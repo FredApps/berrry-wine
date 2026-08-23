@@ -2059,7 +2059,7 @@
     (local $old_eip i32) (local $old_esp i32) (local $old_eax i32)
     (local $old_ecx i32) (local $old_edx i32) (local $old_ebx i32)
     (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
-    (local $old_handler_set_eip i32) (local $old_steps i32)
+    (local $old_handler_set_eip i32) (local $old_steps i32) (local $old_steps_budget i32)
     (local $old_yield_reason i32) (local $old_yield_flag i32) (local $rounds i32)
     (local.set $record (call $help_routine_at
       (call $help_find_routine (local.get $name_hash))))
@@ -2161,6 +2161,9 @@
         (local.set $old_ebp (global.get $ebp))
         (local.set $old_handler_set_eip (global.get $handler_set_eip))
         (local.set $old_steps (global.get $steps))
+        ;; See 04-cache.wat: with the histogram armed the real budget is in
+        ;; $steps_budget, and the nested $run below reseeds it.
+        (local.set $old_steps_budget (global.get $steps_budget))
         (local.set $old_yield_reason (global.get $yield_reason))
         (local.set $old_yield_flag (global.get $yield_flag))
         ;; Arguments go on in reverse: the first one has to end up nearest
@@ -2200,6 +2203,7 @@
         (global.set $ebp (local.get $old_ebp))
         (global.set $handler_set_eip (local.get $old_handler_set_eip))
         (global.set $steps (local.get $old_steps))
+        (global.set $steps_budget (local.get $old_steps_budget))
         (global.set $yield_reason (local.get $old_yield_reason))
         (global.set $yield_flag (local.get $old_yield_flag))))
     (local.set $i (i32.const 0))

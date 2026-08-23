@@ -113,6 +113,38 @@
         (if (i32.eqz (global.get $thread_flush_pending))
           (then (call $host_log_i32 (i32.const 0xCA00F10F))))  ;; cache overflow
         (global.set $thread_flush_pending (i32.const 1))))
+    ;; Handler-index validation, once per EMIT instead of once per replay.
+    ;; This used to live in $next, which meant re-validating a value written
+    ;; here on every dispatch of every cached block — and replay is the whole
+    ;; hot path: a block is emitted once and replayed millions of times.
+    ;;
+    ;; Be clear about what moved and what did not. The old $next check served
+    ;; two populations: (a) a $fn that was already out of range when it was
+    ;; emitted — handler-count drift, a decoder bug — which this catches
+    ;; strictly earlier and with the emitting $eip still in hand; and (b) a
+    ;; $fn that was valid at emit and became garbage afterwards, i.e. real
+    ;; thread-cache corruption discovered at replay, which an emit-time check
+    ;; cannot see. For (b) the old code logged 0xCAC4BAD0, dropped the cache
+    ;; and restarted at $eip; that self-heal is gone, and such a $fn now traps
+    ;; in call_indirect as "table index out of bounds".
+    ;;
+    ;; That is a deliberate trade. (b) is only ever entered from an already
+    ;; incoherent state — the $ip chain has desynced or another writer has
+    ;; overwritten live threaded code — and the "recovery" restarted at a
+    ;; stale $eip, re-running a block's side effects. It avoided a trap; it
+    ;; did not restore correctness. The one documented incident (handler-count
+    ;; drift, apps/rct.md) is population (a) and is still fully covered, which
+    ;; is also what tools/check-handler-count.js pins by grepping this guard.
+    ;;
+    ;; Fail fast rather than recycle: $tstart is already captured by
+    ;; $decode_block, so resetting $thread_alloc from inside $te would leave
+    ;; a half-emitted block pointing at storage about to be reused.
+    (if (i32.ge_u (local.get $fn) (i32.const 400))
+      (then
+        (call $host_log_i32 (i32.const 0xCAC4BAD0))
+        (call $host_log_i32 (local.get $fn))
+        (call $host_log_i32 (global.get $eip))
+        (unreachable)))
     (i32.store (global.get $thread_alloc) (local.get $fn))
     (i32.store offset=4 (global.get $thread_alloc) (local.get $op))
     (global.set $thread_alloc (i32.add (global.get $thread_alloc) (i32.const 8))))
@@ -123,27 +155,47 @@
   ;; ============================================================
   ;; FORTH INNER INTERPRETER
   ;; ============================================================
-  (func $next
+  ;; Everything $next used to do per emulated instruction that is not the
+  ;; dispatch itself. Entered only when the $steps counter reaches or passes
+  ;; zero, which is one of exactly three situations:
+  ;;
+  ;;   $steps < 0   a handler forced an immediate return to the host with the
+  ;;                `(global.set $steps (i32.const 0))` idiom (~120 sites).
+  ;;                The next decrement takes it to -1 and lands here.
+  ;;   $steps == 0, histogram off   the per-block runaway budget is spent.
+  ;;   $steps == 0, histogram on    ordinary op: $steps was armed to 1 so this
+  ;;                path runs for every instruction, records the handler, and
+  ;;                re-arms. The real budget is $steps_budget here.
+  ;;
+  ;; Only the last one continues; the other two unwind the $next chain back to
+  ;; $run exactly as the old inline tests did.
+  (func $next_slow
     (local $fn i32) (local $op i32)
-    (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-    (if (i32.le_s (global.get $steps) (i32.const 0)) (then (return)))
+    (if (i32.lt_s (global.get $steps) (i32.const 0)) (then (return)))
+    (if (i32.eqz (global.get $handler_hist_enabled)) (then (return)))
+    (global.set $steps_budget (i32.sub (global.get $steps_budget) (i32.const 1)))
+    (if (i32.le_s (global.get $steps_budget) (i32.const 0)) (then (return)))
+    ;; Handlers read $steps as a plain "still running" boolean (05-alu.wat,
+    ;; 06b-core-handlers.wat), so it must be positive across the dispatch —
+    ;; and it must be exactly 1 so the next op comes back here.
+    (global.set $steps (i32.const 1))
     (local.set $fn (i32.load (global.get $ip)))
     (local.set $op (i32.load offset=4 (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 8)))
-    ;; Defensive: if cache is corrupted (bad handler index), drop the
-    ;; whole cache and restart at $eip. The fresh decode will produce
-    ;; valid threaded code. This recovers from rare corruption rather
-    ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 400))
-      (then
-        (call $host_log_i32 (i32.const 0xCAC4BAD0))
-        (call $host_log_i32 (local.get $fn))
-        (call $host_log_i32 (global.get $eip))
-        (global.set $thread_alloc (global.get $THREAD_BASE))
-        (call $clear_cache)
-        (return)))
-    (if (global.get $handler_hist_enabled)
-      (then (call $handler_hist_record (local.get $fn))))
+    (call $handler_hist_record (local.get $fn))
+    (call_indirect (type $handler_t) (local.get $op) (local.get $fn)))
+
+  ;; ONE branch per emulated instruction. The handler-index bounds check moved
+  ;; to $te (emit time, once per op instead of once per replay); the histogram
+  ;; test folded into the $steps test, because handlers re-enter here by name
+  ;; through `return_call $next` and cannot be pointed at a second entry point.
+  (func $next
+    (local $fn i32) (local $op i32)
+    (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+    (if (i32.le_s (global.get $steps) (i32.const 0)) (then (return_call $next_slow)))
+    (local.set $fn (i32.load (global.get $ip)))
+    (local.set $op (i32.load offset=4 (global.get $ip)))
+    (global.set $ip (i32.add (global.get $ip) (i32.const 8)))
     (call_indirect (type $handler_t) (local.get $op) (local.get $fn)))
 
   ;; Read next thread i32 and advance $ip

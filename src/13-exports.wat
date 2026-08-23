@@ -175,8 +175,15 @@
       (global.set $ip (local.get $thread))
       (if (global.get $handler_hist_enabled)
         (then (global.set $handler_hist_last (i32.const -1))))
-      ;; Set steps high enough to always complete a block
-      (global.set $steps (i32.const 1000))
+      ;; Set steps high enough to always complete a block. With the handler
+      ;; histogram armed the budget moves to $steps_budget and $steps is armed
+      ;; to 1, so every op detours through $next_slow (see 04-cache.wat).
+      (if (global.get $handler_hist_enabled)
+        (then
+          (global.set $steps_budget (i32.const 1000))
+          (global.set $steps (i32.const 1)))
+        (else
+          (global.set $steps (i32.const 1000))))
       (call $next)
       (br $main))))
 

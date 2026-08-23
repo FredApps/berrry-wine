@@ -1889,6 +1889,13 @@
   ;; Threaded interpreter
   (global $ip    (mut i32) (i32.const 0))
   (global $steps (mut i32) (i32.const 0))
+  ;; $steps is the inner interpreter's ONE hot-path branch, so it does double
+  ;; duty (see $next / $next_slow in 04-cache.wat). Normally it carries the
+  ;; per-block runaway budget directly. With the handler histogram armed it is
+  ;; re-armed to 1 before every dispatch so that every op detours through the
+  ;; slow path, and the real remaining budget lives here instead. Untouched
+  ;; (and irrelevant) while the histogram is off.
+  (global $steps_budget (mut i32) (i32.const 0))
   (global $handler_hist_enabled (mut i32) (i32.const 0))
   ;; Nonzero when ANY of the run loop's debug facilities is armed: watchpoint,
   ;; breakpoint, --count hit counters, --trace-esp, --trace-eip-range, or the

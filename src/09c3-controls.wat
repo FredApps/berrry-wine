@@ -14829,7 +14829,7 @@
     (local $wp i32) (local $slot i32) (local $ctrl_class i32)
     (local $old_eip i32) (local $old_esp i32) (local $old_eax i32) (local $old_ecx i32) (local $old_edx i32)
     (local $old_ebx i32) (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
-    (local $old_handler_set_eip i32) (local $old_steps i32)
+    (local $old_handler_set_eip i32) (local $old_steps i32) (local $old_steps_budget i32)
     (local $old_yield_reason i32) (local $old_yield_flag i32)
     (local $result i32) (local $edit_state i32) (local $edit_len_before i32)
     (local $sync_rounds i32)
@@ -14939,6 +14939,10 @@
     (local.set $old_ebp (global.get $ebp))
     (local.set $old_handler_set_eip (global.get $handler_set_eip))
     (local.set $old_steps (global.get $steps))
+    ;; $steps alone no longer describes the interpreter's remaining budget once
+    ;; the handler histogram is armed — see 04-cache.wat. The nested $run below
+    ;; reseeds both, so both have to come back.
+    (local.set $old_steps_budget (global.get $steps_budget))
     (local.set $old_yield_reason (global.get $yield_reason))
     (local.set $old_yield_flag (global.get $yield_flag))
     ;; Push args + return thunk on guest stack. Wndproc is stdcall ret 0x10
@@ -14980,6 +14984,7 @@
     (global.set $ebp (local.get $old_ebp))
     (global.set $handler_set_eip (local.get $old_handler_set_eip))
     (global.set $steps (local.get $old_steps))
+    (global.set $steps_budget (local.get $old_steps_budget))
     (global.set $yield_reason (local.get $old_yield_reason))
     (global.set $yield_flag (local.get $old_yield_flag))
     (if (i32.and
