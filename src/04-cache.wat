@@ -144,7 +144,15 @@
         (return)))
     (if (global.get $handler_hist_enabled)
       (then (call $handler_hist_record (local.get $fn))))
-    (call_indirect (type $handler_t) (local.get $op) (local.get $fn)))
+    ;; Tail call, not a plain call: handlers already end in `return_call $next`,
+    ;; so with a tail call here the whole handler/$next chain runs in a single
+    ;; wasm frame instead of one frame per emulated x86 op. That removes the
+    ;; stack ceiling on how long a chain can run — $steps (seeded to 1000 per
+    ;; block in src/13-exports.wat) was doing double duty as a stack-depth guard
+    ;; and is now only the scheduling budget it reads as. Engines without the
+    ;; tail-call proposal get `call_indirect; return` from lib/compile-wat.js,
+    ;; where the per-op frame is back and $steps is load-bearing again.
+    (return_call_indirect (type $handler_t) (local.get $op) (local.get $fn)))
 
   ;; Read next thread i32 and advance $ip
   (func $read_thread_word (result i32)
