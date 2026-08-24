@@ -256,10 +256,15 @@
   (func $th_xor_r_i32 (param $op i32)
     (local $r i32) (local.set $r (i32.xor (call $get_reg (local.get $op)) (call $read_thread_word)))
     (call $set_reg (local.get $op) (local.get $r)) (call $set_flags_logic (local.get $r)) (return_call $next))
+  ;; CMP r32, imm32 without the dispatch bookkeeping, so the plain handler and
+  ;; the Jcc-fused one at the end of this file execute literally the same code
+  ;; and cannot drift apart in what lazy-flag state they publish.
+  (func $exec_cmp_r_i32 (param $reg i32) (param $b i32)
+    (local $a i32)
+    (local.set $a (call $get_reg (local.get $reg)))
+    (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b))))
   (func $th_cmp_r_i32 (param $op i32)
-    (local $a i32) (local $b i32)
-    (local.set $a (call $get_reg (local.get $op))) (local.set $b (call $read_thread_word))
-    (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b))) (return_call $next))
+    (call $exec_cmp_r_i32 (local.get $op) (call $read_thread_word)) (return_call $next))
 
   ;; --- Register-Register (operand = dst<<4 | src) ---
   (func $th_mov_r_r (param $op i32)
@@ -2072,12 +2077,15 @@
     (return_call $next))
 
   ;; --- Byte register-immediate ALU (op = alu_op<<8 | reg, imm in next word) ---
-  (func $th_alu_r8_i8 (param $op i32)
+  ;; Split out of the handler so the Jcc-fused form at the end of this file can
+  ;; call the identical body instead of carrying a second copy of it. $op is
+  ;; masked by the caller; $word is the raw immediate thread word.
+  (func $exec_alu_r8_i8 (param $op i32) (param $word i32)
     (local $alu i32) (local $reg i32) (local $a i32) (local $b i32) (local $r i32) (local $cf_in i32)
     (local.set $alu (i32.shr_u (local.get $op) (i32.const 8)))
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $a (call $get_reg8 (local.get $reg)))
-    (local.set $b (i32.and (call $read_thread_word) (i32.const 0xFF)))
+    (local.set $b (i32.and (local.get $word) (i32.const 0xFF)))
     (block $done (block $cmp (block $xor (block $sub (block $and (block $sbb (block $adc (block $or (block $add
       (br_table $add $or $adc $sbb $and $sub $xor $cmp (local.get $alu)))
     ;; 0: ADD
@@ -2124,7 +2132,9 @@
     (local.set $r (i32.and (i32.sub (local.get $a) (local.get $b)) (i32.const 0xFF)))
     (call $set_flags_sub (local.get $a) (local.get $b) (local.get $r))
     )
-    (global.set $flag_sign_shift (i32.const 7))
+    (global.set $flag_sign_shift (i32.const 7)))
+  (func $th_alu_r8_i8 (param $op i32)
+    (call $exec_alu_r8_i8 (local.get $op) (call $read_thread_word))
     (return_call $next))
 
   ;; --- Byte MOV reg8, reg8 ---
@@ -2801,7 +2811,10 @@
       (then (call $set_reg16 (local.get $dst) (local.get $val))))
     (return_call $next))
   ;; 207: r16 OP= imm16 (op=alu_op<<4|reg, imm in next word)
-  (func $th_alu_r16_i16 (param $op i32)
+  ;; The body lives in $exec_alu_r16_i16 so the Jcc-fused form at the end of
+  ;; this file shares it verbatim. Bits above 7 of $op are ignored here, which
+  ;; is what lets the fused encoding park the condition code at bit 8.
+  (func $exec_alu_r16_i16 (param $op i32) (param $word i32)
     (local $alu i32) (local $reg i32) (local $val i32)
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7)))
     (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
@@ -2813,12 +2826,14 @@
     ;; every form came out as a pointer into nothing.
     (local.set $val (call $do_alu32 (local.get $alu)
       (i32.and (call $get_reg (local.get $reg)) (i32.const 0xFFFF))
-      (i32.and (call $read_thread_word) (i32.const 0xFFFF))))
+      (i32.and (local.get $word) (i32.const 0xFFFF))))
     ;; Mask flag_res to 16 bits so ZF/SF/CF compute correctly for 16-bit ops
     (global.set $flag_res (i32.and (global.get $flag_res) (i32.const 0xFFFF)))
     (global.set $flag_sign_shift (i32.const 15))
     (if (i32.ne (local.get $alu) (i32.const 7))
-      (then (call $set_reg16 (local.get $reg) (local.get $val))))
+      (then (call $set_reg16 (local.get $reg) (local.get $val)))))
+  (func $th_alu_r16_i16 (param $op i32)
+    (call $exec_alu_r16_i16 (local.get $op) (call $read_thread_word))
     (return_call $next))
 
   ;; 210: mov r16, r16 (op=dst<<4|src)
@@ -3204,3 +3219,61 @@
         (global.set $esp (i32.add (local.get $old_esp) (i32.const 16)))
         (global.set $eip (local.get $ret_eip))
         (return))))
+
+  ;; ============================================================
+  ;; 410-412: REGISTER FLAG PRODUCER FUSED WITH THE Jcc THAT CONSUMES IT
+  ;; ============================================================
+  ;; compare-then-branch is the most common shape there is in compiled x86,
+  ;; and the measured cost of the inner interpreter is the mispredicted
+  ;; call_indirect in $next, not the work any individual handler does. So the
+  ;; win here is not a cheaper handler, it is one fewer dispatch: the decoder
+  ;; recognises `<reg-immediate ALU> ; Jcc rel8/rel32` and emits a single
+  ;; threaded word for the pair. The three fused forms are the ones a Caesar
+  ;; III gameplay profile put at the top of the pair histogram.
+  ;;
+  ;; Every one of these still publishes the producer's full lazy-flag state,
+  ;; by calling the very same $exec_* body the unfused handler calls. Skipping
+  ;; the flag store and deciding the branch straight from the operands would be
+  ;; a second, larger win — and it is not available. The flags a compare leaves
+  ;; behind are architectural state, not a private channel to the next
+  ;; instruction: `cmp` followed by two branches on one result is ordinary
+  ;; compiler output, and so are SETcc, ADC/SBB, PUSHF, and a fault taken with
+  ;; EFLAGS live into an SEH handler. Nothing inside a single decoded block can
+  ;; prove the next reader is the Jcc we just folded in, because the block ends
+  ;; at that Jcc and its successors are decoded independently. Fuse the
+  ;; dispatch, keep the flags.
+  ;;
+  ;; The thread words after the fused op are, in order: the producer's
+  ;; immediate, the Jcc fall-through EIP, and the Jcc target EIP — the same
+  ;; two trailing words $th_jcc_* reads, so $emit_jcc_tail in the decoder feeds
+  ;; both paths. Like $th_jcc_*, these end the block: they set $eip and return
+  ;; instead of tail-calling $next.
+  (func $jcc_tail (param $cc i32)
+    (local $fall i32) (local $target i32)
+    (local.set $fall (call $read_thread_word))
+    (local.set $target (call $read_thread_word))
+    (if (call $eval_cc (local.get $cc))
+      (then (global.set $eip (local.get $target)))
+      (else (global.set $eip (local.get $fall)))))
+
+  ;; 410: byte reg OP= imm8, then Jcc. op = cc<<12 | alu<<8 | reg.
+  (func $th_alu_r8_i8_jcc (param $op i32)
+    (call $exec_alu_r8_i8
+      (i32.and (local.get $op) (i32.const 0xFFF)) (call $read_thread_word))
+    (call $jcc_tail (i32.shr_u (local.get $op) (i32.const 12))))
+
+  ;; 411: 16-bit reg OP= imm16, then Jcc. op = cc<<8 | alu<<4 | reg.
+  ;; $exec_alu_r16_i16 masks both of its fields, so the condition code rides
+  ;; along in the high bits untouched.
+  (func $th_alu_r16_i16_jcc (param $op i32)
+    (call $exec_alu_r16_i16 (local.get $op) (call $read_thread_word))
+    (call $jcc_tail (i32.shr_u (local.get $op) (i32.const 8))))
+
+  ;; 412: CMP r32, imm32 then Jcc. op = cc<<8 | reg. Only CMP is fused for the
+  ;; dword register-immediate group: the other seven ALU ops each have their
+  ;; own specialised handler (indices 3..9) rather than a shared body, and
+  ;; CMP is the one the profile actually named.
+  (func $th_cmp_r_i32_jcc (param $op i32)
+    (call $exec_cmp_r_i32
+      (i32.and (local.get $op) (i32.const 0xF)) (call $read_thread_word))
+    (call $jcc_tail (i32.shr_u (local.get $op) (i32.const 8))))

@@ -327,6 +327,110 @@
   (func $mr_absolute (result i32)
     (i32.and (i32.eq (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
 
+  ;; ============================================================
+  ;; FUSING A FLAG PRODUCER WITH THE Jcc THAT CONSUMES IT
+  ;; ============================================================
+  ;; Handlers 410-412 execute a register-immediate ALU instruction and the
+  ;; conditional branch that follows it in one dispatch. The saving is the
+  ;; dispatch, not the arithmetic — see the comment on those handlers — so the
+  ;; recognition here only has to be exact, never clever.
+  ;;
+  ;; These are the register-operand forms, and they are disjoint from the two
+  ;; producer+Jcc fusions that already live further down this file:
+  ;; $try_emit_test_jcc (404) folds TEST r,r, which is a different opcode
+  ;; group entirely, and $try_emit_alu_m32_i_jcc (407) folds the group-1 ALU
+  ;; only on its memory operand, i.e. the mod!=3 arm this never reaches.
+  ;;
+  ;; $jcc_lookahead_cc reports the condition code of a Jcc sitting at $d_pc
+  ;; without consuming anything, because the producer's emitter has to know
+  ;; whether to emit the plain or the fused handler index before it calls $te.
+  ;; The match is on the raw opcode byte, so any prefixed Jcc simply falls out
+  ;; of the fast path and keeps its ordinary two-handler encoding.
+  (func $jcc_lookahead_cc (result i32)
+    (local $b i32)
+    (local.set $b (call $gl8 (global.get $d_pc)))
+    ;; 0x70-0x7F: Jcc rel8
+    (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x70))
+                 (i32.le_u (local.get $b) (i32.const 0x7F)))
+      (then (return (i32.and (local.get $b) (i32.const 0xF)))))
+    ;; 0x0F 0x80-0x8F: Jcc rel32 (rel16 in a 16-bit segment)
+    (if (i32.eq (local.get $b) (i32.const 0x0F))
+      (then
+        (local.set $b (call $gl8 (i32.add (global.get $d_pc) (i32.const 1))))
+        (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x80))
+                     (i32.le_u (local.get $b) (i32.const 0x8F)))
+          (then (return (i32.and (local.get $b) (i32.const 0xF)))))))
+    (i32.const -1))
+
+  ;; Consume the Jcc $jcc_lookahead_cc just reported and emit the two trailing
+  ;; words every branch handler reads: fall-through EIP then target EIP. Read
+  ;; the displacement exactly the way the standalone Jcc paths do, including
+  ;; the rel16 form a 16-bit segment uses, so a fused branch and an unfused one
+  ;; land in the same place.
+  (func $emit_jcc_tail
+    (local $b i32) (local $disp i32)
+    (local.set $b (call $d_fetch8))
+    (if (i32.eq (local.get $b) (i32.const 0x0F))
+      (then
+        (drop (call $d_fetch8))
+        (local.set $disp
+          (if (result i32) (global.get $code16)
+            (then (call $sign_ext16 (call $d_fetch16)))
+            (else (call $d_fetch32)))))
+      (else (local.set $disp (call $sign_ext8 (call $d_fetch8)))))
+    (call $te_raw (global.get $d_pc))
+    (call $te_raw (call $branch_target (local.get $disp))))
+
+  ;; The three producer emitters. Each returns 1 when it fused, which means the
+  ;; emitted handler ends the block and the caller must stop decoding. The
+  ;; immediate has already been consumed by the caller, so $d_pc is standing on
+  ;; the next instruction when the lookahead runs.
+  (func $emit_alu_r8_i8_maybe_jcc (param $op i32) (param $imm i32) (result i32)
+    (local $cc i32)
+    (local.set $cc (call $jcc_lookahead_cc))
+    (if (i32.lt_s (local.get $cc) (i32.const 0))
+      (then
+        (call $te (i32.const 154) (local.get $op))
+        (call $te_raw (local.get $imm))
+        (return (i32.const 0))))
+    (call $te (i32.const 410)
+      (i32.or (i32.shl (local.get $cc) (i32.const 12)) (local.get $op)))
+    (call $te_raw (local.get $imm))
+    (call $emit_jcc_tail)
+    (i32.const 1))
+
+  (func $emit_alu_r16_i16_maybe_jcc (param $op i32) (param $imm i32) (result i32)
+    (local $cc i32)
+    (local.set $cc (call $jcc_lookahead_cc))
+    (if (i32.lt_s (local.get $cc) (i32.const 0))
+      (then
+        (call $te (i32.const 207) (local.get $op))
+        (call $te_raw (local.get $imm))
+        (return (i32.const 0))))
+    (call $te (i32.const 411)
+      (i32.or (i32.shl (local.get $cc) (i32.const 8)) (local.get $op)))
+    (call $te_raw (local.get $imm))
+    (call $emit_jcc_tail)
+    (i32.const 1))
+
+  ;; Only ALU index 7 (CMP) has a fused dword form; every other op in the
+  ;; group keeps its own specialised handler at index 3+alu.
+  (func $emit_alu_r_i32_maybe_jcc (param $alu i32) (param $reg i32) (param $imm i32) (result i32)
+    (local $cc i32)
+    (local.set $cc (i32.const -1))
+    (if (i32.eq (local.get $alu) (i32.const 7))
+      (then (local.set $cc (call $jcc_lookahead_cc))))
+    (if (i32.lt_s (local.get $cc) (i32.const 0))
+      (then
+        (call $te (i32.add (i32.const 3) (local.get $alu)) (local.get $reg))
+        (call $te_raw (local.get $imm))
+        (return (i32.const 0))))
+    (call $te (i32.const 412)
+      (i32.or (i32.shl (local.get $cc) (i32.const 8)) (local.get $reg)))
+    (call $te_raw (local.get $imm))
+    (call $emit_jcc_tail)
+    (i32.const 1))
+
   ;; Emit one register-only byte MOV, folding the immediately following one
   ;; when it is another unprefixed 88/8A mod=11 instruction. The pair is fully
   ;; generic and flag-neutral; memory forms and prefixed instructions retain
@@ -1403,6 +1507,7 @@
     (local $imm i32)
     (local $disp i32)
     (local $a i32)
+    (local $fimm i32)          ;; immediate of a possibly Jcc-fused ALU form
 
     ;; Proactive overflow check BEFORE capturing $tstart. If $te triggers a
     ;; mid-decode reset of $thread_alloc, $tstart would still hold the pre-reset
@@ -1681,18 +1786,26 @@
           (local.set $imm (i32.and (i32.shr_u (local.get $op) (i32.const 3)) (i32.const 7))) ;; ALU op index
           ;; Check for AL/EAX, imm forms (bit pattern: xx100 = AL,imm8 and xx101 = EAX,imm32)
           (if (i32.eq (i32.and (local.get $op) (i32.const 7)) (i32.const 4))
-            (then ;; AL, imm8 — byte ALU handler 154
-              (call $te (i32.const 154) (i32.or (i32.shl (local.get $imm) (i32.const 8)) (i32.const 0))) ;; reg=AL(0)
-              (call $te_raw (i32.and (call $d_fetch8) (i32.const 0xFF)))
+            (then ;; AL, imm8 — byte ALU handler 154, or 400 fused with a Jcc
+              (local.set $fimm (i32.and (call $d_fetch8) (i32.const 0xFF)))
+              (if (call $emit_alu_r8_i8_maybe_jcc
+                    (i32.shl (local.get $imm) (i32.const 8)) ;; reg=AL(0)
+                    (local.get $fimm))
+                (then (local.set $done (i32.const 1))))
               (br $decode)))
           (if (i32.eq (i32.and (local.get $op) (i32.const 7)) (i32.const 5))
             (then (if (local.get $prefix_66)
-              (then ;; AX, imm16 — handler 207 (alu_r16_i16)
-                (call $te (i32.const 207) (i32.shl (local.get $imm) (i32.const 4))) ;; reg=0(AX)
-                (call $te_raw (i32.and (call $d_fetch16) (i32.const 0xFFFF))))
+              (then ;; AX, imm16 — handler 207 (alu_r16_i16), or 401 fused
+                (local.set $fimm (i32.and (call $d_fetch16) (i32.const 0xFFFF)))
+                (if (call $emit_alu_r16_i16_maybe_jcc
+                      (i32.shl (local.get $imm) (i32.const 4)) ;; reg=0(AX)
+                      (local.get $fimm))
+                  (then (local.set $done (i32.const 1)))))
               (else ;; EAX, imm32
-                (call $te (i32.add (i32.const 3) (local.get $imm)) (i32.const 0))
-                (call $te_raw (call $d_fetch32))))
+                (local.set $fimm (call $d_fetch32))
+                (if (call $emit_alu_r_i32_maybe_jcc
+                      (local.get $imm) (i32.const 0) (local.get $fimm))
+                  (then (local.set $done (i32.const 1))))))
               (br $decode)))
 
           (call $decode_modrm)
@@ -1781,17 +1894,26 @@
               (else (local.set $imm (i32.and (call $d_fetch8) (i32.const 0xFF)))))))
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then ;; reg, imm
+              ;; Each of the three forms folds an immediately following Jcc
+              ;; into one dispatch (handlers 410/411/412) when there is one.
+              ;; This is the mod=3 arm, so it can never race the memory-form
+              ;; fusion ($try_emit_alu_m32_i_jcc, handler 407) in the else.
               (if (i32.or (i32.eq (local.get $op) (i32.const 0x80)) (i32.eq (local.get $op) (i32.const 0x82)))
                 (then ;; byte reg, imm8 — handler 154
-                  (call $te (i32.const 154) (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (global.get $mr_val)))
-                  (call $te_raw (local.get $imm)))
+                  (if (call $emit_alu_r8_i8_maybe_jcc
+                        (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (global.get $mr_val))
+                        (local.get $imm))
+                    (then (local.set $done (i32.const 1)))))
                 (else (if (i32.and (local.get $prefix_66) (i32.or (i32.eq (local.get $op) (i32.const 0x81)) (i32.eq (local.get $op) (i32.const 0x83))))
                   (then ;; 16-bit reg, imm16 — handler 207
-                    (call $te (i32.const 207) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
-                    (call $te_raw (local.get $imm)))
+                    (if (call $emit_alu_r16_i16_maybe_jcc
+                          (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))
+                          (local.get $imm))
+                      (then (local.set $done (i32.const 1)))))
                   (else ;; dword reg, imm32
-                    (call $te (i32.add (i32.const 3) (global.get $mr_reg)) (global.get $mr_val))
-                    (call $te_raw (local.get $imm)))))))
+                    (if (call $emit_alu_r_i32_maybe_jcc
+                          (global.get $mr_reg) (global.get $mr_val) (local.get $imm))
+                      (then (local.set $done (i32.const 1)))))))))
             (else ;; [mem], imm — use runtime EA
               (if (i32.or (i32.eq (local.get $op) (i32.const 0x80)) (i32.eq (local.get $op) (i32.const 0x82)))
                 (then (call $emit_alu_m8_i (global.get $mr_reg) (local.get $imm)))

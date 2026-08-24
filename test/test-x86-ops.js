@@ -496,6 +496,73 @@ async function main() {
     addr16Eax, e.get_eax());
 
   // ================================================================
+  // Producer fused with the Jcc that consumes it (handlers 410-412)
+  // ================================================================
+  // The decoder folds `<reg,imm ALU> ; Jcc` into one dispatch. What has to
+  // survive that is not the branch — a wrong branch shows up everywhere — but
+  // the flags the compare leaves behind for the NEXT block, since the fused
+  // handler is the only thing that publishes them now.
+
+  // CMP r32,imm32 + JZ, both directions.
+  runCode([0xB8, ...le32(7), 0x83, 0xF8, 0x07, 0x74, 0x05, 0xB8, ...le32(0)]);
+  test('cmp r32,imm8 + jz taken', e.get_eax(), 7);
+  runCode([0xB8, ...le32(9), 0x83, 0xF8, 0x07, 0x74, 0x05, 0xB8, ...le32(1)]);
+  test('cmp r32,imm8 + jz not taken', e.get_eax(), 1);
+
+  // The correctness trap: two branches on one compare. The fused JLE ends its
+  // block; the JZ that follows is decoded separately and must still see the
+  // CMP's lazy-flag state.
+  runCode([
+    0xB8, ...le32(5),       // mov eax, 5
+    0x83, 0xF8, 0x05,       // cmp eax, 5
+    0x7F, 0x07,             // jg  +7 (not taken: 5 <= 5)   <- fused
+    0x74, 0x05,             // jz  +5 (taken, on the SAME compare)
+    0xB8, ...le32(0),       // mov eax, 0  (skipped)
+    0xBB, ...le32(0x1234),  // mov ebx, 0x1234
+  ], () => e.set_ebx(0));
+  test('second Jcc reads the fused compare flags', e.get_ebx(), 0x1234);
+  test('second Jcc did not disturb the result', e.get_eax(), 5);
+
+  // Same question for a non-branch flag consumer: SETcc after the fused pair.
+  runCode([
+    0xB8, ...le32(3),       // mov eax, 3
+    0x83, 0xF8, 0x09,       // cmp eax, 9      (below, so CF=1)
+    0x74, 0x00,             // jz  +0          <- fused, not taken
+    0x0F, 0x92, 0xC3,       // setb bl
+    0x0F, 0x9C, 0xC1,       // setl cl
+  ], () => { e.set_ebx(0); e.set_ecx(0); });
+  test('SETB after a fused compare sees CF', e.get_ebx() & 0xFF, 1);
+  test('SETL after a fused compare sees SF/OF', e.get_ecx() & 0xFF, 1);
+
+  // ADC after the fused pair: CF has to be the compare's, not zero.
+  runCode([
+    0xB8, ...le32(1),       // mov eax, 1
+    0x83, 0xF8, 0x04,       // cmp eax, 4      (CF=1)
+    0x75, 0x00,             // jnz +0          <- fused, taken, falls to next
+    0xBB, ...le32(0),       // mov ebx, 0
+    0x83, 0xD3, 0x00,       // adc ebx, 0
+  ]);
+  test('ADC after a fused compare sees CF', e.get_ebx(), 1);
+
+  // Byte form (handler 410): CMP r8,imm8 + JZ, and the near Jcc encoding.
+  runCode([0xB0, 0x41, 0x3C, 0x41, 0x0F, 0x84, ...le32(5), 0xB8, ...le32(0xBAD),
+           0xB8, ...le32(0xC0FFEE)]);
+  test('cmp al,imm8 + jz rel32 taken', e.get_eax(), 0xC0FFEE);
+  runCode([0xB0, 0x41, 0x3C, 0x42, 0x0F, 0x84, ...le32(5), 0xB8, ...le32(0xBAD)]);
+  test('cmp al,imm8 + jz rel32 not taken', e.get_eax(), 0xBAD);
+
+  // SUB r8,imm8 + JZ: the fused byte form must still write the register.
+  runCode([0xB0, 0x05, 0x2C, 0x05, 0x74, 0x05, 0xB8, ...le32(0xBAD)]);
+  test('sub al,imm8 + jz writes AL and branches', e.get_eax() & 0xFF, 0);
+
+  // 16-bit form (handler 411): the 0x66-prefixed CMP r16,imm16 + JZ. The
+  // sign-extension rule this handler exists for still has to hold: comparing
+  // 0xFFFF against -1 is equal in sixteen bits.
+  runCode([0x66, 0xB8, 0xFF, 0xFF, 0x66, 0x83, 0xF8, 0xFF, 0x74, 0x05,
+           0xB8, ...le32(0xBAD)], () => e.set_eax(0));
+  test('cmp r16,imm16 + jz treats 0xFFFF as -1', e.get_eax() & 0xFFFF, 0xFFFF);
+
+  // ================================================================
   // Summary
   // ================================================================
   console.log(`\n${pass} passed, ${fail} failed`);
