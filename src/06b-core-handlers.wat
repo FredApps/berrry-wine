@@ -624,6 +624,23 @@
       (then (call $gs32 (local.get $addr) (local.get $r))))
     (return_call $next))
 
+  ;; 410: MOV [base+index*scale+disp],r32 -- the store-side counterpart of 389
+  ;; and the single biggest consumer of the generic compute_ea_sib prefix: in a
+  ;; Caesar III gameplay profile 93% of all SIB address computations existed
+  ;; only to feed the very next $th_store32. Encoding the store here costs that
+  ;; pair one indirect dispatch instead of two and drops the SIB_SENTINEL word.
+  ;; Reports itself to the SIB histogram as its consumer (21 = $th_store32) so
+  ;; profiles stay comparable across the fusion, exactly as 400-402 do.
+  (func $th_store32_sib (param $op i32)
+    (local $info i32)
+    (local.set $info (call $read_thread_word))
+    (if (global.get $handler_hist_enabled)
+      (then (call $sib_consumer_hist_record (i32.const 21) (local.get $op) (local.get $info))))
+    (call $gs32 (call $sib_ea (local.get $info) (call $read_thread_word))
+      (call $get_reg (local.get $op)))
+    (return_call $next))
+
+
   ;; 390: two adjacent SIB LEAs. Words are info1, disp1, info2, disp2 and the
   ;; destination registers are packed into op. The second address is computed
   ;; after committing the first result, preserving dependent LEA semantics.

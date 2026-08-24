@@ -731,6 +731,22 @@
         (local.set $a (global.get $mr_disp))
         (if (call $try_emit_abs_run (i32.const 1) (local.get $src) (local.get $a))
           (then (return)))))
+    ;; Indexed SIB dword stores are what compute_ea_sib almost always exists
+    ;; for -- Caesar III's blitters run this pair 26M times a session. Emit the
+    ;; fused handler so it costs one dispatch, mirroring the load side (389).
+    ;; Absolute and 16-bit segmented addresses keep the generic encoding.
+    (if (i32.and
+          (i32.eqz (global.get $code16))
+          (i32.eqz (call $mr_absolute)))
+      (then
+        (call $te (i32.const 410) (local.get $src))
+        (call $te_raw (i32.or
+          (if (result i32) (i32.ne (global.get $mr_base) (i32.const -1))
+            (then (global.get $mr_base)) (else (i32.const 0xF)))
+          (i32.or (i32.shl (global.get $mr_index) (i32.const 4))
+                  (i32.shl (global.get $mr_scale) (i32.const 8)))))
+        (call $te_raw (global.get $mr_disp))
+        (return)))
     (local.set $a (call $emit_sib_or_abs))
     (call $te (i32.const 21) (local.get $src)) (call $te_raw (local.get $a)))
 
