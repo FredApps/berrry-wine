@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 410 funcref)
+  (table $handlers 450 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -466,4 +466,52 @@
     $th_alu_m32_i_jcc         ;; 407: ALU dword [base+disp], imm + Jcc
     $th_load32_base_run       ;; 408: 2-4 back-to-back mov reg,[base+disp]
     $th_unary_alu_m32_ro      ;; 409: inc/dec [base+disp] + ALU [base+disp], imm
+    ;; -- Register-specialised twins of 3/8/10/20/207. Each block is eight
+    ;; -- entries in the canonical register order, so the decoder picks one with
+    ;; -- `base + reg` and never has to branch. $op is unused in 410-441 and
+    ;; -- carries only the ALU op in 442-449.
+    ;; -- The five originals are now unemitted but stay in the table on purpose:
+    ;; -- handler ids are baked into every threaded word and into the histogram
+    ;; -- tooling, so deleting an entry renumbers everything after it. They are
+    ;; -- still the readable statement of what these forty do.
+    $th_add_eax_i32           ;; 410: ADD eax, imm32
+    $th_add_ecx_i32           ;; 411
+    $th_add_edx_i32           ;; 412
+    $th_add_ebx_i32           ;; 413
+    $th_add_esp_i32           ;; 414
+    $th_add_ebp_i32           ;; 415
+    $th_add_esi_i32           ;; 416
+    $th_add_edi_i32           ;; 417
+    $th_sub_eax_i32           ;; 418: SUB eax, imm32
+    $th_sub_ecx_i32           ;; 419
+    $th_sub_edx_i32           ;; 420
+    $th_sub_ebx_i32           ;; 421
+    $th_sub_esp_i32           ;; 422
+    $th_sub_ebp_i32           ;; 423
+    $th_sub_esi_i32           ;; 424
+    $th_sub_edi_i32           ;; 425
+    $th_cmp_eax_i32           ;; 426: CMP eax, imm32
+    $th_cmp_ecx_i32           ;; 427
+    $th_cmp_edx_i32           ;; 428
+    $th_cmp_ebx_i32           ;; 429
+    $th_cmp_esp_i32           ;; 430
+    $th_cmp_ebp_i32           ;; 431
+    $th_cmp_esi_i32           ;; 432
+    $th_cmp_edi_i32           ;; 433
+    $th_load32_eax            ;; 434: eax = [addr]
+    $th_load32_ecx            ;; 435
+    $th_load32_edx            ;; 436
+    $th_load32_ebx            ;; 437
+    $th_load32_esp            ;; 438
+    $th_load32_ebp            ;; 439
+    $th_load32_esi            ;; 440
+    $th_load32_edi            ;; 441
+    $th_alu_ax_i16            ;; 442: ax OP= imm16 (op=alu_op)
+    $th_alu_cx_i16            ;; 443
+    $th_alu_dx_i16            ;; 444
+    $th_alu_bx_i16            ;; 445
+    $th_alu_sp_i16            ;; 446
+    $th_alu_bp_i16            ;; 447
+    $th_alu_si_i16            ;; 448
+    $th_alu_di_i16            ;; 449
   )

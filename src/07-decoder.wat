@@ -655,6 +655,19 @@
     (global.set $d_pc (local.get $p))
     (i32.const 1))
 
+  ;; Pick the handler for `reg OP= imm32`. ADD/SUB/CMP have a per-register
+  ;; specialisation (410/418/426 + reg) that touches the wasm global directly
+  ;; instead of calling $get_reg/$set_reg; every other ALU op falls back to the
+  ;; generic 3+alu form, which still reads the register out of the operand
+  ;; word. The branching is free — this runs once per block decode, not per
+  ;; execution — and the operand word stays the register number either way, so
+  ;; a specialised word and its generic twin are readable the same way.
+  (func $alu_r_i32_handler (param $alu i32) (param $reg i32) (result i32)
+    (if (i32.eq (local.get $alu) (i32.const 0)) (then (return (i32.add (i32.const 410) (local.get $reg)))))
+    (if (i32.eq (local.get $alu) (i32.const 5)) (then (return (i32.add (i32.const 418) (local.get $reg)))))
+    (if (i32.eq (local.get $alu) (i32.const 7)) (then (return (i32.add (i32.const 426) (local.get $reg)))))
+    (i32.add (i32.const 3) (local.get $alu)))
+
   ;; $fuse says whether the bytes after $d_pc are the next instruction. They
   ;; are for `mov r32,r/m32`, and every fusion below peeks at them; they are
   ;; NOT for `imul r32,r/m32,imm`, whose immediate the decoder has already
@@ -719,7 +732,10 @@
             (if (call $try_emit_abs_run (i32.const 0) (local.get $dst) (local.get $a))
               (then (return)))))))
     (local.set $a (call $emit_sib_or_abs))
-    (call $te (i32.const 20) (local.get $dst)) (call $te_raw (local.get $a)))
+    ;; Last resort: absolute / segmented / 16-bit-addressed loads that none of
+    ;; the fusions above claimed. 434+dst writes the destination global
+    ;; directly instead of routing through $set_reg.
+    (call $te (i32.add (i32.const 434) (local.get $dst)) (local.get $dst)) (call $te_raw (local.get $a)))
 
   (func $emit_store32 (param $src i32) (local $a i32)
     (call $apply_seg_override)
@@ -1687,11 +1703,11 @@
               (br $decode)))
           (if (i32.eq (i32.and (local.get $op) (i32.const 7)) (i32.const 5))
             (then (if (local.get $prefix_66)
-              (then ;; AX, imm16 — handler 207 (alu_r16_i16)
-                (call $te (i32.const 207) (i32.shl (local.get $imm) (i32.const 4))) ;; reg=0(AX)
+              (then ;; AX, imm16 — handler 442 (alu_ax_i16), reg baked in
+                (call $te (i32.const 442) (local.get $imm))
                 (call $te_raw (i32.and (call $d_fetch16) (i32.const 0xFFFF))))
               (else ;; EAX, imm32
-                (call $te (i32.add (i32.const 3) (local.get $imm)) (i32.const 0))
+                (call $te (call $alu_r_i32_handler (local.get $imm) (i32.const 0)) (i32.const 0))
                 (call $te_raw (call $d_fetch32))))
               (br $decode)))
 
@@ -1786,11 +1802,11 @@
                   (call $te (i32.const 154) (i32.or (i32.shl (global.get $mr_reg) (i32.const 8)) (global.get $mr_val)))
                   (call $te_raw (local.get $imm)))
                 (else (if (i32.and (local.get $prefix_66) (i32.or (i32.eq (local.get $op) (i32.const 0x81)) (i32.eq (local.get $op) (i32.const 0x83))))
-                  (then ;; 16-bit reg, imm16 — handler 207
-                    (call $te (i32.const 207) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
+                  (then ;; 16-bit reg, imm16 — handler 442+reg, op carries the ALU op
+                    (call $te (i32.add (i32.const 442) (global.get $mr_val)) (global.get $mr_reg))
                     (call $te_raw (local.get $imm)))
                   (else ;; dword reg, imm32
-                    (call $te (i32.add (i32.const 3) (global.get $mr_reg)) (global.get $mr_val))
+                    (call $te (call $alu_r_i32_handler (global.get $mr_reg) (global.get $mr_val)) (global.get $mr_val))
                     (call $te_raw (local.get $imm)))))))
             (else ;; [mem], imm — use runtime EA
               (if (i32.or (i32.eq (local.get $op) (i32.const 0x80)) (i32.eq (local.get $op) (i32.const 0x82)))
@@ -1990,9 +2006,14 @@
         (if (local.get $prefix_66)
           (then (call $te (i32.const 164) (i32.const 0)) (call $te_raw (local.get $imm)))  ;; mov ax, [addr]
           (else
+            ;; The multi-move run handler wins when it can claim this site: it
+            ;; removes whole dispatches, which the register specialisation
+            ;; cannot. Only when the run does not fire do we take the
+            ;; per-register load (434+eax), which is still cheaper than the
+            ;; generic 20 because it skips the $set_reg call.
             (if (call $try_emit_abs_run (i32.const 0) (i32.const 0) (local.get $imm))
               (then (br $decode)))
-            (call $te (i32.const 20) (i32.const 0)) (call $te_raw (local.get $imm))))   ;; mov eax, [addr]
+            (call $te (i32.const 434) (i32.const 0)) (call $te_raw (local.get $imm))))   ;; mov eax, [addr]
         (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA2)) (then (call $te (i32.const 25) (i32.const 0)) (call $te_raw (local.get $imm)) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xA3)) (then
