@@ -46,6 +46,18 @@
 // the real toggle held at +58.6%. Run the null control in the same session as
 // the real measurement and treat it as the threshold, never as a constant.
 //
+// THAT FLOOR IS INTRA-PROCESS. It is measured between two arms alternating
+// every rep inside ONE process, which is what --toggle does and the only
+// comparison this harness is built for. Swapping build/wine-assembly.wasm for
+// another build and re-running makes the comparison cross-process, and the
+// +-1% does not apply: measured 2026-08-24 at load 5-8, one unchanged build
+// spanned 168.2-241.5ms on lut over three invocations (44%), while the two
+// builds under test were indistinguishable. The first run of the second build
+// read as a 26% win across all four loop shapes; the next run of that same
+// binary was the slowest of the set. Answer build-vs-build with --toggle if
+// the change can be a flag, or with the whole-app fixed-work measurement
+// (--max-batches=N under `/usr/bin/time -p`, compare user CPU) if it cannot.
+//
 // AND THE FIRST THING IT FOUND IS THAT OP COUNT LIES ABOUT ITS OWN SIGN.
 // On cmp_ladder the fold is +57% FASTER while printing 7.7% MORE handler ops.
 // The op count is not what changed: block ENTRIES went 5.50 -> 2.00 per

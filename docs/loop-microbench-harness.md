@@ -106,7 +106,34 @@ smaller than the concurrent null control is not a result.
 A new shape whose null control does not come back near zero on a quiet box has a
 layout or aliasing problem, and none of its other numbers mean anything.
 
-## 3.1 Every shape verifies its own work
+## 3.1 The ±1% floor is intra-process, and does not survive comparing two builds
+
+The floor above is measured between two arms *inside one process*, alternating
+every rep with the order rotated. That is what `--toggle` does, and it is the
+only comparison the harness is built for.
+
+The obvious next use is the one it cannot do: swap `build/wine-assembly.wasm`
+for another build and re-run. That makes the comparison cross-process, and the
+±1% does not apply. Measured 2026-08-24 at load 5-8, five invocations
+alternating two builds, minima in ms:
+
+| shape | build A | build B |
+|---|---|---|
+| `lut` | 228.8, 213.2 | 168.2, 241.5, 196.4 |
+| `store_stream` | 36.0, 31.7 | 25.9, 37.1, 34.1 |
+
+Build B's own spread is **44%** — its fastest and slowest runs are the same
+binary. Taken in isolation the first B run reads as a 26% win across all four
+loop shapes, and the very next run of that same binary was the slowest of the
+whole set. Nothing here separates the builds.
+
+So a build-to-build question has to be answered somewhere else: `--toggle` if
+the change can be expressed as a flag, or the whole-app fixed-work measurement
+(`--max-batches=N` with `/usr/bin/time -p` user CPU) if it cannot. A useful
+future extension would be loading two wasm files into one process and
+alternating them the way the toggle arms alternate.
+
+## 3.2 Every shape verifies its own work
 
 Each shape carries a `verify` hook, run unconditionally outside the timed
 region, that checks the loop actually had its memory and register effect. A
