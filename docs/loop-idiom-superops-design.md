@@ -1090,3 +1090,290 @@ byte copy with a *memory* counter and both cursors incrementing), not in the
 page/budget chunk arithmetic. That is the next thing to bisect: parameter
 block first (src/dst/disp/ctr_addr against the guest's own registers at entry),
 then the exit publication (`$b`, the two cursors, the DEC flags, `$eip`).
+
+### 14.1 Correction 2026-08-24: the Diablo render does not reproduce
+
+On main at `fe9cfd0d` with `--loop-superops` **on**, Diablo shareware's main
+menu and Choose Class screen both render correctly -- no per-pixel colour
+noise in the panels. The section above is left standing rather than deleted
+because the capture it describes was real, but the defect is not reproducible
+as written and the disable is no longer justified by it.
+
+Caveats on the non-reproduction, which is why this is a correction and not a
+retraction: the app spends its first thousands of batches inside `smackw32`
+playing the intro, so reaching the menu needs `--time-scale=30` and ~32000
+batches, and `test/run.js` has no deterministic clock, so an ON capture and an
+OFF capture at the same batch number are not at the same point in the guest's
+life. The comparison was made by content, not by matched batch index.
+
+## 15. Store sinking: promote a loop's memory-resident state
+
+> **Superseded in part by section 17.** Every hit-weighted number below counts
+> `find-loops` loops (any backward branch), not the self-loop *blocks* the
+> emulator's machinery can actually lower. Restricted to those, the coverage
+> that is not already taken by the section 3 matcher is ~0.36% of block
+> dispatches, and the conclusion is not to build it. The design description
+> itself stands; the population estimate does not.
+
+A different question from section 3's. The matcher there asks *what a loop is
+for*; this asks only whether the loop keeps a variable in memory that could sit
+in a register for the loop's duration and be written back once at exit. Three
+of the four hot sites in Heroes II are that shape and none of them matches any
+predicate in the shape library -- see [docs/re-notes/heroes2-demo.md]. The
+guest compiler put a decoder cursor in a global, a counter in a stack slot, a
+table pointer in a global, and reloads them every iteration.
+
+### 15.1 Why the handler histogram undercounts this
+
+`$th_ptrvar_fetch8` (H403) already fuses Heroes' hottest cursor idiom -- four
+x86 instructions, one dispatch. The histogram therefore shows it as optimised.
+It is not: the fused handler still performs the store, and a store here is
+`$g2w` plus `$invalidate_code_write` plus a page-crossing test
+(`src/03-registers.wat:265`). Dispatch fusion removed the cheap half and left
+the expensive one. Any accounting done in dispatch counts is blind to this.
+
+**Bound on the prize, measured 2026-08-24.** Throwaway probe: `(return)` at the
+top of `$invalidate_code_write`, so every store skips the code-page test. Wall
+clock is unusable on this box -- the probe run's whole process, including
+`tokenize @ compile-wat.js` doing byte-identical work, ran 2x faster than the
+baseline -- so the numbers below are normalised against the WAT compiler's self
+time as a load anchor (ratio 0.529, Heroes II gameplay, `--repaint-every=50`):
+
+```
+  fn                base    probe(norm)   delta
+  wasm total      2358.6       2112.6    -10.4%
+  $gs32             92.1         54.6    -40.7%
+  $jcc_end         155.8        166.1     +6.6%   <- cannot have changed
+  $gl32             65.8         78.4    +19.0%   <- cannot have changed
+```
+
+Functions the probe cannot have touched moved by up to 19%, so that is the
+noise floor. Only the two the probe did touch clear it. Read it as: the
+invalidate half of the store path is worth **roughly 10% of wasm time**, plus
+or minus several points, with `$g2w` (6.5%) and `$gs32` (3.9%) on top.
+
+### 15.2 The classifier, and the number that matters
+
+`tools/match-loops.js --promote` applies the predicate: a *cell* is a
+loop-invariant address the body touches every iteration, promotable when
+nothing else in the body can alias it.
+
+- `clean` -- provable statically: no other memory op, or the same base+index
+  with a non-overlapping displacement.
+- `guard` -- other accesses are moving streams, so disjointness is a runtime
+  range check per chunk, not a proof. The super-ops already chunk at page
+  boundaries and so already know each chunk's touched range; the check is one
+  compare against it, exact rather than conservative, and it degrades to
+  per-iteration stores instead of miscompiling.
+- Anything else declines. A `call` in the body declines unconditionally.
+
+Static census over eight apps:
+
+```
+app                     loops  promo    pct  clean  guard  cells  sunk/it  no-match
+H2DEMOW.EXE              1215    317  26.1%    111    206    426      571       312
+diablo_s.exe             1719    135   7.9%     30    105    170      194       135
+starcraft.exe            1932     92   4.8%      3     89    113      116        91
+Falldemo.exe             1704     87   5.1%      9     78    114      145        87
+volley.exe                973     34   3.5%      4     30     41       42        34
+claw_demo.exe             226     19   8.4%      0     19     30       31        19
+Total Annihilation.exe    249      8   3.2%      1      7     11       12         8
+caesar3.exe               124      6   4.8%      0      6      7        8         6
+TOTAL                    8142    698   8.6%    158    540    912     1119       692
+```
+
+8.6% against the shape library's 1.2%, and `no-match` says 692 of the 698 are
+loops `match()` rejects -- this is new ground, not a re-slicing.
+
+**Static match rate is the metric that misled section 10.2, so it is not the
+one to decide on.** `--hits=FILE` weights every loop by how often the emulator
+entered it, fed from `test/run.js --hot-block-dump` over the gameplay window
+(Heroes II, batches 1400-2600):
+
+```
+H2DEMOW.EXE: hottest promotable loops
+  (655696 of 839971 self-loop entries, 78.1%; idiom matcher would take 24.2%)
+  0x4c7341    400655  [0x525d80] rw/guard  [0x525da0] wo  [0x525db8] wo  [0x525d90] wo
+  0x4c755d    182410  [0x525d94] wo/guard  [0x525d88] wo/guard
+  0x4cbbb3     42966  [0x528f88] wo  [0x528f9c] wo  [0x528f94] wo
+  0x4cbe76     15186  [0x528fa8] wo/guard
+  0x4cbd80     14259  [0x528fa0] wo/guard
+```
+
+**78.1% of self-loop iterations land in a promotable loop, and the app's two
+hottest blocks are both in the list** -- the ICN control-byte fetch (section
+1.2) and the per-pixel LUT translate (section 1.3). That is precisely the gate
+section 10.2 failed.
+
+Sober denominator: 839971 self-loop entries out of 8050868 total block entries,
+so promotable iterations are 8.1% of all block dispatches, at ~1.6 sunk stores
+each, about 1.05M stores removed. This is a few percent of wasm, not ten.
+
+One design fact falls out of the table: **every hot cell is `guard`, none is
+`clean`.** The runtime range check is not an optimisation of the mechanism, it
+is a precondition for the cases that pay.
+
+### 15.3 Correctness, and one caveat that turned out not to exist
+
+1. **Flush on every exit** -- normal exit, condition-code break, and the
+   `$steps` preemption bail. The existing super-ops republish `$eip` at the
+   loop head when steps run out; the write-back must precede that republish or
+   a resumed loop reads stale memory. This is the failure mode that would look
+   exactly like section 14's.
+2. **SMC** -- a sunk store still owes `$invalidate_code_write`, once, on the
+   final value.
+3. **Faults** -- none of these addresses can fault mid-loop once the first
+   access succeeds; mappings cannot change inside a super-op (section 10.7).
+4. ~~Other threads~~ **-- not a constraint.** An earlier draft of this list
+   worried about the Miles mixer observing a torn cell from its
+   multimedia-timer callback. There are no OS threads: there is no `new Worker`
+   or `worker_threads` anywhere in `lib/` or `host.js`, and
+   `lib/thread-manager.js:2` states it -- "Each WASM instance = one thread,
+   sharing the same linear memory". The run loop steps the main instance, then
+   the thread slices, all on one JS thread. The only re-entrancy point is
+   cooperative pumping from a host import (`waitSingleCooperative`,
+   `h.cs_pump`), and reaching a host import requires an x86 `call`, which the
+   classifier already declines. The guarantee holds for free on exactly the
+   loops that would be promoted.
+
+## 16. Design B is not buildable as specified
+
+Section 4.1 draws the wrapper as `call_indirect body[k]`, which assumes a
+handler returns to its caller. Handlers do not return. Every one ends in a tail
+call into the inner interpreter:
+
+```wat
+;; src/05-alu.wat:397
+(func $th_load8 (param $op i32) (call $set_reg8 (local.get $op) (call $gl8 (call $read_addr))) (return_call $next))
+```
+
+So `call_indirect body[k]` from a wrapper does not run one op -- it runs the
+entire remaining chain inside the wrapper's frame and returns only when
+`$steps` expires. That is the existing interpreter plus one stack frame, not a
+wrapper. Realising section 4 needs a second, *returning* entry point for all
+424 handlers. That is mechanically generatable and it is a different project
+from the one section 4 describes; the savings table in 4.2 remains correct, the
+implementation sketch in 4.1 does not.
+
+**What survives is smaller than section 4.2 implies, because the back edge is
+already fast.** `$branch_end` (`src/04-cache.wat:529`) does not unwind to
+`$run` when the destination is compiled -- it resolves the page and tail-calls
+`$next` -- and `$jcc_end` already chains *fall-through* edges on a decode-time
+adjacency bit. A self-loop shortcut on top of that removes only
+`$page_resolve` (whose answer is a compile-time constant for a back edge) and
+two `$sbh_eip` compares. `$page_resolve` does not appear in the profile's top
+24. The per-op `$next` preamble -- the 18.7% of wasm that made B worth wanting
+-- is untouchable without the returning-handler ABI.
+
+Note for whoever builds either: `$decode_run` sets the adjacency bit with
+`i32.store ... (i32.const 1)` (`src/07-decoder.wat:3888`), not an OR, so any new
+operand bit on a Jcc terminator is clobbered by a later run extension unless
+that store becomes an OR first.
+
+## 17. Correction 2026-08-24: the 78% was multi-block loops, and store sinking does not pay
+
+§15's headline -- "78.1% of self-loop entries are promotable, versus 24.2% for
+the idiom matcher" -- is wrong, and the error is a conflation, not an
+arithmetic slip.
+
+`tools/find-loops.js` calls anything reachable by a backward branch a loop.
+`src/07b-loop-match.wat` only ever sees a *block whose own terminator branches
+to its own entry*. Those are different sets, and the `promotable()` predicate
+in `tools/match-loops.js` inherited the loose one: it rejected `call` but never
+counted branches, so it happily accepted bodies the emulator decodes as four
+separate blocks. No single-block lowering can hold a value in a register across
+a body it does not own.
+
+Heroes II's #1 hot block is exactly that trap:
+
+```
+0x4c7341   400655 hits   -- NOT a self-loop block
+    xor eax, eax
+    mov ecx, [0x525d80]
+    inc ecx
+    mov [0x525d80], ecx
+    mov al, [ecx-0x1]
+    test al, al
+    jge 0x4c7651          <-- exit 1, block ends here
+    test al, 0x40
+    jnz short 0x4c737d    <-- exit 2
+    mov [0x525da0], ebx
+    mov [0x525db8], ebp
+    mov [0x525d90], eax
+    and dword eax, 0x3f
+    jz 0x4c7746           <-- exit 3
+    add ebx, eax
+    jmp short 0x4c7341    <-- back edge
+```
+
+`promotable()` now computes `single` (exactly one branch role, and it is the
+last op) and `--promote` reports it as its own column and its own hit-weighted
+share. Re-measured:
+
+| metric | old claim | corrected |
+|---|---|---|
+| static, 8 apps | 698 / 8142 = 8.6% | single-block **134 / 8142 = 1.6%** |
+| Heroes, hit-weighted share of self-loop entries | 78.1% | single-block **25.2%** |
+| Heroes, ditto, not already covered by `match()` | "692 of 698 are new" | **~3.5%** |
+
+The last row is what kills it. Of the 25.2%, nearly all is one block:
+
+```
+0x4c755d   182410 hits   single   [0x525d94] wo/guard  [0x525d88] wo/guard
+```
+
+and `match()` **already lowers that one** -- it is in the `--list=LUT_RUN`
+output. The genuinely-new single-block promotable hot loops in Heroes are
+`0x4cbe76` (15186 hits) and `0x4cbd80` (14259), together 29445 entries. Self-loop
+entries are 839971 of 8050868 total block entries, so the new coverage is
+**~0.36% of all block dispatches**, at roughly one sunk store each. Even at the
+measured ~10% of wasm time spent under `$gs32`/`$invalidate_code_write`, that is
+a fraction of a percent, comfortably inside the +/-19% per-function noise floor
+this box produces.
+
+`0x4cbe76` is worth quoting anyway, because it is the shape the design was
+written for -- a reverse byte copy whose cursor is spilled to a global every
+iteration, which `match()` declines precisely because that store is a side
+effect it cannot account for:
+
+```
+    mov cl, [esi]
+    inc esi
+    mov [edx], cl
+    dec edx
+    dec edi
+    mov [0x528fa8], edx     <-- the sinkable store
+    jnz short 0x4cbe76
+```
+
+The idea is sound. The population is not there.
+
+### 17.1 What this means for the roadmap
+
+Store sinking was attractive because its predicate is local and compositional
+-- one address, not a whole body. That property is unchanged and still worth
+keeping in mind. What the corrected numbers say is that **on single blocks the
+work has already been taken**: the hot spilled-cursor loops are the same loops
+the A-series idioms match, because a loop tight enough to be one block is
+usually tight enough to be an idiom.
+
+The 78% is real, it just lives in multi-block loops -- which is Design B's
+territory, and §16 already records that Design B is not buildable as specified
+(§4.1's `call_indirect body[k]` assumes handlers return; every handler ends in
+`return_call $next`, so realising it needs a second returning entry point for
+all 424 handlers).
+
+So the honest state of the loop-lowering line of work is:
+
+- **Design A (idioms)**: built, off by default, 1.2% static / 24.2% hit-weighted
+  on Heroes. §14.
+- **Design C (store sinking) on single blocks**: measured before building.
+  ~0.36% of block dispatches of new coverage. **Not worth building.** This
+  section.
+- **Design B (generic multi-block loops)**: where the remaining ~50 points of
+  hit-weighted coverage actually are, and blocked on a 424-handler ABI change.
+  §16.
+
+Nothing here says the ceiling is low; it says the cheap entrances are used up
+and the next real gain costs a handler-ABI change. Anyone picking this up should
+start by pricing the returning-handler ABI, not by writing another matcher.
