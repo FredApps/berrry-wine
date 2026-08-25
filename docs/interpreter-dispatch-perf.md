@@ -405,6 +405,55 @@ The load32 family is the weakest of the five — 12.8M over eight handlers, with
 only five registers carrying real traffic (ecx 5.07M, edx 4.17M, eax 3.39M) — and
 is the block to trim if handler count matters.
 
+## Result: shrinking `$g2w` so V8 will inline it (built, null)
+
+V8's wasm-into-wasm inlining is on by default, but `--wasm-inlining-factor=3`
+lets a caller grow to only ~3x its initial graph, with a floor of
+`--wasm-inlining-min-budget=50`. Threaded code is the pathological shape for
+that heuristic: hundreds of small hot handlers (graphsize 39-64) calling small
+hot leaves, and nobody can afford anybody. `node --trace-wasm-inlining` on
+Heroes II showed the denials landing on the hottest edges in the program —
+`$next` (#320, count 72222), `$get_reg`, `$set_reg`, and `$g2w` (#274, 335
+wire bytes, count 81247 from `$gl32` alone), the last of these under the
+500-byte `--wasm-inlining-max-size` cap and refused purely on growth budget.
+Perversely `$g2w` *was* inlined into function 4004 at count 638, where it does
+not matter.
+
+Raising `--wasm-inlining-min-budget=600` flips all of them to "decided to
+inline" and is worth **~8% user CPU** (median 8.82s -> 8.09s over 40000 fixed
+batches, three pairs, non-overlapping ranges). Browsers run stock V8, so that
+flag is a thermometer, not a fix; the fix has to be WAT-side.
+
+`$g2w` had the cleanest available split, so it went first. Its hot path is the
+direct guest window and nothing else, so:
+
+- `$g2w_bias` (a new mut global, `image_base - GUEST_BASE`, written wherever
+  `$image_base` is) replaces the two-term rebase. Both terms are fixed once the
+  image is loaded, so the old form recomputed a constant on every translation.
+- The signed pre-test is redundant: an unsigned `wa < 0x8000000` already has its
+  top bit clear, so `i32.lt_s wa 0` cannot be true. Three ops removed.
+- DIB range, the four cached sparse ranges and the `VIRTUAL_MAP_TABLE` scan move
+  to `$g2w_slow` behind a `return_call`.
+
+The compiler-side effect is exactly as intended: `$g2w` goes **335 -> 32 wire
+bytes**, and at stock budget it is inlined at **21 sites with 0 denials**
+(baseline 7 inlined / 8 denied), including `$gl32`, `$gs32` and `$gl8`.
+Module-wide inlining goes 270/184 to 291/160.
+
+**And it changes nothing measurable.** Fixed work, 100000 batches, interleaved
+A/B x5, user CPU: baseline 12.15/7.80/7.61/9.39/7.58 (median 7.80) against
+7.63/7.64/8.06/9.46/7.75 (median 7.75). `tools/bench-loops.js` agrees — see
+section 3.1 of [loop-microbench-harness.md](loop-microbench-harness.md), where
+the same pair of builds is indistinguishable and one of them spans 44% against
+itself. Guest execution is byte-identical between the two builds (94,488,790
+index hits, 62,484 misses, 661,566 API calls), so this is a null, not a
+mismeasured win.
+
+The conclusion for the remaining 8%: it is not `$g2w`. It belongs to the other
+callees the flag unblocked at the same time — most plausibly `$next`, which is
+on every single dispatch and has no hot/cold split to exploit, so collecting it
+means hand-inlining the dispatch tail in WAT.
+
 ## Levers that remain
 
 The 512-wide histogram moved the cut line, and the three candidates it exposed
@@ -549,6 +598,9 @@ Two corollaries from that work worth carrying here:
   where that alone manufactured four 6-11% "speedups".
 - Quote minima, not means, when the noise is one-sided (contention only ever
   makes a run slower).
+- `tools/bench-loops.js` cancels noise between two arms *in one process*. It
+  does not cancel anything between two processes, so it cannot A/B two builds —
+  its ±1% floor is not available for that question.
 - `tools/png-diff.js` against a baseline capture is the cheap correctness gate;
   a fusion that changes a pixel changed semantics.
 - `/usr/bin/time -p sh -c "node ... >/dev/null 2>&1" 2>&1` — redirections

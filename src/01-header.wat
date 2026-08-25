@@ -2115,6 +2115,9 @@
 
   ;; PE info
   (global $image_base   (mut i32) (i32.const 0))
+  ;; $image_base - $GUEST_BASE, precomputed. $g2w's hot path is one subtract
+  ;; off this; keep it written wherever $image_base is written.
+  (global $g2w_bias     (mut i32) (i32.const 0xFFFEE000)) ;; 0 - 0x12000
   (global $entry_point  (mut i32) (i32.const 0))
   (global $num_thunks   (mut i32) (i32.const 0))
 

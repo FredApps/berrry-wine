@@ -463,6 +463,7 @@
     ;; A 16-bit image has no base to relocate to, so guest linear addresses
     ;; start at zero and every segment lives in its own 64KB arena slot.
     (global.set $image_base (i32.const 0))
+    (global.set $g2w_bias (i32.sub (global.get $image_base) (global.get $GUEST_BASE)))
     (global.set $win16_thunk_count (i32.const 0))
     (call $zero_memory (global.get $WIN16_SEG_TABLE)
       (i32.mul (i32.add (global.get $WIN16_SEG_MAX) (i32.const 1)) (i32.const 16)))

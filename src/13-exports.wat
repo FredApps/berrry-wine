@@ -2246,6 +2246,7 @@
     (global.set $page_index_next (i32.const 0))
     (call $page_dir_reset)
     (global.set $image_base (local.get $img_base))
+    (global.set $g2w_bias (i32.sub (global.get $image_base) (global.get $GUEST_BASE)))
     ;; Resource lookup state is instance-local. PE headers are not mapped into
     ;; guest memory, so a worker cannot reconstruct this RVA by rereading the
     ;; optional header; copy the value the main loader retained instead.

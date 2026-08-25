@@ -23,6 +23,7 @@
     (local.set $num_sections (i32.load16_u (i32.add (local.get $pe_off) (i32.const 6))))
     (local.set $opt_hdr_size (i32.load16_u (i32.add (local.get $pe_off) (i32.const 20))))
     (global.set $image_base (i32.load (i32.add (local.get $pe_off) (i32.const 52))))
+    (global.set $g2w_bias (i32.sub (global.get $image_base) (global.get $GUEST_BASE)))
     (global.set $entry_point (i32.add (global.get $image_base) (i32.load (i32.add (local.get $pe_off) (i32.const 40)))))
     ;; Compute guest-space thunk zone bounds
     (global.set $thunk_guest_base (i32.add (i32.sub (global.get $THUNK_BASE) (global.get $GUEST_BASE)) (global.get $image_base)))

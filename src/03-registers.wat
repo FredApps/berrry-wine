@@ -73,13 +73,23 @@
   ;; Used as g2w fallback so reads from invalid guest addresses see zeros
   ;; (simulating Windows null-page behavior) and writes go to a harmless sink.
   (global $NULL_SENTINEL i32 (i32.const 0xF0))
+  ;; Hot path only. Nearly every translation lands in the direct guest window,
+  ;; so this function must stay small enough for V8 to inline into $gl32/$gs32
+  ;; and friends -- everything else lives in $g2w_slow behind a tail call.
+  ;;
+  ;; $g2w_bias folds (image_base - GUEST_BASE) into one load: both terms are
+  ;; fixed once the image is loaded, so the two-term rebase was recomputing a
+  ;; constant. The signed test the old code did first is redundant: an unsigned
+  ;; $wa < 0x8000000 already has its top bit clear, so it is also >= 0 signed.
   (func $g2w (param $ga i32) (result i32)
-    (local $wa i32) (local $i i32) (local $count i32) (local $off i32)
-    (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
-    (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
-    (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
-                (i32.ge_u (local.get $wa) (i32.const 0x8000000)))) ;; direct guest window
+    (local $wa i32)
+    (local.set $wa (i32.sub (local.get $ga) (global.get $g2w_bias)))
+    (if (i32.lt_u (local.get $wa) (i32.const 0x8000000)) ;; direct guest window
       (then (return (local.get $wa))))
+    (return_call $g2w_slow (local.get $ga)))
+  (func $g2w_slow (param $ga i32) (result i32)
+    (local $i i32) (local $count i32) (local $off i32)
+    (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
     ;; CreateDIBSection pointers live in a dedicated high guest range backed by
     ;; the final 64MB of linear memory. Test it only after the normal direct
     ;; window misses so ordinary loads retain their original hot path.
