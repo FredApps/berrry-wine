@@ -636,3 +636,141 @@ dispatches to 3.5M. It still ends at `failed to load MSE`, now from further in
 `12ed:2b33`. What is left is DMA/IRQ *timing*: our completion IRQ arrives on
 the loop's periodic cadence rather than at the rate the time constant implies,
 and it is not established that this is what MIDAS is measuring.
+
+**It was, twice over, and BLAND now runs** (fbb458e8). `--trace-io` — added in
+the same commit, and the flag to reach for on any "the driver does not find the
+card" — printed the whole 8237 conversation: MIDAS walks DMA channels 0, 1 and
+3, programming mask/mode/address/count/page for each, and never reads a single
+port back. So the probe is not measuring the DMA controller at all. The code at
+`12ee:2669` says what it is measuring:
+
+```
+12ee:26b2  mov al, 0x14 ; out dx, al   ; single-cycle transfer, one byte
+12ee:26c5  xor cx, cx                  ; 65536 rounds of
+12ee:26c7  cs: cmp byte [0x243c], 0x1  ;   "has my IRQ handler run yet"
+12ee:2707  loop 0x55a7
+12ee:2709  call 0x56b0                 ; no -> reset the DSP, try the next channel
+12ee:271c  cmp al, 0x4 ; jnz ...       ; ran out of channels -> [0x37e] = FFh
+```
+
+Two bugs, both about *when* the interrupt arrives:
+
+1. **An interrupt armed by a port write waited for the next slice.** Interrupts
+   are only injected between slices, where the guest `cs:ip` is a real
+   instruction boundary — and that spin is ~1.1M dispatches, which fits inside
+   one 2M-dispatch slice with room to spare. The IRQ landed one handback *after*
+   the timeout every time, visible in `--trace-io` as the `in 22e` that follows
+   the `out 226` reset rather than preceding it. `Machine.endSlice` now ends the
+   current slice when a port write arms an interrupt.
+2. **Block-done interrupts were paced at a fixed dispatch interval.** A driver
+   that mixes a whole buffer inside its handler then gets asked for half a
+   second of audio every ten milliseconds of guest time: BLAND found the card
+   and spent 300M dispatches inside MIDAS's mixer, its own code never reached
+   and the screen still in text mode. The card decides this rate, not us, so
+   `40h`/`41h` now set the sample rate, the transfer commands record the length,
+   and `sbInterval()` converts the block's duration into dispatches against the
+   same clock the timer uses.
+
+**BLAND is a textmode intro** (its own .NFO: "It uses the 80x25 and 80x50 text
+modes for all effects"), so mode 3h is the finish line, not a symptom. It now
+loads `sb1x.mse`, `warmchip.gdm` and `bland.dat`, turns the speaker on and runs
+its starfield and credits.
+
+The pacing change is a general one and was A/B'd over eight demos at fixed work:
+ATTIC, brainbug, COMPCODE, IHANMUU, DHADREN and BLIQ render byte-identical
+frames — ATTIC on 25 DSP commands instead of 412 — BLACK gets *further* (it
+reaches unchained 320x400 and its own sound init), and BTW differs only in the
+way any timing change moves an animation.
+
+### The `art` bucket hides three more work items
+
+`demo-status.js` calls any text screen with 40 or more non-blank cells `art`,
+and counts it as "showing something they meant to". For a BBS ANSI file
+(`a-note.exe`, `STARPORT.COM`, `NFO.EXE`, `ANTARES.EXE`, `README!.COM`) that is
+exactly right. For three of the thirty it is not — the text on screen is a menu
+or a warning, and the demo behind it never ran. Each was read with `--trace-int`
+in a few minutes, and none of them is a text demo:
+
+**CHROME.EXE — VESA.** It prints its "INTRO CONTAINS REALTIME RAYTRACING / CODE
+IS FULLY PENTIUM OPTIMIZED" warning, asks for `int 10h AX=4F01` (VBE mode info)
+for **mode 0x112, 640x480 24bpp**, gets no answer, and terminates through
+`int 21h AH=4Ch` — 0.4M dispatches, start to finish. The CPU level is not the
+issue: `--cpu=486/586/686` all end at the same instruction. We answer no VBE
+call at all, so `AX` comes back unchanged rather than `0x004F`, and the demo
+takes its own no-VESA path. **How many other rows want VBE has not been
+measured, and that number is what decides whether this is worth building.**
+
+**COCAHOLC.EXE — a protected-mode extender that gives up.** It answers its own
+sound menu (autoKey reads "0", and the choice makes no difference: 1, 2 and 3
+all end at the same instruction after the same 16.2M dispatches), probes DPMI
+(`int 2Fh AX=1687`, unhandled), finds no VCPI, takes the XMS route instead —
+allocates a 2561KB EMB, locks it, and gets a good linear address back — then
+runs a long way in protected mode (`base=129d0`, 32-bit) before unwinding to
+real mode, setting mode 13h and terminating with `int 20h`. It opens none of
+its own files (`COCAHOLC.INF`, `SB.DRV`, `SBP.DRV`) on the way. So the XMS half
+is fine and the extender is where it dies; where exactly is not yet established.
+
+**DINO.EXE and DINO386.EXE — an arrow-key menu.** Their setup screen is a
+three-column grid (device / port / IRQ) with the current row marked by a `>`,
+and it says so: "Use ARROW keys to move around, ENTER selects highlighted
+option." The menu reader in `Machine.menuKey` only recognises menus with a
+single-character selector per option, so it finds nothing to pick — "Silence"
+is right there in the list and matches `SILENT_LABEL`, but it has no letter or
+digit in front of it. Both rows otherwise run: they reach protected mode
+(`cr0=11`, 32-bit code at base 20a0) and sit on the menu for the whole
+300M-dispatch budget.
+
+**Teaching the reader to count rows is not on its own enough, and it is worth
+knowing why before starting.** DINO masks IRQ1 (`out 0x21, 0x02`) and polls port
+0x60 directly — visible in `--trace-io=20,21,a0,a1,60,64` as one `out 021 <- 2`
+followed by an unbroken run of `in 060`. That path is real and keys *do* reach
+it: `--auto-key --keys=down,down,down,enter` moves the marker. It moves **one
+row in 775M dispatches**, though, for four keys. `Machine.kbFill` is only
+consulted from the port-0x60 read on `(kbReads++ & 0xFFF) === 0`, and
+`keyboardIrq` cannot help because `hookedVector` reads the real-mode IVT and a
+protected-mode program's IRQ1 handler is an IDT gate — so every interrupt rung
+in the run loop, keyboard and timer and retrace and Sound Blaster alike, sees a
+program in protected mode as one that has hooked nothing. Whatever else is
+throttling the polled path, that is the general gap underneath it, and it is
+shared with COCAHOLC and AQUAPHOB.
+
+**That gap is now closed** (`04aefe57`). The VM already knew how to read an IDT
+— `$idtgate` walks it for `$fault`, checking `cr0`, the limit and the present
+bit — and only the VM can, because the table's base is a linear address that
+LIDT put somewhere the host cannot guess. Exporting it and consulting it from
+`hookedVector` took DINO from one handback per 1.1M dispatches to one per
+~177k, and it applies to every rung: keyboard, timer, retrace, Sound Blaster.
+
+DINO also now **answers its own menu**: `arrowMenuKeys` reads a marker column
+off the text page and counts rows to a silent option, on the strength of the
+screen having said the marker moves ("Use ARROW keys to move around"). It
+selects Silence and opens `dino.s3m`, where it used to sit on "Gravis
+Ultrasound" for the whole budget. It still does not reach its graphics — the
+grid's remaining fields are committed by a cursor whose column is shown in
+colour, which `screenText` cannot see, and blind Enter and Right walks were
+both tried and neither moved the demo past the setup. So DINO is a row that got
+further, not a row that finished.
+
+**How many rows want VESA: three.** Every program in the corpus was run for 4
+seconds with `--trace-int` and its `int 10h AX=4Fxx` calls counted, and only
+COLORS.EXE, SETUP.EXE and CHROME.EXE make one. VBE is a three-row lever, and
+two of those three rows have another blocker in front of it — so it stays below
+the extender and the video-BIOS ROM on the list.
+
+### A row can say `error` because of how the sweep chose its picture
+
+BLAND.EXE spent a version in the `error` bucket *after* its actual bug was
+fixed, and the reason was the frame chooser. It is a textmode intro: its
+starfield is a few dozen lit cells, and the sound-card menu it prints on the way
+in is 192. Both choosers — `keepBest` inside a run, `score` between runs —
+ranked text screens by cell count alone, so the fullest screen was the question,
+and the run that won the row was the no-sound-card retry whose caption read
+"failed to load MSE". A demo that works, photographed at its menu, described by
+a refusal.
+
+Both now band a screen the program is *asking* or *refusing* on below one it is
+not (`ecd35d57`), sharing `demo-status.js`'s own definition of both rather than
+keeping a second copy of the words. The band sits under `frameScore`'s, so "any
+graphics frame beats any text frame" is unchanged. **The lesson generalises: a
+row in `error` or `prompt` whose program is known to run is a claim about the
+chooser, not about the program.**
