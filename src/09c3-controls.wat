@@ -1187,6 +1187,9 @@
     ;; the rest of OLE.
     (if (i32.eq (local.get $class) (i32.const 30))
       (then (return (call $insertobj_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; Class 31 = Screen Savers applet (WAT-native, src/09ca-screensavers.wat)
+    (if (i32.eq (local.get $class) (i32.const 31))
+      (then (return (call $scrsave_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Other classes: return 0 (DefWindowProc)
     (i32.const 0)
   )

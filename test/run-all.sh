@@ -485,6 +485,8 @@ E2E=(
   test/test-funtris-web-launch.js
   test/test-win98-audio-web.js
   test/test-explorer98-web.js
+  test/test-screensaver-browser.js
+  test/test-screensaver-browser-web.js
   test/test-local-candidate-desktop-web.js
   test/test-win16-web.js
   test/test-worker-guest.js

@@ -687,7 +687,10 @@ class WineAssembly {
       const params = paramsWa ? self.readString(paramsWa) : '';
       console.log(`[ShellExecute] hwnd=0x${hwnd.toString(16)} op="${op}" file="${file}" params="${params}"`);
       const shell = window.wineShell;
-      if (shell && /\.exe$/i.test(file) && shell.launchExe(file)) {
+      // .SCR is a PE with a different extension, and the Screen Savers applet
+      // starts one exactly the way WRITE.EXE starts WordPad, so the same
+      // registry lookup has to accept it.
+      if (shell && /\.(exe|scr)$/i.test(file) && shell.launchExe(file)) {
         self.logToUI(`[ShellExecute] launching ${file}`);
         return 33;
       }
@@ -1259,6 +1262,36 @@ class WineAssembly {
   // than importing — see the win16StageModule host import.
   // `opts.launchPrefs` is the app entry's own screen-size → byte-pokes function
   // (lib/apps.js), applied right after load_pe.
+  // Start a WAT-native applet instead of an emulated program. There is no PE
+  // and no x86: the applet's window and controls are the WAT-native ones, and
+  // the run loop calls its `wat_app_pump` export once per step in place of
+  // the guest slice (an applet has no GetMessage loop to pump itself with).
+  //
+  // Returns false when this build has no such applet, so a stale app-registry
+  // entry fails the launch instead of leaving a live process with no window.
+  async loadWatApp(name) {
+    if (!this.instance) await this.init();
+    const open = this.instance.exports[`${name}_open`];
+    if (typeof open !== 'function' || typeof this.instance.exports.wat_app_pump !== 'function') {
+      console.error(`[watApp] this build has no applet named "${name}"`);
+      return false;
+    }
+    this._watApp = name;
+    const hwnd = open() >>> 0;
+    if (!hwnd) {
+      console.error(`[watApp] ${name} did not open a window`);
+      return false;
+    }
+    if (this.renderer) {
+      this.renderer.wasm = this.instance;
+      this.renderer.wasmMemory = this.memory;
+      this.renderer.mainWasm = this.instance;
+      this.renderer.mainWasmMemory = this.memory;
+      this.renderer.repaint();
+    }
+    return true;
+  }
+
   async loadExe(url, opts = {}) {
     if (!this.instance) await this.init();
     this._win16ExtraModules = opts.win16Modules || [];
@@ -2263,6 +2296,31 @@ class WineAssembly {
     const self = this;
     const step = async () => {
       if (!self.running) return;
+      // An applet has no guest to run: pump its own message queue, repaint,
+      // and stop as soon as it has closed its window. Everything below this
+      // point -- the thread scheduler, the yield reasons, the eip==0 exit
+      // test -- describes an x86 program and would read a stopped one.
+      if (self._watApp) {
+        let alive = 1;
+        try {
+          alive = self.instance.exports.wat_app_pump() | 0;
+        } catch (e) {
+          console.error('[watApp] pump failed:', e);
+          alive = 0;
+        }
+        if (self.renderer) self.renderer.repaint();
+        if (!alive) {
+          self.logToUI('--- Applet closed ---');
+          self.stop();
+          if (self.renderer && self._multiApp) {
+            self._removeAppWindows();
+            self.renderer.repaint();
+          }
+          return;
+        }
+        self._scheduleStep(step);
+        return;
+      }
       // Debug-mode HUD seam (lib/perf-hud.js). Null unless the HUD is on, so
       // a normal run pays one property read per step. Phases are timed here
       // rather than sampled from outside because the whole point is knowing
