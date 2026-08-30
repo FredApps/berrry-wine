@@ -333,7 +333,11 @@ async function runDos(o) {
           + ` dx=${before[3].toString(16)}`
           + `  from ${retCs.toString(16)}:${retIp.toString(16)}`
           + `${ax === before[0] ? '' : ` -> ax=${ax.toString(16)}`}`
-          + `${ok ? '' : '   UNHANDLED'}`);
+          + `${ok ? '' : '   UNHANDLED'}`
+          // The dispatch count is what makes a traced call addressable: it is
+          // the number --dump-at= wants, and without it the only way to point a
+          // mid-run dump at a call this trace just showed you is a bisection.
+          + `  @${session.dispatched}`);
       },
       onEntry: (!report && !traceEntry && !traceV86) ? undefined : (cs, ip, handbacks) => {
         // Every crossing of the virtual-8086 boundary, in both directions, with
