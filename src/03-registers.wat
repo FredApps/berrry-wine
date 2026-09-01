@@ -73,13 +73,29 @@
   ;; Used as g2w fallback so reads from invalid guest addresses see zeros
   ;; (simulating Windows null-page behavior) and writes go to a harmless sink.
   (global $NULL_SENTINEL i32 (i32.const 0xF0))
+  ;; Two functions, not one, and the split is what makes the fast path fast.
+  ;; V8's wasm inliner prices the *whole* callee, so while the direct-window
+  ;; test and the sparse-range scan lived in one function none of the ~2700
+  ;; static call sites got the three instructions they actually need inlined --
+  ;; every guest memory access paid a call. Keeping the wrapper down to the
+  ;; subtract/compare and pushing every miss into $g2w_slow puts it under the
+  ;; default inlining budget, which is the portable form of what
+  ;; --wasm-inlining-min-budget demonstrated on the node command line.
+  ;;
+  ;; The direct-window test is the same predicate as before: a $wa with its
+  ;; high bit set is already >= 0x8000000 unsigned, so the old
+  ;; `!(wa <s 0 || wa >=u 0x8000000)` is exactly `wa <u 0x8000000` -- the form
+  ;; $g2w_affine_span below has always used.
   (func $g2w (param $ga i32) (result i32)
-    (local $wa i32) (local $i i32) (local $count i32) (local $off i32)
-    (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
+    (local $wa i32)
     (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
-    (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
-                (i32.ge_u (local.get $wa) (i32.const 0x8000000)))) ;; direct guest window
-      (then (return (local.get $wa))))
+    (if (result i32) (i32.lt_u (local.get $wa) (i32.const 0x8000000)) ;; direct guest window
+      (then (local.get $wa))
+      (else (call $g2w_slow (local.get $ga)))))
+
+  (func $g2w_slow (param $ga i32) (result i32)
+    (local $i i32) (local $count i32) (local $off i32)
+    (local $rec i32) (local $base i32) (local $size i32) (local $backing i32)
     ;; CreateDIBSection pointers live in a dedicated high guest range backed by
     ;; the final 64MB of linear memory. Test it only after the normal direct
     ;; window misses so ordinary loads retain their original hot path.
@@ -273,11 +289,16 @@
   ;; need not have adjacent WASM backing (commits can be interleaved). Keep the
   ;; normal aligned/page-local path to one translation; only gather/scatter the
   ;; few x86 word/dword accesses that actually cross a non-contiguous boundary.
+  ;; Same split as $g2w: the page-local case is the whole wrapper, and the
+  ;; page-crossing gather lives in a callee that only a boundary access reaches.
   (func $gl32 (param $ga i32) (result i32)
-    (local $wa i32) (local $end_wa i32)
+    (local $wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
-      (then (return (i32.load (local.get $wa)))))
+    (if (result i32) (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
+      (then (i32.load (local.get $wa)))
+      (else (call $gl32_slow (local.get $ga) (local.get $wa)))))
+  (func $gl32_slow (param $ga i32) (param $wa i32) (result i32)
+    (local $end_wa i32)
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 3))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 3)))
       (then (return (i32.load (local.get $wa)))))
@@ -372,11 +393,14 @@
     ;; here as a property of the range walk rather than a second function.
     (call $invalidate_code_range (local.get $ga) (local.get $len)))
   (func $gs32 (param $ga i32) (param $v i32)
-    (local $wa i32) (local $end_wa i32)
+    (local $wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
     (call $invalidate_code_write (local.get $ga) (i32.const 4))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
-      (then (i32.store (local.get $wa) (local.get $v)) (return)))
+      (then (i32.store (local.get $wa) (local.get $v)))
+      (else (call $gs32_slow (local.get $ga) (local.get $v) (local.get $wa)))))
+  (func $gs32_slow (param $ga i32) (param $v i32) (param $wa i32)
+    (local $end_wa i32)
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 3))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 3)))
       (then (i32.store (local.get $wa) (local.get $v)) (return)))
