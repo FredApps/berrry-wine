@@ -282,6 +282,39 @@
   ;; own — and that question decides whether GetSystemMetrics reports the mode
   ;; or the host window ($system_metric in 09a-handlers.wat).
   (global $dx_display_mode_set (mut i32) (i32.const 0))
+  ;; Accessor forms the callers in 09a-handlers.wat / 13-exports.wat use. The
+  ;; committed tree calls them without defining them, so a checkout of HEAD
+  ;; alone does not compile; these restore the trivial accessors over the
+  ;; globals that hold the same state. (The coop/exclusive/palette globals are
+  ;; declared further down this file and are visible module-wide.)
+  (func $dx_display_mode_get (result i32)
+    (global.get $dx_display_mode_set))
+  (func $dx_display_mode_set (param $v i32)
+    (global.set $dx_display_mode_set (local.get $v)))
+  (func $dx_display_w_get (result i32)
+    (global.get $dx_display_w))
+  (func $dx_display_w_set (param $v i32)
+    (global.set $dx_display_w (local.get $v)))
+  (func $dx_display_h_get (result i32)
+    (global.get $dx_display_h))
+  (func $dx_display_h_set (param $v i32)
+    (global.set $dx_display_h (local.get $v)))
+  (func $dx_display_bpp_get (result i32)
+    (global.get $dx_display_bpp))
+  (func $dx_display_bpp_set (param $v i32)
+    (global.set $dx_display_bpp (local.get $v)))
+  (func $dx_coop_hwnd_get (result i32)
+    (global.get $dx_coop_hwnd))
+  (func $dx_coop_hwnd_set (param $v i32)
+    (global.set $dx_coop_hwnd (local.get $v)))
+  (func $dx_exclusive_get (result i32)
+    (global.get $dx_exclusive_fullscreen))
+  (func $dx_exclusive_set (param $v i32)
+    (global.set $dx_exclusive_fullscreen (local.get $v)))
+  (func $dx_primary_pal_get (result i32)
+    (global.get $dx_primary_pal_wa))
+  (func $dx_primary_pal_set (param $v i32)
+    (global.set $dx_primary_pal_wa (local.get $v)))
 
   ;; Running tally of bytes allocated to DirectDraw surfaces. MCM measures
   ;; GetAvailableVidMem delta across CreateSurface/Release to detect texture
