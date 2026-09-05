@@ -521,6 +521,7 @@ UNIT=(
   test/test-to-unicode.js
   test/test-token-security.js
   test/test-toyvm-browser-bundle.js
+  test/test-toyvm-dac-default.js
   test/test-toyvm-live.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
