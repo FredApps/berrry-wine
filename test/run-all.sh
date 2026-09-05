@@ -571,6 +571,7 @@ UNIT=(
   test/test-toyvm-audio.js
   test/test-toyvm-volatile.js
   test/test-toyvm-operand-patch.js
+  test/test-toyvm-sb-single-cycle.js
   test/test-toyvm-dac-default.js
   test/test-toyvm-dead-entry.js
   test/test-user-default-ui-language.js
