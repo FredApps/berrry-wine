@@ -567,6 +567,7 @@ UNIT=(
   test/test-to-unicode.js
   test/test-token-security.js
   test/test-toyvm-browser-bundle.js
+  test/test-toyvm-dead-entry.js
   test/test-toyvm-live.js
   test/test-toyvm-audio.js
   test/test-toyvm-volatile.js
