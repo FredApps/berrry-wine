@@ -575,6 +575,7 @@ UNIT=(
   test/test-toyvm-dead-entry.js
   test/test-toyvm-retrace.js
   test/test-toyvm-dos-terminate.js
+  test/test-toyvm-sb-highspeed-autoinit.js
   test/test-toyvm-sb-single-cycle.js
   test/test-toyvm-ioctl-status.js
   test/test-user-default-ui-language.js
