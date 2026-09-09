@@ -588,6 +588,7 @@ UNIT=(
   test/test-token-security.js
   test/test-toyvm-browser-bundle.js
   test/test-toyvm-live.js
+  test/test-toyvm-region-live.js
   test/test-toyvm-audio.js
   test/test-toyvm-volatile.js
   test/test-toyvm-operand-patch.js
