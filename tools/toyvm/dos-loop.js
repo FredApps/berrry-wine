@@ -1060,6 +1060,9 @@ class DosSession {
     this.stuck = 0;
     this.stuckAt = null;
     this.lastIrq = 0;
+    // Dispatch count the audio was last rendered up to. See the render call in
+    // step(): rendering happens at quantum crossings, not at every handback.
+    this.audioAt = 0;
     this.lastKbIrq = 0;
     this.lastSbIrq = 0;
     // The VGA clock: frame rate last handed to the VM, its period in
@@ -1394,7 +1397,37 @@ class DosSession {
     // sample is where the slice should end, and the next slice is cut again.
     const sbLeft = machine.sbSecondsLeft ? machine.sbSecondsLeft() : 0;
     const sbInterval = sbLeft > 0 ? Math.max(200, Math.ceil(sbLeft / this.guestSeconds(1))) : Infinity;
-    const budget = Math.min(this.slice, Math.max(1, Math.floor(shortest / 4)), sbInterval);
+    // THE QUANTUM IS ANCHORED TO THE ABSOLUTE DISPATCH COUNT, NOT TO THE LAST
+    // HANDBACK. Everything a slice boundary decides -- when an armed IRQ is
+    // delivered, which guest instant the Sound Blaster's DMA is read at, where
+    // the audio for the slice is rendered from -- is decided at a handback, so
+    // a run that takes ONE extra handback has every later boundary shifted by
+    // that slice's unspent remainder, for the rest of the program. An extra
+    // handback is not a hypothetical: it is exactly what the region JIT
+    // removes (a self-loop whose back edge the compiler could not resolve
+    // handed back once per iteration; the region does not) and exactly what
+    // installing one costs (the head has to be compiled again). Measured on
+    // DREAM.EXE: the interpreter took one early exit at 100:7f3 every ~190,000
+    // dispatches and the region absorbed it, so from the install on the two
+    // arms' boundaries never coincided again, the timer IRQ landed on a
+    // different instruction and the frame diverged by 180 pixels with neither
+    // arm computing anything wrong.
+    //
+    // Cutting the slice at the next multiple of the quantum instead makes the
+    // boundaries a function of the dispatch clock alone: an extra handback
+    // costs one short slice and the grid RE-SYNCS at the next lattice point.
+    // The quantum itself is derived from the guest's own timer programming, so
+    // it is the same number in both arms.
+    const quantum = Math.min(this.slice, Math.max(1, Math.floor(shortest / 4)));
+    const budget = Math.min(quantum - (this.dispatched % quantum), sbInterval);
+    // Did the Sound Blaster's block end cut this slice rather than the lattice?
+    // That deadline is a function of the transfer and the guest clock, so it is
+    // the same absolute dispatch count in both arms of any A/B -- which makes
+    // it as safe a place to render audio as a lattice point, and it has to be
+    // one: `audioAdvance` is what COMPLETES a block (Machine.sbDue), and
+    // deferring it to the next quantum would hold the block-done interrupt back
+    // by up to a quantum.
+    const sbCut = sbInterval < quantum - (this.dispatched % quantum);
     // So a port write inside the slice can say when it happened (audioNow).
     machine.sliceStart = this.dispatched;
     machine.sliceBudget = budget;
@@ -1516,8 +1549,23 @@ class DosSession {
     // The sound card and the speaker move with the same clock: the samples a
     // running transfer consumed over this slice, rendered if a host is
     // listening. This is also what completes a block (see Machine.sbDue).
-    if (machine.audioAdvance) {
-      machine.audioAdvance(this.guestSeconds(budget - left), machine.sliceStart, budget - left);
+    // ...AND ON THE LATTICE, FOR THE SAME REASON THE SLICE IS. Rendering is
+    // where the Sound Blaster's DMA is FETCHED, and it reads whatever the
+    // guest's double buffer holds at that instant -- so a run that hands back
+    // an extra time renders one chunk in two halves and reads the buffer at a
+    // guest instant the other run never sampled. The sample GRID is already
+    // chunk-invariant (audio.js `advance`), but the fetch cannot be: it can
+    // only read memory as it is now. So render only at a quantum crossing,
+    // which is a property of the dispatch count and nothing else, and carry
+    // the rest. DREAM.EXE is the case: with the boundaries aligned its frame
+    // and pixel count matched exactly and only the wav still differed, because
+    // the interpreter's extra early exit at 100:842 split one render in two.
+    if (machine.audioAdvance
+        && (Math.floor(this.dispatched / quantum) > Math.floor(this.audioAt / quantum)
+          || (sbCut && left < 0))) {
+      const spent = this.dispatched - this.audioAt;
+      this.audioAt = this.dispatched;
+      machine.audioAdvance(this.guestSeconds(spent), machine.sliceStart, spent);
     }
     machine.mouse.dx += this.mouse[0];
     machine.mouse.dy += this.mouse[1];

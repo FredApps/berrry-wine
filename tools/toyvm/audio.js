@@ -193,7 +193,28 @@ class Sound {
     this.sink = null;
     this.spk = { gate: 0, data: 0, latch: 0x10000, phase: 0 };
     this.events = [];             // {at, gate, data, latch}, at = dispatch count
-    this.outAcc = 0;              // fractional output samples carried between slices
+    // THE SAMPLE GRID IS A FUNCTION OF THE DISPATCH CLOCK, NOT OF THE SLICE.
+    //
+    // A slice is an arbitrary cut: the run loop picks its quantum from the
+    // fastest timer in the machine, a handler can hand back early, and the
+    // region JIT changes the cut wherever it absorbs or adds one (measured on
+    // CYCLE.EXE: 15 more handbacks over 651,113, with the SAME total dispatch
+    // count, the same frame and the same interrupt tally). The guest work is
+    // identical either way, so the rendered sound has to be identical too --
+    // and it was not, because `n` came from an accumulator fed one slice at a
+    // time and every sample's position came from `sliceStart + (spent/n)*i`,
+    // both of which move when the cut moves.
+    //
+    // So both come from the CUMULATIVE dispatch count instead. `dispAcc` is
+    // that count as an exact integer, `samplesOut` how many samples it has
+    // already been worth, and sample j is due at dispatch `(j + 1) / (rate *
+    // spd)`. Splitting one stretch of guest work into two calls now yields
+    // exactly the same samples at exactly the same positions, because both are
+    // computed from the total and not from the pieces.
+    this.dispAcc = 0;             // guest dispatches this stream has been advanced over
+    this.samplesOut = 0;          // ...and how many output frames that has been worth
+    this.spd = 0;                 // guest seconds per dispatch, fixed at the first call
+
     this.sbPos = 0;               // fractional source sample within the output stream
     this.sbAcc = 0;               // unrendered consumption, in source samples
     this.sbSide = 0;              // which channel of a stereo pair comes next
@@ -263,6 +284,14 @@ class Sound {
   // `dt` guest seconds passed over `spent` dispatches starting at `sliceStart`.
   advance(dt, sliceStart, spent) {
     if (!(dt > 0)) { this.events.length = 0; return; }
+    // Guest seconds per dispatch. `guestSeconds()` is linear in its argument,
+    // so this is a machine constant -- but `dt / spent` is only its value to
+    // the last ulp, and a grid computed from a divisor that wobbles is not the
+    // invariant this is for. So it is taken once, from the first slice, which
+    // is long before any region can be installed and is therefore the same
+    // number in both arms of an A/B.
+    if (!this.spd && spent > 0) this.spd = dt / spent;
+    this.dispAcc += spent;
     const sb = this.m.sb, gus = this.m.gus;
     if (!this.rate || !this.sink) {
       if (gus) gus.advance(dt, false);
@@ -276,10 +305,17 @@ class Sound {
       this.applyOpl(Infinity);
       return;
     }
-    this.outAcc += dt * this.rate;
-    const n = Math.floor(this.outAcc);
-    this.outAcc -= n;
-    if (n <= 0) { this.applyEvents(Infinity); return; }
+    // How many output frames the guest clock is worth BY NOW, minus the ones
+    // already emitted: a difference of two totals, so it cannot depend on how
+    // the run loop cut the work up.
+    const want = Math.floor(this.dispAcc * this.spd * this.rate);
+    const n = Math.max(0, want - this.samplesOut);
+    const from = this.samplesOut;
+    this.samplesOut += n;
+    // No frame is due yet, so nothing has happened that an event could land
+    // on. The queues are KEPT: applying them here would time every write in a
+    // sample-less slice by the slice boundary instead of by its own stamp.
+    if (n <= 0) return;
     if (this.buf.length < n * 2) this.buf = new Float32Array(n * 2);
     const buf = this.buf;
     const events = this.events;
@@ -290,12 +326,17 @@ class Sound {
     if (oplEvents.length > 1) oplEvents.sort((a, b) => a.at - b.at);
     let oe = 0;
     const spk = this.spk;
-    if (gus) gus.advance(dt, true);
+    // The Ultrasound is advanced over the frames actually being rendered, not
+    // over the slice: same reason as the grid above, same invariance.
+    if (gus) gus.advance(n / this.rate, true);
     const step = sb.rate / this.rate;
-    const perSample = spent / n;
+    // Where each frame sits on the dispatch clock. Absolute, from the global
+    // frame index, so an event stamped by Machine.audioNow lands on the same
+    // frame however the slices around it were cut.
+    const perSample = 1 / (this.rate * this.spd);
     const HP = 1 - 1 / (this.rate * HP_SECONDS);
     for (let i = 0; i < n; i++) {
-      const at = sliceStart + perSample * i;
+      const at = (from + i + 1) * perSample;
       while (ev < events.length && events[ev].at <= at) {
         const e = events[ev++];
         spk.gate = e.gate; spk.data = e.data; spk.latch = e.latch;
@@ -335,7 +376,18 @@ class Sound {
       this.hpx[0] = l; this.hpy[0] = yl; this.hpx[1] = r; this.hpy[1] = yr;
       buf[i * 2] = yl; buf[i * 2 + 1] = yr;
     }
-    this.applyEvents(Infinity);
+    // WHAT IS LEFT OVER IS NOT LATE, IT IS EARLY. A port write stamped past
+    // the last frame this call rendered belongs to a frame the NEXT call will
+    // render, so it is carried rather than folded in at `Infinity`. Folding it
+    // made the event's timing a function of where the slice happened to be cut
+    // -- and a region moves those cuts (measured on DRAGON.EXE: six more
+    // handbacks over 7244, with the same frame, the same pixels and the same
+    // interrupt count) -- so two runs doing identical guest work rendered the
+    // same notes at different instants. Both queues stay sorted by `at`
+    // because everything appended to them is stamped with a monotone
+    // dispatch count.
+    this.events = events.slice(ev);
+    this.oplEvents = oplEvents.slice(oe);
     this.rendered += n;
     this.sink(buf.subarray(0, n * 2), n);
   }

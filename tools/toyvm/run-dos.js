@@ -190,6 +190,8 @@ async function runDos(o) {
     // itself. Off unless a benchmark asks (bench-dos.js --cpu-time,
     // region-jit.js), so a plain run does not pay for a number nobody reads.
     cpuMeter = false,
+    // `--slice-log=FILE`: where to write the per-handback dispatch counts.
+    sliceLogFile = null,
     // Build the instrumented dispatch and print the census at exit. `hist` is
     // how many handlers to list, `histPairs` how many pairs; 0 for either
     // suppresses that table. Timings from such a run are meaningless -- three
@@ -300,6 +302,8 @@ async function runDos(o) {
     // the filesystem it gets.
     fileRoot: path.dirname(path.resolve(exe)),
   });
+  // See the afterSlice hook: the dispatch count at every handback, when asked.
+  const sliceLog = sliceLogFile ? [] : null;
   // What the card and the speaker played, as rendered chunks, when asked.
   const audioChunks = [];
   if (audioRate > 0) {
@@ -559,6 +563,13 @@ async function runDos(o) {
         // sample map: its window is a stretch of THIS run rather than a
         // fraction of a finished one.
         if (jit) jit.sample({ left, dispatched });
+        // `--slice-log=FILE`: the cumulative dispatch count at every handback,
+        // one per line. A frame hash says two runs ended somewhere different;
+        // this says WHERE THE CUT MOVED, which is the only way to tell "the
+        // region computed something else" from "the region ended its slice one
+        // instruction along and the audio was rendered against a different
+        // grid". `diff` the two files and read the first line that differs.
+        if (sliceLog) sliceLog.push(`${dispatched} ${left} ${cs.toString(16)}:${ip.toString(16)}`);
       },
     },
   });
@@ -664,6 +675,7 @@ async function runDos(o) {
 
   if (bestPng) keepBest();
   const surface = screenSurface(machine);
+  if (sliceLog) fs.writeFileSync(sliceLogFile, sliceLog.join('\n') + '\n');
   return {
     bestScore, bestContent, bestSurface, bestText, saidText,
     variant, exe, vm, machine, jtab,
@@ -935,6 +947,10 @@ async function main() {
     // headless twin of the page's sound: the same samples through the same
     // DMA model, so "is there anything to hear" can be answered by a file.
     audioRate: arg('audio') ? count(arg('audio-rate'), 22050) : 0,
+    // `--slice-log=FILE`: the cumulative dispatch count at every handback, one
+    // per line. `diff` two of them and the first differing line is the exact
+    // handback where the cut moved.
+    sliceLogFile: arg('slice-log'),
     // `--pit-clock` runs every guest clock off dispatchesPerTick and the PIT's
     // reload, which is what the page does; the sweep's defaults keep the timer
     // interrupt at irqEvery.
