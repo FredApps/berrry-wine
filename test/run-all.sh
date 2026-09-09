@@ -602,6 +602,7 @@ UNIT=(
   test/test-toyvm-vbe.js
   test/test-toyvm-load-seg.js
   test/test-toyvm-region-live.js
+  test/test-toyvm-sweep-budget.js
   test/test-user-default-ui-language.js
   test/test-virtual-query-user-boundary.js
   test/test-wave-in-dev-caps.js
