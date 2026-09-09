@@ -69,6 +69,15 @@ function baseOpts(exe, budget) {
     // installed over such a loop replaces that fold -- so the handback cadence
     // moves, and with it every clock derived from it.
     spinLoops: !flag('no-spin'),
+    // THE SHIPPED CLOCK BY DEFAULT, and `--lattice-clock` (BOTH arms, never
+    // one) for the experiment. Anchoring the slice grid to the absolute
+    // dispatch count is what would let a region absorb or add a handback
+    // without moving every later boundary -- but it is not a free rewrite: it
+    // changes the guest's own path on at least one program in this corpus
+    // (BLIQ.EXE, see docs/toyvm-region-live.md), so a gate run on it would be
+    // grading the JIT against a clock nobody runs. The headline gate is
+    // therefore taken on the clock that ships.
+    latticeClock: flag('lattice-clock'),
     log: () => {},
   };
 }

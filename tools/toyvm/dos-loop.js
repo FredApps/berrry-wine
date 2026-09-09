@@ -1022,12 +1022,19 @@ class DosSession {
       smcCensus = false,
       // Linear [lo, hi] byte ranges to report every store to. See CodeCache.
       watch = [],
+      // Anchor the slice grid and the audio render to the ABSOLUTE dispatch
+      // count instead of to the last handback -- see step(). OFF by default,
+      // because it changes what a plain interpreter run plays; the region-JIT
+      // harnesses set it on BOTH arms, which is the only way the comparison
+      // holds a clock still.
+      latticeClock = false,
       hooks = {},
     } = opts;
 
     this.vm = vm;
     this.machine = machine;
     this.slice = slice;
+    this.latticeClock = latticeClock;
     this.mouse = mouse;
     this.irqEvery = irqEvery;
     this.dispatchesPerTick = dispatchesPerTick;
@@ -1418,16 +1425,22 @@ class DosSession {
     // costs one short slice and the grid RE-SYNCS at the next lattice point.
     // The quantum itself is derived from the guest's own timer programming, so
     // it is the same number in both arms.
+    //
+    // AND IT IS OPT-IN, because it is not a free rewrite of the clock. Where
+    // the interpreter hands back early is not rare, so anchoring the grid moves
+    // the boundaries of a plain interpreter run too: measured over six demos at
+    // 80M dispatches with the JIT off, all six rendered a different wav than
+    // main did. That is a change to what the emulator plays, and it does not
+    // belong in the shipped default for the sake of a flag that is off. So the
+    // run loop keeps main's per-slice quantum unless `latticeClock` asks
+    // otherwise, and the JIT harnesses turn it on for BOTH arms -- which is the
+    // only configuration in which the comparison means anything, since an arm
+    // that anchors its grid and an arm that does not have different clocks
+    // before the JIT does anything at all.
     const quantum = Math.min(this.slice, Math.max(1, Math.floor(shortest / 4)));
-    const budget = Math.min(quantum - (this.dispatched % quantum), sbInterval);
-    // Did the Sound Blaster's block end cut this slice rather than the lattice?
-    // That deadline is a function of the transfer and the guest clock, so it is
-    // the same absolute dispatch count in both arms of any A/B -- which makes
-    // it as safe a place to render audio as a lattice point, and it has to be
-    // one: `audioAdvance` is what COMPLETES a block (Machine.sbDue), and
-    // deferring it to the next quantum would hold the block-done interrupt back
-    // by up to a quantum.
-    const sbCut = sbInterval < quantum - (this.dispatched % quantum);
+    const budget = this.latticeClock
+      ? Math.min(quantum - (this.dispatched % quantum), sbInterval)
+      : Math.min(quantum, sbInterval);
     // So a port write inside the slice can say when it happened (audioNow).
     machine.sliceStart = this.dispatched;
     machine.sliceBudget = budget;
@@ -1549,21 +1562,38 @@ class DosSession {
     // The sound card and the speaker move with the same clock: the samples a
     // running transfer consumed over this slice, rendered if a host is
     // listening. This is also what completes a block (see Machine.sbDue).
-    // ...AND ON THE LATTICE, FOR THE SAME REASON THE SLICE IS. Rendering is
-    // where the Sound Blaster's DMA is FETCHED, and it reads whatever the
-    // guest's double buffer holds at that instant -- so a run that hands back
-    // an extra time renders one chunk in two halves and reads the buffer at a
-    // guest instant the other run never sampled. The sample GRID is already
-    // chunk-invariant (audio.js `advance`), but the fetch cannot be: it can
-    // only read memory as it is now. So render only at a quantum crossing,
-    // which is a property of the dispatch count and nothing else, and carry
-    // the rest. DREAM.EXE is the case: with the boundaries aligned its frame
-    // and pixel count matched exactly and only the wav still differed, because
-    // the interpreter's extra early exit at 100:842 split one render in two.
-    if (machine.audioAdvance
-        && (Math.floor(this.dispatched / quantum) > Math.floor(this.audioAt / quantum)
-          || (sbCut && left < 0))) {
-      const spent = this.dispatched - this.audioAt;
+    // ...AND UNDER `latticeClock`, ON THE LATTICE, FOR THE SAME REASON THE
+    // SLICE IS. Rendering is where the Sound Blaster's DMA is FETCHED, and it
+    // reads whatever the guest's double buffer holds at that instant -- so a
+    // run that hands back an extra time renders one chunk in two halves and
+    // reads the buffer at a guest instant the other run never sampled. Pinning
+    // the render to a quantum crossing makes both the chunk boundaries and the
+    // fetch instants a function of the dispatch count alone, which is also what
+    // makes the sample grid come out identical without any change to audio.js:
+    // `advance` is fed the same `spent` at the same absolute counts in both
+    // arms. DREAM.EXE is the case -- with the boundaries aligned its frame and
+    // pixel count matched exactly and only the wav still differed, because the
+    // interpreter's extra early exit at 100:842 split one render in two.
+    //
+    // THE SECOND TERM IS NOT OPTIONAL AND IS NOT `left`. `audioAdvance` is what
+    // COMPLETES a transfer block (Machine.sbDue), so a render deferred past the
+    // block's end holds its interrupt back with it. The first version of this
+    // asked whether the SB deadline had CUT the slice (`sbCut && left < 0`),
+    // which is a question about where the run loop happened to hand back --
+    // exactly the dependency being removed -- and it silently dropped the
+    // render whenever the slice ended early for any other reason. BLIQ.EXE then
+    // completed half its blocks: 2906 interrupts fell to 1481, 180,353
+    // handbacks to 70,856, and its picture went from 5808 non-black pixels to a
+    // black screen. So ask the deadline itself instead: `sbInterval` is how
+    // many dispatches the running block has left, measured from the last
+    // render, so `dispatched - audioAt >= sbInterval` means the block's last
+    // sample is behind us. That is a function of the transfer and the guest
+    // clock, and of nothing about the cut.
+    const sbDueNow = sbInterval !== Infinity && this.dispatched - this.audioAt >= sbInterval;
+    if (machine.audioAdvance && (!this.latticeClock
+        || Math.floor(this.dispatched / quantum) > Math.floor(this.audioAt / quantum)
+        || sbDueNow)) {
+      const spent = this.latticeClock ? this.dispatched - this.audioAt : budget - left;
       this.audioAt = this.dispatched;
       machine.audioAdvance(this.guestSeconds(spent), machine.sliceStart, spent);
     }

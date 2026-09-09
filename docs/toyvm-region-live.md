@@ -15,10 +15,12 @@
 
   STILL SHIPS OFF. `--region-jit` (run-dos.js) and `?jit=1` / the page toggle
   all still default to OFF -- but for a different reason than before. The
-  20-program gate is now CLEAN at both budgets (20/20 byte-identical on frame,
-  pixels, interrupts and rendered audio at 12M and at 80M, where it was 12/20).
-  The 191-program corpus sweep is not: CRITICAL.EXE draws a different picture
-  with the JIT on. See "The correctness gate", "What was wrong" and "The one
+  20-program gate is 20/20 byte-identical on frame, pixels, interrupts and
+  rendered audio at 12M and 19/20 at 80M (where it was 12/20): DREAM still
+  drifts one IRQ boundary by 80M on the shipped clock, and the clock that fixes
+  it (`--lattice-clock`) re-times six flag-off witnesses, so it is opt-in.
+  The 191-program corpus sweep is not clean either: CRITICAL.EXE draws a
+  different picture with the JIT on. See "The correctness gate", "What was wrong" and "The one
   row that still differs".
 ```
 
@@ -137,6 +139,17 @@ bound is the finding: measured across four rep counts (200/100, 200/200,
 grow with the iteration count**. It is the slice a swap lands in overshooting by
 at most one straight line, not the body mis-billing.
 
+That one-dispatch overshoot is what the **lattice clock** (`--lattice-clock`)
+removes: it re-syncs the IRQ grid at the next lattice point instead of letting a
+long slice carry its overshoot forward, so the arms agree on every slice
+boundary and DREAM at 80M goes from DIFFERS to SAME. It is **opt-in on both
+hosts** (`latticeClock: false` in `DosSession` and in `live.js`), because it is
+a change to the shipped clock, JIT or not: with the region JIT off it moved the
+wav of all six flag-off witnesses (DADEMO3, RUNDEMO, BLIQ, ACME-BIG, CONTAGIO,
+CATWALK) against main and blanked BLIQ to 0 pixels. A clock change that
+deterministically re-times six programs is not a correctness fix for a flag
+that ships off; it is a separate experiment and it stays behind its flag.
+
 ## The correctness gate
 
 `region-live-ab.js`, both arms in one process, order rotated, at
@@ -148,21 +161,22 @@ rendered audio**.
 
 10 programs installed a region; the other 10 declined and are identical by
 construction. Mean dispatch/cpu-second change over the installed rows
-**+10.3%** (box at load 12-40 — see "the numbers are noise" below). Re-measured
-2026-09-09 with `--region-jit-gate=0`; the installed rows:
+**+1.2%** (box at load 3-6 — see "the numbers are noise" below). Measured
+2026-09-09 on the shipped clock (lattice off) with `--region-jit-gate=0`; the
+installed rows:
 
 | program | same | share | gate | off M/cpu-s | on M/cpu-s | % |
 |---|---|---:|---:|---:|---:|---:|
-| DHADREN.EXE | yes | 23.5% | 6.59x | 72.71 | 78.06 | +7.4% |
-| ACCIDENT.EXE | yes | 7.1% | 3.51x | 35.91 | 31.23 | -13.0% |
-| RUNDEMO.EXE | yes | 4.9% | 4.22x | 51.16 | 40.31 | -21.2% |
-| CONTAGIO.EXE | yes | 8.2% | 3.87x | 31.33 | 50.24 | +60.4% |
-| CYCLE.EXE | yes | 4.7% | 0.49x | 73.43 | 71.17 | -3.1% |
-| BRW.EXE | yes | 4.2% | 2.47x | 44.98 | 45.06 | +0.2% |
-| ADDY_II.EXE | yes | 28.4% | 4.95x | 83.98 | 124.16 | +47.8% |
-| DRAGON.EXE | yes | 45.2% | 1.62x | 42.00 | 49.50 | +17.9% |
-| ASYLUM.EXE | yes | 3.6% | 3.57x | 47.72 | 53.92 | +13.0% |
-| DREAM.EXE | yes | 99.4% | 1.28x | 73.25 | 68.30 | -6.8% |
+| DHADREN.EXE | yes | 25.1% | 8.28x | 116.62 | 105.03 | -9.9% |
+| ACCIDENT.EXE | yes | 18.3% | 3.56x | 59.40 | 54.41 | -8.4% |
+| RUNDEMO.EXE | yes | 2.5% | 3.35x | 91.60 | 74.84 | -18.3% |
+| CONTAGIO.EXE | yes | 7.2% | 2.68x | 41.98 | 70.36 | +67.6% |
+| CYCLE.EXE | yes | 3.6% | 5.99x | 110.10 | 108.12 | -1.8% |
+| BRW.EXE | yes | 4.3% | 2.50x | 76.49 | 67.78 | -11.4% |
+| ADDY_II.EXE | yes | 27.5% | 2.72x | 153.59 | 186.38 | +21.4% |
+| DRAGON.EXE | yes | 47.5% | 1.59x | 76.29 | 55.63 | -27.1% |
+| ASYLUM.EXE | yes | 3.9% | 3.77x | 78.02 | 79.73 | +2.2% |
+| DREAM.EXE | yes | 97.5% | 2.25x | 115.42 | 112.27 | -2.7% |
 
 ### With the flag off, nothing moved
 
@@ -185,26 +199,35 @@ printed beside every row and is deliberately **not** part of the verdict: a
 change that removes handbacks and moves neither picture nor sound is the good
 case.
 
-### At 80M dispatches: 20/20 identical
+### At 80M dispatches: 19/20 identical, DREAM differs
 
 The same 10 programs installed a region; frame, pixels, interrupts and the wav
-sha256 match on every one. Mean dispatch/cpu-second change over the installed
-rows **-0.3%** at 80M against **+10.3%** at 12M — read the 12M number, not this
-one: at 80M most of these rows spend most of the budget in code the region does
-not cover, and the box was at load 12-40 for both.
+sha256 match on nineteen. **DREAM differs at 80M on the shipped clock and is
+identical at 12M**: frame `462573cd` against `cb260c25`, 6584 against 6764
+pixels, the same 27 interrupts, a different wav, and the arms stop at
+80008453 against 80013157 dispatches. That last pair is the cause — DREAM
+spends 97.5% of its budget inside the region, so the one-dispatch slice
+overshoot the clock section bounds lands on a different IRQ boundary in each
+arm, and by 80M the drift has reached the picture. Re-run alone it reproduces
+byte for byte, and with `--lattice-clock` on both arms it is SAME (frame,
+pixels, ints and wav) at the same budget. So the fix is known and it is the
+lattice clock, which does not ship (see "The clock"); until it does, the flag
+stays off and this row is the reason a full-budget run is not a passing gate.
+Mean dispatch/cpu-second change over the installed rows **+2.3%** at 80M
+against **+1.2%** at 12M, box at load 3-6 for both.
 
 | program | same | share | gate | off M/cpu-s | on M/cpu-s | % |
 |---|---|---:|---:|---:|---:|---:|
-| DHADREN.EXE | yes | 23.5% | 8.03x | 118.16 | 128.00 | +8.3% |
-| ACCIDENT.EXE | yes | 7.1% | 3.43x | 57.09 | 57.65 | +1.0% |
-| RUNDEMO.EXE | yes | 4.9% | 4.25x | 78.72 | 60.18 | -23.6% |
-| CONTAGIO.EXE | yes | 8.2% | 2.61x | 15.98 | 16.47 | +3.0% |
-| CYCLE.EXE | yes | 4.7% | 1.40x | 46.24 | 45.84 | -0.9% |
-| BRW.EXE | yes | 4.2% | 2.48x | 53.56 | 47.89 | -10.6% |
-| ADDY_II.EXE | yes | 28.4% | 2.53x | 55.02 | 58.30 | +6.0% |
-| DRAGON.EXE | yes | 45.2% | 1.56x | 63.07 | 60.72 | -3.7% |
-| ASYLUM.EXE | yes | 3.6% | 3.94x | 54.34 | 52.74 | -3.0% |
-| DREAM.EXE | yes | 99.4% | 2.44x | 70.97 | 85.18 | +20.0% |
+| DHADREN.EXE | yes | 25.1% | 8.10x | 183.99 | 200.80 | +9.1% |
+| ACCIDENT.EXE | yes | 18.3% | 3.40x | 85.21 | 83.71 | -1.8% |
+| RUNDEMO.EXE | yes | 2.5% | 3.15x | 118.09 | 107.99 | -8.5% |
+| CONTAGIO.EXE | yes | 7.2% | 2.59x | 25.47 | 25.99 | +2.0% |
+| CYCLE.EXE | yes | 3.6% | 6.66x | 73.29 | 71.44 | -2.5% |
+| BRW.EXE | yes | 4.3% | 2.61x | 78.71 | 72.11 | -8.4% |
+| ADDY_II.EXE | yes | 27.5% | 2.65x | 84.48 | 88.08 | +4.3% |
+| DRAGON.EXE | yes | 47.5% | 1.62x | 93.30 | 92.19 | -1.2% |
+| ASYLUM.EXE | yes | 3.9% | 3.65x | 74.55 | 76.75 | +3.0% |
+| DREAM.EXE | **NO** | 97.5% | 2.29x | 101.79 | 128.86 | +26.6% |
 
 The ten declining rows are `no self-loop region found` (DTM2, DEMO5, COMPOVRS,
 COPPER, CORE-ADD, CONTACT, DSTNFO) or `INCONCLUSIVE` (B-STEEL, CMA_SHRT,

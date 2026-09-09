@@ -270,6 +270,10 @@ async function run(com, jit) {
     // rate: at the 2M default this whole program is a handful of samples and
     // the pick is a coin toss between two blocks.
     slice: 5e4,
+    // THE CLOCK THAT SHIPS, in both arms. `latticeClock` is left off here on
+    // purpose: the guarantee worth testing is that an install is invisible on
+    // the clock people actually run, not on an experimental one. See
+    // run-dos.js `latticeClock` and docs/toyvm-region-live.md.
     // THE AUDIO CLOCK, RENDERED. Nothing here makes a sound, but the render is
     // still a measurement of when the run loop handed back: the sample grid is
     // a function of the dispatch count and the Sound Blaster's DMA is fetched
