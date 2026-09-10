@@ -2918,8 +2918,9 @@
   ;; one that does. The roots below are the only fixed cost, and they are
   ;; three globals.
   ;;
-  ;; Faces are keyed by path hash so opening the same file twice returns the
-  ;; same slot instead of a second copy of a 400 KB file.
+  ;; Path hash is only a lookup filter: each face owns a full path at +28,
+  ;; compared with the same ASCII case fold before a slot can be reused.
+  ;; Fields +20/+24 remain reserved for future process generation identity.
 
   ;; Every style of every substituted face is 18 files, and a guest may also
   ;; name a face by path. 16 slots looked generous until the substitution
@@ -3002,6 +3003,27 @@
   (func $tt_face_open (param $path_guest i32) (result i32)
     (call $tt_face_open_source (local.get $path_guest) (i32.const 0) (i32.const 0)))
 
+  ;; Face identity paths obey MAX_PATH (260 bytes including NUL). Check each
+  ;; guest byte before reading: do not assume 260 bytes remain in the mapping,
+  ;; and do not scan an unterminated path into another mapped span.
+  (func $tt_face_path_length (param $guest i32) (result i32)
+    (local $path i32) (local $len i32) (local $at i32)
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const -1))))
+    (local.set $path (call $g2w (local.get $guest)))
+    (block $done (loop $scan
+      (if (i32.ge_u (local.get $len) (i32.const 260)) (then (return (i32.const -1))))
+      (if (i32.lt_u (i32.add (local.get $guest) (local.get $len)) (local.get $guest))
+        (then (return (i32.const -1))))
+      (local.set $at (call $g2w (i32.add (local.get $guest) (local.get $len))))
+      (if (i32.or (i32.eq (local.get $at) (i32.const 0xF0))
+            (i32.or (i32.ne (local.get $at) (i32.add (local.get $path) (local.get $len)))
+              (i32.ge_u (local.get $at) (i32.shl (memory.size) (i32.const 16)))))
+        (then (return (i32.const -1))))
+      (if (i32.eqz (i32.load8_u (local.get $at))) (then (return (local.get $len))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
   ;; A completed explicit-API buffer is borrowed; the face cache acquires its
   ;; own bytes only after the staged read. Negative input_size is cache-only.
   (func $tt_face_open_source (param $path_guest i32) (param $input_guest i32)
@@ -3009,12 +3031,15 @@
     (local $path i32) (local $hash i32) (local $table i32) (local $record i32)
     (local $index i32) (local $free i32) (local $handle i32) (local $size i32)
     (local $data_guest i32) (local $data i32) (local $read i32) (local $read_wa i32)
+    (local $path_len i32) (local $path_copy i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const -1))))
     ;; A cold cache-only query must not create the face table. With an
     ;; existing root, tt_faces_ensure below only maps that table for lookup.
     (if (i32.and (i32.lt_s (local.get $input_size) (i32.const 0))
           (i32.eqz (global.get $tt_faces)))
       (then (return (i32.const -1))))
+    (local.set $path_len (call $tt_face_path_length (local.get $path_guest)))
+    (if (i32.le_s (local.get $path_len) (i32.const 0)) (then (return (i32.const -1))))
     (local.set $path (call $g2w (local.get $path_guest)))
     (local.set $hash (call $tt_path_hash (local.get $path)))
     (local.set $table (call $tt_faces_ensure))
@@ -3028,7 +3053,12 @@
       (if (i32.load offset=16 (local.get $record))
         (then
           (if (i32.eq (i32.load (local.get $record)) (local.get $hash))
-            (then (return (local.get $index)))))
+            (then
+              (if (i32.load offset=28 (local.get $record))
+                (then
+                  (if (call $tt_subst_name_equal (local.get $path)
+                        (call $g2w (i32.load offset=28 (local.get $record))))
+                    (then (return (local.get $index)))))))))
         (else (if (i32.eq (local.get $free) (i32.const -1))
           (then (local.set $free (local.get $index))))))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
@@ -3036,14 +3066,22 @@
     (if (i32.eq (local.get $free) (i32.const -1)) (then (return (i32.const -1))))
     (if (i32.lt_s (local.get $input_size) (i32.const 0)) (then (return (i32.const -1))))
 
+    ;; Snapshot identity before host imports can observe or mutate caller
+    ;; memory. Cache-only queries and hits never allocate this copy.
+    (local.set $path_copy (call $heap_alloc (i32.add (local.get $path_len) (i32.const 1))))
+    (if (i32.eqz (local.get $path_copy)) (then (return (i32.const -1))))
+    (memory.copy (call $g2w (local.get $path_copy)) (local.get $path)
+      (i32.add (local.get $path_len) (i32.const 1)))
+    (local.set $path (call $g2w (local.get $path_copy)))
+    (block $failed
     (if (local.get $input_guest)
       (then
         (local.set $size (local.get $input_size))
         (if (i32.or (i32.le_s (local.get $size) (i32.const 0))
               (i32.gt_u (local.get $size) (global.get $TT_MAX_FONT_BYTES)))
-          (then (return (i32.const -1))))
+          (then (br $failed)))
         (local.set $data_guest (call $heap_alloc (local.get $size)))
-        (if (i32.eqz (local.get $data_guest)) (then (return (i32.const -1))))
+        (if (i32.eqz (local.get $data_guest)) (then (br $failed)))
         (local.set $data (call $g2w (local.get $data_guest)))
         (memory.copy (local.get $data) (call $g2w (local.get $input_guest)) (local.get $size)))
       (else
@@ -3052,18 +3090,18 @@
     ;; bitmap-font loader makes, so both paths see one filesystem.
     (local.set $handle (call $host_fs_create_file (local.get $path)
       (i32.const 0x80000000) (i32.const 3) (i32.const 0x80) (i32.const 0)))
-    (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const -1))))
+    (if (i32.eq (local.get $handle) (i32.const -1)) (then (br $failed)))
     (local.set $size (call $host_fs_get_file_size (local.get $handle)))
     (if (i32.or (i32.le_s (local.get $size) (i32.const 0))
           (i32.gt_u (local.get $size) (global.get $TT_MAX_FONT_BYTES)))
       (then
         (drop (call $host_fs_close_handle (local.get $handle)))
-        (return (i32.const -1))))
+        (br $failed)))
     (local.set $data_guest (call $heap_alloc (local.get $size)))
     (if (i32.eqz (local.get $data_guest))
       (then
         (drop (call $host_fs_close_handle (local.get $handle)))
-        (return (i32.const -1))))
+        (br $failed)))
     (local.set $data (call $g2w (local.get $data_guest)))
     ;; The filesystem bridge reports the byte count through guest memory, so
     ;; the count word is borrowed from the front of the buffer being filled
@@ -3073,7 +3111,7 @@
       (then
         (drop (call $host_fs_close_handle (local.get $handle)))
         (call $heap_free (local.get $data_guest))
-        (return (i32.const -1))))
+        (br $failed)))
     (local.set $read_wa (call $g2w (local.get $read))) (i32.store (local.get $read_wa) (i32.const 0))
     (if (i32.eqz (call $host_fs_read_file (local.get $handle)
           (local.get $data_guest) (local.get $size) (local.get $read)))
@@ -3081,13 +3119,13 @@
         (drop (call $host_fs_close_handle (local.get $handle)))
         (call $heap_free (local.get $data_guest))
         (call $heap_free (local.get $read))
-        (return (i32.const -1))))
+        (br $failed)))
     (drop (call $host_fs_close_handle (local.get $handle)))
     (if (i32.ne (i32.load (local.get $read_wa)) (local.get $size))
       (then
         (call $heap_free (local.get $data_guest))
         (call $heap_free (local.get $read))
-        (return (i32.const -1))))
+        (br $failed)))
     (call $heap_free (local.get $read))))
 
     ;; Refuse anything that is not a glyf TrueType here rather than letting
@@ -3095,8 +3133,7 @@
     (if (i32.eqz (call $tt_is_truetype (local.get $data) (local.get $size)))
       (then
         (call $heap_free (local.get $data_guest))
-        (return (i32.const -1))))
-
+        (br $failed)))
     (local.set $record (i32.add (local.get $table)
       (i32.mul (local.get $free) (global.get $TT_FACE_STRIDE))))
     (i32.store (local.get $record) (local.get $hash))
@@ -3104,8 +3141,11 @@
     (i32.store offset=8 (local.get $record) (local.get $size))
     (i32.store offset=12 (local.get $record)
       (call $tt_units_per_em (local.get $data) (local.get $size)))
+    (i32.store offset=28 (local.get $record) (local.get $path_copy))
     (i32.store offset=16 (local.get $record) (i32.const 1))
-    (local.get $free))
+    (return (local.get $free)))
+    (call $heap_free (local.get $path_copy))
+    (i32.const -1))
 
   ;; ---- glyph cache ------------------------------------------------------
   ;;

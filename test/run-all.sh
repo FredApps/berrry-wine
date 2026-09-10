@@ -72,6 +72,7 @@ UNIT=(
   test/test-worker-font-catalog-startup.js
   test/test-font-catalog-remote.js
   test/test-worker-font-catalog-remote.js
+  test/test-tt-face-identity.js
   test/test-cli-font-bootstrap.js
   test/test-vfs-overlay-checkpoints.js
   test/test-runtime-thread-ownership.js

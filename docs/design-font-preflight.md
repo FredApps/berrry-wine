@@ -190,6 +190,42 @@ pixels. Slot reuse must never make an old selected handle refer to a new face.
 Registration refcounts are a separate compatibility issue; do not silently
 change repeated Add/Remove behavior as part of cache invalidation.
 
+### Generation implementation constraints from the consumer audit
+
+The current parsed-face table has 32 append-only slots, with owned font bytes
+per slot. Glyph and hint caches identify a face by its slot, so an immutable
+generation must never overwrite or recycle a published slot while any of
+those consumers can still refer to it. A full table must reject preparation
+without destroying the old usable generation. This is a bounded first
+implementation, not the eventual eviction/memory policy.
+
+Reserve face-record offsets 20 and 24 for a process-owned, non-recycled
+generation identity; offset 28 owns the full path. The coordinator must mint
+identity only for a validated source snapshot and send the same identity and
+immutable bytes to every executing instance that prepares that source.
+Independent per-instance counters would alias in the shared strike registry.
+Reusing an identity with different path or bytes must be rejected. The catalog
+generation and path hash are neither source identities nor lifetime tokens.
+
+Publishing a new face alone cannot enable revision-aware lookup. Realized
+HFONTs need retained source identity, distinct from discovery/registration
+membership. Synthetic strikes must compare the complete source identity and
+rendering parameters, not merely their logical-name/style/size hash. Their
+shared publication, references and retirement must be synchronized: checking
+a generation does not protect bytes freed concurrently by a sibling instance.
+Selection, charset queries and `GetFontData` must all use the retained identity.
+HFONT deletion must release it through `gdi_object_delete_full`; old selected
+fonts must remain usable after registration removal or VFS deletion.
+
+The bitmap-font audit also found that `gdi_bitmap_font_add_buffer` currently
+removes old path-matching records before validating a replacement. Removal
+unbinds matching HFONTs and frees their payloads. Replacement therefore needs
+private staged records and complete validation before publication, followed
+by retirement of the old generation until selected/in-flight owners release
+it. A header-only precheck, clearing all bindings, or path-cache invalidation
+would not establish that contract. Failed replacement must leave registration,
+selected bindings, metrics and pixels unchanged.
+
 ## Ownership and acceptance
 
 Use the existing immutable VFS read-lease checks, but define an aggregate

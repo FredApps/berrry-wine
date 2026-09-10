@@ -2,7 +2,63 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — automatic catalog startup with reply-time freshness
+### Latest increment — collision-safe parsed-face identity
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| FACE LOOKUP                         OWNERSHIP                               STILL REQUIRED                |
++----------------------------------+----------------------------------+------------------------------------+
+| hash narrows candidates          | copy full path before file I/O   | same-path source generations       |
+| full case-folded path must match | publish path + bytes together    | selected HFONT / strike retention  |
+| colliding paths get distinct slot| failed load frees private path   | staged bitmap replacement          |
++----------------------------------+----------------------------------+------------------------------------+
+| CACHE IDENTITY BUG FIXED | NO FACE-SLOT REUSE | DYNAMIC PREFLIGHT + MEMORY / INPUT / AUDIO GATES OPEN         |
++----------------------------------------------------------------------------------------------------------+
+```
+
+The native face cache previously returned the first matching 32-bit path
+hash without comparing paths. A deterministic collision between
+`c:\font-id\5pvu.ttf` and `c:\font-id\c3ea.ttf` reproduced distinct real fonts
+both resolving to face slot zero on committed baseline `60dab3e4`.
+The corrected lookup uses the hash only as a filter and compares an owned
+full path with the existing ASCII case-folding rules. Slots remain append-only;
+this does not invalidate or replace an existing same-path face.
+
+Identity is copied before filesystem imports, so a callback changing the
+caller's path cannot change the published identity. Cache-only misses and
+cache hits do not allocate path copies or read files. Failed loads free the
+private path; successful paths and font bytes remain owned until process
+teardown. Paths now require termination within 260 bytes, with guest mapping
+and linear-memory bounds checked before scanning. This is an explicit bound,
+not a promise to support extended-length paths or normalize slash aliases.
+
+The actual-WAT regression is red on the baseline and green on the fix, covering
+collision-separated Sans/Mono metrics, case aliases, owned staged bytes,
+caller-path reuse, mutation inside a filesystem callback, 259/260-byte bounds
+and failed-parse retry. Existing substitution/rasterization and whole-memory
+read-only resolver regressions pass.
+
+The lifetime audit also confirmed two remaining blockers: bitmap replacement
+removes old records and unbinds HFONTs before validating the replacement;
+synthetic strikes use logical-name/size/style hashes without source-generation
+identity. The design now records shared process identities, immutable face
+slots, selected-font retention, synchronized strike retirement and private
+replacement staging as required—not optional cache-clearing shortcuts.
+Fable's completed materialization work does not establish these consumer
+invariants. Lazy defaults remain off; integration and memory/input/audio
+acceptance remain open.
+
+Verification: canonical and compatibility builds pass (1,066,944 / 1,067,397
+bytes, unchanged layout `b00c9d60346fdb5a`, source 319). The manifest accounts
+for 953 tests; this is not a full-suite run. Focused face identity, resolver,
+substitution/rasterization, TrueType metrics/hinting, immutable font leases,
+CLI stock/catalog/overlay startup and all nine real-Worker catalog startup
+groups pass. The final Chrome matrix exits zero with Worker/cooperative
+Notepad/Calculator parity, Win16 and Rodent2000 input/rendering, Winamp
+playback threads and COM success/missing-server recovery. No performance
+result is claimed under the observed load of 18.91.
+
+### Prior increment — automatic catalog startup with reply-time freshness
 
 ```text
 +----------------------------------------------------------------------------------------------------------+
