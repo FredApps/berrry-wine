@@ -2,7 +2,32 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — Win16 public macro continuation
+### Latest increment — instance-owned x87 registers
+
+The native macro audit found that the eight physical x87 values occupied shared WASM bytes `0x200..0x23f`, while TOP, tags, control/status words, and exact integer payload shadows were instance-local globals. Interleaved guest instances could therefore overwrite one another's floating-point values. Saving that shared bank around an asynchronous native callback would also restore over a sibling Worker's live values. The fix moves the physical values into eight instance-local globals, matching the ownership of the remaining CPU registers; FNSAVE/FRSTOR now use the same physical accessors. Tags and exact integer shadows retain their existing semantics.
+
+Reproduced before the fix: A stored `1.25`, B stored `9.5`, and A read back `9.5`. The compiled opcode-handler regression then demonstrated corruption of all eight physical slots. After the fix its 24 checks pass, covering interleaved FLD, rotated TOP, FNSAVE/FRSTOR bank isolation, and positive/negative FILD/FISTP integers beyond f64's exact integer range. Native MSVCRT `_ftol`, 138 x86 instruction checks, all ten A/W macro cases, and all five Win16 macro cases also pass. Source 308 canonical/compatibility builds pass (1,061,794 / 1,062,247 bytes), with unchanged layout `b00c9d60346fdb5a`, 237 imports, 233 nonoverlapping data segments, and 930 registered tests. The final-source Chrome Worker matrix passes with exit 0 and normal browser/server cleanup: Notepad/Calculator parity, both Rodent render/input checks, Winamp with three real Workers, and COM success/failed-fetch recovery. These are targeted functional results, not a complete-suite or performance claim.
+
+This is an additional concrete instance of the review's state-ownership concern. Fable's earlier FPU file-organization and instruction observations do not establish cross-instance isolation. No throughput claim is implied: host load exceeds the repository's measurement threshold.
+
+Native callback integration remains open. The next transaction must preserve both CPU state and host scheduling state:
+
+```text
++-------------------------+-----------------------------+-----------------------------------+
+| QUEUE / STAGE           | CALLBACK                    | RESTORE                           |
+| own binding + arguments | separate CPU/stack context  | exact CPU state, once             |
+| no guest state mutation | normal waits and scheduling | original absolute sleep deadline  |
+| wait for safe boundary  | old wait remains dormant    | old wait start + poll count       |
++-------------------------+-----------------------------+-----------------------------------+
+| STOP: discard saved state; never resurrect a stopped guest                            |
++---------------------------------------------------------------------------------------+
+```
+
+Host fields are `_mainSleepUntil`, `_mainWaitStartedAt`, and `_mainWaitPolls` for cooperative main execution; `_mainWaitState.{waitStartedAt,waitPolls}` for the main Worker; and `thread.{sleepUntil,waitStartedAt,waitPolls}` for secondary threads. Preserve timestamps in the injected guest-clock domain, not remaining durations: callback time counts toward the original timeout. Detect the typed return before ordinary slice-result handling, whose tails otherwise clear or replace sleep deadlines. Do not consume the original wait's event/semaphore while executing the callback. The existing `get_sleep_yielded()` result is destructive and must not be read twice. Outstanding foreign I/O and synchronous-message/COM/DLL continuations need explicit safe-entry handling, not blind state replacement.
+
+The CPU snapshot must preserve all GPRs/EIP, lazy-flag operands and width, saved carry/DF/extra flags, execution width and selectors/bases/FS, x87 physical bits/TOP/CW/SW/tags/raw shadows, MMX and XMM banks, and the supported wait descriptors. Existing caller-register helpers are partial; FNSAVE/FRSTOR are architectural conversions and do not preserve the internal raw-integer shadow exactly. Snapshot only at an outer complete-block boundary (`resume_ip == 0`), never retain decoded cache pointers across asynchronous work, and force an outer return after callback completion so fresh run budgets are applied. Shared events, clocks, queues, and intentional guest-memory side effects must not be rolled back.
+
+### Prior increment — Win16 public macro continuation
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

@@ -3810,7 +3810,16 @@
   (global $console_cp (mut i32) (i32.const 437))  ;; input code page
   (global $console_output_cp (mut i32) (i32.const 437))  ;; output code page
 
-  ;; x87 FPU state — registers stored at WASM memory 0x200 (8 × f64 = 64 bytes)
+  ;; x87 physical values belong to the instance, like TOP/tags and MMX below.
+  ;; A shared linear-memory bank lets sibling guest threads corrupt each other.
+  (global $fpu_value0 (mut f64) (f64.const 0))
+  (global $fpu_value1 (mut f64) (f64.const 0))
+  (global $fpu_value2 (mut f64) (f64.const 0))
+  (global $fpu_value3 (mut f64) (f64.const 0))
+  (global $fpu_value4 (mut f64) (f64.const 0))
+  (global $fpu_value5 (mut f64) (f64.const 0))
+  (global $fpu_value6 (mut f64) (f64.const 0))
+  (global $fpu_value7 (mut f64) (f64.const 0))
   (global $fpu_top (mut i32) (i32.const 0))   ;; TOP of FPU stack (0-7)
   (global $fpu_cw  (mut i32) (i32.const 0x037F)) ;; Control word (default: all exceptions masked)
   (global $fpu_sw  (mut i32) (i32.const 0))   ;; Status word
