@@ -37,6 +37,7 @@
   ;; synthesise — test/run.js derives get_ticks from the batch counter. Use
   ;; this only to bound a wait on something outside this instance.
   (import "host" "real_time_ms" (func $host_real_time_ms (result i32)))
+  (import "host" "monotonic_time_ms" (func $host_monotonic_time_ms (result f64)))
   (import "host" "yield" (func $host_yield (param i32)))
   ;; One bounded inline turn for the worker threads, for the case where the
   ;; main instance cannot yield: inside a synchronous wndproc the interpreter
@@ -1687,7 +1688,8 @@
   ;; than that one": genuine work per block, or a batch that keeps bailing after
   ;; a handful of blocks and paying the host's per-batch overhead each time.
   ;; Halt reasons: 1 budget exhausted, 2 EIP zero, 3 $yield_flag,
-  ;; 4 blocking-wait $yield_reason, 5 a debug facility (watchpoint/breakpoint).
+  ;; 4 blocking-wait $yield_reason, 5 a debug facility (watchpoint/breakpoint),
+  ;; 6 cooperative wall-clock deadline at a complete block boundary.
   (global $last_run_blocks (mut i32) (i32.const 0))
   (global $last_run_halt   (mut i32) (i32.const 0))
 

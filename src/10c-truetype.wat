@@ -3000,6 +3000,12 @@
   ;; or no heap. Callers fall back to whatever they would have done before,
   ;; so a bad path degrades to the old behaviour instead of trapping.
   (func $tt_face_open (param $path_guest i32) (result i32)
+    (call $tt_face_open_source (local.get $path_guest) (i32.const 0) (i32.const 0)))
+
+  ;; A completed explicit-API buffer is borrowed; the face cache acquires its
+  ;; own bytes only after the staged read. Negative input_size is cache-only.
+  (func $tt_face_open_source (param $path_guest i32) (param $input_guest i32)
+      (param $input_size i32) (result i32)
     (local $path i32) (local $hash i32) (local $table i32) (local $record i32)
     (local $index i32) (local $free i32) (local $handle i32) (local $size i32)
     (local $data_guest i32) (local $data i32) (local $read i32) (local $read_wa i32)
@@ -3023,6 +3029,19 @@
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $scan)))
     (if (i32.eq (local.get $free) (i32.const -1)) (then (return (i32.const -1))))
+    (if (i32.lt_s (local.get $input_size) (i32.const 0)) (then (return (i32.const -1))))
+
+    (if (local.get $input_guest)
+      (then
+        (local.set $size (local.get $input_size))
+        (if (i32.or (i32.le_s (local.get $size) (i32.const 0))
+              (i32.gt_u (local.get $size) (global.get $TT_MAX_FONT_BYTES)))
+          (then (return (i32.const -1))))
+        (local.set $data_guest (call $heap_alloc (local.get $size)))
+        (if (i32.eqz (local.get $data_guest)) (then (return (i32.const -1))))
+        (local.set $data (call $g2w (local.get $data_guest)))
+        (memory.copy (local.get $data) (call $g2w (local.get $input_guest)) (local.get $size)))
+      (else
 
     ;; GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL: the same call the
     ;; bitmap-font loader makes, so both paths see one filesystem.
@@ -3064,7 +3083,7 @@
         (call $heap_free (local.get $data_guest))
         (call $heap_free (local.get $read))
         (return (i32.const -1))))
-    (call $heap_free (local.get $read))
+    (call $heap_free (local.get $read))))
 
     ;; Refuse anything that is not a glyf TrueType here rather than letting
     ;; every accessor below rediscover it one zero at a time.
@@ -3791,11 +3810,13 @@
   ;; family name could be read, 0 otherwise - which is the AddFontResourceA
   ;; return value, a count of fonts added.
   (func $tt_reg_add (param $path_guest i32) (result i32)
-    (local $table i32) (local $path i32) (local $face i32)
+    (call $tt_reg_add_face (local.get $path_guest) (call $tt_face_open (local.get $path_guest))))
+
+  (func $tt_reg_add_face (param $path_guest i32) (param $face i32) (result i32)
+    (local $table i32) (local $path i32)
     (local $data i32) (local $size i32) (local $index i32) (local $free i32)
     (local $record i32) (local $weight i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const 0))))
-    (local.set $face (call $tt_face_open (local.get $path_guest)))
     (if (i32.lt_s (local.get $face) (i32.const 0)) (then (return (i32.const 0))))
     (local.set $data (call $tt_face_data (local.get $face)))
     (local.set $size (call $tt_face_size (local.get $face)))

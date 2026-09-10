@@ -504,6 +504,30 @@ const budgetStats = budgetTm.runBudgeted({ quantumSteps: 100, maxTotalSteps: 100
 assert.strictEqual(budgetRuns, 2, 'budgeted scheduler should stop after crossing the wall-clock budget');
 assert.strictEqual(budgetStats.hitDeadline, true, 'budgeted scheduler should report deadline stops');
 assert.strictEqual(budgetStats.steps, 200, 'budgeted scheduler should report approximate executed steps');
+// maxWallMs-only callers use the compiled deadline too, translated out of
+// this test's injected clock origin. No deadline means deterministic plain run.
+{
+  const clockTm = makeThreadManager();
+  let clockNow = 900000, plainRuns = 0, budgetedRuns = 0, clears = 0;
+  const monotonicStarted = performance.now();
+  clockTm._now = () => clockNow;
+  const thread = makeRunnableThread(1, () => { plainRuns++; });
+  thread.instance.exports.run_budgeted = (blocks, deadline) => {
+    assert.strictEqual(blocks, 100);
+    assert(deadline >= monotonicStarted && deadline <= performance.now() + 6,
+      'WAT deadline is monotonic, not the injected 900000ms origin');
+    budgetedRuns++;
+    clockNow += 10;
+  };
+  thread.instance.exports.set_run_deadline_enabled = value => { assert.strictEqual(value, 0); clears++; };
+  clockTm.threads.set(0xe1000, thread);
+  clockTm.runBudgeted({ quantumSteps: 100, maxTotalSteps: 1000, maxWallMs: 5 });
+  assert.strictEqual(budgetedRuns, 1);
+  assert.strictEqual(plainRuns, 0);
+  assert.strictEqual(clears, 1);
+  clockTm.runSlice(100, { quantumSteps: 100 });
+  assert.strictEqual(plainRuns, 1);
+}
 
 const messageTm = makeThreadManager();
 messageTm._hasMessage = () => true;

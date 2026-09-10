@@ -506,7 +506,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '302';
+  static SOURCE_VERSION = '303';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2173,7 +2173,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=35',
+        workerUrl: 'lib/guest-worker.js?v=36',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -3941,7 +3941,13 @@ class WineAssembly {
       const quantum = this._frozen ? remaining : Math.min(remaining,
         Math.max(1, this._cooperativeQuantumBlocks || 128));
       const before = now();
-      ex.run(quantum);
+      try {
+        if (!this._frozen && ex.run_budgeted) ex.run_budgeted(quantum, deadline);
+        else ex.run(quantum);
+      } finally {
+        if (ex.set_run_deadline_enabled) ex.set_run_deadline_enabled(0);
+      }
+      if (ex.get_last_run_halt && ex.get_last_run_halt() === 6) hitDeadline = true;
       const ran = ex.get_last_run_blocks ? Math.max(0, ex.get_last_run_blocks()) : 0;
       const elapsed = Math.max(0, now() - before);
       blocks += ran;

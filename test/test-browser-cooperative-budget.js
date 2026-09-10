@@ -56,6 +56,25 @@ for (const options of [{ halt: 3 }, { halt: 5 }, { yieldReason: 1 },
   assert.strictEqual(result.hitDeadline, false);
 }
 {
+  const { wine } = fixture({ halt: 6, retired: () => 32 });
+  const exports = wine.instance.exports;
+  const calls = [], enabled = [];
+  exports.run_budgeted = (n, deadline) => { calls.push([n, deadline]); exports.run(32); };
+  exports.set_run_deadline_enabled = value => enabled.push(value);
+  const result = wine._runCooperativeSlice(500000, 8);
+  assert.strictEqual(calls.length, 1);
+  assert.strictEqual(calls[0][1], 8, 'WAT sees the shared host deadline');
+  assert.strictEqual(result.blocks, 32);
+  assert.strictEqual(result.hitDeadline, true, 'halt 6 reports deadline without a blocking yield');
+  assert.deepStrictEqual(enabled, [0]);
+  exports.run_budgeted = () => { throw new Error('test trap'); };
+  assert.throws(() => wine._runCooperativeSlice(500000, 8), /test trap/);
+  assert.deepStrictEqual(enabled, [0, 0], 'top-level trap clears armed deadline');
+  wine._frozen = true;
+  wine._runCooperativeSlice(10);
+  assert.strictEqual(calls.length, 1, 'frozen stepping selects plain run even when budgeted export exists');
+}
+{
   const { wine, calls } = fixture({ cost: 1 });
   const first = wine._runCooperativeSlice(500000);
   assert.strictEqual(calls.length, 1, 'one expensive native call cannot be preempted');

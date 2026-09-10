@@ -45,8 +45,14 @@ const extraWat = String.raw`
 `;
 
 (async () => {
-  const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
+  const { exports: e, hostCtx } = await bootRenderHarness({ extraWat, fonts: 'none' });
   e.test_gdip_prepare();
+  const filename = 'c:\\one.png';
+  Buffer.from(filename + '\0', 'utf16le').forEach((byte, i) => e.guest_write8(0x22000 + i, byte));
+  const png = Buffer.alloc(24);
+  png.writeUInt32LE(0x474e5089); png.write('IHDR', 12);
+  png.writeUInt32BE(1, 16); png.writeUInt32BE(1, 20);
+  hostCtx.vfs.files.set(filename, { data: new Uint8Array(png), attrs: 0x20 });
 
   const tokenOut = 0x20000;
   const imageOut = 0x20004;
@@ -63,8 +69,8 @@ const extraWat = String.raw`
   assert.notStrictEqual(image, 0, 'image load publishes an opaque image');
   assert.strictEqual(e.test_GdipGetImageWidth(image, widthOut), 0);
   assert.strictEqual(e.test_GdipGetImageHeight(image, heightOut), 0);
-  assert.strictEqual(e.guest_read32(widthOut), 1, 'placeholder width is deterministic');
-  assert.strictEqual(e.guest_read32(heightOut), 1, 'placeholder height is deterministic');
+  assert.strictEqual(e.guest_read32(widthOut), 1, 'mounted image width is preserved');
+  assert.strictEqual(e.guest_read32(heightOut), 1, 'mounted image height is preserved');
 
   assert.strictEqual(e.test_GdipCreateBitmapFromGraphics(320, 200, bitmapOut), 0);
   const bitmap = e.guest_read32(bitmapOut) >>> 0;

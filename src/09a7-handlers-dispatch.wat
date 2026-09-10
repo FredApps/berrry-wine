@@ -56,62 +56,156 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; LR_LOADFROMFILE: `name` is a path, not a resource id. Read the .bmp
-  ;; through the VFS and build the bitmap from its BITMAPFILEHEADER + DIB, so
-  ;; the caller gets the file's real pixels at the file's real size. Returns 0
-  ;; when the file is missing or is not a BMP, leaving the resource path to
-  ;; decide what to do next.
-  (func $load_image_bitmap_file (param $path_wa i32) (result i32)
-    (local $handle i32) (local $size i32) (local $buf_ga i32) (local $buf_wa i32)
-    (local $read_ga i32) (local $read_wa i32) (local $off i32) (local $hdr i32) (local $bmp i32)
-    (local.set $handle (call $host_fs_create_file
-      (local.get $path_wa) (i32.const 0x80000000)
-      (i32.const 3) (i32.const 0x80) (i32.const 0)))
-    (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
-    (local.set $size (call $host_fs_get_file_size (local.get $handle)))
-    ;; 54 = BITMAPFILEHEADER + BITMAPINFOHEADER, the smallest legal BMP.
-    (if (i32.or (i32.lt_u (local.get $size) (i32.const 54))
-                (i32.gt_u (local.get $size) (i32.const 0x2000000)))
-      (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (return (i32.const 0))))
-    (local.set $buf_ga (call $heap_alloc (local.get $size)))
-    (local.set $read_ga (call $heap_alloc (i32.const 4)))
-    (if (i32.or (i32.eqz (local.get $buf_ga)) (i32.eqz (local.get $read_ga)))
-      (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (if (local.get $buf_ga) (then (call $heap_free (local.get $buf_ga))))
-        (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
-        (return (i32.const 0))))
-    (local.set $read_wa (call $g2w (local.get $read_ga))) (i32.store (local.get $read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
-      (local.get $handle) (local.get $buf_ga) (local.get $size) (local.get $read_ga)))
-    (drop (call $host_fs_close_handle (local.get $handle)))
-    (local.set $size (i32.load (local.get $read_wa)))
-    (call $heap_free (local.get $read_ga))
+  ;; Per-instance read transactions. Guest-address records: next, ESP, return,
+  ;; six arguments, width, handle, file size, buffer, progress, read count.
+  ;; Retain staged guest bytes, never materialize the lazy VFS entry. The
+  ;; caller parks at its API boundary before any stdcall stack adjustment.
+  (global $load_image_pending (mut i32) (i32.const 0))
+  (func $load_image_file_release (param $frame i32)
+    (drop (call $host_fs_close_handle (call $gl32 (i32.add (local.get $frame) (i32.const 40)))))
+    (call $heap_free (call $gl32 (i32.add (local.get $frame) (i32.const 48))))
+    (call $heap_free (local.get $frame)))
+
+  (func $load_image_bitmap_parse (param $buf_ga i32) (param $size i32) (result i32)
+    (local $buf_wa i32) (local $off i32) (local $hdr i32) (local $bmp i32)
+    (local $header_size i32) (local $minimum i32) (local $palette i32) (local $bytes i32)
     (local.set $buf_wa (call $g2w (local.get $buf_ga)))
     ;; 0x4D42 = 'BM'
     (if (i32.or (i32.lt_u (local.get $size) (i32.const 54))
                 (i32.ne (i32.load16_u (local.get $buf_wa)) (i32.const 0x4D42)))
       (then
-        (call $heap_free (local.get $buf_ga))
         (return (i32.const 0))))
     (local.set $hdr (i32.add (local.get $buf_wa) (i32.const 14)))
+    ;; plan_info accepts a bare caller pointer, so bound its header/mask reads
+    ;; against this file first, then bound its palette and pixel copy plan.
+    (local.set $header_size (i32.load (local.get $hdr)))
+    (if (i32.gt_u (local.get $header_size) (i32.sub (local.get $size) (i32.const 14)))
+      (then (return (i32.const 0))))
+    (local.set $minimum (i32.add (i32.const 14) (local.get $header_size)))
+    (if (i32.and (i32.ge_u (local.get $header_size) (i32.const 40))
+          (i32.eq (i32.load offset=16 (local.get $hdr)) (i32.const 3)))
+      (then
+        (if (i32.lt_u (local.get $size) (i32.const 66)) (then (return (i32.const 0))))
+        (if (i32.lt_u (local.get $minimum) (i32.const 66)) (then (local.set $minimum (i32.const 66))))))
+    (if (i32.eqz (call $gdi_bitmap_plan_info (local.get $hdr) (global.get $GDI_BITMAP_PLAN)))
+      (then (return (i32.const 0))))
+    (local.set $palette (i32.load offset=20 (global.get $GDI_BITMAP_PLAN)))
+    ;; Built-in RGB555 masks are not file bytes. Other palette/mask pointers
+    ;; are header-relative and must fit entirely before the pixel stream.
+    (if (i32.and (i32.ne (local.get $palette) (i32.const 0))
+          (i32.ne (local.get $palette) (global.get $GDI_RGB555_MASKS)))
+      (then
+        (local.set $bytes (i32.mul (i32.load offset=24 (global.get $GDI_BITMAP_PLAN))
+          (select (i32.const 3) (i32.const 4) (i32.eq (local.get $header_size) (i32.const 12)))))
+        (local.set $palette (i32.sub (local.get $palette) (local.get $buf_wa)))
+        (if (i32.or (i32.gt_u (local.get $palette) (local.get $size))
+              (i32.gt_u (local.get $bytes) (i32.sub (local.get $size) (local.get $palette))))
+          (then (return (i32.const 0))))
+        (if (i32.gt_u (i32.add (local.get $palette) (local.get $bytes)) (local.get $minimum))
+          (then (local.set $minimum (i32.add (local.get $palette) (local.get $bytes)))))))
     (local.set $off (i32.load offset=10 (local.get $buf_wa)))  ;; bfOffBits
-    ;; A wrong bfOffBits is common in hand-built files; fall back to the header
-    ;; size, which is what GDI itself uses when the offset is not plausible.
-    (if (i32.or (i32.lt_u (local.get $off) (i32.const 54))
+    ;; Preserve the historical malformed-offset fallback, including palettes.
+    (if (i32.or (i32.lt_u (local.get $off) (local.get $minimum))
                 (i32.ge_u (local.get $off) (local.get $size)))
-      (then (local.set $off (i32.add (i32.const 14) (i32.load (local.get $hdr))))))
+      (then (local.set $off (local.get $minimum))))
     (if (i32.ge_u (local.get $off) (local.get $size))
       (then
-        (call $heap_free (local.get $buf_ga))
         (return (i32.const 0))))
+    (local.set $bytes (i32.load offset=32 (global.get $GDI_BITMAP_PLAN)))
+    (if (i32.load offset=44 (global.get $GDI_BITMAP_PLAN))
+      (then (local.set $bytes (i32.load offset=44 (global.get $GDI_BITMAP_PLAN)))))
+    (if (i32.gt_u (local.get $bytes) (i32.sub (local.get $size) (local.get $off)))
+      (then (return (i32.const 0))))
     (local.set $bmp (call $gdi_bitmap_create_dibitmap
       (i32.const 0) (local.get $hdr)
       (i32.add (local.get $buf_wa) (local.get $off))
       (i32.const 1) (i32.const 0)))
-    (call $heap_free (local.get $buf_ga))
+    (local.get $bmp))
+
+  ;; Returns -1 only for pending, zero for a real file/format failure.
+  (func $load_image_bitmap_file (param $path_ga i32) (param $wide i32) (result i32)
+    (local $frame i32) (local $prev i32) (local $next_frame i32)
+    (local $i i32) (local $match i32) (local $handle i32) (local $size i32)
+    (local $buf i32) (local $pos i32) (local $count i32) (local $bmp i32)
+    (local.set $frame (global.get $load_image_pending))
+    (block $found (loop $find
+      (br_if $found (i32.eqz (local.get $frame)))
+      (local.set $next_frame (call $gl32 (local.get $frame)))
+      (if (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+        (then
+          (local.set $match (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (call $gl32 (global.get $esp)))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 36))) (local.get $wide))))
+          (local.set $i (i32.const 0))
+          (loop $args
+            (if (i32.ne (call $gl32 (i32.add (local.get $frame) (i32.add (i32.const 12) (local.get $i))))
+                        (call $gl32 (i32.add (global.get $esp) (i32.add (i32.const 4) (local.get $i)))))
+              (then (local.set $match (i32.const 0))))
+            (local.set $i (i32.add (local.get $i) (i32.const 4)))
+            (br_if $args (i32.lt_u (local.get $i) (i32.const 24))))
+          ;; Unlink before execution; only a pending read links it back.
+          (if (local.get $prev)
+            (then (call $gs32 (local.get $prev) (local.get $next_frame)))
+            (else (global.set $load_image_pending (local.get $next_frame))))
+          (br_if $found (local.get $match))
+          (call $load_image_file_release (local.get $frame))
+          (local.set $frame (local.get $next_frame)))
+        (else (local.set $prev (local.get $frame)) (local.set $frame (local.get $next_frame))))
+      (br $find)))
+    (if (i32.eqz (local.get $frame))
+      (then
+        (if (i32.le_u (local.get $path_ga) (i32.const 0xFFFF)) (then (return (i32.const 0))))
+        (local.set $handle (call $host_fs_create_file (call $g2w (local.get $path_ga))
+          (i32.const 0x80000000) (i32.const 3) (i32.const 0x80) (local.get $wide)))
+        (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
+        (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+        (if (i32.or (i32.lt_u (local.get $size) (i32.const 54)) (i32.gt_u (local.get $size) (i32.const 0x2000000)))
+          (then (drop (call $host_fs_close_handle (local.get $handle))) (return (i32.const 0))))
+        (local.set $frame (call $heap_alloc (i32.const 60)))
+        (local.set $buf (call $heap_alloc (local.get $size)))
+        (if (i32.or (i32.eqz (local.get $frame)) (i32.eqz (local.get $buf)))
+          (then
+            (drop (call $host_fs_close_handle (local.get $handle)))
+            (if (local.get $frame) (then (call $heap_free (local.get $frame))))
+            (if (local.get $buf) (then (call $heap_free (local.get $buf))))
+            (return (i32.const 0))))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (global.get $esp))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (call $gl32 (global.get $esp)))
+        (local.set $i (i32.const 0))
+        (loop $save_args
+          (call $gs32 (i32.add (local.get $frame) (i32.add (i32.const 12) (local.get $i)))
+            (call $gl32 (i32.add (global.get $esp) (i32.add (i32.const 4) (local.get $i)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 4)))
+          (br_if $save_args (i32.lt_u (local.get $i) (i32.const 24))))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 36)) (local.get $wide))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 40)) (local.get $handle))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 44)) (local.get $size))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 48)) (local.get $buf))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 52)) (i32.const 0))))
+    (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 40))))
+    (local.set $size (call $gl32 (i32.add (local.get $frame) (i32.const 44))))
+    (local.set $buf (call $gl32 (i32.add (local.get $frame) (i32.const 48))))
+    (local.set $pos (call $gl32 (i32.add (local.get $frame) (i32.const 52))))
+    (block $done (loop $read
+      (local.set $count (i32.sub (local.get $size) (local.get $pos)))
+      (if (i32.gt_u (local.get $count) (i32.const 4096)) (then (local.set $count (i32.const 4096))))
+      (call $gs32 (i32.add (local.get $frame) (i32.const 56)) (i32.const 0))
+      (if (i32.eqz (call $host_fs_read_file (local.get $handle) (i32.add (local.get $buf) (local.get $pos))
+             (local.get $count) (i32.add (local.get $frame) (i32.const 56))))
+        (then
+          (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+            (then
+              (call $gs32 (local.get $frame) (global.get $load_image_pending))
+              (global.set $load_image_pending (local.get $frame))
+              (return (i32.const -1))))
+          (br $done)))
+      ;; A short read before the advertised end is truncated input, not ready.
+      (br_if $done (i32.ne (call $gl32 (i32.add (local.get $frame) (i32.const 56))) (local.get $count)))
+      (local.set $pos (i32.add (local.get $pos) (local.get $count)))
+      (call $gs32 (i32.add (local.get $frame) (i32.const 52)) (local.get $pos))
+      (br_if $read (i32.lt_u (local.get $pos) (local.get $size)))
+      (local.set $bmp (call $load_image_bitmap_parse (local.get $buf) (local.get $size)))))
+    (call $load_image_file_release (local.get $frame))
     (local.get $bmp))
 
   ;; 711: LoadImageA(hInst, name, type, cx, cy, fuLoad) — delegate to LoadIcon/LoadCursor/LoadBitmap
@@ -124,17 +218,14 @@
       (then
         ;; LR_LOADFROMFILE (0x10) — name is a path; the resource walker has
         ;; nothing to find. Pawn loads its two board squares this way.
-        (if (i32.and
-              (i32.ne (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
-                               (i32.const 0x10)) (i32.const 0))
-              (i32.gt_u (local.get $arg1) (i32.const 0xFFFF)))
+        (if (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 24))) (i32.const 0x10))
           (then
-            (local.set $tmp (call $load_image_bitmap_file (call $g2w (local.get $arg1))))
-            (if (local.get $tmp)
-              (then
-                (global.set $eax (local.get $tmp))
-                (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
-                (return)))))
+            (local.set $tmp (call $load_image_bitmap_file (local.get $arg1) (i32.const 0)))
+            (if (i32.eq (local.get $tmp) (i32.const -1))
+              (then (call $io_block (i32.const 0)) (return)))
+            (global.set $eax (local.get $tmp))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+            (return)))
         (local.set $tmp (call $host_gdi_load_bitmap (local.get $arg0)
           (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
             (then (local.get $arg1))
@@ -178,6 +269,16 @@
   ;; used by Win98 Media Player. Named bitmap resources are uncommon here; the
   ;; host resource lookup accepts the same guest pointer for either variant.
   (func $handle_LoadImageW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $bmp i32)
+    (if (i32.and (i32.eqz (local.get $arg2))
+          (i32.ne (i32.and (call $gl32 (i32.add (global.get $esp) (i32.const 24))) (i32.const 0x10)) (i32.const 0)))
+      (then
+        (local.set $bmp (call $load_image_bitmap_file (local.get $arg1) (i32.const 1)))
+        (if (i32.eq (local.get $bmp) (i32.const -1))
+          (then (call $io_block (i32.const 0)) (return)))
+        (global.set $eax (local.get $bmp))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 28)))
+        (return)))
     (call $handle_LoadImageA
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))

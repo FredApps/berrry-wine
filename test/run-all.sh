@@ -156,6 +156,7 @@ UNIT=(
   test/test-io-wait-threads.js
   test/test-mm-timer-callback.js
   test/test-run-budget-completes-resume.js
+  test/test-run-deadline.js
   test/test-run-pinned-wasm.js
   test/test-cmp-memory-jb.js
   test/test-browser-waveout-pump.js
@@ -560,6 +561,9 @@ UNIT=(
   test/test-extract-icon-ex-w.js
   test/test-free-console.js
   test/test-gdiplus-flat-api.js
+  test/test-gdiplus-lazy-file.js
+  test/test-font-lazy-registration.js
+  test/test-loadimage-lazy-file.js
   test/test-get-ancestor.js
   test/test-get-class-info-ex-common-control.js
   test/test-get-clipboard-sequence-number.js

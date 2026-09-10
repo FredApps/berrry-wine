@@ -834,6 +834,9 @@
       (then (return)))
     (local.set $t (call $page_resolve (global.get $eip)))
     (if (i32.eqz (local.get $t)) (then (return)))
+    ;; This transfer starts a new complete block. Never poll inside $next or
+    ;; halfway through a native/REP operation; their continuation is not saved.
+    (if (call $run_deadline_poll) (then (return)))
     (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
     (global.set $page_fast (i32.add (global.get $page_fast) (i32.const 1)))
     ;; Kept even on the fast path: these two are what a crash log reads to say

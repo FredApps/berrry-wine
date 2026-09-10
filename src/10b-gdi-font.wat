@@ -780,6 +780,19 @@
       (br $types)))
     (local.get $loaded))
 
+  ;; Explicit registration can stage asynchronous bytes before entering the
+  ;; parser. Render-time font ensure still uses the synchronous loader below.
+  (func $gdi_bitmap_font_add_buffer (param $path_guest i32) (param $data_guest i32)
+      (param $size i32) (result i32)
+    (local $hash i32)
+    (if (i32.or (i32.eqz (local.get $size))
+          (i32.gt_u (local.get $size) (i32.const 0x000F0000)))
+      (then (return (i32.const 0))))
+    (local.set $hash (call $gdi_bitmap_font_path_hash (call $g2w (local.get $path_guest))))
+    (drop (call $gdi_bitmap_font_remove_hash (local.get $hash)))
+    (call $gdi_bitmap_font_parse_file (call $g2w (local.get $data_guest))
+      (local.get $size) (local.get $hash)))
+
   (func $gdi_bitmap_font_add_resource (param $path_guest i32) (result i32)
     (local $path i32) (local $hash i32) (local $handle i32) (local $size i32)
     (local $data_guest i32) (local $data i32) (local $loaded i32)

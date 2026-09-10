@@ -5,8 +5,12 @@ const assert = require('assert');
 const { callDllMain } = require('../lib/dll-loader');
 // $GUEST_BASE, from the map declared in src/00-regions.wat.
 const RegionMap = require('../lib/region-map.generated.js');
+const loaderSource = require('fs').readFileSync(require.resolve('../lib/dll-loader'), 'utf8');
+const callDllExport = require('vm').runInNewContext('(' + loaderSource.slice(
+  loaderSource.indexOf('function callDllExport('),
+  loaderSource.indexOf('function isLikelyCodeAddress(')).trim() + ')', { _regionMap: RegionMap });
 
-function captureDllMainArgs(options, { sparseStack = false } = {}) {
+function captureDllMainArgs(options, { sparseStack = false, trap = false, exportCall = false } = {}) {
   const memory = new WebAssembly.Memory({ initial: 128 });
   const dv = new DataView(memory.buffer);
   const imageBase = 0x00400000;
@@ -18,6 +22,7 @@ function captureDllMainArgs(options, { sparseStack = false } = {}) {
     ? sparseWa + guest - sparseBase
     : contiguousG2w(guest);
   let captured;
+  let deadlineEnabled = 1;
   const e = {
     memory,
     get_image_base: () => imageBase,
@@ -25,17 +30,22 @@ function captureDllMainArgs(options, { sparseStack = false } = {}) {
     get_esp: () => savedEsp,
     get_fs_base: () => 0,
     get_eax: () => 1,
+    get_run_deadline_enabled: () => deadlineEnabled,
+    set_run_deadline_enabled: value => { deadlineEnabled = value; },
     set_eip: value => { e.eip = value >>> 0; },
     set_esp: value => { e.esp = value >>> 0; },
     run: () => {
       captured = [0, 4, 8, 12].map(offset =>
         dv.getUint32(g2w(e.esp + offset), true) >>> 0);
+      if (trap) { deadlineEnabled = 0; throw new Error('nested trap'); }
       e.eip = 0;
     },
   };
   if (sparseStack) e.guest_to_wasm = g2w;
 
-  callDllMain(e, 0x0069d000, 0x006c0aa0, null, options);
+  if (exportCall) callDllExport(e, memory, 0x006c0aa0, [1, 2, 3], null, 'test');
+  else callDllMain(e, 0x0069d000, 0x006c0aa0, null, options);
+  assert.strictEqual(deadlineEnabled, 1, 'caught DLL callback traps preserve the enclosing deadline');
   return captured;
 }
 
@@ -101,3 +111,6 @@ assert.deepStrictEqual(captureSleepResume(),
   'DllMain must advance guest time and resume a cooperative Sleep before restoring caller state');
 
 console.log('PASS  DllMain receives the Windows static/dynamic load context');
+captureDllMainArgs({}, { trap: true });
+captureDllMainArgs({}, { trap: true, exportCall: true });
+console.log('PASS  DLL callbacks restore enclosing deadline after caught traps');

@@ -2,7 +2,37 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
+### Latest increment — image/font consumers and safe deadline polling
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| REVIEW FOLLOW-THROUGH                       IMPLEMENTED / NEXT                                            |
++----------------------------------+----------------------------------+------------------------------------+
+| FILE READ SAFETY                 | COOPERATIVE RESPONSIVENESS       | REMAINING GATES                    |
+| BMP: staged A/W reads, no dummy  | monotonic f64 clock, local in    | render-time font preparation       |
+| GDI+: bounded header retries    | Workers; complete-block polls   | HLP/CNT/navigation/macro retries   |
+| fonts: explicit registration,   | cached chains stop safely;      | installed-tree memory acceptance  |
+| FON / TTF / FOT + cached reuse   | nested callback/trap restoration| headful input/audio acceptance    |
++----------------------------------+----------------------------------+------------------------------------+
+| LAZY SAVES REMAIN OPT-IN         | NO HARD PREEMPTION              | NOT MERGED INTO MAIN / DEPLOYED   |
++----------------------------------------------------------------------------------------------------------+
+```
+
+`LoadImageA/W` retains its handle and bounded guest staging across monotonic 4KiB reads, including actual UTF-16 paths. Explicit file errors return NULL rather than a dummy bitmap; header/mask/palette/pixel bounds are checked before parsing. `GdipLoadImageFromFile` retains a bounded 4KiB header read, returns real errors rather than 1x1 placeholders, and does not publish an object while pending. Their compiled real-VFS tests cover zero/tiny caches, repeated misses, read faults, malformed/short files, nested calls, reused frames, and cleanup.
+
+Explicit font registration stages bytes before FON/TTF parsing or FOT publication. Completed staging is copied into the existing owned font storage and released; lazy VFS entries are not permanently materialized. Return-address/argument guards prevent reused stack frames from consuming an old call's bytes. Independent review caught a cached-face regression; cache-only lookup now preserves registration after source deletion and avoids redundant reads. Compiled regressions cover FON/TTF/FOT, pending/fault behavior, cached and uncached fallback, nested calls, replacement, and no premature FOT publication. Nested render-time font loading remains synchronous and still needs a safe preparation boundary.
+
+`run_budgeted` checks a dedicated monotonic f64 clock between complete x86 blocks, including cached branch chains, with one clock poll per 32 boundary checks. Mandatory `resume_ip` completion takes precedence, including `run(0)`. Plain `run` disables polling and restores the enclosing budget on normal return; COM, DLL, and cooperative-message JavaScript callbacks restore the flag in `finally` after caught traps. Top-level host calls clear it on failure. Worker clocks are local, never blocking RPCs; deterministic/frozen runs use plain `run`. Cooperative peer deadlines translate remaining time from the scheduler's clock into the monotonic clock origin, including `maxWallMs`-only callers.
+
+Compiled deadline tests pass for cached chains, exact retired work, expired deadlines, mandatory completion, timestamps beyond i32 range, synchronous suppression, nested calls/caught traps, and instance isolation. Host/peer scheduler and DLL callback regressions pass. These are safe-boundary checks, not preemption of an individual native, REP, or presentation operation; no hard latency guarantee is claimed.
+
+Final-source canonical and compatibility builds pass at source 303: 1,055,793 and 1,056,246 bytes, 236 host imports, unchanged layout `b00c9d60346fdb5a`, and 233 nonoverlapping data segments. All 922 test files have tier membership; that is not a full-suite run. Existing font metrics, substitutions, default bitmap-font, and enumeration regressions also pass. The final-source real Chrome Worker matrix passes: Notepad/Calculator parity, both Rodent rendering/input checks, Winamp with three Workers, and COM success/failed-fetch recovery. Browser/server cleanup completed normally and the harness exited zero. Host load was 12.97, above the repository's load-4 measurement threshold; no throughput, input-latency, or RSS improvement is claimed.
+
+Next: transactional HLP/CNT loading and help navigation/macro continuations, render-time font preparation, then installed-tree memory and headful input/audio acceptance. Lazy hydration/range writes remain opt-in. The prior microphone-startup baseline failure remains unresolved. Fable's broader structural/scheduling work is separate evidence, not proof these retry/deadline paths were safe; the already-reconciled legacy-read fix remains intact.
+
 ### Next consumer and lifecycle increment
+
+Historical source-302 evidence follows; the latest increment above supersedes its next-step list.
 
 ```text
 +----------------------------------------------------------------------------------------------------------+
