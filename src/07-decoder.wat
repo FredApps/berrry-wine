@@ -30,6 +30,12 @@
   ;; needs a rebuild to switch off cannot be A/B'd on one box in one sitting.
   ;; Decode-time only, so the flag itself costs nothing on the hot path.
   (global $sib_fusion_enabled (mut i32) (i32.const 1))
+  ;; Two straight-line x87 algebra islands emitted by older scalar codecs can
+  ;; be evaluated as one threaded op.  The recognizer is purely structural:
+  ;; constants remain operands in the thread stream and no executable address
+  ;; or application identity is baked into the handler.  Decode-time switch
+  ;; exists solely for same-artifact A/B measurements.
+  (global $x87_island_fusion_enabled (mut i32) (i32.const 1))
   ;; Where $sib_store_at leaves the operands of the store it just matched. Not
   ;; return values because there are three of them and one is the length.
   (global $fuse_info (mut i32) (i32.const 0))
@@ -1744,6 +1750,68 @@
     (call $te_raw (global.get $d_pc))
     (call $te_raw (call $branch_target (local.get $disp)))
     (i32.const 1))
+
+  ;; Collapse two common, entirely straight-line x87 algebra islands.  These
+  ;; are instruction-shape matches, not address matches: the three/two float
+  ;; constants are retained as decoded operands.  There are no guest stores or
+  ;; flag observations inside either island, which lets the execution handler
+  ;; keep the live ST values in f64 locals and publish only the final stack.
+  ;;
+  ;; kind 0 (handler 447):
+  ;;   FLD ST(0); FMUL m32; FXCH ST(2); FADD ST(1),ST;
+  ;;   FMUL m32; FXCH ST(1); FMUL m32
+  ;; kind 1 (handler 448):
+  ;;   FADD ST(1),ST; FSUBP ST(2),ST; FADD m32;
+  ;;   FXCH ST(1); FADD m32
+  ;;
+  ;; Called with $d_pc pointing at the current instruction's ModRM byte.
+  (func $try_emit_x87_island (param $opcode i32) (result i32)
+    (local $p i32)
+    (if (i32.or
+          (i32.eqz (global.get $x87_island_fusion_enabled))
+          (i32.or (global.get $code16)
+            (i32.or (global.get $d_addr16) (global.get $d_seg))))
+      (then (return (i32.const 0))))
+    (local.set $p (global.get $d_pc))
+
+    ;; D9 C0 / D8 0D addr / D9 CA / DC C1 / D8 0D addr /
+    ;; D9 C9 / D8 0D addr
+    (if (i32.eq (local.get $opcode) (i32.const 0xD9))
+      (then
+        (if (i32.and
+              (i32.eq (call $gl8 (local.get $p)) (i32.const 0xC0))
+              (i32.and
+                (i32.eq (call $gl16 (i32.add (local.get $p) (i32.const 1))) (i32.const 0x0DD8))
+                (i32.and
+                  (i32.eq (call $gl32 (i32.add (local.get $p) (i32.const 7))) (i32.const 0xC1DCCAD9))
+                  (i32.and
+                    (i32.eq (call $gl16 (i32.add (local.get $p) (i32.const 11))) (i32.const 0x0DD8))
+                    (i32.and
+                      (i32.eq (call $gl16 (i32.add (local.get $p) (i32.const 17))) (i32.const 0xC9D9))
+                      (i32.eq (call $gl16 (i32.add (local.get $p) (i32.const 19))) (i32.const 0x0DD8)))))))
+          (then
+            (call $te (i32.const 447) (call $gl32 (i32.add (local.get $p) (i32.const 3))))
+            (call $te_raw (call $gl32 (i32.add (local.get $p) (i32.const 13))))
+            (call $te_raw (call $gl32 (i32.add (local.get $p) (i32.const 21))))
+            (global.set $d_pc (i32.add (local.get $p) (i32.const 25)))
+            (return (i32.const 1))))))
+
+    ;; DC C1 / DE EA / D8 05 addr / D9 C9 / D8 05 addr
+    (if (i32.and
+          (i32.eq (local.get $opcode) (i32.const 0xDC))
+          (i32.and
+            (i32.eq (call $gl32 (local.get $p)) (i32.const 0xD8EADEC1))
+            (i32.and
+              (i32.eq (call $gl8 (i32.add (local.get $p) (i32.const 4))) (i32.const 0x05))
+              (i32.and
+                (i32.eq (call $gl16 (i32.add (local.get $p) (i32.const 9))) (i32.const 0xC9D9))
+                (i32.eq (call $gl16 (i32.add (local.get $p) (i32.const 11))) (i32.const 0x05D8))))))
+      (then
+        (call $te (i32.const 448) (call $gl32 (i32.add (local.get $p) (i32.const 5))))
+        (call $te_raw (call $gl32 (i32.add (local.get $p) (i32.const 13))))
+        (global.set $d_pc (i32.add (local.get $p) (i32.const 17)))
+        (return (i32.const 1))))
+    (i32.const 0))
 
   ;; `OP dword [base+disp], imm32` whose next instruction is the Jcc reading
   ;; its flags — the compare-a-local-and-branch shape, and the largest adjacent
@@ -5212,6 +5280,8 @@
       ;; ---- x87 FPU (D8-DF) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0xD8)) (i32.le_u (local.get $op) (i32.const 0xDF)))
         (then
+          (if (call $try_emit_x87_island (local.get $op))
+            (then (br $decode)))
           (call $decode_modrm)
           (if (i32.eq (global.get $mr_mod) (i32.const 3))
             (then

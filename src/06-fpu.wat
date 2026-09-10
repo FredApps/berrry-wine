@@ -944,6 +944,61 @@
       (i32.add (call $get_reg (i32.and (local.get $op) (i32.const 0xF))) (call $read_thread_word)))
     (return_call $next))
 
+  ;; 447: seven-op straight-line x87 multiply/add island.  `op` and the next
+  ;; two words are the three m32 constant addresses.  The ordinary sequence
+  ;; leaves one extra stack value and has no observable intermediate store or
+  ;; status change, so preserve its single FLD stack-overflow check through
+  ;; $fpu_push and publish the three final values directly.
+  (func $th_x87_mul_add_island (param $c1_addr i32)
+    (local $c2_addr i32) (local $c3_addr i32)
+    (local $a f64) (local $b f64) (local $sum f64)
+    (local $v0 f64) (local $v1 f64) (local $v2 f64)
+    (local.set $c2_addr (call $read_thread_word))
+    (local.set $c3_addr (call $read_thread_word))
+    (local.set $b (call $fpu_get (i32.const 0)))
+    (local.set $a (call $fpu_get (i32.const 1)))
+    (local.set $v2
+      (f64.mul (local.get $b)
+        (f64.promote_f32 (f32.load (call $g2w (local.get $c1_addr))))))
+    (local.set $sum (f64.add (local.get $a) (local.get $b)))
+    (local.set $v1
+      (f64.mul (local.get $a)
+        (f64.promote_f32 (f32.load (call $g2w (local.get $c2_addr))))))
+    (local.set $v0
+      (f64.mul (local.get $sum)
+        (f64.promote_f32 (f32.load (call $g2w (local.get $c3_addr))))))
+    (call $fpu_push (local.get $v0))
+    (call $fpu_set (i32.const 1) (local.get $v1))
+    (call $fpu_set (i32.const 2) (local.get $v2))
+    (return_call $next))
+
+  ;; 448: five-op add/sub-pop/add/swap/add island.  The two m32 constants may
+  ;; differ; retaining both operands keeps this a structural algebra fold and
+  ;; does not assume Alpha's particular table layout.
+  (func $th_x87_add_subpop_island (param $c1_addr i32)
+    (local $c2_addr i32)
+    (local $x0 f64) (local $x1 f64) (local $x2 f64)
+    (local $sum f64) (local $diff f64)
+    (local.set $c2_addr (call $read_thread_word))
+    (local.set $x0 (call $fpu_get (i32.const 0)))
+    (local.set $x1 (call $fpu_get (i32.const 1)))
+    (local.set $x2 (call $fpu_get (i32.const 2)))
+    (local.set $sum
+      (f64.add
+        (f64.add (local.get $x1) (local.get $x0))
+        (f64.promote_f32 (f32.load (call $g2w (local.get $c1_addr))))))
+    (local.set $diff
+      (f64.add
+        (f64.sub (local.get $x2) (local.get $x0))
+        (f64.promote_f32 (f32.load (call $g2w (local.get $c2_addr))))))
+    ;; Match FSUBP's observable ordering: ST(1) and ST(2) become valid/lose
+    ;; raw-integer shadows before ST(0) is popped and TOP advances.
+    ;; The intervening FXCH makes the post-pop order diff,sum.
+    (call $fpu_set (i32.const 1) (local.get $diff))
+    (call $fpu_set (i32.const 2) (local.get $sum))
+    (drop (call $fpu_pop))
+    (return_call $next))
+
   ;; 439: canonical x87 compare branch tail:
   ;;   FNSTSW AX; TEST AH, imm8; Jcc
   ;;

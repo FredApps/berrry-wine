@@ -3438,6 +3438,12 @@
   (func (export "set_sib_fusion") (param $flag i32)
     (global.set $sib_fusion_enabled (local.get $flag)))
 
+  ;; Consecutive x87 algebra-island fold.  Decode-time only; clearing the
+  ;; cache makes an in-process A/B switch affect code already visited.
+  (func (export "set_x87_island_fusion") (param $flag i32)
+    (global.set $x87_island_fusion_enabled (local.get $flag))
+    (call $clear_cache))
+
   ;; The unrolled-rectangle fold ($th_rect_run). Same rules: before the first
   ;; decode, and on every per-thread instance.
   (func (export "set_rect_run") (param $flag i32)
