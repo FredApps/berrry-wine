@@ -2,7 +2,34 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — owned public macro calls
+### Latest increment — Win16 public macro continuation
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| WIN16 USER.171                         OWNED PE CALLBACK / ORIGINAL PASCAL RETURN                         |
++----------------------------------+----------------------------------+------------------------------------+
+| ENTER                            | WAIT / RESUME                    | RETURN                             |
+| real NE loader + flat thunks     | separate 64KiB stack + TIB      | restore selectors, bases and FS   |
+| retain original 16-byte frame   | normal Sleep / ReadFile yields  | restore original SS:SP and CS:IP   |
+| copy DLL binding + arguments    | preserve NE resource staging    | one Pascal cleanup; release owners|
++----------------------------------+----------------------------------+------------------------------------+
+| NEXT: native macro interruption | THEN: render-time font loading  | GATES: memory + input/audio       |
++----------------------------------------------------------------------------------------------------------+
+| LAZY DEFAULTS REMAIN OFF         | ISOLATED BRANCH / NOT DEPLOYED   | REVIEW GOAL REMAINS OPEN           |
++----------------------------------------------------------------------------------------------------------+
+```
+
+The public Win16 WinHelp path now retains its actual Pascal frame while a registered PE routine executes. It uses the same owned DLL/argument operation as WinHelpA/W, with a separate callback stack and TIB; the typed return restores Win16 selectors, segment bases, execution width, and FS before the original API completes. The shared call32 scratch stack is not retained across a wait. Teardown frees executing operation storage only after the guest has stopped.
+
+Real NE startup bypasses PE initialization, so it now initializes flat thunk bounds and the typed callback-return thunk explicitly. Synchronous DLL publication saves/restores the original NE staging bytes used by resource walkers. PE extension placement validates section extents and atomically reserves a bounded low-heap extent outside the complete selector arena before mapping; an exhausted window fails rather than spilling into emulator storage. This is not a complete malformed-PE security audit.
+
+Cross-check with `fable-review.md`: the existing ownership, retry, and overlay work does not establish this Win16 callback contract. Native-click macro interruption, nonlocal callback abandonment, render-time font preparation, and installed-tree/input/audio acceptance remain separate open work. A source recheck also corrected an earlier diagnostic hypothesis: normal live `run_impl` returns already drain `resume_ip` before yielding; native interruption still needs complete CPU/wait-state preservation, but not an additional complete-block handshake on this branch.
+
+Validation: source 307 canonical/compatibility builds pass (1,061,528 / 1,061,981 bytes), unchanged layout `b00c9d60346fdb5a`, 237 imports, 233 nonoverlapping data segments, and 929 registered tests. The new compiled real-NE regression passes all five cases: success and data failure each take 408 slices, 130 Sleep calls and six IO parks; DLL failure, cancellation while staging, and cancellation during callback execution also pass. Assertions cover untouched Pascal input bytes, exact far return and segment/FS restoration, callback stack/TIB/TLS state, unchanged NE staging bytes, malformed section/oversized-image rejection, and release of owned stack/TIB storage on stopped-process cancellation. The test exposed and verified the fix for a raw-pointer/boolean-AND error in the trace guard.
+
+The existing compiled parser suite passes 631 checks; NE loader/resource checks pass 2,881 assertions. The 32-bit A/W macro suite, owned resolver tests, and Win16 lazy HLP/CNT test pass. Real Pipe Dream Help and AoEHlp.dll macro checks pass. The final-source Chrome Worker matrix also passes with exit 0 and normal browser/server cleanup: Notepad/Calculator parity, both Rodent render/input checks, Winamp with three real Workers, and COM success/failed-fetch recovery. These are targeted functional checks, not the complete test suite, a general PE compatibility claim, or performance/memory acceptance.
+
+### Prior increment — owned public macro calls
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

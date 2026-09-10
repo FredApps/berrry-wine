@@ -513,6 +513,16 @@
     ;; A 16-bit image has no base to relocate to, so guest linear addresses
     ;; start at zero and every segment lives in its own 64KB arena slot.
     (global.set $image_base (i32.const 0))
+    ;; Public WinHelp can call a PE extension even in an NE task. Its imported
+    ;; APIs and typed return use the flat Win32 thunk zone, not the selector
+    ;; thunk table below. Do not manufacture a PE SizeOfImage for this task.
+    (global.set $thunk_guest_base (call $w2g (global.get $THUNK_BASE)))
+    (global.set $thunk_guest_end (call $w2g (global.get $THUNK_END)))
+    (global.set $font_enum_ret_thunk
+      (i32.add (global.get $thunk_guest_base)
+        (i32.mul (global.get $num_thunks) (i32.const 8))))
+    (call $gs32 (global.get $font_enum_ret_thunk) (i32.const 0xCACA0011))
+    (global.set $num_thunks (i32.add (global.get $num_thunks) (i32.const 1)))
     (global.set $win16_thunk_count (i32.const 0))
     (call $zero_memory (global.get $WIN16_SEG_TABLE)
       (i32.mul (i32.add (global.get $WIN16_SEG_MAX) (i32.const 1)) (i32.const 16)))

@@ -526,6 +526,7 @@ UNIT=(
   test/test-winhelp-routine-ownership.js
   test/test-winhelp-routine-lazy-file.js
   test/test-winhelp-lazy-macro.js
+  test/test-win16-lazy-macro.js
   test/test-wat-gdi-region.js
   test/test-wat-gdi-benchmark.js
   test/test-wat-gdi-bitmap-handlers.js

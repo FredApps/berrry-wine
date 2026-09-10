@@ -6915,8 +6915,19 @@
         (else (call $win16_arg32 (i32.const 0)))))
     ;; The staged loader must retain the real Pascal frame's identity, not
     ;; call32's shared scratch ESP. Only this outer boundary may park it.
-    (local.set $accepted (call $help_dispatch_api_a (local.get $hwnd)
-      (local.get $file) (local.get $cmd) (local.get $data)))
+    (local.set $accepted (call $help_macro_api_enter (local.get $hwnd)
+      (local.get $file) (local.get $cmd) (local.get $data) (i32.const 3)))
+    (if (i32.eq (local.get $accepted) (i32.const -3))
+      (then
+        (local.set $accepted (call $help_dispatch_api_a_impl (local.get $hwnd)
+          (local.get $file) (local.get $cmd) (local.get $data)))))
+    (call $help_macro_api_leave)
+    (if (i32.eq (local.get $accepted) (i32.const -2))
+      (then
+        ;; The PE callback owns a private stack/TIB now. Do not reload thunk
+        ;; CS or pop the suspended Pascal frame until its typed return.
+        (global.set $handler_set_eip (i32.const 1))
+        (return)))
     (if (i32.eq (local.get $accepted) (i32.const -1))
       (then
         (global.set $eax (i32.const 0))
@@ -10414,12 +10425,16 @@
     ;; EIP zero is the exception: that is how a task that has been terminated
     ;; on purpose — FatalAppExit, or a fatal error the host reported — tells
     ;; the run loop it is done, and it must not read as a wild jump.
-    (if (i32.and (i32.ne (global.get $eip) (i32.const 0))
+    ;; A public WinHelp macro may now run a flat DLL callback on its own
+    ;; validated stack; all other out-of-arena returns remain fatal.
+    (if (i32.and
+        (i32.eqz (call $help_macro_api_flat_callback_active))
+        (i32.and (i32.ne (global.get $eip) (i32.const 0))
         (i32.or
           (i32.lt_u (global.get $eip) (global.get $WIN16_ARENA))
           (i32.ge_u (global.get $eip)
             (i32.add (global.get $WIN16_ARENA)
-              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))))
+              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000)))))))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F8))
         (call $host_log_i32 (global.get $win16_last_module))

@@ -2079,7 +2079,8 @@
     (local $copy i32) (local $handle i32) (local $size i32) (local $bytes i32)
     (local $index i32) (local $pos i32) (local $count i32) (local $ok i32)
     (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
-    (if (i32.eqz (global.get $exe_size_of_image))
+    (if (i32.and (i32.eqz (global.get $exe_size_of_image))
+                 (i32.eqz (global.get $is_win16)))
       (then (call $help_routine_cancel_vfs (local.get $owner)) (return (i32.const 0))))
     (local.set $frame (call $help_routine_frame (local.get $owner)))
     (block $failed
@@ -2156,6 +2157,7 @@
   (func $help_routine_commit_vfs (param $frame i32) (result i32)
     (local $w i32) (local $owner i32) (local $index i32) (local $entry i32)
     (local $bytes i32) (local $size i32) (local $pe i32)
+    (local $saved_ne i32) (local $load_addr i32) (local $image_size i32)
     (if (i32.eqz (local.get $frame)) (then (return (i32.const 0))))
     (local.set $w (call $g2w (local.get $frame)))
     (local.set $owner (i32.load offset=4 (local.get $w)))
@@ -2171,12 +2173,35 @@
           (local.set $pe (i32.load offset=60 (local.get $bytes)))
           (br_if $done (i32.gt_u (local.get $pe) (i32.sub (local.get $size) (i32.const 248))))
           (br_if $done (i32.ne (i32.load (i32.add (local.get $bytes) (local.get $pe))) (i32.const 0x4550)))
+          ;; NE resource walkers retain pointers into PE_STAGING for the entire
+          ;; task. Publication is synchronous: save/restore those bytes around
+          ;; the PE loader, never retaining a borrowed staging image across IO.
+          (if (global.get $is_win16)
+            (then
+              (br_if $done (i32.gt_u (global.get $win16_file_size) (global.get $PE_STAGING_SIZE)))
+              (local.set $saved_ne (call $heap_alloc (global.get $win16_file_size)))
+              (br_if $done (i32.eqz (local.get $saved_ne)))
+              (memory.copy (call $g2w (local.get $saved_ne)) (global.get $PE_STAGING)
+                (global.get $win16_file_size))))
+          (local.set $load_addr (call $next_dll_addr))
+          (if (global.get $is_win16)
+            (then
+              ;; Validate before atomically reserving an image-sized extent
+              ;; outside every selector and existing heap arena.
+              (local.set $image_size (call $help_ne_dll_image_size (local.get $bytes) (local.get $size)))
+              (br_if $done (i32.eqz (local.get $image_size)))
+              (local.set $load_addr (call $help_ne_reserve_dll_image (local.get $image_size)))
+              (br_if $done (i32.eqz (local.get $load_addr)))))
           (memory.copy (global.get $PE_STAGING) (local.get $bytes) (local.get $size))
-          (drop (call $load_dll (local.get $size) (call $next_dll_addr)))
+          (drop (call $load_dll (local.get $size) (local.get $load_addr)))
+          (if (local.get $saved_ne)
+            (then (memory.copy (global.get $PE_STAGING) (call $g2w (local.get $saved_ne))
+              (global.get $win16_file_size))))
           (local.set $index (call $find_loaded_dll (i32.load offset=8 (local.get $w))))))
       (br_if $done (i32.lt_s (local.get $index) (i32.const 0)))
       (local.set $entry (call $resolve_name_export (local.get $index)
         (call $g2w (i32.load offset=12 (local.get $w))))))
+    (if (local.get $saved_ne) (then (call $heap_free (local.get $saved_ne))))
     (call $help_routine_cancel_vfs (local.get $owner))
     (local.get $entry))
 
@@ -2198,15 +2223,38 @@
     (call $heap_free (local.get $owner))
     (local.get $entry))
   ;; Public WinHelpA/W macro calls own a real guest-return continuation. Each
-  ;; 80-byte job stores next/state, original ESP/return/thunk, five original
+  ;; 136-byte job stores next/state, original ESP/return/thunk, five original
   ;; arguments, owned parsed arguments/count, resolver frame/result, and the
   ;; callee-saved GPRs. State1 stages IO,2 executes guest code,3 awaits API retry.
-  ;; Native-click and Win16 callers deliberately retain their separate path.
+  ;; Win16 extension: +72 code16; +76..88 ES/CS/SS/DS selectors; +92..104
+  ;; their bases; +108 FS; +112 owned 64KiB callback stack; +116/+120 raw
+  ;; Pascal far path/data; +124 reserved; +128 owned 256-byte callback TIB.
+  ;; Native clicks deliberately retain their separate path.
   (global $help_macro_api_jobs (mut i32) (i32.const 0))
   (global $help_macro_api_context (mut i32) (i32.const 0))
 
   (func $help_macro_api_active (result i32)
     (i32.ne (global.get $help_macro_api_context) (i32.const 0)))
+
+  ;; Only an executing Win16-owned callback may leave the NE arena at an
+  ;; API boundary. A flat CPU alone is not evidence of a valid transition.
+  (func $help_macro_api_flat_callback_active (result i32)
+    (local $job i32) (local $stack i32)
+    (if (global.get $code16) (then (return (i32.const 0))))
+    (local.set $job (global.get $help_macro_api_jobs))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $job)))
+      (if (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 4))) (i32.const 2))
+          (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 3)))
+        (then
+          (local.set $stack (call $gl32 (i32.add (local.get $job) (i32.const 112))))
+          (if (i32.and (i32.ne (local.get $stack) (i32.const 0))
+              (i32.lt_u (i32.sub (global.get $esp) (local.get $stack)) (i32.const 65536)))
+            (then (return (i32.const 1))))))
+      (local.set $job (call $gl32 (local.get $job)))
+      (br $scan)))
+    (i32.const 0))
 
   (func $help_macro_api_free_args (param $args i32)
     (local $i i32) (local $p i32)
@@ -2236,6 +2284,10 @@
       (else (global.set $help_macro_api_jobs (call $gl32 (local.get $job)))))
     (call $help_routine_cancel_vfs (local.get $job))
     (call $help_macro_api_free_args (call $gl32 (i32.add (local.get $job) (i32.const 40))))
+    (local.set $p (call $gl32 (i32.add (local.get $job) (i32.const 112))))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (local.set $p (call $gl32 (i32.add (local.get $job) (i32.const 128))))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
     (call $heap_free (local.get $job)))
 
   (func $help_macro_api_leave
@@ -2257,6 +2309,7 @@
 
   (func $help_macro_api_advance (param $job i32) (param $record i32) (result i32)
     (local $ready i32) (local $entry i32) (local $args i32) (local $i i32)
+    (local $stack i32) (local $tib i32)
     (local.set $ready (call $help_routine_prepare_vfs (local.get $record) (local.get $job)))
     (if (i32.eq (local.get $ready) (i32.const -1)) (then (return (i32.const -1))))
     (if (i32.eqz (local.get $ready))
@@ -2272,10 +2325,48 @@
         (call $help_macro_api_drop (local.get $job))
         (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
         (return (i32.const 0))))
+    (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 3))
+      (then
+        (local.set $stack (call $heap_alloc (i32.const 65536)))
+        (local.set $tib (call $heap_alloc (i32.const 256)))
+        (call $gs32 (i32.add (local.get $job) (i32.const 112)) (local.get $stack))
+        (call $gs32 (i32.add (local.get $job) (i32.const 128)) (local.get $tib))
+        ;; TLS storage belongs to this guest thread, not to the callback job.
+        ;; NE startup has no PE TIB initialization, so establish it once here.
+        (if (i32.eqz (global.get $tls_slots))
+          (then
+            (global.set $tls_slots (call $heap_alloc (i32.const 256)))
+            (if (global.get $tls_slots)
+              (then (memory.fill (call $g2w (global.get $tls_slots))
+                (i32.const 0) (i32.const 256))))))
+        (if (i32.or (i32.eqz (global.get $tls_slots))
+            (i32.or (i32.eqz (local.get $stack)) (i32.eqz (local.get $tib))))
+          (then
+            (call $help_macro_api_drop (local.get $job))
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (memory.fill (call $g2w (local.get $tib)) (i32.const 0) (i32.const 256))
+        (call $gs32 (local.get $tib) (i32.const -1))
+        (call $gs32 (i32.add (local.get $tib) (i32.const 4)) (i32.add (local.get $stack) (i32.const 65536)))
+        (call $gs32 (i32.add (local.get $tib) (i32.const 8)) (local.get $stack))
+        (call $gs32 (i32.add (local.get $tib) (i32.const 0x18)) (local.get $tib))
+        (call $gs32 (i32.add (local.get $tib) (i32.const 0x2c)) (global.get $tls_slots))
+        ;; Direct assignments avoid selector-table lookup and SS's 16-bit SP
+        ;; truncation. The PE callback uses flat code/data and an owned TIB.
+        (global.set $code16 (i32.const 0))
+        (global.set $sreg_es (i32.const 0)) (global.set $sreg_cs (i32.const 0))
+        (global.set $sreg_ss (i32.const 0)) (global.set $sreg_ds (i32.const 0))
+        (global.set $seg_base_es (i32.const 0)) (global.set $seg_base_cs (i32.const 0))
+        (global.set $seg_base_ss (i32.const 0)) (global.set $seg_base_ds (i32.const 0))
+        (global.set $fs_base (local.get $tib))))
     (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 2))
     ;; RET n leaves the typed frame at ESP; the original API frame above it
     ;; remains untouched until the retried WinHelp wrapper returns normally.
-    (global.set $esp (i32.sub (call $gl32 (i32.add (local.get $job) (i32.const 8))) (i32.const 8)))
+    (global.set $esp (i32.sub
+      (if (result i32) (local.get $stack)
+        (then (i32.add (local.get $stack) (i32.const 65536)))
+        (else (call $gl32 (i32.add (local.get $job) (i32.const 8)))))
+      (i32.const 8)))
     (call $gs32 (global.get $esp) (i32.const 0x31504c48)) ;; HLP1
     (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $job))
     (local.set $args (call $gl32 (i32.add (local.get $job) (i32.const 40))))
@@ -2315,18 +2406,39 @@
       (param $command i32) (param $data i32) (param $width i32) (result i32)
     (local $job i32) (local $next i32) (local $match i32) (local $state i32) (local $result i32)
     (call $help_macro_api_leave)
-    (if (global.get $code16) (then (return (i32.const -3))))
-    ;; Host debug helpers call the dispatcher without constructing an API
-    ;; frame. They cannot retain/redirect that borrowed guest stack.
-    (if (i32.or
-          (i32.or (i32.lt_u (global.get $current_thunk_eip) (global.get $thunk_guest_base))
-                  (i32.ge_u (global.get $current_thunk_eip) (global.get $thunk_guest_end)))
-          (i32.or
-            (i32.or (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 4))) (local.get $caller))
-                    (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 8))) (local.get $path)))
-            (i32.or (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 12))) (local.get $command))
-                    (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 16))) (local.get $data)))))
-      (then (return (i32.const -3))))
+    (if (i32.eq (local.get $width) (i32.const 3))
+      (then
+        (if (i32.or (i32.eqz (global.get $code16))
+              (i32.or (i32.eqz (global.get $WIN16_THUNK_SEL))
+                (i32.ne (global.get $sreg_cs) (global.get $WIN16_THUNK_SEL))))
+          (then (return (i32.const -3))))
+        (if (i32.ge_u (i32.sub (global.get $current_thunk_eip) (global.get $seg_base_cs)) (i32.const 65536))
+          (then (return (i32.const -3))))
+        (if (i32.or
+              (i32.ne (call $win16_h32 (call $win16_arg16 (i32.const 5))) (local.get $caller))
+              (i32.or (i32.ne (call $win16_arg16 (i32.const 2)) (local.get $command))
+                (i32.ne (call $win16_far_to_guest (call $win16_arg16 (i32.const 4))
+                          (call $win16_arg16 (i32.const 3))) (local.get $path))))
+          (then (return (i32.const -3))))
+        (if (i32.ne (local.get $data)
+              (if (result i32) (call $help_command_data_is_pointer (local.get $command))
+                (then (call $win16_far_to_guest (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+                (else (call $win16_arg32 (i32.const 0)))))
+          (then (return (i32.const -3)))))
+      (else
+        (if (global.get $code16) (then (return (i32.const -3))))
+        ;; Host debug helpers call the dispatcher without constructing an API
+        ;; frame. They cannot retain/redirect that borrowed guest stack.
+        (if (i32.or
+              (i32.or (i32.lt_u (global.get $current_thunk_eip) (global.get $thunk_guest_base))
+                      (i32.ge_u (global.get $current_thunk_eip) (global.get $thunk_guest_end)))
+              (i32.or
+                (i32.or (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 4))) (local.get $caller))
+                        (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 8))) (local.get $path)))
+                (i32.or (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 12))) (local.get $command))
+                        (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 16))) (local.get $data)))))
+          (then (return (i32.const -3))))
+          ))
     (local.set $job (global.get $help_macro_api_jobs))
     (block $done (loop $find
       (br_if $done (i32.eqz (local.get $job)))
@@ -2341,6 +2453,11 @@
             (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 28))) (local.get $command))
             (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 32))) (local.get $data))
               (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (local.get $width))))))))
+          (if (i32.and (local.get $match) (i32.eq (local.get $width) (i32.const 3)))
+            (then
+              (local.set $match (i32.and
+                (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 116))) (call $win16_arg32 (i32.const 3)))
+                (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 120))) (call $win16_arg32 (i32.const 0)))))))
           (if (local.get $match)
             (then
               (if (i32.eq (local.get $state) (i32.const 1))
@@ -2355,12 +2472,12 @@
       (local.set $job (local.get $next)) (br $find)))
     (if (i32.ne (local.get $command) (global.get $HELP_COMMAND_MACRO))
       (then (return (i32.const -3))))
-    (local.set $job (call $heap_alloc (i32.const 80)))
+    (local.set $job (call $heap_alloc (i32.const 136)))
     (if (i32.eqz (local.get $job))
       (then
         (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
         (return (i32.const 0))))
-    (memory.fill (call $g2w (local.get $job)) (i32.const 0) (i32.const 80))
+    (memory.fill (call $g2w (local.get $job)) (i32.const 0) (i32.const 136))
     (call $gs32 (i32.add (local.get $job) (i32.const 8)) (global.get $esp))
     (call $gs32 (i32.add (local.get $job) (i32.const 12)) (call $gl32 (global.get $esp)))
     (call $gs32 (i32.add (local.get $job) (i32.const 16)) (global.get $current_thunk_eip))
@@ -2373,6 +2490,20 @@
     (call $gs32 (i32.add (local.get $job) (i32.const 60)) (global.get $esi))
     (call $gs32 (i32.add (local.get $job) (i32.const 64)) (global.get $edi))
     (call $gs32 (i32.add (local.get $job) (i32.const 68)) (global.get $ebp))
+    (call $gs32 (i32.add (local.get $job) (i32.const 72)) (global.get $code16))
+    (call $gs32 (i32.add (local.get $job) (i32.const 76)) (global.get $sreg_es))
+    (call $gs32 (i32.add (local.get $job) (i32.const 80)) (global.get $sreg_cs))
+    (call $gs32 (i32.add (local.get $job) (i32.const 84)) (global.get $sreg_ss))
+    (call $gs32 (i32.add (local.get $job) (i32.const 88)) (global.get $sreg_ds))
+    (call $gs32 (i32.add (local.get $job) (i32.const 92)) (global.get $seg_base_es))
+    (call $gs32 (i32.add (local.get $job) (i32.const 96)) (global.get $seg_base_cs))
+    (call $gs32 (i32.add (local.get $job) (i32.const 100)) (global.get $seg_base_ss))
+    (call $gs32 (i32.add (local.get $job) (i32.const 104)) (global.get $seg_base_ds))
+    (call $gs32 (i32.add (local.get $job) (i32.const 108)) (global.get $fs_base))
+    (if (i32.eq (local.get $width) (i32.const 3))
+      (then
+        (call $gs32 (i32.add (local.get $job) (i32.const 116)) (call $win16_arg32 (i32.const 3)))
+        (call $gs32 (i32.add (local.get $job) (i32.const 120)) (call $win16_arg32 (i32.const 0)))))
     (global.set $help_macro_api_context (local.get $job))
     (i32.const -3))
 
@@ -2386,6 +2517,19 @@
     (global.set $esi (call $gl32 (i32.add (local.get $job) (i32.const 60))))
     (global.set $edi (call $gl32 (i32.add (local.get $job) (i32.const 64))))
     (global.set $ebp (call $gl32 (i32.add (local.get $job) (i32.const 68))))
+    (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 3))
+      (then
+        (global.set $code16 (call $gl32 (i32.add (local.get $job) (i32.const 72))))
+        (global.set $sreg_es (call $gl32 (i32.add (local.get $job) (i32.const 76))))
+        (global.set $sreg_cs (call $gl32 (i32.add (local.get $job) (i32.const 80))))
+        (global.set $sreg_ss (call $gl32 (i32.add (local.get $job) (i32.const 84))))
+        (global.set $sreg_ds (call $gl32 (i32.add (local.get $job) (i32.const 88))))
+        (global.set $seg_base_es (call $gl32 (i32.add (local.get $job) (i32.const 92))))
+        (global.set $seg_base_cs (call $gl32 (i32.add (local.get $job) (i32.const 96))))
+        (global.set $seg_base_ss (call $gl32 (i32.add (local.get $job) (i32.const 100))))
+        (global.set $seg_base_ds (call $gl32 (i32.add (local.get $job) (i32.const 104))))
+        (global.set $fs_base (call $gl32 (i32.add (local.get $job) (i32.const 108))))
+      ))
     (global.set $esp (call $gl32 (i32.add (local.get $job) (i32.const 8))))
     (global.set $eip (call $gl32 (i32.add (local.get $job) (i32.const 16))))
     (global.set $steps (i32.const 0))
