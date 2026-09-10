@@ -779,7 +779,20 @@ function buildSyntheticSemanticHelp({
 }
 
 async function main() {
-  const wasm = compileSrcWasm();
+  const wasm = compileSrcWasm((file, source) => file === '13-exports.wat' ? source + String.raw`
+    (func (export "test_help_cpu_state") (param $ip i32) (param $sp i32)
+      (param $reason i32) (param $handle i32) (param $handles i32)
+      (param $all i32) (param $timeout i32) (param $stack i32) (param $flag i32)
+      (global.set $eip (local.get $ip)) (global.set $esp (local.get $sp))
+      (global.set $yield_reason (local.get $reason))
+      (global.set $wait_handle (local.get $handle))
+      (global.set $wait_handles_ptr (local.get $handles))
+      (global.set $wait_all (local.get $all))
+      (global.set $wait_timeout (local.get $timeout))
+      (global.set $wait_stack_bytes (local.get $stack))
+      (global.set $yield_flag (local.get $flag)))
+    (func (export "test_help_yield_flag") (result i32) (global.get $yield_flag))
+  ` : source);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { getMemory: () => memory.buffer, renderer: null, resourceJson: {} };
   const imports = createHostImports(ctx);
@@ -3493,9 +3506,9 @@ async function main() {
     0x8888, allocGuestAnsi(externalSourcePath), 0x0001, 8);
   const externalMainHwnd = e.get_help_window();
   const externalRun = externalSourceAccepted === 1 ? firstVisibleHotspotRun() : null;
-  // Native message dispatch cannot park. A lazy target must be refused before
-  // snapshot/detach, with no leaked pending handle or false success presentation.
-  const { ChunkCache } = require('../lib/byte-provider');
+  // Native dispatch queues a transaction without changing the visible source.
+  // The host services its owned read between guest calls, not by replaying one.
+  const { ChunkCache, ChunkCacheBudget } = require('../lib/byte-provider');
   const eagerExternalTarget = ctx.vfs.files.get(externalTargetPath);
   let lazyExternalFetches = 0;
   ctx.vfs.setProviderFile(externalTargetPath, { provider: new ChunkCache({
@@ -3504,21 +3517,21 @@ async function main() {
       lazyExternalFetches++;
       return new Uint8Array(externalTargetHelp.file.subarray(offset, offset + length));
     },
-  }, { chunkSize: 32, maxChunks: 1, readAhead: 0 }) });
+  }, { chunkSize: 32, budget: new ChunkCacheBudget({ maxBytes: 0 }), readAhead: 0 }) });
   const sourceViewBeforeMiss = e.get_help_view_topic_ptr();
   const sourceRunsBeforeMiss = e.get_help_view_run_ptr();
   const liveHandlesBeforeMiss = [...ctx.vfs.handles.values()].filter(handle => !handle.closed).length;
   check('native external lazy miss preserves the visible document and Back chain',
     externalRun && e.test_help_window_message(0x0201, 0,
       (externalRun.y << 16) | (externalRun.x & 0xffff)) === 0 &&
-    e.get_help_dispatch_status() === 7 &&
     readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) === externalSourcePath &&
     e.get_help_document_snapshot_count() === 0 &&
     e.get_help_session_topic_ref() === 0 && e.get_help_window() === externalMainHwnd &&
     e.get_help_view_topic_ptr() === sourceViewBeforeMiss &&
     e.get_help_view_run_ptr() === sourceRunsBeforeMiss &&
-    !ctx.vfs.pendingRead && lazyExternalFetches === 0 &&
-    [...ctx.vfs.handles.values()].filter(handle => !handle.closed).length === liveHandlesBeforeMiss,
+    !!ctx.vfs.pendingRead && lazyExternalFetches === 0 &&
+    e.get_help_navigation_pending() !== 0 &&
+    e.get_help_navigation_io_handle() === ctx.vfs.pendingRead.handle,
     JSON.stringify({ status: e.get_help_dispatch_status(),
       path: readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()),
       depth: e.get_help_document_snapshot_count(), topic: e.get_help_session_topic_ref(),
@@ -3526,6 +3539,99 @@ async function main() {
       view: e.get_help_view_topic_ptr(), sourceViewBeforeMiss,
       runs: e.get_help_view_run_ptr(), sourceRunsBeforeMiss,
       pending: !!ctx.vfs.pendingRead, fetches: lazyExternalFetches }));
+  const deferredJob = e.get_help_navigation_pending();
+  const deferredRead = ctx.vfs.pendingRead;
+  const deferredCpu = () => [e.get_eip(), e.get_esp(), e.get_yield_reason(),
+    e.get_wait_handle(), e.get_wait_handles_ptr(), e.get_wait_all(),
+    e.get_wait_timeout(), e.get_wait_stack_bytes(), e.test_help_yield_flag()];
+  const originalDeferredCpu = deferredCpu();
+  const sentinelCpu = [0x12345678, 0x140100, 5, 0x1234, 0x140200, 1, 123456, 28, 1];
+  e.test_help_cpu_state(...sentinelCpu);
+  for (let i = 0; i < 64; i++) e.guest_write8(0x140100 + i, i ^ 0xa5);
+  check('repeated native service preserves the same outstanding read',
+    e.help_navigation_service() === -1 && e.get_help_navigation_pending() === deferredJob &&
+    ctx.vfs.pendingRead === deferredRead && lazyExternalFetches === 0 &&
+    JSON.stringify(deferredCpu()) === JSON.stringify(sentinelCpu));
+  let deferredParks = 0;
+  while (e.get_help_navigation_pending() && deferredParks < 100) {
+    if (ctx.vfs.pendingRead) await ctx.vfs.fillPendingRead(ctx.vfs.pendingRead);
+    e.help_navigation_service();
+    deferredParks++;
+  }
+  check('zero-cache deferred native link completes once and publishes one Back snapshot',
+    !e.get_help_navigation_pending() && !ctx.vfs.pendingRead && lazyExternalFetches > 0 &&
+    e.get_help_document_snapshot_count() === 1 && e.get_help_session_topic_ref() === 30 &&
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) === externalTargetPath &&
+    [...ctx.vfs.handles.values()].filter(handle => !handle.closed).length === liveHandlesBeforeMiss &&
+    e.help_navigation_service() === 0 && e.get_help_document_snapshot_count() === 1);
+  check('deferred completion preserves guest EIP/ESP and existing wait descriptor/stack bytes',
+    JSON.stringify(deferredCpu()) === JSON.stringify(sentinelCpu) &&
+    Array.from({ length: 64 }, (_, i) => e.guest_read8(0x140100 + i)).every((b, i) => b === (i ^ 0xa5)));
+  e.test_help_cpu_state(...originalDeferredCpu);
+  e.test_help_view_go_back();
+  const installDeferredTarget = (fault = false) => ctx.vfs.setProviderFile(externalTargetPath, {
+    provider: new ChunkCache({ size: externalTargetHelp.file.length,
+      readRange: async (offset, length) => {
+        if (fault) throw new Error('deferred help target unavailable');
+        return new Uint8Array(externalTargetHelp.file.subarray(offset, offset + length));
+      },
+    }, { chunkSize: 32, budget: new ChunkCacheBudget({ maxBytes: 0 }), readAhead: 0 }),
+  });
+  const clickDeferred = () => e.test_help_window_message(0x0201, 0,
+    (externalRun.y << 16) | (externalRun.x & 0xffff));
+  installDeferredTarget();
+  clickDeferred();
+  const replacedRead = ctx.vfs.pendingRead;
+  clickDeferred();
+  check('new native click cancels the previous owned read and replaces its job',
+    ctx.vfs.handles.get(replacedRead.handle).closed && ctx.vfs.pendingRead !== replacedRead &&
+    e.get_help_navigation_io_handle() === ctx.vfs.pendingRead.handle &&
+    e.get_help_document_snapshot_count() === 0);
+  const beforeCancelCpu = deferredCpu();
+  e.help_navigation_cancel();
+  check('explicit deferred cancellation releases resources without changing guest CPU',
+    !ctx.vfs.pendingRead && !e.get_help_navigation_pending() &&
+    [...ctx.vfs.handles.values()].filter(handle => !handle.closed).length === liveHandlesBeforeMiss &&
+    JSON.stringify(deferredCpu()) === JSON.stringify(beforeCancelCpu));
+  installDeferredTarget(true);
+  const sourceViewBeforeFault = e.get_help_view_topic_ptr();
+  clickDeferred();
+  await ctx.vfs.fillPendingRead(ctx.vfs.pendingRead);
+  const beforeFaultCpu = deferredCpu();
+  check('deferred read fault preserves source document and releases its transaction',
+    e.help_navigation_service() === 0 && !e.get_help_navigation_pending() &&
+    e.get_help_document_snapshot_count() === 0 &&
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) === externalSourcePath &&
+    e.get_help_view_topic_ptr() === sourceViewBeforeFault &&
+    JSON.stringify(deferredCpu()) === JSON.stringify(beforeFaultCpu),
+    JSON.stringify({pending:e.get_help_navigation_pending(),depth:e.get_help_document_snapshot_count(),
+      path:readLatin1(e.get_help_document_path_ptr(),e.get_help_document_path_len()),
+      view:e.get_help_view_topic_ptr(),sourceViewBeforeFault,cpu:deferredCpu(),beforeFaultCpu}));
+  installDeferredTarget();
+  const foreignHandle = ctx.vfs.createFile(externalTargetPath, 0x80000000, 3, 0x80);
+  const foreignPending = ctx.vfs.readFile(foreignHandle, new Uint8Array(32), 32).pending;
+  ctx.vfs.pendingRead = foreignPending;
+  clickDeferred();
+  check('native queue does not overwrite another consumer pending read',
+    foreignPending && ctx.vfs.pendingRead === foreignPending && e.get_help_navigation_pending() &&
+    e.get_help_navigation_io_handle() === 0 && e.help_navigation_service() === -1 &&
+    ctx.vfs.pendingRead === foreignPending);
+  e.help_navigation_cancel();
+  check('canceling an unstarted deferred job preserves foreign pending ownership',
+    ctx.vfs.pendingRead === foreignPending && !ctx.vfs.handles.get(foreignHandle).closed);
+  ctx.vfs.closeHandle(foreignHandle);
+  installDeferredTarget();
+  clickDeferred();
+  const obsoleteHandle = e.get_help_navigation_io_handle();
+  ctx.vfs.files.set(externalTargetPath, eagerExternalTarget);
+  const replacementAccepted = e.test_invoke_WinHelpA(
+    0x8888, allocGuestAnsi(externalTargetPath), 0x0001, 8);
+  check('source replacement cancels the obsolete native transaction without restoring old history',
+    replacementAccepted === 1 && e.help_navigation_service() === 0 &&
+    !e.get_help_navigation_pending() && ctx.vfs.handles.get(obsoleteHandle).closed &&
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) === externalTargetPath &&
+    e.get_help_document_snapshot_count() === 0);
+  e.test_invoke_WinHelpA(0x8888, allocGuestAnsi(externalSourcePath), 0x0001, 8);
   ctx.vfs.files.set(externalTargetPath, eagerExternalTarget);
   check('relative external topic hotspot loads a mounted target through WAT',
     externalRun && e.test_help_window_message(0x0201, 0,

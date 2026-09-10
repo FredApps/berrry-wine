@@ -78,6 +78,70 @@
   ;; -1 for same-document popups; otherwise the snapshot depth that existed
   ;; before an external popup suspended its source document.
   (global $help_popup_external_snapshot_base (mut i32) (i32.const -1))
+  (global $help_document_epoch (mut i32) (i32.const 0))
+  (global $help_navigation_job (mut i32) (i32.const 0))
+
+  ;; One native hyperlink transaction owns its strings and staging independently
+  ;; of whatever guest ESP happens to be active when the scheduler services it.
+  ;; +0 path,+4 window,+8 window length,+12 caller,+16 hash,+20 popup,
+  ;; +24 command,+28 mode,+32 source epoch,+36 source topic,+40 deferred,
+  ;; +44 source primary hwnd,+48 source popup hwnd.
+  (func (export "get_help_navigation_pending") (result i32) (global.get $help_navigation_job))
+  (func (export "get_help_navigation_io_handle") (result i32)
+    (call $help_document_owned_pending_handle (global.get $help_navigation_job)))
+  (func $help_navigation_cancel (export "help_navigation_cancel")
+    (local $job i32) (local $p i32)
+    (local.set $job (global.get $help_navigation_job))
+    (if (i32.eqz (local.get $job)) (then (return)))
+    (global.set $help_navigation_job (i32.const 0))
+    (call $help_document_cancel_vfs_owned (local.get $job))
+    (local.set $p (call $gl32 (local.get $job)))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (local.set $p (call $gl32 (i32.add (local.get $job) (i32.const 4))))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (call $heap_free (local.get $job)))
+
+  ;; -1 needs host I/O; 0 idle/failure; 1 completed. Only an already-deferred
+  ;; operation presents here; an immediate hit keeps the existing caller path.
+  (func $help_navigation_service (export "help_navigation_service") (result i32)
+    (local $job i32) (local $w i32) (local $ready i32)
+    (local $deferred i32) (local $accepted i32) (local $command i32)
+    (local.set $job (global.get $help_navigation_job))
+    (if (i32.eqz (local.get $job)) (then (return (i32.const 0))))
+    (local.set $w (call $g2w (local.get $job)))
+    (if (i32.or
+          (i32.or (i32.ne (i32.load offset=32 (local.get $w)) (global.get $help_document_epoch))
+                  (i32.ne (i32.load offset=36 (local.get $w)) (global.get $help_session_topic_ref)))
+          (i32.or (i32.ne (i32.load offset=44 (local.get $w)) (global.get $help_hwnd))
+                  (i32.ne (i32.load offset=48 (local.get $w)) (global.get $help_popup_hwnd))))
+      (then (call $help_navigation_cancel) (return (i32.const 0))))
+    ;; An outstanding descriptor belongs to its initiating operation. Even our
+    ;; own descriptor must be filled by the outer host before another read.
+    (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+      (then (i32.store offset=40 (local.get $w) (i32.const 1)) (return (i32.const -1))))
+    (local.set $ready (call $help_document_prepare_vfs_owned
+      (call $g2w (i32.load (local.get $w))) (local.get $job)))
+    (if (i32.eq (local.get $ready) (i32.const -1))
+      (then (i32.store offset=40 (local.get $w) (i32.const 1)) (return (i32.const -1))))
+    (if (i32.eqz (local.get $ready))
+      (then
+        (call $help_navigation_cancel)
+        (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+        (return (i32.const 0))))
+    (local.set $deferred (i32.load offset=40 (local.get $w)))
+    (local.set $command (i32.load offset=24 (local.get $w)))
+    ;; From here finish owns both strings and the ready staging frame. Clearing
+    ;; the queue first makes document release and nested presentation harmless.
+    (global.set $help_navigation_job (i32.const 0))
+    (local.set $accepted (call $help_navigation_finish (local.get $ready)
+      (i32.load (local.get $w)) (i32.load offset=4 (local.get $w))
+      (i32.load offset=8 (local.get $w)) (i32.load offset=12 (local.get $w))
+      (i32.load offset=16 (local.get $w)) (i32.load offset=20 (local.get $w))
+      (local.get $command) (i32.load offset=28 (local.get $w))))
+    (call $heap_free (local.get $job))
+    (if (i32.and (local.get $deferred) (local.get $accepted))
+      (then (call $help_present_dispatch (local.get $accepted) (local.get $command))))
+    (local.get $accepted))
 
   ;; Private result channel used while a replacement view is still local.
   (global $help_materialize_bitmap_dc (mut i32) (i32.const 0))
@@ -2428,7 +2492,8 @@
     (local $path_ga i32) (local $path_wa i32) (local $snapshot_base i32)
     (local $parse_error i32) (local $parse_error_offset i32) (local $accepted i32)
     (local $selected i32) (local $window_ga i32) (local $window_wa i32)
-    (local $window_len i32) (local $prepared i32)
+    (local $window_len i32) (local $job i32) (local $job_wa i32) (local $result i32)
+    (call $help_navigation_cancel)
     (local.set $index (call $help_view_hotspot_token_at
       (local.get $x) (local.get $y)))
     (if (i32.lt_s (local.get $index) (i32.const 0))
@@ -2622,19 +2687,40 @@
         (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
         (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
         (return (i32.const 0))))
-    (local.set $path_wa (call $g2w (local.get $path_ga)))
-    ;; Native message dispatch has no resumable guest API frame here. Stage
-    ;; before detaching the visible document, and explicitly refuse a miss
-    ;; until native help navigation has its own scheduler-owned operation.
-    (local.set $prepared (call $help_document_prepare_vfs (local.get $path_wa)))
-    (if (i32.le_s (local.get $prepared) (i32.const 0))
+    (local.set $job (call $heap_alloc (i32.const 52)))
+    (if (i32.eqz (local.get $job))
       (then
-        (if (i32.eq (local.get $prepared) (i32.const -1))
-          (then (call $help_document_cancel_prepare_vfs (local.get $path_wa))))
         (call $heap_free (local.get $path_ga))
         (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
         (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
         (return (i32.const 0))))
+    (local.set $job_wa (call $g2w (local.get $job)))
+    (i32.store (local.get $job_wa) (local.get $path_ga))
+    (i32.store offset=4 (local.get $job_wa) (local.get $window_ga))
+    (i32.store offset=8 (local.get $job_wa) (local.get $window_len))
+    (i32.store offset=12 (local.get $job_wa) (local.get $caller))
+    (i32.store offset=16 (local.get $job_wa) (local.get $hash))
+    (i32.store offset=20 (local.get $job_wa) (local.get $popup))
+    (i32.store offset=24 (local.get $job_wa) (local.get $api_command))
+    (i32.store offset=28 (local.get $job_wa) (local.get $mode))
+    (i32.store offset=32 (local.get $job_wa) (global.get $help_document_epoch))
+    (i32.store offset=36 (local.get $job_wa) (global.get $help_session_topic_ref))
+    (i32.store offset=40 (local.get $job_wa) (i32.const 0))
+    (i32.store offset=44 (local.get $job_wa) (global.get $help_hwnd))
+    (i32.store offset=48 (local.get $job_wa) (global.get $help_popup_hwnd))
+    (global.set $help_navigation_job (local.get $job))
+    (local.set $result (call $help_navigation_service))
+    (select (i32.const 2) (local.get $result) (i32.eq (local.get $result) (i32.const -1))))
+
+  ;; The preparation has completed. This synchronous transaction consumes its
+  ;; frame and both owned strings; no VFS reads or guest routine calls remain.
+  (func $help_navigation_finish (param $prepared i32) (param $path_ga i32)
+    (param $window_ga i32) (param $window_len i32) (param $caller i32)
+    (param $hash i32) (param $popup i32) (param $api_command i32) (param $mode i32)
+    (result i32)
+    (local $snapshot_base i32) (local $parse_error i32) (local $parse_error_offset i32)
+    (local $selected i32) (local $topic_ref i32) (local $accepted i32) (local $window_wa i32)
+    (if (local.get $window_ga) (then (local.set $window_wa (call $g2w (local.get $window_ga)))))
     (local.set $snapshot_base (global.get $help_document_snapshot_count))
     (if (local.get $popup) (then (call $help_popup_capture_session)))
     (if (i32.eqz (call $help_document_snapshot_push))

@@ -521,6 +521,7 @@ UNIT=(
   # Repaired and recovered from quarantine 2026-08-24.
   test/test-winhelp-wat-parser.js
   test/test-winhelp-lazy-file.js
+  test/test-help-navigation-pump.js
   test/test-win16-lazy-help.js
   test/test-winhelp-routine-ownership.js
   test/test-wat-gdi-region.js

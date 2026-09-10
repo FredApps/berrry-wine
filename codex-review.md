@@ -2,7 +2,36 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — transactional help loading
+### Latest increment — deferred native help navigation
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| NATIVE HELP LINKS                       OWNED TRANSACTIONS / OUTER HOST PUMP                              |
++----------------------------------+----------------------------------+------------------------------------+
+| CLICK                            | WAIT / RETRY                     | COMPLETE OR CANCEL                 |
+| retain target and source identity| keep guest CPU + wait state     | publish one document + Back entry |
+| prepare HLP + optional CNT       | fill one owned chunk per turn   | reject stale / failed navigation  |
+| preserve existing document       | never consume foreign pending IO| release handles and owned strings |
++----------------------------------+----------------------------------+------------------------------------+
+| NEXT: macro DLL / callbacks      | THEN: render-time font loading  | GATES: memory + input/audio       |
++----------------------------------------------------------------------------------------------------------+
+| LAZY DEFAULTS STILL OFF          | ISOLATED BRANCH, NO DEPLOYMENT   | REVIEW GOAL REMAINS OPEN           |
++----------------------------------------------------------------------------------------------------------+
+```
+
+Native external help links now retain an explicit operation identity, independent of the guest stack frame. Source document epoch, topic, and window identities reject obsolete work. A queued click leaves the existing document/view/history intact; successful preparation transfers ownership into the existing synchronous navigation transaction and presents exactly once. New clicks and close cancel the queued operation.
+
+The shared host pump services this work at outer scheduler boundaries in browser cooperative mode, Workers, and the CLI. It does not inject an artificial IO_WAIT or clear an existing guest wait. Each invocation fills at most one owned pending request and retries once; awaiting that read can still pause the owning guest loop, so this is not a latency or continuous-interactivity claim. Descriptor identity checks protect unrelated reads and late completion. A dedicated atomic file-read bridge closes the check/read race between Worker RPCs without changing the ordinary ReadFile contract.
+
+Cross-check: Fable's overlay/retry work remains useful prior evidence, but its review does not establish resumable native help navigation or safe macro callback replay. This increment extends the already-reconciled legacy-read work; it does not close render-time font preparation, large-install memory acceptance, or the unresolved microphone-startup baseline failure. Lazy hydration and range writes remain opt-in.
+
+Validation: canonical/compatibility builds pass at source 305 (1,057,740 / 1,058,193 bytes), unchanged layout `b00c9d60346fdb5a`, 237 imports, 233 nonoverlapping data segments, and 926 registered tests. The compiled parser suite passes 631 checks, including eventual zero-cache navigation, exactly-once presentation, read failure, foreign pending IO, source replacement, and unchanged EIP/ESP/yield flag/wait descriptors/stack bytes. Owned preparation, A/W and real Win16 retries, registry lifetime, VFS ownership, scheduler, and overlay lifecycle regressions pass. The shared pump tests cover bounded fills, stop/fault behavior, idle/frozen scheduling, and sleeping Workers—including a sleep that expires during the fill, without uncounted guest execution. Pipe Dream's four real Help checks and all six real AoEHlp.dll macro checks pass against this build. These are targeted functional results, not full-suite, memory, or latency acceptance.
+
+The final-source Chrome Worker gate also passes, with normal browser/server cleanup and exit 0: Notepad/Calculator parity, both Rodent rendering/input checks, Winamp's three actual Workers without traps, and COM success/failed-fetch recovery. This run includes the final help-only scheduling fix. No performance improvement is claimed.
+
+Next implementation slice: public `WinHelpA/W(HELP_COMMAND)` needs an owned macro operation spanning DLL staging and a typed guest-return continuation. Copy registry/normalized-W strings before retaining them, publish only fully staged DLL bytes, and let normal scheduling resume a callback that waits. Do not replay a callback after its side effects begin. Native macro hotspots require an additional callback-entry design that preserves the interrupted guest wait and host sleep deadline; the CPU-neutral navigation pump alone cannot safely execute guest callbacks.
+
+### Prior increment — transactional help loading
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

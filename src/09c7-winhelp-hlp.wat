@@ -4864,9 +4864,10 @@
 
   ;; VFS loading is a two-phase transaction. A per-instance guest record owns
   ;; copied path strings and both file buffers until commit/cancel:
-  ;; next, ESP, return, path, path length, CNT path,
+  ;; next, key (ESP or owner token), return, path, path length, CNT path,
   ;; HLP {handle,size,buffer,position}, CNT {handle,size,buffer,position},
-  ;; stage (0 HLP,1 CNT open,2 CNT read,3 ready), read count.
+  ;; stage (0 HLP,1 CNT open,2 CNT read,3 ready), read count,
+  ;; key kind (0 API frame, 1 explicitly owned native job).
   (global $help_vfs_pending (mut i32) (i32.const 0))
   (func $help_vfs_error (param $code i32) (result i32)
     (global.set $help_last_error (local.get $code))
@@ -4901,15 +4902,46 @@
 
   ;; Terminal API validation/cancellation can abandon the current call frame
   ;; without a usable path. Do not touch another nested call's ESP.
-  (func $help_document_cancel_frame_vfs
+  (func $help_document_cancel_key_vfs (param $key i32) (param $kind i32)
     (local $frame i32) (local $next i32)
     (local.set $frame (global.get $help_vfs_pending))
     (block $done (loop $find
       (br_if $done (i32.eqz (local.get $frame)))
       (local.set $next (call $gl32 (local.get $frame)))
-      (if (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (local.get $key))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 64))) (local.get $kind)))
         (then (call $help_document_cancel_vfs (local.get $frame))))
       (local.set $frame (local.get $next)) (br $find))))
+
+  (func $help_document_cancel_frame_vfs
+    (call $help_document_cancel_key_vfs (global.get $esp) (i32.const 0)))
+  (func $help_document_cancel_vfs_owned (param $owner i32)
+    (if (local.get $owner)
+      (then (call $help_document_cancel_key_vfs (local.get $owner) (i32.const 1)))))
+
+  ;; Host pumps share the VFS pending descriptor with guest I/O. Expose the
+  ;; exact owned handle without touching that descriptor or architectural CPU
+  ;; state, so a pump can defer while another consumer owns the current miss.
+  (func $help_document_owned_pending_handle (param $owner i32) (result i32)
+    (local $frame i32) (local $stage i32) (local $handle i32)
+    (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
+    (local.set $frame (global.get $help_vfs_pending))
+    (block $done (loop $find
+      (br_if $done (i32.eqz (local.get $frame)))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (local.get $owner))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 64))) (i32.const 1)))
+        (then
+          (local.set $stage (call $gl32 (i32.add (local.get $frame) (i32.const 56))))
+          (if (i32.eqz (local.get $stage))
+            (then (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 24))))))
+          (if (i32.eq (local.get $stage) (i32.const 2))
+            (then (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 40))))))
+          (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
+          (return (local.get $handle))))
+      (local.set $frame (call $gl32 (local.get $frame))) (br $find)))
+    (i32.const 0))
 
   ;; Native callers that cannot park may discard only their own preparation.
   ;; Path identity is content-based because W normalization owns a new scratch
@@ -4923,9 +4955,11 @@
     (block $done (loop $find
       (br_if $done (i32.eqz (local.get $frame)))
       (if (i32.and
+            (i32.eqz (call $gl32 (i32.add (local.get $frame) (i32.const 64))))
+            (i32.and
             (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
             (i32.and (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (call $gl32 (global.get $esp)))
-              (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 16))) (local.get $len))))
+              (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 16))) (local.get $len)))))
         (then
           (local.set $path (call $g2w (call $gl32 (i32.add (local.get $frame) (i32.const 12)))))
           (local.set $i (i32.const 0)) (local.set $match (i32.const 1))
@@ -4965,7 +4999,7 @@
     (i32.const 1))
 
   (func $help_vfs_read (param $frame i32) (param $slot i32) (result i32)
-    (local $pos i32) (local $size i32) (local $count i32)
+    (local $pos i32) (local $size i32) (local $count i32) (local $ok i32)
     (local.set $size (call $gl32 (i32.add (local.get $slot) (i32.const 4))))
     (local.set $pos (call $gl32 (i32.add (local.get $slot) (i32.const 12))))
     (block $done (loop $read
@@ -4973,12 +5007,25 @@
       (local.set $count (i32.sub (local.get $size) (local.get $pos)))
       (if (i32.gt_u (local.get $count) (i32.const 4096)) (then (local.set $count (i32.const 4096))))
       (call $gs32 (i32.add (local.get $frame) (i32.const 60)) (i32.const 0))
-      (if (i32.eqz (call $host_fs_read_file (call $gl32 (local.get $slot))
+      ;; Owned jobs may run through a Worker RPC while another guest thread
+      ;; publishes a miss. The host checks descriptor ownership atomically
+      ;; with the read; a separate fs_read_pending RPC cannot provide that.
+      (if (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 64))) (i32.const 1))
+        (then
+          (local.set $ok (call $host_fs_read_file_preserve_pending (call $gl32 (local.get $slot))
             (i32.add (call $gl32 (i32.add (local.get $slot) (i32.const 8))) (local.get $pos))
             (local.get $count) (i32.add (local.get $frame) (i32.const 60))))
-        (then
-          (if (i32.eq (call $host_fs_read_pending) (i32.const 1)) (then (return (i32.const -1))))
-          (return (call $help_vfs_error (global.get $HELP_ERROR_VFS)))))
+          (if (i32.eq (local.get $ok) (i32.const -1)) (then (return (i32.const -1)))))
+        (else
+          (local.set $ok (call $host_fs_read_file (call $gl32 (local.get $slot))
+            (i32.add (call $gl32 (i32.add (local.get $slot) (i32.const 8))) (local.get $pos))
+            (local.get $count) (i32.add (local.get $frame) (i32.const 60))))
+          (if (i32.eqz (local.get $ok))
+            (then
+              (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+                (then (return (i32.const -1))))))))
+      (if (i32.eqz (local.get $ok))
+        (then (return (call $help_vfs_error (global.get $HELP_ERROR_VFS)))))
       (if (i32.ne (call $gl32 (i32.add (local.get $frame) (i32.const 60))) (local.get $count))
         (then (return (call $help_vfs_error (global.get $HELP_ERROR_VFS)))))
       (local.set $pos (i32.add (local.get $pos) (local.get $count)))
@@ -5000,26 +5047,41 @@
   ;; -1 pending, 0 failure, positive ready transaction. No parser, macro,
   ;; snapshot or document/session state mutation occurs during preparation.
   (func $help_document_prepare_vfs (param $path_wa i32) (result i32)
+    (call $help_document_prepare_key_vfs (local.get $path_wa)
+      (global.get $esp) (call $gl32 (global.get $esp)) (i32.const 0)))
+
+  ;; Job owners are unique nonzero tokens, normally a heap job record. Neither
+  ;; matching nor cancellation reads or changes the current guest stack.
+  (func $help_document_prepare_vfs_owned (param $path_wa i32) (param $owner i32) (result i32)
+    (if (i32.eqz (local.get $owner))
+      (then (return (call $help_vfs_error (global.get $HELP_ERROR_BAD_ARGUMENT)))))
+    (call $help_document_prepare_key_vfs (local.get $path_wa)
+      (local.get $owner) (i32.const 0) (i32.const 1)))
+
+  (func $help_document_prepare_key_vfs (param $path_wa i32)
+        (param $key i32) (param $return i32) (param $kind i32) (result i32)
     (local $len i32) (local $frame i32) (local $next i32) (local $path i32)
     (local $cnt i32) (local $cnt_wa i32) (local $i i32) (local $dot i32)
     (local $ch i32) (local $match i32) (local $ok i32)
     (if (i32.eqz (local.get $path_wa))
       (then
-        (call $help_document_cancel_frame_vfs)
+        (call $help_document_cancel_key_vfs (local.get $key) (local.get $kind))
         (return (call $help_vfs_error (global.get $HELP_ERROR_BAD_ARGUMENT)))))
     (local.set $len (call $help_cstring_length_memory (local.get $path_wa) (i32.const 1024)))
     (if (i32.le_s (local.get $len) (i32.const 0))
       (then
-        (call $help_document_cancel_frame_vfs)
+        (call $help_document_cancel_key_vfs (local.get $key) (local.get $kind))
         (return (call $help_vfs_error (global.get $HELP_ERROR_BAD_ARGUMENT)))))
     (local.set $frame (global.get $help_vfs_pending))
     (block $found (loop $find
       (br_if $found (i32.eqz (local.get $frame)))
       (local.set $next (call $gl32 (local.get $frame)))
-      (if (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (local.get $key))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 64))) (local.get $kind)))
         (then
           (local.set $match (i32.and
-            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (call $gl32 (global.get $esp)))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (local.get $return))
             (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 16))) (local.get $len))))
           (if (local.get $match)
             (then
@@ -5036,16 +5098,17 @@
       (local.set $frame (local.get $next)) (br $find)))
     (if (i32.eqz (local.get $frame))
       (then
-        (local.set $frame (call $heap_alloc (i32.const 64)))
+        (local.set $frame (call $heap_alloc (i32.const 68)))
         (if (i32.eqz (local.get $frame))
           (then (return (call $help_vfs_error (global.get $HELP_ERROR_ALLOCATION)))))
-        (memory.fill (call $g2w (local.get $frame)) (i32.const 0) (i32.const 64))
+        (memory.fill (call $g2w (local.get $frame)) (i32.const 0) (i32.const 68))
         (call $gs32 (local.get $frame) (global.get $help_vfs_pending))
         (global.set $help_vfs_pending (local.get $frame))
         (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (i32.const -1))
         (call $gs32 (i32.add (local.get $frame) (i32.const 40)) (i32.const -1))
-        (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (global.get $esp))
-        (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (call $gl32 (global.get $esp)))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (local.get $key))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $return))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 64)) (local.get $kind))
         (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $len))
         (local.set $path (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
         (local.set $cnt (call $heap_alloc (i32.add (local.get $len) (i32.const 5))))

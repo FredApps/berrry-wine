@@ -5,6 +5,8 @@
 // load_pe, the exe-name/cmdline pokes, and the DLL dependency walk.
 // lib/process-boot.js is a classic script loaded ahead of this one.
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
+const HostHelpNavigationPump = typeof require === 'function'
+  ? require('./lib/help-navigation-pump') : globalThis.HelpNavigationPump;
 
 // iOS decides whether a page may be heard at all, and WebAudio alone does not
 // get a say. A page that only ever makes sound through an AudioContext lands
@@ -506,7 +508,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '304';
+  static SOURCE_VERSION = '305';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2173,7 +2175,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=37',
+        workerUrl: 'lib/guest-worker.js?v=38',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2938,6 +2940,7 @@ class WineAssembly {
     // loop that restarted itself on the second launch would be back to
     // holding a dead host forever.
     this._stopped = true;
+    if (this.threadManager) this.threadManager._helpStopping = true;
     if (!this._vfsStopBarrier) {
       // A stop may occur inside an active step or asynchronous boot. Keep its
       // host only until those producers settle, never in the later retry owner.
@@ -2955,8 +2958,17 @@ class WineAssembly {
         const manager = this.threadManager;
         while (steps && steps.size) await Promise.all([...steps]);
         const fills = manager && manager.threads
-          ? [...manager.threads.values()].map(thread => thread.ioFill).filter(Boolean) : [];
+          ? [...manager.threads.values()].flatMap(thread => [thread.ioFill, thread.helpPump]).filter(Boolean) : [];
         await Promise.allSettled(fills);
+        // No cooperative producer can reenter these instances now. Cancel
+        // queued-but-never-pumped work as well as any completed fill's owner.
+        const localExports = [this.instance && this.instance.exports];
+        if (manager && manager.threads) for (const thread of manager.threads.values()) {
+          if (thread.instance) localExports.push(thread.instance.exports);
+        }
+        for (const ex of localExports) {
+          if (ex && ex.help_navigation_cancel) ex.help_navigation_cancel();
+        }
       })();
       // Consumers await the original promise; suppress an unhandled rejection
       // when no browser shell is attached (retirement must fail closed).
@@ -3205,6 +3217,15 @@ class WineAssembly {
         ? window.WinePerf : null;
       if (perf) perf.stepBegin();
       try {
+        if (HostHelpNavigationPump && self.guestWorker.link.helpPending) {
+          const link = self.guestWorker.link;
+          await HostHelpNavigationPump.pump({
+            call: (name, ...args) => link.callExport(name, ...args), pending: true,
+            vfs: self._helpCtx && self._helpCtx.vfs,
+            alive: () => self.running && !link._stopped && !!link.lastEip,
+          });
+          if (!self.running) return;
+        }
         self._beginGuestTickBatch();
         if (self.guestWorker.broker) {
           // The guest's message-wait resume runs inside the worker and needs to
@@ -3383,7 +3404,7 @@ class WineAssembly {
           if (pending) {
             try { await pvfs.fillPendingRead(pending); }
             catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
-            pvfs.pendingRead = null;
+            if (pvfs.pendingRead === pending) pvfs.pendingRead = null;
           }
           await self.guestWorker.callExport('clear_yield');
         } else if (r.yield === 14 || r.yield === 15) {
@@ -3439,6 +3460,15 @@ class WineAssembly {
   // and being told "no" every time. The cap is deliberate — a wake source we
   // forgot to hook up degrades to 20Hz polling, never to a hang.
   _scheduleStep(step, delayMs = 0) {
+    // Private Help work is runnable even while the guest is in WaitMessage or
+    // Sleep. Preserve that wait, but do not apply the idle polling delay.
+    const helpEx = this.instance && this.instance.exports;
+    const helpPending = (helpEx && helpEx.get_help_navigation_pending && helpEx.get_help_navigation_pending()) ||
+      (this.guestWorker && this.guestWorker.link && this.guestWorker.link.helpPending) ||
+      (this.threadManager && this.threadManager.threads && [...this.threadManager.threads.values()].some(thread =>
+        thread.helpPump || (thread.instance && thread.instance.exports.get_help_navigation_pending &&
+          thread.instance.exports.get_help_navigation_pending()) || (thread.link && thread.link.helpPending)));
+    if (helpPending) delayMs = 0;
     // Every completed step of both drive loops passes through here exactly
     // once, which makes this the only honest "did the guest run" counter the
     // page has. `_runSliceCount` is not one: it is bumped only on the branch
@@ -4001,6 +4031,13 @@ class WineAssembly {
       const turnNow = () => self._audioSchedulerNow();
       const turnDeadline = self._frozen ? Infinity : turnNow() + 8;
       try {
+        if (HostHelpNavigationPump) {
+          await HostHelpNavigationPump.pump({ exports: self.instance.exports,
+            vfs: self._helpCtx && self._helpCtx.vfs,
+            alive: () => self.running && !!self.instance.exports.get_eip(),
+          });
+          if (!self.running) return;
+        }
         // Cooperative apps run on the browser's main thread. Respect the
         // smaller compatibility policies selected by browser-shell so a hot
         // guest loop cannot hold input and repaint hostage for a full 1k
@@ -4161,7 +4198,7 @@ class WineAssembly {
           if (pending) {
             try { await vfs.fillPendingRead(pending); }
             catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
-            vfs.pendingRead = null;
+            if (vfs.pendingRead === pending) vfs.pendingRead = null;
           }
           self.instance.exports.clear_yield();
           if (self.running) { self._scheduleStep(step); }

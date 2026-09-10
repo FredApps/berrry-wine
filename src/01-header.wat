@@ -716,6 +716,9 @@
   (import "host" "fs_create_legacy_file" (func $host_fs_create_legacy_file (param i32 i32 i32 i32 i32) (result i32)))
   ;; fs_create_legacy_file(...) → 16-bit HFILE for _lopen/_lcreat
   (import "host" "fs_read_file" (func $host_fs_read_file (param i32 i32 i32 i32) (result i32)))
+  ;; Native deferred Help must not replace another thread's pending read.
+  ;; Atomic result: -1 pending, 0 failure, 1 success (ordinary ReadFile unchanged).
+  (import "host" "fs_read_file_preserve_pending" (func $host_fs_read_file_preserve_pending (param i32 i32 i32 i32) (result i32)))
   ;; fs_read_file(handle, bufGA, nToRead, nReadGA) → BOOL
   (import "host" "fs_read_pending" (func $host_fs_read_pending (result i32)))
   ;; fs_read_pending() → 1 when the fs_read_file that just returned 0 is

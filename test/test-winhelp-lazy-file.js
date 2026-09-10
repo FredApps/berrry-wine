@@ -22,6 +22,11 @@ const extraWat = String.raw`
  (func (export "help_prepare") (param i32) (result i32) (call $help_document_prepare_vfs (local.get 0)))
  (func (export "help_commit") (param i32) (result i32) (call $help_document_commit_vfs (local.get 0)))
  (func (export "help_cancel") (param i32) (call $help_document_cancel_prepare_vfs (local.get 0)))
+ (func (export "help_prepare_owned") (param i32 i32) (result i32)
+   (call $help_document_prepare_vfs_owned (local.get 0) (local.get 1)))
+ (func (export "help_cancel_owned") (param i32) (call $help_document_cancel_vfs_owned (local.get 0)))
+ (func (export "help_owned_handle") (param i32) (result i32)
+   (call $help_document_owned_pending_handle (local.get 0)))
  (func (export "help_push") (result i32) (call $help_document_snapshot_push))
  (func (export "help_frames") (result i32) (local $p i32) (local $n i32)
    (local.set $p (global.get $help_vfs_pending))
@@ -136,6 +141,54 @@ const extraWat = String.raw`
   e.help_cancel(innerWA); assert.strictEqual(e.help_frames(), 1);
   frame(); e.help_cancel(outerWA); e.help_cancel(outerWA); assert.strictEqual(e.help_frames(), 0);
   assert.strictEqual(live(), 0); assert.deepStrictEqual(state(), old);
+  // An owned native job must survive arbitrary service-time ESP/return changes
+  // and must not alias an API frame with the same numeric key and same path.
+  old = seed(); mount('c:\\owned'); frame();
+  const ownedWA = writePath('c:\\owned.hlp'), owner = STACK;
+  assert.strictEqual(e.help_prepare(ownedWA), -1);
+  assert.strictEqual(e.help_owned_handle(owner), 0, 'API numeric-key collision does not expose an owned handle');
+  const foreignRead = vfs.pendingRead;
+  assert.strictEqual(e.help_prepare_owned(ownedWA, owner), -1);
+  assert.strictEqual(vfs.pendingRead, foreignRead, 'atomic owned read cannot replace another API operation descriptor');
+  assert.notStrictEqual(e.help_owned_handle(owner), foreignRead.handle);
+  assert.strictEqual(e.help_frames(), 2);
+  e.help_cancel(ownedWA); assert.strictEqual(e.help_frames(), 1, 'path/API cancellation cannot consume owned job');
+  assert.strictEqual(e.help_prepare_owned(ownedWA, owner), -1);
+  assert.strictEqual(e.help_owned_handle(owner), vfs.pendingRead.handle);
+  assert.strictEqual(e.help_prepare(ownedWA), -1);
+  e.help_cancel_owned(owner); assert.strictEqual(e.help_frames(), 1, 'owned cancellation cannot consume API frame');
+  e.help_cancel_owned(0); assert.strictEqual(e.help_frames(), 1);
+  assert.strictEqual(e.help_prepare_owned(ownedWA, 0), 0, 'zero owner is invalid');
+  assert.strictEqual(e.help_frames(), 1);
+  assert.strictEqual(e.help_prepare_owned(ownedWA, owner), -1);
+  e.help_cancel(ownedWA); assert.strictEqual(e.help_frames(), 1);
+  const ownedOpens = opens;
+  let ownedReady, ownedRounds = 0;
+  for (;;) {
+    frame('WinHelpA', 0x180000 + ownedRounds * 256);
+    e.guest_write32(e.help_esp(), 0x500000 + ownedRounds);
+    const sp = e.help_esp(), ip = e.get_eip();
+    ownedReady = e.help_prepare_owned(ownedWA, owner);
+    assert.strictEqual(e.help_esp(), sp); assert.strictEqual(e.get_eip(), ip);
+    assert.deepStrictEqual(state(), old); assert.strictEqual(e.help_frames(), 1);
+    if (ownedReady !== -1) {
+      assert.strictEqual(e.help_owned_handle(owner), 0, 'ready stage owns no pending read');
+      break;
+    }
+    assert.strictEqual(e.help_owned_handle(owner), vfs.pendingRead.handle, 'active handle follows HLP then CNT stages');
+    assert(++ownedRounds < 15); await vfs.fillPendingRead(vfs.pendingRead);
+  }
+  assert(ownedReady > 0); assert.strictEqual(ownedRounds, expectedRounds);
+  assert.strictEqual(opens - ownedOpens, 1, 'only CNT opens after initial owned HLP; changing ESP never reopens');
+  assert.strictEqual(e.help_commit(ownedReady), 1); assert.strictEqual(e.help_frames(), 0); assert.strictEqual(live(), 0);
+  old = seed(); mount('c:\\owned'); mount('c:\\other-owned'); frame();
+  assert.strictEqual(e.help_prepare_owned(writePath('c:\\owned.hlp'), owner), -1);
+  assert.strictEqual(e.help_prepare_owned(writePath('c:\\other-owned.hlp', PATH + 1024), owner + 1), -1);
+  assert.strictEqual(e.help_prepare_owned(0, owner), 0, 'invalid owned path cancels only that owner');
+  assert.strictEqual(e.help_frames(), 1);
+  frame('WinHelpA', STACK + 8192); e.help_cancel_owned(owner + 1); e.help_cancel_owned(owner + 1);
+  assert.strictEqual(e.help_owned_handle(owner + 1), 0);
+  assert.strictEqual(e.help_frames(), 0); assert.strictEqual(live(), 0); assert.deepStrictEqual(state(), old);
   for (const badPath of [0, writePath('')]) {
     frame(); const wa = writePath('c:\\outer.hlp', PATH + 2048);
     assert.strictEqual(e.help_prepare(wa), -1); assert.strictEqual(e.help_frames(), 1);

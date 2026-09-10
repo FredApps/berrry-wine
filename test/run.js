@@ -3282,6 +3282,7 @@ async function main() {
 
   // ThreadManager setup (lazy — created after instance)
   const { ThreadManager } = require('../lib/thread-manager');
+  const HelpNavigationPump = require('../lib/help-navigation-pump');
   let threadManager = null;
 
   // Wire thread/event imports to ThreadManager
@@ -8138,6 +8139,13 @@ async function main() {
       }
     }
 
+    // Native Help clicks can queue IO without parking a guest API frame.
+    // Service only at the outer boundary, preserving any existing guest wait.
+    await HelpNavigationPump.pump({
+      exports: instance.exports, vfs: ctx.vfs,
+      alive: () => !stopped && instance.exports.get_eip() !== 0,
+    });
+    if (stopped) break;
     const batchStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
     const decodesBefore = DECODE_STATS && instance.exports.get_cache_stores
       ? instance.exports.get_cache_stores() >>> 0 : 0;
@@ -8371,7 +8379,7 @@ async function main() {
         // Fail loudly rather than spinning: a provider that cannot deliver is
         // a mount bug, and a silent retry loop would look like a hang.
         await ctx.vfs.fillPendingRead(pending);
-        ctx.vfs.pendingRead = null;
+        if (ctx.vfs.pendingRead === pending) ctx.vfs.pendingRead = null;
       }
       instance.exports.clear_yield();
     }
@@ -8759,6 +8767,8 @@ if (VERBOSE) {
       }
     }
   }
+  // Every pump is awaited above, so no native Help producer remains active.
+  instance.exports.help_navigation_cancel?.();
   // The control server would otherwise hold the process open; unref lets a
   // reply resolved in the final batch still flush while the exit path prints.
   if (control) control.close();

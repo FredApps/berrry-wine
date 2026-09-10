@@ -225,6 +225,7 @@
   ;; Close the popup and restore both the detached primary view and the exact
   ;; viewer/session/history state that preceded popup activation.
   (func $help_popup_close
+    (call $help_navigation_cancel)
     (call $help_popup_destroy_windows)
     (block $documents_restored (loop $restore_documents
       (br_if $documents_restored
@@ -651,6 +652,7 @@
     ;; WM_LBUTTONDOWN (0x0201)
     (if (i32.eq (local.get $msg) (i32.const 0x0201))
       (then
+        (call $help_navigation_cancel)
         (if (i32.and
               (i32.eq (local.get $hwnd) (global.get $help_hwnd))
               (i32.ne (global.get $help_popup_hwnd) (i32.const 0)))
@@ -660,9 +662,12 @@
         (local.set $click_y (i32.shr_u (local.get $lParam) (i32.const 16)))
         (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
           (then
-            (if (call $help_activate_hotspot_at
+            (local.set $click_line (call $help_activate_hotspot_at
                   (global.get $help_session_owner)
-                  (local.get $click_x) (local.get $click_y))
+                  (local.get $click_x) (local.get $click_y)))
+            (if (i32.eq (local.get $click_line) (i32.const 2))
+              (then (return (i32.const 0))))
+            (if (local.get $click_line)
               (then (call $help_present_dispatch
                 (i32.const 1) (global.get $help_session_last_command)))
               (else (call $help_popup_close)))
@@ -687,8 +692,8 @@
                   (then (call $help_go_back)))))
             (return (i32.const 0))))
         (local.set $click_line (i32.and (local.get $lParam) (i32.const 0xFFFF)))
-        (if (call $help_activate_hotspot_at
-              (global.get $help_session_owner) (local.get $click_line) (local.get $click_y))
+        (if (i32.eq (call $help_activate_hotspot_at
+              (global.get $help_session_owner) (local.get $click_line) (local.get $click_y)) (i32.const 1))
           (then (call $help_present_dispatch
             (i32.const 1) (global.get $help_session_last_command))))
         (return (i32.const 0))))
@@ -794,6 +799,7 @@
     ;; WM_CLOSE (0x0010)
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then
+        (call $help_navigation_cancel)
         (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
           (then (call $help_popup_close) (return (i32.const 0))))
         (call $help_destroy)

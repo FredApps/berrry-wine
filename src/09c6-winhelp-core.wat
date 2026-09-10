@@ -414,6 +414,10 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    ;; Invalidate deferred navigation captured from the previous document,
+    ;; including replacement/rollback that happens to reuse the same topic.
+    (global.set $help_document_epoch
+      (i32.add (global.get $help_document_epoch) (i32.const 1)))
     (if (global.get $help_doc_system_macros_ga)
       (then
         (call $heap_free (global.get $help_doc_system_macros_ga))
