@@ -2,7 +2,35 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — CLI fonts ready before DLL initialization
+### Latest increment — browser executing-owner font bootstrap
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| FINAL MOUNTS / OVERLAY               PREPARE + PUBLISH                           OPEN EXECUTION GATE       |
++----------------------------------+----------------------------------+------------------------------------+
+| one process / one executable     | five bounded immutable leases    | all five fonts installed           |
+| cancellation joins boot teardown | cooperative: local instance      | DLL initialization, then run       |
+| no late DLL mounts after stop    | Worker: one owner-side batch     | no run while DLL loading           |
++----------------------------------+----------------------------------+------------------------------------+
+| STALE / FAILED / CANCELED: discard process | NEXT: dynamic fonts + invalidation | LAZY DEFAULTS STAY OFF    |
++----------------------------------------------------------------------------------------------------------+
+```
+
+Browser `loadExe` now installs all five stock fonts after image/heap initialization and before it opens the `loadDlls`/`run` gate. Cooperative mode uses the synchronous local installer; Worker mode sends one bounded copied batch to the executing instance, never the metadata shadow. Both paths share the native installation loop. The host retains all source leases through the Worker reply and rejects a changed source generation before permitting guest execution. Publication is not an all-five transaction: any failure or cancellation discards this unstarted process rather than retrying its partially initialized memory.
+
+The launch is one-shot. Stop aborts preparation, joins an in-flight direct `loadExe` as well as the shell launch, and prevents late startup completion from reviving the process. DLL fetching checks readiness before mounting its result; DLL initialization clears its pending flags on every exit and checks stop before publishing `running`. Public `run` cannot overtake pending DLL initialization.
+
+Cross-check against the current shared `fable-review.md`: bounded materialization remains completed, not reopened by this consumer integration. Fable's unified build identity/cache graph has now landed on main (`cc575d53`); this older isolated branch still uses numeric cache tags. Integration must adopt main's single version authority for the new stock-font script and Worker dependency instead of restoring these numeric tags. Main's new test discovery must likewise retain both new regressions. No merge or deployment is included here. Dynamic font preflight/invalidation, general cross-context unwind, installed-tree aggregate memory and low-load input/audio acceptance remain open; lazy defaults stay off.
+
+This integration exposed a Rodent2000 regression: VB treats `0xffffffff` as a buffer size and traps in a huge `REP STOSD`; browser and CLI reproduce it, while skipping font installation removes the bounded CLI failure. An initial `HeapSize` attribution was premature: fixing that handler alone did not resolve Rodent. PE disassembly and a guest API trace identify the actual call as `IMalloc_GetSize` on the same reused staging pointer. A compiled regression independently reproduces that handler returning `0xffffffff` instead of the valid allocation size after DLL reservation.
+
+Font staging leaves reusable blocks, DLL reservation retires the instance's bump arena, and the old queries rejected valid reused allocations because the local cursor was zero. `HeapSize`, `IMalloc_GetSize` and `IMalloc_DidAlloc` now share authoritative arena membership and header-extent validation, including sparse and cross-instance allocations. Invalid handles, unknown/unaligned pointers and corrupt extents remain rejected. This does not add a live-allocation bit or promise detection of every freed/forged pointer. The quiet-handler ratchet decreases 437 to 436 because DidAlloc now delegates to the validated query; no quiet handler was added.
+
+The browser VM gate tests pass local versus remote ownership, cancellation during preparation or reply, stale source after reply, one-shot launch, stop during direct initialization, and DLL fetch/initializer/run races. The real Node Worker test validates every batch on both sides, checks actual instance-local parser counters (shadow zero), shared installed state and unchanged guest EIP/ESP/run counters, and discards a partially installed failed batch. Existing local installer, CLI bootstrap, native capacity and allocator tests provide the complementary compiled/fault coverage. Canonical and compatibility builds pass: 942 registered tests (membership, not a complete-suite run), source 313, 1,065,522 / 1,065,975 bytes, 237 imports, 233 nonoverlapping segments and unchanged layout `b00c9d60346fdb5a`.
+
+The corrected normal Rodent2000 CLI completes 200 batches with its real title and board windows, using the same DLL addresses as the failing font-enabled run. The final source-313 Chrome matrix passes with exit 0 and normal cleanup: Notepad/Calculator Worker/cooperative parity and actual five-font state checks, both Rodent rendering/input checks, Winamp playback spawning three executing Workers, and COM load/missing-server recovery. This closes the browser stock-font launch gate, not dynamic font invalidation or installed-tree memory/performance acceptance. The machine was above the load threshold for performance claims; no latency result is inferred from these pass/fail checks.
+
+### Prior increment — CLI fonts ready before DLL initialization
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

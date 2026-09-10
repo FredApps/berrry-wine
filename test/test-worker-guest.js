@@ -84,10 +84,13 @@ async function launch(browser, port, app, { threaded }) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1100, height: 820 });
   const problems = [];
+  const recentLogs = [];
   let boardChanged = 0;
   page.on('pageerror', e => problems.push(String(e)));
   page.on('console', m => {
     const t = m.text();
+    recentLogs.push(t);
+    if (recentLogs.length > 40) recentLogs.shift();
     if (/UNIMPLEMENTED API:|RuntimeError|LinkError|not supported in worker mode|trapped/i.test(t)) {
       problems.push(t);
     }
@@ -201,7 +204,15 @@ async function launch(browser, port, app, { threaded }) {
   } else if (app === 'rodent2000') {
     await page.waitForFunction(() => Object.values(sharedRenderer.windows || {}).some(win =>
       win && win.visible && win.w > 300 && /^Rodent's Revenge 2000/.test(win.title || '')),
-    { timeout: 120000, polling: 250 });
+    { timeout: 120000, polling: 250 }).catch(async error => {
+      console.error('Rodent startup failure:', JSON.stringify({ problems, recentLogs,
+        state: await page.evaluate(() => ({
+          apps: runningApps.map(({ wine }) => ({ boot: wine._fontBootState,
+            stopped: wine._stopped, running: wine.running, dllLoading: wine._dllBootLoading })),
+          windows: Object.values(sharedRenderer.windows || {}).map(w => ({ title: w.title, visible: w.visible })),
+        })) }));
+      throw error;
+    });
     const menu = await page.evaluate(() => {
       const win = Object.values(sharedRenderer.windows).find(item =>
         item && item.visible && item.w > 300 && /^Rodent's Revenge 2000/.test(item.title || ''));
@@ -252,10 +263,13 @@ async function launch(browser, port, app, { threaded }) {
     await wait(SECONDS * 1000);
   }
 
-  const state = await page.evaluate(() => {
+  const state = await page.evaluate(async () => {
     const running = (typeof runningApps !== 'undefined' && runningApps[0]) || null;
     const wine = running ? running.wine : null;
     const gw = wine && wine.guestWorker;
+    const stockStates = wine ? (gw
+      ? await Promise.all([0, 1, 2, 3, 4].map(index => gw.callExport('stock_font_state', index)))
+      : [0, 1, 2, 3, 4].map(index => wine.instance.exports.stock_font_state(index))) : [];
     const canvas = document.getElementById('screen');
     const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
     let boardGreen = 0;
@@ -265,6 +279,8 @@ async function launch(browser, port, app, { threaded }) {
     }
     return {
       threaded: !!gw,
+      stockStates,
+      fontBootState: wine && wine._fontBootState,
       broker: gw && gw.broker ? gw.broker.stats() : null,
       slices: gw ? gw.sliceStats.slices : 0,
       windows: wine && wine.renderer && wine.renderer.windows
@@ -455,6 +471,11 @@ async function comLoadDllProbe(browser, port) {
         `${app}: leaving Threads unchecked selects cooperative mode`);
       check(worker.state.threaded, `${app}: guest runs in a worker`);
       check(!single.state.threaded, `${app}: control run is single-threaded`);
+      for (const [backend, result] of [['Worker', worker], ['cooperative', single]]) {
+        check(result.state.fontBootState === 'ready' &&
+          JSON.stringify(result.state.stockStates) === '[2,2,2,2,2]',
+        `${app}: ${backend} owns all five bootstrapped fonts`, JSON.stringify(result.state.stockStates));
+      }
       check(worker.state.slices > 10, `${app}: worker executed slices`,
         `slices=${worker.state.slices}`);
       check(!!worker.state.broker && worker.state.broker.missing.length === 0,

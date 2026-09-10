@@ -6,6 +6,21 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_imalloc_size") (param $ptr i32) (result i32)
+    (local $saved i32) (local.set $saved (global.get $esp))
+    (call $handle_IMalloc_GetSize (i32.const 0) (local.get $ptr)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved)) (global.get $eax))
+  (func (export "test_imalloc_did_alloc") (param $ptr i32) (result i32)
+    (local $saved i32) (local.set $saved (global.get $esp))
+    (call $handle_IMalloc_DidAlloc (i32.const 0) (local.get $ptr)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved)) (global.get $eax))
+  (func (export "test_reserve_dll_gap")
+    (call $heap_reserve_below (i32.add (call $heap_low_watermark) (i32.const 0x10000))))
+  (func (export "test_heap_cursor") (result i32) (global.get $heap_ptr))
+  (func (export "test_sparse_block") (result i32)
+    (i32.add (call $heap_sparse_alloc (i32.const 32)) (i32.const 4)))
   (func (export "test_get_process_heap") (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (global.get $esp))
@@ -90,6 +105,47 @@ const extraWat = String.raw`
   const b = worker.exports;
 
   const processHeap = a.test_get_process_heap() >>> 0;
+  const staging = a.test_heap_alloc(processHeap, 0, 1024) >>> 0;
+  assert(staging);
+  const stagingSize = a.test_heap_size(processHeap, staging) >>> 0;
+  a.test_heap_free(processHeap, staging);
+  a.test_reserve_dll_gap();
+  assert.strictEqual(a.test_heap_cursor(), 0, 'DLL reservation retires the current bump arena');
+  const reused = a.test_heap_alloc(processHeap, 0, 1024) >>> 0;
+  assert.strictEqual(reused, staging, 'startup staging block is reused after DLL publication');
+  assert.strictEqual(a.test_heap_cursor(), 0, 'free-list reuse does not create a bump arena');
+  assert.strictEqual(a.test_imalloc_size(reused) >>> 0, stagingSize,
+    'IMalloc GetSize accepts reused staging allocation after DLL reservation');
+  assert.strictEqual(a.test_imalloc_did_alloc(reused), 1);
+  assert.strictEqual(a.test_heap_size(processHeap, reused) >>> 0, stagingSize,
+    'HeapSize accepts live reused allocations when the local bump cursor is zero');
+  assert.strictEqual(b.test_heap_size(processHeap, reused) >>> 0, stagingSize,
+    'HeapSize accepts another instance\'s allocation');
+  assert.strictEqual(b.test_imalloc_size(reused) >>> 0, stagingSize);
+  assert.strictEqual(b.test_imalloc_did_alloc(reused), 1);
+  for (const pointer of [0, 1, reused + 1, 0xffffffff]) {
+    assert.strictEqual(a.test_heap_size(processHeap, pointer) >>> 0, 0xffffffff,
+      'unknown or unaligned pointers fail without reading unmapped memory');
+    assert.strictEqual(a.test_imalloc_size(pointer) >>> 0, 0xffffffff);
+    assert.strictEqual(a.test_imalloc_did_alloc(pointer), 0);
+  }
+  const header = a.guest_read32(reused - 4);
+  a.guest_write32(reused - 4, 0x7ffffff8);
+  assert.strictEqual(a.test_heap_size(processHeap, reused) >>> 0, 0xffffffff,
+    'corrupt extent cannot escape its recorded arena');
+  assert.strictEqual(a.test_imalloc_size(reused) >>> 0, 0xffffffff);
+  assert.strictEqual(a.test_imalloc_did_alloc(reused), 0);
+  a.guest_write32(reused - 4, header);
+  a.test_heap_free(processHeap, reused);
+  const sparse = a.test_sparse_block() >>> 0;
+  assert(sparse > 4);
+  assert.strictEqual(a.test_heap_size(processHeap, sparse), 28, 'HeapSize accepts sparse arena allocations');
+  assert.strictEqual(b.test_heap_size(processHeap, sparse), 28, 'another instance can size a sparse allocation');
+  assert.strictEqual(a.test_imalloc_size(sparse), 28);
+  assert.strictEqual(b.test_imalloc_size(sparse), 28);
+  assert.strictEqual(a.test_imalloc_did_alloc(sparse), 1);
+  assert.strictEqual(b.test_imalloc_did_alloc(sparse), 1);
+  a.test_heap_free(processHeap, sparse);
   assert(processHeap, 'GetProcessHeap returns a stable nonzero handle');
   assert.strictEqual(b.test_get_process_heap() >>> 0, processHeap,
     'all browser Worker instances see the same process heap handle');

@@ -508,7 +508,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '312';
+  static SOURCE_VERSION = '313';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -612,6 +612,7 @@ class WineAssembly {
   }
 
   constructor() {
+    this._fontBootState = 'new';
     // A debug tab is a live-worktree harness. Stop/Launch creates a new
     // process and must see a newly rebuilt module even when the page itself
     // was not reloaded; production keeps sharing one compiled module.
@@ -2175,7 +2176,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=41',
+        workerUrl: 'lib/guest-worker.js?v=42',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2214,7 +2215,68 @@ class WineAssembly {
   // `opts.launchPrefs` is the app entry's own screen-size → byte-pokes function
   // (lib/apps.js), applied right after load_pe.
   async loadExe(url, opts = {}) {
+    if (this._stopped || (this._fontBootState && this._fontBootState !== 'new')) {
+      throw new Error('Guest startup is one-shot; create a new process to load an executable');
+    }
+    this._fontBootState = 'loading';
+    const controller = new AbortController();
+    this._fontBootAbort = controller;
+    let finishBoot;
+    this._fontBootBarrier = new Promise(resolve => { finishBoot = resolve; });
+    const check = () => {
+      if (this._stopped || controller.signal.aborted || this._fontBootAbort !== controller) {
+        throw new Error('Guest startup was canceled');
+      }
+    };
+    try {
+      const entry = await this._loadExeOnce(url, opts, check);
+      check();
+      if (!entry) throw new Error('Executable did not produce a guest entry point');
+      await this._prepareStockFonts(check, controller.signal);
+      check();
+      this._fontBootState = 'ready';
+      return entry;
+    } catch (error) {
+      this._fontBootState = 'failed';
+      controller.abort();
+      this.stop();
+      throw error;
+    } finally {
+      if (this._fontBootAbort === controller) this._fontBootAbort = null;
+      finishBoot();
+      this._fontBootBarrier = null;
+    }
+  }
+
+  _assertFontBootReady() {
+    if (this._stopped || (this._fontBootState && this._fontBootState !== 'ready')) {
+      throw new Error('Guest startup is not ready or was stopped');
+    }
+  }
+
+  async _prepareStockFonts(check, signal) {
+    const vfs = this._helpCtx && this._helpCtx.vfs;
+    if (typeof StockFontBootstrap === 'undefined') throw new Error('Stock-font bootstrap library is unavailable');
+    const worker = this.guestWorker;
+    if (!worker) {
+      await StockFontBootstrap.install(vfs, { exports: this.instance.exports, memory: this.memory, signal });
+      check();
+      return;
+    }
+    const batch = await StockFontBootstrap.prepare(vfs, { signal });
+    try {
+      check();
+      const fonts = Array.from({ length: batch.count }, (_, index) => batch.read(index));
+      if (!batch.isCurrent()) throw new Error('Stock-font files changed during startup');
+      await worker.installStockFonts(fonts);
+      check();
+      if (!batch.isCurrent()) throw new Error('Stock-font files changed during Worker publication');
+    } finally { batch.release(); }
+  }
+
+  async _loadExeOnce(url, opts, check) {
     if (!this.instance) await this.init();
+    check();
     this._win16ExtraModules = opts.win16Modules || [];
 
     // `opts.bytes` is the imported-media path (docs/design-byo-media.md): the
@@ -2222,6 +2284,7 @@ class WineAssembly {
     // is no URL to fetch and `url` is only the name the guest should see for
     // itself. Everything below treats the two identically.
     const exeBytes = opts.bytes || await WineAssembly.fetchAssetBytes(url);
+    check();
     this._exeBytes = exeBytes;
 
     // Resource parsing lives in WAT ($find_resource, $dlg_load,
@@ -2249,10 +2312,12 @@ class WineAssembly {
           extraArgs: this._extraArgs || '',
           exeDrive: ProcessBoot.exeDriveForPath(url),
         });
+      check();
       const meta = await this.guestWorker.readExports([
         'get_image_base', 'get_code_start', 'get_code_end',
         'get_thunk_base', 'get_thunk_end', 'get_num_thunks',
       ]);
+      check();
       if (this.instance.exports.init_thread && meta.get_image_base) {
         // tid 7 is the last worker slot; this instance never executes guest
         // code, so its decoded-cache partition is irrelevant — only its globals
@@ -2277,7 +2342,8 @@ class WineAssembly {
     // A 16-bit task's DLLs go into the same selector arena its own segments
     // just went into, so this has to follow load_pe and precede its first call
     // into one.
-    await this._loadWin16Dlls(url, exeBytes);
+    await this._loadWin16Dlls(url, exeBytes, check);
+    check();
 
     // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base).
     if (this.instance.exports.init_dx_com_thunks) {
@@ -2300,7 +2366,7 @@ class WineAssembly {
   // of a map; a name that 404s is simply absent, exactly as a missing file is
   // for the CLI. Hearts loads CARDS through LoadLibrary rather than importing
   // it, so this cannot be driven by the module-reference table.
-  async _loadWin16Dlls(url, exeBytes) {
+  async _loadWin16Dlls(url, exeBytes, check = () => {}) {
     const _loadWin16Dlls = (typeof DllLoader !== 'undefined' && DllLoader.loadWin16Dlls) || null;
     const _stageable = (typeof DllLoader !== 'undefined' && DllLoader.win16StageableModules) || null;
     if (!_loadWin16Dlls || !_stageable) return;
@@ -2353,6 +2419,7 @@ class WineAssembly {
           if (!files.has(name)) files.set(name, bytes);
         } catch (_) { /* absent is a valid answer */ }
       })));
+    check();
     // Keyed uppercase, because the name a LoadLibrary arrives with is whatever
     // the app typed and the name fetched here is whatever the registry says.
     this._win16Modules = new Map(
@@ -2522,11 +2589,27 @@ class WineAssembly {
   }
 
   async loadDlls(dllPaths) {
+    this._assertFontBootReady();
+    if (this._dllBootLoading) throw new Error('Guest DLL initialization is already pending');
+    this._dllBootLoading = true;
+    try {
+      return await this._loadDllsOnce(dllPaths);
+    } catch (error) {
+      this.stop();
+      throw error;
+    } finally {
+      this._dllBootLoading = false;
+      this._inDllInit = false;
+    }
+  }
+
+  async _loadDllsOnce(dllPaths) {
     if (!this.instance) return;
     const _loadDlls = (typeof DllLoader !== 'undefined' && DllLoader.loadDlls) || (typeof loadDlls === 'function' && loadDlls);
     if (!_loadDlls) return;
     // dllPaths can be strings (URLs) or {name, bytes} objects
     const rememberDllBytes = (name, bytes) => {
+      this._assertFontBootReady();
       if (!name || !bytes) return;
       const key = String(name).toLowerCase();
       this._loadedDllBytesByName = this._loadedDllBytesByName || {};
@@ -2557,6 +2640,7 @@ class WineAssembly {
       }
       return item;
     }));
+    this._assertFontBootReady();
     const readyConfigs = configs.filter(Boolean);
     const exeBytes = this._exeBytes;
     this._inDllInit = true;
@@ -2576,12 +2660,14 @@ class WineAssembly {
       const register = opts.registerDllResources;
       delete opts.registerDllResources;
       results = await this.guestWorker.loadDlls(readyConfigs, exeBytes, opts);
+      this._assertFontBootReady();
       if (register) register(readyConfigs, results);
     } else {
       opts.advanceGuestTime = ms => this._advanceGuestTickMs(ms,
         this.hostCtx && this.hostCtx.sharedAudio);
       results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
     }
+    this._assertFontBootReady();
     // Cooperative threads get their DLL set (and the DllMain entry caller) from
     // here; the worker backend loads them inside each worker instead.
     if (this.threadManager && this.threadManager.setLoadedDlls) {
@@ -2923,6 +3009,8 @@ class WineAssembly {
   }
 
   stop(options = {}) {
+    if (this._fontBootAbort) this._fontBootAbort.abort();
+    if (this._fontBootState !== 'failed') this._fontBootState = 'stopped';
     this.running = false;
     if (HostHelpNavigationPump) HostHelpNavigationPump.cancel(this.threadManager || this);
     // A pending parked-sleep timeout and the visibilitychange listener both
@@ -2946,11 +3034,13 @@ class WineAssembly {
       // A stop may occur inside an active step or asynchronous boot. Keep its
       // host only until those producers settle, never in the later retry owner.
       const launch = this._vfsLaunchBarrier;
+      const fontBoot = this._fontBootBarrier;
       let termination;
       try { termination = this.guestWorker && this.guestWorker.stop(); }
       catch (error) { termination = Promise.reject(error); }
       this._vfsStopBarrier = (async () => {
         await termination;
+        if (fontBoot) await fontBoot;
         if (launch) await launch;
         // A boot already awaiting instantiation when stop arrived can publish
         // its Worker/manager later. Recheck after the boot settles as well.
@@ -4003,6 +4093,8 @@ class WineAssembly {
   }
 
   run(stepsPerSlice = 100000) {
+    this._assertFontBootReady();
+    if (this._dllBootLoading) throw new Error('Guest DLL initialization is still pending');
     this.stepsPerSlice = stepsPerSlice;
     if (this.guestWorker) return this._runThreaded(stepsPerSlice);
     this.running = true;

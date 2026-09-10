@@ -204,8 +204,10 @@ const digest = crypto.createHash('sha256')
 // top-level z-order instead of returning this process's main HWND.
 // 2026-09-05: 438 -> 437. The Win98 Shell32 ArrangeWindows ordinal now tiles
 // eligible renderer windows instead of returning an unconditional zero.
-const EXPECTED_COUNT = 437;
-const EXPECTED_SHA256 = '030f24c394c47127bf27f3dadd1152325bb01217a33f83b28aab227fa7c5251f';
+// IMalloc_DidAlloc delegates to the allocator's validated arena query instead
+// of comparing against a stale instance-local bump cursor (437 -> 436).
+const EXPECTED_COUNT = 436;
+const EXPECTED_SHA256 = '8159a50eb74d0eec968a2c0b288d525f04880854cba7e3468af0a99727d8e51a';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

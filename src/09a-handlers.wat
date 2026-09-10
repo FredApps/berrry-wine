@@ -18457,22 +18457,16 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   (func $handle_HeapSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; HeapSize(hHeap, dwFlags, lpMem) → size
     ;; Our heap stores block size (including 4-byte header) at [ptr-4]
-    ;; Only valid for pointers in our heap range; return -1 for unknown pointers
+    ;; Arena membership survives DLL reservations, sparse allocations and
+    ;; cross-thread queries. The instance-local bump cursor is not ownership.
+    ;; Validate the arena before reading a header, then its complete extent.
     (if (i32.eqz (call $heap_api_handle_valid (local.get $arg0)))
       (then
         (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
         (global.set $eax (i32.const 0xFFFFFFFF))
         (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
         (return)))
-    (if (i32.and
-          (i32.ge_u (local.get $arg2) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
-          (i32.lt_u (local.get $arg2) (global.get $heap_ptr)))
-      (then
-        (global.set $eax (i32.sub
-          (call $gl32 (i32.sub (local.get $arg2) (i32.const 4)))
-          (i32.const 4))))
-      (else
-        (global.set $eax (i32.const 0xFFFFFFFF))))  ;; not our allocation
+    (global.set $eax (call $heap_payload_size (local.get $arg2)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 

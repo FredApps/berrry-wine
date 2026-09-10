@@ -60,6 +60,8 @@ UNIT=(
   test/test-stock-font-bootstrap-native.js
   test/test-stock-font-capacity.js
   test/test-stock-font-install.js
+  test/test-browser-font-bootstrap.js
+  test/test-worker-font-bootstrap.js
   test/test-cli-font-bootstrap.js
   test/test-vfs-overlay-checkpoints.js
   test/test-runtime-thread-ownership.js
