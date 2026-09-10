@@ -98,6 +98,38 @@ const SHAPE_C = loopBackJcc([
   0x3B, 0xF7,                         // cmp  esi, edi
 ], 0x72);                             // jb
 
+// -- D: SIB load / SIB store, plus a LEA through the same index --------------
+// [esi+ecx*4] and [edi+ecx*4] are the H389/H420 pair, and `lea edx,[edi+ecx*4]`
+// is H148 over the same base+index+scale. All three take their effective
+// address from a register the loop itself is advancing, which is what makes
+// this different from the base+disp forms already covered: the EA is not a
+// decode-time constant plus one register, it is two registers and a shift.
+// The store's own extra step charge (H420 bills one) is what the pacing case
+// below checks, since getting it wrong changes how much guest work a batch
+// buys without changing a single result.
+const SHAPE_D = loopBackDec([
+  0x8B, 0x04, 0x8E,                   // mov  eax, [esi+ecx*4]
+  0x8D, 0x14, 0x8F,                   // lea  edx, [edi+ecx*4]
+  0x35, 0x78, 0x56, 0x34, 0x12,       // xor  eax, 0x12345678
+  0x01, 0xD8,                         // add  eax, ebx
+  0x89, 0x04, 0x8F,                   // mov  [edi+ecx*4], eax
+]);
+
+// -- E: absolute-address load and store --------------------------------------
+// H20/H21. The decoder resolves [0xADDR] at decode time, so these carry no
+// base register at all -- the case where a fold that assumed every memory op
+// had one would read register 0 and quietly compute from the wrong address.
+function shapeE(absA, absB) {
+  const le = v => [v & 0xff, (v >>> 8) & 0xff, (v >>> 16) & 0xff, (v >>> 24) & 0xff];
+  return loopBackDec([
+    0xA1, ...le(absA),                // mov  eax, [absA]
+    0x01, 0xD8,                       // add  eax, ebx
+    0x31, 0xD0,                       // xor  eax, edx
+    0xA3, ...le(absB),                // mov  [absB], eax
+    0x8B, 0x15, ...le(absB),          // mov  edx, [absB]
+  ]);
+}
+
 // -- negatives ----------------------------------------------------------------
 // A byte load into AL is a partial-register write; it is not in the micro-op
 // table, so the whole block declines rather than being widened by guesswork.
@@ -257,6 +289,26 @@ const NEG_SHORT = loopBackDec([
              ebp: 0xa5a5a5a5, esi: bufC, edi: (bufC + TRIPS * 4) >>> 0 }),
     { seedAt: bufC, seedWords: TRIPS + 4, readAt: bufC }, TRIPS + 4);
 
+  // Shape D indexes both streams with the loop counter itself, so ecx is the
+  // induction variable, the SIB index and the terminator's operand at once.
+  const srcD = (arena + 0x10000) >>> 0;
+  const dstD = (arena + 0x14000) >>> 0;
+  checkShape('shape D (SIB load/store + LEA through the index)', SHAPE_D,
+    () => ({ eax: 0, ecx: TRIPS, edx: 0, ebx: 0x0a0b0c0d,
+             ebp: 0xa5a5a5a5, esi: srcD, edi: dstD }),
+    { seedAt: srcD, seedWords: TRIPS + 4, readAt: dstD }, TRIPS + 4);
+
+  // Shape E's two absolute cells are read and written every iteration, and the
+  // second load reads back the cell the store just wrote -- the abs twin of
+  // shape C's aliasing proof, one where nothing about the address comes from a
+  // register at all.
+  const absA = (arena + 0x18000) >>> 0;
+  const absB = (arena + 0x18004) >>> 0;
+  checkShape('shape E (absolute load/store, self-aliasing)', shapeE(absA, absB),
+    () => ({ eax: 0, ecx: TRIPS, edx: 0x76543210, ebx: 0x00112233,
+             ebp: 0xa5a5a5a5, esi: 0, edi: 0 }),
+    { seedAt: absA, seedWords: 2, readAt: absA }, 2);
+
   // -------------------------------------------------------------- side exit --
   // Same shape, same inputs, but a block budget far below the trip count, so
   // the super-op is forced to materialize everything and be re-entered many
@@ -299,6 +351,25 @@ const NEG_SHORT = loopBackDec([
     // SHAPE_B is 7 interior ops + dec + jnz = 9 emitted ops per iteration.
     assert.strictEqual(e.test_tree_ops() - before, 64n * 9n,
       'billed guest ops equal iterations x the unfolded block cost');
+  }
+
+  // A block whose ops charge steps on their own account. H420 (MOV dword
+  // [base+index*scale+disp], r32) bills one $steps itself, on top of the one
+  // $next bills for dispatching it, because it swallowed a separate SIB-EA
+  // dispatch. So SHAPE_D's unfolded cost is 7 emitted ops + 1 = 8 per
+  // iteration, and a fold that counted only the emitted ops would hand the
+  // guest 12% more work per batch than the scalar path -- invisible in every
+  // result, and visible only as a capture landing on a different frame.
+  {
+    const before = e.test_tree_ops();
+    const itersBefore = e.test_tree_iters();
+    const code = install(SHAPE_D);
+    e.set_tree_fold(1);
+    runAt(code, { eax: 0, ecx: 64, edx: 0, ebx: 3, ebp: 0, esi: srcD, edi: dstD });
+    assert.strictEqual(e.test_tree_iters() - itersBefore, 64n,
+      'SIB shape: every guest iteration is accounted for');
+    assert.strictEqual(e.test_tree_ops() - before, 64n * 8n,
+      'SIB shape: the H420 store\'s own step charge is in the descriptor cost');
   }
 
   // ------------------------------------------------------------- negatives ---
