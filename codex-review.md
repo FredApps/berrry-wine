@@ -2,7 +2,37 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — interrupted object waits and exception search
+### Latest increment — bounded immutable byte preparation
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| PREPARE BYTES                         VALIDATE / CONSUME                       RELEASE                     |
++----------------------------------+----------------------------------+------------------------------------+
+| explicit per-operation byte cap  | exact entry + provider graph     | cancel late publication            |
+| bounded asynchronous reads       | revisions + slice windows match  | retain through in-flight read      |
+| independent of cache eviction    | synchronous private byte copies  | drop bytes and owner references    |
++----------------------------------+----------------------------------+------------------------------------+
+| NEXT: stock-font bootstrap       | THEN: demand-driven preflight    | STILL OPEN: implicit invalidation  |
++----------------------------------------------------------------------------------------------------------+
+| LAZY DEFAULTS REMAIN OFF          | PREREQUISITE, NOT FONT ROLLOUT    | REVIEW GOAL REMAINS OPEN            |
++----------------------------------------------------------------------------------------------------------+
+```
+
+`VirtualFS.prepareReadLease(path, {maxBytes, chunkSize, signal})` prepares a bounded immutable copy without materializing `entry.data`, modifying the file entry, creating a read handle, stealing the pending-read slot, or requiring retained cache chunks. The explicit per-operation byte cap is checked before allocation/I/O. The returned lease exposes bounded copy reads, a current-identity check, and idempotent release; its private byte array cannot be mutated through a returned view. Cancellation forbids publication and retains the provider until an outstanding read settles. Release clears both byte storage and retained owner/provider references.
+
+Identity validation includes the exact VFS entry and its window, plus a bounded graph of cache/slice/sparse dependencies and their identities, revisions, sizes and offsets. Checking only the top provider was insufficient: a SliceProvider does not forward a mutable parent's revision. Eager arrays are copied synchronously and checked for in-place mutation. Mutable custom providers must expose a revision; external mutation of an unversioned source is not supported by this contract. The cap is per operation, not an aggregate process memory budget; the future font-preflight owner must bound concurrent leases.
+
+Preparation also bypasses standard caches at every nested layer while preserving slice offsets, stopping at sparse overlays so their dirty pages remain authoritative. A warmed inner cache otherwise can return old bytes even when the lease correctly records the current mutable-provider revision.
+
+This supplies the byte-ownership primitive, not a general native font retry mechanism. The scheduler can stage bytes, but first selection can happen later within the same guest slice. Stock bootstrap must cover the five named FONs; dynamic selection/enumeration needs a demand-driven pre-side-effect WAT boundary, revision-aware implicit-cache invalidation, and preservation of already-selected/explicitly registered face lifetimes. Replaying native drawing after a missed dependency or eagerly loading every installed font would not satisfy the review. Fable's bounded-provider/materialization findings are addressed here at the consumer-preparation boundary, without claiming the remaining font paths are fixed.
+
+Validation: nine dedicated lease groups pass for byte budgets/ranges, immutable returned copies, pending-slot and entry preservation, provider ownership, short reads/faults, cancellation before/during/after preparation, eager mutation, path replacement/deletion, nested revisions, warmed nested caches, window offsets, zero-cache reads and fill-returned bytes. A compiled System.fon test prepares from a zero-byte cache, publishes through the existing buffer-only parser, and matches both eager strike metadata and every FNT byte; stale/canceled preparation performs no publication and does not poison stock state. This is an explicit test-side parser handoff, not shipped bootstrap integration. Existing lazy-entry (35), ownership, lazy FON/TTF/FOT registration and default bitmap-font regressions pass.
+
+The full canonical/compatibility build passes with 935 registered tests, 237 imports and 233 nonoverlapping data segments. WAT/source version 310 remains unchanged (1,064,782 / 1,065,235 bytes; layout `b00c9d60346fdb5a`); the filesystem browser cache tag advances to 180. Membership and targeted results are not a complete-suite or memory/performance acceptance claim.
+
+The final filesystem-180 browser matrix passes with exit 0 and normal cleanup: Notepad/Calculator parity, both Rodent render/input checks, Winamp executing with three Workers, and COM success/missing-server recovery. This is regression coverage for loading the updated library; lease-to-font publication is exercised by the compiled explicit-handoff test above, not by shipped automatic font preflight.
+
+### Prior increment — interrupted object waits and exception search
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

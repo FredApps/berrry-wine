@@ -54,6 +54,8 @@ UNIT=(
   test/test-sparse-byte-provider.js
   test/test-vfs-sparse-write.js
   test/test-vfs-entry-ownership.js
+  test/test-vfs-read-lease.js
+  test/test-font-read-lease.js
   test/test-vfs-overlay-checkpoints.js
   test/test-runtime-thread-ownership.js
   test/test-worker-guest-readiness.js
