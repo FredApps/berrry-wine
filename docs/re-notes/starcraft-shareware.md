@@ -4,11 +4,47 @@
 > 29,569,755-byte electronic-download demo (`SCDemo.exe`, SHA-1
 > `3126b9b0a390e046d96918e317fa64093ee29bbd`) and its installer-produced
 > `stardated.mpq`, rather than the separate five-mission shareware CD build.
-> The official ED executable has different addresses, so the CD-specific
-> counters and disassembly notes below remain historical until re-profiled.
+> The official ED executable has different addresses. Its logical-frame
+> counter has now been re-profiled below; unless explicitly marked "official
+> ED," the older CD-specific disassembly and measurements remain historical
+> context.
 > The retimed ED route reaches unobstructed Terran mission gameplay at batch
 > 1100 with a 200,000-step batch: Start at `(545,393)` around batch 700 and
 > dismiss the tip at `(200,263)` around batch 900.
+
+## Official ED logical frame counter (2026-09-10)
+
+The official electronic demo preserves the CD build's accumulator-driven
+catch-up-loop structure, with relocated code and globals:
+
+```text
+0x004410f1  call 0x0043bb70        ; outer message/timer pump
+...
+0x00441154  sub esi, [0x61fc28]    ; elapsed versus simulated-time accumulator
+...
+0x004411eb  call 0x004b29f0        ; consume one logical game step
+0x004411f7  mov ecx, [0x695a18]    ; post-call verifier
+0x00441205  mov al, [ecx+0x4d563c] ; current mode's step quantum
+0x0044120b  add edx, eax
+0x0044120d  mov [0x61fc28], edx     ; advance simulated time
+```
+
+A canonical threaded run reached unobstructed Terran mission gameplay at
+batch 1040 and produced these passive block-dispatch counts:
+
+| Counter | Hits | Interpretation |
+|---|---:|---|
+| `0x004410f1` | 4140 | Outer scheduler/catch-up loop; not a logical frame. |
+| `0x004b29f0` | 763 | Logical game-step service entry. |
+| `0x004411f7` | 763 | Post-call accumulator path; independent 1:1 verifier. |
+| `0x004b2a99` | 482 | Conditional work inside the service; not every step. |
+| `0x004b2cb7` | 763 | Common service exit path. |
+| `dx_present` | 8169 | Primary-surface present events; much more frequent. |
+
+Therefore `starcraft_shareware.perf.logicalFrame` uses primary address
+`0x004b29f0` and verifier `0x004411f7`. The HUD reports this as `GAME/s`
+beside generic `PRESENT/s`. The verifier is a consistency check, not a second
+rate: it should remain 1:1 with the primary counter.
 
 `test/binaries/candidates/starcraft-demo-official/installed/`, registry id
 `starcraft_shareware` (`lib/apps.js`).
@@ -80,7 +116,7 @@ There are at least three useful counters, and they answer different questions:
 |---|---|---|
 | How often does the guest hand us display work? | `wine.onGuestFrame` / `PerfHud.guestFrame()` / `dx_trace` kind 5 or 6 | This is the HUD `PRESENT/s`; for StarCraft it is driven by Storm `Unlock` on the primary surface in the trace above. |
 | How often does the browser actually paint? | page FPS / `requestAnimationFrame` cadence / canvas upload counts | This is capped by the browser compositor; DirectDraw events are coalesced before upload. |
-| How often does StarCraft advance simulation or animation? | not yet identified | Requires finding an EXE-level game/render tick, or measuring visible canvas changes. DirectDraw unlocks are only a proxy. |
+| How often does StarCraft advance simulation or animation? | official ED `0x004b29f0`, verified at `0x004411f7` | The accumulator-driven game-step boundary. DirectDraw unlocks remain only a display-work proxy. |
 
 Browser worker-mode samples reached the Blizzard/Smacker intro and confirmed the
 separation: page FPS stayed about 60 while DirectDraw events and image uploads
@@ -620,12 +656,10 @@ its Storm `#261` call is sound-state work, not the game frame. The remaining
 known `GetTickCount` consumer at `0x0046ca76` is a 250 ms network/player-message
 path, also not the game frame.
 
-Browser measurement hint: `lib/apps.js` now declares
-`starcraft_shareware.perf.logicalFrame` with primary counter `0x004b2ed0` and
-verifier `0x004411e7`. The perf HUD should show that as `GAME/s` and keep the
-generic DirectDraw path as `PRESENT/s`. The verifier is not a second FPS
-number; it is the post-call accumulator path that should stay 1:1 with the
-primary counter.
+Historical CD-build browser measurement: the profile formerly used primary
+counter `0x004b2ed0` and verifier `0x004411e7`. Those addresses must not be
+used with the official ED executable. Its current profile uses the relocated
+pair documented at the top of this note.
 
 DirectDraw Lock/Unlock coordinate answer for this build: `Lock(this,
 lpDestRect, lpDDSD, dwFlags, hEvent)` can carry a rectangle. The WAT handler

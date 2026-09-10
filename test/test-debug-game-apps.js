@@ -160,6 +160,13 @@ assert.strictEqual(starcraftReg.get('InstallPath'),
 assert.strictEqual(starcraftReg.get('Program'),
   'C:\\Program Files\\Starcraft Shareware(ED)\\Starcraft.exe');
 assert.strictEqual(starcraftReg.get('StarCD'), 'C');
+assert.deepStrictEqual(starcraft.perf, {
+  logicalFrame: {
+    label: 'GAME',
+    address: 0x004b29f0,
+    verifier: 0x004411f7,
+  },
+}, 'StarCraft ED exposes its proven logical game-step counter and verifier');
 
 const diabloShareware = APPS.diablo_shareware;
 assert.strictEqual(diabloShareware.exe,
