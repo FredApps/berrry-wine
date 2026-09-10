@@ -1,8 +1,9 @@
 # Demand-driven native font preparation
 
-Status: design and prerequisites, not an enabled dynamic-font protocol. Stock
-font startup is installed on the executing owner; dynamic reads still use the
-legacy synchronous paths. Lazy installed-tree defaults remain off.
+Status: stock-font and metadata-catalog startup are installed automatically on
+the executing owner before DLL initialization. Demand-driven face preparation
+and generation-aware invalidation are not enabled; later face reads still use
+the synchronous paths. Lazy installed-tree defaults remain off.
 
 ## Required boundary
 
@@ -108,7 +109,7 @@ budget plus one read copy (at most 4 MiB) and one native staging file (at most
 VFS bytes, provider buffers/caches and already parsed fonts are outside this
 bound; this is not an aggregate process-memory acceptance result.
 
-Automatic startup is still pending. `font_catalog_exclusion_path(index)`
+Automatic startup uses `font_catalog_exclusion_path(index)`, which
 enumerates nonempty path fields from both actual native substitution tables
 without allocation, I/O or memory writes. End-of-list is zero; malformed
 table structure is -1 rather than a silently incomplete list. The host
@@ -127,15 +128,32 @@ copies each consume bounded payload in addition to retained VFS leases and
 one native staging allocation; the message cap is not a total-process cap.
 The Worker validates actual exclusion policy through publication. The host
 validates reply count/generation; uncertain replies require process discard.
-Automatic startup orchestration still must hold source ownership through the
-reply, revalidate VFS/cancellation before admitting execution, and discard an
-unstarted process on stale publication. The local installer must not be passed
-a shadow instance or asynchronous Worker proxy.
+`installRemote()` now holds source ownership through the reply and revalidates
+VFS membership, every retained lease, cancellation and reply shape before
+returning. An internal preparation-only abort controller permits cancellation
+of pending reads without prematurely releasing ready leases after a Worker
+request has been sent. All leases release when that request settles; stale or
+uncertain publication reports that the unstarted process must be discarded.
+
+Browser `loadExe()` now waits for stock fonts and this catalog before becoming
+ready; its existing failure path marks startup failed, aborts and initiates
+stop. The stop barrier joins boot completion and Worker teardown. The helper
+does not await `stop()` internally, which would deadlock against that same
+boot barrier. CLI startup publishes locally after final mounts/overlay restore
+and stock fonts, before DLL entry calls. The local installer must not be passed
+a shadow instance or asynchronous Worker proxy. This establishes the startup
+catalog with a fail-closed policy: malformed custom metadata or exceeding
+32 non-excluded files, 4 MiB per file or 16 MiB aggregate rejects launch.
+It does not support arbitrary installed-font trees or automatic refresh after
+later filesystem changes.
 
 The Worker now owns a monotonic NEW -> OPEN -> SEALED eligibility state.
 Only a first successful main-image load can open it; invalid image return
 codes, repeated initialization/loading and secondary-thread setup cannot
-reopen it. DLL entry calls, synchronous message dispatch, ordinary slices
+reopen it. PE returns must match actual EIP. NE returns are selector:offset,
+so the gate checks the native entry CS/IP, actual CS and segment-table
+translation to actual EIP instead of comparing the packed value to linear EIP.
+DLL entry calls, synchronous message dispatch, ordinary slices
 and non-allowlisted generic exports seal before invocation. Arbitrary
 `readExports` requests are subject to a separate metadata allowlist. Generic
 native catalog mutation exports are denied, so only the dedicated message

@@ -2,7 +2,75 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — Worker startup seal and bounded catalog publication
+### Latest increment — automatic catalog startup with reply-time freshness
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| FINAL MOUNTS / STOCK FONTS          CATALOG PREPARATION                         STARTUP ADMISSION          |
++----------------------------------+----------------------------------+------------------------------------+
+| CLI: restored final VFS          | local: synchronous transaction   | catalog ready before DLL entries   |
+| browser: executing owner        | Worker: retain leases past reply | cancellation/stale => discard      |
+| native exclusions, bounded input| recheck all sources + membership | stop joins boot; no internal wait  |
++----------------------------------+----------------------------------+------------------------------------+
+| AUTOMATIC METADATA DISCOVERY ENABLED | DYNAMIC FACE PREFLIGHT STILL OPEN | LAZY PROVIDER DEFAULTS OFF       |
++----------------------------------------------------------------------------------------------------------+
+```
+
+Browser and CLI startup now publish the bounded metadata catalog after stock
+fonts and final mounts, before DLL initialization or ready/running admission.
+Cooperative and CLI execution use the local native transaction; the browser
+Worker path retains every VFS lease through its publication reply, then checks
+membership, source freshness, cancellation and reply count/generation. A stale
+reply can follow a successful native commit, so startup is rejected and the
+unstarted process is discarded, not retried against that committed instance.
+This is deliberately fail-closed startup: a malformed custom TTF, more than
+32 non-excluded candidates, a file above 4 MiB or aggregate input above 16 MiB
+rejects launch. It is not support for arbitrary installed-font trees.
+
+Review caught cancellation releasing ready leases prematurely through the
+preparation signal. A preparation-only abort controller now forwards abort
+while reads are pending, then detaches before remote publication. Cancellation
+still rejects admission, but leases survive until the remote request settles.
+The helper reports failure without awaiting stop; browser stop already joins
+the enclosing boot barrier, so awaiting it from inside boot would deadlock.
+
+Seven remote-preparation groups pass reply-time replacement/revision/eager
+mutation/membership changes, cancellation, malformed replies, bounds and
+provider cleanup. A real-Worker integration test proves leases span a completed
+commit/reply and rejects a subsequently stale process without executing guest
+instructions. Browser lifecycle tests cover delayed catalog preparation/reply,
+ready/run/DLL gates, stop, faults, stale reply and stop-barrier settlement.
+
+The first automatic-startup Chrome run exposed a Win16 gate regression:
+`load_pe` returns linear EIP for PE but packed selector:offset for NE. The
+old equality check left valid Rodent startup sealed. The corrected NE check
+validates native entry CS/IP, actual CS and segment-table translation to
+actual EIP, retaining the first-load-only and negative-error guards.
+
+This completes startup metadata discovery, not demand-driven face preparation:
+metadata publication does not warm parsed faces or make a later synchronous
+face read safe for a pending provider. Source replacement after startup still
+needs immutable face/strike generations and operation-level preparation.
+Lazy installed-tree/provider defaults remain off, and total-process memory,
+input/audio performance acceptance and integration with main remain open.
+Fable's completed materialization work remains distinct; preserve main's
+unified cache identity and test discovery when integrating.
+
+Final verification: canonical/compatibility build passes, with 952 tests
+accounted for by the manifest gate (not a full-suite run), source 318,
+unchanged native artifacts 1,066,734 / 1,067,187 bytes and layout
+`b00c9d60346fdb5a`. Nine real-Worker startup groups pass, including valid
+and malformed NE. CLI fixtures verify ready state before actual DLL entry,
+custom TTF failure and valid/malformed/whiteout overlay precedence. The final
+Chrome matrix exits 0: Notepad/Calculator Worker/cooperative catalog readiness
+and parity, Win16 Rodent catalog/input/rendering, Rodent2000 input/rendering,
+three Winamp playback Workers and COM success/missing-server recovery.
+These are functional checks, not total-memory or performance acceptance.
+Independent subagent review found no blocking startup issue. The current
+main Fable review still records H1/H2 materialization fixes as completed;
+those historical results do not establish these startup or lifetime gates.
+
+### Prior increment — Worker startup seal and bounded catalog publication
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

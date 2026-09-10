@@ -47,6 +47,37 @@ const ROOT = path.resolve(__dirname,'..');
   });
   console.log('PASS real Worker post-load populated and empty publication affect executing instance only');
 
+  const ne=fs.readFileSync(path.join(ROOT,'binaries/wep16/WEP2/RODENT.EXE'));
+  const neOffset=ne.readUInt32LE(0x3c);
+  assert.strictEqual(ne.readUInt16LE(neOffset),0x454e,'Rodent fixture is actual NE');
+  for(const populated of [false,true]) await withWorker(async({host,shadow})=>{
+    assert.strictEqual(await host.getFontCatalogStartupState(),'NEW');
+    const farEntry=await host.loadPe(new Uint8Array(ne),'RODENT.EXE');
+    assert(farEntry>0 && farEntry<0xfffffffd);
+    assert.strictEqual(await host.callExport('is_win16'),1);
+    assert.strictEqual(await host.getFontCatalogStartupState(),'OPEN','successful NE packed far address is not a linear EIP');
+    const policy=await host.getFontCatalogExclusions();
+    const result=await host.installFontCatalog(populated?entries:[],policy);
+    assert.strictEqual(result.count,populated?1:0);assert(result.generation>0);
+    assert.strictEqual(shadow.font_catalog_ready(),0,'NE catalog belongs to executing Worker, not shadow');
+    const state=await host.readExports(['font_catalog_ready','font_catalog_generation','get_eip','get_last_run_blocks']);
+    assert.strictEqual(state.font_catalog_ready,1);assert.strictEqual(state.font_catalog_generation,result.generation);
+    assert.notStrictEqual(state.get_eip,farEntry,'fixture exercises distinct linear and selector:offset representations');
+    assert.strictEqual(state.get_last_run_blocks,0,'metadata startup executes no NE guest blocks');
+  });
+  console.log('PASS real Rodent NE startup stays OPEN for empty and populated executing-instance catalogs');
+
+  await withWorker(async({host})=>{
+    const malformed=Buffer.from(ne);malformed.writeUInt16LE(0xffff,neOffset+0x1c);
+    assert.strictEqual(await host.loadPe(new Uint8Array(malformed),'BAD-RODENT.EXE'),0xfffffffd,'oversized NE segment count fails safely');
+    assert.strictEqual(await host.getFontCatalogStartupState(),'SEALED');
+    await host.loadPe(new Uint8Array(ne),'RODENT.EXE');
+    assert.strictEqual(await host.getFontCatalogStartupState(),'SEALED','valid NE retry cannot reopen failed first load');
+    const policy=await host.getFontCatalogExclusions();
+    await assert.rejects(()=>host.installFontCatalog([],policy),/open|sealed|startup/i);
+  });
+  console.log('PASS malformed NE first load remains SEALED after a later valid NE reload');
+
   await withWorker(async ({host,shadow}) => {
     const policy=await open(host);
     for (const bad of [null,Array(33).fill(entries[0]),[{path:entries[0].path,bytes:new Uint8Array()}],

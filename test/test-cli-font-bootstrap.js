@@ -51,11 +51,12 @@ try{
  fs.writeFileSync(exe,fixture(false));fs.writeFileSync(dll,fixture(true));fs.writeFileSync(sentinel,Buffer.from([0x5a]));fs.writeFileSync(bad,Buffer.alloc(128,0xa5));fs.writeFileSync(empty,Buffer.alloc(0));
  // Observe actual compiled state at the CLI's loader boundary, then delegate
  // without replacing any loader, parser, or initializer behavior.
- fs.writeFileSync(hook,`const assert=require('assert');const loader=require(${JSON.stringify(path.join(root,'lib/dll-loader.js'))});const real=loader.loadDlls;loader.loadDlls=function(e,...args){assert.deepStrictEqual(Array.from({length:5},(_,i)=>e.stock_font_state(i)),[2,2,2,2,2]);console.log('CLI_STOCK_STATES_READY');return real.call(this,e,...args);};`);
- function run(font,overlay){
+ fs.writeFileSync(hook,`const assert=require('assert');const loader=require(${JSON.stringify(path.join(root,'lib/dll-loader.js'))});const real=loader.loadDlls;loader.loadDlls=function(e,...args){assert.deepStrictEqual(Array.from({length:5},(_,i)=>e.stock_font_state(i)),[2,2,2,2,2]);assert.strictEqual(e.font_catalog_ready(),1);assert(e.font_catalog_generation()>0);console.log('CLI_STOCK_STATES_READY');return real.call(this,e,...args);};`);
+ function run(font,overlay,catalog){
   const args=['--require',hook,path.join(root,'test/run.js'),'--exe='+exe,'--dlls='+dll,'--no-build','--no-renderer','--no-threads','--quiet-api','--quiet-blocks','--trace-api=OutputDebugStringA','--max-batches=10','--batch-size=1000','--max-seconds=15','--vfs-mount='+sentinel+'=c:\\final-sentinel.bin'];
   if(font)args.push('--vfs-mount='+font+'=c:\\windows\\fonts\\system.fon');
   if(overlay)args.push('--overlay-dir='+overlay);
+  if(catalog)args.push('--vfs-mount='+catalog+'=c:\\windows\\fonts\\custom-catalog.ttf');
   const result=spawnSync(process.execPath,args,{cwd:root,encoding:'utf8',timeout:60000,maxBuffer:4*1024*1024});
   assert.ifError(result.error);return {status:result.status,output:(result.stdout||'')+(result.stderr||'')};
  }
@@ -69,14 +70,27 @@ try{
   assert.doesNotMatch(failed.output,/CLI_STOCK_STATES_READY|CLI_DLL_FINAL_VFS_OK|CLI_DLL_FINAL_VFS_BAD|CLI_MAIN_ENTERED/,failed.output);
  }
  console.log('PASS malformed and empty required stock fonts fail CLI launch before guest initialization');
+ const goodTtf=path.join(root,'fonts','subset','LiberationSans-Regular.ttf');
+ assert(fs.existsSync(goodTtf),goodTtf);
+ const catalogGood=run(null,null,goodTtf);
+ assert.strictEqual(catalogGood.status,0,catalogGood.output);
+ assert.match(catalogGood.output,/CLI_DLL_FINAL_VFS_OK/);
+ const catalogBad=run(null,null,bad);
+ assert.notStrictEqual(catalogBad.status,0,catalogBad.output);
+ assert.doesNotMatch(catalogBad.output,/CLI_STOCK_STATES_READY|CLI_DLL_FINAL_VFS_OK|CLI_MAIN_ENTERED/);
+ console.log('PASS custom TTF catalog succeeds and malformed TTF prevents CLI guest initialization');
  async function makeOverlay(name,fontMode){
   const target=path.join(dir,name),vfs=new VirtualFS();
   if(fontMode==='whiteout')vfs.files.set('c:\\windows\\fonts\\system.fon',{data:Uint8Array.of(1),attrs:0x20});
+  if(fontMode==='catalog-whiteout')vfs.files.set('c:\\windows\\fonts\\custom-catalog.ttf',{data:Uint8Array.of(1),attrs:0x20});
   const tracker=VfsOverlay.attach(vfs,{store:nodeDirStore(target)});
   function write(name,bytes){const h=vfs.createFile(name,0x40000000,2);assert(h);assert(vfs.writeFile(h,bytes,bytes.length).ok);vfs.closeHandle(h);}
   write('c:\\final-sentinel.bin',Uint8Array.of(0x5a));
   if(fontMode==='malformed')write('c:\\windows\\fonts\\system.fon',new Uint8Array(128).fill(0xa5));
   if(fontMode==='whiteout')assert(vfs.deleteFile('c:\\windows\\fonts\\system.fon'));
+  if(fontMode==='catalog-valid')write('c:\\windows\\fonts\\custom-catalog.ttf',new Uint8Array(fs.readFileSync(goodTtf)));
+  if(fontMode==='catalog-malformed')write('c:\\windows\\fonts\\custom-catalog.ttf',new Uint8Array(128).fill(0xa5));
+  if(fontMode==='catalog-whiteout')assert(vfs.deleteFile('c:\\windows\\fonts\\custom-catalog.ttf'));
   const report=await tracker.flush();assert.strictEqual(report.failed,0,JSON.stringify(report.errors));
   tracker.detach();return target;
  }
@@ -92,5 +106,16 @@ try{
   assert.doesNotMatch(failed.output,/CLI_STOCK_STATES_READY|CLI_DLL_FINAL_VFS_OK|CLI_DLL_FINAL_VFS_BAD|CLI_MAIN_ENTERED/,failed.output);
  }
  console.log('PASS malformed/whiteouted overlay stock font fails before guest initialization');
+ for(const mode of ['catalog-valid','catalog-malformed','catalog-whiteout']){
+  const result=run(null,await makeOverlay(mode,mode),mode==='catalog-valid'?bad:goodTtf);
+  if(mode==='catalog-malformed'){
+   assert.notStrictEqual(result.status,0,result.output);
+   assert.doesNotMatch(result.output,/CLI_STOCK_STATES_READY|CLI_DLL_FINAL_VFS_OK|CLI_MAIN_ENTERED/);
+  }else{
+   assert.strictEqual(result.status,0,result.output);
+   assert.match(result.output,/CLI_DLL_FINAL_VFS_OK/);assert.match(result.output,/CLI_MAIN_ENTERED/);
+  }
+ }
+ console.log('PASS catalog discovery honors valid/malformed/whiteout overlay over conflicting base TTF');
 }finally{fs.rmSync(dir,{recursive:true,force:true});}
 })().catch(error=>{console.error(error);process.exitCode=1;});

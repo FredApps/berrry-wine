@@ -9,9 +9,12 @@ function deferred() {
   const promise = new Promise(r => { resolve = r; });
   return { promise, resolve };
 }
-function fixture(worker) {
+function fixture(worker, { gateCatalog = false } = {}) {
   const prep = deferred(), reply = deferred(), events = [];
+  const catalogPrep = deferred(), catalogReply = deferred();
+  if (!gateCatalog) { catalogPrep.resolve(); catalogReply.resolve(); }
   let current = true;
+  let catalogCurrent = true, catalogFault = false;
   const batch = { count: 5, read: () => Uint8Array.of(1),
     isCurrent: () => current, release() { events.push('release'); } };
   const stock = {
@@ -27,7 +30,20 @@ function fixture(worker) {
       events.push('local');
     },
   };
+  const catalog = async (remote, options) => {
+    events.push('catalog-prepare'); await catalogPrep.promise;
+    options.check();
+    if (options.signal.aborted || catalogFault) throw Error('catalog preparation failed');
+    if (remote) { events.push('catalog-remote'); await catalogReply.promise; }
+    options.check();
+    if (!catalogCurrent) throw Error('catalog source changed; discard process');
+    events.push('catalog-ready');
+  };
   const context = { console, URLSearchParams, AbortController, StockFontBootstrap: stock,
+    FontCatalog: {
+      install(vfs, options) { assert.strictEqual(options.exports, w.instance.exports); return catalog(false, options); },
+      installRemote(vfs, options) { assert.strictEqual(options.worker, w.guestWorker); return catalog(true, options); },
+    },
     DllLoader: { loadDlls() { events.push('dll'); return []; } } };
   vm.runInNewContext(fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8') +
     '\n;globalThis.Host = WineAssembly;', context);
@@ -41,7 +57,8 @@ function fixture(worker) {
     async installStockFonts() { events.push('remote'); await reply.promise; },
     async stop() { events.push('stop'); },
   };
-  return { w, prep, reply, events, context,
+  return { w, prep, reply, events, context, catalogPrep, catalogReply,
+    invalidateCatalog() { catalogCurrent = false; }, failCatalog() { catalogFault = true; },
     invalidate() { current = false; }, load: () => w.loadExe('test.exe') };
 }
 async function until(predicate) {
@@ -49,6 +66,50 @@ async function until(predicate) {
   throw Error('boundary not reached');
 }
 (async () => {
+  async function reachCatalog(f, worker) {
+    await until(() => f.events.includes('prepare')); f.prep.resolve();
+    if (worker) { await until(() => f.events.includes('remote')); f.reply.resolve(); }
+    await until(() => f.events.includes('catalog-prepare'));
+  }
+  for (const worker of [false, true]) {
+    const f = fixture(worker, { gateCatalog: true }), loading = f.load();
+    await reachCatalog(f, worker);
+    assert.strictEqual(f.w._fontBootState, 'loading');
+    assert.throws(() => f.w.run(), /not ready/);
+    await assert.rejects(f.w.loadDlls([]), /not ready/);
+    f.catalogPrep.resolve();
+    if (worker) {
+      await until(() => f.events.includes('catalog-remote'));
+      assert.strictEqual(f.w._fontBootState, 'loading');
+      f.catalogReply.resolve();
+    }
+    await loading; assert.strictEqual(f.w._fontBootState, 'ready');
+    assert(f.events.includes('catalog-ready'));
+  }
+  for (const mode of ['local-stop', 'prepare-stop', 'reply-stop', 'stale', 'fault']) {
+    const worker = mode !== 'local-stop';
+    const f = fixture(worker, { gateCatalog: true }), loading = f.load();
+    const failed = assert.rejects(loading);
+    await reachCatalog(f, worker);
+    if (['reply-stop', 'stale'].includes(mode)) {
+      f.catalogPrep.resolve(); await until(() => f.events.includes('catalog-remote'));
+      if (mode === 'stale') f.invalidateCatalog(); else f.w.stop();
+      if (mode === 'reply-stop') {
+        let stopped = false; f.w._vfsStopBarrier.then(() => { stopped = true; });
+        await Promise.resolve(); assert.strictEqual(stopped, false, 'stop joins pending catalog reply');
+      }
+      f.catalogReply.resolve();
+    } else {
+      if (mode === 'fault') f.failCatalog(); else f.w.stop();
+      f.catalogPrep.resolve();
+    }
+    await failed; await f.w._vfsStopBarrier;
+    assert.notStrictEqual(f.w._fontBootState, 'ready');
+    assert(!f.events.includes('catalog-ready'));
+    assert.throws(() => f.w.run(), /not ready/);
+    await assert.rejects(f.w.loadDlls([]), /not ready/);
+    if (worker) assert(f.events.includes('stop'));
+  }
   for (const worker of [false, true]) {
     const f = fixture(worker), loading = f.load();
     await until(() => f.events.includes('prepare'));

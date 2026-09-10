@@ -4401,6 +4401,9 @@ async function main() {
   await require('../lib/stock-font-bootstrap').install(ctx.vfs, {
     exports: instance.exports, memory,
   });
+  await require('../lib/font-catalog').install(ctx.vfs, {
+    exports: instance.exports, memory,
+  });
   if (dlls.length > 0) {
     const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
       exeName: path.basename(EXE_PATH),

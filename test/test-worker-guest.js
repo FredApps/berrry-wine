@@ -140,7 +140,9 @@ async function launch(browser, port, app, { threaded }) {
         ? Object.values(wine.renderer.windows) : [];
       return !!(wine && wine.guestWorker && wine.guestWorker.sliceStats.slices > 10
         && windows.filter(win => win && win.visible).length >= 2);
-    }, { timeout: 120000 }, app);
+    }, { timeout: 120000 }, app).catch(error => {
+      throw new Error(`${app}: startup did not reach live Worker windows: ${error.message}\n${recentLogs.join('\n')}`);
+    });
     await page.waitForFunction(() => {
       const canvas = document.getElementById('screen');
       const pixels = canvas.getContext('2d')
@@ -271,6 +273,10 @@ async function launch(browser, port, app, { threaded }) {
       ? await Promise.all([0, 1, 2, 3, 4].map(index => gw.callExport('stock_font_state', index)))
       : [0, 1, 2, 3, 4].map(index => wine.instance.exports.stock_font_state(index))) : [];
     const fontExclusions = gw ? await gw.getFontCatalogExclusions() : null;
+    const catalogState = wine ? (gw
+      ? await gw.readExports(['font_catalog_ready', 'font_catalog_generation'])
+      : { font_catalog_ready: wine.instance.exports.font_catalog_ready(),
+        font_catalog_generation: wine.instance.exports.font_catalog_generation() }) : null;
     const catalogStartupState = gw ? await gw.getFontCatalogStartupState() : null;
     let lateCatalogError = null;
     if (gw) {
@@ -288,6 +294,7 @@ async function launch(browser, port, app, { threaded }) {
       threaded: !!gw,
       stockStates,
       fontExclusions,
+      catalogState,
       catalogStartupState,
       lateCatalogError,
       fontBootState: wine && wine._fontBootState,
@@ -492,6 +499,9 @@ async function comLoadDllProbe(browser, port) {
         check(result.state.fontBootState === 'ready' &&
           JSON.stringify(result.state.stockStates) === '[2,2,2,2,2]',
         `${app}: ${backend} owns all five bootstrapped fonts`, JSON.stringify(result.state.stockStates));
+        check(result.state.catalogState && result.state.catalogState.font_catalog_ready === 1 &&
+          result.state.catalogState.font_catalog_generation > 0,
+        `${app}: ${backend} publishes its startup font catalog`, JSON.stringify(result.state.catalogState));
       }
       check(worker.state.slices > 10, `${app}: worker executed slices`,
         `slices=${worker.state.slices}`);
@@ -518,6 +528,9 @@ async function comLoadDllProbe(browser, port) {
     // used to trap RODENT at its first VBRUN100 far jump (EIP 0x100010).
     const win16 = await launch(browser, port, 'wep16_rodent', { threaded: true });
     check(win16.state.threaded, 'Win16 main task stays in the guest Worker');
+    check(win16.state.catalogState && win16.state.catalogState.font_catalog_ready === 1 &&
+      win16.state.catalogState.font_catalog_generation > 0,
+    'Win16 Worker publishes its startup font catalog', JSON.stringify(win16.state.catalogState));
     check(win16.state.slices > 10, 'Win16 Worker executes past NE startup',
       `slices=${win16.state.slices}`);
     check(win16.state.windows >= 8, 'Win16 Worker creates the Rodent board windows',

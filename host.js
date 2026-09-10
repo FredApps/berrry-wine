@@ -508,7 +508,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '317';
+  static SOURCE_VERSION = '318';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2176,7 +2176,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=46',
+        workerUrl: 'lib/guest-worker.js?v=47',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2234,6 +2234,8 @@ class WineAssembly {
       if (!entry) throw new Error('Executable did not produce a guest entry point');
       await this._prepareStockFonts(check, controller.signal);
       check();
+      await this._prepareFontCatalog(check, controller.signal);
+      check();
       this._fontBootState = 'ready';
       return entry;
     } catch (error) {
@@ -2252,6 +2254,17 @@ class WineAssembly {
     if (this._stopped || (this._fontBootState && this._fontBootState !== 'ready')) {
       throw new Error('Guest startup is not ready or was stopped');
     }
+  }
+
+  async _prepareFontCatalog(check, signal) {
+    const vfs = this._helpCtx && this._helpCtx.vfs;
+    if (typeof FontCatalog === 'undefined') throw new Error('Font catalog library is unavailable');
+    if (this.guestWorker) {
+      await FontCatalog.installRemote(vfs, { worker: this.guestWorker, signal, check });
+    } else {
+      await FontCatalog.install(vfs, { exports: this.instance.exports, memory: this.memory, signal, check });
+    }
+    check();
   }
 
   async _prepareStockFonts(check, signal) {
