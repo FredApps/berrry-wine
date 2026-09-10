@@ -2,7 +2,33 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — stock-font launch prerequisites
+### Latest increment — complete stock-font installation or failure
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| VALIDATE FIRST                      INSTALL WITHOUT EVICTION                    PUBLISH / ROLLBACK        |
++----------------------------------+----------------------------------+------------------------------------+
+| bounded NE tables / resource units| capacity for EVERY valid strike | success: touch LRU, publish state 2 |
+| explicit type-table terminator   | no changes during validation     | failure: free only new records     |
+| count stops beyond 48 strikes    | legacy registration unchanged    | old bytes / state / LRU unchanged  |
++----------------------------------+----------------------------------+------------------------------------+
+| NEXT: CLI boot-order correction  | THEN: guarded launch integration | LAZY DEFAULTS REMAIN OFF            |
++----------------------------------------------------------------------------------------------------------+
+```
+
+Correction to the initial capacity diagnosis: `$gdi_bitmap_font_evict` already protects installed FON records (`active=1`) and evicts only cached rasterized strikes (`active=2`). The reproduced bug was an oversized stock FON returning a nonzero partial count (46), not demonstrated eviction of System. The old installer accepted that partial result and published installed state despite missing resources. Strict startup installation must also avoid disturbing evictable cached records.
+
+Stock installation now uses a side-effect-free validation/count pass, checks free registry capacity, and then parses in a no-eviction mode. Invalid/truncated FON resources, an absent type terminator or failure to allocate any strike reject the entire file. Successful installation touches the new records' LRU stamps and publishes state 2 only after all expected strikes exist. Allocation failure removes the new path's records and storage; neither existing records nor LRU stamps/clock change. This remains a serialized per-file startup operation, not a concurrent or all-five transaction. A failed later font still requires the launch owner to keep the process stopped and dispose of that partially initialized process.
+
+Strict NE parsing checks the offset before reading the signature (WAT `i32.or` is eager), validates resource units before shifting, bounds complete resource tables, requires integer RT_FONT identifiers, and accepts a two-byte final zero type marker. Validation stops once more than the fixed 48 slots would be required, avoiding repeated strike validation for arbitrarily many duplicate resources. Legacy explicit registration and TrueType strike caching retain their prior parser/eviction behavior, apart from safely rejecting an out-of-range NE header instead of attempting its unchecked load.
+
+The compiled regression reproduces partial-success publication before the fix. Coverage includes over-capacity and repeated-resource FONs, exact fit, malformed later resources, huge NE offsets, overflowing resource units, truncated tables, missing terminators, and real bitmap-storage exhaustion after the first successful allocation. It compares the original registry, every owned FNT byte, LRU stamps and clock. The failure test verifies the newly allocated storage is reusable; legacy registration still accepts one valid strike followed by a malformed resource when capacity is available.
+
+Validation: all six capacity/rollback groups pass, as do the five-font native bootstrap with a real PE and initialized peer instance, explicit lazy FON/TTF/FOT registration, System lease handoff and default bitmap-font regressions. Canonical/compatibility builds pass with 938 registered tests, 237 imports, 233 nonoverlapping data segments and unchanged layout `b00c9d60346fdb5a`; source/cache version 312 produces 1,065,547 / 1,066,000 bytes, Worker URL 41. Test membership is not a complete-suite result. No installed-tree memory or input/audio latency acceptance is claimed.
+
+The final source-312 Chrome matrix passes with exit 0: Notepad/Calculator Worker/cooperative parity, both Rodent rendering/input checks, Winamp playback with three executing guest Workers, and COM load/missing-server recovery. Production launch still does not invoke the strict startup installer; these browser tests establish regression coverage for the shared legacy parser and rebuilt runtime, while the dedicated compiled tests establish strict installation behavior.
+
+### Prior increment — stock-font launch prerequisites
 
 ```text
 +----------------------------------------------------------------------------------------------------------+
@@ -24,7 +50,7 @@ Cross-check: Fable's H1 materialization bug and H2 large-offset bug are already 
 
 The consumer audit also found that legacy `setLazyFile` entries invoked their synchronous data getter before the lease's budget and pre-abort checks. The lease now rejects cancellation and known oversized/invalid metadata before invoking that loader, then rechecks the actual loaded length. A custom legacy loader can still allocate more than its advertised size internally; it must honor its metadata, or use a bounded provider. The new regression covers oversized metadata, pre-abort without loading, dishonest metadata and normal bounded loading.
 
-Rollout also needs a registry-capacity policy for substituted FONs: the existing 48-strike parser can evict an earlier font while installing a later one, without clearing the earlier stock state. Five successful return values alone are not proof that all five fonts remain installed. The new installer is a per-font primitive, not a solution to this cross-file capacity problem. Native pointer validation must cover actual post-PE allocations (which begin after the image, often below the nominal `GUEST_HEAP_BASE` region), not just no-image harness allocations.
+The initial registry-capacity warning is corrected and addressed in the latest increment above: installed FONs were protected from eviction, but a replacement file could be only partially installed. The startup primitive now rejects incomplete installation. Native pointer validation must cover actual post-PE allocations (which begin after the image, often below the nominal `GUEST_HEAP_BASE` region), not just no-image harness allocations.
 
 Next integration sequence: keep DLL discovery/mounting before overlay replay, but defer executable DLL initializers until final mounts, save/startup restoration and stock preparation complete; then publish once on the executing instance with a launch-generation/cancellation guard. Any failed or canceled partial publication must keep the guest stopped and dispose of that process. Verify both browser backends and CLI with a DLL that draws during initialization, an overlay-replaced font, and cancellation while a Worker export is pending. A registry-capacity check is required before accepting arbitrary substituted stock FONs. Only afterward consider dynamic font preflight; neither path authorizes turning lazy defaults on without installed-tree and input/audio acceptance.
 

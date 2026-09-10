@@ -58,6 +58,7 @@ UNIT=(
   test/test-font-read-lease.js
   test/test-stock-font-bootstrap.js
   test/test-stock-font-bootstrap-native.js
+  test/test-stock-font-capacity.js
   test/test-vfs-overlay-checkpoints.js
   test/test-runtime-thread-ownership.js
   test/test-worker-guest-readiness.js
