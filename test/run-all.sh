@@ -68,6 +68,8 @@ UNIT=(
   test/test-font-catalog-install.js
   test/test-font-catalog-exclusions.js
   test/test-worker-font-catalog-exclusions.js
+  test/test-font-catalog-message.js
+  test/test-worker-font-catalog-startup.js
   test/test-cli-font-bootstrap.js
   test/test-vfs-overlay-checkpoints.js
   test/test-runtime-thread-ownership.js

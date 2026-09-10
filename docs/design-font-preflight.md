@@ -119,30 +119,39 @@ exclusions, and rechecks the native policy through publication. Low-level
 
 `GuestThreadHost.getFontCatalogExclusions()` obtains one copied snapshot on
 the executing Worker in one message. No borrowed pointers cross asynchronous
-calls. This is read-only policy discovery, not remote catalog installation.
-Worker installation must hold source ownership through its reply, validate
-again before admitting execution, and discard an unstarted process on stale
-publication. The local installer must not be passed a shadow instance or
-asynchronous Worker proxy.
+calls. `installFontCatalog(entries, expectedExcludedPaths)` now provides the
+dedicated synchronous owner-side transaction, with independent host and Worker
+validation of 32 entries, 4 MiB per file, 16 MiB aggregate payload and direct-child
+ASCII TTF paths. Host-owned copies, structured-clone bytes and Worker-owned
+copies each consume bounded payload in addition to retained VFS leases and
+one native staging allocation; the message cap is not a total-process cap.
+The Worker validates actual exclusion policy through publication. The host
+validates reply count/generation; uncertain replies require process discard.
+Automatic startup orchestration still must hold source ownership through the
+reply, revalidate VFS/cancellation before admitting execution, and discard an
+unstarted process on stale publication. The local installer must not be passed
+a shadow instance or asynchronous Worker proxy.
 
-There is currently no authoritative Worker execution-start seal. A safe
-startup-only install protocol must close eligibility before DLL entry calls,
-generic execution-capable exports, synchronous message dispatch and ordinary
-slices; checking the slice counter alone leaves bypasses. It must reject
-secondary-thread initialization and revalidate the captured exclusion policy
-on the executing Worker. Adding the install message without those gates would
-permit catalog replacement after font selections/derived caches already exist.
+The Worker now owns a monotonic NEW -> OPEN -> SEALED eligibility state.
+Only a first successful main-image load can open it; invalid image return
+codes, repeated initialization/loading and secondary-thread setup cannot
+reopen it. DLL entry calls, synchronous message dispatch, ordinary slices
+and non-allowlisted generic exports seal before invocation. Arbitrary
+`readExports` requests are subject to a separate metadata allowlist. Generic
+native catalog mutation exports are denied, so only the dedicated message
+can publish and only while OPEN. Normal non-catalog operations still execute
+after sealing; this state guards publication, not ordinary guest scheduling.
 
 The current image-load sequence uses generic `set_process_id`, `get_staging`,
 `get_staging_size`, `set_exe_name`, `set_exe_drive`, `set_extra_cmdline`,
 `load_pe` (also handles NE) and `init_dx_com_thunks`. Treat the first successful
 image load specially; later loads cannot reopen a sealed startup window.
 Shell configuration also sets HWND base, process environment, Windows version
-and loop-copy options. An explicit audited allowlist is needed, not a name
-prefix rule. In particular, `readExports` currently invokes arbitrary exports
-with no arguments, so its name is not proof that it cannot enter guest code.
-Win16 DLL mapping is a separate pre-font phase; confirm its native
-`load_ne_dll` path is callback-free before permitting it through the seal.
+and loop-copy options. The allowlists are explicit, not prefix rules. Unlisted
+diagnostic exports also conservatively seal startup; future bootstrap callers
+must audit any needed additions rather than assume every `get_` function is
+safe. Win16 DLL mapping remains permitted as a separate pre-font phase: the
+current native `load_ne_dll` path was audited as callback-free.
 
 Separate directory discovery from face registration/loading. Catalog work may
 read bounded metadata incrementally, but must not fill the 32-face parsed cache

@@ -2,7 +2,65 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — executing-owner native font policy
+### Latest increment — Worker startup seal and bounded catalog publication
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| NEW                              | OPEN                             | SEALED                             |
++----------------------------------+----------------------------------+------------------------------------+
+| first main image not loaded      | valid first image entry + EIP    | before DLL callbacks / guest work  |
+| malformed image => SEALED        | dedicated bounded catalog commit| generic/readExports allowlists     |
+| secondary Worker => SEALED       | actual policy checked at owner   | reload/init cannot reopen          |
++----------------------------------+----------------------------------+------------------------------------+
+| REMOTE TRANSACTION IMPLEMENTED | NEXT: retain VFS leases through reply + validate before execution        |
++----------------------------------------------------------------------------------------------------------+
+```
+
+The executing Worker now owns monotonic catalog-publication eligibility.
+Only the first successful main-image load opens it. Review caught loader
+errors represented by truthy negative integers; opening now requires a
+non-error entry matching native EIP. Execution-capable messages seal before
+invocation, including secondary-thread DLL callbacks, DLL initialization,
+slices and synchronous message routes. Separate exact allowlists cover
+generic calls and `readExports`; other exports still execute but first seal
+catalog startup. Direct generic catalog mutators are rejected. Repeated init,
+reloading and secondary slots cannot reset eligibility.
+
+The dedicated `installFontCatalog` message validates independently at both
+ends, copies owned bytes and publishes only while OPEN. It accepts at most
+32 direct-child TTF files, 4 MiB each and 16 MiB aggregate, rejects excluded
+and duplicate paths, and validates current native substitution policy before
+publication. Reply count/generation are checked; failure or an uncertain
+reply requires discarding the unstarted process. The byte cap applies to each
+owned message payload, not the sum of host/Worker clones, VFS leases, staging
+and existing font caches.
+
+Seven real-Worker test groups pass owner-only populated/empty publication,
+host/Worker invalid payload rejection, native malformed rollback, stale
+policy, generic/readExports/DLL sealing, blocked generic mutators, invalid
+first images, secondary slots and duplicate initialization. Message-helper,
+local installer, preparation and existing stock-font tests also pass.
+Independent review found no blocking gate bypass. Unlisted diagnostic exports
+conservatively seal startup; automatic integration must audit needed metadata
+queries rather than assume `get_` names imply safety.
+
+Automatic browser/CLI catalog startup is not enabled yet: it must retain VFS
+leases through the remote reply and validate source/cancellation before guest
+execution, discarding stale publication. Face/strike generations,
+pre-side-effect operation gates and process-memory/performance acceptance
+remain open. This remains distinct from Fable's completed materialization
+fixes; main's unified cache identity/test discovery must survive integration.
+
+Final verification: full canonical/compatibility build passes with 950
+manifest-listed tests (not a full-suite run), source 317 and unchanged native
+artifacts 1,066,734 / 1,067,187 bytes, 237 imports, 233 nonoverlapping data
+segments and layout `b00c9d60346fdb5a`. The final Chrome matrix exits 0:
+Notepad/Calculator parity, native exclusion queries and late catalog rejection,
+five-font readiness, both Rodent input/render checks, three Winamp playback
+Workers and COM success/missing-server recovery. These are functional checks,
+not total-memory or performance acceptance.
+
+### Prior increment — executing-owner native font policy
 
 ```text
 +----------------------------------------------------------------------------------------------------------+
