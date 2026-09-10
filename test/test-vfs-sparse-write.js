@@ -143,6 +143,28 @@ test('materialize rejects concurrent same-size mutation and preserves latest dat
   assert.strictEqual(vfs.files.get('c:\\data.bin')._provider, null);
 });
 
+test('partial-line rewind preserves a later permanent fill fault', async () => {
+  const vfs = new VirtualFS();
+  vfs.setProviderFile('C:\\line.txt', { provider: {
+    size: 4,
+    tryRead(off, len) { return off < 2 ? Uint8Array.of(65 + off).subarray(0, len) : null; },
+    async fill() { throw new Error('disk failure'); },
+  } });
+  const handle = vfs.createFile('C:\\line.txt', 0x80000000, 3);
+  const buffer = new Uint8Array(1);
+  assert(vfs.readFile(handle, buffer, 1).ok);
+  assert(vfs.readFile(handle, buffer, 1).ok);
+  const missing = vfs.readFile(handle, buffer, 1);
+  assert(missing.pending);
+  vfs.setFilePointer(handle, -2, 1); // fgets retries the entire partial line
+  assert.strictEqual(await vfs.fillPendingRead(missing.pending), false);
+  assert(vfs.readFile(handle, buffer, 1).ok);
+  assert(vfs.readFile(handle, buffer, 1).ok);
+  const failure = vfs.readFile(handle, buffer, 1);
+  assert.strictEqual(failure.faulted, true, 'cached prefix must not erase the suffix fault');
+  assert.strictEqual(failure.pending, undefined);
+});
+
 (async () => {
   let failures = 0;
   for (const { name, run } of cases) {

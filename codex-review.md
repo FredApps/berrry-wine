@@ -2,7 +2,7 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-This continuation is being validated in `/private/tmp/wa-review-integration` on top of integrated `a7f96c77`. It is not deployed. Prior integration evidence below does not substitute for testing these changes.
+This continuation is committed as `6653eb1a` in `/private/tmp/wa-review-integration` on top of integrated `a7f96c77`, with the final audit corrections recorded in the following commit. It is not yet integrated into main or deployed. Prior integration evidence below does not substitute for testing these changes.
 
 ```text
 +----------------------------------------------------------------------------------------------------------+
@@ -28,6 +28,8 @@ This continuation is being validated in `/private/tmp/wa-review-integration` on 
 - Managed VFS maps retain shared entries/providers across adoption and shell snapshots. Materialization and pending fills retain providers during I/O. Cleanup errors remain visible without poisoning the next checkpoint. Full launch/stop/cancellation lifecycle acceptance remains.
 - Canonical and compatibility builds pass: source version 300, unchanged layout `8566329207cd7d8f`, 910 manifest entries, 233 data segments without overlaps. Focused sparse-provider, VFS, checkpoint, ownership, CRT, and thread regressions pass. This is not a full-suite or device-performance result.
 - Real Chrome OPFS validation passes: 26 files survive competing two-tab/same-tab writes; an exact-commit snapshot remains readable through another tab's overwrite, deletion, and scope removal. Final release leaves zero orphan blobs and zero snapshot manifests. This validates real Web Lock/OPFS lifetimes, not just model backends.
+- The rebuilt candidate's full browser Worker matrix passes: Notepad/Calculator parity, both Rodent gameplay/input suites, Winamp (three workers, readiness 2.008s), and COM load/unpark. This does not establish that historical intermittent readiness failures are fixed.
+- Final independent review added fail-closed duplicate-index validation, all-settled store lease cleanup with truthful committed results, and preservation of a later read fault while `fgets` retries its cached prefix. Focused regressions reproduce each failure; cleanup errors remain observable and do not skip remaining releases or poison later checkpoints.
 - **#9 remains open:** `rangeWrites:true` is opt-in; ordinary hydration remains eager. A checkpoint rebase makes even initially eager files async-only. `_lread`, `_hread`, `LZRead`/`LZCopy`, sound/version helpers, `mmioDescend`/faulted `mmioAdvance`, and bitmap/font/help loaders still need safe outer-boundary retry or an explicit preload contract. Sparse COW removes the earlier need to park write-opens themselves; byte-consuming operations and lifecycle completion are the blockers. No large-installation memory benchmark is claimed.
 - **#10 remains open:** the adaptive main-slice mitigation does not bound cooperative worker/wake-drain/no-window work or individual native/REP operations. Next: one monotonic deadline per complete cooperative turn, safe polls at complete block boundaries including fast branch chains, deterministic nested/resume tests, then loaded headful input/audio measurements. Never yield halfway through a threaded block or synchronous guest callback. No hard latency guarantee is claimed.
 

@@ -87,11 +87,43 @@ async function common(label, store, reopen) {
   const memory = memoryStore();
   await common('memory', memory, async () => memory);
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-overlay-ranges-'));
-  try { await common('Node', nodeDirStore(dir), async () => nodeDirStore(dir)); }
+  try {
+    await common('Node', nodeDirStore(dir), async () => nodeDirStore(dir));
+    const indexPath = path.join(dir, 'index.json');
+    const index = JSON.parse(fs.readFileSync(indexPath, 'utf8'));
+    index.records.push({...index.records[0]});
+    fs.writeFileSync(indexPath, JSON.stringify(index));
+    const originalUnlink = fs.unlinkSync;
+    let unlinks = 0;
+    fs.unlinkSync = (...args) => { unlinks++; return originalUnlink(...args); };
+    try { await assert.rejects(nodeDirStore(dir).list(), /duplicate overlay index path/); }
+    finally { fs.unlinkSync = originalUnlink; }
+    assert.strictEqual(unlinks, 0, 'malformed duplicate index must fail before GC');
+  }
   finally { fs.rmSync(dir, {recursive:true,force:true}); }
   const stats = { reads: [], writes: [], fullReads: 0 };
   const root = new Directory(stats), locks = new Locks(), opts = {root,locks};
   const store = opfsStore('range-test', opts);
+  const released = [], cleanupFailure = new Error('bad release');
+  const externalBase = (id, fail) => ({size:1, retain() { return this; },
+    readRange: async () => Uint8Array.of(id),
+    release() { released.push(id); if (fail) throw cleanupFailure; },
+  });
+  const cleaned = await store.writeBatch([1,2].map(id => ({path:'cleanup-'+id,kind:'file',size:1,
+    base:externalBase(id,id===1)})), {snapshot:true});
+  assert.strictEqual(cleaned.written, 2);
+  assert.deepStrictEqual(released, [1,2], 'sync release failure cannot skip other bases');
+  assert.deepStrictEqual(cleaned.cleanupErrors, [cleanupFailure]);
+  assert.deepStrictEqual([...await cleaned.snapshot.records.find(r=>r.path==='cleanup-2').provider.readRange(0,1)], [2]);
+  await cleaned.snapshot.release();
+  await store.remove('cleanup-1'); await store.remove('cleanup-2');
+  const failingRead = new Error('original read failure');
+  const rejectedBase = externalBase(3, false);
+  rejectedBase.readRange = async () => { throw failingRead; };
+  rejectedBase.release = async () => { released.push(3); throw cleanupFailure; };
+  await assert.rejects(store.writeBatch([{path:'failed',kind:'file',size:1,base:rejectedBase},
+    {path:'never-written',kind:'file',size:1,base:externalBase(4,false)}]), error => error === failingRead);
+  assert.deepStrictEqual(released, [1,2,3,4], 'async cleanup rejection preserves original failure and releases all bases');
   await common('OPFS', store, async () => opfsStore('range-test', opts));
   stats.reads.length = 0;
   const snapshot = await store.openSnapshot();
