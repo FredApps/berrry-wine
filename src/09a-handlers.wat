@@ -397,6 +397,18 @@
       (i32.mul (i32.sub (local.get $tid) (i32.const 1))
         (global.get $THREAD_MSG_QUEUE_STRIDE))))
 
+  ;; Called by the host before publishing a newly reserved thread id. Never
+  ;; reset here from init_thread: posts accepted before instantiation must live.
+  (func $reset_thread_message_queue (param $tid i32)
+    (local $queue i32)
+    (local.set $queue (call $thread_msg_queue_addr (local.get $tid)))
+    (if (i32.eqz (local.get $queue)) (then (return)))
+    (call $lock_wnd_acquire)
+    (i32.store (local.get $queue) (i32.const 0))
+    (i32.store offset=4 (local.get $queue) (i32.const 0))
+    (i32.store offset=8 (local.get $queue) (i32.const 0))
+    (call $lock_wnd_release))
+
   (func $shared_post_queue_enqueue (param $hwnd i32) (param $msg i32) (param $wparam i32) (param $lparam i32) (result i32)
     (local $cnt i32) (local $tail i32) (local $slot i32) (local $queue i32) (local $tid i32)
     (local.set $tid (call $wnd_get_thread (local.get $hwnd)))

@@ -101,6 +101,7 @@ function makeManager(backend, extraOpts) {
   const mainInstance = {
     exports: {
       get_sync_table: () => 0,
+      reset_thread_message_queue: () => {},
       get_num_thunks: () => 1283,
       sync_thunk_state: () => {},
       get_bp_addr: () => 0,

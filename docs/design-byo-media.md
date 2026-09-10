@@ -671,6 +671,39 @@ make during the phase that hits it, not a reason to redesign now:
 
 ## Overlay semantics (⑤) — the mini-design risk item 3 asked for
 
+### Sparse checkpoint prerequisite (opt-in)
+
+`VfsOverlay.attach(vfs, {store, rangeWrites: true})` selects sparse writable
+entries and range checkpoints. This is not the browser default: several
+internal/audio file consumers still need pending-read support, and a successful
+checkpoint rebase makes an initially eager file asynchronous. Hydration remains
+eager until those consumers and complete launch/stop ownership are verified.
+
+`SparseByteProvider` owns 64KiB dirty pages with byte-range coverage over an
+immutable base. Writes do not fetch untouched bytes; shrinking caps the base
+extent so later growth reads zeros. Snapshots copy dirty ranges only and retain
+their base until persistence settles. An acknowledged snapshot rebases only
+when no newer mutation exists; otherwise the current dirty data remains.
+
+Stores accept `{path, kind:'file', size, base, baseSize, ranges:[{offset,data}]}`.
+Same-store immutable extents are reused; external bases are streamed in bounded
+reads. `openSnapshot()` returns metadata and version-pinned providers;
+`writeBatch(records, {snapshot:true})` pins the exact committed version before
+unlocking. Callers must release snapshots and retain providers they keep.
+OPFS pins use persisted manifests plus live Web Lock leases; Node pins are
+process-local. A snapshot lease is coarse: one retained file can keep all blobs
+from that snapshot alive until its final provider is released.
+
+Managed file maps reference-count shared entries, each of which owns a provider
+lease. Copies fork mutable providers; adoption and shell snapshots share entry
+ownership. Pending fills/materialization and checkpoint snapshots own separate
+in-flight leases. Cleanup errors are reported and do not poison later flushes.
+Tests: `test-sparse-byte-provider`, `test-vfs-sparse-write`,
+`test-vfs-entry-ownership`, `test-overlay-store-ranges`, and
+`test-vfs-overlay-checkpoints`.
+
+### Default eager checkpoint contract
+
 Implemented by `lib/vfs-overlay.js` (tracker) over `lib/overlay-store.js`
 (async repository). This section is the contract; the tests in
 `test/test-vfs-overlay.js` are its executable form.

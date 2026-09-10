@@ -177,13 +177,14 @@ test('the LRU bound keeps a big file from becoming resident', () => {
   assert(cache.stats.fetches >= 16, 'the whole file should have been fetched in chunks');
 });
 
-test('writing to a lazy entry materializes it (copy-on-write)', () => {
+test('writing to a lazy entry keeps a sparse copy-on-write provider', () => {
   const vfs = lazyVfs();
   const h = vfs.createFile(GUEST, 0x40000000, 3);
   vfs.setFilePointer(h, 10, 0);
   vfs.writeFile(h, new Uint8Array([1, 2, 3]), 3);
   const entry = vfs.files.get(NORM);
-  assert(!entry._provider, 'the provider should be dropped once written');
+  assert(entry._provider instanceof bp.SparseByteProvider, 'writes must preserve lazy untouched bytes');
+  assert.strictEqual(entry._provider.pages.size, 1, 'small write owns one page');
   assert.strictEqual(entry.data.length, SIZE, 'size must survive the copy');
   const expect = new Uint8Array(BYTES);
   expect.set([1, 2, 3], 10);
@@ -213,7 +214,7 @@ test('CopyFile off a lazy mount shares the provider instead of materializing', (
   // Independent all the same: writing to the copy must not touch the source.
   const h = vfs.createFile('C:\\GAME\\COPY.DAT', 0x40000000, 3);
   vfs.writeFile(h, new Uint8Array([9]), 1);
-  assert(!copy._provider, 'the written copy should have materialized');
+  assert(copy._provider instanceof bp.SparseByteProvider, 'written copy stays sparse');
   assert(vfs.files.get(NORM)._provider, 'the source must still be lazy');
 });
 

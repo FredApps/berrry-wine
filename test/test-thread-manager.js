@@ -19,6 +19,7 @@ function makeThreadManagerWithMemory(memory, opts) {
   const mainInstance = {
     exports: {
       get_sync_table: () => 0,
+      reset_thread_message_queue: () => {},
       get_heap_ptr: () => 0,
       set_heap_ptr: () => {},
     },
@@ -32,6 +33,13 @@ const idTm = makeThreadManager();
 const threadIdWa = 0x100;
 const idView = new DataView(idTm.memory.buffer);
 idView.setUint32(threadIdWa, 0xdeadbeef, true);
+idTm.mainInstance.exports.reset_thread_message_queue = tid => {
+  assert.strictEqual(tid, 2);
+  assert.strictEqual(idView.getUint32(threadIdWa, true), 0xdeadbeef,
+    'queue reset occurs before lpThreadId publication');
+  assert.strictEqual(idTm._pendingThreads.length, 0,
+    'queue reset occurs before pending-thread publication');
+};
 const idHandle = idTm.createThread(0x5000, 0, 0, 0, threadIdWa);
 assert.strictEqual(idHandle, 0xE1000,
   'CreateThread still returns the independently allocated kernel handle');
@@ -729,3 +737,88 @@ console.log('PASS  ThreadManager preserves and atomically consumes wait-all stat
 console.log('PASS  ThreadManager keeps main wait completion logs trace-only');
 console.log('PASS  ThreadManager keeps synchronization-object creation logs trace-only');
 console.log('PASS  ThreadManager keeps every worker hwnd inside its own app slice');
+
+(async () => {
+  const { Worker } = require('worker_threads');
+  const { WorkerLink, GuestThreadHost } = require('../lib/guest-thread-host');
+  const shared = new SharedArrayBuffer(4);
+  const counter = new Int32Array(shared);
+  const worker = new Worker(`const {parentPort,workerData}=require('worker_threads');
+    const counter=new Int32Array(workerData); parentPort.postMessage('ready');
+    setInterval(()=>Atomics.add(counter,0,1),1);`, { eval: true, workerData: shared });
+  await new Promise((resolve, reject) => { worker.once('message', resolve); worker.once('error', reject); });
+  const link = new WorkerLink({ slot: 1 });
+  link.worker = worker;
+  let completeSlice;
+  link.slice = () => new Promise(resolve => { completeSlice = resolve; });
+  const manager = makeThreadManager();
+  manager._maxWorkerThreads = 1;
+  const backend = { threadLinks: new Map([[1, link]]), slotTid: new Map([[1, 1]]),
+    dropThread: GuestThreadHost.prototype.dropThread };
+  manager.workerBackend = backend;
+  const thread = { tid: 1, state: 'active', link };
+  manager.threads.set(0xE1000, thread);
+  const run = manager._runWorkerThread(0xE1000, thread, 1000, {});
+  manager.terminateThread(0xE1000, 23);
+  assert.strictEqual(manager.createThread(0x4000, 0, 0), 0,
+    'logical exit cannot recycle an executing Worker');
+  completeSlice({ eip: 0x4000, yield: 1 });
+  await run;
+  assert.strictEqual(thread.exitCode, 23, 'late slice does not overwrite exit state');
+  const stoppedCounter = Atomics.load(counter, 0);
+  await new Promise(resolve => setTimeout(resolve, 15));
+  assert.strictEqual(Atomics.load(counter, 0), stoppedCounter, 'Node Worker actually stopped');
+  assert(manager.createThread(0x4000, 0, 0), 'slot reusable after quiescence');
+  const newer = { slot: 1 };
+  backend.threadLinks.set(1, newer);
+  backend.slotTid.set(1, 7);
+  await backend.dropThread(link);
+  assert.strictEqual(backend.threadLinks.get(1), newer, 'late teardown preserves replacement mapping');
+  assert.strictEqual(backend.slotTid.get(1), 7);
+
+  const pendingManager = makeThreadManager();
+  let finishSpawn;
+  let dropped = false;
+  pendingManager._workerPeMeta = async () => ({});
+  pendingManager._workerWasmGlobals = () => ({});
+  pendingManager.workerBackend = {
+    spawnThread: () => new Promise(resolve => { finishSpawn = resolve; }),
+    dropThread: async () => { dropped = true; },
+  };
+  const handle = pendingManager.createThread(0x4000, 0, 0);
+  const spawning = pendingManager.spawnPending();
+  await Promise.resolve();
+  pendingManager.terminateThread(handle, 9);
+  finishSpawn({ slot: 1 });
+  await spawning;
+  assert(dropped, 'worker created after pending cancellation is retired');
+  assert.strictEqual(pendingManager.threads.get(handle).state, 'exited', 'spawn cannot resurrect canceled thread');
+  assert.strictEqual(pendingManager._spawnedCount, 0);
+  const cooperative = makeThreadManager();
+  const canceled = cooperative.createThread(0x4000, 0, 0);
+  cooperative.terminateThread(canceled, 5);
+  cooperative.makeImports = () => { throw new Error('canceled thread was instantiated'); };
+  cooperative.spawnPending();
+  assert.strictEqual(cooperative.threads.get(canceled).state, 'exited');
+
+  const waiting = makeThreadManager();
+  waiting._maxWorkerThreads = 1;
+  waiting.workerBackend = { dropThread: async () => {} };
+  waiting.resolveWait = () => ({ result: 0, waitStackBytes: 12 });
+  let finishWait;
+  const waitingThread = { tid: 1, state: 'active', link: {
+    slice: async () => ({ eip: 0x4000, yield: 1 }),
+    completeWait: () => new Promise(resolve => { finishWait = resolve; }),
+  } };
+  waiting.threads.set(0xE1000, waitingThread);
+  const waitingRun = waiting._runWorkerThread(0xE1000, waitingThread, 1000, {});
+  await Promise.resolve();
+  assert(finishWait, 'wait continuation is pending');
+  waiting.terminateThread(0xE1000, 4);
+  assert.strictEqual(waiting.createThread(0x4000, 0, 0), 0,
+    'slot remains held during async wait completion after slice reply');
+  finishWait({});
+  await waitingRun;
+  assert(waiting.createThread(0x4000, 0, 0));
+  console.log('PASS actual Node Worker quiescence, late teardown identity, and pending-spawn cancellation');
+})().catch(error => { console.error(error); process.exitCode = 1; });

@@ -41,6 +41,12 @@ for a in "$@"; do
 done
 
 UNIT=(
+  test/test-crt-lazy-reads.js
+  test/test-overlay-store-ranges.js
+  test/test-sparse-byte-provider.js
+  test/test-vfs-sparse-write.js
+  test/test-vfs-entry-ownership.js
+  test/test-vfs-overlay-checkpoints.js
   test/test-runtime-thread-ownership.js
   test/test-worker-guest-readiness.js
   test/test-browser-cooperative-budget.js

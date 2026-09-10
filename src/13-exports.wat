@@ -461,6 +461,7 @@
     (call $class_table_register_data (local.get $name_wa) (local.get $wndclass_wa)))
   (func (export "test_class_lookup") (param $name_wa i32) (result i32)
     (call $class_table_lookup (local.get $name_wa)))
+  (export "reset_thread_message_queue" (func $reset_thread_message_queue))
   (func (export "test_shared_post")
     (param $hwnd i32) (param $msg i32) (param $wparam i32) (param $lparam i32) (result i32)
     (call $shared_post_queue_enqueue

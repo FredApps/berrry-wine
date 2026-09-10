@@ -7,6 +7,11 @@ const assert = require('assert');
 const { compileSrcWasm } = require('./compile-src');
 
 const extra = String.raw`
+  (func (export "test_post_thread") (param i32) (param i32) (result i32)
+    (global.set $esp (i32.const 0x410000))
+    (call $handle_PostThreadMessageA (local.get 0) (local.get 1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_post") (param i32) (param i32) (param i32) (param i32) (result i32)
     (global.set $esp (i32.const 0x410000))
     (call $handle_PostMessageA (local.get 0) (local.get 1) (local.get 2) (local.get 3)
@@ -219,6 +224,43 @@ assert.strictEqual(replacement.post_queue_depth(), 0, 'reinitializing a reused i
 replacement.guest_free(pa);
 assert.strictEqual(replacement.guest_alloc(64) >>> 0, pa);
 console.log('PASS thread-slot queue reset and allocation lifetime after producer exit');
+
+// Reset at CreateThread publication, not at delayed instance initialization.
+{
+  const { ThreadManager } = require('../lib/thread-manager');
+  a.reset_thread_message_queue(1);
+  a.reset_thread_message_queue(2);
+  assert.strictEqual(a.test_post_thread(1, 0xD01), 1);
+  for (let i = 0; i < 64; i++) assert.strictEqual(a.test_post_thread(2, 0xD02), 1);
+  for (let i = 0; i < 17; i++) assert.strictEqual(b.test_shared_post_read(0x403000, 1), 1);
+  for (let i = 0; i < 17; i++) assert.strictEqual(a.test_post_thread(2, 0xD03), 1);
+  const tm = new ThreadManager(module_, memory, { exports: a }, () => imports);
+  tm._log = () => {};
+  tm.threads.set(0xE0000, { tid: 1, state: 'exited' });
+  const out = a.guest_to_wasm(0x404000);
+  const handle = tm.createThread(0x401000, 0, 65536, 4, out);
+  assert(handle);
+  assert.strictEqual(a.guest_read32(0x404000), 2);
+  assert.strictEqual(b.test_shared_post_read(0x403000, 1), 0, 'old full ring cleared');
+  assert.strictEqual(a.test_shared_post_read(0x403000, 1), 1, 'sibling queue retained');
+  assert.strictEqual(msg()[1], 0xD01);
+  for (let i = 0; i < 64; i++) assert.strictEqual(a.test_post_thread(2, 0xE00 + i), 1);
+  assert.strictEqual(a.test_post_thread(2, 0xFFF), 0);
+  const replacement = new WebAssembly.Instance(module_, imports).exports;
+  replacement.init_thread(1, 0x400000, 0, 0, 0, 0, 0);
+  for (let i = 0; i < 64; i++) {
+    assert.strictEqual(replacement.test_shared_post_read(0x403000, 1), 1);
+    assert.strictEqual(msg()[1], 0xE00 + i, 'startup post survives initialization');
+  }
+  for (const tid of [0, 9, -1]) a.reset_thread_message_queue(tid);
+  assert.strictEqual(a.test_post_thread(2, 0xF01), 1);
+  tm.threads.set(handle, { tid: 1, state: 'exited' });
+  tm._pendingThreads = [];
+  assert(tm.createThread(0x401000, 0, 65536, 0), 'reuse without lpThreadId succeeds');
+  assert.strictEqual(replacement.test_shared_post_read(0x403000, 1), 0,
+    'non-suspended creation without output pointer still resets old lifetime');
+  console.log('PASS shared ring reset precedes thread publication and preserves startup posts/siblings');
+}
 
 function stressWorker() {
   const assert = require('assert');

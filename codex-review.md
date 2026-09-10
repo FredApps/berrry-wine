@@ -1,6 +1,39 @@
 # Project review — 2026-09-09
 
-## Execution update — review integration
+## Continuation — thread lifetimes and sparse-save prerequisites
+
+This continuation is being validated in `/private/tmp/wa-review-integration` on top of integrated `a7f96c77`. It is not deployed. Prior integration evidence below does not substitute for testing these changes.
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| NEXT-PASS TLDR                             IMPLEMENTED / STILL OPEN                                       |
++----------------------------------+----------------------------------+------------------------------------+
+| THREAD LIFETIMES                  | SAVE MEMORY FOUNDATION           | REMAINING ACCEPTANCE               |
+| reset shared ring BEFORE ID      | immutable, pinned versions       | #9: lazy hydration remains OFF    |
+| publication; keep startup posts  | 64KiB sparse dirty pages          | internal/audio reads must park    |
+|                                  | bounded backend reads             | complete shutdown/lease lifecycle |
+| slot reuse waits for actual      | exact-commit checkpoint snapshots | real browser + large-save checks  |
+| worker termination + callbacks   | concurrent edits survive flush    |                                    |
+|                                  |                                  | #10: whole-turn deadline + safe   |
+| real Worker/full-WAT tests PASS  | CRT pending-read tests PASS       | block-boundary yields + measures  |
++----------------------------------+----------------------------------+------------------------------------+
+| SAFE ORDER: finish file consumers -> enable lazy saves -> measure memory -> bound and measure UI turns     |
++----------------------------------------------------------------------------------------------------------+
+```
+
+- Shared-ring reuse now resets under `LOCK_WND` before publishing a replacement thread ID. Slots stay reserved through asynchronous slice/wait completion and actual Node worker termination. Canceled spawns cannot revive exited threads; stale teardown cannot delete replacement workers. Full-WAT and real-worker tests pass, including 64 startup posts surviving initialization.
+- `feof`, `fread`, `_read`, and `fgets` distinguish pending reads from EOF/failure and park without corrupting cdecl frames. `fgets` rewinds partially consumed bytes before retrying. Compiled-dispatch tests cover repeated misses, faults, EOF, cursors, and stack cleanup.
+- Sparse writable providers preserve untouched bytes, zero truncated/reextended tails, and copy independent dirty pages. Tests cover a 3GiB logical file, small edits without base reads, cache-boundary reads, concurrent materialization, and 250 eager-oracle operations. Zero-byte writes no longer extend files merely because the cursor is past EOF.
+- Stores expose leased `openSnapshot()` providers and bounded immutable extents. `writeBatch(records, {snapshot:true})` returns the exact committed version under the transaction lock. Node and model-OPFS tests cover failed publication, overwrite/delete with pinned old versions, final-release reclamation, and dirty-only writes.
+- Managed VFS maps retain shared entries/providers across adoption and shell snapshots. Materialization and pending fills retain providers during I/O. Cleanup errors remain visible without poisoning the next checkpoint. Full launch/stop/cancellation lifecycle acceptance remains.
+- Canonical and compatibility builds pass: source version 300, unchanged layout `8566329207cd7d8f`, 910 manifest entries, 233 data segments without overlaps. Focused sparse-provider, VFS, checkpoint, ownership, CRT, and thread regressions pass. This is not a full-suite or device-performance result.
+- Real Chrome OPFS validation passes: 26 files survive competing two-tab/same-tab writes; an exact-commit snapshot remains readable through another tab's overwrite, deletion, and scope removal. Final release leaves zero orphan blobs and zero snapshot manifests. This validates real Web Lock/OPFS lifetimes, not just model backends.
+- **#9 remains open:** `rangeWrites:true` is opt-in; ordinary hydration remains eager. A checkpoint rebase makes even initially eager files async-only. `_lread`, `_hread`, `LZRead`/`LZCopy`, sound/version helpers, `mmioDescend`/faulted `mmioAdvance`, and bitmap/font/help loaders still need safe outer-boundary retry or an explicit preload contract. Sparse COW removes the earlier need to park write-opens themselves; byte-consuming operations and lifecycle completion are the blockers. No large-installation memory benchmark is claimed.
+- **#10 remains open:** the adaptive main-slice mitigation does not bound cooperative worker/wake-drain/no-window work or individual native/REP operations. Next: one monotonic deadline per complete cooperative turn, safe polls at complete block boundaries including fast branch chains, deterministic nested/resume tests, then loaded headful input/audio measurements. Never yield halfway through a threaded block or synchronous guest callback. No hard latency guarantee is claimed.
+
+## Earlier execution update — integrated baseline a7f96c77
+
+This section records the previous integration. Its then-open follow-ups and test counts are superseded by the continuation above.
 
 The original review below is historical evidence, not the current status. The implementation began at `b04298f9` in `/private/tmp/wa-codex-review-fixes` and was reconciled with committed main in `/private/tmp/wa-review-integration`. Unrelated uncommitted main-tree work is excluded from the integration commits and preserved in the shared worktree. No deployment is part of this work.
 

@@ -1031,7 +1031,11 @@
               (local.get $arg0) (i32.const -1) (i32.const 1)))
             (global.set $eax (i32.const 0)))
           (else (global.set $eax (i32.const 1)))))
-      (else (global.set $eax (i32.const 1))))
+      (else
+        ;; No cdecl return-address pop has happened yet: preserve the frame.
+        (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+          (then (call $io_block (i32.const 0)) (return)))
+        (global.set $eax (i32.const 1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
@@ -1062,7 +1066,26 @@
             (i32.add (local.get $arg0) (local.get $count))
             (i32.const 1)
             (local.get $bytes_ga)))
-        (then (br $done)))
+        (then
+          (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+            (then
+              ;; Retry the whole line, not just its unavailable suffix. The
+              ;; bytes already copied will be overwritten by the retry.
+              (if (local.get $count)
+                (then
+                  (if (i32.eq (call $host_fs_set_file_pointer
+                        (local.get $arg2) (i32.sub (i32.const 0) (local.get $count))
+                        (i32.const 1)) (i32.const -1))
+                    (then
+                      (global.set $eax (i32.const 0))
+                      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+                      (return)))))
+              (call $io_block (i32.const 0))
+              (return)))
+          ;; A failed fill is an error, not a successful partial line.
+          (global.set $eax (i32.const 0))
+          (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+          (return)))
       (br_if $done (i32.eqz (i32.load (local.get $bytes_wa))))
       (local.set $ch (call $gl8 (i32.add (local.get $arg0) (local.get $count))))
       (local.set $count (i32.add (local.get $count) (i32.const 1)))
@@ -1093,7 +1116,10 @@
           (local.get $arg3) (local.get $arg0) (local.get $total)
           (local.get $bytes_ga))
       (then (local.set $read (i32.load (local.get $bytes_wa))))
-      (else (local.set $read (i32.const 0))))
+      (else
+        (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+          (then (call $io_block (i32.const 0)) (return)))
+        (local.set $read (i32.const 0))))
     (global.set $eax (i32.div_u (local.get $read) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
@@ -1185,14 +1211,18 @@
   )
 
   (func $handle__read (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $bytes_ga i32) (local $bytes_wa i32)
+    (local $bytes_ga i32) (local $bytes_wa i32) (local $ok i32)
     (local.set $bytes_ga (i32.sub (global.get $esp) (i32.const 4)))
     (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
     (i32.store (local.get $bytes_wa) (i32.const 0))
+    (local.set $ok (call $host_fs_read_file
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $bytes_ga)))
+    (if (i32.eqz (local.get $ok))
+      (then
+        (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+          (then (call $io_block (i32.const 0)) (return)))))
     (global.set $eax
-      (if (result i32) (call $host_fs_read_file
-            (local.get $arg0) (local.get $arg1) (local.get $arg2)
-            (local.get $bytes_ga))
+      (if (result i32) (local.get $ok)
         (then (i32.load (local.get $bytes_wa)))
         (else (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))

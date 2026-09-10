@@ -97,6 +97,7 @@ class FakeOpfsFileHandle {
     const snapshot = new Uint8Array(this.dir.files.get(this.name));
     return {
       size: snapshot.length,
+      slice: (start, end) => new Blob([snapshot.slice(start, end)]),
       arrayBuffer: async () => snapshot.buffer.slice(
         snapshot.byteOffset, snapshot.byteOffset + snapshot.byteLength),
     };
@@ -355,22 +356,37 @@ test('copy-on-write over a resident base file keeps the base mount intact', asyn
     'the overlay copy must win over the base mount');
 });
 
-test('an unresident provider file opened for write fails loudly, not silently', () => {
+test('an unresident provider file opened for write fails loudly by default', () => {
+  for (const access of [GENERIC_WRITE, GENERIC_ALL]) {
+    const vfs = new VirtualFS();
+    mountProviderFile(vfs, 'C:\\game\\big.dat', 'x'.repeat(64));
+    const overlay = VfsOverlay.attach(vfs, { store: memoryStore() });
+    assert.strictEqual(vfs.createFile('C:\\game\\big.dat', access, OPEN_EXISTING), 0);
+    assert.strictEqual(overlay.lastError, VfsOverlay.ERROR_NOT_READY);
+    assert.strictEqual(overlay.errors.length, 1);
+    assert.match(overlay.errors[0].message, /materialize/);
+    assert.ok(vfs.createFile('C:\\game\\big.dat', GENERIC_READ, OPEN_EXISTING));
+  }
+});
+
+test('opt-in sparse unresident writes do not read their base', () => {
   for (const [name, access] of [
     ['GENERIC_WRITE', GENERIC_WRITE],
     ['GENERIC_ALL', GENERIC_ALL],
   ]) {
     const vfs = new VirtualFS();
     mountProviderFile(vfs, 'C:\\game\\big.dat', 'x'.repeat(64));
-    const overlay = VfsOverlay.attach(vfs, { store: memoryStore() });
-    // Case 2: nothing has filled the chunk cache, so CreateFile-for-write has
-    // no synchronous way to copy on write and must not pretend otherwise.
+    let reads = 0;
+    const source = vfs.files.get('c:\\game\\big.dat')._provider.provider;
+    const readRange = source.readRange.bind(source);
+    source.readRange = (...args) => { reads++; return readRange(...args); };
+    const overlay = VfsOverlay.attach(vfs, { store: memoryStore(), rangeWrites: true });
+    // Sparse COW records the changed range; no synchronous base read is needed.
     const handle = vfs.createFile('C:\\game\\big.dat', access, OPEN_EXISTING);
-    assert.strictEqual(handle, 0,
-      `${name} must fail at open rather than park later in WriteFile`);
-    assert.strictEqual(overlay.lastError, VfsOverlay.ERROR_NOT_READY);
-    assert.strictEqual(overlay.errors.length, 1);
-    assert.match(overlay.errors[0].message, /materialize/);
+    assert.ok(handle, `${name} permits sparse writes`);
+    assert.ok(vfs.writeFile(handle, bytes('new'), 3).ok);
+    assert.strictEqual(reads, 0, 'open and write must not fetch base bytes');
+    assert.strictEqual(overlay.errors.length, 0);
     // Read-only opens of the same file are unaffected.
     const reader = vfs.createFile('C:\\game\\big.dat', GENERIC_READ, OPEN_EXISTING);
     assert.ok(reader, 'a read-only open of a lazy entry must still succeed');
