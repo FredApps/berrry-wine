@@ -247,6 +247,16 @@ const NO_CASE_CHAIN = hasFlag('no-case-chain');
 const NO_RLE_RUN = hasFlag('no-rle-run');
 // --loopmatch-stats: print the self-loop/match counts at exit.
 const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
+// --tree-fold: the general decode-time integer-expression fold, H448.
+// docs/tree-fold-design-a.md. OFF by default, so this is the only way to turn
+// it on -- and, like every other decode-time gate, it has to reach every
+// per-thread instance or the A/B measures two different decoders.
+// --tree-fold-min-ops=N lowers or raises the interior-op floor (default 4).
+const TREE_FOLD = hasFlag('tree-fold');
+const TREE_FOLD_MIN_OPS = (() => {
+  const v = getArg('tree-fold-min-ops', null);
+  return v === null ? null : (parseInt(v, 10) | 0);
+})();
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
 const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit
@@ -3889,6 +3899,7 @@ async function main() {
   if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
   if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
   if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
+  if (TREE_FOLD) inheritWasm('set_tree_fold', 1);
 
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
     workerBackend: guestThreadHost,
@@ -4778,6 +4789,15 @@ async function main() {
   }
   if (NO_RLE_RUN && instance.exports.set_rle_run) {
     instance.exports.set_rle_run(0);
+  }
+  if (TREE_FOLD && instance.exports.set_tree_fold) {
+    instance.exports.set_tree_fold(1);
+  }
+  // The floor applies whether or not the fold is armed: with it off, the
+  // matcher still counts what it WOULD have taken, and that census is only
+  // meaningful if both arms use the same threshold.
+  if (TREE_FOLD_MIN_OPS !== null && instance.exports.set_tree_fold_min_ops) {
+    instance.exports.set_tree_fold_min_ops(TREE_FOLD_MIN_OPS);
   }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
@@ -8968,6 +8988,25 @@ if (VERBOSE) {
         console.log(`loopmatch: ${label} RGB565 LUT matches`,
           e.get_loop_lut16_matches(), 'runs', e.get_loop_lut16_runs(),
           'pixels', String(e.get_loop_lut16_bytes()));
+      }
+      if (e.get_tree_fold_runs) {
+        // `matches` is blocks the predicate accepted, counted even with the
+        // gate off; `runs` is entries into the super-op; `iters` is guest
+        // iterations executed inside it; `ops` is the guest ops those
+        // iterations stand for -- that last one is the number to compare
+        // against a --handler-hist total to get the share of work caught.
+        console.log(`loopmatch: ${label} TREE_FOLD blocks`,
+          e.get_tree_fold_matches(), 'armed', e.get_tree_fold() ? 'yes' : 'no',
+          'runs', e.get_tree_fold_runs(),
+          'iters', String(e.get_tree_fold_iters()),
+          'ops', String(e.get_tree_fold_ops()));
+        // The decline split. A match rate alone cannot say what to widen; this
+        // names the barrier, and `lastFn` names one handler that hit it.
+        console.log(`loopmatch: ${label} TREE_FOLD declines short`,
+          e.get_tree_decl_short(), 'long', e.get_tree_decl_long(),
+          'terminator', e.get_tree_decl_term(),
+          'unfoldable-op', e.get_tree_decl_uop(),
+          'lastFn', e.get_tree_decl_uop_fn());
       }
       if (e.get_lut_span_runs) {
         console.log(`loopmatch: ${label} fixed LUT spans`,
