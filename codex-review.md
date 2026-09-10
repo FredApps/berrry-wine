@@ -2,7 +2,53 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — atomic native font catalog staging
+### Latest increment — bounded host catalog snapshots and local publication
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| PREPARE: IMPLEMENTED                LOCAL COMMIT: IMPLEMENTED                  AUTOMATIC STARTUP: NEXT    |
++----------------------------------+----------------------------------+------------------------------------+
+| snapshot direct-child TTF names  | stage one font at a time         | native substitution exclusion list |
+| retain ALL source leases        | validate sources + membership    | executing Worker protocol          |
+| 16 MiB aggregate payload default| commit once; abort failed staging| admit execution only while current |
++----------------------------------+----------------------------------+------------------------------------+
+| SOURCE MUTATION / NEW FILE / CANCEL => REJECT | FACE + STRIKE GENERATIONS OPEN | LAZY DEFAULTS STILL OFF   |
++----------------------------------------------------------------------------------------------------------+
+```
+
+`lib/font-catalog.js` implements retained-lease preparation and synchronous
+publication on a local executing instance. Membership is re-enumerated and
+every retained source lease is validated through commit; earlier files are
+not released while later reads are pending. The remaining aggregate budget
+is enforced before requesting each lease. Defaults are 16 MiB retained payload,
+32 files and 4 MiB per file. One read copy and one native staging allocation
+add at most 8 MiB payload transiently, plus bounded metadata/allocator overhead;
+existing VFS/provider/cache/parsed-font ownership is outside that bound.
+
+Six real-VFS preparation test groups pass same-size replacements, provider
+revisions, eager mutation, membership changes, bounds/exclusions, immutable
+read copies, cancellation and provider/handle cleanup. The compiled installer
+test passes metadata-only publication, malformed metadata preserving the old
+catalog, source/membership mutation after native add rejecting commit,
+allocation/native/check failures releasing staging and pending transactions,
+and completed-empty replacement. Independent subagent review found no blocker
+under the documented local synchronous startup contract.
+
+This helper is not automatically called by browser/CLI startup yet. Exclusions
+must come from both actual WAT substitution tables, and Worker publication
+needs final host validation before execution. Validation re-enumerates the
+VFS; this is a bounded startup/refresh operation, not a scheduler hot-path
+query. Face/glyph/strike generations, pre-side-effect gates and total-process
+memory/performance acceptance remain open. No production source/cache identity
+change was needed for this currently unimported helper.
+
+The full canonical/compatibility build passes with 946 manifest-listed tests
+(membership, not a full-suite run), unchanged source 315 and unchanged
+1,066,509 / 1,066,962-byte artifacts/layout. Existing stock-font preparation
+tests also pass. The previous increment's Chrome matrix remains the browser
+evidence; no automatic browser behavior changed in this increment.
+
+### Prior increment — atomic native font catalog staging
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

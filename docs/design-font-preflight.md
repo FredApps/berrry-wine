@@ -88,7 +88,32 @@ re-enumerate names/sizes/timestamps at the end: that misses same-size entry
 replacement, nested-provider revisions and eager in-place mutation. Until a
 durable metadata-token API exists, keeping all source leases through commit
 requires an explicit aggregate retained-byte budget. Sequential reads alone
-do not bound retained memory. This host ownership protocol is still pending.
+do not bound retained memory.
+
+`lib/font-catalog.js` now implements that bounded retained-lease alternative.
+It snapshots direct-child TTF membership with public VFS enumeration, closes
+every enumeration handle, and retains all prepared leases until release.
+Its default aggregate payload budget is 16 MiB, configurable up to 128 MiB;
+candidate count is capped at 32 and each file at 4 MiB. The remaining budget
+is passed into each lease request before its allocation/read. Validation
+checks current membership and every retained source lease, including earlier
+files while a later read is pending. This establishes a consistent snapshot
+at publication, not exact entry identity at the start of discovery.
+
+Local installation stages one copied file at a time, revalidates the complete
+batch immediately before native commit with no intervening await, and aborts
+failed native transactions. The temporary owned payload bound is the lease
+budget plus one read copy (at most 4 MiB) and one native staging file (at most
+4 MiB), plus bounded path/catalog metadata and allocator overhead. Existing
+VFS bytes, provider buffers/caches and already parsed fonts are outside this
+bound; this is not an aggregate process-memory acceptance result.
+
+Automatic startup is still pending. The caller must supply an exclusion
+snapshot matching both actual native substitution tables; `fontMounts()`
+alone is not a sufficient authority for that list. Worker installation must
+hold source ownership through its reply, validate again before admitting
+execution, and discard an unstarted process on stale publication. The local
+installer must not be passed a shadow instance or asynchronous Worker proxy.
 
 Separate directory discovery from face registration/loading. Catalog work may
 read bounded metadata incrementally, but must not fill the 32-face parsed cache
