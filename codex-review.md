@@ -2,7 +2,41 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — bounded immutable byte preparation
+### Latest increment — stock-font launch prerequisites
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| PREPARE FIVE FILES                   PUBLISH BEFORE GUEST EXECUTION              LAUNCH GATE               |
++----------------------------------+----------------------------------+------------------------------------+
+| sequential bounded read leases  | indexed buffer-only FON parser   | browser: executing Worker instance |
+| validate the complete batch     | installed state only on success  | CLI: final mounts BEFORE DllMain    |
+| failure / abort releases owners | refuse existing stock ownership | keep guest parked on preparation   |
++----------------------------------+----------------------------------+------------------------------------+
+| VERIFIED PREPARATION / INSTALL   | NO AUTOMATIC BOOTSTRAP YET        | LAZY DEFAULTS REMAIN OFF            |
++----------------------------------------------------------------------------------------------------------+
+```
+
+The launch audit identified a prerequisite beyond reading the files: CLI `test/run.js` invokes `loadDlls`, which executes DLL initializers, before application/media mounts, overlay hydration and save restoration. A bootstrap inserted just before the main run loop would therefore be too late. The browser restores its overlay before `loadExe` and initializes DLLs afterward; publication belongs after image/heap initialization on the executing instance, not its metadata-only host shadow. Stock FON registry records and state words are shared across instances, while TrueType face caches are instance-local. Do not parse independently on every Worker, allocate staging bytes before `load_pe` resets the heap, or assume loading another executable resets the stock registry.
+
+The bounded next step is preparation of exactly System, MS Sans Serif, Fixedsys, Courier and Terminal, followed by startup-only buffer publication while no guest code can observe incomplete records. Preparation must validate earlier leases after later asynchronous reads; individually valid acquisitions do not establish a current batch. A failed fetch or cancellation must leave native state untouched. Native publication must not replace an already registered path or mark a failed parse permanently unavailable. This is not an all-five atomic replacement transaction: the existing FON parser accepts valid strikes from a partially malformed resource container, and a later file can fail after earlier files installed. The launch owner must keep execution gated and discard failed process memory; continuing or retrying blindly on that partially initialized process is not safe.
+
+Cross-check: Fable's H1 materialization bug and H2 large-offset bug are already recorded as fixed (`8ff2b10d`, `db182b2d`). These font prerequisites address a different remaining consumer boundary, not a reopening of those findings. Dynamic font selection/enumeration, implicit revision invalidation and explicitly selected face lifetimes still need their own pre-side-effect protocol.
+
+The consumer audit also found that legacy `setLazyFile` entries invoked their synchronous data getter before the lease's budget and pre-abort checks. The lease now rejects cancellation and known oversized/invalid metadata before invoking that loader, then rechecks the actual loaded length. A custom legacy loader can still allocate more than its advertised size internally; it must honor its metadata, or use a bounded provider. The new regression covers oversized metadata, pre-abort without loading, dishonest metadata and normal bounded loading.
+
+Rollout also needs a registry-capacity policy for substituted FONs: the existing 48-strike parser can evict an earlier font while installing a later one, without clearing the earlier stock state. Five successful return values alone are not proof that all five fonts remain installed. The new installer is a per-font primitive, not a solution to this cross-file capacity problem. Native pointer validation must cover actual post-PE allocations (which begin after the image, often below the nominal `GUEST_HEAP_BASE` region), not just no-image harness allocations.
+
+Next integration sequence: keep DLL discovery/mounting before overlay replay, but defer executable DLL initializers until final mounts, save/startup restoration and stock preparation complete; then publish once on the executing instance with a launch-generation/cancellation guard. Any failed or canceled partial publication must keep the guest stopped and dispose of that process. Verify both browser backends and CLI with a DLL that draws during initialization, an overlay-replaced font, and cancellation while a Worker export is pending. A registry-capacity check is required before accepting arbitrary substituted stock FONs. Only afterward consider dynamic font preflight; neither path authorizes turning lazy defaults on without installed-tree and input/audio acceptance.
+
+Implemented: `StockFontBootstrap.prepare` acquires the five leases sequentially, with a 0xF0000-byte per-file cap (at most 4,915,200 retained source bytes per batch, not a process-wide budget). The frozen batch validates every lease before any read and releases all owners on preparation failure or cancellation. `stock_font_install` validates the index, state, size, allocator arena/header extent and contiguous address translation before parsing; it refuses a preexisting path hash and publishes state 2 only after a successful parse. The caller must own a live allocation; allocator metadata is not proof against forged headers or reuse of freed storage. The new JS helper is not yet loaded by either production launch path.
+
+Validation: nine batch tests pass, including canonical font index order and browser-global loading in a separate JavaScript realm; ten lease groups pass including legacy lazy-loader prechecks. The compiled test loads the real Notepad PE, explicitly verifies its staging allocation lies below the nominal heap region, and hands off all five real FONs from zero-byte caches. Invalid indices/pointers/sizes, allocation overrun, malformed bytes, nonzero stock state and existing path ownership are rejected without poisoning state. Publication and subsequent ensure perform no VFS reads; a second WASM instance over the same memory observes the installed states and ensures without its own font files. Existing lazy-entry (35), entry ownership, explicit FON/TTF/FOT registration, System lease handoff and default bitmap-font checks pass.
+
+The canonical/compatibility build passes with 937 registered tests, 237 imports, 233 nonoverlapping data segments, and unchanged layout `b00c9d60346fdb5a`. Source version 311 produces 1,065,234 / 1,065,687 bytes; host/region cache tags are 311, Worker URL 40, filesystem 181. This is targeted correctness coverage, not a full-suite, automatic-bootstrap, installed-tree memory or input/audio acceptance claim.
+
+The final Chrome Worker matrix passes with exit 0: Notepad/Calculator backend parity, both Rodent rendering/input checks, Winamp playback with three executing guest Workers, and COM load/missing-server recovery. This verifies the rebuilt runtime and cache-version changes; the automatic font launch gate is still absent. The native handoff and shared-instance font visibility are covered by the dedicated compiled test, not by those browser launches.
+
+### Prior increment — bounded immutable byte preparation
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

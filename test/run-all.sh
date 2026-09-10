@@ -56,6 +56,8 @@ UNIT=(
   test/test-vfs-entry-ownership.js
   test/test-vfs-read-lease.js
   test/test-font-read-lease.js
+  test/test-stock-font-bootstrap.js
+  test/test-stock-font-bootstrap-native.js
   test/test-vfs-overlay-checkpoints.js
   test/test-runtime-thread-ownership.js
   test/test-worker-guest-readiness.js

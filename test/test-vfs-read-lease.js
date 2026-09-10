@@ -59,6 +59,26 @@ async function test(name, fn) { await fn(); passed++; console.log('PASS ' + name
       assert.strictEqual(provider.refs, 1); vfs.files.clear();
     }
   });
+  await test('legacy lazy metadata and pre-abort reject before invoking loader', async () => {
+    const vfs = new VirtualFS(); let loads = 0;
+    const mount = size => vfs.setLazyFile(path, {size, load: () => {
+      loads++; return Uint8Array.of(1,2,3);
+    }});
+    mount(100);
+    await assert.rejects(vfs.prepareReadLease(path, {maxBytes:3}), RangeError);
+    assert.strictEqual(loads, 0);
+    mount(3);
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(vfs.prepareReadLease(path, {maxBytes:3,signal:controller.signal}), /aborted/);
+    assert.strictEqual(loads, 0);
+    mount(1);
+    await assert.rejects(vfs.prepareReadLease(path, {maxBytes:1}), RangeError);
+    assert.strictEqual(loads, 1, 'actual size is checked even if loader metadata lies');
+    mount(3);
+    const lease = await vfs.prepareReadLease(path, {maxBytes:3});
+    assert.deepStrictEqual(lease.read(0,3), Uint8Array.of(1,2,3));
+    lease.release(); vfs.files.clear();
+  });
   await test('revision and path replacement during a read reject stale publication', async () => {
     for (const replace of [false, true]) {
       const { vfs, provider, bytes } = fixture(); let finish;
