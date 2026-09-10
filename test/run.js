@@ -9071,7 +9071,12 @@ if (VERBOSE) {
           e.get_tree_fold_matches(), 'armed', e.get_tree_fold() ? 'yes' : 'no',
           'runs', e.get_tree_fold_runs(),
           'iters', String(e.get_tree_fold_iters()),
-          'ops', String(e.get_tree_fold_ops()));
+          'ops', String(e.get_tree_fold_ops()),
+          // Micro-ops whose $set_flags_* call the dead-flag pass removed,
+          // summed over every lowering. Decode-time, so it says how much of
+          // the folded CODE was flag-dead, not how hot that code was.
+          'deadflag', e.get_tree_fold_dead_flag_ops
+            ? e.get_tree_fold_dead_flag_ops() : 0);
         // The decline split. A match rate alone cannot say what to widen; this
         // names the barrier, and `lastFn` names one handler that hit it.
         console.log(`loopmatch: ${label} TREE_FOLD declines short`,

@@ -2508,6 +2508,8 @@
   (func (export "get_tree_fold_runs") (result i32) (global.get $tree_fold_runs))
   (func (export "get_tree_fold_iters") (result i64) (global.get $tree_fold_iters))
   (func (export "get_tree_fold_ops") (result i64) (global.get $tree_fold_ops))
+  (func (export "get_tree_fold_dead_flag_ops") (result i32)
+    (global.get $tree_fold_dead_flag_ops))
   ;; What the most recent lowering put in the descriptor header. A fold that
   ;; runs the right number of iterations while publishing the wrong register
   ;; set is indistinguishable from one that never ran its body; these two say
