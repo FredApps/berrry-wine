@@ -458,7 +458,8 @@
         "setup.exe"
       ],
       "sourcePage": "https://archive.org/details/cdrom-starcraft-shareware",
-      "license": "commercial shareware; verify redistribution terms",
+      "officialDownload": "http://ftp.blizzard.com/pub/starcraft/demos/SCDemo.exe",
+      "license": "Blizzard demo; non-commercial mirroring permitted when unaltered, complete, and intact (https://www.blizzard.com/en-us/legal/28d5ebbf-c245-4408-8ba9-043dd5f056bf/legal-faq)",
       "packages": [],
       "manual": "Large CCD/IMG disc image intentionally remains manual. Extract it beneath this fixture directory before running the candidate suite."
     },
