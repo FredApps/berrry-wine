@@ -37,6 +37,7 @@ const EXTRA_WAT = `
   (func (export "test_tree_runs") (result i32) (global.get $tree_fold_runs))
   (func (export "test_tree_iters") (result i64) (global.get $tree_fold_iters))
   (func (export "test_tree_ops") (result i64) (global.get $tree_fold_ops))
+  (func (export "test_tree_deadflag") (result i32) (global.get $tree_fold_dead_flag_ops))
   (func (export "test_tree_nuops") (result i32) (global.get $tree_fold_last_nuops))
   (func (export "test_tree_live_out") (result i32) (global.get $tree_fold_last_live_out))
   (func (export "test_tree_cf") (result i32) (call $get_cf))
@@ -164,6 +165,25 @@ const SHAPE_G = loopBackDec([
   0x89, 0x07,                         // mov   [edi], eax
   0x83, 0xC6, 0x02,                   // add   esi, 2
   0x83, 0xC7, 0x04,                   // add   edi, 4
+]);
+
+// -- H: the per-FIELD flag rule's own shape -----------------------------------
+// `add eax,ebx` writes all five lazy-flag fields; `xor edx,eax` two ops later
+// writes only flag_op, flag_res and flag_sign_shift. A "the last op to touch
+// flags wins" rule would call the `add` dead and drop it -- and the terminator
+// is `dec ecx`, whose $set_flags_dec snapshots CF, and $get_cf reads flag_a
+// and flag_b to compute it. Those two fields would then hold whatever the
+// PREVIOUS iteration left, so ZF/SF would still agree, the loop would still
+// terminate, and only CF would be wrong. The per-field join is what makes both
+// writes survive here, and `esi` advances by LEA rather than ADD precisely so
+// that nothing later in the body covers flag_a/flag_b by accident.
+const SHAPE_H = loopBackDec([
+  0x8B, 0x06,                         // mov  eax, [esi]
+  0x01, 0xD8,                         // add  eax, ebx      writes all five
+  0x31, 0xC2,                         // xor  edx, eax      writes a strict subset
+  0x89, 0x07,                         // mov  [edi], eax
+  0x8D, 0x76, 0x04,                   // lea  esi, [esi+4]  no flags at all
+  0x8D, 0x7F, 0x04,                   // lea  edi, [edi+4]  nor this one
 ]);
 
 // -- negatives ----------------------------------------------------------------
@@ -321,11 +341,23 @@ const NEG_SHORT = loopBackDec([
 
   // Shape C is in-place, so seed the buffer it will rewrite and read the same
   // range back. Bound edi one word past the end so the cmp/jb terminates.
+  //
+  // It is also the best case for the dead-flag pass, and the count is exact
+  // rather than "> 0": a cmp terminator writes all five fields and reads none,
+  // so every interior flag write in the body is dead. The body has three --
+  // `xor eax,edx`, `add eax,0x1234` and `add esi,4`; `not eax` and the two
+  // memory ops touch no flags at all. Counted once, not twice: the gate-off
+  // arm returns after bumping `matches` and never reaches the pass.
   const bufC = (arena + 0xc000) >>> 0;
-  checkShape('shape C (in-place chain, cmp/jb, self-aliasing)', SHAPE_C,
-    () => ({ eax: 0, ecx: 0x1111, edx: 0x0f0f0f0f, ebx: 0x22334455,
-             ebp: 0xa5a5a5a5, esi: bufC, edi: (bufC + TRIPS * 4) >>> 0 }),
-    { seedAt: bufC, seedWords: TRIPS + 4, readAt: bufC }, TRIPS + 4);
+  {
+    const deadBefore = e.test_tree_deadflag();
+    checkShape('shape C (in-place chain, cmp/jb, self-aliasing)', SHAPE_C,
+      () => ({ eax: 0, ecx: 0x1111, edx: 0x0f0f0f0f, ebx: 0x22334455,
+               ebp: 0xa5a5a5a5, esi: bufC, edi: (bufC + TRIPS * 4) >>> 0 }),
+      { seedAt: bufC, seedWords: TRIPS + 4, readAt: bufC }, TRIPS + 4);
+    assert.strictEqual(e.test_tree_deadflag() - deadBefore, 3,
+      'shape C: a cmp terminator makes all three interior flag writes dead');
+  }
 
   // Shape D indexes both streams with the loop counter itself, so ecx is the
   // induction variable, the SIB index and the terminator's operand at once.
@@ -376,6 +408,34 @@ const NEG_SHORT = loopBackDec([
       { seedAt: srcG, seedWords: 200, readAt: dstG }, 100);
     assert.strictEqual(onState.ebp >>> 0, 0xa5a5a5a5,
       'shape G: a register outside the live-out mask is not republished');
+  }
+
+  // Shape H is the pass's negative control, and the assertion is zero. A
+  // "last flag writer wins" rule would elide the `add eax,ebx` here because a
+  // later `xor` touches flags at all; the per-field rule keeps it, because the
+  // xor writes a strict subset and the dec terminator's CF snapshot reads the
+  // fields it left alone.
+  //
+  // The exact count, not `> 0` or `>= 0`, and it is the only guard that works
+  // here. Seeding the pass with "the terminator covers everything" -- the
+  // last-writer rule -- was tried against this file: the count went to 2 and
+  // this assertion fired, while the register/flag comparison in checkShape
+  // PASSED. A dropped CF write does not change any register, does not change
+  // where the loop exits, and only shows up if the stale CF and the correct
+  // one happen to differ at the final iteration, which for one set of inputs
+  // they did not. So the flag join is checked structurally, by counting what
+  // the pass removed, and the differential is the backstop rather than the
+  // other way round.
+  const srcH = (arena + 0x28000) >>> 0;
+  const dstH = (arena + 0x2c000) >>> 0;
+  {
+    const deadBefore = e.test_tree_deadflag();
+    checkShape('shape H (per-field flag join, subset writer)', SHAPE_H,
+      () => ({ eax: 0, ecx: 100, edx: 0x5a5a5a5a, ebx: 0x0f1e2d3c,
+               ebp: 0xa5a5a5a5, esi: srcH, edi: dstH }),
+      { seedAt: srcH, seedWords: 200, readAt: dstH }, 100);
+    assert.strictEqual(e.test_tree_deadflag() - deadBefore, 0,
+      'shape H: a later subset writer does not make the full writer dead');
   }
 
   // -------------------------------------------------------------- side exit --
