@@ -508,7 +508,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '308';
+  static SOURCE_VERSION = '309';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2924,6 +2924,7 @@ class WineAssembly {
 
   stop(options = {}) {
     this.running = false;
+    if (HostHelpNavigationPump) HostHelpNavigationPump.cancel(this.threadManager || this);
     // A pending parked-sleep timeout and the visibilitychange listener both
     // close over this WineHost, and a WineHost owns a 512MB shared memory.
     // Same leak the DX rAF chain had.
@@ -3222,6 +3223,7 @@ class WineAssembly {
           const link = self.guestWorker.link;
           await HostHelpNavigationPump.pump({
             call: (name, ...args) => link.callExport(name, ...args), pending: true,
+            callbackOwner: self.threadManager || self, callbackMode: 'mainWorker',
             vfs: self._helpCtx && self._helpCtx.vfs,
             alive: () => self.running && !link._stopped && !!link.lastEip,
           });
@@ -4034,6 +4036,7 @@ class WineAssembly {
       try {
         if (HostHelpNavigationPump) {
           await HostHelpNavigationPump.pump({ exports: self.instance.exports,
+            callbackOwner: self.threadManager || self, callbackMode: 'mainCooperative',
             vfs: self._helpCtx && self._helpCtx.vfs,
             alive: () => self.running && !!self.instance.exports.get_eip(),
           });

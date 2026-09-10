@@ -80,6 +80,10 @@
           (local.get $shared_cache_generation))
         (global.set $thread_flush_pending (i32.const 1))))
     (block $halt (loop $main
+      ;; Native callback completion is acknowledged only by the outer host
+      ;; pump, which restores CPU and absolute wait deadlines as one phase.
+      (if (global.get $help_macro_native_returned)
+        (then (global.set $last_run_halt (i32.const 7)) (br $halt)))
       (if (i32.eqz (global.get $eip))
         (then (global.set $last_run_halt (i32.const 2)) (br $halt)))
       ;; A block whose quantum expired part-way through. Give it a fresh one and

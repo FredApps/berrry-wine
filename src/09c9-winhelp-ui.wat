@@ -86,11 +86,13 @@
   ;; +0 path,+4 window,+8 window length,+12 caller,+16 hash,+20 popup,
   ;; +24 command,+28 mode,+32 source epoch,+36 source topic,+40 deferred,
   ;; +44 source primary hwnd,+48 source popup hwnd.
-  (func (export "get_help_navigation_pending") (result i32) (global.get $help_navigation_job))
+  (func (export "get_help_navigation_pending") (result i32)
+    (i32.or (global.get $help_navigation_job) (call $help_macro_native_pending)))
   (func (export "get_help_navigation_io_handle") (result i32)
     (call $help_document_owned_pending_handle (global.get $help_navigation_job)))
   (func $help_navigation_cancel (export "help_navigation_cancel")
     (local $job i32) (local $p i32)
+    (call $help_macro_native_cancel)
     (local.set $job (global.get $help_navigation_job))
     (if (i32.eqz (local.get $job)) (then (return)))
     (global.set $help_navigation_job (i32.const 0))
@@ -2228,10 +2230,106 @@
   ;; callee-saved GPRs. State1 stages IO,2 executes guest code,3 awaits API retry.
   ;; Win16 extension: +72 code16; +76..88 ES/CS/SS/DS selectors; +92..104
   ;; their bases; +108 FS; +112 owned 64KiB callback stack; +116/+120 raw
-  ;; Pascal far path/data; +124 reserved; +128 owned 256-byte callback TIB.
-  ;; Native clicks deliberately retain their separate path.
+  ;; Pascal far path/data; +124 native source epoch; +128 owned callback TIB;
+  ;; +132 native CPU context. Native clicks use width4 and an outer-pump return.
   (global $help_macro_api_jobs (mut i32) (i32.const 0))
   (global $help_macro_api_context (mut i32) (i32.const 0))
+  (global $help_macro_native_capture (mut i32) (i32.const 0))
+  (global $help_macro_native_job (mut i32) (i32.const 0))
+  (global $help_macro_native_returned (mut i32) (i32.const 0))
+
+  ;; Width4 jobs are native detours. +124 is the source epoch; +132 owns an
+  ;; exact CPU snapshot. State2 runs normally; state3 waits for the OUTER pump
+  ;; to restore CPU and host deadlines together, never in a slice-result tail.
+  (func $help_macro_native_pending (result i32)
+    (if (i32.eqz (global.get $help_macro_native_job)) (then (return (i32.const 0))))
+    (select (global.get $help_macro_native_job) (i32.const 0)
+      (i32.ne (call $gl32 (i32.add (global.get $help_macro_native_job) (i32.const 4))) (i32.const 2))))
+  (func (export "get_help_macro_native_token") (result i32) (global.get $help_macro_native_job))
+  (func (export "get_help_macro_native_phase") (result i32)
+    (if (result i32) (global.get $help_macro_native_job)
+      (then (call $gl32 (i32.add (global.get $help_macro_native_job) (i32.const 4))))
+      (else (i32.const 0))))
+  (func (export "get_help_macro_native_io_handle") (result i32)
+    (call $help_routine_pending_handle (global.get $help_macro_native_job)))
+  (func $help_macro_native_cancel
+    (if (global.get $help_macro_native_job)
+      (then
+        ;; A click/close may discard staged work, but never free an executing
+        ;; callback's arguments, stack, or interrupted context.
+        (if (i32.eq (call $gl32 (i32.add (global.get $help_macro_native_job) (i32.const 4))) (i32.const 1))
+          (then (call $help_macro_api_drop (global.get $help_macro_native_job)))))))
+  (func $help_macro_native_queue (param $record i32) (param $args i32) (param $count i32) (result i32)
+    (local $job i32) (local $ready i32)
+    (call $help_macro_native_cancel)
+    (if (global.get $help_macro_native_job)
+      (then (call $help_macro_api_free_args (local.get $args)) (return (i32.const 0))))
+    (local.set $job (call $heap_alloc (i32.const 136)))
+    (if (i32.eqz (local.get $job))
+      (then (call $help_macro_api_free_args (local.get $args)) (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $job)) (i32.const 0) (i32.const 136))
+    (call $gs32 (local.get $job) (global.get $help_macro_api_jobs))
+    (global.set $help_macro_api_jobs (local.get $job))
+    (global.set $help_macro_native_job (local.get $job))
+    (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $job) (i32.const 36)) (i32.const 4))
+    (call $gs32 (i32.add (local.get $job) (i32.const 40)) (local.get $args))
+    (call $gs32 (i32.add (local.get $job) (i32.const 44)) (local.get $count))
+    (call $gs32 (i32.add (local.get $job) (i32.const 124)) (global.get $help_document_epoch))
+    ;; Copy the registry binding while it is valid. Preparation is CPU-neutral
+    ;; and retains its own descriptor if another read already owns pending IO.
+    (local.set $ready (call $help_routine_prepare_vfs (local.get $record) (local.get $job)))
+    (if (i32.eqz (local.get $ready))
+      (then (call $help_macro_api_drop (local.get $job)) (return (i32.const 0))))
+    (i32.const 2))
+  (func (export "help_macro_native_prepare") (result i32)
+    (local $job i32) (local $ready i32)
+    (local.set $job (global.get $help_macro_native_job))
+    (if (i32.eqz (local.get $job)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $job) (i32.const 4))) (i32.const 1))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $job) (i32.const 124))) (global.get $help_document_epoch))
+      (then (call $help_macro_api_drop (local.get $job)) (return (i32.const 0))))
+    (local.set $ready (call $help_routine_prepare_vfs (i32.const 0) (local.get $job)))
+    (if (i32.eqz (local.get $ready)) (then (call $help_macro_api_drop (local.get $job))))
+    (local.get $ready))
+  (func (export "help_macro_native_begin") (param $token i32) (result i32)
+    (local $ctx i32) (local $result i32)
+    (if (i32.or (i32.eqz (local.get $token))
+        (i32.ne (local.get $token) (global.get $help_macro_native_job))) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $token) (i32.const 4))) (i32.const 1))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $token) (i32.const 124))) (global.get $help_document_epoch))
+      (then (call $help_macro_api_drop (local.get $token)) (return (i32.const 0))))
+    (if (i32.eqz (call $guest_context_can_interrupt)) (then (return (i32.const 0))))
+    (local.set $ctx (call $heap_alloc (global.get $GUEST_CONTEXT_SIZE)))
+    (if (i32.eqz (local.get $ctx)) (then (return (i32.const 0))))
+    (call $guest_context_save (call $g2w (local.get $ctx)))
+    (call $gs32 (i32.add (local.get $token) (i32.const 132)) (local.get $ctx))
+    ;; An interruption is not a C call site: DF may be set and every x87 slot
+    ;; live. Give the extension a forward direction and empty FP stack while
+    ;; retaining the caller's rounding control. The snapshot restores all bits.
+    (global.set $df (i32.const 0))
+    (global.set $fpu_top (i32.const 0))
+    (global.set $fpu_sw (i32.const 0))
+    (global.set $fpu_tag (i32.const 0))
+    (global.set $fpu_raw_tag (i32.const 0))
+    (local.set $result (call $help_macro_api_advance (local.get $token) (i32.const 0)))
+    ;; A newly exposed read can still defer entry. Do not leak/overwrite this
+    ;; snapshot on retry or leave callback ABI state installed without entry.
+    (if (i32.eq (local.get $result) (i32.const -1))
+      (then
+        (call $guest_context_restore (call $g2w (local.get $ctx)))
+        (call $gs32 (i32.add (local.get $token) (i32.const 132)) (i32.const 0))
+        (call $heap_free (local.get $ctx))))
+    (i32.eq (local.get $result) (i32.const -2)))
+  (func (export "help_macro_native_finish") (param $token i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $token))
+        (i32.ne (local.get $token) (global.get $help_macro_native_returned))) (then (return (i32.const 0))))
+    (call $guest_context_restore
+      (call $g2w (call $gl32 (i32.add (local.get $token) (i32.const 132)))))
+    (call $help_macro_api_drop (local.get $token))
+    (i32.const 1))
 
   (func $help_macro_api_active (result i32)
     (i32.ne (global.get $help_macro_api_context) (i32.const 0)))
@@ -2288,6 +2386,15 @@
     (if (local.get $p) (then (call $heap_free (local.get $p))))
     (local.set $p (call $gl32 (i32.add (local.get $job) (i32.const 128))))
     (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (local.set $p (call $gl32 (i32.add (local.get $job) (i32.const 132))))
+    (if (local.get $p)
+      (then
+        (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 4))) (i32.const 1))
+          (then (call $guest_context_restore (call $g2w (local.get $p)))))
+        (call $heap_free (local.get $p))))
+    (if (i32.eq (local.get $job) (global.get $help_macro_native_job))
+      (then (global.set $help_macro_native_job (i32.const 0))
+        (global.set $help_macro_native_returned (i32.const 0))))
     (call $heap_free (local.get $job)))
 
   (func $help_macro_api_leave
@@ -2325,7 +2432,7 @@
         (call $help_macro_api_drop (local.get $job))
         (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
         (return (i32.const 0))))
-    (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 3))
+    (if (i32.ge_u (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 3))
       (then
         (local.set $stack (call $heap_alloc (i32.const 65536)))
         (local.set $tib (call $heap_alloc (i32.const 256)))
@@ -2513,6 +2620,12 @@
     (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 3))
     (call $gs32 (i32.add (local.get $job) (i32.const 52)) (i32.const 1))
     (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+    (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 4))
+      (then
+        (global.set $help_macro_native_returned (local.get $job))
+        (global.set $handler_set_eip (i32.const 1))
+        (global.set $steps (i32.const 0))
+        (return)))
     (global.set $ebx (call $gl32 (i32.add (local.get $job) (i32.const 56))))
     (global.set $esi (call $gl32 (i32.add (local.get $job) (i32.const 60))))
     (global.set $edi (call $gl32 (i32.add (local.get $job) (i32.const 64))))
@@ -2637,6 +2750,9 @@
         (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
         (br $skip)))
       (br $arg)))
+    (if (i32.and (local.get $ok) (i32.ne (global.get $help_macro_native_capture) (i32.const 0)))
+      (then (return (call $help_macro_native_queue
+        (local.get $record) (local.get $args) (local.get $count)))))
     (if (i32.and (local.get $ok) (call $help_macro_api_active))
       (then
         ;; The public operation consumes the copied arguments, including on
@@ -2963,8 +3079,11 @@
           (then
             (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
             (return (i32.const 0))))
-        (return (call $help_macro_execute (local.get $caller)
-          (i32.add (local.get $payload) (i32.const 3)) (local.get $len)))))
+        (global.set $help_macro_native_capture (i32.const 1))
+        (local.set $result (call $help_macro_execute (local.get $caller)
+          (i32.add (local.get $payload) (i32.const 3)) (local.get $len)))
+        (global.set $help_macro_native_capture (i32.const 0))
+        (return (local.get $result))))
     (if (i32.ne (i32.load (local.get $token))
           (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
       (then (return (i32.const 0))))

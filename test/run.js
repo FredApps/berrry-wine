@@ -2193,7 +2193,7 @@ async function main() {
   // One entry per executed batch, for --batch-stats; halts is indexed by the
   // reason code $run reports (see $last_run_halt in src/01-header.wat).
   const batchStatsBlocks = [];
-  const batchStatsHalts = [0, 0, 0, 0, 0, 0];
+  const batchStatsHalts = [0, 0, 0, 0, 0, 0, 0, 0];
   const recordFrame = (series) => {
     const at = process.hrtime.bigint();
     // Outside the measurement window, still move the anchor forward. Skipping
@@ -8143,6 +8143,7 @@ async function main() {
     // Service only at the outer boundary, preserving any existing guest wait.
     await HelpNavigationPump.pump({
       exports: instance.exports, vfs: ctx.vfs,
+      callbackOwner: threadManager, callbackMode: 'mainCooperative',
       alive: () => !stopped && instance.exports.get_eip() !== 0,
     });
     if (stopped) break;
@@ -8768,6 +8769,7 @@ if (VERBOSE) {
     }
   }
   // Every pump is awaited above, so no native Help producer remains active.
+  HelpNavigationPump.cancel(threadManager);
   instance.exports.help_navigation_cancel?.();
   instance.exports.help_macro_api_cancel_all?.();
   // The control server would otherwise hold the process open; unref lets a
@@ -9240,7 +9242,7 @@ if (VERBOSE) {
       const full = batchStatsBlocks.filter(b => b >= BATCH_SIZE).length;
       const tiny = batchStatsBlocks.filter(b => b < BATCH_SIZE / 100).length;
       const names = ['(none)', 'budget spent', 'EIP zero', 'yield_flag',
-                     'blocking wait', 'debug facility'];
+                     'blocking wait', 'debug facility', 'wall deadline', 'native callback return'];
       console.log(BATCH_STATS_FROM
         ? `\nBatch pacing (from batch ${BATCH_STATS_FROM}):`
         : '\nBatch pacing:');

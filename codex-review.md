@@ -2,7 +2,38 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — instance-owned x87 registers
+### Latest increment — native-click macro callback transactions
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| NATIVE HELP CLICK                      OWNED CALLBACK TRANSACTION                                        |
++----------------------------------+----------------------------------+------------------------------------+
+| QUEUE / STAGE                    | RUN                              | RETURN / STOP                      |
+| copy binding + arguments         | separate 64KiB stack + TIB       | typed halt at outer pump           |
+| CPU-neutral provider reads       | ordinary Sleep / ReadFile waits  | restore exact CPU and old deadlines|
+| recheck source epoch + safe entry| clear DF + empty callback FP stack| stop discards; never resurrects    |
++----------------------------------+----------------------------------+------------------------------------+
+| NEXT: remaining wait/unwind cases| THEN: render-time font loading   | GATES: installed-tree + input/audio |
++----------------------------------------------------------------------------------------------------------+
+| LAZY DEFAULTS REMAIN OFF          | ISOLATED BRANCH / NOT DEPLOYED    | REVIEW GOAL REMAINS OPEN            |
++----------------------------------------------------------------------------------------------------------+
+```
+
+Native macro hotspots now queue owned work instead of synchronously borrowing the interrupted application's stack. An outer host pump prepares provider-backed DLL bytes, checks for foreign I/O and a safe execution boundary, and starts the callback with its own stack/TIB. A 552-byte snapshot preserves 97 architectural/supported-wait fields, including exact x87 bits and raw integer shadows, MMX/XMM, lazy flags, selectors/bases, and last error. Callback entry clears DF and empties the internal x87 stack while retaining rounding control. Its typed return parks execution until the outer pump restores the original CPU and absolute host deadlines, after final callback-slice accounting. Decoded pointers are discarded, not restored.
+
+The browser main Worker, cooperative main, secondary Worker/cooperative threads, and CLI use the same pump. Host state is token-owned and restored exactly once; stopped owners discard it, including stop races during awaited entry/finish. Staging cancellation releases owned work; a close/new click cannot free an executing callback's arguments or stack. Entry rechecks the document epoch after preparation so stale staged work cannot begin.
+
+This is deliberately a narrow entry contract: runnable/message-idle states only, with no partial decoded block, synchronous-message/timer/modal continuation, or foreign I/O. Other wait classes defer entry. Nonlocal callback escape/SEH abandonment, comprehensive render-time font preparation, installed-tree memory acceptance, and low-load headful input/audio acceptance remain open. Lazy hydration and sparse-write defaults remain disabled.
+
+Cross-check with `fable-review.md` P4-2: its pending-read/provider ownership findings motivate this consumer audit, but provider fixes alone do not establish safe native callback interruption. This increment addresses that distinct execution-lifetime boundary; it does not close the broader lazy-consumer or performance findings.
+
+Validation: source 309 canonical/compatibility builds pass (1,064,596 / 1,065,049 bytes), unchanged layout `b00c9d60346fdb5a`, 237 imports, 233 nonoverlapping data segments, and 933 registered tests. The independent CPU test checks 97 fields across two actual shared-memory instances, including NaN/negative-zero bits, exact integer shadows, frame canaries, and cache invalidation. The compiled native test invokes the production hotspot hit-test against an authored macro token/run; the successful callback executes 396 single-block slices and 130 Sleep calls plus lazy ReadFile, then restores exact CPU bytes and absolute host scheduling fields. It also covers DLL failure, staging cancellation, and stale-epoch rejection. Host-state and local/remote pump tests cover token ownership, failed entry, foreign I/O, and asynchronous stop races. Existing WinHelpA/W (ten cases), Win16 (five cases), x87 isolation (24 checks), x86 instructions (138), ThreadManager, Worker scheduler (48), and real-Worker state/heap ownership tests pass. The parser suite passed 631 checks earlier in this increment. These are targeted functional results, not a complete-suite, memory, or performance acceptance claim.
+
+Additional native cases pass for callback ReadFile failure (normal single completion and exact restoration) and process-only cancellation during execution. The latter stops further execution, frees the owned stack/TIB/context, and verifies that neither the interrupted CPU nor old host deadlines are revived.
+
+The final-artifact Chrome Worker matrix passes with exit 0 and normal browser/server cleanup: Notepad/Calculator parity, Win16 Rodent and Rodent2000 rendering/input, Winamp executing with three real Workers, and COM success/missing-server recovery. This browser matrix is general runtime regression coverage; the native callback contract itself is covered by the compiled hotspot fixture and local/remote pump tests above.
+
+### Prior increment — instance-owned x87 registers
 
 The native macro audit found that the eight physical x87 values occupied shared WASM bytes `0x200..0x23f`, while TOP, tags, control/status words, and exact integer payload shadows were instance-local globals. Interleaved guest instances could therefore overwrite one another's floating-point values. Saving that shared bank around an asynchronous native callback would also restore over a sibling Worker's live values. The fix moves the physical values into eight instance-local globals, matching the ownership of the remaining CPU registers; FNSAVE/FRSTOR now use the same physical accessors. Tags and exact integer shadows retain their existing semantics.
 
@@ -10,7 +41,7 @@ Reproduced before the fix: A stored `1.25`, B stored `9.5`, and A read back `9.5
 
 This is an additional concrete instance of the review's state-ownership concern. Fable's earlier FPU file-organization and instruction observations do not establish cross-instance isolation. No throughput claim is implied: host load exceeds the repository's measurement threshold.
 
-Native callback integration remains open. The next transaction must preserve both CPU state and host scheduling state:
+At this prior milestone native callback integration remained open. Its transaction contract was:
 
 ```text
 +-------------------------+-----------------------------+-----------------------------------+
