@@ -52,6 +52,7 @@ UNIT=(
   test/test-x86-ops.js
   test/test-lar-opcode.js
   test/test-win16-lfs-opcode.js
+  test/test-tree-fold.js
   test/test-lut-run-generalized.js
   test/test-mmx-mask-copy-run.js
   test/test-copy32-bounded-run.js
