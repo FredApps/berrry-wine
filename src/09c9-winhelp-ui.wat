@@ -2314,6 +2314,36 @@
     (global.set $fpu_sw (i32.const 0))
     (global.set $fpu_tag (i32.const 0))
     (global.set $fpu_raw_tag (i32.const 0))
+    ;; A callback starts a separate exception search in its owned TIB. These
+    ;; continuation pointers are not registrations in the interrupted FS chain.
+    (global.set $delphi_seh_rec (i32.const 0))
+    (global.set $delphi_exception_record (i32.const 0))
+    (global.set $delphi_seh_head_before (i32.const 0))
+    ;; A new wait must not inherit the interrupted wait-all handle array or
+    ;; an old message/vblank deadline. Keep only the saved copy dormant; the
+    ;; callback owns fresh private descriptors, never shared clocks/events.
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $sleep_yielded (i32.const 0))
+    (global.set $sleep_timeout (i32.const 0))
+    (global.set $wait_handle (i32.const 0))
+    (global.set $wait_handles_ptr (i32.const 0))
+    (global.set $wait_all (i32.const 0))
+    (global.set $wait_timeout (i32.const -1))
+    (global.set $wait_stack_bytes (i32.const 12))
+    (global.set $message_wait_msg_ptr (i32.const 0))
+    (global.set $cs_wait_addr (i32.const 0))
+    (global.set $cs_wait_owner (i32.const 0))
+    (global.set $cs_wait_spins (i32.const 0))
+    (global.set $cs_park_pending (i32.const 0))
+    (global.set $cs_resume_esp_delta (i32.const 0))
+    (global.set $vblank_wait_active (i32.const 0))
+    (global.set $vblank_wait_counter (i32.const 0))
+    (global.set $vblank_deadline_ms (i32.const 0))
+    (global.set $spin_deadline_ms (i32.const 0))
+    (global.set $clock_spin_parked_value (i32.const 0))
+    (global.set $clock_spin_parked_valid (i32.const 0))
+    (global.set $loadlib_name_ptr (i32.const 0))
     (local.set $result (call $help_macro_api_advance (local.get $token) (i32.const 0)))
     ;; A newly exposed read can still defer entry. Do not leak/overwrite this
     ;; snapshot on retry or leave callback ABI state installed without entry.

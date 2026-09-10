@@ -69,6 +69,84 @@ function fixture() {
     await f.run(options);
     assert.strictEqual(f.stats().finishes, 1, 'typed return completes once');
   }
+  // Use real wait resolution and atomic event/semaphore consumption. Only the
+  // WAT exports/handle lookup are fixtures; callback scheduling must inspect the
+  // current descriptor, not a slice reply captured before callback entry.
+  for (const mode of ['mainWorker', 'mainCooperative']) {
+    for (const type of [1, 2]) {
+      for (const signaled of [false, true]) {
+        const f = nativeFixture();
+        const manager = Object.create(ThreadManager.prototype);
+        let now = 100, currentHandle = 101, currentYield = 1, completion = null;
+        const sync = new Int32Array(new SharedArrayBuffer(32));
+        sync.set([101, type, +signaled, 0, 102, type, 1, 0]);
+        Object.assign(manager, { syncView: sync, _getSyncIdx: handle => handle === 101 ? 0 : 1,
+          _now: () => now, hasActiveThreads: () => true,
+          _mainWaitState: { waitStartedAt: 70, waitPolls: 100 },
+          _mainSleepUntil: 0, _mainWaitStartedAt: 70, _mainWaitPolls: 100,
+          _completeWait(_ex, result, bytes) { completion = { result, bytes }; currentYield = 0; return 0x401000; } });
+        const oldWaitState = manager._mainWaitState;
+        Object.assign(f.ex, { get_sleep_yielded: () => 0, get_yield_reason: () => currentYield,
+          get_wait_handle: () => currentHandle, get_wait_handles_ptr: () => 0,
+          get_wait_all: () => 0, get_wait_timeout: () => 100,
+          get_wait_stack_bytes: () => 12 });
+        manager.mainInstance = { exports: f.ex };
+        const enter = f.ex.help_macro_native_begin, finish = f.ex.help_macro_native_finish;
+        f.ex.help_macro_native_begin = token => {
+          const ok = enter(token); currentHandle = 102; currentYield = 1; return ok;
+        };
+        f.ex.help_macro_native_finish = token => {
+          const ok = finish(token); currentHandle = 101; currentYield = 1; return ok;
+        };
+        const pump = () => f.run({ callbackOwner: manager, callbackMode: mode });
+        const resolveCurrent = () => {
+          if (mode === 'mainWorker') {
+            const r = manager.resolveMainWorkerWait({ waitHandle: f.ex.get_wait_handle(),
+              waitTimeout: f.ex.get_wait_timeout(), waitStackBytes: 12 });
+            if (r) completion = { result: r.result, bytes: r.waitStackBytes };
+            return r;
+          }
+          return manager.checkMainYield();
+        };
+        await pump();
+        assert.strictEqual(sync[2], +signaled, `${mode}: preparation does not consume original object`);
+        resolveCurrent();
+        assert.deepStrictEqual(completion, { result: 0, bytes: 12 }, 'callback wait resolves its current object');
+        assert.strictEqual(sync[6], 0, 'real callback event/semaphore is consumed');
+        assert.strictEqual(sync[2], +signaled, 'original auto-reset event/semaphore remains untouched');
+        now = 700;
+        await pump();
+        assert.strictEqual(sync[2], +signaled, 'phase2 pump does not poll interrupted wait');
+        f.returned(); await pump();
+        if (mode === 'mainWorker') {
+          assert.strictEqual(manager._mainWaitState, oldWaitState);
+          assert.deepStrictEqual(manager._mainWaitState, { waitStartedAt: 70, waitPolls: 100 });
+        } else {
+          assert.strictEqual(manager._mainWaitStartedAt, 70);
+          assert.strictEqual(manager._mainWaitPolls, 100);
+        }
+        completion = null; resolveCurrent();
+        assert.deepStrictEqual(completion, { result: signaled ? 0 : 0x102, bytes: 12 },
+          'restored wait consumes original signal or expires immediately using original age and poll count');
+        assert.strictEqual(sync[2], 0);
+      }
+    }
+  }
+  {
+    const f = nativeFixture(), manager = Object.create(ThreadManager.prototype);
+    let now = 100;
+    Object.assign(manager, { _now: () => now, _mainSleepUntil: 180,
+      _mainWaitStartedAt: 70, _mainWaitPolls: 12,
+      mainInstance: { exports: { get_sleep_yielded: () => 0, get_yield_reason: () => 0 } } });
+    const options = { callbackOwner: manager, callbackMode: 'mainCooperative' };
+    await f.run(options);
+    assert.strictEqual(manager.checkMainYield(), false, 'callback bypasses original sleep');
+    now = 120; f.returned(); await f.run(options);
+    assert.strictEqual(manager._mainSleepUntil, 180);
+    assert.strictEqual(manager.checkMainYield(), true, 'remaining original absolute sleep is honored');
+    now = 181;
+    assert.strictEqual(manager.checkMainYield(), false, 'original deadline expires without extension');
+  }
   for (const reject of [false, true]) {
     const f = nativeFixture(); let complete;
     f.ex.help_macro_native_begin = () => new Promise((resolve, rejectPromise) => {

@@ -555,7 +555,7 @@
   )
 
   ;; Exact owned context for an outer-boundary native guest detour.
-  ;; frame is a contiguous WASM address; caller owns at least552 bytes.
+  ;; frame is a contiguous WASM address; caller owns at least564 bytes.
   ;; Not architectural FNSAVE: raw integer shadows and NaN payloads survive.
   ;; Layout (i32 offsets; reserved228 is zeroed):
   ;; 0: eax
@@ -617,12 +617,15 @@
   ;; 224: last_error
   ;;232:8 physical x87 f64 bitpatterns;296:8 raw i64;360:8 MMX i64;
   ;;424:8 XMM pairs (low/high i64). No shared clocks/events/cache pointers.
-  (global $GUEST_CONTEXT_SIZE i32 (i32.const 552))
+  ;;552: Delphi SEH registration;556: exception record;560: prior chain head.
+  ;; These remain populated after nonlocal resume, so nonzero is not an
+  ;; active-handler gate. Preserve them instead of blocking installed SEH.
+  (global $GUEST_CONTEXT_SIZE i32 (i32.const 564))
   (func $guest_context_size (export "guest_context_size") (result i32)
     (global.get $GUEST_CONTEXT_SIZE))
 
   ;; Caller additionally excludes foreign host IO and saves JS scheduling
-  ;; deadlines. Only runnable/message-idle entry is supported initially.
+  ;; deadlines. Runnable, ordinary object-wait, and message-idle entry only.
   ;; No Wasm native frame may be suspended: invoke only after run() returns.
   (func $guest_context_can_interrupt (result i32)
     (local $job i32)
@@ -644,7 +647,8 @@
       (local.set $job (call $gl32 (local.get $job)))
       (br $scan)))
     (i32.or (i32.eqz (global.get $yield_reason))
-      (i32.eq (global.get $yield_reason) (i32.const 7))))
+      (i32.or (i32.eq (global.get $yield_reason) (i32.const 1))
+        (i32.eq (global.get $yield_reason) (i32.const 7)))))
 
   (func $guest_context_save (param $frame i32)
     (i32.store offset=0 (local.get $frame) (global.get $eax))
@@ -745,6 +749,9 @@
     (i64.store offset=528 (local.get $frame) (global.get $xmm6h))
     (i64.store offset=536 (local.get $frame) (global.get $xmm7l))
     (i64.store offset=544 (local.get $frame) (global.get $xmm7h))
+    (i32.store offset=552 (local.get $frame) (global.get $delphi_seh_rec))
+    (i32.store offset=556 (local.get $frame) (global.get $delphi_exception_record))
+    (i32.store offset=560 (local.get $frame) (global.get $delphi_seh_head_before))
   )
 
   ;; Restore only at the outer host boundary, never in a slice tail. Decoded
@@ -848,6 +855,9 @@
     (global.set $xmm6h (i64.load offset=528 (local.get $frame)))
     (global.set $xmm7l (i64.load offset=536 (local.get $frame)))
     (global.set $xmm7h (i64.load offset=544 (local.get $frame)))
+    (global.set $delphi_seh_rec (i32.load offset=552 (local.get $frame)))
+    (global.set $delphi_exception_record (i32.load offset=556 (local.get $frame)))
+    (global.set $delphi_seh_head_before (i32.load offset=560 (local.get $frame)))
     (global.set $ip (i32.const 0))
     (global.set $resume_ip (i32.const 0))
     (global.set $steps (i32.const 0)))

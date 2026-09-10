@@ -2,7 +2,37 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — native-click macro callback transactions
+### Latest increment — interrupted object waits and exception search
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| ORIGINAL OBJECT WAIT                   NATIVE CALLBACK                      ORIGINAL WAIT RESUMES        |
++----------------------------------+----------------------------------+------------------------------------+
+| retain handle(s), all/any, frame  | use callback's own wait state    | consume original signal once       |
+| retain absolute timeout age      | original event/count untouched   | original timeout does not restart  |
+| preserve Delphi search pointers  | separate TIB + exception search  | restore original search and FS     |
++----------------------------------+----------------------------------+------------------------------------+
+| NEXT: render-time font preflight | OPEN: cross-context unwind       | GATES: installed-tree + input/audio |
++----------------------------------------------------------------------------------------------------------+
+| LAZY DEFAULTS REMAIN OFF          | ISOLATED BRANCH / NOT DEPLOYED    | REVIEW GOAL REMAINS OPEN            |
++----------------------------------------------------------------------------------------------------------+
+```
+
+The native entry gate now also accepts ordinary object waits (`yield_reason=1`). Their existing handle/count, handle-array pointer, all/any flag, timeout, and stack-cleanup descriptor remain dormant in the snapshot while the callback executes. Main and secondary schedulers resolve fresh live slice results, not a retained original-wait result; after restoration the original wait can consume its signal or finish its elapsed timeout exactly once. Callback entry now resets its private wait/message/CS/vblank/spin/loader descriptors as well: the new compiled test caught an inherited wait-all pointer being interpreted as a callback single-object wait's array. Shared events and clocks are not reset. Existing exclusions for foreign I/O, partially decoded blocks, synchronous-message/timer/modal continuations, and other unsupported yields remain unchanged.
+
+The snapshot now contains 100 fields in 564 bytes. The additional three are Delphi's current registration, exception record, and pre-handler chain head. They are resumable exception-search state, not merely installed handlers in FS:[0]; testing whether they are nonzero would incorrectly block callbacks forever after a completed search because existing code leaves stale values. Native entry saves them and starts with empty callback search pointers; restoration reinstates all three alongside the original FS/TIB. A functional regression runs a second chain search between save/restore, then verifies that the interrupted search follows its own mutated live chain and updates its own exception flags.
+
+General cross-context nonlocal unwind is still not implemented. The current `_setjmp3` is a placeholder, RtlUnwind does not implement a complete cleanup engine, and Win16 Throw can transfer stacks/selectors directly. An escape that bypasses the owned typed return must not be called a successful callback or “fixed” by guessing which CPU state to restore. Process-stop cleanup is verified; a complete nonlocal continuation-unwind protocol remains separate work.
+
+The next lazy-consumer audit confirmed two concrete font blockers: `gdi_bitmap_font_ensure` turns a temporary provider miss into permanent stock-font failure (`state=3`), and `tt_face_open_source` closes/frees on a miss while caching loaded faces by path hash rather than provider revision. Selection, enumeration, metrics/glyphs, GetFontData, controls, Help and metafiles converge on these paths. Buffer-only parser entry points exist, but they need an owned, bounded, revision-validated byte-preparation lease before native side effects. Explicitly registered fonts must retain their existing cache-only lifetime after source deletion; implicit-load revision checks must not erase that distinction. Fable's provider findings do not prove these nested consumer paths safe.
+
+Validation: source 310 canonical/compatibility builds pass (1,064,782 / 1,065,235 bytes), unchanged layout `b00c9d60346fdb5a`, 237 imports, 233 nonoverlapping data segments, and 933 registered tests. The compiled CPU test verifies all 100 fields across two instances and each interruption guard. The native suite passes eleven cases, including actual WaitSingle, WaitSingleEx and WaitMultiple wait-all frames: signals arriving during callback Sleep remain untouched until restoration; the wait-all callback itself performs a separate real single-object wait before its first Sleep and consumes only its own event. Original finite timeout age survives 130 sleeps; stale message/vblank descriptors are cleared for callback execution and restored afterward. Cleanup is exactly 12/16/20 bytes. Current MsgWait completes its own 24-byte frame before yielding (it does not park with reason 1); its test checks that interruption does not pop it again. The original blocked wait and inherited-array failures were reproduced before their fixes.
+
+Main Worker/cooperative pump tests use real wait resolvers and event/semaphore atomics, with mocked guest exports, to verify current-descriptor resolution, original object ownership, timeout ages/poll floors, and remaining absolute sleeps. Compiled Delphi mutated-chain and unhandled-filter regressions pass. These checks do not establish a general SEH/unwind implementation. Host load was 16.07, above the load-4 measurement threshold; no performance or input-latency claim is made.
+
+The final corrected source also passes 138 x86 checks and the Chrome Worker matrix with exit 0 and normal browser/server cleanup: Notepad/Calculator parity, both Rodent render/input checks, Winamp executing with three real Workers, and COM success/missing-server recovery. Existing public WinHelpA/W (ten cases) and Win16 (five cases) passed after the snapshot expansion, before the final native-only descriptor reset.
+
+### Prior increment — native-click macro callback transactions
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

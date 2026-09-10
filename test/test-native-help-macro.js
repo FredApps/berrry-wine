@@ -69,6 +69,19 @@ const extraWat = String.raw`
    (global.set $last_error (i32.const 0x76543210)))
  (func (export "native_df") (result i32) (global.get $df))
  (func (export "native_tags") (result i32) (global.get $fpu_tag))
+ (func (export "native_wait_state_clean") (result i32)
+   (i32.eqz (i32.or (global.get $message_wait_msg_ptr)
+     (i32.or (global.get $vblank_wait_active)
+       (i32.or (global.get $vblank_wait_counter) (global.get $vblank_deadline_ms))))))
+ (func (export "native_wait_thunk") (param $api i32)
+   (i32.store offset=40 (global.get $THUNK_BASE) (i32.const 0x80000001))
+   (i32.store offset=44 (global.get $THUNK_BASE) (local.get $api))
+   (global.set $num_thunks (i32.const 6))
+   (global.set $thunk_guest_end (i32.const 0x07500030))
+   (global.set $eip (i32.const 0x07500028))
+   (global.set $yield_reason (i32.const 0)) (global.set $yield_flag (i32.const 0)))
+ (func (export "native_wait_id") (param $api i32)
+   (i32.store offset=44 (global.get $THUNK_BASE) (local.get $api)))
  (func (export "native_is_free") (param $ga i32) (result i32)
    (local $p i32) (local $left i32)
    (local.set $p (global.get $free_list)) (local.set $left (i32.const 10000))
@@ -82,6 +95,10 @@ const extraWat = String.raw`
    (global.set $help_document_epoch (i32.add (global.get $help_document_epoch) (i32.const 1))))
  (func (export "native_dirty_cpu")
    (global.set $df (i32.const 1)) (global.set $fpu_top (i32.const 3))
+   (global.set $message_wait_msg_ptr (i32.const 0x00497000))
+   (global.set $vblank_wait_active (i32.const 1))
+   (global.set $vblank_wait_counter (i32.const 42))
+   (global.set $vblank_deadline_ms (i32.const 123456))
    (global.set $fpu_tag (i32.const 255)) (global.set $fpu_raw_tag (i32.const 255)))
  (func (export "native_snapshot") (param $wa i32) (call $guest_context_save (local.get $wa)))
 
@@ -134,7 +151,7 @@ function dllFixture(name, target = CODE) {
   return b;
 }
 
-function callbackBytes(length, { state = STATE, nested = null } = {}) {
+function callbackBytes(length, { state = STATE, nested = null, waitHandle = null } = {}) {
   const bytes = [], emit = (...v) => bytes.push(...v), dword = n => emit(n & 255, n >>> 8 & 255, n >>> 16 & 255, n >>> 24 & 255);
   const inc = address => { emit(0xff, 0x05); dword(address); };
   const storeEax = address => { emit(0xa3); dword(address); };
@@ -143,6 +160,7 @@ function callbackBytes(length, { state = STATE, nested = null } = {}) {
   emit(0x55, 0x89, 0xe5); // push ebp; mov ebp,esp
   inc(state); emit(0x8b, 0x45, 8); storeEax(state + 4);
   emit(0x8b, 0x45, 12); storeEax(state + 8);
+  if (waitHandle !== null) { push(50); push(waitHandle); call(THUNK+40); storeEax(state+32); }
   if (nested) {
     push(nested.macro); push(0x0102); push(nested.path); push(0x5555);
     call(THUNK + (nested.wide ? 8 : 0)); storeEax(state + 28);
@@ -160,16 +178,21 @@ function callbackBytes(length, { state = STATE, nested = null } = {}) {
 
 
 const {pump}=require('../lib/help-navigation-pump');
+const {ThreadManager}=require('../lib/thread-manager');
 (async()=>{
- let ticks=1000;
- const h=await bootRenderHarness({fonts:'none',extraWat,extraHostOverrides:{get_ticks:()=>ticks}});
+ let ticks=1000,tm;
+ const h=await bootRenderHarness({fonts:'none',extraWat,extraHostOverrides:{get_ticks:()=>ticks,
+  wait_single:(handle,timeout)=>tm.waitSingle(handle,timeout,1),
+  wait_multiple:(count,ptr,all,timeout)=>tm.waitMultiple(count,ptr,!!all,timeout,1)}});
  const e=h.exports,vfs=h.hostCtx.vfs;
  const exe=fs.readFileSync(path.join(__dirname,'binaries/notepad.exe'));
  new Uint8Array(h.memory.buffer).set(exe,e.get_staging());assert(e.load_pe(exe.length));
+ tm=new ThreadManager({},h.memory,{exports:e},()=>({host:{}}),{now:()=>ticks});
+ tm._now=()=>ticks;tm._log=()=>{};
  const write=(p,b)=>b.forEach((v,i)=>e.guest_write8(p+i,v));
  const data=Uint8Array.from({length:9001},(_,i)=>(i*19+7)&255);
  let n=0;
- for(const failure of ['none','data','dll','cancel','epoch','executing-cancel']){
+ for(const failure of ['wait-auto','wait-ex','wait-all','wait-timeout','msg-complete','none','data','dll','cancel','epoch','executing-cancel']){
   n++;e.test_help_reset();e.macro_setup(id('WinHelpA'),id('WinHelpW'),id('ReadFile'),id('Sleep'));
   const name='native'+n+'.dll',file='c:\\native'+n+'.hlp';
   const budget=new ChunkCacheBudget({maxBytes:0});
@@ -188,7 +211,32 @@ const {pump}=require('../lib/help-navigation-pump');
   const macro='Probe("durable string",'+handle+')';
   write(MACRO,Buffer.from(macro+'\0'));write(CODE,callbackBytes(data.length));write(STATE,new Uint8Array(64));
   e.native_seed();e.native_dirty_cpu();
-  const owner={sleepUntil:9000,waitStartedAt:77,waitPolls:11,sleepCount:17},originalOwner={...owner};
+  const isWait=failure.startsWith('wait-'),isMsg=failure==='msg-complete';let event,sem,waitBytes,callbackEvent;
+  if(isMsg){
+   [0x00490000,0,0,0,50,0].forEach((v,i)=>e.guest_write32(STACK+i*4,v));
+   e.native_wait_thunk(id('MsgWaitForMultipleObjects'));e.run(1);
+   assert.strictEqual(e.get_esp(),STACK+24,'actual MsgWait completes24bytes before slice yield');
+   assert.notStrictEqual(e.get_yield_reason(),1,'current MsgWait implementation has no parked descriptor');
+  }
+  if(isWait){
+   event=tm.createEvent(false,false);sem=tm.createSemaphore(0,1);
+   const multiple=failure==='wait-all',extended=failure==='wait-ex';waitBytes=multiple?20:extended?16:12;
+   const args=multiple?[0x00490000,2,PATH+0x7000,1,50]:extended?[0x00490000,event,50,0]:[0x00490000,event,50];
+   e.guest_write32(PATH+0x7000,event);e.guest_write32(PATH+0x7004,sem);
+   args.forEach((v,i)=>e.guest_write32(STACK+i*4,v));
+   e.native_wait_thunk(id(multiple?'WaitForMultipleObjects':extended?'WaitForSingleObjectEx':'WaitForSingleObject'));e.run(1);
+   assert.strictEqual(e.get_yield_reason(),1,'real wait handler parked');
+   assert.strictEqual(e.get_wait_stack_bytes(),waitBytes);
+   if(multiple){
+    callbackEvent=tm.createEvent(false,false);e.native_wait_id(id('WaitForSingleObject'));
+    write(CODE,callbackBytes(data.length,{waitHandle:callbackEvent}));
+   }
+   tm._mainSleepUntil=0;tm._mainWaitStartedAt=ticks;tm._mainWaitPolls=1000;
+  }
+  const owner=isWait?tm:{sleepUntil:9000,waitStartedAt:77,waitPolls:11,sleepCount:17};
+  const mode=isWait?'mainCooperative':'thread';
+  const ownerSnapshot=()=>isWait?{sleep:tm._mainSleepUntil,start:tm._mainWaitStartedAt,polls:tm._mainWaitPolls}:{...owner};
+  const originalOwner=ownerSnapshot();
   const cpu=()=>{e.native_snapshot(0x19000000);return new Uint8Array(h.memory.buffer,0x19000000,e.guest_context_size()).slice();};
   const original=cpu(),epoch=e.macro_epoch();
   assert.strictEqual(e.native_queue(MACRO,macro.length),2);
@@ -198,7 +246,7 @@ const {pump}=require('../lib/help-navigation-pump');
    while(ready===-1){assert(++attempts<10);if(vfs.pendingRead)await vfs.fillPendingRead(vfs.pendingRead);ready=e.help_macro_native_prepare();}
    assert(ready>0);const token=e.get_help_macro_native_token();e.native_advance_epoch();
    assert.strictEqual(e.help_macro_native_begin(token),0,'epoch change between prepare and begin rejects stale callback');
-   assert.deepStrictEqual(cpu(),original);assert.deepStrictEqual(owner,originalOwner);
+   assert.deepStrictEqual(cpu(),original);assert.deepStrictEqual(ownerSnapshot(),originalOwner);
    e.help_navigation_cancel();assert.strictEqual(e.get_help_macro_native_token(),0);
    assert.strictEqual(e.guest_read32(STATE),0);vfs.closeHandle(handle);
    console.log('PASS native macro stale prepared epoch rejected');continue;
@@ -208,12 +256,24 @@ const {pump}=require('../lib/help-navigation-pump');
    assert(++rounds<5000,'native macro must progress');
    const phase=e.get_help_macro_native_phase();
    if(failure==='cancel'&&phase===1){
-    await pump({exports:e,vfs,callbackOwner:owner,callbackMode:'thread',alive:()=>false});break;
+    await pump({exports:e,vfs,callbackOwner:owner,callbackMode:mode,alive:()=>false});break;
    }
    if(phase===2){
-    if(runs===0){assert.strictEqual(e.native_df(),0,'callback enters with clear DF');assert.strictEqual(e.native_tags(),0,'callback enters with empty x87 stack');}
+    if(isWait&&runs===0&&failure!=='wait-timeout'){tm.setEvent(event);if(failure==='wait-all')tm.releaseSemaphore(sem,1,0);}
+    if(runs===0){assert.strictEqual(e.native_df(),0,'callback enters with clear DF');assert.strictEqual(e.native_tags(),0,'callback enters with empty x87 stack');assert.strictEqual(e.native_wait_state_clean(),1,'callback starts without interrupted message/vblank wait state');}
     e.run(1);runs++;
+    if(e.get_yield_reason()===1){
+     assert.strictEqual(e.get_wait_handle()>>>0,callbackEvent>>>0,'nested wait names callback event');
+     assert.strictEqual(e.get_wait_handles_ptr(),0,'callback single wait cannot inherit original wait-all array');
+     assert.strictEqual(e.get_wait_stack_bytes(),12);
+     tm.setEvent(callbackEvent);assert.strictEqual(tm.checkMainYield(),false);
+     assert.strictEqual(tm.syncView[tm._getSyncIdx(callbackEvent)*4+2],0,'only callback event consumed');
+    }
     if(e.get_sleep_yielded()){sleeps++;ticks+=e.get_sleep_timeout();owner.sleepUntil=ticks+e.get_sleep_timeout();owner.sleepCount++;}
+    if(isWait&&failure!=='wait-timeout'){
+     assert.strictEqual(tm.syncView[tm._getSyncIdx(event)*4+2],1,'original auto-reset signal remains unconsumed during callback');
+     if(failure==='wait-all')assert.strictEqual(tm.syncView[tm._getSyncIdx(sem)*4+2],1,'original semaphore count remains unconsumed');
+    }
     if(failure==='executing-cancel'&&sleeps){
      // No more run calls after this point: the producer is stopped before
      // process teardown releases the callback's live memory.
@@ -233,23 +293,39 @@ const {pump}=require('../lib/help-navigation-pump');
     if(e.get_yield_reason()===12){await vfs.fillPendingRead(vfs.pendingRead);e.clear_yield();}
    }else if(phase===3){
     const parked=cpu();e.run(1);assert.deepStrictEqual(cpu(),parked,'returned callback stays parked until outer pump');
-    await pump({exports:e,vfs,callbackOwner:owner,callbackMode:'thread'});finished=true;
-   }else await pump({exports:e,vfs,callbackOwner:owner,callbackMode:'thread'});
+    await pump({exports:e,vfs,callbackOwner:owner,callbackMode:mode});finished=true;
+   }else await pump({exports:e,vfs,callbackOwner:owner,callbackMode:mode});
    assert.strictEqual(e.macro_epoch(),epoch,'callback never reloads its source document');
   }
   if(failure!=='executing-cancel'){
    assert.deepStrictEqual(cpu(),original,'outer finish restores exact interrupted CPU');
-   assert.deepStrictEqual(owner,originalOwner,'absolute host sleep/wait deadlines restored without extending them');
+   assert.deepStrictEqual(ownerSnapshot(),originalOwner,'absolute host sleep/wait deadlines restored without extending them');
   }
-  if(failure==='none'||failure==='data'){
+  if(isWait||isMsg||failure==='none'||failure==='data'){
    assert(finished);assert.strictEqual(sleeps,130);assert(runs>64);
    assert.strictEqual(e.guest_read32(STATE),1);assert.strictEqual(e.guest_read32(STATE+24),1);
    assert.strictEqual(e.guest_read32(STATE+16),failure==='data'?0:1);
-   if(failure==='none'){
+   if(isWait||isMsg||failure==='none'){
     assert.strictEqual(e.guest_read32(COUNT),data.length);
     assert.deepStrictEqual(Uint8Array.from({length:data.length},(_,i)=>e.guest_read8(BUFFER+i)),data);
    }
   }else if(failure!=='executing-cancel')assert.strictEqual(e.guest_read32(STATE),0);
+  if(isMsg)assert.strictEqual(e.get_esp(),STACK+24,'native callback does not pop completed MsgWait frame twice');
+  if(isWait){
+   assert.strictEqual(e.get_yield_reason(),1,'original wait restored before resolution');
+   if(failure==='wait-timeout'){
+    const decision=tm.resolveWait({waitHandle:e.get_wait_handle(),waitTimeout:e.get_wait_timeout(),waitStackBytes:e.get_wait_stack_bytes()},
+      {waitStartedAt:tm._mainWaitStartedAt,waitPolls:tm._mainWaitPolls},{threadId:1});
+    assert.deepStrictEqual(decision,{result:0x102,waitStackBytes:12},'elapsed original absolute timeout is not restarted by callback');
+   }
+   assert.strictEqual(tm.checkMainYield(),false,'original signaled/expired wait completes now');
+   assert.strictEqual(e.get_eax(),failure==='wait-timeout'?0x102:0);
+   assert.strictEqual(e.get_esp(),STACK+waitBytes,'exact original wait argument cleanup');
+   if(failure!=='wait-timeout')assert.strictEqual(tm.syncView[tm._getSyncIdx(event)*4+2],0,'auto-reset event consumed exactly once');
+   if(failure==='wait-all')assert.strictEqual(tm.syncView[tm._getSyncIdx(sem)*4+2],0,'wait-all consumes semaphore once');
+   if(callbackEvent){assert.strictEqual(e.guest_read32(STATE+32),0,'nested WaitSingle completed');tm.closeSyncHandle(callbackEvent);}
+   tm.closeSyncHandle(event);tm.closeSyncHandle(sem);
+  }
   assert.strictEqual(e.macro_jobs(),0);assert.strictEqual(e.macro_resolvers(),0);
   assert.strictEqual([...vfs.handles.values()].filter(f=>!f.closed).length,1);
   vfs.closeHandle(handle);assert.strictEqual(budget.bytes,0);
