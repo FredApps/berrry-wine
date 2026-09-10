@@ -138,20 +138,27 @@ assert.strictEqual(starcraft.args, 'ophelia terran1',
   'StarCraft starts the first Terran mission without disabling DirectSound');
 assert(starcraft.requiredFiles);
 assert(starcraft.files.some(file =>
-  file.url.endsWith('/stardatsw.mpq') &&
-  file.vfsPaths.includes('c:\\stardatsw.mpq') &&
-  file.vfsPaths.includes('c:\\program files\\starcraft shareware\\stardatsw.mpq')),
-'StarCraft mounts its installed MPQ at both proven paths');
+  file.url.endsWith('/stardated.mpq') &&
+  file.vfsPaths.includes('c:\\stardated.mpq') &&
+  file.vfsPaths.includes('c:\\program files\\starcraft shareware(ed)\\stardated.mpq')),
+'StarCraft mounts the official electronic-demo MPQ at both proven paths');
 assert(starcraft.files.some(file =>
-  file.url.endsWith('/disc/INSTALL.EXE') && file.vfsPath === 'c:\\install.exe'),
-'StarCraft mounts the original shareware CD container where its StarCD check opens it');
+  file.url.endsWith('/SCDemo.exe') && file.vfsPath === 'c:\\scdemo.exe'),
+'StarCraft retains Blizzard\'s complete original one-file demo distribution');
+for (const name of ['license.txt', 'readme.cnt', 'readme.hlp']) {
+  assert(starcraft.files.some(file => file.url.endsWith('/' + name)),
+    `StarCraft retains its installed ${name}`);
+}
+assert(starcraft.startupRegistry.every(entry =>
+  entry.keyPath.endsWith('Starcraft Shareware(ED)')),
+'StarCraft uses the official electronic-demo registry key');
 
 const starcraftReg = new Map(starcraft.startupRegistry.map(entry =>
   [entry.valueName, entry.data]));
 assert.strictEqual(starcraftReg.get('InstallPath'),
-  'C:\\Program Files\\Starcraft Shareware');
+  'C:\\Program Files\\Starcraft Shareware(ED)');
 assert.strictEqual(starcraftReg.get('Program'),
-  'C:\\Program Files\\Starcraft Shareware\\Starcraft.exe');
+  'C:\\Program Files\\Starcraft Shareware(ED)\\Starcraft.exe');
 assert.strictEqual(starcraftReg.get('StarCD'), 'C');
 
 const diabloShareware = APPS.diablo_shareware;

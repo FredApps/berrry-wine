@@ -1,6 +1,16 @@
 # StarCraft shareware
 
-`test/binaries/candidates/starcraft-shareware/installed/`, registry id
+> **Package update (2026-09-10):** the app profile now uses Blizzard's official
+> 29,569,755-byte electronic-download demo (`SCDemo.exe`, SHA-1
+> `3126b9b0a390e046d96918e317fa64093ee29bbd`) and its installer-produced
+> `stardated.mpq`, rather than the separate five-mission shareware CD build.
+> The official ED executable has different addresses, so the CD-specific
+> counters and disassembly notes below remain historical until re-profiled.
+> The retimed ED route reaches unobstructed Terran mission gameplay at batch
+> 1100 with a 200,000-step batch: Start at `(545,393)` around batch 700 and
+> dismiss the tip at `(200,263)` around batch 900.
+
+`test/binaries/candidates/starcraft-demo-official/installed/`, registry id
 `starcraft_shareware` (`lib/apps.js`).
 
 ## DirectDraw present counter investigation (2026-08-31)

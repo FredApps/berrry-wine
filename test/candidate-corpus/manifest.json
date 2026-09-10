@@ -451,17 +451,16 @@
       "id": "starcraft-shareware",
       "name": "StarCraft Shareware",
       "kind": "game",
-      "version": "1998 shareware CD",
+      "version": "1998 official electronic-download demo",
       "executables": [
-        "starcraft.exe",
-        "install.exe",
-        "setup.exe"
+        "SCDemo.exe",
+        "installed/starcraft.exe"
       ],
       "sourcePage": "https://archive.org/details/cdrom-starcraft-shareware",
       "officialDownload": "http://ftp.blizzard.com/pub/starcraft/demos/SCDemo.exe",
       "license": "Blizzard demo; non-commercial mirroring permitted when unaltered, complete, and intact (https://www.blizzard.com/en-us/legal/28d5ebbf-c245-4408-8ba9-043dd5f056bf/legal-faq)",
       "packages": [],
-      "manual": "Large CCD/IMG disc image intentionally remains manual. Extract it beneath this fixture directory before running the candidate suite."
+      "manual": "Download the pinned official SCDemo.exe, run its original installer in Wine Assembly, and export the intact installed payload beneath starcraft-demo-official/installed/."
     },
     {
       "id": "diablo-shareware",
