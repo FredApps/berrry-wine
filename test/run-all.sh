@@ -46,6 +46,9 @@ UNIT=(
   test/test-lz-lazy-copy.js
   test/test-mmio-lazy-navigation.js
   test/test-vfs-overlay-lazy-hydrate.js
+  test/test-browser-overlay-lifecycle.js
+  test/test-sound-lazy-file.js
+  test/test-legacy-file-read.js
   test/test-crt-lazy-reads.js
   test/test-overlay-store-ranges.js
   test/test-sparse-byte-provider.js

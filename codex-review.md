@@ -2,7 +2,43 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Current follow-through
+### Next consumer and lifecycle increment
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| CONTINUATION TLDR                           IMPLEMENTED / NEXT                                           |
++----------------------------------+----------------------------------+------------------------------------+
+| FILE CONSUMERS                   | STOP / SAVE OWNERSHIP            | STILL REQUIRED                     |
+| fgets: preserve line progress    | wait for boot, steps, Workers    | BMP / GDI+ pending reads           |
+| sound: staged WAV + shared stop  | refresh final exit snapshot      | font registration + nested loads  |
+| version: five resumable stages   | retain failed saves for retry    | help/CNT/navigation/macros         |
+| legacy reads: reuse Fable fix    | lease each in-flight launch      | real large-install memory checks  |
++----------------------------------+----------------------------------+------------------------------------+
+| DEFAULT LAZY SAVES: OFF          | NEXT: finish consumers -> enable/measure saves -> safe WAT polling    |
++----------------------------------------------------------------------------------------------------------+
+```
+
+`fgets` now retains its completed character count and file position across misses instead of rewinding the line. A real VFS with zero retained-cache bytes completes a 1,026-byte line with monotonic progress; compiled tests cover nested calls, frame reuse, faults, EOF, and cleanup.
+
+File-backed sound loading retains its handle, WAV buffer, and copied offset across 4KiB reads. Real-thunk tests cover ANSI, Unicode, and legacy entry points, one playback after completion, read failures, invalid WAVs, and cancellation without reopening a stopped sound. A shared atomic stop generation also cancels a peer WASM instance's pending load; this does not change the preexisting instance-local active-voice ownership.
+
+Version-resource parsing resumes at five explicit read stages (DOS header, PE header, section table, resource section, version blob). Completed buffers survive cache eviction; no caller output is published while pending. All four A/W size/info APIs pass real-thunk zero-cache success and per-stage failure tests, including nested calls and final handle/frame cleanup.
+
+The released Fable legacy-read consolidation (`4d5ba5f3`) is reconciled into this candidate: `_lread`, `_hread`, and `mmioRead` share EOF/fault/pending behavior, including the Win16 bridge's ownership of its Pascal frame. Its original regression is retained; the review's newer MMIO navigation continuations remain intact.
+
+Stopped trees now have an explicit owner through producer quiescence, snapshot handoff, and the final durable flush. Stop joins active guest steps, boot completion, Worker termination (including starting workers), and detached read fills before releasing memory/maps. Exit and chained-launch snapshots refresh after those producers settle, preserving late-created files. Failed flushes retain the original tree for retry with a visible warning; same-media durable relaunch retries rather than hydrating a stale manifest. Session child launches can still adopt the retained live snapshot without pretending a failed save was durable.
+
+In-flight launches acquire their own snapshot lease before callbacks or awaits, so replacing a same-executable registry entry cannot clear the pending mount. Worker startup publishes its producer before awaiting readiness and stops it on failure; failed termination propagates rather than silently falling back with an orphan producer. Targeted regressions cover both races and stop-during-start.
+
+Focused lifecycle tests cover these barriers and final provider release; existing overlay, thread-manager, scheduler, and shell-launch regressions pass. Canonical and compatibility builds pass at source 302, layout `b00c9d60346fdb5a`, 918 registered tests, and 233 nonoverlapping data segments. Membership checks are not a full-suite run. Default lazy hydration remains disabled pending bitmap/font/help consumers and large-installation memory acceptance; safe WAT polling and headful input/audio acceptance also remain open.
+
+The final-source real-browser Worker matrix passes on the rebuilt candidate after the startup-cleanup and snapshot-lease fixes: Notepad/Calculator parity, both Rodent gameplay/input checks, Winamp with three Workers, and COM success/failure unpark. The harness closed its browser/server and exited normally. This is functional evidence, not a latency or memory benchmark.
+
+Next consumer order: file-backed BMP/GDI+ loading, explicit font registration, transactional HLP/CNT loading, then nested font fallback/help navigation/macro DLL continuations. These must retain bounded parser buffers without permanently materializing lazy VFS entries, and must not replay prior native side effects.
+
+### Follow-through committed in c16666d3
+
+This section records that commit's evidence and then-open follow-ups; the next increment above supersedes its consumer status.
 
 The next increment adds opt-in `lazyHydrate:true`: metadata mounts without reading payloads, while managed entries retain version pins. A synthetic 24GiB tree mounts with zero payload/cache bytes; two small reads populate 262,159 retained cache bytes in the final operation-owned read path, not whole-file arrays. This is allocation accounting, not an RSS or device-memory benchmark. Default hydration remains eager pending remaining consumer/lifecycle gates.
 

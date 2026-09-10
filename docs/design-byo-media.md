@@ -696,8 +696,17 @@ guest mappings: splitting the file read by mappings and restarting on a later
 cache miss can otherwise loop forever when the prefix exceeds the cache budget.
 Pending file reads own their completed bytes per handle, independently of cache
 eviction or another handle's fill. Revision/entry/close guards reject stale
-completions. Whole-line replay in `fgets` still needs a durable continuation under
-extreme cache pressure; ordinary CRT retry/fault tests alone do not close that gate.
+completions. `fgets` now keeps per-call progress rather than replaying its prefix;
+a zero-cache compiled regression covers a 1,026-byte line. File-backed sound and
+version-resource consumers likewise retain explicit read-stage state. Bitmap,
+font, and help consumers remain a prerequisite for default lazy enablement.
+
+Stopped browser trees retain an explicit owner while boot/guest steps, Worker
+termination, and read fills settle. Exit/chained snapshots refresh after that
+barrier, before the final durable flush and map release. Failed saves keep their
+original live tree and expose retry; a kept-media relaunch cannot hydrate an
+older store version while that retry is failing. Session snapshots require no
+redundant in-memory-store serialization.
 
 `SparseByteProvider` owns 64KiB dirty pages with byte-range coverage over an
 immutable base. Writes do not fetch untouched bytes; shrinking caps the base

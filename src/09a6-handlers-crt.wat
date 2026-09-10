@@ -1047,15 +1047,52 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 
+  ;; Per-instance suspended fgets calls. Frames are keyed by ESP, return
+  ;; address and all arguments; nested calls must not replace their caller.
+  ;; next, ESP, buffer, capacity, stream, count, file position, return (32B).
+  (global $crt_fgets_pending (mut i32) (i32.const 0))
+  (func $crt_fgets_release (param $frame i32) (param $previous i32)
+    (if (local.get $frame) (then
+      (if (local.get $previous)
+        (then (call $gs32 (local.get $previous) (call $gl32 (local.get $frame))))
+        (else (global.set $crt_fgets_pending (call $gl32 (local.get $frame)))))
+      (call $heap_free (local.get $frame)))))
+
   (func $handle_fgets (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $count i32) (local $bytes_ga i32) (local $bytes_wa i32) (local $ch i32)
+    (local $frame i32) (local $previous i32) (local $pos i32) (local $next i32)
+    (local.set $frame (global.get $crt_fgets_pending))
+    (block $found (loop $find
+      (br_if $found (i32.eqz (local.get $frame)))
+      (if (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+        (then
+          (if (i32.and
+                (i32.and
+                  (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (local.get $arg0))
+                  (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 12))) (local.get $arg1)))
+                (i32.and
+                  (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 16))) (local.get $arg2))
+                  (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 28))) (call $gl32 (global.get $esp)))))
+            (then (br $found)))
+          ;; Same stack frame reused for a different call: discard abandoned state.
+          (local.set $next (call $gl32 (local.get $frame)))
+          (call $crt_fgets_release (local.get $frame) (local.get $previous))
+          (local.set $frame (local.get $next))
+          (br $find)))
+      (local.set $previous (local.get $frame))
+      (local.set $frame (call $gl32 (local.get $frame)))
+      (br $find)))
+    (block $failed
+    (if (local.get $frame) (then
+      (local.set $count (call $gl32 (i32.add (local.get $frame) (i32.const 20))))
+      (local.set $pos (call $gl32 (i32.add (local.get $frame) (i32.const 24))))
+      (br_if $failed (i32.ne (call $host_fs_set_file_pointer
+        (local.get $arg2) (local.get $pos) (i32.const 0)) (local.get $pos)))))
     (if (i32.or
           (i32.or (i32.eqz (local.get $arg0)) (i32.le_s (local.get $arg1) (i32.const 0)))
           (i32.eqz (local.get $arg2)))
       (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-        (return)))
+        (br $failed)))
     (local.set $bytes_ga (i32.sub (global.get $esp) (i32.const 4)))
     (local.set $bytes_wa (call $g2w (local.get $bytes_ga)))
     (block $done (loop $read
@@ -1069,23 +1106,25 @@
         (then
           (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
             (then
-              ;; Retry the whole line, not just its unavailable suffix. The
-              ;; bytes already copied will be overwritten by the retry.
-              (if (local.get $count)
-                (then
-                  (if (i32.eq (call $host_fs_set_file_pointer
-                        (local.get $arg2) (i32.sub (i32.const 0) (local.get $count))
-                        (i32.const 1)) (i32.const -1))
-                    (then
-                      (global.set $eax (i32.const 0))
-                      (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-                      (return)))))
+              (local.set $pos (call $host_fs_set_file_pointer (local.get $arg2) (i32.const 0) (i32.const 1)))
+              (br_if $failed (i32.eq (local.get $pos) (i32.const -1)))
+              (if (i32.eqz (local.get $frame)) (then
+                (local.set $frame (call $heap_alloc (i32.const 32)))
+                (br_if $failed (i32.eqz (local.get $frame)))
+                (call $gs32 (local.get $frame) (global.get $crt_fgets_pending))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (global.get $esp))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $arg0))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $arg1))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $arg2))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 28)) (call $gl32 (global.get $esp)))
+                (global.set $crt_fgets_pending (local.get $frame))
+                (local.set $previous (i32.const 0))))
+              (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $count))
+              (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (local.get $pos))
               (call $io_block (i32.const 0))
               (return)))
           ;; A failed fill is an error, not a successful partial line.
-          (global.set $eax (i32.const 0))
-          (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
-          (return)))
+          (br $failed)))
       (br_if $done (i32.eqz (i32.load (local.get $bytes_wa))))
       (local.set $ch (call $gl8 (i32.add (local.get $arg0) (local.get $count))))
       (local.set $count (i32.add (local.get $count) (i32.const 1)))
@@ -1096,6 +1135,11 @@
         (call $gs8 (i32.add (local.get $arg0) (local.get $count)) (i32.const 0))
         (global.set $eax (local.get $arg0)))
       (else (global.set $eax (i32.const 0))))
+    (call $crt_fgets_release (local.get $frame) (local.get $previous))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
+    (return))
+    (call $crt_fgets_release (local.get $frame) (local.get $previous))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))
   )
 

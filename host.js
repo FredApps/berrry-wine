@@ -506,7 +506,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '301';
+  static SOURCE_VERSION = '302';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2161,17 +2161,19 @@ class WineAssembly {
       this.logToUI('[threads] lib/guest-thread-host.js not loaded — running single-threaded');
       return;
     }
+    let worker = null;
     try {
       const res = await fetch('lib/host-import-sigs.generated.json?v=10');
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
+      if (this._stopped) return;
       const self = this;
-      const worker = new GuestThreadHost({
+      worker = new GuestThreadHost({
         memory: this.memory,
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=34',
+        workerUrl: 'lib/guest-worker.js?v=35',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -2181,8 +2183,15 @@ class WineAssembly {
           return self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio);
         },
       });
-      await worker.start();
+      // Publish before awaiting readiness so stop can terminate a starting
+      // worker too; otherwise a rejected start leaves its clock/memory alive.
       this.guestWorker = worker;
+      await worker.start();
+      if (this._stopped) {
+        await worker.stop();
+        if (this.guestWorker === worker) this.guestWorker = null;
+        return;
+      }
       // Renderer windows still retain the browser-side WebAssembly.Instance
       // as their ownership token. Mark that token so keyboard handling queues
       // messages for slot 0 instead of calling exports on the idle instance.
@@ -2190,7 +2199,10 @@ class WineAssembly {
       this.renderer._guestWorkerWasms.add(this.instance);
       this.logToUI('[threads] guest main thread is running in a Worker (experimental)');
     } catch (err) {
-      this.guestWorker = null;
+      // Failed termination is not permission to fall back while an orphan
+      // producer still owns shared memory. Propagate that failure.
+      if (worker) await worker.stop();
+      if (this.guestWorker === worker) this.guestWorker = null;
       this.logToUI(`[threads] worker start failed (${err.message}) — running single-threaded`);
     }
   }
@@ -2893,6 +2905,21 @@ class WineAssembly {
   // exists -- desktop icons hidden over a blank canvas. The two sites with no
   // repaint had the opposite fault: a crash left the dead app's last frame on
   // screen. Repainting last, once, fixes both.
+  _trackGuestStep(body) {
+    const host = this;
+    return function(...args) {
+      if (!host._activeGuestSteps) host._activeGuestSteps = new Set();
+      const active = host._activeGuestSteps;
+      let done;
+      const completion = new Promise(resolve => { done = resolve; });
+      active.add(completion);
+      let work;
+      try { work = body(...args); }
+      catch (error) { active.delete(completion); done(); throw error; }
+      return Promise.resolve(work).finally(() => { active.delete(completion); done(); });
+    };
+  }
+
   stop(options = {}) {
     this.running = false;
     // A pending parked-sleep timeout and the visibilitychange listener both
@@ -2911,6 +2938,30 @@ class WineAssembly {
     // loop that restarted itself on the second launch would be back to
     // holding a dead host forever.
     this._stopped = true;
+    if (!this._vfsStopBarrier) {
+      // A stop may occur inside an active step or asynchronous boot. Keep its
+      // host only until those producers settle, never in the later retry owner.
+      const launch = this._vfsLaunchBarrier;
+      let termination;
+      try { termination = this.guestWorker && this.guestWorker.stop(); }
+      catch (error) { termination = Promise.reject(error); }
+      this._vfsStopBarrier = (async () => {
+        await termination;
+        if (launch) await launch;
+        // A boot already awaiting instantiation when stop arrived can publish
+        // its Worker/manager later. Recheck after the boot settles as well.
+        if (this.guestWorker) await this.guestWorker.stop();
+        const steps = this._activeGuestSteps;
+        const manager = this.threadManager;
+        while (steps && steps.size) await Promise.all([...steps]);
+        const fills = manager && manager.threads
+          ? [...manager.threads.values()].map(thread => thread.ioFill).filter(Boolean) : [];
+        await Promise.allSettled(fills);
+      })();
+      // Consumers await the original promise; suppress an unhandled rejection
+      // when no browser shell is attached (retirement must fail closed).
+      void this._vfsStopBarrier.catch(() => {});
+    }
     this._stopPerfCounterPoll();
     this._cleanupAudio();
     // A deferred last-window teardown has nothing left to finish, and leaving
@@ -2968,7 +3019,11 @@ class WineAssembly {
     if (typeof window !== 'undefined' && !this._releaseTimer) {
       this._releaseTimer = setTimeout(() => {
         this._releaseTimer = null;
-        if (this._stopped) this._releaseGuestMemory();
+        if (this._stopped) {
+          void this._vfsStopBarrier.then(() => this._releaseGuestMemory(), error => {
+            console.error('Guest teardown did not quiesce:', error);
+          });
+        }
       }, 0);
     }
   }
@@ -3140,7 +3195,7 @@ class WineAssembly {
       self.renderer._guestWorkerFocusPublishers.add(self._rendererFocusPublisher);
     }
     let unsupportedYield = 0;
-    const step = async () => {
+    const step = self._trackGuestStep(async () => {
       if (!self.running) return;
       if (self._hiddenPaused || self._maybePauseForHidden()) {
         self._pausedStep = step;
@@ -3349,6 +3404,7 @@ class WineAssembly {
           }
         }
       } catch (err) {
+        if (!self.running) return; // expected rejection from worker termination
         self.logToUI(`[threads] worker loop failed: ${err.message}`);
         self.stop({ repaint: false });
         return;
@@ -3359,7 +3415,7 @@ class WineAssembly {
       // setTimeout chain is capped at 4ms once it is five deep, which would
       // hold worker mode to ~250 slices a second no matter how fast a slice is.
       if (self.running) self._scheduleStep(step);
-    };
+    });
     // Frozen at launch (a ?frozen tile, or the box checked before the app
     // started): park the very first slice instead of running it, so the guest
     // is at instruction zero until an agent steps it.
@@ -3916,7 +3972,7 @@ class WineAssembly {
     const self = this;
     self._installVisibilityPause();
     self._installInputWake();
-    const step = async () => {
+    const step = self._trackGuestStep(async () => {
       if (!self.running) return;
       // Hidden tab, nothing audible: park the whole chain here. Nothing is
       // scheduled after this return, so the emulator costs exactly zero until
@@ -4307,7 +4363,7 @@ class WineAssembly {
       if (self.running) {
         self._scheduleStep(step, mainParked ? self._parkedSleepMs() : 0);
       }
-    };
+    });
     // Frozen at launch (a ?frozen tile, or the box checked before the app
     // started): park the very first slice instead of running it, so the guest
     // is at instruction zero until an agent steps it.

@@ -409,6 +409,8 @@
     (owner "01-header.wat:$SHARED_COUNTERS"))
   (region.declare $CLIPBOARD_SEQUENCE (size 0x00000004) (align 0x00000004)
     (owner "01-header.wat:$CLIPBOARD_SEQUENCE"))
+  (region.declare $SOUND_STOP_GENERATION (size 0x00000004) (align 0x00000004)
+    (owner "09a-handlers.wat:$SOUND_STOP_GENERATION"))
   (region.declare $GDI_TABLE_MARKS (size 0x00000010) (align 0x00000010)
     (owner "01-header.wat:$GDI_TABLE_MARKS"))
   (region.declare $TV_SLOT_MARK (size 0x00000004) (align 0x00000010)

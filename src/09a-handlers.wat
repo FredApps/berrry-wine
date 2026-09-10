@@ -2542,22 +2542,41 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; 1 arg + ret
   )
 
-  ;; 24: _lread — STUB: unimplemented
+  ;; 24: _lread
   (func $handle__lread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; _lread(hFile, lpBuffer, uBytes) — 3 args stdcall
-    ;; host_fs_read_file(handle, bufferWA, nBytes, lpBytesRead_WA) -> bool
-    ;; We use a scratch area on the stack for bytesRead
+    ;; This is the one implementation shared by _hread and mmioRead below.
+    ;; A successful zero-byte read is EOF; a host failure is HFILE_ERROR (-1).
+    ;; Provider-backed files park and retry this same thunk instead of turning
+    ;; a not-yet-resident chunk into false EOF.
     (local $bytes_read_ga i32) (local $bytes_read_wa i32)
+    (local $read_ok i32) (local $pending i32)
     (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
     (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
     (i32.store (local.get $bytes_read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
+    (local.set $read_ok (call $host_fs_read_file
       (local.get $arg0)
       (local.get $arg1)
       (local.get $arg2)
       (local.get $bytes_read_ga)))
-    (global.set $eax (i32.load (local.get $bytes_read_wa)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; 3 args + ret
+    (if (local.get $read_ok)
+      (then (global.set $eax (i32.load (local.get $bytes_read_wa))))
+      (else
+        (local.set $pending (call $host_fs_read_pending))
+        (if (i32.eq (local.get $pending) (i32.const 1))
+          (then
+            (global.set $eax (i32.const 0))
+            ;; The Win16 bridge owns its Pascal frame and parks it after the
+            ;; temporary 32-bit frame has been restored. Redirecting that
+            ;; scratch frame here would make $win16_call32_end trap.
+            (if (global.get $win16_in_call32)
+              (then (global.set $eax (i32.const 0)))
+              (else (call $io_block (i32.const 16)))))
+          (else
+            (global.set $eax (i32.const -1))
+            (if (local.get $pending)
+              (then (global.set $last_error (i32.const 30)))))))) ;; ERROR_READ_FAULT
   )
 
   ;; VkKeyScanA(CHAR ch) → SHORT. The low byte is the virtual-key code and
@@ -2767,19 +2786,16 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; 938: _hread — identical to _lread
+  ;; 938: _hread — the LONG-count spelling of _lread.
   (func $handle__hread (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $bytes_read_ga i32) (local $bytes_read_wa i32)
-    (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
-    (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
-    (i32.store (local.get $bytes_read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
-      (local.get $arg0)
-      (local.get $arg1)
-      (local.get $arg2)
-      (local.get $bytes_read_ga)))
-    (global.set $eax (i32.load (local.get $bytes_read_wa)))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.lt_s (local.get $arg2) (i32.const 0))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (call $handle__lread
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
   ;; 25: Sleep — STUB: unimplemented
@@ -4014,6 +4030,8 @@
   ;; voice_close is stop-and-free: the voice is a one-shot nobody will ask
   ;; about again, and leaving the slot behind leaks one per sound played.
   (func $sound_stop_current
+    (drop (i32.atomic.rmw.add (global.get $SOUND_STOP_GENERATION) (i32.const 1)))
+    (call $sound_cancel_pending)
     (if (global.get $sound_voice)
       (then
         (drop (call $host_voice_close (global.get $sound_voice)))
@@ -4038,49 +4056,146 @@
   ;; parameter. $host_play_sound copies the bytes out synchronously, so the
   ;; block is freed as soon as it returns. A path that does not resolve returns
   ;; FALSE, which is exactly what Win98 reports for a missing sound file.
+  ;; Pending WAV: next, ESP, path, wide, loop, handle, size, block, copied,
+  ;; process-wide stop generation (40 bytes).
+  ;; Cancellation drops expensive resources immediately; its frame remains a
+  ;; tombstone until the parked API resumes, so it cannot reopen a canceled file.
+  (global $sound_file_pending (mut i32) (i32.const 0))
+  (global $SOUND_STOP_GENERATION i32 (region.addr $SOUND_STOP_GENERATION 0))
+  (global $SOUND_STOP_GENERATION_SIZE i32 (region.size $SOUND_STOP_GENERATION))
+  (func $sound_file_has_pending (param $path i32) (param $wide i32) (param $loop i32) (result i32)
+    (local $frame i32)
+    (local.set $frame (global.get $sound_file_pending))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $frame)))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (local.get $path)))
+        (then
+          (if (i32.and
+                (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 12))) (local.get $wide))
+                (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 16))) (local.get $loop)))
+            (then (return (i32.const 1))))))
+      (local.set $frame (call $gl32 (local.get $frame)))
+      (br $scan)))
+    (i32.const 0))
+  (func $sound_cancel_pending
+    (local $frame i32) (local $handle i32)
+    (local.set $frame (global.get $sound_file_pending))
+    (block $done (loop $next
+      (br_if $done (i32.eqz (local.get $frame)))
+      (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 20))))
+      (if (i32.ne (local.get $handle) (i32.const -1))
+        (then
+          (drop (call $host_fs_close_handle (local.get $handle)))
+          (call $heap_free (call $gl32 (i32.add (local.get $frame) (i32.const 28))))
+          (call $gs32 (i32.add (local.get $frame) (i32.const 28)) (i32.const 0))
+          (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (i32.const -1))))
+      (local.set $frame (call $gl32 (local.get $frame)))
+      (br $next))))
+  (func $sound_file_unlink (param $frame i32) (param $previous i32)
+    (if (local.get $previous)
+      (then (call $gs32 (local.get $previous) (call $gl32 (local.get $frame))))
+      (else (global.set $sound_file_pending (call $gl32 (local.get $frame)))))
+    (call $heap_free (local.get $frame)))
   (func $sound_play_file (param $path_guest i32) (param $wide i32) (param $loop i32)
         (result i32)
     (local $handle i32) (local $size i32) (local $blk i32)
-    (local $data_guest i32) (local $data_wa i32) (local $ok i32)
-    (if (i32.eqz (local.get $path_guest)) (then (return (i32.const 0))))
-    (local.set $handle (call $host_fs_create_file
-      (call $g2w (local.get $path_guest))
-      (i32.const 0x80000000)   ;; GENERIC_READ
-      (i32.const 3)            ;; OPEN_EXISTING
-      (i32.const 0x80)         ;; FILE_ATTRIBUTE_NORMAL
-      (local.get $wide)))
-    (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
-    (local.set $size (call $host_fs_get_file_size (local.get $handle)))
-    ;; 16 MB is far past any Win98-era effect or jingle; refuse rather than
-    ;; hand the heap an attacker-sized allocation from a guest string.
-    (if (i32.or (i32.lt_s (local.get $size) (i32.const 44))
-                (i32.gt_u (local.get $size) (i32.const 0x01000000)))
+    (local $frame i32) (local $previous i32) (local $copied i32)
+    (local $want i32) (local $ok i32)
+    (local.set $frame (global.get $sound_file_pending))
+    (block $found (loop $find
+      (br_if $found (i32.eqz (local.get $frame)))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (local.get $path_guest)))
+        (then
+          (br_if $found (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 12))) (local.get $wide))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 16))) (local.get $loop))))))
+      (local.set $previous (local.get $frame))
+      (local.set $frame (call $gl32 (local.get $frame)))
+      (br $find)))
+    (if (local.get $frame)
       (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (return (i32.const 0))))
-    (local.set $blk (call $heap_alloc (i32.add (local.get $size) (i32.const 4))))
-    (if (i32.eqz (local.get $blk))
-      (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (return (i32.const 0))))
-    (local.set $data_guest (i32.add (local.get $blk) (i32.const 4)))
-    (i32.store (call $g2w (local.get $blk)) (i32.const 0))
-    (local.set $ok (call $host_fs_read_file (local.get $handle)
-      (local.get $data_guest) (local.get $size) (local.get $blk)))
+        (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 20))))
+        (if (i32.eq (local.get $handle) (i32.const -1))
+          (then
+            (call $sound_file_unlink (local.get $frame) (local.get $previous))
+            (return (i32.const 0))))
+        (local.set $size (call $gl32 (i32.add (local.get $frame) (i32.const 24))))
+        (local.set $blk (call $gl32 (i32.add (local.get $frame) (i32.const 28))))
+        (local.set $copied (call $gl32 (i32.add (local.get $frame) (i32.const 32))))
+        (if (i32.ne (call $gl32 (i32.add (local.get $frame) (i32.const 36)))
+                    (i32.atomic.load (global.get $SOUND_STOP_GENERATION)))
+          (then
+            (drop (call $host_fs_close_handle (local.get $handle)))
+            (call $heap_free (local.get $blk))
+            (call $sound_file_unlink (local.get $frame) (local.get $previous))
+            (return (i32.const 0)))))
+      (else
+        (local.set $handle (call $host_fs_create_file
+          (call $g2w (local.get $path_guest)) (i32.const 0x80000000)
+          (i32.const 3) (i32.const 0x80) (local.get $wide)))
+        (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
+        (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+        (if (i32.or (i32.lt_s (local.get $size) (i32.const 44))
+                    (i32.gt_u (local.get $size) (i32.const 0x01000000)))
+          (then
+            (drop (call $host_fs_close_handle (local.get $handle)))
+            (return (i32.const 0))))
+        (local.set $blk (call $heap_alloc (i32.add (local.get $size) (i32.const 4))))
+        (if (i32.eqz (local.get $blk))
+          (then
+            (drop (call $host_fs_close_handle (local.get $handle)))
+            (return (i32.const 0))))
+        (local.set $frame (call $heap_alloc (i32.const 40)))
+        (if (i32.eqz (local.get $frame))
+          (then
+            (drop (call $host_fs_close_handle (local.get $handle)))
+            (call $heap_free (local.get $blk))
+            (return (i32.const 0))))
+        (call $gs32 (local.get $frame) (global.get $sound_file_pending))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (global.get $esp))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $path_guest))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $wide))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $loop))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $handle))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (local.get $size))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 28)) (local.get $blk))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 36))
+          (i32.atomic.load (global.get $SOUND_STOP_GENERATION)))
+        (global.set $sound_file_pending (local.get $frame))
+        (local.set $previous (i32.const 0))))
+    (block $done
+      (loop $read
+        (br_if $done (i32.ge_u (local.get $copied) (local.get $size)))
+        (local.set $want (i32.sub (local.get $size) (local.get $copied)))
+        (if (i32.gt_u (local.get $want) (i32.const 4096))
+          (then (local.set $want (i32.const 4096))))
+        (call $gs32 (local.get $blk) (i32.const 0))
+        (if (i32.eqz (call $host_fs_read_file (local.get $handle)
+              (i32.add (i32.add (local.get $blk) (i32.const 4)) (local.get $copied))
+              (local.get $want) (local.get $blk)))
+          (then
+            (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+              (then
+                (call $gs32 (i32.add (local.get $frame) (i32.const 32)) (local.get $copied))
+                (return (i32.const -1))))
+            (br $done)))
+        (br_if $done (i32.ne (call $gl32 (local.get $blk)) (local.get $want)))
+        (local.set $copied (i32.add (local.get $copied) (local.get $want)))
+        (br $read)))
     (drop (call $host_fs_close_handle (local.get $handle)))
-    (if (i32.or (i32.eqz (local.get $ok))
-                (i32.ne (i32.load (call $g2w (local.get $blk))) (local.get $size)))
+    (call $sound_file_unlink (local.get $frame) (local.get $previous))
+    (if (i32.eq (local.get $copied) (local.get $size))
       (then
-        (call $heap_free (local.get $blk))
-        (return (i32.const 0))))
-    (local.set $data_wa (call $g2w (local.get $data_guest)))
-    (if (i32.eqz (call $sound_wav_is_valid (local.get $data_wa) (local.get $size)))
-      (then
-        (call $heap_free (local.get $blk))
-        (return (i32.const 0))))
-    (drop (call $sound_start (local.get $data_wa) (local.get $size) (local.get $loop)))
+        (if (call $sound_wav_is_valid (call $g2w (i32.add (local.get $blk) (i32.const 4))) (local.get $size))
+          (then
+            (local.set $ok (call $sound_start
+              (call $g2w (i32.add (local.get $blk) (i32.const 4))) (local.get $size) (local.get $loop)))))))
     (call $heap_free (local.get $blk))
-    (i32.const 1))
+    (local.get $ok))
 
   ;; SND_RESOURCE: pszSound is MAKEINTRESOURCE(id) naming a WAVE resource in
   ;; the module's own resource directory.
@@ -4115,6 +4230,10 @@
         (result i32)
     (local $loop i32)
     (local.set $loop (i32.and (local.get $flags) (i32.const 0x8)))
+    ;; A retry is the same operation, not a fresh naming/busy decision. In
+    ;; particular a newly started voice must not strand a canceled NOSTOP frame.
+    (if (call $sound_file_has_pending (local.get $name_id) (local.get $wide) (local.get $loop))
+      (then (return (call $sound_play_file (local.get $name_id) (local.get $wide) (local.get $loop)))))
     ;; NULL name, or SND_PURGE (0x40): "stop whatever this process started
     ;; through PlaySound". The host hands back a voice for every sound started
     ;; here, so this is a real stop now, not a claim that one happened.
@@ -4156,6 +4275,8 @@
   (func $handle_sndPlaySoundA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $sound_play_dispatch
       (local.get $arg0) (local.get $arg1) (i32.const 0)))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (call $io_block (i32.const 0)) (return)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
@@ -4166,6 +4287,8 @@
   (func $handle_PlaySoundW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $sound_play_dispatch
       (local.get $arg0) (local.get $arg2) (i32.const 1)))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (call $io_block (i32.const 0)) (return)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -4173,6 +4296,8 @@
   (func $handle_PlaySoundA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (call $sound_play_dispatch
       (local.get $arg0) (local.get $arg2) (i32.const 0)))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (call $io_block (i32.const 0)) (return)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -19193,20 +19318,21 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   ;; Reads RT_VERSION (16) from the PE named by lptstrFilename.
   (func $handle_GetFileVersionInfoSizeA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $size i32)
-    ;; If lpdwHandle is non-null, set *lpdwHandle = 0
-    (if (local.get $arg1)
-      (then (call $gs32 (local.get $arg1) (i32.const 0))))
     ;; A DirectX component we dispatch statically has no file on disk, so the
     ;; EXE's own resource would be answered instead — which is how an app's
     ;; "do you have DirectX 6.1a?" probe ends up reading its own version.
     (if (call $name_is_static_dx_dll (local.get $arg0))
       (then
+        (if (local.get $arg1)
+          (then (call $gs32 (local.get $arg1) (i32.const 0))))
         (global.set $eax (global.get $DX_VERSION_INFO_SIZE))
         (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
         (return)))
     ;; Ordinary calls inspect the named file, including freshly extracted DLLs.
     (call $file_version_info_size_named
       (local.get $arg0) (local.get $arg1) (i32.const 0))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (global.set $eax (i32.const 0)) (call $io_block (i32.const 0)) (return)))
     (drop (local.get $entry))
     (drop (local.get $size))
 
@@ -19233,6 +19359,8 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     ;; the on-disk image has already been loaded at image_base.
     (call $file_version_info_named
       (local.get $arg0) (local.get $arg2) (local.get $arg3) (i32.const 0))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (global.set $eax (i32.const 0)) (call $io_block (i32.const 0)) (return)))
     (drop (local.get $entry))
     (drop (local.get $rva))
     (drop (local.get $size))
@@ -19255,11 +19383,15 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
   (func $handle_GetFileVersionInfoSizeW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $file_version_info_size_named
       (local.get $arg0) (local.get $arg1) (i32.const 1))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (global.set $eax (i32.const 0)) (call $io_block (i32.const 0)) (return)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_GetFileVersionInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $file_version_info_named
       (local.get $arg0) (local.get $arg2) (local.get $arg3) (i32.const 1))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (global.set $eax (i32.const 0)) (call $io_block (i32.const 0)) (return)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; VerQueryValueA(pBlock, lpSubBlock, lplpBuffer, puLen) → BOOL
@@ -20260,7 +20392,10 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (if (i32.eqz (call $host_fs_read_file
           (local.get $handle) (local.get $dest_g)
           (local.get $size) (local.get $count_g)))
-      (then (return (i32.const 0))))
+      (then
+        (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+          (then (return (i32.const -1))))
+        (return (i32.const 0))))
     (i32.eq (call $gl32 (local.get $count_g)) (local.get $size)))
 
   ;; Return the child dword for an ID in a resource directory, or -1. With
@@ -20304,6 +20439,8 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
 
   ;; Load the named PE's RT_VERSION blob into a temporary guest allocation.
   ;; The parser reads only headers, the resource section, and the final blob.
+  ;; Pending parser frame: next/ESP/path/width, then the sixteen saved locals.
+  (global $version_pending (mut i32) (i32.const 0))
   (func $file_version_resource (param $filename_g i32) (param $wide i32)
       (param $size_out_wa i32) (result i32)
     (local $handle i32) (local $file_size i32) (local $count_g i32)
@@ -20317,9 +20454,44 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (local $data_entry i32) (local $data_rva i32) (local $data_size i32)
     (local $data_raw i32) (local $delta i32) (local $blob_g i32)
     (local $i i32) (local $found i32) (local $ok i32)
+    (local $frame i32) (local $previous i32) (local $stage i32) (local $read i32)
     (i32.store (local.get $size_out_wa) (i32.const 0))
     (local.set $handle (i32.const -1))
+    (local.set $frame (global.get $version_pending))
+    (block $found_frame
+      (loop $find_frame
+        (br_if $found_frame (i32.eqz (local.get $frame)))
+        (br_if $found_frame (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+          (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (local.get $filename_g))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 12))) (local.get $wide)))))
+        (local.set $previous (local.get $frame))
+        (local.set $frame (call $gl32 (local.get $frame)))
+        (br $find_frame)))
+    (if (local.get $frame)
+      (then
+        (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 16))))
+        (local.set $file_size (call $gl32 (i32.add (local.get $frame) (i32.const 20))))
+        (local.set $count_g (call $gl32 (i32.add (local.get $frame) (i32.const 24))))
+        (local.set $headers_g (call $gl32 (i32.add (local.get $frame) (i32.const 28))))
+        (local.set $headers_size (call $gl32 (i32.add (local.get $frame) (i32.const 32))))
+        (local.set $pe_off (call $gl32 (i32.add (local.get $frame) (i32.const 36))))
+        (local.set $num_sections (call $gl32 (i32.add (local.get $frame) (i32.const 40))))
+        (local.set $opt_size (call $gl32 (i32.add (local.get $frame) (i32.const 44))))
+        (local.set $rsrc_g (call $gl32 (i32.add (local.get $frame) (i32.const 48))))
+        (local.set $section_raw (call $gl32 (i32.add (local.get $frame) (i32.const 52))))
+        (local.set $section_raw_size (call $gl32 (i32.add (local.get $frame) (i32.const 56))))
+        (local.set $root_off (call $gl32 (i32.add (local.get $frame) (i32.const 60))))
+        (local.set $blob_g (call $gl32 (i32.add (local.get $frame) (i32.const 64))))
+        (local.set $data_size (call $gl32 (i32.add (local.get $frame) (i32.const 68))))
+        (local.set $data_raw (call $gl32 (i32.add (local.get $frame) (i32.const 72))))
+        (local.set $stage (call $gl32 (i32.add (local.get $frame) (i32.const 76))))
+      ))
+    (block $pending
     (block $load
+      (if (i32.eqz (local.get $frame))
+      (then
       (br_if $load (i32.eqz (local.get $filename_g)))
       (local.set $handle (call $host_fs_create_file
         (call $g2w (local.get $filename_g))
@@ -20332,9 +20504,16 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (local.set $headers_g (call $heap_alloc (i32.const 64)))
       (br_if $load (i32.or
         (i32.eqz (local.get $count_g)) (i32.eqz (local.get $headers_g))))
-      (br_if $load (i32.eqz (call $version_read_exact
+      ))
+      ;; Resume immediately before the incomplete read. Completed parse stages
+      ;; retain their buffers, so cache eviction cannot restart a prefix.
+      (block $resume4 (block $resume3 (block $resume2 (block $resume1 (block $resume0
+        (br_table $resume0 $resume1 $resume2 $resume3 $resume4 (local.get $stage)))
+      (local.set $read (call $version_read_exact
         (local.get $handle) (i32.const 0) (i32.const 64)
-        (local.get $headers_g) (local.get $count_g))))
+        (local.get $headers_g) (local.get $count_g)))
+      (br_if $pending (i32.eq (local.get $read) (i32.const -1)))
+      (br_if $load (i32.eqz (local.get $read)))
       (br_if $load (i32.ne (call $gl16 (local.get $headers_g)) (i32.const 0x5A4D)))
       (local.set $pe_off (call $gl32
         (i32.add (local.get $headers_g) (i32.const 0x3C))))
@@ -20345,9 +20524,13 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (call $heap_free (local.get $headers_g))
       (local.set $headers_g (call $heap_alloc (i32.const 24)))
       (br_if $load (i32.eqz (local.get $headers_g)))
-      (br_if $load (i32.eqz (call $version_read_exact
+      ) ;; resume1: PE signature and COFF header
+      (local.set $stage (i32.const 1))
+      (local.set $read (call $version_read_exact
         (local.get $handle) (local.get $pe_off) (i32.const 24)
-        (local.get $headers_g) (local.get $count_g))))
+        (local.get $headers_g) (local.get $count_g)))
+      (br_if $pending (i32.eq (local.get $read) (i32.const -1)))
+      (br_if $load (i32.eqz (local.get $read)))
       (br_if $load (i32.ne (call $gl32 (local.get $headers_g))
         (i32.const 0x00004550)))
       (local.set $num_sections (call $gl16
@@ -20366,9 +20549,13 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (call $heap_free (local.get $headers_g))
       (local.set $headers_g (call $heap_alloc (local.get $headers_size)))
       (br_if $load (i32.eqz (local.get $headers_g)))
-      (br_if $load (i32.eqz (call $version_read_exact
+      ) ;; resume2: optional header and section table
+      (local.set $stage (i32.const 2))
+      (local.set $read (call $version_read_exact
         (local.get $handle) (local.get $pe_off) (local.get $headers_size)
-        (local.get $headers_g) (local.get $count_g))))
+        (local.get $headers_g) (local.get $count_g)))
+      (br_if $pending (i32.eq (local.get $read) (i32.const -1)))
+      (br_if $load (i32.eqz (local.get $read)))
       (br_if $load (i32.ne (call $gl16
         (i32.add (local.get $headers_g) (i32.const 24))) (i32.const 0x010B)))
       (br_if $load (i32.lt_u (call $gl32
@@ -20417,9 +20604,14 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
             (i32.sub (local.get $file_size) (local.get $section_raw))))))
       (local.set $rsrc_g (call $heap_alloc (local.get $section_raw_size)))
       (br_if $load (i32.eqz (local.get $rsrc_g)))
-      (br_if $load (i32.eqz (call $version_read_exact
+      ) ;; resume3: resource directory section
+      (local.set $stage (i32.const 3))
+      (local.set $section_table (i32.add (i32.const 24) (local.get $opt_size)))
+      (local.set $read (call $version_read_exact
         (local.get $handle) (local.get $section_raw)
-        (local.get $section_raw_size) (local.get $rsrc_g) (local.get $count_g))))
+        (local.get $section_raw_size) (local.get $rsrc_g) (local.get $count_g)))
+      (br_if $pending (i32.eq (local.get $read) (i32.const -1)))
+      (br_if $load (i32.eqz (local.get $read)))
       (local.set $root_g (i32.add (local.get $rsrc_g) (local.get $root_off)))
       (local.set $root_size (i32.sub
         (local.get $section_raw_size) (local.get $root_off)))
@@ -20489,11 +20681,21 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
           (i32.sub (local.get $file_size) (local.get $data_raw)))))
       (local.set $blob_g (call $heap_alloc (local.get $data_size)))
       (br_if $load (i32.eqz (local.get $blob_g)))
-      (br_if $load (i32.eqz (call $version_read_exact
+      ) ;; resume4: final version blob
+      (local.set $stage (i32.const 4))
+      (local.set $read (call $version_read_exact
         (local.get $handle) (local.get $data_raw) (local.get $data_size)
-        (local.get $blob_g) (local.get $count_g))))
+        (local.get $blob_g) (local.get $count_g)))
+      (br_if $pending (i32.eq (local.get $read) (i32.const -1)))
+      (br_if $load (i32.eqz (local.get $read)))
       (i32.store (local.get $size_out_wa) (local.get $data_size))
       (local.set $ok (i32.const 1)))
+    (if (local.get $frame)
+      (then
+        (if (local.get $previous)
+          (then (call $gs32 (local.get $previous) (call $gl32 (local.get $frame))))
+          (else (global.set $version_pending (call $gl32 (local.get $frame)))))
+        (call $heap_free (local.get $frame))))
     (if (i32.ne (local.get $handle) (i32.const -1))
       (then (drop (call $host_fs_close_handle (local.get $handle)))))
     (call $heap_free (local.get $rsrc_g))
@@ -20503,17 +20705,54 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (then
         (call $heap_free (local.get $blob_g))
         (return (i32.const 0))))
-    (local.get $blob_g))
+    (return (local.get $blob_g)))
+    ;; Only an incomplete read reaches here. Keep precisely this parser's
+    ;; resources alive; terminal failures above close/free everything.
+    (if (i32.eqz (local.get $frame))
+      (then
+        (local.set $frame (call $heap_alloc (i32.const 80)))
+        (if (i32.eqz (local.get $frame))
+          (then
+            (drop (call $host_fs_close_handle (local.get $handle)))
+            (call $heap_free (local.get $rsrc_g))
+            (call $heap_free (local.get $headers_g))
+            (call $heap_free (local.get $count_g))
+            (call $heap_free (local.get $blob_g))
+            (return (i32.const 0))))
+        (call $gs32 (local.get $frame) (global.get $version_pending))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (global.get $esp))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $filename_g))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $wide))
+        (global.set $version_pending (local.get $frame))))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $handle))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $file_size))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (local.get $count_g))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 28)) (local.get $headers_g))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 32)) (local.get $headers_size))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 36)) (local.get $pe_off))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 40)) (local.get $num_sections))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 44)) (local.get $opt_size))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 48)) (local.get $rsrc_g))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 52)) (local.get $section_raw))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 56)) (local.get $section_raw_size))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 60)) (local.get $root_off))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 64)) (local.get $blob_g))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 68)) (local.get $data_size))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 72)) (local.get $data_raw))
+    (call $gs32 (i32.add (local.get $frame) (i32.const 76)) (local.get $stage))
+    (i32.const -1))
 
   (func $file_version_info_size_named
       (param $filename_g i32) (param $handle_out_g i32) (param $wide i32)
     (local $scratch_g i32) (local $blob_g i32)
-    (if (local.get $handle_out_g)
-      (then (call $gs32 (local.get $handle_out_g) (i32.const 0))))
     (local.set $scratch_g (i32.sub (global.get $esp) (i32.const 4)))
     (call $gs32 (local.get $scratch_g) (i32.const 0))
     (local.set $blob_g (call $file_version_resource
       (local.get $filename_g) (local.get $wide) (call $g2w (local.get $scratch_g))))
+    (if (i32.eq (local.get $blob_g) (i32.const -1))
+      (then (global.set $eax (i32.const -1)) (return)))
+    (if (local.get $handle_out_g)
+      (then (call $gs32 (local.get $handle_out_g) (i32.const 0))))
     (global.set $eax (call $gl32 (local.get $scratch_g)))
     (call $heap_free (local.get $blob_g)))
 
@@ -20525,6 +20764,8 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (call $gs32 (local.get $scratch_g) (i32.const 0))
     (local.set $blob_g (call $file_version_resource
       (local.get $filename_g) (local.get $wide) (call $g2w (local.get $scratch_g))))
+    (if (i32.eq (local.get $blob_g) (i32.const -1))
+      (then (global.set $eax (i32.const -1)) (return)))
     (if (i32.eqz (local.get $blob_g))
       (then
         (global.set $eax (i32.const 0))

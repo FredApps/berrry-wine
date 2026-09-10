@@ -4,6 +4,27 @@ const assert = require('assert');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+const { ChunkCache, ChunkCacheBudget } = require('../lib/byte-provider');
+const apis = require('../src/api_table.json');
+const extraWat = String.raw`
+  (func (export "test_version_begin") (param $id i32) (param $sp i32)
+    (global.set $thunk_guest_base (i32.const 0x200000))
+    (global.set $thunk_guest_end (i32.const 0x200008))
+    (i32.store (global.get $THUNK_BASE) (i32.const 0x80000001))
+    (i32.store offset=4 (global.get $THUNK_BASE) (local.get $id))
+    (global.set $esp (local.get $sp)) (global.set $eip (i32.const 0x200000))
+    (global.set $yield_reason (i32.const 0)) (global.set $yield_flag (i32.const 0)))
+  (func (export "test_version_esp") (result i32) (global.get $esp))
+  (func (export "test_version_eax") (result i32) (global.get $eax))
+  (func (export "test_version_frames") (result i32)
+    (local $p i32) (local $n i32)
+    (local.set $p (global.get $version_pending))
+    (block $done (loop $walk
+      (br_if $done (i32.eqz (local.get $p)))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (local.set $p (call $gl32 (local.get $p))) (br $walk)))
+    (local.get $n))
+`;
 
 function makeVersionBlob() {
   const blob = Buffer.alloc(92);
@@ -81,7 +102,8 @@ async function main() {
     data: new Uint8Array(bad), attrs: 0x20,
   });
 
-  const { instance } = await WebAssembly.instantiate(compileSrcWasm(), imports);
+  const { instance } = await WebAssembly.instantiate(compileSrcWasm((file, source) =>
+    file === '13-exports.wat' ? source + extraWat : source), imports);
   const e = instance.exports;
   ctx.exports = e;
   const u8 = new Uint8Array(memory.buffer);
@@ -124,6 +146,85 @@ async function main() {
 
   assert.strictEqual(e.test_call_GetFileVersionInfoSizeA(writeAscii('C:\\missing.dll'), 0), 0);
   assert.strictEqual(e.test_call_GetFileVersionInfoSizeA(writeAscii('C:\\Windows\\Temp\\bad.dll'), 0), 0);
+
+  let rejectFill = false;
+  const stageRanges = [[0, 64], [0x80, 24], [0x80, 288], [0x200, 512], [0x300, blob.length]];
+  const vfs = ctx.vfs;
+  function mountLazy() {
+    rejectFill = false;
+    vfs.setProviderFile('c:\\windows\\temp\\version.dll', { provider: new ChunkCache({
+      size: pe.length,
+      async readRange(off, len) {
+        if (rejectFill) throw new Error('injected version-stage read failure');
+        return new Uint8Array(pe.subarray(off, off + len));
+      },
+    }, { budget: new ChunkCacheBudget({ maxBytes: 0 }), chunkSize: 64, readAhead: 0 }) });
+  }
+  function liveHandles() { return [...vfs.handles.values()].filter(h => !h.closed).length; }
+  function launch(name, sp) {
+    const info = !name.includes('Size');
+    const output = e.guest_alloc(info ? blob.length + 8 : 4);
+    const count = info ? blob.length + 8 : 4;
+    u8.fill(0xA5, wa(output), wa(output) + count);
+    const filename = name.endsWith('W') ? widePath : ansiPath;
+    const args = info ? [filename, 0, blob.length, output] : [filename, output];
+    const id = apis.find(a => a.name === name).id;
+    e.test_version_begin(id, sp);
+    [0, ...args].forEach((value, i) => e.guest_write32(sp + i * 4, value));
+    const frame = [0, ...args];
+    e.run(2);
+    return { id, sp, output, count, info, frame };
+  }
+  async function drive(call, failStage = -1, firstPending = null) {
+    let stage = 0;
+    while (firstPending || e.get_yield_reason() === 12) {
+      assert(stage < 5, 'parser resumes its stage instead of replaying evicted headers');
+      assert.strictEqual(e.test_version_esp(), call.sp);
+      assert.strictEqual(e.get_eip(), 0x200000);
+      assert.deepStrictEqual(call.frame.map((_, i) => e.guest_read32(call.sp + i * 4) >>> 0), call.frame);
+      assert(u8.subarray(wa(call.output), wa(call.output) + call.count).every(x => x === 0xA5),
+        'pending version query must leave caller output unchanged');
+      const pending = firstPending || vfs.pendingRead;
+      firstPending = null;
+      assert.deepStrictEqual([pending.offset, pending.length], stageRanges[stage]);
+      rejectFill = stage === failStage;
+      await vfs.fillPendingRead(pending);
+      e.test_version_begin(call.id, call.sp); e.run(2);
+      stage++;
+    }
+    assert.strictEqual(stage, failStage < 0 ? 5 : failStage + 1);
+    assert.strictEqual(e.test_version_esp(), call.sp + call.frame.length * 4);
+    assert.strictEqual(e.get_eip(), 0);
+    assert.strictEqual(e.test_version_eax(), failStage >= 0 ? 0 : call.info ? 1 : blob.length);
+    if (call.info) {
+      assert.deepStrictEqual(Buffer.from(u8.subarray(wa(call.output), wa(call.output) + blob.length)),
+        failStage >= 0 ? Buffer.alloc(blob.length, 0xA5) : blob);
+      assert(u8.subarray(wa(call.output) + blob.length, wa(call.output) + call.count).every(x => x === 0xA5));
+    } else assert.strictEqual(dv.getUint32(wa(call.output), true), 0);
+  }
+  const stack = e.guest_alloc(2048) + 1024;
+  for (const name of ['GetFileVersionInfoSizeA', 'GetFileVersionInfoSizeW', 'GetFileVersionInfoA', 'GetFileVersionInfoW']) {
+    for (const failingStage of [-1, 0, 1, 2, 3, 4]) {
+      mountLazy(); const before = liveHandles();
+      const call = launch(name, stack);
+      assert.strictEqual(e.test_version_frames(), 1);
+      await drive(call, failingStage);
+      assert.strictEqual(liveHandles(), before, 'success/error closes its retained file handle');
+      assert.strictEqual(e.test_version_frames(), 0, 'success/error frees parser continuation');
+    }
+  }
+  mountLazy(); const beforeNested = liveHandles();
+  const outer = launch('GetFileVersionInfoSizeA', stack), outerPending = vfs.pendingRead;
+  const inner = launch('GetFileVersionInfoW', stack - 128);
+  assert.strictEqual(e.test_version_frames(), 2);
+  await drive(inner);
+  assert.strictEqual(e.test_version_frames(), 1);
+  assert.strictEqual(liveHandles(), beforeNested + 1);
+  // Reinstate the parked outer call without executing it before its saved fill.
+  e.test_version_begin(outer.id, outer.sp);
+  await drive(outer, -1, outerPending);
+  assert.strictEqual(e.test_version_frames(), 0);
+  assert.strictEqual(liveHandles(), beforeNested);
   console.log('PASS file-backed GetFileVersionInfo A/W resource lookup');
 }
 

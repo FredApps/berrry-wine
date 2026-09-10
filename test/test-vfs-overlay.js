@@ -25,9 +25,8 @@ const browserShellSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'br
 assert.match(browserShellSource,
   /wine\._vfsOverlayTimer = wine\._vfsOverlayDurable \? setInterval/,
   'session imports must not repeatedly clone their growing installer output into a memory store');
-assert.match(browserShellSource,
-  /if \(wine\._vfsOverlayDurable\) void flushBrowserOverlay\(wine, 'stop'\)/,
-  'stopping a session import must not serialize its live VFS into a redundant memory copy');
+// Session stop avoids serialization: exercised dynamically together with
+// snapshot ownership and the durable barrier in test-browser-overlay-lifecycle.
 
 const GENERIC_WRITE = 0x40000000;
 const GENERIC_READ = 0x80000000;
