@@ -3010,6 +3010,11 @@
     (local $index i32) (local $free i32) (local $handle i32) (local $size i32)
     (local $data_guest i32) (local $data i32) (local $read i32) (local $read_wa i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const -1))))
+    ;; A cold cache-only query must not create the face table. With an
+    ;; existing root, tt_faces_ensure below only maps that table for lookup.
+    (if (i32.and (i32.lt_s (local.get $input_size) (i32.const 0))
+          (i32.eqz (global.get $tt_faces)))
+      (then (return (i32.const -1))))
     (local.set $path (call $g2w (local.get $path_guest)))
     (local.set $hash (call $tt_path_hash (local.get $path)))
     (local.set $table (call $tt_faces_ensure))
@@ -3664,6 +3669,18 @@
 
   (func $tt_subst_path (param $name i32) (param $weight i32) (param $italic i32)
         (result i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (if (i32.eqz (i32.load8_u (local.get $name))) (then (return (i32.const 0))))
+    ;; Legacy discovery stays at its existing first named-face lookup.
+    (call $tt_scan_font_dir)
+    (call $tt_subst_resolve (local.get $name) (local.get $weight) (local.get $italic)))
+
+  ;; Pure lookup over the currently published catalog and substitution tables:
+  ;; no discovery, allocation, IO or publication. The result is provisional
+  ;; until catalog preparation completes; tt_font_dir_scanned is NOT an
+  ;; asynchronous readiness token. The returned path is borrowed catalog data.
+  (func $tt_subst_resolve (param $name i32) (param $weight i32) (param $italic i32)
+        (result i32)
     (local $found i32)
     ;; No name at all is a different question from a name nobody knows. A
     ;; LOGFONT with an empty face is asking GDI to choose by pitch and family,
@@ -3676,10 +3693,6 @@
     (if (call $tt_subst_name_equal
           (local.get $name) (global.get $TT_SUBST_TMS_RMN))
       (then (local.set $name (global.get $TT_SUBST_TIMES_NEW_ROMAN))))
-    ;; Whatever is sitting in the font directory counts as installed, and the
-    ;; first face anybody asks for is the earliest point at which the VFS is
-    ;; certainly mounted.
-    (call $tt_scan_font_dir)
     ;; A font the guest installed itself outranks the substitute for it.
     (local.set $found (call $tt_reg_path (local.get $name)
       (local.get $weight) (local.get $italic)))
@@ -3884,7 +3897,7 @@
     (local $want_bold i32) (local $score i32) (local $best i32) (local $found i32)
     (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
     (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
-    (local.set $table (call $tt_reg_ensure))
+    (local.set $table (call $g2w (global.get $tt_reg)))
     (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
     (local.set $want_bold (i32.ge_s (local.get $weight) (i32.const 700)))
     (local.set $italic (i32.ne (local.get $italic) (i32.const 0)))
@@ -5265,6 +5278,10 @@
   (func (export "test_tt_subst_path") (param i32) (param i32) (param i32)
         (result i32)
     (call $tt_subst_path (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_subst_resolve") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_subst_resolve (local.get 0) (local.get 1) (local.get 2)))
 
   (func (export "test_tt_face_for_logfont") (param i32) (param i32) (param i32)
         (result i32)

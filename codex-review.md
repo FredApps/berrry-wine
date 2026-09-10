@@ -2,7 +2,31 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — browser executing-owner font bootstrap
+### Latest increment — read-only dynamic-font dependency lookup
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| LOOKUP: READ ONLY                    DISCOVERY: STILL LEGACY                     REQUIRED NEXT             |
++----------------------------------+----------------------------------+------------------------------------+
+| substitution + registration table| directory scan can open/register | staged catalog publication         |
+| no IO / allocation / publication| scanned flag is NOT readiness    | immutable face generations         |
+| cold cache-only miss stays cold | lookup answer is provisional     | pre-side-effect operation gates    |
++----------------------------------+----------------------------------+------------------------------------+
+| STOCK STARTUP COMPLETE             | DYNAMIC PREFLIGHT NOT YET ENABLED | LAZY DEFAULTS REMAIN OFF           |
++----------------------------------------------------------------------------------------------------------+
+```
+
+The dynamic-font audit found that `tt_subst_path` was not a safe preparation query: it allocates, scans and registers directory files before returning a path. `tt_scan_font_dir` marks its scan complete before its reads, so that flag cannot stand in for asynchronous catalog readiness. Cold cache-only face lookup also allocated the face table. More importantly, `GetFontData` pops its guest stack before face lookup, and rendering, metrics, enumeration, controls, native Help, metafiles and direct `send_message` exports can open fonts after other state changes. Retrying those operations after a missed read would replay guest-visible work.
+
+`tt_subst_resolve` now provides a genuinely read-only lookup against already published registration/substitution tables; the existing legacy path performs discovery separately and delegates to it. Registry lookup no longer invokes its allocation helper. A cold cache-only face miss returns without allocating a table. These queries preserve borrowed-path and source-independent explicit-registration behavior. Their answers remain provisional until catalog preparation is complete; they do not establish file freshness, install a face, or make legacy directory scanning safe for lazy providers.
+
+The compiled purity test covers manifest names/styles, aliases, null/empty/unknown names, repeated cold and published queries, and registered fonts whose source was deleted. It rejects filesystem imports during each query batch and compares heap/catalog roots, input canaries and a digest of the entire shared memory. The existing substitution/raster test also passes. [The implementation design](docs/design-font-preflight.md) records the missing outer-operation boundaries and generation/lifetime requirements: parsed faces and glyphs are instance-local, while shared synthetic strikes currently omit source generation. Invalidating only one cache would still return old pixels or erase a selected/registered lifetime.
+
+Canonical/compatibility build gates pass with 943 registered tests (membership, not a complete-suite result), source 314, 1,065,612 / 1,066,065 bytes, 237 imports, 233 nonoverlapping data segments and unchanged layout `b00c9d60346fdb5a`. The new pure resolver is used by the legacy lookup, not yet by a demand-driven async operation gate. Fable's materialization fixes remain complete; this is separate consumer-boundary work, and eventual integration must preserve main's unified cache identity and test discovery.
+
+The final source-314 Chrome matrix passes with exit 0: Notepad/Calculator backend parity and five-font readiness, both Rodent input/render checks, Winamp with three executing playback Workers, and COM success/missing-server recovery. Lazy FON/TTF/FOT registration, explicit resource registration, substitution/rasterization, local installation and real-Worker bootstrap regressions also pass. These establish unchanged runtime behavior around the new query seam, not completed dynamic preflight or memory/performance acceptance.
+
+### Prior increment — browser executing-owner font bootstrap
 
 ```text
 +----------------------------------------------------------------------------------------------------------+
