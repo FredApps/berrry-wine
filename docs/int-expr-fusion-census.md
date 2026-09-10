@@ -151,6 +151,169 @@ partial loads are the only barriers in an otherwise pure `and`/`add`/`shr`/`lea`
 
 **heaven7 `0x409cb6`** — 2 ops (`cmp byte [edi],0` / `jz`), 502072 hits. Nothing to fold.
 
+## Terminator classes, and what the barriers cost
+
+The share of retired ops that is "foldable" says nothing about *shape*, and shape is what decides
+whether a fold is worth its machinery. A run of 20 folded ops inside a block that is entered once
+per frame saves 19 dispatches once; the same run inside a self-loop saves 19 dispatches per trip.
+[docs/int-expr-fusion-bench.md](int-expr-fusion-bench.md) prices exactly that difference in its
+`trips=1` and `trips=64` columns. So the census now also reports, hit-weighted:
+
+* **terminator class** — `self-loop` (the terminator jumps back to the block's own head),
+  `interior-branch` (a conditional branch elsewhere: one arm of an if/else, or one block of a
+  multi-block loop), `plain-exit` (jmp/call/ret/fallthrough);
+* for self-loops, the **trip structure** — the last instruction that actually wrote the flags the
+  terminator reads, which is `dec`/`inc` for a counted loop and `cmp`/`test` for a compared one.
+  It is not necessarily the instruction *before* the branch: mw3's blend loop puts two `mov`s
+  between its `dec esi` and its `jnz`, and reading only the previous instruction misclassified
+  97.7 % of that app's retired ops as "other" until the walk-back was added;
+* the **collapsible mass** — retired ops in blocks whose entire body folds *as a single run*.
+  Those are the blocks that become one dispatch. A body that folds but is chopped into four runs
+  by alias breaks is four dispatches, so it does not count.
+
+| app | self-loop | interior-branch | plain-exit | self-loop trip structure (share of retired, mean foldable/block) |
+|---|---|---|---|---|
+| `quake2_demo` | **11.3 %** | 72.1 % | 16.6 % | `dec/jnz` 7.7 % (15.6) · `cmp/jcc` 2.0 % (2.2) · `sub`/jcc 1.6 % (1.0) |
+| `caesar3_demo` | **0.0 %** | 68.0 % | 32.0 % | — no self-loop in the hot set at all |
+| `mw3` (startup) | **97.7 %** | 1.1 % | 1.1 % | `dec/jnz` 97.7 % (33.9) |
+| `heaven7` (precalc) | **0.0 %** | 48.2 % | 51.8 % | — |
+
+caesar3's zero is not a measurement failure: its hot loops are all multi-block, and its two
+hottest blocks are the 470-op unrolled row copies, which end in a `jmp`/`jcc` to a *different*
+block. Everything caesar3 would gain from a fold is gained once per block entry, never amortised
+over trips. quake2 is the mixed case, and its 7.7 % `dec/jnz` mass is one routine — the
+`ref_soft.dll` span loop.
+
+**Collapsible mass** (share of retired ops in blocks that fold to one dispatch). `body>=4` drops
+bodies of 1–3 ops, which fold trivially and flatter the total:
+
+| app | mode | all blocks | body≥4 | self-loop | self-loop body≥4 |
+|---|---|---|---|---|---|
+| `quake2_demo` | exact | 3.5 % | 2.5 % | 0.0 % | 0.0 % |
+| | flags | 27.2 % | 19.0 % | 9.2 % | 8.9 % |
+| | all | **32.9 %** | 24.4 % | **9.3 %** | 8.9 % |
+| `caesar3_demo` | exact | 2.6 % | 1.8 % | 0.0 % | 0.0 % |
+| | flags | 18.9 % | 8.0 % | 0.0 % | 0.0 % |
+| | all | **33.5 %** | 17.8 % | **0.0 %** | 0.0 % |
+| `mw3` (startup) | exact | 0.1 % | 0.0 % | 0.0 % | 0.0 % |
+| | all | **98.6 %** | 98.1 % | **97.7 %** | 97.7 % |
+| `heaven7` (precalc) | exact | 15.6 % | **0.0 %** | 0.0 % | 0.0 % |
+| | all | 91.1 % | **0.0 %** | 0.0 % | 0.0 % |
+
+heaven7's two columns are the caveat made numeric: 91 % of its retired ops sit in blocks that
+"fully fold", and *none* of them has a body of four ops or more. It is 1–2-op blocks ending in a
+`call` or `ret`, and collapsing a one-op body to one dispatch saves nothing.
+
+### Relaxed barrier modes
+
+`--relax=alias,partial,flags` (any subset) re-runs the same walk with one barrier class modelled
+instead of refused. The report always prints all five modes; `--relax` selects which get a detailed
+barrier histogram.
+
+* **`alias`** — a store followed by a load is a barrier only when the two addresses may overlap.
+  Disjoint if: both are constant absolute addresses with non-overlapping size-aware ranges; or the
+  same base (and same index/scale) with non-overlapping displacement ranges; or one is `esp`/`ebp`
+  based and the other is not, or is absolute. **That last rule is an assumption, not a proof**
+  (stack frame vs heap/static): code that takes the address of a local and reaches it through a
+  non-frame register violates it. Nothing in these four windows does, but a shipped fold would need
+  it made real. A store whose base register has been rewritten since the store loses the
+  displacement test and falls back to may-alias.
+* **`partial`** — 8/16-bit register and memory accesses are modelled as insert/extract on the
+  32-bit value and fold. High-byte (`ah`/`ch`/`dh`/`bh`) writes are counted separately because they
+  cost an extra shift on both sides: they are **0.2 % of quake2's retired ops and 0.0 % of the
+  other three**, so the awkward case is not the case that matters.
+* **`flags`** — flags are carried as values with a per-*field* last writer, so `inc`/`dec`
+  (CF-preserving), `adc`/`sbb`, `cmp`/`test` feeding a `jcc`, and `setcc`/`cmovcc` fold.
+  `pushf`/`popf`/`lahf`/`sahf`, shifts by `cl` and `rcl`/`rcr` read or write the whole word and
+  stay barriers under every mode.
+
+| app | mode | foldable | ops in ≥4-fold blocks | run p50 | p90 | max | dispatches removed | mean run |
+|---|---|---|---|---|---|---|---|---|
+| `quake2_demo` | exact | 47.7 % | 69.6 % | 3 | 9 | 193 | 28.8 % | 2.52 |
+| | alias | 47.7 % | 69.6 % | 4 | 15 | 204 | 30.5 % | 2.78 |
+| | partial | 53.7 % | 70.4 % | 4 | 11 | 193 | 32.9 % | 2.58 |
+| | flags | 61.0 % | 74.6 % | 4 | 12 | 193 | 41.1 % | 3.07 |
+| | **all** | **67.0 %** | 75.3 % | **6** | **18** | 204 | **50.9 %** | 4.18 |
+| `caesar3_demo` | exact | 67.9 % | 65.1 % | 3 | 4 | 18 | 36.3 % | 2.15 |
+| | alias | 67.9 % | 65.1 % | 3 | 7 | 34 | 38.6 % | 2.32 |
+| | partial | 72.6 % | 69.5 % | 3 | 4 | 18 | 40.9 % | 2.29 |
+| | flags | 78.8 % | 79.2 % | 3 | 4 | 18 | 41.9 % | 2.14 |
+| | **all** | **83.4 %** | 80.5 % | **4** | **7** | 34 | **50.6 %** | 2.55 |
+| `mw3` (startup) | exact | 84.1 % | 98.7 % | 20 | 20 | 20 | 70.1 % | 6.03 |
+| | alias | 84.1 % | 98.7 % | 20 | 20 | 20 | 70.2 % | 6.05 |
+| | partial | 93.9 % | 98.7 % | 32 | 36 | 36 | 86.0 % | 11.92 |
+| | flags | 86.8 % | 98.8 % | 20 | 20 | 20 | 75.2 % | 7.51 |
+| | **all** | **96.6 %** | 98.8 % | **37** | **41** | 41 | **93.6 %** | 32.51 |
+| `heaven7` (precalc) | exact | 12.4 % | 0.0 % | 0 | 1 | 2 | 3.0 % | 1.33 |
+| | alias | 12.4 % | 0.0 % | 0 | 1 | 2 | 3.0 % | 1.33 |
+| | partial | 12.4 % | 0.0 % | 0 | 1 | 2 | 3.0 % | 1.33 |
+| | flags | 51.6 % | 0.0 % | 1 | 2 | 3 | 12.1 % | 1.31 |
+| | **all** | **51.6 %** | 0.0 % | 1 | 2 | 3 | 12.1 % | 1.31 |
+
+Remaining barriers under `--relax=alias,partial,flags`, as a share of retired ops: quake2
+`fpu/simd` 20.3 %, `branch-cc` 8.5 %, `alias` 4.3 %; caesar3 **`alias` 19.7 %**, `branch-cc`
+10.3 %; mw3 `branch-cc` 2.7 %; heaven7 `branch-cc` 24.1 %, `ret` 12.1 %, `call` 12.1 %.
+
+### The two blocks, checked by eye
+
+**`--relax=flags` on quake2 `ref_soft.dll+0x12570`** (runtime `0x00d90570`, 67828 hits). Under the
+exact rule this block is 19 ops, 17 foldable, one run of 17, with `dec ecx` and `jnz` as the two
+barriers — the disassembly is in the *Classifier verification* section above. Under `flags`,
+`dec ecx` is a CF-preserving decrement whose only consumer is the `jnz` two bytes later, so it
+joins the tree: the census now reports **18 foldable, run 18, and the block marked FULL**, i.e. the
+whole body is one dispatch. The terminator classifier independently calls it
+`self-loop:dec/jnz` (the `jnz short 0x10012570` target equals the block head), which is what puts
+its 1.29 M retired ops into quake2's 7.7 % `dec/jnz` collapsible mass. This is the one place in
+quake2 where the fold would be amortised over trips rather than paid per entry.
+
+**`--relax=alias` on a caesar3 unrolled copy — it does not fire.** `0x41d7a0` is the 470-op row
+copy, `mov eax,[esi+0x384]` / `mov [edi+edx],eax` repeated 225 times. Under `alias` its longest run
+stays **3**, and caesar3's `alias` barrier only falls from 19.9 % to 19.7 % of retired ops. The
+reason is visible in one pair: the store is based on `edi`, the load on `esi`, neither is a frame
+register, and no rule in the list proves two arbitrary heap pointers disjoint. The 465-op run in
+the "perfect alias analysis" bracket needs a *whole-object* disjointness proof (src buffer vs dst
+buffer), which is a different and much larger piece of machinery than displacement arithmetic.
+
+Where `alias` does fire is `0x4a1e8a` (26659 hits, 24 ops), and its arithmetic checks out by hand:
+
+```
+F 004a1ec3  mov edx, [ebp+0xc]              1  stack load
+F 004a1ec6  mov [0x5c2d04], edx             2  absolute store
+F 004a1ecc  mov eax, [ebp+0x10]             3  stack load  vs absolute store -> disjoint
+F 004a1ecf  mov [0x5c2d08], eax             4
+F 004a1ed4  movsx ecx, word [0x67408c]      5  abs load vs abs stores 0x5c2d04+4, 0x5c2d08+4 -> disjoint
+F 004a1edb  mov [0x5c2c28], ecx             6
+F 004a1ee1  mov edx, [ebp+0x8]              7  stack load vs absolute stores -> disjoint
+F 004a1ee4  shl edx, 0x6                    8
+F 004a1ee7  xor eax, eax                    9
+  004a1ee9  mov al, [edx+0x5f702c]             partial-reg (folds only under --relax=partial)
+```
+
+Exact run **3** (each stack load after an absolute store broke it), `alias` run **9**, matching the
+tool. Under `--relax=all` the run extends to **11** and stops at `mov al,[edx+0x5f702c]`: `edx` is
+not a frame register, the pending stores are absolute, and the rule refuses to guess — the
+conservative direction, correctly taken. Note also that `movsx ecx, word [0x67408c]` reads the very
+address `mov [0x67408c], ax` wrote earlier in the block; under `all` that store *is* pending and
+the same-absolute-address overlap test would break the run there, which is why the all-mode run is
+11 and not the full 23.
+
+### What the relaxations buy
+
+**`flags` is the one that matters, and `alias` is the one that does not.** On the two windows that
+are genuinely rendering, `flags` alone moves dispatches removed from 28.8 % to 41.1 % (quake2) and
+36.3 % to 41.9 % (caesar3) — more than `alias` and `partial` combined on both — and it is the only
+relaxation that moves the *collapsible* mass at all, taking quake2 from 3.5 % to 27.2 % and
+caesar3 from 2.6 % to 18.9 %. That is the expected shape: `inc`/`dec`/`cmp` are the loop and
+predicate scaffolding sitting between otherwise-contiguous arithmetic, so removing them merges
+fragments rather than extending one end. Run *length* is a different ranking: `alias` is what moves
+p90 (quake2 9 → 15, caesar3 4 → 7, and both maxima), because it is the only relaxation that lets a
+run cross a store. `partial` is cheap and narrow — 5–6 points of foldable share on quake2 and
+caesar3, and its awkward high-byte case is 0.2 % of retired ops at worst — but it is the *only*
+relaxation that helps mw3's blend loop (run p50 20 → 32), because that loop's sole barriers are
+three 16-bit accesses. All three together roughly halve the remaining barrier mass but leave the
+two structural ones untouched: quake2 is still 20.3 % `fpu/simd` and caesar3 is still 19.7 %
+`alias`, and caesar3's is the unrolled-copy shape that only whole-object disjointness would reach.
+
 ## Verdict
 
 **The ceiling is real but modest, and it is smaller than the raw "foldable share" suggests.** On the
@@ -170,6 +333,14 @@ do not build the general decode-time expression tree yet.** The measured headroo
 beat what a narrower fold — same-base disjointness for the copy shape, and full-width handling of
 16-bit-into-32-bit loads — would buy for far less machinery, and this census is the tool to re-run
 against any such narrower proposal.
+
+The terminator and relaxed-mode sections above sharpen that in two ways. First, **only quake2 has
+any collapsible-loop mass at all** (9.3 % of retired ops, one `ref_soft.dll` span loop): caesar3's
+hot set contains no self-loop, so every dispatch a fold saves there is saved once per block entry,
+with the entry and exit materialisation charged each time — the bench's `trips=1` column, not its
+`trips=64` one. Second, if a single barrier class is to be modelled, it is **`flags`**, not
+`alias`: it buys more than the other two combined on both rendering windows, and it is what turns
+that span loop into a single dispatch.
 
 ## Things the classifier cannot do
 
@@ -206,3 +377,10 @@ node tools/expr-fold-census.js --dump=$S/q2-hot.txt \
 
 `--modules-from` reads the run log's own `DLL:` lines, so the emulator's load addresses and the
 census always agree. Add `--module-dir=` for images that do not sit beside the exe.
+
+The terminator-class, collapsible-mass and relaxed-mode tables are printed by every run; they need
+no extra flag. `--relax=alias,partial,flags` (any subset) selects which modes additionally get a
+full barrier histogram — the summary table always covers exact, each single relaxation, and all
+three. The same numbers are in the `--json=` output under `terminatorClasses`, `selfLoopTrips` and
+`modes`, and each of the top blocks carries its own `terminator`, `trip` and per-mode
+`{foldable, runs, longest, fullyFoldable}`.
