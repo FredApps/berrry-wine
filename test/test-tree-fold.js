@@ -130,16 +130,43 @@ function shapeE(absA, absB) {
   ]);
 }
 
-// -- negatives ----------------------------------------------------------------
-// A byte load into AL is a partial-register write; it is not in the micro-op
-// table, so the whole block declines rather than being widened by guesswork.
-const NEG_PARTIAL = loopBackDec([
-  0x89, 0xD0,                         // mov  eax, edx
-  0x8A, 0x06,                         // mov  al, [esi]      <-- partial reg
-  0x01, 0xDA,                         // add  edx, ebx
-  0x89, 0x07,                         // mov  [edi], eax
-  0x83, 0xC7, 0x04,                   // add  edi, 4
+// -- F: the byte LUT loop ----------------------------------------------------
+// A partial-register write used to decline the whole block; it is now an
+// extract and an insert on the container's local. This is the shape the
+// widening exists for -- ref_soft's inner loops are byte loads, byte ALU and
+// byte stores -- and it deliberately touches BOTH lanes of one register:
+// AL is loaded, AH is combined into it, and the untouched upper 16 bits of
+// EAX must come out of the loop exactly as they went in. A fold that kept
+// only 8 or only 16 bits of the container would pass every value check here
+// and still fail that one.
+const SHAPE_F = loopBackDec([
+  0x8A, 0x06,                         // mov  al, [esi]
+  0x30, 0xE0,                         // xor  al, ah
+  0x04, 0x11,                         // add  al, 0x11
+  0x88, 0x07,                         // mov  [edi], al
+  0x8A, 0x66, 0x01,                   // mov  ah, [esi+1]
+  0x83, 0xC6, 0x02,                   // add  esi, 2
+  0x46,                               // inc  esi
+  0x83, 0xC7, 0x01,                   // add  edi, 1
 ]);
+
+// -- G: widening loads and a word register -----------------------------------
+// MOVZX/MOVSX write the WHOLE destination from a narrow read, so they are the
+// opposite case from shape F: no lane on the write, a lane on nothing. The
+// `add ax,imm16` in the middle is the 16-bit half of the same widening, where
+// the mask is 0xFFFF and flag_sign_shift is 15 rather than 7 -- the field a
+// hand-written arm forgets.
+const SHAPE_G = loopBackDec([
+  0x0F, 0xB6, 0x06,                   // movzx eax, byte [esi]
+  0x0F, 0xBE, 0x5E, 0x01,             // movsx ebx, byte [esi+1]
+  0x66, 0x05, 0x34, 0x12,             // add   ax, 0x1234
+  0x01, 0xD8,                         // add   eax, ebx
+  0x89, 0x07,                         // mov   [edi], eax
+  0x83, 0xC6, 0x02,                   // add   esi, 2
+  0x83, 0xC7, 0x04,                   // add   edi, 4
+]);
+
+// -- negatives ----------------------------------------------------------------
 // ADC reads CF. An interior flag CONSUMER is exactly what this family forbids,
 // because the fold's whole licence is that nothing between the ops looks at
 // the flags the ops leave behind.
@@ -149,6 +176,17 @@ const NEG_ADC = loopBackDec([
   0x01, 0xDA,                         // add  edx, ebx
   0x89, 0x07,                         // mov  [edi], eax
   0x83, 0xC7, 0x04,                   // add  edi, 4
+]);
+// The byte twin. Widening the family to partial registers did NOT widen it to
+// flag consumers: `adc al,bl` reads CF at the byte width just as `adc eax,ebx`
+// reads it at the dword width, and both are declined at the same place, by
+// sub-op number rather than by width.
+const NEG_ADC8 = loopBackDec([
+  0x8A, 0x06,                         // mov  al, [esi]
+  0x12, 0xC3,                         // adc  al, bl         <-- flag consumer
+  0x88, 0x07,                         // mov  [edi], al
+  0x46,                               // inc  esi
+  0x47,                               // inc  edi
 ]);
 // Three interior ops, under the default floor of four.
 const NEG_SHORT = loopBackDec([
@@ -309,6 +347,37 @@ const NEG_SHORT = loopBackDec([
              ebp: 0xa5a5a5a5, esi: 0, edi: 0 }),
     { seedAt: absA, seedWords: 2, readAt: absA }, 2);
 
+  // Shape F is the byte LUT loop the widening exists for. EAX enters with a
+  // recognizable value in its upper 16 bits and only AL and AH are ever
+  // written, so the check that matters is not just "the bytes agree" but that
+  // bits 16..31 of EAX came out untouched -- and `deepStrictEqual` on the
+  // whole register file is what says so.
+  const srcF = (arena + 0x1c000) >>> 0;
+  const dstF = (arena + 0x1e000) >>> 0;
+  {
+    const { onState } = checkShape('shape F (byte LUT, both lanes of EAX)', SHAPE_F,
+      () => ({ eax: 0xdead0000, ecx: 100, edx: 0, ebx: 0,
+               ebp: 0xa5a5a5a5, esi: srcF, edi: dstF }),
+      { seedAt: srcF, seedWords: 200, readAt: dstF }, 64);
+    assert.strictEqual(onState.eax >>> 16, 0xdead,
+      'shape F: the lanes the byte ops never touched are unchanged');
+  }
+
+  // Shape G: narrow reads that write the whole destination (MOVZX/MOVSX), plus
+  // one true 16-bit ALU op, whose mask is 0xFFFF and whose flag_sign_shift is
+  // 15. EBP again carries a value nothing in the loop writes, as the live-out
+  // mask's negative control.
+  const srcG = (arena + 0x20000) >>> 0;
+  const dstG = (arena + 0x24000) >>> 0;
+  {
+    const { onState } = checkShape('shape G (movzx/movsx + 16-bit ALU)', SHAPE_G,
+      () => ({ eax: 0, ecx: 100, edx: 0, ebx: 0,
+               ebp: 0xa5a5a5a5, esi: srcG, edi: dstG }),
+      { seedAt: srcG, seedWords: 200, readAt: dstG }, 100);
+    assert.strictEqual(onState.ebp >>> 0, 0xa5a5a5a5,
+      'shape G: a register outside the live-out mask is not republished');
+  }
+
   // -------------------------------------------------------------- side exit --
   // Same shape, same inputs, but a block budget far below the trip count, so
   // the super-op is forced to materialize everything and be re-entered many
@@ -384,8 +453,8 @@ const NEG_SHORT = loopBackDec([
     assert.strictEqual(e.test_tree_runs(), runsBefore,
       `${name}: nothing is lowered, so no super-op runs`);
   }
-  checkDecline('partial-register write (mov al,[esi])', NEG_PARTIAL);
   checkDecline('interior flag consumer (adc)', NEG_ADC);
+  checkDecline('interior byte flag consumer (adc al,bl)', NEG_ADC8);
   checkDecline('body under the minimum-op floor', NEG_SHORT);
 
   // The floor is a knob, not a law: the same block that declined above is
