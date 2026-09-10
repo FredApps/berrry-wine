@@ -3614,6 +3614,42 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; Borrowed WASM path from the actual native substitution blobs. Read-only:
+  ;; no directory discovery or cache/table allocation. Duplicates are retained
+  ;; here so the host can copy and deduplicate without a second source list.
+  (func (export "font_catalog_exclusion_path") (param $index i32) (result i32)
+    (local $which i32) (local $p i32) (local $end i32)
+    (local $field i32) (local $next i32) (local $i i32)
+    (if (i32.lt_s (local.get $index) (i32.const 0)) (then (return (i32.const 0))))
+    (block $done (loop $tables
+      (br_if $done (i32.ge_u (local.get $which) (i32.const 2)))
+      (local.set $p (select (global.get $TT_SUBST_TABLE) (global.get $TT_SUBST_ALIAS_TABLE)
+        (i32.eqz (local.get $which))))
+      (local.set $end (i32.add (local.get $p)
+        (select (global.get $TT_SUBST_TABLE_SIZE) (global.get $TT_SUBST_ALIAS_TABLE_SIZE)
+          (i32.eqz (local.get $which)))))
+      (block $table_done (loop $rows
+        (if (i32.ge_u (local.get $p) (local.get $end)) (then (return (i32.const -1))))
+        (br_if $table_done (i32.eqz (i32.load8_u (local.get $p))))
+        (local.set $field (call $tt_subst_skip (local.get $p) (local.get $end)))
+        (local.set $i (i32.const 0))
+        (block $fields_done (loop $fields
+          (br_if $fields_done (i32.ge_u (local.get $i) (i32.const 4)))
+          (if (i32.ge_u (local.get $field) (local.get $end)) (then (return (i32.const -1))))
+          (local.set $next (call $tt_subst_skip (local.get $field) (local.get $end)))
+          (if (i32.gt_u (local.get $next) (local.get $end)) (then (return (i32.const -1))))
+          (if (i32.load8_u (local.get $field)) (then
+            (if (i32.eqz (local.get $index)) (then (return (local.get $field))))
+            (local.set $index (i32.sub (local.get $index) (i32.const 1)))))
+          (local.set $field (local.get $next))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $fields)))
+        (local.set $p (local.get $field))
+        (br $rows)))
+      (local.set $which (i32.add (local.get $which) (i32.const 1)))
+      (br $tables)))
+    (i32.const 0))
+
   ;; Read C:\WINDOWS\FONTS once and register what is installed there. See the
   ;; note on $TT_FONT_DIR_PATTERN for why an application that never calls
   ;; AddFontResourceA still expects its own faces to answer.

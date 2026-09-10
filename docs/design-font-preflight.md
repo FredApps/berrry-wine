@@ -108,12 +108,41 @@ budget plus one read copy (at most 4 MiB) and one native staging file (at most
 VFS bytes, provider buffers/caches and already parsed fonts are outside this
 bound; this is not an aggregate process-memory acceptance result.
 
-Automatic startup is still pending. The caller must supply an exclusion
-snapshot matching both actual native substitution tables; `fontMounts()`
-alone is not a sufficient authority for that list. Worker installation must
-hold source ownership through its reply, validate again before admitting
-execution, and discard an unstarted process on stale publication. The local
-installer must not be passed a shadow instance or asynchronous Worker proxy.
+Automatic startup is still pending. `font_catalog_exclusion_path(index)`
+enumerates nonempty path fields from both actual native substitution tables
+without allocation, I/O or memory writes. End-of-list is zero; malformed
+table structure is -1 rather than a silently incomplete list. The host
+`excludedPaths()` helper copies, bounds-checks and deduplicates those strings.
+Local `install()` derives this policy automatically, unions optional extra
+exclusions, and rechecks the native policy through publication. Low-level
+`prepare()` remains explicit-policy; `fontMounts()` is not its authority.
+
+`GuestThreadHost.getFontCatalogExclusions()` obtains one copied snapshot on
+the executing Worker in one message. No borrowed pointers cross asynchronous
+calls. This is read-only policy discovery, not remote catalog installation.
+Worker installation must hold source ownership through its reply, validate
+again before admitting execution, and discard an unstarted process on stale
+publication. The local installer must not be passed a shadow instance or
+asynchronous Worker proxy.
+
+There is currently no authoritative Worker execution-start seal. A safe
+startup-only install protocol must close eligibility before DLL entry calls,
+generic execution-capable exports, synchronous message dispatch and ordinary
+slices; checking the slice counter alone leaves bypasses. It must reject
+secondary-thread initialization and revalidate the captured exclusion policy
+on the executing Worker. Adding the install message without those gates would
+permit catalog replacement after font selections/derived caches already exist.
+
+The current image-load sequence uses generic `set_process_id`, `get_staging`,
+`get_staging_size`, `set_exe_name`, `set_exe_drive`, `set_extra_cmdline`,
+`load_pe` (also handles NE) and `init_dx_com_thunks`. Treat the first successful
+image load specially; later loads cannot reopen a sealed startup window.
+Shell configuration also sets HWND base, process environment, Windows version
+and loop-copy options. An explicit audited allowlist is needed, not a name
+prefix rule. In particular, `readExports` currently invokes arbitrary exports
+with no arguments, so its name is not proof that it cannot enter guest code.
+Win16 DLL mapping is a separate pre-font phase; confirm its native
+`load_ne_dll` path is callback-free before permitting it through the seal.
 
 Separate directory discovery from face registration/loading. Catalog work may
 read bounded metadata incrementally, but must not fill the 32-face parsed cache

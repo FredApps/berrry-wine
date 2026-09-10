@@ -48,6 +48,18 @@ const { createFilesystemImports, VirtualFS } = require('../lib/filesystem');
     assert.deepStrictEqual(states(), cold);
     assert.strictEqual(pointers.size, 0);
   };
+  // The native exclusion policy is also a dependency across asynchronous
+  // source preparation, even though the VFS itself did not change.
+  const policyPointer = e.font_catalog_exclusion_path(0) >>> 0;
+  const policyByte = memory[policyPointer];
+  vfs.setProviderFile(first, { provider: { size: source.length,
+    async readRange(offset, length) {
+      memory[policyPointer] = policyByte === 67 ? 68 : 67;
+      return source.slice(offset, offset + length);
+    } } });
+  try { await assert.rejects(Catalog.install(vfs, options), /exclusion|policy/); }
+  finally { memory[policyPointer] = policyByte; setFile(first, source); }
+  unchanged();
   setFile('c:\\windows\\fonts\\malformed.ttf', new Uint8Array(64));
   await assert.rejects(Catalog.install(vfs, options)); unchanged();
   vfs.files.delete('c:\\windows\\fonts\\malformed.ttf');

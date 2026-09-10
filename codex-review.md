@@ -2,7 +2,57 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — bounded host catalog snapshots and local publication
+### Latest increment — executing-owner native font policy
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| NATIVE AUTHORITY                    LOCAL PUBLICATION                          WORKER: READ ONLY          |
++----------------------------------+----------------------------------+------------------------------------+
+| both actual substitution tables | capture exclusions before reads  | one owner-side snapshot message    |
+| no IO / allocation / mutation   | recheck policy before commit     | copied strings; no borrowed paths  |
+| malformed table is an error     | policy changed => abort staging  | no remote catalog install yet      |
++----------------------------------+----------------------------------+------------------------------------+
+| NEXT: seal execution-capable Worker entry points -> guarded publication -> host freshness check -> run    |
++----------------------------------------------------------------------------------------------------------+
+```
+
+Native `font_catalog_exclusion_path` and host `excludedPaths()` now derive
+bounded copied exclusions from both actual WAT substitution tables. Local
+`install()` always includes that policy and revalidates it through commit;
+caller extras cannot remove native exclusions. This closes a second snapshot
+dependency: a valid VFS batch is insufficient if the exclusion policy changes
+while its reads await. A malformed table returns an error, not an apparently
+complete partial list. The low-level preparation interface remains explicit.
+
+The dedicated native test passes exact field enumeration/manifest ownership,
+full-memory/root purity with filesystem imports forbidden, alias-table mutation
+and copied-snapshot lifetime, invalid pointers/lengths and malformed-table
+rejection. The compiled installer rejects native policy mutation during
+asynchronous preparation while preserving the old catalog. A real-Worker test
+passes one-message owner execution, frozen copied replies, no shadow query or
+guest execution, and error recovery. Existing catalog, preparation and stock
+font bootstrap regressions pass.
+
+The Worker exposes only read-only policy discovery. Its lifecycle audit found
+no authoritative startup seal: DLL entry calls, generic export calls and
+synchronous message dispatch can execute guest code without an ordinary slice.
+Before remote catalog installation, those entry points must close startup
+eligibility on the Worker itself; host slice counters cannot enforce it.
+Automatic catalog startup, face/strike generation lifetimes, operation gates
+and memory/performance acceptance remain open. Fable's completed bounded
+materialization work remains distinct; eventual integration must retain main's
+unified cache identity and test discovery.
+
+Final verification: canonical/compatibility build passes at source 316,
+1,066,734 / 1,067,187 bytes, 237 imports and 233 nonoverlapping data segments;
+layout remains `b00c9d60346fdb5a`. All 948 test files have manifest membership
+(not a full-suite result). The final Chrome matrix exits 0: Notepad/Calculator
+backend parity plus the new actual-Worker exclusion query, five-font readiness,
+both Rodent input/render checks, three Winamp playback Workers and COM
+success/missing-server recovery. No performance claim or automatic catalog
+startup enablement follows from these functional checks.
+
+### Prior increment — bounded host catalog snapshots and local publication
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

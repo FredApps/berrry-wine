@@ -270,6 +270,7 @@ async function launch(browser, port, app, { threaded }) {
     const stockStates = wine ? (gw
       ? await Promise.all([0, 1, 2, 3, 4].map(index => gw.callExport('stock_font_state', index)))
       : [0, 1, 2, 3, 4].map(index => wine.instance.exports.stock_font_state(index))) : [];
+    const fontExclusions = gw ? await gw.getFontCatalogExclusions() : null;
     const canvas = document.getElementById('screen');
     const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
     let boardGreen = 0;
@@ -280,6 +281,7 @@ async function launch(browser, port, app, { threaded }) {
     return {
       threaded: !!gw,
       stockStates,
+      fontExclusions,
       fontBootState: wine && wine._fontBootState,
       broker: gw && gw.broker ? gw.broker.stats() : null,
       slices: gw ? gw.sliceStats.slices : 0,
@@ -471,6 +473,10 @@ async function comLoadDllProbe(browser, port) {
         `${app}: leaving Threads unchecked selects cooperative mode`);
       check(worker.state.threaded, `${app}: guest runs in a worker`);
       check(!single.state.threaded, `${app}: control run is single-threaded`);
+      check(Array.isArray(worker.state.fontExclusions) &&
+        worker.state.fontExclusions.includes('c:\\windows\\fonts\\arial.ttf') &&
+        new Set(worker.state.fontExclusions).size === worker.state.fontExclusions.length,
+      `${app}: actual browser Worker returns copied native font exclusions`);
       for (const [backend, result] of [['Worker', worker], ['cooperative', single]]) {
         check(result.state.fontBootState === 'ready' &&
           JSON.stringify(result.state.stockStates) === '[2,2,2,2,2]',
