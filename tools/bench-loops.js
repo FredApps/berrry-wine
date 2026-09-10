@@ -473,9 +473,137 @@ const SHAPES = {
       };
     },
   },
+
+  // ------------------------------------------------------------ TREE_FOLD --
+  // Three whole-block integer expressions, one per census shape. Unlike the
+  // LUT/COPY families these have no single memory idiom to lower to; what the
+  // fold removes is the per-op dispatch and the register-global traffic, so
+  // the number to read is blocks/iter (1 -> 1/iters) and the paired ratio.
+  tree_span: {
+    describe: 'mov/add/shr/and/or/store dword interleave (quake2 ref_soft 0x12570 shape)',
+    real: 'quake2_demo span coordinate interleave — the hottest block in the census',
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 4);
+      const dst = a.buf, step = 0x00030007, start = 0x11110000;
+      return {
+        iters: n,
+        bytesTouched: n * 4,
+        code: loopBack([
+          0x89, 0xD0,                          // mov  eax, edx
+          0x01, 0xDA,                          // add  edx, ebx
+          0xC1, 0xE8, 0x10,                    // shr  eax, 16
+          0x89, 0xD6,                          // mov  esi, edx
+          0x01, 0xDA,                          // add  edx, ebx
+          0x81, 0xE6, 0x00, 0x00, 0xFF, 0xFF,  // and  esi, 0xffff0000
+          0x09, 0xF0,                          // or   eax, esi
+          0x89, 0x07,                          // mov  [edi], eax
+          0x83, 0xC7, 0x04,                    // add  edi, 4
+        ]),
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          dv.setUint32(g2w(dst), 0, true);
+          dv.setUint32(g2w(dst) + (n - 1) * 4, 0, true);
+          e.set_edi(dst); e.set_edx(start); e.set_ebx(step); e.set_ecx(n);
+          e.set_eax(0); e.set_esi(0);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const d = (start + 2 * i * step) >>> 0;
+            const want = ((d >>> 16) | (((d + step) >>> 0) & 0xFFFF0000)) >>> 0;
+            const got = dv.getUint32(g2w(dst) + i * 4, true);
+            if (got !== want) return `dst[${i}]=0x${got.toString(16)} want 0x${want.toString(16)}`;
+          }
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
+        },
+      };
+    },
+  },
+
+  tree_dot: {
+    describe: 'load/imul/add/sar/store with two pointer bumps (fixed-point scale)',
+    real: 'the fixed-point scale-and-store the census names in caesar3 and quake2',
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 8);
+      const src = a.buf, dst = a.buf + n * 4, bias = 0x00004000;
+      return {
+        iters: n,
+        bytesTouched: n * 8,
+        code: loopBack([
+          0x8B, 0x06,             // mov  eax, [esi]
+          0x6B, 0xC0, 0x03,       // imul eax, eax, 3
+          0x01, 0xD8,             // add  eax, ebx
+          0xC1, 0xF8, 0x08,       // sar  eax, 8
+          0x89, 0x07,             // mov  [edi], eax
+          0x83, 0xC6, 0x04,       // add  esi, 4
+          0x83, 0xC7, 0x04,       // add  edi, 4
+        ]),
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (let i = 0; i < n; i++) dv.setInt32(g2w(src) + i * 4, (i * 2654435761) | 0, true);
+          dv.setUint32(g2w(dst), 0, true);
+          dv.setUint32(g2w(dst) + (n - 1) * 4, 0, true);
+          e.set_esi(src); e.set_edi(dst); e.set_ebx(bias); e.set_ecx(n); e.set_eax(0);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const want = ((((i * 2654435761) | 0) * 3 | 0) + bias) >> 8;
+            const got = dv.getInt32(g2w(dst) + i * 4, true);
+            if (got !== want) return `dst[${i}]=${got} want ${want}`;
+          }
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
+        },
+      };
+    },
+  },
+
+  tree_chain: {
+    describe: 'in-place load/xor/add/not/store, cmp/jb terminator (self-aliasing)',
+    real: 'the in-place transform chain; also the proof the fold keeps store->load order',
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 4);
+      const buf = a.buf;
+      const body = [
+        0x8B, 0x06,                    // mov  eax, [esi]
+        0x31, 0xD0,                    // xor  eax, edx
+        0x05, 0x34, 0x12, 0x00, 0x00,  // add  eax, 0x1234
+        0xF7, 0xD0,                    // not  eax
+        0x89, 0x06,                    // mov  [esi], eax
+        0x83, 0xC6, 0x04,              // add  esi, 4
+        0x3B, 0xF7,                    // cmp  esi, edi
+      ];
+      const key = 0x5A17C0DE;
+      return {
+        iters: n,
+        bytesTouched: n * 8,
+        // jb back — the cmp/jcc terminator, not the dec/jnz one.
+        code: body.concat([0x72], rel8(-(body.length + 2))),
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (let i = 0; i < n; i++) dv.setUint32(g2w(buf) + i * 4, (i * 40503 + 7) >>> 0, true);
+          e.set_esi(buf); e.set_edi(buf + n * 4); e.set_edx(key); e.set_eax(0);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const want = (~(((((i * 40503 + 7) >>> 0) ^ key) >>> 0) + 0x1234)) >>> 0;
+            const got = dv.getUint32(g2w(buf) + i * 4, true);
+            if (got !== want) return `buf[${i}]=0x${got.toString(16)} want 0x${want.toString(16)}`;
+          }
+          const end = (buf + n * 4) >>> 0;
+          if (e.get_esi() >>> 0 !== end) return `esi=0x${e.get_esi().toString(16)}, expected 0x${end.toString(16)}`;
+          return null;
+        },
+      };
+    },
+  },
 };
 
 const TOGGLES = {
+  tree_fold: 'set_tree_fold',
   lut_superops: 'set_loop_lut_emit',
   lut16_stack: 'set_loop_lut16_stack_emit',
   case_chain: 'set_case_chain',
@@ -785,7 +913,10 @@ async function main() {
           // $th_case_chain in 06b-core-handlers.wat). When one of them is live,
           // opsTotal is NOT the dispatch count — it is the unfolded-equivalent
           // count plus the fold's own dispatch. Read blocksPerIter instead.
-          foldsLive: ops.all.filter(([i]) => i >= 420 && i <= 424).map(([i]) => `H${i}`),
+          // 454 (TREE_FOLD) re-records the handler indices it replaced too, so
+          // its ops/iter is likewise the unfolded-equivalent, not the real one.
+          foldsLive: ops.all.filter(([i]) => (i >= 420 && i <= 424) || i === 454)
+            .map(([i]) => `H${i}`),
           lutRuns: ops.lutRuns,
           lutBytes: Number(ops.lutBytes),
           lut16Matches: ops.lut16Matches,

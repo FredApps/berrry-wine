@@ -2493,6 +2493,36 @@
     (global.set $rle_run_enabled (local.get $flag)))
   (func (export "get_rle_run") (result i32) (global.get $rle_run_enabled))
 
+  ;; TREE_FOLD ($th_tree_fold, src/07b-loop-match.wat). The general integer
+  ;; expression fold; OFF by default. Decode-time, so the same rule as the
+  ;; three above: set it before the first decode, and on every per-thread
+  ;; instance. `matches` counts every block the predicate accepted whether or
+  ;; not the gate let it emit, so a --tree-fold-off run still reports how much
+  ;; of the corpus the family covers.
+  (func (export "set_tree_fold") (param $flag i32)
+    (global.set $tree_fold_enabled (local.get $flag)))
+  (func (export "get_tree_fold") (result i32) (global.get $tree_fold_enabled))
+  (func (export "set_tree_fold_min_ops") (param $n i32)
+    (global.set $tree_fold_min_ops (local.get $n)))
+  (func (export "get_tree_fold_matches") (result i32) (global.get $tree_fold_matches))
+  (func (export "get_tree_fold_runs") (result i32) (global.get $tree_fold_runs))
+  (func (export "get_tree_fold_iters") (result i64) (global.get $tree_fold_iters))
+  (func (export "get_tree_fold_ops") (result i64) (global.get $tree_fold_ops))
+  ;; What the most recent lowering put in the descriptor header. A fold that
+  ;; runs the right number of iterations while publishing the wrong register
+  ;; set is indistinguishable from one that never ran its body; these two say
+  ;; which. Diagnostic only.
+  (func (export "get_tree_fold_last_nuops") (result i32)
+    (global.get $tree_fold_last_nuops))
+  (func (export "get_tree_fold_last_live_out") (result i32)
+    (global.get $tree_fold_last_live_out))
+  ;; The decline split -- what a wider predicate would have to cover.
+  (func (export "get_tree_decl_short") (result i32) (global.get $tree_decl_short))
+  (func (export "get_tree_decl_long") (result i32) (global.get $tree_decl_long))
+  (func (export "get_tree_decl_term") (result i32) (global.get $tree_decl_term))
+  (func (export "get_tree_decl_uop") (result i32) (global.get $tree_decl_uop))
+  (func (export "get_tree_decl_uop_fn") (result i32) (global.get $tree_decl_uop_fn))
+
   ;; Page compilation (docs/page-compile-design.md). There is deliberately no
   ;; switch: this replaces the storage layer rather than accelerating it, so the
   ;; thing to compare against is the commit before it, not a flag.
