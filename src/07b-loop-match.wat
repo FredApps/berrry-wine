@@ -5209,8 +5209,12 @@
   ;; of descriptor against a source block of at most ~24 ops -- comfortably
   ;; inside it, and past 24 the run length stops being the thing that pays.
   (global $TREE_FOLD_MAX_UOPS i32 (i32.const 24))
-  ;; kind, dst, src-or-subop, immediate, original handler index.
-  (global $TREE_UOP_WORDS i32 (i32.const 5))
+  ;; kind, dst, src-or-subop, immediate, original handler index, extra.
+  ;; The sixth word is the one field whose meaning is per-kind: for the SIB
+  ;; forms it is the index register and scale (index | scale<<4, index 0xF
+  ;; meaning "no index"), which is exactly what a SIB EA needs beyond the base
+  ;; register already in `a` and the displacement already in `imm`.
+  (global $TREE_UOP_WORDS i32 (i32.const 6))
   (global $LOOP_SUPEROP_TREE i32 (i32.const 454))
 
   ;; Micro-op kinds. Numbered densely because $th_tree_fold dispatches on them
@@ -5237,6 +5241,20 @@
   (global $TU_IMUL_RI i32 (i32.const 19))  ;; R[d] = R[a] * imm
   (global $TU_LOAD32  i32 (i32.const 20))  ;; R[d] = [R[a] + imm]
   (global $TU_STORE32 i32 (i32.const 21))  ;; [R[a] + imm] = R[d]
+  ;; Absolute forms. The decoder folds the whole address into one word at
+  ;; decode time, so these need no register at all -- which is also why they
+  ;; are strictly cheaper than the base+disp pair and worth their own kind.
+  (global $TU_LOAD32_ABS  i32 (i32.const 22))  ;; R[d] = [imm]
+  (global $TU_STORE32_ABS i32 (i32.const 23))  ;; [imm] = R[d]
+  ;; SIB forms. Everything from here up computes an effective address as
+  ;; R[a] + R[b & 0xF] << (b >> 4) + imm, with 0xF in either register slot
+  ;; meaning "absent" -- the same encoding $sib_ea reads, so the arithmetic is
+  ;; the decoder's, not a second opinion about it. Kept contiguous at the end
+  ;; so the handler can hoist the EA computation behind one range test.
+  (global $TU_FIRST_SIB   i32 (i32.const 24))
+  (global $TU_LEA_SIB     i32 (i32.const 24))  ;; R[d] = ea            (no flags)
+  (global $TU_LOAD32_SIB  i32 (i32.const 25))  ;; R[d] = [ea]
+  (global $TU_STORE32_SIB i32 (i32.const 26))  ;; [ea] = R[d]
 
   ;; Classifier out-parameters. Decode-time only and single-threaded per
   ;; instance, so globals are cheaper and clearer than packing five fields
@@ -5246,6 +5264,14 @@
   (global $tu_a    (mut i32) (i32.const 0))
   (global $tu_imm  (mut i32) (i32.const 0))
   (global $tu_fn   (mut i32) (i32.const 0))
+  (global $tu_b    (mut i32) (i32.const 0))
+  ;; Guest ops this micro-op stands for BEYOND the one $next already bills for
+  ;; the emitted handler. Almost always zero. H420 is the exception: it charges
+  ;; a step of its own (06b-core-handlers.wat says why -- it swallowed a
+  ;; separate SIB-EA dispatch), so a block containing one billed n+1 steps per
+  ;; iteration unfolded, and the descriptor's `cost` has to say so or the fold
+  ;; silently buys the guest more work per batch than the scalar path did.
+  (global $tu_extra (mut i32) (i32.const 0))
 
   ;; Classify one emitted op as a micro-op. Returns 1 and fills the $tu_*
   ;; globals, or returns 0 -- which declines the entire block. The default is
@@ -5264,6 +5290,8 @@
     (global.set $tu_d (i32.const 0))
     (global.set $tu_a (i32.const 0))
     (global.set $tu_imm (i32.const 0))
+    (global.set $tu_b (i32.const 0))
+    (global.set $tu_extra (i32.const 0))
 
     ;; -- register/immediate: operand = reg, imm32 in the next word ----------
     (if (i32.or (i32.eq (local.get $fn) (i32.const 2))
@@ -5380,6 +5408,51 @@
         (global.set $tu_imm (i32.load offset=8 (local.get $p)))
         (return (i32.const 1))))
 
+    ;; -- absolute dword load/store: operand = reg, guest address in the next
+    ;; word. The decoder resolved the address at decode time, so there is no
+    ;; base register to read and nothing here can be wrong about one; the
+    ;; address still goes through $gl32/$gs32, so translation, page crossing
+    ;; and SMC invalidation are the scalar path's, unchanged.
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 20))
+                (i32.eq (local.get $fn) (i32.const 21)))
+      (then
+        (global.set $tu_kind
+          (select (global.get $TU_LOAD32_ABS) (global.get $TU_STORE32_ABS)
+                  (i32.eq (local.get $fn) (i32.const 20))))
+        (global.set $tu_d (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (return (i32.const 1))))
+
+    ;; -- SIB forms: operand = the data/dst register, then an info word and a
+    ;; displacement word. info = base | index<<4 | scale<<8, with 0xF in either
+    ;; register nibble meaning that term is absent -- $sib_ea's encoding, split
+    ;; here into `a` (base) and `b` (index | scale<<4) so the handler's EA
+    ;; arithmetic reads the same two fields for every SIB kind.
+    ;;
+    ;; H148 LEA, H389 dword load, H420 dword store. H149 ($th_compute_ea_sib)
+    ;; is deliberately NOT here: it computes into $ea_temp and leaves the next
+    ;; op to consume it, so folding it would mean modelling a second op's
+    ;; hidden input, which is a different argument from this one.
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 148))
+        (i32.or (i32.eq (local.get $fn) (i32.const 389))
+                (i32.eq (local.get $fn) (i32.const 420))))
+      (then
+        (local.set $type (i32.load offset=8 (local.get $p)))   ;; info word
+        (global.set $tu_d (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_a (i32.and (local.get $type) (i32.const 0xF)))
+        (global.set $tu_b
+          (i32.or (i32.and (i32.shr_u (local.get $type) (i32.const 4)) (i32.const 0xF))
+                  (i32.shl (i32.and (i32.shr_u (local.get $type) (i32.const 8)) (i32.const 3))
+                           (i32.const 4))))
+        (global.set $tu_imm (i32.load offset=12 (local.get $p)))
+        (if (i32.eq (local.get $fn) (i32.const 148))
+          (then (global.set $tu_kind (global.get $TU_LEA_SIB)) (return (i32.const 1))))
+        (if (i32.eq (local.get $fn) (i32.const 389))
+          (then (global.set $tu_kind (global.get $TU_LOAD32_SIB)) (return (i32.const 1))))
+        (global.set $tu_kind (global.get $TU_STORE32_SIB))
+        (global.set $tu_extra (i32.const 1))
+        (return (i32.const 1))))
+
     ;; -- shift/rotate by an immediate --------------------------------------
     ;; operand = reg | type<<8 | count<<16, count 0xFF meaning CL. CL is
     ;; declined: the count would have to be read out of the local register
@@ -5406,6 +5479,20 @@
 
     (i32.const 0))
 
+  ;; Does this micro-op kind write MEMORY rather than a register? The live-out
+  ;; mask is built from the answer, and getting it wrong in the permissive
+  ;; direction is the one mistake that would not show up as a crash: a store
+  ;; whose `d` was folded into live_out republishes the data register with the
+  ;; value it already held, which is harmless, while a load left OUT of the
+  ;; mask silently drops the loaded value at exit. So the list is exact, and it
+  ;; is one function rather than an inline test at each site because there are
+  ;; now three of those sites and a store kind added to only two of them would
+  ;; be a live-lock nobody sees.
+  (func $tree_uop_is_store (param $kind i32) (result i32)
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE32))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE32_ABS))
+            (i32.eq (local.get $kind) (global.get $TU_STORE32_SIB)))))
+
   ;; Count a terminator decline and return the decline. Written as a function
   ;; because the terminator has four separate reject sites and a counter
   ;; bumped at three of them is worse than no counter at all.
@@ -5425,7 +5512,7 @@
   (func $loop_try_tree_fold
     (param $start_eip i32) (param $tstart i32) (result i32)
     (local $n i32) (local $i i32) (local $p i32) (local $fn i32) (local $op i32)
-    (local $nuops i32) (local $live_out i32)
+    (local $nuops i32) (local $live_out i32) (local $extra i32)
     (local $term_kind i32) (local $term_a i32) (local $term_b i32)
     (local $term_cc i32) (local $term_uop i32)
     (local $fall i32) (local $back i32)
@@ -5496,9 +5583,10 @@
               (i32.add (global.get $tree_decl_uop) (i32.const 1)))
             (global.set $tree_decl_uop_fn (load.field LoopOp handler (local.get $p)))
             (return (i32.const 0))))
+        (local.set $extra (i32.add (local.get $extra) (global.get $tu_extra)))
         ;; A STORE writes memory, not a register; everything else defines its
         ;; destination and must be published at exit.
-        (if (i32.ne (global.get $tu_kind) (global.get $TU_STORE32))
+        (if (i32.eqz (call $tree_uop_is_store (global.get $tu_kind)))
           (then (local.set $live_out
             (i32.or (local.get $live_out)
                     (i32.shl (i32.const 1) (global.get $tu_d))))))
@@ -5544,6 +5632,7 @@
         (i32.store offset=8  (local.get $p) (global.get $tu_a))
         (i32.store offset=12 (local.get $p) (global.get $tu_imm))
         (i32.store offset=16 (local.get $p) (global.get $tu_fn))
+        (i32.store offset=20 (local.get $p) (global.get $tu_b))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $scan)))
     (global.set $thread_alloc (local.get $tstart))
@@ -5558,8 +5647,9 @@
     (call $te_raw (local.get $term_uop))
     (call $te_raw (local.get $fall))
     (call $te_raw (local.get $back))
-    ;; The cost the unfolded block billed: one $steps per emitted op.
-    (call $te_raw (local.get $n))
+    ;; The cost the unfolded block billed: one $steps per emitted op, plus
+    ;; whatever the ops charged on their own account ($tu_extra -- H420).
+    (call $te_raw (i32.add (local.get $n) (local.get $extra)))
     (local.set $i (i32.const 0))
     (block $p2_done
       (loop $p2
@@ -5575,6 +5665,7 @@
         (call $te_raw (i32.load offset=8  (local.get $p)))
         (call $te_raw (i32.load offset=12 (local.get $p)))
         (call $te_raw (i32.load offset=16 (local.get $p)))
+        (call $te_raw (i32.load offset=20 (local.get $p)))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $p2)))
     (i32.const 1))
@@ -5590,6 +5681,7 @@
     (local $r0 i32) (local $r1 i32) (local $r2 i32) (local $r3 i32)
     (local $r4 i32) (local $r5 i32) (local $r6 i32) (local $r7 i32)
     (local $i i32) (local $kind i32) (local $d i32) (local $a i32) (local $imm i32)
+    (local $b i32) (local $ea i32)
     (local $va i32) (local $vb i32) (local $vr i32)
     (local $iters i32) (local $allowed i32) (local $budget i32)
     (local $taken i32) (local $old i32) (local $wrote i32)
@@ -5659,12 +5751,13 @@
             (local.set $d    (i32.load offset=4  (local.get $up)))
             (local.set $a    (i32.load offset=8  (local.get $up)))
             (local.set $imm  (i32.load offset=12 (local.get $up)))
+            (local.set $b    (i32.load offset=20 (local.get $up)))
             ;; Op totals have to stay comparable with a --tree-fold-off build,
             ;; or a handler histogram silently stops counting the work this
             ;; fold does. Re-record the original handler index, as H428 does.
             (if (global.get $handler_hist_enabled)
               (then (call $handler_hist_record (i32.load offset=16 (local.get $up)))))
-            (local.set $up (i32.add (local.get $up) (i32.const 20)))
+            (local.set $up (i32.add (local.get $up) (i32.const 24)))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
 
             ;; R[d] and R[a], by index. A br_table each, but over LOCALS --
@@ -5690,6 +5783,37 @@
                   (br $ga (local.get $r6)))
                 (local.get $r7)))
 
+            ;; SIB effective address, for the contiguous tail of kinds that
+            ;; need one. Hoisted here rather than repeated in three arms, and
+            ;; guarded by a range test so no other kind pays for it.
+            ;;
+            ;; $vb already holds R[a] from the read above, so the base term is
+            ;; free -- but only when a base is present: `a == 0xF` means the
+            ;; SIB had none, and $vb then holds r7 (the br_table's default
+            ;; arm), which is why the base is added under a test rather than
+            ;; unconditionally. The index needs its own read because it is a
+            ;; different register from both $d and $a.
+            (if (i32.ge_u (local.get $kind) (global.get $TU_FIRST_SIB))
+              (then
+                (local.set $ea (local.get $imm))
+                (if (i32.ne (local.get $a) (i32.const 0xF))
+                  (then (local.set $ea (i32.add (local.get $ea) (local.get $vb)))))
+                (if (i32.ne (i32.and (local.get $b) (i32.const 0xF)) (i32.const 0xF))
+                  (then (local.set $ea
+                    (i32.add (local.get $ea)
+                      (i32.shl
+                        (block $gi (result i32)
+                          (block $i7 (block $i6 (block $i5 (block $i4
+                          (block $i3 (block $i2 (block $i1 (block $i0
+                            (br_table $i0 $i1 $i2 $i3 $i4 $i5 $i6 $i7
+                                      (i32.and (local.get $b) (i32.const 0xF))))
+                            (br $gi (local.get $r0))) (br $gi (local.get $r1)))
+                            (br $gi (local.get $r2))) (br $gi (local.get $r3)))
+                            (br $gi (local.get $r4))) (br $gi (local.get $r5)))
+                            (br $gi (local.get $r6)))
+                          (local.get $r7))
+                        (i32.shr_u (local.get $b) (i32.const 4)))))))))
+
             ;; Evaluate. Every arm publishes exactly the flag fields its
             ;; scalar handler publishes, by calling the same helper -- which
             ;; is what makes the per-field join right at every instant.
@@ -5702,6 +5826,7 @@
             ;; first store instead of failing.
             (local.set $wrote (i32.const 1))
             (block $kdone
+              (block $k26 (block $k25 (block $k24 (block $k23 (block $k22
               (block $k21 (block $k20 (block $k19 (block $k18
               (block $k17 (block $k16 (block $k15 (block $k14
               (block $k13 (block $k12 (block $k11 (block $k10
@@ -5710,7 +5835,8 @@
               (block $k01 (block $k00
                 (br_table $k00 $k01 $k02 $k03 $k04 $k05 $k06 $k07 $k08 $k09
                           $k10 $k11 $k12 $k13 $k14 $k15 $k16 $k17 $k18 $k19
-                          $k20 $k21 $k21 (local.get $kind)))
+                          $k20 $k21 $k22 $k23 $k24 $k25 $k26 $k26
+                          (local.get $kind)))
                 ;; 0 MOV_RR
                 (local.set $vr (local.get $vb)) (br $kdone))
                 ;; 1 MOV_RI
@@ -5795,11 +5921,24 @@
                 (local.set $vr
                   (call $gl32 (i32.add (local.get $vb) (local.get $imm))))
                 (br $kdone))
-              ;; 21 STORE32 (and the unreachable default). Writes memory, not
-              ;; a register, so it skips the writeback entirely -- and it goes
-              ;; through $gs32, which is what keeps SMC invalidation and page
-              ;; crossing identical to the scalar path.
-              (call $gs32 (i32.add (local.get $vb) (local.get $imm)) (local.get $va))
+                ;; 21 STORE32. Writes memory, not a register, so it skips the
+                ;; writeback entirely -- and it goes through $gs32, which is
+                ;; what keeps SMC invalidation and page crossing identical to
+                ;; the scalar path.
+                (call $gs32 (i32.add (local.get $vb) (local.get $imm)) (local.get $va))
+                (local.set $wrote (i32.const 0)) (br $kdone))
+                ;; 22 LOAD32_ABS -- the address is a decode-time constant.
+                (local.set $vr (call $gl32 (local.get $imm))) (br $kdone))
+                ;; 23 STORE32_ABS
+                (call $gs32 (local.get $imm) (local.get $va))
+                (local.set $wrote (i32.const 0)) (br $kdone))
+                ;; 24 LEA_SIB -- address arithmetic only, no memory and, as on
+                ;; x86, no flags.
+                (local.set $vr (local.get $ea)) (br $kdone))
+                ;; 25 LOAD32_SIB
+                (local.set $vr (call $gl32 (local.get $ea))) (br $kdone))
+              ;; 26 STORE32_SIB (and the unreachable default).
+              (call $gs32 (local.get $ea) (local.get $va))
               (local.set $wrote (i32.const 0)))
 
             ;; Writeback R[d].
