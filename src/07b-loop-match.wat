@@ -5246,15 +5246,55 @@
   ;; are strictly cheaper than the base+disp pair and worth their own kind.
   (global $TU_LOAD32_ABS  i32 (i32.const 22))  ;; R[d] = [imm]
   (global $TU_STORE32_ABS i32 (i32.const 23))  ;; [imm] = R[d]
+  ;; -- Partial registers -------------------------------------------------
+  ;; A sub-register op is an EXTRACT and an INSERT on the 32-bit local, which
+  ;; is the whole reason the fold can hold a partial write without giving up
+  ;; the register file: `mov al,[esi]` is `r0 = (r0 & ~0xFF) | byte`, and the
+  ;; untouched lanes of r0 are simply the bits the insert did not cover. That
+  ;; is exact, not an approximation, so the family's old blanket exclusion of
+  ;; partial writes was a scope decision rather than a correctness one.
+  ;;
+  ;; One pair of kinds covers both widths, because the only difference is a
+  ;; mask and a sign-shift and both are carried in `b`. `d` and `a` hold the
+  ;; index of the CONTAINING 32-bit register (reg8 & 3, since AH..BH live in
+  ;; EAX..EBX), and `b`'s lane bits say which byte inside it -- so the generic
+  ;; register reads above already fetch the right container and the live-out
+  ;; mask needs no special case at all.
+  (global $TU_MOV_SUB_RR i32 (i32.const 24))  ;; R_sub[d] = R_sub[a]  (no flags)
+  (global $TU_MOV_SUB_RI i32 (i32.const 25))  ;; R_sub[d] = imm       (no flags)
+  (global $TU_ALU_SUB_RR i32 (i32.const 26))  ;; R_sub[d] op= R_sub[a]
+  (global $TU_ALU_SUB_RI i32 (i32.const 27))  ;; R_sub[d] op= imm
+  (global $TU_LOAD8_RO   i32 (i32.const 28))  ;; R8[d] = [R[a] + imm]
+  (global $TU_STORE8_RO  i32 (i32.const 29))  ;; [R[a] + imm] = R8[d]
+  (global $TU_LOAD8_ABS  i32 (i32.const 30))  ;; R8[d] = [imm]
+  (global $TU_STORE8_ABS i32 (i32.const 31))  ;; [imm] = R8[d]
+  ;; MOVZX/MOVSX read a byte but write the WHOLE destination, so these two are
+  ;; full-width writes with a narrow source and need no lane handling at all.
+  (global $TU_MOVZX8_RO  i32 (i32.const 32))  ;; R[d] = zx8 [R[a] + imm]
+  (global $TU_MOVSX8_RO  i32 (i32.const 33))  ;; R[d] = sx8 [R[a] + imm]
+
+  ;; Bit layout of the `b` word. Disjoint by construction: the SIB fields and
+  ;; the lane/width fields never appear in the same kind except for
+  ;; TU_STORE8_SIB, which needs both, and that is exactly why the lane bits sit
+  ;; above the scale rather than overlapping it.
+  (global $TU_B_LANE_D i32 (i32.const 0x40))   ;; dst is the high byte (AH..BH)
+  (global $TU_B_LANE_A i32 (i32.const 0x80))   ;; src is the high byte
+  (global $TU_B_ALU_SHIFT i32 (i32.const 8))   ;; 4 bits: the ALU sub-op
+  (global $TU_B_WORD   i32 (i32.const 0x1000)) ;; 0 = byte width, 1 = word
+  (global $TU_B_IMM8_SHIFT i32 (i32.const 16)) ;; TU_MOV_M8_I_SIB's immediate
+
   ;; SIB forms. Everything from here up computes an effective address as
   ;; R[a] + R[b & 0xF] << (b >> 4) + imm, with 0xF in either register slot
   ;; meaning "absent" -- the same encoding $sib_ea reads, so the arithmetic is
   ;; the decoder's, not a second opinion about it. Kept contiguous at the end
   ;; so the handler can hoist the EA computation behind one range test.
-  (global $TU_FIRST_SIB   i32 (i32.const 24))
-  (global $TU_LEA_SIB     i32 (i32.const 24))  ;; R[d] = ea            (no flags)
-  (global $TU_LOAD32_SIB  i32 (i32.const 25))  ;; R[d] = [ea]
-  (global $TU_STORE32_SIB i32 (i32.const 26))  ;; [ea] = R[d]
+  (global $TU_FIRST_SIB     i32 (i32.const 34))
+  (global $TU_LEA_SIB       i32 (i32.const 34))  ;; R[d] = ea          (no flags)
+  (global $TU_LOAD32_SIB    i32 (i32.const 35))  ;; R[d] = [ea]
+  (global $TU_STORE32_SIB   i32 (i32.const 36))  ;; [ea] = R[d]
+  (global $TU_MOVSX8_SIB    i32 (i32.const 37))  ;; R[d] = sx8 [ea]
+  (global $TU_STORE8_SIB    i32 (i32.const 38))  ;; [ea] = R8[d]
+  (global $TU_MOV_M8_I_SIB  i32 (i32.const 39))  ;; [ea] = imm8 (in b)
 
   ;; Classifier out-parameters. Decode-time only and single-threaded per
   ;; instance, so globals are cheaper and clearer than packing five fields
@@ -5272,6 +5312,32 @@
   ;; iteration unfolded, and the descriptor's `cost` has to say so or the fold
   ;; silently buys the guest more work per batch than the scalar path did.
   (global $tu_extra (mut i32) (i32.const 0))
+
+  ;; Which 32-bit register CONTAINS this sub-register, and is it the high byte?
+  ;;
+  ;; The two widths disagree, which is the whole reason these are functions.
+  ;; A byte index runs AL CL DL BL AH CH DH BH, so 0..3 are the low bytes of
+  ;; EAX..EBX and 4..7 are the HIGH bytes of the same four -- index 5 is CH,
+  ;; inside ECX, not anything to do with EBP. A word index runs AX CX DX BX SP
+  ;; BP SI DI and is simply the low half of the register with the same number.
+  ;; Reading a byte index as if it were a word index is a wrong answer that
+  ;; still computes, so the width is passed in rather than inferred.
+  (func $tree_sub_reg (param $r i32) (param $fn i32) (result i32)
+    (if (result i32) (call $tree_fn_is_word (local.get $fn))
+      (then (i32.and (local.get $r) (i32.const 0x7)))
+      (else (i32.and (local.get $r) (i32.const 0x3)))))
+  (func $tree_sub_hi (param $r i32) (param $fn i32) (result i32)
+    (if (result i32) (call $tree_fn_is_word (local.get $fn))
+      (then (i32.const 0))
+      (else (i32.ge_u (local.get $r) (i32.const 4)))))
+  ;; The word-width handlers among the sub-register set: H206/H207 (r16 ALU),
+  ;; H210 (mov r16,r16), H236 (mov r16,imm16). Everything else in that set is
+  ;; a byte form.
+  (func $tree_fn_is_word (param $fn i32) (result i32)
+    (i32.or (i32.eq (local.get $fn) (i32.const 206))
+    (i32.or (i32.eq (local.get $fn) (i32.const 207))
+    (i32.or (i32.eq (local.get $fn) (i32.const 210))
+            (i32.eq (local.get $fn) (i32.const 236))))))
 
   ;; Classify one emitted op as a micro-op. Returns 1 and fills the $tu_*
   ;; globals, or returns 0 -- which declines the entire block. The default is
@@ -5423,6 +5489,180 @@
         (global.set $tu_imm (i32.load offset=8 (local.get $p)))
         (return (i32.const 1))))
 
+    ;; -- sub-register ALU and MOV, byte and word -----------------------------
+    ;; ADC (2) and SBB (3) are declined here as everywhere else: they READ CF,
+    ;; and a fold whose licence is that nothing looks at the flags the ops
+    ;; leave behind cannot contain one. Every other sub-op goes through the
+    ;; same $do_alu_sized the scalar handler calls, with the same mask and
+    ;; sign-shift, so the five lazy-flag fields land exactly where the scalar
+    ;; sequence would have left them -- including flag_sign_shift, which is 7
+    ;; for a byte op and 15 for a word and is the field a hand-written arm
+    ;; would have forgotten.
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 153))
+        (i32.or (i32.eq (local.get $fn) (i32.const 154))
+        (i32.or (i32.eq (local.get $fn) (i32.const 206))
+                (i32.eq (local.get $fn) (i32.const 207)))))
+      (then
+        ;; H207's sub-op sits at bit 4, not bit 8, unlike the other three.
+        (local.set $type
+          (select
+            (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+            (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))
+            (i32.eq (local.get $fn) (i32.const 207))))
+        (if (i32.or (i32.eq (local.get $type) (i32.const 2))
+                    (i32.eq (local.get $type) (i32.const 3)))
+          (then (return (i32.const 0))))
+        (if (i32.gt_u (local.get $type) (i32.const 7)) (then (return (i32.const 0))))
+        (global.set $tu_b
+          (i32.or (i32.shl (local.get $type) (global.get $TU_B_ALU_SHIFT))
+                  (select (global.get $TU_B_WORD) (i32.const 0)
+                          (i32.ge_u (local.get $fn) (i32.const 206)))))
+        (if (i32.or (i32.eq (local.get $fn) (i32.const 153))
+                    (i32.eq (local.get $fn) (i32.const 206)))
+          (then
+            ;; register/register: dst<<4 | src, both sub-register indices.
+            (local.set $count (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+            (global.set $tu_d (call $tree_sub_reg (local.get $count) (local.get $fn)))
+            (global.set $tu_a
+              (call $tree_sub_reg (i32.and (local.get $op) (i32.const 0xF)) (local.get $fn)))
+            (global.set $tu_b (i32.or (global.get $tu_b)
+              (i32.or (select (global.get $TU_B_LANE_D) (i32.const 0)
+                        (call $tree_sub_hi (local.get $count) (local.get $fn)))
+                      (select (global.get $TU_B_LANE_A) (i32.const 0)
+                        (call $tree_sub_hi (i32.and (local.get $op) (i32.const 0xF))
+                                           (local.get $fn))))))
+            (global.set $tu_kind (global.get $TU_ALU_SUB_RR))
+            (return (i32.const 1))))
+        ;; register/immediate: the register is the low nibble, the immediate is
+        ;; the next word. H154 masks it to a byte, H207 to a word; the mask is
+        ;; applied at run time from the width bit, so store the raw word.
+        (local.set $count (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_d (call $tree_sub_reg (local.get $count) (local.get $fn)))
+        (global.set $tu_b (i32.or (global.get $tu_b)
+          (select (global.get $TU_B_LANE_D) (i32.const 0)
+                  (call $tree_sub_hi (local.get $count) (local.get $fn)))))
+        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_kind (global.get $TU_ALU_SUB_RI))
+        (return (i32.const 1))))
+
+    ;; MOV reg8,reg8 / MOV r16,r16 / MOV reg8,imm8 / MOV r16,imm16. No flags.
+    ;; H155 bit 8 means the decoder fused a SECOND adjacent byte MOV into the
+    ;; same op. That is two register writes from one descriptor slot, which
+    ;; this array cannot express, so it declines -- a missed lowering, never a
+    ;; half-executed one.
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 155))
+                (i32.eq (local.get $fn) (i32.const 210)))
+      (then
+        (if (i32.and (i32.eq (local.get $fn) (i32.const 155))
+                     (i32.ne (i32.and (local.get $op) (i32.const 0x100)) (i32.const 0)))
+          (then (return (i32.const 0))))
+        (local.set $count (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (global.set $tu_d (call $tree_sub_reg (local.get $count) (local.get $fn)))
+        (global.set $tu_a
+          (call $tree_sub_reg (i32.and (local.get $op) (i32.const 0xF)) (local.get $fn)))
+        (global.set $tu_b
+          (i32.or
+            (select (global.get $TU_B_WORD) (i32.const 0)
+                    (i32.eq (local.get $fn) (i32.const 210)))
+            (i32.or (select (global.get $TU_B_LANE_D) (i32.const 0)
+                      (call $tree_sub_hi (local.get $count) (local.get $fn)))
+                    (select (global.get $TU_B_LANE_A) (i32.const 0)
+                      (call $tree_sub_hi (i32.and (local.get $op) (i32.const 0xF))
+                                         (local.get $fn))))))
+        (global.set $tu_kind (global.get $TU_MOV_SUB_RR))
+        (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 156))
+                (i32.eq (local.get $fn) (i32.const 236)))
+      (then
+        (local.set $count (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_d (call $tree_sub_reg (local.get $count) (local.get $fn)))
+        (global.set $tu_b
+          (i32.or
+            (select (global.get $TU_B_WORD) (i32.const 0)
+                    (i32.eq (local.get $fn) (i32.const 236)))
+            (select (global.get $TU_B_LANE_D) (i32.const 0)
+                    (call $tree_sub_hi (local.get $count) (local.get $fn)))))
+        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_kind (global.get $TU_MOV_SUB_RI))
+        (return (i32.const 1))))
+
+    ;; -- byte memory: absolute, base+disp, and the two widening loads --------
+    ;; H24/H25 carry the reg8 index directly in the operand; H28/H29 and
+    ;; H143/H144 carry dst<<4 | base. MOVZX/MOVSX write the whole destination,
+    ;; so they are ordinary full-width kinds with a narrow load in front.
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 24))
+                (i32.eq (local.get $fn) (i32.const 25)))
+      (then
+        (local.set $count (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_d (i32.and (local.get $count) (i32.const 3)))
+        (global.set $tu_b
+          (select (global.get $TU_B_LANE_D) (i32.const 0)
+                  (i32.ge_u (local.get $count) (i32.const 4))))
+        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_kind
+          (select (global.get $TU_LOAD8_ABS) (global.get $TU_STORE8_ABS)
+                  (i32.eq (local.get $fn) (i32.const 24))))
+        (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 28))
+                (i32.eq (local.get $fn) (i32.const 29)))
+      (then
+        (local.set $count (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (global.set $tu_d (i32.and (local.get $count) (i32.const 3)))
+        (global.set $tu_a (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_b
+          (select (global.get $TU_B_LANE_D) (i32.const 0)
+                  (i32.ge_u (local.get $count) (i32.const 4))))
+        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_kind
+          (select (global.get $TU_LOAD8_RO) (global.get $TU_STORE8_RO)
+                  (i32.eq (local.get $fn) (i32.const 28))))
+        (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 143))
+                (i32.eq (local.get $fn) (i32.const 144)))
+      (then
+        (global.set $tu_d (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (global.set $tu_a (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_kind
+          (select (global.get $TU_MOVZX8_RO) (global.get $TU_MOVSX8_RO)
+                  (i32.eq (local.get $fn) (i32.const 143))))
+        (return (i32.const 1))))
+
+    ;; -- byte SIB forms: H400 widening load, H401 byte store, H402 byte
+    ;; immediate store. Same info/disp encoding as the dword SIB kinds; H402
+    ;; carries its immediate in the OPERAND rather than a word, which is why it
+    ;; is the one kind whose immediate rides in `b`.
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 400))
+        (i32.or (i32.eq (local.get $fn) (i32.const 401))
+                (i32.eq (local.get $fn) (i32.const 402))))
+      (then
+        (local.set $type (i32.load offset=8 (local.get $p)))   ;; info word
+        (global.set $tu_a (i32.and (local.get $type) (i32.const 0xF)))
+        (global.set $tu_b
+          (i32.or (i32.and (i32.shr_u (local.get $type) (i32.const 4)) (i32.const 0xF))
+                  (i32.shl (i32.and (i32.shr_u (local.get $type) (i32.const 8)) (i32.const 3))
+                           (i32.const 4))))
+        (global.set $tu_imm (i32.load offset=12 (local.get $p)))
+        (if (i32.eq (local.get $fn) (i32.const 400))
+          (then
+            (global.set $tu_d (i32.and (local.get $op) (i32.const 0xF)))
+            (global.set $tu_kind (global.get $TU_MOVSX8_SIB))
+            (return (i32.const 1))))
+        (if (i32.eq (local.get $fn) (i32.const 401))
+          (then
+            (local.set $count (i32.and (local.get $op) (i32.const 0xF)))
+            (global.set $tu_d (i32.and (local.get $count) (i32.const 3)))
+            (global.set $tu_b (i32.or (global.get $tu_b)
+              (select (global.get $TU_B_LANE_D) (i32.const 0)
+                      (i32.ge_u (local.get $count) (i32.const 4)))))
+            (global.set $tu_kind (global.get $TU_STORE8_SIB))
+            (return (i32.const 1))))
+        (global.set $tu_b (i32.or (global.get $tu_b)
+          (i32.shl (i32.and (local.get $op) (i32.const 0xFF))
+                   (global.get $TU_B_IMM8_SHIFT))))
+        (global.set $tu_kind (global.get $TU_MOV_M8_I_SIB))
+        (return (i32.const 1))))
+
     ;; -- SIB forms: operand = the data/dst register, then an info word and a
     ;; displacement word. info = base | index<<4 | scale<<8, with 0xF in either
     ;; register nibble meaning that term is absent -- $sib_ea's encoding, split
@@ -5491,7 +5731,11 @@
   (func $tree_uop_is_store (param $kind i32) (result i32)
     (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE32))
     (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE32_ABS))
-            (i32.eq (local.get $kind) (global.get $TU_STORE32_SIB)))))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE32_SIB))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE8_RO))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE8_ABS))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE8_SIB))
+            (i32.eq (local.get $kind) (global.get $TU_MOV_M8_I_SIB)))))))))
 
   ;; Count a terminator decline and return the decline. Written as a function
   ;; because the terminator has four separate reject sites and a counter
@@ -5682,6 +5926,7 @@
     (local $r4 i32) (local $r5 i32) (local $r6 i32) (local $r7 i32)
     (local $i i32) (local $kind i32) (local $d i32) (local $a i32) (local $imm i32)
     (local $b i32) (local $ea i32)
+    (local $sh_d i32) (local $sh_a i32) (local $mask i32) (local $ssh i32)
     (local $va i32) (local $vb i32) (local $vr i32)
     (local $iters i32) (local $allowed i32) (local $budget i32)
     (local $taken i32) (local $old i32) (local $wrote i32)
@@ -5783,6 +6028,21 @@
                   (br $ga (local.get $r6)))
                 (local.get $r7)))
 
+            ;; Sub-register lane and width, decoded unconditionally because it
+            ;; is four arithmetic ops with no branch and every alternative
+            ;; (a guard, a second br_table) costs more than it saves. The lane
+            ;; bits are placed so that one shift extracts each: bit 6 -> 8 and
+            ;; bit 7 -> 8, i.e. a byte op on AH..BH reads and writes bits 8..15
+            ;; of its container and a low-byte or word op reads bits 0..15.
+            (local.set $sh_d (i32.and (i32.shr_u (local.get $b) (i32.const 3)) (i32.const 8)))
+            (local.set $sh_a (i32.and (i32.shr_u (local.get $b) (i32.const 4)) (i32.const 8)))
+            (local.set $mask
+              (select (i32.const 0xFFFF) (i32.const 0xFF)
+                      (i32.and (local.get $b) (global.get $TU_B_WORD))))
+            (local.set $ssh
+              (select (i32.const 15) (i32.const 7)
+                      (i32.and (local.get $b) (global.get $TU_B_WORD))))
+
             ;; SIB effective address, for the contiguous tail of kinds that
             ;; need one. Hoisted here rather than repeated in three arms, and
             ;; guarded by a range test so no other kind pays for it.
@@ -5826,7 +6086,10 @@
             ;; first store instead of failing.
             (local.set $wrote (i32.const 1))
             (block $kdone
-              (block $k26 (block $k25 (block $k24 (block $k23 (block $k22
+              (block $k39 (block $k38 (block $k37 (block $k36 (block $k35
+              (block $k34 (block $k33 (block $k32 (block $k31 (block $k30
+              (block $k29 (block $k28 (block $k27 (block $k26 (block $k25
+              (block $k24 (block $k23 (block $k22
               (block $k21 (block $k20 (block $k19 (block $k18
               (block $k17 (block $k16 (block $k15 (block $k14
               (block $k13 (block $k12 (block $k11 (block $k10
@@ -5835,7 +6098,9 @@
               (block $k01 (block $k00
                 (br_table $k00 $k01 $k02 $k03 $k04 $k05 $k06 $k07 $k08 $k09
                           $k10 $k11 $k12 $k13 $k14 $k15 $k16 $k17 $k18 $k19
-                          $k20 $k21 $k22 $k23 $k24 $k25 $k26 $k26
+                          $k20 $k21 $k22 $k23 $k24 $k25 $k26 $k27 $k28 $k29
+                          $k30 $k31 $k32 $k33 $k34 $k35 $k36 $k37 $k38 $k39
+                          $k39
                           (local.get $kind)))
                 ;; 0 MOV_RR
                 (local.set $vr (local.get $vb)) (br $kdone))
@@ -5932,13 +6197,114 @@
                 ;; 23 STORE32_ABS
                 (call $gs32 (local.get $imm) (local.get $va))
                 (local.set $wrote (i32.const 0)) (br $kdone))
-                ;; 24 LEA_SIB -- address arithmetic only, no memory and, as on
+
+                ;; -- sub-register writes. Each of these computes a value at
+                ;; the sub-width and then INSERTS it into the container's
+                ;; local, leaving the lanes it does not cover exactly as they
+                ;; were -- which is what makes a partial write expressible here
+                ;; at all, and why $vr is always a full 32-bit value even when
+                ;; the op wrote eight bits of it.
+
+                ;; 24 MOV_SUB_RR -- no flags, either width.
+                (local.set $vr
+                  (i32.or
+                    (i32.and (local.get $va)
+                      (i32.xor (i32.shl (local.get $mask) (local.get $sh_d)) (i32.const -1)))
+                    (i32.shl
+                      (i32.and (i32.shr_u (local.get $vb) (local.get $sh_a)) (local.get $mask))
+                      (local.get $sh_d))))
+                (br $kdone))
+                ;; 25 MOV_SUB_RI -- no flags.
+                (local.set $vr
+                  (i32.or
+                    (i32.and (local.get $va)
+                      (i32.xor (i32.shl (local.get $mask) (local.get $sh_d)) (i32.const -1)))
+                    (i32.shl (i32.and (local.get $imm) (local.get $mask)) (local.get $sh_d))))
+                (br $kdone))
+                ;; 26 ALU_SUB_RR. $do_alu_sized owns the flag contract at this
+                ;; width, including flag_sign_shift; CMP (7) writes no register.
+                (local.set $vb
+                  (call $do_alu_sized
+                    (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT)) (i32.const 0xF))
+                    (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (local.get $mask))
+                    (i32.and (i32.shr_u (local.get $vb) (local.get $sh_a)) (local.get $mask))
+                    (local.get $mask) (local.get $ssh)))
+                (if (i32.eq (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT))
+                                     (i32.const 0xF))
+                            (i32.const 7))
+                  (then (local.set $wrote (i32.const 0)))
+                  (else (local.set $vr
+                    (i32.or
+                      (i32.and (local.get $va)
+                        (i32.xor (i32.shl (local.get $mask) (local.get $sh_d)) (i32.const -1)))
+                      (i32.shl (local.get $vb) (local.get $sh_d))))))
+                (br $kdone))
+                ;; 27 ALU_SUB_RI
+                (local.set $vb
+                  (call $do_alu_sized
+                    (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT)) (i32.const 0xF))
+                    (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (local.get $mask))
+                    (i32.and (local.get $imm) (local.get $mask))
+                    (local.get $mask) (local.get $ssh)))
+                (if (i32.eq (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT))
+                                     (i32.const 0xF))
+                            (i32.const 7))
+                  (then (local.set $wrote (i32.const 0)))
+                  (else (local.set $vr
+                    (i32.or
+                      (i32.and (local.get $va)
+                        (i32.xor (i32.shl (local.get $mask) (local.get $sh_d)) (i32.const -1)))
+                      (i32.shl (local.get $vb) (local.get $sh_d))))))
+                (br $kdone))
+                ;; 28 LOAD8_RO -- R8[d] = [R[a] + imm]
+                (local.set $vr
+                  (i32.or
+                    (i32.and (local.get $va)
+                      (i32.xor (i32.shl (i32.const 0xFF) (local.get $sh_d)) (i32.const -1)))
+                    (i32.shl (call $gl8 (i32.add (local.get $vb) (local.get $imm)))
+                             (local.get $sh_d))))
+                (br $kdone))
+                ;; 29 STORE8_RO
+                (call $gs8 (i32.add (local.get $vb) (local.get $imm))
+                  (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (i32.const 0xFF)))
+                (local.set $wrote (i32.const 0)) (br $kdone))
+                ;; 30 LOAD8_ABS
+                (local.set $vr
+                  (i32.or
+                    (i32.and (local.get $va)
+                      (i32.xor (i32.shl (i32.const 0xFF) (local.get $sh_d)) (i32.const -1)))
+                    (i32.shl (call $gl8 (local.get $imm)) (local.get $sh_d))))
+                (br $kdone))
+                ;; 31 STORE8_ABS
+                (call $gs8 (local.get $imm)
+                  (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (i32.const 0xFF)))
+                (local.set $wrote (i32.const 0)) (br $kdone))
+                ;; 32 MOVZX8_RO -- narrow read, WHOLE destination written.
+                (local.set $vr (call $gl8 (i32.add (local.get $vb) (local.get $imm))))
+                (br $kdone))
+                ;; 33 MOVSX8_RO
+                (local.set $vr
+                  (call $sign_ext8 (call $gl8 (i32.add (local.get $vb) (local.get $imm)))))
+                (br $kdone))
+                ;; 34 LEA_SIB -- address arithmetic only, no memory and, as on
                 ;; x86, no flags.
                 (local.set $vr (local.get $ea)) (br $kdone))
-                ;; 25 LOAD32_SIB
+                ;; 35 LOAD32_SIB
                 (local.set $vr (call $gl32 (local.get $ea))) (br $kdone))
-              ;; 26 STORE32_SIB (and the unreachable default).
-              (call $gs32 (local.get $ea) (local.get $va))
+                ;; 36 STORE32_SIB
+                (call $gs32 (local.get $ea) (local.get $va))
+                (local.set $wrote (i32.const 0)) (br $kdone))
+                ;; 37 MOVSX8_SIB
+                (local.set $vr (call $sign_ext8 (call $gl8 (local.get $ea)))) (br $kdone))
+                ;; 38 STORE8_SIB
+                (call $gs8 (local.get $ea)
+                  (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (i32.const 0xFF)))
+                (local.set $wrote (i32.const 0)) (br $kdone))
+              ;; 39 MOV_M8_I_SIB (and the unreachable default). The immediate
+              ;; rides in `b` because this handler's operand word IS the byte.
+              (call $gs8 (local.get $ea)
+                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_IMM8_SHIFT))
+                         (i32.const 0xFF)))
               (local.set $wrote (i32.const 0)))
 
             ;; Writeback R[d].
