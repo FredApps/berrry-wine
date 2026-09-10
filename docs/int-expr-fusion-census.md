@@ -151,6 +151,169 @@ partial loads are the only barriers in an otherwise pure `and`/`add`/`shr`/`lea`
 
 **heaven7 `0x409cb6`** — 2 ops (`cmp byte [edi],0` / `jz`), 502072 hits. Nothing to fold.
 
+## Terminator classes, and what the barriers cost
+
+The share of retired ops that is "foldable" says nothing about *shape*, and shape is what decides
+whether a fold is worth its machinery. A run of 20 folded ops inside a block that is entered once
+per frame saves 19 dispatches once; the same run inside a self-loop saves 19 dispatches per trip.
+[docs/int-expr-fusion-bench.md](int-expr-fusion-bench.md) prices exactly that difference in its
+`trips=1` and `trips=64` columns. So the census now also reports, hit-weighted:
+
+* **terminator class** — `self-loop` (the terminator jumps back to the block's own head),
+  `interior-branch` (a conditional branch elsewhere: one arm of an if/else, or one block of a
+  multi-block loop), `plain-exit` (jmp/call/ret/fallthrough);
+* for self-loops, the **trip structure** — the last instruction that actually wrote the flags the
+  terminator reads, which is `dec`/`inc` for a counted loop and `cmp`/`test` for a compared one.
+  It is not necessarily the instruction *before* the branch: mw3's blend loop puts two `mov`s
+  between its `dec esi` and its `jnz`, and reading only the previous instruction misclassified
+  97.7 % of that app's retired ops as "other" until the walk-back was added;
+* the **collapsible mass** — retired ops in blocks whose entire body folds *as a single run*.
+  Those are the blocks that become one dispatch. A body that folds but is chopped into four runs
+  by alias breaks is four dispatches, so it does not count.
+
+| app | self-loop | interior-branch | plain-exit | self-loop trip structure (share of retired, mean foldable/block) |
+|---|---|---|---|---|
+| `quake2_demo` | **11.3 %** | 72.1 % | 16.6 % | `dec/jnz` 7.7 % (15.6) · `cmp/jcc` 2.0 % (2.2) · `sub`/jcc 1.6 % (1.0) |
+| `caesar3_demo` | **0.0 %** | 68.0 % | 32.0 % | — no self-loop in the hot set at all |
+| `mw3` (startup) | **97.7 %** | 1.1 % | 1.1 % | `dec/jnz` 97.7 % (33.9) |
+| `heaven7` (precalc) | **0.0 %** | 48.2 % | 51.8 % | — |
+
+caesar3's zero is not a measurement failure: its hot loops are all multi-block, and its two
+hottest blocks are the 470-op unrolled row copies, which end in a `jmp`/`jcc` to a *different*
+block. Everything caesar3 would gain from a fold is gained once per block entry, never amortised
+over trips. quake2 is the mixed case, and its 7.7 % `dec/jnz` mass is one routine — the
+`ref_soft.dll` span loop.
+
+**Collapsible mass** (share of retired ops in blocks that fold to one dispatch). `body>=4` drops
+bodies of 1–3 ops, which fold trivially and flatter the total:
+
+| app | mode | all blocks | body≥4 | self-loop | self-loop body≥4 |
+|---|---|---|---|---|---|
+| `quake2_demo` | exact | 3.5 % | 2.5 % | 0.0 % | 0.0 % |
+| | flags | 27.2 % | 19.0 % | 9.2 % | 8.9 % |
+| | all | **32.9 %** | 24.4 % | **9.3 %** | 8.9 % |
+| `caesar3_demo` | exact | 2.6 % | 1.8 % | 0.0 % | 0.0 % |
+| | flags | 18.9 % | 8.0 % | 0.0 % | 0.0 % |
+| | all | **33.5 %** | 17.8 % | **0.0 %** | 0.0 % |
+| `mw3` (startup) | exact | 0.1 % | 0.0 % | 0.0 % | 0.0 % |
+| | all | **98.6 %** | 98.1 % | **97.7 %** | 97.7 % |
+| `heaven7` (precalc) | exact | 15.6 % | **0.0 %** | 0.0 % | 0.0 % |
+| | all | 91.1 % | **0.0 %** | 0.0 % | 0.0 % |
+
+heaven7's two columns are the caveat made numeric: 91 % of its retired ops sit in blocks that
+"fully fold", and *none* of them has a body of four ops or more. It is 1–2-op blocks ending in a
+`call` or `ret`, and collapsing a one-op body to one dispatch saves nothing.
+
+### Relaxed barrier modes
+
+`--relax=alias,partial,flags` (any subset) re-runs the same walk with one barrier class modelled
+instead of refused. The report always prints all five modes; `--relax` selects which get a detailed
+barrier histogram.
+
+* **`alias`** — a store followed by a load is a barrier only when the two addresses may overlap.
+  Disjoint if: both are constant absolute addresses with non-overlapping size-aware ranges; or the
+  same base (and same index/scale) with non-overlapping displacement ranges; or one is `esp`/`ebp`
+  based and the other is not, or is absolute. **That last rule is an assumption, not a proof**
+  (stack frame vs heap/static): code that takes the address of a local and reaches it through a
+  non-frame register violates it. Nothing in these four windows does, but a shipped fold would need
+  it made real. A store whose base register has been rewritten since the store loses the
+  displacement test and falls back to may-alias.
+* **`partial`** — 8/16-bit register and memory accesses are modelled as insert/extract on the
+  32-bit value and fold. High-byte (`ah`/`ch`/`dh`/`bh`) writes are counted separately because they
+  cost an extra shift on both sides: they are **0.2 % of quake2's retired ops and 0.0 % of the
+  other three**, so the awkward case is not the case that matters.
+* **`flags`** — flags are carried as values with a per-*field* last writer, so `inc`/`dec`
+  (CF-preserving), `adc`/`sbb`, `cmp`/`test` feeding a `jcc`, and `setcc`/`cmovcc` fold.
+  `pushf`/`popf`/`lahf`/`sahf`, shifts by `cl` and `rcl`/`rcr` read or write the whole word and
+  stay barriers under every mode.
+
+| app | mode | foldable | ops in ≥4-fold blocks | run p50 | p90 | max | dispatches removed | mean run |
+|---|---|---|---|---|---|---|---|---|
+| `quake2_demo` | exact | 47.7 % | 69.6 % | 3 | 9 | 193 | 28.8 % | 2.52 |
+| | alias | 47.7 % | 69.6 % | 4 | 15 | 204 | 30.5 % | 2.78 |
+| | partial | 53.7 % | 70.4 % | 4 | 11 | 193 | 32.9 % | 2.58 |
+| | flags | 61.0 % | 74.6 % | 4 | 12 | 193 | 41.1 % | 3.07 |
+| | **all** | **67.0 %** | 75.3 % | **6** | **18** | 204 | **50.9 %** | 4.18 |
+| `caesar3_demo` | exact | 67.9 % | 65.1 % | 3 | 4 | 18 | 36.3 % | 2.15 |
+| | alias | 67.9 % | 65.1 % | 3 | 7 | 34 | 38.6 % | 2.32 |
+| | partial | 72.6 % | 69.5 % | 3 | 4 | 18 | 40.9 % | 2.29 |
+| | flags | 78.8 % | 79.2 % | 3 | 4 | 18 | 41.9 % | 2.14 |
+| | **all** | **83.4 %** | 80.5 % | **4** | **7** | 34 | **50.6 %** | 2.55 |
+| `mw3` (startup) | exact | 84.1 % | 98.7 % | 20 | 20 | 20 | 70.1 % | 6.03 |
+| | alias | 84.1 % | 98.7 % | 20 | 20 | 20 | 70.2 % | 6.05 |
+| | partial | 93.9 % | 98.7 % | 32 | 36 | 36 | 86.0 % | 11.92 |
+| | flags | 86.8 % | 98.8 % | 20 | 20 | 20 | 75.2 % | 7.51 |
+| | **all** | **96.6 %** | 98.8 % | **37** | **41** | 41 | **93.6 %** | 32.51 |
+| `heaven7` (precalc) | exact | 12.4 % | 0.0 % | 0 | 1 | 2 | 3.0 % | 1.33 |
+| | alias | 12.4 % | 0.0 % | 0 | 1 | 2 | 3.0 % | 1.33 |
+| | partial | 12.4 % | 0.0 % | 0 | 1 | 2 | 3.0 % | 1.33 |
+| | flags | 51.6 % | 0.0 % | 1 | 2 | 3 | 12.1 % | 1.31 |
+| | **all** | **51.6 %** | 0.0 % | 1 | 2 | 3 | 12.1 % | 1.31 |
+
+Remaining barriers under `--relax=alias,partial,flags`, as a share of retired ops: quake2
+`fpu/simd` 20.3 %, `branch-cc` 8.5 %, `alias` 4.3 %; caesar3 **`alias` 19.7 %**, `branch-cc`
+10.3 %; mw3 `branch-cc` 2.7 %; heaven7 `branch-cc` 24.1 %, `ret` 12.1 %, `call` 12.1 %.
+
+### The two blocks, checked by eye
+
+**`--relax=flags` on quake2 `ref_soft.dll+0x12570`** (runtime `0x00d90570`, 67828 hits). Under the
+exact rule this block is 19 ops, 17 foldable, one run of 17, with `dec ecx` and `jnz` as the two
+barriers — the disassembly is in the *Classifier verification* section above. Under `flags`,
+`dec ecx` is a CF-preserving decrement whose only consumer is the `jnz` two bytes later, so it
+joins the tree: the census now reports **18 foldable, run 18, and the block marked FULL**, i.e. the
+whole body is one dispatch. The terminator classifier independently calls it
+`self-loop:dec/jnz` (the `jnz short 0x10012570` target equals the block head), which is what puts
+its 1.29 M retired ops into quake2's 7.7 % `dec/jnz` collapsible mass. This is the one place in
+quake2 where the fold would be amortised over trips rather than paid per entry.
+
+**`--relax=alias` on a caesar3 unrolled copy — it does not fire.** `0x41d7a0` is the 470-op row
+copy, `mov eax,[esi+0x384]` / `mov [edi+edx],eax` repeated 225 times. Under `alias` its longest run
+stays **3**, and caesar3's `alias` barrier only falls from 19.9 % to 19.7 % of retired ops. The
+reason is visible in one pair: the store is based on `edi`, the load on `esi`, neither is a frame
+register, and no rule in the list proves two arbitrary heap pointers disjoint. The 465-op run in
+the "perfect alias analysis" bracket needs a *whole-object* disjointness proof (src buffer vs dst
+buffer), which is a different and much larger piece of machinery than displacement arithmetic.
+
+Where `alias` does fire is `0x4a1e8a` (26659 hits, 24 ops), and its arithmetic checks out by hand:
+
+```
+F 004a1ec3  mov edx, [ebp+0xc]              1  stack load
+F 004a1ec6  mov [0x5c2d04], edx             2  absolute store
+F 004a1ecc  mov eax, [ebp+0x10]             3  stack load  vs absolute store -> disjoint
+F 004a1ecf  mov [0x5c2d08], eax             4
+F 004a1ed4  movsx ecx, word [0x67408c]      5  abs load vs abs stores 0x5c2d04+4, 0x5c2d08+4 -> disjoint
+F 004a1edb  mov [0x5c2c28], ecx             6
+F 004a1ee1  mov edx, [ebp+0x8]              7  stack load vs absolute stores -> disjoint
+F 004a1ee4  shl edx, 0x6                    8
+F 004a1ee7  xor eax, eax                    9
+  004a1ee9  mov al, [edx+0x5f702c]             partial-reg (folds only under --relax=partial)
+```
+
+Exact run **3** (each stack load after an absolute store broke it), `alias` run **9**, matching the
+tool. Under `--relax=all` the run extends to **11** and stops at `mov al,[edx+0x5f702c]`: `edx` is
+not a frame register, the pending stores are absolute, and the rule refuses to guess — the
+conservative direction, correctly taken. Note also that `movsx ecx, word [0x67408c]` reads the very
+address `mov [0x67408c], ax` wrote earlier in the block; under `all` that store *is* pending and
+the same-absolute-address overlap test would break the run there, which is why the all-mode run is
+11 and not the full 23.
+
+### What the relaxations buy
+
+**`flags` is the one that matters, and `alias` is the one that does not.** On the two windows that
+are genuinely rendering, `flags` alone moves dispatches removed from 28.8 % to 41.1 % (quake2) and
+36.3 % to 41.9 % (caesar3) — more than `alias` and `partial` combined on both — and it is the only
+relaxation that moves the *collapsible* mass at all, taking quake2 from 3.5 % to 27.2 % and
+caesar3 from 2.6 % to 18.9 %. That is the expected shape: `inc`/`dec`/`cmp` are the loop and
+predicate scaffolding sitting between otherwise-contiguous arithmetic, so removing them merges
+fragments rather than extending one end. Run *length* is a different ranking: `alias` is what moves
+p90 (quake2 9 → 15, caesar3 4 → 7, and both maxima), because it is the only relaxation that lets a
+run cross a store. `partial` is cheap and narrow — 5–6 points of foldable share on quake2 and
+caesar3, and its awkward high-byte case is 0.2 % of retired ops at worst — but it is the *only*
+relaxation that helps mw3's blend loop (run p50 20 → 32), because that loop's sole barriers are
+three 16-bit accesses. All three together roughly halve the remaining barrier mass but leave the
+two structural ones untouched: quake2 is still 20.3 % `fpu/simd` and caesar3 is still 19.7 %
+`alias`, and caesar3's is the unrolled-copy shape that only whole-object disjointness would reach.
+
 ## Verdict
 
 **The ceiling is real but modest, and it is smaller than the raw "foldable share" suggests.** On the
@@ -170,6 +333,14 @@ do not build the general decode-time expression tree yet.** The measured headroo
 beat what a narrower fold — same-base disjointness for the copy shape, and full-width handling of
 16-bit-into-32-bit loads — would buy for far less machinery, and this census is the tool to re-run
 against any such narrower proposal.
+
+The terminator and relaxed-mode sections above sharpen that in two ways. First, **only quake2 has
+any collapsible-loop mass at all** (9.3 % of retired ops, one `ref_soft.dll` span loop): caesar3's
+hot set contains no self-loop, so every dispatch a fold saves there is saved once per block entry,
+with the entry and exit materialisation charged each time — the bench's `trips=1` column, not its
+`trips=64` one. Second, if a single barrier class is to be modelled, it is **`flags`**, not
+`alias`: it buys more than the other two combined on both rendering windows, and it is what turns
+that span loop into a single dispatch.
 
 ## Things the classifier cannot do
 
@@ -206,3 +377,186 @@ node tools/expr-fold-census.js --dump=$S/q2-hot.txt \
 
 `--modules-from` reads the run log's own `DLL:` lines, so the emulator's load addresses and the
 census always agree. Add `--module-dir=` for images that do not sit beside the exe.
+
+The terminator-class, collapsible-mass and relaxed-mode tables are printed by every run; they need
+no extra flag. `--relax=alias,partial,flags` (any subset) selects which modes additionally get a
+full barrier histogram — the summary table always covers exact, each single relaxation, and all
+three. The same numbers are in the `--json=` output under `terminatorClasses`, `selfLoopTrips` and
+`modes`, and each of the top blocks carries its own `terminator`, `trip` and per-mode
+`{foldable, runs, longest, fullyFoldable}`.
+
+## Three more Win98 apps: Heroes II, Heroes III, StarCraft
+
+Measured 2026-09-10 with the same tool, `--max-ops=4096`, all five modes. Bounded runs
+(`--quiet-api --max-batches=999999 --max-seconds<=90`); box load 9-86.
+
+### Classifier fix that landed with this batch
+
+`push`/`pop`/`pusha`/`popa` were being classified **`fpu/simd`**, not `stack`: the packed-op test
+was a bare `/^(p[a-z]+|...)$/`, which `push` and `pop` both match, and it ran before the stack
+branch. The regex now spells out the real MMX/SSE/3DNow prefixes. This is a *labelling* bug only —
+both classes are barriers, so no foldable share, run length, terminator class, collapsible mass or
+dispatches-removed number changes; Heroes II's histogram simply moved 7.5 % from `fpu/simd` to
+`stack`, and its true `fpu/simd` went to zero. **The `fpu/simd` figures in the
+quake2/caesar3/mw3/heaven7 rows above were produced before the fix and therefore include those
+apps' push/pop traffic** — quake2's headline `fpu/simd` 20.3 % in particular is part x87 and part
+stack, and should be re-measured before it is quoted again.
+
+### Windows, and what is actually on screen
+
+| app | window | verdict |
+|---|---|---|
+| `heroes2_demo` | b1500-2400, after NEW GAME / STANDARD / OKAY, `--batch-size=20000` | **real gameplay** — the Broken Alliance adventure map. Captures at b1500 and b2400 differ on 1.05 % of pixels inside a 311x357 box over the map area; the rest of the screen is static UI chrome. 12978 batches ran in 60 s, so the documented gameplay window was reached comfortably. |
+| `heroes3_demo` | b110-180, `--batch-size=200000 --thread-slices=1 --tick-ms-per-batch=100` | **intro movie, not gameplay** — the 3DO Smacker logo animation. 37.3 % of pixels change between b110 and b180. |
+| `starcraft_shareware` | b300-780, `--threads --batch-size=100000` | **intro cinematic, not gameplay** — the Smacker space-station cinematic. 62.2 % of pixels change between b300 and b780. |
+
+**Neither Heroes III nor StarCraft reaches gameplay inside the time bound, and both fall back into
+the same middleware.** Heroes III's documented route (mousedowns at b700/1300/1900/2500, menu at
+b3050, map by b4000) does not reproduce on current `main`: the run parks on the 3DO logo from about
+batch 200 onward, and captures at b3050, b4000 and b5150 are byte-identical. Batch numbers are also
+not a usable anchor for it — with the batch count uncapped, batches that block on the
+audio-completion pacing retire nothing and the counter races to 487011 batches in 90 s while the
+guest advances one movie. StarCraft's documented route needs batch 4550, and the box delivers
+645-1100 batches per 90 s, i.e. roughly seven minutes of wall clock; `--time-scale=100` does clear
+the cinematic and reach the "Loading" title screen at about batch 1000, but at load 86 that batch
+was no longer reliably reachable inside 90 s, so the title window is not measured here. Both
+windows therefore land inside **`smackw32.dll`, and inside literally the same routine** — Heroes
+III's `0x1000ef03` and StarCraft's `0x1000ef03` are the same RAD Smacker MMX bit-reader/Huffman
+decoder in two builds. They are **not two independent data points**, and neither says anything
+about Heroes III's or StarCraft's own 2D engines.
+
+`--handler-hist-thread=0` sees the main thread only. Heroes II runs its Miles mixer on the main
+thread (MSS32 blocks are in its hot set); Heroes III spawns a Miles worker and StarCraft runs with
+`--threads`, so both hide worker blocks — in both, the Smacker decode being measured is itself on
+the main thread.
+
+### Results
+
+| app | window | retired ops | outside images | foldable (exact) | ops in >=4-fold blocks | run p50/p90 | dispatches removed | top barrier (exact) |
+|---|---|---|---|---|---|---|---|---|
+| `heroes2_demo` | adventure map | 81.15 M | 0.0 % | **48.3 %** | 44.0 % | 2 / 6 | **26.3 %** | `branch-cc` 13.6 % |
+| `heroes3_demo` | 3DO intro movie | 5.61 M | 0.0 % | **47.0 %** | 64.0 % | 3 / 4 | **20.8 %** | `partial-reg` 16.2 % |
+| `starcraft_shareware` | intro cinematic | 426.33 M | 0.8 % | **43.1 %** | 39.0 % | 2 / 4 | **17.8 %** | `branch-cc` 14.6 % |
+
+Terminator classes, hit-weighted:
+
+| app | self-loop | interior-branch | plain-exit | self-loop trip structure (share of retired, mean foldable/block) |
+|---|---|---|---|---|
+| `heroes2_demo` | **2.9 %** | 67.1 % | 29.9 % | `dec/jnz` 1.6 % (2.6) · `loop` 1.3 % (0.0) |
+| `heroes3_demo` | **0.5 %** | 74.7 % | 24.8 % | `dec/jnz` 0.4 % (5.2) · `cmp/jcc` 0.1 % |
+| `starcraft_shareware` | **0.1 %** | 86.4 % | 13.4 % | `cmp/jcc` 0.1 % (4.5) · `dec/jnz` 0.0 % |
+
+Collapsible mass (retired ops in blocks whose entire body folds as one run):
+
+| app | mode | all blocks | body>=4 | self-loop | self-loop body>=4 |
+|---|---|---|---|---|---|
+| `heroes2_demo` | exact | 11.4 % | 5.0 % | 0.0 % | 0.0 % |
+| | flags | 45.3 % | 24.6 % | 0.0 % | 0.0 % |
+| | all | **53.7 %** | 31.7 % | **0.2 %** | 0.2 % |
+| `heroes3_demo` | exact | 1.8 % | 0.8 % | 0.0 % | 0.0 % |
+| | flags | 7.2 % | 2.8 % | 0.0 % | 0.0 % |
+| | all | **16.8 %** | 6.0 % | **0.1 %** | 0.0 % |
+| `starcraft_shareware` | exact | 1.2 % | 0.4 % | 0.0 % | 0.0 % |
+| | flags | 15.4 % | 5.9 % | 0.0 % | 0.0 % |
+| | all | **30.2 %** | 13.4 % | **0.1 %** | 0.1 % |
+
+Relaxed barrier modes:
+
+| app | mode | foldable | ops in >=4-fold blocks | run p50 | p90 | max | dispatches removed | mean run |
+|---|---|---|---|---|---|---|---|---|
+| `heroes2_demo` | exact | 48.3 % | 44.0 % | 2 | 6 | 13 | 26.3 % | 2.19 |
+| | alias | 48.3 % | 44.0 % | 2 | 6 | 13 | 26.6 % | 2.23 |
+| | partial | 54.4 % | 56.3 % | 2 | 7 | 15 | 30.7 % | 2.30 |
+| | flags | 65.8 % | 62.2 % | 3 | 6 | 14 | 39.5 % | 2.50 |
+| | **all** | **71.9 %** | 65.9 % | **4** | **7** | 23 | **47.7 %** | 2.97 |
+| `heroes3_demo` | exact | 47.0 % | 64.0 % | 3 | 4 | 10 | 20.8 % | 1.79 |
+| | alias | 47.0 % | 64.0 % | 3 | 4 | 12 | 20.9 % | 1.80 |
+| | partial | 63.2 % | 68.4 % | 3 | 11 | 14 | 37.9 % | 2.50 |
+| | flags | 56.3 % | 68.5 % | 3 | 4 | 11 | 28.0 % | 1.99 |
+| | **all** | **72.5 %** | 85.2 % | **3** | **11** | 15 | **44.9 %** | 2.63 |
+| `starcraft_shareware` | exact | 43.1 % | 39.0 % | 2 | 4 | 13 | 17.8 % | 1.71 |
+| | alias | 43.1 % | 39.0 % | 2 | 4 | 28 | 18.0 % | 1.72 |
+| | partial | 55.8 % | 53.6 % | 3 | 4 | 15 | 27.1 % | 1.94 |
+| | flags | 54.7 % | 50.6 % | 3 | 4 | 14 | 27.2 % | 1.99 |
+| | **all** | **67.4 %** | 78.7 % | **3** | **5** | 31 | **37.1 %** | 2.22 |
+
+Remaining barriers under `--relax=alias,partial,flags`, as a share of retired ops:
+
+* `heroes2_demo` — `branch-cc` 13.6 %, **`stack` 8.0 %**, `alias` 4.2 %, `branch` 3.3 %,
+  `string` 1.2 %. **`fpu/simd` is 0.0 %**: this window contains no x87 and no MMX at all.
+* `heroes3_demo` — `fpu/simd` 10.2 %, `branch-cc` 10.2 %, `alias` 5.6 %, `other` 3.1 %.
+* `starcraft_shareware` — `branch-cc` 14.6 %, `fpu/simd` 11.6 %, `alias` 4.1 %, `other` 3.0 %.
+
+### Top blocks
+
+**`heroes2_demo`**
+
+* `0x004c7341` (727440 hits, 7 ops, fold 3, run 2, `interior-branch`) — the ICN sprite decoder's
+  command-byte fetch: `xor eax,eax` / `mov ecx,[0x525d80]` / `inc ecx` / `mov [0x525d80],ecx` /
+  `mov al,[ecx-1]` / `test al,al` / `jge`. Its stream cursor is a **global**, re-read and written
+  back for every single byte.
+* `0x00499937` (164020 hits, 24 ops, fold 19, run 6, `plain-exit`) — the per-frame 6-bit VGA to
+  BGRA palette rebuild: three unrolled RGB groups plus an alpha store.
+* `0x0064ca61` = `MSS32.DLL 0x2000da61` (371383 hits, 6 ops, fold 4, run 4, `interior-branch`,
+  FULL) — the Miles mixer's 32-slot voice scan, index and array base both held in globals.
+
+**`heroes3_demo`** (all three are `SMACKW32.DLL`)
+
+* `0x009a6ea0` = `0x1000eea0` (13 ops, fold 6, run 3) — Smacker Huffman symbol lookup: the MMX
+  bit-shift register (`movd`/`psrlq`/`pand`) interleaved with an integer table walk.
+* `0x009a6f80` = `0x1000ef80` — the identical loop, second copy of the same unrolled arm.
+* `0x009a6f03` = `0x1000ef03` (11 ops, fold 8, run 4) — the Smacker tree-node swap: seven chained
+  pointer loads/stores through three globals, broken only by `mov al,[0x10014c00]`.
+
+**`starcraft_shareware`** (all three are `smackw32.dll`)
+
+* `0x008e4fad` = `0x1000efad` (3.34 M hits, 7 ops, fold 3, run 1) — the Smacker MMX bit-reader:
+  `shr edx,0xd` / `dec al` / `and edx,0xffff8` / `movd ebp,mm0` / `psrlq mm0,1` / `shr ebp,1` /
+  `jb`. The MMX pair sits *between* the two integer shifts, which is why a 3-foldable block has a
+  longest run of 1.
+* `0x008e4ecd` = `0x1000eecd` — the identical bit-reader, second unrolled copy.
+* `0x008e4f03` = `0x1000ef03` — the same tree-node swap as Heroes III's third block, byte for byte.
+
+### Hand-verified classifications
+
+* **Heroes II `0x00499937`.** `disasm_fn.js` on `H2DEMOW.EXE` reproduces the census bytes exactly.
+  The run is `mov eax,[ebp-4]` / `lea eax,[eax+eax*2]` / `mov ecx,[ebp-0xc]` /
+  `movsx eax,byte [eax+ecx]` / `shl eax,2` / `mov ecx,[ebp-4]` = **6 foldable**, ended by
+  `mov [0x508084+ecx*4], al`, an 8-bit memory store, correctly `partial-reg`. Three such groups
+  plus the trailing `mov eax,[ebp-4]` give 6x3 + 1 = **19 foldable, longest run 6**, exactly what
+  the tool reports. Note the terminator: it is `jmp 0x499927` to a *different* block, so this loop
+  is `plain-exit`, not a self-loop — its fold would be paid once per entry.
+* **Heroes III `0x1000ef03`.** `disasm_fn.js` on the demo's `SMACKW32.DLL` matches byte for byte
+  (`8b 29 / 8b 1d 68 4b 01 10 / 89 11 / ...`), which also confirms the runtime->file VA arithmetic
+  through a relocated DLL (`0x009a6f03 - 0x998000 + 0x10000000`).
+* **StarCraft `0x1000efad`.** `fe c8` is `dec al` (8-bit write -> `partial-reg`, correct) and
+  `0f 7e c5` is `movd ebp,mm0` (`fpu/simd`, correct). fold 3 / run 1 is right: the two `shr`s that
+  could fold are separated by the MMX pair.
+
+### Are these self-loop-heavy like mw3, or interior-branch-heavy like caesar3?
+
+**All three are firmly on the caesar3 side, and StarCraft is the most extreme case in the census so
+far.** Self-loop mass is 2.9 % (Heroes II), 0.5 % (Heroes III) and 0.1 % (StarCraft), against mw3's
+97.7 % and quake2's 11.3 %; interior-branch mass is 67 %, 75 % and **86.4 %**, where caesar3 sits at
+68 %. Collapsible *self-loop* mass — the bench's `trips=64` column, the only place a fold amortises
+— is 0.2 %, 0.1 % and 0.1 % even with every relaxation on, so on these workloads a decode-time
+expression fold is charged its entry and live-out materialisation on essentially every block it
+fires in, exactly as on caesar3. mw3's shape (one 16-bit alpha-blend self-loop carrying the whole
+profile) remains an outlier produced by a startup window, not a property of 2D engines. The reason
+is visible in the top blocks and is the same for all three: these are **byte-code interpreters over
+compressed streams**, not pixel loops. Heroes II's hottest block is a sprite-opcode dispatch
+(`test al,al / jge`, five ways out) whose literal runs are already `rep movsd`, and both Smacker
+windows are a Huffman bit-reader that branches on the next bit every trip. A branch per token *is*
+the workload, so the block is the loop body and the terminator is always a `jcc` to somewhere else.
+The relaxations also rank differently here than in the two rendering windows above: **`flags` is
+still the biggest single lever on Heroes II** (26.3 % -> 39.5 % dispatches removed, and it is what
+takes the collapsible mass from 11.4 % to 45.3 %), but on the two Smacker windows **`partial`
+overtakes it** (Heroes III 20.8 % -> 37.9 %, StarCraft 17.8 % -> 27.1 %), because a bit-reader's
+state lives in `al`/`cl` counters and `partial-reg` is their single largest exact-mode barrier at
+16.2 % and 12.7 %. `alias` is worth 0.2-0.3 points on all three and is again the relaxation that
+does not matter. The structural ceiling differs too: Heroes II's residue after all three
+relaxations is `branch-cc` 13.6 % plus `stack` 8.0 % with **zero** `fpu/simd` — a pure-integer 2D
+engine, where a fold would be limited only by how often the guest branches — whereas both Smacker
+windows keep a 10-12 % `fpu/simd` floor that an integer expression tree can never cross, because
+the MMX bit shifter is interleaved into the integer chain instruction by instruction rather than
+sitting in a run of its own.
