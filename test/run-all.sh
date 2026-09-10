@@ -63,6 +63,7 @@ UNIT=(
   test/test-browser-font-bootstrap.js
   test/test-worker-font-bootstrap.js
   test/test-font-dependency-resolver.js
+  test/test-font-catalog.js
   test/test-cli-font-bootstrap.js
   test/test-vfs-overlay-checkpoints.js
   test/test-runtime-thread-ownership.js

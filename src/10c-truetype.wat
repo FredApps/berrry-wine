@@ -3621,6 +3621,7 @@
     (local $fd_g i32) (local $fd_w i32) (local $path_g i32) (local $path_w i32)
     (local $handle i32) (local $name_w i32)
     (local $prefix_len i32) (local $name_len i32)
+    (if (global.get $tt_catalog_ready) (then (return)))
     (if (global.get $tt_font_dir_scanned) (then (return)))
     ;; Marked before the work, not after: a directory that is empty, absent or
     ;; too big to allocate scratch for must not be re-read on every face
@@ -3697,6 +3698,11 @@
     (local.set $found (call $tt_reg_path (local.get $name)
       (local.get $weight) (local.get $italic)))
     (if (local.get $found) (then (return (local.get $found))))
+    (if (global.get $tt_catalog)
+      (then
+        (local.set $found (call $tt_reg_table_path (call $g2w (global.get $tt_catalog))
+          (local.get $name) (local.get $weight) (local.get $italic)))
+        (if (local.get $found) (then (return (local.get $found))))))
     (local.set $found (call $tt_subst_table_lookup
       (global.get $TT_SUBST_TABLE) (global.get $TT_SUBST_TABLE_SIZE)
       (local.get $name) (local.get $weight) (local.get $italic)))
@@ -3759,9 +3765,8 @@
   ;; that ships its own copy of a face means that copy, and the substitute
   ;; exists only to answer for files this emulator has no license to carry.
 
-  ;; Matches the face table: a guest that installs more files than the face
-  ;; cache can hold open would fail at the open rather than here, and a
-  ;; registry smaller than the cache would fail first for no stated reason.
+  ;; Each explicit registry and discovered metadata catalog is bounded to 32
+  ;; entries. Catalog discovery does not allocate or consume face-cache slots.
   (global $TT_REG_MAX i32 (i32.const 32))
   (global $TT_REG_NAME_MAX i32 (i32.const 64))
   (global $TT_REG_PATH_MAX i32 (i32.const 132))
@@ -3769,6 +3774,73 @@
   (global $TT_REG_NAME_OFF i32 (i32.const 12))
   (global $TT_REG_PATH_OFF i32 (i32.const 76))
   (global $tt_reg (mut i32) (i32.const 0))
+  ;; Discovered metadata has separate ownership from explicit registrations.
+  (global $tt_catalog (mut i32) (i32.const 0))
+  (global $tt_catalog_ready (mut i32) (i32.const 0))
+  (global $tt_catalog_generation (mut i32) (i32.const 0))
+  (global $tt_catalog_nonce (mut i32) (i32.const 0))
+  (global $tt_catalog_pending (mut i32) (i32.const 0))
+  (global $tt_catalog_token (mut i32) (i32.const 0))
+  (global $tt_catalog_count (mut i32) (i32.const 0))
+  (global $tt_catalog_failed (mut i32) (i32.const 0))
+
+  (func (export "font_catalog_ready") (result i32) (global.get $tt_catalog_ready))
+  (func (export "font_catalog_generation") (result i32) (global.get $tt_catalog_generation))
+  (func (export "font_catalog_begin") (result i32)
+    (local $table i32)
+    ;; Bootstrap must precede the first legacy scan. That scan mixed discovered
+    ;; and explicitly registered entries in tt_reg, so a late first catalog
+    ;; cannot safely distinguish or replace them. No migration is implied.
+    (if (i32.and (i32.ne (global.get $tt_font_dir_scanned) (i32.const 0))
+          (i32.eqz (global.get $tt_catalog_ready)))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.ne (global.get $tt_catalog_pending) (i32.const 0))
+          (i32.eq (global.get $tt_catalog_nonce) (i32.const -1)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (global.get $tt_catalog_generation) (i32.const -1))
+      (then (return (i32.const 0))))
+    (local.set $table (call $heap_alloc (i32.mul (global.get $TT_REG_MAX) (global.get $TT_REG_STRIDE))))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $table)) (i32.const 0)
+      (i32.mul (global.get $TT_REG_MAX) (global.get $TT_REG_STRIDE)))
+    (global.set $tt_catalog_pending (local.get $table))
+    (global.set $tt_catalog_nonce (i32.add (global.get $tt_catalog_nonce) (i32.const 1)))
+    (global.set $tt_catalog_token (global.get $tt_catalog_nonce))
+    (global.set $tt_catalog_count (i32.const 0))
+    (global.set $tt_catalog_failed (i32.const 0))
+    (global.get $tt_catalog_token))
+
+  (func $tt_catalog_abort (export "font_catalog_abort") (param $token i32)
+    (if (i32.or (i32.eqz (global.get $tt_catalog_pending))
+          (i32.ne (local.get $token) (global.get $tt_catalog_token))) (then (return)))
+    (call $heap_free (global.get $tt_catalog_pending))
+    (global.set $tt_catalog_pending (i32.const 0))
+    (global.set $tt_catalog_token (i32.const 0))
+    (global.set $tt_catalog_count (i32.const 0))
+    (global.set $tt_catalog_failed (i32.const 0)))
+
+  (func (export "font_catalog_commit") (param $token i32) (result i32)
+    (local $old i32)
+    (if (i32.or (i32.eqz (global.get $tt_catalog_pending))
+          (i32.ne (local.get $token) (global.get $tt_catalog_token)))
+      (then (return (i32.const 0))))
+    ;; A caller may have entered legacy discovery while staging was pending.
+    ;; Never publish a first catalog over that now-mixed explicit registry.
+    (if (i32.and (i32.ne (global.get $tt_font_dir_scanned) (i32.const 0))
+          (i32.eqz (global.get $tt_catalog_ready)))
+      (then
+        (global.set $tt_catalog_failed (i32.const 1))
+        (return (i32.const 0))))
+    (if (global.get $tt_catalog_failed) (then (return (i32.const 0))))
+    (local.set $old (global.get $tt_catalog))
+    (global.set $tt_catalog (global.get $tt_catalog_pending))
+    (global.set $tt_catalog_pending (i32.const 0))
+    (global.set $tt_catalog_token (i32.const 0))
+    (global.set $tt_catalog_count (i32.const 0))
+    (global.set $tt_catalog_generation (i32.add (global.get $tt_catalog_generation) (i32.const 1)))
+    (global.set $tt_catalog_ready (i32.const 1))
+    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (i32.const 1))
 
   (func $tt_reg_ensure (result i32)
     (local $guest i32) (local $wasm i32) (local $bytes i32)
@@ -3828,7 +3900,7 @@
   (func $tt_reg_add_face (param $path_guest i32) (param $face i32) (result i32)
     (local $table i32) (local $path i32)
     (local $data i32) (local $size i32) (local $index i32) (local $free i32)
-    (local $record i32) (local $weight i32)
+    (local $record i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const 0))))
     (if (i32.lt_s (local.get $face) (i32.const 0)) (then (return (i32.const 0))))
     (local.set $data (call $tt_face_data (local.get $face)))
@@ -3854,6 +3926,16 @@
     (if (i32.lt_s (local.get $free) (i32.const 0)) (then (return (i32.const 0))))
     (local.set $record (call $tt_reg_record (local.get $table) (local.get $free)))
 
+    (call $tt_reg_record_from_bytes (local.get $record) (local.get $path)
+      (local.get $data) (local.get $size)))
+
+  ;; Caller owns an unpublished record and validated contiguous byte spans.
+  ;; Writes no global roots and acquires no face/glyph cache ownership.
+  (func $tt_reg_record_from_bytes (param $record i32) (param $path i32)
+      (param $data i32) (param $size i32) (result i32)
+    (local $weight i32)
+    (if (i32.eqz (call $tt_is_truetype (local.get $data) (local.get $size)))
+      (then (return (i32.const 0))))
     (if (i32.eqz (call $tt_family_name (local.get $data) (local.get $size)
           (i32.add (local.get $record) (global.get $TT_REG_NAME_OFF))
           (global.get $TT_REG_NAME_MAX)))
@@ -3871,6 +3953,55 @@
     (i32.store offset=8 (local.get $record)
       (call $tt_is_italic (local.get $data) (local.get $size)))
     (i32.store (local.get $record) (i32.const 1))
+    (i32.const 1))
+
+  (func (export "font_catalog_add") (param $token i32) (param $path_g i32)
+      (param $data_g i32) (param $size i32) (result i32)
+    (local $path i32) (local $data i32) (local $extent i32) (local $len i32)
+    (local $table i32) (local $record i32)
+    (if (i32.or (i32.eqz (global.get $tt_catalog_pending))
+          (i32.ne (local.get $token) (global.get $tt_catalog_token)))
+      (then (return (i32.const 0))))
+    (if (global.get $tt_catalog_failed) (then (return (i32.const 0))))
+    ;; Pessimistically poison: every early failure requires abort, not a partial commit.
+    (global.set $tt_catalog_failed (i32.const 1))
+    (if (i32.or (i32.eqz (local.get $size))
+          (i32.gt_u (local.get $size) (i32.const 0x400000)))
+      (then (return (i32.const 0))))
+    (local.set $extent (call $heap_payload_size (local.get $data_g)))
+    (if (i32.or (i32.lt_s (local.get $extent) (i32.const 0))
+          (i32.lt_u (local.get $extent) (local.get $size)))
+      (then (return (i32.const 0))))
+    (local.set $data (call $g2w (local.get $data_g)))
+    (if (i32.ne (call $g2w (i32.add (local.get $data_g) (i32.sub (local.get $size) (i32.const 1))))
+          (i32.add (local.get $data) (i32.sub (local.get $size) (i32.const 1))))
+      (then (return (i32.const 0))))
+    (local.set $extent (call $heap_payload_size (local.get $path_g)))
+    (if (i32.le_s (local.get $extent) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $path (call $g2w (local.get $path_g)))
+    (block $terminated (loop $scan
+      (if (i32.or (i32.ge_u (local.get $len) (local.get $extent))
+            (i32.ge_u (local.get $len) (global.get $TT_REG_PATH_MAX)))
+        (then (return (i32.const 0))))
+      (if (i32.ne (call $g2w (i32.add (local.get $path_g) (local.get $len)))
+            (i32.add (local.get $path) (local.get $len)))
+        (then (return (i32.const 0))))
+      (br_if $terminated (i32.eqz (i32.load8_u (i32.add (local.get $path) (local.get $len)))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
+    (local.set $table (call $g2w (global.get $tt_catalog_pending)))
+    ;; Duplicate paths are ambiguous in a replacement snapshot; reject them.
+    (if (i32.ge_s (call $tt_reg_find_path (local.get $table) (local.get $path)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (if (i32.ge_u (global.get $tt_catalog_count) (global.get $TT_REG_MAX))
+      (then (return (i32.const 0))))
+    (local.set $record (call $tt_reg_record (local.get $table) (global.get $tt_catalog_count)))
+    (if (i32.eqz (call $tt_reg_record_from_bytes (local.get $record) (local.get $path)
+          (local.get $data) (local.get $size)))
+      (then (return (i32.const 0))))
+    (global.set $tt_catalog_count (i32.add (global.get $tt_catalog_count) (i32.const 1)))
+    (global.set $tt_catalog_failed (i32.const 0))
     (i32.const 1))
 
   (func $tt_reg_remove (param $path_guest i32) (result i32)
@@ -3892,12 +4023,17 @@
   ;; family installed regular-only still answers a bold request with the file
   ;; it has.
   (func $tt_reg_path (param $name i32) (param $weight i32) (param $italic i32)
+      (result i32)
+    (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
+    (call $tt_reg_table_path (call $g2w (global.get $tt_reg))
+      (local.get $name) (local.get $weight) (local.get $italic)))
+
+  (func $tt_reg_table_path (param $table i32) (param $name i32)
+      (param $weight i32) (param $italic i32)
         (result i32)
-    (local $table i32) (local $index i32) (local $record i32)
+    (local $index i32) (local $record i32)
     (local $want_bold i32) (local $score i32) (local $best i32) (local $found i32)
     (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
-    (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
-    (local.set $table (call $g2w (global.get $tt_reg)))
     (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
     (local.set $want_bold (i32.ge_s (local.get $weight) (i32.const 700)))
     (local.set $italic (i32.ne (local.get $italic) (i32.const 0)))
@@ -3941,28 +4077,36 @@
 
   (func $tt_reg_enum_name (param $index i32) (result i32)
     (local $table i32) (local $i i32) (local $record i32) (local $name i32)
-    (local $seen i32)
-    (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
-    (local.set $table (call $tt_reg_ensure))
-    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (local $seen i32) (local $slot i32) (local $duplicate i32)
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $TT_REG_MAX)))
-      (local.set $record (call $tt_reg_record (local.get $table) (local.get $i)))
+      (br_if $done (i32.ge_u (local.get $i) (i32.mul (global.get $TT_REG_MAX) (i32.const 2))))
+      (local.set $table (select (global.get $tt_reg) (global.get $tt_catalog)
+        (i32.lt_u (local.get $i) (global.get $TT_REG_MAX))))
+      (block $next
+      (br_if $next (i32.eqz (local.get $table)))
+      (local.set $table (call $g2w (local.get $table)))
+      (local.set $slot (i32.rem_u (local.get $i) (global.get $TT_REG_MAX)))
+      (local.set $record (call $tt_reg_record (local.get $table) (local.get $slot)))
       (if (i32.load (local.get $record))
         (then
           (local.set $name
             (i32.add (local.get $record) (global.get $TT_REG_NAME_OFF)))
+          (local.set $duplicate (i32.const 0))
+          (if (i32.and (i32.ge_u (local.get $i) (global.get $TT_REG_MAX))
+                (i32.ne (global.get $tt_reg) (i32.const 0)))
+            (then (local.set $duplicate (call $tt_reg_enum_earlier
+              (call $g2w (global.get $tt_reg)) (global.get $TT_REG_MAX) (local.get $name)))))
           ;; Skip a name the substitution table already reports, and a name an
           ;; earlier registry entry already reported (bold and italic files of
           ;; one family each carry that family's name).
-          (if (i32.and
+          (if (i32.and (i32.eqz (local.get $duplicate)) (i32.and
                 (i32.eqz (call $tt_subst_enum_index (local.get $name)))
                 (i32.eqz (call $tt_reg_enum_earlier
-                  (local.get $table) (local.get $i) (local.get $name))))
+                  (local.get $table) (local.get $slot) (local.get $name)))))
             (then
               (if (i32.eq (local.get $seen) (local.get $index))
                 (then (return (local.get $name))))
-              (local.set $seen (i32.add (local.get $seen) (i32.const 1)))))))
+              (local.set $seen (i32.add (local.get $seen) (i32.const 1))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))

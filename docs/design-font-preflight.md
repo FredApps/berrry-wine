@@ -45,6 +45,51 @@ an asynchronous read and describe that as successful preparation.
 
 ## Catalog and immutable generations
 
+### Native staging contract
+
+The native catalog transaction is separate from explicit `AddFontResource`
+registration and is owned by one executing instance. Its bounded metadata
+table contains at most 32 records of 208 bytes each; it does not own parsed
+faces, glyphs, or complete font files. Current and pending tables can coexist
+so an incomplete refresh does not replace the old catalog.
+
+- `font_catalog_begin()` returns a nonzero transaction nonce, or zero on
+  failure/busy. Nonces are not allocation addresses and must not be reused.
+  Initial preparation must precede legacy directory scanning: begin rejects
+  a legacy-scanned instance, and commit also rejects a scan that intervened
+  during staging. Legacy-discovered registrations cannot safely be mistaken
+  for explicit registrations or migrated without separate ownership records.
+- `font_catalog_add(token, path, bytes, size)` copies family/style/path
+  metadata into the unpublished table. Input spans and the 4 MiB file limit
+  are checked first. An invalid add for the active token poisons that
+  transaction; a foreign/stale token must not affect it.
+  Paths must be nonempty, NUL-terminated within 132 bytes, and unique in the
+  staged table. Metadata acceptance checks the existing TrueType signature
+  and bounded family/style tables, not full glyph validity. Heap extent
+  validation follows the allocator convention; it is not a live-allocation
+  capability check against forged or freed headers.
+- `font_catalog_commit(token)` publishes only a healthy transaction, advances
+  the catalog generation and then frees the old metadata table. Empty is a
+  valid completed catalog, distinct from never prepared.
+- `font_catalog_abort(token)` releases a matching pending transaction and
+  preserves the current catalog; stale aborts are harmless.
+- `font_catalog_ready()` and `font_catalog_generation()` describe catalog
+  publication only. They do not certify current VFS sources or give parsed
+  faces/glyphs/strikes a generation identity.
+
+Explicit registration wins over discovered metadata; catalog entries win over
+substitutes. Enumeration merges these sources without duplicate family names.
+Returned path/name pointers are borrowed from their table: copy them before an
+await or later catalog commit. Native calls alone cannot certify VFS freshness;
+the host must validate the entire candidate snapshot before committing.
+
+Automatic catalog preparation must not release earlier read leases and merely
+re-enumerate names/sizes/timestamps at the end: that misses same-size entry
+replacement, nested-provider revisions and eager in-place mutation. Until a
+durable metadata-token API exists, keeping all source leases through commit
+requires an explicit aggregate retained-byte budget. Sequential reads alone
+do not bound retained memory. This host ownership protocol is still pending.
+
 Separate directory discovery from face registration/loading. Catalog work may
 read bounded metadata incrementally, but must not fill the 32-face parsed cache
 merely to discover names. Publish catalog changes only after source validation;

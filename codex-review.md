@@ -2,7 +2,63 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — read-only dynamic-font dependency lookup
+### Latest increment — atomic native font catalog staging
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| NATIVE TRANSACTION: IMPLEMENTED           HOST SNAPSHOT: NEXT                    RUNTIME LIFETIMES: OPEN    |
++----------------------------------+----------------------------------+------------------------------------+
+| begin -> add metadata -> commit  | validate every source at commit  | immutable face / glyph generations |
+| abort/failure keeps old catalog | bounded aggregate lease memory   | retain selected + registered fonts |
+| 32 records; no parsed faces     | executing instance publication   | pre-side-effect operation gates    |
++----------------------------------+----------------------------------+------------------------------------+
+| EXPLICIT REGISTRATION STAYS SEPARATE | AUTOMATIC DISCOVERY STILL LEGACY | LAZY DEFAULTS REMAIN OFF          |
++----------------------------------------------------------------------------------------------------------+
+```
+
+The native catalog now stages copied family/style/path metadata separately from
+explicit registrations. Nonreused transaction nonces reject stale commands;
+invalid input, duplicate paths or capacity overflow poison the transaction,
+and a failed commit preserves the previous catalog. Healthy publication swaps
+the complete table and advances a catalog-only generation. A completed empty
+catalog suppresses legacy discovery; a merely pending catalog does not.
+
+Cross-checking found a transition hazard: legacy discovery already writes into
+the explicit registry. Initial begin and commit therefore reject an instance
+whose legacy scan ran before publication, including a scan during staging.
+This does not migrate old discovered entries or change explicit Add/Remove
+ownership. Metadata acceptance is not full glyph validation, and borrowed
+catalog path/name pointers must be copied before a later commit frees the table.
+
+Automatic browser/CLI catalog preparation is intentionally not enabled yet.
+Releasing each read lease after metadata extraction and comparing directory
+names/sizes/timestamps at the end misses replacements and provider revisions.
+The host needs durable source validation or retained leases with an aggregate
+byte budget through commit. Parsed faces and synthetic strikes still need
+generation-aware lifetimes and operation-level preflight. These remain open in
+[the implementation design](docs/design-font-preflight.md). Fable's bounded
+materialization work is not reopened; eventual integration must retain main's
+unified cache identity and test discovery.
+
+The canonical/compatibility build passes at source 315 (1,066,509 / 1,066,962
+bytes, 237 imports, 233 nonoverlapping data segments; layout unchanged at
+`b00c9d60346fdb5a`). All 944 tests have manifest membership; this is not a
+complete-suite result. Pure lookup, substitution/rasterization, resource and
+lazy FON/TTF/FOT registration, local installation, browser lifecycle and real
+Worker bootstrap regressions pass. The final Chrome matrix exits 0 with
+Notepad/Calculator parity, both Rodent input/render checks, three Winamp
+playback Workers and COM success/missing-server recovery. No performance
+claim: observed machine load was approximately 18.
+
+The dedicated compiled catalog test passes metadata-only staging/cold-cache
+checks, copied family/style/path ownership, busy begin, idempotent abort,
+stale-token isolation, distinct-path malformed/span/size failures, unterminated
+and oversized paths, duplicate paths, 32-record overflow, explicit precedence
+and enumeration deduplication, completed-empty readiness, and both legacy-first
+and intervening-scan rejection. Failed candidates preserve the old resolution
+and generation. Filesystem imports are forbidden during catalog operations.
+
+### Prior increment — read-only dynamic-font dependency lookup
 
 ```text
 +----------------------------------------------------------------------------------------------------------+
