@@ -2,7 +2,34 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — deferred native help navigation
+### Latest increment — owned public macro calls
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| PUBLIC WINHELPA/W (32-BIT)                 DLL BYTES -> CALLBACK -> TYPED RETURN                           |
++----------------------------------+----------------------------------+------------------------------------+
+| OWN BEFORE WAITING               | RESUME, DO NOT REPLAY            | STILL OPEN                         |
+| copied DLL/export binding        | original API frame retained     | native-click macro callbacks      |
+| copied string/word arguments     | callback Sleep / ReadFile waits | Win16-to-PE callback context       |
+| bounded, monotonic DLL staging   | release only after typed return | nonlocal callback unwind cleanup  |
++----------------------------------+----------------------------------+------------------------------------+
+| NEXT: remaining callback paths  | THEN: render-time font loading  | GATES: memory + input/audio       |
++----------------------------------------------------------------------------------------------------------+
+| LAZY DEFAULTS REMAIN OFF         | ISOLATED BRANCH / NOT DEPLOYED   | REVIEW GOAL REMAINS OPEN           |
++----------------------------------------------------------------------------------------------------------+
+```
+
+Public 32-bit WinHelpA/W registered-routine calls now own a staged DLL binding and parsed arguments. An explicit callback-return continuation preserves the original API frame until completion; retries enter before document reload or Unicode normalization, so they do not repeat registration, navigation, or callback side effects. The callback executes under ordinary scheduling rather than the former 64-round nested loop. The public operation does not borrow a registry record or a temporary W-string across a wait.
+
+DLL preparation reads at most 4KiB per operation, owns its file handle and byte buffer, and leaves shared PE staging untouched until synchronous publication. Loaded-DLL cache hits, foreign pending-read preservation, exact owner cancellation, malformed bytes, and read faults have dedicated coverage. Executing callback arguments are not freed by a replacement request; process teardown releases them only after producers have stopped. Direct host/debug calls without a real API frame retain their separate synchronous path.
+
+This does **not** complete native-click or Win16 macro callback support. Those require preserving an interrupted CPU context and its host-side wait deadlines. Nonlocal guest exception/longjmp abandonment also lacks a verified callback-unwind cleanup hook. Default lazy hydration/range writes remain off; render-time fonts and memory/input/audio acceptance remain open. Fable's earlier retry and overlay work is not evidence that these callback cases are covered.
+
+Validation: source 306 canonical/compatibility builds pass (1,059,862 / 1,060,315 bytes), unchanged layout `b00c9d60346fdb5a`, 237 imports, 233 nonoverlapping segments, and 928 registered tests. All eight primary compiled A/W macro cases pass: successful and faulting callback reads take 408 slices, 130 Sleep calls and six IO parks; DLL failure and pending cancellation do not execute the callback. Tests verify exactly-once side effects, original document loaded once, retained string/word arguments, exact read bytes, final EAX and 20-byte stdcall cleanup, and released operation/handle ownership. Nested A-to-W and W-to-A cases also pass: each takes 816 slices, 260 Sleep calls and 12 IO parks, observes two distinct jobs, and preserves outer arguments through inner document/registry replacement. Both callbacks finish once and leave no owned jobs. The resolver and prior help regressions also pass. Nonlocal unwinding remains unverified.
+
+The final-source Chrome Worker matrix passes with normal browser/server cleanup and exit 0: Notepad/Calculator parity, both Rodent render/input checks, Winamp with three real Workers, and COM success/failed-fetch recovery. The real AoEHlp.dll macro regression passes all six checks and Pipe Dream's four Help checks pass against this build. No performance improvement is claimed.
+
+### Prior increment — deferred native help navigation
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

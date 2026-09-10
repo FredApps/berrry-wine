@@ -2031,76 +2031,365 @@
   ;; Deliberately lazy: a help file registers every routine it might ever use
   ;; the moment it opens, and loading five DLLs to read one topic would be
   ;; wrong. Returns the guest entry address, or 0.
+  ;; Owned resolver frames: next,owner,dll,export,handle,size,bytes,position,
+  ;; count,cached entry,ready. Registry strings are copied before the first read.
+  (global $help_routine_pending (mut i32) (i32.const 0))
+  (func $help_routine_frame (param $owner i32) (result i32)
+    (local $p i32)
+    (local.set $p (global.get $help_routine_pending))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $p)))
+      (if (i32.eq (call $gl32 (i32.add (local.get $p) (i32.const 4))) (local.get $owner))
+        (then (return (local.get $p))))
+      (local.set $p (call $gl32 (local.get $p))) (br $scan))) (i32.const 0))
+
+  (func $help_routine_pending_handle (param $owner i32) (result i32)
+    (local $frame i32) (local $handle i32)
+    (local.set $frame (call $help_routine_frame (local.get $owner)))
+    (if (i32.eqz (local.get $frame)) (then (return (i32.const 0))))
+    (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 16))))
+    (select (local.get $handle) (i32.const 0) (i32.ne (local.get $handle) (i32.const -1))))
+
+  (func $help_routine_cancel_vfs (param $owner i32)
+    (local $p i32) (local $prev i32) (local $value i32) (local $slot i32)
+    (local.set $p (global.get $help_routine_pending))
+    (block $found (loop $scan
+      (if (i32.eqz (local.get $p)) (then (return)))
+      (br_if $found (i32.eq (call $gl32 (i32.add (local.get $p) (i32.const 4))) (local.get $owner)))
+      (local.set $prev (local.get $p)) (local.set $p (call $gl32 (local.get $p))) (br $scan)))
+    (if (local.get $prev) (then (call $gs32 (local.get $prev) (call $gl32 (local.get $p))))
+      (else (global.set $help_routine_pending (call $gl32 (local.get $p)))))
+    (local.set $value (call $gl32 (i32.add (local.get $p) (i32.const 16))))
+    (if (i32.ne (local.get $value) (i32.const -1))
+      (then (drop (call $host_fs_close_handle (local.get $value)))))
+    (local.set $slot (i32.const 8))
+    (loop $strings
+      (local.set $value (call $gl32 (i32.add (local.get $p) (local.get $slot))))
+      (if (local.get $value) (then (call $heap_free (local.get $value))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 4)))
+      (br_if $strings (i32.eq (local.get $slot) (i32.const 12))))
+    (local.set $value (call $gl32 (i32.add (local.get $p) (i32.const 24))))
+    (if (local.get $value) (then (call $heap_free (local.get $value))))
+    (call $heap_free (local.get $p)))
+
+  ;; -1 pending, 0 terminal error, positive ready frame. A retry only needs the
+  ;; owner: record may be zero or invalid after document/binding replacement.
+  (func $help_routine_prepare_vfs (param $record i32) (param $owner i32) (result i32)
+    (local $frame i32) (local $w i32) (local $name i32) (local $len i32)
+    (local $copy i32) (local $handle i32) (local $size i32) (local $bytes i32)
+    (local $index i32) (local $pos i32) (local $count i32) (local $ok i32)
+    (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $exe_size_of_image))
+      (then (call $help_routine_cancel_vfs (local.get $owner)) (return (i32.const 0))))
+    (local.set $frame (call $help_routine_frame (local.get $owner)))
+    (block $failed
+      (if (i32.eqz (local.get $frame))
+        (then
+          (br_if $failed (i32.eqz (local.get $record)))
+          (local.set $frame (call $heap_alloc (i32.const 44)))
+          (br_if $failed (i32.eqz (local.get $frame)))
+          (local.set $w (call $g2w (local.get $frame)))
+          (memory.fill (local.get $w) (i32.const 0) (i32.const 44))
+          (i32.store (local.get $w) (global.get $help_routine_pending))
+          (i32.store offset=4 (local.get $w) (local.get $owner))
+          (i32.store offset=16 (local.get $w) (i32.const -1))
+          (global.set $help_routine_pending (local.get $frame))
+          (local.set $name (i32.load offset=4 (local.get $record)))
+          (br_if $failed (i32.eqz (local.get $name)))
+          (local.set $len (call $help_cstring_length_memory (call $g2w (local.get $name)) (i32.const 1024)))
+          (br_if $failed (i32.le_s (local.get $len) (i32.const 0)))
+          (local.set $copy (call $help_dup_cstring (call $g2w (local.get $name)) (local.get $len)))
+          (br_if $failed (i32.eqz (local.get $copy)))
+          (i32.store offset=8 (local.get $w) (local.get $copy))
+          (local.set $name (i32.load offset=8 (local.get $record)))
+          (br_if $failed (i32.eqz (local.get $name)))
+          (local.set $len (call $help_cstring_length_memory (call $g2w (local.get $name)) (i32.const 256)))
+          (br_if $failed (i32.le_s (local.get $len) (i32.const 0)))
+          (local.set $copy (call $help_dup_cstring (call $g2w (local.get $name)) (local.get $len)))
+          (br_if $failed (i32.eqz (local.get $copy)))
+          (i32.store offset=12 (local.get $w) (local.get $copy))
+          (local.set $index (call $find_loaded_dll (i32.load offset=8 (local.get $w))))
+          (if (i32.ge_s (local.get $index) (i32.const 0))
+            (then
+              (i32.store offset=36 (local.get $w) (call $resolve_name_export
+                (local.get $index) (call $g2w (local.get $copy))))
+              (i32.store offset=40 (local.get $w) (i32.const 1))
+              (return (local.get $frame))))
+          (local.set $handle (call $host_fs_create_file
+            (call $g2w (i32.load offset=8 (local.get $w))) (i32.const 0x80000000)
+            (i32.const 3) (i32.const 0x80) (i32.const 0)))
+          (br_if $failed (i32.eq (local.get $handle) (i32.const -1)))
+          (i32.store offset=16 (local.get $w) (local.get $handle))
+          (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+          (br_if $failed (i32.or (i32.eqz (local.get $size))
+            (i32.gt_u (local.get $size) (global.get $PE_STAGING_SIZE))))
+          (local.set $bytes (call $heap_alloc (local.get $size)))
+          (br_if $failed (i32.eqz (local.get $bytes)))
+          (i32.store offset=20 (local.get $w) (local.get $size))
+          (i32.store offset=24 (local.get $w) (local.get $bytes))))
+      (local.set $w (call $g2w (local.get $frame)))
+      (if (i32.load offset=40 (local.get $w)) (then (return (local.get $frame))))
+      (local.set $pos (i32.load offset=28 (local.get $w)))
+      (local.set $size (i32.load offset=20 (local.get $w)))
+      (block $read_done (loop $read
+        (br_if $read_done (i32.ge_u (local.get $pos) (local.get $size)))
+        (local.set $count (i32.sub (local.get $size) (local.get $pos)))
+        (if (i32.gt_u (local.get $count) (i32.const 4096)) (then (local.set $count (i32.const 4096))))
+        (i32.store offset=32 (local.get $w) (i32.const 0))
+        (local.set $ok (call $host_fs_read_file_preserve_pending
+          (i32.load offset=16 (local.get $w))
+          (i32.add (i32.load offset=24 (local.get $w)) (local.get $pos))
+          (local.get $count) (i32.add (local.get $frame) (i32.const 32))))
+        (if (i32.eq (local.get $ok) (i32.const -1)) (then (return (i32.const -1))))
+        (br_if $failed (i32.or (i32.eqz (local.get $ok))
+          (i32.ne (i32.load offset=32 (local.get $w)) (local.get $count))))
+        (local.set $pos (i32.add (local.get $pos) (local.get $count)))
+        (i32.store offset=28 (local.get $w) (local.get $pos)) (br $read)))
+      (drop (call $host_fs_close_handle (i32.load offset=16 (local.get $w))))
+      (i32.store offset=16 (local.get $w) (i32.const -1))
+      (i32.store offset=40 (local.get $w) (i32.const 1))
+      (return (local.get $frame)))
+    (call $help_routine_cancel_vfs (local.get $owner)) (i32.const 0))
+
+  ;; No VFS operations or registry mutation in this publication step. A sibling
+  ;; may have loaded the DLL while we were fetching; prefer that loaded image.
+  (func $help_routine_commit_vfs (param $frame i32) (result i32)
+    (local $w i32) (local $owner i32) (local $index i32) (local $entry i32)
+    (local $bytes i32) (local $size i32) (local $pe i32)
+    (if (i32.eqz (local.get $frame)) (then (return (i32.const 0))))
+    (local.set $w (call $g2w (local.get $frame)))
+    (local.set $owner (i32.load offset=4 (local.get $w)))
+    (block $done
+      (br_if $done (i32.eqz (i32.load offset=40 (local.get $w))))
+      (local.set $index (call $find_loaded_dll (i32.load offset=8 (local.get $w))))
+      (if (i32.lt_s (local.get $index) (i32.const 0))
+        (then
+          (local.set $size (i32.load offset=20 (local.get $w)))
+          (br_if $done (i32.lt_u (local.get $size) (i32.const 248)))
+          (local.set $bytes (call $g2w (i32.load offset=24 (local.get $w))))
+          (br_if $done (i32.ne (i32.load16_u (local.get $bytes)) (i32.const 0x5A4D)))
+          (local.set $pe (i32.load offset=60 (local.get $bytes)))
+          (br_if $done (i32.gt_u (local.get $pe) (i32.sub (local.get $size) (i32.const 248))))
+          (br_if $done (i32.ne (i32.load (i32.add (local.get $bytes) (local.get $pe))) (i32.const 0x4550)))
+          (memory.copy (global.get $PE_STAGING) (local.get $bytes) (local.get $size))
+          (drop (call $load_dll (local.get $size) (call $next_dll_addr)))
+          (local.set $index (call $find_loaded_dll (i32.load offset=8 (local.get $w))))))
+      (br_if $done (i32.lt_s (local.get $index) (i32.const 0)))
+      (local.set $entry (call $resolve_name_export (local.get $index)
+        (call $g2w (i32.load offset=12 (local.get $w))))))
+    (call $help_routine_cancel_vfs (local.get $owner))
+    (local.get $entry))
+
   (func $help_routine_resolve (param $record i32) (result i32)
-    (local $dll_ga i32) (local $fn_ga i32) (local $dll_index i32)
-    (local $handle i32) (local $size i32) (local $bytes_ga i32) (local $read_ga i32) (local $read_wa i32)
-    (local $entry i32) (local $load_addr i32)
-    ;; A help DLL is x86 code: it needs a loaded process to run inside, with a
-    ;; guest stack and an image base. Without one there is nothing to call
-    ;; into, and pretending otherwise would jump the interpreter at an address
-    ;; that means nothing.
+    (local $owner i32) (local $ready i32) (local $entry i32)
     (if (i32.eqz (global.get $exe_size_of_image)) (then (return (i32.const 0))))
     (if (i32.load offset=16 (local.get $record))
       (then (return (i32.load offset=16 (local.get $record)))))
-    (local.set $dll_ga (i32.load offset=4 (local.get $record)))
-    ;; Borrowed from the routine registry. Only document release/replacement
-    ;; owns this string; a failed lookup must leave later retries intact.
-    (if (i32.eqz (local.get $dll_ga)) (then (return (i32.const 0))))
-    (local.set $dll_index (call $find_loaded_dll (local.get $dll_ga)))
-    (if (i32.lt_s (local.get $dll_index) (i32.const 0))
+    (local.set $owner (call $heap_alloc (i32.const 4)))
+    (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
+    (local.set $ready (call $help_routine_prepare_vfs (local.get $record) (local.get $owner)))
+    (if (i32.gt_s (local.get $ready) (i32.const 0))
       (then
-        ;; The VFS boundary takes the path as a WASM address and the read
-        ;; buffer as a guest one, exactly as the .cnt loader does.
-        (local.set $handle (call $host_fs_create_file
-          (call $g2w (local.get $dll_ga)) (i32.const 0x80000000)
-          (i32.const 3) (i32.const 0x80) (i32.const 0)))
-        (if (i32.eq (local.get $handle) (i32.const -1))
-          (then
-            (return (i32.const 0))))
-        (local.set $size (call $host_fs_get_file_size (local.get $handle)))
-        (if (i32.or
-              (i32.or (i32.eq (local.get $size) (i32.const -1))
-                      (i32.eqz (local.get $size)))
-              (i32.gt_u (local.get $size) (global.get $PE_STAGING_SIZE)))
-          (then
-            (drop (call $host_fs_close_handle (local.get $handle)))
-            (return (i32.const 0))))
-        (local.set $bytes_ga (call $heap_alloc (local.get $size)))
-        (local.set $read_ga (call $heap_alloc (i32.const 4)))
-        (if (i32.or (i32.eqz (local.get $bytes_ga)) (i32.eqz (local.get $read_ga)))
-          (then
-            (drop (call $host_fs_close_handle (local.get $handle)))
-            (if (local.get $bytes_ga) (then (call $heap_free (local.get $bytes_ga))))
-            (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
-            (return (i32.const 0))))
-        (local.set $read_wa (call $g2w (local.get $read_ga))) (i32.store (local.get $read_wa) (i32.const 0))
-        (local.set $entry (call $host_fs_read_file
-          (local.get $handle) (local.get $bytes_ga) (local.get $size)
-          (local.get $read_ga)))
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (if (i32.or (i32.eqz (local.get $entry))
-              (i32.ne (i32.load (local.get $read_wa)) (local.get $size)))
-          (then
-            (call $heap_free (local.get $read_ga))
-            (call $heap_free (local.get $bytes_ga))
-            (return (i32.const 0))))
-        ;; The loader reads the image from the staging buffer, exactly as it
-        ;; does for a LoadLibraryA the host drives.
-        (memory.copy (global.get $PE_STAGING) (call $g2w (local.get $bytes_ga))
-          (local.get $size))
-        (call $heap_free (local.get $read_ga))
-        (call $heap_free (local.get $bytes_ga))
-        (local.set $load_addr (call $next_dll_addr))
-        (drop (call $load_dll (local.get $size) (local.get $load_addr)))
-        (local.set $dll_index (call $find_loaded_dll (local.get $dll_ga)))
-        (if (i32.lt_s (local.get $dll_index) (i32.const 0))
-          (then (return (i32.const 0))))))
-    (local.set $fn_ga (i32.load offset=8 (local.get $record)))
-    (if (i32.eqz (local.get $fn_ga)) (then (return (i32.const 0))))
-    (local.set $entry (call $resolve_name_export
-      (local.get $dll_index) (call $g2w (local.get $fn_ga))))
-    (i32.store offset=16 (local.get $record) (local.get $entry))
+        (local.set $entry (call $help_routine_commit_vfs (local.get $ready)))
+        ;; This compatibility call never parks; its registry record is still
+        ;; valid. Durable callers instead own a copied binding and skip caching.
+        (i32.store offset=16 (local.get $record) (local.get $entry)))
+      (else (call $help_routine_cancel_vfs (local.get $owner))))
+    (call $heap_free (local.get $owner))
     (local.get $entry))
+  ;; Public WinHelpA/W macro calls own a real guest-return continuation. Each
+  ;; 80-byte job stores next/state, original ESP/return/thunk, five original
+  ;; arguments, owned parsed arguments/count, resolver frame/result, and the
+  ;; callee-saved GPRs. State1 stages IO,2 executes guest code,3 awaits API retry.
+  ;; Native-click and Win16 callers deliberately retain their separate path.
+  (global $help_macro_api_jobs (mut i32) (i32.const 0))
+  (global $help_macro_api_context (mut i32) (i32.const 0))
+
+  (func $help_macro_api_active (result i32)
+    (i32.ne (global.get $help_macro_api_context) (i32.const 0)))
+
+  (func $help_macro_api_free_args (param $args i32)
+    (local $i i32) (local $p i32)
+    (if (i32.eqz (local.get $args)) (then (return)))
+    (block $done (loop $free
+      (br_if $done (i32.ge_u (local.get $i) (global.get $HELP_MAX_ROUTINE_ARGS)))
+      (local.set $p (call $gl32 (i32.add (local.get $args)
+        (i32.add (i32.mul (local.get $i) (i32.const 8)) (i32.const 4)))))
+      (if (local.get $p) (then (call $heap_free (local.get $p))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $free)))
+    (call $heap_free (local.get $args)))
+
+  (func $help_macro_api_drop (param $job i32)
+    (local $p i32) (local $prev i32)
+    ;; Executing guest code still borrows its arguments. Only its typed return
+    ;; may transition it to disposable state; debug replacement cannot free it.
+    (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 4))) (i32.const 2))
+      (then (return)))
+    (local.set $p (global.get $help_macro_api_jobs))
+    (block $found (loop $scan
+      (if (i32.eqz (local.get $p)) (then (return)))
+      (br_if $found (i32.eq (local.get $p) (local.get $job)))
+      (local.set $prev (local.get $p))
+      (local.set $p (call $gl32 (local.get $p))) (br $scan)))
+    (if (local.get $prev)
+      (then (call $gs32 (local.get $prev) (call $gl32 (local.get $job))))
+      (else (global.set $help_macro_api_jobs (call $gl32 (local.get $job)))))
+    (call $help_routine_cancel_vfs (local.get $job))
+    (call $help_macro_api_free_args (call $gl32 (i32.add (local.get $job) (i32.const 40))))
+    (call $heap_free (local.get $job)))
+
+  (func $help_macro_api_leave
+    (if (global.get $help_macro_api_context)
+      (then (call $heap_free (global.get $help_macro_api_context))))
+    (global.set $help_macro_api_context (i32.const 0)))
+
+  ;; Process teardown only: the host has joined every producer and guarantees
+  ;; these callbacks will never execute again. Document close must NOT use it.
+  (func (export "help_macro_api_cancel_all")
+    (local $job i32)
+    (call $help_macro_api_leave)
+    (block $done (loop $cancel
+      (local.set $job (global.get $help_macro_api_jobs))
+      (br_if $done (i32.eqz (local.get $job)))
+      (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 3))
+      (call $help_macro_api_drop (local.get $job))
+      (br $cancel))))
+
+  (func $help_macro_api_advance (param $job i32) (param $record i32) (result i32)
+    (local $ready i32) (local $entry i32) (local $args i32) (local $i i32)
+    (local.set $ready (call $help_routine_prepare_vfs (local.get $record) (local.get $job)))
+    (if (i32.eq (local.get $ready) (i32.const -1)) (then (return (i32.const -1))))
+    (if (i32.eqz (local.get $ready))
+      (then
+        (call $help_macro_api_drop (local.get $job))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (call $gs32 (i32.add (local.get $job) (i32.const 48)) (local.get $ready))
+    (local.set $entry (call $help_routine_commit_vfs (local.get $ready)))
+    (call $gs32 (i32.add (local.get $job) (i32.const 48)) (i32.const 0))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (call $help_macro_api_drop (local.get $job))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 2))
+    ;; RET n leaves the typed frame at ESP; the original API frame above it
+    ;; remains untouched until the retried WinHelp wrapper returns normally.
+    (global.set $esp (i32.sub (call $gl32 (i32.add (local.get $job) (i32.const 8))) (i32.const 8)))
+    (call $gs32 (global.get $esp) (i32.const 0x31504c48)) ;; HLP1
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $job))
+    (local.set $args (call $gl32 (i32.add (local.get $job) (i32.const 40))))
+    (local.set $i (call $gl32 (i32.add (local.get $job) (i32.const 44))))
+    (block $done (loop $push
+      (br_if $done (i32.eqz (local.get $i)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+      (call $gs32 (global.get $esp)
+        (call $gl32 (i32.add (local.get $args) (i32.mul (local.get $i) (i32.const 8)))))
+      (br $push)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $entry))
+    (global.set $steps (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 1))
+    (i32.const -2))
+
+  ;; Own args on every path; the parser must not run its legacy cleanup after
+  ;; handing them here. Resolver preparation immediately copies the binding.
+  (func $help_macro_api_begin (param $record i32) (param $args i32) (param $count i32) (result i32)
+    (local $job i32)
+    (local.set $job (global.get $help_macro_api_context))
+    (global.set $help_macro_api_context (i32.const 0))
+    (if (i32.eqz (local.get $job))
+      (then (call $help_macro_api_free_args (local.get $args)) (return (i32.const 0))))
+    (call $gs32 (local.get $job) (global.get $help_macro_api_jobs))
+    (global.set $help_macro_api_jobs (local.get $job))
+    (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $job) (i32.const 40)) (local.get $args))
+    (call $gs32 (i32.add (local.get $job) (i32.const 44)) (local.get $count))
+    (call $help_macro_api_advance (local.get $job) (local.get $record)))
+
+  (func $help_macro_api_enter (param $caller i32) (param $path i32)
+      (param $command i32) (param $data i32) (param $width i32) (result i32)
+    (local $job i32) (local $next i32) (local $match i32) (local $state i32) (local $result i32)
+    (call $help_macro_api_leave)
+    (if (global.get $code16) (then (return (i32.const -3))))
+    ;; Host debug helpers call the dispatcher without constructing an API
+    ;; frame. They cannot retain/redirect that borrowed guest stack.
+    (if (i32.or
+          (i32.or (i32.lt_u (global.get $current_thunk_eip) (global.get $thunk_guest_base))
+                  (i32.ge_u (global.get $current_thunk_eip) (global.get $thunk_guest_end)))
+          (i32.or
+            (i32.or (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 4))) (local.get $caller))
+                    (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 8))) (local.get $path)))
+            (i32.or (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 12))) (local.get $command))
+                    (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 16))) (local.get $data)))))
+      (then (return (i32.const -3))))
+    (local.set $job (global.get $help_macro_api_jobs))
+    (block $done (loop $find
+      (br_if $done (i32.eqz (local.get $job)))
+      (local.set $next (call $gl32 (local.get $job)))
+      (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 8))) (global.get $esp))
+        (then
+          (local.set $state (call $gl32 (i32.add (local.get $job) (i32.const 4))))
+          (local.set $match (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 12))) (call $gl32 (global.get $esp)))
+            (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 20))) (local.get $caller))
+            (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 24))) (local.get $path))
+            (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 28))) (local.get $command))
+            (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 32))) (local.get $data))
+              (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (local.get $width))))))))
+          (if (local.get $match)
+            (then
+              (if (i32.eq (local.get $state) (i32.const 1))
+                (then (return (call $help_macro_api_advance (local.get $job) (i32.const 0)))))
+              (if (i32.eq (local.get $state) (i32.const 2)) (then (return (i32.const -2))))
+              (local.set $result (call $gl32 (i32.add (local.get $job) (i32.const 52))))
+              (call $help_macro_api_drop (local.get $job))
+              (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+              (return (local.get $result))))
+          (if (i32.eq (local.get $state) (i32.const 2)) (then (return (i32.const 0))))
+          (call $help_macro_api_drop (local.get $job))))
+      (local.set $job (local.get $next)) (br $find)))
+    (if (i32.ne (local.get $command) (global.get $HELP_COMMAND_MACRO))
+      (then (return (i32.const -3))))
+    (local.set $job (call $heap_alloc (i32.const 80)))
+    (if (i32.eqz (local.get $job))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $job)) (i32.const 0) (i32.const 80))
+    (call $gs32 (i32.add (local.get $job) (i32.const 8)) (global.get $esp))
+    (call $gs32 (i32.add (local.get $job) (i32.const 12)) (call $gl32 (global.get $esp)))
+    (call $gs32 (i32.add (local.get $job) (i32.const 16)) (global.get $current_thunk_eip))
+    (call $gs32 (i32.add (local.get $job) (i32.const 20)) (local.get $caller))
+    (call $gs32 (i32.add (local.get $job) (i32.const 24)) (local.get $path))
+    (call $gs32 (i32.add (local.get $job) (i32.const 28)) (local.get $command))
+    (call $gs32 (i32.add (local.get $job) (i32.const 32)) (local.get $data))
+    (call $gs32 (i32.add (local.get $job) (i32.const 36)) (local.get $width))
+    (call $gs32 (i32.add (local.get $job) (i32.const 56)) (global.get $ebx))
+    (call $gs32 (i32.add (local.get $job) (i32.const 60)) (global.get $esi))
+    (call $gs32 (i32.add (local.get $job) (i32.const 64)) (global.get $edi))
+    (call $gs32 (i32.add (local.get $job) (i32.const 68)) (global.get $ebp))
+    (global.set $help_macro_api_context (local.get $job))
+    (i32.const -3))
+
+  (func $help_macro_api_return
+    (local $job i32)
+    (local.set $job (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+    (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 3))
+    (call $gs32 (i32.add (local.get $job) (i32.const 52)) (i32.const 1))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+    (global.set $ebx (call $gl32 (i32.add (local.get $job) (i32.const 56))))
+    (global.set $esi (call $gl32 (i32.add (local.get $job) (i32.const 60))))
+    (global.set $edi (call $gl32 (i32.add (local.get $job) (i32.const 64))))
+    (global.set $ebp (call $gl32 (i32.add (local.get $job) (i32.const 68))))
+    (global.set $esp (call $gl32 (i32.add (local.get $job) (i32.const 8))))
+    (global.set $eip (call $gl32 (i32.add (local.get $job) (i32.const 16))))
+    (global.set $steps (i32.const 0))
+    (global.set $handler_set_eip (i32.const 1)))
 
   ;; Call a registered routine. The format string decides how each macro
   ;; argument is passed: 'S'/'s' a C string, 'U'/'u'/'I'/'i' a machine word.
@@ -2123,17 +2412,11 @@
     (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
     (local $old_handler_set_eip i32) (local $old_steps i32)
     (local $old_yield_reason i32) (local $old_yield_flag i32) (local $rounds i32)
+    (local $resolve_failed i32)
     (local.set $record (call $help_routine_at
       (call $help_find_routine (local.get $name_hash))))
     (if (i32.eqz (local.get $record))
       (then
-        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
-        (return (i32.const 0))))
-    (local.set $entry (call $help_routine_resolve (local.get $record)))
-    (if (i32.eqz (local.get $entry))
-      (then
-        ;; The file names a DLL or an export we cannot produce. That is a
-        ;; missing capability, not malformed macro text.
         (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
         (return (i32.const 0))))
     (local.set $fmt (call $g2w (i32.load offset=12 (local.get $record))))
@@ -2210,6 +2493,18 @@
         (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
         (br $skip)))
       (br $arg)))
+    (if (i32.and (local.get $ok) (call $help_macro_api_active))
+      (then
+        ;; The public operation consumes the copied arguments, including on
+        ;; failure. Its callback returns through a typed continuation, never
+        ;; through the bounded synchronous loop used by legacy native callers.
+        (return (call $help_macro_api_begin
+          (local.get $record) (local.get $args) (local.get $count)))))
+    (if (local.get $ok)
+      (then
+        (local.set $entry (call $help_routine_resolve (local.get $record)))
+        (if (i32.eqz (local.get $entry))
+          (then (local.set $ok (i32.const 0)) (local.set $resolve_failed (i32.const 1))))))
     (if (local.get $ok)
       (then
         (local.set $old_eip (global.get $eip))
@@ -2275,7 +2570,9 @@
     (call $heap_free (local.get $args))
     (if (i32.eqz (local.get $ok))
       (then
-        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (global.set $help_session_status
+          (select (global.get $HELP_DISPATCH_UNSUPPORTED)
+            (global.get $HELP_DISPATCH_BAD_DATA) (local.get $resolve_failed)))
         (return (i32.const 0))))
     (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
     (i32.const 1))

@@ -6765,6 +6765,8 @@
     (local $accepted i32)
     (local.set $accepted (call $help_dispatch_api_a
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (if (i32.eq (local.get $accepted) (i32.const -2))
+      (then (global.set $handler_set_eip (i32.const 1)) (return)))
     (if (i32.eq (local.get $accepted) (i32.const -1))
       (then (global.set $eax (i32.const 0)) (call $io_block (i32.const 0)) (return)))
     (call $help_present_dispatch (local.get $accepted) (local.get $arg2))
@@ -11748,6 +11750,8 @@ HookEx — no next hook in chain, return 0
     (local $accepted i32)
     (local.set $accepted (call $help_dispatch_api_w
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (if (i32.eq (local.get $accepted) (i32.const -2))
+      (then (global.set $handler_set_eip (i32.const 1)) (return)))
     (if (i32.eq (local.get $accepted) (i32.const -1))
       (then (global.set $eax (i32.const 0)) (call $io_block (i32.const 0)) (return)))
     (call $help_present_dispatch (local.get $accepted) (local.get $arg2))

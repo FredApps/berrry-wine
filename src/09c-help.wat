@@ -63,7 +63,38 @@
       (i32.add (local.get $length) (i32.const 1))))
     (local.get $copy_ga))
 
+  ;; Public macro continuations resume before either wrapper reloads a document
+  ;; or creates temporary normalized strings. The operation owns parsed inputs.
+  (func $help_dispatch_api_owned
+    (param $caller i32) (param $path_ga i32) (param $command i32)
+    (param $data i32) (param $width i32) (result i32)
+    (local $result i32)
+    (local.set $result (call $help_macro_api_enter (local.get $caller)
+      (local.get $path_ga) (local.get $command) (local.get $data) (local.get $width)))
+    (if (i32.ne (local.get $result) (i32.const -3))
+      (then (call $help_macro_api_leave) (return (local.get $result))))
+    (local.set $result
+      (if (result i32) (i32.eq (local.get $width) (i32.const 1))
+        (then (call $help_dispatch_api_a_impl (local.get $caller) (local.get $path_ga)
+          (local.get $command) (local.get $data)))
+        (else (call $help_dispatch_api_w_impl (local.get $caller) (local.get $path_ga)
+          (local.get $command) (local.get $data)))))
+    (call $help_macro_api_leave)
+    (local.get $result))
+
   (func $help_dispatch_api_a
+    (param $caller i32) (param $path_ga i32) (param $command i32)
+    (param $data i32) (result i32)
+    (call $help_dispatch_api_owned (local.get $caller) (local.get $path_ga)
+      (local.get $command) (local.get $data) (i32.const 1)))
+
+  (func $help_dispatch_api_w
+    (param $caller i32) (param $path_ga i32) (param $command i32)
+    (param $data i32) (result i32)
+    (call $help_dispatch_api_owned (local.get $caller) (local.get $path_ga)
+      (local.get $command) (local.get $data) (i32.const 2)))
+
+  (func $help_dispatch_api_a_impl
     (param $caller i32) (param $path_ga i32) (param $command i32)
     (param $data i32) (result i32)
     (local $path_wa i32) (local $data_wa i32)
@@ -78,7 +109,7 @@
       (local.get $caller) (local.get $path_wa) (local.get $command)
       (local.get $data_wa) (i32.const 0)))
 
-  (func $help_dispatch_api_w
+  (func $help_dispatch_api_w_impl
     (param $caller i32) (param $path_ga i32) (param $command i32)
     (param $data i32) (result i32)
     (local $path_copy_ga i32) (local $data_copy_ga i32)

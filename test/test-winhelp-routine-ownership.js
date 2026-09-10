@@ -25,15 +25,17 @@ const extraWat = String.raw`
 `;
 (async () => {
  let e, mode = 'missing', opens = 0, closes = 0;
+ const fakeRead = (handle, buffer, size, count) => {
+  assert.strictEqual(handle, 100);
+  for (let i = 0; i < size; i++) e.guest_write8(buffer + i, 0);
+  e.guest_write32(count, mode === 'short' ? size - 1 : mode === 'fault' ? 0 : size);
+  return mode === 'fault' ? 0 : 1;
+ };
  const h = await bootRenderHarness({ fonts: 'none', extraWat, extraHostOverrides: {
   fs_create_file: () => { opens++; return mode === 'missing' ? -1 : 100; },
   fs_get_file_size: () => mode === 'empty' ? 0 : mode === 'bad-size' ? -1 : mode === 'oversize' ? 0x7fffffff : 64,
-  fs_read_file: (handle, buffer, size, count) => {
-   assert.strictEqual(handle, 100);
-   for (let i = 0; i < size; i++) e.guest_write8(buffer + i, 0);
-   e.guest_write32(count, mode === 'short' ? size - 1 : mode === 'fault' ? 0 : size);
-   return mode === 'fault' ? 0 : 1;
-  },
+  fs_read_file: fakeRead,
+  fs_read_file_preserve_pending: fakeRead,
   fs_close_handle: () => { closes++; return 1; },
  }});
  e = h.exports;

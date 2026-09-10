@@ -8769,6 +8769,7 @@ if (VERBOSE) {
   }
   // Every pump is awaited above, so no native Help producer remains active.
   instance.exports.help_navigation_cancel?.();
+  instance.exports.help_macro_api_cancel_all?.();
   // The control server would otherwise hold the process open; unref lets a
   // reply resolved in the final batch still flush while the exit path prints.
   if (control) control.close();
