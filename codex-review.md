@@ -2,7 +2,31 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — complete stock-font installation or failure
+### Latest increment — CLI fonts ready before DLL initialization
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| FINALIZE PROCESS FILES               PREPARE + INSTALL FONTS                     RUN GUEST INITIALIZERS    |
++----------------------------------+----------------------------------+------------------------------------+
+| mount base files and DLL files  | five bounded immutable leases    | map DLLs above live heap arenas    |
+| replay overlay / whiteouts      | validate every stock state first | run dependency-ordered DllMain     |
+| restore saves / startup state   | synchronous local publication    | resolve module-relative addresses  |
++----------------------------------+----------------------------------+------------------------------------+
+| FAILURE: nonzero exit + Workers stopped | NEXT: browser launch/cancel gate | LAZY DEFAULTS REMAIN OFF        |
++----------------------------------------------------------------------------------------------------------+
+```
+
+CLI `test/run.js` now mounts DLL files before overlay replay but defers executable DLL loading/initialization until final VFS mounts, overlay hydration, saves and startup state are ready. It invokes `StockFontBootstrap.install` before that loader boundary. The local installer prepares all five leases, checks every stock state before its first publication, uses validated contiguous guest allocations, frees each staging buffer and releases all leases. There are no awaits within publication, and a final freshness/cancellation check prevents success after a last-call or cleanup-time invalidation. Later DLL placement respects the shared heap watermark, so the staging allocation cannot be overwritten by a mapped DLL.
+
+Any failed font preparation/installation rejects this CLI process before DLL initializers or the EXE entry point run. `main().catch` now sets a nonzero exit status as well as stopping Workers; previously rejected work could print an error and still report successful process completion. A later font failure may leave earlier fonts installed in this unstarted memory, which is discarded rather than retried. The local API requires matching executing exports and memory; it is not an asynchronous Worker proxy or host-shadow installer. Browser startup is not wired yet, and general dynamic font preflight/invalidation remains open.
+
+Verification includes six real CLI subprocess cases using generated PE/DLL guest code. A read-only observer checks the actual compiled stock states at the unmodified DLL loader boundary, then real DllMain reads a final mounted sentinel file and emits a marker before the EXE's marker. A real persisted overlay overrides conflicting base bytes before that read. Empty/malformed explicitly mounted fonts and malformed/whiteouted overlay fonts fail with nonzero status before the loader, DllMain or main markers. These tests restore overlay stores through the production APIs, not mocked hydration.
+
+The local installer suite passes preparation/state prechecks, stale and aborted preparation, per-font allocation/native failures, mapped-span rejection, asynchronous proxy rejection, partial-publication cleanup and final-install/free abort cases. Its compiled path loads a real PE and installs all five FONs from zero-cache providers. The nine batch-preparation groups also pass. Bounded CLI startup checks reach Notepad windows in cooperative and `--threads` configurations, Win16 Rodent's window, and Winamp's real DLL initializers and main windows; these are startup checks, not playback, gameplay or latency acceptance.
+
+Canonical/compatibility builds pass with 940 registered tests and unchanged source version 312, sizes 1,065,547 / 1,066,000, 237 imports, 233 nonoverlapping data segments and layout `b00c9d60346fdb5a`. No browser loader/cache tags change because the helper is still unreferenced by browser startup. Browser launch-generation cancellation and executing-Worker publication are next; lazy defaults, installed-tree memory acceptance and low-load input/audio acceptance remain open. Fable's completed bounded-materialization fixes are not reopened by this consumer integration.
+
+### Prior increment — complete stock-font installation or failure
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

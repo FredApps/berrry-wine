@@ -4057,38 +4057,9 @@ async function main() {
     moduleBases['exe'] = { loadAddr: exeLoad, origBase: exeOrig };
     moduleBases[exeBase] = { loadAddr: exeLoad, origBase: exeOrig };
   }
-  if (dlls.length > 0) {
-    mountLoadedDllFiles(ctx.vfs, dlls);
-    const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
-      exeName: path.basename(EXE_PATH),
-      extraArgs: EXTRA_ARGS || '',
-      registerDllResources: (dllConfigs, results) => {
-        const { extractBitmapBytes } = require('../lib/dib');
-        ctx.dllResources = ctx.dllResources || {};
-        for (let i = 0; i < dllConfigs.length && i < results.length; i++) {
-          try {
-            const bitmapBytes = extractBitmapBytes(dllConfigs[i].bytes);
-            const count = Object.keys(bitmapBytes).length;
-            if (count > 0) {
-              ctx.dllResources[results[i].loadAddr] = { bitmapBytes };
-              console.log(`DLL resources: ${dllConfigs[i].name} has ${count} bitmaps`);
-            }
-          } catch (_) {}
-        }
-      },
-    });
-    if (dllResults) {
-      threadManager.setLoadedDlls(dllResults, callDllMain);
-      for (const r of dllResults) {
-        const key = r.name.toLowerCase().replace(/\.[^.]+$/, '');
-        moduleBases[key] = { loadAddr: r.loadAddr, origBase: r.origBase };
-      }
-    }
-    stopped = false;
-  }
-
-  // Resolve any module-relative address specs now that all module bases are known.
-  deferredResolveAddrs();
+  // Base DLL files participate in the same overlay replay as other mounts.
+  // Executable initializers are deferred until final files/state are ready.
+  if (dlls.length > 0) mountLoadedDllFiles(ctx.vfs, dlls);
 
   // Put the exe where a running image expects to find itself; see lib/vfs-seed.js.
   if (ctx.vfs) {
@@ -4422,6 +4393,44 @@ async function main() {
     }
 
   }
+
+  // DLL initializers are guest code: they may read restored files or draw UI.
+  // Prepare the bounded stock set after final mounts/state and before any
+  // initializer runs. Failure rejects this process; never continue a partially
+  // bootstrapped registry or retry it on the same memory.
+  await require('../lib/stock-font-bootstrap').install(ctx.vfs, {
+    exports: instance.exports, memory,
+  });
+  if (dlls.length > 0) {
+    const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
+      exeName: path.basename(EXE_PATH),
+      extraArgs: EXTRA_ARGS || '',
+      registerDllResources: (dllConfigs, results) => {
+        const { extractBitmapBytes } = require('../lib/dib');
+        ctx.dllResources = ctx.dllResources || {};
+        for (let i = 0; i < dllConfigs.length && i < results.length; i++) {
+          try {
+            const bitmapBytes = extractBitmapBytes(dllConfigs[i].bytes);
+            const count = Object.keys(bitmapBytes).length;
+            if (count > 0) {
+              ctx.dllResources[results[i].loadAddr] = { bitmapBytes };
+              console.log(`DLL resources: ${dllConfigs[i].name} has ${count} bitmaps`);
+            }
+          } catch (_) {}
+        }
+      },
+    });
+    if (dllResults) {
+      threadManager.setLoadedDlls(dllResults, callDllMain);
+      for (const r of dllResults) {
+        const key = r.name.toLowerCase().replace(/\.[^.]+$/, '');
+        moduleBases[key] = { loadAddr: r.loadAddr, origBase: r.origBase };
+      }
+    }
+    stopped = false;
+  }
+  // Resolve module-relative specs after the deferred DLL loading finishes.
+  deferredResolveAddrs();
 
   // Return addresses up the EBP chain, as a one-line list. The existing walker
   // in the SEH dump caps EBP at 0x01A00000, which excludes any app whose stack
@@ -9888,7 +9897,8 @@ if (VERBOSE) {
 
 main().catch(e => {
   console.error(e);
-  // Exit code deliberately unchanged; the threads have to be stopped either way
-  // or node waits on them forever and the error above never gets read.
+  process.exitCode = 1;
+  // Rejected launch/runtime work is a failure. Stop Workers as well so Node
+  // cannot wait forever after reporting that failure.
   if (workerThreadHost) workerThreadHost.stop();
 });
