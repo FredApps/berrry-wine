@@ -506,7 +506,7 @@ if (typeof window !== 'undefined') {
 }
 
 class WineAssembly {
-  static SOURCE_VERSION = '300';
+  static SOURCE_VERSION = '301';
   static ASSET_PART_SIZE = 10 * 1024 * 1024;
   // Ceiling on any sleep the drive loop takes while the guest is parked. Every
   // sleep is bounded by a deadline the guest actually named; this bounds the
@@ -2171,7 +2171,7 @@ class WineAssembly {
         module: wasmModule,
         sigs,
         hostImports: this._mainImports.host,
-        workerUrl: 'lib/guest-worker.js?v=33',
+        workerUrl: 'lib/guest-worker.js?v=34',
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         log: msg => { console.log(msg); self.logToUI(msg); },
@@ -3869,14 +3869,19 @@ class WineAssembly {
   // non-preemptible (including a native guest API), so use small measured
   // quanta and check elapsed host time between them. A guest yield/debug halt
   // must return to the existing host state machine, never be resumed here.
-  _runCooperativeSlice(maxBlocks) {
+  _runCooperativeSlice(maxBlocks, turnDeadline) {
     const ex = this.instance.exports;
     const now = () => this._audioSchedulerNow();
     const start = now();
     let blocks = 0;
-    let remaining = Math.max(1, maxBlocks | 0);
+    let remaining = Math.max(0, maxBlocks | 0);
+    const deadline = this._frozen ? Infinity
+      : (Number.isFinite(turnDeadline) ? turnDeadline : start + 8);
     let hitDeadline = false;
     do {
+      // run(0) finishes an already-entered block; never replace it with a new
+      // block or suppress this completion because a host deadline expired.
+      if (remaining > 0 && now() >= deadline) { hitDeadline = true; break; }
       const quantum = this._frozen ? remaining : Math.min(remaining,
         Math.max(1, this._cooperativeQuantumBlocks || 128));
       const before = now();
@@ -3894,7 +3899,7 @@ class WineAssembly {
           ex.get_last_run_halt() !== 1 ||
           (ex.get_yield_reason && ex.get_yield_reason()) ||
           (ex.get_eip && !ex.get_eip())) break;
-      if (!this._frozen && now() - start >= 8) {
+      if (now() >= deadline) {
         hitDeadline = true;
         break;
       }
@@ -3931,17 +3936,35 @@ class WineAssembly {
       // Read only at the tail, where it decides whether the next slice is
       // posted immediately or slept for.
       let mainParked = false;
+      const turnNow = () => self._audioSchedulerNow();
+      const turnDeadline = self._frozen ? Infinity : turnNow() + 8;
       try {
         // Cooperative apps run on the browser's main thread. Respect the
         // smaller compatibility policies selected by browser-shell so a hot
         // guest loop cannot hold input and repaint hostage for a full 1k
         // slice. The guest-Worker path keeps its separate 1k floor above.
         const activeStepsPerSlice = Math.max(1, (self.stepsPerSlice | 0) || stepsPerSlice);
+        // A wake deferred at last turn's deadline must finish before the
+        // signaling main frame resumes and can tear down its shared resources.
+        if (!self._frozen && self.threadManager && self.threadManager._cooperativeWakeTargets
+            && self.threadManager._cooperativeWakeTargets.size) {
+          const wake = await self.threadManager.drainCooperativeWakes({
+            deadline: turnDeadline, now: turnNow,
+            serviceLoadLibraries: () => self.handleCooperativeThreadLoadLibraries(),
+          });
+          if (perf && wake) perf.countBlocks(wake.blocks || 0);
+          if ((wake && wake.pending) || turnNow() >= turnDeadline) {
+            if (self.running) self._scheduleStep(step, 0);
+            return;
+          }
+        }
         self._beginGuestTickBatch();
         // Check if main thread is waiting
         if (self.threadManager) await self.threadManager.resolveMainThreadSend();
         const mainThreadWaiting = self.threadManager &&
-          (self._isMainExecutionSuspended() || self.threadManager.checkMainYield());
+          ((!self._frozen && self._cooperativeWorkersDue &&
+            (self.threadManager.hasActiveThreads() || self.threadManager._pendingThreads.length)) ||
+            self._isMainExecutionSuspended() || self.threadManager.checkMainYield());
         if (mainThreadWaiting) {
           mainParked = true;
           // Main still waiting — just run worker threads.
@@ -3978,7 +4001,7 @@ class WineAssembly {
           const pageProfile = (typeof window !== 'undefined' && window.__aoeProfile) || null;
           const pageProfileStart = pageProfile && typeof performance !== 'undefined' ? performance.now() : 0;
           const perfMainStart = perf ? performance.now() : 0;
-          const mainStats = self._runCooperativeSlice(activeStepsPerSlice);
+          const mainStats = self._runCooperativeSlice(activeStepsPerSlice, turnDeadline);
           if (perf) {
             perf.countBlocks(mainStats.blocks);
             perf.markThrottled(mainStats.hitDeadline);
@@ -4150,10 +4173,17 @@ class WineAssembly {
         }
         // Spawn and run worker threads
         if (self.threadManager) {
-          if (self.threadManager._pendingThreads.length) {
+          if (self.threadManager._pendingThreads.length && (self._frozen || turnNow() < turnDeadline)) {
             await self.threadManager.spawnPending();
           }
+          if (!self._frozen && self.threadManager._pendingThreads.length && turnNow() >= turnDeadline) {
+            self._cooperativeWorkersDue = true;
+          }
           if (self.threadManager.hasActiveThreads()) {
+            // An indivisible main call may spend the whole turn. Give workers
+            // first opportunity next turn rather than starving them repeatedly.
+            const workersExpired = !self._frozen && turnNow() >= turnDeadline;
+            self._cooperativeWorkersDue = workersExpired;
             const windowCount = self.renderer && self.renderer.windows ? Object.keys(self.renderer.windows).length : 0;
             const now = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now();
             const recentInputWake = self.renderer && self.renderer._recentMessageWakeAt &&
@@ -4169,6 +4199,8 @@ class WineAssembly {
               const wakeStats = await self.threadManager.drainCooperativeWakes({
                 maxTotalSteps: recentInputWake ? (64 * 1024 * 1024) : (2 * 1024 * 1024),
                 serviceLoadLibraries: () => self.handleCooperativeThreadLoadLibraries(),
+                deadline: turnDeadline, now: turnNow,
+                frozen: self._frozen,
               });
               if (perf && wakeStats) perf.countBlocks(wakeStats.blocks || 0);
             }
@@ -4199,7 +4231,8 @@ class WineAssembly {
                   // needs several quanta before it can present its first frame.
                   maxTotalSteps: audioHot ? threadBudget : threadBudget * 4,
                   quantumSteps,
-                  maxWallMs,
+                  maxWallMs: self._frozen ? 0 : maxWallMs,
+                  deadline: turnDeadline, now: turnNow,
                   prioritizeAudioThreads: audioHot && !menuOpen,
                   stopIfMessagePending: false,
                 });
@@ -4212,12 +4245,13 @@ class WineAssembly {
                   perf.markThrottled(!!threadStats.hitDeadline);
                 }
               } else {
-                const sliceStats = self.threadManager.runSlice(threadBudget);
+                const sliceStats = self.threadManager.runSlice(threadBudget,
+                  self._frozen ? undefined : { deadline: turnDeadline, now: turnNow });
                 if (perf && sliceStats) perf.countBlocks(sliceStats.blocks || 0);
               }
             }
             if (perf) perf.mark('workers', performance.now() - perfThreadStart);
-            await self.handleCooperativeThreadLoadLibraries();
+            if (self._frozen || turnNow() < turnDeadline) await self.handleCooperativeThreadLoadLibraries();
             const perfPresentStart2 = perf ? performance.now() : 0;
             if (self._presentDxIfDirty) self._presentDxIfDirty();
             if (self.renderer && self.renderer.flushRepaint) {

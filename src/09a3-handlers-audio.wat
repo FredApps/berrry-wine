@@ -608,12 +608,64 @@
   ;; Descends into a RIFF chunk. Reads 8-byte chunk header (ckid + cksize).
   ;; MMCKINFO struct: +0 ckid, +4 cksize, +8 fccType, +12 dwDataOffset, +16 dwFlags
   ;; wFlags: MMIO_FINDCHUNK=0x10, MMIO_FINDRIFF=0x20, MMIO_FINDLIST=0x40
+  ;; Continuation: next, ESP, handle, info, parent, flags, header offset,
+  ;; pending-form flag, completed ckid, completed cksize (40 bytes).
+  (global $mmio_descend_pending (mut i32) (i32.const 0))
+  (func $mmio_descend_release (param $frame i32) (param $previous i32)
+    (if (local.get $frame)
+      (then
+        (if (local.get $previous)
+          (then (call $gs32 (local.get $previous) (call $gl32 (local.get $frame))))
+          (else (global.set $mmio_descend_pending (call $gl32 (local.get $frame)))))
+        (call $heap_free (local.get $frame)))))
+
   (func $handle_mmioDescend (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ck_wa i32) (local $pos i32) (local $ckid i32) (local $cksize i32)
     (local $search_id i32) (local $search_type i32) (local $fcc_type i32)
     (local $end_pos i32) (local $bytes_read_ga i32) (local $bytes_read_wa i32)
     (local $data_offset i32) (local $parent_wa i32)
+    (local $frame i32) (local $previous i32) (local $form_pending i32)
+    (local $initial_pos i32) (local $saved_id i32) (local $saved_size i32)
+    (local $saved_type i32) (local $saved_offset i32) (local $saved_flags i32) (local $lazy i32)
+    (local.set $frame (global.get $mmio_descend_pending))
+    (block $found
+      (loop $find
+        (br_if $found (i32.eqz (local.get $frame)))
+        (if (i32.and
+              (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+              (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (local.get $arg0)))
+          (then
+            (if (i32.and
+                  (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 12))) (local.get $arg1))
+                  (i32.and
+                    (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 16))) (local.get $arg2))
+                    (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 20))) (local.get $arg3))))
+              (then (br $found)))))
+        (local.set $previous (local.get $frame))
+        (local.set $frame (call $gl32 (local.get $frame)))
+        (br $find)))
+    (if (local.get $frame)
+      (then
+        (local.set $pos (call $gl32 (i32.add (local.get $frame) (i32.const 24))))
+        (local.set $form_pending (call $gl32 (i32.add (local.get $frame) (i32.const 28))))
+        (local.set $ckid (call $gl32 (i32.add (local.get $frame) (i32.const 32))))
+        (local.set $cksize (call $gl32 (i32.add (local.get $frame) (i32.const 36))))
+        (if (local.get $form_pending)
+          (then (local.set $pos (i32.add (local.get $pos) (i32.const 8)))))
+        (if (i32.ne (call $host_fs_set_file_pointer
+              (local.get $arg0) (local.get $pos) (i32.const 0)) (local.get $pos))
+          (then
+            (global.set $eax (i32.const 266))
+            (call $mmio_descend_release (local.get $frame) (local.get $previous))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+            (return)))))
     (local.set $ck_wa (call $g2w (local.get $arg1)))
+    (local.set $initial_pos (call $host_fs_set_file_pointer (local.get $arg0) (i32.const 0) (i32.const 1)))
+    (local.set $saved_id (i32.load (local.get $ck_wa)))
+    (local.set $saved_size (i32.load offset=4 (local.get $ck_wa)))
+    (local.set $saved_type (i32.load offset=8 (local.get $ck_wa)))
+    (local.set $saved_offset (i32.load offset=12 (local.get $ck_wa)))
+    (local.set $saved_flags (i32.load offset=16 (local.get $ck_wa)))
     ;; arg3 = wFlags (passed as 5th stack arg), read from [esp+24] in caller
     ;; Actually arg3 = wFlags since dispatcher reads 5 args
     ;; Save search criteria if FIND flags are set
@@ -635,23 +687,36 @@
     (local.set $bytes_read_ga (i32.sub (global.get $esp) (i32.const 4)))
     (local.set $bytes_read_wa (call $g2w (local.get $bytes_read_ga)))
     ;; Search loop: read chunk headers until we find the target or EOF
+    (block $read_failed
     (block $done
       (loop $search
         ;; Get current file position
         (local.set $pos (call $host_fs_set_file_pointer (local.get $arg0) (i32.const 0) (i32.const 1)))
+        (if (local.get $form_pending)
+          (then (local.set $pos (i32.sub (local.get $pos) (i32.const 8)))))
         ;; Check if past end of parent chunk
         (br_if $done (i32.ge_u (local.get $pos) (local.get $end_pos)))
         ;; Read 8 bytes: ckid (4) + cksize (4) into the MMCKINFO struct
+        (block $header_done
+        (if (local.get $form_pending)
+          (then
+            (i32.store (local.get $ck_wa) (local.get $ckid))
+            (i32.store offset=4 (local.get $ck_wa) (local.get $cksize))
+            (br $header_done)))
         (i32.store (local.get $bytes_read_wa) (i32.const 0))
-        (drop (call $host_fs_read_file
+        (if (i32.eqz (call $host_fs_read_file
           (local.get $arg0)
           (local.get $arg1)  ;; write directly into MMCKINFO (guest addr)
           (i32.const 8)
           (local.get $bytes_read_ga)))
+          (then
+            (local.set $lazy (call $host_fs_read_pending))
+            (br $read_failed)))
         ;; Check if we read 8 bytes
         (br_if $done (i32.lt_u (i32.load (local.get $bytes_read_wa)) (i32.const 8)))
         (local.set $ckid (i32.load (local.get $ck_wa)))
         (local.set $cksize (i32.load (i32.add (local.get $ck_wa) (i32.const 4))))
+        )
         ;; For RIFF and LIST chunks, read 4 more bytes for fccType.
         ;; dwDataOffset is always the byte after cksize (pos+8) — for a RIFF/LIST
         ;; chunk the data area *starts with* the form type, so it is not skipped
@@ -666,13 +731,19 @@
               (i32.eq (local.get $ckid) (i32.const 0x5453494C))) ;; "LIST"
           (then
             ;; Read fccType (4 bytes) into MMCKINFO+8
+            (local.set $form_pending (i32.const 1))
             (i32.store (local.get $bytes_read_wa) (i32.const 0))
-            (drop (call $host_fs_read_file
+            (if (i32.eqz (call $host_fs_read_file
               (local.get $arg0)
               (i32.add (local.get $arg1) (i32.const 8))  ;; fccType field (guest addr)
               (i32.const 4)
               (local.get $bytes_read_ga)))
+              (then
+                (local.set $lazy (call $host_fs_read_pending))
+                (br $read_failed)))
+            (br_if $done (i32.ne (i32.load (local.get $bytes_read_wa)) (i32.const 4)))
             (local.set $fcc_type (i32.load (i32.add (local.get $ck_wa) (i32.const 8))))
+            (local.set $form_pending (i32.const 0))
           ))
         ;; Store dwDataOffset
         (i32.store (i32.add (local.get $ck_wa) (i32.const 12)) (local.get $data_offset))
@@ -682,6 +753,7 @@
         (if (i32.eqz (local.get $arg3))
           (then
             (global.set $eax (i32.const 0))  ;; MMSYSERR_NOERROR
+            (call $mmio_descend_release (local.get $frame) (local.get $previous))
             (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
             (return)))
         ;; MMIO_FINDRIFF (0x20): match fccType
@@ -692,6 +764,7 @@
                   (i32.eq (local.get $fcc_type) (local.get $search_type)))
               (then
                 (global.set $eax (i32.const 0))
+                (call $mmio_descend_release (local.get $frame) (local.get $previous))
                 (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
                 (return)))))
         ;; MMIO_FINDLIST (0x40): match fccType in LIST
@@ -702,6 +775,7 @@
                   (i32.eq (local.get $fcc_type) (local.get $search_type)))
               (then
                 (global.set $eax (i32.const 0))
+                (call $mmio_descend_release (local.get $frame) (local.get $previous))
                 (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
                 (return)))))
         ;; MMIO_FINDCHUNK (0x10): match ckid
@@ -710,6 +784,7 @@
             (if (i32.eq (local.get $ckid) (local.get $search_id))
               (then
                 (global.set $eax (i32.const 0))
+                (call $mmio_descend_release (local.get $frame) (local.get $previous))
                 (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
                 (return)))))
         ;; Not found — skip this chunk's data and try next
@@ -724,6 +799,46 @@
     )
     ;; Not found
     (global.set $eax (i32.const 514))  ;; MMIOERR_CHUNKNOTFOUND
+    (call $mmio_descend_release (local.get $frame) (local.get $previous))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+    (return))
+    ;; The search overwrites MMCKINFO and may skip earlier chunks. A retry
+    ;; retains search criteria but resumes at the CURRENT header, not an evicted prefix.
+    (if (i32.eq (local.get $lazy) (i32.const 1))
+      (then
+        (i32.store (local.get $ck_wa) (local.get $saved_id))
+        (i32.store offset=4 (local.get $ck_wa) (local.get $saved_size))
+        (i32.store offset=8 (local.get $ck_wa) (local.get $saved_type))
+        (i32.store offset=12 (local.get $ck_wa) (local.get $saved_offset))
+        (i32.store offset=16 (local.get $ck_wa) (local.get $saved_flags))
+        (local.set $initial_pos (i32.add (local.get $pos)
+          (select (i32.const 8) (i32.const 0) (local.get $form_pending))))
+        (if (i32.and (i32.ne (local.get $initial_pos) (i32.const -1))
+              (i32.eq (call $host_fs_set_file_pointer
+                (local.get $arg0) (local.get $initial_pos) (i32.const 0)) (local.get $initial_pos)))
+          (then
+            (if (i32.eqz (local.get $frame))
+              (then
+                (local.set $frame (call $heap_alloc (i32.const 40)))
+                (if (local.get $frame)
+                  (then
+                    (call $gs32 (local.get $frame) (global.get $mmio_descend_pending))
+                    (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (global.get $esp))
+                    (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $arg0))
+                    (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $arg1))
+                    (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $arg2))
+                    (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $arg3))
+                    (global.set $mmio_descend_pending (local.get $frame))))))
+            (if (local.get $frame)
+              (then
+                (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (local.get $pos))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 28)) (local.get $form_pending))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 32)) (local.get $ckid))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 36)) (local.get $cksize))
+                (call $io_block (i32.const 0))
+                (return)))))))
+    (global.set $eax (i32.const 266)) ;; MMIOERR_CANNOTREAD; never park a permanent failure
+    (call $mmio_descend_release (local.get $frame) (local.get $previous))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
@@ -861,15 +976,22 @@
       (i32.load (i32.add (local.get $info_wa) (i32.const 40)))       ;; lBufOffset
       (i32.sub (i32.load (i32.add (local.get $info_wa) (i32.const 28)))  ;; pchNext
                (local.get $buf))))
-    (drop (call $host_fs_set_file_pointer (local.get $h) (local.get $pos) (i32.const 0)))
+    (if (i32.ne (call $host_fs_set_file_pointer
+          (local.get $h) (local.get $pos) (i32.const 0)) (local.get $pos))
+      (then (return (i32.const 266)))) ;; MMIOERR_CANNOTREAD
     (local.set $read_ga (i32.sub (global.get $esp) (i32.const 8)))
     (local.set $read_wa (call $g2w (local.get $read_ga)))
     (i32.store (local.get $read_wa) (i32.const 0))
-    (drop (call $host_fs_read_file
+    (if (i32.eqz (call $host_fs_read_file
       (local.get $h)
       (local.get $buf)
       (i32.load (i32.add (local.get $info_wa) (i32.const 20)))       ;; cchBuffer
       (local.get $read_ga)))
+      (then
+        ;; Leave MMIOINFO intact: its pchNext/lBufOffset define the retry.
+        (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+          (then (return (i32.const -1)))) ;; internal pending sentinel
+        (return (i32.const 266)))) ;; MMIOERR_CANNOTREAD
     (local.set $got (i32.load (local.get $read_wa)))
     (i32.store (i32.add (local.get $info_wa) (i32.const 28)) (local.get $buf))          ;; pchNext
     (i32.store (i32.add (local.get $info_wa) (i32.const 32))
@@ -909,20 +1031,19 @@
   ;; mmioAdvance(hmmio, lpmmioinfo, fuAdvance) — 3 args stdcall
   (func $handle_mmioAdvance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $result i32)
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
     (if (i32.eqz (local.get $arg1))
-      (then (global.set $eax (i32.const 5)) (return)))                ;; MMSYSERR_INVALPARAM
+      (then
+        (global.set $eax (i32.const 5))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))                ;; MMSYSERR_INVALPARAM
     (local.set $result (call $mmio_refill (local.get $arg0) (local.get $arg1)))
     (global.set $eax (local.get $result))
-    ;; Buffered ISO input has the same asynchronous provider boundary as
-    ;; mmioRead. A successful MMIO refill with no resident bytes may mean the
-    ;; provider is fetching the next extent, not end-of-file. Retry the whole
-    ;; API thunk after IO_WAIT so a transient empty buffer cannot terminate a
-    ;; movie at the first lazy chunk boundary.
-    (if (i32.and
-          (i32.eqz (local.get $result))
-          (i32.eq (call $host_fs_read_pending) (i32.const 1)))
-      (then (call $io_block (i32.const 16))))
+    ;; Refill scratch must stay below the live frame until it completes.
+    (if (i32.eq (local.get $result) (i32.const -1))
+      (then
+        (global.set $eax (i32.const 0)) ;; pending sentinel is internal, not an MMRESULT
+        (call $io_block (i32.const 0)) (return)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
   ;; mmioSetInfo(hmmio, lpmmioinfo, wFlags) — 3 args stdcall

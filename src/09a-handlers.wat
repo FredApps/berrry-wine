@@ -2667,7 +2667,10 @@
     (if (call $host_fs_read_file
           (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $bytes_ga))
       (then (global.set $eax (i32.load (local.get $bytes_wa))))
-      (else (global.set $eax (i32.const -1))))
+      (else
+        (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+          (then (call $io_block (i32.const 0)) (return)))
+        (global.set $eax (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -2677,12 +2680,31 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; Per-instance continuation list, keyed by the intact guest call frame and
+  ;; handles. A nested callback has a different ESP and cannot steal progress.
+  ;; Records: next, esp, source, destination, bytes already committed (20 bytes).
+  (global $lz_copy_pending (mut i32) (i32.const 0))
+
   ;; LZCopy(hfSource, hfDest) copies the remaining expanded stream and returns
   ;; its byte count. For an ordinary input file LZ32 defines this as a direct
   ;; copy; that is the path used by InstallShield 5's self-extracting loader.
   (func $handle_LZCopy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buffer_ga i32) (local $count_ga i32) (local $count_wa i32)
-    (local $count i32) (local $total i32)
+    (local $count i32) (local $total i32) (local $frame i32) (local $previous i32)
+    (local.set $frame (global.get $lz_copy_pending))
+    (block $found
+      (loop $find
+        (br_if $found (i32.eqz (local.get $frame)))
+        (if (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+          (then
+            (if (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (local.get $arg0))
+              (then
+                (br_if $found (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 12))) (local.get $arg1)))))))
+        (local.set $previous (local.get $frame))
+        (local.set $frame (call $gl32 (local.get $frame)))
+        (br $find)))
+    (if (local.get $frame)
+      (then (local.set $total (call $gl32 (i32.add (local.get $frame) (i32.const 16))))))
     (local.set $count_ga (i32.sub (global.get $esp) (i32.const 0x1004)))
     (local.set $buffer_ga (i32.sub (global.get $esp) (i32.const 0x1000)))
     (local.set $count_wa (call $g2w (local.get $count_ga)))
@@ -2693,6 +2715,23 @@
               (local.get $arg0) (local.get $buffer_ga) (i32.const 0x1000)
               (local.get $count_ga)))
           (then
+            (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+              (then
+                ;; Do not rewind/rewrite the committed prefix: besides duplicate
+                ;; side effects, a prefix larger than the cache never catches up.
+                (if (i32.eqz (local.get $frame))
+                  (then
+                    (local.set $frame (call $heap_alloc (i32.const 20)))
+                    (if (i32.eqz (local.get $frame))
+                      (then (global.set $eax (i32.const -5)) (br $done)))
+                    (call $gs32 (local.get $frame) (global.get $lz_copy_pending))
+                    (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (global.get $esp))
+                    (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $arg0))
+                    (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $arg1))
+                    (global.set $lz_copy_pending (local.get $frame))))
+                (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $total))
+                (call $io_block (i32.const 0))
+                (return)))
             (global.set $eax (i32.const -3)) ;; LZERROR_READ
             (br $done)))
         (local.set $count (i32.load (local.get $count_wa)))
@@ -2713,6 +2752,12 @@
             (br $done)))
         (local.set $total (i32.add (local.get $total) (local.get $count)))
         (br $copy)))
+    (if (local.get $frame)
+      (then
+        (if (local.get $previous)
+          (then (call $gs32 (local.get $previous) (call $gl32 (local.get $frame))))
+          (else (global.set $lz_copy_pending (call $gl32 (local.get $frame)))))
+        (call $heap_free (local.get $frame))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 

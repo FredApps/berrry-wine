@@ -679,6 +679,26 @@ internal/audio file consumers still need pending-read support, and a successful
 checkpoint rebase makes an initially eager file asynchronous. Hydration remains
 eager until those consumers and complete launch/stop ownership are verified.
 
+`lazyHydrate: true` separately opts into metadata-only restoration through
+`openSnapshot()`. Installed entries retain their providers before the snapshot
+owner is released; repeated hydration releases replaced entries, and whiteouts
+still apply last. This option is also disabled by default. The lazy-hydrate
+regression mounts 24GiB of synthetic file descriptors with zero payload/cache
+bytes and checks later bounded reads, shared-map lifetimes, and deletion by an
+independent store. It does not measure process RSS or real-device memory use.
+
+Lazy mounts share a retained-chunk LRU budget (16MiB default, configurable with
+`cacheBytes` or a shared `cacheBudget`). Sparse forks and checkpoint rebases keep
+that budget; final owned-cache release removes retained chunks. This cap excludes
+in-flight reads and temporary operation results, and is not a total-memory cap.
+Host file reads request one logical range before scattering completed bytes over
+guest mappings: splitting the file read by mappings and restarting on a later
+cache miss can otherwise loop forever when the prefix exceeds the cache budget.
+Pending file reads own their completed bytes per handle, independently of cache
+eviction or another handle's fill. Revision/entry/close guards reject stale
+completions. Whole-line replay in `fgets` still needs a durable continuation under
+extreme cache pressure; ordinary CRT retry/fault tests alone do not close that gate.
+
 `SparseByteProvider` owns 64KiB dirty pages with byte-range coverage over an
 immutable base. Writes do not fetch untouched bytes; shrinking caps the base
 extent so later growth reads zeros. Snapshots copy dirty ranges only and retain

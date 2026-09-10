@@ -1546,7 +1546,7 @@ Resource-aware Win98 emulator
   <script src="build-info.js"></script>
   <!-- The generated region map must load before any lib script: filesystem.js
        reads the RegionMap global at script-evaluation time, not call time. -->
-  <script src="lib/region-map.generated.js?v=300"></script>
+  <script src="lib/region-map.generated.js?v=301"></script>
   <script src="lib/mem-utils.js?v=169"></script>
   <script src="lib/dib.js?v=168"></script>
   <script src="lib/gdi-surface.js?v=2"></script>
@@ -1576,10 +1576,10 @@ Resource-aware Win98 emulator
   <script src="lib/phone-diag.js?v=2"></script>
   <script src="lib/vfs-persistence.js?v=3"></script>
   <script src="lib/overlay-store.js?v=4"></script>
-  <script src="lib/vfs-overlay.js?v=4"></script>
+  <script src="lib/vfs-overlay.js?v=5"></script>
   <!-- Byte providers for lazily mounted media; must precede filesystem.js,
        which resolves window.byteProvider when a container mounts. -->
-  <script src="lib/byte-provider.js?v=2"></script>
+  <script src="lib/byte-provider.js?v=3"></script>
   <!-- Bring-your-own media (docs/design-byo-media.md phase 4): the containers,
        the OPFS/IndexedDB library, and the drop-to-insert desktop flow. The
        mounts run against a guest's VFS, so these load before host.js. -->
@@ -1599,7 +1599,7 @@ Resource-aware Win98 emulator
   <script src="lib/dll-loader.js?v=172"></script>
   <script src="lib/storage.js?v=170"></script>
   <script src="lib/vfs-entry-ownership.js?v=1"></script>
-  <script src="lib/filesystem.js?v=176"></script>
+  <script src="lib/filesystem.js?v=177"></script>
   <script src="lib/font-substitutions.js?v=1"></script>
   <script src="lib/vendor/webaudio-tinysynth.js?v=168"></script>
   <script src="lib/host-audio.js?v=7"></script>
@@ -1614,13 +1614,13 @@ Resource-aware Win98 emulator
   <script src="lib/host-imports.js?v=215"></script>
   <script src="lib/compile-wat.js?v=169"></script>
   <script src="lib/watx-launcher.js?v=3"></script>
-  <script src="lib/thread-manager.js?v=190"></script>
+  <script src="lib/thread-manager.js?v=191"></script>
   <script src="lib/vlan-wire.js?v=1"></script>
   <script src="lib/vlan-rtc.js?v=1"></script>
   <script src="lib/vlan-lobby.js?v=1"></script>
   <script src="lib/guest-rpc.js?v=8"></script>
   <script src="lib/guest-thread-host.js?v=12"></script>
-  <script src="host.js?v=300"></script>
+  <script src="host.js?v=301"></script>
   <script src="lib/recorder.js?v=172"></script>
   <script src="lib/perf-hud.js?v=4"></script>
   <script>
