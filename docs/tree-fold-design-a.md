@@ -179,7 +179,10 @@ clears it, and `blocks/iter` collapsing from 1.00 to 0.01 — a count, not a tim
 re-recorded, so the remainder is the unfolded-equivalent count (the harness
 prints the `H454 live` note for exactly this).
 
-## 8. What share it actually catches — the honest half
+## 8. What share it actually catches — the honest half (v1, before the widenings)
+
+> Superseded by §9. Kept because it is the measurement that motivated the three
+> relaxations, and because its decline split is the before-column of §9's table.
 
 **quake2_demo, 20000 batches, `--handler-hist` total 92,436,920 retired ops:**
 
@@ -219,41 +222,108 @@ Design A never sees it at all. Its equivalence check is real (pixel-identical
 with the flag on) but there is nothing here for this family to catch, at any
 floor.
 
-## 9. What the next relaxations would unlock, in order
+## 9. The three widenings, measured (2026-09)
 
-1. **8- and 16-bit micro-ops with an explicit partial-register model.** This is
-   where the work is on quake2: ~13% of retired ops in the window are byte
-   loads, byte ALU and byte stores. It is also the hardest, because a partial
-   write means the fold can no longer keep a whole register in one local
-   without modelling the untouched lanes.
-2. **Absolute and SIB memory forms.** `lastFn 20` — `$th_load32: reg = [addr]` —
-   is one handler away from the accept list, as are the `_sib` and
-   `compute_ea_sib` forms (H149 2.17%, H128 1.97%). Pure additions to the
-   classifier with no new correctness argument, since they still go through
-   `$gl32`/`$gs32`.
-3. **Flag-field shadowing.** The per-op `$set_flags_*` calls are the largest
-   remaining per-iteration cost inside the fold. Shadowing the five fields in
-   locals and publishing at exit and side exit is sound *given the per-field
-   last-writer rule*, but it is a real proof obligation and v1 deliberately
-   skipped it. It raises the ceiling of §7, not the share of §8.
-4. **Multi-block bodies (Design B).** §8's terminator row is only 8%, but the
-   census's own top barrier for caesar3 was `alias` at 19.9% and `call` /
-   `multi-branch` are 58% of all declines corpus-wide. Those are Design B's
-   territory and no amount of widening Design A reaches them.
+Relaxations 1-3 of the old §9 list are implemented, each behind the same
+`--tree-fold` flag, in the order (a) memory forms, (b) partial registers,
+(c) per-field flag shadowing.
 
-**Recommendation: keep the flag off.** The family is correct, paced, tested and
-pixel-identical, and it is measurably worth having on the code it covers. What
-it does not yet have is a corpus. Relaxation 2 is cheap and should come first
-because it is the one that costs no new argument; relaxation 1 is what would
-actually move an app number, and it should not be attempted until someone is
-willing to write down the partial-register model.
+### The command, and the trap in it
+
+```
+node test/run.js --app=quake2_demo --args='+set vid_ref soft +map demo1' \
+  --no-threads --quiet-api --batch-size=20000 --max-batches=3000 \
+  --tree-fold --loopmatch-stats --handler-hist --handler-hist-thread=0
+```
+
+**`--args` must be pinned, and this is not optional.** `lib/apps.js` gives
+`quake2_demo` `persistFiles: ['c:\\baseq2\\config.cfg']`, so the renderer
+choice survives across runs *and across processes*. Another agent's
+`+set vid_ref soft` run silently rewrote the persisted value mid-session and
+moved this one from `ref_gl` to `ref_soft`, changing the retired-op total from
+263M to 328M with no source change involved — an hour went into bisecting a
+regression that was a shared config file. The §8 numbers above were taken
+without the pin and are not reproducible as written; every number below is
+`ref_soft`, which is also where the coverage is.
+
+caesar3 is `--app=caesar3_demo --batch-size=20000 --max-batches=3600`.
+
+### Before/after
+
+| stage | commit | q2 blocks matched | q2 ops caught / retired | share | declines short/long/term/unfoldable-op | c3 blocks | frame identical | bench span/dot/chain |
+|---|---|---|---|---|---|---|---|---|
+| rebased v1 | `6a26a17e` | 454 | 1,701,563 / 329,082,451 | 0.517% | 16116 / 3799 / 36337 / **32484** | 0 | — | — |
+| + (a) memory forms | `2025bd74` | 548 | 2,130,462 / 328,987,768 | 0.648% | 16116 / 3799 / 36335 / **32395** | 0 | yes (0/76800) | — |
+| + (b) partial regs | `7e2af37d` | **32,882** | 10,404,993 / 328,041,132 | **3.17%** | 16120 / 3798 / 36340 / **54** | 0 | yes (0/76800) | +23.7 / +29.9 / +33.1% |
+| + (c) flag fields | `ea398be8` | 32,882 | 10,404,993 / 328,041,132 | 3.17% | 16120 / 3798 / 36340 / 54 | 0 | yes (0/307200) | +22.9 / +31.3 / +33.2% |
+
+Whole-app A/B, `--tree-fold` off vs on at `ea398be8`, fixed work
+(`--max-batches=3000`), 8 interleaved reps with the arm order rotated, **user
+CPU** (the box sat at load 17-21, so wall clock is unquotable): off 16.50s, on
+16.39s — **1.007x, paired sd 1.65s.** That is indistinguishable from zero at
+this load, and it is also exactly what the two honest numbers predict:
+3.17% of retired ops x ~25% on the covered shapes ~= 0.8%. The app-level
+measurement and the microbench agree; neither of them says this is worth
+turning on by default.
+
+### What each one actually did
+
+- **(a) memory forms** — absolute (`[addr]`) and SIB (`[base+index*scale+disp]`)
+  loads and stores inside the tree, evaluated in source order through the same
+  `$g2w`/`$gl*`/`$gs*` path as the per-op handlers, so the fault and SMC
+  semantics are the per-op ones by construction. Worth +94 blocks and 0.13
+  percentage points. It was cheap and it was *not* the barrier.
+- **(b) partial registers** — a sub-register is a lane of the 32-bit container
+  local: container index `r & 3` for a byte (AH..BH alias AL..BL's container),
+  `r & 7` for a word, with `mask` and shift decoded unconditionally from the
+  `b` word. This is the one that mattered: `unfoldable-op` collapses from
+  32,395 to **54** and matched blocks go 548 → 32,882, a 60x. §8's diagnosis
+  was right — the hot `ref_soft` self-loops are byte code, and excluding
+  partial writes excluded essentially all of them.
+- **(c) per-field flag shadowing** — a backward decode-time pass marks a
+  `$set_flags_*` call dead when every field it writes is overwritten before any
+  reader, seeded from the terminator's own write set. It elides **163,575** flag
+  writes across 32,882 lowerings (~5.0 per block) and is behaviour-identical
+  (same retired-op total, same coverage, same frame). It bought **nothing
+  measurable**: the bench moved within its own ±1% floor on two of three shapes.
+  The old §9's claim that these calls were "the largest remaining per-iteration
+  cost" is not supported by measurement, and that is the finding.
+
+### What still declines most, at `ea398be8`
+
+| reason | count | share of 56,312 self-loops |
+|---|---|---|
+| terminator is not `dec`/`cmp` + `Jcc` back to the head | 36,340 | 64.5% |
+| fewer than `min_ops` interior ops | 16,120 | 28.6% |
+| more than 24 interior ops | 3,798 | 6.7% |
+| an interior op is not a foldable micro-op | 54 | **0.1%** |
+
+The op vocabulary is finished. What is left is control flow — two thirds of
+declines are a terminator shape the family does not model — plus a long tail of
+loops too short to be worth a super-op and 6.7% that are too long for the
+24-uop arena. Widening the terminator is the next Design A move; the bodies
+themselves are no longer the problem.
+
+**caesar3 is a structural zero at every stage.** 3600 batches / 329M retired
+ops decode **32 self-loop blocks in the whole run**
+(`short 5, terminator 26, unfoldable-op 1`) and match none. Its hot drawing
+code is the RLE token *nest* at `0x40f71c`, already covered by H424/`rect_run`,
+and a nest reached through a compare ladder is not a self-loop. No amount of
+Design A widening reaches it; that is Design B's territory, along with the
+corpus-wide `call` / `multi-branch` declines that are 58% of
+`match-loops.js --why`.
+
+**Recommendation: keep the flag off.** It is correct, paced, tested,
+pixel-identical and now catches 3.17% of a real app's ops instead of 0.00016%
+— but 3.17% x 25% is under a percent, and one app's software renderer is not a
+corpus.
 
 ## 10. Flags
 
 ```
 --tree-fold                 arm the family (default off)
 --tree-fold-min-ops=N       interior-op floor (default 4)
---loopmatch-stats           prints matches / runs / iters / ops and the decline split
+--loopmatch-stats           prints matches / runs / iters / ops / deadflag and the decline split
 node tools/bench-loops.js --shapes=tree_span,tree_dot,tree_chain --toggle=tree_fold
 ```
 
