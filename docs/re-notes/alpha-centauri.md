@@ -215,3 +215,61 @@ recorded 112 parks and 65 changed screen samples, and advanced to Mission Year
 ~17.55-second result: the change avoids some proven useless polling but does
 not make Alpha produce animation frames faster. Heroes II, GTA2, and SkiFree
 gameplay plus the focused message/timer regressions retained progress.
+
+## Opening-movie optimization oracle
+
+`tools/smac-movie-bench.js` is the comparison harness for decoder/interpreter
+changes. It accepts only the exact raw disc used for this investigation:
+503,289,856 bytes, SHA-256
+`425f53a7da9b5acd2726a3ff30423f426ea27bf1a3b806e45688f83feada0c96`.
+It launches `D:\PROGRAMS\TERRAN.EXE` directly, so neither the broken autorun
+menu nor an installed/patched executable can silently change the workload.
+
+The oracle observes the canonical DirectDraw primary at the guest's present
+callback. Alpha's movie surface is required to be slot 6, 640x480 RGB565 with
+a 1,280-byte pitch in the reference run. Each callback hashes all 614,400 raw
+bytes with two independent 32-bit accumulators. Slot-less compatibility
+callbacks are ignored: the browser currently emits one of those in addition
+to the authoritative slot-bearing callback, and counting both would double
+the apparent presentation rate. Adjacent equal hashes remain presentations
+but are not new decoded frames.
+
+Create the baseline and then run a candidate from its own worktree:
+
+```bash
+node tools/smac-movie-bench.js \
+  --warmup-unique=12 --measure-unique=60 --wall-seconds=8 \
+  --out=/private/tmp/smac-oracle-baseline.json
+
+node tools/smac-movie-bench.js \
+  --oracle=/private/tmp/smac-oracle-baseline.json \
+  --measure-unique=60 --wall-seconds=8 \
+  --out=/private/tmp/smac-oracle-candidate.json
+```
+
+The second run waits for the baseline's anchor hash rather than starting at a
+wall-clock delay. Its primary throughput result is the elapsed time for the
+same ordered 60-hash sequence (59 frame intervals). `pixelSequenceMatch` must
+be true before a timing is considered. The simultaneous eight-second result
+reports raw presents and adjacent-distinct frames, but its integer frame count
+is a lower-resolution corroboration, not the headline comparison. Use
+`--headful` before describing a number as user-visible browser FPS; headless
+mode is appropriate for the branch bake-off only.
+
+Add `--handler-hist` in a separate run to collect handler entries, handler
+pairs, and executed basic-block counts over the same anchored visual interval.
+Do not compare its elapsed time to an uninstrumented run. On commit
+`d7435324`, the reference window retired 223,543,261 handler entries and
+12,057,560 guest basic blocks. The largest x87 rows were 6,046,796
+`th_fpu_reg` and 4,319,800 `th_fpu_mem` entries. These counts are the mechanism
+check for a fusion: a candidate should remove the intended dispatches, not
+merely shift wall-clock noise.
+
+Two back-to-back uninstrumented reference runs under unusually high host load
+(load averages roughly 21--30) completed the fixed frame window in 7,722.64
+and 7,702.04 ms and produced byte-identical 60-frame sequences. The 0.27%
+spread is much smaller than the one-frame quantization of the fixed-wall
+window. For this bake-off, require an exact hash match and at least a 1%
+median improvement across three alternating anchored runs; treat a lone A/B
+below 2% as unresolved. Also record both start/end load averages, which the
+harness includes in every report.
