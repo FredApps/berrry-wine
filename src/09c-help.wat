@@ -90,6 +90,7 @@
           (local.get $path_ga) (i32.const 1024)))
         (if (i32.eqz (local.get $path_copy_ga))
           (then
+            (call $help_document_cancel_frame_vfs)
             (global.set $help_session_last_command (local.get $command))
             (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
             (return (i32.const 0))))
@@ -97,13 +98,18 @@
         ;; Finish the synchronous path load before allocating command-string
         ;; storage. Document replacement releases prior heap blocks and must
         ;; not overlap either normalization buffer's lifetime.
-        (call $help_document_snapshot_release_all)
-        (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
+        (local.set $result (call $help_document_load_vfs (local.get $path_wa)))
+        (if (i32.eq (local.get $result) (i32.const -1))
+          (then
+            (call $heap_free (local.get $path_copy_ga))
+            (return (i32.const -1))))
+        (if (i32.eqz (local.get $result))
           (then
             (call $heap_free (local.get $path_copy_ga))
             (global.set $help_session_last_command (local.get $command))
             (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
             (return (i32.const 0))))
+        (call $help_document_snapshot_release_all)
         (call $heap_free (local.get $path_copy_ga))
         (local.set $path_copy_ga (i32.const 0))
         (local.set $path_wa (i32.const 0))))
@@ -344,7 +350,9 @@
     (if (i32.eqz (local.get $accepted))
       (then
         (if (i32.and
-              (i32.eq (global.get $help_session_status) (global.get $HELP_DISPATCH_LOAD_FAILED))
+              (i32.and
+                (i32.eq (global.get $help_session_status) (global.get $HELP_DISPATCH_LOAD_FAILED))
+                (i32.eqz (global.get $help_doc_file_ga)))
               (i32.ne (global.get $help_hwnd) (i32.const 0)))
           (then (call $help_destroy)))
         (return)))

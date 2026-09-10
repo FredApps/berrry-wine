@@ -401,6 +401,21 @@ test('an async-only provider raises a named error on a consumer that cannot wait
       'materializing an unfilled async provider must fail loudly');
   });
 
+test('closing a pending handle clears only its own advertised miss', () => {
+  const vfs = lazyVfs({ sync: false });
+  const a = vfs.createFile(GUEST, 0x80000000, 3);
+  const b = vfs.createFile(GUEST, 0x80000000, 3);
+  const pending = vfs.readFile(a, new Uint8Array(16), 16).pending;
+  assert(pending);
+  vfs.pendingRead = pending;
+  vfs.closeHandle(b);
+  assert.strictEqual(vfs.pendingRead, pending, 'unrelated close must not drop another consumer');
+  vfs.closeHandle(a);
+  assert.strictEqual(vfs.pendingRead, null, 'canceled consumer is no longer pending');
+  vfs.closeHandle(a);
+  assert.strictEqual(vfs.pendingRead, null, 'repeated close stays harmless');
+});
+
 test('vfs.materialize pre-fills an async-only provider for those consumers',
   async () => {
     const vfs = lazyVfs({ sync: false });

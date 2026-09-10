@@ -1979,6 +1979,8 @@
     (if (i32.load offset=16 (local.get $record))
       (then (return (i32.load offset=16 (local.get $record)))))
     (local.set $dll_ga (i32.load offset=4 (local.get $record)))
+    ;; Borrowed from the routine registry. Only document release/replacement
+    ;; owns this string; a failed lookup must leave later retries intact.
     (if (i32.eqz (local.get $dll_ga)) (then (return (i32.const 0))))
     (local.set $dll_index (call $find_loaded_dll (local.get $dll_ga)))
     (if (i32.lt_s (local.get $dll_index) (i32.const 0))
@@ -1990,7 +1992,6 @@
           (i32.const 3) (i32.const 0x80) (i32.const 0)))
         (if (i32.eq (local.get $handle) (i32.const -1))
           (then
-            (call $heap_free (local.get $dll_ga))
             (return (i32.const 0))))
         (local.set $size (call $host_fs_get_file_size (local.get $handle)))
         (if (i32.or
@@ -1999,7 +2000,6 @@
               (i32.gt_u (local.get $size) (global.get $PE_STAGING_SIZE)))
           (then
             (drop (call $host_fs_close_handle (local.get $handle)))
-            (call $heap_free (local.get $dll_ga))
             (return (i32.const 0))))
         (local.set $bytes_ga (call $heap_alloc (local.get $size)))
         (local.set $read_ga (call $heap_alloc (i32.const 4)))
@@ -2008,7 +2008,6 @@
             (drop (call $host_fs_close_handle (local.get $handle)))
             (if (local.get $bytes_ga) (then (call $heap_free (local.get $bytes_ga))))
             (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
-            (call $heap_free (local.get $dll_ga))
             (return (i32.const 0))))
         (local.set $read_wa (call $g2w (local.get $read_ga))) (i32.store (local.get $read_wa) (i32.const 0))
         (local.set $entry (call $host_fs_read_file
@@ -2020,7 +2019,6 @@
           (then
             (call $heap_free (local.get $read_ga))
             (call $heap_free (local.get $bytes_ga))
-            (call $heap_free (local.get $dll_ga))
             (return (i32.const 0))))
         ;; The loader reads the image from the staging buffer, exactly as it
         ;; does for a LoadLibraryA the host drives.
@@ -2430,7 +2428,7 @@
     (local $path_ga i32) (local $path_wa i32) (local $snapshot_base i32)
     (local $parse_error i32) (local $parse_error_offset i32) (local $accepted i32)
     (local $selected i32) (local $window_ga i32) (local $window_wa i32)
-    (local $window_len i32)
+    (local $window_len i32) (local $prepared i32)
     (local.set $index (call $help_view_hotspot_token_at
       (local.get $x) (local.get $y)))
     (if (i32.lt_s (local.get $index) (i32.const 0))
@@ -2625,17 +2623,30 @@
         (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
         (return (i32.const 0))))
     (local.set $path_wa (call $g2w (local.get $path_ga)))
+    ;; Native message dispatch has no resumable guest API frame here. Stage
+    ;; before detaching the visible document, and explicitly refuse a miss
+    ;; until native help navigation has its own scheduler-owned operation.
+    (local.set $prepared (call $help_document_prepare_vfs (local.get $path_wa)))
+    (if (i32.le_s (local.get $prepared) (i32.const 0))
+      (then
+        (if (i32.eq (local.get $prepared) (i32.const -1))
+          (then (call $help_document_cancel_prepare_vfs (local.get $path_wa))))
+        (call $heap_free (local.get $path_ga))
+        (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+        (return (i32.const 0))))
     (local.set $snapshot_base (global.get $help_document_snapshot_count))
     (if (local.get $popup) (then (call $help_popup_capture_session)))
     (if (i32.eqz (call $help_document_snapshot_push))
       (then
+        (call $help_document_cancel_vfs (local.get $prepared))
         (call $heap_free (local.get $path_ga))
         (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
         (if (local.get $popup)
           (then (global.set $help_popup_saved_session_valid (i32.const 0))))
         (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
         (return (i32.const 0))))
-    (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
+    (if (i32.eqz (call $help_document_commit_vfs (local.get $prepared)))
       (then
         (local.set $parse_error (global.get $help_last_error))
         (local.set $parse_error_offset (global.get $help_last_error_offset))

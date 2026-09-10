@@ -2829,9 +2829,10 @@ async function main() {
     data: new Uint8Array(Buffer.from('1 Root\n3 Bad\n', 'latin1')), attrs: 0x20,
   });
   bytes.set(Buffer.from('c:\\badcnt.hlp\0', 'latin1'), nameWA);
-  check('a malformed mounted CNT rejects the document without partial publication',
+  const beforeBadCntFile = e.get_help_file_ptr();
+  check('a malformed mounted CNT rejects replacement and restores the original document',
     e.test_help_load_vfs(nameWA) === 0 && e.get_help_last_error() === 18 &&
-    e.get_help_file_ptr() === 0 && e.get_help_cnt_node_count() === 0);
+    e.get_help_file_ptr() === beforeBadCntFile && e.get_help_cnt_node_count() === 0);
   bytes.set(mountedPath, nameWA);
   check('unified dispatcher loads a mounted path and applies its command',
     e.test_help_dispatch(0x3333, nameWA, 0x0003, 0, 0) === 1 &&
@@ -2839,10 +2840,11 @@ async function main() {
     e.get_help_session_mode() === 1 && e.get_help_dispatch_status() === 1,
     `error=${e.get_help_last_error()} off=${e.get_help_last_error_offset()}`);
   bytes.set(Buffer.from('c:\\missing.hlp\0', 'latin1'), nameWA);
-  check('unified dispatcher reports a missing VFS path without stale state',
+  const beforeMissingFile = e.get_help_file_ptr();
+  check('unified dispatcher reports a missing VFS path without replacing the active document',
     e.test_help_dispatch(0x3333, nameWA, 0x0003, 0, 0) === 0 &&
     e.get_help_last_error() === 7 && e.get_help_dispatch_status() === 7 &&
-    e.get_help_file_ptr() === 0 && e.get_help_session_owner() === 0);
+    e.get_help_file_ptr() === beforeMissingFile && e.get_help_session_owner() === 0x3333);
 
   const mountedPathA = allocGuestAnsi('c:\\fixture.hlp');
   check('WinHelpA ABI normalizes its guest path into the unified dispatcher',
@@ -3491,6 +3493,40 @@ async function main() {
     0x8888, allocGuestAnsi(externalSourcePath), 0x0001, 8);
   const externalMainHwnd = e.get_help_window();
   const externalRun = externalSourceAccepted === 1 ? firstVisibleHotspotRun() : null;
+  // Native message dispatch cannot park. A lazy target must be refused before
+  // snapshot/detach, with no leaked pending handle or false success presentation.
+  const { ChunkCache } = require('../lib/byte-provider');
+  const eagerExternalTarget = ctx.vfs.files.get(externalTargetPath);
+  let lazyExternalFetches = 0;
+  ctx.vfs.setProviderFile(externalTargetPath, { provider: new ChunkCache({
+    size: externalTargetHelp.file.length,
+    readRange: async (offset, length) => {
+      lazyExternalFetches++;
+      return new Uint8Array(externalTargetHelp.file.subarray(offset, offset + length));
+    },
+  }, { chunkSize: 32, maxChunks: 1, readAhead: 0 }) });
+  const sourceViewBeforeMiss = e.get_help_view_topic_ptr();
+  const sourceRunsBeforeMiss = e.get_help_view_run_ptr();
+  const liveHandlesBeforeMiss = [...ctx.vfs.handles.values()].filter(handle => !handle.closed).length;
+  check('native external lazy miss preserves the visible document and Back chain',
+    externalRun && e.test_help_window_message(0x0201, 0,
+      (externalRun.y << 16) | (externalRun.x & 0xffff)) === 0 &&
+    e.get_help_dispatch_status() === 7 &&
+    readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()) === externalSourcePath &&
+    e.get_help_document_snapshot_count() === 0 &&
+    e.get_help_session_topic_ref() === 0 && e.get_help_window() === externalMainHwnd &&
+    e.get_help_view_topic_ptr() === sourceViewBeforeMiss &&
+    e.get_help_view_run_ptr() === sourceRunsBeforeMiss &&
+    !ctx.vfs.pendingRead && lazyExternalFetches === 0 &&
+    [...ctx.vfs.handles.values()].filter(handle => !handle.closed).length === liveHandlesBeforeMiss,
+    JSON.stringify({ status: e.get_help_dispatch_status(),
+      path: readLatin1(e.get_help_document_path_ptr(), e.get_help_document_path_len()),
+      depth: e.get_help_document_snapshot_count(), topic: e.get_help_session_topic_ref(),
+      window: e.get_help_window(), externalMainHwnd,
+      view: e.get_help_view_topic_ptr(), sourceViewBeforeMiss,
+      runs: e.get_help_view_run_ptr(), sourceRunsBeforeMiss,
+      pending: !!ctx.vfs.pendingRead, fetches: lazyExternalFetches }));
+  ctx.vfs.files.set(externalTargetPath, eagerExternalTarget);
   check('relative external topic hotspot loads a mounted target through WAT',
     externalRun && e.test_help_window_message(0x0201, 0,
       (externalRun.y << 16) | (externalRun.x & 0xffff)) === 0 &&
@@ -3721,10 +3757,13 @@ async function main() {
     e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&
     e.get_help_session_topic_ref() === 0 && e.get_help_view_back_count() === 0);
   const missingPathA = allocGuestAnsi('c:\\not-mounted.hlp');
-  check('failed replacement closes the old window instead of showing stale text',
+  const retainedHelpWindow = e.get_help_window();
+  const retainedHelpTopic = e.get_help_view_topic_ptr();
+  const retainedHelpFile = e.get_help_file_ptr();
+  check('failed replacement preserves the original valid document transaction',
     e.test_invoke_WinHelpA(0x8888, missingPathA, 0x0003, 0) === 0 &&
-    e.get_help_window() === 0 && e.get_help_view_topic_ptr() === 0 &&
-    e.get_help_file_ptr() === 0 && e.get_help_dispatch_status() === 7);
+    e.get_help_window() === retainedHelpWindow && e.get_help_view_topic_ptr() === retainedHelpTopic &&
+    e.get_help_file_ptr() === retainedHelpFile && e.get_help_dispatch_status() === 7);
   check('actual HELP_QUIT remains idempotent after a failed replacement',
     e.test_invoke_WinHelpW(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_window() === 0 && e.get_help_view_topic_ptr() === 0 &&

@@ -44,6 +44,7 @@ function run(macro) {
     '--input=' + [
       '60:vfs-import:Empires.hlp:test/binaries/shareware/aoe/aoe_ex/Empires.hlp',
       '61:vfs-import:bird.wav:test/binaries/shareware/aoe/aoe_ex/Bird.wav',
+      '62:vfs-import:AoEHlp.dll:test/binaries/shareware/aoe/aoe_ex/AoEHlp.dll',
       `90:help-macro:Empires.hlp:${macro}`,
     ].join(','),
   ], { cwd: ROOT, encoding: 'utf8', timeout: 180000, env: { ...process.env, NODE_OPTIONS: '' } });

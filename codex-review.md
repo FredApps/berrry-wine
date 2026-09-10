@@ -2,7 +2,37 @@
 
 ## Continuation — thread lifetimes and sparse-save prerequisites
 
-### Latest increment — image/font consumers and safe deadline polling
+### Latest increment — transactional help loading
+
+```text
++----------------------------------------------------------------------------------------------------------+
+| HELP LOADING FOLLOW-THROUGH                                                                               |
++----------------------------------+----------------------------------+------------------------------------+
+| IMPLEMENTED                      | RELIABILITY GUARDS               | STILL REQUIRED                     |
+| prepare HLP + optional CNT       | preserve old document on misses | deferred native hyperlink loading |
+| before publishing either        | rollback failed replacement     | resumable macro DLL/callback work |
+| A/W + Win16 frame-safe retries   | retain bounded Back history     | render-time font preparation      |
+| registry-owned DLL name lifetime | cancel abandoned preparations   | memory + input/audio acceptance   |
++----------------------------------+----------------------------------+------------------------------------+
+| DEFAULT LAZY SAVES: OFF          | NO MAIN MERGE / DEPLOYMENT       | REVIEW GOAL REMAINS OPEN          |
++----------------------------------------------------------------------------------------------------------+
+```
+
+Help-file loading now separates bounded byte preparation from parsing/publication. HLP and optional CNT reads retain handles, paths, buffers, and monotonic 4KiB progress across misses; no document replacement or registration macro runs before both inputs are ready. A failed replacement restores the original document rather than destroying its valid window. Parsing uses one private rollback snapshot, including when all four public Back-history slots are occupied, and disposes that temporary record before returning.
+
+WinHelpA/W propagate pending before presentation or stdcall cleanup. The Win16 USER.171 path retains its actual Pascal frame rather than the shared 32-bit bridge scratch stack; it parks before returning and preserves CS and the far return address. Invalid replacement paths and HELP_QUIT discard abandoned same-frame preparations without canceling unrelated nested calls.
+
+Independent review also fixed a registry lifetime bug: help macro DLL lookup failures no longer free a filename still owned by the document. External native hyperlinks prepare before snapshotting and safely reject a cache miss without replacing the current document or leaking staging. **That guard is not resumable hyperlink support:** native message dispatch still needs an owned deferred operation. Macro DLL staging and guest macro callbacks that themselves wait for I/O also remain incomplete; replaying their earlier side effects is not a valid retry strategy.
+
+The native-click regression exposed a VFS cancellation defect: closing a pending handle left its miss descriptor advertised. Close now clears only the matching descriptor, preserving unrelated pending consumers. The VFS suite passes 35 checks and the full help parser/native-view suite passes 622 checks, including unchanged document/window/view/history and no pending handle after a rejected native cache miss.
+
+Render-time font preparation remains a separate gate. Loading can occur inside font binding, enumeration, controls, help, metrics, glyph queries, and metafile playback—not just TextOut. Any preparation design must preserve provider identity, bound owned bytes, cover Worker/direct-native entry points, and handle dynamic font replacement; indiscriminately filling the 32-face parsed cache changes behavior.
+
+Validation: canonical/compatibility builds pass at source 304 (1,056,787 / 1,057,240 bytes), unchanged layout `b00c9d60346fdb5a`, 236 imports, 233 nonoverlapping data segments, and 925 registered test files. Compiled tests cover real A/W and Win16 entry points, zero-cache repeated misses, per-chunk read faults, short EOF, malformed HLP/CNT rollback, optional missing CNT, full Back history, nested preparations, and cancellation. Pipe Dream's real Win16 Index, Overview link, How to Play, and Commands checks pass against this exact build. These are functional results, not a full-suite or performance claim.
+
+The final-source Chrome Worker matrix also passes with normal browser/server cleanup: Notepad/Calculator parity, both Rodent render/input checks, Winamp's three Workers, and COM success/failure recovery. The existing real AoEHlp.dll macro test passes all six checks after explicitly mounting its DLL alongside its existing HLP/WAV fixtures; it previously checked that DLL on disk but omitted it from the bare Notepad VFS. Assertions remain unchanged. The new ownership regression covers 14 failed lookup attempts followed by registry cleanup. Neither eager macro success nor this ownership fix proves asynchronous macro callback support.
+
+### Prior increment — image/font consumers and safe deadline polling
 
 ```text
 +----------------------------------------------------------------------------------------------------------+

@@ -520,6 +520,9 @@ UNIT=(
   test/test-win16-v86-audit.js
   # Repaired and recovered from quarantine 2026-08-24.
   test/test-winhelp-wat-parser.js
+  test/test-winhelp-lazy-file.js
+  test/test-win16-lazy-help.js
+  test/test-winhelp-routine-ownership.js
   test/test-wat-gdi-region.js
   test/test-wat-gdi-benchmark.js
   test/test-wat-gdi-bitmap-handlers.js

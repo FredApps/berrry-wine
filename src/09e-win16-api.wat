@@ -6900,6 +6900,7 @@
   ;; USER.171 WinHelp(hWnd, lpszHelp, usCommand, ulData).
   (func $win16_WinHelp
     (local $hwnd i32) (local $file i32) (local $cmd i32) (local $data i32)
+    (local $accepted i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 5))))
     (local.set $file (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
@@ -6912,11 +6913,18 @@
         (then (call $win16_far_to_guest
           (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
         (else (call $win16_arg32 (i32.const 0)))))
-    (call $win16_call32_begin (i32.const 4))
-    (call $handle_WinHelpA (local.get $hwnd) (local.get $file) (local.get $cmd)
-      (local.get $data) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    ;; The staged loader must retain the real Pascal frame's identity, not
+    ;; call32's shared scratch ESP. Only this outer boundary may park it.
+    (local.set $accepted (call $help_dispatch_api_a (local.get $hwnd)
+      (local.get $file) (local.get $cmd) (local.get $data)))
+    (if (i32.eq (local.get $accepted) (i32.const -1))
+      (then
+        (global.set $eax (i32.const 0))
+        (call $win16_set_sreg (i32.const 1) (global.get $WIN16_THUNK_SEL))
+        (call $spin_park (i32.const 12))
+        (return)))
+    (call $help_present_dispatch (local.get $accepted) (local.get $cmd))
+    (global.set $eax (i32.and (local.get $accepted) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 12)))
 
   ;; The RECT helpers. These are pure arithmetic on a caller-owned rectangle
