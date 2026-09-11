@@ -318,6 +318,82 @@ pixel-identical and now catches 3.17% of a real app's ops instead of 0.00016%
 — but 3.17% x 25% is under a percent, and one app's software renderer is not a
 corpus.
 
+## 9b. mw3, and what a 45%-coverage app says about the design
+
+§9 ended with "one app's software renderer is not a corpus". mw3 is the second
+app, and it is the one the loop census picked out as the case where self-loops
+dominate: 84% foldable, 98% of that in two blocks (`0x526f54`, `0x527075`), a
+42-op 16-bit software alpha blend.
+
+Getting it to fold took three fixes, and the reason it took three is worth more
+than the fixes: **each barrier hid the next.** The whole ~9850-decline
+population walks from class to class, which is what identifies it as the same
+two blocks throughout.
+
+| stage | blocks folded | where the blend declined |
+|---|---|---|
+| cap 24, as shipped | 6 | `long 9847` |
+| cap 64 | 6 | `terminator 9881` |
+| + terminator suffix | 7 | `unfoldable-op 9861`, lastFn 166 |
+| + 16-bit memory (`45735fb0`) | **5207** | `unfoldable-op 5041`, lastFn 149 |
+
+So raising the cap on its own bought **nothing**. The blend's next objection was
+its terminator: it ends `dec edi / mov [esp+8],edx / mov [esp+c],edi / jnz`,
+and the matcher wanted the flag producer at exactly `n-2`. The fix walks back
+from the Jcc over micro-ops that neither write nor read a flag field and
+records where the terminator runs as `$term_pos`; the suffix keeps its original
+position relative to the counter, which matters because mw3's second store
+stores the register the `dec` just wrote. Then it objected to H166
+`mov r16,[base+disp]` — widening (a) did 32-bit memory and (b) did partial
+registers in *register* form, and nobody had done 16-bit memory.
+
+### Coverage, three apps, at the new cap
+
+All `--no-threads --quiet-api --tree-fold --loopmatch-stats --handler-hist
+--handler-hist-thread=0`. mw3 `--batch-size=200000 --max-batches=50`; quake2
+`--args='+set vid_ref soft +map demo1' --batch-size=20000 --max-batches=3000`;
+heroes2 `--batch-size=20000 --max-batches=2600` (the §10.1 window from
+[loop-idiom-superops-design.md](loop-idiom-superops-design.md)).
+
+| app | blocks | runs | ops caught / retired | share | `$next` dispatches removed | declines short/long/term/uop |
+|---|---|---|---|---|---|---|
+| **mw3** | 5207 | 115,287 | 116,240,046 / 258,573,003 | **45.0%** | 116,124,759 (**43.9%**) | 71 / 0 / 21 / 5041 |
+| quake2 soft | 33,040 | 48,340 | 10,596,862 / 328,014,262 | 3.23% | 10,548,522 (3.22%) | 16120 / 53 / 37054 / 2927 |
+| heroes2 | 4 | 3 | 373 / 105,438,520 | **0.00035%** | 370 | 124 / 0 / 10 / 4 |
+
+Dispatches removed is `ops caught − runs`, because the super-op is one dispatch
+per *run*, not per iteration. heroes2 is the negative control and behaves like
+one: 124 of its 138 declining self-loops are under the four-op floor, so its
+loops are too short to be worth a super-op at all.
+
+### The A/B, and why it cannot be quoted as a win or a loss
+
+mw3, fixed work (`--max-batches=50`), 8 interleaved reps with the arm order
+rotated, user CPU. Box drifted from load 16 to 38 across the run.
+
+| statistic | off | on | verdict |
+|---|---|---|---|
+| mean user CPU | 71.06s | 73.87s | **+3.95% slower** |
+| paired mean delta | — | +2.81s (sd 6.51, SE 2.30) | **t = 1.22, not significant** |
+| minimum user CPU | 62.81s | 60.27s | **−4.04% faster** |
+| retired ops | 264,585,738 | 258,573,003 | on does 2.3% *less* work |
+| frame at batch 50 | — | — | identical, 0 / 307200 |
+
+**The mean and the minimum disagree in sign on the same 16 runs.** That is the
+whole result: this is not a measurement, it is the box. The first two pairs read
++12.7% and +18.4% and looked like a clean regression; reps 3-8 read −9.5%,
+−4.0%, +3.2%, +1.4%, +1.9%. Anyone quoting either end of that is quoting load.
+Note also that the ON arm retires 2.3% fewer ops for its CPU, so a like-for-like
+per-op figure is ~2% worse than whatever the wall figures say.
+
+What this does establish: at 45% coverage and 44% of dispatches removed, the
+effect on a real app is **still inside the noise floor of a loaded box.** The
+microbench's +23..33% was measured on 6-to-11-op bodies, where the saving is one
+block transfer (~9ns) spread over a handful of ops. mw3's body is 42 ops, so the
+same one-transfer saving is spread 4-7x thinner while the generic walker's
+per-micro-op cost is paid 42 times. That is a prediction the design makes, and
+it is why §9c stops guessing the cap and measures it.
+
 ## 10. Flags
 
 ```
