@@ -3155,7 +3155,7 @@ async function main() {
   // before this line but only ever fires during the batch loop, long after it.
   DX_LOCK_PAUSE.clock = batchClock;
   VBLANK.clock = batchClock;
-  ctx.sharedAudio.audioClockMs = () => (tickState.batch * TICK_MS_PER_BATCH) | 0;
+  ctx.sharedAudio.audioClockMs = () => batchClock.batchTicks();
   // --real-ticks hands the guest the wall clock instead. Two emulator
   // processes in one room CANNOT share a batch-driven clock: a batch is not a
   // unit of time and each process runs them at its own rate, so an idle Hearts
@@ -5217,7 +5217,7 @@ async function main() {
         ? { w: renderer.canvas.width | 0, h: renderer.canvas.height | 0 } : null,
       frozen: {
         frozen: controlFrozen,
-        tickMs: TICK_MS_PER_BATCH,
+        tickMs: batchClock.getTickMsPerBatch(),
         credits: controlRunCredits,
         recording: !!videoRecorder,
       },
@@ -5297,15 +5297,25 @@ async function main() {
         }
         wakeControlLoop();
       }
-      return { frozen: controlFrozen, batch: tickState.batch | 0, tickMs: TICK_MS_PER_BATCH };
+      return { frozen: controlFrozen, batch: tickState.batch | 0,
+        tickMs: batchClock.getTickMsPerBatch() };
+    }
+    if (cmd.action === 'tick') {
+      if (!controlFrozen) throw new Error('tick requires frozen mode');
+      if (videoRecorder) throw new Error('cannot change tick cadence while recording');
+      const ms = Number(cmd.ms);
+      if (!Number.isFinite(ms) || ms <= 0) throw new Error('tick needs a positive finite ms value');
+      batchClock.setTickMsPerBatch(ms);
+      return { batch: tickState.batch | 0, tickMs: batchClock.getTickMsPerBatch(),
+        guestMs: batchClock.batchTicks() };
     }
     if (cmd.action === 'step') {
       if (!controlFrozen) throw new Error('step requires frozen mode (launch with --frozen or send frozen on)');
       if (controlStepWaiter) throw new Error('another step command is still running');
       const n = cmd.n === undefined ? 1 : Number(cmd.n);
       if (!Number.isInteger(n) || n < 1) throw new Error('step needs a positive integer n');
-      if (cmd.ms !== undefined && Number(cmd.ms) !== TICK_MS_PER_BATCH) {
-        throw new Error(`CLI tick size is fixed at launch (${TICK_MS_PER_BATCH}ms); use --tick-ms-per-batch=${Number(cmd.ms)}`);
+      if (cmd.ms !== undefined && Number(cmd.ms) !== batchClock.getTickMsPerBatch()) {
+        throw new Error(`CLI tick size is ${batchClock.getTickMsPerBatch()}ms; requested ${Number(cmd.ms)}ms`);
       }
       controlRunCredits += n;
       wakeControlLoop();
@@ -5339,17 +5349,18 @@ async function main() {
       const out = hasVideoExt ? path.resolve(rawName) : path.resolve('recordings', `${safeName}.mp4`);
       videoEvery = every;
       videoStartBatch = tickState.batch | 0;
-      const derivedFps = TICK_MS_PER_BATCH > 0 ? 1000 / (TICK_MS_PER_BATCH * every) : VIDEO_FPS;
+      const tickMs = batchClock.getTickMsPerBatch();
+      const derivedFps = tickMs > 0 ? 1000 / (tickMs * every) : VIDEO_FPS;
       videoRecorder = new CliVideoRecorder(renderer.canvas, {
         path: out,
         fps: derivedFps,
         ffmpeg: FFMPEG_PATH,
-        startGuestMs: (tickState.batch | 0) * TICK_MS_PER_BATCH,
+        startGuestMs: batchClock.batchTicks(),
       });
       return { recording: true, ...videoRecorder.summary(), everyNSteps: videoEvery };
     }
     const entry = String(cmd.cmd || '');
-    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|png|input-message|frozen|step|record|quit');
+    if (!entry) throw new Error('need {cmd:"action:args"} or action: ping|snapshot|eval|png|input-message|frozen|tick|step|record|quit');
     // A frozen CLI is already at a coherent between-batches boundary. Capture
     // there instead of queueing a png action that cannot execute until a
     // later `step` (ctl.js checks that the file exists before it returns).
@@ -8244,6 +8255,11 @@ async function main() {
         && ((batch - videoStartBatch) % videoEvery) === 0) {
       for (const pump of audioTapPumps) { try { pump(); } catch (_) {} }
       presentDxIfDirty(0);   // a recorded frame is a capture, not a live view
+      // DirectDraw presents schedule the desktop composite. A sparse
+      // --repaint-every value must not make the recorder repeatedly sample the
+      // previous screen canvas while the guest's surface advances underneath.
+      // Frozen PNG capture uses this same forced publication boundary.
+      if (renderer && typeof renderer.repaint === 'function') renderer.repaint();
       await videoRecorder.capture(renderer.canvas);
     }
     if (TRACE_BATCH_TIMING) {
@@ -8466,7 +8482,7 @@ async function main() {
         const deadline = (spinYield === 14 && instance.exports.get_spin_deadline_ms)
           ? instance.exports.get_spin_deadline_ms() >>> 0 : 0;
         let owed = 0;
-        if (spinYield === 14 && TICK_MS_PER_BATCH <= 0) {
+        if (spinYield === 14 && batchClock.getTickMsPerBatch() <= 0) {
           owed = ((deadline + 1) - batchClock.batchTicks()) | 0;
           if (owed > 0) tickState.pausedMs += owed; else owed = 0;
         }
@@ -8574,7 +8590,7 @@ async function main() {
       // worker reads them out of its control block without a round trip, and this
       // is the only thread that knows them.
       guestThreadHost.broker.publish({
-        tickMs: tickState.batch * 200,
+        tickMs: batchClock.batchTicks(),
         inputPending: (inputQueue ? inputQueue.length : 0)
           + (renderer && renderer.inputQueue ? renderer.inputQueue.length : 0),
       });

@@ -191,6 +191,13 @@ The CLI renderer streams RGBA frames directly to ffmpeg; a bare recording name
 writes `recordings/NAME.mp4`, while a name ending in `.mp4` or `.webm` is used as
 an explicit path. Its frame rate is derived from `--tick-ms-per-batch` and
 `--every`, so wall-clock pauses between `step` commands never enter the video.
+While frozen and before recording starts, the JSON control channel may send
+`{ "action": "tick", "ms": 40 }` to rebase an already-prepared session to a
+finer capture cadence without moving guest time backwards. Cadence changes are
+refused while a recording is active, so one MP4 always has a stable frame rate.
+Each CLI sample also forces a pending desktop composite after the DirectDraw
+present; otherwise a sparse `--repaint-every` value records the previous screen
+canvas repeatedly even though the guest surface is advancing.
 The same guest-clock PCM tap used by browser frozen recording collects waveOut
 and DirectSound voices (including voices submitted by guest worker threads),
 mixes them on the recording timeline, and muxes stereo AAC into MP4 or Opus into

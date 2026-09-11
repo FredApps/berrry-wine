@@ -41,6 +41,12 @@ const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
   const before = await send({ action: 'snapshot' });
   assert.strictEqual(before.frozen.frozen, true);
   assert.strictEqual(before.batch, 0);
+  const cadence = await send({ action: 'tick', ms: 40 });
+  assert.strictEqual(cadence.tickMs, 40);
+  assert.strictEqual(cadence.guestMs, 0);
+  const retimed = await send({ action: 'snapshot' });
+  assert.strictEqual(retimed.frozen.tickMs, 40,
+    'snapshot did not expose the runtime frozen cadence');
   await sleep(400);
   const still = await send({ action: 'snapshot' });
   assert.strictEqual(still.batch, before.batch, 'a frozen CLI advanced batches while idle');

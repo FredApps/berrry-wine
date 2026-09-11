@@ -40,6 +40,7 @@ const check = (name, ok, detail = '') => {
 const child = spawn(process.execPath, [
   RUN, `--exe=${EXE}`, `--control=${PORT}`, '--frozen',
   '--tick-ms-per-batch=20', '--batch-size=50000', '--max-seconds=45',
+  '--repaint-every=1000000',
   '--quiet-api', '--quiet-blocks', '--no-close', '--no-build',
 ], { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe'] });
 let childOut = '';
@@ -124,6 +125,13 @@ const waitFor = async (label, probe) => {
     streamJson.streams.some(s => s.codec_type === 'video' && s.codec_name === 'h264')
       && streamJson.streams.some(s => s.codec_type === 'audio' && s.codec_name === 'aac'),
     streams.stderr || streams.stdout);
+  const frameMd5 = spawnSync('ffmpeg', ['-v', 'error', '-i', video,
+    '-map', '0:v:0', '-f', 'framemd5', 'pipe:1'], { encoding: 'utf8' });
+  const uniqueFrames = new Set((frameMd5.stdout || '').split('\n')
+    .filter(line => /^\d+,/.test(line)).map(line => line.split(',').pop().trim()));
+  check('recording forces fresh composites despite sparse repaint cadence',
+    frameMd5.status === 0 && uniqueFrames.size > 1,
+    `ffmpeg=${frameMd5.status} uniqueFrames=${uniqueFrames.size}`);
   const decoded = spawnSync('ffmpeg', ['-v', 'error', '-i', video, '-map', '0:a:0',
     '-f', 's16le', '-ac', '2', '-ar', '44100', 'pipe:1'], { maxBuffer: 4 * 1024 * 1024 });
   let peak = 0;

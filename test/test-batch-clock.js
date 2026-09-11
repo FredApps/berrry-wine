@@ -34,4 +34,17 @@ clock.state.callsInBatch = 0;
 assert.strictEqual(clock.getTicks(), 100200,
   'a later batch advances to its deterministic base time');
 
-console.log('PASS  headless batch clock is monotonic across call-counter resets');
+assert.strictEqual(clock.setTickMsPerBatch(40), 40);
+assert.strictEqual(clock.batchTicks(), 100200,
+  'changing cadence rebases without moving the current guest time');
+clock.state.batch = 502;
+clock.state.callsInBatch = 0;
+assert.strictEqual(clock.getTicks(), 100240,
+  'the next batch advances using the new cadence');
+assert.strictEqual(clock.getTickMsPerBatch(), 40);
+assert.strictEqual(clock.getTicks(), 100241);
+clock.setTickMsPerBatch(20);
+assert.strictEqual(clock.batchTicks(), 100241,
+  'rebasing also preserves an intra-batch tick already observed by the guest');
+
+console.log('PASS  headless batch clock is monotonic across resets and cadence changes');
