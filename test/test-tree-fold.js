@@ -283,7 +283,49 @@ const SHAPE_M = [0x31, 0xED].concat(loopBackDec([
   0x83, 0xC7, 0x04,                   // add  edi, 4
 ]));
 
+// -- N: the H149 EA pair, through a 16-bit SIB load --------------------------
+// `mov dx,[esi+ecx*2]` has no fused opcode, so the decoder emits the generic
+// pair: H149 computes the address into $ea_temp and H164 consumes it through
+// $read_addr, which recognizes $SIB_SENTINEL in its address word. That is a
+// cross-op dataflow, and it is what made H149 the family's `lastFn` decline on
+// mw3. The index is ECX, the loop counter itself, so the address is a function
+// of state the fold holds in a LOCAL -- a fold that computed the EA once, or
+// read the sentinel as if it were an address (0xEADEAD is a perfectly
+// plausible one), would load the same wrong word every iteration and the
+// differential below is what says so.
+const SHAPE_N = loopBackDec([
+  0x66, 0x8B, 0x14, 0x4E,             // mov dx, [esi+ecx*2]   H149 + H164(sent)
+  0x66, 0x01, 0xC2,                   // add dx, ax
+  0x66, 0x89, 0x17,                   // mov [edi], dx
+  0x83, 0xC7, 0x02,                   // add edi, 2
+]);
+
+// -- O: H149's own fused byte load -------------------------------------------
+// With bit 8 of its operand set, H149 performs the load itself rather than
+// leaving it to the next handler, so this form is one micro-op with a
+// partial-register write and no partner at all. AH is the other lane of the
+// same container the load writes, which is the case a fold that treated the
+// fused destination as a whole register would get wrong.
+const SHAPE_O = loopBackDec([
+  0x8A, 0x04, 0x0E,                   // mov al, [esi+ecx*1]   H149 fused
+  0x30, 0xE0,                         // xor al, ah
+  0x88, 0x07,                         // mov [edi], al
+  0x83, 0xC7, 0x01,                   // add edi, 1
+]);
+
 // -- negatives ----------------------------------------------------------------
+// A SIB 16-bit STORE is H149 + H163, and H163 is not a micro-op. So the EA
+// producer is present and its consumer is not, which is the exact shape the
+// pairing walk exists to refuse: folding the H149 alone would leave a computed
+// address nothing in the descriptor reads, and the store would run unfolded
+// against a $ea_temp the fold never wrote.
+const NEG_EA_UNPAIRED = loopBackDec([
+  0x66, 0x89, 0x14, 0x4E,             // mov [esi+ecx*2], dx   H149 + H163
+  0x66, 0x01, 0xC2,                   // add dx, ax
+  0x83, 0xC7, 0x02,                   // add edi, 2
+  0x83, 0xC6, 0x02,                   // add esi, 2
+]);
+
 // Three interior ops, under the default floor of four.
 const NEG_SHORT = loopBackDec([
   0x89, 0xD0,                         // mov  eax, edx
@@ -563,6 +605,39 @@ const NEG_SHORT = loopBackDec([
              ebp: 0xa5a5a5a5, esi: srcM, edi: dstM }),
     { seedAt: srcM, seedWords: 200, readAt: dstM }, 100);
 
+  // Shape N's live-out mask is the precise statement that a bare EA compute
+  // defines no register. Its body writes EDX (the 16-bit load and the 16-bit
+  // add) and EDI (the cursor bump), plus ECX because the DEC terminator writes
+  // it, and nothing else -- so the mask is 0x86. The H149 micro-op carries
+  // `d = 0`, so a fold that counted it as a definition
+  // would publish EAX as well and the mask would read 0x87 -- a register the
+  // loop never touched, republished with the value it entered with. Harmless
+  // here, wrong in general, and invisible to every value comparison.
+  const srcN = (arena + 0x58000) >>> 0;
+  const dstN = (arena + 0x5c000) >>> 0;
+  {
+    checkShape('shape N (H149 + H164 sentinel pair, index = the counter)',
+      SHAPE_N,
+      () => ({ eax: 0x00001357, ecx: 100, edx: 0xfeed0000, ebx: 0,
+               ebp: 0xa5a5a5a5, esi: srcN, edi: dstN }),
+      { seedAt: srcN, seedWords: 200, readAt: dstN }, 50);
+    assert.strictEqual(e.test_tree_nuops(), 5,
+      'shape N: the EA compute is a micro-op of its own');
+    assert.strictEqual(e.test_tree_live_out(), 0x86,
+      'shape N: the EA compute defines no register');
+  }
+
+  const srcO = (arena + 0x60000) >>> 0;
+  const dstO = (arena + 0x64000) >>> 0;
+  {
+    const { onState } = checkShape('shape O (H149 fused byte load)', SHAPE_O,
+      () => ({ eax: 0xbeef0011, ecx: 100, edx: 0, ebx: 0,
+               ebp: 0xa5a5a5a5, esi: srcO, edi: dstO }),
+      { seedAt: srcO, seedWords: 60, readAt: dstO }, 25);
+    assert.strictEqual(onState.eax >>> 16, 0xbeef,
+      'shape O: the fused load writes AL only, not the container');
+  }
+
   // -------------------------------------------------------------- side exit --
   // Same shape, same inputs, but a block budget far below the trip count, so
   // the super-op is forced to materialize everything and be re-entered many
@@ -639,6 +714,7 @@ const NEG_SHORT = loopBackDec([
       `${name}: nothing is lowered, so no super-op runs`);
   }
   checkDecline('body under the minimum-op floor', NEG_SHORT);
+  checkDecline('an EA compute whose consumer is not a micro-op', NEG_EA_UNPAIRED);
 
   // The floor is a knob, not a law: the same block that declined above is
   // accepted once the floor drops to three, which proves the decline was the

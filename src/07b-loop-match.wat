@@ -5317,6 +5317,12 @@
   ;; does the arithmetic and skips the $set_flags_* call entirely.
   (global $TU_B_NOFLAGS i32 (i32.const 0x2000))
   (global $TU_B_IMM8_SHIFT i32 (i32.const 16)) ;; TU_MOV_M8_I_SIB's immediate
+  ;; This micro-op's address word was $SIB_SENTINEL, so its address is whatever
+  ;; the preceding TU_EA_SIB computed rather than the immediate in `imm`. Set
+  ;; only on the five accepted kinds that read their address through
+  ;; $read_addr (H20/H21/H24/H25/H164); every other memory kind carries its own
+  ;; base/index/disp and can never see a sentinel.
+  (global $TU_B_EA i32 (i32.const 0x4000))
 
   ;; The five lazy-flag globals plus $saved_cf, one bit each. The whole point
   ;; of tracking them separately -- rather than "the last op that touched
@@ -5376,6 +5382,35 @@
   (global $TU_SBB_RI i32 (i32.const 46))
   (global $TU_MOV_M8_I_SIB  i32 (i32.const 39))  ;; [ea] = imm8 (in b)
 
+  ;; -- the two-op EA pair -------------------------------------------------
+  ;; H149 ($th_compute_ea_sib) is the one emitted op that is not an
+  ;; instruction: it computes an effective address into the $ea_temp global
+  ;; and leaves the NEXT handler to consume it through $read_addr, which reads
+  ;; $ea_temp when its address word is $SIB_SENTINEL. That is a cross-op
+  ;; dataflow, and it is why the family declined it for as long as it did --
+  ;; "one micro-op, one instruction" cannot express a producer whose only
+  ;; consumer is the op after it.
+  ;;
+  ;; The representation that does express it is the obvious one: make the pair
+  ;; two micro-ops joined by a slot, exactly as the interpreter joins them by a
+  ;; global. TU_EA_SIB writes the run's $ea_hold local; a consumer whose
+  ;; address word was the sentinel carries TU_B_EA and reads that local instead
+  ;; of its immediate. The slot is a LOCAL rather than $ea_temp because nothing
+  ;; outside the pair can observe $ea_temp: the decoder emits 149 and its
+  ;; consumer adjacently, so the value is produced and consumed inside one
+  ;; descriptor, and a side exit only ever happens at an iteration boundary,
+  ;; after which the fold re-enters and recomputes the address from scratch.
+  ;;
+  ;; The pairing is checked, not assumed -- see the walk in pass 1. A consumer
+  ;; marked TU_B_EA whose predecessor is not an EA producer, or a bare EA
+  ;; producer whose successor does not consume it, declines the block rather
+  ;; than reading a stale address.
+  (global $TU_EA_SIB     i32 (i32.const 47))  ;; ea_hold = R[a] + R[idx]<<sc + imm
+  ;; Bit 8 of H149's operand fuses the byte load its dominant consumer would
+  ;; have been, so that form is one micro-op with a register write and needs no
+  ;; partner at all.
+  (global $TU_EA_SIB_LD8 i32 (i32.const 48))  ;; the same, plus R8[d] = [ea]
+
   ;; Classifier out-parameters. Decode-time only and single-threaded per
   ;; instance, so globals are cheaper and clearer than packing five fields
   ;; into an i64 return.
@@ -5428,6 +5463,20 @@
   ;; equality-tested the handler index, for the reason spelled out above
   ;; $loop_op_at: the thread stream is a discriminated union keyed by handler,
   ;; and a positional read of +8 is only meaningful once the tag is known.
+  ;; The address word of a $read_addr consumer (H20/H21/H24/H25/H164). The
+  ;; decoder writes a real guest address there, or $SIB_SENTINEL to say "the
+  ;; preceding H149 left it in $ea_temp". Reading that word as an address is
+  ;; exactly the bug this exists to prevent: 0xEADEAD is a perfectly plausible
+  ;; address, so a fold that missed the sentinel would load from it and be
+  ;; wrong in a way that still computes. Sets TU_B_EA and zeroes the immediate
+  ;; instead, and must therefore be called AFTER the other `b` fields are in.
+  (func $tree_abs_addr (param $w i32) (result i32)
+    (if (i32.eq (local.get $w) (global.get $SIB_SENTINEL))
+      (then
+        (global.set $tu_b (i32.or (global.get $tu_b) (global.get $TU_B_EA)))
+        (return (i32.const 0))))
+    (local.get $w))
+
   (func $tree_uop_classify (param $p i32) (result i32)
     (local $fn i32) (local $op i32) (local $type i32) (local $count i32)
     (local.set $fn (load.field LoopOp handler (local.get $p)))
@@ -5592,7 +5641,7 @@
           (select (global.get $TU_LOAD32_ABS) (global.get $TU_STORE32_ABS)
                   (i32.eq (local.get $fn) (i32.const 20))))
         (global.set $tu_d (i32.and (local.get $op) (i32.const 0xF)))
-        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_imm (call $tree_abs_addr (i32.load offset=8 (local.get $p))))
         (return (i32.const 1))))
 
     ;; -- sub-register ALU and MOV, byte and word -----------------------------
@@ -5700,7 +5749,7 @@
       (then
         (global.set $tu_d (i32.and (local.get $op) (i32.const 7)))
         (global.set $tu_b (global.get $TU_B_WORD))
-        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_imm (call $tree_abs_addr (i32.load offset=8 (local.get $p))))
         (global.set $tu_kind (global.get $TU_LOAD16_ABS))
         (return (i32.const 1))))
     (if (i32.or (i32.eq (local.get $fn) (i32.const 165))
@@ -5728,7 +5777,7 @@
         (global.set $tu_b
           (select (global.get $TU_B_LANE_D) (i32.const 0)
                   (i32.ge_u (local.get $count) (i32.const 4))))
-        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_imm (call $tree_abs_addr (i32.load offset=8 (local.get $p))))
         (global.set $tu_kind
           (select (global.get $TU_LOAD8_ABS) (global.get $TU_STORE8_ABS)
                   (i32.eq (local.get $fn) (i32.const 24))))
@@ -5799,10 +5848,34 @@
     ;; here into `a` (base) and `b` (index | scale<<4) so the handler's EA
     ;; arithmetic reads the same two fields for every SIB kind.
     ;;
-    ;; H148 LEA, H389 dword load, H420 dword store. H149 ($th_compute_ea_sib)
-    ;; is deliberately NOT here: it computes into $ea_temp and leaves the next
-    ;; op to consume it, so folding it would mean modelling a second op's
-    ;; hidden input, which is a different argument from this one.
+    ;; H148 LEA, H389 dword load, H420 dword store, and H149's own EA compute,
+    ;; which shares their info/disp encoding exactly -- the operand differs
+    ;; only in that bit 8 selects the fused byte-load form and the low three
+    ;; bits are then its destination reg8.
+    (if (i32.eq (local.get $fn) (i32.const 149))
+      (then
+        (local.set $type (i32.load offset=8 (local.get $p)))   ;; info word
+        (global.set $tu_a (i32.and (local.get $type) (i32.const 0xF)))
+        (global.set $tu_b
+          (i32.or (i32.and (i32.shr_u (local.get $type) (i32.const 4)) (i32.const 0xF))
+                  (i32.shl (i32.and (i32.shr_u (local.get $type) (i32.const 8)) (i32.const 3))
+                           (i32.const 4))))
+        (global.set $tu_imm (i32.load offset=12 (local.get $p)))
+        (if (i32.and (local.get $op) (i32.const 0x100))
+          (then
+            ;; The fused byte load: reg8 index in the low three bits, so the
+            ;; container is `& 3` and the high-byte lane is index >= 4 --
+            ;; $set_reg8's own rule, which is what the handler calls.
+            (local.set $count (i32.and (local.get $op) (i32.const 7)))
+            (global.set $tu_d (i32.and (local.get $count) (i32.const 3)))
+            (global.set $tu_b (i32.or (global.get $tu_b)
+              (select (global.get $TU_B_LANE_D) (i32.const 0)
+                      (i32.ge_u (local.get $count) (i32.const 4)))))
+            (global.set $tu_kind (global.get $TU_EA_SIB_LD8))
+            (return (i32.const 1))))
+        (global.set $tu_kind (global.get $TU_EA_SIB))
+        (return (i32.const 1))))
+
     (if (i32.or (i32.eq (local.get $fn) (i32.const 148))
         (i32.or (i32.eq (local.get $fn) (i32.const 389))
                 (i32.eq (local.get $fn) (i32.const 420))))
@@ -5866,7 +5939,11 @@
     (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE8_ABS))
     (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE16_RO))
     (i32.or (i32.eq (local.get $kind) (global.get $TU_STORE8_SIB))
-            (i32.eq (local.get $kind) (global.get $TU_MOV_M8_I_SIB))))))))))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_MOV_M8_I_SIB))
+            ;; Not a store, but the same question for the same reason: a bare
+            ;; EA compute defines no register at all, so naming one in the
+            ;; live-out mask would publish a register the body never wrote.
+            (i32.eq (local.get $kind) (global.get $TU_EA_SIB)))))))))))
 
   ;; Which lazy-flag fields a micro-op WRITES, as a $TF_F_* mask. Anything not
   ;; listed writes none: every MOV, LEA, NOT, load and store in the family is
@@ -6009,6 +6086,7 @@
     (local $term_cc i32) (local $term_uop i32)
     (local $fall i32) (local $back i32)
     (local $covered i32) (local $fwrites i32) (local $tidx i32)
+    (local $prev_ea i32) (local $want_ea i32)
 
     (local.set $n (global.get $op_index_n))
     ;; Two terminator ops plus at least $tree_fold_min_ops of interior.
@@ -6109,6 +6187,25 @@
             (global.set $tree_decl_uop_fn (load.field LoopOp handler (local.get $p)))
             (return (i32.const 0))))
         (local.set $extra (i32.add (local.get $extra) (global.get $tu_extra)))
+        ;; -- the H149 pair, checked rather than assumed -------------------
+        ;; A bare TU_EA_SIB must be consumed by the very next micro-op, and a
+        ;; TU_B_EA consumer must be produced by the very previous one. The
+        ;; decoder emits them adjacently and the terminator is lifted out of
+        ;; this list without reordering anything, so both hold for every stream
+        ;; a decoder actually writes -- which is exactly why they are cheap to
+        ;; assert and worth asserting: the failure mode of a broken pairing is
+        ;; a load from a stale address, which computes a plausible wrong answer
+        ;; rather than trapping.
+        (local.set $want_ea
+          (i32.ne (i32.and (global.get $tu_b) (global.get $TU_B_EA)) (i32.const 0)))
+        (if (i32.ne (local.get $want_ea) (local.get $prev_ea))
+          (then
+            (global.set $tree_decl_uop
+              (i32.add (global.get $tree_decl_uop) (i32.const 1)))
+            (global.set $tree_decl_uop_fn (load.field LoopOp handler (local.get $p)))
+            (return (i32.const 0))))
+        (local.set $prev_ea
+          (i32.eq (global.get $tu_kind) (global.get $TU_EA_SIB)))
         ;; A STORE writes memory, not a register; everything else defines its
         ;; destination and must be published at exit.
         (if (i32.eqz (call $tree_uop_is_store (global.get $tu_kind)))
@@ -6117,6 +6214,15 @@
                     (i32.shl (i32.const 1) (global.get $tu_d))))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $p1)))
+    ;; A bare EA compute as the last micro-op has nobody to consume it, which
+    ;; means the op that did consume it is the terminator or the Jcc -- neither
+    ;; of which this family models as reading $ea_temp. Decline.
+    (if (local.get $prev_ea)
+      (then
+        (global.set $tree_decl_uop
+          (i32.add (global.get $tree_decl_uop) (i32.const 1)))
+        (global.set $tree_decl_uop_fn (i32.const 149))
+        (return (i32.const 0))))
 
     (global.set $tree_fold_matches
       (i32.add (global.get $tree_fold_matches) (i32.const 1)))
@@ -6326,7 +6432,7 @@
     (local $r0 i32) (local $r1 i32) (local $r2 i32) (local $r3 i32)
     (local $r4 i32) (local $r5 i32) (local $r6 i32) (local $r7 i32)
     (local $i i32) (local $kind i32) (local $d i32) (local $a i32) (local $imm i32)
-    (local $b i32) (local $ea i32)
+    (local $b i32) (local $ea i32) (local $ea_hold i32)
     (local $sh_d i32) (local $sh_a i32) (local $mask i32) (local $ssh i32)
     (local $nof i32) (local $beff i32)
     (local $va i32) (local $vb i32) (local $vr i32)
@@ -6508,6 +6614,16 @@
             ;; a local rather than a mask-and-shift each.
             (local.set $nof (i32.and (local.get $b) (global.get $TU_B_NOFLAGS)))
 
+            ;; The H149 pair's join. A consumer marked TU_B_EA had
+            ;; $SIB_SENTINEL where its address should be, so its address is the
+            ;; one the preceding TU_EA_SIB left in $ea_hold -- which is exactly
+            ;; what $read_addr does with $ea_temp, one indirection shorter.
+            ;; Branchless, and folded into the same `b` decode as the lane bits
+            ;; above so no kind that cannot carry the bit pays a test for it.
+            (local.set $imm
+              (select (local.get $ea_hold) (local.get $imm)
+                      (i32.and (local.get $b) (global.get $TU_B_EA))))
+
             ;; SIB effective address, for the contiguous tail of kinds that
             ;; need one. Hoisted here rather than repeated in three arms, and
             ;; guarded by a range test so no other kind pays for it.
@@ -6551,6 +6667,7 @@
             ;; first store instead of failing.
             (local.set $wrote (i32.const 1))
             (block $kdone
+              (block $k48 (block $k47
               (block $k46 (block $k45 (block $k44 (block $k43
               (block $k42 (block $k41 (block $k40
               (block $k39 (block $k38 (block $k37 (block $k36 (block $k35
@@ -6567,8 +6684,8 @@
                           $k10 $k11 $k12 $k13 $k14 $k15 $k16 $k17 $k18 $k19
                           $k20 $k21 $k22 $k23 $k24 $k25 $k26 $k27 $k28 $k29
                           $k30 $k31 $k32 $k33 $k34 $k35 $k36 $k37 $k38 $k39
-                          $k40 $k41 $k42 $k43 $k44 $k45 $k46
-                          $k46
+                          $k40 $k41 $k42 $k43 $k44 $k45 $k46 $k47 $k48
+                          $k48
                           (local.get $kind)))
                 ;; 0 MOV_RR
                 (local.set $vr (local.get $vb)) (br $kdone))
@@ -6860,13 +6977,31 @@
                   (then (global.set $flag_a (i32.const 0))
                         (global.set $flag_b (i32.const 1))))
                 (br $kdone))
-              ;; 46 SBB_RI (and the unreachable default).
+              ;; 46 SBB_RI
               (local.set $beff (i32.add (local.get $imm) (call $get_cf)))
               (local.set $vr (i32.sub (local.get $va) (local.get $beff)))
               (call $set_flags_sub (local.get $va) (local.get $beff) (local.get $vr))
               (if (i32.lt_u (local.get $beff) (local.get $imm))
                 (then (global.set $flag_a (i32.const 0))
-                      (global.set $flag_b (i32.const 1)))))
+                      (global.set $flag_b (i32.const 1))))
+              (br $kdone))
+              ;; 47 EA_SIB -- the address is already in $ea (the hoist above
+              ;; computed it, since this kind is in the SIB range). Park it for
+              ;; the next micro-op and write no register: this op is not an
+              ;; instruction, it is half of one.
+              (local.set $ea_hold (local.get $ea))
+              (local.set $wrote (i32.const 0))
+              (br $kdone))
+              ;; 48 EA_SIB_LD8 (and the unreachable default) -- the same EA,
+              ;; plus the byte load H149's operand bit 8 fused into it. The
+              ;; insert is the ordinary sub-register one, so AH..BH land in
+              ;; bits 8..15 of their container exactly as $set_reg8 puts them.
+              (local.set $ea_hold (local.get $ea))
+              (local.set $vr
+                (i32.or
+                  (i32.and (local.get $va)
+                    (i32.xor (i32.shl (i32.const 0xFF) (local.get $sh_d)) (i32.const -1)))
+                  (i32.shl (call $gl8 (local.get $ea)) (local.get $sh_d)))))
 
             ;; Writeback R[d].
             (if (local.get $wrote)
