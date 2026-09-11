@@ -20,6 +20,10 @@
 //   setcc     a mid-run `cmp` and two `setcc`s reading it    -- MUST fold
 //   cmploop   a loop with an `adc` inside and a `dec`/`jnz` out -- MUST fold
 //   flagsword a `lahf` in the middle                         -- MUST NOT fold
+//   strmovs   a lodsw/stosw copy loop                        -- MUST fold
+//   strdf     the same walked backwards under `std`          -- MUST fold
+//   strscan   a `scasw` loop whose `jne` reads its compare    -- MUST fold
+//   strseg    a `lodsw` with an `es:` override                -- MUST fold
 //
 // The five flag cases are the other half of the DOS fit. Flags here are LAZY --
 // a producer records its inputs, a consumer materializes the field it wants --
@@ -469,6 +473,110 @@ const CASES = {
       w(0x89, 0xC1);             // mov cx,ax
       w(0x31, 0xD9);             // xor cx,bx
       w(0x89, 0xCA);             // mov dx,cx
+    },
+  },
+
+  // --- the string group ---------------------------------------------------
+  //
+  // `movs`/`stos`/`lods`/`scas`/`cmps` were the top decline bucket in every
+  // program measured, and each of the four cases below is one thing that has
+  // to survive the fold: the SI/DI step, its DIRECTION, the flags a compare
+  // leaves, and the SEGMENT the access goes through. All four are `relaxed`,
+  // so the `--tree-fold-relax=none` arm proves the string relaxation is what
+  // caused the fold and not some other rule quietly widening.
+
+  // A copy loop written the way 16-bit code writes one: `lodsw`, arithmetic,
+  // `stosw`, with SI and DI stepping themselves. The printed SI and DI are the
+  // case -- both must land 16 bytes on from where they started, which is only
+  // true if each string op applied its own +2 inside the tree.
+  strmovs: {
+    folds: true, relaxed: true, loop: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w, label, rel8 }) => {
+      w(0xBE, TABLE & 0xFF, TABLE >> 8);   // mov si,TABLE
+      w(0xBF, DEST & 0xFF, DEST >> 8);     // mov di,DEST
+      w(0xB9, 0x08, 0x00);                 // mov cx,8
+      w(0xFC);                             // cld
+      w(0x31, 0xDB);                       // xor bx,bx
+      w(0x31, 0xD2);                       // xor dx,dx
+      label('copy');
+      w(0xAD);                             // lodsw   ax<-[si], si+=2
+      w(0x01, 0xD0);                       // add ax,dx
+      w(0xAB);                             // stosw   [di]<-ax, di+=2
+      w(0x31, 0xC3);                       // xor bx,ax
+      w(0x42);                             // inc dx
+      w(0xE2, rel8('copy'));               // loop copy
+    },
+  },
+  // THE DIRECTION. DF is read live off the flags global, which the fold does
+  // not promote into a local, so a `std` outside the run reaches every string
+  // op inside it. This walks the same data BACKWARDS; a fold that baked the
+  // +2 in at generation time prints a different SI and a different BX.
+  strdf: {
+    folds: true, relaxed: true, loop: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w, label, rel8 }) => {
+      w(0xBE, (TABLE + 14) & 0xFF, (TABLE + 14) >> 8); // mov si,TABLE+14
+      w(0xBF, (DEST + 14) & 0xFF, (DEST + 14) >> 8);   // mov di,DEST+14
+      w(0xB9, 0x08, 0x00);                 // mov cx,8
+      w(0xFD);                             // std      <- backwards
+      w(0x31, 0xDB);                       // xor bx,bx
+      label('back');
+      w(0xAD);                             // lodsw    si-=2
+      w(0x01, 0xC3);                       // add bx,ax
+      w(0xAB);                             // stosw    di-=2
+      w(0x31, 0xF3);                       // xor bx,si
+      w(0xE2, rel8('back'));               // loop back
+      // ...and put it back, because `printAndExit` walks the snapshot with
+      // `lodsw` and would read it backwards off the end of the buffer.
+      w(0xFC);                             // cld
+    },
+  },
+  // `scas` is a compare: it leaves the lazy-flag record, and the loop's own
+  // terminator is the `jne` that reads it. So this is the string op and the
+  // flag-as-a-value contract in one block -- the run stops when the word is
+  // found, and a fold that materialized the compare anywhere but where the
+  // interpreter does scans a different number of times.
+  strscan: {
+    folds: true, relaxed: true, loop: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w, label, rel8 }) => {
+      w(0xBF, TABLE & 0xFF, TABLE >> 8);   // mov di,TABLE
+      // bytes 6 and 7 of the table are 42 and 49: the word 312Ah, four
+      // compares in.
+      w(0xB8, 0x2A, 0x31);                 // mov ax,312Ah
+      w(0xB9, 0x20, 0x00);                 // mov cx,32
+      w(0xFC);                             // cld
+      w(0x31, 0xDB);                       // xor bx,bx
+      label('scan');
+      w(0xAF);                             // scasw   cmp ax,[es:di]; di+=2
+      w(0x89, 0xFA);                       // mov dx,di
+      w(0x89, 0xD6);                       // mov si,dx
+      w(0x75, rel8('scan'));               // jne scan
+    },
+  },
+  // THE SEGMENT. `lods` reads DS:SI and the prefix overrides it, so the fold
+  // has to keep the operand word the decoder wrote rather than the default.
+  // ES is put one paragraph-and-a-bit above DS, and the two reads are aimed at
+  // the SAME linear word through the two different segments: BX ends at zero
+  // if and only if the override survived. Without it the second read lands in
+  // the program's own code and BX is some other number entirely.
+  strseg: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w }) => {
+      w(0x8C, 0xC8);                       // mov ax,cs
+      w(0x05, 0x10, 0x00);                 // add ax,10h        (+100h bytes)
+      w(0x8E, 0xC0);                       // mov es,ax
+      w(0x90);                             // nop: end that run
+      w(0xBE, TABLE & 0xFF, TABLE >> 8);   // mov si,TABLE      (DS:0200h)
+      w(0xAD);                             // lodsw             DS:SI
+      w(0x89, 0xC3);                       // mov bx,ax
+      w(0xBE, 0x00, 0x01);                 // mov si,0100h      (ES:0100h == DS:0200h)
+      w(0x26, 0xAD);                       // es: lodsw         ES:SI
+      w(0x31, 0xC3);                       // xor bx,ax         -> 0
+      w(0x89, 0xF2);                       // mov dx,si
+      w(0x89, 0xD9);                       // mov cx,bx
     },
   },
 };

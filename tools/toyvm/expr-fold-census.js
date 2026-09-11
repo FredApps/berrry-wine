@@ -161,7 +161,29 @@ function classify(name, width, args, eff) {
 
   if (name === 'end' || name === 'end_smc') return { cls: 'terminator', fold: false };
   if (FPU_RE.test(name) && !/^flag/.test(name)) return { cls: 'fpu', fold: false };
-  if (STRING_RE.test(name)) return { cls: 'string', fold: false };
+  // The string group. A non-rep `movs`/`stos`/`lods`/`scas`/`cmps` is a load
+  // and/or a store plus a fixed +-1/2/4 on SI/DI chosen by DF -- all of it
+  // readable (handler-effects resolves every register index to a literal), so
+  // under `--relax=string` it is a micro-op like any other and the run does not
+  // have to end at it. `ins`/`outs` are port I/O wearing a string op's name and
+  // stay hard barriers; the `rep_`/`repne_` forms write `$steps` themselves and
+  // are their own relaxation.
+  //
+  // `stringKind` is carried out separately from `relax` because the three
+  // subgroups have to stay apart in the decline histogram whether or not their
+  // relaxation is on offer -- and a `rep_` form is not `readable` (its widened
+  // fast path calls helpers the effect table does not model), so keying the
+  // histogram off `relax` alone filed every `rep_movsb` under the port bucket.
+  {
+    const s = STRING_RE.exec(name);
+    if (s) {
+      const kind = (s[2] === 'ins' || s[2] === 'outs') ? 'port' : s[1] ? 'rep' : 'plain';
+      const r = { cls: 'string', fold: false, stringKind: kind, stem };
+      if (kind === 'port') return r;
+      if (eff && !eff.readable) return r;
+      return { ...r, relax: kind === 'rep' ? 'rep' : 'string' };
+    }
+  }
   if (STACK_RE.test(name)) return { cls: 'stack', fold: false };
   if (MULDIV_RE.test(name)) return { cls: 'muldiv', fold: false };
   if (/^(mov_r_sr|mov_sr_r|mov_m_sr|mov_sr_m|push_seg|pop_seg|push_seg32|pop_seg32|les|lds|lfs|lgs)$/.test(name)) {

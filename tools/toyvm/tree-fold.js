@@ -113,10 +113,30 @@ const MIN_OPS = 4;
 // `rcl`/`rcr` and a shift by CL are the same problem in the shift group. They
 // stay barriers, and the decline histogram still names them.
 //
+//   string   a non-rep `movs`/`stos`/`lods`/`scas`/`cmps`. The doc's decline
+//            histogram put this group at the top in every program, and it turns
+//            out to need no new machinery at all: emit.js writes each of them
+//            with LITERAL register indices (si=6, di=7, acc=0), so the same
+//            `foldRegisterFile` pass that handles `mov ax,bx` collapses the
+//            SI/DI update to arithmetic on the register globals and
+//            `promoteRegs` lifts those into the run's locals. The +-1/2/4 step
+//            is `(select -sz sz DF)` read live off the flags global, which is
+//            not promoted, so a `cld`/`std` anywhere -- inside the run or
+//            before it -- reaches the fold unchanged. The load and the store
+//            keep their `$rd`/`$wr` calls in source order, through the same
+//            `$lin(seg, off)` the operand word names, so the segment override
+//            and the fault semantics are the per-op handler's. `scas`/`cmps`
+//            record their compare into the lazy-flag globals like any other
+//            producer, which the `flags` relaxation already consumes as values.
+//            `ins`/`outs` are NOT in this: they are port I/O wearing a string
+//            op's name, and the clock quantization of a port is a separate
+//            question. The `rep_`/`repne_` forms are not in it either -- they
+//            write `$steps` themselves, so they are their own relaxation.
+//
 // The census's third relaxation, `alias`, is not here: it is a disjointness
 // PROOF over two operands rather than a class to accept, and it is the one
 // extension that needs code of its own.
-const RELAXATIONS = ['partial', 'flags'];
+const RELAXATIONS = ['partial', 'flags', 'string'];
 const RELAX_ALL = new Set(RELAXATIONS);
 
 // A handler that reads the dispatch clock cannot be folded: the interpreter
@@ -171,6 +191,14 @@ function bucketOf(c, stem) {
   if (cls === 'flags' && !c.relax) return `flags word: ${stem}`;
   if (cls === 'cmp-test' || cls === 'flags' || cls === 'adc-sbb') return 'flag consumer';
   if (cls === 'branch' || cls === 'terminator') return 'terminator';
+  // The string group splits three ways for the same reason the flag group does:
+  // one part this fold takes when its relaxation is on, one part that is a
+  // different relaxation, and one part (the port forms) that is not on offer.
+  if (cls === 'string') {
+    return c.stringKind === 'rep' ? `string (rep): ${stem}`
+      : c.stringKind === 'port' ? `string port: ${stem}`
+        : `string: ${stem}`;
+  }
   // Everything else is named by its census class, and `other` -- the catch-all
   // -- carries the opcode stem with it. The histogram is a WORK LIST: "6225
   // unsupported ops" says nothing about what to implement next, and
