@@ -3511,6 +3511,10 @@
   (func (export "set_tree_fold") (param $flag i32)
     (global.set $tree_fold_enabled (local.get $flag)))
   (func (export "get_tree_fold") (result i32) (global.get $tree_fold_enabled))
+  ;; --trace-tree-fold. Decode-time like the fold itself, so it has to reach
+  ;; every per-thread instance or the census sees only the main thread's blocks.
+  (func (export "set_tree_trace") (param $flag i32)
+    (global.set $tree_trace (local.get $flag)))
   (func (export "set_tree_fold_min_ops") (param $n i32)
     (global.set $tree_fold_min_ops (local.get $n)))
   (func (export "get_tree_fold_matches") (result i32) (global.get $tree_fold_matches))

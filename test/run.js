@@ -253,6 +253,13 @@ const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 // per-thread instance or the A/B measures two different decoders.
 // --tree-fold-min-ops=N lowers or raises the interior-op floor (default 4).
 const TREE_FOLD = hasFlag('tree-fold');
+// --trace-tree-fold: dump every lowered TREE_FOLD block's classified micro-op
+// list (entry EIP, terminator, per-uop kind/dst/src/imm/handler/b) through the
+// decode-time log_i32 channel. Consumed by tools/tree-shape-census.js, which
+// joins it against a --hot-block-dump to weight each shape by hit count.
+// Implies --tree-fold, since only a lowered block writes the descriptor.
+const TRACE_TREE_FOLD = hasFlag('trace-tree-fold');
+if (TRACE_TREE_FOLD) process.env.DBG_INV = '1';
 const TREE_FOLD_MIN_OPS = (() => {
   const v = getArg('tree-fold-min-ops', null);
   return v === null ? null : (parseInt(v, 10) | 0);
@@ -3899,7 +3906,8 @@ async function main() {
   if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
   if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
   if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
-  if (TREE_FOLD) inheritWasm('set_tree_fold', 1);
+  if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
+  if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
 
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
     workerBackend: guestThreadHost,
@@ -4790,8 +4798,11 @@ async function main() {
   if (NO_RLE_RUN && instance.exports.set_rle_run) {
     instance.exports.set_rle_run(0);
   }
-  if (TREE_FOLD && instance.exports.set_tree_fold) {
+  if ((TREE_FOLD || TRACE_TREE_FOLD) && instance.exports.set_tree_fold) {
     instance.exports.set_tree_fold(1);
+  }
+  if (TRACE_TREE_FOLD && instance.exports.set_tree_trace) {
+    instance.exports.set_tree_trace(1);
   }
   // The floor applies whether or not the fold is armed: with it off, the
   // matcher still counts what it WOULD have taken, and that census is only
