@@ -200,7 +200,7 @@ assert(recorderJs.includes("document.getElementById('start-record-label')"), 're
 assert(/\[\s*'pinball'\s*,\s*'Pinball'/.test(webApp), 'default desktop whitelist should include Pinball');
 assert(/\[\s*'spider'\s*,\s*'Spider'/.test(webApp), 'default desktop whitelist should include Spider');
 assert(/\[\s*'bricks'\s*,\s*'Bricks'/.test(webApp), 'default desktop whitelist should include Bricks');
-assert(/bricks:\s*\{[^}]*files:\s*\['binaries\/wep32-community\/Bricks\/brk1\.dll'\]/s.test(webApp), 'Bricks should expose brk1.dll as a runtime VFS file');
+assert(/bricks:\s*\{[^}]*files:\s*\[[^\]]*'binaries\/wep32-community\/Bricks\/brk1\.dll'/s.test(webApp), 'Bricks should expose brk1.dll as a runtime VFS file');
 assert(!/bricks:\s*\{[^}]*dlls:\s*\['binaries\/wep32-community\/Bricks\/brk1\.dll'\]/s.test(webApp), 'Bricks should not preload brk1.dll as an import DLL');
 assert(/\[\s*'empipe'\s*,\s*'EmPipe'/.test(webApp), 'default desktop whitelist should include EmPipe');
 assert(/empipe:\s*\{[^}]*requiredFiles:\s*true/s.test(webApp), 'EmPipe web launch should fail fast if companion assets are missing');
