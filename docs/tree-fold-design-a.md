@@ -26,7 +26,9 @@ the decoder actually emitted, never a guess:
   `add|sub|and|or|xor r,r` and `r,imm` / `inc` / `dec` / `neg` / `not` /
   `shl|shr|sar|rol|ror r,imm|cl` / `imul r,r` / `imul r,r,imm` /
   `load32 r,[r+d]` / `store32 [r+d],r`.
-* **At least `--tree-fold-min-ops` interior ops** (default 4) and at most 24.
+* **At least `--tree-fold-min-ops` interior ops** (default 4) and at most
+  `--tree-fold-max-ops` (default 160, a structural limit rather than a
+  throughput one — §11).
 
 Everything the task's scope list rules out is ruled out *by construction*,
 because the classifier works from handler indices and the decoder emits a
@@ -527,3 +529,48 @@ It exists to A/B a *shorter* cap — "what are this app's long bodies actually
 contributing?" — since the default is no longer a guess that needs relaxing.
 Both thresholds now propagate through `inheritWasm`, so a `--threads` arm is
 not silently folding by a different rule in its worker instances.
+
+### mw3 re-measured at the default cap, with a null arm in the same run
+
+§9b's "+3.95% mean slower, minimum 4.04% faster, t=1.22" is superseded. The
+re-run has three arms instead of two, rotating every rep, fixed work
+(`--app=mw3 --batch-size=200000 --max-batches=50 --no-threads --quiet-api`),
+user CPU:
+
+* **off** — no fold
+* **cap24** — `--tree-fold --tree-fold-max-ops=24`: every short body still
+  folds, the 42-op blend declines as `long`. Measured, this leaves **17 blocks
+  and 51,246 folded ops** against the default's **5,207 / 116,240,046** — 0.02%
+  of retired ops, so against `off` it is a **null pair inside the same run**,
+  and its spread is a live noise reading taken under the same load as the real
+  comparison.
+* **on** — the default cap, 160: the blend folds (identical census to the old
+  64: 5,207 blocks, 116,240,046 ops, `long 0`).
+
+| rep | off | cap24 | on |
+|---|---|---|---|
+| 1 | 76.72 | 72.92 | 69.97 |
+| 2 | 67.17 | 68.90 | 66.76 |
+| 3 | 68.91 | 63.52 | 70.56 |
+| 4 | 64.13 | 61.46 | 62.96 |
+| 5 | 59.83 | 65.04 | 60.48 |
+| 6 | 59.41 | 58.66 | 59.87 |
+| **mean** | **66.03s** | **65.08s** | **65.10s** |
+
+| pair | paired mean | sd | SE | t |
+|---|---|---|---|---|
+| on − off (45% of ops fold) | **−0.93s (−1.4%)** | 3.01 | 1.23 | −0.76 |
+| cap24 − off (**null**, 0.02% of ops fold) | −0.61s (−0.9%) | 3.92 | 1.60 | −0.38 |
+
+**The null pair is noisier than the real one.** Two arms that differ in 0.02%
+of the work swing ±3.9s run to run; the arm that folds 45% of all retired ops
+differs from `off` by 0.93s. So the fold's app-level effect on mw3 is smaller
+than what this box can resolve — and that is now demonstrated inside the
+measurement rather than argued about afterwards. It is **not** a regression:
+the sign is now negative (faster) and it was positive last time, which is the
+signature of noise, not of a change.
+
+Read the raw column too: `off` drifts 76.72 → 59.41 monotonically across six
+reps as the box unloads. That drift is 29%, more than an order of magnitude
+larger than any effect being looked for, and it is the entire reason the arms
+rotate. Loadavg over the run: 191 at the start, 108 by the second sample.

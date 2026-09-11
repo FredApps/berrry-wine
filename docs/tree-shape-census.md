@@ -10,6 +10,9 @@ that wins **+23-33%** on 6-11-op bodies and loses **12-18%** on mw3's 42-op
 alpha blend, where it covers 45% of all retired ops — the per-micro-op
 interpretation tax eventually exceeds the one-block-transfer saving, and a long
 body is where it bites.
+(**The 12-18% loss was retracted** — see the correction at the end of §6. The
+long-body loss does not exist at any length up to 160; it was a load artifact.
+Nothing else in this census depends on it.)
 
 Runtime wasm codegen is ruled out. The remaining alternative is a **fixed
 vocabulary of hand-written superinstructions**, each covering one recurring
@@ -192,6 +195,32 @@ comparison in the matcher and no new correctness surface. If mw3's blend is
 worth chasing after that, it is worth chasing as **one** hand-written
 `$th_mw3_blend_row`-style superop over the whole loop, matched as a single
 shape — not as nine reusable primitives that are not reusable.
+
+### CORRECTION (2026-09-10): the body-length cap this section recommends does not exist
+
+The verdict above — do not build the vocabulary — **stands**, and its evidence
+(one shape in 663 recurs across two apps) is independent of anything below.
+
+But the "cheap fix" paragraph, the 10 ns per-micro-op tax it derives, and the
+20-25 crossover it computes are all downstream of one input: "H454 measures
+12-18% slower than per-op on mw3's 42-op blend" (also in the header). **That
+number was mine and I retracted it.** It was read off the first two pairs of an
+eight-pair run; the remaining six read -9.5, -4.0, +3.2, +1.4 and +1.9, the
+paired t was 1.22, and the minima said 4% *faster*. See §9b of
+[tree-fold-design-a.md](tree-fold-design-a.md).
+
+The crossover was then measured directly, one shape at nine body lengths
+(§11 there). There is none. The fold leads at **every** length from 8 to 160
+interior micro-ops — +50% at 8, +33-43% from 64 through 160 — and the lead does
+not trend towards zero. A cap at 20-25 would decline bodies the measurement
+says are still winning, mw3's blend among them, which is why the default is now
+160 and bounded by the descriptor's structural limit rather than by throughput.
+
+The same session also measured this box's real noise floor with a null control
+(two arms of byte-identical code, because the fold declined both): -35% to
++27% on wall minima at load 45, against the ±1% `bench-loops.js` is documented
+to have. That is the width of the window any 12-18% app-level claim has to
+clear, and it did not clear it.
 
 ## 7. Reproducing
 
