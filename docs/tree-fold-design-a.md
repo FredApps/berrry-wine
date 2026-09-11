@@ -394,6 +394,48 @@ same one-transfer saving is spread 4-7x thinner while the generic walker's
 per-micro-op cost is paid 42 times. That is a prediction the design makes, and
 it is why §9c stops guessing the cap and measures it.
 
+## 9c. Interior flag consumers: a capability with no corpus
+
+The family's founding licence was "nothing inside the tree looks at the flags
+the ops leave behind", which is why `adc` declined. That licence was stronger
+than it needed to be. The tree keeps the lazy-flag **globals** current wherever
+a reader exists — the dead-flag pass elides a write only when no later op reads
+the fields it wrote — so an interior consumer can call the same `$get_cf` the
+scalar handler calls and get the same answer. ADC/SBB are now micro-op kinds
+(32-bit `H5/H6/H14/H15`) and the sub-register ALU accepts sub-ops 2 and 3.
+
+Two things make this safe rather than merely plausible:
+
+* `$tree_uop_flag_reads` reports the consumer's CF read, so every earlier write
+  it can observe stays live. This is the *only* thing between a folded tree and
+  a wrong answer, and the mutation test is to make ADC report no read: shape K
+  then diverges in `edx`, the accumulator.
+* `$tree_uop_flag_writes` reports **zero** writes for ADC/SBB, which makes them
+  permanently inelidable. Their CF fix-up writes `flag_op`/`flag_a`/`flag_b`
+  outside `$do_alu_sized`, so a no-flags variant would have to replicate it.
+  Under-reporting a write set can only keep an earlier write alive that could
+  have gone — conservative in the safe direction.
+
+**Measured effect on the corpus: none.** mw3 and quake2 are byte-identical
+before and after — same blocks, same ops caught, same declines:
+
+| app | blocks before → after | ops caught before → after |
+|---|---|---|
+| mw3 | 5207 → 5207 | 116,240,046 → 116,240,046 |
+| quake2 soft | 33,040 → 33,040 | 10,596,862 → 10,596,862 |
+
+Not one block in either window contains an interior `adc`. The residual
+barriers are elsewhere and are named by `lastFn`: quake2's is **H83
+`$th_rep_movsd`**, a REP string op that is an entire loop inside one handler
+and is not a micro-op in any useful sense; mw3's is **H149
+`$th_compute_ea_sib`**, which computes an EA into `ea_temp` for the *next*
+handler to consume — a cross-op dataflow the tree's one-op-at-a-time model does
+not represent. Neither is a flag problem.
+
+So this is a capability the family now has and the corpus does not ask for. It
+cost nothing to carry and it removes a stated limitation, but anyone looking for
+the next percentage point should look at H149's two-op EA pairing, not here.
+
 ## 10. Flags
 
 ```

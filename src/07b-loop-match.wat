@@ -5342,6 +5342,20 @@
   (global $TU_LOAD16_ABS  i32 (i32.const 40))  ;; R16[d] = [imm]
   (global $TU_LOAD16_RO   i32 (i32.const 41))  ;; R16[d] = [R[a] + imm]
   (global $TU_STORE16_RO  i32 (i32.const 42))  ;; [R[a] + imm] = R16[d]
+  ;; -- Interior flag CONSUMERS -------------------------------------------
+  ;; The family's original licence was "nothing inside the tree looks at the
+  ;; flags the ops leave behind", which is why ADC declined. That licence is
+  ;; stronger than it needs to be. The tree keeps the lazy-flag GLOBALS
+  ;; current at every point a reader exists -- the dead-flag pass elides a
+  ;; write only when no later op reads the fields it wrote -- so a consumer
+  ;; can simply call the same $get_cf the scalar handler calls and get the
+  ;; same answer. What a consumer costs is not correctness, it is elision:
+  ;; $tree_uop_flag_reads reports it, every earlier write it can observe
+  ;; stays live, and the consumers themselves are never elided.
+  (global $TU_ADC_RR i32 (i32.const 43))
+  (global $TU_ADC_RI i32 (i32.const 44))
+  (global $TU_SBB_RR i32 (i32.const 45))
+  (global $TU_SBB_RI i32 (i32.const 46))
   (global $TU_MOV_M8_I_SIB  i32 (i32.const 39))  ;; [ea] = imm8 (in b)
 
   ;; Classifier out-parameters. Decode-time only and single-threaded per
@@ -5406,6 +5420,32 @@
     (global.set $tu_imm (i32.const 0))
     (global.set $tu_b (i32.const 0))
     (global.set $tu_extra (i32.const 0))
+
+    ;; -- 32-bit ADC/SBB: the interior flag consumers -------------------------
+    ;; H5/H6 are the reg,imm32 pair and H14/H15 the reg,reg pair, encoded like
+    ;; their ADD/SUB neighbours. They are separate kinds rather than ALU
+    ;; sub-ops because the scalar handlers are not just "$do_alu32 with a
+    ;; carry in": each one also has a CF fix-up that writes flag_op/a/b raw
+    ;; when `b + cf` wrapped, and that fix-up is the part a re-derivation
+    ;; would get wrong.
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 5))
+                (i32.eq (local.get $fn) (i32.const 6)))
+      (then
+        (global.set $tu_d (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_kind
+          (select (global.get $TU_ADC_RI) (global.get $TU_SBB_RI)
+                  (i32.eq (local.get $fn) (i32.const 5))))
+        (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $fn) (i32.const 14))
+                (i32.eq (local.get $fn) (i32.const 15)))
+      (then
+        (global.set $tu_d (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (global.set $tu_a (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_kind
+          (select (global.get $TU_ADC_RR) (global.get $TU_SBB_RR)
+                  (i32.eq (local.get $fn) (i32.const 14))))
+        (return (i32.const 1))))
 
     ;; -- register/immediate: operand = reg, imm32 in the next word ----------
     (if (i32.or (i32.eq (local.get $fn) (i32.const 2))
@@ -5538,9 +5578,10 @@
         (return (i32.const 1))))
 
     ;; -- sub-register ALU and MOV, byte and word -----------------------------
-    ;; ADC (2) and SBB (3) are declined here as everywhere else: they READ CF,
-    ;; and a fold whose licence is that nothing looks at the flags the ops
-    ;; leave behind cannot contain one. Every other sub-op goes through the
+    ;; ADC (2) and SBB (3) are allowed now: $do_alu_sized implements them with
+    ;; the same $get_cf the scalar handler calls, and the tree keeps the
+    ;; lazy-flag globals current wherever a reader exists. They are simply
+    ;; never elided -- see $tree_uop_flag_writes. Every sub-op goes through the
     ;; same $do_alu_sized the scalar handler calls, with the same mask and
     ;; sign-shift, so the five lazy-flag fields land exactly where the scalar
     ;; sequence would have left them -- including flag_sign_shift, which is 7
@@ -5557,9 +5598,6 @@
             (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
             (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))
             (i32.eq (local.get $fn) (i32.const 207))))
-        (if (i32.or (i32.eq (local.get $type) (i32.const 2))
-                    (i32.eq (local.get $type) (i32.const 3)))
-          (then (return (i32.const 0))))
         (if (i32.gt_u (local.get $type) (i32.const 7)) (then (return (i32.const 0))))
         (global.set $tu_b
           (i32.or (i32.shl (local.get $type) (global.get $TU_B_ALU_SHIFT))
@@ -5827,11 +5865,19 @@
     (if (i32.or (i32.eq (local.get $kind) (global.get $TU_ALU_SUB_RR))
                 (i32.eq (local.get $kind) (global.get $TU_ALU_SUB_RI)))
       (then
-        ;; The sub-width ALU goes through $do_alu_sized, which for everything
-        ;; but ADC/SBB (both declined upstream) writes what its 32-bit twin
-        ;; writes and then fixes flag_res and flag_sign_shift.
+        ;; The sub-width ALU goes through $do_alu_sized, which writes what its
+        ;; 32-bit twin writes and then fixes flag_res and flag_sign_shift.
         (local.set $sub
           (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT)) (i32.const 0xF)))
+        ;; ADC/SBB report NO writes, which makes them permanently inelidable
+        ;; and stops them covering anything earlier. That is deliberately
+        ;; conservative in both directions: their CF fix-up writes flag_op,
+        ;; flag_a and flag_b outside $do_alu_sized, so a NOFLAGS variant would
+        ;; have to replicate that too, and under-reporting a write set can only
+        ;; ever keep an earlier write alive that could have gone.
+        (if (i32.or (i32.eq (local.get $sub) (i32.const 2))
+                    (i32.eq (local.get $sub) (i32.const 3)))
+          (then (return (i32.const 0))))
         (return
           (if (result i32)
               (i32.or (i32.eq (local.get $sub) (i32.const 1))
@@ -5860,17 +5906,35 @@
       (then (return (global.get $TF_F_INC))))
     (i32.const 0))
 
-  ;; Which fields a micro-op READS. Only two kinds do, and both read CF:
-  ;; INC/DEC snapshot it into $saved_cf because x86 says they preserve it, and
-  ;; RCL/RCR rotate through it. A read makes every earlier write of those
-  ;; fields live again, which is what stops the pass eliding the `and` in
+  ;; Which fields a micro-op READS. All of them read CF: INC/DEC snapshot it
+  ;; into $saved_cf because x86 says they preserve it, RCL/RCR rotate through
+  ;; it, and ADC/SBB add it. A read makes every earlier write of those fields
+  ;; live again, which is what stops the pass eliding the `and` in
   ;; `and eax,ecx / dec ecx` -- $set_flags_dec would read the CF that `and`
   ;; left behind, and $get_cf reaches flag_op/res/a/b to find it.
-  (func $tree_uop_flag_reads (param $kind i32) (result i32)
+  ;;
+  ;; This is also the ONLY thing standing between a folded tree and a wrong
+  ;; answer once interior consumers are allowed: the consumer reads the
+  ;; lazy-flag globals, so every write it can observe has to still be there.
+  (func $tree_uop_flag_reads (param $kind i32) (param $b i32) (result i32)
+    (local $sub i32)
     (if (i32.or (i32.eq (local.get $kind) (global.get $TU_INC))
         (i32.or (i32.eq (local.get $kind) (global.get $TU_DEC))
                 (i32.eq (local.get $kind) (global.get $TU_SHIFT))))
       (then (return (global.get $TF_F_CFRD))))
+    (if (i32.or (i32.eq (local.get $kind) (global.get $TU_ADC_RR))
+        (i32.or (i32.eq (local.get $kind) (global.get $TU_ADC_RI))
+        (i32.or (i32.eq (local.get $kind) (global.get $TU_SBB_RR))
+                (i32.eq (local.get $kind) (global.get $TU_SBB_RI)))))
+      (then (return (global.get $TF_F_CFRD))))
+    (if (i32.or (i32.eq (local.get $kind) (global.get $TU_ALU_SUB_RR))
+                (i32.eq (local.get $kind) (global.get $TU_ALU_SUB_RI)))
+      (then
+        (local.set $sub
+          (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT)) (i32.const 0xF)))
+        (if (i32.or (i32.eq (local.get $sub) (i32.const 2))
+                    (i32.eq (local.get $sub) (i32.const 3)))
+          (then (return (global.get $TF_F_CFRD))))))
     (i32.const 0))
 
   ;; The sub-width ALU with the flag half removed. Only reachable from a
@@ -5983,7 +6047,7 @@
           (then (return (call $tree_decl_term_bump))))
         (if (i32.or
               (call $tree_uop_flag_writes (global.get $tu_kind) (global.get $tu_b))
-              (call $tree_uop_flag_reads (global.get $tu_kind)))
+              (call $tree_uop_flag_reads (global.get $tu_kind) (global.get $tu_b)))
           (then (return (call $tree_decl_term_bump))))
         ;; Ran out of ops without finding a producer: not this family.
         (if (i32.eqz (local.get $tidx))
@@ -6154,7 +6218,8 @@
         (local.set $covered (i32.or (local.get $covered) (local.get $fwrites)))
         (local.set $covered
           (i32.and (local.get $covered)
-            (i32.xor (call $tree_uop_flag_reads (i32.load (local.get $p)))
+            (i32.xor (call $tree_uop_flag_reads (i32.load (local.get $p))
+                       (i32.load offset=20 (local.get $p)))
                      (i32.const -1))))
         (br $dead)))
 
@@ -6209,7 +6274,7 @@
     (local $i i32) (local $kind i32) (local $d i32) (local $a i32) (local $imm i32)
     (local $b i32) (local $ea i32)
     (local $sh_d i32) (local $sh_a i32) (local $mask i32) (local $ssh i32)
-    (local $nof i32)
+    (local $nof i32) (local $beff i32)
     (local $va i32) (local $vb i32) (local $vr i32)
     (local $iters i32) (local $allowed i32) (local $budget i32)
     (local $taken i32) (local $old i32) (local $wrote i32)
@@ -6432,6 +6497,7 @@
             ;; first store instead of failing.
             (local.set $wrote (i32.const 1))
             (block $kdone
+              (block $k46 (block $k45 (block $k44 (block $k43
               (block $k42 (block $k41 (block $k40
               (block $k39 (block $k38 (block $k37 (block $k36 (block $k35
               (block $k34 (block $k33 (block $k32 (block $k31 (block $k30
@@ -6447,8 +6513,8 @@
                           $k10 $k11 $k12 $k13 $k14 $k15 $k16 $k17 $k18 $k19
                           $k20 $k21 $k22 $k23 $k24 $k25 $k26 $k27 $k28 $k29
                           $k30 $k31 $k32 $k33 $k34 $k35 $k36 $k37 $k38 $k39
-                          $k40 $k41 $k42
-                          $k42
+                          $k40 $k41 $k42 $k43 $k44 $k45 $k46
+                          $k46
                           (local.get $kind)))
                 ;; 0 MOV_RR
                 (local.set $vr (local.get $vb)) (br $kdone))
@@ -6707,10 +6773,46 @@
                   (i32.or (i32.and (local.get $va) (i32.const 0xFFFF0000))
                           (call $gl16 (i32.add (local.get $vb) (local.get $imm)))))
                 (br $kdone))
-              ;; 42 STORE16_RO (and the unreachable default).
-              (call $gs16 (i32.add (local.get $vb) (local.get $imm))
-                (i32.and (local.get $va) (i32.const 0xFFFF)))
-              (local.set $wrote (i32.const 0)))
+                ;; 42 STORE16_RO
+                (call $gs16 (i32.add (local.get $vb) (local.get $imm))
+                  (i32.and (local.get $va) (i32.const 0xFFFF)))
+                (local.set $wrote (i32.const 0)) (br $kdone))
+                ;; 43 ADC_RR -- $th_adc_r_r, transcribed. The CF fix-up is not
+                ;; decoration: when `b + cf` wraps, the carry out is 1 no
+                ;; matter what the sum says, and flag_op 8 is the raw mode that
+                ;; states that without disturbing the ZF/SF the add just set.
+                (local.set $beff (i32.add (local.get $vb) (call $get_cf)))
+                (local.set $vr (i32.add (local.get $va) (local.get $beff)))
+                (call $set_flags_add (local.get $va) (local.get $beff) (local.get $vr))
+                (if (i32.lt_u (local.get $beff) (local.get $vb))
+                  (then (global.set $flag_op (i32.const 8))
+                        (global.set $flag_a (i32.const 1))
+                        (global.set $flag_b (i32.const 0))))
+                (br $kdone))
+                ;; 44 ADC_RI
+                (local.set $beff (i32.add (local.get $imm) (call $get_cf)))
+                (local.set $vr (i32.add (local.get $va) (local.get $beff)))
+                (call $set_flags_add (local.get $va) (local.get $beff) (local.get $vr))
+                (if (i32.lt_u (local.get $beff) (local.get $imm))
+                  (then (global.set $flag_op (i32.const 8))
+                        (global.set $flag_a (i32.const 1))
+                        (global.set $flag_b (i32.const 0))))
+                (br $kdone))
+                ;; 45 SBB_RR -- the borrow twin, which fixes flag_a/flag_b only.
+                (local.set $beff (i32.add (local.get $vb) (call $get_cf)))
+                (local.set $vr (i32.sub (local.get $va) (local.get $beff)))
+                (call $set_flags_sub (local.get $va) (local.get $beff) (local.get $vr))
+                (if (i32.lt_u (local.get $beff) (local.get $vb))
+                  (then (global.set $flag_a (i32.const 0))
+                        (global.set $flag_b (i32.const 1))))
+                (br $kdone))
+              ;; 46 SBB_RI (and the unreachable default).
+              (local.set $beff (i32.add (local.get $imm) (call $get_cf)))
+              (local.set $vr (i32.sub (local.get $va) (local.get $beff)))
+              (call $set_flags_sub (local.get $va) (local.get $beff) (local.get $vr))
+              (if (i32.lt_u (local.get $beff) (local.get $imm))
+                (then (global.set $flag_a (i32.const 0))
+                      (global.set $flag_b (i32.const 1)))))
 
             ;; Writeback R[d].
             (if (local.get $wrote)

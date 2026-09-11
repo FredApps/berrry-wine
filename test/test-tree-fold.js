@@ -228,28 +228,62 @@ function shapeJ(absAddr) {
   ]);
 }
 
-// -- negatives ----------------------------------------------------------------
-// ADC reads CF. An interior flag CONSUMER is exactly what this family forbids,
-// because the fold's whole licence is that nothing between the ops looks at
-// the flags the ops leave behind.
-const NEG_ADC = loopBackDec([
-  0x89, 0xD0,                         // mov  eax, edx
-  0x11, 0xD8,                         // adc  eax, ebx       <-- flag consumer
-  0x01, 0xDA,                         // add  edx, ebx
-  0x89, 0x07,                         // mov  [edi], eax
-  0x83, 0xC7, 0x04,                   // add  edi, 4
-]);
-// The byte twin. Widening the family to partial registers did NOT widen it to
-// flag consumers: `adc al,bl` reads CF at the byte width just as `adc eax,ebx`
-// reads it at the dword width, and both are declined at the same place, by
-// sub-op number rather than by width.
-const NEG_ADC8 = loopBackDec([
+// -- K/L: interior flag CONSUMERS, which used to be the family's negatives ----
+// ADC reads CF, and the tree's licence used to be "nothing between the ops
+// looks at the flags the ops leave behind". That was stronger than necessary:
+// the tree keeps the lazy-flag globals current wherever a reader exists, so a
+// consumer reads exactly what the scalar sequence would have left. Both of
+// these are now positives, and what makes them worth testing rather than
+// assuming is the CF fix-up inside ADC/SBB -- when `b + cf` wraps, carry out
+// is 1 regardless of the sum, and the handler writes flag_op/a/b raw to say so.
+//
+// The ordering here is the test, and getting it wrong the first time is how
+// it earned its comment. A consumer BEFORE the writers proves nothing: it
+// reads the previous iteration's flags, so eliding a later write is correct
+// and the elision count is legitimately nonzero. The consumer has to sit
+// AFTER a full five-field writer, under a `cmp` terminator (which writes all
+// five and reads none, so `covered` is full on entry to the backward walk) and
+// with flag-transparent LEAs for the cursor bumps. Then the `add eax,ebx` is
+// elidable on every rule EXCEPT the one that says the `adc` reads CF -- which
+// is exactly the mutation to check.
+const SHAPE_K = loopBackJcc([
+  0x8B, 0x06,                         // mov  eax, [esi]
+  0x01, 0xD8,                         // add  eax, ebx       writes all five
+  0x11, 0xC2,                         // adc  edx, eax       <-- consumer, AFTER it
+  0x89, 0x17,                         // mov  [edi], edx
+  0x8D, 0x76, 0x04,                   // lea  esi, [esi+4]   no flags
+  0x8D, 0x7F, 0x04,                   // lea  edi, [edi+4]   nor this
+  0x3B, 0xF1,                         // cmp  esi, ecx
+], 0x72);                             // jb
+// The byte twin, which goes through $do_alu_sized's own ADC arm rather than
+// the 32-bit kind -- a different code path for the same question.
+//
+// `xor ebp,ebp` in front is not decoration. These are the first shapes whose
+// RESULT depends on the CF at loop entry, and checkShape runs its two arms
+// back to back, so the gate-on arm inherits the flags the gate-off arm left.
+// Without a normalizer the two arms legitimately disagree in the first
+// iteration's low byte, which reads exactly like a broken carry chain. The
+// xor is outside the array loopBackDec closes, so the back edge still lands on
+// `mov al,[esi]` and the carry chain across iterations is untouched.
+const SHAPE_L = [0x31, 0xED].concat(loopBackDec([
   0x8A, 0x06,                         // mov  al, [esi]
   0x12, 0xC3,                         // adc  al, bl         <-- flag consumer
   0x88, 0x07,                         // mov  [edi], al
   0x46,                               // inc  esi
   0x47,                               // inc  edi
-]);
+]));
+// The SBB pair, whose fix-up touches flag_a/flag_b and NOT flag_op -- the one
+// asymmetry between the two that a shared arm would have flattened.
+const SHAPE_M = [0x31, 0xED].concat(loopBackDec([
+  0x8B, 0x06,                         // mov  eax, [esi]
+  0x19, 0xD8,                         // sbb  eax, ebx       <-- flag consumer
+  0x1D, 0x11, 0x22, 0x33, 0x44,       // sbb  eax, 0x44332211
+  0x89, 0x07,                         // mov  [edi], eax
+  0x83, 0xC6, 0x04,                   // add  esi, 4
+  0x83, 0xC7, 0x04,                   // add  edi, 4
+]));
+
+// -- negatives ----------------------------------------------------------------
 // Three interior ops, under the default floor of four.
 const NEG_SHORT = loopBackDec([
   0x89, 0xD0,                         // mov  eax, edx
@@ -500,6 +534,35 @@ const NEG_SHORT = loopBackDec([
              ebp: 0xa5a5a5a5, esi: srcJ, edi: dstJ }),
     { seedAt: srcJ, seedWords: 200, readAt: dstJ }, 50);
 
+  // Interior flag consumers. Each asserts zero elisions as well as agreeing
+  // with the per-op arm: a consumer that the dead-flag pass did not recognize
+  // as a reader would let an earlier write go, and the difference is CF only,
+  // which the register/flag comparison alone has already been shown to miss.
+  const srcK = (arena + 0x40000) >>> 0;
+  const dstK = (arena + 0x44000) >>> 0;
+  {
+    const deadBefore = e.test_tree_deadflag();
+    checkShape('shape K (interior adc, after a full flag writer)', SHAPE_K,
+      () => ({ eax: 0, ecx: (srcK + 100 * 4) >>> 0, edx: 0xfffffff0,
+               ebx: 0x00000037,
+               ebp: 0xa5a5a5a5, esi: srcK, edi: dstK }),
+      { seedAt: srcK, seedWords: 120, readAt: dstK }, 100);
+    assert.strictEqual(e.test_tree_deadflag() - deadBefore, 0,
+      'shape K: an interior CF consumer keeps every earlier flag write alive');
+  }
+  const srcL = (arena + 0x48000) >>> 0;
+  const dstL = (arena + 0x4c000) >>> 0;
+  checkShape('shape L (interior adc al,bl, byte width)', SHAPE_L,
+    () => ({ eax: 0, ecx: 100, edx: 0x5a5a5a5a, ebx: 0x000000e1,
+             ebp: 0xa5a5a5a5, esi: srcL, edi: dstL }),
+    { seedAt: srcL, seedWords: 60, readAt: dstL }, 25);
+  const srcM = (arena + 0x50000) >>> 0;
+  const dstM = (arena + 0x54000) >>> 0;
+  checkShape('shape M (interior sbb, register and immediate)', SHAPE_M,
+    () => ({ eax: 0, ecx: 100, edx: 0x11111111, ebx: 0x0000ffff,
+             ebp: 0xa5a5a5a5, esi: srcM, edi: dstM }),
+    { seedAt: srcM, seedWords: 200, readAt: dstM }, 100);
+
   // -------------------------------------------------------------- side exit --
   // Same shape, same inputs, but a block budget far below the trip count, so
   // the super-op is forced to materialize everything and be re-entered many
@@ -575,8 +638,6 @@ const NEG_SHORT = loopBackDec([
     assert.strictEqual(e.test_tree_runs(), runsBefore,
       `${name}: nothing is lowered, so no super-op runs`);
   }
-  checkDecline('interior flag consumer (adc)', NEG_ADC);
-  checkDecline('interior byte flag consumer (adc al,bl)', NEG_ADC8);
   checkDecline('body under the minimum-op floor', NEG_SHORT);
 
   // The floor is a knob, not a law: the same block that declined above is
