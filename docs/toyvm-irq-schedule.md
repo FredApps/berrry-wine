@@ -236,4 +236,54 @@ is quoted here; the counts are what the gate reads.
   against after, through `sweep-diff.js`. A clock retiming is *supposed* to move
   the frame hash of a time-paced program, which is why `sweep-diff.js` separates
   `regression` and `went blank` (blocking) from `changed` (expected, one line of
-  reason each). See the run below.
+  reason each). See below.
+
+### The corpus run
+
+199 programs in each sweep, 191 names in both.
+
+```
+REGRESSIONS: run status got worse (block the change): 0
+WENT BLANK: drew pixels before, none now (explain or block): 0
+recovered: 2   QUARTZ.EXE timeout -> ok;  do.exe arms-disagree -> ok
+bucket moved: 1   QUARTZ.EXE blank -> demo (drew more; px 0 -> 468)
+```
+
+Nothing blocking. Two programs got *better*: QUARTZ.EXE used to hit the sweep's
+own timeout and now finishes and draws, and `do.exe` used to disagree between
+its four interpreter shells and now agrees — a program whose shells disagree is
+a program whose result depends on how often it hands back, which is the bug this
+change removes.
+
+**Dispatches moved on 184 of 191, and they all moved the same way.** The before
+arm overran its 8,000,000-dispatch budget by up to 42,888 (NT_DEM1.EXE; ~10k
+typical); the after arm lands within 36 of it, usually within 4. That is not the
+guest doing different work, it is the last slice no longer being allowed to run
+past the end of the run: a stop is a date now, so the budget is one of the dates.
+It also means the two sweeps are not sampling the same instant, which matters for
+the next paragraph.
+
+**Frame hashes moved on 22 of 191 rows** (20 distinct binaries; `ZERO-BBS.EXE`
+appears three times from three directories). Every one of them is still drawing.
+`phase.js` in the scratch tree re-ran each of them in both arms at 8.00M, 8.01M,
+8.02M and 8.04M dispatches — a ≤0.5% nudge, smaller than the overshoot the before
+arm was taking for free — and the 22 split three ways:
+
+| what the nudge showed | rows |
+|---|---|
+| a frame the before arm draws reappears in the after arm | 11 |
+| the hash is not stable within *one* arm across the nudge, so it was never an identity | 7 |
+| stable in both arms and still different | 4 |
+
+Of the last four, BKSNOTE.EXE is located exactly: `after@8.00M == before@8.20M`,
+so the after arm is 2.5% further into the same animation on fewer dispatches —
+which is the timer-rate correction from the section above, seen in a picture
+instead of a wav. brainbug.exe draws the *same* frame in the before arm from
+8.0M to 10.0M and a different one with 68,128 pixels against 36,840 in the after
+arm: it drew more, not less. BMGLP.EXE (1,112 → 4,837 px) and ALCHYMIA.EXE
+(2,579 → 2,550 px) were not located on a 0.1M-step walk of the before arm; both
+keep drawing and neither lost its picture.
+
+So: no program lost pixels, two gained a working run, and every frame that moved
+belongs to a program whose picture is a sample of a time-paced animation. The
+frames of programs that are *not* time-paced — the 169 other rows — did not move.

@@ -997,6 +997,15 @@ is the same trade the region JIT already ships with as a page default; it is why
 `--tree-fold` stays opt-in, and why `--no-tree-fold-loops` is a documented
 switch rather than a bisector.
 
+**Superseded as of the interrupt schedule.** Handback-exactness stopped being
+something the audio depends on: interrupts are now delivered at the dispatch
+count they are due at rather than at the next handback, so absorbing a block
+transfer no longer moves an injection. DADEMO3 — the witness this section was
+written about — is byte-identical in all three arms today, and so are RUNDEMO,
+ACME-BIG, CONTAGIO and CATWALK. BLIQ is the one that still moves, and its
+interrupt *count* moves with it, which makes it the install-schedule class and
+not this one. See [toyvm-irq-schedule.md](toyvm-irq-schedule.md).
+
 ## One allocator for the handler table's tail
 
 `--tree-fold` and `--region-jit` were mutually exclusive, and the reason was two
