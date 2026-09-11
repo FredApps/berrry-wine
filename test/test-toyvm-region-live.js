@@ -262,7 +262,15 @@ function sideExitExpected() {
   return { bx, si, bp };
 }
 
-async function run(com, jit) {
+// `fold` asks for `--tree-fold` ALONGSIDE the JIT. Both append generated
+// handlers to the same table, and until tools/toyvm/extras.js they each took
+// their first ordinal from `HANDLERS.length` -- so their ordinals overlapped and
+// each one's module build shipped only its own handlers. An arena word written
+// against a tree then called a region, or called nothing. That is a wrong number
+// and not a crash, which is why it is checked here against the same closed-form
+// answer the other arms are: see docs/toyvm-tree-fold.md, *One allocator for the
+// handler table's tail*.
+async function run(com, jit, fold = false) {
   const r = await runDos({
     exe: com,
     budget: 120e6,
@@ -294,6 +302,10 @@ async function run(com, jit) {
       backend: inlineBackend(),
       log: () => {},
     } : null,
+    // Ungated on purpose: this program's loop is entered a few thousand times,
+    // and the point of the arm is that the two allocators coexist, not that the
+    // hotness gate picks the same block it picks in a demo.
+    treeFold: fold ? { batch: 1, log: () => {} } : null,
   });
   const regs = r.vm.getAll();
   return {
@@ -301,7 +313,7 @@ async function run(com, jit) {
     frame: r.frame, cells: r.text.cells, written: r.machine.con.written,
     wav: crypto.createHash('sha256')
       .update(Buffer.from(wavBytes(r.audioChunks, r.audioRate))).digest('hex').slice(0, 16),
-    dispatched: r.dispatched, jit: r.jit,
+    dispatched: r.dispatched, jit: r.jit, tree: r.tree,
   };
 }
 
@@ -402,7 +414,29 @@ async function main() {
     `the dispatch clock moved by ${sxDrift} across ${sj.installs} install(s) and `
     + `${sj.drops} drop(s): ${sxOn.dispatched} with the JIT vs ${sxOff.dispatched} without`);
 
+  // --- and the same program with BOTH generators appending to one table ---
+  // The values are the assertion, not the timing: a tree fold absorbs handbacks
+  // the interpreter took, so the wav grid and the handback count are expected to
+  // move (docs/toyvm-tree-fold.md, *The one thing it changes*). An ordinal
+  // collision, which is what this arm exists to catch, shows up as arithmetic.
+  const sxBoth = await run(sxCom, true, true);
+  assert.ok(sxBoth.jit && sxBoth.jit.installs >= 1,
+    `no region installed with --tree-fold also on (phase ${sxBoth.jit && sxBoth.jit.phase}`
+    + `${sxBoth.jit && sxBoth.jit.declined ? `: ${sxBoth.jit.declined}` : ''}) -- `
+    + 'without an install this arm does not test the shared table');
+  for (const k of ['bx', 'si', 'bp']) {
+    assert.strictEqual(sxBoth[k], sxOff[k],
+      `${k} differs with the JIT and the tree fold both on: ${sxBoth[k]} vs ${sxOff[k]}`);
+  }
+  assert.strictEqual(sxBoth.frame, sxOff.frame,
+    'the frame hash differs with the JIT and the tree fold both on');
+  assert.strictEqual(sxBoth.cells, sxOff.cells,
+    'the text screen differs with the JIT and the tree fold both on');
+
   fs.rmSync(dir, { recursive: true, force: true });
+  console.log(`PASS test-toyvm-region-live: --region-jit + --tree-fold in one run: `
+    + `${sxBoth.jit.installs} region install(s) and ${sxBoth.tree ? sxBoth.tree.trees : 0} `
+    + `tree handler(s) in one table, bx/si/bp and frame identical to the interpreter`);
   console.log(`PASS test-toyvm-region-live: side exit bp=${sxWant.bp} bx=0x${sxWant.bx.toString(16)}`
     + ` identical over ${sj.installs} install(s), wav ${sxOn.wav}, `
     + `${sxDrift} dispatch(es) apart`);
