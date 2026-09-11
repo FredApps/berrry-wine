@@ -5182,6 +5182,13 @@
   ;; before the first decode and on every per-thread instance.
 
   (global $tree_fold_enabled (mut i32) (i32.const 0))
+  ;; --trace-tree-fold: dump every LOWERED block's classified micro-op list
+  ;; through $host_log_i32, the same single channel $loop_trace uses, because a
+  ;; decode-time function has no other. The consumer is
+  ;; tools/tree-shape-census.js, which rebuilds the dataflow graph from it --
+  ;; the descriptor is the only place the micro-op classification exists, so a
+  ;; static disassembly cannot reproduce it.
+  (global $tree_trace (mut i32) (i32.const 0))
   (global $tree_fold_min_ops (mut i32) (i32.const 4))
   (global $tree_fold_matches (mut i32) (i32.const 0))
   (global $tree_fold_runs (mut i32) (i32.const 0))
@@ -6234,6 +6241,41 @@
                        (i32.load offset=20 (local.get $p)))
                      (i32.const -1))))
         (br $dead)))
+
+    ;; -- shape trace, before the emitter overwrites anything ----------------
+    ;; One record per lowered block: marker, entry EIP, nuops, terminator
+    ;; position and kind, then six words per micro-op straight out of the
+    ;; scratch -- the exact descriptor body about to be emitted, including the
+    ;; dead-flag bit the pass above just set. tools/tree-shape-census.js reads
+    ;; it and joins the entry EIP against a --hot-block-dump for weighting.
+    (if (global.get $tree_trace)
+      (then
+        (call $host_log_i32 (i32.const 0x100C0000))
+        (call $host_log_i32 (local.get $start_eip))
+        (call $host_log_i32 (local.get $nuops))
+        (call $host_log_i32 (local.get $tidx))
+        (call $host_log_i32 (local.get $term_kind))
+        (call $host_log_i32 (local.get $term_a))
+        (call $host_log_i32 (local.get $term_b))
+        (call $host_log_i32 (local.get $term_cc))
+        (local.set $i (i32.const 0))
+        (block $tr_done
+          (loop $tr
+            (br_if $tr_done (i32.ge_u (local.get $i) (local.get $nuops)))
+            (local.set $p
+              (i32.add (global.get $OP_INDEX)
+                (i32.shl
+                  (i32.add (i32.const 1024)
+                           (i32.mul (local.get $i) (global.get $TREE_UOP_WORDS)))
+                  (i32.const 2))))
+            (call $host_log_i32 (i32.load           (local.get $p)))
+            (call $host_log_i32 (i32.load offset=4  (local.get $p)))
+            (call $host_log_i32 (i32.load offset=8  (local.get $p)))
+            (call $host_log_i32 (i32.load offset=12 (local.get $p)))
+            (call $host_log_i32 (i32.load offset=16 (local.get $p)))
+            (call $host_log_i32 (i32.load offset=20 (local.get $p)))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $tr)))))
 
     (global.set $thread_alloc (local.get $tstart))
     (global.set $op_index_n (i32.const 0))
