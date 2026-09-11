@@ -218,6 +218,10 @@ gameplay plus the focused message/timer regressions retained progress.
 
 ## Opening-movie optimization oracle
 
+**Recovery status: HOLD, not a deterministic acceptance gate.** The final
+shared-server repeat below skipped a frame. Keep this recovery candidate out
+of main until a separately validated deterministic-clock workload exists.
+
 `tools/smac-movie-bench.js` is the comparison harness for decoder/interpreter
 changes. It accepts only the exact raw disc used for this investigation:
 503,289,856 bytes, SHA-256
@@ -287,3 +291,34 @@ were 23,536,377 versus 23,536,317 handler entries and 1,327,952 versus
 identical timer/scheduler instruction trace. Host load exceeded 4 throughout;
 no speed conclusion follows. Chrome and the temporary profile/server were
 closed after each run. Unit checks and the canonical/compat build passed.
+
+The final safety follow-up uses `test/static-server.js`, including its
+realpath/root-bound symlink checks; it does not relax that server. Repeating
+the baseline through it completed normally with no browser/runtime errors but
+failed the hash oracle at index 6 (the seventh frame):
+`dc2a38b4d217e8a4` was absent; the sequence advanced to `27d1899f9282eb60`
+and then `3c426952d723aee5`. The CLI exited **2**, `pixelSequenceMatch` was
+false, and `fixedFramesSpeedup` was null. Browser, profile and server cleanup
+completed. Host load was approximately 10–21; no speed conclusion is valid.
+The earlier two matching runs do not establish deterministic reproducibility.
+
+Reproduction commands (the JSON paths are local run artifacts):
+
+```bash
+node tools/smac-movie-bench.js --warmup-unique=12 --measure-unique=8 \
+  --wall-seconds=0 --timeout-seconds=120 --handler-hist \
+  --out=/private/tmp/smac-oracle-recovery-baseline.json
+node tools/smac-movie-bench.js \
+  --oracle=/private/tmp/smac-oracle-recovery-baseline.json --measure-unique=8 \
+  --wall-seconds=0 --timeout-seconds=120 --handler-hist \
+  --out=/private/tmp/smac-oracle-recovery-shared-server.json
+```
+
+The current boundary is a strict **visual-sequence mismatch detector** under
+the existing live clock, not proof of identical guest work or a reliable
+optimization acceptance benchmark. Clock control and repeatable frame
+delivery are separate work; do not weaken the hash comparison to admit this
+failure. The oracle unit test and direct shared-server escaping-symlink check
+pass. The broader pre-existing `test/test-static-server.js` census fails on
+three unrelated private servers in the recovery base; those files were not
+modified by this candidate.

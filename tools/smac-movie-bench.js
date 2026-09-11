@@ -12,7 +12,7 @@
 
 const crypto = require('crypto');
 const fs = require('fs');
-const http = require('http');
+const { startStaticServer, closeServer } = require('../test/static-server');
 const os = require('os');
 const path = require('path');
 
@@ -102,39 +102,14 @@ function compareReports(baseline, candidate) {
     firstMismatch: mismatch,
     baselineHashes: hashesA.length,
     candidateHashes: hashesB.length,
-    fixedFramesSpeedup: a.elapsedMs > 0 && b.elapsedMs > 0 ? a.elapsedMs / b.elapsedMs : null,
+    fixedFramesSpeedup: mismatch < 0 && a.elapsedMs > 0 && b.elapsedMs > 0 ? a.elapsedMs / b.elapsedMs : null,
     fixedWallUniqueDelta: ((candidate.fixedWall || {}).uniqueFrames || 0) -
       ((baseline.fixedWall || {}).uniqueFrames || 0),
   };
 }
 
 function startServer(root) {
-  const mime = { '.html': 'text/html', '.js': 'text/javascript', '.wasm': 'application/wasm',
-    '.json': 'application/json', '.css': 'text/css', '.png': 'image/png' };
-  const server = http.createServer((req, res) => {
-    let pathname;
-    try { pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname); }
-    catch (_) { res.writeHead(400); res.end('bad url'); return; }
-    if (pathname === '/') pathname = '/index.html';
-    const file = path.normalize(path.join(root, pathname));
-    if (file !== root && !file.startsWith(root + path.sep)) {
-      res.writeHead(403); res.end('forbidden'); return;
-    }
-    fs.stat(file, (statError, stat) => {
-      if (statError || !stat.isFile()) { res.writeHead(404); res.end('not found'); return; }
-      res.writeHead(200, {
-        'Content-Type': mime[path.extname(file)] || 'application/octet-stream',
-        'Cache-Control': 'no-store',
-        'Cross-Origin-Opener-Policy': 'same-origin',
-        'Cross-Origin-Embedder-Policy': 'require-corp',
-      });
-      fs.createReadStream(file).pipe(res);
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
-  });
+  return startStaticServer({ root, cacheControl: 'no-store', crossOriginIsolated: true });
 }
 
 async function runBenchmark(options) {
@@ -408,7 +383,7 @@ async function runBenchmark(options) {
     return report;
   } finally {
     if (browser) await browser.close().catch(() => {});
-    await new Promise(resolve => server.close(resolve));
+    await closeServer(server);
     if (profile) fs.rmSync(profile, { recursive: true, force: true });
   }
 }

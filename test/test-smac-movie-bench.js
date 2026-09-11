@@ -49,6 +49,8 @@ const wrong = JSON.parse(JSON.stringify(faster));
 wrong.fixedFrames.hashes[1] = 'XX';
 assert.strictEqual(compareReports(baseline, wrong).firstMismatch, 1);
 assert.strictEqual(compareReports(baseline, wrong).pixelSequenceMatch, false);
+assert.strictEqual(compareReports(baseline, wrong).fixedFramesSpeedup, null,
+  'a different frame sequence cannot produce a speedup comparison');
 assert.throws(() => compareReports({}, {}), /invalid.*oracle/);
 assert.throws(() => compareReports(baseline, {fixedFrames:{anchorHash:'aa',hashes:[]}}), /invalid.*oracle/);
 assert.throws(() => compareReports(baseline, {fixedFrames:{anchorHash:'bb',hashes:['aa','bb']}}), /invalid.*oracle/);
