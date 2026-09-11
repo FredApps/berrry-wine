@@ -97,6 +97,16 @@ async function main() {
     // is worth, run through the same interleaved harness as everything else.
     treefoldexact: { treeFold: { relax: [] } },
     treefoldhotexact: { treeFold: { hot: 64, relax: [] } },
+    // The LOOP half of the fold on its own axis. `tailcall+treefoldhot` against
+    // `tailcall+treefoldhotnoloops` holds the straight-line fold fixed in both
+    // arms and moves only whether a self-loop block iterates inside its tree,
+    // which is the one comparison that prices folding the terminator.
+    treefoldhotnoloops: { treeFold: { hot: 64, loops: false } },
+    // The page's default, as an arm -- and the one that has to STACK. Since the
+    // shared handler-table tail (tools/toyvm/extras.js) the region JIT and the
+    // fold take ordinals from one allocator, so `tailcall+regionjit+treefoldhot`
+    // is a fourth arm and not an error. See docs/toyvm-tree-fold.md.
+    regionjit: { regionJit: true },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };
