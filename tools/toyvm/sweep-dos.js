@@ -102,6 +102,10 @@ async function runOne(exe, o) {
           // anything has to hold the clock still in BOTH arms, so pass
           // --lattice-clock to both runs of the pair. See run-dos.js.
           latticeClock: o.latticeClock,
+          // `--no-irq-schedule`: the before arm of the interrupt schedule, for
+          // a corpus gate that asks whether cutting slices to the dates the
+          // clock owes moved any picture. See docs/toyvm-irq-schedule.md.
+          irqSchedule: o.irqSchedule,
           regionJit: o.regionJit ? {
             sampleAfter: Math.floor(o.budget / 4), profileFor: Math.floor(o.budget / 4),
             gateAt: 0, log: quiet,
@@ -199,7 +203,8 @@ function child(exe, o) {
       ...(o.treeFold ? ['--tree-fold'] : []),
       ...(o.treeFoldHot ? [`--tree-fold-hot=${o.treeFoldHot}`] : []),
       ...(o.treeFoldRelax ? [`--tree-fold-relax=${o.treeFoldRelax.join(',') || 'none'}`] : []),
-      ...(o.latticeClock ? ['--lattice-clock'] : [])];
+      ...(o.latticeClock ? ['--lattice-clock'] : []),
+      ...(o.irqSchedule ? [] : ['--no-irq-schedule'])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
@@ -456,6 +461,7 @@ async function main() {
     // different clocks and every time-paced program in the corpus reports a
     // difference the JIT did not cause.
     latticeClock: flag('lattice-clock'),
+    irqSchedule: !flag('no-irq-schedule'),
   };
 
   const one = arg('one');

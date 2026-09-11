@@ -174,7 +174,7 @@ async function runDos(o) {
     variant = 'tailcall', exe, budget = 200e6, slice = 2e6, seconds = 0,
     // A number (the first N handbacks) or a { from, to } handback window.
     traceInt = false, traceFault = false, traceEntry = 0, traceEntryRegs = false,
-    traceV86 = false,
+    traceV86 = false, traceIrq = false,
     noCache = false, smcFlush = false, wasmDecode = true, fuse = true,
     lazyFlags = true, fuseCond = true, deadFlags = true, crossFlags = true,
     traceBlocks = true, spinLoops = true, regSpec = false, traceDeadFlags = false,
@@ -247,7 +247,15 @@ async function runDos(o) {
     // without moving the picture -- but it is NOT the shipped clock, because
     // anchoring the grid also moves a plain interpreter run's audio. Pass it to
     // both arms of a comparison or to neither.
+    // SUPERSEDED by the interrupt schedule below, which anchors the slice grid,
+    // the audio render AND the interrupt delivery to the same dates; this flag
+    // now does something only alongside `--no-irq-schedule`.
     latticeClock = false,
+    // `--no-irq-schedule`: go back to delivering interrupts and rendering audio
+    // at whichever handback the code cache produced. The A/B partner for the
+    // schedule in dos-loop.js `step`, and the way to reproduce a wav recorded
+    // before it. See docs/toyvm-irq-schedule.md.
+    irqSchedule = true,
     // The DOS command tail, verbatim. Several demos in this corpus name their
     // own silent-mode switch on the screen they refuse to start from.
     guestArgs = '',
@@ -522,7 +530,7 @@ async function runDos(o) {
     treeFold: folder,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit, pitClock,
-    stuckWork, latticeClock,
+    stuckWork, latticeClock, irqSchedule,
     // A watch reports through the census, so asking for one turns it on.
     smcCensus: smcCensus || watch.length > 0, watch,
     // The same count, not recomputed while the page it counts has not changed.
@@ -533,6 +541,17 @@ async function runDos(o) {
     // Exact -- see Machine.textPageEpoch, which compares the bytes.
     cells: cellsCached,
     hooks: {
+      // `--trace-irq`: every interrupt this harness injects, with the three
+      // numbers that decide whether the schedule is anchored to the emulated
+      // clock or to the host's slice grid -- the dispatch count, the guest
+      // seconds it derives, and the handback index it happened to land on.
+      // Two arms that compute the same thing have the same `at` on every line
+      // when the schedule is clock-anchored, and drift apart when it is not.
+      onIrq: !traceIrq ? undefined : ({ vec, src, at, handback, seconds, cs, ip }) => {
+        log(`  irq vec=${vec.toString(16).padStart(2, '0')} ${src.padEnd(7)}`
+          + ` at=${at} hb=${handback} t=${seconds.toFixed(6)}`
+          + ` from ${cs.toString(16)}:${ip.toString(16)}`);
+      },
       onInt: !traceInt ? undefined : ({ vec, before, ok, retCs, retIp, ax }) => {
         log(`int ${vec.toString(16).padStart(2, '0')}h ax=${before[0].toString(16)}`
           + ` bx=${before[1].toString(16)} cx=${before[2].toString(16)}`
@@ -1117,6 +1136,8 @@ async function main() {
       log: flag('tree-fold-verbose') ? console.log : (() => {}),
     } : null,
     traceInt: flag('trace-int'),
+    // --trace-irq: one line per host-injected interrupt. See the hook.
+    traceIrq: flag('trace-irq'),
     traceFault: flag('trace-fault'),
     traceV86: flag('trace-v86'),
     traceEntry: flag('trace-entry') ? { from: 0, to: 40 } : parseTraceEntry(arg('trace-entry')),
@@ -1251,6 +1272,7 @@ async function main() {
     // `--lattice-clock`: anchor the slice grid and the audio render to the
     // absolute dispatch count. Both arms of a comparison, or neither.
     latticeClock: flag('lattice-clock'),
+    irqSchedule: !flag('no-irq-schedule'),
     // --stop-on-text='Runtime error 200' -- end the run the instant the guest
     // prints this, so --dump and --disasm photograph the failure instead of
     // whatever reused its memory afterwards. See Machine.conWatch.

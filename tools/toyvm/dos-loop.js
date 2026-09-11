@@ -1076,6 +1076,14 @@ class DosSession {
       // harnesses set it on BOTH arms, which is the only way the comparison
       // holds a clock still.
       latticeClock = false,
+      // Cut every slice to land on the dispatch count at which the next thing
+      // the host owes the guest comes due, and do the clock's work -- render
+      // the audio, deliver an interrupt -- only at a handback that reached one.
+      // See the schedule in step(). ON, because without it every one of those
+      // instants is a property of how often the code cache happens to hand back
+      // and a fold that removes a handback re-times the audio.
+      // `--no-irq-schedule` is the A/B partner.
+      irqSchedule = true,
       hooks = {},
     } = opts;
 
@@ -1083,6 +1091,7 @@ class DosSession {
     this.machine = machine;
     this.slice = slice;
     this.latticeClock = latticeClock;
+    this.irqSchedule = irqSchedule;
     this.mouse = mouse;
     this.irqEvery = irqEvery;
     this.dispatchesPerTick = dispatchesPerTick;
@@ -1162,9 +1171,25 @@ class DosSession {
   // -- knows all three cases: a 386 or 286 gate through the IDT, the V86
   // hand-off to the monitor, and the real-mode vector table when there is no
   // IDT. So ask for the vector and let it pick.
-  raise(vec) {
+  // `src` names which rung asked for it, for --trace-irq. The hook is handed
+  // the guest instant as three numbers that mean three different things: the
+  // dispatch count (the emulated clock), the handback index (the host's grid),
+  // and the guest seconds the two of them derive. A schedule that is anchored
+  // to the clock has the same `at` in two arms; one anchored to the grid does
+  // not, and the handback index is what says which of the two is happening.
+  raise(vec, src = 'other') {
+    // The interrupted address, read BEFORE the frame goes in -- afterwards
+    // cs:gip is the handler and every line would name the same two numbers.
+    const cs = this.hooks.onIrq ? this.vm.get('cs') : 0;
+    const ip = this.hooks.onIrq ? this.vm.get('gip') : 0;
     this.vm.exports.raise_irq(vec);
     this.irqs++;
+    if (this.hooks.onIrq) {
+      this.hooks.onIrq({
+        vec, src, at: this.dispatched, handback: this.handbacks,
+        seconds: this.guestSeconds(this.dispatched), cs, ip,
+      });
+    }
   }
 
   // How many dispatches a Sound Blaster block is worth. The card decides this,
@@ -1191,6 +1216,13 @@ class DosSession {
     // itself). Read literally it asks for a tick every 200 dispatches.
     const reload = (pit && pit.latch ? pit.latch[0] : 0) || 0x10000;
     return Math.max(200, Math.round(this.dispatchesPerTick * reload / 65536));
+  }
+
+  // Dispatches between keyboard interrupts. Slower than the timer on purpose:
+  // this is a person typing. One expression, read by the rung that delivers it
+  // and by the schedule that cuts the slice to land on it.
+  kbInterval() {
+    return this.pitClock ? this.tickUnit() / 4 : this.irqEvery * 4;
   }
 
   // Dispatches per 18.2Hz tick as the INTERRUPT cadences count them: under the
@@ -1363,7 +1395,7 @@ class DosSession {
     if (cs !== STUB_SEG && vm.mem[(codeBase + ip) & mask] === STUB_BYTE) {
       vm.set('gip', (ip + 1) & 0xFFFF);
       this.icebps++;
-      this.raise(1);
+      this.raise(1, 'icebp');
       return 'int';
     }
     // The trap flag. With TF set the CPU owes an INT 1 after every instruction,
@@ -1511,9 +1543,63 @@ class DosSession {
     // that anchors its grid and an arm that does not have different clocks
     // before the JIT does anything at all.
     const quantum = Math.min(this.slice, Math.max(1, Math.floor(shortest / 4)));
-    const budget = this.latticeClock
-      ? Math.min(quantum - (this.dispatched % quantum), sbInterval)
-      : Math.min(quantum, sbInterval);
+    // THE SCHEDULE. Everything above computes how often something is due; this
+    // computes WHEN THE NEXT ONE IS, as an absolute dispatch count, and cuts the
+    // slice to land on it.
+    //
+    // The difference is the whole of this section. A quantum says "hand back at
+    // least this often" and leaves the actual handback wherever the guest's own
+    // early exits put it, so an interrupt goes in at the first handback AFTER it
+    // was due -- and how far after is a property of the code cache, not of the
+    // guest. Fold a self-loop and the handbacks thin out; the interrupt then
+    // lands somewhere else in guest time, with nothing about the guest changed.
+    // Measured on DADEMO3 at 80M: 46,340 handbacks against 28,209, identical
+    // frame, identical dispatch count, identical guest seconds, and 610 of its
+    // 645 injected vectors at a different dispatch count -- the first at
+    // 10,412,089 against 10,412,065, both interrupting 8:b2e9 at t=1.0398.
+    // Its timer ISR is what drives its GUS playback, so the wav moved.
+    //
+    // A due date is a number both arms compute from the same state, so the cut
+    // is the same in both, so the injection is the same in both. What made the
+    // first attempt at this (documented in the quantum comment above) collapse
+    // was reading a due date as "time until the next event" for events that are
+    // CONDITIONAL: an interrupt nobody hooked never advances its `last` mark,
+    // the remaining time goes negative, and every later slice pins at the floor.
+    // `due()` takes only dates in the FUTURE, so an overdue conditional event
+    // simply stops constraining the slice and is retried at the next stop --
+    // which is what a real line held off by a cleared IF does anyway.
+    //
+    // The render lattice is quoted off the EVENTS, not off `this.slice`. The
+    // slice is a host budget -- how long the run loop is willing to stay inside
+    // wasm -- and letting it into the lattice would make what the guest hears a
+    // function of a knob that exists for the host's benefit. `quantum` still
+    // caps the budget below, so a small --slice still hands back sooner; it
+    // just no longer re-quantizes the audio while it does.
+    const grain = Math.max(1, Math.floor(shortest / 4));
+    let stopAt = Math.floor(this.dispatched / grain) * grain + grain;
+    const due = (at) => { if (at > this.dispatched && at < stopAt) stopAt = at; };
+    // The Sound Blaster block's last sample (already a date, not a rate).
+    if (sbInterval !== Infinity) due(this.audioAt + sbInterval);
+    // The timer, the keyboard and the vertical retrace, each on the cadence its
+    // own rung below tests -- written once here and once there would drift, so
+    // these read the same expressions.
+    due(this.lastIrq + this.timerInterval());
+    due(this.lastKbIrq + this.kbInterval());
+    if (this.vgaPeriod) due((this.vgaFrame + 1) * this.vgaPeriod);
+    // The BIOS tick word, and with it the PIT phase a `latch`/`in 40h` reads
+    // back. This one is not an interrupt at all and is here for the same
+    // reason: it is a number the guest can read, so where it changes has to be
+    // a date and not a handback. BLIQ.EXE is the case -- it reprograms channel
+    // 0, so what it reads back decides the interval it runs at, and with the
+    // phase advanced at every handback the two arms read different counts and
+    // ran their timers at different rates from there on.
+    const tickUnit = this.dispatchesPerTick / (this.tickScale || 1);
+    due(Math.round(Math.ceil((this.dispatched + 1) / tickUnit) * tickUnit));
+    const budget = this.irqSchedule
+      ? Math.max(1, Math.min(this.slice, stopAt - this.dispatched))
+      : (this.latticeClock
+        ? Math.min(quantum - (this.dispatched % quantum), sbInterval)
+        : Math.min(quantum, sbInterval));
     // So a port write inside the slice can say when it happened (audioNow).
     machine.sliceStart = this.dispatched;
     machine.sliceBudget = budget;
@@ -1542,13 +1628,35 @@ class DosSession {
     const left = cut >= 0 ? cut : vm.raw('steps');
     this.dispatched += budget - left;
     this.handbacks++;
+    // Did this handback reach the date the slice was cut to, or is it one the
+    // guest caused on its way past -- an unresolved jump, a store into compiled
+    // code, a port write? Only the first kind is a point on the clock, and only
+    // the first kind may do the clock's work. A handback of the second kind is
+    // at a dispatch count that depends on what is in the code cache, so an
+    // interrupt delivered there or an audio chunk rendered there carries that
+    // dependence into what the guest hears. It is billed, it is counted, and
+    // then the next slice is cut to the same date again -- so the two arms meet
+    // at that date whatever either did in between.
+    const atStop = !this.irqSchedule || this.dispatched >= stopAt;
+    // THE CLOCK READS THE DATE, NOT THE ODOMETER. A slice cut to a date still
+    // overshoots it: a block only tests its budget at its transfer, so the
+    // handback is a few ops past, and how few is a property of the block that
+    // happened to be running -- the interpreter's block and a folded loop's
+    // iteration are the same guest instructions but not always the same number
+    // of billed steps, and measured on DADEMO3 the two arms overshot by one
+    // single op. Marking every clock event at `dispatched` writes that op into
+    // the next date, and the one after, until the two arms are delivering
+    // interrupts to different instructions. Marking them at the date leaves the
+    // overshoot where it belongs -- billed to the window it ran in, which is
+    // the next one -- and every later date is the same number in every arm.
+    const clockAt = atStop && this.irqSchedule ? stopAt : this.dispatched;
     // The retrace IRQ is the rising edge of the bit the port reports, so it is
     // armed when the dispatch count crosses into a new frame -- the interrupt
     // and the status the guest polls come from ONE clock. It is delivered at
     // the next handback (interrupts only go in at instruction boundaries) and
     // stays armed until the rung below fires it or finds nobody listening.
     if (this.vgaPeriod) {
-      const frame = Math.floor(this.dispatched / this.vgaPeriod);
+      const frame = Math.floor(clockAt / this.vgaPeriod);
       if (frame !== this.vgaFrame) { this.vgaFrame = frame; this.retraceEdge = true; }
     }
     if (vm.exports.get_vga_reads) {
@@ -1573,7 +1681,7 @@ class DosSession {
     // debugger would trap twice.
     if (stepping && (vm.get('flags') & (1 << isa.F.TF))) {
       this.traps++;
-      this.raise(1);
+      this.raise(1, 'trap');
     }
     if (vm.raw('smc')) {
       const kind = vm.raw('smc');
@@ -1631,7 +1739,10 @@ class DosSession {
     // the division by zero is runtime error 200. BIOLAN, BRIAN, CREATION and
     // DIGILAB all died there. 550,000 dispatches to a 55ms tick is a 10-MIPS
     // machine, which is a fast 486 -- the part these were written for.
-    machine.setClock(this.dispatched / this.dispatchesPerTick * this.tickScale);
+    // ...and it moves at the dates, for the reason `clockAt` gives: the phase
+    // this writes is what `pitCount` answers a port read with, so advancing it
+    // at every handback makes a PIT read a function of the code cache.
+    if (atStop) machine.setClock(clockAt / this.dispatchesPerTick * this.tickScale);
     // The sound card and the speaker move with the same clock: the samples a
     // running transfer consumed over this slice, rendered if a host is
     // listening. This is also what completes a block (see Machine.sbDue).
@@ -1663,15 +1774,24 @@ class DosSession {
     // sample is behind us. That is a function of the transfer and the guest
     // clock, and of nothing about the cut.
     const sbDueNow = sbInterval !== Infinity && this.dispatched - this.audioAt >= sbInterval;
-    if (machine.audioAdvance && (!this.latticeClock
+    // Under the schedule this is simply "did we reach a stop": the render
+    // lattice is one of the dates the slice is cut to, and the block's end is
+    // another, so both of the old clauses are already in `stopAt`.
+    if (machine.audioAdvance && (this.irqSchedule
+      ? (atStop || sbDueNow)
+      : (!this.latticeClock
         || Math.floor(this.dispatched / quantum) > Math.floor(this.audioAt / quantum)
-        || sbDueNow)) {
-      const spent = this.latticeClock ? this.dispatched - this.audioAt : budget - left;
-      this.audioAt = this.dispatched;
+        || sbDueNow))) {
+      const spent = this.irqSchedule ? clockAt - this.audioAt
+        : (this.latticeClock ? this.dispatched - this.audioAt : budget - left);
+      this.audioAt = this.irqSchedule ? clockAt : this.dispatched;
       machine.audioAdvance(this.guestSeconds(spent), machine.sliceStart, spent);
     }
-    machine.mouse.dx += this.mouse[0];
-    machine.mouse.dy += this.mouse[1];
+    // A rate, so it moves on the clock and not on the grid.
+    if (atStop) {
+      machine.mouse.dx += this.mouse[0];
+      machine.mouse.dy += this.mouse[1];
+    }
 
     // Deliver the timer interrupt, if the program asked to be called.
     //
@@ -1711,16 +1831,25 @@ class DosSession {
     // not an interval computed here. irqEvery stays as the floor between two
     // of them, which is what stops a driver's very short auto-init block from
     // taking every handback.
+    //
+    // EVERY RUNG BELOW IS GATED ON `atStop`, and the one exception says why.
+    // A cadence is a date on the emulated clock and belongs at the handback the
+    // slice was cut to; delivering it at whichever handback the code cache
+    // happened to produce is what made the audio depend on the code cache. The
+    // exception is a Sound Blaster line ARMED BY A PORT WRITE: that instant is
+    // the guest's own store, Machine.endSlice already cut the slice at it to
+    // get the interrupt out with a card's latency rather than a slice's, and it
+    // is at the same dispatch count in every arm because the guest put it there.
     const svec = (vm.get('flags') & 0x200)
-      && (machine.sbForced() || ((machine.sbDue ? machine.sbDue() : true)
-        && this.dispatched - this.lastSbIrq >= this.irqEvery))
+      && (machine.sbForced() || (atStop && (machine.sbDue ? machine.sbDue() : true)
+        && clockAt - this.lastSbIrq >= this.irqEvery))
       ? machine.sbIrq() : 0;
     // The Ultrasound: an event the card reports (a timer, a voice reaching
     // its end, a DMA upload done), not a cadence. Its timer is the beat of
     // every GUS module player here, so it is not rate-limited the way the
     // Sound Blaster's block is; the slice above is already cut to it.
-    const gvec = (vm.get('flags') & 0x200) && machine.gusIrq ? machine.gusIrq() : 0;
-    const tvec = machine.timerVector();
+    const gvec = atStop && (vm.get('flags') & 0x200) && machine.gusIrq ? machine.gusIrq() : 0;
+    const tvec = atStop ? machine.timerVector() : 0;
     // A frame, not a tick: the vertical retrace comes round about 70 times a
     // second against the timer's 18.2, so it is the fastest thing here. Asked
     // for the vector up front like the Sound Blaster's, so that a rung which
@@ -1729,19 +1858,31 @@ class DosSession {
     // the status port itself reports, not a fixed irqEvery/4. An edge nobody
     // hooked is consumed here, not saved: a program that hooks IRQ2 later
     // should get its first interrupt at the next edge, not at once.
-    const rvec = this.retraceEdge && (vm.get('flags') & 0x200) ? machine.retraceIrq() : 0;
-    if (this.retraceEdge && !machine.retraceIrq()) this.retraceEdge = false;
+    const rvec = atStop && this.retraceEdge && (vm.get('flags') & 0x200)
+      ? machine.retraceIrq() : 0;
+    if (atStop && this.retraceEdge && !machine.retraceIrq()) this.retraceEdge = false;
     if (gvec) {
-      this.raise(gvec);
+      this.raise(gvec, 'gus');
     } else if (svec) {
-      this.lastSbIrq = this.dispatched;
-      this.raise(svec);
-    } else if (tvec && this.dispatched - this.lastIrq >= this.timerInterval() && (vm.get('flags') & 0x200)) {
-      this.lastIrq = this.dispatched;
-      this.raise(tvec);
+      this.lastSbIrq = clockAt;
+      this.raise(svec, 'sb');
+    } else if (tvec && clockAt - this.lastIrq >= this.timerInterval() && (vm.get('flags') & 0x200)) {
+      // ON THE GRID, NOT WHERE THIS HANDBACK LANDED. A slice cut to a date
+      // still overshoots it -- a block only tests its budget at its transfer,
+      // so the handback is a few ops past the date and how few is a property of
+      // the block. Marking the delivery there and adding the interval to THAT
+      // carries the overshoot into the next date and the one after, so two arms
+      // that overshoot differently by one single op walk apart over a run.
+      // Advancing by whole intervals keeps every later date the same number in
+      // every arm, which is the point of having a schedule at all.
+      const ti = this.timerInterval();
+      this.lastIrq = this.irqSchedule
+        ? this.lastIrq + Math.floor((clockAt - this.lastIrq) / ti) * ti
+        : this.dispatched;
+      this.raise(tvec, 'timer');
     } else if (rvec) {
       this.retraceEdge = false;
-      this.raise(rvec);
+      this.raise(rvec, 'retrace');
     // IRQ1. A program with its own INT 9 handler reads the keyboard as hardware
     // and never calls the BIOS, so answering INT 16h reaches it not at all --
     // BTW.EXE sits on a sound menu having made zero INT 16h calls in 11M
@@ -1749,10 +1890,10 @@ class DosSession {
     // leaves the scancode where port 60h will find it; here we only deliver it,
     // and only between traces where cs:gip is a real instruction boundary.
     // Slower than the timer on purpose: this is a person typing.
-    } else if (this.dispatched - this.lastKbIrq >= (this.pitClock ? this.tickUnit() / 4 : this.irqEvery * 4)
+    } else if (atStop && clockAt - this.lastKbIrq >= this.kbInterval()
         && (vm.get('flags') & 0x200)) {
       const kvec = machine.keyboardIrq();
-      if (kvec) { this.lastKbIrq = this.dispatched; this.raise(kvec); }
+      if (kvec) { this.lastKbIrq = clockAt; this.raise(kvec, 'kbd'); }
     }
 
     this.checkProgress(cs, ip, this.cache.refusedEntries.has(entry));
