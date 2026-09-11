@@ -5411,6 +5411,27 @@
   ;; partner at all.
   (global $TU_EA_SIB_LD8 i32 (i32.const 48))  ;; the same, plus R8[d] = [ea]
 
+  ;; REP MOVSB/MOVSD/STOSB/STOSD -- the one micro-op that is not integer
+  ;; dataflow. A `rep movsd` is a whole memcpy behind a single dispatch, and
+  ;; nothing about it belongs in a tree of register expressions; it is here
+  ;; only because it appears INSIDE loops that otherwise are one (a row
+  ;; blitter that copies a run, then advances two cursors and a counter), and
+  ;; one such op used to cost the whole block. It was quake2's residual
+  ;; barrier -- `lastFn 83` -- and mw3's after the H149 pair landed.
+  ;;
+  ;; It is modelled by NOT modelling it. The arm publishes all eight register
+  ;; locals to the globals, calls the very body $th_rep_* calls, and reloads
+  ;; them. So the DF direction, the overlap and contiguity tests, the
+  ;; $invalidate_code_write extent, the per-element fallback and the ECX=0
+  ;; write are the interpreter's own code running once -- and a fault partway
+  ;; through leaves ECX/ESI/EDI in the globals exactly where the unfolded path
+  ;; would have left them, because the stores are the same stores. The price
+  ;; is sixteen global accesses around a call that already costs thousands.
+  ;;
+  ;; `d` selects which of the four (fn - 82). Every other field is inert, and
+  ;; `a` and the SIB index nibble are 0xF so the hoisted EA adds nothing.
+  (global $TU_REP_STR    i32 (i32.const 49))
+
   ;; Classifier out-parameters. Decode-time only and single-threaded per
   ;; instance, so globals are cheaper and clearer than packing five fields
   ;; into an i64 return.
@@ -5852,6 +5873,18 @@
     ;; which shares their info/disp encoding exactly -- the operand differs
     ;; only in that bit 8 selects the fused byte-load form and the low three
     ;; bits are then its destination reg8.
+    ;; -- REP MOVSB/MOVSD/STOSB/STOSD (H82..H85) -----------------------------
+    ;; See $TU_REP_STR. Contiguous handler indices, checked as a range, and
+    ;; the operand word is unused by all four.
+    (if (i32.and (i32.ge_u (local.get $fn) (i32.const 82))
+                 (i32.le_u (local.get $fn) (i32.const 85)))
+      (then
+        (global.set $tu_d (i32.sub (local.get $fn) (i32.const 82)))
+        (global.set $tu_a (i32.const 0xF))
+        (global.set $tu_b (i32.const 0xF))
+        (global.set $tu_kind (global.get $TU_REP_STR))
+        (return (i32.const 1))))
+
     (if (i32.eq (local.get $fn) (i32.const 149))
       (then
         (local.set $type (i32.load offset=8 (local.get $p)))   ;; info word
@@ -5943,7 +5976,11 @@
             ;; Not a store, but the same question for the same reason: a bare
             ;; EA compute defines no register at all, so naming one in the
             ;; live-out mask would publish a register the body never wrote.
-            (i32.eq (local.get $kind) (global.get $TU_EA_SIB)))))))))))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_EA_SIB))
+            ;; Nor this one: TU_REP_STR writes whatever the string op writes,
+            ;; which is not `d` (that field names the variant), and pass 1
+            ;; publishes 0xFF for it explicitly instead.
+            (i32.eq (local.get $kind) (global.get $TU_REP_STR))))))))))))
 
   ;; Which lazy-flag fields a micro-op WRITES, as a $TF_F_* mask. Anything not
   ;; listed writes none: every MOV, LEA, NOT, load and store in the family is
@@ -6206,6 +6243,14 @@
             (return (i32.const 0))))
         (local.set $prev_ea
           (i32.eq (global.get $tu_kind) (global.get $TU_EA_SIB)))
+        ;; A REP string op round-trips every register through the globals, so
+        ;; the locals are only authoritative again because the arm reloads
+        ;; them -- and which registers the call actually changed is the string
+        ;; handler's business, not this pass's. Publish all eight. Publishing
+        ;; a register the body did not write is never wrong (the local still
+        ;; holds the value it entered with), only redundant.
+        (if (i32.eq (global.get $tu_kind) (global.get $TU_REP_STR))
+          (then (local.set $live_out (i32.or (local.get $live_out) (i32.const 0xFF)))))
         ;; A STORE writes memory, not a register; everything else defines its
         ;; destination and must be published at exit.
         (if (i32.eqz (call $tree_uop_is_store (global.get $tu_kind)))
@@ -6667,7 +6712,7 @@
             ;; first store instead of failing.
             (local.set $wrote (i32.const 1))
             (block $kdone
-              (block $k48 (block $k47
+              (block $k49 (block $k48 (block $k47
               (block $k46 (block $k45 (block $k44 (block $k43
               (block $k42 (block $k41 (block $k40
               (block $k39 (block $k38 (block $k37 (block $k36 (block $k35
@@ -6684,8 +6729,8 @@
                           $k10 $k11 $k12 $k13 $k14 $k15 $k16 $k17 $k18 $k19
                           $k20 $k21 $k22 $k23 $k24 $k25 $k26 $k27 $k28 $k29
                           $k30 $k31 $k32 $k33 $k34 $k35 $k36 $k37 $k38 $k39
-                          $k40 $k41 $k42 $k43 $k44 $k45 $k46 $k47 $k48
-                          $k48
+                          $k40 $k41 $k42 $k43 $k44 $k45 $k46 $k47 $k48 $k49
+                          $k49
                           (local.get $kind)))
                 ;; 0 MOV_RR
                 (local.set $vr (local.get $vb)) (br $kdone))
@@ -7001,7 +7046,38 @@
                 (i32.or
                   (i32.and (local.get $va)
                     (i32.xor (i32.shl (i32.const 0xFF) (local.get $sh_d)) (i32.const -1)))
-                  (i32.shl (call $gl8 (local.get $ea)) (local.get $sh_d)))))
+                  (i32.shl (call $gl8 (local.get $ea)) (local.get $sh_d))))
+              (br $kdone))
+              ;; 49 REP_STR (and the unreachable default). Publish, call the
+              ;; interpreter's own body, reload. The publish has to be all
+              ;; eight and not just ESI/EDI/ECX/EAX: $gs8/$gl8 reach
+              ;; $invalidate_code_write and the page compiler, and a fault
+              ;; path reads the register file to build its report, so leaving
+              ;; a stale global behind would be visible from inside the call.
+              (global.set $eax (local.get $r0))
+              (global.set $ecx (local.get $r1))
+              (global.set $edx (local.get $r2))
+              (global.set $ebx (local.get $r3))
+              (global.set $esp (local.get $r4))
+              (global.set $ebp (local.get $r5))
+              (global.set $esi (local.get $r6))
+              (global.set $edi (local.get $r7))
+              (block $rdone
+                (block $r3b (block $r2b (block $r1b (block $r0b
+                  (br_table $r0b $r1b $r2b $r3b $r3b (local.get $d)))
+                  (call $rep_movsb_do) (br $rdone))
+                  (call $rep_movsd_do) (br $rdone))
+                  (call $rep_stosb_do) (br $rdone))
+                (call $rep_stosd_do))
+              (local.set $r0 (global.get $eax))
+              (local.set $r1 (global.get $ecx))
+              (local.set $r2 (global.get $edx))
+              (local.set $r3 (global.get $ebx))
+              (local.set $r4 (global.get $esp))
+              (local.set $r5 (global.get $ebp))
+              (local.set $r6 (global.get $esi))
+              (local.set $r7 (global.get $edi))
+              (local.set $wrote (i32.const 0)))
 
             ;; Writeback R[d].
             (if (local.get $wrote)

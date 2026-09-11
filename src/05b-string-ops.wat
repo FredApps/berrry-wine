@@ -154,7 +154,18 @@
       (else (global.set $esi (i32.add (global.get $esi) (i32.const 4)))))
     (return_call $next))
   ;; REP versions (inline loop)
-  (func $th_rep_movsb (param $op i32)
+  ;;
+  ;; Each one is split into a `_do` body and a thin handler that calls it and
+  ;; dispatches. The body is what TREE_FOLD's TU_REP_STR micro-op calls, so a
+  ;; folded `rep movsd` runs THIS code rather than a transcription of it --
+  ;; the DF direction, the overlap and page-contiguity tests, the
+  ;; $invalidate_code_write extent, the per-element $gl/$gs fallback and the
+  ;; ECX-exhaustion write are all the interpreter's, once. These read and write
+  ;; the register GLOBALS, which is why the fold publishes its locals before
+  ;; the call and reloads them after: that also makes a fault mid-copy leave
+  ;; ECX/ESI/EDI exactly where the unfolded path would have left them, because
+  ;; it is the same stores to the same globals.
+  (func $rep_movsb_do
     (local $n i32) (local $dst i32) (local $src i32) (local $i i32)
     (local.set $n (global.get $ecx))
     (if (local.get $n) (then
@@ -216,9 +227,11 @@
               (memory.copy (call $g2w (global.get $edi)) (call $g2w (global.get $esi)) (local.get $n))))
           (global.set $esi (i32.add (global.get $esi) (local.get $n)))
           (global.set $edi (i32.add (global.get $edi) (local.get $n)))))
-      (global.set $ecx (i32.const 0))))
+      (global.set $ecx (i32.const 0)))))
+  (func $th_rep_movsb (param $op i32)
+    (call $rep_movsb_do)
     (return_call $next))
-  (func $th_rep_movsd (param $op i32)
+  (func $rep_movsd_do
     (local $n i32) (local $bytes i32) (local $dst i32) (local $src i32) (local $i i32)
     (local.set $n (global.get $ecx))
     (if (local.get $n) (then
@@ -275,9 +288,11 @@
               (memory.copy (call $g2w (global.get $edi)) (call $g2w (global.get $esi)) (local.get $bytes))))
           (global.set $esi (i32.add (global.get $esi) (local.get $bytes)))
           (global.set $edi (i32.add (global.get $edi) (local.get $bytes)))))
-      (global.set $ecx (i32.const 0))))
+      (global.set $ecx (i32.const 0)))))
+  (func $th_rep_movsd (param $op i32)
+    (call $rep_movsd_do)
     (return_call $next))
-  (func $th_rep_stosb (param $op i32)
+  (func $rep_stosb_do
     (local $n i32) (local $dst i32) (local $i i32)
     (local.set $n (global.get $ecx))
     (if (local.get $n) (then
@@ -315,9 +330,11 @@
                 (local.set $i (i32.add (local.get $i) (i32.const 1)))
                 (br $fill)))))
           (global.set $edi (i32.add (global.get $edi) (local.get $n)))))
-      (global.set $ecx (i32.const 0))))
+      (global.set $ecx (i32.const 0)))))
+  (func $th_rep_stosb (param $op i32)
+    (call $rep_stosb_do)
     (return_call $next))
-  (func $th_rep_stosd (param $op i32)
+  (func $rep_stosd_do
     (local $n i32) (local $bytes i32) (local $al i32) (local $dst i32)
     (local.set $n (global.get $ecx))
     (if (local.get $n) (then
@@ -359,7 +376,9 @@
               (else (global.set $edi (i32.add (global.get $edi) (i32.const 4)))))
             (local.set $n (i32.sub (local.get $n) (i32.const 1)))
             (br $l)))))
-      (global.set $ecx (i32.const 0))))
+      (global.set $ecx (i32.const 0)))))
+  (func $th_rep_stosd (param $op i32)
+    (call $rep_stosd_do)
     (return_call $next))
   (func $th_cmpsb (param $op i32)
     (local $a i32) (local $b i32)

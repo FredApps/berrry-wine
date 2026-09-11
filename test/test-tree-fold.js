@@ -313,7 +313,66 @@ const SHAPE_O = loopBackDec([
   0x83, 0xC7, 0x01,                   // add edi, 1
 ]);
 
+// Close a body with `dec <reg> / jnz body`, for the shapes whose counter
+// cannot be ECX because a REP op owns it.
+function loopBackDecReg(body, decOpcode) {
+  const withDec = body.concat([decOpcode]);
+  return withDec.concat([0x75, (-(withDec.length + 2)) & 0xff, 0xc3]);
+}
+
+// -- P: a REP MOVSD inside an otherwise ordinary integer loop ------------------
+// The blitter shape: reload the run length, copy the run, advance the cursors
+// past a gap, count down. H83 was quake2's residual `lastFn` decline and mw3's
+// after the H149 pair landed. ECX is reloaded every iteration precisely
+// because the REP consumes it -- which is also the thing a fold that kept ECX
+// in a local and never published it would get wrong, since $rep_movsd_do reads
+// the GLOBAL.
+const SHAPE_P = loopBackDecReg([
+  0x8B, 0xCD,                         // mov ecx, ebp        (run length)
+  0xF3, 0xA5,                         // rep movsd           H83
+  0x83, 0xC2, 0x01,                   // add edx, 1
+  0x31, 0xD0,                         // xor eax, edx
+  0x83, 0xC7, 0x04,                   // add edi, 4          (gap in dst)
+], 0x4B /* dec ebx */);
+
+// -- Q: REP STOSB, whose fill byte is AL and therefore changes every trip ------
+// The fill value is read from the EAX global inside the handler, so this fails
+// loudly if the publish is narrowed to "the registers a movs touches".
+const SHAPE_Q = loopBackDecReg([
+  0x8B, 0xCD,                         // mov ecx, ebp
+  0xF3, 0xAA,                         // rep stosb           H84
+  0x83, 0xC0, 0x11,                   // add eax, 0x11       (next fill byte)
+  0x83, 0xC7, 0x02,                   // add edi, 2
+  0x89, 0xD6,                         // mov esi, edx
+], 0x4B /* dec ebx */);
+
+// -- R: the same copy with DF set ---------------------------------------------
+// STD is outside the loop, so the body the back edge re-enters is a self-loop
+// block with DF already 1 and the copy running downward. Nothing in the
+// descriptor models DF; the arm calls the interpreter's body, which reads the
+// $df global, and this is the assertion that it still does.
+const bodyR = [
+  0x8B, 0xCD,                         // mov ecx, ebp
+  0xF3, 0xA5,                         // rep movsd           (backward)
+  0x83, 0xC2, 0x01,                   // add edx, 1
+  0x31, 0xD0,                         // xor eax, edx
+  0x83, 0xEF, 0x04,                   // sub edi, 4
+  0x4B,                               // dec ebx
+];
+const SHAPE_R = [0xFD].concat(bodyR,
+  [0x75, (-(bodyR.length + 2)) & 0xff, 0xFC, 0xC3]);
+
 // -- negatives ----------------------------------------------------------------
+// The accepted range is exactly H82..H85. REP CMPSB (H92) is a string op too,
+// and it writes the lazy-flag fields from inside a helper the descriptor's
+// per-field dead-flag pass knows nothing about, so it must stay out.
+const NEG_REP_CMPS = loopBackDecReg([
+  0xF3, 0xA6,                         // rep cmpsb           H92
+  0x83, 0xC2, 0x01,                   // add edx, 1
+  0x83, 0xC7, 0x04,                   // add edi, 4
+  0x83, 0xC6, 0x04,                   // add esi, 4
+], 0x4B /* dec ebx */);
+
 // A SIB 16-bit STORE is H149 + H163, and H163 is not a micro-op. So the EA
 // producer is present and its consumer is not, which is the exact shape the
 // pairing walk exists to refuse: folding the H149 alone would leave a computed
@@ -638,6 +697,38 @@ const NEG_SHORT = loopBackDec([
       'shape O: the fused load writes AL only, not the container');
   }
 
+  // A REP string op round-trips the whole register file through the globals,
+  // so its live-out mask is 0xFF and nothing narrower is defensible: which
+  // registers $rep_movsd_do wrote is its business, and the arm reloads all
+  // eight from the globals afterwards regardless.
+  const srcP = (arena + 0x68000) >>> 0;
+  const dstP = (arena + 0x6c000) >>> 0;
+  {
+    checkShape('shape P (REP MOVSD inside an integer loop)', SHAPE_P,
+      () => ({ eax: 0, ecx: 0, edx: 0x01020304, ebx: 20,
+               ebp: 4, esi: srcP, edi: dstP }),
+      { seedAt: srcP, seedWords: 200, readAt: dstP }, 120);
+    assert.strictEqual(e.test_tree_nuops(), 5,
+      'shape P: the REP is one micro-op');
+    assert.strictEqual(e.test_tree_live_out(), 0xff,
+      'shape P: a REP publishes the whole register file');
+  }
+
+  const dstQ = (arena + 0x70000) >>> 0;
+  checkShape('shape Q (REP STOSB, fill byte from the EAX global)', SHAPE_Q,
+    () => ({ eax: 0x00000041, ecx: 0, edx: 0x5a5a5a5a, ebx: 20,
+             ebp: 8, esi: 0, edi: dstQ }),
+    { seedAt: dstQ, seedWords: 120, readAt: dstQ }, 60);
+
+  // DF=1. The copy runs downward from the top of each buffer, so the window
+  // that was written is the tail, not the head.
+  const srcR = (arena + 0x74000) >>> 0;
+  const dstR = (arena + 0x78000) >>> 0;
+  checkShape('shape R (REP MOVSD with DF set)', SHAPE_R,
+    () => ({ eax: 0, ecx: 0, edx: 0x11223344, ebx: 20,
+             ebp: 4, esi: (srcR + 0x800) >>> 0, edi: (dstR + 0x800) >>> 0 }),
+    { seedAt: srcR, seedWords: 600, readAt: (dstR + 0x600) >>> 0 }, 128);
+
   // -------------------------------------------------------------- side exit --
   // Same shape, same inputs, but a block budget far below the trip count, so
   // the super-op is forced to materialize everything and be re-entered many
@@ -701,6 +792,24 @@ const NEG_SHORT = loopBackDec([
       'SIB shape: the H420 store\'s own step charge is in the descriptor cost');
   }
 
+  // A REP is ONE guest op no matter how many bytes it moves -- that is what
+  // the interpreter charges for it, one $next dispatch -- so the descriptor
+  // cost must count it as one and not as its element count. Getting this
+  // wrong is the only way this micro-op can change how far a fixed batch
+  // budget gets, and it would do so by a factor of the run length.
+  {
+    const before = e.test_tree_ops();
+    const itersBefore = e.test_tree_iters();
+    const code = install(SHAPE_P);
+    e.set_tree_fold(1);
+    runAt(code, { eax: 0, ecx: 0, edx: 0, ebx: 20, ebp: 64, esi: srcP, edi: dstP });
+    assert.strictEqual(e.test_tree_iters() - itersBefore, 20n,
+      'REP shape: every guest iteration is accounted for');
+    // 5 interior ops + dec + jnz = 7, with the 64-dword copy counting as one.
+    assert.strictEqual(e.test_tree_ops() - before, 20n * 7n,
+      'REP shape: a rep movsd is billed as one guest op, not 64');
+  }
+
   // ------------------------------------------------------------- negatives ---
   function checkDecline(name, code) {
     const before = e.test_tree_matches();
@@ -715,6 +824,7 @@ const NEG_SHORT = loopBackDec([
   }
   checkDecline('body under the minimum-op floor', NEG_SHORT);
   checkDecline('an EA compute whose consumer is not a micro-op', NEG_EA_UNPAIRED);
+  checkDecline('a REP CMPSB, which writes flags the pass cannot see', NEG_REP_CMPS);
 
   // The floor is a knob, not a law: the same block that declined above is
   // accepted once the floor drops to three, which proves the decline was the
