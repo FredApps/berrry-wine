@@ -91,11 +91,32 @@ const MIN_OPS = 4;
 //            file. 8/16-bit LOADS and STORES keep their `$rd8`/`$wr8` calls in
 //            source order like every other memory op, so they carry the same
 //            fault and segment semantics as the per-op handlers.
+//   flags    a flag CONSUMER inside the run -- `adc`/`sbb`, `setcc`, and a
+//            `cmp`/`test` that is not already fused into the terminator. This
+//            is what the LAZY flag scheme buys: a producer does not compute
+//            flags, it records its inputs through `$rec_*`, and a consumer
+//            materializes the one field it wants through `$get_cf`/`$cond*`.
+//            Both are kept verbatim, in source order, inside the generated
+//            handler -- so a consumer reads the record the op in front of it
+//            just wrote, out of the same globals, in the same order the
+//            interpreter would have. The flag globals are deliberately NOT
+//            promoted into locals (`promoteRegs` is given the register and
+//            segment-base lists and nothing else), which is what leaves the
+//            per-FIELD last-writer state at the run's end exactly as an
+//            unfolded compile would: for the terminator, which is not in the
+//            fold, and for any successor block that reads a field this run did
+//            not write.
+//
+// NOT relaxed, and for the census's own reason rather than for want of effort:
+// `lahf`/`sahf`/`pushf`/`popf` and the BCD group want the architectural FLAGS
+// word including AF, which the lazy record does not carry as a value, and
+// `rcl`/`rcr` and a shift by CL are the same problem in the shift group. They
+// stay barriers, and the decline histogram still names them.
 //
 // The census's third relaxation, `alias`, is not here: it is a disjointness
 // PROOF over two operands rather than a class to accept, and it is the one
 // extension that needs code of its own.
-const RELAXATIONS = ['partial'];
+const RELAXATIONS = ['partial', 'flags'];
 const RELAX_ALL = new Set(RELAXATIONS);
 
 // A handler that reads the dispatch clock cannot be folded: the interpreter
@@ -136,11 +157,19 @@ function blockWidth(ops, D = decompTable()) {
 // docs/toyvm-tree-fold.md reports it. The census's class names are finer than
 // the five buckets the histogram wants, so this is the only mapping and it is
 // one-way.
-function bucketOf(cls, stem) {
+function bucketOf(c, stem) {
+  const cls = c.cls;
   if (cls === 'partial-reg') return 'partial-reg';
-  if (cls === 'cmp-test' || cls === 'flags' || cls === 'adc-sbb' || cls === 'shift-cl') {
-    return 'flag consumer';
-  }
+  // The flag barriers are three different things once the `flags` relaxation
+  // exists, and lumping them under one name would make the work list unreadable
+  // in exactly the place it is now pointing. An op tagged `relax: 'flags'` is
+  // one this fold CAN take and is only declining because the relaxation is off;
+  // a shift by CL and the architectural-FLAGS group are barriers the relaxation
+  // deliberately does not cover, and each names itself so the next census can
+  // price it on its own.
+  if (cls === 'shift-cl') return 'shift by CL';
+  if (cls === 'flags' && !c.relax) return `flags word: ${stem}`;
+  if (cls === 'cmp-test' || cls === 'flags' || cls === 'adc-sbb') return 'flag consumer';
   if (cls === 'branch' || cls === 'terminator') return 'terminator';
   // Everything else is named by its census class, and `other` -- the catch-all
   // -- carries the opcode stem with it. The histogram is a WORK LIST: "6225
@@ -191,7 +220,7 @@ function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null, relax = RELAX_
     // is the point: the relaxations widen the POPULATION, they do not add a
     // second way of lowering it.
     if (!c.fold && !(c.relax && relax.has(c.relax))) {
-      close(); note(bucketOf(c.cls, stemOf(HANDLERS[base].name).stem)); continue;
+      close(); note(bucketOf(c, stemOf(HANDLERS[base].name).stem)); continue;
     }
     // The census stops here. The fold has two more questions, both about the
     // BODY rather than the opcode, and both of which can only be asked of the

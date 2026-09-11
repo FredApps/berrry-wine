@@ -14,7 +14,21 @@
 //   narrowmem 8-bit absolute loads and stores in one run     -- MUST fold
 //   narrowrot an 8-bit `rol`, narrow AND not in the fold set -- MUST NOT fold
 //   alias     a store followed by a load                     -- MUST NOT fold
-//   flagcons  an `adc` in the middle                         -- MUST NOT fold
+//   flagcons  an `adc` in the middle                         -- MUST fold
+//   adcchain  a 32-bit add out of two 16-bit halves          -- MUST fold
+//   sbbchain  the same with the borrow                       -- MUST fold
+//   setcc     a mid-run `cmp` and two `setcc`s reading it    -- MUST fold
+//   cmploop   a loop with an `adc` inside and a `dec`/`jnz` out -- MUST fold
+//   flagsword a `lahf` in the middle                         -- MUST NOT fold
+//
+// The five flag cases are the other half of the DOS fit. Flags here are LAZY --
+// a producer records its inputs, a consumer materializes the field it wants --
+// so a flag consumer inside a run needs no new machinery either: the `$rec_*`
+// and `$get_*` calls are kept verbatim in source order, and the flag globals
+// are left out of the register promotion so the per-field last-writer state at
+// the run's end is what an unfolded compile would have left. `flagsword` is the
+// boundary: `lahf` wants the architectural FLAGS byte including AF, which the
+// record does not carry as a value.
 //
 // The four partial-register cases are the DOS half of the suite. 16-bit real
 // mode is written in AL/AH/BL/DH and in 8-bit loads and stores, and the exact
@@ -345,11 +359,14 @@ const CASES = {
       w(0x31, 0xC2);                       // xor dx,ax
     },
   },
-  // `adc` READS the carry the previous op left, which is the one thing a lazy
-  // flag scheme cannot defer past. Nothing inside a fold may consume flags
-  // except the terminator itself.
+  // `adc` READS the carry the previous op left. Under the `flags` relaxation
+  // that is not a barrier but the ordinary case: the producer's `$rec_*` and
+  // the consumer's `$get_cf` are both kept verbatim in source order inside the
+  // handler, so the `adc` reads the record the `mov` in front of it left --
+  // which, since `mov` writes no flags, is still the one the block was entered
+  // with. The printed word is the check.
   flagcons: {
-    folds: false,
+    folds: true, relaxed: true,
     body: ({ w }) => {
       w(0xB8, 0x34, 0x12);       // mov ax,1234h
       w(0xBB, 0x78, 0x56);       // mov bx,5678h
@@ -358,6 +375,100 @@ const CASES = {
       w(0x89, 0xCA);             // mov dx,cx
       w(0x31, 0xC2);             // xor dx,ax
       w(0x01, 0xDA);             // add dx,bx
+    },
+  },
+  // The shape `adc` exists for: a 32-bit add out of two 16-bit halves, where
+  // the carry crosses from one op to the next INSIDE the run. AX ends at 0002h
+  // and DX at 0002h only if the `adc` saw the carry the `add` produced; a fold
+  // that materialized flags at the run's END instead would print DX=0001h and
+  // every register around it would still look right.
+  adcchain: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB8, 0xFF, 0xFF);       // mov ax,0FFFFh
+      w(0xBA, 0x01, 0x00);       // mov dx,1
+      w(0x01, 0xC0);             // add ax,ax      -> carry out
+      w(0x11, 0xD2);             // adc dx,dx      <- reads that carry
+      w(0x01, 0xC0);             // add ax,ax
+      w(0x11, 0xD2);             // adc dx,dx
+      w(0x01, 0xC0);             // add ax,ax
+      w(0x11, 0xD2);             // adc dx,dx      DX=000Fh, AX=0FFF8h
+    },
+  },
+  // ...and its subtractive twin, because CF means BORROW here and the record
+  // `$rec_sub` leaves is not the one `$rec_add` leaves. Two `sbb`s, the second
+  // reading the first's borrow.
+  sbbchain: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB8, 0x00, 0x00);       // mov ax,0
+      w(0xBB, 0x05, 0x00);       // mov bx,5
+      w(0x29, 0xD8);             // sub ax,bx      -> borrow out (AX=0FFFBh)
+      w(0x19, 0xDB);             // sbb bx,bx      <- reads that borrow (BX=0FFFFh)
+      w(0x19, 0xC9);             // sbb cx,cx      <- and the one sbb left
+      w(0x19, 0xD2);             // sbb dx,dx
+    },
+  },
+  // A `cmp` in the middle of a run and two `setcc`s reading it. `setcc` is a
+  // flag read with an 8-bit register destination, so this case needs BOTH
+  // relaxations at once -- which is the ordinary state of 16-bit code and the
+  // reason they were not worth doing one at a time.
+  setcc: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB8, 0x05, 0x00);       // mov ax,5
+      w(0xBB, 0x07, 0x00);       // mov bx,7
+      w(0x39, 0xD8);             // cmp ax,bx       <- mid-run flag write
+      w(0x0F, 0x9C, 0xC1);       // setl cl         <- flag read -> 8-bit write
+      w(0x0F, 0x94, 0xC5);       // setz ch
+      w(0x31, 0xD2);             // xor dx,dx
+      w(0x88, 0xCA);             // mov dl,cl
+    },
+  },
+  // THE CASE THE RELAXATION IS REALLY FOR: a counted loop that both CONSUMES a
+  // flag inside the body (the `adc` reads the bit the `shl` in front of it shifted
+  // out) and leaves the flags its terminator reads (the `dec`). Under the exact
+  // rules the `adc` split the four-op body into a two and a one and nothing
+  // folded; under the relaxation the whole body is one handler, so the `shl`'s
+  // record has to reach the `adc` INSIDE it and the `dec`'s record has to reach
+  // the `jnz` OUTSIDE it, on all eight turns of the loop. A fold that got either
+  // end wrong prints a different BX.
+  cmploop: {
+    folds: true, relaxed: true,
+    body: ({ w, label, rel8 }) => {
+      w(0x31, 0xDB);             // xor bx,bx
+      w(0xBE, 0x08, 0x00);       // mov si,8
+      // The jump is what makes the loop body its own block: decoding runs to a
+      // terminator, so without it the setup and the first two body ops share a
+      // block and fold as a four-op run under the EXACT rules too, which would
+      // make the exact-arm assertion below fail for a reason that is not the
+      // loop.
+      w(0xEB, rel8('cmpl'));     // jmp cmpl
+      label('cmpl');
+      w(0x89, 0xF0);             // mov ax,si
+      w(0xC1, 0xE0, 0x02);       // shl ax,2        -> CF is the bit shifted out
+      w(0x11, 0xC3);             // adc bx,ax       <- reads that CF, mid-run
+      w(0x89, 0xDA);             // mov dx,bx
+      // `dec`+`jnz` FUSE into one terminator op, so they count as one, not two:
+      // without the `mov` above the body would be three ops and too short.
+      w(0x4E);                   // dec si          <- the flags the jnz reads
+      w(0x75, rel8('cmpl'));     // jnz cmpl
+    },
+  },
+  // The boundary on the flag side. `lahf` wants the architectural FLAGS byte,
+  // including AF, which the lazy record does not carry as a value -- so it is
+  // a barrier under the relaxation as much as without it, and splits this into
+  // runs of three and three.
+  flagsword: {
+    folds: false,
+    body: ({ w }) => {
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xBB, 0x78, 0x56);       // mov bx,5678h
+      w(0x01, 0xD8);             // add ax,bx
+      w(0x9F);                   // lahf            <- the whole FLAGS byte
+      w(0x89, 0xC1);             // mov cx,ax
+      w(0x31, 0xD9);             // xor cx,bx
+      w(0x89, 0xCA);             // mov dx,cx
     },
   },
 };
