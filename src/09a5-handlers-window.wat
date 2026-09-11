@@ -856,6 +856,48 @@
         (global.set $createwnd_implicit_show (i32.const 1)))))
 
   ;; 68: CreateDialogParamA
+  ;; WM_INITDIALOG is sent before USER displays a modeless dialog, so the
+  ;; dialog ancestor itself may still be hidden. Eligibility is therefore the
+  ;; child's own WS_VISIBLE/WS_DISABLED/WS_TABSTOP style, not effective
+  ;; visibility through all ancestors as ordinary keyboard traversal uses.
+  (func $dialog_first_init_tabstop (param $dlg i32) (result i32)
+    (local $slot i32) (local $child i32) (local $style i32)
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $dlg) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $child (call $wnd_slot_hwnd (local.get $slot)))
+      (local.set $style (call $wnd_get_style (local.get $child)))
+      (if (i32.and
+            (i32.eq
+              (i32.and (local.get $style) (i32.const 0x18010000))
+              (i32.const 0x10010000))
+            (i32.ne (local.get $child) (local.get $dlg)))
+        (then (return (local.get $child))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Apply USER's post-WM_INITDIALOG default-focus rule. The candidate is the
+  ;; control passed in wParam before the callback; a zero candidate stays zero
+  ;; even if the callback creates a new tab stop. When the callback disables
+  ;; or hides that control, rescan after it returns as documented and choose
+  ;; the first control that is still eligible.
+  (func $dialog_apply_init_focus
+    (param $dlg i32) (param $candidate i32) (param $accepted i32)
+    (local $target i32)
+    (if (i32.or (i32.eqz (local.get $candidate)) (i32.eqz (local.get $accepted)))
+      (then (return)))
+    (local.set $target (call $dialog_first_init_tabstop (local.get $dlg)))
+    (if (i32.eqz (local.get $target)) (then (return)))
+    (call $set_focus (local.get $target))
+    (if (i32.eq (call $ctrl_table_get_class (local.get $target)) (i32.const 2))
+      (then
+        (drop (call $wnd_send_message
+          (local.get $target)
+          (i32.const 0x00B1)  ;; EM_SETSEL
+          (i32.const 0)
+          (i32.const -1))))))
+
   (func $handle_CreateDialogParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ret_addr i32) (local $hwnd i32) (local $dlg_wndproc i32)
     (local $ctrl_count i32) (local $i i32) (local $ctrl_hwnd i32) (local $dlg_rec i32)
@@ -1041,6 +1083,7 @@
     ;; If dlgProc is provided, dispatch WM_INITDIALOG
     (if (local.get $arg3)
       (then
+        (local.set $ctrl_hwnd (call $dialog_first_init_tabstop (local.get $hwnd)))
         ;; Save return address for CACA0001 continuation
         (local.set $ret_addr (call $gl32 (global.get $esp)))
         ;; Pop CreateDialogParamA frame (ret + 5 args = 24 bytes)
@@ -1050,11 +1093,17 @@
         (call $gs32 (global.get $esp) (local.get $hwnd))  ;; saved_hwnd (eax after CACA0001)
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (local.get $ret_addr))  ;; saved_ret
-        ;; Push DlgProc args: hwnd, WM_INITDIALOG(0x110), 0, lParam
+        ;; A private stack marker and candidate let the shared CACA0001 thunk
+        ;; honor the DLGPROC's BOOL return without a nest-unsafe global.
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (local.get $ctrl_hwnd))
+        (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+        (call $gs32 (global.get $esp) (i32.const 0x44494643)) ;; "DIFC"
+        ;; Push DlgProc args: hwnd, WM_INITDIALOG, candidate, lParam
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (local.get $arg4))  ;; lParam
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
-        (call $gs32 (global.get $esp) (i32.const 0))  ;; wParam (focus hwnd)
+        (call $gs32 (global.get $esp) (local.get $ctrl_hwnd))  ;; wParam
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
         (call $gs32 (global.get $esp) (i32.const 0x110))  ;; WM_INITDIALOG
         (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
@@ -3118,8 +3167,10 @@
   ;; on top of a live x86 frame.
   (func $dlg_focus_first_tabstop (param $dlg i32) (result i32)
     (local $first i32) (local $old i32)
-    (local.set $first (call $dialog_next_tabstop
-      (local.get $dlg) (i32.const 0) (i32.const 1)))
+    ;; DefDlgProc judges child eligibility from the dialog template/window
+    ;; styles, even when the dialog ancestor is not on screen yet. WinHelp
+    ;; focuses its hidden Contents page before showing the outer Topics dialog.
+    (local.set $first (call $dialog_first_init_tabstop (local.get $dlg)))
     (if (i32.or
           (i32.eqz (local.get $first))
           (i32.eq (local.get $first) (local.get $dlg)))

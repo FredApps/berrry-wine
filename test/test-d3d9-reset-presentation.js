@@ -38,6 +38,13 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
   (func (export "sampler") (param $d i32) (param $stage i32) (param $value i32) (result i32)
     (call $d3d9_sampler_state (local.get $d) (local.get $stage) (i32.const 1) (local.get $value) (i32.const 0)) (global.get $eax))
   (func (export "program") (param $d i32) (result i32) (call $d3d9_program_state (local.get $d)))
+  (func (export "scissor") (param $d i32) (param $p i32) (param $get i32) (result i32)
+    (call $d3d9_scissor (local.get $d) (local.get $p) (local.get $get)) (global.get $eax))
+  (func (export "free_head") (result i32) (global.get $free_list))
+  (func (export "light") (param $d i32) (result i32)
+    (call $d3d9_light (local.get $d) (i32.const 123456) (i32.const 1) (i32.const 2)) (global.get $eax))
+  (func (export "material") (param $d i32) (param $p i32) (result i32)
+    (call $d3d9_material (local.get $d) (local.get $p) (i32.const 0)) (global.get $eax))
   (func (export "releaseTexture") (param $t i32) (result i32)
     (global.set $esp (i32.const 0x074ff000))
     (call $handle_IDirect3DTexture9_Release (local.get $t) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)) (global.get $eax))
@@ -65,13 +72,32 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     assert.strictEqual(e.texture(d,out),0);const t=e.guest_read32(out)>>>0;
     assert.strictEqual(e.bindTexture(d,stage,t),0);assert.strictEqual(e.sampler(d,stage,3),0);return t;
    });
+   const mat=e.guest_alloc(68);new Float32Array(memory.buffer,wa(mat),17).fill(.5);
+   assert.strictEqual(e.material(d,mat),0);assert.strictEqual(e.light(d),0);
+   const lightHead=e.guest_read32(e.program(d)+21996)>>>0;assert(lightHead);
+   const rect=e.guest_alloc(16);[1,2,6,7].forEach((v,i)=>e.guest_write32(rect+i*4,v));
+   assert.strictEqual(e.scissor(d,rect,0),0);
    for(const overrides of [{6:0},{6:2},{6:4},{11:1},{12:60},{13:2},{3:2},{4:2},{5:1},{8:0},{8:0,0:640,1:480,12:75}]){
     params(overrides);const target=e.target(d),before=moves.length;
     assert.strictEqual(await invoke(e.reset,d,pp),0x8876086c,JSON.stringify(overrides));
     assert.strictEqual(e.target(d),target);assert.strictEqual(moves.length,before,'invalid mode does not resize host');
     extraTextures.forEach(t=>assert.strictEqual(e.guest_read32(t+20),1,'failed Reset preserves appended bindings'));
+    assert.strictEqual(e.guest_read32(e.program(d)+21996)>>>0,lightHead,'failed Reset retains light nodes');
+    assert.strictEqual(new Float32Array(memory.buffer,wa(e.program(d))+21928,1)[0],.5);
+    assert.strictEqual(e.scissor(d,rect,1),0);
+    assert.deepStrictEqual(Array.from(new Uint32Array(memory.buffer,wa(rect),4)),[1,2,6,7]);
    }
    params({0:0,1:0,2:0,6:3});assert.strictEqual(await invoke(e.reset,d,pp),0);
+   assert.strictEqual(e.guest_read32(e.program(d)+21996),0,'successful Reset clears light list');
+   assert.strictEqual(e.scissor(d,rect,1),0);
+   assert.deepStrictEqual(Array.from(new Uint32Array(memory.buffer,wa(rect),4)),[0,0,12,10],
+     'successful Reset restores resized full-target scissor');
+   e.guest_free(rect);
+   assert(new Uint8Array(memory.buffer,wa(e.program(d))+21928,68).every(v=>v===0),'successful Reset restores zero material');
+   let free=e.free_head()>>>0,lightFreed=false;
+   for(let i=0;free&&i<1000;i++,free=e.guest_read32(free+4)>>>0)if(free===lightHead-4)lightFreed=true;
+   assert(lightFreed,'successful Reset retires old light allocation');
+   e.guest_free(mat);
    extraTextures.forEach((t,i)=>{
     assert.strictEqual(e.guest_read32(t+20),0,'successful Reset unbinds appended texture');
     assert.strictEqual(e.guest_read32(e.program(d)+21792+i*4),0);

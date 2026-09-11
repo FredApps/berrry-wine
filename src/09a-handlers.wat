@@ -6947,7 +6947,11 @@
     ;; below reaches back across these 24 bytes so the consumed API frame stays
     ;; beneath it as nested-pump storage.
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-    ;; Set up call to dialog proc: push args for DlgProc(hwnd, WM_INITDIALOG, 0, dwInitParam)
+    ;; Determine the control USER passes in WM_INITDIALOG.wParam before the
+    ;; callback runs. A TRUE callback return applies this default afterward;
+    ;; FALSE means the application assigned focus itself.
+    (local.set $ctrl_hwnd (call $dialog_first_init_tabstop (local.get $hwnd)))
+    ;; Set up call to dialog proc: DlgProc(hwnd, WM_INITDIALOG, ctrl, init).
     ;; Return to dialog loop thunk which pumps messages until EndDialog. Keep
     ;; this API frame in place until then: its consumed args hold the previous
     ;; pump state, and CACA0004 pops all 24 bytes after restoring them.
@@ -6955,7 +6959,7 @@
     (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))  ;; ret → dialog message loop
     (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $hwnd))          ;; hDlg
     (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0110))         ;; WM_INITDIALOG
-    (global.set $dlg_init_focus_hwnd (global.get $focus_hwnd))
+    (global.set $dlg_init_focus_hwnd (local.get $ctrl_hwnd))
     (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (global.get $dlg_init_focus_hwnd)) ;; wParam (focus hwnd)
     (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $init_param))   ;; lParam
     ;; Set EIP to dialog proc and signal redirection (don't let caller override EIP)

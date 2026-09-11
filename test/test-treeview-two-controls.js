@@ -24,6 +24,7 @@ const TVM_SELECTITEM = 0x110b;
 const TVGN_ROOT = 0;
 const TVGN_NEXTVISIBLE = 6;
 const TVGN_CARET = 9;
+const WM_SETFOCUS = 0x0007;
 
 (async () => {
   const { exports: e, memory } = await bootRenderHarness({});
@@ -78,11 +79,20 @@ const TVGN_CARET = 9;
   assert.deepStrictEqual(walk(editor), editorItems,
     'the second control enumerates its own items, not the first control\'s');
 
-  // Win98 gives the first inserted item the caret, per control.
+  // Win98 insertion is quiet. A later WM_SETFOCUS gives a populated control
+  // its first caret without affecting any other TreeView.
   assert.strictEqual(e.send_message(prefs, TVM_GETNEXTITEM, TVGN_CARET, 0) >>> 0,
-    prefsItems[0], 'the first control caret defaults to its own first item');
+    0, 'the first control has no caret before focus');
   assert.strictEqual(e.send_message(editor, TVM_GETNEXTITEM, TVGN_CARET, 0) >>> 0,
-    editorItems[0], 'the second control has its own default caret');
+    0, 'the second control has no caret before focus');
+  e.send_message(prefs, WM_SETFOCUS, 0, 0);
+  assert.strictEqual(e.send_message(prefs, TVM_GETNEXTITEM, TVGN_CARET, 0) >>> 0,
+    prefsItems[0], 'focus gives the first control its own first item');
+  assert.strictEqual(e.send_message(editor, TVM_GETNEXTITEM, TVGN_CARET, 0) >>> 0,
+    0, 'focusing the first control leaves the second without a caret');
+  e.send_message(editor, WM_SETFOCUS, 0, 0);
+  assert.strictEqual(e.send_message(editor, TVM_GETNEXTITEM, TVGN_CARET, 0) >>> 0,
+    editorItems[0], 'focus gives the second control its own first item');
 
   // Selecting in one control must not move the other's caret.
   assert.strictEqual(

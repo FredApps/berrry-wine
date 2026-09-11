@@ -734,3 +734,36 @@ arguments; corrected harness selects its explicit registry entry instead.
 Full canonical/compat build15499 and repeated software font85829 pass after
 concurrent main merges. These are focused native-DLL integration results, not
 proof of fresh full-game menu/gameplay. No guest cache was patched.
+
+Fresh current-artifact game run98750 was started after checkpointad3ba44b, using
+`/private/tmp/bw-glyph-current.pohQXb/wine.wasm` (1141556 bytes). It is independent
+of the preserved old33057 process whose native glyph cache already contains
+failures. At587 seconds the new run reaches intro frame105, with785 completed
+draws and zero reported renderer failures; menu/gameplay acceptance is pending.
+Artifacts: `bw-software-probe-DLH67d` under the host temporary directory. This is
+a progression observation, not a throughput benchmark (launch loadavg39).
+
+Local Candidates now includes `black_white_2_demo` (Black & White 2 Demo).
+The prepared MainApp tree is copied to the ignored local corpus directory
+`test/binaries/win98-games-a-d/Black and White 2-DX9-D3D/installed/`;
+`node tools/gen-win98-games-a-d-manifests.js` inventories its363 companions.
+The entry seeds the same three native DLLs as the CLI probe and opts into the
+experimental programmable profile for this app only; renderer selection stays
+user-controlled (`?d3d9-renderer=software` for software, WebGL by default).
+CLI: `node test/run.js --app=black_white_2_demo --d3d9-renderer=software`.
+This registers the extracted game, not an installer-success or gameplay claim.
+
+Progression update: current-font run98750 remains live, reaching intro frame1513
+at5947 seconds with finishFrame1786 and zero reported renderer failures.
+`frame-5941.png` was visually inspected: complete Lionhead logo/reflection, not
+yet the menu. Older pre-font-fix run33057 is now authoritatively terminal with
+exit0; its recorded final intro frame1787 and cached missing-glyph state are
+historical evidence only. No restart or guest-state patch was used.
+
+Current-font run98750 has now passed intro frame1786 and reached the profile
+creation menu. Personally inspected `frame-7320.png` shows readable “Select
+Profile”, “New Profile Name”, “Close”, and the main menu labels over the island
+background. At7331 seconds the renderer reports20665 completed draws and zero
+failures. This proves the glyph fix reaches the real game's menu, not just the
+standalone font probe. Profile selection and changing gameplay remain unverified;
+the frozen executable artifact predates lighting/cache/scissor checkpoints.

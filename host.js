@@ -1028,6 +1028,7 @@ class WineAssembly {
     const ctx = {
       getMemory: () => self.memory.buffer,
       d3d9Bridge: opts.d3d9Bridge,
+      d3d9Programmable: self.d3d9Programmable === true,
       createD3DRenderWorker: () => self._createD3DRenderWorker(),
       apiTable: self.apiTable,
       get renderer() { return self.renderer; },

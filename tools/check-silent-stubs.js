@@ -247,9 +247,10 @@ const digest = crypto.createHash('sha256')
 // 2026-09-10 merge: 359 -> 357. DirectPlay Receive and Send now use the
 // owned local message queues; all 34 metadata compatibility stubs remain.
 // Recovery integration: IMalloc_DidAlloc queries validated allocation arenas
-// instead of an instance-local bump cursor (357 -> 356).
-const EXPECTED_COUNT = 356;
-const EXPECTED_SHA256 = '9ead05d0f712b117e31489649c623afa739a3c49a76abaff1a8343dc72502bcb';
+// instead of an instance-local bump cursor; with main's newer implementations
+// the combined manual inventory is 355 (all 34 metadata stubs retained).
+const EXPECTED_COUNT = 355;
+const EXPECTED_SHA256 = '793e3cf45191445cff92a2db35c4843d61264cb3b010f242c569dd917e1636f9';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

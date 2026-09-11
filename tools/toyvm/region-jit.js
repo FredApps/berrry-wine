@@ -2681,6 +2681,11 @@ async function main() {
 module.exports = {
   pickRegion, buildRegion, guardBytes, regionSuccessors, snapshotFor, successorIps,
   passSpec, isTransfer, EXIT_SITES,
+  // For tree-fold.js's loop fold, which builds a one-block closed region the
+  // same way `chainFrom` would and hands it to the SAME `buildRegion`. Exported
+  // rather than copied for the reason every other rule in this file is imported
+  // rather than copied: a second reading of an operand tail is a second policy.
+  fallThroughIp,
 };
 
 if (require.main === module) main().catch(e => { console.error(e.stack || String(e)); process.exit(1); });

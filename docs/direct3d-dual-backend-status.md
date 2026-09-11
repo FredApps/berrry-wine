@@ -22,6 +22,109 @@ and [interval semantics](https://learn.microsoft.com/en-us/windows/win32/direct3
 
 ## Current integration checkpoint
 
+Independent color-target checkpoint: native standalone color surfaces
+own canonical pixels and separate external/internal references; the bound RT0
+does not replace the implicit backbuffer. Implemented APIs include bounded
+A8R8G8B8/X8R8G8B8 CreateRenderTarget/CreateOffscreenPlainSurface, RT0 Set/Get,
+GetDesc/GetDevice, lockable-surface LockRect/UnlockRect with subrect addressing,
+and matching-format GetRenderTargetData to a system-memory surface. Binding
+resets viewport/scissor dimensions; externally held default-pool surfaces block
+Reset, while internally bound surfaces retire with Reset/device destruction.
+Unsupported multisampling, formats and lock flags fail explicitly.
+
+Native direct/worker86852 PASS: independent Clear and actual DrawPrimitiveUP,
+Lock readback/Unlock upload, A/B content preservation, implicit backbuffer
+Present and GetRenderTargetData even with B bound, validation, reference recovery,
+Reset and final-child device release. The fixture uses the production host
+import route; routing now includes previously omitted depth/Reset/query commands
+and the new color operations. Async protocol verifies all18 private opcodes.
+Existing COM21353, Reset39222, viewport94591, WebGL Present11654 and depth99511
+pass. Full build65981 passes1150963/1151431 bytes. Browser52209 passes actual
+x86 CreateRenderTarget/SetRenderTarget/Draw/Clear/Lock/Unlock/Present/Release in
+cooperative and guest-main Worker modes, with canonical pixels and native heap
+retirement. Initial browser57496 exposed the second stale routing boundary in
+the guest-worker broker (LockRect trapped as unknown GL opcode196624); extending
+that broker through30012 resolves it. Executor24083 passes22 cases in both
+direct and production-worker software; GPU67695 passes22 cases per WebGL version
+plus forced allocation-failure cleanup/retry. The detailed executor entry below
+records storage/copy costs. These fixtures do not establish native-driver
+raster/format conformance or complete resource-profile coverage.
+
+This is not full render-target/resource completion. Texture-level/cube-face
+render-target binding and sampling aliases, resource-version leases for those
+aliases, MRT/MSAA, remaining formats/lock flags, GetDC and copy/resolve operations
+remain open. The executor currently synchronizes standalone color surfaces at
+explicit lock/readback/upload boundaries; no CPU shadow is claimed current while
+backend work is pending. Shader-profile and capability claims are unchanged.
+
+Scissor executor checkpoint: native51017 and independent73298 PASS15
+point/wire/solid cases, depth/stencil/query exclusion, copied rectangle ownership,
+invalid-bind preservation and late-bind rejection. WebGL2504 and independent6215
+PASS20 cases across WebGL1 solid and WebGL2 solid/point/wire, including top-row,
+right-column, empty and disabled rectangles. Software retains shader/helper
+execution and rejects output before alpha/depth/stencil/query effects; that
+ordering is source-reviewed, not a dedicated derivative pixel fixture. GPU
+scissor uses the actual attachment height for its Y conversion. Manifest and
+logical-operand gates pass. Native Windows raster conformance remains separate
+from agreement with each backend's unscissored baseline.
+
+Scissor frontend/state checkpoint70190 PASS: real Set/GetScissorRect with
+owned RECT bytes, pointer/ordering/target-bound validation, a distinct explicit
+empty-rectangle state, independent render-state enable, and selective
+record/Capture/Apply. Reset27538 passes direct/worker paths: failed Reset retains
+the rectangle and successful Reset restores the resized full-target default.
+Async snapshots retain rectangle coordinates across immediate guest reuse.
+Real COM51349 passes scissored lit draw, Clear, exclusive edges, empty regions
+and enable/disable through the canonical framebuffer. Clear normalization
+intersects explicit regions with viewport and scissor before the shared queue;
+the legacy no-backend Clear rejects enabled scissoring rather than ignoring it.
+Browser57824 passes actual x86 scissored Draw and Clear in cooperative and
+guest-main Worker modes through the render Worker, including canonical pixels
+and allocation retirement. Full build69313 passes1148824/1149292 bytes.
+These semantics follow Microsoft's
+[scissor-test contract](https://learn.microsoft.com/en-us/windows/win32/direct3d9/scissor-test).
+SetRenderTarget was still an open API/resource gate at this scissor checkpoint;
+the newer standalone-color slice above implements its RT0 reset side effects,
+with texture aliases and wider target support still incomplete.
+
+Viewport state-block prerequisite95990 PASS: `SetViewport` now records owned
+24-byte values without changing live state; repeated writes retain the last
+valid value. Capture/Apply, untouched live getters, unrecorded-state preservation
+and null/wrapped/unmapped-pointer rejection have focused native coverage.
+Existing selective-block suite39847 also passes. Real COM82253 proves that
+recording leaves coverage unchanged and Apply moves the lit triangle into the
+recorded viewport. Combined build51597 passes canonical1146581/compat1147049;
+browser20945 passes cooperative and guest-main Worker paths with the software
+render Worker, default packet cache and per-app experimental profile selection.
+An earlier sandbox browser65745 stopped at navigation timeout before guest
+launch; the successful retry used a fresh matched canonical snapshot.
+This follows the documented
+[recordable state methods](https://learn.microsoft.com/en-us/windows/win32/api/d3d9/nf-d3d9-idirect3ddevice9-beginstateblock).
+Full typed ALL/PIXEL/VERTEX creation remains an open gate; palette,
+clip-plane and other missing categories are not silently claimed by this change.
+
+Directional-lighting state checkpoint: native material/light state15817 PASS
+replaces silent-success setters and trapping getters. Device storage appends a
+68-byte material and a linked list keyed by arbitrary DWORD light indices;
+SetLight stores point/spot/directional definitions without enabling them.
+LightEnable on an unknown index creates the documented white +Z directional
+default. Material defaults to all zero, and D3D9 lighting/material-source render
+state defaults are initialized explicitly. These follow Microsoft's
+[material defaults](https://learn.microsoft.com/en-us/windows/win32/direct3d9/materials)
+and [LightEnable contract](https://learn.microsoft.com/en-us/windows/win32/api/d3d9/nf-d3d9-idirect3ddevice9-lightenable).
+Selective Begin/End blocks record material, light definitions and enables
+independently; Capture/Apply and detached allocation retirement pass. The existing
+CreateStateBlock ALL/PIXEL/VERTEX entry remains fail-loud and is not claimed here.
+Reset60956 PASS on direct/worker paths: invalid Reset preserves the state and
+successful Reset frees old light nodes and restores zero material. Async command
+tests verify material, source selectors and all enabled-light fields survive
+immediate guest-memory reuse. Point/spot/specular/skinning and caps remain
+separate gates. Full build87107 PASS (canonical1145409, compat1145877).
+Real-COM software60530 PASS includes directional diffuse, light disable,
+emissive material and actual PS1.1 v0 linkage through canonical framebuffer
+pixels. Native D3DX font50352 and browser WebGL2 font43660 still render863
+white pixels with the newly initialized lighting defaults.
+
 Native D3DX font integration12873 PASS on the software worker: the supplied
 Microsoft d3dx9_25.dll renders readable “Black & White 2” into the canonical
 frame (863 white pixels), versus zero text pixels on the previous build.
@@ -1054,3 +1157,292 @@ SetLOD residency, border color, finite LOD bias and MAXMIPLEVEL; native sampler
 setters accept the corresponding metadata. Nonzero bias/MAXMIPLEVEL explicitly
 reject on the current WebGL adapter until accelerated lowering is implemented.
 No full WebGL sampling parity or real-game completion is implied by these tests.
+
+Directional-lighting lowering checkpoint (2026-09-10): software35236 passes
+21 actual pixel cases plus malformed DLT1 descriptor checks and allocation
+retirement; WebGL34697 passes44 pixel cases across forced WebGL1/2, including
+fixed VS + PS1.1 v0 reading the lit material rather than raw COLOR1. Coverage
+includes front/back/perpendicular directions, optional normal normalization,
+inverse-transpose world scaling, eight directional lights, global/per-light
+ambient, emissive, material sources/COLORVERTEX, missing-color fallback, diffuse
+alpha and zero/underflow/overflow-length direction policy. Native cascade42650
+passes the existing six-stage texture/transform/fog-adjacent lowering suite.
+The DLT1 binder appends real native VM vertex operations and replaces its owned
+VS IR/packet only after successful compilation; older cascade and vertex-input
+ABIs are unchanged. Point/spot and specular lighting remain explicit gates,
+as does lit programmed-PS secondary-color linkage pending conformance. No new
+caps or Windows reference conformance are claimed. At this checkpoint software
+fixed programs still recompiled per draw; the subsequent bounded packet-cache
+slice below removes repeated packet compilation, not descriptor lowering. Complex combinations
+remain bounded by the existing128-instruction native fixed-program budget.
+
+Native fixed semantic packet cache (2026-09-10): each software Device now owns
+a native LRU cache, at most64 variants and a reserved byte capacity (default
+min(256KiB,maxBytes/16), opt-out fixedCacheBytes:0). Matching compares complete
+native IR headers/instructions/operands, excluding only the four DEF literal
+words. A hit copies immutable packet code and rebinds the current DEF prologue
+in WAT; matrices, directional-light/material colors and pixel constants are not
+variant keys. Shader profile/compiler version and all semantic operands remain
+part of the exact comparison. Templates own detached IR/packet bytes, so
+in-flight private packet copies survive eviction and cache retirement. Reset and
+device destruction retire the cache; distinct devices do not share ownership.
+
+Focused cache61583 passes actual lighting and pixel-stage factor/constant pixels with compile-count checks,
+semantic changes/reuse, bounded eviction, clone-allocation OOM preserving cache
+state, admission OOM returning an uncached valid program, invalid-state pixel
+preservation, asynchronous execution after cache retirement, cancellation,
+Reset and device lifetime. Lighting31992 passes21 pixel/malformed-descriptor
+cases; fragment and logical-AND gates pass. This is packet compilation reuse,
+not the final constant-binding architecture: descriptor-to-IR validation/lowering
+still executes on each draw, and each draw allocates a private packet copy.
+No throughput improvement or elimination of those costs has been measured.
+
+Independent color executor checkpoint (2026-09-10): software24083 passes22
+direct and22 production-worker checks; GPU67695 passes22 checks on each forced
+WebGL1/2 path plus failed-FBO allocation cleanup/retry. Color formats21/22 own
+separate bounded storage and preserve A/B contents across draws, clears, uploads
+and readback with differing dimensions. X8 storage initializes/clears alpha255
+and masks alpha writes. Shared depth identity survives color switching; pixels
+outside the smaller target retain their prior depth. Present/readColor(null)
+always select the implicit backbuffer, never the last offscreen color target.
+
+GPU color resources use an authoritative color texture and per-depth-sized
+staging framebuffers, sharing depth renderbuffers by identity. GPU-only load/store
+copies preserve color across staging changes and handle oversized depth storage
+on WebGL1 as well as2. This costs extra storage and copies; no zero-copy or
+throughput claim. Failed framebuffer construction retires newly allocated color
+and depth storage while retaining existing shared depth. Worker31475 adjacent
+parity/order/parent-memory/readback/retirement regression passes; focused worker
+cleanup verifies actual exit before native heap adoption. Generic GPU unit tests
+also pass. Texture-surface alias sampling and versioned CPU/GPU synchronization
+remain required next work; independent color storage alone does not complete them.
+
+Render-target texture frontend checkpoint (2026-09-10): native
+CreateTexture/CreateCubeTexture accepts default-pool, non-dynamic color targets
+in formats21/22. Each face/mip owns a monotonic color identity and shares the
+texture's canonical byte allocation; existing COM surface views retain their
+parent, and target bindings retain that parent internally. GetRenderTarget
+returns the public view, not the private storage descriptor. Texture locks
+reject render-target usage; GetRenderTargetData fences the selected subresource.
+Draw snapshots name color identities instead of uploading stale CPU pixels.
+Final parent destruction publishes one ordered color-set retirement command.
+
+Native61003 passes direct/software-worker mip/cube identity, independent rendered
+mips, readback, view recreation, parent lifetime, feedback rejection and a real
+DrawPrimitiveUP sampling previously rendered texture pixels. Browser78209 passes
+actual x86 CreateTexture/surface bind/Clear/sample/LockRect and color-set retirement
+through both cooperative-main and guest-main Worker production routes, with
+render-worker allocation cleanup. Full build82702 passes canonical1151595 and
+compat1152063; the async protocol test covers all19 private production opcodes.
+Native81793 additionally verifies Reset rejection while an external backbuffer
+is held, followed by successful Reset retiring an internally bound cube parent.
+Existing Reset82330, viewport/scissor1293, texture34052 and cube35791 regressions
+pass. The initial added Reset fixture18505 incorrectly held that backbuffer;
+its failure was expected ownership validation, not a renderer failure.
+Production browser81357 (`node test/test-d3d9-software-host-web.js --webgl`)
+also passes the actual-x86 target/texture sampling and retirement sequence on
+WebGL in both guest modes, using a real guest-created window. Software51264
+passes the same revised fixture. Focused accelerated mip/cube/cache alias
+verification is recorded below. General CPU dirty/version leases, migration and
+complete texture formats/pools remain open, as does Black & White gameplay
+acceptance.
+
+Additional raster discrepancy measured by actual-x86 WebGL fixture21997:
+a clip-space triangle (-1,1), (1,1), (-1,-1), rendered into a4x3 target using
+the current half-pixel conversion, fills the top row in software but leaves it
+clear in WebGL. Interior pixels agree. This exact horizontal-edge ownership
+case remains an unverified/native-reference raster-conformance requirement;
+no epsilon workaround or blanket parity claim has been introduced. Resource
+alias tests use interior samples to isolate storage from edge coverage.
+
+Mip-atlas shader fix (2026-09-10): `withMipSampling` now recognizes compact and
+whitespace-varied GLSL main declarations, including fixed-function output.
+Previously it rewrote texture calls without inserting their helper declarations
+when main used `void main(){`. Shader unit regressions pass; focused alias
+GPU34064 verifies real WebGL1/2 compilation and pixels after this fix. Agent
+native19805 passes21 direct and21 worker alias checks, with heap adoption after
+actual worker exit; final cache/retirement evidence is recorded below.
+
+Adjacent shader-web80127 is **not** a passing regression: initial VS/PS1.1, LIT
+and dependent-texture blocks pass, then its staged PS1.4 browser fixture sends
+JSON-serialized `nativeBytes` rather than a Uint8Array and is rejected by the
+retained native-IR contract. That fixture also predates the explicit PS1.4
+production-profile gate. This failure precedes mip-atlas lowering; production
+validation was not weakened to accept the obsolete diagnostic handoff.
+
+Executor alias coverage: native97715 passes 30 shared pixel/lifetime cases in
+both direct and production Worker execution, followed by confirmed Worker exit
+and native heap adoption. GPU79741 passes 31 cases in each forced WebGL1/2
+context plus Reset cache retirement. Coverage includes fixed and programmed
+sampling, asymmetric top/bottom orientation, mixed CPU/resource mips and cube
+faces, hardware mip selection and MAXMIPLEVEL atlas copies, Draw/Clear/upload
+invalidation, repeated-resource cache reuse, feedback rejection without source
+mutation, and release invalidation. GPU draw tests make `readPixels` throw: alias
+assembly uses GPU copies, not a CPU readback fallback. Native sampling references
+owned BGRA allocations directly; GPU assemblies use executor-local revisions,
+not optional producer upload versions. Mixed CPU/resource assemblies are rebuilt
+because CPU snapshots currently lack stable content identity. GPU scratch and
+assembly copies remain an explicit storage/throughput cost, not zero-copy parity.
+
+Final frontend rerun90202 passes the native direct/worker alias, sampling,
+readback and Reset sequence. Full build7818 passes canonical1151612 and
+compat1152080 with layout9c6027bce1d500a1 and no data-segment overlaps. The
+recorded edge-coverage and staged shader-fixture issues remain open; this is a
+resource checkpoint, not complete raster/profile or gameplay acceptance.
+
+Shader browser fixture transport repaired (2026-09-10): shader-web97596 passes
+WebGL2 and35181 passes forced WebGL1 through terminal exit0. This resolves the
+recorded80127 fixture failure. The test loads the serialized native-IR reader and
+restores Uint8Array bytes after Puppeteer's JSON argument boundary; ordinary
+cases still use production compileNativeIR and ignore redundant JS projections.
+The private PS1.4 block first asserts production-profile rejection, then uses a
+synchronous test-only compileIR adapter for that block and restores production
+compilation in finally. No shipping validation or capability gate changed.
+Coverage again includes dependent/matrix/cube instructions, PS1.2, PS1.3 depth,
+the private PS1.4 lowering subset, and manual mip-atlas/native comparisons on
+both GL versions. Shader unit tests and diff checks also pass. This does not
+enable or prove a complete public PS1.4 profile.
+
+ColorFill checkpoint (2026-09-10): native ColorFill now fills supported21/22
+default-pool offscreen surfaces, render targets, render-target texture views and
+the implicit backbuffer. The [Microsoft contract](https://learn.microsoft.com/en-us/windows/win32/api/d3d9/nf-d3d9-idirect3ddevice9-colorfill)
+defines the destination pool/types and NULL-as-full-surface rectangle. Native
+validation rejects wrong devices/pools, locked targets, invalid pointers and
+nonpositive/out-of-bounds explicit rectangles. Other formats remain gated by
+resource creation. No new caps are exposed.
+
+Private command30014 snapshots a destination/color/rectangle into the existing
+ordered CLEAR command, with depth disabled and no dependence on current native
+viewport/scissor or target binding. Both executors reuse their existing fill and
+resource-revision behavior; no CPU readback fallback was added. Native20100
+passes direct/worker backend bootstrap, implicit/texture/cube/offscreen targets,
+subrect pixels, X8 alpha, binding/scissor preservation, validation and explicit
+pending/completed stdcall-stack assertions. Browser95903 passes actual-x86
+WebGL in both guest modes. Software browser38731 exposed a missing async stack
+guard; the fix passes browser78448 in both guest modes. Full build6715 passes
+canonical1151946/compat1152414 with no overlaps; fragment/logical-AND and20-opcode
+production routing regressions pass. This does not complete other copy/resolve
+operations, formats, or native-reference characterization of degenerate rects.
+
+Rectangular color RESOURCE_UPDATE uploads now accept an optional bounded
+`{x,y,width,height}` rectangle in native top-left coordinates. The software
+executor updates only those rows in its owned native storage; WebGL converts
+only the source rectangle and uses texSubImage2D after saving pending target
+writes. Neither path reads back the destination or uploads a stale whole-surface
+CPU shadow. Uploads advance the existing WebGL color revision for alias-cache
+invalidation. Source pitch, BGRA conversion and X8 alpha rules are preserved.
+Shared fixtures pass35 checks each through direct/worker software (45249) and
+WebGL1/2 (70142), including asymmetric two-row uploads over rendered content,
+untouched destination pixels and a top-edge X8 update. This is the backend
+prerequisite for UpdateSurface, not completed guest API support; native source/
+destination validation and texture-level routing remain to implement.
+
+The first native UpdateSurface slice now implements matching A8R8G8B8/X8R8G8B8
+system-memory sources to default-pool offscreen, independent render-target,
+render-target texture/cube and ordinary texture-level destinations. The native
+view resolver validates device ownership, pool, format, lock state, source RECT
+and destination POINT before copying. Ordinary texture levels update canonical
+bytes and dirty sequence; executor-owned color destinations submit private30015,
+which snapshots source rows into ordered rectangular RESOURCE_UPDATE commands.
+No whole-target CPU overwrite or readback is used for partial GPU uploads.
+Async reentry polls before allocation/copy; pending calls retain their stack.
+Native80316 passes direct/worker source and destination locks, bounds, offsets,
+outside-pixel preservation, ordinary texture dirty sequence, RT mip/cube data
+and stdcall checks. Production browser40847 software and20981 WebGL both pass
+actual-x86 UpdateSurface to RT texture followed by sampling, source release and
+readback in cooperative-main and guest-main Worker modes. The21-opcode bridge
+routing regression passes. Implicit swapchain destinations, other packed/DXT
+formats and outstanding-DC handling remain missing UpdateSurface coverage;
+this is not full API/format completion and does not expand advertised caps.
+
+UpdateSurface now also copies the other currently creatable texture formats:
+X8L8V8U8 and DXT1/DXT5. Native row addressing uses the existing block-byte,
+pitch and mip-row helpers, preserving compressed bits without decode/re-encode.
+Compressed origins must be block aligned; partial trailing blocks are accepted
+only at both source and destination mip edges. Direct/worker regression85321
+passes raw-byte whole and subrectangle copies, distinct row pitches, 2x2/1x1
+mip padding, invalid alignment rejection and no destination mutation on error.
+The existing21/22 color/alias/readback/lifetime suite passes in the same run.
+These fixtures establish implementation behavior, not a native-driver oracle
+for unusual compressed edge rectangles; that characterization remains open.
+No new formats are advertised, and implicit swapchain destinations remain open.
+
+Implicit UpdateSurface destinations are now supported through the same ordered
+color RESOURCE_UPDATE command (null resource means the device backbuffer).
+Native validation uses the actual implicit wrapper/dimensions, not bound RT0;
+the source must match its X8 format. Both backends preserve outside pixels and
+WebGL addresses the logical canvas inside any oversized depth-backed target.
+Native13640 passes implicit rectangle upload/Present plus GetDC exclusion and
+ReleaseDC identity/double-release checks. A dedicated DxObject surface flag
+tracks guest GetDC ownership: compositor DC bindings are not outstanding guest
+acquisitions. Initial43971/41086 checks incorrectly used generic DC state,
+which Present creates internally; the explicit ownership flag fixes this.
+Backend70704/66547 pass39 checks through direct/worker software and WebGL1/2.
+Actual-x86 browser81042 software and7175 WebGL pass both guest modes, including
+upload/Present with an independent RT bound. Initial browser69564/43603 failed
+only the fixture's expected backbuffer Release count (device ownership retains1,
+not0); corrected fixture checks1. Fullbuild40843 passes1153777/1154245 bytes.
+
+Parallel review found and fixed a software-only outside-alpha overwrite:
+X8 normalization now touches only uploaded rows/columns, matching WebGL's
+subimage update. The added parity fixture begins with nonopaque implicit color
+and checks outside alpha through READBACK, not just the displayed image.
+Review also identified a still-open GDI synchronization gap: GetDC binds the
+canonical CPU buffer without fencing/downloading executor-dirty pixels, and
+ReleaseDC does not upload GDI writes. The ownership flag prevents UpdateSurface
+while acquired but does not solve those transfers. Full D3D/GDI interoperability
+requires ordered acquire/readback and release/upload; current tests deliberately
+do not establish that behavior.
+
+Implicit-backbuffer GetDC/ReleaseDC now synchronize through the same queue.
+Acquire reserves guest ownership before private30016 READBACK, publishes no HDC
+while parked, then binds GDI to the downloaded native bytes. Release snapshots
+those bytes once using30015/RESOURCE_UPDATE and polls on reentry; ownership and
+the usable DC survive a terminal upload failure. Distinct acquire/release pending
+bits exclude competing DC acquisition/release. The implicit owner is resolved
+from a live D3D9 device's retained surface slot; no second rendering queue or
+forged color metadata was introduced. New implicit Clear/Draw, ColorFill,
+UpdateSurface, Present and Reset work is excluded while the DC is held;
+already-issued calls still poll rather than abandoning completion tokens.
+
+Native63568 passes direct/worker GetPixel after an unpresented ColorFill,
+SetPixel followed by ReleaseDC/Present, held-DC rejection, wrong/double DC
+release, and pending/completed stdcall assertions. The22-opcode host-routing
+test passes. Browser42202 software and58134 WebGL pass the same actual-x86 GDI
+round trip in cooperative-main and guest-main Worker modes. Initial97907/31683
+browser failures were absent GetPixel imports in the Calc fixture; it now
+resolves GetPixel/SetPixel through real GetProcAddress before calling them.
+Full native/build63568 passes1154420/1154888 bytes with no overlaps. Parallel
+review supplied the reservation/reentry invariants and identified the implicit
+Clear/Draw exclusion fixed here. This verifies the implicit transfer slice,
+not all [GetDC restrictions](https://learn.microsoft.com/en-us/windows/win32/api/d3d9/nf-d3d9-idirect3dsurface9-getdc):
+non-implicit surface/texture DC support, complete
+surface→device lifetime retention and multi-producer fault/cancellation coverage
+remain open. Those are still blockers to full D3D/GDI interoperability.
+
+Backbuffer GetDC admission now requires the immutable lockable bit captured from
+CreateDevice presentation flags. Reset accepts LOCKABLE_BACKBUFFER and captures
+it in the staged replacement surface, preserving the old surface on failure.
+Native18915 passes direct/worker nonlockable rejection, Reset transitions both
+ways, failed transitions preserving admission, and the existing GDI roundtrip.
+Browser61376 software and11089 WebGL pass actual x86 CreateDevice with Flags1
+and the GDI roundtrip in both guest modes. This does not implement implicit
+backbuffer LockRect, broader creation-parameter validation, or the remaining
+surface/DC formats and ownership rules.
+
+Implicit Surface9.GetDevice now validates the output, resolves its live owner,
+and returns the canonical Device9 interface with one added reference rather than
+trapping. Native72381 verifies identity, null-output rejection, stdcall cleanup,
+balanced reference ownership and replacement-backbuffer identity after Reset,
+in direct/worker modes. Browser19382 software and17109 WebGL verify actual x86
+GetDevice and balanced device references in both guest modes; fullbuild48428
+passes1154554/1155022 bytes. Earlier browser33467/32939 failures were a fixture
+assuming refcount1 despite live resources; the check now measures its baseline.
+
+Independent review confirms a separate lifetime blocker: implicit surface
+external references do not yet retain their device. Thus GetDevice after the
+caller's final device Release is not supported correctly. Fix acquisition at
+GetBackBuffer, swap-chain GetBackBuffer, implicit GetRenderTarget, AddRef and QI
+with cycle-free external ownership; final surface release must stage and poll
+asynchronous parent teardown without double-decrementing on reentry or retiring
+storage after a failed handoff. GetDevice alone does not resolve that blocker.

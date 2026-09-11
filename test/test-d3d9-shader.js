@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const assert = require('assert');
-const { parse, compile } = require('../lib/d3d9-shader');
+const { parse, compile, withMipSampling } = require('../lib/d3d9-shader');
 const u32 = values => new Uint32Array(values);
 const vs = u32([0xfffe0101, 1, 0xc00f0000, 0x90e40000, 0xffff]);
 const ps = u32([0xffff0101, 66, 0xb00f0000, 5, 0x800f0000,
@@ -13,6 +13,21 @@ assert.match(compile(vs).source, /position.z \* 2.0 - position.w/);
 assert.match(compile(ps).source, /texture2D\(d3d_s0, d3d_tex0.xy\)/);
 assert.match(compile(ps).source, /gl_FragColor = r0/);
 assert.deepStrictEqual(compile(ps).uniforms, ['d3d_s0']);
+// Both fixed and programmed emitters feed the atlas adapter. Main-function
+// whitespace must not decide whether required GLSL declarations are emitted.
+for(const entry of ['void main() {','void main(){','void main ( void )\n{']){
+  const shader={stage:'pixel',uniforms:['d3d_s0'],source:
+    'precision highp float; uniform sampler2D d3d_s0;\n'+entry+
+    '\nif(false)discard;\ngl_FragColor = texture2D(d3d_s0,vec2(0.25));\n}'};
+  const lowered=withMipSampling(shader,[0]);
+  assert.match(lowered.source,/vec4 d3d_sample0\(vec2 uv\)/);
+  assert(lowered.source.indexOf('vec4 d3d_sample0')<lowered.source.indexOf(entry));
+  assert.match(lowered.source,/bool d3d_discard = false;/);
+  assert.match(lowered.source,/if\(false\)d3d_discard = true;/);
+  assert.match(lowered.source,/gl_FragColor = d3d_sample0\(vec2\(0.25\)\)/);
+  assert.deepStrictEqual(lowered.mipStages,[0]);
+}
+assert.throws(()=>withMipSampling({source:'uniform sampler2D d3d_s0;',uniforms:['d3d_s0']},[0]),/main function/);
 const masked = compile(u32([0xffff0101, 1, 0x81130000, 0x91c60000, 0xffff]));
 assert.match(masked.source, /d3d_color0.zyxw/);
 assert.match(masked.source, /clamp\(/);

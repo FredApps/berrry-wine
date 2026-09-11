@@ -232,8 +232,8 @@ const contentsOutput = (contentsRun.stdout || '') + (contentsRun.stderr || '');
 if (!contentsOutput.includes('Help Topics: FreeCell Help')) {
   failures.push('authentic viewer did not open the FreeCell Contents dialog');
 }
-if (!/dump-tree:contents:[^\n]*state=0x22[^\n]*text="The object of FreeCell"[^\n]*text="Playing FreeCell"[^\n]*text="Strategies and tips"/.test(contentsOutput)) {
-  failures.push('FreeCell Contents did not retain its selected three-topic TreeView');
+if (!/dump-tree:contents:[^\n]*state=0x2[^\n]*text="The object of FreeCell"[^\n]*text="Playing FreeCell"[^\n]*text="Strategies and tips"/.test(contentsOutput)) {
+  failures.push('FreeCell Contents did not retain its selected, collapsed three-topic TreeView');
 }
 if (!fs.existsSync(contentsScreenshot) || fs.statSync(contentsScreenshot).size < 1000) {
   failures.push('rendered FreeCell Contents screenshot is missing');

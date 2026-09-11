@@ -13,6 +13,9 @@
   ;; +20 misc1 (DDSurface: dib_ptr, WASM addr of pixel data, 0 if none)
   ;; +24 misc2 (DDSurface: color key low / surface byte size)
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
+  ;; D3D9 surface arm: 0x40000000 = outstanding guest GetDC (not compositor binding).
+  ;; 0x20000000 = DC acquire pending; 0x10000000 = DC release upload pending.
+  ;; Bit 27 = D3D9 lockable backbuffer, captured from presentation flags.
   ;;
   ;; The comment above is the SEMANTICS; the declaration below is the OFFSETS,
   ;; and after wave 4 of docs/watx-layout-migration-design.md it is the only

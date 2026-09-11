@@ -6,12 +6,16 @@ const {Bridge} = require('../lib/d3d9-host');
 (async () => {
   let bridge;
   const names=['CreateVertexShader','CreatePixelShader','SetVertexShader','SetPixelShader',
-    'SetVertexShaderConstantF','SetPixelShaderConstantF',
+    'SetVertexShaderConstantF','SetPixelShaderConstantF','SetMaterial','SetLight','LightEnable',
     'SetDepthStencilSurface','GetDepthStencilSurface',
-    'Reset','TestCooperativeLevel','GetVertexShader','GetPixelShader','GetViewport','GetRenderState',
+    'Reset','TestCooperativeLevel','GetVertexShader','GetPixelShader','GetViewport','GetRenderState','BeginStateBlock','EndStateBlock','SetScissorRect',
     'SetFVF','SetRenderState','SetTransform','SetViewport','SetStreamSource','SetTexture','SetSamplerState','DrawPrimitive','DrawPrimitiveUP','Present'];
   const {exports:e,memory}=await bootRenderHarness({fonts:'none',
     extraHostOverrides:{gpu_gl_call:(op,p,a)=>bridge.call(op,p,a)},extraWat:`
+    ${['Apply','Release'].map(n=>`(func (export "block_${n}") (param $b i32) (result i32)
+      (global.set $esp (i32.const 0x00300000))
+      (call $handle_IDirect3DStateBlock9_${n} (local.get $b) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0)) (global.get $eax))`).join('\n')}
     (func (export "create_depth") (param $d i32) (param $format i32) (param $out i32) (result i32)
       (global.set $esp (i32.const 0x00300000))
       (call $gs32 (i32.add (global.get $esp) (i32.const 24)) (i32.const 0))
@@ -547,11 +551,74 @@ const {Bridge} = require('../lib/d3d9-host');
   ok(e.Present(device,0,0,0,0),'resized Present');
   const resized=new Uint32Array(memory.buffer,e.target_bits(device)>>>0,160);
   assert.strictEqual(resized[17],0xffff0000);assert.strictEqual(resized[159],0xff000000);
+  // Real COM lighting state -> immutable queue snapshot -> native fixed VS
+  // SIMD execution -> canonical Present. No private lighting descriptor here.
+  ok(e.SetVertexShader(device,0),'lit fixed vertex stage');ok(e.SetPixelShader(device,0),'lit fixed pixel stage');
+  for(const [state,value]of[[137,1],[145,0],[139,0],[29,0],[7,0],[22,1]])
+    ok(e.SetRenderState(device,state,value),'lit state '+state);
+  ok(e.SetFVF(device,0x12),'lit XYZ+NORMAL');
+  const litVertices=alloc(72),material=alloc(68),light=alloc(104);
+  [[-1,1,.5],[1,1,.5],[-1,-1,.5]].forEach((v,i)=>
+    new Float32Array(memory.buffer,wa(litVertices)+i*24,6).set([...v,0,0,-1]));
+  const mat=new Float32Array(memory.buffer,wa(material),17);mat.fill(0);mat.set([.25,.5,.75,.5]);
+  ok(e.SetMaterial(device,material),'SetMaterial actual native state');
+  new Uint8Array(memory.buffer,wa(light),104).fill(0);e.guest_write32(light,3);
+  new Float32Array(memory.buffer,wa(light)+4,4).set([1,1,1,0]);
+  new Float32Array(memory.buffer,wa(light)+64,3).set([0,0,1]);
+  ok(e.SetLight(device,0xf1234567,light),'SetLight arbitrary DWORD index');
+  ok(e.LightEnable(device,0xf1234567,1),'LightEnable');
+  new Uint8Array(memory.buffer,wa(light),104).fill(0x77); // call-time ownership
+  const litDraw=(expected,label)=>{
+    ok(e.clear_target(device,0,0,1,0xff000000,1),label+' clear');
+    ok(e.DrawPrimitiveUP(device,4,1,litVertices,24),label+' draw');ok(e.Present(device),label+' present');
+    const pixel=resized[17],rgba=[pixel>>>16&255,pixel>>>8&255,pixel&255,pixel>>>24];
+    rgba.forEach((v,i)=>assert(Math.abs(v-expected[i])<=1,`${label}: ${rgba} != ${expected}`));
+  };
+  litDraw([64,128,191,128],'directional diffuse material');
+  ok(e.LightEnable(device,0xf1234567,0),'disable directional light');
+  litDraw([0,0,0,128],'disabled light removes diffuse RGB but preserves material alpha');
+  mat.set([.125,.25,.375,0],12);ok(e.SetMaterial(device,material),'change emissive material');
+  mat.fill(0);litDraw([32,64,96,128],'emissive without enabled lights');
+  shader([0xffff0101,1,0x800f0000,0x90e40000,0xffff],true);
+  litDraw([32,64,96,128],'lit fixed VS feeds actual PS1.1 v0');
+  ok(e.BeginStateBlock(device),'record viewport');
+  [8,0,8,10,0,0x3f800000].forEach((v,i)=>e.guest_write32(viewport+i*4,v));
+  ok(e.SetViewport(device,viewport),'record right-half viewport');
+  litDraw([32,64,96,128],'recorded viewport does not affect live draw');
+  ok(e.EndStateBlock(device,out),'finish viewport block');const viewportBlock=e.guest_read32(out)>>>0;
+  new Uint8Array(memory.buffer,wa(viewport),24).fill(0);
+  // Clear uses the current viewport too: erase the old left-hand triangle
+  // before switching, so retained pixels cannot masquerade as a new draw.
+  ok(e.clear_target(device,0,0,1,0xff000000,1),'clear full target before viewport Apply');
+  ok(e.block_Apply(viewportBlock),'apply recorded viewport');
+  litDraw([0,0,0,255],'viewport block changes native raster coverage');
+  assert.strictEqual(resized[25],0x80204060,'lit triangle moves to the right-half viewport');
+  assert.strictEqual(e.block_Release(viewportBlock),0);
+  [0,0,16,10,0,0x3f800000].forEach((v,i)=>e.guest_write32(viewport+i*4,v));
+  ok(e.SetViewport(device,viewport),'restore full viewport for scissor');
+  ok(e.clear_target(device,0,0,1,0xff000000,1),'erase before enabling scissor');
+  const scissorRect=alloc(16);
+  [2,0,5,3].forEach((v,i)=>e.guest_write32(scissorRect+i*4,v));
+  ok(e.SetScissorRect(device,scissorRect),'native scissor rectangle');
+  ok(e.SetRenderState(device,174,1),'enable scissor');
+  new Uint8Array(memory.buffer,wa(scissorRect),16).fill(0x77);
+  litDraw([0,0,0,255],'scissor rejects fragments outside owned rectangle');
+  assert.strictEqual(resized[19],0x80204060,'lit pixel inside scissor survives');
+  ok(e.clear_target(device,0,0,1,0xff00ff00,1),'scissored Clear');ok(e.Present(device),'scissored Clear Present');
+  assert.strictEqual(resized[19],0xff00ff00);assert.strictEqual(resized[17],0xff000000);
+  assert.strictEqual(resized[21],0xff000000,'right scissor edge is exclusive');
+  const beforeEmpty=resized.slice();[4,4,4,4].forEach((v,i)=>e.guest_write32(scissorRect+i*4,v));
+  ok(e.SetScissorRect(device,scissorRect),'empty native scissor');
+  ok(e.clear_target(device,0,0,1,0xffffff00,1),'empty scissored Clear');
+  ok(e.DrawPrimitiveUP(device,4,1,litVertices,24),'empty scissored Draw');ok(e.Present(device),'empty scissor Present');
+  assert.deepStrictEqual(resized,beforeEmpty,'empty scissor has no pixel side effects');
+  ok(e.SetRenderState(device,174,0),'disable scissor');
+  litDraw([32,64,96,128],'disabled scissor restores full viewport');
   assert.strictEqual(entry.kind,'software');
   assert.strictEqual(entry.queue.completed,entry.queue.submitted);
   assert(entry.queue.completed>=3,'initial clear, draw and Present use one queue');
   assert.strictEqual(bridge.call(0x30006,0,device),1,'ordered EVENT');
   assert.strictEqual(bridge.call(0x30004,0,device),1,'ordered destruction');
   assert.strictEqual(bridge.devices.size,0);
-  console.log('PASS real D3D9 COM -> shared queue -> WAT software: programmable/fixed/mixed stages, independent constants and rebinding, XYZ/POSITIONT, strips/fans, alpha tests/defaults/reference snapshots, blending and canonical Present pixels, no DOM/WebGL');
+  console.log('PASS real D3D9 COM -> shared queue -> WAT software: programmable/fixed/mixed stages, independent constants and rebinding, XYZ/POSITIONT, strips/fans, alpha tests/defaults/reference snapshots, blending, directional lighting state and canonical Present pixels, no DOM/WebGL');
 })().catch(error=>{console.error(error);process.exitCode=1;});

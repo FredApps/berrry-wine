@@ -477,19 +477,18 @@ async function runDos(o) {
 
   // The tree fold's driver, built BEFORE the session because the code cache
   // takes it at construction, and handed the session immediately after because
-  // installing has to reach into that cache. Both this and the region JIT
-  // append handlers to the same table through `opts.regions`, so they cannot
-  // both be on: whichever built last would own the ordinals the other's arena
-  // words were written against.
-  let foldOpts = treeFold;
-  if (foldOpts && regionJit) {
-    // ...unless the fold came from TOYVM_TREE_FOLD rather than the command
-    // line, in which case the run asked for a region JIT and something else
-    // asked for the fold everywhere. The explicit request wins; a suite-wide
-    // environment switch must not fail a test that was written about regions.
-    if (foldOpts.fromEnv) foldOpts = null;
-    else throw new Error('--tree-fold and --region-jit both append to the handler table; pick one');
-  }
+  // installing has to reach into that cache.
+  //
+  // THE HANDLER TABLE'S TAIL IS SHARED. Both this and the region JIT append
+  // handlers to it, and they used to be refused together because each numbered
+  // its own from zero -- a tree word dispatching into a region, and whichever
+  // module was built last carrying only its own side's handlers. One allocator
+  // (tools/toyvm/extras.js) owns the tail now, both sides take ordinals from
+  // it, and every module build passes the whole list, so `--tree-fold
+  // --region-jit` is the same program with both folds in it. That combination
+  // is the one that has to work: the page runs with the region JIT on.
+  const foldOpts = treeFold;
+  const extras = new (require('./extras').Extras)();
   const folder = foldOpts
     ? new (require('./tree-fold').TreeFolder)({
       session: null, vm, machine, repFast,
@@ -508,6 +507,7 @@ async function runDos(o) {
       // the instance swap because the memory does, but the gate stops reading
       // it at the window close anyway.
       hits: new Uint32Array(vm.mem.buffer, isa.IPHIST_BASE, isa.IPHIST_SIZE >> 2),
+      extras,
       ...(foldOpts === true ? {} : foldOpts),
     })
     : null;
@@ -723,6 +723,8 @@ async function runDos(o) {
       // worker instead (region-live.js `workerBackend`).
       backend: require('./region-prepare').inlineBackend(),
       log,
+      // The same allocator the tree fold takes its ordinals from.
+      extras,
       ...(regionJit === true ? {} : regionJit),
     })
     : null;
@@ -830,9 +832,12 @@ async function runDos(o) {
     // what the fold is worth: a tree that stands for `ops` guest instructions
     // and ran `n` times removed `n * (ops - 1)` trips through $next, which is a
     // COUNT and not a timing, and is the number to quote on a loaded box.
+    // Read over the WHOLE shared tail, not over the fold's own tree count: the
+    // region JIT appends to the same table, so a tree's counter sits at its
+    // ordinal and the two stop agreeing the moment a region is installed.
     treeEntries: (folder && folder.trees.length && (hist > 0 || histPairs > 0))
       ? [...new Uint32Array(vm.mem.buffer,
-        isa.HIST_BASE + folder.base * 4, folder.trees.length)]
+        isa.HIST_BASE + folder.base * 4, folder.extras.length)]
       : null,
     // Copied out, not aliased: the caller reads this after the instance is
     // done with and a view into a memory somebody else may reuse is a census
@@ -989,6 +994,22 @@ function count(s, d) {
   return Math.round(Number(m[1]) * ({ '': 1, k: 1e3, m: 1e6, b: 1e9 })[m[2].toLowerCase()]);
 }
 
+// `--tree-fold-relax=partial,flags` / `=none` / absent (all of them). An
+// unknown name is an error rather than a silent no-op: a misspelled arm in an
+// A/B would otherwise read as "the relaxation is worth nothing".
+function treeFoldRelax(spec) {
+  const { RELAXATIONS } = require('./tree-fold');
+  if (spec === undefined) return RELAXATIONS;
+  if (spec === 'none') return [];
+  const want = spec.split(',').filter(Boolean);
+  const bogus = want.filter(x => !RELAXATIONS.includes(x));
+  if (bogus.length) {
+    throw new Error(`unknown --tree-fold-relax: ${bogus.join(',')} `
+      + `(known: ${RELAXATIONS.join(',')}, or none)`);
+  }
+  return want;
+}
+
 async function main() {
   const exe = process.argv[2];
   if (!exe || exe.startsWith('--')) {
@@ -1079,6 +1100,19 @@ async function main() {
       // enough that the profiling build is not most of the run.
       warmFrom: 0,
       warmFor: count(arg('tree-fold-warm'), 10e6),
+      // `--tree-fold-relax=LIST`: which of the census's relaxations are on.
+      // The default is all of them, because the decline histogram says the
+      // exact rule set is what keeps the fold off DOS code -- `partial-reg` is
+      // one of the two biggest buckets in every program measured, and 16-bit
+      // real-mode code is made of the narrow forms it names. The switch exists
+      // so an arm can be turned OFF for an A/B: `--tree-fold-relax=none` is the
+      // fold exactly as docs/toyvm-tree-fold.md first measured it.
+      relax: treeFoldRelax(arg('tree-fold-relax')),
+      // `--no-tree-fold-loops`: stop before the terminator, the way the fold
+      // did when docs/toyvm-tree-fold.md first measured it. The A/B arm for the
+      // one relaxation that changes which arena words the guest re-enters --
+      // everything else here is a substitution the guest cannot observe.
+      loops: !flag('no-tree-fold-loops'),
       fromEnv: !process.argv.slice(2).includes('--tree-fold'),
       log: flag('tree-fold-verbose') ? console.log : (() => {}),
     } : null,
@@ -1385,6 +1419,7 @@ async function main() {
     + (r.tree
       ? `\n  tree fold: ${r.tree.trees} handler(s) over ${r.tree.installs} install(s), `
         + `${r.tree.folds} substitution(s) covering ${r.tree.foldedOps} guest ops, `
+        + `${r.tree.treeLoops ? `${r.tree.treeLoops} loop handler(s), ` : ''}`
         + `${(r.tree.watBytes / 1024).toFixed(1)}KB of WAT`
         + `${r.tree.capped ? ' (capped)' : ''}`
         // The gate's own ledger. `hottest` is the load-bearing number when a
@@ -1403,14 +1438,25 @@ async function main() {
         + `\n  tree drops: ${r.tree.dropSites} site(s) -> ${r.tree.dropProgs} program(s), `
         + `${r.tree.dropBlocks} block(s) recompiled`
         + (r.treeEntries ? (() => {
-          let hits = 0, removed = 0;
-          for (let i = 0; i < r.treeEntries.length; i++) {
-            hits += r.treeEntries[i];
-            removed += r.treeEntries[i] * ((r.tree.treeOps[i] || 1) - 1);
+          // A LOOP TREE'S SAVING IS NOT `entries * (ops - 1)`. A straight-line
+          // tree runs its ops once per entry, so that product is exactly the
+          // `$next` trips it removed. A loop tree turns an unknown number of
+          // ITERATIONS inside one dispatch, and nothing here counts them -- so
+          // its entries are reported on their own line rather than folded into
+          // a number that would understate them by the trip count.
+          let hits = 0, removed = 0, loopHits = 0;
+          const isLoop = r.tree.treeIsLoop || [];
+          const ord = r.tree.treeOrd || [];
+          for (let i = 0; i < r.tree.treeOps.length; i++) {
+            const n = r.treeEntries[ord[i]] || 0;
+            if (isLoop[i]) { loopHits += n; continue; }
+            hits += n;
+            removed += n * ((r.tree.treeOps[i] || 1) - 1);
           }
           return `\n  tree entries: ${hits} tree dispatch(es), `
             + `${removed} $next trip(s) removed `
-            + `(${(100 * removed / r.dispatched).toFixed(2)}% of the dispatches retired)`;
+            + `(${(100 * removed / r.dispatched).toFixed(2)}% of the dispatches retired)`
+            + (loopHits ? `, ${loopHits} loop tree dispatch(es) (iterations not counted)` : '');
         })() : '')
         + (r.tree.why.size
           ? `\n  tree declines: ` + [...r.tree.why].sort((a, b) => b[1] - a[1])

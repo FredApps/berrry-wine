@@ -14,11 +14,18 @@ const { bootRenderHarness } = require('./render-helper');
     args: ['--no-first-run', '--no-default-browser-check'] });
   try {
     const page = await browser.newPage();
-    for (const file of ['gpu-backend.js', 'd3d9-shader.js', 'd3d9-fixed.js', 'd3d9-backend.js'])
+    for (const file of ['gpu-backend.js', 'd3d-shader-ir.js', 'd3d9-shader.js', 'd3d9-fixed.js', 'd3d9-backend.js'])
       await page.addScriptTag({ path: path.join(__dirname, '../lib', file) });
     const webglVersion = Number(process.env.D3D9_WEBGL_VERSION || 2);
     assert([1,2].includes(webglVersion), 'D3D9_WEBGL_VERSION must be 1 or 2');
     await page.evaluate(version => {
+      // Puppeteer arguments cross JSON, not structured clone. Restore the
+      // native byte payload at this test transport boundary. Ordinary cases
+      // still run the production serialized-IR/profile checks, not compileIR.
+      const compileNative=D3D9Shader.compileNativeIR;
+      window.restoreShaderBytes=shader=>({...shader,
+        nativeBytes:Uint8Array.from(Object.values(shader.nativeBytes))});
+      D3D9Shader.compileNativeIR=(shader,options)=>compileNative(restoreShaderBytes(shader),options);
       const Device = D3D9Backend.Device;
       D3D9Backend.Device = class extends Device {
         constructor(canvas, options = {}) {
@@ -234,6 +241,18 @@ const { bootRenderHarness } = require('./render-helper');
       kill:native14([64,0x80070005,0xb0e40005,65533,65,0x800f0005,1,0x800f0000,0xa0e40000]),
     };
     const ps14GPU=await page.evaluate(({vs,shaders})=>{
+      // This block deliberately tests private PS1.4 lowering, not guest
+      // acceptance. Prove the production gate rejects it before installing a
+      // synchronous, block-local diagnostic adapter; restore it in finally.
+      const productionCompile=D3D9Shader.compileNativeIR;
+      let rejected=false;
+      try{productionCompile(shaders.sample);}catch(error){rejected=/profile is not enabled/.test(error.message);}
+      if(!rejected)throw Error('private PS1.4 unexpectedly accepted by production compiler');
+      D3D9Shader.compileNativeIR=(shader,options)=>{
+        const restored=restoreShaderBytes(shader),ir=D3DShaderIR.read(restored.nativeBytes.buffer,0);
+        return ir.version===0xffff0104?D3D9Shader.compileIR(ir,options):productionCompile(shader,options);
+      };
+      try{
       const canvas=document.createElement('canvas');canvas.width=canvas.height=4;
       const device=new D3D9Backend.Device(canvas),g=device.gpu,gl=g.gl;
       const texture={width:2,height:2,pixels:new Uint8Array([255,0,0,255,0,255,0,255,0,0,255,255,255,255,255,255]),sampler:{addressU:3,addressV:3,min:1,mag:1,mip:0}};
@@ -256,6 +275,7 @@ const { bootRenderHarness } = require('./render-helper');
         draw.pixelShader=shaders.depth;draw.vertexConstants.set([value,1,0,1]);device.clear([0,0,0,1],3,.5,null,depthAttachment);device.draw(draw);depth.push(read());
       }
       const error=g.getError();device.destroy();return{sample,project,zero,dependent,bump,bumpChanged,cnd,killed,alive,depth,error};
+      }finally{D3D9Shader.compileNativeIR=productionCompile;}
     },{vs:ps14VS,shaders:ps14Shaders});
     assert.deepStrictEqual(ps14GPU,{sample:[0,0,255,255],project:[0,0,255,255],zero:[255,255,255,255],
       dependent:[0,255,0,255],bump:[0,255,0,255],bumpChanged:[255,0,0,255],cnd:[255,0,255,255],

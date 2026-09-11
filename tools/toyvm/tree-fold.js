@@ -75,6 +75,50 @@ const { carryState } = require('./region-live');
 // across the corpus and decides which programs this can pay on.
 const MIN_OPS = 4;
 
+// The census's relaxations, as the fold implements them. `classify()` already
+// tags every op it declines with the relaxation that would take it
+// (`c.relax`), so turning one on here is "accept the class", not "reclassify".
+//
+//   partial  an 8-bit (or, in a 32-bit block, a 16-bit) read/write is an
+//            EXTRACT out of / an INSERT into the full-width value. Nothing new
+//            has to be written for that: emit.js's `$rget8`/`$rset8`/`$rset16`
+//            already spell it exactly that way, `foldRegisterFile` and
+//            `foldRegisterFileWide` already collapse them to a mask-and-or on
+//            the register's own global once the index is a constant, and
+//            `promoteRegs` then rewrites that global into the run's local. So
+//            AL and AH really are bits 0-7 and 8-15 of the promoted AX local,
+//            by construction rather than by a second model of the register
+//            file. 8/16-bit LOADS and STORES keep their `$rd8`/`$wr8` calls in
+//            source order like every other memory op, so they carry the same
+//            fault and segment semantics as the per-op handlers.
+//   flags    a flag CONSUMER inside the run -- `adc`/`sbb`, `setcc`, and a
+//            `cmp`/`test` that is not already fused into the terminator. This
+//            is what the LAZY flag scheme buys: a producer does not compute
+//            flags, it records its inputs through `$rec_*`, and a consumer
+//            materializes the one field it wants through `$get_cf`/`$cond*`.
+//            Both are kept verbatim, in source order, inside the generated
+//            handler -- so a consumer reads the record the op in front of it
+//            just wrote, out of the same globals, in the same order the
+//            interpreter would have. The flag globals are deliberately NOT
+//            promoted into locals (`promoteRegs` is given the register and
+//            segment-base lists and nothing else), which is what leaves the
+//            per-FIELD last-writer state at the run's end exactly as an
+//            unfolded compile would: for the terminator, which is not in the
+//            fold, and for any successor block that reads a field this run did
+//            not write.
+//
+// NOT relaxed, and for the census's own reason rather than for want of effort:
+// `lahf`/`sahf`/`pushf`/`popf` and the BCD group want the architectural FLAGS
+// word including AF, which the lazy record does not carry as a value, and
+// `rcl`/`rcr` and a shift by CL are the same problem in the shift group. They
+// stay barriers, and the decline histogram still names them.
+//
+// The census's third relaxation, `alias`, is not here: it is a disjointness
+// PROOF over two operands rather than a class to accept, and it is the one
+// extension that needs code of its own.
+const RELAXATIONS = ['partial', 'flags'];
+const RELAX_ALL = new Set(RELAXATIONS);
+
 // A handler that reads the dispatch clock cannot be folded: the interpreter
 // would have charged one step per op before it, and a fold charges the whole
 // run at once, so the value it reads differs. The foldable set contains none of
@@ -113,11 +157,19 @@ function blockWidth(ops, D = decompTable()) {
 // docs/toyvm-tree-fold.md reports it. The census's class names are finer than
 // the five buckets the histogram wants, so this is the only mapping and it is
 // one-way.
-function bucketOf(cls, stem) {
+function bucketOf(c, stem) {
+  const cls = c.cls;
   if (cls === 'partial-reg') return 'partial-reg';
-  if (cls === 'cmp-test' || cls === 'flags' || cls === 'adc-sbb' || cls === 'shift-cl') {
-    return 'flag consumer';
-  }
+  // The flag barriers are three different things once the `flags` relaxation
+  // exists, and lumping them under one name would make the work list unreadable
+  // in exactly the place it is now pointing. An op tagged `relax: 'flags'` is
+  // one this fold CAN take and is only declining because the relaxation is off;
+  // a shift by CL and the architectural-FLAGS group are barriers the relaxation
+  // deliberately does not cover, and each names itself so the next census can
+  // price it on its own.
+  if (cls === 'shift-cl') return 'shift by CL';
+  if (cls === 'flags' && !c.relax) return `flags word: ${stem}`;
+  if (cls === 'cmp-test' || cls === 'flags' || cls === 'adc-sbb') return 'flag consumer';
   if (cls === 'branch' || cls === 'terminator') return 'terminator';
   // Everything else is named by its census class, and `other` -- the catch-all
   // -- carries the opcode stem with it. The histogram is a WORK LIST: "6225
@@ -139,7 +191,7 @@ function bucketOf(cls, stem) {
 //     most expensive rule here -- ACCIDENT's hottest block has sixteen
 //     consecutive foldable ops and yields a run of twelve because of it -- and
 //     relaxing it is the first of the three extensions in the doc.
-function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null } = {}) {
+function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null, relax = RELAX_ALL } = {}) {
   const D = decompTable();
   const T = effectsTable();
   const runs = [];
@@ -161,7 +213,15 @@ function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null } = {}) {
     const base = dec[0];
     const eff = T[base];
     const c = classify(HANDLERS[base].name, width, o.args, eff);
-    if (!c.fold) { close(); note(bucketOf(c.cls, stemOf(HANDLERS[base].name).stem)); continue; }
+    // `c.fold` is the exact set; `c.relax` names the relaxation that would take
+    // this op, and a relaxation that is ON accepts it with no reclassification.
+    // Everything downstream of here -- the two body questions, the alias rule,
+    // the lowering -- is the same for a relaxed op as for an exact one, which
+    // is the point: the relaxations widen the POPULATION, they do not add a
+    // second way of lowering it.
+    if (!c.fold && !(c.relax && relax.has(c.relax))) {
+      close(); note(bucketOf(c, stemOf(HANDLERS[base].name).stem)); continue;
+    }
     // The census stops here. The fold has two more questions, both about the
     // BODY rather than the opcode, and both of which can only be asked of the
     // handler that is actually in the arena (which may be the flagless twin).
@@ -271,6 +331,62 @@ function buildTree(run, name) {
   };
 }
 
+// A SELF-LOOP BLOCK, FOLDED WHOLE -- terminator included, so the loop turns
+// INSIDE the handler and costs one dispatch per LOOP rather than one per
+// iteration. `buildTree` above stops in front of the terminator, which is why a
+// four-op loop body still pays a `$next` trip for its `jnz` and another to come
+// back round; this does not.
+//
+// NOTHING HERE IS A SECOND PROTOCOL. The step budget, the slice boundary, the
+// self-modify break and the way the handler publishes where the guest goes next
+// are all region-jit.js's `buildRegion`, called rather than reimplemented, on a
+// one-block closed region built exactly the way `chainFrom` builds one:
+//
+//   * `nexts[i]` is the guest ip control must be at after op i, from the
+//     exported `fallThroughIp` (null for a non-transfer), and the last entry is
+//     the head, which is what tells `buildRegion` the block closes on itself.
+//   * every lowered edge takes the interpreter's own boundary test -- publish
+//     `$gip`, then `$smc || $halt || $steps < 0` and leave through `$out` --
+//     so the slice ends at the same guest instruction it would have ended at
+//     unfolded. That test is the whole of the answer to "does absorbing a block
+//     transfer move the slice boundary": it is the reason it does not.
+//   * `$steps` is charged per iteration, op by op, with the entry refund for
+//     the one `$next` already charged to dispatch in.
+//   * on the way out `$ip` is re-resolved from `$gip` through `$jlook`, so the
+//     arena words behind the tree's own -- the rest of the block, which the
+//     fold leaves exactly where they were -- are simply never read. The arena
+//     still does not change shape.
+//
+// A transfer `buildRegion` could not lower leaves the interpreter's protocol
+// inside the loop, which is the CARRIE.EXE class region-prepare.js declines
+// outright; this declines it for the same reason.
+function buildLoopTree(run, headIp, name) {
+  const { buildRegion, fallThroughIp } = require('./region-jit');
+  const ops = run.map(o => ({ fn: o.fn, name: HANDLERS[o.fn].name, args: o.args, at: o.at }));
+  const nexts = ops.map(o => fallThroughIp(o));
+  nexts[nexts.length - 1] = headIp;
+  let r;
+  try {
+    r = buildRegion(ops, nexts, headIp, name, true, [], []);
+  } catch (e) {
+    return { declined: `loop: build threw: ${e && e.message ? e.message : String(e)}` };
+  }
+  if (!r || !r.body) return { declined: `loop: ${(r && r.declined) || 'no body'}` };
+  if (r.unlowered) {
+    return { declined: `loop: ${r.unlowered} transfer(s) not lowered`
+      + (r.unloweredWhy && r.unloweredWhy.length ? ` (${r.unloweredWhy[0]})` : '') };
+  }
+  const last = run[run.length - 1];
+  const arity = last.at + 1 + ARITY[last.fn] - run[0].at - 1;
+  return {
+    tree: { name, locals: r.locals || '', body: r.body },
+    arity, ops: run.length, loop: true,
+    promoted: r.promoted ? r.promoted.length : 0,
+    promoteDeclined: r.declined || null,
+    bytes: r.body.length,
+  };
+}
+
 // --- the live driver ---------------------------------------------------------
 
 // A fold cannot be installed by writing a word: the handler has to EXIST in the
@@ -302,11 +418,25 @@ class TreeFolder {
     // a handler whether it ever runs again or not. `hot = N` compiles a run
     // only after the arena word it starts at has been dispatched N times.
     hot = 0, warmFrom = 0, warmFor = 10e6, hits = null,
+    // Which of the census's relaxations are on. An array or a Set from the CLI,
+    // normalized to a Set here so `eligibleRuns` never has to ask.
+    relax = RELAXATIONS,
+    // Fold a self-loop block WHOLE, terminator included, so the loop runs its
+    // iterations inside the tree function and costs one dispatch per loop
+    // instead of one per iteration. Off switch for the A/B, since this is the
+    // one relaxation that changes which arena words the guest re-enters.
+    loops = true,
+    // The shared handler-table tail (tools/toyvm/extras.js). The region JIT
+    // appends to the same one, which is what lets `--tree-fold` and
+    // `--region-jit` be on together. A standalone folder gets its own.
+    extras = null,
   }) {
     Object.assign(this, {
       session, vm, machine, portIn, portOut, build, repFast,
       maxTrees, maxInstalls, minOps, log, batchMin, batchWait,
-      hot, warmFrom, warmFor, hits,
+      hot, warmFrom, warmFor, hits, loops,
+      relax: relax instanceof Set ? relax : new Set(relax),
+      extras: extras || new (require('./extras').Extras)(),
     });
     // True while the guest is running on the `--block-hits` build the gate
     // profiles with. Cleared by the first install, which is what takes it away.
@@ -323,7 +453,10 @@ class TreeFolder {
     this.hottest = 0;                 // the highest hit count any candidate had
     this.sinceWant = 0;
     this.trees = [];                  // the `{name, locals, body}` list, in table order
+    this.treeOrd = [];                // ...and each one's ordinal in the SHARED tail
     this.treeOps = [];                // guest ops each of those stands for
+    this.treeIsLoop = [];             // ...and whether each one loops in place
+    this.treeLoops = 0;
     this.at = new Map();              // key -> ordinal
     this.arity = new Map();           // key -> operand words the handler steps over
     this.pendingSites = new Map();    // lin -> true, blocks to drop at the next install
@@ -356,7 +489,11 @@ class TreeFolder {
   // decline everything; the count is read at the end of the profile window
   // instead (`closeWindow`), by which time the arena word has been bumped once
   // per execution of the run.
-  want(key, run, lin, addr) {
+  // `loopHead` is the block's own guest ip when the run is a WHOLE self-loop
+  // block (the loop fold above); undefined for an ordinary straight-line run.
+  // It rides with the run because it is the one thing `buildLoopTree` needs
+  // that the arena words do not carry.
+  want(key, run, lin, addr, loopHead) {
     if (this.at.has(key) || this.wantedKeys.has(key)) {
       if (lin !== undefined) this.pendingSites.set(lin, true);
       return;
@@ -398,7 +535,7 @@ class TreeFolder {
       this.capped = true;
       return;
     }
-    this.wantedKeys.set(key, run);
+    this.wantedKeys.set(key, { run, loopHead });
     this.sinceWant = 0;
     if (lin !== undefined) this.pendingSites.set(lin, true);
   }
@@ -517,8 +654,10 @@ class TreeFolder {
   async pump() {
     if (!this.needsInstall()) return false;
     const built = [];
-    for (const [key, run] of this.wantedKeys) {
-      const r = buildTree(run, `tree_${this.trees.length + built.length}`);
+    for (const [key, w] of this.wantedKeys) {
+      const name = `tree_${this.trees.length + built.length}`;
+      const r = w.loopHead === undefined
+        ? buildTree(w.run, name) : buildLoopTree(w.run, w.loopHead, name);
       if (r.declined) {
         this.declinedTrees.set(r.declined, (this.declinedTrees.get(r.declined) || 0) + 1);
         continue;
@@ -539,7 +678,22 @@ class TreeFolder {
       // N times removed N*(ops-1) trips through `$next`. Without it the fold's
       // headline number would have to be inferred from a timing.
       this.treeOps.push(b.ops);
-      this.at.set(b.key, this.trees.length);
+      // A LOOP TREE'S REMOVED-DISPATCH COUNT IS NOT `entries * (ops - 1)`.
+      // The handler histogram counts ENTRIES into the handler, and a loop tree
+      // is entered once per LOOP and then turns inside itself, so the trips it
+      // removed are `iterations * ops - entries` and the iteration count is
+      // invisible from outside. Counted separately rather than folded into the
+      // same total, so the headline number stays a number and does not quietly
+      // become a lower bound.
+      if (b.loop) this.treeLoops++;
+      this.treeIsLoop.push(!!b.loop);
+      // THE ORDINAL COMES FROM THE SHARED ALLOCATOR, not from this list's
+      // length. tools/toyvm/extras.js owns the handler table's tail because
+      // the region JIT appends to it too, and `--region-jit` is the page
+      // default -- a tree numbered from its own array would name a region.
+      const ord = this.extras.commit([b.tree]);
+      this.at.set(b.key, ord);
+      this.treeOrd.push(ord);
       this.arity.set(b.key, b.arity);
       this.trees.push(b.tree);
       this.watBytes += b.bytes;
@@ -561,7 +715,7 @@ class TreeFolder {
     const t0 = now();
     const next = await makeVm(vm.variant, {
       portIn: this.portIn, portOut: this.portOut, memory: vm.memory,
-      ...this.build, regions: this.trees,
+      ...this.build, regions: this.extras.handlers,
     });
     this.ms.instantiate += now() - t0;
     const t1 = now();
@@ -656,7 +810,12 @@ class TreeFolder {
     return {
       installs: this.installs, trees: this.trees.length, folds: this.folds,
       base: this.base, treeOps: [...this.treeOps],
-      hot: this.hot, phase: this.phase,
+      treeIsLoop: [...this.treeIsLoop], treeLoops: this.treeLoops, loops: this.loops,
+      // Where each tree sits in the SHARED tail, which is what a counter array
+      // read at `base` is indexed by. Not the same as its index in `trees` as
+      // soon as the region JIT has appended anything.
+      treeOrd: [...this.treeOrd], extras: this.extras.length,
+      hot: this.hot, phase: this.phase, relax: [...this.relax],
       hotPromoted: this.hotPromoted, coldSkipped: this.coldSkipped,
       deadSkipped: this.deadSkipped, hottest: this.hottest, hotLins: this.hotLins.size,
       dropSites: this.dropSites, dropProgs: this.dropProgs, dropBlocks: this.dropBlocks,
@@ -671,5 +830,5 @@ const now = () => (typeof performance !== 'undefined' && performance.now
 
 module.exports = {
   TreeFolder, eligibleRuns, buildTree, treeKey, blockWidth, opAt, MIN_OPS,
-  CLOCK_READERS, ESCAPES,
+  CLOCK_READERS, ESCAPES, RELAXATIONS, RELAX_ALL,
 };

@@ -38,16 +38,17 @@
     (if (i32.or (i32.load offset=21772 (local.get $old)) (i32.load offset=1740 (local.get $old))) (then (return)))
     (local.set $rt (call $d3ddev_rt_entry (local.get $device)))
     (if (i32.ne (load.field DxObject refcount (local.get $rt)) (i32.const 1)) (then (return)))
+    (if (i32.and (load.field DxObject flags (local.get $rt)) (i32.const 0x40000000)) (then (return)))
     (local.set $width (call $gl32 (local.get $pp))) (local.set $height (call $gl32 (i32.add (local.get $pp) (i32.const 4))))
     (local.set $format (call $gl32 (i32.add (local.get $pp) (i32.const 8))))
     (local.set $windowed (call $gl32 (i32.add (local.get $pp) (i32.const 32))))
     (local.set $hwnd (call $gl32 (i32.add (local.get $pp) (i32.const 28))))
     (if (i32.eqz (local.get $hwnd)) (then (local.set $hwnd (i32.load offset=1684 (local.get $old)))))
     ;; One physical back buffer supports DISCARD and COPY, not FLIP's extra
-    ;; front/back ownership. No multisample or presentation-flag emulation.
+    ;; front/back ownership. Only LOCKABLE_BACKBUFFER is supported among flags.
     (local.set $swap (call $gl32 (i32.add (local.get $pp) (i32.const 24))))
     (if (i32.and (i32.ne (local.get $swap) (i32.const 1)) (i32.ne (local.get $swap) (i32.const 3))) (then (return)))
-    (if (call $gl32 (i32.add (local.get $pp) (i32.const 44))) (then (return)))
+    (if (i32.and (call $gl32 (i32.add (local.get $pp) (i32.const 44))) (i32.const -2)) (then (return)))
     (local.set $refresh (call $gl32 (i32.add (local.get $pp) (i32.const 48))))
     (if (local.get $windowed)
       (then (if (local.get $refresh) (then (return))))
@@ -96,7 +97,8 @@
     (block $allocation_failed
       (i32.store offset=4 (local.get $wa) (call $d3d9_program_alloc))
       (br_if $allocation_failed (i32.eqz (i32.load offset=4 (local.get $wa))))
-      (i32.store offset=8 (local.get $wa) (call $d3d9_create_surface (local.get $width) (local.get $height) (i32.const 32) (i32.const 1)))
+      (i32.store offset=8 (local.get $wa) (call $d3d9_create_surface (local.get $width) (local.get $height) (i32.const 32)
+        (i32.or (i32.const 1) (i32.shl (i32.and (call $gl32 (i32.add (local.get $pp) (i32.const 44))) (i32.const 1)) (i32.const 27)))))
       (br_if $allocation_failed (i32.eqz (i32.load offset=8 (local.get $wa))))
       (i32.store offset=28 (local.get $wa) (call $heap_alloc (i32.const 4096)))
       (br_if $allocation_failed (i32.eqz (i32.load offset=28 (local.get $wa))))
@@ -155,6 +157,8 @@
     (local.set $i (i32.add (local.get $i) (i32.const 1))) (br_if $textures (i32.lt_u (local.get $i) (i32.const 6))))
   (call $d3d9_shader_unbind (i32.load offset=1720 (local.get $old))) (call $d3d9_shader_unbind (i32.load offset=1732 (local.get $old)))
   (call $d3d9_depth_unbind (i32.load offset=21752 (local.get $old))) (call $d3d9_depth_unbind (i32.load offset=21756 (local.get $old)))
+  (call $d3d9_lights_free (i32.load offset=21996 (local.get $old)))
+  (call $d3d9_color_unbind (i32.load offset=22020 (local.get $old)))
   (call $heap_free (local.get $state)) (call $heap_free (local.get $shared))
   (drop (call $dx_surface_release (i32.load offset=20 (local.get $wa))))
   (global.set $d3d9_windowed_hwnd (select (i32.load offset=48 (local.get $wa)) (i32.const 0) (i32.load offset=44 (local.get $wa))))

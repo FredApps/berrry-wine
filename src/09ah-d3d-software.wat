@@ -44,6 +44,7 @@
 ;; Vertex snapshot144: screenX,Y,Z,invW,colorOverW float4,texOverW float4[6],fogOverW,pad3.
 ;; Context288+indexCount*1022 (POINT uses1050 with scalar oPts sidecar).
 ;; Fog enabled256/color260, interpolated four-lane factor264..279.
+;; Owned table-fog descriptor280, owned scissor RECT284 (null disables).
 ;; Creation workspace3552+vertexCount*144+indexCount*2 (POINT adds vertexCount*4).
 ;; Copied flags gain private65536 only when the VS program writes oPts.
 ;; Workspace includes two12-u32 provenance arrays. Emitted (not guest) U16
@@ -60,7 +61,7 @@
     (i32.or (i32.gt_u (local.get $count) (i32.const 768))
       (i32.ne (i32.rem_u (local.get $count) (i32.const 3)) (i32.const 0))))))
     (then (return (i32.const 0))))
-  (i32.add (i32.add (i32.const 4000) (i32.mul (local.get $count) (i32.const 1052)))
+  (i32.add (i32.add (i32.const 4016) (i32.mul (local.get $count) (i32.const 1052)))
     (i32.add (i32.mul (local.get $n) (i32.const 148))
       (i32.mul (call $d3d_shader_vm_context_bytes) (i32.const 2)))))
 
@@ -71,6 +72,7 @@
     (call $d3d_shader_vm_free (i32.load offset=200 (local.get $ctx)))
     (call $d3d_shader_vm_free (i32.load offset=248 (local.get $ctx)))
     (call $d3d_shader_vm_free (i32.load offset=280 (local.get $ctx)))
+    (call $d3d_shader_vm_free (i32.load offset=284 (local.get $ctx)))
     (call $d3d_shader_vm_free (local.get $ctx)))))
 
 (func $d3d_software_constants (param $vm i32) (param $src i32) (param $count i32)
@@ -930,12 +932,13 @@
           (br_if $shader_depth (i32.lt_u (local.get $lane) (i32.const 4))))))
       (local.set $lane (i32.const 0))
       (loop $write
-        (if (i32.and (i32.ne (i32.and (local.get $bits) (i32.shl (i32.const 1) (local.get $lane))) (i32.const 0))
-          (call $d3d_software_alpha_pass (i32.load offset=204 (local.get $ctx))
-            (f32.load (i32.add (i32.add (local.get $vm) (i32.const 80)) (i32.shl (local.get $lane) (i32.const 2)))))) (then
+        (if (i32.ne (i32.and (local.get $bits) (i32.shl (i32.const 1) (local.get $lane))) (i32.const 0)) (then
           (block $rejected
           (local.set $x (i32.add (i32.load offset=132 (local.get $ctx)) (i32.and (local.get $lane) (i32.const 1))))
           (local.set $y (i32.add (i32.load offset=136 (local.get $ctx)) (i32.shr_u (local.get $lane) (i32.const 1))))
+          (br_if $rejected (i32.eqz (call $d3d_software_scissor_pass (i32.load offset=284 (local.get $ctx)) (local.get $x) (local.get $y))))
+          (br_if $rejected (i32.eqz (call $d3d_software_alpha_pass (i32.load offset=204 (local.get $ctx))
+            (f32.load (i32.add (i32.add (local.get $vm) (i32.const 80)) (i32.shl (local.get $lane) (i32.const 2)))))))
           (br_if $rejected (i32.eqz (call $d3d_software_fragment_pass (local.get $ctx) (local.get $x) (local.get $y)
             (f32.load (i32.add (i32.add (local.get $ctx) (i32.const 208)) (i32.shl (local.get $lane) (i32.const 2)))))))
           (i64.store offset=240 (local.get $ctx)
@@ -990,6 +993,31 @@
 ;; The docs do not mandate sub-UNORM8 incoming-alpha quantization. This path
 ;; compares clamped f32 (matching current GLSL); native precision parity remains
 ;; a reference gate, not an assertion of bit-identical hardware behavior.
+(func $d3d_software_scissor_pass (param $rect i32) (param $x i32) (param $y i32) (result i32)
+  (if (i32.eqz (local.get $rect)) (then (return (i32.const 1))))
+  (i32.and (i32.and (i32.ge_s (local.get $x) (i32.load (local.get $rect))) (i32.lt_s (local.get $x) (i32.load offset=8 (local.get $rect))))
+    (i32.and (i32.ge_s (local.get $y) (i32.load offset=4 (local.get $rect))) (i32.lt_s (local.get $y) (i32.load offset=12 (local.get $rect))))))
+(func (export "d3d_software_bind_scissor") (param $ctx i32) (param $enabled i32) (param $left i32) (param $top i32) (param $right i32) (param $bottom i32) (result i32)
+  (local $copy i32)
+  (if (i32.eqz (call $d3d_shader_vm_range (local.get $ctx) (i32.const 288))) (then (return (i32.const 0))))
+  (if (i32.or (i32.ne (i32.load (local.get $ctx)) (i32.const 0x44535031))
+    (i32.or (i32.ne (i32.load offset=140 (local.get $ctx)) (i32.const 1))
+      (i32.or (i32.ne (i32.load offset=128 (local.get $ctx)) (i32.const 0))
+        (i32.ne (i32.load offset=192 (local.get $ctx)) (i32.const 0))))) (then (return (i32.const 0))))
+  (if (i32.gt_u (local.get $enabled) (i32.const 1)) (then (return (i32.const 0))))
+  (if (local.get $enabled) (then
+    (if (i32.or (i32.lt_s (local.get $left) (i32.const 0)) (i32.or (i32.lt_s (local.get $top) (i32.const 0))
+      (i32.or (i32.lt_s (local.get $right) (local.get $left)) (i32.or (i32.lt_s (local.get $bottom) (local.get $top))
+        (i32.or (i32.gt_u (local.get $right) (i32.load offset=8 (local.get $ctx)))
+          (i32.gt_u (local.get $bottom) (i32.load offset=12 (local.get $ctx)))))))) (then (return (i32.const 0))))
+    (local.set $copy (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    (local.set $copy (call $g2w (local.get $copy)))
+    (i32.store (local.get $copy) (local.get $left)) (i32.store offset=4 (local.get $copy) (local.get $top))
+    (i32.store offset=8 (local.get $copy) (local.get $right)) (i32.store offset=12 (local.get $copy) (local.get $bottom))))
+  (call $d3d_shader_vm_free (i32.load offset=284 (local.get $ctx)))
+  (i32.store offset=284 (local.get $ctx) (local.get $copy)) (i32.const 1))
+
 (func (export "d3d_software_bind_alpha") (param $ctx i32) (param $desc i32) (result i32)
   (if (i32.eqz (call $d3d_shader_vm_range (local.get $ctx) (i32.const 256))) (then (return (i32.const 0))))
   (if (i32.or (i32.ne (i32.load (local.get $ctx)) (i32.const 0x44535031))

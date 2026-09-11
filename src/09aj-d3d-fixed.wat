@@ -20,6 +20,119 @@
 ;; stage/profile fields describe the instruction vocabulary, NOT guest-profile
 ;; legality. It never enters CreateShader or substitutes for failed guest code.
 
+;; Per-device bounded semantic packet cache. No guest shader or object state.
+;; Header32: magic, capacity, used node bytes, MRU head, hits, misses, evictions,
+;; count. Nodes own one allocation: next/bytes/IRbytes/packetbytes + IR + packet.
+;; The selected cache is scoped to one synchronous lowering call, never a yield.
+(global $d3d_fixed_active_cache (mut i32) (i32.const 0))
+(func $d3d_fixed_cache_valid (param $cache i32) (result i32)
+  (if (i32.eqz (local.get $cache)) (then (return (i32.const 1))))
+  (if (i32.eqz (call $d3d_shader_vm_range (local.get $cache) (i32.const 32))) (then (return (i32.const 0))))
+  (i32.eq (i32.load (local.get $cache)) (i32.const 0x44464331)))
+(func (export "d3d_fixed_compile_cached") (param $cache i32) (param $desc i32) (param $table i32) (param $count i32) (param $stages i32) (param $uvmask i32) (result i32)
+  (local $old i32) (local $result i32)
+  (if (i32.eqz (call $d3d_fixed_cache_valid (local.get $cache))) (then (return (i32.const 0))))
+  (local.set $old (global.get $d3d_fixed_active_cache)) (global.set $d3d_fixed_active_cache (local.get $cache))
+  (local.set $result (call $d3d_fixed_compile_cascade5 (local.get $desc) (local.get $table) (local.get $count) (local.get $stages) (local.get $uvmask)))
+  (global.set $d3d_fixed_active_cache (local.get $old)) (local.get $result))
+(func (export "d3d_fixed_light_cached") (param $cache i32) (param $bundle i32) (param $desc i32) (param $lighting i32) (result i32)
+  (local $old i32) (local $result i32)
+  (if (i32.eqz (call $d3d_fixed_cache_valid (local.get $cache))) (then (return (i32.const 0))))
+  (local.set $old (global.get $d3d_fixed_active_cache)) (global.set $d3d_fixed_active_cache (local.get $cache))
+  (local.set $result (call $d3d_fixed_bind_lighting (local.get $bundle) (local.get $desc) (local.get $lighting)))
+  (global.set $d3d_fixed_active_cache (local.get $old)) (local.get $result))
+(func (export "d3d_fixed_cache_create") (param $capacity i32) (result i32)
+  (local $p i32)
+  (if (i32.gt_u (local.get $capacity) (i32.const 1048576)) (then (return (i32.const 0))))
+  (local.set $p (call $heap_alloc (i32.const 32)))
+  (if (i32.eqz (local.get $p)) (then (return (i32.const 0))))
+  (local.set $p (call $g2w (local.get $p))) (memory.fill (local.get $p) (i32.const 0) (i32.const 32))
+  (i32.store (local.get $p) (i32.const 0x44464331)) (i32.store offset=4 (local.get $p) (local.get $capacity)) (local.get $p))
+(func $d3d_fixed_cache_evict (param $cache i32)
+  (local $p i32) (local $prev i32)
+  (local.set $p (i32.load offset=12 (local.get $cache)))
+  (if (i32.eqz (local.get $p)) (then (return)))
+  (loop $tail
+    (if (i32.load (local.get $p)) (then
+      (local.set $prev (local.get $p)) (local.set $p (i32.load (local.get $p))) (br $tail))))
+  (i32.store (select (local.get $prev) (i32.add (local.get $cache) (i32.const 12)) (i32.ne (local.get $prev) (i32.const 0))) (i32.const 0))
+  (i32.store offset=8 (local.get $cache) (i32.sub (i32.load offset=8 (local.get $cache)) (i32.load offset=4 (local.get $p))))
+  (i32.store offset=28 (local.get $cache) (i32.sub (i32.load offset=28 (local.get $cache)) (i32.const 1)))
+  (i32.store offset=24 (local.get $cache) (i32.add (i32.load offset=24 (local.get $cache)) (i32.const 1)))
+  (call $d3d_shader_vm_free (local.get $p)))
+(func (export "d3d_fixed_cache_free") (param $cache i32)
+  (if (local.get $cache) (then
+    (loop $nodes
+      (if (i32.load offset=12 (local.get $cache)) (then (call $d3d_fixed_cache_evict (local.get $cache)) (br $nodes))))
+    (call $d3d_shader_vm_free (local.get $cache)))))
+(func $d3d_fixed_semantic_equal (param $a i32) (param $b i32) (param $bytes i32) (result i32)
+  (local $i i32) (local $offset i32)
+  (loop $words
+    (block $skip
+      (if (i32.ge_u (local.get $i) (i32.const 32)) (then
+        (local.set $offset (i32.and (i32.sub (local.get $i) (i32.const 32)) (i32.const 127)))
+        (if (i32.eq (i32.load (i32.add (local.get $a) (i32.sub (local.get $i) (local.get $offset)))) (i32.const 81)) (then
+          (br_if $skip (i32.or (i32.eq (local.get $offset) (i32.const 36))
+            (i32.or (i32.eq (local.get $offset) (i32.const 52)) (i32.or (i32.eq (local.get $offset) (i32.const 68)) (i32.eq (local.get $offset) (i32.const 84))))))))))
+      (if (i32.ne (i32.load (i32.add (local.get $a) (local.get $i))) (i32.load (i32.add (local.get $b) (local.get $i)))) (then (return (i32.const 0)))))
+    (local.set $i (i32.add (local.get $i) (i32.const 4))) (br_if $words (i32.lt_u (local.get $i) (local.get $bytes))))
+  (i32.const 1))
+(func $d3d_fixed_packet (param $ir i32) (result i32)
+  (local $cache i32) (local $p i32) (local $prev i32) (local $out i32) (local $bytes i32) (local $packetbytes i32)
+  (local $nodebytes i32) (local $i i32) (local $ins i32) (local $pkt i32)
+  (local.set $cache (global.get $d3d_fixed_active_cache))
+  (if (i32.eqz (local.get $cache)) (then (return (call $d3d_shader_vm_compile (local.get $ir)))))
+  (local.set $bytes (i32.load offset=24 (local.get $ir)))
+  (local.set $p (i32.load offset=12 (local.get $cache)))
+  (block $miss (loop $find
+    (br_if $miss (i32.eqz (local.get $p)))
+    (if (i32.eq (i32.load offset=8 (local.get $p)) (local.get $bytes)) (then
+      (if (call $d3d_fixed_semantic_equal (local.get $ir) (i32.add (local.get $p) (i32.const 16)) (local.get $bytes)) (then
+        (local.set $packetbytes (i32.load offset=12 (local.get $p)))
+        (local.set $out (call $heap_alloc (local.get $packetbytes)))
+        (if (i32.eqz (local.get $out)) (then (return (i32.const 0))))
+        (local.set $out (call $g2w (local.get $out)))
+        (memory.copy (local.get $out) (i32.add (local.get $p) (i32.add (i32.const 16) (local.get $bytes))) (local.get $packetbytes))
+        ;; DEF packets are the immutable VM prologue, in original DEF order.
+        (local.set $pkt (i32.add (local.get $out) (i32.const 16)))
+        (loop $defs
+          (local.set $ins (i32.add (local.get $ir) (i32.add (i32.const 32) (i32.shl (local.get $i) (i32.const 7)))))
+          (if (i32.eq (i32.load (local.get $ins)) (i32.const 81)) (then
+            (i32.store offset=16 (local.get $pkt) (i32.load offset=36 (local.get $ins)))
+            (i32.store offset=20 (local.get $pkt) (i32.load offset=52 (local.get $ins)))
+            (i32.store offset=24 (local.get $pkt) (i32.load offset=68 (local.get $ins)))
+            (i32.store offset=28 (local.get $pkt) (i32.load offset=84 (local.get $ins)))
+            (local.set $pkt (i32.add (local.get $pkt) (i32.const 64)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br_if $defs (i32.lt_u (local.get $i) (i32.load offset=16 (local.get $ir)))))
+        (if (local.get $prev) (then
+          (i32.store (local.get $prev) (i32.load (local.get $p)))
+          (i32.store (local.get $p) (i32.load offset=12 (local.get $cache)))
+          (i32.store offset=12 (local.get $cache) (local.get $p))))
+        (i32.store offset=16 (local.get $cache) (i32.add (i32.load offset=16 (local.get $cache)) (i32.const 1)))
+        (return (local.get $out))))))
+    (local.set $prev (local.get $p)) (local.set $p (i32.load (local.get $p))) (br $find)))
+  (i32.store offset=20 (local.get $cache) (i32.add (i32.load offset=20 (local.get $cache)) (i32.const 1)))
+  (local.set $out (call $d3d_shader_vm_compile (local.get $ir)))
+  (if (i32.eqz (local.get $out)) (then (return (i32.const 0))))
+  (local.set $packetbytes (i32.load offset=12 (local.get $out)))
+  (local.set $nodebytes (i32.add (i32.const 16) (i32.add (local.get $bytes) (local.get $packetbytes))))
+  (if (i32.gt_u (local.get $nodebytes) (i32.load offset=4 (local.get $cache))) (then (return (local.get $out))))
+  (loop $room
+    (if (i32.or (i32.gt_u (i32.add (i32.load offset=8 (local.get $cache)) (local.get $nodebytes)) (i32.load offset=4 (local.get $cache)))
+      (i32.ge_u (i32.load offset=28 (local.get $cache)) (i32.const 64))) (then (call $d3d_fixed_cache_evict (local.get $cache)) (br $room))))
+  (local.set $p (call $heap_alloc (local.get $nodebytes)))
+  (if (i32.eqz (local.get $p)) (then (return (local.get $out))))
+  (local.set $p (call $g2w (local.get $p)))
+  (i32.store (local.get $p) (i32.load offset=12 (local.get $cache))) (i32.store offset=4 (local.get $p) (local.get $nodebytes))
+  (i32.store offset=8 (local.get $p) (local.get $bytes)) (i32.store offset=12 (local.get $p) (local.get $packetbytes))
+  (memory.copy (i32.add (local.get $p) (i32.const 16)) (local.get $ir) (local.get $bytes))
+  (memory.copy (i32.add (local.get $p) (i32.add (i32.const 16) (local.get $bytes))) (local.get $out) (local.get $packetbytes))
+  (i32.store offset=12 (local.get $cache) (local.get $p))
+  (i32.store offset=8 (local.get $cache) (i32.add (i32.load offset=8 (local.get $cache)) (local.get $nodebytes)))
+  (i32.store offset=28 (local.get $cache) (i32.add (i32.load offset=28 (local.get $cache)) (i32.const 1)))
+  (local.get $out))
+
 (func $d3d_fixed_free (export "d3d_fixed_free") (param $bundle i32)
   (if (local.get $bundle) (then
     (call $d3d_shader_vm_free (i32.load offset=4 (local.get $bundle)))
@@ -438,7 +551,7 @@
     (if (local.get $uv) (then
       (call $d3d_fixed_op (local.get $vs) (i32.const 1) (i32.const 6) (i32.const 0) (i32.const 15) (i32.const 0)
         (call $d3d_fixed_source (i32.const 1) (i32.load offset=20 (local.get $desc)) (i32.const 228) (i32.const 0)) (i32.const 0) (i32.const 0))))
-    (i32.store offset=12 (local.get $bundle) (call $d3d_shader_vm_compile (local.get $vs)))
+    (i32.store offset=12 (local.get $bundle) (call $d3d_fixed_packet (local.get $vs)))
     (br_if $failure (i32.eqz (i32.load offset=12 (local.get $bundle))))
     (local.set $map (i32.or (i32.load offset=12 (local.get $desc))
       (i32.or (i32.shl (i32.load offset=16 (local.get $desc)) (i32.const 4)) (i32.shl (i32.load offset=20 (local.get $desc)) (i32.const 8)))))
@@ -458,13 +571,137 @@
       (else
         (call $d3d_fixed_combine (local.get $ps) (local.get $colorop) (local.get $ca) (local.get $cb) (i32.const 7) (i32.const 2))
         (call $d3d_fixed_combine (local.get $ps) (select (i32.const 2) (local.get $alphaop) (i32.eq (local.get $alphaop) (i32.const 1))) (local.get $aa) (local.get $ab) (i32.const 8) (i32.const 2))))
-    (i32.store offset=16 (local.get $bundle) (call $d3d_shader_vm_compile (local.get $ps)))
+    (i32.store offset=16 (local.get $bundle) (call $d3d_fixed_packet (local.get $ps)))
     (br_if $failure (i32.eqz (i32.load offset=16 (local.get $bundle))))
     (i32.store offset=20 (local.get $bundle) (local.get $sampled))
     ))
     (i32.store offset=28 (local.get $bundle) (local.get $flags))
     (return (local.get $bundle)))
   (call $d3d_fixed_free (local.get $bundle)) (i32.const 0))
+
+;; DLT1 lighting ABI1: header128, active directional rows64 (maximum8).
+;; Header: magic/version/count/normalReg, diffuseReg/specularReg (16 absent),
+;; normalize/COLORVERTEX, diffuse/ambient/emissive sources0..2, reserved,
+;; ambientARGB, reserved52..63, material diffuse64/ambient80/emissive96,
+;; reserved112..127. Row: type3, diffuse4, ambient20, direction36, reserved48..63.
+;; State lowering only: all vertex lighting still executes as native VM ops.
+(func $d3d_fixed_light_source (param $p i32) (param $selector i32) (param $constant i32) (result i32)
+  (local $reg i32)
+  (local.set $reg (i32.const 16))
+  (if (i32.load offset=28 (local.get $p)) (then
+    (if (i32.eq (local.get $selector) (i32.const 1)) (then (local.set $reg (i32.load offset=16 (local.get $p)))))
+    (if (i32.eq (local.get $selector) (i32.const 2)) (then (local.set $reg (i32.load offset=20 (local.get $p)))))))
+  (call $d3d_fixed_source (select (i32.const 1) (i32.const 2) (i32.lt_u (local.get $reg) (i32.const 16)))
+    (select (local.get $reg) (local.get $constant) (i32.lt_u (local.get $reg) (i32.const 16))) (i32.const 228) (i32.const 0)))
+
+(func $d3d_fixed_bind_lighting (export "d3d_fixed_bind_lighting") (param $bundle i32) (param $desc i32) (param $lighting i32) (result i32)
+  (local $old i32) (local $ir i32) (local $program i32) (local $n i32) (local $i i32) (local $j i32) (local $p i32) (local $k i32)
+  (local $md i32) (local $ma i32) (local $me i32)
+  (local $x f32) (local $y f32) (local $z f32) (local $d f32)
+  (if (i32.eqz (call $d3d_shader_vm_range (local.get $bundle) (i32.const 32))) (then (return (i32.const 0))))
+  (if (i32.eqz (call $d3d_shader_vm_range (local.get $desc) (i32.const 288))) (then (return (i32.const 0))))
+  (if (i32.eqz (call $d3d_shader_vm_range (local.get $lighting) (i32.const 128))) (then (return (i32.const 0))))
+  (if (i32.or (i32.ne (i32.load (local.get $bundle)) (i32.const 0x44464231))
+    (i32.or (i32.ne (i32.load (local.get $lighting)) (i32.const 0x444c5431))
+      (i32.ne (i32.load offset=4 (local.get $lighting)) (i32.const 1)))) (then (return (i32.const 0))))
+  (if (i32.and (i32.load offset=8 (local.get $desc)) (i32.const 1)) (then (return (i32.const 1))))
+  (local.set $old (i32.load offset=4 (local.get $bundle)))
+  (if (i32.eqz (call $d3d_shader_vm_range (local.get $old) (i32.const 32))) (then (return (i32.const 0))))
+  (if (i32.gt_u (i32.load offset=16 (local.get $old)) (i32.const 128)) (then (return (i32.const 0))))
+  (if (i32.ne (i32.load offset=24 (local.get $old)) (i32.add (i32.const 32) (i32.shl (i32.load offset=16 (local.get $old)) (i32.const 7)))) (then (return (i32.const 0))))
+  (if (i32.eqz (call $d3d_shader_vm_range (local.get $old) (i32.load offset=24 (local.get $old)))) (then (return (i32.const 0))))
+  (local.set $n (i32.load offset=8 (local.get $lighting)))
+  (if (i32.or (i32.gt_u (local.get $n) (i32.const 8))
+    (i32.gt_u (i32.add (i32.load offset=16 (local.get $old)) (i32.add (i32.const 32) (i32.mul (local.get $n) (i32.const 7)))) (i32.const 128))) (then (return (i32.const 0))))
+  (if (i32.eqz (call $d3d_shader_vm_range (local.get $lighting) (i32.add (i32.const 128) (i32.shl (local.get $n) (i32.const 6))))) (then (return (i32.const 0))))
+  (if (i32.or (i32.gt_u (i32.load offset=12 (local.get $lighting)) (i32.const 15))
+    (i32.or (i32.gt_u (i32.load offset=16 (local.get $lighting)) (i32.const 16))
+      (i32.gt_u (i32.load offset=20 (local.get $lighting)) (i32.const 16)))) (then (return (i32.const 0))))
+  (if (i32.or (i32.gt_u (i32.load offset=24 (local.get $lighting)) (i32.const 1))
+    (i32.gt_u (i32.load offset=28 (local.get $lighting)) (i32.const 1))) (then (return (i32.const 0))))
+  (if (i32.or (i32.eq (i32.load offset=12 (local.get $lighting)) (i32.load offset=16 (local.get $lighting)))
+    (i32.or (i32.eq (i32.load offset=12 (local.get $lighting)) (i32.load offset=20 (local.get $lighting)))
+      (i32.and (i32.lt_u (i32.load offset=16 (local.get $lighting)) (i32.const 16))
+        (i32.eq (i32.load offset=16 (local.get $lighting)) (i32.load offset=20 (local.get $lighting)))))) (then (return (i32.const 0))))
+  (if (i32.load offset=44 (local.get $lighting)) (then (return (i32.const 0))))
+  (local.set $i (i32.const 52))
+  (loop $reserved
+    (if (i32.load (i32.add (local.get $lighting) (local.get $i))) (then (return (i32.const 0))))
+    (local.set $i (select (i32.const 112) (i32.add (local.get $i) (i32.const 4)) (i32.eq (local.get $i) (i32.const 60))))
+    (br_if $reserved (i32.lt_u (local.get $i) (i32.const 128))))
+  (local.set $i (i32.const 32))
+  (loop $selectors
+    (if (i32.gt_u (i32.load (i32.add (local.get $lighting) (local.get $i))) (i32.const 2)) (then (return (i32.const 0))))
+    (local.set $i (i32.add (local.get $i) (i32.const 4))) (br_if $selectors (i32.le_u (local.get $i) (i32.const 40))))
+  (local.set $i (i32.const 64))
+  (loop $materials
+    (if (i32.eqz (f32.le (f32.abs (f32.load (i32.add (local.get $lighting) (local.get $i)))) (f32.const 3.4028234663852886e38))) (then (return (i32.const 0))))
+    (local.set $i (i32.add (local.get $i) (i32.const 4))) (br_if $materials (i32.lt_u (local.get $i) (i32.const 112))))
+  (local.set $i (i32.const 0))
+  (block $validated (loop $lights
+    (br_if $validated (i32.ge_u (local.get $i) (local.get $n)))
+    (local.set $p (i32.add (local.get $lighting) (i32.add (i32.const 128) (i32.shl (local.get $i) (i32.const 6)))))
+    (if (i32.ne (i32.load (local.get $p)) (i32.const 3)) (then (return (i32.const 0))))
+    (local.set $j (i32.const 4))
+    (loop $values
+      (if (i32.eqz (f32.le (f32.abs (f32.load (i32.add (local.get $p) (local.get $j)))) (f32.const 3.4028234663852886e38))) (then (return (i32.const 0))))
+      (local.set $j (i32.add (local.get $j) (i32.const 4))) (br_if $values (i32.lt_u (local.get $j) (i32.const 48))))
+    (loop $row_reserved
+      (if (i32.load (i32.add (local.get $p) (local.get $j))) (then (return (i32.const 0))))
+      (local.set $j (i32.add (local.get $j) (i32.const 4))) (br_if $row_reserved (i32.lt_u (local.get $j) (i32.const 64))))
+    (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $lights)))
+  ;; Clone before append: failure leaves the old bundle and packets intact.
+  (local.set $ir (call $d3d_fixed_ir (i32.const 0)))
+  (if (i32.eqz (local.get $ir)) (then (return (i32.const 0))))
+  (memory.copy (local.get $ir) (local.get $old) (i32.load offset=24 (local.get $old)))
+  (block $failure
+    (br_if $failure (i32.eqz (call $d3d_fixed_normal_matrix (local.get $desc) (local.get $ir))))
+    (call $d3d_fixed_def (local.get $ir) (i32.const 43) (f32.const 0) (f32.const 0) (f32.const 1) (f32.const 3.4028234663852886e38))
+    (call $d3d_fixed_op (local.get $ir) (i32.const 23) (i32.const 0) (i32.const 8) (i32.const 7) (i32.const 0) (call $d3d_fixed_source (i32.const 1) (i32.load offset=12 (local.get $lighting)) (i32.const 228) (i32.const 0)) (call $d3d_fixed_source (i32.const 2) (i32.const 40) (i32.const 228) (i32.const 0)) (i32.const 0))
+    (if (i32.load offset=24 (local.get $lighting)) (then (call $d3d_fixed_normalize (local.get $ir) (i32.const 8))))
+    (local.set $i (i32.const 0))
+    (loop $material_defs
+      (local.set $p (i32.add (local.get $lighting) (i32.add (i32.const 64) (i32.shl (local.get $i) (i32.const 4)))))
+      (call $d3d_fixed_def (local.get $ir) (i32.add (i32.const 48) (local.get $i))
+        (f32.load (local.get $p)) (f32.load offset=4 (local.get $p)) (f32.load offset=8 (local.get $p)) (f32.load offset=12 (local.get $p)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br_if $material_defs (i32.lt_u (local.get $i) (i32.const 3))))
+    (call $d3d_fixed_argb (local.get $ir) (i32.const 51) (i32.load offset=48 (local.get $lighting)))
+    (local.set $md (call $d3d_fixed_light_source (local.get $lighting) (i32.load offset=32 (local.get $lighting)) (i32.const 48)))
+    (local.set $ma (call $d3d_fixed_light_source (local.get $lighting) (i32.load offset=36 (local.get $lighting)) (i32.const 49)))
+    (local.set $me (call $d3d_fixed_light_source (local.get $lighting) (i32.load offset=40 (local.get $lighting)) (i32.const 50)))
+    (call $d3d_fixed_op (local.get $ir) (i32.const 1) (i32.const 0) (i32.const 4) (i32.const 7) (i32.const 0) (call $d3d_fixed_source (i32.const 2) (i32.const 51) (i32.const 228) (i32.const 0)) (i32.const 0) (i32.const 0))
+    (call $d3d_fixed_op (local.get $ir) (i32.const 1) (i32.const 0) (i32.const 5) (i32.const 7) (i32.const 0) (call $d3d_fixed_source (i32.const 2) (i32.const 15) (i32.const 0) (i32.const 0)) (i32.const 0) (i32.const 0))
+    (local.set $i (i32.const 0))
+    (block $lit (loop $accumulate
+      (br_if $lit (i32.ge_u (local.get $i) (local.get $n)))
+      (local.set $p (i32.add (local.get $lighting) (i32.add (i32.const 128) (i32.shl (local.get $i) (i32.const 6)))))
+      (local.set $k (i32.add (i32.const 52) (i32.mul (local.get $i) (i32.const 3))))
+      (local.set $x (f32.add (f32.add (f32.mul (f32.load offset=36 (local.get $p)) (f32.load offset=160 (local.get $desc))) (f32.mul (f32.load offset=40 (local.get $p)) (f32.load offset=176 (local.get $desc)))) (f32.mul (f32.load offset=44 (local.get $p)) (f32.load offset=192 (local.get $desc))))) (local.set $y (f32.add (f32.add (f32.mul (f32.load offset=36 (local.get $p)) (f32.load offset=164 (local.get $desc))) (f32.mul (f32.load offset=40 (local.get $p)) (f32.load offset=180 (local.get $desc)))) (f32.mul (f32.load offset=44 (local.get $p)) (f32.load offset=196 (local.get $desc))))) (local.set $z (f32.add (f32.add (f32.mul (f32.load offset=36 (local.get $p)) (f32.load offset=168 (local.get $desc))) (f32.mul (f32.load offset=40 (local.get $p)) (f32.load offset=184 (local.get $desc)))) (f32.mul (f32.load offset=44 (local.get $p)) (f32.load offset=200 (local.get $desc)))))
+      (local.set $d (f32.add (f32.add (f32.mul (local.get $x) (local.get $x)) (f32.mul (local.get $y) (local.get $y))) (f32.mul (local.get $z) (local.get $z))))
+      (if (i32.and (f32.gt (local.get $d) (f32.const 0)) (f32.le (local.get $d) (f32.const 3.4028234663852886e38))) (then
+        (local.set $d (f32.neg (f32.div (f32.const 1) (f32.sqrt (local.get $d)))))
+        (local.set $x (f32.mul (local.get $x) (local.get $d))) (local.set $y (f32.mul (local.get $y) (local.get $d))) (local.set $z (f32.mul (local.get $z) (local.get $d))))
+      (else (local.set $x (f32.const 0)) (local.set $y (f32.const 0)) (local.set $z (f32.const 0))))
+      (call $d3d_fixed_def (local.get $ir) (local.get $k) (local.get $x) (local.get $y) (local.get $z) (f32.const 0))
+      (call $d3d_fixed_def (local.get $ir) (i32.add (local.get $k) (i32.const 1)) (f32.load offset=4 (local.get $p)) (f32.load offset=8 (local.get $p)) (f32.load offset=12 (local.get $p)) (f32.load offset=16 (local.get $p)))
+      (call $d3d_fixed_def (local.get $ir) (i32.add (local.get $k) (i32.const 2)) (f32.load offset=20 (local.get $p)) (f32.load offset=24 (local.get $p)) (f32.load offset=28 (local.get $p)) (f32.load offset=32 (local.get $p)))
+      (call $d3d_fixed_op (local.get $ir) (i32.const 8) (i32.const 0) (i32.const 6) (i32.const 1) (i32.const 0) (call $d3d_fixed_source (i32.const 0) (i32.const 8) (i32.const 228) (i32.const 0)) (call $d3d_fixed_source (i32.const 2) (local.get $k) (i32.const 228) (i32.const 0)) (i32.const 0))
+      (call $d3d_fixed_op (local.get $ir) (i32.const 11) (i32.const 0) (i32.const 6) (i32.const 1) (i32.const 0) (call $d3d_fixed_source (i32.const 0) (i32.const 6) (i32.const 0) (i32.const 0)) (call $d3d_fixed_source (i32.const 2) (i32.const 15) (i32.const 0) (i32.const 0)) (i32.const 0))
+      (call $d3d_fixed_op (local.get $ir) (i32.const 4) (i32.const 0) (i32.const 5) (i32.const 7) (i32.const 0) (call $d3d_fixed_source (i32.const 0) (i32.const 6) (i32.const 0) (i32.const 0)) (call $d3d_fixed_source (i32.const 2) (i32.add (local.get $k) (i32.const 1)) (i32.const 228) (i32.const 0)) (call $d3d_fixed_source (i32.const 0) (i32.const 5) (i32.const 228) (i32.const 0)))
+      (call $d3d_fixed_op (local.get $ir) (i32.const 2) (i32.const 0) (i32.const 4) (i32.const 7) (i32.const 0) (call $d3d_fixed_source (i32.const 0) (i32.const 4) (i32.const 228) (i32.const 0)) (call $d3d_fixed_source (i32.const 2) (i32.add (local.get $k) (i32.const 2)) (i32.const 228) (i32.const 0)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $accumulate)))
+    (call $d3d_fixed_op (local.get $ir) (i32.const 4) (i32.const 0) (i32.const 4) (i32.const 7) (i32.const 0) (local.get $ma) (call $d3d_fixed_source (i32.const 0) (i32.const 4) (i32.const 228) (i32.const 0)) (local.get $me))
+    (call $d3d_fixed_op (local.get $ir) (i32.const 4) (i32.const 5) (i32.const 0) (i32.const 7) (i32.const 1) (local.get $md) (call $d3d_fixed_source (i32.const 0) (i32.const 5) (i32.const 228) (i32.const 0)) (call $d3d_fixed_source (i32.const 0) (i32.const 4) (i32.const 228) (i32.const 0)))
+    (call $d3d_fixed_op (local.get $ir) (i32.const 1) (i32.const 5) (i32.const 0) (i32.const 8) (i32.const 1) (local.get $md) (i32.const 0) (i32.const 0))
+    (local.set $program (call $d3d_fixed_packet (local.get $ir)))
+    (br_if $failure (i32.eqz (local.get $program)))
+    (call $d3d_shader_vm_free (i32.load offset=12 (local.get $bundle)))
+    (call $d3d_shader_vm_free (local.get $old))
+    (i32.store offset=4 (local.get $bundle) (local.get $ir))
+    (i32.store offset=12 (local.get $bundle) (local.get $program))
+    (return (i32.const 1)))
+  (call $d3d_shader_vm_free (local.get $ir)) (i32.const 0))
+
 
 ;; Selected-stage bundles retain the paired ABI and ownership rules. Unused
 ;; stage pointers are zero; callers supply the independently bound guest stage.
@@ -559,7 +796,7 @@
 ;; normalizeNormals bit0/localViewer bit1. Old exports retain their gates.
 (func (export "d3d_fixed_compile_cascade4") (param $desc i32) (param $table i32) (param $count i32) (param $stages i32) (param $uvmask i32) (result i32)
   (call $d3d_fixed_compile_cascade_table (local.get $desc) (local.get $table) (local.get $count) (local.get $stages) (local.get $uvmask) (i32.const 136)))
-(func (export "d3d_fixed_compile_cascade5") (param $desc i32) (param $table i32) (param $count i32) (param $stages i32) (param $uvmask i32) (result i32)
+(func $d3d_fixed_compile_cascade5 (export "d3d_fixed_compile_cascade5") (param $desc i32) (param $table i32) (param $count i32) (param $stages i32) (param $uvmask i32) (result i32)
   (call $d3d_fixed_compile_cascade_table (local.get $desc) (local.get $table) (local.get $count) (local.get $stages) (local.get $uvmask) (i32.const 160)))
 (func $d3d_fixed_compile_cascade_table (param $desc i32) (param $table i32) (param $count i32) (param $stages i32) (param $uvmask i32) (param $stride i32) (result i32)
   (local $bundle i32) (local $vs i32) (local $ps i32) (local $i i32) (local $p i32)
@@ -668,7 +905,7 @@
         (local.set $previous_bump (select (local.get $color) (i32.const 0) (local.get $bump)))
         (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $cascade)))
       (br_if $failure (i32.ne (local.get $last) (i32.const 1)))
-      (i32.store offset=16 (local.get $bundle) (call $d3d_shader_vm_compile (local.get $ps)))
+      (i32.store offset=16 (local.get $bundle) (call $d3d_fixed_packet (local.get $ps)))
       (br_if $failure (i32.eqz (i32.load offset=16 (local.get $bundle))))
       (i32.store offset=20 (local.get $bundle) (local.get $mask))
       (local.set $uvmask (local.get $mask))))
@@ -770,7 +1007,7 @@
       (if (i32.eq (local.get $stride) (i32.const 160)) (then
         (br_if $failure (i32.eqz (call $d3d_fixed_fog (local.get $desc) (local.get $table) (local.get $vs))))))
       (call $d3d_shader_vm_free (i32.load offset=12 (local.get $bundle)))
-      (i32.store offset=12 (local.get $bundle) (call $d3d_shader_vm_compile (local.get $vs)))
+      (i32.store offset=12 (local.get $bundle) (call $d3d_fixed_packet (local.get $vs)))
       (br_if $failure (i32.eqz (i32.load offset=12 (local.get $bundle))))))
     (return (local.get $bundle)))
   (call $d3d_fixed_free (local.get $bundle)) (i32.const 0))

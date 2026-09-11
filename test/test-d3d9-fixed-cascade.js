@@ -39,7 +39,7 @@ const {Device}=require('../lib/d3d9-software-backend');
     if(d[5]&32){const flags=ir[7];ir[7]=0;const unmarked=e.d3d_shader_vm_compile(d[2]);ir[7]=flags;
      if(unmarked)e.d3d_shader_vm_free(unmarked);assert.strictEqual(unmarked,0,'six samplers require private fixed-origin IR, never relaxed guest profile');}}}return p;},
   d3d_fixed_free(p){assert(live.delete(p),'one bundle retirement');freed++;e.d3d_fixed_free(p);}};
- const d=new Device({getExports:()=>native,getMemory:()=>memory.buffer,width:4,height:4});
+ const d=new Device({getExports:()=>native,getMemory:()=>memory.buffer,width:4,height:4,fixedCacheBytes:0});
  const identity=new Float32Array([1,0,0,0,0,1,0,0,0,0,1,0,0,0,0,1]);
  const stage=(overrides={})=>({colorOp:2,colorArg1:2,colorArg2:1,alphaOp:2,alphaArg1:2,alphaArg2:1,
   constant:0xff010203,transformFlags:0,texCoordIndex:0,...overrides});

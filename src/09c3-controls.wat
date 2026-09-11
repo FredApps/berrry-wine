@@ -17539,6 +17539,14 @@
       (then
         (call $dialog_default_idok_close (local.get $hwnd))
         (return (i32.const 0))))
+    ;; USER's internal DefDlgProc path performs the same first-tabstop work as
+    ;; an application calling exported DefDlgProcA itself. SetFocus(dialog)
+    ;; reaches this dispatcher directly; without the fallback the dialog HWND
+    ;; kept focus and its child controls never received WM_SETFOCUS.
+    (if (i32.eq (local.get $msg) (i32.const 0x0007)) ;; WM_SETFOCUS
+      (then
+        (drop (call $dlg_focus_first_tabstop (local.get $hwnd)))
+        (return (i32.const 0))))
     ;; FALSE from the DLGPROC hands WM_WINDOWPOSCHANGED to DefDlgProc's
     ;; DefWindowProc tail, which owns the derived WM_MOVE/WM_SIZE messages.
     (if (i32.eq (local.get $msg) (i32.const 0x0047))
