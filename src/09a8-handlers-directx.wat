@@ -135,7 +135,10 @@
   ;; +0 is 0 (inactive), 1 (legacy null-source frame marker seen), or a DIB-
   ;; arena record holding two physical-page identities, x/y pairs, and their
   ;; 32x32x16 backgrounds. Flip swaps DIB pointers between COM surface entries,
-  ;; so keying those two saves by physical page is essential. +4 is reserved.
+  ;; so keying those two saves by physical page is essential.
+  ;; +4 is the guest IDirectDrawClipper pointer retained by a type-2 surface.
+  ;; Keeping this in the existing parallel table avoids stealing one of the
+  ;; fully occupied per-type union fields in DxObject.
   (global $DX_CURSOR_SAVE i32 (region.addr $DX_CURSOR_SAVE 0))
   (global $DX_CURSOR_SAVE_SIZE i32 (region.size $DX_CURSOR_SAVE))
   ;; COM wrapper stubs: DX_MAX × 8 bytes in high memory (safe from guest address collision)
@@ -753,6 +756,27 @@
   (func $dx_cursor_state_ptr (param $entry_wa i32) (result i32)
     (i32.add (global.get $DX_CURSOR_SAVE)
       (i32.shl (call $dx_slot_of (local.get $entry_wa)) (i32.const 3))))
+
+  (func $dx_surface_clipper_ptr (param $entry_wa i32) (result i32)
+    (i32.add (call $dx_cursor_state_ptr (local.get $entry_wa)) (i32.const 4)))
+
+  (func $dx_surface_clipper_get (param $entry_wa i32) (result i32)
+    (i32.load (call $dx_surface_clipper_ptr (local.get $entry_wa))))
+
+  ;; A windowed primary presents to the clipper's associated HWND. Fall back
+  ;; to the cooperative-level target for old applications that never attach a
+  ;; clipper, and for clippers that have not yet received SetHWnd.
+  (func $dx_surface_target_hwnd (param $entry_wa i32) (result i32)
+    (local $clipper i32) (local $clip_entry i32) (local $hwnd i32)
+    (local.set $clipper (call $dx_surface_clipper_get (local.get $entry_wa)))
+    (if (local.get $clipper)
+      (then
+        (local.set $clip_entry (call $dx_from_this (local.get $clipper)))
+        (if (i32.eq (load.field DxObject type (local.get $clip_entry)) (i32.const 10))
+          (then
+            (local.set $hwnd (load.field DxObject misc0 (local.get $clip_entry)))
+            (if (local.get $hwnd) (then (return (local.get $hwnd))))))))
+    (call $dx_target_hwnd))
 
   (func $dx_cursor_reset (param $entry_wa i32)
     (local $state i32) (local $saved i32)
@@ -3620,6 +3644,7 @@
   ;; render-target reference directly.
   (func $dx_surface_release (param $this i32) (result i32)
     (local $entry i32) (local $rc i32) (local $surf_bytes i32) (local $dib_wa i32)
+    (local $clipper i32)
     (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $this)))
     (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
@@ -3631,6 +3656,14 @@
         (global.set $dx_vidmem_used (i32.sub (global.get $dx_vidmem_used) (local.get $surf_bytes)))
         (if (i32.eq (local.get $entry) (global.get $dx_primary_wa))
           (then (global.set $dx_primary_wa (i32.const 0))))
+        ;; SetClipper owns one reference until explicit detachment or this
+        ;; surface's final release. Clear first so teardown cannot observe a
+        ;; stale attachment if the clipper's own reference reaches zero.
+        (local.set $clipper (call $dx_surface_clipper_get (local.get $entry)))
+        (if (local.get $clipper)
+          (then
+            (i32.store (call $dx_surface_clipper_ptr (local.get $entry)) (i32.const 0))
+            (drop (call $dx_com_release_basic (local.get $clipper)))))
         (call $dx_cursor_reset (local.get $entry))
         (if (i32.eqz (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 0x200)))
           (then (call $dib_free_wasm (local.get $dib_wa))))
@@ -4425,9 +4458,31 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; GetClipper — not supported
+  ;; GetClipper(this, lplpDDClipper) — return an independently owned COM
+  ;; reference to the surface's current clipper.
   (func $handle_IDirectDrawSurface_GetClipper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x887600FF))
+    (local $entry i32) (local $clipper i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 2))
+      (then
+        (global.set $eax (i32.const 0x88760082)) ;; DDERR_INVALIDOBJECT
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DDERR_INVALIDPARAMS
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $gs32 (local.get $arg1) (i32.const 0))
+    (local.set $clipper (call $dx_surface_clipper_get (local.get $entry)))
+    (if (i32.eqz (local.get $clipper))
+      (then
+        (global.set $eax (i32.const 0x887600FF)) ;; DDERR_NOCLIPPERATTACHED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (drop (call $dx_com_addref (local.get $clipper)))
+    (call $gs32 (local.get $arg1) (local.get $clipper))
+    (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   ;; GetColorKey(this, dwFlags, lpDDColorKey)
@@ -4669,8 +4724,49 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
-  ;; SetClipper — no-op
+  ;; SetClipper(this, lpDDClipper) — the surface owns one clipper reference.
+  ;; Repeating the same underlying object is neutral; replacement retains the
+  ;; new object before releasing the old, and NULL detaches the current one.
   (func $handle_IDirectDrawSurface_SetClipper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $clipper_entry i32)
+    (local $old_clipper i32) (local $old_entry i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 2))
+      (then
+        (global.set $eax (i32.const 0x88760082)) ;; DDERR_INVALIDOBJECT
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $old_clipper (call $dx_surface_clipper_get (local.get $entry)))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (if (i32.eqz (local.get $old_clipper))
+          (then
+            (global.set $eax (i32.const 0x887600FF)) ;; DDERR_NOCLIPPERATTACHED
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            (return)))
+        (i32.store (call $dx_surface_clipper_ptr (local.get $entry)) (i32.const 0))
+        (drop (call $dx_com_release_basic (local.get $old_clipper)))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $clipper_entry (call $dx_from_this (local.get $arg1)))
+    (if (i32.ne (load.field DxObject type (local.get $clipper_entry)) (i32.const 10))
+      (then
+        (global.set $eax (i32.const 0x88760082)) ;; DDERR_INVALIDOBJECT
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (local.get $old_clipper)
+      (then
+        (local.set $old_entry (call $dx_from_this (local.get $old_clipper)))
+        (if (i32.eq (local.get $old_entry) (local.get $clipper_entry))
+          (then
+            (global.set $eax (i32.const 0))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+            (return)))))
+    (drop (call $dx_com_addref (local.get $arg1)))
+    (i32.store (call $dx_surface_clipper_ptr (local.get $entry)) (local.get $arg1))
+    (if (local.get $old_clipper)
+      (then (drop (call $dx_com_release_basic (local.get $old_clipper)))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -5004,7 +5100,7 @@
     ;; a second WAT window surface for every scanline of old-school fades.
     (local.set $surface_id
       (i32.add (i32.const 0x00200000) (call $dx_slot_of (local.get $entry_wa))))
-    (local.set $target_hwnd (call $dx_target_hwnd))
+    (local.set $target_hwnd (call $dx_surface_target_hwnd (local.get $entry_wa)))
     ;; ...but only while DirectDraw is the sole owner of the window. A window
     ;; that also has ordinary GDI children has a WAT window surface, and both
     ;; surfaces attach to the same hwnd, so whichever attaches last becomes
@@ -5218,8 +5314,19 @@
 
   ;; GetHWnd(this, lphWnd)
   (func $handle_IDirectDrawClipper_GetHWnd (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg1)
-      (then (call $gs32 (local.get $arg1) (global.get $main_hwnd))))
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 10))
+      (then
+        (global.set $eax (i32.const 0x88760082)) ;; DDERR_INVALIDOBJECT
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DDERR_INVALIDPARAMS
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $gs32 (local.get $arg1) (load.field DxObject misc0 (local.get $entry)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -5240,8 +5347,27 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; SetHWnd(this, dwFlags, hWnd) — no-op
+  ;; SetHWnd(this, dwFlags, hWnd) — retain the window whose visible client
+  ;; region defines this clipper. Window-derived region snapshots remain a
+  ;; separate concern, but GetHWnd and later surface attachment must share the
+  ;; caller's actual association rather than the process's main window.
   (func $handle_IDirectDrawClipper_SetHWnd (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 10))
+      (then
+        (global.set $eax (i32.const 0x88760082)) ;; DDERR_INVALIDOBJECT
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    ;; Microsoft documents dwFlags as reserved and required to be zero.
+    (if (i32.or
+          (i32.ne (local.get $arg1) (i32.const 0))
+          (i32.eqz (call $window_handle_valid (local.get $arg2))))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DDERR_INVALIDPARAMS
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (store.field DxObject misc0 (local.get $entry) (local.get $arg2))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 

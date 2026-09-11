@@ -50,5 +50,43 @@ try{
  // Serialization must not capture module-local bindings used only by Node.
  const serialized=Function('return ('+install.toString()+')')(),q=fixture();
  serialized(q.instance,q.e,q.ctx,q.tick);q.ctx.bwAllocRestore();
+ const regions={VIRTUAL_MAP_STATE:{base:64,size:16},VIRTUAL_MAP_TABLE:{base:128,size:64},
+  VIRTUAL_BACKING_BASE:{base:1024,size:1024},HEAP_ARENAS:{base:256,size:80}};
+ function mapped(options={}){
+  const t=fixture();t.ctx._memory={buffer:new ArrayBuffer(4096)};
+  const dv=new DataView(t.ctx._memory.buffer),put=(p,v)=>dv.setUint32(p,v,true);
+  put(64,2);put(68,1792);put(72,0x40000000);
+  // Unsorted, separated backing ranges: 128+256 active; gaps128+256+256.
+  put(128,0x30000000);put(132,256);put(136,1536);
+  put(144,0x30001000);put(148,128);put(152,1152);put(256,3);
+  put(140,4);put(156,32);put(272,0x30000000);put(276,0x30000100);put(280,0x30000080);
+  serialized(t.instance,t.e,t.ctx,t.tick,{regionMap:regions,layoutHash:'test-layout',...options});
+  return {t,put,hit(){t.set({eip:0x009a81c9,edi:0x00a58780,eax:123});assert.strictEqual(t.instance.exports.run(99),99);assert.strictEqual(t.calls(),1);return t.ctx.bwAllocCapture;}};
+ }
+ const m=mapped(),capture=m.hit();
+ assert.strictEqual(capture.virtualMaps.count,2);assert.strictEqual(capture.virtualMaps.capacity,4);
+ assert.strictEqual(capture.virtualMaps.backingCursor,1792);assert.strictEqual(capture.virtualMaps.reservationTop,0x40000000);
+ assert.strictEqual(capture.virtualMaps.activeBytes,384);assert.strictEqual(capture.virtualMaps.freeBackingBytes,640);
+ assert.strictEqual(capture.virtualMaps.largestFreeBackingGap,256);
+ assert.strictEqual(capture.layoutHash,'test-layout');assert.strictEqual(capture.virtualMaps.stateChanged,false);
+ assert.strictEqual(capture.arenas.count,3);assert.strictEqual(capture.arenas.capacity,4);assert.strictEqual(capture.arenas.overflow,false);
+ assert.deepStrictEqual(capture.virtualMaps.records,[[0x30000000,256,1536,4],[0x30001000,128,1152,32]]);
+ assert.deepStrictEqual(capture.arenas.records,[[0x30000000,0x30000100,0x30000080],[0,0,0],[0,0,0]]);
+ assert.deepStrictEqual(capture.arenas.unpublished,[1,2]);assert.strictEqual(capture.arenas.truncated,false);
+ const corrupt=mapped();corrupt.put(64,0xffffffff);const broken=corrupt.hit();
+ assert(broken.virtualMaps.error);assert.strictEqual(broken.regs.eax,123);assert.strictEqual(broken.heap.free_list,4096);
+ assert.strictEqual(broken.virtualMaps.count,0xffffffff);
+ assert.strictEqual(broken.arenas.count,3,'one optional section failure leaves other sections intact');
+ const outOfPool=mapped();outOfPool.put(136,4000);assert(outOfPool.hit().virtualMaps.error);
+ const missing=mapped({regionMap:{}}).hit();assert(missing.virtualMaps.error);assert.strictEqual(missing.regs.eax,123);
+ const failedRead=mapped();failedRead.t.e.guest_read32=()=>{throw Error('guest read unavailable');};
+ const partial=failedRead.hit();assert.strictEqual(partial.regs.eax,123);assert.strictEqual(partial.virtualMaps.activeBytes,384);
+ const empty=mapped();empty.put(64,0);const noMaps=empty.hit();
+ assert.strictEqual(noMaps.virtualMaps.freeBackingBytes,1024);assert.strictEqual(noMaps.virtualMaps.largestFreeBackingGap,1024);
+ const overlap=mapped();overlap.put(152,1536);const shared=overlap.hit();
+ assert.strictEqual(shared.virtualMaps.overlap,true);assert.strictEqual(shared.virtualMaps.freeBackingBytes,768);
+ const noMemory=mapped();delete noMemory.t.ctx._memory;assert(noMemory.hit().virtualMaps.error);
+ const arenaOverflow=mapped();arenaOverflow.put(256,0xffffffff);const capped=arenaOverflow.hit().arenas;
+ assert(capped.overflow);assert(capped.truncated);assert.strictEqual(capped.records.length,4);
 }finally{console.log=log;}
 console.log('PASS targeted B&W allocation observer: filter, return values, durable capture, restoration');

@@ -3199,7 +3199,9 @@
   (global $com_unk_outer (mut i32) (i32.const 0))   ;; pUnkOuter
   (global $com_cls_ctx   (mut i32) (i32.const 0))   ;; dwClsContext
   (global $com_dll_name  (mut i32) (i32.const 0))   ;; WASM addr of DLL name string (from registry)
-  (global $com_state_unknown (mut i32) (i32.const 0)) ;; CoSetState/CoGetState single-thread placeholder
+  ;; Current instance/thread COM state; CoSetState owns this IUnknown and
+  ;; CoGetState returns an independently AddRefed pointer.
+  (global $com_state_unknown (mut i32) (i32.const 0))
   ;; Process-local Running Object Table. Entries are retained independently of
   ;; the short-lived IRunningObjectTable interface wrappers returned to callers.
   (global $ole_rot_entries (mut i32) (i32.const 0))

@@ -253,6 +253,67 @@ async function main() {
     callApi('CoLockObjectExternal', localExternalTarget, 0, 1) === 0 &&
     read(localExternalTarget + 4) === 1);
 
+  const stateOut = alloc(4);
+  write(stateOut, 0xcccccccc);
+  check('CoGetState returns a null pointer when this thread has no state',
+    callApi('CoGetState', stateOut) === 0 && read(stateOut) === 0);
+  check('CoGetState rejects a null output pointer',
+    callApi('CoGetState', 0) === 0x80004003);
+  const malformedState = makeGuestSite();
+  const malformedStateVtable = read(malformedState);
+  const malformedStateAddRef = read(malformedStateVtable + 4);
+  write(malformedStateVtable + 4, 0);
+  check('CoSetState rejects a DLL-private object without a complete lifetime vtable',
+    callApi('CoSetState', malformedState) === 0x80004002 &&
+    read(malformedState + 4) === 1 && read(malformedState + 8) === 0);
+  write(malformedStateVtable + 4, malformedStateAddRef);
+
+  const stateA = makeGuestSite();
+  check('CoSetState retains a DLL-private thread state through guest AddRef',
+    callApi('CoSetState', stateA) === 0 &&
+    read(stateA + 4) === 2 && read(stateA + 8) === 1);
+  write(stateOut, 0xcccccccc);
+  check('CoGetState returns its own AddRefed guest interface pointer',
+    callApi('CoGetState', stateOut) === 0 && read(stateOut) === stateA &&
+    read(stateA + 4) === 3 && read(stateA + 8) === 2);
+  check('the caller can independently release its CoGetState reference',
+    callMethod(read(stateOut), 2) === 2 && read(stateA + 12) === 1);
+
+  const stateB = makeGuestSite();
+  const stateAVtable = read(stateA);
+  const stateARelease = read(stateAVtable + 8);
+  write(stateAVtable + 8, 0);
+  check('CoSetState preserves the old state when its owned Release is malformed',
+    callApi('CoSetState', stateB) === 0x8000ffff &&
+    read(stateA + 4) === 2 && read(stateB + 4) === 1 &&
+    read(stateB + 8) === 0);
+  write(stateAVtable + 8, stateARelease);
+  check('the failed replacement leaves the prior thread state current',
+    callApi('CoGetState', stateOut) === 0 && read(stateOut) === stateA &&
+    callMethod(read(stateOut), 2) === 2);
+  check('CoSetState retains the replacement before releasing the former state',
+    callApi('CoSetState', stateB) === 0 &&
+    read(stateB + 4) === 2 && read(stateB + 8) === 1 &&
+    read(stateA + 4) === 1 && read(stateA + 12) === 3);
+  check('same-object CoSetState replacement is reference-neutral',
+    callApi('CoSetState', stateB) === 0 && read(stateB + 4) === 2 &&
+    read(stateB + 8) === 2 && read(stateB + 12) === 1);
+  check('CoSetState(NULL) releases and clears the current guest state',
+    callApi('CoSetState', 0) === 0 && read(stateB + 4) === 1 &&
+    read(stateB + 12) === 2 && callApi('CoGetState', stateOut) === 0 &&
+    read(stateOut) === 0);
+
+  const localState = e.test_ole_create_data_object(0, 0) >>> 0;
+  check('CoSetState owns emulator-local COM objects synchronously',
+    callApi('CoSetState', localState) === 0 && read(localState + 4) === 2);
+  check('CoGetState AddRefs emulator-local state for its caller',
+    callApi('CoGetState', stateOut) === 0 && read(stateOut) === localState &&
+    read(localState + 4) === 3);
+  assert.strictEqual(e.test_ole_release(read(stateOut)), 2);
+  check('clearing local thread state releases its independently owned reference',
+    callApi('CoSetState', 0) === 0 && read(localState + 4) === 1);
+  assert.strictEqual(e.test_ole_release(localState), 0);
+
   const object = e.test_ole_create_static_handler(0) >>> 0;
   const siteA = makeGuestSite();
   check('SetClientSite AddRefs and owns a DLL-private guest interface',

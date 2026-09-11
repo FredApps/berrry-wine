@@ -9,6 +9,7 @@
 ;; TEXM3x2PAD36/TEX37, TEXM3x3PAD38/TEX39/SPEC40/VSPEC41.
 ;; PS1.2 TEXREG2RGB42,TEXDP3TEX43,TEXDP3=44,TEXM3x3=45,CMP46;
 ;; PS1.3 TEXM3x2DEPTH47 publishes separate depth, not a mutable t register.
+;; Private VS2 CRS55 and NRM56 use independent SIMD vectors, not texture state.
 ;; DP4 reuses handler6. Native IR enforces profile slots and CMP restrictions.
 ;; flags (bit0 saturation, bit1 a0 floor, bit2 coissued SECOND packet,
 ;; bit4 private VS2 MOVA nearest-even, bit5 private ABS,
@@ -27,7 +28,9 @@
 ;; Bump tail: four32-byte copied records at57600 (six f32, valid, reserved).
 ;; Tail: four 48-byte sampler records at57376, discard mask at57568.
 ;; Mip tail: four1280-byte records at57728; legacy prefix62848. Stage4/5
-;; end65568; private VS2 c128..255 append8192 bytes, total73760. Old offsets unchanged.
+;; end65568; private VS2 c128..255 append8192 bytes, end73760.
+;; Uniform typed constants: i0..15 raw ivec4 at73760, b0..15 u32 at74016.
+;; Total74080. Old offsets unchanged; typed constants are shared by all lanes.
 ;; Mip descriptor64: ABI1,count,levelTable,format,U,V,border,min,mag,mip,
 ;; f32 bias,absolute MAXMIPLEVEL,firstResidentLevel,originalW,originalH,flags.
 ;; flags bit0=cube: six face-major level arrays, +X,-X,+Y,-Y,+Z,-Z.
@@ -58,7 +61,7 @@
 ;; PS1.4 six-stage prerequisite: preserve the entire legacy62848-byte prefix.
 ;; Stage4/5 each append legacy48 + bump32 + mip1280 bytes. Register storage,
 ;; original-coordinate snapshots and shader-depth offsets do not move.
-(func $d3d_shader_vm_context_bytes (export "d3d_shader_vm_context_bytes") (result i32) (i32.const 73760))
+(func $d3d_shader_vm_context_bytes (export "d3d_shader_vm_context_bytes") (result i32) (i32.const 74080))
 (func $d3d_shader_vm_sampler (param $ctx i32) (param $stage i32) (result i32)
   (i32.add (local.get $ctx) (select
     (i32.add (i32.const 57376) (i32.mul (local.get $stage) (i32.const 48)))
@@ -196,21 +199,38 @@
 ;; Bounded private VS2 normalized-IR contract. Guest declaration/dataflow checks
 ;; remain decoder-owned. This boundary rejects malformed operands before packet
 ;; lowering can alias constants with a0, outputs, or sampler metadata.
+(func $d3d_shader_vm_arity20 (param $op i32) (result i32)
+  (if (i32.eq (local.get $op) (i32.const 47)) (then (return (i32.const 2))))
+  (if (i32.eq (local.get $op) (i32.const 48)) (then (return (i32.const 5))))
+  (if (i32.eq (local.get $op) (i32.const 34)) (then (return (i32.const 4))))
+  (if (i32.eq (local.get $op) (i32.const 37)) (then (return (i32.const 4))))
+  (if (i32.or (i32.eq (local.get $op) (i32.const 32)) (i32.eq (local.get $op) (i32.const 33))) (then (return (i32.const 3))))
+  (if (i32.or (i32.eq (local.get $op) (i32.const 36))
+    (i32.or (i32.eq (local.get $op) (i32.const 35)) (i32.eq (local.get $op) (i32.const 46))))
+    (then (return (i32.const 2))))
+  (call $d3d_shader_vm_arity (local.get $op)))
+
 (func $d3d_shader_vm_validate20 (param $ins i32) (result i32)
   (local $op i32) (local $arity i32) (local $j i32) (local $p i32)
   (local $bank i32) (local $index i32) (local $selector i32) (local $mod i32) (local $rows i32)
   (local.set $op (i32.load (local.get $ins)))
   (if (i32.eqz (i32.or (i32.le_u (local.get $op) (i32.const 18))
     (i32.or (i32.and (i32.ge_u (local.get $op) (i32.const 19)) (i32.le_u (local.get $op) (i32.const 24)))
-    (i32.or (i32.eq (local.get $op) (i32.const 31))
-    (i32.or (i32.eq (local.get $op) (i32.const 35))
-    (i32.or (i32.eq (local.get $op) (i32.const 46))
+    (i32.or (i32.and (i32.ge_u (local.get $op) (i32.const 31)) (i32.le_u (local.get $op) (i32.const 34)))
+    (i32.or (i32.and (i32.ge_u (local.get $op) (i32.const 35)) (i32.le_u (local.get $op) (i32.const 37)))
+    (i32.or (i32.and (i32.ge_u (local.get $op) (i32.const 46)) (i32.le_u (local.get $op) (i32.const 48)))
       (i32.or (i32.and (i32.ge_u (local.get $op) (i32.const 78)) (i32.le_u (local.get $op) (i32.const 79))) (i32.eq (local.get $op) (i32.const 81))))))))) (then (return (i32.const 0))))
-  (local.set $arity (call $d3d_shader_vm_arity (local.get $op)))
-  (if (i32.or (i32.eq (local.get $op) (i32.const 35)) (i32.eq (local.get $op) (i32.const 46)))
-    (then (local.set $arity (i32.const 2))))
+  (local.set $arity (call $d3d_shader_vm_arity20 (local.get $op)))
   (if (i32.or (i32.ne (i32.load offset=8 (local.get $ins)) (local.get $arity))
     (i32.load offset=12 (local.get $ins))) (then (return (i32.const 0))))
+  (if (i32.eq (local.get $op) (i32.const 37)) (then
+    (if (i32.or (i32.load offset=16 (local.get $ins)) (i32.gt_u (i32.load offset=24 (local.get $ins)) (i32.const 3))) (then (return (i32.const 0))))
+    (if (i64.eq (i64.load offset=16 (local.get $ins)) (i64.load offset=32 (local.get $ins))) (then (return (i32.const 0))))
+    (if (i64.eq (i64.load offset=48 (local.get $ins)) (i64.load offset=64 (local.get $ins))) (then (return (i32.const 0))))))
+  (if (i32.or (i32.eq (local.get $op) (i32.const 32)) (i32.or (i32.eq (local.get $op) (i32.const 33)) (i32.eq (local.get $op) (i32.const 36)))) (then
+    (if (i32.load offset=16 (local.get $ins)) (then (return (i32.const 0))))
+    (if (i32.and (i32.eq (local.get $op) (i32.const 33)) (i32.gt_u (i32.load offset=24 (local.get $ins)) (i32.const 7)))
+      (then (return (i32.const 0))))))
   ;; Matrix macros use consecutive source rows and exact destination masks.
   ;; Validate static row extents here; dynamic a0 offsets remain bounded by the
   ;; per-lane gather. Row addition happens before the c128 storage remapping.
@@ -228,6 +248,15 @@
     (local.set $bank (i32.load (local.get $p))) (local.set $index (i32.load offset=4 (local.get $p)))
     (local.set $selector (i32.load offset=8 (local.get $p))) (local.set $mod (i32.load offset=12 (local.get $p)))
     (block $valid
+      (if (i32.or (i32.eq (local.get $op) (i32.const 47)) (i32.eq (local.get $op) (i32.const 48))) (then
+        (if (i32.eqz (local.get $j))
+          (then (if (i32.or (i32.ne (local.get $bank)
+            (select (i32.const 14) (i32.const 7) (i32.eq (local.get $op) (i32.const 47))))
+            (i32.or (i32.ge_u (local.get $index) (i32.const 16))
+            (i32.or (i32.ne (local.get $selector) (i32.const 15)) (local.get $mod)))) (then (return (i32.const 0)))))
+          (else (if (i32.or (i32.ne (local.get $bank) (i32.const 255))
+            (i32.or (local.get $selector) (local.get $mod))) (then (return (i32.const 0))))))
+        (br $valid)))
       (if (i32.eq (local.get $op) (i32.const 81)) (then
         (if (i32.eqz (local.get $j))
           (then (if (i32.or (i32.ne (local.get $bank) (i32.const 2))
@@ -258,15 +287,28 @@
             (i32.or (i32.and (i32.eq (local.get $bank) (i32.const 5)) (i32.lt_u (local.get $index) (i32.const 2)))
               (i32.and (i32.eq (local.get $bank) (i32.const 6)) (i32.lt_u (local.get $index) (i32.const 8))))))) (then (return (i32.const 0))))))
       ) (else
+        (if (i32.and (i32.eq (local.get $op) (i32.const 37)) (i32.ge_u (local.get $j) (i32.const 2))) (then
+          (if (i32.ne (local.get $bank) (i32.const 2)) (then (return (i32.const 0))))))
+        ;; SGN src1/src2 are distinct temporary scratch registers, not inputs.
+        (if (i32.and (i32.eq (local.get $op) (i32.const 34)) (i32.ge_u (local.get $j) (i32.const 2))) (then
+          (if (local.get $bank) (then (return (i32.const 0))))
+          (if (i64.eq (i64.load offset=48 (local.get $ins)) (i64.load offset=64 (local.get $ins))) (then (return (i32.const 0))))))
+        ;; POW may overwrite its base, but never its exponent register.
+        (if (i32.and (i32.eq (local.get $op) (i32.const 32)) (i32.eq (local.get $j) (i32.const 2))) (then
+          (if (i64.eq (i64.load (local.get $p)) (i64.load offset=16 (local.get $ins))) (then (return (i32.const 0))))))
+        (if (i32.or (i32.eq (local.get $op) (i32.const 33)) (i32.eq (local.get $op) (i32.const 36))) (then
+          (if (i64.eq (i64.load (local.get $p)) (i64.load offset=16 (local.get $ins))) (then (return (i32.const 0))))
+          (if (i32.and (i32.eq (local.get $op) (i32.const 33)) (i32.ne (local.get $selector) (i32.const 228)))
+            (then (return (i32.const 0))))))
         (if (i32.eqz (i32.or
           (i32.and (i32.eqz (local.get $bank)) (i32.lt_u (local.get $index) (i32.const 12)))
           (i32.or (i32.and (i32.eq (local.get $bank) (i32.const 1)) (i32.lt_u (local.get $index) (i32.const 16)))
             (i32.and (i32.eq (local.get $bank) (i32.const 2)) (i32.lt_u (local.get $index) (i32.const 256)))))) (then (return (i32.const 0))))
         (if (i32.or (i32.gt_u (local.get $selector) (i32.const 255))
           (i32.gt_u (i32.and (local.get $mod) (i32.const -257)) (i32.const 1))) (then (return (i32.const 0))))
-        (if (i32.or
+        (if (i32.or (i32.and (i32.eq (local.get $op) (i32.const 37)) (i32.eq (local.get $j) (i32.const 1))) (i32.or (i32.eq (local.get $op) (i32.const 32)) (i32.or
           (i32.and (i32.ge_u (local.get $op) (i32.const 14)) (i32.le_u (local.get $op) (i32.const 15)))
-          (i32.and (i32.ge_u (local.get $op) (i32.const 78)) (i32.le_u (local.get $op) (i32.const 79)))) (then
+          (i32.and (i32.ge_u (local.get $op) (i32.const 78)) (i32.le_u (local.get $op) (i32.const 79)))))) (then
           (if (i32.ne (local.get $selector) (i32.mul (i32.and (local.get $selector) (i32.const 3)) (i32.const 85)))
             (then (return (i32.const 0))))))
         (if (i32.and (i32.ne (local.get $rows) (i32.const 0)) (i32.eq (local.get $j) (i32.const 2))) (then
@@ -475,9 +517,23 @@
     (local.set $ins (i32.add (i32.add (local.get $ir) (i32.const 32)) (i32.shl (local.get $i) (i32.const 7))))
     (local.set $op (i32.load (local.get $ins)))
     (block $skip_emit
-    (br_if $skip_emit (i32.ne (i32.eq (local.get $op) (i32.const 81)) (i32.eqz (local.get $pass))))
+    (br_if $skip_emit (i32.ne (i32.or (i32.eq (local.get $op) (i32.const 81))
+      (i32.and (i32.ne (local.get $vs20) (i32.const 0))
+        (i32.or (i32.eq (local.get $op) (i32.const 47)) (i32.eq (local.get $op) (i32.const 48))))) (i32.eqz (local.get $pass))))
     (local.set $pkt (i32.add (i32.add (local.get $out) (i32.const 16)) (i32.shl (local.get $emitted) (i32.const 6))))
     (local.set $emitted (i32.add (local.get $emitted) (i32.const 1)))
+    ;; Typed definitions carry a uniform index and raw words, not float slots.
+    ;; Stable hoisting preserves last-definition precedence.
+    (if (i32.and (i32.ne (local.get $vs20) (i32.const 0))
+      (i32.or (i32.eq (local.get $op) (i32.const 47)) (i32.eq (local.get $op) (i32.const 48)))) (then
+      (i32.store (local.get $pkt) (i32.add (local.get $op) (i32.const 13)))
+      (i32.store offset=4 (local.get $pkt) (i32.load offset=20 (local.get $ins)))
+      (i32.store offset=16 (local.get $pkt) (i32.load offset=36 (local.get $ins)))
+      (if (i32.eq (local.get $op) (i32.const 48)) (then
+        (i32.store offset=20 (local.get $pkt) (i32.load offset=52 (local.get $ins)))
+        (i32.store offset=24 (local.get $pkt) (i32.load offset=68 (local.get $ins)))
+        (i32.store offset=28 (local.get $pkt) (i32.load offset=84 (local.get $ins)))))
+      (br $skip_emit)))
     (if (i32.eq (local.get $op) (i32.const 65533)) (then
       (i32.store (local.get $pkt) (i32.const 48)) (br $skip_emit)))
     (if (i32.or (i32.eqz (local.get $op)) (i32.eq (local.get $op) (i32.const 31))) (then
@@ -505,6 +561,11 @@
     (if (i32.eq (local.get $op) (i32.const 86)) (then (i32.store (local.get $pkt) (i32.const 45))))
     (if (i32.eq (local.get $op) (i32.const 88)) (then (i32.store (local.get $pkt) (i32.const 46))))
     (if (i32.and (local.get $vs20) (i32.or (i32.eq (local.get $op) (i32.const 46)) (i32.eq (local.get $op) (i32.const 35)))) (then (i32.store (local.get $pkt) (i32.const 0))))
+    (if (i32.and (local.get $vs20) (i32.eq (local.get $op) (i32.const 33))) (then (i32.store (local.get $pkt) (i32.const 55))))
+    (if (i32.and (local.get $vs20) (i32.eq (local.get $op) (i32.const 36))) (then (i32.store (local.get $pkt) (i32.const 56))))
+    (if (i32.and (local.get $vs20) (i32.eq (local.get $op) (i32.const 32))) (then (i32.store (local.get $pkt) (i32.const 57))))
+    (if (i32.and (local.get $vs20) (i32.eq (local.get $op) (i32.const 34))) (then (i32.store (local.get $pkt) (i32.const 58))))
+    (if (i32.and (local.get $vs20) (i32.eq (local.get $op) (i32.const 37))) (then (i32.store (local.get $pkt) (i32.const 59))))
     (if (i32.eq (local.get $op) (i32.const 84)) (then (i32.store (local.get $pkt) (i32.const 47))))
     (if (i32.and (i32.ge_u (local.get $op) (i32.const 6)) (i32.le_u (local.get $op) (i32.const 7)))
       (then (i32.store (local.get $pkt) (i32.add (local.get $op) (i32.const 14)))))
@@ -554,7 +615,7 @@
       (i32.store offset=28 (local.get $pkt) (i32.load offset=84 (local.get $ins)))
       (br $skip_emit)))
     (local.set $arity (call $d3d_shader_vm_arity (i32.load (local.get $ins))))
-    (if (i32.and (local.get $vs20) (i32.or (i32.eq (local.get $op) (i32.const 46)) (i32.eq (local.get $op) (i32.const 35)))) (then (local.set $arity (i32.const 2))))
+    (if (local.get $vs20) (then (local.set $arity (call $d3d_shader_vm_arity20 (local.get $op)))))
     (if (local.get $ps14) (then (local.set $arity (call $d3d_shader_vm_arity14 (local.get $op)))))
     (if (i32.eq (local.get $arity) (i32.const 1)) (then (br $skip_emit)))
     (local.set $j (i32.const 1))
@@ -1056,6 +1117,34 @@
   (local.set $v (v128.bitselect (local.get $a) (local.get $v) (f32x4.eq (local.get $a) (f32x4.splat (f32.const inf)))))
   (v128.bitselect (local.get $a) (local.get $v) (f32x4.ne (local.get $a) (local.get $a))))
 
+;; SINCOS's defined angle domain is [-pi,+pi]. Taylor polynomials of degree
+;; 17/16 use ordinary SIMD (no host math import or runtime-generated Wasm).
+;; Required VS2 coefficient constants are a guest contract; valid programs
+;; receive mathematical sin/cos rather than a driver-specific macro expansion.
+;; Outside the documented domain, this adapter evaluates the same polynomial.
+(func $d3d_shader_vm_sincos (param $x v128) (param $component i32) (result v128)
+  (local $z v128) (local $p v128)
+  (local.set $z (f32x4.mul (local.get $x) (local.get $x)))
+  (if (local.get $component) (then
+    (local.set $p (f32x4.splat (f32.const 2.8114572543455206e-15)))
+    (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const -7.647163731819816e-13))))
+    (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const 1.6059043836821613e-10))))
+    (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const -2.505210838544172e-8))))
+    (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const 2.7557319223985893e-6))))
+    (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const -0.0001984126984126984))))
+    (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const 0.008333333333333333))))
+    (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const -0.16666666666666666))))
+    (return (f32x4.mul (local.get $x) (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const 1)))))))
+  (local.set $p (f32x4.splat (f32.const 4.779477332387385e-14)))
+  (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const -1.1470745597729725e-11))))
+  (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const 2.08767569878681e-9))))
+  (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const -2.755731922398589e-7))))
+  (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const 0.0000248015873015873))))
+  (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const -0.001388888888888889))))
+  (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const 0.041666666666666664))))
+  (local.set $p (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const -0.5))))
+  (f32x4.add (f32x4.mul (local.get $p) (local.get $z)) (f32x4.splat (f32.const 1))))
+
 (func $d3d_shader_vm_alu (param $op i32) (param $a v128) (param $b v128) (param $c v128) (result v128)
   ;; Dedicated static dispatch, not the x86 function table. No recursive NEXT.
   (block $bad (block $max (block $min (block $mul (block $mad (block $sub (block $add (block $mov
@@ -1076,6 +1165,30 @@
 ;; https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/lit---vs
 ;; RCP/RSQ zero yields infinity (the prose contract and current GL behavior).
 ;; a0 MOV's existing floor policy is unchanged pending native-driver comparison.
+(func $d3d_shader_vm_vector (param $regs i32) (param $pkt i32) (param $comp i32) (result v128)
+  (local $src i32) (local $j i32) (local $k i32)
+  (local $x v128) (local $y v128) (local $z v128) (local $length v128) (local $factor v128)
+  (local.set $src (i32.add (local.get $pkt) (i32.const 16)))
+  (if (i32.eq (i32.load (local.get $pkt)) (i32.const 55)) (then
+    (if (i32.eq (local.get $comp) (i32.const 3)) (then (return (f32x4.splat (f32.const 0)))))
+    (local.set $j (i32.rem_u (i32.add (local.get $comp) (i32.const 1)) (i32.const 3)))
+    (local.set $k (i32.rem_u (i32.add (local.get $comp) (i32.const 2)) (i32.const 3)))
+    (return (f32x4.sub
+      (f32x4.mul (call $d3d_shader_vm_source (local.get $regs) (local.get $src) (local.get $j))
+        (call $d3d_shader_vm_source (local.get $regs) (i32.add (local.get $src) (i32.const 16)) (local.get $k)))
+      (f32x4.mul (call $d3d_shader_vm_source (local.get $regs) (local.get $src) (local.get $k))
+        (call $d3d_shader_vm_source (local.get $regs) (i32.add (local.get $src) (i32.const 16)) (local.get $j)))))))
+  (local.set $x (call $d3d_shader_vm_source (local.get $regs) (local.get $src) (i32.const 0)))
+  (local.set $y (call $d3d_shader_vm_source (local.get $regs) (local.get $src) (i32.const 1)))
+  (local.set $z (call $d3d_shader_vm_source (local.get $regs) (local.get $src) (i32.const 2)))
+  (local.set $length (f32x4.add (f32x4.add (f32x4.mul (local.get $x) (local.get $x))
+    (f32x4.mul (local.get $y) (local.get $y))) (f32x4.mul (local.get $z) (local.get $z))))
+  ;; Select the finite zero-length multiplier BEFORE multiplying, including W.
+  (local.set $factor (v128.bitselect (f32x4.splat (f32.const 3.4028234663852886e38))
+    (f32x4.div (f32x4.splat (f32.const 1)) (f32x4.sqrt (local.get $length)))
+    (f32x4.eq (local.get $length) (f32x4.splat (f32.const 0)))))
+  (f32x4.mul (call $d3d_shader_vm_source (local.get $regs) (local.get $src) (local.get $comp)) (local.get $factor)))
+
 (func $d3d_shader_vm_extended (param $regs i32) (param $pkt i32) (param $comp i32) (result v128)
   (local $op i32) (local $a v128) (local $b v128) (local $c v128)
   (local $scalar v128) (local $power v128) (local $y v128)
@@ -1235,6 +1348,28 @@
     ;; clamp, with NaN->1. Not a claim of historic native undefined behavior.
     (local.set $v (v128.bitselect (f32x4.splat (f32.const 1)) (local.get $v) (f32x4.ne (local.get $v) (local.get $v))))
     (return (f32x4.min (f32x4.max (local.get $v) (f32x4.splat (f32.const 0))) (f32x4.splat (f32.const 1))))))
+  (if (i32.eq (local.get $op) (i32.const 59)) (then
+    (return (call $d3d_shader_vm_sincos
+      (call $d3d_shader_vm_source (local.get $regs) (i32.add (local.get $pkt) (i32.const 16)) (i32.const 0)) (local.get $comp)))))
+  (if (i32.eq (local.get $op) (i32.const 58)) (then
+    (local.set $v (call $d3d_shader_vm_source (local.get $regs) (i32.add (local.get $pkt) (i32.const 16)) (local.get $comp)))
+    ;; Literal ordered comparisons: signed zero -> +0; NaN -> +1 is our
+    ;; adapter interpretation of Microsoft's pseudocode, not native evidence.
+    (return (v128.bitselect (f32x4.splat (f32.const -1))
+      (v128.bitselect (f32x4.splat (f32.const 0)) (f32x4.splat (f32.const 1))
+        (f32x4.eq (local.get $v) (f32x4.splat (f32.const 0))))
+      (f32x4.lt (local.get $v) (f32x4.splat (f32.const 0)))))))
+  (if (i32.eq (local.get $op) (i32.const 57)) (then
+    (local.set $v (call $d3d_shader_vm_source (local.get $regs) (i32.add (local.get $pkt) (i32.const 16)) (i32.const 0)))
+    (local.set $t (call $d3d_shader_vm_source (local.get $regs) (i32.add (local.get $pkt) (i32.const 32)) (i32.const 0)))
+    ;; Internal log2 uses abs and -Infinity for zero, not LOG's finite sentinel.
+    ;; Finite zero policy is adapter-defined: 0^positive=0, 0^negative=Inf,
+    ;; exponent zero=1 (including 0^0). No native NaN conformance claim.
+    (return (v128.bitselect (f32x4.splat (f32.const 1))
+      (call $d3d_shader_vm_exp2 (f32x4.mul (call $d3d_shader_vm_log2 (local.get $v)) (local.get $t)))
+      (f32x4.eq (local.get $t) (f32x4.splat (f32.const 0)))))))
+  (if (i32.or (i32.eq (local.get $op) (i32.const 55)) (i32.eq (local.get $op) (i32.const 56)))
+    (then (return (call $d3d_shader_vm_vector (local.get $regs) (local.get $pkt) (local.get $comp)))))
   (if (i32.or (i32.eq (local.get $op) (i32.const 46)) (i32.and (i32.ge_u (local.get $op) (i32.const 20)) (i32.le_u (local.get $op) (i32.const 32))))
     (then (return (call $d3d_shader_vm_extended (local.get $regs) (local.get $pkt) (local.get $comp)))))
   (if (i32.eq (local.get $op) (i32.const 44)) (then (return (call $d3d_shader_vm_texdot (local.get $regs) (local.get $pkt)))))
@@ -1486,6 +1621,17 @@
         (local.set $partner (i32.add (local.get $pkt) (i32.const 64))) (local.set $step (i32.const 2))))))
     (if (i32.lt_s (local.get $budget) (local.get $step))
       (then (return (call $d3d_shader_vm_status (local.get $ctx) (i32.const 1)))))
+    (block $execute
+    (if (i32.or (i32.eq (local.get $op) (i32.const 60)) (i32.eq (local.get $op) (i32.const 61))) (then
+      (local.set $j (i32.load offset=4 (local.get $pkt)))
+      (if (i32.or (i32.ge_u (local.get $j) (i32.const 16)) (local.get $partner))
+        (then (return (call $d3d_shader_vm_status (local.get $ctx) (i32.const -1)))))
+      (if (i32.eq (local.get $op) (i32.const 60))
+        (then (i32.store (i32.add (local.get $ctx) (i32.add (i32.const 74016) (i32.shl (local.get $j) (i32.const 2))))
+          (i32.ne (i32.load offset=16 (local.get $pkt)) (i32.const 0))))
+        (else (v128.store (i32.add (local.get $ctx) (i32.add (i32.const 73760) (i32.shl (local.get $j) (i32.const 4))))
+          (v128.load offset=16 (local.get $pkt)))))
+      (br $execute)))
     (if (i32.eq (local.get $op) (i32.const 51)) (then
       (local.set $desc (call $d3d_shader_vm_sampler (local.get $ctx) (i32.load offset=4 (local.get $pkt))))
       (if (i32.eqz (i32.load (local.get $desc))) (then (return (call $d3d_shader_vm_status (local.get $ctx) (i32.const -3)))))
@@ -1564,6 +1710,7 @@
       (call $d3d_shader_vm_commit (local.get $regs) (local.get $pkt) (local.get $x) (local.get $y) (local.get $z) (local.get $w) (local.get $mask))))
     (if (local.get $partner) (then
       (call $d3d_shader_vm_commit (local.get $regs) (local.get $partner) (local.get $x2) (local.get $y2) (local.get $z2) (local.get $w2) (local.get $mask))))
+    ) ;; $execute: typed prologue shares bounded retirement and resumption.
     (local.set $pc (i32.add (local.get $pc) (local.get $step)))
     (i32.store offset=8 (local.get $ctx) (local.get $pc))
     (i32.store offset=20 (local.get $ctx) (i32.add (i32.load offset=20 (local.get $ctx)) (local.get $step)))

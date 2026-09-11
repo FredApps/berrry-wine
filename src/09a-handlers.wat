@@ -15582,22 +15582,44 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
-  ;; GetProcessAffinityMask(hProcess, *processMask, *systemMask) → BOOL
-  ;; Single-CPU emulator: report mask = 0x1 for both. Returns TRUE.
+  ;; GetProcessAffinityMask(hProcess, *processMask, *systemMask) → BOOL.
+  ;; The browser machine has one logical processor, but the process handle is
+  ;; still part of the contract: a fabricated external process must not gain a
+  ;; plausible mask merely because both real outputs happen to be constants.
   (func $handle_GetProcessAffinityMask (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (if (i32.eqz (call $current_process_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (return)))
     (if (local.get $arg1)
       (then (i32.store (call $g2w (local.get $arg1)) (i32.const 1))))
     (if (local.get $arg2)
       (then (i32.store (call $g2w (local.get $arg2)) (i32.const 1))))
     (global.set $eax (i32.const 1))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; SetThreadAffinityMask(hThread, dwAffinityMask) → previous mask (DWORD_PTR)
-  ;; Single-CPU emulator: always return 0x1 (the only valid mask). Nonzero = success.
+  ;; SetThreadAffinityMask(hThread, dwAffinityMask) → previous mask (DWORD_PTR).
+  ;; The only possible current and previous mask is bit zero. Resolve the
+  ;; handle through the same process-wide thread authority as priority APIs so
+  ;; pseudo and durable handles work while closed/fabricated handles fail.
   (func $handle_SetThreadAffinityMask (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (if (i32.eq
+          (call $host_get_thread_priority
+            (local.get $arg0) (global.get $current_thread_id))
+          (i32.const 0x7fffffff))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (global.set $eax (i32.const 0))
+        (return)))
+    (if (i32.ne (local.get $arg1) (i32.const 1))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (return)))
+    (global.set $eax (i32.const 1))
   )
 
   ;; 536: GlobalFlags(hMem) → flags/lock count.

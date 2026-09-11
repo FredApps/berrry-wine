@@ -20,6 +20,7 @@ const IR=require('../lib/d3d-shader-ir'),Shader=require('../lib/d3d9-shader');
  const cases=[[95,0,95],[127,0,127],[255,0,255],[95.5,0,96],[127.5,0,128],
   [.5,128,128],[1.5,128,130],[2.5,128,130],[-.5,128,128],[-1.5,128,126],[-2.5,128,126],[-1,0,-1],[128,128,-1]];
  const sources=new Map([[0,make(0)],[128,make(128)]]);
+ const positionTolerances=new Map();
  for(const vector of[[1,0,0,0],[.25,.125,.0625,.125]])for(const [op,rows]of[[20,4],[21,3],[22,4],[23,3],[24,2]])for(const [relative,base,address,first]of[[false,127,0,127],[true,127,1.5,129],[true,252,3,255]]){
   const key=`matrix${op}/${relative}/${base}/${vector.join(',')}`;
   const tokens=[0xfffe0200,...ins(31,0x80000000,D(1)),...ins(31,0x80000005,D(1,1)),...ins(31,0x80010005,D(1,2)),
@@ -36,7 +37,7 @@ const IR=require('../lib/d3d-shader-ir'),Shader=require('../lib/d3d9-shader');
  }
  // Arithmetic uses exact binary expectations away from UNORM half ties. Both
  // backends consume the detached IR produced by the same native token decoder.
- for(const [op,vector,expected]of[
+ for(const [op,vector,expected,mask=15]of[
   [14,[-2,9,9,9],[.25,.25,.25,.25]],
   [15,[2,9,9,9],[1,1,1,1]],
   [16,[.25,.0625,9,.5],[1,.25,.25,1]],
@@ -44,16 +45,72 @@ const IR=require('../lib/d3d-shader-ir'),Shader=require('../lib/d3d9-shader');
   [18,[.25,.25,.75,1],[.25,.375,.625,.25]],
   [78,[-2,9,9,9],[.25,.25,.25,.25]],
   [79,[2,9,9,9],[1,1,1,1]],
+  [33,[0,1,0,.25],[.25,0,0,.25],7],
+  [36,[0,0,4,1],[0,0,1,.25]],
+  [36,[0,0,0,0],[0,0,0,0]],
  ]){
-  const key=`arithmetic${op}`,scalar=[14,15,78,79].includes(op);
-  const b=op===17?[1,.5,.25,.75]:[1,.75,.5,.25],c=[0,.25,1,.5];
-  const args=[S(1,2,scalar?0:228)];if(op===17||op===18)args.push(S(2,255));
+  const key=`arithmetic${op}/${vector.join(',')}`,scalar=[14,15,78,79].includes(op);
+  const b=op===33?[0,0,.25,99]:op===17?[1,.5,.25,.75]:[1,.75,.5,.25],c=[0,.25,1,.5];
+  const args=[S(1,2,scalar?0:228)];if(op===17||op===18||op===33)args.push(S(2,255));
   if(op===18)args.push(S(0,2));
   const tokens=[0xfffe0200,...ins(31,0x80000000,D(1)),...ins(31,0x80010005,D(1,2)),
    ...ins(81,D(2,255),...b.map(fbits)),...ins(81,D(2,254),...c.map(fbits)),
-   ...ins(1,D(0,2),S(2,254)),...ins(op,D(0),...args),
+   ...ins(1,D(0,2),S(2,254)),...ins(1,D(0),S(1,2)),...ins(op,D(0,0,mask),...args),
    ...ins(2,D(4),S(1),S(0)),...ins(1,D(5),S(0)),65535];
   sources.set(key,tokens);cases.push([0,key,expected,vector]);
+ }
+ // POW keeps its exponent in a different register, while deliberately
+ // overwriting the initialized base. Exact binary results distinguish abs,
+ // both scalar selectors, reciprocal powers, and exponent-zero behavior.
+ for(const [name,vector,baseComponent,exponent,exponentComponent,result]of[
+  ['negative-base',[-.5,9,9,9],0,[9,2,9,9],1,.25],
+  ['negative-exponent',[9,9,-4,9],2,[9,9,9,-1],3,.25],
+  ['fractional-exponent',[9,.0625,9,9],1,[.5,9,9,9],0,.25],
+  ['zero-exponent',[9,9,9,-.5],3,[9,9,0,9],2,1],
+  ['zero-to-zero',[0,9,9,9],0,[0,9,9,9],0,1],
+ ]){
+  const key=`pow32/${name}`;assert(!sources.has(key));
+  const tokens=[0xfffe0200,...ins(31,0x80000000,D(1)),...ins(31,0x80010005,D(1,2)),
+   ...ins(81,D(2,255),...exponent.map(fbits)),...ins(1,D(0),S(1,2)),
+   ...ins(32,D(0),S(0,0,baseComponent*85),S(2,255,exponentComponent*85)),
+   ...ins(2,D(4),S(1),S(0)),...ins(1,D(5),S(0)),65535];
+  sources.set(key,tokens);cases.push([0,key,Array(4).fill(result),vector]);
+ }
+ // Map signs (-1,0,+1) to exact (.25,.5,.75); negative results must
+ // influence observable pixels rather than disappear through UNORM clamping.
+ for(const [name,vector,swizzle,negate,signs]of[
+  ['signed',[-4,0,2,-0],228,false,[-1,0,1,0]],
+  ['reverse-negate',[-4,0,2,1],27,true,[-1,-1,0,1]],
+ ]){
+  const key=`sgn34/${name}`;assert(!sources.has(key));
+  const tokens=[0xfffe0200,...ins(31,0x80000000,D(1)),...ins(31,0x80010005,D(1,2)),
+   ...ins(81,D(2,255),...Array(4).fill(.25).map(fbits)),
+   ...ins(81,D(2,254),...Array(4).fill(.5).map(fbits)),
+   ...ins(34,D(0),S(1,2,swizzle)|(negate?1<<24:0),S(0,10),S(0,11)),
+   ...ins(5,D(0),S(0),S(2,255)),...ins(2,D(0),S(0),S(2,254)),
+   ...ins(2,D(4),S(1),S(0)),...ins(1,D(5),S(0)),65535];
+  sources.set(key,tokens);cases.push([0,key,signs.map(x=>x*.25+.5),vector]);
+ }
+ // SINCOS's unwritten XYZ are undefined in VS2, so reconstruct those channels
+ // explicitly while proving that the preinitialized W survives. An affine
+ // color map avoids UNORM half ties at the zero/quarter-turn boundaries.
+ // Signed Taylor coefficients inferred from Microsoft's SINCOS Instruction
+ // Format source-register formulas (its later pseudocode has conflicting
+ // signs). Official SDK macro links are unavailable. Mathematical lowering
+ // does not consume them: this is NOT coefficient-expansion conformance.
+ const sincosCoefficients=[[-1/(5040*128),-1/(720*64),1/(24*16),1/(120*32)],[-1/(6*8),-1/(2*8),1,.5]];
+ for(const angle of[0,Math.fround(Math.PI/2),Math.fround(-Math.PI/2)])for(const mask of[1,2,3]){
+  const key=`sincos37/${angle}/${mask}`;assert(!sources.has(key));
+  const vector=[9,angle,9,9],expected=[mask&1?Math.cos(angle)*.25+.625:.625,mask&2?Math.sin(angle)*.25+.625:.625,.25,.75];
+  const tokens=[0xfffe0200,...ins(31,0x80000000,D(1)),...ins(31,0x80010005,D(1,2)),
+   ...sincosCoefficients.flatMap((values,i)=>ins(81,D(2,254+i),...values.map(fbits))),
+   ...ins(81,D(2,252),...Array(4).fill(.25).map(fbits)),
+   ...ins(81,D(2,253),...[.625,.625,.25,.75].map(fbits)),
+   ...ins(1,D(0,0,8),S(2,253)),...ins(37,D(0,0,mask),S(1,2,85),S(2,254),S(2,255)),
+   ...ins(5,D(0,0,mask),S(0),S(2,252)),...ins(2,D(0,0,mask),S(0),S(2,253)),
+   ...ins(1,D(0,0,7^mask),S(2,253)),
+   ...ins(2,D(4),S(1),S(0)),...ins(1,D(5),S(0)),65535];
+  sources.set(key,tokens);positionTolerances.set(key,2e-6);cases.push([0,key,expected,vector]);
  }
  const programs=new Map(),frames=[];
  const psTokens=[0xffff0101,1,D(0),S(1),65535],psIR=e.d3d_shader_ir_compile(put(psTokens),psTokens.length);
@@ -79,7 +136,11 @@ const IR=require('../lib/d3d-shader-ir'),Shader=require('../lib/d3d9-shader');
    f.fill(address,(ctx+32+129*64)/4,(ctx+32+129*64)/4+4);
    for(let c=0;c<4;c++)f.fill(vector[c],(ctx+32+130*64+c*16)/4,(ctx+32+130*64+c*16)/4+4);
    assert.strictEqual(e.d3d_shader_vm_run(ctx,4096),0);
-   for(let c=0;c<4;c++)for(let lane=0;lane<3;lane++)assert.strictEqual(f[(ctx+32+512*64+c*16)/4+lane],Math.fround(inputs[lane][c]+color[c]));
+   for(let c=0;c<4;c++)for(let lane=0;lane<3;lane++){
+    const actual=f[(ctx+32+512*64+c*16)/4+lane],expected=Math.fround(inputs[lane][c]+color[c]);
+    if(positionTolerances.has(base))assert(Math.abs(actual-expected)<=positionTolerances.get(base),`${base} position ${actual} vs ${expected}`);
+    else assert.strictEqual(actual,expected);
+   }
    e.d3d_shader_vm_free(ctx);
    const vertices=alloc(3*48),target=alloc(8*8*4),desc=alloc(128);
    new Float32Array(memory.buffer,vertices,36).set(inputs.flatMap(pos=>[...pos,address,0,0,1,...vector]));

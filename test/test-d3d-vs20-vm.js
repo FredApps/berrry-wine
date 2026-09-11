@@ -44,7 +44,201 @@ const { bootRenderHarness } = require('./render-helper');
       f.fill(c + component / 4, register(ctx, 2, c) + component * 4, register(ctx, 2, c) + component * 4 + 4);
   }
   function release(...pointers) { pointers.forEach(p => e.d3d_shader_vm_free(p)); }
-  assert.strictEqual(e.d3d_shader_vm_context_bytes(), 73760);
+  function seedSincosCoefficients(ctx) {
+    // Signed half-angle Taylor coefficients from the DDI derivation. Its
+    // separate literal table contains conflicting signs/denominators; these
+    // fixtures test mathematical results, not a verified SDK macro expansion.
+    const coefficients=[[-1/(5040*128),-1/(720*64),1/(24*16),1/(120*32)],[-1/(6*8),-1/(2*4),1,.5]];
+    coefficients.forEach((values,index)=>values.forEach((value,component)=>
+      f.fill(value,register(ctx,2,254+index)+component*4,register(ctx,2,254+index)+component*4+4)));
+  }
+  for (const lanes of [15,5]) for(let index=0;index<16;index++) {
+    const words=[0x80000000,0x7fffffff,0x7fc00000,0xffffffff];
+    const raw=word=>operand(255,word,0,0);
+    const program=compile([
+      ins(1,dst(0),constant(0)),
+      ins(47,operand(14,index,15),raw(0)),
+      ins(48,operand(7,index,15),...words.map(raw)),
+      ins(47,operand(14,index,15),raw(index%2?0x80000000:0))
+    ]);
+    const ctx=e.d3d_shader_vm_context(program,lanes);assert(ctx);
+    assert.strictEqual(e.d3d_shader_vm_context_bytes(),74080);
+    assert(u.slice((ctx+73760)/4,(ctx+74080)/4).every(v=>v===0));
+    assert.deepStrictEqual(Array.from({length:4},(_,i)=>u[(program+16+i*64)/4]),[60,61,60,0]);
+    u.fill(123,(ctx+73760)/4,(ctx+74080)/4);
+    assert.strictEqual(e.d3d_shader_vm_run(ctx,1),1);
+    assert.strictEqual(u[(ctx+74016)/4+index],0);
+    assert.strictEqual(e.d3d_shader_vm_run(ctx,1),1);
+    assert.deepStrictEqual(Array.from(u.slice((ctx+73760)/4+index*4,(ctx+73760)/4+index*4+4)),words);
+    assert.strictEqual(e.d3d_shader_vm_run(ctx,2),0);
+    assert.strictEqual(u[(ctx+74016)/4+index],index%2);
+    const fresh=e.d3d_shader_vm_context(program,lanes);assert(fresh);
+    assert(u.slice((fresh+73760)/4,(fresh+74080)/4).every(v=>v===0));
+    release(fresh,ctx,program);cases++;
+  }
+  assert.strictEqual(e.d3d_shader_vm_context_bytes(), 74080);
+  for(const opcode of [47,48]) {
+    const bank=opcode===47?14:7;
+    const definition=()=>ins(opcode,operand(bank,0,15),...Array.from({length:opcode===47?1:4},()=>operand(255,0xffffffff,0,0)));
+    for(const [arg,field,value] of [[0,0,2],[0,1,16],[0,2,1],[0,3,1],[1,0,2],[1,2,1],[1,3,1]]) {
+      const item=definition();item.operands[arg][field]=value;
+      const p=ir([item]);assert.strictEqual(e.d3d_shader_vm_compile_vs20(p),0);
+      release(p);cases++;
+    }
+    const p=ir([definition()],0xfffe0101);
+    assert.strictEqual(e.d3d_shader_vm_compile(p),0);release(p);cases++;
+  }
+  for (const mask of [1,2,3]) for (const lanes of [15,5])
+  for (const selector of [0,85,170,255]) for (const negate of [0,1]) {
+    const destination = 1;
+    const program = compile([ins(37,dst(destination,mask),operand(0,0,selector,negate),constant(254),constant(255))]);
+    const ctx=e.d3d_shader_vm_context(program,lanes);assert(ctx);
+    seedSincosCoefficients(ctx);
+    f.fill(77,register(ctx,0,1),register(ctx,0,1)+16);
+    f.fill(9,register(ctx,0,0),register(ctx,0,0)+16);
+    const angles=[-0,0,-Math.PI/2,Math.PI];
+    f.set(angles,register(ctx,0,0)+(selector&3)*4);
+    const previous=Array.from(f.slice(register(ctx,0,destination),register(ctx,0,destination)+16));
+    assert.strictEqual(e.d3d_shader_vm_run(ctx,1),0);
+    for(let component=0;component<4;component++)for(let lane=0;lane<4;lane++){
+      const actual=f[register(ctx,0,destination)+component*4+lane];
+      if((mask&(1<<component))&&(lanes&(1<<lane))){
+        const angle=Math.fround(angles[lane])*(negate?-1:1);
+        const expected=component===0?Math.cos(angle):Math.sin(angle);
+        assert(Math.abs(actual-expected)<=2e-6,`SINCOS component${component} ${angle}: ${actual} vs${expected}`);
+        if(expected===0)assert.strictEqual(actual,expected);
+      }else if(component===3 || !(lanes&(1<<lane)))assert.strictEqual(actual,previous[component*4+lane]);
+      // Unwritten XYZ are undefined for VS2; do not constrain their values.
+    }
+    release(ctx,program);cases++;
+  }
+  {
+    const program=compile([ins(37,dst(1,3),operand(0,0,0),constant(254),constant(255))]);
+    let worst=0;
+    for(let batch=0;batch<256;batch++){
+      const ctx=e.d3d_shader_vm_context(program,15);assert(ctx);
+      seedSincosCoefficients(ctx);
+      const angles=Array.from({length:4},(_,lane)=>Math.fround(-Math.PI+2*Math.PI*(batch*4+lane)/1023));
+      f.set(angles,register(ctx,0,0));
+      assert.strictEqual(e.d3d_shader_vm_run(ctx,1),0);
+      for(let component=0;component<2;component++)for(let lane=0;lane<4;lane++){
+        const expected=component?Math.sin(angles[lane]):Math.cos(angles[lane]);
+        const error=Math.abs(f[register(ctx,0,1)+component*4+lane]-expected);
+        worst=Math.max(worst,error);assert(error<=2e-6,`SINCOS sweep ${angles[lane]} error${error}`);
+      }
+      release(ctx);cases++;
+    }
+    release(program);console.log(`SINCOS 1024 angles max absolute error ${worst}`);
+  }
+  for (let mask = 1; mask < 16; mask++) for (const lanes of [15, 5])
+  for (const selector of [228, 27, 0, 255]) for (const negate of [0, 1]) {
+    const program = compile([ins(34, dst(1, mask), operand(0, 0, selector, negate), source(2), source(3))]);
+    const ctx = e.d3d_shader_vm_context(program, lanes); assert(ctx);
+    const values = [[-1,0,-0,1],[-Infinity,Infinity,NaN,-2],[3,-4,5,-6],[0,-0,1,-1]];
+    f.set(values.flat(), register(ctx, 0, 0));
+    f.fill(77, register(ctx, 0, 1), register(ctx, 0, 1)+16);
+    f.fill(NaN, register(ctx, 0, 2), register(ctx, 0, 3)+16);
+    assert.strictEqual(e.d3d_shader_vm_run(ctx, 1), 0);
+    for (let component = 0; component < 4; component++) for (let lane = 0; lane < 4; lane++) {
+      let input = values[(selector >>> (2*component)) & 3][lane];
+      if (negate) input = -input;
+      // NaN->1 follows the documented ordered-comparison pseudocode; it is
+      // an adapter policy, not a measured historic driver guarantee.
+      const expected = !(mask & (1<<component)) || !(lanes & (1<<lane)) ? 77 : input < 0 ? -1 : input === 0 ? 0 : 1;
+      assert.strictEqual(f[register(ctx,0,1)+component*4+lane], expected);
+    }
+    release(ctx, program); cases++;
+  }
+  // Overlap is not prohibited by the primary SGN page. Evaluate src0 before
+  // destination writes; undefined scratch contents are deliberately not tested.
+  for (const destination of [0, 1, 2]) for (const scratches of [[2,3],[0,3]]) {
+    const program = compile([ins(34, dst(destination, 5), operand(0,0,27), ...scratches.map(source))]);
+    const ctx = e.d3d_shader_vm_context(program, 15); assert(ctx);
+    f.fill(77, register(ctx,0,destination), register(ctx,0,destination)+16);
+    f.set([1,1,1,1,-2,-2,-2,-2,3,3,3,3,-4,-4,-4,-4], register(ctx,0,0));
+    assert.strictEqual(e.d3d_shader_vm_run(ctx,1),0);
+    for (const component of [0,2])
+      assert.deepStrictEqual(Array.from(f.slice(register(ctx,0,destination)+component*4,register(ctx,0,destination)+component*4+4)),[-1,-1,-1,-1]);
+    release(ctx,program); cases++;
+  }
+  for (const [bases, powers] of [
+    [[-2,.25,0,-0],[3,.5,2,-2]], [[0,-0,1,-4],[0,0,123,.5]],
+    [[2,16,.5,-9],[-2,.25,2,.5]], [[.7,1.1,3.3,8.1],[.125,-.5,2.5,-3]],
+  ]) for (const mask of [1, 8, 15]) for (const lanes of [15, 5])
+  for (const selector of [0,85,170,255]) for (const destination of [0,1]) {
+    const program = compile([ins(32, dst(destination, mask), operand(0, 0, selector), operand(0, 2, 255-selector))]);
+    const ctx = e.d3d_shader_vm_context(program, lanes); assert(ctx);
+    f.fill(9, register(ctx, 0, 0), register(ctx, 0, 0) + 16);
+    f.fill(7, register(ctx, 0, 2), register(ctx, 0, 2) + 16);
+    f.fill(77, register(ctx, 0, 1), register(ctx, 0, 1) + 16);
+    f.set(bases, register(ctx, 0, 0) + (selector & 3) * 4);
+    f.set(powers, register(ctx, 0, 2) + ((255-selector) & 3) * 4);
+    const previous = Array.from(f.slice(register(ctx, 0, destination), register(ctx, 0, destination) + 16));
+    assert.strictEqual(e.d3d_shader_vm_run(ctx, 1), 0);
+    for (let component=0; component<4; component++) for(let lane=0;lane<4;lane++) {
+      const active=(mask & (1<<component)) && (lanes & (1<<lane));
+      const expected=active ? Math.pow(Math.abs(Math.fround(bases[lane])), Math.fround(powers[lane])) : previous[component*4+lane];
+      const actual=f[register(ctx,0,destination)+component*4+lane];
+      if (!active || expected===0 || !Number.isFinite(expected)) assert.strictEqual(actual,expected);
+      else assert(Math.abs(actual-expected)<=Math.abs(expected)*2**-15,
+        `POW ${bases[lane]}^${powers[lane]} mask${mask} lanes${lanes} selector${selector} dst${destination}: ${actual} vs ${expected}`);
+    }
+    release(ctx,program);cases++;
+  }
+  {
+    // Composite POW accuracy, independent of the standalone LOG/EXP sweeps.
+    // Keep results normal; subnormal relative precision is a separate policy.
+    const program = compile([ins(32, dst(1), operand(0, 0, 0), operand(0, 2, 0))]);
+    let worst = 0;
+    for (let batch = 0; batch < 256; batch++) {
+      const ctx = e.d3d_shader_vm_context(program, 15); assert(ctx);
+      const expected = [];
+      for (let lane = 0; lane < 4; lane++) {
+        const n = batch * 4 + lane;
+        const base = Math.fround(2 ** (-12 + 24 * n / 1023));
+        const power = Math.fround(-8 + 16 * ((n * 317) % 1024) / 1023);
+        f[register(ctx, 0, 0) + lane] = base;
+        f[register(ctx, 0, 2) + lane] = power;
+        expected.push(Math.pow(base, power));
+      }
+      assert.strictEqual(e.d3d_shader_vm_run(ctx, 1), 0);
+      for (let lane = 0; lane < 4; lane++) {
+        const actual = f[register(ctx, 0, 1) + lane];
+        const error = Math.abs(actual / expected[lane] - 1);
+        worst = Math.max(worst, error);
+        assert(error <= 2 ** -15, `POW composite sample ${batch*4+lane}: relative error ${error}`);
+      }
+      release(ctx); cases++;
+    }
+    release(program);
+    console.log(`POW composite 1024 samples max relative error ${worst}`);
+  }
+  for (const opcode of [33, 36]) for (let mask = 1; mask < (opcode === 33 ? 8 : 16); mask++)
+  for (const lanes of [15, 5]) for (const negate of [0, 1])
+  for (const swizzle of opcode === 33 ? [228] : [228, 27, 0, 85, 170, 255]) {
+    const a = [[3,0,-0,1],[4,0,0,2],[0,0,-0,2],[10,1,-1,3]];
+    const b = [[0,1,2,3],[0,2,1,4],[1,3,4,5],[99,99,99,99]];
+    const sources = [operand(0, 0, swizzle, negate)];
+    if (opcode === 33) sources.push(source(2));
+    const program = compile([ins(opcode, dst(1, mask), ...sources)]);
+    const ctx = e.d3d_shader_vm_context(program, lanes); assert(ctx);
+    f.set(a.flat(), register(ctx, 0, 0)); f.set(b.flat(), register(ctx, 0, 2));
+    f.fill(77, register(ctx, 0, 1), register(ctx, 0, 1) + 16);
+    assert.strictEqual(e.d3d_shader_vm_run(ctx, 1), 0);
+    for (let component = 0; component < 4; component++) for (let lane = 0; lane < 4; lane++) {
+      const av = a.map((_, c) => {
+        const value = a[(swizzle >>> (c * 2)) & 3][lane]; return negate ? -value : value;
+      });
+      const j = (component + 1) % 3, k = (component + 2) % 3;
+      const squared = Math.fround(Math.fround(Math.fround(av[0]*av[0]) + Math.fround(av[1]*av[1])) + Math.fround(av[2]*av[2]));
+      const factor = squared === 0 ? Math.fround(3.4028234663852886e38) : Math.fround(1 / Math.fround(Math.sqrt(squared)));
+      let expected = opcode === 33 ? Math.fround(Math.fround(av[j]*b[k][lane]) - Math.fround(av[k]*b[j][lane])) : Math.fround(av[component]*factor);
+      if (!(mask & (1 << component)) || !(lanes & (1 << lane))) expected = 77;
+      assert.strictEqual(f[register(ctx, 0, 1) + component * 4 + lane], expected,
+        `vector opcode=${opcode} mask=${mask} lanes=${lanes} negate=${negate} swizzle=${swizzle} component=${component} lane=${lane}`);
+    }
+    release(ctx, program); cases++;
+  }
   {
     // The documented difference form must not overflow an intermediate product
     // when both endpoints are identical finite large values.
@@ -165,10 +359,31 @@ const { bootRenderHarness } = require('./render-helper');
     release(ctx, program); cases++;
   }
   for (const bad of [ins(46, dst(0), source(0)), ins(46, operand(3, 0, 2), source(0)),
+    ...[0,4,8,15].map(mask=>ins(37,dst(1,mask),operand(0,0,0),constant(254),constant(255))),
+    ins(37,dst(0,3),operand(0,0,0),constant(254),constant(255)),
+    ins(37,operand(5,0,3),operand(0,0,0),constant(254),constant(255)),
+    ins(37,dst(1,3),source(0),constant(254),constant(255)),
+    ins(37,dst(1,3),operand(0,0,0),source(2),constant(255)),
+    ins(37,dst(1,3),operand(0,0,0),constant(254),source(2)),
+    ins(37,dst(1,3),operand(0,0,0),constant(254),constant(254)),
+    ins(37,dst(1,3),operand(0,0,0),constant(254),constant(256)),
+    ins(34, dst(0), source(1), source(2), source(2)),
+    ins(34, dst(0), source(1), constant(2), source(3)),
+    ins(34, dst(0), source(1), source(2), operand(1, 3)),
+    ins(34, dst(0), source(1), source(12), source(3)),
+    ins(34, dst(0), source(1), operand(0, 2, 228, 256), source(3)),
     ins(1, addr, source(0)), ins(1, dst(0), constant(256)), ins(1, dst(0), operand(3, 0)),
     ins(1, dst(0), operand(0, 0, 0xe4, 256)), ins(1, dst(0), operand(2, 0, 0xe4, 512)),
     ins(20, dst(0), source(0), constant(0)), ins(35, dst(0), operand(0, 0, 0xe4, 2)),
     ...[14, 15, 78, 79].map(opcode => ins(opcode, dst(0), source(1))),
+    ins(33, dst(0, 7), source(0), source(1)), ins(33, dst(0, 7), source(1), source(0)),
+    ins(33, dst(0, 8), source(1), source(2)), ins(33, dst(0, 7), operand(0, 1, 27), source(2)),
+    ins(33, operand(5, 0, 7), source(1), source(2)),
+    ins(36, dst(0), source(0)), ins(36, operand(5, 0, 15), source(1)),
+    ins(32, dst(0), operand(0, 1, 0), operand(0, 0, 255)),
+    ins(32, operand(5, 0, 15), operand(0, 1, 0), operand(0, 2, 0)),
+    ins(32, dst(0), source(1), operand(0, 2, 0)),
+    ins(32, dst(0), operand(0, 1, 0), source(2)),
     ins(1, operand(4, 1, 15), source(0)), ins(46, operand(3, 0, 1, 1), source(0))]) {
     const p = ir([bad]); assert.strictEqual(e.d3d_shader_vm_compile_vs20(p), 0, 'private unsupported/malformed IR rejected');
     release(p); cases++;

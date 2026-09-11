@@ -276,3 +276,29 @@ unlock returns E_UNEXPECTED. DLL-private implementations use the suspended
 guest callback bridge; emulator-local objects complete synchronously. The
 fLastUnlockReleases proxy-disconnection distinction is not observable because
 the runtime does not expose out-of-process marshaled connections.
+
+2026-09-11: 345 -> 344. CoSetState now retains the replacement thread-state
+IUnknown before releasing the former object, while CoGetState returns an
+independently AddRefed pointer. Both paths preserve the same ownership rules
+for emulator-local and DLL-private guest implementations.
+
+2026-09-11: 344 -> 343. SetThreadAffinityMask now validates pseudo and durable
+thread handles through the existing process thread authority and accepts only
+bit zero, the sole processor in the browser Win98 machine. Empty and
+out-of-process masks fail with ERROR_INVALID_PARAMETER instead of returning a
+fabricated previous mask. GetProcessAffinityMask likewise rejects process
+handles outside the one modeled guest process before publishing its 0x1 masks.
+
+2026-09-11: 343 -> 342. IDirectDrawClipper::SetHWnd now retains the validated
+window associated with each clipper object, and GetHWnd returns that exact
+association instead of fabricating the process main window. Reserved flags,
+invalid windows and null output pointers fail without changing retained state.
+Generating and consuming the window's changing visible clip region remains a
+separate DirectDraw task.
+
+2026-09-11: 342 -> 340. IDirectDrawSurface::SetClipper now owns one COM
+reference to its attached clipper, replaces or detaches it without leaks, and
+automatically releases it with the surface. GetClipper returns an independently
+AddRefed interface and reports a missing attachment. Windowed presentation now
+uses the HWND retained by that clipper instead of assuming the cooperative
+window; arbitrary SetClipList regions and occlusion snapshots remain separate.

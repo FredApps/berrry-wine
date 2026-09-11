@@ -984,3 +984,57 @@ Launch uses --seconds=14400 --capture-every=60 --control-stdin --allocation-prob
 and the frozen --wasm path. Observer installation returned armedtrue with
 address10125769/request10848128. Startup samples through28.95s have no renderer
 failures; neither gameplay nor the target allocation has yet been reached.
+
+Run10715 subsequently completed the intro at frame1787 with no renderer
+failures. Profile Return down218078/up219575 accepted the default Player name;
+`/private/tmp/bw-compacted-profile-accepted.png` shows the main menu. Direct
+movement to156,446 initially left native coordinates at0,0. Moving to0,0 first
+established(-1,-1); then move224741 to156,446 settled at(194,556), verified before
+pressing. New Game down226752/up228520 reaches the tutorial screen, verified by
+`/private/tmp/bw-compacted-tutorial.png` at batch230088. All keys/buttons were
+released after these inputs. The original frozen process remains in use, not a
+latest-source or full-game acceptance run; the targeted allocation capture is
+still pending before Continue.
+
+Continue move232043 to321,451 settled at native(400,562), then down233778 and
+up235764. All synthetic input was released before the failure. Run10715 is now
+authoritatively terminal exit1: batch235768 traps at00925197, the same corrupted
+copy site as the pre-fix run. Do not restart this terminated handle.
+
+Unlike the earlier observer, the targeted capture caught the exact failing
+allocation at batch235767: skipped1 earlier allocation, EIP009a81c9,
+EDI10848128 (00a58780), EAX0. Heap ptr/end72007784/72011776; sparse ptr/end
+852481608/853082112; free-list head877342288; virtual allocation top828637184.
+The bounded walk found10248 free blocks, total5678096 bytes, largest44592,
+with no bad header or truncation. Full registers/stack/stream are durable at
+`[BW-ALLOC-CAPTURE]` in the run's existing run.log, line3048. The capture proves
+NULL allocation precedes the unchecked copy, even with heap-tail reclamation
+and shader-context compaction. It does not yet identify why obtaining another
+large sparse arena failed: virtual allocation records/backing-space census
+were not captured. No missing CPU opcode or new shader failure is demonstrated.
+
+Allocator review: even perfect coalescing of the captured main-instance free
+blocks cannot satisfy this request. A new sparse arena requires10878976 bytes
+(166*64KiB), including aligned allocation/header overhead. The next failure
+branches to distinguish are the shared guest reservation limit,2048 mapping
+slots, contiguous physical backing/PTE publication, and1024 heap arena slots.
+The recorded virtual_alloc_top is instance-local, not the authoritative shared
+reservation cursor. Existing MEM_DECOMMIT/release/failed-reservation lifecycle
+gaps were found during review, but none is established as this run's cause.
+
+The observer now captures matching-layout VIRTUAL_MAP_STATE, all bounded map
+records and heap arena records, active/free backing bytes and largest gap.
+Optional section failures preserve return registers and other diagnostics.
+Counts are capped by descriptors and2048 maps/1024 arenas; unpublished arena
+records and best-effort consistency are explicit. The caller loads the same
+RegionMap mirror after the CLI's WASM-layout check and adds --dump-virtual-maps
+as a terminal backup. Focused tests and syntax/region-copy/diff gates pass.
+
+New probe89033 is live on the identical frozen7dee27a0... wasm, whose layout
+stamp was rechecked as9c6027bce1d500a1; this changes diagnostics, not the guest or
+emulator under comparison. Same14400-second guard,60-second capture interval,
+control stdin and allocation observer. Artifacts:
+/var/folders/dz/1fqkk_jd4350qkm91pm9_q3c0000gp/T/bw-software-probe-w9Dofc.
+Installation reported armedtrue, address10125769/request10848128. No input has
+been sent. This is the instrumented follow-up to a terminal run, not a restart
+caused by an observation timeout, and no allocator fix is claimed yet.

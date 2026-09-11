@@ -1760,3 +1760,143 @@ Full build5124 passes canonical1162212 / compat1162680 with unchanged region
 layout and no data overlaps. Flow control,
 remaining arithmetic instructions and complete VS2 capability admission remain
 open; this is not a full-profile or Black & White gameplay result.
+
+Private CRS/NRM follow-up: new packets55/56 perform SIMD cross product and XYZ
+normalization with the existing source fetch and masked-write machinery. NRM
+scales W too; zero squared length selects finite FLT_MAX before multiplication.
+GLSL uses explicit XYZ length and zero handling, not `normalize(vec4)`. Native
+evaluation uses ordinary f32 multiply/add/sqrt/divide, with no claim of matching
+every GPU's subnormal/overflow behavior. CRS leaves unwritten W untouched.
+
+Token validation requires temporary destinations and rejects source aliases;
+CRS permits masks1..7 and identity swizzles only, with precise per-component
+dependencies. NRM allows masks/swizzles with XYZ plus selected-W dependency.
+Costs are CRS2/NRM3. Native42687 was RED;20088 passes164 new IR cases. Existing
+private84/matrix165/arithmetic195/legacyIR pass82368/67813/79583/26029.
+
+VM71586 was RED before admission;95966 passes502 private VM cases, covering all
+vector masks, active/inactive lanes, NEG, six NRM swizzles, signed zero, finite
+zero-length W and malformed operands. Legacy5503 passes263; logical34455 and
+diff checks pass. GPU39118 passes52 cases including12 CRS/NRM cases in GL1/2.
+The zero-length-W oracle keeps its second scale in the fragment shader to avoid
+combining two vertex scales into a subnormal; no production bug is claimed from
+that initial test failure. Same-IR39570 passes106 GPU frames against53 native
+frames; its initial failure47567 was a duplicate NRM case identifier that paired
+the zero-vector output with the nonzero-vector expectation. IDs now include the
+input vector. Full build11204 passes canonical1162831 / compat1163299, unchanged
+region layout and no data overlaps. Software pipeline71393 passes351 cases.
+Independent read-only review found no concrete packet/validation/masking defect;
+this adds no claim of Windows-driver numeric equivalence. Public profile gates
+remain closed.
+
+Private POW follow-up: opcode32 lowers to packet57 with four-lane SIMD
+log2/multiply/exp2 and to GLSL from the same validated IR. Both scalar sources
+require replicate swizzles; the destination must be temporary and distinct from
+the exponent (base alias is legal). Decoder dependency tracking reads the
+selected scalar regardless of destination mask and charges three slots.
+Public VS2 and legacy opcode admission are unchanged.
+
+The finite-input adapter zero policy is explicitly x^0=1, 0^positive=0 and
+0^negative=+Infinity; Microsoft's POW page does not specify this zero table.
+The native path uses internal log2's negative infinity, not standalone LOG's
+finite sentinel. GLSL guards zero domains explicitly. Nonfinite/subnormal
+cross-driver equivalence is not claimed. Browser zero-base fixtures use a normal
+small exponent: the initial subnormal exponent was flushed to zero by the driver.
+
+Evidence: decoder RED53335 ->3132 PASS210; native RED28876 ->11584 PASS954,
+including a 1024-sample composite accuracy sweep over normal results with maximum
+relative error 0.000004101193076699872 (bound2^-15), masks, scalar selectors,
+active lanes, legal aliases and malformed-IR rejection. Legacy13021 PASS263.
+GPU33167 PASS70 includes18 new POW frames. Same-IR82549 PASS116 GPU frames vs58
+native position/raster frames, adding five POW cases. Full30028 PASS canonical
+1163611 / compat1164079, unchanged layout and no data overlaps. Remaining
+arithmetic, flow control and complete profile/gameplay acceptance remain open.
+
+Private SGN follow-up: opcode34 lowers to SIMD packet58 and ordered component
+comparisons in GLSL. Only src0 is evaluated; two distinct bounded temporary
+scratch operands are validated as clobbers rather than initialized reads.
+Decoder validation invalidates both scratch definition masks after reading src0
+and before publishing destination writes. Overlap with source/destination is
+accepted with destination-written components superseding clobbering; this is
+explicit adapter policy where the primary instruction page does not specify
+overlap. NaN-to-positive-one follows the literal ordered-comparison pseudocode,
+not measured Windows-driver evidence. Signed zero produces positive zero.
+Public VS2 and legacy opcode admission remain unchanged.
+
+Evidence: native RED52300 ->31153 PASS1205, covering every destination mask,
+four swizzles, NEG, inactive lanes, signed zero, infinities, NaN policy, aliasing
+and malformed scratch operands. Decoder RED62799 ->33698 PASS137 including
+uninitialized scratch acceptance, clobber/read rejection, reinitialization,
+selected source dependencies and three-slot accounting. Prior decoder suites
+pass98324/53764. GPU RED8708 ->33630 PASS80 (10 new SGN GL1/2 cases), with scratch
+values absent from generated GLSL. Legacy82913 PASS263; software pipeline26583
+PASS351; full88845 PASS canonical1163901 / compat1164369, unchanged region layout
+and no data overlaps. Independent read-only review found no concrete defect.
+Same-IR55356 PASS120 actual GL1/2 frames against60 native position/raster frames,
+including uninitialized scratches and reverse-swizzled/negated signs mapped to
+visible colors. SINCOS, flow and complete profile/gameplay gates remain open.
+
+Private SINCOS follow-up: opcode37 / packet59 uses ordinary four-lane
+SIMD Taylor polynomials (sine degree17, cosine degree16) on the documented
+[-pi,+pi] domain. Native73923 passes1520 cases including a 1024-angle sweep with
+maximum absolute error3.7030587629605094e-7 against independent JS sin/cos,
+bounded by2e-6 in the test. The driver reference permits0.002 absolute error.
+The helper makes no host math calls and generates no runtime Wasm. Native
+RED46272 confirmed the missing opcode before implementation. Legacy33994
+passes263; full37288 passes canonical1164618 / compat1165086, unchanged layout
+and no data overlaps.
+
+Decoder42062 passes84 SINCOS cases; neighboring suites42062/25097 pass. TEMP
+destination masks1/2/3, scalar angle, source/destination non-aliasing, two
+distinct coefficient-register indices and eight slots are checked. VS2 clears
+XYZ definition bits before publishing written XY, preserving W's definition.
+General coefficient modifiers/swizzles/relative syntax remain available; the
+same encoded index is conservatively rejected even across relative/static
+operands. Required effective coefficient values remain a runtime valid-program
+contract. Mathematical lowering is not a claim to reproduce a driver's exact
+macro expansion or behavior with invalid coefficient values. The primary driver
+page's coefficient signs/denominators conflict internally, so its literal table
+is not an independent numeric oracle. Public profile gates remain unchanged.
+GLSL emits mathematical cos/sin with the existing masked assignment, retaining
+W; behavior outside the documented angle domain is not a parity claim (the
+software helper continues its polynomial). Actual GPU93447 PASS90 includes10
+new SINCOS GL1/2 cases; undefined XYZ are redefined before color observation.
+Same-IR69392 PASS138 GL1/2 frames against69 native frames. Nine new cases cover
+0 and +/-pi/2 with masksX/Y/XY and exact stable UNORM pixels; only their position
+comparisons use the explicit2e-6 arithmetic tolerance. Every older position
+check remains exact. VM68401 repeats1520 PASS with Taylor-derived coefficient
+vectors seeded. Full profiles, flow control and changing gameplay remain open.
+
+Private typed-definition follow-up: DEFB47 and DEFI48 now retain raw DWORD
+immediates in the shared IR and lower to software packets60/61 or GLSL typed
+constants. Definitions are stably hoisted with last-definition precedence and
+consume zero guest instruction slots. The private canonical subset requires
+full destination selector15, no modifier, and b0..15/i0..15; this is not a claim
+that every other native DEFB mask encoding is invalid. Boolean execution maps
+any nonzero DWORD to TRUE; integer definitions preserve signed32 bits, including
+INT_MIN and words that would be NaNs if interpreted as floating point.
+
+The software context appends320 uniform bytes (i registers at73760, b at74016,
+total74080), leaving all previous offsets unchanged. Definitions execute through
+the same bounded packet retirement/cancellation loop; inactive invocation lanes
+do not partially initialize uniform constants. New contexts default to zero.
+GLSL uses const bool/highp ivec4 and a safe INT_MIN literal expression. API
+integer/boolean constant uploads and control-flow consumers remain unfinished;
+the rendered tests use explicit test-only witnesses, not newly admitted typed
+arithmetic. WebGL1 full32 integer execution precision is not established.
+
+Evidence: native RED95562 rejected the missing opcode;36355 PASS1568 including
+all16 indices, exact raw words, malformed operands, late/duplicate definitions,
+one-packet resumption, context isolation and legacy rejection. Legacy VM263 and
+software pipeline76330 PASS351 remain green. Decoder23564 PASS84 baseline and
+100 typed cases; adjacent arithmetic/matrix/vector/POW/SGN/SINCOS suites pass.
+Actual GL1/2 run41089 PASS94 includes four new typed-definition witnesses.
+Independent native review found no concrete defect. Full12282 PASS canonical
+1165086 / compat1165554 with unchanged layout9c6027bce1d500a1 and no data
+overlaps. Public VS2 admission, full profile coverage and gameplay remain open.
+Reader review additionally found that projection discarded noncanonical typed
+immediate selector/modifier fields. The private typed reader now rejects those
+fields (legacy DEF unchanged); RED missing-exception ->35637 PASS typed100 plus
+raw-reader rejection fixtures. Same-IR regression86702 PASS138 actual GL1/2
+frames versus69 native frames; these are the existing arithmetic/raster cases,
+not typed control-flow acceptance.

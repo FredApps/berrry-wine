@@ -31,6 +31,7 @@ const flags=[`--exe=${path.join(game,'BW2Demo.exe')}`,'--vfs-include=**/*',
   '--trace-eip-range=0x00526d93-0x00526d97','--trace-eip-detail','--trace-eip-stream'];
 if(arg('wasm',null))flags.push(`--wasm=${path.resolve(arg('wasm'))}`,'--no-build');
 else if(args.includes('--no-build'))flags.push('--no-build');
+if(args.includes('--allocation-probe'))flags.push('--dump-virtual-maps');
 (async()=>{
   console.log('Artifacts:',output,'loadavg:',os.loadavg());
   const log=fs.createWriteStream(path.join(output,'run.log')),records=fs.createWriteStream(path.join(output,'samples.ndjson'));
@@ -74,8 +75,14 @@ else if(args.includes('--no-build'))flags.push('--no-build');
   const deadline=setTimeout(()=>child.kill('SIGTERM'),(seconds+150)*1000);
   try{
     await command('ping');
-    if(args.includes('--allocation-probe'))
-      console.log('Allocation observer:',await evaluate(`(${installBwAllocationObserver.toString()})(instance,exports,ctx,tickState)`));
+    if(args.includes('--allocation-probe')){
+      // Load after the CLI's build/ping, and honor WINE_REGION_MAP just as
+      // run.js does when checking the loaded WASM's layout stamp.
+      const RegionMap=require('../lib/region-map.generated');
+      const options={layoutHash:RegionMap.LAYOUT_HASH,regionMap:Object.fromEntries(
+        ['VIRTUAL_MAP_STATE','VIRTUAL_MAP_TABLE','VIRTUAL_BACKING_BASE','HEAP_ARENAS'].map(n=>[n,RegionMap.REGIONS[n]]))};
+      console.log('Allocation observer:',await evaluate(`(${installBwAllocationObserver.toString()})(instance,exports,ctx,tickState,${JSON.stringify(options)})`));
+    }
     await evaluate(`(()=>{
       const b=ctx.d3d9Bridge,submit=b._submit,op=${JSON.stringify(OPCODES)};
       const p=ctx.bwSoftwareProbe={submitted:{},completed:{},failed:0,lastError:null,categories:{}};
