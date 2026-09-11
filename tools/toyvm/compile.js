@@ -18,7 +18,7 @@
 const isa = require('./isa');
 const { decodeOne, H } = require('./decode');
 const { ARITY, FUSE, TRACE, SPIN, PSPIN, SPEC, applyExtract, NOFLAG, FLAG_EFFECTS,
-  prepareTables, HANDLERS } = require('./emit');
+  prepareTables, HANDLERS, TAKEN_AT } = require('./emit');
 const { eligibleRuns, treeKey, blockWidth: treeBlockWidth } = require('./tree-fold');
 
 // Per-handler facts the compile loop asks for on every program. HANDLERS
@@ -836,9 +836,68 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         for (let k = 1; k <= ARITY[words[p]]; k++) args.push(words[p + k]);
         return { fn: words[p], args, at: p };
       });
+      const lin = (codeBase + blockIps[b]) & mask;
+
+      // A SELF-LOOP BLOCK, FOLDED WHOLE. When the block's last op is a transfer
+      // whose taken edge is this block's own head, and everything in front of
+      // that terminator is ONE eligible run, the tree can absorb the terminator
+      // and turn the loop inside the handler -- one dispatch per loop instead of
+      // one per iteration. `buildLoopTree` lowers it through region-jit's
+      // `buildRegion`, so the slice still ends at the guest instruction the
+      // interpreter would have ended it at; see tree-fold.js for why that is the
+      // whole of the answer to "does this retime the audio".
+      //
+      // The substitution is the straight-line one with a wider reach: the FIRST
+      // word of the block becomes the handler index and every word behind it --
+      // the operands, the terminator, its target -- stays exactly where it is,
+      // read by nobody, because the handler re-resolves `$ip` from `$gip` on the
+      // way out. A fixup inside is therefore harmless here (it resolves into a
+      // dead word), which is why this path does not carry the straight-line
+      // pass's fixup guard.
+      if (tf.loops && ops.length >= 2) {
+        const term = ops[ops.length - 1];
+        const takenAt = TAKEN_AT.get(term.fn);
+        // `TAKEN_AT` names the operand slot holding the taken edge's GUEST ip;
+        // the slot in front of it is that edge's arena address, which is still a
+        // zero waiting on a fixup here. Reading the wrong one of the two is the
+        // difference between "this loops back to itself" and "this never fires".
+        const taken = takenAt === undefined ? undefined : term.args[takenAt];
+        if (taken === blockIps[b]) {
+          const body = ops.slice(0, -1);
+          const br = eligibleRuns(body, treeBlockWidth(ops),
+            { minOps: 1, why: tf.why, relax: tf.relax });
+          // One run, covering the whole body: a run that stops short would leave
+          // ops the tree cannot lower between two it can, and there is no way to
+          // run those from inside the handler.
+          if (br.length === 1 && br[0].length === body.length) {
+            const key = `loop:${blockIps[b]}:${treeKey(ops)}`;
+            const ord = tf.at.get(key);
+            const arity = term.at + 1 + ARITY[term.fn] - start - 1;
+            if (ord === undefined) {
+              tf.want(key, ops, lin, arenaBase + start * 4, blockIps[b]);
+              continue;
+            }
+            if (tf.arity.get(key) !== arity) { tf.note('arity disagrees with the installed tree'); continue; }
+            words[start] = tf.base + ord;
+            for (let i = 1; i < ops.length; i++) wordIp.delete(ops[i].at);
+            treeFolds++;
+            tf.folds++;
+            tf.foldedOps += ops.length;
+            continue;                        // the block is one tree; no straight-line runs in it
+          }
+          // Name the op that stopped it. A bare "not one eligible run" lands in
+          // the histogram as one bucket for every shape of loop in the program,
+          // which is exactly the thing the decline histogram exists not to be:
+          // the whole point of it is to be a work list.
+          const covered = (br.length && br[0][0].at === body[0].at) ? br[0].length : 0;
+          const bad = body[covered];
+          const stem = bad ? String(HANDLERS[bad.fn].name).split('_')[0] : 'nothing';
+          tf.note(`loop: body breaks at ${stem}`);
+        }
+      }
+
       const runs = eligibleRuns(ops, treeBlockWidth(ops),
         { minOps: tf.minOps, why: tf.why, relax: tf.relax });
-      const lin = (codeBase + blockIps[b]) & mask;
       for (const run of runs) {
         const last = run[run.length - 1];
         const from = run[0].at, to = last.at + 1 + ARITY[last.fn];

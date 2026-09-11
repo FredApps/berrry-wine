@@ -331,6 +331,62 @@ function buildTree(run, name) {
   };
 }
 
+// A SELF-LOOP BLOCK, FOLDED WHOLE -- terminator included, so the loop turns
+// INSIDE the handler and costs one dispatch per LOOP rather than one per
+// iteration. `buildTree` above stops in front of the terminator, which is why a
+// four-op loop body still pays a `$next` trip for its `jnz` and another to come
+// back round; this does not.
+//
+// NOTHING HERE IS A SECOND PROTOCOL. The step budget, the slice boundary, the
+// self-modify break and the way the handler publishes where the guest goes next
+// are all region-jit.js's `buildRegion`, called rather than reimplemented, on a
+// one-block closed region built exactly the way `chainFrom` builds one:
+//
+//   * `nexts[i]` is the guest ip control must be at after op i, from the
+//     exported `fallThroughIp` (null for a non-transfer), and the last entry is
+//     the head, which is what tells `buildRegion` the block closes on itself.
+//   * every lowered edge takes the interpreter's own boundary test -- publish
+//     `$gip`, then `$smc || $halt || $steps < 0` and leave through `$out` --
+//     so the slice ends at the same guest instruction it would have ended at
+//     unfolded. That test is the whole of the answer to "does absorbing a block
+//     transfer move the slice boundary": it is the reason it does not.
+//   * `$steps` is charged per iteration, op by op, with the entry refund for
+//     the one `$next` already charged to dispatch in.
+//   * on the way out `$ip` is re-resolved from `$gip` through `$jlook`, so the
+//     arena words behind the tree's own -- the rest of the block, which the
+//     fold leaves exactly where they were -- are simply never read. The arena
+//     still does not change shape.
+//
+// A transfer `buildRegion` could not lower leaves the interpreter's protocol
+// inside the loop, which is the CARRIE.EXE class region-prepare.js declines
+// outright; this declines it for the same reason.
+function buildLoopTree(run, headIp, name) {
+  const { buildRegion, fallThroughIp } = require('./region-jit');
+  const ops = run.map(o => ({ fn: o.fn, name: HANDLERS[o.fn].name, args: o.args, at: o.at }));
+  const nexts = ops.map(o => fallThroughIp(o));
+  nexts[nexts.length - 1] = headIp;
+  let r;
+  try {
+    r = buildRegion(ops, nexts, headIp, name, true, [], []);
+  } catch (e) {
+    return { declined: `loop: build threw: ${e && e.message ? e.message : String(e)}` };
+  }
+  if (!r || !r.body) return { declined: `loop: ${(r && r.declined) || 'no body'}` };
+  if (r.unlowered) {
+    return { declined: `loop: ${r.unlowered} transfer(s) not lowered`
+      + (r.unloweredWhy && r.unloweredWhy.length ? ` (${r.unloweredWhy[0]})` : '') };
+  }
+  const last = run[run.length - 1];
+  const arity = last.at + 1 + ARITY[last.fn] - run[0].at - 1;
+  return {
+    tree: { name, locals: r.locals || '', body: r.body },
+    arity, ops: run.length, loop: true,
+    promoted: r.promoted ? r.promoted.length : 0,
+    promoteDeclined: r.declined || null,
+    bytes: r.body.length,
+  };
+}
+
 // --- the live driver ---------------------------------------------------------
 
 // A fold cannot be installed by writing a word: the handler has to EXIST in the
@@ -365,11 +421,16 @@ class TreeFolder {
     // Which of the census's relaxations are on. An array or a Set from the CLI,
     // normalized to a Set here so `eligibleRuns` never has to ask.
     relax = RELAXATIONS,
+    // Fold a self-loop block WHOLE, terminator included, so the loop runs its
+    // iterations inside the tree function and costs one dispatch per loop
+    // instead of one per iteration. Off switch for the A/B, since this is the
+    // one relaxation that changes which arena words the guest re-enters.
+    loops = true,
   }) {
     Object.assign(this, {
       session, vm, machine, portIn, portOut, build, repFast,
       maxTrees, maxInstalls, minOps, log, batchMin, batchWait,
-      hot, warmFrom, warmFor, hits,
+      hot, warmFrom, warmFor, hits, loops,
       relax: relax instanceof Set ? relax : new Set(relax),
     });
     // True while the guest is running on the `--block-hits` build the gate
@@ -388,6 +449,8 @@ class TreeFolder {
     this.sinceWant = 0;
     this.trees = [];                  // the `{name, locals, body}` list, in table order
     this.treeOps = [];                // guest ops each of those stands for
+    this.treeIsLoop = [];             // ...and whether each one loops in place
+    this.treeLoops = 0;
     this.at = new Map();              // key -> ordinal
     this.arity = new Map();           // key -> operand words the handler steps over
     this.pendingSites = new Map();    // lin -> true, blocks to drop at the next install
@@ -420,7 +483,11 @@ class TreeFolder {
   // decline everything; the count is read at the end of the profile window
   // instead (`closeWindow`), by which time the arena word has been bumped once
   // per execution of the run.
-  want(key, run, lin, addr) {
+  // `loopHead` is the block's own guest ip when the run is a WHOLE self-loop
+  // block (the loop fold above); undefined for an ordinary straight-line run.
+  // It rides with the run because it is the one thing `buildLoopTree` needs
+  // that the arena words do not carry.
+  want(key, run, lin, addr, loopHead) {
     if (this.at.has(key) || this.wantedKeys.has(key)) {
       if (lin !== undefined) this.pendingSites.set(lin, true);
       return;
@@ -462,7 +529,7 @@ class TreeFolder {
       this.capped = true;
       return;
     }
-    this.wantedKeys.set(key, run);
+    this.wantedKeys.set(key, { run, loopHead });
     this.sinceWant = 0;
     if (lin !== undefined) this.pendingSites.set(lin, true);
   }
@@ -581,8 +648,10 @@ class TreeFolder {
   async pump() {
     if (!this.needsInstall()) return false;
     const built = [];
-    for (const [key, run] of this.wantedKeys) {
-      const r = buildTree(run, `tree_${this.trees.length + built.length}`);
+    for (const [key, w] of this.wantedKeys) {
+      const name = `tree_${this.trees.length + built.length}`;
+      const r = w.loopHead === undefined
+        ? buildTree(w.run, name) : buildLoopTree(w.run, w.loopHead, name);
       if (r.declined) {
         this.declinedTrees.set(r.declined, (this.declinedTrees.get(r.declined) || 0) + 1);
         continue;
@@ -603,6 +672,15 @@ class TreeFolder {
       // N times removed N*(ops-1) trips through `$next`. Without it the fold's
       // headline number would have to be inferred from a timing.
       this.treeOps.push(b.ops);
+      // A LOOP TREE'S REMOVED-DISPATCH COUNT IS NOT `entries * (ops - 1)`.
+      // The handler histogram counts ENTRIES into the handler, and a loop tree
+      // is entered once per LOOP and then turns inside itself, so the trips it
+      // removed are `iterations * ops - entries` and the iteration count is
+      // invisible from outside. Counted separately rather than folded into the
+      // same total, so the headline number stays a number and does not quietly
+      // become a lower bound.
+      if (b.loop) this.treeLoops++;
+      this.treeIsLoop.push(!!b.loop);
       this.at.set(b.key, this.trees.length);
       this.arity.set(b.key, b.arity);
       this.trees.push(b.tree);
@@ -720,6 +798,7 @@ class TreeFolder {
     return {
       installs: this.installs, trees: this.trees.length, folds: this.folds,
       base: this.base, treeOps: [...this.treeOps],
+      treeIsLoop: [...this.treeIsLoop], treeLoops: this.treeLoops, loops: this.loops,
       hot: this.hot, phase: this.phase, relax: [...this.relax],
       hotPromoted: this.hotPromoted, coldSkipped: this.coldSkipped,
       deadSkipped: this.deadSkipped, hottest: this.hottest, hotLins: this.hotLins.size,

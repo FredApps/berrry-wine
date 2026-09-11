@@ -1103,6 +1103,11 @@ async function main() {
       // so an arm can be turned OFF for an A/B: `--tree-fold-relax=none` is the
       // fold exactly as docs/toyvm-tree-fold.md first measured it.
       relax: treeFoldRelax(arg('tree-fold-relax')),
+      // `--no-tree-fold-loops`: stop before the terminator, the way the fold
+      // did when docs/toyvm-tree-fold.md first measured it. The A/B arm for the
+      // one relaxation that changes which arena words the guest re-enters --
+      // everything else here is a substitution the guest cannot observe.
+      loops: !flag('no-tree-fold-loops'),
       fromEnv: !process.argv.slice(2).includes('--tree-fold'),
       log: flag('tree-fold-verbose') ? console.log : (() => {}),
     } : null,
@@ -1409,6 +1414,7 @@ async function main() {
     + (r.tree
       ? `\n  tree fold: ${r.tree.trees} handler(s) over ${r.tree.installs} install(s), `
         + `${r.tree.folds} substitution(s) covering ${r.tree.foldedOps} guest ops, `
+        + `${r.tree.treeLoops ? `${r.tree.treeLoops} loop handler(s), ` : ''}`
         + `${(r.tree.watBytes / 1024).toFixed(1)}KB of WAT`
         + `${r.tree.capped ? ' (capped)' : ''}`
         // The gate's own ledger. `hottest` is the load-bearing number when a
@@ -1427,14 +1433,23 @@ async function main() {
         + `\n  tree drops: ${r.tree.dropSites} site(s) -> ${r.tree.dropProgs} program(s), `
         + `${r.tree.dropBlocks} block(s) recompiled`
         + (r.treeEntries ? (() => {
-          let hits = 0, removed = 0;
+          // A LOOP TREE'S SAVING IS NOT `entries * (ops - 1)`. A straight-line
+          // tree runs its ops once per entry, so that product is exactly the
+          // `$next` trips it removed. A loop tree turns an unknown number of
+          // ITERATIONS inside one dispatch, and nothing here counts them -- so
+          // its entries are reported on their own line rather than folded into
+          // a number that would understate them by the trip count.
+          let hits = 0, removed = 0, loopHits = 0;
+          const isLoop = r.tree.treeIsLoop || [];
           for (let i = 0; i < r.treeEntries.length; i++) {
+            if (isLoop[i]) { loopHits += r.treeEntries[i]; continue; }
             hits += r.treeEntries[i];
             removed += r.treeEntries[i] * ((r.tree.treeOps[i] || 1) - 1);
           }
           return `\n  tree entries: ${hits} tree dispatch(es), `
             + `${removed} $next trip(s) removed `
-            + `(${(100 * removed / r.dispatched).toFixed(2)}% of the dispatches retired)`;
+            + `(${(100 * removed / r.dispatched).toFixed(2)}% of the dispatches retired)`
+            + (loopHits ? `, ${loopHits} loop tree dispatch(es) (iterations not counted)` : '');
         })() : '')
         + (r.tree.why.size
           ? `\n  tree declines: ` + [...r.tree.why].sort((a, b) => b[1] - a[1])

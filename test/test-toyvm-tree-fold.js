@@ -220,7 +220,7 @@ const CASES = {
   // real target, with memory reads inside the run. Loads only, so the alias
   // rule never fires and the whole body is one run.
   addrloop: {
-    folds: true,
+    folds: true, loop: true,
     data: [TABLE, Array.from({ length: 64 }, (_, i) => i)],
     body: ({ w, label, rel8 }) => {
       w(0xBE, TABLE & 0xFF, TABLE >> 8);   // mov si,TABLE
@@ -241,7 +241,7 @@ const CASES = {
   // branch reads -- which is exactly the case where a fold has to get the
   // flags right, because the terminator's compare is the FIRST thing after it.
   incloop: {
-    folds: true,
+    folds: true, loop: true,
     body: ({ w, label, rel8 }) => {
       w(0x31, 0xDB);             // xor bx,bx
       w(0x31, 0xF6);             // xor si,si
@@ -434,7 +434,7 @@ const CASES = {
   // the `jnz` OUTSIDE it, on all eight turns of the loop. A fold that got either
   // end wrong prints a different BX.
   cmploop: {
-    folds: true, relaxed: true,
+    folds: true, relaxed: true, loop: true,
     body: ({ w, label, rel8 }) => {
       w(0x31, 0xDB);             // xor bx,bx
       w(0xBE, 0x08, 0x00);       // mov si,8
@@ -486,6 +486,10 @@ function run(com, extra) {
 const screen = (log) => (log.match(/^  \|(.*)$/gm) || []).map((s) => s.slice(3).trim()).join('');
 const folds = (log) => +(/, (\d+) tree folds/.exec(log) || [0, 0])[1];
 const trees = (log) => +(/tree fold: (\d+) handler/.exec(log) || [0, 0])[1];
+// How many of those handlers absorbed their block's terminator and turn the
+// loop inside themselves (`--tree-fold` item 3). Zero unless a self-loop block
+// was folded whole, which is a different claim from "something folded".
+const loops = (log) => +(/(\d+) loop handler\(s\)/.exec(log) || [0, 0])[1];
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-tree-fold-'));
 const summary = [];
@@ -537,7 +541,28 @@ for (const [name, c] of Object.entries(CASES)) {
     exact = ' (exact: none)';
   }
 
-  summary.push(`${name} ${a} ${c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}${exact}`);
+  // THE TERMINATOR FOLD. A case marked `loop: true` has a self-loop block whose
+  // whole body is foldable, so the tree must absorb the branch and run the
+  // iterations inside itself. The screen assertion above is what makes this
+  // safe to want: a loop that ran a different number of times, or left the
+  // slice at a different instruction, does not print the same seven words.
+  //
+  // The A/B arm is `--no-tree-fold-loops`, and it has to agree with the plain
+  // arm too -- that is what says the loop fold is the only thing that changed.
+  let loopNote = '';
+  if (c.loop) {
+    assert.ok(loops(on) > 0,
+      `${name}: this shape has a foldable self-loop block, but no loop handler `
+      + `was built:\n${on}`);
+    const nl = run(com, ['--tree-fold', '--tree-fold-batch=1', '--no-tree-fold-loops']);
+    assert.strictEqual(screen(nl), a,
+      `${name}: the no-loops arm computed something else\n  plain ${a}\n  no-loops ${screen(nl)}`);
+    assert.strictEqual(loops(nl), 0,
+      `${name}: --no-tree-fold-loops still built ${loops(nl)} loop handler(s):\n${nl}`);
+    loopNote = ` (${loops(on)} loop)`;
+  }
+
+  summary.push(`${name} ${a} ${c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}${loopNote}${exact}`);
 }
 // --- the hotness gate ------------------------------------------------------
 //
