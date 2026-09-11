@@ -2504,6 +2504,15 @@
   (func (export "get_tree_fold") (result i32) (global.get $tree_fold_enabled))
   (func (export "set_tree_fold_min_ops") (param $n i32)
     (global.set $tree_fold_min_ops (local.get $n)))
+  ;; The ceiling, clamped: a descriptor past $TREE_FOLD_UOPS_LIMIT overruns
+  ;; either $decode_block's reserved slack or the classify scratch, and both
+  ;; corrupt silently rather than declining, so the flag cannot be allowed to
+  ;; ask for one. Lowering it is always safe, which is what an A/B wants.
+  (func (export "set_tree_fold_max_ops") (param $n i32)
+    (global.set $tree_fold_max_ops
+      (select (global.get $TREE_FOLD_UOPS_LIMIT) (local.get $n)
+              (i32.gt_u (local.get $n) (global.get $TREE_FOLD_UOPS_LIMIT)))))
+  (func (export "get_tree_fold_max_ops") (result i32) (global.get $tree_fold_max_ops))
   (func (export "get_tree_fold_matches") (result i32) (global.get $tree_fold_matches))
   (func (export "get_tree_fold_runs") (result i32) (global.get $tree_fold_runs))
   (func (export "get_tree_fold_iters") (result i64) (global.get $tree_fold_iters))

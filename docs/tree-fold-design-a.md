@@ -441,9 +441,89 @@ the next percentage point should look at H149's two-op EA pairing, not here.
 ```
 --tree-fold                 arm the family (default off)
 --tree-fold-min-ops=N       interior-op floor (default 4)
+--tree-fold-max-ops=N       interior-op ceiling (default 160; see §11)
 --loopmatch-stats           prints matches / runs / iters / ops / deadflag and the decline split
 node tools/bench-loops.js --shapes=tree_span,tree_dot,tree_chain --toggle=tree_fold
 ```
 
 `set_tree_fold` is in `INHERITED_WASM_GLOBALS`, so every guest-thread instance
 gets the same setting, cooperative and real-Worker alike.
+
+## 11. The body-length ceiling, measured (2026-09)
+
+Both earlier caps were guesses about throughput. 24 was "past this the run
+length stops being the thing that pays"; 64 was "mw3's blend is 42 ops, make it
+fit". Neither was measured. `tools/bench-loops.js` now measures it: one shape
+at nine lengths, so nothing but the body varies — `mov eax,[esi]`, then N-4
+serially dependent `add eax,ebx`, then a store and two cursor bumps.
+
+| interior ops | fold=1 min | fold=0 min | paired median | blocks/iter on→off |
+|---|---|---|---|---|
+| 8   | 169.2ms | 339.9ms | **+50.0%** | 0.01 → 1.00 |
+| 16  | 247.9ms | 477.6ms | **+50.4%** | 0.02 → 1.00 |
+| 24  | 291.2ms | 519.8ms | **+37.4%** | 0.03 → 1.00 |
+| 32  | 231.5ms | 358.4ms | **+37.6%** | 0.03 → 1.00 |
+| 48  | 474.5ms | 689.3ms | **+37.9%** | 0.05 → 1.00 |
+| 64  | 410.7ms | 711.9ms | **+42.8%** | 0.06 → 1.00 |
+| 96  | 841.2ms | 1624.9ms | **+37.6%** | 0.09 → 1.00 |
+| 128 | 1238.0ms | 2116.7ms | **+33.3%** | 0.13 → 1.00 |
+| 160 | 1191.6ms | 1931.0ms | **+35.2%** | 0.14 → 1.00 |
+
+**There is no crossover.** The fold leads at every length tested and the lead
+does not trend towards zero — 50% at 8 ops, 33-43% from 64 to 160. So the
+question the cap was supposed to answer ("where does the generic walker stop
+beating per-op?") has no answer inside the range a descriptor can physically
+hold: body length was never the variable.
+
+That leaves only structure, and two structures bound it. `$decode_block`
+reserves 4096 bytes of slack past `$thread_alloc`; the descriptor is a 44-byte
+header plus 24 bytes per micro-op, so `(4096 - 44) / 24 = 168`. The classify
+scratch is the far half of `OP_INDEX`, 1024 words at 6 words per micro-op =
+170. `$TREE_FOLD_UOPS_LIMIT` is the smaller of the two and the setter clamps to
+it, because a descriptor past either one **corrupts rather than declines**. The
+default is 160, the longest length actually measured, inside both limits.
+
+### The null control, and what it says about every percentage on this page
+
+`tree_mem16/32/96` were written as the honest worst case: a memory interior
+(`mov eax,[esi]` / `add [edi],eax`), where both arms pay `$g2w` and a real
+load and store and only the dispatch is left to win. They turned out to be
+something more useful — a **null control**, because the fold declines them
+outright. H127, the read-modify-write ALU-to-memory form, is not a foldable
+micro-op, and the two arms ran byte-identical code: identical handler
+censuses, `1.00 blocks/iter` on both sides, `+0.0% block entries`.
+
+Two arms of identical code should differ by 0%. They differed by:
+
+| shape | wall minima | paired median |
+|---|---|---|
+| tree_mem16 | **-35.4%** | -14.1% |
+| tree_mem32 | +3.5% | +7.8% |
+| tree_mem96 | +27.3% | +8.2% |
+
+So the ±1% noise floor this harness is documented to have **did not hold for
+this session** — the box was at load 45 with several agent sweeps running, and
+the floor was nearer ±15% on the paired median and ±35% on the minima. Every
+percentage in the table above carries that error bar. What survives it is not
+the magnitude but two things that are not timings: the **sign is consistent
+across nine lengths and two independent runs** (32 and 64 were measured twice,
++37.6/+30.7 and +42.8/+37.6), and `blocks/iter` — a deterministic count —
+falls by 86-99% exactly where the fold fires and by 0% where it does not.
+
+Read the null control before quoting any figure here. It is also the reason
+the mw3 app-level A/B in §9b cannot be called a regression: a mean of +3.95%
+against a null control that swings ±14% is not a measurement of anything.
+
+H127 is a free finding from the same run: RMW-to-memory is a real widening
+candidate, and it is the shape a `for (i) dst[i] += src[i]` loop compiles to.
+
+### Flag
+
+```
+--tree-fold-max-ops=N       interior-op ceiling (default 160, clamped to 168)
+```
+
+It exists to A/B a *shorter* cap — "what are this app's long bodies actually
+contributing?" — since the default is no longer a guess that needs relaxing.
+Both thresholds now propagate through `inheritWasm`, so a `--threads` arm is
+not silently folding by a different rule in its worker instances.

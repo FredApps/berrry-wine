@@ -602,6 +602,127 @@ const SHAPES = {
   },
 };
 
+// -- tree_len<N>: the same loop at six interior lengths -----------------------
+//
+// The fold's win is one block transfer per iteration (~9ns, per the
+// nop_chain/jmp_chain pair) minus whatever the generic walker costs per
+// micro-op on top of a per-op handler. The first term is fixed per iteration;
+// the second scales with the body. So there is a length past which the fold
+// stops paying, and the 24 the family shipped with -- and the 64 it was raised
+// to for mw3 -- were both guesses. This family measures it.
+//
+// One shape, six lengths, so nothing but the body length varies: load, then
+// (N-4) `add eax,ebx`, then store and two pointer bumps. Every op is a
+// micro-op the walker already handles, and the ALU chain is serially
+// dependent, which is the honest case -- an independent chain would let the
+// host CPU hide the walker's overhead behind ILP the real blend does not have.
+function treeLen(nInterior) {
+  const adds = nInterior - 4;
+  if (adds < 0) throw new Error(`tree_len${nInterior}: need at least 4 interior ops`);
+  return {
+    describe: `load + ${adds} x add + store, ${nInterior} interior ops`,
+    real: 'the body-length sweep that sets the default interior cap',
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 8);
+      const src = a.buf, dst = a.buf + n * 4, step = 0x01010101;
+      const body = [0x8B, 0x06];                       // mov eax, [esi]
+      for (let i = 0; i < adds; i++) body.push(0x01, 0xD8);  // add eax, ebx
+      body.push(0x89, 0x07);                           // mov [edi], eax
+      body.push(0x83, 0xC6, 0x04);                     // add esi, 4
+      body.push(0x83, 0xC7, 0x04);                     // add edi, 4
+      body.push(0x49);                                 // dec ecx
+      // Past ~60 interior ops the back edge no longer fits in a rel8, and a
+      // displacement of -133 wraps to +123 -- the decoder then reads whatever
+      // follows as an instruction stream and traps on the first byte that
+      // looks like a prefix (0x67 here). Widen to the near form instead.
+      const back = body.length + 2 <= 128
+        ? [0x75].concat(rel8(-(body.length + 2)))
+        : [0x0F, 0x85, ...[-(body.length + 6)].flatMap(d =>
+            [d & 0xFF, (d >> 8) & 0xFF, (d >> 16) & 0xFF, (d >> 24) & 0xFF])];
+      return {
+        iters: n,
+        bytesTouched: n * 8,
+        code: body.concat(back),
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (let i = 0; i < n; i++) dv.setUint32(g2w(src) + i * 4, (i * 2654435761) >>> 0, true);
+          dv.setUint32(g2w(dst), 0, true);
+          dv.setUint32(g2w(dst) + (n - 1) * 4, 0, true);
+          e.set_esi(src); e.set_edi(dst); e.set_ebx(step); e.set_ecx(n); e.set_eax(0);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const want = (((i * 2654435761) >>> 0) + adds * step) >>> 0;
+            const got = dv.getUint32(g2w(dst) + i * 4, true);
+            if (got !== want) return `dst[${i}]=0x${got.toString(16)} want 0x${want.toString(16)}`;
+          }
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
+        },
+      };
+    },
+  };
+}
+for (const n of [8, 16, 24, 32, 48, 64, 96, 128, 160]) SHAPES[`tree_len${n}`] = treeLen(n);
+
+// The control the length sweep needs. tree_len's interior is register ALU,
+// which is the fold's BEST case by construction: every `add eax,ebx` becomes a
+// wasm local add with no $get_reg/$set_reg either side, so the walker's
+// per-op overhead is compared against the widest possible per-op saving. A
+// memory interior is the other extreme -- the scalar handler and the tree arm
+// both pay $g2w and a real load/store, so the only thing left to win is the
+// dispatch. If the fold still leads here at 96 ops, no body length inside the
+// descriptor's structural limit is a reason to decline.
+function treeMem(nInterior) {
+  const pairs = Math.floor((nInterior - 4) / 2);
+  if (pairs < 1) throw new Error(`tree_mem${nInterior}: too short`);
+  return {
+    describe: `${pairs} x (load + read-modify-write), ${2 * pairs + 4} interior ops`,
+    real: 'the memory-interior control for the body-length sweep',
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 8);
+      const src = a.buf, dst = a.buf + n * 4;
+      const body = [];
+      for (let i = 0; i < pairs; i++) {
+        body.push(0x8B, 0x06);   // mov eax, [esi]
+        body.push(0x01, 0x07);   // add [edi], eax
+      }
+      body.push(0x83, 0xC6, 0x04);                     // add esi, 4
+      body.push(0x83, 0xC7, 0x04);                     // add edi, 4
+      body.push(0x49);                                 // dec ecx
+      const back = body.length + 2 <= 128
+        ? [0x75].concat(rel8(-(body.length + 2)))
+        : [0x0F, 0x85, ...[-(body.length + 6)].flatMap(d =>
+            [d & 0xFF, (d >> 8) & 0xFF, (d >> 16) & 0xFF, (d >> 24) & 0xFF])];
+      return {
+        iters: n,
+        bytesTouched: n * 8,
+        code: body.concat(back),
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (let i = 0; i < n; i++) {
+            dv.setUint32(g2w(src) + i * 4, (i * 2654435761) >>> 0, true);
+            dv.setUint32(g2w(dst) + i * 4, 0, true);
+          }
+          e.set_esi(src); e.set_edi(dst); e.set_ecx(n); e.set_eax(0);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const want = (((i * 2654435761) >>> 0) * pairs) >>> 0;
+            const got = dv.getUint32(g2w(dst) + i * 4, true);
+            if (got !== want) return `dst[${i}]=0x${got.toString(16)} want 0x${want.toString(16)}`;
+          }
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
+        },
+      };
+    },
+  };
+}
+for (const n of [16, 32, 96]) SHAPES[`tree_mem${n}`] = treeMem(n);
+
 const TOGGLES = {
   tree_fold: 'set_tree_fold',
   lut_superops: 'set_loop_lut_emit',

@@ -654,6 +654,38 @@ const NEG_SHORT = loopBackDec([
     e.set_tree_fold_min_ops(4);
   }
 
+  // The ceiling is the same kind of knob, and it needs its own coverage
+  // because nothing else in this file can reach it: the default is 160 and the
+  // longest shape here is 9 interior ops. Squeeze it under shape A instead.
+  {
+    const before = e.test_tree_matches();
+    e.set_tree_fold_max_ops(5);
+    e.set_tree_fold(1);
+    const ga = install(SHAPE_A);
+    runAt(ga, { eax: 0, ecx: 8, edx: 0x1000, ebx: 4, ebp: 0, esi: srcB, edi: dstB });
+    assert.strictEqual(e.test_tree_matches(), before,
+      'a body over the ceiling declines');
+    e.set_tree_fold_max_ops(160);
+    const ga2 = install(SHAPE_A);
+    runAt(ga2, { eax: 0, ecx: 8, edx: 0x1000, ebx: 4, ebp: 0, esi: srcB, edi: dstB });
+    assert.strictEqual(e.test_tree_matches(), before + 1,
+      'raising the ceiling accepts the same body');
+  }
+
+  // The clamp is the safety property, not a convenience: past
+  // $TREE_FOLD_UOPS_LIMIT the descriptor runs off either $decode_block's
+  // reserved slack or the classify scratch, and both corrupt silently instead
+  // of declining -- so the setter must refuse, and a flag must not be able to
+  // ask for it.
+  {
+    e.set_tree_fold_max_ops(100000);
+    assert.strictEqual(e.get_tree_fold_max_ops(), 168,
+      'the ceiling clamps to the structural limit');
+    e.set_tree_fold_max_ops(160);
+    assert.strictEqual(e.get_tree_fold_max_ops(), 160,
+      'a value under the limit is taken as given');
+  }
+
   console.log('TREE_FOLD tests passed:',
     e.test_tree_matches(), 'blocks matched,',
     e.test_tree_runs(), 'super-op runs,',

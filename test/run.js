@@ -263,9 +263,18 @@ const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 // it on -- and, like every other decode-time gate, it has to reach every
 // per-thread instance or the A/B measures two different decoders.
 // --tree-fold-min-ops=N lowers or raises the interior-op floor (default 4).
+// --tree-fold-max-ops=N lowers or raises the ceiling (default 160, clamped in
+// WAT to the structural limit; see $TREE_FOLD_UOPS_LIMIT). The default is not
+// a throughput guess -- tools/bench-loops.js tree_len8..tree_len160 found no
+// crossover at any length -- so this exists to A/B a SHORTER cap, e.g. to ask
+// what one app's long bodies are actually contributing.
 const TREE_FOLD = hasFlag('tree-fold');
 const TREE_FOLD_MIN_OPS = (() => {
   const v = getArg('tree-fold-min-ops', null);
+  return v === null ? null : (parseInt(v, 10) | 0);
+})();
+const TREE_FOLD_MAX_OPS = (() => {
+  const v = getArg('tree-fold-max-ops', null);
   return v === null ? null : (parseInt(v, 10) | 0);
 })();
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
@@ -3941,6 +3950,11 @@ async function main() {
   if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
   if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
   if (TREE_FOLD) inheritWasm('set_tree_fold', 1);
+  // The thresholds too: a guest thread decodes in its own instance, so a cap
+  // set only on the main instance leaves the workers folding by a different
+  // rule and the --threads arm of an A/B compares two decoders.
+  if (TREE_FOLD_MIN_OPS !== null) inheritWasm('set_tree_fold_min_ops', TREE_FOLD_MIN_OPS);
+  if (TREE_FOLD_MAX_OPS !== null) inheritWasm('set_tree_fold_max_ops', TREE_FOLD_MAX_OPS);
 
   threadManager = new ThreadManager(wasmModule, memory, instance, makeWorkerImports, {
     workerBackend: guestThreadHost,
@@ -4842,6 +4856,9 @@ async function main() {
   // meaningful if both arms use the same threshold.
   if (TREE_FOLD_MIN_OPS !== null && instance.exports.set_tree_fold_min_ops) {
     instance.exports.set_tree_fold_min_ops(TREE_FOLD_MIN_OPS);
+  }
+  if (TREE_FOLD_MAX_OPS !== null && instance.exports.set_tree_fold_max_ops) {
+    instance.exports.set_tree_fold_max_ops(TREE_FOLD_MAX_OPS);
   }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);

@@ -5210,18 +5210,29 @@
   ;; One sample, not a histogram -- enough to name the family to widen first.
   (global $tree_decl_uop_fn (mut i32) (i32.const -1))
 
-  ;; A descriptor longer than this is refused outright. $decode_block reserves
-  ;; 4096 bytes of slack past $thread_alloc before $te starts signalling a
-  ;; flush; the descriptor is a 48-byte header ($te's 8 plus ten $te_raw) and
-  ;; $TREE_UOP_WORDS * 4 = 24 bytes per micro-op, so 64 micro-ops is 1584
-  ;; bytes -- still comfortably inside it.
+  ;; A descriptor longer than this is refused outright.
   ;;
-  ;; 24 was the v1 guess that "past 24 the run length stops being the thing
-  ;; that pays", and mw3 is the counterexample: its 16-bit alpha blend at
-  ;; 0x526f54 / 0x527075 is a 42-op straight-line interior that runs for the
-  ;; whole frame, and 98% of that app's foldable self-loop ops are in those
-  ;; two blocks. At 24 it declined as `long` and the family caught nothing.
-  (global $TREE_FOLD_MAX_UOPS i32 (i32.const 64))
+  ;; Both earlier values were guesses about THROUGHPUT -- 24 for "past this the
+  ;; run length stops being the thing that pays", then 64 for mw3's 42-op alpha
+  ;; blend. tools/bench-loops.js `tree_len8..tree_len160` measured it instead,
+  ;; one shape at nine lengths so nothing but the body varies, and there is no
+  ;; crossover: the fold leads by 50% at 8 interior ops and by 35-42% at 64,
+  ;; 96, 128 and 160, never trending towards zero. The memory-interior control
+  ;; `tree_mem*` -- the fold's WORST case, where both arms pay $g2w and a real
+  ;; load/store and only the dispatch is left to win -- leads too. So body
+  ;; length was never the variable, and the only real ceiling is structural.
+  ;;
+  ;; Two structures bound it, and the smaller one is the limit:
+  ;;   * $decode_block reserves 4096 bytes of slack past $thread_alloc before
+  ;;     $te signals a flush. The descriptor is a 44-byte header ($te's 8 plus
+  ;;     ten $te_raw) plus $TREE_UOP_WORDS * 4 = 24 bytes per micro-op, so
+  ;;     (4096 - 44) / 24 = 168.
+  ;;   * the classify scratch is the far half of OP_INDEX, 1024 words at 6
+  ;;     words per micro-op = 170.
+  ;; $TREE_FOLD_UOPS_LIMIT is the smaller, and the setter clamps to it, because
+  ;; a descriptor past either one corrupts rather than declines.
+  (global $TREE_FOLD_UOPS_LIMIT i32 (i32.const 168))
+  (global $tree_fold_max_ops (mut i32) (i32.const 160))
   ;; kind, dst, src-or-subop, immediate, original handler index, extra.
   ;; The sixth word is the one field whose meaning is per-kind: for the SIB
   ;; forms it is the index register and scale (index | scale<<4, index 0xF
@@ -6001,7 +6012,7 @@
           (i32.add (global.get $tree_decl_short) (i32.const 1)))
         (return (i32.const 0))))
     (local.set $nuops (i32.sub (local.get $n) (i32.const 2)))
-    (if (i32.gt_u (local.get $nuops) (global.get $TREE_FOLD_MAX_UOPS))
+    (if (i32.gt_u (local.get $nuops) (global.get $tree_fold_max_ops))
       (then
         (global.set $tree_decl_long
           (i32.add (global.get $tree_decl_long) (i32.const 1)))
@@ -6122,8 +6133,9 @@
     ;;
     ;; The scratch is the far half of OP_INDEX (word 1024 up; OP_INDEX is
     ;; 0x2000 bytes = 2048 words, so the far half is 1024 words against
-    ;; $TREE_FOLD_MAX_UOPS * $TREE_UOP_WORDS = 384), which is free because
+    ;; $TREE_FOLD_UOPS_LIMIT * $TREE_UOP_WORDS = 1008), which is free because
     ;; $op_index_n is reset to zero below and only one op is emitted after it.
+    ;; That 1024 is half of why the limit is what it is -- see its comment.
     (local.set $i (i32.const 0))
     (block $scan_done
       (loop $scan
