@@ -32,6 +32,10 @@ const ROOT = path.resolve(__dirname,'..');
   }
   async function open(host) {
     assert.strictEqual(await host.getFontCatalogStartupState(),'NEW');
+    await host.callExport('set_x87_pipeline4_fusion', 1);
+    await host.callExport('set_x87_affine_fusion', 1);
+    assert.strictEqual(await host.getFontCatalogStartupState(),'NEW',
+      'host init decoder configuration must not seal unstarted catalog');
     assert(await host.loadPe(exe,'notepad.exe'));
     assert.strictEqual(await host.getFontCatalogStartupState(),'OPEN');
     return host.getFontCatalogExclusions();
@@ -117,6 +121,10 @@ const ROOT = path.resolve(__dirname,'..');
     if(route==='reload') { try { await host.loadPe(exe,'notepad.exe'); } catch (_) {} }
     if(route==='duplicateInit') await assert.rejects(()=>host.link._ask({t:'init'}),/one-shot|initial/i);
     assert.strictEqual(await host.getFontCatalogStartupState(),'SEALED',route);
+    await host.callExport('set_x87_pipeline4_fusion', 0);
+    await host.callExport('set_x87_affine_fusion', 0);
+    assert.strictEqual(await host.getFontCatalogStartupState(),'SEALED',
+      'configuration must never reopen an executed or failed startup');
     await assert.rejects(()=>host.installFontCatalog(entries,policy),/sealed|startup|open/i);
     // Even attempting the original loader again cannot restore OPEN.
     try { await host.callExport('load_pe',0); } catch (_) {}
