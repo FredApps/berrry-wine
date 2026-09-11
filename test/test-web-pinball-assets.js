@@ -155,6 +155,10 @@ assert(/\[\s*'blobby_volley'\s*,\s*'Blobby Volley'/.test(webApp),
   'normal desktop promotes Blobby Volley');
 assert(deployJs.includes("'packages/freeware/blobby-volley/'"),
   'public deploy includes the reviewed Blobby Volley payload');
+assert(/\[\s*'starcraft_shareware'\s*,\s*'StarCraft Demo'/.test(webApp),
+  'normal desktop promotes the official StarCraft demo');
+assert(deployJs.includes("'test/binaries/candidates/starcraft-demo-official/'"),
+  'public deploy includes the intact official StarCraft demo distribution');
 assert(webApp.includes("window.open('sources.html', 'wine-assembly-sources')"),
   'desktop includes the Sources miniapp link');
 for (const link of [
@@ -426,7 +430,7 @@ console.log('PASS  deploy filters include .mid/.wav/.inf/DAT and Pinball asset d
 console.log('PASS  Pinball sound uses bundled assets instead of a run-loop EIP hack');
 console.log('PASS  deploy uses multipart for binary uploads');
 console.log('PASS  debug mode exposes direct MIDI playback');
-console.log('PASS  desktop publishes DX-Ball and Blobby Volley with source links');
+console.log('PASS  desktop publishes DX-Ball, Blobby Volley, and StarCraft Demo with source links');
 console.log('PASS  Start menu exposes screen recording');
 console.log('PASS  web host loads TinySynth MIDI backend');
 console.log('PASS  default desktop whitelist includes Pinball');

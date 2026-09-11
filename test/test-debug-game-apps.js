@@ -120,7 +120,7 @@ assert(APPS.diablo2_demo.files.some(file => file.endsWith('/d2data.mpq')),
   'Diablo II mounts its installer-produced data archive');
 assert(APPS.diablo2_demo.files.some(file => file.endsWith('/d2music.mpq')),
   'Diablo II mounts its installer-produced music archive');
-for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'starcraft_shareware', 'fallout_demo',
+for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'fallout_demo',
   'total_annihilation_demo', 'caesar3_demo', 'captain_claw_demo']) {
   assert(debugIds.has(id), `${id} is reachable from the debug app selector`);
   assert(APPS[id], `${id} has an app manifest`);
@@ -132,6 +132,8 @@ const desktopIds = new Set(DESKTOP_APPS.map(([id]) => id));
 assert(desktopIds.has('heroes2_demo'), 'Heroes II is a desktop app');
 assert(!debugIds.has('heroes2_demo'), 'Heroes II is not listed twice');
 assert(APPS.heroes2_demo, 'heroes2_demo has an app manifest');
+assert(desktopIds.has('starcraft_shareware'), 'StarCraft Demo is a desktop app');
+assert(!debugIds.has('starcraft_shareware'), 'StarCraft Demo is not listed twice');
 
 const starcraft = APPS.starcraft_shareware;
 assert.strictEqual(starcraft.args, 'ophelia terran1',
@@ -285,6 +287,8 @@ for (const id of expectedLocalCandidates.keys()) {
 }
 assert(/DEFAULT_APPS\.concat\(DEBUG_ONLY_APPS,\s*LOCAL_DESKTOP\s*\?\s*LOCAL_CANDIDATE_APPS\s*:\s*\[\]\)/s.test(html),
   'debug mode retains localhost-only candidates when running on a local origin');
+assert(/<option value=["']starcraft_shareware["']>StarCraft Demo<\/option>/.test(html),
+  'public selector names the official StarCraft download as a demo');
 for (const id of ['diablo_demo', 'diablo_shareware', 'worms2_demo', 'starcraft_shareware', 'fallout_demo', 'heroes2_demo',
   'total_annihilation_demo', 'caesar3_demo', 'captain_claw_demo']) {
   assert(new RegExp(`<option value=["']${id}["']>`).test(html),
