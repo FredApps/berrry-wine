@@ -30,6 +30,11 @@
 //   repscan   a `repne scasw` that exits on the match         -- MUST fold
 //   repscanmiss  the same with the count run out              -- MUST fold
 //   repcmps   a `rep cmpsw` that exits on the difference      -- MUST fold
+//   shiftcl   shl/shr/sar by CL, one count past the width     -- MUST fold
+//   shiftcl0  a count of ZERO, which must write no flags      -- MUST fold
+//   shiftcarry rcl/rcr/rol/ror, immediate and CL              -- MUST fold
+//   divmul    div/idiv/mul, and NOT into a loop tree          -- MUST fold
+//   divzero   a divide by zero mid-tree, regs read at the trap -- MUST fold
 //
 // The five flag cases are the other half of the DOS fit. Flags here are LAZY --
 // a producer records its inputs, a consumer materializes the field it wants --
@@ -77,6 +82,10 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
+// The relaxation names, from the fold itself rather than a copy: a `needs` arm
+// has to run with every OTHER relaxation on, and a list that went stale here
+// would silently start testing something weaker.
+const { RELAXATIONS } = require('../tools/toyvm/tree-fold');
 
 const ITER = 2000;              // outer-loop trips, in a memory counter
 const COUNTER = 0x500;          // where that counter lives
@@ -155,6 +164,14 @@ function printAndExit(a) {
   w(0xB9, 0x04, 0x00);                   // mov cx,4
   label('L2');
   w(0xC1, 0xC3, 0x04);                   // rol bx,4
+  // ...and a `nop`, for the reason the ones in `snapshot` and `program` are
+  // there: this routine is SCAFFOLDING, and the three negative cases assert
+  // that the whole program folded nothing at all. Once the `shifts` relaxation
+  // landed, `rol bx,4 / mov al,bl / and al,0Fh / add al,'0'` became four
+  // consecutive foldable ops and the hex printer started folding in every
+  // program, which failed `narrowrot` with a fold that had nothing to do with
+  // `narrowrot`. The barrier keeps the scaffolding out of the measurement.
+  w(0x90);                               // nop: end the run
   w(0x88, 0xD8);                         // mov al,bl
   w(0x24, 0x0F);                         // and al,0Fh
   w(0x04, 0x30);                         // add al,'0'
@@ -727,6 +744,161 @@ const CASES = {
       w(0x9C, 0x58, 0x25, 0x40, 0x00);     // pushf / pop ax / and ax,40h -> 0
     },
   },
+
+  // --- the shift group, the rest of it -------------------------------------
+  //
+  // A shift whose count comes from CL. The census declines these because IT
+  // cannot say what the flags come out as when the count is not known at
+  // compile time; the tree does not have to say, because `$sh_<kind><w>` goes
+  // into the run verbatim and does the masking, the zero-count early return and
+  // the carry read itself. `needs: 'shifts'` is what proves that is the reason
+  // this folds: with every OTHER relaxation on it must not.
+  shiftcl: {
+    folds: true, relaxed: true, needs: 'shifts',
+    body: ({ w }) => {
+      w(0xB9, 0x04, 0x00);       // mov cx,4
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xD3, 0xE0);             // shl ax,cl
+      w(0x89, 0xC3);             // mov bx,ax
+      w(0xB9, 0x14, 0x00);       // mov cx,20      <- past the width: the mask decides
+      w(0xD3, 0xEB);             // shr bx,cl
+      w(0xBA, 0x0F, 0xF0);       // mov dx,0F00Fh
+      w(0xB9, 0x03, 0x00);       // mov cx,3
+      w(0xD3, 0xFA);             // sar dx,cl
+      w(0x89, 0xD6);             // mov si,dx
+      w(0x31, 0xC6);             // xor si,ax
+      w(0x89, 0xF7);             // mov di,si
+    },
+  },
+  // A COUNT OF ZERO, which is the case the whole group turns on. `$sh_*` masks
+  // the count and returns the value untouched without writing a single flag, so
+  // the ZF the `cmp` in front of it set has to still be there afterwards. The
+  // `pushf` is a barrier and therefore sits OUTSIDE the run on purpose: it reads
+  // the flags the folded shift left, from outside the handler that left them.
+  // A fold that materialized the shift's flags unconditionally prints 0000 here
+  // and every register around it still looks right.
+  shiftcl0: {
+    folds: true, relaxed: true, needs: 'shifts',
+    body: ({ w }) => {
+      w(0xB9, 0x00, 0x00);       // mov cx,0        <- first, so only three ops
+      w(0xB8, 0x55, 0xAA);       // mov ax,0AA55h      precede the shift and the
+      w(0x3D, 0x55, 0xAA);       // cmp ax,0AA55h      `needs` arm has no run of four
+      w(0xD3, 0xE0);             // shl ax,cl       <- masked count 0: no flag write
+      w(0x89, 0xC2);             // mov dx,ax
+      w(0xD3, 0xC2);             // rol dx,cl       <- and a rotate, same
+      w(0x9C);                   // pushf           <- barrier: ends the run
+      w(0x5B);                   // pop bx
+      w(0x81, 0xE3, 0xC5, 0x00); // and bx,0C5h     <- CF PF AF ZF SF -> 44h
+    },
+  },
+  // `rol`/`ror`/`rcl`/`rcr`, immediate and CL. The rotates were never in the
+  // fold set at any width and `rcl`/`rcr` read the INCOMING carry through
+  // `$get_cf`, which under lazy flags may still be owed by something outside
+  // the run -- here the `stc` in front of it, which is a flag barrier and so is
+  // outside by construction. AX ends one bit left of 1234h with a 1 shifted in
+  // only if that carry reached the fold.
+  shiftcarry: {
+    folds: true, relaxed: true, needs: 'shifts',
+    body: ({ w }) => {
+      w(0xF9);                   // stc             <- barrier, CF=1
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xD1, 0xD0);             // rcl ax,1        <- reads CF
+      w(0xB9, 0x03, 0x00);       // mov cx,3
+      w(0xBB, 0x0F, 0xF0);       // mov bx,0F00Fh
+      w(0xD3, 0xDB);             // rcr bx,cl
+      w(0x89, 0xDA);             // mov dx,bx
+      w(0xD3, 0xC2);             // rol dx,cl
+      w(0x89, 0xD6);             // mov si,dx
+      w(0xD1, 0xCE);             // ror si,1
+      w(0x89, 0xF7);             // mov di,si
+      w(0x31, 0xC7);             // xor di,ax
+    },
+  },
+
+  // --- multiply and divide --------------------------------------------------
+  //
+  // `mul`/`imul`/`div`/`idiv`, the one-operand forms with the implicit AX/DX
+  // pair. The gaps between them are three ops each, so with `muldiv` off there
+  // is no run of four anywhere in the body and `needs` bites.
+  divmul: {
+    folds: true, relaxed: true, needs: 'muldiv', noLoop: true,
+    body: ({ w }) => {
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xBA, 0x00, 0x00);       // mov dx,0
+      w(0xBB, 0x07, 0x00);       // mov bx,7
+      w(0xF7, 0xF3);             // div bx          -> ax=029Bh dx=0003h
+      w(0x89, 0xC1);             // mov cx,ax
+      w(0xB8, 0xF0, 0xFF);       // mov ax,0FFF0h
+      w(0xBA, 0xFF, 0xFF);       // mov dx,0FFFFh   <- DX:AX = -16
+      w(0xF7, 0xFB);             // idiv bx         -> ax=-2 dx=-2
+      w(0x89, 0xC6);             // mov si,ax
+      w(0xB8, 0x05, 0x00);       // mov ax,5
+      w(0xBB, 0x2C, 0x01);       // mov bx,012Ch
+      w(0xF7, 0xE3);             // mul bx          -> ax=05DCh dx=0
+      w(0x89, 0xC7);             // mov di,ax
+    },
+  },
+  // A FAULT IN THE MIDDLE OF A TREE, which is the whole of what `muldiv` had to
+  // get right and the one thing no other case here can reach.
+  //
+  // Five registers are written, then a divide by zero traps to INT 0. The
+  // vector points at a handler laid down by `pre` which writes all five to
+  // memory and IRETs, and the body then loads them back and prints them. So the
+  // printed line IS the register file as it stood at the instant of the fault,
+  // read by guest code from outside the handler that was executing.
+  //
+  // That is a sharp check and not a formality. All five are promoted into wasm
+  // locals for the length of the tree, and `$fault0` is on trace-jit's
+  // `SAFE_CALLS` so the promotion is not declined -- so without the epilogue
+  // `buildTree` splices in front of the call, the globals behind them are the
+  // values they held on ENTRY to the run and the handler prints those instead.
+  // The fold would still compute the right answer everywhere the fault does not
+  // fire, which is exactly why this needs a test of its own.
+  //
+  // The two `nop`s are load-bearing in the same way the ones in `snapshot`
+  // are: without them the setup ops and the read-back ops are each a foldable
+  // run of their own, the exact and `needs` arms fold those, and the case stops
+  // testing anything. With them the only run that reaches four ops is the one
+  // the divide is INSIDE.
+  divzero: {
+    folds: true, relaxed: true, needs: 'muldiv',
+    pre: ({ w, label, rel16, at }) => {
+      w(0xE9, ...rel16('after0'));                 // jmp after0
+      label('div0');
+      // ...with a `nop` between every store, for the reason `snapshot` has
+      // them: five consecutive stores are a foldable run, and the handler is
+      // scaffolding. Without these the exact arm folds the HANDLER and the
+      // case stops saying anything about the divide.
+      w(0x89, 0x36, 0x10, 0x05); w(0x90);          // mov [0510h],si
+      w(0x89, 0x3E, 0x12, 0x05); w(0x90);          // mov [0512h],di
+      w(0x89, 0x0E, 0x14, 0x05); w(0x90);          // mov [0514h],cx
+      w(0xA3, 0x16, 0x05); w(0x90);                // mov [0516h],ax
+      w(0x89, 0x16, 0x18, 0x05); w(0x90);          // mov [0518h],dx
+      w(0xCF);                                     // iret  -> resumes AFTER the div
+      label('after0');
+      const d0 = at('div0') || 0x0100;
+      w(0x31, 0xC0);                               // xor ax,ax
+      w(0x8E, 0xC0);                               // mov es,ax
+      w(0x26, 0xC7, 0x06, 0x00, 0x00, d0 & 0xFF, d0 >> 8);  // mov word es:[0],div0
+      w(0x26, 0x8C, 0x0E, 0x02, 0x00);             // mov es:[2],cs
+    },
+    body: ({ w }) => {
+      w(0xBE, 0x11, 0x11);       // mov si,1111h
+      w(0xBF, 0x22, 0x22);       // mov di,2222h
+      w(0x90);                   // nop: end the run
+      w(0xB8, 0x30, 0x00);       // mov ax,0030h    <- these three are INSIDE the
+      w(0xBA, 0x44, 0x00);       // mov dx,0044h       tree and promoted, so they
+      w(0xB9, 0x00, 0x00);       // mov cx,0           are the sharp part
+      w(0xF7, 0xF1);             // div cx          <- #DE, mid-tree
+      w(0xA1, 0x10, 0x05);       // mov ax,[0510h]  <- si at the fault -> 1111h
+      w(0x8B, 0x1E, 0x12, 0x05); // mov bx,[0512h]  <- di             -> 2222h
+      w(0x8B, 0x0E, 0x14, 0x05); // mov cx,[0514h]  <- cx             -> 0000h
+      w(0x90);                   // nop: end the run
+      w(0x8B, 0x16, 0x16, 0x05); // mov dx,[0516h]  <- ax             -> 0030h
+      w(0x8B, 0x36, 0x18, 0x05); // mov si,[0518h]  <- dx             -> 0044h
+      w(0x89, 0xF7);             // mov di,si
+    },
+  },
 };
 
 function run(com, extra) {
@@ -751,7 +923,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-tree-fold-'));
 const summary = [];
 for (const [name, c] of Object.entries(CASES)) {
   const com = path.join(dir, `${name.toUpperCase()}.COM`);
-  let buf = program(c.body);
+  let buf = program(c.body, c.pre ? { pre: c.pre } : {});
   if (c.data) buf = withData(buf, c.data[0], c.data[1]);
   fs.writeFileSync(com, buf);
 
@@ -797,6 +969,26 @@ for (const [name, c] of Object.entries(CASES)) {
     exact = ' (exact: none)';
   }
 
+  // ...and the sharper form of the same question. `relaxed` only says SOME
+  // relaxation is doing the work; `needs` names which one and runs the arm with
+  // every OTHER relaxation on, so a case credited to `shifts` that actually
+  // folds because of `partial` fails here instead of passing quietly. Worth the
+  // extra arm only on the cases whose relaxation is new; the older ones predate
+  // it and their bodies were not written to make the distinction clean.
+  if (c.needs) {
+    const others = RELAXATIONS.filter((r) => r !== c.needs);
+    const wo = run(com, ['--tree-fold', '--tree-fold-batch=1',
+      `--tree-fold-relax=${others.join(',')}`]);
+    assert.ok(/exited=true/.test(wo), `${name}: the without-${c.needs} arm did not exit:\n${wo}`);
+    assert.strictEqual(screen(wo), a,
+      `${name}: the without-${c.needs} arm computed something else\n`
+      + `  plain ${a}\n  without ${screen(wo)}`);
+    assert.strictEqual(folds(wo), 0,
+      `${name}: folded ${folds(wo)} run(s) with every relaxation EXCEPT `
+      + `'${c.needs}', so this case is not testing '${c.needs}':\n${wo}`);
+    exact = ` (needs: ${c.needs})`;
+  }
+
   // THE TERMINATOR FOLD. A case marked `loop: true` has a self-loop block whose
   // whole body is foldable, so the tree must absorb the branch and run the
   // iterations inside itself. The screen assertion above is what makes this
@@ -806,6 +998,20 @@ for (const [name, c] of Object.entries(CASES)) {
   // The A/B arm is `--no-tree-fold-loops`, and it has to agree with the plain
   // arm too -- that is what says the loop fold is the only thing that changed.
   let loopNote = '';
+  // The other side of that claim. A `div` cannot be absorbed into a LOOP tree:
+  // the fault leaves through a `(return)`, which inside region-jit's region
+  // would skip the epilogue that publishes where the guest goes next. The loop
+  // path asks for `allowFault: false` and this is what says it still does --
+  // the body IS a self-loop whose every other op folds, so a regression here
+  // shows up as a loop handler appearing rather than as anything going wrong.
+  if (c.noLoop) {
+    assert.strictEqual(loops(on), 0,
+      `${name}: a divide was absorbed into a loop tree, which cannot publish `
+      + `$gip on the fault path:\n${on}`);
+    assert.ok(/div \(loop tree\)/.test(on),
+      `${name}: expected the histogram to name the loop-tree refusal:\n${on}`);
+    loopNote = ' (no loop tree)';
+  }
   if (c.loop) {
     assert.ok(loops(on) > 0,
       `${name}: this shape has a foldable self-loop block, but no loop handler `

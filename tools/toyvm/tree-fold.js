@@ -109,9 +109,10 @@ const MIN_OPS = 4;
 //
 // NOT relaxed, and for the census's own reason rather than for want of effort:
 // `lahf`/`sahf`/`pushf`/`popf` and the BCD group want the architectural FLAGS
-// word including AF, which the lazy record does not carry as a value, and
-// `rcl`/`rcr` and a shift by CL are the same problem in the shift group. They
-// stay barriers, and the decline histogram still names them.
+// word including AF, which the lazy record does not carry as a value. They stay
+// barriers, and the decline histogram still names them. (`rcl`/`rcr` and a
+// shift by CL used to be listed here as the same problem. They are not, and the
+// `shifts` relaxation below says why.)
 //
 //   string   a non-rep `movs`/`stos`/`lods`/`scas`/`cmps`. The doc's decline
 //            histogram put this group at the top in every program, and it turns
@@ -153,10 +154,55 @@ const MIN_OPS = 4;
 //            a fold shifts; a charge of a known amount is not that. See
 //            `STEP_CHARGE`.
 //
+//   shifts   the rest of the shift group: a shift or rotate whose count comes
+//            from CL, and `rol`/`ror`/`rcl`/`rcr` at any count. The census
+//            declines these because IT cannot say what the flags come out as --
+//            the count is dynamic, a masked count of zero writes no flags at
+//            all, and `rcl` reads a carry the lazy record owes. A TREE does not
+//            have to say: the handler is `(call $sh_<kind><w> value count)` and
+//            `$sh_*` goes into the run verbatim, so the count is masked with
+//            the live `(global.get $shmask)` -- the 8086-vs-186 setting, which
+//            programs probe deliberately -- the zero-count early return is the
+//            same early return, and the incoming CF still comes through
+//            `$get_cf`. Nothing is re-derived, which is why the decline was
+//            about the census's reasoning and not about the fold's.
+//
+//            One thing this does NOT turn on: `killDeadFlags` in trace-jit.js
+//            treats any `$sh_*` as a flag writer, which is wrong for a masked
+//            count of zero. `buildTree` runs with `deadflags: false` (see
+//            below) so no fold depends on it; the pass is left alone rather
+//            than quietly changing what the measurement tiers report.
+//
+//   muldiv   `mul`/`imul`/`div`/`idiv`, the one-operand forms writing the
+//            implicit AX/DX pair. `mul`/`imul` need nothing: they are readable
+//            ordinary ops the census simply never put in the set. `div`/`idiv`
+//            carry the one escape this fold takes rather than refuses -- the
+//            divide-error trap, `(call $fault0 <ip>) (return)`, once for a zero
+//            divisor and once for a quotient that will not fit.
+//
+//            A FAULT IN THE MIDDLE OF A TREE has to leave the guest in the
+//            state the interpreter would have left it in, and two things are
+//            wrong at that instant. The promoted registers are in wasm locals
+//            and the globals behind them are stale -- and `$fault` pushes
+//            FLAGS/CS/IP to the guest stack and halts, after which everything
+//            downstream reads globals. And the tree has already charged the
+//            whole run's steps up front, while the interpreter would have
+//            charged only one per op up to and including the one that faulted.
+//            So `buildTree` splices two things in front of each fault call, in
+//            this order: the step refund, then the promotion epilogue. Both
+//            must precede the call, because `$fault` copies `$steps` into
+//            `$left` and reaches the stack through SP. `$ip` is deliberately
+//            NOT advanced: an unfolded `div` leaves it parked mid-operand too,
+//            and control re-enters through `$gip`.
+//
+//            `div`/`idiv` are therefore straight-line only. A `(return)` inside
+//            a LOOP tree would skip region-jit's own epilogue, so the loop path
+//            passes `allowFault: false` and the histogram says so.
+//
 // The census's third relaxation, `alias`, is not here: it is a disjointness
 // PROOF over two operands rather than a class to accept, and it is the one
 // extension that needs code of its own.
-const RELAXATIONS = ['partial', 'flags', 'string', 'rep'];
+const RELAXATIONS = ['partial', 'flags', 'string', 'rep', 'shifts', 'muldiv'];
 const RELAX_ALL = new Set(RELAXATIONS);
 
 // A handler that reads the dispatch clock cannot be folded: the interpreter
@@ -181,6 +227,16 @@ const readsClock = (body) => CLOCK_READERS.test(body.replace(STEP_CHARGE, ''));
 // middle of the run's operand words. Same refusal genFusedBranches makes of a
 // fused first half, for the same reason.
 const ESCAPES = /\$halt|\$slice_exit|\$fault|\$jlook|\(return\)|global\.(get|set) \$ip\b/;
+// ...with one shape excepted here too, and for the same kind of reason: a
+// divide-error trap is an escape with a KNOWN shape and a known repair, not an
+// unknown one. `div`/`idiv` are the only handlers in the VM that contain it,
+// twice each, and always written exactly like this. `buildTree` splices the
+// step refund and the promotion epilogue in front of each one; this is what
+// lets the op past the two escape checks in the first place, and it is applied
+// only where the caller allows a fault (never inside a loop tree).
+const FAULT_EXIT = /\(call \$fault0 \([^()]*\)\)\s*\(return\)/g;
+const escapes = (body, allowFault) =>
+  ESCAPES.test(allowFault ? body.replace(FAULT_EXIT, '') : body);
 
 // --- eligibility -------------------------------------------------------------
 
@@ -220,6 +276,12 @@ function bucketOf(c, stem) {
   // deliberately does not cover, and each names itself so the next census can
   // price it on its own.
   if (cls === 'shift-cl') return 'shift by CL';
+  if (cls === 'shift-carry') return 'rcl/rcr';
+  if (cls === 'shift-rot') return 'rol/ror';
+  // A `div` that declined for the fault-in-a-loop reason is a different entry
+  // from one this fold has no relaxation for, and telling them apart is the
+  // whole value of the histogram to whoever reads it next.
+  if (cls === 'muldiv') return c.noFault ? 'div (loop tree)' : `muldiv: ${stem}`;
   if (cls === 'flags' && !c.relax) return `flags word: ${stem}`;
   if (cls === 'cmp-test' || cls === 'flags' || cls === 'adc-sbb') return 'flag consumer';
   if (cls === 'branch' || cls === 'terminator') return 'terminator';
@@ -251,7 +313,11 @@ function bucketOf(c, stem) {
 //     most expensive rule here -- ACCIDENT's hottest block has sixteen
 //     consecutive foldable ops and yields a run of twelve because of it -- and
 //     relaxing it is the first of the three extensions in the doc.
-function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null, relax = RELAX_ALL } = {}) {
+// `allowFault` is false for a LOOP tree, where a `(return)` out of the middle
+// would skip region-jit's epilogue. It is the only option here that is about
+// the CALLER's lowering rather than about the ops.
+function eligibleRuns(ops, width,
+  { minOps = MIN_OPS, why = null, relax = RELAX_ALL, allowFault = true } = {}) {
   const D = decompTable();
   const T = effectsTable();
   const runs = [];
@@ -282,6 +348,13 @@ function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null, relax = RELAX_
     if (!c.fold && !(c.relax && relax.has(c.relax))) {
       close(); note(bucketOf(c, stemOf(HANDLERS[base].name).stem)); continue;
     }
+    // A divide is admitted by the relaxation and then refused by the lowering
+    // the caller asked for. Refused HERE rather than in `buildTree`, so the run
+    // splits around it and the ops either side still fold.
+    if (c.faults && !allowFault) {
+      close(); note(bucketOf({ ...c, noFault: true }, stemOf(HANDLERS[base].name).stem));
+      continue;
+    }
     // The census stops here. The fold has two more questions, both about the
     // BODY rather than the opcode, and both of which can only be asked of the
     // handler that is actually in the arena (which may be the flagless twin).
@@ -295,7 +368,7 @@ function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null, relax = RELAX_
     const folded = foldOperands(HANDLERS[o.fn].body, o.args);
     if (folded === null) { close(); note('operand shape'); continue; }
     if (readsClock(folded)) { close(); note('clock reader'); continue; }
-    if (ESCAPES.test(folded)) { close(); note('escapes'); continue; }
+    if (escapes(folded, allowFault && !!c.faults)) { close(); note('escapes'); continue; }
     const memRead = eff.memRead.length > 0;
     const memWrite = eff.memWrite.length > 0;
     if (sawStore && memRead) { close(); note('alias'); cur = [o]; sawStore = memWrite; continue; }
@@ -350,13 +423,55 @@ function buildTree(run, name) {
     t3 = emitTier3(ops, {
       constprop: true, regfold: true, deadflags: false,
       ea: true, seg: true, inline: true, promote: true,
+      // ...and the one pass option that is a PROMISE rather than a switch: this
+      // function will splice the promotion epilogue in front of every
+      // divide-error trap below, so promoting across one is safe here. Only
+      // this call site passes it -- region-jit lowers through the same pass and
+      // makes no such promise, so a region containing a `div` still declines
+      // promotion outright, which is what keeps it correct.
+      allowFault: true,
     });
   } catch (e) {
     return { declined: `lowering threw: ${e && e.message ? e.message : String(e)}` };
   }
-  const joined = t3.bodies3.join('\n');
-  if (readsClock(joined)) return { declined: 'the lowered body reads the clock' };
-  if (ESCAPES.test(joined)) return { declined: 'the lowered body can leave the handler' };
+  const n = run.length;
+  // THE FAULT REPAIR. Every `(call $fault0 <ip>) (return)` in op i's lowered
+  // body gets two statements spliced in front of it, and the order is the whole
+  // of the correctness argument:
+  //
+  //   the step refund   the tree charged the run's n steps up front; unfolded,
+  //                     the interpreter would have charged one per dispatch up
+  //                     to and including the op that faulted, which is i+1. So
+  //                     n-1-i go back. `$fault` copies `$steps` straight into
+  //                     `$left`, which is why this cannot happen after it.
+  //   `epi`             the promoted registers, out of their locals and back
+  //                     into their globals. `$fault` pushes FLAGS/CS/IP through
+  //                     SP and then halts, and everything downstream of a halt
+  //                     reads globals. Emitting `epi` here as well as at the
+  //                     run's end is free: it is pure local -> global writeback
+  //                     and running it twice writes the same values.
+  //
+  // `$ip` is NOT advanced. An unfolded `div` leaves it parked in the middle of
+  // its own operand words too -- control comes back through `$gip` and
+  // `$jlook`, and the arena words behind it are simply never read.
+  const bodies = t3.bodies3.map((b, i) => {
+    if (!FAULT_EXIT.test(b)) return b;
+    FAULT_EXIT.lastIndex = 0;
+    const refund = n - 1 - i;
+    const before = [
+      refund > 0 ? `(global.set $steps (i32.add (global.get $steps) (i32.const ${refund})))` : '',
+      t3.epi,
+    ].filter(Boolean).join('\n');
+    return b.replace(FAULT_EXIT, (m) => `${before}\n${m}`);
+  });
+  // The clock question is asked of the ops' OWN bodies, before the repair: the
+  // refund is an `$steps +=` this function just wrote and knows the value of,
+  // and `STEP_CHARGE` deliberately excepts only the `-=` shape the handlers
+  // write. Asking it of the repaired text instead declined every `div` as a
+  // clock reader on the strength of the fix for its step accounting.
+  const joined = bodies.join('\n');
+  if (readsClock(t3.bodies3.join('\n'))) return { declined: 'the lowered body reads the clock' };
+  if (escapes(joined, true)) return { declined: 'the lowered body can leave the handler' };
   // Balance, checked here rather than at module build: a fold that unbalanced a
   // body would take the whole module down with a parse error a long way from
   // the run that produced it.
@@ -377,7 +492,6 @@ function buildTree(run, name) {
   const first = run[0].at;
   const endW = last.at + 1 + ARITY[last.fn];
   const arity = endW - first - 1;
-  const n = run.length;
   const body = [
     `;; tree fold: ${n} ops, ${arity} operand words`
       + `${t3.promoted ? `, ${t3.promoted.length} regs in locals` : `, no promotion (${t3.declined})`}`,

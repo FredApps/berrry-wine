@@ -864,8 +864,11 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         const taken = takenAt === undefined ? undefined : term.args[takenAt];
         if (taken === blockIps[b]) {
           const body = ops.slice(0, -1);
+          // `allowFault: false` -- a loop tree is lowered through region-jit's
+          // `buildRegion`, and a `(return)` out of the middle of one would skip
+          // the region epilogue. `div`/`idiv` are straight-line only.
           const br = eligibleRuns(body, treeBlockWidth(ops),
-            { minOps: 1, why: tf.why, relax: tf.relax });
+            { minOps: 1, why: tf.why, relax: tf.relax, allowFault: false });
           // One run, covering the whole body: a run that stops short would leave
           // ops the tree cannot lower between two it can, and there is no way to
           // run those from inside the handler.

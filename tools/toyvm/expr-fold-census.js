@@ -185,7 +185,6 @@ function classify(name, width, args, eff) {
     }
   }
   if (STACK_RE.test(name)) return { cls: 'stack', fold: false };
-  if (MULDIV_RE.test(name)) return { cls: 'muldiv', fold: false };
   if (/^(mov_r_sr|mov_sr_r|mov_m_sr|mov_sr_m|push_seg|pop_seg|push_seg32|pop_seg32|les|lds|lfs|lgs)$/.test(name)) {
     return { cls: 'segment', fold: false };
   }
@@ -209,11 +208,22 @@ function classify(name, width, args, eff) {
   }
   if (stem === 'adc' || stem === 'sbb') return { cls: 'adc-sbb', fold: false, relax: 'flags' };
   if (stem === 'cmp' || stem === 'test') return { cls: 'cmp-test', fold: false, relax: 'flags' };
-  if (SHIFT_CARRY.has(stem)) return { cls: 'flags', fold: false };
 
   // Anything the effect table cannot read is not foldable whatever its name
   // says: a port, a fault, the x87 stack, an index that would not resolve.
   const unreadable = eff && !eff.readable;
+
+  // ...with ONE exception, and only for `div`/`idiv`: the sole thing the effect
+  // table holds against them is `$fault0`, the divide-error trap. That is not
+  // an unknown escape, it is a known one with a known shape -- `(call $fault0
+  // <ip>) (return)`, twice per handler, once for a zero divisor and once for a
+  // quotient that will not fit -- and a tree can take it by writing its
+  // promoted registers back and refunding the steps it charged in advance
+  // before the call. Kept as a SEPARATE predicate from `unreadable` so that a
+  // div that is unreadable for any OTHER reason still declines: this says "the
+  // fault is the only thing wrong with it", not "faults are fine".
+  const faultsOnly = !!eff && !eff.readable && !eff.fpu && !eff.unresolved.length
+    && eff.escapes.length > 0 && eff.escapes.every(s => s === '$fault0');
 
   // Narrow work. The fold is defined full-width -- 16-bit in real mode, 32-bit
   // under a 32-bit code segment -- so an 8-bit op in a 16-bit block, or a
@@ -230,6 +240,10 @@ function classify(name, width, args, eff) {
   // insert/extract, and the whole point of `--relax=partial`) from an 8-bit
   // `rol` (not in the set at any width).
   let inSet = false;
+  // Set alongside `inSet` when the op is in the set only under a relaxation:
+  // which shift subgroup it is, and whether it is a multiply or a divide. Both
+  // are read once at the bottom, where the width questions have been settled.
+  let shiftCls = null, mdCls = null;
   if (ALU_FOLD.has(stem) && form) inSet = true;
   else if (UNARY_FOLD.has(stem) && (form === 'r' || form === 'm')) inSet = true;
   else if (stem === 'lea') inSet = true;
@@ -242,12 +256,36 @@ function classify(name, width, args, eff) {
     const from = Number(/(8|16)$/.exec(stem)[1]);
     inSet = from < width;
   }
-  else if (SHIFT_FOLD.has(stem)) {
+  // The whole shift/rotate group, in one branch, because the four sets differ
+  // only in WHICH relaxation would take them and not in how they lower. Every
+  // one of them is `(call $sh_<kind><w> value count)` with the handler's own
+  // text going into the tree verbatim -- which is what makes the count masking
+  // exact rather than re-derived: `$sh_*` masks with `(global.get $shmask)`,
+  // the live 8086-vs-186 setting, returns the value untouched at a masked count
+  // of zero without writing a single flag, and reads the incoming CF through
+  // `$get_cf` so a `rcl` still sees the carry an earlier compare owes it. None
+  // of that is restated here; it is inlined.
+  //
+  // `shiftCls` names which subgroup, and stays out of `inSet` as a separate
+  // variable so the decline histogram keeps them apart -- "shift by CL" and
+  // "rcl/rcr" are different questions to a reader even though one flag now
+  // turns both on.
+  else if (SHIFT_FOLD.has(stem) || SHIFT_ROT.has(stem) || SHIFT_CARRY.has(stem)) {
     // decode.js passes -1 as the operand sentinel for "read the count from CL".
     const byCl = args && args.length && args[args.length - 1] === -1;
-    if (byCl) return { cls: 'shift-cl', fold: false };
     inSet = true;
-  } else if (SHIFT_ROT.has(stem)) return { cls: 'other', fold: false };
+    if (byCl) shiftCls = 'shift-cl';
+    else if (SHIFT_CARRY.has(stem)) shiftCls = 'shift-carry';
+    else if (SHIFT_ROT.has(stem)) shiftCls = 'shift-rot';
+  }
+  // MUL/IMUL/DIV/IDIV, the one-operand forms with the implicit AX/DX pair.
+  // Matched on the whole NAME rather than the stem so `imul2`/`imul3` (the
+  // 186/386 two- and three-operand forms, which are ordinary folds and were
+  // handled above) do not fall in here.
+  else if (MULDIV_RE.test(name)) {
+    inSet = true;
+    mdCls = /^i?div$/.test(stem) ? 'div' : 'mul';
+  }
 
   const foldable = inSet && w === width;
 
@@ -257,9 +295,24 @@ function classify(name, width, args, eff) {
   // `sh0` (rol) is narrow and is not in the fold set either way, so it stays a
   // hard `partial-reg` with no relaxation offered.
   if (narrow) {
-    return inSet && !unreadable
+    // A narrow op that is ALSO only in the set under a second relaxation needs
+    // both, and `relax` carries one name. Offering `partial` alone here would
+    // let `--relax=partial` fold an 8-bit shift by CL on its own, so the two
+    // together decline with no relaxation named at all.
+    return inSet && !unreadable && !shiftCls && !mdCls
       ? { cls: 'partial-reg', fold: false, relax: 'partial', stem, narrowWidth: w }
       : { cls: 'partial-reg', fold: false, narrowWidth: w };
+  }
+  // The relaxed subgroups, before the blanket `unreadable` decline, because
+  // `div` is unreadable and that is exactly what `faultsOnly` is for.
+  if (foldable && mdCls) {
+    const ok = mdCls === 'div' ? faultsOnly : !unreadable;
+    return ok ? { cls: 'muldiv', fold: false, relax: 'muldiv', stem, faults: mdCls === 'div' }
+      : { cls: 'muldiv', fold: false, stem };
+  }
+  if (foldable && shiftCls) {
+    return unreadable ? { cls: shiftCls, fold: false, stem }
+      : { cls: shiftCls, fold: false, relax: 'shifts', stem };
   }
   if (foldable && unreadable) return { cls: 'other', fold: false };
   if (foldable) return { cls: 'fold', fold: true, stem };
