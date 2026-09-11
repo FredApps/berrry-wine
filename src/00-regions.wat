@@ -303,6 +303,8 @@
     (owner "10-helpers.wat:$lookup_api_id"))
   (region.declare $TEXT_SCRATCH (size 0x00000400) (align 0x00001000)
     (owner "01-header.wat:$TEXT_SCRATCH"))
+  (region.declare $SCRSAVE_TEXT (size 0x00001000) (align 0x00001000)
+    (owner "09ca-screensavers.wat:$SCRSAVE_TEXT"))
   (region.declare $CONSOLE_TEXT (size 0x00003000) (align 0x00001000)
     (stride 0x2 (count $CONSOLE_MAX_CELLS))
     (owner "09a2-handlers-console.wat:$console_buffers_init"))

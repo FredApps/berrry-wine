@@ -25,6 +25,21 @@ let missingExes = 0, missingRequired = 0, missingOptional = 0, apps = 0;
 for (const id of Object.keys(APPS).sort()) {
   const app = APPS[id];
   apps++;
+  // A WAT-native applet has no exe on disk -- it is a part of the wasm
+  // module. What it does need is an applet by that name in the source, so
+  // check that instead of a file the entry deliberately does not name.
+  if (app.watApp) {
+    // Read src/ rather than build/combined.wat: the build may not have run
+    // yet, and a stale concat would answer for the wrong tree.
+    const srcDir = path.join(ROOT, 'src');
+    const src = require('../lib/wat-manifest').WAT_FILES
+      .map(f => fs.readFileSync(path.join(srcDir, f), 'utf8')).join('\n');
+    if (!src.includes(`(export "${app.watApp}_open")`)) {
+      console.log(`FAIL ${id}: no WAT applet exports ${app.watApp}_open`);
+      missingExes++;
+    }
+    continue;
+  }
   if (!app.exe || !fs.existsSync(resolve(app.exe))) {
     console.log(`FAIL ${id}: exe not found: ${app.exe}`);
     missingExes++;

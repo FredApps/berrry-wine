@@ -220,6 +220,12 @@ const highFixedAliases = new Map(Object.entries({
   TT_SUBST_TIMES_NEW_ROMAN: { owner: 'TT_FONT_STRING_STORAGE' },
   TT_FONT_DIR_PATTERN: { owner: 'TT_FONT_STRING_STORAGE' },
   TT_FONT_DIR_PREFIX: { owner: 'TT_FONT_STRING_STORAGE' },
+  SCRSAVE_S_TITLE: { owner: 'SCRSAVE_TEXT' },
+  SCRSAVE_S_PROMPT: { owner: 'SCRSAVE_TEXT' },
+  SCRSAVE_S_RUN: { owner: 'SCRSAVE_TEXT' },
+  SCRSAVE_S_CLOSE: { owner: 'SCRSAVE_TEXT' },
+  SCRSAVE_S_FILE: { owner: 'SCRSAVE_TEXT' },
+  SCRSAVE_TEXT_EMPTY: { owner: 'SCRSAVE_TEXT' },
 }));
 
 const regionByName = new Map(regions.map(region => [region.name, region]));

@@ -66,6 +66,39 @@ async function until(predicate) {
   throw Error('boundary not reached');
 }
 (async () => {
+  for (const outcome of ['ready', 'stop', 'fault', 'missing']) {
+    const f = fixture(false, { gateCatalog: true });
+    let opened = 0;
+    f.w.instance.exports.wat_app_pump = () => {};
+    if (outcome !== 'missing') f.w.instance.exports.scrsave_open = () => ++opened;
+    const loading = f.w.loadWatApp('scrsave');
+    const failed = outcome !== 'ready' ? assert.rejects(loading) : null;
+    if (outcome !== 'missing') {
+      await until(() => f.events.includes('prepare'));
+      assert.throws(() => f.w.run(), /not ready/);
+      await assert.rejects(f.w.loadWatApp('scrsave'), /fresh process/);
+      f.prep.resolve();
+      await until(() => f.events.includes('catalog-prepare'));
+      assert.strictEqual(opened, 0, 'no window before cold font preparation');
+      if (outcome === 'stop') f.w.stop();
+      if (outcome === 'fault') f.failCatalog();
+      f.catalogPrep.resolve();
+    }
+    if (failed) {
+      await failed;
+      assert.strictEqual(opened, 0);
+      assert.strictEqual(f.w._fontBootState, 'failed');
+      assert.strictEqual(f.w._stopped, true);
+      await f.w._vfsStopBarrier;
+    } else {
+      assert.strictEqual(await loading, true);
+      assert.strictEqual(opened, 1);
+      assert.strictEqual(f.w._fontBootState, 'ready');
+      assert.strictEqual(f.w._watApp, 'scrsave');
+      assert.strictEqual(f.w._exeBytes, undefined);
+      await assert.rejects(f.w.loadExe('test.exe'), /one-shot/);
+    }
+  }
   async function reachCatalog(f, worker) {
     await until(() => f.events.includes('prepare')); f.prep.resolve();
     if (worker) { await until(() => f.events.includes('remote')); f.reply.resolve(); }
