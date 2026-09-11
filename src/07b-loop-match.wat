@@ -5216,6 +5216,9 @@
   ;; The handler index of the interior op that most recently caused a decline.
   ;; One sample, not a histogram -- enough to name the family to widen first.
   (global $tree_decl_uop_fn (mut i32) (i32.const -1))
+  ;; The self-loop currently under test, so a decline site can name it in the
+  ;; trace without threading a parameter through every reject.
+  (global $tree_decl_eip (mut i32) (i32.const 0))
 
   ;; A descriptor longer than this is refused outright.
   ;;
@@ -5231,9 +5234,9 @@
   ;;
   ;; Two structures bound it, and the smaller one is the limit:
   ;;   * $decode_block reserves 4096 bytes of slack past $thread_alloc before
-  ;;     $te signals a flush. The descriptor is a 44-byte header ($te's 8 plus
-  ;;     ten $te_raw) plus $TREE_UOP_WORDS * 4 = 24 bytes per micro-op, so
-  ;;     (4096 - 44) / 24 = 168.
+  ;;     $te signals a flush. The descriptor is a 48-byte header ($te's 8 plus
+  ;;     eleven $te_raw) plus $TREE_UOP_WORDS * 4 = 24 bytes per micro-op, so
+  ;;     (4096 - 48) / 24 = 168.
   ;;   * the classify scratch is the far half of OP_INDEX, 1024 words at 6
   ;;     words per micro-op = 170.
   ;; $TREE_FOLD_UOPS_LIMIT is the smaller, and the setter clamps to it, because
@@ -6093,8 +6096,29 @@
   ;; Count a terminator decline and return the decline. Written as a function
   ;; because the terminator has four separate reject sites and a counter
   ;; bumped at three of them is worse than no counter at all.
-  (func $tree_decl_term_bump (result i32)
+  ;;
+  ;; Under --trace-loopmatch it also emits one authoritative record per
+  ;; declined block -- marker, entry, reason, detail -- on the same log_i32
+  ;; channel $loop_trace_block uses. A count says the bucket is large; only
+  ;; the reason says which shapes are in it, and deriving that host-side would
+  ;; mean a second copy of these gates in JS that drifts from these ones.
+  ;;   1 last op is not a Jcc                  detail = its handler index
+  ;;   2 the Jcc does not branch to this entry detail = the target it took
+  ;;   3 walk-back hit a non-micro-op          detail = its handler index
+  ;;   4 walk-back hit a flag-touching op      detail = its handler index
+  ;;   5 ran out of ops with no flag producer  detail = 0
+  ;;   6 producer is none of H64/65/19/10      detail = its handler index
+  (func $tree_decl_term_bump (param $why i32) (param $detail i32) (result i32)
     (global.set $tree_decl_term (i32.add (global.get $tree_decl_term) (i32.const 1)))
+    (if (global.get $loop_trace)
+      (then
+        (if (i32.or (i32.eqz (global.get $loop_trace_eip))
+                    (i32.eq (global.get $loop_trace_eip) (global.get $tree_decl_eip)))
+          (then
+            (call $host_log_i32 (i32.const 0x100C0001))
+            (call $host_log_i32 (global.get $tree_decl_eip))
+            (call $host_log_i32 (local.get $why))
+            (call $host_log_i32 (local.get $detail))))))
     (i32.const 0))
 
   ;; Recognize a self-loop whose interior is pure full-width integer dataflow
@@ -6120,11 +6144,12 @@
     (local $n i32) (local $i i32) (local $p i32) (local $fn i32) (local $op i32)
     (local $nuops i32) (local $live_out i32) (local $extra i32)
     (local $term_kind i32) (local $term_a i32) (local $term_b i32)
-    (local $term_cc i32) (local $term_uop i32)
+    (local $term_cc i32) (local $term_uop i32) (local $term_imm i32)
     (local $fall i32) (local $back i32)
     (local $covered i32) (local $fwrites i32) (local $tidx i32)
     (local $prev_ea i32) (local $want_ea i32)
 
+    (global.set $tree_decl_eip (local.get $start_eip))
     (local.set $n (global.get $op_index_n))
     ;; Two terminator ops plus at least $tree_fold_min_ops of interior.
     (if (i32.lt_u (local.get $n)
@@ -6145,12 +6170,12 @@
     (local.set $fn (load.field LoopOp handler (local.get $p)))
     (if (i32.eqz (i32.and (i32.ge_u (local.get $fn) (i32.const 307))
                           (i32.le_u (local.get $fn) (i32.const 322))))
-      (then (return (call $tree_decl_term_bump))))
+      (then (return (call $tree_decl_term_bump (i32.const 1) (local.get $fn)))))
     (local.set $term_cc (i32.sub (local.get $fn) (i32.const 307)))
     (local.set $fall (i32.load offset=8 (local.get $p)))
     (local.set $back (i32.load offset=12 (local.get $p)))
     (if (i32.ne (local.get $back) (local.get $start_eip))
-      (then (return (call $tree_decl_term_bump))))
+      (then (return (call $tree_decl_term_bump (i32.const 2) (local.get $back)))))
 
     ;; -- terminator: the flag producer, and the suffix after it -------------
     ;; It is not always the op immediately before the Jcc. A compiler that
@@ -6176,15 +6201,21 @@
         (br_if $tfound (i32.eq (local.get $fn) (i32.const 65)))
         (br_if $tfound (i32.eq (local.get $fn) (i32.const 19)))
         (br_if $tfound (i32.eq (local.get $fn) (i32.const 10)))
+        ;; H128 is `reg OP= [base+disp]`; only its CMP form is a terminator,
+        ;; and that is checked below. Stopping the walk here rather than
+        ;; letting it fail the micro-op test means a non-CMP H128 is reported
+        ;; as reason 6 (producer of the wrong kind) instead of reason 3, which
+        ;; is the truth about it.
+        (br_if $tfound (i32.eq (local.get $fn) (i32.const 128)))
         (if (i32.eqz (call $tree_uop_classify (local.get $p)))
-          (then (return (call $tree_decl_term_bump))))
+          (then (return (call $tree_decl_term_bump (i32.const 3) (local.get $fn)))))
         (if (i32.or
               (call $tree_uop_flag_writes (global.get $tu_kind) (global.get $tu_b))
               (call $tree_uop_flag_reads (global.get $tu_kind) (global.get $tu_b)))
-          (then (return (call $tree_decl_term_bump))))
+          (then (return (call $tree_decl_term_bump (i32.const 4) (local.get $fn)))))
         ;; Ran out of ops without finding a producer: not this family.
         (if (i32.eqz (local.get $tidx))
-          (then (return (call $tree_decl_term_bump))))
+          (then (return (call $tree_decl_term_bump (i32.const 5) (i32.const 0)))))
         (local.set $tidx (i32.sub (local.get $tidx) (i32.const 1)))
         (br $tscan)))
     (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
@@ -6209,7 +6240,28 @@
             (local.set $term_kind (i32.const 2))
             (local.set $term_a (i32.and (local.get $op) (i32.const 0xF)))
             (local.set $term_b (i32.load offset=8 (local.get $p))))
-          (else (return (call $tree_decl_term_bump))))))))
+          (else (if (i32.and (i32.eq (local.get $fn) (i32.const 128))
+                             (i32.eq (i32.and (i32.shr_u (local.get $op) (i32.const 8))
+                                              (i32.const 0xF))
+                                     (i32.const 7)))
+            (then
+              ;; cmp r32,[base+disp] + Jcc: the bound lives in MEMORY and is
+              ;; re-read every iteration, so this is not a loop-invariant the
+              ;; fold could hoist -- the body may be what writes it. `a` is the
+              ;; register, `b` the base, and the displacement needs the twelfth
+              ;; header word, which exists only for this.
+              ;;
+              ;; Measured on mw3 0x0042d9b1 (35,840 block entries, 0.89% of the
+              ;; window's): a 16-bit copy loop bounded by a dword in memory.
+              ;; Only the CMP form qualifies -- every other ALU op here writes
+              ;; the register as well, and a terminator that writes is what
+              ;; term_kind 0 is for.
+              (local.set $term_kind (i32.const 3))
+              (local.set $term_a
+                (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+              (local.set $term_b (i32.and (local.get $op) (i32.const 0xF)))
+              (local.set $term_imm (i32.load offset=8 (local.get $p))))
+            (else (return (call $tree_decl_term_bump (i32.const 6) (local.get $fn)))))))))))
 
     ;; -- pass 1: prove every interior op is a micro-op, collect live-outs ---
     (local.set $i (i32.const 0))
@@ -6446,6 +6498,9 @@
     ;; Where the terminator runs inside the micro-op list. Equal to $nuops
     ;; whenever the flag producer really was the last op before the Jcc.
     (call $te_raw (local.get $tidx))
+    ;; The twelfth header word: term_kind 3's displacement, and zero for every
+    ;; other kind.
+    (call $te_raw (local.get $term_imm))
     (local.set $i (i32.const 0))
     (block $p2_done
       (loop $p2
@@ -6472,7 +6527,7 @@
     (local $tp i32) (local $up i32) (local $ub i32)
     (local $nuops i32) (local $live_out i32)
     (local $term_kind i32) (local $term_a i32) (local $term_b i32)
-    (local $term_cc i32) (local $term_uop i32)
+    (local $term_cc i32) (local $term_uop i32) (local $term_imm i32)
     (local $fall i32) (local $back i32) (local $cost i32) (local $term_pos i32)
     (local $r0 i32) (local $r1 i32) (local $r2 i32) (local $r3 i32)
     (local $r4 i32) (local $r5 i32) (local $r6 i32) (local $r7 i32)
@@ -6496,7 +6551,8 @@
     (local.set $back      (i32.load offset=32 (local.get $tp)))
     (local.set $cost      (i32.load offset=36 (local.get $tp)))
     (local.set $term_pos  (i32.load offset=40 (local.get $tp)))
-    (local.set $ub (i32.add (local.get $tp) (i32.const 44)))
+    (local.set $term_imm  (i32.load offset=44 (local.get $tp)))
+    (local.set $ub (i32.add (local.get $tp) (i32.const 48)))
     (global.set $ip
       (i32.add (local.get $ub)
         (i32.mul (local.get $nuops)
@@ -6589,8 +6645,12 @@
                     (local.set $r7 (local.get $vr))))
                   (else
                     ;; cmp: no register write, all five flag fields.
+                    ;; kind 2 compares against the immediate in `term_b`;
+                    ;; kinds 1 and 3 both read a register named by it, and
+                    ;; kind 3 then dereferences [that register + term_imm].
                     (local.set $vb (local.get $term_b))
-                    (if (i32.eq (local.get $term_kind) (i32.const 1))
+                    (if (i32.or (i32.eq (local.get $term_kind) (i32.const 1))
+                                (i32.eq (local.get $term_kind) (i32.const 3)))
                       (then (local.set $vb
                         (block $gu (result i32)
                           (block $u7 (block $u6 (block $u5 (block $u4
@@ -6601,6 +6661,13 @@
                             (br $gu (local.get $r4))) (br $gu (local.get $r5)))
                             (br $gu (local.get $r6)))
                           (local.get $r7)))))
+                    ;; Re-read every iteration. The bound is in memory and the
+                    ;; body may be what moves it; hoisting it would turn a
+                    ;; loop that ends into one that does not.
+                    (if (i32.eq (local.get $term_kind) (i32.const 3))
+                      (then (local.set $vb
+                        (call $gl32
+                          (i32.add (local.get $vb) (local.get $term_imm))))))
                     (call $set_flags_sub (local.get $va) (local.get $vb)
                       (i32.sub (local.get $va) (local.get $vb)))))))
             (br_if $body_done (i32.ge_u (local.get $i) (local.get $nuops)))

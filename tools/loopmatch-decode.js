@@ -10,6 +10,15 @@
 //
 //   node tools/loopmatch-decode.js <run.js log> [--eip=0x4c755d] [--uniq]
 //
+// --tree-why reports TREE_FOLD's terminator declines as the MATCHER reported
+// them -- the reason code travels in the trace stream, so this tool holds no
+// copy of those gates and cannot disagree with them. Pair it with the run's
+// --hot-block-dump to weight each declined loop by how often it was entered:
+//
+//   node test/run.js --app=ID ... --tree-fold --trace-loopmatch \
+//        --handler-hist --handler-hist-thread=0 --hot-block-dump=HOT > LOG
+//   node tools/loopmatch-decode.js LOG --tree-why --hot=HOT [--top=20]
+//
 // --why replaces the per-block dump with a decline histogram: each block is
 // run through the same staged gates $loop_try_lut applies, and charged to the
 // FIRST gate it fails. This is the runtime counterpart of
@@ -176,6 +185,100 @@ function parseBlocks(file) {
   return blocks;
 }
 
+// TREE_FOLD terminator declines, as the MATCHER reported them.
+//
+// Everything above re-derives a verdict host-side from the op list, which is
+// fine for the byte-idiom families whose gates are small. TREE_FOLD's
+// terminator gate is not small, and a second copy of it here would drift from
+// src/07b-loop-match.wat the first time either moved. So the matcher emits the
+// verdict itself: marker 0x100C0001, entry, reason, detail. This only reads
+// it.
+const DECL_MARKER = 0x100c0001;
+const DECL_WHY = {
+  1: 'last-op-not-jcc',
+  2: 'back-edge-elsewhere',
+  3: 'walkback-hit-non-microop',
+  4: 'walkback-hit-flag-op',
+  5: 'no-flag-producer',
+  6: 'producer-not-dec-inc-cmp',
+};
+
+function parseTermDeclines(file) {
+  const words = [];
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    const m = /^\[i32\] (0x[0-9a-f]+)/.exec(line);
+    if (m) words.push(parseInt(m[1], 16) >>> 0);
+  }
+  const out = [];
+  for (let i = 0; i + 3 < words.length; i++) {
+    if (words[i] !== DECL_MARKER) continue;
+    out.push({ eip: words[i + 1], why: words[i + 2], detail: words[i + 3] });
+    i += 3;
+  }
+  return out;
+}
+
+// `--hot-block-dump` rows: "0xVA  hits". A declined block is NOT folded, so a
+// hit here is one ENTRY to the block, i.e. one loop ITERATION -- unlike the
+// folded case tools/tree-shape-census.js warns about, where a hit is a whole
+// run. So this weighting is directly comparable to retired-op share.
+function parseHotBlocks(file) {
+  const hits = new Map();
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    const m = /^(0x[0-9a-f]+)\s+(\d+)/.exec(line.trim());
+    if (m) hits.set(parseInt(m[1], 16) >>> 0, Number(m[2]));
+  }
+  return hits;
+}
+
+function termDeclineReport(file, hotFile, names, top) {
+  const declines = parseTermDeclines(file);
+  const blocks = new Map();
+  for (const b of parseBlocks(file)) if (!blocks.has(b.eip)) blocks.set(b.eip, b);
+  const hot = hotFile ? parseHotBlocks(hotFile) : new Map();
+
+  // One row per entry EIP: a block decoded twice declines twice for the same
+  // reason and would otherwise be counted twice.
+  const byEip = new Map();
+  for (const d of declines) if (!byEip.has(d.eip)) byEip.set(d.eip, d);
+  const rows = [...byEip.values()].map(d => ({
+    ...d,
+    hits: hot.get(d.eip) || 0,
+    ops: (blocks.get(d.eip) || { ops: [] }).ops,
+  }));
+
+  const totalHot = [...hot.values()].reduce((a, b) => a + b, 0);
+  const buckets = new Map();
+  for (const r of rows) {
+    const key = DECL_WHY[r.why] || `why${r.why}`;
+    const e = buckets.get(key) || { n: 0, hits: 0, detail: new Map() };
+    e.n++; e.hits += r.hits;
+    const dn = r.why === 2 ? 'target' : (names.get(r.detail) || String(r.detail));
+    e.detail.set(dn, (e.detail.get(dn) || 0) + r.hits);
+    buckets.set(key, e);
+  }
+
+  console.log(`TREE_FOLD terminator declines: ${rows.length} distinct blocks` +
+    (hotFile ? `, ${totalHot.toLocaleString()} total block entries in the hot dump` : ''));
+  const order = [...buckets.entries()].sort((a, b) => b[1].hits - a[1].hits || b[1].n - a[1].n);
+  for (const [k, e] of order) {
+    const share = totalHot ? ` ${(100 * e.hits / totalHot).toFixed(2)}% of entries` : '';
+    console.log(`  ${k.padEnd(26)} ${String(e.n).padStart(4)} blocks  ${String(e.hits).padStart(10)} entries${share}`);
+    const dd = [...e.detail.entries()].sort((a, b) => b[1] - a[1]).slice(0, 4);
+    for (const [dn, dh] of dd) console.log(`      ${String(dh).padStart(10)}  ${dn}`);
+  }
+
+  console.log(`\ntop ${top} declined self-loops by block entries:`);
+  for (const r of rows.sort((a, b) => b.hits - a.hits).slice(0, top)) {
+    console.log(`  0x${r.eip.toString(16).padStart(8, '0')}  ${String(r.hits).padStart(10)} entries  ` +
+      `${(DECL_WHY[r.why] || r.why)}  detail=${r.why === 2 ? '0x' + r.detail.toString(16) : (names.get(r.detail) || r.detail)}  ` +
+      `${r.ops.length} ops`);
+    for (const [fn, op] of r.ops) {
+      console.log(`       ${String(fn).padStart(4)}  ${(names.get(fn) || '?').padEnd(24)} op=0x${op.toString(16)}`);
+    }
+  }
+}
+
 // One entry per distinct op sequence. Counting raw records instead would
 // measure how often a block was decoded, which after the block-cache fix is
 // mostly 1 and before it was thousands -- neither says anything about the
@@ -199,6 +302,11 @@ function main() {
 
   const names = handlerNames();
   const blocks = parseBlocks(file);
+
+  if (args.includes('--tree-why')) {
+    termDeclineReport(file, opt('hot'), names, opt('top') ? Number(opt('top')) : 20);
+    return;
+  }
 
   if (args.includes('--why')) {
     // A decline histogram over repeated copies of one block says more about
@@ -226,4 +334,5 @@ function main() {
 
 if (require.main === module) main();
 
-module.exports = { parseBlocks, uniqueShapes, declineReason, copyDeclineReason, handlerNames, roleOf, ROLE };
+module.exports = { parseBlocks, uniqueShapes, declineReason, copyDeclineReason, handlerNames, roleOf, ROLE,
+                   parseTermDeclines, parseHotBlocks, termDeclineReport, DECL_WHY };

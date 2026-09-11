@@ -362,6 +362,26 @@ const bodyR = [
 const SHAPE_R = [0xFD].concat(bodyR,
   [0x75, (-(bodyR.length + 2)) & 0xff, 0xFC, 0xC3]);
 
+// -- S: the bound lives in memory ---------------------------------------------
+// `cmp eax,[esi+disp] / jl` -- mw3's 0x0042d9b1, the hottest block in the
+// terminator decline bucket. The bound is re-read every iteration, and this
+// shape writes it FROM THE BODY on the last trip, so a fold that hoisted the
+// load out of the loop would run one iteration too many and a fold that
+// cached it would never stop. That is what makes this a differential rather
+// than a smoke test.
+//
+// The bound at [ebx+0x10] is element 4 of the very array the body rewrites,
+// so the trip count is decided in the middle of the run: the store at eax==4
+// raises it from 20 to 23 and the loop runs three iterations further than its
+// entry state said it would.
+const SHAPE_S = loopBackJcc([
+  0x8B, 0x14, 0x86,                     // mov edx, [esi+eax*4]   H389
+  0x01, 0xFA,                           // add edx, edi
+  0x89, 0x14, 0x86,                     // mov [esi+eax*4], edx   H420
+  0x83, 0xC0, 0x01,                     // add eax, 1
+  0x3B, 0x43, 0x10,                     // cmp eax, [ebx+0x10]    H128 alu=7
+], 0x7C /* jl */);
+
 // -- negatives ----------------------------------------------------------------
 // The accepted range is exactly H82..H85. REP CMPSB (H92) is a string op too,
 // and it writes the lazy-flag fields from inside a helper the descriptor's
@@ -728,6 +748,41 @@ const NEG_SHORT = loopBackDec([
     () => ({ eax: 0, ecx: 0, edx: 0x11223344, ebx: 20,
              ebp: 4, esi: (srcR + 0x800) >>> 0, edi: (dstR + 0x800) >>> 0 }),
     { seedAt: srcR, seedWords: 600, readAt: (dstR + 0x600) >>> 0 }, 128);
+
+  // Shape S needs its own A/B rather than checkShape's, because the memory it
+  // depends on is not a seedable pattern: the bound has to be a small number
+  // in a known slot, and checkShape's seed fills every word with a hash.
+  {
+    const arrS = (arena + 0x7c000) >>> 0;
+    const mk = () => ({ eax: 0, ecx: 0, edx: 0, ebx: arrS,
+                        ebp: 0xa5a5a5a5, esi: arrS, edi: 3 });
+    const setup = () => {
+      for (let i = 0; i < 64; i++) dv.setUint32(wa(arrS) + i * 4, i, true);
+      dv.setUint32(wa(arrS) + 16, 20, true);   // element 4 IS the bound
+    };
+    const offCode = install(SHAPE_S);
+    const onCode = install(SHAPE_S);
+
+    e.set_tree_fold(0);
+    const matchesBefore = e.test_tree_matches();
+    setup();
+    const offState = runAt(offCode, mk());
+    const offMem = readBack(arrS, 64);
+    assert.strictEqual(e.test_tree_matches(), matchesBefore + 1,
+      'shape S: a memory-bounded terminator is recognized');
+    const runsBefore = e.test_tree_runs();
+
+    e.set_tree_fold(1);
+    setup();
+    const onState = runAt(onCode, mk());
+    const onMem = readBack(arrS, 64);
+    assert(e.test_tree_runs() > runsBefore, 'shape S: the lowered super-op executes');
+    assert.deepStrictEqual(onState, offState,
+      'shape S: cmp r,[base+disp] terminator leaves identical state');
+    assert.deepStrictEqual(onMem, offMem, 'shape S: identical memory');
+    assert.strictEqual(offState.eax, 23,
+      'shape S: the body moved the bound mid-run and both arms followed it');
+  }
 
   // -------------------------------------------------------------- side exit --
   // Same shape, same inputs, but a block budget far below the trip count, so
