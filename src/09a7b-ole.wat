@@ -7,6 +7,152 @@
   ;; Split out of 09a7-handlers-dispatch.wat, which was 81% this and 1% dispatch.
   ;; ============================================================
 
+  ;; Process-local OLE drop-target registrations. A node is 16 bytes:
+  ;; hwnd, IDropTarget, ownership kind (1 local / 2 DLL-private guest), next.
+  ;; The mutation guard covers the suspended AddRef/Release interval, where a
+  ;; reentrant guest callback must not observe a half-owned list entry.
+  (global $ole_drop_targets (mut i32) (i32.const 0))
+  (global $ole_drop_target_mutating (mut i32) (i32.const 0))
+
+  (func $ole_drop_target_find (param $hwnd i32) (result i32)
+    (local $entry i32) (local $guard i32)
+    (local.set $entry (global.get $ole_drop_targets))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $entry)))
+      (if (i32.eq (call $gl32 (local.get $entry)) (local.get $hwnd))
+        (then (return (local.get $entry))))
+      (local.set $entry (call $gl32 (i32.add (local.get $entry) (i32.const 12))))
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br_if $done (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $ole_drop_target_commit (param $entry i32)
+    (call $gs32 (i32.add (local.get $entry) (i32.const 12))
+      (global.get $ole_drop_targets))
+    (global.set $ole_drop_targets (local.get $entry))
+    (global.set $ole_drop_target_mutating (i32.const 0)))
+
+  (func $ole_drop_target_unlink (param $entry i32)
+    (local $current i32) (local $previous i32) (local $next i32)
+    (local.set $current (global.get $ole_drop_targets))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $current)))
+      (local.set $next (call $gl32 (i32.add (local.get $current) (i32.const 12))))
+      (if (i32.eq (local.get $current) (local.get $entry))
+        (then
+          (if (local.get $previous)
+            (then (call $gs32 (i32.add (local.get $previous) (i32.const 12))
+              (local.get $next)))
+            (else (global.set $ole_drop_targets (local.get $next))))
+          (call $gs32 (i32.add (local.get $current) (i32.const 12)) (i32.const 0))
+          (return)))
+      (local.set $previous (local.get $current))
+      (local.set $current (local.get $next))
+      (br $scan))))
+
+  ;; RegisterDragDrop owns one reference on the supplied IDropTarget. Commit
+  ;; the registration only after a DLL-private target's guest AddRef returns.
+  (func $com_register_drag_drop (param $hwnd i32) (param $target i32)
+    (local $entry i32) (local $owned i32) (local $ret i32) (local $ctx i32)
+    (if (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+      (then
+        (global.set $eax (i32.const 0x80040102)) ;; DRAGDROP_E_INVALIDHWND
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eqz (local.get $target))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; E_INVALIDARG
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (call $ole_drop_target_find (local.get $hwnd))
+      (then
+        (global.set $eax (i32.const 0x80040101)) ;; DRAGDROP_E_ALREADYREGISTERED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (global.get $ole_drop_target_mutating)
+      (then
+        (global.set $eax (i32.const 0x8000FFFF)) ;; E_UNEXPECTED (reentrant mutation)
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $owned (select (i32.const 1) (i32.const 2)
+      (call $ole_interface_is_local (local.get $target))))
+    (if (i32.and
+          (i32.eq (local.get $owned) (i32.const 2))
+          (i32.or
+            (i32.eqz (call $ole_guest_method_addr (local.get $target) (i32.const 1)))
+            (i32.eqz (call $ole_guest_method_addr (local.get $target) (i32.const 2)))))
+      (then
+        (global.set $eax (i32.const 0x80004002)) ;; E_NOINTERFACE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $entry (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (call $gs32 (local.get $entry) (local.get $hwnd))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 4)) (local.get $target))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 8)) (local.get $owned))
+    (call $gs32 (i32.add (local.get $entry) (i32.const 12)) (i32.const 0))
+    (if (i32.eq (local.get $owned) (i32.const 1))
+      (then
+        (drop (call $ole_addref_local_interface (local.get $target)))
+        (call $ole_drop_target_commit (local.get $entry))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (global.set $ole_drop_target_mutating (i32.const 1))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 30) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 12))
+      (i32.const 0) (local.get $entry) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (drop (call $ole_guest_callback_invoke1
+      (local.get $ctx) (local.get $target) (i32.const 1))))
+
+  ;; Revoke first makes the HWND undiscoverable, then releases the retained
+  ;; target. That ordering keeps a reentrant guest Release from finding stale
+  ;; registration state.
+  (func $com_revoke_drag_drop (param $hwnd i32)
+    (local $entry i32) (local $target i32) (local $owned i32)
+    (local $ret i32) (local $ctx i32)
+    (if (i32.lt_s (call $wnd_table_find (local.get $hwnd)) (i32.const 0))
+      (then
+        (global.set $eax (i32.const 0x80040102)) ;; DRAGDROP_E_INVALIDHWND
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $entry (call $ole_drop_target_find (local.get $hwnd)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x80040100)) ;; DRAGDROP_E_NOTREGISTERED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (global.get $ole_drop_target_mutating)
+      (then
+        (global.set $eax (i32.const 0x8000FFFF)) ;; E_UNEXPECTED (reentrant mutation)
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $target (call $gl32 (i32.add (local.get $entry) (i32.const 4))))
+    (local.set $owned (call $gl32 (i32.add (local.get $entry) (i32.const 8))))
+    (call $ole_drop_target_unlink (local.get $entry))
+    (if (i32.eq (local.get $owned) (i32.const 1))
+      (then
+        (drop (call $ole_release_local_interface (local.get $target)))
+        (call $heap_free (local.get $entry))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (global.set $ole_drop_target_mutating (i32.const 1))
+    (local.set $ret (call $gl32 (global.get $esp)))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 31) (i32.const 0) (local.get $ret)
+      (i32.add (global.get $esp) (i32.const 8))
+      (i32.const 0) (local.get $entry) (i32.const 0) (i32.const 0) (i32.const 0)))
+    (drop (call $ole_guest_callback_invoke1
+      (local.get $ctx) (local.get $target) (i32.const 2))))
+
   ;; One current-thread entry point for COM and OLE. CoInitialize and
   ;; OleInitialize are STA requests; CoInitializeEx supplies its own model.
   (func $com_initialize_current (param $reserved i32) (param $flags i32) (result i32)
@@ -7392,7 +7538,8 @@
   ;; 23/24/25: ROT Register/Revoke/GetObject guest ownership;
   ;; 26: file-moniker BindToObject guest QueryInterface/bind ownership.
   ;; 27/28: file-moniker Save/Load through DLL-private IStream callbacks.
-  ;; 29: OLE clipboard ownership of a DLL-private IDataObject.
+  ;; 29: OLE clipboard ownership of a DLL-private IDataObject;
+  ;; 30/31: RegisterDragDrop AddRef commit / RevokeDragDrop Release teardown.
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -7769,6 +7916,17 @@
               (then (if (call $ole_guest_callback_invoke1
                           (local.get $ctx) (local.get $root) (i32.const 2))
                       (then (return)))))))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 30))
+      (then
+        (call $ole_drop_target_commit (local.get $p1))
+        (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 31))
+      (then
+        (call $heap_free (local.get $p1))
+        (global.set $ole_drop_target_mutating (i32.const 0))
         (call $ole_guest_callback_finish (local.get $ctx) (i32.const 0))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 4))

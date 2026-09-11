@@ -490,9 +490,12 @@ const { bootRenderHarness } = require('./render-helper');
         attributes:[{register:0,type:3,offset:0},{register:1,type:3,offset:16}],state:{cull:1,zenable:false}};
       const results=[],sizes=[];
       for(const c of cases){
-        const delta=2**c.lambda/4,offset=(c.coord??.55)-2.5*delta;
-        draw.vertices=new Uint8Array(new Float32Array([-1,-1,.5,1,offset,offset,0,1,
-          3,-1,.5,1,offset+8*delta,offset,0,1,-1,3,.5,1,offset,offset+8*delta,0,1]).buffer);
+        // D3D integer centers map to GL half-centers: the lower-left
+        // vertex lands at (.5,-.5), so GL sample (2.5,2.5) is (2,3)
+        // pixels from it. Keep the native oracle's exact (coord,coord).
+        const delta=2**c.lambda/4,offsetX=(c.coord??.55)-2*delta,offsetY=(c.coord??.55)-3*delta;
+        draw.vertices=new Uint8Array(new Float32Array([-1,-1,.5,1,offsetX,offsetY,0,1,
+          3,-1,.5,1,offsetX+8*delta,offsetY,0,1,-1,3,.5,1,offsetX,offsetY+8*delta,0,1]).buffer);
         const resident=(c.signed?signedLevels:levels).slice(c.base||0,c.levels||3).map(level=>({...level,pixels:new Uint8Array(level.pixels)}));
         draw.textures=[{...resident[0],levels:resident,originalWidth:4,originalHeight:4,baseLOD:c.base||0,
           ...(c.signed?{format:62}:{}),sampler:{addressU:c.address||3,addressV:c.address||3,borderColor:0xff4080bf,min:c.min,mag:c.mag,mip:c.mode===undefined?2:c.mode,lodBias:c.bias||0,maxMipLevel:c.max||0}}];
@@ -506,8 +509,10 @@ const { bootRenderHarness } = require('./render-helper');
       const resident=levels.map(level=>({...level,pixels:new Uint8Array(level.pixels)}));
       draw.textures=[{...resident[0],levels:resident,originalWidth:4,originalHeight:4,baseLOD:0,
         sampler:{addressU:3,addressV:3,min:1,mag:2,mip:2}}];
-      draw.vertices=new Uint8Array(new Float32Array([-1,-1,.5,1,-.7,-.7,0,1,
-        3,-1,.5,1,3.3,-.7,0,1,-1,3,.5,1,-.7,3.3,0,1]).buffer);
+      // Preserve the intended quad UVs after the viewport center conversion:
+      // raw GL (1,1) receives (.05,.05); raw GL (0,0) gets (-.45,-.45).
+      draw.vertices=new Uint8Array(new Float32Array([-1,-1,.5,1,-.45,-.95,0,1,
+        3,-1,.5,1,3.55,-.95,0,1,-1,3,.5,1,-.45,3.05,0,1]).buffer);
       draw.pixelShader=killPS;draw.pixelConstants=new Float32Array([1,1,1,1]);device.clear([0,0,0,1],1);device.draw(draw);
       const survivor=Array.from(g.readPixels(1,1,1,1,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(4)));
       const discarded=Array.from(g.readPixels(0,0,1,1,gl.RGBA,gl.UNSIGNED_BYTE,new Uint8Array(4)));

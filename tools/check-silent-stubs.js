@@ -246,11 +246,13 @@ const digest = crypto.createHash('sha256')
 // the remaining eight quiet handlers instead of blessing them as exceptions.
 // 2026-09-10 merge: 359 -> 357. DirectPlay Receive and Send now use the
 // owned local message queues; all 34 metadata compatibility stubs remain.
-// Recovery integration: IMalloc_DidAlloc queries validated allocation arenas
-// instead of an instance-local bump cursor; with main's newer implementations
-// the combined manual inventory is 355 (all 34 metadata stubs retained).
-const EXPECTED_COUNT = 355;
-const EXPECTED_SHA256 = '793e3cf45191445cff92a2db35c4843d61264cb3b010f242c569dd917e1636f9';
+// 2026-09-11: 348 -> 346. RegisterDragDrop/RevokeDragDrop now own one retained
+// IDropTarget per live HWND and report invalid, duplicate, and absent
+// registrations instead of returning unconditional success.
+// Recovery integration also replaces IMalloc_DidAlloc's cursor-only answer
+// with a validated allocation-arena query; retain that inventory reduction.
+const EXPECTED_COUNT = 345;
+const EXPECTED_SHA256 = 'ff2e1bed1e3f03bd22ef22a7cafd473196a482a264e797eb21f7ecc956134ecf';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

@@ -13,9 +13,10 @@
   ;; +20 misc1 (DDSurface: dib_ptr, WASM addr of pixel data, 0 if none)
   ;; +24 misc2 (DDSurface: color key low / surface byte size)
   ;; +28 flags (surface type: 1=primary,2=backbuf,4=offscreen; 0x100=has_colorkey)
-  ;; D3D9 surface arm: 0x40000000 = outstanding guest GetDC (not compositor binding).
-  ;; 0x20000000 = DC acquire pending; 0x10000000 = DC release upload pending.
+  ;; D3D9 surface arm: 0x40000000 = guest CPU ownership (not compositor binding).
+  ;; 0x20000000 = acquire pending; 0x10000000 = release upload pending.
   ;; Bit 27 = D3D9 lockable backbuffer, captured from presentation flags.
+  ;; Bit26 distinguishes LockRect from GetDC; bit25 records READONLY LockRect.
   ;;
   ;; The comment above is the SEMANTICS; the declaration below is the OFFSETS,
   ;; and after wave 4 of docs/watx-layout-migration-design.md it is the only
@@ -6901,13 +6902,131 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
-  ;; Acquire / Unacquire — no-op
+  ;; DirectInput device lifecycle bits in the DIDev arm of DxObject.flags.
+  ;; The low five bits retain DISCL_* from SetCooperativeLevel; these bits are
+  ;; emulator-owned and never escape to the guest.
+  (global $DIDEV_FORMAT_SET i32 (i32.const 0x00000100))
+  (global $DIDEV_COOP_SET i32 (i32.const 0x00000200))
+  (global $DIDEV_ACQUIRED i32 (i32.const 0x00000400))
+
+  (func $di_device_is_acquired (param $entry i32) (result i32)
+    (i32.ne
+      (i32.and (load.field DxObject flags (local.get $entry))
+               (global.get $DIDEV_ACQUIRED))
+      (i32.const 0)))
+
+  ;; Validate the standard formats that the browser implementation can return
+  ;; faithfully. Applications pass their own copy of DIDATAFORMAT, so pointer
+  ;; identity is meaningless: check its complete header and the object offsets
+  ;; and kinds. Return dwDataSize on success, zero on failure.
+  (func $di_standard_data_format_size
+      (param $entry i32) (param $format_guest i32) (result i32)
+    (local $format i32) (local $objects i32) (local $object i32)
+    (local $kind i32) (local $data_size i32) (local $count i32)
+    (local $i i32) (local $expected_offset i32) (local $expected_type i32)
+    (if (i32.eqz (local.get $format_guest))
+      (then (return (i32.const 0))))
+    (local.set $format
+      (call $g2w_affine_span (local.get $format_guest) (i32.const 24)))
+    (if (i32.eq (local.get $format) (global.get $NULL_SENTINEL))
+      (then (return (i32.const 0))))
+    ;; DIDATAFORMAT: dwSize, dwObjSize, dwFlags, dwDataSize, dwNumObjs, rgodf.
+    (if (i32.or
+          (i32.ne (i32.load (local.get $format)) (i32.const 24))
+          (i32.or
+            (i32.ne (i32.load offset=4 (local.get $format)) (i32.const 16))
+            (i32.ne (i32.load offset=8 (local.get $format)) (i32.const 2))))
+      (then (return (i32.const 0)))) ;; DIDF_RELAXIS
+    (local.set $data_size (i32.load offset=12 (local.get $format)))
+    (local.set $count (i32.load offset=16 (local.get $format)))
+    (local.set $kind (load.field DxObject misc0 (local.get $entry)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (if (i32.or
+              (i32.ne (local.get $data_size) (i32.const 256))
+              (i32.ne (local.get $count) (i32.const 256)))
+          (then (return (i32.const 0)))))
+      (else
+        (if (i32.ne (local.get $kind) (i32.const 2))
+          (then (return (i32.const 0))))
+        (if (i32.and
+              (i32.or (i32.ne (local.get $data_size) (i32.const 16))
+                      (i32.ne (local.get $count) (i32.const 7)))
+              (i32.or (i32.ne (local.get $data_size) (i32.const 20))
+                      (i32.ne (local.get $count) (i32.const 11))))
+          (then (return (i32.const 0))))))
+    (local.set $objects
+      (call $g2w_affine_span
+        (i32.load offset=20 (local.get $format))
+        (i32.shl (local.get $count) (i32.const 4))))
+    (if (i32.eq (local.get $objects) (global.get $NULL_SENTINEL))
+      (then (return (i32.const 0))))
+    (block $done (loop $objects_loop
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $object
+        (i32.add (local.get $objects) (i32.shl (local.get $i) (i32.const 4))))
+      (if (i32.eq (local.get $kind) (i32.const 1))
+        (then
+          (local.set $expected_offset (local.get $i))
+          (local.set $expected_type (i32.const 0x0C))) ;; DIDFT_BUTTON
+        (else
+          (if (i32.lt_u (local.get $i) (i32.const 3))
+            (then
+              (local.set $expected_offset (i32.shl (local.get $i) (i32.const 2)))
+              (local.set $expected_type (i32.const 0x03))) ;; DIDFT_AXIS
+            (else
+              (local.set $expected_offset (i32.add (local.get $i) (i32.const 9)))
+              (local.set $expected_type (i32.const 0x0C))))))
+      (if (i32.or
+            (i32.ne (i32.load offset=4 (local.get $object))
+                    (local.get $expected_offset))
+            (i32.ne
+              (i32.and (i32.load offset=8 (local.get $object)) (i32.const 0xFF))
+              (local.get $expected_type)))
+        (then (return (i32.const 0))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $objects_loop)))
+    (local.get $data_size))
+
+  ;; Acquire is deliberately not reference-counted. A second call succeeds
+  ;; with S_FALSE, and one Unacquire releases the device, matching DirectInput.
   (func $handle_IDirectInputDevice_Acquire (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $entry i32) (local $flags i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $flags (load.field DxObject flags (local.get $entry)))
+    (if (i32.ne
+          (i32.and (local.get $flags) (global.get $DIDEV_ACQUIRED))
+          (i32.const 0))
+      (then
+        (global.set $eax (i32.const 1)) ;; S_FALSE: already acquired
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (if (i32.ne
+          (i32.and (local.get $flags)
+            (i32.or (global.get $DIDEV_FORMAT_SET) (global.get $DIDEV_COOP_SET)))
+          (i32.or (global.get $DIDEV_FORMAT_SET) (global.get $DIDEV_COOP_SET)))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DIERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (store.field DxObject flags (local.get $entry)
+      (i32.or (local.get $flags) (global.get $DIDEV_ACQUIRED)))
+    (global.set $eax (i32.const 0)) ;; DI_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   (func $handle_IDirectInputDevice_Unacquire (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $entry i32) (local $flags i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $flags (load.field DxObject flags (local.get $entry)))
+    (if (i32.eqz
+          (i32.and (local.get $flags) (global.get $DIDEV_ACQUIRED)))
+      (then
+        (global.set $eax (i32.const 1)) ;; DI_NOEFFECT / S_FALSE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (store.field DxObject flags (local.get $entry)
+      (i32.and (local.get $flags) (i32.const 0xFFFFFBFF)))
+    (global.set $eax (i32.const 0)) ;; DI_OK
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; DIK scan code -> Win32 VK, one byte per scan code. 0 means the scan code
@@ -7057,8 +7176,27 @@
     (local $entry i32) (local $dev_type i32) (local $wa i32) (local $i i32) (local $vk i32)
     (local $dx i32) (local $dy i32) (local $buttons i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.eqz (call $di_device_is_acquired (local.get $entry)))
+      (then
+        (global.set $eax (i32.const 0x8007000C)) ;; DIERR_NOTACQUIRED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.or
+          (i32.eqz (local.get $arg2))
+          (i32.ne (local.get $arg1)
+                  (load.field DxObject misc1 (local.get $entry))))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DIERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (local.set $dev_type (load.field DxObject misc0 (local.get $entry)))
-    (local.set $wa (call $g2w (local.get $arg2)))
+    (local.set $wa
+      (call $g2w_affine_span (local.get $arg2) (local.get $arg1)))
+    (if (i32.eq (local.get $wa) (global.get $NULL_SENTINEL))
+      (then
+        (global.set $eax (i32.const 0x80070057))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (call $zero_memory (local.get $wa) (local.get $arg1))
     (if (i32.eq (local.get $dev_type) (i32.const 1))
       (then
@@ -7138,6 +7276,18 @@
     (local $delivered i32) (local $commit i32)
     (local $queued i32) (local $button_index i32) (local $event i32) (local $event_type i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (i32.eqz (call $di_device_is_acquired (local.get $entry)))
+      (then
+        (global.set $eax (i32.const 0x8007000C)) ;; DIERR_NOTACQUIRED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
+    (if (i32.or
+          (i32.eqz (local.get $arg3))
+          (i32.lt_u (local.get $arg1) (i32.const 16)))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DIERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+        (return)))
     (local.set $dev_type (load.field DxObject misc0 (local.get $entry)))
     (local.set $capacity (i32.load offset=12 (local.get $entry)))
     (if (i32.eq (local.get $dev_type) (i32.const 1))
@@ -7296,8 +7446,28 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
 
-  ;; SetDataFormat — no-op
+  ;; SetDataFormat accepts the standard keyboard, DIMOUSESTATE and
+  ;; DIMOUSESTATE2 layouts that the browser can reproduce. The format may be
+  ;; replaced while unacquired, but DirectInput rejects changes while acquired.
   (func $handle_IDirectInputDevice_SetDataFormat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $data_size i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (call $di_device_is_acquired (local.get $entry))
+      (then
+        (global.set $eax (i32.const 0x800700AA)) ;; DIERR_ACQUIRED
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $data_size
+      (call $di_standard_data_format_size (local.get $entry) (local.get $arg1)))
+    (if (i32.eqz (local.get $data_size))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DIERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (store.field DxObject misc1 (local.get $entry) (local.get $data_size))
+    (store.field DxObject flags (local.get $entry)
+      (i32.or (load.field DxObject flags (local.get $entry))
+              (global.get $DIDEV_FORMAT_SET)))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
@@ -7311,8 +7481,37 @@
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; SetCooperativeLevel — no-op
+  ;; SetCooperativeLevel requires a process-owned top-level HWND and exactly
+  ;; one foreground/background plus one exclusive/nonexclusive choice.
   (func $handle_IDirectInputDevice_SetCooperativeLevel (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $entry i32) (local $flags i32)
+    (if (i32.or
+          (i32.eqz (call $window_handle_valid (local.get $arg1)))
+          (i32.ne (call $wnd_top_level (local.get $arg1)) (local.get $arg1)))
+      (then
+        (global.set $eax (i32.const 0x80070006)) ;; E_HANDLE
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (if (i32.or
+          (i32.ne (i32.and (local.get $arg2) (i32.const 0xFFFFFFE0)) (i32.const 0))
+          (i32.or
+            (i32.eq
+              (i32.ne (i32.and (local.get $arg2) (i32.const 1)) (i32.const 0))
+              (i32.ne (i32.and (local.get $arg2) (i32.const 2)) (i32.const 0)))
+            (i32.eq
+              (i32.ne (i32.and (local.get $arg2) (i32.const 4)) (i32.const 0))
+              (i32.ne (i32.and (local.get $arg2) (i32.const 8)) (i32.const 0)))))
+      (then
+        (global.set $eax (i32.const 0x80070057)) ;; DIERR_INVALIDPARAM
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $flags (load.field DxObject flags (local.get $entry)))
+    (store.field DxObject misc2 (local.get $entry) (local.get $arg1))
+    (store.field DxObject flags (local.get $entry)
+      (i32.or
+        (i32.and (local.get $flags) (i32.const 0xFFFFFFE0))
+        (i32.or (local.get $arg2) (global.get $DIDEV_COOP_SET))))
     (global.set $eax (i32.const 0))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
@@ -7450,10 +7649,14 @@
     (global.set $eax (i32.const 0x80004001)) ;; DIERR_UNSUPPORTED
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
-  ;; Poll(this) — keyboard and mouse deliver their state without polling, so
-  ;; there is nothing to do and the call succeeds.
+  ;; Poll(this) — keyboard and mouse do not require polling, but DirectInput
+  ;; still requires acquisition before answering DI_NOEFFECT.
   (func $handle_IDirectInputDevice2_Poll (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
+    (local $entry i32)
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (global.set $eax
+      (select (i32.const 1) (i32.const 0x8007000C)
+        (call $di_device_is_acquired (local.get $entry)))) ;; DI_NOEFFECT / DIERR_NOTACQUIRED
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; SendDeviceData(this, cbObjectData, rgdod, pdwInOut, fl) — output devices

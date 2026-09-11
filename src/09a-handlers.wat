@@ -4557,6 +4557,15 @@
       (then (return (call $dx_display_h_get))))
     (i32.shr_u (call $host_get_screen_size) (i32.const 16)))
 
+  ;; Bottom edge of the browser desktop's usable area. Keep the classic
+  ;; taskbar reservation in one place so SPI_GETWORKAREA, GetMonitorInfo and
+  ;; SHAppBarMessage cannot describe three different desktops.
+  (func $screen_work_bottom (result i32)
+    (local $height i32)
+    (local.set $height (call $screen_metric_h))
+    (select (i32.sub (local.get $height) (i32.const 28)) (i32.const 0)
+      (i32.gt_u (local.get $height) (i32.const 28))))
+
   (func $system_metric (param $index i32) (result i32)
     (if (i32.eq (local.get $index) (i32.const 0))  ;; SM_CXSCREEN
       (then (return (call $screen_metric_w))))
@@ -11624,7 +11633,7 @@ HookEx — no next hook in chain, return 0
   ;; return-TRUE stub sitting directly above this implementation, so every W
   ;; caller got a success code and an untouched buffer.
   (func $spi_core (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $wide i32) (result i32)
-    (local $buf i32) (local $i i32) (local $screen i32)
+    (local $buf i32) (local $i i32)
     (local $lf i32) (local $narrow i32) (local $p i32) (local $size i32)
     ;; LOGFONTA is 60 bytes, LOGFONTW 92 — every offset past lfCaptionFont moves.
     (local.set $lf (if (result i32) (local.get $wide) (then (i32.const 92)) (else (i32.const 60))))
@@ -11645,18 +11654,19 @@ HookEx — no next hook in chain, return 0
             (return (local.get $i))))
         (return (call $host_set_wallpaper
           (call $g2w (local.get $arg2)) (local.get $arg1)))))
-    ;; SPI_GETWORKAREA = 0x30: fill RECT with the usable desktop area.
-    ;; We do not emulate taskbar reservation, so the work area is the screen.
+    ;; SPI_GETWORKAREA = 0x30: fill RECT with the usable desktop area. The
+    ;; browser desktop owns a classic 28px bottom taskbar (the same rectangle
+    ;; SHAppBarMessage reports), so applications must not center or maximize
+    ;; their windows underneath it.
     (if (i32.eq (local.get $arg0) (i32.const 0x30))
       (then
         (if (local.get $arg2)
           (then
             (local.set $buf (call $g2w (local.get $arg2)))
-            (local.set $screen (call $host_get_screen_size))
             (i32.store        (local.get $buf) (i32.const 0))
             (i32.store offset=4  (local.get $buf) (i32.const 0))
-            (i32.store offset=8  (local.get $buf) (i32.and (local.get $screen) (i32.const 0xFFFF)))
-            (i32.store offset=12 (local.get $buf) (i32.shr_u (local.get $screen) (i32.const 16)))))
+            (i32.store offset=8  (local.get $buf) (call $screen_metric_w))
+            (i32.store offset=12 (local.get $buf) (call $screen_work_bottom))))
         (return (i32.const 1))))
     ;; SPI_GETNONCLIENTMETRICS = 0x29: fill NONCLIENTMETRICS struct
     ;; Win9x applications commonly pass uiParam=0 and declare the versioned
@@ -17514,19 +17524,15 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-rDragDrop(hwnd, pDropTarget) — return S_OK.
-  ;; No real drag/drop path: there is no host OS drop source to deliver IDataObjects
-  ;; from, so tracking the IDropTarget would be pure bookkeeping. Return S_OK so
-  ;; callers proceed; any later drop events simply never arrive.
+  ;; RegisterDragDrop/RevokeDragDrop ownership and duplicate/error semantics
+  ;; live with the OLE continuation bridge in 09a7b-ole.wat. Browser-originated
+  ;; drop delivery can now use that retained target without inventing lifetime.
   (func $handle_RegisterDragDrop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (call $com_register_drag_drop (local.get $arg0) (local.get $arg1))
   )
 
-  ;; RevokeDragDrop(hwnd) — return S_OK, matching the RegisterDragDrop no-op above.
   (func $handle_RevokeDragDrop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (call $com_revoke_drag_drop (local.get $arg0))
   )
 
   ;; CoLockObjectExternal(pUnk, fLock, fLastUnlockReleases) — return S_OK.
@@ -18891,45 +18897,137 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; The browser exposes one primary monitor. The selection APIs still have
+  ;; observable Win32 behavior: DEFAULTTONULL returns NULL for an off-screen
+  ;; point/rectangle/window, while DEFAULTTOPRIMARY and DEFAULTTONEAREST return
+  ;; the monitor. An object that intersects [0,width)x[0,height) always selects
+  ;; it regardless of the fallback flag.
+  (func $single_monitor_fallback (param $flags i32) (result i32)
+    (select (i32.const 0x00010000) (i32.const 0)
+      (i32.or (i32.eq (local.get $flags) (i32.const 1))
+              (i32.eq (local.get $flags) (i32.const 2)))))
+
+  (func $single_monitor_rect
+      (param $left i32) (param $top i32) (param $right i32) (param $bottom i32)
+      (param $flags i32) (result i32)
+    (local $width i32) (local $height i32)
+    (local.set $width (call $screen_metric_w))
+    (local.set $height (call $screen_metric_h))
+    (if (i32.and
+          (i32.and
+            (i32.lt_s (local.get $left) (local.get $right))
+            (i32.lt_s (local.get $top) (local.get $bottom)))
+          (i32.and
+            (i32.and (i32.lt_s (local.get $left) (local.get $width))
+                     (i32.gt_s (local.get $right) (i32.const 0)))
+            (i32.and (i32.lt_s (local.get $top) (local.get $height))
+                     (i32.gt_s (local.get $bottom) (i32.const 0)))))
+      (then (return (i32.const 0x00010000))))
+    (call $single_monitor_fallback (local.get $flags)))
+
   ;; 918: MonitorFromRect(lprc, dwFlags) — 2 args stdcall
-  ;; Return fake monitor handle 0x00010000 (single monitor)
   (func $handle_MonitorFromRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00010000))
+    (local $rect i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (call $single_monitor_fallback (local.get $arg1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $rect (call $g2w (local.get $arg0)))
+    (global.set $eax (call $single_monitor_rect
+      (load.field Rect left (local.get $rect))
+      (load.field.memarg Rect top (local.get $rect))
+      (load.field.memarg Rect right (local.get $rect))
+      (load.field.memarg Rect bottom (local.get $rect))
+      (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 919: GetMonitorInfoA(hMonitor, lpmi) — 2 args stdcall
-  ;; Fill MONITORINFO with the current desktop size.
+  ;; Fill MONITORINFO/MONITORINFOEXA for the one live primary monitor.
   (func $handle_GetMonitorInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $screen i32)
+    (local $wa i32) (local $width i32) (local $height i32) (local $size i32)
+    (if (i32.ne (local.get $arg0) (i32.const 0x00010000))
+      (then
+        (global.set $last_error (i32.const 1461)) ;; ERROR_INVALID_MONITOR_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $wa (call $g2w (local.get $arg1)))
-    (local.set $screen (call $host_get_screen_size))
+    (local.set $size (i32.load (local.get $wa)))
+    (if (i32.and (i32.ne (local.get $size) (i32.const 40))
+                 (i32.ne (local.get $size) (i32.const 72)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $width (call $screen_metric_w))
+    (local.set $height (call $screen_metric_h))
     ;; MONITORINFO: cbSize(4), rcMonitor(16), rcWork(16), dwFlags(4) = 40 bytes
     ;; rcMonitor: left=0, top=0, right=screenW, bottom=screenH
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))   ;; left
     (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0))   ;; top
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.and (local.get $screen) (i32.const 0xFFFF))) ;; right
-    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.shr_u (local.get $screen) (i32.const 16))) ;; bottom
-    ;; rcWork: same as rcMonitor
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (local.get $width)) ;; right
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (local.get $height)) ;; bottom
+    ;; rcWork excludes the classic 28px taskbar already reported by
+    ;; SHAppBarMessage and therefore agrees with SPI_GETWORKAREA.
     (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0))
     (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0))
-    (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.and (local.get $screen) (i32.const 0xFFFF)))
-    (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.shr_u (local.get $screen) (i32.const 16)))
+    (i32.store (i32.add (local.get $wa) (i32.const 28)) (local.get $width))
+    (i32.store (i32.add (local.get $wa) (i32.const 32)) (call $screen_work_bottom))
     ;; dwFlags: MONITORINFOF_PRIMARY = 1
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (i32.const 1))
+    (if (i32.eq (local.get $size) (i32.const 72))
+      (then
+        ;; MONITORINFOEXA.szDevice = "\\\\.\\DISPLAY1".
+        (memory.fill (i32.add (local.get $wa) (i32.const 40)) (i32.const 0) (i32.const 32))
+        (i32.store offset=40 (local.get $wa) (i32.const 0x5C2E5C5C))
+        (i32.store offset=44 (local.get $wa) (i32.const 0x50534944))
+        (i32.store offset=48 (local.get $wa) (i32.const 0x3159414C))))
     (global.set $eax (i32.const 1))  ;; success
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 920: MonitorFromWindow(hwnd, dwFlags) — 2 args stdcall
   (func $handle_MonitorFromWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00010000))
+    (local $rect i32)
+    (if (i32.eqz (call $window_handle_valid (local.get $arg0)))
+      (then
+        (global.set $eax (call $single_monitor_fallback (local.get $arg1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $rect (call $paint_scratch_take))
+    (call $host_get_window_rect (local.get $arg0) (local.get $rect))
+    (global.set $eax (call $single_monitor_rect
+      (load.field PaintRect left (local.get $rect))
+      (load.field.memarg PaintRect top (local.get $rect))
+      (load.field.memarg PaintRect right (local.get $rect))
+      (load.field.memarg PaintRect bottom (local.get $rect))
+      (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; MonitorFromPoint(pt.x, pt.y, dwFlags) — POINT passed by value (2 dwords) + dwFlags = 3 args stdcall
   (func $handle_MonitorFromPoint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00010000))  ;; same fake monitor handle as MonitorFromRect
+    (local $width i32) (local $height i32)
+    (local.set $width (call $screen_metric_w))
+    (local.set $height (call $screen_metric_h))
+    (global.set $eax
+      (if (result i32)
+          (i32.and
+            (i32.and (i32.ge_s (local.get $arg0) (i32.const 0))
+                     (i32.lt_s (local.get $arg0) (local.get $width)))
+            (i32.and (i32.ge_s (local.get $arg1) (i32.const 0))
+                     (i32.lt_s (local.get $arg1) (local.get $height))))
+        (then (i32.const 0x00010000))
+        (else (call $single_monitor_fallback (local.get $arg2)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -21227,8 +21325,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
             (local.set $width (call $screen_metric_w))
             (local.set $height (call $screen_metric_h))
             (i32.store offset=16 (local.get $data) (i32.const 0))
-            (i32.store offset=20 (local.get $data)
-              (i32.sub (local.get $height) (i32.const 28)))
+            (i32.store offset=20 (local.get $data) (call $screen_work_bottom))
             (i32.store offset=24 (local.get $data) (local.get $width))
             (i32.store offset=28 (local.get $data) (local.get $height))
             (global.set $eax (i32.const 1))))))

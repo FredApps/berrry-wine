@@ -767,3 +767,220 @@ background. At7331 seconds the renderer reports20665 completed draws and zero
 failures. This proves the glyph fix reaches the real game's menu, not just the
 standalone font probe. Profile selection and changing gameplay remain unverified;
 the frozen executable artifact predates lighting/cache/scissor checkpoints.
+
+The same run98750 is now terminal (CLI exit1), not waiting for more input.
+Holding Return was accepted at batch591383; at batch591475 the real profile-name
+encoding loop called unimplemented `PathGetCharTypeW(0x50)` and trapped.
+The call site is00857c90 (`push eax; call ebx`), return00857c93, then `test al,1`:
+valid long-filename characters are copied directly; others take the formatting
+branch at00857c9e. The preceding sample reports93956 completed draws and zero
+renderer failures. Thus keyboard input reaches profile processing; this is not
+evidence of gameplay or of a renderer failure. Earlier mouse motion550,400
+mapped to native687,500 (640x480 presentation of800x600 window), drained its
+queue, and did not visibly dismiss the profile dialog. No guest state was patched.
+
+`PathGetCharTypeA/W` is now implemented from Microsoft's API contract and the
+supplied native `test/binaries/explorer98/dlls/shlwapi.dll`, version5.00.2614.3500,
+SHA256 `731b1ffdcb821a87e8ef1aa92fc956a0c385eaa6b8f4ad20c89db8b923f1aeae`.
+Exports485/486 are70bdde1d/70bf16c2. Native disassembly classifies controls0–31,
+quote, less/greater-than and pipe as0; space/comma/semicolon as1; star/question
+as4; slash/colon/backslash as8; all remaining BYTE/WORD inputs as3. These are
+character flags, not whole-filename validity; do not impose separate DOS name
+rules on plus, equals, brackets, DEL or high Unicode values. A truncates toBYTE,
+W toWORD, with no codepage conversion. `test/test-path-get-char-type.js` passes
+both entry points over the entire65536-value domain, upper-bit truncation and
+stdcall cleanup. This is a disassembly-derived fixture, not a native execution
+oracle. A fresh game run with this implementation remains required. No Wine
+implementation source was used.
+
+Fresh frozen run24571 now verifies that progression: snapshot
+`/private/tmp/bw-path-char.ly0IRU/wine.wasm` contains the PathGetCharType fix,
+and `/private/tmp/bw-path-current-screen.png` shows the profile-creation dialog.
+Normal Return down at batch224427 and up at224621 closes it without trapping;
+`/private/tmp/bw-path-after-profile.png` shows the island main menu headed
+“Player”. Renderer completions continue with zero reported failures. This is
+successful profile creation, not gameplay. This frozen snapshot predates the
+later backbuffer-lock/ownership and programmed-VS pixel-center checkpoints.
+
+A synthetic click at155,445 was accepted at225653, but a later capture
+`/private/tmp/bw-path-new-game.png` still shows the same main menu. A held mouse
+down at those coordinates was delivered at226972 to distinguish short-click
+polling from menu behavior; mouse-up was delivered at228211. A later settled
+capture at229794 (`/private/tmp/bw-path-settled-new-game.png`) still shows the
+main menu, so neither click variant proves New Game activation. No key or mouse
+button is left held by these controls. The
+live probe remains24571 with artifacts under `bw-software-probe-8o44XX` in the
+system temporary directory. No guest state or instruction stream was patched.
+
+Buffered-mouse investigation on the same frozen run24571: a temporary,
+return-value-preserving wrapper around `renderer.getMouseButtons` counted8
+polls with left held and8 after release (down237923/up238468). The wrapper was
+restored. Its caller EIP009b0920 belongs to the game's GetDeviceData call at
+009b0930 (`call [eax+28h]`, slot10), with20-byte DIDEVICEOBJECTDATA records;
+this is not a GetDeviceState caller. The game's switch accepts offsets0/4/8
+for axes and12/13/14 for buttons. `SetDataFormat` remains an implementation gap,
+but these observed offsets do not establish a custom-layout mismatch.
+
+After explicit movement155,445 ->156,445 ->155,445 and down243257, the native
+trace proves real left-down dispatch:009b0a59 tests bit0x80;009b0a5e records
+that bit set;009b0a67 passes the zero suppress/error byte at01d7a748;009b0a80
+pushes event1 and009b0a84 calls009afe60, returning to009b0a89. The receiver
+is01d733e8. A read-only snapshot also reports error byte0 and mode017792d4=1.
+Mouse-up244432 is acknowledged and the later009b0a94 ->009afe60 path delivers
+event4. Thus the native event dispatcher receives both edges; the next question
+is relative-cursor/hit-test or downstream event handling, not whether a held
+button ever reaches the guest. This does not yet prove New Game activation.
+Native event1 target009aff41 copies the receiver's current coordinate words
+at+c4/+c8 to+114/+118; event4 target009aff6f copies them to+12c/+130. These
+provide a read-only seam to compare the game's click position with the host's
+absolute pointer, without changing guest memory. Transient state is at+110,
+with another dispatch state byte at+15c.
+
+Diagnostic caution: `set_trace_eip_range` requires `(flag,lo,hi)`, three args.
+A mistaken two-argument call enabled broad streaming trace and slowed batches.
+The correct restoration `(1,0x526d93,0x526d97)` was queued after mouse-up; do not
+infer completion of that control from its submission. Preserve the healthy
+process while its current batch drains; no restart was used for this diagnosis.
+
+The correct trace restoration is now acknowledged, followed by a confirmation
+with host mask0/queue0. The native coordinate snapshot found all current/down/up
+coordinates at(0,0), while the host pointer was(193,556). Sensitivity is1.0,
+insets+100/+104 are0, and remapping+108 is1. A normal mousemove to(0,0) at
+batch281124 moved the game's coordinates to(-1,-1); a later move to(156,446)
+at285501 moved them to(194,556), verified before pressing. Down287458 and
+up288497 at(156,446) recorded both guest edges at(194,556). The settled capture
+at290202, `/private/tmp/bw-native-new-game-settled.png`, shows the four-panel
+controls/tutorial screen with Continue. New Game activation is therefore
+verified; changing in-world gameplay remains outstanding. No guest memory or
+instruction stream was patched, and the frozen process was preserved.
+
+Buffered-input sequencing matters here: motion is accumulated into+cc/+d0
+during the FIFO loop and applied to current+c4/+c8 after that loop. A button
+record encountered in the same poll snapshots the old current position. Move,
+allow an actual input update, then press; absolute host pointer fields alone
+are not sufficient evidence of the game's hit-test coordinates.
+
+Continue was then targeted with mousemove(321,451) at292616; a separate native
+read verified(400,562), followed by down293970/up294751. Run24571 is now
+authoritatively terminal, exit1: batch294774 traps at00925197 decoding0f d0.
+This is not yet evidence of a missing SSE instruction: the supplied EXE has
+`mov eax,3` at00925195, so00925197 is inside its immediate and its runtime bytes
+differ from disk. The enclosing00925120 reader copies from a virtual-method
+buffer using `rep movsd` at00925178 / `rep movsb` at0092517f. Crash registers
+include EBP=EDI=00a58780, ESI=00a5877f, EBX=33078b10; saved caller chain includes
+009208a6,00920dca,009a81da. Investigate the copy arguments/corruption origin
+before adding an opcode implementation. Last sampled renderer failures remain0.
+All synthetic buttons were released before the trap. Gameplay remains unverified.
+
+The saved stack identifies the immediate failure:00925120 is thiscall
+`Read(dest,count,outRead)` with ret12. Return009208a6 at074fd034 places
+dest=0 at074fd038, count=00a58780 at074fd03c, and outRead=074fd050 at074fd040.
+Caller009a81d5 forwards an unchecked NULL from aligned allocator00adbcbf,
+requested size00a58780/alignment64/offset0;00adbc2f requests00a587c3 bytes from
+underlying00ad566e and propagates NULL. Copying count bytes into address zero
+explains final EDI00a58780 and overwritten executable bytes. The reason for the
+allocation failure still requires live allocator evidence; do not assume a leak
+or enlarge memory solely from this stack. Effective source-1 is an inference
+from final ESI/count, not a verified mapping snapshot.
+
+`test/test-bw-rep-copy.js` executes the exact00925165..00925186 copy/cursor
+sequence with valid heap buffers. All16 cold/cached size cases pass on both the
+frozen failing-game WASM and current build, plus fresh source77739. It checks
+EBP/EDX preservation, ECX0, DF0, final pointers, bytes, guards and cursor update.
+No REP defect was reproduced and no instruction implementation was changed.
+Both copies of BW2Demo.exe (probe MainApp and local candidate) have SHA256
+65130510233cfc9e53758bab8480a3cfeeb6b1043de9774ab6e066191b2bb433.
+
+Fresh reproduction21705 uses frozen current-build snapshot
+`/private/tmp/bw-allocation-repro.J76xSx/wine.wasm`; artifacts are
+`bw-software-probe-WjsJYY` in the system temporary directory. It is a new run
+after confirmed exit of24571, not a replacement of a healthy process. Initial
+samples report no renderer failures; menu/gameplay progression remains pending.
+
+Read-only main-instance heap snapshots at batches27089 and43976 are identical:
+9316 free blocks,7550264 total free bytes,3182896 largest block, no cycle or bad
+header; low cursor/end71990848/71991296, sparse920016632/920059904, virtual
+top1214742528. This bounds an intro interval, not the later failed allocation.
+An isolated120-draw renderer audit likewise found stable live/cache bytes and
+reuse, but renderer-private free blocks remain unavailable to the guest owner
+until graceful handoff. Eager multi-batch scratch and owner high-water retention
+remain pressure hypotheses. Ordinary Escape down22658/up23081 did not skip the
+intro; the live run has no held key. Current source now reclaims replaced-arena
+tails and rejects oversized low-heap reservations correctly;21705 predates that
+change and must not be described as post-fix acceptance.
+
+### Allocation-return diagnostic prepared on live run21705
+
+Use breakpoint009a81c9, the aligned allocator's return block, rather than
+009a81d5 inside that block. The native debugger checks dispatch boundaries;
+the later unchecked-argument push is not itself a reliable breakpoint target.
+At c9, EAX is the allocation result, EDI the requested byte count, ESI the
+owning object and EBP the input stream. This allows inspection before the
+subsequent copy corrupts instructions when EAX is zero.
+
+The live CLI now has a one-shot, return-preserving run wrapper installed by
+the ordinary eval channel. It shadows the instance's inherited exports getter
+with a configurable property, invokes the original run exactly once, and on
+the matching debug return copies registers, stack words and allocator cursors
+into ctx.bwAllocCapture. It then clears the breakpoint and restores the original
+property descriptor even if observation fails. ctx.bwAllocRestore cancels the
+hook before a hit. Installation rejected a preexisting breakpoint; a tiny
+independent Wasm test verified that shadowing/restoration is supported.
+No guest instructions, registers or allocation state are patched.
+
+The first oversized terminal input did not execute: canonical terminal input
+overflowed, producing bell characters. Ctrl-U cleared the pending line;
+allocation_capture_check2 confirmed breakpoint0 and no hook. Three short
+hook_part commands then assembled the observer text, and hook_install returned
+true. Keep future relayed commands short. At the last preceding sample the
+intro had reached frame1098, completion95.2, and zero renderer failures. The
+allocation has not yet been observed; this is diagnostic readiness, not proof
+of either allocation failure or success on this preserved pre-fix build.
+
+Run21705 subsequently completed the intro (frame1787, finishFrame1786) and
+reached profile creation. Short Return694309/up694325 left the dialog visible;
+held Return696323/up697061 closed it, with Player at the main menu in
+/private/tmp/bw-profile-settled.png (batch697412). Normal movement698105 to0,0
+then698149 to156,446 settled at native195,557. Down698787/up699231 reaches the
+tutorial Continue screen in /private/tmp/bw-newgame-current.png (batch700341).
+Move701673 to321,451 settled at native401,563; Continue down703542/up704168
+reproduced the copy trap at batch704171, EIP00925197. All inputs were released.
+The probe is terminal exit1, not a live wait. This was the pre-tail/pre-compaction
+frozen build, not current-source acceptance.
+
+The observer worked but matched an earlier call to the same allocation site:
+batch704170, EAX844933376 (nonzero), EDI231184, ESI856098960, EBP856040276.
+At that point the free list had9972 blocks totaling5389088 bytes, largest22368,
+with no detected cycle/bad header/truncation. Low cursor/end71990848/71991296;
+sparse cursor/end845164640/845676544; virtual top856096768. The full registers,
+24 stack words and32 stream words are durable in run.log at BW-ALLOC-CAPTURE.
+The setter logged synchronously before returning to guest execution, so this
+evidence survives the subsequent crash. It proves fragmentation at this earlier
+successful call, not the allocator's full state at the later10.3MiB failure.
+
+The one-shot observer cleared itself after that successful call. Next use must
+retain the breakpoint until EDI equals00a58780 (or explicitly capture every
+matching return), rather than stop at the first use of the shared call site.
+The terminal stack again contains destination0/count00a58780 at the copy call.
+No new CPU opcode defect is demonstrated, and the exact allocation-pressure
+cause remains open. Do not restart the old session handle21705; it has exited.
+
+### Targeted post-compaction reproduction10715
+
+`tools/black-white-software-probe.js --allocation-probe` now installs a reusable
+observer that remains armed through earlier allocations and captures only
+EDI00a58780 at009a81c9. Capture is logged synchronously and the exports property
+and breakpoint are restored afterwards, including observation/logging failures.
+The focused observer test verifies filtering, exactly one guest invocation per
+call, unchanged return values/errors, cancellation, serialization and cleanup.
+
+New run10715 is live on the frozen full-build41098 artifact:
+/private/tmp/bw-compacted-repro.kyBDAg/wine.wasm,1158838 bytes,
+SHA2567dee27a0cace008de26aa1cc5d4a1ec4d88ba7228ce589190182b5e30f655183.
+This includes heap-tail reclamation, context compaction and the private VS2
+foundation, but predates the later DirectInput lifecycle commit and matrix work.
+Artifacts: /var/folders/dz/1fqkk_jd4350qkm91pm9_q3c0000gp/T/bw-software-probe-LJrjIm.
+Launch uses --seconds=14400 --capture-every=60 --control-stdin --allocation-probe
+and the frozen --wasm path. Observer installation returned armedtrue with
+address10125769/request10848128. Startup samples through28.95s have no renderer
+failures; neither gameplay nor the target allocation has yet been reached.

@@ -123,7 +123,7 @@ async function main() {
   // Reuse one loaded import-thunk slot to exercise a public API handler that
   // calc.exe does not itself import. The thunk record is restored after the
   // suspended guest callback chain has completely returned.
-  const callApi = name => {
+  const callApi = (name, ...args) => {
     const api = apiTable.find(entry => entry.name === name);
     assert(api, `${name} must exist in api_table.json`);
     const thunkWa = RegionMap.BASE.THUNK_BASE;
@@ -132,7 +132,8 @@ async function main() {
     const savedName = view.getUint32(thunkWa, true);
     const savedId = view.getUint32(thunkWa + 4, true);
     view.setUint32(thunkWa + 4, api.id >>> 0, true);
-    e.call_func(thunkGuest, 0, 0, 0, 0);
+    const argv = [...args, 0, 0, 0, 0].slice(0, 4);
+    e.call_func(thunkGuest, argv[0], argv[1], argv[2], argv[3]);
     for (let i = 0; i < 400 && e.get_eip(); i++) e.run(5000);
     view.setUint32(thunkWa, savedName, true);
     view.setUint32(thunkWa + 4, savedId, true);
@@ -170,6 +171,53 @@ async function main() {
     checks++;
     console.log(`PASS  ${name}${detail ? `  ${detail}` : ''}`);
   };
+
+  const dragHwndA = 0x12345;
+  const dragHwndB = 0x12346;
+  const dragHwndC = 0x12347;
+  e.test_wnd_table_set(dragHwndA, 0x401000);
+  e.test_wnd_table_set(dragHwndB, 0x401000);
+  e.test_wnd_table_set(dragHwndC, 0x401000);
+  const dragTarget = makeGuestSite();
+  check('RegisterDragDrop rejects an invalid HWND without retaining its target',
+    callApi('RegisterDragDrop', 0x777777, dragTarget) === 0x80040102 &&
+    read(dragTarget + 4) === 1 && read(dragTarget + 8) === 0);
+  check('RegisterDragDrop rejects a null IDropTarget',
+    callApi('RegisterDragDrop', dragHwndA, 0) === 0x80070057);
+  check('RegisterDragDrop retains a DLL-private target through guest AddRef',
+    callApi('RegisterDragDrop', dragHwndA, dragTarget) === 0 &&
+    read(dragTarget + 4) === 2 && read(dragTarget + 8) === 1);
+  const duplicateTarget = makeGuestSite();
+  check('RegisterDragDrop rejects a duplicate HWND without retaining the replacement',
+    callApi('RegisterDragDrop', dragHwndA, duplicateTarget) === 0x80040101 &&
+    read(duplicateTarget + 4) === 1 && read(duplicateTarget + 8) === 0);
+  check('RevokeDragDrop releases the retained DLL-private target',
+    callApi('RevokeDragDrop', dragHwndA) === 0 &&
+    read(dragTarget + 4) === 1 && read(dragTarget + 12) === 1);
+  check('RevokeDragDrop reports a live HWND that is not registered',
+    callApi('RevokeDragDrop', dragHwndA) === 0x80040100);
+  const malformedTarget = makeGuestSite();
+  const malformedVtable = read(malformedTarget);
+  const malformedAddRef = read(malformedVtable + 4);
+  write(malformedVtable + 4, 0);
+  check('RegisterDragDrop rejects a target without an AddRef callback atomically',
+    callApi('RegisterDragDrop', dragHwndB, malformedTarget) === 0x80004002 &&
+    read(malformedTarget + 4) === 1);
+  write(malformedVtable + 4, malformedAddRef);
+  const localTarget = e.test_ole_create_test_site() >>> 0;
+  check('RegisterDragDrop retains an emulator-local COM target',
+    callApi('RegisterDragDrop', dragHwndB, localTarget) === 0 &&
+    read(localTarget + 4) === 2);
+  check('RevokeDragDrop balances an emulator-local target reference',
+    callApi('RevokeDragDrop', dragHwndB) === 0 && read(localTarget + 4) === 1);
+  check('one IDropTarget may be registered independently for two windows',
+    callApi('RegisterDragDrop', dragHwndB, dragTarget) === 0 &&
+    callApi('RegisterDragDrop', dragHwndC, dragTarget) === 0 &&
+    read(dragTarget + 4) === 3 && read(dragTarget + 8) === 3);
+  check('each HWND revocation releases exactly its own retained reference',
+    callApi('RevokeDragDrop', dragHwndC) === 0 &&
+    callApi('RevokeDragDrop', dragHwndB) === 0 &&
+    read(dragTarget + 4) === 1 && read(dragTarget + 12) === 3);
 
   const object = e.test_ole_create_static_handler(0) >>> 0;
   const siteA = makeGuestSite();

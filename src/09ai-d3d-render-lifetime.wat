@@ -2,27 +2,10 @@
 ;; devices/programs/contexts before retirement and must never allocate afterward.
 ;; The receiver may adopt only after confirmed producer termination. These are
 ;; host lifecycle exports, not guest APIs. Forced-death orphan recovery is separate.
-  (func $d3d_render_retire_tail (param $ptr i32) (param $end i32) (param $record i32)
-    (local $size i32)
-    (if (i32.or (i32.eqz (local.get $ptr)) (i32.eqz (local.get $record))) (then (return)))
-    (if (i32.gt_u (local.get $ptr) (local.get $end)) (then (return)))
-    (local.set $size (i32.sub (local.get $end) (local.get $ptr)))
-    (if (i32.or (i32.lt_u (local.get $size) (i32.const 16))
-      (i32.ne (i32.and (local.get $size) (i32.const 7)) (i32.const 0))) (then (return)))
-    ;; ptr is exactly the allocated cursor, so heap_arena_find deliberately
-    ;; excludes it until we publish this formerly unused tail as allocated.
-    (if (i32.or (i32.eqz (i32.atomic.load (local.get $record)))
-      (i32.lt_u (local.get $ptr) (i32.atomic.load (local.get $record)))) (then (return)))
-    (if (i32.ne (i32.atomic.load offset=8 (local.get $record)) (local.get $ptr)) (then (return)))
-    (if (i32.ne (i32.load offset=4 (local.get $record)) (local.get $end)) (then (return)))
-    (i32.store (call $g2w (local.get $ptr)) (local.get $size))
-    (i32.atomic.store offset=8 (local.get $record) (local.get $end))
-    (call $heap_free (i32.add (local.get $ptr) (i32.const 4))))
-
   (func (export "d3d_render_retire_heap") (result i32)
     (local $head i32)
-    (call $d3d_render_retire_tail (global.get $heap_ptr) (global.get $heap_end) (global.get $heap_arena_record))
-    (call $d3d_render_retire_tail (global.get $heap_sparse_ptr) (global.get $heap_sparse_end) (global.get $heap_sparse_record))
+    (call $heap_arena_free_tail (global.get $heap_ptr) (global.get $heap_end) (global.get $heap_arena_record))
+    (call $heap_arena_free_tail (global.get $heap_sparse_ptr) (global.get $heap_sparse_end) (global.get $heap_sparse_record))
     (local.set $head (global.get $free_list))
     (global.set $free_list (i32.const 0))
     (global.set $heap_ptr (i32.const 0))

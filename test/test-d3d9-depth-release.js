@@ -6,10 +6,10 @@ const id=require('../src/api_table.json').find(a=>a.name==='IDirect3DSurface9_Re
 const resetId=require('../src/api_table.json').find(a=>a.name==='IDirect3DDevice9_Reset').id;
 const bytes=n=>[n&255,n>>>8&255,n>>>16&255,n>>>24&255];
 (async()=>{
-  let ready=false,submits=0,polls=0,retired=0,pendingOpcode=0x30004;
+  let ready=false,submits=0,polls=0,retired=0,pendingOpcode=0x30004,completion=1;
   const{exports:e,memory,module,host}=await bootRenderHarness({fonts:'none',extraHostOverrides:{gpu_gl_call(op){
     if(op===pendingOpcode){submits++;return -29;}
-    if(op===0x30007){polls++;return ready?1:-29;}
+    if(op===0x30007){polls++;return ready?completion:-29;}
     if(op===0x30008)retired++;
     return 1;
   }},extraWat:`
@@ -28,6 +28,10 @@ const bytes=n=>[n&255,n>>>8&255,n>>>16&255,n>>>24&255];
       (call $handle_IDirect3D9_CreateDevice (i32.const 0) (i32.const 0) (i32.const 1) (i32.const 1) (i32.const 0) (i32.const 0)) (global.get $eax))
     (func (export "make_depth") (param $d i32) (result i32)
       (call $d3d9_depth_new (local.get $d) (i32.const 8) (i32.const 8) (i32.const 80) (i32.const 0) (i32.const 1)))
+    (func (export "get_backbuffer") (param $d i32) (param $out i32) (result i32)
+      (global.set $esp (i32.const 0x07000000))
+      (call $handle_IDirect3DDevice9_GetBackBuffer (local.get $d) (i32.const 0) (i32.const 0) (i32.const 0) (local.get $out) (i32.const 0))
+      (global.get $eax))
     (func (export "bind_depth") (param $d i32) (param $s i32)
       (call $d3d9_depth_binding (local.get $d) (local.get $s) (i32.const 0)))
     (func (export "release_surface") (param $s i32) (result i32) (call $d3d9_depth_release (local.get $s)))
@@ -92,6 +96,33 @@ const bytes=n=>[n&255,n>>>8&255,n>>>16&255,n>>>24&255];
   e.bind_depth(unbindDevice,0);assert.strictEqual(retired,retireBefore+1,'final unbind emits exactly one backend identity release');
   e.bind_depth(unbindDevice,0);assert.strictEqual(retired,retireBefore+1,'repeated NULL bind cannot release the identity twice');
   assert.strictEqual(e.release_device(unbindDevice),0);assert.strictEqual(retired,retireBefore+1);
+  // Actual x86 caller must not return while final backbuffer retirement is
+  // pending, and an asynchronous failure must leave both owners retryable.
+  assert.strictEqual(e.make_device(pp,out),0);const backDevice=read(out);
+  assert.strictEqual(e.get_backbuffer(backDevice,out),0);const backSurface=read(out);
+  assert.strictEqual(e.refs(backDevice),2);assert.strictEqual(e.refs(backSurface),2);
+  assert.strictEqual(e.release_device(backDevice),1);
+  pendingOpcode=0x30004;completion=-1;ready=false;
+  const backCode=alloc(64),backSubmits=submits,backPixels=e.target_bits(backDevice);
+  new Uint8Array(memory.buffer).set([0x68,...bytes(backSurface),0xb8,...bytes(e.thunk()),0xff,0xd0,0xa3,...bytes(marker),0xc3],e.guest_to_wasm(backCode));
+  for(const expected of[2,0]){
+    ready=false;e.guest_write32(marker,0xdeadbeef);e.clear_yield();e.start(backCode);e.run(1000);
+    assert.strictEqual(e.get_yield_reason(),16);assert.strictEqual(e.get_d3d_render_token(),-29);
+    const parkedESP=e.get_esp();assert.strictEqual(read(marker),0xdeadbeef);
+    assert.strictEqual(e.refs(backDevice),1);assert.strictEqual(e.refs(backSurface),2);
+    assert.strictEqual(e.target_bits(backDevice),backPixels,'parked release keeps canonical pixels');
+    e.clear_yield();e.run(1000);assert.strictEqual(e.get_esp(),parkedESP);
+    assert.strictEqual(e.refs(backDevice),1);assert.strictEqual(e.refs(backSurface),2);
+    ready=true;e.clear_yield();for(let i=0;i<20&&e.get_eip();i++)e.run(1000);
+    assert.strictEqual(e.get_eip(),0);assert.strictEqual(e.get_esp()>>>0,0x07000004);
+    assert.strictEqual(read(marker),expected);assert.strictEqual(e.get_d3d_render_token(),0);
+    if(expected===2){
+      assert.strictEqual(e.refs(backDevice),1);assert.strictEqual(e.refs(backSurface),2);
+      assert.strictEqual(e.target_bits(backDevice),backPixels,'failed completion preserves native storage');
+      completion=1;
+    }
+  }
+  assert.strictEqual(submits,backSubmits+2,'exactly one submission per failed/successful attempt');
   const sibling=(await WebAssembly.instantiate(module,{host})).exports;
   sibling.d3dim_worker_init(0x400000);
   const allocated1=e.temporary_depth()>>>0,allocated2=sibling.temporary_depth()>>>0;
@@ -101,5 +132,5 @@ const bytes=n=>[n&255,n>>>8&255,n>>>16&255,n>>>24&255];
   assert.strictEqual(serial3,serial2+1,'instance creation cannot reset existing depth identities');
   e.depth_exhaust();assert.strictEqual(sibling.depth_serial()>>>0,0xffffffff);
   assert.strictEqual(e.depth_serial(),0);assert.strictEqual(sibling.depth_serial(),0,'exhaustion never wraps or reuses identities');
-  console.log('PASS actual x86 depth-child Release and Reset: parked ownership, immutable resize transaction, one submission and balanced RET');
+  console.log('PASS actual x86 depth/backbuffer Release and Reset: parked ownership, delayed failure/retry, immutable resize transaction, one submission and balanced RET');
 })().catch(error=>{console.error(error);process.exitCode=1;});

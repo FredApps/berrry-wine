@@ -576,7 +576,7 @@ const { bootRenderHarness } = require('./render-helper');
   }
   for(const mode of [0,1,2]) {
     const program=bytecode(texTokens),ctx=e.d3d_shader_vm_context(program,5),m=mipFixture(ctx,{mode});
-    assert.strictEqual(e.d3d_shader_vm_context_bytes(),65568);
+    assert.strictEqual(e.d3d_shader_vm_context_bytes(),73760);
     for(const lod of [-10,0,.25,.5,1,1.5,2,99]) {
       const clamped=Math.min(2,Math.max(0,lod));
       const level=mode===0?0:mode===1?Math.floor(clamped+.5):Math.floor(clamped);

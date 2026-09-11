@@ -6,10 +6,13 @@
 // [--capture-every=60] keeps periodic frames during long progression runs.
 // [--control-stdin] relays existing CLI JSON controls while sampling continues;
 // replies use the original caller id and the standard [ctl] prefix.
+// [--allocation-probe] captures the 10.3MiB gameplay allocation return,
+// keeping the debugger armed through earlier allocations at the shared site.
 const fs=require('fs'),path=require('path'),os=require('os'),readline=require('readline');
 const {spawn}=require('child_process');
 const {setTimeout:delay}=require('timers/promises');
 const {OPCODES}=require('../lib/d3d-command-stream');
+const {installBwAllocationObserver}=require('./bw-allocation-observer');
 const args=process.argv.slice(2),arg=(name,fallback)=>args.find(a=>a.startsWith(`--${name}=`))?.slice(name.length+3)||fallback;
 const seconds=Number(arg('seconds','60'));
 // Software rendering on a loaded host can spend more than thirty minutes in
@@ -71,6 +74,8 @@ else if(args.includes('--no-build'))flags.push('--no-build');
   const deadline=setTimeout(()=>child.kill('SIGTERM'),(seconds+150)*1000);
   try{
     await command('ping');
+    if(args.includes('--allocation-probe'))
+      console.log('Allocation observer:',await evaluate(`(${installBwAllocationObserver.toString()})(instance,exports,ctx,tickState)`));
     await evaluate(`(()=>{
       const b=ctx.d3d9Bridge,submit=b._submit,op=${JSON.stringify(OPCODES)};
       const p=ctx.bwSoftwareProbe={submitted:{},completed:{},failed:0,lastError:null,categories:{}};

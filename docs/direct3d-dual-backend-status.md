@@ -1446,3 +1446,225 @@ GetBackBuffer, swap-chain GetBackBuffer, implicit GetRenderTarget, AddRef and QI
 with cycle-free external ownership; final surface release must stage and poll
 asynchronous parent teardown without double-decrementing on reentry or retiring
 storage after a failed handoff. GetDevice alone does not resolve that blocker.
+
+That implicit-parent retention gap is now implemented: shared external acquisition
+retains the parent only at baseline1→external2; all further surface references
+share that hold. Device/swap-chain GetBackBuffer, implicit GetRenderTarget and
+Surface AddRef (including QI) use it. Internal baseline teardown remains raw
+surface release, so no cycle is introduced. Last external release calls parent
+Release with both counts unchanged until completion. Pending reentry polls;
+failure preserves both owners; success then drops the external surface reference.
+The parent call and surface call share the same one-argument stdcall epilogue.
+
+Native36809 passes direct/worker mixed getter/QI references, original device
+Release followed by GetDevice and rendering, last-reference retirement,
+immediate injected retirement failure followed by successful retry, and parked/
+terminal stack cleanup. Browser54231 software and90328 WebGL pass actual x86
+last-surface retirement in both guest modes, including final executor cleanup.
+Fullbuild81333 passes1154735/1155203 bytes. Independent review checked the
+deferred-decrement scheme. Multi-producer races, asynchronous fault injection,
+broader swap-chain semantics and implicit LockRect remain separate open gates.
+
+Delayed final-backbuffer retirement failure now has two targeted tests.
+Native46980 executes real x86 Surface.Release calls with controlled private
+completion: multiple pending polls keep surface2/device1 and canonical pixels,
+failed completion returns2 without freeing either owner, and a new successful
+attempt submits once and returns through the original stack exactly once.
+Native40611 adds real Bridge._result/_poll tokens in direct and worker-backed
+fixtures: a controlled promise rejection before30004 admission preserves owners,
+then an ordinary production retry retires the backend. These tests prove native
+continuation handling, not recovery from an admitted executor retirement fault.
+Such faults may retire the shared worker; the host releasing/lost state and
+multi-producer cancellation remain distinct lifecycle gates. Test manifest and
+diff checks pass; no runtime source changed in this test-only checkpoint.
+
+Implicit lockable backbuffers now implement LockRect/UnlockRect through the
+existing canonical READBACK and immutable upload commands. CPU ownership is
+shared with DC exclusion, with distinct LockRect-kind and READONLY bits;
+acquire/release reservations prevent overlapping access while parked. Lock
+returns full pitch and a canonical DIB pointer offset to the validated subrect.
+READONLY unlock emits no upload. Failed acquire clears transient ownership;
+failed upload preserves the lock for retry. Existing implicit Clear/Draw,
+ColorFill, UpdateSurface, Present and Reset exclusions cover both access kinds.
+
+Native75402 passes direct/worker full-pitch/subrect pixels, mutual DC/Lock
+exclusion, nested/unbalanced call rejection, READONLY upload omission, and
+injected immediate transfer failures followed by retry. Browser30303 software
+and89176 WebGL pass actual x86 lock/write/unlock/Present in both guest modes.
+Fullbuild71001 passes1155326/1155794 bytes. Current lock flags are0, READONLY and
+NOSYSLOCK; DISCARD/DONOTWAIT/NO_DIRTY_UPDATE remain unimplemented, not silently
+accepted. Unlock currently uploads the fully synchronized X8 buffer, preserving
+surrounding RGB but normalizing X8 alpha; dirty-rectangle upload optimization,
+pending argument-mutation/multi-producer tests and broader surface formats remain
+open. This does not complete the resource/locking profile.
+
+Programmed vertex pixel-center conversion (2026-09-10): the solid GPU path now
+applies the same `(1,-1)*clipW/viewportExtent` displacement as the fixed vertex
+path, including nonzero viewport origins. Previously programmed VS coordinates
+were left at GL half-integer centers while native/fixed paths used D3D integer
+centers. This is a viewport conversion, not an epsilon-based edge fix. Native
+triangle masks21686 pass20 cases; GPU58160 passes20 fixed/programmed equivalence
+checks across forced GL1/2. Shader regressions88630 (GL2) and54316 (GL1) pass,
+including mip/LOD and TEXKILL helper checks; their UV input offsets were adjusted
+to preserve the same independently specified native sample coordinates.
+Extended native91685 and GPU27844 gates pass34 cases/comparisons each, including
+constant W2, varying W(.5,2,4), fractional coverage, and repeated viewport
+extent/origin changes on one device. The accelerated reuse case checks exact
+fractional masks and one cached program throughout the viewport changes.
+
+Integration build40591 passes after the concurrent monitor gate update:
+canonical1155969 / compat1156437 bytes, layout9c6027bce1d500a1, no data overlaps.
+Test manifest and whitespace gates also pass. This supersedes the earlier
+monitor-inventory/PaintRect build interruptions; it does not close the remaining
+renderer profile or gameplay gates.
+
+Full triangle edge parity is still open. The coverage fixture reports exact
+horizontal-edge differences and supports `--require-parity` to turn those into
+a failing gate. Microsoft specifies integer centers and top-left ownership in
+[D3D9 rasterization rules](https://learn.microsoft.com/en-us/windows/win32/direct3d9/rasterization-rules).
+Khronos [ARB_clip_control issue9](https://registry.khronos.org/OpenGL/extensions/ARB/ARB_clip_control.txt)
+leaves exact shared-edge ownership implementation-defined: neither an epsilon
+nor a global Y flip proves conformance. The proposed GPU2 exact path must retain
+homogeneous clipping, original culling, per-pixel top-left edge tests, perspective
+varyings, original raster depth, helper execution before coverage suppression,
+and depth/stencil/blend/query ordering. Transform-feedback output can be copied
+GPU-to-texture through a pixel-unpack buffer to avoid tripling attribute/varying
+requirements; that coverage implementation is not yet present. GL1 remains an
+explicit hardware tie-rule subset. Binary-exact test coordinates isolate edge
+rules; arbitrary transform/subpixel-rounding parity is a separate open issue.
+
+The next lock checkpoint replaces whole-buffer upload with immutable rectangular
+uploads. Five per-device snapshot words capture output WA and x/y/w/h before
+parking; pending acquisition no longer rereads mutable guest rectangle/flags.
+Rejected nested locks cannot replace the active snapshot. Unlock uses captured
+source offset/full pitch and destination bounds, preserving outside RGB and
+alpha while normalizing only uploaded X8 pixels. DC release remains full-surface.
+Program allocation/zeroing grows from22024 to22044 bytes; independent audit found
+no separate allocation-size mirrors, and Reset allocates fresh zeroed snapshots.
+
+Native32862 passes direct/worker invalidated-rectangle reentry, unchanged pending
+output, nested-lock snapshot preservation and outside-alpha checks. Browser24426
+software and64983 WebGL pass actual x86 partial LockRect/UnlockRect/Present,
+mutated guest RECT and exact inside/outside alpha in both guest modes. Shared
+fullbuild95791 reached the silent-handler inventory gate then stopped during
+concurrent monitor-handler work (353 versus356 baseline); its owner was notified.
+That full-build result is not a pass; browser compilation and focused tests are
+the current evidence for this checkpoint.
+
+Live B&W24571 has now passed the profile-creation blocker using the frozen
+PathGetCharType implementation: normal Return224427/up224621 closes the dialog
+and the inspected menu capture is headed Player. This verifies progression
+beyond the prior native API trap, not gameplay. New Game click225653 and held
+mouse226972→228211 were delivered, but settled capture229794 remains at the menu.
+The run is still live with zero reported renderer failures; the frozen snapshot
+predates recent lock/ownership and programmed-VS corrections. See the B&W RE
+notes for artifact paths and exact inputs; no guest state was patched.
+
+Fullbuild76498 passed the updated silent-handler inventory, then stopped on four
+raw PaintRect accesses in concurrent monitor work in09a-handlers.wat. The owner
+was notified; full-build revalidation of the latest snapshot change is pending.
+
+Software homogeneous clipping audit: native98252 passes74 coverage cases,
+including40 new analytic clipping checks for near/far/all four sides, varying W,
+both windings, simultaneous near/left clipping, exact on-plane vertices,
+negative W and nonzero vertices at W=0. Expected projected polygons are specified
+independently rather than produced by a second clipping implementation. Query
+sample counts equal the unique expected pixel masks, checking clip-fan ownership
+as well as visible coverage. Adjacent native pipeline55231 passes351 shader,
+varying/depth, clipping, helper, lifetime and cancellation cases. Inspection and
+these tests found no concrete software clipper defect; no WAT change was made.
+Arbitrary subpixel rounding and GPU hardware tie-rule equivalence remain open;
+this evidence does not assert universal Windows hardware conformance.
+
+B&W run24571 has now activated New Game via ordinary mouse input. The game had
+recorded earlier clicks at native(0,0), unlike the host's absolute pointer.
+Separate relative movement, verified native cursor(194,556), down287458 and
+up288497 lead to a controls/tutorial Continue screen in settled capture290202.
+The diagnostic trace range is restored and the mouse released. See the RE notes
+for native dispatch/coordinate evidence; no guest-state patch or restart was
+used. This advances menu-to-game acceptance but does not yet prove changing
+in-world gameplay, current-build rendering, or parity with WebGL.
+Continue down293970/up294751 subsequently reaches a trap at batch294774,
+EIP00925197; run24571 has exited1. Runtime instruction bytes differ from the
+supplied executable inside a buffer-copy routine, so corruption/copy arguments
+are the next investigation, not an assumed unsupported shader or x86 opcode.
+The saved stack subsequently proves dest0/count00a58780 after an unchecked
+aligned-allocation failure. The exact REP/cursor sequence passes16 valid-buffer
+cases on the frozen artifact, current build and fresh source77739; no REP fix
+was warranted. Fresh current-build reproduction21705 is live for allocation
+state investigation. Neither memory-pressure cause nor gameplay is yet proved.
+
+Allocator pressure checkpoint: successful low/sparse arena replacement now
+publishes the old unused aligned tail (minimum16 bytes) to that instance's free
+list. Previously rollover stranded those bytes until no caller could reuse them.
+The validated helper is shared with graceful render-worker heap retirement;
+failed replacement preserves the old current arena, and low-to-sparse spill
+retains the still-current low tail rather than duplicating it on a free list.
+The failure fixture also exposed oversized low allocations admitted through
+g2w's unmapped sentinel. Bounds now compare the requested guest endpoint with
+the known low-region guest boundary before falling back to sparse allocation.
+
+Final focused46177 passes11 cases, including16/24/64-byte reuse,8-byte padding,
+peer isolation, live guards, genuine1GiB reservation rejection and retry.
+The pre-fix frozen artifact fails the first tail-publication assertion. Heap
+partition72931 and production software-worker99596 pass; earlier heap header
+validation and heap-handle tests pass. Full build97264 passes canonical1155999 /
+compat1156467, unchanged layout9c6027bce1d500a1 and no overlaps. These are real
+memory-budget fixes, not proof that B&W's10.3MiB allocation now succeeds.
+Active run21705 is deliberately preserved on its pre-tail frozen snapshot.
+
+Prepared software contexts now release unused worst-case clipping capacity
+before the next batch is prepared. Vertices remain in place; indices and POINT
+size sidecars move into the smallest compatible sevenfold layout. An internal
+nonmoving heap shrink returns the unused suffix to the owning free list.
+No vertex shader is reexecuted, and every batch still completes validation
+before any raster writes. The host reserves the original creation peak, then
+charges a conservative retained bound including VM/binder slack. This reduces
+multi-batch retained memory without weakening preflight or deferred lifetimes.
+
+Native compaction89280 passes25 cases: analytic clipping and zero output,
+actual heap-header shrink, allocator reuse/overwrite of the freed tail while
+the context is live, POINT scalar relocation, wire edge provenance, an
+800-triangle draw under a budget that rejects the old summed creation bounds,
+exact pixels/sample counts, and late-batch failure with no writes or retained
+budget leak. Heap-shrink10519 passes30 low/sparse alignment, ownership, live
+guard, invalid-input and repeated-shrink cases. Pipeline1308 passes351,
+PSIZE36512 passes, and edge62951 passes74. Production software-worker55789
+passes real-WAT parity, ordering and cleanup. Full build22476 passes
+canonical1156377 / compat1156845 with no data overlaps; test-tier gates pass.
+These establish bounded-context improvements, not resolution of the separate
+B&W guest allocation failure or complete gameplay/backend parity.
+
+Private VS2.0 foundation (2026-09-11, integration still in progress): a
+length-aware native decoder now accepts a bounded straight-line ALU subset,
+DCL/DEF, ABS and scalar MOVA, with explicit a0.x relative operand tokens and
+c0..c255. Public compilation/version gates remain closed. Native validation
+26688 passes84 legality, initialization, malformed-length, lifetime and IR
+budget exhaustion/recovery cases. Flow, matrices and remaining mandatory
+instructions are not covered by this private subset.
+
+The private SIMD compiler preserves the legacy register/sampler layout and
+appends8192 bytes for c128..255, increasing context bytes to73760. MOVA uses
+nearest-even; VS1.1 MOV-a0 retains its existing floor policy. Microsoft's
+[MOVA contract](https://learn.microsoft.com/en-us/windows/win32/direct3dhlsl/mova---vs)
+specifies nearest rounding; the tie rule here is an explicit adapter policy,
+not a claim that every historical native driver used it. Native73562 passes22
+cases including high DEF constants, cross-boundary relative gathers, inactive
+lanes and out-of-range/nonfinite indices. Legacy VM61145 passes231 and software
+pipeline47259 passes351. Production worker18054 and compaction18592 also pass.
+
+Private JS IR projection and GLSL lowering require experimentalVS20 explicitly;
+the production native-IR handoff and guest token parser still reject VS2.
+Browser34907 passes22 real WebGL1/2 cases for signed nearest-even conversion
+and constant selection across c95/c127/c255. That fixture constructs normalized
+IR independently. Follow-up44235 passes26 WebGL1/2 frames against13 native
+raster frames using the same detached, native-validated IR and immutable DEF
+constants, including signed/tie/out-of-range MOVA and actual vertex positions.
+This still does not exercise production upload of256 runtime constants; that
+frontend binding remains96-gated. Review also found and fixed GLSL's private
+high-DEF bound and point-size saturation rejection to match admitted native IR.
+No VS2 capability, full shader profile, or real-game acceptance is claimed.
+Full build41098 passes canonical1158838 / compat1159306, unchanged region
+layout and no data overlaps. The earlier build32355 caught an instruction
+control-bit literal in the test that coincided with a region boundary; the
+fixture now constructs that bit from its index without weakening the ratchet.

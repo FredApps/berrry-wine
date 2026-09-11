@@ -65,6 +65,12 @@
     (i32.add (i32.mul (local.get $n) (i32.const 148))
       (i32.mul (call $d3d_shader_vm_context_bytes) (i32.const 2)))))
 
+;; Valid live contexts only. Deliberately retain the peak bound's VM/slack
+;; allowance for later binders; this is a conservative reservation, not telemetry.
+(func $d3d_software_retained_bound (export "d3d_software_retained_bound") (param $ctx i32) (result i32)
+  (i32.add (i32.load offset=196 (local.get $ctx))
+    (i32.add (i32.const 4016) (i32.mul (call $d3d_shader_vm_context_bytes) (i32.const 2)))))
+
 (func $d3d_software_free (export "d3d_software_free") (param $ctx i32)
   (if (local.get $ctx) (then
     (call $d3d_shader_vm_free (i32.load offset=144 (local.get $ctx)))
@@ -303,6 +309,7 @@
     (br_if $failure (i32.eqz (call $d3d_software_clip (local.get $ctx) (local.get $n) (local.get $count))))
     (call $d3d_shader_vm_free (i32.load offset=200 (local.get $ctx)))
     (i32.store offset=200 (local.get $ctx) (i32.const 0))
+    (br_if $failure (i32.eqz (call $d3d_software_compact (local.get $ctx) (local.get $count))))
     (return (local.get $ctx)))
   (call $d3d_software_free (local.get $ctx)) (i32.const 0))
 
@@ -478,6 +485,28 @@
     (local.set $triangle (i32.add (local.get $triangle) (i32.const 3))) (br_if $triangles (i32.lt_u (local.get $triangle) (local.get $index_count))))
   (i32.store offset=36 (local.get $ctx) (local.get $emitted))
   (i32.store offset=48 (local.get $ctx) (local.get $emitted))
+  (i32.const 1))
+
+;; Clipping needs worst-case sevenfold output space only while preparing. Keep
+;; the established layout formula with the smallest capacity that contains all
+;; emitted vertices; this also preserves the POINT sidecar addressing contract.
+;; No reallocation, vertex shader reexecution or post-write OOM is introduced.
+(func $d3d_software_compact (param $ctx i32) (param $old_capacity i32) (result i32)
+  (local $emitted i32) (local $capacity i32) (local $indices i32) (local $bytes i32) (local $point i32)
+  (local.set $emitted (i32.load offset=48 (local.get $ctx)))
+  (local.set $capacity (i32.div_u (i32.add (local.get $emitted) (i32.const 6)) (i32.const 7)))
+  (local.set $point (i32.ne (i32.and (i32.load offset=100 (local.get $ctx)) (i32.const 8)) (i32.const 0)))
+  (local.set $indices (i32.add (i32.add (local.get $ctx) (i32.const 288)) (i32.mul (local.get $capacity) (i32.const 1008))))
+  (memory.copy (local.get $indices) (i32.load offset=156 (local.get $ctx)) (i32.shl (local.get $emitted) (i32.const 1)))
+  (if (local.get $point) (then
+    (memory.copy (i32.add (i32.add (local.get $ctx) (i32.const 288)) (i32.mul (local.get $capacity) (i32.const 1022)))
+      (i32.add (i32.add (local.get $ctx) (i32.const 288)) (i32.mul (local.get $old_capacity) (i32.const 1022)))
+      (i32.shl (local.get $emitted) (i32.const 2)))))
+  (local.set $bytes (i32.add (i32.const 288) (i32.mul (local.get $capacity)
+    (select (i32.const 1050) (i32.const 1022) (local.get $point)))))
+  (if (i32.eqz (call $heap_shrink (call $w2g (local.get $ctx)) (local.get $bytes))) (then (return (i32.const 0))))
+  (i32.store offset=156 (local.get $ctx) (local.get $indices))
+  (i32.store offset=196 (local.get $ctx) (local.get $bytes))
   (i32.const 1))
 
 (func $d3d_software_edge (param $a i32) (param $b i32) (param $x f32) (param $y f32) (result f32)

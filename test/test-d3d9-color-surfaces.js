@@ -8,14 +8,21 @@ const path=require('path');
 const {WorkerConsumer}=require('../lib/d3d-command-stream');
 const sigs=require('../lib/host-import-sigs.generated.json').sigs;
 (async()=>{
-  let bridge,productionImport;
-  const api={Device9:['SetRenderTarget','GetRenderTarget','GetBackBuffer','SetViewport','GetViewport',
+  let bridge,productionImport,failRetire=false,delayedRetire=null,failTransfer=0;
+  const api={Device9:['SetRenderTarget','GetRenderTarget','GetBackBuffer','GetSwapChain','SetViewport','GetViewport',
     'SetScissorRect','GetScissorRect','GetRenderTargetData','ColorFill','UpdateSurface','SetFVF','SetRenderState','SetTexture','DrawPrimitiveUP','Present','Reset','Release'],
     Texture9:['GetSurfaceLevel','LockRect','Release'],
     CubeTexture9:['GetCubeMapSurface','Release'],
-    Surface9:['GetDesc','AddRef','Release','GetDevice','LockRect','UnlockRect','GetDC','ReleaseDC']};
+    SwapChain9:['GetBackBuffer'],
+    Surface9:['QueryInterface','GetDesc','AddRef','Release','GetDevice','LockRect','UnlockRect','GetDC','ReleaseDC']};
   const {exports:e,memory,module}=await bootRenderHarness({fonts:'none',
-    extraHostOverrides:{gpu_gl_call:(op,p,a)=>productionImport(op,p,a)},extraWat:`
+    extraHostOverrides:{gpu_gl_call:(op,p,a)=>{
+      if(op===failTransfer)return 0;
+      if(op===0x30004&&delayedRetire)return bridge._result(bridge.devices.get(a>>>0),delayedRetire.promise,()=>1,true);
+      return failRetire&&op===0x30004?0:productionImport(op,p,a);
+    }},extraWat:`
+    (func (export "dx_refs") (param $object i32) (result i32)
+      (load.field DxObject refcount (call $dx_from_this (local.get $object))))
     ${Object.entries(api).flatMap(([type,names])=>names.map(name=>`
       (func (export "${type}_${name}") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (param $f i32) (result i32)
         (global.set $esp (i32.const 0x074ff000))
@@ -146,11 +153,13 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     createSoftwareWorker:()=>new WorkerConsumer(new Worker(path.join(__dirname,'../lib/d3d-render-worker.js')),
       {module,memory,sigs,imageBase:e.get_image_base()>>>0,reclaimHeap:h=>e.d3d_render_adopt_free_list(h)})});
   const invoke=async(fn,...args)=>{let value=fn(...args);while(e.get_d3d_render_token()){
-    if([e.Device9_ColorFill,e.Device9_UpdateSurface,e.Surface9_GetDC,e.Surface9_ReleaseDC].includes(fn))
+    if([e.Device9_ColorFill,e.Device9_UpdateSurface,e.Surface9_GetDC,e.Surface9_ReleaseDC,e.Surface9_Release,e.Surface9_LockRect,e.Surface9_UnlockRect].includes(fn))
       assert.strictEqual(e.get_esp()>>>0,0x074ff000,'pending copy/fill/DC preserves stdcall stack');
     await bridge.wait(e.get_d3d_render_token());value=fn(...args);}
     if(fn===e.Device9_ColorFill)assert.strictEqual(e.get_esp()>>>0,0x074ff014,'completed ColorFill pops arguments once');
     if(fn===e.Surface9_GetDC||fn===e.Surface9_ReleaseDC)assert.strictEqual(e.get_esp()>>>0,0x074ff00c,'completed DC call pops once');
+    if(fn===e.Surface9_LockRect)assert.strictEqual(e.get_esp()>>>0,0x074ff014,'completed LockRect pops once');
+    if(fn===e.Surface9_UnlockRect)assert.strictEqual(e.get_esp()>>>0,0x074ff008,'completed UnlockRect pops once');
     return value>>>0;};
   const aliases=async()=>{
     e.guest_write32(pp+44,0);
@@ -160,8 +169,9 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     ok(e.Surface9_GetDevice(ab,out),'implicit surface GetDevice');
     assert.strictEqual(read(out),ad,'implicit surface returns canonical device');
     assert.strictEqual(e.get_esp()>>>0,0x074ff00c,'GetDevice stdcall');
-    assert.strictEqual(await invoke(e.Device9_Release,read(out)),1,'GetDevice owns one device reference');
+    assert.strictEqual(await invoke(e.Device9_Release,read(out)),2,'device caller and external backbuffer retain owner');
     bad(await invoke(e.Surface9_GetDC,ab,out));assert.strictEqual(read(out),0,'nonlockable backbuffer exposes no DC');
+    bad(await invoke(e.Surface9_LockRect,ab,lock,0,0));
     e.guest_write32(pp+44,1);
     bad(await invoke(e.Device9_Reset,ad,pp)); // external reference prevents transition
     bad(await invoke(e.Surface9_GetDC,ab,out));
@@ -169,7 +179,7 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     ok(await invoke(e.Device9_Reset,ad,pp),'Reset enables lockable backbuffer');
     ok(e.Device9_GetRenderTarget(ad,0,out));ab=read(out);
     ok(e.Surface9_GetDevice(ab,out),'replacement backbuffer GetDevice');
-    assert.strictEqual(read(out),ad);assert.strictEqual(await invoke(e.Device9_Release,read(out)),1);
+    assert.strictEqual(read(out),ad);assert.strictEqual(await invoke(e.Device9_Release,read(out)),2);
     for(const format of[62,0x31545844,0x35545844]){
       ok(e.raw_texture(ad,2,format,out),'raw system texture');const st=read(out);
       ok(e.raw_texture(ad,0,format,out),'raw default texture');const dt=read(out);
@@ -242,6 +252,47 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     bad(await invoke(e.Surface9_ReleaseDC,ab,backDC));
     ok(await invoke(e.Device9_Present,ad),'GDI upload survives Present');
     assert.strictEqual(new Uint32Array(memory.buffer,e.back_bits(ad),1)[0],0xffefcdab);
+    write(rect,[1,1,3,2]);
+    failTransfer=0x30016;bad(await invoke(e.Surface9_LockRect,ab,lock,rect,0));failTransfer=0;
+    for(const invalid of[0x2000,0x1000,0x4000])bad(await invoke(e.Surface9_LockRect,ab,lock,rect,invalid));
+    ok(await invoke(e.Surface9_LockRect,ab,lock,rect,0),'implicit writable subrect lock');
+    assert.strictEqual(read(lock),backWidth*4,'subrect returns full surface pitch');
+    const lockedBack=read(lock+4);
+    assert.strictEqual(wa(lockedBack),e.back_bits(ad)+backWidth*4+4,'subrect points into canonical DIB');
+    assert.strictEqual(read(lockedBack),0xff123456,'lock reads completed GPU color');
+    e.guest_write32(lockedBack,0xffa1b2c3);
+    bad(await invoke(e.Surface9_LockRect,ab,lock,0,0));bad(await invoke(e.Surface9_GetDC,ab,out));
+    bad(await invoke(e.Surface9_ReleaseDC,ab,backDC));bad(await invoke(e.Device9_Present,ad));
+    bad(await invoke(e.Device9_ColorFill,ad,ab,0,0));bad(await invoke(e.clear,ad,0));
+    failTransfer=0x30015;bad(await invoke(e.Surface9_UnlockRect,ab));failTransfer=0;
+    bad(await invoke(e.Surface9_GetDC,ab,out));bad(await invoke(e.Surface9_LockRect,ab,lock,0,0));
+    ok(await invoke(e.Surface9_UnlockRect,ab),'implicit unlock retries upload');bad(await invoke(e.Surface9_UnlockRect,ab));
+    ok(await invoke(e.Device9_Present,ad));
+    assert.strictEqual(backFrame[backWidth+1],0xffa1b2c3);assert.strictEqual(backFrame[0],0xffefcdab,'surrounding pixels preserved');
+    ok(await invoke(e.Surface9_LockRect,ab,lock,0,16),'implicit readonly lock');
+    const readonlySubmitted=bridge.devices.get(ad).queue.submitted;
+    ok(await invoke(e.Surface9_UnlockRect,ab));assert.strictEqual(bridge.devices.get(ad).queue.submitted,readonlySubmitted,'readonly unlock submits no upload');
+    ok(await invoke(e.Surface9_GetDC,ab,out));const dcAfterLock=read(out);
+    bad(await invoke(e.Surface9_LockRect,ab,lock,0,0));bad(await invoke(e.Surface9_UnlockRect,ab));
+    ok(await invoke(e.Surface9_ReleaseDC,ab,dcAfterLock));
+    ok(await invoke(e.clear,ad,0x40123456),'nonopaque executor contents before partial lock');
+    write(rect,[1,1,2,2]);write(lock,[0xdeadbeef,0xdeadbeef]);
+    let snapshotLock=e.Surface9_LockRect(ab,lock,rect,0);
+    if(e.get_d3d_render_token()){
+      assert.strictEqual(read(lock+4),0xdeadbeef,'parked lock publishes no pointer');
+      write(rect,[-1,-1,999999,999999]);
+      snapshotLock=await invoke(e.Surface9_LockRect,ab,lock,rect,0);
+    }
+    ok(snapshotLock,'lock resumes with captured rectangle');
+    assert.strictEqual(wa(read(lock+4)),e.back_bits(ad)+backWidth*4+4);
+    e.guest_write32(read(lock+4),0x11223344);
+    write(rect,[0,0,backWidth,backHeight]); // guest RECT no longer authoritative
+    bad(await invoke(e.Surface9_LockRect,ab,lock,rect,0));
+    ok(await invoke(e.Surface9_UnlockRect,ab),'unlock uses immutable original subrect');
+    ok(await invoke(e.Surface9_LockRect,ab,lock,0,16));
+    assert.strictEqual(read(read(lock+4)),0x40123456,'outside alpha survives rectangular upload');
+    assert.strictEqual(read(read(lock+4)+backWidth*4+4),0xff223344,'only locked pixel normalizes X8 alpha');
+    ok(await invoke(e.Surface9_UnlockRect,ab));
     bad(await invoke(e.Device9_UpdateSurface,ad,fillSurface,0,uploadSource,0));
     bad(await invoke(e.Device9_UpdateSurface,ad,uploadSource,0,fillSurface,0));
     write(destPoint,[-1,0]);bad(await invoke(e.Device9_UpdateSurface,ad,uploadSource,rect,fillSurface,destPoint));
@@ -350,6 +401,45 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     ok(e.Device9_GetRenderTarget(ad,0,out));ab=read(out);
     bad(await invoke(e.Surface9_GetDC,ab,out));
     e.Surface9_Release(ab);assert.strictEqual(await invoke(e.Device9_Release,ad),0);
+    // The last surface, not the original device pointer, now owns retirement.
+    ok(e.create_device(pp,out));const retained=read(out);
+    ok(e.Device9_GetBackBuffer(retained,0,0,0,out));const retainedBack=read(out);
+    const iidUnknown=alloc(16);write(iidUnknown,[0,0,0xc0,0x46000000]);
+    ok(e.Surface9_QueryInterface(retainedBack,iidUnknown,out));assert.strictEqual(read(out),retainedBack);
+    assert.strictEqual(e.Surface9_Release(retainedBack),2);e.guest_free(iidUnknown);
+    ok(e.Device9_GetSwapChain(retained,0,out));const swap=read(out);
+    ok(e.SwapChain9_GetBackBuffer(swap,0,0,out));assert.strictEqual(read(out),retainedBack);
+    assert.strictEqual(e.Surface9_Release(retainedBack),2);
+    assert.strictEqual(await invoke(e.Device9_Release,swap),2);
+    assert.strictEqual(e.Surface9_AddRef(retainedBack),3);
+    ok(e.Device9_GetRenderTarget(retained,0,out));assert.strictEqual(read(out),retainedBack);
+    assert.strictEqual(e.Surface9_Release(retainedBack),3);
+    assert.strictEqual(await invoke(e.Device9_Release,retained),1,'surface keeps device alive');
+    ok(e.Surface9_GetDevice(retainedBack,out));assert.strictEqual(read(out),retained);
+    ok(await invoke(e.clear,retained,0xff13579b),'retained device still renders');
+    assert.strictEqual(await invoke(e.Device9_Release,retained),1);
+    assert.strictEqual(e.Surface9_Release(retainedBack),2,'nonfinal surface release keeps parent hold');
+    failRetire=true;
+    assert.strictEqual(await invoke(e.Surface9_Release,retainedBack),2,'failed retirement preserves surface');
+    assert.strictEqual(e.get_esp()>>>0,0x074ff008,'failed retirement pops once');
+    failRetire=false;
+    ok(e.Surface9_GetDevice(retainedBack,out),'failed retirement preserves owner');
+    assert.strictEqual(await invoke(e.Device9_Release,read(out)),1);
+    let rejectRetirement;
+    delayedRetire={promise:new Promise((resolve,reject)=>{rejectRetirement=reject;})};
+    e.Surface9_Release(retainedBack);const failureToken=e.get_d3d_render_token();
+    assert(failureToken<=-2);assert.strictEqual(e.get_esp()>>>0,0x074ff000);
+    assert.strictEqual(e.dx_refs(retained),1);assert.strictEqual(e.dx_refs(retainedBack),2);
+    e.Surface9_Release(retainedBack);assert.strictEqual(e.get_d3d_render_token(),failureToken);
+    assert.strictEqual(e.get_esp()>>>0,0x074ff000,'repeated pending retirement does not pop');
+    delayedRetire=null;rejectRetirement(new Error('injected pre-admission retirement failure'));
+    await bridge.wait(failureToken);
+    assert.strictEqual(await invoke(e.Surface9_Release,retainedBack),2);
+    assert.strictEqual(e.dx_refs(retained),1);assert.strictEqual(e.dx_refs(retainedBack),2);
+    assert(bridge.devices.has(retained),'completion-boundary fault does not destroy backend');
+    assert.strictEqual(await invoke(e.Surface9_Release,retainedBack),0,'last surface retires device');
+    assert.strictEqual(e.get_esp()>>>0,0x074ff008,'final surface release pops once');
+    assert(!bridge.devices.has(retained),'backend retired with final surface');
   };
   bridge=new Bridge({backend:'software',enableProgrammable:true,getExports:()=>e,getMemory:()=>memory.buffer,guestToWasm:wa});
   try{await aliases();}finally{await bridge.close();}

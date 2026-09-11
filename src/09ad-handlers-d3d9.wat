@@ -45,9 +45,10 @@
     ;; +21928 D3DMATERIAL9 (68 bytes, all-zero default), +21996 light-list head.
     ;; +22000 scissor RECT16,+22016 explicit rectangle flag (zero = full target).
     ;; +22020 independently bound color surface; zero selects the backbuffer.
-    (local.set $state (call $heap_alloc (i32.const 22024)))
+    ;; +22024 lock output WA; +22028/32/36/40 immutable backbuffer lock x/y/w/h.
+    (local.set $state (call $heap_alloc (i32.const 22044)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $state)) (i32.const 22024))
+    (call $zero_memory (call $g2w (local.get $state)) (i32.const 22044))
     (call $gs32 (i32.add (local.get $state) (i32.const 21780)) (global.get $current_thread_id))
     (loop $texture_stages
       (local.set $sampler (i32.add (call $g2w (local.get $state))
@@ -944,7 +945,7 @@
   ;; We render straight into the device's render target, so the back buffer is
   ;; that surface seen through the IDirect3DSurface9 vtable.
   (func $handle_IDirect3DDevice9_GetBackBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $rt i32) (local $slot i32)
+    (local $rt i32) (local $slot i32) (local $surface i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
     (if (i32.eqz (local.get $arg4)) (then
       (global.set $eax (i32.const 0x8876086C)) ;; D3DERR_INVALIDCALL
@@ -955,11 +956,10 @@
       (global.set $eax (i32.const 0x8876086C))
       (return)))
     (local.set $slot (call $dx_slot_of (local.get $rt)))
-    ;; Handing out a reference — the app will Release it.
-    (i32.store (i32.add (local.get $rt) (i32.const 4))
-      (i32.add (i32.load (i32.add (local.get $rt) (i32.const 4))) (i32.const 1)))
-    (call $gs32 (local.get $arg4)
-      (call $dx_get_wrapper_for_vtbl (local.get $slot) (global.get $DX_VTBL_D3DSURF9)))
+    (local.set $surface (call $dx_get_wrapper_for_vtbl (local.get $slot) (global.get $DX_VTBL_D3DSURF9)))
+    (call $gs32 (local.get $arg4) (local.get $surface))
+    (if (i32.eqz (local.get $surface)) (then (global.set $eax (i32.const 0x8007000e)) (return)))
+    (drop (call $d3d9_backbuffer_addref (local.get $surface)))
     (global.set $eax (i32.const 0)))
 
   ;; IDirect3DDevice9_GetRasterStatus — 3 args (incl. this)
@@ -1127,8 +1127,7 @@
         (local.set $surface (call $dx_get_wrapper_for_vtbl
           (call $dx_slot_of (local.get $rt)) (global.get $DX_VTBL_D3DSURF9)))
         (if (local.get $surface) (then
-          (store.field DxObject refcount (local.get $rt)
-            (i32.add (load.field DxObject refcount (local.get $rt)) (i32.const 1)))
+          (drop (call $d3d9_backbuffer_addref (local.get $surface)))
           (call $gs32 (local.get $arg2) (local.get $surface))
           (global.set $eax (i32.const 0))))))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
@@ -1883,15 +1882,12 @@
       (call $gs32 (i32.add (local.get $arg0) (i32.const 4)) (local.get $rc))
       (global.set $eax (local.get $rc))
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (store.field DxObject refcount (local.get $entry) (local.get $rc))
-    (global.set $eax (local.get $rc))
+    (global.set $eax (call $d3d9_backbuffer_addref (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DSurface9_Release — 1 args (incl. this)
   (func $handle_IDirect3DSurface9_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $depth_refs i32)
+    (local $depth_refs i32) (local $entry i32) (local $device i32) (local $parent_refs i32)
     (if (i32.or (call $d3d9_is_depth_surface (local.get $arg0)) (call $d3d9_is_color_surface (local.get $arg0))) (then
       (local.set $depth_refs (call $d3d9_depth_release (local.get $arg0)))
       (if (i32.lt_s (local.get $depth_refs) (i32.const 0)) (then (return)))
@@ -1900,6 +1896,20 @@
     (if (call $d3d9_is_texture_surface (local.get $arg0)) (then
       (global.set $eax (call $d3d9_texture_surface_release (local.get $arg0)))
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
+    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (if (local.get $entry) (then
+      (if (i32.eq (load.field DxObject refcount (local.get $entry)) (i32.const 2)) (then
+        (local.set $device (call $d3d9_backbuffer_owner (local.get $arg0)))
+        (if (local.get $device) (then
+          (local.set $parent_refs (load.field DxObject refcount (call $dx_from_this (local.get $device))))
+          ;; Keep the last external surface and its parent unchanged while
+          ;; retirement is pending. Reentry polls without a second decrement.
+          (call $handle_IDirect3DDevice9_Release (local.get $device) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+          (if (global.get $d3d_render_token) (then (return)))
+          (if (i32.and (i32.eq (local.get $parent_refs) (i32.const 1)) (i32.ne (global.get $eax) (i32.const 0)))
+            (then (global.set $eax (i32.const 2)) (return)))
+          ;; DeviceRelease already popped the identical one-argument ABI.
+          (global.set $eax (call $dx_surface_release (local.get $arg0))) (return)))))))
     ;; Standalone Surface9 objects are DirectDraw-style surfaces and must run
     ;; the canonical DIB/video-memory teardown on their final reference.
     (global.set $eax (call $dx_surface_release (local.get $arg0)))
@@ -2026,7 +2036,8 @@
     (if (call $d3d9_is_texture_surface (local.get $arg0))
       (then (call $d3d9_texture_lock (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
         (call $gl32 (i32.add (local.get $arg0) (i32.const 16))) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
-      (else (call $crash_unimplemented (local.get $name_ptr))))
+      (else (call $d3d9_backbuffer_lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3))
+        (if (global.get $d3d_render_token) (then (return)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
 
   ;; IDirect3DSurface9_UnlockRect — 1 args (incl. this)
@@ -2040,7 +2051,8 @@
       (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (if (call $d3d9_is_texture_surface (local.get $arg0))
       (then (call $d3d9_texture_surface_unlock (local.get $arg0)))
-      (else (global.set $eax (i32.const 0x8876086C))))
+      (else (call $d3d9_backbuffer_unlock (local.get $arg0))
+        (if (global.get $d3d_render_token) (then (return)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
 
   ;; IDirect3DSurface9_GetDC(this, phdc) — same DIB-backed DC binding the
@@ -2087,6 +2099,7 @@
     (global.set $eax (i32.const 0x8876086c))
     (block $done
       (br_if $done (i32.eqz (local.get $entry)))
+      (br_if $done (i32.and (load.field DxObject flags (local.get $entry)) (i32.shl (i32.const 1) (i32.const 26))))
       (br_if $done (i32.and (load.field DxObject flags (local.get $entry)) (i32.shl (i32.const 1) (i32.const 29))))
       (br_if $done (i32.or (i32.ne (local.get $arg1) (i32.add (i32.const 0x200000) (call $dx_slot_of (local.get $entry))))
         (i32.eqz (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 0x40000000)))))
@@ -2141,7 +2154,7 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IDirect3DSwapChain9_GetBackBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $rt i32) (local $slot i32)
+    (local $rt i32) (local $slot i32) (local $surface i32)
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
     (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg3)))
       (then
@@ -2155,10 +2168,10 @@
         (global.set $eax (i32.const 0x8876086C))
         (return)))
     (local.set $slot (call $dx_slot_of (local.get $rt)))
-    (i32.store offset=4 (local.get $rt)
-      (i32.add (i32.load offset=4 (local.get $rt)) (i32.const 1)))
-    (call $gs32 (local.get $arg3)
-      (call $dx_get_wrapper_for_vtbl (local.get $slot) (global.get $DX_VTBL_D3DSURF9)))
+    (local.set $surface (call $dx_get_wrapper_for_vtbl (local.get $slot) (global.get $DX_VTBL_D3DSURF9)))
+    (call $gs32 (local.get $arg3) (local.get $surface))
+    (if (i32.eqz (local.get $surface)) (then (global.set $eax (i32.const 0x8007000e)) (return)))
+    (drop (call $d3d9_backbuffer_addref (local.get $surface)))
     (global.set $eax (i32.const 0)))
 
   (func $handle_IDirect3DSwapChain9_GetRasterStatus (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
