@@ -426,12 +426,17 @@ class TreeFolder {
     // instead of one per iteration. Off switch for the A/B, since this is the
     // one relaxation that changes which arena words the guest re-enters.
     loops = true,
+    // The shared handler-table tail (tools/toyvm/extras.js). The region JIT
+    // appends to the same one, which is what lets `--tree-fold` and
+    // `--region-jit` be on together. A standalone folder gets its own.
+    extras = null,
   }) {
     Object.assign(this, {
       session, vm, machine, portIn, portOut, build, repFast,
       maxTrees, maxInstalls, minOps, log, batchMin, batchWait,
       hot, warmFrom, warmFor, hits, loops,
       relax: relax instanceof Set ? relax : new Set(relax),
+      extras: extras || new (require('./extras').Extras)(),
     });
     // True while the guest is running on the `--block-hits` build the gate
     // profiles with. Cleared by the first install, which is what takes it away.
@@ -448,6 +453,7 @@ class TreeFolder {
     this.hottest = 0;                 // the highest hit count any candidate had
     this.sinceWant = 0;
     this.trees = [];                  // the `{name, locals, body}` list, in table order
+    this.treeOrd = [];                // ...and each one's ordinal in the SHARED tail
     this.treeOps = [];                // guest ops each of those stands for
     this.treeIsLoop = [];             // ...and whether each one loops in place
     this.treeLoops = 0;
@@ -681,7 +687,13 @@ class TreeFolder {
       // become a lower bound.
       if (b.loop) this.treeLoops++;
       this.treeIsLoop.push(!!b.loop);
-      this.at.set(b.key, this.trees.length);
+      // THE ORDINAL COMES FROM THE SHARED ALLOCATOR, not from this list's
+      // length. tools/toyvm/extras.js owns the handler table's tail because
+      // the region JIT appends to it too, and `--region-jit` is the page
+      // default -- a tree numbered from its own array would name a region.
+      const ord = this.extras.commit([b.tree]);
+      this.at.set(b.key, ord);
+      this.treeOrd.push(ord);
       this.arity.set(b.key, b.arity);
       this.trees.push(b.tree);
       this.watBytes += b.bytes;
@@ -703,7 +715,7 @@ class TreeFolder {
     const t0 = now();
     const next = await makeVm(vm.variant, {
       portIn: this.portIn, portOut: this.portOut, memory: vm.memory,
-      ...this.build, regions: this.trees,
+      ...this.build, regions: this.extras.handlers,
     });
     this.ms.instantiate += now() - t0;
     const t1 = now();
@@ -799,6 +811,10 @@ class TreeFolder {
       installs: this.installs, trees: this.trees.length, folds: this.folds,
       base: this.base, treeOps: [...this.treeOps],
       treeIsLoop: [...this.treeIsLoop], treeLoops: this.treeLoops, loops: this.loops,
+      // Where each tree sits in the SHARED tail, which is what a counter array
+      // read at `base` is indexed by. Not the same as its index in `trees` as
+      // soon as the region JIT has appended anything.
+      treeOrd: [...this.treeOrd], extras: this.extras.length,
       hot: this.hot, phase: this.phase, relax: [...this.relax],
       hotPromoted: this.hotPromoted, coldSkipped: this.coldSkipped,
       deadSkipped: this.deadSkipped, hottest: this.hottest, hotLins: this.hotLins.size,

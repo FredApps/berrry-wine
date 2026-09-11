@@ -74,9 +74,17 @@ async function prepareRegions(bundle) {
   }
   if (!picks.length) return { declined: 'no self-loop region found' };
 
+  // WHERE THIS BUILD'S REGIONS LAND IN THE HANDLER TABLE. Not 0..n-1: the
+  // table's tail is shared with `--tree-fold` (tools/toyvm/extras.js), so the
+  // regions are numbered from the end of what is already there and the module
+  // below is built with the whole tail in front of them.
+  const before = bundle.extrasBefore || [];
   const out = [];
   for (const [idx, pick] of picks.entries()) {
-    const region = buildRegion(pick.ops, pick.nexts, pick.headIp, `region_${idx}`,
+    // Named by its ORDINAL in the shared tail, not by its position in this
+    // build: the module carries every handler installed before it, and a
+    // second `region_0` in it is a duplicate function name, not a region.
+    const region = buildRegion(pick.ops, pick.nexts, pick.headIp, `region_${before.length + idx}`,
       pick.closed !== false, pick.inner || [], pick.forwards || []);
     if (region.declined && !region.body) return { declined: `build: ${region.declined}` };
     // A REGION THAT COULD NOT LOWER ALL ITS TRANSFERS IS NOT SAFELY
@@ -91,7 +99,7 @@ async function prepareRegions(bundle) {
     if (!guarded) return { declined: 'a block of this region has no covered span' };
     const succ = regionSuccessors(rr, pick, guarded);
     out.push({
-      idx,
+      idx: before.length + idx,
       key: `${pick.cs}:${pick.headIp}`,
       headIp: pick.headIp,
       share: pick.share,
@@ -162,9 +170,13 @@ async function prepareRegions(bundle) {
   // option is part of what the module IS) or `--no-lazy`/`--no-fusecond`,
   // where the guest would be swapped onto handlers with different semantics.
   const built = await buildModule(bundle.variant,
-    { ...(bundle.build || {}), regions: out.map(p => p.region) });
+    { ...(bundle.build || {}), regions: [...before, ...out.map(p => p.region)] });
   return {
     picks: out, bytes: built.bytes, gate: { agree: true, ratio },
+    // What the install has to append to the shared tail, and the epoch it was
+    // built against. An install whose epoch has moved is missing somebody
+    // else's handlers and declines rather than swapping onto a short table.
+    extras: out.map(p => p.region), extrasEpoch: bundle.extrasEpoch,
     ms: { pick: tPick - t0, gate: tGate - tPick, build: now() - tGate },
   };
 }

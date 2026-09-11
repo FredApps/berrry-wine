@@ -666,5 +666,33 @@ assert.strictEqual(disp(gateHot), disp(gatePlain),
 summary.push(`gate ${gp} hot=64:${g64.folds} fold(s)/${g64.trees} tree(s)/${g64.cold} cold, `
   + `hot=50000: no fold`);
 
+// --- coexisting with the region JIT ----------------------------------------
+//
+// The two folds append handlers to the same table, and for as long as each
+// numbered its own from zero they could not both be on: a tree word would
+// dispatch into a region, and whichever module was built last carried only its
+// own side's handlers. `--tree-fold --region-jit` was refused outright, which
+// is not a position the fold can ship from -- the page's default IS the region
+// JIT, so a fold that cannot stack on it never runs for anybody.
+//
+// One allocator owns the tail now (tools/toyvm/extras.js). What this checks is
+// the thing that breaks when it does not: the program still computes the same
+// seven words with both on. The region JIT is asked to profile early so it has
+// a real chance to install here rather than declining past the whole question,
+// and the run is required to fold trees either way -- an arm where nothing was
+// appended would prove nothing about who owns the ordinals.
+const bothProg = GATE_COM;
+const both = run(bothProg, [
+  '--tree-fold', '--tree-fold-batch=1',
+  '--region-jit', '--region-jit-after=100k', '--region-jit-window=100k',
+]);
+assert.ok(/exited=true/.test(both), `both: the two-fold arm did not exit:\n${both}`);
+assert.strictEqual(screen(both), gp,
+  `both: --tree-fold --region-jit computed something else\n  plain ${gp}\n  both  ${screen(both)}`);
+assert.ok(folds(both) > 0,
+  `both: nothing folded, so this arm says nothing about shared ordinals:\n${both}`);
+const jitSaid = (/region jit \(inline\): ([a-z]+)/.exec(both) || [0, 'absent'])[1];
+summary.push(`both ${screen(both)} ${folds(both)} fold(s)/${trees(both)} tree(s), region jit ${jitSaid}`);
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`PASS test-toyvm-tree-fold: ${summary.join('; ')}`);

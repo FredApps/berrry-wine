@@ -477,19 +477,18 @@ async function runDos(o) {
 
   // The tree fold's driver, built BEFORE the session because the code cache
   // takes it at construction, and handed the session immediately after because
-  // installing has to reach into that cache. Both this and the region JIT
-  // append handlers to the same table through `opts.regions`, so they cannot
-  // both be on: whichever built last would own the ordinals the other's arena
-  // words were written against.
-  let foldOpts = treeFold;
-  if (foldOpts && regionJit) {
-    // ...unless the fold came from TOYVM_TREE_FOLD rather than the command
-    // line, in which case the run asked for a region JIT and something else
-    // asked for the fold everywhere. The explicit request wins; a suite-wide
-    // environment switch must not fail a test that was written about regions.
-    if (foldOpts.fromEnv) foldOpts = null;
-    else throw new Error('--tree-fold and --region-jit both append to the handler table; pick one');
-  }
+  // installing has to reach into that cache.
+  //
+  // THE HANDLER TABLE'S TAIL IS SHARED. Both this and the region JIT append
+  // handlers to it, and they used to be refused together because each numbered
+  // its own from zero -- a tree word dispatching into a region, and whichever
+  // module was built last carrying only its own side's handlers. One allocator
+  // (tools/toyvm/extras.js) owns the tail now, both sides take ordinals from
+  // it, and every module build passes the whole list, so `--tree-fold
+  // --region-jit` is the same program with both folds in it. That combination
+  // is the one that has to work: the page runs with the region JIT on.
+  const foldOpts = treeFold;
+  const extras = new (require('./extras').Extras)();
   const folder = foldOpts
     ? new (require('./tree-fold').TreeFolder)({
       session: null, vm, machine, repFast,
@@ -508,6 +507,7 @@ async function runDos(o) {
       // the instance swap because the memory does, but the gate stops reading
       // it at the window close anyway.
       hits: new Uint32Array(vm.mem.buffer, isa.IPHIST_BASE, isa.IPHIST_SIZE >> 2),
+      extras,
       ...(foldOpts === true ? {} : foldOpts),
     })
     : null;
@@ -723,6 +723,8 @@ async function runDos(o) {
       // worker instead (region-live.js `workerBackend`).
       backend: require('./region-prepare').inlineBackend(),
       log,
+      // The same allocator the tree fold takes its ordinals from.
+      extras,
       ...(regionJit === true ? {} : regionJit),
     })
     : null;
@@ -830,9 +832,12 @@ async function runDos(o) {
     // what the fold is worth: a tree that stands for `ops` guest instructions
     // and ran `n` times removed `n * (ops - 1)` trips through $next, which is a
     // COUNT and not a timing, and is the number to quote on a loaded box.
+    // Read over the WHOLE shared tail, not over the fold's own tree count: the
+    // region JIT appends to the same table, so a tree's counter sits at its
+    // ordinal and the two stop agreeing the moment a region is installed.
     treeEntries: (folder && folder.trees.length && (hist > 0 || histPairs > 0))
       ? [...new Uint32Array(vm.mem.buffer,
-        isa.HIST_BASE + folder.base * 4, folder.trees.length)]
+        isa.HIST_BASE + folder.base * 4, folder.extras.length)]
       : null,
     // Copied out, not aliased: the caller reads this after the instance is
     // done with and a view into a memory somebody else may reuse is a census
@@ -1441,10 +1446,12 @@ async function main() {
           // a number that would understate them by the trip count.
           let hits = 0, removed = 0, loopHits = 0;
           const isLoop = r.tree.treeIsLoop || [];
-          for (let i = 0; i < r.treeEntries.length; i++) {
-            if (isLoop[i]) { loopHits += r.treeEntries[i]; continue; }
-            hits += r.treeEntries[i];
-            removed += r.treeEntries[i] * ((r.tree.treeOps[i] || 1) - 1);
+          const ord = r.tree.treeOrd || [];
+          for (let i = 0; i < r.tree.treeOps.length; i++) {
+            const n = r.treeEntries[ord[i]] || 0;
+            if (isLoop[i]) { loopHits += n; continue; }
+            hits += n;
+            removed += n * ((r.tree.treeOps[i] || 1) - 1);
           }
           return `\n  tree entries: ${hits} tree dispatch(es), `
             + `${removed} $next trip(s) removed `
