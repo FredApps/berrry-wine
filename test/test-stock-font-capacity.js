@@ -108,6 +108,6 @@ function repeated(count,{malformedLast=false}={}){
  }
  console.log('PASS exact-fit stock transaction fills remaining slots without replacing originals');
  e.capacity_remove_added();assert.strictEqual(e.test_gdi_bitmap_font_count(),count);
- assert.strictEqual(install(4,repeated(2,{malformedLast:true}),true),1,'legacy AddFontResource retains permissive partial parsing when space is available');
- console.log('PASS legacy add-buffer retains permissive partial parsing');
+ assert.strictEqual(install(4,repeated(2,{malformedLast:true}),true),0,'AddFontResource rejects the complete malformed transaction even when space is available');
+ console.log('PASS add-buffer rejects malformed later resources without partial registration');
 })().catch(error=>{console.error(error);process.exitCode=1;});

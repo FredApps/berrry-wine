@@ -1,5 +1,9 @@
 # Project review — 2026-09-10
 
+## R4 implementation checkpoint — isolated recovery branch
+
+Failed bitmap-font replacement now preserves the existing registration: complete FNT/FON validation, private strike allocation and destination planning precede retirement of the old path. A real pre-fix regression lost the old 6,017-byte strike on malformed input; fixed tests preserve records, payloads, LRU, clock and bound HFONT on failure. Both buffered and synchronous entry points use the transaction, and the canonical/compatibility build passes at 1,180,771 / 1,181,239 bytes. See the recovery ledger for scope and checks. **Not merged into main; concurrent publication, bitmap path-hash collisions, and successful-replacement font lifetime remain open.**
+
 ## Recovery execution update — 2026-09-11
 
 **Final build update:** OLE owner fix `f1b91444` resolves the intermediate handler-checker failure described below. Clean committed main `90503599` now passes the full canonical/compatibility build at **1,160,121 / 1,160,589 bytes**, layout `9c6027bce1d500a1`; the 24 native x87 isolation checks and 11 pipeline differential cases pass. The full test suite was not run. Broad recovery remains isolated pending newer-main reconciliation and coordinated handling of active overlapping edits.
