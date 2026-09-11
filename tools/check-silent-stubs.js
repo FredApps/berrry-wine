@@ -246,8 +246,10 @@ const digest = crypto.createHash('sha256')
 // the remaining eight quiet handlers instead of blessing them as exceptions.
 // 2026-09-10 merge: 359 -> 357. DirectPlay Receive and Send now use the
 // owned local message queues; all 34 metadata compatibility stubs remain.
-const EXPECTED_COUNT = 357;
-const EXPECTED_SHA256 = '97b247e1420cb0e2b581fe30304709fda331609e0e42e09e44d3b899cb725bd5';
+// Recovery integration: IMalloc_DidAlloc queries validated allocation arenas
+// instead of an instance-local bump cursor (357 -> 356).
+const EXPECTED_COUNT = 356;
+const EXPECTED_SHA256 = '9ead05d0f712b117e31489649c623afa739a3c49a76abaff1a8343dc72502bcb';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

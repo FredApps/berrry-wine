@@ -78,6 +78,72 @@
   ;; -1 for same-document popups; otherwise the snapshot depth that existed
   ;; before an external popup suspended its source document.
   (global $help_popup_external_snapshot_base (mut i32) (i32.const -1))
+  (global $help_document_epoch (mut i32) (i32.const 0))
+  (global $help_navigation_job (mut i32) (i32.const 0))
+
+  ;; One native hyperlink transaction owns its strings and staging independently
+  ;; of whatever guest ESP happens to be active when the scheduler services it.
+  ;; +0 path,+4 window,+8 window length,+12 caller,+16 hash,+20 popup,
+  ;; +24 command,+28 mode,+32 source epoch,+36 source topic,+40 deferred,
+  ;; +44 source primary hwnd,+48 source popup hwnd.
+  (func (export "get_help_navigation_pending") (result i32)
+    (i32.or (global.get $help_navigation_job) (call $help_macro_native_pending)))
+  (func (export "get_help_navigation_io_handle") (result i32)
+    (call $help_document_owned_pending_handle (global.get $help_navigation_job)))
+  (func $help_navigation_cancel (export "help_navigation_cancel")
+    (local $job i32) (local $p i32)
+    (call $help_macro_native_cancel)
+    (local.set $job (global.get $help_navigation_job))
+    (if (i32.eqz (local.get $job)) (then (return)))
+    (global.set $help_navigation_job (i32.const 0))
+    (call $help_document_cancel_vfs_owned (local.get $job))
+    (local.set $p (call $gl32 (local.get $job)))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (local.set $p (call $gl32 (i32.add (local.get $job) (i32.const 4))))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (call $heap_free (local.get $job)))
+
+  ;; -1 needs host I/O; 0 idle/failure; 1 completed. Only an already-deferred
+  ;; operation presents here; an immediate hit keeps the existing caller path.
+  (func $help_navigation_service (export "help_navigation_service") (result i32)
+    (local $job i32) (local $w i32) (local $ready i32)
+    (local $deferred i32) (local $accepted i32) (local $command i32)
+    (local.set $job (global.get $help_navigation_job))
+    (if (i32.eqz (local.get $job)) (then (return (i32.const 0))))
+    (local.set $w (call $g2w (local.get $job)))
+    (if (i32.or
+          (i32.or (i32.ne (i32.load offset=32 (local.get $w)) (global.get $help_document_epoch))
+                  (i32.ne (i32.load offset=36 (local.get $w)) (global.get $help_session_topic_ref)))
+          (i32.or (i32.ne (i32.load offset=44 (local.get $w)) (global.get $help_hwnd))
+                  (i32.ne (i32.load offset=48 (local.get $w)) (global.get $help_popup_hwnd))))
+      (then (call $help_navigation_cancel) (return (i32.const 0))))
+    ;; An outstanding descriptor belongs to its initiating operation. Even our
+    ;; own descriptor must be filled by the outer host before another read.
+    (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+      (then (i32.store offset=40 (local.get $w) (i32.const 1)) (return (i32.const -1))))
+    (local.set $ready (call $help_document_prepare_vfs_owned
+      (call $g2w (i32.load (local.get $w))) (local.get $job)))
+    (if (i32.eq (local.get $ready) (i32.const -1))
+      (then (i32.store offset=40 (local.get $w) (i32.const 1)) (return (i32.const -1))))
+    (if (i32.eqz (local.get $ready))
+      (then
+        (call $help_navigation_cancel)
+        (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+        (return (i32.const 0))))
+    (local.set $deferred (i32.load offset=40 (local.get $w)))
+    (local.set $command (i32.load offset=24 (local.get $w)))
+    ;; From here finish owns both strings and the ready staging frame. Clearing
+    ;; the queue first makes document release and nested presentation harmless.
+    (global.set $help_navigation_job (i32.const 0))
+    (local.set $accepted (call $help_navigation_finish (local.get $ready)
+      (i32.load (local.get $w)) (i32.load offset=4 (local.get $w))
+      (i32.load offset=8 (local.get $w)) (i32.load offset=12 (local.get $w))
+      (i32.load offset=16 (local.get $w)) (i32.load offset=20 (local.get $w))
+      (local.get $command) (i32.load offset=28 (local.get $w))))
+    (call $heap_free (local.get $job))
+    (if (i32.and (local.get $deferred) (local.get $accepted))
+      (then (call $help_present_dispatch (local.get $accepted) (local.get $command))))
+    (local.get $accepted))
 
   ;; Private result channel used while a replacement view is still local.
   (global $help_materialize_bitmap_dc (mut i32) (i32.const 0))
@@ -1967,78 +2033,650 @@
   ;; Deliberately lazy: a help file registers every routine it might ever use
   ;; the moment it opens, and loading five DLLs to read one topic would be
   ;; wrong. Returns the guest entry address, or 0.
+  ;; Owned resolver frames: next,owner,dll,export,handle,size,bytes,position,
+  ;; count,cached entry,ready. Registry strings are copied before the first read.
+  (global $help_routine_pending (mut i32) (i32.const 0))
+  (func $help_routine_frame (param $owner i32) (result i32)
+    (local $p i32)
+    (local.set $p (global.get $help_routine_pending))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $p)))
+      (if (i32.eq (call $gl32 (i32.add (local.get $p) (i32.const 4))) (local.get $owner))
+        (then (return (local.get $p))))
+      (local.set $p (call $gl32 (local.get $p))) (br $scan))) (i32.const 0))
+
+  (func $help_routine_pending_handle (param $owner i32) (result i32)
+    (local $frame i32) (local $handle i32)
+    (local.set $frame (call $help_routine_frame (local.get $owner)))
+    (if (i32.eqz (local.get $frame)) (then (return (i32.const 0))))
+    (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 16))))
+    (select (local.get $handle) (i32.const 0) (i32.ne (local.get $handle) (i32.const -1))))
+
+  (func $help_routine_cancel_vfs (param $owner i32)
+    (local $p i32) (local $prev i32) (local $value i32) (local $slot i32)
+    (local.set $p (global.get $help_routine_pending))
+    (block $found (loop $scan
+      (if (i32.eqz (local.get $p)) (then (return)))
+      (br_if $found (i32.eq (call $gl32 (i32.add (local.get $p) (i32.const 4))) (local.get $owner)))
+      (local.set $prev (local.get $p)) (local.set $p (call $gl32 (local.get $p))) (br $scan)))
+    (if (local.get $prev) (then (call $gs32 (local.get $prev) (call $gl32 (local.get $p))))
+      (else (global.set $help_routine_pending (call $gl32 (local.get $p)))))
+    (local.set $value (call $gl32 (i32.add (local.get $p) (i32.const 16))))
+    (if (i32.ne (local.get $value) (i32.const -1))
+      (then (drop (call $host_fs_close_handle (local.get $value)))))
+    (local.set $slot (i32.const 8))
+    (loop $strings
+      (local.set $value (call $gl32 (i32.add (local.get $p) (local.get $slot))))
+      (if (local.get $value) (then (call $heap_free (local.get $value))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 4)))
+      (br_if $strings (i32.eq (local.get $slot) (i32.const 12))))
+    (local.set $value (call $gl32 (i32.add (local.get $p) (i32.const 24))))
+    (if (local.get $value) (then (call $heap_free (local.get $value))))
+    (call $heap_free (local.get $p)))
+
+  ;; -1 pending, 0 terminal error, positive ready frame. A retry only needs the
+  ;; owner: record may be zero or invalid after document/binding replacement.
+  (func $help_routine_prepare_vfs (param $record i32) (param $owner i32) (result i32)
+    (local $frame i32) (local $w i32) (local $name i32) (local $len i32)
+    (local $copy i32) (local $handle i32) (local $size i32) (local $bytes i32)
+    (local $index i32) (local $pos i32) (local $count i32) (local $ok i32)
+    (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
+    (if (i32.and (i32.eqz (global.get $exe_size_of_image))
+                 (i32.eqz (global.get $is_win16)))
+      (then (call $help_routine_cancel_vfs (local.get $owner)) (return (i32.const 0))))
+    (local.set $frame (call $help_routine_frame (local.get $owner)))
+    (block $failed
+      (if (i32.eqz (local.get $frame))
+        (then
+          (br_if $failed (i32.eqz (local.get $record)))
+          (local.set $frame (call $heap_alloc (i32.const 44)))
+          (br_if $failed (i32.eqz (local.get $frame)))
+          (local.set $w (call $g2w (local.get $frame)))
+          (memory.fill (local.get $w) (i32.const 0) (i32.const 44))
+          (i32.store (local.get $w) (global.get $help_routine_pending))
+          (i32.store offset=4 (local.get $w) (local.get $owner))
+          (i32.store offset=16 (local.get $w) (i32.const -1))
+          (global.set $help_routine_pending (local.get $frame))
+          (local.set $name (i32.load offset=4 (local.get $record)))
+          (br_if $failed (i32.eqz (local.get $name)))
+          (local.set $len (call $help_cstring_length_memory (call $g2w (local.get $name)) (i32.const 1024)))
+          (br_if $failed (i32.le_s (local.get $len) (i32.const 0)))
+          (local.set $copy (call $help_dup_cstring (call $g2w (local.get $name)) (local.get $len)))
+          (br_if $failed (i32.eqz (local.get $copy)))
+          (i32.store offset=8 (local.get $w) (local.get $copy))
+          (local.set $name (i32.load offset=8 (local.get $record)))
+          (br_if $failed (i32.eqz (local.get $name)))
+          (local.set $len (call $help_cstring_length_memory (call $g2w (local.get $name)) (i32.const 256)))
+          (br_if $failed (i32.le_s (local.get $len) (i32.const 0)))
+          (local.set $copy (call $help_dup_cstring (call $g2w (local.get $name)) (local.get $len)))
+          (br_if $failed (i32.eqz (local.get $copy)))
+          (i32.store offset=12 (local.get $w) (local.get $copy))
+          (local.set $index (call $find_loaded_dll (i32.load offset=8 (local.get $w))))
+          (if (i32.ge_s (local.get $index) (i32.const 0))
+            (then
+              (i32.store offset=36 (local.get $w) (call $resolve_name_export
+                (local.get $index) (call $g2w (local.get $copy))))
+              (i32.store offset=40 (local.get $w) (i32.const 1))
+              (return (local.get $frame))))
+          (local.set $handle (call $host_fs_create_file
+            (call $g2w (i32.load offset=8 (local.get $w))) (i32.const 0x80000000)
+            (i32.const 3) (i32.const 0x80) (i32.const 0)))
+          (br_if $failed (i32.eq (local.get $handle) (i32.const -1)))
+          (i32.store offset=16 (local.get $w) (local.get $handle))
+          (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+          (br_if $failed (i32.or (i32.eqz (local.get $size))
+            (i32.gt_u (local.get $size) (global.get $PE_STAGING_SIZE))))
+          (local.set $bytes (call $heap_alloc (local.get $size)))
+          (br_if $failed (i32.eqz (local.get $bytes)))
+          (i32.store offset=20 (local.get $w) (local.get $size))
+          (i32.store offset=24 (local.get $w) (local.get $bytes))))
+      (local.set $w (call $g2w (local.get $frame)))
+      (if (i32.load offset=40 (local.get $w)) (then (return (local.get $frame))))
+      (local.set $pos (i32.load offset=28 (local.get $w)))
+      (local.set $size (i32.load offset=20 (local.get $w)))
+      (block $read_done (loop $read
+        (br_if $read_done (i32.ge_u (local.get $pos) (local.get $size)))
+        (local.set $count (i32.sub (local.get $size) (local.get $pos)))
+        (if (i32.gt_u (local.get $count) (i32.const 4096)) (then (local.set $count (i32.const 4096))))
+        (i32.store offset=32 (local.get $w) (i32.const 0))
+        (local.set $ok (call $host_fs_read_file_preserve_pending
+          (i32.load offset=16 (local.get $w))
+          (i32.add (i32.load offset=24 (local.get $w)) (local.get $pos))
+          (local.get $count) (i32.add (local.get $frame) (i32.const 32))))
+        (if (i32.eq (local.get $ok) (i32.const -1)) (then (return (i32.const -1))))
+        (br_if $failed (i32.or (i32.eqz (local.get $ok))
+          (i32.ne (i32.load offset=32 (local.get $w)) (local.get $count))))
+        (local.set $pos (i32.add (local.get $pos) (local.get $count)))
+        (i32.store offset=28 (local.get $w) (local.get $pos)) (br $read)))
+      (drop (call $host_fs_close_handle (i32.load offset=16 (local.get $w))))
+      (i32.store offset=16 (local.get $w) (i32.const -1))
+      (i32.store offset=40 (local.get $w) (i32.const 1))
+      (return (local.get $frame)))
+    (call $help_routine_cancel_vfs (local.get $owner)) (i32.const 0))
+
+  ;; No VFS operations or registry mutation in this publication step. A sibling
+  ;; may have loaded the DLL while we were fetching; prefer that loaded image.
+  (func $help_routine_commit_vfs (param $frame i32) (result i32)
+    (local $w i32) (local $owner i32) (local $index i32) (local $entry i32)
+    (local $bytes i32) (local $size i32) (local $pe i32)
+    (local $saved_ne i32) (local $load_addr i32) (local $image_size i32)
+    (if (i32.eqz (local.get $frame)) (then (return (i32.const 0))))
+    (local.set $w (call $g2w (local.get $frame)))
+    (local.set $owner (i32.load offset=4 (local.get $w)))
+    (block $done
+      (br_if $done (i32.eqz (i32.load offset=40 (local.get $w))))
+      (local.set $index (call $find_loaded_dll (i32.load offset=8 (local.get $w))))
+      (if (i32.lt_s (local.get $index) (i32.const 0))
+        (then
+          (local.set $size (i32.load offset=20 (local.get $w)))
+          (br_if $done (i32.lt_u (local.get $size) (i32.const 248)))
+          (local.set $bytes (call $g2w (i32.load offset=24 (local.get $w))))
+          (br_if $done (i32.ne (i32.load16_u (local.get $bytes)) (i32.const 0x5A4D)))
+          (local.set $pe (i32.load offset=60 (local.get $bytes)))
+          (br_if $done (i32.gt_u (local.get $pe) (i32.sub (local.get $size) (i32.const 248))))
+          (br_if $done (i32.ne (i32.load (i32.add (local.get $bytes) (local.get $pe))) (i32.const 0x4550)))
+          ;; NE resource walkers retain pointers into PE_STAGING for the entire
+          ;; task. Publication is synchronous: save/restore those bytes around
+          ;; the PE loader, never retaining a borrowed staging image across IO.
+          (if (global.get $is_win16)
+            (then
+              (br_if $done (i32.gt_u (global.get $win16_file_size) (global.get $PE_STAGING_SIZE)))
+              (local.set $saved_ne (call $heap_alloc (global.get $win16_file_size)))
+              (br_if $done (i32.eqz (local.get $saved_ne)))
+              (memory.copy (call $g2w (local.get $saved_ne)) (global.get $PE_STAGING)
+                (global.get $win16_file_size))))
+          (local.set $load_addr (call $next_dll_addr))
+          (if (global.get $is_win16)
+            (then
+              ;; Validate before atomically reserving an image-sized extent
+              ;; outside every selector and existing heap arena.
+              (local.set $image_size (call $help_ne_dll_image_size (local.get $bytes) (local.get $size)))
+              (br_if $done (i32.eqz (local.get $image_size)))
+              (local.set $load_addr (call $help_ne_reserve_dll_image (local.get $image_size)))
+              (br_if $done (i32.eqz (local.get $load_addr)))))
+          (memory.copy (global.get $PE_STAGING) (local.get $bytes) (local.get $size))
+          (drop (call $load_dll (local.get $size) (local.get $load_addr)))
+          (if (local.get $saved_ne)
+            (then (memory.copy (global.get $PE_STAGING) (call $g2w (local.get $saved_ne))
+              (global.get $win16_file_size))))
+          (local.set $index (call $find_loaded_dll (i32.load offset=8 (local.get $w))))))
+      (br_if $done (i32.lt_s (local.get $index) (i32.const 0)))
+      (local.set $entry (call $resolve_name_export (local.get $index)
+        (call $g2w (i32.load offset=12 (local.get $w))))))
+    (if (local.get $saved_ne) (then (call $heap_free (local.get $saved_ne))))
+    (call $help_routine_cancel_vfs (local.get $owner))
+    (local.get $entry))
+
   (func $help_routine_resolve (param $record i32) (result i32)
-    (local $dll_ga i32) (local $fn_ga i32) (local $dll_index i32)
-    (local $handle i32) (local $size i32) (local $bytes_ga i32) (local $read_ga i32) (local $read_wa i32)
-    (local $entry i32) (local $load_addr i32)
-    ;; A help DLL is x86 code: it needs a loaded process to run inside, with a
-    ;; guest stack and an image base. Without one there is nothing to call
-    ;; into, and pretending otherwise would jump the interpreter at an address
-    ;; that means nothing.
+    (local $owner i32) (local $ready i32) (local $entry i32)
     (if (i32.eqz (global.get $exe_size_of_image)) (then (return (i32.const 0))))
     (if (i32.load offset=16 (local.get $record))
       (then (return (i32.load offset=16 (local.get $record)))))
-    (local.set $dll_ga (i32.load offset=4 (local.get $record)))
-    (if (i32.eqz (local.get $dll_ga)) (then (return (i32.const 0))))
-    (local.set $dll_index (call $find_loaded_dll (local.get $dll_ga)))
-    (if (i32.lt_s (local.get $dll_index) (i32.const 0))
+    (local.set $owner (call $heap_alloc (i32.const 4)))
+    (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
+    (local.set $ready (call $help_routine_prepare_vfs (local.get $record) (local.get $owner)))
+    (if (i32.gt_s (local.get $ready) (i32.const 0))
       (then
-        ;; The VFS boundary takes the path as a WASM address and the read
-        ;; buffer as a guest one, exactly as the .cnt loader does.
-        (local.set $handle (call $host_fs_create_file
-          (call $g2w (local.get $dll_ga)) (i32.const 0x80000000)
-          (i32.const 3) (i32.const 0x80) (i32.const 0)))
-        (if (i32.eq (local.get $handle) (i32.const -1))
-          (then
-            (call $heap_free (local.get $dll_ga))
-            (return (i32.const 0))))
-        (local.set $size (call $host_fs_get_file_size (local.get $handle)))
-        (if (i32.or
-              (i32.or (i32.eq (local.get $size) (i32.const -1))
-                      (i32.eqz (local.get $size)))
-              (i32.gt_u (local.get $size) (global.get $PE_STAGING_SIZE)))
-          (then
-            (drop (call $host_fs_close_handle (local.get $handle)))
-            (call $heap_free (local.get $dll_ga))
-            (return (i32.const 0))))
-        (local.set $bytes_ga (call $heap_alloc (local.get $size)))
-        (local.set $read_ga (call $heap_alloc (i32.const 4)))
-        (if (i32.or (i32.eqz (local.get $bytes_ga)) (i32.eqz (local.get $read_ga)))
-          (then
-            (drop (call $host_fs_close_handle (local.get $handle)))
-            (if (local.get $bytes_ga) (then (call $heap_free (local.get $bytes_ga))))
-            (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
-            (call $heap_free (local.get $dll_ga))
-            (return (i32.const 0))))
-        (local.set $read_wa (call $g2w (local.get $read_ga))) (i32.store (local.get $read_wa) (i32.const 0))
-        (local.set $entry (call $host_fs_read_file
-          (local.get $handle) (local.get $bytes_ga) (local.get $size)
-          (local.get $read_ga)))
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (if (i32.or (i32.eqz (local.get $entry))
-              (i32.ne (i32.load (local.get $read_wa)) (local.get $size)))
-          (then
-            (call $heap_free (local.get $read_ga))
-            (call $heap_free (local.get $bytes_ga))
-            (call $heap_free (local.get $dll_ga))
-            (return (i32.const 0))))
-        ;; The loader reads the image from the staging buffer, exactly as it
-        ;; does for a LoadLibraryA the host drives.
-        (memory.copy (global.get $PE_STAGING) (call $g2w (local.get $bytes_ga))
-          (local.get $size))
-        (call $heap_free (local.get $read_ga))
-        (call $heap_free (local.get $bytes_ga))
-        (local.set $load_addr (call $next_dll_addr))
-        (drop (call $load_dll (local.get $size) (local.get $load_addr)))
-        (local.set $dll_index (call $find_loaded_dll (local.get $dll_ga)))
-        (if (i32.lt_s (local.get $dll_index) (i32.const 0))
-          (then (return (i32.const 0))))))
-    (local.set $fn_ga (i32.load offset=8 (local.get $record)))
-    (if (i32.eqz (local.get $fn_ga)) (then (return (i32.const 0))))
-    (local.set $entry (call $resolve_name_export
-      (local.get $dll_index) (call $g2w (local.get $fn_ga))))
-    (i32.store offset=16 (local.get $record) (local.get $entry))
+        (local.set $entry (call $help_routine_commit_vfs (local.get $ready)))
+        ;; This compatibility call never parks; its registry record is still
+        ;; valid. Durable callers instead own a copied binding and skip caching.
+        (i32.store offset=16 (local.get $record) (local.get $entry)))
+      (else (call $help_routine_cancel_vfs (local.get $owner))))
+    (call $heap_free (local.get $owner))
     (local.get $entry))
+  ;; Public WinHelpA/W macro calls own a real guest-return continuation. Each
+  ;; 136-byte job stores next/state, original ESP/return/thunk, five original
+  ;; arguments, owned parsed arguments/count, resolver frame/result, and the
+  ;; callee-saved GPRs. State1 stages IO,2 executes guest code,3 awaits API retry.
+  ;; Win16 extension: +72 code16; +76..88 ES/CS/SS/DS selectors; +92..104
+  ;; their bases; +108 FS; +112 owned 64KiB callback stack; +116/+120 raw
+  ;; Pascal far path/data; +124 native source epoch; +128 owned callback TIB;
+  ;; +132 native CPU context. Native clicks use width4 and an outer-pump return.
+  (global $help_macro_api_jobs (mut i32) (i32.const 0))
+  (global $help_macro_api_context (mut i32) (i32.const 0))
+  (global $help_macro_native_capture (mut i32) (i32.const 0))
+  (global $help_macro_native_job (mut i32) (i32.const 0))
+  (global $help_macro_native_returned (mut i32) (i32.const 0))
+
+  ;; Width4 jobs are native detours. +124 is the source epoch; +132 owns an
+  ;; exact CPU snapshot. State2 runs normally; state3 waits for the OUTER pump
+  ;; to restore CPU and host deadlines together, never in a slice-result tail.
+  (func $help_macro_native_pending (result i32)
+    (if (i32.eqz (global.get $help_macro_native_job)) (then (return (i32.const 0))))
+    (select (global.get $help_macro_native_job) (i32.const 0)
+      (i32.ne (call $gl32 (i32.add (global.get $help_macro_native_job) (i32.const 4))) (i32.const 2))))
+  (func (export "get_help_macro_native_token") (result i32) (global.get $help_macro_native_job))
+  (func (export "get_help_macro_native_phase") (result i32)
+    (if (result i32) (global.get $help_macro_native_job)
+      (then (call $gl32 (i32.add (global.get $help_macro_native_job) (i32.const 4))))
+      (else (i32.const 0))))
+  (func (export "get_help_macro_native_io_handle") (result i32)
+    (call $help_routine_pending_handle (global.get $help_macro_native_job)))
+  (func $help_macro_native_cancel
+    (if (global.get $help_macro_native_job)
+      (then
+        ;; A click/close may discard staged work, but never free an executing
+        ;; callback's arguments, stack, or interrupted context.
+        (if (i32.eq (call $gl32 (i32.add (global.get $help_macro_native_job) (i32.const 4))) (i32.const 1))
+          (then (call $help_macro_api_drop (global.get $help_macro_native_job)))))))
+  (func $help_macro_native_queue (param $record i32) (param $args i32) (param $count i32) (result i32)
+    (local $job i32) (local $ready i32)
+    (call $help_macro_native_cancel)
+    (if (global.get $help_macro_native_job)
+      (then (call $help_macro_api_free_args (local.get $args)) (return (i32.const 0))))
+    (local.set $job (call $heap_alloc (i32.const 136)))
+    (if (i32.eqz (local.get $job))
+      (then (call $help_macro_api_free_args (local.get $args)) (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $job)) (i32.const 0) (i32.const 136))
+    (call $gs32 (local.get $job) (global.get $help_macro_api_jobs))
+    (global.set $help_macro_api_jobs (local.get $job))
+    (global.set $help_macro_native_job (local.get $job))
+    (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $job) (i32.const 36)) (i32.const 4))
+    (call $gs32 (i32.add (local.get $job) (i32.const 40)) (local.get $args))
+    (call $gs32 (i32.add (local.get $job) (i32.const 44)) (local.get $count))
+    (call $gs32 (i32.add (local.get $job) (i32.const 124)) (global.get $help_document_epoch))
+    ;; Copy the registry binding while it is valid. Preparation is CPU-neutral
+    ;; and retains its own descriptor if another read already owns pending IO.
+    (local.set $ready (call $help_routine_prepare_vfs (local.get $record) (local.get $job)))
+    (if (i32.eqz (local.get $ready))
+      (then (call $help_macro_api_drop (local.get $job)) (return (i32.const 0))))
+    (i32.const 2))
+  (func (export "help_macro_native_prepare") (result i32)
+    (local $job i32) (local $ready i32)
+    (local.set $job (global.get $help_macro_native_job))
+    (if (i32.eqz (local.get $job)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $job) (i32.const 4))) (i32.const 1))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $job) (i32.const 124))) (global.get $help_document_epoch))
+      (then (call $help_macro_api_drop (local.get $job)) (return (i32.const 0))))
+    (local.set $ready (call $help_routine_prepare_vfs (i32.const 0) (local.get $job)))
+    (if (i32.eqz (local.get $ready)) (then (call $help_macro_api_drop (local.get $job))))
+    (local.get $ready))
+  (func (export "help_macro_native_begin") (param $token i32) (result i32)
+    (local $ctx i32) (local $result i32)
+    (if (i32.or (i32.eqz (local.get $token))
+        (i32.ne (local.get $token) (global.get $help_macro_native_job))) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $token) (i32.const 4))) (i32.const 1))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $token) (i32.const 124))) (global.get $help_document_epoch))
+      (then (call $help_macro_api_drop (local.get $token)) (return (i32.const 0))))
+    (if (i32.eqz (call $guest_context_can_interrupt)) (then (return (i32.const 0))))
+    (local.set $ctx (call $heap_alloc (global.get $GUEST_CONTEXT_SIZE)))
+    (if (i32.eqz (local.get $ctx)) (then (return (i32.const 0))))
+    (call $guest_context_save (call $g2w (local.get $ctx)))
+    (call $gs32 (i32.add (local.get $token) (i32.const 132)) (local.get $ctx))
+    ;; An interruption is not a C call site: DF may be set and every x87 slot
+    ;; live. Give the extension a forward direction and empty FP stack while
+    ;; retaining the caller's rounding control. The snapshot restores all bits.
+    (global.set $df (i32.const 0))
+    (global.set $fpu_top (i32.const 0))
+    (global.set $fpu_sw (i32.const 0))
+    (global.set $fpu_tag (i32.const 0))
+    (global.set $fpu_raw_tag (i32.const 0))
+    ;; A callback starts a separate exception search in its owned TIB. These
+    ;; continuation pointers are not registrations in the interrupted FS chain.
+    (global.set $delphi_seh_rec (i32.const 0))
+    (global.set $delphi_exception_record (i32.const 0))
+    (global.set $delphi_seh_head_before (i32.const 0))
+    ;; A new wait must not inherit the interrupted wait-all handle array or
+    ;; an old message/vblank deadline. Keep only the saved copy dormant; the
+    ;; callback owns fresh private descriptors, never shared clocks/events.
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $sleep_yielded (i32.const 0))
+    (global.set $sleep_timeout (i32.const 0))
+    (global.set $wait_handle (i32.const 0))
+    (global.set $wait_handles_ptr (i32.const 0))
+    (global.set $wait_all (i32.const 0))
+    (global.set $wait_timeout (i32.const -1))
+    (global.set $wait_stack_bytes (i32.const 12))
+    (global.set $message_wait_msg_ptr (i32.const 0))
+    (global.set $cs_wait_addr (i32.const 0))
+    (global.set $cs_wait_owner (i32.const 0))
+    (global.set $cs_wait_spins (i32.const 0))
+    (global.set $cs_park_pending (i32.const 0))
+    (global.set $cs_resume_esp_delta (i32.const 0))
+    (global.set $vblank_wait_active (i32.const 0))
+    (global.set $vblank_wait_counter (i32.const 0))
+    (global.set $vblank_deadline_ms (i32.const 0))
+    (global.set $spin_deadline_ms (i32.const 0))
+    (global.set $clock_spin_parked_value (i32.const 0))
+    (global.set $clock_spin_parked_valid (i32.const 0))
+    (global.set $loadlib_name_ptr (i32.const 0))
+    (local.set $result (call $help_macro_api_advance (local.get $token) (i32.const 0)))
+    ;; A newly exposed read can still defer entry. Do not leak/overwrite this
+    ;; snapshot on retry or leave callback ABI state installed without entry.
+    (if (i32.eq (local.get $result) (i32.const -1))
+      (then
+        (call $guest_context_restore (call $g2w (local.get $ctx)))
+        (call $gs32 (i32.add (local.get $token) (i32.const 132)) (i32.const 0))
+        (call $heap_free (local.get $ctx))))
+    (i32.eq (local.get $result) (i32.const -2)))
+  (func (export "help_macro_native_finish") (param $token i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $token))
+        (i32.ne (local.get $token) (global.get $help_macro_native_returned))) (then (return (i32.const 0))))
+    (call $guest_context_restore
+      (call $g2w (call $gl32 (i32.add (local.get $token) (i32.const 132)))))
+    (call $help_macro_api_drop (local.get $token))
+    (i32.const 1))
+
+  (func $help_macro_api_active (result i32)
+    (i32.ne (global.get $help_macro_api_context) (i32.const 0)))
+
+  ;; Only an executing Win16-owned callback may leave the NE arena at an
+  ;; API boundary. A flat CPU alone is not evidence of a valid transition.
+  (func $help_macro_api_flat_callback_active (result i32)
+    (local $job i32) (local $stack i32)
+    (if (global.get $code16) (then (return (i32.const 0))))
+    (local.set $job (global.get $help_macro_api_jobs))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $job)))
+      (if (i32.and
+          (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 4))) (i32.const 2))
+          (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 3)))
+        (then
+          (local.set $stack (call $gl32 (i32.add (local.get $job) (i32.const 112))))
+          (if (i32.and (i32.ne (local.get $stack) (i32.const 0))
+              (i32.lt_u (i32.sub (global.get $esp) (local.get $stack)) (i32.const 65536)))
+            (then (return (i32.const 1))))))
+      (local.set $job (call $gl32 (local.get $job)))
+      (br $scan)))
+    (i32.const 0))
+
+  (func $help_macro_api_free_args (param $args i32)
+    (local $i i32) (local $p i32)
+    (if (i32.eqz (local.get $args)) (then (return)))
+    (block $done (loop $free
+      (br_if $done (i32.ge_u (local.get $i) (global.get $HELP_MAX_ROUTINE_ARGS)))
+      (local.set $p (call $gl32 (i32.add (local.get $args)
+        (i32.add (i32.mul (local.get $i) (i32.const 8)) (i32.const 4)))))
+      (if (local.get $p) (then (call $heap_free (local.get $p))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $free)))
+    (call $heap_free (local.get $args)))
+
+  (func $help_macro_api_drop (param $job i32)
+    (local $p i32) (local $prev i32)
+    ;; Executing guest code still borrows its arguments. Only its typed return
+    ;; may transition it to disposable state; debug replacement cannot free it.
+    (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 4))) (i32.const 2))
+      (then (return)))
+    (local.set $p (global.get $help_macro_api_jobs))
+    (block $found (loop $scan
+      (if (i32.eqz (local.get $p)) (then (return)))
+      (br_if $found (i32.eq (local.get $p) (local.get $job)))
+      (local.set $prev (local.get $p))
+      (local.set $p (call $gl32 (local.get $p))) (br $scan)))
+    (if (local.get $prev)
+      (then (call $gs32 (local.get $prev) (call $gl32 (local.get $job))))
+      (else (global.set $help_macro_api_jobs (call $gl32 (local.get $job)))))
+    (call $help_routine_cancel_vfs (local.get $job))
+    (call $help_macro_api_free_args (call $gl32 (i32.add (local.get $job) (i32.const 40))))
+    (local.set $p (call $gl32 (i32.add (local.get $job) (i32.const 112))))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (local.set $p (call $gl32 (i32.add (local.get $job) (i32.const 128))))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (local.set $p (call $gl32 (i32.add (local.get $job) (i32.const 132))))
+    (if (local.get $p)
+      (then
+        (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 4))) (i32.const 1))
+          (then (call $guest_context_restore (call $g2w (local.get $p)))))
+        (call $heap_free (local.get $p))))
+    (if (i32.eq (local.get $job) (global.get $help_macro_native_job))
+      (then (global.set $help_macro_native_job (i32.const 0))
+        (global.set $help_macro_native_returned (i32.const 0))))
+    (call $heap_free (local.get $job)))
+
+  (func $help_macro_api_leave
+    (if (global.get $help_macro_api_context)
+      (then (call $heap_free (global.get $help_macro_api_context))))
+    (global.set $help_macro_api_context (i32.const 0)))
+
+  ;; Process teardown only: the host has joined every producer and guarantees
+  ;; these callbacks will never execute again. Document close must NOT use it.
+  (func (export "help_macro_api_cancel_all")
+    (local $job i32)
+    (call $help_macro_api_leave)
+    (block $done (loop $cancel
+      (local.set $job (global.get $help_macro_api_jobs))
+      (br_if $done (i32.eqz (local.get $job)))
+      (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 3))
+      (call $help_macro_api_drop (local.get $job))
+      (br $cancel))))
+
+  (func $help_macro_api_advance (param $job i32) (param $record i32) (result i32)
+    (local $ready i32) (local $entry i32) (local $args i32) (local $i i32)
+    (local $stack i32) (local $tib i32)
+    (local.set $ready (call $help_routine_prepare_vfs (local.get $record) (local.get $job)))
+    (if (i32.eq (local.get $ready) (i32.const -1)) (then (return (i32.const -1))))
+    (if (i32.eqz (local.get $ready))
+      (then
+        (call $help_macro_api_drop (local.get $job))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (call $gs32 (i32.add (local.get $job) (i32.const 48)) (local.get $ready))
+    (local.set $entry (call $help_routine_commit_vfs (local.get $ready)))
+    (call $gs32 (i32.add (local.get $job) (i32.const 48)) (i32.const 0))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (call $help_macro_api_drop (local.get $job))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
+        (return (i32.const 0))))
+    (if (i32.ge_u (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 3))
+      (then
+        (local.set $stack (call $heap_alloc (i32.const 65536)))
+        (local.set $tib (call $heap_alloc (i32.const 256)))
+        (call $gs32 (i32.add (local.get $job) (i32.const 112)) (local.get $stack))
+        (call $gs32 (i32.add (local.get $job) (i32.const 128)) (local.get $tib))
+        ;; TLS storage belongs to this guest thread, not to the callback job.
+        ;; NE startup has no PE TIB initialization, so establish it once here.
+        (if (i32.eqz (global.get $tls_slots))
+          (then
+            (global.set $tls_slots (call $heap_alloc (i32.const 256)))
+            (if (global.get $tls_slots)
+              (then (memory.fill (call $g2w (global.get $tls_slots))
+                (i32.const 0) (i32.const 256))))))
+        (if (i32.or (i32.eqz (global.get $tls_slots))
+            (i32.or (i32.eqz (local.get $stack)) (i32.eqz (local.get $tib))))
+          (then
+            (call $help_macro_api_drop (local.get $job))
+            (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+            (return (i32.const 0))))
+        (memory.fill (call $g2w (local.get $tib)) (i32.const 0) (i32.const 256))
+        (call $gs32 (local.get $tib) (i32.const -1))
+        (call $gs32 (i32.add (local.get $tib) (i32.const 4)) (i32.add (local.get $stack) (i32.const 65536)))
+        (call $gs32 (i32.add (local.get $tib) (i32.const 8)) (local.get $stack))
+        (call $gs32 (i32.add (local.get $tib) (i32.const 0x18)) (local.get $tib))
+        (call $gs32 (i32.add (local.get $tib) (i32.const 0x2c)) (global.get $tls_slots))
+        ;; Direct assignments avoid selector-table lookup and SS's 16-bit SP
+        ;; truncation. The PE callback uses flat code/data and an owned TIB.
+        (global.set $code16 (i32.const 0))
+        (global.set $sreg_es (i32.const 0)) (global.set $sreg_cs (i32.const 0))
+        (global.set $sreg_ss (i32.const 0)) (global.set $sreg_ds (i32.const 0))
+        (global.set $seg_base_es (i32.const 0)) (global.set $seg_base_cs (i32.const 0))
+        (global.set $seg_base_ss (i32.const 0)) (global.set $seg_base_ds (i32.const 0))
+        (global.set $fs_base (local.get $tib))))
+    (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 2))
+    ;; RET n leaves the typed frame at ESP; the original API frame above it
+    ;; remains untouched until the retried WinHelp wrapper returns normally.
+    (global.set $esp (i32.sub
+      (if (result i32) (local.get $stack)
+        (then (i32.add (local.get $stack) (i32.const 65536)))
+        (else (call $gl32 (i32.add (local.get $job) (i32.const 8)))))
+      (i32.const 8)))
+    (call $gs32 (global.get $esp) (i32.const 0x31504c48)) ;; HLP1
+    (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $job))
+    (local.set $args (call $gl32 (i32.add (local.get $job) (i32.const 40))))
+    (local.set $i (call $gl32 (i32.add (local.get $job) (i32.const 44))))
+    (block $done (loop $push
+      (br_if $done (i32.eqz (local.get $i)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+      (call $gs32 (global.get $esp)
+        (call $gl32 (i32.add (local.get $args) (i32.mul (local.get $i) (i32.const 8)))))
+      (br $push)))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $font_enum_ret_thunk))
+    (global.set $eip (local.get $entry))
+    (global.set $steps (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 1))
+    (i32.const -2))
+
+  ;; Own args on every path; the parser must not run its legacy cleanup after
+  ;; handing them here. Resolver preparation immediately copies the binding.
+  (func $help_macro_api_begin (param $record i32) (param $args i32) (param $count i32) (result i32)
+    (local $job i32)
+    (local.set $job (global.get $help_macro_api_context))
+    (global.set $help_macro_api_context (i32.const 0))
+    (if (i32.eqz (local.get $job))
+      (then (call $help_macro_api_free_args (local.get $args)) (return (i32.const 0))))
+    (call $gs32 (local.get $job) (global.get $help_macro_api_jobs))
+    (global.set $help_macro_api_jobs (local.get $job))
+    (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $job) (i32.const 40)) (local.get $args))
+    (call $gs32 (i32.add (local.get $job) (i32.const 44)) (local.get $count))
+    (call $help_macro_api_advance (local.get $job) (local.get $record)))
+
+  (func $help_macro_api_enter (param $caller i32) (param $path i32)
+      (param $command i32) (param $data i32) (param $width i32) (result i32)
+    (local $job i32) (local $next i32) (local $match i32) (local $state i32) (local $result i32)
+    (call $help_macro_api_leave)
+    (if (i32.eq (local.get $width) (i32.const 3))
+      (then
+        (if (i32.or (i32.eqz (global.get $code16))
+              (i32.or (i32.eqz (global.get $WIN16_THUNK_SEL))
+                (i32.ne (global.get $sreg_cs) (global.get $WIN16_THUNK_SEL))))
+          (then (return (i32.const -3))))
+        (if (i32.ge_u (i32.sub (global.get $current_thunk_eip) (global.get $seg_base_cs)) (i32.const 65536))
+          (then (return (i32.const -3))))
+        (if (i32.or
+              (i32.ne (call $win16_h32 (call $win16_arg16 (i32.const 5))) (local.get $caller))
+              (i32.or (i32.ne (call $win16_arg16 (i32.const 2)) (local.get $command))
+                (i32.ne (call $win16_far_to_guest (call $win16_arg16 (i32.const 4))
+                          (call $win16_arg16 (i32.const 3))) (local.get $path))))
+          (then (return (i32.const -3))))
+        (if (i32.ne (local.get $data)
+              (if (result i32) (call $help_command_data_is_pointer (local.get $command))
+                (then (call $win16_far_to_guest (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+                (else (call $win16_arg32 (i32.const 0)))))
+          (then (return (i32.const -3)))))
+      (else
+        (if (global.get $code16) (then (return (i32.const -3))))
+        ;; Host debug helpers call the dispatcher without constructing an API
+        ;; frame. They cannot retain/redirect that borrowed guest stack.
+        (if (i32.or
+              (i32.or (i32.lt_u (global.get $current_thunk_eip) (global.get $thunk_guest_base))
+                      (i32.ge_u (global.get $current_thunk_eip) (global.get $thunk_guest_end)))
+              (i32.or
+                (i32.or (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 4))) (local.get $caller))
+                        (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 8))) (local.get $path)))
+                (i32.or (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 12))) (local.get $command))
+                        (i32.ne (call $gl32 (i32.add (global.get $esp) (i32.const 16))) (local.get $data)))))
+          (then (return (i32.const -3))))
+          ))
+    (local.set $job (global.get $help_macro_api_jobs))
+    (block $done (loop $find
+      (br_if $done (i32.eqz (local.get $job)))
+      (local.set $next (call $gl32 (local.get $job)))
+      (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 8))) (global.get $esp))
+        (then
+          (local.set $state (call $gl32 (i32.add (local.get $job) (i32.const 4))))
+          (local.set $match (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 12))) (call $gl32 (global.get $esp)))
+            (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 20))) (local.get $caller))
+            (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 24))) (local.get $path))
+            (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 28))) (local.get $command))
+            (i32.and (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 32))) (local.get $data))
+              (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (local.get $width))))))))
+          (if (i32.and (local.get $match) (i32.eq (local.get $width) (i32.const 3)))
+            (then
+              (local.set $match (i32.and
+                (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 116))) (call $win16_arg32 (i32.const 3)))
+                (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 120))) (call $win16_arg32 (i32.const 0)))))))
+          (if (local.get $match)
+            (then
+              (if (i32.eq (local.get $state) (i32.const 1))
+                (then (return (call $help_macro_api_advance (local.get $job) (i32.const 0)))))
+              (if (i32.eq (local.get $state) (i32.const 2)) (then (return (i32.const -2))))
+              (local.set $result (call $gl32 (i32.add (local.get $job) (i32.const 52))))
+              (call $help_macro_api_drop (local.get $job))
+              (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+              (return (local.get $result))))
+          (if (i32.eq (local.get $state) (i32.const 2)) (then (return (i32.const 0))))
+          (call $help_macro_api_drop (local.get $job))))
+      (local.set $job (local.get $next)) (br $find)))
+    (if (i32.ne (local.get $command) (global.get $HELP_COMMAND_MACRO))
+      (then (return (i32.const -3))))
+    (local.set $job (call $heap_alloc (i32.const 136)))
+    (if (i32.eqz (local.get $job))
+      (then
+        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $job)) (i32.const 0) (i32.const 136))
+    (call $gs32 (i32.add (local.get $job) (i32.const 8)) (global.get $esp))
+    (call $gs32 (i32.add (local.get $job) (i32.const 12)) (call $gl32 (global.get $esp)))
+    (call $gs32 (i32.add (local.get $job) (i32.const 16)) (global.get $current_thunk_eip))
+    (call $gs32 (i32.add (local.get $job) (i32.const 20)) (local.get $caller))
+    (call $gs32 (i32.add (local.get $job) (i32.const 24)) (local.get $path))
+    (call $gs32 (i32.add (local.get $job) (i32.const 28)) (local.get $command))
+    (call $gs32 (i32.add (local.get $job) (i32.const 32)) (local.get $data))
+    (call $gs32 (i32.add (local.get $job) (i32.const 36)) (local.get $width))
+    (call $gs32 (i32.add (local.get $job) (i32.const 56)) (global.get $ebx))
+    (call $gs32 (i32.add (local.get $job) (i32.const 60)) (global.get $esi))
+    (call $gs32 (i32.add (local.get $job) (i32.const 64)) (global.get $edi))
+    (call $gs32 (i32.add (local.get $job) (i32.const 68)) (global.get $ebp))
+    (call $gs32 (i32.add (local.get $job) (i32.const 72)) (global.get $code16))
+    (call $gs32 (i32.add (local.get $job) (i32.const 76)) (global.get $sreg_es))
+    (call $gs32 (i32.add (local.get $job) (i32.const 80)) (global.get $sreg_cs))
+    (call $gs32 (i32.add (local.get $job) (i32.const 84)) (global.get $sreg_ss))
+    (call $gs32 (i32.add (local.get $job) (i32.const 88)) (global.get $sreg_ds))
+    (call $gs32 (i32.add (local.get $job) (i32.const 92)) (global.get $seg_base_es))
+    (call $gs32 (i32.add (local.get $job) (i32.const 96)) (global.get $seg_base_cs))
+    (call $gs32 (i32.add (local.get $job) (i32.const 100)) (global.get $seg_base_ss))
+    (call $gs32 (i32.add (local.get $job) (i32.const 104)) (global.get $seg_base_ds))
+    (call $gs32 (i32.add (local.get $job) (i32.const 108)) (global.get $fs_base))
+    (if (i32.eq (local.get $width) (i32.const 3))
+      (then
+        (call $gs32 (i32.add (local.get $job) (i32.const 116)) (call $win16_arg32 (i32.const 3)))
+        (call $gs32 (i32.add (local.get $job) (i32.const 120)) (call $win16_arg32 (i32.const 0)))))
+    (global.set $help_macro_api_context (local.get $job))
+    (i32.const -3))
+
+  (func $help_macro_api_return
+    (local $job i32)
+    (local.set $job (call $gl32 (i32.add (global.get $esp) (i32.const 4))))
+    (call $gs32 (i32.add (local.get $job) (i32.const 4)) (i32.const 3))
+    (call $gs32 (i32.add (local.get $job) (i32.const 52)) (i32.const 1))
+    (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
+    (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 4))
+      (then
+        (global.set $help_macro_native_returned (local.get $job))
+        (global.set $handler_set_eip (i32.const 1))
+        (global.set $steps (i32.const 0))
+        (return)))
+    (global.set $ebx (call $gl32 (i32.add (local.get $job) (i32.const 56))))
+    (global.set $esi (call $gl32 (i32.add (local.get $job) (i32.const 60))))
+    (global.set $edi (call $gl32 (i32.add (local.get $job) (i32.const 64))))
+    (global.set $ebp (call $gl32 (i32.add (local.get $job) (i32.const 68))))
+    (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 36))) (i32.const 3))
+      (then
+        (global.set $code16 (call $gl32 (i32.add (local.get $job) (i32.const 72))))
+        (global.set $sreg_es (call $gl32 (i32.add (local.get $job) (i32.const 76))))
+        (global.set $sreg_cs (call $gl32 (i32.add (local.get $job) (i32.const 80))))
+        (global.set $sreg_ss (call $gl32 (i32.add (local.get $job) (i32.const 84))))
+        (global.set $sreg_ds (call $gl32 (i32.add (local.get $job) (i32.const 88))))
+        (global.set $seg_base_es (call $gl32 (i32.add (local.get $job) (i32.const 92))))
+        (global.set $seg_base_cs (call $gl32 (i32.add (local.get $job) (i32.const 96))))
+        (global.set $seg_base_ss (call $gl32 (i32.add (local.get $job) (i32.const 100))))
+        (global.set $seg_base_ds (call $gl32 (i32.add (local.get $job) (i32.const 104))))
+        (global.set $fs_base (call $gl32 (i32.add (local.get $job) (i32.const 108))))
+      ))
+    (global.set $esp (call $gl32 (i32.add (local.get $job) (i32.const 8))))
+    (global.set $eip (call $gl32 (i32.add (local.get $job) (i32.const 16))))
+    (global.set $steps (i32.const 0))
+    (global.set $handler_set_eip (i32.const 1)))
 
   ;; Call a registered routine. The format string decides how each macro
   ;; argument is passed: 'S'/'s' a C string, 'U'/'u'/'I'/'i' a machine word.
@@ -2061,17 +2699,11 @@
     (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
     (local $old_handler_set_eip i32) (local $old_steps i32)
     (local $old_yield_reason i32) (local $old_yield_flag i32) (local $rounds i32)
+    (local $resolve_failed i32)
     (local.set $record (call $help_routine_at
       (call $help_find_routine (local.get $name_hash))))
     (if (i32.eqz (local.get $record))
       (then
-        (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
-        (return (i32.const 0))))
-    (local.set $entry (call $help_routine_resolve (local.get $record)))
-    (if (i32.eqz (local.get $entry))
-      (then
-        ;; The file names a DLL or an export we cannot produce. That is a
-        ;; missing capability, not malformed macro text.
         (global.set $help_session_status (global.get $HELP_DISPATCH_UNSUPPORTED))
         (return (i32.const 0))))
     (local.set $fmt (call $g2w (i32.load offset=12 (local.get $record))))
@@ -2148,6 +2780,21 @@
         (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
         (br $skip)))
       (br $arg)))
+    (if (i32.and (local.get $ok) (i32.ne (global.get $help_macro_native_capture) (i32.const 0)))
+      (then (return (call $help_macro_native_queue
+        (local.get $record) (local.get $args) (local.get $count)))))
+    (if (i32.and (local.get $ok) (call $help_macro_api_active))
+      (then
+        ;; The public operation consumes the copied arguments, including on
+        ;; failure. Its callback returns through a typed continuation, never
+        ;; through the bounded synchronous loop used by legacy native callers.
+        (return (call $help_macro_api_begin
+          (local.get $record) (local.get $args) (local.get $count)))))
+    (if (local.get $ok)
+      (then
+        (local.set $entry (call $help_routine_resolve (local.get $record)))
+        (if (i32.eqz (local.get $entry))
+          (then (local.set $ok (i32.const 0)) (local.set $resolve_failed (i32.const 1))))))
     (if (local.get $ok)
       (then
         (local.set $old_eip (global.get $eip))
@@ -2213,7 +2860,9 @@
     (call $heap_free (local.get $args))
     (if (i32.eqz (local.get $ok))
       (then
-        (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
+        (global.set $help_session_status
+          (select (global.get $HELP_DISPATCH_UNSUPPORTED)
+            (global.get $HELP_DISPATCH_BAD_DATA) (local.get $resolve_failed)))
         (return (i32.const 0))))
     (global.set $help_session_status (global.get $HELP_DISPATCH_ACCEPTED))
     (i32.const 1))
@@ -2430,7 +3079,8 @@
     (local $path_ga i32) (local $path_wa i32) (local $snapshot_base i32)
     (local $parse_error i32) (local $parse_error_offset i32) (local $accepted i32)
     (local $selected i32) (local $window_ga i32) (local $window_wa i32)
-    (local $window_len i32)
+    (local $window_len i32) (local $job i32) (local $job_wa i32) (local $result i32)
+    (call $help_navigation_cancel)
     (local.set $index (call $help_view_hotspot_token_at
       (local.get $x) (local.get $y)))
     (if (i32.lt_s (local.get $index) (i32.const 0))
@@ -2459,8 +3109,11 @@
           (then
             (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
             (return (i32.const 0))))
-        (return (call $help_macro_execute (local.get $caller)
-          (i32.add (local.get $payload) (i32.const 3)) (local.get $len)))))
+        (global.set $help_macro_native_capture (i32.const 1))
+        (local.set $result (call $help_macro_execute (local.get $caller)
+          (i32.add (local.get $payload) (i32.const 3)) (local.get $len)))
+        (global.set $help_macro_native_capture (i32.const 0))
+        (return (local.get $result))))
     (if (i32.ne (i32.load (local.get $token))
           (global.get $HELP_TOKEN_HOTSPOT_BEGIN))
       (then (return (i32.const 0))))
@@ -2624,18 +3277,52 @@
         (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
         (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
         (return (i32.const 0))))
-    (local.set $path_wa (call $g2w (local.get $path_ga)))
+    (local.set $job (call $heap_alloc (i32.const 52)))
+    (if (i32.eqz (local.get $job))
+      (then
+        (call $heap_free (local.get $path_ga))
+        (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
+        (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
+        (return (i32.const 0))))
+    (local.set $job_wa (call $g2w (local.get $job)))
+    (i32.store (local.get $job_wa) (local.get $path_ga))
+    (i32.store offset=4 (local.get $job_wa) (local.get $window_ga))
+    (i32.store offset=8 (local.get $job_wa) (local.get $window_len))
+    (i32.store offset=12 (local.get $job_wa) (local.get $caller))
+    (i32.store offset=16 (local.get $job_wa) (local.get $hash))
+    (i32.store offset=20 (local.get $job_wa) (local.get $popup))
+    (i32.store offset=24 (local.get $job_wa) (local.get $api_command))
+    (i32.store offset=28 (local.get $job_wa) (local.get $mode))
+    (i32.store offset=32 (local.get $job_wa) (global.get $help_document_epoch))
+    (i32.store offset=36 (local.get $job_wa) (global.get $help_session_topic_ref))
+    (i32.store offset=40 (local.get $job_wa) (i32.const 0))
+    (i32.store offset=44 (local.get $job_wa) (global.get $help_hwnd))
+    (i32.store offset=48 (local.get $job_wa) (global.get $help_popup_hwnd))
+    (global.set $help_navigation_job (local.get $job))
+    (local.set $result (call $help_navigation_service))
+    (select (i32.const 2) (local.get $result) (i32.eq (local.get $result) (i32.const -1))))
+
+  ;; The preparation has completed. This synchronous transaction consumes its
+  ;; frame and both owned strings; no VFS reads or guest routine calls remain.
+  (func $help_navigation_finish (param $prepared i32) (param $path_ga i32)
+    (param $window_ga i32) (param $window_len i32) (param $caller i32)
+    (param $hash i32) (param $popup i32) (param $api_command i32) (param $mode i32)
+    (result i32)
+    (local $snapshot_base i32) (local $parse_error i32) (local $parse_error_offset i32)
+    (local $selected i32) (local $topic_ref i32) (local $accepted i32) (local $window_wa i32)
+    (if (local.get $window_ga) (then (local.set $window_wa (call $g2w (local.get $window_ga)))))
     (local.set $snapshot_base (global.get $help_document_snapshot_count))
     (if (local.get $popup) (then (call $help_popup_capture_session)))
     (if (i32.eqz (call $help_document_snapshot_push))
       (then
+        (call $help_document_cancel_vfs (local.get $prepared))
         (call $heap_free (local.get $path_ga))
         (if (local.get $window_ga) (then (call $heap_free (local.get $window_ga))))
         (if (local.get $popup)
           (then (global.set $help_popup_saved_session_valid (i32.const 0))))
         (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
         (return (i32.const 0))))
-    (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
+    (if (i32.eqz (call $help_document_commit_vfs (local.get $prepared)))
       (then
         (local.set $parse_error (global.get $help_last_error))
         (local.set $parse_error_offset (global.get $help_last_error_offset))

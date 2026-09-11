@@ -20,6 +20,28 @@ const extraWat = String.raw`
     (global.get $delphi_seh_rec))
   (func (export "test_delphi_exception_flags") (result i32)
     (call $gl32 (i32.const 0x24004)))
+  (func (export "test_delphi_interrupted_search") (result i32)
+    ;; The interrupted handler changed FS:[0]. Its next continuation must use
+    ;; that live chain, even if an intervening callback searched another one.
+    (global.set $fs_base (i32.const 0x20000))
+    (call $gs32 (i32.const 0x20000) (i32.const 0x22000))
+    (call $gs32 (i32.const 0x21000) (i32.const 0x23000))
+    (call $gs32 (i32.const 0x24004) (i32.const 7))
+    (global.set $delphi_seh_rec (i32.const 0x21000))
+    (global.set $delphi_seh_head_before (i32.const 0x21000))
+    (global.set $delphi_exception_record (i32.const 0x24000))
+    (call $guest_context_save (i32.const 0x19000000))
+    (global.set $fs_base (i32.const 0x25000))
+    (call $gs32 (i32.const 0x25000) (i32.const 0x27000))
+    (call $gs32 (i32.const 0x26000) (i32.const -1))
+    (call $gs32 (i32.const 0x28004) (i32.const 7))
+    (global.set $delphi_seh_rec (i32.const 0x26000))
+    (global.set $delphi_seh_head_before (i32.const 0x26000))
+    (global.set $delphi_exception_record (i32.const 0x28000))
+    (call $delphi_seh_continue_search)
+    (call $guest_context_restore (i32.const 0x19000000))
+    (call $delphi_seh_continue_search)
+    (global.get $delphi_seh_rec))
 `;
 
 (async () => {
@@ -52,7 +74,12 @@ const extraWat = String.raw`
     'searching an outer frame does not jump back to the unchanged live head',
   );
 
-  console.log('PASS  Delphi SEH continuation follows a handler-mutated live chain');
+  assert.strictEqual(wat.test_delphi_interrupted_search(), live,
+    'interrupted search resumes its own mutated chain, not the callback chain');
+  assert.strictEqual(wat.test_delphi_exception_flags(), 1,
+    'interrupted search clears flags in its own exception record');
+
+  console.log('PASS  Delphi SEH continuation follows a handler-mutated live chain across callback snapshots');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

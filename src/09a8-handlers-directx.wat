@@ -9878,25 +9878,12 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IMalloc_GetSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.and
-          (i32.ge_u (local.get $arg1) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
-          (i32.lt_u (local.get $arg1) (global.get $heap_ptr)))
-      (then
-        (global.set $eax (i32.sub
-          (call $gl32 (i32.sub (local.get $arg1) (i32.const 4)))
-          (i32.const 4))))
-      (else
-        (global.set $eax (i32.const 0xFFFFFFFF))))
+    (global.set $eax (call $heap_payload_size (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IMalloc_DidAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax
-      (select
-        (i32.const 1)
-        (i32.const 0)
-        (i32.and
-          (i32.ge_u (local.get $arg1) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
-          (i32.lt_u (local.get $arg1) (global.get $heap_ptr)))))
+      (i32.ne (call $heap_payload_size (local.get $arg1)) (i32.const -1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
 
   (func $handle_IMalloc_HeapMinimize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

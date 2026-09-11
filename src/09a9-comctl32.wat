@@ -404,7 +404,7 @@
       (param $load_flags i32) (param $wide i32) (result i32)
     (local $buf i32) (local $buf_wa i32) (local $cx i32)
     (local $bmp i32) (local $bmp_w i32) (local $bmp_h i32)
-    (local $count i32) (local $path i32) (local $path_owned i32)
+    (local $count i32)
     (drop (local.get $c_grow))
     ;; The common-controls contract is bitmap-only. Icons and cursors belong
     ;; to LoadImage; accepting them here creates a list with invalid geometry.
@@ -414,32 +414,23 @@
           (i32.and (local.get $load_flags) (i32.const 0x10)) ;; LR_LOADFROMFILE
           (i32.const 0))
       (then
-        ;; A file load requires a string, never MAKEINTRESOURCE. Convert W
-        ;; paths through a call-owned buffer before entering the VFS, whose
-        ;; Win9x paths are represented as ANSI; a shared scratch path would let
-        ;; two guest threads corrupt one another's filename.
+        ;; The shared loader retains the original A/W path identity and owns
+        ;; staging across retries. Never pass a temporary converted pointer:
+        ;; a retry must find the same pending operation after the API parks.
         (if (i32.le_u (local.get $name) (i32.const 0xFFFF))
           (then (return (i32.const 0))))
-        (local.set $path (local.get $name))
         (if (local.get $wide)
           (then
             (if (i32.ge_u (call $guest_wcslen (local.get $name)) (i32.const 260))
-              (then (return (i32.const 0))))
-            (local.set $path_owned (call $heap_alloc (i32.const 260)))
-            (if (i32.eqz (local.get $path_owned))
-              (then (return (i32.const 0))))
-            (drop (call $wide_to_ansi
-              (local.get $name) (local.get $path_owned) (i32.const 260)))
-            (local.set $path (local.get $path_owned))))
-        (local.set $bmp (call $load_image_bitmap_file (call $g2w (local.get $path))))
-        (if (local.get $path_owned)
-          (then (call $heap_free (local.get $path_owned)))))
+              (then (return (i32.const 0))))))
+        (local.set $bmp (call $load_image_bitmap_file (local.get $name) (local.get $wide))))
       (else
         (local.set $bmp (call $gdi_bitmap_load_resource
           (local.get $hi) (local.get $name) (local.get $wide)))))
     ;; ImageList_LoadImage returns NULL when LoadImage cannot resolve a real
     ;; bitmap. A fabricated empty HIMAGELIST hides missing resources and leaves
     ;; callers believing image index zero exists.
+    (if (i32.eq (local.get $bmp) (i32.const -1)) (then (return (i32.const -1))))
     (if (i32.eqz (local.get $bmp)) (then (return (i32.const 0))))
     (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
     (local.set $bmp_h (call $host_gdi_get_object_h (local.get $bmp)))
@@ -481,6 +472,8 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
       (i32.const 0)))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (call $io_block (i32.const 0)) (return)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
@@ -492,6 +485,8 @@
       (call $gl32 (i32.add (global.get $esp) (i32.const 24)))
       (call $gl32 (i32.add (global.get $esp) (i32.const 28)))
       (i32.const 1)))
+    (if (i32.eq (global.get $eax) (i32.const -1))
+      (then (call $io_block (i32.const 0)) (return)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 

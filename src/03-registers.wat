@@ -617,6 +617,314 @@
         (else (global.set $flag_res (i32.const 1))))))
   )
 
+  ;; Exact owned context for an outer-boundary native guest detour.
+  ;; frame is a contiguous WASM address; caller owns at least564 bytes.
+  ;; Not architectural FNSAVE: raw integer shadows and NaN payloads survive.
+  ;; Layout (i32 offsets; reserved228 is zeroed):
+  ;; 0: eax
+  ;; 4: ecx
+  ;; 8: edx
+  ;; 12: ebx
+  ;; 16: esp
+  ;; 20: ebp
+  ;; 24: esi
+  ;; 28: edi
+  ;; 32: eip
+  ;; 36: flag_op
+  ;; 40: flag_a
+  ;; 44: flag_b
+  ;; 48: flag_res
+  ;; 52: flag_sign_shift
+  ;; 56: saved_cf
+  ;; 60: df
+  ;; 64: eflags_extra
+  ;; 68: code16
+  ;; 72: sreg_es
+  ;; 76: sreg_cs
+  ;; 80: sreg_ss
+  ;; 84: sreg_ds
+  ;; 88: seg_base_es
+  ;; 92: seg_base_cs
+  ;; 96: seg_base_ss
+  ;; 100: seg_base_ds
+  ;; 104: fs_base
+  ;; 108: fpu_top
+  ;; 112: fpu_cw
+  ;; 116: fpu_sw
+  ;; 120: fpu_tag
+  ;; 124: fpu_raw_tag
+  ;; 128: yield_flag
+  ;; 132: yield_reason
+  ;; 136: sleep_yielded
+  ;; 140: sleep_timeout
+  ;; 144: current_thunk_eip
+  ;; 148: handler_set_eip
+  ;; 152: message_wait_msg_ptr
+  ;; 156: wait_handle
+  ;; 160: wait_handles_ptr
+  ;; 164: wait_all
+  ;; 168: wait_timeout
+  ;; 172: wait_stack_bytes
+  ;; 176: cs_wait_addr
+  ;; 180: cs_wait_owner
+  ;; 184: cs_wait_spins
+  ;; 188: cs_park_pending
+  ;; 192: cs_resume_esp_delta
+  ;; 196: vblank_wait_active
+  ;; 200: vblank_wait_counter
+  ;; 204: vblank_deadline_ms
+  ;; 208: spin_deadline_ms
+  ;; 212: clock_spin_parked_value
+  ;; 216: clock_spin_parked_valid
+  ;; 220: loadlib_name_ptr
+  ;; 224: last_error
+  ;;232:8 physical x87 f64 bitpatterns;296:8 raw i64;360:8 MMX i64;
+  ;;424:8 XMM pairs (low/high i64). No shared clocks/events/cache pointers.
+  ;;552: Delphi SEH registration;556: exception record;560: prior chain head.
+  ;; These remain populated after nonlocal resume, so nonzero is not an
+  ;; active-handler gate. Preserve them instead of blocking installed SEH.
+  (global $GUEST_CONTEXT_SIZE i32 (i32.const 564))
+  (func $guest_context_size (export "guest_context_size") (result i32)
+    (global.get $GUEST_CONTEXT_SIZE))
+
+  ;; Caller additionally excludes foreign host IO and saves JS scheduling
+  ;; deadlines. Runnable, ordinary object-wait, and message-idle entry only.
+  ;; No Wasm native frame may be suspended: invoke only after run() returns.
+  (func $guest_context_can_interrupt (result i32)
+    (local $job i32)
+    (if (i32.eqz (global.get $eip)) (then (return (i32.const 0))))
+    (if (global.get $resume_ip) (then (return (i32.const 0))))
+    (if (global.get $sync_msg_depth) (then (return (i32.const 0))))
+    (if (global.get $mm_timer_in_cb) (then (return (i32.const 0))))
+    (if (global.get $cs_park_pending) (then (return (i32.const 0))))
+    (if (global.get $modal_restore_pending) (then (return (i32.const 0))))
+    (if (global.get $dlg_callback_yield_pending) (then (return (i32.const 0))))
+    (if (global.get $sleep_yielded) (then (return (i32.const 0))))
+    ;; Queued jobs may request this boundary; only executing guest callbacks
+    ;; exclude interruption, including public32 calls without a separate stack.
+    (local.set $job (global.get $help_macro_api_jobs))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $job)))
+      (if (i32.eq (call $gl32 (i32.add (local.get $job) (i32.const 4))) (i32.const 2))
+        (then (return (i32.const 0))))
+      (local.set $job (call $gl32 (local.get $job)))
+      (br $scan)))
+    (i32.or (i32.eqz (global.get $yield_reason))
+      (i32.or (i32.eq (global.get $yield_reason) (i32.const 1))
+        (i32.eq (global.get $yield_reason) (i32.const 7)))))
+
+  (func $guest_context_save (param $frame i32)
+    (i32.store offset=0 (local.get $frame) (global.get $eax))
+    (i32.store offset=4 (local.get $frame) (global.get $ecx))
+    (i32.store offset=8 (local.get $frame) (global.get $edx))
+    (i32.store offset=12 (local.get $frame) (global.get $ebx))
+    (i32.store offset=16 (local.get $frame) (global.get $esp))
+    (i32.store offset=20 (local.get $frame) (global.get $ebp))
+    (i32.store offset=24 (local.get $frame) (global.get $esi))
+    (i32.store offset=28 (local.get $frame) (global.get $edi))
+    (i32.store offset=32 (local.get $frame) (global.get $eip))
+    (i32.store offset=36 (local.get $frame) (global.get $flag_op))
+    (i32.store offset=40 (local.get $frame) (global.get $flag_a))
+    (i32.store offset=44 (local.get $frame) (global.get $flag_b))
+    (i32.store offset=48 (local.get $frame) (global.get $flag_res))
+    (i32.store offset=52 (local.get $frame) (global.get $flag_sign_shift))
+    (i32.store offset=56 (local.get $frame) (global.get $saved_cf))
+    (i32.store offset=60 (local.get $frame) (global.get $df))
+    (i32.store offset=64 (local.get $frame) (global.get $eflags_extra))
+    (i32.store offset=68 (local.get $frame) (global.get $code16))
+    (i32.store offset=72 (local.get $frame) (global.get $sreg_es))
+    (i32.store offset=76 (local.get $frame) (global.get $sreg_cs))
+    (i32.store offset=80 (local.get $frame) (global.get $sreg_ss))
+    (i32.store offset=84 (local.get $frame) (global.get $sreg_ds))
+    (i32.store offset=88 (local.get $frame) (global.get $seg_base_es))
+    (i32.store offset=92 (local.get $frame) (global.get $seg_base_cs))
+    (i32.store offset=96 (local.get $frame) (global.get $seg_base_ss))
+    (i32.store offset=100 (local.get $frame) (global.get $seg_base_ds))
+    (i32.store offset=104 (local.get $frame) (global.get $fs_base))
+    (i32.store offset=108 (local.get $frame) (global.get $fpu_top))
+    (i32.store offset=112 (local.get $frame) (global.get $fpu_cw))
+    (i32.store offset=116 (local.get $frame) (global.get $fpu_sw))
+    (i32.store offset=120 (local.get $frame) (global.get $fpu_tag))
+    (i32.store offset=124 (local.get $frame) (global.get $fpu_raw_tag))
+    (i32.store offset=128 (local.get $frame) (global.get $yield_flag))
+    (i32.store offset=132 (local.get $frame) (global.get $yield_reason))
+    (i32.store offset=136 (local.get $frame) (global.get $sleep_yielded))
+    (i32.store offset=140 (local.get $frame) (global.get $sleep_timeout))
+    (i32.store offset=144 (local.get $frame) (global.get $current_thunk_eip))
+    (i32.store offset=148 (local.get $frame) (global.get $handler_set_eip))
+    (i32.store offset=152 (local.get $frame) (global.get $message_wait_msg_ptr))
+    (i32.store offset=156 (local.get $frame) (global.get $wait_handle))
+    (i32.store offset=160 (local.get $frame) (global.get $wait_handles_ptr))
+    (i32.store offset=164 (local.get $frame) (global.get $wait_all))
+    (i32.store offset=168 (local.get $frame) (global.get $wait_timeout))
+    (i32.store offset=172 (local.get $frame) (global.get $wait_stack_bytes))
+    (i32.store offset=176 (local.get $frame) (global.get $cs_wait_addr))
+    (i32.store offset=180 (local.get $frame) (global.get $cs_wait_owner))
+    (i32.store offset=184 (local.get $frame) (global.get $cs_wait_spins))
+    (i32.store offset=188 (local.get $frame) (global.get $cs_park_pending))
+    (i32.store offset=192 (local.get $frame) (global.get $cs_resume_esp_delta))
+    (i32.store offset=196 (local.get $frame) (global.get $vblank_wait_active))
+    (i32.store offset=200 (local.get $frame) (global.get $vblank_wait_counter))
+    (i32.store offset=204 (local.get $frame) (global.get $vblank_deadline_ms))
+    (i32.store offset=208 (local.get $frame) (global.get $spin_deadline_ms))
+    (i32.store offset=212 (local.get $frame) (global.get $clock_spin_parked_value))
+    (i32.store offset=216 (local.get $frame) (global.get $clock_spin_parked_valid))
+    (i32.store offset=220 (local.get $frame) (global.get $loadlib_name_ptr))
+    (i32.store offset=224 (local.get $frame) (global.get $last_error))
+    (i32.store offset=228 (local.get $frame) (i32.const 0))
+    (i64.store offset=232 (local.get $frame) (i64.reinterpret_f64 (global.get $fpu_value0)))
+    (i64.store offset=240 (local.get $frame) (i64.reinterpret_f64 (global.get $fpu_value1)))
+    (i64.store offset=248 (local.get $frame) (i64.reinterpret_f64 (global.get $fpu_value2)))
+    (i64.store offset=256 (local.get $frame) (i64.reinterpret_f64 (global.get $fpu_value3)))
+    (i64.store offset=264 (local.get $frame) (i64.reinterpret_f64 (global.get $fpu_value4)))
+    (i64.store offset=272 (local.get $frame) (i64.reinterpret_f64 (global.get $fpu_value5)))
+    (i64.store offset=280 (local.get $frame) (i64.reinterpret_f64 (global.get $fpu_value6)))
+    (i64.store offset=288 (local.get $frame) (i64.reinterpret_f64 (global.get $fpu_value7)))
+    (i64.store offset=296 (local.get $frame) (global.get $fpu_raw0))
+    (i64.store offset=304 (local.get $frame) (global.get $fpu_raw1))
+    (i64.store offset=312 (local.get $frame) (global.get $fpu_raw2))
+    (i64.store offset=320 (local.get $frame) (global.get $fpu_raw3))
+    (i64.store offset=328 (local.get $frame) (global.get $fpu_raw4))
+    (i64.store offset=336 (local.get $frame) (global.get $fpu_raw5))
+    (i64.store offset=344 (local.get $frame) (global.get $fpu_raw6))
+    (i64.store offset=352 (local.get $frame) (global.get $fpu_raw7))
+    (i64.store offset=360 (local.get $frame) (global.get $mm0))
+    (i64.store offset=368 (local.get $frame) (global.get $mm1))
+    (i64.store offset=376 (local.get $frame) (global.get $mm2))
+    (i64.store offset=384 (local.get $frame) (global.get $mm3))
+    (i64.store offset=392 (local.get $frame) (global.get $mm4))
+    (i64.store offset=400 (local.get $frame) (global.get $mm5))
+    (i64.store offset=408 (local.get $frame) (global.get $mm6))
+    (i64.store offset=416 (local.get $frame) (global.get $mm7))
+    (i64.store offset=424 (local.get $frame) (global.get $xmm0l))
+    (i64.store offset=432 (local.get $frame) (global.get $xmm0h))
+    (i64.store offset=440 (local.get $frame) (global.get $xmm1l))
+    (i64.store offset=448 (local.get $frame) (global.get $xmm1h))
+    (i64.store offset=456 (local.get $frame) (global.get $xmm2l))
+    (i64.store offset=464 (local.get $frame) (global.get $xmm2h))
+    (i64.store offset=472 (local.get $frame) (global.get $xmm3l))
+    (i64.store offset=480 (local.get $frame) (global.get $xmm3h))
+    (i64.store offset=488 (local.get $frame) (global.get $xmm4l))
+    (i64.store offset=496 (local.get $frame) (global.get $xmm4h))
+    (i64.store offset=504 (local.get $frame) (global.get $xmm5l))
+    (i64.store offset=512 (local.get $frame) (global.get $xmm5h))
+    (i64.store offset=520 (local.get $frame) (global.get $xmm6l))
+    (i64.store offset=528 (local.get $frame) (global.get $xmm6h))
+    (i64.store offset=536 (local.get $frame) (global.get $xmm7l))
+    (i64.store offset=544 (local.get $frame) (global.get $xmm7h))
+    (i32.store offset=552 (local.get $frame) (global.get $delphi_seh_rec))
+    (i32.store offset=556 (local.get $frame) (global.get $delphi_exception_record))
+    (i32.store offset=560 (local.get $frame) (global.get $delphi_seh_head_before))
+  )
+
+  ;; Restore only at the outer host boundary, never in a slice tail. Decoded
+  ;; stream pointers cannot survive a callback's cache invalidation. The next
+  ;; run gets a fresh block budget/deadline; no shared event is rolled back.
+  (func $guest_context_restore (param $frame i32)
+    (global.set $eax (i32.load offset=0 (local.get $frame)))
+    (global.set $ecx (i32.load offset=4 (local.get $frame)))
+    (global.set $edx (i32.load offset=8 (local.get $frame)))
+    (global.set $ebx (i32.load offset=12 (local.get $frame)))
+    (global.set $esp (i32.load offset=16 (local.get $frame)))
+    (global.set $ebp (i32.load offset=20 (local.get $frame)))
+    (global.set $esi (i32.load offset=24 (local.get $frame)))
+    (global.set $edi (i32.load offset=28 (local.get $frame)))
+    (global.set $eip (i32.load offset=32 (local.get $frame)))
+    (global.set $flag_op (i32.load offset=36 (local.get $frame)))
+    (global.set $flag_a (i32.load offset=40 (local.get $frame)))
+    (global.set $flag_b (i32.load offset=44 (local.get $frame)))
+    (global.set $flag_res (i32.load offset=48 (local.get $frame)))
+    (global.set $flag_sign_shift (i32.load offset=52 (local.get $frame)))
+    (global.set $saved_cf (i32.load offset=56 (local.get $frame)))
+    (global.set $df (i32.load offset=60 (local.get $frame)))
+    (global.set $eflags_extra (i32.load offset=64 (local.get $frame)))
+    (global.set $code16 (i32.load offset=68 (local.get $frame)))
+    (global.set $sreg_es (i32.load offset=72 (local.get $frame)))
+    (global.set $sreg_cs (i32.load offset=76 (local.get $frame)))
+    (global.set $sreg_ss (i32.load offset=80 (local.get $frame)))
+    (global.set $sreg_ds (i32.load offset=84 (local.get $frame)))
+    (global.set $seg_base_es (i32.load offset=88 (local.get $frame)))
+    (global.set $seg_base_cs (i32.load offset=92 (local.get $frame)))
+    (global.set $seg_base_ss (i32.load offset=96 (local.get $frame)))
+    (global.set $seg_base_ds (i32.load offset=100 (local.get $frame)))
+    (global.set $fs_base (i32.load offset=104 (local.get $frame)))
+    (global.set $fpu_top (i32.load offset=108 (local.get $frame)))
+    (global.set $fpu_cw (i32.load offset=112 (local.get $frame)))
+    (global.set $fpu_sw (i32.load offset=116 (local.get $frame)))
+    (global.set $fpu_tag (i32.load offset=120 (local.get $frame)))
+    (global.set $fpu_raw_tag (i32.load offset=124 (local.get $frame)))
+    (global.set $yield_flag (i32.load offset=128 (local.get $frame)))
+    (global.set $yield_reason (i32.load offset=132 (local.get $frame)))
+    (global.set $sleep_yielded (i32.load offset=136 (local.get $frame)))
+    (global.set $sleep_timeout (i32.load offset=140 (local.get $frame)))
+    (global.set $current_thunk_eip (i32.load offset=144 (local.get $frame)))
+    (global.set $handler_set_eip (i32.load offset=148 (local.get $frame)))
+    (global.set $message_wait_msg_ptr (i32.load offset=152 (local.get $frame)))
+    (global.set $wait_handle (i32.load offset=156 (local.get $frame)))
+    (global.set $wait_handles_ptr (i32.load offset=160 (local.get $frame)))
+    (global.set $wait_all (i32.load offset=164 (local.get $frame)))
+    (global.set $wait_timeout (i32.load offset=168 (local.get $frame)))
+    (global.set $wait_stack_bytes (i32.load offset=172 (local.get $frame)))
+    (global.set $cs_wait_addr (i32.load offset=176 (local.get $frame)))
+    (global.set $cs_wait_owner (i32.load offset=180 (local.get $frame)))
+    (global.set $cs_wait_spins (i32.load offset=184 (local.get $frame)))
+    (global.set $cs_park_pending (i32.load offset=188 (local.get $frame)))
+    (global.set $cs_resume_esp_delta (i32.load offset=192 (local.get $frame)))
+    (global.set $vblank_wait_active (i32.load offset=196 (local.get $frame)))
+    (global.set $vblank_wait_counter (i32.load offset=200 (local.get $frame)))
+    (global.set $vblank_deadline_ms (i32.load offset=204 (local.get $frame)))
+    (global.set $spin_deadline_ms (i32.load offset=208 (local.get $frame)))
+    (global.set $clock_spin_parked_value (i32.load offset=212 (local.get $frame)))
+    (global.set $clock_spin_parked_valid (i32.load offset=216 (local.get $frame)))
+    (global.set $loadlib_name_ptr (i32.load offset=220 (local.get $frame)))
+    (global.set $last_error (i32.load offset=224 (local.get $frame)))
+    (global.set $fpu_value0 (f64.reinterpret_i64 (i64.load offset=232 (local.get $frame))))
+    (global.set $fpu_value1 (f64.reinterpret_i64 (i64.load offset=240 (local.get $frame))))
+    (global.set $fpu_value2 (f64.reinterpret_i64 (i64.load offset=248 (local.get $frame))))
+    (global.set $fpu_value3 (f64.reinterpret_i64 (i64.load offset=256 (local.get $frame))))
+    (global.set $fpu_value4 (f64.reinterpret_i64 (i64.load offset=264 (local.get $frame))))
+    (global.set $fpu_value5 (f64.reinterpret_i64 (i64.load offset=272 (local.get $frame))))
+    (global.set $fpu_value6 (f64.reinterpret_i64 (i64.load offset=280 (local.get $frame))))
+    (global.set $fpu_value7 (f64.reinterpret_i64 (i64.load offset=288 (local.get $frame))))
+    (global.set $fpu_raw0 (i64.load offset=296 (local.get $frame)))
+    (global.set $fpu_raw1 (i64.load offset=304 (local.get $frame)))
+    (global.set $fpu_raw2 (i64.load offset=312 (local.get $frame)))
+    (global.set $fpu_raw3 (i64.load offset=320 (local.get $frame)))
+    (global.set $fpu_raw4 (i64.load offset=328 (local.get $frame)))
+    (global.set $fpu_raw5 (i64.load offset=336 (local.get $frame)))
+    (global.set $fpu_raw6 (i64.load offset=344 (local.get $frame)))
+    (global.set $fpu_raw7 (i64.load offset=352 (local.get $frame)))
+    (global.set $mm0 (i64.load offset=360 (local.get $frame)))
+    (global.set $mm1 (i64.load offset=368 (local.get $frame)))
+    (global.set $mm2 (i64.load offset=376 (local.get $frame)))
+    (global.set $mm3 (i64.load offset=384 (local.get $frame)))
+    (global.set $mm4 (i64.load offset=392 (local.get $frame)))
+    (global.set $mm5 (i64.load offset=400 (local.get $frame)))
+    (global.set $mm6 (i64.load offset=408 (local.get $frame)))
+    (global.set $mm7 (i64.load offset=416 (local.get $frame)))
+    (global.set $xmm0l (i64.load offset=424 (local.get $frame)))
+    (global.set $xmm0h (i64.load offset=432 (local.get $frame)))
+    (global.set $xmm1l (i64.load offset=440 (local.get $frame)))
+    (global.set $xmm1h (i64.load offset=448 (local.get $frame)))
+    (global.set $xmm2l (i64.load offset=456 (local.get $frame)))
+    (global.set $xmm2h (i64.load offset=464 (local.get $frame)))
+    (global.set $xmm3l (i64.load offset=472 (local.get $frame)))
+    (global.set $xmm3h (i64.load offset=480 (local.get $frame)))
+    (global.set $xmm4l (i64.load offset=488 (local.get $frame)))
+    (global.set $xmm4h (i64.load offset=496 (local.get $frame)))
+    (global.set $xmm5l (i64.load offset=504 (local.get $frame)))
+    (global.set $xmm5h (i64.load offset=512 (local.get $frame)))
+    (global.set $xmm6l (i64.load offset=520 (local.get $frame)))
+    (global.set $xmm6h (i64.load offset=528 (local.get $frame)))
+    (global.set $xmm7l (i64.load offset=536 (local.get $frame)))
+    (global.set $xmm7h (i64.load offset=544 (local.get $frame)))
+    (global.set $delphi_seh_rec (i32.load offset=552 (local.get $frame)))
+    (global.set $delphi_exception_record (i32.load offset=556 (local.get $frame)))
+    (global.set $delphi_seh_head_before (i32.load offset=560 (local.get $frame)))
+    (global.set $ip (i32.const 0))
+    (global.set $resume_ip (i32.const 0))
+    (global.set $steps (i32.const 0)))
+
   ;; Save caller-saved registers + lazy flags onto guest stack (9 dwords = 36 bytes)
   (func $save_caller_regs
     (global.set $esp (i32.sub (global.get $esp) (i32.const 36)))

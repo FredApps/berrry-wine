@@ -63,7 +63,38 @@
       (i32.add (local.get $length) (i32.const 1))))
     (local.get $copy_ga))
 
+  ;; Public macro continuations resume before either wrapper reloads a document
+  ;; or creates temporary normalized strings. The operation owns parsed inputs.
+  (func $help_dispatch_api_owned
+    (param $caller i32) (param $path_ga i32) (param $command i32)
+    (param $data i32) (param $width i32) (result i32)
+    (local $result i32)
+    (local.set $result (call $help_macro_api_enter (local.get $caller)
+      (local.get $path_ga) (local.get $command) (local.get $data) (local.get $width)))
+    (if (i32.ne (local.get $result) (i32.const -3))
+      (then (call $help_macro_api_leave) (return (local.get $result))))
+    (local.set $result
+      (if (result i32) (i32.eq (local.get $width) (i32.const 1))
+        (then (call $help_dispatch_api_a_impl (local.get $caller) (local.get $path_ga)
+          (local.get $command) (local.get $data)))
+        (else (call $help_dispatch_api_w_impl (local.get $caller) (local.get $path_ga)
+          (local.get $command) (local.get $data)))))
+    (call $help_macro_api_leave)
+    (local.get $result))
+
   (func $help_dispatch_api_a
+    (param $caller i32) (param $path_ga i32) (param $command i32)
+    (param $data i32) (result i32)
+    (call $help_dispatch_api_owned (local.get $caller) (local.get $path_ga)
+      (local.get $command) (local.get $data) (i32.const 1)))
+
+  (func $help_dispatch_api_w
+    (param $caller i32) (param $path_ga i32) (param $command i32)
+    (param $data i32) (result i32)
+    (call $help_dispatch_api_owned (local.get $caller) (local.get $path_ga)
+      (local.get $command) (local.get $data) (i32.const 2)))
+
+  (func $help_dispatch_api_a_impl
     (param $caller i32) (param $path_ga i32) (param $command i32)
     (param $data i32) (result i32)
     (local $path_wa i32) (local $data_wa i32)
@@ -78,7 +109,7 @@
       (local.get $caller) (local.get $path_wa) (local.get $command)
       (local.get $data_wa) (i32.const 0)))
 
-  (func $help_dispatch_api_w
+  (func $help_dispatch_api_w_impl
     (param $caller i32) (param $path_ga i32) (param $command i32)
     (param $data i32) (result i32)
     (local $path_copy_ga i32) (local $data_copy_ga i32)
@@ -90,6 +121,7 @@
           (local.get $path_ga) (i32.const 1024)))
         (if (i32.eqz (local.get $path_copy_ga))
           (then
+            (call $help_document_cancel_frame_vfs)
             (global.set $help_session_last_command (local.get $command))
             (global.set $help_session_status (global.get $HELP_DISPATCH_BAD_DATA))
             (return (i32.const 0))))
@@ -97,13 +129,18 @@
         ;; Finish the synchronous path load before allocating command-string
         ;; storage. Document replacement releases prior heap blocks and must
         ;; not overlap either normalization buffer's lifetime.
-        (call $help_document_snapshot_release_all)
-        (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
+        (local.set $result (call $help_document_load_vfs (local.get $path_wa)))
+        (if (i32.eq (local.get $result) (i32.const -1))
+          (then
+            (call $heap_free (local.get $path_copy_ga))
+            (return (i32.const -1))))
+        (if (i32.eqz (local.get $result))
           (then
             (call $heap_free (local.get $path_copy_ga))
             (global.set $help_session_last_command (local.get $command))
             (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
             (return (i32.const 0))))
+        (call $help_document_snapshot_release_all)
         (call $heap_free (local.get $path_copy_ga))
         (local.set $path_copy_ga (i32.const 0))
         (local.set $path_wa (i32.const 0))))
@@ -219,6 +256,7 @@
   ;; Close the popup and restore both the detached primary view and the exact
   ;; viewer/session/history state that preceded popup activation.
   (func $help_popup_close
+    (call $help_navigation_cancel)
     (call $help_popup_destroy_windows)
     (block $documents_restored (loop $restore_documents
       (br_if $documents_restored
@@ -344,7 +382,9 @@
     (if (i32.eqz (local.get $accepted))
       (then
         (if (i32.and
-              (i32.eq (global.get $help_session_status) (global.get $HELP_DISPATCH_LOAD_FAILED))
+              (i32.and
+                (i32.eq (global.get $help_session_status) (global.get $HELP_DISPATCH_LOAD_FAILED))
+                (i32.eqz (global.get $help_doc_file_ga)))
               (i32.ne (global.get $help_hwnd) (i32.const 0)))
           (then (call $help_destroy)))
         (return)))
@@ -643,6 +683,7 @@
     ;; WM_LBUTTONDOWN (0x0201)
     (if (i32.eq (local.get $msg) (i32.const 0x0201))
       (then
+        (call $help_navigation_cancel)
         (if (i32.and
               (i32.eq (local.get $hwnd) (global.get $help_hwnd))
               (i32.ne (global.get $help_popup_hwnd) (i32.const 0)))
@@ -652,9 +693,12 @@
         (local.set $click_y (i32.shr_u (local.get $lParam) (i32.const 16)))
         (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
           (then
-            (if (call $help_activate_hotspot_at
+            (local.set $click_line (call $help_activate_hotspot_at
                   (global.get $help_session_owner)
-                  (local.get $click_x) (local.get $click_y))
+                  (local.get $click_x) (local.get $click_y)))
+            (if (i32.eq (local.get $click_line) (i32.const 2))
+              (then (return (i32.const 0))))
+            (if (local.get $click_line)
               (then (call $help_present_dispatch
                 (i32.const 1) (global.get $help_session_last_command)))
               (else (call $help_popup_close)))
@@ -679,8 +723,8 @@
                   (then (call $help_go_back)))))
             (return (i32.const 0))))
         (local.set $click_line (i32.and (local.get $lParam) (i32.const 0xFFFF)))
-        (if (call $help_activate_hotspot_at
-              (global.get $help_session_owner) (local.get $click_line) (local.get $click_y))
+        (if (i32.eq (call $help_activate_hotspot_at
+              (global.get $help_session_owner) (local.get $click_line) (local.get $click_y)) (i32.const 1))
           (then (call $help_present_dispatch
             (i32.const 1) (global.get $help_session_last_command))))
         (return (i32.const 0))))
@@ -786,6 +830,7 @@
     ;; WM_CLOSE (0x0010)
     (if (i32.eq (local.get $msg) (i32.const 0x0010))
       (then
+        (call $help_navigation_cancel)
         (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
           (then (call $help_popup_close) (return (i32.const 0))))
         (call $help_destroy)

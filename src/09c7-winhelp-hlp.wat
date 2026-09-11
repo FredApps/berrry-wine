@@ -4862,195 +4862,349 @@
     (call $help_run_registration_macros)
     (i32.const 1))
 
-  ;; Load an optional same-directory .cnt companion. A missing companion is
-  ;; normal; an existing malformed/truncated one fails the document load so a
-  ;; partially bound Contents tree is never published.
-  (func $help_document_try_load_cnt_vfs
-    (param $path_wa i32) (result i32)
-    (local $path_len i32) (local $cnt_len i32) (local $i i32) (local $dot i32)
-    (local $ch i32) (local $path_ga i32) (local $cnt_path i32)
-    (local $handle i32) (local $size i32)
-    (local $temp_ga i32) (local $temp_wa i32)
-    (local $read_ga i32) (local $read_wa i32) (local $ok i32)
-    (local.set $path_len (call $help_cstring_length_memory
-      (local.get $path_wa) (i32.const 1024)))
-    (if (i32.le_s (local.get $path_len) (i32.const 0))
-      (then
-        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $path_ga (call $heap_alloc (i32.add (local.get $path_len) (i32.const 5))))
-    (if (i32.eqz (local.get $path_ga))
-      (then
-        (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $cnt_path (call $g2w (local.get $path_ga)))
-    (memory.copy (local.get $cnt_path) (local.get $path_wa) (local.get $path_len))
-    (local.set $dot (i32.const -1))
-    (block $scan_done (loop $scan
-      (br_if $scan_done (i32.ge_u (local.get $i) (local.get $path_len)))
-      (local.set $ch (i32.load8_u (i32.add (local.get $cnt_path) (local.get $i))))
-      (if (i32.or (i32.eq (local.get $ch) (i32.const 47))
-                  (i32.eq (local.get $ch) (i32.const 92)))
-        (then (local.set $dot (i32.const -1))))
-      (if (i32.eq (local.get $ch) (i32.const 46))
-        (then (local.set $dot (local.get $i))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-    (if (i32.lt_s (local.get $dot) (i32.const 0))
-      (then
-        (i32.store8 (i32.add (local.get $cnt_path) (local.get $path_len)) (i32.const 46))
-        (local.set $dot (local.get $path_len))))
-    (i32.store8 (i32.add (local.get $cnt_path) (i32.add (local.get $dot) (i32.const 1)))
-      (i32.const 99))
-    (i32.store8 (i32.add (local.get $cnt_path) (i32.add (local.get $dot) (i32.const 2)))
-      (i32.const 110))
-    (i32.store8 (i32.add (local.get $cnt_path) (i32.add (local.get $dot) (i32.const 3)))
-      (i32.const 116))
-    (local.set $cnt_len (i32.add (local.get $dot) (i32.const 4)))
-    (i32.store8 (i32.add (local.get $cnt_path) (local.get $cnt_len)) (i32.const 0))
-    (local.set $handle (call $host_fs_create_file
-      (local.get $cnt_path) (i32.const 0x80000000)
-      (i32.const 3) (i32.const 0x80) (i32.const 0)))
+  ;; VFS loading is a two-phase transaction. A per-instance guest record owns
+  ;; copied path strings and both file buffers until commit/cancel:
+  ;; next, key (ESP or owner token), return, path, path length, CNT path,
+  ;; HLP {handle,size,buffer,position}, CNT {handle,size,buffer,position},
+  ;; stage (0 HLP,1 CNT open,2 CNT read,3 ready), read count,
+  ;; key kind (0 API frame, 1 explicitly owned native job).
+  (global $help_vfs_pending (mut i32) (i32.const 0))
+  (func $help_vfs_error (param $code i32) (result i32)
+    (global.set $help_last_error (local.get $code))
+    (global.set $help_last_error_offset (i32.const 0))
+    (i32.const 0))
+
+  (func $help_document_cancel_vfs (param $frame i32)
+    (local $p i32) (local $prev i32) (local $next i32) (local $slot i32) (local $value i32)
+    (local.set $p (global.get $help_vfs_pending))
+    (block $found (loop $find
+      (if (i32.eqz (local.get $p)) (then (return)))
+      (br_if $found (i32.eq (local.get $p) (local.get $frame)))
+      (local.set $prev (local.get $p))
+      (local.set $p (call $gl32 (local.get $p))) (br $find)))
+    (local.set $next (call $gl32 (local.get $p)))
+    (if (local.get $prev) (then (call $gs32 (local.get $prev) (local.get $next)))
+      (else (global.set $help_vfs_pending (local.get $next))))
+    (local.set $slot (i32.const 24))
+    (loop $files
+      (local.set $value (call $gl32 (i32.add (local.get $frame) (local.get $slot))))
+      (if (i32.ne (local.get $value) (i32.const -1))
+        (then (drop (call $host_fs_close_handle (local.get $value)))))
+      (local.set $value (call $gl32 (i32.add (local.get $frame) (i32.add (local.get $slot) (i32.const 8)))))
+      (if (local.get $value) (then (call $heap_free (local.get $value))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 16)))
+      (br_if $files (i32.eq (local.get $slot) (i32.const 40))))
+    (local.set $value (call $gl32 (i32.add (local.get $frame) (i32.const 12))))
+    (if (local.get $value) (then (call $heap_free (local.get $value))))
+    (local.set $value (call $gl32 (i32.add (local.get $frame) (i32.const 20))))
+    (if (local.get $value) (then (call $heap_free (local.get $value))))
+    (call $heap_free (local.get $frame)))
+
+  ;; Terminal API validation/cancellation can abandon the current call frame
+  ;; without a usable path. Do not touch another nested call's ESP.
+  (func $help_document_cancel_key_vfs (param $key i32) (param $kind i32)
+    (local $frame i32) (local $next i32)
+    (local.set $frame (global.get $help_vfs_pending))
+    (block $done (loop $find
+      (br_if $done (i32.eqz (local.get $frame)))
+      (local.set $next (call $gl32 (local.get $frame)))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (local.get $key))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 64))) (local.get $kind)))
+        (then (call $help_document_cancel_vfs (local.get $frame))))
+      (local.set $frame (local.get $next)) (br $find))))
+
+  (func $help_document_cancel_frame_vfs
+    (call $help_document_cancel_key_vfs (global.get $esp) (i32.const 0)))
+  (func $help_document_cancel_vfs_owned (param $owner i32)
+    (if (local.get $owner)
+      (then (call $help_document_cancel_key_vfs (local.get $owner) (i32.const 1)))))
+
+  ;; Host pumps share the VFS pending descriptor with guest I/O. Expose the
+  ;; exact owned handle without touching that descriptor or architectural CPU
+  ;; state, so a pump can defer while another consumer owns the current miss.
+  (func $help_document_owned_pending_handle (param $owner i32) (result i32)
+    (local $frame i32) (local $stage i32) (local $handle i32)
+    (if (i32.eqz (local.get $owner)) (then (return (i32.const 0))))
+    (local.set $frame (global.get $help_vfs_pending))
+    (block $done (loop $find
+      (br_if $done (i32.eqz (local.get $frame)))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (local.get $owner))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 64))) (i32.const 1)))
+        (then
+          (local.set $stage (call $gl32 (i32.add (local.get $frame) (i32.const 56))))
+          (if (i32.eqz (local.get $stage))
+            (then (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 24))))))
+          (if (i32.eq (local.get $stage) (i32.const 2))
+            (then (local.set $handle (call $gl32 (i32.add (local.get $frame) (i32.const 40))))))
+          (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const 0))))
+          (return (local.get $handle))))
+      (local.set $frame (call $gl32 (local.get $frame))) (br $find)))
+    (i32.const 0))
+
+  ;; Native callers that cannot park may discard only their own preparation.
+  ;; Path identity is content-based because W normalization owns a new scratch
+  ;; string on each invocation; unrelated/nested API frames remain pinned.
+  (func $help_document_cancel_prepare_vfs (param $path_wa i32)
+    (local $frame i32) (local $len i32) (local $i i32) (local $path i32) (local $match i32)
+    (if (i32.eqz (local.get $path_wa)) (then (return)))
+    (local.set $len (call $help_cstring_length_memory (local.get $path_wa) (i32.const 1024)))
+    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return)))
+    (local.set $frame (global.get $help_vfs_pending))
+    (block $done (loop $find
+      (br_if $done (i32.eqz (local.get $frame)))
+      (if (i32.and
+            (i32.eqz (call $gl32 (i32.add (local.get $frame) (i32.const 64))))
+            (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (global.get $esp))
+            (i32.and (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (call $gl32 (global.get $esp)))
+              (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 16))) (local.get $len)))))
+        (then
+          (local.set $path (call $g2w (call $gl32 (i32.add (local.get $frame) (i32.const 12)))))
+          (local.set $i (i32.const 0)) (local.set $match (i32.const 1))
+          (loop $compare
+            (if (i32.ne (i32.load8_u (i32.add (local.get $path) (local.get $i)))
+                        (i32.load8_u (i32.add (local.get $path_wa) (local.get $i))))
+              (then (local.set $match (i32.const 0))))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br_if $compare (i32.lt_u (local.get $i) (local.get $len))))
+          (if (local.get $match)
+            (then (call $help_document_cancel_vfs (local.get $frame)) (return)))))
+      (local.set $frame (call $gl32 (local.get $frame))) (br $find))))
+
+  ;; slot points at a record's {handle,size,buffer,position}. Optional missing
+  ;; CNT files retain the historical successful-no-companion interpretation.
+  (func $help_vfs_open (param $path i32) (param $slot i32) (param $max i32)
+        (param $optional i32) (result i32)
+    (local $handle i32) (local $size i32) (local $buf i32)
+    (local.set $handle (call $host_fs_create_file (local.get $path)
+      (i32.const 0x80000000) (i32.const 3) (i32.const 0x80) (i32.const 0)))
     (if (i32.eq (local.get $handle) (i32.const -1))
       (then
-        (call $heap_free (local.get $path_ga))
-        (return (i32.const 1))))
+        (if (local.get $optional) (then (return (i32.const 1))))
+        (return (call $help_vfs_error (global.get $HELP_ERROR_VFS)))))
+    (call $gs32 (local.get $slot) (local.get $handle))
     (local.set $size (call $host_fs_get_file_size (local.get $handle)))
-    (if (i32.or (i32.eq (local.get $size) (i32.const -1))
-          (i32.eqz (local.get $size)))
-      (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (call $heap_free (local.get $path_ga))
-        (call $help_set_error (global.get $HELP_ERROR_CNT) (i32.const 0))
-        (return (i32.const 0))))
-    (if (i32.gt_u (local.get $size) (global.get $HELP_MAX_CNT_BYTES))
-      (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (call $heap_free (local.get $path_ga))
-        (call $help_set_error (global.get $HELP_ERROR_CAPACITY) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $temp_ga (call $heap_alloc (local.get $size)))
-    (local.set $read_ga (call $heap_alloc (i32.const 4)))
-    (if (i32.or (i32.eqz (local.get $temp_ga)) (i32.eqz (local.get $read_ga)))
-      (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (if (local.get $temp_ga) (then (call $heap_free (local.get $temp_ga))))
-        (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
-        (call $heap_free (local.get $path_ga))
-        (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $temp_wa (call $g2w (local.get $temp_ga)))
-    (local.set $read_wa (call $g2w (local.get $read_ga)))
-    (i32.store (local.get $read_wa) (i32.const 0))
-    (local.set $ok (call $host_fs_read_file
-      (local.get $handle) (local.get $temp_ga) (local.get $size) (local.get $read_ga)))
-    (drop (call $host_fs_close_handle (local.get $handle)))
-    (call $heap_free (local.get $path_ga))
-    (if (i32.or (i32.eqz (local.get $ok))
-          (i32.ne (i32.load (local.get $read_wa)) (local.get $size)))
-      (then
-        (call $heap_free (local.get $read_ga))
-        (call $heap_free (local.get $temp_ga))
-        (call $help_set_error (global.get $HELP_ERROR_VFS) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $ok (call $help_load_cnt_buffer (local.get $temp_wa) (local.get $size)))
-    (call $heap_free (local.get $read_ga))
-    (call $heap_free (local.get $temp_ga))
-    (local.get $ok))
+    (if (i32.or (i32.eqz (local.get $size)) (i32.eq (local.get $size) (i32.const -1)))
+      (then (return (call $help_vfs_error
+        (select (global.get $HELP_ERROR_CNT) (global.get $HELP_ERROR_VFS) (local.get $optional))))))
+    (if (i32.gt_u (local.get $size) (local.get $max))
+      (then (return (call $help_vfs_error (global.get $HELP_ERROR_CAPACITY)))))
+    (local.set $buf (call $heap_alloc (local.get $size)))
+    (if (i32.eqz (local.get $buf))
+      (then (return (call $help_vfs_error (global.get $HELP_ERROR_ALLOCATION)))))
+    (call $gs32 (i32.add (local.get $slot) (i32.const 4)) (local.get $size))
+    (call $gs32 (i32.add (local.get $slot) (i32.const 8)) (local.get $buf))
+    (i32.const 1))
 
-  ;; Load an already-mounted help file through the ordinary VFS boundary.
-  ;; The host supplies only file bytes; parsing and ownership stay in WAT.
-  (func $help_document_load_vfs
-    (param $path_wa i32) (result i32)
-    (local $handle i32) (local $size i32)
-    (local $temp_ga i32) (local $temp_wa i32)
-    (local $read_ga i32) (local $read_wa i32) (local $ok i32)
-    (local $path_len i32) (local $path_ga i32) (local $path_copy i32)
+  (func $help_vfs_read (param $frame i32) (param $slot i32) (result i32)
+    (local $pos i32) (local $size i32) (local $count i32) (local $ok i32)
+    (local.set $size (call $gl32 (i32.add (local.get $slot) (i32.const 4))))
+    (local.set $pos (call $gl32 (i32.add (local.get $slot) (i32.const 12))))
+    (block $done (loop $read
+      (br_if $done (i32.ge_u (local.get $pos) (local.get $size)))
+      (local.set $count (i32.sub (local.get $size) (local.get $pos)))
+      (if (i32.gt_u (local.get $count) (i32.const 4096)) (then (local.set $count (i32.const 4096))))
+      (call $gs32 (i32.add (local.get $frame) (i32.const 60)) (i32.const 0))
+      ;; Owned jobs may run through a Worker RPC while another guest thread
+      ;; publishes a miss. The host checks descriptor ownership atomically
+      ;; with the read; a separate fs_read_pending RPC cannot provide that.
+      (if (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 64))) (i32.const 1))
+        (then
+          (local.set $ok (call $host_fs_read_file_preserve_pending (call $gl32 (local.get $slot))
+            (i32.add (call $gl32 (i32.add (local.get $slot) (i32.const 8))) (local.get $pos))
+            (local.get $count) (i32.add (local.get $frame) (i32.const 60))))
+          (if (i32.eq (local.get $ok) (i32.const -1)) (then (return (i32.const -1)))))
+        (else
+          (local.set $ok (call $host_fs_read_file (call $gl32 (local.get $slot))
+            (i32.add (call $gl32 (i32.add (local.get $slot) (i32.const 8))) (local.get $pos))
+            (local.get $count) (i32.add (local.get $frame) (i32.const 60))))
+          (if (i32.eqz (local.get $ok))
+            (then
+              (if (i32.eq (call $host_fs_read_pending) (i32.const 1))
+                (then (return (i32.const -1))))))))
+      (if (i32.eqz (local.get $ok))
+        (then (return (call $help_vfs_error (global.get $HELP_ERROR_VFS)))))
+      (if (i32.ne (call $gl32 (i32.add (local.get $frame) (i32.const 60))) (local.get $count))
+        (then (return (call $help_vfs_error (global.get $HELP_ERROR_VFS)))))
+      (local.set $pos (i32.add (local.get $pos) (local.get $count)))
+      (call $gs32 (i32.add (local.get $slot) (i32.const 12)) (local.get $pos))
+      (br $read)))
+    (i32.const 1))
+
+  ;; Internal helper now stages only; its argument is the transaction record.
+  (func $help_document_try_load_cnt_vfs (param $frame i32) (result i32)
+    (if (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 56))) (i32.const 1))
+      (then
+        (if (i32.eqz (call $help_vfs_open
+              (call $g2w (call $gl32 (i32.add (local.get $frame) (i32.const 20))))
+              (i32.add (local.get $frame) (i32.const 40)) (global.get $HELP_MAX_CNT_BYTES) (i32.const 1)))
+          (then (return (i32.const 0))))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 56)) (i32.const 2))))
+    (call $help_vfs_read (local.get $frame) (i32.add (local.get $frame) (i32.const 40))))
+
+  ;; -1 pending, 0 failure, positive ready transaction. No parser, macro,
+  ;; snapshot or document/session state mutation occurs during preparation.
+  (func $help_document_prepare_vfs (param $path_wa i32) (result i32)
+    (call $help_document_prepare_key_vfs (local.get $path_wa)
+      (global.get $esp) (call $gl32 (global.get $esp)) (i32.const 0)))
+
+  ;; Job owners are unique nonzero tokens, normally a heap job record. Neither
+  ;; matching nor cancellation reads or changes the current guest stack.
+  (func $help_document_prepare_vfs_owned (param $path_wa i32) (param $owner i32) (result i32)
+    (if (i32.eqz (local.get $owner))
+      (then (return (call $help_vfs_error (global.get $HELP_ERROR_BAD_ARGUMENT)))))
+    (call $help_document_prepare_key_vfs (local.get $path_wa)
+      (local.get $owner) (i32.const 0) (i32.const 1)))
+
+  (func $help_document_prepare_key_vfs (param $path_wa i32)
+        (param $key i32) (param $return i32) (param $kind i32) (result i32)
+    (local $len i32) (local $frame i32) (local $next i32) (local $path i32)
+    (local $cnt i32) (local $cnt_wa i32) (local $i i32) (local $dot i32)
+    (local $ch i32) (local $match i32) (local $ok i32)
     (if (i32.eqz (local.get $path_wa))
       (then
-        (call $help_document_reset)
-        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $path_len (call $help_cstring_length_memory
-      (local.get $path_wa) (i32.const 1024)))
-    (if (i32.le_s (local.get $path_len) (i32.const 0))
+        (call $help_document_cancel_key_vfs (local.get $key) (local.get $kind))
+        (return (call $help_vfs_error (global.get $HELP_ERROR_BAD_ARGUMENT)))))
+    (local.set $len (call $help_cstring_length_memory (local.get $path_wa) (i32.const 1024)))
+    (if (i32.le_s (local.get $len) (i32.const 0))
       (then
-        (call $help_document_reset)
-        (call $help_set_error (global.get $HELP_ERROR_BAD_ARGUMENT) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $handle (call $host_fs_create_file
-      (local.get $path_wa) (i32.const 0x80000000)
-      (i32.const 3) (i32.const 0x80) (i32.const 0)))
-    (if (i32.eq (local.get $handle) (i32.const -1))
+        (call $help_document_cancel_key_vfs (local.get $key) (local.get $kind))
+        (return (call $help_vfs_error (global.get $HELP_ERROR_BAD_ARGUMENT)))))
+    (local.set $frame (global.get $help_vfs_pending))
+    (block $found (loop $find
+      (br_if $found (i32.eqz (local.get $frame)))
+      (local.set $next (call $gl32 (local.get $frame)))
+      (if (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 4))) (local.get $key))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 64))) (local.get $kind)))
+        (then
+          (local.set $match (i32.and
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 8))) (local.get $return))
+            (i32.eq (call $gl32 (i32.add (local.get $frame) (i32.const 16))) (local.get $len))))
+          (if (local.get $match)
+            (then
+              (local.set $path (call $g2w (call $gl32 (i32.add (local.get $frame) (i32.const 12)))))
+              (local.set $i (i32.const 0))
+              (loop $compare
+                (if (i32.ne (i32.load8_u (i32.add (local.get $path) (local.get $i)))
+                            (i32.load8_u (i32.add (local.get $path_wa) (local.get $i))))
+                  (then (local.set $match (i32.const 0))))
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br_if $compare (i32.lt_u (local.get $i) (local.get $len))))))
+          (br_if $found (local.get $match))
+          (call $help_document_cancel_vfs (local.get $frame))))
+      (local.set $frame (local.get $next)) (br $find)))
+    (if (i32.eqz (local.get $frame))
       (then
-        (call $help_document_reset)
-        (call $help_set_error (global.get $HELP_ERROR_VFS) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $size (call $host_fs_get_file_size (local.get $handle)))
-    (if (i32.or
-          (i32.eq (local.get $size) (i32.const -1))
-          (i32.eqz (local.get $size)))
+        (local.set $frame (call $heap_alloc (i32.const 68)))
+        (if (i32.eqz (local.get $frame))
+          (then (return (call $help_vfs_error (global.get $HELP_ERROR_ALLOCATION)))))
+        (memory.fill (call $g2w (local.get $frame)) (i32.const 0) (i32.const 68))
+        (call $gs32 (local.get $frame) (global.get $help_vfs_pending))
+        (global.set $help_vfs_pending (local.get $frame))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 24)) (i32.const -1))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 40)) (i32.const -1))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 4)) (local.get $key))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 8)) (local.get $return))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 64)) (local.get $kind))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 16)) (local.get $len))
+        (local.set $path (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+        (local.set $cnt (call $heap_alloc (i32.add (local.get $len) (i32.const 5))))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (local.get $path))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 20)) (local.get $cnt))
+        (if (i32.or (i32.eqz (local.get $path)) (i32.eqz (local.get $cnt)))
+          (then
+            (call $help_document_cancel_vfs (local.get $frame))
+            (return (call $help_vfs_error (global.get $HELP_ERROR_ALLOCATION)))))
+        (memory.copy (call $g2w (local.get $path)) (local.get $path_wa) (i32.add (local.get $len) (i32.const 1)))
+        (local.set $cnt_wa (call $g2w (local.get $cnt)))
+        (memory.copy (local.get $cnt_wa) (local.get $path_wa) (local.get $len))
+        (local.set $i (i32.const 0)) (local.set $dot (local.get $len))
+        (loop $scan
+          (local.set $ch (i32.load8_u (i32.add (local.get $cnt_wa) (local.get $i))))
+          (if (i32.or (i32.eq (local.get $ch) (i32.const 47)) (i32.eq (local.get $ch) (i32.const 92)))
+            (then (local.set $dot (local.get $len))))
+          (if (i32.eq (local.get $ch) (i32.const 46)) (then (local.set $dot (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br_if $scan (i32.lt_u (local.get $i) (local.get $len))))
+        (i32.store (i32.add (local.get $cnt_wa) (local.get $dot)) (i32.const 0x746e632e))
+        (i32.store8 (i32.add (local.get $cnt_wa) (i32.add (local.get $dot) (i32.const 4))) (i32.const 0))
+        (if (i32.eqz (call $help_vfs_open (call $g2w (local.get $path))
+              (i32.add (local.get $frame) (i32.const 24)) (global.get $HELP_MAX_FILE_BYTES) (i32.const 0)))
+          (then (call $help_document_cancel_vfs (local.get $frame)) (return (i32.const 0))))))
+    (if (i32.eqz (call $gl32 (i32.add (local.get $frame) (i32.const 56))))
       (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (call $help_document_reset)
-        (call $help_set_error (global.get $HELP_ERROR_VFS) (i32.const 0))
-        (return (i32.const 0))))
-    (if (i32.gt_u (local.get $size) (global.get $HELP_MAX_FILE_BYTES))
+        (local.set $ok (call $help_vfs_read (local.get $frame) (i32.add (local.get $frame) (i32.const 24))))
+        (if (i32.eq (local.get $ok) (i32.const -1)) (then (return (i32.const -1))))
+        (if (i32.eqz (local.get $ok))
+          (then (call $help_document_cancel_vfs (local.get $frame)) (return (i32.const 0))))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 56)) (i32.const 1))))
+    (if (i32.ne (call $gl32 (i32.add (local.get $frame) (i32.const 56))) (i32.const 3))
       (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (call $help_document_reset)
-        (call $help_set_error (global.get $HELP_ERROR_CAPACITY) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $temp_ga (call $heap_alloc (local.get $size)))
-    (local.set $read_ga (call $heap_alloc (i32.const 4)))
-    (if (i32.or (i32.eqz (local.get $temp_ga)) (i32.eqz (local.get $read_ga)))
+        (local.set $ok (call $help_document_try_load_cnt_vfs (local.get $frame)))
+        (if (i32.eq (local.get $ok) (i32.const -1)) (then (return (i32.const -1))))
+        (if (i32.eqz (local.get $ok))
+          (then (call $help_document_cancel_vfs (local.get $frame)) (return (i32.const 0))))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 56)) (i32.const 3))))
+    (local.get $frame))
+
+  ;; Ready bytes are parsed synchronously. Registration macros are deliberately
+  ;; last; their guest DLL callbacks are a separate continuation boundary.
+  (func $help_document_commit_vfs (param $frame i32) (result i32)
+    (local $snapshot i32) (local $next i32) (local $ok i32)
+    (local $error i32) (local $offset i32) (local $path i32)
+    (if (i32.ne (call $gl32 (i32.add (local.get $frame) (i32.const 56))) (i32.const 3))
+      (then (return (call $help_vfs_error (global.get $HELP_ERROR_BAD_ARGUMENT)))))
+    (if (global.get $help_doc_file_ga)
       (then
-        (drop (call $host_fs_close_handle (local.get $handle)))
-        (if (local.get $temp_ga) (then (call $heap_free (local.get $temp_ga))))
-        (if (local.get $read_ga) (then (call $heap_free (local.get $read_ga))))
-        (call $help_document_reset)
-        (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $temp_wa (call $g2w (local.get $temp_ga)))
-    (local.set $read_wa (call $g2w (local.get $read_ga)))
-    (i32.store (local.get $read_wa) (i32.const 0))
-    (local.set $ok (call $host_fs_read_file
-      (local.get $handle) (local.get $temp_ga) (local.get $size) (local.get $read_ga)))
-    (drop (call $host_fs_close_handle (local.get $handle)))
-    (if (i32.or
-          (i32.eqz (local.get $ok))
-          (i32.ne (i32.load (local.get $read_wa)) (local.get $size)))
-      (then
-        (call $heap_free (local.get $read_ga))
-        (call $heap_free (local.get $temp_ga))
-        (call $help_document_reset)
-        (call $help_set_error (global.get $HELP_ERROR_VFS) (i32.const 0))
-        (return (i32.const 0))))
-    (local.set $ok (call $help_document_load_buffer (local.get $temp_wa) (local.get $size)))
-    (call $heap_free (local.get $read_ga))
-    (call $heap_free (local.get $temp_ga))
+        (if (i32.eqz (call $help_document_snapshot_push_transaction))
+          (then
+            (call $help_document_cancel_vfs (local.get $frame))
+            (return (call $help_vfs_error (global.get $HELP_ERROR_ALLOCATION)))))
+        (local.set $snapshot (global.get $help_document_snapshots_ga))))
+    (block $parsed
+      (br_if $parsed (i32.eqz (call $help_document_load_buffer_core
+        (call $g2w (call $gl32 (i32.add (local.get $frame) (i32.const 32))))
+        (call $gl32 (i32.add (local.get $frame) (i32.const 28))))))
+      (br_if $parsed (i32.eqz (call $help_parse_semantic_indexes)))
+      (if (call $gl32 (i32.add (local.get $frame) (i32.const 44)))
+        (then
+          (br_if $parsed (i32.eqz (call $help_load_cnt_buffer
+            (call $g2w (call $gl32 (i32.add (local.get $frame) (i32.const 48))))
+            (call $gl32 (i32.add (local.get $frame) (i32.const 44))))))))
+      (local.set $ok (i32.const 1)))
     (if (local.get $ok)
       (then
-        (if (i32.eqz (call $help_document_try_load_cnt_vfs (local.get $path_wa)))
+        (local.set $path (call $gl32 (i32.add (local.get $frame) (i32.const 12))))
+        (global.set $help_doc_path_ga (local.get $path))
+        (global.set $help_doc_path_wa (call $g2w (local.get $path)))
+        (global.set $help_doc_path_len (call $gl32 (i32.add (local.get $frame) (i32.const 16))))
+        (call $gs32 (i32.add (local.get $frame) (i32.const 12)) (i32.const 0))
+        (if (local.get $snapshot)
           (then
-            (call $help_document_release_storage)
-            (return (i32.const 0))))
-        ;; Retain the exact bounded VFS path that produced this document. It
-        ;; is the canonical base for relative external-hotspot resolution.
-        (local.set $path_ga
-          (call $heap_alloc (i32.add (local.get $path_len) (i32.const 1))))
-        (if (i32.eqz (local.get $path_ga))
-          (then
-            (call $help_document_release_storage)
-            (call $help_set_error (global.get $HELP_ERROR_ALLOCATION) (i32.const 0))
-            (return (i32.const 0))))
-        (local.set $path_copy (call $g2w (local.get $path_ga)))
-        (memory.copy (local.get $path_copy) (local.get $path_wa)
-          (i32.add (local.get $path_len) (i32.const 1)))
-        (global.set $help_doc_path_ga (local.get $path_ga))
-        (global.set $help_doc_path_wa (local.get $path_copy))
-        (global.set $help_doc_path_len (local.get $path_len))))
+            (local.set $next (call $gl32 (local.get $snapshot)))
+            (call $help_document_snapshot_release_record (local.get $snapshot))
+            (global.set $help_document_snapshots_ga (local.get $next))
+            (global.set $help_document_snapshot_count (i32.sub (global.get $help_document_snapshot_count) (i32.const 1))))))
+      (else
+        (local.set $error (global.get $help_last_error))
+        (local.set $offset (global.get $help_last_error_offset))
+        (if (local.get $snapshot)
+          (then (drop (call $help_document_snapshot_restore_top)))
+          (else (call $help_document_release_storage)))
+        (global.set $help_last_error (local.get $error))
+        (global.set $help_last_error_offset (local.get $offset))))
+    (call $help_document_cancel_vfs (local.get $frame))
+    (if (local.get $ok) (then (call $help_run_registration_macros)))
     (local.get $ok))
+
+  (func $help_document_load_vfs (param $path_wa i32) (result i32)
+    (local $ready i32)
+    (local.set $ready (call $help_document_prepare_vfs (local.get $path_wa)))
+    (if (i32.le_s (local.get $ready) (i32.const 0)) (then (return (local.get $ready))))
+    (call $help_document_commit_vfs (local.get $ready)))
 
   ;; Unified API engine. The A/W boundary owns normalization; path_wa and any
   ;; command-specific string data are bounded WA pointers by the time they
@@ -5059,21 +5213,28 @@
   (func $help_dispatch
     (param $caller i32) (param $path_wa i32) (param $command i32)
     (param $data i32) (param $source_is_wide i32) (result i32)
+    (local $loaded i32)
     (drop (local.get $source_is_wide))
     (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_QUIT))
       (then
+        (call $help_document_cancel_frame_vfs)
         (return (call $help_dispatch_loaded
           (local.get $caller) (local.get $command) (local.get $data)))))
+    (if (i32.eqz (local.get $path_wa))
+      (then (call $help_document_cancel_frame_vfs)))
     (if (local.get $path_wa)
       (then
         ;; An explicit WinHelp API file replacement starts a fresh document
         ;; session; only in-document external links retain Back snapshots.
-        (call $help_document_snapshot_release_all)
-        (if (i32.eqz (call $help_document_load_vfs (local.get $path_wa)))
+        (local.set $loaded (call $help_document_load_vfs (local.get $path_wa)))
+        (if (i32.eq (local.get $loaded) (i32.const -1))
+          (then (return (i32.const -1))))
+        (if (i32.eqz (local.get $loaded))
           (then
             (global.set $help_session_last_command (local.get $command))
             (global.set $help_session_status (global.get $HELP_DISPATCH_LOAD_FAILED))
-            (return (i32.const 0))))))
+            (return (i32.const 0))))
+        (call $help_document_snapshot_release_all)))
     (call $help_dispatch_loaded
       (local.get $caller) (local.get $command) (local.get $data)))
 

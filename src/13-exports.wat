@@ -5,7 +5,56 @@
     (global.set $eip (call $gl32 (global.get $esp)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
 
+  ;; Per-instance host budget, never shared guest state. Plain run() disables
+  ;; polling for deterministic stepping and synchronous reentrant callbacks.
+  (global $run_deadline_enabled (mut i32) (i32.const 0))
+  (global $run_deadline_ms (mut f64) (f64.const 0))
+  (global $run_deadline_countdown (mut i32) (i32.const 0))
+  (global $run_deadline_hit (mut i32) (i32.const 0))
+  (func $run_deadline_poll (result i32)
+    (if (i32.eqz (global.get $run_deadline_enabled)) (then (return (i32.const 0))))
+    ;; Native synchronous dispatch still owns a live continuation on its WAT
+    ;; stack. It must finish before the outer run loop may return to the host.
+    (if (global.get $sync_msg_depth) (then (return (i32.const 0))))
+    (if (global.get $run_deadline_hit) (then (return (i32.const 1))))
+    (if (i32.gt_s (global.get $run_deadline_countdown) (i32.const 0))
+      (then
+        (global.set $run_deadline_countdown
+          (i32.sub (global.get $run_deadline_countdown) (i32.const 1)))
+        (return (i32.const 0))))
+    (global.set $run_deadline_countdown (i32.const 31))
+    (global.set $run_deadline_hit
+      (f64.ge (call $host_monotonic_time_ms) (global.get $run_deadline_ms)))
+    (global.get $run_deadline_hit))
+  ;; JS finally blocks restore this flag if a nested run traps and its caller
+  ;; catches the trap while the outer WASM frame remains live.
+  (func (export "get_run_deadline_enabled") (result i32) (global.get $run_deadline_enabled))
+  (func (export "set_run_deadline_enabled") (param $enabled i32)
+    (global.set $run_deadline_enabled (local.get $enabled)))
   (func $run (export "run") (param $max_blocks i32)
+    (local $saved_enabled i32)
+    (local.set $saved_enabled (global.get $run_deadline_enabled))
+    (global.set $run_deadline_enabled (i32.const 0))
+    (call $run_impl (local.get $max_blocks))
+    (global.set $run_deadline_enabled (local.get $saved_enabled)))
+  (func (export "run_budgeted") (param $max_blocks i32) (param $deadline f64)
+    (local $saved_enabled i32) (local $saved_deadline f64)
+    (local $saved_countdown i32) (local $saved_hit i32)
+    (local.set $saved_enabled (global.get $run_deadline_enabled))
+    (local.set $saved_deadline (global.get $run_deadline_ms))
+    (local.set $saved_countdown (global.get $run_deadline_countdown))
+    (local.set $saved_hit (global.get $run_deadline_hit))
+    (global.set $run_deadline_enabled (i32.const 1))
+    (global.set $run_deadline_ms (local.get $deadline))
+    (global.set $run_deadline_countdown (i32.const 0))
+    (global.set $run_deadline_hit (i32.const 0))
+    (call $run_impl (local.get $max_blocks))
+    (global.set $run_deadline_enabled (local.get $saved_enabled))
+    (global.set $run_deadline_ms (local.get $saved_deadline))
+    (global.set $run_deadline_countdown (local.get $saved_countdown))
+    (global.set $run_deadline_hit (local.get $saved_hit)))
+
+  (func $run_impl (param $max_blocks i32)
     (local $thread i32)
     (local $hc_i i32) (local $hc_slot i32)
     (local $prev_eip i32) (local $prev_esp i32)
@@ -31,6 +80,10 @@
           (local.get $shared_cache_generation))
         (global.set $thread_flush_pending (i32.const 1))))
     (block $halt (loop $main
+      ;; Native callback completion is acknowledged only by the outer host
+      ;; pump, which restores CPU and absolute wait deadlines as one phase.
+      (if (global.get $help_macro_native_returned)
+        (then (global.set $last_run_halt (i32.const 7)) (br $halt)))
       (if (i32.eqz (global.get $eip))
         (then (global.set $last_run_halt (i32.const 2)) (br $halt)))
       ;; A block whose quantum expired part-way through. Give it a fresh one and
@@ -76,6 +129,8 @@
               (br $halt)))))
       (if (i32.le_s (global.get $block_budget) (i32.const 0))
         (then (global.set $last_run_halt (i32.const 1)) (br $halt)))
+      (if (call $run_deadline_poll)
+        (then (global.set $last_run_halt (i32.const 6)) (br $halt)))
       (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
       ;; Reset thread buffer if approaching cache region (leave 4KB margin)
       (if (i32.ge_u (global.get $thread_alloc) (i32.sub (global.get $THREAD_END) (i32.const 4096)))
@@ -465,6 +520,7 @@
     (call $class_table_register_data (local.get $name_wa) (local.get $wndclass_wa)))
   (func (export "test_class_lookup") (param $name_wa i32) (result i32)
     (call $class_table_lookup (local.get $name_wa)))
+  (export "reset_thread_message_queue" (func $reset_thread_message_queue))
   (func (export "test_shared_post")
     (param $hwnd i32) (param $msg i32) (param $wparam i32) (param $lparam i32) (result i32)
     (call $shared_post_queue_enqueue

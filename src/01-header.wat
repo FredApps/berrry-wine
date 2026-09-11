@@ -42,6 +42,7 @@
   ;; The i32 result keeps Worker RPC synchronous so the shared-memory write is
   ;; visible before the guest resumes.
   (import "host" "wall_clock" (func $host_wall_clock (param i32 i32) (result i32)))
+  (import "host" "monotonic_time_ms" (func $host_monotonic_time_ms (result f64)))
   (import "host" "yield" (func $host_yield (param i32)))
   ;; One bounded inline turn for the worker threads, for the case where the
   ;; main instance cannot yield: inside a synchronous wndproc the interpreter
@@ -725,6 +726,9 @@
   ;; fs_create_legacy_file(...) → 16-bit HFILE for _lopen/_lcreat
   (import "host" "fs_read_file" (func $host_fs_read_file (param i32 i32 i32 i32) (result i32)))
   (import "host" "fs_read_file_at" (func $host_fs_read_file_at (param i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; Native deferred Help must not replace another thread's pending read.
+  ;; Atomic result: -1 pending, 0 failure, 1 success (ordinary ReadFile unchanged).
+  (import "host" "fs_read_file_preserve_pending" (func $host_fs_read_file_preserve_pending (param i32 i32 i32 i32) (result i32)))
   ;; fs_read_file(handle, bufGA, nToRead, nReadGA) → BOOL
   (import "host" "fs_read_pending" (func $host_fs_read_pending (result i32)))
   ;; fs_read_pending() → 1 when the fs_read_file that just returned 0 is
@@ -1697,7 +1701,9 @@
   ;; than that one": genuine work per block, or a batch that keeps bailing after
   ;; a handful of blocks and paying the host's per-batch overhead each time.
   ;; Halt reasons: 1 budget exhausted, 2 EIP zero, 3 $yield_flag,
-  ;; 4 blocking-wait $yield_reason, 5 a debug facility (watchpoint/breakpoint).
+  ;; 4 blocking-wait $yield_reason, 5 a debug facility (watchpoint/breakpoint),
+  ;; 6 cooperative wall-clock deadline at a complete block boundary,
+  ;; 7 native callback returned; outer pump must restore its interrupted state.
   (global $last_run_blocks (mut i32) (i32.const 0))
   (global $last_run_halt   (mut i32) (i32.const 0))
 
@@ -3825,7 +3831,16 @@
   (global $console_cp (mut i32) (i32.const 437))  ;; input code page
   (global $console_output_cp (mut i32) (i32.const 437))  ;; output code page
 
-  ;; x87 FPU state — registers stored at WASM memory 0x200 (8 × f64 = 64 bytes)
+  ;; x87 physical values belong to the instance, like TOP/tags and MMX below.
+  ;; A shared linear-memory bank lets sibling guest threads corrupt each other.
+  (global $fpu_value0 (mut f64) (f64.const 0))
+  (global $fpu_value1 (mut f64) (f64.const 0))
+  (global $fpu_value2 (mut f64) (f64.const 0))
+  (global $fpu_value3 (mut f64) (f64.const 0))
+  (global $fpu_value4 (mut f64) (f64.const 0))
+  (global $fpu_value5 (mut f64) (f64.const 0))
+  (global $fpu_value6 (mut f64) (f64.const 0))
+  (global $fpu_value7 (mut f64) (f64.const 0))
   (global $fpu_top (mut i32) (i32.const 0))   ;; TOP of FPU stack (0-7)
   (global $fpu_cw  (mut i32) (i32.const 0x037F)) ;; Control word (default: all exceptions masked)
   (global $fpu_sw  (mut i32) (i32.const 0))   ;; Status word

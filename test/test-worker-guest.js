@@ -68,10 +68,13 @@ async function launch(browser, port, app, { threaded }) {
   const page = await browser.newPage();
   await page.setViewport({ width: 1100, height: 820 });
   const problems = [];
+  const recentLogs = [];
   let boardChanged = 0;
   page.on('pageerror', e => problems.push(String(e)));
   page.on('console', m => {
     const t = m.text();
+    recentLogs.push(t);
+    if (recentLogs.length > 40) recentLogs.shift();
     if (/UNIMPLEMENTED API:|RuntimeError|LinkError|not supported in worker mode|trapped/i.test(t)) {
       problems.push(t);
     }
@@ -121,7 +124,9 @@ async function launch(browser, port, app, { threaded }) {
         ? Object.values(wine.renderer.windows) : [];
       return !!(wine && wine.guestWorker && wine.guestWorker.sliceStats.slices > 10
         && windows.filter(win => win && win.visible).length >= 2);
-    }, { timeout: 120000 }, app);
+    }, { timeout: 120000 }, app).catch(error => {
+      throw new Error(`${app}: startup did not reach live Worker windows: ${error.message}\n${recentLogs.join('\n')}`);
+    });
     await page.waitForFunction(() => {
       const canvas = document.getElementById('screen');
       const pixels = canvas.getContext('2d')
@@ -185,7 +190,15 @@ async function launch(browser, port, app, { threaded }) {
   } else if (app === 'rodent2000') {
     await page.waitForFunction(() => Object.values(sharedRenderer.windows || {}).some(win =>
       win && win.visible && win.w > 300 && /^Rodent's Revenge 2000/.test(win.title || '')),
-    { timeout: 120000, polling: 250 });
+    { timeout: 120000, polling: 250 }).catch(async error => {
+      console.error('Rodent startup failure:', JSON.stringify({ problems, recentLogs,
+        state: await page.evaluate(() => ({
+          apps: runningApps.map(({ wine }) => ({ boot: wine._fontBootState,
+            stopped: wine._stopped, running: wine.running, dllLoading: wine._dllBootLoading })),
+          windows: Object.values(sharedRenderer.windows || {}).map(w => ({ title: w.title, visible: w.visible })),
+        })) }));
+      throw error;
+    });
     const menu = await page.evaluate(() => {
       const win = Object.values(sharedRenderer.windows).find(item =>
         item && item.visible && item.w > 300 && /^Rodent's Revenge 2000/.test(item.title || ''));
@@ -236,10 +249,24 @@ async function launch(browser, port, app, { threaded }) {
     await wait(SECONDS * 1000);
   }
 
-  const state = await page.evaluate(() => {
+  const state = await page.evaluate(async () => {
     const running = (typeof runningApps !== 'undefined' && runningApps[0]) || null;
     const wine = running ? running.wine : null;
     const gw = wine && wine.guestWorker;
+    const stockStates = wine ? (gw
+      ? await Promise.all([0, 1, 2, 3, 4].map(index => gw.callExport('stock_font_state', index)))
+      : [0, 1, 2, 3, 4].map(index => wine.instance.exports.stock_font_state(index))) : [];
+    const fontExclusions = gw ? await gw.getFontCatalogExclusions() : null;
+    const catalogState = wine ? (gw
+      ? await gw.readExports(['font_catalog_ready', 'font_catalog_generation'])
+      : { font_catalog_ready: wine.instance.exports.font_catalog_ready(),
+        font_catalog_generation: wine.instance.exports.font_catalog_generation() }) : null;
+    const catalogStartupState = gw ? await gw.getFontCatalogStartupState() : null;
+    let lateCatalogError = null;
+    if (gw) {
+      try { await gw.installFontCatalog([], fontExclusions); }
+      catch (error) { lateCatalogError = String(error.message || error); }
+    }
     const canvas = document.getElementById('screen');
     const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
     let boardGreen = 0;
@@ -249,6 +276,12 @@ async function launch(browser, port, app, { threaded }) {
     }
     return {
       threaded: !!gw,
+      stockStates,
+      fontExclusions,
+      catalogState,
+      catalogStartupState,
+      lateCatalogError,
+      fontBootState: wine && wine._fontBootState,
       broker: gw && gw.broker ? gw.broker.stats() : null,
       slices: gw ? gw.sliceStats.slices : 0,
       windows: wine && wine.renderer && wine.renderer.windows
@@ -439,6 +472,21 @@ async function comLoadDllProbe(browser, port) {
         `${app}: leaving Threads unchecked selects cooperative mode`);
       check(worker.state.threaded, `${app}: guest runs in a worker`);
       check(!single.state.threaded, `${app}: control run is single-threaded`);
+      check(Array.isArray(worker.state.fontExclusions) &&
+        worker.state.fontExclusions.includes('c:\\windows\\fonts\\arial.ttf') &&
+        new Set(worker.state.fontExclusions).size === worker.state.fontExclusions.length,
+      `${app}: actual browser Worker returns copied native font exclusions`);
+      check(worker.state.catalogStartupState === 'SEALED' &&
+        /startup is not open/.test(worker.state.lateCatalogError || ''),
+      `${app}: executing browser Worker rejects late catalog publication`);
+      for (const [backend, result] of [['Worker', worker], ['cooperative', single]]) {
+        check(result.state.fontBootState === 'ready' &&
+          JSON.stringify(result.state.stockStates) === '[2,2,2,2,2]',
+        `${app}: ${backend} owns all five bootstrapped fonts`, JSON.stringify(result.state.stockStates));
+        check(result.state.catalogState && result.state.catalogState.font_catalog_ready === 1 &&
+          result.state.catalogState.font_catalog_generation > 0,
+        `${app}: ${backend} publishes its startup font catalog`, JSON.stringify(result.state.catalogState));
+      }
       check(worker.state.slices > 10, `${app}: worker executed slices`,
         `slices=${worker.state.slices}`);
       check(!!worker.state.broker && worker.state.broker.missing.length === 0,
@@ -464,6 +512,9 @@ async function comLoadDllProbe(browser, port) {
     // used to trap RODENT at its first VBRUN100 far jump (EIP 0x100010).
     const win16 = await launch(browser, port, 'wep16_rodent', { threaded: true });
     check(win16.state.threaded, 'Win16 main task stays in the guest Worker');
+    check(win16.state.catalogState && win16.state.catalogState.font_catalog_ready === 1 &&
+      win16.state.catalogState.font_catalog_generation > 0,
+    'Win16 Worker publishes its startup font catalog', JSON.stringify(win16.state.catalogState));
     check(win16.state.slices > 10, 'Win16 Worker executes past NE startup',
       `slices=${win16.state.slices}`);
     check(win16.state.windows >= 8, 'Win16 Worker creates the Rodent board windows',

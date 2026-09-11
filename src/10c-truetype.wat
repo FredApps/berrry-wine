@@ -2918,8 +2918,9 @@
   ;; one that does. The roots below are the only fixed cost, and they are
   ;; three globals.
   ;;
-  ;; Faces are keyed by path hash so opening the same file twice returns the
-  ;; same slot instead of a second copy of a 400 KB file.
+  ;; Path hash is only a lookup filter: each face owns a full path at +28,
+  ;; compared with the same ASCII case fold before a slot can be reused.
+  ;; Fields +20/+24 remain reserved for future process generation identity.
 
   ;; Every style of every substituted face is 18 files, and a guest may also
   ;; name a face by path. 16 slots looked generous until the substitution
@@ -3000,10 +3001,45 @@
   ;; or no heap. Callers fall back to whatever they would have done before,
   ;; so a bad path degrades to the old behaviour instead of trapping.
   (func $tt_face_open (param $path_guest i32) (result i32)
+    (call $tt_face_open_source (local.get $path_guest) (i32.const 0) (i32.const 0)))
+
+  ;; Face identity paths obey MAX_PATH (260 bytes including NUL). Check each
+  ;; guest byte before reading: do not assume 260 bytes remain in the mapping,
+  ;; and do not scan an unterminated path into another mapped span.
+  (func $tt_face_path_length (param $guest i32) (result i32)
+    (local $path i32) (local $len i32) (local $at i32)
+    (if (i32.eqz (local.get $guest)) (then (return (i32.const -1))))
+    (local.set $path (call $g2w (local.get $guest)))
+    (block $done (loop $scan
+      (if (i32.ge_u (local.get $len) (i32.const 260)) (then (return (i32.const -1))))
+      (if (i32.lt_u (i32.add (local.get $guest) (local.get $len)) (local.get $guest))
+        (then (return (i32.const -1))))
+      (local.set $at (call $g2w (i32.add (local.get $guest) (local.get $len))))
+      (if (i32.or (i32.eq (local.get $at) (i32.const 0xF0))
+            (i32.or (i32.ne (local.get $at) (i32.add (local.get $path) (local.get $len)))
+              (i32.ge_u (local.get $at) (i32.shl (memory.size) (i32.const 16)))))
+        (then (return (i32.const -1))))
+      (if (i32.eqz (i32.load8_u (local.get $at))) (then (return (local.get $len))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; A completed explicit-API buffer is borrowed; the face cache acquires its
+  ;; own bytes only after the staged read. Negative input_size is cache-only.
+  (func $tt_face_open_source (param $path_guest i32) (param $input_guest i32)
+      (param $input_size i32) (result i32)
     (local $path i32) (local $hash i32) (local $table i32) (local $record i32)
     (local $index i32) (local $free i32) (local $handle i32) (local $size i32)
     (local $data_guest i32) (local $data i32) (local $read i32) (local $read_wa i32)
+    (local $path_len i32) (local $path_copy i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const -1))))
+    ;; A cold cache-only query must not create the face table. With an
+    ;; existing root, tt_faces_ensure below only maps that table for lookup.
+    (if (i32.and (i32.lt_s (local.get $input_size) (i32.const 0))
+          (i32.eqz (global.get $tt_faces)))
+      (then (return (i32.const -1))))
+    (local.set $path_len (call $tt_face_path_length (local.get $path_guest)))
+    (if (i32.le_s (local.get $path_len) (i32.const 0)) (then (return (i32.const -1))))
     (local.set $path (call $g2w (local.get $path_guest)))
     (local.set $hash (call $tt_path_hash (local.get $path)))
     (local.set $table (call $tt_faces_ensure))
@@ -3018,29 +3054,55 @@
         (then
           (if (i32.and (i32.eq (i32.load offset=16 (local.get $record)) (i32.const 1))
                 (i32.eq (i32.load (local.get $record)) (local.get $hash)))
-            (then (return (local.get $index)))))
+            (then
+              (if (i32.load offset=28 (local.get $record))
+                (then
+                  (if (call $tt_subst_name_equal (local.get $path)
+                        (call $g2w (i32.load offset=28 (local.get $record))))
+                    (then (return (local.get $index)))))))))
         (else (if (i32.eq (local.get $free) (i32.const -1))
           (then (local.set $free (local.get $index))))))
       (local.set $index (i32.add (local.get $index) (i32.const 1)))
       (br $scan)))
     (if (i32.eq (local.get $free) (i32.const -1)) (then (return (i32.const -1))))
+    (if (i32.lt_s (local.get $input_size) (i32.const 0)) (then (return (i32.const -1))))
+
+    ;; Snapshot identity before host imports can observe or mutate caller
+    ;; memory. Cache-only queries and hits never allocate this copy.
+    (local.set $path_copy (call $heap_alloc (i32.add (local.get $path_len) (i32.const 1))))
+    (if (i32.eqz (local.get $path_copy)) (then (return (i32.const -1))))
+    (memory.copy (call $g2w (local.get $path_copy)) (local.get $path)
+      (i32.add (local.get $path_len) (i32.const 1)))
+    (local.set $path (call $g2w (local.get $path_copy)))
+    (block $failed
+    (if (local.get $input_guest)
+      (then
+        (local.set $size (local.get $input_size))
+        (if (i32.or (i32.le_s (local.get $size) (i32.const 0))
+              (i32.gt_u (local.get $size) (global.get $TT_MAX_FONT_BYTES)))
+          (then (br $failed)))
+        (local.set $data_guest (call $heap_alloc (local.get $size)))
+        (if (i32.eqz (local.get $data_guest)) (then (br $failed)))
+        (local.set $data (call $g2w (local.get $data_guest)))
+        (memory.copy (local.get $data) (call $g2w (local.get $input_guest)) (local.get $size)))
+      (else
 
     ;; GENERIC_READ, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL: the same call the
     ;; bitmap-font loader makes, so both paths see one filesystem.
     (local.set $handle (call $host_fs_create_file (local.get $path)
       (i32.const 0x80000000) (i32.const 3) (i32.const 0x80) (i32.const 0)))
-    (if (i32.eq (local.get $handle) (i32.const -1)) (then (return (i32.const -1))))
+    (if (i32.eq (local.get $handle) (i32.const -1)) (then (br $failed)))
     (local.set $size (call $host_fs_get_file_size (local.get $handle)))
     (if (i32.or (i32.le_s (local.get $size) (i32.const 0))
           (i32.gt_u (local.get $size) (global.get $TT_MAX_FONT_BYTES)))
       (then
         (drop (call $host_fs_close_handle (local.get $handle)))
-        (return (i32.const -1))))
+        (br $failed)))
     (local.set $data_guest (call $heap_alloc (local.get $size)))
     (if (i32.eqz (local.get $data_guest))
       (then
         (drop (call $host_fs_close_handle (local.get $handle)))
-        (return (i32.const -1))))
+        (br $failed)))
     (local.set $data (call $g2w (local.get $data_guest)))
     ;; The filesystem bridge reports the byte count through guest memory, so
     ;; the count word is borrowed from the front of the buffer being filled
@@ -3050,7 +3112,7 @@
       (then
         (drop (call $host_fs_close_handle (local.get $handle)))
         (call $heap_free (local.get $data_guest))
-        (return (i32.const -1))))
+        (br $failed)))
     (local.set $read_wa (call $g2w (local.get $read))) (i32.store (local.get $read_wa) (i32.const 0))
     (if (i32.eqz (call $host_fs_read_file (local.get $handle)
           (local.get $data_guest) (local.get $size) (local.get $read)))
@@ -3058,22 +3120,21 @@
         (drop (call $host_fs_close_handle (local.get $handle)))
         (call $heap_free (local.get $data_guest))
         (call $heap_free (local.get $read))
-        (return (i32.const -1))))
+        (br $failed)))
     (drop (call $host_fs_close_handle (local.get $handle)))
     (if (i32.ne (i32.load (local.get $read_wa)) (local.get $size))
       (then
         (call $heap_free (local.get $data_guest))
         (call $heap_free (local.get $read))
-        (return (i32.const -1))))
-    (call $heap_free (local.get $read))
+        (br $failed)))
+    (call $heap_free (local.get $read))))
 
     ;; Refuse anything that is not a glyf TrueType here rather than letting
     ;; every accessor below rediscover it one zero at a time.
     (if (i32.eqz (call $tt_is_truetype (local.get $data) (local.get $size)))
       (then
         (call $heap_free (local.get $data_guest))
-        (return (i32.const -1))))
-
+        (br $failed)))
     (local.set $record (i32.add (local.get $table)
       (i32.mul (local.get $free) (global.get $TT_FACE_STRIDE))))
     (i32.store (local.get $record) (local.get $hash))
@@ -3081,8 +3142,11 @@
     (i32.store offset=8 (local.get $record) (local.get $size))
     (i32.store offset=12 (local.get $record)
       (call $tt_units_per_em (local.get $data) (local.get $size)))
+    (i32.store offset=28 (local.get $record) (local.get $path_copy))
     (i32.store offset=16 (local.get $record) (i32.const 1))
-    (local.get $free))
+    (return (local.get $free)))
+    (call $heap_free (local.get $path_copy))
+    (i32.const -1))
 
   ;; Memory resources share the face/raster cache, but never the enumerable
   ;; path registry. Face state 2 is registered, 3 is removed but cached: keep
@@ -3699,6 +3763,42 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; Borrowed WASM path from the actual native substitution blobs. Read-only:
+  ;; no directory discovery or cache/table allocation. Duplicates are retained
+  ;; here so the host can copy and deduplicate without a second source list.
+  (func (export "font_catalog_exclusion_path") (param $index i32) (result i32)
+    (local $which i32) (local $p i32) (local $end i32)
+    (local $field i32) (local $next i32) (local $i i32)
+    (if (i32.lt_s (local.get $index) (i32.const 0)) (then (return (i32.const 0))))
+    (block $done (loop $tables
+      (br_if $done (i32.ge_u (local.get $which) (i32.const 2)))
+      (local.set $p (select (global.get $TT_SUBST_TABLE) (global.get $TT_SUBST_ALIAS_TABLE)
+        (i32.eqz (local.get $which))))
+      (local.set $end (i32.add (local.get $p)
+        (select (global.get $TT_SUBST_TABLE_SIZE) (global.get $TT_SUBST_ALIAS_TABLE_SIZE)
+          (i32.eqz (local.get $which)))))
+      (block $table_done (loop $rows
+        (if (i32.ge_u (local.get $p) (local.get $end)) (then (return (i32.const -1))))
+        (br_if $table_done (i32.eqz (i32.load8_u (local.get $p))))
+        (local.set $field (call $tt_subst_skip (local.get $p) (local.get $end)))
+        (local.set $i (i32.const 0))
+        (block $fields_done (loop $fields
+          (br_if $fields_done (i32.ge_u (local.get $i) (i32.const 4)))
+          (if (i32.ge_u (local.get $field) (local.get $end)) (then (return (i32.const -1))))
+          (local.set $next (call $tt_subst_skip (local.get $field) (local.get $end)))
+          (if (i32.gt_u (local.get $next) (local.get $end)) (then (return (i32.const -1))))
+          (if (i32.load8_u (local.get $field)) (then
+            (if (i32.eqz (local.get $index)) (then (return (local.get $field))))
+            (local.set $index (i32.sub (local.get $index) (i32.const 1)))))
+          (local.set $field (local.get $next))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $fields)))
+        (local.set $p (local.get $field))
+        (br $rows)))
+      (local.set $which (i32.add (local.get $which) (i32.const 1)))
+      (br $tables)))
+    (i32.const 0))
+
   ;; Read C:\WINDOWS\FONTS once and register what is installed there. See the
   ;; note on $TT_FONT_DIR_PATTERN for why an application that never calls
   ;; AddFontResourceA still expects its own faces to answer.
@@ -3706,6 +3806,7 @@
     (local $fd_g i32) (local $fd_w i32) (local $path_g i32) (local $path_w i32)
     (local $handle i32) (local $name_w i32)
     (local $prefix_len i32) (local $name_len i32)
+    (if (global.get $tt_catalog_ready) (then (return)))
     (if (global.get $tt_font_dir_scanned) (then (return)))
     ;; Marked before the work, not after: a directory that is empty, absent or
     ;; too big to allocate scratch for must not be re-read on every face
@@ -3754,6 +3855,18 @@
 
   (func $tt_subst_path (param $name i32) (param $weight i32) (param $italic i32)
         (result i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (if (i32.eqz (i32.load8_u (local.get $name))) (then (return (i32.const 0))))
+    ;; Legacy discovery stays at its existing first named-face lookup.
+    (call $tt_scan_font_dir)
+    (call $tt_subst_resolve (local.get $name) (local.get $weight) (local.get $italic)))
+
+  ;; Pure lookup over the currently published catalog and substitution tables:
+  ;; no discovery, allocation, IO or publication. The result is provisional
+  ;; until catalog preparation completes; tt_font_dir_scanned is NOT an
+  ;; asynchronous readiness token. The returned path is borrowed catalog data.
+  (func $tt_subst_resolve (param $name i32) (param $weight i32) (param $italic i32)
+        (result i32)
     (local $found i32)
     ;; No name at all is a different question from a name nobody knows. A
     ;; LOGFONT with an empty face is asking GDI to choose by pitch and family,
@@ -3766,14 +3879,15 @@
     (if (call $tt_subst_name_equal
           (local.get $name) (global.get $TT_SUBST_TMS_RMN))
       (then (local.set $name (global.get $TT_SUBST_TIMES_NEW_ROMAN))))
-    ;; Whatever is sitting in the font directory counts as installed, and the
-    ;; first face anybody asks for is the earliest point at which the VFS is
-    ;; certainly mounted.
-    (call $tt_scan_font_dir)
     ;; A font the guest installed itself outranks the substitute for it.
     (local.set $found (call $tt_reg_path (local.get $name)
       (local.get $weight) (local.get $italic)))
     (if (local.get $found) (then (return (local.get $found))))
+    (if (global.get $tt_catalog)
+      (then
+        (local.set $found (call $tt_reg_table_path (call $g2w (global.get $tt_catalog))
+          (local.get $name) (local.get $weight) (local.get $italic)))
+        (if (local.get $found) (then (return (local.get $found))))))
     (local.set $found (call $tt_subst_table_lookup
       (global.get $TT_SUBST_TABLE) (global.get $TT_SUBST_TABLE_SIZE)
       (local.get $name) (local.get $weight) (local.get $italic)))
@@ -3836,9 +3950,8 @@
   ;; that ships its own copy of a face means that copy, and the substitute
   ;; exists only to answer for files this emulator has no license to carry.
 
-  ;; Matches the face table: a guest that installs more files than the face
-  ;; cache can hold open would fail at the open rather than here, and a
-  ;; registry smaller than the cache would fail first for no stated reason.
+  ;; Each explicit registry and discovered metadata catalog is bounded to 32
+  ;; entries. Catalog discovery does not allocate or consume face-cache slots.
   (global $TT_REG_MAX i32 (i32.const 32))
   (global $TT_REG_NAME_MAX i32 (i32.const 64))
   (global $TT_REG_PATH_MAX i32 (i32.const 132))
@@ -3846,6 +3959,73 @@
   (global $TT_REG_NAME_OFF i32 (i32.const 12))
   (global $TT_REG_PATH_OFF i32 (i32.const 76))
   (global $tt_reg (mut i32) (i32.const 0))
+  ;; Discovered metadata has separate ownership from explicit registrations.
+  (global $tt_catalog (mut i32) (i32.const 0))
+  (global $tt_catalog_ready (mut i32) (i32.const 0))
+  (global $tt_catalog_generation (mut i32) (i32.const 0))
+  (global $tt_catalog_nonce (mut i32) (i32.const 0))
+  (global $tt_catalog_pending (mut i32) (i32.const 0))
+  (global $tt_catalog_token (mut i32) (i32.const 0))
+  (global $tt_catalog_count (mut i32) (i32.const 0))
+  (global $tt_catalog_failed (mut i32) (i32.const 0))
+
+  (func (export "font_catalog_ready") (result i32) (global.get $tt_catalog_ready))
+  (func (export "font_catalog_generation") (result i32) (global.get $tt_catalog_generation))
+  (func (export "font_catalog_begin") (result i32)
+    (local $table i32)
+    ;; Bootstrap must precede the first legacy scan. That scan mixed discovered
+    ;; and explicitly registered entries in tt_reg, so a late first catalog
+    ;; cannot safely distinguish or replace them. No migration is implied.
+    (if (i32.and (i32.ne (global.get $tt_font_dir_scanned) (i32.const 0))
+          (i32.eqz (global.get $tt_catalog_ready)))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.ne (global.get $tt_catalog_pending) (i32.const 0))
+          (i32.eq (global.get $tt_catalog_nonce) (i32.const -1)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (global.get $tt_catalog_generation) (i32.const -1))
+      (then (return (i32.const 0))))
+    (local.set $table (call $heap_alloc (i32.mul (global.get $TT_REG_MAX) (global.get $TT_REG_STRIDE))))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (memory.fill (call $g2w (local.get $table)) (i32.const 0)
+      (i32.mul (global.get $TT_REG_MAX) (global.get $TT_REG_STRIDE)))
+    (global.set $tt_catalog_pending (local.get $table))
+    (global.set $tt_catalog_nonce (i32.add (global.get $tt_catalog_nonce) (i32.const 1)))
+    (global.set $tt_catalog_token (global.get $tt_catalog_nonce))
+    (global.set $tt_catalog_count (i32.const 0))
+    (global.set $tt_catalog_failed (i32.const 0))
+    (global.get $tt_catalog_token))
+
+  (func $tt_catalog_abort (export "font_catalog_abort") (param $token i32)
+    (if (i32.or (i32.eqz (global.get $tt_catalog_pending))
+          (i32.ne (local.get $token) (global.get $tt_catalog_token))) (then (return)))
+    (call $heap_free (global.get $tt_catalog_pending))
+    (global.set $tt_catalog_pending (i32.const 0))
+    (global.set $tt_catalog_token (i32.const 0))
+    (global.set $tt_catalog_count (i32.const 0))
+    (global.set $tt_catalog_failed (i32.const 0)))
+
+  (func (export "font_catalog_commit") (param $token i32) (result i32)
+    (local $old i32)
+    (if (i32.or (i32.eqz (global.get $tt_catalog_pending))
+          (i32.ne (local.get $token) (global.get $tt_catalog_token)))
+      (then (return (i32.const 0))))
+    ;; A caller may have entered legacy discovery while staging was pending.
+    ;; Never publish a first catalog over that now-mixed explicit registry.
+    (if (i32.and (i32.ne (global.get $tt_font_dir_scanned) (i32.const 0))
+          (i32.eqz (global.get $tt_catalog_ready)))
+      (then
+        (global.set $tt_catalog_failed (i32.const 1))
+        (return (i32.const 0))))
+    (if (global.get $tt_catalog_failed) (then (return (i32.const 0))))
+    (local.set $old (global.get $tt_catalog))
+    (global.set $tt_catalog (global.get $tt_catalog_pending))
+    (global.set $tt_catalog_pending (i32.const 0))
+    (global.set $tt_catalog_token (i32.const 0))
+    (global.set $tt_catalog_count (i32.const 0))
+    (global.set $tt_catalog_generation (i32.add (global.get $tt_catalog_generation) (i32.const 1)))
+    (global.set $tt_catalog_ready (i32.const 1))
+    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (i32.const 1))
 
   (func $tt_reg_ensure (result i32)
     (local $guest i32) (local $wasm i32) (local $bytes i32)
@@ -3900,11 +4080,13 @@
   ;; family name could be read, 0 otherwise - which is the AddFontResourceA
   ;; return value, a count of fonts added.
   (func $tt_reg_add (param $path_guest i32) (result i32)
-    (local $table i32) (local $path i32) (local $face i32)
+    (call $tt_reg_add_face (local.get $path_guest) (call $tt_face_open (local.get $path_guest))))
+
+  (func $tt_reg_add_face (param $path_guest i32) (param $face i32) (result i32)
+    (local $table i32) (local $path i32)
     (local $data i32) (local $size i32) (local $index i32) (local $free i32)
-    (local $record i32) (local $weight i32)
+    (local $record i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const 0))))
-    (local.set $face (call $tt_face_open (local.get $path_guest)))
     (if (i32.lt_s (local.get $face) (i32.const 0)) (then (return (i32.const 0))))
     (local.set $data (call $tt_face_data (local.get $face)))
     (local.set $size (call $tt_face_size (local.get $face)))
@@ -3929,6 +4111,16 @@
     (if (i32.lt_s (local.get $free) (i32.const 0)) (then (return (i32.const 0))))
     (local.set $record (call $tt_reg_record (local.get $table) (local.get $free)))
 
+    (call $tt_reg_record_from_bytes (local.get $record) (local.get $path)
+      (local.get $data) (local.get $size)))
+
+  ;; Caller owns an unpublished record and validated contiguous byte spans.
+  ;; Writes no global roots and acquires no face/glyph cache ownership.
+  (func $tt_reg_record_from_bytes (param $record i32) (param $path i32)
+      (param $data i32) (param $size i32) (result i32)
+    (local $weight i32)
+    (if (i32.eqz (call $tt_is_truetype (local.get $data) (local.get $size)))
+      (then (return (i32.const 0))))
     (if (i32.eqz (call $tt_family_name (local.get $data) (local.get $size)
           (i32.add (local.get $record) (global.get $TT_REG_NAME_OFF))
           (global.get $TT_REG_NAME_MAX)))
@@ -3946,6 +4138,55 @@
     (i32.store offset=8 (local.get $record)
       (call $tt_is_italic (local.get $data) (local.get $size)))
     (i32.store (local.get $record) (i32.const 1))
+    (i32.const 1))
+
+  (func (export "font_catalog_add") (param $token i32) (param $path_g i32)
+      (param $data_g i32) (param $size i32) (result i32)
+    (local $path i32) (local $data i32) (local $extent i32) (local $len i32)
+    (local $table i32) (local $record i32)
+    (if (i32.or (i32.eqz (global.get $tt_catalog_pending))
+          (i32.ne (local.get $token) (global.get $tt_catalog_token)))
+      (then (return (i32.const 0))))
+    (if (global.get $tt_catalog_failed) (then (return (i32.const 0))))
+    ;; Pessimistically poison: every early failure requires abort, not a partial commit.
+    (global.set $tt_catalog_failed (i32.const 1))
+    (if (i32.or (i32.eqz (local.get $size))
+          (i32.gt_u (local.get $size) (i32.const 0x400000)))
+      (then (return (i32.const 0))))
+    (local.set $extent (call $heap_payload_size (local.get $data_g)))
+    (if (i32.or (i32.lt_s (local.get $extent) (i32.const 0))
+          (i32.lt_u (local.get $extent) (local.get $size)))
+      (then (return (i32.const 0))))
+    (local.set $data (call $g2w (local.get $data_g)))
+    (if (i32.ne (call $g2w (i32.add (local.get $data_g) (i32.sub (local.get $size) (i32.const 1))))
+          (i32.add (local.get $data) (i32.sub (local.get $size) (i32.const 1))))
+      (then (return (i32.const 0))))
+    (local.set $extent (call $heap_payload_size (local.get $path_g)))
+    (if (i32.le_s (local.get $extent) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $path (call $g2w (local.get $path_g)))
+    (block $terminated (loop $scan
+      (if (i32.or (i32.ge_u (local.get $len) (local.get $extent))
+            (i32.ge_u (local.get $len) (global.get $TT_REG_PATH_MAX)))
+        (then (return (i32.const 0))))
+      (if (i32.ne (call $g2w (i32.add (local.get $path_g) (local.get $len)))
+            (i32.add (local.get $path) (local.get $len)))
+        (then (return (i32.const 0))))
+      (br_if $terminated (i32.eqz (i32.load8_u (i32.add (local.get $path) (local.get $len)))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br $scan)))
+    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
+    (local.set $table (call $g2w (global.get $tt_catalog_pending)))
+    ;; Duplicate paths are ambiguous in a replacement snapshot; reject them.
+    (if (i32.ge_s (call $tt_reg_find_path (local.get $table) (local.get $path)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (if (i32.ge_u (global.get $tt_catalog_count) (global.get $TT_REG_MAX))
+      (then (return (i32.const 0))))
+    (local.set $record (call $tt_reg_record (local.get $table) (global.get $tt_catalog_count)))
+    (if (i32.eqz (call $tt_reg_record_from_bytes (local.get $record) (local.get $path)
+          (local.get $data) (local.get $size)))
+      (then (return (i32.const 0))))
+    (global.set $tt_catalog_count (i32.add (global.get $tt_catalog_count) (i32.const 1)))
+    (global.set $tt_catalog_failed (i32.const 0))
     (i32.const 1))
 
   (func $tt_reg_remove (param $path_guest i32) (result i32)
@@ -3967,12 +4208,17 @@
   ;; family installed regular-only still answers a bold request with the file
   ;; it has.
   (func $tt_reg_path (param $name i32) (param $weight i32) (param $italic i32)
+      (result i32)
+    (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
+    (call $tt_reg_table_path (call $g2w (global.get $tt_reg))
+      (local.get $name) (local.get $weight) (local.get $italic)))
+
+  (func $tt_reg_table_path (param $table i32) (param $name i32)
+      (param $weight i32) (param $italic i32)
         (result i32)
-    (local $table i32) (local $index i32) (local $record i32)
+    (local $index i32) (local $record i32)
     (local $want_bold i32) (local $score i32) (local $best i32) (local $found i32)
     (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
-    (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
-    (local.set $table (call $tt_reg_ensure))
     (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
     (local.set $want_bold (i32.ge_s (local.get $weight) (i32.const 700)))
     (local.set $italic (i32.ne (local.get $italic) (i32.const 0)))
@@ -4016,28 +4262,36 @@
 
   (func $tt_reg_enum_name (param $index i32) (result i32)
     (local $table i32) (local $i i32) (local $record i32) (local $name i32)
-    (local $seen i32)
-    (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
-    (local.set $table (call $tt_reg_ensure))
-    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (local $seen i32) (local $slot i32) (local $duplicate i32)
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $TT_REG_MAX)))
-      (local.set $record (call $tt_reg_record (local.get $table) (local.get $i)))
+      (br_if $done (i32.ge_u (local.get $i) (i32.mul (global.get $TT_REG_MAX) (i32.const 2))))
+      (local.set $table (select (global.get $tt_reg) (global.get $tt_catalog)
+        (i32.lt_u (local.get $i) (global.get $TT_REG_MAX))))
+      (block $next
+      (br_if $next (i32.eqz (local.get $table)))
+      (local.set $table (call $g2w (local.get $table)))
+      (local.set $slot (i32.rem_u (local.get $i) (global.get $TT_REG_MAX)))
+      (local.set $record (call $tt_reg_record (local.get $table) (local.get $slot)))
       (if (i32.load (local.get $record))
         (then
           (local.set $name
             (i32.add (local.get $record) (global.get $TT_REG_NAME_OFF)))
+          (local.set $duplicate (i32.const 0))
+          (if (i32.and (i32.ge_u (local.get $i) (global.get $TT_REG_MAX))
+                (i32.ne (global.get $tt_reg) (i32.const 0)))
+            (then (local.set $duplicate (call $tt_reg_enum_earlier
+              (call $g2w (global.get $tt_reg)) (global.get $TT_REG_MAX) (local.get $name)))))
           ;; Skip a name the substitution table already reports, and a name an
           ;; earlier registry entry already reported (bold and italic files of
           ;; one family each carry that family's name).
-          (if (i32.and
+          (if (i32.and (i32.eqz (local.get $duplicate)) (i32.and
                 (i32.eqz (call $tt_subst_enum_index (local.get $name)))
                 (i32.eqz (call $tt_reg_enum_earlier
-                  (local.get $table) (local.get $i) (local.get $name))))
+                  (local.get $table) (local.get $slot) (local.get $name)))))
             (then
               (if (i32.eq (local.get $seen) (local.get $index))
                 (then (return (local.get $name))))
-              (local.set $seen (i32.add (local.get $seen) (i32.const 1)))))))
+              (local.set $seen (i32.add (local.get $seen) (i32.const 1))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.const 0))
@@ -5409,6 +5663,10 @@
   (func (export "test_tt_subst_path") (param i32) (param i32) (param i32)
         (result i32)
     (call $tt_subst_path (local.get 0) (local.get 1) (local.get 2)))
+
+  (func (export "test_tt_subst_resolve") (param i32) (param i32) (param i32)
+        (result i32)
+    (call $tt_subst_resolve (local.get 0) (local.get 1) (local.get 2)))
 
   (func (export "test_tt_face_for_logfont") (param i32) (param i32) (param i32)
         (result i32)

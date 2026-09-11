@@ -19,6 +19,7 @@ async function main() {
   const guestToWasm = addr => sparseWasmBase + ((addr >>> 0) - sparseBase);
   const mainExports = {
     get_sync_table: () => 0,
+    reset_thread_message_queue: () => {},
     get_heap_ptr: () => 0,
     set_heap_ptr: () => {},
     get_image_base: () => 0x00400000,

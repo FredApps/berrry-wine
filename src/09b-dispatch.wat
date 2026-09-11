@@ -1127,6 +1127,9 @@
     ;; enumerators retain the original saved-return-address form.
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0011))
       (then
+        ;; Owned public WinHelp DLL callback: resume its original API frame.
+        (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x31504C48))
+          (then (call $help_macro_api_return) (return)))
         ;; DirectPlay player/group enumeration leaves its reentrant DPEN frame
         ;; at ESP after the five-argument callback returns.
         (if (i32.eq (call $gl32 (global.get $esp)) (i32.const 0x4E455044))

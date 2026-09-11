@@ -868,6 +868,19 @@
       (i32.gt_u (local.get $end) (i32.atomic.load offset=8 (local.get $rec)))
       (i32.gt_u (local.get $end) (i32.load offset=4 (local.get $rec)))))
 
+  ;; Allocator extent query, independent of the current instance bump cursor.
+  ;; No live/free bit exists: this validates a recorded extent, not the lifetime
+  ;; of freed pointers or the ownership of a forged interior header.
+  (func $heap_payload_size (param $ptr i32) (result i32)
+    (local $block i32) (local $size i32)
+    (local.set $block (i32.sub (local.get $ptr) (i32.const 4)))
+    (if (i32.eqz (call $heap_arena_find (local.get $block)))
+      (then (return (i32.const -1))))
+    (local.set $size (i32.load (call $g2w (local.get $block))))
+    (if (call $heap_block_bad (local.get $block) (local.get $size))
+      (then (return (i32.const -1))))
+    (i32.sub (local.get $size) (i32.const 4)))
+
   ;; Free-list allocator. Each allocated block has a 4-byte size header at ptr-4.
   ;; Free blocks: [size:4][next_guest_ptr:4][...]. Min block = 16 bytes.
   ;; Falls back to bump allocation when no free block fits.

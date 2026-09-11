@@ -2227,7 +2227,7 @@ async function main() {
   // One entry per executed batch, for --batch-stats; halts is indexed by the
   // reason code $run reports (see $last_run_halt in src/01-header.wat).
   const batchStatsBlocks = [];
-  const batchStatsHalts = [0, 0, 0, 0, 0, 0];
+  const batchStatsHalts = [0, 0, 0, 0, 0, 0, 0, 0];
   const recordFrame = (series) => {
     const at = process.hrtime.bigint();
     // Outside the measurement window, still move the anchor forward. Skipping
@@ -3313,6 +3313,7 @@ async function main() {
 
   // ThreadManager setup (lazy — created after instance)
   const { ThreadManager } = require('../lib/thread-manager');
+  const HelpNavigationPump = require('../lib/help-navigation-pump');
   let threadManager = null;
 
   // Wire thread/event imports to ThreadManager
@@ -4102,38 +4103,9 @@ async function main() {
     moduleBases['exe'] = { loadAddr: exeLoad, origBase: exeOrig };
     moduleBases[exeBase] = { loadAddr: exeLoad, origBase: exeOrig };
   }
-  if (dlls.length > 0) {
-    mountLoadedDllFiles(ctx.vfs, dlls);
-    const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
-      exeName: path.basename(EXE_PATH),
-      extraArgs: EXTRA_ARGS || '',
-      registerDllResources: (dllConfigs, results) => {
-        const { extractBitmapBytes } = require('../lib/dib');
-        ctx.dllResources = ctx.dllResources || {};
-        for (let i = 0; i < dllConfigs.length && i < results.length; i++) {
-          try {
-            const bitmapBytes = extractBitmapBytes(dllConfigs[i].bytes);
-            const count = Object.keys(bitmapBytes).length;
-            if (count > 0) {
-              ctx.dllResources[results[i].loadAddr] = { bitmapBytes };
-              console.log(`DLL resources: ${dllConfigs[i].name} has ${count} bitmaps`);
-            }
-          } catch (_) {}
-        }
-      },
-    });
-    if (dllResults) {
-      threadManager.setLoadedDlls(dllResults, callDllMain);
-      for (const r of dllResults) {
-        const key = r.name.toLowerCase().replace(/\.[^.]+$/, '');
-        moduleBases[key] = { loadAddr: r.loadAddr, origBase: r.origBase };
-      }
-    }
-    stopped = false;
-  }
-
-  // Resolve any module-relative address specs now that all module bases are known.
-  deferredResolveAddrs();
+  // Base DLL files participate in the same overlay replay as other mounts.
+  // Executable initializers are deferred until final files/state are ready.
+  if (dlls.length > 0) mountLoadedDllFiles(ctx.vfs, dlls);
 
   // Put the exe where a running image expects to find itself; see lib/vfs-seed.js.
   if (ctx.vfs) {
@@ -4470,6 +4442,47 @@ async function main() {
     }
 
   }
+
+  // DLL initializers are guest code: they may read restored files or draw UI.
+  // Prepare the bounded stock set after final mounts/state and before any
+  // initializer runs. Failure rejects this process; never continue a partially
+  // bootstrapped registry or retry it on the same memory.
+  await require('../lib/stock-font-bootstrap').install(ctx.vfs, {
+    exports: instance.exports, memory,
+  });
+  await require('../lib/font-catalog').install(ctx.vfs, {
+    exports: instance.exports, memory,
+  });
+  if (dlls.length > 0) {
+    const dllResults = loadDlls(instance.exports, memory.buffer, exeBytes, dlls, console.log, {
+      exeName: path.basename(EXE_PATH),
+      extraArgs: EXTRA_ARGS || '',
+      registerDllResources: (dllConfigs, results) => {
+        const { extractBitmapBytes } = require('../lib/dib');
+        ctx.dllResources = ctx.dllResources || {};
+        for (let i = 0; i < dllConfigs.length && i < results.length; i++) {
+          try {
+            const bitmapBytes = extractBitmapBytes(dllConfigs[i].bytes);
+            const count = Object.keys(bitmapBytes).length;
+            if (count > 0) {
+              ctx.dllResources[results[i].loadAddr] = { bitmapBytes };
+              console.log(`DLL resources: ${dllConfigs[i].name} has ${count} bitmaps`);
+            }
+          } catch (_) {}
+        }
+      },
+    });
+    if (dllResults) {
+      threadManager.setLoadedDlls(dllResults, callDllMain);
+      for (const r of dllResults) {
+        const key = r.name.toLowerCase().replace(/\.[^.]+$/, '');
+        moduleBases[key] = { loadAddr: r.loadAddr, origBase: r.origBase };
+      }
+    }
+    stopped = false;
+  }
+  // Resolve module-relative specs after the deferred DLL loading finishes.
+  deferredResolveAddrs();
 
   // Return addresses up the EBP chain, as a one-line list. The existing walker
   // in the SEH dump caps EBP at 0x01A00000, which excludes any app whose stack
@@ -8215,6 +8228,14 @@ async function main() {
       }
     }
 
+    // Native Help clicks can queue IO without parking a guest API frame.
+    // Service only at the outer boundary, preserving any existing guest wait.
+    await HelpNavigationPump.pump({
+      exports: instance.exports, vfs: ctx.vfs,
+      callbackOwner: threadManager, callbackMode: 'mainCooperative',
+      alive: () => !stopped && instance.exports.get_eip() !== 0,
+    });
+    if (stopped) break;
     const batchStartMs = TRACE_BATCH_TIMING ? Date.now() : 0;
     const decodesBefore = DECODE_STATS && instance.exports.get_cache_stores
       ? instance.exports.get_cache_stores() >>> 0 : 0;
@@ -8448,7 +8469,7 @@ async function main() {
         // Fail loudly rather than spinning: a provider that cannot deliver is
         // a mount bug, and a silent retry loop would look like a hang.
         await ctx.vfs.fillPendingRead(pending);
-        ctx.vfs.pendingRead = null;
+        if (ctx.vfs.pendingRead === pending) ctx.vfs.pendingRead = null;
       }
       instance.exports.clear_yield();
     }
@@ -8869,6 +8890,10 @@ if (VERBOSE) {
     }
   }
   const executionElapsedSeconds = Math.max(0, (performance.now() - executionStartedAt) / 1000);
+  // Every pump is awaited above, so no native Help producer remains active.
+  HelpNavigationPump.cancel(threadManager);
+  instance.exports.help_navigation_cancel?.();
+  instance.exports.help_macro_api_cancel_all?.();
   // The control server would otherwise hold the process open; unref lets a
   // reply resolved in the final batch still flush while the exit path prints.
   if (control) control.close();
@@ -9340,7 +9365,7 @@ if (VERBOSE) {
       const full = batchStatsBlocks.filter(b => b >= BATCH_SIZE).length;
       const tiny = batchStatsBlocks.filter(b => b < BATCH_SIZE / 100).length;
       const names = ['(none)', 'budget spent', 'EIP zero', 'yield_flag',
-                     'blocking wait', 'debug facility'];
+                     'blocking wait', 'debug facility', 'wall deadline', 'native callback return'];
       console.log(BATCH_STATS_FROM
         ? `\nBatch pacing (from batch ${BATCH_STATS_FROM}):`
         : '\nBatch pacing:');
@@ -9987,8 +10012,9 @@ if (VERBOSE) {
 
 main().catch(async e => {
   console.error(e);
-  // Exit code deliberately unchanged; the threads have to be stopped either way
-  // or node waits on them forever and the error above never gets read.
+  process.exitCode = 1;
+  // Rejected launch/runtime work is a failure. Stop Workers as well so Node
+  // cannot wait forever after reporting that failure.
   if (workerThreadHost) workerThreadHost.stop();
   if (closeD3DRender) {
     try { await closeD3DRender(); } catch (error) { console.error('[render] retirement failed:',error); }

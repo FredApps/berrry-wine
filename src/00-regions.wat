@@ -409,6 +409,8 @@
     (owner "01-header.wat:$SHARED_COUNTERS"))
   (region.declare $CLIPBOARD_SEQUENCE (size 0x00000004) (align 0x00000004)
     (owner "01-header.wat:$CLIPBOARD_SEQUENCE"))
+  (region.declare $SOUND_STOP_GENERATION (size 0x00000004) (align 0x00000004)
+    (owner "09a-handlers.wat:$SOUND_STOP_GENERATION"))
   (region.declare $GDI_TABLE_MARKS (size 0x00000010) (align 0x00000010)
     (owner "10d-gdi-region-path.wat:$gdi_table_mark_bump"))
   (region.declare $TV_SLOT_MARK (size 0x00000004) (align 0x00000010)
@@ -558,7 +560,7 @@
   (region.declare-fixed $DIB_BACKING_BASE (base 0x1C000000) (size 0x03F00000) (align 0x00001000)
     (owner "10-helpers.wat:$dib_free_wasm"))
   (region.declare-fixed $THREAD_RPC (base 0x1FF00000) (size 0x00100000) (align 0x00001000)
-    (owner "13-exports.wat:$run"))
+    (owner "13-exports.wat:$run_impl"))
 
   ;; ============================================================
   ;; SPANS — address-range LIMITS, not storage.

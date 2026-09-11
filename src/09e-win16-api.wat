@@ -6908,6 +6908,7 @@
   ;; USER.171 WinHelp(hWnd, lpszHelp, usCommand, ulData).
   (func $win16_WinHelp
     (local $hwnd i32) (local $file i32) (local $cmd i32) (local $data i32)
+    (local $accepted i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 5))))
     (local.set $file (call $win16_far_to_guest
       (call $win16_arg16 (i32.const 4)) (call $win16_arg16 (i32.const 3))))
@@ -6920,11 +6921,29 @@
         (then (call $win16_far_to_guest
           (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
         (else (call $win16_arg32 (i32.const 0)))))
-    (call $win16_call32_begin (i32.const 4))
-    (call $handle_WinHelpA (local.get $hwnd) (local.get $file) (local.get $cmd)
-      (local.get $data) (i32.const 0) (i32.const 0))
-    (call $win16_call32_end)
-    (global.set $eax (i32.and (global.get $eax) (i32.const 0xFFFF)))
+    ;; The staged loader must retain the real Pascal frame's identity, not
+    ;; call32's shared scratch ESP. Only this outer boundary may park it.
+    (local.set $accepted (call $help_macro_api_enter (local.get $hwnd)
+      (local.get $file) (local.get $cmd) (local.get $data) (i32.const 3)))
+    (if (i32.eq (local.get $accepted) (i32.const -3))
+      (then
+        (local.set $accepted (call $help_dispatch_api_a_impl (local.get $hwnd)
+          (local.get $file) (local.get $cmd) (local.get $data)))))
+    (call $help_macro_api_leave)
+    (if (i32.eq (local.get $accepted) (i32.const -2))
+      (then
+        ;; The PE callback owns a private stack/TIB now. Do not reload thunk
+        ;; CS or pop the suspended Pascal frame until its typed return.
+        (global.set $handler_set_eip (i32.const 1))
+        (return)))
+    (if (i32.eq (local.get $accepted) (i32.const -1))
+      (then
+        (global.set $eax (i32.const 0))
+        (call $win16_set_sreg (i32.const 1) (global.get $WIN16_THUNK_SEL))
+        (call $spin_park (i32.const 12))
+        (return)))
+    (call $help_present_dispatch (local.get $accepted) (local.get $cmd))
+    (global.set $eax (i32.and (local.get $accepted) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 12)))
 
   ;; The RECT helpers. These are pure arithmetic on a caller-owned rectangle
@@ -10414,12 +10433,16 @@
     ;; EIP zero is the exception: that is how a task that has been terminated
     ;; on purpose — FatalAppExit, or a fatal error the host reported — tells
     ;; the run loop it is done, and it must not read as a wild jump.
-    (if (i32.and (i32.ne (global.get $eip) (i32.const 0))
+    ;; A public WinHelp macro may now run a flat DLL callback on its own
+    ;; validated stack; all other out-of-arena returns remain fatal.
+    (if (i32.and
+        (i32.eqz (call $help_macro_api_flat_callback_active))
+        (i32.and (i32.ne (global.get $eip) (i32.const 0))
         (i32.or
           (i32.lt_u (global.get $eip) (global.get $WIN16_ARENA))
           (i32.ge_u (global.get $eip)
             (i32.add (global.get $WIN16_ARENA)
-              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))))
+              (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000)))))))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F8))
         (call $host_log_i32 (global.get $win16_last_module))

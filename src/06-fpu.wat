@@ -129,14 +129,41 @@
 
   (func (export "set_fpu_trace") (param $on i32) (global.set $fpu_trace (local.get $on)))
 
+  ;; Physical access does not change TOP, tags, or the exact integer shadow.
+  (func $fpu_get_phys (param $p i32) (result f64)
+    (if (i32.eq (local.get $p) (i32.const 0)) (then (return (global.get $fpu_value0))))
+    (if (i32.eq (local.get $p) (i32.const 1)) (then (return (global.get $fpu_value1))))
+    (if (i32.eq (local.get $p) (i32.const 2)) (then (return (global.get $fpu_value2))))
+    (if (i32.eq (local.get $p) (i32.const 3)) (then (return (global.get $fpu_value3))))
+    (if (i32.eq (local.get $p) (i32.const 4)) (then (return (global.get $fpu_value4))))
+    (if (i32.eq (local.get $p) (i32.const 5)) (then (return (global.get $fpu_value5))))
+    (if (i32.eq (local.get $p) (i32.const 6)) (then (return (global.get $fpu_value6))))
+    (global.get $fpu_value7))
+
+  (func $fpu_set_phys (param $p i32) (param $v f64)
+    (if (i32.eq (local.get $p) (i32.const 0))
+      (then (global.set $fpu_value0 (local.get $v)) (return)))
+    (if (i32.eq (local.get $p) (i32.const 1))
+      (then (global.set $fpu_value1 (local.get $v)) (return)))
+    (if (i32.eq (local.get $p) (i32.const 2))
+      (then (global.set $fpu_value2 (local.get $v)) (return)))
+    (if (i32.eq (local.get $p) (i32.const 3))
+      (then (global.set $fpu_value3 (local.get $v)) (return)))
+    (if (i32.eq (local.get $p) (i32.const 4))
+      (then (global.set $fpu_value4 (local.get $v)) (return)))
+    (if (i32.eq (local.get $p) (i32.const 5))
+      (then (global.set $fpu_value5 (local.get $v)) (return)))
+    (if (i32.eq (local.get $p) (i32.const 6))
+      (then (global.set $fpu_value6 (local.get $v)) (return)))
+    (global.set $fpu_value7 (local.get $v)))
+
   (func $fpu_get (param $i i32) (result f64)
-    (f64.load (i32.add (i32.const 0x200)
-      (i32.shl (i32.and (i32.add (global.get $fpu_top) (local.get $i)) (i32.const 7)) (i32.const 3)))))
+    (call $fpu_get_phys (call $fpu_tag_phys
+      (i32.add (global.get $fpu_top) (local.get $i)))))
 
   (func $fpu_set (param $i i32) (param $v f64)
     (call $fpu_raw_clear (local.get $i))
-    (f64.store (i32.add (i32.const 0x200)
-      (i32.shl (i32.and (i32.add (global.get $fpu_top) (local.get $i)) (i32.const 7)) (i32.const 3)))
+    (call $fpu_set_phys (call $fpu_tag_phys (i32.add (global.get $fpu_top) (local.get $i)))
       (local.get $v))
     (call $fpu_mark_valid (local.get $i)))
 
@@ -449,7 +476,7 @@
       (call $fpu_store_m80
         (i32.add (local.get $addr)
           (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1))))
-        (f64.load (i32.add (i32.const 0x200) (i32.shl (local.get $i) (i32.const 3)))))
+        (call $fpu_get_phys (local.get $i)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
@@ -461,7 +488,7 @@
       (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
       (local.set $slot (i32.add (local.get $base)
         (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1)))))
-      (f64.store (i32.add (i32.const 0x200) (i32.shl (local.get $i) (i32.const 3)))
+      (call $fpu_set_phys (local.get $i)
         (call $fpu_load_m80 (i32.add (local.get $addr)
           (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))

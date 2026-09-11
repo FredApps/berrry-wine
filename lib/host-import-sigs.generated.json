@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 239,
+  "count": 241,
   "sigs": {
     "log": {
       "params": [
@@ -125,6 +125,12 @@
       ],
       "results": [
         "i32"
+      ]
+    },
+    "monotonic_time_ms": {
+      "params": [],
+      "results": [
+        "f64"
       ]
     },
     "yield": {
@@ -1262,6 +1268,17 @@
       "params": [
         "i32",
         "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "fs_read_file_preserve_pending": {
+      "params": [
         "i32",
         "i32",
         "i32",

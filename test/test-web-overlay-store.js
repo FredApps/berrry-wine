@@ -109,6 +109,37 @@ async function preparePage(browser, base) {
       }
     }
     console.log('PASS real Chrome OPFS: concurrent two-tab and same-tab stores preserve 26 files across reload and eager snapshot reads');
+    await first.evaluate(async scope => {
+      window.store = OverlayStore.opfsStore(scope);
+      const result = await store.writeBatch([{path:'pinned',kind:'file',data:new TextEncoder().encode('old-version')}], {snapshot:true});
+      window.pinnedSnapshot = result.snapshot;
+      window.pinnedProvider = result.snapshot.records.find(r => r.path === 'pinned').provider;
+    }, scope);
+    await pages[1].evaluate(async scope => {
+      const store = OverlayStore.opfsStore(scope);
+      await store.writeBatch([{path:'pinned',kind:'file',data:new TextEncoder().encode('new-version')}]);
+      await store.remove('pinned');
+    }, scope);
+    assert.deepStrictEqual(await first.evaluate(async () => [...await pinnedProvider.readRange(4, 3)]), [...Buffer.from('ver')]);
+    await pages[1].evaluate(scope => OverlayStore.removeOpfsScope(scope), scope);
+    assert.strictEqual(await first.evaluate(async () => new TextDecoder().decode(await pinnedProvider.readRange(0,99))), 'old-version');
+    await first.evaluate(async () => { await pinnedSnapshot.release(); });
+    const remaining = await first.evaluate(async scope => {
+      const root = await navigator.storage.getDirectory();
+      const top = await root.getDirectoryHandle('wine-assembly');
+      const overlays = await top.getDirectoryHandle('overlays');
+      const name = 'overlay-' + [...new TextEncoder().encode(scope)].map(b => b.toString(16).padStart(2,'0')).join('');
+      const dir = await overlays.getDirectoryHandle(name);
+      const counts = [];
+      for (const child of ['blobs','snapshots']) {
+        let count = 0;
+        for await (const ignored of (await dir.getDirectoryHandle(child)).keys()) count++;
+        counts.push(count);
+      }
+      return counts;
+    }, scope);
+    assert.deepStrictEqual(remaining, [0,0], 'last release must reclaim deleted blobs and lease manifests');
+    console.log('PASS real Chrome OPFS: exact-commit pinned snapshot survives cross-tab overwrite/delete/scope removal; final release reclaims blobs and leases');
   } finally {
     try {
       if (first && !first.isClosed()) {

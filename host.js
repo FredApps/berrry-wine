@@ -7,6 +7,8 @@
 const ProcessBoot = (typeof window !== 'undefined' && window.processBoot) || null;
 const HostMemUtils = (typeof window !== 'undefined' && window.memUtils) ||
   (typeof require !== 'undefined' ? require('./lib/mem-utils') : null);
+const HostHelpNavigationPump = typeof require === 'function'
+  ? require('./lib/help-navigation-pump') : globalThis.HelpNavigationPump;
 
 // iOS decides whether a page may be heard at all, and WebAudio alone does not
 // get a say. A page that only ever makes sound through an AudioContext lands
@@ -633,6 +635,7 @@ class WineAssembly {
   }
 
   constructor() {
+    this._fontBootState = 'new';
     // A debug tab is a live-worktree harness. Stop/Launch creates a new
     // process and must see a newly rebuilt module even when the page itself
     // was not reloaded; production keeps sharing one compiled module.
@@ -2198,12 +2201,14 @@ class WineAssembly {
       this.logToUI('[threads] lib/guest-thread-host.js not loaded — running single-threaded');
       return;
     }
+    let worker = null;
     try {
       const res = await fetch(WineAssembly.versionedUrl('lib/host-import-sigs.generated.json'));
       if (!res.ok) throw new Error(`sigs HTTP ${res.status}`);
       const sigs = (await res.json()).sigs;
+      if (this._stopped) return;
       const self = this;
-      const worker = new GuestThreadHost({
+      worker = new GuestThreadHost({
         memory: this.memory,
         module: wasmModule,
         sigs,
@@ -2218,8 +2223,15 @@ class WineAssembly {
           return self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio);
         },
       });
-      await worker.start();
+      // Publish before awaiting readiness so stop can terminate a starting
+      // worker too; otherwise a rejected start leaves its clock/memory alive.
       this.guestWorker = worker;
+      await worker.start();
+      if (this._stopped) {
+        await worker.stop();
+        if (this.guestWorker === worker) this.guestWorker = null;
+        return;
+      }
       // Renderer windows still retain the browser-side WebAssembly.Instance
       // as their ownership token. Mark that token so keyboard handling queues
       // messages for slot 0 instead of calling exports on the idle instance.
@@ -2227,7 +2239,10 @@ class WineAssembly {
       this.renderer._guestWorkerWasms.add(this.instance);
       this.logToUI('[threads] guest main thread is running in a Worker (experimental)');
     } catch (err) {
-      this.guestWorker = null;
+      // Failed termination is not permission to fall back while an orphan
+      // producer still owns shared memory. Propagate that failure.
+      if (worker) await worker.stop();
+      if (this.guestWorker === worker) this.guestWorker = null;
       this.logToUI(`[threads] worker start failed (${err.message}) — running single-threaded`);
     }
   }
@@ -2237,7 +2252,81 @@ class WineAssembly {
   // `opts.launchPrefs` is the app entry's own screen-size → byte-pokes function
   // (lib/apps.js), applied right after load_pe.
   async loadExe(url, opts = {}) {
+    if (this._stopped || (this._fontBootState && this._fontBootState !== 'new')) {
+      throw new Error('Guest startup is one-shot; create a new process to load an executable');
+    }
+    this._fontBootState = 'loading';
+    const controller = new AbortController();
+    this._fontBootAbort = controller;
+    let finishBoot;
+    this._fontBootBarrier = new Promise(resolve => { finishBoot = resolve; });
+    const check = () => {
+      if (this._stopped || controller.signal.aborted || this._fontBootAbort !== controller) {
+        throw new Error('Guest startup was canceled');
+      }
+    };
+    try {
+      const entry = await this._loadExeOnce(url, opts, check);
+      check();
+      if (!entry) throw new Error('Executable did not produce a guest entry point');
+      await this._prepareStockFonts(check, controller.signal);
+      check();
+      await this._prepareFontCatalog(check, controller.signal);
+      check();
+      this._fontBootState = 'ready';
+      return entry;
+    } catch (error) {
+      this._fontBootState = 'failed';
+      controller.abort();
+      this.stop();
+      throw error;
+    } finally {
+      if (this._fontBootAbort === controller) this._fontBootAbort = null;
+      finishBoot();
+      this._fontBootBarrier = null;
+    }
+  }
+
+  _assertFontBootReady() {
+    if (this._stopped || (this._fontBootState && this._fontBootState !== 'ready')) {
+      throw new Error('Guest startup is not ready or was stopped');
+    }
+  }
+
+  async _prepareFontCatalog(check, signal) {
+    const vfs = this._helpCtx && this._helpCtx.vfs;
+    if (typeof FontCatalog === 'undefined') throw new Error('Font catalog library is unavailable');
+    if (this.guestWorker) {
+      await FontCatalog.installRemote(vfs, { worker: this.guestWorker, signal, check });
+    } else {
+      await FontCatalog.install(vfs, { exports: this.instance.exports, memory: this.memory, signal, check });
+    }
+    check();
+  }
+
+  async _prepareStockFonts(check, signal) {
+    const vfs = this._helpCtx && this._helpCtx.vfs;
+    if (typeof StockFontBootstrap === 'undefined') throw new Error('Stock-font bootstrap library is unavailable');
+    const worker = this.guestWorker;
+    if (!worker) {
+      await StockFontBootstrap.install(vfs, { exports: this.instance.exports, memory: this.memory, signal });
+      check();
+      return;
+    }
+    const batch = await StockFontBootstrap.prepare(vfs, { signal });
+    try {
+      check();
+      const fonts = Array.from({ length: batch.count }, (_, index) => batch.read(index));
+      if (!batch.isCurrent()) throw new Error('Stock-font files changed during startup');
+      await worker.installStockFonts(fonts);
+      check();
+      if (!batch.isCurrent()) throw new Error('Stock-font files changed during Worker publication');
+    } finally { batch.release(); }
+  }
+
+  async _loadExeOnce(url, opts, check) {
     if (!this.instance) await this.init();
+    check();
     this._win16ExtraModules = opts.win16Modules || [];
 
     // `opts.bytes` is the imported-media path (docs/design-byo-media.md): the
@@ -2245,6 +2334,7 @@ class WineAssembly {
     // is no URL to fetch and `url` is only the name the guest should see for
     // itself. Everything below treats the two identically.
     const exeBytes = opts.bytes || await WineAssembly.fetchAssetBytes(url);
+    check();
     this._exeBytes = exeBytes;
 
     // Resource parsing lives in WAT ($find_resource, $dlg_load,
@@ -2272,10 +2362,12 @@ class WineAssembly {
           extraArgs: this._extraArgs || '',
           exeDrive: ProcessBoot.exeDriveForPath(url),
         });
+      check();
       const meta = await this.guestWorker.readExports([
         'get_image_base', 'get_code_start', 'get_code_end',
         'get_thunk_base', 'get_thunk_end', 'get_num_thunks',
       ]);
+      check();
       if (this.instance.exports.init_thread && meta.get_image_base) {
         // tid 7 is the last worker slot; this instance never executes guest
         // code, so its decoded-cache partition is irrelevant — only its globals
@@ -2300,7 +2392,8 @@ class WineAssembly {
     // A 16-bit task's DLLs go into the same selector arena its own segments
     // just went into, so this has to follow load_pe and precede its first call
     // into one.
-    await this._loadWin16Dlls(url, exeBytes);
+    await this._loadWin16Dlls(url, exeBytes, check);
+    check();
 
     // Initialize DirectX COM vtable thunks (must be after load_pe sets image_base).
     if (this.instance.exports.init_dx_com_thunks) {
@@ -2323,7 +2416,7 @@ class WineAssembly {
   // of a map; a name that 404s is simply absent, exactly as a missing file is
   // for the CLI. Hearts loads CARDS through LoadLibrary rather than importing
   // it, so this cannot be driven by the module-reference table.
-  async _loadWin16Dlls(url, exeBytes) {
+  async _loadWin16Dlls(url, exeBytes, check = () => {}) {
     const _loadWin16Dlls = (typeof DllLoader !== 'undefined' && DllLoader.loadWin16Dlls) || null;
     const _stageable = (typeof DllLoader !== 'undefined' && DllLoader.win16StageableModules) || null;
     if (!_loadWin16Dlls || !_stageable) return;
@@ -2376,6 +2469,7 @@ class WineAssembly {
           if (!files.has(name)) files.set(name, bytes);
         } catch (_) { /* absent is a valid answer */ }
       })));
+    check();
     // Keyed uppercase, because the name a LoadLibrary arrives with is whatever
     // the app typed and the name fetched here is whatever the registry says.
     this._win16Modules = new Map(
@@ -2545,11 +2639,27 @@ class WineAssembly {
   }
 
   async loadDlls(dllPaths) {
+    this._assertFontBootReady();
+    if (this._dllBootLoading) throw new Error('Guest DLL initialization is already pending');
+    this._dllBootLoading = true;
+    try {
+      return await this._loadDllsOnce(dllPaths);
+    } catch (error) {
+      this.stop();
+      throw error;
+    } finally {
+      this._dllBootLoading = false;
+      this._inDllInit = false;
+    }
+  }
+
+  async _loadDllsOnce(dllPaths) {
     if (!this.instance) return;
     const _loadDlls = (typeof DllLoader !== 'undefined' && DllLoader.loadDlls) || (typeof loadDlls === 'function' && loadDlls);
     if (!_loadDlls) return;
     // dllPaths can be strings (URLs) or {name, bytes} objects
     const rememberDllBytes = (name, bytes) => {
+      this._assertFontBootReady();
       if (!name || !bytes) return;
       const key = String(name).toLowerCase();
       this._loadedDllBytesByName = this._loadedDllBytesByName || {};
@@ -2580,6 +2690,7 @@ class WineAssembly {
       }
       return item;
     }));
+    this._assertFontBootReady();
     const readyConfigs = configs.filter(Boolean);
     const exeBytes = this._exeBytes;
     this._inDllInit = true;
@@ -2599,12 +2710,14 @@ class WineAssembly {
       const register = opts.registerDllResources;
       delete opts.registerDllResources;
       results = await this.guestWorker.loadDlls(readyConfigs, exeBytes, opts);
+      this._assertFontBootReady();
       if (register) register(readyConfigs, results);
     } else {
       opts.advanceGuestTime = ms => this._advanceGuestTickMs(ms,
         this.hostCtx && this.hostCtx.sharedAudio);
       results = _loadDlls(this.instance.exports, this.memory.buffer, exeBytes, readyConfigs, console.log, opts);
     }
+    this._assertFontBootReady();
     // Cooperative threads get their DLL set (and the DllMain entry caller) from
     // here; the worker backend loads them inside each worker instead.
     if (this.threadManager && this.threadManager.setLoadedDlls) {
@@ -2930,8 +3043,26 @@ class WineAssembly {
   // exists -- desktop icons hidden over a blank canvas. The two sites with no
   // repaint had the opposite fault: a crash left the dead app's last frame on
   // screen. Repainting last, once, fixes both.
+  _trackGuestStep(body) {
+    const host = this;
+    return function(...args) {
+      if (!host._activeGuestSteps) host._activeGuestSteps = new Set();
+      const active = host._activeGuestSteps;
+      let done;
+      const completion = new Promise(resolve => { done = resolve; });
+      active.add(completion);
+      let work;
+      try { work = body(...args); }
+      catch (error) { active.delete(completion); done(); throw error; }
+      return Promise.resolve(work).finally(() => { active.delete(completion); done(); });
+    };
+  }
+
   stop(options = {}) {
+    if (this._fontBootAbort) this._fontBootAbort.abort();
+    if (this._fontBootState !== 'failed') this._fontBootState = 'stopped';
     this.running = false;
+    if (HostHelpNavigationPump) HostHelpNavigationPump.cancel(this.threadManager || this);
     // A pending parked-sleep timeout and the visibilitychange listener both
     // close over this WineHost, and a WineHost owns a 512MB shared memory.
     // Same leak the DX rAF chain had.
@@ -2948,6 +3079,43 @@ class WineAssembly {
     // loop that restarted itself on the second launch would be back to
     // holding a dead host forever.
     this._stopped = true;
+    if (this.threadManager) this.threadManager._helpStopping = true;
+    if (!this._vfsStopBarrier) {
+      // A stop may occur inside an active step or asynchronous boot. Keep its
+      // host only until those producers settle, never in the later retry owner.
+      const launch = this._vfsLaunchBarrier;
+      const fontBoot = this._fontBootBarrier;
+      let termination;
+      try { termination = this.guestWorker && this.guestWorker.stop(); }
+      catch (error) { termination = Promise.reject(error); }
+      this._vfsStopBarrier = (async () => {
+        await termination;
+        if (fontBoot) await fontBoot;
+        if (launch) await launch;
+        // A boot already awaiting instantiation when stop arrived can publish
+        // its Worker/manager later. Recheck after the boot settles as well.
+        if (this.guestWorker) await this.guestWorker.stop();
+        const steps = this._activeGuestSteps;
+        const manager = this.threadManager;
+        while (steps && steps.size) await Promise.all([...steps]);
+        const fills = manager && manager.threads
+          ? [...manager.threads.values()].flatMap(thread => [thread.ioFill, thread.helpPump]).filter(Boolean) : [];
+        await Promise.allSettled(fills);
+        // No cooperative producer can reenter these instances now. Cancel
+        // queued-but-never-pumped work as well as any completed fill's owner.
+        const localExports = [this.instance && this.instance.exports];
+        if (manager && manager.threads) for (const thread of manager.threads.values()) {
+          if (thread.instance) localExports.push(thread.instance.exports);
+        }
+        for (const ex of localExports) {
+          if (ex && ex.help_navigation_cancel) ex.help_navigation_cancel();
+          if (ex && ex.help_macro_api_cancel_all) ex.help_macro_api_cancel_all();
+        }
+      })();
+      // Consumers await the original promise; suppress an unhandled rejection
+      // when no browser shell is attached (retirement must fail closed).
+      void this._vfsStopBarrier.catch(() => {});
+    }
     this._stopPerfCounterPoll();
     this._cleanupAudio();
     // A deferred last-window teardown has nothing left to finish, and leaving
@@ -3014,7 +3182,11 @@ class WineAssembly {
     } else if (typeof window !== 'undefined' && !this._releaseTimer) {
       this._releaseTimer = setTimeout(() => {
         this._releaseTimer = null;
-        if (this._stopped) this._releaseGuestMemory();
+        if (this._stopped) {
+          void this._vfsStopBarrier.then(() => this._releaseGuestMemory(), error => {
+            console.error('Guest teardown did not quiesce:', error);
+          });
+        }
       }, 0);
     }
   }
@@ -3223,7 +3395,7 @@ class WineAssembly {
       self.renderer._guestWorkerFocusPublishers.add(self._rendererFocusPublisher);
     }
     let unsupportedYield = 0;
-    const step = async () => {
+    const step = self._trackGuestStep(async () => {
       if (!self.running) return;
       if (self._hiddenPaused || self._maybePauseForHidden()) {
         self._pausedStep = step;
@@ -3233,6 +3405,16 @@ class WineAssembly {
         ? window.WinePerf : null;
       if (perf) perf.stepBegin();
       try {
+        if (HostHelpNavigationPump && self.guestWorker.link.helpPending) {
+          const link = self.guestWorker.link;
+          await HostHelpNavigationPump.pump({
+            call: (name, ...args) => link.callExport(name, ...args), pending: true,
+            callbackOwner: self.threadManager || self, callbackMode: 'mainWorker',
+            vfs: self._helpCtx && self._helpCtx.vfs,
+            alive: () => self.running && !link._stopped && !!link.lastEip,
+          });
+          if (!self.running) return;
+        }
         self._beginGuestTickBatch();
         if (self.guestWorker.broker) {
           // The guest's message-wait resume runs inside the worker and needs to
@@ -3423,7 +3605,7 @@ class WineAssembly {
           if (pending) {
             try { await pvfs.fillPendingRead(pending); }
             catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
-            pvfs.pendingRead = null;
+            if (pvfs.pendingRead === pending) pvfs.pendingRead = null;
           }
           await self.guestWorker.callExport('clear_yield');
         } else if (r.yield === 14 || r.yield === 15) {
@@ -3444,6 +3626,7 @@ class WineAssembly {
           }
         }
       } catch (err) {
+        if (!self.running) return; // expected rejection from worker termination
         self.logToUI(`[threads] worker loop failed: ${err.message}`);
         self.stop({ repaint: false });
         return;
@@ -3454,7 +3637,7 @@ class WineAssembly {
       // setTimeout chain is capped at 4ms once it is five deep, which would
       // hold worker mode to ~250 slices a second no matter how fast a slice is.
       if (self.running) self._scheduleStep(step);
-    };
+    });
     // Frozen at launch (a ?frozen tile, or the box checked before the app
     // started): park the very first slice instead of running it, so the guest
     // is at instruction zero until an agent steps it.
@@ -3478,6 +3661,15 @@ class WineAssembly {
   // and being told "no" every time. The cap is deliberate — a wake source we
   // forgot to hook up degrades to 20Hz polling, never to a hang.
   _scheduleStep(step, delayMs = 0) {
+    // Private Help work is runnable even while the guest is in WaitMessage or
+    // Sleep. Preserve that wait, but do not apply the idle polling delay.
+    const helpEx = this.instance && this.instance.exports;
+    const helpPending = (helpEx && helpEx.get_help_navigation_pending && helpEx.get_help_navigation_pending()) ||
+      (this.guestWorker && this.guestWorker.link && this.guestWorker.link.helpPending) ||
+      (this.threadManager && this.threadManager.threads && [...this.threadManager.threads.values()].some(thread =>
+        thread.helpPump || (thread.instance && thread.instance.exports.get_help_navigation_pending &&
+          thread.instance.exports.get_help_navigation_pending()) || (thread.link && thread.link.helpPending)));
+    if (helpPending) delayMs = 0;
     // Every completed step of both drive loops passes through here exactly
     // once, which makes this the only honest "did the guest run" counter the
     // page has. `_runSliceCount` is not one: it is bumped only on the branch
@@ -3978,18 +4170,29 @@ class WineAssembly {
   // non-preemptible (including a native guest API), so use small measured
   // quanta and check elapsed host time between them. A guest yield/debug halt
   // must return to the existing host state machine, never be resumed here.
-  _runCooperativeSlice(maxBlocks) {
+  _runCooperativeSlice(maxBlocks, turnDeadline) {
     const ex = this.instance.exports;
     const now = () => this._audioSchedulerNow();
     const start = now();
     let blocks = 0;
-    let remaining = Math.max(1, maxBlocks | 0);
+    let remaining = Math.max(0, maxBlocks | 0);
+    const deadline = this._frozen ? Infinity
+      : (Number.isFinite(turnDeadline) ? turnDeadline : start + 8);
     let hitDeadline = false;
     do {
+      // run(0) finishes an already-entered block; never replace it with a new
+      // block or suppress this completion because a host deadline expired.
+      if (remaining > 0 && now() >= deadline) { hitDeadline = true; break; }
       const quantum = this._frozen ? remaining : Math.min(remaining,
         Math.max(1, this._cooperativeQuantumBlocks || 128));
       const before = now();
-      ex.run(quantum);
+      try {
+        if (!this._frozen && ex.run_budgeted) ex.run_budgeted(quantum, deadline);
+        else ex.run(quantum);
+      } finally {
+        if (ex.set_run_deadline_enabled) ex.set_run_deadline_enabled(0);
+      }
+      if (ex.get_last_run_halt && ex.get_last_run_halt() === 6) hitDeadline = true;
       const ran = ex.get_last_run_blocks ? Math.max(0, ex.get_last_run_blocks()) : 0;
       const elapsed = Math.max(0, now() - before);
       blocks += ran;
@@ -4003,7 +4206,7 @@ class WineAssembly {
           ex.get_last_run_halt() !== 1 ||
           (ex.get_yield_reason && ex.get_yield_reason()) ||
           (ex.get_eip && !ex.get_eip())) break;
-      if (!this._frozen && now() - start >= 8) {
+      if (now() >= deadline) {
         hitDeadline = true;
         break;
       }
@@ -4012,6 +4215,8 @@ class WineAssembly {
   }
 
   run(stepsPerSlice = 100000) {
+    this._assertFontBootReady();
+    if (this._dllBootLoading) throw new Error('Guest DLL initialization is still pending');
     this.stepsPerSlice = stepsPerSlice;
     if (this.guestWorker) return this._runThreaded(stepsPerSlice);
     this.running = true;
@@ -4020,7 +4225,7 @@ class WineAssembly {
     const self = this;
     self._installVisibilityPause();
     self._installInputWake();
-    const step = async () => {
+    const step = self._trackGuestStep(async () => {
       if (!self.running) return;
       // Hidden tab, nothing audible: park the whole chain here. Nothing is
       // scheduled after this return, so the emulator costs exactly zero until
@@ -4040,12 +4245,36 @@ class WineAssembly {
       // Read only at the tail, where it decides whether the next slice is
       // posted immediately or slept for.
       let mainParked = false;
+      const turnNow = () => self._audioSchedulerNow();
+      const turnDeadline = self._frozen ? Infinity : turnNow() + 8;
       try {
+        if (HostHelpNavigationPump) {
+          await HostHelpNavigationPump.pump({ exports: self.instance.exports,
+            callbackOwner: self.threadManager || self, callbackMode: 'mainCooperative',
+            vfs: self._helpCtx && self._helpCtx.vfs,
+            alive: () => self.running && !!self.instance.exports.get_eip(),
+          });
+          if (!self.running) return;
+        }
         // Cooperative apps run on the browser's main thread. Respect the
         // smaller compatibility policies selected by browser-shell so a hot
         // guest loop cannot hold input and repaint hostage for a full 1k
         // slice. The guest-Worker path keeps its separate 1k floor above.
         const activeStepsPerSlice = Math.max(1, (self.stepsPerSlice | 0) || stepsPerSlice);
+        // A wake deferred at last turn's deadline must finish before the
+        // signaling main frame resumes and can tear down its shared resources.
+        if (!self._frozen && self.threadManager && self.threadManager._cooperativeWakeTargets
+            && self.threadManager._cooperativeWakeTargets.size) {
+          const wake = await self.threadManager.drainCooperativeWakes({
+            deadline: turnDeadline, now: turnNow,
+            serviceLoadLibraries: () => self.handleCooperativeThreadLoadLibraries(),
+          });
+          if (perf && wake) perf.countBlocks(wake.blocks || 0);
+          if ((wake && wake.pending) || turnNow() >= turnDeadline) {
+            if (self.running) self._scheduleStep(step, 0);
+            return;
+          }
+        }
         self._beginGuestTickBatch();
         // Check if main thread is waiting
         if (self.threadManager) await self.threadManager.resolveMainThreadSend();
@@ -4056,7 +4285,9 @@ class WineAssembly {
           else renderWaiting = true;
         }
         const mainThreadWaiting = renderWaiting || (self.threadManager &&
-          (self._isMainExecutionSuspended() || self.threadManager.checkMainYield()));
+          ((!self._frozen && self._cooperativeWorkersDue &&
+            (self.threadManager.hasActiveThreads() || self.threadManager._pendingThreads.length)) ||
+            self._isMainExecutionSuspended() || self.threadManager.checkMainYield()));
         if (mainThreadWaiting) {
           mainParked = true;
           // Main still waiting — just run worker threads.
@@ -4093,7 +4324,7 @@ class WineAssembly {
           const pageProfile = (typeof window !== 'undefined' && window.__aoeProfile) || null;
           const pageProfileStart = pageProfile && typeof performance !== 'undefined' ? performance.now() : 0;
           const perfMainStart = perf ? performance.now() : 0;
-          const mainStats = self._runCooperativeSlice(activeStepsPerSlice);
+          const mainStats = self._runCooperativeSlice(activeStepsPerSlice, turnDeadline);
           if (perf) {
             perf.countBlocks(mainStats.blocks);
             perf.markThrottled(mainStats.hitDeadline);
@@ -4195,7 +4426,7 @@ class WineAssembly {
           if (pending) {
             try { await vfs.fillPendingRead(pending); }
             catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
-            vfs.pendingRead = null;
+            if (vfs.pendingRead === pending) vfs.pendingRead = null;
           }
           self.instance.exports.clear_yield();
           if (self.running) { self._scheduleStep(step); }
@@ -4271,10 +4502,17 @@ class WineAssembly {
         }
         // Spawn and run worker threads
         if (self.threadManager) {
-          if (self.threadManager._pendingThreads.length) {
+          if (self.threadManager._pendingThreads.length && (self._frozen || turnNow() < turnDeadline)) {
             await self.threadManager.spawnPending();
           }
+          if (!self._frozen && self.threadManager._pendingThreads.length && turnNow() >= turnDeadline) {
+            self._cooperativeWorkersDue = true;
+          }
           if (self.threadManager.hasActiveThreads()) {
+            // An indivisible main call may spend the whole turn. Give workers
+            // first opportunity next turn rather than starving them repeatedly.
+            const workersExpired = !self._frozen && turnNow() >= turnDeadline;
+            self._cooperativeWorkersDue = workersExpired;
             const windowCount = self.renderer && self.renderer.windows ? Object.keys(self.renderer.windows).length : 0;
             const now = self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now();
             const recentInputWake = self.renderer && self.renderer._recentMessageWakeAt &&
@@ -4290,6 +4528,8 @@ class WineAssembly {
               const wakeStats = await self.threadManager.drainCooperativeWakes({
                 maxTotalSteps: recentInputWake ? (64 * 1024 * 1024) : (2 * 1024 * 1024),
                 serviceLoadLibraries: () => self.handleCooperativeThreadLoadLibraries(),
+                deadline: turnDeadline, now: turnNow,
+                frozen: self._frozen,
               });
               if (perf && wakeStats) perf.countBlocks(wakeStats.blocks || 0);
             }
@@ -4320,7 +4560,8 @@ class WineAssembly {
                   // needs several quanta before it can present its first frame.
                   maxTotalSteps: audioHot ? threadBudget : threadBudget * 4,
                   quantumSteps,
-                  maxWallMs,
+                  maxWallMs: self._frozen ? 0 : maxWallMs,
+                  deadline: turnDeadline, now: turnNow,
                   prioritizeAudioThreads: audioHot && !menuOpen,
                   stopIfMessagePending: false,
                 });
@@ -4333,12 +4574,13 @@ class WineAssembly {
                   perf.markThrottled(!!threadStats.hitDeadline);
                 }
               } else {
-                const sliceStats = self.threadManager.runSlice(threadBudget);
+                const sliceStats = self.threadManager.runSlice(threadBudget,
+                  self._frozen ? undefined : { deadline: turnDeadline, now: turnNow });
                 if (perf && sliceStats) perf.countBlocks(sliceStats.blocks || 0);
               }
             }
             if (perf) perf.mark('workers', performance.now() - perfThreadStart);
-            await self.handleCooperativeThreadLoadLibraries();
+            if (self._frozen || turnNow() < turnDeadline) await self.handleCooperativeThreadLoadLibraries();
             const perfPresentStart2 = perf ? performance.now() : 0;
             if (self._presentDxIfDirty) self._presentDxIfDirty();
             if (self.renderer && self.renderer.flushRepaint) {
@@ -4394,7 +4636,7 @@ class WineAssembly {
       if (self.running) {
         self._scheduleStep(step, mainParked ? self._parkedSleepMs() : 0);
       }
-    };
+    });
     // Frozen at launch (a ?frozen tile, or the box checked before the app
     // started): park the very first slice instead of running it, so the guest
     // is at instruction zero until an agent steps it.

@@ -7,6 +7,7 @@ const { ThreadManager } = require('../lib/thread-manager');
   const mainInstance = {
     exports: {
       get_sync_table: () => 0,
+      reset_thread_message_queue: () => {},
       get_bp_addr: () => 0,
       get_watch_addr: () => 0,
     },

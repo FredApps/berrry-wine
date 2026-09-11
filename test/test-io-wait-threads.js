@@ -32,7 +32,7 @@ function makeVfs() {
 
 async function testWorkerBackend() {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
-  const mainInstance = { exports: { get_sync_table: () => 0, get_bp_addr: () => 0, get_watch_addr: () => 0 } };
+  const mainInstance = { exports: { get_sync_table: () => 0, reset_thread_message_queue: () => {}, get_bp_addr: () => 0, get_watch_addr: () => 0 } };
   const vfs = makeVfs();
   const sliceResults = [];
   const exportCalls = [];
@@ -96,7 +96,7 @@ async function testWorkerBackend() {
 
 async function testCooperativeBackend() {
   const memory = new WebAssembly.Memory({ initial: 1, maximum: 1, shared: true });
-  const mainInstance = { exports: { get_sync_table: () => 0, get_bp_addr: () => 0, get_watch_addr: () => 0 } };
+  const mainInstance = { exports: { get_sync_table: () => 0, reset_thread_message_queue: () => {}, get_bp_addr: () => 0, get_watch_addr: () => 0 } };
   const vfs = makeVfs();
   const tm = new ThreadManager({}, memory, mainInstance, () => ({ host: {} }), {
     getVfs: () => vfs,

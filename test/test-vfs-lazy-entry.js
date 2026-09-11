@@ -177,13 +177,14 @@ test('the LRU bound keeps a big file from becoming resident', () => {
   assert(cache.stats.fetches >= 16, 'the whole file should have been fetched in chunks');
 });
 
-test('writing to a lazy entry materializes it (copy-on-write)', () => {
+test('writing to a lazy entry keeps a sparse copy-on-write provider', () => {
   const vfs = lazyVfs();
   const h = vfs.createFile(GUEST, 0x40000000, 3);
   vfs.setFilePointer(h, 10, 0);
   vfs.writeFile(h, new Uint8Array([1, 2, 3]), 3);
   const entry = vfs.files.get(NORM);
-  assert(!entry._provider, 'the provider should be dropped once written');
+  assert(entry._provider instanceof bp.SparseByteProvider, 'writes must preserve lazy untouched bytes');
+  assert.strictEqual(entry._provider.pages.size, 1, 'small write owns one page');
   assert.strictEqual(entry.data.length, SIZE, 'size must survive the copy');
   const expect = new Uint8Array(BYTES);
   expect.set([1, 2, 3], 10);
@@ -213,7 +214,7 @@ test('CopyFile off a lazy mount shares the provider instead of materializing', (
   // Independent all the same: writing to the copy must not touch the source.
   const h = vfs.createFile('C:\\GAME\\COPY.DAT', 0x40000000, 3);
   vfs.writeFile(h, new Uint8Array([9]), 1);
-  assert(!copy._provider, 'the written copy should have materialized');
+  assert(copy._provider instanceof bp.SparseByteProvider, 'written copy stays sparse');
   assert(vfs.files.get(NORM)._provider, 'the source must still be lazy');
 });
 
@@ -399,6 +400,21 @@ test('an async-only provider raises a named error on a consumer that cannot wait
     assert.throws(() => vfs.files.get(NORM).data, /async-only provider/,
       'materializing an unfilled async provider must fail loudly');
   });
+
+test('closing a pending handle clears only its own advertised miss', () => {
+  const vfs = lazyVfs({ sync: false });
+  const a = vfs.createFile(GUEST, 0x80000000, 3);
+  const b = vfs.createFile(GUEST, 0x80000000, 3);
+  const pending = vfs.readFile(a, new Uint8Array(16), 16).pending;
+  assert(pending);
+  vfs.pendingRead = pending;
+  vfs.closeHandle(b);
+  assert.strictEqual(vfs.pendingRead, pending, 'unrelated close must not drop another consumer');
+  vfs.closeHandle(a);
+  assert.strictEqual(vfs.pendingRead, null, 'canceled consumer is no longer pending');
+  vfs.closeHandle(a);
+  assert.strictEqual(vfs.pendingRead, null, 'repeated close stays harmless');
+});
 
 test('vfs.materialize pre-fills an async-only provider for those consumers',
   async () => {

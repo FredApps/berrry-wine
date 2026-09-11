@@ -414,6 +414,10 @@
         (global.set $help_last_error_offset (local.get $file_off)))))
 
   (func $help_document_release_storage
+    ;; Invalidate deferred navigation captured from the previous document,
+    ;; including replacement/rollback that happens to reuse the same topic.
+    (global.set $help_document_epoch
+      (i32.add (global.get $help_document_epoch) (i32.const 1)))
     (if (global.get $help_doc_system_macros_ga)
       (then
         (call $heap_free (global.get $help_doc_system_macros_ga))
@@ -605,10 +609,20 @@
   ;; Detach the current document roots without freeing them. The ordinary
   ;; loader may then reset and parse into the now-empty global document slot.
   (func $help_document_snapshot_push (result i32)
+    (call $help_document_snapshot_push_with_limit (global.get $HELP_MAX_DOCUMENT_SNAPSHOTS)))
+
+  ;; A replacement transaction needs one private rollback record even when
+  ;; Back history is full. It must dispose/restore it before returning; this
+  ;; does not increase the user-visible navigation-history bound.
+  (func $help_document_snapshot_push_transaction (result i32)
+    (call $help_document_snapshot_push_with_limit
+      (i32.add (global.get $HELP_MAX_DOCUMENT_SNAPSHOTS) (i32.const 1))))
+
+  (func $help_document_snapshot_push_with_limit (param $limit i32) (result i32)
     (local $ga i32) (local $p i32)
     (if (i32.or (i32.eqz (global.get $help_doc_file_ga))
           (i32.ge_u (global.get $help_document_snapshot_count)
-            (global.get $HELP_MAX_DOCUMENT_SNAPSHOTS)))
+            (local.get $limit)))
       (then (return (i32.const 0))))
     (local.set $ga (call $heap_alloc (global.get $HELP_DOCUMENT_SNAPSHOT_SIZE)))
     (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
