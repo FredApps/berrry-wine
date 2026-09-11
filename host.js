@@ -1435,7 +1435,7 @@ class WineAssembly {
           self.logToUI(`[ShellExecute] launching ${launchFile} from the caller's filesystem`);
           return 33;
         }
-        if (/\.exe$/i.test(file) && shell.launchExe(file)) {
+        if (/\.(exe|scr)$/i.test(file) && shell.launchExe(file)) {
           self.logToUI(`[ShellExecute] launching ${file}`);
           return 33;
         }
@@ -2188,6 +2188,7 @@ class WineAssembly {
   // taking the launch down with it — single-threaded is a supported mode, not a
   // degraded one (docs/design-real-threads.md §3.6).
   async _maybeStartGuestWorker(wasmModule) {
+    if (this._watAppRequested) return;
     if (typeof window === 'undefined') return;
     if (!window.WINE_THREADS) return;
     if (!(typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated)) {
@@ -2236,6 +2237,40 @@ class WineAssembly {
   // than importing — see the win16StageModule host import.
   // `opts.launchPrefs` is the app entry's own screen-size → byte-pokes function
   // (lib/apps.js), applied right after load_pe.
+  // Start a WAT-native applet instead of an emulated program. There is no PE
+  // and no x86: the applet's window and controls are the WAT-native ones, and
+  // the run loop calls its `wat_app_pump` export once per step in place of
+  // the guest slice (an applet has no GetMessage loop to pump itself with).
+  //
+  // Returns false when this build has no such applet, so a stale app-registry
+  // entry fails the launch instead of leaving a live process with no window.
+  async loadWatApp(name) {
+    if (this._stopped || this._watApp || this._exeBytes) throw new Error('Applet requires a fresh process');
+    this._watAppRequested = true;
+    if (!this.instance) await this.init();
+    if (this._stopped) throw new Error('Applet startup canceled');
+    if (this.guestWorker) throw new Error('Applet must run on its executing local instance');
+    const open = this.instance.exports[`${name}_open`];
+    if (typeof open !== 'function' || typeof this.instance.exports.wat_app_pump !== 'function') {
+      console.error(`[watApp] this build has no applet named "${name}"`);
+      return false;
+    }
+    const hwnd = open() >>> 0;
+    if (!hwnd) {
+      console.error(`[watApp] ${name} did not open a window`);
+      return false;
+    }
+    this._watApp = name;
+    if (this.renderer) {
+      this.renderer.wasm = this.instance;
+      this.renderer.wasmMemory = this.memory;
+      this.renderer.mainWasm = this.instance;
+      this.renderer.mainWasmMemory = this.memory;
+      this.renderer.repaint();
+    }
+    return true;
+  }
+
   async loadExe(url, opts = {}) {
     if (!this.instance) await this.init();
     this._win16ExtraModules = opts.win16Modules || [];
@@ -4033,6 +4068,17 @@ class WineAssembly {
       // a normal run pays one property read per step. Phases are timed here
       // rather than sampled from outside because the whole point is knowing
       // *which* part of a long step held the main thread.
+      if (self._watApp) {
+        let alive = false;
+        try { alive = !!self.instance.exports.wat_app_pump(); }
+        catch (error) { console.error('[watApp] pump failed:', error); }
+        if (self.renderer) self.renderer.repaint();
+        if (!alive) { self.stop(); return; }
+        // Input wakeups may interrupt this bounded idle delay. Never spin a
+        // zero-delay guest loop for a static native dialog with no guest.
+        self._scheduleStep(step, 50);
+        return;
+      }
       const perf = (typeof window !== 'undefined' && window.WinePerf && window.WinePerf.enabled)
         ? window.WinePerf : null;
       if (perf) perf.stepBegin();
