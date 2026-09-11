@@ -574,3 +574,172 @@ Read the raw column too: `off` drifts 76.72 → 59.41 monotonically across six
 reps as the box unloads. That drift is 29%, more than an order of magnitude
 larger than any effect being looked for, and it is the entire reason the arms
 rotate. Loadavg over the run: 191 at the start, 108 by the second sample.
+
+## 12. Three more widenings, and what each was worth (2026-09-11)
+
+Three barriers were taken down in order: the H149 effective-address pair, REP
+MOVS/STOS, and one terminator shape. Two of the three bought nothing
+measurable. That is the finding, and this section is written to make it hard
+to read otherwise.
+
+### The windows, and the denominator
+
+Every number below is from one command per app, all with `--no-threads
+--quiet-api --no-build --loopmatch-stats --handler-hist
+--handler-hist-thread=0`:
+
+| app | window |
+|---|---|
+| mw3 | `--app=mw3 --batch-size=200000 --max-batches=50` |
+| quake2 | `--app=quake2_demo --args='+set vid_ref soft +map demo1' --batch-size=20000 --max-batches=3000` |
+| heroes2 | `--app=heroes2_demo --batch-size=20000 --max-batches=2600` |
+| caesar3 | `--app=caesar3_demo --batch-size=20000 --max-batches=3600` |
+
+**The denominator is the FOLD-OFF retired-op total, not the fold-on one.** H454
+re-records the handler index of every interior micro-op but not of the
+terminator or the Jcc, so an armed run's `[handler-hist] total` is short by two
+ops per folded iteration — 264,438,340 against 252,355,242 on mw3, a 4.6% gap
+that is pure accounting. Dividing by the armed total would inflate every share
+on this page. The fold-off total is identical on the `main` build and on this
+branch's tip for all four apps, so it is also a stable denominator.
+
+**`--args` is pinned for quake2 on purpose**: its `config.cfg` persists across
+processes, so a run without it measures whatever the previous run left behind.
+
+### Coverage, per app, per commit
+
+`ops` is `TREE_FOLD ... ops` from `--loopmatch-stats`; `share` is that over the
+fold-off retired total; `declines` is `short / long / terminator / unfoldable-op`.
+
+| app | commit | blocks | ops caught | share | declines | lastFn |
+|---|---|---|---|---|---|---|
+| mw3 | main `ff44490d` | 6 | 116,422,492 | **44.03%** | 15 / 0 / 4 / 5 | 149 |
+| mw3 | H149 pair `54997cbc` | 7 | 247,968,049 | **93.77%** | 15 / 0 / 4 / 4 | 83 |
+| mw3 | REP `9b24da19` | 7 | 247,968,049 | **93.77%** | 15 / 0 / 4 / 4 | 408 |
+| mw3 | mem bound `7fd5b9ea` | 8 | 248,218,929 | **93.87%** | 15 / 0 / 3 / 4 | 408 |
+| quake2 | main | 55 | 9,372,997 | **3.13%** | 51 / 0 / 262 / 13 | 190 |
+| quake2 | H149 pair | 55 | 9,236,701 | **3.09%** | 51 / 0 / 262 / 13 | 190 |
+| quake2 | REP | 55 | 9,236,701 | **3.09%** | 51 / 0 / 262 / 13 | 190 |
+| quake2 | mem bound | 55 | 9,236,701 | **3.09%** | 51 / 0 / 262 / 13 | 190 |
+| heroes2 | main → mem bound | 4 | 373 | **0.0003%** | 11 / 0 / 4 / 4 | 155 |
+| caesar3 | main → mem bound | 0 | 0 | **0%** | 3 / 0 / 1 / 1 | 133 |
+
+Fold-off retired totals: mw3 264,438,340 · quake2 299,375,553 · heroes2
+126,324,744 · caesar3 281,817,744.
+
+So, item by item:
+
+* **The H149 pair is the whole story.** mw3 44.03% → 93.77% — its hottest
+  loops address memory through a SIB, and every one of them was declining on
+  the one emitted op that is not an instruction.
+* **REP MOVS/STOS bought zero on all four apps.** It removed a decline class
+  (mw3's `lastFn` moved 83 → 408) without folding a single new block: the one
+  mw3 block it unblocks then declines on `$th_load32_base_run`, a run-fusion
+  super-op from a different family. It is kept because it is correct, tested,
+  and cheap, not because it paid.
+* **The memory bound is worth 0.10% of mw3 and nothing elsewhere.** +250,880
+  ops, which is exactly 35,840 block entries × the block's 7 ops — the
+  arithmetic closes, which is the point of quoting it that small.
+
+**Correction to commit `9b24da19`'s message.** It claims quake2 was unchanged
+by the H149 pair and that `54997cbc`'s 9,372,997 was a `config.cfg` artifact.
+Rebuilt at `ff44490d` and measured with `--args` pinned, quake2 really does go
+9,372,997 → 9,236,701 across that commit: runs rise 34,942 → 42,819 while
+iterations fall 575,050 → 559,906, i.e. the block count is unchanged but a
+short-trip, often-entered loop displaced a long-trip one. A **1.5% loss** on
+quake2 against a **2.1x gain** on mw3.
+
+### The `terminator` bucket was never the lever it looked like
+
+`terminator 262` on quake2 is 64% of that app's declines and was the headline
+reason to open this bucket. The count is the wrong unit twice over: it counts
+DECODE EVENTS, so a re-decoded block appears once per decode, and it weights
+every block equally, so a loop entered once weighs what a loop entered 32,705
+times does.
+
+The matcher now emits its own verdict per declined block under
+`--trace-loopmatch` (marker `0x100C0001`: entry, reason, detail; the six
+reasons are enumerated at `$tree_decl_term_bump`), and
+`tools/loopmatch-decode.js --tree-why --hot=HOT` joins those to the run's
+`--hot-block-dump`. For a DECLINED block a hot-block hit is one loop
+*iteration*, so that weighting is directly comparable to retired-op share —
+unlike the folded case `tools/tree-shape-census.js` has to caveat.
+
+| app | decline events | distinct blocks | block entries | share of entries |
+|---|---|---|---|---|
+| quake2 | 262 | **15** | 83,170 | **0.14%** |
+| mw3 | 4 | **3** | 35,875 | **0.89%** |
+| heroes2 | 4 | **4** | 172 | **0.00%** |
+
+And what is actually in them:
+
+| app | block | entries | the op that stopped the walk | verdict |
+|---|---|---|---|---|
+| quake2 | 13 blocks incl. `0x004129b0`, `0x00412a34` | 32,705 each for the top two, 83,134 total | `$th_fpu_mem`, `$th_fpu_mem_ro`, `$th_fpu_reg` | **x87 — out of family at any width** |
+| quake2 | 2 blocks | 36 | `$th_alu_r8_i8` | a byte ALU between counter and Jcc |
+| mw3 | `0x0042d9b1` | 35,840 | `$th_alu_r_m32_ro` (CMP form) | **implemented** — term_kind 3 |
+| mw3 | `0x018118aa` | 35 | `$th_test_r8_r8` | TEST + Jcc, 0.001% |
+| mw3 | `0x018372dd` | 0 | `$th_test_r_i32` | never entered |
+| heroes2 | `0x004c4472` | 127 | `$th_mov_m16_r16` | a 16-bit SIB store, 0.0005% |
+| heroes2 | 3 blocks | 45 | `$th_nop`, `$th_alu_r_m32`, `$th_test_r_i32` | noise |
+
+None of the shapes the bucket was expected to hold — `loop`, `jecxz`, a `jmp`
+back with the branch elsewhere, two exits — occurs even once. Every one of the
+22 distinct declined blocks across three apps IS a real self-loop with a single
+back edge ending in an ordinary `Jcc`; what stopped them was the op standing
+between the counter and the branch, which is reason 3 in the new enumeration
+and not a terminator *shape* at all.
+
+So exactly one shape was worth building: `cmp r32,[base+disp] + Jcc`, 89% of
+mw3's bucket by weight. `test` + `Jcc` is the next one and it is worth 0.001%;
+it is left undone on that evidence, not on difficulty.
+
+### The A/B, with a null arm in the same run
+
+Fixed WORK (`--app=mw3 --batch-size=200000 --max-batches=50 --no-threads
+--quiet-api`), **user CPU**, three arms in one build, order rotated every rep,
+as §11 did. The null arm is `--tree-fold --tree-fold-max-ops=24`: measured, it
+folds **302,210 ops, 0.11% of retired**, against the default cap's 93.87%. So
+`cap24 − off` is a pair that differs in a tenth of a percent of the work, and
+its spread is a live noise reading taken under the same load as the real
+comparison.
+
+Six reps, 18 runs, `/usr/bin/time -p` user CPU:
+
+| rep | order | off | cap24 (null) | on |
+|---|---|---|---|---|
+| 1 | off,cap24,on | 58.98 | 56.04 | 52.98 |
+| 2 | cap24,on,off | 45.10 | 66.21 | 59.84 |
+| 3 | on,off,cap24 | 59.78 | 66.46 | 53.82 |
+| 4 | off,cap24,on | 66.57 | 66.33 | 64.29 |
+| 5 | cap24,on,off | 63.06 | 67.16 | 54.00 |
+| 6 | on,off,cap24 | 67.31 | 67.53 | 56.21 |
+| **mean** | | **60.13s** | **64.95s** | **56.86s** |
+
+| pair | paired mean | sd | SE | t |
+|---|---|---|---|---|
+| `on − off` | **−3.28s (−5.4%)** | 9.33 | 3.81 | **−0.86** |
+| `cap24 − off` (**null**) | **+4.82s (+8.0%)** | 8.68 | 3.54 | **+1.36** |
+
+Loadavg over the run: 3.4 min, 6.3 max, 5.3 mean.
+
+**The null arm moved further than the real one, and with a larger |t|.** Two
+builds that differ in 0.11% of the folded work separated by 8.0%; the build
+that folds 93.87% separated by 5.4% in the other direction. Neither |t| clears
+2 at 5 degrees of freedom. So the honest statement is: **this box, at this
+load, cannot resolve the effect of TREE_FOLD on mw3 user CPU at all**, and the
+−5.4% must not be quoted as a speedup. Anything under roughly ±10% is inside
+the noise floor of a paired six-rep run here.
+
+Read the `off` column on its own: 58.98, 45.10, 59.78, 66.57, 63.06, 67.31 for
+one identical command. A 49% spread between its own best and worst run, against
+the 5% being looked for. Rotating the arms is what keeps that drift from
+landing entirely on one of them; it does not make the drift small enough to see
+through.
+
+What the coverage table *can* say without a timer is unaffected: the H149 pair
+took mw3 from folding 44% of its retired ops to 93.87%, and the fold is
+behaviour-identical (mw3 `--png` at batch 50, fold off vs on: 0 of 307,200
+pixels differ; quake2's census is byte-identical). Whether 93.87% coverage is
+worth wall-clock or CPU on this hardware is a question for a quiet box.
+
