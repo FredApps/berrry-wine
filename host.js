@@ -3139,7 +3139,8 @@ class WineAssembly {
     const hotUntil = Math.max(
       Number(shared.waveOutHotUntilMs) || 0,
       Number(shared.cdAudioHotUntilMs) || 0);
-    return hotUntil > this._audioSchedulerNow();
+    return hotUntil > this._audioSchedulerNow()
+      || !!(shared.directSoundLoopingVoices && shared.directSoundLoopingVoices.size);
   }
 
   // Called once per step from the worker-budget calculation, so it used to

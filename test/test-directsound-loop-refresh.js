@@ -68,6 +68,8 @@ try {
   const { host } = createHostImports(ctx);
   const voice = host.voice_open(22050, 1, 8);
   host.voice_play_ring(voice, ptr, 4, 0, 1);
+  assert(ctx.directSoundLoopingVoices.has(voice),
+    'a looping DirectSound voice keeps the browser audio session active');
 
   const ac = ctx._voices._ac;
   const source = ac.started[0];
@@ -116,6 +118,8 @@ try {
     'a naturally ended non-looping source clears guest-visible playing state');
 
   host.voice_stop(voice);
+  assert(!ctx.directSoundLoopingVoices.has(voice),
+    'DirectSound Stop releases the persistent audio-session activity');
   assert.strictEqual(ctx._voices._map[voice].currentSrc, null,
     'DirectSound Stop should still terminate the refreshed ring source');
   assert.strictEqual(host.voice_is_playing(voice), 0,
