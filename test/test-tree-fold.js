@@ -186,6 +186,48 @@ const SHAPE_H = loopBackDec([
   0x8D, 0x7F, 0x04,                   // lea  edi, [edi+4]  nor this one
 ]);
 
+// -- I: mw3's spill suffix ----------------------------------------------------
+// The flag producer is not the op before the Jcc. mw3's 16-bit alpha blend at
+// 0x526f54 ends `dec edi / mov [esp+8],edx / mov [esp+c],edi / jnz`, and the
+// second of those stores the counter the DEC just wrote. So this is not only
+// the shape that used to decline as `terminator`, it is the shape that catches
+// a fold which "fixes" the problem by hoisting the suffix above the counter:
+// the stored value would then be one too high, and the memory comparison here
+// is what says so.
+function loopDecThenSuffix(body, suffix) {
+  const all = body.concat([0x49]).concat(suffix);   // dec ecx, then the suffix
+  return all.concat([0x75, (-(all.length + 2)) & 0xff, 0xc3]);
+}
+const SHAPE_I = loopDecThenSuffix([
+  0x8B, 0x06,                         // mov  eax, [esi]
+  0x01, 0xD8,                         // add  eax, ebx
+  0x89, 0x07,                         // mov  [edi], eax
+  0x83, 0xC6, 0x04,                   // add  esi, 4
+  0x83, 0xC7, 0x04,                   // add  edi, 4
+], [
+  0x89, 0x44, 0x24, 0x08,             // mov  [esp+8], eax
+  0x89, 0x4C, 0x24, 0x0C,             // mov  [esp+0xc], ecx   <-- post-DEC value
+]);
+
+// -- J: 16-bit memory, the three forms mw3's alpha blend is built from --------
+// H166 `mov dx,[esi]`, H165 `mov [edi],dx` and H164 `mov bx,[abs]`. A 16-bit
+// register is the low half of its container with no high lane, so the thing to
+// get wrong is the OTHER half: each of these must leave bits 16..31 of the
+// destination exactly as it found them, which is why ebx and edx are seeded
+// with a high pattern nothing in the body touches.
+function shapeJ(absAddr) {
+  return loopBackDec([
+    0x66, 0x8B, 0x16,                 // mov dx, [esi]
+    0x66, 0x01, 0xC2,                 // add dx, ax
+    0x66, 0x89, 0x17,                 // mov [edi], dx
+    0x66, 0x8B, 0x1D,                 // mov bx, [abs]
+    absAddr & 0xff, (absAddr >>> 8) & 0xff,
+    (absAddr >>> 16) & 0xff, (absAddr >>> 24) & 0xff,
+    0x83, 0xC6, 0x02,                 // add esi, 2
+    0x83, 0xC7, 0x02,                 // add edi, 2
+  ]);
+}
+
 // -- negatives ----------------------------------------------------------------
 // ADC reads CF. An interior flag CONSUMER is exactly what this family forbids,
 // because the fold's whole licence is that nothing between the ops looks at
@@ -437,6 +479,26 @@ const NEG_SHORT = loopBackDec([
     assert.strictEqual(e.test_tree_deadflag() - deadBefore, 0,
       'shape H: a later subset writer does not make the full writer dead');
   }
+
+  // Shape I reads back the two STACK slots, not the [edi] stream: the stream
+  // would agree even if the suffix were hoisted above the counter, and
+  // [esp+0xc] is the only witness that says the fold ran `dec ecx` first.
+  const srcI = (arena + 0x30000) >>> 0;
+  const dstI = (arena + 0x34000) >>> 0;
+  checkShape('shape I (flag-transparent suffix after the counter)', SHAPE_I,
+    () => ({ eax: 0, ecx: 100, edx: 0x13572468, ebx: 0x0000cafe,
+             ebp: 0xa5a5a5a5, esi: srcI, edi: dstI }),
+    { seedAt: (stack + 8) >>> 0, seedWords: 2, readAt: (stack + 8) >>> 0 }, 2);
+
+  const srcJ = (arena + 0x38000) >>> 0;
+  const dstJ = (arena + 0x3c000) >>> 0;
+  const absJ = (arena + 0x3f000) >>> 0;
+  seed(absJ, 4);
+  checkShape('shape J (16-bit memory: ro load, ro store, absolute load)',
+    shapeJ(absJ),
+    () => ({ eax: 0x0000abcd, ecx: 100, edx: 0xdead0000, ebx: 0xbeef0000,
+             ebp: 0xa5a5a5a5, esi: srcJ, edi: dstJ }),
+    { seedAt: srcJ, seedWords: 200, readAt: dstJ }, 50);
 
   // -------------------------------------------------------------- side exit --
   // Same shape, same inputs, but a block budget far below the trip count, so
