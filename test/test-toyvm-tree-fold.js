@@ -8,9 +8,37 @@
 //   dot       straight-line full-width arithmetic, 12 ops -- MUST fold
 //   addrloop  a `loop`-terminated body that walks a pointer  -- MUST fold
 //   incloop   an `inc si / cmp si,N / jne` loop              -- MUST fold
-//   partial   an 8-bit write in the middle                   -- MUST NOT fold
+//   partial   an 8-bit write in the middle                   -- MUST fold
+//   bytelut   a byte LUT loop: 8-bit load, 8-bit store       -- MUST fold
+//   ahal      AH and AL written apart, AX read whole         -- MUST fold
+//   narrowmem 8-bit absolute loads and stores in one run     -- MUST fold
+//   narrowrot an 8-bit `rol`, narrow AND not in the fold set -- MUST NOT fold
 //   alias     a store followed by a load                     -- MUST NOT fold
-//   flagcons  an `adc` in the middle                         -- MUST NOT fold
+//   flagcons  an `adc` in the middle                         -- MUST fold
+//   adcchain  a 32-bit add out of two 16-bit halves          -- MUST fold
+//   sbbchain  the same with the borrow                       -- MUST fold
+//   setcc     a mid-run `cmp` and two `setcc`s reading it    -- MUST fold
+//   cmploop   a loop with an `adc` inside and a `dec`/`jnz` out -- MUST fold
+//   flagsword a `lahf` in the middle                         -- MUST NOT fold
+//
+// The five flag cases are the other half of the DOS fit. Flags here are LAZY --
+// a producer records its inputs, a consumer materializes the field it wants --
+// so a flag consumer inside a run needs no new machinery either: the `$rec_*`
+// and `$get_*` calls are kept verbatim in source order, and the flag globals
+// are left out of the register promotion so the per-field last-writer state at
+// the run's end is what an unfolded compile would have left. `flagsword` is the
+// boundary: `lahf` wants the architectural FLAGS byte including AF, which the
+// record does not carry as a value.
+//
+// The four partial-register cases are the DOS half of the suite. 16-bit real
+// mode is written in AL/AH/BL/DH and in 8-bit loads and stores, and the exact
+// rule set refused every one of them -- `partial-reg` was one of the two
+// biggest decline buckets in every program measured. What makes them foldable
+// is not a new model of the register file: AL really is bits 0-7 of the
+// promoted AX local, because emit.js's `$rget8`/`$rset8` already spell an 8-bit
+// access as an extract and a mask-and-or insert and the lowering already folds
+// those to the register's own global. `narrowrot` is the boundary: `rol` is not
+// in the fold set at ANY width, so being narrow is not on its own a licence.
 //
 // Every one runs its body two thousand times inside an outer loop, prints AX,
 // BX, CX, DX, SI, DI and the arithmetic bits of FLAGS, and is run twice: once
@@ -44,6 +72,7 @@ const ITER = 2000;              // outer-loop trips, in a memory counter
 const COUNTER = 0x500;          // where that counter lives
 const SNAP = 0x300;             // where the seven printed words are stashed
 const TABLE = 0x200;            // addrloop's data
+const DEST = 0x280;             // bytelut's output
 
 // --- a two-pass assembler, just big enough --------------------------------
 //
@@ -191,7 +220,7 @@ const CASES = {
   // real target, with memory reads inside the run. Loads only, so the alias
   // rule never fires and the whole body is one run.
   addrloop: {
-    folds: true,
+    folds: true, loop: true,
     data: [TABLE, Array.from({ length: 64 }, (_, i) => i)],
     body: ({ w, label, rel8 }) => {
       w(0xBE, TABLE & 0xFF, TABLE >> 8);   // mov si,TABLE
@@ -212,7 +241,7 @@ const CASES = {
   // branch reads -- which is exactly the case where a fold has to get the
   // flags right, because the terminator's compare is the FIRST thing after it.
   incloop: {
-    folds: true,
+    folds: true, loop: true,
     body: ({ w, label, rel8 }) => {
       w(0x31, 0xDB);             // xor bx,bx
       w(0x31, 0xF6);             // xor si,si
@@ -227,15 +256,91 @@ const CASES = {
       w(0x75, rel8('inner'));    // jne inner
     },
   },
-  // AL and AH are subfields of AX in the register file, so an 8-bit write in
-  // the middle of a 16-bit run is an overlap the fold does not model. It splits
-  // here into runs of 1 and 2, and nothing folds.
+  // AL and AH are subfields of AX in the register file. The `partial`
+  // relaxation models an 8-bit write as an INSERT into the full-width value and
+  // an 8-bit read as an EXTRACT out of it, so this run of five folds whole --
+  // and the printed AX is the case: `1237` is `1234` with AL incremented by 3,
+  // which is only right if the insert left AH alone.
   partial: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xB3, 0xAA);             // mov bl,0AAh     <- 8-bit insert
+      w(0x04, 0x03);             // add al,3        <- 8-bit extract + insert
+      w(0x89, 0xC1);             // mov cx,ax
+      w(0x31, 0xD9);             // xor cx,bx
+    },
+  },
+  // The shape 16-bit real-mode code is actually made of: a byte fetched through
+  // a pointer, transformed in AL, and stored a byte at a time. Eight-bit loads
+  // and stores keep their `$rd8`/`$wr8` calls in source order like every other
+  // memory op, so they fault and segment exactly as the per-op handlers do --
+  // the relaxation is about the REGISTER halves, not about memory width.
+  bytelut: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w, label, rel8 }) => {
+      w(0xBE, TABLE & 0xFF, TABLE >> 8);   // mov si,TABLE
+      w(0xBF, DEST & 0xFF, DEST >> 8);     // mov di,DEST
+      w(0xB9, 0x08, 0x00);                 // mov cx,8
+      w(0xB6, 0x07);                       // mov dh,7
+      label('lut');
+      w(0x89, 0xF3);                       // mov bx,si
+      w(0x8A, 0x07);                       // mov al,[bx]     <- 8-bit load
+      w(0x00, 0xF0);                       // add al,dh       <- two 8-bit reads
+      w(0x34, 0x5A);                       // xor al,5Ah
+      w(0x88, 0x05);                       // mov [di],al     <- 8-bit store
+      w(0x46);                             // inc si
+      w(0x47);                             // inc di
+      w(0xE2, rel8('lut'));                // loop lut
+    },
+  },
+  // The two halves of one register written apart and read together. A fold that
+  // kept AL and AH in separate locals, or that wrote one back over the other,
+  // gets a plausible-looking AX here and the wrong one: the answer is 3213h and
+  // both halves have to survive the other's write to reach it.
+  ahal: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB9, 0x0F, 0x00);       // mov cx,15
+      w(0xB8, 0x00, 0x00);       // mov ax,0
+      w(0xB0, 0x12);             // mov al,12h
+      w(0xB4, 0x34);             // mov ah,34h
+      w(0x04, 0x01);             // add al,1
+      w(0x80, 0xEC, 0x02);       // sub ah,2
+      w(0x89, 0xC3);             // mov bx,ax
+      w(0x31, 0xCB);             // xor bx,cx
+      w(0x88, 0xE2);             // mov dl,ah
+    },
+  },
+  // Narrow MEMORY: two 8-bit absolute loads, arithmetic between the halves of
+  // one register, two 8-bit absolute stores. Loads first, so the alias rule --
+  // which the partial relaxation does not touch -- never fires and the whole
+  // run is one tree.
+  narrowmem: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 11) & 0xFF)],
+    body: ({ w }) => {
+      w(0xA0, TABLE & 0xFF, TABLE >> 8);           // mov al,[TABLE]
+      w(0x8A, 0x26, (TABLE + 1) & 0xFF, (TABLE + 1) >> 8); // mov ah,[TABLE+1]
+      w(0x00, 0xE0);                               // add al,ah
+      w(0x34, 0x5A);                               // xor al,5Ah
+      w(0xA2, DEST & 0xFF, DEST >> 8);             // mov [DEST],al
+      w(0x88, 0x26, (DEST + 1) & 0xFF, (DEST + 1) >> 8);   // mov [DEST+1],ah
+      w(0xBB, 0x34, 0x12);                         // mov bx,1234h
+      w(0x89, 0xDE);                               // mov si,bx
+    },
+  },
+  // The boundary the relaxation must NOT cross. `rol` is not in the census's
+  // fold set at any width -- it is a carry-producing rotate, not an insert --
+  // so being narrow does not make it eligible. It splits this into runs of two
+  // and two, and nothing folds.
+  narrowrot: {
     folds: false,
     body: ({ w }) => {
       w(0xB8, 0x34, 0x12);       // mov ax,1234h
-      w(0xB3, 0xAA);             // mov bl,0AAh     <- partial-reg
-      w(0x04, 0x03);             // add al,3        <- partial-reg
+      w(0xB3, 0xAA);             // mov bl,0AAh
+      w(0xD0, 0xC3);             // rol bl,1        <- not in the fold set
       w(0x89, 0xC1);             // mov cx,ax
       w(0x31, 0xD9);             // xor cx,bx
     },
@@ -254,11 +359,14 @@ const CASES = {
       w(0x31, 0xC2);                       // xor dx,ax
     },
   },
-  // `adc` READS the carry the previous op left, which is the one thing a lazy
-  // flag scheme cannot defer past. Nothing inside a fold may consume flags
-  // except the terminator itself.
+  // `adc` READS the carry the previous op left. Under the `flags` relaxation
+  // that is not a barrier but the ordinary case: the producer's `$rec_*` and
+  // the consumer's `$get_cf` are both kept verbatim in source order inside the
+  // handler, so the `adc` reads the record the `mov` in front of it left --
+  // which, since `mov` writes no flags, is still the one the block was entered
+  // with. The printed word is the check.
   flagcons: {
-    folds: false,
+    folds: true, relaxed: true,
     body: ({ w }) => {
       w(0xB8, 0x34, 0x12);       // mov ax,1234h
       w(0xBB, 0x78, 0x56);       // mov bx,5678h
@@ -267,6 +375,100 @@ const CASES = {
       w(0x89, 0xCA);             // mov dx,cx
       w(0x31, 0xC2);             // xor dx,ax
       w(0x01, 0xDA);             // add dx,bx
+    },
+  },
+  // The shape `adc` exists for: a 32-bit add out of two 16-bit halves, where
+  // the carry crosses from one op to the next INSIDE the run. AX ends at 0002h
+  // and DX at 0002h only if the `adc` saw the carry the `add` produced; a fold
+  // that materialized flags at the run's END instead would print DX=0001h and
+  // every register around it would still look right.
+  adcchain: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB8, 0xFF, 0xFF);       // mov ax,0FFFFh
+      w(0xBA, 0x01, 0x00);       // mov dx,1
+      w(0x01, 0xC0);             // add ax,ax      -> carry out
+      w(0x11, 0xD2);             // adc dx,dx      <- reads that carry
+      w(0x01, 0xC0);             // add ax,ax
+      w(0x11, 0xD2);             // adc dx,dx
+      w(0x01, 0xC0);             // add ax,ax
+      w(0x11, 0xD2);             // adc dx,dx      DX=000Fh, AX=0FFF8h
+    },
+  },
+  // ...and its subtractive twin, because CF means BORROW here and the record
+  // `$rec_sub` leaves is not the one `$rec_add` leaves. Two `sbb`s, the second
+  // reading the first's borrow.
+  sbbchain: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB8, 0x00, 0x00);       // mov ax,0
+      w(0xBB, 0x05, 0x00);       // mov bx,5
+      w(0x29, 0xD8);             // sub ax,bx      -> borrow out (AX=0FFFBh)
+      w(0x19, 0xDB);             // sbb bx,bx      <- reads that borrow (BX=0FFFFh)
+      w(0x19, 0xC9);             // sbb cx,cx      <- and the one sbb left
+      w(0x19, 0xD2);             // sbb dx,dx
+    },
+  },
+  // A `cmp` in the middle of a run and two `setcc`s reading it. `setcc` is a
+  // flag read with an 8-bit register destination, so this case needs BOTH
+  // relaxations at once -- which is the ordinary state of 16-bit code and the
+  // reason they were not worth doing one at a time.
+  setcc: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB8, 0x05, 0x00);       // mov ax,5
+      w(0xBB, 0x07, 0x00);       // mov bx,7
+      w(0x39, 0xD8);             // cmp ax,bx       <- mid-run flag write
+      w(0x0F, 0x9C, 0xC1);       // setl cl         <- flag read -> 8-bit write
+      w(0x0F, 0x94, 0xC5);       // setz ch
+      w(0x31, 0xD2);             // xor dx,dx
+      w(0x88, 0xCA);             // mov dl,cl
+    },
+  },
+  // THE CASE THE RELAXATION IS REALLY FOR: a counted loop that both CONSUMES a
+  // flag inside the body (the `adc` reads the bit the `shl` in front of it shifted
+  // out) and leaves the flags its terminator reads (the `dec`). Under the exact
+  // rules the `adc` split the four-op body into a two and a one and nothing
+  // folded; under the relaxation the whole body is one handler, so the `shl`'s
+  // record has to reach the `adc` INSIDE it and the `dec`'s record has to reach
+  // the `jnz` OUTSIDE it, on all eight turns of the loop. A fold that got either
+  // end wrong prints a different BX.
+  cmploop: {
+    folds: true, relaxed: true, loop: true,
+    body: ({ w, label, rel8 }) => {
+      w(0x31, 0xDB);             // xor bx,bx
+      w(0xBE, 0x08, 0x00);       // mov si,8
+      // The jump is what makes the loop body its own block: decoding runs to a
+      // terminator, so without it the setup and the first two body ops share a
+      // block and fold as a four-op run under the EXACT rules too, which would
+      // make the exact-arm assertion below fail for a reason that is not the
+      // loop.
+      w(0xEB, rel8('cmpl'));     // jmp cmpl
+      label('cmpl');
+      w(0x89, 0xF0);             // mov ax,si
+      w(0xC1, 0xE0, 0x02);       // shl ax,2        -> CF is the bit shifted out
+      w(0x11, 0xC3);             // adc bx,ax       <- reads that CF, mid-run
+      w(0x89, 0xDA);             // mov dx,bx
+      // `dec`+`jnz` FUSE into one terminator op, so they count as one, not two:
+      // without the `mov` above the body would be three ops and too short.
+      w(0x4E);                   // dec si          <- the flags the jnz reads
+      w(0x75, rel8('cmpl'));     // jnz cmpl
+    },
+  },
+  // The boundary on the flag side. `lahf` wants the architectural FLAGS byte,
+  // including AF, which the lazy record does not carry as a value -- so it is
+  // a barrier under the relaxation as much as without it, and splits this into
+  // runs of three and three.
+  flagsword: {
+    folds: false,
+    body: ({ w }) => {
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xBB, 0x78, 0x56);       // mov bx,5678h
+      w(0x01, 0xD8);             // add ax,bx
+      w(0x9F);                   // lahf            <- the whole FLAGS byte
+      w(0x89, 0xC1);             // mov cx,ax
+      w(0x31, 0xD9);             // xor cx,bx
+      w(0x89, 0xCA);             // mov dx,cx
     },
   },
 };
@@ -284,6 +486,10 @@ function run(com, extra) {
 const screen = (log) => (log.match(/^  \|(.*)$/gm) || []).map((s) => s.slice(3).trim()).join('');
 const folds = (log) => +(/, (\d+) tree folds/.exec(log) || [0, 0])[1];
 const trees = (log) => +(/tree fold: (\d+) handler/.exec(log) || [0, 0])[1];
+// How many of those handlers absorbed their block's terminator and turn the
+// loop inside themselves (`--tree-fold` item 3). Zero unless a self-loop block
+// was folded whole, which is a different claim from "something folded".
+const loops = (log) => +(/(\d+) loop handler\(s\)/.exec(log) || [0, 0])[1];
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-tree-fold-'));
 const summary = [];
@@ -318,7 +524,45 @@ for (const [name, c] of Object.entries(CASES)) {
   // ...and the fold must never fire with the flag off, whatever else changes.
   assert.strictEqual(folds(off), 0, `${name}: the plain arm folded ${folds(off)} run(s)`);
 
-  summary.push(`${name} ${a} ${c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}`);
+  // A case that only folds because of a relaxation has to STOP folding when the
+  // relaxation is turned off. Without this the four partial cases would pass on
+  // a build where the exact rule set had quietly started accepting narrow ops
+  // for some other reason, and the relaxation would be credited with a fold it
+  // did not cause.
+  let exact = '';
+  if (c.relaxed) {
+    const ex = run(com, ['--tree-fold', '--tree-fold-batch=1', '--tree-fold-relax=none']);
+    assert.ok(/exited=true/.test(ex), `${name}: the exact arm did not exit:\n${ex}`);
+    assert.strictEqual(screen(ex), a,
+      `${name}: the exact arm computed something else\n  plain ${a}\n  exact ${screen(ex)}`);
+    assert.strictEqual(folds(ex), 0,
+      `${name}: folded ${folds(ex)} run(s) with the relaxations off, so this case `
+      + `is not testing the relaxation:\n${ex}`);
+    exact = ' (exact: none)';
+  }
+
+  // THE TERMINATOR FOLD. A case marked `loop: true` has a self-loop block whose
+  // whole body is foldable, so the tree must absorb the branch and run the
+  // iterations inside itself. The screen assertion above is what makes this
+  // safe to want: a loop that ran a different number of times, or left the
+  // slice at a different instruction, does not print the same seven words.
+  //
+  // The A/B arm is `--no-tree-fold-loops`, and it has to agree with the plain
+  // arm too -- that is what says the loop fold is the only thing that changed.
+  let loopNote = '';
+  if (c.loop) {
+    assert.ok(loops(on) > 0,
+      `${name}: this shape has a foldable self-loop block, but no loop handler `
+      + `was built:\n${on}`);
+    const nl = run(com, ['--tree-fold', '--tree-fold-batch=1', '--no-tree-fold-loops']);
+    assert.strictEqual(screen(nl), a,
+      `${name}: the no-loops arm computed something else\n  plain ${a}\n  no-loops ${screen(nl)}`);
+    assert.strictEqual(loops(nl), 0,
+      `${name}: --no-tree-fold-loops still built ${loops(nl)} loop handler(s):\n${nl}`);
+    loopNote = ` (${loops(on)} loop)`;
+  }
+
+  summary.push(`${name} ${a} ${c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}${loopNote}${exact}`);
 }
 // --- the hotness gate ------------------------------------------------------
 //
@@ -421,6 +665,34 @@ assert.strictEqual(disp(gateHot), disp(gatePlain),
 
 summary.push(`gate ${gp} hot=64:${g64.folds} fold(s)/${g64.trees} tree(s)/${g64.cold} cold, `
   + `hot=50000: no fold`);
+
+// --- coexisting with the region JIT ----------------------------------------
+//
+// The two folds append handlers to the same table, and for as long as each
+// numbered its own from zero they could not both be on: a tree word would
+// dispatch into a region, and whichever module was built last carried only its
+// own side's handlers. `--tree-fold --region-jit` was refused outright, which
+// is not a position the fold can ship from -- the page's default IS the region
+// JIT, so a fold that cannot stack on it never runs for anybody.
+//
+// One allocator owns the tail now (tools/toyvm/extras.js). What this checks is
+// the thing that breaks when it does not: the program still computes the same
+// seven words with both on. The region JIT is asked to profile early so it has
+// a real chance to install here rather than declining past the whole question,
+// and the run is required to fold trees either way -- an arm where nothing was
+// appended would prove nothing about who owns the ordinals.
+const bothProg = GATE_COM;
+const both = run(bothProg, [
+  '--tree-fold', '--tree-fold-batch=1',
+  '--region-jit', '--region-jit-after=100k', '--region-jit-window=100k',
+]);
+assert.ok(/exited=true/.test(both), `both: the two-fold arm did not exit:\n${both}`);
+assert.strictEqual(screen(both), gp,
+  `both: --tree-fold --region-jit computed something else\n  plain ${gp}\n  both  ${screen(both)}`);
+assert.ok(folds(both) > 0,
+  `both: nothing folded, so this arm says nothing about shared ordinals:\n${both}`);
+const jitSaid = (/region jit \(inline\): ([a-z]+)/.exec(both) || [0, 'absent'])[1];
+summary.push(`both ${screen(both)} ${folds(both)} fold(s)/${trees(both)} tree(s), region jit ${jitSaid}`);
 
 fs.rmSync(dir, { recursive: true, force: true });
 console.log(`PASS test-toyvm-tree-fold: ${summary.join('; ')}`);

@@ -5,14 +5,19 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
-  (func (export "test_d3d9_set_null_shaders") (param $pixel i32) (param $shader i32) (result i64)
+  (func (export "new_device") (result i32)
+    (local $d i32)
+    (local.set $d (call $dx_create_com_obj (i32.const 20) (global.get $DX_VTBL_D3DDEV9)))
+    (store.field DxObject misc1 (call $dx_from_this (local.get $d)) (call $d3d9_program_alloc))
+    (local.get $d))
+  (func (export "test_d3d9_set_null_shaders") (param $device i32) (param $pixel i32) (param $shader i32) (result i64)
     (global.set $esp (i32.const 0x00300000))
     (if (local.get $pixel)
       (then (call $handle_IDirect3DDevice9_SetPixelShader
-        (i32.const 0x1234) (local.get $shader) (i32.const 0)
+        (local.get $device) (local.get $shader) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0)))
       (else (call $handle_IDirect3DDevice9_SetVertexShader
-        (i32.const 0x1234) (local.get $shader) (i32.const 0)
+        (local.get $device) (local.get $shader) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0))))
     (i64.or (i64.extend_i32_u (global.get $eax))
       (i64.shl (i64.extend_i32_u (global.get $esp)) (i64.const 32))))
@@ -20,15 +25,18 @@ const extraWat = String.raw`
 
 (async () => {
   const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
+  e.init_dx_com_thunks();const device=e.new_device();
   for (const pixel of [0, 1]) {
-    let result = e.test_d3d9_set_null_shaders(pixel, 0);
+    let result = e.test_d3d9_set_null_shaders(device, pixel, 0);
     assert.strictEqual(Number(result & 0xffffffffn), 0,
       'NULL shader selects the fixed-function pipeline');
     assert.strictEqual(Number(result >> 32n), 0x0030000c,
       'shader setter pops this, shader, and return address');
-    result = e.test_d3d9_set_null_shaders(pixel, 1);
+    result = e.test_d3d9_set_null_shaders(device, pixel, 1);
     assert.strictEqual(Number(result & 0xffffffffn) >>> 0, 0x8876086c,
       'unsupported programmable shader handles are rejected');
+    result=e.test_d3d9_set_null_shaders(0,pixel,0);
+    assert.strictEqual(Number(result&0xffffffffn)>>>0,0x8876086c,'NULL shader does not validate a NULL device');
   }
   console.log('PASS D3D9 NULL vertex/pixel shaders select fixed-function rendering');
 })().catch(error => {

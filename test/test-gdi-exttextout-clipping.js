@@ -86,7 +86,26 @@ const RegionMap = require('../lib/region-map.generated.js');
   assert(greenBackgroundPixels > 0,
     'WAT must apply OPAQUE background color around glyph-mask pixels');
 
-  console.log('PASS  WAT text composition owns clipping, colors, and opaque backgrounds');
+  // Native Win98 oracle: gdi-exttextout-glyph, cases0..3. A missing optional
+  // rectangle does not suppress text or its TA_UPDATECP advance.
+  const beforeNullRect=new Uint8Array(bytes.slice(bitsWa,bitsWa+width*height*4));
+  wat.test_gdi_dc_set_field(hdc,32,1,0); // TA_UPDATECP
+  wat.test_gdi_dc_set_field(hdc,12,2,0);
+  wat.test_gdi_dc_set_field(hdc,16,2,0);
+  assert.strictEqual(wat.test_call_ExtTextOutA(hdc,0,0,0,0,textGa,1),1);
+  const expectedAdvance=wat.test_gdi_dc_get_field(hdc,12,0);
+  const expectedPixels=bytes.slice(bitsWa,bitsWa+width*height*4);
+  assert(expectedAdvance>2,'ordinary text advances current position');
+  for(const options of [2,4,6]) {
+    bytes.set(beforeNullRect,bitsWa);
+    wat.test_gdi_dc_set_field(hdc,12,2,0);
+    wat.test_gdi_dc_set_field(hdc,16,2,0);
+    assert.strictEqual(wat.test_call_ExtTextOutA(hdc,0,0,options,0,textGa,1),1);
+    assert.strictEqual(wat.test_gdi_dc_get_field(hdc,12,0),expectedAdvance);
+    assert.deepStrictEqual(bytes.slice(bitsWa,bitsWa+width*height*4),expectedPixels);
+  }
+
+  console.log('PASS  WAT text composition owns clipping, colors, opaque backgrounds and optional opaque rectangle');
 })().catch(error => {
   console.error(error);
   process.exit(1);

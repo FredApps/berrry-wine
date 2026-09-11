@@ -340,13 +340,14 @@
       (then
         (i32.store offset=4 (local.get $image_rec)
           (i32.load (i32.add (local.get $lParam_wa) (i32.const 36))))))
-    ;; State: if mask includes TVIF_STATE (0x8), use provided state; else keep
-    ;; the old minimal-control behavior of showing descendants by default.
+    ;; State: if mask includes TVIF_STATE (0x8), use the requested state.
+    ;; Win98 otherwise inserts the item collapsed; adding children later does
+    ;; not implicitly expand their parent.
     (if (i32.and (local.get $mask) (i32.const 0x8))
       (then
         (local.set $state (i32.load (i32.add (local.get $lParam_wa) (i32.const 16)))))
       (else
-        (local.set $state (i32.const 0x20))))  ;; default: TVIS_EXPANDED
+        (local.set $state (i32.const 0))))
     (if (i32.and
           (i32.ne (i32.and (local.get $mask) (i32.const 0x40)) (i32.const 0))
           (i32.ne (i32.load (i32.add (local.get $lParam_wa) (i32.const 40))) (i32.const 0)))
@@ -477,13 +478,6 @@
                     (br $find)))))))))
     (if (i32.eqz (local.get $hParent))
       (then (call $tv_link_root_item (local.get $base) (local.get $handle))))
-    ;; Win98's TreeView gives the first inserted item the caret. WinHelp
-    ;; immediately queries TVGN_CARET and relies on that native default.
-    (if (i32.eqz (call $tv_view_sel))
-      (then
-        (call $tv_view_set_sel (local.get $handle))
-        (i32.store offset=20 (local.get $base)
-          (i32.or (i32.load offset=20 (local.get $base)) (i32.const 0x2)))))
     (local.get $handle))
 
   ;; TVM_GETITEMA handler — read TVITEM, fill requested fields
@@ -816,6 +810,40 @@
       (br $rows)))
     (i32.const 0))
 
+  ;; Absolute display row for an item, independent of the current viewport.
+  ;; Returns -1 when the item is not in the expanded display-order walk.
+  (func $tv_visible_row_for_handle (param $target i32) (result i32)
+    (local $hItem i32) (local $row i32) (local $guard i32)
+    (local.set $hItem (call $tv_visible_handle_at_row (i32.const 0)))
+    (block $done (loop $items
+      (br_if $done (i32.eqz (local.get $hItem)))
+      (if (i32.eq (local.get $hItem) (local.get $target))
+        (then (return (local.get $row))))
+      (br_if $done (i32.ge_u (local.get $guard) (call $tv_slot_limit)))
+      (local.set $hItem (call $tv_next_visible_handle (local.get $hItem)))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br $items)))
+    (i32.const -1))
+
+  (func $tv_first_item_with_state (param $mask i32) (result i32)
+    (local $i i32) (local $base i32)
+    (block $done (loop $items
+      (br_if $done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
+      (local.set $base
+        (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+      (if (i32.and
+            (i32.and
+              (i32.ne (i32.load (local.get $base)) (i32.const 0))
+              (call $tv_slot_in_view (local.get $i)))
+            (i32.ne
+              (i32.and (i32.load offset=20 (local.get $base)) (local.get $mask))
+              (i32.const 0)))
+        (then (return (i32.load (local.get $base)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $items)))
+    (i32.const 0))
+
   ;; TVM_GETNEXTITEM handler
   (func $tv_get_next (param $flag i32) (param $hItem i32) (result i32)
     (local $slot i32) (local $base i32) (local $i i32)
@@ -841,6 +869,9 @@
     ;; TVGN_FIRSTVISIBLE (5)
     (if (i32.eq (local.get $flag) (i32.const 5))
       (then (return (call $tv_first_visible))))
+    ;; TVGN_DROPHILITE (8)
+    (if (i32.eq (local.get $flag) (i32.const 8))
+      (then (return (call $tv_first_item_with_state (i32.const 0x0008)))))
     ;; Need to find the item
     (local.set $slot (call $tv_find_slot (local.get $hItem)))
     (if (i32.eq (local.get $slot) (i32.const -1))
@@ -863,62 +894,66 @@
       (then (return (call $tv_next_visible_from_slot (local.get $slot)))))
     (i32.const 0))
 
-  ;; Send the parent dialog a minimal NM_TREEVIEWA/TVN_SELCHANGEDA after the
-  ;; caret item changes. Winamp populates the preferences page from this
-  ;; notification; without it the tree paints but the page area remains blank.
-  (func $tv_notify_sel_changed (param $hwnd i32) (param $old_handle i32) (param $new_handle i32) (param $action i32)
+  ;; Send one NM_TREEVIEWA selection notification and return the parent's
+  ;; result. Win98 sends TVN_SELCHANGINGA against the old state, permits a
+  ;; nonzero result to veto the change, then sends TVN_SELCHANGEDA only after
+  ;; the caret/state update. Winamp populates its preferences page from the
+  ;; accepted notification rather than a follow-up TVM_GETITEM call.
+  (func $tv_notify_selection
+    (param $hwnd i32) (param $old_handle i32) (param $new_handle i32)
+    (param $action i32) (param $code i32) (result i32)
     (local $parent i32) (local $notify_g i32) (local $notify_w i32)
-    (local $slot i32) (local $base i32)
+    (local $slot i32) (local $base i32) (local $ret i32)
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
-    (if (i32.eqz (local.get $parent)) (then (return)))
+    (if (i32.eqz (local.get $parent)) (then (return (i32.const 0))))
     (local.set $notify_g (call $heap_alloc (i32.const 104)))
-    (if (i32.eqz (local.get $notify_g)) (then (return)))
+    (if (i32.eqz (local.get $notify_g)) (then (return (i32.const 0))))
     (local.set $notify_w (call $g2w (local.get $notify_g)))
     (call $zero_memory (local.get $notify_w) (i32.const 104))
-    ;; NMHDR: hwndFrom, idFrom, code. Send both changing and changed below;
-    ;; older Winamp handlers consult the notification rather than relying on
-    ;; a follow-up TVM_GETITEM call.
+    ;; NMHDR: hwndFrom, idFrom, code; action follows at +12.
     (i32.store          (local.get $notify_w) (local.get $hwnd))
     (i32.store offset=4 (local.get $notify_w) (call $ctrl_table_get_id (local.get $hwnd)))
-    (i32.store offset=8 (local.get $notify_w) (i32.const -401))
+    (i32.store offset=8 (local.get $notify_w) (local.get $code))
     (i32.store offset=12 (local.get $notify_w) (local.get $action))
 
-    ;; itemOld at +16, itemNew at +56. Fill mask, hItem, selected state
-    ;; for itemNew, and lParam so Winamp can map the tree node to a page.
+    ;; itemOld at +16, itemNew at +56. Win98 advertises HANDLE|STATE|PARAM
+    ;; for both records, including a NULL endpoint. The state is sampled when
+    ;; each notification is built, so CHANGING sees the old selection and
+    ;; CHANGED sees the committed selection.
+    (i32.store offset=16 (local.get $notify_w) (i32.const 0x1C))
+    (i32.store offset=20 (local.get $notify_w) (local.get $old_handle))
     (if (local.get $old_handle)
       (then
         (local.set $slot (call $tv_find_slot (local.get $old_handle)))
-        (if (i32.ne (local.get $slot) (i32.const -1))
+        (if (i32.and
+              (i32.ne (local.get $slot) (i32.const -1))
+              (call $tv_slot_in_view (local.get $slot)))
           (then
             (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
-            (i32.store offset=16 (local.get $notify_w) (i32.const 0x14))
-            (i32.store offset=20 (local.get $notify_w) (local.get $old_handle))
+            (i32.store offset=24 (local.get $notify_w) (i32.load offset=20 (local.get $base)))
             (i32.store offset=48 (local.get $notify_w)
               (call $tv_item_has_children (local.get $base)))
             (i32.store offset=52 (local.get $notify_w) (i32.load offset=24 (local.get $base)))))))
+    (i32.store offset=56 (local.get $notify_w) (i32.const 0x1C))
+    (i32.store offset=60 (local.get $notify_w) (local.get $new_handle))
     (if (local.get $new_handle)
       (then
         (local.set $slot (call $tv_find_slot (local.get $new_handle)))
-        (if (i32.ne (local.get $slot) (i32.const -1))
+        (if (i32.and
+              (i32.ne (local.get $slot) (i32.const -1))
+              (call $tv_slot_in_view (local.get $slot)))
           (then
             (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
-            (i32.store offset=56 (local.get $notify_w) (i32.const 0x1C))
-            (i32.store offset=60 (local.get $notify_w) (local.get $new_handle))
-            (i32.store offset=64 (local.get $notify_w) (i32.const 0x0002))
-            (i32.store offset=68 (local.get $notify_w) (i32.const 0x0002))
+            (i32.store offset=64 (local.get $notify_w) (i32.load offset=20 (local.get $base)))
             (i32.store offset=88 (local.get $notify_w)
               (call $tv_item_has_children (local.get $base)))
             (i32.store offset=92 (local.get $notify_w) (i32.load offset=24 (local.get $base)))))))
-    (drop (call $wnd_send_message
+    (local.set $ret (call $wnd_send_message
       (local.get $parent) (i32.const 0x004E)
       (call $ctrl_table_get_id (local.get $hwnd))
       (local.get $notify_g)))
-    (i32.store offset=8 (local.get $notify_w) (i32.const -402))
-    (drop (call $wnd_send_message
-      (local.get $parent) (i32.const 0x004E)
-      (call $ctrl_table_get_id (local.get $hwnd))
-      (local.get $notify_g)))
-    (call $heap_free (local.get $notify_g)))
+    (call $heap_free (local.get $notify_g))
+    (local.get $ret))
 
   (func $tv_notify_simple (param $hwnd i32) (param $code i32)
     (local $parent i32) (local $notify_g i32) (local $notify_w i32)
@@ -930,6 +965,34 @@
     (i32.store          (local.get $notify_w) (local.get $hwnd))
     (i32.store offset=4 (local.get $notify_w) (call $ctrl_table_get_id (local.get $hwnd)))
     (i32.store offset=8 (local.get $notify_w) (local.get $code))
+    (drop (call $wnd_send_message
+      (local.get $parent) (i32.const 0x004E)
+      (call $ctrl_table_get_id (local.get $hwnd))
+      (local.get $notify_g)))
+    (call $heap_free (local.get $notify_g)))
+
+  ;; TVN_DELETEITEMA. Win98 sends one notification for every removed item,
+  ;; children before their parent, with hItem and the application-owned lParam
+  ;; still valid in itemOld.
+  (func $tv_notify_delete_item (param $hwnd i32) (param $hItem i32)
+    (local $parent i32) (local $slot i32) (local $base i32)
+    (local $notify_g i32) (local $notify_w i32)
+    (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
+    (if (i32.eqz (local.get $parent)) (then (return)))
+    (local.set $slot (call $tv_find_slot (local.get $hItem)))
+    (if (i32.eq (local.get $slot) (i32.const -1)) (then (return)))
+    (local.set $base
+      (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $notify_g (call $heap_alloc (i32.const 104)))
+    (if (i32.eqz (local.get $notify_g)) (then (return)))
+    (local.set $notify_w (call $g2w (local.get $notify_g)))
+    (call $zero_memory (local.get $notify_w) (i32.const 104))
+    (i32.store          (local.get $notify_w) (local.get $hwnd))
+    (i32.store offset=4 (local.get $notify_w) (call $ctrl_table_get_id (local.get $hwnd)))
+    (i32.store offset=8 (local.get $notify_w) (i32.const -409)) ;; TVN_DELETEITEMA
+    (i32.store offset=16 (local.get $notify_w) (i32.const 0x14)) ;; TVIF_HANDLE|TVIF_PARAM
+    (i32.store offset=20 (local.get $notify_w) (local.get $hItem))
+    (i32.store offset=52 (local.get $notify_w) (i32.load offset=24 (local.get $base)))
     (drop (call $wnd_send_message
       (local.get $parent) (i32.const 0x004E)
       (call $ctrl_table_get_id (local.get $hwnd))
@@ -971,14 +1034,146 @@
     (call $heap_free (local.get $notify_g))
     (local.get $ret))
 
-  (func $tv_select_caret (param $hwnd i32) (param $hItem i32) (param $action i32) (result i32)
-    (local $old_sel i32) (local $slot i32) (local $base i32)
-    (local $i i32) (local $scan_base i32)
+  ;; Expand every ancestor from the root down. TVM_SELECTITEM with TVGN_CARET
+  ;; and TVGN_FIRSTVISIBLE both reveal a descendant hidden below collapsed
+  ;; parents on Win98. Going root-first preserves the notification order and
+  ;; bounds recursion even if an application's item links are malformed.
+  ;; Result: -1 = failure, 0 = already revealed, 1 = at least one ancestor
+  ;; expanded. The distinction is observable through TVM_ENSUREVISIBLE.
+  (func $tv_expand_ancestors (param $hwnd i32) (param $hItem i32) (param $depth i32) (result i32)
+    (local $slot i32) (local $base i32) (local $parent i32)
+    (local $parent_slot i32) (local $parent_base i32)
+    (local $expanded i32) (local $ret i32)
+    (if (i32.ge_u (local.get $depth) (call $tv_slot_limit))
+      (then (return (i32.const -1))))
+    (local.set $slot (call $tv_find_slot (local.get $hItem)))
+    (if (i32.eq (local.get $slot) (i32.const -1))
+      (then (return (i32.const -1))))
+    (local.set $base
+      (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $parent (i32.load offset=4 (local.get $base)))
+    (if (i32.eqz (local.get $parent))
+      (then (return (i32.const 0))))
+    (local.set $ret (call $tv_expand_ancestors
+      (local.get $hwnd) (local.get $parent)
+      (i32.add (local.get $depth) (i32.const 1))))
+    (if (i32.lt_s (local.get $ret) (i32.const 0))
+      (then (return (i32.const -1))))
+    (local.set $parent_slot (call $tv_find_slot (local.get $parent)))
+    (if (i32.eq (local.get $parent_slot) (i32.const -1))
+      (then (return (i32.const -1))))
+    (local.set $parent_base
+      (i32.add (global.get $TV_TABLE)
+        (i32.mul (local.get $parent_slot) (i32.const 32))))
+    (local.set $expanded
+      (i32.ne
+        (i32.and (i32.load offset=20 (local.get $parent_base)) (i32.const 0x20))
+        (i32.const 0)))
+    (if (i32.eqz (call $tv_set_expanded
+          (local.get $hwnd) (local.get $parent) (i32.const 2)))
+      (then (return (i32.const -1))))
+    (select
+      (i32.const 1)
+      (local.get $ret)
+      (i32.eqz (local.get $expanded))))
+
+  ;; Reveal an item and project that content position into the TreeView's
+  ;; standard vertical scrollbar. With make_first=0, scroll only as far as
+  ;; needed; with make_first=1, place the item at the top when the tail length
+  ;; permits it (TVGN_FIRSTVISIBLE semantics).
+  (func $tv_reveal_item (param $hwnd i32) (param $hItem i32) (param $make_first i32) (result i32)
+    (local $sz i32) (local $h i32) (local $row i32)
+    (local $first i32) (local $visible i32) (local $target i32)
+    (local $expanded i32) (local $new_first i32) (local $flags i32)
+    (if (i32.eqz (local.get $hItem))
+      (then (return (i32.const 0))))
+    (local.set $expanded (call $tv_expand_ancestors
+      (local.get $hwnd) (local.get $hItem) (i32.const 0)))
+    (if (i32.lt_s (local.get $expanded) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $row (call $tv_visible_row_for_handle (local.get $hItem)))
+    (if (i32.lt_s (local.get $row) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (local.set $first (call $tv_view_row))
+    (local.set $visible (call $tv_visible_rows_for_h (local.get $h)))
+    (local.set $target (local.get $first))
+    (if (local.get $make_first)
+      (then (local.set $target (local.get $row)))
+      (else
+        (if (i32.lt_s (local.get $row) (local.get $first))
+          (then (local.set $target (local.get $row)))
+          (else
+            (if (i32.ge_s
+                  (local.get $row)
+                  (i32.add (local.get $first) (local.get $visible)))
+              (then
+                (local.set $target
+                  (i32.add
+                    (i32.sub (local.get $row) (local.get $visible))
+                    (i32.const 1)))))))))
+    (local.set $new_first (call $tv_scroll_to_for_h
+      (local.get $hwnd) (local.get $h) (local.get $target)))
+    ;; bit 0 = success, bit 1 = expanded, bit 2 = scrolled.
+    (local.set $flags (i32.const 1))
+    (if (local.get $expanded)
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 2)))))
+    (if (i32.ne (local.get $new_first) (local.get $first))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 4)))))
+    (local.get $flags))
+
+  (func $tv_select_drop_target (param $hwnd i32) (param $hItem i32) (result i32)
+    (local $slot i32) (local $base i32) (local $i i32)
     (if (i32.and
           (i32.ne (local.get $hItem) (i32.const 0))
           (i32.eq (call $tv_find_slot (local.get $hItem)) (i32.const -1)))
       (then (return (i32.const 0))))
+    (block $clear_done (loop $clear_items
+      (br_if $clear_done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
+      (local.set $base
+        (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+      (if (i32.and
+            (i32.ne (i32.load (local.get $base)) (i32.const 0))
+            (call $tv_slot_in_view (local.get $i)))
+        (then
+          (i32.store offset=20 (local.get $base)
+            (i32.and (i32.load offset=20 (local.get $base)) (i32.const 0xFFFFFFF7)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $clear_items)))
+    (if (local.get $hItem)
+      (then
+        (local.set $slot (call $tv_find_slot (local.get $hItem)))
+        (local.set $base
+          (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+        (i32.store offset=20 (local.get $base)
+          (i32.or (i32.load offset=20 (local.get $base)) (i32.const 0x0008)))))
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (call $treeview_paint_wat (local.get $hwnd))
+    (i32.const 1))
+
+  (func $tv_select_caret (param $hwnd i32) (param $hItem i32) (param $action i32) (result i32)
+    (local $old_sel i32) (local $slot i32) (local $base i32)
+    (local $i i32) (local $scan_base i32)
+    (if (local.get $hItem)
+      (then
+        (local.set $slot (call $tv_find_slot (local.get $hItem)))
+        (if (i32.or
+              (i32.eq (local.get $slot) (i32.const -1))
+              (i32.eqz (call $tv_slot_in_view (local.get $slot))))
+          (then (return (i32.const 0))))))
     (local.set $old_sel (call $tv_view_sel))
+    (if (i32.eq (local.get $old_sel) (local.get $hItem))
+      (then (return (i32.const 1))))
+    (if (call $tv_notify_selection
+          (local.get $hwnd) (local.get $old_sel) (local.get $hItem)
+          (local.get $action) (i32.const -401))
+      (then (return (i32.const 0))))
+    (if (local.get $hItem)
+      (then
+        (if (i32.eqz (call $tv_reveal_item
+              (local.get $hwnd) (local.get $hItem) (i32.const 0)))
+          (then (return (i32.const 0))))))
     (if (local.get $old_sel)
       (then
         (local.set $slot (call $tv_find_slot (local.get $old_sel)))
@@ -1010,9 +1205,9 @@
             (i32.store offset=20 (local.get $base)
               (i32.or (i32.load offset=20 (local.get $base)) (i32.const 0x0002)))))))
     (call $tv_view_set_sel (local.get $hItem))
-    (if (i32.ne (local.get $old_sel) (local.get $hItem))
-      (then (call $tv_notify_sel_changed
-        (local.get $hwnd) (local.get $old_sel) (local.get $hItem) (local.get $action))))
+    (drop (call $tv_notify_selection
+      (local.get $hwnd) (local.get $old_sel) (local.get $hItem)
+      (local.get $action) (i32.const -402)))
     (call $paint_flag_set_inv (local.get $hwnd))
     (call $treeview_paint_wat (local.get $hwnd))
     (i32.const 1))
@@ -1065,71 +1260,287 @@
 
   (func $tv_set_expanded (param $hwnd i32) (param $hItem i32) (param $action i32) (result i32)
     (local $slot i32) (local $base i32) (local $state i32) (local $cmd i32)
-    (local $was_expanded i32) (local $notify_action i32)
+    (local $was_expanded i32) (local $was_expanded_once i32)
+    (local $notify_first_expand i32) (local $collapse_reset i32) (local $ret i32)
     (local $sel_slot i32) (local $sel_base i32)
-    (local $i i32) (local $scan_base i32)
+    (local $child i32) (local $child_slot i32) (local $child_base i32)
+    (local $next_child i32) (local $guard i32) (local $sz i32) (local $h i32)
     (local.set $slot (call $tv_find_slot (local.get $hItem)))
-    (if (i32.eq (local.get $slot) (i32.const -1))
+    (if (i32.or
+          (i32.eq (local.get $slot) (i32.const -1))
+          (i32.eqz (call $tv_slot_in_view (local.get $slot))))
       (then (return (i32.const 0))))
     (local.set $base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
     (local.set $state (i32.load offset=20 (local.get $base)))
     (local.set $was_expanded (i32.and (local.get $state) (i32.const 0x20)))
+    (local.set $was_expanded_once (i32.and (local.get $state) (i32.const 0x40)))
     (local.set $cmd (i32.and (local.get $action) (i32.const 0x000F)))
+    (local.set $collapse_reset (i32.and (local.get $action) (i32.const 0x8000)))
     ;; TVE_COLLAPSE=1, TVE_EXPAND=2, TVE_TOGGLE=3.
-    (if (i32.eq (local.get $cmd) (i32.const 1))
-      (then (local.set $state (i32.and (local.get $state) (i32.const 0xFFFFFFDF))))
-      (else
-        (if (i32.eq (local.get $cmd) (i32.const 2))
-          (then (local.set $state (i32.or (local.get $state) (i32.const 0x20))))
-          (else
-            (if (i32.eq (local.get $cmd) (i32.const 3))
-              (then (local.set $state (i32.xor (local.get $state) (i32.const 0x20)))))))))
-    (if (i32.eq
-          (local.get $was_expanded)
-          (i32.and (local.get $state) (i32.const 0x20)))
-      (then (return (i32.const 1))))
-    (local.set $notify_action
-      (select (i32.const 2) (i32.const 1)
-        (i32.ne (i32.and (local.get $state) (i32.const 0x20)) (i32.const 0))))
-    (if (call $tv_notify_item_expand
-          (local.get $hwnd) (local.get $hItem) (local.get $notify_action) (i32.const -405))
-      (then (return (i32.const 0))))
-    (i32.store offset=20 (local.get $base) (local.get $state))
+    (if (i32.eq (local.get $cmd) (i32.const 3))
+      (then
+        (local.set $cmd
+          (select (i32.const 1) (i32.const 2)
+            (i32.ne (local.get $was_expanded) (i32.const 0))))))
     (if (i32.and
-          (i32.eqz (i32.and (local.get $state) (i32.const 0x20)))
-          (i32.ne (call $tv_view_sel) (i32.const 0)))
+          (i32.ne (local.get $cmd) (i32.const 1))
+          (i32.ne (local.get $cmd) (i32.const 2)))
+      (then (return (i32.const 0))))
+
+    ;; Expanding a leaf fails. An already-expanded branch succeeds quietly.
+    ;; Only the first expansion while TVIS_EXPANDEDONCE is clear is vetoable
+    ;; and emits TVN_ITEMEXPANDING/TVN_ITEMEXPANDED on Win98.
+    (if (i32.eq (local.get $cmd) (i32.const 2))
+      (then
+        (if (i32.eqz (call $tv_item_has_children (local.get $base)))
+          (then (return (i32.const 0))))
+        (if (local.get $was_expanded)
+          (then (return (i32.const 1))))
+        (if (i32.eqz (local.get $was_expanded_once))
+          (then
+            (if (call $tv_notify_item_expand
+                  (local.get $hwnd) (local.get $hItem) (i32.const 2) (i32.const -405))
+              (then (return (i32.const 0))))
+            (local.set $notify_first_expand (i32.const 1))))
+        (local.set $state (i32.or (local.get $state) (i32.const 0x60)))
+        (i32.store offset=20 (local.get $base) (local.get $state))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (call $treeview_paint_wat (local.get $hwnd))
+        (if (local.get $notify_first_expand)
+          (then
+            (drop (call $tv_notify_item_expand
+              (local.get $hwnd) (local.get $hItem) (i32.const 2) (i32.const -406)))))
+        (return (i32.const 1))))
+
+    ;; A plain collapse of an already-collapsed branch fails without changes.
+    ;; COLLAPSERESET is different: it still removes descendants and clears
+    ;; EXPANDEDONCE, while preserving that FALSE return value.
+    (local.set $ret (i32.ne (local.get $was_expanded) (i32.const 0)))
+    (if (i32.and
+          (i32.eqz (local.get $was_expanded))
+          (i32.eqz (local.get $collapse_reset)))
+      (then (return (i32.const 0))))
+    (local.set $state (i32.and (local.get $state) (i32.const 0xFFFFFFDF)))
+    (if (local.get $collapse_reset)
+      (then (local.set $state (i32.and (local.get $state) (i32.const 0xFFFFFFBF)))))
+    (i32.store offset=20 (local.get $base) (local.get $state))
+
+    (if (i32.ne (call $tv_view_sel) (i32.const 0))
       (then
         (local.set $sel_slot (call $tv_find_slot (call $tv_view_sel)))
-        (if (i32.ne (local.get $sel_slot) (i32.const -1))
+        (if (i32.and
+              (i32.ne (local.get $sel_slot) (i32.const -1))
+              (call $tv_slot_in_view (local.get $sel_slot)))
           (then
             (local.set $sel_base (i32.add (global.get $TV_TABLE)
               (i32.mul (local.get $sel_slot) (i32.const 32))))
             (if (i32.eqz (call $tv_item_visible (local.get $sel_base)))
-              (then (return (call $tv_select_caret
-                (local.get $hwnd) (local.get $hItem) (i32.const 1)))))))))
-    (if (i32.eqz (i32.and (local.get $state) (i32.const 0x20)))
+              (then
+                ;; Collapsing over the caret moves it to the collapsing item
+                ;; without selection-change notifications on Win98. Only the
+                ;; caret's selected bit moves: independently set TVIS_SELECTED
+                ;; bits on other hidden descendants remain intact.
+                (i32.store offset=20 (local.get $sel_base)
+                  (i32.and
+                    (i32.load offset=20 (local.get $sel_base))
+                    (i32.const 0xFFFFFFFD)))
+                (i32.store offset=20 (local.get $base)
+                  (i32.or
+                    (i32.load offset=20 (local.get $base))
+                    (i32.const 0x0002)))
+                (call $tv_view_set_sel (local.get $hItem))))))))
+
+    (if (local.get $collapse_reset)
       (then
-        (local.set $i (i32.const 0))
-        (block $scan_done (loop $scan_items
-          (br_if $scan_done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
-          (local.set $scan_base (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
-          (if (i32.and
-                (i32.and
-                  (i32.ne (i32.load (local.get $scan_base)) (i32.const 0))
-                  (call $tv_slot_in_view (local.get $i)))
-                (i32.ne
-                  (i32.and (i32.load offset=20 (local.get $scan_base)) (i32.const 0x0002))
-                  (i32.const 0)))
-            (then
-              (if (i32.eqz (call $tv_item_visible (local.get $scan_base)))
-                (then (return (call $tv_select_caret
-                  (local.get $hwnd) (local.get $hItem) (i32.const 1)))))))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $scan_items)))))
+        (local.set $child (i32.load offset=8 (local.get $base)))
+        ;; Detach first so re-entrant delete notifications see the same empty
+        ;; child list that Win98 exposes once reset processing has begun.
+        (i32.store offset=8 (local.get $base) (i32.const 0))
+        (block $children_done (loop $children
+          (br_if $children_done (i32.eqz (local.get $child)))
+          (br_if $children_done (i32.ge_u (local.get $guard) (call $tv_slot_limit)))
+          (local.set $child_slot (call $tv_find_slot (local.get $child)))
+          (br_if $children_done (i32.eq (local.get $child_slot) (i32.const -1)))
+          (local.set $child_base
+            (i32.add (global.get $TV_TABLE)
+              (i32.mul (local.get $child_slot) (i32.const 32))))
+          (local.set $next_child (i32.load offset=12 (local.get $child_base)))
+          (drop (call $tv_delete_branch
+            (local.get $hwnd) (local.get $child) (i32.const 0)))
+          (local.set $child (local.get $next_child))
+          (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+          (br $children)))))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (drop (call $tv_scroll_to_for_h
+      (local.get $hwnd) (local.get $h) (call $tv_view_row)))
     (call $paint_flag_set_inv (local.get $hwnd))
     (call $treeview_paint_wat (local.get $hwnd))
-    (drop (call $tv_notify_item_expand
-      (local.get $hwnd) (local.get $hItem) (local.get $notify_action) (i32.const -406)))
+    (local.get $ret))
+
+  ;; Clear one item record after its children have already been removed.
+  (func $tv_delete_branch (param $hwnd i32) (param $hItem i32) (param $depth i32) (result i32)
+    (local $slot i32) (local $base i32) (local $child i32)
+    (local $child_slot i32) (local $child_base i32) (local $next_child i32)
+    (local $text i32) (local $guard i32)
+    (if (i32.ge_u (local.get $depth) (call $tv_slot_limit))
+      (then (return (i32.const 0))))
+    (local.set $slot (call $tv_find_slot (local.get $hItem)))
+    (if (i32.or
+          (i32.eq (local.get $slot) (i32.const -1))
+          (i32.eqz (call $tv_slot_in_view (local.get $slot))))
+      (then (return (i32.const 0))))
+    (local.set $base
+      (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+    (local.set $child (i32.load offset=8 (local.get $base)))
+    (block $children_done (loop $children
+      (br_if $children_done (i32.eqz (local.get $child)))
+      (br_if $children_done (i32.ge_u (local.get $guard) (call $tv_slot_limit)))
+      (local.set $child_slot (call $tv_find_slot (local.get $child)))
+      (br_if $children_done (i32.eq (local.get $child_slot) (i32.const -1)))
+      (local.set $child_base
+        (i32.add (global.get $TV_TABLE)
+          (i32.mul (local.get $child_slot) (i32.const 32))))
+      (local.set $next_child (i32.load offset=12 (local.get $child_base)))
+      (drop (call $tv_delete_branch
+        (local.get $hwnd) (local.get $child)
+        (i32.add (local.get $depth) (i32.const 1))))
+      (local.set $child (local.get $next_child))
+      (local.set $guard (i32.add (local.get $guard) (i32.const 1)))
+      (br $children)))
+    (call $tv_notify_delete_item (local.get $hwnd) (local.get $hItem))
+    (local.set $text (i32.load offset=28 (local.get $base)))
+    (if (local.get $text) (then (call $heap_free (local.get $text))))
+    (call $zero_memory (local.get $base) (i32.const 32))
+    (i32.store (call $tv_owner_cell (local.get $slot)) (i32.const 0))
+    (i32.store (call $tv_image_record (local.get $slot)) (i32.const -1))
+    (i32.store offset=4 (call $tv_image_record (local.get $slot)) (i32.const -1))
+    (if (global.get $tv_count)
+      (then (global.set $tv_count (i32.sub (global.get $tv_count) (i32.const 1)))))
+    (i32.const 1))
+
+  (func $tv_unlink_item (param $base i32)
+    (local $parent i32) (local $prev i32) (local $next i32) (local $slot i32)
+    (local.set $parent (i32.load offset=4 (local.get $base)))
+    (local.set $prev (i32.load offset=16 (local.get $base)))
+    (local.set $next (i32.load offset=12 (local.get $base)))
+    (if (local.get $prev)
+      (then
+        (local.set $slot (call $tv_find_slot (local.get $prev)))
+        (if (i32.ne (local.get $slot) (i32.const -1))
+          (then
+            (i32.store offset=12
+              (i32.add (global.get $TV_TABLE)
+                (i32.mul (local.get $slot) (i32.const 32)))
+              (local.get $next)))))
+      (else
+        (if (local.get $parent)
+          (then
+            (local.set $slot (call $tv_find_slot (local.get $parent)))
+            (if (i32.ne (local.get $slot) (i32.const -1))
+              (then
+                (i32.store offset=8
+                  (i32.add (global.get $TV_TABLE)
+                    (i32.mul (local.get $slot) (i32.const 32)))
+                  (local.get $next))))))))
+    (if (local.get $next)
+      (then
+        (local.set $slot (call $tv_find_slot (local.get $next)))
+        (if (i32.ne (local.get $slot) (i32.const -1))
+          (then
+            (i32.store offset=16
+              (i32.add (global.get $TV_TABLE)
+                (i32.mul (local.get $slot) (i32.const 32)))
+              (local.get $prev)))))))
+
+  (func $tv_caret_in_branch (param $hItem i32) (result i32)
+    (local $caret i32) (local $slot i32) (local $base i32)
+    (local.set $caret (call $tv_view_sel))
+    (if (i32.eqz (local.get $caret)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $caret) (local.get $hItem))
+      (then (return (i32.const 1))))
+    (local.set $slot (call $tv_find_slot (local.get $caret)))
+    (if (i32.eq (local.get $slot) (i32.const -1))
+      (then (return (i32.const 0))))
+    (local.set $base
+      (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+    (call $tv_item_is_descendant_of (local.get $base) (local.get $hItem)))
+
+  (func $tv_delete_all_items (param $hwnd i32) (result i32)
+    (local $root i32) (local $slot i32) (local $base i32) (local $next i32)
+    (local $i i32) (local $sz i32) (local $h i32)
+    ;; Win98 does not emit TVN_SELCHANGING/CHANGED for DeleteAllItems.
+    (call $tv_view_set_sel (i32.const 0))
+    (local.set $root (call $tv_get_next (i32.const 0) (i32.const 0)))
+    (block $roots_done (loop $roots
+      (br_if $roots_done (i32.eqz (local.get $root)))
+      (local.set $slot (call $tv_find_slot (local.get $root)))
+      (br_if $roots_done (i32.eq (local.get $slot) (i32.const -1)))
+      (local.set $base
+        (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+      (local.set $next (i32.load offset=12 (local.get $base)))
+      (drop (call $tv_delete_branch (local.get $hwnd) (local.get $root) (i32.const 0)))
+      (local.set $root (local.get $next))
+      (br $roots)))
+    ;; Remove any malformed/orphaned records too: delete-all must leave this
+    ;; control empty even if an earlier application message supplied bad links.
+    (block $orphans_done (loop $orphans
+      (br_if $orphans_done (i32.ge_u (local.get $i) (call $tv_slot_limit)))
+      (local.set $base
+        (i32.add (global.get $TV_TABLE) (i32.mul (local.get $i) (i32.const 32))))
+      (if (i32.and
+            (i32.ne (i32.load (local.get $base)) (i32.const 0))
+            (call $tv_slot_in_view (local.get $i)))
+        (then
+          (drop (call $tv_delete_branch
+            (local.get $hwnd) (i32.load (local.get $base)) (i32.const 0)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $orphans)))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (drop (call $tv_scroll_to_for_h
+      (local.get $hwnd) (local.get $h) (i32.const 0)))
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (call $treeview_paint_wat (local.get $hwnd))
+    (i32.const 1))
+
+  (func $tv_delete_item (param $hwnd i32) (param $hItem i32) (result i32)
+    (local $slot i32) (local $base i32) (local $replacement i32)
+    (local $sz i32) (local $h i32)
+    (if (i32.or
+          (i32.eqz (local.get $hItem))
+          (i32.eq (local.get $hItem) (i32.const 0xFFFF0000)))
+      (then (return (call $tv_delete_all_items (local.get $hwnd)))))
+    (local.set $slot (call $tv_find_slot (local.get $hItem)))
+    (if (i32.or
+          (i32.eq (local.get $slot) (i32.const -1))
+          (i32.eqz (call $tv_slot_in_view (local.get $slot))))
+      (then (return (i32.const 0))))
+    (local.set $base
+      (i32.add (global.get $TV_TABLE) (i32.mul (local.get $slot) (i32.const 32))))
+    ;; Win98 prefers the next sibling/root, then the parent, then the previous
+    ;; sibling when deletion removes the caret or one of its ancestors.
+    (local.set $replacement (i32.load offset=12 (local.get $base)))
+    (if (i32.eqz (local.get $replacement))
+      (then (local.set $replacement (i32.load offset=4 (local.get $base)))))
+    (if (i32.eqz (local.get $replacement))
+      (then (local.set $replacement (i32.load offset=16 (local.get $base)))))
+    (if (call $tv_caret_in_branch (local.get $hItem))
+      (then
+        ;; Deletion itself is not vetoable. Win98 still removes the selected
+        ;; branch when the parent rejects its replacement caret; in that case
+        ;; it leaves the TreeView with no caret and sends no SELCHANGED.
+        (if (i32.eqz (call $tv_select_caret
+              (local.get $hwnd) (local.get $replacement) (i32.const 0)))
+          (then (call $tv_view_set_sel (i32.const 0))))))
+    (call $tv_unlink_item (local.get $base))
+    (drop (call $tv_delete_branch (local.get $hwnd) (local.get $hItem) (i32.const 0)))
+    (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
+    (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
+    (drop (call $tv_scroll_to_for_h
+      (local.get $hwnd) (local.get $h) (call $tv_view_row)))
+    (call $paint_flag_set_inv (local.get $hwnd))
+    (call $treeview_paint_wat (local.get $hwnd))
     (i32.const 1))
 
   (func $treeview_handle_mouse (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
@@ -1291,21 +1702,9 @@
           (local.get $hwnd) (call $g2w (local.get $lParam))))
         (call $treeview_paint_wat (local.get $hwnd))
         (return (local.get $ret))))
-    ;; TVM_DELETEITEM (0x1101) — simplified: just clear the slot
+    ;; TVM_DELETEITEM (0x1101)
     (if (i32.eq (local.get $msg) (i32.const 0x1101))
-      (then
-        (local.set $ret (call $tv_find_slot (local.get $lParam)))
-        (if (i32.ne (local.get $ret) (i32.const -1))
-          (then
-            (if (i32.eq (call $tv_view_sel) (local.get $lParam))
-              (then (call $tv_view_set_sel (i32.const 0))))
-            (i32.store (i32.add (global.get $TV_TABLE)
-              (i32.mul (local.get $ret) (i32.const 32))) (i32.const 0))
-            (i32.store (call $tv_owner_cell (local.get $ret)) (i32.const 0))
-            (i32.store (call $tv_image_record (local.get $ret)) (i32.const -1))
-            (i32.store offset=4 (call $tv_image_record (local.get $ret)) (i32.const -1))
-            (global.set $tv_count (i32.sub (global.get $tv_count) (i32.const 1)))))
-        (return (i32.const 1))))
+      (then (return (call $tv_delete_item (local.get $hwnd) (local.get $lParam)))))
     ;; TVM_EXPAND (0x1102)
     (if (i32.eq (local.get $msg) (i32.const 0x1102))
       (then
@@ -1332,7 +1731,20 @@
           (then
             (return (call $tv_select_caret
               (local.get $hwnd) (local.get $lParam) (i32.const 0)))))
-        (return (i32.const 1))))
+        (if (i32.eq (local.get $wParam) (i32.const 8)) ;; TVGN_DROPHILITE
+          (then
+            (return (call $tv_select_drop_target
+              (local.get $hwnd) (local.get $lParam)))))
+        (if (i32.eq (local.get $wParam) (i32.const 5)) ;; TVGN_FIRSTVISIBLE
+          (then
+            (local.set $ret (call $tv_reveal_item
+              (local.get $hwnd) (local.get $lParam) (i32.const 1)))
+            (if (local.get $ret)
+              (then
+                (call $paint_flag_set_inv (local.get $hwnd))
+                (call $treeview_paint_wat (local.get $hwnd))))
+            (return (i32.ne (local.get $ret) (i32.const 0)))))
+        (return (i32.const 0))))
     ;; TVM_GETITEMA (0x110c)
     (if (i32.eq (local.get $msg) (i32.const 0x110c))
       (then (return (call $tv_get_item (call $g2w (local.get $lParam))))))
@@ -1342,6 +1754,21 @@
     ;; TVM_HITTEST (0x1111)
     (if (i32.eq (local.get $msg) (i32.const 0x1111))
       (then (return (call $tv_hit_test (call $g2w (local.get $lParam))))))
+    ;; TVM_ENSUREVISIBLE (0x1114)
+    (if (i32.eq (local.get $msg) (i32.const 0x1114))
+      (then
+        (local.set $ret (call $tv_reveal_item
+          (local.get $hwnd) (local.get $lParam) (i32.const 0)))
+        (if (local.get $ret)
+          (then
+            (call $paint_flag_set_inv (local.get $hwnd))
+            (call $treeview_paint_wat (local.get $hwnd))))
+        ;; Microsoft documents the historical return value as nonzero only
+        ;; when scrolling occurred and no ancestor was expanded.
+        (return
+          (i32.eq
+            (i32.and (local.get $ret) (i32.const 0x6))
+            (i32.const 0x4)))))
     ;; Default
     (i32.const 0))
 
@@ -1435,14 +1862,14 @@
                 (then
                   (local.set $depth (call $tv_item_depth (local.get $base)))
 	              (local.set $x (i32.add (i32.const 4) (i32.mul (local.get $depth) (i32.const 16))))
+	              ;; Selection paint follows this item's state exactly. Win98
+	              ;; permits TVM_SETITEM to mark a hidden descendant selected
+	              ;; without moving the caret; that does not select its parent
+	              ;; by proxy.
 	              (local.set $selected
-	                (i32.or
-	                  (i32.ne (i32.and (local.get $state) (i32.const 0x0002)) (i32.const 0))
-	                  (i32.and
-	                    (i32.and
-	                      (call $tv_item_has_children (local.get $base))
-	                      (i32.eqz (i32.and (local.get $state) (i32.const 0x20))))
-	                    (call $tv_has_selected_descendant (local.get $base)))))
+	                (i32.ne
+	                  (i32.and (local.get $state) (i32.const 0x0002))
+	                  (i32.const 0)))
 
 	              (if (call $tv_item_has_children (local.get $base))
                 (then
@@ -1575,6 +2002,7 @@
 
   (func $treeview_wndproc_owned (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $code i32) (local $delta i32) (local $sz i32) (local $h i32) (local $old_row i32) (local $new_row i32)
+    (local $first i32)
     ;; WM_DESTROY — free this control's internal copies and view record. Item
     ;; lParam data remains owned by the application, as on Win32.
     (if (i32.eq (local.get $msg) (i32.const 0x0002))
@@ -1591,6 +2019,19 @@
     ;; WM_ERASEBKGND (0x0014)
     (if (i32.eq (local.get $msg) (i32.const 0x0014))
       (then (return (i32.const 1))))
+    ;; WM_SETFOCUS. Win98 does not select during insertion—even when the
+    ;; control already has focus. If a populated control receives focus with
+    ;; no caret, it selects the first root through the normal vetoable path.
+    (if (i32.eq (local.get $msg) (i32.const 0x0007))
+      (then
+        (if (i32.eqz (call $tv_view_sel))
+          (then
+            (local.set $first (call $tv_get_next (i32.const 0) (i32.const 0)))
+            (if (local.get $first)
+              (then
+                (drop (call $tv_select_caret
+                  (local.get $hwnd) (local.get $first) (i32.const 0)))))))
+        (return (i32.const 0))))
     ;; WM_MOUSEWHEEL (0x020A): 120 delta = 3 rows, positive delta scrolls up.
     (if (i32.eq (local.get $msg) (i32.const 0x020A))
       (then

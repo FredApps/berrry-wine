@@ -1239,8 +1239,46 @@
       (then (global.set $freelib_last_handle (i32.const 0)))))
 
   ;; 12: LoadLibraryA
+  (global $loadlib_normalized_name (mut i32) (i32.const 0))
+  ;; Per-instance scratch survives the async load yield. Only the basename
+  ;; determines the default extension; a trailing dot suppresses appending.
+  (func $loadlib_normalize_name (param $name i32) (result i32)
+    (local $length i32) (local $dot i32) (local $ch i32) (local $dst i32)
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (block $end (loop $scan
+      (if (i32.ge_u (local.get $length) (i32.const 260)) (then (return (i32.const 0))))
+      (local.set $ch (call $gl8 (i32.add (local.get $name) (local.get $length))))
+      (br_if $end (i32.eqz (local.get $ch)))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 92))
+            (i32.eq (local.get $ch) (i32.const 47)))
+        (then (local.set $dot (i32.const 0))))
+      (if (i32.eq (local.get $ch) (i32.const 46))
+        (then (local.set $dot (i32.add (local.get $length) (i32.const 1)))))
+      (local.set $length (i32.add (local.get $length) (i32.const 1))) (br $scan)))
+    (if (i32.eqz (local.get $length)) (then (return (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $dot) (i32.const 0))
+          (i32.ne (local.get $dot) (local.get $length)))
+      (then (return (local.get $name))))
+    (if (i32.and (i32.eqz (local.get $dot)) (i32.gt_u (local.get $length) (i32.const 255)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $loadlib_normalized_name))
+      (then (global.set $loadlib_normalized_name (call $heap_alloc (i32.const 260)))))
+    (if (i32.eqz (global.get $loadlib_normalized_name)) (then (return (i32.const 0))))
+    (local.set $dst (call $g2w (global.get $loadlib_normalized_name)))
+    (memory.copy (local.get $dst) (call $g2w (local.get $name)) (local.get $length))
+    (if (local.get $dot)
+      (then (i32.store8 (i32.add (local.get $dst) (i32.sub (local.get $length) (i32.const 1))) (i32.const 0)))
+      (else
+        (i32.store (i32.add (local.get $dst) (local.get $length)) (i32.const 0x6c6c642e))
+        (i32.store8 (i32.add (local.get $dst) (i32.add (local.get $length) (i32.const 4))) (i32.const 0))))
+    (global.get $loadlib_normalized_name))
+
   (func $handle_LoadLibraryA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $tmp i32) (local $src i32) (local $dst i32) (local $ch i32) (local $name_wa i32)
+    (local.set $arg0 (call $loadlib_normalize_name (local.get $arg0)))
+    (if (i32.eqz (local.get $arg0))
+      (then (global.set $eax (i32.const 0)) (global.set $last_error (i32.const 126))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8))) (return)))
     (local.set $tmp (call $find_loaded_dll (local.get $arg0)))
     (if (i32.ge_s (local.get $tmp) (i32.const 0))
       (then
@@ -4352,6 +4390,15 @@
       (then (return (call $dx_display_h_get))))
     (i32.shr_u (call $host_get_screen_size) (i32.const 16)))
 
+  ;; Bottom edge of the browser desktop's usable area. Keep the classic
+  ;; taskbar reservation in one place so SPI_GETWORKAREA, GetMonitorInfo and
+  ;; SHAppBarMessage cannot describe three different desktops.
+  (func $screen_work_bottom (result i32)
+    (local $height i32)
+    (local.set $height (call $screen_metric_h))
+    (select (i32.sub (local.get $height) (i32.const 28)) (i32.const 0)
+      (i32.gt_u (local.get $height) (i32.const 28))))
+
   (func $system_metric (param $index i32) (result i32)
     (if (i32.eq (local.get $index) (i32.const 0))  ;; SM_CXSCREEN
       (then (return (call $screen_metric_w))))
@@ -4532,43 +4579,8 @@
 
   ;; 91: GetClientRect
   (func $handle_GetClientRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $cs i32) (local $style i32) (local $cw i32) (local $ch i32)
-    ;; Controls live entirely in WAT (CONTROL_GEOM) — asking the host for
-    ;; their client size falls back to the 640×480 desktop default because
-    ;; child hwnds aren't in renderer.windows[], which then corrupts any
-    ;; size calc the guest does from it (calc's dialog resize is one such
-    ;; path). For controls, read the size directly from CONTROL_GEOM.
-    ;; Generic child HWNDs (RichEdit, MFC views, etc.) also need WAT-owned
-    ;; geometry. Their JS window objects are parent-relative surfaces, while
-    ;; host_get_window_client_size returns top-level/client fallback sizes.
-    (if (call $ctrl_table_get_class (local.get $arg0))
-      (then (local.set $cs (call $ctrl_get_wh_packed (local.get $arg0))))
-      (else
-        (local.set $style (call $wnd_get_style (local.get $arg0)))
-        (if (i32.and
-              (i32.ne (call $wnd_get_parent (local.get $arg0)) (i32.const 0))
-              (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
-          (then
-            (call $defwndproc_do_nccalcsize (local.get $arg0))
-            (local.set $cw
-              (i32.sub
-                (call $client_rect_get_r (local.get $arg0))
-                (call $client_rect_get_l (local.get $arg0))))
-            (local.set $ch
-              (i32.sub
-                (call $client_rect_get_b (local.get $arg0))
-                (call $client_rect_get_t (local.get $arg0))))
-            (if (i32.or
-                  (i32.le_s (local.get $cw) (i32.const 0))
-                  (i32.le_s (local.get $ch) (i32.const 0)))
-              (then (local.set $cs (call $ctrl_get_wh_packed (local.get $arg0))))
-              (else
-                (local.set $cs
-                  (i32.or
-                    (i32.and (local.get $cw) (i32.const 0xFFFF))
-                    (i32.shl (local.get $ch) (i32.const 16)))))))
-          (else
-            (local.set $cs (call $host_get_window_client_size (local.get $arg0)))))))
+    (local $cs i32)
+    (local.set $cs (call $wnd_get_client_size_packed (local.get $arg0)))
     (call $gs32 (local.get $arg1) (i32.const 0))       ;; left
     (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))   ;; top
     (call $gs32 (i32.add (local.get $arg1) (i32.const 8))
@@ -6773,7 +6785,11 @@
     ;; below reaches back across these 24 bytes so the consumed API frame stays
     ;; beneath it as nested-pump storage.
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
-    ;; Set up call to dialog proc: push args for DlgProc(hwnd, WM_INITDIALOG, 0, dwInitParam)
+    ;; Determine the control USER passes in WM_INITDIALOG.wParam before the
+    ;; callback runs. A TRUE callback return applies this default afterward;
+    ;; FALSE means the application assigned focus itself.
+    (local.set $ctrl_hwnd (call $dialog_first_init_tabstop (local.get $hwnd)))
+    ;; Set up call to dialog proc: DlgProc(hwnd, WM_INITDIALOG, ctrl, init).
     ;; Return to dialog loop thunk which pumps messages until EndDialog. Keep
     ;; this API frame in place until then: its consumed args hold the previous
     ;; pump state, and CACA0004 pops all 24 bytes after restoring them.
@@ -6781,7 +6797,7 @@
     (call $gs32 (global.get $esp) (global.get $dlg_loop_thunk))  ;; ret → dialog message loop
     (call $gs32 (i32.add (global.get $esp) (i32.const 4)) (local.get $hwnd))          ;; hDlg
     (call $gs32 (i32.add (global.get $esp) (i32.const 8)) (i32.const 0x0110))         ;; WM_INITDIALOG
-    (global.set $dlg_init_focus_hwnd (global.get $focus_hwnd))
+    (global.set $dlg_init_focus_hwnd (local.get $ctrl_hwnd))
     (call $gs32 (i32.add (global.get $esp) (i32.const 12)) (global.get $dlg_init_focus_hwnd)) ;; wParam (focus hwnd)
     (call $gs32 (i32.add (global.get $esp) (i32.const 16)) (local.get $init_param))   ;; lParam
     ;; Set EIP to dialog proc and signal redirection (don't let caller override EIP)
@@ -7608,6 +7624,24 @@
       (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
+
+  (func $write_private_profile_section (param $app i32) (param $strings i32) (param $file i32) (param $wide i32)
+    (local $error i32)
+    (local.set $error (call $host_ini_write_section
+      (if (result i32) (local.get $app) (then (call $g2w (local.get $app))) (else (i32.const 0)))
+      (if (result i32) (local.get $strings) (then (call $g2w (local.get $strings))) (else (i32.const 0)))
+      (if (result i32) (local.get $file) (then (call $g2w (local.get $file))) (else (i32.const 0)))
+      (local.get $wide)))
+    (if (local.get $error) (then (global.set $last_error (local.get $error))))
+    (global.set $eax (i32.eqz (local.get $error))))
+
+  (func $handle_WritePrivateProfileSectionA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $write_private_profile_section (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  (func $handle_WritePrivateProfileSectionW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $write_private_profile_section (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
 
   ;; 193: ShellExecuteA(hwnd, lpOperation, lpFile, lpParameters, lpDirectory, nShowCmd)
   (func $handle_ShellExecuteA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -11428,7 +11462,7 @@ HookEx — no next hook in chain, return 0
   ;; return-TRUE stub sitting directly above this implementation, so every W
   ;; caller got a success code and an untouched buffer.
   (func $spi_core (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $wide i32) (result i32)
-    (local $buf i32) (local $i i32) (local $screen i32)
+    (local $buf i32) (local $i i32)
     (local $lf i32) (local $narrow i32) (local $p i32) (local $size i32)
     ;; LOGFONTA is 60 bytes, LOGFONTW 92 — every offset past lfCaptionFont moves.
     (local.set $lf (if (result i32) (local.get $wide) (then (i32.const 92)) (else (i32.const 60))))
@@ -11449,18 +11483,19 @@ HookEx — no next hook in chain, return 0
             (return (local.get $i))))
         (return (call $host_set_wallpaper
           (call $g2w (local.get $arg2)) (local.get $arg1)))))
-    ;; SPI_GETWORKAREA = 0x30: fill RECT with the usable desktop area.
-    ;; We do not emulate taskbar reservation, so the work area is the screen.
+    ;; SPI_GETWORKAREA = 0x30: fill RECT with the usable desktop area. The
+    ;; browser desktop owns a classic 28px bottom taskbar (the same rectangle
+    ;; SHAppBarMessage reports), so applications must not center or maximize
+    ;; their windows underneath it.
     (if (i32.eq (local.get $arg0) (i32.const 0x30))
       (then
         (if (local.get $arg2)
           (then
             (local.set $buf (call $g2w (local.get $arg2)))
-            (local.set $screen (call $host_get_screen_size))
             (i32.store        (local.get $buf) (i32.const 0))
             (i32.store offset=4  (local.get $buf) (i32.const 0))
-            (i32.store offset=8  (local.get $buf) (i32.and (local.get $screen) (i32.const 0xFFFF)))
-            (i32.store offset=12 (local.get $buf) (i32.shr_u (local.get $screen) (i32.const 16)))))
+            (i32.store offset=8  (local.get $buf) (call $screen_metric_w))
+            (i32.store offset=12 (local.get $buf) (call $screen_work_bottom))))
         (return (i32.const 1))))
     ;; SPI_GETNONCLIENTMETRICS = 0x29: fill NONCLIENTMETRICS struct
     ;; Win9x applications commonly pass uiParam=0 and declare the versioned
@@ -11763,9 +11798,83 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; SubtractRect(lprcDst, lprcSrc1, lprcSrc2) → BOOL. Only well-defined when src2 fully covers
-  ;; src1 in one axis; apps use it for update-region math. Approximation: copy src1→dst unless
-  ;; src2 fully contains src1 (→ empty). Returns FALSE for empty result.
+  ;; Store the bounding rectangle left after subtracting src2 from src1.
+  ;; Win32 only trims when the intersection spans src1 completely along one
+  ;; axis; a corner overlap cannot be represented by one RECT and therefore
+  ;; leaves src1 unchanged. Inputs are values rather than pointers so dst may
+  ;; alias either source, as the API permits in common docking call patterns.
+  (func $rect_subtract_to_wa
+      (param $dst i32)
+      (param $s1l i32) (param $s1t i32) (param $s1r i32) (param $s1b i32)
+      (param $s2l i32) (param $s2t i32) (param $s2r i32) (param $s2b i32)
+      (result i32)
+    (local $il i32) (local $it i32) (local $ir i32) (local $ib i32)
+    (store.field Rect left (local.get $dst) (local.get $s1l))
+    (store.field.memarg Rect top (local.get $dst) (local.get $s1t))
+    (store.field.memarg Rect right (local.get $dst) (local.get $s1r))
+    (store.field.memarg Rect bottom (local.get $dst) (local.get $s1b))
+    (if (i32.or
+          (i32.ge_s (local.get $s1l) (local.get $s1r))
+          (i32.ge_s (local.get $s1t) (local.get $s1b)))
+      (then
+        (store.field Rect left (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect top (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect right (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect bottom (local.get $dst) (i32.const 0))
+        (return (i32.const 0))))
+    (local.set $il
+      (select (local.get $s1l) (local.get $s2l)
+        (i32.gt_s (local.get $s1l) (local.get $s2l))))
+    (local.set $it
+      (select (local.get $s1t) (local.get $s2t)
+        (i32.gt_s (local.get $s1t) (local.get $s2t))))
+    (local.set $ir
+      (select (local.get $s1r) (local.get $s2r)
+        (i32.lt_s (local.get $s1r) (local.get $s2r))))
+    (local.set $ib
+      (select (local.get $s1b) (local.get $s2b)
+        (i32.lt_s (local.get $s1b) (local.get $s2b))))
+    ;; No intersection: the result is the source rectangle copied above.
+    (if (i32.or
+          (i32.ge_s (local.get $il) (local.get $ir))
+          (i32.ge_s (local.get $it) (local.get $ib)))
+      (then (return (i32.const 1))))
+    ;; Complete coverage has an empty geometric difference.
+    (if (i32.and
+          (i32.and (i32.eq (local.get $il) (local.get $s1l))
+                   (i32.eq (local.get $it) (local.get $s1t)))
+          (i32.and (i32.eq (local.get $ir) (local.get $s1r))
+                   (i32.eq (local.get $ib) (local.get $s1b))))
+      (then
+        (store.field Rect left (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect top (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect right (local.get $dst) (i32.const 0))
+        (store.field.memarg Rect bottom (local.get $dst) (i32.const 0))
+        (return (i32.const 0))))
+    ;; A full-height intersection can trim a left or right strip.
+    (if (i32.and
+          (i32.eq (local.get $it) (local.get $s1t))
+          (i32.eq (local.get $ib) (local.get $s1b)))
+      (then
+        (if (i32.eq (local.get $il) (local.get $s1l))
+          (then (store.field Rect left (local.get $dst) (local.get $ir)))
+          (else
+            (if (i32.eq (local.get $ir) (local.get $s1r))
+              (then (store.field.memarg Rect right (local.get $dst) (local.get $il)))))))
+      (else
+        ;; A full-width intersection can trim a top or bottom strip.
+        (if (i32.and
+              (i32.eq (local.get $il) (local.get $s1l))
+              (i32.eq (local.get $ir) (local.get $s1r)))
+          (then
+            (if (i32.eq (local.get $it) (local.get $s1t))
+              (then (store.field.memarg Rect top (local.get $dst) (local.get $ib)))
+              (else
+                (if (i32.eq (local.get $ib) (local.get $s1b))
+                  (then (store.field.memarg Rect bottom (local.get $dst) (local.get $it))))))))))
+    (i32.const 1))
+
+  ;; SubtractRect(lprcDst, lprcSrc1, lprcSrc2) → BOOL.
   (func $handle_SubtractRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst i32) (local $s1 i32) (local $s2 i32)
     (local $s1l i32) (local $s1t i32) (local $s1r i32) (local $s1b i32)
@@ -11781,24 +11890,11 @@ HookEx — no next hook in chain, return 0
     (local.set $s2t (load.field.memarg Rect top (local.get $s2)))
     (local.set $s2r (load.field.memarg Rect right (local.get $s2)))
     (local.set $s2b (load.field.memarg Rect bottom (local.get $s2)))
-    ;; If src2 fully contains src1, result is empty.
-    (if (i32.and
-          (i32.and (i32.le_s (local.get $s2l) (local.get $s1l))
-                   (i32.le_s (local.get $s2t) (local.get $s1t)))
-          (i32.and (i32.ge_s (local.get $s2r) (local.get $s1r))
-                   (i32.ge_s (local.get $s2b) (local.get $s1b))))
-      (then
-        (store.field Rect left (local.get $dst) (i32.const 0))
-        (store.field.memarg Rect top (local.get $dst) (i32.const 0))
-        (store.field.memarg Rect right (local.get $dst) (i32.const 0))
-        (store.field.memarg Rect bottom (local.get $dst) (i32.const 0))
-        (global.set $eax (i32.const 0)))
-      (else
-        (store.field Rect left (local.get $dst) (local.get $s1l))
-        (store.field.memarg Rect top (local.get $dst) (local.get $s1t))
-        (store.field.memarg Rect right (local.get $dst) (local.get $s1r))
-        (store.field.memarg Rect bottom (local.get $dst) (local.get $s1b))
-        (global.set $eax (i32.const 1))))
+    (global.set $eax
+      (call $rect_subtract_to_wa
+        (local.get $dst)
+        (local.get $s1l) (local.get $s1t) (local.get $s1r) (local.get $s1b)
+        (local.get $s2l) (local.get $s2t) (local.get $s2r) (local.get $s2b)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))  ;; stdcall, 3 args
   )
 
@@ -12055,6 +12151,15 @@ HookEx — no next hook in chain, return 0
     (global.set $esp (i32.add (global.get $esp) (i32.const 4)))  ;; stdcall, 0 args
   )
 
+  ;; Convert the user/system default aliases; concrete/invariant/unknown LCIDs
+  ;; pass through unchanged. This is not the caller's SetThreadLocale setting.
+  (func $handle_ConvertDefaultLocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (i32.eq (local.get $arg0) (i32.const 0x0400))
+                (i32.eq (local.get $arg0) (i32.const 0x0800)))
+      (then (global.set $eax (i32.const 0x0409)))
+      (else (global.set $eax (local.get $arg0))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; GetSystemDefaultLCID() -> LCID. RichEdit asks during DLL init.
   (func $handle_GetSystemDefaultLCID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 0x0409))
@@ -12082,6 +12187,18 @@ HookEx — no next hook in chain, return 0
   ;; already solved. The scratch SYSTEMTIME is ours alone, so it comes from
   ;; the heap once and is reused.
   (global $dosdate_scratch (mut i32) (i32.const 0))
+  ;; Microsoft OLE32 4.71.2900, export23, VA7ff8b556: validate the input
+  ;; FILETIME and both WORD outputs, then delegate to the Win32 conversion.
+  (func $handle_CoFileTimeToDosDateTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.or (call $ptr_range_bad (local.get $arg0) (i32.const 8))
+          (i32.or (call $ptr_range_bad (local.get $arg1) (i32.const 2))
+                  (call $ptr_range_bad (local.get $arg2) (i32.const 2))))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (call $handle_FileTimeToDosDateTime (local.get $arg0) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+
   (func $handle_FileTimeToDosDateTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $st i32) (local $year i32)
     (if (i32.eqz (global.get $dosdate_scratch))
@@ -17232,27 +17349,23 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
-rDragDrop(hwnd, pDropTarget) — return S_OK.
-  ;; No real drag/drop path: there is no host OS drop source to deliver IDataObjects
-  ;; from, so tracking the IDropTarget would be pure bookkeeping. Return S_OK so
-  ;; callers proceed; any later drop events simply never arrive.
+  ;; RegisterDragDrop/RevokeDragDrop ownership and duplicate/error semantics
+  ;; live with the OLE continuation bridge in 09a7b-ole.wat. Browser-originated
+  ;; drop delivery can now use that retained target without inventing lifetime.
   (func $handle_RegisterDragDrop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+    (call $com_register_drag_drop (local.get $arg0) (local.get $arg1))
   )
 
-  ;; RevokeDragDrop(hwnd) — return S_OK, matching the RegisterDragDrop no-op above.
   (func $handle_RevokeDragDrop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+    (call $com_revoke_drag_drop (local.get $arg0))
   )
 
-  ;; CoLockObjectExternal(pUnk, fLock, fLastUnlockReleases) — return S_OK.
-  ;; mspaint probes this via GetProcAddress at startup and bails with a fatal
-  ;; MessageBox if unresolved. No real OOP server lifetime to manage.
+  ;; CoLockObjectExternal retains balanced strong references through the OLE
+  ;; guest-callback bridge; mspaint and embedded-object servers use this to
+  ;; keep a visible object alive independently of their ordinary references.
   (func $handle_CoLockObjectExternal (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0))
-    (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+    (call $com_lock_object_external
+      (local.get $arg0) (local.get $arg1) (local.get $arg2))
   )
 
 ;; 657: GetDCEx — STUB: unimplemented
@@ -18615,45 +18728,137 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
+  ;; The browser exposes one primary monitor. The selection APIs still have
+  ;; observable Win32 behavior: DEFAULTTONULL returns NULL for an off-screen
+  ;; point/rectangle/window, while DEFAULTTOPRIMARY and DEFAULTTONEAREST return
+  ;; the monitor. An object that intersects [0,width)x[0,height) always selects
+  ;; it regardless of the fallback flag.
+  (func $single_monitor_fallback (param $flags i32) (result i32)
+    (select (i32.const 0x00010000) (i32.const 0)
+      (i32.or (i32.eq (local.get $flags) (i32.const 1))
+              (i32.eq (local.get $flags) (i32.const 2)))))
+
+  (func $single_monitor_rect
+      (param $left i32) (param $top i32) (param $right i32) (param $bottom i32)
+      (param $flags i32) (result i32)
+    (local $width i32) (local $height i32)
+    (local.set $width (call $screen_metric_w))
+    (local.set $height (call $screen_metric_h))
+    (if (i32.and
+          (i32.and
+            (i32.lt_s (local.get $left) (local.get $right))
+            (i32.lt_s (local.get $top) (local.get $bottom)))
+          (i32.and
+            (i32.and (i32.lt_s (local.get $left) (local.get $width))
+                     (i32.gt_s (local.get $right) (i32.const 0)))
+            (i32.and (i32.lt_s (local.get $top) (local.get $height))
+                     (i32.gt_s (local.get $bottom) (i32.const 0)))))
+      (then (return (i32.const 0x00010000))))
+    (call $single_monitor_fallback (local.get $flags)))
+
   ;; 918: MonitorFromRect(lprc, dwFlags) — 2 args stdcall
-  ;; Return fake monitor handle 0x00010000 (single monitor)
   (func $handle_MonitorFromRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00010000))
+    (local $rect i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (call $single_monitor_fallback (local.get $arg1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $rect (call $g2w (local.get $arg0)))
+    (global.set $eax (call $single_monitor_rect
+      (load.field Rect left (local.get $rect))
+      (load.field.memarg Rect top (local.get $rect))
+      (load.field.memarg Rect right (local.get $rect))
+      (load.field.memarg Rect bottom (local.get $rect))
+      (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 919: GetMonitorInfoA(hMonitor, lpmi) — 2 args stdcall
-  ;; Fill MONITORINFO with the current desktop size.
+  ;; Fill MONITORINFO/MONITORINFOEXA for the one live primary monitor.
   (func $handle_GetMonitorInfoA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $screen i32)
+    (local $wa i32) (local $width i32) (local $height i32) (local $size i32)
+    (if (i32.ne (local.get $arg0) (i32.const 0x00010000))
+      (then
+        (global.set $last_error (i32.const 1461)) ;; ERROR_INVALID_MONITOR_HANDLE
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $wa (call $g2w (local.get $arg1)))
-    (local.set $screen (call $host_get_screen_size))
+    (local.set $size (i32.load (local.get $wa)))
+    (if (i32.and (i32.ne (local.get $size) (i32.const 40))
+                 (i32.ne (local.get $size) (i32.const 72)))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $width (call $screen_metric_w))
+    (local.set $height (call $screen_metric_h))
     ;; MONITORINFO: cbSize(4), rcMonitor(16), rcWork(16), dwFlags(4) = 40 bytes
     ;; rcMonitor: left=0, top=0, right=screenW, bottom=screenH
     (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))   ;; left
     (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0))   ;; top
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.and (local.get $screen) (i32.const 0xFFFF))) ;; right
-    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.shr_u (local.get $screen) (i32.const 16))) ;; bottom
-    ;; rcWork: same as rcMonitor
+    (i32.store (i32.add (local.get $wa) (i32.const 12)) (local.get $width)) ;; right
+    (i32.store (i32.add (local.get $wa) (i32.const 16)) (local.get $height)) ;; bottom
+    ;; rcWork excludes the classic 28px taskbar already reported by
+    ;; SHAppBarMessage and therefore agrees with SPI_GETWORKAREA.
     (i32.store (i32.add (local.get $wa) (i32.const 20)) (i32.const 0))
     (i32.store (i32.add (local.get $wa) (i32.const 24)) (i32.const 0))
-    (i32.store (i32.add (local.get $wa) (i32.const 28)) (i32.and (local.get $screen) (i32.const 0xFFFF)))
-    (i32.store (i32.add (local.get $wa) (i32.const 32)) (i32.shr_u (local.get $screen) (i32.const 16)))
+    (i32.store (i32.add (local.get $wa) (i32.const 28)) (local.get $width))
+    (i32.store (i32.add (local.get $wa) (i32.const 32)) (call $screen_work_bottom))
     ;; dwFlags: MONITORINFOF_PRIMARY = 1
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (i32.const 1))
+    (if (i32.eq (local.get $size) (i32.const 72))
+      (then
+        ;; MONITORINFOEXA.szDevice = "\\\\.\\DISPLAY1".
+        (memory.fill (i32.add (local.get $wa) (i32.const 40)) (i32.const 0) (i32.const 32))
+        (i32.store offset=40 (local.get $wa) (i32.const 0x5C2E5C5C))
+        (i32.store offset=44 (local.get $wa) (i32.const 0x50534944))
+        (i32.store offset=48 (local.get $wa) (i32.const 0x3159414C))))
     (global.set $eax (i32.const 1))  ;; success
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; 920: MonitorFromWindow(hwnd, dwFlags) — 2 args stdcall
   (func $handle_MonitorFromWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00010000))
+    (local $rect i32)
+    (if (i32.eqz (call $window_handle_valid (local.get $arg0)))
+      (then
+        (global.set $eax (call $single_monitor_fallback (local.get $arg1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $rect (call $paint_scratch_take))
+    (call $host_get_window_rect (local.get $arg0) (local.get $rect))
+    (global.set $eax (call $single_monitor_rect
+      (load.field PaintRect left (local.get $rect))
+      (load.field.memarg PaintRect top (local.get $rect))
+      (load.field.memarg PaintRect right (local.get $rect))
+      (load.field.memarg PaintRect bottom (local.get $rect))
+      (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; MonitorFromPoint(pt.x, pt.y, dwFlags) — POINT passed by value (2 dwords) + dwFlags = 3 args stdcall
   (func $handle_MonitorFromPoint (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 0x00010000))  ;; same fake monitor handle as MonitorFromRect
+    (local $width i32) (local $height i32)
+    (local.set $width (call $screen_metric_w))
+    (local.set $height (call $screen_metric_h))
+    (global.set $eax
+      (if (result i32)
+          (i32.and
+            (i32.and (i32.ge_s (local.get $arg0) (i32.const 0))
+                     (i32.lt_s (local.get $arg0) (local.get $width)))
+            (i32.and (i32.ge_s (local.get $arg1) (i32.const 0))
+                     (i32.lt_s (local.get $arg1) (local.get $height))))
+        (then (i32.const 0x00010000))
+        (else (call $single_monitor_fallback (local.get $arg2)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -20835,8 +21040,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
             (local.set $width (call $screen_metric_w))
             (local.set $height (call $screen_metric_h))
             (i32.store offset=16 (local.get $data) (i32.const 0))
-            (i32.store offset=20 (local.get $data)
-              (i32.sub (local.get $height) (i32.const 28)))
+            (i32.store offset=20 (local.get $data) (call $screen_work_bottom))
             (i32.store offset=24 (local.get $data) (local.get $width))
             (i32.store offset=28 (local.get $data) (local.get $height))
             (global.set $eax (i32.const 1))))))

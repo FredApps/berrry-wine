@@ -11,6 +11,10 @@ const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 const PRINT_PIN = process.argv.includes('--print-pin');
 const LIST = process.argv.includes('--list');
+const apiTable = JSON.parse(fs.readFileSync(path.join(SRC, 'api_table.json'), 'utf8'));
+const metadataStubs = new Set(apiTable
+  .filter(api => api.stub !== undefined)
+  .map(api => `handle_${api.name}`));
 
 function functions(source, prefix) {
   const clean = source.replace(/;;.*$/gm, '');
@@ -62,9 +66,23 @@ for (const [label, flat, expected] of [
 }
 
 const quiet = [];
+const seenMetadataStubs = new Set();
 for (const file of fs.readdirSync(SRC).filter(name => name.endsWith('.wat')).sort()) {
   const source = fs.readFileSync(path.join(SRC, file), 'utf8');
-  quiet.push(...quietEntries(file, source));
+  for (const entry of quietEntries(file, source)) {
+    const handler = entry.name.slice(entry.name.indexOf(':') + 1);
+    if (file === '09b2-dispatch-table.generated.wat' && metadataStubs.has(handler)) {
+      seenMetadataStubs.add(handler);
+    } else {
+      quiet.push(entry);
+    }
+  }
+}
+
+for (const handler of metadataStubs) {
+  if (!seenMetadataStubs.has(handler)) {
+    throw new Error(`api_table metadata stub $${handler} is not a generated quiet handler`);
+  }
 }
 
 quiet.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
@@ -215,8 +233,27 @@ const digest = crypto.createHash('sha256')
 // a shared guard. Their old non-recording stubs are NOT claimed implemented.
 // 2026-09-09: 411 -> 410. SetGammaRamp retains the per-device API ramp;
 // unsupported display gamma remains unadvertised. Get/default/copy tested.
-const EXPECTED_COUNT = 405;
-const EXPECTED_SHA256 = '0d9e8f43b3d441426b6418018dfbc607ffeba2de52cd666bb502f27307485e3c';
+// 2026-09-10: 405 -> 404. GetNPatchMode returns the disabled-only backend's
+// FLOAT through x87 ST(0), not an unrelated EAX zero. Nonzero setters reject.
+// 2026-09-10: 404 -> 403. SetDepthStencilSurface now validates a same-device
+// surface, retains its binding, switches persistent depth identity, and retires
+// the previous binding; NULL disables depth. Reset remains separately pending.
+// 2026-09-10: 403 -> 401. Reset now preflights resource ownership and creates
+// replacement state/targets transactionally across the render fence;
+// TestCooperativeLevel reports native Reset-failure/recovery state.
+// 2026-09-10: 401 -> 359 manual. API metadata now owns 34 reviewed constant
+// compatibility stubs; mixer and common-control lifetime/behavior fixes remove
+// the remaining eight quiet handlers instead of blessing them as exceptions.
+// 2026-09-10 merge: 359 -> 357. DirectPlay Receive and Send now use the
+// owned local message queues; all 34 metadata compatibility stubs remain.
+// 2026-09-11: 348 -> 346. RegisterDragDrop/RevokeDragDrop now own one retained
+// IDropTarget per live HWND and report invalid, duplicate, and absent
+// registrations instead of returning unconditional success.
+// 2026-09-11: 346 -> 345. CoLockObjectExternal now retains one strong COM
+// reference per lock and releases exactly one per balanced unlock, including
+// DLL-private objects reached through the guest callback continuation.
+const EXPECTED_COUNT = 345;
+const EXPECTED_SHA256 = 'cef18634c84af5962b04550ed2542a130334d17286a0fbac2d3b4cb846cee232';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,
@@ -320,5 +357,5 @@ if (dangerous.length) {
   process.exit(1);
 }
 
-console.log(`PASS  straight-line silent-handler inventory is pinned (${quiet.length})`);
+console.log(`PASS  straight-line silent-handler inventory is pinned (${quiet.length} manual + ${metadataStubs.size} metadata)`);
 console.log('PASS  D3D9 resource/output stubs fail loudly');

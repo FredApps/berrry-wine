@@ -97,12 +97,12 @@ async function bootRenderHarness({
   base.host.wait_multiple = () => 0;
   base.host.com_create_instance = () => 0x80004002;
   Object.assign(base.host, extraHostOverrides);
-  const { instance } = await WebAssembly.instantiate(wasmBytes, base);
+  const { instance, module } = await WebAssembly.instantiate(wasmBytes, base);
   const e = instance.exports;
   ctx.exports = e;
   renderer.wasm = instance;
   renderer.wasmMemory = memory;
-  return { instance, exports: e, renderer, canvas, memory, hostCtx: ctx, host: base.host, gdi: base.gdi };
+  return { instance, module, exports: e, renderer, canvas, memory, hostCtx: ctx, host: base.host, gdi: base.gdi };
 }
 
 // Sample the canvas at every 16x16 grid cell. Returns the count of unique

@@ -171,6 +171,23 @@ test('basename fallback finds file by name on wrong drive', () => {
   assert.strictEqual(r.entry.name, 'demoopen.ddv');
 });
 
+test('missing C-drive directories cannot borrow an exact filename from a cache', () => {
+  const vfs = makeVFS({ 'c:\\game\\cache\\data\\area.bif': 6586 });
+  vfs.ensureParentDirs('C:\\game\\cache\\data\\area.bif');
+  assert(vfs.setCurrentDirectory('C:\\game'));
+  for (const missing of ['C:\\game\\override\\data\\area.bif', '.\\override\\data\\area.bif']) {
+    const found = vfs.findFirstFile(missing);
+    assert.strictEqual(found.handle, 0, `${missing} must not enumerate the cached archive`);
+    assert.strictEqual(found.entry, null);
+    assert.strictEqual(vfs.createFile(missing, 0x80000000, 3), 0,
+      'enumeration and opening must agree about the missing path');
+  }
+  const exact = vfs.findFirstFile('C:\\game\\cache\\data\\area.bif');
+  assert(exact.handle, 'the actual cached file remains discoverable');
+  assert.strictEqual(exact.entry.size, 6586);
+  assert(vfs.createFile('C:\\game\\cache\\data\\area.bif', 0x80000000, 3));
+});
+
 test('exact lookup in an existing directory does not find a nested basename', () => {
   const vfs = makeVFS({
     'c:\\windows\\temp\\_istmp0.dir\\isuninst.exe': 314880,

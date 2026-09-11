@@ -3016,7 +3016,8 @@
         (i32.mul (local.get $index) (global.get $TT_FACE_STRIDE))))
       (if (i32.load offset=16 (local.get $record))
         (then
-          (if (i32.eq (i32.load (local.get $record)) (local.get $hash))
+          (if (i32.and (i32.eq (i32.load offset=16 (local.get $record)) (i32.const 1))
+                (i32.eq (i32.load (local.get $record)) (local.get $hash)))
             (then (return (local.get $index)))))
         (else (if (i32.eq (local.get $free) (i32.const -1))
           (then (local.set $free (local.get $index))))))
@@ -3082,6 +3083,95 @@
       (call $tt_units_per_em (local.get $data) (local.get $size)))
     (i32.store offset=16 (local.get $record) (i32.const 1))
     (local.get $free))
+
+  ;; Memory resources share the face/raster cache, but never the enumerable
+  ;; path registry. Face state 2 is registered, 3 is removed but cached: keep
+  ;; bytes alive for already-realized fonts, just as file faces remain cached.
+  ;; The existing 32-face process cache bounds this retention. Slots are not
+  ;; recycled: glyph/hint caches use face indices as persistent identities.
+  ;; +20 owns a 64-byte family name, +24 weight, +28 italic. The resource handle
+  ;; is the face-record guest address; it is validated by scanning, not read
+  ;; through an untrusted incoming pointer. Only single-face glyf sfnt is in
+  ;; scope (TTC/CFF fail without claiming a registration).
+  (func $tt_mem_add (param $source i32) (param $size i32) (result i32)
+    (local $data i32) (local $table i32) (local $index i32) (local $record i32)
+    (local $name i32) (local $copy i32)
+    (if (i32.or (i32.eqz (local.get $source))
+          (i32.or (i32.lt_u (local.get $size) (i32.const 12))
+            (i32.gt_u (local.get $size) (global.get $TT_MAX_FONT_BYTES))))
+      (then (return (i32.const 0))))
+    (local.set $data (call $g2w_affine_span (local.get $source) (local.get $size)))
+    (if (i32.eq (local.get $data) (global.get $NULL_SENTINEL))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $tt_is_truetype (local.get $data) (local.get $size)))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.eqz (call $tt_units_per_em (local.get $data) (local.get $size)))
+          (i32.eqz (call $tt_table_entry (local.get $data) (local.get $size) (i32.const 0x676c7966))))
+      (then (return (i32.const 0))))
+    (local.set $table (call $tt_faces_ensure))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (block $free (loop $scan
+      (if (i32.ge_u (local.get $index) (global.get $TT_MAX_FACES))
+        (then (return (i32.const 0))))
+      (local.set $record (call $tt_face_record (local.get $index)))
+      (br_if $free (i32.eqz (i32.load offset=16 (local.get $record))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1))) (br $scan)))
+    (local.set $name (call $heap_alloc (i32.const 64)))
+    (if (i32.eqz (local.get $name)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $tt_family_name (local.get $data) (local.get $size)
+          (call $g2w (local.get $name)) (i32.const 64)))
+      (then (call $heap_free (local.get $name)) (return (i32.const 0))))
+    (local.set $copy (call $heap_alloc (local.get $size)))
+    (if (i32.eqz (local.get $copy))
+      (then (call $heap_free (local.get $name)) (return (i32.const 0))))
+    (memory.copy (call $g2w (local.get $copy)) (local.get $data) (local.get $size))
+    (i32.store offset=4 (local.get $record) (local.get $copy))
+    (i32.store offset=8 (local.get $record) (local.get $size))
+    (i32.store offset=12 (local.get $record)
+      (call $tt_units_per_em (local.get $data) (local.get $size)))
+    (i32.store offset=20 (local.get $record) (local.get $name))
+    (i32.store offset=24 (local.get $record)
+      (call $tt_tm_weight (local.get $data) (local.get $size)))
+    (i32.store offset=28 (local.get $record)
+      (call $tt_is_italic (local.get $data) (local.get $size)))
+    (i32.store offset=16 (local.get $record) (i32.const 2))
+    (call $w2g (local.get $record)))
+
+  (func $tt_mem_remove (param $handle i32) (result i32)
+    (local $index i32) (local $record i32)
+    (if (i32.eqz (global.get $tt_faces)) (then (return (i32.const 0))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (global.get $TT_MAX_FACES)))
+      (local.set $record (call $tt_face_record (local.get $index)))
+      (if (i32.and (i32.eq (call $w2g (local.get $record)) (local.get $handle))
+            (i32.eq (i32.load offset=16 (local.get $record)) (i32.const 2)))
+        (then (i32.store offset=16 (local.get $record) (i32.const 3))
+          (return (i32.const 1))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1))) (br $scan)))
+    (i32.const 0))
+
+  (func $tt_mem_face (param $name i32) (param $weight i32) (param $italic i32) (result i32)
+    (local $index i32) (local $record i32) (local $score i32)
+    (local $best i32) (local $found i32)
+    (local.set $best (i32.const -1)) (local.set $found (i32.const -1))
+    (if (i32.or (i32.eqz (local.get $name)) (i32.eqz (global.get $tt_faces)))
+      (then (return (i32.const -1))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (global.get $TT_MAX_FACES)))
+      (local.set $record (call $tt_face_record (local.get $index)))
+      (if (i32.eq (i32.load offset=16 (local.get $record)) (i32.const 2))
+        (then (if (call $tt_subst_name_equal (local.get $name)
+              (call $g2w (i32.load offset=20 (local.get $record))))
+          (then
+            (local.set $score (i32.add (i32.mul (i32.const 2)
+              (i32.eq (i32.ge_s (local.get $weight) (i32.const 700))
+                (i32.ge_s (i32.load offset=24 (local.get $record)) (i32.const 700))))
+              (i32.eq (i32.ne (local.get $italic) (i32.const 0))
+                (i32.ne (i32.load offset=28 (local.get $record)) (i32.const 0)))))
+            (if (i32.ge_s (local.get $score) (local.get $best))
+              (then (local.set $best (local.get $score)) (local.set $found (local.get $index))))))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1))) (br $scan)))
+    (local.get $found))
 
   ;; ---- glyph cache ------------------------------------------------------
   ;;
@@ -3350,6 +3440,25 @@
     (call $tt_glyph_ensure (local.get $face)
       (call $tt_face_ansi_glyph (local.get $face) (local.get $byte))
       (local.get $ppem)))
+
+  ;; ETO_GLYPH_INDEX addresses the TrueType face directly, including glyphs
+  ;; absent from the ANSI cmap. Return packed face+1 / ppem for one text call.
+  (func $tt_gdi_index_face (param $hdc i32) (result i32)
+    (local $dc i32) (local $font i32) (local $face i32) (local $ppem i32)
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (local.get $dc)) (then (return (i32.const 0))))
+    (local.set $font (load.field.memarg GdiDcState font (local.get $dc)))
+    (if (i32.eqz (call $gdi_object_record (local.get $font))) (then (return (i32.const 0))))
+    (local.set $face (call $tt_face_for_logfont (call $gdi_font_face (local.get $font))
+      (call $gdi_font_weight (local.get $font)) (call $gdi_font_italic (local.get $font))))
+    (if (i32.lt_s (local.get $face) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $ppem (call $tt_face_ppem (local.get $face) (call $gdi_font_height (local.get $font))))
+    (if (i32.or (i32.le_s (local.get $ppem) (i32.const 0)) (i32.gt_u (local.get $ppem) (i32.const 255))) (then (return (i32.const 0))))
+    (i32.or (i32.add (local.get $face) (i32.const 1)) (i32.shl (local.get $ppem) (i32.const 16))))
+
+  (func $tt_gdi_index_width (param $face i32) (param $ppem i32) (param $gid i32) (result i32)
+    (call $tt_advance_px (call $tt_face_data (local.get $face))
+      (call $tt_face_size (local.get $face)) (local.get $gid) (local.get $ppem)))
 
   ;; ---- face substitution ------------------------------------------------
   ;;
@@ -4029,7 +4138,9 @@
   ;; when the face has no substitute or the file is not in the VFS.
   (func $tt_face_for_logfont (param $name i32) (param $weight i32)
         (param $italic i32) (result i32)
-    (local $path i32)
+    (local $path i32) (local $face i32)
+    (local.set $face (call $tt_mem_face (local.get $name) (local.get $weight) (local.get $italic)))
+    (if (i32.ge_s (local.get $face) (i32.const 0)) (then (return (local.get $face))))
     (local.set $path (call $tt_subst_path (local.get $name) (local.get $weight)
       (local.get $italic)))
     (if (i32.eqz (local.get $path)) (then (return (i32.const -1))))
@@ -4331,6 +4442,10 @@
 
     (local.set $hash (call $tt_strike_hash (local.get $name) (local.get $ppem)
       (local.get $weight) (local.get $italic)))
+    ;; A newly registered private face can replace the same named substitute.
+    ;; Its raster cache identity must include the resolved source face.
+    (local.set $hash (i32.xor (local.get $hash)
+      (i32.mul (i32.add (local.get $face) (i32.const 1)) (i32.const 0x9e3779b9))))
     (local.set $found (call $tt_strike_find (local.get $hash)))
     (if (local.get $found) (then (return (local.get $found))))
 
@@ -4629,6 +4744,56 @@
   (func $tt_ggo_ceil (param $value i32) (result i32)
     (i32.sub (i32.const 0)
       (i32.shr_s (i32.sub (i32.const 0) (local.get $value)) (i32.const 16))))
+
+  ;; Legacy Win98 kerning for the scalable face selected into a DC. Bitmap
+  ;; Language capabilities from the realized face, not the requested font name.
+  ;; Only legacy horizontal format-0 kerning is consumed by our placement path.
+  (func $tt_gdi_font_language_info (param $hdc i32) (result i32)
+    (local $dc i32) (local $strike i32) (local $handle i32) (local $face i32)
+    (local $data i32) (local $size i32) (local $off i32) (local $end i32)
+    (local $count i32) (local $length i32) (local $coverage i32) (local $pairs i32)
+    (local $flags i32) (local $codepages i32)
+    (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+    (if (i32.eqz (local.get $dc)) (then (return (i32.const -1))))
+    (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
+    (if (i32.eqz (local.get $strike)) (then (return (i32.const -1))))
+    (if (i32.ne (i32.load (local.get $strike)) (i32.const 2)) (then (return (i32.const 0))))
+    (local.set $handle (load.field.memarg GdiDcState font (local.get $dc)))
+    (local.set $face (call $tt_face_for_logfont (call $gdi_font_face (local.get $handle))
+      (call $gdi_font_weight (local.get $handle)) (call $gdi_font_italic (local.get $handle))))
+    (if (i32.lt_s (local.get $face) (i32.const 0)) (then (return (i32.const -1))))
+    (local.set $data (call $tt_face_data (local.get $face)))
+    (local.set $size (call $tt_face_size (local.get $face)))
+    (local.set $off (call $tt_table_off (local.get $data) (local.get $size) (i32.const 0x4f532f32)))
+    (if (i32.ge_u (call $tt_table_len (local.get $data) (local.get $size) (i32.const 0x4f532f32)) (i32.const 86)) (then
+      (local.set $codepages (call $tt_u32 (local.get $data) (local.get $size) (i32.add (local.get $off) (i32.const 78))))
+      (if (i32.and (local.get $codepages) (i32.const 0x003e0000)) (then (local.set $flags (i32.or (local.get $flags) (i32.const 1)))))
+      (if (i32.and (local.get $codepages) (i32.const 0x40)) (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x10)))))
+      (if (i32.and (i32.ne (i32.and (local.get $codepages) (i32.const 0x60)) (i32.const 0))
+        (i32.ne (i32.and (load.field.memarg GdiDcState text_align (local.get $dc)) (i32.const 0x100)) (i32.const 0)))
+        (then (local.set $flags (i32.or (local.get $flags) (i32.const 2)))))))
+    (local.set $off (call $tt_table_off (local.get $data) (local.get $size) (i32.const 0x6b65726e)))
+    (local.set $length (call $tt_table_len (local.get $data) (local.get $size) (i32.const 0x6b65726e)))
+    (if (i32.lt_u (local.get $length) (i32.const 4)) (then (return (local.get $flags))))
+    (if (call $tt_u16 (local.get $data) (local.get $size) (local.get $off)) (then (return (local.get $flags))))
+    (local.set $end (i32.add (local.get $off) (local.get $length)))
+    (local.set $count (call $tt_u16 (local.get $data) (local.get $size) (i32.add (local.get $off) (i32.const 2))))
+    (local.set $off (i32.add (local.get $off) (i32.const 4)))
+    (block $done (loop $tables
+      (br_if $done (i32.eqz (local.get $count)))
+      (br_if $done (i32.lt_u (i32.sub (local.get $end) (local.get $off)) (i32.const 14)))
+      (local.set $length (call $tt_u16 (local.get $data) (local.get $size) (i32.add (local.get $off) (i32.const 2))))
+      (br_if $done (i32.or (i32.lt_u (local.get $length) (i32.const 14))
+        (i32.gt_u (local.get $length) (i32.sub (local.get $end) (local.get $off)))))
+      (local.set $coverage (call $tt_u16 (local.get $data) (local.get $size) (i32.add (local.get $off) (i32.const 4))))
+      (local.set $pairs (call $tt_u16 (local.get $data) (local.get $size) (i32.add (local.get $off) (i32.const 6))))
+      (if (i32.and (i32.eq (i32.and (local.get $coverage) (i32.const 0xff03)) (i32.const 1))
+        (i32.and (i32.ne (local.get $pairs) (i32.const 0))
+          (i32.le_u (local.get $pairs) (i32.div_u (i32.sub (local.get $length) (i32.const 14)) (i32.const 6)))))
+        (then (return (i32.or (local.get $flags) (i32.const 8)))))
+      (local.set $off (i32.add (local.get $off) (local.get $length)))
+      (local.set $count (i32.sub (local.get $count) (i32.const 1))) (br $tables)))
+    (local.get $flags))
 
   ;; Legacy Win98 kerning for the scalable face selected into a DC. Bitmap
   ;; strikes and faces without a classic `kern` format-0 table adjust by zero.

@@ -696,6 +696,8 @@
   ;; ini_get_int(appNameWA, keyNameWA, nDefault, fileNameWA, isWide) → int value
   (import "host" "ini_write_string" (func $host_ini_write_string (param i32 i32 i32 i32 i32) (result i32)))
   ;; ini_write_string(appNameWA, keyNameWA, valueWA, fileNameWA, isWide) → BOOL
+  (import "host" "ini_write_section" (func $host_ini_write_section (param i32 i32 i32 i32) (result i32)))
+  ;; ini_write_section(appNameWA, stringsWA, fileNameWA, isWide) -> Win32 error
 
   (import "host" "get_window_client_size" (func $host_get_window_client_size (param i32) (result i32)))
   ;; get_window_client_size(hwnd) → (clientW | (clientH << 16))
@@ -3326,8 +3328,15 @@
   (global $propsheet_header (mut i32) (i32.const 0))
   (global $propsheet_pages (mut i32) (i32.const 0))
   (global $propsheet_page_count (mut i32) (i32.const 0))
+  (global $propsheet_pages_are_handles (mut i32) (i32.const 0))
+  (global $propsheet_owns_page_handles (mut i32) (i32.const 0))
+  (global $propsheet_inline_pages_initialized (mut i32) (i32.const 0))
   (global $propsheet_page_index (mut i32) (i32.const 0))
   (global $propsheet_page_hwnd (mut i32) (i32.const 0))
+  ;; Guest-heap array of one retained dialog HWND per page. Win98 creates a
+  ;; normal page lazily on its first activation, then hides/shows that same
+  ;; dialog so its controls and application-owned state survive tab switches.
+  (global $propsheet_page_hwnds (mut i32) (i32.const 0))
   (global $propsheet_frame_hwnd (mut i32) (i32.const 0))
   (global $propsheet_finish_page (mut i32) (i32.const 0))
   (global $propsheet_finish_nmhdr (mut i32) (i32.const 0))
@@ -3713,7 +3722,7 @@
   (global $WIN16_WH_CALLWNDPROC i32 (i32.const 4))
   (global $win16_hook_cwp (mut i32) (i32.const 0))
   (global $win16_cursor_count (mut i32) (i32.const 0))
-  ;; A ring of four 32-byte buffers at the bottom of DGROUP, where a message
+  ;; A ring of four 32-byte buffers in a USER-owned segment, where a message
   ;; that carries a pointer can hand a 16-bit task a struct in its own shape at
   ;; an address one of its own selectors covers. Four, not one, because a
   ;; dialog redraws several owner-draw controls before any of them returns.
@@ -3721,14 +3730,13 @@
   ;; Raised while the 32-bit bridge frame is open, so $win16_arg16 can refuse
   ;; to read an argument off the scratch stack instead of the task's.
   (global $win16_in_call32 (mut i32) (i32.const 0))
-  (global $win16_msg_scratch (mut i32) (i32.const 0))
+  (global $win16_scratch_seg (mut i32) (i32.const 0))
   (global $win16_msg_slot (mut i32) (i32.const 0))
-  ;; A LOGFONT and a TEXTMETRIC for EnumFonts to show its callback, in DGROUP
+  ;; A LOGFONT and a TEXTMETRIC for EnumFonts to show its callback, in USER's segment
   ;; beside the message scratch and for the same reason: the callback is given
   ;; a far pointer to them and reads them with 16-bit code, so they cannot live
   ;; in this emulator's private memory. 50 + 31 bytes, rounded up.
   (global $WIN16_FONT_SCRATCH_SIZE i32 (i32.const 96))
-  (global $win16_font_scratch (mut i32) (i32.const 0))
   (global $win16_lheap_base (mut i32) (i32.const 0))
   (global $win16_lheap_ptr (mut i32) (i32.const 0))
   (global $win16_lheap_end (mut i32) (i32.const 0))
@@ -3817,7 +3825,16 @@
   (global $console_cp (mut i32) (i32.const 437))  ;; input code page
   (global $console_output_cp (mut i32) (i32.const 437))  ;; output code page
 
-  ;; x87 FPU state — registers stored at WASM memory 0x200 (8 × f64 = 64 bytes)
+  ;; x87 physical values belong to the instance, like TOP/tags and MMX below.
+  ;; A shared linear-memory bank lets sibling guest threads corrupt each other.
+  (global $fpu_value0 (mut f64) (f64.const 0))
+  (global $fpu_value1 (mut f64) (f64.const 0))
+  (global $fpu_value2 (mut f64) (f64.const 0))
+  (global $fpu_value3 (mut f64) (f64.const 0))
+  (global $fpu_value4 (mut f64) (f64.const 0))
+  (global $fpu_value5 (mut f64) (f64.const 0))
+  (global $fpu_value6 (mut f64) (f64.const 0))
+  (global $fpu_value7 (mut f64) (f64.const 0))
   (global $fpu_top (mut i32) (i32.const 0))   ;; TOP of FPU stack (0-7)
   (global $fpu_cw  (mut i32) (i32.const 0x037F)) ;; Control word (default: all exceptions masked)
   (global $fpu_sw  (mut i32) (i32.const 0))   ;; Status word

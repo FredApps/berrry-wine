@@ -17,6 +17,7 @@ const ctx = {
   onRegistryValueChanged: change => registryChanges.push(change),
 };
 const storage = createStorageImports(ctx);
+const { VirtualFS } = require('../lib/filesystem');
 
 function writeGuestString(guestAddr, value) {
   const wa = g2w(guestAddr, IMAGE_BASE);
@@ -403,6 +404,68 @@ console.log('PASS  setRegValue materializes parent registry keys');
 console.log('PASS  Win98 Explorer Shell Folders expose the program-group directory');
 console.log('PASS  registry roots, subkeys, and values enumerate with Win32 buffer semantics');
 console.log('PASS  RegQueryInfoKey-style registry metadata reports counts and max lengths');
+ctx.vfs = new VirtualFS();
+ctx.vfs.dirs.add('c:\\games');
+ctx.vfs.dirs.add('c:\\other');
+const sectionPath = 'c:\\games\\profile-section-test.ini';
+ctx.vfs.files.set(sectionPath, { data: Buffer.from('; keep\r\n[Alias]\r\nOld=gone\r\n[Other]\r\nKeep=yes\r\n'), attrs: 0x80 });
+writeGuestString(iniFileGA, sectionPath);
+writeGuestString(iniSectionGA, 'ALIAS');
+writeGuestString(valueGA, 'HD0:=C:\\Games\0CD2:=C:\\CD2\0\0');
+const sectionWrite = (strings, wide = 0) => storage.ini_write_section(
+  g2w(iniSectionGA, IMAGE_BASE), strings, g2w(iniFileGA, IMAGE_BASE), wide);
+assert.strictEqual(sectionWrite(g2w(valueGA, IMAGE_BASE)), 0);
+let sectionText = Buffer.from(ctx.vfs.files.get(sectionPath).data).toString('latin1');
+assert(sectionText.includes('; keep\r\n[Alias]\r\nHD0:=C:\\Games\r\nCD2:=C:\\CD2'));
+assert(!sectionText.includes('Old='));
+assert(sectionText.includes('[Other]\r\nKeep=yes'));
+writeGuestString(iniKeyGA, 'Extra');
+writeGuestString(valueGA, 'mixed');
+assert.strictEqual(storage.ini_write_string(g2w(iniSectionGA, IMAGE_BASE),
+  g2w(iniKeyGA, IMAGE_BASE), g2w(valueGA, IMAGE_BASE), g2w(iniFileGA, IMAGE_BASE), 0), 1);
+sectionText = Buffer.from(ctx.vfs.files.get(sectionPath).data).toString('latin1');
+assert(sectionText.includes('Extra=mixed'));
+assert(sectionText.includes('HD0:=C:\\Games'), 'single-key writes retain section-written keys');
+assert(sectionText.includes('[Other]\r\nKeep=yes'), 'single-key writes preserve unrelated sections');
+assert.strictEqual(sectionWrite(0), 0, 'NULL strings delete the entire section');
+sectionText = Buffer.from(ctx.vfs.files.get(sectionPath).data).toString('latin1');
+assert(!sectionText.includes('[Alias]'));
+assert(sectionText.includes('[Other]\r\nKeep=yes'));
+writeGuestString(valueGA, '');
+assert.strictEqual(sectionWrite(g2w(valueGA, IMAGE_BASE)), 0, 'empty strings retain an empty section');
+sectionText = Buffer.from(ctx.vfs.files.get(sectionPath).data).toString('latin1');
+assert(sectionText.includes('[ALIAS]'));
+assert(!sectionText.includes('Extra='));
+writeGuestString(iniFileGA, 'c:\\missing\\profile.ini');
+assert.strictEqual(sectionWrite(g2w(valueGA, IMAGE_BASE)), 3, 'missing parent directory is reported');
+assert(!ctx.vfs.files.has('c:\\missing\\profile.ini'));
+
+writeGuestString(iniFileGA, 'profile-section-new.ini');
+writeGuestString(iniSectionGA, 'New');
+writeGuestString(valueGA, 'One=1\0Two=2=3\0\0');
+assert.strictEqual(sectionWrite(g2w(valueGA, IMAGE_BASE)), 0);
+const createdPath = 'c:\\windows\\profile-section-new.ini';
+assert(ctx.vfs.files.has(createdPath), 'bare INI names are created in Windows');
+ctx.vfs.files.get(createdPath).attrs = 1;
+const readOnlyBytes = Buffer.from(ctx.vfs.files.get(createdPath).data);
+assert.strictEqual(sectionWrite(0), 5);
+assert.deepStrictEqual(Buffer.from(ctx.vfs.files.get(createdPath).data), readOnlyBytes);
+
+const unicodePath = 'c:\\other\\profile-section-test.ini';
+ctx.vfs.files.set(unicodePath, { data: Buffer.from('\ufeff[Unicode]\r\nOld=1\r\n', 'utf16le'), attrs: 0x80 });
+writeGuestStringW(iniFileGA, unicodePath);
+writeGuestStringW(iniSectionGA, 'Unicode');
+writeGuestStringW(valueGA, 'Name=\u03a9\0\0');
+assert.strictEqual(sectionWrite(g2w(valueGA, IMAGE_BASE), 1), 0);
+assert(Buffer.from(ctx.vfs.files.get(unicodePath).data).toString('utf16le').includes('Name=\u03a9'));
+assert.strictEqual(Buffer.from(ctx.vfs.files.get(sectionPath).data).toString('latin1'), sectionText,
+  'same basename in a different directory must not overwrite the first file');
+assert.strictEqual(storage.ini_write_section(0, 0, 0, 0), 0, 'all-NULL cache flush succeeds');
+assert.strictEqual(storage.ini_write_section(0, g2w(valueGA, IMAGE_BASE), g2w(iniFileGA, IMAGE_BASE), 1), 87);
+mem.fill(65, mem.length - 4);
+assert.strictEqual(sectionWrite(mem.length - 4, 1), 87, 'unterminated input fails without mutation');
+delete ctx.vfs;
+console.log('PASS  INI section/key writes persist through VFS, retain Unicode, and reject read-only writes');
 console.log('PASS  app startup INI values are visible to profile APIs');
 console.log('PASS  system.ini exposes supported MCI drivers with case-insensitive overrides');
 console.log('PASS  win.ini exposes the supported Media Player file extensions');

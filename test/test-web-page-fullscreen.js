@@ -89,7 +89,7 @@ async function main() {
     // has no retractable toolbars, so vh and dvh are the same number). If the
     // probe misreads a page that is demonstrably armed, it will send the next
     // investigation somewhere wrong.
-    await page.goto(`${base}/index.html?diag=1&page-fs=${Date.now()}`,
+    await page.goto(`${base}/index.html?single-app=0&diag=1&page-fs=${Date.now()}`,
       { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(
       () => typeof approveBrowserFullscreen === 'function' && document.getElementById('screen'),
@@ -110,7 +110,8 @@ async function main() {
     });
     await page.waitForFunction(() => {
       const app = runningApps.find(item => item && item.name === 'winmine_wep');
-      return !!(app && app.wine.running && app.wine._runSliceCount >= 40);
+      return !!(app && app.wine.running && Object.values(app.wine.renderer.windows)
+        .some(w => w.visible && !w.isChild && w.w > 0 && w.h > 0));
     }, { timeout: 120000 });
 
     // A guest taking the display, through the renderer's own transition rather
@@ -369,7 +370,64 @@ async function main() {
     // page back with it -- needs no browser and is checked against a stubbed
     // renderer in test/test-web-fullscreen-consent.js.
 
-    console.log('PASS  fullscreen button gives the app the whole page where the Fullscreen API is missing');
+    // A normal windowed game must arm the same affordance without ever
+    // pretending to own an exclusive display. Mock the toolbar's missing
+    // height: Chrome has no retractable Safari chrome of its own.
+    await page.goto(`${base}/index.html?app=sol&single-app=1`,
+      { waitUntil: 'load', timeout: 60000 });
+    await page.waitForFunction(() => window.wineShell?.runningApps.some(a => a.wine.running),
+      { timeout: 120000 });
+    await page.evaluate(() => {
+      largeViewportHeight = () => window.innerHeight + 83;
+      scrollCollapseSample();
+    });
+    const windowed = await page.evaluate(layout);
+    assert(!windowed.pageFullscreen && !windowed.scrollCollapse && !windowed.gutterVisible,
+      'windowed portrait games do not offer the Safari swipe banner');
+    assert(!windowed.classes.includes('exclusive-fullscreen'),
+      'a windowed game must not claim exclusive display ownership');
+    await page.setViewport({ ...VIEWPORT, width: 844, height: 292 });
+    await page.evaluate(() => scrollCollapseSample());
+    const rotated = await page.evaluate(layout);
+    assert(rotated.gutterVisible, 'rotation re-arms the gesture when landscape bars are visible');
+    assert(!rotated.exitVisible, 'windowed mode has no redundant fullscreen close chip');
+    const banner = await page.evaluate(() => {
+      const r = document.getElementById('scroll-collapse-gutter').getBoundingClientRect();
+      return { left:r.left, right:r.right, width:innerWidth };
+    });
+    assert(Math.abs(banner.left) < 1 && Math.abs(banner.right - banner.width) < 1,
+      'the banner spans the viewport without reserving a gap for the removed close chip');
+    assert(rotated.scrollHeight > rotated.viewport.height, 'landscape remains genuinely scrollable');
+    assert(await page.evaluate(() => !document.documentElement.style.getPropertyValue('--pinned-vh')),
+      'rotation discards the portrait pinned height');
+    await page.evaluate(() => {
+      document.body.classList.add('bars-collapsed');
+      const r = wineShell.renderer;
+      r.beginViewPinch(); r.updateViewPinch(0.65); r.endViewPinch(true);
+    });
+    assert((await page.evaluate(layout)).pageFullscreen, 'cancelled pinch does not exit fullscreen');
+    const beforePinch = await page.evaluate(() => Object.values(wineShell.renderer.windows)
+      .filter(w => w._singleAppNaturalSize).map(w => w._maximized));
+    await page.evaluate(() => {
+      const r = wineShell.renderer;
+      r.beginViewPinch(); r.updateViewPinch(0.65); r.endViewPinch();
+      window.dispatchEvent(new Event('resize'));
+    });
+    const pinchedOut = await page.evaluate(layout);
+    assert(!pinchedOut.pageFullscreen && !pinchedOut.scrollCollapse,
+      'inward pinch exits scroll-entered fullscreen and resize does not re-enter');
+    assert.deepStrictEqual(await page.evaluate(() => Object.values(wineShell.renderer.windows)
+      .filter(w => w._singleAppNaturalSize).map(w => w._maximized)), beforePinch,
+      'leaving page fullscreen does not restore or resize the guest window state');
+    await page.setViewport(VIEWPORT);
+    const portraitAgain = await page.evaluate(layout);
+    assert(!portraitAgain.gutterVisible && !portraitAgain.scrollCollapse,
+      'returning to portrait disarms windowed scroll-to-collapse');
+    await page.evaluate(() => wineShell.stopAllApps());
+    const stopped = await page.evaluate(layout);
+    assert(!stopped.pageFullscreen && !stopped.scrollCollapse, 'closing the app disarms the gesture');
+
+    console.log('PASS  fullscreen fallback: exclusive and windowed phone games, rotation and cleanup');
   } finally {
     await browser.close();
     if (server) server.close();

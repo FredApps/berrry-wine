@@ -114,6 +114,13 @@ const ENV_WASM = process.env.WINE_ASSEMBLY_WASM || '';
 const NO_BUILD = hasFlag('no-build') || !!ENV_WASM; // --no-build: skip auto-build
 const NO_CLOSE = hasFlag('no-close');      // --no-close: don't inject WM_CLOSE
 const NO_RENDERER = hasFlag('no-renderer'); // --no-renderer: skip CLI canvas/renderer (guest-state diagnostics)
+// Experimental programmable D3D9 software path; no DOM or GL provider needed.
+// Keep capability opt-in separate: the implementation is not a full SM profile.
+const D3D9_RENDERER = getArg('d3d9-renderer', null);
+const D3D9_PROGRAMMABLE = hasFlag('d3d9-programmable');
+if (D3D9_RENDERER !== null && D3D9_RENDERER !== 'software') {
+  throw new Error('CLI --d3d9-renderer currently supports software only; WebGL requires a browser/provider');
+}
 const NO_MMX = hasFlag('no-mmx');          // --no-mmx: report a 486DX from CPUID so guests take scalar paths
 const DUMP_GDI = getArg('dump-gdi', null); // --dump-gdi=DIR: dump GDI bitmaps as PNGs
 const DUMP_DDRAW = getArg('dump-ddraw-surfaces', null); // --dump-ddraw-surfaces=DIR: dump DirectDraw surface DIBs as PNGs
@@ -800,6 +807,7 @@ const RPC_CENSUS = hasFlag('rpc-census'); // --rpc-census: with --threads, per-t
 // node alive, so a run that ends — cleanly or by throwing — would otherwise hang
 // instead of reporting.
 let workerThreadHost = null;
+let closeD3DRender = null;
 // --wait-slices=N: worker slices per batch while the MAIN thread is parked in a
 // blocking wait a worker has to satisfy. Nothing else can run then, so this is
 // much larger than THREAD_SLICES; set it to THREAD_SLICES to turn the boost off.
@@ -1963,6 +1971,16 @@ async function main() {
   const apiByName = new Map(apiTable.map(e => [e.name, e]));
   const ctx = {
     getMemory: () => ctx._memory ? ctx._memory.buffer : null,
+    d3d9Backend: D3D9_RENDERER || 'webgl',
+    d3d9Programmable: D3D9_PROGRAMMABLE || APP_ENTRY?.d3d9Programmable === true,
+    createD3DRenderWorker: () => {
+      const {Worker} = require('worker_threads');
+      const {WorkerConsumer} = require('../lib/d3d-command-stream');
+      const sigs = JSON.parse(fs.readFileSync(path.join(ROOT,'lib','host-import-sigs.generated.json'),'utf8')).sigs;
+      return new WorkerConsumer(new Worker(path.join(ROOT,'lib','d3d-render-worker.js')),
+        {module:wasmModule,memory,sigs,imageBase:instance.exports.get_image_base() >>> 0,
+          reclaimHeap:head=>instance.exports.d3d_render_adopt_free_list(head)});
+    },
     renderer,
     processId: 1000,
     apiTable,
@@ -2044,6 +2062,7 @@ async function main() {
     },
   };
   const base = createHostImports(ctx);
+  closeD3DRender = () => ctx.closeD3DRender();
   if (ctx.vfs) {
     ctx.vfs.dirs.add('c:\\windows');
     ctx.vfs.dirs.add('c:\\windows\\system');
@@ -3627,6 +3646,7 @@ async function main() {
     // audio device, the GDI handles — comes from one shared list, so the two
     // hosts cannot quietly disagree about what a thread inherits.
     const workerCtx = Object.assign(processSharedCtx(ctx), {
+      d3d9Bridge: ctx.d3d9Bridge,
       getMemory: () => memory.buffer,
       renderer,
       onExit: () => {},
@@ -3929,6 +3949,7 @@ async function main() {
     // read synchronously, so this mostly matters to tests that mount an
     // async provider to mimic the browser's File-backed ISO reads.
     getVfs: () => ctx.vfs || null,
+    onRenderWait: token => ctx.waitD3DRender(token),
     hasMessage: () => !!(
       inputEvent ||
       (crossThreadMsgs && crossThreadMsgs.length) ||
@@ -4980,9 +5001,24 @@ async function main() {
   // callback: Heroes II hung ten batches after its main menu this way. host.js
   // has always made this exemption (_isMainExecutionSuspended); the CLI has to
   // agree or the browser and the harness run different schedulers.
+  let mainRenderWait = null;
   const mainExecutionSuspended = () => {
-    if (!threadManager.isMainThreadSuspended()) return false;
     const ex = instance.exports;
+    if (ex.get_yield_reason() === 16) {
+      const token = ex.get_d3d_render_token() | 0;
+      if (!mainRenderWait || mainRenderWait.token !== token) {
+        const wait = {token,done:false}; mainRenderWait = wait;
+        wait.promise = Promise.resolve().then(() => ctx.waitD3DRender(token))
+          .catch(error => console.error('[render]',error))
+          .then(() => { wait.done = true; });
+      }
+      if (!mainRenderWait.done) return true;
+      mainRenderWait = null; ex.clear_yield();
+    }
+    if (threadManager._renderSendTargets.has(ex)) return true;
+    if (ex.get_yield_reason() === 10 && (threadManager.backend === 'worker' ||
+        !threadManager.resolveCooperativeThreadSend(ex))) return true;
+    if (!threadManager.isMainThreadSuspended()) return false;
     return !(ex.is_mm_timer_callback_active && (ex.is_mm_timer_callback_active() | 0));
   };
 
@@ -5429,6 +5465,7 @@ async function main() {
     return { close() { if (server) server.close(); } };
   })() : null;
 
+  const executionStartedAt = performance.now();
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
     if (deadlineMs && Date.now() >= deadlineMs) {
       console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${batch}`);
@@ -8431,6 +8468,7 @@ async function main() {
       }
       instance.exports.clear_yield();
     }
+    if (instance.exports.get_yield_reason() === 16) mainExecutionSuspended();
 
     // Handle the vertical-blank yield (yield_reason=13). A DirectDraw call
     // parked with its stdcall frame intact and EIP on the thunk, so advancing
@@ -8616,7 +8654,7 @@ async function main() {
         // --threads-serial means nothing runs beside a guest thread, main
         // included, or the switch would not answer the question it exists for.
         if (THREADS_SERIAL) await workerSlices;
-        else if (s < THREAD_SLICES - 1 && !stopped) {
+        else if (s < THREAD_SLICES - 1 && !stopped && !mainExecutionSuspended()) {
           // Main keeps running WHILE they do — the CLI's version of host.js
           // awaiting the main slice and the thread slices together.
           try { instance.exports.run(BATCH_SIZE); } catch (e) { /* reported below */ }
@@ -8697,6 +8735,10 @@ async function main() {
         await new Promise(resolve => setImmediate(resolve));
       }
     }
+    // Render worker replies also require a real event-loop turn; Promise-only
+    // CLI batches starve message delivery even though their guest is parked.
+    if (ctx.d3d9Bridge && ctx.d3d9Bridge.requests.size)
+      await new Promise(resolve => setImmediate(resolve));
     // A parked socket call is not the only way to be waiting on the wire. An
     // app using WSAAsyncSelect never blocks in winsock at all: it sits in its
     // message pump expecting to be told, so nothing above would ever yield and
@@ -8790,6 +8832,12 @@ if (VERBOSE) {
         prevApiCount = apiCount;
         prevRegFp = regFp;
         stuckCount = 0;
+      } else if (ex.get_yield_reason() === 16 && ctx.d3d9Bridge &&
+          ctx.d3d9Bridge.requests.has(ex.get_d3d_render_token() | 0)) {
+        // The render worker owns a live continuation. An unchanged guest CPU
+        // while it runs is intentional; normal wall deadlines still apply.
+        // Do not exempt an orphaned yield with no corresponding request.
+        stuckCount = 0;
       } else if (ex.win16_pump_parked && ex.win16_pump_parked()) {
         // A 16-bit modal dialog or message box with no message to handle waits
         // on a continuation slot with every register unchanged. That is the
@@ -8836,6 +8884,7 @@ if (VERBOSE) {
       }
     }
   }
+  const executionElapsedSeconds = Math.max(0, (performance.now() - executionStartedAt) / 1000);
   // The control server would otherwise hold the process open; unref lets a
   // reply resolved in the final batch still flush while the exit path prints.
   if (control) control.close();
@@ -9114,7 +9163,7 @@ if (VERBOSE) {
   }
 
   console.log(`\nStats: ${apiCount} API calls, ${batchesRun} batches`
-    + (MAX_SECONDS ? ` in ${MAX_SECONDS}s (${(batchesRun / MAX_SECONDS).toFixed(0)} batches/s)` : ''));
+    + ` in ${executionElapsedSeconds.toFixed(3)}s (${(batchesRun / Math.max(executionElapsedSeconds,0.001)).toFixed(0)} batches/s)`);
   reportMmx();
   reportGuestPageStats();
 
@@ -9949,11 +9998,15 @@ if (VERBOSE) {
   }
 
   if (workerThreadHost) workerThreadHost.stop();
+  if (closeD3DRender) await closeD3DRender();
 }
 
-main().catch(e => {
+main().catch(async e => {
   console.error(e);
   // Exit code deliberately unchanged; the threads have to be stopped either way
   // or node waits on them forever and the error above never gets read.
   if (workerThreadHost) workerThreadHost.stop();
+  if (closeD3DRender) {
+    try { await closeD3DRender(); } catch (error) { console.error('[render] retirement failed:',error); }
+  }
 });

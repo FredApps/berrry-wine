@@ -7,6 +7,10 @@ const { ThreadManager } = require('../lib/thread-manager');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_convert_default_locale") (param $locale i32) (result i32)
+    (global.set $esp (i32.const 0x00300000))
+    (call $handle_ConvertDefaultLocale (local.get $locale) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0)) (global.get $eax))
   (func (export "test_get_thread_locale") (result i32)
     (global.set $esp (i32.const 0x00300000))
     (call $handle_GetThreadLocale
@@ -65,6 +69,12 @@ const extraWat = String.raw`
     'successful SetThreadLocale preserves LastError');
   assert.strictEqual(e.test_get_thread_locale(), 0x0419,
     'GetThreadLocale returns the calling thread setting');
+  for (const [input, output] of [[0x400,0x409],[0x800,0x409],[0x409,0x409],
+    [0x419,0x419],[0x7f,0x7f],[0xdeadbeef,0xdeadbeef]]) {
+    assert.strictEqual(e.test_convert_default_locale(input)>>>0,output);
+    assert.strictEqual(e.get_esp()>>>0,0x00300008);
+    assert.strictEqual(e.test_get_last_error(),0x1234,'conversion preserves LastError');
+  }
 
   const child = e.test_create_thread() >>> 0;
   assert(child, 'CreateThread returns a real pending thread handle');

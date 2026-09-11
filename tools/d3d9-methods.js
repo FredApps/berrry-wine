@@ -213,6 +213,42 @@ const interfaces = [
     { name: 'ReleaseDC',       nargs: 2 },
   ]},
 
+  { prefix: 'IDirect3DCubeTexture9', methods: [
+    { name: 'QueryInterface', nargs: 3 },
+    { name: 'AddRef', nargs: 1 },
+    { name: 'Release', nargs: 1 },
+    { name: 'GetDevice', nargs: 2 },
+    { name: 'SetPrivateData', nargs: 5 },
+    { name: 'GetPrivateData', nargs: 4 },
+    { name: 'FreePrivateData', nargs: 2 },
+    { name: 'SetPriority', nargs: 2 },
+    { name: 'GetPriority', nargs: 1 },
+    { name: 'PreLoad', nargs: 1 },
+    { name: 'GetType', nargs: 1 },
+    { name: 'SetLOD', nargs: 2 },
+    { name: 'GetLOD', nargs: 1 },
+    { name: 'GetLevelCount', nargs: 1 },
+    { name: 'SetAutoGenFilterType', nargs: 2 },
+    { name: 'GetAutoGenFilterType', nargs: 1 },
+    { name: 'GenerateMipSubLevels', nargs: 1 },
+    { name: 'GetLevelDesc', nargs: 3 },
+    { name: 'GetCubeMapSurface', nargs: 4 },
+    { name: 'LockRect', nargs: 6 },
+    { name: 'UnlockRect', nargs: 3 },
+    { name: 'AddDirtyRect', nargs: 3 },
+  ]},
+
+  { prefix: 'IDirect3DQuery9', methods: [
+    { name: 'QueryInterface', nargs: 3 },
+    { name: 'AddRef', nargs: 1 },
+    { name: 'Release', nargs: 1 },
+    { name: 'GetDevice', nargs: 2 },
+    { name: 'GetType', nargs: 1 },
+    { name: 'GetDataSize', nargs: 1 },
+    { name: 'Issue', nargs: 2 },
+    { name: 'GetData', nargs: 4 },
+  ]},
+
   // ── IDirect3DSwapChain9 ────────────────────────────────────────────
   { prefix: 'IDirect3DSwapChain9', methods: [
     { name: 'QueryInterface',       nargs: 3 },

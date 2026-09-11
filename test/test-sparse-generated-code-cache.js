@@ -125,6 +125,16 @@ async function main() {
     'outer generated entry should execute');
   assert.strictEqual(executeOverlap(overlapCode + 1), 0x31415926,
     'interior generated entry should execute');
+  for (let i = 0; i < 4; i++) {
+    assert.strictEqual(executeOverlap(overlapCode), 0x31415926);
+    assert.strictEqual(e.test_sparse_cache_lookup(overlapCode), 1,
+      'outer entry remains cached after executing it');
+    assert.strictEqual(e.test_sparse_cache_lookup(overlapCode + 1), 1,
+      'decoding the outer prefix must preserve the cached interior entry');
+    assert.strictEqual(executeOverlap(overlapCode + 1), 0x31415926);
+    assert.strictEqual(e.test_sparse_cache_lookup(overlapCode), 1,
+      'alternating entry points must not evict each other');
+  }
   le32(0x27182818).forEach((byte, index) => e.guest_write8(overlapCode + 2 + index, byte));
   assert.strictEqual(executeOverlap(overlapCode), 0x27182818,
     'patching bytes shared by overlapping entries must retire the older entry');

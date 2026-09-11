@@ -7,6 +7,8 @@ const path = require('path');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (export "test_dp_assign_owner" (func $dp_assign_group_owner))
+  (export "test_dp_owner" (func $dp_group_owner))
   (func (export "test_start_directplay_enumerate")
       (param $ansi i32) (param $callback i32) (param $context i32) (result i32)
     (global.set $esp (i32.const 0x074FF000))
@@ -326,6 +328,17 @@ const extraWat = String.raw`
   assert(groupId && player1 && player2, 'created DirectPlay entities receive nonzero IDs');
   assert.strictEqual(new Set([groupId, player1, player2]).size, 3,
     'created DirectPlay entities receive unique IDs');
+  assert.strictEqual(e.test_dp_owner(groupId) >>> 0, 0xffffffff,
+    'a new group has no explicitly assigned owner');
+  assert.strictEqual(e.test_dp_assign_owner(groupId, player1), 1);
+  assert.strictEqual(e.test_dp_owner(groupId) >>> 0, player1);
+  assert.strictEqual(e.test_dp_assign_owner(groupId, player2), 1);
+  assert.strictEqual(e.test_dp_owner(groupId) >>> 0, player2, 'ownership transfers');
+  assert.strictEqual(e.test_dp_assign_owner(groupId, groupId), 0, 'a group is not a player');
+  assert.strictEqual(e.test_dp_assign_owner(player1, player2), 0, 'a player is not a group');
+  assert.strictEqual(e.test_dp_assign_owner(groupId, 0xdeadbeef), 0);
+  assert.strictEqual(e.test_dp_owner(groupId) >>> 0, player2, 'invalid assignment preserves owner');
+  assert.strictEqual(e.test_dp_assign_owner(groupId, player1), 1);
 
   const sizePtr = e.guest_alloc(4) >>> 0;
   const flagsOut = e.guest_alloc(4) >>> 0;
@@ -562,6 +575,10 @@ const extraWat = String.raw`
   });
   assert.strictEqual(e.test_dp_destroy(player1, 1) >>> 0, 0x80070057,
     'DestroyPlayer rejects an already-destroyed ID');
+  assert.strictEqual(e.test_dp_owner(groupId) >>> 0, 0xffffffff,
+    'destroying a player leaves no stale owner reference');
+  assert.strictEqual(e.test_dp_assign_owner(groupId, player1), 0);
+  assert.strictEqual(e.test_dp_assign_owner(groupId, player2), 1);
   assert.strictEqual(e.test_dp_get_flags(player1, 1, flagsOut) >>> 0, 0x88770096,
     'GetPlayerFlags rejects a destroyed player');
   assert.strictEqual(e.guest_read32(flagsOut), 0,
@@ -581,6 +598,8 @@ const extraWat = String.raw`
 
   assert.strictEqual(e.test_dp_destroy(groupId, 0), 0,
     'DestroyGroup removes the parent group');
+  assert.strictEqual(e.test_dp_owner(groupId) >>> 0, 0xffffffff);
+  assert.strictEqual(e.test_dp_assign_owner(childId, player2), 1);
   e.guest_write32(sizePtr, 99);
   assert.strictEqual(
     e.test_dp_get_data(groupId, 0, dataOut, sizePtr, 0) >>> 0, 0x8877009b,
@@ -597,8 +616,14 @@ const extraWat = String.raw`
     'a destroyed enumeration target returns an invalid-parameter error');
 
   assert.strictEqual(e.test_dp_close(), 0, 'Close releases all local entities');
+  assert.strictEqual(e.test_dp_owner(childId) >>> 0, 0xffffffff,
+    'closing clears the group and its owner state');
   runEntityEnum(0, 0, continueCallback, 0, 0, 0);
   runEntityEnum(1, 0, continueCallback, 0, 0, 0);
+  assert.strictEqual(e.test_dp_create_group(groupOut, red.name, 0, 0, 0), 0);
+  assert.strictEqual(e.test_dp_owner(e.guest_read32(groupOut)) >>> 0, 0xffffffff,
+    'a reused entity slot cannot inherit a prior owner');
+  assert.strictEqual(e.test_dp_close(), 0);
 
   console.log('PASS  DirectPlay local entities retain, query, and enumerate with Win98 semantics');
 })().catch(error => {

@@ -28,7 +28,9 @@ function makeCtx() {
     exports: {
       get_image_base: () => IMAGE_BASE,
       guest_alloc: (size) => { const at = next; next += (size + 0xFFF) & ~0xFFF; return at; },
+      guest_free: base => ctx.freed.push(base),
     },
+    freed: [],
   };
   ctx.g2w = (guest) => guest - IMAGE_BASE + GUEST_BASE;
   ctx.bytes = () => new Uint8Array(memory.buffer);
@@ -117,12 +119,39 @@ function makeCtx() {
     'read-only mapping does not retain a duplicate eager JavaScript copy');
   assert.strictEqual(lazyImports.fs_unmap_view(lazyBase), 1,
     'unmapping a read-only provider view needs no synchronous writeback');
+  assert.deepStrictEqual(lazyCtx.freed,[lazyBase],'unmap releases backing with the matching allocator');
+  assert.strictEqual(lazyImports.fs_unmap_view(lazyBase),0,'double unmap fails');
+  assert.deepStrictEqual(lazyCtx.freed,[lazyBase],'double unmap does not double free');
+  const sparseCtx=makeCtx(), sparseFreed=[];
+  sparseCtx.exports.guest_map_alloc=sparseCtx.exports.guest_alloc;
+  sparseCtx.exports.guest_map_free=p=>{sparseFreed.push(p);return 1;};
+  const sparseImports=createFilesystemImports(sparseCtx);
+  const sparseMap=sparseImports.fs_create_file_mapping(0xffffffff,4,0,4096,0);
+  const sparseBase=sparseImports.fs_map_view_of_file(sparseMap,6,0,0,0);
+  assert.strictEqual(sparseImports.fs_unmap_view(sparseBase),1);
+  assert.deepStrictEqual(sparseFreed,[sparseBase]);assert.deepStrictEqual(sparseCtx.freed,[]);
+  lazyCtx.vfs.setProviderFile('d:\\bad.dat',{
+    provider:{size:4096,readRange:()=>Promise.reject(new Error('read failed'))},attrs:1});
+  const badFile=lazyCtx.vfs.createFile('d:\\bad.dat',0x80000000,3);
+  const badMap=lazyImports.fs_create_file_mapping(badFile,2,0,0,0);
+  assert.strictEqual(lazyImports.fs_map_view_of_file(badMap,4,0,0,0),0);
+  await assert.rejects(lazyCtx.vfs.pendingRead.provider.fill(),/read failed/);
+  assert.strictEqual(lazyCtx.freed.length,2,'failed provider fill releases unpublished allocation');
+  assert.strictEqual(lazyImports.fs_map_view_of_file(badMap,4,0,0,0),0);
+  assert.strictEqual(lazyCtx.freed.length,2,'failed retry does not free twice');
 
   // --- the WAT handler ------------------------------------------------------
   const seen = [];
   let mapAttempts = 0;
   const { exports: wat } = await bootRenderHarness({
     extraWat: String.raw`
+      (func (export "g2w") (param $g i32) (result i32) (call $g2w (local.get $g)))
+      (func (export "map_count") (result i32) (i32.load (global.get $VIRTUAL_MAP_STATE)))
+      (func (export "backing_top") (result i32)
+        (i32.load offset=4 (global.get $VIRTUAL_MAP_STATE)))
+      (func (export "exhaust_bump") (result i32)
+        (i32.store offset=4 (global.get $VIRTUAL_MAP_STATE) (region.end $VIRTUAL_BACKING_BASE))
+        (region.end $VIRTUAL_BACKING_BASE))
       (func (export "test_flush_view_of_file") (param $base i32) (param $bytes i32) (result i64)
         (global.set $esp (i32.const 0x00300000))
         (call $handle_FlushViewOfFile
@@ -166,6 +195,38 @@ function makeCtx() {
     'the retried mapping returns the host-completed guest address');
   assert.strictEqual(Number(retried >> 32n), 0x00300018,
     'the successful retry pops five arguments and its return address once');
+
+  // Real sparse allocator, not the JS test double: sequential map/unmap
+  // cycles must recover the map slot and physical backing each time.
+  const pinned=wat.guest_map_alloc(4096);
+  assert(pinned);wat.guest_write32(pinned,0x12345678);
+  const count=wat.map_count(),top=wat.backing_top();
+  for(let i=0;i<1100;i++){
+    const view=wat.guest_map_alloc(65536);assert(view,'mapping cycle '+i);
+    assert.strictEqual(wat.guest_read32(view),0,'reused backing is zeroed');
+    wat.guest_write32(view,0xdeadbeef);
+    assert.strictEqual(wat.guest_map_free(view),1);
+    assert.strictEqual(wat.map_count(),count);
+    assert.strictEqual(wat.backing_top(),top);
+  }
+  assert.strictEqual(wat.guest_read32(pinned),0x12345678,'live mapping survives');
+  assert.strictEqual(wat.guest_map_free(pinned),1);
+  assert.strictEqual(wat.guest_map_free(pinned),0,'exact release is not repeatable');
+  const first=wat.guest_map_alloc(65536),live=wat.guest_map_alloc(65536);
+  assert(first && live);wat.guest_write32(live,0x23456789);
+  const firstBacking=wat.g2w(first);
+  assert.strictEqual(wat.guest_map_free(first),1,'release a non-top extent');
+  const exhausted=wat.exhaust_bump(), reused=wat.guest_map_alloc(65536);
+  assert(reused,'exhausted bump allocator reuses a released gap');
+  assert.strictEqual(wat.g2w(reused),firstBacking,'exact freed extent is reused');
+  assert.strictEqual(wat.backing_top(),exhausted,'gap reuse cannot lower high water into live backing');
+  assert.strictEqual(wat.guest_read32(reused),0);
+  assert.strictEqual(wat.guest_read32(live),0x23456789);
+  const second=wat.guest_map_alloc(65536);assert(second);
+  assert.notStrictEqual(wat.g2w(second),wat.g2w(reused),'consecutive gap allocations do not overlap');
+  assert.strictEqual(wat.guest_map_free(second),1);
+  assert.strictEqual(wat.guest_map_free(reused),1);
+  assert.strictEqual(wat.guest_map_free(live),1);
 
   console.log('PASS  FlushViewOfFile writes a live view back at the right offset');
 })().catch(err => {

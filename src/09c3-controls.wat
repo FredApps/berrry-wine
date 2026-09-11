@@ -313,6 +313,18 @@
     (field padding_packed      i32) ;; +72  TB_SETPADDING, cx | cy<<16
     (field hot_index           i32)) ;; +76 default -1; ends at +80
 
+  ;; Status bar (ctrl_class 22, and the WAT paint mirror for a registered
+  ;; comctl32 status bar). MenuHelp writes transient help to simple part 0xFF
+  ;; and toggles SB_SIMPLE; it does not destroy pane zero's normal text.
+  ;; Retaining both strings lets closing a menu restore the application's
+  ;; ordinary status line. TITLE_TABLE mirrors whichever string is active.
+  (layout StatusBarState
+    (field normal_text_ptr i32)    ;; +0  guest heap ptr, ANSI
+    (field normal_text_len i32)    ;; +4
+    (field simple_text_ptr i32)    ;; +8  guest heap ptr, ANSI
+    (field simple_text_len i32)    ;; +12
+    (field simple_mode     i32))   ;; +16 BOOL; ends at +20
+
   ;; ---- ButtonState accessors ----
   ;;
   ;; $sw is the *WASM* address of the struct — $g2w of WND_RECORDS.state_ptr.
@@ -787,6 +799,119 @@
 
   ;; ---- Control table helpers (legacy CONTROL_TABLE) ----
 
+  (func $statusbar_normal_ptr (param $sw ptr<StatusBarState>) (result i32)
+    (load.field StatusBarState normal_text_ptr (local.get $sw)))
+  (func $statusbar_set_normal_ptr (param $sw ptr<StatusBarState>) (param $v i32)
+    (store.field StatusBarState normal_text_ptr (local.get $sw) (local.get $v)))
+  (func $statusbar_normal_len (param $sw ptr<StatusBarState>) (result i32)
+    (load.field.memarg StatusBarState normal_text_len (local.get $sw)))
+  (func $statusbar_set_normal_len (param $sw ptr<StatusBarState>) (param $v i32)
+    (store.field.memarg StatusBarState normal_text_len (local.get $sw) (local.get $v)))
+  (func $statusbar_simple_ptr (param $sw ptr<StatusBarState>) (result i32)
+    (load.field.memarg StatusBarState simple_text_ptr (local.get $sw)))
+  (func $statusbar_set_simple_ptr (param $sw ptr<StatusBarState>) (param $v i32)
+    (store.field.memarg StatusBarState simple_text_ptr (local.get $sw) (local.get $v)))
+  (func $statusbar_simple_len (param $sw ptr<StatusBarState>) (result i32)
+    (load.field.memarg StatusBarState simple_text_len (local.get $sw)))
+  (func $statusbar_set_simple_len (param $sw ptr<StatusBarState>) (param $v i32)
+    (store.field.memarg StatusBarState simple_text_len (local.get $sw) (local.get $v)))
+  (func $statusbar_simple_mode (param $sw ptr<StatusBarState>) (result i32)
+    (load.field.memarg StatusBarState simple_mode (local.get $sw)))
+  (func $statusbar_set_simple_mode (param $sw ptr<StatusBarState>) (param $v i32)
+    (store.field.memarg StatusBarState simple_mode (local.get $sw) (local.get $v)))
+
+  ;; Copy one status-bar string from a WASM address into state-owned guest
+  ;; storage. Allocate before retiring the old string so an OOM leaves the
+  ;; status bar exactly as it was.
+  (func $statusbar_state_store_text
+      (param $sw ptr<StatusBarState>) (param $simple i32)
+      (param $src_wa i32) (param $len i32) (result i32)
+    (local $old i32) (local $buf i32) (local $buf_wa i32)
+    (if (i32.gt_u (local.get $len) (i32.const 255))
+      (then (local.set $len (i32.const 255))))
+    (local.set $old
+      (if (result i32) (local.get $simple)
+        (then (call $statusbar_simple_ptr (local.get $sw)))
+        (else (call $statusbar_normal_ptr (local.get $sw)))))
+    (if (i32.eqz (local.get $len))
+      (then
+        (if (local.get $old) (then (call $heap_free (local.get $old))))
+        (if (local.get $simple)
+          (then
+            (call $statusbar_set_simple_ptr (local.get $sw) (i32.const 0))
+            (call $statusbar_set_simple_len (local.get $sw) (i32.const 0)))
+          (else
+            (call $statusbar_set_normal_ptr (local.get $sw) (i32.const 0))
+            (call $statusbar_set_normal_len (local.get $sw) (i32.const 0))))
+        (return (i32.const 1))))
+    (local.set $buf (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+    (local.set $buf_wa (call $g2w (local.get $buf)))
+    (memory.copy (local.get $buf_wa) (local.get $src_wa) (local.get $len))
+    (i32.store8 (i32.add (local.get $buf_wa) (local.get $len)) (i32.const 0))
+    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (if (local.get $simple)
+      (then
+        (call $statusbar_set_simple_ptr (local.get $sw) (local.get $buf))
+        (call $statusbar_set_simple_len (local.get $sw) (local.get $len)))
+      (else
+        (call $statusbar_set_normal_ptr (local.get $sw) (local.get $buf))
+        (call $statusbar_set_normal_len (local.get $sw) (local.get $len))))
+    (i32.const 1))
+
+  (func $statusbar_state_publish (param $hwnd i32) (param $sw ptr<StatusBarState>)
+    (local $ptr i32) (local $len i32)
+    (if (call $statusbar_simple_mode (local.get $sw))
+      (then
+        (local.set $ptr (call $statusbar_simple_ptr (local.get $sw)))
+        (local.set $len (call $statusbar_simple_len (local.get $sw))))
+      (else
+        (local.set $ptr (call $statusbar_normal_ptr (local.get $sw)))
+        (local.set $len (call $statusbar_normal_len (local.get $sw)))))
+    (call $title_table_set
+      (local.get $hwnd)
+      (if (result i32) (local.get $ptr)
+        (then (call $g2w (local.get $ptr)))
+        (else (i32.const 0)))
+      (local.get $len))
+    (call $invalidate_hwnd (local.get $hwnd)))
+
+  ;; Lazily attach the paint mirror. Registered native status bars do not run
+  ;; their WM_CREATE through the WAT proc, so seed pane zero from TITLE_TABLE
+  ;; the first time one of their status messages reaches us.
+  (func $statusbar_state_get (param $hwnd i32) (param $create i32) (result i32)
+    (local $state i32) (local $sw ptr<StatusBarState>)
+    (local $title_wa i32) (local $title_len i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (local.get $state) (then (return (local.get $state))))
+    (if (i32.eqz (local.get $create)) (then (return (i32.const 0))))
+    (local.set $state (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (local.set $sw (cast ptr<StatusBarState> (call $g2w (local.get $state))))
+    (memory.fill (local.get $sw) (i32.const 0) (i32.const 20))
+    (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
+    (local.set $title_wa (call $title_table_get_ptr (local.get $hwnd)))
+    (local.set $title_len (call $title_table_get_len (local.get $hwnd)))
+    (if (i32.and (i32.ne (local.get $title_wa) (i32.const 0))
+                 (i32.ne (local.get $title_len) (i32.const 0)))
+      (then
+        (drop (call $statusbar_state_store_text
+          (local.get $sw) (i32.const 0)
+          (local.get $title_wa) (local.get $title_len)))))
+    (local.get $state))
+
+  (func $statusbar_state_release (param $hwnd i32)
+    (local $state i32) (local $sw ptr<StatusBarState>) (local $ptr i32)
+    (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
+    (if (i32.eqz (local.get $state)) (then (return)))
+    (local.set $sw (cast ptr<StatusBarState> (call $g2w (local.get $state))))
+    (local.set $ptr (call $statusbar_normal_ptr (local.get $sw)))
+    (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+    (local.set $ptr (call $statusbar_simple_ptr (local.get $sw)))
+    (if (local.get $ptr) (then (call $heap_free (local.get $ptr))))
+    (call $heap_free (local.get $state))
+    (call $wnd_set_state_ptr (local.get $hwnd) (i32.const 0)))
+
   ;; Mark a registered native status-bar window without classifying it as a
   ;; WAT control. Its guest comctl32/MFC wndproc must remain authoritative for
   ;; CCS_BOTTOM layout, while the shared renderer surface still needs WAT to
@@ -1153,6 +1278,10 @@
   (func $ctrl_table_reset_slot (param $slot i32)
     (local $addr i32)
     (call $tab_native_state_release (call $wnd_slot_hwnd (local.get $slot)))
+    (if (i32.or
+          (i32.eq (i32.load (call $ctrl_slot_addr (local.get $slot))) (i32.const 22))
+          (call $statusbar_native_is (call $wnd_slot_hwnd (local.get $slot))))
+      (then (call $statusbar_state_release (call $wnd_slot_hwnd (local.get $slot)))))
     (call $statusbar_native_mark_slot (local.get $slot) (i32.const 0))
     (call $tab_native_mark_slot (local.get $slot) (i32.const 0))
     (local.set $addr (call $ctrl_slot_addr (local.get $slot)))
@@ -7416,39 +7545,103 @@
   (func $statusbar_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $text_w i32) (local $text_len i32) (local $right i32)
+    (local $state i32) (local $sw ptr<StatusBarState>)
+    (local $simple i32) (local $text_g i32) (local $tmp_g i32)
     (local $is_paint i32)
     (local $parent i32) (local $view i32) (local $view_sz i32) (local $slot i32)
     (local $mouse i32) (local $coord_x i32) (local $coord_y i32)
     (local $coord_w i32) (local $coord_len i32) (local $part_len i32)
-    ;; WM_SETTEXT and SB_SETTEXTA. Paint uses the former for its help prompt;
-    ;; accepting part zero/simple-mode SB_SETTEXTA also covers common callers.
+    ;; A WAT-owned status bar gets its normal text from CREATESTRUCT. Native
+    ;; comctl32 bars are initialized lazily from TITLE_TABLE instead because
+    ;; their guest wndproc owns WM_CREATE.
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (local.set $state (call $statusbar_state_get (local.get $hwnd) (i32.const 1)))
+        (if (local.get $state)
+          (then
+            (local.set $sw (cast ptr<StatusBarState> (call $g2w (local.get $state))))
+            (local.set $text_g (call $gl32 (i32.add (local.get $lParam) (i32.const 36))))
+            (local.set $text_len
+              (if (result i32) (local.get $text_g)
+                (then (call $guest_strlen (local.get $text_g)))
+                (else (i32.const 0))))
+            (drop (call $statusbar_state_store_text
+              (local.get $sw) (i32.const 0)
+              (if (result i32) (local.get $text_g)
+                (then (call $g2w (local.get $text_g)))
+                (else (i32.const 0)))
+              (local.get $text_len)))
+            (call $statusbar_state_publish (local.get $hwnd) (local.get $sw))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0002))
+      (then
+        (call $statusbar_state_release (local.get $hwnd))
+        (return (i32.const 0))))
+    ;; WM_SETTEXT updates the ordinary pane. SB_SETTEXTA/W part 0xFF updates
+    ;; the simple pane that MenuHelp uses; part zero remains the ordinary pane.
     (if (i32.or
           (i32.eq (local.get $msg) (i32.const 0x000C))
-          (i32.eq (local.get $msg) (i32.const 0x0401)))
+          (i32.or
+            (i32.eq (local.get $msg) (i32.const 0x0401))
+            (i32.eq (local.get $msg) (i32.const 0x040B))))
       (then
+        (local.set $simple
+          (i32.and
+            (i32.ne (local.get $msg) (i32.const 0x000C))
+            (i32.eq (i32.and (local.get $wParam) (i32.const 0xFF)) (i32.const 0xFF))))
         (if (i32.or
               (i32.eq (local.get $msg) (i32.const 0x000C))
               (i32.or
                 (i32.eqz (i32.and (local.get $wParam) (i32.const 0xFF)))
-                (i32.eq (i32.and (local.get $wParam) (i32.const 0xFF)) (i32.const 0xFF))))
+                (local.get $simple)))
           (then
-            (local.set $text_len
-              (if (result i32) (local.get $lParam)
-                (then (call $guest_strlen (local.get $lParam)))
-                (else (i32.const 0))))
-            (call $title_table_set
-              (local.get $hwnd)
-              (if (result i32) (local.get $lParam)
-                (then (call $g2w (local.get $lParam)))
-                (else (i32.const 0)))
-              (local.get $text_len))
-            (call $invalidate_hwnd (local.get $hwnd))))
+            (local.set $state (call $statusbar_state_get (local.get $hwnd) (i32.const 1)))
+            (if (local.get $state)
+              (then
+                (local.set $sw (cast ptr<StatusBarState> (call $g2w (local.get $state))))
+                (if (i32.eq (local.get $msg) (i32.const 0x040B))
+                  (then
+                    (local.set $tmp_g (call $heap_alloc (i32.const 256)))
+                    (if (local.get $tmp_g)
+                      (then
+                        (local.set $text_len
+                          (if (result i32) (local.get $lParam)
+                            (then (call $wide_to_ansi
+                              (local.get $lParam) (local.get $tmp_g) (i32.const 256)))
+                            (else (i32.const 0))))
+                        (drop (call $statusbar_state_store_text
+                          (local.get $sw) (local.get $simple)
+                          (call $g2w (local.get $tmp_g)) (local.get $text_len)))
+                        (call $heap_free (local.get $tmp_g)))))
+                  (else
+                    (local.set $text_len
+                      (if (result i32) (local.get $lParam)
+                        (then (call $guest_strlen (local.get $lParam)))
+                        (else (i32.const 0))))
+                    (drop (call $statusbar_state_store_text
+                      (local.get $sw) (local.get $simple)
+                      (if (result i32) (local.get $lParam)
+                        (then (call $g2w (local.get $lParam)))
+                        (else (i32.const 0)))
+                      (local.get $text_len)))))
+                (if (i32.eq (local.get $simple)
+                            (call $statusbar_simple_mode (local.get $sw)))
+                  (then (call $statusbar_state_publish
+                    (local.get $hwnd) (local.get $sw))))))))
         (return (i32.const 1))))
-    ;; SB_SETPARTS / SB_SIMPLE: retain API success. The Paint/MFC status bar
-    ;; presents its active prompt through the whole first pane.
-    (if (i32.or
-          (i32.eq (local.get $msg) (i32.const 0x0404))
-          (i32.eq (local.get $msg) (i32.const 0x0409)))
+    ;; SB_SIMPLE selects between the preserved ordinary pane and simple part.
+    (if (i32.eq (local.get $msg) (i32.const 0x0409))
+      (then
+        (local.set $state (call $statusbar_state_get (local.get $hwnd) (i32.const 1)))
+        (if (local.get $state)
+          (then
+            (local.set $sw (cast ptr<StatusBarState> (call $g2w (local.get $state))))
+            (call $statusbar_set_simple_mode
+              (local.get $sw) (i32.ne (local.get $wParam) (i32.const 0)))
+            (call $statusbar_state_publish (local.get $hwnd) (local.get $sw))))
+        (return (i32.const 1))))
+    ;; SB_SETPARTS: retain API success. The current painter presents one pane.
+    (if (i32.eq (local.get $msg) (i32.const 0x0404))
       (then
         (call $invalidate_hwnd (local.get $hwnd))
         (return (i32.const 1))))
@@ -7729,7 +7922,7 @@
   ;;
   ;; Bounded SysListView32 subset for report/list panes. This is intentionally
   ;; smaller than a full common-control clone: it stores columns, fixed 8-slot
-  ;; subitem text rows, a single selected row, and a vertical top index. That is
+  ;; subitem text rows, per-item LVIS_* state, and a vertical top index. That is
   ;; enough for RegEdit/installer details panes to become stateful and for the
   ;; shared Win98 scrollbar helpers to be reused here.
   ;;
@@ -7744,7 +7937,9 @@
   ;;   +20  col_cap
   ;;   +24  col_widths_ptr   guest ptr to u32[]
   ;;   +28  col_texts_ptr    guest ptr to u32[] heap string pointers
-  ;;   +32  selected_index   -1 = none
+  ;;   +32  selection_mark   most recently selected row, -1 = none. Selection
+  ;;                         itself is the per-item LVIS_SELECTED bit: Win98's
+  ;;                         default ListView permits multiple selected rows.
   ;;   +36  top_index        content viewport (LVM_GETTOPINDEX), distinct from
   ;;                         the thumb-only state changed by SetScrollPos
   ;;   +40  extended_style   LVM_SETEXTENDEDLISTVIEWSTYLE shadow
@@ -8005,12 +8200,59 @@
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $tick))))))
 
-  ;; LVIS_* state bits for one item. Only the state-image field (0xF000) is
-  ;; kept here; selection lives in the control's own "selected index" slot.
+  ;; Complete LVIS_* state for one item. Selection, focus, cut/drop highlight,
+  ;; overlay index and state-image index all belong to the item; +32 in the
+  ;; control record is only the most recent selection mark.
   (func $lv_item_state_addr (param $sw i32) (param $item i32) (result i32)
     (i32.add
       (call $g2w (call $lv_cells_ptr (local.get $sw)))
       (i32.add (i32.mul (local.get $item) (i32.const 44)) (i32.const 40))))
+
+  (func $lv_find_item_with_state (param $sw i32) (param $after i32) (param $mask i32) (result i32)
+    (local $i i32) (local $count i32)
+    (local.set $i (i32.add (local.get $after) (i32.const 1)))
+    (if (i32.lt_s (local.get $i) (i32.const 0))
+      (then (local.set $i (i32.const 0))))
+    (local.set $count (call $lv_item_count (local.get $sw)))
+    (block $done (loop $items
+      (br_if $done (i32.ge_s (local.get $i) (local.get $count)))
+      (if (i32.eq
+            (i32.and
+              (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $i)))
+              (local.get $mask))
+            (local.get $mask))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $items)))
+    (i32.const -1))
+
+  (func $lv_selected_count (param $sw i32) (result i32)
+    (local $i i32) (local $count i32) (local $selected i32)
+    (local.set $count (call $lv_item_count (local.get $sw)))
+    (block $done (loop $items
+      (br_if $done (i32.ge_s (local.get $i) (local.get $count)))
+      (if (i32.and
+            (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $i)))
+            (i32.const 0x0002))
+        (then (local.set $selected (i32.add (local.get $selected) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $items)))
+    (local.get $selected))
+
+  (func $lv_refresh_selection_mark (param $sw i32)
+    (local $mark i32)
+    (local.set $mark (call $lv_selected (local.get $sw)))
+    (if (i32.and
+          (i32.and (i32.ge_s (local.get $mark) (i32.const 0))
+                   (i32.lt_s (local.get $mark) (call $lv_item_count (local.get $sw))))
+          (i32.ne
+            (i32.and
+              (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $mark)))
+              (i32.const 0x0002))
+            (i32.const 0)))
+      (then (return)))
+    (call $lv_set_selected (local.get $sw)
+      (call $lv_find_item_with_state (local.get $sw) (i32.const -1) (i32.const 0x0002))))
 
   (func $lv_ensure_item_capacity (param $sw i32) (param $want i32)
     (local $cap i32) (local $new_cap i32) (local $new_bytes i32)
@@ -8190,8 +8432,7 @@
     (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                 (i32.ge_s (local.get $idx) (local.get $count)))
       (then (return (i32.const 0))))
-    (if (i32.eq (call $lv_selected (local.get $sw)) (local.get $idx))
-      (then (drop (call $lv_select_item (local.get $hwnd) (local.get $sw) (i32.const -1)))))
+    (local.set $selected (call $lv_selected (local.get $sw)))
     (call $lv_free_row_text (local.get $sw) (local.get $idx))
     (local.set $tail (i32.sub (i32.sub (local.get $count) (local.get $idx)) (i32.const 1)))
     (if (i32.gt_s (local.get $tail) (i32.const 0))
@@ -8204,9 +8445,12 @@
       (call $lv_cell_addr (local.get $sw) (i32.sub (local.get $count) (i32.const 1)) (i32.const 0))
       (i32.const 44))
     (call $lv_set_item_count (local.get $sw) (i32.sub (local.get $count) (i32.const 1)))
-    (local.set $selected (call $lv_selected (local.get $sw)))
     (if (i32.gt_s (local.get $selected) (local.get $idx))
       (then (call $lv_set_selected (local.get $sw) (i32.sub (local.get $selected) (i32.const 1)))))
+    (if (i32.eq (local.get $selected) (local.get $idx))
+      (then
+        (call $lv_set_selected (local.get $sw) (i32.const -1))
+        (call $lv_refresh_selection_mark (local.get $sw))))
     (local.set $h (call $ctrl_get_h (local.get $hwnd)))
     (drop (call $lv_scroll_to_for_h
       (local.get $hwnd) (local.get $sw) (local.get $h) (call $lv_top_index (local.get $sw))))
@@ -8365,34 +8609,125 @@
     (call $heap_free (local.get $notify_g))
     (local.get $ret))
 
+  ;; Apply one LVITEM.state/stateMask pair. The record at +40 is authoritative;
+  ;; the control-level selection mark merely remembers the most recently
+  ;; selected row. Win98 enforces one focused item, and LVS_SINGLESEL enforces
+  ;; one selected item, by clearing the old row as part of the same operation.
+  ;; Broadcast callers can request LVN_ITEMCHANGING even for an unchanged row,
+  ;; which is what Win98 comctl32 does while walking a normal multi-select list.
+  (func $lv_change_item_state
+    (param $hwnd i32) (param $sw i32) (param $idx i32)
+    (param $state i32) (param $mask i32)
+    (param $exclusive_selection i32) (param $notify_unchanged i32) (result i32)
+    (local $old_state i32) (local $new_state i32) (local $unique_mask i32)
+    (local $i i32) (local $other_state i32) (local $other_new i32)
+    (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                (i32.ge_s (local.get $idx) (call $lv_item_count (local.get $sw))))
+      (then (return (i32.const 0))))
+    (local.set $old_state
+      (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $idx))))
+    (local.set $new_state
+      (i32.or
+        (i32.and (local.get $old_state) (i32.xor (local.get $mask) (i32.const -1)))
+        (i32.and (local.get $state) (local.get $mask))))
+
+    ;; Ask the parent about the requested row before disturbing any row whose
+    ;; unique focus/selection would have to be cleared for it.
+    (if (i32.or (local.get $notify_unchanged)
+                (i32.ne (local.get $old_state) (local.get $new_state)))
+      (then
+        (if (call $lv_notify_item_state
+              (local.get $hwnd) (local.get $idx)
+              (i32.and (local.get $old_state) (local.get $mask))
+              (i32.and (local.get $new_state) (local.get $mask))
+              (i32.const -100)) ;; LVN_ITEMCHANGINGA
+          (then (return (i32.const 0))))))
+
+    (local.set $unique_mask (i32.const 0))
+    (if (i32.and (local.get $state)
+          (i32.and (local.get $mask) (i32.const 0x0001))) ;; LVIS_FOCUSED
+      (then (local.set $unique_mask (i32.or (local.get $unique_mask) (i32.const 0x0001)))))
+    (if (i32.and
+          (i32.ne
+            (i32.and (local.get $state)
+                     (i32.and (local.get $mask) (i32.const 0x0002)))
+            (i32.const 0))
+          (i32.or
+            (local.get $exclusive_selection)
+            (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0004))
+                    (i32.const 0)))) ;; LVS_SINGLESEL
+      (then (local.set $unique_mask (i32.or (local.get $unique_mask) (i32.const 0x0002)))))
+
+    ;; Clear unique bits on every other row. Notify only rows that really lose
+    ;; state; native comctl32 does not fabricate ITEMCHANGED for no-op rows.
+    (if (local.get $unique_mask)
+      (then
+        (local.set $i (i32.const 0))
+        (block $unique_done (loop $unique_rows
+          (br_if $unique_done (i32.ge_s (local.get $i) (call $lv_item_count (local.get $sw))))
+          (if (i32.ne (local.get $i) (local.get $idx))
+            (then
+              (local.set $other_state
+                (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $i))))
+              (local.set $other_new
+                (i32.and (local.get $other_state)
+                         (i32.xor (local.get $unique_mask) (i32.const -1))))
+              (if (i32.ne (local.get $other_state) (local.get $other_new))
+                (then
+                  (if (call $lv_notify_item_state
+                        (local.get $hwnd) (local.get $i)
+                        (i32.and (local.get $other_state) (local.get $unique_mask))
+                        (i32.const 0) (i32.const -100))
+                    (then (return (i32.const 0))))
+                  (i32.store
+                    (call $lv_item_state_addr (local.get $sw) (local.get $i))
+                    (local.get $other_new))
+                  (drop (call $lv_notify_item_state
+                    (local.get $hwnd) (local.get $i)
+                    (i32.and (local.get $other_state) (local.get $unique_mask))
+                    (i32.const 0) (i32.const -101)))))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $unique_rows)))))
+
+    (if (i32.ne (local.get $old_state) (local.get $new_state))
+      (then
+        (i32.store (call $lv_item_state_addr (local.get $sw) (local.get $idx))
+          (local.get $new_state))
+        (drop (call $lv_notify_item_state
+          (local.get $hwnd) (local.get $idx)
+          (i32.and (local.get $old_state) (local.get $mask))
+          (i32.and (local.get $new_state) (local.get $mask))
+          (i32.const -101))))) ;; LVN_ITEMCHANGEDA
+
+    (if (i32.and (local.get $mask) (i32.const 0x0002))
+      (then
+        (if (i32.and (local.get $state) (i32.const 0x0002))
+          (then (call $lv_set_selected (local.get $sw) (local.get $idx)))
+          (else (call $lv_refresh_selection_mark (local.get $sw))))))
+    (i32.const 1))
+
   (func $lv_select_item (param $hwnd i32) (param $sw i32) (param $idx i32) (result i32)
-    (local $old_idx i32)
     (if (i32.and
           (i32.ne (local.get $idx) (i32.const -1))
           (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                   (i32.ge_s (local.get $idx) (call $lv_item_count (local.get $sw)))))
       (then (return (i32.const 0))))
-    (local.set $old_idx (call $lv_selected (local.get $sw)))
-    (if (i32.eq (local.get $old_idx) (local.get $idx))
-      (then (return (i32.const 1))))
-    (if (i32.ge_s (local.get $idx) (i32.const 0))
+    (if (i32.eq (local.get $idx) (i32.const -1))
       (then
-        (if (call $lv_notify_item_state
-              (local.get $hwnd) (local.get $idx)
-              (i32.const 0) (i32.const 0x0002) (i32.const -100))
-          (then (return (i32.const 0))))))
-    (if (i32.ge_s (local.get $old_idx) (i32.const 0))
-      (then
-        (drop (call $lv_notify_item_state
-          (local.get $hwnd) (local.get $old_idx)
-          (i32.const 0x0002) (i32.const 0) (i32.const -101)))))
-    (call $lv_set_selected (local.get $sw) (local.get $idx))
-    (if (i32.ge_s (local.get $idx) (i32.const 0))
-      (then
-        (drop (call $lv_notify_item_state
-          (local.get $hwnd) (local.get $idx)
-          (i32.const 0) (i32.const 0x0002) (i32.const -101)))))
-    (i32.const 1))
+        (block $clear_done (loop $clear_selected
+          (local.set $idx
+            (call $lv_find_item_with_state (local.get $sw) (i32.const -1) (i32.const 0x0002)))
+          (br_if $clear_done (i32.lt_s (local.get $idx) (i32.const 0)))
+          (if (i32.eqz (call $lv_change_item_state
+                (local.get $hwnd) (local.get $sw) (local.get $idx)
+                (i32.const 0) (i32.const 0x0002) (i32.const 0) (i32.const 0)))
+            (then (return (i32.const 0))))
+          (br $clear_selected)))
+        (call $lv_set_selected (local.get $sw) (i32.const -1))
+        (return (i32.const 1))))
+    (call $lv_change_item_state
+      (local.get $hwnd) (local.get $sw) (local.get $idx)
+      (i32.const 0x0002) (i32.const 0x0002) (i32.const 1) (i32.const 0)))
 
   (func $lv_paint_report_icon
     (param $hdc i32) (param $sw i32) (param $row i32) (param $x i32) (param $y i32) (result i32)
@@ -9215,6 +9550,12 @@
           (i32.mul (i32.sub (local.get $count) (local.get $idx)) (i32.const 44)))
         (call $zero_memory (call $lv_cell_addr (local.get $sw) (local.get $idx) (i32.const 0)) (i32.const 44))
         (i32.store (call $lv_item_image_addr (local.get $sw) (local.get $idx)) (i32.const -1))
+        ;; The record shift also moves per-item state. Keep the control-level
+        ;; selection mark attached to the same logical row.
+        (local.set $old (call $lv_selected (local.get $sw)))
+        (if (i32.ge_s (local.get $old) (local.get $idx))
+          (then (call $lv_set_selected (local.get $sw)
+            (i32.add (local.get $old) (i32.const 1)))))
         (call $lv_set_item_count (local.get $sw) (i32.add (local.get $count) (i32.const 1)))
         (if (i32.and (local.get $mask) (i32.const 0x0001))
           (then
@@ -9232,10 +9573,11 @@
               (i32.load offset=32 (local.get $lvi_w)))))
         (if (i32.and (local.get $mask) (i32.const 0x0008))
           (then
-            (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
-              (then
-                (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
-                  (then (drop (call $lv_select_item (local.get $hwnd) (local.get $sw) (local.get $idx)))))))))
+            (drop (call $lv_change_item_state
+              (local.get $hwnd) (local.get $sw) (local.get $idx)
+              (i32.load offset=12 (local.get $lvi_w))
+              (i32.load offset=16 (local.get $lvi_w))
+              (i32.const 0) (i32.const 0)))))
         (call $lv_resolve_insert_callbacks
           (local.get $hwnd) (local.get $sw) (local.get $idx)
           (i32.and
@@ -9275,17 +9617,12 @@
               (i32.load offset=32 (local.get $lvi_w)))))
         (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0008))
           (then
-            (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
-              (then
-                (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
-                  (then
-                    (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (local.get $idx)))
-                      (then (return (i32.const 0)))))
-                  (else
-                    (if (i32.eq (call $lv_selected (local.get $sw)) (local.get $idx))
-                      (then
-                        (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (i32.const -1)))
-                          (then (return (i32.const 0))))))))))))
+            (if (i32.eqz (call $lv_change_item_state
+                  (local.get $hwnd) (local.get $sw) (local.get $idx)
+                  (i32.load offset=12 (local.get $lvi_w))
+                  (i32.load offset=16 (local.get $lvi_w))
+                  (i32.const 0) (i32.const 0)))
+              (then (return (i32.const 0))))))
         ;; DefView commonly inserts the PIDL/lParam first and assigns
         ;; LPSTR_TEXTCALLBACKA/I_IMAGECALLBACK with a later LVM_SETITEMA.
         ;; Resolve that form too; handling only INSERTITEM left stock desktop
@@ -9315,6 +9652,9 @@
           (select (i32.load offset=4 (local.get $lvi_w)) (local.get $wParam)
                   (i32.eq (local.get $msg) (i32.const 0x1005))))
         (local.set $sub (i32.load offset=8 (local.get $lvi_w)))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_s (local.get $idx) (call $lv_item_count (local.get $sw))))
+          (then (return (i32.const 0))))
         (if (i32.eq (local.get $msg) (i32.const 0x1005))
           (then
             (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0002))
@@ -9328,8 +9668,17 @@
             (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0008))
               (then
                 (i32.store offset=12 (local.get $lvi_w)
-                  (select (i32.const 0x0002) (i32.const 0)
-                          (i32.eq (call $lv_selected (local.get $sw)) (local.get $idx))))))))
+                  (i32.and
+                    (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $idx)))
+                    (i32.load offset=16 (local.get $lvi_w))))))
+            (if (i32.and (i32.load (local.get $lvi_w)) (i32.const 0x0001))
+              (then
+                (drop (call $lv_copy_cell_text
+                  (local.get $sw) (local.get $idx) (local.get $sub)
+                  (i32.load offset=20 (local.get $lvi_w))
+                  (i32.load offset=24 (local.get $lvi_w))))))
+            ;; LVM_GETITEM returns BOOL, not the copied text length.
+            (return (i32.const 1))))
         (return (call $lv_copy_cell_text
           (local.get $sw) (local.get $idx) (local.get $sub)
           (i32.load offset=20 (local.get $lvi_w))
@@ -9340,65 +9689,87 @@
       (then
         (if (i32.eqz (local.get $lParam)) (then (return (i32.const 0))))
         (local.set $idx (local.get $wParam))
+        (local.set $lvi_w (call $g2w (local.get $lParam)))
+        (local.set $mask (i32.load offset=16 (local.get $lvi_w)))
+        (local.set $old (i32.load offset=12 (local.get $lvi_w)))
+        ;; Win98 applies index -1 to every item, except when the requested
+        ;; state cannot be shared: focus is unique, and LVS_SINGLESEL cannot
+        ;; select all. Those two requests fail atomically.
+        (if (i32.eq (local.get $idx) (i32.const -1))
+          (then
+            (if (i32.and
+                  (i32.and (local.get $old) (local.get $mask))
+                  (i32.const 0x0001)) ;; LVIS_FOCUSED
+              (then (return (i32.const 0))))
+            (if (i32.and
+                  (i32.ne
+                    (i32.and (i32.and (local.get $old) (local.get $mask)) (i32.const 0x0002))
+                    (i32.const 0))
+                  (i32.ne
+                    (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0004))
+                    (i32.const 0))) ;; LVS_SINGLESEL
+              (then (return (i32.const 0))))
+            ;; Win98's single-select clear visits only its selected row.
+            (if (i32.and
+                  (i32.and
+                    (i32.eqz (i32.and (local.get $old) (i32.const 0x0002)))
+                    (i32.ne (i32.and (local.get $mask) (i32.const 0x0002)) (i32.const 0)))
+                  (i32.ne
+                    (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0004))
+                    (i32.const 0)))
+              (then
+                (local.set $i
+                  (call $lv_find_item_with_state
+                    (local.get $sw) (i32.const -1) (i32.const 0x0002)))
+                (if (i32.ge_s (local.get $i) (i32.const 0))
+                  (then
+                    (if (i32.eqz (call $lv_change_item_state
+                          (local.get $hwnd) (local.get $sw) (local.get $i)
+                          (local.get $old) (local.get $mask)
+                          (i32.const 0) (i32.const 0)))
+                      (then (return (i32.const 0))))))
+                (call $paint_flag_set_inv (local.get $hwnd))
+                (return (i32.const 1))))
+            (local.set $i (i32.const 0))
+            (block $broadcast_done (loop $broadcast_items
+              (br_if $broadcast_done
+                (i32.ge_s (local.get $i) (call $lv_item_count (local.get $sw))))
+              (if (i32.eqz (call $lv_change_item_state
+                    (local.get $hwnd) (local.get $sw) (local.get $i)
+                    (local.get $old) (local.get $mask)
+                    (i32.const 0) (i32.const 1)))
+                (then (return (i32.const 0))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $broadcast_items)))
+            (call $paint_flag_set_inv (local.get $hwnd))
+            (return (i32.const 1))))
         (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
                     (i32.ge_s (local.get $idx) (call $lv_item_count (local.get $sw))))
           (then (return (i32.const 0))))
-        (local.set $lvi_w (call $g2w (local.get $lParam)))
-        ;; LVIS_STATEIMAGEMASK -- the check box. Index 1 is unchecked and 2 is
-        ;; checked by the convention every caller of LVSIL_STATE follows.
-        (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0xF000))
-          (then
-            (i32.store (call $lv_item_state_addr (local.get $sw) (local.get $idx))
-              (i32.or
-                (i32.and (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $idx)))
-                         (i32.const 0xFFFF0FFF))
-                (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0xF000))))))
-        (if (i32.and (i32.load offset=16 (local.get $lvi_w)) (i32.const 0x0002))
-          (then
-            (if (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002))
-              (then
-                (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (local.get $idx)))
-                  (then (return (i32.const 0))))))
-            (if (i32.and
-                  (i32.eqz (i32.and (i32.load offset=12 (local.get $lvi_w)) (i32.const 0x0002)))
-                  (i32.eq (call $lv_selected (local.get $sw)) (local.get $idx)))
-              (then
-                (if (i32.eqz (call $lv_select_item (local.get $hwnd) (local.get $sw) (i32.const -1)))
-                  (then (return (i32.const 0))))))))
+        (if (i32.eqz (call $lv_change_item_state
+              (local.get $hwnd) (local.get $sw) (local.get $idx)
+              (local.get $old) (local.get $mask)
+              (i32.const 0) (i32.const 0)))
+          (then (return (i32.const 0))))
         (call $paint_flag_set_inv (local.get $hwnd))
         (return (i32.const 1))))
     (if (i32.eq (local.get $msg) (i32.const 0x102C))
       (then
-        (local.set $old (i32.const 0))
-        (if (i32.and (local.get $lParam) (i32.const 0x0002))
-          (then
-            (if (i32.eq (call $lv_selected (local.get $sw)) (local.get $wParam))
-              (then (local.set $old (i32.const 0x0002))))))
-        ;; ListView_GetCheckState is this message masked to 0xF000, so the
-        ;; check box has to answer here or every app reads back "unchecked".
-        (if (i32.and (local.get $lParam) (i32.const 0xF000))
-          (then
-            (if (i32.and (i32.ge_s (local.get $wParam) (i32.const 0))
-                         (i32.lt_s (local.get $wParam) (call $lv_item_count (local.get $sw))))
-              (then
-                (local.set $old (i32.or (local.get $old)
-                  (i32.and (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $wParam)))
-                           (i32.const 0xF000))))))))
-        (return (local.get $old))))
+        (if (i32.or (i32.lt_s (local.get $wParam) (i32.const 0))
+                    (i32.ge_s (local.get $wParam) (call $lv_item_count (local.get $sw))))
+          (then (return (i32.const 0))))
+        (return (i32.and
+          (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $wParam)))
+          (local.get $lParam)))))
     (if (i32.eq (local.get $msg) (i32.const 0x1032))
-      (then
-        (return (select (i32.const 1) (i32.const 0)
-                  (i32.ge_s (call $lv_selected (local.get $sw)) (i32.const 0))))))
+      (then (return (call $lv_selected_count (local.get $sw)))))
     (if (i32.eq (local.get $msg) (i32.const 0x100C))
       (then
         (local.set $idx (i32.add (local.get $wParam) (i32.const 1)))
-        (if (i32.and (local.get $lParam) (i32.const 0x0002))
-          (then
-            (if (i32.and
-                  (i32.ge_s (call $lv_selected (local.get $sw)) (local.get $idx))
-                  (i32.lt_s (call $lv_selected (local.get $sw)) (call $lv_item_count (local.get $sw))))
-              (then (return (call $lv_selected (local.get $sw)))))
-            (return (i32.const -1))))
+        (local.set $mask (i32.and (local.get $lParam) (i32.const 0x000F)))
+        (if (local.get $mask)
+          (then (return (call $lv_find_item_with_state
+            (local.get $sw) (local.get $wParam) (local.get $mask)))))
         (if (i32.lt_s (local.get $idx) (call $lv_item_count (local.get $sw)))
           (then (return (local.get $idx))))
         (return (i32.const -1))))
@@ -9915,7 +10286,9 @@
           (local.set $y (i32.add (local.get $header_h) (i32.mul (local.get $draw_row) (i32.const 16))))
           (if (i32.lt_s (local.get $y) (local.get $h))
             (then
-              (if (i32.eq (local.get $row) (call $lv_selected (local.get $sw)))
+              (if (i32.and
+                    (i32.load (call $lv_item_state_addr (local.get $sw) (local.get $row)))
+                    (i32.const 0x0002))
                 (then
                   (drop (call $host_gdi_fill_rect (local.get $hdc)
                           (i32.const 0) (local.get $y)
@@ -16934,13 +17307,19 @@
         (if (i32.eq (local.get $msg) (i32.const 0x000F))
           (then (return (call $tab_native_paint (local.get $hwnd)))))))
     ;; A registered status bar keeps ctrl_class=0 so its guest wndproc can
-    ;; perform MFC layout. Its shared-surface paint and WM_SETTEXT invalidation
-    ;; are WAT-owned; otherwise Print Preview can leave the old prompt visible
-    ;; after MFC changes the status title to "Page 1".
+    ;; perform MFC layout. Its shared-surface paint and text/simple-mode mirror
+    ;; are WAT-owned; otherwise Print Preview can leave an old prompt visible,
+    ;; and MenuHelp's SB_SETTEXTW/SB_SIMPLE pair never reaches the pixels.
     (if (i32.and (call $statusbar_native_is (local.get $hwnd))
                  (i32.or
-                   (i32.eq (local.get $msg) (i32.const 0x000F))
-                   (i32.eq (local.get $msg) (i32.const 0x000C))))
+                   (i32.or
+                     (i32.eq (local.get $msg) (i32.const 0x000F))
+                     (i32.eq (local.get $msg) (i32.const 0x000C)))
+                   (i32.or
+                     (i32.eq (local.get $msg) (i32.const 0x0401))
+                     (i32.or
+                       (i32.eq (local.get $msg) (i32.const 0x0409))
+                       (i32.eq (local.get $msg) (i32.const 0x040B))))))
       (then (return (call $statusbar_wndproc
         (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; Keep the exported/test-driver path consistent with SendMessageA and
@@ -17159,6 +17538,14 @@
                   (i32.const 1)))
       (then
         (call $dialog_default_idok_close (local.get $hwnd))
+        (return (i32.const 0))))
+    ;; USER's internal DefDlgProc path performs the same first-tabstop work as
+    ;; an application calling exported DefDlgProcA itself. SetFocus(dialog)
+    ;; reaches this dispatcher directly; without the fallback the dialog HWND
+    ;; kept focus and its child controls never received WM_SETFOCUS.
+    (if (i32.eq (local.get $msg) (i32.const 0x0007)) ;; WM_SETFOCUS
+      (then
+        (drop (call $dlg_focus_first_tabstop (local.get $hwnd)))
         (return (i32.const 0))))
     ;; FALSE from the DLGPROC hands WM_WINDOWPOSCHANGED to DefDlgProc's
     ;; DefWindowProc tail, which owns the derived WM_MOVE/WM_SIZE messages.
@@ -17477,15 +17864,23 @@
     (i32.const 1))
 
   (func $modal_finish_local (param $result i32)
-    (local $owner i32) (local $hwnd i32)
+    (local $owner i32) (local $hwnd i32) (local $class i32)
     (local.set $hwnd (global.get $modal_dlg_hwnd))
     (if (i32.eqz (local.get $hwnd)) (then (return)))
+    (local.set $class (call $ctrl_table_get_class (local.get $hwnd)))
     ;; The shell picker sends the selected HTREEITEM through shared modal
     ;; state. Convert it to a caller-owned PIDL only in this owning instance;
     ;; renderer shadows have separate heap globals even though memory is shared.
-    (if (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 31))
+    (if (i32.eq (local.get $class) (i32.const 31))
       (then (local.set $result
         (call $browse_modal_finish (local.get $hwnd) (local.get $result)))))
+    ;; A successful PropertySheet call owns every HPROPSHEETPAGE passed in its
+    ;; handle array. Retire those copied page objects with the frame, matching
+    ;; the lifetime transfer documented for PropertySheet.
+    (if (i32.eq (local.get $class) (i32.const 32))
+      (then
+        (call $propsheet_release_pages)
+        (call $propsheet_page_hwnds_release)))
     (global.set $modal_result (local.get $result))
     (call $cd_modal_writeback (local.get $result))
     (local.set $owner (call $wnd_get_owner (local.get $hwnd)))
@@ -17516,10 +17911,90 @@
           (then (i32.atomic.store (global.get $SHARED_MODAL_DONE) (i32.const 1)))))))
 
   ;; ---- COMCTL32 property-sheet wizard ----
-  ;; This implements the classic PROPSHEETHEADERA + inline PROPSHEETPAGEA
-  ;; form used by Win9x installers. The page itself remains application code:
-  ;; its resource template is loaded normally and its DLGPROC receives the
-  ;; standard initialization and PSN_* notifications.
+  ;; This implements both classic PROPSHEETHEADERA page forms: an inline
+  ;; PROPSHEETPAGEA array and an HPROPSHEETPAGE array produced by
+  ;; CreatePropertySheetPageA. The page itself remains application code: its
+  ;; resource template is loaded normally and its DLGPROC receives the standard
+  ;; initialization and PSN_* notifications.
+  (func $propsheet_resolve_page (param $index i32) (result i32)
+    (local $pages_w i32) (local $psp_g i32) (local $psp_w i32)
+    (local $size i32) (local $flags i32) (local $page i32)
+    (if (i32.ge_u (local.get $index) (global.get $propsheet_page_count))
+      (then (return (i32.const 0))))
+    ;; Convert the array base once. Inline entries use wasm pointer arithmetic;
+    ;; handle arrays translate each validated page through its owned record.
+    (local.set $pages_w (call $g2w (global.get $propsheet_pages)))
+    (if (global.get $propsheet_pages_are_handles)
+      (then
+        (local.set $page (i32.load (i32.add (local.get $pages_w)
+          (i32.shl (local.get $index) (i32.const 2)))))
+        (if (i32.eqz (call $propsheet_page_record (local.get $page)))
+          (then (return (i32.const 0))))
+        (return (local.get $page))))
+    (local.set $size (i32.load (local.get $pages_w)))
+    (if (i32.or (i32.lt_u (local.get $size) (i32.const 40))
+                (i32.gt_u (local.get $size) (i32.const 0x1000)))
+      (then (return (i32.const 0))))
+    (local.set $psp_g (i32.add (global.get $propsheet_pages)
+      (i32.mul (local.get $index) (local.get $size))))
+    (local.set $psp_w (i32.add (local.get $pages_w)
+      (i32.mul (local.get $index) (local.get $size))))
+    (local.set $flags (i32.load offset=4 (local.get $psp_w)))
+    (if (i32.or
+          (i32.ne (i32.load (local.get $psp_w)) (local.get $size))
+          (i32.ne (i32.and (local.get $flags) (i32.const 0xFFFF0000)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (local.get $psp_g))
+
+  (func $propsheet_prepare_inline_pages (result i32)
+    (local $i i32) (local $page i32) (local $page_w i32) (local $size i32)
+    (global.set $propsheet_inline_pages_initialized (i32.const 0))
+    (block $done (loop $pages
+      (br_if $done (i32.ge_u (local.get $i) (global.get $propsheet_page_count)))
+      (local.set $page (call $propsheet_resolve_page (local.get $i)))
+      (if (i32.eqz (local.get $page)) (then (return (i32.const 0))))
+      (local.set $page_w (call $g2w (local.get $page)))
+      (local.set $size (i32.load (local.get $page_w)))
+      (call $propsheet_page_ref_change (local.get $page_w) (i32.const 1))
+      (if (i32.gt_u (local.get $size) (i32.const 40))
+        (then
+          (drop (call $propsheet_page_callback
+            (local.get $page) (local.get $page_w) (i32.const 0))))) ;; PSPCB_ADDREF
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (global.set $propsheet_inline_pages_initialized (local.get $i))
+      (br $pages)))
+    (i32.const 1))
+
+  (func $propsheet_release_pages
+    (local $pages_w i32) (local $i i32) (local $page i32) (local $page_w i32)
+    (local.set $pages_w (call $g2w (global.get $propsheet_pages)))
+    (if (global.get $propsheet_owns_page_handles)
+      (then
+        (block $handles_done (loop $handles
+          (br_if $handles_done
+            (i32.ge_u (local.get $i) (global.get $propsheet_page_count)))
+          (local.set $page (i32.load (i32.add (local.get $pages_w)
+            (i32.shl (local.get $i) (i32.const 2)))))
+          (drop (call $propsheet_page_destroy_owned (local.get $page)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $handles)))
+        (global.set $propsheet_owns_page_handles (i32.const 0))
+        (return)))
+    ;; PSH_PROPSHEETPAGE creates its inline records implicitly. Release every
+    ;; initialized record, including a page whose dialog was never selected.
+    (block $inline_done (loop $inline
+      (br_if $inline_done
+        (i32.ge_u (local.get $i) (global.get $propsheet_inline_pages_initialized)))
+      (local.set $page (call $propsheet_resolve_page (local.get $i)))
+      (if (local.get $page)
+        (then
+          (local.set $page_w (call $g2w (local.get $page)))
+          (drop (call $propsheet_page_callback
+            (local.get $page) (local.get $page_w) (i32.const 1))) ;; PSPCB_RELEASE
+          (call $propsheet_page_ref_change (local.get $page_w) (i32.const -1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $inline)))
+    (global.set $propsheet_inline_pages_initialized (i32.const 0)))
   (func $propsheet_notify (param $page i32) (param $code i32) (result i32)
     (local $nm_g i32) (local $nm_w i32) (local $ret i32)
     (if (i32.eqz (local.get $page)) (then (return (i32.const 0))))
@@ -17535,13 +18010,57 @@
     (call $heap_free (local.get $nm_g))
     (local.get $ret))
 
-  (func $propsheet_destroy_page
+  (func $propsheet_page_hwnds_release
+    (if (global.get $propsheet_page_hwnds)
+      (then
+        (call $heap_free (global.get $propsheet_page_hwnds))
+        (global.set $propsheet_page_hwnds (i32.const 0)))))
+
+  (func $propsheet_page_hwnds_alloc (result i32)
+    (local $bytes i32) (local $page_hwnds_w i32)
+    (call $propsheet_page_hwnds_release)
+    (local.set $bytes
+      (i32.shl (global.get $propsheet_page_count) (i32.const 2)))
+    (global.set $propsheet_page_hwnds (call $heap_alloc (local.get $bytes)))
+    (if (i32.eqz (global.get $propsheet_page_hwnds))
+      (then (return (i32.const 0))))
+    (local.set $page_hwnds_w (call $g2w (global.get $propsheet_page_hwnds)))
+    (memory.fill (local.get $page_hwnds_w) (i32.const 0) (local.get $bytes))
+    (i32.const 1))
+
+  (func $propsheet_page_hwnd_get (param $index i32) (result i32)
+    (if (i32.or
+          (i32.eqz (global.get $propsheet_page_hwnds))
+          (i32.ge_u (local.get $index) (global.get $propsheet_page_count)))
+      (then (return (i32.const 0))))
+    (i32.load (i32.add
+      (call $g2w (global.get $propsheet_page_hwnds))
+      (i32.shl (local.get $index) (i32.const 2)))))
+
+  (func $propsheet_page_hwnd_set (param $index i32) (param $page i32)
+    (if (i32.or
+          (i32.eqz (global.get $propsheet_page_hwnds))
+          (i32.ge_u (local.get $index) (global.get $propsheet_page_count)))
+      (then (return)))
+    (i32.store (i32.add
+      (call $g2w (global.get $propsheet_page_hwnds))
+      (i32.shl (local.get $index) (i32.const 2)))
+      (local.get $page)))
+
+  ;; Inactive property pages remain live children. Mirror ShowWindow's
+  ;; visibility bookkeeping so hidden descendants neither paint nor receive
+  ;; mouse input, while their HWND/control records remain untouched.
+  (func $propsheet_hide_page
     (local $page i32)
     (local.set $page (global.get $propsheet_page_hwnd))
     (if (local.get $page)
       (then
-        (call $wnd_destroy_tree (local.get $page))
-        (call $host_destroy_window (local.get $page))
+        (drop (call $host_show_window (local.get $page) (i32.const 0)))
+        (call $wnd_uncover_parent (local.get $page))
+        (drop (call $wnd_set_style (local.get $page)
+          (i32.and (call $wnd_get_style (local.get $page))
+            (i32.const 0xEFFFFFFF))))
+        (call $paint_clear_subtree (local.get $page))
         (global.set $propsheet_page_hwnd (i32.const 0)))))
 
   ;; PSN_WIZFINISH is allowed to perform the complete install before it
@@ -17576,14 +18095,34 @@
   (func $propsheet_show_page (param $index i32) (result i32)
     (local $psp_g i32) (local $psp_w i32) (local $size i32)
     (local $page i32) (local $hinst i32) (local $template i32) (local $proc i32)
-    (if (i32.ge_u (local.get $index) (global.get $propsheet_page_count))
-      (then (return (i32.const 0))))
-    (local.set $psp_g (global.get $propsheet_pages))
-    (local.set $size (i32.load (call $g2w (local.get $psp_g))))
-    (if (i32.lt_u (local.get $size) (i32.const 28))
-      (then (return (i32.const 0))))
-    (local.set $psp_g (i32.add (local.get $psp_g) (i32.mul (local.get $index) (local.get $size))))
+    (local.set $psp_g (call $propsheet_resolve_page (local.get $index)))
+    (if (i32.eqz (local.get $psp_g)) (then (return (i32.const 0))))
     (local.set $psp_w (call $g2w (local.get $psp_g)))
+    (local.set $size (i32.load (local.get $psp_w)))
+    ;; A page already visited owns a live dialog. Show that exact HWND again;
+    ;; do not repeat PSPCB_CREATE, WM_INITDIALOG, resource loading, or control
+    ;; construction, because Win98 preserves the page between activations.
+    (local.set $page (call $propsheet_page_hwnd_get (local.get $index)))
+    (if (local.get $page)
+      (then
+        (drop (call $host_show_window (local.get $page) (i32.const 5)))
+        (drop (call $wnd_set_style (local.get $page)
+          (i32.or (call $wnd_get_style (local.get $page))
+            (i32.const 0x10000000))))
+        (global.set $propsheet_page_index (local.get $index))
+        (global.set $propsheet_page_hwnd (local.get $page))
+        (global.set $dlg_hwnd (local.get $page))
+        (drop (call $propsheet_notify
+          (local.get $page) (i32.const -200))) ;; PSN_SETACTIVE
+        (call $dlg_seed_focus (local.get $page))
+        (call $dlg_fill_bkgnd (local.get $page))
+        (call $paint_flag_set_inv (local.get $page))
+        (return (local.get $page))))
+    ;; PSPCB_CREATE belongs to dialog materialization, not handle allocation.
+    ;; Its zero return vetoes this page before any HWND or resource is created.
+    (if (i32.eqz (call $propsheet_page_callback
+          (local.get $psp_g) (local.get $psp_w) (i32.const 2)))
+      (then (return (i32.const 0))))
     (local.set $hinst (i32.load offset=8 (local.get $psp_w)))
     (local.set $template (i32.load offset=12 (local.get $psp_w)))
     (local.set $proc (i32.load offset=24 (local.get $psp_w)))
@@ -17611,6 +18150,7 @@
     (call $host_move_window (local.get $page)
       (i32.const 10) (i32.const 10) (i32.const 420) (i32.const 228) (i32.const 1))
     (call $host_show_window (local.get $page) (i32.const 5))
+    (call $propsheet_page_hwnd_set (local.get $index) (local.get $page))
     (global.set $propsheet_page_index (local.get $index))
     (global.set $propsheet_page_hwnd (local.get $page))
     (global.set $dlg_hwnd (local.get $page))
@@ -17623,8 +18163,10 @@
     (local.get $page))
 
   (func $propsheet_change_page (param $delta i32)
-    (local $old i32) (local $next i32) (local $notify i32) (local $ret i32)
+    (local $old i32) (local $old_index i32) (local $next i32)
+    (local $notify i32) (local $ret i32)
     (local.set $old (global.get $propsheet_page_hwnd))
+    (local.set $old_index (global.get $propsheet_page_index))
     (if (i32.eqz (local.get $old)) (then (return)))
     (local.set $notify (select (i32.const -207) (i32.const -206) (i32.gt_s (local.get $delta) (i32.const 0))))
     (local.set $ret (call $propsheet_notify (local.get $old) (local.get $notify)))
@@ -17638,8 +18180,11 @@
         (call $propsheet_begin_finish (local.get $old))
         (return)))
     (drop (call $propsheet_notify (local.get $old) (i32.const -201))) ;; PSN_KILLACTIVE
-    (call $propsheet_destroy_page)
-    (drop (call $propsheet_show_page (local.get $next))))
+    (call $propsheet_hide_page)
+    ;; If a lazy target cannot be materialized, restore the previous live page
+    ;; instead of leaving a blank sheet after PSN_KILLACTIVE.
+    (if (i32.eqz (call $propsheet_show_page (local.get $next)))
+      (then (drop (call $propsheet_show_page (local.get $old_index))))))
 
   (func $propsheet_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
@@ -17669,24 +18214,60 @@
       (then (call $modal_done (i32.const 0)) (return (i32.const 0))))
     (i32.const 0))
 
+  ;; Win98's PropertySheetA accepts only the three 32-bit header versions that
+  ;; shipped with its common-controls line.  It rejects nPages >= 100 and flag
+  ;; bits 26..31 before allocating the internal sheet.  Keep our additional
+  ;; zero-page/NULL-array guard: those inputs cannot describe a usable sheet
+  ;; and otherwise reach an unchecked page-array dereference below.
+  (func $propsheet_header_valid (param $header_w i32) (result i32)
+    (local $size i32) (local $flags i32) (local $count i32)
+    (local.set $size (i32.load (local.get $header_w)))
+    (if (i32.and
+          (i32.ne (local.get $size) (i32.const 36))
+          (i32.and
+            (i32.ne (local.get $size) (i32.const 40))
+            (i32.ne (local.get $size) (i32.const 52))))
+      (then (return (i32.const 0))))
+    (local.set $flags (i32.load offset=4 (local.get $header_w)))
+    (if (i32.ne
+          (i32.and (local.get $flags) (i32.const 0xFC000000))
+          (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $count (i32.load offset=24 (local.get $header_w)))
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $count))
+                  (i32.ge_u (local.get $count) (i32.const 100)))
+          (i32.eqz (i32.load offset=32 (local.get $header_w))))
+      (then (return (i32.const 0))))
+    (i32.const 1))
+
   (func $create_property_sheet (param $header_g i32) (result i32)
     (local $header_w i32) (local $flags i32) (local $owner i32)
     (local $caption_g i32) (local $caption_w i32) (local $dlg i32)
     (local $start i32)
     (local.set $header_w (call $g2w (local.get $header_g)))
-    (if (i32.lt_u (i32.load (local.get $header_w)) (i32.const 36))
+    (if (i32.eqz (call $propsheet_header_valid (local.get $header_w)))
       (then (return (i32.const 0))))
     (local.set $flags (i32.load offset=4 (local.get $header_w)))
-    ;; PSH_PROPSHEETPAGE is required here; HPROPSHEETPAGE arrays are retained
-    ;; for CreatePropertySheetPageA compatibility but are not yet expanded.
-    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x00000008)))
-      (then (return (i32.const 0))))
     (global.set $propsheet_header (local.get $header_g))
     (global.set $propsheet_page_count (i32.load offset=24 (local.get $header_w)))
     (global.set $propsheet_pages (i32.load offset=32 (local.get $header_w)))
-    (if (i32.or (i32.eqz (global.get $propsheet_page_count))
-                (i32.eqz (global.get $propsheet_pages)))
-      (then (return (i32.const 0))))
+    (global.set $propsheet_pages_are_handles
+      (i32.eqz (i32.and (local.get $flags) (i32.const 0x00000008))))
+    (global.set $propsheet_owns_page_handles (i32.const 0))
+    (global.set $propsheet_inline_pages_initialized (i32.const 0))
+    (global.set $propsheet_owns_page_handles
+      (global.get $propsheet_pages_are_handles))
+    (if (i32.and
+          (i32.eqz (global.get $propsheet_pages_are_handles))
+          (i32.eqz (call $propsheet_prepare_inline_pages)))
+      (then
+        (call $propsheet_release_pages)
+        (return (i32.const 0))))
+    (if (i32.eqz (call $propsheet_page_hwnds_alloc))
+      (then
+        (call $propsheet_release_pages)
+        (return (i32.const 0))))
     (local.set $owner (i32.load offset=8 (local.get $header_w)))
     (local.set $caption_g (i32.load offset=20 (local.get $header_w)))
     (local.set $caption_w (select (call $g2w (local.get $caption_g)) (i32.const 0) (local.get $caption_g)))
@@ -17724,6 +18305,8 @@
         (call $wnd_destroy_tree (local.get $dlg))
         (call $host_destroy_window (local.get $dlg))
         (global.set $propsheet_frame_hwnd (i32.const 0))
+        (call $propsheet_page_hwnds_release)
+        (call $propsheet_release_pages)
         (return (i32.const 0))))
     (global.set $main_hwnd (local.get $dlg))
     (local.get $dlg))

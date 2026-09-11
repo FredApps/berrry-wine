@@ -30,6 +30,17 @@ const N = apiTable.length;
 const out = [];
 const PAGE_SIZE = 256;
 
+function watName(name, label) {
+  if (!/^[A-Za-z0-9_?@$]+$/.test(name)) {
+    fatal(`${label} has invalid WAT identifier ${JSON.stringify(name)}`);
+  }
+  return name;
+}
+
+function watI32(value) {
+  return value > 0x7fffffff ? `0x${value.toString(16)}` : String(value);
+}
+
 // Hand-written fast paths and the COM-vtable bootstrap still need a few IDs,
 // but their source must never bake in api_table.json's current array indexes.
 // Emit the names beside the generated dispatcher so an append/reorder repair
@@ -46,6 +57,8 @@ const namedApiIds = [
   ['IDirect3DBuffer9_QueryInterface', 'API_ID_IDirect3DBuffer9_BASE'],
   ['IDirect3DVertexDeclaration9_QueryInterface', 'API_ID_IDirect3DVertexDeclaration9_BASE'],
   ['IDirect3DStateBlock9_QueryInterface', 'API_ID_IDirect3DStateBlock9_BASE'],
+  ['IDirect3DQuery9_QueryInterface', 'API_ID_IDirect3DQuery9_BASE'],
+  ['IDirect3DCubeTexture9_QueryInterface', 'API_ID_IDirect3DCubeTexture9_BASE'],
 ];
 
 out.push('  ;; Named API ids consumed by hand-written dispatch fast paths.');
@@ -59,6 +72,85 @@ for (const [name, symbol] of namedApiIds) {
   out.push(`  (global $${symbol} i32 (i32.const ${matches[0].id}))`);
 }
 out.push('');
+
+// Constant compatibility stubs are data, not behavior worth transcribing in
+// a hand-written handler file.  The explicit pop count keeps unusual calling
+// conventions reviewable; stdcall rows are additionally checked against nargs.
+const stubApis = apiTable.filter(api => api.stub !== undefined);
+const stubHandlers = new Set();
+for (const api of stubApis) {
+  const stub = api.stub;
+  if (!stub || typeof stub !== 'object' || Array.isArray(stub) ||
+      Object.keys(stub).some(key => key !== 'pop' && key !== 'ret') ||
+      !Number.isInteger(stub.pop) || stub.pop < 0 || stub.pop % 4 !== 0 ||
+      !Number.isInteger(stub.ret) || stub.ret < -0x80000000 || stub.ret > 0xffffffff) {
+    fatal(`API ${api.name} stub must be {"pop": aligned nonnegative integer, "ret": i32 integer}`);
+    continue;
+  }
+  if (api.handler) {
+    fatal(`API ${api.name} cannot combine stub metadata with a handler alias`);
+    continue;
+  }
+  if (api.convention === 'stdcall' && Number.isInteger(api.nargs) &&
+      stub.pop !== 4 * (api.nargs + 1)) {
+    fatal(`API ${api.name} stub pop ${stub.pop} disagrees with stdcall nargs ${api.nargs}`);
+  }
+  const handler = watName(api.name, `API ${api.name} stub handler`);
+  if (stubHandlers.has(handler)) fatal(`duplicate generated stub handler $handle_${handler}`);
+  stubHandlers.add(handler);
+}
+if (stubApis.length) {
+  out.push('  ;; ============================================================');
+  out.push('  ;; CONSTANT API STUBS — GENERATED, do not edit');
+  out.push('  ;; Opted in with stub:{pop,ret} in api_table.json.');
+  out.push('  ;; ============================================================');
+}
+for (const api of stubApis) {
+  if (!stubHandlers.has(api.name)) continue;
+  out.push(`  ;; ${api.name}: pop ${api.stub.pop}, return ${watI32(api.stub.ret)}`);
+  out.push(`  (func $handle_${api.name} (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)`);
+  out.push(`    (global.set $eax (i32.const ${watI32(api.stub.ret)}))`);
+  out.push(`    (global.set $esp (i32.add (global.get $esp) (i32.const ${api.stub.pop}))))`);
+  out.push('');
+}
+
+// Test-only direct-call exports used by focused WAT harnesses.  These have one
+// mechanical ABI: expose the API's declared arguments, zero-fill the handler's
+// remaining argument registers/name pointer, and restore ESP after the stdcall
+// handler advances it.  Anything needing a synthetic stack frame or other
+// setup remains hand-written in 13-exports.wat.
+const testCallApis = apiTable.filter(api => api.test_call === true);
+for (const api of apiTable) {
+  if (api.test_call !== undefined && api.test_call !== true) {
+    fatal(`API ${api.name} test_call must be true when present`);
+  }
+}
+if (testCallApis.length) {
+  out.push('  ;; ============================================================');
+  out.push('  ;; TEST-CALL EXPORTS — GENERATED, do not edit');
+  out.push('  ;; Opted in with test_call:true in api_table.json.');
+  out.push('  ;; ============================================================');
+}
+for (const api of testCallApis) {
+  if (!Number.isInteger(api.nargs) || api.nargs < 0 || api.nargs > 5) {
+    fatal(`API ${api.name} test_call requires integer nargs in range 0..5`);
+    continue;
+  }
+  const handler = watName(api.handler || api.name, `API ${api.name} handler`);
+  const params = Array.from({ length: api.nargs }, (_, i) => ` (param $arg${i} i32)`).join('');
+  const args = Array.from({ length: 5 }, (_, i) =>
+    i < api.nargs ? `(local.get $arg${i})` : '(i32.const 0)');
+  args.push('(i32.const 0)');
+  out.push(`  (func (export "test_call_${api.name}")${params} (result i32)`);
+  out.push('    (local $saved_esp i32)');
+  out.push('    (local.set $saved_esp (global.get $esp))');
+  out.push(`    (call $handle_${handler}`);
+  out.push(`      ${args.slice(0, 3).join(' ')}`);
+  out.push(`      ${args.slice(3).join(' ')})`);
+  out.push('    (global.set $esp (local.get $saved_esp))');
+  out.push('    (global.get $eax))');
+}
+if (testCallApis.length) out.push('');
 
 // OpenGL/WGL exports share one ABI bridge. `words` counts physical 32-bit
 // stack words (GLdouble consumes two), while api_table nargs remains the
@@ -155,10 +247,7 @@ function handlerCall(api) {
     const slot = parseInt(daSlot[2], 10);
     return `      (call $handle_IDirectAnimationDA${iface}_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
   }
-  const handler = api.handler || api.name;
-  if (!/^[A-Za-z0-9_?@$]+$/.test(handler)) {
-    fatal(`API ${api.name} has invalid handler alias ${JSON.stringify(handler)}`);
-  }
+  const handler = watName(api.handler || api.name, `API ${api.name} handler alias`);
   return `      (call $handle_${handler} (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
 }
 
@@ -286,6 +375,8 @@ comInterfaces.push({ prefix: 'IDirect3DSwapChain9', global: 'DX_VTBL_D3DSWAP9' }
 // Listener is an auxiliary view of a primary DirectSound buffer. Append it
 // after every established interface so registry offsets remain stable.
 comInterfaces.push({ prefix: 'IDirectSound3DListener', global: 'DX_VTBL_DS3DLISTENER' });
+comInterfaces.push({ prefix: 'IDirectPlay4', global: 'DX_VTBL_DPLAY4', extends: 'IDirectPlay3' });
+comInterfaces.push({ prefix: 'IDirectPlayLobby3', global: 'DX_VTBL_DPLAYLOBBY3', extends: 'IDirectPlayLobby2' });
 
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));

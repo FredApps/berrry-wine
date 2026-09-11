@@ -447,12 +447,16 @@
     (local $count i32) (local $backing_ptr i32) (local $guest_end i32)
     (local $i i32) (local $rec i32) (local $base i32) (local $map_size i32)
     (local $backing i32) (local $map_end i32) (local $backing_end i32)
-    (local $extended i32)
+    (local $extended i32) (local $high_water i32)
+    (if (i32.gt_u (local.get $size) (global.get $VIRTUAL_BACKING_BASE_SIZE))
+      (then (return (i32.const 0))))
     (local.set $guest_end (i32.add (local.get $guest) (local.get $size)))
+    (if (i32.lt_u (local.get $guest_end) (local.get $guest)) (then (return (i32.const 0))))
     (local.set $count (i32.load (global.get $VIRTUAL_MAP_STATE)))
     (local.set $backing_ptr (i32.load (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))))
     (if (i32.eqz (local.get $backing_ptr))
       (then (local.set $backing_ptr (global.get $VIRTUAL_BACKING_BASE))))
+    (local.set $high_water (local.get $backing_ptr))
 
     (local.set $i (i32.const 0))
     (block $scan_done (loop $scan
@@ -487,13 +491,11 @@
           (return (select (local.get $guest) (i32.const 0)
             (i32.ne (local.get $extended) (i32.const 0))))))
       (if (i32.and
-            (i32.eq (local.get $guest) (local.get $map_end))
-            (i32.eq (local.get $backing_ptr) (local.get $backing_end)))
+            (i32.and (i32.eq (local.get $guest) (local.get $map_end))
+              (i32.eq (local.get $backing_ptr) (local.get $backing_end)))
+            (i32.le_u (i32.add (local.get $backing_ptr) (local.get $size))
+              (region.end $VIRTUAL_BACKING_BASE)))
         (then
-          (if (i32.gt_u
-                (i32.add (local.get $backing_ptr) (local.get $size))
-                (i32.add (global.get $VIRTUAL_BACKING_BASE) (global.get $VIRTUAL_BACKING_BASE_SIZE)))
-            (then (return (i32.const 0))))
           (call $zero_memory (local.get $backing_ptr) (local.get $size))
           ;; Publish translations before the larger record size. A reader can
           ;; therefore never see a committed byte whose PTE names no backing.
@@ -517,7 +519,26 @@
     (if (i32.gt_u
           (i32.add (local.get $backing_ptr) (local.get $size))
           (i32.add (global.get $VIRTUAL_BACKING_BASE) (global.get $VIRTUAL_BACKING_BASE_SIZE)))
-      (then (return (i32.const 0))))
+      (then
+        ;; Released non-top extents are holes in the live map, not reusable
+        ;; bump space. Only on exhaustion, find a gap without moving any live
+        ;; backing or changing g2w's affine records. A collision advances the
+        ;; candidate and restarts the unsorted scan.
+        (local.set $backing_ptr (global.get $VIRTUAL_BACKING_BASE))
+        (local.set $i (i32.const 0))
+        (block $gap_found (loop $gap
+          (if (i32.gt_u (local.get $size)
+                (i32.sub (region.end $VIRTUAL_BACKING_BASE) (local.get $backing_ptr)))
+            (then (return (i32.const 0))))
+          (br_if $gap_found (i32.ge_u (local.get $i) (local.get $count)))
+          (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE) (i32.shl (local.get $i) (i32.const 4))))
+          (local.set $backing (i32.load offset=8 (local.get $rec)))
+          (local.set $backing_end (i32.add (local.get $backing) (i32.load offset=4 (local.get $rec))))
+          (if (i32.and (i32.lt_u (local.get $backing_ptr) (local.get $backing_end))
+                (i32.gt_u (i32.add (local.get $backing_ptr) (local.get $size)) (local.get $backing)))
+            (then (local.set $backing_ptr (local.get $backing_end)) (local.set $i (i32.const 0)))
+            (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+          (br $gap)))))
     (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE) (i32.shl (local.get $count) (i32.const 4))))
     (i32.store (local.get $rec) (local.get $guest))
     (i32.store (i32.add (local.get $rec) (i32.const 4)) (local.get $size))
@@ -535,7 +556,8 @@
     ;; avoids: $g2w would map a guest address onto a record still being filled.
     (i32.atomic.store (global.get $VIRTUAL_MAP_STATE) (i32.add (local.get $count) (i32.const 1)))
     (i32.store (i32.add (global.get $VIRTUAL_MAP_STATE) (i32.const 4))
-      (i32.add (local.get $backing_ptr) (local.get $size)))
+      (select (local.get $high_water) (i32.add (local.get $backing_ptr) (local.get $size))
+        (i32.gt_u (local.get $high_water) (i32.add (local.get $backing_ptr) (local.get $size)))))
     (call $virtual_shared_top_observe (local.get $guest))
     (global.set $virtual_alloc_top (local.get $guest))
     (local.get $guest))
@@ -626,6 +648,29 @@
       (br $scan)))
     (i32.const 0))
 
+  ;; Retire the unused tail of an instance-owned arena after a replacement
+  ;; arena has been successfully registered. It was reserved exclusively for
+  ;; this instance, but never published as allocated, so first give it a valid
+  ;; block header and extend the authoritative allocated extent. Normal free
+  ;; validation then transfers it to this instance's private free list.
+  ;; A sub-minimum tail cannot hold a free block and remains padding.
+  (func $heap_arena_free_tail (param $ptr i32) (param $end i32) (param $record i32)
+    (local $size i32)
+    (if (i32.or (i32.eqz (local.get $ptr)) (i32.eqz (local.get $record)))
+      (then (return)))
+    (if (i32.gt_u (local.get $ptr) (local.get $end)) (then (return)))
+    (local.set $size (i32.sub (local.get $end) (local.get $ptr)))
+    (if (i32.or (i32.lt_u (local.get $size) (i32.const 16))
+      (i32.ne (i32.and (local.get $size) (i32.const 7)) (i32.const 0))) (then (return)))
+    ;; Reject stale or already-published tuples, including repeated retirement.
+    (if (i32.or (i32.eqz (i32.atomic.load (local.get $record)))
+      (i32.lt_u (local.get $ptr) (i32.atomic.load (local.get $record)))) (then (return)))
+    (if (i32.ne (i32.atomic.load offset=8 (local.get $record)) (local.get $ptr)) (then (return)))
+    (if (i32.ne (i32.load offset=4 (local.get $record)) (local.get $end)) (then (return)))
+    (i32.store (call $g2w (local.get $ptr)) (local.get $size))
+    (i32.atomic.store offset=8 (local.get $record) (local.get $end))
+    (call $heap_free (i32.add (local.get $ptr) (i32.const 4))))
+
   ;; Reserve this instance's next private chunk of the low guest heap window.
   ;; The cursor is shared; the arena handed back is exclusively ours, so the
   ;; per-allocation fast path in $heap_alloc needs no synchronization at all.
@@ -635,6 +680,7 @@
   ;; word, one CAS, and nothing to release on the early-return paths below.
   (func $heap_low_reserve (param $need i32) (result i32)
     (local $state i32) (local $cursor i32) (local $chunk i32) (local $seed i32)
+    (local $record i32)
     (local.set $state (global.get $HEAP_SHARED))
     (block $reserved (loop $retry
       (local.set $cursor (i32.atomic.load (local.get $state)))
@@ -668,11 +714,14 @@
       ;; valid block entries into zero. The extent is declared now
       ;; (src/00-regions.wat), so the bound is the region's end and the two
       ;; cannot drift apart no matter where the allocator puts either one.
+      ;; Compare in guest space against the known low-region boundary. Resolving
+      ;; an arbitrary request endpoint with g2w can return the unmapped sentinel,
+      ;; which is numerically below this region and would admit oversized chunks.
       (if (i32.lt_u (i32.add (local.get $cursor) (local.get $chunk)) (local.get $cursor))
         (then (return (i32.const 0))))
       (if (i32.gt_u
-            (call $g2w (i32.add (local.get $cursor) (local.get $chunk)))
-            (region.end $GUEST_HEAP_BASE))
+            (i32.add (local.get $cursor) (local.get $chunk))
+            (call $w2g (region.end $GUEST_HEAP_BASE)))
         (then (return (i32.const 0))))
       ;; Claim it, or lose the race and recompute against the winner's cursor.
       (br_if $reserved
@@ -680,20 +729,30 @@
           (i32.atomic.rmw.cmpxchg (local.get $state) (local.get $cursor)
             (i32.add (local.get $cursor) (local.get $chunk)))))
       (br $retry)))
-    (global.set $heap_arena_record (call $heap_arena_register
+    (local.set $record (call $heap_arena_register
       (local.get $cursor) (i32.add (local.get $cursor) (local.get $chunk))))
-    (if (i32.eqz (global.get $heap_arena_record))
+    (if (i32.eqz (local.get $record))
       (then (return (i32.const 0))))
+    (call $heap_arena_free_tail (global.get $heap_ptr) (global.get $heap_end)
+      (global.get $heap_arena_record))
+    (global.set $heap_arena_record (local.get $record))
     (global.set $heap_ptr (local.get $cursor))
     (global.set $heap_end (i32.add (local.get $cursor) (local.get $chunk)))
     (local.get $cursor))
 
   ;; Remove an exact sparse mapping on VirtualFree(..., MEM_RELEASE). Compact
-  ;; the live metadata prefix so MAX_VIRTUAL_MAPS retains its bound. Backing is
-  ;; a bump arena, therefore only the
-  ;; most recently committed extent can be reclaimed without a free list; all
-  ;; other releases still recover their map-table slot immediately.
+  ;; the live prefix so g2w's linear scan and MAX_VIRTUAL_MAPS bound keep their
+  ;; existing representation. A top release rewinds the bump cursor. Other
+  ;; releases recover their map slot immediately and leave a physical gap;
+  ;; virtual_map_commit_locked can reuse that gap on bump exhaustion.
   (func $virtual_map_release (param $guest i32) (result i32)
+    (local $result i32)
+    (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
+    (local.set $result (call $virtual_map_release_locked (local.get $guest)))
+    (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+    (local.get $result))
+
+  (func $virtual_map_release_locked (param $guest i32) (result i32)
     (local $count i32) (local $i i32) (local $rec i32) (local $last i32)
     (local $last_rec i32) (local $size i32) (local $backing i32)
     (local $backing_ptr i32)
@@ -787,7 +846,7 @@
   ;; spills to sparse high guest chunks when that window reaches emulator-private
   ;; memory. This keeps Windows heap pointers valid without moving code caches.
   (func $heap_sparse_alloc (param $need i32) (result i32)
-    (local $chunk i32) (local $new_top i32) (local $ptr i32)
+    (local $chunk i32) (local $new_top i32) (local $ptr i32) (local $record i32)
     (if (i32.or
           (i32.eqz (global.get $heap_sparse_ptr))
           (i32.gt_u
@@ -808,10 +867,13 @@
         (if (i32.eqz (local.get $new_top)) (then (return (i32.const 0))))
         (if (i32.eqz (call $virtual_map_commit (local.get $new_top) (local.get $chunk)))
           (then (return (i32.const 0))))
-        (global.set $heap_sparse_record (call $heap_arena_register
+        (local.set $record (call $heap_arena_register
           (local.get $new_top) (i32.add (local.get $new_top) (local.get $chunk))))
-        (if (i32.eqz (global.get $heap_sparse_record))
+        (if (i32.eqz (local.get $record))
           (then (return (i32.const 0))))
+        (call $heap_arena_free_tail (global.get $heap_sparse_ptr) (global.get $heap_sparse_end)
+          (global.get $heap_sparse_record))
+        (global.set $heap_sparse_record (local.get $record))
         (global.set $heap_sparse_ptr (local.get $new_top))
         (global.set $heap_sparse_end (i32.add (local.get $new_top) (local.get $chunk)))))
     (local.set $ptr (global.get $heap_sparse_ptr))
@@ -933,6 +995,32 @@
       (i32.atomic.store offset=8 (global.get $heap_arena_record) (global.get $heap_ptr)))
     ;; Return guest pointer past the size header
     (i32.add (local.get $ptr) (i32.const 4)))
+
+  ;; Shrink a live allocation in place without allocating or moving its prefix.
+  ;; Internal callers use this after constructing a bounded worst-case buffer.
+  ;; Returns the original guest pointer, or zero for an invalid block/growth.
+  ;; The original arena still covers both headers; only the unused suffix moves
+  ;; to this instance's free list. Sub-minimum suffixes remain padding.
+  (func $heap_shrink (param $guest_ptr i32) (param $size i32) (result i32)
+    (local $block i32) (local $wa i32) (local $old i32) (local $need i32)
+    (local $tail i32) (local $remaining i32)
+    (if (i32.or (i32.eqz (local.get $guest_ptr))
+      (i32.gt_u (local.get $size) (i32.const 0x7FFFFFF0))) (then (return (i32.const 0))))
+    (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))
+    (if (i32.eqz (call $heap_arena_find (local.get $block))) (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $block)))
+    (local.set $old (i32.load (local.get $wa)))
+    (if (call $heap_block_bad (local.get $block) (local.get $old)) (then (return (i32.const 0))))
+    (local.set $need (i32.and (i32.add (local.get $size) (i32.const 11)) (i32.const -8)))
+    (if (i32.lt_u (local.get $need) (i32.const 16)) (then (local.set $need (i32.const 16))))
+    (if (i32.gt_u (local.get $need) (local.get $old)) (then (return (i32.const 0))))
+    (local.set $remaining (i32.sub (local.get $old) (local.get $need)))
+    (if (i32.ge_u (local.get $remaining) (i32.const 16)) (then
+      (local.set $tail (i32.add (local.get $block) (local.get $need)))
+      (i32.store (local.get $wa) (local.get $need))
+      (i32.store (call $g2w (local.get $tail)) (local.get $remaining))
+      (call $heap_free (i32.add (local.get $tail) (i32.const 4)))))
+    (local.get $guest_ptr))
 
   ;; heap_free: return block to free list
   (func $heap_free (param $guest_ptr i32)
@@ -2026,6 +2114,40 @@
     (local $wh i32)
     (local.set $wh (call $client_rect_wh_packed (local.get $hwnd)))
     (if (local.get $wh) (then (return (local.get $wh))))
+    (call $host_get_window_client_size (local.get $hwnd)))
+
+  ;; Win32 GetClientRect's canonical size calculation. WAT-native controls
+  ;; own their geometry outright; generic WS_CHILD windows first refresh the
+  ;; recorded non-client split; only top-level windows ask the browser host.
+  ;; Keep this in one helper so APIs such as comctl32's
+  ;; GetEffectiveClientRect start from exactly the rectangle GetClientRect
+  ;; would have returned instead of inventing a desktop-sized fallback.
+  (func $wnd_get_client_size_packed (param $hwnd i32) (result i32)
+    (local $style i32) (local $cw i32) (local $ch i32)
+    (if (call $ctrl_table_get_class (local.get $hwnd))
+      (then (return (call $ctrl_get_wh_packed (local.get $hwnd)))))
+    (local.set $style (call $wnd_get_style (local.get $hwnd)))
+    (if (i32.and
+          (i32.ne (call $wnd_get_parent (local.get $hwnd)) (i32.const 0))
+          (i32.ne (i32.and (local.get $style) (i32.const 0x40000000)) (i32.const 0)))
+      (then
+        (call $defwndproc_do_nccalcsize (local.get $hwnd))
+        (local.set $cw
+          (i32.sub
+            (call $client_rect_get_r (local.get $hwnd))
+            (call $client_rect_get_l (local.get $hwnd))))
+        (local.set $ch
+          (i32.sub
+            (call $client_rect_get_b (local.get $hwnd))
+            (call $client_rect_get_t (local.get $hwnd))))
+        (if (i32.or
+              (i32.le_s (local.get $cw) (i32.const 0))
+              (i32.le_s (local.get $ch) (i32.const 0)))
+          (then (return (call $ctrl_get_wh_packed (local.get $hwnd)))))
+        (return
+          (i32.or
+            (i32.and (local.get $cw) (i32.const 0xFFFF))
+            (i32.shl (local.get $ch) (i32.const 16))))))
     (call $host_get_window_client_size (local.get $hwnd)))
 
   (func $update_invalidate_full (param $hwnd i32)
@@ -4681,6 +4803,7 @@
     (local $style i32) (local $parent i32) (local $myxy i32) (local $myx i32) (local $myy i32)
     (local $slot i32) (local $my_slot i32) (local $my_z i32) (local $sib i32)
     (local $xy i32) (local $wh i32) (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
+    (local $clip_sibling i32) (local $win16_frame i32)
     (local.set $style (call $wnd_get_style (local.get $hwnd)))
     (local.set $parent (call $wnd_get_parent (local.get $hwnd)))
     (if (i32.eqz (local.get $parent)) (then (return)))
@@ -4691,6 +4814,13 @@
     ;; half of its earlier overlapping owner-draw Play button every second.
     (if (i32.eqz (i32.and (local.get $style) (i32.const 0x04000000))) ;; WS_CLIPSIBLINGS
       (then
+        ;; Win16 native controls must not be hidden by earlier decorative
+        ;; frames. Custom painters still need the dialog visible-region clip:
+        ;; WEPUTIL's later frame otherwise draws across its earlier heading.
+        ;; Explicit WS_CLIPSIBLINGS always takes precedence in either case.
+        (if (i32.and (global.get $is_win16)
+              (i32.ne (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 0)))
+          (then (return)))
         (if (i32.and
               (i32.ne (call $wnd_table_get (local.get $parent)) (global.get $WNDPROC_DIALOG))
               (i32.eqz (call $wnd_class_is_dialog (local.get $parent))))
@@ -4700,11 +4830,28 @@
     (local.set $my_z (call $wnd_z_get (local.get $hwnd)))
     (local.set $myx (call $ctrl_get_x_s (local.get $hwnd)))
     (local.set $myy (call $ctrl_get_y_s (local.get $hwnd)))
+    (local.set $win16_frame (i32.and (global.get $is_win16)
+      (i32.eqz (i32.and (local.get $style) (i32.const 0x04000000)))))
     (local.set $slot (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $slot) (global.get $MAX_WINDOWS)))
       (local.set $sib (call $wnd_slot_hwnd (local.get $slot)))
-      (if (call $wnd_z_is_above_sibling (local.get $hwnd) (local.get $sib))
+      (local.set $clip_sibling (call $wnd_z_is_above_sibling (local.get $hwnd) (local.get $sib)))
+      (if (local.get $win16_frame)
+        (then
+          ;; A Win16 decorative custom painter must leave native labels
+          ;; visible regardless of template ordering. An exactly coincident
+          ;; custom frame is the label's own border, however, and must draw.
+          (local.set $clip_sibling
+            (i32.and
+              (i32.and (i32.ne (call $ctrl_table_get_class (local.get $sib)) (i32.const 0))
+                (i32.eq (call $wnd_get_parent (local.get $sib)) (local.get $parent)))
+              (i32.and
+                (i32.ne (i32.and (call $wnd_get_style (local.get $sib)) (i32.const 0x10000000)) (i32.const 0))
+                (i32.eqz (i32.and
+                  (i32.eq (call $ctrl_get_xy_packed (local.get $sib)) (call $ctrl_get_xy_packed (local.get $hwnd)))
+                  (i32.eq (call $ctrl_get_wh_packed (local.get $sib)) (call $ctrl_get_wh_packed (local.get $hwnd))))))))))
+      (if (local.get $clip_sibling)
         (then
           (local.set $wh (call $ctrl_get_wh_packed (local.get $sib)))
           (local.set $sx (call $ctrl_get_x_s (local.get $sib)))

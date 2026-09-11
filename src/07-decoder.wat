@@ -3205,6 +3205,16 @@
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
 
+      ;; Reuse a known suffix instead of publishing an overlapping block.
+      ;; Otherwise alternating outer/interior entries repeatedly retire each
+      ;; other even when no guest code bytes have changed.
+      (if (i32.ne (global.get $d_pc) (local.get $start_eip))
+        (then
+          (if (call $page_probe (global.get $d_pc))
+            (then
+              (call $te (i32.const 45) (global.get $d_pc))
+              (br $exit)))))
+
       ;; Storm's scalar MPQ decompressor calls this tiny helper tens of
       ;; thousands of times per rendered frame load. It is always entered at a
       ;; basic-block boundary, so recognize the whole exact helper before the
@@ -5098,6 +5108,36 @@
               (br $decode)))
 
           ;; ---- SSE base ----
+          ;; CVTSS2SI r32,xmm/m32 (default MXCSR nearest-even rounding).
+          (if (i32.and (i32.eq (local.get $op) (i32.const 0x2d))
+            (i32.and (i32.eqz (local.get $prefix_66))
+              (i32.eq (local.get $prefix_rep) (i32.const 1)))) (then
+            (call $decode_modrm)
+            (if (i32.eq (global.get $mr_mod) (i32.const 3)) (then
+              (call $te (i32.const 432) (i32.or (i32.const 0x1200)
+                (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))))
+            (else
+              (call $apply_seg_override)
+              (local.set $a (call $emit_sib_or_abs))
+              (call $te (i32.const 433) (i32.or (i32.const 0x1200)
+                (i32.shl (global.get $mr_reg) (i32.const 4))))
+              (call $te_raw (local.get $a))))
+            (br $decode)))
+          ;; CVTSI2SS xmm, r/m32. Source register is a GPR, not XMM.
+          (if (i32.and (i32.eq (local.get $op) (i32.const 0x2a))
+            (i32.and (i32.eqz (local.get $prefix_66))
+              (i32.eq (local.get $prefix_rep) (i32.const 1)))) (then
+            (call $decode_modrm)
+            (if (i32.eq (global.get $mr_mod) (i32.const 3)) (then
+              (call $te (i32.const 432) (i32.or (i32.const 0x1100)
+                (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))))
+            (else
+              (call $apply_seg_override)
+              (local.set $a (call $emit_sib_or_abs))
+              (call $te (i32.const 433) (i32.or (i32.const 0x1100)
+                (i32.shl (global.get $mr_reg) (i32.const 4))))
+              (call $te_raw (local.get $a))))
+            (br $decode)))
           ;; UCOMISS/COMISS: scalar compare to integer condition flags. Only the
           ;; unprefixed single-precision form belongs to this handler.
           (if (i32.and

@@ -177,11 +177,16 @@ class LiveJit {
       // rebuild is the SAME module plus a region. Empty means "the defaults",
       // which is what a default run is.
       build = {},
+      // The shared handler-table tail (tools/toyvm/extras.js). `--tree-fold`
+      // appends to the same one; with both on, neither side may number its
+      // handlers from zero. A standalone JIT gets its own.
+      extras = null,
       log = () => {},
     } = opts;
     Object.assign(this, {
       session, vm, machine, portIn, portOut, sampleAfter, profileFor, regions,
       minShare, minOps, gateAt, gateIters, backend, repFast, cpu, build, log,
+      extras: extras || new (require('./extras').Extras)(),
     });
     this.phase = 'profiling';
     this.declined = null;
@@ -251,6 +256,14 @@ class LiveJit {
       regs, machine,
       regions: this.regions, minShare: this.minShare, minOps: this.minOps,
       gateAt: this.gateAt, gateIters: this.gateIters,
+      // THE HANDLER TABLE'S TAIL AS IT STANDS. `--tree-fold` appends to the
+      // same one (tools/toyvm/extras.js), so a module built with only THIS
+      // side's regions would leave the fold's handlers out of the table and
+      // every tree word in the arena would name nothing. The prepared module
+      // therefore carries the whole tail, and the regions are numbered from
+      // its end rather than from zero.
+      extrasBefore: this.extras.handlers.slice(),
+      extrasEpoch: this.extras.epoch,
     };
   }
 
@@ -358,6 +371,18 @@ class LiveJit {
   async install(prepared) {
     const vm = this.vm;
     const old = vm.exports;
+    // THE TAIL MUST NOT HAVE MOVED UNDER THE PREPARED MODULE. `--tree-fold`
+    // appends to the same handler table between slices, and this module was
+    // built and gated against the tail as it stood when the bundle was taken.
+    // Installing it anyway would swap the guest onto a table missing every
+    // handler added in between -- an arena word naming nothing. Preparation is
+    // cheap to repeat and the next pump takes a fresh bundle, so decline.
+    if (prepared.extras && prepared.extrasEpoch !== this.extras.epoch) {
+      this.declined = 'the handler table grew while this region was prepared';
+      this.log(`[jit] ${this.declined}; re-profiling`);
+      this.phase = 'profiling';
+      return false;
+    }
     // Timed apart from the swap because the two are paid on different threads.
     // `WebAssembly.compile` is asynchronous and browsers run it off the main
     // thread, so what the page loses here is the swap below; headless, where
@@ -418,6 +443,13 @@ class LiveJit {
       }
     }
 
+    // The regions are part of the shared tail from here on: they were built at
+    // the end of it and the module that just came up carries them there, so
+    // the next build by EITHER side has to keep them.
+    if (prepared.extras) {
+      this.extras.commit(prepared.extras,
+        { base: prepared.picks[0].idx, n: prepared.extras.length, epoch: prepared.extrasEpoch });
+    }
     const cache = this.session.cache;
     cache.regionAt = new Map(prepared.picks.map(p => [p.key, p.idx]));
     cache.regionSucc = new Map(prepared.picks.map(p => [p.key, p.succ]));

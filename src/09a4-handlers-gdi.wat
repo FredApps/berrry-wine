@@ -559,6 +559,11 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; GetFontLanguageInfo reports the selected realized face, including kerning.
+  (func $handle_GetFontLanguageInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $tt_gdi_font_language_info (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   ;; GetTextCharsetInfo(hdc, lpSig, flags). Raster fonts have no Unicode range
   ;; signature; preserve the selected font's charset rather than forcing ANSI.
   (func $handle_GetTextCharsetInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1368,6 +1373,18 @@
   ;;
   ;; Node: next, resource path, source path, hidden flag.  Paths are owned
   ;; guest-heap copies because both callers commonly pass stack buffers.
+  (func $handle_AddFontMemResourceEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (if (i32.and (i32.eqz (local.get $arg2)) (i32.ne (local.get $arg3) (i32.const 0)))
+      (then
+        (global.set $eax (call $tt_mem_add (local.get $arg0) (local.get $arg1)))
+        (if (global.get $eax) (then (call $gs32 (local.get $arg3) (i32.const 1))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  (func $handle_RemoveFontMemResourceEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $tt_mem_remove (local.get $arg0)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
   (global $scalable_font_resources (mut i32) (i32.const 0))
 
   (func $scalable_font_source_for (param $resource i32) (result i32)
@@ -2045,8 +2062,9 @@
     (if (local.get $lpDx)
       (then (local.set $dx_wa (call $g2w (local.get $lpDx)))))
     (local.set $wide (i32.const 1))
-    (local.set $packed_ansi_len
-      (call $gdi_ext_text_out_w_packed_ansi_len (local.get $text_wa) (local.get $count)))
+    (if (i32.eqz (i32.and (local.get $arg3) (i32.const 16)))
+      (then (local.set $packed_ansi_len
+        (call $gdi_ext_text_out_w_packed_ansi_len (local.get $text_wa) (local.get $count)))))
     (if (local.get $packed_ansi_len)
       (then
         (local.set $count (local.get $packed_ansi_len))

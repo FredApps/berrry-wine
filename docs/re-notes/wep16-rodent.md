@@ -11,6 +11,52 @@ the original remains the desktop edition and the remake is separately
 selectable as `rodent2000`. See [rodent2000.md](rodent2000.md) for the remake's
 OLE picture startup fix and gameplay command.
 
+## High Scores close corruption and invisible saved names (2026-09-10)
+
+Two independent bugs reproduced in non-isolated Chrome with the compatibility
+WASM artifact explicitly forced (tail-call support selects the artifact;
+SharedArrayBuffer availability does not).
+
+* Closing the viewer raised a garbage-text message box and eventually consumed
+  the Win16 stack. The modal return at WEPUTIL `1:0xc07` was correct. The real
+  corruption happened during owner-draw painting: the fourth 32-byte
+  DRAWITEMSTRUCT scratch slot at DGROUP `0x12 + 3*32 = 0x72` overwrote VB's
+  nesting counter with `ODT_BUTTON=4`, and nearby runtime fields with the rest
+  of the structure. VB declares an empty static DGROUP then initializes its
+  own runtime data there. USER's message/font copies now occupy a dedicated,
+  lazily allocated selector instead. Existing heap/stack spacing is retained.
+* Saved name/score strings were present in the actual STATIC controls but
+  invisible. The implicit Win32-dialog sibling clip treated WEPUTIL's earlier
+  decorative IndentBox as an opaque occluder of later enclosed labels. Win16
+  native controls now require explicit WS_CLIPSIBLINGS; custom painters retain
+  the dialog visible-region clip around native controls, including headings
+  later in template order. An exactly coincident custom frame is the label's
+  own border and remains drawable. The existing Win32 rule and explicit Win16 clipping
+  remain intact. Disabling implicit clipping for all Win16 controls was too
+  broad: it restored names but drew horizontal frame lines across headings.
+
+Verification: `test-win16-user-scratch.js` checks all DGROUP bytes, the four-slot
+ring, DRAWITEM fields, and EnumFonts far pointers. The window-surface regression
+checks Win16 implicit/explicit and Win32 dialog clips. A compat-browser probe
+substituted the real WepScore API call for WepFame with a test score of 9999,
+typed `PhoneProbe` through browser keyboard events, inspected both real score
+lists and their pixels, and closed back to the idle game with ESP `0x1179ea`.
+This exercises WEPUTIL's actual entry/save/viewer code, not a naturally earned
+game-over or Safari keyboard policy. Probe: `/private/tmp/rodent-compat-close.js`
+with `SCORE_PROBE=1`; capture: `/private/tmp/rodent-score-saved.png`.
+
+The broader `test-win16-dialog.js` Solitaire suite still fails its final
+Cancel/closed-screenshot assertion, identically with the pre-fix HEAD artifact
+and the new build. It is not a green-suite claim; the scratch, clipping matrix,
+native caret, and actual WEPUTIL resource tests pass.
+
+The board-profile presentation area is now used for both Fit and Fill,
+including modal windows, and accounts for the CSS safe-area insets and visual
+viewport top. A host already below the status bar does not double the inset;
+keyboard-open retains the frozen area and landscape retains its side rails.
+Single-app and touch-control tests cover these bounds. The phone preview uses
+Chrome with an explicitly simulated 47px top inset, not an actual Safari capture.
+
 ## Idle CPU: Win16 WaitMessage busy loop (2026-09-10)
 
 Browser block tracing found a repeating 34-block pump, ending at
@@ -186,7 +232,7 @@ preserving the other materialized arithmetic flags. The focused selector test
 executes the same disp16 memory encoding and checks both valid and invalid
 answers.
 
-### High Scores focus is intentionally not text focus (checked 2026-09-09)
+### High Scores viewer check did not cover name entry (2026-09-09)
 
 The Game > High Scores window is a viewer, not the new-score name prompt. A
 current `dump-windows` / `dlg-dump` run shows 20 static score/name labels, three
@@ -196,6 +242,39 @@ Consequently there is no USER caret to blink and the browser's caret-gated
 phone keyboard correctly stays closed. Adding a synthetic caret or forcing the
 keyboard here would send text to a push button. A real post-game name prompt,
 if reached, must be checked separately because it is a different form/path.
+
+### New-score caret missing from the compositor (fixed locally 2026-09-10)
+
+The reported bug concerns earning a score and **entering a name**, not the
+viewer above. WEPUTIL.DLL's RT_DIALOG 200 says "You have achieved a high
+score!" / "Please enter your name:" and contains Edit id 500, a decorative
+IndentBox, and OK. ENTERDLGPROC (export 1002, segment 1:0x10bb) sets the name
+text and returns TRUE from WM_INITDIALOG; it relies on USER's initial focus.
+
+Loading that exact resource through the Win16 template converter reproduces
+the mismatch: USER focus and its visible caret both name Edit 500, but
+`renderer.caretRect()` is null. Resource-created controls have WAT window
+records, not entries in `renderer.windows`; `_paintCaretOverlay` discarded
+the caret when that JavaScript record was absent. This also withheld the
+caret signal used by the phone keyboard and touch-overlay pass-through.
+
+The compositor now resolves these children through WAT's existing absolute
+geometry exports and requires visible ancestry back to an owned renderer
+window. No synthetic caret, focus override, or extra rendering surface is
+introduced. Blink-off retains the keyboard anchor; hidden/destroyed/orphaned
+controls do not. `test-win16-score-caret.js` uses the original DLL resource
+and checks Edit 500 focus, caret, text insertion, and compositor visibility;
+`test-renderer-native-caret.js` covers blink phases, visibility, ancestry,
+ownership, and the existing JavaScript-backed window path.
+
+Verification is resource-level plus automated input regressions. The bounded
+Chrome gameplay run reached score 188 but not game over; it does not establish
+end-to-end score saving. Actual iPhone keyboard appearance remains to verify
+on the local build. Main d61fb67f was subsequently merged into the 8087
+worktree; its centralized cache identity and automatic test discovery replace
+the original renderer-201 cache bump and explicit test-list additions. Caret,
+resource typing, and mobile touch regressions pass after integration. No
+production deployment.
 
 ## Status panel regression (fixed 2026-08-25, dec5373c)
 

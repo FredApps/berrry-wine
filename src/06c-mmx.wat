@@ -181,7 +181,7 @@
   ;; imm8 in operand bits 16..23; sub=8/9 are ADDPS/MULPS;
   ;; sub=10/11 are ADDSS/MULSS (preserve destination upper 96 bits);
   ;; sub=12 is UCOMISS/COMISS (no destination write); sub=13/14 DIVSS/SUBSS;
-  ;; sub=15/16 DIVPS/SUBPS.
+  ;; sub=15/16 DIVPS/SUBPS; sub=17 CVTSI2SS (default nearest-even rounding).
   (func $th_sse_rr (param $op i32)
     (local $sub i32) (local $dst i32) (local $src i32)
     (local $d v128) (local $s v128) (local $v v128)
@@ -191,6 +191,14 @@
     (local.set $src (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $d (call $xmm_get (local.get $dst)))
     (local.set $s (call $xmm_get (local.get $src)))
+    (if (i32.eq (local.get $sub) (i32.const 18)) (then
+      (call $set_reg (local.get $dst)
+        (call $sse_cvtt_f32_i32 (f32.nearest (f32x4.extract_lane 0 (local.get $s)))))
+      (return_call $next)))
+    (if (i32.eq (local.get $sub) (i32.const 17)) (then
+      (call $xmm_set (local.get $dst) (f32x4.replace_lane 0 (local.get $d)
+        (f32.convert_i32_s (call $get_reg (local.get $src)))))
+      (return_call $next)))
     (if (i32.eq (local.get $sub) (i32.const 12))
       (then
         (call $sse_compare_flags (f32x4.extract_lane 0 (local.get $d))
@@ -258,6 +266,14 @@
     (local.set $dst (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $addr (call $read_addr))
     (local.set $d (call $xmm_get (local.get $dst)))
+    (if (i32.eq (local.get $sub) (i32.const 18)) (then
+      (call $set_reg (local.get $dst) (call $sse_cvtt_f32_i32
+        (f32.nearest (f32.reinterpret_i32 (call $gl32 (local.get $addr))))))
+      (return_call $next)))
+    (if (i32.eq (local.get $sub) (i32.const 17)) (then
+      (call $xmm_set (local.get $dst) (f32x4.replace_lane 0 (local.get $d)
+        (f32.convert_i32_s (call $gl32 (local.get $addr)))))
+      (return_call $next)))
     ;; Scalar memory arithmetic must read only four bytes. In particular the
     ;; neighboring twelve bytes may live on an unmapped page.
     (if (i32.eq (local.get $sub) (i32.const 12))

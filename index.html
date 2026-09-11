@@ -915,6 +915,9 @@
       -webkit-tap-highlight-color: transparent;
     }
     body.page-fullscreen #page-fullscreen-exit:active { opacity: 1; }
+    /* The guest window already has its own close control. Page fullscreen
+       here is only Safari toolbar management, not a second app to dismiss. */
+    body.windowed-phone #page-fullscreen-exit { display: none; }
     /* Safari's own toolbars are the one thing script cannot take away. Say so
        once, name the thing that does (Add to Home Screen runs the manifest's
        standalone display with no browser chrome at all), and get out of the
@@ -1028,6 +1031,13 @@
     }
     body.scroll-collapse:not(.bars-collapsed) #scroll-collapse-gutter .nudge {
       animation: gutter-nudge 1.6s ease-in-out infinite;
+    }
+    body.windowed-phone.scroll-collapse #scroll-collapse-gutter {
+      left: 0;
+      right: 0;
+      box-sizing: border-box;
+      padding-left: env(safe-area-inset-left);
+      padding-right: env(safe-area-inset-right);
     }
     @keyframes gutter-nudge {
       0%, 100% { transform: translateY(2px); opacity: 0.55; }
@@ -1307,6 +1317,7 @@
           <option value="dungeon_keeper_demo">Dungeon Keeper Demo</option>
           <option value="darkstone_demo">Darkstone Demo</option>
           <option value="jazz2_demo">Jazz Jackrabbit 2 Demo</option>
+          <option value="black_white_2_demo">Black &amp; White 2 Demo</option>
           <option value="quake2_demo">Quake II Demo</option>
           <option value="quake2_demo_installer">Quake II Demo Installer</option>
           <option value="heroes3_demo">Heroes III Demo</option>
@@ -1611,7 +1622,13 @@ Resource-aware Win98 emulator
       "lib/host-window.js",
       "lib/gpu-backend.js",
       "lib/d3d9-shader.js",
+      "lib/d3d-shader-ir.js",
+      "lib/d3d9-fixed.js",
+      "lib/d3d9-texture.js",
       "lib/d3d9-backend.js",
+      "lib/d3d-command-stream.js",
+      "lib/d3d-geometry-batches.js",
+      "lib/d3d9-software-backend.js",
       "lib/d3d9-host.js",
       "lib/gl-command-stream.js",
       "lib/gl-compat.js",
@@ -1703,6 +1720,35 @@ Resource-aware Win98 emulator
     }
     window.enterPageFullscreenIfNoApi = enterPageFullscreenIfNoApi;
 
+    function syncWindowedPageFullscreen() {
+      const body = document.body;
+      const windowed = SINGLE_APP_MODE && !DEBUG_MODE &&
+        body.classList.contains('app-running') &&
+        !body.classList.contains('exclusive-fullscreen');
+      body.classList.toggle('windowed-phone', windowed);
+      if (!windowed) return;
+      // Freeze the orientation decision during keyboard entry: a portrait
+      // keyboard can make the remaining viewport wider than it is tall.
+      const height = (keyboardController && keyboardController.frozenHeight()) || innerHeight;
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (innerWidth > height && !(renderer && renderer._fullscreenDeclined)) enterPageFullscreenIfNoApi();
+      else if (body.classList.contains('page-fullscreen')) exitPageFullscreen();
+    }
+
+    // Pinch-to-fit can also give back the page space acquired by scrolling
+    // Safari's bars away. Do not touch the guest's maximized/restored state.
+    window.exitPageFullscreenFromPinch = function () {
+      const body = document.body;
+      if (!body.classList.contains('page-fullscreen') ||
+          !body.classList.contains('scroll-collapse') ||
+          !body.classList.contains('bars-collapsed')) return false;
+      const renderer = sharedRenderer || (wine && wine.renderer);
+      if (renderer) renderer._fullscreenDeclined = true;
+      exitPageFullscreen();
+      window.scrollTo(0, 0);
+      return true;
+    };
+
     // iOS Safari with its own chrome still over the page -- the only browser
     // where scroll-to-collapse means anything, and only while the page is not
     // installed (a home-screen app has no bars to collapse).
@@ -1721,6 +1767,7 @@ Resource-aware Win98 emulator
     // happened. "It happened" is innerHeight growing, which with the page
     // sitting still is the bars and nothing else.
     let pinnedViewportHeight = 0;
+    let collapseViewportWidth = 0;
 
     // The bars-retracted height, straight from the browser. 100lvh is the
     // LARGE viewport -- what the page gets once the toolbars are gone -- and
@@ -1745,15 +1792,26 @@ Resource-aware Win98 emulator
     function scrollCollapseArm() {
       if (!browserChromeIsRemovableByScroll()) return;
       pinnedViewportHeight = window.innerHeight;
+      collapseViewportWidth = window.innerWidth;
       document.body.classList.add('scroll-collapse');
     }
     function scrollCollapseDisarm() {
       document.body.classList.remove('scroll-collapse', 'bars-collapsed');
       document.documentElement.style.removeProperty('--pinned-vh');
       pinnedViewportHeight = 0;
+      collapseViewportWidth = 0;
     }
     function scrollCollapseSample() {
       if (!document.body.classList.contains('scroll-collapse')) return;
+      // A portrait collapse says nothing about the bars after rotation.
+      // Width changes also cover Safari changing its landscape side insets.
+      // Keyboard height changes must not re-arm the strip over text entry.
+      if (Math.abs(window.innerWidth - collapseViewportWidth) > 1) {
+        collapseViewportWidth = window.innerWidth;
+        pinnedViewportHeight = window.innerHeight;
+        document.body.classList.remove('bars-collapsed');
+        document.documentElement.style.removeProperty('--pinned-vh');
+      }
       const height = window.innerHeight;
       const large = largeViewportHeight();
       // Prefer the absolute test: the viewport has reached the height it only
@@ -2121,6 +2179,10 @@ Resource-aware Win98 emulator
       },
       onAppRunningChange: running => {
         document.body.classList.toggle('app-running', !!running);
+        // Windowed phone games need Safari's scroll affordance too. They
+        // never take DirectDraw exclusive mode, so the renderer cannot arm
+        // it for them. Desktop/debug and browsers with a real API stay as-is.
+        if (running) syncWindowedPageFullscreen();
         // No guest is running, so no guest owns the display. Every one of
         // these classes hides the desktop icons -- and on a phone the icons
         // are the only launcher there is, so any of them left set strands the
@@ -2849,6 +2911,9 @@ Resource-aware Win98 emulator
       // their complete backing pixels when the physical screen gets shorter;
       // presentation scales that intact board into the new control layout.
       const boardRenderer = window.wineShell && window.wineShell.renderer;
+      if (SINGLE_APP_MODE && boardRenderer && boardRenderer.singleAppBackingSize) {
+        ({ w, h } = boardRenderer.singleAppBackingSize(w, h));
+      }
       if (boardRenderer && boardRenderer.mobileCrop && boardRenderer.mobileCrop.contain) {
         for (const win of Object.values(boardRenderer.windows || {})) {
           if (!win || win.isChild || !win.visible) continue;
@@ -2863,6 +2928,7 @@ Resource-aware Win98 emulator
     // Resize canvas to match container
     function resizeCanvas() {
       applySingleAppMode();
+      syncWindowedPageFullscreen();
       const canvas = document.getElementById('screen');
       const wrap = document.getElementById('screen-wrap');
       const { fullscreen, displayW, displayH, w, h, dpr } = screenCanvasSize();

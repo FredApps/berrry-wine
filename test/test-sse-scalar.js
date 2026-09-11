@@ -27,6 +27,36 @@ const { createHostImports } = require('../lib/host-imports');
   };
   const upper = [0x7fc12345, 0x80000000, 0xdeadbeef];
   let count = 0;
+  for(const memorySource of [false,true])for(const [value,expected] of [
+    [0,0],[-0,0],[1.5,2],[2.5,2],[-1.5,-2],[-2.5,-2],[3.9,4],
+    [2147483520,2147483520],[2147483648,0x80000000],[-2147483648,0x80000000],
+    [NaN,0x80000000],[Infinity,0x80000000]]) {
+    [bits(value),...upper].forEach((v,i)=>e.guest_write32(b+i*4,v));
+    const code=[0x0f,0x10,0x0d,...le32(b),0xf3,0x0f,0x2d,
+      ...(memorySource?[0x05,...le32(b)]:[0xc1]),0xa3,...le32(out+16),
+      0x0f,0x11,0x0d,...le32(out),0xc3];
+    const pc=base+0x1000+count++*256,sp=base+0xd00000;
+    code.forEach((v,i)=>e.guest_write8(pc+i,v));
+    e.guest_write32(sp,0);e.set_esp(sp);e.set_eip(pc);e.run(10000);
+    assert.strictEqual(e.get_eip(),0);assert.strictEqual(e.get_esp()>>>0,sp+4);
+    assert.strictEqual(e.guest_read32(out+16)>>>0,expected>>>0,`CVTSS2SI ${value}, memory=${memorySource}`);
+    assert.deepStrictEqual(Array.from({length:4},(_,i)=>e.guest_read32(out+i*4)>>>0),
+      [bits(value),...upper],'conversion preserves source XMM');
+  }
+  for(const memorySource of [false,true])for(const value of [0,32,-1,-2147483648,2147483647,16777217,-16777217,16777219]) {
+    [bits(7),...upper].forEach((v,i)=>e.guest_write32(a+i*4,v));
+    e.guest_write32(b,value);
+    const code=[0x0f,0x10,0x05,...le32(a),0xb8,...le32(value),
+      0xf3,0x0f,0x2a,...(memorySource?[0x05,...le32(b)]:[0xc0]),
+      0x0f,0x11,0x05,...le32(out),0xc3];
+    const pc=base+0x1000+count++*256,sp=base+0xd00000;
+    code.forEach((v,i)=>e.guest_write8(pc+i,v));
+    e.guest_write32(sp,0);e.set_esp(sp);e.set_eip(pc);e.run(10000);
+    assert.strictEqual(e.get_eip(),0,'CVTSI2SS returns');
+    assert.strictEqual(e.get_esp()>>>0,sp+4);
+    assert.deepStrictEqual(Array.from({length:4},(_,i)=>e.guest_read32(out+i*4)>>>0),
+      [bits(Math.fround(value)),...upper],`CVTSI2SS signed ${value}, memory=${memorySource}`);
+  }
   for (const [opcode, label, operation] of [
     [0x58, 'ADDSS', (x, y) => Math.fround(x + y)],
     [0x59, 'MULSS', (x, y) => Math.fround(x * y)],

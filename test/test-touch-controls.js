@@ -718,3 +718,33 @@ TouchControls.destroy();
 }
 
 console.log('PASS  touch controls hold, pair and release guest keys');
+
+{
+  TouchControls.install({ document: global.document, renderer });
+  TouchControls.el._rect = { left: 0, top: 0, width: 390, height: 844 };
+  const previous = { ...global.window };
+  global.window.innerWidth = 390;
+  global.window.visualViewport = { height: 844, offsetTop: 0 };
+  global.window.getComputedStyle = () => ({ getPropertyValue: key => key === '--tc-safe-top' ? '47px' : '0px' });
+  let area = TouchControls.getBoardArea();
+  assert.strictEqual(area.y * 844, 47);
+  assert.strictEqual(Math.round((area.y + area.h) * 844), 640);
+  global.document.body.classList.add('keyboard-open');
+  global.window.visualViewport.height = 400;
+  assert.deepStrictEqual(TouchControls.getBoardArea(), area, 'keyboard does not move controls/presentation anchors');
+  global.document.body.classList.remove('keyboard-open');
+  global.window.visualViewport.height = 844;
+  TouchControls.el._rect.top = 47;
+  area = TouchControls.getBoardArea();
+  assert.strictEqual(area.y, 0, 'an already-inset host does not double the safe area');
+  TouchControls.el._rect = { left: 0, top: 0, width: 844, height: 390 };
+  global.window.innerWidth = 844;
+  global.window.visualViewport.height = 390;
+  global.window.getComputedStyle = () => ({ getPropertyValue: key => key === '--tc-safe-top' ? '0px' : '47px' });
+  area = TouchControls.getBoardArea();
+  assert.strictEqual(area.x * 844, 204, 'landscape rails already clear the notch');
+  assert.strictEqual(area.h, 1);
+  TouchControls.destroy();
+  global.window = previous;
+  console.log('PASS board area: status/notch insets, no double inset, keyboard freeze, landscape rails');
+}

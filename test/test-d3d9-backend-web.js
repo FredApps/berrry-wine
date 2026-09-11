@@ -9,7 +9,7 @@ const puppeteer = require('puppeteer');
     args: ['--no-first-run', '--no-default-browser-check'] });
   try {
     const page = await browser.newPage();
-    for (const file of ['gpu-backend.js', 'd3d9-shader.js', 'd3d9-backend.js'])
+    for (const file of ['gpu-backend.js', 'd3d9-shader.js', 'd3d9-fixed.js', 'd3d9-backend.js'])
       await page.addScriptTag({ path: path.join(__dirname, '../lib', file) });
     const result = await page.evaluate(() => {
       const canvas = document.createElement('canvas'); canvas.width = canvas.height = 16;

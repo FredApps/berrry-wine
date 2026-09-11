@@ -15,6 +15,390 @@ node test/test-icewind-dale-demo.js
 
 ## Original installer investigation
 
+### Latest acceptance: original-installed gameplay and quicksave
+
+The local FindFirstFile correction below passes a fresh launch of the clean
+`/private/tmp/iwd-profile-fixed-installed-vfs`, not the diagnostic cache
+export or legacy extracted fixture. Original EXE, INI, KEY, CD2 files, and
+override resources were retained. No guest memory patch or host-expanded
+archive was used. The game recreated its own cache during this run.
+
+The single low-priority headless process used `--no-build --no-threads`,
+`--control-stdin --frozen`, `--batch-size=200000`, `--time-scale=10`,
+`--repaint-every=10`, and the internal `--max-seconds=900` guard. The game
+was advanced in short stdio steps and explicitly quit at batch 1996, exit 0.
+This is a functional result, not a performance measurement.
+
+Inspected checkpoints:
+
+- Batch 695: `/private/tmp/iwd-find-fixed-party.png`, created `codex` fighter.
+- Batch 1095: `/private/tmp/iwd-find-fixed-load-1095.png`, native Prologue
+  after guest expansion of the four area archives, no WED assertion.
+- Done at (400,435) leaves the chapter and reaches the tavern. Hrothgar's
+  opening conversation advances through Continue; Farewell closes it.
+- Batch 1885: `/private/tmp/iwd-original-walk-after.png`, selected character
+  beside the table at approximately (318,200). The preceding floor target
+  at (400,260) was blocked by furniture and is not movement acceptance.
+- Click (500,300), step 40: `/private/tmp/iwd-original-walk-confirmed.png`,
+  the same character now at the destination with the camera unchanged.
+- Q down at 1925, Q up at 1926, then 70 total batches:
+  `/private/tmp/iwd-original-after-quicksave.png` at 1996 shows the tavern
+  again and the game's **Quick-save successful** message.
+
+The native `mpsave/000000001-quick-save` contains `icewind.gam` (3520 bytes,
+`GAMEV1.1`, contains `codex`), `icewind.sav` (1670, `SAV V1.0`),
+`worldmap.wmp` (8072, `WMAPV1.0`), `icewind.bmp` (23462), and
+`portrt0.bmp` (1678). All five were exported and checked under
+`/private/tmp/iwd-original-native-saves/program files/black isle/icewind dale demo/mpsave`.
+The default session also contains `codex` in its 2416-byte GAM. This
+supersedes the older claim that the numbered quicksave path was unavailable.
+
+Fresh-process reload is now verified as well. The same CLI command mounted
+the clean original installation first, then the full native save export with
+a second `--vfs-tree`. No cache files were carried over. At batch 330,
+`/private/tmp/iwd-reload-list.png` shows the numbered quicksave, its thumbnail,
+and the character portrait. Load at (541,102) causes the guest to expand its
+original CD2 archives again. A nearly stationary loading bar is not evidence
+of a hang: the AR100A output handle advanced from 5,004,288 to 5,410,816 bytes
+between batches 1230 and 1530, and AR100D was being written by batch 2330.
+
+Batch 2830 reaches Party Formation with `codex`. Done at (552,432), batch
+3030, restores the tavern at batch 3130, with the character at the saved
+position near (500,300): `/private/tmp/iwd-reload-tavern.png`. Clicking
+(452,330) and stepping 40 moves the character there, visibly confirmed in
+`/private/tmp/iwd-reload-move.png`. The historical red `Paused for saving
+game` log line remains visible but does not prevent this movement. The
+process explicitly quit at batch 3170, exit 0. Shutdown still reports a held
+main-thread critical section at `0x006c8f94`; this test does not establish
+that all synchronization cleanup is correct.
+
+Remaining limits: browser acceptance of this original VFS is not yet
+verified. The Prologue narration body is still blank. Earlier shutdown
+diagnostics report one abandoned parked EnterCriticalSection and one held
+main-thread critical section; successful gameplay does not prove that
+scheduler issue fixed. The legacy acceptance script below still mounts its
+modified fixture and must not be cited as the original-install regression.
+
+### Original-install browser probe: not accepted
+
+The temporary `/private/tmp/iwd-original-browser.js` serves the same original
+installation and native save export through range-backed providers. It uses
+headless Chrome, cross-origin isolation, frozen stdio stepping, and a 900s
+internal deadline. It does not mount the legacy fixture. The first harness
+attempt omitted profile preparation and stopped on `VfsPendingError` for
+`icewind.ini`. Calling the existing `mediaImport.materializeIniFiles` helper
+before launch corrects that harness omission without changing file contents.
+
+The subsequent probe still does not establish browser gameplay. After a
+relaunch without premature Escape input, it creates `JigSawedME` and opens
+the GUI archives and `data/mvefilel.bif`, but the captures at frozen steps
+450, 750, and 910 remain gray. The window has no `_dxFrameLayer` at that
+checkpoint. Main EIP is `0x008b68c5`; four cooperative secondary threads
+exist, with final EIPs `0x005b3344`, `0x00437dd3`, `0x00437d49`, and
+`0x0043d3eb`. Escape at steps 750 and 830 did not expose a menu. The last
+capture is `/private/tmp/iwd-original-browser-menu.png` (despite the filename,
+it is not a menu). The browser and its temporary server were explicitly
+closed, exit 0. Rendering, intro progress, and input routing still need to be
+distinguished before assigning a runtime cause; no browser fix is claimed.
+
+### Original first-area load: false local file matches
+
+On the Lobby3A build, the clean original-installed VFS completes character
+creation through Sound and Name. The inspected
+`/private/tmp/iwd-original-party-ready.png` at batch 695 shows the created
+`codex` fighter. Accepting the party enters Starting Game, then the guest
+itself expands the four original area CBFs into `cache/data`:
+
+| Archive | Expanded Bytes | SHA-256 of Guest Output |
+| --- | ---: | --- |
+| AR100A | 6613876 | `4134c41a68425cb9a6c98fb5cbb146d6be9aa883aa76e626acb1c7a22ca330a6` |
+| AR100B | 8898048 | `1e06cd252940e44040b55c48feae9ed72c0ca52491f71a2c723fbbf8ae269328` |
+| AR100C | 6199168 | `87b4f35baba9403c1a5a0efb8f80fe2ed2b43efd604766522533609b5cbd05a1` |
+| AR100D | 5072154 | `5bc21fcd750516e2e3f1d97bca9bb7fb9382c3de8fd24736ac6af4020926a648` |
+
+A read-only, in-memory zlib comparison found every byte equal to the original
+CBF payload's expansion. No reference output was mounted or substituted.
+This rules out decompression corruption for these four files.
+
+The run subsequently asserted at `Infinity.cpp:1763`, "Demand for WED file
+failed"; the inspected screenshot is
+`/private/tmp/iwd-original-first-load-1245.png`. The guest stack returns to
+`0x006559cb`; resource object `0x4ff6c1d0` has locator `0x03600004`.
+The original KEY resolves that locator to `AR1006.WED` in BIF 54,
+`data/AR100B.bif`. Its expanded file contains the valid `WED V1.3` resource
+at offset 23108, length 6586. The failing BIF object's stored path instead
+names the nonexistent `override/data/ar100b.bif`.
+
+`VirtualFS.findFirstFile` was allowing exact C-drive probes in absent
+directories to match the same basename anywhere in the VFS, including the
+real cache file. `createFile` already disallowed that fallback on C:, so
+the two APIs disagreed about the existence of the override path. The new
+regression fails before the correction; both APIs now reject missing local
+paths while retaining exact cache access and the existing non-C media
+fallback. VFS (30), lazy-entry (34), overlay (19), and ANSI/OEM filename
+tests pass. This is a general path-lookup correction, not a game-specific
+resource substitution.
+
+### Earlier Lobby3A checkpoint: character generation reached
+
+The targeted trace after the DP4 fix identified a second rejected interface:
+`IDirectPlayLobby2_QueryInterface` at return address `0x008d3796` requested
+`{2db72491-652c-11d1-a7a8-0000f803abfc}` (Lobby3A), not another DirectPlay4
+interface. Its `E_NOINTERFACE` path released the lobby and abandoned setup.
+
+Lobby3A now upgrades the same ANSI object to the SDK's 19-slot layout,
+preserving all 15 inherited slots and appending ConnectEx,
+RegisterApplication, UnregisterApplication, and WaitForConnectionSettings.
+The signatures follow the [Wine DirectPlay lobby header](https://raw.githubusercontent.com/wine-mirror/wine/master/include/dplobby.h).
+These four new operations remain explicitly unsupported, with argument
+validation and no fabricated connection or registration success. Unicode
+Lobby3 remains rejected. This is ABI support, not full lobby functionality.
+
+The real-thunk `test-directplay4.js` regression passes for both DP4 and
+Lobby3A, including identity, inherited slots, worker registry restoration,
+HRESULTs, output clearing, and stdcall cleanup. The inherited lobby-address
+suite also passes. Full build gates pass: native 1,076,563 bytes,
+compatibility 1,077,027 bytes, layout `fc765043612db8cc`.
+
+A fresh low-priority, frozen CLI run used the original install's complete
+`/private/tmp/iwd-profile-fixed-installed-vfs`, without substituting the
+EXE, INI, KEY, or compressed archives. The trace now reports Lobby3A QI
+`S_OK`, followed by `IDirectPlay3_EnumConnections`. Inspected captures:
+
+- Batch 300: `/private/tmp/iwd-lobby3-menu.png`, complete menu.
+- Click (480,175), step 50: `/private/tmp/iwd-lobby3-create-game.png`,
+  actual Party Formation with six slots, no session error.
+- Click (145,145), step 20: `/private/tmp/iwd-lobby3-character-choice.png`,
+  the native Create/Delete/Cancel dialog.
+- Click (320,215), step 20: `/private/tmp/iwd-lobby3-character.png`,
+  Character Generation with its initial Gender step and explanatory text.
+
+The process was explicitly quit at batch 390, exit 0. This fixes the observed
+Create Game blocker but is not gameplay acceptance. Next complete a character
+and verify first-area loading, unpaused movement, and native session saving
+using this original-installed VFS. Older acceptance below used the modified
+legacy fixture and cannot establish those results for the original install.
+
+### Earlier DirectPlay4 checkpoint
+
+The pre-DP4 rejection recorded below is now fixed in compiled factory tests.
+QueryInterface upgrades the same ANSI object to a generated 53-slot vtable,
+preserving its 47 inherited entries and appending the six SDK tail methods.
+`test-directplay4.js` loads a Win32 PE and calls the generated thunks through
+the emulator dispatch loop, checking slot IDs, HRESULTs, output buffers, and
+stdcall stack cleanup. It also checks restoration of the appended thread
+vtable registry entry. The factory/identity suite passes 31 cases.
+
+Synchronous local SendEx, send/receive queue queries, and cancellation of
+pending queue entries are implemented. Async production/completion and public
+group-ownership policy/notifications remain explicitly unsupported; both
+ownership methods preserve state/output rather than report false success.
+Cancellation tests inject pending entries and do not claim an async transport.
+The earlier internal ownership storage is not a completed public contract.
+
+The full build passed (native 1,076,220 bytes, compatibility 1,076,684 bytes;
+layout `d36314e0fcee18b2`). A fresh frozen CLI run used only the original
+installer's `/private/tmp/iwd-profile-fixed-installed-vfs`, with the same
+EXE/cwd and no INI/KEY substitutions. The inspected menu at batch 300 is
+`/private/tmp/iwd-dp4-menu.png`. Clicking Create Game at (480,175), then
+stepping 100 batches, **still produces Cannot connect to the game session**;
+the inspected capture is `/private/tmp/iwd-dp4-create-game.png`. The process
+was explicitly quit at batch 400. This is not gameplay acceptance, and the
+new result disproves treating the missing IID as the sole session blocker.
+Next is a targeted COM/DirectPlay trace beyond the now-supported activation
+request. Older checkpoints below describe their respective builds.
+
+### Decoder overlap correction
+
+The long install's exit counters reported roughly 101 million retired
+blocks but only 127,641 invalidation calls. The retirement counter also
+counts `page_publish` replacing overlapping entries; it does not prove
+that the guest modified its code. The hot cabinet loop at relocated
+`0x007b4d21` has ordinary interior branch targets. Alternating an outer
+entry with an interior entry made the one-owner-per-byte cache continually
+retire the other decode.
+
+`decode_block` now emits an ordinary block end when it reaches an already
+cached instruction entry, preserving that suffix instead of overlapping
+it again. No guest address or cabinet format is special-cased. The focused
+regression in `test-sparse-generated-code-cache.js` failed before this
+change because the interior entry vanished after re-entering the outer
+prefix. It now requires both entries to remain cached while alternating
+them, and retains the subsequent shared-immediate rewrite check. Sparse
+and cross-instance invalidation, page-chunk allocation, and 138 x86 cases
+pass with this correction.
+
+The actual clean installer run on this build passed inspected copy screens
+at batch 8750 (30%) and 18750 (56%). Its next large stdio step did not
+return a checkpoint for a long interval: a live process and CPU activity
+were not sufficient evidence of installation progress. Final output did
+establish a new stopping point at batch 27726: the installer left its
+copy-progress UI and trapped on the still-unimplemented
+`WritePrivateProfileSectionA`. The caller is `0x0041d366`, returning to
+`0x0041d36c` in the emitted InstallShield engine. Process exit was 1,
+not Setup Complete. Implement and test the real section-writing semantics
+before another full installer acceptance; do not silently return success.
+Use shorter step requests or a separately accessible control channel so
+progress and orderly-stop commands are not queued behind a long step.
+
+`WritePrivateProfileSectionA/W` are now implemented in `db04f9a8`: section
+replacement/deletion writes the VFS file, retains an existing UTF-16LE file's
+encoding, and reports invalid parameters, missing parents, and read-only
+write failures. Single-key profile writes preserve the section-written keys.
+The storage regression and full build pass. `test/test-profile-section.js`
+also exercises both compiled WAT handlers with guest pointers, Unicode text,
+NULL deletion/flush arguments, BOOL/LastError, and three-argument stdcall
+cleanup. The original-installer acceptance below now passes; gameplay using
+the installed game's original INI/CD layout remains unverified.
+
+### Completed original installation
+
+The clean guest-produced engine replay on the integrated profile-fix build
+(1,073,129-byte WASM, layout `f73bfdc3f7f38137`) completed the original
+installation. It passed the former profile-section trap, created shortcuts,
+and displayed the compatible-DirectX reinstall question at batch 27750.
+Answering No with `dlg-cmd:7` reached the actual **Setup Complete** screen at
+batch 27800. Finish (ID 1) led to guest `[Exit] code=0` and a successful VFS
+export at batch 27840. This is not a deadline-only or copy-progress acceptance.
+
+The separate output is `/private/tmp/iwd-profile-fixed-installed-vfs`.
+Its `program files/black isle/icewind dale demo` subtree contains 1,079 files
+totaling 470,164,222 bytes. Read-only comparison with the existing
+`installed-extracted/Recommended_compressed` reference found 1,076 identical
+files, one changed `icewind.ini`, and two installer-created extras:
+`readme.txt` and `uninst.isu`. All 640 sound-set WAVs are present. The original
+`CHITIN.KEY` is byte-identical to the reference's original key, not the
+legacy modified `CHITIN-full.KEY`. The installer itself wrote these aliases:
+
+```ini
+[Alias]
+HD0:=C:\Program Files\Black Isle\Icewind Dale Demo\
+CD1:=C:\Program Files\Black Isle\Icewind Dale Demo\CD1\
+CD2:=C:\CD2\
+```
+
+No host decompressor or INI/KEY patch supplied the installed payload. The
+export also retains the original `cd2` source tree. Next launch must mount
+this entire VFS and use the installed executable's guest path and working
+directory, retaining the original CD2 layout and compressed resources.
+Do not substitute legacy expanded BIFs or the modified key as gameplay proof.
+
+Inspected screenshots: `/private/tmp/iwd-profile-directx-question.png` and
+`/private/tmp/iwd-profile-setup-final.png`. The latter shows Setup Complete.
+Replay used `--max-seconds=3600 --control=8137 --control-stdin --frozen`.
+This terminal closed stdin, so all wizard actions and checkpoints used HTTP.
+Long step requests can exceed HTTP's 30-second response deadline while the
+guest keeps running: inspect `/snapshot` credits until zero before issuing
+another step. Independent file-size checks established continued progress.
+The process priority was lowered during high host load; no benchmark was run.
+
+Two follow-up observations are not covered by this install acceptance: the
+Readme checkbox input issued a ShellExecute request before Finish, and VFS
+export reported an empty `c:\windows` file/directory collision, preserving
+the file as `windows.__vfs_file__`. Neither caused a setup error, but both
+deserve separate investigation rather than being silently treated as correct.
+
+### Original-installed game startup
+
+A low-priority headless run mounted the complete exported VFS, loaded
+`program files/black isle/icewind dale demo/iddemo.exe`, and set both its
+guest executable path and working directory to that installed directory.
+No INI, KEY, CD2, override, or compressed resource was changed or removed.
+With `--batch-size=200000 --time-scale=10 --repaint-every=10`, Escape at
+batches 100, 160, 220, and 280 skipped the intro sequences. The inspected
+`/private/tmp/iwd-original-game-later.png` at batch 285 shows the full menu
+with readable labels, not just background artwork.
+
+Clicking Create Game at `(480,175)` at batch 300 instead produced
+**Cannot connect to the game session**. The inspected error screenshot is
+`/private/tmp/iwd-original-party.png` at batch 400; despite its filename it
+does not show Party Formation. The run was explicitly quit at batch 450.
+This differs from the legacy modified-fixture acceptance and remains the
+next gameplay blocker. The error text alone does not establish whether
+DirectPlay address creation, COM activation, or another step failed.
+
+A subsequent selective DirectPlay/COM API trace stopped at the internal
+180-second deadline at batch 200, before the Create Game click. It provides
+no failing session API evidence. Note that `--trace-api=Names` also enables
+unfiltered file-read/find diagnostics through `_debugReadFile` and
+`_debugFindFile`, so even a nominally selective startup trace emits extensive
+resource I/O. Next investigation should enable the relevant tracing at the
+menu or suppress those independent file diagnostics while retaining the
+DirectPlay/COM trace, then compare with the legacy route on the same build.
+
+The follow-up frozen trace identified a concrete interface gap during menu
+initialization, before Create Game: at `0x008d3680`, the executable calls
+`CoCreateInstance(0x00997c50, NULL, 1, 0x00997c40, out)` with return address
+`0x008d3686`. Decoding the original executable's GUID bytes gives
+`CLSID_DirectPlay` and `IID_IDirectPlay4A`
+`{0AB1C531-4745-11D1-A7A1-0000F803ABFC}`. The caller stores the HRESULT at
+`[ebp-0x1c]` and tests it after `CoUninitialize`.
+
+The current `dplay_query_interface_wa` intentionally rejects this IID because
+only the 47-slot ANSI DirectPlay2/3 vtable exists. The compiled
+`test-directplay-query-interface.js` now reproduces the exact factory request:
+`E_NOINTERFACE`, cleared output, and no leaked temporary object. Its passing
+negative test describes a missing feature, not working IWD gameplay. The
+legacy fixture's earlier success does not establish that it still works on
+this newer COM implementation; the original-installed error should not be
+attributed to INI/KEY/CD layout without further evidence.
+
+At that checkpoint, the next step was a 53-slot ANSI DirectPlay4 implementation. Its additional methods
+are group-owner get/set, extended send, queue inspection, and cancellation by
+message or priority, as defined in the
+[Wine DirectPlay header](https://raw.githubusercontent.com/wine-mirror/wine/master/include/dplay.h).
+Simply accepting the IID on the shorter vtable would permit calls past its
+end. Ownership, queue state, cancellation, reference lifetimes, and all tail
+stdcall contracts need coverage before changing the current rejection test.
+The trace run was explicitly quit at batch 350; its inspected session-error
+capture is `/private/tmp/iwd-original-dp4-error.png`.
+
+Implementation has started with an internal ownership-storage prerequisite:
+the local entity entry now retains an explicit owner ID. Assignment requires
+a live group and a live player; transfer replaces that ID, player destruction
+invalidates references to it, and group destruction/Close/slot reuse discard
+old ownership. Compiled entity tests cover those transitions and failed
+assignments preserving prior state. This is not yet `GetGroupOwner` or
+`SetGroupOwner` API support: default selection, membership policy, ownership
+notifications/migration, per-object session isolation, and public HRESULT
+contracts still need to be established. No DP4 IID or additional vtable slot
+has been exposed by this prerequisite.
+
+Internal message storage now retains copied payloads, owner keys, sender and
+recipient IDs, unsigned priorities, and non-recycled message IDs. Queries
+count messages/bytes or find the oldest match independent of slot reuse;
+cancellation is owner-scoped and separates send from receive entries. Storage
+is bounded to 64 entries, 1 MiB per payload, and 4 MiB total. Close clears it
+even when no entity table has been allocated. The compiled
+`test-directplay-message-queue.js` covers those invariants, ID exhaustion, and
+copies spanning non-contiguous guest-page backing. `Receive` now consumes
+received entries through the public handler, with buffer-size negotiation,
+peek, FIFO, explicit sender/recipient filters (including system sender zero),
+and sparse destination copies. `GetMessageCount` reports received entries for
+the caller's object. Final COM Release removes that object's messages without
+removing another object's queue; non-final Release retains them. The compiled
+test exercises those handlers and their stdcall stack cleanup. Receive's
+copy/peek/filter behavior follows the
+[Wine receive implementation](https://github.com/wine-mirror/wine/blob/master/dlls/dplayx/dplay.c).
+The storage tests inject received entries directly. A separate compiled
+`test-directplay-send.js` now exercises public Send-to-Receive delivery:
+local unicast, broadcast and direct group membership, excluding the sender.
+Each recipient gets copied bytes and its borrowed receive event is signaled
+only after all copies exist. Capacity failure rolls back this send without
+discarding prior messages or signaling events. Unknown flags fail, while
+streams, security and asynchronous modes explicitly return unsupported.
+Entity entries retain creator-object and event fields; sends require a local
+sender belonging to the caller and do not silently join unrelated objects.
+Close and final Release retire only the caller's entities/messages. Destroying
+a recipient discards its unread messages but destroying a sender does not
+retract already-delivered messages. Tests cover those transitions, two-object
+cleanup, capacity rollback, copied bytes, event ordering, and recipient slot 31.
+Provider/session initialization, network/session joining, anonymous sends,
+SendEx and asynchronous completion still need implementation. Existing entity
+enumeration/mutation methods also need a full session-isolation audit. The DP4
+IID remained rejected at that checkpoint; see the latest result above. No new
+gameplay pass is claimed.
+
 The original `Setup.exe` successfully emits its InstallShield 5.5 engine
 through guest execution. Replay that emitted engine, not a host-extracted
 cabinet. The following frozen CLI route uses an isolated build and leaves

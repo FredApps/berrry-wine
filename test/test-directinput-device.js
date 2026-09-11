@@ -115,6 +115,38 @@ const extraWat = `
       (local.get $obj) (i32.const 16) (local.get $buffer)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
+  (func (export "test_di_set_data_format")
+        (param $obj i32) (param $format i32) (result i32)
+    (global.set $esp (i32.const 0x074ff000))
+    (call $handle_IDirectInputDevice_SetDataFormat
+      (local.get $obj) (local.get $format) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_di_set_cooperative_level")
+        (param $obj i32) (param $hwnd i32) (param $flags i32) (result i32)
+    (global.set $esp (i32.const 0x074ff000))
+    (call $handle_IDirectInputDevice_SetCooperativeLevel
+      (local.get $obj) (local.get $hwnd) (local.get $flags)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_di_acquire") (param $obj i32) (result i32)
+    (global.set $esp (i32.const 0x074ff000))
+    (call $handle_IDirectInputDevice_Acquire
+      (local.get $obj) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_di_unacquire") (param $obj i32) (result i32)
+    (global.set $esp (i32.const 0x074ff000))
+    (call $handle_IDirectInputDevice_Unacquire
+      (local.get $obj) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
+  (func (export "test_di_poll") (param $obj i32) (result i32)
+    (global.set $esp (i32.const 0x074ff000))
+    (call $handle_IDirectInputDevice2_Poll
+      (local.get $obj) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.get $eax))
   (func (export "test_di_set_buffer_size")
         (param $obj i32) (param $property_id i32) (param $property i32) (result i32)
     (global.set $esp (i32.const 0x074ff000))
@@ -155,6 +187,88 @@ const extraWat = `
   const root = wat.test_di_root_create(0x0700) >>> 0;
   const count = 0x00410100;
   const data = 0x00410200;
+  const mouseFormat = 0x00411000;
+  const mouseObjects = 0x00412000;
+  const keyboardFormat = 0x00411100;
+  const keyboardObjects = 0x00414000;
+
+  const writeFormat = (format, objects, kind) => {
+    const keyboardDevice = kind === 'keyboard';
+    const mouse2 = kind === 'mouse2';
+    const objectCount = keyboardDevice ? 256 : (mouse2 ? 11 : 7);
+    const dataSize = keyboardDevice ? 256 : (mouse2 ? 20 : 16);
+    wat.guest_write32(format, 24);       // DIDATAFORMAT.dwSize
+    wat.guest_write32(format + 4, 16);   // dwObjSize
+    wat.guest_write32(format + 8, 2);    // DIDF_RELAXIS
+    wat.guest_write32(format + 12, dataSize);
+    wat.guest_write32(format + 16, objectCount);
+    wat.guest_write32(format + 20, objects);
+    for (let i = 0; i < objectCount; i++) {
+      const offset = keyboardDevice ? i : (i < 3 ? i * 4 : i + 9);
+      const type = keyboardDevice
+        ? ((0x8000000c | (i << 8)) >>> 0)
+        : (i < 3 ? 0x00ffff03 : 0x00ffff0c);
+      wat.guest_write32(objects + i * 16, 0); // pguid: identity is not retained
+      wat.guest_write32(objects + i * 16 + 4, offset);
+      wat.guest_write32(objects + i * 16 + 8, type);
+      wat.guest_write32(objects + i * 16 + 12, 0);
+    }
+  };
+
+  // DirectInput requires format + cooperative level before acquisition, and
+  // acquisition is a Boolean state rather than a reference count.
+  assert.strictEqual(wat.test_di_acquire(mouse) >>> 0, 0x80070057,
+    'Acquire rejects a device without a data format or cooperative level');
+  assert.strictEqual(wat.test_di_poll(mouse) >>> 0, 0x8007000c,
+    'Poll rejects an unacquired device');
+  assert.strictEqual(wat.test_di_set_data_format(mouse, 0) >>> 0, 0x80070057,
+    'SetDataFormat rejects a null descriptor');
+  writeFormat(mouseFormat, mouseObjects, 'mouse');
+  wat.guest_write32(mouseObjects + 4, 4);
+  assert.strictEqual(wat.test_di_set_data_format(mouse, mouseFormat) >>> 0, 0x80070057,
+    'SetDataFormat rejects a nonstandard object offset');
+  wat.guest_write32(mouseObjects + 4, 0);
+  assert.strictEqual(wat.test_di_set_data_format(mouse, mouseFormat) >>> 0, 0,
+    'SetDataFormat accepts the standard DIMOUSESTATE layout');
+  assert.strictEqual(wat.test_di_acquire(mouse) >>> 0, 0x80070057,
+    'Acquire still requires a cooperative level');
+  assert.strictEqual(wat.test_di_set_cooperative_level(mouse, 0xdead, 6) >>> 0,
+    0x80070006, 'SetCooperativeLevel rejects an invalid top-level HWND');
+  assert.strictEqual(wat.test_di_set_cooperative_level(mouse, 0x10000, 0) >>> 0,
+    0x80070057, 'cooperative flags require one choice from each pair');
+  assert.strictEqual(wat.test_di_set_cooperative_level(mouse, 0x10000, 6) >>> 0, 0,
+    'foreground nonexclusive access is accepted for the desktop window');
+  assert.strictEqual(wat.test_di_acquire(mouse) >>> 0, 0);
+  assert.strictEqual(wat.test_di_acquire(mouse) >>> 0, 1,
+    'repeated Acquire returns S_FALSE without adding an acquisition reference');
+  assert.strictEqual(wat.test_di_poll(mouse) >>> 0, 1,
+    'the acquired system mouse returns DI_NOEFFECT because it needs no polling');
+  assert.strictEqual(wat.test_di_set_data_format(mouse, mouseFormat) >>> 0, 0x800700aa,
+    'the data format cannot change while the device is acquired');
+  assert.strictEqual(wat.test_di_unacquire(mouse) >>> 0, 0);
+  assert.strictEqual(wat.test_di_unacquire(mouse) >>> 0, 1,
+    'one Unacquire releases the device despite two Acquire calls');
+  wat.guest_write32(data, 0xfeedface);
+  assert.strictEqual(wat.test_di_mouse_get_state(mouse, data) >>> 0, 0x8007000c);
+  assert.strictEqual(wat.guest_read32(data) >>> 0, 0xfeedface,
+    'unacquired GetDeviceState leaves the output buffer untouched');
+  wat.guest_write32(count, 7);
+  assert.strictEqual(wat.test_di_mouse_get_data(mouse, data, count, 0) >>> 0, 0x8007000c);
+  assert.strictEqual(wat.guest_read32(count), 7,
+    'unacquired GetDeviceData leaves the caller count untouched');
+  writeFormat(mouseFormat, mouseObjects, 'mouse2');
+  assert.strictEqual(wat.test_di_set_data_format(mouse, mouseFormat) >>> 0, 0,
+    'SetDataFormat accepts the standard 20-byte DIMOUSESTATE2 layout');
+  writeFormat(mouseFormat, mouseObjects, 'mouse');
+  assert.strictEqual(wat.test_di_set_data_format(mouse, mouseFormat) >>> 0, 0,
+    'an unacquired device can return to the standard DIMOUSESTATE layout');
+  assert.strictEqual(wat.test_di_acquire(mouse) >>> 0, 0);
+
+  writeFormat(keyboardFormat, keyboardObjects, 'keyboard');
+  assert.strictEqual(wat.test_di_set_data_format(keyboard, keyboardFormat) >>> 0, 0,
+    'SetDataFormat accepts the standard 256-byte keyboard layout');
+  assert.strictEqual(wat.test_di_set_cooperative_level(keyboard, 0x10000, 6) >>> 0, 0);
+  assert.strictEqual(wat.test_di_acquire(keyboard) >>> 0, 0);
 
   // Win98-era DirectInput enumerates the system mouse and keyboard through
   // the guest callback. The callback owns only the descriptor lifetime and

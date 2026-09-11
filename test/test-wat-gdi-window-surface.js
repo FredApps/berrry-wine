@@ -19,6 +19,11 @@ const SECOND_CHILD = 0x10004;
 
 async function main() {
   const extraWat = String.raw`
+  (func (export "test_clip_dialog_mode") (param $hwnd i32) (param $mode i32)
+    (global.set $is_win16 (local.get $mode))
+    (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_DIALOG)))
+  (func (export "test_clip_control_class") (param $hwnd i32) (param $class i32)
+    (call $ctrl_table_set (call $wnd_table_find (local.get $hwnd)) (local.get $class) (i32.const 100)))
   (func (export "test_beginpaint_system_update_clip") (param $hwnd i32) (result i32)
     (local $ps i32) (local $hdc i32) (local $clip i32) (local $ok i32)
     (local.set $ps (global.get $GUEST_STACK))
@@ -281,6 +286,37 @@ async function main() {
     `(rects=${systemClipRects}, box=${systemClipBox.join(',')})`);
   assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 0,
     'a higher-z overlapping sibling must be excluded from the child DC');
+  wat.test_clip_dialog_mode(HWND, 1);
+  wat.dc_apply_client_clip(siblingDc, CHILD);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 0,
+    'Win16 still honors explicit WS_CLIPSIBLINGS');
+  wat.wnd_set_style_export(CHILD, 0x50000000);
+  wat.test_clip_control_class(CHILD, 3);
+  wat.dc_apply_client_clip(siblingDc, CHILD);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 1,
+    'Win16 decorative dialog siblings do not implicitly hide enclosed labels');
+  wat.test_clip_control_class(CHILD, 0);
+  wat.test_clip_control_class(SECOND_CHILD, 3);
+  wat.dc_apply_client_clip(siblingDc, CHILD);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 0,
+    'Win16 custom frames retain clipping around higher heading labels');
+  dv.setInt32(RegionMap.BASE.WND_Z_ORDER_TABLE +secondChildSlot * 4, 50, true);
+  wat.dc_apply_client_clip(siblingDc, CHILD);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 0,
+    'an earlier outer frame also clears a later heading');
+  const childWh = wat.ctrl_get_wh(CHILD) >>> 0;
+  wat.ctrl_set_geom(SECOND_CHILD, 7, 12, childWh & 65535, childWh >>> 16);
+  wat.dc_apply_client_clip(siblingDc, CHILD);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 1,
+    'the heading own coincident frame is not clipped away');
+  wat.ctrl_set_geom(SECOND_CHILD, 10, 13, 5, 5);
+  wat.test_clip_control_class(SECOND_CHILD, 0);
+  dv.setInt32(RegionMap.BASE.WND_Z_ORDER_TABLE +secondChildSlot * 4, 200, true);
+  wat.test_clip_dialog_mode(HWND, 0);
+  wat.dc_apply_client_clip(siblingDc, CHILD);
+  assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 0,
+    'Win32 dialog compatibility clipping is preserved');
+  wat.wnd_set_style_export(CHILD, 0x54000000);
   dv.setInt32(RegionMap.BASE.WND_Z_ORDER_TABLE +childSlot * 4, 300, true);
   wat.dc_apply_client_clip(siblingDc, CHILD);
   assert.strictEqual(wat.test_gdi_dc_clip_point_visible(siblingDc, 3, 1), 1,

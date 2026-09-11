@@ -11,7 +11,12 @@ const RegionMap = require('../lib/region-map.generated.js');
   // There is no host text import left to stub: measurement, metrics and
   // rasterization all happen in WAT against a strike the VFS supplied.
   // test/test-gdi-migration-status.js is what holds that surface closed.
-  const { exports: wat, memory, hostCtx } = await bootRenderHarness();
+  const { exports: wat, memory, hostCtx } = await bootRenderHarness({extraWat: `
+    (func (export "font_language_info") (param $dc i32) (result i32)
+      (global.set $esp (i32.const 0x074ff000))
+      (call $handle_GetFontLanguageInfo (local.get $dc) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0)) (global.get $eax))
+  `});
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => RegionMap.g2w(guest, imageBase);
@@ -41,6 +46,18 @@ const RegionMap = require('../lib/region-map.generated.js');
     wat.test_call_SelectObject(hdc, bitmap);
     return { bitmap, hdc, bits: wat.guest_read32(bitsOut) >>> 0 };
   };
+
+  check('font language information follows the selected font', () => {
+    assert.strictEqual(wat.font_language_info(0)>>>0,0xffffffff);
+    const {hdc}=createTextDc();
+    assert.strictEqual(wat.font_language_info(hdc),0,'stock bitmap font is normalized');
+    const face=allocZero(32);
+    [...'Arial'].forEach((c,i)=>wat.guest_write16(face+i*2,c.charCodeAt(0)));
+    const font=wat.test_call_CreateFontW(-16,400,0,face)>>>0;
+    assert(font);wat.test_call_SelectObject(hdc,font);
+    assert.strictEqual(wat.font_language_info(hdc)&8,8,'real classic kerning table advertised');
+    assert.strictEqual(wat.get_esp()>>>0,0x074ff008);
+  });
 
   check('ANSI extent-ex returns progressive widths and exact fit count', () => {
     const { hdc } = createTextDc();

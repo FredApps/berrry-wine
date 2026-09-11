@@ -25,6 +25,10 @@ const childProcess = require('child_process');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
+const apiTable = JSON.parse(fs.readFileSync(path.join(SRC, 'api_table.json'), 'utf8'));
+const generatedStubNames = new Set(apiTable
+  .filter(api => api.stub !== undefined)
+  .map(api => `$handle_${api.name}`));
 const arg = (name, dflt) => {
   const hit = process.argv.find(a => a.startsWith(`--${name}=`));
   return hit ? hit.slice(name.length + 3) : dflt;
@@ -117,7 +121,13 @@ function extractFuncs(file, text) {
 
 const funcs = [];
 for (const f of fs.readdirSync(SRC).filter(n => n.endsWith('.wat')).sort()) {
-  funcs.push(...extractFuncs(f, fs.readFileSync(path.join(SRC, f), 'utf8')));
+  for (const fn of extractFuncs(f, fs.readFileSync(path.join(SRC, f), 'utf8'))) {
+    // Constant handlers opted into api_table metadata are intentionally
+    // generated from one template. Count the table rows, not their duplicate
+    // machine shape; this census remains about hand-written copy/paste.
+    if (f === '09b2-dispatch-table.generated.wat' && generatedStubNames.has(fn.name)) continue;
+    funcs.push(fn);
+  }
 }
 
 let added = new Set();

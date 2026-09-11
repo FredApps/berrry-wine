@@ -1,4 +1,211 @@
-# Project review — 2026-09-09
+# Project review — 2026-09-10
+
+## Recovery execution update — 2026-09-11
+
+**Final build update:** OLE owner fix `f1b91444` resolves the intermediate handler-checker failure described below. Clean committed main `90503599` now passes the full canonical/compatibility build at **1,160,121 / 1,160,589 bytes**, layout `9c6027bce1d500a1`; the 24 native x87 isolation checks and 11 pipeline differential cases pass. The full test suite was not run. Broad recovery remains isolated pending newer-main reconciliation and coordinated handling of active overlapping edits.
+
+Ownership checks found live shape-census/region-folding processes and active release/mobile/D3D/GL work. Those lanes were excluded from takeover and cleanup. The closed-session screensaver work and this team's review branch were recovered into `codex/recovery-main-20260910`, preserving the original branches/worktrees. The unreferenced x87 optimization commit now has safety ref `codex/recovery-x87-islands-20260910`; it is **not accepted for main** on the available timings.
+
+The broad recovery candidate reconciles 24 review commits with main through `10b0f53e`, adapts the screensaver, fixes a real Worker font-startup integration failure, and appends screensaver storage without relocating existing canonical regions. Canonical/compatibility builds pass at **1,174,169 / 1,174,637 bytes**. Focused native, Worker, storage, font, lazy-I/O, callback and Chrome OPFS checks pass; save-bundle/sync passes **112 checks**. The real-browser screensaver catalog/Preview check and final **full Chrome Worker matrix pass**: Notepad/Calculator parity, both Rodents' rendering and held-arrow gameplay, Winamp's three Workers and live playback, and COM success/failure recovery.
+
+The SMAC oracle candidate is retained at `791d656d` on `codex/recovery-smac-oracle-20260910`: two eight-frame comparisons matched, but the next repeat skipped expected frame index 6. It correctly reports failure and no speedup. **Do not merge it as a deterministic benchmark oracle.** Synthetic sparse-overlay checks mount 24 GiB of logical files with no payload/cache allocation and use 262,159 cache bytes after small reads; these are accounting measurements, not RSS. Loaded-host timings do not establish a current-main performance improvement.
+
+**The broad candidate is not merged into main.** Main has newer commits, and active uncommitted host/browser/filesystem/test edits overlap integration. No foreign edits have been stashed or staged. The standalone x87 correctness recovery **is merged as `f9465bc6`**, containing `401b58a4`: only two WAT sources and its regression test. The foreign dirty diff was byte-identical across that merge. Its isolated pre-merge canonical/compatibility build passed **1,156,001 / 1,156,469 bytes**, with 24 isolation/save/raw-integer checks and 11 pipeline differential cases passing. A clean build of merged head stops at an inherited OLE handler-ESP gate from parent `a38c67e8` (`RegisterDragDrop`/`RevokeDragDrop` wrappers); the OLE owner was notified. Do not claim the complete merged-main build passes. Detailed evidence is in [docs/recovery-2026-09-10.md](docs/recovery-2026-09-10.md). Findings below describe the original pinned baseline; candidate-only fixes remain open on main.
+
+The initial Rodent timeout was traced to a missing fixture dependency, `weputil.dll`. Materializing the full 49-file WEP2 package fixed the test fixture; the bounded retry and full matrix then passed. No server path policy was weakened. This does not establish that memory relocation caused the earlier timeout.
+
+## Fresh review: main, unfinished designs, and recoverable agent work
+
+**Baseline:** committed main `ad3ba44bf28b030b1068d842c715f53bc6099eb2`. This is a review, not an implementation or release. Other agents are actively editing the shared worktree; their uncommitted work is excluded from claims about main. The older review below is retained as historical evidence.
+
+```text
++------------------------------------------------------------------------------------------------------+
+| FRESH REVIEW                         MAIN != ALL WORK COMPLETED IN OTHER SESSIONS                     |
++---------------------------------+----------------------------------+---------------------------------+
+| VERIFIED NOW                    | RECOVERABLE, NOT IN MAIN         | STILL OPEN                      |
+| x87 cross-instance corruption   | 24 review-integration commits   | bitmap-font replacement atomicity|
+| font-path hash collision        | Claude screensaver browser      | font generations / live handles |
+| cache + test-discovery gates OK | x87 fusion commit, no local ref | D3D breadth / real LAN match     |
++---------------------------------+----------------------------------+---------------------------------+
+| INVENTORY: 110 branches | 42 have unmatched patches | 107 valid worktrees | 190 residual directories   |
+| SESSION TRIAGE: 191 project Codex logs + 54 Claude parent logs; sampled tails, not exhaustive histories|
++------------------------------------------------------------------------------------------------------+
+| NEXT: rescue correctness fixes -> reconcile current main -> regression gates -> feature recovery      |
+|       benchmark optimizations separately; preserve active/dirty work; do not blindly merge or prune    |
++------------------------------------------------------------------------------------------------------+
+```
+
+### Findings, ordered by risk
+
+#### R1 — P1: x87 values are shared between guest instances
+
+**Freshly reproduced against pinned main.** `src/06-fpu.wat:132` stores physical x87 registers at shared-memory address `0x200 + index * 8`, although other FPU state belongs to each instance. With two real WebAssembly instances sharing one memory, instance A writes ST(0)=1.25 and B writes ST(0)=9.5; A then reads **9.5**, not 1.25. Guest threads can corrupt one another's floating-point computations without touching the same guest variable.
+
+The probe compiled all 69 source fragments from the pinned commit and added only exports for the existing FPU get/set helpers. This is a native failure, not a mock or an inference from a session summary. Repair candidate: `98151373` on `codex/review-integration-20260909`, which moves physical x87 registers into instance-private state. Integrate with save/restore and real-thread coverage before considering throughput optimizations.
+
+#### R2 — P1: recycled thread slots retain old shared-ring messages
+
+**Source-confirmed integration gap; not freshly rerun in this pass.** `lib/thread-manager.js:500` reserves a thread slot and publishes its replacement ID without first retiring/resetting the previous shared message-ring lifetime. Resetting only a local queue does not address this separate ring. The earlier full-source reproducer is documented below; the isolated regression now explicitly covers reset-before-publication and preservation of valid startup posts.
+
+Repair candidate: `6653eb1a`, with `test/test-runtime-thread-ownership.js` in the review branch. The important ordering is reserve slot -> reset old ring -> publish ID -> accept new posts; resetting after publication can erase valid replacement-thread messages.
+
+#### R3 — P2: TrueType cache treats a hash as complete file identity
+
+**Freshly reproduced against pinned main.** `src/10c-truetype.wat:3002` returns a cached face when the path hash matches, without comparing full paths. Two distinct paths, `c:\font-id\5pvu.ttf` and `c:\font-id\c3ea.ttf`, both hash to **3656534779**. Mounted with Liberation Sans and Liberation Mono respectively, both opened as face **0** and produced the same W width (**23** at size 24). The second request resolves to the wrong font.
+
+Repair candidate: `b1396263` adds owned full-path identity on the review branch. That is not a complete answer to replacing a font at the *same* path: content generations, selected-handle lifetime, and invalidation still require an explicit contract.
+
+#### R4 — P2: malformed bitmap-font replacement destroys the valid registration first
+
+**Source finding; no new runtime reproducer in this pass.** `src/10b-gdi-font.wat:813` calls `gdi_bitmap_font_remove_hash` before parsing the replacement. Removal unbinds matching HFONT records and frees their strike data. If the replacement is malformed and parsing fails, the previous valid registration is already gone. The isolated buffer-loading variant retains this ordering, so merging the review branch alone does not close it.
+
+Parse and validate into a candidate registration, then publish atomically. Failed replacement should preserve the old usable registration; successful replacement/removal also needs defined behavior for live selected handles. Add malformed replacement, allocation failure, same-path new-content, and selected-font lifetime tests.
+
+#### R5 — P2: large writable overlays still have eager whole-payload costs on main
+
+`lib/vfs-overlay.js:106–122` rejects uncached writable opens; hydration at `306–326` reads complete payloads, and `lib/overlay-store.js:23` documents the eager snapshot contract. This can amplify memory and checkpoint work for large installations. `docs/design-byo-media.md:649` correctly requires all synchronous consumers to participate in preparation/parking: implementing only CreateFile is insufficient.
+
+The review branch has substantial lazy-I/O, ownership, sparse-save, immutable-lease, and consumer work absent from main. Reconcile that work rather than restarting it, but validate current browser/CLI/Worker startup paths and a genuinely large install/save cycle. **No fresh peak-memory, throughput, phone latency, or power-loss durability measurements were made here.** Cooperative time checks also remain a mitigation, not preemption inside a long native handler.
+
+#### R6 — P2: acceptance claims are narrower than the planned compatibility contracts
+
+These are separate, documented gaps rather than proof every app is broken:
+
+| Area | Evidence on pinned main | Remaining acceptance |
+|---|---|---|
+| Direct3D | `docs/direct3d-dual-backend-status.md:840–850`; `src/09ad-handlers-d3d9.wat:1258` CreateStateBlock trap | Fixed-function/resource breadth, D3D8, profile-specific gameplay, cancellation/performance. Current lighting work is active, not abandoned. |
+| Virtual LAN | `docs/virtual-lan-party.md:1205–1210`; `test/test-vlan-match.js:175–190` waits for listen/accept/protocol stream, then kills both sides | A completed real match, including sustained state exchange and exit. Networking is implemented; the document's early “not implemented” label is stale. |
+| OLE drag/drop | `src/09a-handlers.wat:17338–17350` returns S_OK without retaining a drop target or delivering events | Actual target/event lifetime, or truthful unsupported behavior. WordPad embedding tests do not establish drag/drop support. |
+| WordPad OLE | `docs/richedit-compat-design.md:21–31` distinguishes deferred OLE breadth from the unverified two-DIB reopen gate | Run the specific reopen acceptance; do not label existing embedding code absent. |
+
+### Unimplemented ideas versus stale plans
+
+The documentation audit enumerated **128 committed Markdown files: 72 top-level and 56 RE notes**, with 27 top-level design/plan/status/audit/follow-up candidates. This was targeted source/test cross-checking, not a line-by-line review of every document. Three additional untracked docs belong to ongoing work.
+
+| Document / idea | Current disposition | Next action |
+|---|---|---|
+| `docs/design-byo-media.md` lazy storage | Partly missing from main; much exists on the review branch | Integrate and stress lifetime/large-save paths; see R5. |
+| Review-branch `docs/design-font-preflight.md` | Catalog/preflight implementation exists off-main; replacement generations remain open | Preserve catalog/lease work; close R3/R4 and selected-handle semantics. |
+| `docs/direct3d-dual-backend-status.md` | Real backend implementation plus explicit missing contracts | Track actual game acceptance separately from API/test counts. |
+| `docs/virtual-lan-party.md` | Initial status stale; completed-match gate still meaningful | Update status only after protocol and gameplay evidence. |
+| `docs/richedit-compat-design.md` | Broader OLE deliberately deferred; narrow reopen gate unverified | Prioritize supported workflows, not a blanket “OLE done.” |
+| `docs/design-agent-control.md:3–14` | Phases 1/2 frozen and implemented; stream subscription/replay remain design | Treat later phases as optional backlog, not missing baseline control support. |
+| `docs/site-seo-worklog.md:39` | Site work merged; repeatable compatibility badges and per-app clips remain ideas | Generate evidence first. Submission, outreach, and deployment require separate authority. |
+| `docs/desktop-idle-cpu-audit.md:3–19` | Accepted/merged status already recorded | Do not reimplement old checklist entries; deployment and measurement are separate. |
+| `docs/page-compile-design.md:945` | Later section supersedes early proposal; page chunks and CASE_CHAIN exist | Evaluate remaining measured bottlenecks against current implementation. |
+| `docs/paint-refactor-followup.md:3–7` | Sections 1, 2, and 4 recorded complete | Preserve remaining scoped follow-ups, not the historical entire plan. |
+| WATX layout / typed-pointer proposals | “Zero uses”/spec-only wording stale; real uses exist in `09a-handlers.wat` and `09c3-controls.wat` | Refresh status from source before scheduling migration work. |
+
+**Fable cross-check:** its older mirrored-owner/cache-version/manual-test-list findings are not all still open. Symbolic-owner work was already reused in the earlier integration. Fresh checks pass with one `build-info`/`WINE_BUILD` authority and automatically discovered test tiers. Main's current cache/test machinery must survive integration; copying the older branch's manual version or test membership would regress it. The shared `fable-review.md` is actively edited by another agent and was not changed by this audit. Its broader decomposition/compatibility backlog is not disproved by these specific closures.
+
+### Recoverable branches, worktrees, and dropped-session candidates
+
+Branch-name/ancestry alone is misleading. Of **110 local branches**, **54 are ancestors of main**, **14 are fully patch-equivalent**, and **42 contain at least one unmatched patch** under `git cherry`. An unmatched patch is a recovery lead, not proof the functionality is absent: squashes, rewrites, and partial integration require source comparison.
+
+There are **297 registered worktree paths**, but only **107 validate as their own Git worktree**. The other **190 are residual directories missing their worktree `.git` metadata**, marked prunable; they are not 190 additional live worktrees. Of the valid worktrees, **15 are clean, 78 contain only build/dependency/corpus/log artifacts, and 14 have other changes, including main**. Seven registrations are locked. No directories or refs were deleted; lock-owner liveness is unverified.
+
+| Priority | Candidate | Verified disposition / recommendation |
+|---|---|---|
+| First | `codex/review-integration-20260909` at `b1396263`, `/private/tmp/wa-review-integration` | **24 unmatched commits**, 117-file delta (+14,978/-1,258); clean apart from intentional dependency symlink. Real missing runtime, storage, callback, and font work. Reconcile in an isolated integration branch with current main. |
+| Coordinate owner | `codex/release-20260910` at `df73b5ed`, `/private/tmp/wa-release-20260910` | Four unmatched release/StarCraft commits plus dirty batch-clock/control-test work. Recent board activity: **active**, not dropped. |
+| Preserve WIP | `codex/rodent-score-caret` at `d1eb8cd5`, `/private/tmp/wa-idle-integrate-20260910` | Branch tip already merged, but about 199 lines of uncommitted touch/renderer/test work at inventory time. Analog-mouse lane remains active. Merged branch does not mean disposable worktree. |
+| Feature recovery | `scr-browser` at `b51374e8` | Claude session `ed40b41e-9b1e-4266-a961-49ade7d8e6b5` explicitly deferred integration. Commit remains unmatched; its 437-line `src/09ca-screensavers.wat` does not exist on main. Contains applet, shell/host wiring and native/browser tests. Rebase and validate current shell/build integration before adopting. |
+| Preserve research | `dea5b5ab`, “Fuse hot scalar x87 algebra islands” | Codex session `01a088f6-20da-7a82-a3da-5b870d942728` reports an isolated candidate. Commit object exists, is not an ancestor of main, and **no current local ref contains it**. Session's pixel/performance claims were not rerun; its full build was reported blocked by the old base. Establish a recovery ref with approval before garbage collection; correctness R1 comes first. |
+| Benchmark research | `codex/smac-bench-oracle` at `96178533`, `/private/tmp/wa-smac-bench-oracle` | Unmatched deterministic benchmark and dirty benchmark files. Preserve measurement harness; do not equate benchmark code with proven current-main speedup. |
+| Owner review | `worktree-agent-adcd6b282725a3e21` at `efa6838c`, `.claude/worktrees/agent-adcd6b282725a3e21` | Region-folding experiments plus dirty `region-jit.js`; related Claude parent `a30e10d7-6d2d-4704-becb-eebad207768b`. Compare against current region engine and oracle; lock age alone is not abandonment evidence. |
+
+The review branch's unique work groups into ring/sparse-save repair (`6653eb1a`), persistence fault handling (`5397dea7`), cooperative/lazy consumers (`c16666d3`, `686bf81e`, `6d49011f`), owned help/callback execution (`d60e81a5` through `7117d971`, including x87 `98151373`), immutable VFS leases (`1db19a1a`), stock-font preparation/catalog transactions (`8f8dd7f7` through `60dab3e4`), and full-path face identity (`b1396263`). This is an inventory, not a claim that each can be cherry-picked independently.
+
+**False positives found:** old Codex sessions reported real-thread work `701b12f`, replicated dispatch `9450d792`, logical-FPS work `339eee46`, SEO work `c36c60a3`, and Diablo diagnostics `0876e5c0` as pending; all are now ancestors of the pinned main. Claude candidates `c2f5bd88`, `8ea64aab`, and `71a36a0c` look unique in history, but their relevant source/test patches reverse-apply cleanly to main after excluding generated/document/manual-runner churn. Do not blindly merge them again.
+
+#### Recovery inventory appendix
+
+All 42 branches with unmatched patches are listed below. Counts are per branch, **not distinct missing commits**; `shape-census` and `worktree-agent-a7f740852e0816261` share a tip. Most experimental branches still need semantic comparison before adoption.
+
+```text
+branch                                      unmatched patches
+angel-pm                                    1
+aoe-recompile-poc                           18
+codex/controlstate-gate                      1
+codex/controlstate-integration               2
+codex/release-20260910                        4
+codex/review-integration-20260909            24
+codex/smac-bench-oracle                      1
+perf/fuse-cmp-jcc                            1
+perf/fuse-sib-store                          1
+perf/next-fastpath-branches                  1
+perf/next-tailcall-dispatch                  1
+perf/reg-file-in-memory                     2
+perf/reg-specialised-handlers                1
+scr-browser                                 1
+shape-census                                6
+worktree-agent-a072a4ad0907e59ad              1
+worktree-agent-a099f94164eb75dd8              1
+worktree-agent-a3401c963a900fb3b              1
+worktree-agent-a3f8fd99933b45c3a              1
+worktree-agent-a424f5b7ef8e48088              1
+worktree-agent-a508f71947208807d              1
+worktree-agent-a56740131042465f4              2
+worktree-agent-a7ca85e9334cc32bb              1
+worktree-agent-a7f740852e0816261              6
+worktree-agent-a854bf3764708601c              1
+worktree-agent-a8a2d0c0110f93605              1
+worktree-agent-a9a699950aa504af3              1
+worktree-agent-a9d909185b6ed41bc              1
+worktree-agent-aa1162fb1330e01cc              1
+worktree-agent-aaa3d2482e11c62d4              1
+worktree-agent-aabc6ae8f9eba467a              1
+worktree-agent-aae47c83a7cae0d9e              1
+worktree-agent-abf90e42167919c32              1
+worktree-agent-ac0ba46b028b73243              1
+worktree-agent-adb1d03f632d8033e              1
+worktree-agent-adcd6b282725a3e21              2
+worktree-agent-aefd5647b019c4c9d              2
+worktree-agent-af6250931f6e1aebb              1
+worktree-agent-aff7b73bd6b7a908c              1
+worktree-loop-store-sinking                  3
+worktree-volley-dplay                        1
+wt-io-work                                  4
+```
+
+The 14 non-artifact dirty worktrees below require preservation and owner review. “Non-artifact” excludes only dependency/build/corpus directories and standalone logs; it does not prove the modifications are useful or absent from main. Paths and counts are an audit-time snapshot.
+
+| Path (repository-relative unless absolute) | Dirty work to check |
+|---|---|
+| Main repository | Active shared implementation; excluded from pinned findings |
+| `/private/tmp/wa-idle-integrate-20260910` | Active touch/analog-mouse work |
+| `/private/tmp/wa-release-20260910` | Batch-clock and control-test work |
+| `/private/tmp/wa-simgolf-root` | Detached `lib/apps.js` edits |
+| `/private/tmp/wa-smac-bench-oracle` | Benchmark work |
+| `/private/tmp/wine-smac-clock-opt` | Detached region/handler edits |
+| `/Users/vg/.claude/jobs/1fd8ea5d/tmp/wt-dplay` | String/dispatch/API edits and untracked Blobby networking test |
+| `/Users/vg/.claude/jobs/2e04d5f5/tmp/inc/demo` | Manifest/build changes and tracked fixture deletions |
+| `/Users/vg/.claude/jobs/2e04d5f5/tmp/loopop-base` | Fixture deletions and untracked keyboard-focus test |
+| `/Users/vg/.claude/jobs/2e04d5f5/tmp/loopop-new` | Loop/build changes, fixture deletions, untracked source/test copies |
+| `.claude/worktrees/agent-a632a67e7ef51eb90` | Shape-census worker/loop/exports/test-run changes |
+| `.claude/worktrees/agent-a728dddbd17c3822b` | Untracked gameplay, critical-section, DirectDraw, keyboard and memory tests |
+| `.claude/worktrees/agent-adcd6b282725a3e21` | Region-JIT/tree-fold experiments and generated bundles |
+| `.claude/worktrees/agent-aefd5647b019c4c9d` | Untracked gameplay tests, dialog-button test and temporary files |
+
+### Evidence coverage and limits
+
+- Parsed metadata for **243 local Codex logs**, identifying **191 project sessions**. Sampled their final 2 MiB and the tails of **54 Claude parent-session logs**; readable final messages were found in 149 and 51 respectively. Missing final text is not proof a session was dropped.
+- The Claude project directory contains **504 JSONL files including 450 nested subagent logs**. Nested histories and full large logs were not exhaustively read. Encrypted content was not decrypted. Session text supplies leads; Git ancestry, patch equivalence, source, and dirty-worktree state determine status. Private debug tokens/URLs are intentionally omitted.
+- Fresh passing gates: 69-fragment balance; browser cache graph (68 page scripts, 7 worker scripts, one authority); test discovery/manifest accounting (**1,024 files: 701 unit, 317 e2e, 6 smoke; 0 quarantined; 2 explicit timeout exceptions**).
+- Fresh pinned native compilation succeeded for both R1/R3 probes, and both assertions failed as described. No full canonical build, full suite, new real-browser acceptance matrix, or device performance benchmark was run in this review. A shared-tree compile during another agent's mid-edit lighting work was excluded as non-baseline evidence.
+- Subagents independently audited documentation backlog and branch/worktree recovery; root performed current-source reproductions, session-tail triage, and reconciliation. No runtime implementation, merge, commit, cleanup, or deployment was performed.
+
+### Recommended next execution
+
+1. Preserve branchless/dirty recovery candidates and agree ownership with active lanes. Do not prune from branch-merged status alone.
+2. Reconcile the 24-commit review candidate onto current main in isolation, prioritizing x87, ring lifetime, and persistence. Preserve current API numbering/generated tables, cache authority, test discovery, and newer D3D/DirectPlay/mobile work.
+3. Run canonical/compat builds and focused real-thread, failed-save, browser OPFS, startup/lazy-consumer, help-callback and font gates. Record intermittent failures, not only final successful reruns.
+4. Close bitmap-font atomic replacement and same-path generation/live-handle semantics; these remain open beyond the candidate integration.
+5. Select feature recovery explicitly: screensaver browser first if wanted; evaluate region/x87 optimization only against current-main semantic oracles and controlled performance measurements. Validate a completed LAN game and representative D3D gameplay separately.
+
+---
+
+## Historical review — 2026-09-09
 
 ## Execution update — review integration
 

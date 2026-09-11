@@ -122,9 +122,12 @@ async function main() {
   check('DirectPlay3 rejects the Unicode sibling interface',
     (e.test_call_directplay3_qi(dplay, dplay3w, out) >>> 0) === 0x80004002 &&
     e.test_dx_refcount(dplay) === 1);
-  check('DirectPlay3 rejects DirectPlay4A because its six tail slots are absent',
-    (e.test_call_directplay3_qi(dplay, dplay4a, out) >>> 0) === 0x80004002 &&
-    e.test_dx_refcount(dplay) === 1);
+  const oldTable = dv.getUint32(wa(dplay), true);
+  check('DirectPlay3 upgrades DirectPlay4A to a full vtable with the same identity',
+    e.test_call_directplay3_qi(dplay, dplay4a, out) === 0 &&
+    dv.getUint32(wa(out), true) === dplay && e.test_dx_refcount(dplay) === 2 &&
+    dv.getUint32(wa(dplay), true) !== oldTable);
+  check('DirectPlay4A query reference balances', e.test_call_directplay3_release(dplay) === 1);
   check('DirectPlay3 accepts inherited IDirectPlay2A and AddRefs',
     e.test_call_directplay3_qi(dplay, dplay2a, out) === 0 &&
     dv.getUint32(wa(out), true) === dplay && e.test_dx_refcount(dplay) === 2);
@@ -167,6 +170,15 @@ async function main() {
   check('CoCreateInstance rejects the Unicode DirectPlay sibling without leaking',
     (e.test_cocreate(clsidDirectPlay, 0, dplay3w, out) >>> 0) === 0x80004002 &&
     dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);
+  // Icewind Dale asks for this IID at 0x008d3680 during menu initialization.
+  // Change this baseline to a full-vtable success test when DP4A is implemented.
+  dv.setUint32(wa(out), 0xfeedface, true);
+  check('CoCreateInstance accepts the exact IWD DirectPlay4A activation request',
+    e.test_cocreate(clsidDirectPlay, 0, dplay4a, out) === 0 &&
+    dv.getUint32(wa(out), true) !== 0 && e.test_dx_live_count() === liveBeforeFactories + 1);
+  check('IWD DirectPlay4A factory reference balances',
+    e.test_call_directplay3_release(dv.getUint32(wa(out), true)) === 0 &&
+    e.test_dx_live_count() === liveBeforeFactories);
   check('CoCreateInstance rejects DirectPlay aggregation and clears output',
     (e.test_cocreate(clsidDirectPlay, 1, dplay3a, out) >>> 0) === 0x80040110 &&
     dv.getUint32(wa(out), true) === 0 && e.test_dx_live_count() === liveBeforeFactories);

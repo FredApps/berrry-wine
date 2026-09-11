@@ -1,11 +1,16 @@
 # Direct3D 9 programmable rendering
 
-## Scope and status (2026-09-09)
+Long-term implementation plan: [software and WebGL backends](../docs/direct3d-dual-backend-design.md),
+including shared shader IR and a WAT SIMD threaded-code software shader compiler.
+That document is proposed architecture, not a claim of implemented parity.
+
+## Scope and status (2026-09-10)
 
 Black & White 2 Demo is the first measured programmable D3D9 target. It now
-loads its genuine game/data/D3DX DLL and reaches the pixel-shader capability
-check. Gameplay is **not working**. Existing D3D9 plumbing is not a renderer:
-several draws/setters still return success without performing their operation.
+loads its genuine game/data/D3DX DLL and reaches real draw submissions after
+model preloading. Gameplay is **not verified**. Programmable and bounded unlit
+fixed-function draws now render through the shared GPU backend; numerous
+resource formats and raster operations remain unsupported.
 Shader capabilities are opt-in (`?d3d9-programmable`) and require a real GPU
 shader/texture/indexed-draw pixel probe. This experimental integration profile
 does not claim complete shader/resource/raster conformance or game compatibility.
@@ -56,6 +61,12 @@ Unsupported instructions/formats fail explicitly, with bytecode offset and
 opcode where applicable. No arbitrary shader is replaced by a flat-color
 program. A source-generation unit test alone does not establish shader support.
 
+The measured null-VS/null-PS sprite path needs a separate fixed-function
+compiler, not substitute bytecode for a failed guest shader. WAT retains its
+transforms, texture stages, bindings and render states; immutable draw snapshots
+lower the supported unlit subset to the same GPU program/resource contract.
+Lighting, fog and unsupported stage operations must reject explicitly.
+
 ## Implemented slices (not gameplay completion)
 
 - `lib/d3d9-shader.js`: bounded VS/PS1.1 parser and GLSL compiler, arithmetic,
@@ -80,6 +91,12 @@ program. A source-generation unit test alone does not establish shader support.
 
 - Guest textures have native BGRA mip bytes, rectangle locks, level surfaces,
   shared texture/surface lock state, sampler bindings and explicit mip upload.
+- CubeTexture9 owns six face-major mip chains and distinct surface aliases,
+  with shared lock state and parent lifetime. Bound cube resources specialize
+  PS1.1 TEX to samplerCube through the shared GPU backend. Browser pixel tests
+  cover all six directions, LOD, 2D/cube switching, and mixed sampler targets
+  in both stage orders. Render-target/autogen cubes remain
+  unsupported; dependent TEXREG2AR explicitly rejects a cube binding.
 - Vertex/index buffers have real COM identity, byte storage, locks, descriptors
   and internal/external lifetime. Stream 0 offsets and signed base vertices
   are validated before indexed/nonindexed GPU draws. UP draws consume source
@@ -90,19 +107,52 @@ program. A source-generation unit test alone does not establish shader support.
 
 - Immutable vertex declarations support stream0 FLOAT1..4/D3DCOLOR, semantic
   shader binding, QueryInterface/GetDeclaration and independent lifetime.
-- Selective render/sampler/texture/transform/declaration/shader/float-constant
+- Selective render/sampler/texture/texture-stage/transform/declaration/shader/float-constant
   state blocks record without mutating live state,
   retain only the final write to each included state, and Capture/Apply only
   that subset. Other recording categories fail explicitly; preset all/pixel/
   vertex block creation is still unimplemented.
 - Texture references retained by blocks have explicit replacement/destruction
   lifetime. View/projection, eight texture and 256 world matrices are independent
-  identity-initialized device state. Fixed-function transform rendering is not
-  implemented. The gamma API retains copied ramp data; display gamma remains
+  identity-initialized device state. Unlit fixed-function draws now consume
+  world/view/projection matrices or POSITIONT screen coordinates. The gamma API retains copied ramp data; display gamma remains
   unsupported and unadvertised.
+- Device queries retain the original parent identity and return copied creation
+  parameters and the device display mode. Device lifetime retains the parent;
+  GetDirect3D adds a separate caller reference.
+- Eight texture-stage rows have D3D9 defaults, validated enum slots, and
+  selective state-block Capture/Apply. The common fixed-function subset is
+  projected into the existing D3DIM state. This does not implement the remaining
+  texture combiners or bump-map shader instructions.
+
+- EVENT query objects have real COM/device lifetime and a synchronous GPU
+  completion barrier at Issue(END). GetData reports completion only after that
+  barrier; failure propagates as device loss. Other query types are unavailable.
+  This correctness-first path stalls submission and is not an asynchronous fence.
+
+- Viewport Get/Set has copied device state, target bounds/depth validation and
+  actual cropped GPU rendering. Viewport recording in state blocks still fails
+  explicitly rather than changing live state during recording.
 
 Current integration limits: one stream, a limited declaration type set,
 no render-target switching, incomplete raster-state lowering.
 Present reads GPU pixels back to canonical memory; mid-frame surface access
 still needs explicit readback fencing. Default shader caps remain disabled. No game
 binary patches or capability-only bypass have been used.
+
+The bounded fixed-function compiler shares the GPU backend, with diffuse color,
+single-stage 2D texture combiners, specular addition and alpha testing. It rejects
+lighting, fog, texture transforms, multiple active stages and mixed fixed/programmed
+stages. Browser tests drive null shader bindings through WAT and verify transformed
+pixels, textured modulation, alpha rejection, screen-space coverage and the
+[documented null-texture cascade termination](https://learn.microsoft.com/en-us/windows/win32/direct3d9/texture-blending).
+One-level textures clamp LOD through non-mip filtering; partial multi-level chains
+still reject. These are renderer tests, not evidence of gameplay.
+
+DXT1/DXT5 sampled textures retain their compressed bytes in guest memory, with
+block-row pitches, aligned subrect locks, and full-block storage for small mip
+tails. Immutable upload conversion implements RGB565 interpolation, DXT1
+transparent selectors, and both DXT5 alpha modes. CPU/compiled storage tests and
+actual browser texture pixels pass. Other compressed formats remain unavailable.
+The genuine Lionhead intro is now visibly rendered after correcting culling and
+Present compositor scheduling; menu/gameplay progression remains unverified.

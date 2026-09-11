@@ -69,3 +69,32 @@ gpu.draw({ ...command, vertexBuffer: secondBuffer });
 assert.strictEqual(calls.filter(call => call[0] === 'vertexAttribPointer').length, 2,
   'changing the source buffer invalidates the cached attribute pointer');
 console.log('PASS generic WebGL/GLES backend resource contract');
+
+// Allocation/compile/link failures must retire every successfully created
+// object, including the vertex shader when fragment compilation fails.
+for (const failure of ['vertex-allocation','fragment-allocation','vertex-compile',
+    'fragment-compile','program-allocation','link','feedback','location',null]) {
+  const createdShaders=[],deletedShaders=[],createdPrograms=[],deletedPrograms=[];
+  const faultGL={...gl,
+    createShader(type) {
+      if(failure===`${type===gl.VERTEX_SHADER?'vertex':'fragment'}-allocation`)return null;
+      const shader={type};createdShaders.push(shader);return shader;
+    },
+    getShaderParameter(shader) {return failure!==`${shader.type===gl.VERTEX_SHADER?'vertex':'fragment'}-compile`;},
+    deleteShader(shader) {deletedShaders.push(shader);},
+    createProgram() {if(failure==='program-allocation')return null;const p={};createdPrograms.push(p);return p;},
+    getProgramParameter() {return failure!=='link';},
+    deleteProgram(p) {deletedPrograms.push(p);},
+    transformFeedbackVaryings() {if(failure==='feedback')throw new Error('feedback setup failed');},
+    getAttribLocation() {if(failure==='location')throw new Error('location lookup failed');return 0;},
+  };
+  const backend=new WebGLBackend({getContext:()=>faultGL},{apiVersion:2});
+  const create=()=>backend.createProgram('void main(){}','void main(){}',['a'],[],{transformFeedbackVaryings:['result']});
+  if(failure)assert.throws(create,Error,failure);else create();
+  assert.deepStrictEqual(new Set(deletedShaders),new Set(createdShaders),`${failure}: shader retirement`);
+  assert.strictEqual(deletedShaders.length,createdShaders.length,`${failure}: exactly once`);
+  assert.strictEqual(backend._programs.size,failure?0:1,`${failure}: publish only complete programs`);
+  if(failure)assert.deepStrictEqual(deletedPrograms,createdPrograms,`${failure}: program retirement`);
+  else {assert.strictEqual(deletedPrograms.length,0);backend.destroy();assert.deepStrictEqual(deletedPrograms,createdPrograms);}
+}
+console.log('PASS shader/program allocation and compile/link failure retirement');

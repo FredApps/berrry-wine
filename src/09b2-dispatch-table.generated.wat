@@ -11,6 +11,1675 @@
   (global $API_ID_IDirect3DBuffer9_BASE i32 (i32.const 3329))
   (global $API_ID_IDirect3DVertexDeclaration9_BASE i32 (i32.const 3343))
   (global $API_ID_IDirect3DStateBlock9_BASE i32 (i32.const 3348))
+  (global $API_ID_IDirect3DQuery9_BASE i32 (i32.const 3357))
+  (global $API_ID_IDirect3DCubeTexture9_BASE i32 (i32.const 3369))
+
+  ;; ============================================================
+  ;; CONSTANT API STUBS — GENERATED, do not edit
+  ;; Opted in with stub:{pop,ret} in api_table.json.
+  ;; ============================================================
+  ;; StgIsStorageFile: pop 8, return 0x800300fb
+  (func $handle_StgIsStorageFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x800300fb))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; ILockBytes_Flush: pop 8, return 0
+  (func $handle_ILockBytes_Flush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; ILockBytes_LockRegion: pop 28, return 0
+  (func $handle_ILockBytes_LockRegion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  ;; ILockBytes_UnlockRegion: pop 28, return 0
+  (func $handle_ILockBytes_UnlockRegion (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 28))))
+
+  ;; IStorage_SetElementTimes: pop 24, return 0
+  (func $handle_IStorage_SetElementTimes (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; IDataObject_DUnadvise: pop 12, return 0x80040004
+  (func $handle_IDataObject_DUnadvise (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80040004))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; IOleObject_SetMoniker: pop 16, return 0x80004001
+  (func $handle_IOleObject_SetMoniker (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80004001))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IOleObject_DoVerb: pop 32, return 0x80040100
+  (func $handle_IOleObject_DoVerb (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0x80040100))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32))))
+
+  ;; IOleObject_Update: pop 8, return 0
+  (func $handle_IOleObject_Update (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; IOleObject_IsUpToDate: pop 8, return 0
+  (func $handle_IOleObject_IsUpToDate (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; IOleObject_SetColorScheme: pop 12, return 0
+  (func $handle_IOleObject_SetColorScheme (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; IOleCache_InitCache: pop 12, return 0
+  (func $handle_IOleCache_InitCache (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; IViewObject_Unfreeze: pop 12, return 0
+  (func $handle_IViewObject_Unfreeze (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; IViewObject_SetAdvise: pop 20, return 0
+  (func $handle_IViewObject_SetAdvise (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; OleUIUpdateLinksA: pop 20, return 1
+  (func $handle_OleUIUpdateLinksA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; IMoniker_IsDirty: pop 8, return 1
+  (func $handle_IMoniker_IsDirty (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; IFont_SetRatio: pop 16, return 0
+  (func $handle_IFont_SetRatio (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; IFont_AddRefHfont: pop 12, return 0
+  (func $handle_IFont_AddRefHfont (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; IFont_ReleaseHfont: pop 12, return 0
+  (func $handle_IFont_ReleaseHfont (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; IFont_SetHdc: pop 12, return 0
+  (func $handle_IFont_SetHdc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; BASS_Init: pop 24, return 1
+  (func $handle_BASS_Init (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24))))
+
+  ;; BASS_PluginLoad: pop 12, return 0
+  (func $handle_BASS_PluginLoad (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; BASS_Start: pop 4, return 1
+  (func $handle_BASS_Start (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  ;; BASS_SetConfig: pop 12, return 1
+  (func $handle_BASS_SetConfig (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; BASS_SampleFree: pop 8, return 1
+  (func $handle_BASS_SampleFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; BASS_StreamFree: pop 8, return 1
+  (func $handle_BASS_StreamFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; BASS_MusicFree: pop 8, return 1
+  (func $handle_BASS_MusicFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; BASS_ChannelPlay: pop 12, return 1
+  (func $handle_BASS_ChannelPlay (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 12))))
+
+  ;; BASS_ChannelStop: pop 8, return 1
+  (func $handle_BASS_ChannelStop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; BASS_ChannelSetAttribute: pop 16, return 1
+  (func $handle_BASS_ChannelSetAttribute (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 16))))
+
+  ;; BASS_ChannelSetPosition: pop 20, return 1
+  (func $handle_BASS_ChannelSetPosition (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20))))
+
+  ;; BASS_ErrorGetCode: pop 4, return 0
+  (func $handle_BASS_ErrorGetCode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  ;; BASS_Free: pop 4, return 1
+  (func $handle_BASS_Free (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 4))))
+
+  ;; BASS_ChannelPause: pop 8, return 1
+  (func $handle_BASS_ChannelPause (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; ============================================================
+  ;; TEST-CALL EXPORTS — GENERATED, do not edit
+  ;; Opted in with test_call:true in api_table.json.
+  ;; ============================================================
+  (func (export "test_call_AbortDoc") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_AbortDoc
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CloseMetaFile") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CloseMetaFile
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateBitmap") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateBitmap
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateCompatibleBitmap") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateCompatibleBitmap
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateCompatibleDC") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateCompatibleDC
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateDIBPatternBrushPt") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateDIBPatternBrushPt
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateHalftonePalette") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateHalftonePalette
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateHatchBrush") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateHatchBrush
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreatePalette") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreatePalette
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreatePatternBrush") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreatePatternBrush
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreatePen") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreatePen
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateRectRgn") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateRectRgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateSolidBrush") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateSolidBrush
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DeleteDC") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DeleteDC
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DeleteMetaFile") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DeleteMetaFile
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DeleteObject") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DeleteObject
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DestroyMenu") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DestroyMenu
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DrawEdge") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DrawEdge
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DrawFocusRect") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DrawFocusRect
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DrawTextA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DrawTextA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DrawTextW") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DrawTextW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_Ellipse") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_Ellipse
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_EndDoc") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_EndDoc
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_EndPage") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_EndPage
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_ExtCreatePen") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ExtCreatePen
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_ExtFloodFill") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ExtFloodFill
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_FillRect") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_FillRect
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_FrameRect") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_FrameRect
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetCommandLineW") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetCommandLineW
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetDC") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetDC
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetDCOrgEx") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetDCOrgEx
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetDiskFreeSpaceA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetDiskFreeSpaceA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetDriveTypeA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetDriveTypeA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetDriveTypeW") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetDriveTypeW
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetLastError") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetLastError
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetLogicalDrives") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetLogicalDrives
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetModuleFileNameA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetModuleFileNameA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetModuleHandleA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetModuleHandleA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetModuleHandleW") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetModuleHandleW
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetNearestPaletteIndex") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetNearestPaletteIndex
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetObjectA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetObjectA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetObjectType") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetObjectType
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetObjectW") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetObjectW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetPaletteEntries") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetPaletteEntries
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetPixel") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetPixel
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetSystemMetrics") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetSystemMetrics
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTabbedTextExtentA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTabbedTextExtentA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTabbedTextExtentW") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTabbedTextExtentW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTextExtentPoint32A") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTextExtentPoint32A
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTextFaceW") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTextFaceW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTextMetricsA") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTextMetricsA
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetWindowDC") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetWindowDC
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GlobalAddAtomA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GlobalAddAtomA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GlobalAddAtomW") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GlobalAddAtomW
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GlobalDeleteAtom") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GlobalDeleteAtom
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GlobalFindAtomW") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GlobalFindAtomW
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GlobalGetAtomNameW") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GlobalGetAtomNameW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_LineTo") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_LineTo
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_LoadBitmapA") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_LoadBitmapA
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_LoadBitmapW") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_LoadBitmapW
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PlayMetaFile") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PlayMetaFile
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PolyBezier") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PolyBezier
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PolyBezierTo") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PolyBezierTo
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PolyDraw") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PolyDraw
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_Polygon") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_Polygon
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_Polyline") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_Polyline
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PolylineTo") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PolylineTo
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_RealizePalette") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_RealizePalette
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_Rectangle") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_Rectangle
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_RegisterClassA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_RegisterClassA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_RegisterClassExW") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_RegisterClassExW
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_RegisterClassW") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_RegisterClassW
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_ReleaseDC") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ReleaseDC
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_ResizePalette") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ResizePalette
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_RestoreDC") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_RestoreDC
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SaveDC") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SaveDC
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SelectClipPath") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SelectClipPath
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SelectObject") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SelectObject
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetArcDirection") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetArcDirection
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetBrushOrgEx") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetBrushOrgEx
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetColorAdjustment") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetColorAdjustment
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetDIBColorTable") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetDIBColorTable
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetMapMode") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetMapMode
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetMapperFlags") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetMapperFlags
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetPaletteEntries") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetPaletteEntries
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetPixel") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetPixel
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetSystemPaletteUse") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetSystemPaletteUse
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetTextCharacterExtra") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetTextCharacterExtra
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetTextJustification") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetTextJustification
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_StartPage") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_StartPage
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_TextOutA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_TextOutA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetCurrentObject") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetCurrentObject
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetWindowRgn") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetWindowRgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetWindowRgn") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetWindowRgn
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_WSAStartup") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_WSAStartup
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateBrushIndirect") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateBrushIndirect
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_AppendMenuA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_AppendMenuA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_InsertMenuA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_InsertMenuA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreatePopupMenu") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreatePopupMenu
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_joyGetNumDevs") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_joyGetNumDevs
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetFileVersionInfoSizeA") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetFileVersionInfoSizeA
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetFileVersionInfoA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetFileVersionInfoA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_VerQueryValueA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_VerQueryValueA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetLogicalDriveStringsA") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetLogicalDriveStringsA
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTextCharacterExtra") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTextCharacterExtra
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetDeviceGammaRamp") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetDeviceGammaRamp
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetTextFaceA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetTextFaceA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetCharWidthA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetCharWidthA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_FindAtomA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_FindAtomA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_FindAtomW") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_FindAtomW
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_AddAtomA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_AddAtomA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DeleteAtom") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DeleteAtom
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateMetaFileA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateMetaFileA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetColorAdjustment") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetColorAdjustment
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateBitmapIndirect") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateBitmapIndirect
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreatePolyPolygonRgn") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreatePolyPolygonRgn
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetBitmapBits") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetBitmapBits
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetBitmapDimensionEx") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetBitmapDimensionEx
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetBrushOrgEx") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetBrushOrgEx
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetRegionData") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetRegionData
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PtInRegion") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PtInRegion
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetBitmapBits") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetBitmapBits
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_AnimatePalette") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_AnimatePalette
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_ChoosePixelFormat") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ChoosePixelFormat
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DescribePixelFormat") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DescribePixelFormat
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GdiSetBatchLimit") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GdiSetBatchLimit
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetGraphicsMode") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetGraphicsMode
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetPixelFormat") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetPixelFormat
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetSystemPaletteUse") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetSystemPaletteUse
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetDeviceGammaRamp") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetDeviceGammaRamp
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetGraphicsMode") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetGraphicsMode
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetPixelFormat") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetPixelFormat
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SwapBuffers") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SwapBuffers
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_AddFontResourceA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_AddFontResourceA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetCharABCWidthsA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetCharABCWidthsA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetFontData") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetFontData
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_RemoveFontResourceA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_RemoveFontResourceA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CopyEnhMetaFileA") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CopyEnhMetaFileA
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_DeleteEnhMetaFile") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_DeleteEnhMetaFile
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetEnhMetaFileBits") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetEnhMetaFileBits
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetEnhMetaFileHeader") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetEnhMetaFileHeader
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetEnhMetaFilePaletteEntries") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetEnhMetaFilePaletteEntries
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetICMProfileA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetICMProfileA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetMetaFileBitsEx") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetMetaFileBitsEx
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetWinMetaFileBits") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetWinMetaFileBits
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PlayEnhMetaFile") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PlayEnhMetaFile
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_ResetDCA") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ResetDCA
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetEnhMetaFileBits") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetEnhMetaFileBits
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetMetaFileBitsEx") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetMetaFileBitsEx
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetWinMetaFileBits") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetWinMetaFileBits
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_EnumThreadWindows") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_EnumThreadWindows
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_joyGetDevCapsA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_joyGetDevCapsA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_joySetCapture") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_joySetCapture
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_joyReleaseCapture") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_joyReleaseCapture
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetProcessWorkingSetSize") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetProcessWorkingSetSize
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PolyPolyline") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PolyPolyline
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_AbortPath") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_AbortPath
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_BeginPath") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_BeginPath
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CloseFigure") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CloseFigure
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_EndPath") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_EndPath
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetPath") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetPath
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_PathToRegion") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_PathToRegion
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_FlattenPath") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_FlattenPath
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_FillPath") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_FillPath
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_StrokePath") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_StrokePath
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_StrokeAndFillPath") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_StrokeAndFillPath
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_WidenPath") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_WidenPath
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GlobalFindAtomA") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GlobalFindAtomA
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GlobalGetAtomNameA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GlobalGetAtomNameA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_AddAtomW") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_AddAtomW
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetAtomNameA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetAtomNameA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetAtomNameW") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetAtomNameW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_InsertMenuItemA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_InsertMenuItemA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CloseEnhMetaFile") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CloseEnhMetaFile
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_ColorMatchToTarget") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ColorMatchToTarget
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateEllipticRgnIndirect") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateEllipticRgnIndirect
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateEnhMetaFileA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateEnhMetaFileA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_EqualRgn") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_EqualRgn
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_ExtCreateRegion") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_ExtCreateRegion
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetICMMode") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetICMMode
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_SetICMProfileA") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_SetICMProfileA
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetFileVersionInfoSizeW") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetFileVersionInfoSizeW
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetFileVersionInfoW") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetFileVersionInfoW
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_GetLogicalDriveStringsW") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_GetLogicalDriveStringsW
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_CreateScalableFontResourceA") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_CreateScalableFontResourceA
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
+  (func (export "test_call_mmioSetBuffer") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (global.get $esp))
+    (call $handle_mmioSetBuffer
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (global.set $esp (local.get $saved_esp))
+    (global.get $eax))
 
   ;; ============================================================
   ;; API BR_TABLE DISPATCH — GENERATED, do not edit
@@ -72,7 +1741,7 @@
       (then
         (call $dispatch_api_table_page_12 (i32.sub (local.get $api_id) (i32.const 3072)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 3355))
+    (if (i32.lt_u (local.get $api_id) (i32.const 3404))
       (then
         (call $dispatch_api_table_page_13 (i32.sub (local.get $api_id) (i32.const 3328)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
@@ -13496,8 +15165,57 @@
   )
 
   (func $dispatch_api_table_page_13 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 3328..3354
+    ;; api ids 3328..3403
     (block $fallback
+    (block $api_75
+    (block $api_74
+    (block $api_73
+    (block $api_72
+    (block $api_71
+    (block $api_70
+    (block $api_69
+    (block $api_68
+    (block $api_67
+    (block $api_66
+    (block $api_65
+    (block $api_64
+    (block $api_63
+    (block $api_62
+    (block $api_61
+    (block $api_60
+    (block $api_59
+    (block $api_58
+    (block $api_57
+    (block $api_56
+    (block $api_55
+    (block $api_54
+    (block $api_53
+    (block $api_52
+    (block $api_51
+    (block $api_50
+    (block $api_49
+    (block $api_48
+    (block $api_47
+    (block $api_46
+    (block $api_45
+    (block $api_44
+    (block $api_43
+    (block $api_42
+    (block $api_41
+    (block $api_40
+    (block $api_39
+    (block $api_38
+    (block $api_37
+    (block $api_36
+    (block $api_35
+    (block $api_34
+    (block $api_33
+    (block $api_32
+    (block $api_31
+    (block $api_30
+    (block $api_29
+    (block $api_28
+    (block $api_27
     (block $api_26
     (block $api_25
     (block $api_24
@@ -13525,7 +15243,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $fallback (local.get $api_id))
     ) ;; 3328: DirectXSetup
       (call $handle_DirectXSetup (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -13606,6 +15324,153 @@
       (return)
     ) ;; 3354: ReadFileEx
       (call $handle_ReadFileEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3355: ConvertDefaultLocale
+      (call $handle_ConvertDefaultLocale (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3356: GetFontLanguageInfo
+      (call $handle_GetFontLanguageInfo (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3357: IDirect3DQuery9_QueryInterface
+      (call $handle_IDirect3DQuery9_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3358: IDirect3DQuery9_AddRef
+      (call $handle_IDirect3DQuery9_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3359: IDirect3DQuery9_Release
+      (call $handle_IDirect3DQuery9_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3360: IDirect3DQuery9_GetDevice
+      (call $handle_IDirect3DQuery9_GetDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3361: IDirect3DQuery9_GetType
+      (call $handle_IDirect3DQuery9_GetType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3362: IDirect3DQuery9_GetDataSize
+      (call $handle_IDirect3DQuery9_GetDataSize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3363: IDirect3DQuery9_Issue
+      (call $handle_IDirect3DQuery9_Issue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3364: IDirect3DQuery9_GetData
+      (call $handle_IDirect3DQuery9_GetData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3365: AddFontMemResourceEx
+      (call $handle_AddFontMemResourceEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3366: RemoveFontMemResourceEx
+      (call $handle_RemoveFontMemResourceEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3367: CoFileTimeToDosDateTime
+      (call $handle_CoFileTimeToDosDateTime (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3368: GetKeyNameTextW
+      (call $handle_GetKeyNameTextW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3369: IDirect3DCubeTexture9_QueryInterface
+      (call $handle_IDirect3DCubeTexture9_QueryInterface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3370: IDirect3DCubeTexture9_AddRef
+      (call $handle_IDirect3DCubeTexture9_AddRef (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3371: IDirect3DCubeTexture9_Release
+      (call $handle_IDirect3DCubeTexture9_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3372: IDirect3DCubeTexture9_GetDevice
+      (call $handle_IDirect3DCubeTexture9_GetDevice (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3373: IDirect3DCubeTexture9_SetPrivateData
+      (call $handle_IDirect3DCubeTexture9_SetPrivateData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3374: IDirect3DCubeTexture9_GetPrivateData
+      (call $handle_IDirect3DCubeTexture9_GetPrivateData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3375: IDirect3DCubeTexture9_FreePrivateData
+      (call $handle_IDirect3DCubeTexture9_FreePrivateData (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3376: IDirect3DCubeTexture9_SetPriority
+      (call $handle_IDirect3DCubeTexture9_SetPriority (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3377: IDirect3DCubeTexture9_GetPriority
+      (call $handle_IDirect3DCubeTexture9_GetPriority (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3378: IDirect3DCubeTexture9_PreLoad
+      (call $handle_IDirect3DCubeTexture9_PreLoad (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3379: IDirect3DCubeTexture9_GetType
+      (call $handle_IDirect3DCubeTexture9_GetType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3380: IDirect3DCubeTexture9_SetLOD
+      (call $handle_IDirect3DCubeTexture9_SetLOD (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3381: IDirect3DCubeTexture9_GetLOD
+      (call $handle_IDirect3DCubeTexture9_GetLOD (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3382: IDirect3DCubeTexture9_GetLevelCount
+      (call $handle_IDirect3DCubeTexture9_GetLevelCount (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3383: IDirect3DCubeTexture9_SetAutoGenFilterType
+      (call $handle_IDirect3DCubeTexture9_SetAutoGenFilterType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3384: IDirect3DCubeTexture9_GetAutoGenFilterType
+      (call $handle_IDirect3DCubeTexture9_GetAutoGenFilterType (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3385: IDirect3DCubeTexture9_GenerateMipSubLevels
+      (call $handle_IDirect3DCubeTexture9_GenerateMipSubLevels (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3386: IDirect3DCubeTexture9_GetLevelDesc
+      (call $handle_IDirect3DCubeTexture9_GetLevelDesc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3387: IDirect3DCubeTexture9_GetCubeMapSurface
+      (call $handle_IDirect3DCubeTexture9_GetCubeMapSurface (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3388: IDirect3DCubeTexture9_LockRect
+      (call $handle_IDirect3DCubeTexture9_LockRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3389: IDirect3DCubeTexture9_UnlockRect
+      (call $handle_IDirect3DCubeTexture9_UnlockRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3390: IDirect3DCubeTexture9_AddDirtyRect
+      (call $handle_IDirect3DCubeTexture9_AddDirtyRect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3391: DestroyPropertySheetPage
+      (call $handle_DestroyPropertySheetPage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3392: WritePrivateProfileSectionA
+      (call $handle_WritePrivateProfileSectionA (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3393: WritePrivateProfileSectionW
+      (call $handle_WritePrivateProfileSectionW (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3394: IDirectPlay4_GetGroupOwner
+      (call $handle_IDirectPlay4_GetGroupOwner (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3395: IDirectPlay4_SetGroupOwner
+      (call $handle_IDirectPlay4_SetGroupOwner (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3396: IDirectPlay4_SendEx
+      (call $handle_IDirectPlay4_SendEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3397: IDirectPlay4_GetMessageQueue
+      (call $handle_IDirectPlay4_GetMessageQueue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3398: IDirectPlay4_CancelMessage
+      (call $handle_IDirectPlay4_CancelMessage (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3399: IDirectPlay4_CancelPriority
+      (call $handle_IDirectPlay4_CancelPriority (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3400: IDirectPlayLobby3_ConnectEx
+      (call $handle_IDirectPlayLobby3_ConnectEx (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3401: IDirectPlayLobby3_RegisterApplication
+      (call $handle_dplobby3_application_unsupported (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3402: IDirectPlayLobby3_UnregisterApplication
+      (call $handle_dplobby3_application_unsupported (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3403: IDirectPlayLobby3_WaitForConnectionSettings
+      (call $handle_IDirectPlayLobby3_WaitForConnectionSettings (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 3328)))
@@ -13779,4 +15644,10 @@
     (global.set $DX_VTBL_D3DSWAP9 (call $init_com_vtable (i32.const 3019) (i32.const 10)))
     ;; IDirectSound3DListener: 18 methods starting at api_id 3036
     (global.set $DX_VTBL_DS3DLISTENER (call $init_com_vtable (i32.const 3036) (i32.const 18)))
+    ;; IDirectPlay4: extends IDirectPlay3 (47) + 6 extra = 53 total, extra at api_id 3394
+    (global.set $DX_VTBL_DPLAY4 (call $extend_com_vtable
+      (global.get $DX_VTBL_DPLAY3) (i32.const 47) (i32.const 3394) (i32.const 53)))
+    ;; IDirectPlayLobby3: extends IDirectPlayLobby2 (15) + 4 extra = 19 total, extra at api_id 3400
+    (global.set $DX_VTBL_DPLAYLOBBY3 (call $extend_com_vtable
+      (global.get $DX_VTBL_DPLAYLOBBY2) (i32.const 15) (i32.const 3400) (i32.const 19)))
   )

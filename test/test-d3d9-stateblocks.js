@@ -5,9 +5,21 @@ const {bootRenderHarness}=require('./render-helper');
 (async()=>{
   const methods=['BeginStateBlock','EndStateBlock','SetRenderState','GetRenderState','SetFVF','GetFVF','SetSamplerState','GetSamplerState','SetTexture','GetTexture','SetTransform','GetTransform','GetGammaRamp','SetGammaRamp','CreateVertexDeclaration','SetVertexDeclaration','GetVertexDeclaration'];
   const blockMethods=['Capture','Apply','Release','QueryInterface','GetDevice'];
+  methods.push('SetTextureStageState','GetTextureStageState');
+  methods.push('SetNPatchMode');
+  methods.push('SetIndices','GetIndices','SetStreamSource','GetStreamSource');
   for(const stage of ['Vertex','Pixel'])for(const op of ['Create','Set','Get'])methods.push(op+stage+'Shader');
   for(const stage of ['Vertex','Pixel'])for(const op of ['Set','Get'])methods.push(op+stage+'ShaderConstantF');
   const {exports:e}=await bootRenderHarness({fonts:'none',extraWat:`
+    (func (export "buffer") (param $device i32) (param $kind i32) (param $out i32) (result i32)
+      (call $d3d9_buffer_create (local.get $device) (i32.const 128) (i32.const 0)
+        (select (i32.const 101) (i32.const 0) (i32.eq (local.get $kind) (i32.const 7)))
+        (i32.const 1) (local.get $out) (local.get $kind)) (global.get $eax))
+    (func (export "npatch") (param $device i32) (result f64)
+      (global.set $esp (i32.const 0x074ff000))
+      (call $handle_IDirect3DDevice9_GetNPatchMode (local.get $device) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+      (call $fpu_pop))
     (func (export "texture") (param $device i32) (param $out i32) (result i32)
       (call $d3d9_texture_create (local.get $device) (i32.const 2) (i32.const 2)
         (i32.const 1) (i32.const 0) (i32.const 21) (i32.const 1) (local.get $out))
@@ -24,15 +36,104 @@ const {bootRenderHarness}=require('./render-helper');
       (store.field DxObject misc1 (call $dx_from_this (local.get $d)) (call $d3d9_program_alloc))
       (local.get $d))
     ${[...methods.map(n=>['IDirect3DDevice9',n]),...blockMethods.map(n=>['IDirect3DStateBlock9',n])].map(([type,name])=>`
-    (func (export "${name}") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (result i32)
+    (func (export "${name}") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (param $f i32) (result i32)
       (global.set $esp (i32.const 0x074ff000))
       (call $handle_${type}_${name} (local.get $a) (local.get $b) (local.get $c)
-        (local.get $d) (i32.const 0) (i32.const 0)) (global.get $eax))`).join('\n')}
+        (local.get $d) (local.get $f) (i32.const 0)) (global.get $eax))`).join('\n')}
   `});
   e.init_dx_com_thunks();
   const out=0x00409000,d=e.device(out),invalid=0x8876086c;
+  assert.strictEqual(e.npatch(d),0);
+  assert.strictEqual(e.get_esp()>>>0,0x074ff008);
+  for(const bits of [0x3f800000,0x40000000,0xbf800000,0x7fc00000])
+    assert.strictEqual(e.SetNPatchMode(d,bits)>>>0,0x8876086a);
+  assert.strictEqual(e.SetNPatchMode(d,0),0);
+  assert.strictEqual(e.SetNPatchMode(d,0x80000000),0);
   const read=p=>e.guest_read32(p)>>>0;
+  const buffers=[6,6,7,7].map(kind=>{assert.strictEqual(e.buffer(d,kind,out),0);return read(out);});
+  const [v1,v2,i1,i2]=buffers,refs=b=>read(b+20);
+  assert.strictEqual(e.BeginStateBlock(d),0);
+  assert.strictEqual(e.SetIndices(d,i1),0);assert.strictEqual(refs(i1),1);
+  assert.strictEqual(e.SetIndices(d,i2),0);assert.strictEqual(refs(i1),0);
+  assert.strictEqual(e.SetStreamSource(d,0,v1,8,16),0);
+  assert.strictEqual(e.SetStreamSource(d,0,v2,16,32),0);assert.strictEqual(refs(v1),0);
+  assert.strictEqual(e.SetStreamSource(d,0,v1,128,16)>>>0,invalid);
+  assert.strictEqual(refs(v2),1,'invalid write preserves recorded buffer');
+  assert.strictEqual(e.GetIndices(d,out),0);assert.strictEqual(read(out),0,'recording leaves live IB alone');
+  assert.strictEqual(e.GetStreamSource(d,0,out,out+4,out+8),0);assert.strictEqual(read(out),0);
+  assert.strictEqual(e.EndStateBlock(d,out),0);const buffersBlock=read(out);
+  assert.strictEqual(e.Apply(buffersBlock),0);
+  assert.strictEqual(refs(i2),2);assert.strictEqual(refs(v2),2);
+  assert.strictEqual(e.GetStreamSource(d,0,out,out+4,out+8),0);
+  assert.deepStrictEqual([read(out),read(out+4),read(out+8)],[v2,16,32]);
+  e.releaseTexture(v2); // balance getter's external AddRef
+  assert.strictEqual(e.SetIndices(d,i1),0);
+  assert.strictEqual(e.Capture(buffersBlock),0);assert.strictEqual(refs(i2),0);assert.strictEqual(refs(i1),2);
+  assert.strictEqual(e.SetIndices(d,0),0);
+  assert.strictEqual(e.Apply(buffersBlock),0);
+  assert.strictEqual(e.GetIndices(d,out),0);assert.strictEqual(read(out),i1);e.releaseTexture(i1);
+  assert.strictEqual(e.Release(buffersBlock),0);
+  assert.strictEqual(refs(i1),1);assert.strictEqual(refs(v2),1);
+  assert.strictEqual(e.SetIndices(d,0),0);assert.strictEqual(e.SetStreamSource(d,0,0,0,0),0);
+  for(const b of buffers){assert.strictEqual(refs(b),0);assert.strictEqual(e.releaseTexture(b),0);}
+  for(const stage of[4,5]){
+    const sampler=type=>{assert.strictEqual(e.GetSamplerState(d,stage,type,out),0);return read(out);};
+    assert.strictEqual(sampler(1),1);assert.strictEqual(sampler(5),1);
+    assert.strictEqual(e.texture(d,out),0);const texture=read(out);
+    assert.strictEqual(e.BeginStateBlock(d),0);
+    assert.strictEqual(e.SetTexture(d,stage,texture),0);
+    assert.strictEqual(e.SetTexture(d,stage,texture),0);assert.strictEqual(refs(texture),1);
+    assert.strictEqual(e.SetSamplerState(d,stage,1,3),0);
+    assert.strictEqual(e.SetSamplerState(d,stage,5,2),0);
+    assert.strictEqual(sampler(1),1,'recording leaves appended live sampler unchanged');
+    assert.strictEqual(e.GetTexture(d,stage,out),0);assert.strictEqual(read(out),0);
+    assert.strictEqual(e.EndStateBlock(d,out),0);const block=read(out);
+    assert.strictEqual(e.Apply(block),0);assert.strictEqual(refs(texture),2);
+    assert.strictEqual(sampler(1),3);assert.strictEqual(sampler(5),2);
+    assert.strictEqual(e.GetTexture(d,stage,out),0);assert.strictEqual(read(out),texture);e.releaseTexture(texture);
+    assert.strictEqual(e.SetSamplerState(d,stage,1,2),0);
+    assert.strictEqual(e.Capture(block),0);assert.strictEqual(refs(texture),2);
+    assert.strictEqual(e.SetSamplerState(d,stage,1,1),0);
+    assert.strictEqual(e.Apply(block),0);assert.strictEqual(sampler(1),2);
+    assert.strictEqual(e.SetTexture(d,stage,0),0);assert.strictEqual(refs(texture),1);
+    assert.strictEqual(e.Release(block),0);assert.strictEqual(refs(texture),0);
+    assert.strictEqual(e.releaseTexture(texture),0);
+  }
+  assert.strictEqual(e.SetTexture(d,6,0)>>>0,invalid);
+  assert.strictEqual(e.SetSamplerState(d,6,1,1)>>>0,invalid);
   const state=id=>{assert.strictEqual(e.GetRenderState(d,id,out),0);return read(out);};
+  const tss=(stage,type)=>{assert.strictEqual(e.GetTextureStageState(d,stage,type,out),0);return read(out);};
+  for(let stage=0;stage<8;stage++) {
+    assert.strictEqual(tss(stage,1),stage?1:4);
+    assert.strictEqual(tss(stage,4),stage?1:2);
+    assert.strictEqual(tss(stage,11),stage);
+    assert.strictEqual(tss(stage,28),1);
+  }
+  assert.strictEqual(e.SetTextureStageState(d,8,1,2)>>>0,invalid);
+  assert.strictEqual(e.SetTextureStageState(d,0,12,2)>>>0,invalid);
+  for(const value of[0,2,3,4,6,17,21,0xffffffff]){
+    assert.strictEqual(e.SetTextureStageState(d,0,28,value)>>>0,invalid);
+    assert.strictEqual(tss(0,28),1,'invalid RESULTARG preserves CURRENT');
+  }
+  assert.strictEqual(e.SetTextureStageState(d,0,28,5),0);assert.strictEqual(tss(0,28),5);
+  assert.strictEqual(e.SetTextureStageState(d,0,28,1),0);
+  assert.strictEqual(e.GetTextureStageState(d,0,1,0)>>>0,invalid);
+  assert.strictEqual(e.BeginStateBlock(d),0);
+  assert.strictEqual(e.SetNPatchMode(d,0),0,'recording disabled N-patches preserves linear rendering');
+  assert.strictEqual(e.SetTextureStageState(d,0,1,2),0);
+  assert.strictEqual(e.SetTextureStageState(d,0,1,3),0);
+  assert.strictEqual(e.SetTextureStageState(d,7,32,0x11223344),0);
+  assert.strictEqual(tss(0,1),4,'recording leaves texture-stage state untouched');
+  assert.strictEqual(e.EndStateBlock(d,out),0);const tssBlock=read(out);
+  assert.strictEqual(e.Apply(tssBlock),0);
+  assert.strictEqual(tss(0,1),3);assert.strictEqual(tss(7,32),0x11223344);
+  assert.strictEqual(e.SetTextureStageState(d,0,1,4),0);
+  assert.strictEqual(e.Capture(tssBlock),0);
+  assert.strictEqual(e.SetTextureStageState(d,0,1,2),0);
+  assert.strictEqual(e.SetTextureStageState(d,1,1,6),0);
+  assert.strictEqual(e.Apply(tssBlock),0);
+  assert.strictEqual(tss(0,1),4);assert.strictEqual(tss(1,1),6,'uncaptured stage survives Apply');
+  assert.strictEqual(e.Release(tssBlock),0);
   const mat=out+64,copy=mat+64;
   const ramp=out+256,rampCopy=ramp+1536;
   e.GetGammaRamp(d,0,ramp);

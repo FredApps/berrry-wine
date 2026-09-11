@@ -1271,6 +1271,54 @@
         }
       ]
     },
+    "StatusBarState": {
+      "file": "src/09c3-controls.wat",
+      "frozen": null,
+      "frozenNote": null,
+      "size": 20,
+      "fields": [
+        {
+          "name": "normal_text_ptr",
+          "type": "i32",
+          "offset": 0,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "normal_text_len",
+          "type": "i32",
+          "offset": 4,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "simple_text_ptr",
+          "type": "i32",
+          "offset": 8,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "simple_text_len",
+          "type": "i32",
+          "offset": 12,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "simple_mode",
+          "type": "i32",
+          "offset": 16,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        }
+      ]
+    },
     "VSock": {
       "file": "src/09d-winsock.wat",
       "frozen": null,

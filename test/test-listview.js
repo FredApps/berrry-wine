@@ -73,8 +73,13 @@ const LVIF_STATE = 0x0008;
 const LVFI_PARAM = 0x0001;
 const LVFI_STRING = 0x0002;
 const LVFI_PARTIAL = 0x0008;
+const LVIS_FOCUSED = 0x0001;
 const LVIS_SELECTED = 0x0002;
+const LVIS_CUT = 0x0004;
+const LVIS_STATEIMAGEMASK = 0xF000;
+const LVNI_FOCUSED = 0x0001;
 const LVNI_SELECTED = 0x0002;
+const LVS_SINGLESEL = 0x0004;
 const LVIR_BOUNDS = 0x0000;
 const LVIR_LABEL = 0x0002;
 const LVCF_WIDTH = 0x0002;
@@ -382,7 +387,7 @@ async function main() {
       storedItem: dv.getInt32(p + 12, true),
     };
   }
-  function insertItem(idx, text, image = 0, lParam = 0) {
+  function insertItem(idx, text, image = 0, lParam = 0, target = lv) {
     const g = e.guest_alloc(40);
     const p = wa(g);
     u8.fill(0, p, p + 40);
@@ -392,7 +397,7 @@ async function main() {
     dv.setUint32(p + 20, writeStr(text), true);
     dv.setInt32(p + 28, image, true);
     dv.setUint32(p + 32, lParam >>> 0, true);
-    return e.send_message(lv, LVM_INSERTITEMA, 0, g);
+    return e.send_message(target, LVM_INSERTITEMA, 0, g);
   }
   function setSubitem(item, sub, text) {
     const g = e.guest_alloc(40);
@@ -423,12 +428,13 @@ async function main() {
     dv.setUint32(p + 32, lParam >>> 0, true);
     return e.send_message(lv, LVM_SETITEMA, 0, g);
   }
-  function getItemMeta(item) {
+  function getItemMeta(item, stateMask = 0xFFFFFFFF) {
     const g = e.guest_alloc(40);
     const p = wa(g);
     u8.fill(0, p, p + 40);
     dv.setUint32(p + 0, LVIF_IMAGE | LVIF_PARAM | LVIF_STATE, true);
     dv.setInt32(p + 4, item, true);
+    dv.setUint32(p + 16, stateMask >>> 0, true);
     const len = e.send_message(lv, LVM_GETITEMA, 0, g);
     return {
       len,
@@ -436,6 +442,15 @@ async function main() {
       lParam: dv.getUint32(p + 32, true),
       state: dv.getUint32(p + 12, true),
     };
+  }
+  function setItemState(target, item, state, stateMask) {
+    const g = e.guest_alloc(40);
+    const p = wa(g);
+    u8.fill(0, p, p + 40);
+    dv.setUint32(p + 0, LVIF_STATE, true);
+    dv.setUint32(p + 12, state >>> 0, true);
+    dv.setUint32(p + 16, stateMask >>> 0, true);
+    return e.send_message(target, LVM_SETITEMSTATE, item, g);
   }
   function findItem(start, flags, text = '', lParam = 0) {
     const g = e.guest_alloc(24);
@@ -560,13 +575,28 @@ async function main() {
   const row5Type = getItemText(5, 1);
   check('LVM_GETITEMTEXTA subitem text value', row5Type.text === 'REG_DWORD', row5Type.text);
   const row5Meta = getItemMeta(5);
-  check('LVM_GETITEMA returns inserted image/lParam', row5Meta.image === 15 && row5Meta.lParam === 0xCAFE0005, JSON.stringify(row5Meta));
+  check('LVM_GETITEMA returns BOOL plus inserted image/lParam', row5Meta.len === 1 && row5Meta.image === 15 && row5Meta.lParam === 0xCAFE0005, JSON.stringify(row5Meta));
   check('LVM_SETITEMA updates image/lParam', setItemMeta(5, 77, 0x1234ABCD) === 1);
   const row5MetaUpdated = getItemMeta(5);
   check('LVM_GETITEMA returns updated image/lParam', row5MetaUpdated.image === 77 && row5MetaUpdated.lParam === 0x1234ABCD, JSON.stringify(row5MetaUpdated));
   check('LVM_SETITEMA updates a visible row to in-range image', setItemMeta(0, 1, 0xCAFE0000) === 1);
   const row0MetaUpdated = getItemMeta(0);
   check('LVM_GETITEMA returns in-range image metadata', row0MetaUpdated.image === 1 && row0MetaUpdated.lParam === 0xCAFE0000, JSON.stringify(row0MetaUpdated));
+
+  const invalidItemG = e.guest_alloc(40);
+  const invalidItemP = wa(invalidItemG);
+  u8.fill(0, invalidItemP, invalidItemP + 40);
+  dv.setUint32(invalidItemP + 0, LVIF_IMAGE | LVIF_PARAM | LVIF_STATE, true);
+  dv.setInt32(invalidItemP + 4, 99, true);
+  dv.setUint32(invalidItemP + 12, 0x11223344, true);
+  dv.setUint32(invalidItemP + 16, 0xFFFFFFFF, true);
+  dv.setUint32(invalidItemP + 28, 0x55667788, true);
+  dv.setUint32(invalidItemP + 32, 0x99AABBCC, true);
+  check('LVM_GETITEMA rejects an invalid row before touching outputs',
+    e.send_message(lv, LVM_GETITEMA, 0, invalidItemG) === 0 &&
+      dv.getUint32(invalidItemP + 12, true) === 0x11223344 &&
+      dv.getUint32(invalidItemP + 28, true) === 0x55667788 &&
+      dv.getUint32(invalidItemP + 32, true) === 0x99AABBCC);
 
   const exportBuf = e.guest_alloc(64);
   const exportLen = e.listview_get_item_text(lv, 4, 1, exportBuf, 64);
@@ -702,20 +732,81 @@ async function main() {
   check('LVM_GETNEXTITEM finds selected row', e.send_message(lv, LVM_GETNEXTITEM, 0xFFFFFFFF, LVNI_SELECTED) === 4);
   check('LVM_GETITEMSTATE reports selected bit', e.send_message(lv, LVM_GETITEMSTATE, 4, LVIS_SELECTED) === LVIS_SELECTED);
 
-  const stateG = e.guest_alloc(40);
-  const stateP = wa(stateG);
-  u8.fill(0, stateP, stateP + 40);
-  dv.setUint32(stateP + 0, LVIF_STATE, true);
-  dv.setUint32(stateP + 12, LVIS_SELECTED, true);
-  dv.setUint32(stateP + 16, LVIS_SELECTED, true);
   const notifyBeforeState = e.listview_get_debug_notify_count();
-  check('LVM_SETITEMSTATE can move selection', e.send_message(lv, LVM_SETITEMSTATE, 2, stateG) === 1);
-  check('selection export follows LVM_SETITEMSTATE', e.listview_get_selected_index(lv) === 2);
-  check('LVM_SETITEMSTATE sends selected-item LVN_ITEMCHANGED', e.listview_get_debug_notify_count() >= notifyBeforeState + 3 &&
+  check('LVM_SETITEMSTATE adds a second selection', setItemState(lv, 2, LVIS_SELECTED, LVIS_SELECTED) === 1);
+  check('selection mark follows the latest LVM_SETITEMSTATE', e.listview_get_selected_index(lv) === 2);
+  check('normal ListView retains both programmatic selections',
+    e.send_message(lv, LVM_GETSELECTEDCOUNT, 0, 0) === 2 &&
+      e.send_message(lv, LVM_GETITEMSTATE, 2, LVIS_SELECTED) === LVIS_SELECTED &&
+      e.send_message(lv, LVM_GETITEMSTATE, 4, LVIS_SELECTED) === LVIS_SELECTED);
+  check('LVM_GETNEXTITEM scans each selected row',
+    e.send_message(lv, LVM_GETNEXTITEM, 0xFFFFFFFF, LVNI_SELECTED) === 2 &&
+      e.send_message(lv, LVM_GETNEXTITEM, 2, LVNI_SELECTED) === 4 &&
+      e.send_message(lv, LVM_GETNEXTITEM, 4, LVNI_SELECTED) === -1);
+  check('LVM_SETITEMSTATE sends selected-item LVN_ITEMCHANGED', e.listview_get_debug_notify_count() >= notifyBeforeState + 2 &&
     e.listview_get_debug_notify_code() === LVN_ITEMCHANGED &&
     e.listview_get_debug_notify_item() === 2 &&
     e.listview_get_debug_notify_old_state() === 0 &&
     e.listview_get_debug_notify_new_state() === LVIS_SELECTED);
+
+  check('LVM_SETITEMSTATE -1 broadcasts state image and cut state',
+    setItemState(lv, -1, 0x2000 | LVIS_CUT, LVIS_STATEIMAGEMASK | LVIS_CUT) === 1);
+  check('broadcast state reaches every row without losing selection',
+    [0, 1, 2, 3, 4, 11].every(i =>
+      e.send_message(lv, LVM_GETITEMSTATE, i, LVIS_STATEIMAGEMASK | LVIS_CUT) === (0x2000 | LVIS_CUT)) &&
+      e.send_message(lv, LVM_GETSELECTEDCOUNT, 0, 0) === 2);
+  const maskedState = getItemMeta(2, LVIS_CUT);
+  check('LVM_GETITEMA honors LVITEM.stateMask', maskedState.len === 1 && maskedState.state === LVIS_CUT, JSON.stringify(maskedState));
+
+  check('normal ListView accepts broadcast select',
+    setItemState(lv, -1, LVIS_SELECTED, LVIS_SELECTED) === 1 &&
+      e.send_message(lv, LVM_GETSELECTEDCOUNT, 0, 0) === 12);
+  check('normal ListView accepts broadcast selection clear',
+    setItemState(lv, -1, 0, LVIS_SELECTED) === 1 &&
+      e.send_message(lv, LVM_GETSELECTEDCOUNT, 0, 0) === 0 &&
+      e.send_message(lv, LVM_GETNEXTITEM, 0xFFFFFFFF, LVNI_SELECTED) === -1);
+
+  check('focused item state moves uniquely',
+    setItemState(lv, 0, LVIS_FOCUSED, LVIS_FOCUSED) === 1 &&
+      setItemState(lv, 2, LVIS_FOCUSED, LVIS_FOCUSED) === 1 &&
+      e.send_message(lv, LVM_GETITEMSTATE, 0, LVIS_FOCUSED) === 0 &&
+      e.send_message(lv, LVM_GETITEMSTATE, 2, LVIS_FOCUSED) === LVIS_FOCUSED &&
+      e.send_message(lv, LVM_GETNEXTITEM, 0xFFFFFFFF, LVNI_FOCUSED) === 2);
+  check('broadcast focus fails atomically',
+    setItemState(lv, -1, LVIS_FOCUSED, LVIS_FOCUSED) === 0 &&
+      e.send_message(lv, LVM_GETITEMSTATE, 2, LVIS_FOCUSED) === LVIS_FOCUSED);
+
+  const singleLv = e.test_create_listview(0, 0, 160, 80, 1 | LVS_SINGLESEL, 0);
+  insertItem(0, 'Single 0', 0, 0, singleLv);
+  insertItem(1, 'Single 1', 0, 0, singleLv);
+  insertItem(2, 'Single 2', 0, 0, singleLv);
+  const singleSet0 = setItemState(singleLv, 0, LVIS_SELECTED, LVIS_SELECTED);
+  const singleSet2 = setItemState(singleLv, 2, LVIS_SELECTED, LVIS_SELECTED);
+  const singleAfterTwo = {
+    set0: singleSet0,
+    set2: singleSet2,
+    count: e.send_message(singleLv, LVM_GETSELECTEDCOUNT, 0, 0),
+    state0: e.send_message(singleLv, LVM_GETITEMSTATE, 0, LVIS_SELECTED),
+    state2: e.send_message(singleLv, LVM_GETITEMSTATE, 2, LVIS_SELECTED),
+  };
+  check('LVS_SINGLESEL replaces the prior programmatic selection',
+    singleAfterTwo.set0 === 1 && singleAfterTwo.set2 === 1 &&
+      singleAfterTwo.count === 1 && singleAfterTwo.state0 === 0 &&
+      singleAfterTwo.state2 === LVIS_SELECTED, JSON.stringify(singleAfterTwo));
+  const singleBroadcastSet = setItemState(singleLv, -1, LVIS_SELECTED, LVIS_SELECTED);
+  check('LVS_SINGLESEL rejects broadcast select atomically',
+    singleBroadcastSet === 0 &&
+      e.send_message(singleLv, LVM_GETSELECTEDCOUNT, 0, 0) === 1 &&
+      e.send_message(singleLv, LVM_GETITEMSTATE, 2, LVIS_SELECTED) === LVIS_SELECTED,
+    `ret=${singleBroadcastSet} count=${e.send_message(singleLv, LVM_GETSELECTEDCOUNT, 0, 0)}`);
+  const singleBroadcastClear = setItemState(singleLv, -1, 0, LVIS_SELECTED);
+  check('LVS_SINGLESEL accepts broadcast selection clear',
+    singleBroadcastClear === 1 && e.send_message(singleLv, LVM_GETSELECTEDCOUNT, 0, 0) === 0,
+    `ret=${singleBroadcastClear} count=${e.send_message(singleLv, LVM_GETSELECTEDCOUNT, 0, 0)}`);
+  if (e.wnd_destroy_tree) e.wnd_destroy_tree(singleLv - 1);
+
+  check('restore one selected row for deletion coverage',
+    setItemState(lv, 2, LVIS_SELECTED, LVIS_SELECTED) === 1);
 
   e.send_message(lv, WM_LBUTTONDOWN, 1, makeLParam(212, 76));
   e.send_message(lv, WM_LBUTTONUP, 0, makeLParam(212, 76));

@@ -10,6 +10,11 @@ const CHECK = process.argv.includes('--check');
 
 const GAMES = [
   {
+    id: 'black_white_2_demo',
+    root: 'Black and White 2-DX9-D3D/installed',
+    exe: 'BW2Demo.exe',
+  },
+  {
     id: 'curse_monkey_island_demo',
     root: 'Curse of Monkey Island demo-SW',
     exe: 'COMI.EXE',

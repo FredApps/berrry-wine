@@ -5159,12 +5159,22 @@
     (global.set $esp (i32.sub (global.get $esp) (i32.const 2)))
     (call $gs16 (global.get $esp) (local.get $v)))
 
+  ;; USER owns these buffers, not the task's DGROUP/local heap. In particular
+  ;; VB initializes private runtime data in its initially empty DGROUP;
+  ;; placing the fourth DRAWITEM slot at offset 0x72 overwrote its nesting
+  ;; counter with ODT_BUTTON=4. Allocate lazily so ordinary task/DLL startup
+  ;; selector ordering is unchanged, and reuse the segment for this task.
+  (func $win16_scratch_segment (result i32)
+    (if (i32.eqz (global.get $win16_scratch_seg))
+      (then (global.set $win16_scratch_seg (call $win16_alloc_segment))))
+    (global.get $win16_scratch_seg))
+
   ;; Narrowing lParam is not always a truncation either. When it points at a
   ;; struct, the struct itself is the 32-bit shape and a 16-bit procedure will
   ;; `les` the two words it is handed and then read every field at the wrong
   ;; offset — Solitaire's Deck dialog draws each card back from a
   ;; DRAWITEMSTRUCT and got ES = the top half of a 32-bit heap address, which
-  ;; is no selector at all. So it is rebuilt in the task's own DGROUP, in the
+  ;; is no selector at all. So it is rebuilt in USER's scratch segment, in the
   ;; 16-bit shape, and passed as a far pointer there.
   ;;
   ;; WM_DRAWITEM is the only one of this family the controls ever send. Its
@@ -5176,18 +5186,13 @@
   ;; DRAWITEMSTRUCT is 48 bytes in Win32 and 26 in Win16: five UINTs, two
   ;; handles, a RECT of ints, and the itemData DWORD.
   (func $win16_msg_lparam16 (param $msg i32) (param $lparam i32) (result i32)
-    (local $src i32) (local $dst i32)
+    (local $src i32) (local $dst i32) (local $segment i32)
     (if (i32.ne (local.get $msg) (i32.const 0x002B))
       (then (return (local.get $lparam))))
-    (if (i32.eqz (global.get $win16_msg_scratch))
-      (then (return (local.get $lparam))))
     (local.set $src (local.get $lparam))
-    ;; DGROUP by segment index, not through $seg_base_ds: DS is whatever the
-    ;; last 16-bit code to run left in it — a DLL's own data segment, as often
-    ;; as not — and the far pointer handed out below names DGROUP.
-    (local.set $dst (i32.add (call $win16_seg_base (global.get $win16_auto_data))
-      (i32.add (global.get $win16_msg_scratch)
-               (i32.shl (global.get $win16_msg_slot) (i32.const 5)))))
+    (local.set $segment (call $win16_scratch_segment))
+    (local.set $dst (i32.add (call $win16_seg_base (local.get $segment))
+      (i32.shl (global.get $win16_msg_slot) (i32.const 5))))
     (call $gs16 (local.get $dst) (call $gl32 (local.get $src)))
     (call $gs16 (i32.add (local.get $dst) (i32.const 2))
       (call $gl32 (i32.add (local.get $src) (i32.const 4))))
@@ -5207,9 +5212,8 @@
       (call $gl32 (i32.add (local.get $src) (i32.const 44))))
     (local.set $lparam
       (i32.or
-        (i32.shl (call $win16_index_to_sel (global.get $win16_auto_data)) (i32.const 16))
-        (i32.add (global.get $win16_msg_scratch)
-                 (i32.shl (global.get $win16_msg_slot) (i32.const 5)))))
+        (i32.shl (call $win16_index_to_sel (local.get $segment)) (i32.const 16))
+        (i32.shl (global.get $win16_msg_slot) (i32.const 5))))
     (global.set $win16_msg_slot
       (i32.and (i32.add (global.get $win16_msg_slot) (i32.const 1)) (i32.const 3)))
     (local.get $lparam))
@@ -10001,8 +10005,8 @@
   ;; rather than numbers invented here.
   (func $win16_ef_enter
     (local $lf i32) (local $tm i32) (local $wide i32) (local $i i32) (local $n i32)
-    (local.set $lf (i32.add (call $win16_seg_base (global.get $win16_auto_data))
-                            (global.get $win16_font_scratch)))
+    (local.set $lf (i32.add (call $win16_seg_base (call $win16_scratch_segment))
+                            (global.get $WIN16_MSG_SCRATCH_SIZE)))
     (local.set $tm (i32.add (local.get $lf) (i32.const 52)))
     (call $zero_memory (call $g2w (local.get $lf)) (global.get $WIN16_FONT_SCRATCH_SIZE))
     ;; TEXTMETRICA is the same fields with longs where Win16 has words, so it
@@ -10047,10 +10051,10 @@
     ;; The callback's Pascal frame: lpLogFont, lpTextMetric, nFontType, lpData,
     ;; and a far return onto the thunk that picks the walk up again. RASTER
     ;; (1) is what these strikes are.
-    (call $win16_push16 (call $win16_index_to_sel (global.get $win16_auto_data)))
-    (call $win16_push16 (global.get $win16_font_scratch))
-    (call $win16_push16 (call $win16_index_to_sel (global.get $win16_auto_data)))
-    (call $win16_push16 (i32.add (global.get $win16_font_scratch) (i32.const 52)))
+    (call $win16_push16 (call $win16_index_to_sel (global.get $win16_scratch_seg)))
+    (call $win16_push16 (global.get $WIN16_MSG_SCRATCH_SIZE))
+    (call $win16_push16 (call $win16_index_to_sel (global.get $win16_scratch_seg)))
+    (call $win16_push16 (i32.add (global.get $WIN16_MSG_SCRATCH_SIZE) (i32.const 52)))
     (call $win16_push16 (i32.const 1))
     (call $win16_push16 (i32.shr_u (global.get $win16_ef_data) (i32.const 16)))
     (call $win16_push16 (global.get $win16_ef_data))

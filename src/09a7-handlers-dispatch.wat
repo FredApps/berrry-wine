@@ -2989,6 +2989,32 @@
   )
 
   ;; 790: GetKeyNameTextA(lParam, lpString, cchSize) — write key name from scan code
+  ;; The emulated keyboard currently uses the ANSI handler's US names. Convert
+  ;; those through private scratch because that legacy formatter writes whole
+  ;; names; no unbounded write is allowed into the caller's UTF-16 buffer.
+  (func $handle_GetKeyNameTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $scratch i32) (local $length i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.le_s (local.get $arg2) (i32.const 0)))
+      (then (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (local.set $scratch (call $heap_alloc (i32.const 64)))
+    (if (i32.eqz (local.get $scratch))
+      (then (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16))) (return)))
+    (call $handle_GetKeyNameTextA (local.get $arg0) (local.get $scratch) (i32.const 64)
+      (i32.const 0) (i32.const 0) (local.get $name_ptr))
+    (local.set $length (global.get $eax))
+    (if (i32.ge_u (local.get $length) (local.get $arg2))
+      (then (local.set $length (i32.sub (local.get $arg2) (i32.const 1)))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $length)))
+      (call $gs16 (i32.add (local.get $arg1) (i32.mul (local.get $i) (i32.const 2)))
+        (call $gl8 (i32.add (local.get $scratch) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $copy)))
+    (call $gs16 (i32.add (local.get $arg1) (i32.mul (local.get $length) (i32.const 2))) (i32.const 0))
+    (call $heap_free (local.get $scratch))
+    (global.set $eax (local.get $length)))
+
   (func $handle_GetKeyNameTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; arg0=lParam (scan code in bits 16-23), arg1=lpString, arg2=cchSize
     (local $scan i32) (local $buf i32) (local $len i32) (local $ch i32)

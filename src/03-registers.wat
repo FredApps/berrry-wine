@@ -308,7 +308,32 @@
     ;; through its elementwise path when pages are missing or non-contiguous.
     (call $guest_page_affine_span (local.get $ga) (local.get $len))
   )
+  ;; Sparse backing is not in the direct affine guest window. In particular,
+  ;; native shader allocations retain WASM pointers and must recover the real
+  ;; guest allocation on release. Serialize against map removal/compaction.
+  (func $w2g_sparse (param $wa i32) (result i32)
+    (local $i i32) (local $count i32) (local $rec i32)
+    (local $off i32) (local $guest i32)
+    (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
+    (local.set $count (i32.atomic.load (global.get $VIRTUAL_MAP_STATE)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE)
+        (i32.shl (local.get $i) (i32.const 4))))
+      (local.set $off (i32.sub (local.get $wa) (i32.load offset=8 (local.get $rec))))
+      (if (i32.lt_u (local.get $off) (i32.load offset=4 (local.get $rec)))
+        (then
+          (local.set $guest (i32.add (i32.load (local.get $rec)) (local.get $off)))
+          (br $done)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+    (local.get $guest))
   (func $w2g (param $wa i32) (result i32)
+    (if (i32.lt_u
+          (i32.sub (local.get $wa) (global.get $VIRTUAL_BACKING_BASE))
+          (global.get $VIRTUAL_BACKING_BASE_SIZE))
+      (then (return (call $w2g_sparse (local.get $wa)))))
     (if (result i32)
       (i32.lt_u
         (i32.sub (local.get $wa) (global.get $DIB_BACKING_BASE))

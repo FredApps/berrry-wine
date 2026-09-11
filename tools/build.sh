@@ -467,7 +467,7 @@ node tools/layout-migrate.js "${GDI_PATH_LAYOUT_ARGS[@]}" --gate > /dev/null || 
 # does not exist, not a conversion.
 RECT_LAYOUT_ARGS=(--file=src/09a-handlers.wat --layout=Rect
   --base-call='$g2w' --base-local-from-call=rc,wa,rect,rect_w,r,dst,src,s1,s2,a,b,p
-  --only-func='$handle_InvalidateRect,$handle_ValidateRect,$handle_GetUpdateRect,$handle_RedrawWindow,$handle_FillRect,$handle_FrameRect,$handle_InvertRect,$handle_DrawEdge,$handle_DrawFocusRect,$handle_DrawFrameControl,$handle_DrawCaptionTempA,$draw_text_ex,$handle_OffsetRect,$handle_InflateRect,$handle_CopyRect,$handle_IntersectRect,$handle_UnionRect,$handle_SubtractRect,$handle_IsRectEmpty,$handle_EqualRect,$handle_PtInRect,$handle_AdjustWindowRectEx,$handle_MapDialogRect,$handle_ScrollWindowEx,$handle_ClipCursor'
+  --only-func='$handle_InvalidateRect,$handle_ValidateRect,$handle_GetUpdateRect,$handle_RedrawWindow,$handle_FillRect,$handle_FrameRect,$handle_InvertRect,$handle_DrawEdge,$handle_DrawFocusRect,$handle_DrawFrameControl,$handle_DrawCaptionTempA,$draw_text_ex,$handle_OffsetRect,$handle_InflateRect,$handle_CopyRect,$handle_IntersectRect,$handle_UnionRect,$handle_SubtractRect,$handle_IsRectEmpty,$handle_EqualRect,$handle_PtInRect,$handle_AdjustWindowRectEx,$handle_MapDialogRect,$handle_ScrollWindowEx,$handle_ClipCursor,$handle_MonitorFromRect'
   --memarg)
 node tools/layout-migrate.js "${RECT_LAYOUT_ARGS[@]}" --gate > /dev/null || {
   node tools/layout-migrate.js "${RECT_LAYOUT_ARGS[@]}" --gate; exit 1; }

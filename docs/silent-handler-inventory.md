@@ -208,3 +208,71 @@ ownership, clear current selection, and release attachment references.
 2026-09-06: 435 -> 432. Direct3D Device 1/2/3 NextViewport now walks each
 device's retained Win9x viewport list, returns AddRef'd HEAD/TAIL/NEXT
 interfaces, and distinguishes invalid input, empty lists, and list end.
+
+2026-09-10: 370 -> 369. mixerMessage now enforces the documented
+device-id-only, MXDM_USER-or-higher contract and reports unsupported private
+driver messages instead of claiming every driver-specific request succeeded.
+
+2026-09-10: 369 -> 367. DPA_Destroy and DSA_Destroy now validate opaque live
+handles, retire them, and return both their backing arrays and handle records
+to the process heap instead of claiming success while leaking every array.
+
+2026-09-10: 367 -> 365. Comctl32_Free and Comctl32_GetSize now operate on
+validated live allocations instead of returning unconditional TRUE and 256;
+the same tracked extent also makes ReAlloc preserve only owned bytes, retire
+moved storage, and fail without destroying the original allocation.
+
+2026-09-10: 365 -> 364. MenuHelp now uses its real seven-argument stdcall ABI,
+resolves command and popup help-string resources, and drives the status bar's
+separate Win98 simple pane instead of silently doing nothing.
+
+2026-09-10: 364 -> 363. ShowHideMenuCtl now parses its documented selector
+pairs, toggles the corresponding child or whole menu, synchronizes the menu
+check, and fails for absent mappings or controls instead of always returning
+TRUE.
+
+2026-09-10: 405 -> 404. IDirectPlay3 Receive now reads its object's received
+message queue, negotiates buffer size, filters sender/recipient, and supports
+peek or consumption instead of unconditionally reporting no messages.
+The reviewed inventory diff removes only this handler; no entries were added
+or otherwise changed. Message production and DP4 activation remain separate.
+
+2026-09-10: 404 -> 403. IDirectPlay3 Send now copies messages into local
+recipient queues and signals their events, validates sender ownership and
+unsupported modes, and rolls back partial multicast allocation failure.
+The reviewed inventory diff removes only Send, with no added or modified
+quiet entries. Network transport and asynchronous sending are not implemented.
+
+2026-09-10: 356 -> 353. MonitorFromPoint, MonitorFromRect, and
+MonitorFromWindow now test the one browser monitor's actual rectangle and
+honor MONITOR_DEFAULTTONULL, MONITOR_DEFAULTTOPRIMARY, and
+MONITOR_DEFAULTTONEAREST instead of always returning the primary handle.
+The same slice validates GetMonitorInfoA and makes its work area agree with
+SPI_GETWORKAREA and the browser desktop's existing 28-pixel Win98 taskbar.
+
+2026-09-11: 353 -> 348. DirectInput device Acquire, Unacquire,
+SetDataFormat, SetCooperativeLevel, and Poll now follow the documented device
+lifecycle instead of returning unconditional success. The device retains its
+standard keyboard or mouse data format and cooperative-level HWND/flags;
+acquisition is non-reference-counted, data access requires acquisition, and
+invalid formats, windows, flag pairs, and acquired format changes return their
+documented HRESULTs. The browser still exposes only the system keyboard and
+mouse and does not yet model acquisition competition or automatic foreground
+loss.
+
+2026-09-11: 348 -> 346. RegisterDragDrop now validates a live process window,
+rejects duplicate registrations, and retains one IDropTarget reference per
+window. RevokeDragDrop distinguishes invalid and unregistered windows, unlinks
+the exact registration, and releases its retained target. DLL-private targets
+cross the existing suspended guest COM callback bridge for AddRef/Release;
+emulator-local interfaces use the synchronous path. Browser drop events are not
+yet converted into IDataObject/IDropTarget calls.
+
+2026-09-11: 346 -> 345. CoLockObjectExternal now implements its documented
+strong-reference lifetime: every lock owns one IUnknown AddRef and every
+balanced unlock performs one Release. Repeated locks remain independently
+counted, null and malformed interfaces fail before mutation, and an unbalanced
+unlock returns E_UNEXPECTED. DLL-private implementations use the suspended
+guest callback bridge; emulator-local objects complete synchronously. The
+fLastUnlockReleases proxy-disconnection distinction is not observable because
+the runtime does not expose out-of-process marshaled connections.

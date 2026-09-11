@@ -1024,6 +1024,9 @@ class WineAssembly {
     self._guestTickState(sharedAudio);
     const ctx = {
       getMemory: () => self.memory.buffer,
+      d3d9Bridge: opts.d3d9Bridge,
+      d3d9Programmable: self.d3d9Programmable === true,
+      createD3DRenderWorker: () => self._createD3DRenderWorker(),
       apiTable: self.apiTable,
       get renderer() { return self.renderer; },
       get resourceJson() { return self.resourceJson; },
@@ -1865,6 +1868,7 @@ class WineAssembly {
       // cannot quietly disagree. The rest of the options are per-thread by
       // nature: this worker's own instance, and its id.
       const wi = self.getImports(Object.assign(processSharedCtx(mainCtx), {
+        d3d9Bridge: mainCtx.d3d9Bridge,
         detached: true,
         instance: () => workerInstance || self.instance,
         exports: () => workerInstance ? workerInstance.exports : self.instance.exports,
@@ -1929,6 +1933,7 @@ class WineAssembly {
       // ReadFile off a mounted ISO). Read late: the VFS is attached to the
       // help context after init().
       getVfs: () => (self._helpCtx && self._helpCtx.vfs) || null,
+      onRenderWait: token => self.hostCtx.waitD3DRender(token),
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
       waitNow: () => self._guestAudioClockMs(self.hostCtx && self.hostCtx.sharedAudio),
@@ -3031,6 +3036,19 @@ class WineAssembly {
   // they still point at us: a later app has already overwritten them with its
   // own and must not be unwired by a straggling stop().
   _releaseGuestMemory() {
+    const bridge = this.hostCtx && this.hostCtx.d3d9Bridge;
+    if (bridge && bridge.asyncSoftware && bridge.workerReady && !this._d3dRenderRetired) {
+      if (!this._d3dRenderRetirement) this._d3dRenderRetirement = this.hostCtx.closeD3DRender().then(() => {
+        this._d3dRenderRetired = true;
+        if (this._stopped) this._releaseGuestMemory();
+      }, error => {
+        // Do not claim native allocations were reclaimed after an orphaned
+        // worker exit. Keep the owner reachable for diagnostics/recovery.
+        this._d3dRenderRetirementError = error;
+        this.logToUI(`[render] retirement failed: ${error && error.message}`);
+      });
+      return;
+    }
     this._deleteOwnSurfacePresentations();
     const renderer = this.renderer;
     if (renderer) {
@@ -3084,6 +3102,30 @@ class WineAssembly {
     for (const id of mine) {
       try { del(id); } catch (_) {}
     }
+  }
+
+  async _createD3DRenderWorker() {
+    const memory = this.memory, module = this._wasmModule, e = this.instance && this.instance.exports;
+    if (!memory || !module || !e || typeof D3DCommandStream === 'undefined')
+      throw new Error('D3D9 software worker runtime is unavailable');
+    const response = await fetch(WineAssembly.versionedUrl('lib/host-import-sigs.generated.json'));
+    if (!response.ok) throw new Error(`render worker signatures HTTP ${response.status}`);
+    const sigs = (await response.json()).sigs;
+    const worker = new Worker(WineAssembly.versionedUrl('lib/d3d-render-worker.js'));
+    return new D3DCommandStream.WorkerConsumer(worker, {module,memory,sigs,
+      imageBase:e.get_image_base() >>> 0, sourceVersion:globalThis.WINE_SOURCE_VERSION,
+      reclaimHeap: head => e.d3d_render_adopt_free_list(head)});
+  }
+
+  _beginD3DRenderWait(token) {
+    token |= 0;
+    if (token > -2) throw new Error('invalid D3D9 render wait token');
+    if (this._d3dMainWait && this._d3dMainWait.token === token) return this._d3dMainWait;
+    const wait = {token,done:false}; this._d3dMainWait = wait;
+    wait.promise = Promise.resolve().then(() => this.hostCtx.waitD3DRender(token))
+      .catch(error => this.logToUI(`[render] ${error && error.message}`))
+      .then(() => { wait.done = true; });
+    return wait;
   }
 
   _audioSchedulerNow() {
@@ -3230,6 +3272,15 @@ class WineAssembly {
           ? sync
           : Object.assign({}, sync || {}, { focusHwnd: pendingFocus | 0 });
         let r, threadsRun;
+        const runMain = async () => {
+          const wait = self._d3dMainWait;
+          if (wait) {
+            if (!wait.done) return Object.assign({}, self._d3dParkedSlice, {blocks:0,ms:0});
+            self._d3dMainWait = null; self._d3dParkedSlice = null;
+            await self.guestWorker.callExport('clear_yield');
+          }
+          return self.guestWorker.slice(steps, mainSync);
+        };
         if (self.renderer && self.renderer.beginWorkerGuestSlice) {
           self.renderer.beginWorkerGuestSlice();
         }
@@ -3238,10 +3289,10 @@ class WineAssembly {
             // Diagnostic only: the same slices, one at a time. A bug that appears
             // in parallel and not here is a race in shared emulator state, which is
             // a different investigation from a bug in the worker plumbing.
-            r = await self.guestWorker.slice(steps, mainSync);
+            r = await runMain();
             threadsRun = await runThreads();
           } else {
-            [r, threadsRun] = await Promise.all([self.guestWorker.slice(steps, mainSync), runThreads()]);
+            [r, threadsRun] = await Promise.all([runMain(), runThreads()]);
           }
         } finally {
           if (self.renderer && self.renderer.endWorkerGuestSlice) {
@@ -3359,6 +3410,9 @@ class WineAssembly {
         } else if (r.yield === 8) {
           await self.guestWorker.callExport('clear_yield');
           try { await self.guestWorker.callExport('vlan_pump'); } catch (_) {}
+        } else if (r.yield === 16) {
+          self._d3dParkedSlice = r;
+          self._beginD3DRenderWait(r.renderToken);
         } else if (r.yield === 12) {
           // io_wait: ReadFile parked on a provider-backed VFS entry (mounted
           // zip/iso, dropped File, remote URL over Range). The brokered fs
@@ -3996,8 +4050,14 @@ class WineAssembly {
         self._beginGuestTickBatch();
         // Check if main thread is waiting
         if (self.threadManager) await self.threadManager.resolveMainThreadSend();
-        const mainThreadWaiting = self.threadManager &&
-          (self._isMainExecutionSuspended() || self.threadManager.checkMainYield());
+        let renderWaiting = false;
+        if (self.instance.exports.get_yield_reason() === 16) {
+          const wait = self._beginD3DRenderWait(self.instance.exports.get_d3d_render_token());
+          if (wait.done) { self._d3dMainWait = null; self.instance.exports.clear_yield(); }
+          else renderWaiting = true;
+        }
+        const mainThreadWaiting = renderWaiting || (self.threadManager &&
+          (self._isMainExecutionSuspended() || self.threadManager.checkMainYield()));
         if (mainThreadWaiting) {
           mainParked = true;
           // Main still waiting — just run worker threads.
@@ -4116,6 +4176,10 @@ class WineAssembly {
         }
         // Handle yield reasons
         const yieldReason = self.instance.exports.get_yield_reason();
+        if (yieldReason === 16) {
+          self._beginD3DRenderWait(self.instance.exports.get_d3d_render_token());
+          mainParked = true;
+        }
         if (yieldReason === 3) {
           await self.handleComDllLoad();
           if (self.running) { self._scheduleStep(step); }

@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 238,
+  "count": 239,
   "sigs": {
     "log": {
       "params": [
@@ -1088,6 +1088,17 @@
     "ini_write_string": {
       "params": [
         "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "ini_write_section": {
+      "params": [
         "i32",
         "i32",
         "i32",

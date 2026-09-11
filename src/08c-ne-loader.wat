@@ -885,10 +885,12 @@
   ;; of the segment", which after the growth above is the whole DGROUP.
   (func $win16_start_task (param $ne_off i32)
     (local $ss_index i32) (local $sp i32) (local $ds_index i32) (local $limit i32)
+    (local $reserved_start i32)
 
     ;; The 16-bit handle map belongs to the task, not to the image: a second
     ;; load in the same instance must not inherit the first task's indices.
     (call $win16_handle_reset)
+    (global.set $win16_scratch_seg (i32.const 0))
 
     (local.set $ds_index (global.get $win16_auto_data))
     (local.set $ss_index (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x1A))))
@@ -902,25 +904,19 @@
         ;; The heap goes immediately above the static data and below the stack,
         ;; which is what makes a local handle a near pointer — see
         ;; $win16_LocalAlloc. Two bytes of slack keep a zero handle out of it.
-        ;; The message scratch sits below the heap rather than inside it: the
-        ;; heap is the app's to fill and this has to stay put for the life of
-        ;; the task. DGROUP is grown by exactly as much, so the app's own heap
-        ;; is not the smaller for it.
-        ;; Never below the sixteen bytes of instance data at the start of
-        ;; DGROUP. A Visual Basic image declares no static data at all, so its
-        ;; DGROUP starts life zero bytes long and everything this places went
-        ;; on top of the task's own description of its stack — VB read its
-        ;; stack floor out of the middle of the font scratch.
-        (global.set $win16_msg_scratch
+        ;; Retain the historical heap/stack spacing, but do not write USER
+        ;; scratch here. VB declares an empty DGROUP and its runtime lays out
+        ;; private data over this space. Message/font copies use a separate
+        ;; lazy selector instead (win16_scratch_segment).
+        (local.set $reserved_start
           (i32.add
             (select (call $win16_seg_limit (local.get $ds_index)) (i32.const 16)
               (i32.gt_u (call $win16_seg_limit (local.get $ds_index)) (i32.const 16)))
             (i32.const 2)))
         (global.set $win16_msg_slot (i32.const 0))
-        (global.set $win16_font_scratch
-          (i32.add (global.get $win16_msg_scratch) (global.get $WIN16_MSG_SCRATCH_SIZE)))
         (global.set $win16_lheap_ptr
-          (i32.add (global.get $win16_font_scratch) (global.get $WIN16_FONT_SCRATCH_SIZE)))
+          (i32.add (local.get $reserved_start)
+            (i32.add (global.get $WIN16_MSG_SCRATCH_SIZE) (global.get $WIN16_FONT_SCRATCH_SIZE))))
         (global.set $win16_lheap_base (global.get $win16_lheap_ptr))
         (global.set $win16_lheap_end
           (i32.add (global.get $win16_lheap_ptr) (global.get $win16_heap_size)))

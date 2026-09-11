@@ -1,6 +1,6 @@
   ;; ============================================================
   ;; COMCTL32 HANDLERS
-  ;; ImageList, toolbar and status-bar creation, up-down and property-sheet stubs,
+  ;; ImageList, toolbar and status-bar creation, up-down and property sheets,
   ;; MenuHelp, and the DSA/DPA dynamic-array and pointer-array APIs.
   ;; 
   ;; This was a 680-line slab of comctl32 sitting in the middle of
@@ -924,14 +924,71 @@
 
   ;; GetEffectiveClientRect(hWnd, lprc, lpInfo) — 3 args, void
   (func $handle_GetEffectiveClientRect (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Calculates the client rect excluding toolbars/status bars
-    ;; For now, just call GetClientRect equivalent — fill rect with window client area
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg1)))
-    (i32.store (local.get $wa) (i32.const 0))          ;; left
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))  ;; top
-    (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 640))  ;; right
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 480)) ;; bottom
+    (local $rect i32) (local $info i32) (local $cs i32)
+    (local $pair_count i32) (local $child i32)
+    (local $xy i32) (local $wh i32)
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32)
+    ;; The SDK requires valid output and mapping pointers. Keep the browser
+    ;; process alive for malformed callers while retaining the useful part of
+    ;; the contract: a null table still receives the ordinary client rect.
+    (if (i32.eqz (local.get $arg1))
+      (then
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
+    (local.set $rect (call $g2w (local.get $arg1)))
+    (local.set $cs (call $wnd_get_client_size_packed (local.get $arg0)))
+    (store.field Rect left (local.get $rect) (i32.const 0))
+    (store.field.memarg Rect top (local.get $rect) (i32.const 0))
+    (store.field.memarg Rect right (local.get $rect)
+      (i32.and (local.get $cs) (i32.const 0xFFFF)))
+    (store.field.memarg Rect bottom (local.get $rect)
+      (i32.shr_u (local.get $cs) (i32.const 16)))
+    (if (local.get $arg2)
+      (then
+        ;; Win98 comctl32 skips the first pair (the menu entry), then treats
+        ;; each following pair as selector/control-id until selector == 0.
+        (local.set $info (i32.add (call $g2w (local.get $arg2)) (i32.const 8)))
+        (block $done (loop $controls
+          ;; Bound a malformed unterminated table rather than walking arbitrary
+          ;; host memory forever. Valid Win32 tables terminate long before this.
+          (br_if $done (i32.ge_u (local.get $pair_count) (i32.const 256)))
+          (br_if $done (i32.eqz (i32.load (local.get $info))))
+          (local.set $child
+            (call $ctrl_find_by_id
+              (local.get $arg0) (i32.load offset=4 (local.get $info))))
+          ;; Checking WS_VISIBLE itself, rather than effective ancestor
+          ;; visibility, is what makes a child count while a hidden parent is
+          ;; waiting to be shown; this is both the SDK rule and Win98's test.
+          (if (i32.and
+                (i32.ne (local.get $child) (i32.const 0))
+                (i32.ne
+                  (i32.and (call $wnd_get_style (local.get $child))
+                           (i32.const 0x10000000))
+                  (i32.const 0)))
+            (then
+              ;; GetDlgItem guarantees a direct child here. CONTROL_GEOM is
+              ;; stored in parent-client coordinates, exactly the result of
+              ;; Win98's GetWindowRect + MapWindowPoints(NULL, parent, ...).
+              (local.set $xy (call $ctrl_get_xy_packed (local.get $child)))
+              (local.set $wh (call $ctrl_get_wh_packed (local.get $child)))
+              (local.set $x
+                (i32.shr_s (i32.shl (local.get $xy) (i32.const 16)) (i32.const 16)))
+              (local.set $y (i32.shr_s (local.get $xy) (i32.const 16)))
+              (local.set $w (i32.and (local.get $wh) (i32.const 0xFFFF)))
+              (local.set $h (i32.shr_u (local.get $wh) (i32.const 16)))
+              (drop
+                (call $rect_subtract_to_wa
+                  (local.get $rect)
+                  (load.field Rect left (local.get $rect))
+                  (load.field.memarg Rect top (local.get $rect))
+                  (load.field.memarg Rect right (local.get $rect))
+                  (load.field.memarg Rect bottom (local.get $rect))
+                  (local.get $x) (local.get $y)
+                  (i32.add (local.get $x) (local.get $w))
+                  (i32.add (local.get $y) (local.get $h))))))
+          (local.set $info (i32.add (local.get $info) (i32.const 8)))
+          (local.set $pair_count (i32.add (local.get $pair_count) (i32.const 1)))
+          (br $controls)))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
@@ -969,45 +1026,585 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
-  ;; MenuHelp(uMsg, wParam, lParam, hMainMenu, hInst) — 5 args, void
+  ;; Resolve the RT_STRING id selected by WM_MENUSELECT. lpwIDs is already a
+  ;; translated WASM address and has the historical MENUHELPUINTS shape:
+  ;;   [command-id offset, main-menu popup-index offset,
+  ;;    nested popup string id, nested popup HMENU, ..., 0, 0]
+  ;; The public documentation describes the trailing pairs but omits the two
+  ;; leading offsets; the Win98 comctl32 code and classic SDK usage require
+  ;; both. A zero result means display an empty help string.
+  (func $menu_help_resource_id
+      (param $wParam i32) (param $lParam i32) (param $hMainMenu i32)
+      (param $ids_w i32) (result i32)
+    (local $flags i32) (local $item i32) (local $submenu i32)
+    (local $pair i32) (local $i i32) (local $string_id i32)
+    (if (i32.eqz (local.get $ids_w)) (then (return (i32.const 0))))
+    (local.set $flags (i32.shr_u (local.get $wParam) (i32.const 16)))
+    (local.set $item (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+    (if (i32.or
+          (i32.ne (i32.and (local.get $flags) (i32.const 0x800)) (i32.const 0)) ;; MF_SEPARATOR
+          (i32.ne (i32.and (local.get $flags) (i32.const 0x2000)) (i32.const 0))) ;; MF_SYSMENU
+      (then (return (i32.const 0))))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x10))) ;; !MF_POPUP
+      (then (return (i32.add (i32.load (local.get $ids_w)) (local.get $item)))))
+    ;; Direct children of the main menu use their zero-based position plus the
+    ;; second offset. Nested popups use the explicit (string id, HMENU) pairs.
+    (if (i32.eq (local.get $lParam) (local.get $hMainMenu))
+      (then (return (i32.add (i32.load offset=4 (local.get $ids_w)) (local.get $item)))))
+    (local.set $submenu
+      (call $menu_handle_submenu (local.get $lParam) (local.get $item)))
+    (if (i32.eqz (local.get $submenu)) (then (return (i32.const 0))))
+    (local.set $pair (i32.add (local.get $ids_w) (i32.const 8)))
+    ;; The native routine walks to a zero string id. Bound malformed caller
+    ;; input so a bad table cannot turn one guest call into an unending host run.
+    (block $done
+      (loop $scan
+        (br_if $done (i32.ge_u (local.get $i) (i32.const 256)))
+        (local.set $string_id (i32.load (local.get $pair)))
+        (br_if $done (i32.eqz (local.get $string_id)))
+        (if (i32.eq (i32.load offset=4 (local.get $pair)) (local.get $submenu))
+          (then (return (local.get $string_id))))
+        (local.set $pair (i32.add (local.get $pair) (i32.const 8)))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+    (i32.const 0))
+
+  ;; MenuHelp(uMsg, wParam, lParam, hMainMenu, hInst, hwndStatus, lpwIDs)
+  ;; — 7 args, void. Win98's implementation handles WM_MENUSELECT, writes a
+  ;; UTF-16 string to status-bar simple part 0xFF, and leaves WM_COMMAND alone
+  ;; despite the broader wording in current documentation.
   (func $handle_MenuHelp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Processes WM_MENUSELECT and WM_COMMAND for status bar help text — no-op
-    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+    (local $hwnd_status i32) (local $ids_g i32) (local $ids_w i32)
+    (local $flags i32) (local $string_id i32) (local $buf_g i32)
+    ;; The generic handler ABI passes five register locals; remaining stdcall
+    ;; arguments stay on the guest stack after the return address and arg0..4.
+    (local.set $hwnd_status
+      (call $gl32 (i32.add (global.get $esp) (i32.const 24))))
+    (local.set $ids_g
+      (call $gl32 (i32.add (global.get $esp) (i32.const 28))))
+    (if (i32.eq (local.get $arg0) (i32.const 0x011F)) ;; WM_MENUSELECT
+      (then
+        (local.set $flags (i32.shr_u (local.get $arg1) (i32.const 16)))
+        ;; WM_MENUSELECT's closed sentinel returns the status bar to its normal
+        ;; panes. Win98 requires lParam==NULL as well as flags==0xFFFF.
+        (if (i32.and
+              (i32.eq (local.get $flags) (i32.const 0xFFFF))
+              (i32.eqz (local.get $arg2)))
+          (then
+            (drop (call $wnd_send_message
+              (local.get $hwnd_status) (i32.const 0x0409) ;; SB_SIMPLE
+              (i32.const 0) (i32.const 0))))
+          (else
+            (local.set $ids_w
+              (if (result i32) (local.get $ids_g)
+                (then (call $g2w (local.get $ids_g)))
+                (else (i32.const 0))))
+            (local.set $string_id (call $menu_help_resource_id
+              (local.get $arg1) (local.get $arg2) (local.get $arg3)
+              (local.get $ids_w)))
+            (local.set $buf_g (call $heap_alloc (i32.const 512)))
+            (if (local.get $buf_g)
+              (then
+                (memory.fill (call $g2w (local.get $buf_g)) (i32.const 0) (i32.const 512))
+                (if (local.get $string_id)
+                  (then
+                    (call $push_rsrc_ctx (local.get $arg4))
+                    (drop (call $string_load_w
+                      (local.get $string_id) (call $g2w (local.get $buf_g))
+                      (i32.const 256)))
+                    (call $pop_rsrc_ctx)))))
+            (drop (call $wnd_send_message
+              (local.get $hwnd_status) (i32.const 0x040B) ;; SB_SETTEXTW
+              (i32.const 0x01FF) (local.get $buf_g)))
+            (drop (call $wnd_send_message
+              (local.get $hwnd_status) (i32.const 0x0409) ;; SB_SIMPLE
+              (i32.const 1) (i32.const 0)))
+            (if (local.get $buf_g) (then (call $heap_free (local.get $buf_g))))))))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 32)))
   )
 
-  ;; ShowHideMenuCtl(hWnd, uFlags, lpInfo) — 3 args, returns BOOL
+  ;; Show or hide one mapped child while keeping its menu check synchronized.
+  ;; This is the child-window subset of ShowWindow that ShowHideMenuCtl uses;
+  ;; it retains the browser surface, USER style, WM_SHOWWINDOW, invalidation,
+  ;; and hidden-subtree cleanup without running top-level activation policy.
+  (func $show_hide_menu_control_visible
+      (param $hwnd i32) (param $show i32) (result i32)
+    (if (i32.eqz (call $wnd_table_get (local.get $hwnd)))
+      (then (return (i32.const 0))))
+    (drop (call $post_queue_push
+      (local.get $hwnd) (i32.const 0x0018) ;; WM_SHOWWINDOW
+      (local.get $show) (i32.const 0)))
+    (drop (call $host_show_window
+      (local.get $hwnd) (select (i32.const 5) (i32.const 0) (local.get $show))))
+    (call $wnd_apply_show_state
+      (local.get $hwnd) (select (i32.const 5) (i32.const 0) (local.get $show)))
+    (if (local.get $show)
+      (then
+        (drop (call $wnd_set_style (local.get $hwnd)
+          (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
+        (call $nc_flags_set (local.get $hwnd) (i32.const 2))
+        (call $paint_flag_set_inv (local.get $hwnd))
+        (drop (call $paint_seed_child_paints (local.get $hwnd))))
+      (else
+        (call $wnd_uncover_parent (local.get $hwnd))
+        (drop (call $wnd_set_style (local.get $hwnd)
+          (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0xEFFFFFFF))))
+        (call $paint_clear_subtree (local.get $hwnd))))
+    (i32.const 1))
+
+  ;; The first lpInfo pair maps a selector to the application's whole menu.
+  ;; Reuse SetMenu's handle normalization and non-client repaint sequence.
+  (func $show_hide_menu_bar
+      (param $hwnd i32) (param $hmenu i32) (param $show i32) (result i32)
+    (local $menu_key i32)
+    (if (i32.eqz (call $wnd_table_get (local.get $hwnd)))
+      (then (return (i32.const 0))))
+    (local.set $menu_key (select (local.get $hmenu) (i32.const 0) (local.get $show)))
+    (if (i32.and
+          (local.get $show)
+          (i32.or
+            (i32.eq (local.get $menu_key) (i32.const 0x00080001))
+            (i32.eq
+              (i32.and (local.get $menu_key) (i32.const 0xFFFF0000))
+              (i32.const 0x00BE0000))))
+      (then (local.set $menu_key
+        (i32.and (local.get $menu_key) (i32.const 0xFFFF)))))
+    (call $menu_load (local.get $hwnd) (local.get $menu_key))
+    (call $defwndproc_do_nccalcsize (local.get $hwnd))
+    (call $host_set_menu (local.get $hwnd) (local.get $menu_key))
+    (if (call $wnd_is_effectively_visible (local.get $hwnd))
+      (then
+        (call $defwndproc_do_ncpaint (local.get $hwnd))
+        (call $paint_flag_set_inv (local.get $hwnd))))
+    (i32.const 1))
+
+  ;; ShowHideMenuCtl(hWnd, uFlags, lpInfo) — 3 args, returns BOOL.
+  ;; lpInfo is {selector, main HMENU}, followed by {menu id, child control id}
+  ;; pairs and a zero selector terminator. Win98 toggles from the menu item's
+  ;; current MF_CHECKED state rather than from the window's visibility bit.
   (func $handle_ShowHideMenuCtl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (global.set $eax (i32.const 1))
+    (local $info_w i32) (local $pair i32) (local $hmenu i32)
+    (local $index i32) (local $old_state i32) (local $new_check i32)
+    (local $ctrl i32) (local $result i32)
+    (if (i32.and
+          (i32.ne (call $wnd_table_get (local.get $arg0)) (i32.const 0))
+          (i32.ne (local.get $arg2) (i32.const 0)))
+      (then
+        ;; Translate the caller's pair table once; every scan/load below uses
+        ;; the same WASM address rather than repeatedly converting arg2.
+        (local.set $info_w (call $g2w (local.get $arg2)))
+        (local.set $hmenu (i32.load offset=4 (local.get $info_w)))
+        (local.set $pair (local.get $info_w))
+        (block $done
+          (loop $scan
+            (br_if $done (i32.ge_u (local.get $index) (i32.const 256)))
+            (br_if $done (i32.eqz (i32.load (local.get $pair))))
+            (if (i32.eq (i32.load (local.get $pair)) (local.get $arg1))
+              (then
+                (if (i32.eqz (local.get $index))
+                  (then
+                    ;; Once detached, its menu blob is intentionally absent;
+                    ;; attachment state is the durable truth for this special
+                    ;; pair and makes the next call reattach it.
+                    (local.set $new_check
+                      (select (i32.const 0) (i32.const 8)
+                        (i32.ne (call $menu_source_get (local.get $arg0)) (i32.const 0))))
+                    (local.set $result (call $show_hide_menu_bar
+                      (local.get $arg0) (local.get $hmenu)
+                      (i32.ne (local.get $new_check) (i32.const 0)))))
+                  (else
+                    (local.set $old_state
+                      (call $menu_handle_state_by_id (local.get $hmenu) (local.get $arg1)))
+                    (local.set $new_check
+                      (select (i32.const 0) (i32.const 8)
+                        (i32.ne (i32.and (local.get $old_state) (i32.const 8)) (i32.const 0))))
+                    (local.set $ctrl (call $ctrl_find_by_id
+                      (local.get $arg0) (i32.load offset=4 (local.get $pair))))
+                    (if (local.get $ctrl)
+                      (then (local.set $result (call $show_hide_menu_control_visible
+                        (local.get $ctrl) (i32.ne (local.get $new_check) (i32.const 0)))))
+                      (else (local.set $new_check (i32.const 0))))))
+                ;; Win98 updates the main menu and its first submenu. The WAT
+                ;; menu mutation walks the whole attached blob, so one call
+                ;; covers both identities without double-toggling anything.
+                (drop (call $menu_check_item_global
+                  (local.get $arg1) (local.get $new_check)))
+                (br $done)))
+            (local.set $pair (i32.add (local.get $pair) (i32.const 8)))
+            (local.set $index (i32.add (local.get $index) (i32.const 1)))
+            (br $scan)))))
+    (global.set $eax (local.get $result))
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
+  ;; Convert COLORREF (00BBGGRR) to the RGBQUAD word used by owned indexed
+  ;; bitmap palettes (00RRGGBB).
+  (func $mapped_bitmap_palette_color (param $colorref i32) (result i32)
+    (call $gdi_raster_swap_rb (i32.and (local.get $colorref) (i32.const 0x00FFFFFF))))
+
+  ;; Win98's six default toolbar mappings. The source colors are COLORREFs;
+  ;; the targets are resolved through the process's current system colors.
+  (func $mapped_bitmap_default_from (param $index i32) (result i32)
+    (if (i32.eq (local.get $index) (i32.const 0)) (then (return (i32.const 0x00000000))))
+    (if (i32.eq (local.get $index) (i32.const 1)) (then (return (i32.const 0x00808080))))
+    (if (i32.eq (local.get $index) (i32.const 2)) (then (return (i32.const 0x00C0C0C0))))
+    (if (i32.eq (local.get $index) (i32.const 3)) (then (return (i32.const 0x00FFFFFF))))
+    (if (i32.eq (local.get $index) (i32.const 4)) (then (return (i32.const 0x00FF0000))))
+    (i32.const 0x00FF00FF))
+
+  (func $mapped_bitmap_default_to (param $index i32) (result i32)
+    (if (i32.eq (local.get $index) (i32.const 0)) (then (return (call $win98_sys_color (i32.const 18)))))
+    (if (i32.eq (local.get $index) (i32.const 1)) (then (return (call $win98_sys_color (i32.const 16)))))
+    (if (i32.eq (local.get $index) (i32.const 2)) (then (return (call $win98_sys_color (i32.const 15)))))
+    (if (i32.eq (local.get $index) (i32.const 3)) (then (return (call $win98_sys_color (i32.const 20)))))
+    (if (i32.eq (local.get $index) (i32.const 4)) (then (return (call $win98_sys_color (i32.const 13)))))
+    (call $win98_sys_color (i32.const 5)))
+
+  ;; Apply at most Win98's 16 accepted COLORMAP entries to an indexed bitmap's
+  ;; owned palette. $map is a translated WASM pointer, or zero for the six
+  ;; system-color defaults above.
+  (func $mapped_bitmap_apply_colors
+      (param $bitmap i32) (param $map i32) (param $map_count i32)
+    (local $record i32) (local $palette i32) (local $palette_count i32)
+    (local $i i32) (local $j i32) (local $entry i32)
+    (local $from i32) (local $to i32)
+    (local.set $record (call $gdi_object_record (local.get $bitmap)))
+    (if (i32.eqz (call $gdi_bitmap_record_valid (local.get $record))) (then (return)))
+    (local.set $palette (load.field.memarg GdiBitmap palette (local.get $record)))
+    (local.set $palette_count
+      (load.field.memarg GdiBitmap palette_count (local.get $record)))
+    ;; A 16-bpp mask triplet uses the same record fields but is not a color
+    ;; table. CreateMappedBitmap is fully defined only for <=256-color images.
+    (if (i32.or
+          (i32.eqz (local.get $palette))
+          (i32.or
+            (i32.gt_u (load.field.memarg GdiBitmap bpp (local.get $record)) (i32.const 8))
+            (i32.le_s (local.get $map_count) (i32.const 0))))
+      (then (return)))
+    (if (i32.gt_s (local.get $map_count) (i32.const 16))
+      (then (local.set $map_count (i32.const 16))))
+    (block $palette_done (loop $palette_entries
+      (br_if $palette_done (i32.ge_u (local.get $i) (local.get $palette_count)))
+      (local.set $entry
+        (i32.and
+          (i32.load (i32.add (local.get $palette) (i32.shl (local.get $i) (i32.const 2))))
+          (i32.const 0x00FFFFFF)))
+      (local.set $j (i32.const 0))
+      (block $maps_done (loop $maps
+        (br_if $maps_done (i32.ge_u (local.get $j) (local.get $map_count)))
+        (if (local.get $map)
+          (then
+            (local.set $from (call $mapped_bitmap_palette_color
+              (i32.load (i32.add (local.get $map) (i32.shl (local.get $j) (i32.const 3))))))
+            (local.set $to (call $mapped_bitmap_palette_color
+              (i32.load offset=4
+                (i32.add (local.get $map) (i32.shl (local.get $j) (i32.const 3)))))))
+          (else
+            (local.set $from (call $mapped_bitmap_palette_color
+              (call $mapped_bitmap_default_from (local.get $j))))
+            (local.set $to (call $mapped_bitmap_palette_color
+              (call $mapped_bitmap_default_to (local.get $j))))))
+        (if (i32.eq (local.get $entry) (local.get $from))
+          (then
+            (i32.store
+              (i32.add (local.get $palette) (i32.shl (local.get $i) (i32.const 2)))
+              (local.get $to))
+            (br $maps_done)))
+        (local.set $j (i32.add (local.get $j) (i32.const 1)))
+        (br $maps)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $palette_entries)))
+    ;; The browser surface is a derived presentation of this WAT-owned record;
+    ;; refresh it after changing the canonical palette.
+    (drop (call $host_gdi_surface_upload
+      (local.get $bitmap) (i32.const 0) (i32.const 0)
+      (load.field.memarg GdiBitmap width (local.get $record))
+      (load.field.memarg GdiBitmap height (local.get $record)))))
+
+  ;; CMB_MASKED returns a display bitmap twice the source width: the mapped
+  ;; color image occupies the left half and a black/white transparency mask
+  ;; occupies the right. Win98 derives that mask after color mapping, with
+  ;; mapped magenta as white and every other pixel as black.
+  (func $mapped_bitmap_create_masked (param $source i32) (result i32)
+    (local $record i32) (local $width i32) (local $height i32)
+    (local $result i32) (local $scratch_g i32) (local $scratch i32)
+    (local $src_desc i32) (local $dst_desc i32)
+    (local $x i32) (local $y i32) (local $color i32)
+    (local.set $record (call $gdi_object_record (local.get $source)))
+    (if (i32.eqz (call $gdi_bitmap_record_valid (local.get $record)))
+      (then (return (i32.const 0))))
+    (local.set $width (load.field.memarg GdiBitmap width (local.get $record)))
+    (local.set $height (load.field.memarg GdiBitmap height (local.get $record)))
+    (if (i32.gt_u (local.get $width) (i32.const 0x3FFFFFFF))
+      (then (return (i32.const 0))))
+    (local.set $result (call $gdi_bitmap_create_bitmap
+      (i32.shl (local.get $width) (i32.const 1)) (local.get $height)
+      (i32.const 1) (i32.const 32) (i32.const 0)))
+    (if (i32.eqz (local.get $result)) (then (return (i32.const 0))))
+    (local.set $scratch_g (call $heap_alloc (i32.const 160)))
+    (if (i32.eqz (local.get $scratch_g))
+      (then
+        (drop (call $gdi_object_delete_full (local.get $result)))
+        (return (i32.const 0))))
+    (local.set $scratch (call $g2w (local.get $scratch_g)))
+    (local.set $src_desc (local.get $scratch))
+    (local.set $dst_desc (i32.add (local.get $scratch) (i32.const 80)))
+    (if (i32.eqz (i32.and
+          (call $gdi_raster_desc_from_bitmap (local.get $source) (local.get $src_desc))
+          (call $gdi_raster_desc_from_bitmap (local.get $result) (local.get $dst_desc))))
+      (then
+        (call $heap_free (local.get $scratch_g))
+        (drop (call $gdi_object_delete_full (local.get $result)))
+        (return (i32.const 0))))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $y) (local.get $height)))
+      (local.set $x (i32.const 0))
+      (block $cols_done (loop $cols
+        (br_if $cols_done (i32.ge_u (local.get $x) (local.get $width)))
+        (local.set $color
+          (call $gdi_raster_read (local.get $src_desc) (local.get $x) (local.get $y)))
+        (drop (call $gdi_raster_write
+          (local.get $dst_desc) (local.get $x) (local.get $y) (local.get $color)))
+        (drop (call $gdi_raster_write
+          (local.get $dst_desc) (i32.add (local.get $x) (local.get $width))
+          (local.get $y)
+          (select (i32.const 0x00FFFFFF) (i32.const 0)
+            (i32.eq (i32.and (local.get $color) (i32.const 0x00FFFFFF))
+                    (i32.const 0x00FF00FF)))))
+        (local.set $x (i32.add (local.get $x) (i32.const 1)))
+        (br $cols)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $rows)))
+    (call $heap_free (local.get $scratch_g))
+    (drop (call $host_gdi_surface_upload
+      (local.get $result) (i32.const 0) (i32.const 0)
+      (i32.shl (local.get $width) (i32.const 1)) (local.get $height)))
+    (local.get $result))
+
   ;; CreateMappedBitmap(hInstance, idBitmap, wFlags, lpColorMap, iNumMaps) — 5 args, returns HBITMAP
   (func $handle_CreateMappedBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $tmp i32)
-    ;; Bounded compatibility: load the requested RT_BITMAP and skip the
-    ;; optional comctl32 color map for now. Returning a real HBITMAP matters
-    ;; more than the previous fake handle because toolbar/image painters can
-    ;; validate and blit it.
-    (local.set $tmp
+    (local $bitmap i32) (local $masked i32) (local $map i32) (local $map_count i32)
+    (local.set $bitmap
       (call $host_gdi_load_bitmap
         (local.get $arg0)
-        (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
-          (then (local.get $arg1))
-          (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
-    (if (i32.eqz (local.get $tmp))
+        ;; Win98's export reads idBitmap as a WORD resource id even though the
+        ;; modern prototype spells the slot INT_PTR.
+        (i32.and (local.get $arg1) (i32.const 0xFFFF))))
+    (if (local.get $bitmap)
       (then
-        (local.set $tmp
-          (call $host_gdi_create_compat_bitmap
-            (i32.const 0) (i32.const 16) (i32.const 16) (i32.const 0)))))
-    (global.set $eax (local.get $tmp))
+        (if (local.get $arg3)
+          (then
+            ;; Translate the caller's COLORMAP array once, then walk it in
+            ;; linear memory. The Win98 implementation clamps custom maps to
+            ;; sixteen entries.
+            (local.set $map (call $g2w (local.get $arg3)))
+            (local.set $map_count (local.get $arg4)))
+          (else (local.set $map_count (i32.const 6))))
+        (call $mapped_bitmap_apply_colors
+          (local.get $bitmap) (local.get $map) (local.get $map_count))
+        (if (i32.ne (i32.and (local.get $arg2) (i32.const 2)) (i32.const 0))
+          (then
+            (local.set $masked (call $mapped_bitmap_create_masked (local.get $bitmap)))
+            (drop (call $gdi_object_delete_full (local.get $bitmap)))
+            (local.set $bitmap (local.get $masked))))))
+    ;; Load failure is failure. Win98 returns NULL; fabricating a blank 16x16
+    ;; bitmap hides missing resources and produces plausible empty toolbars.
+    (global.set $eax (local.get $bitmap))
     (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
-  ;; CreatePropertySheetPageA(lppsp) — 1 arg, returns HPROPSHEETPAGE
+  ;; HPROPSHEETPAGE is an opaque, owned copy of PROPSHEETPAGEA. The handle
+  ;; points at the copied public structure so WM_INITDIALOG can receive the
+  ;; documented lParam; the two private words immediately before it retain the
+  ;; live marker and exact extent. The heap header is another four bytes back.
+  (global $PROPSHEET_PAGE_MAGIC i32 (i32.const 0x31475050)) ;; "PPG1"
+
+  ;; Return the private header's wasm address, or zero for NULL, stale, foreign,
+  ;; truncated, and forged handles. Translate the guest allocation only once.
+  (func $propsheet_page_record (param $page i32) (result i32)
+    (local $block i32) (local $block_w i32) (local $block_size i32)
+    (local $raw_w i32) (local $size i32)
+    (if (i32.or
+          (i32.lt_u (local.get $page) (i32.const 12))
+          (i32.ne (i32.and (local.get $page) (i32.const 7)) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (local.set $block (i32.sub (local.get $page) (i32.const 12)))
+    (if (i32.eqz (call $heap_arena_find (local.get $block)))
+      (then (return (i32.const 0))))
+    (local.set $block_w (call $g2w (local.get $block)))
+    (local.set $block_size (i32.load (local.get $block_w)))
+    (if (i32.or
+          (i32.lt_u (local.get $block_size) (i32.const 56))
+          (call $heap_block_bad (local.get $block) (local.get $block_size)))
+      (then (return (i32.const 0))))
+    (local.set $raw_w (i32.add (local.get $block_w) (i32.const 4)))
+    (if (i32.ne (i32.load (local.get $raw_w)) (global.get $PROPSHEET_PAGE_MAGIC))
+      (then (return (i32.const 0))))
+    (local.set $size (i32.load offset=4 (local.get $raw_w)))
+    (if (i32.or
+          (i32.or (i32.lt_u (local.get $size) (i32.const 40))
+                  (i32.gt_u (local.get $size) (i32.const 0x1000)))
+          (i32.gt_u (local.get $size)
+            (i32.sub (local.get $block_size) (i32.const 12))))
+      (then (return (i32.const 0))))
+    (local.get $raw_w))
+
+  ;; Invoke a page callback as the real three-argument stdcall. This mirrors the
+  ;; bounded synchronous guest-call path used by EDITSTREAM and SendMessage:
+  ;; preserve every interrupted x86 register, enter through the existing sync
+  ;; return thunk, and restore the caller after the callback reaches it.
+  (func $propsheet_page_callback
+      (param $page i32) (param $psp_w i32) (param $message i32) (result i32)
+    (local $callback i32) (local $result i32) (local $rounds i32)
+    (local $old_eip i32) (local $old_esp i32) (local $old_eax i32)
+    (local $old_ecx i32) (local $old_edx i32) (local $old_ebx i32)
+    (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
+    (local $old_handler_set_eip i32) (local $old_steps i32)
+    (local $old_yield_reason i32) (local $old_yield_flag i32)
+    (if (i32.eqz
+          (i32.and (i32.load offset=4 (local.get $psp_w)) (i32.const 0x80)))
+      (then (return (i32.const 1))))
+    (local.set $callback (i32.load offset=32 (local.get $psp_w)))
+    (if (i32.eqz (local.get $callback)) (then (return (i32.const 1))))
+    (local.set $old_eip (global.get $eip))
+    (local.set $old_esp (global.get $esp))
+    (local.set $old_eax (global.get $eax))
+    (local.set $old_ecx (global.get $ecx))
+    (local.set $old_edx (global.get $edx))
+    (local.set $old_ebx (global.get $ebx))
+    (local.set $old_esi (global.get $esi))
+    (local.set $old_edi (global.get $edi))
+    (local.set $old_ebp (global.get $ebp))
+    (local.set $old_handler_set_eip (global.get $handler_set_eip))
+    (local.set $old_steps (global.get $steps))
+    (local.set $old_yield_reason (global.get $yield_reason))
+    (local.set $old_yield_flag (global.get $yield_flag))
+    ;; Push right-to-left: ppsp, PSPCB_*, NULL hwnd, return thunk.
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $page))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (local.get $message))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (i32.const 0))
+    (global.set $esp (i32.sub (global.get $esp) (i32.const 4)))
+    (call $gs32 (global.get $esp) (global.get $sync_msg_ret_thunk))
+    (global.set $eip (local.get $callback))
+    (global.set $steps (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $sync_msg_depth
+      (i32.add (global.get $sync_msg_depth) (i32.const 1)))
+    (block $done (loop $run_callback
+      (call $run (i32.const 1000000))
+      (br_if $done (i32.eqz (global.get $eip)))
+      (local.set $rounds (i32.add (local.get $rounds) (i32.const 1)))
+      (br_if $done (i32.ge_u (local.get $rounds) (i32.const 64)))
+      (br $run_callback)))
+    (global.set $sync_msg_depth
+      (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
+    ;; A callback that fails to reach the return thunk cannot safely approve a
+    ;; page. PSPCB_RELEASE ignores the result, but uses the same bounded call.
+    (local.set $result
+      (select (global.get $eax) (i32.const 0) (i32.eqz (global.get $eip))))
+    (global.set $eip (local.get $old_eip))
+    (global.set $esp (local.get $old_esp))
+    (global.set $eax (local.get $old_eax))
+    (global.set $ecx (local.get $old_ecx))
+    (global.set $edx (local.get $old_edx))
+    (global.set $ebx (local.get $old_ebx))
+    (global.set $esi (local.get $old_esi))
+    (global.set $edi (local.get $old_edi))
+    (global.set $ebp (local.get $old_ebp))
+    (global.set $handler_set_eip (local.get $old_handler_set_eip))
+    (global.set $steps (local.get $old_steps))
+    (global.set $yield_reason (local.get $old_yield_reason))
+    (global.set $yield_flag (local.get $old_yield_flag))
+    (local.get $result))
+
+  (func $propsheet_page_ref_change
+      (param $psp_w i32) (param $delta i32)
+    (local $ref_g i32) (local $ref_w i32)
+    (if (i32.eqz
+          (i32.and (i32.load offset=4 (local.get $psp_w)) (i32.const 0x40)))
+      (then (return)))
+    (local.set $ref_g (i32.load offset=36 (local.get $psp_w)))
+    (if (i32.eqz (local.get $ref_g)) (then (return)))
+    (local.set $ref_w (call $g2w (local.get $ref_g)))
+    (i32.store (local.get $ref_w)
+      (i32.add (i32.load (local.get $ref_w)) (local.get $delta))))
+
+  (func $propsheet_page_destroy_owned (param $page i32) (result i32)
+    (local $raw_w i32) (local $psp_w i32)
+    (local.set $raw_w (call $propsheet_page_record (local.get $page)))
+    (if (i32.eqz (local.get $raw_w)) (then (return (i32.const 0))))
+    ;; Retire the handle before PSPCB_RELEASE so a callback that recursively
+    ;; calls DestroyPropertySheetPage cannot enter itself or double-free.
+    (i32.store (local.get $raw_w) (i32.const 0x52475050)) ;; "PPGR"
+    (local.set $psp_w (i32.add (local.get $raw_w) (i32.const 8)))
+    (drop (call $propsheet_page_callback
+      (local.get $page) (local.get $psp_w) (i32.const 1))) ;; PSPCB_RELEASE
+    ;; Win98 delivers RELEASE first, then balances PSP_USEREFPARENT.
+    (call $propsheet_page_ref_change (local.get $psp_w) (i32.const -1))
+    (i32.store (local.get $raw_w) (i32.const 0))
+    (i32.store offset=4 (local.get $raw_w) (i32.const 0))
+    (call $heap_free (i32.sub (local.get $page) (i32.const 8)))
+    (i32.const 1))
+
+  ;; CreatePropertySheetPageA(lppsp) — 1 arg, returns HPROPSHEETPAGE.
+  ;; Win98 accepts 40..4096-byte structures and rejects flag bits above bit 15.
+  ;; On the Win98 path, structures newer than the 40-byte base receive the
+  ;; return-ignored PSPCB_ADDREF here. PSPCB_CREATE belongs to page-dialog
+  ;; materialization, and PSPCB_RELEASE is delivered exactly once on teardown.
   (func $handle_CreatePropertySheetPageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return a fake handle
-    (local.set $arg0 (call $heap_alloc (i32.const 4)))
+    (local $src_w i32) (local $size i32) (local $flags i32)
+    (local $raw i32) (local $raw_w i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $src_w (call $g2w (local.get $arg0)))
+    (local.set $size (i32.load (local.get $src_w)))
+    (local.set $flags (i32.load offset=4 (local.get $src_w)))
+    (if (i32.or
+          (i32.or (i32.lt_u (local.get $size) (i32.const 40))
+                  (i32.gt_u (local.get $size) (i32.const 0x1000)))
+          (i32.ne (i32.and (local.get $flags) (i32.const 0xFFFF0000)) (i32.const 0)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $raw (call $heap_alloc (i32.add (local.get $size) (i32.const 8))))
+    (if (i32.eqz (local.get $raw))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $raw_w (call $g2w (local.get $raw)))
+    (i32.store (local.get $raw_w) (global.get $PROPSHEET_PAGE_MAGIC))
+    (i32.store offset=4 (local.get $raw_w) (local.get $size))
+    (memory.copy (i32.add (local.get $raw_w) (i32.const 8))
+      (local.get $src_w) (local.get $size))
+    (local.set $arg0 (i32.add (local.get $raw) (i32.const 8)))
+    ;; Match Win98's ordering by incrementing the optional parent reference
+    ;; after allocation succeeds and before the optional ADDREF callback.
+    (call $propsheet_page_ref_change
+      (i32.add (local.get $raw_w) (i32.const 8)) (i32.const 1))
+    ;; Win98 sends PSPCB_ADDREF only for records larger than its 40-byte base.
+    (if (i32.gt_u (local.get $size) (i32.const 40))
+      (then
+        (drop (call $propsheet_page_callback
+          (local.get $arg0) (i32.add (local.get $raw_w) (i32.const 8))
+          (i32.const 0))))) ;; PSPCB_ADDREF
+    ;; A reentrant callback may have destroyed the handle itself.
+    (if (i32.eqz (call $propsheet_page_record (local.get $arg0)))
+      (then (local.set $arg0 (i32.const 0))))
     (global.set $eax (local.get $arg0))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 8))))
+
+  ;; DestroyPropertySheetPage(hPSPage) — 1 arg, returns BOOL.
+  (func $handle_DestroyPropertySheetPage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $propsheet_page_destroy_owned (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
@@ -1069,76 +1666,248 @@
 
   ;; ============================================================
   ;; COMCTL32 internal heap functions (ordinal-only)
+  ;; Win98 comctl32.dll ordinals 71..74 are thin wrappers over HeapAlloc with
+  ;; HEAP_ZERO_MEMORY, HeapReAlloc with HEAP_ZERO_MEMORY, HeapFree, and HeapSize
+  ;; respectively.  Keep that contract here; only the private heap's storage
+  ;; representation differs inside the browser runtime.
   ;; ============================================================
+
+  ;; Keep the allocator's private size/liveness header immediately before the
+  ;; pointer exposed to common-control callers:
+  ;;   heap payload [magic:4, requested_size:4, caller bytes...]
+  ;; The underlying heap header remains four bytes before that payload.  This
+  ;; gives GetSize the requested extent and lets Free/ReAlloc reject stale or
+  ;; foreign pointers without guessing from adjacent guest memory.
+  (global $COMCTL_ALLOC_MAGIC i32 (i32.const 0x31414343)) ;; "CCA1"
+
+  ;; Return the private header's wasm address, or zero when pv is not one of
+  ;; this family's live allocations.  The guest pointer is translated once.
+  (func $comctl_alloc_record (param $ptr i32) (result i32)
+    (local $block i32) (local $block_wa i32) (local $block_size i32)
+    (local $raw_wa i32) (local $requested i32)
+    (if (i32.or
+          (i32.lt_u (local.get $ptr) (i32.const 12))
+          (i32.ne (i32.and (local.get $ptr) (i32.const 7)) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (local.set $block (i32.sub (local.get $ptr) (i32.const 12)))
+    (if (i32.eqz (call $heap_arena_find (local.get $block)))
+      (then (return (i32.const 0))))
+    (local.set $block_wa (call $g2w (local.get $block)))
+    (local.set $block_size (i32.load (local.get $block_wa)))
+    (if (i32.or
+          (i32.lt_u (local.get $block_size) (i32.const 16))
+          (call $heap_block_bad (local.get $block) (local.get $block_size)))
+      (then (return (i32.const 0))))
+    (local.set $raw_wa (i32.add (local.get $block_wa) (i32.const 4)))
+    (if (i32.ne (i32.load (local.get $raw_wa)) (global.get $COMCTL_ALLOC_MAGIC))
+      (then (return (i32.const 0))))
+    (local.set $requested (i32.load offset=4 (local.get $raw_wa)))
+    (if (i32.gt_u (local.get $requested)
+          (i32.sub (local.get $block_size) (i32.const 12)))
+      (then (return (i32.const 0))))
+    (local.get $raw_wa))
+
+  (func $comctl_alloc_new (param $size i32) (result i32)
+    (local $raw i32) (local $raw_wa i32)
+    (if (i32.gt_u (local.get $size) (i32.const 0x7FFFFFE8))
+      (then (return (i32.const 0))))
+    (local.set $raw
+      (call $heap_alloc (i32.add (local.get $size) (i32.const 8))))
+    (if (i32.eqz (local.get $raw)) (then (return (i32.const 0))))
+    (local.set $raw_wa (call $g2w (local.get $raw)))
+    (i32.store (local.get $raw_wa) (global.get $COMCTL_ALLOC_MAGIC))
+    (i32.store offset=4 (local.get $raw_wa) (local.get $size))
+    (if (local.get $size)
+      (then
+        (memory.fill (i32.add (local.get $raw_wa) (i32.const 8))
+          (i32.const 0) (local.get $size))))
+    (i32.add (local.get $raw) (i32.const 8)))
 
   ;; Comctl32_Alloc(dwSize) — 1 arg, returns pointer (zeroed)
   (func $handle_Comctl32_Alloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ptr i32)
-    (local.set $ptr (call $heap_alloc (local.get $arg0)))
-    ;; Zero the allocation
-    (if (local.get $arg0)
-      (then (memory.fill (call $g2w (local.get $ptr)) (i32.const 0) (local.get $arg0))))
-    (global.set $eax (local.get $ptr))
+    (global.set $eax (call $comctl_alloc_new (local.get $arg0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; Comctl32_ReAlloc(pv, cbNew) — 2 args, returns pointer
   (func $handle_Comctl32_ReAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Simple: allocate new, copy, return new (no free of old — heap doesn't support free yet)
-    (local $new_ptr i32)
+    (local $old_wa i32) (local $old_size i32)
+    (local $new_raw i32) (local $new_wa i32)
     (if (i32.eqz (local.get $arg0))
       (then
-        ;; NULL input = just alloc
-        (local.set $new_ptr (call $heap_alloc (local.get $arg1)))
-        (if (local.get $arg1)
-          (then (memory.fill (call $g2w (local.get $new_ptr)) (i32.const 0) (local.get $arg1)))))
-      (else
-        ;; Realloc: alloc new, copy old data
-        (local.set $new_ptr (call $heap_alloc (local.get $arg1)))
-        (if (local.get $arg1)
-          (then (memory.copy (call $g2w (local.get $new_ptr)) (call $g2w (local.get $arg0)) (local.get $arg1))))))
-    (global.set $eax (local.get $new_ptr))
+        (global.set $eax (call $comctl_alloc_new (local.get $arg1)))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $old_wa (call $comctl_alloc_record (local.get $arg0)))
+    (if (i32.or
+          (i32.eqz (local.get $old_wa))
+          (i32.gt_u (local.get $arg1) (i32.const 0x7FFFFFE8)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $old_size (i32.load offset=4 (local.get $old_wa)))
+    (local.set $new_raw
+      (call $heap_realloc
+        (i32.sub (local.get $arg0) (i32.const 8))
+        (i32.add (local.get $arg1) (i32.const 8))
+        (i32.const 0)))
+    (if (i32.eqz (local.get $new_raw))
+      (then
+        ;; The original allocation remains live when reallocation fails.
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $new_wa (call $g2w (local.get $new_raw)))
+    (i32.store (local.get $new_wa) (global.get $COMCTL_ALLOC_MAGIC))
+    (i32.store offset=4 (local.get $new_wa) (local.get $arg1))
+    (if (i32.gt_u (local.get $arg1) (local.get $old_size))
+      (then
+        (memory.fill
+          (i32.add (local.get $new_wa)
+            (i32.add (i32.const 8) (local.get $old_size)))
+          (i32.const 0)
+          (i32.sub (local.get $arg1) (local.get $old_size)))))
+    (global.set $eax (i32.add (local.get $new_raw) (i32.const 8)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; Comctl32_Free(pv) — 1 arg, returns BOOL
   (func $handle_Comctl32_Free (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Our heap doesn't support free, just return TRUE
+    (local $raw_wa i32)
+    (local.set $raw_wa (call $comctl_alloc_record (local.get $arg0)))
+    (if (i32.eqz (local.get $raw_wa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (i32.store (local.get $raw_wa) (i32.const 0))
+    (i32.store offset=4 (local.get $raw_wa) (i32.const 0))
+    (call $heap_free (i32.sub (local.get $arg0) (i32.const 8)))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; Comctl32_GetSize(pv) — 1 arg, returns DWORD size
   (func $handle_Comctl32_GetSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Our heap doesn't track sizes, return a reasonable default
-    (global.set $eax (i32.const 256))
+    (local $raw_wa i32)
+    (local.set $raw_wa (call $comctl_alloc_record (local.get $arg0)))
+    (if (local.get $raw_wa)
+      (then (global.set $eax (i32.load offset=4 (local.get $raw_wa))))
+      (else (global.set $eax (i32.const -1))))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; ============================================================
+  ;; DSA/DPA handles are opaque heap objects.  Keep a live marker outside the
+  ;; legacy fields so every operation can reject NULL and already-destroyed
+  ;; handles before translating or dereferencing them.  The marker is cleared
+  ;; before the block is returned to the heap; heap_free then overwrites only
+  ;; the first payload word with its next link.
+  (global $DSA_MAGIC i32 (i32.const 0x31415344)) ;; "DSA1"
+  (global $DPA_MAGIC i32 (i32.const 0x31415044)) ;; "DPA1"
+
+  (func $dsa_record (param $hdsa i32) (result i32)
+    (local $wa i32) (local $block i32) (local $size i32)
+    (if (i32.or
+          (i32.eqz (local.get $hdsa))
+          (i32.ne (i32.and (local.get $hdsa) (i32.const 7)) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (local.set $block (i32.sub (local.get $hdsa) (i32.const 4)))
+    (if (i32.eqz (call $heap_arena_find (local.get $block)))
+      (then (return (i32.const 0))))
+    (local.set $size (i32.load (call $g2w (local.get $block))))
+    (if (i32.or
+          (i32.lt_u (local.get $size) (i32.const 24))
+          (call $heap_block_bad (local.get $block) (local.get $size)))
+      (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $hdsa)))
+    (if (i32.ne (i32.load offset=16 (local.get $wa)) (global.get $DSA_MAGIC))
+      (then (return (i32.const 0))))
+    (local.get $wa))
+
+  (func $dpa_record (param $hdpa i32) (result i32)
+    (local $wa i32) (local $block i32) (local $size i32)
+    (if (i32.or
+          (i32.eqz (local.get $hdpa))
+          (i32.ne (i32.and (local.get $hdpa) (i32.const 7)) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (local.set $block (i32.sub (local.get $hdpa) (i32.const 4)))
+    (if (i32.eqz (call $heap_arena_find (local.get $block)))
+      (then (return (i32.const 0))))
+    (local.set $size (i32.load (call $g2w (local.get $block))))
+    (if (i32.or
+          (i32.lt_u (local.get $size) (i32.const 24))
+          (call $heap_block_bad (local.get $block) (local.get $size)))
+      (then (return (i32.const 0))))
+    (local.set $wa (call $g2w (local.get $hdpa)))
+    (if (i32.ne (i32.load offset=12 (local.get $wa)) (global.get $DPA_MAGIC))
+      (then (return (i32.const 0))))
+    (local.get $wa))
+
   ;; DSA (Dynamic Structure Array) — real implementation
-  ;; DSA layout in memory: [item_size:4, count:4, capacity:4, data_ptr:4]
+  ;; DSA layout in memory:
+  ;; [item_size:4, count:4, capacity:4, data_ptr:4, live_magic:4]
   ;; ============================================================
 
   ;; DSA_Create(cbItem, cItemGrow) — 2 args, returns HDSA
   (func $handle_DSA_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dsa i32) (local $dsa_wa i32)
-    (local $cap i32)
-    (local.set $cap (select (local.get $arg1) (i32.const 8) (i32.gt_u (local.get $arg1) (i32.const 0))))
-    (local.set $dsa (call $heap_alloc (i32.const 16))) (local.set $dsa_wa (call $g2w (local.get $dsa)))
+    (local $cap i32) (local $data i32)
+    (local.set $cap
+      (select (local.get $arg1) (i32.const 8)
+        (i32.gt_s (local.get $arg1) (i32.const 0))))
+    ;; cbItem is a positive byte count, and the initial backing multiplication
+    ;; must stay within the heap allocator's documented maximum request.
+    (if (i32.le_s (local.get $arg0) (i32.const 0))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (if (i32.gt_u (local.get $cap)
+          (i32.div_u (i32.const 0x7FFFFFF0) (local.get $arg0)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $dsa (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $dsa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $data (call $heap_alloc (i32.mul (local.get $cap) (local.get $arg0))))
+    (if (i32.eqz (local.get $data))
+      (then
+        (call $heap_free (local.get $dsa))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
+    (local.set $dsa_wa (call $g2w (local.get $dsa)))
     (i32.store (local.get $dsa_wa) (local.get $arg0))           ;; item_size
     (i32.store offset=4 (local.get $dsa_wa) (i32.const 0))  ;; count
     (i32.store offset=8 (local.get $dsa_wa) (local.get $cap))  ;; capacity
-    ;; Allocate data buffer: capacity * item_size
-    (i32.store offset=12 (local.get $dsa_wa)
-      (call $heap_alloc (i32.mul (local.get $cap) (local.get $arg0))))
+    (i32.store offset=12 (local.get $dsa_wa) (local.get $data))
+    (i32.store offset=16 (local.get $dsa_wa) (global.get $DSA_MAGIC))
     (global.set $eax (local.get $dsa))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
   )
 
   ;; DSA_Destroy(hdsa) — 1 arg, returns BOOL
   (func $handle_DSA_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Can't free, just return TRUE
+    (local $dsa_wa i32) (local $data i32)
+    (local.set $dsa_wa (call $dsa_record (local.get $arg0)))
+    (if (i32.eqz (local.get $dsa_wa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $data (i32.load offset=12 (local.get $dsa_wa)))
+    ;; Retire first, then release backing storage and finally the handle.
+    (i32.store offset=12 (local.get $dsa_wa) (i32.const 0))
+    (i32.store offset=16 (local.get $dsa_wa) (i32.const 0))
+    (call $heap_free (local.get $data))
+    (call $heap_free (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -1146,17 +1915,24 @@
   ;; DSA_GetItem(hdsa, index, pitem) — 3 args, returns BOOL
   (func $handle_DSA_GetItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $item_size i32) (local $dsa_wa i32)
-    (local $data_ptr i32)
+    (local $data_ptr i32) (local $data_wa i32) (local $item_wa i32)
     (local $count i32)
-    (local.set $dsa_wa (call $g2w (local.get $arg0)))
+    (local.set $dsa_wa (call $dsa_record (local.get $arg0)))
+    (if (i32.or (i32.eqz (local.get $dsa_wa)) (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (local.set $item_size (i32.load (local.get $dsa_wa)))
     (local.set $count (i32.load offset=4 (local.get $dsa_wa)))
     (local.set $data_ptr (i32.load offset=12 (local.get $dsa_wa)))
     (if (i32.lt_u (local.get $arg1) (local.get $count))
       (then
+        (local.set $data_wa (call $g2w (local.get $data_ptr)))
+        (local.set $item_wa (call $g2w (local.get $arg2)))
         ;; Copy item_size bytes from data[index*item_size] to pitem
-        (memory.copy (call $g2w (local.get $arg2))
-          (call $g2w (i32.add (local.get $data_ptr) (i32.mul (local.get $arg1) (local.get $item_size))))
+        (memory.copy (local.get $item_wa)
+          (i32.add (local.get $data_wa) (i32.mul (local.get $arg1) (local.get $item_size)))
           (local.get $item_size))
         (global.set $eax (i32.const 1)))
       (else
@@ -1169,7 +1945,12 @@
     (local $item_size i32) (local $dsa_wa i32)
     (local $data_ptr i32)
     (local $count i32)
-    (local.set $dsa_wa (call $g2w (local.get $arg0)))
+    (local.set $dsa_wa (call $dsa_record (local.get $arg0)))
+    (if (i32.eqz (local.get $dsa_wa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $item_size (i32.load (local.get $dsa_wa)))
     (local.set $count (i32.load offset=4 (local.get $dsa_wa)))
     (local.set $data_ptr (i32.load offset=12 (local.get $dsa_wa)))
@@ -1194,8 +1975,13 @@
     (local $data_ptr i32)
     (local $idx i32)
     (local $new_cap i32)
-    (local $new_data i32) (local $new_data_wa i32)
-    (local.set $dsa_wa (call $g2w (local.get $arg0)))
+    (local $new_data i32) (local $new_data_wa i32) (local $item_wa i32)
+    (local.set $dsa_wa (call $dsa_record (local.get $arg0)))
+    (if (i32.or (i32.eqz (local.get $dsa_wa)) (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (local.set $item_size (i32.load (local.get $dsa_wa)))
     (local.set $count (i32.load offset=4 (local.get $dsa_wa)))
     (local.set $cap (i32.load offset=8 (local.get $dsa_wa)))
@@ -1206,10 +1992,28 @@
     ;; Grow first so the extra slot exists before the shift.
     (if (i32.ge_u (local.get $count) (local.get $cap))
       (then
+        (if (i32.gt_u (local.get $cap) (i32.const 0x3FFFFFFF))
+          (then
+            (global.set $eax (i32.const -1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
         (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
         (if (i32.lt_u (local.get $new_cap) (i32.const 8))
           (then (local.set $new_cap (i32.const 8))))
-        (local.set $new_data (call $heap_alloc (i32.mul (local.get $new_cap) (local.get $item_size)))) (local.set $new_data_wa (call $g2w (local.get $new_data)))
+        (if (i32.gt_u (local.get $new_cap)
+              (i32.div_u (i32.const 0x7FFFFFF0) (local.get $item_size)))
+          (then
+            (global.set $eax (i32.const -1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
+        (local.set $new_data
+          (call $heap_alloc (i32.mul (local.get $new_cap) (local.get $item_size))))
+        (if (i32.eqz (local.get $new_data))
+          (then
+            (global.set $eax (i32.const -1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
+        (local.set $new_data_wa (call $g2w (local.get $new_data)))
         (if (local.get $count)
           (then
             (memory.copy (local.get $new_data_wa) (local.get $data_wa)
@@ -1228,9 +2032,10 @@
           (i32.add (local.get $data_wa) (i32.mul (local.get $idx) (local.get $item_size)))
           (i32.mul (i32.sub (local.get $count) (local.get $idx)) (local.get $item_size)))))
     ;; Copy item data to data[idx * item_size]
+    (local.set $item_wa (call $g2w (local.get $arg2)))
     (memory.copy
       (i32.add (local.get $data_wa) (i32.mul (local.get $idx) (local.get $item_size)))
-      (call $g2w (local.get $arg2))
+      (local.get $item_wa)
       (local.get $item_size))
     ;; Increment count
     (i32.store offset=4 (local.get $dsa_wa)
@@ -1248,7 +2053,12 @@
     (local $item_size i32) (local $dsa_wa i32) (local $data_wa i32)
     (local $count i32)
     (local $data_ptr i32)
-    (local.set $dsa_wa (call $g2w (local.get $arg0)))
+    (local.set $dsa_wa (call $dsa_record (local.get $arg0)))
+    (if (i32.eqz (local.get $dsa_wa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $item_size (i32.load (local.get $dsa_wa)))
     (local.set $count (i32.load offset=4 (local.get $dsa_wa)))
     (local.set $data_ptr (i32.load offset=12 (local.get $dsa_wa))) (local.set $data_wa (call $g2w (local.get $data_ptr)))
@@ -1273,25 +2083,57 @@
 
   ;; ============================================================
   ;; DPA (Dynamic Pointer Array) — real implementation
-  ;; DPA layout: [count:4, capacity:4, ptrs_ptr:4]
+  ;; DPA layout: [count:4, capacity:4, ptrs_ptr:4, live_magic:4]
   ;; ============================================================
 
   ;; DPA_Create(cItemGrow) — 1 arg, returns HDPA
   (func $handle_DPA_Create (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dpa i32) (local $dpa_wa i32)
-    (local $cap i32)
-    (local.set $cap (select (local.get $arg0) (i32.const 8) (i32.gt_u (local.get $arg0) (i32.const 0))))
-    (local.set $dpa (call $heap_alloc (i32.const 12))) (local.set $dpa_wa (call $g2w (local.get $dpa)))
+    (local $cap i32) (local $ptrs i32)
+    (local.set $cap
+      (select (local.get $arg0) (i32.const 8)
+        (i32.gt_s (local.get $arg0) (i32.const 0))))
+    (if (i32.gt_u (local.get $cap) (i32.const 0x1FFFFFFC))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $dpa (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $dpa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $ptrs (call $heap_alloc (i32.shl (local.get $cap) (i32.const 2))))
+    (if (i32.eqz (local.get $ptrs))
+      (then
+        (call $heap_free (local.get $dpa))
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $dpa_wa (call $g2w (local.get $dpa)))
     (i32.store (local.get $dpa_wa) (i32.const 0))           ;; count
     (i32.store offset=4 (local.get $dpa_wa) (local.get $cap))  ;; capacity
-    (i32.store offset=8 (local.get $dpa_wa)
-      (call $heap_alloc (i32.shl (local.get $cap) (i32.const 2))))   ;; ptrs array
+    (i32.store offset=8 (local.get $dpa_wa) (local.get $ptrs))
+    (i32.store offset=12 (local.get $dpa_wa) (global.get $DPA_MAGIC))
     (global.set $eax (local.get $dpa))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
 
   ;; DPA_Destroy(hdpa) — 1 arg, returns BOOL
   (func $handle_DPA_Destroy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dpa_wa i32) (local $ptrs i32)
+    (local.set $dpa_wa (call $dpa_record (local.get $arg0)))
+    (if (i32.eqz (local.get $dpa_wa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (local.set $ptrs (i32.load offset=8 (local.get $dpa_wa)))
+    (i32.store offset=8 (local.get $dpa_wa) (i32.const 0))
+    (i32.store offset=12 (local.get $dpa_wa) (i32.const 0))
+    (call $heap_free (local.get $ptrs))
+    (call $heap_free (local.get $arg0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )
@@ -1300,7 +2142,12 @@
   (func $handle_DPA_GetPtr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $count i32) (local $dpa_wa i32)
     (local $ptrs i32)
-    (local.set $dpa_wa (call $g2w (local.get $arg0)))
+    (local.set $dpa_wa (call $dpa_record (local.get $arg0)))
+    (if (i32.eqz (local.get $dpa_wa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $count (i32.load (local.get $dpa_wa)))
     (local.set $ptrs (i32.load offset=8 (local.get $dpa_wa)))
     (if (i32.lt_u (local.get $arg1) (local.get $count))
@@ -1326,7 +2173,12 @@
     (local $new_cap i32)
     (local $new_ptrs i32)
     (local $dpa_wa i32) (local $ptrs_wa i32) (local $new_ptrs_wa i32)
-    (local.set $dpa_wa (call $g2w (local.get $arg0)))
+    (local.set $dpa_wa (call $dpa_record (local.get $arg0)))
+    (if (i32.eqz (local.get $dpa_wa))
+      (then
+        (global.set $eax (i32.const -1))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+        (return)))
     (local.set $count (i32.load (local.get $dpa_wa)))
     (local.set $cap (i32.load offset=4 (local.get $dpa_wa)))
     (local.set $ptrs (i32.load offset=8 (local.get $dpa_wa)))
@@ -1338,10 +2190,20 @@
     ;; Grow before the shift so the extra slot exists.
     (if (i32.ge_u (local.get $count) (local.get $cap))
       (then
+        (if (i32.gt_u (local.get $cap) (i32.const 0x0FFFFFFE))
+          (then
+            (global.set $eax (i32.const -1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
         (local.set $new_cap (i32.shl (local.get $cap) (i32.const 1)))
         (if (i32.lt_u (local.get $new_cap) (i32.const 8))
           (then (local.set $new_cap (i32.const 8))))
         (local.set $new_ptrs (call $heap_alloc (i32.shl (local.get $new_cap) (i32.const 2))))
+        (if (i32.eqz (local.get $new_ptrs))
+          (then
+            (global.set $eax (i32.const -1))
+            (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
+            (return)))
         (local.set $new_ptrs_wa (call $g2w (local.get $new_ptrs)))
         (local.set $i (i32.const 0))
         (block $copy_done (loop $copy
@@ -1385,7 +2247,12 @@
     (local $removed i32)
     (local $i i32)
     (local $dpa_wa i32) (local $ptrs_wa i32)
-    (local.set $dpa_wa (call $g2w (local.get $arg0)))
+    (local.set $dpa_wa (call $dpa_record (local.get $arg0)))
+    (if (i32.eqz (local.get $dpa_wa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+        (return)))
     (local.set $count (i32.load (local.get $dpa_wa)))
     (local.set $ptrs (i32.load offset=8 (local.get $dpa_wa)))
     (if (local.get $ptrs)
@@ -1411,8 +2278,14 @@
 
   ;; DPA_DeleteAllPtrs(hdpa) — 1 arg, returns BOOL
   (func $handle_DPA_DeleteAllPtrs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Set count to 0
-    (i32.store (call $g2w (local.get $arg0)) (i32.const 0))
+    (local $dpa_wa i32)
+    (local.set $dpa_wa (call $dpa_record (local.get $arg0)))
+    (if (i32.eqz (local.get $dpa_wa))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
+        (return)))
+    (i32.store (local.get $dpa_wa) (i32.const 0))
     (global.set $eax (i32.const 1))
     (global.set $esp (i32.add (global.get $esp) (i32.const 8)))
   )

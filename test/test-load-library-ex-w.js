@@ -14,6 +14,8 @@ const extraWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0))
     (global.get $eax))
 
+  (func (export "normalize_library_name") (param i32) (result i32)
+    (call $loadlib_normalize_name (local.get 0)))
   (func (export "test_load_library_ex_w") (param $name i32) (param $file i32) (param $flags i32) (result i32)
     (global.set $image_base (i32.const 0x00400000))
     (global.set $esp (i32.const 0x00300000))
@@ -45,6 +47,18 @@ const extraWat = String.raw`
   const ansiName = 0x00402700;
   const value = 'uxtheme.dll';
   wat.test_init_image_base();
+  const ansi=0x00403000;
+  for(const [input,expected] of [['kernel32','kernel32.dll'],
+    ['.\\PlugIns\\ScriptLibraryR','.\\PlugIns\\ScriptLibraryR.dll'],
+    ['C:\\dir.ext\\plugin','C:\\dir.ext\\plugin.dll'],['plugin.ext','plugin.ext'],
+    ['plugin.','plugin'],['C:/dir.ext/plugin','C:/dir.ext/plugin.dll']]) {
+    [...Buffer.from(input+'\0')].forEach((c,i)=>wat.guest_write8(ansi+i,c));
+    const p=wat.normalize_library_name(ansi)>>>0;assert(p);
+    let result='';for(let i=0;i<260;i++) {const c=wat.guest_read8(p+i);if(!c)break;result+=String.fromCharCode(c);}
+    assert.strictEqual(result,expected);
+  }
+  assert.strictEqual(wat.normalize_library_name(0),0);
+  wat.guest_write8(ansi,0);assert.strictEqual(wat.normalize_library_name(ansi),0);
   for (let i = 0; i <= value.length; i++) {
     const code = i < value.length ? value.charCodeAt(i) : 0;
     wat.guest_write8(name + i * 2, code & 0xff);

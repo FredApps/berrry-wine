@@ -62,6 +62,38 @@ function win(x, y, w, h, chromeW, chromeH) {
 
 const aspect = rect => rect.w / rect.h;
 
+// Auto-maximize preserves the startup request as a logical desktop floor,
+// without pinning the app to an aspect ratio or capturing popup dimensions.
+{
+  const renderer = makeRenderer(400, 866, false);
+  const sol = win(20, 20, 593, 431, 8, 46);
+  renderer.windows[sol.hwnd] = sol;
+  assert(renderer.prepareSingleAppMaximize(sol));
+  const portrait = renderer.singleAppBackingSize(400, 866);
+  assert.deepStrictEqual(portrait, { w: 593, h: 1284 });
+  Object.assign(renderer.canvas, { width: portrait.w, height: portrait.h });
+  renderer.showWindow(sol.hwnd, 3);
+  assert(sol.clientRect.w >= 585, 'the client is not crushed below the card layout');
+  renderer.prepareSingleAppMaximize(sol);
+  assert.deepStrictEqual(sol._singleAppNaturalSize, { w: 593, h: 431 });
+  const landscape = renderer.singleAppBackingSize(844, 390);
+  assert.deepStrictEqual(landscape, { w: 933, h: 431 });
+  Object.assign(renderer.canvas, { width: landscape.w, height: landscape.h });
+  renderer.handleScreenResize(portrait.w, portrait.h, landscape.w, landscape.h);
+  assert.strictEqual(sol.w, 933, 'responsive maximize still expands horizontally');
+  assert.strictEqual(sol.h, 431, 'landscape retains the natural height');
+  assert.deepStrictEqual(renderer.singleAppBackingSize(400, 866), portrait,
+    'rotation never captures an expanded size as the new minimum');
+  sol.visible = false;
+  assert.deepStrictEqual(renderer.singleAppBackingSize(400, 866), { w: 400, h: 866 });
+  for (const extra of [{ isDialog: true }, { ownerHwnd: 1 },
+      { style: WS_VISIBLE | 0x80000000 | WS_THICKFRAME }, { isChild: true }]) {
+    const popup = { ...win(0, 0, 900, 900, 8, 46), ...extra };
+    assert.strictEqual(renderer.prepareSingleAppMaximize(popup), false);
+    assert.strictEqual(popup._singleAppNaturalSize, undefined);
+  }
+}
+
 // --- The fit itself ---------------------------------------------------------
 
 // Taipei on a 400x681 portrait canvas. Its client is 392x254 (1.543); the

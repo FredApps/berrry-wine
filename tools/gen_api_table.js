@@ -1153,6 +1153,8 @@ const extra = [
   { name: 'DeleteAtom', nargs: 1 },
   // USER32 — cosmetic selection animation used by Win98 RegEdit.
   { name: 'DrawAnimatedRects', nargs: 4 },
+  // COMCTL32 — owned property-sheet page handles (ordinal 24 on Win98).
+  { name: 'DestroyPropertySheetPage', nargs: 1 },
   { name: 'RegEnumValueA', nargs: 8 },
   { name: 'RegEnumValueW', nargs: 8 },
   { name: 'RegQueryInfoKeyA', nargs: 12 },
@@ -1520,9 +1522,14 @@ const table = existing.map((api, id) => {
     id,
     name: api.name,
     nargs: api.nargs,
-    convention: api.convention || 'stdcall',
-    hash: fnv1a(api.name),
   };
+  // Keep opt-in generated metadata ahead of the ordinary ABI fields. Besides
+  // making regeneration idempotent, this is the canonical ordering used by
+  // the append-only table's existing rows.
+  if (api.test_call === true) out.test_call = true;
+  if (api.stub) out.stub = api.stub;
+  out.convention = api.convention || 'stdcall';
+  out.hash = fnv1a(api.name);
   if (api.args) out.args = api.args;
   if (api.ret) out.ret = api.ret;
   if (api.handler) out.handler = api.handler;
@@ -1552,8 +1559,13 @@ if (table.length * 8 > HASH_TABLE_SIZE) {
   process.exit(1);
 }
 
-// Write api_table.json
-fs.writeFileSync(jsonPath, JSON.stringify(table, null, 2) + '\n');
+// Write api_table.json. Constant stubs are deliberately one-line metadata in
+// the canonical table; retain that compact shape so a generator run does not
+// mechanically rewrite every migrated row.
+const tableJson = JSON.stringify(table, null, 2).replace(
+  /"stub": \{\n\s+"pop": ([^,\n]+),\n\s+"ret": ([^\n]+)\n\s+\}/g,
+  '"stub": { "pop": $1, "ret": $2 }');
+fs.writeFileSync(jsonPath, tableJson + '\n');
 console.log(`Generated ${jsonPath} with ${table.length} APIs`);
 
 // Generate WAT data segment

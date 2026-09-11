@@ -39,6 +39,28 @@ assert.strictEqual(new Set(dropdownIds).size, dropdownIds.length,
   'debug dropdown app IDs must be unique');
 for (const id of dropdownIds) assert(APPS[id], `debug dropdown app ${id} is not registered`);
 
+const bw = APPS.black_white_2_demo;
+assert(dropdownIds.includes('black_white_2_demo'));
+assert(LOCAL_CANDIDATE_APPS.some(([id]) => id === 'black_white_2_demo'));
+assert(!DESKTOP_APPS.some(([id]) => id === 'black_white_2_demo'));
+assert(bw.exe.endsWith('/installed/BW2Demo.exe'), 'launch the game, not its installer');
+assert.strictEqual(bw.d3d9Programmable, true);
+assert.strictEqual(bw.requiredFiles, true);
+const bwManifestPath = path.join(ROOT, bw.localFileManifest);
+const bwManifest = JSON.parse(fs.readFileSync(bwManifestPath, 'utf8'));
+assert.strictEqual(bwManifest.schemaVersion, 1);
+assert(bwManifest.files.some(file => file.vfsPath.toLowerCase() === 'c:\\data\\everything.stuff'));
+for (const file of bwManifest.files) {
+  assert(fs.existsSync(path.resolve(path.dirname(bwManifestPath), file.url)),
+    `Black & White companion missing: ${file.url}`);
+}
+assert.strictEqual(fs.statSync(path.join(ROOT, bw.exe)).size, 20656128);
+assert.deepStrictEqual(bw.dlls.map(file => path.basename(file)),
+  ['d3dx9_25.dll', 'binkw32.dll', 'dbghelp.dll']);
+assert(browserShell.includes('wine.d3d9Programmable = app.d3d9Programmable === true;'));
+assert(fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8')
+  .includes('d3d9Programmable: self.d3d9Programmable === true,'));
+
 for (const id of ['heaven7', 'cashcow', 'bakkslide7', 'ptct']) {
   assert(!DESKTOP_APPS.some(([listed]) => listed === id),
     `${id} must stay off the production desktop`);
