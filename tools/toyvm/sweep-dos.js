@@ -114,7 +114,9 @@ async function runOne(exe, o) {
           // against the gated fold as well as the static one. It is the same
           // check either way: the fold charges the dispatches it removes, so
           // an off/on pair through sweep-diff.js has to come back unchanged.
-          treeFold: o.treeFold ? { log: quiet, hot: o.treeFoldHot } : null,
+          treeFold: o.treeFold
+            ? { log: quiet, hot: o.treeFoldHot, ...(o.treeFoldRelax ? { relax: o.treeFoldRelax } : {}) }
+            : null,
         });
         // Two checks, and they catch different things. ACROSS variants: four
         // shells that did not execute the same instructions cannot be compared,
@@ -196,6 +198,7 @@ function child(exe, o) {
       ...(o.regionJit ? ['--region-jit'] : []),
       ...(o.treeFold ? ['--tree-fold'] : []),
       ...(o.treeFoldHot ? [`--tree-fold-hot=${o.treeFoldHot}`] : []),
+      ...(o.treeFoldRelax ? [`--tree-fold-relax=${o.treeFoldRelax.join(',') || 'none'}`] : []),
       ...(o.latticeClock ? ['--lattice-clock'] : [])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
@@ -441,6 +444,12 @@ async function main() {
     // `--tree-fold-hot=N`: the hotness gate, corpus-wide. 0 (absent) is the
     // static fold.
     treeFoldHot: Number(arg('tree-fold-hot', 0)) || 0,
+    // `--tree-fold-relax=LIST` / `=none`: the census relaxations, corpus-wide.
+    // Absent means the fold's own default (all of them); `none` is the exact
+    // rule set the fold shipped with, which is the arm an off/on pair is
+    // compared against when a relaxation is being argued about.
+    treeFoldRelax: arg('tree-fold-relax') === undefined ? null
+      : (arg('tree-fold-relax') === 'none' ? [] : arg('tree-fold-relax').split(',').filter(Boolean)),
     // `--lattice-clock`: anchor the slice grid and the audio render to the
     // absolute dispatch count (run-dos.js). Independent of --region-jit so an
     // on/off sweep pair can set it on BOTH arms; without that the two arms run

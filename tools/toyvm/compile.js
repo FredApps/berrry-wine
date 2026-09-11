@@ -836,7 +836,8 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
         for (let k = 1; k <= ARITY[words[p]]; k++) args.push(words[p + k]);
         return { fn: words[p], args, at: p };
       });
-      const runs = eligibleRuns(ops, treeBlockWidth(ops), { minOps: tf.minOps, why: tf.why });
+      const runs = eligibleRuns(ops, treeBlockWidth(ops),
+        { minOps: tf.minOps, why: tf.why, relax: tf.relax });
       const lin = (codeBase + blockIps[b]) & mask;
       for (const run of runs) {
         const last = run[run.length - 1];

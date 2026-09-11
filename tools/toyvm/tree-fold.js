@@ -75,6 +75,29 @@ const { carryState } = require('./region-live');
 // across the corpus and decides which programs this can pay on.
 const MIN_OPS = 4;
 
+// The census's relaxations, as the fold implements them. `classify()` already
+// tags every op it declines with the relaxation that would take it
+// (`c.relax`), so turning one on here is "accept the class", not "reclassify".
+//
+//   partial  an 8-bit (or, in a 32-bit block, a 16-bit) read/write is an
+//            EXTRACT out of / an INSERT into the full-width value. Nothing new
+//            has to be written for that: emit.js's `$rget8`/`$rset8`/`$rset16`
+//            already spell it exactly that way, `foldRegisterFile` and
+//            `foldRegisterFileWide` already collapse them to a mask-and-or on
+//            the register's own global once the index is a constant, and
+//            `promoteRegs` then rewrites that global into the run's local. So
+//            AL and AH really are bits 0-7 and 8-15 of the promoted AX local,
+//            by construction rather than by a second model of the register
+//            file. 8/16-bit LOADS and STORES keep their `$rd8`/`$wr8` calls in
+//            source order like every other memory op, so they carry the same
+//            fault and segment semantics as the per-op handlers.
+//
+// The census's third relaxation, `alias`, is not here: it is a disjointness
+// PROOF over two operands rather than a class to accept, and it is the one
+// extension that needs code of its own.
+const RELAXATIONS = ['partial'];
+const RELAX_ALL = new Set(RELAXATIONS);
+
 // A handler that reads the dispatch clock cannot be folded: the interpreter
 // would have charged one step per op before it, and a fold charges the whole
 // run at once, so the value it reads differs. The foldable set contains none of
@@ -139,7 +162,7 @@ function bucketOf(cls, stem) {
 //     most expensive rule here -- ACCIDENT's hottest block has sixteen
 //     consecutive foldable ops and yields a run of twelve because of it -- and
 //     relaxing it is the first of the three extensions in the doc.
-function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null } = {}) {
+function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null, relax = RELAX_ALL } = {}) {
   const D = decompTable();
   const T = effectsTable();
   const runs = [];
@@ -161,7 +184,15 @@ function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null } = {}) {
     const base = dec[0];
     const eff = T[base];
     const c = classify(HANDLERS[base].name, width, o.args, eff);
-    if (!c.fold) { close(); note(bucketOf(c.cls, stemOf(HANDLERS[base].name).stem)); continue; }
+    // `c.fold` is the exact set; `c.relax` names the relaxation that would take
+    // this op, and a relaxation that is ON accepts it with no reclassification.
+    // Everything downstream of here -- the two body questions, the alias rule,
+    // the lowering -- is the same for a relaxed op as for an exact one, which
+    // is the point: the relaxations widen the POPULATION, they do not add a
+    // second way of lowering it.
+    if (!c.fold && !(c.relax && relax.has(c.relax))) {
+      close(); note(bucketOf(c.cls, stemOf(HANDLERS[base].name).stem)); continue;
+    }
     // The census stops here. The fold has two more questions, both about the
     // BODY rather than the opcode, and both of which can only be asked of the
     // handler that is actually in the arena (which may be the flagless twin).
@@ -302,11 +333,15 @@ class TreeFolder {
     // a handler whether it ever runs again or not. `hot = N` compiles a run
     // only after the arena word it starts at has been dispatched N times.
     hot = 0, warmFrom = 0, warmFor = 10e6, hits = null,
+    // Which of the census's relaxations are on. An array or a Set from the CLI,
+    // normalized to a Set here so `eligibleRuns` never has to ask.
+    relax = RELAXATIONS,
   }) {
     Object.assign(this, {
       session, vm, machine, portIn, portOut, build, repFast,
       maxTrees, maxInstalls, minOps, log, batchMin, batchWait,
       hot, warmFrom, warmFor, hits,
+      relax: relax instanceof Set ? relax : new Set(relax),
     });
     // True while the guest is running on the `--block-hits` build the gate
     // profiles with. Cleared by the first install, which is what takes it away.
@@ -656,7 +691,7 @@ class TreeFolder {
     return {
       installs: this.installs, trees: this.trees.length, folds: this.folds,
       base: this.base, treeOps: [...this.treeOps],
-      hot: this.hot, phase: this.phase,
+      hot: this.hot, phase: this.phase, relax: [...this.relax],
       hotPromoted: this.hotPromoted, coldSkipped: this.coldSkipped,
       deadSkipped: this.deadSkipped, hottest: this.hottest, hotLins: this.hotLins.size,
       dropSites: this.dropSites, dropProgs: this.dropProgs, dropBlocks: this.dropBlocks,
@@ -671,5 +706,5 @@ const now = () => (typeof performance !== 'undefined' && performance.now
 
 module.exports = {
   TreeFolder, eligibleRuns, buildTree, treeKey, blockWidth, opAt, MIN_OPS,
-  CLOCK_READERS, ESCAPES,
+  CLOCK_READERS, ESCAPES, RELAXATIONS, RELAX_ALL,
 };

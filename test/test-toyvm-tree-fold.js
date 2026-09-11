@@ -8,9 +8,23 @@
 //   dot       straight-line full-width arithmetic, 12 ops -- MUST fold
 //   addrloop  a `loop`-terminated body that walks a pointer  -- MUST fold
 //   incloop   an `inc si / cmp si,N / jne` loop              -- MUST fold
-//   partial   an 8-bit write in the middle                   -- MUST NOT fold
+//   partial   an 8-bit write in the middle                   -- MUST fold
+//   bytelut   a byte LUT loop: 8-bit load, 8-bit store       -- MUST fold
+//   ahal      AH and AL written apart, AX read whole         -- MUST fold
+//   narrowmem 8-bit absolute loads and stores in one run     -- MUST fold
+//   narrowrot an 8-bit `rol`, narrow AND not in the fold set -- MUST NOT fold
 //   alias     a store followed by a load                     -- MUST NOT fold
 //   flagcons  an `adc` in the middle                         -- MUST NOT fold
+//
+// The four partial-register cases are the DOS half of the suite. 16-bit real
+// mode is written in AL/AH/BL/DH and in 8-bit loads and stores, and the exact
+// rule set refused every one of them -- `partial-reg` was one of the two
+// biggest decline buckets in every program measured. What makes them foldable
+// is not a new model of the register file: AL really is bits 0-7 of the
+// promoted AX local, because emit.js's `$rget8`/`$rset8` already spell an 8-bit
+// access as an extract and a mask-and-or insert and the lowering already folds
+// those to the register's own global. `narrowrot` is the boundary: `rol` is not
+// in the fold set at ANY width, so being narrow is not on its own a licence.
 //
 // Every one runs its body two thousand times inside an outer loop, prints AX,
 // BX, CX, DX, SI, DI and the arithmetic bits of FLAGS, and is run twice: once
@@ -44,6 +58,7 @@ const ITER = 2000;              // outer-loop trips, in a memory counter
 const COUNTER = 0x500;          // where that counter lives
 const SNAP = 0x300;             // where the seven printed words are stashed
 const TABLE = 0x200;            // addrloop's data
+const DEST = 0x280;             // bytelut's output
 
 // --- a two-pass assembler, just big enough --------------------------------
 //
@@ -227,15 +242,91 @@ const CASES = {
       w(0x75, rel8('inner'));    // jne inner
     },
   },
-  // AL and AH are subfields of AX in the register file, so an 8-bit write in
-  // the middle of a 16-bit run is an overlap the fold does not model. It splits
-  // here into runs of 1 and 2, and nothing folds.
+  // AL and AH are subfields of AX in the register file. The `partial`
+  // relaxation models an 8-bit write as an INSERT into the full-width value and
+  // an 8-bit read as an EXTRACT out of it, so this run of five folds whole --
+  // and the printed AX is the case: `1237` is `1234` with AL incremented by 3,
+  // which is only right if the insert left AH alone.
   partial: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xB3, 0xAA);             // mov bl,0AAh     <- 8-bit insert
+      w(0x04, 0x03);             // add al,3        <- 8-bit extract + insert
+      w(0x89, 0xC1);             // mov cx,ax
+      w(0x31, 0xD9);             // xor cx,bx
+    },
+  },
+  // The shape 16-bit real-mode code is actually made of: a byte fetched through
+  // a pointer, transformed in AL, and stored a byte at a time. Eight-bit loads
+  // and stores keep their `$rd8`/`$wr8` calls in source order like every other
+  // memory op, so they fault and segment exactly as the per-op handlers do --
+  // the relaxation is about the REGISTER halves, not about memory width.
+  bytelut: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w, label, rel8 }) => {
+      w(0xBE, TABLE & 0xFF, TABLE >> 8);   // mov si,TABLE
+      w(0xBF, DEST & 0xFF, DEST >> 8);     // mov di,DEST
+      w(0xB9, 0x08, 0x00);                 // mov cx,8
+      w(0xB6, 0x07);                       // mov dh,7
+      label('lut');
+      w(0x89, 0xF3);                       // mov bx,si
+      w(0x8A, 0x07);                       // mov al,[bx]     <- 8-bit load
+      w(0x00, 0xF0);                       // add al,dh       <- two 8-bit reads
+      w(0x34, 0x5A);                       // xor al,5Ah
+      w(0x88, 0x05);                       // mov [di],al     <- 8-bit store
+      w(0x46);                             // inc si
+      w(0x47);                             // inc di
+      w(0xE2, rel8('lut'));                // loop lut
+    },
+  },
+  // The two halves of one register written apart and read together. A fold that
+  // kept AL and AH in separate locals, or that wrote one back over the other,
+  // gets a plausible-looking AX here and the wrong one: the answer is 3213h and
+  // both halves have to survive the other's write to reach it.
+  ahal: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xB9, 0x0F, 0x00);       // mov cx,15
+      w(0xB8, 0x00, 0x00);       // mov ax,0
+      w(0xB0, 0x12);             // mov al,12h
+      w(0xB4, 0x34);             // mov ah,34h
+      w(0x04, 0x01);             // add al,1
+      w(0x80, 0xEC, 0x02);       // sub ah,2
+      w(0x89, 0xC3);             // mov bx,ax
+      w(0x31, 0xCB);             // xor bx,cx
+      w(0x88, 0xE2);             // mov dl,ah
+    },
+  },
+  // Narrow MEMORY: two 8-bit absolute loads, arithmetic between the halves of
+  // one register, two 8-bit absolute stores. Loads first, so the alias rule --
+  // which the partial relaxation does not touch -- never fires and the whole
+  // run is one tree.
+  narrowmem: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 11) & 0xFF)],
+    body: ({ w }) => {
+      w(0xA0, TABLE & 0xFF, TABLE >> 8);           // mov al,[TABLE]
+      w(0x8A, 0x26, (TABLE + 1) & 0xFF, (TABLE + 1) >> 8); // mov ah,[TABLE+1]
+      w(0x00, 0xE0);                               // add al,ah
+      w(0x34, 0x5A);                               // xor al,5Ah
+      w(0xA2, DEST & 0xFF, DEST >> 8);             // mov [DEST],al
+      w(0x88, 0x26, (DEST + 1) & 0xFF, (DEST + 1) >> 8);   // mov [DEST+1],ah
+      w(0xBB, 0x34, 0x12);                         // mov bx,1234h
+      w(0x89, 0xDE);                               // mov si,bx
+    },
+  },
+  // The boundary the relaxation must NOT cross. `rol` is not in the census's
+  // fold set at any width -- it is a carry-producing rotate, not an insert --
+  // so being narrow does not make it eligible. It splits this into runs of two
+  // and two, and nothing folds.
+  narrowrot: {
     folds: false,
     body: ({ w }) => {
       w(0xB8, 0x34, 0x12);       // mov ax,1234h
-      w(0xB3, 0xAA);             // mov bl,0AAh     <- partial-reg
-      w(0x04, 0x03);             // add al,3        <- partial-reg
+      w(0xB3, 0xAA);             // mov bl,0AAh
+      w(0xD0, 0xC3);             // rol bl,1        <- not in the fold set
       w(0x89, 0xC1);             // mov cx,ax
       w(0x31, 0xD9);             // xor cx,bx
     },
@@ -318,7 +409,24 @@ for (const [name, c] of Object.entries(CASES)) {
   // ...and the fold must never fire with the flag off, whatever else changes.
   assert.strictEqual(folds(off), 0, `${name}: the plain arm folded ${folds(off)} run(s)`);
 
-  summary.push(`${name} ${a} ${c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}`);
+  // A case that only folds because of a relaxation has to STOP folding when the
+  // relaxation is turned off. Without this the four partial cases would pass on
+  // a build where the exact rule set had quietly started accepting narrow ops
+  // for some other reason, and the relaxation would be credited with a fold it
+  // did not cause.
+  let exact = '';
+  if (c.relaxed) {
+    const ex = run(com, ['--tree-fold', '--tree-fold-batch=1', '--tree-fold-relax=none']);
+    assert.ok(/exited=true/.test(ex), `${name}: the exact arm did not exit:\n${ex}`);
+    assert.strictEqual(screen(ex), a,
+      `${name}: the exact arm computed something else\n  plain ${a}\n  exact ${screen(ex)}`);
+    assert.strictEqual(folds(ex), 0,
+      `${name}: folded ${folds(ex)} run(s) with the relaxations off, so this case `
+      + `is not testing the relaxation:\n${ex}`);
+    exact = ' (exact: none)';
+  }
+
+  summary.push(`${name} ${a} ${c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}${exact}`);
 }
 // --- the hotness gate ------------------------------------------------------
 //

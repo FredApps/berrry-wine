@@ -91,6 +91,12 @@ async function main() {
     treefoldhot: { treeFold: { hot: 64 } },
     treefoldhot16: { treeFold: { hot: 16 } },
     treefoldhot256: { treeFold: { hot: 256 } },
+    // The same two arms with the census relaxations turned OFF -- the exact
+    // rule set the fold shipped with. `tailcall+treefoldexact` against
+    // `tailcall+treefold` is the A/B for what widening the eligible population
+    // is worth, run through the same interleaved harness as everything else.
+    treefoldexact: { treeFold: { relax: [] } },
+    treefoldhotexact: { treeFold: { hot: 64, relax: [] } },
     nowasmdecode: { wasmDecode: false },
     nocache: { noCache: true },
   };

@@ -989,6 +989,22 @@ function count(s, d) {
   return Math.round(Number(m[1]) * ({ '': 1, k: 1e3, m: 1e6, b: 1e9 })[m[2].toLowerCase()]);
 }
 
+// `--tree-fold-relax=partial,flags` / `=none` / absent (all of them). An
+// unknown name is an error rather than a silent no-op: a misspelled arm in an
+// A/B would otherwise read as "the relaxation is worth nothing".
+function treeFoldRelax(spec) {
+  const { RELAXATIONS } = require('./tree-fold');
+  if (spec === undefined) return RELAXATIONS;
+  if (spec === 'none') return [];
+  const want = spec.split(',').filter(Boolean);
+  const bogus = want.filter(x => !RELAXATIONS.includes(x));
+  if (bogus.length) {
+    throw new Error(`unknown --tree-fold-relax: ${bogus.join(',')} `
+      + `(known: ${RELAXATIONS.join(',')}, or none)`);
+  }
+  return want;
+}
+
 async function main() {
   const exe = process.argv[2];
   if (!exe || exe.startsWith('--')) {
@@ -1079,6 +1095,14 @@ async function main() {
       // enough that the profiling build is not most of the run.
       warmFrom: 0,
       warmFor: count(arg('tree-fold-warm'), 10e6),
+      // `--tree-fold-relax=LIST`: which of the census's relaxations are on.
+      // The default is all of them, because the decline histogram says the
+      // exact rule set is what keeps the fold off DOS code -- `partial-reg` is
+      // one of the two biggest buckets in every program measured, and 16-bit
+      // real-mode code is made of the narrow forms it names. The switch exists
+      // so an arm can be turned OFF for an A/B: `--tree-fold-relax=none` is the
+      // fold exactly as docs/toyvm-tree-fold.md first measured it.
+      relax: treeFoldRelax(arg('tree-fold-relax')),
       fromEnv: !process.argv.slice(2).includes('--tree-fold'),
       log: flag('tree-fold-verbose') ? console.log : (() => {}),
     } : null,
