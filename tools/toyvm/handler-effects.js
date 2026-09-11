@@ -48,6 +48,10 @@ const KIND = [
   [/^rd(8|16|32)$/, 'memRead'],
   [/^wr(8|16|32)$/, 'memWrite'],
   [/^sget$/, 'segRead'],
+  // `$lin(seg, off)` is `(sbase(seg) + off) & linmask`: a segment read with the
+  // offset already in hand. Only REP widening's fast path calls it directly --
+  // every other memory op goes through $rd/$wr, which call it internally.
+  [/^lin$/, 'segRead'],
   [/^sset$/, 'segWrite'],
   // The effective-address helper, which is 612 of the 1581 handlers and is the
   // single most important thing here rather than a decline: `$ea(i, d)` is a
@@ -74,6 +78,16 @@ const KIND = [
   // Flag record helpers. Named so they are not mistaken for unknown calls --
   // FLAG_EFFECTS already covers what they mean.
   [/^(flags_|rec_|get_|cond)/, 'flags'],
+  // REP widening's own bookkeeping. `$rep_span_ok` and `$code_clear` are
+  // QUERIES over a linear span (is it inside the guest's memory, is any of it
+  // compiled), `$rep_decl` counts why a widened run fell back to the byte loop.
+  // None of the three reads or writes a guest register, guest memory or a flag,
+  // so leaving them unresolved would report every `rep_movsb` as unreadable --
+  // which is what filed the whole rep group under the wrong barrier before this
+  // entry existed. The memory the widened path then touches is `memory.copy` /
+  // `memory.fill` / a store loop, which this table does not see either way; the
+  // byte loop beside it uses `$rd`/`$wr` and is what puts the mem effects in.
+  [/^(rep_decl|rep_span_ok|code_clear)$/, 'bookkeeping'],
   // Pure arithmetic helpers: the shift/rotate kernels and the offset adder.
   // They compute a value and touch nothing but the flag record, so the store
   // that consumes them is already counted at the handler's own `$rset`.
@@ -126,7 +140,7 @@ function effectsOf(hx) {
     if (k.kind === 'escape') { e.escapes.push(`$${m[1]}`); continue; }
     if (k.kind === 'countDown') { e.countDown = true; continue; }
     if (k.kind === 'countRead') { e.countRead = true; continue; }
-    if (k.kind === 'transfer') continue;
+    if (k.kind === 'transfer' || k.kind === 'bookkeeping') continue;
     if (k.kind === 'address') {
       // Both arguments matter: the mode picks the registers, the displacement
       // is the constant part of the address.

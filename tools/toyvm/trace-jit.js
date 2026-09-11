@@ -1161,6 +1161,9 @@ const SAFE_CALLS = [
   // guest ip -> arena address and holds no guest register.
   [/^(slice_exit|jlook|rpush|rpop)$/, []],
   [/^(port_in|port_out)$/, []],                      // leave to the host, take no register
+  // REP widening's guards and its decline counter. Two queries over a linear
+  // span and one statistic; none of the three reads or writes a guest register.
+  [/^(rep_decl|rep_span_ok|code_clear)$/, []],
   // The stack helpers move SP themselves and address through SS. Neither may
   // be promoted while one of these is in the body; everything else still can.
   [/^(push|pop)(16|32)$/, ['sp', 'ssb']],

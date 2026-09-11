@@ -133,10 +133,30 @@ const MIN_OPS = 4;
 //            question. The `rep_`/`repne_` forms are not in it either -- they
 //            write `$steps` themselves, so they are their own relaxation.
 //
+//   rep      a `rep movs`/`rep stos` or a `repne scas`/`rep cmps`. These are
+//            already super-ops -- one dispatch runs the whole count, widened to
+//            `memory.copy`/`memory.fill` under hoisted guards when the span
+//            allows it -- and folding one changes NOTHING about what it does:
+//            the same guards, the same `br $slow` fallbacks to the byte loop,
+//            the same CX/SI/DI/ZF state on every exit, because the handler body
+//            is taken verbatim like every other op in a run. What it buys is the
+//            dispatch on either side of it, which is the whole point: a DOS
+//            inner loop is usually a couple of pointer updates, a `rep movsw`
+//            and a branch, and before this the `rep` split it into two runs too
+//            short to fold.
+//
+//            The one thing that had to be said out loud is the CLOCK. A rep
+//            handler writes `$steps` -- once per element in the byte loop, once
+//            for the whole run in the widened path -- and `CLOCK_READERS` below
+//            refuses any handler that mentions `$steps` at all. That refusal is
+//            about a handler whose BEHAVIOUR depends on the clock's value, which
+//            a fold shifts; a charge of a known amount is not that. See
+//            `STEP_CHARGE`.
+//
 // The census's third relaxation, `alias`, is not here: it is a disjointness
 // PROOF over two operands rather than a class to accept, and it is the one
 // extension that needs code of its own.
-const RELAXATIONS = ['partial', 'flags', 'string'];
+const RELAXATIONS = ['partial', 'flags', 'string', 'rep'];
 const RELAX_ALL = new Set(RELAXATIONS);
 
 // A handler that reads the dispatch clock cannot be folded: the interpreter
@@ -145,6 +165,18 @@ const RELAX_ALL = new Set(RELAXATIONS);
 // these today; the check is here so that stays true rather than being believed.
 // Same list region-jit.js flushes its pending step charge for.
 const CLOCK_READERS = /\$steps|\$slice_budget|\$vga_status|\$port_in|\$port_out/;
+// ...with one shape excepted, and only this shape: `$steps -= <a constant or a
+// local>`. That is a CHARGE, not an observation. A charge commutes with the
+// tree's own up-front `$steps -= n-1`, so the total at the run's end is the
+// interpreter's total whichever order the two happen in, and nothing between
+// them branches on the value -- the budget is tested in `$next`, which a folded
+// run does not reach until it is over. The REP handlers are the only ops that
+// carry one (per element in the byte loop, once for the whole run in the
+// widened path), and without this exception `rep` could not fold at all while
+// pretending to be refused for a reason about correctness.
+const STEP_CHARGE =
+  /\(global\.set \$steps \(i32\.sub \(global\.get \$steps\) \((?:i32\.const \d+|local\.get \$[a-zA-Z0-9_]+)\)\)\)/g;
+const readsClock = (body) => CLOCK_READERS.test(body.replace(STEP_CHARGE, ''));
 // ...and one that leaves the handler early would leave `$ip` parked in the
 // middle of the run's operand words. Same refusal genFusedBranches makes of a
 // fused first half, for the same reason.
@@ -262,7 +294,7 @@ function eligibleRuns(ops, width, { minOps = MIN_OPS, why = null, relax = RELAX_
     // left is that.
     const folded = foldOperands(HANDLERS[o.fn].body, o.args);
     if (folded === null) { close(); note('operand shape'); continue; }
-    if (CLOCK_READERS.test(folded)) { close(); note('clock reader'); continue; }
+    if (readsClock(folded)) { close(); note('clock reader'); continue; }
     if (ESCAPES.test(folded)) { close(); note('escapes'); continue; }
     const memRead = eff.memRead.length > 0;
     const memWrite = eff.memWrite.length > 0;
@@ -323,13 +355,19 @@ function buildTree(run, name) {
     return { declined: `lowering threw: ${e && e.message ? e.message : String(e)}` };
   }
   const joined = t3.bodies3.join('\n');
-  if (CLOCK_READERS.test(joined)) return { declined: 'the lowered body reads the clock' };
+  if (readsClock(joined)) return { declined: 'the lowered body reads the clock' };
   if (ESCAPES.test(joined)) return { declined: 'the lowered body can leave the handler' };
   // Balance, checked here rather than at module build: a fold that unbalanced a
   // body would take the whole module down with a parse error a long way from
   // the run that produced it.
+  //
+  // `;;` comments come out first, and that is not cosmetic. emit.js writes
+  // prose above the tricky parts of a handler, and REP widening's happens to
+  // contain `copy a[0..n) to a[1..n]` -- one bare `)`. Counted raw, that lone
+  // paren declined every `rep movs` fold as an unbalanced body, which reads
+  // exactly like a code-generation bug and is not one.
   let depth = 0;
-  for (const ch of joined) {
+  for (const ch of joined.replace(/;;[^\n]*/g, '')) {
     if (ch === '(') depth++;
     else if (ch === ')') { depth--; if (depth < 0) return { declined: 'unbalanced body' }; }
   }

@@ -24,6 +24,12 @@
 //   strdf     the same walked backwards under `std`          -- MUST fold
 //   strscan   a `scasw` loop whose `jne` reads its compare    -- MUST fold
 //   strseg    a `lodsw` with an `es:` override                -- MUST fold
+//   repmovs   a `rep movsw` down the widened path             -- MUST fold
+//   repmovsdown  the same under `std`, so the byte loop runs  -- MUST fold
+//   repstos   a `rep stosw` fill                              -- MUST fold
+//   repscan   a `repne scasw` that exits on the match         -- MUST fold
+//   repscanmiss  the same with the count run out              -- MUST fold
+//   repcmps   a `rep cmpsw` that exits on the difference      -- MUST fold
 //
 // The five flag cases are the other half of the DOS fit. Flags here are LAZY --
 // a producer records its inputs, a consumer materializes the field it wants --
@@ -577,6 +583,148 @@ const CASES = {
       w(0x31, 0xC3);                       // xor bx,ax         -> 0
       w(0x89, 0xF2);                       // mov dx,si
       w(0x89, 0xD9);                       // mov cx,bx
+    },
+  },
+
+  // --- the REP forms ------------------------------------------------------
+  //
+  // A `rep` is already a super-op: one dispatch runs the whole count, widened
+  // to `memory.copy`/`memory.fill` when the hoisted guards allow it and falling
+  // back to a byte loop when they do not. Folding one must change NOTHING about
+  // that -- the guards, the fallback and the CX/SI/DI/ZF state on every exit
+  // are the handler's, taken verbatim. What it buys is the dispatch on either
+  // side, which is the whole point: before this a `rep` split a DOS inner loop
+  // into two runs too short to fold.
+
+  // `rep movsw` down the WIDENED path (DF clear, span inside the guest, nothing
+  // compiled in it), with foldable work either side of it so the run is a tree
+  // rather than a lone op. CX must come out zero and SI/DI must have advanced
+  // by the whole byte count, which is the widened path's own bookkeeping.
+  repmovs: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w }) => {
+      w(0xBE, TABLE & 0xFF, TABLE >> 8);   // mov si,TABLE
+      w(0xBF, DEST & 0xFF, DEST >> 8);     // mov di,DEST
+      w(0xB9, 0x08, 0x00);                 // mov cx,8
+      w(0xFC);                             // cld
+      w(0x90);                             // nop: `cld` is a barrier; start here
+      w(0x89, 0xF3);                       // mov bx,si
+      w(0x01, 0xFB);                       // add bx,di
+      w(0xF3, 0xA5);                       // rep movsw     <- 8 words
+      w(0x89, 0xCA);                       // mov dx,cx     (0)
+      w(0x31, 0xDA);                       // xor dx,bx
+      w(0x89, 0xD8);                       // mov ax,bx
+    },
+  },
+  // THE SLOW PATH, in the same shape. `std` is one of the conditions the
+  // widened path declines on (`$rep_decl(1)`), so this one runs the byte loop
+  // inside the tree -- the interpreter's own fallback, charging `$steps` per
+  // element instead of once for the run. Both arms must still print the same
+  // seven words, which is what says the two paths agree about where SI, DI and
+  // CX end up.
+  repmovsdown: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w }) => {
+      w(0xBE, (TABLE + 14) & 0xFF, (TABLE + 14) >> 8); // mov si,TABLE+14
+      w(0xBF, (DEST + 14) & 0xFF, (DEST + 14) >> 8);   // mov di,DEST+14
+      w(0xB9, 0x08, 0x00);                 // mov cx,8
+      w(0xFD);                             // std            <- declines the widening
+      w(0x90);                             // nop
+      w(0x89, 0xF3);                       // mov bx,si
+      w(0x01, 0xFB);                       // add bx,di
+      w(0xF3, 0xA5);                       // rep movsw
+      w(0x89, 0xCA);                       // mov dx,cx
+      w(0x31, 0xDA);                       // xor dx,bx
+      w(0x89, 0xD8);                       // mov ax,bx
+      w(0xFC);                             // cld: `printAndExit` walks with lodsw
+    },
+  },
+  // `rep stosw` -- the fill twin, and the one whose widened path is a
+  // `memory.fill`/store loop rather than a copy.
+  repstos: {
+    folds: true, relaxed: true,
+    body: ({ w }) => {
+      w(0xBF, DEST & 0xFF, DEST >> 8);     // mov di,DEST
+      w(0xB8, 0x5A, 0xA5);                 // mov ax,0A55Ah
+      w(0xB9, 0x10, 0x00);                 // mov cx,16
+      w(0xFC);                             // cld
+      w(0x90);                             // nop
+      w(0x89, 0xFB);                       // mov bx,di
+      w(0x01, 0xC3);                       // add bx,ax
+      w(0xF3, 0xAB);                       // rep stosw     <- 16 words
+      w(0x89, 0xCA);                       // mov dx,cx
+      w(0x31, 0xDA);                       // xor dx,bx
+      w(0x89, 0xDE);                       // mov si,bx
+    },
+  },
+  // THE SCAN, AND ITS THREE EXITS. `repne scasw` stops on a match, on the count
+  // running out, or not at all -- and the contract is that CX, DI and ZF are
+  // left exactly where the interpreter leaves them in each case. This one hits
+  // the MATCH exit: 312Ah is the word four compares in, so CX must come out at
+  // 32-4 = 28 and DI at TABLE+8, with ZF set. A fold that ran the scan to
+  // exhaustion prints a different CX and the same picture everywhere else.
+  repscan: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w }) => {
+      w(0xBF, TABLE & 0xFF, TABLE >> 8);   // mov di,TABLE
+      w(0xB8, 0x2A, 0x31);                 // mov ax,312Ah
+      w(0xB9, 0x20, 0x00);                 // mov cx,32
+      w(0xFC);                             // cld
+      w(0x90);                             // nop
+      w(0x89, 0xFB);                       // mov bx,di
+      w(0x8D, 0x77, 0x02);                 // lea si,[bx+2]
+      w(0xF2, 0xAF);                       // repne scasw   <- stops on the match
+      w(0x89, 0xCA);                       // mov dx,cx     (28)
+      w(0x89, 0xFB);                       // mov bx,di     (TABLE+8)
+      // ZF is the other half of the exit state and CX alone cannot show it when
+      // a scan matches on its LAST element. `pushf` is a hard barrier, so this
+      // sits outside the run on purpose -- it reads the flags the folded rep
+      // left, from outside the handler that left them.
+      w(0x9C, 0x5E, 0x81, 0xE6, 0x40, 0x00); // pushf / pop si / and si,40h
+    },
+  },
+  // ...and the EXHAUSTED exit, in the same shape: a value that is not in the
+  // table at all, so the scan runs the count out and CX comes back zero with ZF
+  // clear. Same handler, other end.
+  repscanmiss: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w }) => {
+      w(0xBF, TABLE & 0xFF, TABLE >> 8);   // mov di,TABLE
+      w(0xB8, 0x37, 0x13);                 // mov ax,1337h  <- not in the table
+      w(0xB9, 0x08, 0x00);                 // mov cx,8
+      w(0xFC);                             // cld
+      w(0x90);                             // nop
+      w(0x89, 0xFB);                       // mov bx,di
+      w(0x8D, 0x77, 0x02);                 // lea si,[bx+2]
+      w(0xF2, 0xAF);                       // repne scasw
+      w(0x89, 0xCA);                       // mov dx,cx     (0)
+      w(0x89, 0xFB);                       // mov bx,di     (TABLE+16)
+      w(0x9C, 0x5E, 0x81, 0xE6, 0x40, 0x00); // pushf / pop si / and si,40h -> 0
+    },
+  },
+  // `rep cmpsw`: two streams, and the exit is on the first DIFFERENCE. The two
+  // halves of the table differ at the very first word, so this stops after one
+  // compare with CX at 7 -- and SI and DI have both stepped exactly once.
+  repcmps: {
+    folds: true, relaxed: true,
+    data: [TABLE, Array.from({ length: 64 }, (_, i) => (i * 7) & 0xFF)],
+    body: ({ w }) => {
+      w(0xBE, TABLE & 0xFF, TABLE >> 8);           // mov si,TABLE
+      w(0xBF, (TABLE + 16) & 0xFF, (TABLE + 16) >> 8); // mov di,TABLE+16
+      w(0xB9, 0x08, 0x00);                 // mov cx,8
+      w(0xFC);                             // cld
+      w(0x90);                             // nop
+      w(0x89, 0xF3);                       // mov bx,si
+      w(0x01, 0xFB);                       // add bx,di
+      w(0xF3, 0xA7);                       // rep cmpsw     <- stops on difference
+      w(0x89, 0xCA);                       // mov dx,cx
+      w(0x89, 0xC3);                       // mov bx,ax
+      w(0x89, 0xD8);                       // mov ax,bx
+      w(0x9C, 0x58, 0x25, 0x40, 0x00);     // pushf / pop ax / and ax,40h -> 0
     },
   },
 };
