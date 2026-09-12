@@ -2537,6 +2537,11 @@
   (func (export "get_tree_decl_term") (result i32) (global.get $tree_decl_term))
   (func (export "get_tree_decl_uop") (result i32) (global.get $tree_decl_uop))
   (func (export "get_tree_decl_uop_fn") (result i32) (global.get $tree_decl_uop_fn))
+  ;; The x87 sub-bucket of `unfoldable-op`: how many self-loops were declined
+  ;; because an x87 op was outside the accepted set, and (group<<8)|(reg<<4)|rm
+  ;; of the last one -- which names the instruction, where lastFn 188 cannot.
+  (func (export "get_tree_decl_x87") (result i32) (global.get $tree_decl_x87))
+  (func (export "get_tree_decl_x87_op") (result i32) (global.get $tree_decl_x87_op))
 
   ;; Page compilation (docs/page-compile-design.md). There is deliberately no
   ;; switch: this replaces the storage layer rather than accelerating it, so the

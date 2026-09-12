@@ -279,6 +279,146 @@ function termDeclineReport(file, hotFile, names, top) {
   }
 }
 
+// ============================================================ x87 census
+// Which x87 instructions sit INSIDE otherwise-integer self-loops.
+//
+// This is the question TREE_FOLD's `unfoldable-op` bucket cannot answer on its
+// own: `lastFn 188` says "an x87 memory op stopped it" and nothing about WHICH
+// one, so a work list ordered by population needs the (group, reg, rm) fields
+// out of the operand words. The three x87 handlers encode those differently
+// and each is a discriminated union keyed by its handler index, so the
+// decoding lives here rather than in a regex over the printed dump:
+//
+//   H188 $th_fpu_mem     op = (group<<4)|reg,           next word = addr
+//   H189 $th_fpu_reg     op = (group<<8)|(reg<<4)|rm
+//   H190 $th_fpu_mem_ro  op = (group<<8)|(reg<<4)|base, next word = disp
+//
+// A block is weighted by its `--hot-block-dump` entry count when one is given.
+// For a block that did NOT fold, one hot hit is one loop ITERATION, so the
+// weight is directly comparable to a retired-op share; without --hot every
+// block counts once and the answer is about distinct code, not about work.
+const X87_MEM = new Map(Object.entries({
+  // group/reg -> mnemonic. Group 0/4 are the f32/f64 arithmetic forms and
+  // 2/6 the integer ones, so one row covers reg 0..7 for each pair.
+  '0/0': 'fadd m32', '0/1': 'fmul m32', '0/2': 'fcom m32', '0/3': 'fcomp m32',
+  '0/4': 'fsub m32', '0/5': 'fsubr m32', '0/6': 'fdiv m32', '0/7': 'fdivr m32',
+  '4/0': 'fadd m64', '4/1': 'fmul m64', '4/2': 'fcom m64', '4/3': 'fcomp m64',
+  '4/4': 'fsub m64', '4/5': 'fsubr m64', '4/6': 'fdiv m64', '4/7': 'fdivr m64',
+  '2/0': 'fiadd m32', '2/1': 'fimul m32', '2/2': 'ficom m32', '2/3': 'ficomp m32',
+  '2/4': 'fisub m32', '2/5': 'fisubr m32', '2/6': 'fidiv m32', '2/7': 'fidivr m32',
+  '6/0': 'fiadd m16', '6/1': 'fimul m16', '6/2': 'ficom m16', '6/3': 'ficomp m16',
+  '6/4': 'fisub m16', '6/5': 'fisubr m16', '6/6': 'fidiv m16', '6/7': 'fidivr m16',
+  '1/0': 'fld m32', '1/2': 'fst m32', '1/3': 'fstp m32', '1/4': 'fldenv',
+  '1/5': 'fldcw', '1/6': 'fnstenv', '1/7': 'fnstcw',
+  '5/0': 'fld m64', '5/2': 'fst m64', '5/3': 'fstp m64', '5/4': 'frstor',
+  '5/6': 'fnsave', '5/7': 'fnstsw m16',
+  '3/0': 'fild m32', '3/2': 'fist m32', '3/3': 'fistp m32', '3/5': 'fld m80',
+  '3/7': 'fstp m80',
+  '7/0': 'fild m16', '7/2': 'fist m16', '7/3': 'fistp m16', '7/4': 'fbld',
+  '7/5': 'fild m64', '7/6': 'fbstp', '7/7': 'fistp m64',
+}));
+
+const X87_ST = ['fld1', 'fldl2t', 'fldl2e', 'fldpi', 'fldlg2', 'fldln2', 'fldz'];
+const X87_D9_E = { 0: 'fchs', 1: 'fabs', 4: 'ftst', 5: 'fxam' };
+const X87_D9_F = ['f2xm1', 'fyl2x', 'fptan', 'fpatan', 'fxtract', 'fprem1', 'fdecstp', 'fincstp'];
+const X87_D9_FX = ['fprem', 'fyl2xp1', 'fsqrt', 'fsincos', 'frndint', 'fscale', 'fsin', 'fcos'];
+const X87_ARITH = ['fadd', 'fmul', 'fcom', 'fcomp', 'fsub', 'fsubr', 'fdiv', 'fdivr'];
+
+function x87RegName(group, reg, rm) {
+  if (group === 0) return `${X87_ARITH[reg]} st,st(${rm})`;
+  if (group === 4) return `${X87_ARITH[reg]} st(${rm}),st`;
+  if (group === 6) return reg === 3 ? 'fcompp' : `${X87_ARITH[reg]}p st(${rm}),st`;
+  if (group === 1) {
+    if (reg === 0) return `fld st(${rm})`;
+    if (reg === 1) return `fxch st(${rm})`;
+    if (reg === 2) return 'fnop';
+    if (reg === 4) return X87_D9_E[rm] || `d9/4 rm${rm}`;
+    if (reg === 5) return X87_ST[rm] || `d9/5 rm${rm}`;
+    if (reg === 6) return X87_D9_F[rm];
+    if (reg === 7) return X87_D9_FX[rm];
+  }
+  if (group === 2) return reg === 5 ? 'fucompp' : `fcmov da/${reg} st(${rm})`;
+  if (group === 3) {
+    if (reg === 4) return ['fneni', 'fndisi', 'fnclex', 'fninit'][rm] || `db/4 rm${rm}`;
+    if (reg === 5) return `fucomi st(${rm})`;
+    if (reg === 6) return `fcomi st(${rm})`;
+    return `fcmovn db/${reg} st(${rm})`;
+  }
+  if (group === 5) {
+    return { 0: `ffree st(${rm})`, 2: `fst st(${rm})`, 3: `fstp st(${rm})`,
+             4: `fucom st(${rm})`, 5: `fucomp st(${rm})` }[reg] || `dd/${reg} rm${rm}`;
+  }
+  if (group === 7) {
+    if (reg === 4 && rm === 0) return 'fnstsw ax';
+    if (reg === 5) return `fucomip st(${rm})`;
+    if (reg === 6) return `fcomip st(${rm})`;
+  }
+  return `x87 g${group}/r${reg}/rm${rm}`;
+}
+
+// (handler, operand) -> a mnemonic and the (group, reg, rm) it decoded from,
+// or null when the op is not one of the three x87 handlers.
+function x87Decode(fn, op) {
+  if (fn === 188) {
+    const group = (op >>> 4) & 0xF, reg = op & 0xF;
+    return { group, reg, rm: -1, form: 'mem',
+             name: X87_MEM.get(`${group}/${reg}`) || `x87 mem g${group}/r${reg}` };
+  }
+  if (fn === 190) {
+    const group = (op >>> 8) & 0xF, reg = (op >>> 4) & 0xF;
+    return { group, reg, rm: -1, form: 'mem_ro',
+             name: (X87_MEM.get(`${group}/${reg}`) || `x87 mem g${group}/r${reg}`) + ' [r+d]' };
+  }
+  if (fn === 189) {
+    const group = (op >>> 8) & 0xF, reg = (op >>> 4) & 0xF, rm = op & 0xF;
+    return { group, reg, rm, form: 'reg', name: x87RegName(group, reg, rm) };
+  }
+  return null;
+}
+
+function x87CensusReport(file, hotFile, names, top) {
+  const blocks = uniqueShapes(parseBlocks(file));
+  const hot = hotFile ? parseHotBlocks(hotFile) : new Map();
+  const pop = new Map();       // mnemonic -> { n, weight, form }
+  let mixedBlocks = 0, mixedWeight = 0, pureX87 = 0, x87Blocks = 0;
+  const perBlock = [];
+
+  for (const b of blocks) {
+    const x = b.ops.map(([fn, op]) => x87Decode(fn, op)).filter(Boolean);
+    if (!x.length) continue;
+    x87Blocks++;
+    const w = hot.get(b.eip) || 0;
+    // "Mixed" = the body has integer work in it as well, which is the
+    // population this widening is for. A block that is nothing but x87 plus
+    // its Jcc belongs to the x87 semantic families, not to TREE_FOLD.
+    const intOps = b.ops.length - x.length - 1;   // -1 for the closing Jcc
+    if (intOps > 0) { mixedBlocks++; mixedWeight += w; } else { pureX87++; continue; }
+    perBlock.push({ eip: b.eip, w, nx: x.length, nint: intOps, ops: b.ops });
+    for (const e of x) {
+      const k = pop.get(e.name) || { n: 0, weight: 0, form: e.form };
+      k.n++; k.weight += w;
+      pop.set(e.name, k);
+    }
+  }
+
+  console.log(`${blocks.length} distinct self-loop shapes; ${x87Blocks} contain x87, ` +
+    `${mixedBlocks} of those are MIXED (integer + x87)` +
+    (hotFile ? `, ${mixedWeight.toLocaleString()} block entries` : ''));
+  console.log(`${pureX87} are x87-only (the x87 semantic families' territory, not TREE_FOLD's)\n`);
+  console.log('x87 ops inside mixed self-loops, by ' + (hotFile ? 'block entries' : 'static count') + ':');
+  const rows = [...pop.entries()].sort((a, b) =>
+    (b[1].weight - a[1].weight) || (b[1].n - a[1].n));
+  for (const [name, e] of rows) {
+    console.log(`  ${name.padEnd(20)} ${e.form.padEnd(7)} ${String(e.n).padStart(4)} sites  ` +
+      `${String(e.weight).padStart(12)} entries`);
+  }
+  console.log(`\ntop ${top} mixed blocks by entries:`);
+  for (const r of perBlock.sort((a, b) => b.w - a.w).slice(0, top)) {
+    console.log(`  0x${r.eip.toString(16).padStart(8, '0')}  ${String(r.w).padStart(10)} entries  ` +
+      `${r.nint} int + ${r.nx} x87 ops`);
+  }
+}
+
 // One entry per distinct op sequence. Counting raw records instead would
 // measure how often a block was decoded, which after the block-cache fix is
 // mostly 1 and before it was thousands -- neither says anything about the
@@ -302,6 +442,11 @@ function main() {
 
   const names = handlerNames();
   const blocks = parseBlocks(file);
+
+  if (args.includes('--x87-census')) {
+    x87CensusReport(file, opt('hot'), names, opt('top') ? Number(opt('top')) : 20);
+    return;
+  }
 
   if (args.includes('--tree-why')) {
     termDeclineReport(file, opt('hot'), names, opt('top') ? Number(opt('top')) : 20);
@@ -335,4 +480,5 @@ function main() {
 if (require.main === module) main();
 
 module.exports = { parseBlocks, uniqueShapes, declineReason, copyDeclineReason, handlerNames, roleOf, ROLE,
-                   parseTermDeclines, parseHotBlocks, termDeclineReport, DECL_WHY };
+                   parseTermDeclines, parseHotBlocks, termDeclineReport, DECL_WHY,
+                   x87Decode, x87RegName, x87CensusReport };

@@ -600,6 +600,47 @@ const SHAPES = {
       };
     },
   },
+
+  tree_x87: {
+    describe: 'fld/fmul/fstp float scale with two pointer bumps (quake2 0x004129b0 shape)',
+    real: 'quake2 ref_soft mixed loops — 78k block entries; the x87 micro-ops in §13',
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 8);
+      const src = a.buf, dst = a.buf + n * 4;
+      return {
+        iters: n,
+        bytesTouched: n * 12,
+        code: loopBack([
+          0xD9, 0x06,             // fld   dword [esi]
+          0xD8, 0x0F,             // fmul  dword [edi]
+          0xD9, 0x1F,             // fstp  dword [edi]
+          0x83, 0xC6, 0x04,       // add   esi, 4
+          0x83, 0xC7, 0x04,       // add   edi, 4
+        ]),
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          // Finite, exactly representable values on both sides: the point is
+          // to price the dispatch, not to time the denormal slow path.
+          for (let i = 0; i < n; i++) {
+            dv.setFloat32(g2w(src) + i * 4, 1.5 + (i % 64) * 0.25, true);
+            dv.setFloat32(g2w(dst) + i * 4, 0.5 + (i % 7) * 0.125, true);
+          }
+          e.set_esi(src); e.set_edi(dst); e.set_ecx(n);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            const want = Math.fround(Math.fround(1.5 + (i % 64) * 0.25)
+                                   * Math.fround(0.5 + (i % 7) * 0.125));
+            const got = dv.getFloat32(g2w(dst) + i * 4, true);
+            if (got !== want) return `dst[${i}]=${got} want ${want}`;
+          }
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
+        },
+      };
+    },
+  },
 };
 
 // -- tree_len<N>: the same loop at six interior lengths -----------------------

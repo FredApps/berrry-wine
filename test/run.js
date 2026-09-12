@@ -9140,7 +9140,14 @@ if (VERBOSE) {
           e.get_tree_decl_short(), 'long', e.get_tree_decl_long(),
           'terminator', e.get_tree_decl_term(),
           'unfoldable-op', e.get_tree_decl_uop(),
-          'lastFn', e.get_tree_decl_uop_fn());
+          'lastFn', e.get_tree_decl_uop_fn(),
+          // A sub-count of unfoldable-op, not a fourth bucket: how many of
+          // those declines were an x87 op outside the accepted set, and which
+          // instruction the last one was. `lastFn 188` names three hundred
+          // different instructions; this names one.
+          'x87-op', e.get_tree_decl_x87 ? e.get_tree_decl_x87() : 0,
+          'lastX87', e.get_tree_decl_x87_op
+            ? '0x' + (e.get_tree_decl_x87_op() >>> 0).toString(16) : '-');
       }
       if (e.get_lut_span_runs) {
         console.log(`loopmatch: ${label} fixed LUT spans`,

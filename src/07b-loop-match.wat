@@ -5216,6 +5216,14 @@
   ;; The handler index of the interior op that most recently caused a decline.
   ;; One sample, not a histogram -- enough to name the family to widen first.
   (global $tree_decl_uop_fn (mut i32) (i32.const -1))
+  ;; An x87 op the accepted set does not contain. A SUB-BUCKET of
+  ;; `unfoldable-op`, not a separate one: the classifier returns 0 either way
+  ;; and pass 1 bumps $tree_decl_uop as usual. It exists because `lastFn 188`
+  ;; names three hundred different instructions and this names the one.
+  ;; $tree_decl_x87_op is (group<<8)|(reg<<4)|rm, with rm 0xF for a memory
+  ;; form -- decoded by tools/loopmatch-decode.js's x87 namer.
+  (global $tree_decl_x87 (mut i32) (i32.const 0))
+  (global $tree_decl_x87_op (mut i32) (i32.const -1))
   ;; The self-loop currently under test, so a decline site can name it in the
   ;; trace without threading a parameter through every reject.
   (global $tree_decl_eip (mut i32) (i32.const 0))
@@ -5435,6 +5443,55 @@
   ;; `a` and the SIB index nibble are 0xF so the hoisted EA adds nothing.
   (global $TU_REP_STR    i32 (i32.const 49))
 
+  ;; -- x87 inside an integer tree -----------------------------------------
+  ;; docs/tree-fold-design-a.md §13.
+  ;;
+  ;; The barrier these remove is NOT an x87 one. Measured on quake2 soft, the
+  ;; largest declining population by block entries was thirteen blocks whose
+  ;; interiors are ordinary integer address arithmetic with an `fld / fmul /
+  ;; fstp` sitting in the middle -- and BOTH families declined them: TREE_FOLD
+  ;; because H188/H189/H190 are not integer dataflow, and the x87 semantic
+  ;; families (H449-453) because the integer ops between the x87 ops break
+  ;; their contiguity. Nobody folded them, so the interpreter paid a full
+  ;; $next per op for the integer half as well.
+  ;;
+  ;; What is folded is the INTEGER half. Each x87 micro-op calls exactly the
+  ;; helper its scalar handler calls -- $fpu_exec_mem or $fpu_exec_reg, the
+  ;; same two functions $th_fpu_mem/$th_fpu_reg/$th_fpu_mem_ro call -- with the
+  ;; same (group, reg, rm) it decoded and the same address. So the x87 stack,
+  ;; the tag word, the raw 64-bit shadows and every sticky exception bit in
+  ;; $fpu_sw are produced by the interpreter's own code, in source order,
+  ;; unchanged. There is no second opinion about x87 semantics anywhere in
+  ;; this family, which is the whole reason this widening is small.
+  ;;
+  ;; Holding ST(0) in a wasm local across consecutive x87 ops is deliberately
+  ;; NOT done. It would have to reproduce $fpu_set/$fpu_get's tag and raw-
+  ;; shadow bookkeeping, FXCH's payload move and the C1 stack-overflow bit at
+  ;; every push, and the moment any of that is approximated the family stops
+  ;; being "the interpreter's own code" and starts being a second x87. The
+  ;; saving would be a few f64 loads against a call that already does real
+  ;; floating-point work.
+  ;;
+  ;; Three fields ride in `b`, above every bit the integer kinds use:
+  ;;   bits 16..19 group, 20..23 reg, 24..27 rm.
+  ;; `a` is the base register for the base+disp form and 0xF otherwise, and
+  ;; the SIB-EA hoist therefore computes exactly the address these want:
+  ;; `imm` alone for the absolute form (which is also where the H149 sentinel
+  ;; join lands, since TU_B_EA is decoded before the hoist) and `R[a] + imm`
+  ;; for the base+disp one.
+  (global $TU_X87_MEM  i32 (i32.const 50))  ;; fpu_exec_mem(group, reg, [ea])
+  (global $TU_X87_MRO  i32 (i32.const 51))  ;; fpu_exec_mem(group, reg, R[a]+imm)
+  (global $TU_X87_REG  i32 (i32.const 52))  ;; fpu_exec_reg(group, reg, rm)
+  ;; FNSTSW AX is the one x87 op that writes a GENERAL register, and it is in
+  ;; the accepted set because `fcom / fnstsw ax / test ah,imm` is how every
+  ;; pre-P6 compiler reads a comparison back. It is its own kind rather than a
+  ;; flag on TU_X87_REG so the two global accesses it needs -- publish EAX,
+  ;; call, reload EAX -- are paid by it alone and not by every x87 op.
+  (global $TU_X87_SW_AX i32 (i32.const 53)) ;; publish EAX, DF E0, reload EAX
+  (global $TU_B_X87_GROUP_SHIFT i32 (i32.const 16))
+  (global $TU_B_X87_REG_SHIFT   i32 (i32.const 20))
+  (global $TU_B_X87_RM_SHIFT    i32 (i32.const 24))
+
   ;; Classifier out-parameters. Decode-time only and single-threaded per
   ;; instance, so globals are cheaper and clearer than packing five fields
   ;; into an i64 return.
@@ -5500,6 +5557,152 @@
         (global.set $tu_b (i32.or (global.get $tu_b) (global.get $TU_B_EA)))
         (return (i32.const 0))))
     (local.get $w))
+
+  ;; Is this (group, reg) memory form one $fpu_exec_mem actually implements?
+  ;;
+  ;; The list mirrors that function's own dispatch, arm for arm, and the
+  ;; default is decline. Two different failures are being prevented and only
+  ;; one of them is obvious. The obvious one: an unimplemented combination
+  ;; reaches $fpu_crash_op, which traps -- and a trap taken from inside the
+  ;; fold reports a register file that is still in wasm locals, so the crash
+  ;; log that is supposed to name the next thing to implement would name the
+  ;; wrong EIP and the wrong registers instead. The other: an arm added to
+  ;; $fpu_exec_mem later is simply not folded until it is added here too,
+  ;; which is a missed lowering and never a wrong one.
+  ;;
+  ;; Nothing in the memory set touches a general register or a lazy flag, so
+  ;; unlike the register set there is no second reason to decline here.
+  (func $tree_x87_mem_ok (param $group i32) (param $reg i32) (result i32)
+    ;; D8/DC (f32/f64 arithmetic) and DA/DE (int32/int16 arithmetic): all
+    ;; eight reg values are real instructions.
+    (if (i32.or (i32.eq (local.get $group) (i32.const 0))
+        (i32.or (i32.eq (local.get $group) (i32.const 4))
+        (i32.or (i32.eq (local.get $group) (i32.const 2))
+                (i32.eq (local.get $group) (i32.const 6)))))
+      (then (return (i32.const 1))))
+    ;; D9: FLD/FST/FSTP m32, FLDENV, FLDCW, FNSTENV, FNSTCW. reg 1 is not one.
+    (if (i32.eq (local.get $group) (i32.const 1))
+      (then (return (i32.ne (local.get $reg) (i32.const 1)))))
+    ;; DD: FLD/FST/FSTP m64, FRSTOR, FNSAVE, FNSTSW m16. reg 1 and 5 are not.
+    (if (i32.eq (local.get $group) (i32.const 5))
+      (then (return (i32.and (i32.ne (local.get $reg) (i32.const 1))
+                             (i32.ne (local.get $reg) (i32.const 5))))))
+    ;; DB: FILD/FIST/FISTP m32, FLD/FSTP m80.
+    (if (i32.eq (local.get $group) (i32.const 3))
+      (then (return
+        (i32.or (i32.eq (local.get $reg) (i32.const 0))
+        (i32.or (i32.eq (local.get $reg) (i32.const 2))
+        (i32.or (i32.eq (local.get $reg) (i32.const 3))
+        (i32.or (i32.eq (local.get $reg) (i32.const 5))
+                (i32.eq (local.get $reg) (i32.const 7)))))))))
+    ;; DF: FILD/FIST/FISTP m16, FBLD, FILD m64, FBSTP, FISTP m64. reg 1 is not.
+    (if (i32.eq (local.get $group) (i32.const 7))
+      (then (return (i32.ne (local.get $reg) (i32.const 1)))))
+    (i32.const 0))
+
+  ;; The register set, which has the extra rule the memory set does not: an
+  ;; op that touches a GENERAL register or the lazy-flag globals is declined
+  ;; even when $fpu_exec_reg implements it perfectly well.
+  ;;
+  ;;   FCMOVcc  (DA/0-2, DB/0-2)   READS  CF/ZF through $get_cf/$get_zf.
+  ;;   FCOMI    (DB/5-6, DF/5-6)   WRITES EFLAGS through $fpu_compare_eflags.
+  ;;   FNSTSW AX (DF E0)           WRITES EAX -- accepted, as TU_X87_SW_AX.
+  ;;
+  ;; The FCMOV case is the one that would be silently wrong rather than merely
+  ;; imprecise. The decode-time dead-flag pass elides a $set_flags_* call when
+  ;; nothing between it and the terminator reads the fields it wrote, and it
+  ;; learns about readers from $tree_uop_flag_reads -- which reports zero for
+  ;; every x87 kind. An FCMOV inside the tree would therefore read flags an
+  ;; earlier micro-op was allowed to skip writing. Teaching the reader set
+  ;; about it is a two-line change; it is not made because no corpus app has
+  ;; one inside a self-loop (measured, §13), and an unexercised widening in a
+  ;; correctness-critical pass is worse than a decline.
+  ;;
+  ;; FCOMI/FUCOMI are declined for the mirror-image reason: they write the
+  ;; lazy-flag globals from outside $tree_uop_flag_writes' model, so the
+  ;; terminator's own $eval_cc could read a field the pass believed only the
+  ;; terminator writes.
+  (func $tree_x87_reg_ok (param $group i32) (param $reg i32) (param $rm i32) (result i32)
+    ;; D8: arith ST(0),ST(i) -- every reg is real.
+    (if (i32.eq (local.get $group) (i32.const 0)) (then (return (i32.const 1))))
+    ;; D9: FLD ST(i), FXCH, FNOP, FCHS/FABS/FTST/FXAM, the constants, and the
+    ;; two transcendental banks.
+    (if (i32.eq (local.get $group) (i32.const 1))
+      (then
+        (if (i32.or (i32.eq (local.get $reg) (i32.const 0))
+                    (i32.eq (local.get $reg) (i32.const 1)))
+          (then (return (i32.const 1))))
+        (if (i32.eq (local.get $reg) (i32.const 2))
+          (then (return (i32.eqz (local.get $rm)))))
+        (if (i32.eq (local.get $reg) (i32.const 4))
+          (then (return
+            (i32.or (i32.eq (local.get $rm) (i32.const 0))
+            (i32.or (i32.eq (local.get $rm) (i32.const 1))
+            (i32.or (i32.eq (local.get $rm) (i32.const 4))
+                    (i32.eq (local.get $rm) (i32.const 5))))))))
+        (if (i32.eq (local.get $reg) (i32.const 5))
+          (then (return (i32.le_u (local.get $rm) (i32.const 6)))))
+        (if (i32.or (i32.eq (local.get $reg) (i32.const 6))
+                    (i32.eq (local.get $reg) (i32.const 7)))
+          (then (return (i32.const 1))))
+        (return (i32.const 0))))
+    ;; DA: FCMOVB/E/BE read flags and are declined; DA E9 FUCOMPP does not.
+    (if (i32.eq (local.get $group) (i32.const 2))
+      (then (return (i32.and (i32.eq (local.get $reg) (i32.const 5))
+                             (i32.eq (local.get $rm) (i32.const 1))))))
+    ;; DB: only the DB E0..E3 bank (FNENI/FNDISI/FNCLEX/FNINIT). FNCLEX and
+    ;; FNINIT clear the sticky exception bits, which is a real x87 state
+    ;; change and is exactly what the interpreter's own arm does.
+    (if (i32.eq (local.get $group) (i32.const 3))
+      (then (return (i32.and (i32.eq (local.get $reg) (i32.const 4))
+                             (i32.le_u (local.get $rm) (i32.const 3))))))
+    ;; DC: arith ST(i),ST(0) -- reg 2/3 are the unimplemented FCOM aliases.
+    ;; DE: the popping twins, plus DE D9 FCOMPP.
+    (if (i32.or (i32.eq (local.get $group) (i32.const 4))
+                (i32.eq (local.get $group) (i32.const 6)))
+      (then
+        (if (i32.and (i32.and (i32.eq (local.get $group) (i32.const 6))
+                              (i32.eq (local.get $reg) (i32.const 3)))
+                     (i32.eq (local.get $rm) (i32.const 1)))
+          (then (return (i32.const 1))))
+        (return
+          (i32.or (i32.eq (local.get $reg) (i32.const 0))
+          (i32.or (i32.eq (local.get $reg) (i32.const 1))
+          (i32.or (i32.eq (local.get $reg) (i32.const 4))
+          (i32.or (i32.eq (local.get $reg) (i32.const 5))
+          (i32.or (i32.eq (local.get $reg) (i32.const 6))
+                  (i32.eq (local.get $reg) (i32.const 7))))))))))
+    ;; DD: FFREE, FST, FSTP, FUCOM, FUCOMP.
+    (if (i32.eq (local.get $group) (i32.const 5))
+      (then (return
+        (i32.or (i32.eq (local.get $reg) (i32.const 0))
+        (i32.or (i32.eq (local.get $reg) (i32.const 2))
+        (i32.or (i32.eq (local.get $reg) (i32.const 3))
+        (i32.or (i32.eq (local.get $reg) (i32.const 4))
+                (i32.eq (local.get $reg) (i32.const 5)))))))))
+    ;; DF: FNSTSW AX has its own kind; FUCOMIP/FCOMIP write EFLAGS.
+    (i32.const 0))
+
+  ;; Count an x87 decline and name the exact instruction. Returns 0 so a
+  ;; classify arm can `(return (call $tree_x87_decline ...))`.
+  (func $tree_x87_decline (param $group i32) (param $reg i32) (param $rm i32)
+                          (result i32)
+    (global.set $tree_decl_x87 (i32.add (global.get $tree_decl_x87) (i32.const 1)))
+    (global.set $tree_decl_x87_op
+      (i32.or (i32.shl (local.get $group) (i32.const 8))
+        (i32.or (i32.shl (local.get $reg) (i32.const 4)) (local.get $rm))))
+    (i32.const 0))
+
+  ;; Pack (group, reg, rm) into the high half of the `b` word, above every bit
+  ;; the integer kinds use. One function so the three classify arms and the
+  ;; three handler arms cannot disagree about the layout.
+  (func $tree_x87_b (param $group i32) (param $reg i32) (param $rm i32) (result i32)
+    (i32.or (i32.const 0xF)      ;; SIB index nibble: absent, so the hoisted EA
+      (i32.or                    ;; is `imm` (+ R[a] when a base is present)
+        (i32.shl (local.get $group) (global.get $TU_B_X87_GROUP_SHIFT))
+        (i32.or
+          (i32.shl (local.get $reg) (global.get $TU_B_X87_REG_SHIFT))
+          (i32.shl (local.get $rm) (global.get $TU_B_X87_RM_SHIFT))))))
 
   (func $tree_uop_classify (param $p i32) (result i32)
     (local $fn i32) (local $op i32) (local $type i32) (local $count i32)
@@ -5956,6 +6159,70 @@
         (global.set $tu_imm (local.get $count))
         (return (i32.const 1))))
 
+    ;; -- x87 ----------------------------------------------------------------
+    ;; H188 $th_fpu_mem: op = (group<<4)|reg, address in the next word -- and
+    ;; that word can be $SIB_SENTINEL, which is why it goes through
+    ;; $tree_abs_addr like every other $read_addr consumer. `d` is inert (the
+    ;; op defines no register, and $tree_uop_is_store says so), `a` is 0xF
+    ;; because there is no base, so the hoisted EA is the address itself.
+    (if (i32.eq (local.get $fn) (i32.const 188))
+      (then
+        (local.set $type  (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (local.set $count (i32.and (local.get $op) (i32.const 0xF)))
+        (if (i32.eqz (call $tree_x87_mem_ok (local.get $type) (local.get $count)))
+          (then (return (call $tree_x87_decline
+                          (local.get $type) (local.get $count) (i32.const 0xF)))))
+        (global.set $tu_a (i32.const 0xF))
+        (global.set $tu_b (call $tree_x87_b
+          (local.get $type) (local.get $count) (i32.const 0)))
+        (global.set $tu_imm (call $tree_abs_addr (i32.load offset=8 (local.get $p))))
+        (global.set $tu_kind (global.get $TU_X87_MEM))
+        (return (i32.const 1))))
+
+    ;; H190 $th_fpu_mem_ro: op = (group<<8)|(reg<<4)|base, disp in the next
+    ;; word. The base is read out of the run's register LOCAL, which is the
+    ;; whole point -- the scalar handler pays a $get_reg for it.
+    (if (i32.eq (local.get $fn) (i32.const 190))
+      (then
+        (local.set $type  (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+        (local.set $count (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (if (i32.eqz (call $tree_x87_mem_ok (local.get $type) (local.get $count)))
+          (then (return (call $tree_x87_decline
+                          (local.get $type) (local.get $count) (i32.const 0xF)))))
+        (global.set $tu_a (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_b (call $tree_x87_b
+          (local.get $type) (local.get $count) (i32.const 0)))
+        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_kind (global.get $TU_X87_MRO))
+        (return (i32.const 1))))
+
+    ;; H189 $th_fpu_reg: op = (group<<8)|(reg<<4)|rm. No memory, no address.
+    (if (i32.eq (local.get $fn) (i32.const 189))
+      (then
+        (local.set $type  (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+        (local.set $count (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (global.set $tu_a (i32.const 0xF))
+        (global.set $tu_b (call $tree_x87_b
+          (local.get $type) (local.get $count)
+          (i32.and (local.get $op) (i32.const 0xF))))
+        ;; DF E0 = FNSTSW AX. `d` names EAX so the live-out mask picks it up
+        ;; through the ordinary path -- the arm writes the local itself and
+        ;; clears $wrote, so the generic writeback does not fight it.
+        (if (i32.and
+              (i32.and (i32.eq (local.get $type) (i32.const 7))
+                       (i32.eq (local.get $count) (i32.const 4)))
+              (i32.eqz (i32.and (local.get $op) (i32.const 0xF))))
+          (then
+            (global.set $tu_d (i32.const 0))
+            (global.set $tu_kind (global.get $TU_X87_SW_AX))
+            (return (i32.const 1))))
+        (if (i32.eqz (call $tree_x87_reg_ok (local.get $type) (local.get $count)
+                       (i32.and (local.get $op) (i32.const 0xF))))
+          (then (return (call $tree_x87_decline (local.get $type) (local.get $count)
+                          (i32.and (local.get $op) (i32.const 0xF))))))
+        (global.set $tu_kind (global.get $TU_X87_REG))
+        (return (i32.const 1))))
+
     (i32.const 0))
 
   ;; Does this micro-op kind write MEMORY rather than a register? The live-out
@@ -5983,7 +6250,15 @@
             ;; Nor this one: TU_REP_STR writes whatever the string op writes,
             ;; which is not `d` (that field names the variant), and pass 1
             ;; publishes 0xFF for it explicitly instead.
-            (i32.eq (local.get $kind) (global.get $TU_REP_STR))))))))))))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_REP_STR))
+            ;; The three x87 kinds write the x87 stack and, for FST/FISTP,
+            ;; memory -- never a general register, and their `d` is inert.
+            ;; TU_X87_SW_AX is the exception and is absent from this list on
+            ;; purpose: it really does define EAX, `d` really is 0, and the
+            ;; live-out mask has to say so.
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_X87_MEM))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_X87_MRO))
+            (i32.eq (local.get $kind) (global.get $TU_X87_REG)))))))))))))))
 
   ;; Which lazy-flag fields a micro-op WRITES, as a $TF_F_* mask. Anything not
   ;; listed writes none: every MOV, LEA, NOT, load and store in the family is
@@ -6779,6 +7054,7 @@
             ;; first store instead of failing.
             (local.set $wrote (i32.const 1))
             (block $kdone
+              (block $k53 (block $k52 (block $k51 (block $k50
               (block $k49 (block $k48 (block $k47
               (block $k46 (block $k45 (block $k44 (block $k43
               (block $k42 (block $k41 (block $k40
@@ -6797,7 +7073,8 @@
                           $k20 $k21 $k22 $k23 $k24 $k25 $k26 $k27 $k28 $k29
                           $k30 $k31 $k32 $k33 $k34 $k35 $k36 $k37 $k38 $k39
                           $k40 $k41 $k42 $k43 $k44 $k45 $k46 $k47 $k48 $k49
-                          $k49
+                          $k50 $k51 $k52 $k53
+                          $k53
                           (local.get $kind)))
                 ;; 0 MOV_RR
                 (local.set $vr (local.get $vb)) (br $kdone))
@@ -7115,7 +7392,7 @@
                     (i32.xor (i32.shl (i32.const 0xFF) (local.get $sh_d)) (i32.const -1)))
                   (i32.shl (call $gl8 (local.get $ea)) (local.get $sh_d))))
               (br $kdone))
-              ;; 49 REP_STR (and the unreachable default). Publish, call the
+              ;; 49 REP_STR. Publish, call the
               ;; interpreter's own body, reload. The publish has to be all
               ;; eight and not just ESI/EDI/ECX/EAX: $gs8/$gl8 reach
               ;; $invalidate_code_write and the page compiler, and a fault
@@ -7144,6 +7421,58 @@
               (local.set $r5 (global.get $ebp))
               (local.set $r6 (global.get $esi))
               (local.set $r7 (global.get $edi))
+              (local.set $wrote (i32.const 0))
+              (br $kdone))
+              ;; 50 X87_MEM -- absolute (or H149-paired) address. The hoisted
+              ;; $ea is already the address: `a` is 0xF so no base was added
+              ;; and the SIB index nibble is 0xF so no index was, leaving the
+              ;; immediate the TU_B_EA select above may have replaced with
+              ;; $ea_hold. $fpu_exec_mem is the same function $th_fpu_mem
+              ;; calls with the same two nibbles, so the load width, the
+              ;; push/pop, the tag word and every sticky bit in $fpu_sw are
+              ;; the interpreter's, not this family's.
+              (call $fpu_exec_mem
+                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_GROUP_SHIFT))
+                         (i32.const 0xF))
+                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_REG_SHIFT))
+                         (i32.const 0xF))
+                (local.get $ea))
+              (local.set $wrote (i32.const 0))
+              (br $kdone))
+              ;; 51 X87_MRO -- base+disp. $ea is R[a] + imm, computed from the
+              ;; register LOCAL; the scalar H190 pays a $get_reg for the same
+              ;; number. Identical call otherwise.
+              (call $fpu_exec_mem
+                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_GROUP_SHIFT))
+                         (i32.const 0xF))
+                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_REG_SHIFT))
+                         (i32.const 0xF))
+                (local.get $ea))
+              (local.set $wrote (i32.const 0))
+              (br $kdone))
+              ;; 52 X87_REG -- no memory and no general register at all. The
+              ;; accepted set excludes FCMOVcc and FCOMI/FUCOMI, so nothing
+              ;; here reads or writes a lazy-flag field and the dead-flag
+              ;; pass's model stays complete.
+              (call $fpu_exec_reg
+                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_GROUP_SHIFT))
+                         (i32.const 0xF))
+                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_REG_SHIFT))
+                         (i32.const 0xF))
+                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_RM_SHIFT))
+                         (i32.const 0xF)))
+              (local.set $wrote (i32.const 0))
+              (br $kdone))
+              ;; 53 FNSTSW AX (and the unreachable default). The one x87 op
+              ;; that writes a general register, so EAX round-trips through
+              ;; the global the way TU_REP_STR round-trips all eight -- the
+              ;; interpreter's arm reads $eax to preserve its top half and
+              ;; writes the status word into the bottom, and reproducing that
+              ;; here would be a second copy of it. Only EAX needs publishing:
+              ;; DF E0 reads and writes nothing else.
+              (global.set $eax (local.get $r0))
+              (call $fpu_exec_reg (i32.const 7) (i32.const 4) (i32.const 0))
+              (local.set $r0 (global.get $eax))
               (local.set $wrote (i32.const 0)))
 
             ;; Writeback R[d].

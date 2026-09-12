@@ -45,6 +45,9 @@ const EXTRA_WAT = `
   (func (export "test_tree_sf") (result i32) (call $get_sf))
   (func (export "test_tree_of") (result i32) (call $get_of))
   (func (export "test_tree_pf") (result i32) (call $get_pf))
+  (func (export "test_fpu_sw") (result i32) (global.get $fpu_sw))
+  (func (export "test_fpu_sw_clear") (global.set $fpu_sw (i32.const 0)))
+  (func (export "test_tree_decl_x87") (result i32) (global.get $tree_decl_x87))
 `;
 
 // Close a body with `dec ecx / jnz body`. The jnz displacement counts from the
@@ -382,6 +385,61 @@ const SHAPE_S = loopBackJcc([
   0x3B, 0x43, 0x10,                     // cmp eax, [ebx+0x10]    H128 alu=7
 ], 0x7C /* jl */);
 
+// -- mixed integer + x87 --------------------------------------------------
+// quake2's ref_soft scales a float span while stepping two integer pointers,
+// and until the x87 micro-ops existed the whole block declined on the first
+// `fld`. The x87 half runs through the SAME $fpu_exec_mem/$fpu_exec_reg the
+// unfolded handlers call, so what these cases actually prove is that the
+// INTEGER side of the fold -- registers in locals, the SIB/base EA hoist, the
+// dead-flag pass -- did not perturb the x87 machine.
+//
+// MIX1: load / scale / store per iteration, both streams stepped by 4.
+const SHAPE_MIX1 = loopBackDec([
+  0xD9, 0x06,                         // fld   dword [esi]
+  0xD8, 0x0F,                         // fmul  dword [edi]
+  0xD9, 0x1F,                         // fstp  dword [edi]
+  0x83, 0xC6, 0x04,                   // add   esi, 4
+  0x83, 0xC7, 0x04,                   // add   edi, 4
+]);
+
+// MIX2: the same shape with a divide, run over a divisor buffer of zeros. The
+// status word is STICKY, so a fold that dropped or reordered the divide would
+// leave ZE down -- and one that ran it twice would still read ZE, which is why
+// the stored quotients are compared as well.
+const SHAPE_MIX2 = loopBackDec([
+  0xD9, 0x06,                         // fld   dword [esi]
+  0xD8, 0x37,                         // fdiv  dword [edi]
+  0xD9, 0x1F,                         // fstp  dword [edi]
+  0x83, 0xC6, 0x04,                   // add   esi, 4
+  0x83, 0xC7, 0x04,                   // add   edi, 4
+]);
+
+// MIX3: a register-form body -- fld st(0) / fmul st,st(1) / faddp is quake2
+// 0x00d7fb2f's shape -- plus an fxch, which is the op that makes any "keep
+// ST(0) in a local" scheme wrong. Closed by cmp/jb on the pointer.
+const SHAPE_MIX3 = loopBackJcc([
+  0xD9, 0x06,                         // fld   dword [esi]
+  0xD9, 0xC0,                         // fld   st(0)
+  0xD8, 0xC9,                         // fmul  st, st(1)
+  0xD9, 0xC9,                         // fxch  st(1)
+  0xDE, 0xC1,                         // faddp st(1), st
+  0xD9, 0x1F,                         // fstp  dword [edi]
+  0x83, 0xC6, 0x04,                   // add   esi, 4
+  0x83, 0xC7, 0x04,                   // add   edi, 4
+  0x39, 0xDE,                         // cmp   esi, ebx
+], 0x72 /* jb */);
+
+// A negative: FNSTSW AX is folded, but FCOMI writes EFLAGS from inside the FPU
+// and the descriptor's per-field dead-flag pass cannot see that, so it must
+// decline by name rather than fold and lose the comparison.
+const NEG_X87_FCOMI = loopBackDec([
+  0xD9, 0x06,                         // fld   dword [esi]
+  0xDB, 0xF1,                         // fcomi st, st(1)
+  0xDD, 0xD8,                         // fstp  st(0)
+  0x83, 0xC6, 0x04,                   // add   esi, 4
+  0x83, 0xC7, 0x04,                   // add   edi, 4
+]);
+
 // -- negatives ----------------------------------------------------------------
 // The accepted range is exactly H82..H85. REP CMPSB (H92) is a string op too,
 // and it writes the lazy-flag fields from inside a helper the descriptor's
@@ -444,6 +502,10 @@ const NEG_SHORT = loopBackDec([
       esi: e.get_esi() >>> 0, edi: e.get_edi() >>> 0,
       cf: e.test_tree_cf(), zf: e.test_tree_zf(), sf: e.test_tree_sf(),
       of: e.test_tree_of(), pf: e.test_tree_pf(),
+      // The x87 status word is part of the answer, not a detail: its exception
+      // bits are sticky, so a fold that skipped, doubled or reordered an x87
+      // op shows up here even when the stored result happens to match.
+      fpuSw: e.test_fpu_sw(),
     };
   }
 
@@ -451,6 +513,7 @@ const NEG_SHORT = loopBackDec([
   // to hand control back mid-loop and be re-entered, which is the side-exit
   // path -- and the assertion is that the answer does not change.
   function runAt(code, regs, budget) {
+    e.test_fpu_sw_clear();
     e.set_eax(regs.eax >>> 0); e.set_ecx(regs.ecx >>> 0);
     e.set_edx(regs.edx >>> 0); e.set_ebx(regs.ebx >>> 0);
     e.set_ebp(regs.ebp >>> 0); e.set_esi(regs.esi >>> 0); e.set_edi(regs.edi >>> 0);
@@ -488,7 +551,11 @@ const NEG_SHORT = loopBackDec([
     // Cumulative across shapes, so the OFF arm's claim is "did not move it",
     // never "it is zero".
     const runsAtEntry = e.test_tree_runs();
-    if (out !== null) seed(out.seedAt, out.seedWords);
+    // A float body needs float bytes: the default seed's hash words are
+    // denormals, which is legal but makes every arm raise the same pile of
+    // flags and hides the one the case is about.
+    const doSeed = opts.seedFn || seed;
+    if (out !== null) doSeed(out.seedAt, out.seedWords);
     const offState = runAt(offCode, mkRegs(offCode), opts.budget);
     const offMem = out === null ? null : readBack(out.readAt, outWords);
     const matchesOff = e.test_tree_matches();
@@ -499,7 +566,7 @@ const NEG_SHORT = loopBackDec([
       `${name}: the gate-off arm executes no super-op`);
 
     e.set_tree_fold(1);
-    if (out !== null) seed(out.seedAt, out.seedWords);
+    if (out !== null) doSeed(out.seedAt, out.seedWords);
     const onState = runAt(onCode, mkRegs(onCode), opts.budget);
     const onMem = out === null ? null : readBack(out.readAt, outWords);
     assert.strictEqual(e.test_tree_matches(), matchesOff + 1,
@@ -865,6 +932,48 @@ const NEG_SHORT = loopBackDec([
       'REP shape: a rep movsd is billed as one guest op, not 64');
   }
 
+  // -------------------------------------------------- mixed integer + x87 ---
+  const srcX = (arena + 0x11000) >>> 0;
+  const dstX = (arena + 0x14000) >>> 0;
+  const FTRIPS = 200;
+  // Ordinary finite floats on both sides, so the only exception a healthy run
+  // can raise is PE from a rounded product.
+  const seedFloats = (dividendZero) => () => {
+    for (let i = 0; i < FTRIPS + 4; i++) {
+      dv.setFloat32(wa(srcX) + i * 4, 1.5 + i * 0.25, true);
+      dv.setFloat32(wa(dstX) + i * 4, dividendZero ? 0 : 0.5 + (i % 7) * 0.125, true);
+    }
+  };
+
+  checkShape('shape MIX1 (fld/fmul/fstp + two pointer steps)', SHAPE_MIX1,
+    () => ({ eax: 0, ecx: FTRIPS, edx: 0, ebx: 0, ebp: 0, esi: srcX, edi: dstX }),
+    { seedAt: dstX, seedWords: FTRIPS + 4, readAt: dstX }, FTRIPS + 4,
+    { seedFn: seedFloats(false) });
+
+  // The ZE case. Both arms must raise it, and the assertion is on the arm that
+  // folded -- checked directly rather than only through the A/B, so a build
+  // where NEITHER arm raised it cannot pass by agreeing.
+  {
+    const { onState, offState } = checkShape('shape MIX2 (fdiv by zero raises ZE)',
+      SHAPE_MIX2,
+      () => ({ eax: 0, ecx: FTRIPS, edx: 0, ebx: 0, ebp: 0, esi: srcX, edi: dstX }),
+      { seedAt: dstX, seedWords: FTRIPS + 4, readAt: dstX }, FTRIPS + 4,
+      { seedFn: seedFloats(true) });
+    assert.strictEqual(offState.fpuSw & 0x04, 0x04,
+      'shape MIX2: the unfolded arm raises ZE');
+    assert.strictEqual(onState.fpuSw & 0x04, 0x04,
+      'shape MIX2: the folded arm raises the same ZE');
+    assert.strictEqual(onState.fpuSw & 0x80, 0x80,
+      'shape MIX2: and sets the error summary bit with it');
+  }
+
+  // Register-form x87, including the fxch that rules out caching ST(0).
+  checkShape('shape MIX3 (register-form x87 with fxch, cmp/jb close)', SHAPE_MIX3,
+    () => ({ eax: 0, ecx: 0, edx: 0, ebx: (srcX + FTRIPS * 4) >>> 0,
+             ebp: 0, esi: srcX, edi: dstX }),
+    { seedAt: dstX, seedWords: FTRIPS + 4, readAt: dstX }, FTRIPS + 4,
+    { seedFn: seedFloats(false) });
+
   // ------------------------------------------------------------- negatives ---
   function checkDecline(name, code) {
     const before = e.test_tree_matches();
@@ -880,6 +989,12 @@ const NEG_SHORT = loopBackDec([
   checkDecline('body under the minimum-op floor', NEG_SHORT);
   checkDecline('an EA compute whose consumer is not a micro-op', NEG_EA_UNPAIRED);
   checkDecline('a REP CMPSB, which writes flags the pass cannot see', NEG_REP_CMPS);
+  {
+    const declBefore = e.test_tree_decl_x87();
+    checkDecline('an FCOMI, which writes EFLAGS from inside the FPU', NEG_X87_FCOMI);
+    assert(e.test_tree_decl_x87() > declBefore,
+      'the FCOMI decline is counted under its own named reason, not generic');
+  }
 
   // The floor is a knob, not a law: the same block that declined above is
   // accepted once the floor drops to three, which proves the decline was the

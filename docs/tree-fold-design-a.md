@@ -743,3 +743,245 @@ behaviour-identical (mw3 `--png` at batch 50, fold off vs on: 0 of 307,200
 pixels differ; quake2's census is byte-identical). Whether 93.87% coverage is
 worth wall-clock or CPU on this hardware is a question for a quiet box.
 
+
+## 13. x87 inside an integer tree (2026-09-12)
+
+§12 ended with one line in the decline table that was not a shape problem:
+
+> | quake2 | 13 blocks incl. `0x004129b0`, `0x00412a34` | 32,705 each for the top two, 83,134 total | `$th_fpu_mem`, `$th_fpu_mem_ro`, `$th_fpu_reg` | **x87 — out of family at any width** |
+
+"Out of family at any width" was wrong, and the reason it was wrong is worth
+stating plainly, because it is the same mistake in both directions.
+
+**Those thirteen blocks are not x87 loops.** They are ordinary integer
+address-stepping loops with two or three x87 instructions in the middle. Both
+fold families refused them, each for a reason that is true and neither of which
+is the whole picture:
+
+- TREE_FOLD declined because H188/H189/H190 are not integer dataflow.
+- The x87 semantic families (H449–453) declined because the integer ops
+  *between* the x87 ops break the contiguity their fusers require.
+
+So nobody folded them, and the interpreter paid a full `$next` plus `get_reg` /
+`set_reg` traffic for the **integer** half of a body it was already going to run
+op by op for the x87 half. The barrier removed here is an integer barrier that
+happened to be standing next to an x87 instruction.
+
+### What the corpus actually contains
+
+Census first, implement in population order. Command per app: the §12 window,
+plus `--trace-loopmatch --hot-block-dump=`, read back with the new
+`tools/loopmatch-decode.js --x87-census --hot=FILE` — which classifies each
+distinct self-loop shape as MIXED (integer + x87) or x87-only and weights every
+x87 op by hot-block entries, so the ranking is iterations and not decode events.
+
+| app | self-loop shapes | containing x87 | MIXED | x87-only | block entries in mixed loops |
+|---|---|---|---|---|---|
+| quake2 soft | 47 | **10** | **10** | 0 | **82,625** |
+| mw3 | 20 | 0 | 0 | 0 | 0 |
+| heroes2 | 19 | 0 | 0 | 0 | 0 |
+| heaven7 | 4 | 0 | 0 | 0 | 0 |
+| blobby_volley | 13 | 0 | 0 | 0 | 0 |
+| elasto_mania | 26 | 0 | 0 | 0 | 0 |
+
+**Quake2 is the entire population, and every one of its x87 self-loops is
+mixed — not one is x87-only.** That is a finding about scope, not a
+disappointment: it says this widening is aimed at exactly one app in the
+corpus, and it says the *other* family (H449–453) has no self-loop territory
+here at all.
+
+Inside quake2, by block entries:
+
+| x87 op | form | sites | entries |
+|---|---|---|---|
+| `fadd m32 [r+d]` | H190 | 8 | 78,730 |
+| `fstp m32` | H188 | 5 | 78,097 |
+| `fld m32` | H188 | 3 | 77,007 |
+| `fsub m32 [r+d]` | H190 | 3 | 77,007 |
+| `fmul st,st(1)` | H189 | 2 | 36,490 |
+| `fmul m32 [r+d]` | H190 | 2 | 32,821 |
+| `fmul m32` | H188 | 2 | 12,247 |
+| `fld m32 [r+d]` | H190 | 7 | 5,519 |
+| `fld st(0)` / `faddp` / `fstp st(0)` | H189 | 1 each | 3,785 each |
+| `fstp m32 [r+d]` | H190 | 6 | 1,794 |
+| `fxch st(1)` | H189 | 4 | 1,607 |
+| `fild m32 [r+d]` | H190 | 2 | 655 |
+| `fsub st,st(1)`, `fld st(1)` | H189 | 1 each | 506 each |
+| `fmul m64`, `fsubrp st(1),st` | H188 / H189 | 1 each | 11 each |
+
+Eighteen distinct instructions across three handler indices. That count is the
+design: **enumerating x87 mnemonics is the wrong axis.** The right one is the
+three handlers, because each already has one canonical semantic helper behind
+it.
+
+### The implementation, in one sentence
+
+Four micro-op kinds — `TU_X87_MEM` (50), `TU_X87_MRO` (51), `TU_X87_REG` (52),
+`TU_X87_SW_AX` (53) — each of which calls **exactly the helper its scalar
+handler calls**: `$fpu_exec_mem(group, reg, addr)` for H188/H190 and
+`$fpu_exec_reg(group, reg, rm)` for H189, with the same nibbles the decoder
+produced and the same address.
+
+Nothing about x87 is reimplemented, so the x87 stack, the tag word, the raw
+64-bit shadows, the C1 stack-overflow bit and every sticky exception bit in
+`$fpu_sw` are produced by the interpreter's own code in source order. That is
+not a convenience; it is why the widening is small enough to trust. Preserving
+sticky status "exactly" is true **by construction** here, and a design that
+re-derived any of it would have to earn the same claim by testing.
+
+Three fields ride in the `b` word above every bit the integer kinds use: group
+at 16–19, reg at 20–23, rm at 24–27.
+
+**ST(0) is deliberately not cached in a wasm local across consecutive x87 ops.**
+It was the obvious next step and it is the wrong one: it would have to
+reproduce `$fpu_set`/`$fpu_get`'s tag and raw-shadow bookkeeping, FXCH's
+payload move, and the C1 bit at every push. The moment any of that is
+approximated this family stops being "the interpreter's own code" and becomes a
+second x87 implementation — for a saving of a few f64 loads against a call that
+already does real floating-point work. The corpus agrees the guard could not be
+dropped anyway: `fxch` appears at four sites in quake2's mixed loops.
+
+### Coverage, before and after
+
+Same windows as §12, same denominator rule — **the FOLD-OFF retired-op total**,
+because an armed run's `[handler-hist] total` is short by two ops per folded
+iteration and dividing by it would inflate every share here.
+
+| app | fold-off retired ops | ops caught before | share | ops caught after | share | blocks matched | declines before → after |
+|---|---|---|---|---|---|---|---|
+| quake2 soft | 299,375,553 | 9,372,997 | **3.13%** | 10,193,586 | **3.41%** | 52 → **307** | terminator 262 → **7** |
+| mw3 | 264,438,340 | 248,218,929 | **93.87%** | 248,218,929 | **93.87%** | 8 → 8 | 15/0/3/4 unchanged |
+
+heroes2 is deliberately absent from that table rather than filled in from §12.
+Its 2,600-batch window did not finish on this box — the machine sat at load
+220–290 for the whole session, and the run was at batch 25 after three minutes
+— so there is no fresh measurement to put in a row. What *is* measured for it
+is the census above: **zero x87 ops in any of its 19 self-loop shapes**, which
+is why it was not re-run at a shorter window either. A number copied forward
+from §12 and presented beside two that were re-measured would read as a third
+measurement.
+
+Read the quake2 row twice, because it contains the result and the correction to
+the result.
+
+**255 more self-loop blocks fold, and they were worth 0.27 percentage points.**
+The `terminator` bucket collapsed from 262 decline events to 7 — those thirteen
+mixed blocks were counted there, not under `unfoldable-op`, because §12's
+reason 3 is "an op standing between the counter and the branch", and an x87 op
+sitting there is exactly that. So the widening did remove the top decline the
+bucket named. And the top decline the bucket named was worth **820,589 retired
+ops out of 299 million**, because 83,134 block entries at ~10 ops each is a
+small number however large it looks in a decline table.
+
+That is the same unit lesson §12 wrote down about decline *events*, one level
+further in: entries are the right weight for comparing declines to each other,
+and still not the right weight for deciding whether a widening matters. Only
+ops over the fold-off total is.
+
+`x87-op 0` on every app: **not one x87 instruction in the corpus's self-loops
+falls outside the accepted set.** The whitelist is not costing coverage
+anywhere it was measured, and FCMOVcc/FCOMI — the two deliberate declines —
+never occur in one.
+
+### The new top decline
+
+`tools/loopmatch-decode.js --tree-why --hot=` over the same quake2 window, after
+the widening:
+
+| reason | blocks | entries | share of entries | the op that stopped the walk |
+|---|---|---|---|---|
+| `walkback-hit-non-microop` | 4 | **514** | 0.00% | `th_test_r_r` (503), `th_mov_m16_r16` (11), `th_test_r_i32` (0) |
+| `walkback-hit-flag-op` | 2 | 36 | 0.00% | `th_alu_r8_i8` |
+
+514 entries out of 59,129,336 in the hot dump. The `unfoldable-op` bucket is 13
+decline events with `lastFn 76` = `$th_mov_m32_i32`, and `short` is 51 blocks
+under the four-op floor.
+
+**quake2's decline list is now noise, and the next lever is not on it.** The
+app still folds only 3.4% of its retired ops, so what is left is not blocks
+that decline — it is the ~96% of quake2's work that never enters a self-loop
+block at all. That is Design B's territory, and no amount of widening Design A
+reaches it.
+
+### Behaviour
+
+`--png` at the end of the identical window, fold off vs fold on, through
+`tools/png-diff.js`:
+
+| app | pixels differing |
+|---|---|
+| quake2 soft | **0 of 76,800** (max channel delta 0) |
+| mw3 | **0 of 307,200** (max channel delta 0) |
+
+### Where the saving comes from
+
+Only from the integer side, and one form makes that visible. H190
+(`$th_fpu_mem_ro`, `fadd dword [ebx+0x10]`) is the most common x87 form in the
+census, and its base register is read **out of the run's register local**
+through the existing SIB EA hoist — the scalar handler pays a `$get_reg` for
+the same number. The x87 call itself is identical in both arms; the microbench
+below confirms that directly (`H190:1,572,864` in *both* arms of `tree_x87`).
+
+### The three declines that are on purpose
+
+| op | why | cost of accepting it |
+|---|---|---|
+| `FCMOVcc` (DA/0-2, DB/0-2) | **reads** CF/ZF via `$get_cf`/`$get_zf` | the decode-time dead-flag pass learns readers from `$tree_uop_flag_reads`, which reports zero for every x87 kind — an FCMOV would read flags an earlier micro-op was allowed to skip writing |
+| `FCOMI`/`FUCOMI` (DB/5-6, DF/5-6) | **writes** EFLAGS via `$fpu_compare_eflags` | mirror image: writes lazy-flag fields from outside `$tree_uop_flag_writes`' model, so the terminator's `$eval_cc` could read a field the pass believed only the terminator writes |
+| anything `$fpu_exec_*` does not implement | would reach `$fpu_crash_op` | a trap taken **inside** the fold reports a register file still sitting in wasm locals, so the crash log that exists to name the next thing to implement would name the wrong EIP and stale registers |
+
+The first two are each a two-line change to the reader/writer sets. They are
+not made because no corpus app has one inside a self-loop, and an unexercised
+widening in a correctness-critical pass is worse than a decline. The third is
+structural: the accepted set mirrors `$fpu_exec_mem`/`$fpu_exec_reg`'s own
+implemented arms arm-for-arm, and an arm added there later is simply not folded
+until it is added here too — a missed lowering, never a wrong one.
+
+`FNSTSW AX` (DF E0) is the one x87 op that writes a general register, and it is
+**accepted**, as its own kind, because `fcom / fnstsw ax / test ah,imm` is how
+every pre-P6 compiler reads a comparison back. It publishes and reloads EAX
+alone (not all eight, the way `TU_REP_STR` must), and it is excluded from
+`$tree_uop_is_store` so the live-out mask picks EAX up through the ordinary
+path.
+
+Declines are counted under their own name rather than vanishing into
+`unfoldable-op`: `--loopmatch-stats` now prints `x87-op N lastX87 0xGRM`, and
+`tools/loopmatch-decode.js` turns that encoding back into a mnemonic. `lastFn
+188` names three hundred different instructions; `lastX87 0x36f` names one.
+
+### Tests
+
+`test/test-tree-fold.js` grows three mixed positives and one named negative,
+all on the file's existing A/B contract — decode and run the same bytes twice
+at different guest addresses, gate off then on, and demand the two arms agree
+on all eight registers, on CF/ZF/SF/OF/PF, on the memory touched **and now on
+`$fpu_sw`**, which was added to the compared state for every shape in the file.
+
+| case | body | what only it can catch |
+|---|---|---|
+| MIX1 | `fld [esi]` / `fmul [edi]` / `fstp [edi]` + two pointer bumps | the census's dominant shape |
+| MIX2 | the same with `fdiv`, over a divisor buffer of zeros | **ZE**: asserted directly on both arms (`fpuSw & 0x04`, plus the ES summary bit), not only through the A/B — so a build where *neither* arm raised it cannot pass by agreeing |
+| MIX3 | `fld st(0)` / `fmul st,st(1)` / `fxch` / `faddp` / `fstp [edi]`, cmp/jb close | register forms, and the `fxch` that rules out caching ST(0) |
+| NEG | `fcomi st,st(1)` in an otherwise foldable body | that the decline is counted under the **named** x87 reason, not the generic one |
+
+The status word is sticky, so comparing it across arms is a stronger assertion
+than comparing the stored results: a fold that dropped, doubled or reordered an
+x87 op shows up there even when the arithmetic happens to come out the same.
+
+### CPU, on the microbench only
+
+`tools/bench-loops.js` grows a `tree_x87` shape (the quake2 `0x004129b0` body:
+`fld / fmul / fstp` with two pointer bumps), measured with
+`--toggle=tree_fold --reps=6 --bytes=4m`, both arms in one process alternating:
+
+```
+tree_fold=1   min 1023.1ms   0.01 blocks/iter   H190:1,572,864  H3:1,048,576  H454:3,667
+tree_fold=0   min 1358.4ms   1.00 blocks/iter   H190:1,572,864  H3:1,048,576  H65:524,288  H312:524,288
+=> +24.7% time (min), paired median +19.6%
+```
+
+Read the H190 column before the percentage: **identical in both arms**. The x87
+work is unchanged; what disappeared is one block transfer, one `dec` and one
+`jnz` dispatch per iteration. And per the harness's own standing warning, this
+is a microbench percentage and must not be quoted as an app percentage — the
+app-level share it applies to is in the coverage table above.
