@@ -184,7 +184,32 @@ function classify(name, width, args, eff) {
       return { ...r, relax: kind === 'rep' ? 'rep' : 'string' };
     }
   }
-  if (STACK_RE.test(name)) return { cls: 'stack', fold: false };
+  if (STACK_RE.test(name)) {
+    // The `stack` relaxation. A plain push/pop is a store or a load at SS:SP
+    // plus a fixed +-2/4 on SP -- both of them readable, both of them things
+    // the fold already emits for other opcodes -- so under `--relax=stack` it
+    // is a micro-op like any other and the run does not have to end at it.
+    // That matters more than the op itself: `stack` is the corpus's LARGEST
+    // named barrier (RUNDEMO 7064 declines, ACCIDENT 3708), because 16-bit code
+    // pushes arguments in the middle of the arithmetic that computes them.
+    //
+    // The three groups that stay barriers, and why each is not an oversight:
+    //   push_seg/pop_seg  a segment register, and `$sset` can move any segment
+    //                     base -- the `segment` class next door, wearing a
+    //                     stack op's name.
+    //   pusha/popa/enter/leave  eight or more accesses with their own SP
+    //                     ordering; nothing here is wrong with them, they are
+    //                     simply not written out yet.
+    //   call/ret          deliberately, and permanently for this fold: they are
+    //                     terminators, and a run ends at one whatever it does
+    //                     to the stack.
+    // `pushf`/`popf` are offered and mostly decline on their own -- `popf` can
+    // hand the block back when it raises TF, which `escapes()` catches.
+    if (/^(push_(r|m|i)(16|32)|pop_(r|m)(16|32)|push_sp|pushf|popf|pushf32|popf32)$/.test(name)) {
+      return { cls: 'stack', fold: false, relax: 'stack' };
+    }
+    return { cls: 'stack', fold: false };
+  }
   if (/^(mov_r_sr|mov_sr_r|mov_m_sr|mov_sr_m|push_seg|pop_seg|push_seg32|pop_seg32|les|lds|lfs|lgs)$/.test(name)) {
     return { cls: 'segment', fold: false };
   }

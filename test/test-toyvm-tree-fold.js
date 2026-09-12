@@ -387,6 +387,64 @@ const CASES = {
       w(0x31, 0xC2);                       // xor dx,ax
     },
   },
+  // THE `stack` RELAXATION: a matched push/pop in the middle of arithmetic.
+  // 16-bit code is made of this -- an argument pushed halfway through the
+  // expression that computes the next one -- and it is the corpus's largest
+  // named decline bucket. With the relaxation off this splits into three runs
+  // of two and nothing folds; with it on the whole thing is one run, SP lives
+  // in a local for the length of it, and the stack slot is still written and
+  // read back by the same `$wr16`/`$rd16` the interpreter calls.
+  stack: {
+    folds: true, relaxed: true, needs: 'stack',
+    body: ({ w }) => {
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xBB, 0x78, 0x56);       // mov bx,5678h
+      w(0x50);                   // push ax          <- store at SS:SP
+      w(0x89, 0xC1);             // mov cx,ax
+      w(0x31, 0xD9);             // xor cx,bx
+      w(0x5A);                   // pop dx           <- load it back: 1234h
+      w(0x01, 0xDA);             // add dx,bx
+      w(0x89, 0xD6);             // mov si,dx
+    },
+  },
+  // SP IS SIXTEEN BITS AND IT WRAPS. `$push16` masks the decremented pointer
+  // with `$spm`, so a push at SP=0 stores at SS:0FFFEh and not below the
+  // segment -- and once SP is a promoted local that masking has to survive
+  // being inlined. This run sets SP to zero, pushes across the wrap, pops back
+  // and restores, all inside one tree: a fold that dropped the mask, or that
+  // moved SP before evaluating what it was pushing, gets a different BX here
+  // and usually loses the return address as well.
+  //
+  // There is no stack FAULT to test in real mode -- the mask is what a segment
+  // limit is here, and this is that case.
+  stackwrap: {
+    folds: true, relaxed: true, needs: 'stack',
+    body: ({ w }) => {
+      w(0xB8, 0xEF, 0xBE);       // mov ax,0BEEFh
+      w(0x89, 0xE5);             // mov bp,sp        <- save
+      w(0x31, 0xE4);             // xor sp,sp        <- SP = 0, in a local
+      w(0x50);                   // push ax          <- SP wraps to 0FFFEh
+      w(0x5B);                   // pop bx           <- 0BEEFh back, SP = 0
+      w(0x89, 0xE1);             // mov cx,sp        <- must read 0
+      w(0x89, 0xEC);             // mov sp,bp        <- restore
+      w(0x89, 0xDA);             // mov dx,bx
+    },
+  },
+  // The boundary the relaxation must NOT cross. `push ds` moves a SEGMENT
+  // register and `pop ds` goes through `$sset`, which can move any segment
+  // base -- the `segment` class wearing a stack op's name. Runs of two either
+  // side, and nothing folds.
+  stackseg: {
+    folds: false,
+    body: ({ w }) => {
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xBB, 0x78, 0x56);       // mov bx,5678h
+      w(0x1E);                   // push ds          <- not in the relaxation
+      w(0x1F);                   // pop ds
+      w(0x89, 0xC1);             // mov cx,ax
+      w(0x31, 0xD9);             // xor cx,bx
+    },
+  },
   // `adc` READS the carry the previous op left. Under the `flags` relaxation
   // that is not a barrier but the ordinary case: the producer's `$rec_*` and
   // the consumer's `$get_cf` are both kept verbatim in source order inside the

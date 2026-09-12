@@ -202,7 +202,12 @@ const MIN_OPS = 4;
 // The census's third relaxation, `alias`, is not here: it is a disjointness
 // PROOF over two operands rather than a class to accept, and it is the one
 // extension that needs code of its own.
-const RELAXATIONS = ['partial', 'flags', 'string', 'rep', 'shifts', 'muldiv'];
+// `stack` is the sixth, and the one the census said was worth the most: a
+// plain push/pop lowered as a micro-op (see the note in expr-fold-census.js's
+// classifier and `inlineStack` in trace-jit.js). It admits the op AND it is
+// what lets SP be promoted, since the stack helpers are inlined for the same
+// run rather than called.
+const RELAXATIONS = ['partial', 'flags', 'string', 'rep', 'shifts', 'muldiv', 'stack'];
 const RELAX_ALL = new Set(RELAXATIONS);
 
 // A handler that reads the dispatch clock cannot be folded: the interpreter
@@ -369,6 +374,20 @@ function eligibleRuns(ops, width,
     if (folded === null) { close(); note('operand shape'); continue; }
     if (readsClock(folded)) { close(); note('clock reader'); continue; }
     if (escapes(folded, allowFault && !!c.faults)) { close(); note('escapes'); continue; }
+    // A stack access is deliberately NOT counted here, and the reason is worth
+    // writing down because the opposite reading is the obvious one.
+    //
+    // Nothing in this lowering moves memory. Every pass in emitTier2/emitTier3
+    // rewrites ONE op's body in place -- operands, addressing mode, segment,
+    // register file, constants -- and the bodies are then concatenated in
+    // source order, so every `$rd*` and `$wr*` executes exactly where and when
+    // the interpreter would run it. The alias rule is a conservatism on top of
+    // that (item 1 of *What is next*: most of those pairs are provably
+    // disjoint and it wants relaxing, not widening), and a `push` followed by
+    // its matching `pop` is a store followed by a load at the SAME address --
+    // the single most common shape there is. Counting the stack as memory here
+    // would split every matched pair back apart and give the `stack`
+    // relaxation nothing to do.
     const memRead = eff.memRead.length > 0;
     const memWrite = eff.memWrite.length > 0;
     if (sawStore && memRead) { close(); note('alias'); cur = [o]; sawStore = memWrite; continue; }
@@ -423,6 +442,11 @@ function buildTree(run, name) {
     t3 = emitTier3(ops, {
       constprop: true, regfold: true, deadflags: false,
       ea: true, seg: true, inline: true, promote: true,
+      // The stack helpers, inlined, so SP is a local across the run instead of
+      // a register the pass is banned from touching. Only this call site asks:
+      // a region built by region-jit lowers through the same function and is
+      // unchanged by this.
+      stack: true,
       // ...and the one pass option that is a PROMISE rather than a switch: this
       // function will splice the promotion epilogue in front of every
       // divide-error trap below, so promoting across one is safe here. Only

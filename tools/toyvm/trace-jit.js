@@ -1230,6 +1230,88 @@ function inlineCounters(body) {
   return { out, changed };
 }
 
+// --- the stack helpers, inlined ---------------------------------------------
+//
+// Same argument as the counters above, for the same reason and with a bigger
+// prize. `$push16`/`$pop16`/`$push32`/`$pop32` are on SAFE_CALLS, so a body
+// containing one lowers -- but being on that list COSTS SP and the SS base for
+// the whole run (they move SP and address through SS behind promoteRegs' back),
+// and SP is written by every one of them. Inlining turns those hidden accesses
+// into text the promotion pass can rewrite, so a run of pushes keeps SP in a
+// local, adds its offsets there, and writes the register back once at the end.
+//
+// THE STACK SLOTS ARE STILL WRITTEN, in source order, by the same `$wr16` the
+// interpreter calls with the same arguments. This does not elide a store or
+// turn a matched push/pop pair into a register move -- it removes the BARRIER,
+// so the ops either side of a `push` land in one run instead of two, and it
+// removes SP from the banned set so the arithmetic between them is local. The
+// emitted memory traffic, the SS segmentation and anything a fault would see
+// are the interpreter's, instruction for instruction.
+//
+// `$Lsv` is why the push forms are written with a temporary rather than as one
+// expression: `(call $push16 X)` evaluates X BEFORE SP moves, and `push [bp-2]`
+// with BP-2 == SP-2 reads the word the push is about to overwrite. Doing the
+// store first and reading afterwards is a different program. The pop forms need
+// no temporary -- the loaded value simply stays on the wasm stack across the SP
+// update, which is what the `(block (result i32) ...)` is for.
+const SP_ADD = (n, sign) =>
+  `(global.set $sp (i32.and (i32.${sign} (global.get $sp) (i32.const ${n})) (global.get $spm)))`;
+const STACK_INLINE = [
+  // Ordered longest-call-first is not needed here (the four names are
+  // distinct), but the PUSH forms take an argument and so are matched as a
+  // prefix `(call $pushNN ` with the argument and closing paren left to the
+  // caller; see inlineStack.
+  ['pop16', `(block (result i32)
+    (call $rd16 (i32.const 2) (global.get $sp))
+    ${SP_ADD(2, 'add')})`],
+  ['pop32', `(block (result i32)
+    (call $rd32 (i32.const 2) (global.get $sp))
+    ${SP_ADD(4, 'add')})`],
+];
+const PUSH_INLINE = {
+  push16: (n) => `${SP_ADD(2, 'sub')}
+    (call $wr16 (i32.const 2) (global.get $sp) (local.get $L${n}))`,
+  push32: (n) => `${SP_ADD(4, 'sub')}
+    (call $wr32 (i32.const 2) (global.get $sp) (local.get $L${n}))`,
+};
+
+// Find the matching `)` for the `(` at `i`, ignoring `;;` line comments.
+function matchParen(s, i) {
+  let depth = 0;
+  for (let j = i; j < s.length; j++) {
+    const c = s[j];
+    if (c === ';' && s[j + 1] === ';') { while (j < s.length && s[j] !== '\n') j++; continue; }
+    if (c === '(') depth++;
+    else if (c === ')') { depth--; if (depth === 0) return j; }
+  }
+  return -1;
+}
+
+function inlineStack(body) {
+  let out = body, changed = 0, tmp = false;
+  for (const [name, text] of STACK_INLINE) {
+    const call = `(call $${name})`;
+    if (!out.includes(call)) continue;
+    changed += out.split(call).length - 1;
+    out = out.split(call).join(text);
+  }
+  // The push forms: `(call $push16 <expr>)` -> evaluate <expr> into $Lsv, move
+  // SP, store. A statement, not an expression, which is what a push already is.
+  for (const name of Object.keys(PUSH_INLINE)) {
+    const open = `(call $${name} `;
+    for (;;) {
+      const i = out.indexOf(open);
+      if (i < 0) break;
+      const end = matchParen(out, i);
+      if (end < 0) break;
+      const arg = out.slice(i + open.length, end);
+      out = `${out.slice(0, i)}(local.set $Lsv ${arg})\n${PUSH_INLINE[name]('sv')}${out.slice(end + 1)}`;
+      changed++; tmp = true;
+    }
+  }
+  return { out, changed, tmp };
+}
+
 function promoteRegs(bodies, regs, allowFault = false) {
   const joined = bodies.join('\n');
   const banned = new Set();
@@ -1333,7 +1415,17 @@ function emitTier3(ops, passes) {
   // bisecting a wrong region. Everything else in tier 3 was already switchable
   // and these two were not, so a bisect that reached "no passes at all" was
   // still folding addresses and segments and could not clear them.
-  let bodies = t2.bodies.map((b) => {
+  // The stack helpers first, so the `(i32.const 2)` segment index they leave
+  // behind is a constant foldSeg can resolve like any other. Opt-in: only
+  // tree-fold's straight-line lowering asks for it, so a region built without
+  // it is byte-for-byte the region it was before this existed.
+  let stackInlined = 0, stackTmp = false;
+  const t2bodies = passes.stack !== true ? t2.bodies : t2.bodies.map((b) => {
+    const r = inlineStack(b);
+    stackInlined += r.changed; stackTmp = stackTmp || r.tmp;
+    return r.out;
+  });
+  let bodies = t2bodies.map((b) => {
     const r = passes.ea === false ? { out: b, changed: 0, a32: 0, dynamic: 0 } : foldEa(b);
     eaFolded += r.changed; eaA32 += r.a32; eaDynamic += r.dynamic;
     // Before foldSeg, not after: a segment index that is still an unevaluated
@@ -1377,6 +1469,7 @@ function emitTier3(ops, passes) {
       passes.allowFault === true);
   return {
     ...t2, eaFolded, eaA32, eaDynamic, segFolded, segDynamic, arith, folded, inlined,
+    stackInlined,
     promoted: p.declined ? null : p.used,
     declined: p.declined || null,
     // The per-op bodies, still separated. A region compiler needs to interleave
@@ -1385,7 +1478,9 @@ function emitTier3(ops, passes) {
     // the tier-2 array by accident.
     bodies3: p.declined ? bodies : p.bodies,
     wat: (p.declined ? bodies : p.bodies).join('\n'),
-    locals: p.declined ? '' : p.locals,
+    // `$Lsv` is the push scratch, and it is declared whether or not promotion
+    // stood up: the inlined text that uses it is in the bodies either way.
+    locals: `${p.declined ? '' : p.locals}${stackTmp ? ' (local $Lsv i32)' : ''}`,
     pro: p.declined ? '' : p.pro,
     epi: p.declined ? '' : p.epi,
   };

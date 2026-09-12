@@ -1341,6 +1341,113 @@ dispatch* in [toyvm-irq-schedule.md](toyvm-irq-schedule.md).
 **All six witnesses are now identical in all three arms** (plain, `--tree-fold
 --tree-fold-hot=64`, `--region-jit`), frame and wav.
 
+## `push`/`pop` in the tree
+
+The bucket the previous section's work list named first, and the largest one the
+histogram has ever carried: **`stack`**, 7064 declines on RUNDEMO and 3884 on
+ACCIDENT over a 20M run. 16-bit code pushes an argument in the middle of the
+arithmetic that computes the next one, so a barrier at `push` does not cost one
+op — it cuts the run in half.
+
+`--tree-fold-relax=stack` is the seventh relaxation and is on by default with
+the others. `--tree-fold` itself stays default **OFF**.
+
+| value | what joins the eligible set |
+|---|---|
+| `stack` | `push`/`pop` of a register, a memory operand or an immediate, at both widths, plus the 8086 `push sp` form and `pushf`/`popf` |
+
+Three groups stay barriers, and none of them is an oversight:
+
+- **`push ds` / `pop es`** move a segment register and go through `$sset`, which
+  can move any segment base. That is the `segment` class wearing a stack op's
+  name, and it declines as `segment` would.
+- **`pusha`/`popa`/`enter`/`leave`** are eight or more accesses with their own
+  SP ordering. Nothing is wrong with them; they are simply not written out.
+- **`call`/`ret`** stay barriers permanently. A run ends at a terminator
+  whatever it does to the stack.
+
+`popf` is offered and declines on its own: it can hand the block back when it
+raises TF (that is how a DOS trace decryptor arms its INT 1), and `escapes()`
+catches the `$halt` write.
+
+### What it needed: the stack helpers, inlined
+
+Admitting the opcode is half of it, and it is the half that would have bought
+almost nothing on its own. `$push16`/`$pop16`/`$push32`/`$pop32` are on
+`trace-jit.js`'s `SAFE_CALLS`, so a body containing one already lowered — but
+being on that list **costs SP and the SS base**, because those helpers move SP
+and address through SS behind `promoteRegs`' back and the pass bans both for the
+whole run. Every one of them writes SP. A run of pushes would have kept SP in a
+global and paid a load and a store per op.
+
+So `inlineStack` does for them exactly what `inlineCounters` already did for
+`$cxdec`: writes them out as expressions over the globals they touch, which
+turns the hidden accesses into text the promotion pass can rewrite. SP becomes a
+local for the length of the run, the offsets between the pushes are local
+arithmetic, and the register is written back once.
+
+**The stack slots are still written**, in source order, by the same `$wr16` with
+the same arguments. This does not elide a store or collapse a matched push/pop
+into a register move — the point is removing the *barrier*, not the memory
+traffic — so the SS segmentation, the `$spm` wrap and anything a fault would see
+are the interpreter's, instruction for instruction.
+
+Two details that are load-bearing:
+
+- **The push forms need a temporary.** `(call $push16 X)` evaluates X *before*
+  SP moves, and `push [bp-2]` with BP−2 == SP−2 reads the word the push is about
+  to overwrite. Storing first and reading afterwards is a different program, so
+  the inline is `(local.set $Lsv X)` then the SP update then the store. The pop
+  forms need none: the loaded value stays on the wasm stack across the SP
+  update, inside a `(block (result i32) ...)`.
+- **The alias rule is not widened to the stack.** A push is a store and its
+  matching pop is a load at the same address, so counting stack accesses as
+  memory would split every matched pair back apart and leave the relaxation with
+  nothing to do. It is sound not to: nothing in this lowering *moves* memory —
+  every pass in `emitTier2`/`emitTier3` rewrites one op's body in place and the
+  bodies are concatenated in source order — so every `$rd*`/`$wr*` runs exactly
+  where the interpreter runs it. (Measured both ways: widening the rule turned
+  2713 recovered `stack` declines on ACCIDENT into 793 more `too short` and 389
+  more `alias`, for no correctness the lowering did not already have.)
+
+The inline is **opt-in** (`passes.stack`), asked for only by `buildTree`. A
+region built by `region-jit.js` lowers through the same function and is
+byte-for-byte the region it was before this existed.
+
+### Before and after, 20M with the hot gate
+
+`--dispatches=20m --pit-clock --auto-key --sound-pref=sb
+--env=ULTRASND=220,1,1,11,7 --tree-fold --tree-fold-hot=64`, once with
+`--tree-fold-relax=partial,flags,string,rep,shifts,muldiv` (the five that were
+already on) and once with the default set, which adds `stack`:
+
+| program | frame | trees off/on | loop trees off/on | substitutions off/on | guest ops off/on | `stack` declines off/on |
+|---|---|---|---|---|---|---|
+| BRW | ecef58f7 | 6 / 6 | 3 / 3 | 13 / 13 | 66 / 66 | 698 / **47** |
+| ACCIDENT | 90ddad9a | 5 / 5 | 0 / 0 | 4 / 4 | 50 / 50 | 3628 / **915** |
+| DHADREN | aa293234 | 0 / 0 | 0 / 0 | 0 / 0 | 0 / 0 | 1441 / **365** |
+| B-STEEL | 8e8c9dc5 | 3 / **4** | 1 / 1 | 6 / 6 | 28 / 26 | 615 / **189** |
+| DTM2 | 38c165c5 | 4 / **5** | 0 / 0 | 4 / **10** | 22 / **74** | 441 / **187** |
+| CYCLE | 38c165c5 | 1 / 1 | 1 / 1 | 1 / 1 | 3 / 3 | 771 / **268** |
+| RUNDEMO | 08502c5c | 25 / **42** | 4 / **6** | 46 / **62** | 245 / **331** | 7064 / **2985** |
+| DADEMO3 | 88b5bd0e | 42 / **54** | 25 / 25 | 214 / **229** | 1153 / **1202** | 1812 / **65** |
+| CATWALK | 9af00ca9 | 12 / 11 | 1 / 1 | 20 / 18 | 100 / **111** | 1488 / **583** |
+
+**The frame is identical on all nine.**
+
+Two things this table says that are worth separating. The `stack` bucket falls by
+59-96% everywhere — the barrier really is gone. But the *gated* fold only builds
+trees for blocks the run entered 64 times or more, and on four of the nine that
+hot set produces the same trees it did before: the recovered runs are in cold
+code. Where the hot blocks do push, the effect is large — RUNDEMO **+68% trees**
+(25 → 42, and two more loop trees), DTM2 **+236% guest ops**, DADEMO3 **+29%
+trees**. CATWALK loses a tree and gains eleven guest ops, which is one longer
+run replacing two short ones.
+
+The ungated population is the other way round: on ACCIDENT the relaxation
+recovers 2713 declines outright, and every one of them is a run in a block the
+gate refuses.
+
 ## What is next
 
 The decline histogram is the work list, and the three relaxations it points at,
@@ -1359,11 +1466,38 @@ about the rest: `rep` inside a tree is worth ~0.01% because widening already
 collapses it to one dispatch, while the *non-rep* string ops were worth −2.5% on
 their own. The two mechanisms do not compete so much as stack.
 
-What that leaves at the top of the histogram is **`push`/`pop`**, `call`/`ret`,
-`segment`, and `alias` — and the first of those is the one to reach for next,
-because the other three are either Design B's territory or item 1 below.
-`out`/`in` remain deliberately out of scope: host I/O quantization is a separate
-investigation.
+What that left at the top of the histogram was **`push`/`pop`**, `call`/`ret`,
+`segment`, and `alias`. **`push`/`pop` is now in** — see *`push`/`pop` in the
+tree* above. `out`/`in` remain deliberately out of scope: host I/O quantization
+is a separate investigation.
+
+### The histogram after `stack`
+
+Summed over the nine 20M runs in the table above, with every relaxation on:
+
+| bucket | declines |
+|---|---|
+| too short (<4 ops) | 25706 |
+| terminator | 18773 |
+| call | 6478 |
+| stack (the three groups left out) | 5604 |
+| alias | 5031 |
+| segment | 4442 |
+| cold block (outside the hot set) | 3999 |
+| io | 2915 |
+| ret | 2858 |
+| cold (<64 entries) | 1860 |
+| int | 564 |
+| unsupported: nop | 552 |
+| unsupported: xchg | 516 |
+
+`too short` and `terminator` are now the whole top of the list, and neither is a
+new relaxation: `too short` is what `MIN_OPS` refuses and shrinks whenever
+anything else joins two runs, and `terminator` is Design B's territory except
+for the self-loop case already folded. Of the rest, `call`+`ret` (9336) is the
+single biggest remaining number and is control flow; `alias` (item 1 below) is
+the biggest that is *not*. `xchg` and `nop` are now the two `unsupported` entries
+worth a line of lowering each.
 
 **1. Alias disjointness.** Today every load after a store in the same run is
 assumed to alias, and the run ends there. Most of those pairs are provably
