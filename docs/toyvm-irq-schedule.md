@@ -149,7 +149,15 @@ no longer reaches the audio either: `--tree-fold-batch=1`, which used to
 reproduce the *moved* value, now gives the plain wav byte for byte on DADEMO3
 (c97d1d54), CATWALK (6035ae47) and CONTAGIO (331a6704).
 
-### BLIQ, the one that remains
+### BLIQ, the one that remained — and what it actually was
+
+**Resolved.** The paragraph below is the state of the investigation as it stood
+and is kept because its measurements are right; the conclusion it reaches
+("a billing question in `tree-fold.js` / `region-jit.js`") is not. See *A
+handback is not a dispatch* below for the cause and the fix, and *The witnesses,
+after the handback fix* for the numbers that replace the table above.
+
+
 
 BLIQ's fold arm still diverges, and it is not the injection grid: its
 `ints` count differs too (2979 against 2984), which is guest divergence and not
@@ -168,6 +176,98 @@ fold's billed step count agree with the interpreter's op-for-op at the exit
 edge, which is a billing question in `tree-fold.js` / `region-jit.js` and not a
 scheduling one. Total dispatches are identical (80,035,358 both arms), so the
 disagreement is local to the edge, not cumulative.
+
+## A handback is not a dispatch
+
+The residual was not in the fold at all. It was in `$next`.
+
+`$next` charged its step and *then* tested `$halt`:
+
+```wat
+(global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+(if (global.get $halt) (then (return)))
+```
+
+A handback does not end the wasm call. The handler that takes one calls
+`$slice_exit`, which sets `$halt`, and then tail-calls `$next` like every other
+handler; `$next` notices and returns. With the decrement in front of the test,
+that trip through dispatch — which runs **no guest instruction**, it only
+discovers that the slice is over — was billed to the emulated clock.
+
+So the clock counted handbacks. And **handbacks are a property of the code
+cache, not of the guest**: one guest transfer costs one dispatch when the edge
+is linked and two when it is not, the phantom plus the target's first op after
+the host re-enters through `run()`. Anything that changes which edges are linked
+moves the clock without changing a single guest instruction — and a tree-fold
+install does exactly that, because `dropWanting` drops the programs holding a
+wanting block and recompiles their heads, which drops their traced edges.
+
+BLIQ.EXE is the witness that could see it because it reprograms PIT channel 0
+and reads the count back, so a clock a couple of hundred phantom steps out ran
+its timer at a different rate from there on — a different interrupt *count*
+(2979 against 2984), which is why it read as guest divergence rather than
+re-timing.
+
+The fix is to test `$halt` first, in all four dispatch shells
+(`HALT_FIRST` in `emit.js`). An unlinked transfer then bills exactly what the
+linked one does.
+
+### The evidence that it was not the trees
+
+Three measurements, each of which rules out a body-level explanation:
+
+- With `--no-tree-fold-loops`, only `--tree-fold-relax=partial` diverged;
+  `none`, `flags`, `string`, `rep`, `shifts` and `muldiv` were byte-identical to
+  plain over 14M dispatches (`shared=14046 differing=0`).
+- Restricting the lowering to any ONE of the four partial-only trees reproduced
+  the *identical* divergence — **including for trees that made zero
+  substitutions**. A fold that changes nothing in the arena cannot change what
+  the guest computes, so the cause was the extra *candidate* changing the
+  install's drop set.
+- In the window after the first install, both arms stood at dispatch 10,013,362
+  with identical registers. Plain then ran three slices — `8b5:73` (13
+  dispatches), `8b5:95` (3), `8b5:1e4` (19), 35 in total — to reach the register
+  state the fold arm reached in ONE 33-dispatch slice from `8b5:73`. Same guest
+  work, 32 real ops; two fewer handbacks, two fewer dispatches. One phantom
+  step per handback, exactly.
+
+`--no-fuse`, `--no-trace-blocks`, `--no-spin` and `--no-rep-fast` all left the
+divergence unchanged, which is what said the difference was not in any compile
+transform that changes the op stream.
+
+### The regression test
+
+`test/test-toyvm-tree-fold.js`, section *A handback is not a dispatch*. It takes
+the fold out of it, because the fold is not what the mechanism is about: the
+knob is **the slice length**. The same program is run at a 2M slice and a 20k
+slice and must bill the same number of dispatches, with a control assertion that
+the two arms really did hand back a different number of times (measured: 71
+against 103 handbacks, 900,404 dispatches both). With the phantom step back in,
+the tight arm bills 32 more.
+
+## The witnesses, after the handback fix
+
+Same recipe, three arms of one build (plain, `--tree-fold --tree-fold-hot=64`,
+`--region-jit`). The wav hash is FNV-1a over the wav bytes, the same function
+`frameHash` uses.
+
+| witness | frame (all arms) | wav plain | wav fold | wav region-jit |
+|---|---|---|---|---|
+| DADEMO3 | 36128ac7 | 55358cf2 | **55358cf2** | **55358cf2** |
+| RUNDEMO | fcf5e9b5 | 9b51195e | **9b51195e** | **9b51195e** |
+| BLIQ | 3243b8e3 | e2a1b6b5 | **e2a1b6b5** | **e2a1b6b5** |
+| ACME-BIG | 362275f5 | 27904a23 | **27904a23** | **27904a23** |
+| CONTAGIO | 163af616 | bb5cf796 | **bb5cf796** | **bb5cf796** |
+| CATWALK | 19cfa368 | 1031f0ce | **1031f0ce** | **1031f0ce** |
+
+**All six are identical in all three arms**, frame and wav. Five frames are
+unchanged from the table above; BLIQ's moved (dbb3c55d → 3243b8e3) because its
+clock was the one the phantom steps were actually distorting, and it is the arm
+whose timer now runs at the rate the guest programmed.
+
+Removing a step per handback shifts every wav in the table, for the same reason
+the schedule work shifted them: these are the correct values and the old ones
+were the phantom-quantized ones.
 
 ## The baselines changed, and here is the ground truth
 

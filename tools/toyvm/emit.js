@@ -582,6 +582,31 @@ const CONT = (arena) => `(select (i32.const 0) ${arena}
 // carrying flag liveness across a block edge (docs/toyvm-dead-flags.md).
 // Called, not inlined, because it is the cold arm of every branch.
 const SLICE_EXIT = '(call $slice_exit)';
+// The first two lines of every dispatch shell, and the order of the two is a
+// CLOCK decision rather than a style one.
+//
+// A handback does not end the wasm call: the handler that took it sets $halt
+// and then tail-calls $next like every other handler, and $next notices. If
+// $next charges its step BEFORE it looks at $halt, that trip through dispatch
+// -- which runs no guest instruction, it only discovers that the slice is over
+// -- is billed to the emulated clock. So the clock counts handbacks.
+//
+// Handbacks are a property of the CODE CACHE, not of the guest: the same guest
+// transfer costs one dispatch when the edge is linked and two when it is not
+// (one for the phantom, one for the target's first op after the host re-enters
+// through run()). Anything that changes which edges are linked -- a tree-fold
+// install dropping and recompiling the programs that held a wanting block, a
+// region install, a self-modify flush -- then moves the clock without changing
+// a single guest instruction, and docs/toyvm-irq-schedule.md's whole point is
+// that the clock is what the IRQ dates are read from. BLIQ.EXE reprograms PIT
+// channel 0 and reads the count back, so a clock that drifted by a couple of
+// hundred phantom steps ran its timer at a different rate and its audio came
+// out different with nothing wrong in either arm.
+//
+// Testing $halt first makes the phantom free, so an unlinked transfer bills
+// exactly what the linked one does and the clock counts guest work only.
+const HALT_FIRST = `(if (global.get $halt) (then (return)))
+  (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))`;
 const GO = (arena, guest) => `
   (global.set $gip ${guest})
   (if ${CONT(arena)}
@@ -5832,8 +5857,7 @@ function emitTailcall(opts = {}) {
   s += `
 (func $next
   (local $fn i32)
-  (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-  (if (global.get $halt) (then (return)))
+  ${HALT_FIRST}
   (local.set $fn (i32.load (global.get $ip)))
   ${iph}
   (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
@@ -5864,8 +5888,7 @@ function emitReplTailcall() {
   s += `(table $h ${HANDLERS.length} funcref)\n`;
   s += `(elem (i32.const 0) ${HANDLERS.map(x => `$${x.name}`).join(' ')})\n`;
   const dispatch = `
-  (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-  (if (global.get $halt) (then (return)))
+  ${HALT_FIRST}
   (local.set $fn (i32.load (global.get $ip)))
   (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
   (return_call_indirect $h (type $void) (local.get $fn))`;
@@ -5890,8 +5913,7 @@ function emitCalls() {
 (func $next
   (local $fn i32)
   (loop $l
-    (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-    (if (global.get $halt) (then (return)))
+    ${HALT_FIRST}
     (local.set $fn (i32.load (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
     (call_indirect $h (type $void) (local.get $fn))
@@ -5907,8 +5929,7 @@ function emitSwitch() {
   // frames, no signature check -- and, in the non-replicated form, still just
   // one branch site for all of them.
   const dispatch = `
-    (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-    (if (global.get $halt) (then (return)))
+    ${HALT_FIRST}
     (local.set $fn (i32.load (global.get $ip)))
     (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
     (br_table ${HANDLERS.map((_, i) => `$a${i}`).join(' ')} $bad (local.get $fn))`;

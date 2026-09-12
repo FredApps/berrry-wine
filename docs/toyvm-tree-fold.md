@@ -1310,6 +1310,37 @@ eligibility it produces the *same* divergent hash (`383ec794`), and
 which is what a schedule effect looks like and what a wrong value does not. The
 frame is identical in every one of those arms.
 
+## BLIQ's residual divergence: a handback was costing a dispatch
+
+The last witness this fold could not keep byte-identical was BLIQ.EXE, and the
+cause was not in this file. `$next` charged its step *before* it tested `$halt`,
+so the trip through dispatch that only discovers a slice is over — running no
+guest instruction — was billed to the emulated clock. That made the clock count
+**handbacks**, and handbacks are a property of the code cache: a guest transfer
+costs one dispatch when its edge is linked and two when it is not.
+
+Installing a tree is exactly such a change. `dropWanting` drops the programs
+holding a wanting block and recompiles their heads, which loses their traced
+edges — so the install moved the clock with nothing in the arena different, the
+IRQ dates derived from the clock moved with it, and BLIQ (which reprograms PIT
+channel 0 and reads the count back) then ran its timer at a different rate. Its
+interrupt count moved, 2979 against 2984, which is what made it look like guest
+divergence.
+
+The tell was that restricting the lowering to a single tree reproduced the
+divergence **even for a tree that made zero substitutions**. A fold that changes
+nothing in the arena cannot change what the guest computes.
+
+The fix is in `emit.js` (`HALT_FIRST`): test `$halt` first, in all four dispatch
+shells, so the phantom is free. The regression test is in
+`test/test-toyvm-tree-fold.js` and does not use the fold at all — it runs one
+program at two slice lengths and requires the same dispatch count out of both.
+Full write-up, evidence and the new witness table: *A handback is not a
+dispatch* in [toyvm-irq-schedule.md](toyvm-irq-schedule.md).
+
+**All six witnesses are now identical in all three arms** (plain, `--tree-fold
+--tree-fold-hot=64`, `--region-jit`), frame and wav.
+
 ## What is next
 
 The decline histogram is the work list, and the three relaxations it points at,

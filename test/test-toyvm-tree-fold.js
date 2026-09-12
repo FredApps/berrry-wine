@@ -86,6 +86,7 @@ const { execFileSync } = require('child_process');
 // has to run with every OTHER relaxation on, and a list that went stale here
 // would silently start testing something weaker.
 const { RELAXATIONS } = require('../tools/toyvm/tree-fold');
+const { runDos } = require('../tools/toyvm/run-dos');
 
 const ITER = 2000;              // outer-loop trips, in a memory counter
 const COUNTER = 0x500;          // where that counter lives
@@ -1156,5 +1157,58 @@ assert.ok(folds(both) > 0,
 const jitSaid = (/region jit \(inline\): ([a-z]+)/.exec(both) || [0, 'absent'])[1];
 summary.push(`both ${screen(both)} ${folds(both)} fold(s)/${trees(both)} tree(s), region jit ${jitSaid}`);
 
-fs.rmSync(dir, { recursive: true, force: true });
-console.log(`PASS test-toyvm-tree-fold: ${summary.join('; ')}`);
+// --- A HANDBACK IS NOT A DISPATCH ------------------------------------------
+//
+// The residual BLIQ.EXE divergence docs/toyvm-irq-schedule.md was left holding:
+// with the fold on, BLIQ's 80M wav differed from plain while its frame did not,
+// and its interrupt COUNT moved too, so it was guest divergence rather than
+// re-timing. It reproduced with `--no-tree-fold-loops`, with a single
+// relaxation, and -- the tell -- with a tree that made ZERO substitutions. A
+// fold that changes nothing in the arena cannot change what the guest computes,
+// so the cause was never a tree body.
+//
+// It was the emulated clock counting HANDBACKS. `$next` charged its step before
+// it tested `$halt`, so the trip through dispatch that only discovers the slice
+// is over -- running no guest instruction -- was billed. A guest transfer whose
+// edge is linked costs one dispatch; the same transfer unlinked costs two, the
+// phantom plus the target's first op after the host re-enters through `run()`.
+// Installing a tree drops the programs holding a wanting block and recompiles
+// their heads, which drops their traced edges, so the install moved the clock
+// without changing a guest instruction -- and BLIQ reprograms PIT channel 0 and
+// reads the count back, so a clock a few hundred steps out ran its timer at a
+// different rate.
+//
+// This is that mechanism with the fold taken out of it, because the fold is not
+// what it is about: THE SLICE LENGTH is the knob. A short slice hands back more
+// often over the same guest work, so if a handback costs a step the two arms
+// bill the same program differently. The assertion is that they do not, and the
+// control is that the arms really did hand back a different number of times --
+// a test where both arms took the same handbacks would pass with the phantom
+// step back in.
+async function clockAB() {
+  const arm = async (slice) => {
+    const r = await runDos({ exe: GATE_COM, budget: 8e6, slice, log: () => {} });
+    return { dispatched: r.dispatched, handbacks: r.handbacks, exited: r.machine.exited };
+  };
+  const wide = await arm(2e6);
+  const tight = await arm(2e4);
+  assert.ok(wide.exited && tight.exited,
+    `clock: the program did not run to completion (wide ${wide.exited}, tight ${tight.exited})`);
+  assert.ok(tight.handbacks > wide.handbacks + 20,
+    `clock: the two slice lengths took ${tight.handbacks} and ${wide.handbacks} handbacks -- `
+    + 'too close together for this to say anything about what a handback costs');
+  assert.strictEqual(tight.dispatched, wide.dispatched,
+    `clock: the same program billed ${tight.dispatched} dispatches at a 20k slice and `
+    + `${wide.dispatched} at a 2M slice, a difference of `
+    + `${tight.dispatched - wide.dispatched} over `
+    + `${tight.handbacks - wide.handbacks} extra handbacks. A handback is being charged `
+    + 'a step it did no guest work for, so the emulated clock counts what is in the code '
+    + 'cache and every IRQ date derived from it moves with an install.');
+  return `clock ${wide.dispatched} dispatches at ${wide.handbacks}/${tight.handbacks} handbacks`;
+}
+
+clockAB().then((line) => {
+  summary.push(line);
+  fs.rmSync(dir, { recursive: true, force: true });
+  console.log(`PASS test-toyvm-tree-fold: ${summary.join('; ')}`);
+}, (e) => { console.error(e); process.exit(1); });
