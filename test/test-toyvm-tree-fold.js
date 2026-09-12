@@ -1184,8 +1184,47 @@ const disp = (log) => +(/([\d.]+)M dispatches/.exec(log) || [0, -1])[1];
 assert.strictEqual(disp(gateHot), disp(gatePlain),
   `gate hot=64: ${disp(gateHot)}M dispatches against ${disp(gatePlain)}M plain:\n${gateHot}`);
 
-summary.push(`gate ${gp} hot=64:${g64.folds} fold(s)/${g64.trees} tree(s)/${g64.cold} cold, `
-  + `hot=50000: no fold`);
+// 4. A BATCH THAT IS NOT WORTH A MODULE IS NOT BUILT. `--tree-fold-min-payoff`
+//    is the second half of the gate and asks a different question from the hit
+//    count: not "is this block entered often" but "would a handler over it
+//    remove enough to pay for the ~1700-handler module it has to be installed
+//    in". One module build is the gate's whole cost, so a run that promotes
+//    hot-but-cheap blocks used to pay in full and get nothing back -- DTM2
+//    projected 0.94% of its window and CYCLE 0.00%.
+//
+//    Pinned at both ends. At an impossible threshold the SAME hot blocks are
+//    found and nothing is built; at 0 the refusal is off and the fold is the
+//    one checked above. Both arms still have to print the same seven words and
+//    retire the same dispatches, because a refusal is a host-side decision and
+//    the guest must not be able to see it either way.
+const gatePoor = run(GATE_COM, ['--tree-fold', '--tree-fold-hot=64',
+  `--tree-fold-warm=${GATE_WARM}`, '--tree-fold-batch=1', '--tree-fold-min-payoff=0.9']);
+assert.ok(/exited=true/.test(gatePoor), `gate min-payoff: did not exit:\n${gatePoor}`);
+const gPoor = gateCounts(gatePoor);
+assert.strictEqual(gPoor.trees, 0,
+  `gate min-payoff=0.9: built ${gPoor.trees} handler(s) for a batch it refused:\n${gatePoor}`);
+assert.strictEqual(gPoor.folds, 0,
+  `gate min-payoff=0.9: substituted ${gPoor.folds} run(s) with no module:\n${gatePoor}`);
+assert.ok(/refused: under/.test(gatePoor),
+  `gate min-payoff=0.9: nothing was refused, so the threshold did not bite:\n${gatePoor}`);
+assert.strictEqual(screen(gatePoor), gp,
+  `gate min-payoff=0.9: the refusing arm computed something else\n  plain  ${gp}\n`
+  + `  refused ${screen(gatePoor)}`);
+assert.strictEqual(disp(gatePoor), disp(gatePlain),
+  `gate min-payoff=0.9: ${disp(gatePoor)}M dispatches against ${disp(gatePlain)}M plain:\n`
+  + gatePoor);
+
+// ...and the one build. The drop that publishes the window's verdict is a cache
+// operation and used to be reached through a module install, which made every
+// gated run pay for two. One is the fixed cost now, and a second would be the
+// regression.
+const gateInstalls = (log) => +(/over (\d+) install\(s\)/.exec(log) || [0, -1])[1];
+assert.strictEqual(gateInstalls(gateHot), 1,
+  `gate hot=64: ${gateInstalls(gateHot)} install(s), so the profiler removal and the `
+  + `trees are not riding the same module:\n${gateHot}`);
+
+summary.push(`gate ${gp} hot=64:${g64.folds} fold(s)/${g64.trees} tree(s)/${g64.cold} cold `
+  + `in ${gateInstalls(gateHot)} install, hot=50000: no fold, min-payoff=0.9: no build`);
 
 // --- coexisting with the region JIT ----------------------------------------
 //

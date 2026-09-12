@@ -1119,6 +1119,28 @@ async function main() {
       // enough that the profiling build is not most of the run.
       warmFrom: 0,
       warmFor: count(arg('tree-fold-warm'), 10e6),
+      // `--tree-fold-quiet=N` (with `--tree-fold-probe=` and
+      // `--tree-fold-min-warm=`) ends the window as soon as its answer stops
+      // moving, instead of at the `--tree-fold-warm` cap. OFF by default:
+      // `--block-hits` measured free over a whole run, so there is nothing to
+      // save at the end of the window, and BRW's mid-window lull makes an early
+      // close cost it every substitution it had. See tree-fold.js. Pair with
+      // `--tree-fold-window-trace` to print the timeline it decides on.
+      probeEvery: count(arg('tree-fold-probe'), 250e3),
+      quietFor: count(arg('tree-fold-quiet'), 0),
+      minWarm: count(arg('tree-fold-min-warm'), 250e3),
+      // `--tree-fold-settle=N`: how far past the window close the gate waits,
+      // still profiling, for the dropped hot blocks to recompile -- so the
+      // profiler removal and the trees ride one module build rather than two.
+      settleFor: count(arg('tree-fold-settle'), 100e3),
+      // `--tree-fold-min-payoff=F`: refuse to build a module for a batch
+      // projected to remove less than F of the window's own dispatches. The
+      // gate's hit count says a block is entered often; it does not say a tree
+      // over it removes anything, and DTM2 promotes 30 blocks to remove 0.64%
+      // of its run while BRW promotes 13 to remove 4.56%.
+      // `--tree-fold-min-payoff=0` turns it off for the A/B.
+      minPayoff: Number(arg('tree-fold-min-payoff', 0.01)),
+      windowTrace: flag('tree-fold-window-trace'),
       // `--tree-fold-relax=LIST`: which of the census's relaxations are on.
       // The default is all of them, because the decline histogram says the
       // exact rule set is what keeps the fold off DOS code -- `partial-reg` is
@@ -1451,6 +1473,18 @@ async function main() {
           ? `\n  tree gate: hot>=${r.tree.hot}, ${r.tree.hotLins} hot block(s), ${r.tree.hotPromoted} promoted, `
             + `${r.tree.coldSkipped} cold, ${r.tree.deadSkipped} hot-but-dead, `
             + `hottest candidate ${r.tree.hottest} entries`
+            // WHERE the window ended, and on which of the two rules. The
+            // profiling build is a per-dispatch charge, so this is the number
+            // that says what the gate cost before it found anything: `cap`
+            // means it ran the full `--tree-fold-warm` distance.
+            + `, window closed at ${r.tree.closedAt} (${r.tree.closedWhy})`
+            // What the batch was PROJECTED to remove, on the window's own
+            // counts. Printed whether or not `--tree-fold-min-payoff` is on,
+            // because it is the number that says whether a build was earned --
+            // compare it against the `tree entries:` line below.
+            + `, projected ${r.tree.projected} trip(s)`
+            + (r.tree.refusedPayoff
+              ? ` (refused: under ${r.tree.minPayoff} of the window)` : '')
           : '')
         + `, ${r.tree.ms.instantiate.toFixed(0)}ms building + ${r.tree.ms.swap.toFixed(0)}ms swapping`
         // The drop is what turns an installed handler into a substituted one.

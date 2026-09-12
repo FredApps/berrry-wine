@@ -622,6 +622,54 @@ class TreeFolder {
     // a handler whether it ever runs again or not. `hot = N` compiles a run
     // only after the arena word it starts at has been dispatched N times.
     hot = 0, warmFrom = 0, warmFor = 10e6, hits = null,
+    // Ending the window EARLY, and why it is off (`quietFor = 0`).
+    //
+    // The window looked like the gate's constant cost -- ten million dispatches
+    // of `--block-hits`, paid by every gated run and earned back only by a
+    // folding one. So this samples it every `probeEvery` dispatches and closes
+    // once the answer (candidates nominated / over the threshold / paragraphs
+    // ever compiled) has held still for `quietFor`, never before `minWarm`.
+    //
+    // Two measurements retired it. The profiler is FREE: `--block-hits` alone
+    // over a whole 20M run costs 1.54 -> 1.54s on DTM2, 1.76 -> 1.78 on CYCLE,
+    // 2.25 -> 2.16 on BRW, so there was nothing at the end of the window to
+    // save. And closing early is not cheap: candidate discovery is spread
+    // across the whole window, and BRW has a 3.3M-dispatch lull in the middle
+    // of it -- at `quietFor = 1M` its window shut at 1.27M and it built six
+    // handlers that substituted NOTHING, against 13 substitutions over the full
+    // distance. A rule safe for BRW closes DTM2 at 5.75M: three quarters of the
+    // window for none of the saving.
+    //
+    // Kept as an arm, not deleted, because the timeline it prints
+    // (`--tree-fold-window-trace`) is the evidence for that paragraph.
+    probeEvery = 250e3, quietFor = 0, minWarm = 250e3,
+    // How long the closed window waits, still profiling, for the dropped hot
+    // blocks to recompile before the one install goes in. See closeWindow.
+    settleFor = 100e3,
+    // The smallest projected removal, as a fraction of the dispatches the
+    // profile window itself retired, that is worth one module build. 0 is off.
+    //
+    // 1% is where the corpus separates. Projected against measured, seven
+    // programs, 20M dispatches, gate at 64:
+    //
+    //   BRW      16.03% of window projected -> 4.56% of the run removed
+    //   RUNDEMO   5.84%                     -> 3.97%
+    //   DADEMO3   1.67%                     -> 1.90%
+    //   DTM2      0.94%                     -> 0.64%
+    //   CATWALK   0.04%                     -> 0.04%
+    //   ACCIDENT  0.01%                     -> 1.04%
+    //   CYCLE     0.00%                     -> 0.00%
+    //
+    // ACCIDENT is the one the projection gets wrong, and it gets it wrong in
+    // the documented direction: its removal is a LOOP tree's, whose iterations
+    // are invisible to `entries * (ops - 1)`. Cutting it costs a 1% dispatch
+    // removal and saves a module build, which is the better side of that trade
+    // at these sizes -- but it is the case to look at first if this threshold
+    // is ever suspected of being too blunt.
+    minPayoff = 0.01,
+    // Print one line per probe at which the answer moved. Off by default: it is
+    // the trace for tuning the two numbers above, not a run-time diagnostic.
+    windowTrace = false,
     // Which of the census's relaxations are on. An array or a Set from the CLI,
     // normalized to a Set here so `eligibleRuns` never has to ask.
     relax = RELAXATIONS,
@@ -639,6 +687,7 @@ class TreeFolder {
       session, vm, machine, portIn, portOut, build, repFast,
       maxTrees, maxInstalls, minOps, log, batchMin, batchWait,
       hot, warmFrom, warmFor, hits, loops,
+      probeEvery, quietFor, minWarm, windowTrace, settleFor, minPayoff,
       relax: relax instanceof Set ? relax : new Set(relax),
       extras: extras || new (require('./extras').Extras)(),
     });
@@ -674,6 +723,55 @@ class TreeFolder {
     this.ms = { build: 0, instantiate: 0, swap: 0 };
     this.capped = false;
     this.dropSites = 0; this.dropProgs = 0; this.dropBlocks = 0;
+    // The early-close sampler's state. `probeSig` is the answer as of the last
+    // probe that changed it, `quietSince` the dispatch count at which it last
+    // moved, and `closedAt`/`closedWhy` record what actually ended the window
+    // so the summary can say whether the cap was reached or not.
+    this.lastProbe = 0;
+    this.probeSig = null;
+    this.paraHigh = 0;
+    this.quietSince = warmFrom;
+    this.closedAt = 0;
+    this.closedWhy = '';
+    this.settled = false;
+    this.hotHits = new Map();         // hot guest address -> the count it reached
+    this.projected = 0;               // trips the batch about to be built should remove
+    this.preProjected = 0;            // ...the same sum over the window's captured runs
+    this.refusedPayoff = 0;           // ...when that was too few to be worth a module
+    this.done = false;                // ...and so nothing more will be built at all
+  }
+
+  // The answer the window exists to produce, as a comparable value: how many
+  // runs have been nominated, and how many of them are already over the
+  // threshold. Both halves matter -- a program still discovering code moves the
+  // first, a program whose known code is warming up moves the second -- and the
+  // window has stopped being informative only when NEITHER moves.
+  //
+  // O(candidates) and run once per `probeEvery` dispatches, so it is off the
+  // per-dispatch path entirely; the cost this is here to remove is in wasm.
+  windowSig() {
+    let over = 0;
+    for (const c of this.candidates.values()) {
+      let n = 0;
+      for (const a of c.addrs) { const h = this.hitsAt(a); if (h > n) n = h; }
+      if (n >= this.hot) over++;
+    }
+    // THE THIRD TERM IS WHY THIS WORKS ON BRW. Candidates alone go quiet during
+    // a depack -- BRW nominates nothing new between 250k and its blitter at
+    // ~4M, so a two-term signature closed its window at 1.27M and built six
+    // handlers that substituted NOTHING. What is moving in that stretch is the
+    // program's own code: paragraphs it has never compiled before keep
+    // arriving. So the footprint is part of the answer, and the window stays
+    // open while the guest is still producing code to judge.
+    //
+    // High-water rather than the live size, because the live size dips every
+    // time a self-modifying store drops a program and climbs back when it
+    // recompiles -- CYCLE's mixer recompiles 66k times a minute and would never
+    // be quiet on the raw number. A recompile of code already seen does not
+    // move a high-water mark; code never seen before does.
+    const byPara = this.session && this.session.cache ? this.session.cache.byPara : null;
+    if (byPara && byPara.size > this.paraHigh) this.paraHigh = byPara.size;
+    return `${this.candidates.size}/${over}/${this.paraHigh}`;
   }
 
   // Where this module's extra handlers start in the table. Read off the VM
@@ -734,12 +832,18 @@ class TreeFolder {
         return;
       }
     }
+    // `done` is the payoff refusal, not a cap: the window is shut and its own
+    // numbers said no module is coming, so there is nothing left to nominate
+    // for. Kept apart from `capped` so the report does not claim a limit was
+    // hit, and apart from `installs` so it does not claim builds that never
+    // happened.
+    if (this.done) return;
     if (this.trees.length + this.wantedKeys.size >= this.maxTrees
         || this.installs >= this.maxInstalls) {
       this.capped = true;
       return;
     }
-    this.wantedKeys.set(key, { run, loopHead });
+    this.wantedKeys.set(key, { run, loopHead, hits: this.hotHits.get(lin) || 0 });
     this.sinceWant = 0;
     if (lin !== undefined) this.pendingSites.set(lin, true);
   }
@@ -762,7 +866,9 @@ class TreeFolder {
   // The end of the profile window: every candidate is judged on the count its
   // run actually reached, the hot ones become wants, and the phase closes so
   // the install that follows can drop the profiling build.
-  closeWindow() {
+  closeWindow(dispatched = 0, why = 'cap') {
+    this.closedAt = dispatched;
+    this.closedWhy = why;
     const byPara = this.session && this.session.cache ? this.session.cache.byPara : null;
     // Is any block this run was seen in still compiled? A hot count is a
     // statement about the PAST and the install is in the future, and on this
@@ -801,18 +907,63 @@ class TreeFolder {
       // they have NOW, and the next install carries trees that are current by
       // construction. Two installs instead of one, and every handler built is a
       // handler that is used.
-      for (const lin of c.lins) { this.hotLins.add(lin); this.pendingSites.set(lin, true); }
+      for (const lin of c.lins) {
+        this.hotLins.add(lin);
+        this.pendingSites.set(lin, true);
+        // ...and how hot, kept per guest address, because that count is the
+        // only estimate of what a tree over this block will be WORTH. See
+        // `payoff` in pump(): the gate's threshold says a block runs often
+        // enough to be interesting and says nothing about how much a handler
+        // over it would remove.
+        if (n > (this.hotHits.get(lin) || 0)) this.hotHits.set(lin, n);
+      }
       if (!live(c)) { this.deadSkipped++; this.note('hot but no longer compiled'); continue; }
       this.hotPromoted++;
+      // The same projection pump() makes, made here on the CAPTURED run. The
+      // run itself is thrown away (see above) and only its LENGTH is used, so
+      // the instability that makes it useless as a key does not matter: a block
+      // that folded eleven ops at 4M folds about eleven at 10M.
+      this.preProjected += n * Math.max(0, c.run.length - 1);
     }
     // The hot set is finite and fully known now, so there is nothing left to
     // wait for: the second install only has to let the drop's recompiles land.
     this.batchWait = Math.min(this.batchWait, 100);
     this.candidates.clear();
     this.phase = 'closed';
-    this.sinceWant = this.batchWait;   // install at the next seam, whatever the batch size
-    this.log(`[tree] profile window closed: ${this.hotPromoted} hot, ${this.coldSkipped} cold, `
-      + `${this.deadSkipped} hot-but-dead `
+    // Refuse the whole thing here rather than after the drop, when the window's
+    // own numbers already say no module is coming. The drop is not free either
+    // -- DTM2's is 258 blocks thrown away and compiled back -- and paying for it
+    // to discover a batch that pump() will then refuse is the same waste one
+    // level up. CYCLE projects 310 trips and DTM2 94,364 against a 10M window;
+    // neither is worth a rebuild, and neither is worth a recompile storm.
+    if (this.minPayoff > 0 && this.preProjected < this.minPayoff * dispatched) {
+      this.refusedPayoff = this.preProjected;
+      this.note(`window not worth a module (${this.preProjected} trips projected)`);
+      this.hotLins.clear();
+      this.pendingSites.clear();
+      this.hotHits.clear();
+      this.done = true;
+      this.log(`[tree] profile window closed at ${this.closedAt} (${this.closedWhy}): `
+        + `nothing built, ${this.preProjected} trip(s) projected of ${dispatched}`);
+      return;
+    }
+    // THE DROP DOES NOT NEED A MODULE. It is a cache operation -- throw the
+    // programs holding a hot block away and compile them straight back -- and
+    // the gate used to spend a whole wasm build getting to it, because the
+    // profiler-removal install was the thing that called it. That made the
+    // fixed charge on EVERY gated run two module builds: one to take the
+    // profiler out, and a second, after the recompiles, to carry the trees.
+    //
+    // Doing it here leaves one. The recompiles land immediately (`entryFor` is
+    // synchronous for every block in the current CS), so `want()` has the runs
+    // it will fold before the next seam, and the single install that follows
+    // both removes the profiler and installs the trees. The profiler stays on
+    // for the `settleFor` dispatches that buys, which is a rounding error
+    // against the window it just left.
+    if (this.session && this.session.cache) this.dropWanting();
+    this.sinceWant = 0;
+    this.log(`[tree] profile window closed at ${this.closedAt} (${this.closedWhy}): `
+      + `${this.hotPromoted} hot, ${this.coldSkipped} cold, ${this.deadSkipped} hot-but-dead `
       + `(threshold ${this.hot}, hottest candidate ${this.hottest} entries)`);
   }
 
@@ -835,19 +986,59 @@ class TreeFolder {
   // `dispatched` is the guest clock the window is measured on, so this is where
   // it is closed.
   tick(dispatched = 0) {
-    if (this.phase === 'warm' && dispatched >= this.warmFrom + this.warmFor) this.closeWindow();
+    if (this.phase === 'warm') {
+      if (dispatched >= this.warmFrom + this.warmFor) this.closeWindow(dispatched, 'cap');
+      else if (this.quietFor > 0 && dispatched - this.lastProbe >= this.probeEvery) {
+        this.lastProbe = dispatched;
+        const sig = this.windowSig();
+        if (sig !== this.probeSig) {
+          // Straight to stderr rather than through `log`, which is verbose-gated:
+          // this trace is asked for by its own flag and turning on the whole
+          // verbose stream to read it would bury it.
+          if (this.windowTrace) {
+            console.error(`[tree] window probe at ${dispatched}: `
+              + `${sig} (was ${this.probeSig || '-'})`);
+          }
+          this.probeSig = sig;
+          this.quietSince = dispatched;
+        } else if (dispatched - this.quietSince >= this.quietFor
+                   && dispatched >= this.warmFrom + this.minWarm) {
+          this.closeWindow(dispatched, `quiet since ${this.quietSince}`);
+        }
+      }
+    }
+    if (this.phase === 'closed' && this.profilerLive
+        && dispatched >= this.closedAt + this.settleFor) this.settled = true;
     if (this.wantedKeys.size) this.sinceWant++;
   }
 
+  // A MODULE BUILD IS THE ONLY THING THE GATE COSTS, so nothing here installs
+  // unless there is a tree to install.
+  //
+  // This used to force a build the moment the window shut, whether or not
+  // anything qualified, to get the `--block-hits` profiler out -- on the belief
+  // that the profiler was one load/add/store per dispatch and worth 22% on BRW.
+  // Measured directly (user+sys CPU, fixed 20M dispatches, min of 3
+  // interleaved reps, `--block-hits` alone against nothing at all):
+  //
+  //   DTM2  1.54 -> 1.54    CYCLE  1.76 -> 1.78    BRW  2.25 -> 2.16
+  //
+  // The profiler is free, for the WHOLE run, on all three. What is not free is
+  // the rebuild it was being taken out with: one module is 1700 handlers and
+  // measured 591-751ms of the 0.67-0.80s the gate charged. That charge, paid by
+  // every gated run and earned back only by a folding one, is exactly the
+  // constant absolute cost that put five of the six A/B programs just under
+  // parity while BRW gained 10%.
+  //
+  // So a run that finds nothing hot now keeps the profiler and builds nothing,
+  // and a run that finds something pays for ONE build, not two: the drop no
+  // longer needs a module (see closeWindow), so the profiler removal and the
+  // trees ride the same install. `settleFor` is the wait that makes that true
+  // -- a hot block in another CS recompiles lazily, when the guest next enters
+  // it, and its want has to be in hand before the build starts.
   needsInstall() {
-    // The profiling build has to come OUT whether or not anything qualified.
-    // `--block-hits` is one load/add/store per dispatch and measured 22% on
-    // BRW, so a gated run that found nothing hot -- which is the whole point of
-    // the gate, and is what DTM2 and CYCLE do -- would otherwise pay for a
-    // profiler it is no longer reading, forever, and read as the gate costing
-    // what the profiler costs.
-    if (this.profilerLive && this.phase === 'closed') return true;
     if (!this.wantedKeys.size) return false;
+    if (this.profilerLive && this.phase === 'closed') return this.settled;
     return this.wantedKeys.size >= this.batchMin || this.sinceWant >= this.batchWait;
   }
 
@@ -866,12 +1057,39 @@ class TreeFolder {
         this.declinedTrees.set(r.declined, (this.declinedTrees.get(r.declined) || 0) + 1);
         continue;
       }
-      built.push({ key, ...r });
+      built.push({ key, ...r, hits: w.hits || 0 });
     }
     this.wantedKeys.clear();
     this.sinceWant = 0;
-    // ...but a profiler-drop install carries no trees and still has to happen.
-    if (!built.length && !(this.profilerLive && this.phase === 'closed')) {
+    // IS THIS BATCH WORTH A MODULE? The gate answers "does this block run often
+    // enough to be interesting"; it does not answer "how much would a handler
+    // over it remove", and on DTM2 the two came apart by a factor of seven --
+    // hottest candidate 12676 entries, and the trees it built removed 0.64% of
+    // the run's dispatches, against 4.56% on BRW from a batch half the size.
+    // One module build is ~1700 handlers and is the gate's whole cost, so a
+    // batch projected to remove less than `minPayoff` of the window's own
+    // dispatches is not built at all.
+    //
+    // The projection is `entries * (ops - 1)` summed over the batch, counted on
+    // the window's numbers: exactly the arithmetic `tree entries:` reports
+    // afterwards, run forward on the counts the window already has. It is a
+    // LOWER bound for a loop tree, whose iterations are invisible from outside
+    // -- which is the right way for it to be wrong, since it biases toward
+    // building the loop folds that are worth the most.
+    this.projected = built.reduce((s, b) => s + b.hits * Math.max(0, b.ops - 1), 0);
+    if (this.minPayoff > 0 && this.phase === 'closed'
+        && this.projected < this.minPayoff * this.closedAt) {
+      this.refusedPayoff = this.projected;
+      this.note(`batch not worth a module (${this.projected} trips projected)`, built.length);
+      // Nothing more will be built: the window is shut, so no better batch is
+      // coming, and leaving the profiler in costs nothing (see needsInstall).
+      this.done = true;
+      this.pendingSites.clear();
+      return false;
+    }
+    // Every want declined its lowering, so there is nothing to put in a module.
+    // Building one anyway is the mistake needsInstall's comment is about.
+    if (!built.length) {
       this.pendingSites.clear();
       return false;
     }
@@ -1022,6 +1240,9 @@ class TreeFolder {
       hot: this.hot, phase: this.phase, relax: [...this.relax],
       hotPromoted: this.hotPromoted, coldSkipped: this.coldSkipped,
       deadSkipped: this.deadSkipped, hottest: this.hottest, hotLins: this.hotLins.size,
+      closedAt: this.closedAt, closedWhy: this.closedWhy,
+      projected: this.projected || this.preProjected, refusedPayoff: this.refusedPayoff,
+      minPayoff: this.minPayoff,
       dropSites: this.dropSites, dropProgs: this.dropProgs, dropBlocks: this.dropBlocks,
       foldedOps: this.foldedOps, watBytes: this.watBytes, capped: this.capped,
       why: this.why, declinedTrees: this.declinedTrees, ms: { ...this.ms },

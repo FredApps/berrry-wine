@@ -1448,6 +1448,182 @@ The ungated population is the other way round: on ACCIDENT the relaxation
 recovers 2713 declines outright, and every one of them is a run in a block the
 gate refuses.
 
+### Handler entries removed
+
+The static counts above say what was *built*. What ran is the `--handler-hist`
+total, 20M dispatches, `--tree-fold-min-payoff=0` on both arms so this measures
+the relaxation and not the payoff gate that arrived with it:
+
+| program | handler entries, `stack` off | on | removed |
+|---|---|---|---|
+| RUNDEMO | 6,712,708 | 6,724,481 | **−11,773 (−0.18%)** |
+| DADEMO3 | 7,546,096 | 7,455,919 | 90,177 (1.20%) |
+| DTM2 | 4,016,554 | 3,874,218 | 142,336 (3.54%) |
+| B-STEEL | 12,870,217 | 12,855,279 | 14,938 (0.12%) |
+
+RUNDEMO is the one to explain, because it is the program the static table likes
+most — 25 trees to 42 — and it comes out 0.18% *worse*. Seventeen extra trees in
+a program is not seventeen extra folds on the hot path; the new ones land beside
+existing fusions and traces, and displacing a fused pair with a tree that covers
+the same ops trades one dispatch for one dispatch. At this size that is noise
+either way, and the honest reading is that `stack`'s value on RUNDEMO is
+structural rather than immediate: it is what takes its batch over the payoff
+threshold at all. With the shipping policy (`--tree-fold-min-payoff=0.01`) the
+`stack`-off arm projects under 1% and builds **nothing** — 7,699,380 entries —
+so end to end the relaxation is worth **−12.66%** there. Two true numbers about
+two different questions; the like-for-like one is in the table.
+
+### Corpus and witnesses
+
+`sweep-dos.js --dir=/tmp/demos --dispatches=8m --reps=1 --variants=tailcall`,
+off against `--tree-fold --tree-fold-hot=64`, through `sweep-diff.js`:
+**191 programs, 0 regressions, 0 went blank, 0 changed, 0 bucket moves.**
+
+The six 80M witnesses, three arms each, are in the table at the end of *What the
+gate costs* below.
+
+## What the gate costs, and where it was actually going
+
+The A/B in [tree-fold-ab-2026-09.md](tree-fold-ab-2026-09.md) left the gated
+fold in an odd shape: BRW **−10%**, and RUNDEMO, DADEMO3, CATWALK, DTM2 and
+CYCLE each **+0.05..0.08s**. The same absolute charge on programs whose run
+times span 3.5x is not a proportional cost, it is a fixed one, and the obvious
+suspect was the profile window — `--block-hits` is a load/add/store per dispatch
+and the window is ten million of them.
+
+**It is not the profiler.** `--block-hits` alone, for a whole 20M-dispatch run,
+against nothing at all, user+sys CPU, min of three interleaved reps:
+
+| program | off | `--block-hits` | delta |
+|---|---|---|---|
+| DTM2 | 1.54 | 1.54 | 0.00 |
+| CYCLE | 1.76 | 1.78 | +0.02 |
+| BRW | 2.25 | 2.16 | −0.09 |
+
+Free, twice the distance the window runs. The earlier "22% on BRW" in
+`needsInstall`'s comment was never measured this way and is withdrawn.
+
+What the gate actually charges is **wasm module builds**. One module is ~1700
+handlers, and the gated fold was doing two or three of them on every run:
+
+| program | before | after |
+|---|---|---|
+| DTM2 | 3 installs, 1490ms building, 29 handlers, 9 substitutions | 1 install, 5 handlers, 10 substitutions |
+| BRW | 2 installs, 1186ms building, 6 handlers, 13 substitutions | 1 install, 6 handlers, 13 substitutions |
+
+Three changes, in the order they matter.
+
+**1. The drop does not need a module.** The window's verdict is published by
+throwing away the programs holding a hot block so they recompile and re-nominate
+their current runs — a *cache* operation. It was being reached through
+`install()`, because the profiler-removal build was the thing that called
+`dropWanting()`, which made the fixed charge two builds: one to take the
+profiler out, one to carry the trees. Dropping at the window close instead, and
+waiting `--tree-fold-settle=` (100k dispatches) for the stragglers, lets the
+profiler removal and the trees ride the **same** build. Byte-identical results
+on both programs above — BRW keeps all 13 substitutions and its frame — for half
+the builds. DTM2 gets *better* results as well as cheaper ones, because a single
+late install carries only runs that are current.
+
+**2. Nothing is built for a batch that is not worth a module.** The gate's hit
+count says a block is entered often; it says nothing about how much a handler
+over it would remove, and the two come apart by a factor of seven. Projecting
+`entries * (ops − 1)` over the promoted batch, against what the run then removed:
+
+| program | projected, as a share of the window | measured, as a share of the run |
+|---|---|---|
+| BRW | 16.03% | 4.56% |
+| RUNDEMO | 5.84% | 3.97% |
+| DADEMO3 | 1.67% | 1.90% |
+| DTM2 | 0.94% | 0.64% |
+| CATWALK | 0.04% | 0.04% |
+| ACCIDENT | 0.01% | 1.04% |
+| CYCLE | 0.00% | 0.00% |
+
+`--tree-fold-min-payoff` (default **0.01**) refuses the build below 1% of the
+window. The projection is a lower bound for a loop tree, whose iterations are
+invisible to `entries * (ops − 1)`, and ACCIDENT is exactly that case: 1% of its
+dispatches removed by a fold the projection scores at 0.01%. Cutting it trades a
+1% dispatch removal for a module build, which is the better side at these sizes
+— but it is the first case to look at if the threshold is ever suspected.
+
+**3. The refusal happens before the drop**, not after the build, because a
+recompile storm is not free either: DTM2's drop is 258 blocks.
+
+Together, on the same statistic as the first table (user+sys CPU, fixed 20M
+dispatches, min of three interleaved reps):
+
+| program | gate before | gate after |
+|---|---|---|
+| DTM2 | +0.80 | **+0.08** |
+| CYCLE | +0.78 | **+0.08** |
+| BRW | +0.79 | +0.75 (one build, and the program the fold is for) |
+
+The residual 5% on the two refusing programs is the eligibility analysis at
+compile time, which is the gate's irreducible cost — it is what decides there is
+nothing to fold.
+
+BRW's row is worth reading carefully, because it is measuring something the A/B
+does not. This is *total process CPU*, so it charges the module build in full:
+one build on a box at load 48 is 0.6-0.75s, against the ~0.10s that removing
+4.56% of a 2.1s run is worth. At 20M dispatches BRW's build is not repaid by
+BRW's fold; the −10% in the A/B is the guest loop, over a longer run, on a
+quieter box. Both numbers are true and they are answers to different questions:
+*is the fold faster* and *does the fold pay for itself at this run length*. What
+these three changes fix is the case where there was no first number at all.
+
+### The early-close window, and why it is off
+
+`--tree-fold-quiet=N` samples the window every `--tree-fold-probe=` dispatches
+and closes it as soon as its answer — candidates nominated, candidates over the
+threshold, paragraphs ever compiled — has held still for N. It is implemented,
+it works, and it is **off by default**, for two measured reasons.
+
+The profiler is free (above), so there is nothing at the end of the window to
+save. And closing early is not cheap: candidate discovery is spread across the
+whole window. `--tree-fold-window-trace` on BRW:
+
+```
+window probe at  250339: 10/6/29
+window probe at 1526738: 62/7/237
+window probe at 2373699: 64/12/241
+window probe at 3397397: 74/12/265
+window probe at 6691788: 76/12/273
+window probe at 7259693: 99/13/383
+```
+
+A **3.3M-dispatch lull** in the middle. At `quietFor = 1M` BRW's window shut at
+1.27M and it built six handlers that substituted **nothing**, against 13
+substitutions over the full distance. A rule wide enough to survive that lull
+closes DTM2 at 5.75M: three quarters of the window, for none of the saving.
+
+The flag stays because the timeline it prints is the evidence for this
+paragraph.
+
+### Nothing the guest can see
+
+The whole of this section is host-side policy — when to build a module, and
+whether to build one at all — so the guest must come out the same. It does.
+
+`sweep-dos.js --dispatches=8m --reps=1 --variants=tailcall` off against
+`--tree-fold --tree-fold-hot=64`: **191 programs, 0 regressions, 0 went blank,
+0 changed.**
+
+The six witnesses at 80M with `--pit-clock --auto-key --sound-pref=sb
+--env=ULTRASND=220,1,1,11,7`, FNV-1a over the wav bytes, three arms each:
+
+| witness | frame | wav plain | wav `--tree-fold --tree-fold-hot=64` | wav `--region-jit` |
+|---|---|---|---|---|
+| DADEMO3 | 36128ac7 | 55358cf2 | **55358cf2** | **55358cf2** |
+| RUNDEMO | fcf5e9b5 | 9b51195e | **9b51195e** | **9b51195e** |
+| BLIQ | 3243b8e3 | e2a1b6b5 | **e2a1b6b5** | **e2a1b6b5** |
+| ACME-BIG | 362275f5 | 27904a23 | **27904a23** | **27904a23** |
+| CONTAGIO | 163af616 | bb5cf796 | **bb5cf796** | **bb5cf796** |
+| CATWALK | 19cfa368 | 1031f0ce | **1031f0ce** | **1031f0ce** |
+
+BLIQ included — see *BLIQ's residual divergence* above for why that row is the
+one worth checking twice.
+
 ## What is next
 
 The decline histogram is the work list, and the three relaxations it points at,
