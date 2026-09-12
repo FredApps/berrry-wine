@@ -1600,6 +1600,49 @@ closes DTM2 at 5.75M: three quarters of the window, for none of the saving.
 The flag stays because the timeline it prints is the evidence for this
 paragraph.
 
+### The same A/B again, after the three changes
+
+`tools/fold-ab.js --target=toyvm --work=20m --reps=12 --arm-on='--tree-fold
+--tree-fold-hot=64'`, the identical protocol
+[tree-fold-ab-2026-09.md](tree-fold-ab-2026-09.md) prescribes: three interleaved
+arms (`off`, `on`, and a second `off` labelled `null`) with the order rotated per
+rep, fixed work of exactly 20M dispatches, guest CPU seconds. Loadavg was
+**30.2–33.5** for every rep of every program, so the paired `2 × sd(null−off)`
+rule calls all twelve rows unresolvable, exactly as it did before. The **MIN**
+is the statistic that survives that load — interference can only add CPU — and
+`null−off` on the min is its own noise floor.
+
+Seconds. Positive is a LOSS.
+
+| program | on−off min, before | **on−off min, after** | null−off min, after | what the gate does now at 20M |
+|---|---|---|---|---|
+| BRW | −0.051 | **−0.124** | +0.006 | 1 install, 33 handlers, 198 subs, 3.08M trips projected |
+| DTM2 | +0.081 | **+0.003** | −0.005 | refused: 94,455 trips, under 0.01 of the window |
+| CATWALK | +0.047 | **+0.037** | +0.003 | 1 install, 4 handlers, 4 subs |
+| RUNDEMO | +0.061 | **+0.038** | −0.002 | 1 install, 18 handlers, 42 subs |
+| DADEMO3 | +0.049 | **+0.046** | +0.019 | 1 install, 54 handlers, 229 subs |
+| CYCLE | +0.070 | **+0.058** | −0.001 | refused: 310 trips |
+
+Every row improved and none regressed; BRW's gain more than doubled, and DTM2 —
+the program that used to pay 0.081s for four trees it entered **zero** times —
+is at parity now that its window refuses to build at all.
+
+Two rows say the story is not finished. **CYCLE** also refuses, builds nothing,
+and still shows +0.058 on the min against a null of −0.001; **DTM2** refuses in
+exactly the same way and shows +0.003. Two programs running identical host
+policy cannot differ by 0.055s because of that policy, so at least one of those
+two numbers is the box and not the feature — which is what a paired sd of 0.05
+to 0.09 at loadavg 30 already says. **CATWALK** and **DADEMO3** do build, do
+substitute, and are the honest residual: a module's build time spent for a yield
+that (four substitutions on CATWALK) is not there.
+
+So the flip condition — all six at or above parity on the min, with BRW keeping
+its gain — is **not** met, and `--tree-fold` stays OFF. What changed is that the
+gap is now 0.04-0.06s on four programs instead of 0.05-0.08s on five, the
+mechanism behind it is named (module builds, not the profiler), and one of the
+two knobs that closes it (`--tree-fold-min-payoff`) demonstrably works where its
+projection is honest.
+
 ### Nothing the guest can see
 
 The whole of this section is host-side policy — when to build a module, and
