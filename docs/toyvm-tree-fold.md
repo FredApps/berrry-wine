@@ -1780,6 +1780,41 @@ joined by unconditional `jmp`/fall-through, then one that branches — is
 actually taken. `--no-tree-fold-calls` is the A/B; `--tree-fold-max-call-ops`
 (32) and `--tree-fold-call-budget` (2000) are the caps.
 
+### Timing: the inlining is invisible even where it fires
+
+`tools/fold-ab.js --target=toyvm --work=20m --reps=8`, three interleaved arms
+with the order rotated per rep, guest CPU seconds. Loadavg **43–90** across the
+reps, so seven of the eight rows are `unresolvable` under the paired
+`2 x sd(null-off)` rule and the **MIN** is again the only statistic that
+survives — interference can only add CPU, and `null-off` on the min is the
+noise floor. Seconds; positive is a LOSS.
+
+| program | arm | off min | on min | **on-off min** | null-off min |
+|---|---|---:|---:|---:|---:|
+| DADEMO3 | fold | 0.303 | 0.330 | +0.027 | −0.014 |
+| RUNDEMO | fold | 0.140 | 0.173 | +0.033 | +0.006 |
+| BLIQ | fold | 0.577 | 0.710 | +0.133 | −0.013 |
+| ACME-BIG | fold | 0.083 | 0.109 | +0.026 | +0.009 |
+| CONTAGIO | fold | 0.526 | 0.586 | +0.060 | −0.002 |
+| CATWALK | fold | 0.136 | 0.142 | +0.006 | +0.013 |
+| **B-STEEL** | **fold** | 0.364 | 0.462 | **+0.098** | +0.008 |
+| **B-STEEL** | **fold, `--no-tree-fold-calls`** | 0.364 | 0.458 | **+0.094** | +0.009 |
+
+The last two rows are the measurement this round is for, and they are the same
+number. The toyvm target has no `--base`, so its `off` arm is always the bare
+interpreter; the way to price leaf-call inlining is two invocations sharing that
+baseline, and the difference between their gains — **0.004s on a 0.364s
+baseline, against a null floor of 0.009** — is a third of the noise. On the one
+program in nine where the fold inlines anything at all, inlining it is not
+measurable. That is the expected result for two call sites and eight callee ops,
+and it is why the reach histogram above, not this table, is the round's finding.
+
+The other six rows reproduce the round-6 picture at a much worse load (43–90
+against the 30–33 the earlier table was taken at) and do not contradict it:
+CATWALK +0.006 against its recorded +0.037, RUNDEMO +0.033 against +0.038,
+DADEMO3 +0.027 against +0.046. The gated fold remains a small loss at 20M,
+dominated by module build time, and `--tree-fold` stays OFF.
+
 ## Ranking by projected savings, and validating it
 
 Round 6's `--tree-fold-min-payoff` projected `entries x (ops - 1)` — the
