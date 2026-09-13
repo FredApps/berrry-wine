@@ -245,6 +245,20 @@ const LUT_SUPEROPS = hasFlag('lut-superops');
 const NO_LUT_SUPEROPS = hasFlag('no-lut-superops');
 const COPY_SUPEROPS_ARG = hasFlag('copy-superops');
 const NO_COPY_SUPEROPS = hasFlag('no-copy-superops');
+// --block-exec: run every eligible basic block through the per-block executor
+// (H458) instead of dispatching its ops one at a time. Default OFF, decode
+// time, so it steers only blocks decoded after it is applied — which is why it
+// is set before the first batch and on every per-thread instance.
+// --block-exec-stats prints installs/declines/runs and the native-vs-fallback
+// op split at exit; that split is the migration meter, not a curiosity.
+// docs/block-executor-design.md.
+const BLOCK_EXEC = hasFlag('block-exec');
+const BLOCK_EXEC_STATS = hasFlag('block-exec-stats');
+const BLOCK_EXEC_MIN_UOPS = parseInt(getArg('block-exec-min-uops', '0'), 10) || 0;
+// Debug ceiling. With the floor it makes the installer a one-size sieve, which
+// is how a --block-exec divergence gets bisected to a block shape.
+const BLOCK_EXEC_MAX_UOPS = parseInt(getArg('block-exec-max-uops', '0'), 10) || 0;
+const BLOCK_EXEC_TRACE = hasFlag('trace-block-exec');
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
@@ -3951,6 +3965,10 @@ async function main() {
   if (NO_LUT_SUPEROPS) inheritWasm('set_loop_lut_emit', 0);
   if (COPY_SUPEROPS) inheritWasm('set_loop_copy_emit', 1);
   if (NO_COPY_SUPEROPS) inheritWasm('set_loop_copy_emit', 0);
+  if (BLOCK_EXEC) inheritWasm('set_block_exec', 1);
+  if (BLOCK_EXEC_MIN_UOPS) inheritWasm('set_block_exec_min_uops', BLOCK_EXEC_MIN_UOPS);
+  if (BLOCK_EXEC_MAX_UOPS) inheritWasm('set_block_exec_max_uops', BLOCK_EXEC_MAX_UOPS);
+  if (BLOCK_EXEC_TRACE) inheritWasm('set_block_exec_trace', 1);
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
   if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
@@ -4841,6 +4859,18 @@ async function main() {
   }
   if (NO_COPY_SUPEROPS && instance.exports.set_loop_copy_emit) {
     instance.exports.set_loop_copy_emit(0);
+  }
+  if (BLOCK_EXEC && instance.exports.set_block_exec) {
+    instance.exports.set_block_exec(1);
+  }
+  if (BLOCK_EXEC_MIN_UOPS && instance.exports.set_block_exec_min_uops) {
+    instance.exports.set_block_exec_min_uops(BLOCK_EXEC_MIN_UOPS);
+  }
+  if (BLOCK_EXEC_MAX_UOPS && instance.exports.set_block_exec_max_uops) {
+    instance.exports.set_block_exec_max_uops(BLOCK_EXEC_MAX_UOPS);
+  }
+  if (BLOCK_EXEC_TRACE && instance.exports.set_block_exec_trace) {
+    instance.exports.set_block_exec_trace(1);
   }
   if (NO_AOE_FILL && instance.exports.set_loop_aoe_fill_emit) {
     instance.exports.set_loop_aoe_fill_emit(0);
@@ -9096,6 +9126,37 @@ if (VERBOSE) {
       if (held.length) {
         console.log(`held critical sections at exit (${held.length}):`);
         for (const line of held) console.log(line);
+      }
+    }
+  }
+
+  if ((BLOCK_EXEC || BLOCK_EXEC_STATS) && instance.exports.get_block_exec_runs) {
+    // Per instance, because a worker thread is its own module instance with
+    // its own decoder and its own counters -- a main-only read reports zero
+    // for an app whose hot code runs on a worker.
+    const bxReport = (label, e) => {
+      if (!e || !e.get_block_exec_runs) return;
+      const nat = e.get_block_exec_native_ops();
+      const fb = e.get_block_exec_fallback_ops();
+      const tot = nat + fb;
+      // The share served in-loop IS the fraction of the dispatch/register
+      // ceiling this build collects. `lastFallbackFn` names the handler
+      // family to migrate next; `declWhy` is why the most recent block was
+      // refused (1 short, 2 poisoned/16-bit/fault-null, 3 unsafe op,
+      // 4 past the emit slack, 5 past the classify scratch).
+      console.log(`block-exec: ${label} armed`, e.get_block_exec() ? 'yes' : 'no',
+        'installs', e.get_block_exec_installs(),
+        'declines', e.get_block_exec_declines(),
+        'runs', e.get_block_exec_runs(),
+        'ops native', String(nat), 'fallback', String(fb),
+        'native%', tot > 0n ? (Number(nat * 10000n / tot) / 100).toFixed(2) : '-',
+        'lastFallbackFn', e.get_block_exec_last_fallback_fn(),
+        'declWhy', e.get_block_exec_decl_why());
+    };
+    bxReport('M ', instance.exports);
+    if (threadManager) {
+      for (const [, t] of threadManager.threads) {
+        if (t.instance) bxReport(`T${t.tid}`, t.instance.exports);
       }
     }
   }

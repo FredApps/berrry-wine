@@ -40,6 +40,7 @@
 (include "06c-mmx.wat")
 (include "07-decoder.wat")
 (include "07b-loop-match.wat")
+(include "07c-block-exec.wat")
 (include "08-pe-loader.wat")
 (include "08b-dll-loader.wat")
 (include "08c-ne-loader.wat")

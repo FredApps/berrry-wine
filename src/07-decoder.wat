@@ -6122,6 +6122,16 @@
     ;; Loop-idiom matcher runs on the ops just emitted, before the block is
     ;; published. See src/07b-loop-match.wat.
     (call $loop_match_block (local.get $start_eip) (local.get $tstart))
+    ;; The per-block executor runs LAST among the matchers that can claim a
+    ;; whole block and FIRST among the passes that rewrite ops in place. After
+    ;; $loop_match_block, so every specialised family keeps priority -- a block
+    ;; one of them took set $op_index_n to 0 and is declined on the first test.
+    ;; Before the x87 fusers, because those rewrite an op in place and leave
+    ;; the ops they absorbed in the stream as inline data with stale OP_INDEX
+    ;; entries, which this matcher's walk cannot survive. Blocks containing an
+    ;; x87 op are declined outright so the fusers still get them.
+    ;; Default OFF; see docs/block-executor-design.md.
+    (drop (call $block_exec_try_install (local.get $start_eip) (local.get $tstart)))
     (call $x87_fuse_block)
     (call $x87_short_fuse_block)
     (call $x87_tree4_fuse_block)

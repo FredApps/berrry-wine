@@ -7185,7 +7185,7 @@
                         ;; indexed address then writes at index<<(scale+4).
                         ;; Found by test/test-block-exec.js, which reaches the
                         ;; combination H454 has apparently never met in a
-                        ;; self-loop; H457 shares this decode verbatim.
+                        ;; self-loop; H458 shares this decode verbatim.
                         (i32.and (i32.shr_u (local.get $b) (i32.const 4)) (i32.const 3)))))))))
 
             ;; Evaluate. Every arm publishes exactly the flag fields its

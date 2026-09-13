@@ -2387,8 +2387,15 @@
   ;; instruction (--fault-null=raise), which is what real hardware does.
   ;; Per-instance like every mutable global, so a worker thread needs its own
   ;; call to see the same setting.
+  ;; Arming this retires every decoded block, because the per-block executor
+  ;; (H458) declines to install while it is set: a native micro-op that traps
+  ;; inside $g2w under --fault-null=stop would do so with the register file
+  ;; still in wasm locals, so the crash dump would name stale registers. The
+  ;; decline is decode-time, so a block installed BEFORE the flag was armed
+  ;; would keep running -- hence the flush. Costs nothing on an unarmed run.
   (func (export "set_fault_unmapped") (param $mode i32)
-    (global.set $fault_unmapped (local.get $mode)))
+    (global.set $fault_unmapped (local.get $mode))
+    (if (local.get $mode) (then (global.set $thread_flush_pending (i32.const 1)))))
   (func (export "get_guest_page_table_size") (result i32)
     (global.get $GUEST_PAGE_TABLE_SIZE))
   (func (export "get_bp_first_caller") (result i32) (global.get $bp_first_caller))
@@ -2701,6 +2708,38 @@
   ;; first would have been the thing the go/no-go was meant to gate. The
   ;; harness supplies the descriptor AND the x86 the other arm runs, and
   ;; checksum equality between the arms is what proves the two agree.
+  ;; The per-block executor (H458, src/07c-block-exec.wat,
+  ;; docs/block-executor-design.md). OFF by default and decode-time like every
+  ;; other fold gate, so it has to be set before the first decode and on every
+  ;; per-thread instance -- lib/worker-imports.js carries it for the second
+  ;; half and test/test-worker-wasm-globals.js is the gate on that.
+  (func (export "set_block_exec") (param $flag i32)
+    (global.set $block_exec_enabled (local.get $flag)))
+  (func (export "get_block_exec") (result i32) (global.get $block_exec_enabled))
+  (func (export "set_block_exec_min_uops") (param $n i32)
+    (global.set $block_exec_min_uops (local.get $n)))
+  (func (export "set_block_exec_max_uops") (param $n i32)
+    (global.set $block_exec_max_uops (local.get $n)))
+  (func (export "set_block_exec_trace") (param $n i32)
+    (global.set $block_exec_trace (local.get $n)))
+  (func (export "get_block_exec_installs") (result i32)
+    (global.get $block_exec_installs))
+  (func (export "get_block_exec_declines") (result i32)
+    (global.get $block_exec_declines))
+  (func (export "get_block_exec_runs") (result i32) (global.get $block_exec_runs))
+  ;; The migration meter. native/(native+fallback) is the share of retired ops
+  ;; the executor served in-loop; the rest went out to a real handler through
+  ;; the spill/call/reload path, and $..._last_fallback_fn names the family to
+  ;; widen next.
+  (func (export "get_block_exec_native_ops") (result i64)
+    (global.get $block_exec_native_ops))
+  (func (export "get_block_exec_fallback_ops") (result i64)
+    (global.get $block_exec_fallback_ops))
+  (func (export "get_block_exec_last_fallback_fn") (result i32)
+    (global.get $block_exec_last_fallback_fn))
+  (func (export "get_block_exec_decl_why") (result i32)
+    (global.get $block_exec_decl_why))
+
   (func (export "set_region_fold") (param $flag i32)
     (global.set $region_fold_enabled (local.get $flag)))
   (func (export "get_region_fold") (result i32) (global.get $region_fold_enabled))

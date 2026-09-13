@@ -1174,6 +1174,100 @@ for (const k of [2, 4, 8, 16, 32]) {
   SHAPES[`region_blk${k}_r8`] = regionBlockShape(k, true);
 }
 
+// --- the same block, but the descriptor is BUILT BY THE DECODER -------------
+// `blk{k}` is `region_blk{k}_r8`'s x86 with no hand-written region spec, for
+// --toggle=block_exec (H458, src/07c-block-exec.wat). The distinction matters:
+// region_blk* measures the *mechanism* with a descriptor an operator wrote by
+// hand for one entry EIP, and can therefore be armed for a shape no matcher
+// would ever install. These measure what an app actually gets, because the
+// only thing standing between the x86 and the executor is
+// $block_exec_try_install. A `blk8` win that region_blk8_r8 does not show, or
+// the reverse, is a matcher question and not an executor one.
+//
+// Both blocks of the loop are covered here where the region shape covers them
+// as one descriptor: H458 installs per block, so the k-op straight-line block
+// gets a descriptor and the two-op `dec ecx / jnz` block is below
+// $block_exec_min_uops and stays threaded. That asymmetry is the honest
+// picture of the fold, not a defect of the shape.
+function blockExecShape(k) {
+  const chain = BLK_CHAIN6;
+  return {
+    describe: `one ${k}-op straight-line block re-entered every trip, ` +
+      `descriptor installed by the decoder (H458)`,
+    real: 'every basic block in every app; what --block-exec actually collects',
+    emit(a) {
+      const n = Math.max(20000, Math.floor(2_000_000 / k));
+      const body = [];
+      for (let i = 0; i < k; i++) body.push(...chain[i % chain.length].code);
+      const bodyLen = body.length;                 // 2 bytes per op
+      const code = body.concat([0xEB, 0x00],       // jmp $+0 — ends the block
+        [0x49], [0x75], rel8(-(bodyLen + 5)));     // dec ecx / jnz top
+      return {
+        iters: n, bytesTouched: 0, code,
+        setup(e) {
+          e.set_eax(1); e.set_edx(2); e.set_ebx(3);
+          e.set_esi(5); e.set_edi(7); e.set_ebp(11);
+          e.set_ecx(n);
+        },
+        checksum: regSnapshot,
+        verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+      };
+    },
+  };
+}
+for (const k of [2, 4, 8, 16, 32]) SHAPES[`blk${k}`] = blockExecShape(k);
+
+// A block whose ops go to MEMORY rather than staying in registers, and one
+// with a deliberate hole in the executor's vocabulary in the middle of it.
+// Together they bracket the two ways a real block differs from `blk8`: the
+// register file is not the only cost, and a single unimplemented opcode drags
+// its whole block through spill/call/reload.
+SHAPES.blk_mem8 = {
+  describe: '8-op block of base+disp dword loads/stores re-entered every trip',
+  real: 'the memory half of an ordinary block; $g2w is not what H458 removes',
+  emit(a) {
+    const n = 250000;
+    const body = [];
+    for (let i = 0; i < 4; i++) {
+      body.push(0x8B, 0x46, i * 4);                // mov eax, [esi+i*4]
+      body.push(0x89, 0x47, i * 4);                // mov [edi+i*4], eax
+    }
+    const bodyLen = body.length;
+    const code = body.concat([0xEB, 0x00], [0x49], [0x75], rel8(-(bodyLen + 5)));
+    return {
+      iters: n, bytesTouched: n * 32, code,
+      setup(e) {
+        e.set_esi(a.buf); e.set_edi(a.buf + 0x1000); e.set_ecx(n);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+SHAPES.blk_fb8 = {
+  describe: '8-op block with one ADC in the middle (a fallback inside the descriptor)',
+  real: 'the cost of one unimplemented opcode: spill 8, call the handler, reload 8',
+  emit(a) {
+    const n = 250000;
+    const body = [];
+    for (let i = 0; i < 4; i++) body.push(...BLK_CHAIN6[i % BLK_CHAIN6.length].code);
+    body.push(0x11, 0xC3);                          // adc ebx, eax — not implemented
+    for (let i = 4; i < 7; i++) body.push(...BLK_CHAIN6[i % BLK_CHAIN6.length].code);
+    const bodyLen = body.length;
+    const code = body.concat([0xEB, 0x00], [0x49], [0x75], rel8(-(bodyLen + 5)));
+    return {
+      iters: n, bytesTouched: 0, code,
+      setup(e) {
+        e.set_eax(1); e.set_edx(2); e.set_ebx(3);
+        e.set_esi(5); e.set_edi(7); e.set_ebp(11);
+        e.set_ecx(n);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
 // --- STEP 2 (a): 2-block if/else loop --------------------------------------
 // while (esi < edx) { ebx += *esi; esi += 4; }  — a guard block and a body
 // block. The guard's taken edge is the loop exit, which is the one shape a
@@ -1513,6 +1607,7 @@ const TOGGLES = {
   ck_lut16: 'set_ck_lut16',
   ck_blend16: 'set_ck_blend16',
   ck_shadow16: 'set_ck_shadow16',
+  block_exec: 'set_block_exec',
 };
 
 // ---------------------------------------------------------------------------
