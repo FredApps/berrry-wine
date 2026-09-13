@@ -1314,12 +1314,25 @@
   ;; registry mode" call that ends it. That flag is the only explicit
   ;; fullscreen signal a non-DirectDraw app gives, so the compositor uses it
   ;; instead of guessing from window geometry.
-  (func $handle_ChangeDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $display_change_settings (param $devmode i32) (param $flags i32) (result i32)
     (global.set $display_fullscreen
-      (i32.and (i32.ne (local.get $arg0) (i32.const 0))
-               (i32.ne (i32.and (local.get $arg1) (i32.const 0x4)) (i32.const 0))))
-    (global.set $eax (i32.const 0))  ;; DISP_CHANGE_SUCCESSFUL
+      (i32.and (i32.ne (local.get $devmode) (i32.const 0))
+               (i32.ne (i32.and (local.get $flags) (i32.const 0x4)) (i32.const 0))))
+    (i32.const 0)  ;; DISP_CHANGE_SUCCESSFUL
+  )
+
+  (func $handle_ChangeDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $display_change_settings (local.get $arg0) (local.get $arg1)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 12)))
+  )
+
+  ;; ChangeDisplaySettingsExA(lpszDeviceName, lpDevMode, hwnd, dwFlags, lParam)
+  ;; — 5 args stdcall. The device name selects among adapters, and this machine
+  ;; reports exactly one, so the Ex form carries no information the plain form
+  ;; does not: it records the same CDS_FULLSCREEN intent through the same core.
+  (func $handle_ChangeDisplaySettingsExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $display_change_settings (local.get $arg1) (local.get $arg3)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
   )
 
   ;; EnumDisplaySettingsA(lpszDeviceName, iModeNum, lpDevMode) — 3 args stdcall.
@@ -1445,29 +1458,31 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 16)))
   )
 
-  ;; EnumDisplayDevicesW(lpDevice, iDevNum, lpDisplayDevice, dwFlags).
-  ;; Expose the fixed host surface as one primary desktop adapter and one
-  ;; active monitor. DISPLAY_DEVICEW is 0x348 bytes on 32-bit Windows:
-  ;; cb, DeviceName[32], DeviceString[128], StateFlags, DeviceID[128],
-  ;; DeviceKey[128]. SDL2 uses both enumeration levels during video startup.
-  (func $handle_EnumDisplayDevicesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; EnumDisplayDevices(lpDevice, iDevNum, lpDisplayDevice, dwFlags) — the one
+  ;; implementation both spellings funnel into. Expose the fixed host surface
+  ;; as one primary desktop adapter and one active monitor.
+  ;;
+  ;; The two structures are the same fields at different widths and offsets:
+  ;; DISPLAY_DEVICEW is 0x348 bytes (cb, DeviceName[32] at 4,
+  ;; DeviceString[128] at 68, StateFlags at 324, DeviceID and DeviceKey after
+  ;; it) and DISPLAY_DEVICEA is 0x1A8 (DeviceString at 36, StateFlags at 164).
+  ;; A caller passing the older ANSI cb of 0x1A4 (no DeviceKey) is accepted;
+  ;; anything shorter is refused, which is what Windows does with an
+  ;; uninitialized cb. SDL2 uses both enumeration levels during video startup.
+  (func $enum_display_device (param $device i32) (param $devnum i32)
+                             (param $buf i32) (param $wide i32) (result i32)
     (local $dst i32)
     (if (i32.or
-          (i32.ne (local.get $arg1) (i32.const 0))
-          (i32.eqz (local.get $arg2)))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
-    (local.set $dst (call $g2w (local.get $arg2)))
+          (i32.ne (local.get $devnum) (i32.const 0))
+          (i32.eqz (local.get $buf)))
+      (then (return (i32.const 0))))
+    (local.set $dst (call $g2w (local.get $buf)))
+    (if (local.get $wide) (then
     (if (i32.lt_u (i32.load (local.get $dst)) (i32.const 0x348))
-      (then
-        (global.set $eax (i32.const 0))
-        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
-        (return)))
+      (then (return (i32.const 0))))
     (memory.fill (local.get $dst) (i32.const 0) (i32.const 0x348))
     (i32.store (local.get $dst) (i32.const 0x348))
-    (if (i32.eqz (local.get $arg0))
+    (if (i32.eqz (local.get $device))
       (then
         ;; DeviceName = L"\\\\.\\DISPLAY1"
         (i32.store offset=4  (local.get $dst) (i32.const 0x005c005c))
@@ -1514,7 +1529,54 @@
         (i32.store offset=96 (local.get $dst) (i32.const 0x00000072))
         ;; DISPLAY_DEVICE_ACTIVE (same bit value as ATTACHED_TO_DESKTOP).
         (i32.store offset=324 (local.get $dst) (i32.const 0x1))))
-    (global.set $eax (i32.const 1))
+    ) (else
+    (if (i32.lt_u (i32.load (local.get $dst)) (i32.const 0x1A4))
+      (then (return (i32.const 0))))
+    (memory.fill (local.get $dst) (i32.const 0) (i32.const 0x1A8))
+    (i32.store (local.get $dst) (i32.const 0x1A8))
+    (if (i32.eqz (local.get $device))
+      (then
+        ;; DeviceName = "\\\\.\\DISPLAY1"
+        (i32.store offset=4  (local.get $dst) (i32.const 0x5C2E5C5C))
+        (i32.store offset=8  (local.get $dst) (i32.const 0x50534944))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x3159414C))
+        ;; DeviceString = "Wine-Assembly Display"
+        (i32.store offset=36 (local.get $dst) (i32.const 0x656E6957))
+        (i32.store offset=40 (local.get $dst) (i32.const 0x7373412D))
+        (i32.store offset=44 (local.get $dst) (i32.const 0x6C626D65))
+        (i32.store offset=48 (local.get $dst) (i32.const 0x69442079))
+        (i32.store offset=52 (local.get $dst) (i32.const 0x616C7073))
+        (i32.store offset=56 (local.get $dst) (i32.const 0x00000079))
+        ;; DISPLAY_DEVICE_ATTACHED_TO_DESKTOP | PRIMARY_DEVICE.
+        (i32.store offset=164 (local.get $dst) (i32.const 0x5)))
+      (else
+        ;; DeviceName = "\\\\.\\DISPLAY1\\Monitor0"
+        (i32.store offset=4  (local.get $dst) (i32.const 0x5C2E5C5C))
+        (i32.store offset=8  (local.get $dst) (i32.const 0x50534944))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x3159414C))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x6E6F4D5C))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x726F7469))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x00000030))
+        ;; DeviceString = "Default Monitor"
+        (i32.store offset=36 (local.get $dst) (i32.const 0x61666544))
+        (i32.store offset=40 (local.get $dst) (i32.const 0x20746C75))
+        (i32.store offset=44 (local.get $dst) (i32.const 0x696E6F4D))
+        (i32.store offset=48 (local.get $dst) (i32.const 0x00726F74))
+        ;; DISPLAY_DEVICE_ACTIVE (same bit value as ATTACHED_TO_DESKTOP).
+        (i32.store offset=164 (local.get $dst) (i32.const 0x1))))
+    ))
+    (i32.const 1)
+  )
+
+  (func $handle_EnumDisplayDevicesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $enum_display_device
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  (func $handle_EnumDisplayDevicesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $eax (call $enum_display_device
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
