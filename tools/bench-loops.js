@@ -1023,7 +1023,487 @@ SHAPES.ck_blend16 = ckBlend16(42, 3);
 SHAPES.ck_blend16_opaque = ckBlend16(0, 0);
 SHAPES.ck_blend16_allblend = ckBlend16(0, 100);
 
+// ---------------------------------------------------------------------------
+// REGION descriptor shapes (--toggle=region)
+// ---------------------------------------------------------------------------
+// H454's descriptor is a graph; the shipped self-loop fold is its one-block
+// case. These shapes hand the decoder a HAND-BUILT descriptor for a specific
+// entry EIP through set_region_spec, because there is no multi-block matcher
+// yet -- whether one is worth writing is exactly what this measures. The x86
+// and the descriptor are written side by side here and the two arms are
+// checksum-compared on every rep, so a descriptor that does not agree with the
+// bytes fails the run instead of producing a fast wrong answer.
+//
+// Register file order is the emulator's: 0 eax, 1 ecx, 2 edx, 3 ebx, 4 esp,
+// 5 ebp, 6 esi, 7 edi.
+const RG = { eax: 0, ecx: 1, edx: 2, ebx: 3, esp: 4, ebp: 5, esi: 6, edi: 7 };
+const M = r => 1 << r;
+
+// Micro-op kinds, mirroring the $TU_* globals in src/07b-loop-match.wat.
+const TU = {
+  MOV_RI: 1, ADD_RR: 3, ADD_RI: 4, SUB_RR: 5, SUB_RI: 6, AND_RI: 8,
+  XOR_RR: 11, INC: 13, LOAD32: 20, STORE32: 21, MOVZX8_RO: 32,
+};
+// Original handler indices, so the histogram keeps counting folded work with
+// the same names an unfolded build would use (H454 re-records them).
+const FN = {
+  mov_ri: 2, add_ri: 3, and_ri: 7, sub_ri: 8, add_rr: 12, sub_rr: 17,
+  xor_rr: 18, load_ro: 26, store_ro: 27, inc: 64, movzx8_ro: 143,
+};
+// Terminator kinds and the x86 condition-code nibble $eval_cc takes.
+const TK = { DECINC: 0, CMP_RR: 1, CMP_RI: 2, CMP_RM: 3, NONE: 4 };
+const CC = { b: 2, ae: 3, z: 4, nz: 5 };
+
+const REGION_BLOCK_WORDS = 13;
+
+// [kind, dst, src, imm, original handler, extra] -- the six words of one
+// micro-op, in $TREE_UOP_WORDS order.
+const uop = (kind, d, a, imm, fn, b = 0) => [kind, d, a, imm | 0, fn, b | 0];
+
+// Serialize a region descriptor exactly as $th_tree_fold reads it back.
+function regionWords(blocks, exits) {
+  if (blocks.length > 16) throw new Error(`region: ${blocks.length} blocks over the 16 cap`);
+  if (exits.length > 8) throw new Error(`region: ${exits.length} exits over the 8 cap`);
+  const uopsTotal = blocks.reduce((n, b) => n + b.uops.length, 0);
+  const words = [blocks.length, exits.length, uopsTotal, 0];
+  let off = 0;
+  for (const b of blocks) {
+    const t = b.term;
+    const pos = t.kind === TK.NONE ? -1 : (t.pos === undefined ? b.uops.length : t.pos);
+    words.push(off, b.uops.length, pos, t.kind,
+      t.a | 0, t.b | 0, t.uop | 0, t.imm | 0, t.cc | 0,
+      b.cost, b.succT, b.succF, b.eip | 0);
+    if (words.length % 1 !== 0) throw new Error('impossible');
+    off += b.uops.length;
+  }
+  if ((words.length - 4) !== blocks.length * REGION_BLOCK_WORDS) {
+    throw new Error('region: block record width drifted from $REGION_BLOCK_WORDS');
+  }
+  for (const x of exits) words.push(x.eip | 0, x.liveOut);
+  for (const b of blocks) for (const u of b.uops) words.push(...u);
+  return words;
+}
+
+// Write the descriptor where $region_try_install will copy it from, and arm
+// the install for this entry EIP. Called from a shape's setup(), i.e. OUTSIDE
+// the timed region, and harmless on the off arm because $region_try_install
+// returns immediately when $region_fold_enabled is 0.
+function armRegion(e, g2w, a, entryEip, words) {
+  if (words.length * 4 + 8 > 4096) {
+    throw new Error(`region: ${words.length} words exceeds $decode_block's 4096-byte slack`);
+  }
+  const dv = new DataView(e.memory.buffer);
+  const wa = g2w(a.spec);
+  for (let i = 0; i < words.length; i++) dv.setInt32(wa + i * 4, words[i], true);
+  e.set_region_spec(entryEip, a.spec, words.length);
+}
+
+const REGS8 = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi'];
+const regSnapshot = e => REGS8.filter(r => r !== 'esp')
+  .map(r => `${r}=${(e[`get_${r}`]() >>> 0).toString(16)}`).join(' ');
+
+// modrm for a two-byte `op r32, r/m32` in register form.
+const rr = (op, reg, rm) => [op, 0xC0 | (reg << 3) | rm];
+
+// --- STEP 1: one straight-line block, entered and left every iteration ------
+// K reg-reg ALU ops, then `jmp $+0` to END THE BLOCK, then a separate
+// dec/jnz block. The region therefore covers two blocks and is re-entered
+// every trip, which is the case that applies to 100% of code -- unlike the
+// self-loop fold, whose entry cost amortizes over the whole loop.
+//
+// r4 and r8 run the SAME x86 and differ only in the published live-out mask
+// (four written registers vs all eight). Publishing a register the block did
+// not change is semantically a no-op, so the pair isolates exactly one cost:
+// what exit publication charges per register.
+const BLK_CHAIN4 = [
+  { code: rr(0x03, RG.eax, RG.esi), uop: uop(TU.ADD_RR, RG.eax, RG.esi, 0, FN.add_rr) },
+  { code: rr(0x33, RG.edx, RG.eax), uop: uop(TU.XOR_RR, RG.edx, RG.eax, 0, FN.xor_rr) },
+  { code: rr(0x03, RG.ebx, RG.edx), uop: uop(TU.ADD_RR, RG.ebx, RG.edx, 0, FN.add_rr) },
+  { code: rr(0x03, RG.esi, RG.ebx), uop: uop(TU.ADD_RR, RG.esi, RG.ebx, 0, FN.add_rr) },
+];
+const BLK_CHAIN6 = BLK_CHAIN4.slice(0, 3).concat([
+  { code: rr(0x03, RG.esi, RG.edi), uop: uop(TU.ADD_RR, RG.esi, RG.edi, 0, FN.add_rr) },
+  { code: rr(0x33, RG.edi, RG.ebp), uop: uop(TU.XOR_RR, RG.edi, RG.ebp, 0, FN.xor_rr) },
+  { code: rr(0x03, RG.ebp, RG.ebx), uop: uop(TU.ADD_RR, RG.ebp, RG.ebx, 0, FN.add_rr) },
+]);
+
+function regionBlockShape(k, wide) {
+  const chain = wide ? BLK_CHAIN6 : BLK_CHAIN4;
+  const liveOut = wide ? 0xFF
+    : M(RG.eax) | M(RG.edx) | M(RG.ebx) | M(RG.esi) | M(RG.ecx);
+  return {
+    describe: `one ${k}-op straight-line block re-entered every trip, ` +
+      `${wide ? '8' : '4'}-register live-out`,
+    real: 'every basic block in every app; the per-block entry/exit cost of a region descriptor',
+    emit(a) {
+      const n = Math.max(20000, Math.floor(2_000_000 / k));
+      const body = [];
+      const uops = [];
+      for (let i = 0; i < k; i++) {
+        body.push(...chain[i % chain.length].code);
+        uops.push(chain[i % chain.length].uop);
+      }
+      const bodyLen = body.length;                 // 2 bytes per op
+      const code = body.concat([0xEB, 0x00],       // jmp $+0 — ends the block
+        [0x49], [0x75], rel8(-(bodyLen + 5)));     // dec ecx / jnz top
+      const base = a.codeAddr;
+      const blocks = [
+        { uops, term: { kind: TK.NONE }, cost: k + 1, succT: 0, succF: 1, eip: base },
+        { uops: [], cost: 2, succT: 0, succF: -1, eip: base + bodyLen + 2,
+          term: { kind: TK.DECINC, a: RG.ecx, uop: 0, cc: CC.nz, pos: 0 } },
+      ];
+      const exits = [{ eip: base + bodyLen + 5, liveOut }];
+      const words = regionWords(blocks, exits);
+      return {
+        iters: n, bytesTouched: 0, code,
+        setup(e, mem, g2w) {
+          e.set_eax(1); e.set_edx(2); e.set_ebx(3);
+          e.set_esi(5); e.set_edi(7); e.set_ebp(11);
+          e.set_ecx(n);
+          armRegion(e, g2w, a, base, words);
+        },
+        checksum: regSnapshot,
+        verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+      };
+    },
+  };
+}
+
+for (const k of [2, 4, 8, 16, 32]) {
+  SHAPES[`region_blk${k}_r4`] = regionBlockShape(k, false);
+  SHAPES[`region_blk${k}_r8`] = regionBlockShape(k, true);
+}
+
+// --- STEP 2 (a): 2-block if/else loop --------------------------------------
+// while (esi < edx) { ebx += *esi; esi += 4; }  — a guard block and a body
+// block. The guard's taken edge is the loop exit, which is the one shape a
+// self-loop matcher can never see.
+SHAPES.region_if2 = {
+  describe: '2-block guarded accumulate loop (guard block + body block)',
+  real: 'the `cmp cursor,end / jae done` head every bounded scan compiles to',
+  emit(a) {
+    const n = Math.min(1_000_000, Math.floor(a.bufBytes / 4));
+    const base = a.codeAddr;
+    const code = [
+      0x3B, 0xC0 | (RG.esi << 3) | RG.edx,        // +0  cmp esi, edx
+      0x73, 9,                                     // +2  jae DONE(+13)
+      0x8B, 0x00 | (RG.eax << 3) | RG.esi,        // +4  mov eax,[esi]
+      0x03, 0xC0 | (RG.ebx << 3) | RG.eax,        // +6  add ebx,eax
+      0x83, 0xC0 | RG.esi, 4,                      // +8  add esi,4
+      0xEB, (-13) & 0xFF,                          // +11 jmp +0
+    ];                                             // +13 DONE
+    const blocks = [
+      { uops: [], cost: 2, succT: -1, succF: 1, eip: base,
+        term: { kind: TK.CMP_RR, a: RG.esi, b: RG.edx, cc: CC.ae, pos: 0 } },
+      { uops: [
+          uop(TU.LOAD32, RG.eax, RG.esi, 0, FN.load_ro),
+          uop(TU.ADD_RR, RG.ebx, RG.eax, 0, FN.add_rr),
+          uop(TU.ADD_RI, RG.esi, RG.esi, 4, FN.add_ri),
+        ], term: { kind: TK.NONE }, cost: 4, succT: 0, succF: 0, eip: base + 4 },
+    ];
+    const exits = [{ eip: base + 13,
+      liveOut: M(RG.eax) | M(RG.ebx) | M(RG.esi) }];
+    const words = regionWords(blocks, exits);
+    return {
+      iters: n, bytesTouched: n * 4, code,
+      setup(e, mem, g2w) {
+        const dv = new DataView(e.memory.buffer);
+        const wa = g2w(a.buf);
+        for (let i = 0; i < n; i++) dv.setUint32(wa + i * 4, (i * 2654435761) >>> 0, true);
+        e.set_ebx(0); e.set_eax(0);
+        e.set_esi(a.buf); e.set_edx(a.buf + n * 4);
+        armRegion(e, g2w, a, base, words);
+      },
+      checksum: regSnapshot,
+      verify: e => (e.get_esi() >>> 0) === ((a.buf + n * 4) >>> 0)
+        ? null : `esi=0x${(e.get_esi() >>> 0).toString(16)}, expected 0x${(a.buf + n * 4).toString(16)}`,
+    };
+  },
+};
+
+// --- STEP 2 (b): 4-block diamond loop --------------------------------------
+SHAPES.region_diamond4 = {
+  describe: '4-block diamond loop (head, two arms, tail)',
+  real: 'the data-dependent if/else inside a per-element loop; match-loops.js calls it multi-branch',
+  emit(a) {
+    const n = Math.min(500_000, Math.floor(a.bufBytes / 4));
+    const base = a.codeAddr;
+    const THR = 0x40000000;
+    const code = [
+      0x8B, 0x00 | (RG.eax << 3) | RG.esi,        // +0  mov eax,[esi]
+      0x83, 0xC0 | RG.esi, 4,                      // +2  add esi,4
+      0x3D, ...le32(THR),                          // +5  cmp eax, THR
+      0x72, 4,                                     // +10 jb ELSE(+16)
+      0x03, 0xC0 | (RG.ebx << 3) | RG.eax,        // +12 add ebx,eax
+      0xEB, 4,                                     // +14 jmp TAIL(+20)
+      0x2B, 0xC0 | (RG.ebx << 3) | RG.eax,        // +16 sub ebx,eax
+      0xEB, 0,                                     // +18 jmp TAIL(+20)
+      0x49,                                        // +20 dec ecx
+      0x75, (-23) & 0xFF,                          // +21 jnz +0
+    ];                                             // +23 END
+    const blocks = [
+      { uops: [
+          uop(TU.LOAD32, RG.eax, RG.esi, 0, FN.load_ro),
+          uop(TU.ADD_RI, RG.esi, RG.esi, 4, FN.add_ri),
+        ], cost: 4, succT: 2, succF: 1, eip: base,
+        term: { kind: TK.CMP_RI, a: RG.eax, b: THR, cc: CC.b, pos: 2 } },
+      { uops: [uop(TU.ADD_RR, RG.ebx, RG.eax, 0, FN.add_rr)],
+        term: { kind: TK.NONE }, cost: 2, succT: 3, succF: 3, eip: base + 12 },
+      { uops: [uop(TU.SUB_RR, RG.ebx, RG.eax, 0, FN.sub_rr)],
+        term: { kind: TK.NONE }, cost: 2, succT: 3, succF: 3, eip: base + 16 },
+      { uops: [], cost: 2, succT: 0, succF: -1, eip: base + 20,
+        term: { kind: TK.DECINC, a: RG.ecx, uop: 0, cc: CC.nz, pos: 0 } },
+    ];
+    const exits = [{ eip: base + 23,
+      liveOut: M(RG.eax) | M(RG.ecx) | M(RG.ebx) | M(RG.esi) }];
+    const words = regionWords(blocks, exits);
+    return {
+      iters: n, bytesTouched: n * 4, code,
+      setup(e, mem, g2w) {
+        const dv = new DataView(e.memory.buffer);
+        const wa = g2w(a.buf);
+        for (let i = 0; i < n; i++) dv.setUint32(wa + i * 4, (i * 2654435761) >>> 0, true);
+        e.set_ebx(0); e.set_eax(0); e.set_ecx(n); e.set_esi(a.buf);
+        armRegion(e, g2w, a, base, words);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
+// --- STEP 2 (c): 6-block state machine loop --------------------------------
+SHAPES.region_state6 = {
+  describe: '6-block state-machine loop (two-rung dispatch, three arms, tail)',
+  real: 'a token loop whose head is a compare chain — the shape match-loops.js declines as multi-branch',
+  emit(a) {
+    const n = Math.min(500_000, Math.floor(a.bufBytes / 4));
+    const base = a.codeAddr;
+    const code = [
+      0x8B, 0x00 | (RG.eax << 3) | RG.esi,        // +0  mov eax,[esi]
+      0x83, 0xC0 | RG.esi, 4,                      // +2  add esi,4
+      0x83, 0xE0, 3,                               // +5  and eax,3
+      0x83, 0xF8, 1,                               // +8  cmp eax,1
+      0x72, 9,                                     // +11 jb A0(+22)
+      0x83, 0xF8, 2,                               // +13 cmp eax,2
+      0x72, 8,                                     // +16 jb A1(+26)
+      0x33, 0xC0 | (RG.ebx << 3) | RG.eax,        // +18 A2: xor ebx,eax
+      0xEB, 8,                                     // +20 jmp TAIL(+30)
+      0x03, 0xC0 | (RG.ebx << 3) | RG.eax,        // +22 A0: add ebx,eax
+      0xEB, 4,                                     // +24 jmp TAIL(+30)
+      0x2B, 0xC0 | (RG.ebx << 3) | RG.eax,        // +26 A1: sub ebx,eax
+      0xEB, 0,                                     // +28 jmp TAIL(+30)
+      0x49,                                        // +30 dec ecx
+      0x75, (-33) & 0xFF,                          // +31 jnz +0
+    ];                                             // +33 END
+    const arm = (op, fn, at, succ) => ({
+      uops: [uop(op, RG.ebx, RG.eax, 0, fn)],
+      term: { kind: TK.NONE }, cost: 2, succT: succ, succF: succ, eip: base + at });
+    const blocks = [
+      { uops: [
+          uop(TU.LOAD32, RG.eax, RG.esi, 0, FN.load_ro),
+          uop(TU.ADD_RI, RG.esi, RG.esi, 4, FN.add_ri),
+          uop(TU.AND_RI, RG.eax, RG.eax, 3, FN.and_ri),
+        ], cost: 5, succT: 3, succF: 1, eip: base,
+        term: { kind: TK.CMP_RI, a: RG.eax, b: 1, cc: CC.b, pos: 3 } },
+      { uops: [], cost: 2, succT: 4, succF: 2, eip: base + 13,
+        term: { kind: TK.CMP_RI, a: RG.eax, b: 2, cc: CC.b, pos: 0 } },
+      arm(TU.XOR_RR, FN.xor_rr, 18, 5),
+      arm(TU.ADD_RR, FN.add_rr, 22, 5),
+      arm(TU.SUB_RR, FN.sub_rr, 26, 5),
+      { uops: [], cost: 2, succT: 0, succF: -1, eip: base + 30,
+        term: { kind: TK.DECINC, a: RG.ecx, uop: 0, cc: CC.nz, pos: 0 } },
+    ];
+    const exits = [{ eip: base + 33,
+      liveOut: M(RG.eax) | M(RG.ecx) | M(RG.ebx) | M(RG.esi) }];
+    const words = regionWords(blocks, exits);
+    return {
+      iters: n, bytesTouched: n * 4, code,
+      setup(e, mem, g2w) {
+        const dv = new DataView(e.memory.buffer);
+        const wa = g2w(a.buf);
+        for (let i = 0; i < n; i++) dv.setUint32(wa + i * 4, (i * 2654435761) >>> 0, true);
+        e.set_ebx(0); e.set_eax(0); e.set_ecx(n); e.set_esi(a.buf);
+        armRegion(e, g2w, a, base, words);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
+// --- STEP 2 (d): the Caesar RLE compare ladder, 5 cases --------------------
+SHAPES.region_ladder5 = {
+  describe: '10-block RLE token ladder (4 compare rungs, 5 case bodies, tail)',
+  real: "Caesar III's 0x40f71c sprite blitter — the nest tools/find-rle-nests.js finds",
+  emit(a) {
+    const n = Math.min(400_000, Math.floor(a.bufBytes / 6));
+    const dst = a.buf + ((n + 15) & ~15);
+    const base = a.codeAddr;
+    const addEdi4 = [0x83, 0xC0 | RG.edi, 4];
+    const code = [
+      0x0F, 0xB6, 0x00 | (RG.eax << 3) | RG.esi,  // +0  movzx eax, byte [esi]
+      0x46,                                        // +3  inc esi
+      0x83, 0xF8, 0,                               // +4  cmp eax,0
+      0x74, 22,                                    // +7  je C0(+31)
+      0x83, 0xF8, 1,                               // +9  cmp eax,1
+      0x74, 22,                                    // +12 je C1(+36)
+      0x83, 0xF8, 2,                               // +14 cmp eax,2
+      0x74, 24,                                    // +17 je C2(+43)
+      0x83, 0xF8, 3,                               // +19 cmp eax,3
+      0x74, 26,                                    // +22 je C3(+50)
+      0x33, 0xC0 | (RG.ebx << 3) | RG.eax,        // +24 C4: xor ebx,eax
+      ...addEdi4,                                  // +26
+      0xEB, 26,                                    // +29 jmp TAIL(+57)
+      ...addEdi4,                                  // +31 C0
+      0xEB, 21,                                    // +34 jmp TAIL
+      0x89, 0x00 | (RG.eax << 3) | RG.edi,        // +36 C1: mov [edi],eax
+      ...addEdi4,                                  // +38
+      0xEB, 14,                                    // +41 jmp TAIL
+      0x89, 0x00 | (RG.ebx << 3) | RG.edi,        // +43 C2: mov [edi],ebx
+      ...addEdi4,                                  // +45
+      0xEB, 7,                                     // +48 jmp TAIL
+      0x03, 0xC0 | (RG.ebx << 3) | RG.eax,        // +50 C3: add ebx,eax
+      ...addEdi4,                                  // +52
+      0xEB, 0,                                     // +55 jmp TAIL(+57)
+      0x49,                                        // +57 dec ecx
+      0x75, (-60) & 0xFF,                          // +58 jnz +0
+    ];                                             // +60 END
+    const bump = uop(TU.ADD_RI, RG.edi, RG.edi, 4, FN.add_ri);
+    const rung = (imm, at, taken, fall) => ({
+      uops: [], cost: 2, succT: taken, succF: fall, eip: base + at,
+      term: { kind: TK.CMP_RI, a: RG.eax, b: imm, cc: CC.z, pos: 0 } });
+    const body = (uops, at) => ({
+      uops: uops.concat([bump]), term: { kind: TK.NONE },
+      cost: uops.length + 2, succT: 9, succF: 9, eip: base + at });
+    const blocks = [
+      { uops: [
+          uop(TU.MOVZX8_RO, RG.eax, RG.esi, 0, FN.movzx8_ro),
+          uop(TU.INC, RG.esi, RG.esi, 0, FN.inc),
+        ], cost: 4, succT: 5, succF: 1, eip: base,
+        term: { kind: TK.CMP_RI, a: RG.eax, b: 0, cc: CC.z, pos: 2 } },
+      rung(1, 9, 6, 2),
+      rung(2, 14, 7, 3),
+      rung(3, 19, 8, 4),
+      body([uop(TU.XOR_RR, RG.ebx, RG.eax, 0, FN.xor_rr)], 24),   // 4: C4
+      body([], 31),                                               // 5: C0
+      body([uop(TU.STORE32, RG.eax, RG.edi, 0, FN.store_ro)], 36),// 6: C1
+      body([uop(TU.STORE32, RG.ebx, RG.edi, 0, FN.store_ro)], 43),// 7: C2
+      body([uop(TU.ADD_RR, RG.ebx, RG.eax, 0, FN.add_rr)], 50),   // 8: C3
+      { uops: [], cost: 2, succT: 0, succF: -1, eip: base + 57,
+        term: { kind: TK.DECINC, a: RG.ecx, uop: 0, cc: CC.nz, pos: 0 } },
+    ];
+    const exits = [{ eip: base + 60,
+      liveOut: M(RG.eax) | M(RG.ecx) | M(RG.ebx) | M(RG.esi) | M(RG.edi) }];
+    const words = regionWords(blocks, exits);
+    return {
+      iters: n, bytesTouched: n * 5, code,
+      setup(e, mem, g2w) {
+        const wa = g2w(a.buf);
+        // Token stream: every case exercised, none of them in a predictable
+        // period short enough for the host branch predictor to memorize.
+        for (let i = 0; i < n; i++) mem[wa + i] = (i * 7 + (i >> 3)) % 5;
+        e.set_ebx(1); e.set_eax(0); e.set_ecx(n);
+        e.set_esi(a.buf); e.set_edi(dst);
+        armRegion(e, g2w, a, base, words);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
+// --- STEP 2 (e): a call-free leaf, frame stores KEPT ------------------------
+// The callee body is inlined but the call frame is not elided: the return
+// address is still materialized, still pushed on a shadow stack, and still
+// popped. That is what a region descriptor could honestly do to a leaf call --
+// it makes the control transfer static without pretending the stores away.
+SHAPES.region_call1 = {
+  describe: '3-block inlined leaf call with the frame stores kept',
+  real: 'a per-element helper call; `call` is 30% of every match-loops.js decline histogram',
+  emit(a) {
+    const n = Math.min(500_000, Math.floor(a.bufBytes / 8));
+    const shadow = a.buf + Math.floor(a.bufBytes / 2);
+    const base = a.codeAddr;
+    // A FIXED sentinel, not `base + 28`. The value is only stored and reloaded
+    // — the return is static because the callee is inlined — and the real
+    // return address moves with the fresh code page every rep, which would
+    // make the cross-arm checksum differ for a reason that has nothing to do
+    // with the fold.
+    const ret = 0x00CA11ED;
+    const code = [
+      0x8B, 0x00 | (RG.eax << 3) | RG.esi,        // +0  mov eax,[esi]
+      0x83, 0xC0 | RG.esi, 4,                      // +2  add esi,4
+      0xB8 + RG.edx, ...le32(ret),                 // +5  mov edx, RETADDR
+      0x83, 0xE8 | RG.edi, 4,                      // +10 sub edi,4
+      0x89, 0x00 | (RG.edx << 3) | RG.edi,        // +13 mov [edi],edx
+      0xEB, 0,                                     // +15 jmp CALLEE(+17)
+      0x03, 0xC0 | (RG.ebx << 3) | RG.eax,        // +17 add ebx,eax
+      0x33, 0xC0 | (RG.ebx << 3) | RG.edx,        // +19 xor ebx,edx
+      0x8B, 0x00 | (RG.edx << 3) | RG.edi,        // +21 mov edx,[edi]
+      0x83, 0xC0 | RG.edi, 4,                      // +23 add edi,4
+      0xEB, 0,                                     // +26 jmp RET(+28)
+      0x49,                                        // +28 dec ecx
+      0x75, (-31) & 0xFF,                          // +29 jnz +0
+    ];                                             // +31 END
+    const blocks = [
+      { uops: [
+          uop(TU.LOAD32, RG.eax, RG.esi, 0, FN.load_ro),
+          uop(TU.ADD_RI, RG.esi, RG.esi, 4, FN.add_ri),
+          uop(TU.MOV_RI, RG.edx, RG.edx, ret, FN.mov_ri),
+          uop(TU.SUB_RI, RG.edi, RG.edi, 4, FN.sub_ri),
+          uop(TU.STORE32, RG.edx, RG.edi, 0, FN.store_ro),
+        ], term: { kind: TK.NONE }, cost: 6, succT: 1, succF: 1, eip: base },
+      { uops: [
+          uop(TU.ADD_RR, RG.ebx, RG.eax, 0, FN.add_rr),
+          uop(TU.XOR_RR, RG.ebx, RG.edx, 0, FN.xor_rr),
+          uop(TU.LOAD32, RG.edx, RG.edi, 0, FN.load_ro),
+          uop(TU.ADD_RI, RG.edi, RG.edi, 4, FN.add_ri),
+        ], term: { kind: TK.NONE }, cost: 5, succT: 2, succF: 2, eip: base + 17 },
+      { uops: [], cost: 2, succT: 0, succF: -1, eip: base + 28,
+        term: { kind: TK.DECINC, a: RG.ecx, uop: 0, cc: CC.nz, pos: 0 } },
+    ];
+    const exits = [{ eip: base + 31,
+      liveOut: M(RG.eax) | M(RG.ecx) | M(RG.edx) | M(RG.ebx) | M(RG.esi) | M(RG.edi) }];
+    const words = regionWords(blocks, exits);
+    return {
+      iters: n, bytesTouched: n * 12, code,
+      setup(e, mem, g2w) {
+        const dv = new DataView(e.memory.buffer);
+        const wa = g2w(a.buf);
+        for (let i = 0; i < n; i++) dv.setUint32(wa + i * 4, (i * 2654435761) >>> 0, true);
+        e.set_ebx(0); e.set_eax(0); e.set_edx(0); e.set_ecx(n);
+        e.set_esi(a.buf); e.set_edi(shadow);
+        armRegion(e, g2w, a, base, words);
+      },
+      checksum: regSnapshot,
+      verify(e) {
+        if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+        return (e.get_edi() >>> 0) === (shadow >>> 0)
+          ? null : `edi=0x${(e.get_edi() >>> 0).toString(16)}, shadow stack unbalanced`;
+      },
+    };
+  },
+};
+
+// --- NULL control -----------------------------------------------------------
+// Byte-identical work in both arms: the spec is armed for an EIP the guest
+// never reaches, so nothing installs whatever the toggle says. Whatever this
+// prints is the harness's own floor for the session.
+SHAPES.region_null = {
+  describe: 'NULL control — the diamond shape with the region spec armed at an unreachable EIP',
+  real: 'nothing; this is the noise floor both arms of every region shape share',
+  emit(a) {
+    const inner = SHAPES.region_diamond4.emit(a);
+    const setup = inner.setup;
+    return Object.assign({}, inner, {
+      setup(e, mem, g2w) { setup(e, mem, g2w); e.set_region_spec(0, 0, 0); },
+    });
+  },
+};
+
 const TOGGLES = {
+  region: 'set_region_fold',
   tree_fold: 'set_tree_fold',
   lut_superops: 'set_loop_lut_emit',
   lut16_stack: 'set_loop_lut16_stack_emit',
@@ -1098,6 +1578,10 @@ function layout(imageBase, bufBytes) {
   const a = {
     code: imageBase + 0x040000,   // fresh page per rep, bumped by the caller
     lut: imageBase + 0x100000,    // 256 bytes
+    // Scratch a region shape writes its descriptor into for
+    // $region_try_install to copy. One page; the descriptor cannot exceed
+    // $decode_block's 4096-byte slack anyway.
+    spec: imageBase + 0x140000,
     stackTop: imageBase + 0x800000,
     buf: imageBase + 0x1000000,
     bufBytes,
@@ -1133,6 +1617,9 @@ function runToCompletion(e, codeAddr, stackTop) {
 // same decode cost.
 function oneRep({ e, mem, g2w }, shape, a, repIndex) {
   const codeAddr = a.code + repIndex * 0x1000;
+  // Shapes that build a decode-time descriptor need the address the code will
+  // actually live at, because the descriptor names entry EIPs.
+  a.codeAddr = codeAddr;
   const built = shape.emit(a);
   const bytes = built.code.concat([0xC3]);           // ret to the 0 sentinel
   mem.set(bytes, g2w(codeAddr));
@@ -1150,7 +1637,12 @@ function oneRep({ e, mem, g2w }, shape, a, repIndex) {
     const why = built.verify(e, mem, g2w);
     if (why) throw new Error(`${shape.name}: shape did not do its work — ${why}`);
   }
-  return { ns: Number(t1 - t0), built };
+  // A fold that produces the wrong ANSWER is faster for free, and `verify`
+  // only checks the loop terminated. `checksum` is the whole visible guest
+  // state after the shape, compared across arms by the caller — that is what
+  // makes a hand-built region descriptor evidence rather than a hypothesis.
+  const check = built.checksum ? built.checksum(e, mem, g2w) : null;
+  return { ns: Number(t1 - t0), built, check };
 }
 
 function countOps(inst, shape, a, repIndex) {
@@ -1259,6 +1751,7 @@ async function main() {
 
   ensureBuilt();
 
+  const loadBefore = require('os').loadavg().map(x => x.toFixed(2)).join(' ');
   const results = [];
   for (const name of names) {
     const shape = { ...SHAPES[name], name };
@@ -1281,6 +1774,7 @@ async function main() {
       : [null];
     const armNs = new Map(arms.map(v => [v, []]));
     const armOps = new Map();
+    const armCheck = new Map();
 
     let repIndex = 0;
     for (const v of arms) {
@@ -1302,9 +1796,28 @@ async function main() {
       const order = arms.slice(shift).concat(arms.slice(0, shift));
       for (const v of order) {
         if (v !== null) inst.e[TOGGLES[toggle]](v);
-        const { ns, built } = oneRep(inst, shape, a, repIndex++);
+        const { ns, built, check } = oneRep(inst, shape, a, repIndex++);
         armNs.get(v).push(ns);
         a.lastBuilt = built;
+        if (check !== null) {
+          if (armCheck.has(v)) {
+            if (armCheck.get(v) !== check) {
+              throw new Error(`${name}: arm ${v} is not deterministic\n  ${armCheck.get(v)}\n  ${check}`);
+            }
+          } else {
+            armCheck.set(v, check);
+          }
+        }
+      }
+    }
+    // Every arm must leave the same guest state. Without this a region
+    // descriptor that disagrees with its own x86 just reports a speedup.
+    if (armCheck.size > 1) {
+      const [[refArm, ref]] = [...armCheck];
+      for (const [v, c] of armCheck) {
+        if (c !== ref) {
+          throw new Error(`${name}: arms disagree on the result\n  ${toggle}=${refArm}: ${ref}\n  ${toggle}=${v}: ${c}`);
+        }
       }
     }
 
@@ -1373,7 +1886,14 @@ async function main() {
 
   if (wantJson) { console.log(JSON.stringify({ bufBytes, reps, mapping, toggle, results }, null, 2)); return; }
 
-  console.log(`\nworking set ${fmt(bufBytes)} bytes (${mapping} guest mapping), ${reps} interleaved reps, minima quoted`);
+  // This box regularly sits at load 20-40 with other agents sweeping. The
+  // interleave makes drift common-mode but it cannot make a saturated machine
+  // quiet, so print what the machine was doing at both ends of the run and let
+  // the reader discount accordingly.
+  const load = () => require('os').loadavg().map(x => x.toFixed(2)).join(' ');
+  console.log(`\nloadavg ${loadBefore} at start, ${load()} at end` +
+    (Number(loadBefore.split(' ')[0]) > 4 ? '  <-- LOADED, treat single percentages as noise' : ''));
+  console.log(`working set ${fmt(bufBytes)} bytes (${mapping} guest mapping), ${reps} interleaved reps, minima quoted`);
   if (toggle) console.log(`A/B toggle: ${toggle} (on vs off, same process, alternating)`);
   console.log('');
   for (const r of results) {
@@ -1426,4 +1946,12 @@ async function main() {
   console.log('real code. Pair every result with --handler-hist / tools/match-loops.js.');
 }
 
-main().catch(err => { console.error(err.stack || String(err)); process.exit(1); });
+// The region descriptor layout has exactly one JS encoder, and
+// test/test-tree-fold.js builds its descriptors with it too: a bench and a
+// correctness test that disagree about the layout would each look right on its
+// own while proving nothing together.
+module.exports = { regionWords, uop, RG, TU, TK, CC, FN, REGION_BLOCK_WORDS };
+
+if (require.main === module) {
+  main().catch(err => { console.error(err.stack || String(err)); process.exit(1); });
+}

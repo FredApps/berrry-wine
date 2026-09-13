@@ -1044,6 +1044,188 @@ const NEG_SHORT = loopBackDec([
       'a value under the limit is taken as given');
   }
 
+  // -------------------------------------------------------------- regions --
+  // H454's descriptor is a graph and the self-loop fold above is its one-block
+  // case. Nothing decodes a multi-block descriptor yet -- $region_try_install
+  // takes one handed in through set_region_spec, which is what the bench uses
+  // and what these cases use. So the descriptors below are HAND-WRITTEN
+  // alongside the x86 they claim to describe, and the only thing that makes
+  // them evidence is that the two arms must agree bit for bit.
+  {
+    const { regionWords, uop, RG, TU, TK, CC, FN } =
+      require('../tools/bench-loops.js');
+    const specGa = (arena + 0x18000) >>> 0;
+
+    function arm(entry, blocks, exits) {
+      const words = regionWords(blocks, exits);
+      for (let i = 0; i < words.length; i++) {
+        dv.setInt32(wa(specGa) + i * 4, words[i], true);
+      }
+      e.set_region_spec(entry, specGa, words.length);
+      e.set_region_fold(1);
+    }
+    function disarm() {
+      e.set_region_fold(0);
+      e.set_region_spec(0, 0, 0);
+    }
+
+    // A region and the x86 it describes, checked as a pair. `mk(base)` returns
+    // { code, blocks, exits } for a given install address.
+    function checkRegion(name, mk, regs) {
+      disarm();
+      const offCode = install(mk(0).code);
+      const offState = runAt(offCode, regs);
+
+      const onCode = install(mk(0).code);
+      const built = mk(onCode);
+      const installsBefore = e.get_region_installs();
+      arm(onCode, built.blocks, built.exits);
+      const onState = runAt(onCode, regs);
+      assert.strictEqual(e.get_region_installs(), installsBefore + 1,
+        `${name}: the region descriptor was installed`);
+      assert.deepStrictEqual(onState, offState,
+        `${name}: region and threaded arms must agree`);
+
+      // Same descriptor, re-entered constantly. A budget of 1 block makes
+      // every trip round the region end in a side exit, which is the only
+      // place the meters can stop it -- so this is the interruption path, run
+      // thousands of times instead of once.
+      const chopCode = install(mk(0).code);
+      const chopped = mk(chopCode);
+      arm(chopCode, chopped.blocks, chopped.exits);
+      const chopState = runAt(chopCode, regs, 1);
+      assert.deepStrictEqual(chopState, offState,
+        `${name}: a region chopped into one-block slices gives the same answer`);
+      disarm();
+      return { offState, onCode, built };
+    }
+
+    // (1) The BLOCK handler: one straight-line block plus a counter block, so
+    // the region is entered and left every trip. This is the case that applies
+    // to all code, unlike a self-loop whose entry cost amortizes away.
+    const blockRegion = base => ({
+      code: [
+        0x03, 0xC0 | (RG.eax << 3) | RG.esi,   // +0 add eax, esi
+        0x33, 0xC0 | (RG.edx << 3) | RG.eax,   // +2 xor edx, eax
+        0x03, 0xC0 | (RG.ebx << 3) | RG.edx,   // +4 add ebx, edx
+        0xEB, 0x00,                            // +6 jmp $+0 (ends the block)
+        0x49,                                  // +8 dec ecx
+        0x75, 0xF3,                            // +9 jnz +0   (-13)
+        0xC3,                                  // +11 ret
+      ],
+      blocks: [
+        { uops: [
+            uop(TU.ADD_RR, RG.eax, RG.esi, 0, FN.add_rr),
+            uop(TU.XOR_RR, RG.edx, RG.eax, 0, FN.xor_rr),
+            uop(TU.ADD_RR, RG.ebx, RG.edx, 0, FN.add_rr),
+          ], term: { kind: TK.NONE }, cost: 4, succT: 1, succF: 1, eip: base },
+        { uops: [], cost: 2, succT: 0, succF: -1, eip: (base + 8) >>> 0,
+          term: { kind: TK.DECINC, a: RG.ecx, uop: 0, cc: CC.nz, pos: 0 } },
+      ],
+      exits: [{ eip: (base + 11) >>> 0,
+        liveOut: (1 << RG.eax) | (1 << RG.ecx) | (1 << RG.edx) | (1 << RG.ebx) }],
+    });
+    const blockRegs = { eax: 1, ecx: 5000, edx: 2, ebx: 3, ebp: 0, esi: 7, edi: 0 };
+    checkRegion('block region', blockRegion, blockRegs);
+
+    // (2) The REGION handler proper: a four-block diamond. Interior control
+    // flow is a data-dependent branch resolved inside the handler, which is
+    // the whole point -- $loop_match_block cannot see this shape at all,
+    // because none of its blocks branches to itself.
+    const THR = 0x40000000;
+    const diamondRegion = base => ({
+      code: [
+        0x8B, 0x00 | (RG.eax << 3) | RG.esi,   // +0  mov eax,[esi]
+        0x83, 0xC0 | RG.esi, 4,                // +2  add esi,4
+        0x3D, 0x00, 0x00, 0x00, 0x40,          // +5  cmp eax, THR
+        0x72, 4,                               // +10 jb ELSE(+16)
+        0x03, 0xC0 | (RG.ebx << 3) | RG.eax,   // +12 add ebx,eax
+        0xEB, 4,                               // +14 jmp TAIL(+20)
+        0x2B, 0xC0 | (RG.ebx << 3) | RG.eax,   // +16 sub ebx,eax
+        0xEB, 0,                               // +18 jmp TAIL(+20)
+        0x49,                                  // +20 dec ecx
+        0x75, 0xE9,                            // +21 jnz +0   (-23)
+        0xC3,                                  // +23 ret
+      ],
+      blocks: [
+        { uops: [
+            uop(TU.LOAD32, RG.eax, RG.esi, 0, FN.load_ro),
+            uop(TU.ADD_RI, RG.esi, RG.esi, 4, FN.add_ri),
+          ], cost: 4, succT: 2, succF: 1, eip: base,
+          term: { kind: TK.CMP_RI, a: RG.eax, b: THR, cc: CC.b, pos: 2 } },
+        { uops: [uop(TU.ADD_RR, RG.ebx, RG.eax, 0, FN.add_rr)],
+          term: { kind: TK.NONE }, cost: 2, succT: 3, succF: 3, eip: (base + 12) >>> 0 },
+        { uops: [uop(TU.SUB_RR, RG.ebx, RG.eax, 0, FN.sub_rr)],
+          term: { kind: TK.NONE }, cost: 2, succT: 3, succF: 3, eip: (base + 16) >>> 0 },
+        { uops: [], cost: 2, succT: 0, succF: -1, eip: (base + 20) >>> 0,
+          term: { kind: TK.DECINC, a: RG.ecx, uop: 0, cc: CC.nz, pos: 0 } },
+      ],
+      exits: [{ eip: (base + 23) >>> 0,
+        liveOut: (1 << RG.eax) | (1 << RG.ecx) | (1 << RG.ebx) | (1 << RG.esi) }],
+    });
+    const words = 4000;
+    seed(arena, words);
+    const diamondRegs =
+      { eax: 0, ecx: words, edx: 0, ebx: 0, ebp: 0, esi: arena, edi: 0 };
+    const diamond = checkRegion('diamond region', diamondRegion, diamondRegs);
+
+    // (3) A side exit taken MID-REGION has to leave state a plain interpreter
+    // could have produced, or the fold is only correct when it runs to the
+    // end. Stop the region between blocks, then hand the published registers
+    // and EIP to a threaded-only copy of the same code and demand it finishes
+    // in exactly the state the all-threaded run reached.
+    {
+      const parkCode = install(diamondRegion(0).code);
+      const parked = diamondRegion(parkCode);
+      seed(arena, words);
+      arm(parkCode, parked.blocks, parked.exits);
+      e.set_eax(0); e.set_ecx(words); e.set_edx(0); e.set_ebx(0);
+      e.set_ebp(0); e.set_esi(arena); e.set_edi(0);
+      e.set_esp(stack);
+      dv.setUint32(wa(stack), 0, true);
+      e.set_eip(parkCode);
+      e.run(3);                                 // three blocks, then park
+      const parkEip = e.get_eip() >>> 0;
+      const parkRegs = {
+        eax: e.get_eax() >>> 0, ecx: e.get_ecx() >>> 0, edx: e.get_edx() >>> 0,
+        ebx: e.get_ebx() >>> 0, ebp: e.get_ebp() >>> 0,
+        esi: e.get_esi() >>> 0, edi: e.get_edi() >>> 0,
+      };
+      disarm();
+
+      // Only block edges are safepoints, so the resume EIP must be one of the
+      // descriptor's own entry points -- never an address inside a block.
+      const edges = parked.blocks.map(b => b.eip >>> 0)
+        .concat(parked.exits.map(x => x.eip >>> 0));
+      assert(edges.includes(parkEip),
+        `a side exit resumed at 0x${parkEip.toString(16)}, which is not a block edge ` +
+        `(${edges.map(x => '0x' + x.toString(16)).join(', ')})`);
+      assert(parkRegs.ecx > 0 && parkRegs.ecx < words,
+        `the side exit should be mid-loop, ecx=${parkRegs.ecx} of ${words}`);
+
+      // Resume in a copy with no region on it at all.
+      const resumeCode = install(diamondRegion(0).code);
+      const resumeEip = (resumeCode + (parkEip - parkCode)) >>> 0;
+      e.test_fpu_sw_clear();
+      e.set_eax(parkRegs.eax); e.set_ecx(parkRegs.ecx); e.set_edx(parkRegs.edx);
+      e.set_ebx(parkRegs.ebx); e.set_ebp(parkRegs.ebp);
+      e.set_esi(parkRegs.esi); e.set_edi(parkRegs.edi);
+      e.set_esp(stack);
+      dv.setUint32(wa(stack), 0, true);
+      e.set_eip(resumeEip);
+      let done = false;
+      for (let i = 0; i < 200000 && !done; i++) {
+        e.run(100000);
+        done = (e.get_eip() >>> 0) === 0;
+      }
+      assert(done, 'the threaded resume finished');
+      assert.deepStrictEqual(state(), diamond.offState,
+        'a mid-region side exit leaves exactly the state threaded execution would');
+    }
+
+    disarm();
+  }
+
   console.log('TREE_FOLD tests passed:',
     e.test_tree_matches(), 'blocks matched,',
     e.test_tree_runs(), 'super-op runs,',
