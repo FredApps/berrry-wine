@@ -823,10 +823,120 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
   // and off by default; making them compose means teaching the census's table
   // about SPEC, which is that file's business and not this one's.
   let treeFolds = 0;
+  const treeInlined = [];
   if (opts.treeFold && !opts.oneInsn) {
     const tf = opts.treeFold;
     const fixupAt = new Set(fixups.map(f => f.wordIndex));
+    // The ops of one block, as the fold wants them. Null when the arity table
+    // and the arena disagree about where the boundaries are, or when a word in
+    // the range is already a TREE (a handler the compiler has no arity for),
+    // which is why the leaf-call pass below runs before anything folds.
+    const blockOps = (b) => {
+      const start = blockStarts[b];
+      const end = b + 1 < blockStarts.length ? blockStarts[b + 1] : words.length;
+      const at = opsOf(start, end);
+      if (!at) return null;
+      return at.map((p) => {
+        const args = [];
+        for (let k = 1; k <= ARITY[words[p]]; k++) args.push(words[p + k]);
+        return { fn: words[p], args, at: p };
+      });
+    };
+
+    // --- LEAF-CALL INLINING, a PRE-PASS over the blocks -----------------------
+    //
+    // Before anything else folds, because a call tree reads the CALLEE's arena
+    // words and a callee that had already been folded would present one tree
+    // ordinal where its ops used to be. Running first makes the input to this
+    // pass the same words a fresh decode produces, in every compile, which is
+    // what keeps `treeKey` stable enough to match on the next one.
+    //
+    // What is required of the callee, and every one of these is checked here
+    // rather than trusted: the call is NEAR with a static target, the target is
+    // a block head in THIS program, that block ends in one `ret`/`ret imm16`,
+    // and everything in front of that `ret` -- in the callee and in the caller
+    // -- is one eligible run. The last condition is what rules out a callee
+    // containing a call, an `int`, an `iret`, an indirect jump or a segment
+    // change without a second list of opcodes to keep in step: none of them is
+    // in the fold set, so any of them ends the run and the whole shape declines.
+    const callFolded = new Set();
+    if (tf.calls) {
+      const ipIndex = new Map();
+      for (let i = 0; i < blockIps.length; i++) if (!ipIndex.has(blockIps[i])) ipIndex.set(blockIps[i], i);
+      for (let b = 0; b < blockStarts.length; b++) {
+        const start = blockStarts[b];
+        const callerOps = blockOps(b);
+        if (!callerOps || callerOps.length < 2) continue;
+        const call = callerOps[callerOps.length - 1];
+        if (!/^call_rel(32)?$/.test(HANDLERS[call.fn].name)) continue;
+        const cb = ipIndex.get(call.args[1]);
+        if (cb === undefined || cb === b) { tf.note('call: callee is not a block in this program'); continue; }
+        const calleeOps = blockOps(cb);
+        if (!calleeOps || !calleeOps.length) continue;
+        const ret = calleeOps[calleeOps.length - 1];
+        if (!/^ret(_imm)?(32)?$/.test(HANDLERS[ret.fn].name)) {
+          tf.note(`call: callee ends ${String(HANDLERS[ret.fn].name).split('_')[0]}, not ret`);
+          continue;
+        }
+        if (calleeOps.length > tf.maxCallOps) { tf.note('call: callee over the size cap'); continue; }
+        const run = callerOps.concat(calleeOps);
+        const body = callerOps.slice(0, -1).concat(calleeOps.slice(0, -1));
+        // `allowFault: false`: this lowers through region-jit like a loop tree,
+        // and a `(return)` out of the middle would skip the epilogue.
+        const br = eligibleRuns(body, treeBlockWidth(run),
+          { minOps: 1, why: tf.why, relax: tf.relax, allowFault: false });
+        if (!(br.length === 1 && br[0].length === body.length)) {
+          const covered = (br.length && br[0][0].at === body[0].at) ? br[0].length : 0;
+          const bad = body[covered];
+          tf.note(`call: body breaks at ${bad ? String(HANDLERS[bad.fn].name).split('_')[0] : 'nothing'}`);
+          continue;
+        }
+        const arity = call.at + 1 + ARITY[call.fn] - start - 1;
+        // The callee's guest bytes, so a store into them can decline the fast
+        // operand repair: the caller's tree holds those operands as constants
+        // and repairing the callee's own arena words in place would leave the
+        // two disagreeing. See dos-loop.js repairProg. An instruction is at
+        // most 15 bytes, so the last one cannot reach past `hi + 15`.
+        let lo = Infinity, hi = -Infinity;
+        for (const o of calleeOps) {
+          const ip = wordIp.get(o.at);
+          if (ip === undefined) continue;
+          if (ip < lo) lo = ip;
+          if (ip > hi) hi = ip;
+        }
+        if (lo === Infinity) { tf.note('call: callee has no instruction boundaries'); continue; }
+        const key = `call:${blockIps[b]}:${treeKey(callerOps)}::${treeKey(calleeOps)}`;
+        const ord = tf.at.get(key);
+        if (ord === undefined) {
+          if (tf.callBudgetLeft < calleeOps.length) { tf.note('call: inlining budget spent'); continue; }
+          tf.callBudgetLeft -= calleeOps.length;
+          tf.want(key, run, (codeBase + blockIps[b]) & mask, arenaBase + start * 4, undefined, {
+            headIp: blockIps[b], calleeIp: call.args[1], retIp: call.args[2],
+            callIdx: callerOps.length - 1, arity,
+            // The arena word holding the return address's arena target is the
+            // call's fourth operand, and the arena does not change shape -- so
+            // its distance from the tree's own first operand word is a constant
+            // the handler can load through `$ip`.
+            retArenaOff: (call.at + 4 - (start + 1)) * 4,
+          });
+          continue;
+        }
+        if (tf.arity.get(key) !== arity) { tf.note('arity disagrees with the installed tree'); continue; }
+        const flo = (codeBase + lo) & mask, fhi = (codeBase + hi + 15) & mask;
+        treeInlined.push(fhi >= flo ? [flo, fhi] : [0, mask]);
+        words[start] = tf.base + ord;
+        for (let i = 1; i < callerOps.length; i++) wordIp.delete(callerOps[i].at);
+        callFolded.add(b);
+        treeFolds++;
+        tf.folds++;
+        tf.foldedOps += run.length;
+        tf.callSites++;
+        tf.callOps += calleeOps.length;
+      }
+    }
+
     for (let b = 0; b < blockStarts.length; b++) {
+      if (callFolded.has(b)) continue;      // the block is one call tree already
       const start = blockStarts[b];
       const end = b + 1 < blockStarts.length ? blockStarts[b + 1] : words.length;
       const at = opsOf(start, end);
@@ -993,6 +1103,10 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
 
   return {
     words, blocks, fixups, unresolved, covered, wordIp, volatileCuts, calls, cyclic,
+    // Guest byte ranges whose ops are inlined into ANOTHER block's tree here.
+    // Their own arena words are still live (other callers enter them directly),
+    // so a store into them is not repairable in place -- see repairProg.
+    treeInlined: treeInlined.length ? treeInlined : null,
     unimplemented: [...unimplemented],
     // The decoder refused the very first instruction of the program's ENTRY
     // block, so the compiled entry is `end, ip` and running it moves the guest

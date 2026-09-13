@@ -958,6 +958,122 @@ const CASES = {
       w(0x89, 0xF7);             // mov di,si
     },
   },
+
+  // --- leaf-call inlining (Design B, round 7) ------------------------------
+  //
+  // Each of these lays its callee INSIDE the loop body, jumped over, so the
+  // caller block, the callee block and the return landing are all in the one
+  // program `program()` builds. The caller block's last op is the `call`, which
+  // is what the pre-pass in compile.js keys on; the ops before it plus the
+  // callee's ops up to its `ret` are the run it hands to the tree builder.
+  //
+  // The screen assertion is the whole point: an inlined callee that got SP, the
+  // return address or the shadow stack even slightly wrong does not come back
+  // to the right instruction, and the seven printed words say so.
+
+  // The plain shape: a two-op leaf, called from inside a hot loop.
+  leafcall: {
+    folds: true, calls: 1,
+    body: ({ w, label, rel8, rel16 }) => {
+      w(0xEB, rel8('lcover'));   // jmp lcover
+      label('lccallee');
+      w(0x01, 0xD8);             // add ax,bx
+      w(0x31, 0xC1);             // xor cx,ax
+      w(0xC3);                   // ret
+      label('lcover');
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xBB, 0x78, 0x56);       // mov bx,5678h
+      w(0xE8, ...rel16('lccallee'));
+    },
+  },
+
+  // ...and the same thing ending in `ret imm16`, which adjusts SP on the way
+  // out. `region-jit.js` only grew a lowering for `ret_imm` because of this
+  // fold -- `chainFrom` never walks through one, so no profiled region had ever
+  // contained one before. The `push dx` is what the `ret 2` cleans up: if the
+  // lowering forgets the immediate, SP drifts by two every trip and the
+  // program returns somewhere else long before it prints anything.
+  retimm: {
+    folds: true, calls: 1,
+    body: ({ w, label, rel8, rel16 }) => {
+      w(0xEB, rel8('riover'));   // jmp riover
+      label('ricallee');
+      w(0x01, 0xD8);             // add ax,bx
+      w(0x31, 0xC1);             // xor cx,ax
+      w(0xC2, 0x02, 0x00);       // ret 2
+      label('riover');
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xBB, 0x78, 0x56);       // mov bx,5678h
+      w(0x52);                   // push dx   <- the two bytes `ret 2` drops
+      w(0xE8, ...rel16('ricallee'));
+    },
+  },
+
+  // A callee that can FAULT mid-body is never inlined. The pre-pass asks
+  // `eligibleRuns` for `allowFault: false`, so the `div` ends the run and the
+  // caller+callee no longer form the single run the fold requires. That refusal
+  // is the guarantee: a `#DE` inside an inlined callee would leave through a
+  // `(return)` and skip the epilogue that publishes where the guest goes next,
+  // exactly as it would in a loop tree (see `divloop`).
+  callfault: {
+    folds: null, calls: 0,
+    body: ({ w, label, rel8, rel16 }) => {
+      w(0xEB, rel8('cfover'));   // jmp cfover
+      label('cfcallee');
+      w(0xBA, 0x00, 0x00);       // mov dx,0
+      w(0xB9, 0x03, 0x00);       // mov cx,3
+      w(0xF7, 0xF1);             // div cx    <- fault-capable, ends the run
+      w(0xC3);                   // ret
+      label('cfover');
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xE8, ...rel16('cfcallee'));
+    },
+  },
+
+  // The negative the task names: a callee containing an `int`. An interrupt
+  // changes CS:IP and the shadow stack from under the tree, so the run stops at
+  // it and the call site is left alone. AH=30h is the DOS version, which is a
+  // constant here -- a date or a keystroke would make the two arms disagree for
+  // reasons that have nothing to do with the fold.
+  callint: {
+    folds: null, calls: 0,
+    body: ({ w, label, rel8, rel16 }) => {
+      w(0xEB, rel8('ciover'));   // jmp ciover
+      label('cicallee');
+      w(0xB4, 0x30);             // mov ah,30h
+      w(0xCD, 0x21);             // int 21h
+      w(0xC3);                   // ret
+      label('ciover');
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xE8, ...rel16('cicallee'));
+    },
+  },
+
+  // SELF-MODIFYING CODE, aimed at the callee's bytes rather than the caller's.
+  // The caller rewrites the immediate of the `add ax,imm16` inside the callee
+  // on every trip, so once the tree is installed every trip must notice that
+  // the bytes the tree was built from have changed. `dos-loop.js` refuses the
+  // fast in-place operand repair for any program carrying a `treeInlined`
+  // range that the store reaches, and clears the plan cache when one is
+  // registered; without either, the folded arm keeps adding the immediate the
+  // callee had at install time and prints a different sum.
+  // `calls` is a MINIMUM here and an exact count everywhere else: the store
+  // invalidates the program on every trip, so the site is re-inlined once per
+  // recompile and the total is a function of how the installs batched.
+  callsmc: {
+    folds: null, calls: 1, callsAtLeast: true,
+    body: ({ w, label, rel8, rel16, at }) => {
+      w(0xEB, rel8('csover'));   // jmp csover
+      label('csimm');
+      w(0x05, 0x00, 0x00);       // add ax,imm16   <- imm at csimm+1
+      w(0xC3);                   // ret
+      label('csover');
+      const imm = (at('csimm') || 0x0100) + 1;
+      w(0x8B, 0x1E, COUNTER & 0xFF, COUNTER >> 8);   // mov bx,[COUNTER]
+      w(0x89, 0x1E, imm & 0xFF, imm >> 8);           // mov [csimm+1],bx
+      w(0xE8, ...rel16('csimm'));
+    },
+  },
 };
 
 function run(com, extra) {
@@ -977,6 +1093,10 @@ const trees = (log) => +(/tree fold: (\d+) handler/.exec(log) || [0, 0])[1];
 // loop inside themselves (`--tree-fold` item 3). Zero unless a self-loop block
 // was folded whole, which is a different claim from "something folded".
 const loops = (log) => +(/(\d+) loop handler\(s\)/.exec(log) || [0, 0])[1];
+// How many CALL SITES had their leaf callee inlined into the caller's tree.
+// Distinct from `folds` for the same reason `loops` is: a program can fold
+// plenty of straight-line runs and inline nothing.
+const calls = (log) => +(/tree calls: (\d+) call site/.exec(log) || [0, 0])[1];
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-tree-fold-'));
 const summary = [];
@@ -1001,7 +1121,11 @@ for (const [name, c] of Object.entries(CASES)) {
     `${name}: the fold computed something else\n  plain  ${a}\n  folded ${b}`);
 
   const n = folds(on);
-  if (c.folds) {
+  if (c.folds === null) {
+    // `folds: null` -- this case is about something OTHER than the fold count
+    // (the leaf-call cases: what matters there is `calls`, and the scaffolding
+    // around the callee is free to fold or not).
+  } else if (c.folds) {
     assert.ok(n > 0, `${name}: nothing folded, but this shape must fold:\n${on}`);
     assert.ok(trees(on) > 0, `${name}: ${n} substitution(s) but no handler generated:\n${on}`);
   } else {
@@ -1010,6 +1134,51 @@ for (const [name, c] of Object.entries(CASES)) {
   }
   // ...and the fold must never fire with the flag off, whatever else changes.
   assert.strictEqual(folds(off), 0, `${name}: the plain arm folded ${folds(off)} run(s)`);
+  assert.strictEqual(calls(off), 0, `${name}: the plain arm inlined a call site`);
+
+  // LEAF-CALL INLINING. `calls` is an exact count because these cases each
+  // contain exactly one `call`, so "1" says the pre-pass matched that site and
+  // "0" says it refused it -- neither can be satisfied by some other block in
+  // the program folding.
+  let callNote = '';
+  if (c.calls !== undefined) {
+    if (c.callsAtLeast) {
+      assert.ok(calls(on) >= c.calls,
+        `${name}: expected at least ${c.calls} inlined call site(s), got ${calls(on)}:\n${on}`);
+    } else {
+      assert.strictEqual(calls(on), c.calls,
+        `${name}: expected ${c.calls} inlined call site(s), got ${calls(on)}:\n${on}`);
+    }
+    callNote = ` (${calls(on)} call)`;
+  }
+  if (c.calls) {
+    // The A/B partner, so the screen agreement above is attributable. With
+    // `--no-tree-fold-calls` every other fold still runs and the call site is
+    // left as a real transfer.
+    const nc = run(com, ['--tree-fold', '--tree-fold-batch=1', '--no-tree-fold-calls']);
+    assert.strictEqual(calls(nc), 0,
+      `${name}: --no-tree-fold-calls still inlined ${calls(nc)} site(s):\n${nc}`);
+    assert.strictEqual(screen(nc), a,
+      `${name}: the no-calls arm computed something else\n  plain ${a}\n  no-calls ${screen(nc)}`);
+
+    // AN INTERRUPT FALLING DUE MID-CALLEE. The tree keeps the call's
+    // return-address push and the ret's pop as real architectural stores, so a
+    // slice that is cut, or a vector taken, anywhere inside the inlined body
+    // has to find exactly the stack the interpreter would have left. 997 is a
+    // prime well under the callee's length in dispatches, so the due date
+    // lands at a different point in the body on nearly every trip rather than
+    // repeatedly at one safe boundary.
+    const irqArgs = ['--irq-every=997'];
+    const irqOff = run(com, irqArgs);
+    const irqOn = run(com, ['--tree-fold', '--tree-fold-batch=1', ...irqArgs]);
+    assert.ok(/exited=true/.test(irqOn), `${name}: the irq folded arm did not exit:\n${irqOn}`);
+    assert.strictEqual(screen(irqOn), screen(irqOff),
+      `${name}: with an interrupt due mid-callee the arms disagree\n`
+      + `  plain  ${screen(irqOff)}\n  folded ${screen(irqOn)}`);
+    assert.ok(calls(irqOn) > 0,
+      `${name}: the irq arm inlined nothing, so it is not testing the inline:\n${irqOn}`);
+    callNote += ' (irq ok)';
+  }
 
   // A case that only folds because of a relaxation has to STOP folding when the
   // relaxation is turned off. Without this the four partial cases would pass on
@@ -1083,7 +1252,7 @@ for (const [name, c] of Object.entries(CASES)) {
     loopNote = ` (${loops(on)} loop)`;
   }
 
-  summary.push(`${name} ${a} ${c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}${loopNote}${exact}`);
+  summary.push(`${name} ${a} ${c.folds === null ? `${n} fold(s)` : c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}${callNote}${loopNote}${exact}`);
 }
 // --- the hotness gate ------------------------------------------------------
 //

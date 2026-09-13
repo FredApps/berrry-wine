@@ -591,6 +591,95 @@ function buildLoopTree(run, headIp, name) {
   };
 }
 
+// A CALLER BLOCK WITH ITS LEAF CALLEE INLINED (Design B, in miniature).
+//
+// `call` and `ret` were the two biggest NAMED entries in the decline histogram
+// -- 6478 and 2858 across the nine measured programs -- and they are not a
+// missing relaxation. They are a control-flow shape: a straight-line block that
+// ends in a near call, a callee that does some arithmetic and returns, and two
+// block transfers plus 2n dispatches paid for the round trip.
+//
+// NOTHING ARCHITECTURAL IS ELIDED, and that is the whole correctness argument:
+//
+//   * the call's return-address PUSH is still `$push16`/`$push32`, in place,
+//     with the same guest value. SP and the stack bytes are the interpreter's
+//     at every point inside the callee.
+//   * the SHADOW-STACK record is still `$rpush`, and its arena operand is read
+//     LIVE out of the arena word it has always lived in rather than baked in as
+//     a constant. That word is a fixup, resolved after this pass runs and
+//     different in every compile, so a constant would be a lie in exactly the
+//     runs the tree is reused in -- and a zero is worse than a lie: `$rpush`
+//     skips the entry, the inlined `ret`'s `$rpop` then misses on the CALLER's
+//     frame, and a miss empties the whole shadow stack. The arena does not
+//     change shape (see the header), so the offset from `$ip` to that word is
+//     the same in every compile the tree substitutes into.
+//   * the `ret` is still a `$pop16`/`$pop32` and a `$rpop`, and the region
+//     LEAVES there: `splitExit` publishes whatever address came off the guest
+//     stack as `$gip` and the epilogue resolves `$ip` from it. So a callee that
+//     rewrote its own return address, or returned somewhere else entirely, is
+//     not a special case -- the tree never assumes where the `ret` goes, it
+//     only removes the two dispatches and the two block transfers of getting
+//     there. What is saved is the round trip, not the frame.
+//   * a fault, an expired slice or an interrupt due date inside the callee
+//     leaves through the same `edge()` boundary test every other lowered
+//     transfer takes, so the guest stops at the instruction it would have
+//     stopped at unfolded.
+//
+// SELF-MODIFYING CODE is the one thing this needs that the other two folds do
+// not. The callee's arena words are NOT overwritten -- other callers still
+// enter it directly -- so `repairProg` would happily patch a callee operand in
+// place while the caller's tree holds the old value as a constant. compile.js
+// records the callee's guest bytes in `prog.treeInlined` and dos-loop.js
+// declines the fast repair for a store that reaches them, which falls back to
+// dropping the program: always correct, and reported.
+function buildCallTree(run, spec, name) {
+  const { buildRegion, fallThroughIp } = require('./region-jit');
+  const ops = run.map(o => ({ fn: o.fn, name: HANDLERS[o.fn].name, args: o.args, at: o.at }));
+  const nexts = ops.map(o => fallThroughIp(o));
+  // The call's edge is the callee, not the word behind it; the `ret`'s is the
+  // return site, which is where the region ends.
+  nexts[spec.callIdx] = spec.calleeIp;
+  nexts[nexts.length - 1] = spec.retIp;
+  let r;
+  try {
+    r = buildRegion(ops, nexts, spec.headIp, name, false, [], []);
+  } catch (e) {
+    return { declined: `call: build threw: ${e && e.message ? e.message : String(e)}` };
+  }
+  if (!r || !r.body) return { declined: `call: ${(r && r.declined) || 'no body'}` };
+  if (r.unlowered) {
+    return { declined: `call: ${r.unlowered} transfer(s) not lowered`
+      + (r.unloweredWhy && r.unloweredWhy.length ? ` (${r.unloweredWhy[0]})` : '') };
+  }
+  // THE SHADOW-STACK PUSH, REPAIRED. `stripArenaOperands` zeroed the arena
+  // operand (it was a zero already -- fixups resolve after this pass), so the
+  // lowering emitted the push with a literal 0. Read the real one out of the
+  // arena instead. `$ip` is the tree's first operand word on entry and nothing
+  // in front of the call writes it -- every op there passed `escapes()`, which
+  // refuses a `$ip` write outright -- so the offset is a constant.
+  const want = `(call $rpush (i32.const ${spec.retIp}) (i32.const 0))`;
+  const idx = r.body.indexOf(want);
+  if (idx < 0 || r.body.indexOf(want, idx + want.length) >= 0) {
+    return { declined: 'call: the shadow-stack push is not where the lowering puts it' };
+  }
+  if (/\(global\.set \$ip /.test(r.body.slice(0, idx))) {
+    return { declined: 'call: $ip is written before the shadow-stack push' };
+  }
+  const body = r.body.slice(0, idx)
+    + `(call $rpush (i32.const ${spec.retIp})`
+    + ` (i32.load offset=${spec.retArenaOff} (global.get $ip)))`
+    + r.body.slice(idx + want.length);
+  return {
+    tree: { name, locals: r.locals || '', body },
+    arity: spec.arity, ops: run.length, call: true,
+    // Two block transfers, not one: the call and the return.
+    transfers: 2,
+    promoted: r.promoted ? r.promoted.length : 0,
+    promoteDeclined: r.declined || null,
+    bytes: body.length,
+  };
+}
+
 // --- the live driver ---------------------------------------------------------
 
 // A fold cannot be installed by writing a word: the handler has to EXIST in the
@@ -678,6 +767,22 @@ class TreeFolder {
     // instead of one per iteration. Off switch for the A/B, since this is the
     // one relaxation that changes which arena words the guest re-enters.
     loops = true,
+    // Inline a LEAF callee into the caller's tree (buildCallTree above). On
+    // within `--tree-fold`; `--no-tree-fold-calls` is the A/B arm.
+    calls = true,
+    // The size cap on one inlined callee, in guest ops, and the budget on the
+    // total inlined across the run. Neither is a correctness bound -- both are
+    // there because a handler is wasm text and a module build is the gate's
+    // whole cost, so a 300-op callee inlined at forty call sites is 12000 ops
+    // of generated code for a fold whose value is two block transfers.
+    maxCallOps = 32, callBudget = 2000,
+    // VALIDATING THE PAYOFF MODEL. With `--tree-fold-stats` the run measures a
+    // second, DISJOINT window after the install -- `statsSkip` dispatches to
+    // let the install settle, then `statsWindow` of counting -- and reports the
+    // projection against the entries each tree actually took. Off by default:
+    // it forces the per-handler histogram on, which the fold does not otherwise
+    // need.
+    stats = false, statsSkip = 250e3, statsWindow = 5e6,
     // The shared handler-table tail (tools/toyvm/extras.js). The region JIT
     // appends to the same one, which is what lets `--tree-fold` and
     // `--region-jit` be on together. A standalone folder gets its own.
@@ -686,7 +791,8 @@ class TreeFolder {
     Object.assign(this, {
       session, vm, machine, portIn, portOut, build, repFast,
       maxTrees, maxInstalls, minOps, log, batchMin, batchWait,
-      hot, warmFrom, warmFor, hits, loops,
+      hot, warmFrom, warmFor, hits, loops, calls, maxCallOps, callBudget,
+      statsOn: stats, statsSkip, statsWindow,
       probeEvery, quietFor, minWarm, windowTrace, settleFor, minPayoff,
       relax: relax instanceof Set ? relax : new Set(relax),
       extras: extras || new (require('./extras').Extras)(),
@@ -709,7 +815,18 @@ class TreeFolder {
     this.treeOrd = [];                // ...and each one's ordinal in the SHARED tail
     this.treeOps = [];                // guest ops each of those stands for
     this.treeIsLoop = [];             // ...and whether each one loops in place
+    this.treeIsCall = [];             // ...or inlines a leaf callee
+    this.treeSaves = [];              // ...and what one entry into it is worth
+    this.treeHits = [];               // ...against the window's own entry count
     this.treeLoops = 0;
+    this.treeCalls = 0;
+    this.callSites = 0;               // call sites folded, over the whole run
+    this.callOps = 0;                 // callee ops inlined at them
+    this.callBudgetLeft = callBudget;
+    // The stats window: `null` until the install, then two counter snapshots
+    // `statsWindow` dispatches apart.
+    this.statsAt = 0; this.statsFrom = null; this.statsBase = null;
+    this.statsDelta = null; this.statsSpan = 0;
     this.at = new Map();              // key -> ordinal
     this.arity = new Map();           // key -> operand words the handler steps over
     this.pendingSites = new Map();    // lin -> true, blocks to drop at the next install
@@ -795,16 +912,24 @@ class TreeFolder {
   // block (the loop fold above); undefined for an ordinary straight-line run.
   // It rides with the run because it is the one thing `buildLoopTree` needs
   // that the arena words do not carry.
-  want(key, run, lin, addr, loopHead) {
+  // `callSpec` is the same for the leaf-call fold: everything `buildCallTree`
+  // needs that the caller block's own arena words do not carry (the callee's
+  // guest ip, the return site, where the call sits in the run).
+  want(key, run, lin, addr, loopHead, callSpec) {
     if (this.at.has(key) || this.wantedKeys.has(key)) {
       if (lin !== undefined) this.pendingSites.set(lin, true);
       return;
     }
+    // How many BLOCK TRANSFERS a tree over this run removes per entry, on top
+    // of its n-1 dispatches. A straight-line run removes none -- it stops in
+    // front of the terminator by construction. A loop tree absorbs its back
+    // edge, and a call tree absorbs the call and the return.
+    const transfers = callSpec ? 2 : loopHead === undefined ? 0 : 1;
     if (this.phase === 'warm') {
       let c = this.candidates.get(key);
       if (!c) {
         if (this.candidates.size >= this.maxTrees * 8) { this.capped = true; return; }
-        c = { run, lins: new Set(), addrs: new Set() };
+        c = { run, lins: new Set(), addrs: new Set(), transfers };
         this.candidates.set(key, c);
       }
       if (lin !== undefined) c.lins.add(lin);
@@ -843,7 +968,8 @@ class TreeFolder {
       this.capped = true;
       return;
     }
-    this.wantedKeys.set(key, { run, loopHead, hits: this.hotHits.get(lin) || 0 });
+    this.wantedKeys.set(key,
+      { run, loopHead, callSpec, transfers, hits: this.hotHits.get(lin) || 0 });
     this.sinceWant = 0;
     if (lin !== undefined) this.pendingSites.set(lin, true);
   }
@@ -923,7 +1049,7 @@ class TreeFolder {
       // run itself is thrown away (see above) and only its LENGTH is used, so
       // the instability that makes it useless as a key does not matter: a block
       // that folded eleven ops at 4M folds about eleven at 10M.
-      this.preProjected += n * Math.max(0, c.run.length - 1);
+      this.preProjected += n * (Math.max(0, c.run.length - 1) + (c.transfers || 0));
     }
     // The hot set is finite and fully known now, so there is nothing left to
     // wait for: the second install only has to let the drop's recompiles land.
@@ -1010,6 +1136,75 @@ class TreeFolder {
     if (this.phase === 'closed' && this.profilerLive
         && dispatched >= this.closedAt + this.settleFor) this.settled = true;
     if (this.wantedKeys.size) this.sinceWant++;
+    if (this.statsOn && this.installs > 0) this.sampleStats(dispatched);
+  }
+
+  // The counter array for the SHARED handler tail, or null if this build has no
+  // histogram in it. Read fresh every time: an install swaps the instance, and
+  // a view into the previous one's memory is a census of a machine that has
+  // stopped.
+  treeCounters() {
+    if (!this.vm || !this.vm.mem || !this.extras.length) return null;
+    try {
+      return new Uint32Array(this.vm.mem.buffer,
+        isa.HIST_BASE + this.base * 4, this.extras.length);
+    } catch (e) { return null; }
+  }
+
+  // THE SECOND, DISJOINT WINDOW. The projection is made on counts from the
+  // PROFILE window and spent on a batch that runs afterwards, so the only
+  // honest check is to measure the same trees over a later stretch of the same
+  // run and compare RATES -- entries per dispatch, which is what makes two
+  // windows of different lengths comparable.
+  sampleStats(dispatched) {
+    if (this.statsDelta) return;
+    // The install itself is the origin: the trees are in the table from here.
+    if (!this.statsAt) this.statsAt = dispatched;
+    if (this.statsFrom === null) {
+      if (dispatched < this.statsAt + this.statsSkip) return;
+      const c = this.treeCounters();
+      if (!c) { this.statsOn = false; return; }
+      this.statsFrom = dispatched;
+      this.statsBase = Uint32Array.from(c);
+      return;
+    }
+    if (dispatched < this.statsFrom + this.statsWindow) return;
+    const c = this.treeCounters();
+    if (!c) { this.statsOn = false; return; }
+    this.statsSpan = dispatched - this.statsFrom;
+    this.statsDelta = this.treeOrd.map((ord, i) =>
+      ((c[ord] >>> 0) - (this.statsBase[ord] >>> 0)) >>> 0);
+  }
+
+  // Projected against actual, per tree, plus the top-k precision the doc
+  // reports. Returns null when the window never completed -- a run that ended
+  // before it closed has no measurement, and reporting the half of it that ran
+  // would be reporting a shorter window as if it were the same one.
+  payoffReport(k = 10) {
+    if (!this.statsDelta || !this.closedAt || !this.statsSpan) return null;
+    const rows = this.treeOrd.map((ord, i) => ({
+      i, ord, ops: this.treeOps[i], save: this.treeSaves[i],
+      loop: this.treeIsLoop[i], call: this.treeIsCall[i],
+      // Per million dispatches, so the two windows are the same unit.
+      projected: this.treeHits[i] * this.treeSaves[i] / this.closedAt * 1e6,
+      actual: this.statsDelta[i] * this.treeSaves[i] / this.statsSpan * 1e6,
+      entries: this.statsDelta[i],
+    }));
+    const byP = [...rows].sort((a, b) => b.projected - a.projected);
+    const byA = [...rows].sort((a, b) => b.actual - a.actual);
+    const kk = Math.min(k, rows.length);
+    const top = new Set(byA.slice(0, kk).map(r => r.i));
+    const hit = byP.slice(0, kk).filter(r => top.has(r.i)).length;
+    return {
+      rows: byP, k: kk, precision: kk ? hit / kk : 0,
+      span: this.statsSpan, from: this.statsFrom, window: this.closedAt,
+      projected: rows.reduce((s, r) => s + r.projected, 0),
+      actual: rows.reduce((s, r) => s + r.actual, 0),
+      // How many trees the window said were worth something and the second
+      // window never entered at all. This is the number the old ranking was
+      // silently wrong about on CYCLE.
+      dead: rows.filter(r => r.projected > 0 && r.entries === 0).length,
+    };
   }
 
   // A MODULE BUILD IS THE ONLY THING THE GATE COSTS, so nothing here installs
@@ -1051,13 +1246,14 @@ class TreeFolder {
     const built = [];
     for (const [key, w] of this.wantedKeys) {
       const name = `tree_${this.trees.length + built.length}`;
-      const r = w.loopHead === undefined
-        ? buildTree(w.run, name) : buildLoopTree(w.run, w.loopHead, name);
+      const r = w.callSpec ? buildCallTree(w.run, w.callSpec, name)
+        : w.loopHead === undefined
+          ? buildTree(w.run, name) : buildLoopTree(w.run, w.loopHead, name);
       if (r.declined) {
         this.declinedTrees.set(r.declined, (this.declinedTrees.get(r.declined) || 0) + 1);
         continue;
       }
-      built.push({ key, ...r, hits: w.hits || 0 });
+      built.push({ key, transfers: w.transfers || 0, ...r, hits: w.hits || 0 });
     }
     this.wantedKeys.clear();
     this.sinceWant = 0;
@@ -1070,13 +1266,25 @@ class TreeFolder {
     // batch projected to remove less than `minPayoff` of the window's own
     // dispatches is not built at all.
     //
-    // The projection is `entries * (ops - 1)` summed over the batch, counted on
-    // the window's numbers: exactly the arithmetic `tree entries:` reports
-    // afterwards, run forward on the counts the window already has. It is a
-    // LOWER bound for a loop tree, whose iterations are invisible from outside
-    // -- which is the right way for it to be wrong, since it biases toward
-    // building the loop folds that are worth the most.
-    this.projected = built.reduce((s, b) => s + b.hits * Math.max(0, b.ops - 1), 0);
+    // The projection is PROJECTED SAVINGS, not projected dispatches: per entry,
+    // the `ops - 1` trips through `$next` the tree does not take PLUS the block
+    // transfers it absorbs, summed over the batch on the window's own counts.
+    //
+    // The transfer term is what round 7 added, and it is not a rounding
+    // correction. `tools/bench-loops.js` prices a dispatch at ~8ns and a block
+    // transfer at ~9ns ON TOP of one, so a call tree's two absorbed transfers
+    // are worth about as much as four more folded ops -- and a four-op leaf
+    // call, ranked on dispatches alone, projects 3 where it is worth 5. The two
+    // folds whose value is mostly transfer (loop, call) were therefore the two
+    // the old ranking pushed to the bottom.
+    //
+    // It is still a LOWER bound for a loop tree, whose iterations are invisible
+    // from outside -- which is the right way for it to be wrong, since it
+    // biases toward building the loop folds that are worth the most.
+    // `--tree-fold-stats` measures projected against actual in a second,
+    // disjoint window; the table is in docs/toyvm-tree-fold.md.
+    this.projected = built.reduce(
+      (s, b) => s + b.hits * (Math.max(0, b.ops - 1) + (b.transfers || 0)), 0);
     if (this.minPayoff > 0 && this.phase === 'closed'
         && this.projected < this.minPayoff * this.closedAt) {
       this.refusedPayoff = this.projected;
@@ -1108,7 +1316,14 @@ class TreeFolder {
       // same total, so the headline number stays a number and does not quietly
       // become a lower bound.
       if (b.loop) this.treeLoops++;
+      if (b.call) this.treeCalls++;
       this.treeIsLoop.push(!!b.loop);
+      this.treeIsCall.push(!!b.call);
+      // What one entry into this handler is projected to save, and how often
+      // the window said it would be entered. `--tree-fold-stats` reads both
+      // back against the counters a second window measures.
+      this.treeSaves.push(Math.max(0, b.ops - 1) + (b.transfers || 0));
+      this.treeHits.push(b.hits || 0);
       // THE ORDINAL COMES FROM THE SHARED ALLOCATOR, not from this list's
       // length. tools/toyvm/extras.js owns the handler table's tail because
       // the region JIT appends to it too, and `--region-jit` is the page
@@ -1233,6 +1448,9 @@ class TreeFolder {
       installs: this.installs, trees: this.trees.length, folds: this.folds,
       base: this.base, treeOps: [...this.treeOps],
       treeIsLoop: [...this.treeIsLoop], treeLoops: this.treeLoops, loops: this.loops,
+      treeIsCall: [...this.treeIsCall], treeCalls: this.treeCalls, calls: this.calls,
+      callSites: this.callSites, callOps: this.callOps,
+      payoff: this.payoffReport(),
       // Where each tree sits in the SHARED tail, which is what a counter array
       // read at `base` is indexed by. Not the same as its index in `trees` as
       // soon as the region JIT has appended anything.
@@ -1254,6 +1472,7 @@ const now = () => (typeof performance !== 'undefined' && performance.now
   ? performance.now() : Number(process.hrtime.bigint() / 1000n) / 1000);
 
 module.exports = {
-  TreeFolder, eligibleRuns, buildTree, treeKey, blockWidth, opAt, MIN_OPS,
+  TreeFolder, eligibleRuns, buildTree, buildLoopTree, buildCallTree,
+  treeKey, blockWidth, opAt, MIN_OPS,
   CLOCK_READERS, ESCAPES, RELAXATIONS, RELAX_ALL,
 };

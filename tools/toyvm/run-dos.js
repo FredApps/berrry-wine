@@ -370,6 +370,13 @@ async function runDos(o) {
   // dispatch (22% on BRW, measured), and the install that puts the trees in
   // takes it back out again. See docs/toyvm-tree-fold.md, "The hotness gate".
   const foldHot = treeFold && treeFold !== true && treeFold.hot > 0 ? treeFold.hot : 0;
+  // `--tree-fold-stats` measures the payoff model against the per-tree entry
+  // counters, so it needs the handler histogram whether or not one was asked
+  // for. Forced here rather than left to the caller: a run that quietly
+  // reported no measurement because a second flag was missing is worse than a
+  // run that pays for a counter.
+  const foldStats = !!(treeFold && treeFold !== true && treeFold.stats);
+  const wantHist = hist > 0 || histPairs > 0 || foldStats;
   if (foldHot && variant !== 'tailcall') {
     throw new Error(`--tree-fold-hot profiles with --block-hits, which only the tailcall `
       + `shell emits, not ${variant}`);
@@ -377,7 +384,7 @@ async function runDos(o) {
   const vm = await makeVm(variant, {
     portIn: (p, w) => machine.portIn(p, w),
     portOut: (p, v, w) => machine.portOut(p, v, w),
-    hist: hist > 0 || histPairs > 0,
+    hist: wantHist,
     ipHist: blockHits || foldHot > 0,
     lazyFlags, fuseCond, regions: jitRegions,
   });
@@ -507,7 +514,7 @@ async function runDos(o) {
       // NOTE the `ipHist: blockHits` -- NOT `blockHits || foldHot`. The rebuild
       // is where the gate's profiler goes away: the guest lands on a module
       // with the trees in it and the per-dispatch counter gone.
-      build: { hist: hist > 0 || histPairs > 0, ipHist: blockHits, lazyFlags, fuseCond },
+      build: { hist: wantHist, ipHist: blockHits, lazyFlags, fuseCond },
       portIn: (p, w) => machine.portIn(p, w),
       portOut: (p, v, w) => machine.portOut(p, v, w),
       log,
@@ -733,7 +740,7 @@ async function runDos(o) {
       // `lazyFlags`/`fuseCond` change what a handler MEANS. Rebuilding on the
       // defaults happened to agree with a default run and would have swapped
       // `--no-lazy` or `--handler-hist` onto a different machine mid-flight.
-      build: { hist: hist > 0 || histPairs > 0, ipHist: blockHits, lazyFlags, fuseCond },
+      build: { hist: wantHist, ipHist: blockHits, lazyFlags, fuseCond },
       portIn: (p, w) => machine.portIn(p, w),
       portOut: (p, v, w) => machine.portOut(p, v, w),
       // In-process and blocking, which is the right choice HERE: a headless run
@@ -854,7 +861,7 @@ async function runDos(o) {
     // Read over the WHOLE shared tail, not over the fold's own tree count: the
     // region JIT appends to the same table, so a tree's counter sits at its
     // ordinal and the two stop agreeing the moment a region is installed.
-    treeEntries: (folder && folder.trees.length && (hist > 0 || histPairs > 0))
+    treeEntries: (folder && folder.trees.length && wantHist)
       ? [...new Uint32Array(vm.mem.buffer,
         isa.HIST_BASE + folder.base * 4, folder.extras.length)]
       : null,
@@ -1154,6 +1161,21 @@ async function main() {
       // one relaxation that changes which arena words the guest re-enters --
       // everything else here is a substitution the guest cannot observe.
       loops: !flag('no-tree-fold-loops'),
+      // `--no-tree-fold-calls`: the A/B arm for leaf-call inlining, which is on
+      // within `--tree-fold`. `call` and `ret` were the two biggest named
+      // entries in the decline histogram before it existed.
+      calls: !flag('no-tree-fold-calls'),
+      // ...and its two size limits. Neither is a correctness bound; see the
+      // constructor in tree-fold.js.
+      maxCallOps: count(arg('tree-fold-max-call-ops'), 32),
+      callBudget: count(arg('tree-fold-call-budget'), 2000),
+      // `--tree-fold-stats[=N]`: measure the payoff model against itself in a
+      // second, disjoint window of N dispatches after the install (default 5M),
+      // and print projected against actual per tree. Forces the per-handler
+      // histogram on, which is where the entry counts come from.
+      stats: flag('tree-fold-stats') || arg('tree-fold-stats') !== undefined,
+      statsWindow: count(arg('tree-fold-stats'), 5e6),
+      statsSkip: count(arg('tree-fold-stats-skip'), 250e3),
       fromEnv: !process.argv.slice(2).includes('--tree-fold'),
       log: flag('tree-fold-verbose') ? console.log : (() => {}),
     } : null,
@@ -1464,6 +1486,7 @@ async function main() {
       ? `\n  tree fold: ${r.tree.trees} handler(s) over ${r.tree.installs} install(s), `
         + `${r.tree.folds} substitution(s) covering ${r.tree.foldedOps} guest ops, `
         + `${r.tree.treeLoops ? `${r.tree.treeLoops} loop handler(s), ` : ''}`
+        + `${r.tree.treeCalls ? `${r.tree.treeCalls} leaf-call handler(s), ` : ''}`
         + `${(r.tree.watBytes / 1024).toFixed(1)}KB of WAT`
         + `${r.tree.capped ? ' (capped)' : ''}`
         // The gate's own ledger. `hottest` is the load-bearing number when a
@@ -1513,6 +1536,35 @@ async function main() {
             + `${removed} $next trip(s) removed `
             + `(${(100 * removed / r.dispatched).toFixed(2)}% of the dispatches retired)`
             + (loopHits ? `, ${loopHits} loop tree dispatch(es) (iterations not counted)` : '');
+        })() : '')
+        // LEAF-CALL INLINING, as a count of what it actually reached: how many
+        // call sites got a tree and how many callee ops rode into them. A zero
+        // here with a nonzero `call:` line in the declines below is the
+        // interesting case -- the shape was found and refused, and the decline
+        // names which op refused it.
+        + (r.tree.calls
+          ? `\n  tree calls: ${r.tree.callSites} call site(s) inlined, `
+            + `${r.tree.callOps} callee op(s)`
+          : '\n  tree calls: off')
+        // PROJECTED AGAINST ACTUAL, from `--tree-fold-stats`: the ranking is
+        // made on the profile window's counts and spent on a batch that runs
+        // afterwards, so the only honest check is a second, disjoint window
+        // over the same run. Rates, per million dispatches, because the two
+        // windows are different lengths.
+        + (r.tree.payoff ? (() => {
+          const p = r.tree.payoff;
+          const rows = p.rows.slice(0, 12).map((t) => `\n    #${t.i}`
+            + `${t.loop ? ' loop' : t.call ? ' call' : '     '}`
+            + ` ${String(t.ops).padStart(3)} ops x${t.save} saved`
+            + `  projected ${t.projected.toFixed(1)}/Mdisp`
+            + `  actual ${t.actual.toFixed(1)}/Mdisp`
+            + `  (${t.entries} entries)`).join('');
+          return `\n  tree payoff: window ${p.window} dispatches -> measured over `
+            + `${p.span} from ${p.from}; projected ${p.projected.toFixed(1)}/Mdisp `
+            + `vs actual ${p.actual.toFixed(1)}/Mdisp `
+            + `(x${(p.actual / (p.projected || 1)).toFixed(2)}), `
+            + `top-${p.k} precision ${(100 * p.precision).toFixed(0)}%, `
+            + `${p.dead} projected tree(s) never entered` + rows;
         })() : '')
         + (r.tree.why.size
           ? `\n  tree declines: ` + [...r.tree.why].sort((a, b) => b[1] - a[1])

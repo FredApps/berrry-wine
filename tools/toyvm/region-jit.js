@@ -1021,8 +1021,13 @@ function passSpec() {
   return Object.fromEntries(known.map(k => [k, spec.includes(k)]));
 }
 
+// `ret_imm`/`ret_imm32` are here for tree-fold.js's leaf-call inlining, which is
+// the first caller that can put one at the end of a region: `chainFrom` never
+// walks through one, so no profiled region has ever contained one. They lower
+// exactly like `ret` -- pop the address, adjust SP, publish $gip -- and without
+// this the trailing `GO` would be emitted verbatim, `$slice_exit` and all.
 function isTransfer(op) {
-  return TAKEN_AT.has(op.fn) || /^(call_rel(32)?|ret(32)?)$/.test(op.name);
+  return TAKEN_AT.has(op.fn) || /^(call_rel(32)?|ret(_imm)?(32)?)$/.test(op.name);
 }
 
 // Does this op body observe the dispatch clock? `$steps` and `$slice_budget`

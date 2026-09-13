@@ -1667,6 +1667,221 @@ The six witnesses at 80M with `--pit-clock --auto-key --sound-pref=sb
 BLIQ included — see *BLIQ's residual divergence* above for why that row is the
 one worth checking twice.
 
+## Leaf-call inlining (Design B, in miniature)
+
+`call` and `ret` were the two largest *named* declines left after `push`/`pop`
+(6478 + 2858 over the nine programs), so this round makes the smallest version
+of Design B that can be argued to be safe: when a block ends in a near `call`
+with a static target, and the callee is a **single block** ending in one `ret`
+or `ret imm16`, the caller's ops and the callee's ops are compiled as one tree
+and the call site disappears.
+
+**Every architectural stack store stays.** The call's return-address push and
+the `ret`'s pop are the push/pop tree micro-ops from round 6, so SP, SS and the
+bytes at `[SS:SP]` are exactly what the interpreter would have written at every
+point inside the inlined body. Nothing about a frame is elided. That is what
+makes a fault, an interrupt due date or a slice cut landing anywhere in the
+callee indistinguishable from the unfolded run — the tree can be abandoned
+mid-body and the machine is already in a state the interpreter could have
+produced.
+
+Three parts, one in each file:
+
+- **`compile.js`** runs the fold as a **pre-pass**, before the loop and
+  straight-line passes. It has to: once the callee's arena words have been
+  overwritten with a tree ordinal they are no longer the ops the pre-pass needs
+  to read. It checks the caller's last op is `call_rel`/`call_rel32`, resolves
+  `args[1]` through `ipIndex` to a block *in this program*, requires that
+  block's last op to match `/^ret(_imm)?(32)?$/` and to fit `maxCallOps`, and
+  then requires `eligibleRuns(..., allowFault: false)` to return exactly **one**
+  run covering caller-ops-minus-the-call concatenated with
+  callee-ops-minus-the-`ret`. Anything else declines, with a named bucket.
+- **`tree-fold.js`**'s `buildCallTree` hands that op list to `buildRegion` with
+  a doctored `nexts` array — the call's successor is the callee's first IP, the
+  last op's successor is the return IP — and `closed = false`. `buildRegion`
+  already lowers `call_rel` through `splitJump` (keeping the push and the
+  `$rpush`) and `ret` through `splitExit` (keeping the pop, the `$rpop` and the
+  `$gip` publish), so the assembly is the whole of it.
+- **`region-jit.js`** grew `ret_imm`/`ret_imm32` in `isTransfer`. `chainFrom`
+  never walks through one, so until this fold no profiled region had ever
+  contained a `ret imm16`, and the trailing `GO` would have been emitted
+  verbatim.
+
+### The one thing that needed care: the shadow stack
+
+`$rpush(ip, arena)` **returns early when `arena == 0`** — it skips the entry
+entirely. The obvious implementation bakes the call's `arenaRet` operand into
+the tree as a constant, and that constant is **always zero at fold time**:
+`compile.js` resolves arena fixups *after* the tree pass. So the inlined `ret`'s
+`$rpop` would miss on a frame that was never pushed, set `rtop = 0`, and quietly
+flatten the shadow stack for the rest of the run. `buildCallTree` therefore
+patches the one `$rpush` the lowering emits to **load the arena word live**,
+`(i32.load offset=K (global.get $ip))`, and declines outright if that call is
+absent, duplicated, or preceded by a write to `$ip`.
+
+### SMC: the callee's bytes are now the caller's bytes
+
+A tree is invalidated by a write into the run it was built from. An inlined
+callee makes a *second, disjoint* byte range load-bearing for the caller's tree,
+and nothing knew that. Two changes: `compile.js` records every inlined callee's
+range on `prog.treeInlined`, and `dos-loop.js` (a) refuses the fast in-place
+operand repair for any store that reaches one of those ranges, and (b) clears
+the plan cache when a program carrying one is registered. Without either, a
+program that rewrites an immediate inside a leaf keeps executing the immediate
+the tree was built from. `test/test-toyvm-tree-fold.js`'s `callsmc` is exactly
+that program.
+
+### What it reaches: almost nothing, and the histogram says why
+
+Nine programs at `--dispatches=20m --auto-key --tree-fold --tree-fold-hot=64`:
+
+| program | trees | subs (ops) | call sites inlined | callee ops |
+|---|---:|---:|---:|---:|
+| BRW | 33 | 198 (1109) | **0** | 0 |
+| DADEMO3 | 54 | 229 (1202) | **0** | 0 |
+| RUNDEMO | 18 | 42 (226) | **0** | 0 |
+| CATWALK | 4 | 4 (20) | **0** | 0 |
+| B-STEEL | 6 | 8 (38) | **2** | 8 |
+| ACCIDENT | 0 | 0 | 0 | 0 |
+| DHADREN | 0 | 0 | 0 | 0 |
+| CYCLE | 0 | 0 | 0 | 0 |
+| DTM2 | 0 | 0 | 0 | 0 |
+
+(The last four install nothing at all at this budget with the gate on; CYCLE and
+DTM2 are still on a blank mode 3 at 20M.)
+
+**Two call sites in one of nine programs.** The `call`/`ret` decline rows are
+unchanged by this work and were never going to change — those record a
+straight-line *run* ending at a transfer, which is a different mechanism from
+the block-level pre-pass. The evidence is the new `call:` buckets, 3303
+refusals against 2 acceptances:
+
+| refusal | count | what it means |
+|---|---:|---|
+| `call: body breaks at out` | 1172 | the **caller** writes a VGA/DAC port right before the call |
+| `call: callee ends <op>, not ret` | 2008 | the callee is **more than one block** |
+| `call: body breaks at <op>` (rest) | 113 | caller+callee is not one run for some other reason |
+| `call: callee is not a block in this program` | 10 | the target is in another program image |
+
+The two headline numbers are the finding. `callee ends …, not ret` (2008) is
+the multi-block callee — real Design B, not this — and its largest *followable*
+sub-bucket, a callee ending in an unconditional `jmp` (103), is 5% of it; the
+rest end in a conditional branch, another `call`, or an `int`. `body breaks at
+out` (1172) is a demo-corpus signature rather than a general one: this code
+reprograms a VGA register and immediately calls something, and `out` is
+deliberately outside the fold because host I/O quantization is its own
+investigation.
+
+So the round's honest verdict is: **the single-block leaf callee does not occur
+in this corpus at a rate worth a fold.** The machinery is correct, it is
+committed with tests, it costs nothing when it does not fire, and it is the
+right first step only if the follow-up — a callee that is a *chain* of blocks
+joined by unconditional `jmp`/fall-through, then one that branches — is
+actually taken. `--no-tree-fold-calls` is the A/B; `--tree-fold-max-call-ops`
+(32) and `--tree-fold-call-budget` (2000) are the caps.
+
+## Ranking by projected savings, and validating it
+
+Round 6's `--tree-fold-min-payoff` projected `entries x (ops - 1)` — the
+*dispatches* a tree removes. That undercounts a loop tree and a call tree, both
+of which also remove a **block transfer**, and `tools/bench-loops.js` prices a
+block transfer at ~9ns against ~8ns for a dispatch, so a transfer is worth
+slightly more than the dispatch it comes with. The projection is now
+
+    savings = entries x ((ops - 1) + transfers)
+
+with `transfers` = 0 for a straight-line tree, 1 for a loop tree (the
+self-branch) and 2 for a call tree (the call and the `ret`).
+
+### Validating it: a second, disjoint window
+
+`--tree-fold-stats` measures what the projection was worth. After the install
+settles (`--tree-fold-stats-skip`, 250k dispatches), it counts each tree's real
+entries over a fresh window (`--tree-fold-stats=N`, 5M) and reports projected
+against actual in **savings per million dispatches**, plus top-k precision and
+the number of trees that were projected and then never entered at all:
+
+| program | projected /Mdisp | actual /Mdisp | ratio | top-k precision | dead trees |
+|---|---:|---:|---:|---:|---:|
+| BRW | 343353 | 454594 | **x1.32** | 70% (k=10) | 10 |
+| B-STEEL | 287236 | 39922 | x0.14 | 100% (k=6) | 0 |
+| CATWALK | 27406 | 342 | x0.01 | 100% (k=4) | 2 |
+| DADEMO3 | 19876 | 43916 | **x2.21** | 40% (k=10) | 0 |
+| RUNDEMO | 27936 | 26908 | **x0.96** | 60% (k=10) | 16 |
+
+The model is within 1.4x on the two programs where the fold is worth the most
+(BRW 34% of all dispatches removed, RUNDEMO 2.7%) and wrong by two orders of
+magnitude on CATWALK, which folds four trees in a scene that then ends. That is
+the shape of the error everywhere: **the projection is a good estimate of a
+tree's rate and a poor estimate of its lifetime.** BRW's own per-tree rows say
+it plainly — its top projected tree (`#2 loop`, 100963/Mdisp) is entered *zero*
+times after the install, while `#15` was projected at 47550 and delivered
+183192.
+
+### Should the default rise to 0.03?
+
+`--tree-fold-min-payoff` refuses a module whose projected savings are under that
+fraction of the window's dispatches. The measured question is whether 0.03
+separates yield from no-yield better than 0.01 does. It does not:
+
+| program | projected (fraction) | actual (fraction) | admitted at 0.01 | admitted at 0.03 |
+|---|---:|---:|:--:|:--:|
+| BRW | 0.343 | 0.455 | yes | yes |
+| B-STEEL | 0.287 | 0.040 | yes | yes |
+| RUNDEMO | 0.028 | 0.027 | yes | **no** |
+| CATWALK | 0.027 | 0.0003 | yes | **no** |
+| DADEMO3 | 0.020 | 0.044 | yes | **no** |
+
+Raising the bar to 0.03 buys one avoided dud (CATWALK, 0.03% actual) and costs
+**two real winners** — DADEMO3, whose actual 4.4% is larger than B-STEEL's 4.0%
+and which 0.03 would reject while admitting B-STEEL, and RUNDEMO at 2.7%. The
+projection under-shoots exactly where it matters (x2.21 on DADEMO3), so a
+higher bar is applied to the number that is least trustworthy on the downside.
+**The default stays 0.01.**
+
+### Nothing the guest can see
+
+- **Corpus**, `sweep-dos.js --dir=/tmp/demos --dispatches=8m --reps=1
+  --variants=tailcall`, off against `--tree-fold --tree-fold-hot=64`, through
+  `sweep-diff.js`: **191 programs, 191 unchanged.** 0 regressions, 0 went
+  blank, 0 changed, 0 bucket moves.
+- **Six 80M witnesses**, `--pit-clock --auto-key --sound-pref=sb
+  --env=ULTRASND=220,1,1,11,7 --audio=FILE`, in **three** arms — plain,
+  `--tree-fold --tree-fold-hot=64`, and `--region-jit`:
+
+| witness | frame (all three arms) | wav |
+|---|---|---|
+| DADEMO3 | 36128ac7 | identical across all three |
+| RUNDEMO | fcf5e9b5 | identical across all three |
+| BLIQ | 3243b8e3 | identical across all three |
+| ACME-BIG | 362275f5 | identical across all three |
+| CONTAGIO | 163af616 | identical across all three |
+| CATWALK | 19cfa368 | identical across all three |
+
+Every frame matches its recorded baseline, and every wav is byte-identical in
+all three arms — including the three (BLIQ, CONTAGIO, CATWALK) that were
+grid-movers in earlier rounds. **The wav hashes themselves no longer match the
+ones recorded with those baselines**, and that is not this change: the `plain`
+arm runs none of this code (`repairProg`'s `treeInlined` check is a null test on
+a program that has none, and `isTransfer` is only reached from the JIT), yet it
+produces the same bytes as the other two. Whatever moved the wav baseline moved
+it for the interpreter, before this round; the three-arm identity is the safety
+statement, and it is the strong one.
+
+### Tests
+
+Six cases in `test/test-toyvm-tree-fold.js`, each laying its callee inside the
+loop body so the caller block, the callee block and the return landing are all
+in one program: `leafcall` (a two-op leaf called from a hot loop), `retimm`
+(`ret 2` against a `push dx`, which is what catches an SP drift of two per
+trip), `callfault` (a `div` in the callee — never inlined, because
+`allowFault: false` ends the run at it), `callint` (an `int` in the callee — the
+named negative), and `callsmc` (the caller rewrites the callee's immediate every
+trip). Each inlining case additionally runs a `--no-tree-fold-calls` arm, so the
+screen agreement is attributable, and an `--irq-every=997` pair, so an interrupt
+falling due at a different point inside the callee on nearly every trip has to
+leave the same registers, SP and memory as the interpreter would.
+
 ## What is next
 
 The decline histogram is the work list, and the three relaxations it points at,
@@ -1687,8 +1902,13 @@ their own. The two mechanisms do not compete so much as stack.
 
 What that left at the top of the histogram was **`push`/`pop`**, `call`/`ret`,
 `segment`, and `alias`. **`push`/`pop` is now in** — see *`push`/`pop` in the
-tree* above. `out`/`in` remain deliberately out of scope: host I/O quantization
-is a separate investigation.
+tree* above. **`call`/`ret` has now been attempted** in its smallest safe form
+and measured to reach almost nothing — see *Leaf-call inlining (Design B, in
+miniature)* above, where the refusal histogram says the corpus's callees are
+multi-block (2008) or sit behind a caller that just wrote a VGA port (1172).
+Widening it means a callee that is a chain of blocks, then one that branches,
+which is Design B proper. `out`/`in` remain deliberately out of scope: host I/O
+quantization is a separate investigation.
 
 ### The histogram after `stack`
 

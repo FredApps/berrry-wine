@@ -390,6 +390,17 @@ class CodeCache {
   }
 
   repairProg(prog, lo, hi, patches) {
+    // A LEAF CALLEE INLINED INTO A CALLER'S TREE cannot be repaired in place.
+    // Its own arena words are still live -- other callers enter the block
+    // directly -- so the walk below would patch them and report success, while
+    // the caller's tree goes on holding the operands it inlined as constants.
+    // Declining sends the store down the drop-and-recompile path, which rebuilds
+    // both. See the leaf-call pre-pass in compile.js.
+    if (prog.treeInlined) {
+      for (const [l, h] of prog.treeInlined) {
+        if (hi >= l && lo <= h) return this.decline('store reaches a callee inlined into a tree');
+      }
+    }
     const mem = this.vm.mem;
     const rd = (l) => mem[l];
     const { codeBase, mask, d32, cs, words } = prog;
@@ -933,6 +944,11 @@ class CodeCache {
     // there costs one extra region drop, not a storm.
     prog.key = key;
     prog.cs = cs;
+    // A cached repair plan names the programs it repairs and replays without
+    // looking for new ones. A program that has inlined a callee into a tree is
+    // the one kind that MUST NOT be repaired that way, so throw the plans out
+    // rather than let one replay over bytes this program now owns differently.
+    if (prog.treeInlined) this.plans.clear();
     // What the decode was asked with, so repairOperands can decode one of
     // this program's instructions again the same way.
     prog.codeBase = codeBase;

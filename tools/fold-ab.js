@@ -120,6 +120,12 @@ function toyvmOpts(armFlags) {
     if (f === '--tree-fold') o.treeFold = Object.assign({}, o.treeFold);
     else if ((m = f.match(/^--tree-fold-hot=(\d+)$/))) o.treeFold = Object.assign({ hot: Number(m[1]) }, o.treeFold, { hot: Number(m[1]) });
     else if ((m = f.match(/^--tree-fold-min=(\d+)$/))) o.treeFold = Object.assign({}, o.treeFold, { minOps: Number(m[1]) });
+    // `--no-tree-fold-calls` only means anything alongside `--tree-fold` in the
+    // SAME arm string: the toyvm off arm is always the bare interpreter (there
+    // is no --base for this target), so the way to price leaf-call inlining is
+    // two invocations sharing that baseline -- one arm with the fold, one arm
+    // with the fold and this -- and to compare their gains.
+    else if (f === '--no-tree-fold-calls') o.treeFold = Object.assign({}, o.treeFold, { calls: false });
     else if (f === '--region-jit') o.regionJit = true;
     else if (f === '--block-hits') o.blockHits = true;
     else throw new Error(`fold-ab: no toyvm mapping for arm flag ${f}`);
