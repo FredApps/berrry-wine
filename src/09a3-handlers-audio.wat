@@ -1518,6 +1518,63 @@
     (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
   )
 
+  ;; EnumDisplayDevicesA(lpDevice, iDevNum, lpDisplayDevice, dwFlags) — the ANSI
+  ;; twin of EnumDisplayDevicesW above, over DISPLAY_DEVICEA (0x1A8 bytes:
+  ;; cb, DeviceName[32], DeviceString[128], StateFlags, DeviceID[128],
+  ;; DeviceKey[128]).
+  (func $handle_EnumDisplayDevicesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dst i32)
+    (if (i32.or
+          (i32.ne (local.get $arg1) (i32.const 0))
+          (i32.eqz (local.get $arg2)))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (local.set $dst (call $g2w (local.get $arg2)))
+    (if (i32.lt_u (i32.load (local.get $dst)) (i32.const 0x1a8))
+      (then
+        (global.set $eax (i32.const 0))
+        (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+        (return)))
+    (memory.fill (local.get $dst) (i32.const 0) (i32.const 0x1a8))
+    (i32.store (local.get $dst) (i32.const 0x1a8))
+    (if (i32.eqz (local.get $arg0))
+      (then
+        ;; DeviceName = "\\\\.\\DISPLAY1", DeviceString = "Display"
+        (i32.store offset=4  (local.get $dst) (i32.const 0x5c2e5c5c))
+        (i32.store offset=8  (local.get $dst) (i32.const 0x50534944))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x3159414c))
+        (i32.store offset=36 (local.get $dst) (i32.const 0x70736944))
+        (i32.store offset=40 (local.get $dst) (i32.const 0x0079616c))
+        ;; ATTACHED_TO_DESKTOP | PRIMARY_DEVICE
+        (i32.store offset=164 (local.get $dst) (i32.const 0x5)))
+      (else
+        ;; DeviceName = "\\\\.\\DISPLAY1\\Monitor0", DeviceString = "Monitor"
+        (i32.store offset=4  (local.get $dst) (i32.const 0x5c2e5c5c))
+        (i32.store offset=8  (local.get $dst) (i32.const 0x50534944))
+        (i32.store offset=12 (local.get $dst) (i32.const 0x3159414c))
+        (i32.store offset=16 (local.get $dst) (i32.const 0x6e6f4d5c))
+        (i32.store offset=20 (local.get $dst) (i32.const 0x726f7469))
+        (i32.store offset=24 (local.get $dst) (i32.const 0x00000030))
+        (i32.store offset=36 (local.get $dst) (i32.const 0x696e6f4d))
+        (i32.store offset=40 (local.get $dst) (i32.const 0x00726f74))
+        ;; DISPLAY_DEVICE_ACTIVE
+        (i32.store offset=164 (local.get $dst) (i32.const 0x1))))
+    (global.set $eax (i32.const 1))
+    (global.set $esp (i32.add (global.get $esp) (i32.const 20)))
+  )
+
+  ;; ChangeDisplaySettingsExA(lpszDeviceName, lpDevMode, hwnd, dwFlags, lParam)
+  ;; — same policy as ChangeDisplaySettingsA, one argument slot further along.
+  (func $handle_ChangeDisplaySettingsExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (global.set $display_fullscreen
+      (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+               (i32.ne (i32.and (local.get $arg3) (i32.const 0x4)) (i32.const 0))))
+    (global.set $eax (i32.const 0))  ;; DISP_CHANGE_SUCCESSFUL
+    (global.set $esp (i32.add (global.get $esp) (i32.const 24)))
+  )
+
   ;; 757: waveOutGetNumDevs() — return 1 (one audio device available)
   (func $handle_waveOutGetNumDevs (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (global.set $eax (i32.const 1))  ;; 1 device
