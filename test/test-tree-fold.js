@@ -1035,7 +1035,9 @@ const NEG_SHORT = loopBackDec([
   // ask for it.
   {
     e.set_tree_fold_max_ops(100000);
-    assert.strictEqual(e.get_tree_fold_max_ops(), 168,
+    // 167, not 168: the region header (nblocks/nexits/uops_total/reserved)
+    // costs four words the old single-block descriptor did not carry.
+    assert.strictEqual(e.get_tree_fold_max_ops(), 167,
       'the ceiling clamps to the structural limit');
     e.set_tree_fold_max_ops(160);
     assert.strictEqual(e.get_tree_fold_max_ops(), 160,
