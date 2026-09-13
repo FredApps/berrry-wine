@@ -2666,6 +2666,29 @@
   (func (export "get_tree_decl_x87") (result i32) (global.get $tree_decl_x87))
   (func (export "get_tree_decl_x87_op") (result i32) (global.get $tree_decl_x87_op))
 
+  ;; REGION descriptors. H454's descriptor is a graph; the shipped fold emits
+  ;; the one-block case of it. These three exports install a hand-built
+  ;; multi-block one at a chosen guest EIP, and exist for
+  ;; tools/bench-loops.js --toggle=region and test/test-tree-fold.js only.
+  ;; OFF by default and decode-time like every other fold gate, so the flag has
+  ;; to be set before the block at that EIP is first decoded.
+  ;;
+  ;; There is deliberately no region MATCHER. Recognizing a graph in real code
+  ;; is the app-scale work this measurement exists to decide about; building it
+  ;; first would have been the thing the go/no-go was meant to gate. The
+  ;; harness supplies the descriptor AND the x86 the other arm runs, and
+  ;; checksum equality between the arms is what proves the two agree.
+  (func (export "set_region_fold") (param $flag i32)
+    (global.set $region_fold_enabled (local.get $flag)))
+  (func (export "get_region_fold") (result i32) (global.get $region_fold_enabled))
+  ;; $ptr is a GUEST address -- the descriptor words are read through $gl32, so
+  ;; the harness writes them the same way it writes the guest code beside them.
+  (func (export "set_region_spec") (param $eip i32) (param $ptr i32) (param $words i32)
+    (global.set $region_spec_eip (local.get $eip))
+    (global.set $region_spec_ptr (local.get $ptr))
+    (global.set $region_spec_words (local.get $words)))
+  (func (export "get_region_installs") (result i32) (global.get $region_installs))
+
   ;; Page compilation (docs/page-compile-design.md). There is deliberately no
   ;; switch: this replaces the storage layer rather than accelerating it, so the
   ;; thing to compare against is the commit before it, not a flag.

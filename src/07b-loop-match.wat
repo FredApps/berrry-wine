@@ -4293,6 +4293,8 @@
   ;; Called from $decode_block just before $cache_store.
   (func $loop_match_block (param $start_eip i32) (param $tstart i32)
     (if (global.get $op_index_poison) (then (return)))
+    (if (call $region_try_install (local.get $start_eip) (local.get $tstart))
+      (then (return)))
     (if (i32.eqz (call $loop_is_selfloop (local.get $start_eip))) (then (return)))
     (global.set $loop_selfloop_blocks
       (i32.add (global.get $loop_selfloop_blocks) (i32.const 1)))
@@ -5242,14 +5244,15 @@
   ;;
   ;; Two structures bound it, and the smaller one is the limit:
   ;;   * $decode_block reserves 4096 bytes of slack past $thread_alloc before
-  ;;     $te signals a flush. The descriptor is a 48-byte header ($te's 8 plus
-  ;;     eleven $te_raw) plus $TREE_UOP_WORDS * 4 = 24 bytes per micro-op, so
-  ;;     (4096 - 48) / 24 = 168.
+  ;;     $te signals a flush. The descriptor is a 76-byte header for the
+  ;;     one-block case ($te's 8, a 16-byte region header, one 52-byte block
+  ;;     record and one 8-byte exit record) plus $TREE_UOP_WORDS * 4 = 24 bytes
+  ;;     per micro-op, so (4096 - 76) / 24 = 167.
   ;;   * the classify scratch is the far half of OP_INDEX, 1024 words at 6
   ;;     words per micro-op = 170.
   ;; $TREE_FOLD_UOPS_LIMIT is the smaller, and the setter clamps to it, because
   ;; a descriptor past either one corrupts rather than declines.
-  (global $TREE_FOLD_UOPS_LIMIT i32 (i32.const 168))
+  (global $TREE_FOLD_UOPS_LIMIT i32 (i32.const 167))
   (global $tree_fold_max_ops (mut i32) (i32.const 160))
   ;; kind, dst, src-or-subop, immediate, original handler index, extra.
   ;; The sixth word is the one field whose meaning is per-kind: for the SIB
@@ -5258,6 +5261,64 @@
   ;; register already in `a` and the displacement already in `imm`.
   (global $TREE_UOP_WORDS i32 (i32.const 6))
   (global $LOOP_SUPEROP_TREE i32 (i32.const 454))
+
+  ;; ------------------------------------------------------------------
+  ;; REGION descriptors -- the multi-block generalization of the above.
+  ;; ------------------------------------------------------------------
+  ;; H454's descriptor is a GRAPH, not a single block. The self-loop the
+  ;; matcher emits is the one-block case of it: one block record whose taken
+  ;; successor is itself and whose not-taken successor is exit 0. Nothing about
+  ;; the micro-op executor changed to make that true, which is the whole point
+  ;; -- there is exactly one micro-op interpreter in this file and both the
+  ;; shipped fold and the region bench run it.
+  ;;
+  ;;   header, 4 words at $ip
+  ;;     +0  nblocks
+  ;;     +4  nexits
+  ;;     +8  uops_total
+  ;;     +12 reserved (0)
+  ;;   block table, nblocks * 13 words, at header+16
+  ;;     +0  uop_off      first micro-op, as an index into the flat array
+  ;;     +4  nuops
+  ;;     +8  term_pos     where the flag producer runs; -1 for term_kind 4
+  ;;     +12 term_kind    0 dec/inc  1 cmp r,r  2 cmp r,imm  3 cmp r,[r+d]
+  ;;                      4 = none (unconditional edge, always succ_fall)
+  ;;     +16 term_a
+  ;;     +20 term_b
+  ;;     +24 term_uop
+  ;;     +28 term_imm
+  ;;     +32 term_cc
+  ;;     +36 cost         guest ops one execution of this block bills
+  ;;     +40 succ_taken   >= 0 block index; < 0 exit slot (-1 - v)
+  ;;     +44 succ_fall    ditto
+  ;;     +48 entry_eip    where a SIDE EXIT resumes -- see below
+  ;;   exit table, nexits * 2 words
+  ;;     +0  eip
+  ;;     +4  live_out     the register mask published on THIS exit
+  ;;   micro-ops, uops_total * $TREE_UOP_WORDS words
+  ;;
+  ;; A side exit (either meter exhausted) can only be taken at a block edge,
+  ;; where every guest register is a real value in a local and no partial
+  ;; instruction is in flight. It publishes all eight rather than a mask,
+  ;; because it resumes at another block's entry rather than at a modelled
+  ;; exit -- and publishing a register the region never wrote is a no-op, the
+  ;; local still holding the value it was loaded with.
+  (global $REGION_BLOCK_WORDS i32 (i32.const 13))
+  (global $REGION_MAX_BLOCKS i32 (i32.const 16))
+  (global $REGION_MAX_EXITS i32 (i32.const 8))
+  ;; Bench/test only: install a hand-built region descriptor at one guest EIP,
+  ;; in place of whatever the decoder would have produced for the block that
+  ;; starts there. There is NO region matcher -- recognizing a graph in real
+  ;; code is the app-scale design this measurement exists to decide about, and
+  ;; building it before the go/no-go would have been the thing the go/no-go was
+  ;; supposed to gate. So the descriptor comes from the harness, which also
+  ;; emits the x86 the other arm runs, and checksum equality between the two
+  ;; arms is what proves the descriptor is a faithful lowering of it.
+  (global $region_fold_enabled (mut i32) (i32.const 0))
+  (global $region_spec_eip (mut i32) (i32.const 0))
+  (global $region_spec_ptr (mut i32) (i32.const 0))   ;; GUEST address
+  (global $region_spec_words (mut i32) (i32.const 0))
+  (global $region_installs (mut i32) (i32.const 0))
 
   ;; Micro-op kinds. Numbered densely because $th_tree_fold dispatches on them
   ;; with a br_table; adding one means extending that table too.
@@ -6407,6 +6468,47 @@
       (select (i32.add (local.get $j) (i32.const 1)) (local.get $j)
               (i32.ge_u (local.get $j) (local.get $tidx)))))
 
+  ;; Bench/test hook: replace the block at $region_spec_eip with the region
+  ;; descriptor the harness prepared in guest memory. Runs before every other
+  ;; family and before the self-loop test, because a region entry block is
+  ;; usually not a self-loop and would never reach the matcher otherwise.
+  ;;
+  ;; It rewinds $thread_alloc to $tstart and clears $op_index_n exactly as
+  ;; $loop_try_tree_fold's emit does -- the ops the decoder just emitted for
+  ;; this block are the bytes the descriptor is written over, and $decode_run
+  ;; reads $op_index_n to decide whether to extend the run, so leaving it set
+  ;; would let the run append a fall-through block to a super-op that never
+  ;; falls through.
+  (func $region_try_install (param $start_eip i32) (param $tstart i32) (result i32)
+    (local $i i32) (local $n i32) (local $p i32)
+    (if (i32.eqz (global.get $region_fold_enabled)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $region_spec_eip)) (then (return (i32.const 0))))
+    (if (i32.ne (local.get $start_eip) (global.get $region_spec_eip))
+      (then (return (i32.const 0))))
+    (local.set $n (global.get $region_spec_words))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+    ;; The descriptor has to fit the slack $decode_block reserved, or $te's
+    ;; overflow backstop fires in the middle of a block that is already being
+    ;; overwritten. Refuse instead.
+    (if (i32.gt_u (i32.add (i32.mul (local.get $n) (i32.const 4)) (i32.const 8))
+                  (i32.const 4096))
+      (then (return (i32.const 0))))
+    (global.set $thread_alloc (local.get $tstart))
+    (global.set $op_index_n (i32.const 0))
+    (call $te (global.get $LOOP_SUPEROP_TREE) (i32.const 0))
+    (local.set $p (global.get $region_spec_ptr))
+    (block $done
+      (loop $cp
+        (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
+        (call $te_raw (call $gl32 (i32.add (local.get $p)
+                                    (i32.shl (local.get $i) (i32.const 2)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $cp)))
+    (global.set $region_installs (i32.add (global.get $region_installs) (i32.const 1)))
+    (global.set $loop_matched_blocks
+      (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
+    (i32.const 1))
+
   ;;
   ;; Two passes over the same ops. The first proves eligibility and computes
   ;; the two counts the descriptor header needs before its body (the micro-op
@@ -6757,25 +6859,39 @@
 
     (global.set $thread_alloc (local.get $tstart))
     (global.set $op_index_n (i32.const 0))
+    ;; The one-block case of the REGION layout documented beside
+    ;; $REGION_BLOCK_WORDS: one block whose taken successor is itself (the back
+    ;; edge) and whose not-taken successor is exit 0 (the fall-through).
+    ;; $back is not stored -- it is this block's own entry EIP, which is what
+    ;; the block record's entry_eip word already is, and the side exit reads it
+    ;; from there.
     (call $te (global.get $LOOP_SUPEROP_TREE) (i32.const 0))
+    (call $te_raw (i32.const 1))              ;; nblocks
+    (call $te_raw (i32.const 1))              ;; nexits
+    (call $te_raw (local.get $nuops))         ;; uops_total
+    (call $te_raw (i32.const 0))              ;; reserved
+    ;; -- block 0 --
+    (call $te_raw (i32.const 0))              ;; uop_off
     (call $te_raw (local.get $nuops))
-    (call $te_raw (local.get $live_out))
+    ;; Where the terminator runs inside the micro-op list. Equal to $nuops
+    ;; whenever the flag producer really was the last op before the Jcc.
+    (call $te_raw (local.get $tidx))          ;; term_pos
     (call $te_raw (local.get $term_kind))
     (call $te_raw (local.get $term_a))
     (call $te_raw (local.get $term_b))
-    (call $te_raw (local.get $term_cc))
     (call $te_raw (local.get $term_uop))
-    (call $te_raw (local.get $fall))
-    (call $te_raw (local.get $back))
+    ;; term_kind 3's displacement, and zero for every other kind.
+    (call $te_raw (local.get $term_imm))
+    (call $te_raw (local.get $term_cc))
     ;; The cost the unfolded block billed: one $steps per emitted op, plus
     ;; whatever the ops charged on their own account ($tu_extra -- H420).
     (call $te_raw (i32.add (local.get $n) (local.get $extra)))
-    ;; Where the terminator runs inside the micro-op list. Equal to $nuops
-    ;; whenever the flag producer really was the last op before the Jcc.
-    (call $te_raw (local.get $tidx))
-    ;; The twelfth header word: term_kind 3's displacement, and zero for every
-    ;; other kind.
-    (call $te_raw (local.get $term_imm))
+    (call $te_raw (i32.const 0))              ;; succ_taken = block 0 (back edge)
+    (call $te_raw (i32.const -1))             ;; succ_fall  = exit slot 0
+    (call $te_raw (local.get $start_eip))     ;; entry_eip
+    ;; -- exit 0 --
+    (call $te_raw (local.get $fall))
+    (call $te_raw (local.get $live_out))
     (local.set $i (i32.const 0))
     (block $p2_done
       (loop $p2
@@ -6803,7 +6919,7 @@
     (local $nuops i32) (local $live_out i32)
     (local $term_kind i32) (local $term_a i32) (local $term_b i32)
     (local $term_cc i32) (local $term_uop i32) (local $term_imm i32)
-    (local $fall i32) (local $back i32) (local $cost i32) (local $term_pos i32)
+    (local $cost i32) (local $term_pos i32)
     (local $r0 i32) (local $r1 i32) (local $r2 i32) (local $r3 i32)
     (local $r4 i32) (local $r5 i32) (local $r6 i32) (local $r7 i32)
     (local $i i32) (local $kind i32) (local $d i32) (local $a i32) (local $imm i32)
@@ -6811,26 +6927,28 @@
     (local $sh_d i32) (local $sh_a i32) (local $mask i32) (local $ssh i32)
     (local $nof i32) (local $beff i32)
     (local $va i32) (local $vb i32) (local $vr i32)
-    (local $iters i32) (local $allowed i32) (local $budget i32)
-    (local $taken i32) (local $old i32) (local $wrote i32)
+    (local $old i32) (local $wrote i32)
+    (local $nblocks i32) (local $nexits i32) (local $uops_total i32)
+    (local $BR i32) (local $EX i32) (local $UO i32) (local $brp i32)
+    (local $cur i32) (local $loaded i32) (local $next_b i32)
+    (local $succ_t i32) (local $succ_f i32) (local $exit_eip i32) (local $side i32)
+    (local $nblk i32) (local $nsteps i32)
+    (local $steps_avail i32) (local $budget_avail i32)
 
     (local.set $tp (global.get $ip))
-    (local.set $nuops     (i32.load           (local.get $tp)))
-    (local.set $live_out  (i32.load offset=4  (local.get $tp)))
-    (local.set $term_kind (i32.load offset=8  (local.get $tp)))
-    (local.set $term_a    (i32.load offset=12 (local.get $tp)))
-    (local.set $term_b    (i32.load offset=16 (local.get $tp)))
-    (local.set $term_cc   (i32.load offset=20 (local.get $tp)))
-    (local.set $term_uop  (i32.load offset=24 (local.get $tp)))
-    (local.set $fall      (i32.load offset=28 (local.get $tp)))
-    (local.set $back      (i32.load offset=32 (local.get $tp)))
-    (local.set $cost      (i32.load offset=36 (local.get $tp)))
-    (local.set $term_pos  (i32.load offset=40 (local.get $tp)))
-    (local.set $term_imm  (i32.load offset=44 (local.get $tp)))
-    (local.set $ub (i32.add (local.get $tp) (i32.const 48)))
+    (local.set $nblocks    (i32.load          (local.get $tp)))
+    (local.set $nexits     (i32.load offset=4 (local.get $tp)))
+    (local.set $uops_total (i32.load offset=8 (local.get $tp)))
+    (local.set $BR (i32.add (local.get $tp) (i32.const 16)))
+    (local.set $EX
+      (i32.add (local.get $BR)
+        (i32.mul (local.get $nblocks)
+          (i32.shl (global.get $REGION_BLOCK_WORDS) (i32.const 2)))))
+    (local.set $UO
+      (i32.add (local.get $EX) (i32.shl (local.get $nexits) (i32.const 3))))
     (global.set $ip
-      (i32.add (local.get $ub)
-        (i32.mul (local.get $nuops)
+      (i32.add (local.get $UO)
+        (i32.mul (local.get $uops_total)
           (i32.shl (global.get $TREE_UOP_WORDS) (i32.const 2)))))
 
     ;; Entry materialization: the whole architectural register file, once.
@@ -6845,33 +6963,52 @@
     (local.set $r6 (global.get $esi))
     (local.set $r7 (global.get $edi))
 
-    ;; Trip bound. Both meters, exactly as the unfolded loop would have spent
-    ;; them: one $steps per guest op ($cost of them per iteration) and one
-    ;; $block_budget per back-edge. Whichever runs out first stops the run,
-    ;; and the run resumes by re-entering this same block through $back.
-    (local.set $allowed
-      (i32.div_u
-        (i32.add
-          (select (global.get $steps) (i32.const 0)
-                  (i32.gt_s (global.get $steps) (i32.const 0)))
-          (i32.sub (local.get $cost) (i32.const 1)))
-        (local.get $cost)))
-    (local.set $budget
+    ;; Both meters, exactly as the unfolded graph would have spent them: one
+    ;; $steps per guest op ($cost of them per block execution) and one
+    ;; $block_budget per block entry. They are checked at a block edge rather
+    ;; than bounded up front, because with more than one block in the region
+    ;; the per-execution cost is not a constant to divide by. The first block
+    ;; always runs -- a do-while runs its body once even with the budget
+    ;; already spent, exactly as the block would have when $run entered it.
+    (local.set $steps_avail
+      (select (global.get $steps) (i32.const 0)
+              (i32.gt_s (global.get $steps) (i32.const 0))))
+    (local.set $budget_avail
       (select (global.get $block_budget) (i32.const 0)
               (i32.gt_s (global.get $block_budget) (i32.const 0))))
-    (if (i32.lt_u (local.get $budget) (local.get $allowed))
-      (then (local.set $allowed (local.get $budget))))
-    ;; Never zero: a do-while must run its body at least once, exactly as the
-    ;; block would have when $run entered it with the budget already spent.
-    (if (i32.eqz (local.get $allowed)) (then (local.set $allowed (i32.const 1))))
 
     (global.set $tree_fold_runs
       (i32.add (global.get $tree_fold_runs) (i32.const 1)))
 
-    (local.set $iters (i32.const 0))
-    (local.set $taken (i32.const 0))
+    (local.set $loaded (i32.const -1))
     (block $done
       (loop $trip
+        ;; The block record, reloaded only when the block index actually
+        ;; changed. A self-loop -- the shape the shipped fold emits -- changes
+        ;; it never, so its inner loop pays one compare per iteration and none
+        ;; of these thirteen loads.
+        (if (i32.ne (local.get $cur) (local.get $loaded))
+          (then
+            (local.set $brp
+              (i32.add (local.get $BR)
+                (i32.mul (local.get $cur)
+                  (i32.shl (global.get $REGION_BLOCK_WORDS) (i32.const 2)))))
+            (local.set $ub
+              (i32.add (local.get $UO)
+                (i32.mul (i32.load (local.get $brp))
+                  (i32.shl (global.get $TREE_UOP_WORDS) (i32.const 2)))))
+            (local.set $nuops     (i32.load offset=4  (local.get $brp)))
+            (local.set $term_pos  (i32.load offset=8  (local.get $brp)))
+            (local.set $term_kind (i32.load offset=12 (local.get $brp)))
+            (local.set $term_a    (i32.load offset=16 (local.get $brp)))
+            (local.set $term_b    (i32.load offset=20 (local.get $brp)))
+            (local.set $term_uop  (i32.load offset=24 (local.get $brp)))
+            (local.set $term_imm  (i32.load offset=28 (local.get $brp)))
+            (local.set $term_cc   (i32.load offset=32 (local.get $brp)))
+            (local.set $cost      (i32.load offset=36 (local.get $brp)))
+            (local.set $succ_t    (i32.load offset=40 (local.get $brp)))
+            (local.set $succ_f    (i32.load offset=44 (local.get $brp)))
+            (local.set $loaded (local.get $cur))))
         (local.set $i (i32.const 0))
         (local.set $up (local.get $ub))
         (block $body_done
@@ -7492,20 +7629,56 @@
                 (local.set $r7 (local.get $vr)))))
             (br $body)))
 
-        (local.set $iters (i32.add (local.get $iters) (i32.const 1)))
-        ;; $eval_cc reads the same globals the scalar Jcc would have read, so
-        ;; every one of the sixteen conditions is exact here for free.
-        (local.set $taken (call $eval_cc (local.get $term_cc)))
-        (br_if $done (i32.eqz (local.get $taken)))
-        (br_if $done (i32.ge_u (local.get $iters) (local.get $allowed)))
+        (local.set $nblk (i32.add (local.get $nblk) (i32.const 1)))
+        (local.set $nsteps (i32.add (local.get $nsteps) (local.get $cost)))
+        ;; Which edge. term_kind 4 is an unconditional one -- a block that ends
+        ;; in a `jmp`, or one that simply falls into its successor -- and it
+        ;; evaluates no condition at all. Everything else evaluates the same
+        ;; $eval_cc the scalar Jcc would have, off the same globals, so all
+        ;; sixteen conditions are exact here for free.
+        (local.set $next_b (local.get $succ_f))
+        (if (i32.ne (local.get $term_kind) (i32.const 4))
+          (then
+            (if (call $eval_cc (local.get $term_cc))
+              (then (local.set $next_b (local.get $succ_t))))))
+        ;; A modelled exit. Publishes THIS exit's live-out mask: which
+        ;; registers the region defined on the paths that can reach it is a
+        ;; per-exit fact, not a per-region one.
+        (if (i32.lt_s (local.get $next_b) (i32.const 0))
+          (then
+            (local.set $up
+              (i32.add (local.get $EX)
+                (i32.shl (i32.sub (i32.const -1) (local.get $next_b))
+                         (i32.const 3))))
+            (local.set $exit_eip (i32.load          (local.get $up)))
+            (local.set $live_out (i32.load offset=4 (local.get $up)))
+            (br $done)))
+        ;; Safepoint. The only place either meter is allowed to stop the run is
+        ;; a block edge, because that is the only place the guest is in a state
+        ;; the rest of the emulator can read: every register is a value in a
+        ;; local about to be published, no instruction is half-retired, and the
+        ;; EIP the run resumes at is a real basic-block entry.
+        (if (i32.or (i32.ge_u (local.get $nsteps) (local.get $steps_avail))
+                    (i32.ge_u (local.get $nblk) (local.get $budget_avail)))
+          (then
+            (local.set $side (i32.const 1))
+            (local.set $exit_eip
+              (i32.load offset=48
+                (i32.add (local.get $BR)
+                  (i32.mul (local.get $next_b)
+                    (i32.shl (global.get $REGION_BLOCK_WORDS) (i32.const 2))))))
+            (br $done)))
+        (local.set $cur (local.get $next_b))
         (br $trip)))
 
     ;; Exit materialization. The live-out mask is what the descriptor proved
     ;; the body writes; a register outside it holds the value it entered with,
     ;; so publishing it would be a no-op and skipping it is not an omission.
-    ;; This runs on BOTH exits -- the terminator falling through and the
-    ;; budget-exhausted side exit -- which is the rule the bench doc says it
-    ;; never priced.
+    ;; This runs on BOTH kinds of exit -- a modelled one, with its own mask,
+    ;; and the budget-exhausted side exit, which publishes all eight because it
+    ;; resumes at a block entry rather than at a modelled exit and no mask in
+    ;; the descriptor describes what is live there.
+    (if (local.get $side) (then (local.set $live_out (i32.const 0xFF))))
     (if (i32.and (local.get $live_out) (i32.const 0x01)) (then (global.set $eax (local.get $r0))))
     (if (i32.and (local.get $live_out) (i32.const 0x02)) (then (global.set $ecx (local.get $r1))))
     (if (i32.and (local.get $live_out) (i32.const 0x04)) (then (global.set $edx (local.get $r2))))
@@ -7516,25 +7689,26 @@
     (if (i32.and (local.get $live_out) (i32.const 0x80)) (then (global.set $edi (local.get $r7))))
 
     (global.set $tree_fold_iters
-      (i64.add (global.get $tree_fold_iters) (i64.extend_i32_u (local.get $iters))))
+      (i64.add (global.get $tree_fold_iters) (i64.extend_i32_u (local.get $nblk))))
     (global.set $tree_fold_ops
-      (i64.add (global.get $tree_fold_ops)
-        (i64.extend_i32_u (i32.mul (local.get $iters) (local.get $cost)))))
+      (i64.add (global.get $tree_fold_ops) (i64.extend_i32_u (local.get $nsteps))))
 
     ;; Pacing. $next already billed one step for this H454 dispatch and $run
-    ;; already billed one block for entering it, so charge the rest: the
-    ;; iterations' worth of guest ops, and the back-edges they took. The
-    ;; transfer OUT of the block is charged by $branch_end below, exactly as
-    ;; the final not-taken Jcc would have charged it.
+    ;; already billed one block for entering it, so charge the rest: the guest
+    ;; ops every block execution stood for, and the interior transfers between
+    ;; them. The transfer OUT of the region is charged by $branch_end below,
+    ;; exactly as the final not-taken Jcc would have charged it.
     (global.set $steps
       (i32.sub (global.get $steps)
-        (i32.sub (i32.mul (local.get $iters) (local.get $cost)) (i32.const 1))))
+        (i32.sub (local.get $nsteps) (i32.const 1))))
     (global.set $block_budget
       (i32.sub (global.get $block_budget)
-        (i32.sub (local.get $iters) (i32.const 1))))
+        (i32.sub (local.get $nblk) (i32.const 1))))
 
-    ;; A side exit resumes by re-entering this same block: the guest state is
-    ;; fully materialized, so the descriptor is re-entered as if the loop had
-    ;; simply been interrupted between two iterations -- which it was.
-    (global.set $eip (select (local.get $back) (local.get $fall) (local.get $taken)))
+    ;; A side exit resumes at the entry EIP of the block it was about to run:
+    ;; the guest state is fully materialized, so the region is re-entered (or,
+    ;; if the resume point is an interior block, that block is decoded on its
+    ;; own) as if the graph had simply been interrupted at an edge -- which it
+    ;; was.
+    (global.set $eip (local.get $exit_eip))
     (return_call $branch_end))
