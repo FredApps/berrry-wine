@@ -1058,3 +1058,145 @@ the same knob at 0.
   the same conservatism the 1-block installer has; it is not a region question,
   and changing it should be measured as its own arm.
 * **The tiering split** from §13.7, still not done.
+
+## 15. CFG discovery and the hot gate (round 10, 2026-09-14)
+
+Round 9 ended with the matcher able to *run* multi-block regions at +37-40% and
+unable to *find* them: `$decode_run` handed it a fall-through chain, so any
+region whose head or second block was a branch target was invisible, and
+coverage of 2+ block regions sat near 0% at the shipped cost model. This round
+replaced chain discovery with a CFG walk, and then found that the interesting
+number was not the walk at all.
+
+### 15.1 Discovery is a breadth-first closure from the head
+
+`$bx_walk_once` starts at a candidate head and walks Jcc/jmp targets *and*
+fall-throughs through decoded blocks, decoding on demand within the same page,
+until it has the single-entry closed set or refuses it. The census rules are
+unchanged (≤16 blocks, ≤8 exits, uop budget, one page, no call/ret/int/indirect
+inside), and entry is still through the head only — a jump into a member from
+outside gets the member's own 1-block descriptor.
+
+Three bounds keep it cheap, and all three are load-bearing:
+
+* a per-walk **block budget** (`$bx_walk_budget`, 24) — the cost bound, counted
+  in blocks because a block is what costs a `$decode_block`;
+* a per-head **failure memo** (`$bx_walk_memo_max`, 3 declines and the head is
+  never attempted again), which is what turns "paid once per hot head" from an
+  aspiration into a bound;
+* the **hotness gate** `$bx_walk_hot_k` — see §15.3, which is the whole story.
+
+The head guard `$bx_walk_head_ok` is shared by both call sites. It has to
+reject `head == 0` explicitly: `$page_probe(0)` returns *true*, because an
+unused page-directory slot holds tag 0, and walking from there decodes guest
+address 0 and hits the decoder's "execution entered zeros" trap.
+
+### 15.2 A region must be installed where the guest stands
+
+The first re-anchor attempt installed regions from the loop *top* whenever a
+walk refused a successor below its head. It installed three regions and got
+zero entries, every iteration: installing from the top while the guest stands
+at the bottom means the next block transfer lands on an *interior* cover mark,
+which misses, re-decodes and symmetrically retires the region just built.
+
+So the walker records the lowest in-page successor it had to refuse
+(`$bx_walk_min_below`) and, instead of re-walking from it, primes that address's
+hot counter to `K-1` — a **gate hint**. The lower head is then walked the next
+time the guest actually enters it, which is the only moment an install there
+can stick. `reanchorHints` counts them.
+
+`$bx_region_installs` is also now incremented *after* the publish check: a
+descriptor that found no home in the chunk was emitted, not installed, and
+counting it as one reads as "the matcher is working and the executor never runs
+it".
+
+### 15.3 The hot gate was the whole cost, and K=24 was miscalibrated
+
+With discovery working, quake2 was a **resolved 19% loss** — worse than round
+9. The decomposition took three arms, all at `--batch-size=200000`, 300 batches:
+
+| arm | median |
+|---|---|
+| regions off (`--no-block-exec-regions`) | 7.54s |
+| walks disabled, 1-block executor and hot probe still on (`--block-exec-walk-k=100000000`) | 7.63s |
+| default (K=24) | 9.42s |
+
+The hot probe is free; the entire 1.8s is walk + install + region execution. And
+`--decode-stats` named it: **1,584,079 block decodes against 124,061 with the
+family off** — 12.8x the decode work, ~33 re-decodes per install.
+
+The mechanism is §15.2's, at scale. Publishing a descriptor covers its whole
+guest extent, so anything entering the interior misses, re-decodes and retires
+the region; a *lukewarm* head installs, churns, and installs again. K=24 was
+low enough to arm that loop on thousands of heads. Sweeping it on quake2:
+
+| K | block decodes | opsMulti |
+|---|---|---|
+| 24 | 1,584,079 | 16,179,253 |
+| 64 | 942,968 | 24,727,410 |
+| **256** | **417,280** | **27,817,225** |
+| 1024 | 187,442 | 22,672,623 |
+| 4096 | 133,051 | 17,406,161 |
+
+K=24 was not buying coverage with that decode work: **256 covers 72% more guest
+ops for a quarter of the decodes.** The same shape holds on caesar3 (158,278 →
+15,582 decodes, opsMulti 110,830 → 237,822) and mw3. heroes2 is the one app that
+harvests less at 256 than at 24 — its hot heads are not entered 256 times in the
+window — at near-baseline decode cost, so less gain, never a loss.
+
+The default is now 256, and with it the round-9/round-10 quake2 loss is gone:
+`on-off` moves from a resolved **-1.794s** to **-0.174s** (K=256) and **+0.132s**
+(K=1024), both inside the null spread. caesar3, diablo and mw3 are all
+unresolvable too; caesar3 still *trends* to a residual -0.652s on an 8s run and
+is the one to re-measure on a quiet box.
+
+### 15.4 Terminator flag producers
+
+`and`/`sub`/`or`/`xor`/`add` r,r and r,imm writing a register are now accepted
+as terminator flag producers (term_kind 8 and 9), on the same lazy-flag model as
+`test`. This was Diablo's dominant refusal in round 9 at 1.8M declines.
+
+### 15.5 What it measures
+
+Coverage, six apps, 200000-block batches, against
+`tools/code-region-census.js` run over the **same** hot-block dump:
+
+| app | opsMulti% (default) | opsMulti% (ceiling) | census 2+ block eligible | uopsVisited/guestOps |
+|---|---|---|---|---|
+| quake2 | 3.25% | 4.98% | 18.6% | 0.101% |
+| caesar3 | 0.16% | 0.75% | 49.9% | 0.006% |
+| heroes2 | 2.88% | 8.99% | 6.5% | 0.141% |
+| mw3 | 1.53% | 3.53% | 1.3% | 0.038% |
+| diablo | 1.75% | 1.86% | 20.9% | 0.028% |
+| starcraft | 0.05% | 0.18% | 9.7% | 0.008% |
+
+Discovery cost fell ~10x with the gate change (quake2 0.964% → 0.101% of guest
+ops). The census denominator is x86 ops and the matcher's is handler dispatches
+— the census prints the ratio per app (quake2 1.13, caesar3 1.08, heroes2 0.87,
+mw3 1.08, diablo 1.77, starcraft 1.60) and it has to be quoted when comparing.
+
+**Two traps in these numbers.** Absolute coverage is only comparable *within one
+back-to-back batch of runs*: the emulator is deterministic given its state, but
+apps persist VFS state between processes, and the same command a few runs apart
+returned 13,427 installs / 27.8M opsMulti and 5,625 / 11.2M on quake2.
+Instrumentation is not the variable — `--handler-hist` and `--hot-block-dump`
+runs came back bit-identical to plain ones. And a batch is a budget of *blocks*,
+so a region retires N blocks for one budget unit and the same `--max-batches`
+lands *further* into the guest: three of sixteen PNG pairs differ for that
+reason, all mid-animation, and on those screens the off arm differs from itself
+between adjacent budgets (14.7%, 23.1%, 10.2% of pixels) by more than the two
+arms differ from each other. Every settled screen is pixel-identical.
+
+### 15.6 Still open
+
+* **The thrash table aliases.** 64 direct-mapped slots over thousands of heads
+  reset each other before the 16-install threshold bites, which is *why* raising
+  K works at all. Widening it and counting installs per head is the round-11
+  lever, and it should recover what K=256 costs heroes2.
+* **caesar3 is the big remaining gap**: 49.9% of its guest CPU is 2+ block
+  eligible and the matcher captures 0.16%. Its declines are dominated by
+  `shortChain` and by memo refusals (2.4M against 24.9k attempts at K=24).
+* **`termNotModelled`** is still the top classify refusal in quake2, caesar3,
+  mw3 and starcraft — it needs the per-block tail pointer from §14.6.
+* **The tiering split** from §13.7, still not done: blk16 and blk32 measure
+  +0.4% and +0.9% paired, against the pre-merge +22/+36.

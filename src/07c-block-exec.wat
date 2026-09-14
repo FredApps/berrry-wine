@@ -313,6 +313,23 @@
   (global $BX_RG_WHY_OFF   i32 (i32.const 3520))   ;; 8 decline-reason counters
   (global $BX_RG_CFAIL_OFF i32 (i32.const 3536))   ;; 8 collect-refusal counters
   (global $BX_RG_NOFIT_OFF i32 (i32.const 3552))   ;; 9 classify-refusal counters
+  ;; ---- the CFG walker's three tables (round 10) ------------------------
+  ;; The worklist. One entry per edge discovered, popped in order, so the walk
+  ;; is a breadth-first closure over the block graph rather than a fall-through
+  ;; chain. 64 is twice $REGION_MAX_BLOCKS * 2 edges, i.e. it cannot overflow
+  ;; before the block cap does.
+  (global $BX_RG_WL_OFF    i32 (i32.const 3600))   ;; 64 words
+  ;; Per-head entry counters, direct-mapped on the head EIP. This is the
+  ;; HOTNESS GATE: discovery is attempted only after a block has been entered
+  ;; through $branch_end $bx_walk_hot_k times, so a cold block that happens to
+  ;; be a branch target costs one table bump and nothing else. 512 slots of
+  ;; {eip, count}.
+  (global $BX_RG_HOT_OFF   i32 (i32.const 4096))   ;; 512 * 2 words
+  ;; Per-head failure memo. A head whose walk declined $bx_walk_memo_max times
+  ;; is never attempted again, which is what turns "cost paid once per hot
+  ;; head" from an aspiration into a bound: without it the hotness counter
+  ;; re-arms every K entries forever. 256 slots of {eip, fails}.
+  (global $BX_RG_MEMO_OFF  i32 (i32.const 5120))   ;; 256 * 2 words
 
   ;; Collector state. Live only between $bx_region_begin and $bx_region_finish,
   ;; which are both inside one $decode_run and therefore cannot nest.
@@ -320,6 +337,10 @@
   (global $bx_rg_n      (mut i32) (i32.const 0))
   (global $bx_rg_uops   (mut i32) (i32.const 0))
   (global $bx_rg_fw     (mut i32) (i32.const 0))
+  ;; The fallback-pool cursor as it stood when the current classify started, so
+  ;; a refusal part-way through a block's body scan rewinds exactly what that
+  ;; block wrote and nothing earlier.
+  (global $bx_rg_fw0    (mut i32) (i32.const 0))
   (global $bx_rg_head   (mut i32) (i32.const 0))
   ;; The EIP $decode_run was asked for, which is what its return value has to
   ;; be the code for. A restarted chain has a head PAST that, and a region
@@ -327,6 +348,92 @@
   ;; reached through the page index like any other block.
   (global $bx_rg_run_start (mut i32) (i32.const 0))
   (global $bx_rg_next   (mut i32) (i32.const 0))
+
+  ;; ---- the CFG walker (round 10) ---------------------------------------
+  ;; Round 9's discovery rode $decode_run's fall-through chain, and measured
+  ;; ~0% coverage of 2+ block regions at the shipped cost model against a
+  ;; census that followed Jcc and jmp TARGETS as well. A region whose head is a
+  ;; branch target, or whose second block is one, was invisible by
+  ;; construction. This is the replacement: a closure walk over the block graph
+  ;; from one hot head, decoding on demand inside the head's page.
+  ;;
+  ;; What it keeps from round 9, unchanged and deliberately so:
+  ;;   * the descriptor, the classifier, the executor, the exit table;
+  ;;   * the SMC story -- the region is published over ONE contiguous guest
+  ;;     span [head, max member end), $page_publish retires every old block it
+  ;;     touches, and a write anywhere inside retires the region;
+  ;;   * the 64-slot thrash guard.
+  ;; What that span costs is the one new rule: **every member must start at or
+  ;; above the head**, so the head is the lowest address in the region and the
+  ;; published entry point is the span's first byte. An edge to a lower address
+  ;; is simply an exit. Without it $page_retire_at, which infers a block's
+  ;; extent by walking out over equal chunk offsets, would break the chunk with
+  ;; the span's low byte as the resume address and a later entry at the head
+  ;; would jump into the middle of its own region.
+  ;;
+  ;; Bytes inside the span that belong to no member are covered by the region
+  ;; too. That is not an approximation: a cover mark means "not an entry point",
+  ;; so entering such a byte misses, re-decodes, and symmetrically retires the
+  ;; region -- the same self-healing arm the interior-entry case has always
+  ;; used, and the thrash table is what bounds it.
+  (global $bx_rg_walk (mut i32) (i32.const 0))
+  ;; How many addresses the current walk has put on its worklist.
+  (global $bx_rg_wl_n (mut i32) (i32.const 0))
+  ;; Entries through $branch_end before a head is worth a walk.
+  ;;
+  ;; 256, and the number is measured rather than chosen. The gate does not
+  ;; only decide how much discovery costs -- it decides how much RE-DECODE the
+  ;; install path costs, because publishing a descriptor covers its whole guest
+  ;; extent and anything that enters the interior misses, re-decodes and
+  ;; symmetrically retires the region. A lukewarm head installs, churns and
+  ;; installs again. Measured on quake2 (300 batches, 200000-block batches),
+  ;; against 124,061 block decodes with the family off:
+  ;;
+  ;;     K       decodes      opsMulti
+  ;;     24    1,584,079    16,179,253
+  ;;     64      942,968    24,727,410
+  ;;     256     417,280    27,817,225
+  ;;     1024    187,442    22,672,623
+  ;;     4096    133,051    17,406,161
+  ;;
+  ;; So K=24 was not buying coverage with that decode work: 256 covers 72% MORE
+  ;; guest ops for a QUARTER of the decodes. The same shape holds on caesar3
+  ;; (158,278 -> 15,582 decodes, opsMulti 110,830 -> 237,822) and mw3. That
+  ;; miscalibration was the whole of round 9's quake2 loss: at K=24 the family
+  ;; costs a resolved -1.794s on a 9.4s run, and at 256 it is inside the null
+  ;; spread. heroes2 is the one app that harvests less at 256 than at 24 (its
+  ;; hot heads are not entered 256 times in the window), at near-baseline
+  ;; decode cost -- less gain, never a loss.
+  ;;
+  ;; The residual churn is the thrash table aliasing: 64 direct-mapped slots
+  ;; over thousands of heads reset each other before the 16-install threshold
+  ;; bites, which is why raising K works at all and is the next lever.
+  (global $bx_walk_hot_k (mut i32) (i32.const 256))
+  ;; Blocks one walk may visit. This is the discovery COST bound, and it is
+  ;; counted in blocks rather than in uops because a block is what costs a
+  ;; $decode_block.
+  (global $bx_walk_budget (mut i32) (i32.const 24))
+  ;; Declines a head may accumulate before it is never attempted again.
+  (global $bx_walk_memo_max (mut i32) (i32.const 3))
+  ;; The $branch_end gate, kept as its own global so the hot path is one load
+  ;; and one not-taken branch when the family is off -- which is the default and
+  ;; every other app's configuration. Set by set_block_exec / the region cap.
+  (global $bx_hot_on (mut i32) (i32.const 0))
+
+  ;; Discovery meters. $bx_walk_blocks is the number the design doc reports as
+  ;; "blocks visited per install"; $bx_walk_uops is the same in micro-ops, which
+  ;; is what makes it comparable with the executor's own op counters.
+  (global $bx_walk_attempts (mut i32) (i32.const 0))
+  (global $bx_walk_installs (mut i32) (i32.const 0))
+  (global $bx_walk_blocks   (mut i64) (i64.const 0))
+  (global $bx_walk_uops     (mut i64) (i64.const 0))
+  (global $bx_walk_memo_refusals (mut i32) (i32.const 0))
+  (global $bx_walk_hot_probes (mut i32) (i32.const 0))
+  ;; The lowest in-page successor a walk had to refuse for being BELOW its
+  ;; head, and the count of walks that were re-anchored onto one. See the
+  ;; re-anchor comment on $bx_walk_try.
+  (global $bx_walk_min_below (mut i32) (i32.const 0))
+  (global $bx_walk_reanchors (mut i32) (i32.const 0))
 
   ;; Meters.
   (global $bx_region_installs (mut i32) (i32.const 0))
@@ -385,6 +492,22 @@
         (br_if $found (i32.eq (local.get $fn) (i32.const 72)))
         (br_if $found (i32.eq (local.get $fn) (i32.const 73)))
         (br_if $found (i32.eq (local.get $fn) (i32.const 128)))
+        ;; ALU r,imm32 (H3 add, H4 or, H7 and, H8 sub, H9 xor) and ALU r,r
+        ;; (H12, H13, H16, H17, H18). These WRITE a register as well as the
+        ;; flags, which is the only thing that separates them from the `cmp`
+        ;; and `test` pair above, and the executor's term_kind 8/9 does that
+        ;; write. Round 9 measured `noFlagProducer` at 1.84M of Diablo's 2.81M
+        ;; classify refusals for exactly this reason: `and eax,7 / jnz` is as
+        ;; common an idiom as `test eax,eax / jnz` and was not accepted.
+        ;;
+        ;; The two holes in each range -- H5/H6 adc/sbb and H14/H15 adc/sbb --
+        ;; are matched here and declined below rather than skipped, because a
+        ;; carry-consuming op is a flag WRITER and the backward scan may not
+        ;; walk over one either way.
+        (br_if $found (i32.and (i32.ge_u (local.get $fn) (i32.const 3))
+                               (i32.le_u (local.get $fn) (i32.const 9))))
+        (br_if $found (i32.and (i32.ge_u (local.get $fn) (i32.const 12))
+                               (i32.le_u (local.get $fn) (i32.const 18))))
         ;; Not a producer: it may still be walked over, but only if it is a
         ;; micro-op that neither writes nor reads a flag field. Those keep
         ;; their original position and run after the terminator, which is what
@@ -441,8 +564,40 @@
                     (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
                   (global.set $bx_pr_b (i32.and (local.get $op) (i32.const 0xF)))
                   (global.set $bx_pr_imm (i32.load offset=8 (local.get $p))))
-                (else (return (i32.const -1))))))))))))))
+                (else
+                  ;; ALU r,imm32 -> kind 9, ALU r,r -> kind 8. `uop` carries
+                  ;; the x86 group sub-op (0 add, 1 or, 4 and, 5 sub, 6 xor),
+                  ;; which is `fn - 3` for the immediate forms and `fn - 12`
+                  ;; for the register ones; 2 and 3 are adc/sbb and decline.
+                  (if (i32.and (i32.ge_u (local.get $fn) (i32.const 3))
+                               (i32.le_u (local.get $fn) (i32.const 9)))
+                    (then
+                      (global.set $bx_pr_uop (i32.sub (local.get $fn) (i32.const 3)))
+                      (if (call $bx_alu_term_bad (global.get $bx_pr_uop))
+                        (then (return (i32.const -1))))
+                      (global.set $bx_pr_kind (i32.const 9))
+                      (global.set $bx_pr_a (i32.and (local.get $op) (i32.const 0xF)))
+                      (global.set $bx_pr_b (i32.load offset=8 (local.get $p))))
+                    (else (if (i32.and (i32.ge_u (local.get $fn) (i32.const 12))
+                                       (i32.le_u (local.get $fn) (i32.const 18)))
+                      (then
+                        (global.set $bx_pr_uop (i32.sub (local.get $fn) (i32.const 12)))
+                        (if (call $bx_alu_term_bad (global.get $bx_pr_uop))
+                          (then (return (i32.const -1))))
+                        (global.set $bx_pr_kind (i32.const 8))
+                        (global.set $bx_pr_a
+                          (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+                        (global.set $bx_pr_b (i32.and (local.get $op) (i32.const 0xF))))
+                      (else (return (i32.const -1))))))))))))))))))
     (i32.sub (local.get $n) (i32.const 2)))
+
+  ;; "This x86 ALU group sub-op may not be a terminator flag producer." Only
+  ;; add/or/and/sub/xor are modelled: adc (2) and sbb (3) read CF as an input
+  ;; and cmp (7) is handled by its own kinds above.
+  (func $bx_alu_term_bad (param $s i32) (result i32)
+    (i32.or (i32.eq (local.get $s) (i32.const 2))
+      (i32.or (i32.eq (local.get $s) (i32.const 3))
+              (i32.ge_u (local.get $s) (i32.const 7)))))
 
   ;; ----------------------------------------------------------------------
   ;; Classify one just-decoded block into the region builder. Reads OP_INDEX
@@ -459,6 +614,7 @@
     (local $nat i32) (local $nfb i32) (local $up i32) (local $u0 i32)
     (local $k i32) (local $fbp i32)
 
+    (global.set $bx_rg_fw0 (global.get $bx_rg_fw))
     (local.set $n (global.get $op_index_n))
     (if (i32.eqz (local.get $n)) (then (return (call $bx_rg_nofit (i32.const 1)))))
     (local.set $u0 (global.get $bx_rg_uops))
@@ -672,45 +828,40 @@
     (i32.const 1))
 
   ;; ----------------------------------------------------------------------
-  ;; Collector entry points, called from $decode_run and $decode_block.
+  ;; Collector entry point, called from $decode_block. Round 9 armed this from
+  ;; $decode_run and collected along the run's fall-through chain; round 10
+  ;; arms it only from $bx_walk_try, so a decode that is not part of a
+  ;; discovery walk pays one global load here and nothing else. That deleted
+  ;; cost is the 412,327 `shortChain` declines the round-9 quake2 window spent
+  ;; classifying blocks that could never become a region.
   ;; ----------------------------------------------------------------------
-  (func $bx_region_begin (param $start_eip i32)
-    (global.set $bx_rg_active (i32.const 0))
-    (if (i32.eqz (global.get $block_exec_enabled)) (then (return)))
-    (if (i32.eqz (global.get $bx_region_enabled)) (then (return)))
-    ;; Same three standing-down conditions the one-block matcher has: a 16-bit
-    ;; block has a different register and address model, and under
-    ;; --fault-null=stop a native memory op can trap with the register locals
-    ;; unpublished.
-    (if (i32.or (global.get $code16) (global.get $fault_unmapped)) (then (return)))
-    (global.set $bx_rg_active (i32.const 1))
-    (global.set $bx_rg_n     (i32.const 0))
-    (global.set $bx_rg_uops  (i32.const 0))
-    (global.set $bx_rg_fw    (i32.const 0))
-    (global.set $bx_rg_head  (local.get $start_eip))
-    (global.set $bx_rg_run_start (local.get $start_eip))
-    (global.set $bx_rg_next  (local.get $start_eip)))
 
   ;; One classify refusal, recorded by reason, returning the 0 the caller
   ;; wants so a decline site stays one expression. 1 empty block, 2 byte-form
   ;; fused test+Jcc, 3 no flag producer, 4 terminator is not a modelled edge,
   ;; 5 micro-op array full, 6 op the executor may not run natively,
   ;; 7 fallback pool full, 8 trailing EA_SIB.
+  ;;
+  ;; It also rewinds the fallback pool. A refusal can happen AFTER the body
+  ;; scan has copied a fallback's inline words into the pool, and in round 9
+  ;; that leak was invisible because every refusal either ended the chain or
+  ;; restarted the builder, both of which reset the cursor. The walker keeps
+  ;; collecting after a refused block, so the rewind has to be explicit.
   (func $bx_rg_nofit (param $r i32) (result i32)
     (local $p i32)
+    (global.set $bx_rg_fw (global.get $bx_rg_fw0))
     (local.set $p (call $bx_rg_word
       (i32.add (global.get $BX_RG_NOFIT_OFF) (local.get $r))))
     (i32.store (local.get $p) (i32.add (i32.load (local.get $p)) (i32.const 1)))
     (i32.const 0))
 
-  ;; One collect refusal, recorded by reason and by whether the chain already
-  ;; had members. A refusal at n>=1 is a region that ended where it should;
-  ;; a refusal at n==0 is a head that never started one, and the two want
-  ;; opposite fixes, so they are counted apart. Slots 0..3 are the reason at
-  ;; n==0, 4..7 the same reason at n>=1.
+  ;; One collect refusal, recorded by reason and by whether the walk already
+  ;; had members. Slots 0..3 are the reason at n==0, 4..7 the same reason at
+  ;; n>=1. Unlike round 9 this does NOT disarm the collector: a block the
+  ;; walker cannot classify is simply not a member, and the edge into it
+  ;; becomes one of the region's exits.
   (func $bx_rg_cfail (param $r i32)
     (local $p i32)
-    (global.set $bx_rg_active (i32.const 0))
     (local.set $p (call $bx_rg_word
       (i32.add (global.get $BX_RG_CFAIL_OFF)
         (i32.add (local.get $r)
@@ -718,66 +869,23 @@
                   (i32.ne (global.get $bx_rg_n) (i32.const 0)))))))
     (i32.store (local.get $p) (i32.add (i32.load (local.get $p)) (i32.const 1))))
 
-  ;; Throw the partial chain away and start a new one at $eip. Every builder
-  ;; cursor resets, so whatever a refused classify wrote into the micro-op
-  ;; array or the fallback pool is simply overwritten.
-  (func $bx_rg_restart (param $eip i32)
-    (global.set $bx_rg_active (i32.const 1))
-    (global.set $bx_rg_n     (i32.const 0))
-    (global.set $bx_rg_uops  (i32.const 0))
-    (global.set $bx_rg_fw    (i32.const 0))
-    (global.set $bx_rg_head  (local.get $eip))
-    (global.set $bx_rg_next  (local.get $eip))
-    (global.set $bx_region_restarts
-      (i32.add (global.get $bx_region_restarts) (i32.const 1))))
-
   ;; Called from $decode_block, before $loop_match_block, on every block --
-  ;; including the ones decoded outside a run, where $bx_rg_active is 0 and
-  ;; this is two loads and a branch.
+  ;; including every block decoded outside a walk, where $bx_rg_active is 0 and
+  ;; this is one load and a branch.
   (func $bx_region_collect (param $start_eip i32)
     (if (i32.eqz (global.get $bx_rg_active)) (then (return)))
-    ;; Guest-contiguity is what makes the region's cover marks a single span.
-    ;; $decode_run only ever extends along a fall-through, so this holds by
-    ;; construction; it is checked because the failure mode of a hole is a
-    ;; write that retires nothing.
-    (if (i32.ne (local.get $start_eip) (global.get $bx_rg_next))
-      (then
-        (if (i32.ge_u (global.get $bx_rg_n) (i32.const 2))
-          (then (call $bx_rg_cfail (i32.const 0)) (return)))
-        (call $bx_rg_restart (local.get $start_eip))))
     (if (i32.or
           (i32.ge_u (global.get $bx_rg_n) (global.get $REGION_MAX_BLOCKS))
           (i32.ge_u (global.get $bx_rg_n) (global.get $bx_region_enabled)))
       (then (call $bx_rg_cfail (i32.const 1)) (return)))
     (if (i32.or (global.get $op_index_poison) (i32.eqz (global.get $op_index_n)))
-      (then
-        (if (i32.ge_u (global.get $bx_rg_n) (i32.const 2))
-          (then (call $bx_rg_cfail (i32.const 2)) (return)))
-        (call $bx_rg_cfail (i32.const 2))
-        (call $bx_rg_restart (global.get $d_pc))
-        (return)))
-    ;; A block this cannot classify simply ENDS the region: the blocks already
-    ;; collected stay, and the edge into this one becomes an exit. That is the
-    ;; whole reason a call- or ret-terminated block costs nothing here.
-    ;;
-    ;; ... unless there is nothing to keep. A chain of fewer than two members
-    ;; can never install, so ending it here would throw away the REST of the
-    ;; run for nothing -- and the run is long: $decode_run walks up to 64
-    ;; fall-through blocks, and the first of them is exactly the one most
-    ;; likely to end in a `call`, which is not a modelled edge. Measured on
-    ;; Quake II before this line existed: 16147 chains died on their own head
-    ;; block and 13218 of those were a terminator the descriptor cannot
-    ;; express. So restart the builder at the block after the refusal instead
-    ;; and let the region form in the middle of the run where the loops are.
+      (then (call $bx_rg_cfail (i32.const 2)) (return)))
+    ;; A block the classifier refuses is simply not a member; the edge into it
+    ;; becomes an exit. That is what makes a `call`- or `ret`-terminated
+    ;; successor cost nothing here beyond its own decode.
     (if (i32.eqz (call $bx_rg_classify_block (local.get $start_eip)))
-      (then
-        (if (i32.ge_u (global.get $bx_rg_n) (i32.const 2))
-          (then (call $bx_rg_cfail (i32.const 3)) (return)))
-        (call $bx_rg_cfail (i32.const 3))
-        (call $bx_rg_restart (global.get $d_pc))
-        (return)))
-    (global.set $bx_rg_n (i32.add (global.get $bx_rg_n) (i32.const 1)))
-    (global.set $bx_rg_next (global.get $d_pc)))
+      (then (call $bx_rg_cfail (i32.const 3)) (return)))
+    (global.set $bx_rg_n (i32.add (global.get $bx_rg_n) (i32.const 1))))
 
   ;; Member index whose entry EIP is $ga, or -1.
   (func $bx_rg_member (param $ga i32) (result i32)
@@ -855,8 +963,10 @@
   ;; One decline, recorded. $bx_region_why keeps the last reason for a quick
   ;; look; the histogram beside it is what answers "what declined most".
   ;; 1 not worth it, 2 exit table full, 3 no room to emit, 4 thrashing,
-  ;; 5 publish refused, 6 chain shorter than two blocks, 7 a member declined
-  ;; classification so the chain ended early.
+  ;; 5 publish refused, 6 fewer than two members, 7 unused (round 9's
+  ;; "a member declined and the chain ended early", which the walker no longer
+  ;; has -- a refused member is just an exit), 8 the discovery budget ran out
+  ;; before the closure did, 9 the head was memoised as a repeat failure.
   (func $bx_rg_decline (param $w i32)
     (local $p i32)
     (global.set $bx_region_why (local.get $w))
@@ -864,33 +974,38 @@
       (i32.add (global.get $bx_region_declines) (i32.const 1)))
     (local.set $p (call $bx_rg_word
       (i32.add (global.get $BX_RG_WHY_OFF)
-        (select (i32.const 0) (local.get $w) (i32.gt_u (local.get $w) (i32.const 7))))))
+        (select (i32.const 0) (local.get $w) (i32.gt_u (local.get $w) (i32.const 9))))))
     (i32.store (local.get $p) (i32.add (i32.load (local.get $p)) (i32.const 1))))
 
   ;; ----------------------------------------------------------------------
   ;; $bx_region_finish -- decide, then emit the descriptor over a fresh piece
-  ;; of the arena and publish it at the head EIP. Takes and returns
-  ;; $decode_run's first-block pointer: on an install the region replaces it.
+  ;; of the arena and publish it at the head EIP. Returns 1 on an install.
+  ;;
+  ;; The guest extent is [head, max member end). Every member is at or above
+  ;; the head by the walker's own rule, so that span covers all of them; bytes
+  ;; inside it that belong to no member are covered too, which retires whatever
+  ;; used to own them and makes entering one a miss (and therefore a re-decode
+  ;; that symmetrically retires the region).
   ;; ----------------------------------------------------------------------
-  (func $bx_region_finish (param $t0 i32) (result i32)
+  (func $bx_region_finish (result i32)
     (local $n i32) (local $i i32) (local $j i32) (local $rec i32)
     (local $e i32) (local $ne i32) (local $ep i32)
     (local $nat i32) (local $nfb i32) (local $total i32) (local $bytes i32)
     (local $tstart i32) (local $off i32) (local $head i32) (local $gend i32)
     (local $blocks i32) (local $benefit i32) (local $cost i32)
 
-    (if (i32.eqz (global.get $bx_rg_active)) (then (return (local.get $t0))))
+    (if (i32.eqz (global.get $bx_rg_active)) (then (return (i32.const 0))))
     (global.set $bx_rg_active (i32.const 0))
     (local.set $n (global.get $bx_rg_n))
     (if (i32.lt_u (local.get $n) (i32.const 2))
       (then
         (call $bx_rg_decline (i32.const 6))
-        (return (local.get $t0))))
+        (return (i32.const 0))))
     (local.set $head (global.get $bx_rg_head))
     (if (i32.eqz (call $bx_rg_thrash_ok (local.get $head)))
       (then
         (call $bx_rg_decline (i32.const 4))
-        (return (local.get $t0))))
+        (return (i32.const 0))))
 
     ;; ---- resolve every edge ---------------------------------------------
     (i32.store (call $bx_rg_word
@@ -905,7 +1020,7 @@
         (if (i32.eq (local.get $e) (i32.const 0x7FFFFFFF))
           (then
             (call $bx_rg_decline (i32.const 2))
-            (return (local.get $t0))))
+            (return (i32.const 0))))
         (i32.store offset=44 (local.get $rec) (local.get $e))
         ;; term_kind 4 evaluates no condition and always takes succ_fall, so
         ;; its taken slot must not claim an exit of its own.
@@ -916,7 +1031,7 @@
             (if (i32.eq (local.get $e) (i32.const 0x7FFFFFFF))
               (then
                 (call $bx_rg_decline (i32.const 2))
-                (return (local.get $t0))))
+                (return (i32.const 0))))
             (i32.store offset=40 (local.get $rec) (local.get $e))))
         (local.set $nat (i32.add (local.get $nat) (i32.load offset=64 (local.get $rec))))
         (local.set $nfb (i32.add (local.get $nfb) (i32.load offset=68 (local.get $rec))))
@@ -925,8 +1040,18 @@
     (local.set $ne (i32.load (call $bx_rg_word
                      (i32.sub (global.get $BX_RG_EXIT_OFF) (i32.const 1)))))
     (local.set $total (global.get $bx_rg_uops))
-    (local.set $gend (i32.load offset=52 (call $bx_rg_rec
-                       (i32.sub (local.get $n) (i32.const 1)))))
+    ;; The span's high edge. Round 9's chain was guest-ascending so the last
+    ;; member ended it; a closure walk visits in edge order, so take the max.
+    (local.set $gend (i32.const 0))
+    (local.set $i (i32.const 0))
+    (block $gd_done
+      (loop $gd
+        (br_if $gd_done (i32.ge_u (local.get $i) (local.get $n)))
+        (local.set $e (i32.load offset=52 (call $bx_rg_rec (local.get $i))))
+        (if (i32.gt_u (local.get $e) (local.get $gend))
+          (then (local.set $gend (local.get $e))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $gd)))
 
     ;; ---- worth it? -------------------------------------------------------
     ;; The same ns model the one-block installer uses, with the two terms a
@@ -949,12 +1074,12 @@
         (if (i32.lt_u (local.get $total) (global.get $block_exec_min_uops))
           (then
             (call $bx_rg_decline (i32.const 1))
-            (return (local.get $t0)))))
+            (return (i32.const 0)))))
       (else
         (if (i32.le_s (local.get $benefit) (local.get $cost))
           (then
             (call $bx_rg_decline (i32.const 1))
-            (return (local.get $t0))))))
+            (return (i32.const 0))))))
 
     ;; ---- the emit slack, derived exactly as the one-block case does -------
     (local.set $bytes
@@ -967,14 +1092,14 @@
     (if (i32.gt_u (local.get $bytes) (i32.const 4096))
       (then
         (call $bx_rg_decline (i32.const 3))
-        (return (local.get $t0))))
+        (return (i32.const 0))))
     ;; $te's overflow backstop must not fire in the middle of this emit.
     (if (i32.or (global.get $thread_flush_pending)
                 (i32.ge_u (global.get $thread_alloc)
                   (i32.sub (global.get $THREAD_END) (i32.const 16384))))
       (then
         (call $bx_rg_decline (i32.const 3))
-        (return (local.get $t0))))
+        (return (i32.const 0))))
 
     ;; ---- emit ------------------------------------------------------------
     (local.set $tstart (global.get $thread_alloc))
@@ -1030,15 +1155,27 @@
         (br $fb)))
 
     ;; ---- publish over the head, and over every member it subsumes --------
-    ;; The guest extent is [head, last member's end), which is the union of the
-    ;; members' own extents because the chain is contiguous. $page_publish
-    ;; retires every block inside it before indexing this one, so the members'
+    ;; The guest extent is [head, max member end). Every member starts at or
+    ;; above the head, so that span contains all of them. $page_publish retires
+    ;; every old block inside it before indexing this one, so the members'
     ;; separate entries go away and the region owns every byte -- which is
     ;; exactly what makes a write to a member retire the region.
     (global.set $op_index_n (i32.const 0))
     (local.set $bytes (global.get $thread_alloc))     ;; reused: the emit end
     (local.set $off (call $page_publish (local.get $head) (local.get $tstart)
                       (local.get $bytes) (local.get $gend)))
+    (if (i32.lt_s (local.get $off) (i32.const 0))
+      (then
+        ;; No home in the chunk. Nothing is executing this copy -- the walker
+        ;; runs at a block boundary, not on the path into the block -- so the
+        ;; staging bytes are abandoned and the head keeps whatever entry it
+        ;; already had. Round 9 had to hand the arena copy back to $decode_run
+        ;; here; there is no run to hand it to any more.
+        (global.set $bx_region_why (i32.const 5))
+        (return (i32.const 0))))
+    ;; Counted here and not before the test above: a descriptor that found no
+    ;; home in the chunk was emitted, not installed, and counting it as one
+    ;; reads as "the matcher is working and the executor never runs it".
     (global.set $bx_region_installs
       (i32.add (global.get $bx_region_installs) (i32.const 1)))
     (global.set $bx_region_blocks
@@ -1046,14 +1183,6 @@
     (local.set $i (call $bx_rg_word
       (i32.add (global.get $BX_RG_HIST_OFF) (local.get $n))))
     (i32.store (local.get $i) (i32.add (i32.load (local.get $i)) (i32.const 1)))
-    (if (i32.lt_s (local.get $off) (i32.const 0))
-      (then
-        ;; No home in the chunk. The arena copy is still a correct region, and
-        ;; $run is about to execute it; it simply will not be found again.
-        (global.set $bx_region_why (i32.const 5))
-        (if (i32.ne (local.get $head) (global.get $bx_rg_run_start))
-          (then (return (local.get $t0))))
-        (return (local.get $tstart))))
     ;; Reclaim the staging bytes, but only when publishing left $thread_alloc
     ;; exactly where the emit ended -- $page_publish can itself carve a chunk
     ;; out of the arena, and rewinding over that would hand the next block's
@@ -1062,12 +1191,307 @@
     (if (i32.eq (global.get $thread_alloc) (local.get $bytes))
       (then (global.set $thread_alloc (local.get $tstart))))
     (global.set $bx_region_why (i32.const 0))
-    ;; A region whose head is not the EIP the run was entered for is published
-    ;; and findable, but the run still has to return the code for the EIP it
-    ;; was asked about.
-    (if (i32.ne (local.get $head) (global.get $bx_rg_run_start))
-      (then (return (local.get $t0))))
-    (i32.add (global.get $cur_page_chunk) (local.get $off)))
+    (i32.const 1))
+
+  ;; ======================================================================
+  ;; DISCOVERY BY CFG WALK (round 10)
+  ;; ======================================================================
+
+  ;; The hotness gate. 512 direct-mapped slots of {head EIP, entries}. Bumped
+  ;; from $branch_end -- which is every taken branch, every jmp and every
+  ;; $th_block_end, i.e. exactly "this address is a branch target" -- and it
+  ;; fires a walk on the $bx_walk_hot_k'th entry, then rearms at zero. The
+  ;; memo below is what stops the rearm from turning into an unbounded retry.
+  ;; The $branch_end gate is the AND of the two switches, cached in its own
+  ;; global so the hot path never reads two. Both setters call this.
+  (func $bx_hot_gate_refresh
+    (global.set $bx_hot_on
+      (i32.and (i32.ne (global.get $block_exec_enabled) (i32.const 0))
+               (i32.ne (global.get $bx_region_enabled) (i32.const 0)))))
+
+  (func $bx_hot_slot (param $eip i32) (result i32)
+    (call $bx_rg_word
+      (i32.add (global.get $BX_RG_HOT_OFF)
+        (i32.shl (i32.and (i32.shr_u (local.get $eip) (i32.const 2))
+                          (i32.const 511))
+                 (i32.const 1)))))
+
+  (func $bx_hot_bump (param $eip i32)
+    (local $s i32) (local $c i32)
+    (local.set $s (call $bx_hot_slot (local.get $eip)))
+    (if (i32.ne (i32.load (local.get $s)) (local.get $eip))
+      (then
+        (i32.store (local.get $s) (local.get $eip))
+        (i32.store offset=4 (local.get $s) (i32.const 1))
+        (return)))
+    (local.set $c (i32.add (i32.load offset=4 (local.get $s)) (i32.const 1)))
+    (if (i32.lt_u (local.get $c) (global.get $bx_walk_hot_k))
+      (then
+        (i32.store offset=4 (local.get $s) (local.get $c))
+        (return)))
+    (i32.store offset=4 (local.get $s) (i32.const 0))
+    (global.set $bx_walk_hot_probes
+      (i32.add (global.get $bx_walk_hot_probes) (i32.const 1)))
+    (call $bx_walk_try (local.get $eip)))
+
+  ;; The per-head failure memo. 256 direct-mapped slots of {head EIP, fails}.
+  ;; A head that has declined $bx_walk_memo_max times is never walked again,
+  ;; which is what makes the discovery cost per head a constant rather than a
+  ;; rate. A successful install clears the entry, so a region retired by SMC
+  ;; can be rediscovered.
+  (func $bx_memo_slot (param $eip i32) (result i32)
+    (call $bx_rg_word
+      (i32.add (global.get $BX_RG_MEMO_OFF)
+        (i32.shl (i32.and (i32.shr_u (local.get $eip) (i32.const 2))
+                          (i32.const 255))
+                 (i32.const 1)))))
+
+  (func $bx_memo_ok (param $eip i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $bx_memo_slot (local.get $eip)))
+    (if (i32.ne (i32.load (local.get $s)) (local.get $eip)) (then (return (i32.const 1))))
+    (i32.lt_u (i32.load offset=4 (local.get $s)) (global.get $bx_walk_memo_max)))
+
+  (func $bx_memo_note (param $eip i32) (param $ok i32)
+    (local $s i32)
+    (local.set $s (call $bx_memo_slot (local.get $eip)))
+    (if (i32.ne (i32.load (local.get $s)) (local.get $eip))
+      (then
+        (i32.store (local.get $s) (local.get $eip))
+        (i32.store offset=4 (local.get $s) (i32.const 0))))
+    (if (local.get $ok)
+      (then (i32.store offset=4 (local.get $s) (i32.const 0)))
+      (else (i32.store offset=4 (local.get $s)
+              (i32.add (i32.load offset=4 (local.get $s)) (i32.const 1))))))
+
+  ;; Push one edge target onto the worklist if it is not there already.
+  ;; Returns 0 when the list is full, which is a decline rather than a
+  ;; truncation: a region whose edges were silently dropped would resolve them
+  ;; as exits and could exceed nothing, but it would also not be the region the
+  ;; walk set out to build, and a shape that varies with table pressure is not
+  ;; one a PNG sweep can hold still.
+  (func $bx_wl_push (param $ga i32) (result i32)
+    (local $i i32) (local $n i32) (local $p i32)
+    (local.set $p (call $bx_rg_word (global.get $BX_RG_WL_OFF)))
+    (local.set $n (global.get $bx_rg_wl_n))
+    (block $dup
+      (loop $s
+        (br_if $dup (i32.ge_u (local.get $i) (local.get $n)))
+        (if (i32.eq (i32.load (i32.add (local.get $p)
+                                (i32.shl (local.get $i) (i32.const 2))))
+                    (local.get $ga))
+          (then (return (i32.const 1))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $s)))
+    (if (i32.ge_u (local.get $n) (i32.const 64)) (then (return (i32.const 0))))
+    (i32.store (i32.add (local.get $p) (i32.shl (local.get $n) (i32.const 2)))
+               (local.get $ga))
+    (global.set $bx_rg_wl_n (i32.add (local.get $n) (i32.const 1)))
+    (i32.const 1))
+
+  ;; ----------------------------------------------------------------------
+  ;; $bx_walk_try -- one discovery attempt at one hot head.
+  ;;
+  ;; A closure walk over the block graph: pop an address, decode it (which
+  ;; classifies it into the builder through $bx_region_collect), push both its
+  ;; successors, repeat. Both edges of every member are followed, which is the
+  ;; whole difference from round 9 -- a Jcc target, a `jmp` target and a loop
+  ;; back edge are all ordinary worklist entries now, where before only a
+  ;; fall-through could extend the set.
+  ;;
+  ;; Four things bound the cost, and all four are needed:
+  ;;   * the HOTNESS GATE above -- a walk is attempted only for a head that
+  ;;     has been branched to $bx_walk_hot_k times;
+  ;;   * the ATTEMPT BUDGET here -- $bx_walk_budget blocks visited, after which
+  ;;     the attempt declines rather than truncating;
+  ;;   * the MEMO -- a head that declined too often is never retried;
+  ;;   * the THRASH GUARD, unchanged from round 9, on the install side.
+  ;;
+  ;; An address that is not walked is not an error: it is simply not a member,
+  ;; and the edge into it resolves to an exit in $bx_region_finish.
+  ;; ----------------------------------------------------------------------
+  (func $bx_walk_once (param $head i32) (result i32)
+    (local $wi i32) (local $eip i32) (local $page i32) (local $budget i32)
+    (local $before i32) (local $rec i32) (local $ok i32) (local $p i32)
+
+    (if (i32.eqz (call $bx_walk_head_ok (local.get $head)))
+      (then (return (i32.const 0))))
+    (global.set $bx_walk_attempts
+      (i32.add (global.get $bx_walk_attempts) (i32.const 1)))
+    (global.set $bx_walk_min_below (i32.const 0))
+
+    (local.set $page (i32.and (local.get $head) (i32.const 0xFFFFF000)))
+    (local.set $budget (global.get $bx_walk_budget))
+    (global.set $bx_rg_active (i32.const 1))
+    (global.set $bx_rg_walk   (i32.const 1))
+    (global.set $bx_rg_n      (i32.const 0))
+    (global.set $bx_rg_uops   (i32.const 0))
+    (global.set $bx_rg_fw     (i32.const 0))
+    (global.set $bx_rg_fw0    (i32.const 0))
+    (global.set $bx_rg_head   (local.get $head))
+    (global.set $bx_rg_wl_n   (i32.const 0))
+    (drop (call $bx_wl_push (local.get $head)))
+
+    (local.set $ok (i32.const 1))
+    (block $walk_done
+      (loop $walk
+        (br_if $walk_done (i32.ge_u (local.get $wi) (global.get $bx_rg_wl_n)))
+        (local.set $eip
+          (i32.load (i32.add (call $bx_rg_word (global.get $BX_RG_WL_OFF))
+                      (i32.shl (local.get $wi) (i32.const 2)))))
+        (local.set $wi (i32.add (local.get $wi) (i32.const 1)))
+        ;; Already a member: nothing to do, the edge resolves to it.
+        (br_if $walk (i32.ge_s (call $bx_rg_member (local.get $eip)) (i32.const 0)))
+        ;; Out of the head's page, or BELOW the head. The second is the rule
+        ;; that keeps the published span's first byte the region's entry point
+        ;; -- see the comment on $bx_rg_walk. Either way this address is an
+        ;; exit, not a member.
+        (br_if $walk (i32.ne (i32.and (local.get $eip) (i32.const 0xFFFFF000))
+                             (local.get $page)))
+        (if (i32.lt_u (local.get $eip) (local.get $head))
+          (then
+            (if (i32.or (i32.eqz (global.get $bx_walk_min_below))
+                        (i32.lt_u (local.get $eip) (global.get $bx_walk_min_below)))
+              (then (global.set $bx_walk_min_below (local.get $eip))))
+            (br $walk)))
+        ;; The budget. Declining here rather than truncating keeps the shape a
+        ;; function of the code and not of how much of the budget earlier edges
+        ;; happened to spend.
+        (if (i32.eqz (local.get $budget))
+          (then
+            (call $bx_rg_decline (i32.const 8))
+            (local.set $ok (i32.const 0))
+            (br $walk_done)))
+        (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))
+        (local.set $before (global.get $bx_rg_n))
+        (global.set $bx_walk_blocks
+          (i64.add (global.get $bx_walk_blocks) (i64.const 1)))
+        ;; Decode on demand. A block already compiled is decoded again and
+        ;; republished -- correct, and the price of getting its micro-ops,
+        ;; which exist only for the instant between the emit and the next
+        ;; block's. The collector at the tail of $decode_block is what turns
+        ;; that instant into a builder record.
+        (drop (call $decode_block (local.get $eip)))
+        ;; A flush or a page swap under us invalidates nothing we hold -- the
+        ;; builder is in its own region -- but it means the emit this walk is
+        ;; about to make has no home, so stop now rather than at the publish.
+        (if (global.get $thread_flush_pending)
+          (then
+            (call $bx_rg_decline (i32.const 3))
+            (local.set $ok (i32.const 0))
+            (br $walk_done)))
+        ;; Refused by the classifier: not a member, and the edge is an exit.
+        (br_if $walk (i32.eq (global.get $bx_rg_n) (local.get $before)))
+        (local.set $rec (call $bx_rg_rec (local.get $before)))
+        (global.set $bx_walk_uops
+          (i64.add (global.get $bx_walk_uops)
+            (i64.extend_i32_u (i32.load offset=4 (local.get $rec)))))
+        (if (i32.eqz (call $bx_wl_push (i32.load offset=60 (local.get $rec))))
+          (then
+            (call $bx_rg_decline (i32.const 8))
+            (local.set $ok (i32.const 0))
+            (br $walk_done)))
+        (if (i32.eqz (call $bx_wl_push (i32.load offset=56 (local.get $rec))))
+          (then
+            (call $bx_rg_decline (i32.const 8))
+            (local.set $ok (i32.const 0))
+            (br $walk_done)))
+        (br $walk)))
+
+    (global.set $bx_rg_walk (i32.const 0))
+    (if (local.get $ok)
+      (then (local.set $ok (call $bx_region_finish)))
+      (else (global.set $bx_rg_active (i32.const 0))))
+    (if (local.get $ok)
+      (then (global.set $bx_walk_installs
+              (i32.add (global.get $bx_walk_installs) (i32.const 1)))))
+    (local.get $ok))
+
+  ;; ----------------------------------------------------------------------
+  ;; $bx_walk_head_ok -- may a walk be started here at all? Split out of
+  ;; $bx_walk_try so the re-anchored second attempt below is held to exactly
+  ;; the same standard as the first.
+  ;;
+  ;; The head must be an address the interpreter has ALREADY compiled code at.
+  ;; $branch_end's gate fires for every value $eip takes at a block edge, and
+  ;; not all of them are code: the sentinel 0 a `ret` off the end of the guest
+  ;; stack leaves behind, an API thunk address, a wild transfer a crash is
+  ;; about to report. Decoding those traps inside $decode_block for a reason
+  ;; that has nothing to do with the guest -- 0 lands in the "execution entered
+  ;; zeros" check, which is a true statement about a false premise.
+  ;;
+  ;; Zero is tested on its own and not left to $page_probe, because $page_probe
+  ;; CANNOT reject it: an unused page-directory slot holds the tag 0, which is
+  ;; exactly page 0's tag, so the slot matches and the probe reads an index out
+  ;; of address 0 and reports cover. Every other address the probe does answer
+  ;; for, and it moves no page registers and counts no hit or miss.
+  ;; ----------------------------------------------------------------------
+  (func $bx_walk_head_ok (param $head i32) (result i32)
+    (if (i32.eqz (global.get $block_exec_enabled)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $bx_region_enabled)) (then (return (i32.const 0))))
+    ;; Never re-enter: $decode_block runs the collector, and a walk started
+    ;; inside a walk would share the one builder.
+    (if (global.get $bx_rg_active) (then (return (i32.const 0))))
+    ;; The same standing-down conditions the one-block matcher has, plus the
+    ;; arena: decoding into a flush-pending arena is what $decode_block itself
+    ;; refuses to do.
+    (if (i32.or (global.get $code16) (global.get $fault_unmapped))
+      (then (return (i32.const 0))))
+    (if (global.get $thread_flush_pending) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $head)) (then (return (i32.const 0))))
+    (if (i32.and (i32.ge_u (local.get $head) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $head) (global.get $thunk_guest_end)))
+      (then (return (i32.const 0))))
+    (call $page_probe (local.get $head)))
+
+  ;; ----------------------------------------------------------------------
+  ;; $bx_walk_try -- one discovery attempt, and a RE-ANCHOR HINT when it fails.
+  ;;
+  ;; The walk refuses any member below its head, because the published span
+  ;; must start at the region's one entry point. That rule costs nothing when
+  ;; the hot head is the lowest address of its loop, and everything when it is
+  ;; not: a loop discovered from its BOTTOM block -- the join of a diamond
+  ;; reached by a forward `jmp` before the back edge has run K times -- turns
+  ;; away its own loop top and collects one block.
+  ;;
+  ;; The fix is NOT to walk again immediately from the lower address. A region
+  ;; may only be installed while the guest is standing at its entry, and here
+  ;; the guest is standing at the bottom block. Install from the top anyway and
+  ;; the very next transfer lands on an interior address, which is a cover mark
+  ;; and not an entry, so it is decoded afresh -- and that publish retires the
+  ;; region that was just built. Measured: three installs, zero entries, on
+  ;; every iteration of the test's diamond.
+  ;;
+  ;; So the lower address is HINTED instead: its hot counter is primed to one
+  ;; short of K, and the next branch into it -- the back edge, which is one
+  ;; iteration away -- fires the gate there. The walk then runs with the guest
+  ;; at the address it is about to publish as the entry, which is the same
+  ;; situation every ordinary loop-top discovery is in.
+  ;;
+  ;; The memo is noted against the address the GATE fired on, never against the
+  ;; hinted one -- the gate is what will ask again.
+  ;; ----------------------------------------------------------------------
+  (func $bx_walk_try (param $head i32)
+    (local $ok i32) (local $alt i32) (local $s i32)
+    (if (i32.eqz (call $bx_memo_ok (local.get $head)))
+      (then
+        (global.set $bx_walk_memo_refusals
+          (i32.add (global.get $bx_walk_memo_refusals) (i32.const 1)))
+        (return)))
+    (local.set $ok (call $bx_walk_once (local.get $head)))
+    (if (i32.eqz (local.get $ok))
+      (then
+        (local.set $alt (global.get $bx_walk_min_below))
+        (if (i32.and (i32.ne (local.get $alt) (i32.const 0))
+                     (call $bx_memo_ok (local.get $alt)))
+          (then
+            (global.set $bx_walk_reanchors
+              (i32.add (global.get $bx_walk_reanchors) (i32.const 1)))
+            (local.set $s (call $bx_hot_slot (local.get $alt)))
+            (i32.store (local.get $s) (local.get $alt))
+            (i32.store offset=4 (local.get $s)
+              (i32.sub (global.get $bx_walk_hot_k) (i32.const 1)))))))
+    (call $bx_memo_note (local.get $head) (local.get $ok)))
 
   ;; ----------------------------------------------------------------------
   ;; $block_exec_try_install -- the matcher. Called from $decode_block AFTER
@@ -1629,6 +2053,57 @@
                       (local.set $r5 (local.get $vr)) (br $cdone))
                       (local.set $r6 (local.get $vr)) (br $cdone))
                     (local.set $r7 (local.get $vr))))
+                  (else (if (i32.ge_u (local.get $term_kind) (i32.const 8))
+                  (then
+                    ;; term_kind 8 (`alu r,r`) and 9 (`alu r,imm32`). These are
+                    ;; the round-10 producers, and the one thing that separates
+                    ;; them from the cmp/test pair below is that they WRITE the
+                    ;; destination register as well as the flags -- so the arm
+                    ;; ends in the same 8-way writeback the inc/dec arm uses.
+                    ;; `term_uop` is the x86 group sub-op; only 0 add, 1 or,
+                    ;; 4 and, 5 sub, 6 xor are ever emitted ($bx_alu_term_bad
+                    ;; declines adc/sbb, which read CF, and cmp, which has its
+                    ;; own kinds).
+                    (local.set $vb (local.get $term_b))
+                    (if (i32.eq (local.get $term_kind) (i32.const 8))
+                      (then (local.set $vb
+                        (block $gw (result i32)
+                          (block $w7 (block $w6 (block $w5 (block $w4
+                          (block $w3 (block $w2 (block $w1 (block $w0
+                            (br_table $w0 $w1 $w2 $w3 $w4 $w5 $w6 $w7 (local.get $term_b)))
+                            (br $gw (local.get $r0))) (br $gw (local.get $r1)))
+                            (br $gw (local.get $r2))) (br $gw (local.get $r3)))
+                            (br $gw (local.get $r4))) (br $gw (local.get $r5)))
+                            (br $gw (local.get $r6)))
+                          (local.get $r7)))))
+                    (local.set $vr
+                      (block $ar (result i32)
+                        (if (i32.eqz (local.get $term_uop))
+                          (then (br $ar (i32.add (local.get $va) (local.get $vb)))))
+                        (if (i32.eq (local.get $term_uop) (i32.const 1))
+                          (then (br $ar (i32.or (local.get $va) (local.get $vb)))))
+                        (if (i32.eq (local.get $term_uop) (i32.const 4))
+                          (then (br $ar (i32.and (local.get $va) (local.get $vb)))))
+                        (if (i32.eq (local.get $term_uop) (i32.const 5))
+                          (then (br $ar (i32.sub (local.get $va) (local.get $vb)))))
+                        (i32.xor (local.get $va) (local.get $vb))))
+                    (if (i32.eqz (local.get $term_uop))
+                      (then (call $set_flags_add (local.get $va) (local.get $vb) (local.get $vr)))
+                      (else (if (i32.eq (local.get $term_uop) (i32.const 5))
+                        (then (call $set_flags_sub (local.get $va) (local.get $vb) (local.get $vr)))
+                        (else (call $set_flags_logic (local.get $vr))))))
+                    (block $tdone
+                    (block $v7 (block $v6 (block $v5 (block $v4
+                    (block $v3 (block $v2 (block $v1 (block $v0
+                      (br_table $v0 $v1 $v2 $v3 $v4 $v5 $v6 $v7 (local.get $term_a)))
+                      (local.set $r0 (local.get $vr)) (br $tdone))
+                      (local.set $r1 (local.get $vr)) (br $tdone))
+                      (local.set $r2 (local.get $vr)) (br $tdone))
+                      (local.set $r3 (local.get $vr)) (br $tdone))
+                      (local.set $r4 (local.get $vr)) (br $tdone))
+                      (local.set $r5 (local.get $vr)) (br $tdone))
+                      (local.set $r6 (local.get $vr)) (br $tdone))
+                    (local.set $r7 (local.get $vr))))
                   (else
                     ;; cmp: no register write, all five flag fields.
                     ;; kind 2 compares against the immediate in `term_b`;
@@ -1668,7 +2143,7 @@
                           (i32.and (local.get $va) (local.get $vb))))
                       (else
                         (call $set_flags_sub (local.get $va) (local.get $vb)
-                          (i32.sub (local.get $va) (local.get $vb)))))))))
+                          (i32.sub (local.get $va) (local.get $vb)))))))))))
             (br_if $body_done (i32.ge_u (local.get $i) (local.get $nuops)))
             (local.set $kind (i32.load           (local.get $up)))
             (local.set $d    (i32.load offset=4  (local.get $up)))

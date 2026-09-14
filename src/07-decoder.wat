@@ -6237,10 +6237,12 @@
     (local $t0 i32) (local $page i32) (local $n i32)
     (local $alloc i32) (local $jfn i32) (local $fall i32) (local $prev_end i32)
     (local $tb i32) (local $optr i32) (local $old_chunk i32)
-    ;; A run is exactly the block set the region matcher wants -- one entry,
-    ;; ascending guest address, one page, stopping at already-compiled code --
-    ;; so it collects along the run and decides once at the end.
-    (call $bx_region_begin (local.get $start_eip))
+    ;; Round 9 armed the region matcher here and collected along the run's
+    ;; fall-through chain. It no longer does: discovery is a CFG closure walk
+    ;; from a hot head ($bx_walk_try, driven by $branch_end), because a chain
+    ;; of fall-throughs cannot see a region whose head or second block is a
+    ;; branch target -- which measured as ~0% of the census's 2+ block
+    ;; coverage. See docs/block-executor-design.md section 15.
     (local.set $t0 (call $decode_block (local.get $start_eip)))
     (local.set $page (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
     (block $stop (loop $ext
@@ -6328,8 +6330,5 @@
       (br $ext)))
     (if (local.get $n)
       (then (global.set $page_ft_chains (i32.add (global.get $page_ft_chains) (i32.const 1)))))
-    ;; If a region was built out of this run, it is published over the head and
-    ;; over every member it subsumes, and the pointer it returns is the one
-    ;; $run must execute -- the head's own block entry has just been retired.
-    (call $bx_region_finish (local.get $t0))
+    (local.get $t0)
   )

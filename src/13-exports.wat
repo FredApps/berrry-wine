@@ -2714,7 +2714,8 @@
   ;; per-thread instance -- lib/worker-imports.js carries it for the second
   ;; half and test/test-worker-wasm-globals.js is the gate on that.
   (func (export "set_block_exec") (param $flag i32)
-    (global.set $block_exec_enabled (local.get $flag)))
+    (global.set $block_exec_enabled (local.get $flag))
+    (call $bx_hot_gate_refresh))
   (func (export "get_block_exec") (result i32) (global.get $block_exec_enabled))
   (func (export "set_block_exec_min_uops") (param $n i32)
     (global.set $block_exec_min_uops (local.get $n)))
@@ -2751,9 +2752,37 @@
   ;; turn just the N-block half off and leave the one-block executor armed,
   ;; which is the only way to attribute a change to one of the two.
   (func (export "set_block_exec_regions") (param $flag i32)
-    (global.set $bx_region_enabled (local.get $flag)))
+    (global.set $bx_region_enabled (local.get $flag))
+    (call $bx_hot_gate_refresh))
   (func (export "get_block_exec_regions") (result i32)
     (global.get $bx_region_enabled))
+  ;; Discovery knobs (round 10). K entries before a head is walked, blocks one
+  ;; walk may visit, declines before a head is memoised out. All three are
+  ;; A/B levers, not tuning taste: the round-9 loss was decode-time discovery
+  ;; cost, so the arm that prices it has to be able to move it.
+  (func (export "set_block_exec_walk_k") (param $n i32)
+    (global.set $bx_walk_hot_k (local.get $n)))
+  (func (export "set_block_exec_walk_budget") (param $n i32)
+    (global.set $bx_walk_budget (local.get $n)))
+  (func (export "get_block_exec_walk_attempts") (result i32)
+    (global.get $bx_walk_attempts))
+  (func (export "get_block_exec_walk_installs") (result i32)
+    (global.get $bx_walk_installs))
+  ;; The discovery COST, in the two units the design doc reports it in: blocks
+  ;; visited (each one a $decode_block) and micro-ops classified.
+  (func (export "get_block_exec_walk_blocks") (result i64)
+    (global.get $bx_walk_blocks))
+  (func (export "get_block_exec_walk_uops") (result i64)
+    (global.get $bx_walk_uops))
+  (func (export "get_block_exec_walk_memo") (result i32)
+    (global.get $bx_walk_memo_refusals))
+  (func (export "get_block_exec_walk_probes") (result i32)
+    (global.get $bx_walk_hot_probes))
+  ;; Walks that failed and hinted a lower head to the gate instead. A high
+  ;; number against few installs means discovery keeps arriving at loops from
+  ;; the bottom.
+  (func (export "get_block_exec_walk_reanchors") (result i32)
+    (global.get $bx_walk_reanchors))
   (func (export "get_block_exec_region_installs") (result i32)
     (global.get $bx_region_installs))
   (func (export "get_block_exec_region_declines") (result i32)

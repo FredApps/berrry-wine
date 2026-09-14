@@ -822,6 +822,19 @@
   ;; $page_resolve cannot name one.
   (func $branch_end
     (local $t i32)
+    ;; The block-executor's discovery gate. $branch_end is every taken branch,
+    ;; every jmp and every $th_block_end, so "this address was entered through
+    ;; $branch_end" IS the "loop head or branch target" signal the multi-block
+    ;; matcher wants, and the counter behind it is the hotness gate that keeps
+    ;; discovery to once per hot head rather than once per decode. Off by
+    ;; default and for every app: $bx_hot_on is set only by set_block_exec with
+    ;; regions armed, so the cost here is one load and a not-taken branch.
+    ;; It runs BEFORE the debug and yield returns below, so that a run with
+    ;; --break= or --watch= still forms the same regions a plain run does; the
+    ;; walk itself decodes and never executes, which is safe at a block edge in
+    ;; exactly the way $run's own miss path is.
+    (if (global.get $bx_hot_on)
+      (then (call $bx_hot_bump (global.get $eip))))
     (if (i32.or (global.get $dbg_any)
         (i32.or (global.get $code16)
         (i32.or (global.get $yield_flag) (global.get $yield_reason))))

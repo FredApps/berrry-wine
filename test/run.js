@@ -276,6 +276,14 @@ const NO_BLOCK_EXEC_REGIONS = hasFlag('no-block-exec-regions');
 // at 16 and matches at 2 names the size at which the descriptor stops being
 // right, which "regions on/off" cannot.
 const BLOCK_EXEC_REGION_MAX = parseInt(getArg('block-exec-region-max', '0'), 10) || 0;
+// --block-exec-walk-k=N / --block-exec-walk-budget=N: the two discovery knobs
+// of the round-10 CFG walker. K is how many times a block has to be branched
+// to before its region is looked for; the budget is how many blocks one such
+// look may decode. Together they are the whole decode-time cost of the
+// multi-block matcher, which is what the round-9 measurement blamed for a 2.6%
+// loss on Quake II, so they are flags rather than constants.
+const BLOCK_EXEC_WALK_K = parseInt(getArg('block-exec-walk-k', '0'), 10) || 0;
+const BLOCK_EXEC_WALK_BUDGET = parseInt(getArg('block-exec-walk-budget', '0'), 10) || 0;
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
@@ -3988,6 +3996,8 @@ async function main() {
   if (BLOCK_EXEC_TRACE) inheritWasm('set_block_exec_trace', 1);
   if (NO_BLOCK_EXEC_REGIONS) inheritWasm('set_block_exec_regions', 0);
   else if (BLOCK_EXEC_REGION_MAX) inheritWasm('set_block_exec_regions', BLOCK_EXEC_REGION_MAX);
+  if (BLOCK_EXEC_WALK_K) inheritWasm('set_block_exec_walk_k', BLOCK_EXEC_WALK_K);
+  if (BLOCK_EXEC_WALK_BUDGET) inheritWasm('set_block_exec_walk_budget', BLOCK_EXEC_WALK_BUDGET);
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
   if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
@@ -4895,6 +4905,12 @@ async function main() {
     instance.exports.set_block_exec_regions(0);
   } else if (BLOCK_EXEC_REGION_MAX && instance.exports.set_block_exec_regions) {
     instance.exports.set_block_exec_regions(BLOCK_EXEC_REGION_MAX);
+  }
+  if (BLOCK_EXEC_WALK_K && instance.exports.set_block_exec_walk_k) {
+    instance.exports.set_block_exec_walk_k(BLOCK_EXEC_WALK_K);
+  }
+  if (BLOCK_EXEC_WALK_BUDGET && instance.exports.set_block_exec_walk_budget) {
+    instance.exports.set_block_exec_walk_budget(BLOCK_EXEC_WALK_BUDGET);
   }
   if (NO_AOE_FILL && instance.exports.set_loop_aoe_fill_emit) {
     instance.exports.set_loop_aoe_fill_emit(0);
@@ -9216,11 +9232,34 @@ if (VERBOSE) {
       // million times outweighs a thousand 2-block ones.
       console.log(`block-exec-regions: ${label} byN(ops/entries/installs)`,
         byN.join(' '));
+      // Discovery cost, the round-10 number. `blocks` is $decode_block calls
+      // the walker made and `uops` the micro-ops it classified; both divided by
+      // installs is what the design doc quotes as cost per install, and the
+      // same blocks figure against the run's total decodes is the share of
+      // decode time discovery is responsible for.
+      if (e.get_block_exec_walk_attempts) {
+        const att = e.get_block_exec_walk_attempts();
+        const ins = e.get_block_exec_walk_installs();
+        const blk = e.get_block_exec_walk_blocks();
+        const uop = e.get_block_exec_walk_uops();
+        console.log(`block-exec-regions: ${label} discovery`,
+          'probes', e.get_block_exec_walk_probes(),
+          'attempts', att,
+          'installs', ins,
+          'memoRefusals', e.get_block_exec_walk_memo(),
+          'reanchorHints', e.get_block_exec_walk_reanchors
+            ? e.get_block_exec_walk_reanchors() : 0,
+          'blocksVisited', String(blk),
+          'uopsVisited', String(uop),
+          'blocksPerInstall', ins ? (Number(blk) / ins).toFixed(1) : '-',
+          'uopsPerInstall', ins ? (Number(uop) / ins).toFixed(1) : '-');
+      }
       if (e.get_block_exec_region_why_n) {
         const WHY = [null, 'notWorthIt', 'exitsFull', 'noRoom', 'thrash',
-          'publishRefused', 'shortChain', 'memberDeclined'];
+          'publishRefused', 'shortChain', 'memberDeclined', 'walkBudget',
+          'memoised'];
         const why = [];
-        for (let w = 1; w <= 7; w += 1) {
+        for (let w = 1; w <= 9; w += 1) {
           const c = e.get_block_exec_region_why_n(w);
           if (c) why.push(`${WHY[w]}=${c}`);
         }

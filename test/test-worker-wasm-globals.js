@@ -47,7 +47,8 @@ for (const setter of [
   'set_loop_aoe_span_emit', 'set_sib_fusion', 'set_store_span_fusion',
   'set_x87_pipeline4_fusion', 'set_x87_affine_fusion', 'set_rect_run',
   'set_case_chain', 'set_rle_run', 'set_tree_fold', 'set_region_fold',
-  'set_block_exec', 'set_block_exec_min_uops',
+  'set_block_exec', 'set_block_exec_min_uops', 'set_block_exec_regions',
+  'set_block_exec_walk_k', 'set_block_exec_walk_budget',
 ]) {
   assert(setters.includes(setter), `${setter} is missing from inherited WASM globals`);
 }
@@ -72,6 +73,9 @@ record('set_tree_fold', 1);              // off by default: one is the meaningfu
 record('set_region_fold', 1);            // ditto; the bench/test-only region path
 record('set_block_exec', 1);             // off by default: one is the meaningful value
 record('set_block_exec_min_uops', 4);
+record('set_block_exec_regions', 0);     // zero is meaningful: the matcher off
+record('set_block_exec_walk_k', 8);
+record('set_block_exec_walk_budget', 12);
 record('set_cs_steal_after', 37);
 record('set_fault_unmapped', 2);
 record('set_callstack_enabled', 1);

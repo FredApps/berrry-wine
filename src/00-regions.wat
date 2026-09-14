@@ -511,11 +511,13 @@
   ;; built across several consecutive $decode_block calls, and each of those
   ;; rewrites OP_INDEX from word 0 and runs the one-block matcher over the far
   ;; half. A region builder that lived there would be eaten by its own members.
-  ;; 4096 words: 16 block records of 24, a 160-micro-op array, a fallback pool,
-  ;; a thrash table and the size histogram -- see the $BX_RG_* offsets in
+  ;; 8192 words: 16 block records of 24, a 160-micro-op array, a fallback pool,
+  ;; a thrash table and the size histogram in the first 4096, and the CFG
+  ;; walker's own three tables -- worklist, per-head entry counters, per-head
+  ;; failure memo -- in the second. See the $BX_RG_* offsets in
   ;; 07c-block-exec.wat, which are the only reader.
-  (region.declare $BX_RG_BASE (size 0x00004000) (align 0x00001000)
-    (stride 0x4 (count 4096))
+  (region.declare $BX_RG_BASE (size 0x00008000) (align 0x00001000)
+    (stride 0x4 (count 8192))
     (owner "07c-block-exec.wat:$BX_RG_BASE"))
   (region.declare $DX_SURF_PAL (size 0x00004000) (align 0x00001000)
     (stride 0x4 (count $DX_MAX))

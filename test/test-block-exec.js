@@ -126,6 +126,21 @@ async function main() {
   check('the executor is OFF in a fresh instance', e.get_block_exec() === 0,
     `get_block_exec()=${e.get_block_exec()}`);
 
+  // Multi-block discovery is hotness-gated in production: a head must be
+  // branched to K times before the CFG walk is attempted at all, so the walk
+  // is paid once per hot head instead of once per decode. A snippet in this
+  // file runs a handful of iterations and would never reach the shipped K, so
+  // the gate is dropped to the first entry here — this file is about what the
+  // matcher builds, not about how long it waits before building it. The gate
+  // and the budget have cases of their own further down, which set these back.
+  //
+  // Two, not one: the FIRST branch into a head is the edge that compiles it,
+  // and a walk needs the head already compiled (see $bx_walk_try). At the
+  // shipped K that is invisible — by the 24th entry every real head has been
+  // compiled for a long time — so one is the only value that would behave
+  // differently from production here.
+  e.set_block_exec_walk_k(2);
+
   const STACK_TOP = imageBase + 0xD00000;
   const DATA = imageBase + 0x900000;   // scratch the snippets read and write
   const DATA_LEN = 256;
@@ -519,6 +534,10 @@ async function main() {
   function region(name, bytes, seed, opts) {
     const off = arm(bytes, false, seed);
     const riBefore = e.get_block_exec_region_installs();
+    const probesBefore = e.get_block_exec_walk_probes();
+    const attemptsBefore = e.get_block_exec_walk_attempts();
+    const nofitBefore = [];
+    for (let r = 1; r <= 9; r += 1) nofitBefore.push(e.get_block_exec_region_nofit(r));
     const entBefore = [];
     for (let n = 2; n <= 16; n += 1) entBefore.push(e.get_block_exec_entries_by_n(n));
     const on = arm(bytes, true, seed);
@@ -539,7 +558,19 @@ async function main() {
       check(`  ${name}: a multi-block region installed and ran`,
         installs >= 1 && entries >= 1,
         `regionInstalls=${installs} multiBlockEntries=${entries} ` +
-        `why=${e.get_block_exec_region_why()} — declined, so this case proves nothing`);
+        `why=${e.get_block_exec_region_why()} ` +
+        // Which half failed: no attempt at all means no head was ever branched
+        // to (discovery never started), an attempt with no install means the
+        // walk ran and the closure was refused.
+        `hotProbes=${e.get_block_exec_walk_probes() - probesBefore} ` +
+        `walkAttempts=${e.get_block_exec_walk_attempts() - attemptsBefore} ` +
+        // $bx_region_why keeps only the LAST reason, and "the closure came out
+        // shorter than two blocks" overwrites the per-member refusal that made
+        // it short. The classify histogram is where that survives.
+        `nofit=[${nofitBefore.map((b, i) =>
+          `${i + 1}:${e.get_block_exec_region_nofit(i + 1) - b}`)
+          .filter(t => !t.endsWith(':0')).join(' ')}]` +
+        ` — declined, so this case proves nothing`);
     }
     return { off, on, installs, entries };
   }
@@ -563,7 +594,20 @@ async function main() {
     // A diamond: one test, two arms, one join. Both arms are members and the
     // join is a member too, so the whole shape is one descriptor and neither
     // arm costs a transfer.
+    //
+    // The leading `jmp` is not decoration. Discovery starts at heads the guest
+    // BRANCHES to, which is what makes the walk cost once per hot head rather
+    // than once per decode; a diamond with no back edge and no branch into its
+    // test block is never a head at all. In a real binary that entry edge is
+    // the call or the branch that reaches the function; here it has to be
+    // written down.
+    // Six iterations, not two. Discovery is hotness-gated, so a region is
+    // installed a couple of entries INTO the loop and only the iterations
+    // after that one enter it; a snippet that stops as soon as the descriptor
+    // exists installs it and proves nothing about running it.
     region('diamond (both arms and the join in one region)', asm([
+      [...movRI(ECX, 6)],
+      { label: 'top' },
       [...aluRI(7, ESI, 4)],                       // cmp esi,4
       { j: 'jcc', cc: JB, to: 'low' },
       [...movRI(EAX, 0x1111), ...aluRR(ADD, EAX, ESI)],
@@ -571,7 +615,8 @@ async function main() {
       { label: 'low' },
       [...movRI(EAX, 0x2222), ...aluRR(SUB, EAX, ESI)],
       { label: 'join' },
-      [...movRR(EDX, EAX), ...incR(EDX)],
+      [...movRR(EDX, EAX), ...incR(EDX), ...decR(ESI), ...decR(ECX)],
+      { j: 'jcc', cc: JNZ, to: 'top' },
       JOIN,
     ]));
 
@@ -579,14 +624,13 @@ async function main() {
     // internal edges and one exit. This is the shape the census counted as
     // 5-16 block, in miniature.
     region('state machine over guest memory', asm([
-      [...movRI(ECX, 3), ...movRI(EAX, 0)],
+      [...movRI(ECX, 8), ...movRI(EAX, 0)],
       { label: 'top' },
       [...aluRI(7, ECX, 0)],
       { j: 'jcc', cc: JZ, to: 'out' },
-      // `test edx,1`, not `and edx,1`: the flag-producer walk models CMP,
-      // TEST, INC/DEC and the memory-form CMP, and an `and` that writes a
-      // register is not one of them (measured on Quake II: 19% of all
-      // classify refusals are exactly this, `noFlagProducer`).
+      // `test edx,1` here; the `and edx,1` twin, which writes a register as
+      // well as the flags, is a terminator producer too since round 10 and has
+      // its own case below.
       [...load32(EDX, EBX, 0x40), 0xF7, 0xC0 | EDX, ...le32(1)],
       { j: 'jcc', cc: JZ, to: 'even' },
       [...aluRI(0, EAX, 0x10), ...store32(EAX, EBX, 0x44)],
@@ -599,6 +643,149 @@ async function main() {
       { label: 'out' },
       JOIN,
     ]));
+
+    // The head reached by a TAKEN Jcc, going forward. Round 9's discovery
+    // walked $decode_run's fall-through chain, so a region whose head is a
+    // branch target was invisible to it however hot it got; this is the case
+    // that was measured at ~0% coverage and is the reason the walk exists.
+    region('a region whose head is a forward Jcc target', asm([
+      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      [...aluRI(7, ESI, 0)],                       // cmp esi,0 (seeded 4)
+      { j: 'jcc', cc: JNZ, to: 'top' },
+      [...movRI(EAX, 0xDEAD)],                     // never runs
+      { j: 'jmp', to: 'out' },
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...aluRR(ADD, EAX, ECX), ...decR(ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+
+    // The head reached ONLY by a back edge: the first entry falls through into
+    // it, so the one branch that ever targets it is the loop's own `jmp` at
+    // the bottom. Three blocks, so the region is not the degenerate two.
+    region('a region entered from a loop back edge', asm([
+      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...load32(EDX, EBX, 0x50), ...aluRI(4, EDX, 1)],   // and edx,1
+      { j: 'jcc', cc: JZ, to: 'even' },
+      [...aluRI(0, EAX, 5)],
+      { label: 'even' },
+      [...decR(ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+
+    // `and r,imm` as the terminator's flag producer -- term_kind 9. Round 9
+    // declined this shape 1.8M times on Diablo alone (`noFlagProducer`), which
+    // is what item 2 of round 10 is about. The `and` writes EDX as well as the
+    // flags, so a wrong fold shows up in the register compare, not only in the
+    // branch.
+    region('ALU r,imm as the terminator flag producer', asm([
+      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...movRR(EDX, ECX), ...aluRI(4, EDX, 3)],   // and edx,3
+      { j: 'jcc', cc: JZ, to: 'four' },
+      [...aluRI(0, EAX, 0x11)],
+      { j: 'jmp', to: 'step' },
+      { label: 'four' },
+      [...aluRI(5, EAX, 7)],
+      { label: 'step' },
+      [...decR(ECX)],
+      { j: 'jcc', cc: JNZ, to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+
+    // `sub r,r` as the producer -- term_kind 8, the register-register half of
+    // the same widening.
+    region('ALU r,r as the terminator flag producer', asm([
+      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...movRR(EDX, ECX), ...aluRR(SUB, EDX, ESI)],   // sub edx,esi
+      { j: 'jcc', cc: JZ, to: 'hit' },
+      [...aluRI(0, EAX, 0x11)],
+      { j: 'jmp', to: 'step' },
+      { label: 'hit' },
+      [...aluRI(5, EAX, 7)],
+      { label: 'step' },
+      [...decR(ECX)],
+      { j: 'jcc', cc: JNZ, to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+  }
+
+  {
+    // The two cost bounds on discovery, checked by forcing them rather than by
+    // reading the code: a budget too small to reach the closure must DECLINE
+    // (not install a truncated region), and a head that keeps declining must
+    // stop being attempted at all.
+    const wide = asm([
+      [...movRI(ECX, 40), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...load32(EDX, EBX, 0x50), ...aluRI(4, EDX, 1)],
+      { j: 'jcc', cc: JZ, to: 'even' },
+      [...aluRI(0, EAX, 5)],
+      { j: 'jmp', to: 'step' },
+      { label: 'even' },
+      [...aluRI(5, EAX, 3)],
+      { label: 'step' },
+      [...decR(ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]);
+
+    e.set_block_exec_walk_budget(1);
+    const whyAll = [];
+    for (let w = 1; w <= 9; w += 1) whyAll.push(e.get_block_exec_region_why_n(w));
+    const whyBefore = e.get_block_exec_region_why_n(8);
+    const insBefore = e.get_block_exec_region_installs();
+    const attBefore = e.get_block_exec_walk_attempts();
+    const probeBefore = e.get_block_exec_walk_probes();
+    const budgetOff = arm(wide, false);
+    const budgetOn = arm(wide, true);
+    const budgetDeclines = e.get_block_exec_region_why_n(8) - whyBefore;
+    const declinesAny = whyAll.reduce(
+      (n, b, i) => n + (e.get_block_exec_region_why_n(i + 1) - b), 0);
+    const budgetInstalls = e.get_block_exec_region_installs() - insBefore;
+    const attempts = e.get_block_exec_walk_attempts() - attBefore;
+    const probes = e.get_block_exec_walk_probes() - probeBefore;
+
+    // "Cleanly" is the claim: nothing installs, the decline is recorded, and
+    // the guest gets the same answer either way. Which reason is recorded is
+    // not fixed — a budget of one stops the walk before the head's successors
+    // are ever classified, so the closure comes out short (reason 6) rather
+    // than over budget (reason 8); either is a refusal, and neither truncates.
+    check('a budget too small to reach the closure declines',
+      declinesAny >= 1 && budgetInstalls === 0,
+      `walkBudget declines=${budgetDeclines} installs=${budgetInstalls} ` +
+      `attempts=${attempts} probes=${probes} ` +
+      `why=[${whyAll.map((b, i) => `${i + 1}:${e.get_block_exec_region_why_n(i + 1) - b}`)
+        .filter(t => !t.endsWith(':0')).join(' ')}]`);
+    check('  and the block still runs correctly',
+      ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi']
+        .every(k => budgetOff[k] === budgetOn[k]) &&
+      budgetOff.data === budgetOn.data && budgetOff.eip === budgetOn.eip,
+      `off ${hexRegs(budgetOff)}\n         on  ${hexRegs(budgetOn)}`);
+    // 40 iterations at K=2 is about twenty gate firings on the loop head. The
+    // memo caps what those cost: a head that has declined its limit is never
+    // walked again, so attempts stop while probes keep arriving.
+    check('  a head that keeps declining stops being attempted',
+      attempts < probes && attempts <= 12,
+      `attempts=${attempts} probes=${probes}`);
+    check('    and the memo is what stopped them',
+      e.get_block_exec_walk_memo() > 0,
+      `memoRefusals=${e.get_block_exec_walk_memo()}`);
+    e.set_block_exec_walk_budget(24);
   }
 
   {
