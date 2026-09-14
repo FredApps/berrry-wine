@@ -1,8 +1,21 @@
 # TREE_FOLD — the first real decode-time expression fold (Design A)
 
-Status: **implemented, OFF by default, gated behind `--tree-fold`.**
-Handler **454** (`$th_tree_fold`), matcher `$loop_try_tree_fold` in
-`src/07b-loop-match.wat`.
+> **SUPERSEDED (2026-09-13) by
+> [block-executor-design.md](block-executor-design.md) §13.**
+> There is now ONE executor and ONE descriptor format: a plain block is a
+> 1-block region with no back edge, this document's self-loop fold is a 1-block
+> region with a back edge, and a region is N ≤ 16 blocks. `$th_tree_fold` no
+> longer exists as a separate function — handler 454 is an alias of
+> `$th_block_exec` (458), and every capability described below was re-expressed
+> inside `src/07c-block-exec.wat`. `--tree-fold` is a deprecated alias of
+> `--block-exec` and prints a deprecation line. Read this file for the
+> *matcher* (`$loop_try_tree_fold`, still live in `src/07b-loop-match.wat`) and
+> for how the predicate was derived; read §13 of the block-executor design for
+> what actually runs and what the merge cost.
+
+Status: **implemented, OFF by default, gated behind `--block-exec`.**
+Handler **454** (an alias of `$th_block_exec`), matcher `$loop_try_tree_fold`
+in `src/07b-loop-match.wat`.
 
 This is the family the census in
 [int-expr-fusion-census.md](int-expr-fusion-census.md) said *not* to build yet.

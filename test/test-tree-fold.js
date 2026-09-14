@@ -440,6 +440,32 @@ const NEG_X87_FCOMI = loopBackDec([
   0x83, 0xC7, 0x04,                   // add   edi, 4
 ]);
 
+// -- TEST terminators ---------------------------------------------------------
+// `test r,r / jnz` and `test r,imm / jnz` are the flag producers the region
+// census found declined in every single app it measured -- the top decline by a
+// wide margin, and worth about six points of coverage on their own. They write
+// no register, so the shape is a cmp's in every other respect; only the flag
+// helper differs ($set_flags_logic, which clears CF and OF).
+const SHAPE_TEST_RR = loopBackJcc([
+  0x8B, 0x06,                         // mov  eax, [esi]
+  0x01, 0xD0,                         // add  eax, edx
+  0x89, 0x07,                         // mov  [edi], eax
+  0x83, 0xC6, 0x04,                   // add  esi, 4
+  0x83, 0xC7, 0x04,                   // add  edi, 4
+  0x49,                               // dec  ecx
+  0x85, 0xC9,                         // test ecx, ecx
+], 0x75);                             // jnz
+
+const SHAPE_TEST_RI = loopBackJcc([
+  0x8B, 0x06,                         // mov  eax, [esi]
+  0x31, 0xD8,                         // xor  eax, ebx
+  0x89, 0x07,                         // mov  [edi], eax
+  0x83, 0xC6, 0x04,                   // add  esi, 4
+  0x83, 0xC7, 0x04,                   // add  edi, 4
+  0x49,                               // dec  ecx
+  0xF7, 0xC1, 0xFF, 0x00, 0x00, 0x00, // test ecx, 0xff
+], 0x75);                             // jnz
+
 // -- negatives ----------------------------------------------------------------
 // The accepted range is exactly H82..H85. REP CMPSB (H92) is a string op too,
 // and it writes the lazy-flag fields from inside a helper the descriptor's
@@ -973,6 +999,22 @@ const NEG_SHORT = loopBackDec([
              ebp: 0, esi: srcX, edi: dstX }),
     { seedAt: dstX, seedWords: FTRIPS + 4, readAt: dstX }, FTRIPS + 4,
     { seedFn: seedFloats(false) });
+
+  // The two TEST terminators, each closing a loop the counter really drives.
+  {
+    const bufT = (arena + 0x14000) >>> 0;
+    checkShape('shape TEST_RR (test r,r terminator)', SHAPE_TEST_RR,
+      () => ({ eax: 0, ecx: TRIPS, edx: 0x01020304, ebx: 0,
+               ebp: 0xa5a5a5a5, esi: bufT, edi: (bufT + 0x2000) >>> 0 }),
+      { seedAt: bufT, seedWords: TRIPS + 4, readAt: (bufT + 0x2000) >>> 0 },
+      TRIPS + 4);
+    const bufU = (arena + 0x18000) >>> 0;
+    checkShape('shape TEST_RI (test r,imm32 terminator)', SHAPE_TEST_RI,
+      () => ({ eax: 0, ecx: TRIPS, edx: 0, ebx: 0x5a5a5a5a,
+               ebp: 0xa5a5a5a5, esi: bufU, edi: (bufU + 0x2000) >>> 0 }),
+      { seedAt: bufU, seedWords: TRIPS + 4, readAt: (bufU + 0x2000) >>> 0 },
+      TRIPS + 4);
+  }
 
   // ------------------------------------------------------------- negatives ---
   function checkDecline(name, code) {

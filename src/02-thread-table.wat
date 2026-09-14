@@ -512,10 +512,16 @@
     $th_x87_island            ;; 451: contiguous x87 micro-op island
     $th_x87_affine_prepare    ;; 452: compiled affine x87 prefix
     $th_x87_affine_finish     ;; 453: compiled affine x87 suffix
-    $th_tree_fold             ;; 454: a whole integer-expression self-loop
+    ;; 454 and 458 are THE SAME FUNCTION. There is one region executor and one
+    ;; descriptor format: a self-loop fold is a 1-block region with a back edge,
+    ;; a plain block is a 1-block region whose terminator stayed threaded, and a
+    ;; region is N blocks. 454 survives as an alias so the loop matcher's
+    ;; installs, $region_try_install and every recorded histogram keep their
+    ;; identity; new installs from the block matcher emit 458.
+    $th_block_exec            ;; 454: alias of 458 (was $th_tree_fold)
     $th_ck_lut16_run          ;; 455: a whole colour-keyed LUT16 sprite row
     $th_ck_blend16_run        ;; 456: a whole alpha-blended RGB565 sprite row
     $th_ck_shadow16_run       ;; 457: a keyed sprite row with a dest-indexed arm
-    $th_block_exec            ;; 458: a whole basic block, registers in locals
-    $th_bx_resume             ;; 459: H458's fallback resume trampoline (empty)
+    $th_block_exec            ;; 458: a region descriptor, registers in locals
+    $th_bx_resume             ;; 459: the fallback resume trampoline (empty)
   )

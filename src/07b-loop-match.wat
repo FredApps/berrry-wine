@@ -1230,7 +1230,17 @@
     (if (i32.lt_u (global.get $op_index_n) (i32.const 2)) (then (return (i32.const 0))))
     (local.set $p (call $loop_op_at
       (i32.sub (global.get $op_index_n) (i32.const 1))))
-    (if (i32.eqz (call $loop_is_jcc (load.field LoopOp handler (local.get $p))))
+    ;; H404 is `test r,r + Jcc` fused into one op. It is NOT added to
+    ;; $loop_is_jcc, deliberately: every specialised family calls that to mean
+    ;; "the last op is a pure branch and nothing else", and a fused op that also
+    ;; computes an AND and publishes flags would be silently unmodelled in each
+    ;; of them. Only the general executor knows what to do with it (term_kind
+    ;; 6), and it is the only matcher that has to see this block at all -- so the
+    ;; widening lives here, where the word layout (+8 fall, +12 target) is the
+    ;; one thing being relied on, and H404 has exactly that.
+    (if (i32.eqz (i32.or
+                   (call $loop_is_jcc (load.field LoopOp handler (local.get $p)))
+                   (i32.eq (load.field LoopOp handler (local.get $p)) (i32.const 404))))
       (then (return (i32.const 0))))
     ;; words after the header: +8 fall-through, +12 target
     (i32.eq (i32.load offset=12 (local.get $p)) (local.get $start_eip)))
@@ -6481,7 +6491,14 @@
   ;; falls through.
   (func $region_try_install (param $start_eip i32) (param $tstart i32) (result i32)
     (local $i i32) (local $n i32) (local $p i32)
-    (if (i32.eqz (global.get $region_fold_enabled)) (then (return (i32.const 0))))
+    ;; One executor, one switch: --block-exec arms the hand-fed multi-block
+    ;; descriptor path too. $region_fold_enabled survives as the bench's own
+    ;; narrower hook (--toggle=region), so an A/B can still move only this
+    ;; path. Either enable is enough; with no spec armed for this EIP the
+    ;; function returns immediately anyway, so a real run pays nothing.
+    (if (i32.and (i32.eqz (global.get $region_fold_enabled))
+                 (i32.eqz (global.get $block_exec_enabled)))
+      (then (return (i32.const 0))))
     (if (i32.eqz (global.get $region_spec_eip)) (then (return (i32.const 0))))
     (if (i32.ne (local.get $start_eip) (global.get $region_spec_eip))
       (then (return (i32.const 0))))
@@ -6524,7 +6541,7 @@
     (local $term_cc i32) (local $term_uop i32) (local $term_imm i32)
     (local $fall i32) (local $back i32)
     (local $covered i32) (local $fwrites i32) (local $tidx i32)
-    (local $prev_ea i32) (local $want_ea i32)
+    (local $prev_ea i32) (local $want_ea i32) (local $fused i32)
 
     (global.set $tree_decl_eip (local.get $start_eip))
     (local.set $n (global.get $op_index_n))
@@ -6545,14 +6562,49 @@
     ;; -- terminator: the Jcc must close the loop on this block's own entry --
     (local.set $p (call $loop_op_at (i32.sub (local.get $n) (i32.const 1))))
     (local.set $fn (load.field LoopOp handler (local.get $p)))
-    (if (i32.eqz (i32.and (i32.ge_u (local.get $fn) (i32.const 307))
-                          (i32.le_u (local.get $fn) (i32.const 322))))
-      (then (return (call $tree_decl_term_bump (i32.const 1) (local.get $fn)))))
-    (local.set $term_cc (i32.sub (local.get $fn) (i32.const 307)))
-    (local.set $fall (i32.load offset=8 (local.get $p)))
-    (local.set $back (i32.load offset=12 (local.get $p)))
+    ;; H404 is `test r,r + Jcc`, already fused into ONE op by the decoder --
+    ;; which is how this shape actually reaches us. A separate H72 survives only
+    ;; when something stands between the test and the branch, so the fused form
+    ;; is the one worth having, and `producer:test` was the region census's top
+    ;; decline in every app it measured. It is both the flag producer and the
+    ;; branch, so there is no backward walk to do and no suffix after it.
+    (if (i32.eq (local.get $fn) (i32.const 404))
+      (then
+        (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
+        ;; The byte form leaves $flag_sign_shift at 7 and reads the 8-bit
+        ;; sub-registers; term_kind 6 is the 32-bit case only.
+        (if (i32.and (local.get $op) (i32.const 0x1000))
+          (then (return (call $tree_decl_term_bump (i32.const 6) (local.get $fn)))))
+        (local.set $fused (i32.const 1))
+        (local.set $term_cc
+          (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+        (local.set $fall (i32.load offset=8  (local.get $p)))
+        (local.set $back (i32.load offset=12 (local.get $p)))
+        (local.set $term_kind (i32.const 6))
+        (local.set $term_a
+          (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (local.set $term_b (i32.and (local.get $op) (i32.const 0xF)))
+        ;; One more interior op than the two-op form: nothing was consumed by a
+        ;; separate branch, so the whole prefix is body.
+        (local.set $nuops (i32.sub (local.get $n) (i32.const 1)))
+        (local.set $tidx  (i32.sub (local.get $n) (i32.const 1)))
+        (if (i32.gt_u (local.get $nuops) (global.get $tree_fold_max_ops))
+          (then
+            (global.set $tree_decl_long
+              (i32.add (global.get $tree_decl_long) (i32.const 1)))
+            (return (i32.const 0))))))
+    (if (i32.eqz (local.get $fused))
+      (then
+        (if (i32.eqz (i32.and (i32.ge_u (local.get $fn) (i32.const 307))
+                              (i32.le_u (local.get $fn) (i32.const 322))))
+          (then (return (call $tree_decl_term_bump (i32.const 1) (local.get $fn)))))
+        (local.set $term_cc (i32.sub (local.get $fn) (i32.const 307)))
+        (local.set $fall (i32.load offset=8  (local.get $p)))
+        (local.set $back (i32.load offset=12 (local.get $p)))))
     (if (i32.ne (local.get $back) (local.get $start_eip))
       (then (return (call $tree_decl_term_bump (i32.const 2) (local.get $back)))))
+
+    (if (i32.eqz (local.get $fused)) (then
 
     ;; -- terminator: the flag producer, and the suffix after it -------------
     ;; It is not always the op immediately before the Jcc. A compiler that
@@ -6578,6 +6630,14 @@
         (br_if $tfound (i32.eq (local.get $fn) (i32.const 65)))
         (br_if $tfound (i32.eq (local.get $fn) (i32.const 19)))
         (br_if $tfound (i32.eq (local.get $fn) (i32.const 10)))
+        ;; H72/H73 are `test r,r` and `test r,imm32` -- the census's top decline
+        ;; by a wide margin, and the only one present in every app it measured.
+        ;; A `test eax,eax / jz` is how a compiler writes "is this pointer
+        ;; null", and a `test r,imm / jnz` is how a state machine branches on a
+        ;; flag word; declining them cost about six points of coverage on their
+        ;; own. They write no register, so nothing else about the shape changes.
+        (br_if $tfound (i32.eq (local.get $fn) (i32.const 72)))
+        (br_if $tfound (i32.eq (local.get $fn) (i32.const 73)))
         ;; H128 is `reg OP= [base+disp]`; only its CMP form is a terminator,
         ;; and that is checked below. Stopping the walk here rather than
         ;; letting it fail the micro-op test means a non-CMP H128 is reported
@@ -6617,6 +6677,20 @@
             (local.set $term_kind (i32.const 2))
             (local.set $term_a (i32.and (local.get $op) (i32.const 0xF)))
             (local.set $term_b (i32.load offset=8 (local.get $p))))
+        (else (if (i32.eq (local.get $fn) (i32.const 72))
+          (then
+            ;; test r,r + Jcc. Same operand encoding as cmp r,r; only the
+            ;; flag helper differs, and the executor picks it off term_kind.
+            (local.set $term_kind (i32.const 6))
+            (local.set $term_a
+              (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+            (local.set $term_b (i32.and (local.get $op) (i32.const 0xF))))
+        (else (if (i32.eq (local.get $fn) (i32.const 73))
+          (then
+            ;; test r,imm32 + Jcc -- the immediate is the op's inline word.
+            (local.set $term_kind (i32.const 7))
+            (local.set $term_a (i32.and (local.get $op) (i32.const 0xF)))
+            (local.set $term_b (i32.load offset=8 (local.get $p))))
           (else (if (i32.and (i32.eq (local.get $fn) (i32.const 128))
                              (i32.eq (i32.and (i32.shr_u (local.get $op) (i32.const 8))
                                               (i32.const 0xF))
@@ -6638,7 +6712,7 @@
                 (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
               (local.set $term_b (i32.and (local.get $op) (i32.const 0xF)))
               (local.set $term_imm (i32.load offset=8 (local.get $p))))
-            (else (return (call $tree_decl_term_bump (i32.const 6) (local.get $fn)))))))))))
+            (else (return (call $tree_decl_term_bump (i32.const 6) (local.get $fn)))))))))))))))))
 
     ;; -- pass 1: prove every interior op is a micro-op, collect live-outs ---
     (local.set $i (i32.const 0))
@@ -6911,813 +6985,3 @@
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $p2)))
     (i32.const 1))
-
-  ;; The super-op. Eight guest registers in locals for the whole run; memory,
-  ;; flags and the branch decision through the ordinary helpers.
-  (func $th_tree_fold (param $op i32)
-    (local $tp i32) (local $up i32) (local $ub i32)
-    (local $nuops i32) (local $live_out i32)
-    (local $term_kind i32) (local $term_a i32) (local $term_b i32)
-    (local $term_cc i32) (local $term_uop i32) (local $term_imm i32)
-    (local $cost i32) (local $term_pos i32)
-    (local $r0 i32) (local $r1 i32) (local $r2 i32) (local $r3 i32)
-    (local $r4 i32) (local $r5 i32) (local $r6 i32) (local $r7 i32)
-    (local $i i32) (local $kind i32) (local $d i32) (local $a i32) (local $imm i32)
-    (local $b i32) (local $ea i32) (local $ea_hold i32)
-    (local $sh_d i32) (local $sh_a i32) (local $mask i32) (local $ssh i32)
-    (local $nof i32) (local $beff i32)
-    (local $va i32) (local $vb i32) (local $vr i32)
-    (local $old i32) (local $wrote i32)
-    (local $nblocks i32) (local $nexits i32) (local $uops_total i32)
-    (local $BR i32) (local $EX i32) (local $UO i32) (local $brp i32)
-    (local $cur i32) (local $loaded i32) (local $next_b i32)
-    (local $succ_t i32) (local $succ_f i32) (local $exit_eip i32) (local $side i32)
-    (local $nblk i32) (local $nsteps i32)
-    (local $steps_avail i32) (local $budget_avail i32)
-
-    (local.set $tp (global.get $ip))
-    (local.set $nblocks    (i32.load          (local.get $tp)))
-    (local.set $nexits     (i32.load offset=4 (local.get $tp)))
-    (local.set $uops_total (i32.load offset=8 (local.get $tp)))
-    (local.set $BR (i32.add (local.get $tp) (i32.const 16)))
-    (local.set $EX
-      (i32.add (local.get $BR)
-        (i32.mul (local.get $nblocks)
-          (i32.shl (global.get $REGION_BLOCK_WORDS) (i32.const 2)))))
-    (local.set $UO
-      (i32.add (local.get $EX) (i32.shl (local.get $nexits) (i32.const 3))))
-    (global.set $ip
-      (i32.add (local.get $UO)
-        (i32.mul (local.get $uops_total)
-          (i32.shl (global.get $TREE_UOP_WORDS) (i32.const 2)))))
-
-    ;; Entry materialization: the whole architectural register file, once.
-    ;; Reading all eight unconditionally is cheaper than a live-in mask and
-    ;; cannot be wrong about a register the descriptor forgot to name.
-    (local.set $r0 (global.get $eax))
-    (local.set $r1 (global.get $ecx))
-    (local.set $r2 (global.get $edx))
-    (local.set $r3 (global.get $ebx))
-    (local.set $r4 (global.get $esp))
-    (local.set $r5 (global.get $ebp))
-    (local.set $r6 (global.get $esi))
-    (local.set $r7 (global.get $edi))
-
-    ;; Both meters, exactly as the unfolded graph would have spent them: one
-    ;; $steps per guest op ($cost of them per block execution) and one
-    ;; $block_budget per block entry. They are checked at a block edge rather
-    ;; than bounded up front, because with more than one block in the region
-    ;; the per-execution cost is not a constant to divide by. The first block
-    ;; always runs -- a do-while runs its body once even with the budget
-    ;; already spent, exactly as the block would have when $run entered it.
-    (local.set $steps_avail
-      (select (global.get $steps) (i32.const 0)
-              (i32.gt_s (global.get $steps) (i32.const 0))))
-    (local.set $budget_avail
-      (select (global.get $block_budget) (i32.const 0)
-              (i32.gt_s (global.get $block_budget) (i32.const 0))))
-
-    (global.set $tree_fold_runs
-      (i32.add (global.get $tree_fold_runs) (i32.const 1)))
-
-    (local.set $loaded (i32.const -1))
-    (block $done
-      (loop $trip
-        ;; The block record, reloaded only when the block index actually
-        ;; changed. A self-loop -- the shape the shipped fold emits -- changes
-        ;; it never, so its inner loop pays one compare per iteration and none
-        ;; of these thirteen loads.
-        (if (i32.ne (local.get $cur) (local.get $loaded))
-          (then
-            (local.set $brp
-              (i32.add (local.get $BR)
-                (i32.mul (local.get $cur)
-                  (i32.shl (global.get $REGION_BLOCK_WORDS) (i32.const 2)))))
-            (local.set $ub
-              (i32.add (local.get $UO)
-                (i32.mul (i32.load (local.get $brp))
-                  (i32.shl (global.get $TREE_UOP_WORDS) (i32.const 2)))))
-            (local.set $nuops     (i32.load offset=4  (local.get $brp)))
-            (local.set $term_pos  (i32.load offset=8  (local.get $brp)))
-            (local.set $term_kind (i32.load offset=12 (local.get $brp)))
-            (local.set $term_a    (i32.load offset=16 (local.get $brp)))
-            (local.set $term_b    (i32.load offset=20 (local.get $brp)))
-            (local.set $term_uop  (i32.load offset=24 (local.get $brp)))
-            (local.set $term_imm  (i32.load offset=28 (local.get $brp)))
-            (local.set $term_cc   (i32.load offset=32 (local.get $brp)))
-            (local.set $cost      (i32.load offset=36 (local.get $brp)))
-            (local.set $succ_t    (i32.load offset=40 (local.get $brp)))
-            (local.set $succ_f    (i32.load offset=44 (local.get $brp)))
-            (local.set $loaded (local.get $cur))))
-        (local.set $i (i32.const 0))
-        (local.set $up (local.get $ub))
-        (block $body_done
-          (loop $body
-            ;; -- terminator --------------------------------------------------
-            ;; It runs at uop index $term_pos, which is usually $nuops (the
-            ;; flag producer really was the last thing before the Jcc) but is
-            ;; lower whenever the compiler put flag-transparent ops after it --
-            ;; see the decode-time walk. Everything from here to $nuops is a
-            ;; uop that executes AFTER the counter is updated, exactly as the
-            ;; unfolded block ran it, so nothing is reordered across a flag.
-            (if (i32.eq (local.get $i) (local.get $term_pos))
-              (then
-                (local.set $va
-                  (block $gt (result i32)
-                    (block $t7 (block $t6 (block $t5 (block $t4
-                    (block $t3 (block $t2 (block $t1 (block $t0
-                      (br_table $t0 $t1 $t2 $t3 $t4 $t5 $t6 $t7 (local.get $term_a)))
-                      (br $gt (local.get $r0))) (br $gt (local.get $r1)))
-                      (br $gt (local.get $r2))) (br $gt (local.get $r3)))
-                      (br $gt (local.get $r4))) (br $gt (local.get $r5)))
-                      (br $gt (local.get $r6)))
-                    (local.get $r7)))
-                (if (i32.eqz (local.get $term_kind))
-                  (then
-                    ;; dec/inc the counter and write it straight back.
-                    (local.set $old (local.get $va))
-                    (local.set $vr
-                      (select (i32.add (local.get $old) (i32.const 1))
-                              (i32.sub (local.get $old) (i32.const 1))
-                              (local.get $term_uop)))
-                    (if (local.get $term_uop)
-                      (then (call $set_flags_inc (local.get $old) (local.get $vr)))
-                      (else (call $set_flags_dec (local.get $old) (local.get $vr))))
-                    (block $cdone
-                    (block $c7 (block $c6 (block $c5 (block $c4
-                    (block $c3 (block $c2 (block $c1 (block $c0
-                      (br_table $c0 $c1 $c2 $c3 $c4 $c5 $c6 $c7 (local.get $term_a)))
-                      (local.set $r0 (local.get $vr)) (br $cdone))
-                      (local.set $r1 (local.get $vr)) (br $cdone))
-                      (local.set $r2 (local.get $vr)) (br $cdone))
-                      (local.set $r3 (local.get $vr)) (br $cdone))
-                      (local.set $r4 (local.get $vr)) (br $cdone))
-                      (local.set $r5 (local.get $vr)) (br $cdone))
-                      (local.set $r6 (local.get $vr)) (br $cdone))
-                    (local.set $r7 (local.get $vr))))
-                  (else
-                    ;; cmp: no register write, all five flag fields.
-                    ;; kind 2 compares against the immediate in `term_b`;
-                    ;; kinds 1 and 3 both read a register named by it, and
-                    ;; kind 3 then dereferences [that register + term_imm].
-                    (local.set $vb (local.get $term_b))
-                    (if (i32.or (i32.eq (local.get $term_kind) (i32.const 1))
-                                (i32.eq (local.get $term_kind) (i32.const 3)))
-                      (then (local.set $vb
-                        (block $gu (result i32)
-                          (block $u7 (block $u6 (block $u5 (block $u4
-                          (block $u3 (block $u2 (block $u1 (block $u0
-                            (br_table $u0 $u1 $u2 $u3 $u4 $u5 $u6 $u7 (local.get $term_b)))
-                            (br $gu (local.get $r0))) (br $gu (local.get $r1)))
-                            (br $gu (local.get $r2))) (br $gu (local.get $r3)))
-                            (br $gu (local.get $r4))) (br $gu (local.get $r5)))
-                            (br $gu (local.get $r6)))
-                          (local.get $r7)))))
-                    ;; Re-read every iteration. The bound is in memory and the
-                    ;; body may be what moves it; hoisting it would turn a
-                    ;; loop that ends into one that does not.
-                    (if (i32.eq (local.get $term_kind) (i32.const 3))
-                      (then (local.set $vb
-                        (call $gl32
-                          (i32.add (local.get $vb) (local.get $term_imm))))))
-                    (call $set_flags_sub (local.get $va) (local.get $vb)
-                      (i32.sub (local.get $va) (local.get $vb)))))))
-            (br_if $body_done (i32.ge_u (local.get $i) (local.get $nuops)))
-            (local.set $kind (i32.load           (local.get $up)))
-            (local.set $d    (i32.load offset=4  (local.get $up)))
-            (local.set $a    (i32.load offset=8  (local.get $up)))
-            (local.set $imm  (i32.load offset=12 (local.get $up)))
-            (local.set $b    (i32.load offset=20 (local.get $up)))
-            ;; Op totals have to stay comparable with a --tree-fold-off build,
-            ;; or a handler histogram silently stops counting the work this
-            ;; fold does. Re-record the original handler index, as H428 does.
-            (if (global.get $handler_hist_enabled)
-              (then (call $handler_hist_record (i32.load offset=16 (local.get $up)))))
-            (local.set $up (i32.add (local.get $up) (i32.const 24)))
-            (local.set $i (i32.add (local.get $i) (i32.const 1)))
-
-            ;; R[d] and R[a], by index. A br_table each, but over LOCALS --
-            ;; no memory traffic and no call, which is the whole point.
-            (local.set $va
-              (block $gd (result i32)
-                (block $g7 (block $g6 (block $g5 (block $g4
-                (block $g3 (block $g2 (block $g1 (block $g0
-                  (br_table $g0 $g1 $g2 $g3 $g4 $g5 $g6 $g7 (local.get $d)))
-                  (br $gd (local.get $r0))) (br $gd (local.get $r1)))
-                  (br $gd (local.get $r2))) (br $gd (local.get $r3)))
-                  (br $gd (local.get $r4))) (br $gd (local.get $r5)))
-                  (br $gd (local.get $r6)))
-                (local.get $r7)))
-            (local.set $vb
-              (block $ga (result i32)
-                (block $a7 (block $a6 (block $a5 (block $a4
-                (block $a3 (block $a2 (block $a1 (block $a0
-                  (br_table $a0 $a1 $a2 $a3 $a4 $a5 $a6 $a7 (local.get $a)))
-                  (br $ga (local.get $r0))) (br $ga (local.get $r1)))
-                  (br $ga (local.get $r2))) (br $ga (local.get $r3)))
-                  (br $ga (local.get $r4))) (br $ga (local.get $r5)))
-                  (br $ga (local.get $r6)))
-                (local.get $r7)))
-
-            ;; Sub-register lane and width, decoded unconditionally because it
-            ;; is four arithmetic ops with no branch and every alternative
-            ;; (a guard, a second br_table) costs more than it saves. The lane
-            ;; bits are placed so that one shift extracts each: bit 6 -> 8 and
-            ;; bit 7 -> 8, i.e. a byte op on AH..BH reads and writes bits 8..15
-            ;; of its container and a low-byte or word op reads bits 0..15.
-            (local.set $sh_d (i32.and (i32.shr_u (local.get $b) (i32.const 3)) (i32.const 8)))
-            (local.set $sh_a (i32.and (i32.shr_u (local.get $b) (i32.const 4)) (i32.const 8)))
-            (local.set $mask
-              (select (i32.const 0xFFFF) (i32.const 0xFF)
-                      (i32.and (local.get $b) (global.get $TU_B_WORD))))
-            (local.set $ssh
-              (select (i32.const 15) (i32.const 7)
-                      (i32.and (local.get $b) (global.get $TU_B_WORD))))
-            ;; "Nobody reads the flags this op would write." Decoded here, next
-            ;; to the other `b` fields, so the arms below are a single test on
-            ;; a local rather than a mask-and-shift each.
-            (local.set $nof (i32.and (local.get $b) (global.get $TU_B_NOFLAGS)))
-
-            ;; The H149 pair's join. A consumer marked TU_B_EA had
-            ;; $SIB_SENTINEL where its address should be, so its address is the
-            ;; one the preceding TU_EA_SIB left in $ea_hold -- which is exactly
-            ;; what $read_addr does with $ea_temp, one indirection shorter.
-            ;; Branchless, and folded into the same `b` decode as the lane bits
-            ;; above so no kind that cannot carry the bit pays a test for it.
-            (local.set $imm
-              (select (local.get $ea_hold) (local.get $imm)
-                      (i32.and (local.get $b) (global.get $TU_B_EA))))
-
-            ;; SIB effective address, for the contiguous tail of kinds that
-            ;; need one. Hoisted here rather than repeated in three arms, and
-            ;; guarded by a range test so no other kind pays for it.
-            ;;
-            ;; $vb already holds R[a] from the read above, so the base term is
-            ;; free -- but only when a base is present: `a == 0xF` means the
-            ;; SIB had none, and $vb then holds r7 (the br_table's default
-            ;; arm), which is why the base is added under a test rather than
-            ;; unconditionally. The index needs its own read because it is a
-            ;; different register from both $d and $a.
-            (if (i32.ge_u (local.get $kind) (global.get $TU_FIRST_SIB))
-              (then
-                (local.set $ea (local.get $imm))
-                (if (i32.ne (local.get $a) (i32.const 0xF))
-                  (then (local.set $ea (i32.add (local.get $ea) (local.get $vb)))))
-                (if (i32.ne (i32.and (local.get $b) (i32.const 0xF)) (i32.const 0xF))
-                  (then (local.set $ea
-                    (i32.add (local.get $ea)
-                      (i32.shl
-                        (block $gi (result i32)
-                          (block $i7 (block $i6 (block $i5 (block $i4
-                          (block $i3 (block $i2 (block $i1 (block $i0
-                            (br_table $i0 $i1 $i2 $i3 $i4 $i5 $i6 $i7
-                                      (i32.and (local.get $b) (i32.const 0xF))))
-                            (br $gi (local.get $r0))) (br $gi (local.get $r1)))
-                            (br $gi (local.get $r2))) (br $gi (local.get $r3)))
-                            (br $gi (local.get $r4))) (br $gi (local.get $r5)))
-                            (br $gi (local.get $r6)))
-                          (local.get $r7))
-                        ;; Scale is TWO bits at b[5:4]. The `& 3` is load-bearing
-                        ;; on exactly one kind: TU_STORE8_SIB is the only one that
-                        ;; carries SIB fields AND a lane bit, and TU_B_LANE_D is
-                        ;; 0x40 -- bit 6, which an unmasked `b >> 4` folds into
-                        ;; the shift amount as +4. A high-byte store through an
-                        ;; indexed address then writes at index<<(scale+4).
-                        ;; Found by test/test-block-exec.js, which reaches the
-                        ;; combination H454 has apparently never met in a
-                        ;; self-loop; H458 shares this decode verbatim.
-                        (i32.and (i32.shr_u (local.get $b) (i32.const 4)) (i32.const 3)))))))))
-
-            ;; Evaluate. Every arm publishes exactly the flag fields its
-            ;; scalar handler publishes, by calling the same helper -- which
-            ;; is what makes the per-field join right at every instant.
-            ;;
-            ;; $wrote, rather than a second exit label out of the br_table:
-            ;; a store is the one kind whose result does not go to a register,
-            ;; and branching around the writeback from inside the table put
-            ;; the branch target outside the loop body the first time this was
-            ;; written -- which silently truncated every iteration at its
-            ;; first store instead of failing.
-            (local.set $wrote (i32.const 1))
-            (block $kdone
-              (block $k53 (block $k52 (block $k51 (block $k50
-              (block $k49 (block $k48 (block $k47
-              (block $k46 (block $k45 (block $k44 (block $k43
-              (block $k42 (block $k41 (block $k40
-              (block $k39 (block $k38 (block $k37 (block $k36 (block $k35
-              (block $k34 (block $k33 (block $k32 (block $k31 (block $k30
-              (block $k29 (block $k28 (block $k27 (block $k26 (block $k25
-              (block $k24 (block $k23 (block $k22
-              (block $k21 (block $k20 (block $k19 (block $k18
-              (block $k17 (block $k16 (block $k15 (block $k14
-              (block $k13 (block $k12 (block $k11 (block $k10
-              (block $k09 (block $k08 (block $k07 (block $k06
-              (block $k05 (block $k04 (block $k03 (block $k02
-              (block $k01 (block $k00
-                (br_table $k00 $k01 $k02 $k03 $k04 $k05 $k06 $k07 $k08 $k09
-                          $k10 $k11 $k12 $k13 $k14 $k15 $k16 $k17 $k18 $k19
-                          $k20 $k21 $k22 $k23 $k24 $k25 $k26 $k27 $k28 $k29
-                          $k30 $k31 $k32 $k33 $k34 $k35 $k36 $k37 $k38 $k39
-                          $k40 $k41 $k42 $k43 $k44 $k45 $k46 $k47 $k48 $k49
-                          $k50 $k51 $k52 $k53
-                          $k53
-                          (local.get $kind)))
-                ;; 0 MOV_RR
-                (local.set $vr (local.get $vb)) (br $kdone))
-                ;; 1 MOV_RI
-                (local.set $vr (local.get $imm)) (br $kdone))
-                ;; 2 LEA_RO -- LEA never touches flags
-                (local.set $vr (i32.add (local.get $vb) (local.get $imm))) (br $kdone))
-                ;; 3 ADD_RR. From here to 19, the arithmetic is unconditional
-                ;; and only the $set_flags_* call is gated on $nof -- the bit
-                ;; the decode-time dead-flag pass set when it proved nothing
-                ;; between here and the terminator reads what this would write.
-                (local.set $vr (i32.add (local.get $va) (local.get $vb)))
-                (if (i32.eqz (local.get $nof))
-                  (then (call $set_flags_add (local.get $va) (local.get $vb) (local.get $vr))))
-                (br $kdone))
-                ;; 4 ADD_RI
-                (local.set $vr (i32.add (local.get $va) (local.get $imm)))
-                (if (i32.eqz (local.get $nof))
-                  (then (call $set_flags_add (local.get $va) (local.get $imm) (local.get $vr))))
-                (br $kdone))
-                ;; 5 SUB_RR
-                (local.set $vr (i32.sub (local.get $va) (local.get $vb)))
-                (if (i32.eqz (local.get $nof))
-                  (then (call $set_flags_sub (local.get $va) (local.get $vb) (local.get $vr))))
-                (br $kdone))
-                ;; 6 SUB_RI
-                (local.set $vr (i32.sub (local.get $va) (local.get $imm)))
-                (if (i32.eqz (local.get $nof))
-                  (then (call $set_flags_sub (local.get $va) (local.get $imm) (local.get $vr))))
-                (br $kdone))
-                ;; 7 AND_RR
-                (local.set $vr (i32.and (local.get $va) (local.get $vb)))
-                (if (i32.eqz (local.get $nof)) (then (call $set_flags_logic (local.get $vr))))
-                (br $kdone))
-                ;; 8 AND_RI
-                (local.set $vr (i32.and (local.get $va) (local.get $imm)))
-                (if (i32.eqz (local.get $nof)) (then (call $set_flags_logic (local.get $vr))))
-                (br $kdone))
-                ;; 9 OR_RR
-                (local.set $vr (i32.or (local.get $va) (local.get $vb)))
-                (if (i32.eqz (local.get $nof)) (then (call $set_flags_logic (local.get $vr))))
-                (br $kdone))
-                ;; 10 OR_RI
-                (local.set $vr (i32.or (local.get $va) (local.get $imm)))
-                (if (i32.eqz (local.get $nof)) (then (call $set_flags_logic (local.get $vr))))
-                (br $kdone))
-                ;; 11 XOR_RR
-                (local.set $vr (i32.xor (local.get $va) (local.get $vb)))
-                (if (i32.eqz (local.get $nof)) (then (call $set_flags_logic (local.get $vr))))
-                (br $kdone))
-                ;; 12 XOR_RI
-                (local.set $vr (i32.xor (local.get $va) (local.get $imm)))
-                (if (i32.eqz (local.get $nof)) (then (call $set_flags_logic (local.get $vr))))
-                (br $kdone))
-                ;; 13 INC -- preserves CF, which $set_flags_inc reads back out
-                ;; of whatever really wrote it last. Skipping it when the flags
-                ;; are dead also skips that $get_cf, which is the single most
-                ;; expensive thing the elision removes.
-                (local.set $vr (i32.add (local.get $va) (i32.const 1)))
-                (if (i32.eqz (local.get $nof))
-                  (then (call $set_flags_inc (local.get $va) (local.get $vr))))
-                (br $kdone))
-                ;; 14 DEC
-                (local.set $vr (i32.sub (local.get $va) (i32.const 1)))
-                (if (i32.eqz (local.get $nof))
-                  (then (call $set_flags_dec (local.get $va) (local.get $vr))))
-                (br $kdone))
-                ;; 15 NEG == SUB 0, src
-                (local.set $vr (i32.sub (i32.const 0) (local.get $va)))
-                (if (i32.eqz (local.get $nof))
-                  (then (call $set_flags_sub (i32.const 0) (local.get $va) (local.get $vr))))
-                (br $kdone))
-                ;; 16 NOT -- no flags, exactly as x86
-                (local.set $vr (i32.xor (local.get $va) (i32.const -1))) (br $kdone))
-                ;; 17 SHIFT -- $do_shift32 owns the flag contract, including
-                ;; the count==0 case that writes nothing at all.
-                (local.set $vr
-                  (call $do_shift32 (local.get $a) (local.get $va) (local.get $imm)))
-                (br $kdone))
-                ;; 18 IMUL_RR. The 64-bit product exists only to decide CF/OF,
-                ;; so a dead-flag IMUL drops the widening multiply as well as
-                ;; the three global stores.
-                (local.set $vr (i32.mul (local.get $va) (local.get $vb)))
-                (if (i32.eqz (local.get $nof))
-                  (then
-                    (global.set $flag_op (i32.const 6))
-                    (global.set $flag_sign_shift (i32.const 31))
-                    (global.set $flag_b
-                      (i64.ne
-                        (i64.mul (i64.extend_i32_s (local.get $va))
-                                 (i64.extend_i32_s (local.get $vb)))
-                        (i64.extend_i32_s (local.get $vr))))
-                    (global.set $flag_res (local.get $vr))))
-                (br $kdone))
-                ;; 19 IMUL_RI
-                (local.set $vr (i32.mul (local.get $vb) (local.get $imm)))
-                (if (i32.eqz (local.get $nof))
-                  (then
-                    (global.set $flag_op (i32.const 6))
-                    (global.set $flag_sign_shift (i32.const 31))
-                    (global.set $flag_b
-                      (i64.ne
-                        (i64.mul (i64.extend_i32_s (local.get $vb))
-                                 (i64.extend_i32_s (local.get $imm)))
-                        (i64.extend_i32_s (local.get $vr))))
-                    (global.set $flag_res (local.get $vr))))
-                (br $kdone))
-                ;; 20 LOAD32
-                (local.set $vr
-                  (call $gl32 (i32.add (local.get $vb) (local.get $imm))))
-                (br $kdone))
-                ;; 21 STORE32. Writes memory, not a register, so it skips the
-                ;; writeback entirely -- and it goes through $gs32, which is
-                ;; what keeps SMC invalidation and page crossing identical to
-                ;; the scalar path.
-                (call $gs32 (i32.add (local.get $vb) (local.get $imm)) (local.get $va))
-                (local.set $wrote (i32.const 0)) (br $kdone))
-                ;; 22 LOAD32_ABS -- the address is a decode-time constant.
-                (local.set $vr (call $gl32 (local.get $imm))) (br $kdone))
-                ;; 23 STORE32_ABS
-                (call $gs32 (local.get $imm) (local.get $va))
-                (local.set $wrote (i32.const 0)) (br $kdone))
-
-                ;; -- sub-register writes. Each of these computes a value at
-                ;; the sub-width and then INSERTS it into the container's
-                ;; local, leaving the lanes it does not cover exactly as they
-                ;; were -- which is what makes a partial write expressible here
-                ;; at all, and why $vr is always a full 32-bit value even when
-                ;; the op wrote eight bits of it.
-
-                ;; 24 MOV_SUB_RR -- no flags, either width.
-                (local.set $vr
-                  (i32.or
-                    (i32.and (local.get $va)
-                      (i32.xor (i32.shl (local.get $mask) (local.get $sh_d)) (i32.const -1)))
-                    (i32.shl
-                      (i32.and (i32.shr_u (local.get $vb) (local.get $sh_a)) (local.get $mask))
-                      (local.get $sh_d))))
-                (br $kdone))
-                ;; 25 MOV_SUB_RI -- no flags.
-                (local.set $vr
-                  (i32.or
-                    (i32.and (local.get $va)
-                      (i32.xor (i32.shl (local.get $mask) (local.get $sh_d)) (i32.const -1)))
-                    (i32.shl (i32.and (local.get $imm) (local.get $mask)) (local.get $sh_d))))
-                (br $kdone))
-                ;; 26 ALU_SUB_RR. $do_alu_sized owns the flag contract at this
-                ;; width, including flag_sign_shift; CMP (7) writes no register.
-                ;; With the flags dead, $tree_alu_sized_noflags computes the
-                ;; same six results with the flag half removed -- and a dead
-                ;; CMP becomes nothing at all, since it writes no register
-                ;; either.
-                (local.set $vb
-                  (if (result i32) (local.get $nof)
-                    (then (call $tree_alu_sized_noflags
-                      (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT)) (i32.const 0xF))
-                      (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (local.get $mask))
-                      (i32.and (i32.shr_u (local.get $vb) (local.get $sh_a)) (local.get $mask))
-                      (local.get $mask)))
-                    (else (call $do_alu_sized
-                      (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT)) (i32.const 0xF))
-                      (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (local.get $mask))
-                      (i32.and (i32.shr_u (local.get $vb) (local.get $sh_a)) (local.get $mask))
-                      (local.get $mask) (local.get $ssh)))))
-                (if (i32.eq (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT))
-                                     (i32.const 0xF))
-                            (i32.const 7))
-                  (then (local.set $wrote (i32.const 0)))
-                  (else (local.set $vr
-                    (i32.or
-                      (i32.and (local.get $va)
-                        (i32.xor (i32.shl (local.get $mask) (local.get $sh_d)) (i32.const -1)))
-                      (i32.shl (local.get $vb) (local.get $sh_d))))))
-                (br $kdone))
-                ;; 27 ALU_SUB_RI
-                (local.set $vb
-                  (if (result i32) (local.get $nof)
-                    (then (call $tree_alu_sized_noflags
-                      (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT)) (i32.const 0xF))
-                      (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (local.get $mask))
-                      (i32.and (local.get $imm) (local.get $mask))
-                      (local.get $mask)))
-                    (else (call $do_alu_sized
-                      (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT)) (i32.const 0xF))
-                      (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (local.get $mask))
-                      (i32.and (local.get $imm) (local.get $mask))
-                      (local.get $mask) (local.get $ssh)))))
-                (if (i32.eq (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_ALU_SHIFT))
-                                     (i32.const 0xF))
-                            (i32.const 7))
-                  (then (local.set $wrote (i32.const 0)))
-                  (else (local.set $vr
-                    (i32.or
-                      (i32.and (local.get $va)
-                        (i32.xor (i32.shl (local.get $mask) (local.get $sh_d)) (i32.const -1)))
-                      (i32.shl (local.get $vb) (local.get $sh_d))))))
-                (br $kdone))
-                ;; 28 LOAD8_RO -- R8[d] = [R[a] + imm]
-                (local.set $vr
-                  (i32.or
-                    (i32.and (local.get $va)
-                      (i32.xor (i32.shl (i32.const 0xFF) (local.get $sh_d)) (i32.const -1)))
-                    (i32.shl (call $gl8 (i32.add (local.get $vb) (local.get $imm)))
-                             (local.get $sh_d))))
-                (br $kdone))
-                ;; 29 STORE8_RO
-                (call $gs8 (i32.add (local.get $vb) (local.get $imm))
-                  (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (i32.const 0xFF)))
-                (local.set $wrote (i32.const 0)) (br $kdone))
-                ;; 30 LOAD8_ABS
-                (local.set $vr
-                  (i32.or
-                    (i32.and (local.get $va)
-                      (i32.xor (i32.shl (i32.const 0xFF) (local.get $sh_d)) (i32.const -1)))
-                    (i32.shl (call $gl8 (local.get $imm)) (local.get $sh_d))))
-                (br $kdone))
-                ;; 31 STORE8_ABS
-                (call $gs8 (local.get $imm)
-                  (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (i32.const 0xFF)))
-                (local.set $wrote (i32.const 0)) (br $kdone))
-                ;; 32 MOVZX8_RO -- narrow read, WHOLE destination written.
-                (local.set $vr (call $gl8 (i32.add (local.get $vb) (local.get $imm))))
-                (br $kdone))
-                ;; 33 MOVSX8_RO
-                (local.set $vr
-                  (call $sign_ext8 (call $gl8 (i32.add (local.get $vb) (local.get $imm)))))
-                (br $kdone))
-                ;; 34 LEA_SIB -- address arithmetic only, no memory and, as on
-                ;; x86, no flags.
-                (local.set $vr (local.get $ea)) (br $kdone))
-                ;; 35 LOAD32_SIB
-                (local.set $vr (call $gl32 (local.get $ea))) (br $kdone))
-                ;; 36 STORE32_SIB
-                (call $gs32 (local.get $ea) (local.get $va))
-                (local.set $wrote (i32.const 0)) (br $kdone))
-                ;; 37 MOVSX8_SIB
-                (local.set $vr (call $sign_ext8 (call $gl8 (local.get $ea)))) (br $kdone))
-                ;; 38 STORE8_SIB
-                (call $gs8 (local.get $ea)
-                  (i32.and (i32.shr_u (local.get $va) (local.get $sh_d)) (i32.const 0xFF)))
-                (local.set $wrote (i32.const 0)) (br $kdone))
-                ;; 39 MOV_M8_I_SIB. The immediate rides in `b` because this
-                ;; handler's operand word IS the byte.
-                (call $gs8 (local.get $ea)
-                  (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_IMM8_SHIFT))
-                           (i32.const 0xFF)))
-                (local.set $wrote (i32.const 0)) (br $kdone))
-                ;; 40 LOAD16_ABS -- the low half only; the top half of the
-                ;; container survives, exactly as $th_mov_r16_m16 leaves it.
-                (local.set $vr
-                  (i32.or (i32.and (local.get $va) (i32.const 0xFFFF0000))
-                          (call $gl16 (local.get $imm))))
-                (br $kdone))
-                ;; 41 LOAD16_RO
-                (local.set $vr
-                  (i32.or (i32.and (local.get $va) (i32.const 0xFFFF0000))
-                          (call $gl16 (i32.add (local.get $vb) (local.get $imm)))))
-                (br $kdone))
-                ;; 42 STORE16_RO
-                (call $gs16 (i32.add (local.get $vb) (local.get $imm))
-                  (i32.and (local.get $va) (i32.const 0xFFFF)))
-                (local.set $wrote (i32.const 0)) (br $kdone))
-                ;; 43 ADC_RR -- $th_adc_r_r, transcribed. The CF fix-up is not
-                ;; decoration: when `b + cf` wraps, the carry out is 1 no
-                ;; matter what the sum says, and flag_op 8 is the raw mode that
-                ;; states that without disturbing the ZF/SF the add just set.
-                (local.set $beff (i32.add (local.get $vb) (call $get_cf)))
-                (local.set $vr (i32.add (local.get $va) (local.get $beff)))
-                (call $set_flags_add (local.get $va) (local.get $beff) (local.get $vr))
-                (if (i32.lt_u (local.get $beff) (local.get $vb))
-                  (then (global.set $flag_op (i32.const 8))
-                        (global.set $flag_a (i32.const 1))
-                        (global.set $flag_b (i32.const 0))))
-                (br $kdone))
-                ;; 44 ADC_RI
-                (local.set $beff (i32.add (local.get $imm) (call $get_cf)))
-                (local.set $vr (i32.add (local.get $va) (local.get $beff)))
-                (call $set_flags_add (local.get $va) (local.get $beff) (local.get $vr))
-                (if (i32.lt_u (local.get $beff) (local.get $imm))
-                  (then (global.set $flag_op (i32.const 8))
-                        (global.set $flag_a (i32.const 1))
-                        (global.set $flag_b (i32.const 0))))
-                (br $kdone))
-                ;; 45 SBB_RR -- the borrow twin, which fixes flag_a/flag_b only.
-                (local.set $beff (i32.add (local.get $vb) (call $get_cf)))
-                (local.set $vr (i32.sub (local.get $va) (local.get $beff)))
-                (call $set_flags_sub (local.get $va) (local.get $beff) (local.get $vr))
-                (if (i32.lt_u (local.get $beff) (local.get $vb))
-                  (then (global.set $flag_a (i32.const 0))
-                        (global.set $flag_b (i32.const 1))))
-                (br $kdone))
-              ;; 46 SBB_RI
-              (local.set $beff (i32.add (local.get $imm) (call $get_cf)))
-              (local.set $vr (i32.sub (local.get $va) (local.get $beff)))
-              (call $set_flags_sub (local.get $va) (local.get $beff) (local.get $vr))
-              (if (i32.lt_u (local.get $beff) (local.get $imm))
-                (then (global.set $flag_a (i32.const 0))
-                      (global.set $flag_b (i32.const 1))))
-              (br $kdone))
-              ;; 47 EA_SIB -- the address is already in $ea (the hoist above
-              ;; computed it, since this kind is in the SIB range). Park it for
-              ;; the next micro-op and write no register: this op is not an
-              ;; instruction, it is half of one.
-              (local.set $ea_hold (local.get $ea))
-              (local.set $wrote (i32.const 0))
-              (br $kdone))
-              ;; 48 EA_SIB_LD8 (and the unreachable default) -- the same EA,
-              ;; plus the byte load H149's operand bit 8 fused into it. The
-              ;; insert is the ordinary sub-register one, so AH..BH land in
-              ;; bits 8..15 of their container exactly as $set_reg8 puts them.
-              (local.set $ea_hold (local.get $ea))
-              (local.set $vr
-                (i32.or
-                  (i32.and (local.get $va)
-                    (i32.xor (i32.shl (i32.const 0xFF) (local.get $sh_d)) (i32.const -1)))
-                  (i32.shl (call $gl8 (local.get $ea)) (local.get $sh_d))))
-              (br $kdone))
-              ;; 49 REP_STR. Publish, call the
-              ;; interpreter's own body, reload. The publish has to be all
-              ;; eight and not just ESI/EDI/ECX/EAX: $gs8/$gl8 reach
-              ;; $invalidate_code_write and the page compiler, and a fault
-              ;; path reads the register file to build its report, so leaving
-              ;; a stale global behind would be visible from inside the call.
-              (global.set $eax (local.get $r0))
-              (global.set $ecx (local.get $r1))
-              (global.set $edx (local.get $r2))
-              (global.set $ebx (local.get $r3))
-              (global.set $esp (local.get $r4))
-              (global.set $ebp (local.get $r5))
-              (global.set $esi (local.get $r6))
-              (global.set $edi (local.get $r7))
-              (block $rdone
-                (block $r3b (block $r2b (block $r1b (block $r0b
-                  (br_table $r0b $r1b $r2b $r3b $r3b (local.get $d)))
-                  (call $rep_movsb_do) (br $rdone))
-                  (call $rep_movsd_do) (br $rdone))
-                  (call $rep_stosb_do) (br $rdone))
-                (call $rep_stosd_do))
-              (local.set $r0 (global.get $eax))
-              (local.set $r1 (global.get $ecx))
-              (local.set $r2 (global.get $edx))
-              (local.set $r3 (global.get $ebx))
-              (local.set $r4 (global.get $esp))
-              (local.set $r5 (global.get $ebp))
-              (local.set $r6 (global.get $esi))
-              (local.set $r7 (global.get $edi))
-              (local.set $wrote (i32.const 0))
-              (br $kdone))
-              ;; 50 X87_MEM -- absolute (or H149-paired) address. The hoisted
-              ;; $ea is already the address: `a` is 0xF so no base was added
-              ;; and the SIB index nibble is 0xF so no index was, leaving the
-              ;; immediate the TU_B_EA select above may have replaced with
-              ;; $ea_hold. $fpu_exec_mem is the same function $th_fpu_mem
-              ;; calls with the same two nibbles, so the load width, the
-              ;; push/pop, the tag word and every sticky bit in $fpu_sw are
-              ;; the interpreter's, not this family's.
-              (call $fpu_exec_mem
-                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_GROUP_SHIFT))
-                         (i32.const 0xF))
-                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_REG_SHIFT))
-                         (i32.const 0xF))
-                (local.get $ea))
-              (local.set $wrote (i32.const 0))
-              (br $kdone))
-              ;; 51 X87_MRO -- base+disp. $ea is R[a] + imm, computed from the
-              ;; register LOCAL; the scalar H190 pays a $get_reg for the same
-              ;; number. Identical call otherwise.
-              (call $fpu_exec_mem
-                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_GROUP_SHIFT))
-                         (i32.const 0xF))
-                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_REG_SHIFT))
-                         (i32.const 0xF))
-                (local.get $ea))
-              (local.set $wrote (i32.const 0))
-              (br $kdone))
-              ;; 52 X87_REG -- no memory and no general register at all. The
-              ;; accepted set excludes FCMOVcc and FCOMI/FUCOMI, so nothing
-              ;; here reads or writes a lazy-flag field and the dead-flag
-              ;; pass's model stays complete.
-              (call $fpu_exec_reg
-                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_GROUP_SHIFT))
-                         (i32.const 0xF))
-                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_REG_SHIFT))
-                         (i32.const 0xF))
-                (i32.and (i32.shr_u (local.get $b) (global.get $TU_B_X87_RM_SHIFT))
-                         (i32.const 0xF)))
-              (local.set $wrote (i32.const 0))
-              (br $kdone))
-              ;; 53 FNSTSW AX (and the unreachable default). The one x87 op
-              ;; that writes a general register, so EAX round-trips through
-              ;; the global the way TU_REP_STR round-trips all eight -- the
-              ;; interpreter's arm reads $eax to preserve its top half and
-              ;; writes the status word into the bottom, and reproducing that
-              ;; here would be a second copy of it. Only EAX needs publishing:
-              ;; DF E0 reads and writes nothing else.
-              (global.set $eax (local.get $r0))
-              (call $fpu_exec_reg (i32.const 7) (i32.const 4) (i32.const 0))
-              (local.set $r0 (global.get $eax))
-              (local.set $wrote (i32.const 0)))
-
-            ;; Writeback R[d].
-            (if (local.get $wrote)
-              (then
-                (block $sdone
-                (block $s7 (block $s6 (block $s5 (block $s4
-                (block $s3 (block $s2 (block $s1 (block $s0
-                  (br_table $s0 $s1 $s2 $s3 $s4 $s5 $s6 $s7 (local.get $d)))
-                  (local.set $r0 (local.get $vr)) (br $sdone))
-                  (local.set $r1 (local.get $vr)) (br $sdone))
-                  (local.set $r2 (local.get $vr)) (br $sdone))
-                  (local.set $r3 (local.get $vr)) (br $sdone))
-                  (local.set $r4 (local.get $vr)) (br $sdone))
-                  (local.set $r5 (local.get $vr)) (br $sdone))
-                  (local.set $r6 (local.get $vr)) (br $sdone))
-                (local.set $r7 (local.get $vr)))))
-            (br $body)))
-
-        (local.set $nblk (i32.add (local.get $nblk) (i32.const 1)))
-        (local.set $nsteps (i32.add (local.get $nsteps) (local.get $cost)))
-        ;; Which edge. term_kind 4 is an unconditional one -- a block that ends
-        ;; in a `jmp`, or one that simply falls into its successor -- and it
-        ;; evaluates no condition at all. Everything else evaluates the same
-        ;; $eval_cc the scalar Jcc would have, off the same globals, so all
-        ;; sixteen conditions are exact here for free.
-        (local.set $next_b (local.get $succ_f))
-        (if (i32.ne (local.get $term_kind) (i32.const 4))
-          (then
-            (if (call $eval_cc (local.get $term_cc))
-              (then (local.set $next_b (local.get $succ_t))))))
-        ;; A modelled exit. Publishes THIS exit's live-out mask: which
-        ;; registers the region defined on the paths that can reach it is a
-        ;; per-exit fact, not a per-region one.
-        (if (i32.lt_s (local.get $next_b) (i32.const 0))
-          (then
-            (local.set $up
-              (i32.add (local.get $EX)
-                (i32.shl (i32.sub (i32.const -1) (local.get $next_b))
-                         (i32.const 3))))
-            (local.set $exit_eip (i32.load          (local.get $up)))
-            (local.set $live_out (i32.load offset=4 (local.get $up)))
-            (br $done)))
-        ;; Safepoint. The only place either meter is allowed to stop the run is
-        ;; a block edge, because that is the only place the guest is in a state
-        ;; the rest of the emulator can read: every register is a value in a
-        ;; local about to be published, no instruction is half-retired, and the
-        ;; EIP the run resumes at is a real basic-block entry.
-        (if (i32.or (i32.ge_u (local.get $nsteps) (local.get $steps_avail))
-                    (i32.ge_u (local.get $nblk) (local.get $budget_avail)))
-          (then
-            (local.set $side (i32.const 1))
-            (local.set $exit_eip
-              (i32.load offset=48
-                (i32.add (local.get $BR)
-                  (i32.mul (local.get $next_b)
-                    (i32.shl (global.get $REGION_BLOCK_WORDS) (i32.const 2))))))
-            (br $done)))
-        (local.set $cur (local.get $next_b))
-        (br $trip)))
-
-    ;; Exit materialization. The live-out mask is what the descriptor proved
-    ;; the body writes; a register outside it holds the value it entered with,
-    ;; so publishing it would be a no-op and skipping it is not an omission.
-    ;; This runs on BOTH kinds of exit -- a modelled one, with its own mask,
-    ;; and the budget-exhausted side exit, which publishes all eight because it
-    ;; resumes at a block entry rather than at a modelled exit and no mask in
-    ;; the descriptor describes what is live there.
-    (if (local.get $side) (then (local.set $live_out (i32.const 0xFF))))
-    (if (i32.and (local.get $live_out) (i32.const 0x01)) (then (global.set $eax (local.get $r0))))
-    (if (i32.and (local.get $live_out) (i32.const 0x02)) (then (global.set $ecx (local.get $r1))))
-    (if (i32.and (local.get $live_out) (i32.const 0x04)) (then (global.set $edx (local.get $r2))))
-    (if (i32.and (local.get $live_out) (i32.const 0x08)) (then (global.set $ebx (local.get $r3))))
-    (if (i32.and (local.get $live_out) (i32.const 0x10)) (then (global.set $esp (local.get $r4))))
-    (if (i32.and (local.get $live_out) (i32.const 0x20)) (then (global.set $ebp (local.get $r5))))
-    (if (i32.and (local.get $live_out) (i32.const 0x40)) (then (global.set $esi (local.get $r6))))
-    (if (i32.and (local.get $live_out) (i32.const 0x80)) (then (global.set $edi (local.get $r7))))
-
-    (global.set $tree_fold_iters
-      (i64.add (global.get $tree_fold_iters) (i64.extend_i32_u (local.get $nblk))))
-    (global.set $tree_fold_ops
-      (i64.add (global.get $tree_fold_ops) (i64.extend_i32_u (local.get $nsteps))))
-
-    ;; Pacing. $next already billed one step for this H454 dispatch and $run
-    ;; already billed one block for entering it, so charge the rest: the guest
-    ;; ops every block execution stood for, and the interior transfers between
-    ;; them. The transfer OUT of the region is charged by $branch_end below,
-    ;; exactly as the final not-taken Jcc would have charged it.
-    (global.set $steps
-      (i32.sub (global.get $steps)
-        (i32.sub (local.get $nsteps) (i32.const 1))))
-    (global.set $block_budget
-      (i32.sub (global.get $block_budget)
-        (i32.sub (local.get $nblk) (i32.const 1))))
-
-    ;; A side exit resumes at the entry EIP of the block it was about to run:
-    ;; the guest state is fully materialized, so the region is re-entered (or,
-    ;; if the resume point is an interior block, that block is decoded on its
-    ;; own) as if the graph had simply been interrupted at an edge -- which it
-    ;; was.
-    (global.set $eip (local.get $exit_eip))
-    (return_call $branch_end))

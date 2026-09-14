@@ -313,15 +313,16 @@ async function main() {
 
   console.log('\n-- the fallback path --');
 
-  // ADC/SBB are deliberately NOT in the executor's vocabulary, so each of
-  // these is a spill / call_indirect / reload in the middle of a block whose
-  // other ops stayed in locals. If the reload were wrong, the ops AFTER it
-  // would diverge -- which is why each case has native work on both sides.
-  const adc = equiv('ADC r,r mid-block (a fallback between native ops)',
+  // ADC/SBB used to be outside the executor's vocabulary and this case existed
+  // to exercise the spill / call_indirect / reload path through them. The merge
+  // with H454 brought its ADC/SBB micro-ops in, so they are native now and this
+  // case is a plain correctness case again -- the fallback path is covered by
+  // the pushfd below it and by the explicit fallback cases further down.
+  const adc = equiv('ADC r,r mid-block (now a native carry-in op)',
     [...aluRI(0, EAX, 0x80000000), ...aluRR(ADC, ECX, EDX),
      ...aluRR(XOR, EDI, ECX), ...incR(EAX)]);
-  check('  ADC really took the fallback', adc.on.fallbacks >= 2,
-    `fallbacks=${adc.on.fallbacks} (pushfd is one; ADC should be the other)`);
+  check('  ADC is native after the H454 merge', adc.on.fallbacks <= 1,
+    `fallbacks=${adc.on.fallbacks} (pushfd is the only one left)`);
   equiv('SBB r,imm mid-block',
     [...aluRR(CMP, EAX, EDX), ...aluRI(3, ECX, 0x1000),
      ...aluRR(SUB, EDI, ECX), ...decR(EDX)]);

@@ -252,7 +252,15 @@ const NO_COPY_SUPEROPS = hasFlag('no-copy-superops');
 // --block-exec-stats prints installs/declines/runs and the native-vs-fallback
 // op split at exit; that split is the migration meter, not a curiosity.
 // docs/block-executor-design.md.
-const BLOCK_EXEC = hasFlag('block-exec');
+// --tree-fold named the second half of the same machine and is now an alias.
+// One round of deprecation: it still works, and it says so.
+const TREE_FOLD_ALIAS = hasFlag('tree-fold');
+if (TREE_FOLD_ALIAS) {
+  console.log('[deprecated] --tree-fold is now --block-exec: the self-loop fold '
+    + 'and the block executor are one descriptor format and one handler. '
+    + 'Passing --block-exec instead does exactly this.');
+}
+const BLOCK_EXEC = hasFlag('block-exec') || TREE_FOLD_ALIAS;
 const BLOCK_EXEC_STATS = hasFlag('block-exec-stats');
 const BLOCK_EXEC_MIN_UOPS = parseInt(getArg('block-exec-min-uops', '0'), 10) || 0;
 // Debug ceiling. With the floor it makes the installer a one-size sieve, which
@@ -282,7 +290,7 @@ const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 // a throughput guess -- tools/bench-loops.js tree_len8..tree_len160 found no
 // crossover at any length -- so this exists to A/B a SHORTER cap, e.g. to ask
 // what one app's long bodies are actually contributing.
-const TREE_FOLD = hasFlag('tree-fold');
+const TREE_FOLD = BLOCK_EXEC;
 // --trace-tree-fold: dump every lowered TREE_FOLD block's classified micro-op
 // list (entry EIP, terminator, per-uop kind/dst/src/imm/handler/b) through the
 // decode-time log_i32 channel. Consumed by tools/tree-shape-census.js, which
@@ -9144,12 +9152,20 @@ if (VERBOSE) {
       // family to migrate next; `declWhy` is why the most recent block was
       // refused (1 short, 2 poisoned/16-bit/fault-null, 3 unsafe op,
       // 4 past the emit slack, 5 past the classify scratch).
+      // `entries` and `transfersSaved` are the two terms of the cost model:
+      // one region entry is paid per run and one block transfer is saved per
+      // interior edge, so a ns/entry-vs-ns/op fit falls straight out of these
+      // four numbers and the run's user CPU. Nothing else records a saved
+      // transfer -- a folded edge leaves no trace in the handler histogram.
+      const ts = e.get_block_exec_transfers_saved
+        ? e.get_block_exec_transfers_saved() : 0n;
       console.log(`block-exec: ${label} armed`, e.get_block_exec() ? 'yes' : 'no',
         'installs', e.get_block_exec_installs(),
         'declines', e.get_block_exec_declines(),
-        'runs', e.get_block_exec_runs(),
+        'entries', e.get_block_exec_runs(),
         'ops native', String(nat), 'fallback', String(fb),
         'native%', tot > 0n ? (Number(nat * 10000n / tot) / 100).toFixed(2) : '-',
+        'transfersSaved', String(ts),
         'lastFallbackFn', e.get_block_exec_last_fallback_fn(),
         'declWhy', e.get_block_exec_decl_why());
     };

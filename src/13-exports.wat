@@ -2739,6 +2739,12 @@
     (global.get $block_exec_last_fallback_fn))
   (func (export "get_block_exec_decl_why") (result i32)
     (global.get $block_exec_decl_why))
+  ;; Interior block edges the executor did not have to take. With the run count
+  ;; and the two op totals this is everything a ns/entry-vs-ns/op fit needs, and
+  ;; it is the one term nothing else records -- a folded edge is invisible to
+  ;; the handler histogram and to $block_budget alike.
+  (func (export "get_block_exec_transfers_saved") (result i64)
+    (global.get $block_exec_transfers_saved))
 
   (func (export "set_region_fold") (param $flag i32)
     (global.set $region_fold_enabled (local.get $flag)))

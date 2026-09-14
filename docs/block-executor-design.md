@@ -655,3 +655,179 @@ split at exit. Every percentage in a report from this harness must be read with
 `loadavg` beside it; this box sits at 60–350 and its wall clock measures the
 neighbours, which is why the app-scale arm is `fold-ab.js` on user CPU with a
 NULL control and never a two-arm wall-clock comparison.
+
+---
+
+## 13. The merge (2026-09-13): one executor, one descriptor
+
+Handlers 454 (`$th_tree_fold`) and 458 (`$th_block_exec`) were two executors
+reading two descriptor formats for the same idea. They are now **one function**.
+`src/02-thread-table.wat` lists `$th_block_exec` at *both* 454 and 458 — 454
+survives only as an alias so the loop matcher's installs, `$region_try_install`
+and every recorded histogram keep the identity they already had; new installs
+from the block matcher emit 458.
+
+The unifying statement is that there is one shape with three cases:
+
+| case | descriptor |
+|---|---|
+| a plain block | 1 block, no back edge, terminator left threaded (`term_kind 5`) |
+| today's self-loop fold | 1 block, back edge, terminator folded |
+| a region | N ≤ 16 blocks, an exit table, one entry |
+
+### 13.1 What moved out of H454
+
+Everything. Each former H454 capability is now a case inside the merged
+executor, not a second code path:
+
+* **loop-in-place terminator** — the folded terminator kinds (`dec/inc`,
+  `cmp r,r`, `cmp r,imm`, `cmp r,[r+d]`, unconditional) all execute in the
+  region loop, and OPEN-1 is answered for the block case by the new
+  **`term_kind 5`**: a block whose terminator stayed threaded sets `tail_exit`,
+  and the executor resumes the threaded tail at `$ip = tail_ip` instead of
+  going out through `$branch_end`.
+* **per-exit live-out publication** — the exit table's `live_out` mask, with
+  `0xFF` for a threaded tail.
+* **interior flags-as-values** — the `$TF_F_*` dead-flag elision.
+* **x87 micro-ops, `ea` pair, `rep` micro-ops, push/pop, 16-bit memory,
+  partial-reg lanes** — all in the one `$TU_*` kind space (0..57), dispatched
+  by one `br_table`. The dense private `$BX_*` kind space and `$bx_kind_for_tu`
+  are deleted; there is no second numbering left to keep in sync.
+
+Nothing failed to move. Two capabilities changed shape rather than being
+dropped: ADC/SBB are now native micro-ops (they used to be forced to a
+fallback by `$bx_kind_for_tu` returning -1), and a fallback's inline operand
+words now live in a **trailing fallback pool** rather than inline in the uop
+stream, so the uop stride stays exactly 24 bytes and every hand-written
+descriptor in the tests and the bench stays valid. Header word +12, previously
+`reserved` and always written as 0, is now `fb_bytes`.
+
+### 13.2 OPEN-6 and OPEN-7
+
+* **OPEN-6** — the classifier was widened to the fused handlers the executor
+  kept falling back on; the measured fallback share is now under 3.5% of
+  in-region ops on every app in §13.4 and under 1% on four of six.
+* **OPEN-7** — the install floor is a **cost estimate in ns**, not a uop count:
+  `benefit = 16·native_uops + 9·transfers_saved`, `cost = 190 + 20·fallbacks`,
+  all known at decode time. `--block-exec-min-uops=N` still forces a hard
+  floor for A/B work; `0` (the default) means "use the model".
+* **`test r,r` / `test r,imm` as terminator flag producers** — the census's top
+  decline, accepted as `term_kind 6` and `7`. The decoder *fuses* `test r,r`
+  with the following `Jcc` into one op (H404), so the matcher had to learn the
+  fused form as well as the two-op one; `$loop_is_selfloop` was widened to see
+  H404, deliberately without widening `$loop_is_jcc`, which every specialised
+  family calls to mean "a pure branch".
+
+### 13.3 One switch
+
+`--block-exec` is the switch, default OFF. `--tree-fold` is accepted for one
+round as an alias and prints a deprecation line. `$region_try_install` now
+honours either `$block_exec_enabled` or the bench's narrower
+`$region_fold_enabled`, so `--toggle=block_exec` covers the region shapes too.
+The new mutable global `$block_exec_transfers_saved` is in
+`INHERITED_WASM_GLOBALS` (`test/test-worker-wasm-globals.js`: 31 setters).
+`--block-exec-stats` now prints `entries` (not `runs`) and `transfersSaved`, so
+ns/entry and ns/op can be fitted from user CPU.
+
+### 13.4 Coverage, measured
+
+`--max-batches=8000 --max-seconds=25` (heroes2 and caesar3 are truncated by the
+wall-clock guard), share of *retired handler ops* that ran inside a region:
+
+| app | installs | declines | entries | native ops | fb ops | native % | transfers saved | total ops | in-region % |
+|---|---|---|---|---|---|---|---|---|---|
+| quake2_demo | 483 | 30364 | 278293 | 12298919 | 425437 | 96.66 | 500802 | 61269570 | 20.77 |
+| heroes2_demo | 58 | 3143 | 23017 | 419479 | 12917 | 97.01 | 43 | 39113523 | 1.11 |
+| mw3 | 153 | 8215 | 312520 | 285925551 | 2220 | 100.00 | 7150577 | 288350915 | 99.16 |
+| notepad | 2 | 223 | 2 | 31 | 1 | 96.88 | 0 | 2261 | 1.42 |
+| calc | 137 | 1100 | 3556 | 60726 | 464 | 99.24 | 0 | 6144723 | 1.00 |
+| caesar3_demo | 13 | 504 | 64 | 1222 | 12 | 99.03 | 80 | 99601 | 1.24 |
+
+Every entry counted here is a **1-block** region: `$block_exec_try_install`
+emits 1-block descriptors and `$region_try_install` only installs a descriptor
+handed in through `set_region_spec`. There is still **no multi-block matcher**,
+so `transfersSaved` is today the self-loop back edges, and the N-block numbers
+in §13.5 are what a matcher *would* be worth, not what any app gets.
+
+### 13.5 Bench, pre-merge vs post-merge
+
+`tools/bench-loops.js --toggle=block_exec`, minima, ≥7 reps, loadavg 11-13.
+Pre-merge column is [region-descriptor-bench-2026-09.md](region-descriptor-bench-2026-09.md).
+
+| shape | pre-merge | post-merge | Δ |
+|---|---|---|---|
+| blk2 | −1.9% | −6.5% | (both declined — noise) |
+| blk4 | +4.7% | −3.5% | (both declined — noise) |
+| blk8 | −0.9% | −2.5% | (both declined — noise) |
+| blk16 | +22.0% | +4.8% | **−17** |
+| blk32 | +36.2% | +16.0% | **−20** |
+| blk_mem8 | +18.8% | declined | see below |
+| blk_fb8 | +18.8% | declined | see below |
+| region_if2 | +39.6% | +33.5% (paired +30.6) | −6 |
+| region_diamond4 | +31.0% | +40.4% (paired +41.7) | +9 |
+| region_state6 | +41.5% | +39.1% (paired +46.7) | −2 |
+| region_ladder5 | +40.8% | +38.4% (paired +38.6) | −2 |
+| region_null | −1.3% | +3.2% (paired −6.0) | control |
+
+**The region shapes held; the single-block shapes lost 17-20 points.** That is
+the bigger-function tiering loss this design predicted: the merged executor is
+one much larger wasm function than either half was, and the 1-block case is
+where the entry cost is amortized over the fewest micro-ops, so it is exactly
+the case that pays for the size. The N-block cases re-enter the same expensive
+prologue far less often per unit of work and are untouched.
+
+The `blk_mem8` / `blk_fb8` rows are the cost model, not a regression, and they
+are also **the measurement that calibrated it**. Forcing them to install by
+dropping `$BX_C_ENTRY` to 100 (breakeven ≈ 7 native uops) and re-running:
+
+| shape (ENTRY=100, forced install) | result |
+|---|---|
+| blk8 | **−3.2%** |
+| blk_mem8 | **−12.2%** |
+| blk_fb8 | **−8.5%** |
+| blk16 | +5.7% |
+| blk32 | +19.4% |
+
+So on the merged executor a 9-uop block is a *loss*, where on the pre-merge one
+it was +18.8%. The real breakeven now sits between 9 and 16 native uops, and
+`190 / 16 = 11.9` lands inside that window and declines exactly the shapes that
+measured as losses. The floor moved because the executor got bigger — which is
+the whole argument for expressing it as a cost rather than a constant.
+
+### 13.6 App-scale A/B
+
+`tools/fold-ab.js --target=win98 --arm-on='--block-exec'`, user CPU, three arms
+with a NULL control:
+
+| app | work | reps | on−off | null−off | verdict |
+|---|---|---|---|---|---|
+| quake2_demo | 1500 | 3 | −0.070s (−2.4%) | −0.090s | unresolvable |
+| heroes2_demo | 1500 | 3 | −0.140s (−2.8%) | +0.113s | unresolvable |
+| mw3 | 3000 | 2 of 4 | +0.34s, −0.12s | — | unresolvable |
+
+Both directions favour the arm on quake2 and heroes2, but the box sat at
+loadavg 11-28 for the whole window and the NULL arm moved as much as the arm
+did — twice the null spread is larger than the effect in every case. mw3, the
+one app with real coverage (99.2% of retired ops in a region), could not
+complete its reps inside the 178s cap at load 25-28. **No app-scale number
+from this session is quotable**; the honest statement is that the microbench
+says the 1-block case got 17-20 points worse and the app harness cannot see
+either sign through the noise.
+
+### 13.7 Still open
+
+* **OPEN-1 (partial)** — done for the block case via `term_kind 5`; a folded
+  `Jcc` terminator inside an N-block region still ends the region rather than
+  looping in place across members.
+* **OPEN-2 / the multi-block matcher** — nothing builds an N-block descriptor
+  from real code. §13.5's region rows are the payoff waiting on it, and it is
+  the only work that would make `transfersSaved` mean what its name says.
+* **OPEN-3, OPEN-4, OPEN-5** — untouched, as scoped.
+* **The tiering loss in §13.5.** The merged function should be split so the
+  1-block no-fallback case is a small leaf the JIT will tier and inline, with
+  the general region loop behind it. That is a refactor of one function, not of
+  the descriptor, and the descriptor merge is what makes it possible.
+* **Region cases with no reachable test** — SMC of one member block, a
+  breakpoint inside a region, and a 6-block state machine from real code are
+  all unreachable until a matcher exists; the bench arms them by hand through
+  `set_region_spec`, which is not the same coverage.
