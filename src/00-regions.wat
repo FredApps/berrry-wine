@@ -506,6 +506,17 @@
   (region.declare $OP_INDEX (size 0x00002000) (align 0x00001000)
     (stride 0x4 (count $OP_INDEX_MAX))
     (owner "01-header.wat:$OP_INDEX"))
+  ;; Where the multi-block region MATCHER assembles a descriptor. It cannot
+  ;; share OP_INDEX's far half the way the one-block matcher does: a region is
+  ;; built across several consecutive $decode_block calls, and each of those
+  ;; rewrites OP_INDEX from word 0 and runs the one-block matcher over the far
+  ;; half. A region builder that lived there would be eaten by its own members.
+  ;; 4096 words: 16 block records of 24, a 160-micro-op array, a fallback pool,
+  ;; a thrash table and the size histogram -- see the $BX_RG_* offsets in
+  ;; 07c-block-exec.wat, which are the only reader.
+  (region.declare $BX_RG_BASE (size 0x00004000) (align 0x00001000)
+    (stride 0x4 (count 4096))
+    (owner "07c-block-exec.wat:$BX_RG_BASE"))
   (region.declare $DX_SURF_PAL (size 0x00004000) (align 0x00001000)
     (stride 0x4 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:$dx_surf_pal_set"))

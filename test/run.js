@@ -267,6 +267,15 @@ const BLOCK_EXEC_MIN_UOPS = parseInt(getArg('block-exec-min-uops', '0'), 10) || 
 // is how a --block-exec divergence gets bisected to a block shape.
 const BLOCK_EXEC_MAX_UOPS = parseInt(getArg('block-exec-max-uops', '0'), 10) || 0;
 const BLOCK_EXEC_TRACE = hasFlag('trace-block-exec');
+// --no-block-exec-regions: arm the one-block executor but not the multi-block
+// matcher. The two halves ride the same switch, so this is the only way to
+// attribute an app-scale change to one of them.
+const NO_BLOCK_EXEC_REGIONS = hasFlag('no-block-exec-regions');
+// --block-exec-region-max=N: the largest multi-block region the matcher may
+// install. This is the bisect knob for a divergence — a picture that differs
+// at 16 and matches at 2 names the size at which the descriptor stops being
+// right, which "regions on/off" cannot.
+const BLOCK_EXEC_REGION_MAX = parseInt(getArg('block-exec-region-max', '0'), 10) || 0;
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
@@ -3977,6 +3986,8 @@ async function main() {
   if (BLOCK_EXEC_MIN_UOPS) inheritWasm('set_block_exec_min_uops', BLOCK_EXEC_MIN_UOPS);
   if (BLOCK_EXEC_MAX_UOPS) inheritWasm('set_block_exec_max_uops', BLOCK_EXEC_MAX_UOPS);
   if (BLOCK_EXEC_TRACE) inheritWasm('set_block_exec_trace', 1);
+  if (NO_BLOCK_EXEC_REGIONS) inheritWasm('set_block_exec_regions', 0);
+  else if (BLOCK_EXEC_REGION_MAX) inheritWasm('set_block_exec_regions', BLOCK_EXEC_REGION_MAX);
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
   if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
@@ -4879,6 +4890,11 @@ async function main() {
   }
   if (BLOCK_EXEC_TRACE && instance.exports.set_block_exec_trace) {
     instance.exports.set_block_exec_trace(1);
+  }
+  if (NO_BLOCK_EXEC_REGIONS && instance.exports.set_block_exec_regions) {
+    instance.exports.set_block_exec_regions(0);
+  } else if (BLOCK_EXEC_REGION_MAX && instance.exports.set_block_exec_regions) {
+    instance.exports.set_block_exec_regions(BLOCK_EXEC_REGION_MAX);
   }
   if (NO_AOE_FILL && instance.exports.set_loop_aoe_fill_emit) {
     instance.exports.set_loop_aoe_fill_emit(0);
@@ -9168,6 +9184,67 @@ if (VERBOSE) {
         'transfersSaved', String(ts),
         'lastFallbackFn', e.get_block_exec_last_fallback_fn(),
         'declWhy', e.get_block_exec_decl_why());
+      // The multi-block matcher's own line. `ops by N` is the coverage split
+      // the census is compared against: N=1 is a plain block, N>=2 is a region
+      // the one-block matcher could never have built. It is a count of
+      // micro-ops retired inside a descriptor of that size, so it is directly
+      // comparable with the [handler-hist] total for the same window.
+      if (!e.get_block_exec_region_installs) return;
+      const byN = [];
+      let opsMulti = 0n; let ops1 = 0n; let entMulti = 0;
+      for (let n = 1; n <= 16; n += 1) {
+        const o = e.get_block_exec_ops_by_n(n);
+        const ent = e.get_block_exec_entries_by_n(n);
+        const inst = e.get_block_exec_region_hist(n);
+        if (o || ent || inst) byN.push(`${n}:${o}/${ent}/${inst}`);
+        if (n === 1) ops1 += o; else { opsMulti += o; entMulti += ent; }
+      }
+      console.log(`block-exec-regions: ${label}`,
+        'armed', e.get_block_exec_regions() ? 'yes' : 'no',
+        'installs', e.get_block_exec_region_installs(),
+        'declines', e.get_block_exec_region_declines(),
+        'meanBlocks',
+        e.get_block_exec_region_installs()
+          ? (e.get_block_exec_region_blocks() / e.get_block_exec_region_installs()).toFixed(2)
+          : '-',
+        'thrashRefusals', e.get_block_exec_region_thrash(),
+        'why', e.get_block_exec_region_why(),
+        'ops1', String(ops1), 'opsMulti', String(opsMulti),
+        'entriesMulti', entMulti);
+      // ops/entries/installs per N. Read it as "what shapes does this app
+      // actually have", not as a ranking: one 16-block region entered a
+      // million times outweighs a thousand 2-block ones.
+      console.log(`block-exec-regions: ${label} byN(ops/entries/installs)`,
+        byN.join(' '));
+      if (e.get_block_exec_region_why_n) {
+        const WHY = [null, 'notWorthIt', 'exitsFull', 'noRoom', 'thrash',
+          'publishRefused', 'shortChain', 'memberDeclined'];
+        const why = [];
+        for (let w = 1; w <= 7; w += 1) {
+          const c = e.get_block_exec_region_why_n(w);
+          if (c) why.push(`${WHY[w]}=${c}`);
+        }
+        console.log(`block-exec-regions: ${label} declinedBy`, why.join(' ') || 'none');
+      }
+      if (e.get_block_exec_region_cfail) {
+        const CF = ['notContiguous', 'blockCap', 'poison', 'classify'];
+        const cf = [];
+        for (let s = 0; s < 8; s += 1) {
+          const c = e.get_block_exec_region_cfail(s);
+          if (c) cf.push(`${s < 4 ? 'head' : 'tail'}.${CF[s % 4]}=${c}`);
+        }
+        console.log(`block-exec-regions: ${label} chainEndedBy`, cf.join(' ') || 'none');
+      }
+      if (e.get_block_exec_region_nofit) {
+        const NF = [null, 'empty', 'byteFusedJcc', 'noFlagProducer', 'termNotModelled',
+          'uopsFull', 'unsafeOp', 'fbPoolFull', 'trailingEaSib'];
+        const nf = [];
+        for (let r = 1; r <= 8; r += 1) {
+          const c = e.get_block_exec_region_nofit(r);
+          if (c) nf.push(`${NF[r]}=${c}`);
+        }
+        console.log(`block-exec-regions: ${label} classifyRefused`, nf.join(' ') || 'none');
+      }
     };
     bxReport('M ', instance.exports);
     if (threadManager) {

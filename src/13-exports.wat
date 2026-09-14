@@ -2746,6 +2746,66 @@
   (func (export "get_block_exec_transfers_saved") (result i64)
     (global.get $block_exec_transfers_saved))
 
+  ;; The multi-block matcher (src/07c-block-exec.wat section "THE MULTI-BLOCK
+  ;; MATCHER"). It rides on --block-exec; this setter exists so an A/B can
+  ;; turn just the N-block half off and leave the one-block executor armed,
+  ;; which is the only way to attribute a change to one of the two.
+  (func (export "set_block_exec_regions") (param $flag i32)
+    (global.set $bx_region_enabled (local.get $flag)))
+  (func (export "get_block_exec_regions") (result i32)
+    (global.get $bx_region_enabled))
+  (func (export "get_block_exec_region_installs") (result i32)
+    (global.get $bx_region_installs))
+  (func (export "get_block_exec_region_declines") (result i32)
+    (global.get $bx_region_declines))
+  ;; Sum of member blocks over every installed region; divided by the install
+  ;; count it is the mean region size, and the histogram below is its shape.
+  (func (export "get_block_exec_region_blocks") (result i32)
+    (global.get $bx_region_blocks))
+  (func (export "get_block_exec_region_why") (result i32)
+    (global.get $bx_region_why))
+  (func (export "get_block_exec_region_thrash") (result i32)
+    (global.get $bx_region_thrash))
+  ;; Classify refusals by reason, 1 <= $r <= 8. See $bx_rg_nofit.
+  (func (export "get_block_exec_region_nofit") (param $r i32) (result i32)
+    (if (i32.gt_u (local.get $r) (i32.const 8))
+      (then (return (i32.const 0))))
+    (i32.load (call $bx_rg_word
+      (i32.add (global.get $BX_RG_NOFIT_OFF) (local.get $r)))))
+  ;; Collect refusals: 0..3 = notContiguous/blockCap/poison/classify with an
+  ;; empty chain, 4..7 = the same four with members already collected.
+  (func (export "get_block_exec_region_cfail") (param $s i32) (result i32)
+    (if (i32.gt_u (local.get $s) (i32.const 7))
+      (then (return (i32.const 0))))
+    (i32.load (call $bx_rg_word
+      (i32.add (global.get $BX_RG_CFAIL_OFF) (local.get $s)))))
+  ;; How many region candidates were declined for reason $w, 1 <= w <= 7.
+  ;; See $bx_rg_decline for what each number means.
+  (func (export "get_block_exec_region_why_n") (param $w i32) (result i32)
+    (if (i32.gt_u (local.get $w) (i32.const 7))
+      (then (return (i32.const 0))))
+    (i32.load (call $bx_rg_word
+      (i32.add (global.get $BX_RG_WHY_OFF) (local.get $w)))))
+  ;; How many regions of exactly $n blocks were installed, 0 <= n <= 16.
+  (func (export "get_block_exec_region_hist") (param $n i32) (result i32)
+    (if (i32.gt_u (local.get $n) (global.get $REGION_MAX_BLOCKS))
+      (then (return (i32.const 0))))
+    (i32.load (call $bx_rg_word
+      (i32.add (global.get $BX_RG_HIST_OFF) (local.get $n)))))
+  ;; Coverage by size: micro-ops retired inside, and entries into, a descriptor
+  ;; of exactly $n blocks. $n == 1 is the plain-block case, so the two together
+  ;; are the "ops in 1-block vs N-block regions" split.
+  (func (export "get_block_exec_ops_by_n") (param $n i32) (result i64)
+    (if (i32.gt_u (local.get $n) (global.get $REGION_MAX_BLOCKS))
+      (then (return (i64.const 0))))
+    (i64.load (call $bx_rg_word
+      (i32.add (global.get $BX_RG_OPSN_OFF) (i32.shl (local.get $n) (i32.const 1))))))
+  (func (export "get_block_exec_entries_by_n") (param $n i32) (result i32)
+    (if (i32.gt_u (local.get $n) (global.get $REGION_MAX_BLOCKS))
+      (then (return (i32.const 0))))
+    (i32.load (call $bx_rg_word
+      (i32.add (global.get $BX_RG_ENTN_OFF) (local.get $n)))))
+
   (func (export "set_region_fold") (param $flag i32)
     (global.set $region_fold_enabled (local.get $flag)))
   (func (export "get_region_fold") (result i32) (global.get $region_fold_enabled))

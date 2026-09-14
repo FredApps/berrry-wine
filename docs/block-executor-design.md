@@ -831,3 +831,230 @@ either sign through the noise.
   breakpoint inside a region, and a 6-block state machine from real code are
   all unreachable until a matcher exists; the bench arms them by hand through
   `set_region_spec`, which is not the same coverage.
+
+## 14. The multi-block matcher (round 9, 2026-09-14)
+
+OPEN-2 is closed: real guest code now produces N-block region descriptors. The
+work is in `src/07c-block-exec.wat` (`$bx_region_begin` / `$bx_region_collect`
+/ `$bx_region_finish`, and the classifier and edge resolver under them), wired
+into `src/07-decoder.wat` at three points, with the builder's scratch in a new
+`$BX_RG_BASE` region. **Default OFF**, like everything else in this family.
+
+### 14.1 Where the members come from
+
+Not from a recursive decode and not from a pre-scan. The matcher rides
+`$decode_run`, which already walks exactly the set the census's rules describe:
+single entry, ascending guest address, one page, stopping at already-compiled
+code. `$bx_region_begin` arms a builder at the run's first block,
+`$bx_region_collect` classifies each block at the tail of `$decode_block`, and
+`$bx_region_finish` decides and emits at the end of the run. The cost of a
+declined region is one classify pass over a block that was going to be decoded
+anyway.
+
+Because the chain is guest-contiguous by construction, the region's extent is
+one hole-free span, and that is what makes the rest work:
+
+* **Entry through the head only.** `$page_publish` retires every old block the
+  new extent touches and keeps one owner per guest byte, so publishing the
+  region over `[head, last member end)` retires the members' own entries.
+* **SMC is the existing mechanism, unchanged.** A write to any member byte hits
+  a cover mark inside the region's extent and retires the whole region. No
+  generation counter was added.
+* **A jump into a member is self-healing.** The interior address is not in the
+  index, so it misses, re-decodes, and symmetrically retires the region — the
+  "or decline" arm of the brief, arrived at for free.
+* **A thrash guard** (64 direct-mapped slots of head EIP + install count,
+  refusing past 16) stops the region/interior-entry ping-pong that the two
+  previous bullets otherwise permit forever.
+
+Loop back edges resolve against the member set and stay inside. `$steps` is
+billed per block at block edges, as before.
+
+### 14.2 What declines, measured
+
+`--block-exec-stats` now prints four new lines: `byN(ops/entries/installs)`,
+`declinedBy`, `chainEndedBy` and `classifyRefused`. On quake2 (`+map demo1`,
+300 batches, `--block-exec-min-uops=1`):
+
+```
+declinedBy       notWorthIt=482 exitsFull=5 thrash=14164 shortChain=412327
+chainEndedBy     head.classify=277469 tail.classify=31006
+classifyRefused  byteFusedJcc=1939 noFlagProducer=74879 termNotModelled=190250
+                 uopsFull=24 unsafeOp=41383
+```
+
+**`termNotModelled` is the answer to "what declined most and why" in five of
+six apps.** The block ends in a `call`, a `ret` or an indirect branch, which the
+descriptor cannot express, so the chain dies on its own head block. Diablo is
+the exception: there `noFlagProducer` is 1.84M of 2.81M refusals — an `and` or
+`sub` that writes a register is not one of the five producer shapes the
+backward walk accepts.
+
+Two caps that do NOT bind, confirming the census: `uopsFull` and `exitsFull`
+are three orders of magnitude below the other reasons, and `blockCap` never
+fires outside starcraft.
+
+A chain that dies on its head used to end the whole run. It now restarts at the
+next block (`$bx_rg_restart`), which is worth the difference between 6,260 and
+23,698 candidate chains on the quake2 window. The restart is also what forced
+`$bx_rg_run_start`: a region whose head is past the EIP the run was entered for
+must NOT be handed back as the run's entry point, and doing so was a hard crash
+(EIP into a string table) the first time the restart found anything.
+
+### 14.3 Coverage, and the census cross-check
+
+Two arms per app: the shipped OPEN-7 cost model, and `--block-exec-min-uops=1`,
+which replaces the benefit/cost test with a uop floor and is therefore the
+matcher's **coverage ceiling**. `opsMulti%` is micro-ops retired inside a 2+
+block descriptor as a share of all guest ops (the `--handler-hist` total).
+
+```
+app                   arm       installs  meanN  entriesMulti   opsMulti  opsMulti%  census 2+
+----------------------------------------------------------------------------------------------
+quake2_demo           default         11   4.27            50      1,014     0.000%      6.2%
+                      min-uops=1  23,593   2.43     3,678,747 11,497,799     2.68%
+caesar3_demo          default          2   5.00            54      1,108     0.000%     54.7%
+                      min-uops=1     135   2.24     2,082,993  6,631,513     2.09%
+heroes2_demo          default          1   9.00             1         22     0.000%      4.0%
+                      min-uops=1     143   2.56       596,592  2,015,011    12.66%
+mw3                   default          1   2.00             1         27     0.000%     43.8%
+                      min-uops=1     217   2.22        57,238    253,296     2.10%
+diablo_shareware      default         10   4.40        65,844  5,102,770     0.75%      21.1%
+                      min-uops=1   3,853   3.05     3,660,996 21,495,114     3.16%
+starcraft_shareware   default         15   4.07           822      6,007     0.000%     12.1%
+                      min-uops=1   5,960   2.27     1,520,567  8,573,486     0.96%
+```
+
+**The ratio to the census is 0.02–0.43 at the ceiling and ~0 at the shipped cost
+model. That gap is a matcher limit, not a census over-count, and the limit is
+the discovery source.** The census followed *Jcc and jmp targets as well as
+fall-throughs*; this matcher only ever sees `$decode_run`'s fall-through chain,
+and `$decode_run` stops at the first terminator that is not a specialised Jcc.
+A region whose head is reached by a branch, or whose second block is a branch
+target rather than a fall-through, is invisible here by construction. caesar3 is
+the clearest case: the census puts 96.6% of its ops in 2-4 block regions and the
+matcher reaches 2.09%.
+
+One row deserves reading on its own: **diablo at the default model installs ten
+regions, one of which is a 2-block descriptor entered 65,280 times and worth
+15.9% of all executor ops.** The cost model is not uniformly wrong; it is
+uniformly *quiet*, and when it does fire it can fire on something hot.
+
+heroes2 exceeds its census figure (12.66% vs 4.0%) because the windows are not
+the same — the census sampled MSS32 decode, this sweep is a 300-batch boot.
+
+### 14.4 Throughput
+
+**Microbench** (`tools/bench-loops.js --toggle=block_exec --reps=7`, paired
+median, minima in the log). The three multi-block shapes are now installed by
+the *matcher*, not hand-fed through `set_region_spec`:
+
+```
+shape             blocks/iter on→off   paired   min-based   null (--toggle=rect_run)
+-----------------------------------------------------------------------------------
+region_if2         0.01 → 2.00         +36.9%     +36.7%      +1.1%
+region_diamond4    0.01 → 2.00         +36.7%     +37.9%      +1.0%
+region_state6      0.02 → 2.00         +39.4%     +40.3%      +1.6%
+blk16              2.00 → 2.00          +1.6%      +4.0%      -1.2%
+blk32              2.00 → 2.00          +7.3%      +4.6%      -0.8%
+```
+
+So the *mechanism* is worth 37-40% on a shape it covers, against a ±1.6% null,
+and it removes 99.7% of the block entries to get there. The tiering split named
+in §13.7 was **not** attempted this round; blk16/blk32 above are the
+before-the-split baseline.
+
+**App scale** (`tools/fold-ab.js`, arm-on = regions, arm-off =
+`--no-block-exec-regions`, the same executor either side, so this prices the
+*matcher* alone):
+
+```
+app                   work  reps  arm-off med   on-off    null-off   verdict
+-----------------------------------------------------------------------------------
+quake2_demo (default)  300     5     7.030s    +0.186s    +0.014s   resolved LOSS 2.6%
+quake2_demo (min=1)    300     7*    6.91s     +2.2s      +0.1s     resolved LOSS ~32%
+diablo_shareware       100     5     3.460s    +0.074s    +0.016s   unresolvable
+caesar3_demo           300     5     5.740s    -0.094s    -0.030s   unresolvable
+mw3                     12     5     7.740s    +0.058s    +0.102s   unresolvable
+```
+
+`*` the min-uops=1 row is the raw per-rep spread from the 175s-capped run
+(on 8.80-9.18s, off 6.66-6.95s, null 6.68-7.21s over seven reps); it did not
+reach the tool's own verdict line, but off and null overlap exactly and on does
+not, so the sign is not in doubt.
+
+**The honest summary: at the shipped cost model the matcher costs 2.6% on
+quake2 and buys ~0% coverage; at the coverage ceiling it costs ~32% to buy
+2.7%.** The microbench says that loss is not in the executor — it is decode-time
+discovery plus the thrash the coverage arm provokes (14,164 refusals on that
+window). This is why the family stays default OFF and why §14.6 lists discovery,
+not the descriptor, as the next work.
+
+### 14.5 Correctness
+
+`test/test-block-exec.js` grew a `-- multi-block regions --` section (99 checks
+total, all green): a 2-block if/else loop, a diamond, a 6-block state machine
+over guest memory, a jump from outside into a member, SMC of a member (not of
+the head), an unmapped access from a member, a region interrupted by the block
+budget and resumed in three-block slices, and a breakpoint on a member's entry.
+Each differential case also asserts that a 2+ block descriptor actually
+installed and ran, so a pass cannot be two identical threaded compilations.
+
+The breakpoint case found a real defect and is the one behaviour change outside
+the matcher: `$run` checks `$bp_addr` at block entries, and a region's interior
+edges are block entries `$run` never sees, so a `--break=` inside a folded loop
+fired once and then never again. The executor now side-exits at an interior edge
+whose entry EIP is the breakpoint, guarded on `$bp_addr` being non-zero.
+
+`test-tree-fold`, `test-worker-wasm-globals`, `test-x87-pipeline4-fusion` and
+`test-x86-ops` (138 cases) all pass against the new build.
+
+**PNG identity**, two budgets per app, arm A = `--no-block-exec-regions`, both
+arms at `--block-exec-min-uops=1` so the matcher is at full coverage:
+
+```
+app                    60/6 batches      200/12 batches
+------------------------------------------------------------
+quake2_demo            identical         36 px (0.047%)
+mw3                    identical         identical
+heroes2_demo           identical         identical
+diablo_shareware       identical         identical
+caesar3_demo           identical         identical
+starcraft_shareware    identical         23,748 px (7.73%)
+```
+
+The two that differ are the two whose screens are paced by the batch clock, and
+both were checked against a control rather than assumed:
+
+* starcraft's difference is 7.73% of pixels in the box `0,86 639x308`; **one
+  extra batch** of arm A changes 10.37% of pixels in the *same* box.
+* quake2 at 300 batches differs by 3.79%; arm A at 299 and 300 batches is
+  pixel-identical, so that one is *not* a one-batch phase — but arm A at
+  `--batch-size=199000` differs from arm A at `--batch-size=200000` by
+  **33.0%**. A 0.5% change in work-per-batch moves that frame ten times as much
+  as the matcher does, and the matcher changes work-per-batch by construction.
+  Bisecting with `--block-exec-region-max` is non-monotonic (clean at 2 and 4,
+  the same 2,914-pixel alternative at 3, 8 and 16), which is the signature of a
+  bistable pacing outcome rather than of a size-dependent descriptor bug.
+
+`--block-exec-region-max=N` is new and exists for exactly that bisect: it caps
+the largest region the matcher may install, and `--no-block-exec-regions` is
+the same knob at 0.
+
+### 14.6 Still open after this round
+
+* **Discovery, not the descriptor, is the ceiling.** Following Jcc/jmp targets
+  as well as fall-throughs is what closes the 0.02-0.43 census ratio. Everything
+  needed to *run* those regions already exists and measures at +37-40%.
+* **`termNotModelled`** — a member whose terminator is a `call`/`ret`/indirect
+  ends the chain. Allowing the last member a `term_kind 5` threaded tail would
+  admit most of them, but the descriptor has one `$tail_ip` for the whole
+  region, so it needs a per-block tail pointer first.
+* **`noFlagProducer`** — Diablo's dominant refusal; `and`/`sub`/`or` writing a
+  register is not an accepted producer.
+* **The cost model.** 190ns of entry against 16ns/uop means a 2-block region
+  needs ~12 native micro-ops on the path taken before it installs, and the
+  estimate available at decode time is half the region's static count. This is
+  the same conservatism the 1-block installer has; it is not a region question,
+  and changing it should be measured as its own arm.
+* **The tiering split** from §13.7, still not done.

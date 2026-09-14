@@ -6119,6 +6119,14 @@
       (br $decode)
     ))
 
+    ;; The multi-block region matcher sees the ops FIRST, because it is the
+    ;; only pass that needs them after this call returns: a region is built
+    ;; across the several blocks of one $decode_run and every other matcher
+    ;; either rewrites the stream in place or zeroes $op_index_n. Collecting
+    ;; here costs a classify pass on a block that was going to be decoded
+    ;; anyway, and nothing at all when no run is in progress.
+    ;; See src/07c-block-exec.wat and docs/block-executor-design.md section 14.
+    (call $bx_region_collect (local.get $start_eip))
     ;; Loop-idiom matcher runs on the ops just emitted, before the block is
     ;; published. See src/07b-loop-match.wat.
     (call $loop_match_block (local.get $start_eip) (local.get $tstart))
@@ -6229,6 +6237,10 @@
     (local $t0 i32) (local $page i32) (local $n i32)
     (local $alloc i32) (local $jfn i32) (local $fall i32) (local $prev_end i32)
     (local $tb i32) (local $optr i32) (local $old_chunk i32)
+    ;; A run is exactly the block set the region matcher wants -- one entry,
+    ;; ascending guest address, one page, stopping at already-compiled code --
+    ;; so it collects along the run and decides once at the end.
+    (call $bx_region_begin (local.get $start_eip))
     (local.set $t0 (call $decode_block (local.get $start_eip)))
     (local.set $page (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
     (block $stop (loop $ext
@@ -6316,5 +6328,8 @@
       (br $ext)))
     (if (local.get $n)
       (then (global.set $page_ft_chains (i32.add (global.get $page_ft_chains) (i32.const 1)))))
-    (local.get $t0)
+    ;; If a region was built out of this run, it is published over the head and
+    ;; over every member it subsumes, and the pointer it returns is the one
+    ;; $run must execute -- the head's own block entry has just been retired.
+    (call $bx_region_finish (local.get $t0))
   )

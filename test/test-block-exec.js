@@ -474,6 +474,358 @@ async function main() {
       entryOff.includes('halted@entry|1234abcd'), entryOff);
   }
 
+  console.log('\n-- multi-block regions --');
+
+  // A region is several basic blocks under ONE descriptor, so every case below
+  // needs real control flow inside the snippet. These are the encodings the
+  // single-block cases above never needed.
+  const JZ = 4, JNZ = 5, JB = 2, JAE = 3, JL = 0xC, JGE = 0xD;
+  const jccRel32 = (cc, rel) => [0x0F, 0x80 | cc, ...le32(rel)];
+  const jmpRel32 = rel => [0xE9, ...le32(rel)];
+
+  // A two-pass assembler, because a multi-block snippet's displacements are
+  // not knowable until every block's length is. A piece is a byte array, a
+  // `{label}` marker, or a `{j, cc, to}` jump naming a label; jumps are always
+  // the rel32 form so pass one's size estimate is exact.
+  function asm(pieces) {
+    const at = new Map();
+    let off = 0;
+    for (const p of pieces) {
+      if (p.label !== undefined) { at.set(p.label, off); continue; }
+      off += p.j !== undefined ? (p.j === 'jmp' ? 5 : 6) : p.length;
+    }
+    const out = [];
+    for (const p of pieces) {
+      if (p.label !== undefined) continue;
+      if (p.j === undefined) { out.push(...p); continue; }
+      const size = p.j === 'jmp' ? 5 : 6;
+      const rel = at.get(p.to) - (out.length + size);
+      out.push(...(p.j === 'jmp' ? jmpRel32(rel) : jccRel32(p.cc, rel)));
+    }
+    return out;
+  }
+
+  // The flags probe the single-block cases append cannot be used here: it
+  // would land in whichever block happens to be last rather than on the path
+  // the case is about. These snippets end in `pushfd; pop ebp; ret` written
+  // explicitly at the join.
+  const JOIN = [...PUSHFD, ...popR(EBP), ...RET];
+
+  let regionInstalls = 0, regionEntries = 0;
+
+  // Same differential contract as `equiv`, plus the assertion that makes the
+  // case mean anything: a descriptor of at least two blocks was installed.
+  // Without it a pass says only that two identical threaded compilations agree.
+  function region(name, bytes, seed, opts) {
+    const off = arm(bytes, false, seed);
+    const riBefore = e.get_block_exec_region_installs();
+    const entBefore = [];
+    for (let n = 2; n <= 16; n += 1) entBefore.push(e.get_block_exec_entries_by_n(n));
+    const on = arm(bytes, true, seed);
+    const installs = e.get_block_exec_region_installs() - riBefore;
+    let entries = 0;
+    for (let n = 2; n <= 16; n += 1) {
+      entries += e.get_block_exec_entries_by_n(n) - entBefore[n - 2];
+    }
+    regionInstalls += installs; regionEntries += entries;
+    const regsOk = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi']
+      .every(k => off[k] === on[k]);
+    const ok = regsOk && off.data === on.data && off.eip === on.eip;
+    check(name, ok, ok ? '' :
+      `\n         off ${hexRegs(off)}\n         on  ${hexRegs(on)}` +
+      `\n         eip ${off.eip.toString(16)} vs ${on.eip.toString(16)}` +
+      (off.data === on.data ? '' : '\n         guest memory differs'));
+    if (!(opts && opts.mayDecline)) {
+      check(`  ${name}: a multi-block region installed and ran`,
+        installs >= 1 && entries >= 1,
+        `regionInstalls=${installs} multiBlockEntries=${entries} ` +
+        `why=${e.get_block_exec_region_why()} — declined, so this case proves nothing`);
+    }
+    return { off, on, installs, entries };
+  }
+
+  {
+    // Two blocks and a back edge: the loop head tests and branches, the body
+    // falls through to it. The back edge is INTERNAL -- it resolves to a
+    // member, not an exit -- which is the property that makes a loop worth
+    // folding at all.
+    region('2-block if/else loop', asm([
+      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],                       // cmp ecx,0
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...aluRR(ADD, EAX, ECX), ...decR(ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+
+    // A diamond: one test, two arms, one join. Both arms are members and the
+    // join is a member too, so the whole shape is one descriptor and neither
+    // arm costs a transfer.
+    region('diamond (both arms and the join in one region)', asm([
+      [...aluRI(7, ESI, 4)],                       // cmp esi,4
+      { j: 'jcc', cc: JB, to: 'low' },
+      [...movRI(EAX, 0x1111), ...aluRR(ADD, EAX, ESI)],
+      { j: 'jmp', to: 'join' },
+      { label: 'low' },
+      [...movRI(EAX, 0x2222), ...aluRR(SUB, EAX, ESI)],
+      { label: 'join' },
+      [...movRR(EDX, EAX), ...incR(EDX)],
+      JOIN,
+    ]));
+
+    // A three-state machine driven off guest memory: several blocks, several
+    // internal edges and one exit. This is the shape the census counted as
+    // 5-16 block, in miniature.
+    region('state machine over guest memory', asm([
+      [...movRI(ECX, 3), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      // `test edx,1`, not `and edx,1`: the flag-producer walk models CMP,
+      // TEST, INC/DEC and the memory-form CMP, and an `and` that writes a
+      // register is not one of them (measured on Quake II: 19% of all
+      // classify refusals are exactly this, `noFlagProducer`).
+      [...load32(EDX, EBX, 0x40), 0xF7, 0xC0 | EDX, ...le32(1)],
+      { j: 'jcc', cc: JZ, to: 'even' },
+      [...aluRI(0, EAX, 0x10), ...store32(EAX, EBX, 0x44)],
+      { j: 'jmp', to: 'step' },
+      { label: 'even' },
+      [...aluRI(5, EAX, 3), ...store32(EAX, EBX, 0x48)],
+      { label: 'step' },
+      [...decR(ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+  }
+
+  {
+    // Entry from OUTSIDE into a member. The region publishes over its whole
+    // guest extent, so the interior address is not in the index as a block of
+    // its own; jumping there must decode it on its own terms and produce the
+    // same answer as the threaded build, not run the region from its head.
+    const pieces = asm([
+      [...movRI(EAX, 0x100)],
+      { label: 'mid' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...aluRI(0, EAX, 7), ...decR(ECX)],
+      { j: 'jmp', to: 'mid' },
+      { label: 'out' },
+      JOIN,
+    ]);
+    // Where `mid` lands: after the 5-byte `mov eax,imm32`.
+    const MID = 5;
+    const inner = (blockExec) => {
+      const addr = nextCode();
+      const wa = g2w(addr);
+      for (let i = 0; i < pieces.length; i++) mem[wa + i] = pieces[i];
+      e.set_block_exec_min_uops(2);
+      e.set_block_exec(blockExec ? 1 : 0);
+      const go = (from) => {
+        seedData();
+        normalizeFlags();
+        e.set_block_exec_min_uops(2);
+        e.set_block_exec(blockExec ? 1 : 0);
+        e.set_eax(0); e.set_ecx(4); e.set_edx(0); e.set_ebx(DATA);
+        e.set_esi(SEED.esi); e.set_edi(SEED.edi); e.set_ebp(0);
+        e.set_esp(STACK_TOP);
+        dv.setUint32(g2w(STACK_TOP), 0, true);
+        e.set_eip(from);
+        e.run(100000);
+        return `${(e.get_eax() >>> 0).toString(16)}/${(e.get_ecx() >>> 0).toString(16)}`;
+      };
+      const head = go(addr);          // builds the region
+      const mid = go(addr + MID);     // enters a member from outside
+      const again = go(addr);         // and the head still works afterwards
+      e.set_block_exec(0);
+      return `${head} ${mid} ${again}`;
+    };
+    const eoff = inner(false), eon = inner(true);
+    check('a jump into the middle of a region agrees with threaded',
+      eoff === eon, `${eoff}  vs  ${eon}`);
+  }
+
+  {
+    // SMC of a MEMBER, not of the head. The region covers the member's bytes,
+    // so the ordinary per-page cover marks have to retire the whole region --
+    // if they only retired a block that no longer exists in the index, the
+    // stale region would keep running the old code.
+    const mk = (delta) => asm([
+      [...movRI(EAX, 0), ...movRI(ECX, 3)],
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...aluRI(0, EAX, delta), ...decR(ECX)],     // <- the member that is rewritten
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]);
+    const v1 = mk(0x11), v2 = mk(0x22);
+    if (v1.length !== v2.length) throw new Error('the member-SMC pair must be the same length');
+    const memberSmc = (blockExec) => {
+      const addr = nextCode();
+      const wa = g2w(addr);
+      for (let i = 0; i < v1.length; i++) mem[wa + i] = v1[i];
+      const runAt = () => {
+        seedData();
+        normalizeFlags();
+        e.set_block_exec_min_uops(2);
+        e.set_block_exec(blockExec ? 1 : 0);
+        e.set_eax(0); e.set_ecx(0); e.set_edx(0); e.set_ebx(DATA);
+        e.set_esi(SEED.esi); e.set_edi(SEED.edi); e.set_ebp(0);
+        e.set_esp(STACK_TOP);
+        dv.setUint32(g2w(STACK_TOP), 0, true);
+        e.set_eip(addr);
+        e.run(100000);
+        return (e.get_eax() >>> 0).toString(16);
+      };
+      e.set_block_exec_min_uops(2);
+      e.set_block_exec(blockExec ? 1 : 0);
+      const first = runAt();
+      // Rewrite through the guest store path, as the head-SMC case does.
+      for (let i = 0; i < v2.length; i += 4) {
+        if (v1[i] === v2[i] && v1[i + 1] === v2[i + 1]
+            && v1[i + 2] === v2[i + 2] && v1[i + 3] === v2[i + 3]) continue;
+        const word = v2[i] | (v2[i + 1] << 8) | (v2[i + 2] << 16) | (v2[i + 3] << 24);
+        const w = nextCode();
+        const ww = g2w(w);
+        const st = [...store32(EAX, EBX, i), ...RET];
+        for (let k = 0; k < st.length; k++) mem[ww + k] = st[k];
+        e.set_eax(word >>> 0); e.set_ebx(addr);
+        e.set_esp(STACK_TOP); dv.setUint32(g2w(STACK_TOP), 0, true);
+        e.set_eip(w); e.run(1000);
+      }
+      const second = runAt();
+      e.set_block_exec(0);
+      return { first, second };
+    };
+    const moff = memberSmc(false), mon = memberSmc(true);
+    check('SMC of a region member: the first run agrees',
+      moff.first === mon.first, `${moff.first} vs ${mon.first}`);
+    check('SMC of a region member: the rewrite is seen',
+      moff.second === mon.second, `${moff.second} vs ${mon.second}`);
+    check('SMC of a region member: the rewrite changed the answer',
+      moff.first !== moff.second, `${moff.first} == ${moff.second}`);
+  }
+
+  {
+    // A fault inside a region. With --fault-null unarmed an unmapped access
+    // reads the NULL sentinel and writes nowhere; the contract is that a
+    // region absorbs it exactly as threaded code does, from a member block
+    // rather than from the head.
+    region('an unmapped access from a member matches threaded', asm([
+      [...movRI(ECX, 2), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...load32abs(EDX, 0x7F000000), ...aluRR(ADD, EAX, EDX), ...decR(ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+  }
+
+  {
+    // Budget expiry mid-region. `run(3)` cannot finish the loop, so the region
+    // must side-exit at a block edge with every register published and resume
+    // from a real basic-block entry. Driving both arms in the same small
+    // slices is the only way to see that the stop points agree.
+    const bytes = asm([
+      [...movRI(ECX, 12), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...aluRI(0, EAX, 5), ...decR(ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]);
+    const sliced = (blockExec) => {
+      const addr = nextCode();
+      const wa = g2w(addr);
+      for (let i = 0; i < bytes.length; i++) mem[wa + i] = bytes[i];
+      seedData();
+      normalizeFlags();
+      e.set_block_exec_min_uops(2);
+      e.set_block_exec(blockExec ? 1 : 0);
+      e.set_eax(0); e.set_ecx(0); e.set_edx(0); e.set_ebx(DATA);
+      e.set_esi(SEED.esi); e.set_edi(SEED.edi); e.set_ebp(0);
+      e.set_esp(STACK_TOP);
+      dv.setUint32(g2w(STACK_TOP), 0, true);
+      e.set_eip(addr);
+      const trace = [];
+      for (let i = 0; i < 200 && (e.get_eip() >>> 0) !== 0; i += 1) {
+        e.run(3);
+        const eip = e.get_eip() >>> 0;
+        trace.push(`${eip === 0 ? 'ran' : eip - addr}:${(e.get_eax() >>> 0).toString(16)}` +
+                   `/${(e.get_ecx() >>> 0).toString(16)}`);
+      }
+      e.set_block_exec(0);
+      return trace.join(' ');
+    };
+    const boff = sliced(false), bon = sliced(true);
+    check('a region interrupted by the block budget resumes identically',
+      boff === bon,
+      `\n         off ${boff.slice(0, 200)}\n         on  ${bon.slice(0, 200)}`);
+    check('  and it really was interrupted', boff.split(' ').length > 3,
+      `${boff.split(' ').length} slices`);
+  }
+
+  {
+    // A breakpoint on a member's entry. Breakpoints are a $run-loop-head
+    // facility, so the contract is the same one the single-block case pins:
+    // the two arms agree about which entries halt and about the state there.
+    const bytes = asm([
+      [...movRI(ECX, 3), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...aluRI(0, EAX, 9), ...decR(ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]);
+    const TOP = 10;   // two 5-byte `mov r,imm32`
+    const withBp = (blockExec) => {
+      const addr = nextCode();
+      const wa = g2w(addr);
+      for (let i = 0; i < bytes.length; i++) mem[wa + i] = bytes[i];
+      e.set_bp(addr + TOP);
+      const once = () => {
+        seedData();
+        normalizeFlags();
+        e.set_block_exec_min_uops(2);
+        e.set_block_exec(blockExec ? 1 : 0);
+        e.set_eax(0); e.set_ecx(0); e.set_edx(0); e.set_ebx(DATA);
+        e.set_esi(SEED.esi); e.set_edi(SEED.edi); e.set_ebp(0);
+        e.set_esp(STACK_TOP);
+        dv.setUint32(g2w(STACK_TOP), 0, true);
+        e.set_eip(addr);
+        e.run(100000);
+        const eip = e.get_eip() >>> 0;
+        return `${eip === 0 ? 'ran' : `@+${eip - addr}`}|` +
+               `${(e.get_eax() >>> 0).toString(16)}/${(e.get_ecx() >>> 0).toString(16)}`;
+      };
+      let guard = 0;
+      while (!once().startsWith('@') && ++guard < 4) { /* prime the skip latch */ }
+      const r = `${once()} THEN ${once()}`;
+      e.set_bp(0);
+      e.set_block_exec(0);
+      return r;
+    };
+    const pOff = withBp(false), pOn = withBp(true);
+    check('a breakpoint inside a region behaves identically in both arms',
+      pOff === pOn, `${pOff}  vs  ${pOn}`);
+  }
+
+  console.log(`  ${regionInstalls} multi-block regions installed, ` +
+    `${regionEntries} entries into one`);
+  check('the multi-block matcher installed something in this run',
+    regionInstalls >= 3, `regionInstalls=${regionInstalls}`);
+
   console.log('\n-- declines --');
 
   {
