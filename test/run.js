@@ -307,6 +307,12 @@ const NO_SIB_FUSION = hasFlag('no-sib-fusion');
 const NO_RECT_RUN = hasFlag('no-rect-run');
 const NO_CASE_CHAIN = hasFlag('no-case-chain');
 const NO_RLE_RUN = hasFlag('no-rle-run');
+// The two stream-idiom folds (docs/loop-idiom-superops-design.md §20). Both
+// are on by default and both off switches exist for the same reason the ones
+// above do: a same-binary A/B of the fold against the threaded blocks it
+// replaced. They are decode-time, so the two arms have to be separate runs.
+const NO_SMK_TREE = hasFlag('no-smk-tree');
+const NO_PCX_RUN = hasFlag('no-pcx-run');
 // --x87-fusion: arm the semantic x87 families (H449 pipeline4/short, H450
 // balanced tree, H451 island, H452/453 affine prefix+suffix). Default OFF in
 // the module, and until now the browser's window.WineSuperops.x87Fusion was
@@ -4075,6 +4081,8 @@ async function main() {
   if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
   if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
   if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
+  if (NO_SMK_TREE) inheritWasm('set_smk_tree', 0);
+  if (NO_PCX_RUN) inheritWasm('set_pcx_run', 0);
   if (X87_FUSION) {
     inheritWasm('set_x87_pipeline4_fusion', 1);
     inheritWasm('set_x87_affine_fusion', 1);
@@ -5013,6 +5021,12 @@ async function main() {
   }
   if (NO_RLE_RUN && instance.exports.set_rle_run) {
     instance.exports.set_rle_run(0);
+  }
+  if (NO_SMK_TREE && instance.exports.set_smk_tree) {
+    instance.exports.set_smk_tree(0);
+  }
+  if (NO_PCX_RUN && instance.exports.set_pcx_run) {
+    instance.exports.set_pcx_run(0);
   }
   // Per-instance, like every other decode-time setting: a guest thread decodes
   // in its own instance, so arming only the main one would leave the workers
@@ -9538,6 +9552,21 @@ if (VERBOSE) {
       if (e.get_loop_aoe_span_runs) {
         console.log(`loopmatch: ${label} AoE span prefixes`,
           e.get_loop_aoe_span_matches(), 'runs', e.get_loop_aoe_span_runs());
+      }
+      // The two stream-idiom folds. `levels`/`tokens` are guest iterations,
+      // so multiplying them by the per-iteration op cost in §20 of the design
+      // note gives the ops a --handler-hist no longer sees.
+      if (e.get_smk_tree_runs) {
+        console.log(`loopmatch: ${label} SMK_TREE blocks`,
+          e.get_smk_tree_matches(), 'armed', e.get_smk_tree() ? 'yes' : 'no',
+          'runs', e.get_smk_tree_runs(),
+          'levels', String(e.get_smk_tree_levels()));
+      }
+      if (e.get_pcx_run_runs) {
+        console.log(`loopmatch: ${label} PCX_RUN blocks`,
+          e.get_pcx_run_matches(), 'armed', e.get_pcx_run() ? 'yes' : 'no',
+          'runs', e.get_pcx_run_runs(),
+          'tokens', String(e.get_pcx_run_tokens()));
       }
     };
     report('M ', instance.exports);

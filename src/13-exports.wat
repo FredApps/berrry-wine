@@ -2737,6 +2737,26 @@
   (func (export "get_ck_copy8_runs") (result i32) (global.get $ck_copy8_runs))
   (func (export "get_ck_copy8_px") (result i64) (global.get $ck_copy8_px))
 
+  ;; The two stream-idiom folds of docs/loop-idiom-superops-design.md §20.
+  ;; `matches` counts blocks the recognizer accepted, `runs` entries into the
+  ;; super-op, and `levels`/`tokens` the guest iterations those entries stand
+  ;; for -- that last one is what a --handler-hist total is divided into to
+  ;; get the share of work caught. Both off switches are decode-time, so an
+  ;; A/B needs two code addresses or a cleared block cache.
+  (func (export "set_smk_tree") (param $flag i32)
+    (global.set $smk_tree_enabled (local.get $flag)))
+  (func (export "get_smk_tree") (result i32) (global.get $smk_tree_enabled))
+  (func (export "get_smk_tree_matches") (result i32) (global.get $smk_tree_matches))
+  (func (export "get_smk_tree_runs") (result i32) (global.get $smk_tree_runs))
+  (func (export "get_smk_tree_levels") (result i64) (global.get $smk_tree_levels))
+
+  (func (export "set_pcx_run") (param $flag i32)
+    (global.set $pcx_run_enabled (local.get $flag)))
+  (func (export "get_pcx_run") (result i32) (global.get $pcx_run_enabled))
+  (func (export "get_pcx_run_matches") (result i32) (global.get $pcx_run_matches))
+  (func (export "get_pcx_run_runs") (result i32) (global.get $pcx_run_runs))
+  (func (export "get_pcx_run_tokens") (result i64) (global.get $pcx_run_tokens))
+
   ;; The alpha-blended RGB565 blit fold ($th_ck_blend16_run). The off switch
   ;; is decode-time like every other fold's, so an A/B has to run the two arms
   ;; at different code addresses or clear the block cache between them.

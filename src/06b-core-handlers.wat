@@ -2663,3 +2663,264 @@
         (global.set $flag_sign_shift (i32.const 31))
         (global.set $eip (local.get $exit_eip))))
     (return_call $branch_end))
+
+  ;; 461: the Smacker one-bit Huffman descent, matched from raw x86 by
+  ;; $try_emit_smk_tree_walk, which documents the three-block diamond this
+  ;; replaces and why it is matched there rather than by the self-loop
+  ;; matcher. Per tree level the interpreter pays two or three block transfers
+  ;; and eleven or twelve dispatches; here a level is one $gl32 and a 64-bit
+  ;; shift.
+  ;;
+  ;; The bit accumulator is an MMX register and is read and written through
+  ;; $mmx_get/$mmx_set, so the MMX state this leaves behind is exactly what
+  ;; the scalar $th_mmx_rr and shift handlers would have left -- the guest's
+  ;; refill path reads it again the moment the descent ends.
+  ;;
+  ;; Bounded at $SMK_TREE_MAX_LEVELS: an accumulator holds 64 bits and a walk
+  ;; consumes one a level, so a longer descent is reading bits that are not
+  ;; there. A run that reaches the cap parks at the HEAD, which is safe only
+  ;; because it has made real progress first; an immediate bail to the head
+  ;; would re-enter this handler in the same state and spin.
+  (func $th_smk_tree_walk (param $op i32)
+    (local $tp i32) (local $head_eip i32) (local $exit_eip i32)
+    (local $sh i32) (local $mask i32) (local $alt i32)
+    (local $N i32) (local $P i32) (local $SCR i32) (local $B8 i32)
+    (local $K i32) (local $M i32)
+    (local $n i32) (local $p i32) (local $scr i32) (local $b i32) (local $k i32)
+    (local $acc i64) (local $cf i32)
+    (local $levels i32) (local $cost i32) (local $blocks i32) (local $capped i32)
+    (local.set $tp (global.get $ip))
+    (local.set $head_eip (i32.load           (local.get $tp)))
+    (local.set $exit_eip (i32.load offset=4  (local.get $tp)))
+    (local.set $sh       (i32.load offset=8  (local.get $tp)))
+    (local.set $mask     (i32.load offset=12 (local.get $tp)))
+    (local.set $alt      (i32.load offset=16 (local.get $tp)))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 20)))
+
+    (local.set $N   (i32.and                 (local.get $op)                   (i32.const 0xF)))
+    (local.set $P   (i32.and (i32.shr_u (local.get $op) (i32.const 4))  (i32.const 0xF)))
+    (local.set $SCR (i32.and (i32.shr_u (local.get $op) (i32.const 8))  (i32.const 0xF)))
+    (local.set $B8  (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF)))
+    (local.set $K   (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xF)))
+    (local.set $M   (i32.and (i32.shr_u (local.get $op) (i32.const 20)) (i32.const 0xF)))
+
+    (local.set $n   (call $get_reg   (local.get $N)))
+    (local.set $p   (call $get_reg   (local.get $P)))
+    (local.set $b   (call $get_reg8  (local.get $B8)))
+    (local.set $k   (call $get_reg16 (local.get $K)))
+    (local.set $acc (call $mmx_get   (local.get $M)))
+
+    (block $done (loop $level
+      ;; shr N,sh / and N,mask -- the bit==1 child offset, computed before the
+      ;; bit is known and discarded by the bit==0 arm exactly as the x86 does.
+      (local.set $n (i32.and (i32.shr_u (local.get $n) (local.get $sh))
+                             (local.get $mask)))
+      ;; dec B8 -- an 8-bit decrement, so it wraps at 0 and never touches the
+      ;; other three bytes of its 32-bit register.
+      (local.set $b (i32.and (i32.sub (local.get $b) (i32.const 1))
+                             (i32.const 0xFF)))
+      ;; movd SCR,mm / psrlq mm,1 / shr SCR,1 -- GETBITS(1). CF comes from the
+      ;; SCALAR shift, which is why the accumulator's low bit is read out of
+      ;; the copy rather than out of the MMX register after the shift.
+      (local.set $scr (i32.wrap_i64 (local.get $acc)))
+      (local.set $acc (i64.shr_u (local.get $acc) (i64.const 1)))
+      (local.set $cf (i32.and (local.get $scr) (i32.const 1)))
+      (local.set $scr (i32.shr_u (local.get $scr) (i32.const 1)))
+      (if (i32.eqz (local.get $cf))
+        (then
+          (local.set $n (local.get $alt))
+          ;; head (7 ops) + the bit==0 arm's extra dispatch and block
+          (local.set $cost (i32.add (local.get $cost) (i32.const 12)))
+          (local.set $blocks (i32.add (local.get $blocks) (i32.const 3))))
+        (else
+          (local.set $cost (i32.add (local.get $cost) (i32.const 11)))
+          (local.set $blocks (i32.add (local.get $blocks) (i32.const 2)))))
+      ;; add P,N / mov N,[P] -- one level down the tree
+      (local.set $p (i32.add (local.get $p) (local.get $n)))
+      (local.set $n (call $gl32 (local.get $p)))
+      (local.set $levels (i32.add (local.get $levels) (i32.const 1)))
+      ;; cmp K16,N16 / jz head -- a leaf ends the descent
+      (br_if $done (i32.ne (i32.and (local.get $k) (i32.const 0xFFFF))
+                           (i32.and (local.get $n) (i32.const 0xFFFF))))
+      (if (i32.ge_u (local.get $levels) (global.get $SMK_TREE_MAX_LEVELS))
+        (then (local.set $capped (i32.const 1)) (br $done)))
+      (br $level)))
+
+    (global.set $block_budget
+      (i32.sub (global.get $block_budget) (local.get $blocks)))
+    (global.set $steps (i32.sub (global.get $steps)
+      (i32.add (local.get $cost) (i32.const 1))))
+    ;; Two MMX instructions a level, so the MMX execution census keeps meaning
+    ;; what it meant before the fold existed.
+    (global.set $mmx_exec_count (i32.add (global.get $mmx_exec_count)
+      (i32.shl (local.get $levels) (i32.const 1))))
+    (global.set $smk_tree_runs (i32.add (global.get $smk_tree_runs) (i32.const 1)))
+    (global.set $smk_tree_levels
+      (i64.add (global.get $smk_tree_levels) (i64.extend_i32_u (local.get $levels))))
+
+    (call $set_reg  (local.get $N)   (local.get $n))
+    (call $set_reg  (local.get $P)   (local.get $p))
+    (call $set_reg  (local.get $SCR) (local.get $scr))
+    (call $set_reg8 (local.get $B8)  (local.get $b))
+    (call $mmx_set  (local.get $M)   (local.get $acc))
+    ;; K is the marker and is never written.
+    (if (local.get $capped)
+      (then
+        ;; No flags: the head's own `shr` and the descent's `cmp` overwrite
+        ;; whatever this level left, exactly as the x86 does.
+        (global.set $eip (local.get $head_eip)))
+      (else
+        ;; The descent fell out of `cmp K16,N16`, a SIXTEEN-bit compare -- the
+        ;; guest's leaf handling reads ZF and SF from it.
+        (call $set_flags_sub
+          (i32.and (local.get $k) (i32.const 0xFFFF))
+          (i32.and (local.get $n) (i32.const 0xFFFF))
+          (i32.and (i32.sub (local.get $k) (local.get $n)) (i32.const 0xFFFF)))
+        (global.set $flag_sign_shift (i32.const 15))
+        (global.set $eip (local.get $exit_eip))))
+    (return_call $branch_end))
+
+  ;; 462: Quake II's PCX/WAL run expander, matched from raw x86 by
+  ;; $try_emit_pcx_run, which documents the five-block diamond this replaces
+  ;; and why it is proved by body hash rather than by grammar. Because the
+  ;; hash pins all 108 bytes, the register roles and the three ESP
+  ;; displacements below are facts about the matched code, not assumptions:
+  ;;
+  ;;   EDX cursor   ECX scratch/header  EAX token+value  EBX destination base
+  ;;   EBP output offset  ESI run length  EDI fill pointer
+  ;;   [ESP+0x10] spilled cursor   [ESP+0x14] header   [ESP+0x18] dest base
+  ;;
+  ;; The spills are written on the same instructions the x86 writes them, so a
+  ;; capped run resumes at the head with the frame in the state the guest's
+  ;; own loop would have left it in.
+  (func $th_pcx_run (param $op i32)
+    (local $tp i32) (local $head_eip i32) (local $exit_eip i32)
+    (local $esp i32) (local $cursor i32) (local $hdr i32) (local $base i32)
+    (local $off i32) (local $edi i32) (local $ebx i32) (local $eax i32)
+    (local $tok i32) (local $n i32) (local $v i32) (local $val32 i32)
+    (local $limit i32) (local $dir i32) (local $i i32) (local $dw i32)
+    (local $tokens i32) (local $cost i32) (local $blocks i32) (local $capped i32)
+    (local.set $tp (global.get $ip))
+    (local.set $head_eip (i32.load          (local.get $tp)))
+    (local.set $exit_eip (i32.load offset=4 (local.get $tp)))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 8)))
+
+    (local.set $esp    (call $get_reg (i32.const 4)))
+    (local.set $cursor (call $get_reg (i32.const 2)))
+    (local.set $ebx    (call $get_reg (i32.const 3)))
+    (local.set $off    (call $get_reg (i32.const 5)))
+    (local.set $edi    (call $get_reg (i32.const 7)))
+    (local.set $eax    (call $get_reg (i32.const 0)))
+    (local.set $hdr    (call $get_reg (i32.const 1)))
+    (local.set $n      (call $get_reg (i32.const 6)))
+    ;; `rep stos` reads DF. The fold runs both directions rather than bailing:
+    ;; the block this descriptor stands for IS the loop head, so a bail to the
+    ;; head would re-enter this handler and spin.
+    (local.set $dir (select (i32.const -1) (i32.const 1) (global.get $df)))
+
+    (block $done (loop $token
+      ;; xor eax,eax / mov al,[edx] / inc edx / mov [esp+0x10],edx
+      (local.set $tok (call $gl8 (local.get $cursor)))
+      (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+      (call $gs32 (i32.add (local.get $esp) (i32.const 0x10)) (local.get $cursor))
+      (if (i32.eq (i32.and (local.get $tok) (i32.const 0xC0)) (i32.const 0xC0))
+        (then
+          ;; the run arm: length in the low six bits, value in the next byte
+          (local.set $n (i32.and (local.get $tok) (i32.const 0x3F)))
+          (local.set $v (call $gl8 (local.get $cursor)))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+          (call $gs32 (i32.add (local.get $esp) (i32.const 0x10)) (local.get $cursor))
+          ;; head (8) + run arm (7) + the shared count test (4), 3 blocks
+          (local.set $cost (i32.add (local.get $cost) (i32.const 19)))
+          (local.set $blocks (i32.add (local.get $blocks) (i32.const 3))))
+        (else
+          ;; the literal arm: one byte, and the token IS the value
+          (local.set $n (i32.const 1))
+          (local.set $v (local.get $tok))
+          ;; head (8) + literal arm through the count test (5), 2 blocks
+          (local.set $cost (i32.add (local.get $cost) (i32.const 13)))
+          (local.set $blocks (i32.add (local.get $blocks) (i32.const 2)))))
+
+      (if (i32.gt_s (local.get $n) (i32.const 0))
+        (then
+          ;; lea edi,[ebx+ebp] -- EBX is still the base the LAST token's
+          ;; `mov ebx,[esp+0x18]` left there, which is the loop's invariant.
+          (local.set $edi (i32.add (local.get $ebx) (local.get $off)))
+          ;; The value replication goes through BX, whose high half is the
+          ;; destination base at that instant -- and cancels, because the
+          ;; `shl eax,0x10 / mov ax,bx` only ever keeps the two bytes just
+          ;; written. The result is the byte four times over.
+          (local.set $val32 (i32.mul (local.get $v) (i32.const 0x01010101)))
+          (local.set $base (call $gl32 (i32.add (local.get $esp) (i32.const 0x18))))
+          (local.set $ebx (local.get $base))
+          ;; rep stosd -- n>>2 dwords
+          (local.set $dw (i32.shr_u (local.get $n) (i32.const 2)))
+          (local.set $i (i32.const 0))
+          (block $dwdone (loop $dwl
+            (br_if $dwdone (i32.ge_u (local.get $i) (local.get $dw)))
+            (call $gs32 (local.get $edi) (local.get $val32))
+            (local.set $edi (i32.add (local.get $edi)
+              (i32.mul (local.get $dir) (i32.const 4))))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $dwl)))
+          ;; add ebp,esi then rep stosb -- n&3 trailing bytes
+          (local.set $off (i32.add (local.get $off) (local.get $n)))
+          (local.set $i (i32.const 0))
+          (block $bdone (loop $bl
+            (br_if $bdone (i32.ge_u (local.get $i)
+              (i32.and (local.get $n) (i32.const 3))))
+            (call $gs8 (local.get $edi) (local.get $v))
+            (local.set $edi (i32.add (local.get $edi) (local.get $dir)))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $bl)))
+          ;; mov edx,[esp+0x10] -- the fill clobbered EDX, so it is reloaded
+          (local.set $cursor (call $gl32 (i32.add (local.get $esp) (i32.const 0x10))))
+          (local.set $eax (local.get $val32))
+          (local.set $cost (i32.add (local.get $cost) (i32.const 22)))
+          (local.set $blocks (i32.add (local.get $blocks) (i32.const 1))))
+        (else
+          ;; A zero-length run jumps PAST the EDX reload, so the cursor stays
+          ;; as the token fetch left it -- the same value here, but only
+          ;; because nothing clobbered it on this path.
+          (local.set $eax (local.get $v))
+          (local.set $cost (i32.add (local.get $cost) (i32.const 5)))
+          (local.set $blocks (i32.add (local.get $blocks) (i32.const 1)))))
+
+      ;; the tail: mov ecx,[esp+0x14] / xor eax,eax / mov ax,[ecx+8]
+      (local.set $hdr (call $gl32 (i32.add (local.get $esp) (i32.const 0x14))))
+      (local.set $limit (call $gl16 (i32.add (local.get $hdr) (i32.const 8))))
+      (local.set $eax (local.get $limit))
+      (local.set $tokens (i32.add (local.get $tokens) (i32.const 1)))
+      ;; cmp ebp,eax / jle head
+      (br_if $done (i32.gt_s (local.get $off) (local.get $limit)))
+      (if (i32.ge_u (local.get $tokens) (global.get $PCX_RUN_MAX_TOKENS))
+        (then (local.set $capped (i32.const 1)) (br $done)))
+      (br $token)))
+
+    (global.set $block_budget
+      (i32.sub (global.get $block_budget) (local.get $blocks)))
+    (global.set $steps (i32.sub (global.get $steps)
+      (i32.add (local.get $cost) (i32.const 1))))
+    (global.set $pcx_run_runs (i32.add (global.get $pcx_run_runs) (i32.const 1)))
+    (global.set $pcx_run_tokens
+      (i64.add (global.get $pcx_run_tokens) (i64.extend_i32_u (local.get $tokens))))
+
+    (call $set_reg (i32.const 0) (local.get $eax))
+    (call $set_reg (i32.const 1) (local.get $hdr))
+    (call $set_reg (i32.const 2) (local.get $cursor))
+    (call $set_reg (i32.const 3) (local.get $ebx))
+    (call $set_reg (i32.const 5) (local.get $off))
+    (call $set_reg (i32.const 6) (local.get $n))
+    (call $set_reg (i32.const 7) (local.get $edi))
+    (if (local.get $capped)
+      (then
+        ;; The cap lands exactly where the guest's `jle` would have: at the
+        ;; head, with every register and every spilled temporary in the state
+        ;; the x86 leaves at a token boundary.
+        (global.set $eip (local.get $head_eip)))
+      (else
+        (call $set_flags_sub (local.get $off) (local.get $limit)
+          (i32.sub (local.get $off) (local.get $limit)))
+        (global.set $flag_sign_shift (i32.const 31))
+        (global.set $eip (local.get $exit_eip))))
+    (return_call $branch_end))

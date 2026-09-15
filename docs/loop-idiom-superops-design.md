@@ -1504,3 +1504,134 @@ all — measured ops per frame, divided into measured ops per second:
 So the keyed fold is worth ~2.9x here **and cannot reach 30 fps** — it removes
 59% of the ops and Amdahl does the rest. Anything targeting 30 fps has to come
 for the other 41% as well.
+
+## 20. Stream idioms: the two LOAD-TIME folds (handlers 461 and 462)
+
+[docs/hot-loop-vocabulary-2026-09.md](hot-loop-vocabulary-2026-09.md) §7 ranks the
+decompression / bit-stream class separately from memory traffic, and §4b splits
+the Win98 windows into gameplay and loading. The two readings together say
+something none of §§14-19 could: the stream class is **23.2% of the eight
+loading windows and ~3.3% of the five gameplay ones**. It is a *load-time*
+vocabulary. A fold here does not raise a frame rate; it shortens a loading
+screen, and that is the thing to measure it against.
+
+The loading-window family table ranks the stream families:
+
+| family | Σshare | apps | biggest single instance |
+|---|---|---|---|
+| RLE_TOKEN | 65.8 | 4 | quake2 `ref_soft+0x1000583e` 13.81% |
+| TABLE_DECODE | 46.7 | 1 | starcraft `smackw32+0x1000efad` 4.40% |
+| GETBITS | 23.6 | 2 | starcraft, diablo |
+| REFILL | 16.6 | 2 | starcraft, diablo |
+| CRC_STEP | 5.0 | 3 | — |
+
+### What was picked, and why those two
+
+**461 `SMK_TREE_WALK` — TABLE_DECODE/GETBITS(1), the Smacker MMX Huffman
+descent.** `smackw32+0x1000efad` and `+0x1000eecd` are ranks 1 and 2 of
+starcraft-loading. They are **byte-identical over 37 bytes**, and each is the
+head of a three-block diamond (`jb` to the bit==1 arm, a `mov edx,4` bit==0
+arm, a shared descend/compare tail with a `jz` back edge). With their arms that
+is 4.40+2.51+1.57 and 4.38+2.50+1.56 = **16.9% of starcraft-loading**, caught by
+one address-independent fold. `tools/find_bytes.js` over the corpus finds the
+same 22-byte prologue **five times in each of seven different SMACKW32.DLLs**
+(StarCraft shareware and demo, Caesar III, Diablo II, Heroes III, Alien vs
+Predator) — so unlike RLE_RUN (§ the Caesar ladder) and the jgl folds of §19
+this is not a one-app fold: it is one codec's inner loop, shipped by seven
+games in the corpus.
+
+**462 `PCX_RUN` — RLE_TOKEN, Quake II's PCX/WAL run expander.** The five blocks
+`ref_soft+0x1000580c / 0x10005822 / 0x10005832 / 0x10005837 / 0x1000583e` are
+5.02+0.53+2.76+2.51+13.81 = **24.6% of quake2-loading**, and they are one
+diamond: a token fetch, a run arm, a literal arm, a shared count test, and a
+fill block that ends in the back edge. It is the largest diamond-shaped
+RLE_TOKEN instance in the study.
+
+### What was declined, and why
+
+- **Diablo's storm colour-key run scanner** (`storm+0x1501d0b5`, 18.11% — the
+  single largest stream block anywhere in the loading set, 28.5 points with its
+  neighbours). Declined on **shape**, not on size: it is a ≥8-block nest with
+  several independent exits (`0x1501d0f8`, `0x1501d11c`, `0x1501d124`,
+  `0x1501d129`, `0x1501d12e`, `0x1501d136`, `0x1501d154`) and every temporary
+  spilled to the frame, so there is no diamond to match and no small set of
+  register roles to extract. The matcher this document describes only ever runs
+  at a block start over a bounded byte grammar; a nest with that many exits is
+  Design B's territory. Its two-block sub-loop `0x1501cfc0 / 0x1501cff4`
+  (9.5%) *is* a clean diamond and would be the next one to build.
+- **Diablo's PKWARE bit reader** (`storm+0x1502c8a8` REFILL+GETBITS, 2.19%) —
+  already folded: `$match_storm_bitreader` emits handler 396 for it.
+- **Caesar III's RLE** — already folded: that is `RLE_RUN`, handler 429.
+- **Heroes II's sprite RLE blitter** (`H2DEMOW+0x004c7341`, 5.30% of its loading
+  window, 17% of the §4 menu window). Declined this round only because both
+  picks above are larger in their own windows; its token fetch reads its cursor
+  through a *global*, which is a different grammar from either fold here.
+
+### 461, the grammar and the executor
+
+37 bytes, all branches rel8, no absolute address — so the grammar is matched
+structurally with the register numbers read out, and both copies in a DLL (and
+all five, and all seven DLLs) are the same match:
+
+```
+  head:  shr  N, sh            ; child offset for bit==1, out of the node word
+         dec  B8               ; one fewer bit left in the accumulator
+         and  N, mask
+         movd SCR, mmM         ; low 32 bits of the bit accumulator
+         psrlq mmM, 1          ; consume one bit
+         shr  SCR, 1           ; ...and put it in CF
+         jb   descend
+         mov  N, alt           ; bit==0 takes the fixed sibling offset
+  descend:
+         add  P, N             ; walk one level
+         mov  N, [P]
+         cmp  K16, N16         ; still an internal node?
+         jz   head
+  exit:
+```
+
+`N`, `P`, `SCR`, the 32-bit register under `B8`, and `K` must be five distinct
+registers and none of them ESP — the executor holds all five in locals, so an
+alias would move a cursor the guest still needs. The `psrlq` shift count must be
+exactly 1 and the `shr SCR` exactly 1: those two together are the GETBITS(1),
+and any other pair is a different loop.
+
+The executor reads and writes `mmM` through `$mmx_get`/`$mmx_set` so MMX state
+is exactly what the scalar handlers would have left, loads `[P]` through `$gl32`
+so page-edge and sparse translation apply unchanged, and exits with the flags of
+the **16-bit** `cmp` (`flag_sign_shift` 15), which is what the guest's `jz`
+reads. It is bounded at 64 iterations — an accumulator is 64 bits and a tree walk
+consumes one bit a level — and a run that hits the cap parks EIP at the head
+having made real progress, so it can only ever re-enter, never spin.
+
+### 462, the byte proof and the executor
+
+The Quake II loop is 108 bytes of MSVC output with three ESP displacements, a
+partial-register value replication (`mov bl,al / mov bh,bl / shl eax,16 /
+mov ax,bx`) and two `rep stos`. A grammar loose enough to write for that would
+not pin it down, so this one is proved the way `$try_emit_mmx_copy64` is: an
+FNV-1a over the exact 108 bytes after a cheap anchor check. Everything the
+executor needs — the register roles and the three displacements — is then
+implied by the hash.
+
+```
+  tok = *cursor++                       ; and the cursor is spilled every token
+  if ((tok & 0xc0) == 0xc0)  n = tok & 0x3f, v = *cursor++
+  else                       n = 1,          v = tok
+  if (n > 0) memset(base + off, v, n)   ; rep stosd then rep stosb
+  off += n
+  while (off <= (u16)hdr[8])
+```
+
+Three things the executor has to get right and a hand-written expectation would
+not: `n == 0` skips the fill **and** the cursor reload, so EDX comes out of a
+zero-length token still holding the token cursor; the fill's dword arm stores a
+value replicated out of a register whose top half is the destination base at
+that instant (it cancels — the executor asserts it by agreeing with the
+interpreter, not by reasoning); and DF must be clear, because two `rep stos`
+read it. A set DF declines at **execute** time, not match time, and falls back
+to the threaded blocks.
+
+Both folds bill `$block_budget` and `$steps` for every block and op they
+swallowed, so `--handler-hist`, `--batch-stats` and the block/op accounting keep
+meaning what they meant before.
