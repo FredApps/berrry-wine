@@ -5405,6 +5405,15 @@
   ;; $read_addr (H20/H21/H24/H25/H164); every other memory kind carries its own
   ;; base/index/disp and can never see a sentinel.
   (global $TU_B_EA i32 (i32.const 0x4000))
+  ;; Round 11, the load/op split's register-move elimination. "The first
+  ;; source of this micro-op is the LANE named at b[27:24], not R[d]." Set
+  ;; only by $bx_opt_pass in 07c-block-exec.wat, and only on kinds whose $va
+  ;; is a pure source -- never on a kind that reads $va as an accumulator it
+  ;; also writes through a partial lane. Bits 24..27 are free on every kind
+  ;; except TU_MOV_M8_I_SIB, whose immediate occupies 16..23 and which is not
+  ;; in the whitelist.
+  (global $TU_B_SRC0       i32 (i32.const 0x8000))
+  (global $TU_B_SRC0_SHIFT i32 (i32.const 24))
 
   ;; The five lazy-flag globals plus $saved_cf, one bit each. The whole point
   ;; of tracking them separately -- rather than "the last op that touched
@@ -5463,6 +5472,16 @@
   (global $TU_SBB_RR i32 (i32.const 45))
   (global $TU_SBB_RI i32 (i32.const 46))
   (global $TU_MOV_M8_I_SIB  i32 (i32.const 39))  ;; [ea] = imm8 (in b)
+
+  ;; -- CMP, flags only (round 11) ----------------------------------------
+  ;; These two exist for the load/op split in 07c: `cmp reg,[mem]` becomes a
+  ;; load into a temp lane plus one of these, and without a cmp kind the whole
+  ;; instruction would have to stay a fallback. They also pick up interior
+  ;; `cmp r,r` (H19) and `cmp r,imm32` (H10), which were fallbacks before.
+  ;; They define NO register, which is why $tree_uop_is_store lists them: the
+  ;; live-out mask must not claim `d`.
+  (global $TU_CMP_RR i32 (i32.const 58))  ;; flags of R[d] - R[a]
+  (global $TU_CMP_RI i32 (i32.const 59))  ;; flags of R[d] - imm
 
   ;; -- the two-op EA pair -------------------------------------------------
   ;; H149 ($th_compute_ea_sib) is the one emitted op that is not an
@@ -5810,6 +5829,26 @@
         (global.set $tu_kind
           (select (global.get $TU_ADC_RR) (global.get $TU_SBB_RR)
                   (i32.eq (local.get $fn) (i32.const 14))))
+        (return (i32.const 1))))
+
+    ;; -- CMP, flags only. H10 is `cmp r,imm32` (operand = reg, imm in the
+    ;; next word) and H19 `cmp r,r` (operand = dst<<4|src). Both call
+    ;; $set_flags_sub on the same two values the arms here do, so the join is
+    ;; the scalar path's. H19 also feeds $branch_hist_set when the handler
+    ;; histogram is armed; that is a diagnostic channel, not architectural
+    ;; state, and it is the one thing an interior cmp loses under the fold --
+    ;; the same loss every other folded op already takes.
+    (if (i32.eq (local.get $fn) (i32.const 10))
+      (then
+        (global.set $tu_kind (global.get $TU_CMP_RI))
+        (global.set $tu_d (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $tu_imm (i32.load offset=8 (local.get $p)))
+        (return (i32.const 1))))
+    (if (i32.eq (local.get $fn) (i32.const 19))
+      (then
+        (global.set $tu_kind (global.get $TU_CMP_RR))
+        (global.set $tu_d (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (global.set $tu_a (i32.and (local.get $op) (i32.const 0xF)))
         (return (i32.const 1))))
 
     ;; -- register/immediate: operand = reg, imm32 in the next word ----------
@@ -6329,7 +6368,11 @@
             ;; live-out mask has to say so.
     (i32.or (i32.eq (local.get $kind) (global.get $TU_X87_MEM))
     (i32.or (i32.eq (local.get $kind) (global.get $TU_X87_MRO))
-            (i32.eq (local.get $kind) (global.get $TU_X87_REG)))))))))))))))
+            ;; CMP writes flags and nothing else. Its `d` names the register
+            ;; it SUBTRACTS FROM, which the live-out mask must not claim.
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_CMP_RR))
+    (i32.or (i32.eq (local.get $kind) (global.get $TU_CMP_RI))
+            (i32.eq (local.get $kind) (global.get $TU_X87_REG)))))))))))))))))
 
   ;; Which lazy-flag fields a micro-op WRITES, as a $TF_F_* mask. Anything not
   ;; listed writes none: every MOV, LEA, NOT, load and store in the family is
@@ -6385,6 +6428,11 @@
     (if (i32.or (i32.eq (local.get $kind) (global.get $TU_INC))
                 (i32.eq (local.get $kind) (global.get $TU_DEC)))
       (then (return (global.get $TF_F_INC))))
+    ;; CMP is a SUB that keeps only the flags, so it writes exactly what
+    ;; $set_flags_sub writes.
+    (if (i32.or (i32.eq (local.get $kind) (global.get $TU_CMP_RR))
+                (i32.eq (local.get $kind) (global.get $TU_CMP_RI)))
+      (then (return (global.get $TF_F_ALL))))
     (i32.const 0))
 
   ;; Which fields a micro-op READS. All of them read CF: INC/DEC snapshot it

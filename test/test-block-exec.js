@@ -85,6 +85,17 @@ const load16abs = (d, abs) => [0x66, 0x8B, 0x05 | (d << 3), ...le32(abs)];
 const pushR = r => [0x50 + r];
 const popR = r => [0x58 + r];
 const pushI = v => [0x68, ...le32(v)];
+// Memory-SOURCE ALU: `op r32, [base+disp32]` and `op r32, [abs]`. These are the
+// forms round 11's split takes apart, and nothing else in this file emits one.
+// The opcode is the register-destination direction (0x03 add, 0x0B or, 0x23
+// and, 0x2B sub, 0x33 xor, 0x3B cmp) — one higher than the r/m-destination
+// opcode the aluRR encoder above uses.
+const ADD_RM = 0x03, OR_RM = 0x0B, AND_RM = 0x23, SUB_RM = 0x2B,
+      XOR_RM = 0x33, CMP_RM = 0x3B;
+const aluRM = (opc, d, base, disp) => [opc, 0x80 | (d << 3) | base, ...le32(disp)];
+const aluRAbs = (opc, d, abs) => [opc, 0x05 | (d << 3), ...le32(abs)];
+const imulRM = (d, base, disp) => [0x0F, 0xAF, 0x80 | (d << 3) | base, ...le32(disp)];
+const CDQ = [0x99];
 const PUSHFD = [0x9C];
 const RET = [0xC3];
 const NOP = [0x90];
@@ -201,6 +212,15 @@ async function main() {
     const installsBefore = e.get_block_exec_installs();
     const fbBefore = e.get_block_exec_fallback_ops();
     const natBefore = e.get_block_exec_native_ops();
+    // Round 11's decode-time pass keeps its own meters. Capturing them per arm
+    // is what lets a case assert that a transform FIRED or, more often, that
+    // it correctly did not — a "the two arms agree" check cannot tell a sound
+    // rewrite from no rewrite at all.
+    const passBefore = {
+      split: e.get_bx_pass_split(), rle: e.get_bx_pass_rle(),
+      movelim: e.get_bx_pass_movelim(), immfold: e.get_bx_pass_immfold(),
+      stlf: e.get_bx_pass_stlf(),
+    };
     e.set_eip(addr);
     e.run(100000);
     const out = {
@@ -215,6 +235,13 @@ async function main() {
       lastFallbackFn: e.get_block_exec_last_fallback_fn(),
       fallbacks: Number(e.get_block_exec_fallback_ops() - fbBefore),
       natives: Number(e.get_block_exec_native_ops() - natBefore),
+      pass: {
+        split: Number(e.get_bx_pass_split() - passBefore.split),
+        rle: Number(e.get_bx_pass_rle() - passBefore.rle),
+        movelim: Number(e.get_bx_pass_movelim() - passBefore.movelim),
+        immfold: Number(e.get_bx_pass_immfold() - passBefore.immfold),
+        stlf: Number(e.get_bx_pass_stlf() - passBefore.stlf),
+      },
     };
     e.set_block_exec(0);
     return out;
@@ -1014,6 +1041,179 @@ async function main() {
     regionInstalls >= 3, `regionInstalls=${regionInstalls}`);
 
   console.log('\n-- declines --');
+
+  console.log('\n-- round 11: the decode-time load/op split --');
+
+  // Everything below is differential in the same way as the rest of this file,
+  // but a differential pass is NOT the assertion that matters here. A pass
+  // that never fires also produces two identical arms, so each case asserts
+  // the meter as well: `rle >= 1` for the ones where a load really is
+  // redundant, and `rle === 0` for the ones where the alias rule must refuse.
+  // The negatives are the point — §16.2's rule is only worth writing down if
+  // something checks that it is obeyed.
+  const store8abs = (s8, abs) => [0x88, 0x05 | (s8 << 3), ...le32(abs)];
+
+  const splitCase = (name, body, want, seed) => {
+    const r = equiv(name, body, seed);
+    const p = r.on.pass;
+    for (const k of Object.keys(want)) {
+      const [op, n] = want[k];
+      const got = p[k];
+      check(`  ${name}: ${k} ${op} ${n}`,
+        op === '>=' ? got >= n : got === n,
+        `${k}=${got} (split=${p.split} rle=${p.rle} movelim=${p.movelim} ` +
+        `immfold=${p.immfold} stlf=${p.stlf})`);
+    }
+    return r;
+  };
+
+  // (b) redundant-load elimination, the positive. Two dword reads of one
+  // absolute address with nothing between them that the rule kills, so the
+  // second becomes a register move off the first.
+  splitCase('two loads of one address: the second is eliminated',
+    [...load32abs(EAX, DATA + 0x30), ...aluRR(XOR, ECX, ECX),
+     ...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EDX, ECX)],
+    { rle: ['>=', 1] });
+
+  // The alias rule, clause by clause. Each of these would be a correctness bug
+  // if the load were eliminated, and each is a *shape* the rule names rather
+  // than a value it computed, because nothing at decode time knows the values.
+  splitCase('an aliasing store between two loads blocks elimination',
+    [...load32abs(EAX, DATA + 0x30), ...store32abs(ECX, DATA + 0x30),
+     ...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EDX, EAX)],
+    { rle: ['==', 0] });
+
+  splitCase('a DISJOINT store between two loads does not block it',
+    [...load32abs(EAX, DATA + 0x30), ...store32abs(ECX, DATA + 0x40),
+     ...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EDX, EAX)],
+    { rle: ['>=', 1] });
+
+  // Partial-width overlap: one byte inside the dword. The ranges intersect, so
+  // the fact dies even though the widths differ — this is the case a
+  // same-width-only comparison would get wrong.
+  splitCase('a byte store INSIDE the loaded dword blocks elimination',
+    [...load32abs(EAX, DATA + 0x30), ...store8abs(ECX, DATA + 0x31),
+     ...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EDX, EAX)],
+    { rle: ['==', 0] });
+
+  splitCase('a byte store one past the dword does not block it',
+    [...load32abs(EAX, DATA + 0x30), ...store8abs(ECX, DATA + 0x34),
+     ...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EDX, EAX)],
+    { rle: ['>=', 1] });
+
+  // The base register written between the two loads: same displacement, two
+  // different addresses.
+  splitCase('a write to the base register between two loads blocks it',
+    [...load32(EAX, EBX, 0x30), ...incR(EBX),
+     ...load32(EDX, EBX, 0x30), ...aluRR(ADD, EDX, EAX)],
+    { rle: ['==', 0] });
+
+  // An op the classifier does not model — `cdq` is a FALLBACK here — stands in
+  // for every opaque thing a block can contain, a call included: the pass
+  // cannot see what it touched, so every fact dies.
+  splitCase('an unmodelled op between two loads blocks it',
+    [...load32abs(EAX, DATA + 0x30), ...CDQ,
+     ...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EDX, EAX)],
+    { rle: ['==', 0] });
+
+  // push/pop move ESP and write memory the pass does not model as a store.
+  splitCase('a push/pop pair between two loads blocks it',
+    [...load32abs(EAX, DATA + 0x30), ...pushR(ECX), ...popR(ECX),
+     ...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EDX, EAX)],
+    { rle: ['==', 0] });
+
+  // (a) the split itself: `op r32,[mem]` is one micro-op today only as a
+  // FALLBACK, so taking it apart into a load into a temp lane plus the
+  // register form is what converts it to native. The differential is the whole
+  // assertion for correctness; `split >= 1` says it actually happened.
+  splitCase('add r32,[base+disp] is split into a load and a register add',
+    [...aluRM(ADD_RM, EAX, EBX, 0x10), ...aluRR(XOR, ECX, ECX),
+     ...aluRM(SUB_RM, EDX, EBX, 0x14), ...aluRR(ADD, EDX, ECX)],
+    { split: ['>=', 1] });
+
+  splitCase('and/or/xor/cmp r32,[abs] split the same way',
+    [...aluRAbs(AND_RM, EAX, DATA + 0x20), ...aluRAbs(OR_RM, ECX, DATA + 0x24),
+     ...aluRAbs(XOR_RM, EDX, DATA + 0x28), ...aluRAbs(CMP_RM, EBX, DATA + 0x2C)],
+    { split: ['>=', 1] });
+
+  splitCase('imul r32,[base+disp] splits',
+    [...imulRM(EAX, EBX, 0x18), ...aluRR(XOR, ECX, ECX),
+     ...imulRM(EDX, EBX, 0x1C), ...aluRR(ADD, EDX, ECX)],
+    { split: ['>=', 1] });
+
+  // A split load feeding a second op at the SAME address: the temp lane the
+  // first split wrote is itself a fact, so the second split's load is
+  // redundant. This is the compound case the two transforms only reach
+  // together, and the one that would break loudly if the lane allocator
+  // reused a live lane.
+  splitCase('two memory-source ops on one address share the loaded lane',
+    [...aluRM(ADD_RM, EAX, EBX, 0x10), ...aluRM(SUB_RM, EDX, EBX, 0x10),
+     ...aluRR(XOR, ECX, ECX), ...aluRR(ADD, ECX, EAX)],
+    { split: ['>=', 2], rle: ['>=', 1] });
+
+  // (d) register-move elimination and (e) immediate folding. Both are about a
+  // micro-op disappearing rather than a memory access, so the meter is the
+  // only way to see them at all.
+  // The source here is a LOAD, not an immediate, on purpose: a move off a
+  // known constant is folded by (e) instead and the move never reaches (d),
+  // which is exactly what the first draft of this case measured by accident.
+  // And the consumer must REDEFINE the moved register — `mov ecx,eax ; add
+  // edx,ecx` is not a move-elimination shape at all, because ecx stays live.
+  splitCase('a move feeding the next op that redefines it is removed',
+    [...load32abs(EAX, DATA + 0x30), ...movRR(ECX, EAX), ...aluRR(ADD, ECX, ESI),
+     ...aluRR(XOR, EDI, ECX)],
+    { movelim: ['>=', 1] });
+
+  splitCase('a move the next op simply overwrites is removed',
+    [...load32abs(EAX, DATA + 0x30), ...movRR(ECX, EAX), ...movRR(ECX, EDX),
+     ...aluRR(XOR, EDI, ECX)],
+    { movelim: ['>=', 1] });
+
+  splitCase('a move off a known constant folds to an immediate',
+    [...movRI(EAX, 0x0000BEEF), ...movRR(ECX, EAX), ...aluRR(ADD, EDX, ECX),
+     ...aluRR(XOR, EDI, EDX)],
+    { immfold: ['>=', 1] });
+
+  // Store-to-load forwarding is REMOVED, not merely unused: the $g2w NULL
+  // sentinel discards a store to an unmapped address and returns 0 for the
+  // load, so a forwarded value and the real one differ with nothing to say so.
+  // This asserts the meter stays at zero, which is what stops the transform
+  // being reintroduced under the same name without the sentinel being fixed.
+  const stlfProbe = splitCase('store-to-load forwarding never fires',
+    [...movRI(EAX, 0x1234ABCD), ...store32abs(EAX, DATA + 0x30),
+     ...load32abs(EDX, DATA + 0x30), ...aluRR(XOR, ECX, EDX)],
+    { stlf: ['==', 0] });
+  check('  a store still kills the fact rather than seeding one',
+    stlfProbe.on.pass.rle === 0, `rle=${stlfProbe.on.pass.rle}`);
+
+  // And the case that caught it: a store through a register holding an
+  // unmapped address, followed by a read back. The threaded arm reads 0.
+  splitCase('a store through a null base register, then a read back',
+    [...movRI(EBX, 0), ...movRI(EAX, 0x1234ABCD), ...store32(EAX, EBX, 0x40),
+     ...load32(ECX, EBX, 0x40), ...aluRR(XOR, EDX, ECX)],
+    { stlf: ['==', 0] });
+
+  {
+    // (§16.4) Across a block boundary inside a region, nothing is carried. The
+    // pass runs per member block, so the same address loaded either side of a
+    // Jcc is loaded twice — the conservative end of the rule, asserted here so
+    // that a future edge-carrying version has to change this case deliberately
+    // rather than by accident.
+    const r = region('facts do not cross a block boundary in a region', asm([
+      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EAX, EDX),
+       ...decR(ECX), ...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...load32abs(EDI, DATA + 0x30), ...aluRR(ADD, EAX, EDI),
+       ...aluRR(XOR, ESI, ESI)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+    check('  no elimination carried across the edge',
+      r.on.pass.rle === 0, `rle=${r.on.pass.rle}`);
+  }
 
   {
     // Below $block_exec_min_uops the H458 dispatch is not repaid, so the

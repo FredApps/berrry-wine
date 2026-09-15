@@ -60,7 +60,15 @@
 //   node tools/bench-loops.js --shapes=lut,store_stream --bytes=16m
 //   node tools/bench-loops.js --shapes=lut,store_stream --mapping=sparse
 //   node tools/bench-loops.js --shapes=cmp_ladder --toggle=case_chain
+//   node tools/bench-loops.js --shapes=blk_rld8,blk_memalu8 --toggle=block_exec_split
 //   node tools/bench-loops.js --json
+//
+// A NOTE ON --toggle=block_exec_split. It is the only toggle here that is not
+// a fold of its own: the decode-time load/op split exists only inside a block
+// descriptor, so the toggle arms the executor in BOTH arms and varies only the
+// pass. Point it at blk_rld8 (redundant loads) or blk_memalu8 (memory-source
+// ALU, a FALLBACK per op until the split); every other shape is a null control
+// for it in the sense the calibration note above means.
 
 const fs = require('fs');
 const path = require('path');
@@ -1268,6 +1276,76 @@ SHAPES.blk_fb8 = {
   },
 };
 
+// --- ROUND 11: the shapes --toggle=block_exec_split is about ----------------
+// Neither of these is interesting under --toggle=block_exec; both are chosen so
+// that turning the PASS off inside an already-armed executor changes the
+// descriptor. Run them as `--shapes=blk_rld8,blk_memalu8 --toggle=block_exec_split`.
+//
+// blk_rld8: four dword reads of TWO addresses, alternating, with only register
+// work between them. The alias rule holds across all of it (no store, no push,
+// no unmodelled op, and the base register is never written), so two of the four
+// loads are redundant and become register moves. This is the upper bound on
+// what redundant-load elimination is worth: real blocks interleave stores.
+SHAPES.blk_rld8 = {
+  describe: '8-op block, four dword loads of two addresses with two repeats',
+  real: 'the re-read of one struct field a few instructions apart',
+  emit(a) {
+    const n = 250000;
+    const body = [
+      0x8B, 0x46, 0x00,                   // mov eax,[esi+0]
+      0x8B, 0x5E, 0x10,                   // mov ebx,[esi+0x10]
+      0x31, 0xC0 | (RG.eax << 3) | RG.edx, // xor edx,eax
+      0x8B, 0x6E, 0x00,                   // mov ebp,[esi+0]     <- redundant
+      0x31, 0xC0 | (RG.ebx << 3) | RG.edi, // xor edi,ebx
+      0x8B, 0x7E, 0x10,                   // mov edi,[esi+0x10]  <- redundant
+      0x31, 0xC0 | (RG.ebp << 3) | RG.edx, // xor edx,ebp
+    ];
+    const bodyLen = body.length;
+    const code = body.concat([0xEB, 0x00], [0x49], [0x75], rel8(-(bodyLen + 5)));
+    return {
+      iters: n, bytesTouched: n * 8, code,
+      setup(e) {
+        e.set_esi(a.buf); e.set_eax(1); e.set_ebx(3); e.set_edx(2);
+        e.set_ebp(11); e.set_edi(7); e.set_ecx(n);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
+// blk_memalu8: six `op r32,[esi+disp]` instructions. Without the split each is
+// a FALLBACK — spill 8 registers, call_indirect, reload 8 — so this shape is
+// the one where the pass changes the KIND of work rather than the amount of
+// it. Expect the largest effect here and treat it as an upper bound for the
+// same reason as above: it is six fallbacks in a row and no real block is.
+SHAPES.blk_memalu8 = {
+  describe: '6-op block of `op r32,[esi+disp]` memory-source ALU',
+  real: 'accumulate-from-memory code; a FALLBACK per op until the split',
+  emit(a) {
+    const n = 250000;
+    const body = [
+      0x03, 0x46, 0x00,   // add eax,[esi+0]
+      0x2B, 0x5E, 0x04,   // sub ebx,[esi+4]
+      0x23, 0x56, 0x08,   // and edx,[esi+8]
+      0x0B, 0x6E, 0x0C,   // or  ebp,[esi+0xc]
+      0x33, 0x7E, 0x10,   // xor edi,[esi+0x10]
+      0x03, 0x46, 0x14,   // add eax,[esi+0x14]
+    ];
+    const bodyLen = body.length;
+    const code = body.concat([0xEB, 0x00], [0x49], [0x75], rel8(-(bodyLen + 5)));
+    return {
+      iters: n, bytesTouched: n * 24, code,
+      setup(e) {
+        e.set_esi(a.buf); e.set_eax(1); e.set_ebx(3); e.set_edx(0xFFFF);
+        e.set_ebp(11); e.set_edi(7); e.set_ecx(n);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
 // --- STEP 2 (a): 2-block if/else loop --------------------------------------
 // while (esi < edx) { ebx += *esi; esi += 4; }  — a guard block and a body
 // block. The guard's taken edge is the loop exit, which is the one shape a
@@ -1608,6 +1686,26 @@ const TOGGLES = {
   ck_blend16: 'set_ck_blend16',
   ck_shadow16: 'set_ck_shadow16',
   block_exec: 'set_block_exec',
+  // Round 11's decode-time load/op split. It is not a fold of its own: it only
+  // exists inside a descriptor, so BOTH arms must have the executor armed and
+  // only the pass may differ. A plain setter name cannot express that, so a
+  // toggle may also be a function of (exports, armValue).
+  // The explicit uop floor is set too, and that is not a thumb on the scale:
+  // with min_uops at its default 0 the executor uses its cost model, and the
+  // model declines every shape in this file (declWhy 1) because a synthetic
+  // 6-8 op block does not repay one descriptor entry. Both arms then run the
+  // ordinary interpreter and the measurement is of nothing. A floor of 2 makes
+  // the descriptor install in BOTH arms, which is the only configuration in
+  // which the split is the one thing that differs.
+  block_exec_split: (e, v) => {
+    e.set_block_exec(1);
+    e.set_block_exec_min_uops(2);
+    e.set_block_exec_split(v);
+  },
+};
+const applyToggle = (e, name, v) => {
+  const t = TOGGLES[name];
+  if (typeof t === 'function') t(e, v); else e[t](v);
 };
 
 // ---------------------------------------------------------------------------
@@ -1749,6 +1847,16 @@ function countOps(inst, shape, a, repIndex) {
   const lut16Bytes0 = e.get_loop_lut16_bytes ? e.get_loop_lut16_bytes() : 0n;
   const lut16Matches0 = e.get_loop_lut16_matches ? e.get_loop_lut16_matches() : 0;
   const matched0 = e.get_loop_matched_blocks ? e.get_loop_matched_blocks() : 0;
+  // The block executor's own meters. Without these a `blk*` shape whose
+  // descriptor never installed — too few micro-ops, an unsafe op, the classify
+  // scratch full — looks exactly like one that installed and did not help,
+  // because the handler histogram is deliberately blind to the difference (a
+  // native micro-op re-records the handler index it replaced). `fbOps` is the
+  // one that answers "did round 11's split actually convert anything": a
+  // memory-form ALU op is a FALLBACK until it is split and a native micro-op
+  // afterwards, and nothing else in this output moves when it does.
+  const bxNat0 = e.get_block_exec_native_ops ? e.get_block_exec_native_ops() : 0n;
+  const bxFb0 = e.get_block_exec_fallback_ops ? e.get_block_exec_fallback_ops() : 0n;
   e.set_handler_hist_enabled(1);
   e.reset_handler_hist();
   oneRep(inst, shape, a, repIndex);
@@ -1791,6 +1899,24 @@ function countOps(inst, shape, a, repIndex) {
   blockEntries += blockCollisions;
   return {
     total, blockEntries, blockCollisions,
+    // Installs are CUMULATIVE, not a delta: a descriptor is built once at
+    // decode and every later rep re-enters the same cached block, so the delta
+    // over one rep is zero on a shape that is running entirely inside the
+    // executor. The question this answers is "did it ever install", and the
+    // per-rep work is the op counters below.
+    bxInstalls: e.get_block_exec_installs ? e.get_block_exec_installs() : 0,
+    // Why the LAST candidate block was declined, when nothing installed. A
+    // zero install count with no reason means the decoder never even offered a
+    // block, which is a different bug from "offered and refused".
+    bxDeclWhy: e.get_block_exec_decl_why ? e.get_block_exec_decl_why() : -1,
+    bxNativeOps: e.get_block_exec_native_ops
+      ? Number(e.get_block_exec_native_ops() - bxNat0) : 0,
+    bxFallbackOps: e.get_block_exec_fallback_ops
+      ? Number(e.get_block_exec_fallback_ops() - bxFb0) : 0,
+    // Cumulative for the same reason as installs: the passes run at decode.
+    bxSplit: e.get_bx_pass_split ? Number(e.get_bx_pass_split()) : 0,
+    bxRle: e.get_bx_pass_rle ? Number(e.get_bx_pass_rle()) : 0,
+    bxMovelim: e.get_bx_pass_movelim ? Number(e.get_bx_pass_movelim()) : 0,
     top: perHandler.slice(0, TOP_N), all: perHandler,
     lutRuns: e.get_loop_lut_runs ? e.get_loop_lut_runs() - lutRuns0 : 0,
     lutBytes: e.get_loop_lut_bytes ? e.get_loop_lut_bytes() - lutBytes0 : 0n,
@@ -1874,7 +2000,7 @@ async function main() {
 
     let repIndex = 0;
     for (const v of arms) {
-      if (v !== null) inst.e[TOGGLES[toggle]](v);
+      if (v !== null) applyToggle(inst.e, toggle, v);
       armOps.set(v, countOps(inst, shape, a, repIndex++));
     }
     // Interleave the arms rep by rep. Background load drifts on the scale of
@@ -1891,7 +2017,7 @@ async function main() {
       const shift = r % arms.length;
       const order = arms.slice(shift).concat(arms.slice(0, shift));
       for (const v of order) {
-        if (v !== null) inst.e[TOGGLES[toggle]](v);
+        if (v !== null) applyToggle(inst.e, toggle, v);
         const { ns, built, check } = oneRep(inst, shape, a, repIndex++);
         armNs.get(v).push(ns);
         a.lastBuilt = built;
@@ -1955,6 +2081,13 @@ async function main() {
           lut16Runs: ops.lut16Runs,
           lut16Bytes: Number(ops.lut16Bytes),
           matched: ops.matched,
+          bxInstalls: ops.bxInstalls,
+          bxDeclWhy: ops.bxDeclWhy,
+          bxNativeOps: ops.bxNativeOps,
+          bxFallbackOps: ops.bxFallbackOps,
+          bxSplit: ops.bxSplit,
+          bxRle: ops.bxRle,
+          bxMovelim: ops.bxMovelim,
           topHandlers: ops.top,
           guestMBps: built.bytesTouched ? (built.bytesTouched / (min / 1e9)) / (1024 * 1024) : null,
         };
@@ -2011,6 +2144,16 @@ async function main() {
         `${arm.blocksPerIter.toFixed(2)} blocks/iter${mb}`);
       console.log(`    ${' '.repeat(16)} top handlers: ${arm.topHandlers.map(([i, c]) => `H${i}:${fmt(c)}`).join('  ')}`);
       console.log(`    ${' '.repeat(16)} LUT matches/runs/bytes: ${fmt(arm.matched)}/${fmt(arm.lutRuns)}/${fmt(arm.lutBytes)}`);
+      if (toggle && toggle.startsWith('block_exec')) {
+        // installs=0 means the descriptor never took, and every other number on
+        // this line is then about a shape the block executor did not run at all.
+        // fallback is the one round 11 moves: a memory-form ALU op is a FALLBACK
+        // until the split converts it, and a native micro-op afterwards.
+        console.log(`    ${' '.repeat(16)} block-exec installs/native/fallback: ` +
+          `${fmt(arm.bxInstalls)}/${fmt(arm.bxNativeOps)}/${fmt(arm.bxFallbackOps)}  ` +
+          `pass split/rle/movelim: ${fmt(arm.bxSplit)}/${fmt(arm.bxRle)}/${fmt(arm.bxMovelim)}` +
+          (arm.bxInstalls ? '' : `  declWhy ${arm.bxDeclWhy}`));
+      }
       if (arm.lut16Matches || arm.lut16Runs) {
         console.log(`    ${' '.repeat(16)} RGB565 matches/runs/pixels: ` +
           `${fmt(arm.lut16Matches)}/${fmt(arm.lut16Runs)}/${fmt(arm.lut16Bytes)}`);

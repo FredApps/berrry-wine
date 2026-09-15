@@ -284,6 +284,9 @@ const BLOCK_EXEC_REGION_MAX = parseInt(getArg('block-exec-region-max', '0'), 10)
 // loss on Quake II, so they are flags rather than constants.
 const BLOCK_EXEC_WALK_K = parseInt(getArg('block-exec-walk-k', '0'), 10) || 0;
 const BLOCK_EXEC_WALK_BUDGET = parseInt(getArg('block-exec-walk-budget', '0'), 10) || 0;
+// Round 11's decode-time load/op split. ON whenever the executor is on, so the
+// only switch is the negative one -- this is the A/B partner, not an opt-in.
+const NO_BLOCK_EXEC_SPLIT = hasFlag('no-block-exec-split');
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
@@ -4026,6 +4029,7 @@ async function main() {
   else if (BLOCK_EXEC_REGION_MAX) inheritWasm('set_block_exec_regions', BLOCK_EXEC_REGION_MAX);
   if (BLOCK_EXEC_WALK_K) inheritWasm('set_block_exec_walk_k', BLOCK_EXEC_WALK_K);
   if (BLOCK_EXEC_WALK_BUDGET) inheritWasm('set_block_exec_walk_budget', BLOCK_EXEC_WALK_BUDGET);
+  if (NO_BLOCK_EXEC_SPLIT) inheritWasm('set_block_exec_split', 0);
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
   if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
@@ -4939,6 +4943,9 @@ async function main() {
   }
   if (BLOCK_EXEC_WALK_BUDGET && instance.exports.set_block_exec_walk_budget) {
     instance.exports.set_block_exec_walk_budget(BLOCK_EXEC_WALK_BUDGET);
+  }
+  if (NO_BLOCK_EXEC_SPLIT && instance.exports.set_block_exec_split) {
+    instance.exports.set_block_exec_split(0);
   }
   if (NO_AOE_FILL && instance.exports.set_loop_aoe_fill_emit) {
     instance.exports.set_loop_aoe_fill_emit(0);
@@ -9228,6 +9235,43 @@ if (VERBOSE) {
         'transfersSaved', String(ts),
         'lastFallbackFn', e.get_block_exec_last_fallback_fn(),
         'declWhy', e.get_block_exec_decl_why());
+      // Round 11's decode-time pass, one line per instance. `before`/`after`
+      // are micro-ops in every descriptor this instance built, counted at the
+      // moment the pass started and the moment it finished, so `after-before`
+      // is the net change and the per-transform counters say where it came
+      // from. The split ADDS a micro-op each time it fires (one memory op
+      // becomes a load plus a register op), so `after` can exceed `before`
+      // while the pass is still doing its job -- read `split` against `rle`
+      // and `movelim`, which are the two that delete. `stlf` is structurally
+      // zero: store-to-load forwarding was removed as unsound (the $g2w NULL
+      // sentinel makes a store-then-load of an unmapped address read 0, not
+      // the stored value), and the counter is kept so a future attempt cannot
+      // silently reuse the name. `immfold` is a MOV r,r whose source held a
+      // known constant rewritten to MOV r,imm.
+      if (e.get_bx_pass_uops_before) {
+        const bef = e.get_bx_pass_uops_before();
+        const aft = e.get_bx_pass_uops_after();
+        const sp = e.get_bx_pass_split();
+        // `before` is counted at pass ENTRY, and the split already fired by
+        // then (it runs in the classify scan, not in the pass), so
+        // `before - split` is the descriptor size the same run would have
+        // built with --no-block-exec-split. `netVsOff%` is that comparison and
+        // is the number to quote against §8's predicted removable share;
+        // `delta%` only prices the three transforms inside the pass proper.
+        const off = bef - sp;
+        console.log(`block-exec-split: ${label} armed`,
+          e.get_block_exec_split() ? 'yes' : 'no',
+          'uopsBefore', String(bef), 'uopsAfter', String(aft),
+          'delta', String(aft - bef),
+          'delta%', bef > 0n ? (Number((aft - bef) * 10000n / bef) / 100).toFixed(2) : '-',
+          'uopsSplitOff', String(off),
+          'netVsOff%', off > 0n ? (Number((aft - off) * 10000n / off) / 100).toFixed(2) : '-',
+          'split', String(e.get_bx_pass_split()),
+          'rle', String(e.get_bx_pass_rle()),
+          'stlf', String(e.get_bx_pass_stlf()),
+          'movelim', String(e.get_bx_pass_movelim()),
+          'immfold', String(e.get_bx_pass_immfold()));
+      }
       // The multi-block matcher's own line. `ops by N` is the coverage split
       // the census is compared against: N=1 is a plain block, N>=2 is a region
       // the one-block matcher could never have built. It is a count of

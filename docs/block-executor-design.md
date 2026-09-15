@@ -1200,3 +1200,436 @@ arms differ from each other. Every settled screen is pixel-identical.
   mw3 and starcraft — it needs the per-block tail pointer from §14.6.
 * **The tiering split** from §13.7, still not done: blk16 and blk32 measure
   +0.4% and +0.9% paired, against the pre-merge +22/+36.
+
+## 16. The decode-time load/op split (round 11, 2026-09-14)
+
+[hot-loop-vocabulary-2026-09.md](hot-loop-vocabulary-2026-09.md) §8 and §4b
+measured what a *generic* pass over the micro-op stream could delete from the
+hot blocks of thirteen Win98 windows — no matcher, no new arithmetic
+vocabulary: 0.7-19.3% of guest ops per window, mean ≈ 8%, with the largest
+share in a gameplay window (quake2-gameplay, 19.3%, 12.6 points of it redundant
+loads). §9 of that document put this first on the build list. This section is
+that pass.
+
+The hard constraint is unchanged: **no runtime wasm codegen.** This is a pass
+over the decode-time descriptor, executed by the same fixed executor; the two
+new micro-op kinds it needs are fixed build-time handler arms like every other.
+
+### 16.1 The split representation
+
+Today a memory-form ALU instruction — `add edx,[0x10027ba8]`, `adc esi,[ebx+ecx*4]`,
+`imul eax,[esi+8]` — has no micro-op kind at all, so it takes the FALLBACK path:
+spill eight registers, `call_indirect` the real handler, reload eight. The
+instruction's *load* is therefore invisible to any analysis, and so is its ALU.
+
+The split makes both explicit:
+
+```
+add edx, [ebx+0x10]          ->   TU_LOAD32     d=L0  a=ebx  imm=0x10
+                                  TU_ADD_RR     d=edx a=L0
+add edx, [0x10027ba8]        ->   TU_LOAD32_ABS d=L0  imm=0x10027ba8
+                                  TU_ADD_RR     d=edx a=L0
+cmp eax, [ebx+4]             ->   TU_LOAD32     d=L0  a=ebx  imm=4
+                                  TU_CMP_RR     d=eax a=L0
+```
+
+**The temp lanes are register indices 8..14, held in seven more wasm locals in
+`$th_block_exec`.** The `d` and `a` fields of a micro-op are whole words in the
+descriptor, so nothing needed re-encoding; what changed is that the two
+index-decoded operand reads and the one index-decoded writeback grew from
+8-entry `br_table`s to 15-entry ones. Index 15 (`0xF`) keeps its meaning of
+*absent* and still lands on the default arm, and the SIB *index* read stays
+8-wide because a SIB index is always an architectural register.
+
+Seven, not eight, and not sixteen. Seven is what is left of a 4-bit field once
+`0xF` is reserved, and a wider register file makes the one function the JIT
+already struggles to tier bigger for no return. It is far more than the shape
+needs: a split's load is consumed by the *very next* micro-op, so concurrent
+lane pressure from the split itself is one, and the lanes are handed out
+round-robin only so that a redundant-load rewrite can still name an earlier
+lane. Reallocating a lane kills any fact naming it, because walk 1 treats the
+split's load as a write to that lane — there is no separate liveness check to
+get wrong, and no way to run out.
+
+**A temp lane is never architectural.** It is not in any exit's `live_out`
+mask, it is never published to a global, it is never read by a terminator, and
+it is never a SIB base or index. It survives a fallback for free, because a
+fallback spills and reloads *globals* and a lane is a local the call cannot
+see — but see the alias rule below, which kills every fact across a fallback
+anyway.
+
+Two new kinds are added to the shared `$TU_*` space, at 58 and 59:
+
+| kind | meaning |
+|---|---|
+| `TU_CMP_RR` 58 | flags only, `R[d] - R[a]`, no register written |
+| `TU_CMP_RI` 59 | flags only, `R[d] - imm`, no register written |
+
+They exist because `cmp reg,[mem]` is the second most common memory-form ALU
+shape in the corpus and without a `cmp` kind the split would have to decline
+it. They also pick up interior `cmp r,r` / `cmp r,imm32` (H19 / H10), which were
+fallbacks before.
+
+One more `b`-word bit, `$TU_B_SRC0` (0x8000) with a 4-bit lane at bits 24..27:
+**"read the first source from this lane instead of from `d`."** It is what makes
+a register-to-register move disappear rather than merely move: `mov eax,edx ;
+shr eax,16` becomes one `TU_SHIFT d=eax` whose first source is lane `edx`. It
+is set only by this pass and only on kinds whose `$va` is a pure source.
+
+### 16.2 The alias rule, verbatim
+
+> A store kills every earlier load fact unless the store and the load name the
+> same base register, the same index register and the same scale, and their
+> `[disp, disp+width)` byte ranges are disjoint. An absolute address counts as
+> base = none, index = none, scale = 0, disp = the address, so two absolute
+> accesses are compared by range — and an absolute store still kills every
+> register-based load, and a register-based store still kills every absolute
+> load. ESP-relative and EBP-relative accesses are distinct bases and are
+> compared as such only while neither ESP nor EBP is written in the stretch; a
+> write to a register kills every fact whose base or index is that register. A
+> write to a load's destination kills that load's fact. Any fallback micro-op,
+> any `rep` or x87 micro-op, any push/pop, any op the classifier did not
+> recognise, any call, and any block boundary kills every fact.
+
+The rule is stated in full because it was written to serve both redundant-load
+elimination *and* store-to-load forwarding. Only the first half of it is used:
+a store now kills facts and never records one, because forwarding turned out to
+be unsound for a reason the alias rule does not address at all (§16.3, item 3).
+What survives of the second half is that a store must still be **compared**
+against every live load fact, which is what the "unless … disjoint" clause is
+for.
+
+**This rule is conservative in a way that costs real measured coverage, and
+that is the honest headline of this round.** quake2-gameplay's unrolled span
+loop reloads `[0x10027ba8]` eight times per block — the 12.6 points §4b
+counted — but between every pair of those loads it executes `mov [edi+N],al`.
+`edi` is a runtime pointer; nothing at decode time can prove it is not
+`0x10027ba8`, so the store kills the fact and the reload stands. §8's
+"removable" column is an *upper bound computed without an alias model*, and the
+measured table in §16.6 is what a sound one reaches.
+
+### 16.3 The five transforms
+
+Run once, at descriptor build, over the micro-ops of one block, in one forward
+walk:
+
+1. **split** — a memory-form ALU or IMUL micro-op becomes a load into a lane
+   plus a register-form op on that lane. Handlers H48 (`reg OP= [abs]`), H128
+   (`reg OP= [base+disp]`), H157 and H158 (`imul reg, [mem]`). Read-modify-write
+   forms (`[mem] OP= reg`) are three micro-ops and are not in this round.
+2. **redundant-load elimination** — a load whose (base, index, scale, disp,
+   width) matches a live earlier load's becomes `TU_MOV_RR` from that load's
+   destination. The first load still executes, at the same address, so a fault
+   is raised in the same place; only the second translation is skipped.
+3. **store-to-load forwarding** — **written, measured, and REMOVED. It is
+   unsound in this emulator.** The transform itself is easy: a load that
+   exactly matches a live earlier store becomes `TU_MOV_RR` from the store's
+   data register, and the alias rule in §16.2 is more than strong enough to
+   decide the match. What defeats it is not aliasing but coherence: guest
+   memory does not behave like memory at an address no mapping covers. `$g2w`
+   resolves a miss to the NULL sentinel at `0xF0`, where a store goes nowhere
+   and a load reads 0. So
+
+   ```
+   mov [eax], ecx
+   mov edx, [eax]        ; eax unmapped
+   ```
+
+   leaves `edx = 0` on the threaded path and `edx = ecx` if the store is
+   forwarded, and the two arms diverge silently with no fault anywhere to
+   mark it. Real hardware would have raised an access violation at the store
+   and the question would never arise. Nothing available at decode time can
+   prove an address is mapped — that is the whole reason the sentinel exists —
+   so the transform is **dropped rather than guarded**. `test/test-block-exec.js`
+   carries the case that caught it ("a store through a null base register,
+   then a read back") and asserts the meter stays at zero, so it cannot be
+   reintroduced under the same name without the sentinel being dealt with
+   first. A store now only ever *kills* facts; it never records one.
+
+   Redundant-load elimination (2) is unaffected by the same argument: two
+   loads of one address read the same place whether that place is the sentinel
+   or real memory, and both yield the same value either way.
+4. **register-move elimination** — a `TU_MOV_RR d,a` whose *immediately
+   following* micro-op fully redefines `d` while reading it as its first source
+   is deleted, and that consumer's `$TU_B_SRC0` lane is set to `a`. Adjacent
+   only: the moment anything between the move and its consumer writes `a`, the
+   old value has to live somewhere and a lane is no cheaper than the register
+   it already sits in. A `TU_MOV_RR`/`TU_MOV_RI` that is immediately overwritten
+   by another full definition of the same register is simply deleted.
+5. **immediate folding** — a `TU_MOV_RR` whose *source register* is known to
+   hold a constant (it was defined by a `TU_MOV_RI` earlier in the block, and
+   nothing has written it since) becomes `TU_MOV_RI` of that constant. It was
+   drafted as a corollary of 3; with 3 gone it lives on register moves
+   instead, which is where it actually pays — the move loses its register
+   read, and 4 can then delete the definition when nothing else needs it.
+
+Only 4 ever *deletes* a micro-op; 2 and 5 rewrite one in place and 1 adds one.
+That matters for two contracts:
+
+* **`--handler-hist` comparability.** Every micro-op re-records its original
+  handler index, so a rewritten one still counts. A deleted one does not, and a
+  split one would count twice — so the load half of a split carries `fn = -1`
+  and the histogram skips it. A histogram taken with the pass on therefore
+  reports exactly the guest ops the pass did *not* delete, which is the number
+  this round is about.
+* **`$steps`.** The block's `cost` is the count of **x86 instructions** it
+  serves natively, computed in the classify loop and untouched by the pass. A
+  batch under `--block-exec` must not silently buy the guest more work than the
+  threaded arm got, or every fixed-batch A/B compares two different amounts of
+  execution and reads as a speedup.
+
+### 16.4 Regions, and why the carry resets at every block boundary
+
+The pass runs on both descriptor shapes. In an N-block region it runs **per
+member block, resetting every fact at the boundary** — it never carries a load
+or a store fact along an interior edge, even a fall-through one with a single
+predecessor. The rule in §16.2 *permits* a carry along an edge whose target has
+a single predecessor inside the region; the implementation takes the
+conservative end of that permission and carries nothing at all, because the
+edge set is resolved *after* every member is classified, so a pass that wanted
+to carry would have to run in a third phase over a graph, and the measured
+in-region share of guest ops (§15.5: 0.05%-3.25% opsMulti) does not pay for
+that yet. `test/test-block-exec.js` asserts the negative directly — the same
+address loaded either side of a `Jcc` inside a region is loaded twice.
+
+**This is also, as it turns out, the reason redundant-load elimination measures
+zero on every real window** (§16.6). A block is short; the redundancy §8
+counted is mostly between blocks, not inside one.
+
+Making the split work inside the region builder did need one structural change:
+that builder's scan loop assumed micro-op index == op index (it derives the
+terminator's `term_pos` from an op index). It is now driven by the op index with
+the micro-op count tracked separately, and `term_pos` is the micro-op count at
+the moment the loop reaches the flag producer.
+
+### 16.5 Fault preservation, and `--fault-null`
+
+* A removed redundant load never changes behaviour: the *first* load executed,
+  at the same guest address, through the same `$gl32`. A faulting address still
+  faults, once instead of twice, and `--fault-null`'s report counts addresses
+  probed, not probes.
+* Forwarding a store to a load would have skipped the load's translation
+  entirely. That is sound as far as *faults* go — the store to that exact
+  address already went through `$gs32` on the same path — and unsound for the
+  reason in §16.3 item 3, which is about what an unmapped address *reads*, not
+  about where it faults. The transform is gone.
+* All of this is moot under `--fault-null` in any mode, because **the whole family
+  already declines to install while `$fault_unmapped` is nonzero** (§6), and
+  `set_fault_unmapped` raises `$thread_flush_pending` so arming it mid-run
+  discards every block already installed. There is no configuration in which
+  the pass is active and the flag is armed.
+
+Lazy flags and partial registers are preserved by construction rather than by
+care: the split emits the *same* `$set_flags_*` call the fused handler made,
+in the same position; elimination only ever removes a `TU_MOV_*`, which is
+flag-transparent in x86 and in this vocabulary; and `TU_B_SRC0` changes where
+a value is read from, never what is computed from it.
+
+### 16.6 Measured
+
+**Read the fallback column, not the uop column.** The pass's product is not
+smaller descriptors — it is *fewer trips out of the executor*. Splitting
+`add eax,[esi+8]` turns one `TU_FALLBACK` into a `TU_LOAD32` plus a
+`TU_ALU_RR`, so the micro-op count goes **up** by one while a spill of eight
+GPRs, a `call_indirect` and a reload of eight GPRs disappear. Any reading that
+scores this pass on "micro-ops removed" scores it on the wrong axis, and §8's
+"removable ops" column is that wrong axis.
+
+#### Per window, against §4b's prediction
+
+13 windows, `collect-win98*.sh`, each run twice — once with the pass on and
+once with `--no-block-exec-split`. `deleted%` is `(rle + movelim + immfold)`
+over `uopsSplitOff`, i.e. the share of the descriptor the three *deleting*
+transforms actually removed; `§4b` is the removable share that document
+predicted from a static count with no alias model and no block-boundary model.
+
+| window | uops (split off) | uops (pass on) | net | split | rle | movelim | immfold | deleted% | §4b predicted |
+|---|---|---|---|---|---|---|---|---|---|
+| quake2-gameplay | 18805464 | 20907311 | +11.18% | 2216636 | 3584 | 114789 | 7833 | 0.56% | 19.3% |
+| mw3-gameplay | 557378 | 571648 | +2.56% | 21149 | 10 | 6879 | 30 | 1.19% | 5.6% |
+| gta2-gameplay | 669450 | 670497 | +0.16% | 5177 | 1 | 4130 | 19 | 0.61% | 3.4% |
+| rct-gameplay | 186946 | 189362 | +1.29% | 2572 | 25 | 156 | 7 | 0.10% | 0.7% |
+| heroes2-gameplay | 1177499 | 1191112 | +1.16% | 26564 | 750 | 12951 | 0 | 1.14% | 8.8% |
+| quake2-loading | 1638878 | 1601852 | −2.26% | 903 | 0 | 37929 | 7258 | 2.31% | 12.3% |
+| mw3-loading | 452448 | 466399 | +3.08% | 20328 | 2 | 6377 | 14 | 1.35% | 17.8% |
+| gta2-loading | 210296 | 208299 | −0.95% | 361 | 0 | 2358 | 1 | 1.12% | 2% |
+| rct-loading | 306063 | 310257 | +1.37% | 4420 | 39 | 226 | 9 | 0.09% | 5.6% |
+| heroes2-loading | 423330 | 426642 | +0.78% | 7199 | 625 | 3887 | 0 | 1.05% | 8.7% |
+| caesar3-loading | 102379 | 103355 | +0.95% | 1001 | 106 | 25 | 0 | 0.13% | 4.4% |
+| starcraft-loading | 28647492 | 28715028 | +0.24% | 97124 | 7818 | 29588 | 64 | 0.13% | 3.5% |
+| diablo-loading | 4927060 | 4943337 | +0.33% | 48216 | 346 | 31939 | 114 | 0.65% | 4.5% |
+
+Measured deletion is **0.09%–2.31%** against a predicted 0.7%–19.3%. The gap is
+not a bug in either number; it is three things §8 could not have known:
+
+1. **§8 counted redundancy across a whole trace, this pass sees one block.**
+   `rle` is the transform §8's 12.6-point "redundant loads" column was about,
+   and it is the one that measures nearest zero — single digits to a few
+   thousand, against millions of micro-ops. The redundancy is real and it is
+   almost all *between* blocks (§16.4), where a conservative pass with no
+   single-predecessor carry cannot reach it.
+2. **Store-to-load forwarding was removed as unsound** (§16.3 item 3), so its
+   share of §8's prediction is structurally unreachable, not merely missed.
+3. **§8 had no alias model.** Every load it counted as removable is removable
+   only if nothing in between could have written it, and the rule in §16.2
+   refuses on any unmodelled op, any write through a register the load's base
+   depends on, and any call.
+
+#### What the pass actually bought: FALLBACK → native
+
+Same 13 pairs. `native%` is the share of executed micro-ops that ran inside
+the executor rather than through the spill/`call_indirect`/reload path.
+
+| window | native% off | native% on | fallback ops off | fallback ops on | change |
+|---|---|---|---|---|---|
+| quake2-gameplay | 91.74% | 98.87% | 75928624 | 6339024 | **−91.7%** |
+| mw3-gameplay | 99.83% | 99.95% | 1308056 | 305635 | −76.6% |
+| gta2-gameplay | 89.97% | 88.42% | 1561315 | 1347642 | −13.7% |
+| rct-gameplay | 86.97% | 85.29% | 1584916 | 322544 | −79.6% |
+| heroes2-gameplay | 96.46% | 96.44% | 662855 | 716952 | +8.2% |
+| quake2-loading | 96.12% | 96.04% | 2178228 | 2177947 | −0.0% |
+| mw3-loading | 99.96% | 99.97% | 274177 | 197769 | −27.9% |
+| gta2-loading | 94.55% | 94.51% | 250015 | 249979 | −0.0% |
+| rct-loading | 87.07% | 86.6% | 1553070 | 425206 | −72.6% |
+| heroes2-loading | 96.2% | 96.15% | 309277 | 319389 | +3.3% |
+| caesar3-loading | 92.61% | 93.27% | 430247 | 401520 | −6.7% |
+| starcraft-loading | 96.66% | 98.5% | 16752544 | 3936730 | −76.5% |
+| diablo-loading | 97.43% | 98.33% | 2221381 | 1451762 | −34.6% |
+
+**These two passes are not paired work and the absolute columns must not be
+diffed.** Both collections are time-capped on a box at load 5–25, so each run
+reached a different point in its app; only `native%`, a within-run share, is
+comparable, and even it shifts with what the run reached. Block entries, off
+vs on: quake2-gameplay 18.7M vs 14.0M, gta2-gameplay 683k vs 447k,
+rct-gameplay 557k vs 90k, heroes2-gameplay 783k vs 852k, starcraft-loading
+17.9M vs 10.0M. The ON runs generally covered *less* work in the same cap, so
+quake2-gameplay's +7.1-point `native%` gain is not a coverage artefact; gta2
+and rct are not resolvable from these runs at all.
+
+#### Microbench
+
+`tools/bench-loops.js --shapes=blk_rld8,blk_memalu8,blk8 --toggle=block_exec_split --reps=8`,
+load 3.8, minima over 8 interleaved reps with the arm order rotated.
+
+| shape | split=1 min | split=0 min | min delta | paired median | fallback ops on → off |
+|---|---|---|---|---|---|
+| `blk_memalu8` (six `op r32,[esi+disp]`) | 42.1ms | 60.1ms | **+30.0%** | +29.7% | 0 → 1,500,000 |
+| `blk8` (null control, no memory form) | 38.9ms | 39.7ms | +2.0% | +2.9% | 0 → 0 |
+| `blk_rld8` (four loads, two repeated) | 26.2ms | 27.4ms | +4.4% | −2.3% | 250,000 → 250,000 |
+
+`blk_memalu8` is the shape the pass exists for and the mechanism is visible in
+the counters rather than inferred: with the pass on the block's 1.5M
+`TU_FALLBACK` executions become 3.0M native micro-ops, block entries fall
+from 1.99 to 0.01 per iteration, and the time falls 30%. `blk8` and
+`blk_rld8` both fire the pass zero times (`split/rle/movelim: 0/0/0`) and are
+therefore two independent null controls; their +2.0% and the contradictory
++4.4% min / −2.3% median are the harness's noise floor on a loaded box.
+
+**Two traps this measurement walked into, both now fixed in the tool.** The
+toggle sets `set_block_exec_min_uops(2)` as well as arming the executor,
+because with the default cost model every synthetic block in `bench-loops.js`
+is declined (`declWhy 1` — a 6–8 op block does not repay one descriptor entry),
+so *both arms ran the plain interpreter* and the first three attempts measured
+nothing while looking like a clean ±2% null. And the per-arm output now prints
+`block-exec installs/native/fallback` and the pass counters, because the
+handler histogram is blind to this by construction: a native micro-op
+re-records the handler index it replaced, so an installed descriptor and a
+declined one print identical top-handler lines.
+
+#### Whole-app A/B
+
+`tools/fold-ab.js`, three interleaved arms, MIN statistic. The split has no
+positive flag, so the arms are **inverted**: `off` is the pass ON, `on` is
+`--no-block-exec-split`.
+
+| app | work | reps | load | off (pass ON) med / min | on (pass OFF) med / min | null spread | verdict |
+|---|---|---|---|---|---|---|---|
+| quake2_demo | 300 | 6 | 3.7–6.0 | 5.975s / 5.850s | 5.810s / 5.740s | sd 0.341 | **unresolvable** (\|on−off\| 0.175 vs 2× null 0.682) |
+| rct | 5000 | 6 | 3.5–6.8 | 60.955s / 50.060s | 60.120s / 55.540s | sd 5.078 | **unresolvable** (\|on−off\| 0.763 vs 2× null 10.155) |
+
+Said plainly: **box load makes the whole-app A/B unresolvable.** quake2 got 5
+of 6 reps under loadavg 4 and still could not separate a 0.175s difference
+from a 0.682s null band; rct got 0 quiet reps out of 6. Neither run is
+evidence for or against a speedup, and neither should be quoted as one. The
+deterministic counters above and the microbench are the measurements that
+carry weight here; the per-app timing question is open until the box is idle.
+
+#### Pixels
+
+Pass on vs `--no-block-exec-split`, at two batch budgets per app, on quake2,
+heroes2 and rct — the two-budget rule from §14, because one budget cannot tell
+a real difference from a frame caught at a different point of a clock-paced
+animation.
+
+| app | budget | pixels differing | changed box |
+|---|---|---|---|
+| heroes2_demo | 1400 batches | **0 of 307200 (0.0000%)** | — |
+| heroes2_demo | 2000 batches | **0 of 307200 (0.0000%)** | — |
+| rct | 4250 batches | **0 of 307200 (0.0000%)** | — |
+| rct | 5000 batches | 346 of 307200 (0.1126%) | 535,459 57x19 |
+| quake2_demo | 500 / 1000 / 2000 / 3000 batches | **0 of 76800 (0.0000%)** at every one | — |
+| quake2_demo | 4000 batches | 56412 of 76800 (73.45%) | 0,0 320x240 |
+| quake2_demo | 5000 batches | 3979 of 76800 (5.18%) | 138,133 158x107 |
+| quake2_demo | 6000 batches | 49 of 76800 (0.0638%) | 138,3 93x136 |
+| quake2_demo | 7000 batches | 32 of 76800 (0.0417%) | 138,0 91x139 |
+
+**Verdict: pacing, not a picture change.** Heroes II is bit-identical at both
+budgets and RCT at the first, with RCT's 57x19 box at the second landing on its
+bottom-right status readout. quake2 is the interesting one and it is the
+textbook shape of the two-budget rule: identical at four consecutive budgets,
+73% of the frame at 4000, 5.18% at 5000, then back to 0.06% and 0.04% at 6000
+and 7000. A wrong rasterization does not heal itself as the run goes on; a
+scene boundary crossed by one arm and not the other looks exactly like this.
+
+Two controls make that reading rather than a hope. First, **the same arm run
+twice is bit-identical** (0 of 76800), so nothing here is process
+nondeterminism. Second, the mechanism is visible in the counters: the fallback
+path costs *block entries* as well as time — `bench-loops.js` measures 1.99
+block entries per iteration with the pass off against 0.01 with it on — and
+`--max-batches` is a budget of block entries. So the same batch count buys the
+guest strictly more progress with the pass on, which is why the API-call count
+at a fixed budget diverges (66600 vs 66679 at 4000) before any pixel does.
+Comparing two arms at one batch count is comparing two different moments.
+
+**Two protocol traps, both hit while collecting this.** `png-ab.sh` first
+interpolated an unquoted `$Q2` holding `--args=+set vid_ref soft +map demo1`,
+which word-splits into five arguments and never reaches the guest — and quake2
+is in `persistFiles`, so its `config.cfg` carries the resulting state into the
+*next* process (70142 vs 85553 API calls for nominally identical runs). Quote
+the args and re-diff before believing any quake2 A/B. And a bare
+`name=$1` in a shell function called from another function that also has `name`
+photographed `quake2-b1-on-off`; both helpers now declare `local`.
+
+#### Tests
+
+`test/test-block-exec.js` 167 passed / 0 failed (round-11 section added:
+RLE positive, aliasing store blocks, disjoint store does not, byte store
+inside a dword blocks, byte store one past does not, base-register write
+blocks, unmodelled op blocks, push/pop blocks, `add r32,[base+disp]` splits,
+`and`/`or`/`xor`/`cmp r32,[abs]` split, `imul r32,[mem]` splits, two memory
+sources share one loaded lane, both move-elimination shapes, imm folding,
+`stlf === 0` twice, and a region case asserting `rle === 0` across a `Jcc`).
+`test/test-x86-ops.js` 138 passed / 0 failed. `test/test-tree-fold.js` PASS.
+`test/test-worker-wasm-globals.js` PASS, 35 setters. 
+`test/test-x87-pipeline4-fusion.js` PASS, 11 differential cases.
+
+### 16.7 Switch
+
+`--block-exec` stays **OFF** by default. The pass is ON whenever the executor
+is on; `--no-block-exec-split` is its A/B partner and is propagated to worker
+instances through `INHERITED_WASM_GLOBALS` like every other toggle in this
+family. `--block-exec-stats` grows a `block-exec-split:` line per instance carrying
+`uopsBefore` / `uopsAfter`, the descriptor size the same run would have built
+with the pass off (`uopsSplitOff`, which is `uopsBefore - split`, because the
+split fires in the classify scan before the pass is entered), and a count for
+each of the five transforms. `tools/block-exec-decode.js` prints the split
+form, with lane numbers rendered as `L0`..`L6`; its trace stream grew the `d`
+and `b` words for that, and its kind table now reads BOTH `07b-loop-match.wat`
+and `07c-block-exec.wat` — reading only the first silently printed `kind57`
+for every FALLBACK. `tools/bench-loops.js --toggle=block_exec_split` arms the
+executor in both arms and varies only the pass; `blk_rld8` and `blk_memalu8`
+are the two shapes it is for. That toggle also sets an explicit uop floor of 2,
+because the default cost model declines every synthetic block in that file, and
+the per-arm output now prints `block-exec installs/native/fallback` plus the
+pass counters (and `declWhy` when nothing installed) so a shape that never
+entered the executor cannot masquerade as one that did — see §16.6.
