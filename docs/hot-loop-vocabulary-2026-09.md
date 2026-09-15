@@ -55,6 +55,11 @@ The decision rule agreed in advance:
 and x87 — the app had not reached its renderer yet. The longer window exposes the
 loop that is 93% of its work. Both are reported; only `mw3long` is read.
 
+Every one of those six is a menu, an intro or boot code. **Section 4b adds thirteen
+more windows** — five apps inside real gameplay and eight covering launch to the
+first gameplay frame — and it contradicts this section in two places, so read it
+before quoting anything below.
+
 `--hot-block-dump` gives block **entry** counts, not retired ops, so
 `hot-loop-corpus.js win98` disassembles every block from its head to its first
 control-flow instruction, out of the module file, and weights it
@@ -173,6 +178,326 @@ Measured ALU-op coverage (mnemonic-classified, weighted by block entries, 124 of
 31.8%, top 20 31.8%** of dynamic ALU ops. The top-10 number is 17.3 points BLEND
 (one app) plus 7.1 points FIELD_REPACK (one app); remove those two apps and the
 whole arithmetic vocabulary covers roughly 7% of Win98 ALU ops.
+
+## 4b. Gameplay and loading windows
+
+Section 4's six windows are menus, intros and boot code: diablo is an idle pump at
+its main menu, caesar3 is the 555→565 conversion of its boot screens, heroes2 is a
+menu with the sound driver spinning, starcraft is the Smacker intro. That is a real
+objection to every number above it, so thirteen more windows were collected — five
+apps driven into **actual gameplay**, and eight covering **launch to the first
+gameplay frame** — and hand-read the same way.
+
+Collected by
+[`collect-win98-gameplay.sh`](hot-loop-vocabulary-2026-09/collect-win98-gameplay.sh),
+disassembled by
+[`disasm-win98-gameplay.sh`](hot-loop-vocabulary-2026-09/disasm-win98-gameplay.sh);
+per-loop indexes in
+[`read-win98-gameplay.tsv`](hot-loop-vocabulary-2026-09/read-win98-gameplay.tsv) and
+[`read-win98-loading.tsv`](hot-loop-vocabulary-2026-09/read-win98-loading.tsv);
+disassemblies under
+[`win98/<app>-gameplay/`](hot-loop-vocabulary-2026-09/win98/) and
+`win98/<app>-loading/`.
+
+The mechanism is `--handler-hist-start=N --handler-hist-stop=M` together with
+`--hot-block-dump=FILE`: the dump covers exactly the armed batch range, so a late
+window is not diluted by the menus the app had to walk through first. No tool
+change was needed for that. The input schedules are the ones the repo's own
+gameplay tests use (`test/test-mw3-gameplay.js`, `test-rct-gameplay.js`,
+`test-heroes2-gameplay.js`, `test-gta2-demo-gameplay.js`), so "this window is
+gameplay" is the same claim those tests assert, and every run also wrote a PNG.
+
+| window | distinct blocks | retired guest ops | top-3 share |
+|---|---|---|---|
+| quake2-gameplay | 5085 | 2,975,810,059 | 5.3 / 2.7 / 2.7 |
+| mw3-gameplay | 9783 | 187,419,690 | 3.5 / 2.8 / 2.5 |
+| gta2-gameplay | 6281 | 61,918,425 | 2.5 / 2.2 / 2.2 |
+| rct-gameplay | 1710 | 277,935,723 | 28.7 / 28.7 / 9.0 |
+| heroes2-gameplay | 1199 | 144,425,666 | 5.9 / 4.4 / 2.7 |
+| quake2-loading | 8507 | 274,793,685 | 13.8 / 5.4 / 5.0 |
+| mw3-loading | 14555 | 1,239,306,413 | 31.1 / 28.2 / 2.3 |
+| gta2-loading | 32390 | 5,764,483 | 58.3 / 6.6 / 6.1 |
+| rct-loading | 11180 | 3,518,382,965 | 3.5 / 2.5 / 2.1 |
+| heroes2-loading | 7401 | 90,487,552 | 6.8 / 5.7 / 5.3 |
+| caesar3-loading | 2215 | 341,865,694 | 14.7 / 7.7 / 7.7 |
+| starcraft-loading | 6075 | 2,188,094,380 | 4.4 / 4.4 / 4.0 |
+| diablo-loading | 5178 | 591,119,575 | 18.1 / 6.0 / 4.8 |
+
+Three apps have a loading window only, and the reason is recorded rather than
+hidden: **caesar3**'s menu clicks do not register at this commit (running the
+repo's own `test/test-caesar3-gameplay.js` reproduces `AssertionError: '' !==
+'Codex'`), so it gets a boot window; **starcraft** stalls at its title screen, as
+its re-notes say; **diablo** does reach Tristram, but its own gameplay test needs
+~4x the 300s wall clock this collection allowed — the best run here got to batch
+1213 of 4300, with the Enter Name and level-load screens photographed on the way
+(`dia-b1600.png`, `dia-c600.png`), so its window is honestly labelled menu + asset
+boot. **SkiFree** was collected and discarded: its "gameplay" PNG showed `Dist -1m,
+Speed 0m/s` at the start line, which is not gameplay.
+
+PNG evidence — the repo ignores `*.png`, so these are not committed;
+`collect-win98-gameplay.sh` writes them beside its hot-block dumps, and the names
+below are the ones it uses. quake2 `q2-5000.png` (Outer Base, weapon
+and HUD) against `q2-2500.png` (console, still loading); mw3 `mw3-gp-950.png`
+(cockpit, terrain, HUD); gta2 `gta2-8000.png` (city, HUD, mission text); rct
+`rct-5900.png` (park at £9,837.70 / 22°C) against `rct-load-end.png` (£10,000.00 /
+17°C — the park has not opened yet); heroes2 `h2-2900.png` (adventure map, hero,
+castle, sidebar).
+
+### What each gameplay window does
+
+- **quake2-gameplay is one loop nest, and it is arithmetic.** Fourteen of the 25
+  ranked blocks are `D_DrawSpans8`; eleven of those are different *entry offsets*
+  into one 16-texel unrolled body whose per-texel step is the carry-select stride
+  `add acc,step / sbb c,c / adc src,[tbl+c*4] / mov al,[src] / mov [dst+k],al`.
+  The hottest single block in the window is `ref_soft+0x10012570` (5.34%), the span
+  coordinate packer `mov eax,edx / add edx,ebx / shr eax,0x10 / and esi,0xffff0000 /
+  or eax,esi`. There is **no decompression at all** in the top 25.
+- **mw3-gameplay is an x87 software T&L pipeline, and the SWAR blend is not in it.**
+  Four separate inlined copies of the same 3x3-matrix-times-vec3 loop, a 1/z
+  perspective divide, three dot3 clip rows, an integer exponent-halving fast-sqrt
+  (`sar 1` + `add 0x1fc00000` on the float bit pattern), two copies of the
+  magic-constant float→int trick that indexes a 64-entry trig table. Flattest window
+  in the study: hottest block 3.45%, 9783 distinct blocks.
+- **gta2-gameplay is a linear table scan plus an x87 vertex feeder.** One C routine
+  — a stride-8 backward search — is inlined at four call sites and is 12.9% between
+  them; a `for (i=0; i<obj->count; i++)` walk keeps its induction variable in a
+  struct member and re-loads the bound from a table header every iteration. About
+  6% of the window is three 1-op **thunk-zone landings**, i.e. host-call overhead
+  rather than guest code.
+- **rct-gameplay is one memset and a map traversal.** `RCT+0x00401875`/`0x00401885`
+  — `inc [ebp-8] / cmp [ebp-8],0xa00 / jge` and `mov eax,[ebp-8] / mov byte
+  [eax+0x569360],0 / jmp` — is **57.5% of the window**, a 2560-byte global clear
+  whose index is stored and reloaded three times inside three instructions. Because
+  the loop spans two blocks, the self-loop matcher never sees it. The rest is
+  0x10-stride map-element list walks; 32.5% of all dispatches in this window are
+  branches.
+- **heroes2-gameplay is its sprite blitter, with the sound driver demoted.** The
+  `0x004c7xxx` RLE blitter is 48% of the read weight (it was 17% in section 4's
+  menu window) and MSS32 polling falls from ~33% to 7.5 points. The same block
+  addresses recur with the same tags, so the vocabulary transfers; only the mix
+  moves. Two blocks are new: a hand-written `memmove` chain called to copy
+  **16 bytes** per adventure-map cell (6.6 points), and a `row*stride*12 + col*12`
+  cell-address tree that dereferences `[this+0xae]` twice in one block.
+
+### Family table, gameplay windows only
+
+125 loops, 5 apps, Σshare 232 points.
+
+| # | family | class | loops | apps | Σshare | %of-slice | example |
+|---|---|---|---|---|---|---|---|
+| 1 | COUNTER | OTHER | 13 | 4 | 50.8 | 21.9% | `RCT+0x00401875` |
+| 2 | MEMFILL | MEM | 1 | 1 | 28.7 | 12.4% | `RCT+0x00401885` |
+| 3 | ADDR_SCALE | ARITH | 19 | 5 | 27.0 | 11.7% | `H2DEMOW+0x00499937` |
+| 4 | CMP_SKIP | OTHER | 22 | 4 | 20.5 | 8.8% | `RCT+0x0055785a` |
+| 5 | CALL_GLUE | OTHER | 13 | 4 | 15.0 | 6.5% | `unmapped+0x00966aec` |
+| 6 | TEXEL_FETCH | ARITH | 10 | 1 | 14.4 | 6.2% | `ref_soft+0x10011e94` |
+| 7 | CARRY_STRIDE | ARITH | 9 | 1 | 14.1 | 6.1% | `ref_soft+0x10011e94` |
+| 8 | MEMCOPY | MEM | 9 | 2 | 13.5 | 5.8% | `mech3demo+0x00515a9c` |
+| 9 | STRSEARCH | MEM | 8 | 1 | 12.9 | 5.6% | `gta2+0x004ef949` |
+| 10 | X87 | OTHER | 9 | 2 | 12.6 | 5.4% | `mech3demo+0x0051579f` |
+| 11 | FIELD_REPACK | ARITH | 6 | 3 | 9.6 | 4.1% | `ref_soft+0x10012570` |
+| 12 | DOT3 | ARITH | 7 | 2 | 8.1 | 3.5% | `mech3demo+0x0051b0be` |
+| 13 | RLE_TOKEN | STREAM | 2 | 1 | 7.6 | 3.3% | `H2DEMOW+0x004c7341` |
+| 14 | LUT_XLAT | ARITH | 5 | 3 | 7.1 | 3.0% | `H2DEMOW+0x004c7558` |
+| 15 | FTOL | OTHER | 6 | 2 | 6.7 | 2.9% | `mech3demo+0x0051b0be` |
+| 16 | PERSP_DIV | ARITH | 4 | 2 | 6.7 | 2.9% | `mech3demo+0x004fd394` |
+| 17 | FIXPT_STEP | ARITH | 1 | 1 | 5.3 | 2.3% | `ref_soft+0x10012570` |
+| 18 | BYTE_PACK | ARITH | 2 | 2 | 5.3 | 2.3% | `H2DEMOW+0x00499937` |
+| 19 | FIXPT_MUL | ARITH | 4 | 2 | 4.1 | 1.8% | `ref_soft+0x1001212f` |
+| 20 | IO_POLL | OTHER | 2 | 1 | 3.3 | 1.4% | `MSS32+0x2000da61` |
+
+Class rollup: **OTHER 45.9%, ARITH 29.5%, MEM 21.4%, STREAM 3.3%**.
+
+Measured ALU-op coverage (125 of 125 read loops matched, 609.9M entry-weighted ALU
+instructions): **top 5 ARITH families 66.3%, top 10 72.6%, top 20 72.6%**. That
+number is *not* comparable to section 4's 31.8% and must not be quoted as an
+improvement: the denominator is entry-weighted across windows whose absolute sizes
+differ by 48x, and quake2-gameplay (2.98 billion retired ops, all of it one span
+loop) supplies most of it — CARRY_STRIDE alone is 34.6% and FIXPT_STEP 16.4%, both
+one app. It is one app's renderer measured against five apps' arithmetic.
+
+### Family table, loading windows only
+
+200 loops, 8 apps, Σshare 541 points.
+
+| # | family | class | loops | apps | Σshare | %of-slice | example |
+|---|---|---|---|---|---|---|---|
+| 1 | MEMFILL | MEM | 11 | 6 | 96.2 | 17.8% | `gta2+0x00419cf6` |
+| 2 | COUNTER | OTHER | 37 | 7 | 78.6 | 14.5% | `c3+0x00417204` |
+| 3 | RLE_TOKEN | STREAM | 14 | 4 | 65.8 | 12.2% | `storm+0x1501d0b5` |
+| 4 | BLEND (SWAR) | ARITH | 2 | 1 | 59.3 | 10.9% | `mech3demo+0x00526f54` |
+| 5 | TABLE_DECODE | STREAM | 18 | 1 | 46.7 | 8.6% | `smackw32+0x1000efad` |
+| 6 | FIELD_REPACK | ARITH | 13 | 5 | 38.1 | 7.0% | `c3+0x004a3ecf` |
+| 7 | CALL_GLUE | OTHER | 23 | 6 | 36.8 | 6.8% | `gta2+0x005c9fcc` |
+| 8 | CMP_SKIP | OTHER | 23 | 7 | 36.6 | 6.8% | `c3+0x004a3ec1` |
+| 9 | ADDR_SCALE | ARITH | 19 | 5 | 24.4 | 4.5% | `H2DEMOW+0x00499937` |
+| 10 | GETBITS | STREAM | 9 | 2 | 23.6 | 4.4% | `smackw32+0x1000efad` |
+| 11 | LUT_XLAT | ARITH | 13 | 3 | 20.3 | 3.7% | `ref_soft+0x10005a0f` |
+| 12 | IO_POLL | OTHER | 9 | 3 | 17.4 | 3.2% | `MSS32+0x2000da61` |
+| 13 | MEMCOPY | MEM | 16 | 4 | 16.9 | 3.1% | `c3+0x0049e9db` |
+| 14 | REFILL | STREAM | 7 | 2 | 16.6 | 3.1% | `smackw32+0x1000ef03` |
+| 15 | FIXPT_STEP | ARITH | 2 | 1 | 10.1 | 1.9% | `quake2+0x00426313` |
+| 16 | BYTE_PACK | ARITH | 2 | 2 | 10.0 | 1.8% | `H2DEMOW+0x00499937` |
+| 17 | FTOL | OTHER | 1 | 1 | 6.6 | 1.2% | `gta2+0x005deb40` |
+| 18 | X87 | OTHER | 2 | 1 | 6.3 | 1.2% | `gta2+0x005c9fcc` |
+| 19 | CRC_STEP | STREAM | 5 | 3 | 5.0 | 0.9% | `H2DEMOW+0x004976d8` |
+| 20 | STRSEARCH | MEM | 4 | 2 | 2.8 | 0.5% | `quake2+0x00423564` |
+
+Class rollup: **OTHER 31.7%, ARITH 27.3%, STREAM 23.2%, MEM 17.9%**. Measured
+ALU-op coverage (200 of 200 matched, 1.94G entry-weighted ALU instructions): **top
+5 ARITH families 38.0%, top 10 38.3%, top 20 38.3%** — and 20.8 of those points are
+mw3's SWAR blend, one app again.
+
+Two corrections to section 4 fall straight out of the split:
+
+- **MW3's SWAR blend is a loading loop, not a renderer loop.**
+  `mech3demo+0x00526f54` (31.10%) and `0x00527075` (28.17%) are ranks 1 and 2 of
+  mw3-loading — 59.3% of that window — and **neither address appears anywhere in the
+  mw3-gameplay hot-block dump**. Section 4 calls the same pair 93.1% of "mw3long"
+  and reads it as MW3's renderer. It is the pre-mission screens. The whole
+  SWAR/blend fold family is worth nothing inside the cockpit.
+- **Quake II's `D_DrawSpans8` is ~7x what section 4 measured.** Its exemplar block
+  is listed there at 1.0% and the family at 3.0%; in gameplay that block is 2.72%
+  and the same unrolled loop occupies eleven ranked blocks totalling ~17 points,
+  with its x87 setup adding ~5 more. Section 4's low number is an artifact of
+  measuring during the map load *and* of the per-block split hiding one loop behind
+  eleven addresses. Conversely, section 4's headline FIXPT_STEP exemplar
+  (`quake2+0x00426313`) is a **sound resampler** that does not survive into gameplay
+  at all.
+
+Two families gain the Win98 instances they lacked: `CRC_STEP` now has Quake II's
+MD4 `Com_BlockChecksum` (three rounds, 1.7% of its loading window), Storm's MPQ
+stream cipher (1.12% of starcraft-loading) and Heroes II's two-accumulator rolling
+checksum (2.16% of heroes2-loading).
+
+### Where each gameplay window's weight actually goes
+
+Share points of the window, as a percentage of that window's hand-read top-25
+weight. (a) already-folded idioms, (b) generic C logic with globals/stack slots
+reloaded per iteration, (c) arithmetic expression trees, (d) stream/decompression
+idioms, (e) polling, glue, counters and x87/CRT library calls.
+
+| gameplay window | top-25 covers | (a) folded | (b) generic C | (c) arith trees | (d) stream | (e) poll/glue |
+|---|---|---|---|---|---|---|
+| quake2 | 36.0% | **0%** | 6% | **88%** | 0% | 6% |
+| mw3 | 30.9% | **0%** | 27% | **70%** | 0% | 3% |
+| gta2 | 34.4% | **0%** | **62%** | 10% | 0% | 28% |
+| rct | 85.4% | **0%** | **95%** | 4% | 0% | 1% |
+| heroes2 | 45.3% | 13% | 14% | 29% | 17% | 27% |
+
+| loading window | top-25 covers | (a) folded | (b) generic C | (c) arith trees | (d) stream | (e) poll/glue |
+|---|---|---|---|---|---|---|
+| quake2 | 62.3% | 22% | 4% | 32% | 25% | 17% |
+| mw3 | 77.1% | 2% | 1% | **90%** | 0% | 9% |
+| gta2 | 93.9% | 0.3% | **75%** | 6% | 0% | 19% |
+| rct | 36.8% | 6% | 7% | 8% | **65%** | 14% |
+| heroes2 | 55.9% | 6% | 10% | 14% | 13% | **57%** |
+| caesar3 | 83.8% | 0% | 24% | 27% | 9% | **40%** |
+| starcraft | 58.6% | 0% | 0% | 4% | **87%** | 9% |
+| diablo | 73.1% | 12% | 39% | 0% | **46%** | 3% |
+
+Column (a) is charged generously — anything `rep movs`/`rep stos`-shaped is counted
+as already handled. The **handler histogram is harsher and is the number to quote**:
+rolling up the printed top-24 handlers of every window, the four whole-loop folds
+(`$th_lut_run` H418, `$th_copy_run` H419, `$th_rect_run` H427, `$th_rle_run` H429)
+are **0.0% of every one of the thirteen windows** — each sits below the window's
+24th-rank cut, which ranges 0.41%-1.52%. Not one of the five gameplay windows is
+running a fold at all.
+
+| window | x87 | folds (418/419/427/429) | `*_run` handlers | branch | top-24 covers | 24th-rank cut |
+|---|---|---|---|---|---|---|
+| quake2-gameplay | 18.1% | 0.0% | 1.2% | 4.4% | 70.0% | 1.20% |
+| mw3-gameplay | 38.6% | 0.0% | 1.1% | 3.8% | 74.0% | 1.11% |
+| gta2-gameplay | 31.8% | 0.0% | 0.0% | 4.8% | 70.8% | 1.18% |
+| rct-gameplay | 0.0% | 0.0% | 0.0% | 32.5% | 90.5% | 0.41% |
+| heroes2-gameplay | 0.0% | 0.0% | 3.7% | 11.8% | 62.3% | 1.25% |
+| quake2-loading | 0.0% | 0.0% | 1.7% | 6.0% | 67.0% | 1.52% |
+| mw3-loading | 0.0% | 0.0% | 0.0% | 4.2% | 86.1% | 0.82% |
+| gta2-loading | 0.6% | 0.0% | 0.0% | 3.1% | 89.7% | 0.43% |
+| rct-loading | 0.0% | 0.0% | 0.0% | 16.3% | 63.8% | 1.21% |
+| heroes2-loading | 0.0% | 0.0% | 5.8% | 11.1% | 65.6% | 1.28% |
+| caesar3-loading | 0.0% | 0.0% | 0.0% | 12.7% | 90.1% | 0.92% |
+| starcraft-loading | 0.0% | 0.0% | 0.0% | 4.4% | 78.7% | 1.17% |
+| diablo-loading | 0.0% | 0.0% | 0.0% | 9.5% | 73.2% | 1.37% |
+
+The x87 column is the other structural finding: **3D gameplay is 18-39% x87
+dispatches, and every loading window is 0.0-0.6%.** No integer-tree vocabulary
+touches those ops, and section 4 could not see them because none of its six windows
+was inside a 3D renderer.
+
+### Section 8's method applied to all thirteen windows
+
+| window | covered | loads/ops | redundant | store→load | reg moves | **removable** |
+|---|---|---|---|---|---|---|
+| quake2-gameplay | 36.0% | 29.7% | 12.6% | 2.3% | 4.4% | **19.3%** |
+| mw3-gameplay | 30.9% | 16.2% | 0.5% | 2.6% | 2.5% | **5.6%** |
+| gta2-gameplay | 34.4% | 16.1% | 0.4% | 1.2% | 1.8% | **3.4%** |
+| rct-gameplay | 85.4% | 18.4% | 0.5% | 0.0% | 0.3% | **0.7%** |
+| heroes2-gameplay | 45.3% | 31.5% | 4.4% | 0.0% | 4.4% | **8.8%** |
+| quake2-loading | 62.3% | 21.7% | 0.0% | 0.1% | 12.2% | **12.3%** |
+| mw3-loading | 77.1% | 28.8% | 5.2% | 0.0% | 12.6% | **17.8%** |
+| gta2-loading | 93.9% | 31.8% | 0.0% | 0.9% | 1.1% | **2.0%** |
+| rct-loading | 36.8% | 26.0% | 3.2% | 0.0% | 2.4% | **5.6%** |
+| heroes2-loading | 55.8% | 35.7% | 6.2% | 0.4% | 2.1% | **8.7%** |
+| caesar3-loading | 83.7% | 20.1% | 1.0% | 0.7% | 2.7% | **4.4%** |
+| starcraft-loading | 58.6% | 26.6% | 0.0% | 0.0% | 3.5% | **3.5%** |
+| diablo-loading | 73.1% | 22.8% | 0.0% | 1.7% | 2.9% | **4.5%** |
+
+Raw per-loop counts: [`load-census-4b.json`](hot-loop-vocabulary-2026-09/load-census-4b.json).
+
+Range 0.7%-19.3%, mean ≈ 8% — the same band section 8 found, now including
+gameplay. **The single largest removable share in the entire study is a gameplay
+window**: quake2-gameplay at 19.3%, 12.6 points of it redundant loads, because the
+unrolled span loop re-reads its DDA accumulators from module globals between
+bodies. rct-gameplay is the counter-example at 0.7% — its 57% memset has almost
+nothing to delete *inside* a block, because the redundancy is the `[ebp-8]`
+round-trip across a two-block loop, which needs a cross-block window this census
+does not model.
+
+### Does the section 9 decision change?
+
+**No, and the gameplay data strengthens every one of its four reasons.**
+
+1. *Concentration.* Still one app per family, and now demonstrably one *window* per
+   family: BLEND is 100% mw3-loading and absent from mw3-gameplay; CARRY_STRIDE and
+   TEXEL_FETCH are 100% quake2-gameplay; TABLE_DECODE/GETBITS/REFILL are 100%
+   starcraft-loading. The gameplay slice's 66.3% top-5 ALU coverage is one
+   renderer's span loop; strip quake2 and the arithmetic vocabulary covers well
+   under 10% of what the other four gameplay windows execute.
+2. *A family is not a tree.* Unchanged, and worse: `ADDR_SCALE` is the only family
+   present in all five gameplay apps (27.0 points, 19 loops) and those 19 loops are
+   a palette byte-pack, a `row*stride*12` cell address, a struct-member indexed
+   getter and a vertex-array stride — four unrelated trees under one tag.
+3. *Tree shape merges semantics.* Unchanged.
+4. *The denominator is mostly not arithmetic.* Now measured from inside gameplay:
+   the two *largest* gameplay windows by read weight are rct (95% generic C logic
+   with memory-resident induction variables, 32.5% of dispatches branches) and gta2
+   (62% generic C plus 28% glue, ~6% of it emulator thunk landings). Add 18-39% x87
+   in the three 3D gameplay windows and the arithmetic-tree vocabulary is aimed at a
+   minority of what a running game executes.
+
+One item on the build list gains evidence and one loses it. **The generic load/op
+split gains**: its best case in the whole study is now a gameplay window (19.3%),
+and the shapes it targets — accumulators respilled to globals between unrolled
+bodies, induction variables round-tripped through `[ebp-8]` — are exactly what the
+gameplay windows are made of. **The five stream uops lose ground for gameplay
+specifically**: they are 25-87% of five loading windows and 0% of four of the five
+gameplay windows (heroes2's 17% is the exception), so they should be justified as
+*load-time* accelerators — which is a real and defensible claim, since loading is
+where a user waits — and never as a frame-rate argument.
+
+Two new observations that section 9 did not have:
+
+- **The existing whole-loop folds fire in none of these windows.** H418/419/427/429
+  are below the 24th-rank cut everywhere. Whatever the next fold is, the evidence
+  here says the ones already built do not reach real gameplay, which is the
+  strongest available argument against building more of the same kind.
+- **rct-gameplay is the shape the matcher is structurally blind to.** A 57%-of-window
+  memset whose counter lives in `[ebp-8]` and whose body is a second block cannot be
+  seen by `$loop_match_block` at all, because that only ever runs on blocks that
+  branch to *themselves*. The same blindness hides RCT's colour-keyed LUT blit
+  (section 19 of the superops design) in its loading window. Multi-block loop
+  recognition, not a bigger arithmetic vocabulary, is where the unclaimed weight is.
 
 ## 5. DOS: 199 programs, ranked two ways
 
@@ -497,6 +822,10 @@ inline form of BURMA's library.
 bash docs/hot-loop-vocabulary-2026-09/collect-win98.sh
 bash docs/hot-loop-vocabulary-2026-09/disasm-win98.sh
 
+# Win98 section 4b: the gameplay and loading windows
+bash docs/hot-loop-vocabulary-2026-09/collect-win98-gameplay.sh
+bash docs/hot-loop-vocabulary-2026-09/disasm-win98-gameplay.sh
+
 # DOS: the whole /tmp/demos corpus, five at a time, 60s each
 node tools/hot-loop-corpus.js dos-sweep --root=/tmp/demos --jobs=5 --secs=60 \
   --top=40 --out=DIR
@@ -506,8 +835,16 @@ node tools/hot-loop-corpus.js dos-summary  --out=DIR
 node tools/hot-loop-corpus.js load-census  --out=DIR
 node tools/hot-loop-corpus.js aggregate    --out=DIR --read=DIR/.. \
   --dos=DIR --win=DIR
+
+# the two section-4b slices, from the same data directory
+node tools/hot-loop-corpus.js aggregate --read=DIR --win=DIR --out=TMP \
+  --slices='win98-gameplay'
+node tools/hot-loop-corpus.js aggregate --read=DIR --win=DIR --out=TMP \
+  --slices='win98-loading'
 ```
 
 The full aggregate output as run is
-[`aggregate.out`](hot-loop-vocabulary-2026-09/aggregate.out); the per-loop rows,
-with every tree, are in the `read-*.tsv` files beside it.
+[`aggregate.out`](hot-loop-vocabulary-2026-09/aggregate.out), with the two slices in
+[`aggregate-gameplay.out`](hot-loop-vocabulary-2026-09/aggregate-gameplay.out) and
+[`aggregate-loading.out`](hot-loop-vocabulary-2026-09/aggregate-loading.out); the
+per-loop rows, with every tree, are in the `read-*.tsv` files beside them.

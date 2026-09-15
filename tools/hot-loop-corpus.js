@@ -577,7 +577,10 @@ function readTsvs(dir) {
       // name: a bare demo name like ANTARES must not read as a Win98 app.
       const year = (prog.match(/^(19\d\d)-/) || slice.match(/^(19\d\d)/) || [])[1] || null;
       rows.push({
-        slice, prog, year, corpus: slice === 'win98' ? 'win98' : 'dos',
+        // Every `read-win98*.tsv` is the Win98 corpus, not just `read-win98.tsv`:
+        // the gameplay/loading windows of section 4b live in their own slice
+        // files, and a slice name is not a corpus name.
+        slice, prog, year, corpus: /^win98/.test(slice) ? 'win98' : 'dos',
         block: c[1].trim(), share, fam, parts: fam.split('+').map((s) => baseFam(s)).filter(Boolean),
         tree,
       });
@@ -708,7 +711,11 @@ function winAluCoverage(rows, winBase) {
         const mn = (line.split(/\s{2,}/).pop() || '').trim().split(/\s+/)[0];
         if (ALU_MNEM.test(mn)) alu += b.entries; else other += b.entries;
       }
-      idx.set(`${app}|${b.module.replace(/\.(dll|exe)$/i, '')}+${b.origVa}`, { alu, other });
+      // A block whose runtime VA falls outside every loaded module (an emulator
+      // thunk-zone landing) has module/origVa null; the hand-read rows name it
+      // `unmapped+<runtime VA>`, so build the same key rather than crashing.
+      const mod = (b.module || 'unmapped').replace(/\.(dll|exe)$/i, '');
+      idx.set(`${app}|${mod}+${b.origVa || b.addr}`, { alu, other });
     }
   }
   let alu = 0; let matched = 0; let missed = 0;
@@ -734,7 +741,12 @@ function winAluCoverage(rows, winBase) {
 
 function aggregate(out) {
   const dir = arg('read', out);
-  const rows = readTsvs(dir);
+  // --slices=REGEX keeps only the read-*.tsv slices whose name matches, so the
+  // gameplay-only and loading-only tables of section 4b can be produced from
+  // the same data directory as the whole-corpus ones without moving files.
+  const sliceRe = arg('slices', null);
+  let rows = readTsvs(dir);
+  if (sliceRe) rows = rows.filter((r) => new RegExp(sliceRe).test(r.slice));
   if (!rows.length) { console.log(`no read-*.tsv in ${dir}`); return; }
   const progs = new Set(rows.map((r) => r.prog));
   console.log(`${rows.length} hand-read loops across ${progs.size} programs (${[...new Set(rows.map((r) => r.slice))].join(', ')})`);
@@ -831,7 +843,7 @@ function main() {
     console.log('  win98 --log=RUN.log --hot=HOT.txt --app=NAME [--exe=PATH] [--top=25] [--max-ops=48]');
     console.log('  dos   --exe=PROG.EXE [--top=10] [--show=24] [--dispatches=8m] [--pit-clock] [--auto-key]');
     console.log('  dos-sweep [--root=/tmp/demos] [--jobs=6] [--secs=60] [--top=5] [--dispatches=12m]');
-    console.log('  aggregate --read=DIR   (rank the hand-read read-*.tsv files)');
+    console.log('  aggregate --read=DIR [--slices=REGEX]   (rank the hand-read read-*.tsv files)');
     console.log('  index');
     console.log('  common: --out=DIR');
     process.exit(2);
