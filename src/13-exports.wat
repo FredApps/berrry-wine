@@ -2893,6 +2893,13 @@
   (func (export "set_block_exec_rmw") (param $flag i32)
     (global.set $block_exec_rmw (local.get $flag)))
   (func (export "get_block_exec_rmw") (result i32) (global.get $block_exec_rmw))
+  ;; Round 16: the one-block leaf entry point (H463). ON by default inside an
+  ;; armed executor; zero sends every one-block install back through H458.
+  (func (export "set_block_exec_leaf") (param $flag i32)
+    (global.set $block_exec_leaf (local.get $flag)))
+  (func (export "get_block_exec_leaf") (result i32) (global.get $block_exec_leaf))
+  (func (export "get_block_exec_leaf_runs") (result i32)
+    (global.get $block_exec_leaf_runs))
   (func (export "get_bx_pass_rmw") (result i64) (global.get $bx_pass_rmw))
   (func (export "get_block_exec_installs") (result i32)
     (global.get $block_exec_installs))

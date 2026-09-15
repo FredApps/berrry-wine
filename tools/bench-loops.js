@@ -1276,6 +1276,99 @@ SHAPES.blk_fb8 = {
   },
 };
 
+// --- ROUND 16: a working set the branch predictor cannot learn ---------------
+// Every other blk* shape re-enters ONE block every trip. After a few thousand
+// trips the indirect jumps inside the executor -- the kind br_table, the two
+// operand-read tables, the writeback table -- are all perfectly predicted,
+// because each of them sees the same target sequence forever. That is not what
+// an app does, and it is the measurement artifact the 2026-09-15 review calls
+// out as #3(b): blk16 read +22.0% when the executor's body was short and fell
+// to +0.4% as the body grew, with the *dispatch* cost never actually priced.
+//
+// blk_mix512 cycles 512 DISTINCT blocks of 4-12 mixed register ALU ops. No two
+// adjacent blocks have the same op sequence, so the kind table's target
+// sequence is 512 blocks long and the predictor has nothing to latch onto.
+// This is the shape the leaf split has to win on if it is worth shipping.
+//
+// Two layout constraints, both real and both load-bearing:
+//  * Blocks are spaced 128 bytes apart and the tail of each block is a
+//    `jmp rel8` OVER the padding, so only 32 blocks land on any one 4KB guest
+//    code page. A page's descriptors live in a chunk capped at
+//    PAGE_CHUNK_BYTES (16KB), and 32 descriptors of a 12-uop block is ~12KB —
+//    pack the blocks tighter and the chunk overflows, installs decline, and
+//    both arms quietly measure the threaded interpreter instead.
+//  * 512 * 128 = 64KB of code, so the shape declares `codeStride` and gets a
+//    64KB-aligned fresh arena per rep instead of the default one page.
+const MIX_REGS = [0, 2, 3, 5, 6, 7];            // eax edx ebx ebp esi edi
+const MIX_OPS = [0x01, 0x09, 0x21, 0x29, 0x31, 0x89];  // add or and sub xor mov
+function mixShape(fixedUops, spacing, stride) {
+  return {
+    describe: fixedUops
+      ? `512 distinct ${fixedUops}-op register blocks, cycled — a cold indirect predictor`
+      : '512 distinct 4-12 op register blocks, cycled — a cold indirect predictor',
+    real: fixedUops
+      ? `the cold-predictor cost of a ${fixedUops}-uop block; the breakeven sweep`
+      : 'an app\'s block working set; the one blk* shape a hot BTB cannot flatter',
+    // The stride must EXCEED the shape's own length, or rep N's first block
+    // lands on rep N-1's tail and the two arms share decoded code (oneRep
+    // enforces it).
+    codeStride: stride,
+    emit(a) {
+      const NBLOCKS = 512, SPACING = spacing;
+      const code = [];
+      let uops = 0;
+      for (let b = 0; b < NBLOCKS; b++) {
+        const at = code.length;
+        const nu = fixedUops || (4 + (b % 9));
+        uops += nu;
+        for (let j = 0; j < nu; j++) {
+          const o = (b * 7 + j * 3) % MIX_OPS.length;
+          const d = MIX_REGS[(b * 5 + j) % MIX_REGS.length];
+          const src = MIX_REGS[(b * 3 + j * 2 + 1) % MIX_REGS.length];
+          code.push(MIX_OPS[o], 0xC0 | (src << 3) | d);
+        }
+        // `jmp rel8` ends the block AND skips the padding to the next one.
+        const pad = SPACING - (code.length - at) - 2;
+        if (pad < 0 || pad > 127) {
+          throw new Error(`mixShape: ${nu} uops do not fit a ${SPACING}-byte slot`);
+        }
+        code.push(0xEB, pad & 0xFF);
+        for (let p = 0; p < pad; p++) code.push(0x90);
+      }
+      // Hold the WORK per iteration roughly constant across the sweep, so a
+      // per-iteration number is not secretly a per-uop number.
+      const n = Math.max(200, Math.round(4_000_000 / uops));
+      const tail = code.length;                     // == NBLOCKS * SPACING
+      code.push(0x49);                              // dec ecx
+      code.push(0x0F, 0x85, ...le32(-(tail + 7)));  // jnz near -> block 0
+      return {
+        iters: n, bytesTouched: 0, code, uopsPerIter: uops,
+        setup(e) {
+          e.set_eax(1); e.set_edx(2); e.set_ebx(3);
+          e.set_esi(5); e.set_edi(7); e.set_ebp(11);
+          e.set_ecx(n);
+        },
+        checksum: regSnapshot,
+        verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+      };
+    },
+  };
+}
+SHAPES.blk_mix512 = mixShape(null, 128, 0x20000);
+// The breakeven sweep. Fixed uop count per block, so "how many micro-ops does
+// a descriptor need to repay its entry" has an answer measured on a predictor
+// the shape does not let the CPU learn -- which is the axis the shipped
+// $BX_C_ENTRY/$BX_C_UOP model was never calibrated on. Same 128-byte slots as
+// blk_mix512, so 32 blocks land on a 4KB code page: at 16 uops a descriptor is
+// ~470 bytes and 32 of them do NOT fit the page's 16KB chunk -- measured, a
+// u16 row installs 368 of 512 and its number is meaningless. An overflow
+// DECLINES the install rather than failing loudly, so any new row here has to
+// be checked against installs==512 before it is quoted. 12 is the last row
+// that fits.
+for (const u of [2, 4, 6, 8, 10, 12]) {
+  SHAPES[`blk_mix512_u${u}`] = mixShape(u, 128, 0x20000);
+}
+
 // --- ROUND 11: the shapes --toggle=block_exec_split is about ----------------
 // Neither of these is interesting under --toggle=block_exec; both are chosen so
 // that turning the PASS off inside an already-armed executor changes the
@@ -1886,6 +1979,42 @@ const TOGGLES = {
     e.set_block_exec_min_uops(2);
     e.set_block_exec_rmw(v);
   },
+  // Round 16's one-block leaf (H463, section 25). Same contract again: the
+  // executor is armed in BOTH arms and only the leaf varies, so what is timed
+  // is "which function services a one-block install", not "is there a
+  // descriptor". The off arm is the general region handler with its region
+  // machinery and ~70 live locals; the on arm is the fixed leaf function with
+  // the region loop, the exit table and the fallback path deleted.
+  //
+  // Point it at blk_mix512. A `blk8`-style shape re-enters ONE site every
+  // trip, so the branch predictor learns every indirect jump inside the
+  // handler and the two arms converge — which is exactly how blk16 fell from
+  // +22.0% to +0.4% as the rest of the round landed. The 512-block shape is
+  // the one that prices a cold predictor.
+  // The executor against the threaded interpreter with the uop floor dropped,
+  // so a synthetic block installs instead of being declined by the cost model.
+  // `block_exec` on its own is the shipped configuration and is the right
+  // toggle for "what does an app get"; this one is the right toggle for "what
+  // is the mechanism worth", because at the shipped floor a 4-12 op block
+  // declines (declWhy 1) and both arms run the same threaded code.
+  block_exec_forced: (e, v) => {
+    e.set_block_exec(v);
+    e.set_block_exec_min_uops(v ? 2 : 0);
+  },
+  // The same executor-vs-threaded comparison with the leaf held OFF, so the
+  // on arm is the general region handler servicing one-block installs. Pair it
+  // with block_exec_forced: the difference between the two is what the leaf is
+  // worth to the fold as a whole rather than to the handler in isolation.
+  block_exec_forced_gen: (e, v) => {
+    e.set_block_exec(v);
+    e.set_block_exec_min_uops(v ? 2 : 0);
+    e.set_block_exec_leaf(0);
+  },
+  block_exec_leaf: (e, v) => {
+    e.set_block_exec(1);
+    e.set_block_exec_min_uops(2);
+    e.set_block_exec_leaf(v);
+  },
 };
 const applyToggle = (e, name, v) => {
   const t = TOGGLES[name];
@@ -1954,13 +2083,25 @@ async function newInstance() {
 // layout has to make that the safe direction.
 function layout(imageBase, bufBytes) {
   const a = {
-    code: imageBase + 0x040000,   // fresh page per rep, bumped by the caller
+    // Fresh code per rep, bumped by the caller. The stride is the shape's
+    // (`codeStride`, default one page), so a shape whose working set is many
+    // pages — blk_mix512 is 64KB — still gets an address no earlier rep has
+    // decoded. That is what keeps "re-emit at a fresh address" meaning "decode
+    // fresh" rather than "trip the code-page invalidation walk". The arena
+    // runs to `stackTop` less a megabyte of stack, which is ~13MB of room; it
+    // used to start at 0x040000 and stop at `lut`, which was 768KB and could
+    // not hold 24 reps of a multi-page shape.
+    code: imageBase + 0x200000,
     lut: imageBase + 0x100000,    // 256 bytes
     // Scratch a region shape writes its descriptor into for
     // $region_try_install to copy. One page; the descriptor cannot exceed
     // $decode_block's 4096-byte slack anyway.
     spec: imageBase + 0x140000,
-    stackTop: imageBase + 0x800000,
+    // The stack sits just under `buf`, not at 0x800000, so the whole
+    // 0x200000..0xE00000 span above `code` is arena. A multi-page shape needs
+    // a fresh, NON-OVERLAPPING address every rep -- see `codeStride` -- and at
+    // 41 reps a 128KB stride wants 11MB of it.
+    stackTop: imageBase + 0xF00000,
     buf: imageBase + 0x1000000,
     bufBytes,
   };
@@ -1994,12 +2135,26 @@ function runToCompletion(e, codeAddr, stackTop) {
 // effect without a clear_cache export, and it keeps both A/B arms paying the
 // same decode cost.
 function oneRep({ e, mem, g2w }, shape, a, repIndex) {
-  const codeAddr = a.code + repIndex * 0x1000;
+  const codeAddr = a.code + repIndex * (shape.codeStride || 0x1000);
   // Shapes that build a decode-time descriptor need the address the code will
   // actually live at, because the descriptor names entry EIPs.
   a.codeAddr = codeAddr;
   const built = shape.emit(a);
   const bytes = built.code.concat([0xC3]);           // ret to the 0 sentinel
+  // A shape longer than its own stride lands its first block exactly where the
+  // PREVIOUS rep's tail block was decoded, so the entry hits a cached block
+  // from the other arm and the run continues inside the other arm's code. That
+  // is silent: the timing is plausible, `verify` passes, and only the op
+  // counters give it away (the off arm of blk_mix512 reported 4,087,908 native
+  // micro-ops with the executor disabled). Refuse it instead.
+  if (bytes.length > (shape.codeStride || 0x1000)) {
+    throw new Error(`${shape.name}: ${bytes.length} bytes of code does not fit its ` +
+      `codeStride of ${shape.codeStride || 0x1000} — reps would overlap`);
+  }
+  if (codeAddr + bytes.length > a.stackTop - 0x100000) {
+    throw new Error(`${shape.name}: rep ${repIndex} at 0x${codeAddr.toString(16)} runs ` +
+      `into the guest stack — lower --reps or the shape's codeStride`);
+  }
   mem.set(bytes, g2w(codeAddr));
   built.setup(e, mem, g2w);
   if (process.env.BENCH_TRACE_LOOP && e.set_loop_trace) e.set_loop_trace(1, codeAddr);

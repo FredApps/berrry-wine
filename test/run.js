@@ -296,6 +296,10 @@ const NO_BLOCK_EXEC_SPLIT = hasFlag('no-block-exec-split');
 const BLOCK_EXEC_X87 = hasFlag('block-exec-x87');
 const NO_BLOCK_EXEC_CARRY = hasFlag('no-block-exec-carry');
 const NO_BLOCK_EXEC_RMW = hasFlag('no-block-exec-rmw');
+// Round 16's one-block leaf entry point (H463, section 25). ON by default
+// inside an armed executor, so ZERO is the meaningful value: --no-block-exec-leaf
+// sends every one-block install back through the merged H458.
+const NO_BLOCK_EXEC_LEAF = hasFlag('no-block-exec-leaf');
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
@@ -4069,6 +4073,7 @@ async function main() {
   if (BLOCK_EXEC_X87) inheritWasm('set_block_exec_x87', 1);
   if (NO_BLOCK_EXEC_CARRY) inheritWasm('set_block_exec_carry', 0);
   if (NO_BLOCK_EXEC_RMW) inheritWasm('set_block_exec_rmw', 0);
+  if (NO_BLOCK_EXEC_LEAF) inheritWasm('set_block_exec_leaf', 0);
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
   if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
@@ -5000,6 +5005,9 @@ async function main() {
   }
   if (NO_BLOCK_EXEC_RMW && instance.exports.set_block_exec_rmw) {
     instance.exports.set_block_exec_rmw(0);
+  }
+  if (NO_BLOCK_EXEC_LEAF && instance.exports.set_block_exec_leaf) {
+    instance.exports.set_block_exec_leaf(0);
   }
   if (NO_AOE_FILL && instance.exports.set_loop_aoe_fill_emit) {
     instance.exports.set_loop_aoe_fill_emit(0);
@@ -9311,10 +9319,18 @@ if (VERBOSE) {
       // transfer -- a folded edge leaves no trace in the handler histogram.
       const ts = e.get_block_exec_transfers_saved
         ? e.get_block_exec_transfers_saved() : 0n;
+      // Round 16: how the entries split between the one-block leaf (H463) and
+      // the general executor (H458). `entries` counts both, so the second
+      // number is `entries - leaf` and it is the region / fallback-carrying /
+      // folded-terminator population -- the part the leaf's contract excludes.
+      const leafRuns = e.get_block_exec_leaf_runs
+        ? e.get_block_exec_leaf_runs() : 0;
       console.log(`block-exec: ${label} armed`, e.get_block_exec() ? 'yes' : 'no',
         'installs', e.get_block_exec_installs(),
         'declines', e.get_block_exec_declines(),
         'entries', e.get_block_exec_runs(),
+        'leafEntries', leafRuns,
+        'genEntries', e.get_block_exec_runs() - leafRuns,
         'ops native', String(nat), 'fallback', String(fb),
         'native%', tot > 0n ? (Number(nat * 10000n / tot) / 100).toFixed(2) : '-',
         'transfersSaved', String(ts),

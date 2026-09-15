@@ -205,6 +205,11 @@ async function main() {
 
   // Run one arm. `blockExec` steers the DECODE of a fresh address, so the two
   // arms are genuinely two different compilations of the same bytes.
+  // Round 16's leaf switch, read by `arm`. It is a variable and not an
+  // argument because every existing call site predates the leaf and must keep
+  // running with it in its shipped state (on).
+  let leafGate = true;
+
   function arm(bytes, blockExec, seed) {
     const addr = nextCode();
     const wa = g2w(addr);
@@ -227,6 +232,14 @@ async function main() {
     e.set_ebp(0);
     e.set_esp(STACK_TOP);
     dv.setUint32(g2w(STACK_TOP), 0, true);   // sentinel return address
+    // Round 16 (section 25). The one-block leaf (H463) is a separate handler,
+    // so which of the two an install landed on is observable rather than
+    // inferred. `leafGate` is the arm switch for the leaf itself: with it off
+    // every install goes back through the general region handler, which is the
+    // A/B that proves the leaf is an optimization and not a behaviour change.
+    e.set_block_exec_leaf(leafGate ? 1 : 0);
+    const leafBefore = e.get_block_exec_leaf_runs();
+    const runsBefore = e.get_block_exec_runs();
     const installsBefore = e.get_block_exec_installs();
     const fbBefore = e.get_block_exec_fallback_ops();
     const natBefore = e.get_block_exec_native_ops();
@@ -257,6 +270,8 @@ async function main() {
       esi: e.get_esi() >>> 0, edi: e.get_edi() >>> 0,
       data: Buffer.from(mem.subarray(g2w(DATA), g2w(DATA) + DATA_LEN)).toString('hex'),
       installs: e.get_block_exec_installs() - installsBefore,
+      runs: e.get_block_exec_runs() - runsBefore,
+      leafRuns: e.get_block_exec_leaf_runs() - leafBefore,
       declWhy: e.get_block_exec_decl_why(),
       lastFallbackFn: e.get_block_exec_last_fallback_fn(),
       fallbacks: Number(e.get_block_exec_fallback_ops() - fbBefore),
@@ -2000,6 +2015,151 @@ async function main() {
       `the armed arm recompiled the page, so the overflow dropped it`);
 
     e.set_block_exec(0);
+  }
+
+  console.log('\n-- round 16: the one-block leaf (H463) --');
+
+  {
+    // Every case above ends in the flags probe, and `pushfd` is a FALLBACK op.
+    // A descriptor carrying a fallback can never take the leaf -- the leaf's
+    // contract is exactly "one block, no exits, no fallback pool, no x87 run"
+    // -- so the 269 cases above exercise H458 and say nothing at all about
+    // H463. These cases end at the terminator instead, which is what a real
+    // one-block install looks like, and compare registers and memory only.
+    const leafBlock = body => [...body, ...RET];
+
+    function leafEquiv(name, body, seed) {
+      const bytes = leafBlock(body);
+      const off = arm(bytes, false, seed);
+      const on = arm(bytes, true, seed);
+      totalNative += on.natives; totalFallback += on.fallbacks;
+      totalInstalls += on.installs;
+      const regsOk = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi']
+        .every(k => off[k] === on[k]);
+      const memOk = off.data === on.data;
+      const eipOk = off.eip === on.eip;
+      let why = '';
+      if (!regsOk) why = `\n         off ${hexRegs(off)}\n         on  ${hexRegs(on)}`;
+      else if (!memOk) why = ' (guest memory differs)';
+      else if (!eipOk) why = ` (eip ${off.eip.toString(16)} vs ${on.eip.toString(16)})`;
+      check(`leaf: ${name}`, regsOk && memOk && eipOk, why);
+      check(`  leaf: ${name}: entered through H463`, on.leafRuns >= 1,
+        `installs=${on.installs} runs=${on.runs} leafRuns=${on.leafRuns} ` +
+        `declWhy=${on.declWhy} — the block did not take the leaf, so this ` +
+        `case measured the general region handler again`);
+      check(`  leaf: ${name}: no fallback op ran`, on.fallbacks === 0,
+        `fallbacks=${on.fallbacks}`);
+      return { off, on };
+    }
+
+    leafEquiv('register ALU chain',
+      [...movRI(EAX, 0xDEADBEEF), ...aluRR(ADD, EAX, ECX),
+       ...movRR(EDX, EAX), ...aluRI(6, EDX, 0x0F0F0F0F), ...incR(EBX)]);
+    leafEquiv('LEA and the memory forms',
+      [...leaRO(ESI, EBX, 0x20), ...load32(EAX, EBX, 0x10),
+       ...aluRR(ADD, EAX, ECX), ...store32(EAX, EBX, 0x14),
+       ...load32(EDX, EBX, 0x14)]);
+    leafEquiv('shifts and the 8/16-bit forms',
+      [...movRI(EAX, 0x00FF00FF), ...shlRI(EAX, 4), ...shrRI(EAX, 2),
+       ...movRR(ECX, EAX), ...aluRR(XOR, EDX, ECX)]);
+
+    // THE CONTRACT, from the other side. A block that carries a fallback must
+    // install on the GENERAL handler, because the leaf has no spill/reload
+    // path and no fallback pool to point at. This is the case that would fail
+    // if the emit-time predicate in $block_exec_try_install ever widened.
+    {
+      const r = equiv('a fallback keeps the block off the leaf',
+        [...movRI(EAX, 0x1234), ...aluRI(0, EAX, 1), ...movRR(ECX, EAX),
+         ...incR(EDX)]);
+      check('  the fallback-carrying block did NOT take the leaf',
+        r.on.leafRuns === 0 && r.on.runs >= 1,
+        `runs=${r.on.runs} leafRuns=${r.on.leafRuns} — a descriptor with a ` +
+        `fallback pool was handed to H463, which cannot service one`);
+    }
+
+    // The leaf as an A/B against itself: same bytes, leaf gate off. The
+    // install still happens (on H458) and the answer is bit-identical.
+    {
+      const body = [...movRI(EAX, 0x01020304), ...aluRR(SUB, EAX, ECX),
+                    ...movRR(EDI, EAX), ...leaRO(ESI, EAX, 0x08),
+                    ...aluRR(AND, EDX, EDI)];
+      const bytes = leafBlock(body);
+      leafGate = true;
+      const withLeaf = arm(bytes, true);
+      leafGate = false;
+      const without = arm(bytes, true);
+      leafGate = true;
+      const same = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi']
+        .every(k => withLeaf[k] === without[k]) &&
+        withLeaf.data === without.data && withLeaf.eip === without.eip;
+      check('leaf on and leaf off compute the same state', same,
+        `\n         leaf ${hexRegs(withLeaf)}\n         gen  ${hexRegs(without)}`);
+      check('  leaf on took H463', withLeaf.leafRuns >= 1,
+        `leafRuns=${withLeaf.leafRuns}`);
+      check('  leaf off still installed, on H458', without.leafRuns === 0 &&
+        without.installs >= 1 && without.runs >= 1,
+        `installs=${without.installs} runs=${without.runs} ` +
+        `leafRuns=${without.leafRuns}`);
+    }
+
+    // SMC of a LEAF install. The retirement stamp is written over the block's
+    // first op, and the leaf is reached through a different handler index than
+    // the region executor -- so a stamp check that only recognised H458 would
+    // leave a stale leaf descriptor live here. ($bx_is_desc_word is the one
+    // place that knows both indices.)
+    {
+      const v1 = leafBlock([...movRI(EAX, 0x1111), ...aluRI(0, EAX, 1),
+                            ...movRR(ECX, EAX), ...incR(EDX)]);
+      const v2 = leafBlock([...movRI(EAX, 0x2222), ...aluRI(0, EAX, 2),
+                            ...movRR(ECX, EAX), ...decR(EDX)]);
+      if (v1.length !== v2.length) throw new Error('the leaf SMC pair must be the same length');
+
+      const smcLeaf = (blockExec) => {
+        const addr = nextCode();
+        const wa = g2w(addr);
+        const runAt = () => {
+          seedData();
+          e.set_eax(SEED.eax); e.set_ecx(SEED.ecx); e.set_edx(SEED.edx);
+          e.set_ebx(SEED.ebx); e.set_esi(SEED.esi); e.set_edi(SEED.edi);
+          e.set_ebp(0); e.set_esp(STACK_TOP);
+          dv.setUint32(g2w(STACK_TOP), 0, true);
+          e.set_eip(addr);
+          e.run(100000);
+          return `${(e.get_eax() >>> 0).toString(16)}/${(e.get_ecx() >>> 0).toString(16)}/${(e.get_edx() >>> 0).toString(16)}`;
+        };
+        e.set_block_exec_min_uops(2);
+        e.set_block_exec_leaf(1);
+        e.set_block_exec(blockExec ? 1 : 0);
+        const leaf0 = e.get_block_exec_leaf_runs();
+        for (let i = 0; i < v1.length; i++) mem[wa + i] = v1[i];
+        const first = runAt();
+        const leafFirst = e.get_block_exec_leaf_runs() - leaf0;
+        e.set_ebx(addr);
+        for (let i = 0; i < v2.length; i += 4) {
+          const word = v2[i] | (v2[i + 1] << 8) | (v2[i + 2] << 16) | (v2[i + 3] << 24);
+          e.set_eax(word >>> 0);
+          const w = nextCode();
+          const ww = g2w(w);
+          const st = [...store32(EAX, EBX, i), ...RET];
+          for (let k = 0; k < st.length; k++) mem[ww + k] = st[k];
+          e.set_esp(STACK_TOP); dv.setUint32(g2w(STACK_TOP), 0, true);
+          e.set_eip(w); e.run(1000);
+        }
+        const second = runAt();
+        e.set_block_exec(0);
+        return { first, second, leafFirst };
+      };
+      const soff = smcLeaf(false);
+      const son = smcLeaf(true);
+      check('leaf SMC: the install really was a leaf install', son.leafFirst >= 1,
+        `leafRuns=${son.leafFirst} — nothing leaf-shaped was invalidated`);
+      check('leaf SMC: the first run agrees', soff.first === son.first,
+        `${soff.first} vs ${son.first}`);
+      check('leaf SMC: the rewritten block is re-decoded and agrees',
+        soff.second === son.second, `${soff.second} vs ${son.second}`);
+      check('leaf SMC: the rewrite actually changed the answer',
+        soff.first !== soff.second, `${soff.first} == ${soff.second}`);
+    }
   }
 
   console.log('\n-- coverage of this run --');

@@ -2849,3 +2849,228 @@ What is worth keeping regardless of that switch: the bare-op native path, the
 wrapper/body split (which is what makes any future cheap call possible), and
 above all the section-24.2 fix, which was a live coverage bug in the *default*
 path of the x87 lever rather than a round-15 feature.
+
+## 25. Round 16: the one-block leaf, and the decide experiments (2026-09-15)
+
+[docs/block-executor-review-2026-09-15.md](block-executor-review-2026-09-15.md)
+left three questions and a kill rule. Experiment #1 (the reachable-share CDF) is
+[round14-decide-cdf.md](block-executor-design/round14-decide-cdf.md). This
+section is the other two — the indirect-branch census (#2) and section 13.7's
+never-attempted leaf split (#3), measured on the 512-block shape the review asks
+for (#3(b)) — and the verdict.
+
+Everything below is either a static count or an in-process alternating-arm
+minimum from `tools/bench-loops.js`. No wall-clock A/B of an app appears here:
+this box sat between load 3 and load 20 for the whole session, and the null
+control below swings ±10% at the top of that range.
+
+### 25.1 How many data-dependent indirect branches does a micro-op cost?
+
+`tools/indirect-census.js --preset=block-exec` classifies every indirect branch
+in a named function out of one SpiderMonkey Ion compile (`tools/wasm-native.js`
+does the extraction). On arm64 a wasm `br_table` is `cmp` + `ldr x16,[base,idx,lsl #3]`
++ `br x16`; a `return_call` to a known function is an `adr x17` trampoline and is
+**not** data-dependent; a `return_call_indirect` is `ldr x8,[table]; add; ldr; br x8`
+and is.
+
+| function | bytes | instrs | jump tables | call_indirect | data-dependent sites |
+|---|---|---|---|---|---|
+| `$th_block_exec` (H458) | 10472 | 2618 | 12 | 2 | 14 |
+| `$th_block_exec_leaf` (H463) | 6960 | 1740 | 7 | 0 | 7 |
+| `$next` | 568 | 142 | 0 | 0 | 2 |
+
+Those are *sites*, not per-op costs. Per **executed micro-op** the executor's body
+loop passes the 62-target kind table plus whichever operand tables that kind
+reads — `R[d]` and `R[a]` are 16-target tables, `SRC0` is a third, the SIB index
+an 8-target fourth, and the writeback a 16-target fifth taken only when the op
+wrote a register. Against the threaded path for the same x86 op:
+
+| x86 op | executor, per micro-op | threaded, per op |
+|---|---|---|
+| `mov r,r` | kind + 2 reads + writeback = **4** | `$next` + `$get_reg` + `$set_reg` = **3** |
+| `mov r,imm32` | kind + writeback = **2** | `$next` + `$set_reg` = **2** |
+| `add r,r` | kind + 2 reads + writeback = **4** | `$next` + 3 accessors = **4** |
+| `add r,imm32` | kind + 1 read + writeback = **3** | `$next` + 2 accessors = **3** |
+| `lea r,[b+d]` | kind + 1 read + writeback = **3** | `$next` + 2 accessors = **3** |
+| `mov r,[b+d]` | kind + 1 read + writeback = **3** | `$next` + 2 accessors = **3** |
+| `mov [b+d],r` | kind + 2 reads, no writeback = **3** | `$next` + 2 accessors = **3** |
+| `mov r,[ebp+d]` | kind + writeback = **2** | `$next` + 1 accessor = **2** |
+| `lea r,[b+i*s+d]` | kind + 2 reads + SIB index + writeback = **5** | `$next` + 3 accessors = **4** |
+
+**The executor does not remove indirect branches per micro-op.** It is within one
+of the threaded path on every kind, and behind it on the SIB form. The review's
+"four to six against one plus two" reads the executor's *site* count against the
+threaded path's *per-op* count; the honest comparison is the table above, and it
+says the two paths are level.
+
+What the executor actually removes is the per-*block* cost — one `$next` dispatch
+and one block transfer per basic block, which is what `transfersSaved` counts —
+and what it adds is the entry: eight register materializations, the header parse,
+and one function with a dozen indirect sites all aliasing each other in the BTB
+instead of 464 handlers with one site each. That last term is invisible to every
+`blk{k}` shape, which is why 25.2 exists.
+
+### 25.2 The leaf (section 13.7), and the 512-block shape
+
+`$th_block_exec_leaf` is handler **463**: a fixed function, no codegen, that runs
+a descriptor with **exactly one block, no exits, no fallback pool and no
+`TU_X87RUN`**. The contract is enforced where the descriptor is emitted —
+`$block_exec_try_install` picks `$BX_LEAF_HANDLER` over `$BX_HANDLER` only when
+`$nfb` and `$nx87run` are both zero, and both are final before the emit — so the
+leaf's arms 57 and 60 are `(unreachable)` rather than dead code it hopes not to
+reach. `$bx_is_desc_word` is the one place that knows both handler indices, and
+`src/04-cache.wat` asks it rather than comparing against H458; a stamp check that
+only recognised H458 would have left stale leaf descriptors live across SMC.
+
+The body loop is duplicated, not shared. WATX has `defmacro`, but `tools/func-index.js`
+and `tools/indirect-census.js` resolve names out of `build/combined.wat`, where a
+macro is unexpanded — a macro-generated function would be unnameable by exactly
+the tools this round needed.
+
+`blk_mix512` is the new shape: 512 distinct blocks of 4-12 mixed register ALU ops,
+laid out 128 bytes apart with a `jmp rel8` over the padding and cycled. The
+spacing is load-bearing twice over — only 32 blocks land on a 4KB code page, so
+the page's 16KB descriptor chunk holds them all (at 16 uops it does not: 368 of
+512 install), and the shape declares `codeStride` because a shape longer than its
+own stride puts rep N's first block where rep N-1's tail was decoded, which is
+silent and had the off arm running the on arm's installed descriptors. `oneRep`
+now refuses that instead.
+
+**Leaf on vs leaf off, executor armed in both arms** (`--toggle=block_exec_leaf`,
+31 reps, minima, three independent runs, positive = leaf faster):
+
+| shape | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| `blk4` | -0.7% | -0.3% | -0.9% |
+| `blk8` | -0.5% | +1.4% | -4.8% |
+| `blk16` | -0.2% | +1.3% | -2.3% |
+| `blk32` | -0.7% | -0.3% | +2.8% |
+| `blk_mem8` | -0.1% | -2.0% | -0.3% |
+| `blk_fb8` (null control — a fallback can never take the leaf) | +0.4% | -1.1% | +0.2% |
+| **`blk_mix512`** | **+12.8%** | **+13.5%** | **+14.9%** |
+
+`blk_fb8` is the control that makes the rest readable: the leaf cannot service it,
+so its true delta is zero and its spread is the box's noise floor. Every
+single-site shape sits inside that band. The 512-block shape is 13-15% outside it,
+three times.
+
+Region shapes do not move (`--toggle=block_exec_leaf`, 21 reps, minima):
+`region_if2` +0.0%, `region_diamond4` +0.9%, `region_state6` -0.1%,
+`region_ladder5` +0.7%, `region_call1` +1.8%, `region_null` +0.0%.
+
+**Executor vs threaded on `blk_mix512`** (31 reps, minima, three runs):
+
+| arm | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| executor **with** the leaf (`block_exec_forced`) | +1.2% | +2.2% | +1.2% |
+| executor with the leaf **disabled** (`block_exec_forced_gen`) | -11.7% | -10.9% | -10.3% |
+
+That pair is the round's result. On the one shape that does not let the branch
+predictor learn the executor's dozen indirect sites, the general region handler
+**loses 11%** to the threaded interpreter, and the leaf is the whole difference
+between that and a small win.
+
+**Breakeven in native uops, cold predictor** (`blk_mix512_u{k}`, executor vs
+threaded, 9 reps, minima):
+
+| uops/block | leaf on | leaf off |
+|---|---|---|
+| 2 | -19.7% | — |
+| 4 | -16.5% | — |
+| 6 | -6.2% | — |
+| 8 | -3.9% | -15.3% |
+| 10 | -2.5% | -11.3% |
+| 12 | +7.6% * | -2.6% * |
+
+\* 480 of 512 blocks install at 12 uops — the page's descriptor chunk overflows —
+so that row is not a clean measurement, only a direction.
+
+With the leaf the crossover is between **10 and 12** native micro-ops. The shipped
+model's `$BX_C_ENTRY` 190 / `$BX_C_UOP` 16 puts it at **11.9**, inside that window,
+so **the cost model needs no change** and the floor of 12 is confirmed rather than
+merely bisected. Without the leaf the crossover is above 12.
+
+The `blk{k}` family says the opposite and must not be used for this: on a single
+block re-entered forever the executor wins at every size measured, +42.3% at two
+micro-ops. A floor calibrated there would be 2, and it would be wrong for every
+app.
+
+### 25.3 The windows
+
+Deterministic counters, executor off and on, batch counts fixed so the run ends on
+`--max-batches` and not on a clock (a `--max-seconds` cutoff lands on a different
+batch every time and none of these numbers would repeat). quake2-gameplay is 8000
+batches rather than round 14's 20000 because 20000 does not fit this session's 60s
+guard.
+
+| window | arm | installs | entries | **leaf entries** | **general entries** | ops native | fallback | native% | transfersSaved | decodes |
+|---|---|---|---|---|---|---|---|---|---|---|
+| heroes2-gameplay (3000) | off | 0 | 0 | 0 | 0 | 0 | 0 | — | 0 | 215,634 |
+| heroes2-gameplay (3000) | on | 3,828 | 2,401,388 | 647,686 (27.0%) | 1,753,702 | 25,602,933 | 354,387 | 98.63 | 1,251,320 | 206,448 |
+| quake2-gameplay (8000) | off | 0 | 0 | 0 | 0 | 0 | 0 | — | 0 | 642,738 |
+| quake2-gameplay (8000) | on | 14,574 | 5,918,842 | 1,613,981 (27.3%) | 4,304,861 | 241,727,850 | 3,609,653 | 98.52 | 15,547,045 | 656,925 |
+
+Two things to read off that. The leaf is **27% of executor entries** in both
+windows, not the majority — most one-block installs carry at least one fallback
+micro-op and stay on the general handler, so the 13% the leaf is worth on
+`blk_mix512` reaches roughly a quarter of the executor's real traffic. And the
+executor still does not cost decodes: heroes2 decodes *fewer* blocks with it armed
+(206,448 vs 215,634), quake2 2.2% more.
+
+Pixels, `--block-exec` off vs on, two budgets each:
+
+| capture | changed pixels |
+|---|---|
+| quake2 b600 | 0.0000% |
+| quake2 b2600 | 0.0000% |
+| heroes2 b700 | 0.0000% |
+| heroes2 b1400 | 0.3711% (box 65,37 305x338) |
+
+The one nonzero row is **pacing, not rendering**, and the controls say so: the
+window is deterministic (the off arm photographed twice at b1400 differs by
+0.0000%), and one batch of that scene moves **1.4333%** of the frame inside the
+same box (off arm b1399 vs b1400, box 64,35 312x357). 0.37% is a fraction of one
+batch of an animation, measured against a null band four times its size.
+
+### 25.4 Verdict on the kill rule
+
+The rule the review set: *if `blk_mix512` is negative for the executor, the
+executor is frozen as the region/self-loop fold, default OFF, and no further
+executor round is opened.*
+
+`blk_mix512` is **+1.2% to +2.5%** for the executor as it now ships. **The kill
+rule is not met**, and the executor is not frozen.
+
+State the margin with it, because it is thin and it is contingent:
+
+* +2% on a microbench whose null control (`blk_fb8`) swung ±1% in the same
+  session and ±10% earlier in the day at load 12-20. This is a *sign*, measured
+  three times, not a magnitude anyone should quote.
+* It is positive **only because of this round's work**. The same shape is -11%
+  with the leaf disabled, which is what the executor measured as before today.
+* The leaf reaches 27% of executor entries on the two real windows, so the
+  mechanism's headroom on an app is a quarter of the 13% the microbench shows.
+
+`$block_exec` stays **0** — default OFF, `--block-exec` is still the arm — and
+nothing in this round argues for flipping it. What this round changes is which
+question the next one asks: the executor's remaining cost is the general
+handler's entry and its BTB footprint, not the per-micro-op dispatch count
+(25.1 shows that is level with the threaded path), and the way to shrink it is
+to widen the leaf's contract — a fallback-carrying block is 73% of executor
+entries and currently pays the whole region function for one `pushfd`.
+
+### 25.5 Not proven
+
+* **The leaf on a real app.** Every number in 25.2 is a microbench. There is no
+  app-level A/B in this section and there deliberately is not one: the box was
+  loaded for the whole session and the wall-clock A/Bs that produced
+  [interpreter-dispatch-perf.md](interpreter-dispatch-perf.md)'s unresolvable
+  24-42% are what `bench-loops.js` exists to replace.
+* **The 12-uop row of the breakeven sweep**, where 480 of 512 blocks install.
+  A page-chunk-aware variant (16 blocks per page) would fix it and was not built.
+* **Whether the leaf's win is the site count or the live-range count.** It has
+  half the indirect sites *and* a third less code *and* ~30 fewer live locals,
+  and this round separated none of those.
+* **The general handler with the fallback path split out.** If the leaf's win is
+  BTB footprint, the same treatment applied to the fallback-carrying one-block
+  case is the larger prize, and it is untouched.

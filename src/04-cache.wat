@@ -765,8 +765,8 @@
     ;; descriptor can pass the same stream on to its own copy instead of
     ;; publishing without one -- which is the case that would otherwise still
     ;; end with a walk retiring a finished region.
-    (if (i32.eq (i32.load (i32.add (local.get $chunk) (local.get $coff)))
-                (global.get $BX_HANDLER))
+    (if (call $bx_is_desc_word
+          (i32.load (i32.add (local.get $chunk) (local.get $coff))))
       (then
         (local.set $w (i32.add (local.get $chunk) (local.get $coff)))
         (local.set $wmax (i32.load offset=4 (local.get $w)))
@@ -1267,7 +1267,7 @@
     ;; handler of an ordinary decoded block: the decoder emits it nowhere, only
     ;; $block_exec_try_install and $bx_region_finish do.
     (global.set $page_pub_was_desc (i32.const 0))
-    (if (i32.eq (i32.load (local.get $tstart)) (global.get $BX_HANDLER))
+    (if (call $bx_is_desc_word (i32.load (local.get $tstart)))
       (then
         (return (call $page_publish_desc (local.get $start_eip) (local.get $tstart)
                   (local.get $tend) (local.get $guest_end)))))
@@ -1604,7 +1604,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 463))
+    (if (i32.ge_u (local.get $fn) (i32.const 464))
       (then
         (return_call $dispatch_bad (local.get $fn))))
     (if (global.get $handler_hist_enabled)

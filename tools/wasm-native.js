@@ -222,4 +222,9 @@ function main() {
   }
 }
 
-main();
+// Importable, so a second tool can disassemble MANY functions from ONE
+// SpiderMonkey run instead of paying its ~4s startup per name. Used by
+// tools/indirect-census.js.
+module.exports = { findTool, nameTable, extract, disassemble, DEFAULT_WASM, COMBINED };
+
+if (require.main === module) main();
