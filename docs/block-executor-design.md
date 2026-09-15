@@ -2258,3 +2258,155 @@ Also still open: the region path saves no copy of the head block's stream (only
 the one-block installer does), so a walk that meets a *region* descriptor still
 takes it back the slow way; and the 13-window `docs/hot-loop-vocabulary-2026-09`
 sweep has not been re-run against this build.
+
+### 22.6 The 13 windows, re-run on the round-13 build (2026-09-15)
+
+That last open item, closed. `docs/block-executor-design/collect-round13-windows.sh`
+runs section 4b's 13 windows — the same ids, batch ranges and input schedules as
+`collect-win98-gameplay.sh` and `collect-round12-carry.sh`, so every column here
+reads straight against sections 16.6 and 18.2 — with **`off` being the plain
+interpreter and `on` being `--block-exec` as it ships**. That is a different arm
+from round 12's: there both arms had the executor armed and the toggle was one
+pass inside it. This is the comparison the "turn it on by default" question
+actually asks.
+
+Both arms carry `--verbose`, because that is what prints `cache: block decodes`
+and `pages: compiled`, and round 13's whole subject is that an install must not
+cost a decode. `docs/block-executor-design/parse-round13-windows.js` turns the
+26 logs into the tables below.
+
+**Read the `cap` column first.** Each run is `timeout 180` around
+`--max-seconds=170`, and ten of the thirteen windows stopped on their
+`--max-batches` cap in both arms — those rows are deterministic and their
+absolute numbers are comparable between arms. Three did not: **mw3-gameplay,
+starcraft-loading and diablo-loading hit the time cap**, so the two arms reached
+different points of their app and their absolute columns are a coverage
+artefact, not a measurement. Box `loadavg` ran **6.9 → 22.7** across the
+collection (several other agent sweeps were live on this machine), which is
+also why three windows ran out of clock; the deterministic counters are
+load-immune and the wall clock here is not quoted for anything.
+
+#### Block decodes and page compiles
+
+| window | cap off/on | batches off/on | decodes off | decodes on | Δ | pages off | pages on |
+|---|---|---|---|---|---|---|---|
+| quake2-loading | batch/batch | 2,600/2,600 | 97,551 | 99,223 | +1.7% | 5,244 | 5,343 |
+| quake2-gameplay | batch/batch | 20,000/20,000 | 1,831,629 | 2,036,356 | +11.2% | 46,423 | 49,026 |
+| mw3-loading | batch/batch | 830/830 | 35,395 | 35,704 | +0.9% | 1,467 | 1,469 |
+| mw3-gameplay | *time/time* | 1,256/1,165 | 1,324,524 | 1,070,987 | −19.1% | 37,668 | 30,491 |
+| gta2-loading | batch/batch | 3,000/3,000 | 67,901 | 67,924 | +0.0% | 536 | 540 |
+| gta2-gameplay | batch/batch | 9,000/9,000 | 818,063 | 816,969 | −0.1% | 26,099 | 26,063 |
+| rct-loading | batch/batch | 4,250/4,250 | 250,651 | 257,026 | +2.5% | 5,470 | 5,475 |
+| rct-gameplay | batch/batch | 6,000/6,000 | 282,167 | 290,984 | +3.1% | 5,360 | 5,401 |
+| heroes2-loading | batch/batch | 1,400/1,400 | 17,944 | 25,780 | **+43.7%** | 149 | 156 |
+| heroes2-gameplay | batch/batch | 3,000/3,000 | 215,638 | 227,792 | +5.6% | 569 | 632 |
+| caesar3-loading | batch/batch | 1,600/1,600 | 2,722 | 2,742 | +0.7% | 57 | 57 |
+| starcraft-loading | *time/time* | 699/427 | 155,213 | 88,356 | −43.1% | 2,640 | 1,682 |
+| diablo-loading | *time/time* | 266/384 | 123,052 | 622,080 | +405.5% | 370 | 1,436 |
+
+The three *time*-capped rows say nothing: starcraft's ON arm covered 427 batches
+against the OFF arm's 699 and diablo's covered 384 against 266, so their decode
+columns are measuring how far each run got, not what an install costs.
+
+On the ten deterministic windows the decode overhead of arming the executor is
+**+0.0% to +5.6% in eight of them**, and the two that stand out are
+**quake2-gameplay at +11.2%** and **heroes2-loading at +43.7%**. Section 22.4
+predicted exactly this residue: an install no longer re-decodes the block it is
+classifying, but a region *walk* still decodes every member it visits, and the
+page-compile column tracks the decode column in every row (quake2-gameplay
++5.6% pages against +11.2% decodes, heroes2-loading +4.7% against +43.7%) — the
+descriptors are still being carved out of the same per-page chunk the threaded
+code lives in, which is the "second per-page chunk" item section 22.5 leaves
+open. heroes2-loading is the window to bisect it on: 1,400 batches, 17,944
+decodes off, and the largest relative cost in the corpus.
+
+#### The one-block executor
+
+| window | installs | declines | entries | native% | fallback ops | transfersSaved |
+|---|---|---|---|---|---|---|
+| quake2-loading | 1,451 | 96,478 | 2,203,763 | 96.49 | 1,856,759 | 6,671,598 |
+| quake2-gameplay | 35,218 | 1,999,844 | 16,295,539 | 98.45 | 9,172,381 | 30,293,485 |
+| mw3-loading | 520 | 33,366 | 2,832,274 | 99.96 | 271,239 | 18,668,892 |
+| mw3-gameplay | 21,270 | 1,047,899 | 4,014,376 | 99.87 | 933,804 | 19,202,937 |
+| gta2-loading | 245 | 67,174 | 163,796 | 94.70 | 253,970 | 253,602 |
+| gta2-gameplay | 18,008 | 798,456 | 682,439 | 90.30 | 1,555,972 | 516,177 |
+| rct-loading | 12,057 | 244,969 | 2,110,374 | 95.24 | 2,819,753 | 11,952,730 |
+| rct-gameplay | 11,812 | 279,172 | 1,735,087 | 94.87 | 2,057,179 | 8,159,650 |
+| heroes2-loading | 845 | 24,369 | 621,868 | 99.16 | 67,645 | 156,454 |
+| heroes2-gameplay | 2,799 | 224,427 | 1,176,281 | 98.82 | 230,711 | 672,110 |
+| caesar3-loading | 63 | 2,520 | 314,490 | 93.29 | 426,151 | 188,860 |
+| starcraft-loading | 3,784 | 83,563 | 2,531,160 | 98.24 | 846,469 | 611,798 |
+| diablo-loading | 19,728 | 601,371 | 16,149,033 | 98.41 | 1,750,543 | 9,522,926 |
+
+`native%` is **90.30%–99.96%** across the whole corpus, against section 16.6's
+85.29%–99.95% for the round-11 build — the floor has come up by five points and
+the two windows that were *below* 90% there (rct-gameplay 85.29%, rct-loading
+86.6%) are now 94.87% and 95.24%. Nothing here is a share below 90 any more.
+
+`transfersSaved` is the column that has no equivalent anywhere else: one block
+transfer saved per interior region edge, invisible to the handler histogram by
+construction. mw3-loading saves 18.7M of them off 520 installs, which is the
+cleanest statement in this table of what a region descriptor is for.
+
+#### The multi-block matcher
+
+| window | region installs | region declines | meanBlocks | opsMulti | opsMulti% |
+|---|---|---|---|---|---|
+| quake2-loading | 31 | 4,027 | 8.94 | 42,467,892 | **80.07%** |
+| quake2-gameplay | 2,431 | 288,866 | 12.80 | 143,436,843 | 24.12% |
+| mw3-loading | 23 | 13,923 | 9.96 | 5,434,313 | 0.72% |
+| mw3-gameplay | 119 | 32,256 | 9.03 | 5,561,306 | 0.71% |
+| gta2-loading | 12 | 1,942 | 7.42 | 454,904 | 9.48% |
+| gta2-gameplay | 62 | 3,215 | 8.48 | 3,208,956 | 19.99% |
+| rct-loading | 103 | 80,029 | 8.70 | 48,261,389 | **81.34%** |
+| rct-gameplay | 89 | 65,417 | 8.58 | 29,543,820 | 73.59% |
+| heroes2-loading | 43 | 4,766 | 9.81 | 1,425,336 | 17.61% |
+| heroes2-gameplay | 49 | 13,940 | 9.55 | 3,506,439 | 17.92% |
+| caesar3-loading | 15 | 4,551 | 11.07 | 605,387 | 9.52% |
+| starcraft-loading | 16 | 25,126 | 9.81 | 2,258,219 | 4.68% |
+| diablo-loading | 35 | 5,932 | 8.54 | 59,404,813 | 41.42% |
+
+`opsMulti%` is the share of retired micro-ops that ran inside a descriptor of
+two blocks or more — work the one-block matcher could never have claimed. It
+spans **0.71% to 81.34%**, and the spread is the finding: on RCT and on
+quake2's loading window four fifths of all executed micro-ops are inside
+multi-block regions, while MechWarrior 3 is at seven tenths of one percent in
+*both* of its windows. Region installs are tiny everywhere (12–2,431), so this
+is entirely a story about how often a handful of descriptors are re-entered,
+not about how many get built. Any future cost model tuned on mw3 will be tuned
+on the one app in the corpus where the multi-block path does nothing.
+
+#### The decode-time split pass
+
+| window | uopsBefore | uopsAfter | split | rle | movelim | immfold | rmw |
+|---|---|---|---|---|---|---|---|
+| quake2-loading | 270,151 | 268,386 | 3,454 | 3 | 1,765 | 123 | 346 |
+| quake2-gameplay | 10,747,459 | 10,703,919 | 762,010 | 190 | 43,540 | 729 | 19,338 |
+| mw3-loading | 157,066 | 155,914 | 3,387 | 16 | 1,152 | 14 | 466 |
+| mw3-gameplay | 2,907,801 | 2,894,182 | 33,971 | 41 | 13,619 | 386 | 5,075 |
+| gta2-loading | 181,972 | 179,715 | 233 | 0 | 2,257 | 3 | 28 |
+| gta2-gameplay | 2,740,971 | 2,728,352 | 26,720 | 1 | 12,619 | 130 | 2,910 |
+| rct-loading | 1,321,553 | 1,318,439 | 26,663 | 28 | 3,114 | 6 | 8,207 |
+| rct-gameplay | 1,307,592 | 1,304,821 | 28,263 | 82 | 2,771 | 8 | 7,299 |
+| heroes2-loading | 126,379 | 124,973 | 10,147 | 286 | 1,406 | 0 | 2,141 |
+| heroes2-gameplay | 474,011 | 466,830 | 34,079 | 262 | 7,181 | 0 | 2,731 |
+| caesar3-loading | 33,427 | 33,405 | 505 | 139 | 22 | 0 | 0 |
+| starcraft-loading | 677,319 | 673,277 | 51,164 | 2,490 | 4,042 | 5 | 20,226 |
+| diablo-loading | 1,936,216 | 1,935,439 | 3,243 | 127 | 777 | 61 | 895 |
+
+Unchanged in character from section 16.6: `rle` still measures nearest zero in
+every window (the redundancy is between blocks, not inside them, and the
+cross-edge carry of section 18 reaches only single-predecessor members), and
+`split` is the transform doing the work — 762,010 firings on quake2-gameplay,
+each one a `TU_FALLBACK` that did not happen. Read it against the `fallback ops`
+column above, never against the uop counts.
+
+#### What this says about turning it on
+
+Nothing here is a correctness signal — these are throughput counters, and the
+pixel question is a separate sweep (`tools/block-exec-sweep.js`,
+[sweep-2026-09-15.md](block-executor-design/sweep-2026-09-15.md)). What it does
+say is that the *cost* side of the default-on decision is now one number:
+**decode and page-compile overhead, +0.0% to +43.7% depending on the window**,
+concentrated where a region walk visits many members, and with a known
+structural fix (the second per-page chunk) already written down in section 22.5.
