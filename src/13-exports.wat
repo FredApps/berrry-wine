@@ -2872,6 +2872,16 @@
   (func (export "get_bx_pass_movelim") (result i64) (global.get $bx_pass_movelim))
   (func (export "get_bx_pass_immfold") (result i64) (global.get $bx_pass_immfold))
   (func (export "get_bx_x87_uops") (result i64) (global.get $bx_x87_uops))
+  (func (export "get_bx_x87run_uops") (result i64) (global.get $bx_x87run_uops))
+  ;; Round 15 (section 24): the x87 machine state the executor deliberately
+  ;; does NOT model, exported so a test can assert that directly instead of
+  ;; inferring it from a stored float. Getters only -- nothing sets these from
+  ;; the host, so they are not INHERITED_WASM_GLOBALS.
+  (func (export "get_fpu_top") (result i32) (global.get $fpu_top))
+  (func (export "get_fpu_sw") (result i32) (global.get $fpu_sw))
+  (func (export "get_fpu_tags") (result i32) (global.get $fpu_tag))
+  (func (export "get_bx_x87_native_uops") (result i64)
+    (global.get $bx_x87_native_uops))
   (func (export "set_block_exec_carry") (param $flag i32)
     (global.set $block_exec_carry (local.get $flag)))
   (func (export "get_block_exec_carry") (result i32) (global.get $block_exec_carry))

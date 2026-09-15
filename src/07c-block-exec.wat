@@ -112,7 +112,31 @@
   (global $TU_FALLBACK i32 (i32.const 57))
   ;; 58 and 59 are $TU_CMP_RR / $TU_CMP_RI, declared in 07b beside the rest of
   ;; the shared vocabulary because the classifier emits them.
-  (global $TU_MAX_KIND i32 (i32.const 59))
+  ;;
+  ;; ROUND 15 (design doc section 24). A FUSED x87 run -- one of H449..H453 --
+  ;; as a native micro-op instead of a TU_FALLBACK. `a` is the fused handler
+  ;; index, `imm` its packed operand word, `b` the byte offset of its inline
+  ;; words in the trailing pool, and `d` the 8-bit mask of general registers
+  ;; the run READS (computed at install time by $x87_run_reads, or by the
+  ;; island walk). It differs from TU_FALLBACK in three ways, all of them the
+  ;; point:
+  ;;
+  ;;   * it calls the fused BODY (07b's $x87_run_body) rather than the thread
+  ;;     table's wrapper, so there is no `return_call $next`, no H459 resume
+  ;;     handler and no second indirect dispatch;
+  ;;   * it publishes only the registers in `d` and reloads NONE, because no
+  ;;     fused x87 body writes a general register (proved family by family in
+  ;;     section 24.1) -- against eight stores and eight loads;
+  ;;   * it is priced at $BX_C_X87RUN rather than $BX_C_X87FB.
+  ;;
+  ;; `d` therefore does NOT name a destination register here. That is safe
+  ;; because $bx_mem_shape gives this kind shape 3 -- the "not modelled" shape
+  ;; -- and the optimisation pass's walk 1 leaves on shape 3 before it ever
+  ;; reads `d`, while the executor arm clears $wrote so the writeback br_table
+  ;; never runs. Both are asserted by test-block-exec.js rather than left to
+  ;; the reading.
+  (global $TU_X87RUN   i32 (i32.const 60))
+  (global $TU_MAX_KIND i32 (i32.const 60))
 
   ;; ======================================================================
   ;; ROUND 11 -- the decode-time load/op split (design doc section 16)
@@ -155,6 +179,16 @@
   ;; bare x87 op, so it is a count of descriptor entries, not of guest x87
   ;; instructions.
   (global $bx_x87_uops         (mut i64) (i64.const 0))
+  ;; Round 15 (section 24): of those, how many are the CHEAP kind -- a fused
+  ;; run that went in as TU_X87RUN. `x87 - x87run` is the residue still paying
+  ;; the trampoline: a bare op the native classifier declined, or an island
+  ;; carrying a form $fpu_exec_* does not implement.
+  (global $bx_x87run_uops      (mut i64) (i64.const 0))
+  ;; And how many bare H188..H190 went in as one of 07b's own native x87 kinds
+  ;; (TU_X87_MEM / _MRO / _REG / _SW_AX) rather than as a fallback. Those are
+  ;; real dispatches saved and DO bump $nat, which is why they are counted
+  ;; apart from the two above.
+  (global $bx_x87_native_uops  (mut i64) (i64.const 0))
   ;; Round 12 (section 18): redundant loads eliminated ONLY because a fact was
   ;; carried across a region edge. It is a strict subset of $bx_pass_rle -- the
   ;; carry pass bumps both -- so `rle - carryRle` is what a block-local pass
@@ -330,6 +364,14 @@
   ;; uops' worth: enough that an x87-DENSE block declines, while a long integer
   ;; block carrying one stray x87 op still installs.
   (global $BX_C_X87FB    i32 (i32.const 96))
+  ;; ROUND 15 (section 24). A fused x87 run that went in as TU_X87RUN. It is
+  ;; still worth nothing on the BENEFIT side -- the fold already made the run
+  ;; one dispatch, so the executor saves zero of them and $nat is not bumped --
+  ;; but it no longer costs a trampoline either, so it must not be priced like
+  ;; one. Set from tools/bench-loops.js --shapes=blk_x87mix,blk_x87long,
+  ;; blk_x87sw --toggle=block_exec_x87 (section 24.3); see that table before
+  ;; changing it.
+  (global $BX_C_X87RUN   i32 (i32.const 16))
 
   ;; Where the descriptor is BUILT. Writing it forward from $tstart would
   ;; overwrite the very ops still being read -- a 24-byte micro-op over an
@@ -3030,6 +3072,9 @@
     (local $j i32) (local $total i32) (local $extra i32)
     (local $nat i32) (local $nfb i32) (local $up i32)
     (local $span i32) (local $pe i32) (local $nx87 i32)
+    ;; Round 15 (section 24): TU_X87RUN micro-ops, their read mask, and the
+    ;; walk's verdict on whether this run may take the cheap arm.
+    (local $nx87run i32) (local $rmask i32) (local $cheap i32) (local $peop i32)
     ;; Round 13: the displaced threaded stream, saved with the descriptor.
     (local $rawlen i32) (local $save i32) (local $extra i32) (local $rawoff i32)
 
@@ -3122,12 +3167,61 @@
         ;; the fuser refused, or --no-x87-fusion) is span 1 and the generic
         ;; `nw` arithmetic below already gets it right; it is here only so the
         ;; unsafe test does not decline the block first.
+        ;;
+        ;; ---- ROUND 15 (section 24) adds two cheaper outcomes ahead of that.
+        ;;
+        ;; (a) A BARE H188..H190 goes to $tree_uop_classify first. That
+        ;;     function already emits 07b's own native x87 kinds -- TU_X87_MEM,
+        ;;     TU_X87_MRO, TU_X87_REG and TU_X87_SW_AX -- which the executor
+        ;;     has run since the H454 merge, so the only reason a bare x87 op
+        ;;     was ever a fallback here is that this arm ran before the
+        ;;     classifier did. Those are real saved dispatches and bump $nat.
+        ;;     A form the classifier declines still falls through to (c).
+        ;;
+        ;; (b) A FUSED H449..H453 whose absorbed ops all pass the island
+        ;;     predicates becomes ONE TU_X87RUN: the fused body is called
+        ;;     directly, with only the registers it reads published and none
+        ;;     reloaded. It saves no dispatch -- the fold already made the run
+        ;;     one -- so $nat is still not bumped; what it saves is the
+        ;;     trampoline, and it is priced at $BX_C_X87RUN instead of
+        ;;     $BX_C_X87FB.
+        ;;
+        ;; (c) Anything else keeps the round-12 TU_FALLBACK exactly as it was.
         (local.set $span (i32.const 0))
         (if (global.get $block_exec_x87)
           (then
             (if (i32.and (i32.ge_u (local.get $fn) (i32.const 188))
                          (i32.le_u (local.get $fn) (i32.const 190)))
-              (then (local.set $span (i32.const 1)))
+              (then
+                (local.set $span (i32.const 1))
+                ;; (a). The emit is the same six stores the generic classify
+                ;; path below does; it is repeated rather than jumped to
+                ;; because this arm sits above the $bx_op_unsafe test that
+                ;; would otherwise have declined the block already.
+                (if (call $tree_uop_classify (local.get $p))
+                  (then
+                    (if (i32.gt_u (i32.add (local.get $sc) (global.get $TREE_UOP_WORDS))
+                                  (local.get $ucap))
+                      (then (global.set $block_exec_decl_why (i32.const 5))
+                            (global.set $block_exec_declines
+                              (i32.add (global.get $block_exec_declines) (i32.const 1)))
+                            (return (i32.const 0))))
+                    (local.set $up
+                      (i32.add (local.get $base) (i32.shl (local.get $sc) (i32.const 2))))
+                    (local.set $extra (i32.add (local.get $extra) (global.get $tu_extra)))
+                    (i32.store           (local.get $up) (global.get $tu_kind))
+                    (i32.store offset=4  (local.get $up) (global.get $tu_d))
+                    (i32.store offset=8  (local.get $up) (global.get $tu_a))
+                    (i32.store offset=12 (local.get $up) (global.get $tu_imm))
+                    (i32.store offset=16 (local.get $up) (global.get $tu_fn))
+                    (i32.store offset=20 (local.get $up) (global.get $tu_b))
+                    (local.set $sc (i32.add (local.get $sc) (global.get $TREE_UOP_WORDS)))
+                    (local.set $nuops (i32.add (local.get $nuops) (i32.const 1)))
+                    (local.set $nat (i32.add (local.get $nat) (i32.const 1)))
+                    (global.set $bx_x87_native_uops
+                      (i64.add (global.get $bx_x87_native_uops) (i64.const 1)))
+                    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                    (br $scan))))
               (else
                 (local.set $span
                   (call $x87_fused_span (local.get $fn)
@@ -3147,18 +3241,71 @@
             ;; Every absorbed entry must be a plain x87 op. Checked rather than
             ;; assumed, because this is the one place a wrong span silently
             ;; turns inline address words into a handler index.
+            ;;
+            ;; ROUND 15: the same walk now also answers the TU_X87RUN question
+            ;; for the ISLAND family, whose base registers and (group, reg, rm)
+            ;; forms live in the absorbed records rather than in the packed
+            ;; word. $cheap starts at 1 and only ever falls to 0, so a walk
+            ;; that finds one unimplemented form -- or an FNSTSW AX, which
+            ;; $tree_x87_reg_ok declines and which WRITES EAX -- puts the whole
+            ;; run back on the old trampoline rather than half of it.
+            ;;
+            ;; The other four families are shape-matched by their fusers: they
+            ;; call $fpu_arith / $fpu_push / $fpu_set directly and never reach
+            ;; $fpu_exec_mem's default arm, so they are cheap by construction
+            ;; and their mask comes from $x87_run_reads.
+            (local.set $cheap (i32.const 1))
+            (local.set $rmask (call $x87_run_reads (local.get $fn)
+                                (i32.load offset=4 (local.get $p))))
+            (if (i32.eq (local.get $fn) (i32.const 451))
+              (then
+                ;; op 0 is the one the fuser overwrote; the packed word kept
+                ;; its handler at bits 12..19 and its operand at bits 0..11.
+                (local.set $peop (i32.load offset=4 (local.get $p)))
+                (local.set $pe
+                  (i32.and (i32.shr_u (local.get $peop) (i32.const 12)) (i32.const 0xFF)))
+                (local.set $peop (i32.and (local.get $peop) (i32.const 0xFFF)))
+                (if (i32.eqz (call $x87_island_op_ok (local.get $pe) (local.get $peop)))
+                  (then (local.set $cheap (i32.const 0))))
+                (local.set $rmask (i32.or (local.get $rmask)
+                  (call $x87_island_op_base (local.get $pe) (local.get $peop))))))
             (local.set $j (i32.const 1))
             (block $ab_done
               (loop $ab
                 (br_if $ab_done (i32.ge_u (local.get $j) (local.get $span)))
-                (local.set $pe (i32.load
-                  (call $loop_op_at (i32.add (local.get $i) (local.get $j)))))
-                (if (i32.eqz (i32.and (i32.ge_u (local.get $pe) (i32.const 188))
-                                      (i32.le_u (local.get $pe) (i32.const 190))))
+                (local.set $pe (call $loop_op_at (i32.add (local.get $i) (local.get $j))))
+                (local.set $peop (i32.load offset=4 (local.get $pe)))
+                (local.set $pe (i32.load (local.get $pe)))
+                ;; 188..190 is the ordinary case. 449..453 is the one ROUND 15
+                ;; found: the five fusers run in a fixed order and none of them
+                ;; skips ops an earlier one already absorbed, so
+                ;; $x87_island_fuse_block -- which runs LAST -- re-fuses the
+                ;; TAIL of an H449/H450/H452/H453 region into an H451. Only the
+                ;; first op's handler word is rewritten, and an outer fused
+                ;; body reads its inline stream by ADDRESS WORD only (H449 takes
+                ;; $tp+0/+12/+24/+36, i.e. the address slot of each absorbed
+                ;; 12-byte record) -- so the rewritten handler and operand words
+                ;; are dead data on the threaded path and nothing observes them.
+                ;; They were NOT dead here: this check declined the whole block
+                ;; over them, which is why an H449 mode-0 region -- the four-op
+                ;; FLD/arith/arith/FSTP pipeline, the commonest shape the fold
+                ;; has -- never installed at all before round 15.
+                (if (i32.eqz (i32.or
+                      (i32.and (i32.ge_u (local.get $pe) (i32.const 188))
+                               (i32.le_u (local.get $pe) (i32.const 190)))
+                      (i32.and (i32.ge_u (local.get $pe) (i32.const 449))
+                               (i32.le_u (local.get $pe) (i32.const 453)))))
                   (then (global.set $block_exec_decl_why (i32.const 3))
                         (global.set $block_exec_declines
                           (i32.add (global.get $block_exec_declines) (i32.const 1)))
                         (return (i32.const 0))))
+                (if (i32.eq (local.get $fn) (i32.const 451))
+                  (then
+                    (if (i32.eqz (call $x87_island_op_ok
+                                   (local.get $pe) (local.get $peop)))
+                      (then (local.set $cheap (i32.const 0))))
+                    (local.set $rmask (i32.or (local.get $rmask)
+                      (call $x87_island_op_base (local.get $pe) (local.get $peop))))))
                 (local.set $j (i32.add (local.get $j) (i32.const 1)))
                 (br $ab)))
             ;; room for one micro-op, before anything is written
@@ -3181,8 +3328,19 @@
                     (global.set $block_exec_declines
                       (i32.add (global.get $block_exec_declines) (i32.const 1)))
                     (return (i32.const 0))))
-            (i32.store           (local.get $up) (global.get $TU_FALLBACK))
-            (i32.store offset=4  (local.get $up) (i32.const 0))
+            ;; A BARE op never takes the cheap arm here: path (a) above already
+            ;; had first refusal on it through $tree_uop_classify, and this is
+            ;; the residue that function declined. TU_X87RUN's body dispatch
+            ;; only knows 449..453.
+            (if (i32.and (i32.ge_u (local.get $fn) (i32.const 188))
+                         (i32.le_u (local.get $fn) (i32.const 190)))
+              (then (local.set $cheap (i32.const 0))))
+            (i32.store           (local.get $up)
+              (select (global.get $TU_X87RUN) (global.get $TU_FALLBACK)
+                      (local.get $cheap)))
+            ;; `d` is the read mask for TU_X87RUN and inert for TU_FALLBACK,
+            ;; which publishes all eight regardless.
+            (i32.store offset=4  (local.get $up) (local.get $rmask))
             (i32.store offset=8  (local.get $up) (local.get $fn))
             (i32.store offset=12 (local.get $up) (i32.load offset=4 (local.get $p)))
             (i32.store offset=16 (local.get $up) (local.get $fn))
@@ -3198,17 +3356,33 @@
                 (local.set $fbw (i32.add (local.get $fbw) (i32.const 1)))
                 (local.set $j (i32.add (local.get $j) (i32.const 1)))
                 (br $x87cp)))
+            ;; The H459 resume trampoline. TU_X87RUN does not need one -- it
+            ;; never calls $next -- but the two words are written for it all
+            ;; the same, so the pool layout is one shape and the size check
+            ;; above is one arithmetic. Two words per fused run, once, at
+            ;; install time.
             (i32.store (i32.add (local.get $fbb) (i32.shl (local.get $fbw) (i32.const 2)))
                        (global.get $BX_RESUME_HANDLER))
             (i32.store offset=4 (i32.add (local.get $fbb) (i32.shl (local.get $fbw) (i32.const 2)))
                        (i32.const 0))
             (local.set $fbw (i32.add (local.get $fbw) (i32.const 2)))
             (local.set $nuops (i32.add (local.get $nuops) (i32.const 1)))
-            (local.set $nfb (i32.add (local.get $nfb) (i32.const 1)))
-            ;; counted separately so the cost model can charge it $BX_C_X87FB
-            (local.set $nx87 (i32.add (local.get $nx87) (i32.const 1)))
             (global.set $bx_x87_uops
               (i64.add (global.get $bx_x87_uops) (i64.const 1)))
+            (if (local.get $cheap)
+              (then
+                ;; Cheap arm. NOT counted in $nfb: a fallback bills itself a
+                ;; step through the parked counter (its handler ends in
+                ;; $next), and this one does not call $next at all -- so its
+                ;; one step has to be in the descriptor's `cost` instead, via
+                ;; $nx87run. $nat stays where it is: no dispatch was saved.
+                (local.set $nx87run (i32.add (local.get $nx87run) (i32.const 1)))
+                (global.set $bx_x87run_uops
+                  (i64.add (global.get $bx_x87run_uops) (i64.const 1))))
+              (else
+                (local.set $nfb (i32.add (local.get $nfb) (i32.const 1)))
+                ;; counted separately so the cost model can charge it $BX_C_X87FB
+                (local.set $nx87 (i32.add (local.get $nx87) (i32.const 1)))))
             (local.set $i (i32.add (local.get $i) (local.get $span)))
             (br $scan)))
 
@@ -3400,13 +3574,17 @@
               (i32.sub
                 (i32.add (i32.mul (local.get $nat) (global.get $BX_C_UOP))
                          (i32.mul (i32.const 0) (global.get $BX_C_TRANSFER)))
-                ;; $nfb counts the x87 micro-ops too; bill those at the higher
-                ;; $BX_C_X87FB and the rest at the plain fallback price.
+                ;; $nfb counts the x87 FALLBACK micro-ops too; bill those at
+                ;; the higher $BX_C_X87FB and the rest at the plain fallback
+                ;; price. $nx87run is NOT in $nfb (round 15) and is billed at
+                ;; its own, much smaller, $BX_C_X87RUN.
                 (i32.add (global.get $BX_C_ENTRY)
                   (i32.add
-                    (i32.mul (i32.sub (local.get $nfb) (local.get $nx87))
-                             (global.get $BX_C_FALLBACK))
-                    (i32.mul (local.get $nx87) (global.get $BX_C_X87FB)))))
+                    (i32.mul (local.get $nx87run) (global.get $BX_C_X87RUN))
+                    (i32.add
+                      (i32.mul (i32.sub (local.get $nfb) (local.get $nx87))
+                               (global.get $BX_C_FALLBACK))
+                      (i32.mul (local.get $nx87) (global.get $BX_C_X87FB))))))
               (i32.const 0))
           (then (global.set $block_exec_decl_why (i32.const 1))
                 (global.set $block_exec_declines
@@ -3566,7 +3744,14 @@
     ;; copy was rare (round 13 made it only for blocks discovery had asked
     ;; for), and would have billed the guest clock several hundred steps per
     ;; block now that every install carries one.
-    (call $te_raw (local.get $nat))
+    ;;
+    ;; ROUND 15: `+ $nx87run`. A TU_X87RUN calls the fused body WITHOUT going
+    ;; through $next, so unlike every other fallback-shaped micro-op it charges
+    ;; the guest nothing through the parked counter. The threaded arm this is
+    ;; compared against spends exactly one step on the fused op's own dispatch,
+    ;; so one step per run belongs here or `--block-exec-x87` silently buys the
+    ;; guest more work per batch than `--block-exec` did.
+    (call $te_raw (i32.add (local.get $nat) (local.get $nx87run)))
     (call $te_raw (i32.const 0))                    ;; succ_taken (unused)
     (call $te_raw (i32.const 0))                    ;; succ_fall  (unused)
     (call $te_raw (local.get $start_eip))           ;; entry_eip
@@ -4109,6 +4294,7 @@
             ;; first store instead of failing.
             (local.set $wrote (i32.const 1))
             (block $kdone
+              (block $k60
               (block $k59 (block $k58
               (block $k57 (block $k56 (block $k55 (block $k54
               (block $k53 (block $k52 (block $k51 (block $k50
@@ -4131,8 +4317,8 @@
                           $k30 $k31 $k32 $k33 $k34 $k35 $k36 $k37 $k38 $k39
                           $k40 $k41 $k42 $k43 $k44 $k45 $k46 $k47 $k48 $k49
                           $k50 $k51 $k52 $k53 $k54 $k55 $k56 $k57
-                          $k58 $k59
-                          $k59
+                          $k58 $k59 $k60
+                          $k60
                           (local.get $kind)))
                 ;; 0 MOV_RR
                 (local.set $vr (local.get $vb)) (br $kdone))
@@ -4616,6 +4802,50 @@
               (if (i32.eqz (local.get $nof))
                 (then (call $set_flags_sub (local.get $va) (local.get $imm)
                         (i32.sub (local.get $va) (local.get $imm)))))
+              (local.set $wrote (i32.const 0))
+              (br $kdone))
+
+              ;; 60 X87RUN (and the unreachable default) -- a FUSED x87 run,
+              ;; H449..H453, called as the body it is instead of routed through
+              ;; the trampoline. Section 24.
+              ;;
+              ;; PUBLISH: only the registers `d` names. Every address a fused
+              ;; body forms goes through $x87_pipeline_addr or, in the island,
+              ;; through one $get_reg, and the install-time walk collected
+              ;; exactly those. Nothing else in these five bodies reads the
+              ;; register file: $fpu_exec_mem/$fpu_exec_reg do not, $gs32's
+              ;; $invalidate_code_write does not, and the only other consumer
+              ;; of a stale global -- a crash report out of $fpu_crash_op --
+              ;; is unreachable here, because $x87_island_op_ok declined every
+              ;; form that could reach it and the other four families never
+              ;; call those two functions at all.
+              ;;
+              ;; RELOAD: none. No fused x87 body writes a general register.
+              ;; FNSTSW AX is the one x87 instruction that does, and it cannot
+              ;; be inside one of these runs: four of the five families are
+              ;; shape-matched to FLD/arith/FSTP, and in the fifth
+              ;; $tree_x87_reg_ok declines group 7 outright.
+              ;;
+              ;; $ip: set to this run's pool copy, exactly as the TU_FALLBACK
+              ;; arm does. The body walks its inline words through that global
+              ;; and leaves it past them; nothing downstream of here reads it
+              ;; before the exit path rewrites it.
+              (if (i32.and (local.get $d) (i32.const 0x01)) (then (global.set $eax (local.get $r0))))
+              (if (i32.and (local.get $d) (i32.const 0x02)) (then (global.set $ecx (local.get $r1))))
+              (if (i32.and (local.get $d) (i32.const 0x04)) (then (global.set $edx (local.get $r2))))
+              (if (i32.and (local.get $d) (i32.const 0x08)) (then (global.set $ebx (local.get $r3))))
+              (if (i32.and (local.get $d) (i32.const 0x10)) (then (global.set $esp (local.get $r4))))
+              (if (i32.and (local.get $d) (i32.const 0x20)) (then (global.set $ebp (local.get $r5))))
+              (if (i32.and (local.get $d) (i32.const 0x40)) (then (global.set $esi (local.get $r6))))
+              (if (i32.and (local.get $d) (i32.const 0x80)) (then (global.set $edi (local.get $r7))))
+              ;; The H149 pair, one direction only: an island's FIRST op may be
+              ;; an H188 whose address word is $SIB_SENTINEL, and $th_x87_island
+              ;; reads $ea_temp for it. Nothing in these bodies WRITES $ea_temp,
+              ;; so there is no reload to match.
+              (global.set $ea_temp (local.get $ea_hold))
+              (global.set $ip (i32.add (local.get $fbp) (local.get $b)))
+              (call $x87_run_body (local.get $a) (local.get $imm))
+              (global.set $block_exec_last_fallback_fn (local.get $a))
               (local.set $wrote (i32.const 0)))
 
             ;; Writeback R[d], fifteen arms as above.

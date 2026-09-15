@@ -742,7 +742,20 @@
   ;; four-op/two-arithmetic form; modes 1/2/3 are memory-arithmetic, copy, and
   ;; unary three-op regions. Preserve source evaluation order and use
   ;; $fpu_arith so divide-by-zero/status behavior remains canonical.
+  ;; ROUND 15 (section 24): each fused x87 family is split into a BODY that
+  ;; does the work and a thin threaded wrapper that adds `return_call $next`.
+  ;; The split is what lets the block executor call the body directly as a
+  ;; native micro-op (TU_X87RUN) instead of paying the generic TU_FALLBACK
+  ;; trampoline -- a fallback has to route through $next because a handler
+  ;; ends in one, and that is the whole reason the resume handler H459 exists.
+  ;; The body still reads its inline words through the $ip GLOBAL, exactly as
+  ;; before, so nothing about the threaded path changes; the executor arm sets
+  ;; $ip to the pool copy first, which is what the TU_FALLBACK arm already
+  ;; does one line above it.
   (func $th_x87_pipeline4 (param $op i32)
+    (call $x87_pipeline4_body (local.get $op))
+    (return_call $next))
+  (func $x87_pipeline4_body (param $op i32)
     (local $tp i32) (local $a0 i32) (local $a1 i32)
     (local $a2 i32) (local $a3 i32) (local $wa i32) (local $mode i32)
     (local $v f64) (local $rhs f64)
@@ -827,8 +840,7 @@
       (then (f64.store (local.get $wa) (call $fpu_pop)))
       (else (f32.store (local.get $wa) (f32.demote_f64 (call $fpu_pop)))))
     (global.set $x87_pipeline4_runs
-      (i32.add (global.get $x87_pipeline4_runs) (i32.const 1)))
-    (return_call $next))
+      (i32.add (global.get $x87_pipeline4_runs) (i32.const 1))))
 
   ;; Recognize the balanced binary-tree leaf used by Alpha's TQI algebra and
   ;; by ordinary compiler output generally:
@@ -936,6 +948,9 @@
 
   ;; 450: balanced binary expression tree leaf.
   (func $th_x87_tree4 (param $op i32)
+    (call $x87_tree4_body (local.get $op))
+    (return_call $next))
+  (func $x87_tree4_body (param $op i32)
     (local $tp i32) (local $a0 i32) (local $a1 i32) (local $a3 i32)
     (local $older f64) (local $top f64) (local $v f64) (local $wa i32)
     (local.set $tp (global.get $ip))
@@ -990,8 +1005,7 @@
     (global.set $fpu_top
       (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
     (global.set $x87_tree4_runs
-      (i32.add (global.get $x87_tree4_runs) (i32.const 1)))
-    (return_call $next))
+      (i32.add (global.get $x87_tree4_runs) (i32.const 1))))
 
   ;; Compile the recurring two-output affine expression emitted by the Smacker
   ;; decoder. These recognizers operate on semantics plus address shape, not
@@ -1127,6 +1141,9 @@
   ;; local renaming. Materialize at each following memory boundary so faults
   ;; would observe the same architectural stack as the scalar sequence.
   (func $th_x87_affine_prepare (param $op i32)
+    (call $x87_affine_prepare_body (local.get $op))
+    (return_call $next))
+  (func $x87_affine_prepare_body (param $op i32)
     (local $tp i32) (local $a0 i32) (local $a1 i32) (local $a3 i32)
     (local $a6 i32) (local $a8 i32)
     (local $x f64) (local $y f64) (local $sum f64)
@@ -1160,12 +1177,14 @@
     (local.set $t2 (f64.mul (local.get $sum) (local.get $c)))
     (call $fpu_set (i32.const 0) (local.get $t2))
     (global.set $x87_affine_prepare_runs
-      (i32.add (global.get $x87_affine_prepare_runs) (i32.const 1)))
-    (return_call $next))
+      (i32.add (global.get $x87_affine_prepare_runs) (i32.const 1))))
 
   ;; H452: direct semantic suffix. The pop remains architecturally visible;
   ;; FXCH is only a local permutation, materialized before the next load.
   (func $th_x87_affine_finish (param $op i32)
+    (call $x87_affine_finish_body (local.get $op))
+    (return_call $next))
+  (func $x87_affine_finish_body (param $op i32)
     (local $tp i32) (local $a2 i32) (local $a4 i32)
     (local $top f64) (local $mid f64) (local $old f64)
     (local $r0 f64) (local $r1 f64) (local $bias f64)
@@ -1198,8 +1217,7 @@
     (local.set $r0 (f64.add (local.get $r0) (local.get $bias)))
     (call $fpu_set (i32.const 0) (local.get $r0))
     (global.set $x87_affine_finish_runs
-      (i32.add (global.get $x87_affine_finish_runs) (i32.const 1)))
-    (return_call $next))
+      (i32.add (global.get $x87_affine_finish_runs) (i32.const 1))))
 
   ;; Collapse a maximal contiguous run of ordinary x87 memory/register ops
   ;; into one dispatch while continuing to use the canonical semantic helpers.
@@ -1298,6 +1316,9 @@
   ;; Generic x87 micro-op inner loop. This eliminates threaded dispatch and
   ;; keeps the canonical stack/tag/status semantics in $fpu_exec_mem/reg.
   (func $th_x87_island (param $packed i32)
+    (call $x87_island_body (local.get $packed))
+    (return_call $next))
+  (func $x87_island_body (param $packed i32)
     (local $cursor i32) (local $fn i32) (local $op i32)
     (local $count i32) (local $i i32) (local $addr i32)
     (local.set $cursor (global.get $ip))
@@ -1339,8 +1360,135 @@
       (br $each)))
     (global.set $ip (local.get $cursor))
     (global.set $x87_island_runs
-      (i32.add (global.get $x87_island_runs) (i32.const 1)))
-    (return_call $next))
+      (i32.add (global.get $x87_island_runs) (i32.const 1))))
+
+  ;; ----------------------------------------------------------------------
+  ;; ROUND 15 (section 24): the block executor's entry into the five bodies.
+  ;;
+  ;; $ip must already point at the fused op's inline words -- the executor's
+  ;; TU_X87RUN arm sets it to its pool copy -- and every body leaves $ip past
+  ;; the words it consumed, exactly as it does on the threaded path. Nothing
+  ;; here calls $next, which is the whole point: the executor stays inside its
+  ;; own loop instead of paying a resume trampoline.
+  ;;
+  ;; The dispatch is a compare chain and not a call_indirect, because the
+  ;; thread table's entries for 449..453 are the WRAPPERS and calling one of
+  ;; those would put $next back.
+  (func $x87_run_body (param $fn i32) (param $op i32)
+    (if (i32.eq (local.get $fn) (i32.const 449))
+      (then (return (call $x87_pipeline4_body (local.get $op)))))
+    (if (i32.eq (local.get $fn) (i32.const 450))
+      (then (return (call $x87_tree4_body (local.get $op)))))
+    (if (i32.eq (local.get $fn) (i32.const 451))
+      (then (return (call $x87_island_body (local.get $op)))))
+    (if (i32.eq (local.get $fn) (i32.const 452))
+      (then (return (call $x87_affine_prepare_body (local.get $op)))))
+    ;; 453. The installer only ever emits TU_X87RUN for 449..453, checked
+    ;; there, so there is no other case to reach.
+    (call $x87_affine_finish_body (local.get $op)))
+
+  ;; Which general registers a fused x87 run READS, as an 8-bit mask over
+  ;; EAX..EDI. Every address a fused body forms goes through
+  ;; $x87_pipeline_addr, whose `base` nibble is 8 for an absolute address and
+  ;; 0..7 for `R[base] + disp`; the packed operand word carries one such
+  ;; nibble per memory op. So the answer is pure nibble arithmetic over the
+  ;; word the FUSER wrote, and it lives here for the same reason
+  ;; $x87_fused_span does: it is the fuser's fact.
+  ;;
+  ;; Deliberately a SUPERSET for H449 -- its mode selects which of its four
+  ;; nibbles are used, and publishing a register the run does not read costs
+  ;; one store and cannot be wrong, while missing one is a stale global inside
+  ;; the call.
+  ;;
+  ;; H451 (island) returns 0: its bases are in the absorbed records, not in
+  ;; the packed word, and the installer walks those records anyway.
+  (func $x87_run_reads (param $fn i32) (param $op i32) (result i32)
+    (local $m i32)
+    (if (i32.eq (local.get $fn) (i32.const 449))
+      (then (return (i32.or
+        (i32.or (call $x87_nib_mask (local.get $op) (i32.const 0))
+                (call $x87_nib_mask (local.get $op) (i32.const 4)))
+        (i32.or (call $x87_nib_mask (local.get $op) (i32.const 8))
+                (call $x87_nib_mask (local.get $op) (i32.const 12)))))))
+    (if (i32.eq (local.get $fn) (i32.const 450))
+      (then (return (i32.or
+        (i32.or (call $x87_nib_mask (local.get $op) (i32.const 0))
+                (call $x87_nib_mask (local.get $op) (i32.const 4)))
+                (call $x87_nib_mask (local.get $op) (i32.const 8))))))
+    (if (i32.eq (local.get $fn) (i32.const 452))
+      (then (return (i32.or
+        (i32.or
+          (i32.or (call $x87_nib_mask (local.get $op) (i32.const 0))
+                  (call $x87_nib_mask (local.get $op) (i32.const 4)))
+          (i32.or (call $x87_nib_mask (local.get $op) (i32.const 8))
+                  (call $x87_nib_mask (local.get $op) (i32.const 12))))
+        (call $x87_nib_mask (local.get $op) (i32.const 16))))))
+    (if (i32.eq (local.get $fn) (i32.const 453))
+      (then (return (i32.or
+        (call $x87_nib_mask (local.get $op) (i32.const 0))
+        (call $x87_nib_mask (local.get $op) (i32.const 4))))))
+    (i32.const 0))
+
+  ;; One address nibble -> its register bit, or 0 for the absolute form.
+  (func $x87_nib_mask (param $op i32) (param $sh i32) (result i32)
+    (local $n i32)
+    (local.set $n (i32.and (i32.shr_u (local.get $op) (local.get $sh)) (i32.const 0xF)))
+    (if (i32.gt_u (local.get $n) (i32.const 7)) (then (return (i32.const 0))))
+    (i32.shl (i32.const 1) (local.get $n)))
+
+  ;; The island's per-op questions, asked at INSTALL time off the threaded
+  ;; record rather than at run time off the cursor. Two separate facts:
+  ;;
+  ;;   $x87_island_op_base  -- the register bit this op reads, 0 if none.
+  ;;   $x87_island_op_ok    -- may this op run with a PARTIAL register publish?
+  ;;
+  ;; The second is the conservative half and is why the island family needs a
+  ;; walk at all. $th_x87_island forwards whatever (group, reg, rm) it finds
+  ;; to $fpu_exec_mem / $fpu_exec_reg, and two of those outcomes are not safe
+  ;; for a native micro-op:
+  ;;
+  ;;   * an unimplemented form reaches $fpu_crash_op, which TRAPS -- and a
+  ;;     trap taken with only some registers published names a register file
+  ;;     that never existed. $tree_x87_mem_ok / $tree_x87_reg_ok are exactly
+  ;;     the "this form is implemented" predicates, reused rather than copied.
+  ;;   * FNSTSW AX (DF E0) WRITES EAX. The executor holds EAX in a local, so
+  ;;     the write would be dropped at the next publish. $tree_x87_reg_ok
+  ;;     declines group 7 outright, which covers it; this is noted because it
+  ;;     is the case that would be silently wrong rather than loud.
+  ;;
+  ;; A run holding either stays on the old TU_FALLBACK path, which publishes
+  ;; and reloads all eight and is correct for both.
+  (func $x87_island_op_base (param $fn i32) (param $op i32) (result i32)
+    (if (i32.eq (local.get $fn) (i32.const 190))
+      (then
+        ;; $x87_island_op_ok declines a base above 7, so this cannot be
+        ;; reached with one -- the guard is here anyway because a mask that
+        ;; names the wrong register is a stale global and not a crash.
+        (if (i32.gt_u (i32.and (local.get $op) (i32.const 0xF)) (i32.const 7))
+          (then (return (i32.const 0))))
+        (return (i32.shl (i32.const 1)
+                  (i32.and (local.get $op) (i32.const 0x7))))))
+    (i32.const 0))
+
+  (func $x87_island_op_ok (param $fn i32) (param $op i32) (result i32)
+    (if (i32.eq (local.get $fn) (i32.const 190))
+      (then
+        (if (i32.gt_u (i32.and (local.get $op) (i32.const 0xF)) (i32.const 7))
+          (then (return (i32.const 0))))))
+    (if (i32.eq (local.get $fn) (i32.const 188))
+      (then (return (call $tree_x87_mem_ok
+        (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+        (i32.and (local.get $op) (i32.const 0xF))))))
+    (if (i32.eq (local.get $fn) (i32.const 190))
+      (then (return (call $tree_x87_mem_ok
+        (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))
+        (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))))))
+    (if (i32.eq (local.get $fn) (i32.const 189))
+      (then (return (call $tree_x87_reg_ok
+        (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF))
+        (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
+        (i32.and (local.get $op) (i32.const 0xF))))))
+    (i32.const 0))
 
   ;; Does this block end in a conditional branch back to its own entry?
   (func $loop_is_selfloop (param $start_eip i32) (result i32)

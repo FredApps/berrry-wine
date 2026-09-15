@@ -239,6 +239,12 @@ async function main() {
       movelim: e.get_bx_pass_movelim(), immfold: e.get_bx_pass_immfold(),
       stlf: e.get_bx_pass_stlf(),
       x87: e.get_bx_x87_uops(),
+      // Round 15 (section 24). `x87run` is the cheap kind -- a FUSED run that
+      // went in as TU_X87RUN -- and is a subset of `x87`. `x87native` is the
+      // other round-15 path and is disjoint from both: a BARE H188-H190 that
+      // $tree_uop_classify turned into one of 07b's own native x87 micro-ops.
+      x87run: e.get_bx_x87run_uops(),
+      x87native: e.get_bx_x87_native_uops(),
       rmw: e.get_bx_pass_rmw(),
     };
     e.set_eip(addr);
@@ -256,6 +262,8 @@ async function main() {
       fallbacks: Number(e.get_block_exec_fallback_ops() - fbBefore),
       natives: Number(e.get_block_exec_native_ops() - natBefore),
       x87uops: Number(e.get_bx_x87_uops() - passBefore.x87),
+      x87run: Number(e.get_bx_x87run_uops() - passBefore.x87run),
+      x87native: Number(e.get_bx_x87_native_uops() - passBefore.x87native),
       pass: {
         split: Number(e.get_bx_pass_split() - passBefore.split),
         rle: Number(e.get_bx_pass_rle() - passBefore.rle),
@@ -1707,8 +1715,14 @@ async function main() {
       `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
   }
 
-  // (6) The control: with the fold DISARMED the same block still has to work,
-  //     because a bare 188/189/190 is a span-1 fallback on the generic path.
+  // (6) The control: with the fold DISARMED the same block still has to work.
+  //
+  //     ROUND 15 CHANGED WHAT THIS ASSERTS. A bare 188/189/190 used to be a
+  //     span-1 TU_FALLBACK, so the case checked `x87uops >= 4`. It now goes to
+  //     $tree_uop_classify first and comes back as one of 07b's own NATIVE x87
+  //     micro-ops, so the count that moves is `x87native` and `x87uops` stays
+  //     at zero -- which is the improvement, not a regression. The bare-op
+  //     fallback residue still exists and case (6b) is what exercises it.
   {
     e.set_x87_pipeline4_fusion(0);
     e.set_x87_affine_fusion(0);
@@ -1718,10 +1732,140 @@ async function main() {
        ...load32(ECX, EBX, 0xB0), ...aluRR(XOR, EDX, ECX)]);
     check('  it installed with the fold off too', r.on.installs >= 1,
       `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
-    check('  and every bare x87 op is its own fallback', r.on.x87uops >= 4,
-      `x87uops=${r.on.x87uops}`);
+    check('  and every bare x87 op is a NATIVE micro-op (round 15)',
+      r.on.x87native >= 4 && r.on.x87uops === 0,
+      `x87native=${r.on.x87native} x87uops=${r.on.x87uops}`);
+    check('  and they are inside opsNative, not opsFallback',
+      r.on.natives >= 4, `natives=${r.on.natives} fallbacks=${r.on.fallbacks}`);
+
+    // (6b) THE BARE-OP RESIDUE. FNSTSW AX is DF E0 -- group 7, which
+    //      $tree_x87_reg_ok declines outright because the *register* set
+    //      forbids anything that touches a general register or the lazy-flag
+    //      globals. Its own kind TU_X87_SW_AX exists and the classifier does
+    //      emit it, so this case's job is the OTHER half: FNSTENV (D9 /6), a
+    //      memory form $fpu_exec_mem does implement but whose (group, reg) the
+    //      native predicate accepts, versus FCOMIP (DF /6), which writes
+    //      EFLAGS and is declined -- so the block must still install with that
+    //      one arriving as a TU_FALLBACK and the answer must still match.
+    {
+      const FCOMIP = [0xDF, 0xF1];   // fcomip st, st(1)
+      const r2 = x87equiv('a declined bare x87 form stays on the fallback path',
+        [...load32(EAX, EBX, 0x10), ...fldM(EBX, 0x80), ...fldM(EBX, 0x84),
+         ...FCOMIP, ...aluRI(0, EAX, 5), ...load32(ECX, EBX, 0x14),
+         ...aluRR(XOR, EDX, ECX)]);
+      check('  the block with a declined x87 form still installed',
+        r2.on.installs >= 1,
+        `installs=${r2.on.installs} declWhy=${r2.on.declWhy}`);
+      check('  and that op is a fallback, not a native micro-op',
+        r2.on.x87uops >= 1, `x87uops=${r2.on.x87uops}`);
+    }
+
+    // (6c) FNSTSW AX as a bare op: the one x87 instruction that WRITES a
+    //      general register. It has its own micro-op kind (TU_X87_SW_AX),
+    //      which publishes EAX, calls, and reloads EAX alone -- so the
+    //      following integer code has to see the status word. The equiv check
+    //      compares EAX between the arms, which is exactly the question.
+    {
+      const r3 = x87equiv('fnstsw ax writes EAX from inside the executor',
+        [...fldM(EBX, 0x80), ...fcompM(EBX, 0x84), ...FNSTSW,
+         ...aluRI(4, EAX, 0x4700), ...load32(ECX, EBX, 0x10),
+         ...aluRR(ADD, ECX, EAX)]);
+      check('  the fnstsw block installed', r3.on.installs >= 1,
+        `installs=${r3.on.installs} declWhy=${r3.on.declWhy}`);
+    }
     e.set_x87_pipeline4_fusion(1);
     e.set_x87_affine_fusion(1);
+  }
+
+  // ------------------------------------------------------------------
+  // Round 15 (section 24): the FUSED run as a cheap native micro-op.
+  //
+  // Everything above ran through the round-12 TU_FALLBACK arm. These cases
+  // are about TU_X87RUN: the fused body called directly, with only the
+  // registers it reads published and none reloaded.
+  // ------------------------------------------------------------------
+  console.log('\n-- round 15: the fused x87 run as TU_X87RUN --');
+
+  // (8) BASE REGISTER READ. Every address in these bodies is `R[base] + disp`
+  //     and the base register lives in an executor LOCAL, not in the global
+  //     the body reads -- so if the publish mask were wrong the body would
+  //     form its addresses off a stale EBX and read the wrong floats. EBX is
+  //     written by the block BEFORE the fused run so a stale global is a
+  //     different number and not a coincidence.
+  {
+    const r = x87equiv('the fused run reads its base register through the mask',
+      [...load32(EAX, EBX, 0x10), ...aluRI(0, EBX, 0),
+       ...fldM(EBX, 0x80), ...faddM(EBX, 0x84), ...fmulM(EBX, 0x88),
+       ...fstpM(EBX, 0xB4),
+       ...load32(ECX, EBX, 0xB4), ...aluRR(XOR, EDX, ECX)]);
+    check('  the fused run installed', r.on.installs >= 1,
+      `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
+    check('  and it went in as the CHEAP kind', r.on.x87run >= 1,
+      `x87run=${r.on.x87run} x87uops=${r.on.x87uops}`);
+  }
+
+  // (9) The same block with a base register the block MOVES between the two
+  //     halves of the run. `add ebx, 0` above is a no-op on purpose; here the
+  //     integer code around the run really does change EBX, which is what
+  //     catches a mask computed once and published at the wrong time.
+  {
+    const r = x87equiv('a base register written before the run is the one used',
+      [...aluRI(0, EBX, 0), ...load32(EAX, EBX, 0x10),
+       ...fldM(EBX, 0x80), ...faddM(EBX, 0x84), ...fmulM(EBX, 0x8C),
+       ...fstpM(EBX, 0xB8), ...aluRR(ADD, EAX, EAX),
+       ...load32(ECX, EBX, 0xB8)]);
+    check('  it installed', r.on.installs >= 1,
+      `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
+  }
+
+  // (10) THE X87 STATE IS UNTOUCHED BY THE EXECUTOR. The stack, the tag word
+  //      and the status word are globals neither arm's executor models; the
+  //      fused body produces them through $fpu_* exactly as the threaded path
+  //      does. Read them back directly rather than inferring them from a
+  //      stored float: a fold that got TOP right and the tags wrong would
+  //      still store the right number.
+  {
+    const bytes = [...FNINIT, ...plantFloats,
+      ...load32(EAX, EBX, 0x10),
+      ...fldM(EBX, 0x80), ...faddM(EBX, 0x84), ...fmulM(EBX, 0x88),
+      ...fstpM(EBX, 0xBC),
+      ...fldM(EBX, 0x84), ...fldM(EBX, 0x88),
+      ...aluRR(XOR, ECX, EAX)];
+    const full = block(bytes);
+    const readState = () => ({
+      top: e.get_fpu_top ? e.get_fpu_top() : -1,
+      sw: e.get_fpu_sw ? e.get_fpu_sw() : -1,
+      tags: e.get_fpu_tags ? e.get_fpu_tags() : -1,
+    });
+    const off = arm(full, false); const offState = readState();
+    const on = arm(full, true);   const onState = readState();
+    check('the x87 stack/status/tag globals match the threaded arm',
+      offState.top === onState.top && offState.sw === onState.sw
+        && offState.tags === onState.tags,
+      `off top=${offState.top} sw=${offState.sw} tags=${offState.tags} / ` +
+      `on top=${onState.top} sw=${onState.sw} tags=${onState.tags}`);
+    check('  and the block executed natively for the integer half',
+      on.installs >= 1, `installs=${on.installs} declWhy=${on.declWhy}`);
+    check('  registers and memory still agree',
+      ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi']
+        .every(k => off[k] === on[k]) && off.data === on.data,
+      `\n         off ${hexRegs(off)}\n         on  ${hexRegs(on)}`);
+  }
+
+  // (11) THE ISLAND'S DECLINE. $th_x87_island forwards whatever (group, reg,
+  //      rm) it finds to $fpu_exec_reg, and FCOMIP writes EFLAGS -- a form
+  //      $tree_x87_reg_ok declines. So a fused island holding one must fall
+  //      back to the trampoline arm rather than take the partial publish, and
+  //      the two arms must still agree.
+  {
+    const FCOMIP = [0xDF, 0xF1];
+    const r = x87equiv('an island holding a declined form stays on the trampoline',
+      [...load32(EAX, EBX, 0x10),
+       ...fldM(EBX, 0x80), ...fldM(EBX, 0x84), ...FXCH1, ...FCOMIP,
+       ...fstpM(EBX, 0xC0),
+       ...aluRI(0, EAX, 3), ...load32(ECX, EBX, 0x14)]);
+    check('  the island block still installed', r.on.installs >= 1,
+      `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
   }
 
   // (7) A region member is still refused over an x87 op. $bx_region_collect

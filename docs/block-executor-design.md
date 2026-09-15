@@ -2452,3 +2452,248 @@ would be unresolvable, so this round is argued entirely from **counts**, which
 are load-immune: decodes, page compiles, installs, entries, native% and
 opsMulti% above. The one wall-clock number worth recording is that it never
 *got worse* in any window that reached its batch cap.
+
+## 24. Round 15: the fused x87 run as a cheap micro-op (2026-09-15)
+
+Round 12 gave the executor x87 by admitting the fused op as a **fallback**:
+spill all eight GPRs, point `$ip` at a pool copy of the inline words terminated
+by `$BX_RESUME_HANDLER`, `call_indirect` the real handler, let its
+`return_call $next` dispatch H459 back into the executor, reload all eight. It
+bought coverage and nothing else — `$nat` was deliberately not bumped for it,
+`$BX_C_X87FB` priced it at 96 (about six native uops), and section 17.5 turned
+the lever off because on the finished round-12 build it *lost* installs.
+
+Round 15 asks the other question: what if the x87 op is **cheap**? Not so the
+x87 gets faster — the fused body does exactly the same FPU work either way —
+but so the *integer* ops around it stop being priced out of the executor.
+
+### 24.1 What is new
+
+**`TU_X87RUN` (kind 60).** A fused x87 run — H449 pipeline4/short, H450 tree4,
+H451 island, H452 affine-prepare, H453 affine-finish — emitted as one micro-op
+whose arm calls the handler's **body** directly.
+
+**Why there is no resume trampoline, precisely.** The round was framed as "the
+x87 fused handlers do not set `$eip`". They do not, and that is true, but it is
+not the reason the trampoline exists. The trampoline exists because every one of
+those five handlers *ends in* `(return_call $next)`: calling the table entry
+from inside the executor would hand control to the interpreter's dispatch loop
+and never come back. So each was split in `src/07b-loop-match.wat`:
+
+```
+(func $th_x87_pipeline4 (param $op i32)         ;; the thread-table entry
+  (call $x87_pipeline4_body (local.get $op))
+  (return_call $next))
+(func $x87_pipeline4_body (param $op i32) ...)  ;; the body, callable
+```
+
+`$x87_run_body` then picks the body by `fn` with a compare chain — deliberately
+**not** `call_indirect` through the handler table, because the table holds the
+wrappers, which would put `$next` back.
+
+**Bare x87 ops go native.** H188/H189/H190 that no fuser absorbed used to become
+fallbacks. They now run `$tree_uop_classify` first and, when it accepts, emit
+07b's own native kinds `TU_X87_MEM`/`_MRO`/`_REG`/`_SW_AX` (50-53) and bump
+`$nat`. A form the classifier declines still falls to `TU_FALLBACK`.
+
+**Partial publish, no reload.** `TU_X87RUN` publishes only the GPRs the run
+*reads*, from an 8-bit mask the installer computes and stores in the `d` field
+(`$x87_run_reads`, plus a walk of the packed island record for H451). It
+reloads **nothing**. Three obligations, each checked rather than assumed:
+
+1. every address a fused body forms comes from `$x87_pipeline_addr` or, in the
+   island, one `$get_reg` — the walk collects exactly those nibbles;
+2. nothing else in those bodies reads the register file: `$fpu_exec_mem` /
+   `$fpu_exec_reg` do not, and `$gs32`'s `$invalidate_code_write` does not
+   (grepped);
+3. the only other consumer of a stale global is a crash report from
+   `$fpu_crash_op`, which the other four families never call and which
+   `$x87_island_op_ok` makes unreachable for H451.
+
+No fused body writes a general register, so the reload is genuinely empty.
+FNSTSW AX is the one x87 instruction that does, and it cannot be inside a run:
+four families are shape-matched to FLD/arith/FSTP, and in the fifth
+`$tree_x87_reg_ok` declines group 7 outright. It is reachable only as a *bare*
+op, where kind 53 publishes EAX, calls, and reloads EAX alone.
+
+Putting the mask in `d` is safe because `$bx_mem_shape` gives kind 60 shape 3
+("not modelled"), and `$bx_opt_pass` walk 1 leaves on shape 3 *before* it reads
+`d`; the arm clears `$wrote`, so the writeback `br_table` never sees it either.
+
+### 24.2 The decline this round had to fix first
+
+The first build declined every H449 mode-0 region with `declWhy 3`. Root cause,
+found rather than guessed: the five fusers run in fixed order in
+`src/07-decoder.wat` and **none of them skips ops an earlier one absorbed**, so
+`$x87_island_fuse_block` (last) re-fuses the *tail* of an H449 four-op region
+into an H451. The installer's absorbed-entry check demanded 188..190, saw 451,
+and declined the whole block. That means the commonest fold shape —
+FLD / arith / arith / FSTP — **had never installed at all since round 12**.
+
+Widening the check to accept 188..190 *or* 449..453 is sound: an outer fused
+body reads its inline stream by address word only (H449 takes
+`$tp+0/+12/+24/+36`, the address slot of each absorbed 12-byte record), so a
+rewritten handler or operand word in an absorbed entry is dead data.
+
+### 24.3 Cost model
+
+`$BX_C_X87RUN` = 16, against `$BX_C_X87FB` = 96 and `$BX_C_FALLBACK` = 20. A
+`TU_X87RUN` is *not* counted in `$nfb`, and it does not bump the benefit term
+either — the benefit of the round is the integer uops that now clear the bar,
+not the x87 op. The `cost` descriptor word is `$nat + $nx87run`: a `TU_X87RUN`
+never calls `$next`, so unlike a fallback it charges nothing through the parked
+`$steps` counter and has to be billed one step here.
+
+### 24.4 Microbench — and a correction to section 17.5's number
+
+`tools/bench-loops.js --toggle=block_exec_x87 --reps=9`, minima, one process,
+alternating arms, loadavg 30.
+
+**The three x87 shapes were measuring the wrong thing.** Each planted its float
+operand with `mov dword [esi+8],imm32` — and *that* form is itself a
+`TU_FALLBACK`. The counters say so plainly: 250,000 fallbacks in a
+250,000-iteration run. So section 17.5's **-62.0%** for `blk_x87mix` is mostly
+one spill-eight / `call_indirect` / reload-eight per iteration that has nothing
+to do with x87. The store is now `mov [esi+8],ebp` with `ebp` preloaded to 1.0f
+— same fact-killing store, same bytes, modelled kind — and the ON arm runs at
+`fallback=0`.
+
+| shape | ON min | OFF min | paired median | ON arm coverage |
+|---|---|---|---|---|
+| `blk_x87mix` (5 ops, fld/fstp pair) | 68.4ms | 53.5ms | **-39.2%** | 1.5M native, 0 fallback |
+| `blk_x87long` (14 ops, pair in a long integer body) | 161.7ms | 104.6ms | **-53.9%** | 4.0M native, 0 fallback |
+| `blk_x87sw` (7 ops, fld/fcomp/fnstsw ax) | 135.7ms | 116.1ms | **-34.2%** | 2.0M native, 0 fallback |
+
+Two things this does and does not say. It does say the x87 arm is still a
+**loss** on these shapes even at 100% native coverage — so the round did not
+make an x87-carrying block of this size worth executing. It does **not** isolate
+the price of an x87 micro-op, because this toggle's OFF arm runs **no descriptor
+at all** (round 11 declines any x87-carrying block outright), so the delta is
+the whole descriptor, entry and exit included, on blocks of 5 to 14 ops.
+
+**And it cannot price `TU_X87RUN` at all.** The new counter line says so
+directly:
+
+```
+x87 entries: 0 (cheap 0, trampoline 0)  bare-native 2
+```
+
+No fuser fires in the harness — these shapes are not pipeline candidates — so
+every x87 op in them is a *bare* one taking the new native path. The cheap fused
+kind is priced only by the app window below.
+
+### 24.5 quake2-gameplay (batches 4000-5000, thread 0, all arms `--x87-fusion`)
+
+| | noexec | off (`--block-exec`) | on (`+ --block-exec-x87`) |
+|---|---|---|---|
+| block decodes | 349,530 | 354,773 | **338,070** |
+| one-block installs | — | 7,169 | **10,094** (+40.8%) |
+| entries | — | 2,805,252 | 2,548,746 (-9.1%) |
+| ops native | — | 118,926,025 | 116,051,401 (-2.4%) |
+| ops fallback | — | 1,559,538 | 1,458,494 |
+| native% | — | 98.70 | 98.75 |
+| transfersSaved | — | 8,175,099 | 6,543,698 (-20.0%) |
+| region installs | — | 1,186 | 738 (-37.8%) |
+| opsMulti | — | 53,206,798 | 37,705,967 (-29.1%) |
+| entriesMulti | — | 1,280,443 | 745,156 |
+| x87 descriptor entries | — | 0 | 26,622 |
+| — of them cheap (`TU_X87RUN`) | — | 0 | **26,286 (98.7%)** |
+| — still on the trampoline | — | 0 | 336 |
+| bare x87 native micro-ops | — | 0 | 114,044 |
+
+Every count above reproduced **to the digit** across two independent runs of the
+script; the wall clock for the same arm ranged 35-154 batches/s on this box, so
+no timing claim is made from it.
+
+The reading is split, and both halves matter:
+
+- **The one-block installer gains, decisively**: 7,169 → 10,094 installs,
+  +40.8%. That is round 15's claim working — the H449 mode-0 blocks that section
+  24.2 had been silently declining now install, and the x87 op inside them no
+  longer prices its integer neighbours out. 98.7% of the fused runs take the
+  cheap kind. Decodes go *down*, so round 13's rule (an install must not cost a
+  decode) still holds.
+- **The multi-block region installer loses**: 1,186 → 738. Region *attempts* are
+  unchanged (36,110 vs 36,003) and the `classifyRefused` histogram is unchanged
+  to within a few percent (`unsafeOp` 7,511 vs 7,291), so this is not the x87
+  kind refusing to chain — it is churn in the region cost model, and it is why
+  `entries` and `transfersSaved` fall even though installs rise.
+
+So section 17.5's verdict ("the lever is a coverage loss") is **reversed for the
+one-block installer and still true for the region installer**, and net native
+ops are 2.4% *down*.
+
+### 24.6 mw3-gameplay (batches 920-1000, thread 0, all arms `--x87-fusion`)
+
+The first attempt at this window measured nothing: at loadavg 45 the 270s
+wall-clock guard stopped the `off` arm at batch 149 and the `on` arm at batch 6,
+so the handler-hist window never opened in either. `ONLY=` and `MS=`/`TO=` were
+added to `collect-round15-x87run.sh` for exactly that, and the re-take at
+`MS=1500` reached batch 1,000 in all three arms. **Check the `N batches in Ns`
+line of every arm before comparing any window on this box.**
+
+| | noexec | off | on |
+|---|---|---|---|
+| block decodes | 20,757 | 20,742 | 20,742 |
+| one-block installs | — | 261 | 265 (+4) |
+| entries | — | 892,905 | 892,913 (+8) |
+| ops native | — | 709,824,918 | 709,825,054 (+136) |
+| ops fallback | — | 119,918 | 119,918 (=) |
+| native% | — | 99.98 | 99.98 |
+| transfersSaved | — | 17,989,186 | 17,989,186 (=) |
+| region installs | — | 44 | 44 (=) |
+| opsMulti | — | 1,537,650 | 1,537,650 (=) |
+| x87 descriptor entries | — | 0 | 68 |
+| — of them cheap (`TU_X87RUN`) | — | 0 | 67 |
+| bare x87 native micro-ops | — | 0 | 246 |
+
+This is a **gain, and a negligible one**: +136 native ops against a 709.8M
+baseline is +0.00002%. Section 17.5 found mw3 "unchanged to the digit" because
+the x87 descriptors were built and never entered; round 15 does get them
+entered, and the answer is that there are only 68 of them. The x87 in mw3's hot
+code is not in blocks this installer takes, so section 4c's 39.5% is still not
+reachable through this lever — not because the lever loses, but because it
+barely applies.
+
+### 24.7 The picture is unchanged
+
+`docs/block-executor-design/collect-round15-png.sh`, two budgets per app, both
+arms carrying `--block-exec --x87-fusion` and differing only in
+`--block-exec-x87`:
+
+| app | budget | `tools/png-diff.js` |
+|---|---|---|
+| quake2 | 600 batches | 0 of 76,800 pixels differ, max channel delta 0 |
+| quake2 | 1,200 batches | 0 of 76,800 pixels differ, max channel delta 0 |
+| mw3 | 400 batches | 0 of 307,200 pixels differ, max channel delta 0 |
+| mw3 | 830 batches | 0 of 307,200 pixels differ, max channel delta 0 |
+
+Both arms of every pair reached the same batch (checked in the logs, because a
+wall-clock-truncated arm photographs a different moment and that reads as a
+rendering difference), and every capture has real content — 60 KB and 254-415 KB
+of PNG, not a flat surface.
+
+Byte-identical at both budgets on both apps is a stronger result than round 12's
+and round 14's sweeps got, and it is what the partial publish had to earn: the
+only reason it is allowed to skip seven of eight registers is that nothing in
+those bodies can observe the difference.
+
+### 24.8 Verdict
+
+The bar set for this round was: keep the default OFF unless `blk_x87mix` is
+non-negative **and** both windows gain. `blk_x87mix` is **-39.2%**, so the bar
+is not met and **`$block_exec_x87` stays 0**; the arm stays `--block-exec-x87`.
+
+For the record, the windows half of the bar is *nearly* met and is worth
+separating from the microbench half. quake2-gameplay no longer loses one-block
+installs — it gains 40.8% of them, reversing section 17.5 — but it loses 37.8%
+of its region installs and 2.4% of its native ops, so it is not a clean gain.
+mw3-gameplay gains, by 4 installs and 136 ops in 709.8M. Neither result argues
+for flipping the default; both argue that the mechanism is now correct and the
+thing standing between it and a win is the region cost model, not the x87
+plumbing.
+
+What is worth keeping regardless of that switch: the bare-op native path, the
+wrapper/body split (which is what makes any future cheap call possible), and
+above all the section-24.2 fix, which was a live coverage bug in the *default*
+path of the x87 lever rather than a round-15 feature.

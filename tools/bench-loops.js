@@ -1354,6 +1354,16 @@ SHAPES.blk_memalu8 = {
 // that plants the operand is inside the loop on purpose: it makes the block
 // self-contained (nothing depends on what the buffer happened to hold) and it
 // is a fact-killing store, which is what a real x87-carrying block has too.
+//
+// ROUND 15 CORRECTION -- the store was `mov dword [esi+8],imm32`, and THAT
+// form is itself a TU_FALLBACK. So every one of these three shapes was paying
+// one spill-eight / call_indirect / reload-eight per iteration that had
+// nothing to do with x87, and the fallback dominated the arm: the counters
+// read 250,000 fallbacks in a 250,000-iteration run. It is now
+// `mov [esi+8],ebp` with ebp preloaded to 1.0f -- same fact-killing store,
+// same bytes written, but a modelled kind, so the ON arm runs 100% native
+// (fallback=0) and the delta is the x87 handling and the descriptor, which is
+// what these shapes were supposed to be measuring.
 // Run as `--shapes=blk_x87mix --toggle=block_exec_x87`.
 SHAPES.blk_x87mix = {
   describe: '5-op block: an fld/fstp pair between integer ops',
@@ -1361,7 +1371,7 @@ SHAPES.blk_x87mix = {
   emit(a) {
     const n = 250000;
     const body = [
-      0xC7, 0x46, 0x08, 0x00, 0x00, 0x80, 0x3F,  // mov dword [esi+8],1.0f
+      0x89, 0x6E, 0x08,                           // mov [esi+8],ebp   (ebp = 1.0f)
       0xD9, 0x46, 0x08,                           // fld  dword [esi+8]
       0xD9, 0x5E, 0x10,                           // fstp dword [esi+0x10]
       0x03, 0x46, 0x00,                           // add eax,[esi+0]
@@ -1373,6 +1383,90 @@ SHAPES.blk_x87mix = {
       iters: n, bytesTouched: n * 16, code,
       setup(e) {
         e.set_esi(a.buf); e.set_eax(1); e.set_edx(2); e.set_ecx(n);
+        e.set_ebp(0x3F800000);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
+// --- ROUND 15: two more x87 shapes, for the TU_X87RUN price -----------------
+//
+// blk_x87mix prices the lever on a block that is MOSTLY x87 -- two x87 ops
+// against three integer ones. That is the shape the cost model is meant to
+// decline, so on its own it cannot say whether the cheap kind made the x87
+// micro-op cheaper; it can only say the whole block got faster or slower.
+// These two isolate the other two questions.
+//
+// blk_x87long: the same fld/fstp pair with a LONG integer body around it --
+// twelve integer ops to two x87 ones. This is §4c's actual claim (an x87 op
+// sitting inside integer code, not the other way round) and it is the block
+// the round is for: the integer half is what becomes reachable.
+// Run as `--shapes=blk_x87long --toggle=block_exec_x87`.
+SHAPES.blk_x87long = {
+  describe: '14-op block: one fld/fstp pair inside a long integer body',
+  real: 'an x87 op stranded in otherwise integer code (quake2 +0x10011cd1)',
+  emit(a) {
+    const n = 250000;
+    const body = [
+      0x89, 0x6E, 0x08,                           // mov [esi+8],ebp   (ebp = 1.0f)
+      0x03, 0x46, 0x00,                           // add eax,[esi+0]
+      0x33, 0x5E, 0x04,                           // xor ebx,[esi+4]
+      0x8B, 0x7E, 0x0C,                           // mov edi,[esi+0xc]
+      0x01, 0xF8,                                 // add eax,edi
+      0x8D, 0x5C, 0x1B, 0x03,                     // lea ebx,[ebx+ebx+3]
+      0xD9, 0x46, 0x08,                           // fld  dword [esi+8]
+      0xD9, 0x5E, 0x10,                           // fstp dword [esi+0x10]
+      0x31, 0xD8,                                 // xor eax,ebx
+      0x8B, 0x56, 0x14,                           // mov edx,[esi+0x14]
+      0x01, 0xC2,                                 // add edx,eax
+      0x8D, 0x7C, 0x3F, 0x01,                     // lea edi,[edi+edi+1]
+      0x29, 0xFA,                                 // sub edx,edi
+      0x21, 0xD3,                                 // and ebx,edx
+    ];
+    const bodyLen = body.length;
+    const code = body.concat([0xEB, 0x00], [0x49], [0x75], rel8(-(bodyLen + 5)));
+    return {
+      iters: n, bytesTouched: n * 24, code,
+      setup(e) {
+        e.set_esi(a.buf); e.set_eax(1); e.set_ebx(3); e.set_edx(2);
+        e.set_edi(7); e.set_ecx(n); e.set_ebp(0x3F800000);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
+// blk_x87sw: fld / fcomp / fnstsw ax / integer. FNSTSW AX is the one x87
+// instruction that WRITES a general register, so this is the shape where the
+// round-15 partial publish has to be wrong if it is wrong: the bare-op path
+// classifies it as TU_X87_SW_AX, which publishes EAX, calls, and reloads EAX
+// alone. Correctness is test-block-exec.js's job; this is here for the price,
+// because that kind pays two global accesses no other x87 kind does.
+// Run as `--shapes=blk_x87sw --toggle=block_exec_x87`.
+SHAPES.blk_x87sw = {
+  describe: '7-op block: fld / fcomp / fnstsw ax, then integer work',
+  real: 'the pre-P6 float compare: fcom / fnstsw ax / test ah,imm',
+  emit(a) {
+    const n = 250000;
+    const body = [
+      0x89, 0x6E, 0x08,                           // mov [esi+8],ebp   (ebp = 1.0f)
+      0xD9, 0x46, 0x08,                           // fld  dword [esi+8]
+      0xD8, 0x5E, 0x08,                           // fcomp dword [esi+8]
+      0xDF, 0xE0,                                 // fnstsw ax
+      0x25, 0x00, 0x47, 0x00, 0x00,               // and eax,0x4700
+      0x03, 0x5E, 0x00,                           // add ebx,[esi+0]
+      0x31, 0xC3,                                 // xor ebx,eax
+    ];
+    const bodyLen = body.length;
+    const code = body.concat([0xEB, 0x00], [0x49], [0x75], rel8(-(bodyLen + 5)));
+    return {
+      iters: n, bytesTouched: n * 12, code,
+      setup(e) {
+        e.set_esi(a.buf); e.set_eax(1); e.set_ebx(3); e.set_ecx(n);
+        e.set_ebp(0x3F800000);
       },
       checksum: regSnapshot,
       verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
@@ -2007,6 +2101,13 @@ function countOps(inst, shape, a, repIndex) {
     bxSplit: e.get_bx_pass_split ? Number(e.get_bx_pass_split()) : 0,
     bxRle: e.get_bx_pass_rle ? Number(e.get_bx_pass_rle()) : 0,
     bxMovelim: e.get_bx_pass_movelim ? Number(e.get_bx_pass_movelim()) : 0,
+    // Round 15 (section 24): x87 descriptor entries, split into the CHEAP
+    // fused kind (TU_X87RUN), the bare ops that became one of 07b's native
+    // x87 micro-ops, and -- by subtraction -- the residue still on the
+    // trampoline. Cumulative like the pass counters: they are install-time.
+    bxX87: e.get_bx_x87_uops ? Number(e.get_bx_x87_uops()) : 0,
+    bxX87Run: e.get_bx_x87run_uops ? Number(e.get_bx_x87run_uops()) : 0,
+    bxX87Native: e.get_bx_x87_native_uops ? Number(e.get_bx_x87_native_uops()) : 0,
     top: perHandler.slice(0, TOP_N), all: perHandler,
     lutRuns: e.get_loop_lut_runs ? e.get_loop_lut_runs() - lutRuns0 : 0,
     lutBytes: e.get_loop_lut_bytes ? e.get_loop_lut_bytes() - lutBytes0 : 0n,
@@ -2178,6 +2279,9 @@ async function main() {
           bxSplit: ops.bxSplit,
           bxRle: ops.bxRle,
           bxMovelim: ops.bxMovelim,
+          bxX87: ops.bxX87,
+          bxX87Run: ops.bxX87Run,
+          bxX87Native: ops.bxX87Native,
           topHandlers: ops.top,
           guestMBps: built.bytesTouched ? (built.bytesTouched / (min / 1e9)) / (1024 * 1024) : null,
         };
@@ -2243,6 +2347,11 @@ async function main() {
           `${fmt(arm.bxInstalls)}/${fmt(arm.bxNativeOps)}/${fmt(arm.bxFallbackOps)}  ` +
           `pass split/rle/movelim: ${fmt(arm.bxSplit)}/${fmt(arm.bxRle)}/${fmt(arm.bxMovelim)}` +
           (arm.bxInstalls ? '' : `  declWhy ${arm.bxDeclWhy}`));
+        if (arm.bxX87 || arm.bxX87Native) {
+          console.log(`    ${' '.repeat(16)} x87 entries: ${fmt(arm.bxX87)} ` +
+            `(cheap ${fmt(arm.bxX87Run)}, trampoline ${fmt(arm.bxX87 - arm.bxX87Run)})  ` +
+            `bare-native ${fmt(arm.bxX87Native)}`);
+        }
       }
       if (arm.lut16Matches || arm.lut16Runs) {
         console.log(`    ${' '.repeat(16)} RGB565 matches/runs/pixels: ` +

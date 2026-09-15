@@ -9362,6 +9362,16 @@ if (VERBOSE) {
           // x87 instructions -- a single `x87` here can stand for a run of
           // 255.
           'x87', e.get_bx_x87_uops ? String(e.get_bx_x87_uops()) : '-',
+          // Round 15 section 24. `x87run` is the share of `x87` that went in
+          // as the CHEAP kind (TU_X87RUN -- the fused body called directly,
+          // partial publish, no trampoline); `x87 - x87run` is the residue
+          // still paying one. `x87native` is separate and counts BARE
+          // H188-H190 that became one of 07b's own native x87 micro-ops
+          // instead of a fallback -- those are real saved dispatches and are
+          // inside `opsNative`, which the other two are not.
+          'x87run', e.get_bx_x87run_uops ? String(e.get_bx_x87run_uops()) : '-',
+          'x87native',
+            e.get_bx_x87_native_uops ? String(e.get_bx_x87_native_uops()) : '-',
           // Round 12 section 18: the cross-edge carry. `carryRle` is the share
           // of `rle` that the carry itself found -- a load killed inside its
           // own block is not one of these. `carryEdges` / `carryRefused` split
