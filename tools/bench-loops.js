@@ -1474,6 +1474,67 @@ SHAPES.blk_x87sw = {
   },
 };
 
+// --- ROUND 16: the x87 op as a REGION MEMBER --------------------------------
+//
+// Every shape above is one block, so none of them can price round 16 at all:
+// the question there is not what a TU_X87RUN costs (blk_x87long answers that)
+// but what happens to the REGION when a member holds one. Round 15 refused such
+// a member, which truncated the chain at that block and usually dropped the
+// closure under the two-block minimum -- so the off arm here is not "the same
+// region with a slower member", it is "several one-block descriptors and the
+// transfers between them", and the delta is the transfers the region removes
+// minus whatever the bigger descriptor costs.
+//
+// THREE blocks, with the fld/fstp pair in the MIDDLE one, because a two-block
+// loop degenerates: the x87 block would be the head or the tail and the
+// interesting case is a member with a member on each side of it. `jmp $+0` is
+// how a block is ended without changing the work, the same device the
+// region_blk* shapes use.
+//
+// Both arms carry --block-exec --block-exec-x87, so the one-block x87 family is
+// identical on both sides and the only variable is the round-16 sub-lever --
+// the microbench twin of collect-round16-png.sh's arms.
+// Run as `--shapes=region_x87 --toggle=block_exec_x87_regions`.
+SHAPES.region_x87 = {
+  describe: '3-block region, one fld/fstp pair in the middle member',
+  real: 'a hot loop whose body strands a scalar float op between integer blocks',
+  emit(a) {
+    const n = 250000;
+    // Block 1: integer only.
+    const b1 = [
+      0x03, 0x46, 0x00,                           // add eax,[esi+0]
+      0x33, 0x5E, 0x04,                           // xor ebx,[esi+4]
+      0x8D, 0x5C, 0x1B, 0x03,                     // lea ebx,[ebx+ebx+3]
+      0xEB, 0x00,                                 // jmp $+0   (ends the block)
+    ];
+    // Block 2: the x87 pair between integer ops. `mov [esi+8],ebp` plants a
+    // known float (ebp = 1.0f) so the run does not depend on what the buffer
+    // held, and it is a fact-killing store exactly as a real one would be.
+    const b2 = [
+      0x89, 0x6E, 0x08,                           // mov [esi+8],ebp
+      0xD9, 0x46, 0x08,                           // fld  dword [esi+8]
+      0xD9, 0x5E, 0x10,                           // fstp dword [esi+0x10]
+      0x31, 0xD8,                                 // xor eax,ebx
+      0x8B, 0x56, 0x14,                           // mov edx,[esi+0x14]
+      0x01, 0xC2,                                 // add edx,eax
+      0xEB, 0x00,                                 // jmp $+0
+    ];
+    // Block 3: the loop terminator, and the back edge that makes this a region
+    // rather than three descriptors in a row.
+    const back = b1.length + b2.length + 2;       // +2 for `dec ecx`
+    const code = b1.concat(b2, [0x49], [0x75], rel8(-(back + 2)));
+    return {
+      iters: n, bytesTouched: n * 24, code,
+      setup(e) {
+        e.set_esi(a.buf); e.set_eax(1); e.set_ebx(3); e.set_edx(2);
+        e.set_ecx(n); e.set_ebp(0x3F800000);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
 // blk_rmw8: six read-modify-write memory forms in a row. Until lever C each was
 // a whole-instruction FALLBACK — spill eight, call_indirect, reload eight — so
 // like blk_memalu8 this shape changes the KIND of work rather than its amount,
@@ -1875,6 +1936,22 @@ const TOGGLES = {
     e.set_block_exec(1);
     e.set_block_exec_min_uops(2);
     e.set_block_exec_x87(v);
+  },
+  // Round 16's sub-lever. Unlike block_exec_x87 above, BOTH arms here run with
+  // the one-block x87 family armed -- the off arm is round 15 exactly -- so the
+  // delta is the region emitter's handling of an x87 member and nothing else.
+  // min_uops is forced for the same reason block_exec_split forces it: at the
+  // default floor of 0 the one-block cost model declines every block in this
+  // file (declWhy 1), nothing installs in EITHER arm, and the run measures the
+  // plain interpreter against itself -- which is exactly what the first take of
+  // region_x87 did, reporting +17.2% on the minima while the medians went the
+  // other way and the counters read installs 0/0. Check `installs` is nonzero
+  // in both arms before reading any number off this toggle.
+  block_exec_x87_regions: (e, v) => {
+    e.set_block_exec(1);
+    e.set_block_exec_min_uops(2);
+    e.set_block_exec_x87(1);
+    e.set_block_exec_x87_regions(v);
   },
   block_exec_carry: (e, v) => {
     e.set_block_exec(1);

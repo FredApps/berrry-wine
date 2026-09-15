@@ -3046,6 +3046,38 @@
   (func (export "get_page_desc_chunk_grows") (result i32) (global.get $page_desc_chunk_grows))
   (func (export "get_page_desc_chunk_full")  (result i32) (global.get $page_desc_chunk_full))
   (func (export "get_block_exec_no_room")    (result i32) (global.get $bx_no_room))
+  ;; Round 16 (section 26). Discovery's view of the one-block family: how many
+  ;; successors a walk could not read back, how many descriptors it had to take
+  ;; back for want of a displaced-stream copy, and how many installs published
+  ;; WITHOUT that copy in the first place -- which is what makes the previous
+  ;; two happen.
+  (func (export "get_block_exec_walk_uncached") (result i32)
+    (global.get $bx_walk_uncached))
+  (func (export "get_block_exec_raw_wants") (result i32) (global.get $bx_raw_wants))
+  (func (export "get_block_exec_desc_nocopy") (result i32) (global.get $bx_desc_nocopy))
+  (func (export "get_block_exec_rg_nocopy") (result i32) (global.get $bx_rg_nocopy))
+  ;; Round 16: regions installed carrying at least one x87 member micro-op, and
+  ;; the region classifier's own x87 split.
+  (func (export "get_block_exec_rg_x87_regions") (result i32)
+    (global.get $bx_rg_x87_regions))
+  (func (export "get_block_exec_rg_x87run") (result i64) (global.get $bx_rg_x87run_uops))
+  (func (export "get_block_exec_rg_x87_native") (result i64)
+    (global.get $bx_rg_x87_native_uops))
+  (func (export "get_block_exec_rg_x87_fb") (result i64) (global.get $bx_rg_x87_fb_uops))
+  ;; Round 16: decline reason 3, split by site, plus the two measures of the
+  ;; seam between the families -- walks that arrived at a head the one-block
+  ;; installer already owned, and heads the memo permanently locked out.
+  (func (export "set_block_exec_x87_regions") (param $f i32)
+    (global.set $block_exec_x87_regions (local.get $f)))
+  (func (export "get_block_exec_x87_regions") (result i32)
+    (global.get $block_exec_x87_regions))
+  (func (export "get_block_exec_rg_nr_bytes") (result i32) (global.get $bx_rg_nr_bytes))
+  (func (export "get_block_exec_rg_nr_arena") (result i32) (global.get $bx_rg_nr_arena))
+  (func (export "get_block_exec_rg_nr_fit")   (result i32) (global.get $bx_rg_nr_fit))
+  (func (export "get_block_exec_rg_head_desc") (result i32) (global.get $bx_rg_head_desc))
+  (func (export "get_block_exec_rg_head_desc_fail") (result i32)
+    (global.get $bx_rg_head_desc_fail))
+  (func (export "get_block_exec_memo_locked") (result i32) (global.get $bx_memo_locked))
   (func (export "get_page_ft_chains")(result i32) (global.get $page_ft_chains))
   (func (export "get_page_ft_blocks")(result i32) (global.get $page_ft_blocks))
 

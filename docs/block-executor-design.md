@@ -2849,3 +2849,327 @@ What is worth keeping regardless of that switch: the bare-op native path, the
 wrapper/body split (which is what makes any future cheap call possible), and
 above all the section-24.2 fix, which was a live coverage bug in the *default*
 path of the x87 lever rather than a round-15 feature.
+
+## 26. Round 16: x87 as a REGION MEMBER op (2026-09-15)
+
+> Section 25 is deliberately absent here: it belongs to the concurrent round-16
+> work on the executor's body loop (the one-block leaf split) and is written in
+> that worktree. This section is numbered 26 so the two can land in either order
+> without renumbering each other.
+
+Round 15 taught the **one-block** installer the fused x87 run and 07b's bare
+native x87 kinds, and section 24.5 left two things on the table. One was a
+result: region installs on quake2-gameplay fell 1,186 → 738 with the region
+classifier untouched and `classifyRefused` unchanged — churn nobody had a
+mechanism for. The other was the scope: `$bx_rg_classify_block` still refused
+every x87 op as `$bx_op_unsafe`, so a hot loop whose body held one `fld`/`fstp`
+pair was **truncated at that member**, and a chain cut in the middle usually
+falls under the two-block minimum and is declined outright.
+
+This round does both: lift the region refusal (section 17.4's "smaller change"),
+and go find the churn with counters rather than theory.
+
+### 26.1 What is new
+
+**The classifier arm.** `$bx_rg_classify_block` learns the same
+`$x87_fused_span` arithmetic the one-block installer got in round 12, placed
+**above** the `$bx_op_unsafe` test for the same reason the one-block arm is:
+188..190 and 449..453 are "unsafe" to that predicate for two reasons that no
+longer hold (the fusers ran after the matcher; everything ≥418 is a fold unless
+stated). A bare 188..190 goes through `$tree_uop_classify` and becomes one of
+kinds 50..53; anything `$x87_fused_span` reports a span for becomes one
+`TU_X87RUN` (kind 60) when the absorbed walk says it is cheap, and one
+`TU_FALLBACK` otherwise. The gate is `$block_exec_x87`, exactly as the one-block
+path's is, and the classifier refuses precisely what the one-block classifier
+refuses — the FCOMIP-style forms `$tree_x87_reg_ok` declines go to the
+trampoline arm; FNSTSW AX is **not** among them, since it has its own kind
+(`TU_X87_SW_AX`) that publishes and reloads EAX alone.
+
+**The emitter.** There is nothing to add to it, and that is the point worth
+stating rather than assuming: a one-block descriptor **is** a one-member region
+to `$th_block_exec`, so a micro-op array that runs in one runs in the other by
+construction. The member is written with exactly the kinds, the `d` read mask,
+the pool copy of the inline words and the two-word `$BX_RESUME_HANDLER`
+trampoline the one-block path writes. The alias rules need no change either —
+`$bx_mem_shape` already gives 50..53 and 60 shape 3, "not understood", which
+kills every fact — but that is a property of a shared table rather than of
+anything this path does, so it is now **asserted in a test**
+(`test-block-exec.js`, "an x87 member kills the alias fact across it") instead
+of reasoned about.
+
+**Two hazards the one-block scan does not have**, both in the op-index
+bookkeeping:
+
+- the flag producer is **lifted out** of the body at op index `$tidx`, so scan
+  index `i` maps to op index `i` or `i+1`. A span is a run of consecutive op
+  indices, so a producer sitting strictly inside one would make `i += span` step
+  over it. Declined (`$bx_rg_nofit 6`) rather than repaired: a producer is a
+  cmp/test/sub and every absorbed entry is checked to be 188..190/449..453, so
+  the two cannot overlap in practice and this is a guard, not a path.
+- a member's `cost` word is an **op count**, not `$nat`. A fused run would
+  otherwise bill one threaded step per absorbed op, when the threaded arm bills
+  **one** — the absorbed ops are inline data and never dispatch. `$absorbed` is
+  subtracted at the record commit. Without that subtraction a 4-op fused run
+  looks four times as expensive as it is, and the cost model declines the very
+  regions this round exists to enable.
+
+**The cost model.** A member `TU_X87RUN` is billed at `$BX_C_X87RUN` = 16 ns and
+a member x87 fallback at `$BX_C_X87FB` = 96 ns — the same prices the one-block
+model uses, because it is the same executor. The region's entry cost and its
+per-transfer cost are untouched.
+
+**The sub-lever.** `$block_exec_x87_regions`, default **on**, meaningless
+without `$block_exec_x87`. `--no-block-exec-x87-regions` reproduces round 15
+exactly on this build, which is what every A/B below is taken against — an A/B
+against `--block-exec` alone would vary the one-block family too. Propagated
+through `INHERITED_WASM_GLOBALS`.
+
+### 26.2 The churn in section 24.5, found
+
+Six counters were added to name it, and the first hypothesis they killed was
+mine. The displaced-stream copy is skipped when the descriptor plus the copy
+would not fit 4,096 bytes; a skipped copy is invisible to every round-15 counter
+and costs the region family the whole block, because the walker meets a
+descriptor with no stream and takes it back. Round 15 installs 2,925 *more*
+one-block descriptors, and x87 ones are the biggest, so this looked certain.
+
+It is not what happens. `descNoCopy`, `regionNoCopy` and `rawWants` are **0 in
+every arm** — the copy always fits and the walker never had to reclaim a
+descriptor. The counters stay, because the channel is real and silent when it
+opens, but the regression is elsewhere.
+
+What the arithmetic actually says (quake2-gameplay, `off` → `r15`):
+
+| | off | r15 | Δ |
+|---|---|---|---|
+| walk attempts | 36,110 | 36,003 | **-107** |
+| region installs | 1,186 | 738 | **-448** |
+| declines | 34,924 | 35,265 | **+341** |
+| — `noRoom` | 2,714 | 2,863 | +149 |
+| — `shortChain` | 20,768 | 20,927 | +159 |
+| — `thrash` | 927 | 985 | +58 |
+| — `exitsFull` | 30 | 6 | -24 |
+| — `notWorthIt` | 10,429 | 10,428 | **-1** |
+| `nrChunkFull` (new split of `noRoom`) | 2,714 | 2,863 | **+149** |
+| `nrBytes` / `nrArena` (the other two sites) | 0 / 0 | 0 / 0 | = |
+| `memoLocked` (new) | 6,684 | 6,875 | +191 |
+| one-block installs | 7,169 | 10,094 | +2,925 |
+
+`installs + declines == attempts` in both arms, so the -448 decomposes exactly
+as (+341 declines) + (-107 attempts). Three findings:
+
+1. **It is not the cost model.** `notWorthIt` moves by **one**. Whatever round
+   15 did to the region family, it did not make regions look more expensive.
+   That rules out the reading section 24.5 offered ("churn in the region cost
+   model") and it is why none of the knobs — K, the thrash cap, the reserve —
+   is the lever.
+2. **One third of it is priced, exactly: the shared per-page descriptor chunk.**
+   Round 14 gave descriptors their own 16 KB per-page chunk, and **both families
+   draw on the same one**. Round 15 puts 2,925 extra one-block descriptors into
+   it, and the new split of decline reason 3 attributes the entire `noRoom`
+   delta to `nrChunkFull` (+149, with the other two sites flat at zero). So a
+   one-block x87 install can and does crowd out a region install on the same
+   page. This is a round-14 structural cost, not a round-15 bug.
+3. **The amplifier is the install rate, and it is 3.3%.** 1,186 installs out of
+   36,110 attempts. A decline mass that shifts by 1.0% moves installs by 38%.
+   No single large cause is needed to explain -448 and none exists: the residue
+   is +159 `shortChain` and +58 `thrash`, spread thin.
+
+The **entries** collapse is larger than the install collapse (`entriesMulti`
+1,280,443 → 745,156, -42%, against -38% of installs) and concentrates at the
+hot shape: N=13 regions go 453 → 189 installs and 325,612 → 106,038 entries.
+The mechanism that fits is the memo **ratchet** — `$bx_memo_note` stops asking
+about a head after `$bx_walk_memo_max` (3) consecutive failures, permanently, so
+a transient failure streak is permanent coverage loss and the heads lost are the
+hot ones rather than average ones. `memoLocked` rises by 191, the right order
+for the +217 of `shortChain` + `thrash`. **This one is consistent, not proved**:
+a per-head causal link would need a walk trace this build does not produce, and
+it is recorded as an open question rather than a result.
+
+**The fix taken is round 16 itself, plus honest pricing.** Lifting the refusal
+removes the truncation (`classifyRefused unsafeOp` 7,291 → **0**, the bucket
+disappears). The chunk-pressure third is **named and not fixed**: fixing it
+means changing how round 14 splits a page between the two families, which is a
+different round and a knob this one was told not to turn.
+
+### 26.3 quake2-gameplay (batches 4000-5000, thread 0, all arms `--x87-fusion`)
+
+`r15` is `--block-exec --block-exec-x87 --no-block-exec-x87-regions`; `on` adds
+the region path. All four arms reached batch 5,000.
+`docs/block-executor-design/collect-round16-x87regions.sh`.
+
+| | noexec | off (`--block-exec`) | r15 (`+ --block-exec-x87`) | on (round 16) |
+|---|---|---|---|---|
+| block decodes | 349,530 | 354,773 | 338,070 | 335,690 |
+| one-block installs | — | 7,169 | 10,094 | 10,087 |
+| entries | — | 2,805,252 | 2,548,746 | 2,621,096 |
+| **ops native** | — | **118,926,025** | 116,051,401 | **121,484,776** |
+| ops fallback | — | 1,559,538 | 1,458,494 | 1,786,204 |
+| native% | — | 98.70 | 98.75 | 98.55 |
+| transfersSaved | — | 8,175,099 | 6,543,698 | 7,650,164 |
+| **region installs** | — | **1,186** | 738 | **764** |
+| opsMulti | — | 53,206,798 | 37,705,967 | 44,516,190 |
+| entriesMulti | — | 1,280,443 | 745,156 | 845,574 |
+| walk attempts | — | 36,110 | 36,003 | 35,503 |
+| `classifyRefused unsafeOp` | — | 7,511 | 7,291 | **0** |
+| `classifyRefused termNotModelled` | — | 25,420 | 25,541 | 30,105 |
+| `classifyRefused noFlagProducer` | — | 12,048 | 12,347 | 13,180 |
+| `nrChunkFull` | — | 2,714 | 2,863 | 3,637 |
+| **regions holding ≥1 x87 member** | — | 0 | 0 | **274** |
+| — member `TU_X87RUN` micro-ops | — | 0 | 0 | 7,181 |
+| — member bare-native micro-ops | — | 0 | 0 | 4,720 |
+| — member x87 fallbacks | — | 0 | 0 | **0** |
+
+Every count reproduced to the digit across runs. The box ran at loadavg 3-16
+during the sweep and the wall clocks (13.9 s `off`, 15.3 s `on` for 5,000
+batches) are **not quoted as a result**.
+
+The reading:
+
+- **Against round 15, round 16 wins on every axis it was built for.** Region
+  installs 738 → 764, `opsMulti` 37.7M → 44.5M (+18.1%), `entriesMulti` 745K →
+  846K, ops native 116.1M → 121.5M (+4.7%). 274 regions now hold x87, carrying
+  7,181 fused runs and 4,720 bare native micro-ops — and **not one member x87
+  fallback**, so every x87 op that reached a member took a cheap or a native
+  kind.
+- **Against the x87-off arm, the result is split.** Ops native 121.5M **exceeds**
+  `off`'s 118.9M (+2.2%) — the whole point, since round 15 was 2.4% *down* — but
+  region installs are still 764 against 1,186.
+- **Why installs stay down is now visible rather than mysterious.** The x87
+  refusal bucket is gone (7,291 → 0), and the refusals reappear *later in the
+  chain*: `termNotModelled` +4,564 and `noFlagProducer` +833. A block that used
+  to die at its x87 op now gets as far as its terminator and dies there instead.
+  Meanwhile `nrChunkFull` climbs to 3,637, because a region descriptor holding
+  x87 members is bigger and the page chunk is the same size.
+- Work moved from regions to one-block descriptors and the **total** went up:
+  `ops1` 67.3M (`off`) → 78.8M (`on`) while `opsMulti` fell 53.2M → 44.5M.
+
+### 26.4 mw3-gameplay (batches 920-1000, thread 0, all arms `--x87-fusion`)
+
+| | noexec | off | r15 | on (round 16) |
+|---|---|---|---|---|
+| block decodes | 20,757 | 20,742 | 20,742 | 20,742 |
+| one-block installs | — | 261 | 265 | 265 |
+| entries | — | 892,905 | 892,913 | 892,913 |
+| ops native | — | 709,824,918 | 709,825,054 | 709,825,054 |
+| ops fallback | — | 119,918 | 119,918 | 119,918 |
+| region installs | — | 44 | 44 | 44 |
+| opsMulti | — | 1,537,650 | 1,537,650 | 1,537,650 |
+| entriesMulti | — | 72,890 | 72,890 | 72,890 |
+| `classifyRefused unsafeOp` | — | 0 | 0 | 0 |
+| regions holding ≥1 x87 member | — | 0 | 0 | **0** |
+
+**`on` is byte-identical to `r15` on every counter in the run**, which makes mw3
+a clean null control rather than a second data point. The reason is visible in
+one row: `classifyRefused unsafeOp` is **0 in every arm**, including `off`. The
+region walker in this window never met an x87 op at all, so there was no refusal
+to lift and round 16 has nothing to do here. This is the same finding section
+24.6 reached about the one-block path from the other direction — mw3's x87 is
+not in the code these installers take — and it is why a two-window bar cannot be
+met by improving the mechanism.
+
+### 26.5 Microbench
+
+A new shape, `region_x87` in `tools/bench-loops.js`: a **3-block** loop with one
+`fld`/`fstp` pair in the *middle* member, because a two-block loop degenerates —
+the x87 block would be the head or the tail, and the case worth pricing is a
+member with a member on each side of it. Both arms carry
+`--block-exec --block-exec-x87`, so the one-block family is identical and the
+only variable is the round-16 sub-lever: the microbench twin of
+`collect-round16-png.sh`'s arms.
+
+`node tools/bench-loops.js --shapes=region_x87 --toggle=block_exec_x87_regions --reps=9`,
+250,000 iterations, alternating arms in one process:
+
+| | on | off (round 15) |
+|---|---|---|
+| **block entries / iter** | **2.00** | 4.00 |
+| **handler ops / iter** | **16.01** | 21.00 |
+| one-block installs | 3 | 6 |
+| H458 (executor entries) | 250,256 | 500,000 |
+| minima | 165.0 ms | 211.7 ms |
+| paired medians | — | +12.3% for `on` |
+
+**Read the first two rows, not the last two.** The box was at loadavg 35-44 for
+this run, so the time columns are reported only because their sign agrees; the
+block-entry and op counts are deterministic and load-immune, and they say
+exactly what the round claims: the region absorbs one block transfer per
+iteration (4.00 → 2.00 entries) and 5 of 21 handler ops per iteration, because
+the three blocks become one descriptor instead of two descriptors and a gap.
+
+**A correction worth recording, because it nearly shipped as a result.** The
+first take of this shape did not force `set_block_exec_min_uops(2)` in the
+toggle. At the default floor of 0 the one-block cost model declines every
+synthetic block in that file (`declWhy 1`), **nothing installed in either arm**,
+and the run compared the plain interpreter against itself — while still printing
+"+17.2%" off the minima, with the medians pointing the other way and
+`installs 0/0` sitting two lines below it. The toggle now forces the floor, the
+same way `block_exec_split` does and for the same reason. Check `installs` is
+nonzero in both arms before reading any number off a `block_exec_*` toggle.
+
+### 26.6 The picture is unchanged
+
+`docs/block-executor-design/collect-round16-png.sh`, two budgets per app. Both
+arms carry `--x87-fusion --block-exec --block-exec-x87` and differ only in
+`--no-block-exec-x87-regions`, so anything that moved would be the region
+emitter's publish mask or its alias rules and nothing else.
+
+| app | budget | both arms reached | `tools/png-diff.js` |
+|---|---|---|---|
+| quake2 | 600 batches | yes | 0 of 76,800 pixels differ, max channel delta 0 |
+| quake2 | 1,200 batches | yes | 0 of 76,800 pixels differ, max channel delta 0 |
+| mw3 | 400 batches | yes | 0 of 307,200 pixels differ, max channel delta 0 |
+| mw3 | 830 batches | yes | 0 of 307,200 pixels differ, max channel delta 0 |
+
+Both arms of every pair reached the same batch (checked in the `N batches in Ns`
+line of each log, because a wall-clock-truncated arm photographs a different
+moment and that reads as a rendering difference), and every capture has real
+content -- 61 KB and 254-415 KB of PNG, not a flat surface.
+
+Byte-identical at both budgets on both apps is what the partial publish had to
+earn for the member path as well as the one-block path: the only reason a
+`TU_X87RUN` member is allowed to publish five registers out of eight is that
+nothing in those bodies can observe the difference -- and a region member has
+more that could, because the blocks around it keep running natively afterwards
+instead of returning to the interpreter.
+
+### 26.7 Verdict
+
+The bar set for this round was: **with x87 on, region installs ≥ the non-x87 arm
+AND ops native ≥ the non-x87 arm on quake2-gameplay.**
+
+| | `off` (non-x87) | `on` (round 16) | met? |
+|---|---|---|---|
+| region installs | 1,186 | 764 | **no** (-35.6%) |
+| ops native | 118,926,025 | 121,484,776 | **yes** (+2.2%) |
+
+**The bar is not met, so `$block_exec_x87` stays 0 and no default is flipped.**
+The honest summary is that round 16 fixed the half of section 24.5 it set out to
+fix and did not reach parity on the other half:
+
+- Against **round 15** — the arm that actually regressed — round 16 gains on
+  every axis: region installs +3.5%, `opsMulti` +18.1%, `entriesMulti` +13.5%,
+  ops native +4.7%. The x87 refusal bucket in the region classifier is gone
+  entirely and no x87 op that reaches a member falls back.
+- Against the **x87-off** arm, native ops now *exceed* the baseline (round 15
+  was 2.4% down) but region installs do not recover. The reason is measured
+  rather than guessed: the refusals move down the chain to `termNotModelled` /
+  `noFlagProducer`, and `nrChunkFull` rises to 3,637 because a descriptor with
+  x87 members is bigger and round 14's per-page descriptor chunk is not.
+- mw3-gameplay is a **null**, not a second window: its region walker never meets
+  an x87 op in this window in any arm.
+
+**What is unproven, stated as such:**
+
+1. The memo ratchet's role in the residual +159 `shortChain` / +58 `thrash` of
+   section 26.2 is *consistent* with `memoLocked` +191 and is not proved. A
+   per-head walk trace would settle it; this build does not produce one, and
+   `$bx_walk_memo_max` has no setter, so even an A/B on the ratchet depth would
+   need a new export.
+2. The chunk-pressure third is priced and **not fixed**. Whether giving the two
+   families separate reserves in the page chunk would recover the 422 installs
+   is untested — it is a round-14 change and a knob this round was told not to
+   turn.
+3. No wall-clock claim is made anywhere in this section. The box ran at loadavg
+   3-44 across these sweeps; every number quoted as a result is a deterministic
+   counter that reproduced to the digit.

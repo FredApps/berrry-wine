@@ -294,6 +294,11 @@ const NO_BLOCK_EXEC_SPLIT = hasFlag('no-block-exec-split');
 // Round 12 lever A. OFF by default -- see section 17.5 of
 // docs/block-executor-design.md; ONE is the meaningful value here.
 const BLOCK_EXEC_X87 = hasFlag('block-exec-x87');
+// Round 16 (section 26): x87 inside a REGION MEMBER. A sub-lever of the one
+// above and ON whenever it is, so ZERO is the meaningful value here --
+// --no-block-exec-x87-regions restores round 15's one-block-only behaviour and
+// is the A/B partner every section-26 table is taken against.
+const NO_BLOCK_EXEC_X87_REGIONS = hasFlag('no-block-exec-x87-regions');
 const NO_BLOCK_EXEC_CARRY = hasFlag('no-block-exec-carry');
 const NO_BLOCK_EXEC_RMW = hasFlag('no-block-exec-rmw');
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
@@ -4067,6 +4072,7 @@ async function main() {
   if (BLOCK_EXEC_WALK_BUDGET) inheritWasm('set_block_exec_walk_budget', BLOCK_EXEC_WALK_BUDGET);
   if (NO_BLOCK_EXEC_SPLIT) inheritWasm('set_block_exec_split', 0);
   if (BLOCK_EXEC_X87) inheritWasm('set_block_exec_x87', 1);
+  if (NO_BLOCK_EXEC_X87_REGIONS) inheritWasm('set_block_exec_x87_regions', 0);
   if (NO_BLOCK_EXEC_CARRY) inheritWasm('set_block_exec_carry', 0);
   if (NO_BLOCK_EXEC_RMW) inheritWasm('set_block_exec_rmw', 0);
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
@@ -4994,6 +5000,9 @@ async function main() {
   }
   if (BLOCK_EXEC_X87 && instance.exports.set_block_exec_x87) {
     instance.exports.set_block_exec_x87(1);
+  }
+  if (NO_BLOCK_EXEC_X87_REGIONS && instance.exports.set_block_exec_x87_regions) {
+    instance.exports.set_block_exec_x87_regions(0);
   }
   if (NO_BLOCK_EXEC_CARRY && instance.exports.set_block_exec_carry) {
     instance.exports.set_block_exec_carry(0);
@@ -9440,6 +9449,38 @@ if (VERBOSE) {
           'uopsVisited', String(uop),
           'blocksPerInstall', ins ? (Number(blk) / ins).toFixed(1) : '-',
           'uopsPerInstall', ins ? (Number(uop) / ins).toFixed(1) : '-');
+      }
+      // Round 16 (section 26). The seam between the two families. A walk that
+      // cannot READ a successor turns it into an exit (`uncached`); when the
+      // reason is a one-block descriptor standing there with no copy of the
+      // stream it displaced, the walk takes the descriptor back (`rawWants`)
+      // and the whole attempt fails. `descNoCopy` is how many one-block
+      // installs published without that copy, which is the cause of both --
+      // and it rises whenever a one-block lever makes descriptors bigger.
+      if (e.get_block_exec_walk_uncached) {
+        console.log(`block-exec-regions: ${label} seam`,
+          'uncached', e.get_block_exec_walk_uncached(),
+          'rawWants', e.get_block_exec_raw_wants(),
+          'descNoCopy', e.get_block_exec_desc_nocopy(),
+          'regionNoCopy', e.get_block_exec_rg_nocopy(),
+          'noRoom', e.get_block_exec_no_room(),
+          'nrBytes', e.get_block_exec_rg_nr_bytes ? e.get_block_exec_rg_nr_bytes() : '-',
+          'nrArena', e.get_block_exec_rg_nr_arena ? e.get_block_exec_rg_nr_arena() : '-',
+          'nrChunkFull', e.get_block_exec_rg_nr_fit ? e.get_block_exec_rg_nr_fit() : '-',
+          'headWasDesc', e.get_block_exec_rg_head_desc
+            ? e.get_block_exec_rg_head_desc() : '-',
+          'headWasDescFailed', e.get_block_exec_rg_head_desc_fail
+            ? e.get_block_exec_rg_head_desc_fail() : '-',
+          'memoLocked', e.get_block_exec_memo_locked
+            ? e.get_block_exec_memo_locked() : '-',
+          'x87Regions', e.get_block_exec_rg_x87_regions
+            ? e.get_block_exec_rg_x87_regions() : '-',
+          'rgX87run', e.get_block_exec_rg_x87run
+            ? String(e.get_block_exec_rg_x87run()) : '-',
+          'rgX87native', e.get_block_exec_rg_x87_native
+            ? String(e.get_block_exec_rg_x87_native()) : '-',
+          'rgX87fb', e.get_block_exec_rg_x87_fb
+            ? String(e.get_block_exec_rg_x87_fb()) : '-');
       }
       if (e.get_block_exec_region_why_n) {
         const WHY = [null, 'notWorthIt', 'exitsFull', 'noRoom', 'thrash',

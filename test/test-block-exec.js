@@ -1868,12 +1868,16 @@ async function main() {
       `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
   }
 
-  // (7) A region member is still refused over an x87 op. $bx_region_collect
-  //     runs BEFORE the fusers, so the region classifier sees raw 188..190 and
-  //     the widening above deliberately does not reach it. Asserted so the
-  //     scope of round 12 is a decision on the record rather than an omission.
+  // (7) A region whose member holds an x87 op. Round 15 REFUSED this -- the
+  //     region classifier saw raw 188..190 and called $bx_op_unsafe -- and the
+  //     case asserted only that the two arms still agreed. Round 16 lifted the
+  //     refusal (section 26), so the member is now emitted with the same kinds
+  //     the one-block path uses and this case is the agreement half of that;
+  //     the kinds themselves are pinned in the round-16 section at the end of
+  //     this file. `mayDecline` stays, because whether a region installs here
+  //     is a cost-model decision, not the property under test.
   {
-    const r = region('a region declines a member holding x87', asm([
+    const r = region('a region whose member holds x87 agrees with threaded', asm([
       [...FNINIT, ...plantFloats, ...movRI(ECX, 4), ...movRI(EAX, 0)],
       { label: 'top' },
       [...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EAX, EDX),
@@ -2000,6 +2004,198 @@ async function main() {
       `the armed arm recompiled the page, so the overflow dropped it`);
 
     e.set_block_exec(0);
+  }
+
+  // ======================================================================
+  // ROUND 16 -- x87 AS A REGION MEMBER OP.
+  // docs/block-executor-design.md section 26.
+  //
+  // Round 15 taught the ONE-BLOCK installer the fused x87 run (TU_X87RUN) and
+  // 07b's bare native kinds (50..53). The region classifier kept refusing all
+  // of it as $bx_op_unsafe, so a hot loop whose body held one fld/fstp pair was
+  // truncated at that member and usually fell under the two-block minimum.
+  // Round 16 gives $bx_rg_classify_block the same $x87_fused_span arithmetic.
+  //
+  // The claim under test is NOT "x87 works in the executor" -- section 24
+  // already established that for the one-block family. It is the narrower
+  // and more falsifiable one: a region member is emitted with the SAME kinds
+  // and the SAME publish mask, because a one-block descriptor is a one-member
+  // region to $th_block_exec and the micro-op arrays are interchangeable by
+  // construction. So each case below pins the KIND the member went in as, via
+  // the per-family counters ($bx_rg_x87run_uops and friends), and not merely
+  // that the two arms agreed -- two identical threaded compilations always
+  // agree, and a case that only checks agreement would pass with the whole
+  // round 16 arm deleted.
+  //
+  // The alias case is the one the design asks for explicitly rather than
+  // assumes: $bx_mem_shape gives kinds 50..53 and 60 shape 3 ("not understood"),
+  // which kills every fact -- but that is a property of a shared table, not of
+  // anything the region path does, so it is asserted here rather than reasoned
+  // about.
+  // ======================================================================
+  console.log('\n-- round 16: x87 inside a region member --');
+  {
+    e.set_x87_pipeline4_fusion(1);
+    e.set_x87_affine_fusion(1);
+    e.set_block_exec_x87(1);
+    check('  region x87 is armed by default', e.get_block_exec_x87_regions() === 1,
+      `x87Regions lever = ${e.get_block_exec_x87_regions()}`);
+
+    // Snapshot every round-16 family counter around one region() call. The
+    // uop counters are i64 exports, so they arrive as BigInt.
+    const rgX87 = () => ({
+      regions: e.get_block_exec_rg_x87_regions(),
+      run: Number(e.get_block_exec_rg_x87run()),
+      native: Number(e.get_block_exec_rg_x87_native()),
+      fb: Number(e.get_block_exec_rg_x87_fb()),
+    });
+    const x87region = (name, bytes, opts) => {
+      const before = rgX87();
+      const r = region(name, bytes, null, opts);
+      const after = rgX87();
+      r.rg = {
+        regions: after.regions - before.regions,
+        run: after.run - before.run,
+        native: after.native - before.native,
+        fb: after.fb - before.fb,
+      };
+      return r;
+    };
+
+    // The loop body every case below varies. Six iterations because discovery
+    // is hotness-gated (K), and the back edge is internal so the closure is a
+    // real multi-block region and not two one-block descriptors in a row.
+    const loop = body => asm([
+      [...FNINIT, ...plantFloats, ...movRI(ECX, 6), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EAX, EDX)],
+      { j: 'jmp', to: 'mid' },
+      { label: 'mid' },
+      [...body, ...decR(ECX), ...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JNZ, to: 'top' },
+      JOIN,
+    ]);
+
+    // (1) THE FUSED RUN INSIDE A MEMBER. fld/fadd/fmul/fstp over one base
+    //     register is the shape $x87_fused_span reports a span for, and the
+    //     member must carry it as ONE micro-op of the cheap kind -- not as
+    //     four, and not as a trampoline fallback. `run` moving is the whole
+    //     assertion; `fb` staying put is what separates "it went in cheap"
+    //     from "it went in at all".
+    {
+      const r = x87region('a fused x87 run inside a region member',
+        loop([...fldM(EBX, 0x80), ...faddM(EBX, 0x84), ...fmulM(EBX, 0x88),
+              ...fstpM(EBX, 0xB0)]));
+      check('  the member went in as the CHEAP fused kind (TU_X87RUN)',
+        r.rg.run >= 1 && r.rg.fb === 0,
+        `rgX87run=${r.rg.run} rgX87fb=${r.rg.fb} rgX87native=${r.rg.native}`);
+      check('  and the region was counted as holding x87',
+        r.rg.regions >= 1, `x87Regions=${r.rg.regions} installs=${r.installs}`);
+    }
+
+    // (2) BARE x87 INSIDE A MEMBER. With both fusers disarmed the same four
+    //     instructions reach the classifier as raw 188..190, go through
+    //     $tree_uop_classify, and come back as 07b's own NATIVE kinds -- so
+    //     `native` moves and `run` does not. This is the round-15 one-block
+    //     case (6) reproduced on the region path, and it is a different code
+    //     path in $bx_rg_classify_block, not the same one with a flag off.
+    {
+      e.set_x87_pipeline4_fusion(0);
+      e.set_x87_affine_fusion(0);
+      const r = x87region('bare x87 ops inside a region member',
+        loop([...fldM(EBX, 0x80), ...faddM(EBX, 0x84), ...fmulM(EBX, 0x88),
+              ...fstpM(EBX, 0xB4)]));
+      check('  every bare op is a NATIVE member micro-op, none a fallback',
+        r.rg.native >= 4 && r.rg.fb === 0,
+        `rgX87native=${r.rg.native} rgX87fb=${r.rg.fb} rgX87run=${r.rg.run}`);
+      e.set_x87_pipeline4_fusion(1);
+      e.set_x87_affine_fusion(1);
+    }
+
+    // (3) THE FACT IS KILLED ACROSS THE x87 MEMBER. Two loads of one absolute
+    //     address with an x87 store between them. $bx_mem_shape must give the
+    //     x87 micro-op shape 3, so the redundant-load elimination (`rle`)
+    //     cannot fire across it -- if it did, the second load would be
+    //     rewritten to the first one's value and the block would read a float
+    //     it never stored. Asserted, because the design only says the shared
+    //     table "already treats these as fact-killing".
+    {
+      const r = x87region('an x87 member kills the alias fact across it', asm([
+        [...FNINIT, ...plantFloats, ...movRI(ECX, 6), ...movRI(EAX, 0)],
+        { label: 'top' },
+        [...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EAX, EDX)],
+        { j: 'jmp', to: 'mid' },
+        { label: 'mid' },
+        [...load32abs(ESI, DATA + 0x38),
+         ...fldM(EBX, 0x80), ...faddM(EBX, 0x84), ...fmulM(EBX, 0x88),
+         ...fstpM(EBX, 0x38),
+         ...load32abs(EDI, DATA + 0x38), ...aluRR(ADD, ESI, EDI),
+         ...decR(ECX), ...aluRI(7, ECX, 0)],
+        { j: 'jcc', cc: JNZ, to: 'top' },
+        JOIN,
+      ]));
+      check('  the fact was killed (rle stayed at zero)', r.on.pass.rle === 0,
+        `rle=${r.on.pass.rle}`);
+      check('  and the x87 still went in as a member micro-op',
+        r.rg.run + r.rg.native + r.rg.fb >= 1,
+        `run=${r.rg.run} native=${r.rg.native} fb=${r.rg.fb}`);
+    }
+
+    // (4) THE REFUSAL. The region classifier must refuse exactly what the
+    //     one-block classifier refuses and nothing more, so both halves of
+    //     that boundary are pinned:
+    //
+    //      * FCOMIP (DF /6) writes EFLAGS, which $tree_x87_reg_ok declines --
+    //        it has no native kind, so it has to arrive as a member FALLBACK
+    //        (the spill/call_indirect/reload trampoline), never silently as a
+    //        native one. A native kind here would run the op without
+    //        publishing the lazy-flag globals it writes.
+    //      * FNSTSW AX (DF E0) is group 7 and writes a GENERAL register, but
+    //        it is NOT refused: it has its own kind, TU_X87_SW_AX, which
+    //        publishes and reloads EAX alone. The one-block path emits it
+    //        (round 15 case 6c) so the member path must too, and the arms have
+    //        to agree on EAX -- otherwise the integer code after it branches
+    //        on a status word the executor never wrote.
+    {
+      const FCOMIP = [0xDF, 0xF1];
+      const r = x87region('a declined x87 form inside a member takes the trampoline',
+        loop([...fldM(EBX, 0x80), ...fldM(EBX, 0x84), ...FCOMIP,
+              ...fstpM(EBX, 0xB8)]), { mayDecline: true });
+      check('  the declined form is a member FALLBACK, not a native kind',
+        r.rg.fb >= 1, `rgX87fb=${r.rg.fb} rgX87run=${r.rg.run} ` +
+        `rgX87native=${r.rg.native} installs=${r.installs}`);
+
+      const r2 = x87region('fnstsw ax writes EAX from inside a region member',
+        loop([...fldM(EBX, 0x80), ...fcompM(EBX, 0x84), ...FNSTSW,
+              ...aluRI(4, EAX, 0x4700)]));
+      check('  and it went in as a member micro-op rather than declining',
+        r2.rg.run + r2.rg.native + r2.rg.fb >= 1,
+        `run=${r2.rg.run} native=${r2.rg.native} fb=${r2.rg.fb}`);
+    }
+
+    // (5) THE SUB-LEVER. --no-block-exec-x87-regions puts the region path back
+    //     on round-15 behaviour with the one-block path untouched, which is
+    //     what every A/B in section 26 is taken against. Without this case the
+    //     flag could be dead and the measurement would be comparing a build
+    //     with itself.
+    {
+      e.set_block_exec_x87_regions(0);
+      const r = x87region('with the sub-lever off a member holding x87 is refused',
+        loop([...fldM(EBX, 0x80), ...faddM(EBX, 0x84), ...fmulM(EBX, 0x88),
+              ...fstpM(EBX, 0xBC)]), { mayDecline: true });
+      check('  no x87 reached any region member',
+        r.rg.run === 0 && r.rg.native === 0 && r.rg.fb === 0
+          && r.rg.regions === 0,
+        `run=${r.rg.run} native=${r.rg.native} fb=${r.rg.fb} ` +
+        `regions=${r.rg.regions}`);
+      e.set_block_exec_x87_regions(1);
+    }
+
+    e.set_x87_pipeline4_fusion(0);
+    e.set_x87_affine_fusion(0);
+    e.set_block_exec_x87(0);   // back to the shipped default
+    check('  the round-16 sub-lever is left at its default',
+      e.get_block_exec_x87_regions() === 1);
   }
 
   console.log('\n-- coverage of this run --');
