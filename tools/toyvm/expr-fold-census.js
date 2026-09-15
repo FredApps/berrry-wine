@@ -268,7 +268,39 @@ function classify(name, width, args, eff) {
   // Set alongside `inSet` when the op is in the set only under a relaxation:
   // which shift subgroup it is, and whether it is a multiply or a divide. Both
   // are read once at the bottom, where the width questions have been settled.
-  let shiftCls = null, mdCls = null;
+  let shiftCls = null, mdCls = null, tailCls = null;
+  // THE UNSUPPORTED-OP TAIL, four groups the decline histogram named by stem.
+  // Each of these used to fall through to `{ cls: 'other' }` and end the run at
+  // the exact op the DOS corpus's two spread arithmetic trees are written with
+  // (docs/hot-loop-vocabulary-2026-09.md section 9). None of them needs a new
+  // model; all four are a line here plus, for the double shifts, one entry in
+  // handler-effects' helper table. `tailCls` names WHICH, so the decline
+  // histogram and `--tree-fold-relax=` keep them apart.
+  //
+  //   nop     the empty body. Zero operands, zero effects -- literally nothing
+  //           to lower. It ends a run today purely because it was never named.
+  //   extend  `cbw`/`cwd`/`cwde`/`cdq`, the implicit sign-extensions. Each is
+  //           one `$rset16`/`$ax`/`$dx` access the register-file fold already
+  //           collapses, and each is admitted at ANY block width: they carry
+  //           their operand width in the opcode, not in the block, and
+  //           `promoteRegs` rewrites the bare `$ax`/`$dx` globals textually
+  //           like any other.
+  //   xchg    the register/register and memory/register swaps. Readable, with
+  //           both register indices in the one operand word.
+  //   dshift  `shld`/`shrd`, the double-precision shifts -- `imul_r32`
+  //           immediately followed by `shrd #N` IS the corpus's fixed-point
+  //           multiply idiom, so this is the op FIXPT_MUL splits on. The
+  //           handler is `(call $sh{l,r}d<w> dst src count)` with the count's
+  //           CL sentinel resolved in the handler body, and `$sh{l,r}d<w>` is
+  //           a pure value function that touches the flag word and no register
+  //           -- the same shape as `$sh_*`, which is why it takes the same
+  //           treatment in handler-effects.js and trace-jit.js's SAFE_CALLS.
+  if (name === 'nop') return { cls: 'other', fold: false, relax: 'nop', stem };
+  if (/^(cbw|cwd|cwde|cdq)$/.test(name)) {
+    return eff && !eff.readable
+      ? { cls: 'other', fold: false }
+      : { cls: 'other', fold: false, relax: 'extend', stem };
+  }
   if (ALU_FOLD.has(stem) && form) inSet = true;
   else if (UNARY_FOLD.has(stem) && (form === 'r' || form === 'm')) inSet = true;
   else if (stem === 'lea') inSet = true;
@@ -311,6 +343,16 @@ function classify(name, width, args, eff) {
     inSet = true;
     mdCls = /^i?div$/.test(stem) ? 'div' : 'mul';
   }
+  // The two tail groups that DO carry a width, so they go through the same
+  // narrow/`foldable` questions every other op does rather than returning
+  // early. A narrow one declines as plain `partial-reg` with no relaxation
+  // offered, exactly as a narrow shift or a narrow `mul` does: `--relax=xchg`
+  // alone must not fold an 8-bit swap inside a 16-bit run.
+  else if (stem === 'xchg' && (form === 'rr' || form === 'mr')) {
+    inSet = true; tailCls = 'xchg';
+  } else if ((stem === 'shld' || stem === 'shrd') && (form === 'r' || form === 'm')) {
+    inSet = true; tailCls = 'dshift';
+  }
 
   const foldable = inSet && w === width;
 
@@ -324,7 +366,7 @@ function classify(name, width, args, eff) {
     // both, and `relax` carries one name. Offering `partial` alone here would
     // let `--relax=partial` fold an 8-bit shift by CL on its own, so the two
     // together decline with no relaxation named at all.
-    return inSet && !unreadable && !shiftCls && !mdCls
+    return inSet && !unreadable && !shiftCls && !mdCls && !tailCls
       ? { cls: 'partial-reg', fold: false, relax: 'partial', stem, narrowWidth: w }
       : { cls: 'partial-reg', fold: false, narrowWidth: w };
   }
@@ -338,6 +380,13 @@ function classify(name, width, args, eff) {
   if (foldable && shiftCls) {
     return unreadable ? { cls: shiftCls, fold: false, stem }
       : { cls: shiftCls, fold: false, relax: 'shifts', stem };
+  }
+  // The width-carrying half of the unsupported-op tail. `cls` stays `other` so
+  // the decline histogram keeps saying `unsupported: xchg` / `unsupported: shrd`
+  // when the relaxation is off, which is the name the work list was written in.
+  if (foldable && tailCls) {
+    return unreadable ? { cls: 'other', fold: false }
+      : { cls: 'other', fold: false, relax: tailCls, stem };
   }
   if (foldable && unreadable) return { cls: 'other', fold: false };
   if (foldable) return { cls: 'fold', fold: true, stem };

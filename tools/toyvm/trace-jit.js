@@ -1156,7 +1156,11 @@ const SAFE_CALLS = [
   // The flag record. rec_* takes its inputs as parameters and writes only
   // $fa/$fb/$fu/$fw/$fr/$fcf/$fop, which are not general registers.
   [/^(flags_\w+|rec_\w+|get_\w+|cond\w*)$/, []],
-  [/^(sh_\w+|off_add|pow2)$/, []],                   // pure arithmetic kernels
+  // Pure arithmetic kernels. The double shifts are on this list for the same
+  // reason the single ones are: `$shld16`/`$shrd16`/`$shld32`/`$shrd32` take
+  // destination, source and count as values and return a value, writing only
+  // the flag word -- every register access belongs to the handler around them.
+  [/^(sh_\w+|shld(16|32)|shrd(16|32)|off_add|pow2)$/, []],
   // ip/halt only. rpush/rpop are the shadow return stack, which is a cache over
   // guest ip -> arena address and holds no guest register.
   [/^(slice_exit|jlook|rpush|rpop)$/, []],

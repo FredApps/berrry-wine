@@ -91,7 +91,15 @@ const KIND = [
   // Pure arithmetic helpers: the shift/rotate kernels and the offset adder.
   // They compute a value and touch nothing but the flag record, so the store
   // that consumes them is already counted at the handler's own `$rset`.
-  [/^(sh_|off_add$|pow2$)/, 'alu'],
+  // `$shld16`/`$shrd16`/`$shld32`/`$shrd32` belong here for exactly the same
+  // reason: each takes destination, source and count as VALUES, returns the
+  // result as a value, and touches nothing but the flag word (`$flags_word` in,
+  // `$flags_put` out). The register file is reached by the HANDLER around it,
+  // through `$rget`/`$rset`/`$rd`/`$wr`, which this table already reads. Before
+  // this line every `shld`/`shrd` was `unresolved` and so unreadable, which is
+  // what filed `imul_r32` + `shrd #N` -- the DOS corpus's fixed-point multiply
+  // idiom -- under `unsupported: shrd` in the tree fold's decline histogram.
+  [/^(sh_|shld(16|32)$|shrd(16|32)$|off_add$|pow2$)/, 'alu'],
 ];
 
 function kindOf(fn) {

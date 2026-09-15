@@ -207,7 +207,35 @@ const MIN_OPS = 4;
 // classifier and `inlineStack` in trace-jit.js). It admits the op AND it is
 // what lets SP be promoted, since the stack helpers are inlined for the same
 // run rather than called.
-const RELAXATIONS = ['partial', 'flags', 'string', 'rep', 'shifts', 'muldiv', 'stack'];
+//
+// The last four are THE UNSUPPORTED-OP TAIL, and they exist because
+// docs/hot-loop-vocabulary-2026-09.md section 9 finally priced it. That study
+// read 583 hot loops across 199 DOS demos and found exactly two arithmetic
+// trees spread across the corpus rather than concentrated in one program:
+// `ADDR_SCALE` (`imul(y,W) + x` feeding an 8/16-bit store, 36 demos) and
+// `FIXPT_MUL` (`imul_r32` immediately followed by `shrd #N`, 21 demos),
+// together 13.8% of DOS dynamic ALU ops. Running the fold over the fifteen
+// demos that carry them hardest put the blocker in the histogram by name --
+// `unsupported: nop`, `unsupported: shrd`, `unsupported: xchg`,
+// `unsupported: cbw`/`cwd`/`cwde`/`cdq` -- which is the census the note in
+// *What is next* said these should wait for.
+//
+//   nop      the empty handler body. It ends a run today only because nothing
+//            ever named it, and it is the single largest named barrier in the
+//            demos measured (MAMAN 1618 declines, QUARTZ 765, BARTI 438).
+//   extend   `cbw`/`cwd`/`cwde`/`cdq`. Readable already; each is one register
+//            access the register-file fold collapses.
+//   xchg     `xchg` reg,reg and mem,reg. Readable already, both indices in the
+//            one operand word.
+//   dshift   `shld`/`shrd`. This is the FIXPT_MUL op: `imul_r32` + `shrd #N`
+//            is the corpus's fixed-point multiply, and the `shrd` is what split
+//            BBUUMI's and DEFECT!'s whole-program iterators into runs. The
+//            handler was unreadable for one reason -- `$shld<w>`/`$shrd<w>` was
+//            not in handler-effects' helper table -- and it belongs there
+//            beside `$sh_*`, because it is the same shape: values in, a value
+//            out, the flag word its only global. See the note there.
+const RELAXATIONS = ['partial', 'flags', 'string', 'rep', 'shifts', 'muldiv', 'stack',
+  'nop', 'extend', 'xchg', 'dshift'];
 const RELAX_ALL = new Set(RELAXATIONS);
 
 // A handler that reads the dispatch clock cannot be folded: the interpreter

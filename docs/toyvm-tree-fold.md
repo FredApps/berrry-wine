@@ -1917,6 +1917,124 @@ screen agreement is attributable, and an `--irq-every=997` pair, so an interrupt
 falling due at a different point inside the callee on nearly every trip has to
 leave the same registers, SP and memory as the interpreter would.
 
+## The unsupported-op tail (ADDR_SCALE and FIXPT_MUL, 2026-09)
+
+[docs/hot-loop-vocabulary-2026-09.md](hot-loop-vocabulary-2026-09.md) §5 asked a
+different question of the DOS corpus than this document ever had: not *which
+blocks are hot in one program*, but **which arithmetic trees recur across
+programs**. Two did, and only two — `ADDR_SCALE` (`imul(y, W) + x` feeding an
+8/16-bit store; 36 demos, no demo more than 18.5% of the family) and `FIXPT_MUL`
+(`imul_r32` immediately followed by `shrd #N`; 21 demos, top demo 23.2%) — and
+between them they are 13.8% of DOS dynamic ALU ops. §9's recommendation was to
+find out whether the tree fold already takes them.
+
+It mostly did not, and the reason was not a missing model of anything. The
+seventeen demos that carry those two trees most heavily (aggregating both
+families per demo out of `read-*.tsv`: BBUUMI 97.1%, DEFECT! 95.5, ANTRO 95.1,
+MAMAN 80.4, NEWSBOX3 73.2, bobs 70.2, CMA_SHRT 67.5, RUN\_IT 61.7, AUTUMN 59.9,
+QUARTZ 59.5, ASYLUM 59.4, BLIQ 58.6, CORE-ADV 40.2, BURMA 36.7, ACIDRAIN 35.1,
+B-STEEL 32.2, BARTI 30.6) declined on the **`unsupported:` tail** of the
+histogram — the bucket that is keyed by opcode stem rather than by class, and
+that exists precisely because an op the census cannot name ends a run as surely
+as a `call` does. Four stems accounted for all of it:
+
+| stem | what it is | where it bit hardest (declines at 20M, before) |
+|---|---|---|
+| `nop` | 16-bit compiler padding | MAMAN 1618, QUARTZ 765, BARTI 438, BURMA 155, ANTRO 56, BLIQ 28 |
+| `cbw`/`cwd`/`cwde`/`cdq` | the implicit sign-extends in front of a signed divide | BARTI 57, ASYLUM 24, RUN\_IT 27, AUTUMN 26, BLIQ 23 |
+| `xchg` | reg,reg permutation, both encodings | BLIQ 64, B-STEEL 31, CORE-ADV 30, AUTUMN 28, QUARTZ 26 — present in 13 of the 17 |
+| `shld`/`shrd` | **the FIXPT_MUL op itself** | BBUUMI 44, DEFECT! 42, BLIQ 11, BURMA 8 |
+
+That last row is the finding. `FIXPT_MUL` was not declining on the multiply —
+`muldiv` had already taken that — it was declining on the shift that makes it a
+fixed-point multiply, one op past where the tree stopped.
+
+### The widening
+
+Four new relaxation names (`nop`, `extend`, `xchg`, `dshift`), and each is one
+row of classification, because each op is either observationally nothing or a
+pure value→value kernel the lowering already knows how to keep verbatim:
+
+- **`nop`** writes nothing at all. It is `{ cls: 'other', fold: false }` with a
+  relaxation offered, and the run simply steps over it.
+- **`extend`** — `cbw`/`cwd`/`cwde`/`cdq` are a MOV with a shape the classifier
+  had no name for. AL already *is* bits 0–7 of the promoted AX local (the
+  `partial` work), so nothing new is needed; the early return sits in front of
+  the narrow-width check so these do not get re-classified `partial-reg`.
+- **`xchg`** reg,reg is a permutation of two promoted locals. No memory, no
+  flags.
+- **`dshift`** — `shld`/`shrd` needed one line outside the classifier as well.
+  `handler-effects.js` decides `readable` from the `(call $name …)` sites in a
+  handler body, and `$shld16`/`$shrd16`/`$shld32`/`$shrd32` were in neither the
+  `alu` kind pattern nor trace-jit's `SAFE_CALLS`, so the handler came back
+  unreadable and register promotion would have been declined even once the
+  classifier accepted it. They belong on both lists for exactly the reason the
+  single shifts do: destination, source and count in as values, result out as a
+  value, nothing touched but the flag word. The memory forms (`shld_m*`) go
+  through `$rd`/`$wr` and remain subject to the ordinary alias rule.
+
+`xchg` with a memory operand is accepted as `mr` and left to the same alias
+analysis every other memory op gets; nothing here bypasses it.
+
+### What it moved
+
+Seventeen demos, `--dispatches=20m --tree-fold --tree-fold-hot=64`. Handler and
+dispatch counts are deterministic and load-independent, which is the only thing
+worth quoting on this box.
+
+| demo | retired before | retired after | handlers before → after |
+|---|---|---|---|
+| BBUUMI | 20.39% | **39.51%** | 4 → 3 |
+| DEFECT! | 10.53% | **39.05%** | 4 → 8 |
+| QUARTZ | 26.01% | 28.38% | 7 → 10 |
+| MAMAN | 16.24% | 18.55% | 70 → 79 |
+| BARTI | 9.32% | 10.89% | 45 → 47 |
+| B-STEEL | 1.00% | 1.10% | 6 → 7 |
+| AUTUMN | 17.37% | 17.38% | 17 → 19 |
+| ACIDRAIN, ANTRO, ASYLUM, BLIQ, BURMA, CMA\_SHRT, CORE-ADV, NEWSBOX3, RUN\_IT, bobs | — | unchanged | — |
+
+**All seventeen frame hashes are byte-identical before and after.**
+
+The two demos that move most are the two the `shrd` row named, and BBUUMI moves
+from four handlers to *three* while nearly doubling what it retires: the
+relaxation joined runs that had been split, so there is less generated code
+covering more of the program. That is the shape a real widening has, as against
+one that merely folds more fragments.
+
+Ten demos did not move, and the reasons are worth recording because none of them
+is "the relaxation did not work" — the `unsupported:` bucket is **empty in all
+seventeen after-runs** except CMA\_SHRT's, which retains `lidt16` 68, `lgdt16`
+51, `bt` 6 and `smsw` 1. Those are protected-mode instructions and deliberately
+out of scope. The other nine were blocked somewhere else the whole time:
+ANTRO's LCG is split across a `call`/`ret` pair (Design B's territory, not this
+fold's); CMA\_SHRT and RUN\_IT build nothing at all (the min-payoff gate refuses
+the build, and RUN\_IT's hottest candidate has 1264 entries against the `hot=64`
+window); the rest declined on `too short`, `alias` or `terminator` before any of
+these stems was reached.
+
+### The test's scaffolding barrier had to change
+
+`test/test-toyvm-tree-fold.js` separates the parts of each case body that are
+the case from the parts that are plumbing — the snapshot stores, the hex
+printer, the loop prologue — by putting a **barrier**, an op the fold refuses,
+between them. Without it those runs of consecutive stores are themselves
+foldable and the negative cases stop asserting anything. That barrier used to be
+`nop`, and `nop` is now the *first* relaxation in this section: with the
+widening in, `narrowrot` (a case whose whole point is that it must never fold)
+folded five runs.
+
+It is now `push es` / `pop es`. A segment push/pop is classified `segment` with
+**no relaxation offered at all** — `$sset` can move any segment base, so it is a
+barrier the fold declines permanently rather than one that might be relaxed away
+by a later session — and it is observationally nothing: ES is restored, the
+stack is balanced, no flag is written.
+
+Four positive cases were added alongside, one per new relaxation — `tailnop`,
+`tailextend`, `tailxchg`, `tailshrd` — each built so that with its own
+relaxation off and **every other one on** there is no run of four ops anywhere
+in the body. That `needs:` arm is what says the fold is credited to the right
+relaxation rather than to a neighbour. `tailshrd` is the FIXPT_MUL shape itself.
+
 ## What is next
 
 The decline histogram is the work list, and the three relaxations it points at,
@@ -1971,7 +2089,9 @@ anything else joins two runs, and `terminator` is Design B's territory except
 for the self-loop case already folded. Of the rest, `call`+`ret` (9336) is the
 single biggest remaining number and is control flow; `alias` (item 1 below) is
 the biggest that is *not*. `xchg` and `nop` are now the two `unsupported` entries
-worth a line of lowering each.
+worth a line of lowering each — **both are now in**, along with the sign-extends
+and the double shifts; see *The unsupported-op tail* above, which empties the
+`unsupported:` bucket entirely on sixteen of the seventeen demos measured there.
 
 **1. Alias disjointness.** Today every load after a store in the same run is
 assumed to alias, and the run ends there. Most of those pairs are provably

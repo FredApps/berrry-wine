@@ -35,6 +35,10 @@
 //   shiftcarry rcl/rcr/rol/ror, immediate and CL              -- MUST fold
 //   divmul    div/idiv/mul, and NOT into a loop tree          -- MUST fold
 //   divzero   a divide by zero mid-tree, regs read at the trap -- MUST fold
+//   tailnop   a `nop` between two halves of one tree           -- MUST fold
+//   tailextend cbw/cwd, the implicit sign-extends              -- MUST fold
+//   tailxchg  `xchg` reg,reg, both encodings                   -- MUST fold
+//   tailshrd  `shrd`/`shld` by an immediate (the FIXPT_MUL op) -- MUST fold
 //
 // The five flag cases are the other half of the DOS fit. Flags here are LAZY --
 // a producer records its inputs, a consumer materializes the field it wants --
@@ -124,17 +128,29 @@ function asm(build) {
   return out;
 }
 
-// The seven-word snapshot, each store separated by a `nop`.
+// THE SCAFFOLDING BARRIER: `push es` / `pop es`.
 //
-// The nops are load-bearing and not padding. A `nop` classifies as an
-// unsupported op and therefore ENDS a run, which keeps the snapshot's own
-// seven perfectly foldable stores from forming a fold of their own -- without
-// them the three negative cases fold their snapshot and the test asserts
-// nothing. The one before the first store is the same guard against the case
-// body's tail joining it.
+// Every one of these is load-bearing and none of them is padding. A run has to
+// be ENDED between the scaffolding this file emits around each case and the
+// case's own body, or the scaffolding folds and the three negative cases stop
+// asserting anything -- they assert that the whole program folded nothing at
+// all, and a snapshot of seven consecutive stores is a perfectly foldable run.
+//
+// It used to be `nop`, and `nop` is no longer a barrier: the corpus census in
+// docs/hot-loop-vocabulary-2026-09.md put `unsupported: nop` at the top of the
+// tree fold's decline histogram on the DOS demos that carry ADDR_SCALE and
+// FIXPT_MUL, and the `nop` relaxation took it. A segment push/pop is the
+// replacement because it is a barrier the fold declines *permanently* -- `$sset`
+// can move any segment base, so `push_seg`/`pop_seg` are classified `segment`
+// with no relaxation offered -- and because it is observationally nothing: ES
+// comes back exactly as it was, no general register and no flag is touched, and
+// the stack is balanced across the pair. Two bytes, `06 07`.
+const BARRIER = [0x06, 0x07];             // push es / pop es
+
+// The seven-word snapshot, each store separated by a barrier.
 function snapshot(w) {
-  const st = (bytes) => { w(0x90); w(...bytes); };
-  w(0x90);
+  const st = (bytes) => { w(...BARRIER); w(...bytes); };
+  w(...BARRIER);
   st([0xA3, SNAP & 0xFF, SNAP >> 8]);                   // mov [SNAP+0],ax
   st([0x89, 0x1E, (SNAP + 2) & 0xFF, (SNAP + 2) >> 8]); // mov [SNAP+2],bx
   st([0x89, 0x0E, (SNAP + 4) & 0xFF, (SNAP + 4) >> 8]); // mov [SNAP+4],cx
@@ -144,8 +160,8 @@ function snapshot(w) {
   // ...and the flags the terminator's own compare left behind, masked to the
   // six arithmetic bits (CF PF AF ZF SF OF). The rest of the word is IF/DF and
   // the reserved bits, which say nothing about the arithmetic.
-  w(0x90, 0x9C, 0x58, 0x25, 0xD5, 0x08);                // nop / pushf / pop ax / and ax,08D5h
-  w(0x90); w(0xA3, (SNAP + 12) & 0xFF, (SNAP + 12) >> 8);
+  w(...BARRIER, 0x9C, 0x58, 0x25, 0xD5, 0x08);          // barrier / pushf / pop ax / and ax,08D5h
+  w(...BARRIER); w(0xA3, (SNAP + 12) & 0xFF, (SNAP + 12) >> 8);
 }
 
 // Print the seven words as hex, then exit. `phex` prints BX and returns.
@@ -165,14 +181,14 @@ function printAndExit(a) {
   w(0xB9, 0x04, 0x00);                   // mov cx,4
   label('L2');
   w(0xC1, 0xC3, 0x04);                   // rol bx,4
-  // ...and a `nop`, for the reason the ones in `snapshot` and `program` are
+  // ...and a BARRIER, for the reason the ones in `snapshot` and `program` are
   // there: this routine is SCAFFOLDING, and the three negative cases assert
   // that the whole program folded nothing at all. Once the `shifts` relaxation
   // landed, `rol bx,4 / mov al,bl / and al,0Fh / add al,'0'` became four
   // consecutive foldable ops and the hex printer started folding in every
   // program, which failed `narrowrot` with a fold that had nothing to do with
   // `narrowrot`. The barrier keeps the scaffolding out of the measurement.
-  w(0x90);                               // nop: end the run
+  w(...BARRIER);                               // barrier: end the run
   w(0x88, 0xD8);                         // mov al,bl
   w(0x24, 0x0F);                         // and al,0Fh
   w(0x04, 0x30);                         // add al,'0'
@@ -197,16 +213,16 @@ function printAndExit(a) {
 function program(body, { tail = [], pre = null, iter = ITER } = {}) {
   return asm((a) => {
     const { w, label, rel8 } = a;
-    if (pre) { pre(a); w(0x90); }
+    if (pre) { pre(a); w(...BARRIER); }
     w(0xC7, 0x06, COUNTER & 0xFF, COUNTER >> 8, iter & 0xFF, iter >> 8);
-    // ...and a `nop` after it, for the same reason as the ones in `snapshot`.
+    // ...and a BARRIER after it, for the same reason as the ones in `snapshot`.
     // `mov word [mem],imm16` is itself a foldable store, and the first trip
     // through the loop falls into the body from here -- so without this it
     // joins the body's first three ops and folds `alias` at exactly four.
-    w(0x90);
+    w(...BARRIER);
     label('outer');
     body(a);
-    w(0x90);                                                   // nop: end the run
+    w(...BARRIER);                                                   // barrier: end the run
     w(0xFF, 0x0E, COUNTER & 0xFF, COUNTER >> 8);               // dec word [COUNTER]
     w(0x75, rel8('outer'));                                    // jnz outer
     snapshot(w);
@@ -650,7 +666,7 @@ const CASES = {
       w(0x8C, 0xC8);                       // mov ax,cs
       w(0x05, 0x10, 0x00);                 // add ax,10h        (+100h bytes)
       w(0x8E, 0xC0);                       // mov es,ax
-      w(0x90);                             // nop: end that run
+      w(...BARRIER);                             // barrier: end that run
       w(0xBE, TABLE & 0xFF, TABLE >> 8);   // mov si,TABLE      (DS:0200h)
       w(0xAD);                             // lodsw             DS:SI
       w(0x89, 0xC3);                       // mov bx,ax
@@ -684,7 +700,7 @@ const CASES = {
       w(0xBF, DEST & 0xFF, DEST >> 8);     // mov di,DEST
       w(0xB9, 0x08, 0x00);                 // mov cx,8
       w(0xFC);                             // cld
-      w(0x90);                             // nop: `cld` is a barrier; start here
+      w(...BARRIER);                             // barrier: `cld` is one too; start here
       w(0x89, 0xF3);                       // mov bx,si
       w(0x01, 0xFB);                       // add bx,di
       w(0xF3, 0xA5);                       // rep movsw     <- 8 words
@@ -707,7 +723,7 @@ const CASES = {
       w(0xBF, (DEST + 14) & 0xFF, (DEST + 14) >> 8);   // mov di,DEST+14
       w(0xB9, 0x08, 0x00);                 // mov cx,8
       w(0xFD);                             // std            <- declines the widening
-      w(0x90);                             // nop
+      w(...BARRIER);                             // barrier
       w(0x89, 0xF3);                       // mov bx,si
       w(0x01, 0xFB);                       // add bx,di
       w(0xF3, 0xA5);                       // rep movsw
@@ -726,7 +742,7 @@ const CASES = {
       w(0xB8, 0x5A, 0xA5);                 // mov ax,0A55Ah
       w(0xB9, 0x10, 0x00);                 // mov cx,16
       w(0xFC);                             // cld
-      w(0x90);                             // nop
+      w(...BARRIER);                             // barrier
       w(0x89, 0xFB);                       // mov bx,di
       w(0x01, 0xC3);                       // add bx,ax
       w(0xF3, 0xAB);                       // rep stosw     <- 16 words
@@ -749,7 +765,7 @@ const CASES = {
       w(0xB8, 0x2A, 0x31);                 // mov ax,312Ah
       w(0xB9, 0x20, 0x00);                 // mov cx,32
       w(0xFC);                             // cld
-      w(0x90);                             // nop
+      w(...BARRIER);                             // barrier
       w(0x89, 0xFB);                       // mov bx,di
       w(0x8D, 0x77, 0x02);                 // lea si,[bx+2]
       w(0xF2, 0xAF);                       // repne scasw   <- stops on the match
@@ -773,7 +789,7 @@ const CASES = {
       w(0xB8, 0x37, 0x13);                 // mov ax,1337h  <- not in the table
       w(0xB9, 0x08, 0x00);                 // mov cx,8
       w(0xFC);                             // cld
-      w(0x90);                             // nop
+      w(...BARRIER);                             // barrier
       w(0x89, 0xFB);                       // mov bx,di
       w(0x8D, 0x77, 0x02);                 // lea si,[bx+2]
       w(0xF2, 0xAF);                       // repne scasw
@@ -793,7 +809,7 @@ const CASES = {
       w(0xBF, (TABLE + 16) & 0xFF, (TABLE + 16) >> 8); // mov di,TABLE+16
       w(0xB9, 0x08, 0x00);                 // mov cx,8
       w(0xFC);                             // cld
-      w(0x90);                             // nop
+      w(...BARRIER);                             // barrier
       w(0x89, 0xF3);                       // mov bx,si
       w(0x01, 0xFB);                       // add bx,di
       w(0xF3, 0xA7);                       // rep cmpsw     <- stops on difference
@@ -914,7 +930,7 @@ const CASES = {
   // The fold would still compute the right answer everywhere the fault does not
   // fire, which is exactly why this needs a test of its own.
   //
-  // The two `nop`s are load-bearing in the same way the ones in `snapshot`
+  // The two BARRIERs are load-bearing in the same way the ones in `snapshot`
   // are: without them the setup ops and the read-back ops are each a foldable
   // run of their own, the exact and `needs` arms fold those, and the case stops
   // testing anything. With them the only run that reaches four ops is the one
@@ -924,15 +940,15 @@ const CASES = {
     pre: ({ w, label, rel16, at }) => {
       w(0xE9, ...rel16('after0'));                 // jmp after0
       label('div0');
-      // ...with a `nop` between every store, for the reason `snapshot` has
+      // ...with a BARRIER between every store, for the reason `snapshot` has
       // them: five consecutive stores are a foldable run, and the handler is
       // scaffolding. Without these the exact arm folds the HANDLER and the
       // case stops saying anything about the divide.
-      w(0x89, 0x36, 0x10, 0x05); w(0x90);          // mov [0510h],si
-      w(0x89, 0x3E, 0x12, 0x05); w(0x90);          // mov [0512h],di
-      w(0x89, 0x0E, 0x14, 0x05); w(0x90);          // mov [0514h],cx
-      w(0xA3, 0x16, 0x05); w(0x90);                // mov [0516h],ax
-      w(0x89, 0x16, 0x18, 0x05); w(0x90);          // mov [0518h],dx
+      w(0x89, 0x36, 0x10, 0x05); w(...BARRIER);          // mov [0510h],si
+      w(0x89, 0x3E, 0x12, 0x05); w(...BARRIER);          // mov [0512h],di
+      w(0x89, 0x0E, 0x14, 0x05); w(...BARRIER);          // mov [0514h],cx
+      w(0xA3, 0x16, 0x05); w(...BARRIER);                // mov [0516h],ax
+      w(0x89, 0x16, 0x18, 0x05); w(...BARRIER);          // mov [0518h],dx
       w(0xCF);                                     // iret  -> resumes AFTER the div
       label('after0');
       const d0 = at('div0') || 0x0100;
@@ -944,7 +960,7 @@ const CASES = {
     body: ({ w }) => {
       w(0xBE, 0x11, 0x11);       // mov si,1111h
       w(0xBF, 0x22, 0x22);       // mov di,2222h
-      w(0x90);                   // nop: end the run
+      w(...BARRIER);                   // barrier: end the run
       w(0xB8, 0x30, 0x00);       // mov ax,0030h    <- these three are INSIDE the
       w(0xBA, 0x44, 0x00);       // mov dx,0044h       tree and promoted, so they
       w(0xB9, 0x00, 0x00);       // mov cx,0           are the sharp part
@@ -952,9 +968,92 @@ const CASES = {
       w(0xA1, 0x10, 0x05);       // mov ax,[0510h]  <- si at the fault -> 1111h
       w(0x8B, 0x1E, 0x12, 0x05); // mov bx,[0512h]  <- di             -> 2222h
       w(0x8B, 0x0E, 0x14, 0x05); // mov cx,[0514h]  <- cx             -> 0000h
-      w(0x90);                   // nop: end the run
+      w(...BARRIER);                   // barrier: end the run
       w(0x8B, 0x16, 0x16, 0x05); // mov dx,[0516h]  <- ax             -> 0030h
       w(0x8B, 0x36, 0x18, 0x05); // mov si,[0518h]  <- dx             -> 0044h
+      w(0x89, 0xF7);             // mov di,si
+    },
+  },
+
+  // --- the unsupported-op tail (the 2026-09 corpus census) ------------------
+  //
+  // Four groups that the decline histogram named by stem rather than by class,
+  // and that between them broke every tree in the ~15 DOS demos carrying the
+  // ADDR_SCALE and FIXPT_MUL shapes of docs/hot-loop-vocabulary-2026-09.md §5.
+  // None of them needed a new model of anything: each is either observationally
+  // nothing, or a pure value->value kernel the lowering already knows how to
+  // keep verbatim. What they were is unclassified, and an unclassified op ends
+  // a run as surely as a call does.
+  //
+  // A `nop` between two halves of one tree. Top of the decline histogram in six
+  // of the fifteen demos (MAMAN 1618 sites, QUARTZ 765, BARTI 438) because
+  // 16-bit compilers pad with it. The two halves here are three ops each, so
+  // with `nop` off there is no run of four anywhere and `needs` bites.
+  tailnop: {
+    folds: true, relaxed: true, needs: 'nop',
+    body: ({ w }) => {
+      w(0xB8, 0x11, 0x11);       // mov ax,1111h
+      w(0xBB, 0x22, 0x22);       // mov bx,2222h
+      w(0xB9, 0x33, 0x33);       // mov cx,3333h
+      w(0x90);                   // nop             <- the whole of the case
+      w(0x01, 0xD8);             // add ax,bx       -> 3333h
+      w(0x01, 0xC1);             // add cx,ax       -> 6666h
+      w(0x89, 0xCA);             // mov dx,cx
+    },
+  },
+  // `cbw`/`cwd` -- the implicit sign-extends, which are a MOV with a shape the
+  // census had no name for. ASYLUM declined 24 sites on `cbw` alone and BARTI
+  // 57 across the pair; they are how a 16-bit compiler sets up a signed divide,
+  // which is why they sit next to the FIXPT_MUL trees rather than apart. AL is
+  // already bits 0-7 of the promoted AX local, so this is one lowering row.
+  tailextend: {
+    folds: true, relaxed: true, needs: 'extend',
+    body: ({ w }) => {
+      w(0xB8, 0xFF, 0x00);       // mov ax,00FFh    <- AL = FFh, AH = 0
+      w(0xBB, 0x01, 0x00);       // mov bx,1
+      w(0xB9, 0x02, 0x00);       // mov cx,2
+      w(0x98);                   // cbw             -> AX = FFFFh
+      w(0x99);                   // cwd             -> DX = FFFFh
+      w(0x89, 0xD6);             // mov si,dx
+      w(0x01, 0xDE);             // add si,bx       -> 0000h
+      w(0x89, 0xF7);             // mov di,si
+    },
+  },
+  // `xchg` reg,reg, in BOTH encodings: the one-byte AX form (90h+r, of which
+  // 90h itself is the `nop` above) and the ModRM form. Present in thirteen of
+  // the fifteen demos. It is a permutation of two promoted locals and nothing
+  // else -- no memory, no flags -- so the only reason it declined is that no
+  // row named it.
+  tailxchg: {
+    folds: true, relaxed: true, needs: 'xchg',
+    body: ({ w }) => {
+      w(0xB8, 0x34, 0x12);       // mov ax,1234h
+      w(0xBB, 0x78, 0x56);       // mov bx,5678h
+      w(0xB9, 0xBC, 0x9A);       // mov cx,9ABCh
+      w(0x93);                   // xchg ax,bx      -> ax=5678h bx=1234h
+      w(0x87, 0xD9);             // xchg cx,bx      -> cx=1234h bx=9ABCh
+      w(0x89, 0xC2);             // mov dx,ax
+      w(0x89, 0xDE);             // mov si,bx
+      w(0x89, 0xCF);             // mov di,cx
+    },
+  },
+  // `shrd`, THE op of the FIXPT_MUL tree -- `imul` immediately followed by a
+  // `shrd #N` is the fixed-point multiply the census found spread across 21
+  // demos, and it was declining on the shift, not on the multiply (BBUUMI 44
+  // sites, DEFECT! 42). `$shrd16`/`$shld16` take destination, source and count
+  // as values and return the result as a value, touching nothing but the flag
+  // word, so they belong on the same handler-effects row as the single shifts
+  // and on trace-jit's SAFE_CALLS for the same reason.
+  tailshrd: {
+    folds: true, relaxed: true, needs: 'dshift',
+    body: ({ w }) => {
+      w(0xB8, 0x00, 0x40);       // mov ax,4000h
+      w(0xBA, 0x02, 0x00);       // mov dx,2
+      w(0xBB, 0x00, 0xF0);       // mov bx,0F000h
+      w(0x0F, 0xAC, 0xD0, 0x04); // shrd ax,dx,4    -> 2400h
+      w(0x0F, 0xA4, 0xD8, 0x04); // shld ax,bx,4    -> 400Fh
+      w(0x89, 0xC1);             // mov cx,ax
+      w(0x89, 0xCE);             // mov si,cx
       w(0x89, 0xF7);             // mov di,si
     },
   },
@@ -1075,6 +1174,17 @@ const CASES = {
     },
   },
 };
+
+// `TOYVM_TREE_FOLD=1` turns the fold on for a run-dos.js process that was not
+// given `--tree-fold`. It exists so the OTHER suites -- the ones with no
+// opinion about the flag -- can be run with it on. This suite is the one place
+// it must not reach: every case here is an A/B between an arm that passes
+// `--tree-fold` and an arm that does not, and the second arm asserts it folded
+// nothing. Inherited by a child, the variable makes that baseline arm fold
+// whenever its program happens to fill the default install batch, and the case
+// stops comparing the two things it exists to compare. So the plain arm is made
+// plain here rather than at each of the forty-odd call sites.
+delete process.env.TOYVM_TREE_FOLD;
 
 function run(com, extra) {
   const args = [path.join(__dirname, '..', 'tools', 'toyvm', 'run-dos.js'), com,
