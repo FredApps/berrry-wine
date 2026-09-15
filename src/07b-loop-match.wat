@@ -1177,6 +1177,37 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan))))
 
+  ;; How many OP_INDEX entries one FUSED x87 op covers, itself included, or 0
+  ;; when the handler is not a fused x87 family. Round 12 (OPEN-6): the block
+  ;; executor runs AFTER these fusers now and has to walk past the ops they
+  ;; absorbed, which are still in the stream as inline data with their original
+  ;; handler words. Only the fuser knows how many that is, so the answer lives
+  ;; here, next to the code that decides it, rather than as a second copy of
+  ;; these constants in 07c-block-exec.wat.
+  ;;
+  ;;   449 $th_x87_pipeline4 -- mode in bits 26..27: 0 -> 4 ops, 1 -> 3,
+  ;;                            2 -> 2, 3 -> 3 (see $x87_short_fuse_block)
+  ;;   450 $th_x87_tree4     -- always 4
+  ;;   451 $th_x87_island    -- run length in bits 20..27
+  ;;   452 affine prepare    -- always 9
+  ;;   453 affine finish     -- always 5
+  (func $x87_fused_span (param $fn i32) (param $op i32) (result i32)
+    (if (i32.eq (local.get $fn) (i32.const 449))
+      (then
+        (local.set $op
+          (i32.and (i32.shr_u (local.get $op) (i32.const 26)) (i32.const 3)))
+        (if (i32.eqz (local.get $op)) (then (return (i32.const 4))))
+        (if (i32.eq (local.get $op) (i32.const 2)) (then (return (i32.const 2))))
+        (return (i32.const 3))))
+    (if (i32.eq (local.get $fn) (i32.const 450)) (then (return (i32.const 4))))
+    (if (i32.eq (local.get $fn) (i32.const 451))
+      (then
+        (return (i32.and (i32.shr_u (local.get $op) (i32.const 20))
+                         (i32.const 0xFF)))))
+    (if (i32.eq (local.get $fn) (i32.const 452)) (then (return (i32.const 9))))
+    (if (i32.eq (local.get $fn) (i32.const 453)) (then (return (i32.const 5))))
+    (i32.const 0))
+
   ;; Generic x87 micro-op inner loop. This eliminates threaded dispatch and
   ;; keeps the canonical stack/tag/status semantics in $fpu_exec_mem/reg.
   (func $th_x87_island (param $packed i32)

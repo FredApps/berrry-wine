@@ -1633,3 +1633,489 @@ because the default cost model declines every synthetic block in that file, and
 the per-arm output now prints `block-exec installs/native/fallback` plus the
 pass counters (and `declWhy` when nothing installed) so a shape that never
 entered the executor cannot masquerade as one that did — see §16.6.
+
+## 17. x87-carrying blocks in the executor (round 12 lever A, 2026-09-14)
+
+OPEN-6. Round 11's installer declined **any** block holding an x87 handler
+(H188-H190), and §4c of `docs/hot-loop-vocabulary-2026-09.md` priced that
+decline: x87-carrying blocks are **23.0%** of quake2-gameplay's retired ops,
+**39.5%** of mw3-gameplay's and **7.9%** of gta2's. That is the largest single
+class of work the executor was structurally unable to see.
+
+### 17.1 Two designs, and which one was built
+
+Two were on the table.
+
+1. **x87 as an executor micro-op that spills the integer lanes and calls the
+   existing x87 handler body** — a native fallback, one per raw x87
+   instruction.
+2. **Make the x87 semantic fold's fused region ONE micro-op inside the
+   executor's stream**, so the fold and the executor compose instead of
+   competing.
+
+Option 1 alone is actively harmful and that is why it was not built alone. The
+x87 fold (H449-H453, `--x87-fusion`) already absorbs **78-89%** of raw x87
+dispatches; with the executor installing *before* the fusers, every block the
+executor accepted would be a block the fold never saw, and the round would have
+traded the fold's 78-89% for a fallback per instruction.
+
+What is built is **option 2, with option 1 as the residue**:
+
+* `$decode_block` now runs the five x87 fusers **before**
+  `$block_exec_try_install` (`src/07-decoder.wat`). The fold gets first refusal,
+  exactly as it does today.
+* A fused H449-H453 op becomes **one** `TU_FALLBACK` whose inline word span
+  covers every op the fold absorbed. The span is not re-derived at the
+  installer: `$x87_fused_span` lives in `src/07b-loop-match.wat`, next to the
+  fusers that decide it, because it is their fact (H449's is mode-dependent:
+  mode0 4, mode1 3, mode2 2, mode3 3; H450 4; H451 the run length in bits
+  20..27; H452 9; H453 5).
+* A **bare** H188/H189/H190 the fuser refused — a run too short to fuse, or
+  `--no-x87-fusion` — falls through the same arm with span 1 and becomes an
+  ordinary fallback. That is option 1, kept for the residue the fold does not
+  cover.
+
+### 17.2 Why it is sound without touching the x87 state
+
+The x87 stack, tag word and status word are **globals the executor does not
+model**, so they survive a fallback by not being touched: the spill/reload
+around `TU_FALLBACK` is the eight integer GPRs, and the handler body called
+through it is byte-for-byte the one the threaded path calls.
+
+The alias rule needed no new clause either. `TU_FALLBACK` is shape 3 to
+`$bx_mem_shape`, and §16.2 already reads "any fallback ... kills every fact", so
+"an x87 op between two loads of the same address kills the fact" is the existing
+rule rather than a new one. `test-block-exec.js` asserts it as `rle === 0`
+rather than leaving it to the reading.
+
+`$nat` is deliberately **not** bumped for an x87 fallback. The cost model still
+prices the run as what it is — a trip out of the executor — so a block that is
+mostly x87 is still declined on cost, not accepted because it became legal.
+
+### 17.3 Measured
+
+`docs/block-executor-design/collect-round12-x87.sh`, two windows, both arms
+carrying `--x87-fusion` (an arm without the fold measures a different
+question). When this table was taken the lever was ON by default and `off`
+was `--no-block-exec-x87`; it is now OFF by default and `on` is
+`--block-exec-x87` (section 17.5). The arm labels below are unchanged.
+
+| window | arm | installs | entries | ops native | fallback | native% | transfersSaved | x87 uops | rle |
+|---|---|---|---|---|---|---|---|---|---|
+| quake2-gameplay (4000-5000) | off | 54177 | 3985308 | 124097991 | 3049307 | 97.60 | 2831290 | 0 | 899 |
+| quake2-gameplay | **on** | **63151** | **4045707** | **126464142** | 3253383 | 97.49 | **3304812** | **254685** | **1583** |
+| mw3-gameplay (920-1000) | off | 544 | 865981 | 708497584 | 103577 | 99.98 | 17772171 | 0 | 0 |
+| mw3-gameplay | **on** | **545** | 865981 | 708497584 | 103577 | 99.98 | 17772171 | **505** | 0 |
+
+Quake II is where the lever lands: **+16.6% installs**, +16.7% transfers saved,
+descriptor micro-ops 5.67M → 6.97M (+22.8%), and 254,685 x87 fallback entries
+that did not exist. Regions gain too — `opsMulti` 24.7M → 34.1M, `entriesMulti`
+898k → 1.36M — because a block that used to be an unsafe member now classifies.
+`native%` moves *down* a tenth of a point, 97.60 → 97.49, which is the honest
+sign of the mechanism: fallbacks were added on purpose.
+
+MechWarrior 3 gains **nothing**: one extra install, 505 x87 descriptor entries,
+and `entries` / `ops native` identical to the digit. The new descriptors were
+built and never entered. So §4c's 39.5% is not reachable through this lever on
+that window — those ops are in blocks the executor declines for some *other*
+reason, and `classifyRefused termNotModelled=7149` is where to look next.
+
+**There is no sound single "share of the window now inside the executor"
+number, and one should not be quoted.** `--handler-hist`'s total counts
+*threaded dispatches*, and a block the executor runs contributes one H458
+dispatch to that total however many x86 instructions it retires; the executor's
+own counters are *micro-ops*. The two denominators are different units. The
+numbers above are the executor's own and are comparable arm to arm, which is
+the comparison this section is about.
+
+### 17.4 What the region path would still need
+
+The scope here is deliberately the **single-block** path.
+`$bx_region_collect` runs *before* the fusers, so a region's classifier still
+sees raw H188-H190 and still refuses them through `$bx_op_unsafe` — asserted by
+a test, not left as an omission. Lifting that means either running collection
+after the fold (which changes what discovery sees at every head, not just at
+x87 ones) or teaching `$bx_rg_classify_block` the same `$x87_fused_span`
+arithmetic the installer now has. The second is the smaller change and is the
+one to try; it was not in this round because quake2's remaining x87 declines
+come back as `declWhy 1` — the cost model — and widening the classifier without
+moving the cost model would only produce more declines at a later stage.
+
+### 17.5 Re-measured on the finished round-12 build: turned OFF
+
+The table above was taken before levers B and C existed. Re-run on the finished
+build, with the cross-edge carry and the RMW split in place, **the lever is a
+coverage loss**:
+
+| quake2-gameplay | off (declined) | on (--block-exec-x87) |
+|---|---|---|
+| installs | 59448 | 52749 |
+| entries | 4013795 | 4004985 |
+| transfersSaved | 3287542 | 2513271 |
+| native% | 97.63 | 97.59 |
+| x87 micro-ops | 0 | 254849 |
+
+mw3-gameplay is unchanged to the digit in both arms (installs 544, entries
+865981, `ops native` 708497605): the x87 descriptors are built and never
+entered, exactly as the first measurement found, so section 4c's 39.5% is still
+not reachable through this lever.
+
+The reading is that the x87 micro-ops change the uop counts the cost model sees,
+and on the finished build that churn costs more installs than the x87 blocks
+themselves bring in. So **`$block_exec_x87` now defaults to 0** and the arm to
+measure is `--block-exec-x87`. Nothing is deleted: the mechanism, its tests and
+the ordering change (fusers before the installer) all stay, because the missing
+piece is a cost model that prices an x87 micro-op honestly, not the plumbing.
+
+A second calibration came out of the same measurement.
+`tools/bench-loops.js --shapes=blk_x87mix --toggle=block_exec_x87` (a 5-op block
+with an `fld`/`fstp` pair in it, 250k iterations, minima, one process) runs
+**-62.0%** with the block inside the executor. That harness sets
+`$block_exec_min_uops`, which *replaces* the cost model, so the number is not
+"the model chose badly", it is the price of the choice: an x87 micro-op is the
+only fallback the executor admits that buys nothing, because `$nat` is
+deliberately not bumped for it. `$BX_C_X87FB` (96, about six native uops) now
+prices it separately from `$BX_C_FALLBACK` (20). On the real corpus that price
+changed almost nothing (quake2-gameplay still admits 254849 x87 micro-ops
+against 254685 before it), which is the intended shape: it declines an x87-dense
+block and leaves a long integer block carrying one stray x87 op alone.
+
+### 17.6 Switch
+
+`--block-exec-x87` turns the lever on; it is OFF by default (section 17.5).
+It is a per-instance mutable global propagated through
+`INHERITED_WASM_GLOBALS` like every other toggle in this family, and
+`--block-exec-stats` grows an `x87` field on the `block-exec-split:` line. That
+field counts **descriptor entries** — one per fused region or per bare op — not
+guest x87 instructions, so a single `x87` there can stand for a run of up to
+255.
+
+## 18. Carrying load facts across a region edge (round 12 lever B, 2026-09-14)
+
+> **Both sweeps in sections 18 and 19 were taken with `$block_exec_x87` at its
+> then-default of 1**, before section 17.5 turned that lever off. The A/B inside
+> each table is internally valid (the two arms differ only in the flag named),
+> but the absolute fallback and micro-op counts move once x87 blocks are
+> declined again, so do not read them against a table taken on a later build.
+
+§16.2's rule already permitted this — "a fact may cross an edge whose target
+has a single predecessor inside the region" — and §16.4 recorded that round 11
+implemented the conservative end of it and carried **nothing**. §16.6 then
+measured what that cost: `rle`, the transform §8's 12.6-point "redundant loads"
+column was about, came out at single digits to a few thousand against millions
+of micro-ops, because *the redundancy is between blocks and the pass only saw
+one*.
+
+### 18.1 Why round 11 could not do it, and what changed
+
+Not conservatism for its own sake: **the edge set does not exist yet when a
+member is classified.** `$bx_rg_classify_block` runs per block, one after
+another, and only `$bx_rg_try_emit` resolves each member's `succ_taken` /
+`succ_fall` into member indices. Nothing at classify time can say whether a
+successor has one predecessor.
+
+So the carry is a **second pass at emit**, `$bx_rg_carry_pass`, run right after
+the edge-resolution loop and before the cost model. It walks the members in
+index order, re-running walk 1 on each, and seeds the fact table from the
+previous member's exit state exactly when that member is the target's one
+in-region predecessor. Walk 2 is not re-run — it deletes micro-ops, and every
+member's `uop_off` and the region's `$total` were fixed when it ran; walk 1 only
+ever rewrites a micro-op in place.
+
+Three things make the seed sound, and each is the existing rule rather than a
+new one:
+
+* **A region is only ever entered at its head.** A member something else jumps
+  into gets decoded as a block of its own, which retires the region
+  (`$bx_rg_thrash_ok`), so "one predecessor inside the region" is "one
+  predecessor".
+* **Every kill still kills.** It is the same walk: a store on the carried edge,
+  an unmodelled op, a fallback, an x87 micro-op or a write to a fact's base
+  register all kill exactly as they do inside one block.
+* **The folded terminator kills too.** This one is new code, and it is also a
+  **latent round-11 bug fixed on its own account**: `$bx_rg_classify_block`
+  lifts the flag producer out of the micro-op list, so walk 1 could not see that
+  `term_kind` 0 (`inc`/`dec`), 8 (`alu r,r`) and 9 (`alu r,imm32`) *write a
+  register*. A fact recorded before the producer could be matched after it even
+  though the producer had moved the base. `$bx_kill_term_wreg` now applies that
+  write, at `$bx_opt_term_pos` inside walk 1 and again on the way out of each
+  member — both are needed, because a producer that stood at the END of a block
+  has `term_pos == nuops`, an index walk 1's loop never visits, and `inc ecx ;
+  jnz top` is exactly that shape.
+
+The seed is restricted to `pred == m - 1`. That is an **implementation limit,
+not the rule**: seeding from an arbitrary predecessor needs one fact table per
+member, while walking members in index order gives the m-1 case for free. Every
+other single-predecessor edge is counted in `carryRefused`, which is precisely
+the measure of what a per-member table would add.
+
+### 18.2 Measured, against §8's prediction
+
+`docs/block-executor-design/collect-round12-carry.sh`, the same 13 windows and
+batch ranges as §16.6, `off` = `--no-block-exec-carry`. `deleted%` is the same
+`(rle + movelim + immfold) / uopsSplitOff` §16.6 used. `reach%` is
+`carryEdges / (carryEdges + carryRefused)` — the share of non-head members the
+`m-1` restriction actually reaches.
+
+| window | rle off | rle on | carryRle | deleted% off | deleted% on | carryEdges | carryRefused | reach% |
+|---|---|---|---|---|---|---|---|---|
+| quake2-loading | 0 | 6 | 6 | 2.204% | 2.427% | 30720 | 22922 | 57.3% |
+| quake2-gameplay | 9542 | 9793 | 251 | 0.435% | 0.436% | 409368 | 462408 | 47.0% |
+| mw3-loading | 2 | 11 | 9 | 1.328% | 1.330% | 11463 | 7765 | 59.6% |
+| mw3-gameplay \* | 12 | 9 | 9 | 0.504% | 1.337% | 4409 | 2583 | 63.1% |
+| gta2-loading | 0 | 0 | 0 | 1.107% | 1.107% | 747 | 773 | 49.1% |
+| gta2-gameplay | 1 | 1 | 0 | 0.435% | 0.435% | 3982 | 6145 | 39.3% |
+| rct-loading | 686 | 872 | 186 | 0.201% | 0.208% | 25301 | 1137 | 95.7% |
+| rct-gameplay | 242 | 300 | 58 | 0.190% | 0.193% | 17675 | 488 | 97.3% |
+| heroes2-loading | 1036 | 1151 | 115 | 1.144% | 1.174% | 5417 | 12864 | 29.6% |
+| heroes2-gameplay | 714 | 921 | 207 | 1.653% | 1.671% | 12879 | 31310 | 29.1% |
+| caesar3-loading | 107 | 158 | 51 | 0.122% | 0.169% | 1472 | 1352 | 52.1% |
+| starcraft-loading | 8271 | 8486 | 300 | 0.134% | 0.135% | 15901 | 23898 | 40.0% |
+| diablo-loading | 422 | 418 | 0 | 1.244% | 1.251% | 12017 | 15568 | 43.6% |
+
+\* mw3-gameplay's two arms did not cover the same guest work — both are
+`--max-seconds`-capped and their `uopsSplitOff` differ by an order of magnitude
+— so that row is **not a valid A/B** and its numbers must not be read as an
+effect. It is left in rather than dropped so the gap is on the record.
+
+### 18.3 What it recovers, plainly
+
+**The carry works and it is small.** `rle` rises in 9 of the 12 valid windows,
+by 251 on quake2-gameplay (9542 → 9793, +2.6%), 207 on heroes2-gameplay, 300 on
+starcraft-loading, 186 on rct-loading. `deleted%` moves by hundredths of a point
+almost everywhere — the largest honest move is quake2-loading's 2.204% → 2.427%,
+and that is mostly `immfold`, not `rle`.
+
+So **§8's prediction is still not reached, and reason 1 of §16.6 was only part
+of the story.** "The redundancy is almost all between blocks" implied that
+carrying facts across the edge would recover it. It recovers a few percent of an
+already near-zero transform. The rest of the gap must be reasons 2 and 3 —
+store-to-load forwarding's share is structurally unreachable, and §8 had no
+alias model, so most of what it counted as redundant is refused by the kill
+rule and would be refused however far the facts were carried.
+
+Two secondary findings worth keeping:
+
+* **The carry's real product is constant propagation, not load elimination.**
+  `immfold` on quake2-gameplay goes 1233 → 1818 (+47%) and on quake2-loading
+  5546 → 9134 (+65%) — far larger relative moves than `rle`'s. A constant
+  written in one block and used in the next is common; a load repeated across an
+  edge with nothing killing it in between is not.
+* **`reach%` splits the corpus in two.** RollerCoaster Tycoon's regions are
+  almost entirely straight-line chains (95.7% / 97.3% reached), while Heroes II's
+  are joins (29.1% / 29.6%). A per-member fact table would roughly triple the
+  carried edges on Heroes II and do nothing for RCT. Given that tripling the
+  edges here bought a few hundred `rle`, that table is **not** worth building on
+  this evidence.
+
+### 18.4 Switch
+
+`--no-block-exec-carry` is the A/B partner, ON with the executor, propagated to
+workers through `INHERITED_WASM_GLOBALS`. `--block-exec-stats` grows `carryRle`
+(the share of `rle` the carry itself found), `carryEdges` and `carryRefused` on
+the `block-exec-split:` line. `carryRle` is what makes a rise in `rle`
+attributable to this lever rather than to an in-block redundancy, and
+`test-block-exec.js` asserts the same separation on a synthetic region —
+including the four corners of the rule: carried along a fall-through, not
+carried into a two-predecessor join, killed by a store on the edge, killed by
+the terminator's own base write.
+
+## 19. Splitting the read-modify-write STORE (round 12 lever C, 2026-09-14)
+
+> **Both sweeps in sections 18 and 19 were taken with `$block_exec_x87` at its
+> then-default of 1**, before section 17.5 turned that lever off. The A/B inside
+> each table is internally valid (the two arms differ only in the flag named),
+> but the absolute fallback and micro-op counts move once x87 blocks are
+> declined again, so do not read them against a table taken on a later build.
+
+Round 11 (section 16) split the **load** side of a memory-form instruction: an
+`add eax,[esi+8]` became a `TU_LOAD32` into a temp lane plus a register-form
+`TU_ADD_RR` on that lane, which is what made the alias/redundancy pass possible
+at all. It did not touch the other direction. Every read-modify-write form --
+`add [esi+8],eax`, `xor dword [ebx],0x20`, `inc dword [edi]` -- was still a
+single whole-instruction `TU_FALLBACK`: eight registers spilled, the real
+handler called through the table, eight registers reloaded, and every load fact
+in the block killed on the way past.
+
+This section splits those too.
+
+### 19.1 Which handlers
+
+Six, all of them the store-side twins of the four section 16.3 already
+covered:
+
+| H | handler | form |
+|---|---|---|
+| 127 | `$th_alu_m32_r_ro` | `[base+disp] OP= reg` |
+| 47 | `$th_alu_m32_r` | `[abs] OP= reg` |
+| 131 | `$th_alu_m32_i_ro` | `[base+disp] OP= imm32` |
+| 51 | `$th_alu_m32_i32` | `[abs] OP= imm32` |
+| 135 | `$th_unary_m32_ro` | `inc`/`dec`/`not`/`neg` `[base+disp]` |
+| 68 | `$th_unary_m32` | `inc`/`dec`/`not`/`neg` `[abs]` |
+
+Each becomes three micro-ops: `TU_LOAD32`/`TU_LOAD32_ABS` into a temp lane, the
+register-form op on that lane (the SAME `$set_flags_*` call in the same
+position, so the lazy-flag state the terminator reads is bit-identical), then
+`TU_STORE32`/`TU_STORE32_ABS` from the lane back to the same address. The store
+half kills facts exactly as a plain store does; the load half may reuse a live
+fact. `$bx_split_n` carries 2 or 3 to the emitter so the existing two-micro-op
+path is untouched.
+
+**CMP is the exception.** `cmp [mem],reg` and `cmp [mem],imm` arrive through the
+same two handlers with `alu == 7`, and CMP writes no destination -- so those stay
+at two micro-ops with no store, which is also what keeps the alias rule honest
+(a CMP must not kill the fact it just read).
+
+**Not split:** the 8- and 16-bit twins, because the temp lane is 32 bits wide and
+a partial-width RMW would need a read-modify-write of the lane itself before the
+store, which is a second alias question and not this round's; and `xchg`/`xadd`,
+because neither is three micro-ops -- both need a register writeback fused with
+the store, so they would need a fourth kind rather than reusing the existing
+ones. Both stay whole-instruction fallbacks and a test pins the byte form.
+
+### 19.2 What it buys
+
+**Read the fallback column first.** The product of this lever is fewer trips out
+of the executor. The uop count goes UP by construction -- one x86 instruction
+becomes three micro-ops -- so `uopsAfter` rising is the lever working, not
+failing. Same 13 windows as section 16.6, both arms in one sweep, `off` is
+`--no-block-exec-rmw`:
+
+| window | fallback off | fallback on | fallback d% | rmw splits | entries off | entries on | uopsAfter off | uopsAfter on | uops d% |
+|---|---|---|---|---|---|---|---|---|---|
+| quake2-loading | 1828769 | 1828653 | -0.01% | 377 | 2104320 | 2104071 | 1582229 | 1586437 | 0.27% |
+| quake2-gameplay | 13480737 | 13527953 | 0.35% | 40368 | 16895220 | 16877108 | 53591778 | 54158228 | 1.06% |
+| mw3-loading | 317595 | 317655 | 0.02% | 495 | 2819820 | 2819838 | 538192 | 539516 | 0.25% |
+| mw3-gameplay * | 53935 | 170342 | 215.83% | 451 | 546735 | 2803162 | 61904 | 434960 | 602.64% |
+| gta2-loading | 252174 | 252164 | -0.00% | 32 | 149711 | 149808 | 211551 | 211873 | 0.15% |
+| gta2-gameplay | 1520907 | 1529745 | 0.58% | 2978 | 709185 | 714013 | 3092077 | 3115996 | 0.77% |
+| rct-loading | 1555125 | 1555036 | -0.01% | 18906 | 614203 | 614230 | 2568664 | 2612056 | 1.69% |
+| rct-gameplay | 1543947 | 1544568 | 0.04% | 13150 | 594477 | 595340 | 2384664 | 2445534 | 2.55% |
+| heroes2-loading | 288667 | 159055 | **-44.90%** | 9160 | 356027 | 354497 | 388573 | 342956 | -11.74% |
+| heroes2-gameplay | 685981 | 617563 | **-9.97%** | 31755 | 857220 | 867635 | 1154814 | 1264880 | 9.53% |
+| caesar3-loading | 426210 | 426209 | -0.00% | 0 | 305870 | 305870 | 109026 | 110145 | 1.03% |
+| starcraft-loading * | 1701432 | 2334013 | 37.18% | 63148 | 7520130 | 8432590 | 22219464 | 24832416 | 11.76% |
+| diablo-loading | 1503282 | 1525533 | 1.48% | 8512 | 2586145 | 2600427 | 4881180 | 5004733 | 2.53% |
+
+`*` = the two arms did not cover the same guest work (executor entries differ by
+more than 2%); not a valid A/B, kept in the table rather than dropped so the
+next reader does not re-run them expecting a number.
+
+Three findings.
+
+**One: on this corpus it is a Heroes II lever.** Heroes II loading drops 44.9% of
+its executor fallbacks and 11.7% of its micro-ops at the same time -- the only
+row where both fall, and it falls because blocks that used to price a whole-
+instruction fallback now price three cheap micro-ops and *install* instead of
+declining. Its gameplay window drops another 10.0%. Every other valid window
+moves by less than 1.5% in either direction.
+
+**Two: the lever fires almost everywhere and pays almost nowhere.** Splits are
+nonzero in 12 of 13 windows (Caesar III is the exception at zero -- its hot code
+is the RLE ladder of section 16 and a `rect_run` fold, neither of which contains
+an RMW form the executor sees). Firing 40368 times on quake2-gameplay and moving
+fallbacks by +0.35% means those instructions were not on the path that decides
+coverage there.
+
+**Three: a small fallback RISE is install churn, not a regression per
+instruction.** quake2-gameplay (+0.35%), gta2-gameplay (+0.58%) and diablo
+(+1.48%) all pair their rise with an entry count that also moved (0.1-0.6%) --
+the changed uop counts feed the cost model, a slightly different set of regions
+installs, and the fallbacks inside them are counted against a slightly different
+denominator. Nothing in the split makes one RMW instruction more expensive than
+the whole-instruction fallback it replaced.
+
+### 19.3 Correctness
+
+Same alias rule, no new rule. The differential cases added to
+`test/test-block-exec.js` are the ones where a wrong rule shows up as a wrong
+answer rather than a wrong count:
+
+- an RMW whose flags are read by the terminator (the split must leave the lazy-
+  flag quadruple exactly as the fused handler did);
+- a byte-width RMW, asserted **not** split (`rmw == 0`, fallback >= 1);
+- `add [eax],eax` -- the base register is also the source, so the load must be
+  taken before the op and the store must use the address computed from the OLD
+  base;
+- an RMW under a store to an overlapping byte range earlier in the same block
+  (the fact must be dead: `stlf == 0`);
+- an RMW load that reuses a live fact (`rle == 1` exactly, so the reuse is the
+  lever's and not an accident);
+- each of the six handlers above, individually, asserted to reach `rmw >= 1`;
+- `cmp [mem],reg` asserted to split into two micro-ops with no store;
+- an A/B against `--no-block-exec-rmw` that agrees byte for byte on the final
+  machine state while the split counter reads `off=0 on=3`.
+
+239 cases pass in `test/test-block-exec.js`, with `test-x86-ops` (138),
+`test-x87-pipeline4-fusion` (11 differential), `test-tree-fold` and
+`test-worker-wasm-globals` green beside it.
+
+### 19.4 Switch
+
+`--no-block-exec-rmw`, ON with the executor, propagated to workers through
+`INHERITED_WASM_GLOBALS`. `--block-exec-stats` grows an `rmw` counter on the
+`block-exec-split:` line, counting the third micro-op -- so `rmw` is exactly the
+number of RMW instructions this lever took out of the fallback path. The third
+micro-op is emitted with `fn = -1` so `--handler-hist` still counts the x86
+instruction once.
+
+## 20. Round 12 microbench minima
+
+`tools/bench-loops.js`, 9 interleaved reps in one process, order rotated,
+minima quoted; box at loadavg 6 throughout, which is why the paired median is
+printed beside the minimum rather than instead of it.
+
+| shape | toggle | minima | paired median | reading |
+|---|---|---|---|---|
+| `blk_memalu8` (6 `op r32,[esi+disp]`) | `block_exec_split` | **+27.8%** | +27.6% | round 11's load split, re-confirmed on the round-12 build |
+| `blk_rld8` (4 loads of 2 addresses, 2 repeats) | `block_exec_split` | -2.0% | -6.2% | a pure-load block gains nothing from splitting; §16 said the same |
+| `blk_rmw8` (6 read-modify-write memory forms) | `block_exec_rmw` | **+15.7%** | +13.8% | lever C, on the shape it is for |
+| `region_if2` (guard block + body block) | `block_exec_carry` | +2.9% | +0.4% | lever B is at the harness's ±1% noise floor |
+| `blk_x87mix` (fld/fstp pair among integer ops) | `block_exec_x87` | **-62.0%** | -63.8% | lever A, and why it is now off (§17.5) |
+
+Two cautions carried forward. These shapes set `$block_exec_min_uops`, which
+**replaces** the cost model, so every row is "what it costs once the block is
+inside the executor", never "what the model decides". And the harness prices a
+perfectly BTB-predicted loop, so no percentage here is an app percentage: the
+13-window tables in §§16.6, 18.5 and 19.2 are where coverage is measured.
+
+## 21. Round 12: the picture, and the wall clock
+
+**Picture.** `docs/block-executor-design/collect-round12-png.sh` captures each of
+quake2, mw3 and heroes2 at two budgets with the executor off and on:
+
+| app | budget | changed pixels |
+|---|---|---|
+| quake2 | 600 / 1200 | 0 of 76800, both |
+| mw3 | 400 / 830 | 0 of 307200, both |
+| heroes2 | 700 | 282 of 307200 (0.09%), box 53,186 128x31 |
+| heroes2 | 1400 | 738 of 307200 (0.24%), box 51,183 131x180 |
+
+Heroes II differs at both budgets, which is what the two-budget rule exists to
+catch -- so it was checked rather than waved through. It is pacing: re-running
+the **off** arm alone at 1390 instead of 1400 batches, a 0.7% change in budget
+with no code difference at all, moves 571 pixels (0.19%) inside the same box
+(51,196 131x167). A same-arm perturbation the size of the cross-arm difference
+means the difference is where the animation got to, not what was drawn.
+
+**Wall clock.** `tools/fold-ab.js --app=quake2_demo --arm-on='--block-exec'
+--base='--quiet-api --batch-size=200000 --x87-fusion' --work=300
+--extra='--args=+set vid_ref soft +map demo1'`, 8 reps, arm order rotated:
+
+```
+off   median 4.900s  min 4.550s
+on    median 5.370s  min 5.000s
+null  median 4.850s  min 4.550s
+on-off   mean 0.426s  sd 0.370  median 0.470
+VERDICT unresolvable at this load  (|on-off| 0.426 vs 2x null spread 0.886)
+```
+
+**Unresolvable, and reported as unresolvable.** The on arm is slower in 7 of 8
+reps by a fairly steady ~0.47s, but the null-vs-off spread on the same box is
+twice that, so this run cannot separate the executor from the machine. Two
+things also make the number a poor question even on a quiet box: at
+`--work=300` a large share of the wall clock is app load and first-decode, which
+is exactly where the executor *spends* (descriptor building) and not where it
+*earns*; and `--quiet-api` is on, so what remains is guest work rather than
+stdout. The coverage counters in sections 16.6, 18.5, 19.2 and 17.5 are
+deterministic and are what round 12's claims rest on.

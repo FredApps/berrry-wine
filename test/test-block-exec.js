@@ -61,6 +61,24 @@ const load32 = (d, base, disp) => [0x8B, 0x80 | (d << 3) | base, ...le32(disp)];
 const store32 = (s, base, disp) => [0x89, 0x80 | (s << 3) | base, ...le32(disp)];
 const load32abs = (d, abs) => [0x8B, 0x05 | (d << 3), ...le32(abs)];
 const store32abs = (s, abs) => [0x89, 0x05 | (s << 3), ...le32(abs)];
+// ---- read-modify-write memory forms (round 12 lever C, §19). The opcode is
+// the `OP r/m32, r32` direction (0x01 ADD, 0x09 OR, 0x21 AND, 0x29 SUB,
+// 0x31 XOR, 0x39 CMP), so the MEMORY operand is the destination -- the mirror
+// of load32/aluRR, where it is the source.
+const aluMR = (opc, base, disp, reg) => [opc, 0x80 | (reg << 3) | base, ...le32(disp)];
+const aluMabsR = (opc, abs, reg) => [opc, 0x05 | (reg << 3), ...le32(abs)];
+const aluMI = (digit, base, disp, imm) =>
+  [0x81, 0x80 | (digit << 3) | base, ...le32(disp), ...le32(imm)];
+const aluMabsI = (digit, abs, imm) =>
+  [0x81, 0x05 | (digit << 3), ...le32(abs), ...le32(imm)];
+const incM = (base, disp) => [0xFF, 0x80 | base, ...le32(disp)];
+const decM = (base, disp) => [0xFF, 0x88 | base, ...le32(disp)];
+const notM = (base, disp) => [0xF7, 0x90 | base, ...le32(disp)];
+const negM = (base, disp) => [0xF7, 0x98 | base, ...le32(disp)];
+const incMabs = abs => [0xFF, 0x05, ...le32(abs)];
+const negMabs = abs => [0xF7, 0x1D, ...le32(abs)];
+// The BYTE twin, which lever C deliberately does not split.
+const aluM8R8 = (base, disp, r8) => [0x00, 0x80 | (r8 << 3) | base, ...le32(disp)];
 const movR8R8 = (d, s) => [0x88, 0xC0 | (s << 3) | d];
 const aluR8I8 = (digit, r8, v) => [0x80, 0xC0 | (digit << 3) | r8, v & 0xFF];
 const load8 = (d8, base, disp) => [0x8A, 0x80 | (d8 << 3) | base, ...le32(disp)];
@@ -220,6 +238,8 @@ async function main() {
       split: e.get_bx_pass_split(), rle: e.get_bx_pass_rle(),
       movelim: e.get_bx_pass_movelim(), immfold: e.get_bx_pass_immfold(),
       stlf: e.get_bx_pass_stlf(),
+      x87: e.get_bx_x87_uops(),
+      rmw: e.get_bx_pass_rmw(),
     };
     e.set_eip(addr);
     e.run(100000);
@@ -235,12 +255,14 @@ async function main() {
       lastFallbackFn: e.get_block_exec_last_fallback_fn(),
       fallbacks: Number(e.get_block_exec_fallback_ops() - fbBefore),
       natives: Number(e.get_block_exec_native_ops() - natBefore),
+      x87uops: Number(e.get_bx_x87_uops() - passBefore.x87),
       pass: {
         split: Number(e.get_bx_pass_split() - passBefore.split),
         rle: Number(e.get_bx_pass_rle() - passBefore.rle),
         movelim: Number(e.get_bx_pass_movelim() - passBefore.movelim),
         immfold: Number(e.get_bx_pass_immfold() - passBefore.immfold),
         stlf: Number(e.get_bx_pass_stlf() - passBefore.stlf),
+        rmw: Number(e.get_bx_pass_rmw() - passBefore.rmw),
       },
     };
     e.set_block_exec(0);
@@ -1193,13 +1215,24 @@ async function main() {
      ...load32(ECX, EBX, 0x40), ...aluRR(XOR, EDX, ECX)],
     { stlf: ['==', 0] });
 
+  // ------------------------------------------------------------------
+  // Round 12 section 18: carrying a load fact ACROSS a region edge.
+  //
+  // Section 16.2 always permitted this where the target has a single
+  // predecessor inside the region; round 11 carried nothing, because the edge
+  // set is not resolved until every member has been classified. These four
+  // cases are the rule's four corners, and each asserts BOTH that the two arms
+  // agree and what the pass did, since "the arms agree" cannot tell a sound
+  // carry from no carry at all.
+  // ------------------------------------------------------------------
   {
-    // (§16.4) Across a block boundary inside a region, nothing is carried. The
-    // pass runs per member block, so the same address loaded either side of a
-    // Jcc is loaded twice — the conservative end of the rule, asserted here so
-    // that a future edge-carrying version has to change this case deliberately
-    // rather than by accident.
-    const r = region('facts do not cross a block boundary in a region', asm([
+    // (1) THE CARRY ITSELF. The same shape round 11 used to assert
+    // `rle === 0` across the edge: the head loads DATA+0x30, falls through to
+    // a block that loads it again, and nothing in between kills the fact, so
+    // the second load is now a register move. Deliberately re-written from the
+    // round-11 case rather than added beside it, because that assertion was a
+    // statement about the implementation's conservatism, not about the rule.
+    const carried = asm([
       [...movRI(ECX, 6), ...movRI(EAX, 0)],
       { label: 'top' },
       [...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EAX, EDX),
@@ -1210,9 +1243,204 @@ async function main() {
       { j: 'jmp', to: 'top' },
       { label: 'out' },
       JOIN,
+    ]);
+    const r = region('a fact carried along a fall-through is reused', carried);
+    check('  the carried load was eliminated',
+      r.on.pass.rle >= 1, `rle=${r.on.pass.rle}`);
+    // ...and the A/B partner really is one: with the carry off the same bytes
+    // eliminate nothing, which is what makes the counter above attributable to
+    // this lever rather than to an in-block redundancy.
+    e.set_block_exec_carry(0);
+    const offArm = arm(carried, true);
+    e.set_block_exec_carry(1);
+    check('  --no-block-exec-carry eliminates nothing',
+      offArm.pass.rle === 0, `rle=${offArm.pass.rle}`);
+    check('  and both carry arms agree with threaded',
+      offArm.eax === r.off.eax && offArm.edi === r.off.edi,
+      `eax ${offArm.eax.toString(16)} vs ${r.off.eax.toString(16)}`);
+  }
+
+  {
+    // (2) A TWO-PREDECESSOR JOIN. The diamond's join is reached from both arms,
+    // so neither arm's exit state describes it and no fact may cross. The arms
+    // are kept load-free so the only load pair in the region is the head's and
+    // the join's -- otherwise a carry into an ARM (legal: each has one
+    // predecessor) would count in the same meter and the assertion would be
+    // about the wrong edge.
+    const r = region('a fact is NOT carried into a two-predecessor join', asm([
+      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...load32abs(EDX, DATA + 0x30), ...aluRI(7, ESI, 4)],
+      { j: 'jcc', cc: JB, to: 'low' },
+      [...aluRI(0, EAX, 0x11)],
+      { j: 'jmp', to: 'join' },
+      { label: 'low' },
+      [...aluRI(5, EAX, 7)],
+      { label: 'join' },
+      [...load32abs(EDI, DATA + 0x30), ...aluRR(ADD, EAX, EDI),
+       ...decR(ECX)],
+      { j: 'jcc', cc: JNZ, to: 'top' },
+      { label: 'out' },
+      JOIN,
     ]));
-    check('  no elimination carried across the edge',
+    check('  nothing was eliminated at the join',
       r.on.pass.rle === 0, `rle=${r.on.pass.rle}`);
+  }
+
+  {
+    // (3) A STORE ON THE CARRIED EDGE. Same single-predecessor fall-through as
+    // (1), with a store to the very address the fact names sitting between the
+    // two loads. The kill rule is unchanged by the carry, so the second load
+    // must survive -- and if it did not the differential compare would catch
+    // it, because the store changes what is there.
+    const r = region('a store on the carried edge kills the fact', asm([
+      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EAX, EDX),
+       ...incR(EDX), ...store32abs(EDX, DATA + 0x30),
+       ...decR(ECX), ...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...load32abs(EDI, DATA + 0x30), ...aluRR(ADD, EAX, EDI),
+       ...aluRR(XOR, ESI, ESI)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+    check('  the store killed it',
+      r.on.pass.rle === 0, `rle=${r.on.pass.rle}`);
+  }
+
+  {
+    // (4) A BASE WRITE AT THE JOIN. This is the case the carry could not have
+    // been written without: the head's FOLDED TERMINATOR producer is `inc ebx`,
+    // which writes the fact's base register and is not in the micro-op list at
+    // all, so a walk that only looked at micro-ops would carry a fact naming an
+    // address the edge just moved. `jz out` is never taken (EBX is a large
+    // pointer) and the body restores EBX, so the loop stays inside DATA.
+    const r = region('a base write by the terminator kills the fact', asm([
+      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...load32(EDX, EBX, 0x30), ...aluRR(ADD, EAX, EDX), ...incR(EBX)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...load32(EDI, EBX, 0x30), ...aluRR(ADD, EAX, EDI),
+       ...decR(EBX), ...decR(ECX)],
+      { j: 'jcc', cc: JNZ, to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]));
+    check('  the terminator base write killed it',
+      r.on.pass.rle === 0, `rle=${r.on.pass.rle}`);
+  }
+
+  // ------------------------------------------------------------------
+  // Round 12 section 19: the READ-MODIFY-WRITE store split (lever C).
+  //
+  // Round 11 split only the load side. `[m] OP= reg` and its family were whole
+  // instruction fallbacks, so an in-place increment cost a spill of eight GPRs,
+  // a call_indirect and a reload. They are now three micro-ops: a TU_LOAD into
+  // a lane, the register-form op on that lane, and a TU_STORE back.
+  //
+  // Every case below runs through `equiv`, whose block ends `pushfd ; pop ebp`,
+  // so EBP is compared as well as the registers and the data -- which is what
+  // makes "RMW with flags read by the terminator" an assertion in all of them
+  // rather than one case. `neg` and `inc` differ from each other precisely in
+  // which flags they leave, and CF in particular is what a wrong lowering
+  // loses.
+  // ------------------------------------------------------------------
+  console.log('\n-- read-modify-write memory forms (round 12, §19) --');
+  {
+    const rmw = (name, body, seed) => {
+      const r = equiv(name, body, seed);
+      check(`  ${name}: split into load/op/store`, r.on.pass.rmw >= 1,
+        `rmw=${r.on.pass.rmw} split=${r.on.pass.split}`);
+      return r;
+    };
+
+    rmw('ADD/SUB/XOR [base+disp], reg (H127)',
+      [...aluMR(0x01, EBX, 0x40, ECX), ...aluMR(0x29, EBX, 0x44, EDX),
+       ...aluMR(0x31, EBX, 0x48, ESI)]);
+    rmw('AND/OR [addr], reg (H47)',
+      [...aluMabsR(0x21, DATA + 0x50, ECX), ...aluMabsR(0x09, DATA + 0x54, EDX)]);
+    rmw('ADD/SUB [base+disp], imm32 (H131)',
+      [...aluMI(0, EBX, 0x58, 0x00010203), ...aluMI(5, EBX, 0x5C, 0x7F)]);
+    rmw('XOR/AND [addr], imm32 (H51)',
+      [...aluMabsI(6, DATA + 0x60, 0xFFFF0000),
+       ...aluMabsI(4, DATA + 0x64, 0x0F0F0F0F)]);
+    rmw('INC/DEC/NOT/NEG [base+disp] (H135)',
+      [...incM(EBX, 0x68), ...decM(EBX, 0x6C), ...notM(EBX, 0x70),
+       ...negM(EBX, 0x74)]);
+    rmw('INC/NEG [addr] (H68)',
+      [...incMabs(DATA + 0x78), ...negMabs(DATA + 0x7C)]);
+
+    // CMP is the one member of these opcode families that does NOT store --
+    // $th_alu_m32_r skips its write-back when alu == 7 and so does the split.
+    // A store here would write a value the instruction never produces, so the
+    // assertion is that the form split (two micro-ops, load + TU_CMP_RR) with
+    // NO store half.
+    const cmpr = equiv('CMP [base+disp], reg splits without a store',
+      [...aluMR(0x39, EBX, 0x40, ECX), ...aluMabsI(7, DATA + 0x44, 0x1234)]);
+    check('  no store half was emitted for CMP', cmpr.on.pass.rmw === 0,
+      `rmw=${cmpr.on.pass.rmw}`);
+    check('  but the loads were still split', cmpr.on.pass.split >= 2,
+      `split=${cmpr.on.pass.split}`);
+
+    // A PARTIAL-WIDTH RMW. The byte twin needs the sub-register vocabulary on
+    // the lane, so it is deliberately left a whole-instruction fallback -- the
+    // point of the case is that it still executes correctly, and that the
+    // meter shows it took the other path rather than being silently lowered as
+    // a dword.
+    const byteRmw = equiv('a byte RMW is NOT split and still agrees',
+      [...aluM8R8(EBX, 0x40, 1), ...aluMR(0x01, EBX, 0x44, EDX)]);
+    check('  only the dword form split', byteRmw.on.pass.rmw === 1,
+      `rmw=${byteRmw.on.pass.rmw}`);
+    check('  and the byte form went through a fallback',
+      byteRmw.on.fallbacks >= 1, `fallbacks=${byteRmw.on.fallbacks}`);
+
+    // THE BASE WRITTEN BY THE OP ITSELF. `add [eax],eax` reads EAX as the base
+    // AND as the addend; the lowering must add the ORIGINAL EAX into memory and
+    // must not disturb EAX. It is safe by construction -- the op writes the
+    // lane -- and this is the case that says so out loud.
+    rmw('add [eax],eax -- the base is its own operand',
+      [...aluMR(0x01, EAX, 0, EAX), ...aluMR(0x01, EAX, 4, EAX)],
+      { eax: DATA + 0x20 });
+
+    // AN EARLIER STORE OVERLAPPING THE RMW's ADDRESS. The store half kills
+    // facts exactly as a plain store does, and store-to-load forwarding stays
+    // removed (§16.3 item 3), so the RMW's load must go to memory and read what
+    // the store put there. A wrong answer here shows up in the data compare,
+    // not only in the meter.
+    const over = equiv('an RMW under an earlier store to the same address',
+      [...movRI(ESI, 0x0BADF00D), ...store32(ESI, EBX, 0x40),
+       ...aluMR(0x01, EBX, 0x40, ECX), ...load32(EDX, EBX, 0x40)]);
+    check('  nothing was forwarded from the store', over.on.pass.stlf === 0,
+      `stlf=${over.on.pass.stlf}`);
+
+    // THE LOAD HALF REUSING A LIVE FACT. `mov eax,[ebx+0x40]` followed by
+    // `add [ebx+0x40],imm` names the same address with nothing in between, so
+    // the RMW's load is the redundant one and becomes a register move. The
+    // store half then kills the fact, which is why the second load after it is
+    // NOT eliminated -- one `rle`, not two.
+    const reuse = equiv('the RMW load reuses a live fact, its store kills it',
+      [...load32(EAX, EBX, 0x40), ...aluMI(0, EBX, 0x40, 7),
+       ...load32(ECX, EBX, 0x40), ...aluRR(ADD, EDX, ECX)]);
+    check('  exactly one load was eliminated', reuse.on.pass.rle === 1,
+      `rle=${reuse.on.pass.rle} — 0 means the fact did not reach the RMW, ` +
+      `2 means the store failed to kill it`);
+
+    // The A/B partner, on the same bytes: with --no-block-exec-rmw every form
+    // above is a fallback again, and the answers must not move.
+    const both = [...aluMR(0x01, EBX, 0x40, ECX), ...incM(EBX, 0x44),
+                  ...negMabs(DATA + 0x48)];
+    const withRmw = arm(block(both), true);
+    e.set_block_exec_rmw(0);
+    const noRmw = arm(block(both), true);
+    e.set_block_exec_rmw(1);
+    check('--no-block-exec-rmw agrees byte for byte',
+      withRmw.data === noRmw.data && withRmw.ebp === noRmw.ebp,
+      withRmw.data === noRmw.data ? `eflags ${withRmw.ebp.toString(16)} vs ` +
+        `${noRmw.ebp.toString(16)}` : 'guest memory differs');
+    check('  and it really was the other path', noRmw.pass.rmw === 0 &&
+      withRmw.pass.rmw === 3, `off=${noRmw.pass.rmw} on=${withRmw.pass.rmw}`);
   }
 
   {
@@ -1239,6 +1467,193 @@ async function main() {
       `installs=${armed.on.installs}`);
     e.set_fault_unmapped(0);
   }
+
+  // ------------------------------------------------------------------
+  // Round 12 (OPEN-6): x87-carrying blocks are no longer declined.
+  //
+  // The executor runs AFTER the x87 fusers now, and an x87 op -- fused or bare
+  // -- is a FALLBACK micro-op: spill eight, call the real handler with $ip at
+  // its inline words, reload eight. The x87 stack, tag word and status word
+  // are globals the executor never models, so they survive by not being
+  // touched. Every case below is run with the fold ARMED, because that is the
+  // configuration the ordering change exists for and the one where a wrong
+  // span turns a fused op's inline address words into a handler index.
+  //
+  // FNINIT opens every body: the x87 stack is global state that outlives an
+  // arm, so without it the second arm of a case starts on whatever depth the
+  // first one left and the two arms differ for a reason that is not the
+  // executor's.
+  // ------------------------------------------------------------------
+  console.log('\n-- round 12: x87 inside the executor --');
+
+  const FNINIT = [0xDB, 0xE3];
+  // D9 /0 fld m32, D9 /3 fstp m32, D8 /0 fadd m32, D8 /1 fmul m32,
+  // D8 /3 fcomp m32, DB /0 fild m32, DB /3 fistp m32.
+  const x87m = (op, digit, base, disp) => [op, 0x80 | (digit << 3) | base, ...le32(disp)];
+  const fldM   = (base, disp) => x87m(0xD9, 0, base, disp);
+  const fstpM  = (base, disp) => x87m(0xD9, 3, base, disp);
+  const faddM  = (base, disp) => x87m(0xD8, 0, base, disp);
+  const fmulM  = (base, disp) => x87m(0xD8, 1, base, disp);
+  const fcompM = (base, disp) => x87m(0xD8, 3, base, disp);
+  const fildM  = (base, disp) => x87m(0xDB, 0, base, disp);
+  const fistpM = (base, disp) => x87m(0xDB, 3, base, disp);
+  const FXCH1  = [0xD9, 0xC9];        // fxch st(1)
+  const FLDST0 = [0xD9, 0xC0];        // fld st(0)
+  const FNSTSW = [0xDF, 0xE0];        // fnstsw ax
+  const SAHF   = [0x9E];
+
+  // Known operands, planted by the SNIPPET rather than by the harness: `arm`
+  // refills the scratch from seedData() inside each arm, so anything written
+  // from JS before the run is gone by the time the block executes. A
+  // `mov dword [ebx+disp], imm32` costs one more micro-op and buys a case that
+  // can say which way a compare went.
+  const movMI = (base, disp, v) => [0xC7, 0x80 | base, ...le32(disp), ...le32(v)];
+  const F1_5 = 0x3FC00000, F2_25 = 0x40100000, F_0_75 = 0xBF400000, F8 = 0x41000000;
+  const plantFloats = [
+    ...movMI(EBX, 0x80, F1_5), ...movMI(EBX, 0x84, F2_25),
+    ...movMI(EBX, 0x88, F_0_75), ...movMI(EBX, 0x8C, F8),
+    ...movMI(EBX, 0x90, 1234), ...movMI(EBX, 0x94, (-77) >>> 0),
+  ];
+
+  e.set_x87_pipeline4_fusion(1);
+  e.set_x87_affine_fusion(1);
+  // Lever A is OFF by default (section 17.5), so every case in this section has
+  // to arm it explicitly -- otherwise the two arms run the same threaded code
+  // and the section proves nothing. Restored at the end of the section.
+  e.set_block_exec_x87(1);
+
+  // Every x87 case opens with FNINIT and then plants its own operands, so the
+  // floats it reads are named values rather than whatever seedData's fill
+  // happened to leave at that offset — a denormal or a NaN would still be
+  // identical in both arms, but a case that cannot say what it computed can
+  // only report agreement and never a wrong answer.
+  const x87equiv = (name, body, opts) =>
+    equiv(name, [...FNINIT, ...plantFloats, ...body], null, opts);
+
+  // (1) fld / fstp to memory standing inside an otherwise integer block. This
+  //     is the shape §4c named as the whole cost: quake2's `+0x10011cd1` family
+  //     is x87 for a few ops and integer span-walking for the rest.
+  {
+    const r = x87equiv('fld/fstp m32 inside an integer block',
+      [...load32(EAX, EBX, 0x10), ...aluRI(0, EAX, 1),
+       ...fldM(EBX, 0x80), ...faddM(EBX, 0x84), ...fstpM(EBX, 0xA0),
+       ...aluRR(XOR, ECX, EAX), ...load32(EDX, EBX, 0x14),
+       ...aluRR(ADD, EDX, ECX)]);
+    check('  the block installed with x87 inside it', r.on.installs >= 1,
+      `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
+    check('  and the x87 arrived as a fallback micro-op', r.on.x87uops >= 1,
+      `x87uops=${r.on.x87uops}`);
+  }
+
+  // (2) fild / fistp -- the int->float->int trip through a stack slot, which
+  //     is the other half of §4c's decline-1 bucket.
+  {
+    const r = x87equiv('fild/fistp m32 inside an integer block',
+      [...load32(EAX, EBX, 0x10), ...aluRI(4, EAX, 0xFF),
+       ...fildM(EBX, 0x90), ...fmulM(EBX, 0x80), ...fistpM(EBX, 0xA4),
+       ...load32(ECX, EBX, 0xA4), ...aluRR(ADD, EAX, ECX)]);
+    check('  fild/fistp installed', r.on.installs >= 1,
+      `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
+    check('  and counted an x87 micro-op', r.on.x87uops >= 1,
+      `x87uops=${r.on.x87uops}`);
+  }
+
+  // (3) fcomp + fnstsw ax + sahf + Jcc as the block's terminator. §4c's
+  //     decline-2: mw3 enters five of these 5-7 op blocks ~100,000 times each.
+  //     The interesting part is that `fnstsw ax` WRITES EAX from inside a
+  //     fallback, so the executor's reload of the eight locals after the call
+  //     is what makes the following integer code see it.
+  {
+    const bytes = asm([
+      [...FNINIT, ...plantFloats,
+       ...fldM(EBX, 0x80), ...fcompM(EBX, 0x84), ...FNSTSW, ...SAHF],
+      { j: 'jcc', cc: JB, to: 'lower' },
+      [...movRI(EDX, 0x11111111), ...aluRR(XOR, ECX, ECX)],
+      { j: 'jmp', to: 'out' },
+      { label: 'lower' },
+      [...movRI(EDX, 0x22222222), ...aluRI(0, ECX, 3)],
+      { label: 'out' },
+      JOIN,
+    ]);
+    const off = arm(bytes, false);
+    const on = arm(bytes, true);
+    const ok = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi']
+      .every(k => off[k] === on[k]) && off.data === on.data && off.eip === on.eip;
+    check('fcomp + fnstsw ax + sahf + Jcc terminator', ok,
+      ok ? '' : `\n         off ${hexRegs(off)}\n         on  ${hexRegs(on)}`);
+    check('  the compare really took the lower branch',
+      (off.edx >>> 0) === 0x22222222, `edx=${off.edx.toString(16)}`);
+  }
+
+  // (4) An fxch chain. §4c found fxch is inside the island's accepted set
+  //     wherever it is contiguous, so this is the case that proves a FUSED run
+  //     (H451) is walked past by its span and not op by op — a wrong span here
+  //     runs an address word as a handler index and the arms diverge loudly.
+  {
+    const r = x87equiv('an fxch chain inside a fused island',
+      [...fldM(EBX, 0x80), ...fldM(EBX, 0x84), ...FXCH1, ...FLDST0,
+       ...FXCH1, ...faddM(EBX, 0x88), ...fstpM(EBX, 0xA8), ...fstpM(EBX, 0xAC),
+       ...load32(EAX, EBX, 0xA8), ...aluRR(XOR, ECX, EAX)]);
+    check('  the fxch chain installed', r.on.installs >= 1,
+      `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
+    check('  and it went in as one or more x87 fallbacks', r.on.x87uops >= 1,
+      `x87uops=${r.on.x87uops}`);
+  }
+
+  // (5) THE ALIAS CASE. An x87 op between two loads of one address must kill
+  //     the fact: an x87 store writes memory the pass cannot model at all, so
+  //     `rle` has to stay at zero here. This is the §16.2 clause "any x87
+  //     micro-op ... kills every fact", and it is now reachable for the first
+  //     time, because before round 12 the block would simply have declined.
+  {
+    const r = x87equiv('an x87 op between two loads of one address kills the fact',
+      [...load32abs(EAX, DATA + 0x30), ...aluRR(XOR, ECX, ECX),
+       ...fldM(EBX, 0x80), ...fstpM(EBX, 0x30),
+       ...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EDX, EAX)]);
+    check('  the fact was killed (rle stayed at zero)', r.on.pass.rle === 0,
+      `rle=${r.on.pass.rle}`);
+    check('  and the block still installed', r.on.installs >= 1,
+      `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
+  }
+
+  // (6) The control: with the fold DISARMED the same block still has to work,
+  //     because a bare 188/189/190 is a span-1 fallback on the generic path.
+  {
+    e.set_x87_pipeline4_fusion(0);
+    e.set_x87_affine_fusion(0);
+    const r = x87equiv('bare x87 ops with the fold disarmed',
+      [...load32(EAX, EBX, 0x10), ...fldM(EBX, 0x80), ...faddM(EBX, 0x84),
+       ...fmulM(EBX, 0x88), ...fstpM(EBX, 0xB0), ...aluRI(0, EAX, 7),
+       ...load32(ECX, EBX, 0xB0), ...aluRR(XOR, EDX, ECX)]);
+    check('  it installed with the fold off too', r.on.installs >= 1,
+      `installs=${r.on.installs} declWhy=${r.on.declWhy}`);
+    check('  and every bare x87 op is its own fallback', r.on.x87uops >= 4,
+      `x87uops=${r.on.x87uops}`);
+    e.set_x87_pipeline4_fusion(1);
+    e.set_x87_affine_fusion(1);
+  }
+
+  // (7) A region member is still refused over an x87 op. $bx_region_collect
+  //     runs BEFORE the fusers, so the region classifier sees raw 188..190 and
+  //     the widening above deliberately does not reach it. Asserted so the
+  //     scope of round 12 is a decision on the record rather than an omission.
+  {
+    const r = region('a region declines a member holding x87', asm([
+      [...FNINIT, ...plantFloats, ...movRI(ECX, 4), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...load32abs(EDX, DATA + 0x30), ...aluRR(ADD, EAX, EDX),
+       ...fldM(EBX, 0x80), ...fstpM(EBX, 0xB8),
+       ...decR(ECX), ...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JNZ, to: 'top' },
+      JOIN,
+    ]), null, { mayDecline: true });
+    check('  the x87 member did not stop the two arms agreeing',
+      r !== undefined, 'region() returned nothing');
+  }
+
+  e.set_x87_pipeline4_fusion(0);
+  e.set_x87_affine_fusion(0);
+  e.set_block_exec_x87(0);   // back to the shipped default
 
   console.log('\n-- coverage of this run --');
   const tot = totalNative + totalFallback;

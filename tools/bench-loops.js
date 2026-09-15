@@ -1346,6 +1346,72 @@ SHAPES.blk_memalu8 = {
   },
 };
 
+// --- ROUND 12: the shapes levers A and C are about -------------------------
+//
+// blk_x87mix: an integer block with ONE x87 memory pair sitting in the middle
+// of it. This is §4c's "an integer op interleaved inside the x87 run" seen from
+// the other side, and it is the block round 11 declined outright. The store
+// that plants the operand is inside the loop on purpose: it makes the block
+// self-contained (nothing depends on what the buffer happened to hold) and it
+// is a fact-killing store, which is what a real x87-carrying block has too.
+// Run as `--shapes=blk_x87mix --toggle=block_exec_x87`.
+SHAPES.blk_x87mix = {
+  describe: '5-op block: an fld/fstp pair between integer ops',
+  real: 'scalar float shuffling inside otherwise integer code',
+  emit(a) {
+    const n = 250000;
+    const body = [
+      0xC7, 0x46, 0x08, 0x00, 0x00, 0x80, 0x3F,  // mov dword [esi+8],1.0f
+      0xD9, 0x46, 0x08,                           // fld  dword [esi+8]
+      0xD9, 0x5E, 0x10,                           // fstp dword [esi+0x10]
+      0x03, 0x46, 0x00,                           // add eax,[esi+0]
+      0x31, 0xC0 | (RG.eax << 3) | RG.edx,        // xor edx,eax
+    ];
+    const bodyLen = body.length;
+    const code = body.concat([0xEB, 0x00], [0x49], [0x75], rel8(-(bodyLen + 5)));
+    return {
+      iters: n, bytesTouched: n * 16, code,
+      setup(e) {
+        e.set_esi(a.buf); e.set_eax(1); e.set_edx(2); e.set_ecx(n);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
+// blk_rmw8: six read-modify-write memory forms in a row. Until lever C each was
+// a whole-instruction FALLBACK — spill eight, call_indirect, reload eight — so
+// like blk_memalu8 this shape changes the KIND of work rather than its amount,
+// and like it, it is an upper bound: no real block is six RMWs in a row.
+// Run as `--shapes=blk_rmw8 --toggle=block_exec_rmw`.
+SHAPES.blk_rmw8 = {
+  describe: '6-op block of read-modify-write memory forms',
+  real: 'in-place counters and accumulators; a FALLBACK per op until the split',
+  emit(a) {
+    const n = 250000;
+    const body = [
+      0x01, 0x46, 0x00,               // add [esi+0],eax
+      0x29, 0x5E, 0x04,               // sub [esi+4],ebx
+      0x31, 0x7E, 0x08,               // xor [esi+8],edi
+      0x81, 0x46, 0x0C, 1, 0, 0, 0,   // add dword [esi+0xc],1
+      0xFF, 0x46, 0x10,               // inc dword [esi+0x10]
+      0xF7, 0x5E, 0x14,               // neg dword [esi+0x14]
+    ];
+    const bodyLen = body.length;
+    const code = body.concat([0xEB, 0x00], [0x49], [0x75], rel8(-(bodyLen + 5)));
+    return {
+      iters: n, bytesTouched: n * 48, code,
+      setup(e) {
+        e.set_esi(a.buf); e.set_eax(1); e.set_ebx(3); e.set_edi(7);
+        e.set_ecx(n);
+      },
+      checksum: regSnapshot,
+      verify: e => e.get_ecx() === 0 ? null : `ecx=${e.get_ecx()}, expected 0`,
+    };
+  },
+};
+
 // --- STEP 2 (a): 2-block if/else loop --------------------------------------
 // while (esi < edx) { ebx += *esi; esi += 4; }  — a guard block and a body
 // block. The guard's taken edge is the loop exit, which is the one shape a
@@ -1701,6 +1767,30 @@ const TOGGLES = {
     e.set_block_exec(1);
     e.set_block_exec_min_uops(2);
     e.set_block_exec_split(v);
+  },
+  // Round 12's three levers, all with the same shape of contract as
+  // block_exec_split: the executor is armed in BOTH arms and only the lever
+  // varies, so what is timed is the lever and not the executor.
+  //
+  // block_exec_x87 is the one whose OFF arm runs no descriptor at all: round
+  // 11 declined any block holding an x87 op outright, so `off` here is the
+  // plain interpreter and `on` is a descriptor with one fallback in it. That
+  // is the real comparison the lever makes and not a rigged one -- but it does
+  // mean the delta includes the whole descriptor, not just the x87 handling.
+  block_exec_x87: (e, v) => {
+    e.set_block_exec(1);
+    e.set_block_exec_min_uops(2);
+    e.set_block_exec_x87(v);
+  },
+  block_exec_carry: (e, v) => {
+    e.set_block_exec(1);
+    e.set_block_exec_min_uops(2);
+    e.set_block_exec_carry(v);
+  },
+  block_exec_rmw: (e, v) => {
+    e.set_block_exec(1);
+    e.set_block_exec_min_uops(2);
+    e.set_block_exec_rmw(v);
   },
 };
 const applyToggle = (e, name, v) => {

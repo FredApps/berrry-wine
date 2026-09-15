@@ -287,6 +287,15 @@ const BLOCK_EXEC_WALK_BUDGET = parseInt(getArg('block-exec-walk-budget', '0'), 1
 // Round 11's decode-time load/op split. ON whenever the executor is on, so the
 // only switch is the negative one -- this is the A/B partner, not an opt-in.
 const NO_BLOCK_EXEC_SPLIT = hasFlag('no-block-exec-split');
+// Round 12's x87 widening (design doc section 17). Also ON whenever the
+// executor is on, so this too is only a negative switch: it restores round 11's
+// behaviour of declining any block that holds an H188-H190 or a fused
+// H449-H453, which is the `before` arm of section 17's coverage table.
+// Round 12 lever A. OFF by default -- see section 17.5 of
+// docs/block-executor-design.md; ONE is the meaningful value here.
+const BLOCK_EXEC_X87 = hasFlag('block-exec-x87');
+const NO_BLOCK_EXEC_CARRY = hasFlag('no-block-exec-carry');
+const NO_BLOCK_EXEC_RMW = hasFlag('no-block-exec-rmw');
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
@@ -4040,6 +4049,9 @@ async function main() {
   if (BLOCK_EXEC_WALK_K) inheritWasm('set_block_exec_walk_k', BLOCK_EXEC_WALK_K);
   if (BLOCK_EXEC_WALK_BUDGET) inheritWasm('set_block_exec_walk_budget', BLOCK_EXEC_WALK_BUDGET);
   if (NO_BLOCK_EXEC_SPLIT) inheritWasm('set_block_exec_split', 0);
+  if (BLOCK_EXEC_X87) inheritWasm('set_block_exec_x87', 1);
+  if (NO_BLOCK_EXEC_CARRY) inheritWasm('set_block_exec_carry', 0);
+  if (NO_BLOCK_EXEC_RMW) inheritWasm('set_block_exec_rmw', 0);
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
   if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
@@ -4960,6 +4972,15 @@ async function main() {
   }
   if (NO_BLOCK_EXEC_SPLIT && instance.exports.set_block_exec_split) {
     instance.exports.set_block_exec_split(0);
+  }
+  if (BLOCK_EXEC_X87 && instance.exports.set_block_exec_x87) {
+    instance.exports.set_block_exec_x87(1);
+  }
+  if (NO_BLOCK_EXEC_CARRY && instance.exports.set_block_exec_carry) {
+    instance.exports.set_block_exec_carry(0);
+  }
+  if (NO_BLOCK_EXEC_RMW && instance.exports.set_block_exec_rmw) {
+    instance.exports.set_block_exec_rmw(0);
   }
   if (NO_AOE_FILL && instance.exports.set_loop_aoe_fill_emit) {
     instance.exports.set_loop_aoe_fill_emit(0);
@@ -9309,7 +9330,27 @@ if (VERBOSE) {
           'rle', String(e.get_bx_pass_rle()),
           'stlf', String(e.get_bx_pass_stlf()),
           'movelim', String(e.get_bx_pass_movelim()),
-          'immfold', String(e.get_bx_pass_immfold()));
+          'immfold', String(e.get_bx_pass_immfold()),
+          // Round 12: x87 micro-ops accepted as fallbacks instead of
+          // declining the whole block. One per FUSED region (H449-H453) or
+          // per bare x87 op, so it counts descriptor entries and not guest
+          // x87 instructions -- a single `x87` here can stand for a run of
+          // 255.
+          'x87', e.get_bx_x87_uops ? String(e.get_bx_x87_uops()) : '-',
+          // Round 12 section 18: the cross-edge carry. `carryRle` is the share
+          // of `rle` that the carry itself found -- a load killed inside its
+          // own block is not one of these. `carryEdges` / `carryRefused` split
+          // every non-head member of every emitted region into "seeded from
+          // its one predecessor" and "not", so refused is the headroom a
+          // per-member fact table would reach.
+          'carryRle', e.get_bx_pass_carry_rle ? String(e.get_bx_pass_carry_rle()) : '-',
+          'carryEdges', e.get_bx_carry_edges ? String(e.get_bx_carry_edges()) : '-',
+          'carryRefused', e.get_bx_carry_refused ? String(e.get_bx_carry_refused()) : '-',
+          // Round 12 section 19: how many of `split` were READ-MODIFY-WRITE
+          // forms, which produce three micro-ops instead of two. Each one is a
+          // TU_FALLBACK that no longer happens, so read it beside the
+          // block-exec line's `fallback` column, not beside the uop counts.
+          'rmw', e.get_bx_pass_rmw ? String(e.get_bx_pass_rmw()) : '-');
       }
       // The multi-block matcher's own line. `ops by N` is the coverage split
       // the census is compared against: N=1 is a plain block, N>=2 is a region

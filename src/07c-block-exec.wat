@@ -123,6 +123,16 @@
   ;; toggle in this family and is in INHERITED_WASM_GLOBALS.
   (global $block_exec_split (mut i32) (i32.const 1))
 
+  ;; ROUND 12 (OPEN-6) -- may a block hold an x87 op? OFF, opt in with
+  ;; --block-exec-x87. It shipped ON and was turned off by its own
+  ;; re-measurement on the finished round-12 build (section 17.5): with the
+  ;; cross-edge carry and the RMW split in place it LOSES coverage on
+  ;; quake2-gameplay (installs 59448 -> 52749, transfersSaved 3.29M -> 2.51M,
+  ;; native% 97.63 -> 97.59) and changes nothing at all on mw3-gameplay. Zero is
+  ;; therefore round 11's blanket decline, and one is the arm to measure.
+  ;; Per-instance mutable and in INHERITED_WASM_GLOBALS like every other toggle.
+  (global $block_exec_x87 (mut i32) (i32.const 0))
+
   ;; Temp lanes. Register indices 8..14, held in seven wasm locals inside
   ;; $th_block_exec. 15 is still "absent", which is what caps this at seven.
   (global $BX_LANE0    i32 (i32.const 8))
@@ -140,6 +150,28 @@
   (global $bx_pass_stlf        (mut i64) (i64.const 0))
   (global $bx_pass_movelim     (mut i64) (i64.const 0))
   (global $bx_pass_immfold     (mut i64) (i64.const 0))
+  ;; Round 12 (OPEN-6): x87 micro-ops the classifier accepted as fallbacks
+  ;; rather than declining the whole block over. One per FUSED region or per
+  ;; bare x87 op, so it is a count of descriptor entries, not of guest x87
+  ;; instructions.
+  (global $bx_x87_uops         (mut i64) (i64.const 0))
+  ;; Round 12 (section 18): redundant loads eliminated ONLY because a fact was
+  ;; carried across a region edge. It is a strict subset of $bx_pass_rle -- the
+  ;; carry pass bumps both -- so `rle - carryRle` is what a block-local pass
+  ;; would have found on its own.
+  (global $bx_pass_carry_rle   (mut i64) (i64.const 0))
+  ;; Region edges the carry was actually taken along, and the ones it was
+  ;; refused on. The refusal count is the interesting half: it is the measure of
+  ;; how much of §16.2's permission the single-predecessor rule reaches.
+  (global $bx_carry_edges      (mut i64) (i64.const 0))
+  (global $bx_carry_refused    (mut i64) (i64.const 0))
+  ;; ON whenever the executor is on; --no-block-exec-carry is the A/B partner
+  ;; the section-18 table is measured with.
+  (global $block_exec_carry (mut i32) (i32.const 1))
+  ;; Round 12 lever C: the read-modify-write store split. ON with the executor;
+  ;; --no-block-exec-rmw is its A/B partner.
+  (global $block_exec_rmw   (mut i32) (i32.const 1))
+  (global $bx_pass_rmw      (mut i64) (i64.const 0))
 
   ;; ---- the fact table --------------------------------------------------
   ;; Up to $BX_FACT_MAX live memory facts for the straight-line stretch being
@@ -172,6 +204,16 @@
   ;; Scratch for the walk, so the helpers below can be plain functions.
   (global $bx_opt_term_pos (mut i32) (i32.const 0))
   (global $bx_lane_next (mut i32) (i32.const 0))
+  ;; ROUND 12 (section 18). The register the FOLDED terminator writes, or -1.
+  ;; The terminator is not a micro-op in the list -- it was lifted out -- so
+  ;; walk 1 has to be told, and it is the one thing that can invalidate a fact
+  ;; at a region edge as well as inside a block. term_kind 0 (inc/dec),
+  ;; 8 (`alu r,r`) and 9 (`alu r,imm32`) write `term_a`; every other kind
+  ;; writes nothing but flags.
+  (global $bx_opt_term_wreg (mut i32) (i32.const -1))
+  ;; 1 while $bx_rg_carry_pass is re-walking a member, so an `rle` hit can be
+  ;; attributed to the carry rather than to the block-local pass.
+  (global $bx_opt_carry_mode (mut i32) (i32.const 0))
 
   ;; ----------------------------------------------------------------------
   ;; Decode-time helpers
@@ -274,6 +316,20 @@
   (global $BX_C_UOP      i32 (i32.const 16))
   (global $BX_C_TRANSFER i32 (i32.const 9))
   (global $BX_C_FALLBACK i32 (i32.const 20))
+
+  ;; An x87 micro-op is a fallback like any other -- but it is the only fallback
+  ;; the executor admits that BUYS NOTHING, because $nat is deliberately not
+  ;; bumped for it (section 17): the x87 body still runs through its real
+  ;; handler, so the descriptor saves no dispatch there and pays the spill,
+  ;; the resume trampoline and the reload on top. Pricing it at $BX_C_FALLBACK
+  ;; measured as a LOSS: tools/bench-loops.js --shapes=blk_x87mix, a 5-op block
+  ;; with an fld/fstp pair in it, installs at 20 and runs -62.0% slower than the
+  ;; same block left to the threaded interpreter (250k iterations, minima, same
+  ;; process). The extra wall time was ~42ns per x87 micro-op against the ~16ns
+  ;; ($BX_C_UOP) a native micro-op saves, so this is set to about six native
+  ;; uops' worth: enough that an x87-DENSE block declines, while a long integer
+  ;; block carrying one stray x87 op still installs.
+  (global $BX_C_X87FB    i32 (i32.const 96))
 
   ;; Where the descriptor is BUILT. Writing it forward from $tstart would
   ;; overwrite the very ops still being read -- a 24-byte micro-op over an
@@ -774,8 +830,9 @@
         (if (i32.and (i32.ge_s (local.get $tidx) (i32.const 0))
                      (i32.eq (local.get $i) (local.get $tidx)))
           (then (local.set $tpos (local.get $ui))))
-        ;; Room for two micro-ops, so the split never has to be undone.
-        (if (i32.gt_u (i32.add (local.get $u0) (i32.add (local.get $ui) (i32.const 2)))
+        ;; Room for three micro-ops, so a split never has to be undone -- two
+        ;; for round 11's load split, three for round 12's RMW store split.
+        (if (i32.gt_u (i32.add (local.get $u0) (i32.add (local.get $ui) (i32.const 3)))
                       (global.get $BX_RG_UOPS_MAX))
           (then (return (call $bx_rg_nofit (i32.const 5)))))
         ;; uop index -> op index: the flag producer is lifted out of the list
@@ -853,7 +910,7 @@
         (if (call $bx_try_split (local.get $p) (call $bx_next_lane))
           (then
             (call $bx_emit_split (local.get $up))
-            (local.set $ui (i32.add (local.get $ui) (i32.const 2)))
+            (local.set $ui (i32.add (local.get $ui) (global.get $bx_split_n)))
             (local.set $nat (i32.add (local.get $nat) (i32.const 1)))
             (local.set $i (i32.add (local.get $i) (i32.const 1)))
             (br $scan)))
@@ -904,12 +961,26 @@
       (then (local.set $tpos (local.get $ui))))
 
     ;; ---- the round-11 optimisation pass, over this member block alone.
-    ;; Facts are reset at every block boundary (design doc section 16.4): the
-    ;; edge set is not resolved until every member is classified, so there is
-    ;; nothing here that could say whether a successor has one predecessor.
+    ;; Facts still start empty here: the edge set is not resolved until every
+    ;; member is classified, so nothing at this point can say whether a
+    ;; successor has one predecessor. $bx_rg_carry_pass runs at emit, where it
+    ;; can (section 18).
+    ;;
+    ;; What IS new in round 12 is the terminator's own write. The flag producer
+    ;; was lifted out of the micro-op list above, so walk 1 cannot see that
+    ;; term_kind 0/8/9 writes $term_a, and a fact naming that register survived
+    ;; across it. Tell it.
+    (global.set $bx_opt_term_wreg
+      (select (local.get $term_a) (i32.const -1)
+        (i32.and (i32.lt_u (local.get $term_a) (i32.const 8))
+          (i32.or (i32.eqz (local.get $term_kind))
+                  (i32.ge_u (local.get $term_kind) (i32.const 8))))))
     (local.set $ui
       (call $bx_opt_pass (call $bx_rg_uop_at (local.get $u0))
                          (local.get $ui) (local.get $tpos)))
+    ;; Record it per member, for the carry pass to replay.
+    (i32.store offset=72 (call $bx_rg_rec (global.get $bx_rg_n))
+               (global.get $bx_opt_term_wreg))
     (local.set $tpos (global.get $bx_opt_term_pos))
     (local.set $nuops (local.get $ui))
 
@@ -1056,6 +1127,99 @@
                (i32.add (local.get $ne) (i32.const 1)))
     (i32.sub (i32.const -1) (local.get $ne)))
 
+  ;; ----------------------------------------------------------------------
+  ;; ROUND 12 (section 18) -- CARRY LOAD FACTS ACROSS A REGION EDGE.
+  ;;
+  ;; Section 16.2's rule already permits a carry along an edge whose target has
+  ;; a single predecessor inside the region; round 11's implementation took the
+  ;; conservative end of that permission and carried nothing, because the edge
+  ;; set is not resolved until every member has been classified. This runs
+  ;; after it is, over the members in index order, re-walking each one's
+  ;; micro-ops -- and seeding the fact table from the previous member's exit
+  ;; state exactly when that member is the target's ONE in-region predecessor.
+  ;;
+  ;; Three things make the seed sound, and all three are the existing rule
+  ;; rather than a new one:
+  ;;
+  ;;  * A region is only ever ENTERED at its head. A member reached from
+  ;;    outside gets decoded as a block of its own, which retires the region
+  ;;    ($bx_rg_thrash_ok), so "one predecessor inside the region" really is
+  ;;    "one predecessor".
+  ;;  * Everything that kills a fact inside a block still kills it: this is the
+  ;;    same walk, so a store on the carried edge, an unmodelled op, a
+  ;;    fallback, an x87 op or a write to a fact's base register all kill
+  ;;    exactly as they did within one block.
+  ;;  * The FOLDED TERMINATOR on the carried edge kills too, through
+  ;;    $bx_opt_term_wreg: term_kind 0/8/9 write $term_a and are not in the
+  ;;    micro-op list, so without that kill a carry would step straight over a
+  ;;    `inc esi` / `add esi,4` that moved the base.
+  ;;
+  ;; Restricting the seed to `pred == m - 1` is an implementation limit, not the
+  ;; rule: seeding from an arbitrary predecessor means storing one fact table
+  ;; per member, while walking members in index order gives the m-1 case for
+  ;; free. Every other single-predecessor edge is counted in $bx_carry_refused,
+  ;; which is exactly the measure of what a per-member table would add.
+  ;;
+  ;; Walk 2 is deliberately NOT re-run. It deletes micro-ops, and $total plus
+  ;; every member's uop_off were fixed when it ran; walk 1 only rewrites one in
+  ;; place, so the descriptor's shape is untouched by this pass.
+  ;; ----------------------------------------------------------------------
+  (func $bx_rg_carry_pass (param $n i32)
+    (local $m i32) (local $j i32) (local $np i32) (local $pred i32)
+    (local $rec i32) (local $rj i32) (local $carry i32)
+    (if (i32.eqz (global.get $block_exec_split)) (then (return)))
+    (global.set $bx_opt_carry_mode (i32.const 1))
+    (local.set $m (i32.const 0))
+    (block $m_done
+      (loop $ms
+        (br_if $m_done (i32.ge_u (local.get $m) (local.get $n)))
+        (local.set $rec (call $bx_rg_rec (local.get $m)))
+        ;; ---- how many members have an edge into m? A block whose two
+        ;; successors are both m is ONE predecessor, not two.
+        (local.set $np (i32.const 0))
+        (local.set $pred (i32.const -1))
+        (local.set $j (i32.const 0))
+        (block $j_done
+          (loop $js
+            (br_if $j_done (i32.ge_u (local.get $j) (local.get $n)))
+            (local.set $rj (call $bx_rg_rec (local.get $j)))
+            (if (i32.or
+                  (i32.eq (i32.load offset=40 (local.get $rj)) (local.get $m))
+                  (i32.eq (i32.load offset=44 (local.get $rj)) (local.get $m)))
+              (then
+                (local.set $np (i32.add (local.get $np) (i32.const 1)))
+                (local.set $pred (local.get $j))))
+            (local.set $j (i32.add (local.get $j) (i32.const 1)))
+            (br $js)))
+        (local.set $carry
+          (i32.and (i32.ne (global.get $block_exec_carry) (i32.const 0))
+            (i32.and (i32.ne (local.get $m) (i32.const 0))
+              (i32.and (i32.eq (local.get $np) (i32.const 1))
+                       (i32.eq (local.get $pred)
+                               (i32.sub (local.get $m) (i32.const 1)))))))
+        (if (local.get $m)
+          (then
+            (if (local.get $carry)
+              (then (global.set $bx_carry_edges
+                      (i64.add (global.get $bx_carry_edges) (i64.const 1))))
+              (else (global.set $bx_carry_refused
+                      (i64.add (global.get $bx_carry_refused) (i64.const 1)))))))
+        (global.set $bx_opt_term_pos  (i32.load offset=8  (local.get $rec)))
+        (global.set $bx_opt_term_wreg (i32.load offset=72 (local.get $rec)))
+        (call $bx_opt_walk1
+          (call $bx_rg_uop_at (i32.load (local.get $rec)))
+          (i32.load offset=4 (local.get $rec))
+          (local.get $carry))
+        ;; The terminator runs on the way OUT, so its register write has to be
+        ;; in the state the next member inherits. Walk 1 only reaches it when
+        ;; the producer stood mid-block; at the end of the block -- which is
+        ;; where `inc ecx ; jnz top` puts it -- term_pos == nuops and the loop
+        ;; never visits that index.
+        (call $bx_kill_term_wreg)
+        (local.set $m (i32.add (local.get $m) (i32.const 1)))
+        (br $ms)))
+    (global.set $bx_opt_carry_mode (i32.const 0)))
+
   ;; The thrash guard. A member block that something else jumps into gets
   ;; re-decoded, which retires the region; the region's head then misses and
   ;; rebuilds it, which retires the member. Neither step is wrong -- the
@@ -1159,6 +1323,11 @@
         (local.set $nfb (i32.add (local.get $nfb) (i32.load offset=68 (local.get $rec))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $ed)))
+
+    ;; ---- round 12: now that the edge set is resolved, carry facts across the
+    ;; edges whose target has a single in-region predecessor (section 18).
+    (call $bx_rg_carry_pass (local.get $n))
+
     (local.set $ne (i32.load (call $bx_rg_word
                      (i32.sub (global.get $BX_RG_EXIT_OFF) (i32.const 1)))))
     (local.set $total (global.get $bx_rg_uops))
@@ -1644,6 +1813,20 @@
   (global $bxs_imm  (mut i32) (i32.const 0))
   (global $bxs_b    (mut i32) (i32.const 0))
 
+  ;; ROUND 12 lever C (section 19): the STORE half of a read-modify-write.
+  ;; Round 11 split only the load side -- `reg OP= [m]` -- and left `[m] OP=
+  ;; reg` a whole-instruction fallback. The store half needs its own five
+  ;; fields because the RMW form writes THREE micro-ops, not two.
+  (global $bxr_kind (mut i32) (i32.const 0))
+  (global $bxr_d    (mut i32) (i32.const 0))
+  (global $bxr_a    (mut i32) (i32.const 0))
+  (global $bxr_imm  (mut i32) (i32.const 0))
+  (global $bxr_b    (mut i32) (i32.const 0))
+  ;; How many micro-ops the last successful $bx_try_split produced: 2 for the
+  ;; round-11 load split, 3 for an RMW. Both call sites read it instead of the
+  ;; literal 2 they used to add.
+  (global $bx_split_n (mut i32) (i32.const 2))
+
   ;; $bx_mem_shape's output. 0 = touches no memory and is understood,
   ;; 1 = a load, 2 = a store, 3 = NOT UNDERSTOOD, which kills every fact.
   (global $bx_ms_shape (mut i32) (i32.const 0))
@@ -1945,41 +2128,45 @@
     (i32.store offset=20 (local.get $dst) (i32.load offset=20 (local.get $src))))
 
   ;; ----------------------------------------------------------------------
-  ;; THE PASS. One block's micro-ops, in place. Returns the new micro-op count
-  ;; and leaves the adjusted terminator position in $bx_opt_term_pos.
+  ;; WALK 1, on its own, so it can be re-run over a member block with the fact
+  ;; table already holding a predecessor's exit state (round 12, section 18).
   ;;
-  ;; Two walks, separate on purpose: the first only ever rewrites a micro-op
-  ;; where it stands, so it can carry the fact table forward without worrying
-  ;; about indices moving; the second deletes, and deleting while analysing is
-  ;; how an off-by-one in term_pos gets written.
+  ;; `seed` of 0 starts from nothing, which is what round 11 did at every block
+  ;; boundary. `seed` of 1 keeps whatever the previous call left -- and that is
+  ;; sound only where the caller has proved the previous call was over this
+  ;; block's ONE in-region predecessor; $bx_rg_carry_pass is the only caller
+  ;; that passes 1.
   ;;
-  ;; WHY THERE IS NO STORE-TO-LOAD FORWARDING. It was written, it was measured,
-  ;; and it is unsound in this emulator -- not because of aliasing, which the
-  ;; rule above handles, but because guest memory is not coherent at an
-  ;; unmapped address. $g2w resolves a miss to the NULL sentinel, where a store
-  ;; goes nowhere and a load reads 0, so `mov [eax],ecx ; mov edx,[eax]` with
-  ;; eax unmapped leaves edx at 0 on the threaded path and at ecx if the store
-  ;; is forwarded. Real hardware would have faulted and the question would
-  ;; never arise; here the sentinel makes the two paths differ silently, and
-  ;; `test/test-block-exec.js`'s "a store through a null base register" case is
-  ;; the one that caught it. Nothing at decode time can prove an address is
-  ;; mapped, so the transform is dropped rather than guarded. REDUNDANT-LOAD
-  ;; elimination is unaffected: two loads of one address read the same place
-  ;; whether it is the sentinel or real memory, and both give the same value.
+  ;; Re-running this with `seed` 0 over a list it has already walked is a
+  ;; no-op: a load it rewrote is now a TU_MOV_RR, which has no memory shape and
+  ;; cannot match as a load again, and the constant table is rebuilt
+  ;; identically. So neither `rle` nor `immfold` double-counts, and the only
+  ;; hits a second walk can find are the ones the seed made visible.
   ;; ----------------------------------------------------------------------
-  (func $bx_opt_pass (param $up0 i32) (param $nuops i32) (param $term_pos i32)
-    (result i32)
-    (local $i i32) (local $j i32) (local $up i32) (local $nxt i32) (local $f i32)
+  ;; The folded terminator's register write, applied to the fact tables. Two
+  ;; callers: walk 1 applies it at $bx_opt_term_pos, which is where the producer
+  ;; stood in program order, and the carry pass applies it again on the way out
+  ;; of a member. Both are needed and neither is redundant: a producer lifted
+  ;; from the MIDDLE of a block has ops after it that walk 1 must see the kill
+  ;; for, while a producer that stood at the END has $bx_opt_term_pos == nuops,
+  ;; a position walk 1's loop never visits -- so for the common shape (`inc
+  ;; ecx ; jnz top`) the exit kill is the ONLY one that fires. Idempotent, so
+  ;; the overlap costs nothing.
+  (func $bx_kill_term_wreg
+    (if (i32.lt_s (global.get $bx_opt_term_wreg) (i32.const 0)) (then (return)))
+    (call $bx_kill_reg (global.get $bx_opt_term_wreg))
+    (if (i32.lt_u (global.get $bx_opt_term_wreg) (global.get $BX_CONST_N))
+      (then (i32.store (call $bx_const (global.get $bx_opt_term_wreg))
+                       (i32.const 0)))))
+
+  (func $bx_opt_walk1 (param $up0 i32) (param $nuops i32) (param $seed i32)
+    (local $i i32) (local $j i32) (local $up i32) (local $f i32)
     (local $kind i32) (local $d i32) (local $a i32) (local $hit i32)
-    (local $out i32) (local $tp i32) (local $cp i32)
-
-    (global.set $bx_opt_term_pos (local.get $term_pos))
-    (if (i32.eqz (global.get $block_exec_split)) (then (return (local.get $nuops))))
-    (global.set $bx_pass_uops_before
-      (i64.add (global.get $bx_pass_uops_before) (i64.extend_i32_u (local.get $nuops))))
-    (global.set $bx_fact_n (i32.const 0))
-    (call $bx_const_clear)
-
+    (local $cp i32)
+    (if (i32.eqz (local.get $seed))
+      (then
+        (global.set $bx_fact_n (i32.const 0))
+        (call $bx_const_clear)))
     ;; ---- walk 1: redundant loads, store->load forwarding, imm folding ----
     (local.set $i (i32.const 0))
     (block $w1_done
@@ -1987,6 +2174,18 @@
         (br_if $w1_done (i32.ge_u (local.get $i) (local.get $nuops)))
         (local.set $up (i32.add (local.get $up0)
           (i32.mul (local.get $i) (i32.shl (global.get $TREE_UOP_WORDS) (i32.const 2)))))
+        ;; ROUND 12. The FOLDED TERMINATOR runs here, at $bx_opt_term_pos, and
+        ;; it is not a micro-op in this list -- $bx_rg_classify_block lifted it
+        ;; out. term_kind 0 (inc/dec), 8 (`alu r,r`) and 9 (`alu r,imm32`)
+        ;; WRITE a register, and walk 1 could not see that at all before this
+        ;; round: a fact recorded before the producer and matched after it named
+        ;; an address the producer had since moved. That is a latent round-11
+        ;; bug in the region path on its own account, and it is the same kill
+        ;; the round-12 carry needs at a region edge, so it lives here once.
+        ;; (term_kind 3 dereferences a register but only READS, and a read
+        ;; never kills a fact.)
+        (if (i32.eq (local.get $i) (global.get $bx_opt_term_pos))
+          (then (call $bx_kill_term_wreg)))
         (local.set $kind (i32.load (local.get $up)))
         (local.set $d (i32.load offset=4 (local.get $up)))
         (call $bx_mem_shape (local.get $up))
@@ -2050,6 +2249,9 @@
                 (local.set $a (i32.load offset=24 (local.get $f)))
                 (global.set $bx_pass_rle
                   (i64.add (global.get $bx_pass_rle) (i64.const 1)))
+                (if (global.get $bx_opt_carry_mode)
+                  (then (global.set $bx_pass_carry_rle
+                    (i64.add (global.get $bx_pass_carry_rle) (i64.const 1)))))
                 (i32.store           (local.get $up) (global.get $TU_MOV_RR))
                 (i32.store offset=8  (local.get $up) (local.get $a))
                 (i32.store offset=12 (local.get $up) (i32.const 0))
@@ -2099,7 +2301,43 @@
                 (i32.store          (local.get $cp) (i32.const 1))
                 (i32.store offset=4 (local.get $cp) (i32.load offset=12 (local.get $up)))))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $w1)))
+        (br $w1))))
+
+  ;; ----------------------------------------------------------------------
+  ;; THE PASS. One block's micro-ops, in place. Returns the new micro-op count
+  ;; and leaves the adjusted terminator position in $bx_opt_term_pos.
+  ;;
+  ;; Two walks, separate on purpose: the first only ever rewrites a micro-op
+  ;; where it stands, so it can carry the fact table forward without worrying
+  ;; about indices moving; the second deletes, and deleting while analysing is
+  ;; how an off-by-one in term_pos gets written.
+  ;;
+  ;; WHY THERE IS NO STORE-TO-LOAD FORWARDING. It was written, it was measured,
+  ;; and it is unsound in this emulator -- not because of aliasing, which the
+  ;; rule above handles, but because guest memory is not coherent at an
+  ;; unmapped address. $g2w resolves a miss to the NULL sentinel, where a store
+  ;; goes nowhere and a load reads 0, so `mov [eax],ecx ; mov edx,[eax]` with
+  ;; eax unmapped leaves edx at 0 on the threaded path and at ecx if the store
+  ;; is forwarded. Real hardware would have faulted and the question would
+  ;; never arise; here the sentinel makes the two paths differ silently, and
+  ;; `test/test-block-exec.js`'s "a store through a null base register" case is
+  ;; the one that caught it. Nothing at decode time can prove an address is
+  ;; mapped, so the transform is dropped rather than guarded. REDUNDANT-LOAD
+  ;; elimination is unaffected: two loads of one address read the same place
+  ;; whether it is the sentinel or real memory, and both give the same value.
+  ;; ----------------------------------------------------------------------
+  (func $bx_opt_pass (param $up0 i32) (param $nuops i32) (param $term_pos i32)
+    (result i32)
+    (local $i i32) (local $j i32) (local $up i32) (local $nxt i32) (local $f i32)
+    (local $kind i32) (local $d i32) (local $a i32) (local $hit i32)
+    (local $out i32) (local $tp i32) (local $cp i32)
+
+    (global.set $bx_opt_term_pos (local.get $term_pos))
+    (if (i32.eqz (global.get $block_exec_split)) (then (return (local.get $nuops))))
+    (global.set $bx_pass_uops_before
+      (i64.add (global.get $bx_pass_uops_before) (i64.extend_i32_u (local.get $nuops))))
+    ;; ---- walk 1, as its own function since round 12 ----------------------
+    (call $bx_opt_walk1 (local.get $up0) (local.get $nuops) (i32.const 0))
 
     ;; ---- walk 2: register-move elimination ------------------------------
     (local.set $i (i32.const 0))
@@ -2198,6 +2436,43 @@
       (then (global.set $tu_kind (global.get $TU_CMP_RR)) (return (i32.const 1))))
     (i32.const 0))
 
+  ;; The immediate-operand twin of $bx_alu_kind, for the `[m] OP= imm32` forms
+  ;; lever C accepts. Same ALU sub-op numbering, which is x86's /r field order
+  ;; and is what every handler in 05-alu.wat reads.
+  (func $bx_alu_kind_i (param $alu i32) (result i32)
+    (if (i32.eqz (local.get $alu))
+      (then (global.set $tu_kind (global.get $TU_ADD_RI)) (return (i32.const 1))))
+    (if (i32.eq (local.get $alu) (i32.const 1))
+      (then (global.set $tu_kind (global.get $TU_OR_RI)) (return (i32.const 1))))
+    (if (i32.eq (local.get $alu) (i32.const 2))
+      (then (global.set $tu_kind (global.get $TU_ADC_RI)) (return (i32.const 1))))
+    (if (i32.eq (local.get $alu) (i32.const 3))
+      (then (global.set $tu_kind (global.get $TU_SBB_RI)) (return (i32.const 1))))
+    (if (i32.eq (local.get $alu) (i32.const 4))
+      (then (global.set $tu_kind (global.get $TU_AND_RI)) (return (i32.const 1))))
+    (if (i32.eq (local.get $alu) (i32.const 5))
+      (then (global.set $tu_kind (global.get $TU_SUB_RI)) (return (i32.const 1))))
+    (if (i32.eq (local.get $alu) (i32.const 6))
+      (then (global.set $tu_kind (global.get $TU_XOR_RI)) (return (i32.const 1))))
+    (if (i32.eq (local.get $alu) (i32.const 7))
+      (then (global.set $tu_kind (global.get $TU_CMP_RI)) (return (i32.const 1))))
+    (i32.const 0))
+
+  ;; The four unary memory sub-ops, in the handlers' own numbering
+  ;; (0 inc, 1 dec, 2 not, 3 neg -- $th_unary_m32's if-chain). TU_NOT is
+  ;; flag-transparent in this vocabulary exactly as x86 NOT is, so the mapping
+  ;; is one for one and no flag fixup rides along.
+  (func $bx_unary_kind (param $u i32) (result i32)
+    (if (i32.eqz (local.get $u))
+      (then (global.set $tu_kind (global.get $TU_INC)) (return (i32.const 1))))
+    (if (i32.eq (local.get $u) (i32.const 1))
+      (then (global.set $tu_kind (global.get $TU_DEC)) (return (i32.const 1))))
+    (if (i32.eq (local.get $u) (i32.const 2))
+      (then (global.set $tu_kind (global.get $TU_NOT)) (return (i32.const 1))))
+    (if (i32.eq (local.get $u) (i32.const 3))
+      (then (global.set $tu_kind (global.get $TU_NEG)) (return (i32.const 1))))
+    (i32.const 0))
+
   ;; The next temp lane, round-robin. A lane's previous contents die at its
   ;; reallocation for free, because walk 1 treats the split's LOAD as a write
   ;; to that lane and kills every fact naming it -- so there is no separate
@@ -2227,6 +2502,7 @@
   (func $bx_try_split (param $p i32) (param $lane i32) (result i32)
     (local $fn i32) (local $op i32) (local $alu i32) (local $reg i32) (local $base i32)
     (if (i32.eqz (global.get $block_exec_split)) (then (return (i32.const 0))))
+    (global.set $bx_split_n (i32.const 2))
     (local.set $fn (i32.load (local.get $p)))
     (local.set $op (i32.load offset=4 (local.get $p)))
     (global.set $bxs_d   (local.get $lane))
@@ -2301,6 +2577,174 @@
         (global.set $tu_kind (global.get $TU_IMUL_RR))
         (return (i32.const 1))))
 
+    ;; ------------------------------------------------------------------
+    ;; ROUND 12 LEVER C (section 19): the READ-MODIFY-WRITE forms, where the
+    ;; destination is the memory operand. Three micro-ops, not two:
+    ;;
+    ;;     TU_LOAD32  lane <- [m]
+    ;;     <register-form op> on the lane        (the same $set_flags_* call,
+    ;;                                            in the same position)
+    ;;     TU_STORE32 [m] <- lane
+    ;;
+    ;; The alias rule needs no clause: the third micro-op is a REAL store kind,
+    ;; so walk 1 kills facts through it exactly as it does for a plain
+    ;; `mov [m],reg`, and the first is a real load kind, so a live fact naming
+    ;; the same address is reused. `add [eax],eax` is safe by construction --
+    ;; the op writes the LANE, never the base.
+    ;;
+    ;; Only the DWORD forms are here. The byte and word twins (H49/H52/H129/
+    ;; H132/H160/H162/H220 ...) stay whole-instruction fallbacks, because a
+    ;; partial-width RMW would need the sub-register vocabulary on the lane and
+    ;; that is a wider change than this lever.
+    ;;
+    ;; `alu == 7` is CMP, and $th_alu_m32_r/$th_alu_m32_i32 skip their store for
+    ;; it. So does this: the form stays TWO micro-ops, a load and a TU_CMP_*,
+    ;; and $bx_split_n is left at 2. Emitting a store there would write back a
+    ;; value the instruction does not produce.
+    ;; ------------------------------------------------------------------
+
+    ;; H127 -- [base+disp] OP= reg. operand = alu<<8 | reg<<4 | base.
+    (if (i32.eq (local.get $fn) (i32.const 127))
+      (then
+        (if (i32.eqz (global.get $block_exec_rmw)) (then (return (i32.const 0))))
+        (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+        (local.set $reg (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (local.set $base (i32.and (local.get $op) (i32.const 0xF)))
+        (if (i32.or (i32.gt_u (local.get $base) (i32.const 7))
+                    (i32.gt_u (local.get $reg) (i32.const 7)))
+          (then (return (i32.const 0))))
+        (global.set $bxs_kind (global.get $TU_LOAD32))
+        (global.set $bxs_a (local.get $base))
+        (global.set $bxs_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_d (local.get $lane))
+        (global.set $tu_a (local.get $reg))
+        (if (i32.ne (local.get $alu) (i32.const 7))
+          (then
+            (global.set $bxr_kind (global.get $TU_STORE32))
+            (global.set $bxr_d (local.get $lane))
+            (global.set $bxr_a (local.get $base))
+            (global.set $bxr_imm (i32.load offset=8 (local.get $p)))
+            (global.set $bxr_b (i32.const 0))
+            (global.set $bx_split_n (i32.const 3))))
+        (return (call $bx_alu_kind (local.get $alu)))))
+
+    ;; H47 -- [addr] OP= reg. operand = alu<<4 | reg, address in the next word.
+    (if (i32.eq (local.get $fn) (i32.const 47))
+      (then
+        (if (i32.eqz (global.get $block_exec_rmw)) (then (return (i32.const 0))))
+        (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (local.set $reg (i32.and (local.get $op) (i32.const 0xF)))
+        (if (i32.gt_u (local.get $reg) (i32.const 7)) (then (return (i32.const 0))))
+        (global.set $bxs_kind (global.get $TU_LOAD32_ABS))
+        ;; $tree_abs_addr reports the SIB sentinel by ORing $TU_B_EA into
+        ;; $tu_b; that bit belongs to BOTH memory halves and to neither the
+        ;; ALU op, so it is copied across and $tu_b put back to zero.
+        (global.set $tu_b (i32.const 0))
+        (global.set $bxs_imm (call $tree_abs_addr (i32.load offset=8 (local.get $p))))
+        (global.set $bxs_b (global.get $tu_b))
+        (global.set $tu_b (i32.const 0))
+        (global.set $tu_d (local.get $lane))
+        (global.set $tu_a (local.get $reg))
+        (if (i32.ne (local.get $alu) (i32.const 7))
+          (then
+            (global.set $bxr_kind (global.get $TU_STORE32_ABS))
+            (global.set $bxr_d (local.get $lane))
+            (global.set $bxr_a (i32.const 0xF))
+            (global.set $bxr_imm (global.get $bxs_imm))
+            (global.set $bxr_b (global.get $bxs_b))
+            (global.set $bx_split_n (i32.const 3))))
+        (return (call $bx_alu_kind (local.get $alu)))))
+
+    ;; H131 -- [base+disp] OP= imm32. operand = alu<<8 | base; disp then imm.
+    (if (i32.eq (local.get $fn) (i32.const 131))
+      (then
+        (if (i32.eqz (global.get $block_exec_rmw)) (then (return (i32.const 0))))
+        (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
+        (local.set $base (i32.and (local.get $op) (i32.const 0xF)))
+        (if (i32.gt_u (local.get $base) (i32.const 7)) (then (return (i32.const 0))))
+        (global.set $bxs_kind (global.get $TU_LOAD32))
+        (global.set $bxs_a (local.get $base))
+        (global.set $bxs_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_d (local.get $lane))
+        (global.set $tu_a (i32.const 0))
+        (global.set $tu_imm (i32.load offset=12 (local.get $p)))
+        (if (i32.ne (local.get $alu) (i32.const 7))
+          (then
+            (global.set $bxr_kind (global.get $TU_STORE32))
+            (global.set $bxr_d (local.get $lane))
+            (global.set $bxr_a (local.get $base))
+            (global.set $bxr_imm (i32.load offset=8 (local.get $p)))
+            (global.set $bxr_b (i32.const 0))
+            (global.set $bx_split_n (i32.const 3))))
+        (return (call $bx_alu_kind_i (local.get $alu)))))
+
+    ;; H51 -- [addr] OP= imm32. operand = alu; address then imm in the words.
+    (if (i32.eq (local.get $fn) (i32.const 51))
+      (then
+        (if (i32.eqz (global.get $block_exec_rmw)) (then (return (i32.const 0))))
+        (local.set $alu (i32.and (local.get $op) (i32.const 0xF)))
+        (global.set $bxs_kind (global.get $TU_LOAD32_ABS))
+        (global.set $tu_b (i32.const 0))
+        (global.set $bxs_imm (call $tree_abs_addr (i32.load offset=8 (local.get $p))))
+        (global.set $bxs_b (global.get $tu_b))
+        (global.set $tu_b (i32.const 0))
+        (global.set $tu_d (local.get $lane))
+        (global.set $tu_a (i32.const 0))
+        (global.set $tu_imm (i32.load offset=12 (local.get $p)))
+        (if (i32.ne (local.get $alu) (i32.const 7))
+          (then
+            (global.set $bxr_kind (global.get $TU_STORE32_ABS))
+            (global.set $bxr_d (local.get $lane))
+            (global.set $bxr_a (i32.const 0xF))
+            (global.set $bxr_imm (global.get $bxs_imm))
+            (global.set $bxr_b (global.get $bxs_b))
+            (global.set $bx_split_n (i32.const 3))))
+        (return (call $bx_alu_kind_i (local.get $alu)))))
+
+    ;; H135 -- inc/dec/not/neg [base+disp]. operand = unary<<4 | base.
+    (if (i32.eq (local.get $fn) (i32.const 135))
+      (then
+        (if (i32.eqz (global.get $block_exec_rmw)) (then (return (i32.const 0))))
+        (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+        (local.set $base (i32.and (local.get $op) (i32.const 0xF)))
+        (if (i32.gt_u (local.get $base) (i32.const 7)) (then (return (i32.const 0))))
+        (if (i32.eqz (call $bx_unary_kind (local.get $alu)))
+          (then (return (i32.const 0))))
+        (global.set $bxs_kind (global.get $TU_LOAD32))
+        (global.set $bxs_a (local.get $base))
+        (global.set $bxs_imm (i32.load offset=8 (local.get $p)))
+        (global.set $tu_d (local.get $lane))
+        (global.set $tu_a (i32.const 0))
+        (global.set $bxr_kind (global.get $TU_STORE32))
+        (global.set $bxr_d (local.get $lane))
+        (global.set $bxr_a (local.get $base))
+        (global.set $bxr_imm (i32.load offset=8 (local.get $p)))
+        (global.set $bxr_b (i32.const 0))
+        (global.set $bx_split_n (i32.const 3))
+        (return (i32.const 1))))
+
+    ;; H68 -- inc/dec/not/neg [addr]. operand = unary; address in the next word.
+    (if (i32.eq (local.get $fn) (i32.const 68))
+      (then
+        (if (i32.eqz (global.get $block_exec_rmw)) (then (return (i32.const 0))))
+        (local.set $alu (i32.and (local.get $op) (i32.const 0xF)))
+        (if (i32.eqz (call $bx_unary_kind (local.get $alu)))
+          (then (return (i32.const 0))))
+        (global.set $bxs_kind (global.get $TU_LOAD32_ABS))
+        (global.set $tu_b (i32.const 0))
+        (global.set $bxs_imm (call $tree_abs_addr (i32.load offset=8 (local.get $p))))
+        (global.set $bxs_b (global.get $tu_b))
+        (global.set $tu_b (i32.const 0))
+        (global.set $tu_d (local.get $lane))
+        (global.set $tu_a (i32.const 0))
+        (global.set $bxr_kind (global.get $TU_STORE32_ABS))
+        (global.set $bxr_d (local.get $lane))
+        (global.set $bxr_a (i32.const 0xF))
+        (global.set $bxr_imm (global.get $bxs_imm))
+        (global.set $bxr_b (global.get $bxs_b))
+        (global.set $bx_split_n (i32.const 3))
+        (return (i32.const 1))))
+
     (i32.const 0))
 
   ;; Write the split's two micro-ops at $up. The LOAD half carries fn = -1 so
@@ -2322,6 +2766,22 @@
     (i32.store offset=12 (local.get $up) (global.get $tu_imm))
     (i32.store offset=16 (local.get $up) (global.get $tu_fn))
     (i32.store offset=20 (local.get $up) (global.get $tu_b))
+    ;; Round 12 lever C: the RMW form's store half. Its `fn` is -1 for the same
+    ;; reason the load half's is -- one x86 instruction must count once in the
+    ;; handler histogram however many micro-ops it became, or a histogram taken
+    ;; with the pass on is not comparable with one taken without it.
+    (if (i32.eq (global.get $bx_split_n) (i32.const 3))
+      (then
+        (local.set $up (i32.add (local.get $up)
+          (i32.shl (global.get $TREE_UOP_WORDS) (i32.const 2))))
+        (i32.store           (local.get $up) (global.get $bxr_kind))
+        (i32.store offset=4  (local.get $up) (global.get $bxr_d))
+        (i32.store offset=8  (local.get $up) (global.get $bxr_a))
+        (i32.store offset=12 (local.get $up) (global.get $bxr_imm))
+        (i32.store offset=16 (local.get $up) (i32.const -1))
+        (i32.store offset=20 (local.get $up) (global.get $bxr_b))
+        (global.set $bx_pass_rmw
+          (i64.add (global.get $bx_pass_rmw) (i64.const 1)))))
     (global.set $bx_pass_split
       (i64.add (global.get $bx_pass_split) (i64.const 1))))
 
@@ -2345,6 +2805,7 @@
     (local $words i32) (local $nuops i32) (local $k i32) (local $nw i32)
     (local $j i32) (local $total i32) (local $extra i32)
     (local $nat i32) (local $nfb i32) (local $up i32)
+    (local $span i32) (local $pe i32) (local $nx87 i32)
 
     (if (i32.eqz (global.get $block_exec_enabled)) (then (return (i32.const 0))))
     ;; A fold already rewrote this block.
@@ -2409,6 +2870,118 @@
         (local.set $p (call $loop_op_at (local.get $i)))
         (local.set $pn (call $loop_op_at (i32.add (local.get $i) (i32.const 1))))
         (local.set $fn (i32.load (local.get $p)))
+
+        ;; ---- ROUND 12 (OPEN-6): x87, as ONE fallback micro-op.
+        ;;
+        ;; This runs before the safety test on purpose. 188..190 and the fused
+        ;; families 449..453 are all "unsafe" to $bx_op_unsafe -- 188..190
+        ;; because the x87 fusers used to run after this matcher, 449..453
+        ;; because everything at 418 and up is a fold unless stated otherwise.
+        ;; Neither reason survives round 12: the fusers now run FIRST
+        ;; (07-decoder.wat), and none of these five handlers touches $eip. What
+        ;; makes them safe here is exactly what makes any fallback safe -- the
+        ;; executor spills all eight registers, sets $ip at the op's inline
+        ;; words in the pool, call_indirects the real handler, and reloads. The
+        ;; x87 stack, tags and status word are globals the executor never
+        ;; touches, so they are preserved by not being modelled at all.
+        ;;
+        ;; A fused op's absorbed ops are STILL in the stream as its inline
+        ;; data with their original handler words, so the span comes from
+        ;; $x87_fused_span and the inline words run from this op's second word
+        ;; to wherever the op $span entries later starts. A bare x87 op (a run
+        ;; the fuser refused, or --no-x87-fusion) is span 1 and the generic
+        ;; `nw` arithmetic below already gets it right; it is here only so the
+        ;; unsafe test does not decline the block first.
+        (local.set $span (i32.const 0))
+        (if (global.get $block_exec_x87)
+          (then
+            (if (i32.and (i32.ge_u (local.get $fn) (i32.const 188))
+                         (i32.le_u (local.get $fn) (i32.const 190)))
+              (then (local.set $span (i32.const 1)))
+              (else
+                (local.set $span
+                  (call $x87_fused_span (local.get $fn)
+                        (i32.load offset=4 (local.get $p))))))))
+        (if (local.get $span)
+          (then
+            ;; The span must stay inside the body: the terminator is op n-1 and
+            ;; is emitted separately. Anything else means the fuser and this
+            ;; walk disagree, and guessing is how a block runs its own inline
+            ;; data as handlers.
+            (if (i32.gt_u (i32.add (local.get $i) (local.get $span))
+                          (i32.sub (local.get $n) (i32.const 1)))
+              (then (global.set $block_exec_decl_why (i32.const 3))
+                    (global.set $block_exec_declines
+                      (i32.add (global.get $block_exec_declines) (i32.const 1)))
+                    (return (i32.const 0))))
+            ;; Every absorbed entry must be a plain x87 op. Checked rather than
+            ;; assumed, because this is the one place a wrong span silently
+            ;; turns inline address words into a handler index.
+            (local.set $j (i32.const 1))
+            (block $ab_done
+              (loop $ab
+                (br_if $ab_done (i32.ge_u (local.get $j) (local.get $span)))
+                (local.set $pe (i32.load
+                  (call $loop_op_at (i32.add (local.get $i) (local.get $j)))))
+                (if (i32.eqz (i32.and (i32.ge_u (local.get $pe) (i32.const 188))
+                                      (i32.le_u (local.get $pe) (i32.const 190))))
+                  (then (global.set $block_exec_decl_why (i32.const 3))
+                        (global.set $block_exec_declines
+                          (i32.add (global.get $block_exec_declines) (i32.const 1)))
+                        (return (i32.const 0))))
+                (local.set $j (i32.add (local.get $j) (i32.const 1)))
+                (br $ab)))
+            ;; room for one micro-op, before anything is written
+            (if (i32.gt_u (i32.add (local.get $sc) (global.get $TREE_UOP_WORDS))
+                          (local.get $ucap))
+              (then (global.set $block_exec_decl_why (i32.const 5))
+                    (global.set $block_exec_declines
+                      (i32.add (global.get $block_exec_declines) (i32.const 1)))
+                    (return (i32.const 0))))
+            (local.set $up (i32.add (local.get $base) (i32.shl (local.get $sc) (i32.const 2))))
+            ;; Inline words: from this op's word 2 to the start of the op the
+            ;; span ends at. $pe is that op's address.
+            (local.set $pe (call $loop_op_at (i32.add (local.get $i) (local.get $span))))
+            (local.set $nw (i32.shr_u
+              (i32.sub (i32.sub (local.get $pe) (local.get $p)) (i32.const 8))
+              (i32.const 2)))
+            (if (i32.gt_u (i32.add (local.get $fbw) (i32.add (local.get $nw) (i32.const 2)))
+                          (i32.sub (local.get $cap) (local.get $ucap)))
+              (then (global.set $block_exec_decl_why (i32.const 5))
+                    (global.set $block_exec_declines
+                      (i32.add (global.get $block_exec_declines) (i32.const 1)))
+                    (return (i32.const 0))))
+            (i32.store           (local.get $up) (global.get $TU_FALLBACK))
+            (i32.store offset=4  (local.get $up) (i32.const 0))
+            (i32.store offset=8  (local.get $up) (local.get $fn))
+            (i32.store offset=12 (local.get $up) (i32.load offset=4 (local.get $p)))
+            (i32.store offset=16 (local.get $up) (local.get $fn))
+            (i32.store offset=20 (local.get $up) (i32.shl (local.get $fbw) (i32.const 2)))
+            (local.set $sc (i32.add (local.get $sc) (global.get $TREE_UOP_WORDS)))
+            (local.set $j (i32.const 0))
+            (block $x87cp_done
+              (loop $x87cp
+                (br_if $x87cp_done (i32.ge_u (local.get $j) (local.get $nw)))
+                (i32.store (i32.add (local.get $fbb) (i32.shl (local.get $fbw) (i32.const 2)))
+                  (i32.load (i32.add (local.get $p)
+                    (i32.add (i32.const 8) (i32.shl (local.get $j) (i32.const 2))))))
+                (local.set $fbw (i32.add (local.get $fbw) (i32.const 1)))
+                (local.set $j (i32.add (local.get $j) (i32.const 1)))
+                (br $x87cp)))
+            (i32.store (i32.add (local.get $fbb) (i32.shl (local.get $fbw) (i32.const 2)))
+                       (global.get $BX_RESUME_HANDLER))
+            (i32.store offset=4 (i32.add (local.get $fbb) (i32.shl (local.get $fbw) (i32.const 2)))
+                       (i32.const 0))
+            (local.set $fbw (i32.add (local.get $fbw) (i32.const 2)))
+            (local.set $nuops (i32.add (local.get $nuops) (i32.const 1)))
+            (local.set $nfb (i32.add (local.get $nfb) (i32.const 1)))
+            ;; counted separately so the cost model can charge it $BX_C_X87FB
+            (local.set $nx87 (i32.add (local.get $nx87) (i32.const 1)))
+            (global.set $bx_x87_uops
+              (i64.add (global.get $bx_x87_uops) (i64.const 1)))
+            (local.set $i (i32.add (local.get $i) (local.get $span)))
+            (br $scan)))
+
         ;; A terminator in the body means the block does not have the shape
         ;; OP_INDEX says it has. Decline rather than guess.
         (if (call $bx_op_unsafe (local.get $fn))
@@ -2509,13 +3082,15 @@
         (if (call $bx_try_split (local.get $p) (call $bx_next_lane))
           (then
             (if (i32.le_u (i32.add (local.get $sc)
-                            (i32.shl (global.get $TREE_UOP_WORDS) (i32.const 1)))
+                            (i32.mul (global.get $TREE_UOP_WORDS)
+                                     (global.get $bx_split_n)))
                           (local.get $ucap))
               (then
                 (call $bx_emit_split (local.get $up))
                 (local.set $sc (i32.add (local.get $sc)
-                  (i32.shl (global.get $TREE_UOP_WORDS) (i32.const 1))))
-                (local.set $nuops (i32.add (local.get $nuops) (i32.const 2)))
+                  (i32.mul (global.get $TREE_UOP_WORDS)
+                           (global.get $bx_split_n))))
+                (local.set $nuops (i32.add (local.get $nuops) (global.get $bx_split_n)))
                 (local.set $nat (i32.add (local.get $nat) (i32.const 1)))
                 (local.set $i (i32.add (local.get $i) (i32.const 1)))
                 (br $scan)))))
@@ -2567,6 +3142,10 @@
     ;; term_pos is -1 here: a one-block descriptor leaves its terminator
     ;; threaded behind the executor, so there is no folded terminator inside
     ;; the micro-op list for a move to be carried across.
+    ;; term_wreg is -1 for the same reason term_pos is: a one-block descriptor
+    ;; leaves its terminator threaded behind the executor, so there is no
+    ;; lifted-out producer whose register write walk 1 could miss.
+    (global.set $bx_opt_term_wreg (i32.const -1))
     (local.set $nuops
       (call $bx_opt_pass (local.get $base) (local.get $nuops) (i32.const -1)))
     (local.set $sc (i32.mul (local.get $nuops) (global.get $TREE_UOP_WORDS)))
@@ -2591,8 +3170,13 @@
               (i32.sub
                 (i32.add (i32.mul (local.get $nat) (global.get $BX_C_UOP))
                          (i32.mul (i32.const 0) (global.get $BX_C_TRANSFER)))
+                ;; $nfb counts the x87 micro-ops too; bill those at the higher
+                ;; $BX_C_X87FB and the rest at the plain fallback price.
                 (i32.add (global.get $BX_C_ENTRY)
-                         (i32.mul (local.get $nfb) (global.get $BX_C_FALLBACK))))
+                  (i32.add
+                    (i32.mul (i32.sub (local.get $nfb) (local.get $nx87))
+                             (global.get $BX_C_FALLBACK))
+                    (i32.mul (local.get $nx87) (global.get $BX_C_X87FB)))))
               (i32.const 0))
           (then (global.set $block_exec_decl_why (i32.const 1))
                 (global.set $block_exec_declines

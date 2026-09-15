@@ -6130,21 +6130,26 @@
     ;; Loop-idiom matcher runs on the ops just emitted, before the block is
     ;; published. See src/07b-loop-match.wat.
     (call $loop_match_block (local.get $start_eip) (local.get $tstart))
-    ;; The per-block executor runs LAST among the matchers that can claim a
-    ;; whole block and FIRST among the passes that rewrite ops in place. After
-    ;; $loop_match_block, so every specialised family keeps priority -- a block
-    ;; one of them took set $op_index_n to 0 and is declined on the first test.
-    ;; Before the x87 fusers, because those rewrite an op in place and leave
-    ;; the ops they absorbed in the stream as inline data with stale OP_INDEX
-    ;; entries, which this matcher's walk cannot survive. Blocks containing an
-    ;; x87 op are declined outright so the fusers still get them.
-    ;; Default OFF; see docs/block-executor-design.md.
-    (drop (call $block_exec_try_install (local.get $start_eip) (local.get $tstart)))
     (call $x87_fuse_block)
     (call $x87_short_fuse_block)
     (call $x87_tree4_fuse_block)
     (call $x87_affine_fuse_block)
     (call $x87_island_fuse_block)
+    ;; The per-block executor runs LAST among the matchers that can claim a
+    ;; whole block. After $loop_match_block, so every specialised family keeps
+    ;; priority -- a block one of them took set $op_index_n to 0 and is
+    ;; declined on the first test.
+    ;;
+    ;; Round 12 moved it AFTER the x87 fusers (OPEN-6). It used to run before
+    ;; them and decline any block holding an x87 op outright, which cost the
+    ;; INTEGER half of every x87-carrying block -- 23.0% of quake2-gameplay's
+    ;; retired ops, 39.5% of mw3's. Now the fold runs first and the executor
+    ;; sees the fused op: a run of x87 work is ONE fallback micro-op rather
+    ;; than a decline, and $x87_fused_span (07b-loop-match.wat) is how the
+    ;; classifier walks past the ops the fuser absorbed, which are still in the
+    ;; stream as that op's inline data. Fold and executor compose.
+    ;; Default OFF; see docs/block-executor-design.md section 17.
+    (drop (call $block_exec_try_install (local.get $start_eip) (local.get $tstart)))
     (call $publish_block (local.get $start_eip) (local.get $tstart) (global.get $d_pc))
   )
 
