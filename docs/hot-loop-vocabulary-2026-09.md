@@ -499,6 +499,175 @@ Two new observations that section 9 did not have:
   (section 19 of the superops design) in its loading window. Multi-block loop
   recognition, not a bigger arithmetic vocabulary, is where the unclaimed weight is.
 
+## 4c. The x87 half of those windows, and what the x87 fold already takes
+
+Section 4b left 3D gameplay sitting at 18-39% x87 dispatches and stopped there.
+The obvious next question is not "should something fold x87" — something already
+does. H449-H453 (`$x87_pipeline4`, `$x87_tree4`, `$x87_island`,
+`$x87_affine_prepare/finish`, all in
+[`src/07b-loop-match.wat`](../src/07b-loop-match.wat), designed in
+[tree-fold-design-a.md §13](tree-fold-design-a.md)) have existed since
+2026-09-12. The question is how much of *this* work they catch, and what stops
+them on the rest.
+
+Collected by
+[`collect-win98-x87-4c.sh`](hot-loop-vocabulary-2026-09/collect-win98-x87-4c.sh);
+per-window logs, hot-block dumps, disassemblies and classifications under
+[`win98/<app>-gameplay-x87/`](hot-loop-vocabulary-2026-09/win98/).
+
+**The first finding is that none of the earlier headless numbers measured the
+fold at all.** The families are gated on `$x87_pipeline4_emit_enabled` /
+`$x87_affine_emit_enabled`, and until this commit the only thing that set either
+was `window.WineSuperops.x87Fusion` in `host.js` — `test/run.js` never called
+the exports. So every CLI run in this study, §13's coverage table included, was
+made with the emit gate off. `--x87-fusion` is the one tool change this section
+needed; `--handler-hist` also prints a named `x87:` line now, because a fused
+family is not in the top-24 cut and the residue is the whole measurement.
+
+### What the fold catches, measured
+
+Each window run twice over the *same* batch range, `--x87-fusion` off then on.
+A fused family retires one dispatch for a whole region, so the two columns below
+are not comparable as work — the number that is, is how far raw x87 fell.
+
+| window (batches) | dispatches off → on | raw x87 off | raw x87 on | fused | **x87 ops absorbed** |
+|---|---|---|---|---|---|
+| quake2-gameplay 4000-5000 | 158,252,322 → 137,767,321 (**−12.9%**) | 26,429,136 (16.70%) | 3,986,432 (2.89%) | 1,957,711 | 22,442,704 = **84.9%** |
+| mw3-gameplay 920-1000 | 95,909,589 → 71,239,745 (**−25.7%**) | 34,746,675 (36.23%) | 7,618,461 (10.69%) | 2,251,972 | 27,128,214 = **78.1%** |
+| gta2-gameplay 4500-5200 | 15,559,743 → 12,014,061 (**−22.8%**) | 4,349,699 (27.95%) | 499,385 (4.16%) | 304,632 | 3,850,314 = **88.5%** |
+| heroes2-gameplay 1500-2200 | 53,563,890 | **0 (0.00%)** | — | — | nothing to catch |
+
+So the answer to the section's question is **78-89% already**, in every window
+that has any x87 at all. heroes2 is the control and prints an exact zero, which
+is the same answer §13's census gave from the other side.
+
+Two of the five families are **dead in all four windows**: `$x87_tree4` (H450)
+and the affine pair (H452/H453) matched zero blocks anywhere. H451, the generic
+island — a maximal run of three or more consecutive H188/H189/H190 — is 98% of
+everything caught; H449 is the rest. The two shape-specific families are
+carrying nothing here.
+
+**And the dispatch saving is not a time saving.** Interleaved A/B, three pairs
+each, user CPU for identical work:
+
+| window | off (user s) | on (user s) | paired deltas |
+|---|---|---|---|
+| quake2 | 22.39 / 21.53 / 20.48 | 21.40 / 20.68 / 20.92 | −4.4%, −3.9%, **+2.1%** |
+| gta2 | 20.49 / 16.03 / 15.53 | 18.77 / 14.95 / 15.76 | −8.4%, −6.7%, **+1.5%** |
+| mw3 | 92.44 / 84.82 | 85.92 / 123.36 | −7.1%, **+45.4%** |
+
+quake2 turns a 12.9% dispatch cut into roughly −2% ± 3%, and mw3's pairs do not
+agree with each other at all (its route contains `wait-canvas-dark-pixels`, so
+the guest work itself moves between runs; its API count moved by 0.4% across the
+pair). The box sat at load 7-27 throughout. **Quote the dispatch column, not the
+CPU column** — the honest statement is that the x87 fold removes a fifth of the
+dispatches in a 3D window and no measurable wall time on this machine, which is
+the same lesson `$next` dispatch counting taught in
+[interpreter-dispatch-perf.md](interpreter-dispatch-perf.md).
+
+### What declines the rest
+
+`x87-classify.js` takes the fold-off hot-block dump, disassembles the top 120
+blocks out of the PE (`tools/hot-loop-corpus.js`), and applies the island's own
+rule to each — a run of three, no SIB-addressed H188 after the first op — so a
+decline is charged to the instruction that broke the run, weighted by block
+entries. It is static and covers 72% (quake2) / 81% (mw3) / 9% (gta2) of each
+window's measured x87 stream; gta2's x87 is spread far past rank 120, so read
+its shares and not its totals.
+
+| window | x87-carrying blocks | x87 dispatches seen | caught | declined: interleaved integer op | declined: `fnstsw ax` | other |
+|---|---|---|---|---|---|---|
+| quake2 | 45 / 120 | 19,027,162 | **92.0%** | 8.0% | 0.0% | 0 |
+| mw3 | 68 / 120 | 28,050,272 | **87.8%** | 5.6% | **6.6%** | 0 |
+| gta2 | 19 / 120 | 403,181 | **78.0%** | **21.9%** | 0.0% | block end 0.1% |
+
+The instruction that actually broke each declined run, as a share of that
+window's x87:
+
+| window | top breakers |
+|---|---|
+| quake2 | `mov` 6.0%, `add` 1.5%, `sub` 0.4%, `movsx` 0.1%, `test` 0.1% |
+| mw3 | `fnstsw` 6.6%, `mov` 1.3%, `add` 1.1%, `test` 0.6%, `shl` 0.6%, `push` 0.5%, `sub` 0.5%, `lea` 0.5%, `call` 0.3% |
+| gta2 | `mov` 10.7%, `push` 3.4%, `call` 2.0%, `add` 1.7%, `sar` 1.3%, `shl` 1.3%, `xor` 1.1% |
+
+Two named declines from §13 turn out not to occur in gameplay at all. **No x87
+op in quake2's or gta2's hot blocks uses a SIB operand**, and mw3's 309,580 that
+do are all the *first* op of their run, where the rule allows them — the
+`sib-operand` bucket is empty in all three. Nothing was declined for an
+unimplemented x87 op either. `fstp` to memory, `fild`/`fistp` and `fxch` chains
+are all inside the accepted set and are caught wherever they are contiguous.
+
+One correction to make before reading the quake2 row: `0x9B` (FWAIT) emits *no*
+threaded op, and `tools/disasm.js` prints it as `db 0x9b`. Counting it as an
+integer instruction charges a false decline to every MSVC `_ftol` in the corpus
+— 182,194 entries of quake2's alone — so the classifier treats it as x87
+whitespace, which is what the decoder does.
+
+### The top x87-carrying blocks, and the expression each computes
+
+quake2, `ref_soft.dll` (runtime base `0xd7e000`, orig `0x10000000`):
+
+| block | entries | x87 ops | expression | straight-line tree? |
+|---|---|---|---|---|
+| `+0x10011c3b` | 78,197 | 29, one run | span texture setup: `fild u,v`, times the six s/t axis constants, plus offsets, then `fdivr` — the **perspective divide** | yes, whole block |
+| `+0x10012b34` | 46,062 | 37, one run | world→view: `v − vieworg` then three **dot3** against vright/vup/vpn, closed by a `fcom` near-clip test | yes |
+| `+0x10002b73` | 31,783 | 45 in two runs | same transform, second half | yes |
+| `+0x10011cd1`, `+0x10011deb`, `+0x100120bd`, `+0x10011d40` | 39k-89k each | 7-23 | **s/t → fixed-point cursor**: `fld st(0)` / `fmul st,st(4)` / `fmul st,st(3)` / two `fistp`, then the integer span walk reads them back | yes for the x87, but the block continues in integers |
+| `+0x10002a93` | 31,550 | 26 in runs of 2 | two RGB byte triples → float **through `[ebp-8]`**, scaled by six constants, summed, biased, `fstp`ed | no — `mov bl,[esi+n]` / `mov [ebp-8],ebx` between every pair |
+| `+0x10014590` | 182,194 | 4 | MSVC **`_ftol`**: `fnstcw` / `or ah,0xc` / `fldcw` / `fistp` / `fldcw` | no — the control-word edit is integer |
+| `+0x100124d9` | 70,683 | 9 in runs of 2-5 | span clip: `fild`×2, two `fmul`, `fadd`, `fcom`, with `imul`/`add` address math **scheduled between** the x87 ops | no |
+
+mw3, `mech3demo.exe` (no relocation, runtime VA == orig VA):
+
+| block | entries | x87 ops | expression | straight-line tree? |
+|---|---|---|---|---|
+| `+0x0051579f` | 80,864 | 36, one run | **3x3 matrix × vec3**: six `fld`/`fmul` pairs then an `fxch`/`faddp` reduction — the island's best case in the corpus | yes, whole block |
+| `+0x00515ad8` | 57,732 | 48 in four runs | the same inlined again, four vertices | yes |
+| `+0x004fd394`, `+0x004fd390` | 121,278 / 32,780 | 17 | **perspective divide** `1/z`, preceded by two x87 ops the integer setup splits off | yes apart from those two |
+| `+0x0051b0be`, `+0x0051b3ed` | ~50k each | 28, one run | **dot3 clip rows** | yes |
+| `+0x0051bc31`, `+0x0051bc4d`, `+0x0051bc62`, `+0x0051bcaa`, `+0x0051bcbf` | ~101k each | 2 | **float bounds test**: `fld [ecx]` / `fcomp const` / `fnstsw ax` / `test ah,imm` / `jcc` — five consecutive 5-7 op blocks, one per clip plane | it is a whole block, and it is four ops long |
+
+gta2, `gta2.exe`: `+0x004e30a0` (5,427 entries) is `fild [esp+0x10]` / `fmul
+const` / `fstp [eax+0x6e6a90]` with `sar`/`add`/`shl` address arithmetic
+**interleaved between** the three x87 ops — the Pentium U/V-pipe scheduling the
+compiler did on purpose, which is exactly what breaks a contiguity rule.
+
+### The missing roles, ranked by the x87 dispatches each would unlock
+
+1. **An integer op inside the x87 region.** quake2 8.0%, mw3 5.6%, gta2 21.9% of
+   their x87 streams; it is the *only* decline in quake2 and gta2. Every instance
+   is a pointer bump, an address computation, or an int↔float trip through a
+   stack slot sitting between two x87 ops. This is precisely the mixed
+   integer+x87 micro-op region [tree-fold-design-a.md §13](tree-fold-design-a.md)
+   designed and implemented as `TU_X87_MEM`/`MRO`/`REG`/`SW_AX`.
+2. **`fcomp` + `fnstsw ax` + `test ah` + `jcc` as a foldable terminator.** mw3
+   6.6%, everyone else ~0. Note the shape: these are not long blocks with a
+   compare in them, they are entire 5-7 op *blocks* entered ~100,000 times each.
+   Folding the four ops saves three dispatches out of five and leaves the block
+   transfer, which is the larger cost.
+3. **A run of two.** Dropping the island's floor from 3 to 2 would take about
+   half of bucket 1 by itself, for one constant.
+4. **SIB operands, unimplemented x87 ops, `fxch` chains, `fstp` to memory.**
+   Zero declines between them, in all three windows. Nothing to build.
+
+### Recommendation
+
+**Do not widen the x87 grammar; widen what is allowed to contain x87.** The fold
+already takes 78-89% of the x87 stream, and the entire residue is worth at most
+another 1-5% of window dispatches — on a lever whose 13-26% has already been
+shown to buy no measurable CPU. The number that matters is on the other side of
+the same wall: `src/07c-block-exec.wat` declines **any** block containing
+H188-H190 outright (its own comment marks this OPEN-6), and x87-carrying blocks
+are **23.0% of quake2's retired guest ops, 39.5% of mw3's and 7.9% of gta2's**.
+So in a 3D app the integer half of a third of the work is excluded from the
+block executor *because* an x87 instruction stands next to it — which is the
+same barrier §13 named, one level up: the cost is an integer barrier that
+happens to be standing beside an x87 op. Widening the block executor to the x87
+micro-op kinds resolves declines 1, 2 and 3 above as a side effect, since a
+block executor does not care whether its micro-ops are contiguous. That is one
+change worth three, and it is worth more than any amount of further x87
+vocabulary.
+
 ## 5. DOS: 199 programs, ranked two ways
 
 Full per-loop index in the five [`read-*.tsv`](hot-loop-vocabulary-2026-09/) files;

@@ -295,6 +295,16 @@ const NO_SIB_FUSION = hasFlag('no-sib-fusion');
 const NO_RECT_RUN = hasFlag('no-rect-run');
 const NO_CASE_CHAIN = hasFlag('no-case-chain');
 const NO_RLE_RUN = hasFlag('no-rle-run');
+// --x87-fusion: arm the semantic x87 families (H449 pipeline4/short, H450
+// balanced tree, H451 island, H452/453 affine prefix+suffix). Default OFF in
+// the module, and until now the browser's window.WineSuperops.x87Fusion was
+// the ONLY way to turn them on -- so every headless measurement of "how much
+// x87 does the fold catch" was silently measuring the fold switched off.
+// The match COUNTERS increment either way (the emit gate is checked after the
+// predicate), so `--loopmatch-stats` alone answers "how many blocks would
+// match"; this flag is what makes those matches actually run, which is the
+// only way to get an entry-weighted share out of --handler-hist.
+const X87_FUSION = hasFlag('x87-fusion');
 // --loopmatch-stats: print the self-loop/match counts at exit.
 const LOOPMATCH_STATS = hasFlag('loopmatch-stats');
 // --tree-fold: the general decode-time integer-expression fold, H448.
@@ -4038,6 +4048,10 @@ async function main() {
   if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
   if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
   if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
+  if (X87_FUSION) {
+    inheritWasm('set_x87_pipeline4_fusion', 1);
+    inheritWasm('set_x87_affine_fusion', 1);
+  }
   if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
   if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
   // The thresholds too: a guest thread decodes in its own instance, so a cap
@@ -4961,6 +4975,13 @@ async function main() {
   if (NO_RLE_RUN && instance.exports.set_rle_run) {
     instance.exports.set_rle_run(0);
   }
+  // Per-instance, like every other decode-time setting: a guest thread decodes
+  // in its own instance, so arming only the main one would leave the workers
+  // running the scalar x87 handlers and make the share unreadable.
+  if (X87_FUSION && instance.exports.set_x87_pipeline4_fusion) {
+    instance.exports.set_x87_pipeline4_fusion(1);
+    instance.exports.set_x87_affine_fusion(1);
+  }
   if ((TREE_FOLD || TRACE_TREE_FOLD) && instance.exports.set_tree_fold) {
     instance.exports.set_tree_fold(1);
   }
@@ -5241,6 +5262,24 @@ async function main() {
       const pct = total ? (row.hits * 100 / total).toFixed(2) : '0.00';
       console.log(`  H${row.id} ${handlerNames[row.id] || '$handler_' + row.id} ${row.hits} (${pct}%)`);
     }
+    // The x87 split, named rather than left to the top-24 cut. A fused family
+    // retires ONE dispatch for a whole region, so the two columns are not
+    // comparable as work: read `raw` against the same run with --x87-fusion
+    // off to see how many x87 dispatches the fold actually absorbed. Printed
+    // unconditionally because an app with no x87 prints zeros, which is itself
+    // the answer to "is the x87 fold relevant here".
+    const sumIds = ids => ids.reduce((a, id) => a + ((u32[base + id] >>> 0) || 0), 0);
+    const rawX87 = sumIds([188, 189, 190]);
+    const fusedX87 = sumIds([449, 450, 451, 452, 453]);
+    const pctOf = v => (total ? (v * 100 / total).toFixed(2) : '0.00');
+    console.log(`  x87: raw ${rawX87} (${pctOf(rawX87)}%)`
+      + ` [H188 ${u32[base + 188] >>> 0} H189 ${u32[base + 189] >>> 0}`
+      + ` H190 ${u32[base + 190] >>> 0}]`
+      + ` fused-dispatches ${fusedX87} (${pctOf(fusedX87)}%)`
+      + ` [H449 ${u32[base + 449] >>> 0} H450 ${u32[base + 450] >>> 0}`
+      + ` H451 ${u32[base + 451] >>> 0} H452 ${u32[base + 452] >>> 0}`
+      + ` H453 ${u32[base + 453] >>> 0}]`
+      + ` H439 ${u32[base + 439] >>> 0}`);
     if (pairBase) {
       const pairs = [];
       let pairTotal = 0;
@@ -9369,6 +9408,26 @@ if (VERBOSE) {
           'x87-op', e.get_tree_decl_x87 ? e.get_tree_decl_x87() : 0,
           'lastX87', e.get_tree_decl_x87_op
             ? '0x' + (e.get_tree_decl_x87_op() >>> 0).toString(16) : '-');
+      }
+      if (e.get_x87_pipeline4_matches) {
+        // `matches` counts the blocks each x87 family's predicate ACCEPTED,
+        // whether or not --x87-fusion armed the emit; `runs` is entries into
+        // the fused handler and is zero unless it did. The two together say
+        // "this many shapes matched, and they were entered this often" --
+        // which is the only way to tell a family that never matches from one
+        // that matches cold code.
+        console.log(`loopmatch: ${label} x87 armed`,
+          X87_FUSION ? 'yes' : 'no',
+          'pipeline4', e.get_x87_pipeline4_matches(),
+          'runs', e.get_x87_pipeline4_runs(),
+          '| tree4', e.get_x87_tree4_matches(),
+          'runs', e.get_x87_tree4_runs(),
+          '| island', e.get_x87_island_matches(),
+          'runs', e.get_x87_island_runs(),
+          '| affine', e.get_x87_affine_prepare_matches()
+            + e.get_x87_affine_finish_matches(),
+          'runs', e.get_x87_affine_prepare_runs()
+            + e.get_x87_affine_finish_runs());
       }
       if (e.get_lut_span_runs) {
         console.log(`loopmatch: ${label} fixed LUT spans`,
