@@ -848,3 +848,8 @@ The full aggregate output as run is
 [`aggregate-gameplay.out`](hot-loop-vocabulary-2026-09/aggregate-gameplay.out) and
 [`aggregate-loading.out`](hot-loop-vocabulary-2026-09/aggregate-loading.out); the
 per-loop rows, with every tree, are in the `read-*.tsv` files beside them.
+
+`aggregate.out` is the run that produced sections 4-9 and predates section 4b, so a
+slice-less re-run now folds the 325 gameplay/loading rows into the same win98
+totals and will not reproduce it. Pass `--slices='win98$'` to get the original six
+windows back on their own.
