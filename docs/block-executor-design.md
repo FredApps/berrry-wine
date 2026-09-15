@@ -2077,7 +2077,7 @@ Two cautions carried forward. These shapes set `$block_exec_min_uops`, which
 **replaces** the cost model, so every row is "what it costs once the block is
 inside the executor", never "what the model decides". And the harness prices a
 perfectly BTB-predicted loop, so no percentage here is an app percentage: the
-13-window tables in §§16.6, 18.5 and 19.2 are where coverage is measured.
+13-window tables in sections 16.6, 18.2 and 19.2 are where coverage is measured.
 
 ## 21. Round 12: the picture, and the wall clock
 
@@ -2117,5 +2117,5 @@ things also make the number a poor question even on a quiet box: at
 `--work=300` a large share of the wall clock is app load and first-decode, which
 is exactly where the executor *spends* (descriptor building) and not where it
 *earns*; and `--quiet-api` is on, so what remains is guest work rather than
-stdout. The coverage counters in sections 16.6, 18.5, 19.2 and 17.5 are
+stdout. The coverage counters in sections 16.6, 18.2, 19.2 and 17.5 are
 deterministic and are what round 12's claims rest on.
