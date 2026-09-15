@@ -1661,20 +1661,41 @@
   (global $PAGE_INDEX_WORKER_SLOTS i32 (i32.const 16))
   (global $PAGE_INDEX_NONE   i32 (i32.const 0xFFFF))
   ;; Bit 14 marks an interior byte. "Is this offset an entry point" is therefore
-  ;; the single test `entry < PAGE_INDEX_COVER`, which catches 0xFFFF too.
+  ;; the single test `(entry & PAGE_INDEX_COVER) == 0`, which catches 0xFFFF too.
   (global $PAGE_INDEX_COVER  i32 (i32.const 0x4000))
   (global $PAGE_INDEX_OFFMASK i32 (i32.const 0x3FFF))
+  ;; Round 14 (docs/block-executor-design.md section 23). Bit 15 says WHICH of
+  ;; the page's two chunks the offset names: clear = the threaded-code chunk,
+  ;; set = the block-executor DESCRIPTOR chunk. So the u16 entry space is
+  ;;
+  ;;   0x0000..0x3FFF  entry point, threaded chunk, at that offset
+  ;;   0x4000..0x7FFF  interior byte of the threaded block at (e & 0x3FFF)
+  ;;   0x8000..0xBFFF  entry point, DESCRIPTOR chunk, at that offset
+  ;;   0xC000..0xFFFE  interior byte of the descriptor block at (e & 0x3FFF)
+  ;;   0xFFFF          nothing compiled here
+  ;;
+  ;; 0xFFFF is safe against the last descriptor-cover value because a
+  ;; descriptor is at least 8 bytes and its chunk is capped at 0x4000, so a
+  ;; descriptor entry offset is never above 0x3FF8 and a cover mark never
+  ;; reaches 0xFFFF. "Which chunk does this entry name" is one AND, and the
+  ;; owner key a retirement walk compares is `e & PAGE_INDEX_OWNER`, which
+  ;; keeps the chunk bit and drops the cover bit.
+  (global $PAGE_INDEX_DESC   i32 (i32.const 0x8000))
+  (global $PAGE_INDEX_OWNER  i32 (i32.const 0xBFFF))
   ;; PAGE_DIR: per-thread direct-mapped table keyed on the guest page number.
-  ;; 16 bytes per entry: +0 page base (0 = empty), +4 index ptr, +8 chunk base,
-  ;; +12 chunk length. Split like the other two per-thread arenas: the main
-  ;; thread keeps 1024 entries (16KB) and each of the fifteen workers gets 256
-  ;; (4KB). Entries and mask are per-instance, set in $init_thread; the values
-  ;; here are the main thread's, and the mask must stay entries-1 because it is
-  ;; used as a mask and the table is direct-mapped.
+  ;; 32 bytes per entry: +0 page base (0 = empty), +4 index ptr, +8 threaded
+  ;; chunk base, +12 threaded chunk used|class|flags, +16 descriptor chunk base
+  ;; (0 = none yet), +20 descriptor chunk used|class, +24/+28 reserved.
+  ;; Split like the other two per-thread arenas: the main thread keeps 1024
+  ;; entries (32KB) and each of the fifteen workers gets 256 (8KB). Entries and
+  ;; mask are per-instance, set in $init_thread; the values here are the main
+  ;; thread's, and the mask must stay entries-1 because it is used as a mask
+  ;; and the table is direct-mapped.
   (global $PAGE_DIR_BASE i32 (region.addr $PAGE_DIR_BASE 0))
   (global $PAGE_DIR_BASE_SIZE i32 (region.size $PAGE_DIR_BASE))
-  (global $PAGE_DIR_MAIN_BYTES i32 (i32.const 0x4000))
-  (global $PAGE_DIR_STRIDE i32 (i32.const 0x1000))
+  (global $PAGE_DIR_SLOT_BYTES i32 (i32.const 32))
+  (global $PAGE_DIR_MAIN_BYTES i32 (i32.const 0x8000))
+  (global $PAGE_DIR_STRIDE i32 (i32.const 0x2000))
   (global $PAGE_DIR_ENTRIES (mut i32) (i32.const 1024))
   (global $PAGE_DIR_MASK (mut i32) (i32.const 1023))
   (global $PAGE_DIR_WORKER_ENTRIES i32 (i32.const 256))
@@ -1730,6 +1751,11 @@
   (global $cur_page_base  (mut i32) (i32.const 0))
   (global $cur_page_index (mut i32) (i32.const 0))
   (global $cur_page_chunk (mut i32) (i32.const 0))
+  ;; Round 14: the second chunk of the loaded page, holding block-executor
+  ;; descriptors. 0 when this page has never had one, which is the common case;
+  ;; $page_resolve selects between the two with the entry's bit 15 and never
+  ;; branches on it.
+  (global $cur_page_desc  (mut i32) (i32.const 0))
   ;; Counters for the A/B in docs/page-compile-design.md section 8.
   (global $page_compiles (mut i32) (i32.const 0))
   (global $page_hits     (mut i32) (i32.const 0))

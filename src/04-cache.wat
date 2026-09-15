@@ -199,6 +199,31 @@
   (func $page_desc_class (param $desc i32) (result i32)
     (i32.and (i32.shr_u (local.get $desc) (i32.const 16)) (i32.const 3)))
 
+  ;; ROUND 14 -- the SECOND per-page chunk, for block-executor descriptors.
+  ;; See docs/block-executor-design.md section 23.
+  ;;
+  ;; Round 13 put descriptors in the page's one 16KB threaded chunk, and that
+  ;; chunk is a hard ceiling (the index entry is a 14-bit offset). A descriptor
+  ;; is ~24 bytes of micro-op per guest op against 8 for the threaded stream it
+  ;; stands in for, so an install brought the next OVERFLOW forward -- and an
+  ;; overflow does not fail locally, it DROPS THE WHOLE PAGE and re-decodes
+  ;; every block on it. The admission control that followed traded installs
+  ;; away to stop that: region installs fell 38,881 -> 1,101.
+  ;;
+  ;; Descriptors get their own chunk now, in slot words +16/+20. Nothing an
+  ;; install spends can push an ordinary block out of the threaded chunk, so
+  ;; the admission reserve for descriptors is zero, and overflowing the
+  ;; descriptor chunk degrades to a DECLINE -- the ordinary threaded block is
+  ;; published instead -- rather than dropping the page.
+  (global $page_desc_chunk_allocs (mut i32) (i32.const 0))
+  (global $page_desc_chunk_grows  (mut i32) (i32.const 0))
+  (global $page_desc_chunk_full   (mut i32) (i32.const 0))
+
+  (func $page_dchunk (param $slot i32) (result i32)
+    (i32.load offset=16 (local.get $slot)))
+  (func $page_dword (param $slot i32) (result i32)
+    (i32.load offset=20 (local.get $slot)))
+
   ;; Bit 20 of the page descriptor word: "a block-executor REGION descriptor on
   ;; this page stands for guest bytes outside its own published extent."
   ;;
@@ -365,12 +390,18 @@
   ;; is not, and the handler table does not move.
   (func $page_retire_at (param $slot i32) (param $off i32) (result i32)
     (local $idx i32) (local $chunk i32) (local $v i32) (local $coff i32)
-    (local $lo i32) (local $hi i32)
+    (local $lo i32) (local $hi i32) (local $owner i32)
     (local.set $idx (i32.load offset=4 (local.get $slot)))
     (local.set $v
       (i32.load16_u (i32.add (local.get $idx) (i32.shl (local.get $off) (i32.const 1)))))
     (if (i32.eq (local.get $v) (global.get $PAGE_INDEX_NONE))
       (then (return (i32.add (local.get $off) (i32.const 1)))))
+    ;; Round 14: the walk below compares the OWNER key -- chunk bit kept, cover
+    ;; bit dropped -- so a descriptor block and a threaded block that happen to
+    ;; sit at the same offset in their two different chunks never read as one
+    ;; block. $coff stays the plain 14-bit offset, into whichever chunk bit 15
+    ;; names.
+    (local.set $owner (i32.and (local.get $v) (global.get $PAGE_INDEX_OWNER)))
     (local.set $coff (i32.and (local.get $v) (global.get $PAGE_INDEX_OFFMASK)))
     ;; Walk out to the block's guest extent. Every byte of it carries the same
     ;; chunk offset -- that is what $page_publish wrote -- so the extent is
@@ -384,8 +415,8 @@
           (i32.add (local.get $idx)
             (i32.shl (i32.sub (local.get $lo) (i32.const 1)) (i32.const 1)))))
       (br_if $ld (i32.eq (local.get $v) (global.get $PAGE_INDEX_NONE)))
-      (br_if $ld (i32.ne (i32.and (local.get $v) (global.get $PAGE_INDEX_OFFMASK))
-                         (local.get $coff)))
+      (br_if $ld (i32.ne (i32.and (local.get $v) (global.get $PAGE_INDEX_OWNER))
+                         (local.get $owner)))
       (local.set $lo (i32.sub (local.get $lo) (i32.const 1)))
       (br $ls)))
     (local.set $hi (i32.add (local.get $off) (i32.const 1)))
@@ -394,13 +425,19 @@
       (local.set $v
         (i32.load16_u (i32.add (local.get $idx) (i32.shl (local.get $hi) (i32.const 1)))))
       (br_if $hd (i32.eq (local.get $v) (global.get $PAGE_INDEX_NONE)))
-      (br_if $hd (i32.ne (i32.and (local.get $v) (global.get $PAGE_INDEX_OFFMASK))
-                         (local.get $coff)))
+      (br_if $hd (i32.ne (i32.and (local.get $v) (global.get $PAGE_INDEX_OWNER))
+                         (local.get $owner)))
       (local.set $hi (i32.add (local.get $hi) (i32.const 1)))
       (br $hs)))
     ;; Break the chunk before clearing the index, so there is no window in
-    ;; which the block is unreachable by lookup but still fallen into.
-    (local.set $chunk (i32.load offset=8 (local.get $slot)))
+    ;; which the block is unreachable by lookup but still fallen into. A
+    ;; descriptor's first 8 bytes are handler + operand, exactly the shape
+    ;; $th_block_end overwrites, so the same store works for both chunks.
+    (local.set $chunk
+      (if (result i32) (i32.and (local.get $owner) (global.get $PAGE_INDEX_DESC))
+        (then (call $page_dchunk (local.get $slot)))
+        (else (i32.load offset=8 (local.get $slot)))))
+    (if (i32.eqz (local.get $chunk)) (then (return (i32.add (local.get $off) (i32.const 1)))))
     (i32.store (i32.add (local.get $chunk) (local.get $coff)) (i32.const 45))
     (i32.store offset=4 (i32.add (local.get $chunk) (local.get $coff))
       (i32.or (i32.load (local.get $slot)) (local.get $lo)))
@@ -500,7 +537,7 @@
       (i32.mul
         (i32.and (i32.shr_u (local.get $page_base) (i32.const 12))
                  (global.get $PAGE_DIR_MASK))
-        (i32.const 16))))
+        (global.get $PAGE_DIR_SLOT_BYTES))))
 
   ;; Forget every compiled page for this thread. Used at thread init and
   ;; whenever the arena the chunks live in is recycled underneath them.
@@ -509,6 +546,7 @@
     (global.set $cur_page_base (i32.const 0))
     (global.set $cur_page_index (i32.const 0))
     (global.set $cur_page_chunk (i32.const 0))
+    (global.set $cur_page_desc (i32.const 0))
     (global.set $page_index_next (i32.const 0))
     (global.set $page_index_free (i32.const 0))
     (global.set $page_index_evict_cursor (i32.const 0))
@@ -522,7 +560,8 @@
     (block $d (loop $s
       (br_if $d (i32.ge_u (local.get $i) (global.get $PAGE_DIR_ENTRIES)))
       (local.set $slot
-        (i32.add (global.get $PAGE_DIR) (i32.mul (local.get $i) (i32.const 16))))
+        (i32.add (global.get $PAGE_DIR)
+          (i32.mul (local.get $i) (global.get $PAGE_DIR_SLOT_BYTES))))
       (if (i32.load (local.get $slot))
         (then (call $page_chunk_sample
           (call $page_desc_used (i32.load offset=12 (local.get $slot))))))
@@ -530,6 +569,10 @@
       (i32.store offset=4 (local.get $slot) (i32.const 0))
       (i32.store offset=8 (local.get $slot) (i32.const 0))
       (i32.store offset=12 (local.get $slot) (i32.const 0))
+      (i32.store offset=16 (local.get $slot) (i32.const 0))
+      (i32.store offset=20 (local.get $slot) (i32.const 0))
+      (i32.store offset=24 (local.get $slot) (i32.const 0))
+      (i32.store offset=28 (local.get $slot) (i32.const 0))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $s))))
 
@@ -555,7 +598,8 @@
           (br_if $found (i32.ge_u (local.get $n) (global.get $PAGE_DIR_ENTRIES)))
           (local.set $slot
             (i32.add (global.get $PAGE_DIR)
-              (i32.mul (global.get $page_index_evict_cursor) (i32.const 16))))
+              (i32.mul (global.get $page_index_evict_cursor)
+                       (global.get $PAGE_DIR_SLOT_BYTES))))
           (global.set $page_index_evict_cursor
             (i32.and
               (i32.add (global.get $page_index_evict_cursor) (i32.const 1))
@@ -690,10 +734,14 @@
       (i32.load16_u
         (i32.add (local.get $idx)
           (i32.shl (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1)))))
-    (if (i32.ge_u (local.get $e) (global.get $PAGE_INDEX_COVER))
+    (if (i32.and (local.get $e) (global.get $PAGE_INDEX_COVER))
       (then (return (i32.const 0))))
-    (local.set $coff (local.get $e))
-    (local.set $chunk (i32.load offset=8 (local.get $slot)))
+    (local.set $coff (i32.and (local.get $e) (global.get $PAGE_INDEX_OFFMASK)))
+    (local.set $chunk
+      (if (result i32) (i32.and (local.get $e) (global.get $PAGE_INDEX_DESC))
+        (then (call $page_dchunk (local.get $slot)))
+        (else (i32.load offset=8 (local.get $slot)))))
+    (if (i32.eqz (local.get $chunk)) (then (return (i32.const 0))))
     ;; ---- an executor DESCRIPTOR stands here -------------------------------
     ;; Not an x86 op stream -- but a one-block descriptor carries a verbatim
     ;; copy of the threaded stream it displaced, parked at the tail of its
@@ -706,6 +754,17 @@
     ;; executor, which reads its header from $ip) holds the byte offset from
     ;; the block start to that table; zero means the copy was not saved and
     ;; the caller falls back to taking the descriptor back.
+    ;;
+    ;; Round 14 gave the table a second header word and extended the copy to
+    ;; REGION descriptors as well (section 23). The layout is
+    ;;   +0  n, the op count
+    ;;   +4  rawlen, the copy's byte length
+    ;;   +8  n offsets, each relative to the copy's first byte
+    ;;   +8+4n  the copy itself
+    ;; The length is there so that a region whose head is ITSELF a one-block
+    ;; descriptor can pass the same stream on to its own copy instead of
+    ;; publishing without one -- which is the case that would otherwise still
+    ;; end with a walk retiring a finished region.
     (if (i32.eq (i32.load (i32.add (local.get $chunk) (local.get $coff)))
                 (global.get $BX_HANDLER))
       (then
@@ -719,7 +778,7 @@
           (then (return (i32.const 0))))
         (local.set $me                                              ;; raw base
           (i32.add (local.get $ms)
-            (i32.add (i32.const 4) (i32.shl (local.get $n) (i32.const 2)))))
+            (i32.add (i32.const 8) (i32.shl (local.get $n) (i32.const 2)))))
         (local.set $w (i32.const 0))
         (block $rd (loop $rl
           (br_if $rd (i32.ge_u (local.get $w) (local.get $n)))
@@ -727,7 +786,7 @@
             (i32.add (global.get $OP_INDEX) (i32.shl (local.get $w) (i32.const 2)))
             (i32.add (local.get $me)
               (i32.load (i32.add (local.get $ms)
-                (i32.shl (i32.add (local.get $w) (i32.const 1)) (i32.const 2))))))
+                (i32.shl (i32.add (local.get $w) (i32.const 2)) (i32.const 2))))))
           (local.set $w (i32.add (local.get $w) (i32.const 1)))
           (br $rl)))
         (return (local.get $n))))
@@ -757,6 +816,82 @@
       (br $scan)))
     (local.get $n))
 
+  ;; ----------------------------------------------------------------------
+  ;; $page_cached_stream -- round 14. Where the published THREADED bytes of the
+  ;; block entered at $ga live, and how many there are.
+  ;;
+  ;; The one-block installer saves the stream it displaces by copying it out of
+  ;; the emit scratch, which it is about to overwrite. The REGION installer has
+  ;; no such copy to make: its head block was published normally some time ago
+  ;; and its bytes are sitting in the page's threaded chunk right now, so the
+  ;; region only needs to be told where they are. That is this.
+  ;;
+  ;; Returns the chunk address, or 0 when $ga is not a threaded entry point or
+  ;; its extent cannot be read. The byte length lands in
+  ;; $page_cached_stream_len, which is only meaningful on a non-zero return.
+  ;; ----------------------------------------------------------------------
+  (global $page_cached_stream_len (mut i32) (i32.const 0))
+
+  (func $page_cached_stream (param $ga i32) (result i32)
+    (local $slot i32) (local $idx i32) (local $chunk i32) (local $base i32)
+    (local $e i32) (local $coff i32) (local $me i32)
+    (local $w i32) (local $w0 i32) (local $wmax i32)
+    (global.set $page_cached_stream_len (i32.const 0))
+    (local.set $base (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    (local.set $slot (call $page_dir_slot (local.get $base)))
+    (if (i32.ne (i32.load (local.get $slot)) (local.get $base))
+      (then (return (i32.const 0))))
+    (local.set $idx (i32.load offset=4 (local.get $slot)))
+    (local.set $e
+      (i32.load16_u
+        (i32.add (local.get $idx)
+          (i32.shl (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1)))))
+    ;; An ENTRY, in either chunk.
+    (if (i32.and (local.get $e) (global.get $PAGE_INDEX_COVER))
+      (then (return (i32.const 0))))
+    (local.set $coff (i32.and (local.get $e) (global.get $PAGE_INDEX_OFFMASK)))
+    ;; A DESCRIPTOR stands here. It does not own a threaded stream -- but if it
+    ;; carries a copy of the one it displaced, that copy IS the stream, and
+    ;; handing it on is what lets a region built over a one-block descriptor
+    ;; keep the block's ops readable instead of publishing bare.
+    (if (i32.and (local.get $e) (global.get $PAGE_INDEX_DESC))
+      (then
+        (local.set $chunk (call $page_dchunk (local.get $slot)))
+        (if (i32.eqz (local.get $chunk)) (then (return (i32.const 0))))
+        (local.set $w (i32.add (local.get $chunk) (local.get $coff)))
+        (local.set $me (i32.load offset=4 (local.get $w)))        ;; rawoff
+        (if (i32.eqz (local.get $me)) (then (return (i32.const 0))))
+        (local.set $me (i32.add (local.get $w) (local.get $me))) ;; the table
+        (local.set $w0 (i32.load (local.get $me)))                ;; n
+        (if (i32.or (i32.eqz (local.get $w0))
+                    (i32.gt_u (local.get $w0) (global.get $OP_INDEX_MAX)))
+          (then (return (i32.const 0))))
+        (global.set $page_cached_stream_len (i32.load offset=4 (local.get $me)))
+        (if (i32.eqz (global.get $page_cached_stream_len))
+          (then (return (i32.const 0))))
+        (return
+          (i32.add (local.get $me)
+            (i32.add (i32.const 8) (i32.shl (local.get $w0) (i32.const 2)))))))
+    (local.set $chunk (i32.load offset=8 (local.get $slot)))
+    (if (i32.eqz (local.get $chunk)) (then (return (i32.const 0))))
+    ;; The extent is the END bitmap's first set bit strictly above the entry
+    ;; word -- exactly the bound $page_cached_ops scans to.
+    (local.set $me (i32.add (local.get $idx) (global.get $PAGE_OPBITS_END)))
+    (local.set $w0 (i32.shr_u (local.get $coff) (i32.const 2)))
+    (local.set $wmax
+      (i32.shr_u (call $page_desc_used (i32.load offset=12 (local.get $slot)))
+                 (i32.const 2)))
+    (local.set $w (i32.add (local.get $w0) (i32.const 1)))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $w) (local.get $wmax)))
+      (br_if $done (call $page_opbit_test (local.get $me) (local.get $w)))
+      (local.set $w (i32.add (local.get $w) (i32.const 1)))
+      (br $scan)))
+    (if (i32.gt_u (local.get $w) (local.get $wmax)) (then (return (i32.const 0))))
+    (global.set $page_cached_stream_len
+      (i32.shl (i32.sub (local.get $w) (local.get $w0)) (i32.const 2)))
+    (i32.add (local.get $chunk) (local.get $coff)))
+
   ;; Is the compiled block entered at $ga a block-executor descriptor rather
   ;; than a threaded op stream? 0 for "not compiled" as well, so the caller has
   ;; to have established that separately.
@@ -770,11 +905,11 @@
       (i32.load16_u
         (i32.add (i32.load offset=4 (local.get $slot))
           (i32.shl (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1)))))
-    (if (i32.ge_u (local.get $e) (global.get $PAGE_INDEX_COVER))
-      (then (return (i32.const 0))))
-    (i32.eq
-      (i32.load (i32.add (i32.load offset=8 (local.get $slot)) (local.get $e)))
-      (global.get $BX_HANDLER)))
+    ;; Round 14: a descriptor is now exactly "an entry whose index bit 15 is
+    ;; set". No chunk load, no handler compare.
+    (i32.and (i32.eqz (i32.and (local.get $e) (global.get $PAGE_INDEX_COVER)))
+             (i32.ne (i32.and (local.get $e) (global.get $PAGE_INDEX_DESC))
+                     (i32.const 0))))
 
   ;; Retire the compiled block entered at $ga, by guest address. Same machinery
   ;; a code write uses; the region walker needs it to take back a one-block
@@ -801,16 +936,19 @@
     (local.set $o (i32.and (local.get $ga) (i32.const 0xFFF)))
     (local.set $coff
       (i32.load16_u (i32.add (local.get $idx) (i32.shl (local.get $o) (i32.const 1)))))
-    (if (i32.ge_u (local.get $coff) (global.get $PAGE_INDEX_COVER))
+    (if (i32.and (local.get $coff) (global.get $PAGE_INDEX_COVER))
       (then (return (i32.const 0))))
+    ;; The owner key, not the bare offset: bit 15 has to match too, or a
+    ;; descriptor block's cover marks would be read as a threaded block's.
+    (local.set $coff (i32.and (local.get $coff) (global.get $PAGE_INDEX_OWNER)))
     (local.set $o (i32.add (local.get $o) (i32.const 1)))
     (block $hd (loop $hs
       (br_if $hd (i32.ge_u (local.get $o) (i32.const 4096)))
       (local.set $v
         (i32.load16_u (i32.add (local.get $idx) (i32.shl (local.get $o) (i32.const 1)))))
       (br_if $hd (i32.eq (local.get $v) (global.get $PAGE_INDEX_NONE)))
-      (br_if $hd (i32.lt_u (local.get $v) (global.get $PAGE_INDEX_COVER)))
-      (br_if $hd (i32.ne (i32.and (local.get $v) (global.get $PAGE_INDEX_OFFMASK))
+      (br_if $hd (i32.eqz (i32.and (local.get $v) (global.get $PAGE_INDEX_COVER))))
+      (br_if $hd (i32.ne (i32.and (local.get $v) (global.get $PAGE_INDEX_OWNER))
                          (local.get $coff)))
       (local.set $o (i32.add (local.get $o) (i32.const 1)))
       (br $hs)))
@@ -833,6 +971,28 @@
   ;; the 1000-batch quake2 window: with no reserve the one-block family alone
   ;; took page compiles from 18,269 to 21,997 and block decodes from 781,266
   ;; to 1,047,921. A mandatory publish passes 0.
+  ;; ROUND 14: this is the DESCRIPTOR chunk's admission test, and it is a
+  ;; different question from the threaded chunk's. A descriptor now has a chunk
+  ;; of its own, so nothing it spends can push an ordinary block out of the
+  ;; threaded chunk, and overflowing the descriptor chunk is a local decline --
+  ;; $publish_block goes on to publish the threaded block instead. There is
+  ;; therefore no reserve and no overflow memo here: both existed only to keep
+  ;; descriptors from bringing forward a whole-page DROP, and the drop is gone.
+  ;;
+  ;; A page that is not compiled yet answers 1: the publish creates it.
+  (func $page_desc_would_fit (param $start_eip i32) (param $len i32) (result i32)
+    (local $slot i32) (local $base i32)
+    (if (i32.gt_u (local.get $len) (global.get $PAGE_CHUNK_BYTES))
+      (then (return (i32.const 0))))
+    (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
+    (local.set $slot (call $page_dir_slot (local.get $base)))
+    (if (i32.ne (i32.load (local.get $slot)) (local.get $base))
+      (then (return (i32.const 1))))
+    (i32.le_u
+      (i32.add (call $page_desc_used (call $page_dword (local.get $slot)))
+               (local.get $len))
+      (global.get $PAGE_CHUNK_BYTES)))
+
   (func $page_would_fit (param $start_eip i32) (param $len i32)
                         (param $reserve i32) (result i32)
     (local $slot i32) (local $base i32)
@@ -864,11 +1024,14 @@
   ;; unlikely.
   (func $page_dir_drop_mode (param $page_base i32) (param $defer i32)
     (local $slot i32) (local $idx i32) (local $chunk i32) (local $desc i32)
+    (local $dchunk i32) (local $dword i32)
     (local.set $slot (call $page_dir_slot (local.get $page_base)))
     (if (i32.ne (i32.load (local.get $slot)) (local.get $page_base)) (then (return)))
     (local.set $idx (i32.load offset=4 (local.get $slot)))
     (local.set $chunk (i32.load offset=8 (local.get $slot)))
     (local.set $desc (i32.load offset=12 (local.get $slot)))
+    (local.set $dchunk (call $page_dchunk (local.get $slot)))
+    (local.set $dword (call $page_dword (local.get $slot)))
     (call $page_chunk_sample (call $page_desc_used (local.get $desc)))
     (if (local.get $idx)
       (then
@@ -878,11 +1041,21 @@
     (i32.store offset=4 (local.get $slot) (i32.const 0))
     (i32.store offset=8 (local.get $slot) (i32.const 0))
     (i32.store offset=12 (local.get $slot) (i32.const 0))
+    (i32.store offset=16 (local.get $slot) (i32.const 0))
+    (i32.store offset=20 (local.get $slot) (i32.const 0))
     (if (i32.eq (global.get $cur_page_base) (local.get $page_base))
       (then
         (global.set $cur_page_base (i32.const 0))
         (global.set $cur_page_index (i32.const 0))
-        (global.set $cur_page_chunk (i32.const 0))))
+        (global.set $cur_page_chunk (i32.const 0))
+        (global.set $cur_page_desc (i32.const 0))))
+    ;; The descriptor chunk is never the one a suspended stream is running
+    ;; from at a DEFERRED drop -- that path exists for the block $decode_run
+    ;; has already saved, which is always threaded code -- so it goes back on
+    ;; its free list through the same safety test the ordinary chunk uses.
+    (if (local.get $dchunk)
+      (then (call $page_chunk_put_if_safe
+              (local.get $dchunk) (call $page_desc_class (local.get $dword)))))
     (if (local.get $defer)
       (then
         (if (i32.and
@@ -940,10 +1113,13 @@
     (i32.store offset=8 (local.get $slot) (local.get $chunk))
     (i32.store offset=12 (local.get $slot)
       (i32.shl (local.get $class) (i32.const 16)))
+    (i32.store offset=16 (local.get $slot) (i32.const 0))
+    (i32.store offset=20 (local.get $slot) (i32.const 0))
     (global.set $page_compiles (i32.add (global.get $page_compiles) (i32.const 1)))
     (global.set $cur_page_base (local.get $page_base))
     (global.set $cur_page_index (local.get $idx))
     (global.set $cur_page_chunk (local.get $chunk))
+    (global.set $cur_page_desc (i32.const 0))
     (i32.const 1))
 
   ;; Copy a freshly decoded block out of the arena into its page's chunk and
@@ -959,6 +1135,123 @@
   ;; block really did land immediately after this one, and a return of -1 (or of
   ;; an offset that is not where the previous block ended) is how a page swap, a
   ;; full chunk or an arena flush announces itself.
+  ;; Set by $page_publish when the stream it just published went into the
+  ;; DESCRIPTOR chunk, so $publish_block knows which base to add the returned
+  ;; offset to and that the address-ordered run must stop here.
+  (global $page_pub_was_desc (mut i32) (i32.const 0))
+
+  ;; ----------------------------------------------------------------------
+  ;; $page_publish_desc -- round 14. Publish a block-executor descriptor into
+  ;; the page's SECOND chunk.
+  ;;
+  ;; Everything an ordinary publish does, except three things, and each of the
+  ;; three is the point of the round:
+  ;;
+  ;;   * it never drops the page. A descriptor that does not fit returns -1
+  ;;     and the caller publishes the ordinary threaded block instead, so the
+  ;;     worst case of an install is a DECLINE rather than 4096 bytes of other
+  ;;     people's compiled code thrown away.
+  ;;   * it writes no op-boundary bitmaps. Those describe threaded words, and
+  ;;     a descriptor has none; $page_cached_ops reads a descriptor through the
+  ;;     displaced-stream copy in its fallback pool instead.
+  ;;   * its index entries carry $PAGE_INDEX_DESC, which is what sends
+  ;;     $page_resolve to the second chunk.
+  ;; ----------------------------------------------------------------------
+  (func $page_publish_desc (param $start_eip i32) (param $tstart i32)
+                           (param $tend i32) (param $guest_end i32) (result i32)
+    (local $base i32) (local $slot i32) (local $used i32) (local $len i32)
+    (local $dword i32) (local $class i32) (local $needed i32)
+    (local $chunk i32) (local $new_chunk i32) (local $new_class i32)
+    (local $o i32) (local $olast i32) (local $overlap_stop i32)
+    (local.set $len (i32.sub (local.get $tend) (local.get $tstart)))
+    (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const -1))))
+    (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
+    (if (i32.ne (local.get $base) (global.get $cur_page_base))
+      (then
+        (if (i32.eqz (call $page_enter (local.get $base)))
+          (then
+            ;; The page does not exist yet. Create it at the smallest class --
+            ;; the threaded chunk this makes is empty and will grow on its own
+            ;; terms; what is wanted here is the index.
+            (if (i32.eqz (call $page_create (local.get $base) (i32.const 1)))
+              (then (return (i32.const -1))))))))
+    (local.set $slot (call $page_dir_slot (local.get $base)))
+    ;; Same index invariant as the threaded publish: any live block covering a
+    ;; byte must be the block that byte names. Retire whatever the descriptor's
+    ;; guest extent overlaps, in EITHER chunk -- $page_retire_at reads the
+    ;; owner's chunk bit and breaks the right one.
+    (local.set $o (i32.and (local.get $start_eip) (i32.const 0xFFF)))
+    (local.set $overlap_stop (i32.sub (local.get $guest_end) (local.get $base)))
+    (if (i32.gt_u (local.get $overlap_stop) (i32.const 4096))
+      (then (local.set $overlap_stop (i32.const 4096))))
+    (block $overlap_done (loop $overlap_scan
+      (br_if $overlap_done (i32.ge_u (local.get $o) (local.get $overlap_stop)))
+      (local.set $o (call $page_retire_at (local.get $slot) (local.get $o)))
+      (br $overlap_scan)))
+    (local.set $dword (call $page_dword (local.get $slot)))
+    (local.set $used (call $page_desc_used (local.get $dword)))
+    (local.set $class (call $page_desc_class (local.get $dword)))
+    (local.set $chunk (call $page_dchunk (local.get $slot)))
+    (local.set $needed (i32.add (local.get $used) (local.get $len)))
+    ;; The descriptor chunk is full. DECLINE -- do not drop the page. This is
+    ;; the whole behavioural difference from round 13, and the reason installs
+    ;; can be generous again.
+    (if (i32.gt_u (local.get $needed) (global.get $PAGE_CHUNK_BYTES))
+      (then
+        (global.set $page_desc_chunk_full
+          (i32.add (global.get $page_desc_chunk_full) (i32.const 1)))
+        (return (i32.const -1))))
+    (if (i32.eqz (local.get $chunk))
+      (then
+        (local.set $class (call $page_chunk_class_for (local.get $needed)))
+        (if (i32.lt_s (local.get $class) (i32.const 0)) (then (return (i32.const -1))))
+        (local.set $chunk (call $page_chunk_alloc (local.get $class)))
+        (if (i32.eqz (local.get $chunk)) (then (return (i32.const -1))))
+        (global.set $page_desc_chunk_allocs
+          (i32.add (global.get $page_desc_chunk_allocs) (i32.const 1)))
+        (i32.store offset=16 (local.get $slot) (local.get $chunk))
+        (global.set $cur_page_desc (local.get $chunk))))
+    (if (i32.gt_u (local.get $needed) (call $page_chunk_bytes (local.get $class)))
+      (then
+        ;; Growing relocates every descriptor already in the chunk. A nested
+        ;; synchronous dispatch can have one of them suspended, so decline
+        ;; instead, exactly as the threaded grow does.
+        (if (global.get $sync_msg_depth) (then (return (i32.const -1))))
+        (local.set $new_class (call $page_chunk_class_for (local.get $needed)))
+        (local.set $new_chunk (call $page_chunk_alloc (local.get $new_class)))
+        (if (i32.eqz (local.get $new_chunk)) (then (return (i32.const -1))))
+        (memory.copy (local.get $new_chunk) (local.get $chunk) (local.get $used))
+        (i32.store offset=16 (local.get $slot) (local.get $new_chunk))
+        (call $page_chunk_put (local.get $chunk) (local.get $class))
+        (local.set $chunk (local.get $new_chunk))
+        (local.set $class (local.get $new_class))
+        (global.set $cur_page_desc (local.get $new_chunk))
+        (global.set $page_desc_chunk_grows
+          (i32.add (global.get $page_desc_chunk_grows) (i32.const 1)))))
+    (memory.copy (i32.add (local.get $chunk) (local.get $used))
+                 (local.get $tstart) (local.get $len))
+    (i32.store16
+      (i32.add (global.get $cur_page_index)
+        (i32.shl (i32.and (local.get $start_eip) (i32.const 0xFFF)) (i32.const 1)))
+      (i32.or (local.get $used) (global.get $PAGE_INDEX_DESC)))
+    (local.set $o (i32.add (i32.and (local.get $start_eip) (i32.const 0xFFF)) (i32.const 1)))
+    (local.set $olast (i32.sub (local.get $guest_end) (local.get $base)))
+    (if (i32.gt_u (local.get $olast) (i32.const 4096))
+      (then (local.set $olast (i32.const 4096))))
+    (block $md (loop $ms
+      (br_if $md (i32.ge_u (local.get $o) (local.get $olast)))
+      (i32.store16
+        (i32.add (global.get $cur_page_index) (i32.shl (local.get $o) (i32.const 1)))
+        (i32.or (local.get $used)
+          (i32.or (global.get $PAGE_INDEX_DESC) (global.get $PAGE_INDEX_COVER))))
+      (local.set $o (i32.add (local.get $o) (i32.const 1)))
+      (br $ms)))
+    (i32.store offset=20 (local.get $slot)
+      (i32.or (i32.shl (local.get $class) (i32.const 16))
+              (i32.add (local.get $used) (local.get $len))))
+    (global.set $page_pub_was_desc (i32.const 1))
+    (local.get $used))
+
   (func $page_publish (param $start_eip i32) (param $tstart i32) (param $tend i32)
                       (param $guest_end i32) (result i32)
     (local $base i32) (local $slot i32) (local $used i32) (local $len i32)
@@ -967,6 +1260,17 @@
     (local $o i32) (local $olast i32) (local $overlap_stop i32)
     (local.set $len (i32.sub (local.get $tend) (local.get $tstart)))
     (if (i32.le_s (local.get $len) (i32.const 0)) (then (return (i32.const -1))))
+    ;; Round 14: a block-executor descriptor goes into the page's OTHER chunk.
+    ;; The test is the stream itself -- a descriptor opens with the executor's
+    ;; handler index -- so no caller has to be told apart and no parameter is
+    ;; threaded through the decoder for it. $BX_HANDLER is never a legal first
+    ;; handler of an ordinary decoded block: the decoder emits it nowhere, only
+    ;; $block_exec_try_install and $bx_region_finish do.
+    (global.set $page_pub_was_desc (i32.const 0))
+    (if (i32.eq (i32.load (local.get $tstart)) (global.get $BX_HANDLER))
+      (then
+        (return (call $page_publish_desc (local.get $start_eip) (local.get $tstart)
+                  (local.get $tend) (local.get $guest_end)))))
     (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
     ;; The decoder caps every block at its starting page (see the page-boundary
     ;; split in $decode_block), so a block's x86 is inside one page and its
@@ -1087,6 +1391,7 @@
     (global.set $cur_page_base (local.get $page_base))
     (global.set $cur_page_index (i32.load offset=4 (local.get $slot)))
     (global.set $cur_page_chunk (i32.load offset=8 (local.get $slot)))
+    (global.set $cur_page_desc (call $page_dchunk (local.get $slot)))
     (i32.const 1))
 
   ;; The hot path. Resolve a guest address to a threaded-code pointer without
@@ -1109,13 +1414,22 @@
     ;; One test covers both misses: PAGE_INDEX_NONE (0xFFFF, nothing compiled
     ;; here) and a cover mark (bit 14 set, this byte is inside a block but is
     ;; not its entry point, so entering here would run from the middle of an
-    ;; instruction).
-    (if (i32.ge_u (local.get $off) (global.get $PAGE_INDEX_COVER))
+    ;; instruction). Round 14 made it an AND rather than a compare because the
+    ;; entry space now has a high half: a descriptor entry is 0x8000..0xBFFF
+    ;; and a descriptor cover mark 0xC000..0xFFFE, and bit 14 still separates
+    ;; them exactly as it does in the low half.
+    (if (i32.and (local.get $off) (global.get $PAGE_INDEX_COVER))
       (then
         (global.set $page_misses (i32.add (global.get $page_misses) (i32.const 1)))
         (return (i32.const 0))))
     (global.set $page_hits (i32.add (global.get $page_hits) (i32.const 1)))
-    (i32.add (global.get $cur_page_chunk) (local.get $off)))
+    ;; Bit 15 picks the chunk. Branchless on purpose: this is the hot path and
+    ;; a descriptor entry is rare, so a predicted-taken branch would be worse
+    ;; than the select.
+    (i32.add
+      (select (global.get $cur_page_desc) (global.get $cur_page_chunk)
+              (i32.and (local.get $off) (global.get $PAGE_INDEX_DESC)))
+      (i32.and (local.get $off) (global.get $PAGE_INDEX_OFFMASK))))
 
   ;; "Is there already compiled code entered at this address?" -- the question
   ;; $decode_run asks before extending a run into the next block. Unlike
@@ -1129,11 +1443,15 @@
     (if (i32.ne (i32.load (local.get $slot)) (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
       (then (return (i32.const 0))))
     (local.set $idx (i32.load offset=4 (local.get $slot)))
-    (i32.lt_u
-      (i32.load16_u
-        (i32.add (local.get $idx)
-          (i32.shl (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1))))
-      (global.get $PAGE_INDEX_COVER)))
+    ;; "Entry point in EITHER chunk" -- a descriptor is compiled code too, and
+    ;; reading it as "not compiled" would have $decode_run extend a run into a
+    ;; block that is already installed and decode it again.
+    (i32.eqz
+      (i32.and
+        (i32.load16_u
+          (i32.add (local.get $idx)
+            (i32.shl (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1))))
+        (global.get $PAGE_INDEX_COVER))))
 
   ;; Every block-terminating handler ends by tail-calling this instead of
   ;; returning. Returning is what costs: it unwinds to the top of $run, which

@@ -2258,3 +2258,197 @@ Also still open: the region path saves no copy of the head block's stream (only
 the one-block installer does), so a walk that meets a *region* descriptor still
 takes it back the slow way; and the 13-window `docs/hot-loop-vocabulary-2026-09`
 sweep has not been re-run against this build.
+
+## 23. Round 14: descriptors get their own per-page chunk (2026-09-15)
+
+§22.5 named the remaining cost and proposed the fix. This round builds it.
+
+### 23.1 The mechanism, in three sentences
+
+A compiled guest page now owns **two** chunks instead of one — the threaded-code
+chunk it always had, and a second chunk of the same 16KB cap that holds nothing
+but block-executor descriptors — so a descriptor at ~24 bytes per micro-op no
+longer competes for space with the 8-byte-per-op stream it replaces. Which
+chunk a page-index entry names is carried in **bit 15** of the u16 entry, using
+the `0x8000`-`0xBFFF` range §22.5 identified as free: `0x0000`-`0x3FFF` is a
+threaded entry point, `0x4000`-`0x7FFF` an interior byte of one, `0x8000`-`0xBFFF`
+a descriptor entry point, `0xC000`-`0xFFFE` an interior byte of one, and `0xFFFF`
+still means nothing is compiled here. Because the descriptor chunk is separate,
+running out of room in it now **declines the one install** and returns `-1`
+instead of dropping the whole page, which is what round 13's shared chunk had
+no way to express.
+
+Three supporting changes come with it. The page-directory slot grows from 16 to
+32 bytes (`+16` descriptor chunk base, `+20` its `used|class`; `$PAGE_DIR_BASE`
+0x13000 → 0x26000 in `src/00-regions.wat`, mirror regenerated), because a page
+with two chunks needs two bases and two used-words. `$BX_PAGE_RESERVE` is
+retired to 0 and both admission sites — the one-block installer and
+`$bx_region_finish` — now ask `$page_desc_would_fit`, which has no reserve and
+no overflow memo to consult, because the thing it is protecting is no longer
+shared with anybody. And the **region path now saves the displaced stream too**
+(§22's other open item): `$bx_region_finish` stages `$page_cached_ops` +
+`$page_cached_stream` for the head block behind its emit and parks the byte
+offset in the descriptor's otherwise-unused operand word, exactly as the
+one-block installer does, so a later walk that meets a region descriptor reads
+its ops out of the saved table instead of re-decoding.
+
+Two bugs were found while building it and are fixed here. `$page_cached_stream`
+returned nothing when a region's head block was *itself* already a one-block
+descriptor, so the saved-copy table grew a second header word (`{n, rawlen,
+offsets, bytes}`) and both readers and both writers moved with it. And the
+emitted descriptor header billed the guest clock `$nat + $extra` — the block's
+step cost *plus the byte count* of the copy parked behind it. A cost is steps;
+bytes are not steps. It is `$nat` now.
+
+### 23.2 What it did to quake2
+
+`node test/run.js --app=quake2_demo --args='+set vid_ref soft +map demo1'
+--quiet-api --batch-size=200000 --max-batches=1000 --verbose`, the §22 command:
+
+| arm | block decodes | vs off | pages compiled | 1-blk installs | region installs | native% |
+|---|---|---|---|---|---|---|
+| off | 781,266 | — | 18,269 | 0 | 0 | — |
+| round 13 `--no-block-exec-regions` | 857,385 | +9.7% | 19,245 | 16,946 | 0 | — |
+| round 13 `--block-exec` | 876,984 | +12.3% | 19,607 | 15,368 | 1,101 | 97.95 |
+| **round 14 `--no-block-exec-regions`** | **782,314** | **+0.13%** | 18,843 | 16,345 | 0 | 98.26 |
+| **round 14 `--block-exec`** | **806,155** | **+3.19%** | 18,801 | 19,360 | 4,482 | 98.13 |
+
+The decode half of the acceptance is met with room to spare: +3.19% against a
+5% budget, and the no-regions arm is within a seventh of a percent of the plain
+interpreter. **Page compiles are the reason, and they are the number to read**:
+18,801 against the off arm's 18,269, where round 13 needed 19,607 — the executor
+now costs the page table almost nothing, which is precisely §22.5's prediction.
+Region installs are 4.1x round 13's (4,482 vs 1,101) and one-block installs 1.26x
+(19,360 vs 15,368). Entries 10,288,227, opsMulti 212,577,687 of 236.0M total
+(90.1%), transfersSaved 25,332,645, meanBlocks 10.66, native% 98.13 — above the
+97.9 floor.
+
+**The install half of the acceptance as literally written is not met, and it
+should not be.** Round 12's 185,907 one-block and 38,881 region installs are
+not a coverage number: an install can happen at most once per decode, and round
+12 bought those installs with 3,108,885 decodes and 40,788 page compiles against
+the off arm's 18,269. They were **re-installs after page drops**, the same
+blocks paid for again and again — which is the exact pathology round 13 was
+written to end. The two halves of the criterion are in structural tension, and
+the round-12 install counts can only be reached by giving back the decodes.
+What round 14 reports instead is installs rising 1.26x/4.1x *while* page
+compiles fall to the off baseline, i.e. more blocks covered for less work.
+
+### 23.3 The 13 windows
+
+Both columns are the executor **armed** (`--block-exec --block-exec-stats
+--verbose`); the r13 column is §22.6's `on` arm, collected by
+`docs/block-executor-design/collect-round13-windows.sh`, and the r14 column by
+`docs/block-executor-design/collect-r14-windows.sh` (read out with
+`read-r14-windows.sh` beside it) on the same window definitions
+(`docs/block-executor-design/collect-round12-carry.sh`). `opsMulti%` is
+`opsMulti / (ops1 + opsMulti)`, the share of executed uops that came from a
+multi-block region.
+
+| window | decodes r13→r14 | 1-blk inst r13→r14 | region inst r13→r14 | entries r13→r14 | native% r13→r14 | opsMulti% r13→r14 |
+|---|---|---|---|---|---|---|
+| quake2-loading | 99,223→96,483 | 1,451→1,394 | 31→**93** | 2.20M→2.20M | 96.49→96.46 | 80.07→79.93 |
+| quake2-gameplay | 2,036,356→**1,842,872** | 35,218→43,940 | 2,431→**9,571** | 16.3M→20.0M | 98.45→98.26 | 24.12→**54.12** |
+| gta2-loading | 67,924→67,896 | 245→196 | 12→**38** | 163,796→108,428 | 94.70→94.45 | 9.48→**22.37** |
+| gta2-gameplay | 816,969→815,012 | 18,008→17,847 | 62→**121** | 682,439→549,686 | 90.30→89.78 | 19.99→**27.56** |
+| rct-gameplay | 290,984→**278,615** | 11,812→11,792 | 89→**167** | 1.74M→1.84M | 94.87→94.95 | 73.59→**79.31** |
+| heroes2-loading | 25,780→**14,826** | 845→781 | 43→**62** | 621,868→1.19M | 99.16→98.81 | 17.61→**37.29** |
+| heroes2-gameplay | 227,792→**206,448** | 2,799→3,828 | 49→**70** | 1.18M→2.40M | 98.82→98.63 | 17.92→**36.04** |
+| caesar3-loading | 2,742→2,719 | 63→52 | 15→**49** | 314,490→307,841 | 93.29→93.58 | 9.52→**12.14** |
+| *mw3-loading* | *35,704→22,027* | *520→285* | *23→21* | *2.83M→825,270* | *99.96→99.99* | *0.72→0.09* |
+| *mw3-gameplay* | *1,070,987→10,189* | *21,270→160* | *119→13* | *4.01M→548,558* | *99.87→99.99* | *0.71→0.08* |
+| *rct-loading* | *257,026→230,965* | *12,057→11,759* | *103→167* | *2.11M→1.32M* | *95.24→95.59* | *81.34→78.78* |
+| *starcraft-loading* | *88,356→140,656* | *3,784→9,832* | *16→45* | *2.53M→2.17M* | *98.24→98.35* | *4.68→56.62* |
+| *diablo-loading* | *622,080→87,595* | *19,728→19,950* | *35→61* | *16.1M→9.02M* | *98.41→97.43* | *41.42→23.01* |
+
+The five italic rows are **not measurements**. Every window carries
+`--max-seconds=170`, and in those five one or both arms hit the wall clock
+before its batch cap: r13 time-capped mw3-gameplay, starcraft-loading and
+diablo-loading; r14 time-capped mw3-loading (281 of 830 batches), mw3-gameplay
+(96 of 1400), rct-loading (3,123 of 4,250), starcraft-loading (715 of 1,500)
+and diablo-loading (350 of 400). The box ran loadavg 7 → 60 across the two
+collections, so those rows measure how busy the machine was, not the build.
+Only the eight upright rows reached `--max-batches` in both arms and are
+deterministic.
+
+Across those eight: **region installs are up in every single one** (1.5x to
+3.9x, median 2.3x) and decodes are down or flat in every single one, by as much
+as 42% (heroes2-loading 25,780 → 14,826) — the chunk contention §22.5 blamed
+was real, and separating the chunks recovered it without a tuning knob. The
+`opsMulti%` column is where to look for what that bought: the share of work
+coming from multi-block regions roughly doubles on six of the eight
+(quake2-gameplay 24.1 → 54.1, heroes2-gameplay 17.9 → 36.0, gta2-loading
+9.5 → 22.4), because a region that used to be declined for want of room now
+installs. `native%` moves by less than half a point either way in all eight,
+which is the flat line you want from a change that is about *storage*: the same
+ops are being executed, from a different place.
+
+### 23.4 What the tests cover
+
+`test/test-block-exec.js` grew six checks (242 → 248) for the new chunk, built
+around a synthetic 4KB-aligned page packed to the brim with 17-byte blocks
+(`add eax,imm32; add eax,imm32; jmp next`; `aluRI` is a 6-byte encoding, not 5).
+Beyond "the arms agree on the result", it asserts that a descriptor chunk was
+actually allocated, that descriptors installed into it, that the chunk **ran
+out** (`get_page_desc_chunk_full` + `get_block_exec_no_room` ≥ 1), and — the
+one that matters — that `on.compiles <= off.compiles + 1`. That last assertion
+is the whole behavioural difference from round 13 stated as a test: an overflow
+DECLINES an install and the page stays compiled, where before it took the page
+down and every block on it got decoded again.
+
+Also green against this build: `test-x86-ops` (145), `test-tree-fold` (55 blocks
+matched, 9,198 super-op runs), `test-worker-wasm-globals` (38 setters — the new
+`$cur_page_desc` among them), `test-x87-pipeline4-fusion` (11 differential cases).
+
+### 23.5 The carry limit stays
+
+§18's cross-edge fact carry still refuses any predecessor that is not `m-1`,
+and the round-14 brief asked for that lifted "if it is cheap". Measured on the
+quake2 window: `carryEdges 103,562`, `carryRefused 66,076` — so the refusal is
+real and frequent, 39% of candidate edges. It is not cheap. Carrying past
+`pred == m-1` means a *per-member* snapshot of the carried state rather than
+one running set, and the carried state is the 16x8-word fact table plus
+`$bx_fact_n` plus the 15x2-word const table, ~159 words a member. `$BX_RG_BASE`
+is 8,192 words with 7,912 already used — about 280 spare, under two members'
+worth — so the lift is a ~10KB region growth before a line of it works. That is
+a round of its own, not a rider on this one.
+
+### 23.6 The picture
+
+`docs/block-executor-design/collect-r14-png.sh`: quake2, heroes2 and rct, each at two batch budgets,
+block-exec off and on, same command otherwise. **Five of the six pairs are
+byte-identical** — 0 of 76,800 (quake2 at 600 and 2,600) and 0 of 307,200
+(heroes2 at 700, rct at 1,500 and 3,000), max channel delta 0.
+
+The sixth, heroes2 at 1,400 batches, differs in 1,140 of 307,200 pixels (0.37%,
+max channel delta 64, box 65,37 305x338). That is **animation phase, not a
+rendering difference**, and the way to tell is to measure both null bands rather
+than eyeball the frame:
+
+- *Run-to-run*: two further off runs at the same budget are byte-identical to
+  each other and to the original. The pipeline is deterministic; 0.37% is not
+  noise.
+- *Frame-to-frame*: off at 1,399 vs off at 1,400 differs in 1.43% of pixels
+  (box 64,35 312x357) and 1,400 vs 1,401 in 1.37% — **one batch of guest time
+  already moves four times as many pixels, in the same box**. The map's water,
+  campfire and flags are animating. The on-vs-off delta is a fraction of a
+  single animation step of that same region.
+- *Which path*: `--no-block-exec-regions` and the full `--block-exec` arm produce
+  **pixel-for-pixel the same** difference (1,140 / 0.3711% / box 65,37 305x338).
+  So round 14's new region chunk contributes nothing to it; it is the one-block
+  descriptor's step accounting nudging the timer phase, which the executor has
+  done since it could bill a block at all.
+
+Game state is identical in both frames — same map, same castle, same hero, same
+resource bar.
+
+### 23.7 No wall-clock A/B this round
+
+`tools/fold-ab.js` was not run. `uptime` on this box read loadavg **37.30 /
+39.47 / 44.05** at the point the timing arm would have started (7.75 at its
+quietest during the session, 60 at its busiest), against the 10 above which a
+whole-app A/B on this machine measures the machine. A timing claim from that
+would be unresolvable, so this round is argued entirely from **counts**, which
+are load-immune: decodes, page compiles, installs, entries, native% and
+opsMulti% above. The one wall-clock number worth recording is that it never
+*got worse* in any window that reached its batch cap.

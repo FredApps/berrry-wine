@@ -1746,6 +1746,118 @@ async function main() {
   e.set_x87_affine_fusion(0);
   e.set_block_exec_x87(0);   // back to the shipped default
 
+  // ======================================================================
+  // ROUND 14 -- the DESCRIPTOR CHUNK, and what happens when it fills.
+  // docs/block-executor-design.md section 23.
+  //
+  // A page owns two chunks now: the threaded one and a second one holding
+  // block-executor descriptors. Both are capped at 16KB by the 14-bit offsets
+  // in the per-page byte index, so the descriptor chunk CAN fill -- and the
+  // whole point of splitting them is what happens then.
+  //
+  // Round 13 had one chunk, and overflowing it does not fail locally:
+  // $page_publish DROPS THE WHOLE PAGE and every block on it is decoded again.
+  // That is why round 13 had to buy admission control with installs (region
+  // installs 38,881 -> 1,101). Overflowing the descriptor chunk must instead
+  // DECLINE the one install and leave the page -- its threaded code, its
+  // index, its other descriptors -- exactly where it was.
+  //
+  // The case builds a 4KB guest page packed with ~180 tiny blocks, which is
+  // far more descriptor than 16KB holds, and asserts three things: the two
+  // arms still compute the same answer, the overflow really happened, and the
+  // page was not dropped and recompiled behind it.
+  // ======================================================================
+  console.log('\n-- round 14: descriptor-chunk overflow --');
+  {
+    // A fresh, 4KB-ALIGNED page well above the cursor the cases above walk.
+    const pageBase = (imageBase + 0x40000 + codeOffset + 0xFFF) & ~0xFFF;
+    const BLOCK_BYTES = 17;                 // add eax,imm32 (6) x2 ; jmp (5)
+    const N = Math.floor((4096 - JOIN.length) / BLOCK_BYTES);
+    const bytes = [];
+    for (let i = 0; i < N; i++) {
+      bytes.push(...aluRI(0, EAX, i + 1));          // add eax, i+1   (5)
+      bytes.push(...aluRI(0, EAX, 0x10000 + i));    // add eax, ...    (5)
+      // jmp to the next block; the last one falls into the join below.
+      bytes.push(...jmpRel32(0));                   // patched below   (5)
+      const at = bytes.length - 4;
+      const rel = 0;                                // next block starts here
+      for (let k = 0; k < 4; k++) bytes[at + k] = (rel >>> (8 * k)) & 0xFF;
+    }
+    bytes.push(...JOIN);
+    check('  the overflow page fits in one 4KB guest page',
+      bytes.length <= 4096, `${bytes.length} bytes, ${N} blocks`);
+
+    function runPage(blockExec) {
+      const wa = g2w(pageBase);
+      for (let i = 0; i < bytes.length; i++) mem[wa + i] = bytes[i];
+      // Every block on this page must be forgotten between the arms, or the
+      // second arm runs the first arm's compiled code and installs nothing.
+      e.invalidate_code_range(pageBase, 4096);
+      seedData();
+      normalizeFlags();
+      e.set_block_exec_min_uops(2);
+      e.set_block_exec(blockExec ? 1 : 0);
+      e.set_eax(0); e.set_ecx(SEED.ecx); e.set_edx(SEED.edx);
+      e.set_ebx(SEED.ebx); e.set_esi(SEED.esi); e.set_edi(SEED.edi);
+      e.set_ebp(0);
+      e.set_esp(STACK_TOP);
+      dv.setUint32(g2w(STACK_TOP), 0, true);
+      const before = {
+        compiles: e.get_page_compiles(),
+        full: e.get_page_desc_chunk_full(),
+        noRoom: e.get_block_exec_no_room(),
+        allocs: e.get_page_desc_chunk_allocs(),
+        installs: e.get_block_exec_installs(),
+      };
+      e.set_eip(pageBase);
+      e.run(100000);
+      return {
+        eax: e.get_eax() >>> 0, ecx: e.get_ecx() >>> 0, edx: e.get_edx() >>> 0,
+        ebx: e.get_ebx() >>> 0, esi: e.get_esi() >>> 0, edi: e.get_edi() >>> 0,
+        eip: e.get_eip() >>> 0,
+        compiles: e.get_page_compiles() - before.compiles,
+        full: e.get_page_desc_chunk_full() - before.full,
+        noRoom: e.get_block_exec_no_room() - before.noRoom,
+        allocs: e.get_page_desc_chunk_allocs() - before.allocs,
+        installs: e.get_block_exec_installs() - before.installs,
+      };
+    }
+
+    const off = runPage(false);
+    const on  = runPage(true);
+
+    // (1) CORRECTNESS. A chunk that overflowed must not change what the guest
+    //     computes -- the declined blocks simply run as threaded code.
+    const same = ['eax', 'ecx', 'edx', 'ebx', 'esi', 'edi', 'eip']
+      .every(k => off[k] === on[k]);
+    check('a descriptor-chunk overflow does not change the result', same,
+      same ? '' : `off eax=${off.eax.toString(16)} eip=${off.eip.toString(16)} / ` +
+                  `on eax=${on.eax.toString(16)} eip=${on.eip.toString(16)}`);
+
+    // (2) The case is only worth anything if the chunk ACTUALLY filled. A
+    //     descriptor chunk was allocated, descriptors were installed into it,
+    //     and then room ran out.
+    check('  a descriptor chunk was allocated for the page', on.allocs >= 1,
+      `descChunkAllocs=${on.allocs}`);
+    check('  descriptors installed on it', on.installs >= 1,
+      `installs=${on.installs}`);
+    check('  and then it ran out of room', on.noRoom + on.full >= 1,
+      `noRoom=${on.noRoom} descChunkFull=${on.full} installs=${on.installs} ` +
+      `of ${N} blocks — the page was not packed tightly enough to overflow`);
+
+    // (3) THE ROUND'S CLAIM. Overflow degraded to a decline. A DROPPED page is
+    //     visible as page compiles: the page is recompiled from scratch and
+    //     every block on it decoded again, so the armed arm would compile this
+    //     one page many times over. It compiles it as often as the off arm
+    //     does, which for a single straight run is once.
+    check('an overflow DECLINES the install and never drops the page',
+      on.compiles <= off.compiles + 1,
+      `pageCompiles off=${off.compiles} on=${on.compiles} — ` +
+      `the armed arm recompiled the page, so the overflow dropped it`);
+
+    e.set_block_exec(0);
+  }
+
   console.log('\n-- coverage of this run --');
   const tot = totalNative + totalFallback;
   console.log(`  ${totalInstalls} blocks installed, ${totalNative} ops native, ` +

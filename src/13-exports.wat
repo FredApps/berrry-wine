@@ -1933,9 +1933,11 @@
       (else
         (global.set $PAGE_DIR (global.get $PAGE_DIR_BASE))
         (global.set $PAGE_DIR_ENTRIES
-          (i32.div_u (global.get $PAGE_DIR_MAIN_BYTES) (i32.const 16)))
+          (i32.div_u (global.get $PAGE_DIR_MAIN_BYTES)
+                     (global.get $PAGE_DIR_SLOT_BYTES)))
         (global.set $PAGE_DIR_MASK
-          (i32.sub (i32.div_u (global.get $PAGE_DIR_MAIN_BYTES) (i32.const 16))
+          (i32.sub (i32.div_u (global.get $PAGE_DIR_MAIN_BYTES)
+                              (global.get $PAGE_DIR_SLOT_BYTES))
                    (i32.const 1)))
         (global.set $PAGE_INDEX (global.get $PAGE_INDEX_ARENA))
         (global.set $PAGE_INDEX_SLOTS
@@ -3006,6 +3008,14 @@
   (func (export "get_page_ft_missed")(result i32) (global.get $page_ft_missed))
   (func (export "get_page_retires")  (result i32) (global.get $page_retires))
   (func (export "get_page_range_drops")(result i32) (global.get $page_range_drops))
+  ;; Round 14 (docs/block-executor-design.md section 23): the SECOND per-page
+  ;; chunk, the one executor descriptors live in. `full` is the count that
+  ;; matters -- it is a publish that DECLINED because the descriptor chunk was
+  ;; out of room, where round 13's equivalent dropped the whole page.
+  (func (export "get_page_desc_chunk_allocs")(result i32) (global.get $page_desc_chunk_allocs))
+  (func (export "get_page_desc_chunk_grows") (result i32) (global.get $page_desc_chunk_grows))
+  (func (export "get_page_desc_chunk_full")  (result i32) (global.get $page_desc_chunk_full))
+  (func (export "get_block_exec_no_room")    (result i32) (global.get $bx_no_room))
   (func (export "get_page_ft_chains")(result i32) (global.get $page_ft_chains))
   (func (export "get_page_ft_blocks")(result i32) (global.get $page_ft_blocks))
 

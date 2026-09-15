@@ -6492,12 +6492,23 @@
           (i32.add (global.get $page_unpublished) (i32.const 1)))
         (global.set $d_pub_end (i32.const -1))
         (return (local.get $tstart))))
+    ;; Round 14: a block-executor descriptor lands in the page's SECOND chunk,
+    ;; so the offset it reports is not comparable with the threaded chunk's and
+    ;; the address-ordered run below must not try to append to it. -1 is
+    ;; already how a run is told "there is nothing here to be adjacent to".
     (global.set $d_pub_end
-      (i32.add (global.get $d_pub_off)
-        (i32.sub (global.get $d_block_end) (local.get $tstart))))
+      (if (result i32) (global.get $page_pub_was_desc)
+        (then (i32.const -1))
+        (else
+          (i32.add (global.get $d_pub_off)
+            (i32.sub (global.get $d_block_end) (local.get $tstart))))))
     (if (i32.eq (global.get $thread_alloc) (global.get $d_block_end))
       (then (global.set $thread_alloc (local.get $tstart))))
-    (i32.add (global.get $cur_page_chunk) (global.get $d_pub_off)))
+    (i32.add
+      (if (result i32) (global.get $page_pub_was_desc)
+        (then (global.get $cur_page_desc))
+        (else (global.get $cur_page_chunk)))
+      (global.get $d_pub_off)))
 
   ;; ============================================================
   ;; ADDRESS-ORDERED RUNS
@@ -6625,6 +6636,11 @@
       ;; that is not where the previous block ended. The emit scratch used to
       ;; need a second, separate witness because the first execution ran from
       ;; it; $publish_block reclaims it now, so there is nothing left to check.
+      ;; Round 14: a descriptor went into the other chunk, so its offset is not
+      ;; comparable with $prev_end at all -- and an accidental equality would
+      ;; write the adjacency bit into a threaded block whose neighbour is not
+      ;; there. Stop before the compare, not after it.
+      (br_if $stop (global.get $page_pub_was_desc))
       (br_if $stop (i32.ne (global.get $d_pub_off) (local.get $prev_end)))
       ;; Set the adjacency bit in the chunk, which is the only place the run
       ;; exists. The operand of the previous block's Jcc terminator sits 12

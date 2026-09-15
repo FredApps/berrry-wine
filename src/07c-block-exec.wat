@@ -477,9 +477,14 @@
   ;; may be claimed again, which costs coverage and never correctness.
   ;; 512 slots, the whole tail of $BX_RG_BASE (7400 + 512 = 7912 of 8192
   ;; words). An evicted mark costs one extra take-back, never correctness.
-  ;; Headroom every optional executor publish leaves in a page chunk, so that
-  ;; the ORDINARY blocks decoded later on the same page still fit. See
-  ;; $page_would_fit.
+  ;; ROUND 14 retired this. It was headroom an optional executor publish left
+  ;; in the page's ONE chunk so that the ordinary blocks decoded later on the
+  ;; same page still fitted -- because a chunk that overflowed dropped the
+  ;; whole page. Descriptors have their own chunk now
+  ;; (docs/block-executor-design.md section 23), overflowing it is a local
+  ;; decline, and the two families no longer compete for a byte. Kept at 0 as
+  ;; documentation of what the number meant; the install paths call
+  ;; $page_desc_would_fit and pass no reserve at all.
   (global $BX_PAGE_RESERVE i32 (i32.const 0))
   (global $BX_RG_RAW_OFF   i32 (i32.const 7400))   ;; 512 words
   (global $BX_RG_RAW_MASK  i32 (i32.const 511))
@@ -1365,6 +1370,10 @@
     (local $nat i32) (local $nfb i32) (local $total i32) (local $bytes i32)
     (local $tstart i32) (local $off i32) (local $head i32) (local $gend i32)
     (local $blocks i32) (local $benefit i32) (local $cost i32)
+    ;; Round 14: the head block's displaced threaded stream, saved with the
+    ;; region descriptor the way the one-block installer saves its own.
+    (local $rawoff i32) (local $rawsrc i32) (local $rawlen i32)
+    (local $rawn i32) (local $extra i32) (local $save i32)
 
     (if (i32.eqz (global.get $bx_rg_active)) (then (return (i32.const 0))))
     (global.set $bx_rg_active (i32.const 0))
@@ -1478,11 +1487,81 @@
         (call $bx_rg_decline (i32.const 3))
         (return (i32.const 0))))
 
+    ;; ---- ROUND 14: SAVE THE HEAD BLOCK'S DISPLACED THREADED STREAM --------
+    ;; Section 22 left this undone, and the cost was structural: a region
+    ;; descriptor replaces the head's index entry, so a later walk arriving at
+    ;; the head found something it could not classify, marked the address and
+    ;; RETIRED THE REGION -- throwing away a multi-block install to get one
+    ;; block's ops back. The one-block family had not had that problem since
+    ;; round 13, because it carries a verbatim copy of the stream it displaced.
+    ;; Now the region carries one too, read by the same $page_cached_ops path
+    ;; through the same otherwise-unused operand word.
+    ;;
+    ;; It is cheaper here than in the one-block case. That installer copies out
+    ;; of the emit scratch it is about to overwrite; the head block's bytes are
+    ;; already published in the page's THREADED chunk and nothing is about to
+    ;; move them, so $page_cached_stream just points at them.
+    ;;
+    ;; $bytes is exactly the offset the copy will land at -- the emit below
+    ;; writes the header, block table, exit table, uops and fallback pool, in
+    ;; that order, and $bytes is their total by construction.
+    (local.set $rawoff (i32.const 0))
+    (local.set $extra (i32.const 0))
+    (local.set $rawn (call $page_cached_ops (local.get $head)))
+    (if (local.get $rawn)
+      (then
+        (local.set $rawsrc (call $page_cached_stream (local.get $head)))
+        (local.set $rawlen (global.get $page_cached_stream_len))
+        (if (i32.and (i32.ne (local.get $rawsrc) (i32.const 0))
+                     (i32.ne (local.get $rawlen) (i32.const 0)))
+          (then
+            (local.set $extra
+              (i32.add (i32.const 8)
+                (i32.add (i32.shl (local.get $rawn) (i32.const 2))
+                         (local.get $rawlen))))
+            ;; Too big WITH the copy is not a decline: publish the region
+            ;; without it, exactly as the one-block path does.
+            (if (i32.or
+                  (i32.gt_u (i32.add (local.get $bytes) (local.get $extra))
+                            (i32.const 4096))
+                  (i32.ge_u
+                    (i32.add (global.get $thread_alloc)
+                      (i32.add (i32.shl (local.get $bytes) (i32.const 1))
+                               (i32.const 8192)))
+                    (i32.sub (global.get $THREAD_END) (i32.const 4096))))
+              (then (local.set $extra (i32.const 0)))
+              (else
+                ;; Stage the table and the bytes past the emit. OP_INDEX is
+                ;; about to be reused by $te, so the offsets have to be read
+                ;; out of it now.
+                (local.set $rawoff (local.get $bytes))
+                (local.set $save
+                  (i32.add (global.get $thread_alloc)
+                    (i32.add (local.get $bytes)
+                      (i32.add (local.get $extra) (i32.const 64)))))
+                (i32.store (local.get $save) (local.get $rawn))
+                (i32.store offset=4 (local.get $save) (local.get $rawlen))
+                (local.set $i (i32.const 0))
+                (block $rot_done
+                  (loop $rot
+                    (br_if $rot_done (i32.ge_u (local.get $i) (local.get $rawn)))
+                    (i32.store
+                      (i32.add (local.get $save)
+                        (i32.shl (i32.add (local.get $i) (i32.const 2)) (i32.const 2)))
+                      (i32.sub (call $loop_op_at (local.get $i)) (local.get $rawsrc)))
+                    (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                    (br $rot)))
+                (memory.copy
+                  (i32.add (local.get $save)
+                    (i32.add (i32.const 8) (i32.shl (local.get $rawn) (i32.const 2))))
+                  (local.get $rawsrc) (local.get $rawlen))
+                (local.set $bytes (i32.add (local.get $bytes) (local.get $extra)))))))))
+
     ;; ---- emit ------------------------------------------------------------
     (local.set $tstart (global.get $thread_alloc))
     (global.set $op_index_n (i32.const 0))
     (global.set $op_index_poison (i32.const 0))
-    (call $te (global.get $BX_HANDLER) (i32.const 0))
+    (call $te (global.get $BX_HANDLER) (local.get $rawoff))
     (call $te_raw (local.get $n))
     (call $te_raw (local.get $ne))
     (call $te_raw (local.get $total))
@@ -1530,6 +1609,16 @@
           (i32.add (global.get $BX_RG_FB_OFF) (local.get $i)))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $fb)))
+    ;; ...and, straight after the pool, the head block's saved threaded stream.
+    ;; `fb_bytes` above deliberately does NOT include it: a region's terminator
+    ;; is folded, so nothing ever reads past the pool, and the copy is inert to
+    ;; the executor and visible only to $page_cached_ops.
+    (if (local.get $extra)
+      (then
+        (memory.copy (global.get $thread_alloc) (local.get $save)
+                     (local.get $extra))
+        (global.set $thread_alloc
+          (i32.add (global.get $thread_alloc) (local.get $extra)))))
 
     ;; ---- publish over the HEAD BLOCK ONLY (round 13) ---------------------
     ;; Round 10 published over [head, max member end), so every member's own
@@ -1553,9 +1642,8 @@
     (local.set $bytes (global.get $thread_alloc))     ;; reused: the emit end
     ;; Admission control. A publish that does not fit drops the WHOLE PAGE and
     ;; re-decodes every block on it; an install is optional, so ask first.
-    (if (i32.eqz (call $page_would_fit (local.get $head)
-                    (i32.sub (local.get $bytes) (local.get $tstart))
-                    (global.get $BX_PAGE_RESERVE)))
+    (if (i32.eqz (call $page_desc_would_fit (local.get $head)
+                    (i32.sub (local.get $bytes) (local.get $tstart))))
       (then
         (global.set $bx_no_room (i32.add (global.get $bx_no_room) (i32.const 1)))
         (global.set $thread_alloc (local.get $tstart))
@@ -3345,22 +3433,26 @@
     ;; pool only through offsets its own micro-ops carry, and reachable from
     ;; $page_cached_ops through the descriptor's otherwise-unused operand word.
     ;;
-    ;; The copy is made ONLY for a block discovery has actually asked for.
-    ;; Saving one with every install was measured and is worse: a descriptor
-    ;; plus its copy is roughly twice the bytes, the page chunk is a fixed
-    ;; 16KB, and overflowing it DROPS THE PAGE -- 1,064,880 block decodes
-    ;; against 950,026 for the same window with the copy withheld. So the
-    ;; sequence is: first walk through this block meets a bare descriptor,
-    ;; marks the address wanted and takes the descriptor back (one decode);
-    ;; the guest re-decodes, this install saves the copy; every later walk
-    ;; reads it for free. One decode per block discovery wants, once.
+    ;; ROUND 13 made the copy conditional on $bx_raw_wanted, because a
+    ;; descriptor plus its copy is roughly twice the bytes and they were
+    ;; competing with ordinary threaded code for one 16KB chunk that DROPS THE
+    ;; WHOLE PAGE when it overflows -- 1,064,880 block decodes against 950,026
+    ;; with the copy withheld. ROUND 14 removed that competition: descriptors
+    ;; and their copies live in a chunk of their own, and overflowing it
+    ;; declines one install instead of throwing a page away. So the copy is
+    ;; made for every install that has room for it, and the "wanted" mark is
+    ;; left as what it always was -- the record of a walk that had to take a
+    ;; descriptor back because no copy was there.
     (local.set $rawoff (i32.const 0))
     (local.set $extra (i32.const 0))
     (local.set $total
       (i32.add
         (i32.add (i32.const 76) (i32.shl (local.get $words) (i32.const 2)))
         (i32.add (i32.shl (local.get $fbw) (i32.const 2)) (local.get $tail_bytes))))
-    (if (call $bx_raw_wanted (local.get $start_eip))
+    ;; The only precondition left is that the copy would be readable: an op
+    ;; table of $n entries, and a decoder that can still describe them.
+    (if (i32.and (i32.ne (local.get $n) (i32.const 0))
+                 (i32.eqz (global.get $op_index_poison)))
       (then
         (local.set $rawlen (i32.sub (global.get $thread_alloc) (local.get $tstart)))
         (local.set $rawoff
@@ -3368,7 +3460,7 @@
             (i32.add (i32.shl (local.get $words) (i32.const 2))
                      (i32.shl (local.get $fbw) (i32.const 2)))))
         (local.set $extra
-          (i32.add (i32.const 4)
+          (i32.add (i32.const 8)
             (i32.add (i32.shl (local.get $n) (i32.const 2)) (local.get $rawlen))))
         ;; Too big WITH the copy is not a decline: publish the descriptor
         ;; without it and let discovery meet it again. Installs must not fall
@@ -3394,36 +3486,36 @@
               (i32.add (i32.add (local.get $tstart) (local.get $total))
                        (i32.const 64)))
             (i32.store (local.get $save) (local.get $n))
+            (i32.store offset=4 (local.get $save) (local.get $rawlen))
             (local.set $j (i32.const 0))
             (block $ot_done
               (loop $ot
                 (br_if $ot_done (i32.ge_u (local.get $j) (local.get $n)))
                 (i32.store
                   (i32.add (local.get $save)
-                    (i32.shl (i32.add (local.get $j) (i32.const 1)) (i32.const 2)))
+                    (i32.shl (i32.add (local.get $j) (i32.const 2)) (i32.const 2)))
                   (i32.sub (call $loop_op_at (local.get $j)) (local.get $tstart)))
                 (local.set $j (i32.add (local.get $j) (i32.const 1)))
                 (br $ot)))
             (memory.copy
               (i32.add (local.get $save)
-                (i32.add (i32.const 4) (i32.shl (local.get $n) (i32.const 2))))
+                (i32.add (i32.const 8) (i32.shl (local.get $n) (i32.const 2))))
               (local.get $tstart) (local.get $rawlen))))))
     (if (i32.gt_u (local.get $total) (i32.const 4096))
       (then (global.set $block_exec_decl_why (i32.const 4))
             (global.set $block_exec_declines
               (i32.add (global.get $block_exec_declines) (i32.const 1)))
             (return (i32.const 0))))
-    ;; ---- round 13 admission control. The descriptor is bigger than the
-    ;; threaded code it replaces, so an install can be the byte that pushes the
-    ;; page chunk past 16KB -- and $page_publish answers that by DROPPING THE
-    ;; PAGE, which re-decodes every block on it. Measured on the 1000-batch
-    ;; quake2 window before this check: 20,555 page compiles against 18,269
-    ;; with the family off, and +175k block decodes for 41k installs.
+    ;; ---- round 14 admission control. The question is now only "does this
+    ;; descriptor fit in the page's DESCRIPTOR chunk", which is a chunk no
+    ;; ordinary block ever writes to. There is no reserve and no overflow memo
+    ;; because there is nothing left to protect: round 13 needed both because a
+    ;; descriptor could be the byte that pushed the shared 16KB chunk over and
+    ;; $page_publish answers that by DROPPING THE PAGE.
     ;;
     ;; Declining here costs nothing: $publish_block goes on to publish the
     ;; ordinary threaded block, which is smaller and fits.
-    (if (i32.eqz (call $page_would_fit (local.get $start_eip) (local.get $total)
-                    (global.get $BX_PAGE_RESERVE)))
+    (if (i32.eqz (call $page_desc_would_fit (local.get $start_eip) (local.get $total)))
       (then (global.set $bx_no_room (i32.add (global.get $bx_no_room) (i32.const 1)))
             (global.set $block_exec_decl_why (i32.const 4))
             (global.set $block_exec_declines
@@ -3468,7 +3560,13 @@
     ;; cost: the steps this block stands for on its own account. The fallbacks
     ;; are NOT in it -- they charge themselves through the parked counter, and
     ;; counting them here would bill the guest twice.
-    (call $te_raw (i32.add (local.get $nat) (local.get $extra)))
+    ;; ROUND 14 FIX: this used to be `$nat + $extra`, i.e. the block's step
+    ;; cost plus the BYTE COUNT of the saved threaded copy parked behind it.
+    ;; A cost is steps; bytes are not steps. It was near-invisible while the
+    ;; copy was rare (round 13 made it only for blocks discovery had asked
+    ;; for), and would have billed the guest clock several hundred steps per
+    ;; block now that every install carries one.
+    (call $te_raw (local.get $nat))
     (call $te_raw (i32.const 0))                    ;; succ_taken (unused)
     (call $te_raw (i32.const 0))                    ;; succ_fall  (unused)
     (call $te_raw (local.get $start_eip))           ;; entry_eip

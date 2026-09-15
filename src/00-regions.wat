@@ -266,9 +266,12 @@
   ;; this buys nothing and costs nothing beyond the 0x5C000 of extra map.
   (region.declare $PAGE_INDEX_ARENA (size 0x0033C000) (align 0x00001000)
     (owner "01-header.wat:$PAGE_INDEX_ARENA"))
-  ;; Same split: main 1024 directory entries (0x4000), each worker 256
-  ;; (0x1000). 0x4000 + 15 * 0x1000 = 0x13000.
-  (region.declare $PAGE_DIR_BASE (size 0x00013000) (align 0x00001000)
+  ;; Same split: main 1024 directory entries, each worker 256. A slot is 32
+  ;; bytes since block-executor round 14 (docs/block-executor-design.md section
+  ;; 23) -- a page now owns TWO chunks, the threaded one and a second one for
+  ;; executor descriptors, and each needs a base and a used|class word. So
+  ;; main is 0x8000, a worker 0x2000, and 0x8000 + 15 * 0x2000 = 0x26000.
+  (region.declare $PAGE_DIR_BASE (size 0x00026000) (align 0x00001000)
     (owner "01-header.wat:$PAGE_DIR_BASE"))
   (region.declare $WIN16_APP_DLL_STAGING (size 0x00600000) (align 0x00001000)
     (stride $WIN16_APP_DLL_STRIDE (count 6))
