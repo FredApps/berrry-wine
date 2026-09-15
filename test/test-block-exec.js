@@ -952,8 +952,13 @@ async function main() {
     // reads the NULL sentinel and writes nowhere; the contract is that a
     // region absorbs it exactly as threaded code does, from a member block
     // rather than from the head.
+    // Round 13: the region walker no longer decodes, so a member has to be a
+    // block the guest has ALREADY run, and a one-block descriptor standing on
+    // one has to be taken back and republished first ($bx_raw_want). Both cost
+    // iterations, so the loop count here is about giving discovery room, not
+    // about the fault this case is measuring.
     region('an unmapped access from a member matches threaded', asm([
-      [...movRI(ECX, 2), ...movRI(EAX, 0)],
+      [...movRI(ECX, 20), ...movRI(EAX, 0)],
       { label: 'top' },
       [...aluRI(7, ECX, 0)],
       { j: 'jcc', cc: JZ, to: 'out' },
@@ -1267,24 +1272,110 @@ async function main() {
     // the join's -- otherwise a carry into an ARM (legal: each has one
     // predecessor) would count in the same meter and the assertion would be
     // about the wrong edge.
+    // The branch ALTERNATES (EBX flips in the join) for a round-13 reason: a
+    // walk only ever collects blocks the guest has RUN, so an arm that is never
+    // taken is not a member, and the join it feeds then has one in-region
+    // predecessor instead of two -- which makes the carry legal and leaves this
+    // case asserting nothing. Flipping every iteration runs both arms from the
+    // first two, well before discovery converges. The trip count is also
+    // raised, because discovery now needs a couple of iterations to take its
+    // members back from the one-block installer.
+    // There is exactly ONE load in the region, and it is in the join. The fact
+    // it produces travels the back edge into `top` (one in-region predecessor,
+    // so that carry is legal) and on into whichever arm runs -- and has to be
+    // REFUSED at the join's own entry, which both arms reach. A second load in
+    // the head would make the meter ambiguous: the carry into an arm is legal
+    // and would count in the same counter as the illegal one.
     const r = region('a fact is NOT carried into a two-predecessor join', asm([
-      [...movRI(ECX, 6), ...movRI(EAX, 0)],
+      [...movRI(ECX, 20), ...movRI(EAX, 0), ...movRI(EBX, 0)],
       { label: 'top' },
-      [...load32abs(EDX, DATA + 0x30), ...aluRI(7, ESI, 4)],
-      { j: 'jcc', cc: JB, to: 'low' },
+      [...aluRI(7, EBX, 0)],
+      { j: 'jcc', cc: JZ, to: 'low' },
       [...aluRI(0, EAX, 0x11)],
       { j: 'jmp', to: 'join' },
       { label: 'low' },
       [...aluRI(5, EAX, 7)],
       { label: 'join' },
       [...load32abs(EDI, DATA + 0x30), ...aluRR(ADD, EAX, EDI),
-       ...decR(ECX)],
+       ...aluRI(6, EBX, 1), ...decR(ECX)],
       { j: 'jcc', cc: JNZ, to: 'top' },
       { label: 'out' },
       JOIN,
     ]));
     check('  nothing was eliminated at the join',
-      r.on.pass.rle === 0, `rle=${r.on.pass.rle}`);
+      r.on.pass.rle === 0,
+      `rle=${r.on.pass.rle} installs=${r.installs} entries=${r.entries}`);
+  }
+
+  {
+    // ROUND 13 REGRESSION -- AN INSTALL MUST NOT COST A DECODE.
+    //
+    // Discovery used to re-decode, twice over: the region walker ran
+    // $decode_run on every candidate successor, and the one-block installer
+    // displaced the threaded stream a later walk needed, so the same block was
+    // decoded again and again. On the 1000-batch quake2 window that was
+    // 3,108,885 block decodes against 781,266 with the family off. The walker
+    // now classifies out of the compiled page ($page_cached_ops) and never
+    // decodes; a descriptor standing on a block discovery wants carries a
+    // verbatim copy of the stream it displaced.
+    //
+    // Measuring that here is a hard assertion rather than a number: run ONE
+    // loop from ONE address until everything about it has settled, and the
+    // last run must decode nothing at all. A walker that decodes shows up as a
+    // nonzero count on every run, forever, because the hot gate re-arms.
+    const bytes = asm([
+      [...movRI(ECX, 400), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...aluRR(ADD, EAX, ECX), ...decR(ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      JOIN,
+    ]);
+    const addr = nextCode();
+    const wa = g2w(addr);
+    for (let i = 0; i < bytes.length; i += 1) mem[wa + i] = bytes[i];
+    e.set_block_exec_min_uops(2);
+    e.set_block_exec(1);
+    const runOnce = () => {
+      seedData();
+      normalizeFlags();
+      e.set_eax(SEED.eax); e.set_ecx(SEED.ecx); e.set_edx(SEED.edx);
+      e.set_ebx(SEED.ebx); e.set_esi(SEED.esi); e.set_edi(SEED.edi);
+      e.set_ebp(0);
+      e.set_esp(STACK_TOP);
+      dv.setUint32(g2w(STACK_TOP), 0, true);
+      const d0 = e.get_cache_stores();
+      const i0 = e.get_block_exec_installs();
+      const r0 = e.get_block_exec_region_installs();
+      e.set_eip(addr);
+      e.run(200000);
+      return {
+        decodes: e.get_cache_stores() - d0,
+        installs: e.get_block_exec_installs() - i0,
+        regions: e.get_block_exec_region_installs() - r0,
+        eax: e.get_eax() >>> 0,
+      };
+    };
+    const first = runOnce();
+    let settled = first;
+    let totalDecodes = first.decodes;
+    for (let k = 0; k < 8; k += 1) {
+      settled = runOnce();
+      totalDecodes += settled.decodes;
+    }
+    check('  a settled loop decodes nothing on a re-run',
+      settled.decodes === 0,
+      `decodes=${settled.decodes} (first run ${first.decodes}, ` +
+      `9 runs ${totalDecodes}) installs=${settled.installs} ` +
+      `regions=${settled.regions}`);
+    // The decode count is only meaningful if the executor really did claim it.
+    check('  ...with the block installed',
+      e.get_block_exec_installs() > 0, 'no install at all');
+    check('  and it still computes the same sum',
+      settled.eax === first.eax,
+      `${settled.eax.toString(16)} vs ${first.eax.toString(16)}`);
   }
 
   {

@@ -458,6 +458,35 @@
   (global $BX_RG_FACT_OFF  i32 (i32.const 7168))   ;; 16 * 8 words
   ;; ...and its constant table, immediately after: 15 * 2 words.
   (global $BX_RG_CONST_OFF i32 (i32.const 7296))
+  ;; ROUND 13 -- the RAW-WANTED table. 256 direct-mapped slots of one guest
+  ;; address.
+  ;;
+  ;; The two families compete for the same blocks. The one-block installer runs
+  ;; at the tail of every decode and replaces the threaded stream with a
+  ;; descriptor; the region walker, which no longer decodes, can only classify a
+  ;; threaded stream. So a block claimed by the one-block family is invisible to
+  ;; discovery, and a loop whose body blocks were all claimed collects nothing
+  ;; but its head. (Round 12 never noticed: its walk decoded the member back
+  ;; into existence and paid a decode plus a retire for it every time.)
+  ;;
+  ;; A walk that meets a descriptor where it wanted a member marks that address
+  ;; WANTED and retires the descriptor. The guest re-decodes the block on its
+  ;; next entry -- one decode, once -- and the one-block installer declines it
+  ;; while the mark stands, so the stream is there for the next walk. The table
+  ;; is direct-mapped and never cleared: an evicted mark just means that block
+  ;; may be claimed again, which costs coverage and never correctness.
+  ;; 512 slots, the whole tail of $BX_RG_BASE (7400 + 512 = 7912 of 8192
+  ;; words). An evicted mark costs one extra take-back, never correctness.
+  ;; Headroom every optional executor publish leaves in a page chunk, so that
+  ;; the ORDINARY blocks decoded later on the same page still fit. See
+  ;; $page_would_fit.
+  (global $BX_PAGE_RESERVE i32 (i32.const 0))
+  (global $BX_RG_RAW_OFF   i32 (i32.const 7400))   ;; 512 words
+  (global $BX_RG_RAW_MASK  i32 (i32.const 511))
+  (global $bx_raw_wants    (mut i32) (i32.const 0))
+  ;; Set by $bx_raw_want, read by $bx_walk_try: did THIS walk take a descriptor
+  ;; back? If so its decline says nothing about the code and must not be memoed.
+  (global $bx_walk_marked  (mut i32) (i32.const 0))
 
   ;; Collector state. Live only between $bx_region_begin and $bx_region_finish,
   ;; which are both inside one $decode_run and therefore cannot nest.
@@ -562,6 +591,12 @@
   ;; re-anchor comment on $bx_walk_try.
   (global $bx_walk_min_below (mut i32) (i32.const 0))
   (global $bx_walk_reanchors (mut i32) (i32.const 0))
+  ;; Round 13. Successors a walk turned into exits because the guest had not
+  ;; compiled them yet, and installs refused because the descriptor would not
+  ;; fit the page chunk without dropping the page. Both used to be paid in
+  ;; block decodes instead of being counted.
+  (global $bx_walk_uncached (mut i32) (i32.const 0))
+  (global $bx_no_room (mut i32) (i32.const 0))
 
   ;; Meters.
   (global $bx_region_installs (mut i32) (i32.const 0))
@@ -1080,6 +1115,57 @@
       (then (call $bx_rg_cfail (i32.const 3)) (return)))
     (global.set $bx_rg_n (i32.add (global.get $bx_rg_n) (i32.const 1))))
 
+  ;; ---- the raw-wanted table (round 13) ---------------------------------
+  (func $bx_raw_slot (param $ga i32) (result i32)
+    (call $bx_rg_word
+      (i32.add (global.get $BX_RG_RAW_OFF)
+        (i32.and
+          (i32.xor (local.get $ga) (i32.shr_u (local.get $ga) (i32.const 12)))
+          (global.get $BX_RG_RAW_MASK)))))
+
+  (func $bx_raw_wanted (param $ga i32) (result i32)
+    (i32.eq (i32.load (call $bx_raw_slot (local.get $ga))) (local.get $ga)))
+
+  ;; Claim this address for the region family and take back the descriptor that
+  ;; is standing on it, so the guest's next entry publishes the threaded stream
+  ;; a walk can read.
+  (func $bx_raw_want (param $ga i32)
+    (if (call $bx_raw_wanted (local.get $ga)) (then (return)))
+    (i32.store (call $bx_raw_slot (local.get $ga)) (local.get $ga))
+    (global.set $bx_raw_wants (i32.add (global.get $bx_raw_wants) (i32.const 1)))
+    (global.set $bx_walk_marked (i32.const 1))
+    (call $page_retire_ga (local.get $ga)))
+
+  ;; ----------------------------------------------------------------------
+  ;; ROUND 13 -- classify a block that is ALREADY in the thread cache.
+  ;;
+  ;; The classifier's whole input is OP_INDEX plus $d_pc: the addresses of this
+  ;; block's threaded ops, and the guest address one past its last byte. Both
+  ;; used to exist only for the instant between a decode and the next one,
+  ;; which is why discovery re-decoded. $page_cached_ops rebuilds OP_INDEX from
+  ;; the published stream and the bitmaps beside it, and $page_cached_end reads
+  ;; the guest extent out of the byte index -- the same walk $page_retire_at
+  ;; does. Nothing is decoded, nothing is emitted, and the page registers do
+  ;; not move.
+  ;;
+  ;; Returns 1 when the block was readable (whether or not the classifier
+  ;; accepted it -- a refusal makes the edge an exit, and the caller's own
+  ;; member test sees that), 0 when it is not compiled, is a descriptor, or
+  ;; its ops cannot be described.
+  ;; ----------------------------------------------------------------------
+  (func $bx_classify_cached (param $ga i32) (result i32)
+    (local $n i32) (local $e i32)
+    (local.set $n (call $page_cached_ops (local.get $ga)))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+    (local.set $e (call $page_cached_end (local.get $ga)))
+    (if (i32.le_u (local.get $e) (local.get $ga)) (then (return (i32.const 0))))
+    (global.set $op_index_n (local.get $n))
+    (global.set $op_index_poison (i32.const 0))
+    (global.set $d_pc (local.get $e))
+    (call $bx_region_collect (local.get $ga))
+    (global.set $op_index_n (i32.const 0))
+    (i32.const 1))
+
   ;; Member index whose entry EIP is $ga, or -1.
   (func $bx_rg_member (param $ga i32) (result i32)
     (local $i i32)
@@ -1445,16 +1531,39 @@
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $fb)))
 
-    ;; ---- publish over the head, and over every member it subsumes --------
-    ;; The guest extent is [head, max member end). Every member starts at or
-    ;; above the head, so that span contains all of them. $page_publish retires
-    ;; every old block inside it before indexing this one, so the members'
-    ;; separate entries go away and the region owns every byte -- which is
-    ;; exactly what makes a write to a member retire the region.
+    ;; ---- publish over the HEAD BLOCK ONLY (round 13) ---------------------
+    ;; Round 10 published over [head, max member end), so every member's own
+    ;; index entry was retired and the region owned every byte. That is what
+    ;; made a write to a member retire the region -- and also what made an
+    ;; ordinary transfer INTO a member miss, decode the member afresh, and
+    ;; publish it back over the region that had just been built. On the
+    ;; 1000-batch quake2 window that loop cost 1.37M extra retires and 3.1M
+    ;; block decodes against 781k with the family off.
+    ;;
+    ;; So the region's index footprint is its head block, exactly the block it
+    ;; replaces. The members keep their entries and keep running as ordinary
+    ;; blocks when they are entered from outside; entering at the head runs the
+    ;; region. Nothing is decoded either way.
+    ;;
+    ;; The invalidation duty the cover marks used to discharge moves to the
+    ;; page: $page_mark_spanreg below sets a bit that makes any guest write to
+    ;; this page drop the whole page rather than retire per offset. See
+    ;; $page_desc_spanreg in 04-cache.wat.
     (global.set $op_index_n (i32.const 0))
     (local.set $bytes (global.get $thread_alloc))     ;; reused: the emit end
+    ;; Admission control. A publish that does not fit drops the WHOLE PAGE and
+    ;; re-decodes every block on it; an install is optional, so ask first.
+    (if (i32.eqz (call $page_would_fit (local.get $head)
+                    (i32.sub (local.get $bytes) (local.get $tstart))
+                    (global.get $BX_PAGE_RESERVE)))
+      (then
+        (global.set $bx_no_room (i32.add (global.get $bx_no_room) (i32.const 1)))
+        (global.set $thread_alloc (local.get $tstart))
+        (call $bx_rg_decline (i32.const 3))
+        (return (i32.const 0))))
     (local.set $off (call $page_publish (local.get $head) (local.get $tstart)
-                      (local.get $bytes) (local.get $gend)))
+                      (local.get $bytes)
+                      (i32.load offset=52 (call $bx_rg_rec (i32.const 0)))))
     (if (i32.lt_s (local.get $off) (i32.const 0))
       (then
         ;; No home in the chunk. Nothing is executing this copy -- the walker
@@ -1467,6 +1576,11 @@
     ;; Counted here and not before the test above: a descriptor that found no
     ;; home in the chunk was emitted, not installed, and counting it as one
     ;; reads as "the matcher is working and the executor never runs it".
+    ;; The region stands for guest bytes its index footprint does not cover, so
+    ;; the page can no longer be invalidated per offset.
+    (if (i32.gt_u (local.get $gend)
+                  (i32.load offset=52 (call $bx_rg_rec (i32.const 0))))
+      (then (call $page_mark_spanreg (local.get $head))))
     (global.set $bx_region_installs
       (i32.add (global.get $bx_region_installs) (i32.const 1)))
     (global.set $bx_region_blocks
@@ -1657,20 +1771,28 @@
         (local.set $before (global.get $bx_rg_n))
         (global.set $bx_walk_blocks
           (i64.add (global.get $bx_walk_blocks) (i64.const 1)))
-        ;; Decode on demand. A block already compiled is decoded again and
-        ;; republished -- correct, and the price of getting its micro-ops,
-        ;; which exist only for the instant between the emit and the next
-        ;; block's. The collector at the tail of $decode_block is what turns
-        ;; that instant into a builder record.
-        (drop (call $decode_block (local.get $eip)))
-        ;; A flush or a page swap under us invalidates nothing we hold -- the
-        ;; builder is in its own region -- but it means the emit this walk is
-        ;; about to make has no home, so stop now rather than at the publish.
-        (if (global.get $thread_flush_pending)
+        ;; ROUND 13. A walk NEVER decodes. It used to call $decode_block here,
+        ;; which republished the block and then republished the region over it
+        ;; -- 724,450 decodes on the 1000-batch quake2 window, and every one of
+        ;; them a block the guest had already compiled. The micro-ops are now
+        ;; recovered from the PUBLISHED threaded code instead, through the
+        ;; op-boundary bitmaps $page_publish writes beside every block.
+        ;;
+        ;; A successor that is not compiled yet is simply not a member: the
+        ;; edge into it becomes one of the region's exits, exactly as a
+        ;; successor the classifier refuses does. The guest will compile it in
+        ;; the ordinary course of running, and the head's gate -- which rearms
+        ;; -- brings the walk back when it has. Decoding it here to find out
+        ;; what it looks like is the thing this round exists to delete.
+        (if (i32.eqz (call $bx_classify_cached (local.get $eip)))
           (then
-            (call $bx_rg_decline (i32.const 3))
-            (local.set $ok (i32.const 0))
-            (br $walk_done)))
+            ;; A one-block descriptor is standing where this member should be.
+            ;; Take it back and try again on the next pass; see $bx_raw_want.
+            (if (call $page_cached_is_desc (local.get $eip))
+              (then (call $bx_raw_want (local.get $eip))))
+            (global.set $bx_walk_uncached
+              (i32.add (global.get $bx_walk_uncached) (i32.const 1)))
+            (br $walk)))
         ;; Refused by the classifier: not a member, and the edge is an exit.
         (br_if $walk (i32.eq (global.get $bx_rg_n) (local.get $before)))
         (local.set $rec (call $bx_rg_rec (local.get $before)))
@@ -1769,7 +1891,21 @@
         (global.set $bx_walk_memo_refusals
           (i32.add (global.get $bx_walk_memo_refusals) (i32.const 1)))
         (return)))
+    (global.set $bx_walk_marked (i32.const 0))
     (local.set $ok (call $bx_walk_once (local.get $head)))
+    ;; Round 13. This walk took back one or more one-block descriptors it wants
+    ;; the threaded stream of ($bx_raw_want). The guest republishes those blocks
+    ;; on its next entry, so the answer will be different one iteration from
+    ;; now: re-arm the gate at this head so the retry is one guest iteration
+    ;; away rather than K of them. The memo failure is still recorded below --
+    ;; re-arming without it is an unbounded retry loop, which is the thing the
+    ;; memo exists to make impossible.
+    (if (i32.and (global.get $bx_walk_marked) (i32.eqz (local.get $ok)))
+      (then
+        (local.set $s (call $bx_hot_slot (local.get $head)))
+        (i32.store (local.get $s) (local.get $head))
+        (i32.store offset=4 (local.get $s)
+          (i32.sub (global.get $bx_walk_hot_k) (i32.const 1)))))
     (if (i32.eqz (local.get $ok))
       (then
         (local.set $alt (global.get $bx_walk_min_below))
@@ -2806,10 +2942,16 @@
     (local $j i32) (local $total i32) (local $extra i32)
     (local $nat i32) (local $nfb i32) (local $up i32)
     (local $span i32) (local $pe i32) (local $nx87 i32)
+    ;; Round 13: the displaced threaded stream, saved with the descriptor.
+    (local $rawlen i32) (local $save i32) (local $extra i32) (local $rawoff i32)
 
     (if (i32.eqz (global.get $block_exec_enabled)) (then (return (i32.const 0))))
     ;; A fold already rewrote this block.
     (if (i32.eqz (global.get $op_index_n)) (then (return (i32.const 0))))
+    ;; Round 13: if the region walker asked for this block's threaded stream,
+    ;; this install carries a copy of it (see the SAVE THE STREAM comment
+    ;; below). It is not declined -- declining would cost the one-block family
+    ;; every member of every region the walker ever looked at.
     ;; OP_INDEX overflowed, so op boundaries are unknown; 16-bit blocks have a
     ;; different register and address model; and under --fault-null=stop a
     ;; native memory op can trap with the register locals unpublished, so the
@@ -3194,12 +3336,96 @@
     ;; corrupts the next block silently instead of failing.
     ;; 8 dispatch + 16 header + 52 block record + 0 exit table + uops + pool
     ;; + the threaded terminator.
+    ;; ---- round 13: SAVE THE STREAM THIS DESCRIPTOR DISPLACES.
+    ;; The region walker classifies threaded ops and no longer decodes, so a
+    ;; block this family claims is invisible to discovery unless its ops are
+    ;; still readable somewhere. They are: a byte-for-byte copy of the block's
+    ;; threaded stream, preceded by its op-boundary table, rides along at the
+    ;; tail of the fallback pool -- inert to the executor, which addresses the
+    ;; pool only through offsets its own micro-ops carry, and reachable from
+    ;; $page_cached_ops through the descriptor's otherwise-unused operand word.
+    ;;
+    ;; The copy is made ONLY for a block discovery has actually asked for.
+    ;; Saving one with every install was measured and is worse: a descriptor
+    ;; plus its copy is roughly twice the bytes, the page chunk is a fixed
+    ;; 16KB, and overflowing it DROPS THE PAGE -- 1,064,880 block decodes
+    ;; against 950,026 for the same window with the copy withheld. So the
+    ;; sequence is: first walk through this block meets a bare descriptor,
+    ;; marks the address wanted and takes the descriptor back (one decode);
+    ;; the guest re-decodes, this install saves the copy; every later walk
+    ;; reads it for free. One decode per block discovery wants, once.
+    (local.set $rawoff (i32.const 0))
+    (local.set $extra (i32.const 0))
     (local.set $total
       (i32.add
         (i32.add (i32.const 76) (i32.shl (local.get $words) (i32.const 2)))
         (i32.add (i32.shl (local.get $fbw) (i32.const 2)) (local.get $tail_bytes))))
+    (if (call $bx_raw_wanted (local.get $start_eip))
+      (then
+        (local.set $rawlen (i32.sub (global.get $thread_alloc) (local.get $tstart)))
+        (local.set $rawoff
+          (i32.add (i32.const 76)
+            (i32.add (i32.shl (local.get $words) (i32.const 2))
+                     (i32.shl (local.get $fbw) (i32.const 2)))))
+        (local.set $extra
+          (i32.add (i32.const 4)
+            (i32.add (i32.shl (local.get $n) (i32.const 2)) (local.get $rawlen))))
+        ;; Too big WITH the copy is not a decline: publish the descriptor
+        ;; without it and let discovery meet it again. Installs must not fall
+        ;; for a diagnostic convenience.
+        (if (i32.or
+              (i32.gt_u (i32.add (local.get $total) (local.get $extra))
+                        (i32.const 4096))
+              (i32.ge_u
+                (i32.add
+                  (i32.add (local.get $tstart)
+                    (i32.add (local.get $total) (local.get $extra)))
+                  (i32.add (local.get $rawlen) (i32.const 64)))
+                (i32.sub (global.get $THREAD_END) (i32.const 4096))))
+          (then
+            (local.set $extra (i32.const 0))
+            (local.set $rawoff (i32.const 0)))
+          (else
+            (local.set $total (i32.add (local.get $total) (local.get $extra)))
+            ;; Park the table and the bytes past where the descriptor will end
+            ;; -- the emit rewinds to $tstart and writes straight over the
+            ;; stream being copied.
+            (local.set $save
+              (i32.add (i32.add (local.get $tstart) (local.get $total))
+                       (i32.const 64)))
+            (i32.store (local.get $save) (local.get $n))
+            (local.set $j (i32.const 0))
+            (block $ot_done
+              (loop $ot
+                (br_if $ot_done (i32.ge_u (local.get $j) (local.get $n)))
+                (i32.store
+                  (i32.add (local.get $save)
+                    (i32.shl (i32.add (local.get $j) (i32.const 1)) (i32.const 2)))
+                  (i32.sub (call $loop_op_at (local.get $j)) (local.get $tstart)))
+                (local.set $j (i32.add (local.get $j) (i32.const 1)))
+                (br $ot)))
+            (memory.copy
+              (i32.add (local.get $save)
+                (i32.add (i32.const 4) (i32.shl (local.get $n) (i32.const 2))))
+              (local.get $tstart) (local.get $rawlen))))))
     (if (i32.gt_u (local.get $total) (i32.const 4096))
       (then (global.set $block_exec_decl_why (i32.const 4))
+            (global.set $block_exec_declines
+              (i32.add (global.get $block_exec_declines) (i32.const 1)))
+            (return (i32.const 0))))
+    ;; ---- round 13 admission control. The descriptor is bigger than the
+    ;; threaded code it replaces, so an install can be the byte that pushes the
+    ;; page chunk past 16KB -- and $page_publish answers that by DROPPING THE
+    ;; PAGE, which re-decodes every block on it. Measured on the 1000-batch
+    ;; quake2 window before this check: 20,555 page compiles against 18,269
+    ;; with the family off, and +175k block decodes for 41k installs.
+    ;;
+    ;; Declining here costs nothing: $publish_block goes on to publish the
+    ;; ordinary threaded block, which is smaller and fits.
+    (if (i32.eqz (call $page_would_fit (local.get $start_eip) (local.get $total)
+                    (global.get $BX_PAGE_RESERVE)))
+      (then (global.set $bx_no_room (i32.add (global.get $bx_no_room) (i32.const 1)))
+            (global.set $block_exec_decl_why (i32.const 4))
             (global.set $block_exec_declines
               (i32.add (global.get $block_exec_declines) (i32.const 1)))
             (return (i32.const 0))))
@@ -3220,11 +3446,16 @@
     ;; ---- emit: a one-block region, no exits, terminator threaded ----
     (global.set $thread_alloc (local.get $tstart))
     (global.set $op_index_n (i32.const 0))
-    (call $te (global.get $BX_HANDLER) (i32.const 0))
+    ;; The operand the executor never reads carries the offset of the saved
+    ;; threaded stream (0 = not saved).
+    (call $te (global.get $BX_HANDLER) (local.get $rawoff))
     (call $te_raw (i32.const 1))                    ;; nblocks
     (call $te_raw (i32.const 0))                    ;; nexits
     (call $te_raw (local.get $nuops))               ;; uops_total
-    (call $te_raw (i32.shl (local.get $fbw) (i32.const 2)))  ;; fb_bytes
+    ;; fb_bytes INCLUDES the saved stream: it is how the executor finds its
+    ;; threaded terminator, and the copy sits between the pool and the tail.
+    (call $te_raw (i32.add (i32.shl (local.get $fbw) (i32.const 2))
+                           (local.get $extra)))     ;; fb_bytes
     (call $te_raw (i32.const 0))                    ;; uop_off
     (call $te_raw (local.get $nuops))               ;; nuops
     (call $te_raw (i32.const -1))                   ;; term_pos: never
@@ -3257,6 +3488,13 @@
           (i32.load (i32.add (local.get $fbb) (i32.shl (local.get $j) (i32.const 2)))))
         (local.set $j (i32.add (local.get $j) (i32.const 1)))
         (br $fb)))
+    ;; ...and the saved stream, straight after the pool.
+    (if (local.get $extra)
+      (then
+        (memory.copy (global.get $thread_alloc) (local.get $save)
+                     (local.get $extra))
+        (global.set $thread_alloc
+          (i32.add (global.get $thread_alloc) (local.get $extra)))))
     ;; The terminator goes back through $te, not $te_raw, so OP_INDEX records
     ;; it as the block's last op at its new address -- which is what keeps
     ;; $decode_run's `optr + 16 == d_block_end` adjacency test working and lets

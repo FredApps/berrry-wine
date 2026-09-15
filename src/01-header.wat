@@ -1633,9 +1633,30 @@
   ;; $PAGE_INDEX in $init_thread, and the defaults here are the main thread's.
   (global $PAGE_INDEX_ARENA i32 (region.addr $PAGE_INDEX_ARENA 0))
   (global $PAGE_INDEX_ARENA_SIZE i32 (region.size $PAGE_INDEX_ARENA))
-  (global $PAGE_INDEX_MAIN_BYTES i32 (i32.const 0x00100000))
-  (global $PAGE_INDEX_STRIDE i32 (i32.const 0x00020000))
-  (global $PAGE_INDEX_BYTES  i32 (i32.const 0x2000))
+  (global $PAGE_INDEX_MAIN_BYTES i32 (i32.const 0x00120000))
+  (global $PAGE_INDEX_STRIDE i32 (i32.const 0x00024000))
+  (global $PAGE_INDEX_BYTES  i32 (i32.const 0x2400))
+  ;; Block-executor round 13 (docs/block-executor-design.md section 22). The
+  ;; threaded stream is not self-describing: an op is (handler, operand) plus
+  ;; however many inline words that handler takes, so nothing downstream of the
+  ;; decoder can find op boundaries. OP_INDEX answers that at decode time and
+  ;; is gone the instant the next block is decoded, which is why the region
+  ;; walker used to re-decode every block it wanted to classify.
+  ;;
+  ;; These two bitmaps persist the answer. One bit per 4-byte word of the
+  ;; page's 16KB chunk -- 4096 bits, 512 bytes each:
+  ;;   OPBITS_START  a threaded op begins at this word
+  ;;   OPBITS_END    a published block ends at this word (one past its last)
+  ;; The END map is what bounds a scan: a block's ops are the START bits from
+  ;; its entry offset up to the first END bit above it. An END bit AT the entry
+  ;; offset belongs to the block below and is skipped by construction.
+  ;;
+  ;; They live at the tail of the same index slot, so they are allocated,
+  ;; cleared, freed and relocated with it and need no per-thread base of their
+  ;; own. 0x2000 + 0x200 + 0x200 = 0x2400, exactly PAGE_INDEX_BYTES.
+  (global $PAGE_OPBITS_START i32 (i32.const 0x2000))
+  (global $PAGE_OPBITS_END   i32 (i32.const 0x2200))
+  (global $PAGE_OPBITS_BYTES i32 (i32.const 0x200))
   (global $PAGE_INDEX_SLOTS  (mut i32) (i32.const 128))
   (global $PAGE_INDEX_WORKER_SLOTS i32 (i32.const 16))
   (global $PAGE_INDEX_NONE   i32 (i32.const 0xFFFF))

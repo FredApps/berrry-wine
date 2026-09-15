@@ -2119,3 +2119,142 @@ is exactly where the executor *spends* (descriptor building) and not where it
 *earns*; and `--quiet-api` is on, so what remains is guest work rather than
 stdout. The coverage counters in sections 16.6, 18.2, 19.2 and 17.5 are
 deterministic and are what round 12's claims rest on.
+
+## 22. Round 13: an install must not cost a decode (2026-09-15)
+
+### 22.1 The measurement that opened the round
+
+Round 12's whole-app A/B on quake2 soft was a **resolved loss** — 30.0s on
+against 20.2s off, +35% CPU — and the cause was not the executor running. It
+was the executor *installing*. One 1000-batch window
+(`--app=quake2_demo --args='+set vid_ref soft +map demo1' --quiet-api
+--batch-size=200000 --max-batches=1000`), reading `cache: block decodes`:
+
+| arm | block decodes | vs off |
+|---|---|---|
+| off | 781,266 | — |
+| `--block-exec --no-block-exec-regions` | 956,732 | +22% |
+| `--block-exec` (regions, default K=256) | 3,108,885 | **4.0x** |
+| `--block-exec --block-exec-walk-k=4096` | 964,140 | +23% |
+
+`native%` was 97.95 in every armed arm, so the executor was fine once
+installed. 38,881 region installs against 2.3M extra decodes is ~55 decodes per
+region — the install path was the loss, and raising the hot gate only hid it by
+installing less.
+
+### 22.2 Where the decodes came from
+
+Two mechanisms, both structural.
+
+**(a) The walk decoded.** `$bx_walk_once` called `$decode_run` on every
+candidate successor so it would have threaded ops to classify. A walk that
+declined threw all of that away, and the hot gate re-armed, so the same blocks
+were decoded again on the next attempt. 104,025 walk attempts against 2,380
+installs is the shape of that.
+
+**(b) Descriptors are big, and the page chunk is not.** A compiled 4KB guest
+page owns one contiguous chunk of at most **16KB** — `PAGE_CHUNK_BYTES`, and
+the ceiling is not a preference: the per-page index entry is a 14-bit offset.
+A one-block descriptor is a 24-byte micro-op per guest op plus a header, a
+block record and a fallback pool, against 8 bytes per op for the threaded
+stream it replaces. When a publish does not fit, `$page_publish` does not fail
+locally — it **drops the whole page**, and every block on it is decoded again.
+Round 12 published a multi-block region over the *entire guest extent* of its
+members, which retired every one of them, so their next entry missed, decoded,
+and re-published. Page compiles went 18,269 → 40,788 and dropped blocks
+218,339 → 1,584,613.
+
+### 22.3 The mechanism
+
+Three changes, in the order they matter.
+
+**The published threaded stream is self-describing, and the walk reads it
+instead of decoding.** Each page index slot carries two 512-byte bitmaps over
+its chunk — one bit per 4-byte threaded word — marking **op starts** and
+**block ends** (`$PAGE_OPBITS_START` / `$PAGE_OPBITS_END`, written by
+`$page_opbits_publish` from `OP_INDEX` at publish time, which is the only
+moment op boundaries are known). `$page_cached_ops(ga)` walks them to rebuild
+`OP_INDEX` for a block that is already compiled, and `$page_cached_end(ga)`
+recovers its guest extent from the index. `$bx_classify_cached` feeds those to
+the existing `$bx_rg_classify_block`, so the region builder is unchanged and
+the walk never calls the decoder: a successor that is not in the cache simply
+ends the walk (`$bx_walk_uncached`), and the guest decodes it naturally the
+next time it runs there.
+
+**A region publish covers only its head block.** `$bx_region_finish` passes the
+head's own `guest_end` rather than the closure's, so member blocks keep their
+index entries and their threaded code. Entering the region at its head runs the
+descriptor; entering at a member runs that member's ordinary block. The
+invalidation duty the old wide extent was carrying moves to a bit in the page
+descriptor word (`$PAGE_DESC_SPANREG`): a page that has published a region
+whose reach exceeds its head drops **whole** on any guest write into it, rather
+than trusting a per-block extent that is no longer there.
+
+**The one-block installer hands back what it displaced.** A descriptor replaces
+a block's threaded stream, which makes that block invisible to a walker that
+can only classify threaded ops — the two families compete for the same blocks.
+So a walk that meets a descriptor where it wanted a member marks the address in
+a 512-slot direct-mapped table (`$bx_raw_want`) and retires the descriptor;
+the guest re-decodes the block once; and **that install carries a verbatim copy
+of the stream it displaced**, parked at the tail of its fallback pool with an
+op-boundary table in front of it, addressed through the descriptor's otherwise
+unused operand word. `$page_cached_ops` reads that copy, so every later walk
+through the block is free. One decode per block discovery wants, once.
+
+Finally, both optional publishes ask before they spend: `$page_would_fit`
+takes a `reserve`, and refuses on any page that has **overflowed before**
+(`$PAGE_OVFL_MEMO`, a 1024-slot memo that has to outlive the directory entry
+the drop destroys) unless 6KB of headroom remains.
+
+### 22.4 What it measured
+
+Same 1000-batch quake2 window, same command:
+
+| arm | decodes | vs off | pages compiled | 1-blk installs | region installs | multi-block entries |
+|---|---|---|---|---|---|---|
+| off | 781,266 | — | 18,269 | 0 | 0 | 0 |
+| round 12 `--no-block-exec-regions` | 956,732 | +22.5% | — | 41,211 | 0 | 0 |
+| round 12 `--block-exec` | 3,108,885 | +298% | 40,788 | 185,907 | 38,881 | — |
+| **round 13 `--no-block-exec-regions`** | **857,385** | **+9.7%** | 19,245 | 16,946 | 0 | 0 |
+| **round 13 `--block-exec`** | **876,984** | **+12.3%** | 19,607 | 15,368 | 1,101 | 4,007,893 |
+
+The regions arm is **3.5x fewer decodes** than round 12 and the one-block arm
+**11.6% fewer**, and the walk itself now contributes none of them: every decode
+above the off line is a page that overflowed its chunk.
+
+### 22.5 What is still open, and why it is not a knob
+
+**The 5% goal is not met (9.7% / 12.3%), and the remaining gap is the 16KB
+chunk, not the discovery path.** Admission control trades installs against
+decodes along a curve, and the curve was measured, not guessed — five builds,
+one window each, the same command:
+
+| admission policy | 1-blk decodes | 1-blk installs | regions decodes | region installs |
+|---|---|---|---|---|
+| none | 1,047,921 | 58,868 | 1,019,725 | 2,839 |
+| flat 4KB reserve | 863,351 | 19,314 | 921,585 | 1,444 |
+| flat 8KB reserve | 986,655 | 16,206 | 864,050 | 371 |
+| overflow memo, hard refuse | 801,745 | 4,795 | 805,001 | **32** |
+| **memo + 6KB reserve (shipped)** | 857,385 | 16,946 | 876,984 | 1,101 |
+| memo + 10KB reserve | 850,391 | 11,896 | 848,226 | 322 |
+
+Two things that curve says. It is **not monotone** — a bigger flat reserve made
+the one-block arm *worse* — because which page overflows depends on the order
+installs land, so tuning the number is chasing a chaotic system. And the one
+policy that reaches the goal (hard refuse: +3.0%, 805,001) does it by declining
+essentially every region, which is not a win. The shipped point is the best
+measured compromise, and it is a compromise.
+
+The structural fix is to stop spending the threaded chunk on descriptors at
+all: a **second per-page chunk** for executor descriptors, selected by the
+currently unused `0x8000`-`0xBFFF` range of the page index entry (0x0000-0x3FFF
+is an entry, 0x4000-0x7FFF a cover mark, 0xFFFF none), with its own base and
+`used` in a widened page-directory slot. That gives descriptors their own 16KB
+and returns page compiles to the off-arm baseline, which by the table above is
+where the last 8-12% lives. It is the next round's work, not a knob on this
+one.
+
+Also still open: the region path saves no copy of the head block's stream (only
+the one-block installer does), so a walk that meets a *region* descriptor still
+takes it back the slow way; and the 13-window `docs/hot-loop-vocabulary-2026-09`
+sweep has not been re-run against this build.

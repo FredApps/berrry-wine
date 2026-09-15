@@ -248,9 +248,18 @@
   ;; the one routine it was spawned for. So the main thread keeps its full 128
   ;; index slots (0x100000) and each of the fifteen workers gets 16 (0x20000).
   ;; No uniform (stride ...) can describe that, and stating a false one would
-  ;; be worse than stating none: 0x100000 + 15 * 0x20000 = 0x2E0000, and the
+  ;; be worse than stating none: 0x120000 + 15 * 0x24000 = 0x33C000, and the
   ;; region SHRINKS by 5MB while carrying twice as many threads.
-  (region.declare $PAGE_INDEX_ARENA (size 0x002E0000) (align 0x00001000)
+  ;;
+  ;; WIDENED 0x2E0000 -> 0x33C000 (block executor round 13). A slot is no
+  ;; longer 4096 u16 index entries alone: it carries two 512-byte bitmaps over
+  ;; the page's 16KB chunk, one bit per 4-byte threaded word, marking op starts
+  ;; and block ends. That is what makes the published threaded stream
+  ;; self-describing, so the region walker can classify a block that is ALREADY
+  ;; compiled instead of decoding it again -- see docs/block-executor-design.md
+  ;; section 22. Slot count is unchanged (MAIN_BYTES / PAGE_INDEX_BYTES), so
+  ;; this buys nothing and costs nothing beyond the 0x5C000 of extra map.
+  (region.declare $PAGE_INDEX_ARENA (size 0x0033C000) (align 0x00001000)
     (owner "01-header.wat:$PAGE_INDEX_ARENA"))
   ;; Same split: main 1024 directory entries (0x4000), each worker 256
   ;; (0x1000). 0x4000 + 15 * 0x1000 = 0x13000.
@@ -538,6 +547,16 @@
   (region.declare $BX_RG_BASE (size 0x00008000) (align 0x00001000)
     (stride 0x4 (count 8192))
     (owner "07c-block-exec.wat:$BX_RG_BASE"))
+  ;; ROUND 13 -- the per-page OVERFLOW MEMO. 1024 direct-mapped slots of one
+  ;; page base. A page whose chunk once overflowed is a page whose compiled
+  ;; code does not fit in 16KB, and an executor descriptor is bigger than the
+  ;; threaded stream it stands in for, so installing one there brings the next
+  ;; overflow forward -- and an overflow DROPS THE WHOLE PAGE and re-decodes
+  ;; every block on it. The memo has to outlive the page directory entry, which
+  ;; is exactly what the drop destroys, so it cannot live in the page desc.
+  (region.declare $PAGE_OVFL_MEMO (size 0x00001000) (align 0x00001000)
+    (stride 0x4 (count 1024))
+    (owner "04-cache.wat:$PAGE_OVFL_MEMO"))
   (region.declare $DX_SURF_PAL (size 0x00004000) (align 0x00001000)
     (stride 0x4 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:$dx_surf_pal_set"))
