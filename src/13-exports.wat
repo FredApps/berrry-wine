@@ -2850,8 +2850,38 @@
   ;; other fold gate, so it has to be set before the first decode and on every
   ;; per-thread instance -- lib/worker-imports.js carries it for the second
   ;; half and test/test-worker-wasm-globals.js is the gate on that.
+  ;; Block chaining (docs/block-chaining-design.md). Default OFF, and mutually
+  ;; exclusive with the block executor in BOTH directions, so the order the
+  ;; inherited setters replay in cannot decide which one a worker instance
+  ;; runs: the executor always wins. The executor copies threaded streams into
+  ;; descriptor fallback pools, and a chain delta is only meaningful relative to
+  ;; the word it was patched into, so a copied chain word is the one shape this
+  ;; mechanism cannot survive.
+  (func (export "set_block_chain") (param $flag i32)
+    (global.set $block_chain_on
+      (i32.and (i32.ne (local.get $flag) (i32.const 0))
+               (i32.eqz (global.get $block_exec_enabled)))))
+  (func (export "get_block_chain") (result i32) (global.get $block_chain_on))
+  (func (export "get_chain_hits") (result i64) (global.get $chain_hits))
+  (func (export "get_chain_slow") (result i64) (global.get $chain_slow))
+  (func (export "get_chain_patches") (result i32) (global.get $chain_patches))
+  (func (export "get_chain_bumps") (result i32) (global.get $chain_bumps))
+  (func (export "get_chain_epoch") (result i32) (global.get $chain_epoch))
+  (func (export "get_branch_end_calls") (result i64) (global.get $branch_end_calls))
+  ;; The epoch is 13 bits and the wrap has to be reachable from a test in under
+  ;; a second. Every real invalidation path -- $page_retire_at, $page_chunk_put,
+  ;; $page_dir_reset, $page_dir_drop_mode -- calls exactly this function, and
+  ;; test-block-chain.js covers those paths separately through
+  ;; invalidate_code_range and a guest SMC write. What this export exists for is
+  ;; the arithmetic AT the wrap: that past $CHAIN_EPOCH_MAX the epoch parks on a
+  ;; value no stored slot can hold, and that a later run restarts it at 1.
+  ;; Driving 8192 real page drops takes hundreds of thousands of compile/run
+  ;; cycles because a page dir slot that is already free costs nothing to drop.
+  (func (export "test_chain_bump") (call $chain_bump))
+
   (func (export "set_block_exec") (param $flag i32)
     (global.set $block_exec_enabled (local.get $flag))
+    (if (local.get $flag) (then (global.set $block_chain_on (i32.const 0))))
     (call $bx_hot_gate_refresh))
   (func (export "get_block_exec") (result i32) (global.get $block_exec_enabled))
   (func (export "set_block_exec_min_uops") (param $n i32)

@@ -2000,6 +2000,13 @@ const TOGGLES = {
   ck_blend16: 'set_ck_blend16',
   ck_shadow16: 'set_ck_shadow16',
   block_exec: 'set_block_exec',
+  // Round 15 block chaining (docs/block-chaining-design.md). The shape to run
+  // it on is the block-entry pair: `--shapes=nop_chain,jmp_chain
+  // --toggle=block_chain`. nop_chain holds dispatch count equal and has no
+  // block ends at all, so it is the null control — a toggle that moves it is
+  // measuring the machine, not the transfer. The real answer is the change in
+  // (jmp_chain - nop_chain), which is the transfer term on its own.
+  block_chain: 'set_block_chain',
   // Round 11's decode-time load/op split. It is not a fold of its own: it only
   // exists inside a descriptor, so BOTH arms must have the executor armed and
   // only the pass may differ. A plain setter name cannot express that, so a

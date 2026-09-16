@@ -252,10 +252,16 @@
                 (i32.eq (global.get $sbh_eip_b) (local.get $eip)))
       (then (return)))
     (if (i32.eqz (call $sbh_match_mode (call $g2w (local.get $eip)))) (then (return)))
+    ;; Block chaining resolves an SBH entry like any other target before this
+    ;; address becomes one, and its fast path does not repeat $branch_end's two
+    ;; $sbh_eip compares -- it relies on no live chain naming one. Bumping the
+    ;; epoch here is what makes that true: every chain patched before the
+    ;; pattern was recognised dies, and $branch_end's own early return keeps a
+    ;; new one from ever being written. See docs/block-chaining-design.md.
     (if (i32.eqz (global.get $sbh_eip_a))
-      (then (global.set $sbh_eip_a (local.get $eip)) (return)))
+      (then (global.set $sbh_eip_a (local.get $eip)) (call $chain_bump) (return)))
     (if (i32.eqz (global.get $sbh_eip_b))
-      (then (global.set $sbh_eip_b (local.get $eip)))))
+      (then (global.set $sbh_eip_b (local.get $eip)) (call $chain_bump))))
 
   (func $fast_msvc_sbh_scan (result i32)
     (local $wa i32) (local $scan i32) (local $scan_wa i32) (local $page i32)

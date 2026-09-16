@@ -704,8 +704,18 @@
     (global.set $esp (i32.add (global.get $esp) (i32.add (i32.const 4) (local.get $op))))
     (call $cs_pop)
     (return_call $branch_end))
+  ;; H43's operand word is emitted as 0 at all three decoder sites and read by
+  ;; nothing, so it is the whole 32 bits of chain slot: epoch in the high half,
+  ;; signed delta in the low one. After $read_thread_word, $ip stands 12 bytes
+  ;; past the op header, so the operand word is at $ip-8.
+  ;; docs/block-chaining-design.md.
   (func $th_jmp (param $op i32)
     (global.set $eip (call $read_thread_word))
+    (if (global.get $block_chain_on)
+      (then
+        (return_call $chain_end
+          (i32.sub (global.get $ip) (i32.const 8))
+          (local.get $op) (i32.const 0) (i32.const 0))))
     (return_call $branch_end))
   (func $th_jcc (param $op i32)
     (local $fall i32) (local $target i32) (local $taken i32)
@@ -749,7 +759,12 @@
   ;; comparison against the fork point measure unequal amounts of work.
   ;; When the budget runs out the return unwinds to $run with $eip already
   ;; naming the fall-through block, so the next batch simply looks it up.
-  (func $jcc_end (param $op i32)
+  ;; $opaddr is the address of this terminator's own operand word in whatever
+  ;; stream it is running from -- $ip-12, because both raw words have been read
+  ;; by the time a specialised Jcc gets here. Block chaining writes its resolved
+  ;; target into bits 31..2 of that word and leaves bits 1..0 alone, which is
+  ;; why the two tests below are unchanged. docs/block-chaining-design.md.
+  (func $jcc_end (param $op i32) (param $opaddr i32)
     ;; Headroom counter for the address-ordered page emit that is NOT built
     ;; (docs/page-compile-design.md sections 2.1/3). Bit 1 says this Jcc fell
     ;; through; bit 0 says the fall-through block is the very next thing in the
@@ -774,6 +789,16 @@
                 (call $next)
                 (return)))
             (return)))))
+    ;; Bit 1 is set by the caller when the branch was NOT taken, so it is also
+    ;; the edge tag the chain slot carries: reaching here with it set means the
+    ;; fall-through block was not adjacent and this edge is going to the desk
+    ;; exactly like a taken one. Both are chainable, and the slot follows
+    ;; whichever last missed. docs/block-chaining-design.md.
+    (if (global.get $block_chain_on)
+      (then
+        (return_call $chain_end (local.get $opaddr)
+          (i32.shr_u (local.get $op) (i32.const 2)) (i32.const 2)
+          (i32.shr_u (i32.and (local.get $op) (i32.const 2)) (i32.const 1)))))
     (return_call $branch_end))
   (func $th_jcc_o (param $op i32)
     (local $fall i32) (local $target i32)
@@ -783,7 +808,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_no (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 1))))
@@ -792,7 +817,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_b (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 2))))
@@ -801,7 +826,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_ae (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 3))))
@@ -810,7 +835,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_z (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 4))))
@@ -819,7 +844,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_nz (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 5))))
@@ -828,7 +853,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_be (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 6))))
@@ -837,7 +862,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_a (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 7))))
@@ -846,7 +871,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_s (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 8))))
@@ -855,7 +880,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_ns (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 9))))
@@ -864,7 +889,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_p (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 10))))
@@ -873,7 +898,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_np (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 11))))
@@ -882,7 +907,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_l (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 12))))
@@ -891,7 +916,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_ge (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 13))))
@@ -900,7 +925,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_le (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 14))))
@@ -909,7 +934,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_jcc_g (param $op i32)
     (local $fall i32) (local $target i32)
     (if (global.get $handler_hist_enabled) (then (call $branch_hist_record_jcc (i32.const 15))))
@@ -918,7 +943,7 @@
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
-    (return_call $jcc_end (local.get $op)))
+    (return_call $jcc_end (local.get $op) (i32.sub (global.get $ip) (i32.const 12))))
   (func $th_block_end (param $op i32)
     (global.set $eip (local.get $op))
     (return_call $branch_end))

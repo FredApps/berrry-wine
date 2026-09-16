@@ -262,6 +262,18 @@ if (TREE_FOLD_ALIAS) {
 }
 const BLOCK_EXEC = hasFlag('block-exec') || TREE_FOLD_ALIAS;
 const BLOCK_EXEC_STATS = hasFlag('block-exec-stats');
+// --block-chain: patch a taken direct branch's own operand word with the
+// resolved threaded-code address of its target, so every later transfer skips
+// $branch_end and $page_resolve. Default OFF; the `chain:` line at exit is the
+// counter pair the round's gate is stated against.
+// docs/block-chaining-design.md.
+const BLOCK_CHAIN = hasFlag('block-chain');
+if (BLOCK_CHAIN && BLOCK_EXEC) {
+  console.error('--block-chain and --block-exec are mutually exclusive: the '
+    + 'executor copies threaded streams into descriptor fallback pools, and a '
+    + 'chain delta is only meaningful in the word it was patched into.');
+  process.exit(2);
+}
 const BLOCK_EXEC_MIN_UOPS = parseInt(getArg('block-exec-min-uops', '0'), 10) || 0;
 // Debug ceiling. With the floor it makes the installer a one-size sieve, which
 // is how a --block-exec divergence gets bisected to a block shape.
@@ -623,6 +635,11 @@ const HANDLER_HIST_THREADS = HANDLER_HIST_THREAD_SPEC.split(',')
   .filter(v => Number.isInteger(v) && v >= 0);
 const HANDLER_HIST_THREAD = HANDLER_HIST_THREADS.length ? HANDLER_HIST_THREADS[0] : -1;
 const HANDLER_HIST_START = Math.max(0, parseInt(getArg('handler-hist-start', '0'), 10) || 0);
+// How many rows the histogram prints. The default 24 is a reading convenience,
+// not a measurement boundary: a question about the terminator population (which
+// handlers reach $branch_end) needs the tail, because a block-ending handler can
+// be far down a per-op histogram and still be a large share of the transfers.
+const HANDLER_HIST_TOP = Math.max(1, parseInt(getArg('handler-hist-top', '24'), 10) || 24);
 const HANDLER_HIST_STOP = Math.max(HANDLER_HIST_START + 1,
   parseInt(getArg('handler-hist-stop', String(MAX_BATCHES)), 10) || MAX_BATCHES);
 // --hot-block-dump=FILE: write every distinct block the histogram window saw,
@@ -4066,6 +4083,7 @@ async function main() {
   if (NO_LUT_SUPEROPS) inheritWasm('set_loop_lut_emit', 0);
   if (COPY_SUPEROPS) inheritWasm('set_loop_copy_emit', 1);
   if (NO_COPY_SUPEROPS) inheritWasm('set_loop_copy_emit', 0);
+  if (BLOCK_CHAIN) inheritWasm('set_block_chain', 1);
   if (BLOCK_EXEC) inheritWasm('set_block_exec', 1);
   if (BLOCK_EXEC_MIN_UOPS) inheritWasm('set_block_exec_min_uops', BLOCK_EXEC_MIN_UOPS);
   if (BLOCK_EXEC_MAX_UOPS) inheritWasm('set_block_exec_max_uops', BLOCK_EXEC_MAX_UOPS);
@@ -4977,6 +4995,9 @@ async function main() {
   if (NO_COPY_SUPEROPS && instance.exports.set_loop_copy_emit) {
     instance.exports.set_loop_copy_emit(0);
   }
+  if (BLOCK_CHAIN && instance.exports.set_block_chain) {
+    instance.exports.set_block_chain(1);
+  }
   if (BLOCK_EXEC && instance.exports.set_block_exec) {
     instance.exports.set_block_exec(1);
   }
@@ -5328,7 +5349,7 @@ async function main() {
     }
     handlers.sort((a, b) => b.hits - a.hits);
     console.log(`[handler-hist] T${handlerHistThread} batches=${handlerHistWindowStart}..${batch} total=${total}`);
-    for (const row of handlers.slice(0, 24)) {
+    for (const row of handlers.slice(0, HANDLER_HIST_TOP)) {
       const pct = total ? (row.hits * 100 / total).toFixed(2) : '0.00';
       console.log(`  H${row.id} ${handlerNames[row.id] || '$handler_' + row.id} ${row.hits} (${pct}%)`);
     }
@@ -9533,6 +9554,40 @@ if (VERBOSE) {
     if (threadManager) {
       for (const [, t] of threadManager.threads) {
         if (t.instance) bxReport(`T${t.tid}`, t.instance.exports);
+      }
+    }
+  }
+
+  // Block chaining (docs/block-chaining-design.md). Printed in BOTH arms, so
+  // the off arm's `branchEnd` is the denominator the round's gate is stated
+  // against: `hits` is transfers that never reached $branch_end at all, and
+  // `branchEnd` is every entry to it, chained-terminator or not. `slow` is the
+  // subset of $branch_end entries that came from a chainable terminator, which
+  // is what says whether a low hit rate is "not chained yet" or "not chainable".
+  if ((BLOCK_CHAIN || VERBOSE) && instance.exports.get_branch_end_calls) {
+    const chainReport = (label, e) => {
+      if (!e || !e.get_branch_end_calls) return;
+      const hits = e.get_chain_hits();
+      const be = e.get_branch_end_calls();
+      const transfers = hits + be;
+      console.log(`chain: ${label} armed`, e.get_block_chain() ? 'yes' : 'no',
+        'hits', String(hits),
+        'slow', String(e.get_chain_slow()),
+        'branchEnd', String(be),
+        'chained%', transfers > 0n
+          ? (Number(hits * 10000n / transfers) / 100).toFixed(2) : '-',
+        'patches', e.get_chain_patches(),
+        'epochBumps', e.get_chain_bumps(),
+        'epoch', e.get_chain_epoch(),
+        // The third population, and the reason a chained% below 100 is not a
+        // miss rate: an adjacent fall-through never reaches either desk.
+        'adjacent', e.get_page_ft ? e.get_page_ft() : '-',
+        'ftMissed', e.get_page_ft_missed ? e.get_page_ft_missed() : '-');
+    };
+    chainReport('M ', instance.exports);
+    if (threadManager) {
+      for (const [, t] of threadManager.threads) {
+        if (t.instance) chainReport(`T${t.tid}`, t.instance.exports);
       }
     }
   }
