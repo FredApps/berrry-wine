@@ -124,6 +124,77 @@
   ;; the fallback-carrying ones". `--no-block-exec-leaf-fb` is the arm.
   (global $block_exec_leaf_fb (mut i32) (i32.const 1))
   (global $block_exec_leaf_fb_runs (mut i32) (i32.const 0))
+
+  ;; ======================================================================
+  ;; ROUND 18 (section 28): THE UNMODELLED-TERMINATOR SIDE EXIT.
+  ;; ======================================================================
+  ;; `termNotModelled` -- a block ending in a call, a ret, an indirect branch,
+  ;; a `loop`/`jecxz`, an int, a far jump, or one of the fused Jcc forms the
+  ;; classifier will not read -- was the top classify refusal in five of six
+  ;; apps (section 14.2). Such a block was not a member at all, so its BODY --
+  ;; which is ordinary code the executor can run perfectly well -- was left on
+  ;; the threaded path together with its terminator, and the region stopped at
+  ;; the edge into it.
+  ;;
+  ;; This admits it as a member with `term_kind 10`: the body runs natively
+  ;; like any other member's, and then the member SIDE-EXITS into threaded
+  ;; execution at its OWN terminator -- publish all eight, `$ip <- this
+  ;; member's tail`, `return_call $next` -- exactly as the one-block
+  ;; `term_kind 5` path does. Nothing about call/ret semantics is modelled.
+  ;;
+  ;; Section 14.6 said this "needs a per-block tail pointer first", because
+  ;; `$tail_ip` is one value derived from the descriptor header. The per-member
+  ;; pointer costs NO new descriptor words: a `term_kind 10` member evaluates
+  ;; no condition and has no in-region successor, so `term_a`/`term_b`/
+  ;; `term_uop`/`term_imm`/`term_cc`/`succ_taken`/`succ_fall` are all dead for
+  ;; it. `term_imm` (record word 7) carries the BYTE OFFSET of this member's
+  ;; copied terminator within the descriptor's fallback pool, and the executor
+  ;; reads `tail = $fbp + term_imm`. $REGION_BLOCK_WORDS is unchanged, every
+  ;; existing descriptor is byte-identical, and the single-`$tail_ip` fast path
+  ;; is untouched for a region that has no such member.
+  ;;
+  ;; A `term_kind 10` member is a DEAD END in the region graph: it has zero
+  ;; interior successors. A call's fall-through is deliberately not one -- the
+  ;; callee runs threaded and returns to call+5 through `$branch_end`, which
+  ;; re-enters the page index like any other transfer, and (since round 13) a
+  ;; region's index footprint is its HEAD BLOCK ONLY, so call+5 keeps its own
+  ;; entry and nothing about the return retires the region. Re-entering the
+  ;; region means re-entering at the head, as it does for every other exit.
+  ;;
+  ;; The A/B switch, ON within the executor; `--no-block-exec-tail-exits` is
+  ;; the arm that reproduces round 17 exactly on this build.
+  (global $block_exec_tail_exits (mut i32) (i32.const 1))
+  ;; term_kind 10 members in the region currently being built. Reset with the
+  ;; rest of the builder state in $bx_walk_once.
+  (global $bx_rg_tail_n (mut i32) (i32.const 0))
+  ;; ---- the census (section 28.1), which ran BEFORE the executor change ----
+  ;; Classify refusals with reason 4 (termNotModelled) seen during the walk in
+  ;; progress. Reset per walk; $bx_rg_nofit bumps it.
+  (global $bx_rg_tailref (mut i32) (i32.const 0))
+  ;; Walks that declined for `shortChain` (fewer than two members) but whose
+  ;; member count PLUS the blocks refused for termNotModelled would have been
+  ;; two or more. This is the upper bound on regions the side exit can add --
+  ;; upper, because it assumes every such block would also have passed the
+  ;; body scan, the uop caps and the cost model.
+  (global $bx_rg_tail_would_admit (mut i32) (i32.const 0))
+  ;; Walks that DID install and had at least one termNotModelled refusal: the
+  ;; regions that would have grown rather than the ones that would have
+  ;; appeared.
+  (global $bx_rg_tail_would_grow (mut i32) (i32.const 0))
+  ;; Total termNotModelled refusals seen inside a walk, and how many of those
+  ;; were actually admitted as term_kind 10 members.
+  (global $bx_rg_tail_refusals (mut i64) (i64.const 0))
+  (global $bx_rg_tail_admitted (mut i64) (i64.const 0))
+  ;; Installed regions carrying at least one, and the member total across them.
+  (global $bx_rg_tail_regions (mut i32) (i32.const 0))
+  (global $bx_rg_tail_members (mut i32) (i32.const 0))
+  ;; Why an admission was refused after the terminator was accepted in
+  ;; principle: 1 the switch is off, 2 the published stream could not be read,
+  ;; 3 the terminator's byte length is not in [8,64], 4 the pool is full.
+  (global $bx_rg_tail_norm (mut i32) (i32.const 0))
+  ;; RUNTIME: side exits actually taken through an unmodelled terminator.
+  (global $block_exec_tail_exit_runs (mut i32) (i32.const 0))
+
   (global $BX_UOP_WORDS i32 (i32.const 6))
   (global $BX_HEADER_WORDS i32 (i32.const 4))
 
@@ -932,6 +1003,10 @@
     ;; so far, and $tpos the terminator's position measured in MICRO-ops --
     ;; which is what the executor's `term_pos` field means.
     (local $nops i32) (local $ui i32) (local $tpos i32)
+    ;; Round 18 (section 28): the unmodelled-terminator side exit. $tail_p is
+    ;; the terminator op's address in the PUBLISHED stream and $tail_bytes its
+    ;; length there, which is what gets copied into the descriptor's pool.
+    (local $tail_p i32) (local $tail_bytes i32) (local $sbase i32)
 
     (global.set $bx_rg_fw0 (global.get $bx_rg_fw))
     (local.set $n (global.get $op_index_n))
@@ -994,6 +1069,78 @@
         (local.set $fall (local.get $taken))
         (local.set $nuops (i32.sub (local.get $n) (i32.const 1)))
         (local.set $tidx (i32.const -1))))
+    ;; ---- ROUND 18 (section 28): THE UNMODELLED TERMINATOR ----------------
+    ;; Nothing above recognised this block's last op as an edge the descriptor
+    ;; can express -- it is a call, a ret, an indirect branch, a loop/jecxz, an
+    ;; int, a far jump, or a fused Jcc form the two arms above declined. Admit
+    ;; the block anyway, as a DEAD END whose body runs natively and whose
+    ;; terminator runs THREADED, from a copy of its own published words parked
+    ;; in the descriptor's fallback pool.
+    ;;
+    ;; No call/ret semantics are modelled anywhere. The member simply publishes
+    ;; all eight registers, points $ip at its own tail and `return_call $next`
+    ;; -- the same three lines the one-block `term_kind 5` install has always
+    ;; run, applied per member instead of per region.
+    ;;
+    ;; $eip is restored to the member's entry address at the exit, because the
+    ;; threaded arm this is compared against had the PREVIOUS block's
+    ;; terminator set it there, and a folded interior edge does not. Section
+    ;; 2.1's "mid-block $eip is stale at the block's entry" is then true inside
+    ;; a region as well, which is what `ret`'s crash reporting and
+    ;; `--fault-null` read.
+    (if (i32.and (i32.eqz (local.get $shape))
+                 (i32.ne (global.get $block_exec_tail_exits) (i32.const 0)))
+      (then
+        (block $no_tail
+          ;; The exits budget. A side exit IS an exit -- it is a place the
+          ;; region hands control back -- so it is held to $REGION_MAX_EXITS
+          ;; together with the modelled ones. This is the cheap half of the
+          ;; test; $bx_region_finish does the exact one once the edge set is
+          ;; resolved and the modelled exit count is known.
+          (if (i32.ge_u (global.get $bx_rg_tail_n) (global.get $REGION_MAX_EXITS))
+            (then (global.set $bx_rg_tail_norm (i32.const 4)) (br $no_tail)))
+          ;; Where this block's published threaded bytes are. The walker never
+          ;; decodes (round 13), so the terminator's length cannot be taken
+          ;; from $thread_alloc the way the one-block installer takes it -- it
+          ;; is the distance from the last op to the end of the published
+          ;; stream, and $page_cached_stream is what knows that end. It also
+          ;; answers for a member that is itself a one-block descriptor, by
+          ;; handing back the verbatim copy OP_INDEX was rebuilt from, so the
+          ;; two agree by construction.
+          (local.set $sbase (call $page_cached_stream (local.get $start_eip)))
+          (if (i32.eqz (local.get $sbase))
+            (then (global.set $bx_rg_tail_norm (i32.const 2)) (br $no_tail)))
+          (local.set $tail_p (call $loop_op_at (i32.sub (local.get $n) (i32.const 1))))
+          (if (i32.or (i32.lt_u (local.get $tail_p) (local.get $sbase))
+                      (i32.ge_u (local.get $tail_p)
+                        (i32.add (local.get $sbase)
+                                 (global.get $page_cached_stream_len))))
+            (then (global.set $bx_rg_tail_norm (i32.const 2)) (br $no_tail)))
+          (local.set $tail_bytes
+            (i32.sub (i32.add (local.get $sbase) (global.get $page_cached_stream_len))
+                     (local.get $tail_p)))
+          ;; The same 8..64 window the one-block installer holds its tail to:
+          ;; an op is at least a {handler, operand} pair and no terminator in
+          ;; the table carries more than fourteen inline words.
+          (if (i32.or (i32.lt_u (local.get $tail_bytes) (i32.const 8))
+                      (i32.or (i32.gt_u (local.get $tail_bytes) (i32.const 64))
+                              (i32.and (local.get $tail_bytes) (i32.const 3))))
+            (then (global.set $bx_rg_tail_norm (i32.const 3)) (br $no_tail)))
+          (local.set $shape (i32.const 1))
+          (local.set $term_kind (i32.const 10))
+          ;; 15 is "absent". It keeps $bx_opt_term_wreg at -1 (the select below
+          ;; requires `term_a < 8`), which is right: the terminator is not
+          ;; folded here, so it writes nothing this pass has to model.
+          (local.set $term_a (i32.const 15))
+          ;; Both successors are the member itself, so $bx_walk_once's two
+          ;; worklist pushes are no-ops rather than a walk into address 0.
+          ;; A call's fall-through is NOT an interior edge: the callee runs
+          ;; threaded and returns to call+5 through $branch_end, which resolves
+          ;; it through the page index like any other transfer.
+          (local.set $fall  (local.get $start_eip))
+          (local.set $taken (local.get $start_eip))
+          (local.set $nuops (i32.sub (local.get $n) (i32.const 1)))
+          (local.set $tidx  (i32.const -1)))))
     (if (i32.eqz (local.get $shape)) (then (return (call $bx_rg_nofit (i32.const 4)))))
     (if (i32.gt_u (i32.add (local.get $u0) (local.get $nuops))
                   (global.get $BX_RG_UOPS_MAX))
@@ -1365,6 +1512,39 @@
               (global.get $TU_EA_SIB))
           (then (return (call $bx_rg_nofit (i32.const 8)))))))
 
+    ;; ---- ROUND 18: park this member's terminator in the pool -------------
+    ;; Last, because every refusal above rewinds the pool cursor and there is
+    ;; no refusal after this point. The offset goes in `term_imm`, which a
+    ;; term_kind 10 member does not otherwise use, so $REGION_BLOCK_WORDS and
+    ;; every existing descriptor's bytes are unchanged -- see section 28.
+    (if (i32.eq (local.get $term_kind) (i32.const 10))
+      (then
+        (if (i32.gt_u
+              (i32.add (global.get $bx_rg_fw)
+                       (i32.shr_u (local.get $tail_bytes) (i32.const 2)))
+              (global.get $BX_RG_FB_MAX))
+          (then (return (call $bx_rg_nofit (i32.const 7)))))
+        (local.set $term_imm (i32.shl (global.get $bx_rg_fw) (i32.const 2)))
+        (local.set $k (i32.const 0))
+        (block $tl_done
+          (loop $tl
+            (br_if $tl_done (i32.ge_u (i32.shl (local.get $k) (i32.const 2))
+                                      (local.get $tail_bytes)))
+            (i32.store
+              (i32.add (local.get $fbp)
+                (i32.shl (i32.add (global.get $bx_rg_fw) (local.get $k))
+                         (i32.const 2)))
+              (i32.load (i32.add (local.get $tail_p)
+                          (i32.shl (local.get $k) (i32.const 2)))))
+            (local.set $k (i32.add (local.get $k) (i32.const 1)))
+            (br $tl)))
+        (global.set $bx_rg_fw
+          (i32.add (global.get $bx_rg_fw)
+                   (i32.shr_u (local.get $tail_bytes) (i32.const 2))))
+        (global.set $bx_rg_tail_n (i32.add (global.get $bx_rg_tail_n) (i32.const 1)))
+        (global.set $bx_rg_tail_admitted
+          (i64.add (global.get $bx_rg_tail_admitted) (i64.const 1)))))
+
     ;; ---- commit the builder record -------------------------------------
     (local.set $rec (call $bx_rg_rec (global.get $bx_rg_n)))
     (i32.store          (local.get $rec) (local.get $u0))         ;; uop_off
@@ -1385,8 +1565,15 @@
     ;; cost is compared against bills ONE step for the whole run. Without the
     ;; subtraction `--block-exec-x87` would silently give the guest fewer ops
     ;; per batch inside a region than outside one.
+    ;;
+    ;; ROUND 18: minus one more for a term_kind 10 member. Its terminator is
+    ;; NOT folded -- it dispatches through $next on the way out and bills its
+    ;; own step there, exactly as it does on the threaded path -- so counting
+    ;; it here would charge the guest twice for one instruction.
     (i32.store offset=36 (local.get $rec)
-      (i32.sub (i32.add (local.get $n) (local.get $extra)) (local.get $absorbed)))
+      (i32.sub
+        (i32.sub (i32.add (local.get $n) (local.get $extra)) (local.get $absorbed))
+        (i32.eq (local.get $term_kind) (i32.const 10))))
     (i32.store offset=40 (local.get $rec) (i32.const 0))          ;; succ_taken, later
     (i32.store offset=44 (local.get $rec) (i32.const 0))          ;; succ_fall, later
     (i32.store offset=48 (local.get $rec) (local.get $start_eip))
@@ -1431,6 +1618,15 @@
   (func $bx_rg_nofit (param $r i32) (result i32)
     (local $p i32)
     (global.set $bx_rg_fw (global.get $bx_rg_fw0))
+    ;; ROUND 18 census. Reason 4 is the one the side exit is aimed at, and the
+    ;; per-walk counter is what lets $bx_region_finish say whether THIS walk
+    ;; would have become (or grown) a region if the block had been admitted.
+    (if (i32.eq (local.get $r) (i32.const 4))
+      (then
+        (global.set $bx_rg_tailref
+          (i32.add (global.get $bx_rg_tailref) (i32.const 1)))
+        (global.set $bx_rg_tail_refusals
+          (i64.add (global.get $bx_rg_tail_refusals) (i64.const 1)))))
     (local.set $p (call $bx_rg_word
       (i32.add (global.get $BX_RG_NOFIT_OFF) (local.get $r))))
     (i32.store (local.get $p) (i32.add (i32.load (local.get $p)) (i32.const 1)))
@@ -1730,6 +1926,14 @@
     (local.set $n (global.get $bx_rg_n))
     (if (i32.lt_u (local.get $n) (i32.const 2))
       (then
+        ;; ROUND 18 census. A walk that found fewer than two members but
+        ;; refused at least one block for termNotModelled is a region the side
+        ;; exit could create -- provided that block also survives the body
+        ;; scan and the cost model, which is why this is an UPPER bound.
+        (if (i32.ge_u (i32.add (local.get $n) (global.get $bx_rg_tailref))
+                      (i32.const 2))
+          (then (global.set $bx_rg_tail_would_admit
+                  (i32.add (global.get $bx_rg_tail_would_admit) (i32.const 1)))))
         (call $bx_rg_decline (i32.const 6))
         (return (i32.const 0))))
     (local.set $head (global.get $bx_rg_head))
@@ -1747,6 +1951,23 @@
       (loop $ed
         (br_if $ed_done (i32.ge_u (local.get $i) (local.get $n)))
         (local.set $rec (call $bx_rg_rec (local.get $i)))
+        ;; ROUND 18. A term_kind 10 member has no in-region successor at all:
+        ;; it leaves through its own threaded terminator, so there is no edge
+        ;; to resolve and no exit-table slot to claim. Both successor words are
+        ;; set to -1, which is not a member index, so $bx_rg_carry_pass's
+        ;; predecessor count never attributes an edge to it either. Its share
+        ;; of the exits budget is charged below, against $bx_rg_tail_n.
+        (if (i32.eq (i32.load offset=12 (local.get $rec)) (i32.const 10))
+          (then
+            (i32.store offset=40 (local.get $rec) (i32.const -1))
+            (i32.store offset=44 (local.get $rec) (i32.const -1))
+            (local.set $nat (i32.add (local.get $nat) (i32.load offset=64 (local.get $rec))))
+            (local.set $nfb (i32.add (local.get $nfb) (i32.load offset=68 (local.get $rec))))
+            (local.set $nx87run (i32.add (local.get $nx87run) (i32.load offset=76 (local.get $rec))))
+            (local.set $nx87fb  (i32.add (local.get $nx87fb)  (i32.load offset=80 (local.get $rec))))
+            (local.set $nx87nat (i32.add (local.get $nx87nat) (i32.load offset=84 (local.get $rec))))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $ed)))
         (local.set $e (call $bx_rg_edge (i32.load offset=60 (local.get $rec))))
         (if (i32.eq (local.get $e) (i32.const 0x7FFFFFFF))
           (then
@@ -1778,6 +1999,16 @@
 
     (local.set $ne (i32.load (call $bx_rg_word
                      (i32.sub (global.get $BX_RG_EXIT_OFF) (i32.const 1)))))
+    ;; ROUND 18: a side exit through an unmodelled terminator counts against
+    ;; the <= 8 exits rule alongside the modelled ones. It owns no exit-table
+    ;; slot -- it has no resume EIP to publish, the threaded terminator picks
+    ;; the successor -- so the sum is checked here rather than inside
+    ;; $bx_rg_edge.
+    (if (i32.gt_u (i32.add (local.get $ne) (global.get $bx_rg_tail_n))
+                  (global.get $REGION_MAX_EXITS))
+      (then
+        (call $bx_rg_decline (i32.const 2))
+        (return (i32.const 0))))
     (local.set $total (global.get $bx_rg_uops))
     ;; The span's high edge. Round 9's chain was guest-ascending so the last
     ;; member ended it; a closure walk visits in edge order, so take the max.
@@ -1811,14 +2042,22 @@
     ;; in $nfb and is billed at its own, much smaller, $BX_C_X87RUN. With
     ;; --block-exec-x87 off every one of these is zero and the expression is
     ;; the round-10 one, unchanged.
+    ;;
+    ;; ROUND 18: plus one $BX_C_TRANSFER per term_kind 10 member. Leaving
+    ;; through an unmodelled terminator costs the eight-register spill and the
+    ;; dispatch into it -- the same pair the one-block path's threaded tail
+    ;; pays -- and $BX_C_TRANSFER is exactly what that pair is priced at on the
+    ;; benefit side. No other knob moves; the K, thrash, memo and reserve
+    ;; settings are round 17's.
     (local.set $cost
+      (i32.add (i32.mul (global.get $bx_rg_tail_n) (global.get $BX_C_TRANSFER))
       (i32.add (global.get $BX_C_ENTRY)
         (i32.add
           (i32.mul (local.get $nx87run) (global.get $BX_C_X87RUN))
           (i32.add
             (i32.mul (i32.sub (local.get $nfb) (local.get $nx87fb))
                      (global.get $BX_C_FALLBACK))
-            (i32.mul (local.get $nx87fb) (global.get $BX_C_X87FB))))))
+            (i32.mul (local.get $nx87fb) (global.get $BX_C_X87FB)))))))
     (if (global.get $block_exec_min_uops)
       (then
         (if (i32.lt_u (local.get $total) (global.get $block_exec_min_uops))
@@ -2047,6 +2286,19 @@
       (then (call $page_mark_spanreg (local.get $head))))
     (global.set $bx_region_installs
       (i32.add (global.get $bx_region_installs) (i32.const 1)))
+    ;; ROUND 18. The census half: an installed region that still refused a
+    ;; block for termNotModelled is one the side exit could have grown. The
+    ;; coverage half: how many regions carry a term_kind 10 member, and how
+    ;; many such members there are in total.
+    (if (global.get $bx_rg_tailref)
+      (then (global.set $bx_rg_tail_would_grow
+              (i32.add (global.get $bx_rg_tail_would_grow) (i32.const 1)))))
+    (if (global.get $bx_rg_tail_n)
+      (then
+        (global.set $bx_rg_tail_regions
+          (i32.add (global.get $bx_rg_tail_regions) (i32.const 1)))
+        (global.set $bx_rg_tail_members
+          (i32.add (global.get $bx_rg_tail_members) (global.get $bx_rg_tail_n)))))
     ;; Round 16: regions that actually carry x87. Counted at INSTALL and not at
     ;; classify, because a member that was classified into a region nobody
     ;; installed is not coverage.
@@ -2217,6 +2469,10 @@
     (global.set $bx_rg_fw0    (i32.const 0))
     (global.set $bx_rg_head   (local.get $head))
     (global.set $bx_rg_wl_n   (i32.const 0))
+    ;; ROUND 18: per-walk state -- the census counter and the count of
+    ;; term_kind 10 members this build has taken.
+    (global.set $bx_rg_tailref (i32.const 0))
+    (global.set $bx_rg_tail_n  (i32.const 0))
     (drop (call $bx_wl_push (local.get $head)))
 
     (local.set $ok (i32.const 1))
@@ -5275,6 +5531,26 @@
           (then
             (local.set $tail_exit (i32.const 1))
             (local.set $live_out (i32.const 0xFF))
+            (br $done)))
+        ;; term_kind 10 (round 18, section 28) -- THE UNMODELLED TERMINATOR.
+        ;; The same exit as term_kind 5 with one word of indirection: this
+        ;; MEMBER's terminator was copied into the descriptor's fallback pool
+        ;; at byte offset `term_imm`, so the tail is per member rather than the
+        ;; header's one $tail_ip. Publish all eight, restore $eip to this
+        ;; block's entry -- which is where the threaded arm's previous
+        ;; terminator left it, and which a folded interior edge did not write
+        ;; -- and walk into the copy. Nothing about the terminator itself is
+        ;; interpreted here; $next dispatches it and it transfers as it always
+        ;; does.
+        (if (i32.eq (local.get $term_kind) (i32.const 10))
+          (then
+            (local.set $tail_exit (i32.const 1))
+            (local.set $live_out (i32.const 0xFF))
+            (local.set $tail_ip
+              (i32.add (local.get $fbp) (local.get $term_imm)))
+            (global.set $eip (i32.load offset=48 (local.get $brp)))
+            (global.set $block_exec_tail_exit_runs
+              (i32.add (global.get $block_exec_tail_exit_runs) (i32.const 1)))
             (br $done)))
         ;; Which edge. term_kind 4 is an unconditional one -- a block that ends
         ;; in a `jmp`, or one that simply falls into its successor -- and it

@@ -2157,6 +2157,25 @@ const TOGGLES = {
     e.set_block_exec_leaf(1);
     e.set_block_exec_leaf_fb(1);
   },
+  // ROUND 18 (section 28): a region member may end in an UNMODELLED terminator
+  // -- a call, a ret, an indirect branch, a loop/jecxz -- and side-exit into
+  // threaded execution there (term_kind 10). The executor and both leaves are
+  // armed in BOTH arms, so what varies is only whether the region classifier
+  // will admit such a member.
+  //
+  // Point this at the EXISTING region shapes (region_if2, region_diamond4,
+  // region_state6, region_ladder5, region_call1, region_null). None of them
+  // can gain a kind-10 member -- region_call1's call is what STOPS its region
+  // in both arms, because the call is the head block's own terminator and a
+  // region needs two members -- so every one of them is a null control, and
+  // the gate for this round is that they stay inside the +-2% noise floor.
+  // A toggle that is meant to be free has to be shown to be free on the
+  // shapes it is not supposed to touch; that is the whole measurement here.
+  block_exec_tail_exits: (e, v) => {
+    e.set_block_exec(1);
+    e.set_block_exec_min_uops(2);
+    e.set_block_exec_tail_exits(v);
+  },
 };
 const applyToggle = (e, name, v) => {
   const t = TOGGLES[name];

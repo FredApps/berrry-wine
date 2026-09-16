@@ -2944,6 +2944,33 @@
   (func (export "get_block_exec_leaf_fb") (result i32) (global.get $block_exec_leaf_fb))
   (func (export "get_block_exec_leaf_fb_runs") (result i32)
     (global.get $block_exec_leaf_fb_runs))
+  ;; Round 18 (section 28): the unmodelled-terminator side exit. Zero here
+  ;; reproduces round 17 exactly on this build -- a block ending in a call, a
+  ;; ret or an indirect branch goes back to being a classify refusal.
+  (func (export "set_block_exec_tail_exits") (param $flag i32)
+    (global.set $block_exec_tail_exits (local.get $flag)))
+  (func (export "get_block_exec_tail_exits") (result i32)
+    (global.get $block_exec_tail_exits))
+  (func (export "get_block_exec_tail_exit_runs") (result i32)
+    (global.get $block_exec_tail_exit_runs))
+  ;; The census. `would_admit` / `would_grow` are the UPPER BOUND -- walks that
+  ;; a term_kind 10 member could have turned into, or grown, a region --
+  ;; counted whether or not the switch above is on, so the off arm measures the
+  ;; opportunity and the on arm measures what was realised.
+  (func (export "get_block_exec_tail_would_admit") (result i32)
+    (global.get $bx_rg_tail_would_admit))
+  (func (export "get_block_exec_tail_would_grow") (result i32)
+    (global.get $bx_rg_tail_would_grow))
+  (func (export "get_block_exec_tail_refusals") (result i64)
+    (global.get $bx_rg_tail_refusals))
+  (func (export "get_block_exec_tail_admitted") (result i64)
+    (global.get $bx_rg_tail_admitted))
+  (func (export "get_block_exec_tail_regions") (result i32)
+    (global.get $bx_rg_tail_regions))
+  (func (export "get_block_exec_tail_members") (result i32)
+    (global.get $bx_rg_tail_members))
+  (func (export "get_block_exec_tail_norm") (result i32)
+    (global.get $bx_rg_tail_norm))
   (func (export "get_bx_pass_rmw") (result i64) (global.get $bx_pass_rmw))
   (func (export "get_block_exec_installs") (result i32)
     (global.get $block_exec_installs))

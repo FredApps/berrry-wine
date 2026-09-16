@@ -154,6 +154,12 @@ async function main() {
   // claim, so it is asserted rather than assumed.
   check('the executor is OFF in a fresh instance', e.get_block_exec() === 0,
     `get_block_exec()=${e.get_block_exec()}`);
+  // Round 18 (section 28). The side exit ships ON, and this is the only place
+  // that can say so: every `arm()` below writes the switch, so after the first
+  // one the global reports the last arm's request and not the default.
+  check('the round-18 side exit is ON in a fresh instance',
+    e.get_block_exec_tail_exits() === 1,
+    `get_block_exec_tail_exits()=${e.get_block_exec_tail_exits()}`);
 
   // Multi-block discovery is hotness-gated in production: a head must be
   // branched to K times before the CFG walk is attempted at all, so the walk
@@ -212,9 +218,18 @@ async function main() {
   // Round 17's second leaf (H464). Same reasoning: every call site predates it
   // and must keep running with it in its shipped state (on).
   let leafFbGate = true;
+  // Round 18's side exit (section 28). Same contract once more: every call
+  // site above predates it and must keep running with it in its shipped state
+  // (on), and the round-18 section at the bottom of this file is the only
+  // place that varies it.
+  let tailGate = true;
 
-  function arm(bytes, blockExec, seed) {
-    const addr = nextCode();
+  // `opts.addr` places the snippet at an address the caller already knows.
+  // Round 18's indirect-jump case needs it: a `jmp r32` target has to be
+  // baked into the bytes as a literal, so the bytes cannot be assembled until
+  // the address is chosen, and each arm is a different address by design.
+  function arm(bytes, blockExec, seed, opts) {
+    const addr = (opts && opts.addr) || nextCode();
     const wa = g2w(addr);
     for (let i = 0; i < bytes.length; i++) mem[wa + i] = bytes[i];
     seedData();
@@ -242,6 +257,11 @@ async function main() {
     // A/B that proves the leaf is an optimization and not a behaviour change.
     e.set_block_exec_leaf(leafGate ? 1 : 0);
     e.set_block_exec_leaf_fb(leafFbGate ? 1 : 0);
+    e.set_block_exec_tail_exits(tailGate ? 1 : 0);
+    const tailRegionsBefore = e.get_block_exec_tail_regions();
+    const tailMembersBefore = e.get_block_exec_tail_members();
+    const tailRunsBefore = e.get_block_exec_tail_exit_runs();
+    const tailAdmittedBefore = e.get_block_exec_tail_admitted();
     const leafBefore = e.get_block_exec_leaf_runs();
     const leafFbBefore = e.get_block_exec_leaf_fb_runs();
     const runsBefore = e.get_block_exec_runs();
@@ -278,6 +298,10 @@ async function main() {
       runs: e.get_block_exec_runs() - runsBefore,
       leafRuns: e.get_block_exec_leaf_runs() - leafBefore,
       leafFbRuns: e.get_block_exec_leaf_fb_runs() - leafFbBefore,
+      tailRegions: e.get_block_exec_tail_regions() - tailRegionsBefore,
+      tailMembers: e.get_block_exec_tail_members() - tailMembersBefore,
+      tailRuns: e.get_block_exec_tail_exit_runs() - tailRunsBefore,
+      tailAdmitted: Number(e.get_block_exec_tail_admitted() - tailAdmittedBefore),
       declWhy: e.get_block_exec_decl_why(),
       lastFallbackFn: e.get_block_exec_last_fallback_fn(),
       fallbacks: Number(e.get_block_exec_fallback_ops() - fbBefore),
@@ -575,6 +599,14 @@ async function main() {
   const JZ = 4, JNZ = 5, JB = 2, JAE = 3, JL = 0xC, JGE = 0xD;
   const jccRel32 = (cc, rel) => [0x0F, 0x80 | cc, ...le32(rel)];
   const jmpRel32 = rel => [0xE9, ...le32(rel)];
+  // Round 18 (section 28). `call rel32` is five bytes like `jmp rel32` and is
+  // relative to the END of the instruction in exactly the same way, so the
+  // assembler below treats the two identically -- the only thing that differs
+  // is which terminator the decoder emits and, therefore, whether the region
+  // classifier can model it.
+  const callRel32 = rel => [0xE8, ...le32(rel)];
+  const jmpAbsR = r => [0xFF, 0xE0 | r];            // jmp r32 (indirect)
+  const loopRel8 = rel => [0xE2, rel & 0xFF];       // loop rel8
 
   // A two-pass assembler, because a multi-block snippet's displacements are
   // not knowable until every block's length is. A piece is a byte array, a
@@ -585,15 +617,17 @@ async function main() {
     let off = 0;
     for (const p of pieces) {
       if (p.label !== undefined) { at.set(p.label, off); continue; }
-      off += p.j !== undefined ? (p.j === 'jmp' ? 5 : 6) : p.length;
+      off += p.j !== undefined
+        ? (p.j === 'jmp' || p.j === 'call' ? 5 : 6) : p.length;
     }
     const out = [];
     for (const p of pieces) {
       if (p.label !== undefined) continue;
       if (p.j === undefined) { out.push(...p); continue; }
-      const size = p.j === 'jmp' ? 5 : 6;
+      const size = p.j === 'jmp' || p.j === 'call' ? 5 : 6;
       const rel = at.get(p.to) - (out.length + size);
-      out.push(...(p.j === 'jmp' ? jmpRel32(rel) : jccRel32(p.cc, rel)));
+      out.push(...(p.j === 'jmp' ? jmpRel32(rel)
+        : p.j === 'call' ? callRel32(rel) : jccRel32(p.cc, rel)));
     }
     return out;
   }
@@ -2652,6 +2686,412 @@ async function main() {
       check('the reserve is left at its shipped default',
         e.get_page_desc_rg_reserve() === 0,
         `rgReserve=${e.get_page_desc_rg_reserve()}`);
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // ROUND 18 -- THE SIDE EXIT THROUGH AN UNMODELLED TERMINATOR (§28).
+  //
+  // Before this round the region classifier refused any block whose
+  // terminator it could not model -- a call, a ret, an indirect branch, a
+  // loop/jecxz -- and the whole region walk stopped at the edge INTO such a
+  // block. That refusal (`termNotModelled`) was the top classify refusal in
+  // five of the six apps censused in §14.2.
+  //
+  // `term_kind 10` admits the member anyway and models NOTHING about what its
+  // terminator does. The member's body runs natively like any other; at its
+  // end the executor sets `$ip` to that member's OWN copied terminator, spills
+  // and returns to `$next` -- byte for byte what the one-block path has always
+  // done at `tail_ip`, except that the pointer is per-member instead of one
+  // per descriptor. So a `call` is not inlined, a `ret` is not modelled, and
+  // an indirect jump's target is never computed here: the threaded
+  // interpreter does all of it, exactly as before.
+  //
+  // Every case below therefore has the same shape of proof. Three arms of the
+  // same bytes -- threaded, round 17 (the side exit refused), round 18 -- must
+  // agree on every register, on guest memory and on the final EIP, and the
+  // round-18 arm must show the side exit actually admitted. Agreement alone
+  // would be satisfied by a region that never installed.
+  // ------------------------------------------------------------------
+  console.log('\n-- round 18: side exit through an unmodelled terminator --');
+  {
+    // The round-15/16 x87 encoders are scoped to their own section, so case
+    // (7) below carries its own copy rather than widening theirs.
+    const x87m18 = (op, digit, base, disp) =>
+      [op, 0x80 | (digit << 3) | base, ...le32(disp)];
+    const fldM18 = (base, disp) => x87m18(0xD9, 0, base, disp);
+    const fstpM18 = (base, disp) => x87m18(0xD9, 3, base, disp);
+
+    // Three arms, not two. The r17 arm is what makes this a test of the side
+    // exit rather than a test of the executor: it holds the executor, both
+    // leaves and the walk exactly where round 17 left them and varies only
+    // whether the classifier may admit a kind-10 member.
+    // `bytes` may be a byte array or a function of the address the arm will
+    // run at, for a snippet that has to name its own address (case 3).
+    function tailRegion(name, bytes, seed, opts) {
+      const mk = typeof bytes === 'function'
+        ? () => { const a = nextCode(); return [bytes(a), { addr: a }]; }
+        : () => [bytes, undefined];
+      let [b, o] = mk();
+      const threaded = arm(b, false, seed, o);
+      tailGate = false;
+      [b, o] = mk();
+      const r17 = arm(b, true, seed, o);
+      tailGate = true;
+      const riBefore = e.get_block_exec_region_installs();
+      const declBefore = {};
+      for (const w of [1, 2, 3, 4, 5, 6, 8, 9]) declBefore[w] = e.get_block_exec_region_why_n(w);
+      [b, o] = mk();
+      const r18 = arm(b, true, seed, o);
+      const installs = e.get_block_exec_region_installs() - riBefore;
+      const keys = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi'];
+      const agree = (a, b) => keys.every(k => a[k] === b[k]) &&
+        a.data === b.data && a.eip === b.eip;
+      const ok = agree(threaded, r17) && agree(threaded, r18);
+      check(name, ok, ok ? '' :
+        `\n         threaded ${hexRegs(threaded)}` +
+        `\n         r17      ${hexRegs(r17)}` +
+        `\n         r18      ${hexRegs(r18)}` +
+        `\n         eip ${threaded.eip.toString(16)} / ` +
+        `${r17.eip.toString(16)} / ${r18.eip.toString(16)}` +
+        (threaded.data === r18.data ? '' : '\n         guest memory differs'));
+      if (!(opts && opts.mayDecline)) {
+        check(`  ${name}: a kind-10 member was admitted and ran`,
+          r18.tailMembers >= 1 && r18.tailRuns >= 1,
+          `tailMembers=${r18.tailMembers} tailRegions=${r18.tailRegions} ` +
+          `sideExits=${r18.tailRuns} admitted=${r18.tailAdmitted} ` +
+          `regionInstalls=${installs} lastNoTail=${e.get_block_exec_tail_norm()} ` +
+          `why=${e.get_block_exec_region_why()} decl=[${
+            [1, 2, 3, 4, 5, 6, 8, 9].map(w =>
+              `${w}:${e.get_block_exec_region_why_n(w) - declBefore[w]}`)
+              .filter(t => !t.endsWith(':0')).join(' ')}]` +
+          ` — nothing side-exited, so this case proves nothing`);
+        // And the round-17 arm must NOT have one. Without this the case could
+        // pass on a build where the gate does nothing at all.
+        check(`  ${name}: round 17 refused it, as it must`,
+          r17.tailMembers === 0 && r17.tailRuns === 0,
+          `r17 tailMembers=${r17.tailMembers} sideExits=${r17.tailRuns}`);
+      }
+      return { threaded, r17, r18, installs };
+    }
+
+    // Every block below is deliberately FAT -- a dozen or so micro-ops of
+    // filler arithmetic. The shipped cost model prices a descriptor against a
+    // fixed entry cost ($BX_C_ENTRY, 190) plus a transfer per exit, so the
+    // two- and three-op blocks the earlier sections of this file use decline
+    // as `notWorthIt` (declWhy 1) and both arms then run the same threaded
+    // code. That is a real property of the executor and not something to
+    // lower the floor around: `arm()` already drops $block_exec_min_uops, but
+    // the cost model is what decides whether the REGION installs, and it is
+    // the thing these cases have to get past honestly.
+    const filler = (n) => {
+      const out = [];
+      for (let i = 0; i < n; i++) {
+        out.push(...(i & 1 ? aluRR(ADD, EDX, ESI) : aluRR(XOR, EDX, EDI)));
+      }
+      return out;
+    };
+
+    // (1) A MEMBER ENDING IN `call`. The loop body calls a leaf that adds to
+    //     eax and returns. The call is the body block's terminator, so before
+    //     this round the region stopped at the edge into the body and the
+    //     descriptor was one block (or nothing).
+    //
+    //     The call's fall-through is deliberately NOT an interior edge: the
+    //     callee runs threaded and returns to call+5 through a `ret`, which
+    //     re-enters the region only as a fresh ENTRY at whatever block starts
+    //     there. That is why a kind-10 member is a dead end with no in-region
+    //     successors, and it is what makes "do not model the call" sound.
+    tailRegion('member ending in call rel32', asm([
+      [...movRI(ECX, 8), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...filler(10), ...aluRI(7, ECX, 0)],        // ... ; cmp ecx,0
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...filler(10), ...decR(ECX)],
+      { j: 'call', to: 'leaf' },
+      [...filler(6), ...aluRR(ADD, EAX, ECX)],
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      [...filler(6), ...JOIN],
+      { label: 'leaf' },
+      [...aluRI(0, EAX, 3), ...RET],               // add eax,3 ; ret
+    ]));
+
+    // (2) A MEMBER ENDING IN `ret`. The `ret` is inside the region's closure
+    //     -- one arm of a diamond returns rather than joining -- so the
+    //     classifier must admit that arm as a kind-10 member and let the
+    //     threaded `ret` do the transfer. Nothing about the return address is
+    //     modelled; the executor only spills and hands `$ip` the copied `ret`.
+    //     Note where the `ret`s have to be to be TESTABLE. A walk never
+    //     decodes (round 13), so a successor block that has not run yet has no
+    //     published ops and can only become an exit -- which means a `ret` on
+    //     a loop's one-time exit path is invisible to this. The callee below
+    //     is entered on every trip of the outer loop and BOTH its arms return,
+    //     so both `ret`s are hot by the time the walk from the callee's head
+    //     runs.
+    tailRegion('member ending in ret', asm([
+      [...movRI(ECX, 10), ...movRI(EDI, 0)],
+      { label: 'outer' },
+      [...filler(6), ...decR(ECX)],
+      { j: 'call', to: 'fn' },
+      [...aluRR(ADD, EDI, EAX), ...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JNZ, to: 'outer' },
+      [...filler(4), ...JOIN],
+      { label: 'fn' },
+      [...filler(10), ...aluRI(7, ECX, 5)],        // cmp ecx,5
+      { j: 'jcc', cc: JB, to: 'low' },
+      [...filler(10), ...movRI(EAX, 0x1111), ...aluRR(ADD, EAX, ECX), ...RET],
+      { label: 'low' },
+      [...filler(10), ...movRI(EAX, 0x2222), ...aluRR(SUB, EAX, ECX), ...RET],
+    ]));
+
+    // (3) A MEMBER ENDING IN AN INDIRECT `jmp r32`. The target is a runtime
+    //     value, so there is no static successor to walk to even in
+    //     principle. This is the case that makes "side exit" the right shape:
+    //     a modelling approach would have to give up here, and this one does
+    //     not have to know anything.
+    //
+    //     The indirect jump is on the HOT path, not the exit path, for the
+    //     same reason the `ret` case above is arranged the way it is: it is
+    //     taken on every trip, and only the last trip leaves through the
+    //     ordinary conditional branch.
+    //
+    //     The target is a literal, so the snippet cannot be assembled until
+    //     its own address is known -- hence the builder form of `tailRegion`.
+    //     The jump goes forward to the loop's own tail block, which is taken
+    //     on every trip, so the kind-10 member is hot by the time the walk
+    //     runs rather than sitting on a one-shot exit path.
+    tailRegion('member ending in indirect jmp r32', (addr) => {
+      // Two passes: assemble once to learn the tail label's offset, then
+      // again with the real absolute address in the `mov edx,imm32`.
+      const build = (tgtAbs) => asm([
+        [...movRI(ECX, 10), ...movRI(EAX, 0)],
+        { label: 'top' },
+        [...filler(10), ...aluRI(7, ECX, 0)],
+        { j: 'jcc', cc: JZ, to: 'out' },
+        [...filler(10), ...decR(ECX), ...aluRI(0, EAX, 5),
+         ...movRI(EDX, tgtAbs), ...jmpAbsR(EDX)],
+        { label: 'tail' },
+        [...filler(6), ...aluRI(0, EAX, 0x100)],
+        { j: 'jmp', to: 'top' },
+        { label: 'out' },
+        // EDX is the indirect jump's scratch and therefore holds a different
+        // literal in each arm by construction. Clear it before the flags probe
+        // so the arms are comparable on the registers the SNIPPET computes.
+        [...filler(6), ...aluRR(XOR, EDX, EDX), ...JOIN],
+      ]);
+      // The `tail` label's offset does not depend on the immediate -- `mov
+      // edx,imm32` is five bytes whatever it holds -- so it can be summed
+      // from the piece lengths ahead of it, with the jcc's six.
+      const tailOff =
+        movRI(ECX, 10).length + movRI(EAX, 0).length +
+        filler(10).length + aluRI(7, ECX, 0).length + 6 +
+        filler(10).length + decR(ECX).length + aluRI(0, EAX, 5).length +
+        movRI(EDX, 0).length + jmpAbsR(EDX).length;
+      return build(addr + tailOff);
+    });
+
+    // (4) A MEMBER ENDING IN `loop`. `loop` both decrements ecx and branches,
+    //     which is precisely the kind of terminator the classifier has no
+    //     term_kind for -- and note the member's body must NOT be credited
+    //     with the decrement, because the threaded terminator performs it
+    //     after the executor has spilled.
+    {
+      // `loop` is rel8 and asm() only emits rel32 jumps, so this one is laid
+      // out by hand: [head][body ... loop back to body][join].
+      const head = [...movRI(EAX, 0), ...movRI(ECX, 7)];
+      const body = [...filler(10), ...aluRI(0, EAX, 2), ...aluRI(0, EDX, 1)];
+      const back = -(body.length + 2);
+      const bytes = [...head, ...body, ...loopRel8(back), ...JOIN];
+      tailRegion('member ending in loop rel8', bytes, null, { mayDecline: true });
+    }
+
+    // (5) SMC IN THE CALLEE WHILE THE REGION IS LIVE. The callee is threaded
+    //     code the region never owned, so rewriting it must invalidate the
+    //     callee and leave the descriptor alone -- and the answer must follow
+    //     the NEW bytes. Round 13's rule is what makes this work: a region's
+    //     page-index footprint is its HEAD BLOCK only, members keep their own
+    //     entries, and a write to a page drops that page.
+    //
+    //     The GUEST does the write. A host-side poke into linear memory is not
+    //     self-modifying code as far as this emulator is concerned -- nothing
+    //     marks the page, so the stale threaded stream keeps running and the
+    //     case would be asserting something that was never promised. So the
+    //     snippet stores a new immediate into its own callee with a
+    //     `mov dword [abs],imm32`, and the two configurations differ only in
+    //     the VALUE stored: the control writes back the immediate already
+    //     there, so both take the identical invalidation path and the only
+    //     variable is whether the new bytes were honoured.
+    {
+      const storeAbsI32 = (abs, v) => [0xC7, 0x05, ...le32(abs), ...le32(v)];
+      // The store's operand is a literal, so the snippet has to be assembled
+      // against the address it will run at -- twice, because the callee's
+      // offset inside the blob is what the store points at. `mov
+      // dword [abs],imm32` is ten bytes whatever it holds, so the two passes
+      // have identical layout and the second one is exact.
+      const smcBytes = (addr, newImm) => {
+        const leafBody = [...aluRI(0, EAX, 3), ...RET];
+        const shape = (immAbs) => asm([
+          [...movRI(ECX, 6), ...movRI(EAX, 0)],
+          { label: 'top' },
+          [...filler(10), ...aluRI(7, ECX, 0)],
+          { j: 'jcc', cc: JZ, to: 'out' },
+          [...filler(10), ...decR(ECX), ...storeAbsI32(immAbs, newImm)],
+          { j: 'call', to: 'leaf' },
+          { j: 'jmp', to: 'top' },
+          { label: 'out' },
+          [...filler(6), ...JOIN],
+          { label: 'leaf' },
+          leafBody,
+        ]);
+        const probe = shape(0);
+        const leafOff = probe.length - leafBody.length;
+        const out = shape(addr + leafOff + 2);   // the imm32 of `add eax,imm32`
+        if (out.length !== probe.length) throw new Error('smc layout shifted');
+        // Pin the layout: a change to the encoders must fail here rather than
+        // silently aim the store at a ModRM byte.
+        if (out[leafOff] !== 0x81 || out[leafOff + 2] !== 3 ||
+            out[out.length - 1] !== 0xC3) {
+          throw new Error('smc: store target is not the callee immediate');
+        }
+        return out;
+      };
+      const runSmc = (newImm, blockExec) => {
+        const a = nextCode();
+        return arm(smcBytes(a, newImm), blockExec, null, { addr: a });
+      };
+      const ctlThreaded = runSmc(3, false);
+      const ctlRegion = runSmc(3, true);
+      const smcThreaded = runSmc(0x20, false);
+      const smcRegion = runSmc(0x20, true);
+      // Without this the case could "pass" on a build where nothing sees the
+      // store at all -- the region would agree with a threaded run that was
+      // equally stale.
+      check('  SMC case: the interpreter itself sees the store',
+        ctlThreaded.eax !== smcThreaded.eax,
+        `threaded control eax=${ctlThreaded.eax.toString(16)} ` +
+        `rewrite eax=${smcThreaded.eax.toString(16)}`);
+      check('SMC in the callee is seen while the region is live',
+        smcRegion.eax === smcThreaded.eax && smcRegion.eip === smcThreaded.eip,
+        `region eax=${smcRegion.eax.toString(16)} ` +
+        `threaded eax=${smcThreaded.eax.toString(16)} — the rewrite was not ` +
+        `observed, so stale code ran under the descriptor`);
+      check('  and the control agrees between the two as well',
+        ctlRegion.eax === ctlThreaded.eax,
+        `region eax=${ctlRegion.eax.toString(16)} ` +
+        `threaded eax=${ctlThreaded.eax.toString(16)}`);
+      check('  and a region with a call tail is what ran',
+        smcRegion.tailRuns >= 1,
+        `sideExits=${smcRegion.tailRuns} — no side exit, so the descriptor ` +
+        `under test is not the one this case is about`);
+    }
+
+    // (6) RE-ENTRY AT call+5. The callee returns into the middle of the
+    //     region's extent, and that landing must be a normal block entry --
+    //     not a resumption of the descriptor, and not a reason to retire it.
+    //     A region that got retired on every return would show up as a region
+    //     install count that climbs with the trip count, so this case counts.
+    {
+      const loop = trips => asm([
+        [...movRI(ECX, trips), ...movRI(EAX, 0)],
+        { label: 'top' },
+        [...filler(10), ...aluRI(7, ECX, 0)],
+        { j: 'jcc', cc: JZ, to: 'out' },
+        [...filler(10), ...decR(ECX)],
+        { j: 'call', to: 'leaf' },
+        [...filler(6), ...aluRR(ADD, EAX, ECX)],   // this IS call+5's block
+        { j: 'jmp', to: 'top' },
+        { label: 'out' },
+        [...filler(6), ...JOIN],
+        { label: 'leaf' },
+        [...aluRI(0, EAX, 1), ...RET],
+      ]);
+      // The install COUNT AT ONE TRIP COUNT cannot answer this. The counter is
+      // global and this snippet has several hot heads -- the loop top, the
+      // callee, the return landing, the exit block -- so a healthy run
+      // installs a handful of regions at warm-up no matter what happens on
+      // return, and "a handful" and "one per return" are indistinguishable at
+      // a dozen trips. What separates them is how the count SCALES with the
+      // trip count: an install per return tracks it, warm-up does not.
+      // Both snippets go on pages of their own, well past everything
+      // `nextCode()` hands out. Descriptors live in a per-page chunk (round
+      // 14), and by this point in the file the pages the other cases share
+      // are full -- a snippet placed there declines with `noRoom` (declWhy 3)
+      // and measures the chunk rather than the return landing.
+      let scalePage = imageBase + 0x80000;
+      const measure = trips => {
+        const where = scalePage; scalePage += 0x10000;
+        const ri = e.get_block_exec_region_installs();
+        const pr = e.get_block_exec_walk_probes();
+        const at = e.get_block_exec_walk_attempts();
+        const dw = {};
+        for (const w of [1, 2, 3, 4, 5, 6, 8, 9]) dw[w] = e.get_block_exec_region_why_n(w);
+        const r = arm(loop(trips), true, null, { addr: where });
+        return { installs: e.get_block_exec_region_installs() - ri,
+                 sideExits: r.tailRuns, eax: r.eax,
+                 probes: e.get_block_exec_walk_probes() - pr,
+                 attempts: e.get_block_exec_walk_attempts() - at,
+                 decl: [1, 2, 3, 4, 5, 6, 8, 9]
+                   .map(w => `${w}:${e.get_block_exec_region_why_n(w) - dw[w]}`)
+                   .filter(t => !t.endsWith(':0')).join(' ') };
+      };
+      const few = measure(40);
+      const many = measure(400);
+      check('returning to call+5 does not retire the region',
+        many.sideExits >= few.sideExits * 5 &&
+        many.installs <= few.installs + 8,
+        `40 trips: installs=${few.installs} sideExits=${few.sideExits} ` +
+        `probes=${few.probes} attempts=${few.attempts} decl=[${few.decl}]; ` +
+        `400 trips: installs=${many.installs} sideExits=${many.sideExits} ` +
+        `probes=${many.probes} attempts=${many.attempts} decl=[${many.decl}] — ` +
+        `the installs tracked the trip count, so the return landing is ` +
+        `invalidating the descriptor`);
+    }
+
+    // (7) AN x87 MEMBER IN A REGION THAT ALSO HAS A kind-10 TAIL. Round 16 let
+    //     x87 into a region; this checks the two features compose, because the
+    //     x87 path and the side exit both touch what the executor must have
+    //     spilled before it hands control back to `$next`.
+    tailRegion('x87 member beside a call tail', asm([
+      [...movRI(ECX, 5), ...movRI(EAX, 0)],
+      { label: 'top' },
+      [...filler(10), ...aluRI(7, ECX, 0)],
+      { j: 'jcc', cc: JZ, to: 'out' },
+      [...filler(8), ...fldM18(EBX, 0x80), ...fstpM18(EBX, 0xA0), ...decR(ECX)],
+      { j: 'call', to: 'leaf' },
+      { j: 'jmp', to: 'top' },
+      { label: 'out' },
+      [...filler(6), ...JOIN],
+      { label: 'leaf' },
+      [...aluRI(0, EAX, 7), ...RET],
+    ]), null, { mayDecline: true });
+
+    // (8) THE GATE. Off must be round 17 exactly -- no admissions, no side
+    //     exits -- and the switch must be left in its shipped state.
+    {
+      tailGate = false;
+      const off = arm(asm([
+        [...movRI(ECX, 6), ...movRI(EAX, 0)],
+        { label: 'top' },
+        [...filler(10), ...aluRI(7, ECX, 0)],
+        { j: 'jcc', cc: JZ, to: 'out' },
+        [...filler(10), ...decR(ECX)],
+        { j: 'call', to: 'leaf' },
+        { j: 'jmp', to: 'top' },
+        { label: 'out' },
+        [...filler(6), ...JOIN],
+        { label: 'leaf' },
+        [...aluRI(0, EAX, 3), ...RET],
+      ]), true, null);
+      tailGate = true;
+      check('the gate off admits nothing and side-exits never',
+        off.tailAdmitted === 0 && off.tailRuns === 0,
+        `admitted=${off.tailAdmitted} sideExits=${off.tailRuns}`);
+      // The shipped default is asserted on the FRESH instance at the top of
+      // this file, not here: `arm()` writes the switch on every call, so by
+      // this point the global says only what the last arm asked for. Put it
+      // back where the rest of the file expects it.
+      e.set_block_exec_tail_exits(1);
     }
   }
 

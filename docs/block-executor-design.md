@@ -3611,3 +3611,254 @@ runs), `test-worker-wasm-globals` (42 inherited setters, was 40),
    is untested.
 6. Nothing here touches the K / thrash / memo knobs, and no claim is made about
    them.
+
+## 28. Round 18: side-exiting through an unmodelled terminator (2026-09-15)
+
+### 28.1 The refusal this removes
+
+Section 14.2 measured `termNotModelled` as the top classify refusal in five of
+the six apps censused: a block whose terminator the region classifier has no
+`term_kind` for — a `call`, a `ret`, an indirect `call`/`jmp`, a `loop`/`jecxz`,
+an `int`, a far transfer, a fused-Jcc form the classifier rejects — was refused,
+and the whole CFG walk stopped at the edge *into* that block. That section also
+named the obstacle: "allowing the last member a `term_kind 5` threaded tail
+would admit most of them, but the descriptor has one `$tail_ip` for the whole
+region, so it needs a per-block tail pointer first."
+
+Round 18 gives every member its own tail pointer and admits such a block as
+`term_kind 10`. **Nothing about the terminator is modelled.** The member's body
+runs natively like every other member; at its end the executor sets `$ip` to
+that member's own copied terminator, spills, and `return_call $next` — byte for
+byte the one-block path's behaviour at `tail_ip`, except the pointer is per
+member. A `call` is not inlined, a `ret` does not compute a return address, an
+indirect jump's target is never resolved here. The threaded interpreter does all
+of it, exactly as before. This is deliberately **not** option D of
+[block-executor-review-2026-09-15.md](block-executor-review-2026-09-15.md) §3.
+
+### 28.2 Two design decisions, and why they cost nothing
+
+**The per-member tail pointer adds no descriptor words.** A kind-10 member
+evaluates no condition and has no in-region successor, so `term_a`, `term_b`,
+`term_uop`, `term_cc`, `succ_taken` and `succ_fall` are all dead in its record.
+`term_imm` (record word 7) carries the byte offset of the member's copied
+terminator inside the descriptor's fallback pool instead. `$REGION_BLOCK_WORDS`
+is unchanged at 13, so a region with no kind-10 member is byte-identical to what
+round 17 built — a property of the build, not a measurement.
+
+**A kind-10 member is a dead end with zero interior successors.** In particular
+**a call's fall-through is not an interior edge.** The callee runs threaded and
+returns to `call+5` through its own `ret`; that landing re-enters the region only
+as a fresh *entry* at whatever block starts there. Round 13's rule is what makes
+that safe: a region's page-index footprint is its **head block only**, members
+keep their own entries, and `$page_mark_spanreg` drops the whole page on a write.
+So the return does not retire the descriptor, and SMC in the callee is the
+callee's page's business.
+
+The exit through a kind-10 terminator counts against the `REGION_MAX_EXITS` (8)
+budget, and costs `$BX_C_TRANSFER` in the cost model like any exit. Its body
+contributes to `$nat` like any member; its `cost` field is `n - 1` because the
+threaded terminator bills its own step through `$next`.
+
+`--block-chain` remains mutually exclusive with `--block-exec` and was **not**
+touched.
+
+### 28.3 The census, taken before the executor change (the upper bound)
+
+Four windows, three arms each, **fixed work** — `--max-batches` with
+`--max-seconds` present only as a guard that must not fire. Every arm reached
+its full batch count; `docs/block-executor-design/read-round18.js` refuses to
+tabulate one that did not, because these are cumulative counters and an arm the
+guard cut short did less work than its partner. Collector:
+`docs/block-executor-design/collect-round18-windows.sh`.
+
+The census is read off the **r17 arm** (`--no-block-exec-tail-exits`), whose
+opportunity counters are bumped whether or not the switch is on.
+
+| window | termNotModelled | other refusals | wouldAdmit | wouldGrow | region installs |
+|---|---:|---:|---:|---:|---:|
+| caesar3-loading | 4683 | 521 | 278 | 36 | 49 |
+| heroes2-gameplay | 2891 | 990 | 301 | 28 | 62 |
+| quake2-gameplay | 4589 | 2143 | 589 | 110 | 124 |
+| rct-gameplay | 11312 | 49086 | 774 | 0 | 149 |
+
+`wouldAdmit` counts walks that came out shorter than two members but refused at
+least one block for `termNotModelled` — a region the side exit could create.
+`wouldGrow` counts installed regions that refused at least one such block and
+would have been larger. **Both are upper bounds**: a block that clears the
+terminator hurdle still has to survive the body scan, the exits budget and the
+cost model. So the honest prediction before any executor work was "up to ~280-780
+new regions per window, and a few dozen existing ones larger" — not "×6 regions".
+
+Note rct-gameplay's other column: `noFlagProducer` is 49086 there, four times
+the terminator refusals. Round 18 does nothing for that one.
+
+### 28.4 What was realised
+
+| window | termNotModelled after | realised | kind-10 admitted | regions w/ a tail | tail members | side exits |
+|---|---:|---:|---:|---:|---:|---:|
+| caesar3-loading | 0 | **100.0%** | 3903 | 32 | 63 | 10163 |
+| heroes2-gameplay | 43 | 98.5% | 2762 | 36 | 48 | 11141 |
+| quake2-gameplay | 24 | 99.5% | 3822 | 187 | 337 | 268704 |
+| rct-gameplay | 12 | 99.9% | 9975 | 1 | 1 | 0 |
+
+The refusal is essentially gone — 98.5-100% of it — which is the mechanical
+claim and is unambiguous. What that buys is a different question, answered below,
+and **rct is the row that shows the two are not the same thing**: 9975 blocks
+were admitted at classify and exactly one survived into an installed descriptor,
+where it never ran. Its gain (below) is therefore *not* from executing a side
+exit at all; it is from the walk no longer stopping at those edges, reaching
+larger closures that then install without the kind-10 member. That is a real
+effect and it was not predicted.
+
+### 28.5 Gates, stated before the numbers
+
+Declared up front: region installs and `opsMulti` up on **at least three of the
+four** windows; `termNotModelled` down by the census's upper bound, with the
+realised fraction stated; decodes **≤ off+5%** (rounds 13/14's kill rule); `ops
+native` not down on any window; PNG identical at two budgets per app; the
+existing region shapes unmoved on `bench-loops.js`; the test suites green.
+
+| window | arm | decodes | vs off | region installs | opsMulti | entriesMulti | ops native |
+|---|---|---:|---:|---:|---:|---:|---:|
+| caesar3-loading | off | 2720 | — | — | — | — | — |
+| | r17 | 2717 | -0.1% | 49 | 573,989 | 35,671 | 5,014,155 |
+| | **on** | 2717 | -0.1% | **45** | **843,180** | 37,424 | 5,344,759 |
+| heroes2-gameplay | off | 17593 | — | — | — | — | — |
+| | r17 | 14826 | -15.7% | 62 | 3,928,745 | 886,973 | 10,411,524 |
+| | **on** | 14825 | -15.7% | **71** | **3,995,981** | 892,326 | 10,445,089 |
+| quake2-gameplay | off | 167771 | — | — | — | — | — |
+| | r17 | 170769 | +1.8% | 124 | 6,281,088 | 298,026 | 18,298,400 |
+| | **on** | 170834 | +1.8% | **211** | **8,264,645** | 420,938 | 20,276,315 |
+| rct-gameplay | off | 297277 | — | — | — | — | — |
+| | r17 | 297330 | +0.0% | 149 | 26,279,512 | 752,520 | 35,044,955 |
+| | **on** | 297226 | -0.0% | **164** | **26,581,017** | 763,046 | 35,336,275 |
+
+- **decodes**: +1.8% worst case, and it is unchanged from r17 to within 65
+  decodes on every window. An install still does not cost a decode.
+- **opsMulti** up on **4 of 4**: +46.9% caesar3, +1.7% heroes2, **+31.6%**
+  quake2, +1.1% rct.
+- **ops native** up on 4 of 4 (+6.6%, +0.3%, +10.8%, +0.8%).
+- **region installs** up on **3 of 4** — quake2 124→211, heroes2 62→71, rct
+  149→164 — and **down on caesar3, 49→45**, while caesar3's `opsMulti` rose 47%
+  and its `meanBlocks` rose 8.37→10.24. Fewer, bigger regions is the intended
+  shape and the gate is met at three of four, but the install count is not the
+  metric to read: `opsMulti` is.
+- quake2 is the window where the mechanism does what it says: 187 of 211 regions
+  carry a tail, and 268,704 side exits ran.
+
+### 28.6 The existing region shapes did not move
+
+`tools/bench-loops.js --toggle=block_exec_tail_exits` over `region_if2`,
+`region_diamond4`, `region_state6`, `region_ladder5`, `region_call1` and
+`region_null`. None of these can gain a kind-10 member — `region_call1`'s call is
+its head block's own terminator and stops the region in both arms — so all six
+are null controls.
+
+**Deterministic counters: identical in both arms on all six shapes.** `ops/iter`
+and `blocks/iter` are +0.0% everywhere, and `block-exec native` ops are
+identical to the op (3,000,000 / 1,500,000 / 1,994,792 / 1,520,000 / 4,500,000 /
+1,500,000). Two shapes install *fewer* descriptors with the side exit on for the
+same native op count — `region_ladder5` 6→3 and `region_null` 2→1 — which is a
+pair of installs becoming one, not work disappearing.
+
+**The ±2% timing control could not be evaluated on this box and is not claimed.**
+The box sat at loadavg 12-23 through both runs and `region_null` — the shape that
+by construction cannot be affected, since its region spec is armed at an
+unreachable EIP — came back at +7.1% on one run and -27.7% on another. When the
+null control swings 27%, no arm's time means anything. The deterministic evidence
+above is what supports "existing shapes unmoved"; a timing answer needs a quiet
+machine.
+
+### 28.7 Correctness
+
+**PNG identity, r17 vs on, two fixed budgets per app** — never wall-clock
+capped, because a capture taken when the clock ran out is a different moment of
+a clock-paced animation in each arm. The comparison is r17-vs-on, not off-vs-on:
+the executor as a whole already has its registry-wide sweep
+([sweep-2026-09-15.md](block-executor-design/sweep-2026-09-15.md)); what this
+round has to show is that `term_kind 10` changed nothing *on top of round 17*.
+Script: `docs/block-executor-design/check-round18-png.sh`.
+
+| app | budgets | result |
+|---|---|---|
+| heroes2_demo | 600, 1200 | IDENTICAL, IDENTICAL |
+| caesar3_demo | 600, 1200 | IDENTICAL, IDENTICAL |
+| rct | 2000, 4000 | IDENTICAL, IDENTICAL |
+| quake2_demo | 1500, 3000 | IDENTICAL, IDENTICAL |
+
+**`test/test-block-exec.js`** grew a round-18 section and is **368 passed, 0
+failed**. Every case runs three arms of the same bytes — threaded, round 17,
+round 18 — which must agree on all eight registers, on guest memory and on the
+final EIP; the round-18 arm must show a kind-10 member admitted *and* a side
+exit taken, and the round-17 arm must show neither. Agreement alone would be
+satisfied by a region that never installed.
+
+- member ending in `call rel32`
+- member ending in `ret`
+- member ending in indirect `jmp r32`
+- member ending in `loop rel8`
+- **SMC in the callee while the region is live** — the *guest* stores the new
+  immediate into its own callee. A host-side poke into linear memory is not SMC
+  as far as this emulator is concerned (nothing marks the page), so the earlier
+  draft of this case was asserting something never promised; the control arm
+  stores back the immediate already there, so both arms take the identical
+  invalidation path and the only variable is whether the new bytes were honoured.
+- **re-entry at `call+5`** — measured at two trip counts, because the install
+  counter is global and this snippet has four hot heads: "installed once per
+  head" and "retired and rebuilt on every return" are indistinguishable at one
+  trip count. Measured standalone at 12 / 40 / 1200 trips: installs **6 / 8 /
+  16** against side exits **10 / 38 / 1178**. Installs are flat; the return
+  landing does not retire the descriptor.
+- an x87 member beside a call tail (round 16 composing with round 18)
+- the gate off admits nothing and side-exits never
+
+Also green: `test-block-chain` (25), `test-stream-fold`, `test-tree-fold`,
+`test-worker-wasm-globals` (44 inherited setters — `set_block_exec_tail_exits`
+is in `lib/worker-imports.js` and propagates), `test-x87-pipeline4-fusion` (11
+differential cases), and `WINE_ASSEMBLY_WASM=build/wine-assembly.wasm node
+test/test-x86-ops.js` (145).
+
+### 28.8 Two things the test file taught, worth not re-learning
+
+1. **A walk never decodes** (round 13), so a successor block that has not run
+   yet has no published ops and can only become an *exit*. A `ret` or an
+   indirect jump sitting on a loop's one-time exit path is therefore invisible
+   to this feature. The first drafts of the `ret` and indirect-jump cases put
+   the unmodelled terminator on the exit path and admitted nothing at all; both
+   had to be rearranged so the terminator runs on **every** trip.
+2. **The cost model, not `$block_exec_min_uops`, is what decides whether a
+   region installs.** The two- and three-op blocks the rest of that file uses
+   all decline as `notWorthIt`, so both arms silently run the same threaded
+   code. Round 18's cases carry a dozen ops of filler per block to clear
+   `$BX_C_ENTRY` honestly rather than by lowering a floor. And late in a long
+   test file the per-page descriptor chunk is exhausted — a snippet placed on a
+   shared page declines with `noRoom` and measures the chunk instead — so the
+   two-point scaling case is placed on pages of its own.
+
+### 28.9 Verdict
+
+**Ship it, on.** The refusal it targets is 98.5-100% gone, `opsMulti` and native
+ops are up on all four windows, decodes are unchanged from round 17, and every
+correctness gate is clean.
+
+What is **not** proven:
+
+1. **No throughput claim.** No wall-clock A/B was run; the box was at loadavg
+   12-23 throughout and the bench-loops null control swung 27%. Everything
+   above is a deterministic counter. `opsMulti` up 47% and 32% is more work
+   under a descriptor, which is the thing the executor exists to do — it is not
+   a measured speedup.
+2. **rct's gain has no mechanism attached.** One kind-10 member survived into a
+   descriptor there and never ran, yet installs rose 15 and `opsMulti` 1.1%.
+   The effect is the walk reaching further, not the side exit executing, and it
+   was not predicted or modelled.
+3. **caesar3's install count fell** (49→45) while its work under descriptors
+   rose 47%. Consistent with fewer, bigger regions, but not directly measured
+   as such beyond `meanBlocks` 8.37→10.24.
+4. The census is four windows of four apps. `wouldAdmit`/`wouldGrow` are upper
+   bounds by construction, and the realised fraction of *those* (rather than of
+   the refusal count) was not separated out.
+5. No K / thrash / memo / reserve knob was touched, and no claim is made about
+   any of them.
+6. `--block-chain` is still mutually exclusive with `--block-exec`; untouched
+   and untested in combination.

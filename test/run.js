@@ -322,6 +322,10 @@ const NO_BLOCK_EXEC_LEAF = hasFlag('no-block-exec-leaf');
 // sends every fallback-carrying one-block install back through H458 and
 // reproduces round 16 exactly on this build.
 const NO_BLOCK_EXEC_LEAF_FB = hasFlag('no-block-exec-leaf-fb');
+// Round 18 (design doc section 28): let a region member end in an unmodelled
+// terminator and side-exit into threaded execution there. ON within the
+// executor; this flag is the arm that reproduces round 17 exactly.
+const NO_BLOCK_EXEC_TAIL_EXITS = hasFlag('no-block-exec-tail-exits');
 // Round 17, section 27.2: headroom (in bytes) a ONE-BLOCK install must leave
 // in the per-page descriptor chunk, so a region install gets first refusal on
 // the page's last bytes. 0 (the module default) is round 16's admission test.
@@ -4111,6 +4115,7 @@ async function main() {
   if (NO_BLOCK_EXEC_RMW) inheritWasm('set_block_exec_rmw', 0);
   if (NO_BLOCK_EXEC_LEAF) inheritWasm('set_block_exec_leaf', 0);
   if (NO_BLOCK_EXEC_LEAF_FB) inheritWasm('set_block_exec_leaf_fb', 0);
+  if (NO_BLOCK_EXEC_TAIL_EXITS) inheritWasm('set_block_exec_tail_exits', 0);
   if (PAGE_DESC_RG_RESERVE != null) {
     inheritWasm('set_page_desc_rg_reserve', PAGE_DESC_RG_RESERVE);
   }
@@ -5057,6 +5062,9 @@ async function main() {
   }
   if (NO_BLOCK_EXEC_LEAF_FB && instance.exports.set_block_exec_leaf_fb) {
     instance.exports.set_block_exec_leaf_fb(0);
+  }
+  if (NO_BLOCK_EXEC_TAIL_EXITS && instance.exports.set_block_exec_tail_exits) {
+    instance.exports.set_block_exec_tail_exits(0);
   }
   if (PAGE_DESC_RG_RESERVE != null && instance.exports.set_page_desc_rg_reserve) {
     instance.exports.set_page_desc_rg_reserve(PAGE_DESC_RG_RESERVE);
@@ -9588,6 +9596,24 @@ if (VERBOSE) {
           if (c) nf.push(`${NF[r]}=${c}`);
         }
         console.log(`block-exec-regions: ${label} classifyRefused`, nf.join(' ') || 'none');
+      }
+      // Round 18, design doc section 28. `refusals` is every termNotModelled
+      // seen inside a walk and `admitted` how many of those became term_kind
+      // 10 members; `wouldAdmit`/`wouldGrow` are the census's UPPER BOUND --
+      // walks that a side-exiting member could have turned into a region, or
+      // grown -- and they are counted with the switch off as well, which is
+      // what makes the off arm the "before" measurement.
+      if (e.get_block_exec_tail_refusals) {
+        console.log(`block-exec-regions: ${label} tailExits`,
+          'on', e.get_block_exec_tail_exits(),
+          'refusals', String(e.get_block_exec_tail_refusals()),
+          'admitted', String(e.get_block_exec_tail_admitted()),
+          'regions', e.get_block_exec_tail_regions(),
+          'members', e.get_block_exec_tail_members(),
+          'runs', e.get_block_exec_tail_exit_runs(),
+          'wouldAdmit', e.get_block_exec_tail_would_admit(),
+          'wouldGrow', e.get_block_exec_tail_would_grow(),
+          'lastNo', e.get_block_exec_tail_norm());
       }
     };
     bxReport('M ', instance.exports);
