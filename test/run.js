@@ -305,6 +305,18 @@ const NO_BLOCK_EXEC_RMW = hasFlag('no-block-exec-rmw');
 // inside an armed executor, so ZERO is the meaningful value: --no-block-exec-leaf
 // sends every one-block install back through the merged H458.
 const NO_BLOCK_EXEC_LEAF = hasFlag('no-block-exec-leaf');
+// Round 17's fallback-carrying leaf (H464, section 27). ON by default inside an
+// armed executor, so ZERO is the meaningful value: --no-block-exec-leaf-fb
+// sends every fallback-carrying one-block install back through H458 and
+// reproduces round 16 exactly on this build.
+const NO_BLOCK_EXEC_LEAF_FB = hasFlag('no-block-exec-leaf-fb');
+// Round 17, section 27.2: headroom (in bytes) a ONE-BLOCK install must leave
+// in the per-page descriptor chunk, so a region install gets first refusal on
+// the page's last bytes. 0 (the module default) is round 16's admission test.
+const PAGE_DESC_RG_RESERVE = (() => {
+  const v = getArg('page-desc-rg-reserve');
+  return v == null ? null : parseInt(v, 10);
+})();
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
@@ -4080,6 +4092,10 @@ async function main() {
   if (NO_BLOCK_EXEC_CARRY) inheritWasm('set_block_exec_carry', 0);
   if (NO_BLOCK_EXEC_RMW) inheritWasm('set_block_exec_rmw', 0);
   if (NO_BLOCK_EXEC_LEAF) inheritWasm('set_block_exec_leaf', 0);
+  if (NO_BLOCK_EXEC_LEAF_FB) inheritWasm('set_block_exec_leaf_fb', 0);
+  if (PAGE_DESC_RG_RESERVE != null) {
+    inheritWasm('set_page_desc_rg_reserve', PAGE_DESC_RG_RESERVE);
+  }
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
   if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
@@ -5017,6 +5033,12 @@ async function main() {
   }
   if (NO_BLOCK_EXEC_LEAF && instance.exports.set_block_exec_leaf) {
     instance.exports.set_block_exec_leaf(0);
+  }
+  if (NO_BLOCK_EXEC_LEAF_FB && instance.exports.set_block_exec_leaf_fb) {
+    instance.exports.set_block_exec_leaf_fb(0);
+  }
+  if (PAGE_DESC_RG_RESERVE != null && instance.exports.set_page_desc_rg_reserve) {
+    instance.exports.set_page_desc_rg_reserve(PAGE_DESC_RG_RESERVE);
   }
   if (NO_AOE_FILL && instance.exports.set_loop_aoe_fill_emit) {
     instance.exports.set_loop_aoe_fill_emit(0);
@@ -9334,12 +9356,19 @@ if (VERBOSE) {
       // folded-terminator population -- the part the leaf's contract excludes.
       const leafRuns = e.get_block_exec_leaf_runs
         ? e.get_block_exec_leaf_runs() : 0;
+      // Round 17: the leaf FAMILY is two entry points now. `leafEntries` stays
+      // the pure leaf so the round-16 numbers remain comparable; `leafFbEntries`
+      // is H464, and `genEntries` is what is left on the general region
+      // function -- which is the number round 17 exists to drive down.
+      const leafFbRuns = e.get_block_exec_leaf_fb_runs
+        ? e.get_block_exec_leaf_fb_runs() : 0;
       console.log(`block-exec: ${label} armed`, e.get_block_exec() ? 'yes' : 'no',
         'installs', e.get_block_exec_installs(),
         'declines', e.get_block_exec_declines(),
         'entries', e.get_block_exec_runs(),
         'leafEntries', leafRuns,
-        'genEntries', e.get_block_exec_runs() - leafRuns,
+        'leafFbEntries', leafFbRuns,
+        'genEntries', e.get_block_exec_runs() - leafRuns - leafFbRuns,
         'ops native', String(nat), 'fallback', String(fb),
         'native%', tot > 0n ? (Number(nat * 10000n / tot) / 100).toFixed(2) : '-',
         'transfersSaved', String(ts),
@@ -9483,6 +9512,17 @@ if (VERBOSE) {
           'nrBytes', e.get_block_exec_rg_nr_bytes ? e.get_block_exec_rg_nr_bytes() : '-',
           'nrArena', e.get_block_exec_rg_nr_arena ? e.get_block_exec_rg_nr_arena() : '-',
           'nrChunkFull', e.get_block_exec_rg_nr_fit ? e.get_block_exec_rg_nr_fit() : '-',
+          // Round 17, section 27.2. `descChunkFull` is the page-level counter
+          // ($page_desc_chunk_full: a publish that did not fit), and
+          // `rgReserveDeclines` is how many ONE-BLOCK installs the region
+          // reserve turned away that the bare chunk would have taken -- the
+          // one number that says whether the policy is doing anything.
+          'descChunkFull', e.get_page_desc_chunk_full
+            ? e.get_page_desc_chunk_full() : '-',
+          'rgReserve', e.get_page_desc_rg_reserve
+            ? e.get_page_desc_rg_reserve() : '-',
+          'rgReserveDeclines', e.get_page_desc_reserve_declines
+            ? e.get_page_desc_reserve_declines() : '-',
           'headWasDesc', e.get_block_exec_rg_head_desc
             ? e.get_block_exec_rg_head_desc() : '-',
           'headWasDescFailed', e.get_block_exec_rg_head_desc_fail

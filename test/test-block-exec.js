@@ -209,6 +209,9 @@ async function main() {
   // argument because every existing call site predates the leaf and must keep
   // running with it in its shipped state (on).
   let leafGate = true;
+  // Round 17's second leaf (H464). Same reasoning: every call site predates it
+  // and must keep running with it in its shipped state (on).
+  let leafFbGate = true;
 
   function arm(bytes, blockExec, seed) {
     const addr = nextCode();
@@ -238,7 +241,9 @@ async function main() {
     // every install goes back through the general region handler, which is the
     // A/B that proves the leaf is an optimization and not a behaviour change.
     e.set_block_exec_leaf(leafGate ? 1 : 0);
+    e.set_block_exec_leaf_fb(leafFbGate ? 1 : 0);
     const leafBefore = e.get_block_exec_leaf_runs();
+    const leafFbBefore = e.get_block_exec_leaf_fb_runs();
     const runsBefore = e.get_block_exec_runs();
     const installsBefore = e.get_block_exec_installs();
     const fbBefore = e.get_block_exec_fallback_ops();
@@ -272,6 +277,7 @@ async function main() {
       installs: e.get_block_exec_installs() - installsBefore,
       runs: e.get_block_exec_runs() - runsBefore,
       leafRuns: e.get_block_exec_leaf_runs() - leafBefore,
+      leafFbRuns: e.get_block_exec_leaf_fb_runs() - leafFbBefore,
       declWhy: e.get_block_exec_decl_why(),
       lastFallbackFn: e.get_block_exec_last_fallback_fn(),
       fallbacks: Number(e.get_block_exec_fallback_ops() - fbBefore),
@@ -2068,14 +2074,15 @@ async function main() {
        ...movRR(ECX, EAX), ...aluRR(XOR, EDX, ECX)]);
 
     // THE CONTRACT, from the other side. A block that carries a fallback must
-    // install on the GENERAL handler, because the leaf has no spill/reload
-    // path and no fallback pool to point at. This is the case that would fail
-    // if the emit-time predicate in $block_exec_try_install ever widened.
+    // never reach the PURE leaf, which has no spill/reload path and no
+    // fallback pool to point at -- its arms 57 and 60 are `unreachable`. Since
+    // round 17 it goes to H464 instead of H458, so this checks both halves:
+    // not H463, and the descriptor did install and run.
     {
-      const r = equiv('a fallback keeps the block off the leaf',
+      const r = equiv('a fallback keeps the block off the PURE leaf',
         [...movRI(EAX, 0x1234), ...aluRI(0, EAX, 1), ...movRR(ECX, EAX),
          ...incR(EDX)]);
-      check('  the fallback-carrying block did NOT take the leaf',
+      check('  the fallback-carrying block did NOT take H463',
         r.on.leafRuns === 0 && r.on.runs >= 1,
         `runs=${r.on.runs} leafRuns=${r.on.leafRuns} — a descriptor with a ` +
         `fallback pool was handed to H463, which cannot service one`);
@@ -2356,6 +2363,296 @@ async function main() {
     e.set_block_exec_x87(0);   // back to the shipped default
     check('  the round-16 sub-lever is left at its default',
       e.get_block_exec_x87_regions() === 1);
+  }
+
+  // ======================================================================
+  // ROUND 17 -- THE FALLBACK-CARRYING LEAF (H464) AND THE CHUNK RESERVE.
+  // docs/block-executor-design.md section 27.
+  //
+  // Round 16's leaf (H463) refuses any descriptor that carries a fallback
+  // pool, so a one-block descriptor with a single `pushfd` in it paid the
+  // whole 10 KB general region function. H464 is the same leaf with a
+  // fallback arm: spill the eight registers, run the real threaded handler
+  // out of the fallback pool, reload them, carry on natively.
+  //
+  // The cases below are about the SEAM, because that is the only thing the
+  // second function can get wrong: a register the fallback needs that was
+  // never spilled reads stale, and a register the fallback wrote that is not
+  // reloaded is silently dropped on the floor. Both directions are asserted
+  // against the threaded arm, not against each other.
+  // ======================================================================
+  console.log('\n-- round 17: the fallback leaf (H464) and the chunk reserve --');
+  {
+    // `bswap r32`: register-only, absent from $bx_op_unsafe, and
+    // $tree_uop_classify has no kind for it -- so it lands as a real
+    // TU_FALLBACK inside an otherwise all-native block, which is exactly the
+    // shape this round is about. NOTE for anyone reaching for a fallback op:
+    // `adc r,r` is NOT one any more. It became a native executor kind at some
+    // point and tools/bench-loops.js's blk_fb8 shape (and section 25's
+    // description of it as the fallback control) are both stale because of it.
+    const bswapR = r => [0x0F, 0xC8 + r];
+    // No flags probe: `pushfd` is itself a fallback, and a case that wants to
+    // say WHICH fallback ran cannot afford a second one it did not ask for.
+    const fbBlock = body => [...body, ...RET];
+
+    // The leaf_fb twin of leafEquiv: same equivalence, plus the assertion
+    // that the block really entered H464 and really executed a fallback.
+    function fbEquiv(name, body, seed) {
+      const bytes = fbBlock(body);
+      const off = arm(bytes, false, seed);
+      const on = arm(bytes, true, seed);
+      totalNative += on.natives; totalFallback += on.fallbacks;
+      totalInstalls += on.installs;
+      const regsOk = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi']
+        .every(k => off[k] === on[k]);
+      const memOk = off.data === on.data;
+      const eipOk = off.eip === on.eip;
+      let why = '';
+      if (!regsOk) why = `\n         off ${hexRegs(off)}\n         on  ${hexRegs(on)}`;
+      else if (!memOk) why = ' (guest memory differs)';
+      else if (!eipOk) why = ` (eip ${off.eip.toString(16)} vs ${on.eip.toString(16)})`;
+      check(`leaf_fb: ${name}`, regsOk && memOk && eipOk, why);
+      check(`  leaf_fb: ${name}: entered through H464`, on.leafFbRuns >= 1,
+        `installs=${on.installs} runs=${on.runs} leafRuns=${on.leafRuns} ` +
+        `leafFbRuns=${on.leafFbRuns} declWhy=${on.declWhy} — the block did ` +
+        `not take the fallback leaf, so this case measured something else`);
+      check(`  leaf_fb: ${name}: a fallback really ran`, on.fallbacks >= 1,
+        `fallbacks=${on.fallbacks} natives=${on.natives} — the op chosen as ` +
+        `the fallback has become a native kind, so the seam was never crossed`);
+      check(`  leaf_fb: ${name}: the pure leaf was not used`, on.leafRuns === 0,
+        `leafRuns=${on.leafRuns}`);
+      return { off, on };
+    }
+
+    // (1) ENTRY. The plainest possible shape: natives, one fallback, RET.
+    fbEquiv('one fallback between native ops',
+      [...movRI(EAX, 0x12345678), ...bswapR(EAX), ...movRR(ECX, EAX),
+       ...incR(EDX)]);
+
+    // (2) THE SPILL DIRECTION. `ebx` is written by a NATIVE micro-op (so it
+    //     lives in a wasm local, not in the global) and then read by the
+    //     fallback. If the spill were missing or partial, the threaded
+    //     handler would bswap whatever $ebx held before the block.
+    fbEquiv('a native write is visible to the fallback that reads it',
+      [...movRI(EBX, 0x0A0B0C0D), ...bswapR(EBX), ...movRR(EAX, EBX)]);
+
+    // (3) THE RELOAD DIRECTION. The fallback writes `esi`; the native ops
+    //     after it consume that value. A missing reload leaves the local
+    //     holding the pre-fallback value and the block computes with it.
+    fbEquiv('a fallback write is visible to the natives that read it',
+      [...movRI(ESI, 0xCAFEBABE), ...bswapR(ESI), ...aluRR(ADD, EAX, ESI),
+       ...movRR(EDI, ESI), ...aluRR(XOR, ECX, ESI)]);
+
+    // (4) The seam is crossed more than once, and the ops between two
+    //     fallbacks must not be re-run or skipped by the resume arithmetic.
+    fbEquiv('two fallbacks in one block',
+      [...movRI(EAX, 0x00112233), ...bswapR(EAX), ...aluRI(0, EAX, 0x10),
+       ...movRR(ECX, EAX), ...bswapR(ECX), ...aluRR(SUB, EDX, ECX)]);
+
+    // (5) Boundary positions: the very first micro-op, and the very last one
+    //     before the terminator. Both are the arithmetic most likely to be
+    //     off by one.
+    fbEquiv('the FIRST micro-op is the fallback',
+      [...bswapR(EBX), ...movRR(EAX, EBX), ...aluRR(ADD, ECX, EBX),
+       ...incR(EDX)]);
+    fbEquiv('the LAST micro-op is the fallback',
+      [...movRI(EDI, 0x77665544), ...aluRI(0, EDI, 3), ...movRR(EDX, EDI),
+       ...bswapR(EDI)]);
+
+    // (6) Memory either side of the seam. A store before the fallback and a
+    //     load after it: the fallback path must not disturb the descriptor's
+    //     view of guest memory.
+    fbEquiv('stores and loads either side of a fallback',
+      [...load32(EAX, EBX, 0x10), ...store32(EAX, EBX, 0x24),
+       ...bswapR(EAX), ...store32(EAX, EBX, 0x28),
+       ...load32(ECX, EBX, 0x24), ...aluRR(ADD, ECX, EAX)]);
+
+    // (7) THE A/B AGAINST ITSELF. Gate H464 off and the same bytes install on
+    //     H458 instead -- an optimization, not a behaviour change. This is the
+    //     round-17 twin of round 16's `leaf on and leaf off` case.
+    {
+      const bytes = fbBlock([...movRI(EAX, 0x01020304), ...bswapR(EAX),
+                             ...aluRR(SUB, EAX, ECX), ...movRR(EDI, EAX),
+                             ...bswapR(EDI), ...aluRR(AND, EDX, EDI)]);
+      leafFbGate = true;
+      const withFb = arm(bytes, true);
+      leafFbGate = false;
+      const without = arm(bytes, true);
+      leafFbGate = true;
+      const same = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi']
+        .every(k => withFb[k] === without[k]) &&
+        withFb.data === without.data && withFb.eip === without.eip;
+      check('leaf_fb on and leaf_fb off compute the same state', same,
+        `\n         leaf_fb ${hexRegs(withFb)}\n         gen     ${hexRegs(without)}`);
+      check('  leaf_fb on took H464', withFb.leafFbRuns >= 1,
+        `leafFbRuns=${withFb.leafFbRuns}`);
+      check('  leaf_fb off still installed, on H458',
+        without.leafFbRuns === 0 && without.leafRuns === 0 &&
+        without.installs >= 1 && without.runs >= 1,
+        `installs=${without.installs} runs=${without.runs} ` +
+        `leafRuns=${without.leafRuns} leafFbRuns=${without.leafFbRuns}`);
+      check('  both arms ran the same number of fallback ops',
+        withFb.fallbacks === without.fallbacks,
+        `leaf_fb=${withFb.fallbacks} gen=${without.fallbacks}`);
+    }
+
+    // (8) SMC OF A LEAF_FB INSTALL. The retirement stamp is a handler index
+    //     written over the block's first word, and H464 is a THIRD index
+    //     $bx_is_desc_word has to recognise. If it did not, a rewritten block
+    //     would keep running its stale descriptor -- the exact bug round 16
+    //     had to fix for H463.
+    {
+      const v1 = fbBlock([...movRI(EAX, 0x1111), ...bswapR(EAX),
+                          ...movRR(ECX, EAX), ...incR(EDX)]);
+      const v2 = fbBlock([...movRI(EAX, 0x2222), ...bswapR(EAX),
+                          ...movRR(ECX, EAX), ...decR(EDX)]);
+      if (v1.length !== v2.length) throw new Error('the leaf_fb SMC pair must be the same length');
+
+      const smcFb = (blockExec) => {
+        const addr = nextCode();
+        const wa = g2w(addr);
+        const runAt = () => {
+          seedData();
+          e.set_eax(SEED.eax); e.set_ecx(SEED.ecx); e.set_edx(SEED.edx);
+          e.set_ebx(SEED.ebx); e.set_esi(SEED.esi); e.set_edi(SEED.edi);
+          e.set_ebp(0); e.set_esp(STACK_TOP);
+          dv.setUint32(g2w(STACK_TOP), 0, true);
+          e.set_eip(addr);
+          e.run(100000);
+          return `${(e.get_eax() >>> 0).toString(16)}/${(e.get_ecx() >>> 0).toString(16)}/${(e.get_edx() >>> 0).toString(16)}`;
+        };
+        e.set_block_exec_min_uops(2);
+        e.set_block_exec_leaf(1);
+        e.set_block_exec_leaf_fb(1);
+        e.set_block_exec(blockExec ? 1 : 0);
+        const fb0 = e.get_block_exec_leaf_fb_runs();
+        for (let i = 0; i < v1.length; i++) mem[wa + i] = v1[i];
+        const first = runAt();
+        const fbFirst = e.get_block_exec_leaf_fb_runs() - fb0;
+        e.set_ebx(addr);
+        for (let i = 0; i < v2.length; i += 4) {
+          const word = v2[i] | (v2[i + 1] << 8) | (v2[i + 2] << 16) | (v2[i + 3] << 24);
+          e.set_eax(word >>> 0);
+          const w = nextCode();
+          const ww = g2w(w);
+          const st = [...store32(EAX, EBX, i), ...RET];
+          for (let k = 0; k < st.length; k++) mem[ww + k] = st[k];
+          e.set_esp(STACK_TOP); dv.setUint32(g2w(STACK_TOP), 0, true);
+          e.set_eip(w); e.run(1000);
+        }
+        const second = runAt();
+        e.set_block_exec(0);
+        return { first, second, fbFirst };
+      };
+      const soff = smcFb(false);
+      const son = smcFb(true);
+      check('leaf_fb SMC: the install really was a leaf_fb install',
+        son.fbFirst >= 1,
+        `leafFbRuns=${son.fbFirst} — nothing H464-shaped was invalidated`);
+      check('leaf_fb SMC: the first run agrees', soff.first === son.first,
+        `${soff.first} vs ${son.first}`);
+      check('leaf_fb SMC: the rewritten block is re-decoded and agrees',
+        soff.second === son.second, `${soff.second} vs ${son.second}`);
+      check('leaf_fb SMC: the rewrite actually changed the answer',
+        soff.first !== soff.second, `${soff.first} == ${soff.second}`);
+    }
+
+    // ==================================================================
+    // PART B -- THE PER-PAGE REGION RESERVE.
+    //
+    // Section 26.2: the two descriptor families share one 16KB per-page
+    // chunk on a first-come basis, so a page full of cheap one-block
+    // descriptors can leave a region candidate with nowhere to publish. The
+    // reserve is the fix: N bytes at the end of the chunk that ONLY the
+    // region path may spend. It defaults to 0, so the shipped behaviour is
+    // round 16's exactly; these cases are about the mechanism.
+    //
+    // The page below is round 14's overflow page -- ~180 tiny one-block
+    // shapes in one 4KB guest page, far more descriptor than 16KB holds.
+    // ==================================================================
+    {
+      const pageBase = (imageBase + 0x60000 + codeOffset + 0xFFF) & ~0xFFF;
+      const BLOCK_BYTES = 17;
+      const N = Math.floor((4096 - JOIN.length) / BLOCK_BYTES);
+      const bytes = [];
+      for (let i = 0; i < N; i++) {
+        bytes.push(...aluRI(0, EAX, i + 1));
+        bytes.push(...aluRI(0, EAX, 0x10000 + i));
+        bytes.push(...jmpRel32(0));
+      }
+      bytes.push(...JOIN);
+
+      function runReserve(reserve) {
+        const wa = g2w(pageBase);
+        for (let i = 0; i < bytes.length; i++) mem[wa + i] = bytes[i];
+        e.invalidate_code_range(pageBase, 4096);
+        seedData();
+        normalizeFlags();
+        e.set_block_exec_min_uops(2);
+        e.set_page_desc_rg_reserve(reserve);
+        e.set_block_exec(1);
+        e.set_eax(0); e.set_ecx(SEED.ecx); e.set_edx(SEED.edx);
+        e.set_ebx(SEED.ebx); e.set_esi(SEED.esi); e.set_edi(SEED.edi);
+        e.set_ebp(0); e.set_esp(STACK_TOP);
+        dv.setUint32(g2w(STACK_TOP), 0, true);
+        const before = {
+          installs: e.get_block_exec_installs(),
+          declines: e.get_page_desc_reserve_declines(),
+          compiles: e.get_page_compiles(),
+        };
+        e.set_eip(pageBase);
+        e.run(100000);
+        const out = {
+          eax: e.get_eax() >>> 0, ecx: e.get_ecx() >>> 0,
+          edx: e.get_edx() >>> 0, eip: e.get_eip() >>> 0,
+          installs: e.get_block_exec_installs() - before.installs,
+          declines: e.get_page_desc_reserve_declines() - before.declines,
+          compiles: e.get_page_compiles() - before.compiles,
+        };
+        e.set_block_exec(0);
+        e.set_page_desc_rg_reserve(0);
+        return out;
+      }
+
+      const r0 = runReserve(0);
+      const r8k = runReserve(8192);
+
+      // (1) The reserve must be inert as far as the guest is concerned. It
+      //     only ever declines an INSTALL, and a declined block runs as
+      //     threaded code -- so the answer cannot move.
+      const same = r0.eax === r8k.eax && r0.ecx === r8k.ecx &&
+        r0.edx === r8k.edx && r0.eip === r8k.eip;
+      check('the region reserve does not change what the guest computes', same,
+        `r0 eax=${r0.eax.toString(16)} eip=${r0.eip.toString(16)} / ` +
+        `r8k eax=${r8k.eax.toString(16)} eip=${r8k.eip.toString(16)}`);
+
+      // (2) The default is off, so a zero reserve must never account for a
+      //     single decline. (If it did, the shipped build would differ from
+      //     round 16 and every A/B above would be measuring two changes.)
+      check('  a zero reserve declines nothing', r0.declines === 0,
+        `reserveDeclines=${r0.declines} at reserve=0`);
+
+      // (3) The mechanism fires, and the counter only counts declines the
+      //     reserve CAUSED -- requests that would have overflowed the chunk
+      //     anyway are the chunk's business, not the reserve's.
+      check('  a nonzero reserve declines one-block installs it caused',
+        r8k.declines >= 1,
+        `reserveDeclines=${r8k.declines} installs=${r8k.installs} — the ` +
+        `reserve never bound, so this page is not packed tightly enough`);
+      check('  and it costs one-block installs, as it must',
+        r8k.installs < r0.installs,
+        `installs r0=${r0.installs} r8k=${r8k.installs}`);
+
+      // (4) A reserve buys room by DECLINING, never by dropping the page.
+      //     A dropped page is visible as a recompile, and a recompile costs
+      //     a decode of every block on it (sections 22/23's kill rule).
+      check('a reserve never drops the page', r8k.compiles <= r0.compiles + 1,
+        `pageCompiles r0=${r0.compiles} r8k=${r8k.compiles}`);
+
+      check('the reserve is left at its shipped default',
+        e.get_page_desc_rg_reserve() === 0,
+        `rgReserve=${e.get_page_desc_rg_reserve()}`);
+    }
   }
 
   console.log('\n-- coverage of this run --');

@@ -218,6 +218,21 @@
   (global $page_desc_chunk_allocs (mut i32) (i32.const 0))
   (global $page_desc_chunk_grows  (mut i32) (i32.const 0))
   (global $page_desc_chunk_full   (mut i32) (i32.const 0))
+  ;; ROUND 17 (section 27.2): the two descriptor families -- one-block installs
+  ;; and multi-block region installs -- draw on the SAME 16KB per-page chunk,
+  ;; and section 26.2 priced what that costs: round 15's 2,925 extra one-block
+  ;; x87 descriptors took nrChunkFull from 2,714 to 2,863 and round 16's bigger
+  ;; region descriptors to 3,637, i.e. a one-block install crowding a region
+  ;; install off the same page. This is the headroom a ONE-BLOCK install must
+  ;; leave behind it in the descriptor chunk; a region install passes 0 and so
+  ;; gets first refusal on the last bytes of the page. Zero reproduces round 16
+  ;; exactly. Not a knob on K, the thrash cap or the memo depth -- it is round
+  ;; 14's storage split, which is the thing section 26.2 named.
+  (global $page_desc_rg_reserve (mut i32) (i32.const 0))
+  ;; One-block installs this reserve declined that the bare chunk would have
+  ;; admitted. Without it a reserve that never binds and one that binds
+  ;; constantly look identical from outside.
+  (global $page_desc_reserve_declines (mut i32) (i32.const 0))
 
   (func $page_dchunk (param $slot i32) (result i32)
     (i32.load offset=16 (local.get $slot)))
@@ -980,17 +995,41 @@
   ;; descriptors from bringing forward a whole-page DROP, and the drop is gone.
   ;;
   ;; A page that is not compiled yet answers 1: the publish creates it.
-  (func $page_desc_would_fit (param $start_eip i32) (param $len i32) (result i32)
-    (local $slot i32) (local $base i32)
+  ;; ROUND 17: $reserve is headroom this publish must leave behind it in the
+  ;; DESCRIPTOR chunk, and it exists for one reason only -- to stop the
+  ;; one-block family from spending the page's last bytes on descriptors a
+  ;; region install would have used better. A region install passes 0 and is
+  ;; therefore admitted on exactly the terms round 14 gave it; a one-block
+  ;; install passes $page_desc_rg_reserve. It is NOT the threaded chunk's
+  ;; reserve reintroduced: overflowing this chunk is still a local decline and
+  ;; still cannot drop a page, so nothing here is protecting against a drop.
+  (func $page_desc_would_fit (param $start_eip i32) (param $len i32)
+                             (param $reserve i32) (result i32)
+    (local $slot i32) (local $base i32) (local $used i32)
     (if (i32.gt_u (local.get $len) (global.get $PAGE_CHUNK_BYTES))
       (then (return (i32.const 0))))
     (local.set $base (i32.and (local.get $start_eip) (i32.const 0xFFFFF000)))
     (local.set $slot (call $page_dir_slot (local.get $base)))
     (if (i32.ne (i32.load (local.get $slot)) (local.get $base))
       (then (return (i32.const 1))))
+    (local.set $used (call $page_desc_used (call $page_dword (local.get $slot))))
+    ;; Would it have fitted WITHOUT the reserve? Answering that here is what
+    ;; makes the counter mean "the reserve is what declined this", rather than
+    ;; "the chunk was full anyway" -- which is the difference between a policy
+    ;; that is doing something and one that is inert.
+    (if (i32.gt_u (local.get $reserve) (i32.const 0))
+      (then
+        (if (i32.and
+              (i32.le_u (i32.add (local.get $used) (local.get $len))
+                        (global.get $PAGE_CHUNK_BYTES))
+              (i32.gt_u (i32.add (local.get $used)
+                          (i32.add (local.get $len) (local.get $reserve)))
+                        (global.get $PAGE_CHUNK_BYTES)))
+          (then
+            (global.set $page_desc_reserve_declines
+              (i32.add (global.get $page_desc_reserve_declines) (i32.const 1)))))))
     (i32.le_u
-      (i32.add (call $page_desc_used (call $page_dword (local.get $slot)))
-               (local.get $len))
+      (i32.add (local.get $used) (i32.add (local.get $len) (local.get $reserve)))
       (global.get $PAGE_CHUNK_BYTES)))
 
   (func $page_would_fit (param $start_eip i32) (param $len i32)
@@ -1604,7 +1643,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $fn) (i32.const 464))
+    (if (i32.ge_u (local.get $fn) (i32.const 465))
       (then
         (return_call $dispatch_bad (local.get $fn))))
     (if (global.get $handler_hist_enabled)

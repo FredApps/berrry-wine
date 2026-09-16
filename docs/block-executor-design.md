@@ -3398,3 +3398,216 @@ fix and did not reach parity on the other half:
 3. No wall-clock claim is made anywhere in this section. The box ran at loadavg
    3-44 across these sweeps; every number quoted as a result is a deterministic
    counter that reproduced to the digit.
+
+## 27. Round 17: the fallback-carrying leaf (H464), and the chunk reserve (2026-09-15)
+
+Two independent changes, measured separately.
+
+**A.** Section 25 gave one-block descriptors their own small handler, H463
+`$th_block_exec_leaf`, and then refused it any descriptor carrying a fallback
+pool — so a block with a single `pushfd` in it paid the whole 10 KB general
+region function (`$th_block_exec`, 14 data-dependent indirect sites) to run
+fourteen native micro-ops and one threaded one. Round 17 adds **H464
+`$th_block_exec_leaf_fb`**: the same leaf with a fallback arm.
+
+**B.** Section 26.2 priced, and left unfixed, the two descriptor families
+sharing round 14's one 16 KB per-page chunk on a first-come basis. Round 17
+adds a **per-page region reserve**: N bytes at the end of the chunk that only
+the region installer may spend.
+
+### 27.1 Why a second function and not a second arm
+
+A `call_indirect` inside H463's body loop would add a data-dependent indirect
+site to *every* descriptor the leaf services, including the 1.6M entries per
+window that never touch a fallback — and `tools/indirect-census.js` counts
+sites, because that is what a BTB is pressured by. A second entry point instead
+makes "the pure leaf did not regress" a property of the **build** rather than
+of a measurement: H463's body is byte-for-byte what round 16 shipped, and a
+descriptor that carries no fallback still emits H463's handler index.
+
+The cost is that `$bx_is_desc_word` now has to recognise three handler indices
+rather than two. That is the one thing this shape can get silently wrong — a
+retirement stamp check that missed H464 would leave a rewritten block running
+its stale descriptor — so it has its own SMC case in `test/test-block-exec.js`.
+
+The emit site in `$block_exec_try_install` is a three-way select: no fallback
+and no x87 run → H463; otherwise, leaf_fb gate on → H464; else H458. So the
+`--no-block-exec-leaf-fb` arm is round 16 exactly on this build, which is what
+every A/B below is written against.
+
+### 27.2 The microbench (tools/bench-loops.js, `--toggle=block_exec_leaf_fb`)
+
+Minima, three independent runs, alternating arms in one process. `+` = the
+fallback leaf is faster.
+
+| shape | run 1 | run 2 | run 3 |
+|---|---|---|---|
+| blk4 | -0.3% | +0.1% | +0.9% |
+| blk8 | +2.3% | -0.1% | -8.9% (outlier) |
+| blk16 | +1.2% | +0.4% | -1.6% |
+| blk32 | +1.4% | -0.4% | +0.5% |
+| blk_mem8 | +0.7% | +1.6% | +0.4% |
+| blk_fb8 | +0.3% | +0.0% | +0.2% |
+| **blk_mix512** (null control) | +0.2% | -0.2% | +1.6% |
+| **blk_mix512_fb** | **+10.0%** | **+10.2%** | **+8.4%** |
+
+Region shapes (21 reps, one run): region_if2 +0.7%, region_diamond4 -0.4%,
+region_state6 +2.2%, region_ladder5 -0.9%, region_call1 -1.4%, region_null
++2.2% (this is the noise floor — the shape is *identical* in both arms),
+region_x87 +4.2%. Nothing regressed beyond the control band.
+
+`blk_mix512_fb` is new: the `blk_mix512` working set (512 distinct blocks, 128
+bytes apart, so no indirect site sees a learnable target sequence) with a
+fallback op inserted mid-body in every second block. It is the only shape where
+this round is reachable at all, and it is the only shape that moves.
+
+**Two corrections to earlier sections, both found while building that shape:**
+
+1. **`blk_fb8` is not a fallback control any more and section 25 should not be
+   read as if it were.** It uses `adc r,r`, which has since become a native
+   executor kind; the shape reports `fallback: 0` on this build. The row above
+   is therefore a second null control, not a fallback measurement. The op that
+   *is* a fallback, and is what `blk_mix512_fb` uses, is `bswap r32`
+   (`0F C8+r`): register-only, absent from `$bx_op_unsafe`, and with no kind in
+   `$tree_uop_classify`. Measured 235,520 fallback micro-ops, 512/512 installs
+   in both arms.
+2. **Section 25.4's "fallback-carrying 1-block descriptors are 73% of executor
+   entries" is wrong as stated.** 73% is the whole non-leaf remainder, which is
+   dominated by *multi-block regions* (2,783,716 of 5,797,427 entries on
+   quake2-gameplay). The fallback-carrying one-block population is measured
+   below at 13.2% and 1.6%.
+
+### 27.3 The windows
+
+`docs/block-executor-design/collect-round17-windows.sh`. `off` = no executor;
+`r16` = `--block-exec --no-block-exec-leaf-fb`; `on` = `--block-exec`.
+
+| | quake2-gameplay (4000-8000) | heroes2-gameplay (1500-3000) |
+|---|---|---|
+| decodes, off | 651,032 | 215,398 |
+| decodes, r16 and on | 660,569 (+1.5%) | 206,394 (-4.2%) |
+| entries | 5,797,427 | 2,401,967 |
+| leafEntries (H463) | 1,647,224 (28.4%) | 648,177 (27.0%) |
+| **leafFbEntries (H464)** | **766,117 (13.2%)** | **38,981 (1.6%)** |
+| genEntries, r16 | 4,150,203 | 1,753,790 |
+| genEntries, on | 3,384,086 | 1,714,809 |
+| ops native | 241,886,033 (identical) | 25,626,675 (identical) |
+| transfersSaved | 15,178,070 (identical) | 1,256,726 (identical) |
+| entriesMulti (regions) | 2,783,716 | 1,628,771 |
+| one-block entries (byN 1) | 3,013,711 | 773,196 |
+
+`r16` and `on` are identical on **every** counter except the entry split — same
+decodes, same installs, same native ops, same transfersSaved, same region
+installs. That is the shape the change was supposed to have: it moves work
+between two functions and changes nothing about what is installed.
+
+Read against the one-block population rather than against all entries, the leaf
+family now covers **80.1%** of quake2-gameplay's one-block entries and **88.9%**
+of heroes2-gameplay's. The residue (≈600,370 and ≈86,038) is one-block
+descriptors with a folded, non-`term_kind 5` terminator — outside both leaves'
+contracts by design, not by omission.
+
+### 27.4 The picture
+
+`docs/block-executor-design/collect-round17-png.sh`, two budgets per app, both
+arms carrying `--block-exec` so the only variable is which function services a
+fallback-carrying descriptor. quake2 at 600 and 2600 batches, heroes2 at 700
+and 1400: **all four pairs byte-identical** (`tools/png-diff.js`), with both
+arms reaching the same batch and the same API-call count in every pair.
+
+### 27.5 Part B: the per-page region reserve
+
+`$page_desc_would_fit` takes a `$reserve` argument. The region installer passes
+0; the one-block installer passes `$page_desc_rg_reserve`, so the last N bytes
+of a page's 16 KB descriptor chunk are spendable only by a region.
+`$page_desc_reserve_declines` counts only declines the reserve *caused* — a
+request that would have overflowed the chunk anyway is the chunk's business.
+The default is **0**, i.e. round-16 behaviour exactly.
+
+`docs/block-executor-design/collect-round17-chunk.sh`, quake2-gameplay
+4000-8000, read with `docs/block-executor-design/r17-chunk-table.js`:
+
+| arm | decodes | vs off | region installs | 1-block installs | nrChunkFull | rgResDecl | ops native |
+|---|---|---|---|---|---|---|---|
+| noexec | 651,032 | — | — | — | — | — | — |
+| nox87 r=0 | 660,569 | +1.5% | 2,832 | 14,671 | 6,459 | 0 | 241,886,033 |
+| nox87 r=2048 | 660,559 | +1.5% | 2,854 | 14,278 | 6,435 | 3,515 | 241,113,118 |
+| nox87 r=4096 | 662,019 | +1.7% | 3,056 | 13,790 | 6,732 | 4,049 | 240,312,775 |
+| nox87 r=6144 | 662,202 | +1.7% | 3,234 | 13,158 | 6,671 | 4,818 | 243,556,789 |
+| **x87 r=0** | 607,370 | -6.7% | **1,618** | 18,344 | 8,320 | 0 | 244,130,867 |
+| x87 r=2048 | 645,722 | -0.8% | **2,998** | 19,294 | 8,772 | 6,022 | 280,398,542 |
+| x87 r=4096 | 644,389 | -1.0% | 3,042 | 18,576 | 7,187 | 6,384 | 272,678,313 |
+| **x87 r=6144** | 651,724 | +0.1% | **3,555** | 17,961 | 6,978 | 7,717 | **281,866,545** |
+
+Section 26.2's effect reproduces on this build at a different scale: turning
+x87 regions on takes region installs from 2,832 to **1,618**, a 43% loss, with
+the region classifier untouched. The reserve recovers it and then some — at
+2048 bytes the x87 arm is already at 2,998, *above* the non-x87 arm's own
+r=0 figure, and at 6144 it is 3,555 (+120% over x87 r=0).
+
+**The kill rule holds in every row.** Sections 22/23 require decodes ≤ off+5%;
+the worst row here is +1.7% and the best x87 row is +0.1%. No reserve setting
+bought regions by making pages recompile.
+
+Native micro-ops rise with it: 244.1M → 281.9M in the x87 arm (+15.5%), which
+is the actual point — a region entry replaces a chain of block transfers, so
+region installs are only worth quoting when the ops they carry follow.
+
+**Success criterion, stated against the real numbers.** The brief's bar was
+"region installs with x87 on ≥ the non-x87 arm's 1,186". 1,186 was section
+24.5's figure on an older build; the non-x87 arm on *this* build is 2,832. The
+x87 arm clears both bars from r=2048 upward (2,998) and reaches 3,555 at
+r=6144, with decodes at +0.1%. Bar met.
+
+**The reserve nevertheless ships at 0.** `--block-exec-x87` is itself off by
+default, and on the default (non-x87) path the reserve is a much smaller trade:
++402 region installs against −1,513 one-block installs and +0.7% native ops for
++0.2pp of decode. Turning it on by default would be a second change riding on
+round 17's A/B; the counters say it is worth turning on *with* x87 regions, and
+that decision belongs to whichever round makes x87 regions the default.
+`--page-desc-rg-reserve=N` is the knob.
+
+One second-order effect worth naming so it is not read as a contradiction: in
+the x87 arms one-block installs go *up* with a nonzero reserve (18,344 →
+19,294 at r=2048) even though the reserve only ever declines them. The reserve
+changes which pages survive and which get recompiled, so the population of
+pages offered to the one-block installer is not the same population. It is not
+evidence that the reserve failed to bind — `rgResDecl` is 6,022 in that row.
+
+### 27.6 Tests
+
+`test/test-block-exec.js` is 350 cases (was 308). The round-17 section covers
+H464 entry, both directions of the spill/reload seam (a native write the
+fallback reads; a fallback write the natives read), two fallbacks in one block,
+the fallback as the first and as the last micro-op, memory either side of the
+seam, the gate-off A/B (bit-identical state, install lands on H458, same
+fallback-op count), SMC of a leaf_fb install, and the reserve (inert on the
+guest's answer, zero declines at r=0, real declines at r=8192, one-block
+installs fall, the page is never dropped, the knob is left at its default).
+
+Also green: `test-stream-fold`, `test-tree-fold` (55 blocks, 9,198 super-op
+runs), `test-worker-wasm-globals` (42 inherited setters, was 40),
+`test-x87-pipeline4-fusion` (11 cases), and `test-x86-ops` (145 cases).
+
+### 27.7 What is unproven
+
+1. **No wall-clock app number is claimed.** The box ran at loadavg 5-40
+   throughout. Every figure above is either a deterministic counter that
+   reproduced to the digit across arms, or a `bench-loops.js` minimum from
+   alternating arms in one process.
+2. `blk_mix512_fb`'s +9-10% is a **microbench** on a shape built to be worst
+   case for the general function (512 cold blocks, half of them carrying a
+   fallback). It must not be quoted as an app percentage; the app-side evidence
+   is the entry split in 27.3, not a time.
+3. The 13.2% / 1.6% spread between the two windows is large and unexplained.
+   heroes2-gameplay's one-block population is simply mostly fallback-free in
+   this window; whether that holds for other Heroes II scenes is untested.
+4. The ≈600K quake2 one-block entries still on H458 are attributed to a folded
+   terminator by construction (they are neither leaf's contract), not by a
+   per-descriptor census. A third leaf variant for folded terminators is the
+   obvious next question and was not attempted.
+5. The reserve was swept only on quake2-gameplay. Whether 6144 is near-optimal
+   anywhere else, and whether a *proportional* reserve would beat a fixed one,
+   is untested.
+6. Nothing here touches the K / thrash / memo knobs, and no claim is made about
+   them.

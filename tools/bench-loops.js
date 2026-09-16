@@ -1299,16 +1299,36 @@ SHAPES.blk_fb8 = {
 //    both arms quietly measure the threaded interpreter instead.
 //  * 512 * 128 = 64KB of code, so the shape declares `codeStride` and gets a
 //    64KB-aligned fresh arena per rep instead of the default one page.
+const FB_OP = [0x0F, 0xCB];                     // bswap ebx
 const MIX_REGS = [0, 2, 3, 5, 6, 7];            // eax edx ebx ebp esi edi
 const MIX_OPS = [0x01, 0x09, 0x21, 0x29, 0x31, 0x89];  // add or and sub xor mov
-function mixShape(fixedUops, spacing, stride) {
+// ROUND 17: `fbEvery` puts one FALLBACK micro-op into every Nth block.
+//
+// The opcode is `bswap ebx`, NOT blk_fb8's `adc ebx,eax`. Measured on this
+// build, blk_fb8 retires ZERO fallback micro-ops: `adc r,r` has been a native
+// executor kind for some time and blk_fb8's comment is stale, which makes it a
+// null control for a different reason than section 25 gives. `bswap` is
+// register-only (so the shape still touches no guest memory), is not in
+// $bx_op_unsafe, and has no $tree_uop_classify kind, so it is a real
+// TU_FALLBACK -- checked, not assumed: the harness prints the fallback count
+// and it must be nonzero in both arms before any number here is read.
+// blk_mix512_fb sets it to 2, so half the 512 blocks carry a fallback and half
+// do not: a working set that exercises BOTH leaf entry points, which is what
+// section 27 has to price. A shape where every block falls back would measure
+// H464 alone and would not answer whether adding a third entry point hurt the
+// other two.
+function mixShape(fixedUops, spacing, stride, fbEvery) {
   return {
-    describe: fixedUops
-      ? `512 distinct ${fixedUops}-op register blocks, cycled — a cold indirect predictor`
-      : '512 distinct 4-12 op register blocks, cycled — a cold indirect predictor',
-    real: fixedUops
-      ? `the cold-predictor cost of a ${fixedUops}-uop block; the breakeven sweep`
-      : 'an app\'s block working set; the one blk* shape a hot BTB cannot flatter',
+    describe: fbEvery
+      ? `512 distinct 4-12 op register blocks, every ${fbEvery === 2 ? '2nd' : fbEvery + 'th'} carrying one fallback`
+      : (fixedUops
+        ? `512 distinct ${fixedUops}-op register blocks, cycled — a cold indirect predictor`
+        : '512 distinct 4-12 op register blocks, cycled — a cold indirect predictor'),
+    real: fbEvery
+      ? 'the 73% of executor entries that carry a fallback, mixed with the 27% that do not'
+      : (fixedUops
+        ? `the cold-predictor cost of a ${fixedUops}-uop block; the breakeven sweep`
+        : 'an app\'s block working set; the one blk* shape a hot BTB cannot flatter'),
     // The stride must EXCEED the shape's own length, or rep N's first block
     // lands on rep N-1's tail and the two arms share decoded code (oneRep
     // enforces it).
@@ -1321,7 +1341,15 @@ function mixShape(fixedUops, spacing, stride) {
         const at = code.length;
         const nu = fixedUops || (4 + (b % 9));
         uops += nu;
+        // The fallback goes in the MIDDLE, not at either end: at the head it
+        // would be the first micro-op and at the tail the last, and both are
+        // positions the spill/reload could be special-cased at. In the middle
+        // it has native micro-ops on both sides, so a register the handler
+        // wrote has to survive back into the locals to be read by the ops
+        // after it -- which is the property arm 57 exists to preserve.
+        const fbAt = (fbEvery && (b % fbEvery) === 0) ? (nu >> 1) : -1;
         for (let j = 0; j < nu; j++) {
+          if (j === fbAt) { code.push(...FB_OP); uops += 1; }
           const o = (b * 7 + j * 3) % MIX_OPS.length;
           const d = MIX_REGS[(b * 5 + j) % MIX_REGS.length];
           const src = MIX_REGS[(b * 3 + j * 2 + 1) % MIX_REGS.length];
@@ -1355,6 +1383,14 @@ function mixShape(fixedUops, spacing, stride) {
   };
 }
 SHAPES.blk_mix512 = mixShape(null, 128, 0x20000);
+// ROUND 17 (section 27): the shape the widened leaf contract is about. Same
+// 512-block cold-predictor working set, but every second block carries one
+// `adc ebx,eax` -- so half the descriptors take the pure leaf H463 and half
+// take H464, which is roughly the 27/73 split section 25.3 measured on the two
+// real windows. Check `installs` is 512 in BOTH arms before reading any number
+// off it: a fallback-carrying descriptor also carries a pool, and a page's
+// 16KB descriptor chunk is the same size it was.
+SHAPES.blk_mix512_fb = mixShape(null, 128, 0x20000, 2);
 // The breakeven sweep. Fixed uop count per block, so "how many micro-ops does
 // a descriptor need to repay its entry" has an answer measured on a predictor
 // the shape does not let the CPU learn -- which is the axis the shipped
@@ -2091,6 +2127,28 @@ const TOGGLES = {
     e.set_block_exec(1);
     e.set_block_exec_min_uops(2);
     e.set_block_exec_leaf(v);
+  },
+  // ROUND 17 (section 27): the fallback-carrying leaf H464 alone. The executor
+  // is armed and the PURE leaf is on in both arms, so what varies is only
+  // which function services a one-block descriptor that has a fallback in it:
+  // the on arm is H464, the off arm is the general region handler exactly as
+  // round 16 shipped. Point it at blk_mix512_fb; on blk_mix512 it is a null
+  // control, because no block there carries a fallback and nothing can reach
+  // H464 at all.
+  block_exec_leaf_fb: (e, v) => {
+    e.set_block_exec(1);
+    e.set_block_exec_min_uops(2);
+    e.set_block_exec_leaf(1);
+    e.set_block_exec_leaf_fb(v);
+  },
+  // The executor against the threaded interpreter with BOTH leaves armed --
+  // the round-17 twin of block_exec_forced, for a shape whose descriptors
+  // carry fallbacks.
+  block_exec_forced_leaf2: (e, v) => {
+    e.set_block_exec(v);
+    e.set_block_exec_min_uops(v ? 2 : 0);
+    e.set_block_exec_leaf(1);
+    e.set_block_exec_leaf_fb(1);
   },
 };
 const applyToggle = (e, name, v) => {

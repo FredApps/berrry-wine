@@ -2905,6 +2905,15 @@
   (func (export "get_block_exec_leaf") (result i32) (global.get $block_exec_leaf))
   (func (export "get_block_exec_leaf_runs") (result i32)
     (global.get $block_exec_leaf_runs))
+  ;; Round 17: the SECOND leaf (H464), the one that may fall back. Meaningless
+  ;; with set_block_exec_leaf(0), which already sends every one-block install
+  ;; back to H458; zero here narrows that to the fallback-carrying ones and
+  ;; reproduces round 16 exactly.
+  (func (export "set_block_exec_leaf_fb") (param $flag i32)
+    (global.set $block_exec_leaf_fb (local.get $flag)))
+  (func (export "get_block_exec_leaf_fb") (result i32) (global.get $block_exec_leaf_fb))
+  (func (export "get_block_exec_leaf_fb_runs") (result i32)
+    (global.get $block_exec_leaf_fb_runs))
   (func (export "get_bx_pass_rmw") (result i64) (global.get $bx_pass_rmw))
   (func (export "get_block_exec_installs") (result i32)
     (global.get $block_exec_installs))
@@ -3057,6 +3066,15 @@
   (func (export "get_page_desc_chunk_allocs")(result i32) (global.get $page_desc_chunk_allocs))
   (func (export "get_page_desc_chunk_grows") (result i32) (global.get $page_desc_chunk_grows))
   (func (export "get_page_desc_chunk_full")  (result i32) (global.get $page_desc_chunk_full))
+  ;; Round 17, section 27.2: the one-block family's headroom reserve inside the
+  ;; per-page DESCRIPTOR chunk, and the count of one-block installs it declined
+  ;; that the bare chunk would have taken. 0 is round 16's behaviour.
+  (func (export "set_page_desc_rg_reserve") (param $n i32)
+    (global.set $page_desc_rg_reserve (local.get $n)))
+  (func (export "get_page_desc_rg_reserve") (result i32)
+    (global.get $page_desc_rg_reserve))
+  (func (export "get_page_desc_reserve_declines") (result i32)
+    (global.get $page_desc_reserve_declines))
   (func (export "get_block_exec_no_room")    (result i32) (global.get $bx_no_room))
   ;; Round 16 (section 26). Discovery's view of the one-block family: how many
   ;; successors a walk could not read back, how many descriptors it had to take

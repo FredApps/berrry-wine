@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 464 funcref)
+  (table $handlers 465 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -528,4 +528,5 @@
     $th_smk_tree_walk         ;; 461: a whole Smacker one-bit Huffman descent
     $th_pcx_run               ;; 462: a whole Quake II PCX/WAL run expansion
     $th_block_exec_leaf       ;; 463: a ONE-block descriptor, no region machinery
+    $th_block_exec_leaf_fb    ;; 464: the same leaf, but it may fall back
   )
