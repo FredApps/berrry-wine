@@ -65,6 +65,11 @@
   (global $loop_colorkey8_matches (mut i32) (i32.const 0))
   (global $loop_colorkey8_runs (mut i32) (i32.const 0))
   (global $loop_colorkey8_bytes (mut i64) (i64.const 0))
+  ;; Generic unit-stride byte FILL_RUN (H454). See $loop_try_fill_run.
+  (global $loop_fill_matches (mut i32) (i32.const 0))
+  (global $loop_fill_runs (mut i32) (i32.const 0))
+  (global $loop_fill_bytes (mut i64) (i64.const 0))
+  (global $loop_fill_slow_runs (mut i32) (i32.const 0))
   ;; Generic balanced x87 expression pipeline. Kept opt-in while the first
   ;; production calibration establishes whole-emulator benefit; the matcher
   ;; still counts candidates with execution disabled.
@@ -115,6 +120,21 @@
   ;; same-process semantic and timing A/Bs; the production default is on.
   (global $loop_aoe_fill_emit_enabled (mut i32) (i32.const 1))
   (global $loop_aoe_span_emit_enabled (mut i32) (i32.const 1))
+  ;; Generic unit-stride byte FILL_RUN. This is a MEMORY-path lowering (one
+  ;; memory.fill in place of N byte stores), so it is in principle the family
+  ;; the performance summary says can pay -- but it ships DEFAULT OFF, for the
+  ;; same reason COPY_RUN does: the payoff was never demonstrated and the broad
+  ;; corpus safety was never established.
+  ;;
+  ;; The shape is general (479 of 1107 distinct corpus binaries carry it, 1417
+  ;; sites), and the lowering is exact (test/test-byte-fill-run.js). What it is
+  ;; NOT is long. On StarCraft's 0x004b48d7 the measured mean run is 3.5 bytes
+  ;; (467232 bytes over 132865 runs), so a memory.fill buys almost nothing over
+  ;; the byte stores and what is left is a dispatch-count reduction -- which the
+  ;; governing law says measures ~0. Turn it on with --fill-superops; the
+  ;; matcher still counts candidates when execution is off, so the A/B arms
+  ;; differ only in whether H454 is emitted.
+  (global $loop_fill_emit_enabled (mut i32) (i32.const 0))
   ;; Jazz 2 has three copies of one exact two-block masked MMX row loop. Keep
   ;; its gate and the two semantically identical store strategies separate
   ;; from the older scalar COPY_RUN gate: the benchmark can switch the latter
@@ -4306,6 +4326,10 @@
     ;; the order is a cost choice, not a precedence one.
     (if (call $loop_try_aoe_grid_fill (local.get $start_eip) (local.get $tstart))
       (then (return)))
+    ;; Four ops exactly, so this declines on the op count alone for every block
+    ;; the others want; it is first because it is the cheapest decline.
+    (if (call $loop_try_fill_run (local.get $start_eip) (local.get $tstart))
+      (then (return)))
     (if (call $loop_try_lut16_counted (local.get $start_eip) (local.get $tstart))
       (then (return)))
     (if (call $loop_try_lut (local.get $start_eip) (local.get $tstart)) (then (return)))
@@ -4511,6 +4535,288 @@
     (global.set $eip
       (select (local.get $back) (local.get $fall)
         (i32.lt_s (global.get $eax) (local.get $end))))
+    (return_call $branch_end))
+
+  ;; ------------------------------------------------------------------
+  ;; 454: generic unit-stride byte FILL_RUN
+  ;; ------------------------------------------------------------------
+  ;; The shape is a counted store of ONE loop-invariant byte through a pointer
+  ;; that moves by exactly one byte per iteration, and nothing else:
+  ;;
+  ;;   StarCraft 0x004b48d7   mov [edi],al / inc edi / dec edx / jnz ^
+  ;;   StarCraft 0x004b4d2a   inc edi / dec edx / mov [edi-1],al / jnz ^
+  ;;   StarCraft 0x004b557f   dec edi / dec edx / mov [edi],al / jnz ^
+  ;;
+  ;; All three are the same run of bytes written with the same value, so the
+  ;; whole body collapses to one `memory.fill`. That is the point: the emulator
+  ;; does not merely stop dispatching four handlers per byte, it stops touching
+  ;; memory one byte at a time -- the only kind of reduction docs/
+  ;; performance-summary.md records as paying.
+  ;;
+  ;; Written against ROLES, not against those three instruction sequences. The
+  ;; registers, the displacement, the stride direction and the position of each
+  ;; op within the body are all parameters; only the ORDER RELATION that decides
+  ;; the first address, and the one that decides which op leaves the flags the
+  ;; branch reads, are constrained.
+  ;;
+  ;; Why the body may be exactly these four roles and no more: this matcher
+  ;; models no dataflow beyond them, so any fifth op could redefine the pointer,
+  ;; the counter or the stored byte in a way the lowering would silently drop.
+  ;;
+  ;; Two facts are discharged at RUN time with a guard plus a fallback rather
+  ;; than proved at decode time, the pattern the LUT/COPY executors already use:
+  ;; that the whole run lies in one affine mapping, and that the address range
+  ;; does not wrap. A failed guard takes the elementwise arm, which performs the
+  ;; same stores in the same order through $gs8.
+  (func $loop_try_fill_run
+    (param $start_eip i32) (param $tstart i32) (result i32)
+    (local $i i32) (local $p i32) (local $fn i32) (local $op i32) (local $role i32)
+    (local $st_cnt i32) (local $st_idx i32) (local $st_base i32) (local $st_src i32)
+    (local $st_disp i32)
+    (local $addi_cnt i32) (local $a0_idx i32) (local $a0_reg i32) (local $a0_step i32)
+    (local $a1_idx i32) (local $a1_reg i32) (local $a1_step i32)
+    (local $ptr_reg i32) (local $ptr_step i32) (local $ptr_idx i32)
+    (local $ctr_reg i32)
+    (local $fall i32) (local $back i32) (local $first_off i32) (local $desc i32)
+
+    ;; store + pointer add + counter add + branch, and nothing else.
+    (if (i32.ne (global.get $op_index_n) (i32.const 4))
+      (then (return (i32.const 0))))
+
+    (local.set $st_idx (i32.const -1))
+    (local.set $i (i32.const 0))
+    (block $scan_done
+      (loop $scan
+        (br_if $scan_done (i32.ge_u (local.get $i) (i32.const 4)))
+        (local.set $p (call $loop_op_at (local.get $i)))
+        (local.set $fn (load.field LoopOp handler (local.get $p)))
+        (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
+        (local.set $role (call $loop_role (local.get $fn) (local.get $op)))
+
+        (if (i32.eq (local.get $role) (global.get $LR_STORE8))
+          (then
+            (if (local.get $st_cnt) (then (return (i32.const 0))))
+            (local.set $st_cnt (i32.const 1))
+            (local.set $st_idx (local.get $i))
+            (local.set $st_base (i32.and (local.get $op) (i32.const 0xF)))
+            (local.set $st_src (i32.shr_u (local.get $op) (i32.const 4)))
+            (local.set $st_disp (i32.load offset=8 (local.get $p))))
+          (else
+            (if (i32.eq (local.get $role) (global.get $LR_ADDI))
+              (then
+                (if (i32.eqz (local.get $addi_cnt))
+                  (then
+                    (local.set $a0_idx (local.get $i))
+                    (local.set $a0_reg (i32.and (local.get $op) (i32.const 0xF)))
+                    (local.set $a0_step
+                      (select (i32.const 1) (i32.const -1)
+                        (i32.eq (local.get $fn) (i32.const 64)))))
+                  (else
+                    (if (i32.ne (local.get $addi_cnt) (i32.const 1))
+                      (then (return (i32.const 0))))
+                    (local.set $a1_idx (local.get $i))
+                    (local.set $a1_reg (i32.and (local.get $op) (i32.const 0xF)))
+                    (local.set $a1_step
+                      (select (i32.const 1) (i32.const -1)
+                        (i32.eq (local.get $fn) (i32.const 64))))))
+                (local.set $addi_cnt (i32.add (local.get $addi_cnt) (i32.const 1))))
+              (else
+                ;; The branch is a role, but only as the final op.
+                (if (i32.eq (local.get $role) (global.get $LR_JCC))
+                  (then
+                    (if (i32.ne (local.get $i) (i32.const 3))
+                      (then (return (i32.const 0)))))
+                  ;; anything else at all, including LR_UNKNOWN
+                  (else (return (i32.const 0))))))))
+
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+
+    (if (i32.or (i32.ne (local.get $st_cnt) (i32.const 1))
+                (i32.ne (local.get $addi_cnt) (i32.const 2)))
+      (then (return (i32.const 0))))
+
+    ;; The terminator must be JNZ specifically. A byte store writes no flags, so
+    ;; the flags it reads are the LAST add-immediate's -- which makes that op the
+    ;; trip counter and the other one the pointer. Requiring `dec` there is what
+    ;; makes the trip count exactly the counter's entry value.
+    (local.set $p (call $loop_op_at (i32.const 3)))
+    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 312))
+      (then (return (i32.const 0))))
+    (local.set $fall (i32.load offset=8 (local.get $p)))
+    (local.set $back (i32.load offset=12 (local.get $p)))
+    (if (i32.ne (local.get $back) (local.get $start_eip))
+      (then (return (i32.const 0))))
+
+    (if (i32.ne (local.get $a1_step) (i32.const -1))
+      (then (return (i32.const 0))))
+    (local.set $ctr_reg (local.get $a1_reg))
+    (local.set $ptr_reg (local.get $a0_reg))
+    (local.set $ptr_step (local.get $a0_step))
+    (local.set $ptr_idx (local.get $a0_idx))
+
+    ;; Pointer, counter and the source byte's architectural register must be
+    ;; three different registers: the lowering advances the first two once at
+    ;; the end and reads the third once at the start. Byte registers 4..7 name
+    ;; the high byte of eax..ebx, so the architectural register is src & 3.
+    (if (i32.ge_u (local.get $ptr_reg) (i32.const 8)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $ctr_reg) (i32.const 8)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $st_src) (i32.const 8)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $ptr_reg) (local.get $ctr_reg))
+      (then (return (i32.const 0))))
+    (if (i32.ne (local.get $st_base) (local.get $ptr_reg))
+      (then (return (i32.const 0))))
+    (if (i32.or
+          (i32.eq (i32.and (local.get $st_src) (i32.const 3)) (local.get $ptr_reg))
+          (i32.eq (i32.and (local.get $st_src) (i32.const 3)) (local.get $ctr_reg)))
+      (then (return (i32.const 0))))
+
+    ;; Iteration k stores at ptr0 + first_off + k*step. When the pointer add
+    ;; runs BEFORE the store, iteration 0 already sees one step of movement.
+    (local.set $first_off (local.get $st_disp))
+    (if (i32.lt_u (local.get $ptr_idx) (local.get $st_idx))
+      (then
+        (local.set $first_off
+          (i32.add (local.get $first_off) (local.get $ptr_step)))))
+
+    (global.set $loop_fill_matches
+      (i32.add (global.get $loop_fill_matches) (i32.const 1)))
+    (if (i32.eqz (global.get $loop_fill_emit_enabled))
+      (then (return (i32.const 0))))
+
+    (local.set $desc
+      (i32.or (local.get $ptr_reg)
+        (i32.or (i32.shl (local.get $ctr_reg) (i32.const 4))
+          (i32.or (i32.shl (local.get $st_src) (i32.const 8))
+            (i32.shl (i32.lt_s (local.get $ptr_step) (i32.const 0))
+                     (i32.const 12))))))
+
+    (global.set $loop_matched_blocks
+      (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
+    (global.set $thread_alloc (local.get $tstart))
+    (global.set $op_index_n (i32.const 0))
+    (call $te (i32.const 454) (local.get $desc))
+    (call $te_raw (local.get $first_off))
+    (call $te_raw (local.get $fall))
+    (call $te_raw (local.get $back))
+    (i32.const 1))
+
+  (func $th_fill_run (param $op i32)
+    (local $tp i32) (local $first_off i32) (local $fall i32) (local $back i32)
+    (local $ptr_reg i32) (local $ctr_reg i32) (local $src i32) (local $neg i32)
+    (local $step i32) (local $p0 i32) (local $c0 i32) (local $val i32)
+    (local $total i32) (local $allowed i32) (local $n i32)
+    (local $first i32) (local $lo i32) (local $wa i32) (local $i i32)
+    (local $new_c i32)
+
+    (local.set $tp (global.get $ip))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 12)))
+    (local.set $first_off (i32.load (local.get $tp)))
+    (local.set $fall (i32.load offset=4 (local.get $tp)))
+    (local.set $back (i32.load offset=8 (local.get $tp)))
+
+    (local.set $ptr_reg (i32.and (local.get $op) (i32.const 0xF)))
+    (local.set $ctr_reg (i32.and (i32.shr_u (local.get $op) (i32.const 4))
+                                 (i32.const 0xF)))
+    (local.set $src (i32.and (i32.shr_u (local.get $op) (i32.const 8))
+                             (i32.const 0xF)))
+    (local.set $neg (i32.and (i32.shr_u (local.get $op) (i32.const 12))
+                             (i32.const 1)))
+    (local.set $step (select (i32.const -1) (i32.const 1) (local.get $neg)))
+
+    (local.set $p0 (call $get_reg (local.get $ptr_reg)))
+    (local.set $c0 (call $get_reg (local.get $ctr_reg)))
+    (local.set $val (call $get_reg8 (local.get $src)))
+
+    ;; `dec`/`jnz` gives exactly $c0 iterations, and an entry value of 0 means
+    ;; 2^32 -- represent that as "more than any budget" rather than as a special
+    ;; case, so the ordinary clamp below handles it and the block re-enters.
+    (local.set $total
+      (select (i32.const -1) (local.get $c0) (i32.eqz (local.get $c0))))
+
+    ;; Same guest-instruction and block budgets the four-handler body would have
+    ;; spent. $next already charged H454 itself, hence the cost-1 in the first.
+    (local.set $allowed
+      (i32.div_u
+        (i32.add
+          (select (global.get $steps) (i32.const 0)
+            (i32.gt_s (global.get $steps) (i32.const 0)))
+          (i32.const 3))
+        (i32.const 4)))
+    (if (i32.eqz (local.get $allowed))
+      (then (local.set $allowed (i32.const 1))))
+    (local.set $n
+      (select (local.get $total) (local.get $allowed)
+        (i32.lt_u (local.get $total) (local.get $allowed))))
+    (local.set $allowed
+      (select (i32.add (global.get $block_budget) (i32.const 1)) (i32.const 1)
+        (i32.gt_s (global.get $block_budget) (i32.const 0))))
+    (if (i32.gt_u (local.get $n) (local.get $allowed))
+      (then (local.set $n (local.get $allowed))))
+    (if (i32.eqz (local.get $n)) (then (local.set $n (i32.const 1))))
+
+    (local.set $first (i32.add (local.get $p0) (local.get $first_off)))
+    ;; Every iteration writes the same byte, so a descending run is the same
+    ;; set of bytes as the ascending one that ends at $first. Reject the two
+    ;; wrapping cases outright -- an address range that wraps is not a span and
+    ;; $g2w_affine_span must not be asked about one.
+    (local.set $lo (local.get $first))
+    (local.set $wa (global.get $NULL_SENTINEL))
+    (if (local.get $neg)
+      (then
+        (if (i32.ge_u (local.get $first) (i32.sub (local.get $n) (i32.const 1)))
+          (then
+            (local.set $lo
+              (i32.sub (local.get $first)
+                (i32.sub (local.get $n) (i32.const 1))))
+            (local.set $wa (call $g2w_affine_span (local.get $lo) (local.get $n))))))
+      (else
+        (if (i32.ge_u (i32.add (local.get $first) (local.get $n))
+                      (local.get $first))
+          (then
+            (local.set $wa
+              (call $g2w_affine_span (local.get $lo) (local.get $n)))))))
+
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then
+        (call $invalidate_code_write (local.get $lo) (local.get $n))
+        (memory.fill (local.get $wa) (local.get $val) (local.get $n)))
+      (else
+        ;; Unmapped, split across mappings, or wrapped: perform the identical
+        ;; stores in the identical order, one at a time.
+        (global.set $loop_fill_slow_runs
+          (i32.add (global.get $loop_fill_slow_runs) (i32.const 1)))
+        (local.set $i (i32.const 0))
+        (loop $slow
+          (call $gs8
+            (i32.add (local.get $first)
+              (i32.mul (local.get $i) (local.get $step)))
+            (local.get $val))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br_if $slow (i32.lt_u (local.get $i) (local.get $n))))))
+
+    (call $set_reg (local.get $ptr_reg)
+      (i32.add (local.get $p0) (i32.mul (local.get $n) (local.get $step))))
+    (local.set $new_c (i32.sub (local.get $c0) (local.get $n)))
+    (call $set_reg (local.get $ctr_reg) (local.get $new_c))
+    (call $set_flags_dec
+      (i32.add (local.get $new_c) (i32.const 1)) (local.get $new_c))
+
+    (global.set $steps
+      (i32.sub (global.get $steps)
+        (i32.sub (i32.mul (local.get $n) (i32.const 4)) (i32.const 1))))
+    (if (i32.gt_u (local.get $n) (i32.const 1))
+      (then
+        (global.set $block_budget
+          (i32.sub (global.get $block_budget)
+            (i32.sub (local.get $n) (i32.const 1))))))
+    (global.set $loop_fill_runs
+      (i32.add (global.get $loop_fill_runs) (i32.const 1)))
+    (global.set $loop_fill_bytes
+      (i64.add (global.get $loop_fill_bytes) (i64.extend_i32_u (local.get $n))))
+    (global.set $eip
+      (select (local.get $back) (local.get $fall)
+        (i32.ne (local.get $new_c) (i32.const 0))))
     (return_call $branch_end))
 
   ;; 438: one span-prefix executor for both AoE builds. `op` selects only the

@@ -698,3 +698,58 @@ Lock/Unlock trace.
 - Use `--watch-log` on `0x631e8c`, `0x631e98`, and `0x631e9c` only as clock
   plumbing. Confirm any proposed frame boundary against canvas hashes while
   Smacker counts and DirectSound/Storm `#261` counts remain flat.
+
+## This route is NOT reproducible past ~batch 1200 (2026-09-15)
+
+**Do not gate a change on a fixed-batch StarCraft capture taken during
+gameplay.** Two runs with *identical* flags, the same build and the same
+`--input` schedule (`--no-threads --batch-size=100000`) disagree with each
+other, and the disagreement grows with depth:
+
+    batch 1160:  671,107 vs 671,107 API calls    0.0000% of pixels differ
+    batch 1300:  722,174 vs 722,588 API calls    2.70%
+    batch 4690:  4,665,418 vs 4,558,471 API calls   25.31%
+
+The 25% at batch 4690 is **not** animation phase: captures at 4686 / 4688 /
+4690 / 4692 within one run are 0.0000% apart, so the scene is static there and
+the whole difference is run-to-run divergence. Any A/B smaller than these bands
+is unattributable. An A/B at batch 4690 measuring "13.78% of pixels changed"
+means nothing, because the app disagrees with itself by 25.31% at that point.
+
+Not root-caused. The emulator's own clock (`get_ticks`) is batch-driven and
+deterministic, so the suspects are the host-side real-clock seams in
+`lib/host-imports.js` (`real_time_ms` / `wall_clock` are `Date.now`) and the
+audio path. It is pre-existing, not introduced by the loop-superop work that
+found it.
+
+### The window that IS usable
+
+Everything up to ~batch 1200 is exactly reproducible, and the `0x004b48xx` GRP
+blit nest switches on between batches **1120 and 1160**:
+
+    batch 1120:  0x004b48aa = 0        (nest not yet reached)
+    batch 1160:  0x004b48aa = 14,035   (nest active, run still deterministic)
+    batch 1210:  0x004b48aa ~ 48,000   (already past the reproducibility edge)
+
+So **`--max-batches=1160` is the deterministic gate for anything touching the
+blit nest**, and it is a narrow target — 1120 is too early for the nest, 1210 is
+already too late for reproducibility. Confirm the window held by checking that
+both arms report the same API-call count before reading the pixels; if they
+differ, the capture is not a valid oracle regardless of what the pixels say.
+
+### Block-entry shares on the gameplay route
+
+Measured over 4700 batches with `--handler-hist`, total **1.218e9** block
+entries. The `0x004b48xx` nest is **4.15%** of block entries, not the ~30% that
+had been assumed, and the three arms are very unequal:
+
+    0x004b48aa   26,475,636   2.17%    literal copy — the hot arm
+    0x004b4892   16,004,073   1.31%
+    0x004b48e3    7,664,415   0.63%
+    0x004b48d7      452,650   0.037%   constant-byte fill — 58x colder
+
+`0x004b48d7` is `mov [edi],al / inc edi / dec edx / jnz` and averages **3.5
+bytes per run** (467,232 bytes over 132,865 runs), not the ~16 iterations
+previously assumed. Anything optimizing this nest should target `0x004b48aa`;
+see §19 of [loop-idiom-superops-design.md](../loop-idiom-superops-design.md) for
+what happened when the cold arm was lowered instead.

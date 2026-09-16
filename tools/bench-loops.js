@@ -93,6 +93,62 @@ function loopBack(body) {
 // iteration, identical except that `jmp $+0` ends a block and `nop` does not.
 const BLOCK_ENTRY_K = 8;
 
+// A fixed-length byte fill, repeated. `byte_fill` fills the whole buffer in one
+// enormous run, which prices the memory.fill ceiling and nothing else; real code
+// does not do that. StarCraft's 0x004b48d7 averages 3.5 bytes per run, so the
+// question that decides whether FILL_RUN is worth anything is what ONE SHORT RUN
+// costs -- the fold pays for an affine-span proof and a code-write invalidation
+// per run, and those are charged whether the run is 4 bytes or 4096.
+//
+// The outer loop reloads EDI and EDX from immediates each time, so every run
+// refills the same region and the inner block stays a self-loop the matcher can
+// see. Total bytes stored is held ~constant across run lengths, so the arms are
+// comparable per byte.
+//
+//   outer:  mov edi,dst ; mov edx,runLen
+//   inner:  mov [edi],al ; inc edi ; dec edx ; jnz inner
+//           dec ecx ; jnz outer
+function byteFillRunShape(a, runLen) {
+  const outer = Math.max(1, Math.floor(a.bufBytes / runLen));
+  const dst = a.buf;
+  const imm32 = v => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
+  const code = [
+    0xBF, ...imm32(dst),          // mov edi, dst
+    0xBA, ...imm32(runLen),       // mov edx, runLen
+    0x88, 0x07,                   // inner: mov [edi],al
+    0x47,                         // inc edi
+    0x4A,                         // dec edx
+    0x75, 0xFA,                   // jnz inner  (-6)
+    0x49,                         // dec ecx
+    0x75, 0xED,                   // jnz outer  (-19)
+  ];
+  return {
+    iters: outer * runLen,        // normalize per BYTE, so run lengths compare
+    bytesTouched: outer * runLen,
+    code,
+    setup(e, mem, g2w) {
+      // Complement pre-fill: a lowering that wrote nothing must fail `verify`.
+      new Uint8Array(mem.buffer).fill(0x5a, g2w(dst), g2w(dst) + runLen);
+      e.set_eax(0xa5);
+      e.set_ecx(outer);
+    },
+    verify(e, mem, g2w) {
+      const b = new Uint8Array(mem.buffer);
+      for (const i of [0, runLen >> 1, runLen - 1]) {
+        if (b[g2w(dst) + i] !== 0xa5) {
+          return `dst[${i}]=0x${b[g2w(dst) + i].toString(16)} want 0xa5`;
+        }
+      }
+      if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+      if (e.get_edx() !== 0) return `edx=${e.get_edx()}, expected 0`;
+      if ((e.get_edi() >>> 0) !== ((dst + runLen) >>> 0)) {
+        return `edi=0x${(e.get_edi() >>> 0).toString(16)}, expected 0x${((dst + runLen) >>> 0).toString(16)}`;
+      }
+      return null;
+    },
+  };
+}
+
 function blockEntryShape(a, useJmp) {
   const n = a.iterOverride || 1_000_000;
   const filler = [];
@@ -439,6 +495,57 @@ const SHAPES = {
     emit: a => blockEntryShape(a, true),
   },
 
+  byte_fill: {
+    describe: 'mov [edi],al / inc edi / dec edx / jnz — the FILL_RUN candidate',
+    real: 'StarCraft 0x004b48d7 GRP transparent-run arm; 479 of 1107 corpus binaries',
+    emit(a) {
+      const n = a.bufBytes;
+      const dst = a.buf;
+      return {
+        iters: n,
+        bytesTouched: n,
+        // mov [edi],al ; inc edi ; dec edx ; jnz -6
+        code: [0x88, 0x07, 0x47, 0x4a, 0x75, 0xfa],
+        setup(e, mem, g2w) {
+          // Pre-fill with the COMPLEMENT of the value the loop writes, so a
+          // lowering that silently wrote nothing cannot pass `verify` — the same
+          // trap rep_movsd documents above.
+          new Uint8Array(mem.buffer).fill(0x5a, g2w(dst), g2w(dst) + n);
+          e.set_eax(0xa5); e.set_edi(dst); e.set_edx(n);
+        },
+        verify(e, mem, g2w) {
+          const b = new Uint8Array(mem.buffer);
+          for (const i of [0, 1, n >> 1, n - 1]) {
+            if (b[g2w(dst) + i] !== 0xa5) {
+              return `dst[${i}]=0x${b[g2w(dst) + i].toString(16)} want 0xa5`;
+            }
+          }
+          if (e.get_edx() !== 0) return `edx=${e.get_edx()}, expected 0`;
+          if ((e.get_edi() >>> 0) !== ((dst + n) >>> 0)) {
+            return `edi=0x${(e.get_edi() >>> 0).toString(16)}, expected 0x${((dst + n) >>> 0).toString(16)}`;
+          }
+          return null;
+        },
+      };
+    },
+  },
+
+  byte_fill_r4: {
+    describe: '4-byte fills in an outer loop — FILL_RUN at StarCraft\'s real run length',
+    real: 'StarCraft 0x004b48d7 measured mean is 3.5 bytes/run, not a bulk fill',
+    emit: a => byteFillRunShape(a, 4),
+  },
+  byte_fill_r16: {
+    describe: '16-byte fills in an outer loop — the run length the fold was designed for',
+    real: 'the originally assumed ~16 iterations per transparent run',
+    emit: a => byteFillRunShape(a, 16),
+  },
+  byte_fill_r64: {
+    describe: '64-byte fills in an outer loop — long enough for memory.fill to dominate',
+    real: 'upper end of a sprite row run',
+    emit: a => byteFillRunShape(a, 64),
+  },
+
   rep_movsd: {
     describe: 'rep movsd — already lowered to memory.copy; the FLOOR for a bulk copy',
     real: 'every blitter; shows what the store path costs when it is absent entirely',
@@ -481,6 +588,7 @@ const TOGGLES = {
   case_chain: 'set_case_chain',
   rle_run: 'set_rle_run',
   rect_run: 'set_rect_run',
+  fill_run: 'set_loop_fill_emit',
 };
 
 // ---------------------------------------------------------------------------

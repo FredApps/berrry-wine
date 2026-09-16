@@ -1367,3 +1367,189 @@ H408 executed 2,869,328 load groups in that gameplay window, while the former
 `H343 -> H343` top pair disappeared. The resulting frame still scored terrain
 102,464, life 3,612, mana 2,910 and 189 quantized colors. Machine load exceeded
 80 during the replay, so no wall-time/FPS claim is made.
+
+## 19. Generic byte FILL_RUN (H454), and why it ships disabled
+
+H454 lowers the most ordinary fill loop there is -- one byte store through a
+unit-stride pointer, a counter, and a `jnz` back to the top -- into a single
+`memory.fill`. It is correct, it is general, it wins on a microbench at every
+run length tested, and it is **off by default**, because on the target it was
+built for it addresses 0.037% of the workload.
+
+That combination is the point of this section. The fold is not the thing that
+failed; the *target selection* is, and the evidence that would have caught it
+was available before any WAT was written.
+
+### 19.1 The shape
+
+Recognized at decode time by `$loop_try_fill_run`, over the ops a self-loop
+block just emitted: exactly four ops, exactly one STORE8, exactly two ADDI,
+and a JCC that must be op index 3, handler 312 (`jnz`), branching to the
+block's own entry. The *last* ADDI must be the decrement, because that is the
+flag-writer the branch reads and therefore the counter; the other is the
+pointer, whose step must be +/-1. Store base must be the pointer register, and
+pointer / counter / source register must be distinct.
+
+Three body orders occur in the wild and differ only in where the run starts:
+
+    A   mov [edi],al ; inc edi ; dec edx ; jnz      StarCraft 0x004b48d7
+    B   inc edi ; dec edx ; mov [edi-1],al ; jnz    StarCraft 0x004b4d2a
+    C   dec edi ; dec edx ; mov [edi],al ; jnz      descending
+
+When the pointer add runs *before* the store, iteration 0 has already moved one
+step, so the first address is `disp + step` rather than `disp`. Getting that
+wrong shifts the entire run by one byte and is invisible in every histogram --
+which is why `test/test-byte-fill-run.js` compares bytes, all eight registers
+and all four flags against the same x86 run unfolded, for all three orders,
+plus guard bytes either side of the extent.
+
+The executor follows the sanctioned run-entry-guard pattern: it proves one
+guest->WASM delta covers the whole span with `$g2w_affine_span`, and on
+`$NULL_SENTINEL` falls back to an elementwise `$gs8` loop rather than declining
+at decode time. Wrapping is rejected in both directions. Budget accounting is
+exactly neutral -- n iterations charge n block budget and 4n steps whether
+folded or not -- so the fold does not shift batch boundaries.
+
+### 19.2 Generality: this one is NOT a one-app fold
+
+`tools/find-byte-fills.js` (added with this work) over 2253 corpus paths, 1107
+distinct binaries after content-hash dedup:
+
+    479 of 1107 binaries (43%) carry the shape, 1417 sites total
+    scummvm 87, AvP demo 33, DOSBox 22/18, SMACKW32.DLL 15, RCT 15,
+    starcraft.exe 8, diablo_s.exe 8
+
+Contrast RLE_RUN (1 of 287 PEs) and the keyed-LUT nest (297 of 613 matches in
+one DLL). So the *primitive* is a real one. Generality was never the problem.
+
+### 19.3 What the microbench says: the machinery is sound
+
+`tools/bench-loops.js --toggle=fill_run`, 1 MB working set, 4 interleaved reps.
+`byte_fill` fills the whole buffer in one enormous run and prices only the
+ceiling; the `byte_fill_rN` shapes added here repeat a *fixed short* run in an
+outer loop, which is what real code does, and hold total bytes constant so the
+rows compare per byte:
+
+    run length   blocks/iter off -> on   time
+    4 bytes        1.25 -> 0.75          +21.8%
+    16 bytes       1.06 -> 0.19          +53.5%
+    64 bytes       1.02 -> 0.05          +83.4%
+
+So short runs are *not* the problem either. Even at 4 bytes the affine-span
+proof and the code-write invalidation cost less than the byte stores they
+replace. Per the standing rule, none of these percentages is quotable as an app
+percentage.
+
+### 19.4 What actually killed it: the target is cold
+
+The premise for building this was that StarCraft's `0x004b48xx` GRP blit nest is
+~30% of block entries and that `0x004b48d7` runs ~16 iterations per entry.
+Measured on the documented gameplay route (4700 batches, `--handler-hist`,
+1.218e9 total block entries):
+
+    0x004b48aa   26,475,636   2.17%     <- the hot arm (a literal COPY, not a fill)
+    0x004b4892   16,004,073   1.31%
+    0x004b48e3    7,664,415   0.63%
+    0x004b48d7      452,650   0.037%    <- the arm this fold targets
+
+The nest is ~4.15% of block entries on this route, not 30%, and within it the
+chosen arm is the **coldest by 58x**. The mean run is 3.5 bytes, not 16
+(467,232 bytes over 132,865 runs), so the "~16 iterations" premise was wrong in
+the same direction.
+
+With the fold on, `0x004b48d7` block entries drop 452,650 -> 132,314 (3.4x).
+That is a real reduction of 320,336 block entries -- and 320,336 is 0.026% of
+1.218e9. At the microbench's most favourable short-run figure that is ~0.006%
+of the application. Unmeasurable, exactly as the performance summary's governing
+law predicts for a fold whose guest work is unchanged.
+
+**The lesson is the ordering.** `--count` on the candidate arm costs one run and
+would have reported 0.037% before any WAT existed. Match density (43% of the
+corpus) and match correctness say a primitive is *reusable*; only a hit count
+says it is *worth lowering*. Both were needed and only one was checked up front.
+
+### 19.5 The StarCraft pixel gate: where it works, and where it cannot
+
+**A deep-gameplay fixed-batch capture cannot gate anything on this route.** Two
+runs with **identical** flags, same build, same input schedule:
+
+    batch 1300:  722,174 vs 722,588 API calls,  2.70% of pixels differ
+    batch 4690:  4,665,418 vs 4,558,471 API calls,  25.31% of pixels differ
+
+The observed on-vs-off diffs at those depths (2.87% / 1.50% / 1.39% / 13.78% at
+batches 3500 / 4300 / 4400 / 4690) are all *below* the app's own same-flags
+self-diff. This is not animation phase: adjacent batches within one run
+(4686 / 4688 / 4690 / 4692) are 0.0000% apart, so the scene is static and the
+25.31% is pure run-to-run divergence. The verdict is NONDET, not DIFFERENT. Two
+further facts agree: total ops moved 51M between arms while the fold's own
+arithmetic accounts for at most ~1.7M, and thread T2's counters differ between
+arms although the fold never fires on T2. The nondeterminism is pre-existing and
+not introduced here; untested candidates are the host-side real-clock seams
+(`real_time_ms` / `wall_clock` are `Date.now` while `get_ticks` is batch-driven)
+and the audio path.
+
+**But the gate does work, in a narrow window, and the fold passes it.** The
+route is exactly reproducible up to ~batch 1200, and the blit nest switches on
+between batches 1120 and 1160 -- so there is a band where the fold is active
+*and* the app still agrees with itself. Stopping exactly there is the clean
+gate. Two runs at **1160 batches**, `--count=0x4b48d7,0x4b48aa`:
+
+                   API calls   0x004b48aa   0x004b48d7   H454 runs/bytes
+    --no-fill-superops  671,107     14,035          135        0 /   0
+    --fill-superops     671,107     14,035           45       45 / 135
+
+    0 of 307,200 pixels differ (0.0000%), max channel delta 0
+
+Identical API counts and an identical nest hit count say the window is
+deterministic; `0x004b48d7` dropping 135 -> 45 with 45 H454 runs covering 135
+bytes says the fold really executed; and the capture is pixel-identical. That is
+the gate passing with the lowering demonstrably active, on the app it was built
+for.
+
+The same conclusion falls out of a three-run set at 1210 batches, just past the
+reproducibility edge, which is worth recording because it shows what the edge
+looks like -- two OFF runs and one ON:
+
+                      0x004b48d7   H454 runs/bytes   b1160     b1200
+    q-off                    552         0 /   0     ref       ref
+    q-off2 (null control)    579         0 /   0     0.0000%   0.6090%
+    q-on                     193       193 / 579     0.0000%   0.6090%
+
+At batch 1160 all three are pixel-identical with the fold firing. At 1200 the
+A/B diff and the null diff are *the same 0.6090%* -- and `q-on` is pixel-
+identical to `q-off2` (0.0000% at both captures), with matching counters
+(`0x004b48aa = 49290` in both). The ON arm reproduces an OFF arm exactly; it is
+`q-off` that is the outlier. Block entries at the folded site drop 579 -> 193
+(3.0x) across that boundary with no pixel consequence.
+
+That is a real pass: the fold is active, the oracle is valid, and the picture is
+unchanged.
+
+Correctness is therefore established by the deterministic instruments instead.
+`test/test-byte-fill-run.js` is the real gate: it is exhaustive over the three
+body orders, checks every register and flag as well as every byte, and covers
+the near misses and the 2^32-trip budget clamp. The whole-app captures are a
+weaker supplement, and should be read as such -- on both reproducible routes the
+fold fires only a handful of times:
+
+    caesar3_demo      17 runs, 38 bytes    0 of 307,200 pixels differ
+    diablo_shareware   1 run,   2 bytes    0 of 307,200 pixels differ
+
+Those rule out gross corruption on a second and third binary; they do not
+exercise the fold hard. No app-level capture in this work exercised H454 both
+heavily *and* reproducibly, and that gap is the honest limit of the evidence
+here.
+
+### 19.6 Status
+
+Default **off**, like COPY_RUN and for the same reason: the payoff was never
+demonstrated. `--fill-superops` enables it, `--no-fill-superops` is explicit off,
+and the matcher keeps counting candidates when execution is disabled so the A/B
+arms differ only in whether H454 is emitted. With it off the recognizer returns
+0 and the block falls through untouched, so the shipped build executes exactly
+as it did before.
+
+What would make it earn default-on is a *hot* instance of the shape, found by
+hit count rather than by match count. The census in 19.2 lists 1417 sites; none
+of them has been ranked by hotness yet, and that -- not more matcher generality
+-- is the next step for this family.

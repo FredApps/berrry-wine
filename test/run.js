@@ -240,6 +240,11 @@ const COPY_SUPEROPS_ARG = hasFlag('copy-superops');
 const NO_COPY_SUPEROPS = hasFlag('no-copy-superops');
 const NO_AOE_FILL = hasFlag('no-aoe-fill');
 const NO_AOE_SPAN = hasFlag('no-aoe-span');
+// --no-fill-superops / --fill-superops: the generic unit-stride byte FILL_RUN
+// family (H454). On by default in the module; both flags exist so an A/B is
+// explicit on either arm's command line.
+const FILL_SUPEROPS = hasFlag('fill-superops');
+const NO_FILL_SUPEROPS = hasFlag('no-fill-superops');
 // --no-sib-fusion: decode indexed SIB memory operands as the unfused
 // compute_ea_sib + consumer pair. On by default in the module; this is the
 // A/B partner, so a fusion's op-count delta and its wall-clock effect can be
@@ -3900,6 +3905,8 @@ async function main() {
   if (NO_COPY_SUPEROPS) inheritWasm('set_loop_copy_emit', 0);
   if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
   if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
+  if (FILL_SUPEROPS) inheritWasm('set_loop_fill_emit', 1);
+  if (NO_FILL_SUPEROPS) inheritWasm('set_loop_fill_emit', 0);
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
   // Guest threads run their own module instance over the shared memory, so the
   // spin state is per-thread by construction — but the THRESHOLD is a setting
@@ -4786,6 +4793,12 @@ async function main() {
   }
   if (NO_AOE_SPAN && instance.exports.set_loop_aoe_span_emit) {
     instance.exports.set_loop_aoe_span_emit(0);
+  }
+  if (FILL_SUPEROPS && instance.exports.set_loop_fill_emit) {
+    instance.exports.set_loop_fill_emit(1);
+  }
+  if (NO_FILL_SUPEROPS && instance.exports.set_loop_fill_emit) {
+    instance.exports.set_loop_fill_emit(0);
   }
   // Per-instance, not once: worker threads are separate WASM instances over
   // one shared memory, so a mut global set only on the main instance leaves
@@ -9005,6 +9018,12 @@ if (VERBOSE) {
       if (e.get_loop_aoe_span_runs) {
         console.log(`loopmatch: ${label} AoE span prefixes`,
           e.get_loop_aoe_span_matches(), 'runs', e.get_loop_aoe_span_runs());
+      }
+      if (e.get_loop_fill_runs) {
+        console.log(`loopmatch: ${label} byte FILL_RUN`,
+          e.get_loop_fill_matches(), 'runs', e.get_loop_fill_runs(),
+          'bytes', String(e.get_loop_fill_bytes()),
+          'elementwise', e.get_loop_fill_slow_runs());
       }
     };
     report('M ', instance.exports);
