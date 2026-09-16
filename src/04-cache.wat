@@ -155,11 +155,18 @@
   ;;
   ;; Two properties make that a data patch rather than a second cache:
   ;;
-  ;;   * it is stored as a DELTA from the operand word's own address, and only
-  ;;     ever when both words live in the same page chunk. A chunk grow
-  ;;     relocates the whole chunk with one memory.copy, so a delta survives
-  ;;     what an absolute pointer would not; and a 16KB chunk bounds the delta
-  ;;     to signed 16 bits, which is what leaves room for the epoch beside it.
+  ;;   * it is stored as an OFFSET INSIDE ONE OF THE PAGE'S TWO CHUNKS, plus a
+  ;;     one-bit selector saying which. A chunk grow relocates the whole chunk
+  ;;     with one memory.copy that preserves offsets, so an offset survives
+  ;;     what an absolute pointer would not; and a 16KB chunk cap bounds it to
+  ;;     12 bits of dword index, which is what leaves room for the epoch and
+  ;;     the selector beside it. (Round 15 stored a signed 16-bit DELTA from
+  ;;     the operand word's own address instead. That could not name a target
+  ;;     in the page's OTHER chunk -- the two chunks are independently bump-
+  ;;     allocated out of the same multi-megabyte thread-cache arena at
+  ;;     different times, so the distance between them is unbounded -- which is
+  ;;     why chaining and the block executor used to be mutually exclusive.
+  ;;     See docs/block-chaining-design.md section 8.)
   ;;   * validity is one global compare. $chain_epoch is bumped by every event
   ;;     that can make a chunk pointer mean something else -- a block retired,
   ;;     a page dropped, the directory reset, a chunk handed back to a free
@@ -170,9 +177,14 @@
   ;; bits 0/1 exactly where $decode_run writes them; H43's operand is emitted
   ;; as 0 at all three decoder sites and read by nobody, so jmp shifts by zero.
   ;; Above that shift:
-  ;;   bits 29..17  epoch, 1..$CHAIN_EPOCH_MAX; 0 means unpatched
-  ;;   bits 16..1   delta, signed, target minus this word's own address
+  ;;   bits 26..14  epoch, 1..$CHAIN_EPOCH_MAX; 0 means unpatched
+  ;;   bit  13      which CHUNK of the page the target is in: 0 the threaded
+  ;;                stream chunk, 1 the block-executor DESCRIPTOR chunk
+  ;;   bits 12..1   the target's DWORD offset inside that chunk, 0..4095, which
+  ;;                covers the whole 16KB cap exactly
   ;;   bit 0        which EDGE the slot describes: 0 taken, 1 fall-through
+  ;; 27 bits, three fewer than round 15's 13+16+1, which is what pays for the
+  ;; selector.
   ;;
   ;; A conditional branch has two edges and one slot, so the edge tag is not
   ;; decoration. Most of them need only one: when $decode_run proved the
@@ -194,9 +206,44 @@
   (global $chain_slow (mut i64) (i64.const 0))
   (global $chain_patches (mut i32) (i32.const 0))
   (global $chain_bumps (mut i32) (i32.const 0))
+  ;; ROUND 19 -- the anchor-location split. A threaded op executing out of a
+  ;; page's DESCRIPTOR chunk can only be a block-executor tail: the descriptor
+  ;; itself is entered at its head and never dispatched through $next again,
+  ;; and round 13's saved verbatim stream copy is inert data nothing runs. So
+  ;; "the chain slot lives in the descriptor chunk" IS "this transfer is an
+  ;; executor exit", and these three counters are the executor-exit half of
+  ;; the round's gate without any flag or handshake between the two features.
+  (global $chain_hits_pool   (mut i64) (i64.const 0))
+  (global $chain_slow_pool   (mut i64) (i64.const 0))
+  (global $chain_patches_pool (mut i32) (i32.const 0))
+  ;; Patch refusals, split by which end of the edge could not be named. Both
+  ;; are addresses outside BOTH of the current page's chunks: a target on a
+  ;; different page (the common one -- a chain is confined to one page) and an
+  ;; anchor in the emit scratch or in a stream the page registers do not
+  ;; describe.
+  (global $chain_refuse_target (mut i32) (i32.const 0))
+  (global $chain_refuse_anchor (mut i32) (i32.const 0))
+  ;; Live slots that failed the anchor-membership test at READ time, i.e. the
+  ;; page registers were not describing the anchor's page. Those fall to the
+  ;; desk like any other miss. Nonzero is not a bug -- a nested synchronous
+  ;; dispatch repoints the registers under a suspended block -- but a LARGE
+  ;; number would mean the chunk-relative encoding is paying for itself less
+  ;; often than the counters above suggest, so it is reported rather than
+  ;; folded into `slow`.
+  (global $chain_stale_regs (mut i64) (i64.const 0))
+  ;; ROUND 19. One transfer's worth of "$chain_end already did the block
+  ;; executor's discovery bump for this address". Set by $chain_hot_ok when the
+  ;; bump invalidated the slot it was about to follow, consumed and cleared by
+  ;; $branch_end_at, which the same transfer then tail-calls. Never live across
+  ;; a transfer, so it is per-instance state and not a setting.
+  (global $chain_hot_bumped (mut i32) (i32.const 0))
   ;; Entries to $branch_end, chaining or not. The round's gate is stated per
   ;; retired block against this number, so it is counted in both arms.
   (global $branch_end_calls (mut i64) (i64.const 0))
+  ;; Of those, the ones whose terminator was executing out of a page's
+  ;; descriptor chunk -- i.e. block-executor tail exits that took the desk.
+  ;; Only counted while the executor is armed.
+  (global $branch_end_pool (mut i64) (i64.const 0))
 
   (func $chain_bump
     (global.set $chain_bumps (i32.add (global.get $chain_bumps) (i32.const 1)))
@@ -639,6 +686,8 @@
     (global.set $cur_page_index (i32.const 0))
     (global.set $cur_page_chunk (i32.const 0))
     (global.set $cur_page_desc (i32.const 0))
+    (global.set $cur_page_chunk_cap (i32.const 0))
+    (global.set $cur_page_desc_cap (i32.const 0))
     (global.set $page_index_next (i32.const 0))
     (global.set $page_index_free (i32.const 0))
     (global.set $page_index_evict_cursor (i32.const 0))
@@ -1168,7 +1217,9 @@
         (global.set $cur_page_base (i32.const 0))
         (global.set $cur_page_index (i32.const 0))
         (global.set $cur_page_chunk (i32.const 0))
-        (global.set $cur_page_desc (i32.const 0))))
+        (global.set $cur_page_desc (i32.const 0))
+        (global.set $cur_page_chunk_cap (i32.const 0))
+        (global.set $cur_page_desc_cap (i32.const 0))))
     ;; The descriptor chunk is never the one a suspended stream is running
     ;; from at a DEFERRED drop -- that path exists for the block $decode_run
     ;; has already saved, which is always threaded code -- so it goes back on
@@ -1240,6 +1291,8 @@
     (global.set $cur_page_index (local.get $idx))
     (global.set $cur_page_chunk (local.get $chunk))
     (global.set $cur_page_desc (i32.const 0))
+    (global.set $cur_page_chunk_cap (call $page_chunk_bytes (local.get $class)))
+    (global.set $cur_page_desc_cap (i32.const 0))
     (i32.const 1))
 
   ;; Copy a freshly decoded block out of the arena into its page's chunk and
@@ -1330,7 +1383,8 @@
         (global.set $page_desc_chunk_allocs
           (i32.add (global.get $page_desc_chunk_allocs) (i32.const 1)))
         (i32.store offset=16 (local.get $slot) (local.get $chunk))
-        (global.set $cur_page_desc (local.get $chunk))))
+        (global.set $cur_page_desc (local.get $chunk))
+        (global.set $cur_page_desc_cap (call $page_chunk_bytes (local.get $class)))))
     (if (i32.gt_u (local.get $needed) (call $page_chunk_bytes (local.get $class)))
       (then
         ;; Growing relocates every descriptor already in the chunk. A nested
@@ -1346,6 +1400,7 @@
         (local.set $chunk (local.get $new_chunk))
         (local.set $class (local.get $new_class))
         (global.set $cur_page_desc (local.get $new_chunk))
+        (global.set $cur_page_desc_cap (call $page_chunk_bytes (local.get $new_class)))
         (global.set $page_desc_chunk_grows
           (i32.add (global.get $page_desc_chunk_grows) (i32.const 1)))))
     (memory.copy (i32.add (local.get $chunk) (local.get $used))
@@ -1456,6 +1511,7 @@
           (i32.or (call $page_desc_spanreg (local.get $desc))
             (i32.or (i32.shl (local.get $new_class) (i32.const 16)) (local.get $used))))
         (global.set $cur_page_chunk (local.get $new_chunk))
+        (global.set $cur_page_chunk_cap (call $page_chunk_bytes (local.get $new_class)))
         ;; No decoded block is executing while a top-level miss is being
         ;; published. $decode_run adjusts its local first-block pointer when it
         ;; observes this relocation.
@@ -1512,6 +1568,17 @@
     (global.set $cur_page_index (i32.load offset=4 (local.get $slot)))
     (global.set $cur_page_chunk (i32.load offset=8 (local.get $slot)))
     (global.set $cur_page_desc (call $page_dchunk (local.get $slot)))
+    ;; A cap is only meaningful beside a real base: a page that has never had a
+    ;; descriptor chunk keeps 0/0, which makes the membership test below false
+    ;; for every address rather than true for everything near 0.
+    (global.set $cur_page_chunk_cap
+      (call $page_chunk_bytes
+        (call $page_desc_class (i32.load offset=12 (local.get $slot)))))
+    (global.set $cur_page_desc_cap
+      (select (i32.const 0)
+        (call $page_chunk_bytes
+          (call $page_desc_class (call $page_dword (local.get $slot))))
+        (i32.eqz (call $page_dchunk (local.get $slot)))))
     (i32.const 1))
 
   ;; The hot path. Resolve a guest address to a threaded-code pointer without
@@ -1593,32 +1660,61 @@
   ;; The thunk zone needs no test here: a thunk page is never compiled, so
   ;; $page_resolve cannot name one.
   ;; ----------------------------------------------------------------------
-  ;; Write the resolved target back into the terminator's operand word, as a
-  ;; delta from that word plus the current epoch. Refused unless BOTH words
-  ;; live inside the same page chunk, measured against that chunk's real
-  ;; allocated capacity -- chunks are bump-allocated back to back, so a bound
-  ;; of $PAGE_CHUNK_BYTES would accept an address in the NEXT chunk.
+  ;; Which of the loaded page's two chunks holds $a, or -1 for neither.
+  ;; 0 = the threaded stream chunk, 1 = the block-executor descriptor chunk.
   ;;
-  ;; That test is what confines a chain to one page (one chunk per page), what
-  ;; bounds the delta to signed 16 bits, and what rejects the two cases a chain
-  ;; must never be written for: a stream still executing out of the emit
-  ;; scratch, and a target that resolved into the page's DESCRIPTOR chunk.
+  ;; The bound is each chunk's REAL allocated capacity, never the nominal
+  ;; $PAGE_CHUNK_BYTES: chunks are bump-allocated back to back out of one
+  ;; arena, so a loose bound would happily accept an address in the next
+  ;; chunk -- which belongs to a different page. A base of 0 carries a cap of
+  ;; 0, so an unallocated chunk matches nothing rather than matching low
+  ;; addresses.
+  ;; ----------------------------------------------------------------------
+  (func $chain_chunk_of (param $a i32) (result i32)
+    (if (i32.lt_u (i32.sub (local.get $a) (global.get $cur_page_chunk))
+                  (global.get $cur_page_chunk_cap))
+      (then (return (i32.const 0))))
+    (if (i32.lt_u (i32.sub (local.get $a) (global.get $cur_page_desc))
+                  (global.get $cur_page_desc_cap))
+      (then (return (i32.const 1))))
+    (i32.const -1))
+
+  ;; ----------------------------------------------------------------------
+  ;; Write the resolved target back into the terminator's operand word, as a
+  ;; chunk selector plus a dword offset inside that chunk, plus the epoch.
+  ;; Refused unless BOTH words live inside one of the loaded page's two
+  ;; chunks -- they need not be the SAME chunk any more, which is the whole
+  ;; round: an executor tail's anchor is in the descriptor chunk and its
+  ;; target is usually an ordinary block in the stream chunk.
+  ;;
+  ;; That test is still what confines a chain to one page (the page registers
+  ;; name one page's two chunks), what bounds the offset to 12 bits of dword,
+  ;; and what rejects a stream still executing out of the emit scratch.
   ;; ----------------------------------------------------------------------
   (func $chain_patch (param $patch_at i32) (param $t i32) (param $shift i32)
                      (param $tag i32)
-    (local $chunk i32) (local $cap i32) (local $lowmask i32)
+    (local $tsel i32) (local $asel i32) (local $off i32) (local $lowmask i32)
     (if (i32.gt_u (global.get $chain_epoch) (global.get $CHAIN_EPOCH_MAX))
       (then (return)))
-    (local.set $chunk (global.get $cur_page_chunk))
-    (if (i32.eqz (local.get $chunk)) (then (return)))
-    (local.set $cap
-      (call $page_chunk_bytes
-        (call $page_desc_class
-          (i32.load offset=12 (call $page_dir_slot (global.get $cur_page_base))))))
-    (if (i32.ge_u (i32.sub (local.get $t) (local.get $chunk)) (local.get $cap))
-      (then (return)))
-    (if (i32.ge_u (i32.sub (local.get $patch_at) (local.get $chunk)) (local.get $cap))
-      (then (return)))
+    (local.set $tsel (call $chain_chunk_of (local.get $t)))
+    (if (i32.lt_s (local.get $tsel) (i32.const 0))
+      (then (global.set $chain_refuse_target
+              (i32.add (global.get $chain_refuse_target) (i32.const 1)))
+            (return)))
+    (local.set $asel (call $chain_chunk_of (local.get $patch_at)))
+    (if (i32.lt_s (local.get $asel) (i32.const 0))
+      (then (global.set $chain_refuse_anchor
+              (i32.add (global.get $chain_refuse_anchor) (i32.const 1)))
+            (return)))
+    ;; Every threaded word is 4-byte aligned -- $te and $te_raw are the only
+    ;; writers and both bump by multiples of 4 -- so the two low bits carry no
+    ;; information and are what the 16KB cap fits into 12 bits of index.
+    (local.set $off
+      (i32.shr_u
+        (i32.sub (local.get $t)
+          (select (global.get $cur_page_desc) (global.get $cur_page_chunk)
+                  (local.get $tsel)))
+        (i32.const 2)))
     (local.set $lowmask
       (i32.sub (i32.shl (i32.const 1) (local.get $shift)) (i32.const 1)))
     (i32.store (local.get $patch_at)
@@ -1626,15 +1722,42 @@
         (i32.and (i32.load (local.get $patch_at)) (local.get $lowmask))
         (i32.shl
           (i32.or
-            (i32.shl (global.get $chain_epoch) (i32.const 17))
+            (i32.shl (global.get $chain_epoch) (i32.const 14))
             (i32.or
-              (i32.shl
-                (i32.and (i32.sub (local.get $t) (local.get $patch_at))
-                         (i32.const 0xFFFF))
-                (i32.const 1))
-              (local.get $tag)))
+              (i32.shl (local.get $tsel) (i32.const 13))
+              (i32.or
+                (i32.shl (i32.and (local.get $off) (i32.const 0xFFF))
+                         (i32.const 1))
+                (local.get $tag))))
           (local.get $shift))))
-    (global.set $chain_patches (i32.add (global.get $chain_patches) (i32.const 1))))
+    (global.set $chain_patches (i32.add (global.get $chain_patches) (i32.const 1)))
+    (if (local.get $asel)
+      (then (global.set $chain_patches_pool
+              (i32.add (global.get $chain_patches_pool) (i32.const 1))))))
+
+  ;; ----------------------------------------------------------------------
+  ;; ROUND 19. Perform the block executor's discovery bump on behalf of a
+  ;; transfer that is about to skip the desk, and say whether the chain slot
+  ;; survived it. Returns 1 when the caller may still follow the slot: either
+  ;; discovery is not armed at all (the common case, one global load), or the
+  ;; bump changed nothing this slot depends on.
+  ;;
+  ;; A 0 sets $chain_hot_bumped, which $branch_end_at consumes instead of
+  ;; bumping again -- the bump has to happen exactly once per transfer or the
+  ;; walk probes land at different entries than they do with chaining off, and
+  ;; "identical block decodes" is the gate this whole round is measured by.
+  ;; ----------------------------------------------------------------------
+  (func $chain_hot_ok (param $patch_at i32) (param $asel i32) (result i32)
+    (local $ep0 i32)
+    (if (i32.eqz (global.get $bx_hot_on)) (then (return (i32.const 1))))
+    (local.set $ep0 (global.get $chain_epoch))
+    (call $bx_hot_bump (global.get $eip))
+    (if (i32.and
+          (i32.eq (global.get $chain_epoch) (local.get $ep0))
+          (i32.eq (call $chain_chunk_of (local.get $patch_at)) (local.get $asel)))
+      (then (return (i32.const 1))))
+    (global.set $chain_hot_bumped (i32.const 1))
+    (i32.const 0))
 
   ;; ----------------------------------------------------------------------
   ;; The chained transfer itself. $chain is the operand word with the Jcc's two
@@ -1644,38 +1767,107 @@
   ;; Everything $branch_end does per transfer is done here too, and in the same
   ;; order: the four guard globals, the budget test and its decrement, the two
   ;; dbg_prev stores. What is NOT here is $page_resolve and the call that
-  ;; reaches it. $bx_hot_on joins the guard set rather than being assumed away,
-  ;; so a build with the block executor armed keeps forming exactly the regions
-  ;; it forms without this flag. The $sbh_eip_a/b pair is handled at patch time
-  ;; instead -- see $sbh_note in the decoder, which bumps the epoch.
+  ;; reaches it. The $sbh_eip_a/b pair is handled at patch time instead -- see
+  ;; $sbh_note in the decoder, which bumps the epoch.
+  ;;
+  ;; ROUND 19 -- the block executor's discovery gate. Round 15 put $bx_hot_on
+  ;; in the guard set, which made "the executor is armed" mean "nothing
+  ;; chains", and that was the other half of the mutual exclusion. It is
+  ;; PERFORMED here now instead: $bx_hot_bump is what counts entries into a
+  ;; head, and a transfer that skips the desk is still an entry, so skipping
+  ;; the bump would silently stop hot heads from being discovered. It is bumped
+  ;; exactly once per transfer either way -- here when this call commits to the
+  ;; jump, in $branch_end_at when it does not -- and $chain_hot_bumped carries
+  ;; the one case where both would otherwise fire.
+  ;;
+  ;; The bump can decode, install a descriptor and free a chunk, so it runs
+  ;; LAST, after every other test, and its two side effects are re-tested
+  ;; afterwards: an epoch that moved means something was retired or freed, and
+  ;; an anchor that no longer sits in the same chunk means the page registers
+  ;; moved. Either sends this transfer to the desk, where $page_resolve gives
+  ;; it the descriptor the walk just installed.
   ;; ----------------------------------------------------------------------
   (func $chain_end (param $patch_at i32) (param $chain i32) (param $shift i32)
                    (param $tag i32)
+    (local $asel i32) (local $tsel i32) (local $off4 i32)
+    ;; The anchor's own chunk, which is also the ROUND-19 VALIDITY TEST for the
+    ;; page registers this function is about to read a chunk base out of. A
+    ;; chained transfer does not call $page_resolve, so $cur_page_* are not
+    ;; refreshed and can describe another page entirely -- a nested synchronous
+    ;; dispatch is enough to do it. Chunks are disjoint, so an anchor that
+    ;; falls inside one of the two chunks the registers currently name IS in
+    ;; that chunk, which proves the registers describe the page that owns the
+    ;; anchor -- the same page whose chunks $chain_patch measured the offset
+    ;; against. Everything that frees, relocates or reassigns either chunk
+    ;; bumps the epoch, so a slot that also passes the epoch compare is naming
+    ;; a chunk that has not moved since it was written.
+    (local.set $asel (call $chain_chunk_of (local.get $patch_at)))
     (if (i32.and
-          (i32.eq (i32.shr_u (local.get $chain) (i32.const 17))
-                  (global.get $chain_epoch))
-          (i32.eq (i32.and (local.get $chain) (i32.const 1)) (local.get $tag)))
+          (i32.ge_s (local.get $asel) (i32.const 0))
+          (i32.and
+            (i32.eq (i32.shr_u (local.get $chain) (i32.const 14))
+                    (global.get $chain_epoch))
+            (i32.eq (i32.and (local.get $chain) (i32.const 1)) (local.get $tag))))
       (then
         (if (i32.eqz
               (i32.or (global.get $dbg_any)
               (i32.or (global.get $code16)
-              (i32.or (global.get $yield_flag)
-              (i32.or (global.get $yield_reason) (global.get $bx_hot_on))))))
+              (i32.or (global.get $yield_flag) (global.get $yield_reason)))))
           (then
             (if (i32.gt_s (global.get $block_budget) (i32.const 0))
               (then
-                (global.set $block_budget
-                  (i32.sub (global.get $block_budget) (i32.const 1)))
-                (global.set $chain_hits
-                  (i64.add (global.get $chain_hits) (i64.const 1)))
-                (global.set $dbg_prev2_eip (global.get $dbg_prev_eip))
-                (global.set $dbg_prev_eip (global.get $eip))
-                (global.set $ip
-                  (i32.add (local.get $patch_at)
-                    (i32.shr_s (i32.shl (local.get $chain) (i32.const 15))
-                               (i32.const 16))))
-                (return_call $next)))))))
+                (local.set $tsel
+                  (i32.and (i32.shr_u (local.get $chain) (i32.const 13))
+                           (i32.const 1)))
+                (local.set $off4
+                  (i32.shl
+                    (i32.and (i32.shr_u (local.get $chain) (i32.const 1))
+                             (i32.const 0xFFF))
+                    (i32.const 2)))
+                ;; Belt and braces: the offset must still be inside the
+                ;; selected chunk's allocated capacity. It cannot fail while
+                ;; the epoch holds -- a class shrink is a free plus an alloc,
+                ;; both of which bump -- and it costs one compare to stop a
+                ;; wrong answer being a wild jump rather than a desk trip.
+                (if (i32.lt_u (local.get $off4)
+                      (select (global.get $cur_page_desc_cap)
+                              (global.get $cur_page_chunk_cap)
+                              (local.get $tsel)))
+                  (then
+                   ;; The discovery bump goes LAST, so that a transfer which
+                   ;; ends up at the desk anyway is never bumped twice. It is
+                   ;; a separate `if` and not an `and` operand for exactly that
+                   ;; reason: an `and` evaluates both sides.
+                   (if (call $chain_hot_ok (local.get $patch_at) (local.get $asel))
+                    (then
+                    (global.set $block_budget
+                      (i32.sub (global.get $block_budget) (i32.const 1)))
+                    (global.set $chain_hits
+                      (i64.add (global.get $chain_hits) (i64.const 1)))
+                    (if (local.get $asel)
+                      (then (global.set $chain_hits_pool
+                              (i64.add (global.get $chain_hits_pool) (i64.const 1)))))
+                    (global.set $dbg_prev2_eip (global.get $dbg_prev_eip))
+                    (global.set $dbg_prev_eip (global.get $eip))
+                    (global.set $ip
+                      (i32.add
+                        (select (global.get $cur_page_desc)
+                                (global.get $cur_page_chunk)
+                                (local.get $tsel))
+                        (local.get $off4)))
+                    (return_call $next)))))))))))
     (global.set $chain_slow (i64.add (global.get $chain_slow) (i64.const 1)))
+    (if (i32.gt_s (local.get $asel) (i32.const 0))
+      (then (global.set $chain_slow_pool
+              (i64.add (global.get $chain_slow_pool) (i64.const 1)))))
+    ;; A live-looking slot the registers could not be trusted for. Separated
+    ;; from `slow` so "not chained yet" and "chained, but read from the wrong
+    ;; page" are not the same number.
+    (if (i32.and
+          (i32.lt_s (local.get $asel) (i32.const 0))
+          (i32.ne (i32.shr_u (local.get $chain) (i32.const 14)) (i32.const 0)))
+      (then (global.set $chain_stale_regs
+              (i64.add (global.get $chain_stale_regs) (i64.const 1)))))
     (return_call $branch_end_at (local.get $patch_at) (local.get $shift)
                  (local.get $tag)))
 
@@ -1686,6 +1878,19 @@
     (local $t i32)
     (global.set $branch_end_calls
       (i64.add (global.get $branch_end_calls) (i64.const 1)))
+    ;; ROUND 19: how many desk trips came out of a block-executor tail. $ip is
+    ;; still inside the stream the terminator was read from, so the descriptor
+    ;; chunk answers it -- and the only threaded ops that ever execute from
+    ;; there are executor tails. Gated on the executor being armed so that the
+    ;; off arm's desk path is byte-for-byte what it was. It is a superset of
+    ;; $chain_slow_pool: the tails whose terminator has no spare operand word
+    ;; (ret, call, loop, $th_block_end) arrive here with $patch_at 0 and are
+    ;; invisible to the chain counters by construction.
+    (if (global.get $block_exec_enabled)
+      (then
+        (if (i32.gt_s (call $chain_chunk_of (global.get $ip)) (i32.const 0))
+          (then (global.set $branch_end_pool
+                  (i64.add (global.get $branch_end_pool) (i64.const 1)))))))
     ;; The block-executor's discovery gate. $branch_end is every taken branch,
     ;; every jmp and every $th_block_end, so "this address was entered through
     ;; $branch_end" IS the "loop head or branch target" signal the multi-block
@@ -1698,7 +1903,12 @@
     ;; walk itself decodes and never executes, which is safe at a block edge in
     ;; exactly the way $run's own miss path is.
     (if (global.get $bx_hot_on)
-      (then (call $bx_hot_bump (global.get $eip))))
+      (then
+        ;; ROUND 19: unless $chain_end already bumped this transfer on its way
+        ;; here, in which case the flag is spent and the bump is not repeated.
+        (if (global.get $chain_hot_bumped)
+          (then (global.set $chain_hot_bumped (i32.const 0)))
+          (else (call $bx_hot_bump (global.get $eip))))))
     (if (i32.or (global.get $dbg_any)
         (i32.or (global.get $code16)
         (i32.or (global.get $yield_flag) (global.get $yield_reason))))

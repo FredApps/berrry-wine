@@ -1762,6 +1762,17 @@
   ;; $page_resolve selects between the two with the entry's bit 15 and never
   ;; branches on it.
   (global $cur_page_desc  (mut i32) (i32.const 0))
+  ;; ROUND 19 (docs/block-chaining-design.md section 8): the ALLOCATED capacity
+  ;; of each of the two chunks above, in bytes -- $page_chunk_bytes(class), not
+  ;; the nominal $PAGE_CHUNK_BYTES. They exist so that "is this address inside
+  ;; the chunk the page registers currently name?" is two subtracts and two
+  ;; unsigned compares off globals, with no PAGE_DIR load. That test is what
+  ;; makes a chunk-relative chain slot safe to read on a path that never
+  ;; refreshes the page registers: chunks are disjoint, so an address inside
+  ;; [$cur_page_chunk, +cap) IS in that chunk, which proves the registers
+  ;; describe the page that owns it. 0 whenever the matching base is 0.
+  (global $cur_page_chunk_cap (mut i32) (i32.const 0))
+  (global $cur_page_desc_cap  (mut i32) (i32.const 0))
   ;; Counters for the A/B in docs/page-compile-design.md section 8.
   (global $page_compiles (mut i32) (i32.const 0))
   (global $page_hits     (mut i32) (i32.const 0))

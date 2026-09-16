@@ -7,8 +7,11 @@ the resolved threaded-code pointer of the edge's target *in the terminator's own
 operand word*, so the next transfer over that edge skips `$branch_end`'s guard
 chain and `$page_resolve` entirely.
 
-Flag: `--block-chain`, **default OFF**, mutually exclusive with `--block-exec`,
-propagated to worker instances through `INHERITED_WASM_GLOBALS`.
+Flag: `--block-chain`, **default OFF**, propagated to worker instances through
+`INHERITED_WASM_GLOBALS`. It was mutually exclusive with `--block-exec` through
+round 18; **round 19 (§10) removed that** — both flags may now be armed at
+once, and the slot holds a chunk-relative offset rather than a self-relative
+delta.
 
 No runtime wasm generation is involved. Nothing is compiled, emitted or
 `WebAssembly.compile`d; `$chain_end` is one fixed handler reading one word of
@@ -123,15 +126,19 @@ A single counter rather than per-page generations because a chain crosses pages
 (the target block need not live on the source block's page), so a per-page
 generation would have to be checked at both ends.
 
-### 3.2 A slot may only point inside its own chunk
+### 3.2 A slot may only point inside one of its page's two chunks
+
+> Round 19 widened this from "its own chunk" to "either of the loaded page's
+> two chunks". The bound, the reason for it and the capacity rule are unchanged.
 
 `$chain_patch` refuses unless **both** `$t` and `$patch_at` fall inside
-`[chunk, chunk + capacity)` for the current page's chunk, where `capacity` is
+`[chunk, chunk + capacity)` for one of the current page's two chunks — its
+stream chunk or its descriptor chunk — where `capacity` is
 `$page_chunk_bytes(class)` read from the page descriptor — *not* the nominal
 `$PAGE_CHUNK_BYTES`. Chunks are bump-allocated back to back, so a loose bound
 would happily accept an address in the next chunk. This one test also rejects a
-stream executing out of the emit scratch and a target in the descriptor chunk,
-and it is what bounds the delta to 16 signed bits.
+stream executing out of the emit scratch, and it is what bounds the offset to
+12 bits of dword (§10.1).
 
 ### 3.3 The wrap cannot alias
 
@@ -142,14 +149,18 @@ reads stale) until `$thread_arena_flush_if_safe` runs from `$run`'s loop head,
 between blocks, clears the arena and restarts the epoch at 1. There is no point
 at which an 8192-invalidations-old slot compares equal.
 
-### 3.4 Mutual exclusion with `--block-exec`
+### 3.4 Mutual exclusion with `--block-exec` — REMOVED in round 19
 
-The block executor copies threaded streams into descriptor fallback pools. A
-delta is relative to the operand word's own address, so a copied stream carries
-a delta pointing into the chunk it was copied *from*. `set_block_chain` refuses
-while the executor is armed and `set_block_exec` clears the chain flag, so the
-two orders behave the same; `test/run.js` rejects the two flags together
-outright.
+Through round 18: the block executor copies threaded streams into descriptor
+fallback pools, a delta is relative to the operand word's own address, so a
+copied stream carried a delta pointing into the chunk it was copied *from*.
+`set_block_chain` refused while the executor was armed, `set_block_exec`
+cleared the chain flag, and `test/run.js` rejected the two flags together.
+
+None of that is true any more. §10 replaces the delta with a chunk-relative
+offset plus a chunk selector, so a copied terminator names its own chunk; both
+setters are now independent in both orders and both flags on is a supported
+configuration.
 
 ---
 
@@ -375,3 +386,306 @@ instance, so a worker's counters are never folded into main's.
   (`adjacent`), and one whose fall-through is elsewhere does (`ftMissed`). Both
   are identical between arms in every run above, which is a useful cheap check
   that the two arms did the same work.
+
+---
+
+## 10. Round 19 — coexistence with the block executor
+
+**One line:** the two flags were mutually exclusive because a chain slot held a
+*self-relative* delta and the executor runs a block's terminator from a **copy**
+in the page's descriptor chunk; the slot now holds a **chunk-relative offset
+plus a one-bit chunk selector**, so a copied terminator names its own chunk and
+both flags may be armed together.
+
+**Verdict.** Coexistence is correct, and is *measured* correct: block decodes,
+descriptor installs and descriptor entries are identical to the digit between
+the `exec` and `both` arms on all four windows, every picture matches the
+`exec` arm byte for byte at two budgets on four apps, and `staleRegs` — a slot
+followed with the wrong page registers loaded — is **0** everywhere. What
+coexistence is *not* is a straight win: on three of the four windows `both`
+takes **more** desk trips per retired block than `chain` alone, because the
+executor replaces chainable stream edges with descriptor tails that mostly end
+in terminators no chain slot can reach. The round's stated gates are therefore
+one PASS and two FAILs, reported below rather than re-scoped.
+
+### 10.1 Why the delta could not simply be widened
+
+A page owns two chunks (round 14): a **stream chunk** and a **descriptor
+chunk**. They are bump-allocated out of the same ~3.9 MB per-thread arena at
+different times and with independent size classes, so the distance between them
+is unbounded in principle and routinely far past ±32 KB in practice. A 16-bit
+signed self-relative delta cannot express a cross-chunk edge at all.
+
+Widening the delta field was not available either. The narrowest host is the
+specialised `Jcc` (H307–H322), whose operand word gives up its low two bits to
+the adjacency pair, leaving 30 usable bits — and round 15 already spent all 30
+on 13 bits of epoch, 16 of delta and 1 of edge tag.
+
+So the encoding changed shape instead of size, and came out **three bits
+cheaper**:
+
+```
+bits 26..14  epoch, 1..$CHAIN_EPOCH_MAX; 0 means unpatched
+bit  13      chunk: 0 = stream chunk, 1 = descriptor chunk
+bits 12..1   the target's DWORD offset inside that chunk, 0..4095
+bit  0       edge tag: 0 taken, 1 fall-through
+```
+
+12 bits of dword index covers 16 KB, which is `$PAGE_CHUNK_BYTES` exactly, so
+the field bounds the largest chunk class by construction rather than by
+convention. Every threaded word is 4-byte aligned (`$te`/`$te_raw` are the only
+writers and both bump by multiples of 4), which is what makes the two dropped
+low bits free.
+
+### 10.2 The hazard the offset introduces, and the test that closes it
+
+An offset is only meaningful against a base, and the base comes from the page
+registers `$cur_page_chunk` / `$cur_page_desc`. A chained transfer never calls
+`$page_resolve`, so those registers are **not** refreshed and can describe a
+different page entirely — a nested synchronous dispatch is enough to do it.
+Round 15's delta needed no base and so had no such hazard.
+
+The closing test is *anchor membership*, and it is the same test the patch
+guard already performs, done again at read time. `$chain_chunk_of($patch_at)`
+asks which of the two chunks the registers currently name contains the operand
+word being read. Chunks are disjoint, so a hit **proves** the registers
+describe the page that owns the anchor — which is the same page `$chain_patch`
+measured the offset against. It also gives the counters their split for free:
+selector 1 is a descriptor-chunk anchor, i.e. a block-executor tail.
+
+Two globals carry the capacities, because a base without its real allocated
+size is a loose bound: `$cur_page_chunk_cap` and `$cur_page_desc_cap`, both
+maintained wherever a base is (`$page_dir_reset`, `$page_dir_drop_mode`,
+`$page_create`, `$page_enter`, `$page_publish`, `$page_publish_desc`), both 0
+whenever the matching base is 0. A third, cheap check re-tests the decoded
+offset against the selected chunk's capacity before the jump, so a slot that
+somehow survived is a desk trip and never a wild jump.
+
+### 10.3 Epoch events — enumerated from the code, not from memory
+
+The brief asked for every descriptor-chunk event that can free or move a pool
+copy to bump `$chain_epoch`. **No new bump sites were required**, and the
+enumeration is why:
+
+| what can happen to a descriptor chunk | how it gets there | bump |
+|---|---|---|
+| chunk freed to a class free list | `$page_chunk_put` | yes, directly |
+| chunk freed late | `$page_chunk_put_if_safe`, `$page_chunk_reclaim_deferred` | via `$page_chunk_put` |
+| chunk grown to a bigger class | `$page_publish` / `$page_publish_desc` grow paths | via `$page_chunk_put` on the old chunk |
+| both chunks dropped with the page | `$page_dir_drop_mode` | directly, and via `$page_chunk_put` for each chunk |
+| page dir slot reused | `$page_index_alloc` eviction → `$page_dir_drop` | via `$page_dir_drop_mode` |
+| descriptor retired (SMC, `invalidate_code_range`) | `$page_retire_at` | yes, directly |
+| descriptor taken back for a walk | `$bx_raw_want` → `$page_retire_ga` → `$page_retire_at` | yes |
+| whole directory thrown away | `$page_dir_reset` | yes |
+| an address becomes an SBH candidate | `$sbh_note_candidate` | yes |
+
+Thrash and memo tables (`$bx_memo_note`, the thrash ratchet) were checked and
+deliberately *not* added: they are refusal counters that free no bytes and move
+no code.
+
+Correctness does not rest on this table being complete, which is the point of
+doing it this way round. The anchor-membership test is an independent proof
+that the registers name the anchor's own page, so a missed bump degrades to
+"followed a slot into a chunk that has not moved" rather than to a wild jump.
+
+### 10.4 The discovery gate, which was the other half of the exclusion
+
+Round 15 also put `$bx_hot_on` in `$chain_end`'s guard set, so "the executor is
+armed" meant "nothing chains" even after the encoding was fixed. That guard is
+gone; the gate is **performed** on the chained path instead. `$bx_hot_bump`
+counts entries into a head and is what triggers a CFG walk, and a transfer that
+skips the desk is still an entry — skipping it would silently stop hot heads
+from being discovered, and the round would then be measuring a different
+executor.
+
+`$chain_hot_ok` does the bump **last**, after every other test has passed, and
+re-tests its two side effects: an epoch that moved (something was retired or
+freed) or an anchor that changed chunk (the registers moved) sends the transfer
+to the desk, where `$page_resolve` hands it the descriptor the walk just
+installed. The bump must happen **exactly once per transfer** or the walk
+probes land at different entries than they do with chaining off, so
+`$chain_hot_bumped` carries the one case where both `$chain_end` and
+`$branch_end_at` would otherwise fire. That this is right is not argued: the
+`both` and `exec` arms below agree to the digit on decodes, installs and
+descriptor entries on all four windows.
+
+### 10.5 A chained edge into an executor-installed target
+
+`$page_resolve` returns the descriptor base for a `$PAGE_INDEX_DESC` entry, and
+the descriptor opens with `[BX_HANDLER][rawoff]` written by `$te`. So a chained
+edge whose target is executor-installed lands on that stream head, `$next`
+performs **one** dispatch into `$th_block_exec`, and nothing re-resolves — the
+handler reads `$ip` as its own `$tp`. Confirmed in the code, and the test file's
+`leaf loop` case runs it.
+
+### 10.6 Counters
+
+`chain:` grew a second line, printed under `--block-chain` or `--verbose`, once
+per wasm instance:
+
+```
+chain: M  pool hits 45987 slow 115 patches 5412 tailExits 247893 tailChained% 18.55
+          chainableTails 46102 ofChainable% 99.75 poolDesk 201906
+          refuseTgt 0 refuseAnc 620566 staleRegs 0
+```
+
+* `pool hits` / `slow` / `patches` — the `hits`/`slow`/`patches` populations
+  restricted to a **descriptor-chunk anchor**. A threaded op executing out of a
+  descriptor chunk can only be an executor tail, so `pool hits` *is* "executor
+  exits that chained".
+* `tailExits` — every executor exit through a copied terminator
+  (`$block_exec_tail_exit_count`, bumped in H458's tail-exit path and in both
+  leaves).
+* `chainableTails` — the subset of those whose copied terminator is a handler
+  that **has** a chain slot: H43 `$th_jmp` and the specialised `Jcc` H307–H322.
+  Everything else (`ret`, `call`, the generic `$th_jcc` whose operand word is
+  its condition code, `$th_block_end`, `loop`/`jecxz`, an indirect jump)
+  reaches the desk with `$patch_at` 0 and cannot be chained by *any* widening
+  of the anchor rule. Round 18's `term_kind 10` exists precisely to admit
+  blocks ending in the unmodelled terminators, so an executor arm's tails are
+  biased towards the unchainable kinds by construction.
+* `poolDesk` — the same population counted from the desk side
+  (`$branch_end_pool`), and a superset of `pool slow`.
+* `refuseTgt` / `refuseAnc` — patches refused because the target, or the
+  anchor, was in neither of the loaded page's chunks. `refuseAnc` is large and
+  is **not** new: it is the ordinary cross-page transfer, and it is within 1.5%
+  of the `chain`-alone arm on every window.
+* `staleRegs` — live-looking slots dropped by the §10.2 membership test. **0 on
+  every window measured.**
+
+### 10.7 Windows — four arms, fixed batches
+
+`docs/block-executor-design/collect-round19-windows.sh` +
+`read-round19.js` (2026-09-15; `/tmp/r19-windows`). Retired blocks are measured,
+not assumed: `$block_budget` is spent by an entry to `$branch_end`, a chained
+transfer and an adjacent fall-through, so their sum is the block count the run
+retired.
+
+| window | arm | desk (`branchEnd`) | retired blocks | desk/block | decodes | installs |
+|---|---|---|---|---|---|---|
+| caesar3-loading (1400 b) | off | 59,509,040 | 69,920,307 | 0.8511 | 2721 | 0 |
+| | chain | 29,739,299 | 69,920,308 | **0.4253** | 2720 | 0 |
+| | exec | 59,284,455 | 69,675,911 | 0.8509 | 2717 | 54 |
+| | both | 29,718,894 | 69,675,911 | 0.4265 | 2717 | 54 |
+| heroes2-gameplay (1400 b) | off | 13,339,031 | 15,653,699 | 0.8521 | 17593 | 0 |
+| | chain | 6,980,531 | 15,653,699 | **0.4459** | 17593 | 0 |
+| | exec | 13,058,305 | 15,298,489 | 0.8536 | 14825 | 782 |
+| | both | 7,594,956 | 15,298,489 | 0.4965 | 14825 | 782 |
+| quake2-gameplay (600 b) | off | 10,628,793 | 11,433,956 | 0.9296 | 32494 | 0 |
+| | chain | 6,099,178 | 11,433,956 | **0.5334** | 32494 | 0 |
+| | exec | 9,584,051 | 10,200,426 | 0.9396 | 32457 | 506 |
+| | both | 5,756,907 | 10,200,426 | 0.5644 | 32457 | 506 |
+| rct-gameplay (1200 b) | off | 165,052,449 | 226,304,030 | 0.7293 | 17751 | 0 |
+| | chain | 103,146,819 | 226,304,030 | 0.4558 | 17751 | 0 |
+| | exec | 162,577,276 | 224,639,692 | 0.7237 | 17742 | 103 |
+| | both | 101,319,283 | 224,639,692 | **0.4510** | 17742 | 103 |
+
+**Gate 1 — `$branch_end` per retired block, `both` ≤ min(`chain`, `exec`) on
+every window: FAIL** (rct PASS, caesar3 +0.3%, quake2 +5.8%, heroes2 +11.3%).
+
+**Gate 2 — block decodes identical between `both` and `exec`: PASS**, and
+exactly, on all four windows; installs and descriptor entries match too.
+
+The executor exits:
+
+| window | tails | of which chainable | chained | % of tails | % of chainable |
+|---|---|---|---|---|---|
+| caesar3-loading | 247,893 | 46,102 | 45,987 | 18.6% | **99.8%** |
+| heroes2-gameplay | 300,809 | 261,646 | 255,628 | 85.0% | **97.7%** |
+| quake2-gameplay | 104,635 | 13,125 | 11,137 | 10.6% | **84.9%** |
+| rct-gameplay | 85,170 | 4,420 | 3,189 | 3.7% | **72.2%** |
+
+**Gate 3 — executor exits chained > 50% of executor exits: FAIL on three of
+four** (heroes2 85.0%; caesar3 18.6%, quake2 10.6%, rct 3.7%). Against the only
+denominator the mechanism can address it is 72–100%. The gap between the two
+columns is the same census result §1 reports for the round as a whole: most
+exits leave through a terminator with no spare operand word, and on the
+executor that bias is by construction, not by accident.
+
+Why `both` can be worse than `chain` alone on desk trips, which is the round's
+real finding: the executor *converts* chainable stream edges into descriptor
+tails. A region's internal edges stop reaching a chain slot (good — the
+descriptor resolves them for free), but its **exits** mostly land on terminator
+kinds chaining cannot reach, and its modelled side exits set `$eip` and go
+straight to `$branch_end` with no threaded tail at all. On heroes2 that trade
+costs 900k chained transfers to save 281k transfers outright. Desk trips are
+not the only currency — that arm also runs 95% of its ops natively — but on
+this axis the two optimizations overlap rather than compose.
+
+### 10.8 Pictures
+
+`docs/block-executor-design/check-round19-png.sh`, three arms × two budgets ×
+four apps, fixed batches.
+
+**`both` vs `exec`: IDENTICAL, 8 of 8.** `both` vs `chain`: identical 7 of 8;
+the exception is rct @1200, which differs by 15,794 of 307,200 pixels — and the
+**control** (`chain` vs `exec`, neither arm touching anything this round
+changed) differs by *exactly the same* 15,794 pixels with the same max channel
+delta of 44. That is the executor reaching a different phase of a clock-paced
+animation, which round 18's sweep already characterises; it is not this round.
+
+### 10.9 Microbenchmark
+
+`tools/bench-loops.js`, shape `blk_mix512` (512 distinct blocks, each ending in
+a `jmp rel8`, each installed as a one-block descriptor — so every tail is a
+copied H43 in the descriptor chunk, which is exactly the anchor this round
+added), 7 interleaved reps, minima, one process per pair:
+
+| pair | off arm | on arm | delta |
+|---|---|---|---|
+| `--toggle=block_chain` (executor off in both) | 45.7 ms | 43.8 ms | **+4.3%** |
+| `--toggle=chain_exec` (executor armed in both) | 44.8 ms | 44.3 ms | **+1.2%** |
+
+Chaining is worth about a quarter as much on top of the executor as it is on
+its own, which is §10.7's finding priced instead of counted. Region shapes as a
+regression check under `--toggle=chain_exec`: `region_blk4_r8` −0.2%,
+`region_blk2_r4` +0.1% — both inside the harness's ±1% noise floor.
+
+`chain_exec` is a toggle and not a new shape: `blk_mix512` already *is* "a mixed
+working set of executor-installed blocks connected by direct edges", and adding
+a byte-identical copy of it under another name would have been a second thing
+to keep in step with no second measurement in it.
+
+### 10.10 Tests
+
+`test/test-block-chain.js` grew a `-- chaining and the block executor, both
+armed --` section (57 cases total, was 25). Round 15's two mutual-exclusion
+assertions are rewritten as their opposite: both flags arm independently, in
+both orders. The new cases each run **four arms** of the same bytes at four
+addresses in one instance (off / chain / exec / both) and require all four to
+agree with the plain interpreter:
+
+* **leaf loop** — a one-block loop installed as H463/H464, so the back edge's
+  anchor is the leaf's pool copy. Asserts a leaf actually ran, that the pool
+  anchor chained, that the `exec`-alone arm chained nothing, that the
+  `chain`-alone arm chained **no pool anchor** (a pool hit with the executor
+  off would mean `$chain_chunk_of` misreads a chunk), and that nothing was
+  refused or followed with stale registers.
+* **general-handler loop** — the same loop with both leaves disarmed, so the
+  install goes through H458 and the exit is its `tail_exit` path.
+* **multi-block region** — a head, a fall-through body and a join under one
+  descriptor. Its internal edges never reach a chain slot, so the assertion is
+  on desk trips, not on hits.
+* **pool SMC** — a loop installed *and* pool-chained, then rewritten through a
+  real guest store. Asserts the pool anchor was chained first (or the case
+  proves nothing), that the answer changes and still agrees, that the epoch
+  moved, and that nothing was followed into the freed chunk.
+* **descriptor retire** — `invalidate_code_range` over the page with both flags
+  on, which frees the descriptor chunk and kills every pool anchor at once.
+
+Green on this build: `test-block-chain` 57/57, `test-block-exec` 368/368,
+`test-stream-fold`, `test-tree-fold`, `test-worker-wasm-globals` (44 inherited
+setters), `test-x87-pipeline4-fusion`, `test-x86-ops` 145/145.
+
+### 10.11 What is still open
+
+* Gates 1 and 3 fail as stated, and §10.7 says why. The mechanism that would
+  move either is the one §7 already names — giving `ret`, `call`,
+  `$th_block_end` and the generic `$th_jcc` a slot — which needs a stream
+  layout change and is a round of its own.
+* Nothing here has been measured in worker mode. The new globals are per-run
+  counters and one transient flag, so none of them belongs in
+  `INHERITED_WASM_GLOBALS`, and the two setters that do were already there.
+* No wall-clock app A/B was run. The box sat at loadavg 3–6 throughout, and
+  every number above is a deterministic counter, a picture or an in-process
+  interleaved microbenchmark minimum.

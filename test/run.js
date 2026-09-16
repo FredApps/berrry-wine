@@ -270,13 +270,13 @@ const BLOCK_EXEC_STATS = hasFlag('block-exec-stats');
 // $branch_end and $page_resolve. Default OFF; the `chain:` line at exit is the
 // counter pair the round's gate is stated against.
 // docs/block-chaining-design.md.
+// Round 19 removed the mutual exclusion with --block-exec: a chain slot holds
+// a chunk selector plus an offset inside one of the loaded page's two chunks,
+// not a delta from its own address, so a slot inside a descriptor's copied
+// terminator names its target exactly as one in the threaded stream does.
+// Both flags together is the configuration section 8 of the design doc
+// measures, and the `chain:` line's pool columns are that measurement.
 const BLOCK_CHAIN = hasFlag('block-chain');
-if (BLOCK_CHAIN && BLOCK_EXEC) {
-  console.error('--block-chain and --block-exec are mutually exclusive: the '
-    + 'executor copies threaded streams into descriptor fallback pools, and a '
-    + 'chain delta is only meaningful in the word it was patched into.');
-  process.exit(2);
-}
 const BLOCK_EXEC_MIN_UOPS = parseInt(getArg('block-exec-min-uops', '0'), 10) || 0;
 // Debug ceiling. With the floor it makes the installer a one-size sieve, which
 // is how a --block-exec divergence gets bisected to a block shape.
@@ -9652,6 +9652,35 @@ if (VERBOSE) {
         // miss rate: an adjacent fall-through never reaches either desk.
         'adjacent', e.get_page_ft ? e.get_page_ft() : '-',
         'ftMissed', e.get_page_ft_missed ? e.get_page_ft_missed() : '-');
+      // Round 19: the anchor-location split, and with it the executor-exit
+      // half of the round's gate. A threaded op executing out of a page's
+      // DESCRIPTOR chunk can only be a block-executor tail, so `poolHits` is
+      // "executor exits that chained" and `tailExits` (counted inside the
+      // executor itself) is the denominator. `poolDesk` is the same population
+      // measured from the desk side and is a superset of `poolSlow`: a tail
+      // whose terminator has no spare operand word never enters $chain_end.
+      if (e.get_chain_hits_pool) {
+        const tails = e.get_block_exec_tail_exit_count ? e.get_block_exec_tail_exit_count() : 0n;
+        const chainable = e.get_block_exec_tail_chainable ? e.get_block_exec_tail_chainable() : 0n;
+        const ph = e.get_chain_hits_pool();
+        console.log(`chain: ${label} pool hits`, String(ph),
+          'slow', String(e.get_chain_slow_pool()),
+          'patches', e.get_chain_patches_pool(),
+          'tailExits', String(tails),
+          'tailChained%', tails > 0n
+            ? (Number(ph * 10000n / tails) / 100).toFixed(2) : '-',
+          // The honest denominator: a tail whose copied terminator is a ret, a
+          // call, a generic Jcc or $th_block_end has no operand word to hold a
+          // chain slot, so it can never be chained however the anchor rule is
+          // widened. `chainableTails` is the subset that can be.
+          'chainableTails', String(chainable),
+          'ofChainable%', chainable > 0n
+            ? (Number(ph * 10000n / chainable) / 100).toFixed(2) : '-',
+          'poolDesk', String(e.get_branch_end_pool()),
+          'refuseTgt', e.get_chain_refuse_target(),
+          'refuseAnc', e.get_chain_refuse_anchor(),
+          'staleRegs', String(e.get_chain_stale_regs()));
+      }
     };
     chainReport('M ', instance.exports);
     if (threadManager) {

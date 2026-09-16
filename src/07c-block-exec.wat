@@ -194,6 +194,42 @@
   (global $bx_rg_tail_norm (mut i32) (i32.const 0))
   ;; RUNTIME: side exits actually taken through an unmodelled terminator.
   (global $block_exec_tail_exit_runs (mut i32) (i32.const 0))
+  ;; ROUND 19 (docs/block-chaining-design.md section 8): every executor exit
+  ;; that leaves through a COPIED TERMINATOR -- term_kind 5 in all three
+  ;; handlers plus round 18's per-member term_kind 10 -- as opposed to a
+  ;; modelled side exit, which sets $eip and goes to $branch_end with no
+  ;; threaded tail at all. It is the denominator of "what share of executor
+  ;; exits did block chaining claim": the numerator is $chain_hits_pool, since
+  ;; a chain slot in a descriptor chunk can only be one of these tails.
+  (global $block_exec_tail_exit_count (mut i64) (i64.const 0))
+  ;; ROUND 19, and the reason the round's executor-exit gate is stated against
+  ;; TWO denominators rather than one: the subset of those tails whose copied
+  ;; terminator is a handler that HAS a chain slot -- H43 ($th_jmp) and the
+  ;; specialised Jcc forms H307..H322. Every other terminator (ret, call, the
+  ;; generic $th_jcc whose operand word is its condition code, $th_block_end,
+  ;; loop/jecxz, an indirect jump) reaches $branch_end with $patch_at 0 and
+  ;; cannot be chained by any widening of the anchor rule, because there is no
+  ;; spare word to write the answer in. Measured, not assumed: round 18's
+  ;; term_kind 10 exists precisely to admit blocks ending in the UNMODELLED
+  ;; terminators, so an executor arm's tails are biased towards the
+  ;; unchainable kinds by construction.
+  (global $block_exec_tail_chainable (mut i64) (i64.const 0))
+
+  ;; One executor exit through a copied terminator. $tail_ip points at that
+  ;; copy's {handler, operand} pair, and the handler index is the first word --
+  ;; the same word $next loads -- so classifying the tail costs one load on an
+  ;; exit that is already about to take a mispredicted indirect branch.
+  (func $bx_tail_note (param $tail_ip i32)
+    (local $fn i32)
+    (global.set $block_exec_tail_exit_count
+      (i64.add (global.get $block_exec_tail_exit_count) (i64.const 1)))
+    (local.set $fn (i32.load (local.get $tail_ip)))
+    (if (i32.or
+          (i32.eq (local.get $fn) (i32.const 43))
+          (i32.and (i32.ge_u (local.get $fn) (i32.const 307))
+                   (i32.le_u (local.get $fn) (i32.const 322))))
+      (then (global.set $block_exec_tail_chainable
+              (i64.add (global.get $block_exec_tail_chainable) (i64.const 1))))))
 
   (global $BX_UOP_WORDS i32 (i32.const 6))
   (global $BX_HEADER_WORDS i32 (i32.const 4))
@@ -5700,6 +5736,7 @@
     ;; $resume_ip HERE -- a real op boundary with every register published.
     (if (local.get $tail_exit)
       (then
+        (call $bx_tail_note (local.get $tail_ip))
         (global.set $ip (local.get $tail_ip))
         (return_call $next)))
 
@@ -6524,6 +6561,7 @@
     ;; The terminator is the next op in the stream. If $steps went non-positive
     ;; above, $next takes the ordinary out-of-steps path and parks $resume_ip
     ;; here -- a real op boundary with every register published.
+    (call $bx_tail_note (local.get $tail_ip))
     (global.set $ip (local.get $tail_ip))
     (return_call $next))
 
@@ -7413,6 +7451,7 @@
     ;; The terminator is the next op in the stream. If $steps went non-positive
     ;; above, $next takes the ordinary out-of-steps path and parks $resume_ip
     ;; here -- a real op boundary with every register published.
+    (call $bx_tail_note (local.get $tail_ip))
     (global.set $ip (local.get $tail_ip))
     (return_call $next))
 

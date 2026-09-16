@@ -2043,6 +2043,29 @@ const TOGGLES = {
   // measuring the machine, not the transfer. The real answer is the change in
   // (jmp_chain - nop_chain), which is the transfer term on its own.
   block_chain: 'set_block_chain',
+  // ROUND 19 (docs/block-chaining-design.md section 8): what block chaining
+  // adds ON TOP of the block executor, now that the two are no longer mutually
+  // exclusive. Same contract as block_exec_split: the executor is armed in
+  // BOTH arms and only the chain flag varies, so the delta is "chaining a
+  // descriptor's copied tail", not "is there a descriptor".
+  //
+  // The shape is blk_mix512 -- 512 distinct blocks, each ending in a `jmp
+  // rel8` and each installed as a one-block descriptor, so every block's tail
+  // is a COPIED H43 in the page's descriptor chunk and is exactly the pool
+  // anchor this round widened the patch guard for. A `blk{k}` shape re-enters
+  // one site forever and cannot price a BTB, so it would flatter both arms.
+  //
+  //   node tools/bench-loops.js --shapes=blk_mix512 --toggle=block_chain
+  //   node tools/bench-loops.js --shapes=blk_mix512 --toggle=chain_exec
+  //
+  // The first pair is off-vs-chain (the executor off in both), the second is
+  // exec-vs-both. They are two processes, so read each pair's own delta and do
+  // not subtract one pair's absolute minimum from the other's.
+  chain_exec: (e, v) => {
+    e.set_block_exec(1);
+    e.set_block_exec_min_uops(2);
+    e.set_block_chain(v);
+  },
   // Round 11's decode-time load/op split. It is not a fold of its own: it only
   // exists inside a descriptor, so BOTH arms must have the executor armed and
   // only the pass may differ. A plain setter name cannot express that, so a

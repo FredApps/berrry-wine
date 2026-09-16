@@ -93,16 +93,25 @@ async function main() {
     `get_block_chain()=${e.get_block_chain()}`);
   e.set_block_chain(1);
   check('the flag arms', e.get_block_chain() === 1);
-  // Mutual exclusion with the block executor, in BOTH orders. The executor
-  // copies threaded streams into its descriptor pools, and a chain delta is
-  // relative to the operand word's own address, so a copied stream carries a
-  // delta that points into the chunk it was copied FROM.
+  // ROUND 19 (docs/block-chaining-design.md section 8): the two flags are
+  // INDEPENDENT. Round 15 made them mutually exclusive because a chain slot
+  // held a self-relative delta, and the executor copies a block's terminator
+  // into its descriptor chunk, so a copied word carried a delta measured
+  // against the chunk it was copied FROM. The slot now holds a chunk-relative
+  // offset plus a one-bit chunk selector, so a pool copy names its own chunk
+  // and both flags may be on at once. Asserted in both orders, because a
+  // one-way clamp would leave the other order silently disarmed.
   e.set_block_exec(1);
-  check('arming the executor disarms chaining', e.get_block_chain() === 0,
+  check('arming the executor leaves chaining armed', e.get_block_chain() === 1,
     `get_block_chain()=${e.get_block_chain()}`);
+  check('the executor is armed', e.get_block_exec() === 1,
+    `get_block_exec()=${e.get_block_exec()}`);
+  e.set_block_chain(0);
   e.set_block_chain(1);
-  check('chaining refuses to arm while the executor is on', e.get_block_chain() === 0,
+  check('chaining arms while the executor is on', e.get_block_chain() === 1,
     `get_block_chain()=${e.get_block_chain()}`);
+  check('arming chaining left the executor alone', e.get_block_exec() === 1,
+    `get_block_exec()=${e.get_block_exec()}`);
   e.set_block_exec(0);
   e.set_block_chain(0);
   check('chaining is off again for the state cases', e.get_block_chain() === 0);
@@ -399,6 +408,245 @@ async function main() {
     const afterFlush = runAt();
     check('epoch wrap: the answer is unchanged after the restart',
       want === afterFlush, `${want} vs ${afterFlush}`);
+  }
+
+  console.log('\n-- chaining and the block executor, both armed --');
+
+  // ROUND 19. What these cases are FOR is the one thing round 15 could not
+  // express: an edge whose ANCHOR is a pool copy. When the executor installs a
+  // descriptor it copies the block's terminator into the page's DESCRIPTOR
+  // chunk and leaves $tail_ip pointing at that copy, so the terminator that
+  // actually runs -- and therefore the operand word a chain patch lands in --
+  // is not the one in the stream chunk. $chain_hits_pool counts exactly those,
+  // so "the pool anchor chained" is measured, never inferred from a total.
+  //
+  // Discovery is hotness-gated; these snippets run tens of iterations, not the
+  // thousands production waits for, so the gate drops to its floor here for the
+  // same reason test/test-block-exec.js drops it.
+  e.set_block_exec_walk_k(2);
+
+  function bxCounters() {
+    return {
+      hits: e.get_chain_hits(), slow: e.get_chain_slow(),
+      poolHits: e.get_chain_hits_pool(), poolSlow: e.get_chain_slow_pool(),
+      patches: e.get_chain_patches(), poolPatches: e.get_chain_patches_pool(),
+      refuseTgt: e.get_chain_refuse_target(), refuseAnc: e.get_chain_refuse_anchor(),
+      staleRegs: e.get_chain_stale_regs(), branchEndPool: e.get_branch_end_pool(),
+      tailExits: e.get_block_exec_tail_exit_count(),
+      leafRuns: e.get_block_exec_leaf_runs(), leafFbRuns: e.get_block_exec_leaf_fb_runs(),
+      installs: e.get_block_exec_installs(),
+      regionInstalls: e.get_block_exec_region_installs(),
+      bumps: e.get_chain_bumps(),
+      desk: e.get_branch_end_calls(),
+    };
+  }
+  function bxDelta(a, b) {
+    const out = {};
+    for (const k of Object.keys(a)) out[k] = Number(b[k] - a[k]);
+    return out;
+  }
+
+  // One arm of the four-way matrix. `mode` is 'off' | 'chain' | 'exec' | 'both'
+  // -- four genuinely different histories of the same bytes at four different
+  // addresses, because a slot is written on the first transfer through a
+  // terminator and a descriptor is installed on the first hot entry.
+  function bxArm(bytes, mode, seed, opts) {
+    const addr = (opts && opts.addr) || nextCode();
+    writeAt(addr, bytes);
+    seedData();
+    normalizeFlags();
+    // The shipped 12-uop floor would decline every hand-written snippet here
+    // and silently run four identical threaded arms, so it drops to the
+    // minimum a descriptor can express (the same reasoning as test-block-exec).
+    e.set_block_exec_min_uops((opts && opts.minUops) || 2);
+    e.set_block_exec_leaf(opts && opts.leaf === false ? 0 : 1);
+    e.set_block_exec_leaf_fb(opts && opts.leafFb === false ? 0 : 1);
+    e.set_block_exec_tail_exits(opts && opts.tailExits === false ? 0 : 1);
+    e.set_block_exec(mode === 'exec' || mode === 'both' ? 1 : 0);
+    e.set_block_chain(mode === 'chain' || mode === 'both' ? 1 : 0);
+    setRegs(seed);
+    const before = bxCounters();
+    e.set_eip(addr);
+    e.run(200000);
+    const out = snapshot(addr);
+    out.mode = mode;
+    out.d = bxDelta(before, bxCounters());
+    e.set_block_chain(0);
+    e.set_block_exec(0);
+    return out;
+  }
+
+  // Run all four arms and assert every one of them agrees with the plain
+  // interpreter. Three A/Bs in one, and the one that matters is `both`.
+  function matrix(name, bytes, seed, opts) {
+    const arms = ['off', 'chain', 'exec', 'both'].map(m => bxArm(bytes, m, seed, opts));
+    const base = arms[0];
+    for (const a of arms.slice(1)) agree(`${name}: ${a.mode} agrees with the interpreter`, base, a);
+    return { off: arms[0], chain: arms[1], exec: arms[2], both: arms[3] };
+  }
+
+  {
+    // A counted loop whose single block the executor installs as a LEAF (H463
+    // or H464). The leaf's exit is `$ip <- tail_ip; return_call $next`, so the
+    // back edge's anchor is the pool copy of the terminator and nothing else
+    // in the system can chain it.
+    const body = [...aluRR(ADD, EAX, ECX), ...decR(ECX)];
+    const code = [...movRI(ECX, 60), ...movRI(EAX, 0), ...body,
+                  ...jnzRel8(-(body.length + 2)), ...tail];
+    const m = matrix('leaf loop', code);
+    check('leaf loop: the executor installed a leaf in the exec arms',
+      m.exec.d.leafRuns + m.exec.d.leafFbRuns > 0 &&
+      m.both.d.leafRuns + m.both.d.leafFbRuns > 0,
+      `exec leaf=${m.exec.d.leafRuns}/${m.exec.d.leafFbRuns} ` +
+      `both leaf=${m.both.d.leafRuns}/${m.both.d.leafFbRuns} — no leaf ran, so the case proves nothing`);
+    check('leaf loop: the leaf tail exits were chained in the both arm',
+      m.both.d.poolHits > 0,
+      `poolHits=${m.both.d.poolHits} tailExits=${m.both.d.tailExits} ` +
+      `poolPatches=${m.both.d.poolPatches} slowPool=${m.both.d.poolSlow} ` +
+      `refuseTgt=${m.both.d.refuseTgt} refuseAnc=${m.both.d.refuseAnc}`);
+    check('leaf loop: the exec-alone arm chained nothing',
+      m.exec.d.hits === 0 && m.exec.d.poolHits === 0,
+      `hits=${m.exec.d.hits} poolHits=${m.exec.d.poolHits}`);
+    check('leaf loop: the chain-alone arm chained no POOL anchor',
+      m.chain.d.hits > 0 && m.chain.d.poolHits === 0,
+      `hits=${m.chain.d.hits} poolHits=${m.chain.d.poolHits} — a pool hit with the executor off means $chain_chunk_of misreads a chunk`);
+    check('leaf loop: no patch was refused for an out-of-chunk address',
+      m.both.d.refuseTgt === 0 && m.both.d.refuseAnc === 0,
+      `refuseTgt=${m.both.d.refuseTgt} refuseAnc=${m.both.d.refuseAnc}`);
+    check('leaf loop: no slot was followed with the wrong page registers loaded',
+      m.both.d.staleRegs === 0, `staleRegs=${m.both.d.staleRegs}`);
+  }
+
+  {
+    // The same loop with the leaf handlers disarmed, so every install goes
+    // through the GENERAL region handler (H458) and the exit is its
+    // `tail_exit` path instead. Different handler, same anchor question.
+    const body = [...aluRR(ADD, EAX, ECX), ...decR(ECX)];
+    const code = [...movRI(ECX, 60), ...movRI(EAX, 0), ...body,
+                  ...jnzRel8(-(body.length + 2)), ...tail];
+    const m = matrix('general-handler loop', code, undefined, { leaf: false, leafFb: false });
+    check('general-handler loop: an install ran with no leaf',
+      m.both.d.installs > 0 && m.both.d.leafRuns === 0 && m.both.d.leafFbRuns === 0,
+      `installs=${m.both.d.installs} leaf=${m.both.d.leafRuns}/${m.both.d.leafFbRuns}`);
+    check('general-handler loop: its tail exits chained',
+      m.both.d.poolHits > 0,
+      `poolHits=${m.both.d.poolHits} tailExits=${m.both.d.tailExits} slowPool=${m.both.d.poolSlow}`);
+  }
+
+  {
+    // A multi-block region: a head that branches, a fall-through body and a
+    // join, all under ONE descriptor. Its internal edges never reach a chain
+    // slot at all (the descriptor resolves them), so what is under test is the
+    // region's EXIT -- including the per-member tail of round 18's kind-10
+    // terminator, which lives at its own byte offset inside the fallback pool
+    // rather than at the descriptor's end.
+    const away = [...aluRR(SUB, EAX, ECX)];
+    const fall = [...aluRR(ADD, EAX, ECX)];
+    const join = [...decR(ESI)];
+    const cmpPart = [...incR(EDX), ...cmpRI(EDX, 0)];
+    const jzPart = jzRel8(fall.length + 2);
+    const jmpPart = jmpRel8(away.length);
+    const headLen = cmpPart.length + jzPart.length + fall.length + jmpPart.length
+                  + away.length + join.length;
+    const code = [...movRI(ESI, 40), ...cmpPart, ...jzPart, ...fall, ...jmpPart,
+                  ...away, ...join, ...jnzRel8(-(headLen + 2)), ...tail];
+    const m = matrix('multi-block region', code);
+    check('multi-block region: a region installed in the both arm',
+      m.both.d.regionInstalls > 0 || m.both.d.installs > 0,
+      `regionInstalls=${m.both.d.regionInstalls} installs=${m.both.d.installs}`);
+    // NOT "it chained as much as chaining alone": a region resolves its own
+    // internal edges inside the descriptor, so the back edge that chaining
+    // alone patches 113 times does not reach a chain slot here at all. The
+    // property the round is actually claiming is the one stated on desk trips
+    // -- both flags together must not send MORE transfers to $branch_end than
+    // either flag alone does.
+    check('multi-block region: both arms together take no more desk trips than either alone',
+      m.both.d.desk <= Math.min(m.chain.d.desk, m.exec.d.desk),
+      `both=${m.both.d.desk} chain=${m.chain.d.desk} exec=${m.exec.d.desk} ` +
+      `(off=${m.off.d.desk})`);
+    check('multi-block region: no refusals and no stale-register follows',
+      m.both.d.refuseTgt === 0 && m.both.d.refuseAnc === 0 && m.both.d.staleRegs === 0,
+      `refuseTgt=${m.both.d.refuseTgt} refuseAnc=${m.both.d.refuseAnc} staleRegs=${m.both.d.staleRegs}`);
+  }
+
+  {
+    // Self-modifying code against a POOL anchor. The loop runs long enough to
+    // be installed as a descriptor AND to have its pool-copied terminator
+    // patched, then its guest bytes are rewritten through a real guest store.
+    // The rewrite must retire the descriptor and bump the epoch; a pool patch
+    // that survived would send the second run into a freed descriptor chunk.
+    const mk = (delta) => {
+      const body = [...aluRI(0, EAX, delta), ...decR(ECX)];
+      return [...movRI(ECX, 40), ...movRI(EAX, 0), ...body,
+              ...jnzRel8(-(body.length + 2)), ...tail];
+    };
+    const v1 = mk(3), v2 = mk(5);
+    if (v1.length !== v2.length) throw new Error('the SMC pair must be the same length');
+
+    const smcBoth = (mode) => {
+      const addr = nextCode();
+      const runAt = () => {
+        const r = bxArm(v1, mode, undefined, { addr });
+        return { s: `${r.eax.toString(16)}/${r.ecx.toString(16)}`, d: r.d };
+      };
+      writeAt(addr, v1);
+      const first = runAt();
+      const bumpsBefore = e.get_chain_bumps();
+      for (let i = 0; i < v2.length; i += 4) {
+        const word = v2[i] | (v2[i + 1] << 8) | (v2[i + 2] << 16) | (v2[i + 3] << 24);
+        const w = nextCode();
+        writeAt(w, [...store32(EAX, EBX, i), ...RET]);
+        normalizeFlags();
+        setRegs({ eax: word >>> 0, ebx: addr });
+        e.set_eip(w);
+        e.run(1000);
+      }
+      const bumps = e.get_chain_bumps() - bumpsBefore;
+      writeAt(addr, v2);          // bxArm re-writes its bytes; keep them v2
+      const r2 = bxArm(v2, mode, undefined, { addr });
+      return { first: first.s, firstD: first.d, second: `${r2.eax.toString(16)}/${r2.ecx.toString(16)}`,
+               secondD: r2.d, bumps };
+    };
+    const soff = smcBoth('off');
+    const son = smcBoth('both');
+    check('pool SMC: the first run agrees', soff.first === son.first,
+      `${soff.first} vs ${son.first}`);
+    check('pool SMC: a pool anchor really was chained before the rewrite',
+      son.firstD.poolHits > 0,
+      `poolHits=${son.firstD.poolHits} installs=${son.firstD.installs} — nothing pool-chained, so the case proves nothing`);
+    check('pool SMC: the rewritten loop agrees after the rewrite',
+      soff.second === son.second, `${soff.second} vs ${son.second}`);
+    check('pool SMC: the rewrite actually changed the answer',
+      soff.first !== soff.second, `${soff.first} == ${soff.second}`);
+    check('pool SMC: retiring the descriptor bumped the chain epoch', son.bumps > 0,
+      `bumps=${son.bumps} — nothing invalidated the pool chains`);
+    check('pool SMC: no slot was followed into a freed chunk',
+      son.secondD.staleRegs === 0, `staleRegs=${son.secondD.staleRegs}`);
+  }
+
+  {
+    // Wholesale page invalidation with both flags on: the path a descriptor
+    // RETIRE and a chunk drop both take. The descriptor chunk is freed here,
+    // so every pool anchor and every pool target dies at once.
+    const body = [...aluRI(0, EAX, 9), ...decR(ECX)];
+    const code = [...movRI(ECX, 40), ...movRI(EAX, 0), ...body,
+                  ...jnzRel8(-(body.length + 2)), ...tail];
+    const addr = nextCode();
+    const runAt = () => bxArm(code, 'both', undefined, { addr });
+    const before = runAt();
+    check('descriptor retire: a pool anchor was chained first',
+      before.d.poolHits > 0, `poolHits=${before.d.poolHits}`);
+    const epochBefore = e.get_chain_epoch();
+    e.invalidate_code_range(addr & ~0xFFF, 4096);
+    const epochAfter = e.get_chain_epoch();
+    const after = runAt();
+    check('descriptor retire: the answer survives it',
+      before.eax === after.eax && before.ecx === after.ecx,
+      `${before.eax.toString(16)}/${before.ecx.toString(16)} vs ${after.eax.toString(16)}/${after.ecx.toString(16)}`);
+    check('descriptor retire: it moved the epoch', epochAfter !== epochBefore,
+      `epoch ${epochBefore} -> ${epochAfter} — an unmoved epoch leaves every pool slot live`);
+    check('descriptor retire: no stale-register follow after it',
+      after.d.staleRegs === 0, `staleRegs=${after.d.staleRegs}`);
   }
 
   console.log('\n-- the debug facilities --');

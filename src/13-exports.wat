@@ -2867,17 +2867,16 @@
   ;; other fold gate, so it has to be set before the first decode and on every
   ;; per-thread instance -- lib/worker-imports.js carries it for the second
   ;; half and test/test-worker-wasm-globals.js is the gate on that.
-  ;; Block chaining (docs/block-chaining-design.md). Default OFF, and mutually
-  ;; exclusive with the block executor in BOTH directions, so the order the
-  ;; inherited setters replay in cannot decide which one a worker instance
-  ;; runs: the executor always wins. The executor copies threaded streams into
-  ;; descriptor fallback pools, and a chain delta is only meaningful relative to
-  ;; the word it was patched into, so a copied chain word is the one shape this
-  ;; mechanism cannot survive.
+  ;; Block chaining (docs/block-chaining-design.md). Default OFF. Round 19
+  ;; removed the mutual exclusion with the block executor: the slot no longer
+  ;; holds a delta from the operand word's own address but a chunk selector
+  ;; plus an offset inside one of the loaded page's two chunks, so a slot in a
+  ;; descriptor's copied terminator names its target exactly as one in the
+  ;; threaded stream does. Both flags on is a supported configuration and is
+  ;; what section 8 of the design doc measures. The setter order no longer
+  ;; decides anything, which is what the inherited-setter replay needed.
   (func (export "set_block_chain") (param $flag i32)
-    (global.set $block_chain_on
-      (i32.and (i32.ne (local.get $flag) (i32.const 0))
-               (i32.eqz (global.get $block_exec_enabled)))))
+    (global.set $block_chain_on (i32.ne (local.get $flag) (i32.const 0))))
   (func (export "get_block_chain") (result i32) (global.get $block_chain_on))
   (func (export "get_chain_hits") (result i64) (global.get $chain_hits))
   (func (export "get_chain_slow") (result i64) (global.get $chain_slow))
@@ -2885,6 +2884,20 @@
   (func (export "get_chain_bumps") (result i32) (global.get $chain_bumps))
   (func (export "get_chain_epoch") (result i32) (global.get $chain_epoch))
   (func (export "get_branch_end_calls") (result i64) (global.get $branch_end_calls))
+  ;; ROUND 19 -- the anchor-location split. "pool" means the chain slot lives in
+  ;; a page's block-executor DESCRIPTOR chunk, which can only be a copied
+  ;; terminator, which can only be an executor tail exit.
+  (func (export "get_chain_hits_pool") (result i64) (global.get $chain_hits_pool))
+  (func (export "get_chain_slow_pool") (result i64) (global.get $chain_slow_pool))
+  (func (export "get_chain_patches_pool") (result i32) (global.get $chain_patches_pool))
+  (func (export "get_chain_refuse_target") (result i32) (global.get $chain_refuse_target))
+  (func (export "get_chain_refuse_anchor") (result i32) (global.get $chain_refuse_anchor))
+  (func (export "get_chain_stale_regs") (result i64) (global.get $chain_stale_regs))
+  (func (export "get_branch_end_pool") (result i64) (global.get $branch_end_pool))
+  (func (export "get_block_exec_tail_exit_count") (result i64)
+    (global.get $block_exec_tail_exit_count))
+  (func (export "get_block_exec_tail_chainable") (result i64)
+    (global.get $block_exec_tail_chainable))
   ;; The epoch is 13 bits and the wrap has to be reachable from a test in under
   ;; a second. Every real invalidation path -- $page_retire_at, $page_chunk_put,
   ;; $page_dir_reset, $page_dir_drop_mode -- calls exactly this function, and
@@ -2896,9 +2909,12 @@
   ;; cycles because a page dir slot that is already free costs nothing to drop.
   (func (export "test_chain_bump") (call $chain_bump))
 
+  ;; ROUND 19: no longer clears $block_chain_on. The two features coexist --
+  ;; see docs/block-chaining-design.md section 8 -- so this setter and
+  ;; set_block_chain are independent and the replay order of the inherited
+  ;; setters no longer decides which one a worker instance runs.
   (func (export "set_block_exec") (param $flag i32)
     (global.set $block_exec_enabled (local.get $flag))
-    (if (local.get $flag) (then (global.set $block_chain_on (i32.const 0))))
     (call $bx_hot_gate_refresh))
   (func (export "get_block_exec") (result i32) (global.get $block_exec_enabled))
   (func (export "set_block_exec_min_uops") (param $n i32)
