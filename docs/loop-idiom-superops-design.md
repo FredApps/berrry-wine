@@ -1367,3 +1367,138 @@ H408 executed 2,869,328 load groups in that gameplay window, while the former
 `H343 -> H343` top pair disappeared. The resulting frame still scored terrain
 102,464, life 3,612, mana 2,910 and 189 quantized colors. Machine load exceeded
 80 during the replay, so no wall-time/FPS claim is made.
+
+## 21. Call side exits: census and verdict (2026-09-15)
+
+**Verdict: do not build it.** The proposal was to let a self-loop body that
+contains a `call` (direct or indirect) or an indirect `jmp` be folded anyway,
+lowering that op to a *side exit*: the fold runs native iterations until the one
+that reaches the call, writes every register and flag back the way H455
+(`$th_ck_lut16_run`) already does mid-loop, sets `$eip` to the call instruction
+and drops back to threaded execution. Two independent measurements say the
+mechanism cannot pay, and a third says it cannot even be reached.
+
+### 21.1 It cannot be reached: a call ends the block
+
+`$loop_match_block` runs on blocks, and `$loop_is_selfloop` requires the block's
+**last** emitted op to be a Jcc whose target is the block's own entry EIP
+(`src/07b-loop-match.wat:1228`). Every CALL form in the decoder sets
+`$done = 1` and terminates the block -- `CALL rel32` (handler 39,
+`src/07-decoder.wat:4295`), `CALL rel16` (266), `CALL r/m32` register form
+(119), `CALL [mem]` via `$emit_call_ind`, the 16-bit forms (379/380) and
+`CALL FAR` (369) -- and so does every indirect `JMP`. A block whose body
+contains a call therefore ends *at* the call and never ends in a backedge Jcc,
+so it is never a self-loop and no `$loop_try_*` predicate has ever seen one.
+
+This is why `tools/match-loops.js` reports a large `call` bucket that the WAT
+matcher does not: `tools/find-loops.js` decodes linearly and scans straight
+across calls, so its bodies include loops that are not single blocks in the
+emulator at all. **The static `call` decline count is an artifact of the static
+tool, not a queue of missed lowerings.** Reaching these loops at all would first
+require the decoder to speculatively continue a block past a call -- a change to
+block identity that the block cache, block chaining, the block executor, the
+return-address push and SEH all depend on.
+
+### 21.2 Static census: 9 loops out of 19,146, and all 9 are the wrong shape
+
+`tools/match-loops.js --why` now splits the `call` bucket into "the call is the
+ONLY blocker" versus "the call plus something a side exit does not fix", and for
+the first group reports which family the loop would match with the call elided
+(`--callExit` semantics: the fold never executes the call, so callee register
+clobber is deliberately not modelled -- this is an upper bound). It also reports
+whether the call is reached unconditionally on the backedge path (`uncond`) or
+sits behind an earlier branch (`guarded`).
+
+Over War3Demo.exe, Game.dll, quake2.exe, ref_soft.dll, H2DEMOW.EXE,
+caesar3.exe, RCTYCOON.EXE, DIABLO.EXE, STORM.DLL and starcraft.exe:
+
+| quantity | count |
+|---|---|
+| self-loops found | 19,146 |
+| already matched by an existing predicate | 239 (1.2%) |
+| declined for `call` | 10,154 |
+| ... call is the **only** blocker | **9** (0.09% of call declines, 0.05% of loops) |
+| ... call **plus** another blocker | 10,145 |
+| of the 9: call is `uncond` (every iteration) | **9** |
+| of the 9: call is `guarded` | **0** |
+
+The co-blockers on the other 10,145 name what those loops actually are:
+
+| co-blocker | count |
+|---|---|
+| `unknown-op:push` | 4,616 |
+| `unknown-op:lea` | 1,997 |
+| `unknown-op:add` | 1,796 |
+| `multi-branch` | 505 |
+| `too-many-mem-ops` | 266 |
+
+`push` dominating is the tell: these are argument-setup sequences around a
+function call, not blittable idioms with an incidental call in them.
+
+**A side exit at an `uncond` call folds nothing.** The exit fires on iteration
+0 of every entry, so the fold performs zero native iterations and is pure added
+dispatch. All 9 candidates are that case. They are also all the same program
+shape -- fill an array with a function's return value:
+
+```
+starcraft.exe 0x40701f  (would match FILL_RUN)
+    call 0x4b6720          ; rand()
+    mov [esi], eax
+    add dword esi, 0x4
+    dec edi
+    jnz short 0x40701f
+```
+
+and the `FILL_RUN` label on it is itself a misclassification: the stored value
+*varies* every iteration, and only looks loop-invariant because the census
+elided the instruction that produces it. The remaining eight (War3Demo
+`0x432f10`, `0x432fb0`; Game.dll `0x6f291048`, `0x6f2911e8`, `0x6f4a5673`,
+`0x6f4acfa2`, `0x6f4ad0b4`; starcraft `0x40b918`) are the same pattern.
+
+### 21.3 Dynamic census: none of the 9 is hot, and the real call cost is elsewhere
+
+Cross-checked against the `--handler-hist` hot-block dumps in
+`docs/hot-loop-vocabulary-2026-09/` (gta2, heroes2, mw3, quake2, rct, starcraft,
+caesar3; gameplay and loading windows): **zero** of the 9 VAs appears in any
+ranked window. Dynamic share of the call-only bucket is 0.00%.
+
+What *is* hot near calls is the `CALL_GLUE` family -- and it is not this shape:
+
+| app (gameplay) | CALL_GLUE share of block entries | app (loading) | share |
+|---|---|---|---|
+| gta2 | 8.60% | gta2 | 12.52% |
+| heroes2 | 3.69% | quake2 | 7.51% |
+| mw3 | 1.60% | heroes2 | 7.30% |
+| rct | 1.12% | starcraft | 5.36% |
+| | | mw3 | 3.03% |
+| | | caesar3 | 1.04% |
+
+Every one of those entries is a *separate* block -- a prologue
+(`push ebp; mov ebp,esp; push x3; call L32[iat]`), an epilogue
+(`pop x3; leave; ret`), or a thunk-zone landing -- i.e. the block transfers the
+call itself is made of. Not one hot loop in any window is a self-loop whose body
+contains a call. A side exit inside a loop body cannot touch any of it; that
+cost belongs to block chaining and call/return fast-pathing, which is where the
+measured percentage actually lives.
+
+### 21.4 What was built
+
+Only the census. `tools/match-loops.js` gained `match(body, {callExit})`,
+`isExitOp()` and `classifyCallDecline()`, and `--why` now prints the call-only
+/ call-plus split, the family and `uncond`/`guarded` breakdown, and (with
+`--list`) the call-only bodies. No WAT was written: no handler was added, no
+`src/02-thread-table.wat` or `src/04-cache.wat` count moved, and the block
+executor's classifier is untouched.
+
+### 21.5 Unproven / left open
+
+- The 0.05% static and 0.00% dynamic yield is measured over ten binaries and
+  seven profiled apps. It is not a proof for every program, but the *mechanical*
+  argument in 21.1 and the `uncond` argument in 21.2 do not depend on the corpus.
+- A `guarded` call -- one behind an earlier branch in the body -- is the only
+  shape where a side exit could fold real iterations, and the census found
+  **none**. Such a loop is necessarily `multi-branch`, which is Design B
+  (self-loop wrapping, §4) territory, not Design A's.
+- No claim is made about folding the `CALL_GLUE` blocks themselves; §21.3 only
+  establishes that they are the hot call-adjacent cost and that this proposal
+  does not address them.

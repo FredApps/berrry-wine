@@ -188,9 +188,57 @@ function summarize(body) {
     branch: roles.filter(r => r.kind === 'BRANCH') };
 }
 
+// ------------------------------------------------------------ side exits --
+// The ops the side-exit proposal would lower to an exit rather than a decline:
+// any CALL (direct or indirect) and any INDIRECT jmp. A `jmp 0x401000` is a
+// plain branch and stays a branch.
+function isExitOp(insn) {
+  const t = insn.trim().toLowerCase();
+  if (/^call\b/.test(t)) return true;
+  const j = /^jmp\s+(.*)$/.exec(t);
+  if (!j) return false;
+  return !/^(short\s+|near\s+)?(0x[0-9a-f]+|[0-9]+)$/.test(j[1].trim());
+}
+
+// Why a `call` decline declines, in the detail step 1 asks for:
+//   only      -- the call is the ONLY blocker; `pattern` is what the loop
+//                would match if the call were a side exit
+//   plus      -- the call plus `other`, which a side exit does not fix
+// `guard` says whether the call is reached unconditionally on the backedge
+// path (every iteration => a side exit fires on iteration 0 and the fold never
+// advances) or sits behind an earlier branch in the body.
+function classifyCallDecline(body) {
+  const exits = body.filter(isExitOp);
+  if (!exits.length) return null;
+  // A branch that is not the loop's own terminator, appearing before the first
+  // exit op, is what could make the exit conditional.
+  const firstExit = body.findIndex(isExitOp);
+  const guarded = body.slice(0, firstExit)
+    .some(i => /^\s*(j[a-z]+|loop[a-z]*)\b/i.test(i));
+  const m = match(body, { callExit: true });
+  return {
+    exits: exits.length,
+    indirect: exits.some(i => !/^\s*call\s+(0x[0-9a-f]+|[0-9]+)\s*$/i.test(i)),
+    guard: guarded ? 'guarded' : 'uncond',
+    only: !m.reject,
+    pattern: m.pattern || null,
+    other: m.reject || null,
+  };
+}
+
 // -------------------------------------------------------------- predicates --
 // Returns {pattern, stride} or {reject: reason}.
-function match(body) {
+//
+// opts.callExit models the side-exit proposal: a CALL (or an indirect JMP) in
+// the body is not a blocker but an EXIT -- the fold runs native iterations
+// until the one that reaches the call, writes state back and returns to
+// threaded execution. So for the census the call is simply elided from the
+// body and every other predicate is applied unchanged. Register clobber by
+// the callee is deliberately not modelled: under a side exit the fold never
+// executes the call, so what the callee would clobber cannot affect it.
+function match(body, opts) {
+  const callExit = opts && opts.callExit;
+  if (callExit) body = body.filter(i => !isExitOp(i));
   const s = summarize(body);
   if (s.calls.length) return { reject: 'call' };
   if (s.others.length) return { reject: 'unknown-op:' + s.others[0].mnem };
@@ -317,7 +365,8 @@ function promotable(body) {
   return { cells: out };
 }
 
-module.exports = { match, summarize, role, parseOperand, promotable };
+module.exports = { match, summarize, role, parseOperand, promotable,
+  isExitOp, classifyCallDecline };
 
 // ------------------------------------------------------------------- main --
 if (require.main === module) {
@@ -395,15 +444,37 @@ if (require.main === module) {
   const PATTERNS = ['COPY_RUN', 'FILL_RUN', 'LUT_RUN', 'SCAN_RUN'];
   const rows = [];
   const whyAll = new Map();
+  // --why detail for the `call` bucket (step 1 of the side-exit census)
+  const callOnly = new Map();    // "PATTERN/guard" -> count
+  const callPlus = new Map();    // other reject    -> count
+  const callVAs = [];
   for (const f of files) {
     let loops;
     try { loops = findLoops(f, { maxBody: MAXB }); }
     catch (e) { console.error(`${path.basename(f)}: ${e.message}`); continue; }
-    const row = { file: f, total: loops.length, matched: 0, unit: 0 };
+    const row = { file: f, total: loops.length, matched: 0, unit: 0,
+      callOnly: 0, callOnlyGuarded: 0, callPlus: 0 };
     for (const p of PATTERNS) row[p] = 0;
     for (const lp of loops) {
       const m = match(lp.body);
-      if (m.reject) { whyAll.set(m.reject, (whyAll.get(m.reject) || 0) + 1); continue; }
+      if (m.reject) {
+        whyAll.set(m.reject, (whyAll.get(m.reject) || 0) + 1);
+        if (m.reject === 'call') {
+          const c = classifyCallDecline(lp.body);
+          if (c && c.only) {
+            row.callOnly++;
+            if (c.guard === 'guarded') row.callOnlyGuarded++;
+            callOnly.set(`${c.pattern}/${c.guard}`,
+              (callOnly.get(`${c.pattern}/${c.guard}`) || 0) + 1);
+            callVAs.push({ file: path.basename(f), va: lp.va, pattern: c.pattern,
+              guard: c.guard, exits: c.exits, indirect: c.indirect, body: lp.body });
+          } else if (c) {
+            row.callPlus++;
+            callPlus.set(c.other, (callPlus.get(c.other) || 0) + 1);
+          }
+        }
+        continue;
+      }
       row[m.pattern]++; row.matched++;
       if (Math.abs(m.stride) === m.size) row.unit++;
       if (LIST && (LIST === '*' || LIST === m.pattern)) {
@@ -413,7 +484,13 @@ if (require.main === module) {
     }
     rows.push(row);
   }
-  if (has('json')) { console.log(JSON.stringify({ rows, why: [...whyAll].sort((a, b) => b[1] - a[1]) }, null, 1)); process.exit(0); }
+  if (has('json')) {
+    console.log(JSON.stringify({ rows, why: [...whyAll].sort((a, b) => b[1] - a[1]),
+      callOnly: [...callOnly].sort((a, b) => b[1] - a[1]),
+      callPlus: [...callPlus].sort((a, b) => b[1] - a[1]),
+      callVAs: has('list') ? callVAs : callVAs.map(v => ({ ...v, body: undefined })) }, null, 1));
+    process.exit(0);
+  }
 
   const w = Math.max(12, ...rows.map(r => path.basename(r.file).length));
   console.log('app'.padEnd(w) + '  loops   COPY   FILL    LUT   SCAN  matched  unit-stride');
@@ -439,6 +516,28 @@ if (require.main === module) {
     console.log('\ndeclines:');
     for (const [k, v] of [...whyAll].sort((a, b) => b[1] - a[1]).slice(0, 20)) {
       console.log(`  ${String(v).padStart(6)}  ${k}`);
+    }
+    const nCall = whyAll.get('call') || 0;
+    const nOnly = [...callOnly.values()].reduce((a, b) => a + b, 0);
+    const nPlus = [...callPlus.values()].reduce((a, b) => a + b, 0);
+    console.log(`\n  call declines: ${nCall}  ->  call-is-the-ONLY-blocker ${nOnly}`
+      + `  |  call+other ${nPlus}`);
+    console.log('\n  call-only, by family the loop would match with a side exit:');
+    if (!nOnly) console.log('        (none)');
+    for (const [k, v] of [...callOnly].sort((a, b) => b[1] - a[1])) {
+      console.log(`  ${String(v).padStart(6)}  ${k}`);
+    }
+    console.log('\n  call+other, by the blocker a side exit does NOT fix:');
+    for (const [k, v] of [...callPlus].sort((a, b) => b[1] - a[1]).slice(0, 20)) {
+      console.log(`  ${String(v).padStart(6)}  ${k}`);
+    }
+    if (has('list')) {
+      console.log('\n  call-only loop bodies:');
+      for (const v of callVAs) {
+        console.log(`${v.file} 0x${v.va.toString(16)}  ${v.pattern} ${v.guard}`
+          + ` exits=${v.exits}${v.indirect ? ' indirect' : ''}`);
+        for (const b of v.body) console.log('    ' + b);
+      }
     }
   }
 }
