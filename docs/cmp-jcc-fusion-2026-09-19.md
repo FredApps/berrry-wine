@@ -71,13 +71,33 @@ blocks):
 Instructions barely moved and cycles went up: the saved dispatches were
 paid back as `$branch_end` lookups on every fallen-through fused block.
 
-Round 2, plain-Jcc control word layout: see the table below.
+Round 2, plain-Jcc control word layout (the shipped one):
 
-ROUND2_TABLE
+| app | null band | fused vs base (median gameplay CPU) | instructions | cycles |
+|---|---|---|---|---|
+| StarCraft | 1.36% | +1.29%, inside the band | −0.4% | +1.7% |
+| Heroes II (7.8s window) | 0.77% | −0.26%, inside the band | −0.5% | −0.2% |
+| Diablo | 3.28% | −4.86%, but base's median (17.68s) is its own outlier: the fused arm is −1.6% against the null arm's 17.10s, inside the band | −0.1% | −2.5% |
+
+**Verdict: neutral.** The layout fix turned a measured loss into no
+measured change on all three apps. Retired instructions barely move
+because a fused CMP+Jcc still does the CMP's flag publish and the Jcc's two
+word reads; what it removes is one dispatch per site, and at 4-12% of
+dispatches that is under the ~5% the entire per-dispatch tail was measured
+to be worth (dispatch replication), so a few tenths of a percent is the
+expected size and the box cannot resolve it.
+
+It is kept on branch `cmpjcc-fusion` (with this document and the test) and
+not on main: a lever with no measured win stays off.
 
 ## Where it leaves the plan
 
-The other halves of recommendation (1) — `test r,r`/`test r,imm` forms are
-already H404; `cmp r,[mem] + Jcc`, `cmp [mem],imm + Jcc`, `shr r,1 + jnb` —
-follow the same template, and every one of them must keep the control-word
-layout or it repeats round 1.
+Dispatch-count fusions of this size are below the box's resolution, so
+the census's recommendation (1) is closed as "not worth a handler each":
+`cmp r,[mem] + Jcc`, `cmp [mem],imm + Jcc`, `shr r,1 + jnb` would each
+remove fewer dispatches than this one did. A fusion has to remove *memory
+traffic or a block transfer*, not just a dispatch, to show up — which is
+what the census's own `rect_run` (+12%) versus `case_chain` (~0) already
+said. The token-fetch and push/pop-run levers (recommendations 2 and 3)
+should be estimated against that bar before they are built. Any new
+terminator fusion must keep the control-word layout or it repeats round 1.
