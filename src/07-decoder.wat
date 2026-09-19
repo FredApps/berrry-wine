@@ -3088,6 +3088,54 @@
     (call $te_raw (call $branch_target (local.get $disp)))
     (i32.const 1))
 
+  ;; A 32-bit register CMP (r,r or r,imm) whose next instruction is a Jcc:
+  ;; emits handler 469 and returns 1 on a match, consuming the Jcc, so the
+  ;; caller must end the block. Called before the ordinary CMP handler is
+  ;; emitted, with nothing written for the CMP yet. Declines a Jcc whose
+  ;; target is this block's own start — that block is a self-loop, and the
+  ;; loop-idiom matcher needs to see the CMP and the Jcc as two ops — and, as
+  ;; every fusion does, 16-bit code.
+  (func $try_emit_cmp_jcc (param $a i32) (param $b i32) (param $immform i32)
+                          (param $imm i32) (param $start_eip i32) (result i32)
+    (local $b1 i32) (local $b2 i32) (local $cc i32) (local $disp i32) (local $len i32)
+    (if (global.get $code16) (then (return (i32.const 0))))
+    (local.set $b1 (call $gl8 (global.get $d_pc)))
+    (if (i32.and (i32.ge_u (local.get $b1) (i32.const 0x70))
+                 (i32.le_u (local.get $b1) (i32.const 0x7F)))
+      (then
+        (local.set $cc (i32.and (local.get $b1) (i32.const 0xF)))
+        (local.set $disp
+          (call $sign_ext8 (call $gl8 (i32.add (global.get $d_pc) (i32.const 1)))))
+        (local.set $len (i32.const 2)))
+      (else
+        (local.set $b2 (call $gl8 (i32.add (global.get $d_pc) (i32.const 1))))
+        (if (i32.and
+              (i32.eq (local.get $b1) (i32.const 0x0F))
+              (i32.and (i32.ge_u (local.get $b2) (i32.const 0x80))
+                       (i32.le_u (local.get $b2) (i32.const 0x8F))))
+          (then
+            (local.set $cc (i32.and (local.get $b2) (i32.const 0xF)))
+            (local.set $disp (call $gl32 (i32.add (global.get $d_pc) (i32.const 2))))
+            (local.set $len (i32.const 6)))
+          (else (return (i32.const 0))))))
+    ;; the target, computed before $d_pc moves so a decline leaves no trace
+    (local.set $disp (i32.add (i32.add (global.get $d_pc) (local.get $len)) (local.get $disp)))
+    (if (i32.eq (local.get $disp) (local.get $start_eip)) (then (return (i32.const 0))))
+    (global.set $d_pc (i32.add (global.get $d_pc) (local.get $len)))
+    ;; Layout: [469][control word, 0][fields][imm32?][fall][target]. The
+    ;; control word is a plain Jcc's operand -- $decode_run marks adjacency in
+    ;; it and $jcc_end reads it -- so the CMP's fields go in their own word.
+    (call $te (i32.const 469) (i32.const 0))
+    (call $te_raw
+      (i32.or
+        (i32.or (local.get $a) (i32.shl (local.get $b) (i32.const 4)))
+        (i32.or (i32.shl (local.get $cc) (i32.const 8))
+                (i32.shl (local.get $immform) (i32.const 12)))))
+    (if (local.get $immform) (then (call $te_raw (local.get $imm))))
+    (call $te_raw (global.get $d_pc))
+    (call $te_raw (local.get $disp))
+    (i32.const 1))
+
   ;; Called immediately after decoding DF E0 (FNSTSW AX). Recognize the exact
   ;; MSVC x87 condition tail `F6 C4 imm8; Jcc`, consume it, and replace all
   ;; three instructions with handler 439. Other TEST forms remain ordinary x86
@@ -4994,8 +5042,14 @@
                 (call $te (i32.const 207) (i32.shl (local.get $imm) (i32.const 4))) ;; reg=0(AX)
                 (call $te_raw (i32.and (call $d_fetch16) (i32.const 0xFFFF))))
               (else ;; EAX, imm32
+                (local.set $disp (call $d_fetch32))
+                (if (i32.eq (local.get $imm) (i32.const 7))
+                  (then
+                    (if (call $try_emit_cmp_jcc (i32.const 0) (i32.const 0) (i32.const 1)
+                                                (local.get $disp) (local.get $start_eip))
+                      (then (local.set $done (i32.const 1)) (br $decode)))))
                 (call $te (i32.add (i32.const 3) (local.get $imm)) (i32.const 0))
-                (call $te_raw (call $d_fetch32))))
+                (call $te_raw (local.get $disp))))
               (br $decode)))
 
           (call $decode_modrm)
@@ -5039,10 +5093,21 @@
                             (call $te_raw (call $gl32 (i32.add (global.get $d_pc) (i32.const 3))))
                             (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 7))))
                           (else
+                            (if (i32.eq (local.get $imm) (i32.const 7))
+                              (then
+                                (if (call $try_emit_cmp_jcc (global.get $mr_reg) (global.get $mr_val)
+                                          (i32.const 0) (i32.const 0) (local.get $start_eip))
+                                  (then (local.set $done (i32.const 1)) (br $decode)))))
                             (call $te (i32.add (i32.const 12) (local.get $imm))
                               (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))))
-                      (else (call $te (i32.add (i32.const 12) (local.get $imm))
-                        (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))))
+                      (else
+                        (if (i32.eq (local.get $imm) (i32.const 7))
+                          (then
+                            (if (call $try_emit_cmp_jcc (global.get $mr_val) (global.get $mr_reg)
+                                      (i32.const 0) (i32.const 0) (local.get $start_eip))
+                              (then (local.set $done (i32.const 1)) (br $decode)))))
+                        (call $te (i32.add (i32.const 12) (local.get $imm))
+                          (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))))
                 (else ;; byte (even opcode) — use r8 handler 153
                   (if (i32.and (local.get $op) (i32.const 2))
                     (then (call $te (i32.const 153)
@@ -5093,6 +5158,11 @@
                     (call $te (i32.const 207) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
                     (call $te_raw (local.get $imm)))
                   (else ;; dword reg, imm32
+                    (if (i32.eq (global.get $mr_reg) (i32.const 7))
+                      (then
+                        (if (call $try_emit_cmp_jcc (global.get $mr_val) (i32.const 0) (i32.const 1)
+                                  (local.get $imm) (local.get $start_eip))
+                          (then (local.set $done (i32.const 1)) (br $decode)))))
                     (call $te (i32.add (i32.const 3) (global.get $mr_reg)) (global.get $mr_val))
                     (call $te_raw (local.get $imm)))))))
             (else ;; [mem], imm — use runtime EA
@@ -7184,7 +7254,7 @@
   (func $decode_run (param $start_eip i32) (result i32)
     (local $t0 i32) (local $page i32) (local $n i32)
     (local $alloc i32) (local $jfn i32) (local $fall i32) (local $prev_end i32)
-    (local $tb i32) (local $optr i32) (local $old_chunk i32)
+    (local $tb i32) (local $optr i32) (local $old_chunk i32) (local $ctl_back i32)
     ;; Round 9 armed the region matcher here and collected along the run's
     ;; fall-through chain. It no longer does: discovery is a CFG closure walk
     ;; from a hot head ($bx_walk_try, driven by $branch_end), because a chain
@@ -7220,11 +7290,27 @@
         (i32.load
           (i32.add (global.get $OP_INDEX)
             (i32.shl (i32.sub (global.get $op_index_n) (i32.const 1)) (i32.const 2)))))
-      (br_if $stop (i32.ne (i32.add (local.get $optr) (i32.const 16)) (local.get $alloc)))
       (local.set $jfn (i32.load (local.get $optr)))
-      (br_if $stop (i32.lt_u (local.get $jfn) (i32.const 307)))
-      (br_if $stop (i32.gt_u (local.get $jfn) (i32.const 322)))
-      (local.set $fall (i32.load offset=8 (local.get $optr)))
+      ;; A specialised Jcc is 16 bytes: [fn][control][fall][target]. The
+      ;; fused CMP+Jcc (H469) keeps that control word and those two trailing
+      ;; words but carries a fields word, and an imm32 in its immediate form,
+      ;; between them: 20 or 24 bytes. $ctl_back is how far the control word
+      ;; sits before the block end; the fall word is always 8 bytes from it.
+      (if (i32.and (i32.ge_u (local.get $jfn) (i32.const 307))
+                   (i32.le_u (local.get $jfn) (i32.const 322)))
+        (then (local.set $ctl_back (i32.const 12)))
+        (else
+          (br_if $stop (i32.ne (local.get $jfn) (i32.const 469)))
+          (local.set $ctl_back
+            (i32.add (i32.const 16)
+              (i32.shl (i32.and (i32.shr_u (i32.load offset=8 (local.get $optr))
+                                           (i32.const 12))
+                                (i32.const 1))
+                       (i32.const 2))))))
+      (br_if $stop (i32.ne (i32.add (local.get $optr)
+                                    (i32.add (local.get $ctl_back) (i32.const 4)))
+                           (local.get $alloc)))
+      (local.set $fall (i32.load (i32.sub (local.get $alloc) (i32.const 8))))
       ;; One page per run: the index, the chunk and $invalidate_page are all
       ;; per-page, so a run that wandered into the next page would be indexed
       ;; against the wrong one.
@@ -7273,10 +7359,10 @@
       (br_if $stop (global.get $page_pub_was_desc))
       (br_if $stop (i32.ne (global.get $d_pub_off) (local.get $prev_end)))
       ;; Set the adjacency bit in the chunk, which is the only place the run
-      ;; exists. The operand of the previous block's Jcc terminator sits 12
-      ;; bytes back from where that block ended.
+      ;; exists. The control word of the previous block's terminator sits
+      ;; $ctl_back bytes back from where that block ended.
       (i32.store
-        (i32.add (global.get $cur_page_chunk) (i32.sub (local.get $prev_end) (i32.const 12)))
+        (i32.add (global.get $cur_page_chunk) (i32.sub (local.get $prev_end) (local.get $ctl_back)))
         (i32.const 1))
       (global.set $page_ft_blocks (i32.add (global.get $page_ft_blocks) (i32.const 1)))
       (local.set $n (i32.add (local.get $n) (i32.const 1)))

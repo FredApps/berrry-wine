@@ -1185,6 +1185,91 @@
       (else (global.set $eip (local.get $fall))))
     (return_call $branch_end))
 
+  ;; 469: CMP r32,r32 or CMP r32,imm32 immediately followed by a Jcc — the
+  ;; compare-and-branch every compiled `if` and counted loop is built from.
+  ;; The 2026-09-19 five-app census (docs/hot-idiom-census-2026-09-19.md) put
+  ;; the unfused pair at 4-15% of all dispatches in every app measured, with
+  ;; H10->Jcc alone 8.4% of SimGolf's. Like 404 the pair costs one dispatch
+  ;; instead of two, and like 407 the flags are published exactly as the
+  ;; separate CMP left them ($set_flags_sub), so PUSHFD, SETcc or a second
+  ;; branch after the group still read the truth. The condition itself is
+  ;; answered straight off the two operands — ZF is a==b, CF is a<b unsigned,
+  ;; SF!=OF is a<b signed — which is what the lazy evaluator would compute
+  ;; anyway, minus its op-kind dispatch; O/NO/P/NP go to $eval_cc.
+  ;;
+  ;; The decoder never emits this on a self-loop back edge (target == block
+  ;; start): the loop-idiom matcher in 07b classifies the CMP and the Jcc as
+  ;; two roles and does not know this op, so those blocks keep the pair.
+  ;;
+  ;; The op word is the same control word the sixteen specialised Jcc carry:
+  ;; bits 1..0 are $jcc_end's fall-through marks ($decode_run writes bit 0
+  ;; when the not-taken successor is adjacent in the chunk) and bits 31..2
+  ;; are block chaining's slot. The CMP's own fields live in the word after
+  ;; it: bits 0-3 register a (the CMP's first operand), bits 4-7 register b,
+  ;; bits 8-11 the x86 condition code, bit 12 set for the immediate form.
+  ;; Then: imm32 (immediate form only), fall-through EIP, target EIP -- the
+  ;; last two exactly where a plain Jcc keeps them, so the address-ordered run
+  ;; in $decode_run and $jcc_end's adjacent fall-through both still apply.
+  (func $th_cmp_jcc (param $op i32)
+    (local $a i32) (local $b i32) (local $cc i32) (local $taken i32)
+    (local $fall i32) (local $target i32) (local $f i32) (local $immform i32)
+    (local.set $f (call $read_thread_word))
+    (local.set $immform (i32.and (i32.shr_u (local.get $f) (i32.const 12)) (i32.const 1)))
+    (local.set $cc (i32.and (i32.shr_u (local.get $f) (i32.const 8)) (i32.const 0xF)))
+    (local.set $a (i32.load (i32.add (global.get $reg_base)
+      (i32.shl (i32.and (local.get $f) (i32.const 0xF)) (i32.const 2)))))
+    (if (local.get $immform)
+      (then (local.set $b (call $read_thread_word)))
+      (else (local.set $b (i32.load (i32.add (global.get $reg_base)
+        (i32.shl (i32.and (i32.shr_u (local.get $f) (i32.const 4)) (i32.const 0xF)) (i32.const 2)))))))
+    (if (global.get $handler_hist_enabled)
+      (then
+        ;; keep the cmp->jcc register histogram meaningful for the r,r form,
+        ;; as $th_cmp_r_r does
+        (if (i32.eqz (local.get $immform))
+          (then (call $branch_hist_set (i32.const 1)
+            (i32.or (i32.shl (i32.and (local.get $f) (i32.const 7)) (i32.const 3))
+                    (i32.and (i32.shr_u (local.get $f) (i32.const 4)) (i32.const 7))))))
+        (call $branch_hist_record_jcc (local.get $cc))))
+    (call $set_flags_sub (local.get $a) (local.get $b) (i32.sub (local.get $a) (local.get $b)))
+    (local.set $fall (call $read_thread_word))
+    (local.set $target (call $read_thread_word))
+    (block $cc_done
+      (if (i32.eq (local.get $cc) (i32.const 0x4))
+        (then (local.set $taken (i32.eq (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0x5))
+        (then (local.set $taken (i32.ne (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0xC))
+        (then (local.set $taken (i32.lt_s (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0xD))
+        (then (local.set $taken (i32.ge_s (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0xE))
+        (then (local.set $taken (i32.le_s (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0xF))
+        (then (local.set $taken (i32.gt_s (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0x2))
+        (then (local.set $taken (i32.lt_u (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0x3))
+        (then (local.set $taken (i32.ge_u (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0x6))
+        (then (local.set $taken (i32.le_u (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0x7))
+        (then (local.set $taken (i32.gt_u (local.get $a) (local.get $b))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0x8))
+        (then (local.set $taken (i32.shr_u (i32.sub (local.get $a) (local.get $b)) (i32.const 31))) (br $cc_done)))
+      (if (i32.eq (local.get $cc) (i32.const 0x9))
+        (then (local.set $taken (i32.eqz (i32.shr_u (i32.sub (local.get $a) (local.get $b)) (i32.const 31)))) (br $cc_done)))
+      (local.set $taken (call $eval_cc (local.get $cc))))
+    (if (local.get $taken)
+      (then (global.set $eip (local.get $target)))
+      (else (global.set $eip (local.get $fall))
+            (local.set $op (i32.or (local.get $op) (i32.const 2)))))
+    ;; The control word sits behind the fields, [imm], fall and target words
+    ;; that were just read: 16 bytes back, 20 for the immediate form.
+    (return_call $jcc_end (local.get $op)
+      (i32.sub (global.get $ip)
+        (i32.add (i32.const 16) (i32.shl (local.get $immform) (i32.const 2))))))
+
   ;; 405/406: a run of 2-4 back-to-back absolute MOVs — `mov [abs],reg` or
   ;; `mov reg,[abs]` with nothing in between. Absolute loads and stores are the
   ;; two heaviest handlers in Heroes II's blitter (8.6% and 6.0% of all ops) and

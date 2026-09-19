@@ -19,7 +19,7 @@
   ;;      keeps $decode_run's fall-through adjacency alive (it reads the last
   ;;      OP_INDEX entry and requires optr + 16 == d_block_end), keeps
   ;;      $page_retire_at's 8-byte stamp landing on the block's first op, and
-  ;;      means call/ret/loop/jecxz/far-jmp/H404/H407 need no executor code at
+  ;;      means call/ret/loop/jecxz/far-jmp/H404/H407/H469 need no executor code at
   ;;      all. Cost: one dispatch per block. A block of N ops goes N -> 2.
   ;;
   ;;   2. UNIMPLEMENTED OPS RUN THE REAL HANDLER. Registers spill to the
@@ -464,7 +464,8 @@
           (i32.or (i32.eq (local.get $fn) (i32.const 381))
                   (i32.eq (local.get $fn) (i32.const 382)))
           (i32.or (i32.eq (local.get $fn) (i32.const 404))
-                  (i32.eq (local.get $fn) (i32.const 407)))))))
+                  (i32.or (i32.eq (local.get $fn) (i32.const 407))
+                          (i32.eq (local.get $fn) (i32.const 469))))))))
 
 
   ;; ----------------------------------------------------------------------
