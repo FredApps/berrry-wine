@@ -2969,3 +2969,57 @@ native-child overlay test also covers a smaller popup at a nonzero origin.
 The browser regression checks both red markers and gold OK pixels, dismisses
 the notice by clicking that visible button, then reopens it and checks Escape
 before continuing through character creation and gameplay.
+
+## Gameplay benchmark correction (2026-09-19)
+
+Batch-window timings cannot compare decoder folds reliably: both guest time
+and the input schedule used to advance by batch, while a batch budgets blocks.
+The isolated corrected harness gates candidates off during startup, stops at
+the actual gameplay loop back edge 0x0040dd6b, then advances guest time by
+50ms per iteration, independent of budget yields. After 100 warmup iterations,
+it measures 600 and compares all presented pixels/palettes, endpoint frames,
+and main-thread API counts across builds. See
+[the benchmark methodology and results](../diablo-gameplay-benchmark.md).
+
+Six sequential runs on the idle remote i9-9900K all produced identical 600-frame
+sequences and 45,000 main-thread API calls. Packed PUSH/POP averaged 4.51%
+more CPU; LOAD/TEST/Jcc averaged 0.52% less, inside the baseline's 1.26%
+repeat spread. Neither is a demonstrated gameplay win. This measures idle
+Tristram simulation/rendering, excluding loading/menu and real-time polling.
+The earlier network skip conclusion is withdrawn: CLI `--skip` checked only
+batch boundaries and skipped eight calls, not every invocation.
+
+Walking follow-up: the vertical route between screen (320,270) and (320,82),
+alternated every 60 gameplay iterations, moves through all ten legs. All
+three runs matched 600 frames, 47,594 API calls, 28 tiles and 67 tile changes.
+The local player index is at 0x4ad1a8, stride 0x54d8, tile X/Y at
+0x4ad1e8/0x4ad1ec. Earlier diagonal routes hit the river/cottage and were
+rejected. See the benchmark document for the exact movement assertions.
+
+Qualification: the gameplay breakpoint disables block chaining via dbg_any.
+The preceding fixed-work candidate percentages are debugger-mode results,
+not proof of production speed changes. A second, breakpoint-free ten-second
+walking profile completed with 201 presents and eight distinct tiles. Its
+largest self-time entries were CLI API logging (7.50%), the API WASM-to-JS
+bridge (7.11%), block transfer (6.52%), g2w (4.61%), page lookup (3.52%) and
+operand fetch (3.46%). Counted copy was 0.86%. This is CLI attribution, not
+phone timing or guest-network attribution. A chain-preserving fixed-work
+boundary remains necessary before using the harness for optimization verdicts.
+
+September 20 follow-up: the isolated benchmark now exempts only the gameplay
+breakpoint from the blanket debug guard, while checking its exact target in
+both fast transfer paths. Standalone stop/resume/watchpoint/cached-chain tests
+and 145 x86 cases pass. Three remote walking replays match the previous
+600-frame hash and every player position, with 85,198,645 normal fast
+transfers each. Fixed-work CPU is 6.217/6.076 seconds (A/A), not a shipped
+speedup: the removed cost was debugger instrumentation. The corrected profile
+has branch_end_at 9.47%, operand fetch 7.09%, counted copy 3.79%. See the
+benchmark document for quiet-logging follow-up and remaining instrumentation.
+
+Quiet-logging A/B completed: fixed-work mean 6.163 seconds versus original
+6.146 seconds, only +0.27% within repeat variation. No demonstrated gameplay
+gain. The real-clock logger+bridge sample share drops 15.23% to 1.27%, but
+both runs still present 200 frames in ten seconds; extra API calls rise
+8.99M to 11.79M (more polling, not more rendering). Fast-logger fixed-work
+profile corroborates block transfer 9.89% and operand fetch 7.12% as next
+targets. Experimental flag only; no browser/default change or commit.

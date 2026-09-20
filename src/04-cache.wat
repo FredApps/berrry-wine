@@ -1663,8 +1663,8 @@
   ;; The five tests below are the guards that can actually fire; each is a
   ;; global that is zero in a plain run, and any non-zero one falls back to the
   ;; desk rather than trying to reproduce what the desk does:
-  ;;   $dbg_any      OR of the six debug arming flags (watchpoint, breakpoint,
-  ;;                 hit counters, trace-esp, trace-eip, handler histogram)
+  ;;   $dbg_chain_guard  OR of the debug arming flags; benchmark mode exempts
+  ;;                 only the breakpoint, whose target is checked separately
   ;;   $code16       16-bit tasks get two extra checks and a separate dispatch
   ;;   $yield_flag   a handler asked the host for control
   ;;   $yield_reason a blocking API is parked; $run decides whether to halt
@@ -1823,7 +1823,8 @@
             (i32.eq (i32.and (local.get $chain) (i32.const 1)) (local.get $tag))))
       (then
         (if (i32.eqz
-              (i32.or (global.get $dbg_any)
+              (i32.or (i32.or (global.get $dbg_chain_guard)
+                             (i32.eq (global.get $eip) (global.get $bp_addr)))
               (i32.or (global.get $code16)
               (i32.or (global.get $yield_flag) (global.get $yield_reason)))))
           (then
@@ -1930,7 +1931,8 @@
     ;; --break= or --watch= still forms the same regions a plain run does; the
     ;; walk itself decodes and never executes, which is safe at a block edge in
     ;; exactly the way $run's own miss path is.
-    (if (i32.or (global.get $dbg_any)
+    (if (i32.or (i32.or (global.get $dbg_chain_guard)
+                       (i32.eq (global.get $eip) (global.get $bp_addr)))
         (i32.or (global.get $code16)
         (i32.or (global.get $yield_flag) (global.get $yield_reason))))
       (then (return)))

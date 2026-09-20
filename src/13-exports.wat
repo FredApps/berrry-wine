@@ -2516,6 +2516,10 @@
   ;; Every setter below that can arm or disarm one of them ends by calling this.
   ;; Missing a call here does not corrupt anything — it makes one debug flag
   ;; silently do nothing, which is why they are all in one place.
+  ;; Benchmark-only mode: chains return to run at the breakpoint target;
+  ;; every other debugging facility retains its ordinary no-chaining guard.
+  (global $benchmark_chain_bp (mut i32) (i32.const 0))
+  (global $dbg_chain_guard (mut i32) (i32.const 0))
   (func $dbg_recompute
     (global.set $dbg_any
       (i32.or (i32.ne (global.get $watch_addr) (i32.const 0))
@@ -2523,7 +2527,17 @@
           (i32.or (i32.ne (global.get $hit_count_n) (i32.const 0))
             (i32.or (i32.ne (global.get $trace_esp_flag) (i32.const 0))
               (i32.or (i32.ne (global.get $trace_eip_flag) (i32.const 0))
-                      (i32.ne (global.get $handler_hist_enabled) (i32.const 0)))))))))
+                      (i32.ne (global.get $handler_hist_enabled) (i32.const 0))))))))
+    (global.set $dbg_chain_guard (global.get $dbg_any))
+    (if (global.get $benchmark_chain_bp)
+      (then (global.set $dbg_chain_guard
+        (i32.or (i32.ne (global.get $watch_addr) (i32.const 0))
+          (i32.or (i32.ne (global.get $hit_count_n) (i32.const 0))
+            (i32.or (i32.ne (global.get $trace_esp_flag) (i32.const 0))
+              (i32.or (i32.ne (global.get $trace_eip_flag) (i32.const 0))
+                      (i32.ne (global.get $handler_hist_enabled) (i32.const 0))))))))))
+  (func (export "set_benchmark_chain_bp") (param $on i32)
+    (global.set $benchmark_chain_bp (local.get $on)) (call $dbg_recompute))
 
   ;; Watchpoint exports
   (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)) (call $dbg_recompute))
