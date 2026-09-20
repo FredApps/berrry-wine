@@ -144,23 +144,23 @@
   ;; 363: compute a 16-bit segmented EA into ea_temp, then fall through to the
   ;; handler that consumes it — the same contract as $th_compute_ea_sib.
   (func $th_compute_ea16 (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32)
-    (local.set $info (call $read_thread_word))
-    (global.set $ea_temp (call $ea16_compute (local.get $info) (call $read_thread_word)))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32)
+    (local.set $info (read-thread-word))
+    (global.set $ea_temp (call $ea16_compute (local.get $info) (read-thread-word)))
     (dispatch-next))
 
   ;; 364: LEA r16, m — the offset only, with no segment base and wrapped to
   ;; the segment, because that is the number the guest is about to use as one.
   (func $th_lea16 (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $off i32)
-    (local.set $info (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $off i32)
+    (local.set $info (read-thread-word))
     (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $off (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $info) (i32.const 0xF)) (i32.const 2)))))))
     (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $off (i32.add (local.get $off)
         (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 2))))))))
     (call $set_reg16 (local.get $op)
-      (i32.and (i32.add (local.get $off) (call $read_thread_word)) (i32.const 0xFFFF)))
+      (i32.and (i32.add (local.get $off) (read-thread-word)) (i32.const 0xFFFF)))
     (dispatch-next))
 
   ;; 442: LAR r16/32, r/m16. The NE loader's selector table is the protected-
@@ -315,18 +315,18 @@
         (unreachable))))
 
   (func $th_call_far_imm (param $op i32)
-    (local $off i32) (local $sel i32)
-    (local.set $off (call $read_thread_word))
-    (local.set $sel (call $read_thread_word))
+    (local $operand_word i32) (local $off i32) (local $sel i32)
+    (local.set $off (read-thread-word))
+    (local.set $sel (read-thread-word))
     (call $win16_push_far_ret (local.get $op))
     (call $win16_far_transfer (local.get $sel) (local.get $off) (local.get $op) (i32.const 1))
     (call $win16_assert_eip (local.get $op)))
 
   ;; 368: JMP FAR ptr16:16 — offset, selector
   (func $th_jmp_far_imm (param $op i32)
-    (local $off i32) (local $sel i32)
-    (local.set $off (call $read_thread_word))
-    (local.set $sel (call $read_thread_word))
+    (local $operand_word i32) (local $off i32) (local $sel i32)
+    (local.set $off (read-thread-word))
+    (local.set $sel (read-thread-word))
     (call $win16_far_transfer (local.get $sel) (local.get $off) (i32.const 0) (i32.const 0)))
 
   ;; 369: CALL FAR m16:16 — op = linear return address, address in next word
@@ -434,8 +434,8 @@
 
   ;; 379: CALL r/m16 (register form) — op = linear return address, reg next
   (func $th_call_near16_r (param $op i32)
-    (local $target i32)
-    (local.set $target (i32.and (i32.load (i32.add (global.get $reg_base) (i32.shl (call $read_thread_word) (i32.const 2)))) (i32.const 0xFFFF)))
+    (local $operand_word i32) (local $target i32)
+    (local.set $target (i32.and (i32.load (i32.add (global.get $reg_base) (i32.shl (read-thread-word) (i32.const 2)))) (i32.const 0xFFFF)))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 2)))
     (call $gs16 (i32.load offset=16 (global.get $reg_base)) (i32.and (local.get $op) (i32.const 0xFFFF)))
     (call $cs_push (local.get $op))
@@ -647,8 +647,8 @@
   ;;
   ;; Only 21h means anything here. Everything else keeps the DOS convention for
   ;; "no such service": carry set, and the program's own error path takes over.
-  (func $th_int (param $op i32)
-    (global.set $eip (call $read_thread_word))
+  (func $th_int (param $op i32) (local $operand_word i32)
+    (global.set $eip (read-thread-word))
     (if (i32.eq (local.get $op) (i32.const 0x21))
       (then (call $win16_dos_int21))
       (else (call $dos_cf (i32.const 1)))))

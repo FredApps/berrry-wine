@@ -2538,6 +2538,8 @@
                       (i32.ne (global.get $handler_hist_enabled) (i32.const 0))))))))))
   (func (export "set_benchmark_chain_bp") (param $on i32)
     (global.set $benchmark_chain_bp (local.get $on)) (call $dbg_recompute))
+  (func (export "set_bench_candidate") (param $on i32)
+    (global.set $bench_operand_fetch_inline (i32.ne (local.get $on) (i32.const 0))))
 
   ;; Watchpoint exports
   (func (export "set_bp") (param $addr i32) (global.set $bp_addr (local.get $addr)) (global.set $bp_first_caller (i32.const 0)) (call $dbg_recompute))

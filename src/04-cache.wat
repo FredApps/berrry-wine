@@ -2116,7 +2116,22 @@
     (local $nx_fn i32) (local $nx_op i32)
     (dispatch-next))
 
-  ;; Read next thread i32 and advance $ip
+  ;; Experimental decoded-operand fetch inlining. The gameplay harness keeps
+  ;; this off through startup, then enables it at the first gameplay boundary
+  ;; and clears the decoded cache in both arms. The pure-inline artifact uses a
+  ;; dedicated local at every expansion site, preserving load-before-increment
+  ;; order without adding global traffic to the hot path. Its setter remains
+  ;; present for harness compatibility; the artifact is intentionally always on
+  ;; and relies on the exact-work oracle to reject any startup divergence.
+  (global $bench_operand_fetch_inline (mut i32) (i32.const 0))
+  (defmacro (read-thread-word)
+    (block (result i32)
+      (local.set $operand_word (i32.load (global.get $ip)))
+      (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
+      (local.get $operand_word)))
+
+  ;; Read next thread i32 and advance $ip. Kept as the benchmark's disabled
+  ;; path so boot and baseline behavior retain the original call shape.
   (func $read_thread_word (result i32)
     (local $v i32)
     (local.set $v (i32.load (global.get $ip)))

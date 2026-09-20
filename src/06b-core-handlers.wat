@@ -160,19 +160,19 @@
     (dispatch-next))
   ;; 167: mov [addr], imm16 (op=0, addr+imm in words)
   (func $th_mov_m16_i16 (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
     (local.set $addr (call $read_addr))
-    (call $gs16 (local.get $addr) (call $read_thread_word))
+    (call $gs16 (local.get $addr) (read-thread-word))
     (dispatch-next))
   ;; 168: mov [base+disp], imm16 (op=base, disp+imm in words)
   (func $th_mov_m16_i16_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
-    (local.set $addr (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $op) (i32.const 2)))) (call $read_thread_word)))
-    (call $gs16 (local.get $addr) (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
+    (local.set $addr (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $op) (i32.const 2)))) (read-thread-word)))
+    (call $gs16 (local.get $addr) (read-thread-word))
     (dispatch-next))
   (func $th_call_r (param $op i32)
-    (local $reg i32) (local $target i32)
-    (local.set $reg (call $read_thread_word))
+    (local $operand_word i32) (local $reg i32) (local $target i32)
+    (local.set $reg (read-thread-word))
     (local.set $target (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $reg) (i32.const 2)))))
     ;; Check thunk zone (guest-space bounds)
     (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
@@ -207,12 +207,12 @@
     (call $gs32 (local.get $addr) (call $gl32 (i32.load offset=16 (global.get $reg_base))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) (dispatch-next))
   (func $th_alu_m16_i16 (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $imm i32) (local $val i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $imm i32) (local $val i32)
     ;; The immediate is masked to sixteen bits like the memory operand: a
     ;; sign-extended imm8 arrives as 0xFFFFFFxx and would compare unsigned
     ;; against a 16-bit value as though it were enormous. See $th_alu_r16_i16.
     (local.set $addr (call $read_addr))
-    (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFFFF)))
+    (local.set $imm (i32.and (read-thread-word) (i32.const 0xFFFF)))
     (local.set $val (call $do_alu_sized (local.get $op) (call $gl16 (local.get $addr)) (local.get $imm) (i32.const 0xFFFF) (i32.const 15)))
     (if (i32.ne (local.get $op) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (dispatch-next))
@@ -246,14 +246,14 @@
 
   ;; 126: LEA dst, [base+disp]. operand=dst<<4|base, disp in next word.
   (func $th_lea_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (i32.store (i32.add (global.get $reg_base) (i32.shl (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 2))) (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2)))) (call $read_thread_word)))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (i32.store (i32.add (global.get $reg_base) (i32.shl (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 2))) (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2)))) (read-thread-word)))
     (dispatch-next))
 
   ;; 148: LEA dst, [base+index*scale+disp]. op=dst. Words: base|index<<4|scale<<8, disp.
   (func $th_lea_sib (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
-    (local.set $info (call $read_thread_word))
-    (local.set $disp (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
+    (local.set $info (read-thread-word))
+    (local.set $disp (read-thread-word))
     ;; base: low 4 bits (0xF = no base)
     (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $base_val (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $info) (i32.const 0xF)) (i32.const 2)))))))
@@ -273,9 +273,9 @@
   ;; handler preserves the generic SIB encoding while avoiding a second
   ;; indirect threaded dispatch and the sentinel word it used to consume.
   (func $th_compute_ea_sib (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
-    (local.set $info (call $read_thread_word))
-    (local.set $disp (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
+    (local.set $info (read-thread-word))
+    (local.set $disp (read-thread-word))
     (if (global.get $handler_hist_enabled)
       (then
         (if (i32.and (local.get $op) (i32.const 0x100))
@@ -311,10 +311,10 @@
   ;; ALU in one dispatch. op = alu<<4 | reg8; info and disp words follow, in
   ;; 149's encoding. PKWARE implode's `cmp [ebp+esi],bl` is the case.
   (func $th_alu_m8_r_sib (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $base_val i32) (local $index_val i32) (local $disp i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $base_val i32) (local $index_val i32) (local $disp i32)
     (local $addr i32) (local $alu i32) (local $r i32)
-    (local.set $info (call $read_thread_word))
-    (local.set $disp (call $read_thread_word))
+    (local.set $info (read-thread-word))
+    (local.set $disp (read-thread-word))
     (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $base_val (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $info) (i32.const 0xF)) (i32.const 2)))))))
     (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
@@ -336,9 +336,9 @@
   ;; dword loads millions of times, while adding another mode branch to the
   ;; generic SIB handler slows every other SIB operation.
   (func $th_load32_sib (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
-    (local.set $info (call $read_thread_word))
-    (local.set $disp (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $base_val i32) (local $index_val i32) (local $scale i32) (local $disp i32)
+    (local.set $info (read-thread-word))
+    (local.set $disp (read-thread-word))
     (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $base_val (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $info) (i32.const 0xF)) (i32.const 2)))))))
     (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
@@ -375,11 +375,11 @@
 
   ;; 400: MOVSX r32, byte [base+index*scale+disp]
   (func $th_movsx8_sib (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $v i32)
-    (local.set $info (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $v i32)
+    (local.set $info (read-thread-word))
     (if (global.get $handler_hist_enabled)
       (then (call $sib_consumer_hist_record (i32.const 79) (local.get $op) (local.get $info))))
-    (local.set $v (call $gl8 (call $sib_ea (local.get $info) (call $read_thread_word))))
+    (local.set $v (call $gl8 (call $sib_ea (local.get $info) (read-thread-word))))
     (if (i32.ge_u (local.get $v) (i32.const 0x80))
       (then (local.set $v (i32.or (local.get $v) (i32.const 0xFFFFFF00)))))
     (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $op) (i32.const 2))) (local.get $v))
@@ -387,21 +387,21 @@
 
   ;; 401: MOV byte [base+index*scale+disp], r8
   (func $th_store8_sib (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32)
-    (local.set $info (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32)
+    (local.set $info (read-thread-word))
     (if (global.get $handler_hist_enabled)
       (then (call $sib_consumer_hist_record (i32.const 25) (local.get $op) (local.get $info))))
-    (call $gs8 (call $sib_ea (local.get $info) (call $read_thread_word))
+    (call $gs8 (call $sib_ea (local.get $info) (read-thread-word))
       (call $get_reg8 (local.get $op)))
     (dispatch-next))
 
   ;; 402: MOV byte [base+index*scale+disp], imm8 (op = the immediate)
   (func $th_mov_m8_i8_sib (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32)
-    (local.set $info (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32)
+    (local.set $info (read-thread-word))
     (if (global.get $handler_hist_enabled)
       (then (call $sib_consumer_hist_record (i32.const 77) (local.get $op) (local.get $info))))
-    (call $gs8 (call $sib_ea (local.get $info) (call $read_thread_word)) (local.get $op))
+    (call $gs8 (call $sib_ea (local.get $info) (read-thread-word)) (local.get $op))
     (dispatch-next))
 
   ;; 420: MOV dword [base+index*scale+disp], r32 — the dword twin of 401.
@@ -418,7 +418,7 @@
   ;; more than they saved. Keeps the 149 encoding (info word, then disp), so
   ;; the decoder change is only which opcode it emits.
   (func $th_store32_sib (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info i32)
     ;; Charge the step the fused-away dispatch would have cost. $next bills
     ;; $steps once per dispatch, so without this the guest advances ~12%
     ;; further per host batch on this workload and every frame captured at a
@@ -428,10 +428,10 @@
     ;; work a batch buys. The win here is the removed call_indirect, the
     ;; SIB_SENTINEL word and the $ea_temp round trip, not the step.
     (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
-    (local.set $info (call $read_thread_word))
+    (local.set $info (read-thread-word))
     (if (global.get $handler_hist_enabled)
       (then (call $sib_consumer_hist_record (i32.const 21) (local.get $op) (local.get $info))))
-    (call $gs32 (call $sib_ea (local.get $info) (call $read_thread_word))
+    (call $gs32 (call $sib_ea (local.get $info) (read-thread-word))
       (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $op) (i32.const 2)))))
     (dispatch-next))
 
@@ -511,7 +511,7 @@
   ;; costs nothing and means the fusion needs no predicate about which registers
   ;; may overlap.
   (func $th_copy32_ro_to_sib (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $v i32) (local $info i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $v i32) (local $info i32)
     ;; Two dispatches folded away, so two steps to charge on top of the one
     ;; $next bills -- see 420's note. Three total, matching what H345 + H149 +
     ;; H21 billed before either fusion existed, so pacing is unchanged by how
@@ -519,16 +519,16 @@
     (global.set $steps (i32.sub (global.get $steps) (i32.const 2)))
     (local.set $v (call $gl32 (i32.add
       (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2))))
-      (call $read_thread_word))))
+      (read-thread-word))))
     (i32.store (i32.add (global.get $reg_base) (i32.shl (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 2))) (local.get $v))
-    (local.set $info (call $read_thread_word))
+    (local.set $info (read-thread-word))
     ;; Report the store, not the fusion: the SIB EA this computes is consumed by
     ;; a store32 exactly as it was before, and a profile that renamed it would
     ;; stop being comparable across the change.
     (if (global.get $handler_hist_enabled)
       (then (call $sib_consumer_hist_record (i32.const 21)
               (i32.shr_u (local.get $op) (i32.const 4)) (local.get $info))))
-    (call $gs32 (call $sib_ea (local.get $info) (call $read_thread_word))
+    (call $gs32 (call $sib_ea (local.get $info) (read-thread-word))
       (local.get $v))
     (dispatch-next))
 
@@ -809,7 +809,7 @@
   ;; gathering all eight bytes) preserves even pathological table/destination
   ;; or frame/destination aliasing exactly like the guest instruction stream.
   (func $th_lut_span8_rows (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $pix_reg i32) (local $eax_reg i32) (local $frame_reg i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $pix_reg i32) (local $eax_reg i32) (local $frame_reg i32)
     (local $edx_reg i32) (local $esi_reg i32)
     (local $selector_disp i32) (local $rows_disp i32) (local $cost i32)
     (local $table_abs i32) (local $eax_disp i32) (local $ebx_disp i32)
@@ -831,13 +831,13 @@
       (i32.and (i32.shr_u (local.get $op) (i32.const 24)) (i32.const 0xF)))
     (local.set $esi_reg
       (i32.and (i32.shr_u (local.get $op) (i32.const 28)) (i32.const 0xF)))
-    (local.set $selector_disp (call $read_thread_word))
-    (local.set $rows_disp (call $read_thread_word))
-    (local.set $cost (call $read_thread_word))
-    (local.set $table_abs (call $read_thread_word))
-    (local.set $eax_disp (call $read_thread_word))
-    (local.set $ebx_disp (call $read_thread_word))
-    (local.set $ecx_disp (call $read_thread_word))
+    (local.set $selector_disp (read-thread-word))
+    (local.set $rows_disp (read-thread-word))
+    (local.set $cost (read-thread-word))
+    (local.set $table_abs (read-thread-word))
+    (local.set $eax_disp (read-thread-word))
+    (local.set $ebx_disp (read-thread-word))
+    (local.set $ecx_disp (read-thread-word))
 
     (local.set $pix (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $pix_reg) (i32.const 2)))))
     (local.set $frame (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $frame_reg) (i32.const 2)))))
@@ -941,7 +941,7 @@
   ;; Six words: start displacement, count, original instruction cost,
   ;; table displacement, final aux kind, final aux displacement.
   (func $th_lut_span (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $src1_reg i32) (local $dst_reg i32) (local $tbl_reg i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $src1_reg i32) (local $dst_reg i32) (local $tbl_reg i32)
     (local $acc_reg i32) (local $mode i32) (local $src2_reg i32)
     (local $didx_reg i32) (local $aux_reg i32)
     (local $start i32) (local $count i32) (local $cost i32)
@@ -972,12 +972,12 @@
     (if (i32.eq (local.get $mode) (i32.const 2))
       (then (return_call $th_lut_span8_rows (local.get $op))))
 
-    (local.set $start (call $read_thread_word))
-    (local.set $count (call $read_thread_word))
-    (local.set $cost (call $read_thread_word))
-    (local.set $tbl_disp (call $read_thread_word))
-    (local.set $aux_kind (call $read_thread_word))
-    (local.set $aux_disp (call $read_thread_word))
+    (local.set $start (read-thread-word))
+    (local.set $count (read-thread-word))
+    (local.set $cost (read-thread-word))
+    (local.set $tbl_disp (read-thread-word))
+    (local.set $aux_kind (read-thread-word))
+    (local.set $aux_disp (read-thread-word))
 
     (local.set $src1 (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $src1_reg) (i32.const 2)))))
     (local.set $dst (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $dst_reg) (i32.const 2)))))
@@ -1115,8 +1115,8 @@
   ;; address of the pointer variable, then the byte load's displacement (only
   ;; when bit 8 is set). Flags are INC's, exactly as the separate ops left them.
   (func $th_ptrvar_fetch8 (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $abs i32) (local $old i32) (local $ptr i32)
-    (local.set $abs (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $abs i32) (local $old i32) (local $ptr i32)
+    (local.set $abs (read-thread-word))
     (local.set $old (call $gl32 (local.get $abs)))
     (local.set $ptr (i32.add (local.get $old) (i32.const 1)))
     (i32.store (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2))) (local.get $ptr))
@@ -1125,7 +1125,7 @@
     (if (i32.and (local.get $op) (i32.const 0x100))
       (then
         (call $set_reg8 (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 7))
-          (call $gl8 (i32.add (local.get $ptr) (call $read_thread_word))))))
+          (call $gl8 (i32.add (local.get $ptr) (read-thread-word))))))
     (dispatch-next))
 
   ;; 404: TEST r,r (or TEST r8,r8) immediately followed by a Jcc. The branch is
@@ -1139,7 +1139,7 @@
   ;; op: bits 0-3 and 4-7 the two registers, bits 8-11 the x86 condition code,
   ;; bit 12 set for the byte form. Words: fall-through EIP, then target EIP.
   (func $th_test_jcc (param $op i32)
-    (local $r i32) (local $cc i32) (local $sign i32) (local $taken i32)
+    (local $operand_word i32) (local $r i32) (local $cc i32) (local $sign i32) (local $taken i32)
     (local $fall i32) (local $target i32)
     (local.set $cc (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
     (if (global.get $handler_hist_enabled)
@@ -1158,8 +1158,8 @@
           (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2))))))
         (call $set_flags_logic (local.get $r))
         (local.set $sign (i32.shr_u (local.get $r) (i32.const 31)))))
-    (local.set $fall (call $read_thread_word))
-    (local.set $target (call $read_thread_word))
+    (local.set $fall (read-thread-word))
+    (local.set $target (read-thread-word))
     (block $cc_done
       (if (i32.or (i32.eq (local.get $cc) (i32.const 0x4)) (i32.eq (local.get $cc) (i32.const 0x6)))
         (then (local.set $taken (i32.eqz (local.get $r))) (br $cc_done)))
@@ -1194,11 +1194,11 @@
   ;; op: bits 0-3 the run length, then one register per nibble from bit 4 up.
   ;; Words: one absolute address per element, in program order.
   (func $th_store32_abs_run (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $n i32) (local $i i32) (local $addr i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $n i32) (local $i i32) (local $addr i32)
     (local.set $n (i32.and (local.get $op) (i32.const 0xF)))
     (block $done (loop $l
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (local.set $addr (call $read_thread_word))
+      (local.set $addr (read-thread-word))
       (call $gs32 (local.get $addr)
         (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and
           (i32.shr_u (local.get $op)
@@ -1221,13 +1221,13 @@
   ;; op: src in bits 0..3, base in bits 4..7, count in bits 8..31.
   ;; word: signed starting displacement.
   (func $th_store32_base_span (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $src i32) (local $base i32) (local $n i32) (local $disp i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $src i32) (local $base i32) (local $n i32) (local $disp i32)
     (local $ga i32) (local $wa i32)
     (local $len i32) (local $v i32) (local $i i32)
     (local.set $src (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $base (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $n (i32.shr_u (local.get $op) (i32.const 8)))
-    (local.set $disp (call $read_thread_word))
+    (local.set $disp (read-thread-word))
     (local.set $ga (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $base) (i32.const 2)))) (local.get $disp)))
     (local.set $v (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $src) (i32.const 2)))))
     (local.set $len (i32.shl (local.get $n) (i32.const 2)))
@@ -1258,11 +1258,11 @@
     (dispatch-next))
 
   (func $th_load32_abs_run (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $n i32) (local $i i32) (local $addr i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $n i32) (local $i i32) (local $addr i32)
     (local.set $n (i32.and (local.get $op) (i32.const 0xF)))
     (block $done (loop $l
       (br_if $done (i32.ge_u (local.get $i) (local.get $n)))
-      (local.set $addr (call $read_thread_word))
+      (local.set $addr (read-thread-word))
       (i32.store (i32.add (global.get $reg_base) (i32.shl (i32.and
           (i32.shr_u (local.get $op)
             (i32.add (i32.const 4) (i32.shl (local.get $i) (i32.const 2))))
@@ -1287,18 +1287,18 @@
   ;; the ordinary Jcc payload appended, so the emitter is unchanged apart from
   ;; which opcode it writes.
   (func $th_alu_m32_i_jcc (param $op i32)
-    (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
+    (local $operand_word i32) (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
     (local $cc i32) (local $fall i32) (local $target i32)
     (local.set $cc (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF)))
     (if (global.get $handler_hist_enabled)
       (then (call $branch_hist_record_jcc (local.get $cc))))
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
-    (local.set $imm (call $read_thread_word))
+    (local.set $imm (read-thread-word))
     (local.set $val (call $do_alu32 (local.get $alu) (call $gl32 (local.get $addr)) (local.get $imm)))
     (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs32 (local.get $addr) (local.get $val))))
-    (local.set $fall (call $read_thread_word))
-    (local.set $target (call $read_thread_word))
+    (local.set $fall (read-thread-word))
+    (local.set $target (read-thread-word))
     (if (call $eval_cc (local.get $cc))
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))))
@@ -1316,7 +1316,7 @@
   ;; the group is computed from the base value the group started with, which
   ;; is exactly what the unfused sequence would have done.
   (func $th_load32_base_run (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $n i32) (local $i i32) (local $base i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $n i32) (local $i i32) (local $base i32)
     (local.set $n (i32.and (local.get $op) (i32.const 0xF)))
     (local.set $base
       (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)) (i32.const 2)))))
@@ -1325,7 +1325,7 @@
       (i32.store (i32.add (global.get $reg_base) (i32.shl (i32.and
           (i32.shr_u (local.get $op)
             (i32.add (i32.const 8) (i32.shl (local.get $i) (i32.const 2))))
-          (i32.const 0xF)) (i32.const 2))) (call $gl32 (i32.add (local.get $base) (call $read_thread_word))))
+          (i32.const 0xF)) (i32.const 2))) (call $gl32 (i32.add (local.get $base) (read-thread-word))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l)))
     (dispatch-next))
@@ -1348,12 +1348,12 @@
   ;; unfused pair. op: bits 0-3 base reg, 4-7 the unary op, 8-11 the ALU op.
   ;; Words: the displacement, then the immediate.
   (func $th_unary_alu_m32_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $uop i32) (local $alu i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $uop i32) (local $alu i32)
     (local $old i32) (local $r i32) (local $imm i32)
     (local.set $addr (i32.add
       (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2))))
-      (call $read_thread_word)))
-    (local.set $imm (call $read_thread_word))
+      (read-thread-word)))
+    (local.set $imm (read-thread-word))
     (local.set $uop (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
     (local.set $old (call $gl32 (local.get $addr)))
@@ -1378,12 +1378,12 @@
   ;; destination registers are packed into op. The second address is computed
   ;; after committing the first result, preserving dependent LEA semantics.
   (func $th_lea_sib_pair (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $info1 i32) (local $disp1 i32) (local $info2 i32) (local $disp2 i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $info1 i32) (local $disp1 i32) (local $info2 i32) (local $disp2 i32)
     (local $base_val i32) (local $index_val i32) (local $scale i32)
-    (local.set $info1 (call $read_thread_word))
-    (local.set $disp1 (call $read_thread_word))
-    (local.set $info2 (call $read_thread_word))
-    (local.set $disp2 (call $read_thread_word))
+    (local.set $info1 (read-thread-word))
+    (local.set $disp1 (read-thread-word))
+    (local.set $info2 (read-thread-word))
+    (local.set $disp2 (read-thread-word))
     (if (i32.ne (i32.and (local.get $info1) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $base_val (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $info1) (i32.const 0xF)) (i32.const 2)))))))
     (if (i32.ne (i32.and (i32.shr_u (local.get $info1) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
@@ -1410,20 +1410,20 @@
   ;; tree builder uses this pair for every node probe. MOV leaves flags alone;
   ;; TEST publishes the same lazy logic flags as the two ordinary handlers.
   (func $th_load_eax_edx_test_i32 (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (i32.store offset=0 (global.get $reg_base) (call $gl32
-        (i32.add (i32.load offset=8 (global.get $reg_base)) (call $read_thread_word))))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (i32.store offset=0 (global.get $reg_base) (call $gl32
+        (i32.add (i32.load offset=8 (global.get $reg_base)) (read-thread-word))))
     (call $set_flags_logic
-      (i32.and (i32.load offset=0 (global.get $reg_base)) (call $read_thread_word)))
+      (i32.and (i32.load offset=0 (global.get $reg_base)) (read-thread-word)))
     (dispatch-next))
 
   ;; 392: ADD EDX,EAX followed by the zero-displacement form of handler 391.
   ;; TEST overwrites every arithmetic flag written by ADD, so the only live
   ;; intermediate state is the updated EDX used as the load address.
   (func $th_add_edx_eax_load_test (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (i32.store offset=8 (global.get $reg_base) (i32.add (i32.load offset=8 (global.get $reg_base)) (i32.load offset=0 (global.get $reg_base))))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (i32.store offset=8 (global.get $reg_base) (i32.add (i32.load offset=8 (global.get $reg_base)) (i32.load offset=0 (global.get $reg_base))))
     (i32.store offset=0 (global.get $reg_base) (call $gl32 (i32.load offset=8 (global.get $reg_base))))
     (call $set_flags_logic
-      (i32.and (i32.load offset=0 (global.get $reg_base)) (call $read_thread_word)))
+      (i32.and (i32.load offset=0 (global.get $reg_base)) (read-thread-word)))
     (dispatch-next))
 
   ;; 393: Smacker refills its bit reservoir after decrementing an absolute
@@ -1431,15 +1431,15 @@
   ;; and target words make this block-ending just like $th_jcc_nz; DEC's full
   ;; lazy-flag state (including preserved CF) remains visible at either edge.
   (func $th_dec_m8_abs_jnz (param $op i32)
-    (local $old i32) (local $r i32) (local $fall i32) (local $target i32)
+    (local $operand_word i32) (local $old i32) (local $r i32) (local $fall i32) (local $target i32)
     (local.set $old (call $gl8 (local.get $op)))
     (local.set $r
       (i32.and (i32.sub (local.get $old) (i32.const 1)) (i32.const 0xFF)))
     (call $set_flags_dec (local.get $old) (local.get $r))
     (global.set $flag_sign_shift (i32.const 7))
     (call $gs8 (local.get $op) (local.get $r))
-    (local.set $fall (call $read_thread_word))
-    (local.set $target (call $read_thread_word))
+    (local.set $fall (read-thread-word))
+    (local.set $target (read-thread-word))
     (if (global.get $handler_hist_enabled)
       (then (call $branch_hist_record_jcc (i32.const 5))))
     (if (local.get $r)
@@ -1452,11 +1452,11 @@
   ;; exact count-one shift flags; the saved low bit selects the successor
   ;; without resolving the lazy CF a second time.
   (func $th_shr_ebp_1_jcc_b (param $op i32)
-    (local $old i32) (local $taken i32) (local $fall i32) (local $target i32)
+    (local $operand_word i32) (local $old i32) (local $taken i32) (local $fall i32) (local $target i32)
     (local.set $old (i32.load offset=20 (global.get $reg_base)))
     (i32.store offset=20 (global.get $reg_base) (call $do_shift32 (i32.const 5) (local.get $old) (i32.const 1)))
-    (local.set $fall (call $read_thread_word))
-    (local.set $target (call $read_thread_word))
+    (local.set $fall (read-thread-word))
+    (local.set $target (read-thread-word))
     (if (global.get $handler_hist_enabled)
       (then (call $branch_hist_record_jcc (i32.add (i32.const 2) (local.get $op)))))
     (local.set $taken
@@ -1474,10 +1474,10 @@
   ;; flag before the final TEST is overwritten by that TEST. Bound the native
   ;; loop so even corrupt input returns control with an exact guest resume EIP.
   (func $th_smack_huff_walk (param $op i32)
-    (local $loop_eip i32) (local $fall i32) (local $counter i32)
+    (local $operand_word i32) (local $loop_eip i32) (local $fall i32) (local $counter i32)
     (local $old_ebp i32) (local $r i32) (local $n i32)
-    (local.set $loop_eip (call $read_thread_word))
-    (local.set $fall (call $read_thread_word))
+    (local.set $loop_eip (read-thread-word))
+    (local.set $fall (read-thread-word))
     (block $done
       (loop $walk
         (local.set $counter
@@ -1695,8 +1695,8 @@
     (dispatch-next))
 
   ;; Helper: compute EA from operand encoding (alu_op<<8 | reg<<4 | base)
-  (func $ea_from_op (param $op i32) (result i32)
-    (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2)))) (call $read_thread_word)))
+  (func $ea_from_op (param $op i32) (result i32) (local $operand_word i32)
+    (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2)))) (read-thread-word)))
 
   ;; 127: [base+disp] OP= reg32. operand = alu_op<<8 | reg<<4 | base. disp in next word.
   (func $th_alu_m32_r_ro (param $op i32)
@@ -1748,48 +1748,48 @@
 
   ;; 131: [base+disp] OP= imm32. operand = alu_op<<8 | base. disp+imm in next words.
   (func $th_alu_m32_i_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
-    (local.set $imm (call $read_thread_word))
+    (local.set $imm (read-thread-word))
     (local.set $val (call $do_alu32 (local.get $alu) (call $gl32 (local.get $addr)) (local.get $imm)))
     (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs32 (local.get $addr) (local.get $val))))
     (dispatch-next))
 
   ;; 132: [base+disp] OP= imm8. operand = alu_op<<8 | base. disp+imm in next words.
   (func $th_alu_m8_i_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
     ;; The immediate is masked to eight bits like the memory operand: a
     ;; sign-extended imm8 arrives as 0xFFFFFFxx and would compare unsigned
     ;; against a byte as though it were enormous. See $th_alu_m16_i_ro.
-    (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFF)))
+    (local.set $imm (i32.and (read-thread-word) (i32.const 0xFF)))
     (local.set $val (call $do_alu_sized (local.get $alu) (call $gl8 (local.get $addr)) (local.get $imm) (i32.const 0xFF) (i32.const 7)))
     (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs8 (local.get $addr) (local.get $val))))
     (dispatch-next))
 
   ;; 220: [base+disp] OP= imm16. operand = alu_op<<8 | base. disp+imm in next words.
   (func $th_alu_m16_i_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $alu i32) (local $imm i32) (local $val i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
     (local.set $alu (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
-    (local.set $imm (i32.and (call $read_thread_word) (i32.const 0xFFFF)))
+    (local.set $imm (i32.and (read-thread-word) (i32.const 0xFFFF)))
     (local.set $val (call $do_alu_sized (local.get $alu) (call $gl16 (local.get $addr)) (local.get $imm) (i32.const 0xFFFF) (i32.const 15)))
     (if (i32.ne (local.get $alu) (i32.const 7)) (then (call $gs16 (local.get $addr) (local.get $val))))
     (dispatch-next))
 
   ;; 133: mov [base+disp], imm32. op=base, disp+imm in next words.
   (func $th_mov_m32_i32_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
-    (call $gs32 (local.get $addr) (call $read_thread_word))
+    (call $gs32 (local.get $addr) (read-thread-word))
     (dispatch-next))
   ;; 134: mov [base+disp], imm8.
   (func $th_mov_m8_i8_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
-    (call $gs8 (local.get $addr) (call $read_thread_word))
+    (call $gs8 (local.get $addr) (read-thread-word))
     (dispatch-next))
   ;; 135: inc/dec/not/neg [base+disp]. op=unary_op<<4|base, disp in word.
   (func $th_unary_m32_ro (param $op i32)
@@ -1818,23 +1818,23 @@
     (dispatch-next))
   ;; 137: test [base+disp], imm32. op=base, disp+imm in words.
   (func $th_test_m32_i32_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
-    (drop (call $do_alu32 (i32.const 4) (call $gl32 (local.get $addr)) (call $read_thread_word)))
+    (drop (call $do_alu32 (i32.const 4) (call $gl32 (local.get $addr)) (read-thread-word)))
     (dispatch-next))
   ;; 138: test [base+disp], imm8. op=base, disp+imm in words.
   (func $th_test_m8_i8_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
-    (drop (call $do_alu32 (i32.const 4) (call $gl8 (local.get $addr)) (call $read_thread_word)))
+    (drop (call $do_alu32 (i32.const 4) (call $gl8 (local.get $addr)) (read-thread-word)))
     (global.set $flag_sign_shift (i32.const 7)) (dispatch-next))
   ;; 139: shift [base+disp]. op=base, next word=shift_info (type<<8|count), next word=disp.
   ;; Wait — ea_from_op reads disp as first word. So: op=base, word1=disp (from ea_from_op), word2=shift_info.
   ;; Actually let me not use ea_from_op here for flexibility. op=base, w1=disp, w2=shift_type<<8|count.
   (func $th_shift_m32_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $info i32) (local $stype i32) (local $count i32) (local $val i32)
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32) (local $info i32) (local $stype i32) (local $count i32) (local $val i32)
     (local.set $addr (call $ea_from_op (local.get $op)))
-    (local.set $info (call $read_thread_word))
+    (local.set $info (read-thread-word))
     (local.set $stype (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 7)))
     (local.set $count (i32.and (local.get $info) (i32.const 0xFF)))
     (if (i32.eq (local.get $count) (i32.const 0xFF)) (then (local.set $count (i32.and (i32.load offset=4 (global.get $reg_base)) (i32.const 31)))))
@@ -1844,9 +1844,9 @@
   ;; 140: call [base+disp]. op=ret_addr, w1=base, w2=disp.
   ;; Different encoding: we need ret_addr in operand AND base+disp. Pack base in w1, disp in w2.
   (func $th_call_ind_ro (param $op i32)
-    (local $base i32) (local $disp i32) (local $mem_addr i32) (local $target i32)
-    (local.set $base (call $read_thread_word))
-    (local.set $disp (call $read_thread_word))
+    (local $operand_word i32) (local $base i32) (local $disp i32) (local $mem_addr i32) (local $target i32)
+    (local.set $base (read-thread-word))
+    (local.set $disp (read-thread-word))
     (local.set $mem_addr (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $base) (i32.const 2)))) (local.get $disp)))
     (local.set $target (call $gl32 (local.get $mem_addr)))
     (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
@@ -1863,10 +1863,10 @@
     (global.set $eip (local.get $target)))
   ;; 141: jmp [base+disp]. op=0, w1=base, w2=disp.
   (func $th_jmp_ind_ro (param $op i32)
-    (local $base i32) (local $disp i32) (local $mem_addr i32) (local $target i32)
+    (local $operand_word i32) (local $base i32) (local $disp i32) (local $mem_addr i32) (local $target i32)
     (local $ret_addr i32)
-    (local.set $base (call $read_thread_word))
-    (local.set $disp (call $read_thread_word))
+    (local.set $base (read-thread-word))
+    (local.set $disp (read-thread-word))
     (local.set $mem_addr (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $base) (i32.const 2)))) (local.get $disp)))
     (local.set $target (call $gl32 (local.get $mem_addr)))
     (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
@@ -1882,8 +1882,8 @@
     (global.set $eip (local.get $target)))
   ;; 355: jmp [disp+eax*4]. Hot AoE blitter command-table dispatch.
   (func $th_jmp_ind_sib_eax4_abs (param $op i32)
-    (local $disp i32) (local $target i32) (local $ret_addr i32)
-    (local.set $disp (call $read_thread_word))
+    (local $operand_word i32) (local $disp i32) (local $target i32) (local $ret_addr i32)
+    (local.set $disp (read-thread-word))
     (local.set $target
       (call $gl32
         (i32.add (local.get $disp)

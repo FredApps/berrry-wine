@@ -954,8 +954,8 @@
 
   ;; 188: FPU memory op — op=(group<<4)|reg, addr in next word
   (func $th_fpu_mem (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
-    (local.set $addr (call $read_thread_word))
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (local $addr i32)
+    (local.set $addr (read-thread-word))
     (if (i32.eq (local.get $addr) (global.get $SIB_SENTINEL))
       (then (local.set $addr (global.get $ea_temp))))
     (call $fpu_exec_mem
@@ -974,10 +974,10 @@
 
   ;; 190: FPU memory op with base+disp — op=(group<<8)|(reg<<4)|base, disp in next word
   (func $th_fpu_mem_ro (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (call $fpu_exec_mem
+     (local $operand_word i32) (local $nx_fn i32) (local $nx_op i32) (call $fpu_exec_mem
       (i32.shr_u (local.get $op) (i32.const 8))
       (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF))
-      (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2)))) (call $read_thread_word)))
+      (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2)))) (read-thread-word)))
     (dispatch-next))
 
   ;; 439: canonical x87 compare branch tail:
@@ -990,7 +990,7 @@
   ;; the sequence saves two threaded dispatches at each scalar x87 comparison.
   ;; op: imm8 in bits 0-7, condition code in bits 8-11. Words: fall, target.
   (func $th_fnstsw_test_ah_jcc (param $op i32)
-    (local $r i32) (local $cc i32) (local $fall i32) (local $target i32)
+    (local $operand_word i32) (local $r i32) (local $cc i32) (local $fall i32) (local $target i32)
     (global.set $fpu_sw
       (i32.or
         (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
@@ -1006,8 +1006,8 @@
     (global.set $flag_sign_shift (i32.const 7))
     (local.set $cc
       (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xF)))
-    (local.set $fall (call $read_thread_word))
-    (local.set $target (call $read_thread_word))
+    (local.set $fall (read-thread-word))
+    (local.set $target (read-thread-word))
     (if (call $eval_cc (local.get $cc))
       (then (global.set $eip (local.get $target)))
       (else (global.set $eip (local.get $fall))))
