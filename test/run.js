@@ -2730,7 +2730,17 @@ async function main() {
 
   // --- Override logging ---
   let criticalTracePending = null;
+  // Experimental A/B: retain API totals but avoid decoding names no consumer
+  // needs. Explicit diagnostics always keep the original logging path.
+  const fastQuietApi = hasFlag('quiet-api-fast') && QUIET_API &&
+    !TRACE_API && !TRACE_API_COUNTS && !TRACE_CRITICAL &&
+    !TRACE_INPUT_DISPATCH && !ESP_DELTA && !breakApis.length;
   h.log = (ptr, len) => {
+    if (fastQuietApi) {
+      apiCount++;
+      pendingComApiId = -1;
+      return;
+    }
     const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
     let t = '';
     for (let i = 0; i < b.length && b[i]; i++) t += String.fromCharCode(b[i]);
