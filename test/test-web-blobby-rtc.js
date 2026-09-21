@@ -8,8 +8,9 @@
 // test-web-blobby-lan.js is the same match on one tab's LoopbackSegment. This
 // one puts each player in its own browser context (its own cookie, so its own
 // signaling user): the host goes online and opens a session, the probe marks
-// the room serving, the guest picks it from the list, and they play over the
-// data channel lib/vlan-rtc.js sets up. A failure here alone is the RTC wire's
+// the room serving, the guest opening the game picks it from the list at
+// launch and is walked into the session by lan.join.inGame, and they play
+// over the data channel lib/vlan-rtc.js sets up. A failure here alone is the RTC wire's
 // or the room's; one that also fails in the tab test is DirectPlay's.
 
 'use strict';
@@ -252,18 +253,18 @@ const blobsAt = (band) => {
       return { label, page, problems, cdp, ctx };
     };
 
+    // The guest opens the game only once the host is serving, which is the
+    // moment the list at launch has something to show.
     const host = await open('host');
-    const guest = await open('guest');
 
     const started = ({ page, label }) => H.until(page, `${label}: never booted`,
       () => runningApps.length > 0, null, MILESTONE_MS);
-    check('both browsers booted Blobby straight into the game',
-      !!(await started(host)) && !!(await started(guest)));
+    check('the host booted Blobby straight into the game', !!(await started(host)));
 
     const cardUp = ({ page }) => page.evaluate(
       () => !!document.getElementById('wine-lan-card'));
-    check('neither browser was asked anything before the game needed the room',
-      !(await cardUp(host)) && !(await cardUp(guest)));
+    check('with nobody hosting, nothing was asked before the game needed the room',
+      !(await cardUp(host)));
 
     // Waiting a flat MENU_MS here is what made this test flaky: the key script
     // below walks the menu by position, so a DOWN that lands before the menu
@@ -286,8 +287,8 @@ const blobsAt = (band) => {
         + ` (${colours || 0} colours)`);
       return colours;
     };
-    check('both browsers reached the main menu before any key was sent',
-      !!(await menuUp(host)) && !!(await menuUp(guest)));
+    check('the host reached the main menu before any key was sent',
+      !!(await menuUp(host)));
     await H.sleep(MENU_MS);
     await snap(host, 'host-menu');
     // --host-setup walks EINSTELLUNGEN first and is now only for a profile
@@ -331,23 +332,24 @@ const blobsAt = (band) => {
     }, null, MILESTONE_MS);
     check(`the probe saw the host's DirectPlay session (${hostChip})`, !!hostChip);
 
-    // ---- the guest finds it in the list ------------------------------------
-    await keys(guest.page, [DOWN, ENTER, DOWN, ENTER, DOWN, DOWN, ENTER]);
+    // ---- the guest opens the game and is shown the list at launch -----------
+    const guest = await open('guest');
     const rows = await H.until(guest.page, 'guest: the host never appeared in its list', () => {
       const r = [...document.querySelectorAll('#wine-lan-card .wine-lan-room')];
       return r.length ? r.map(x => x.textContent) : null;
     }, null, 60000);
     if (!rows) await snap(guest, 'guest-no-list');
-    check(`the guest's list shows the host's session (${rows && rows.join(' | ')})`,
+    check(`the guest's list at launch shows the host's session (${rows && rows.join(' | ')})`,
       !!rows && rows.length === 1 && /\d\/\d/.test(rows[0]));
     if (!rows) throw new Error('nothing to join; see guest-no-list.png');
     await guest.page.evaluate(() =>
       document.querySelector('#wine-lan-card .wine-lan-room button').click());
     check('Join put the guest in the host\'s room (10.0.0.2)',
       !!(await wired(guest)) && (await guest.page.evaluate(wireOf)).address === '10.0.0.2');
-    // The guest asked from SPIELE SUCHEN, so it is on the game's own session
-    // list: lan.join.inGame waits for the host's reply and picks the session
-    // itself. No key is pressed for it from here on.
+    check('the guest booted Blobby after joining', !!(await started(guest)));
+    // Joined at launch, so lan.join.inGame (why 5) waits for the main menu,
+    // walks NETZWERKSPIEL -> ALS GAST SPIELEN... -> SPIELE SUCHEN, and picks
+    // the session once the host answers. No key is pressed for it from here.
     const pageUrl = await guest.page.evaluate(() => location.search);
     check(`its page address names the room (${pageUrl})`, /[?&]room=/.test(pageUrl));
     await H.sleep(3000);

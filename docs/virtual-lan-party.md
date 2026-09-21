@@ -1461,9 +1461,10 @@ answers, and a copy searching with its own broadcast `ENUM_REQ`s never does.
 
 Three registry fields keep Blobby's one-keyboard game undisturbed:
 
-- `waitForGame: true` drops the launch-time list and the mid-game toast, so the
-  card appears only when NETZWERKSPIEL makes the game's own DirectPlay call ask
-  for a room. An invite link still joins at launch.
+- The list appears at launch (and as a mid-game toast) only when someone is
+  hosting. With nobody hosting, the game starts on its own keyboard and the card
+  waits until NETZWERKSPIEL makes the game's own DirectPlay call ask for a room.
+  An invite link still joins at launch.
 - `local: true` keeps **Both players here** on the card. The card is shown even
   when nobody is serving, so that choice stays reachable; an empty card offers
   **Go online**, which is the silent join-or-open.
@@ -1472,6 +1473,10 @@ Three registry fields keep Blobby's one-keyboard game undisturbed:
   DirectPlay Open to host, 3 Open to join, 4 EnumSessions. A searcher (4) that
   picks a row is already on SPIELE SUCHEN's session list, so the recipe waits
   for the host's reply (`heard()`), then presses Up Enter to take the session.
+  A row picked from the launch-time list is `why` 5: the recipe waits for
+  the main menu (the window gets past 64 colours once it fades in), walks
+  NETZWERKSPIEL → ALS GAST SPIELEN… → SPIELE SUCHEN itself, and then takes
+  the session the same way.
   Any other `why` falls back to `join.hint` in the chip (`pick NETZWERKSPIEL →
   ALS GAST SPIELEN… → SPIELE SUCHEN`). DirectPlay's own broadcast finds the
   session, so nobody types an address. The same recipe hook serves Quake's
