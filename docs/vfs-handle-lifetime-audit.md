@@ -364,3 +364,28 @@ VFS 32/32 and file-time suites pass. Full shared-tree build passes with 251 impo
 canonical 1,472,099 bytes, compatibility 1,473,073 bytes, unchanged layout
 `54f430b349c8d55e` and 242 nonoverlapping data segments. This build also includes
 the preceding compressed-size workaround removal; no isolated timing claim.
+
+## Pending-read lifetime checkpoint — 2026-09-21
+
+A delayed provider rejection used to publish `readFaults[handle]` unconditionally,
+even after close had cleared that handle's state. Pending reads now carry the
+original file-handle record and entry. Fill start/completion validates both plus
+the provider; a closed/reused handle or replaced entry cannot receive the old
+fault. A previously latched fault is also discarded if its identity no longer
+matches. Retry accounting uses that identity rather than numeric handle alone.
+
+Close retires its own pending slot, never a peer's. A fill completing later may
+populate the provider cache, but cannot revive a closed operation. Already-closed
+pending reads do not start new fills. Mapping fills retain their existing separate
+path; this is not a mapping-lifetime fix or provider-network cancellation.
+
+Deterministic deferred-provider tests cover late failure after close, forced
+numeric handle reuse, replacement before/after fault publication, close before
+fill, late success, and preserving a peer's pending request. These are asynchronous
+VFS tests, not real Worker scheduler coverage. The scheduler's process-shared
+pending slot and open-handle path-based entry model remain broader open issues.
+
+Verification: lazy-provider 39/39, VFS 32/32 and adoption tests pass. A negative
+control loaded the committed filesystem source in memory: it published a stale
+fault after close, whereas the candidate did not. This host-only change adds no
+WASM import/layout changes; no artifact rebuild or performance claim.

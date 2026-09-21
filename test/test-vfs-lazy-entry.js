@@ -393,6 +393,91 @@ test('the pending record names the handle and position it belongs to', () => {
   assert.strictEqual(rb.pending.pos, 700000);
 });
 
+test('late file fills cannot publish faults after close, reuse, or entry replacement', async () => {
+  for (const mutation of ['close', 'reuse', 'replace']) {
+    const vfs = new VirtualFS();
+    let rejectFill;
+    const provider = {
+      size: 16, tryRead: () => null,
+      fill: () => new Promise((resolve, reject) => { rejectFill = reject; }),
+    };
+    vfs.setProviderFile(GUEST, { provider });
+    const handle = vfs.createFile(GUEST, 0x80000000, 3) >>> 0;
+    const pending = vfs.readFile(handle, new Uint8Array(4), 4).pending;
+    vfs.pendingRead = pending;
+    const filling = vfs.fillPendingRead(pending);
+    if (mutation !== 'replace') {
+      vfs.closeHandle(handle);
+      assert.strictEqual(vfs.pendingRead, null, 'close retires only its own pending slot');
+    }
+    if (mutation !== 'close') {
+      vfs.setProviderFile(GUEST, { provider: {
+        size: 16, tryRead: (off, len) => new Uint8Array(len).fill(0x55),
+        fill: () => Promise.resolve(),
+      } });
+      if (mutation === 'reuse') {
+        // Force allocator wrap/reuse without billions of intervening opens.
+        vfs._nextHandle = handle;
+        assert.strictEqual(vfs.createFile(GUEST, 0x80000000, 3) >>> 0, handle);
+      }
+    }
+    rejectFill(new Error('old provider failed late'));
+    assert.strictEqual(await filling, false);
+    assert.strictEqual(vfs.readFaults.has(handle), false, `${mutation}: no stale fault publication`);
+    if (mutation === 'close') {
+      assert.strictEqual(vfs.readFile(handle, new Uint8Array(4), 4).error, 6);
+    } else {
+      const bytes = new Uint8Array(4);
+      assert.strictEqual(vfs.readFile(handle, bytes, 4).ok, true);
+      assert.deepStrictEqual([...bytes], [0x55, 0x55, 0x55, 0x55]);
+    }
+  }
+});
+
+test('closed pending reads skip fills and late success preserves a peer pending slot', async () => {
+  const vfs = new VirtualFS();
+  let complete;
+  let fills = 0;
+  const provider = {
+    size: 16, tryRead: () => null,
+    fill: () => { fills++; return new Promise(resolve => { complete = resolve; }); },
+  };
+  vfs.setProviderFile(GUEST, { provider });
+  const closed = vfs.createFile(GUEST, 0x80000000, 3);
+  const neverStarted = vfs.readFile(closed, new Uint8Array(4), 4).pending;
+  vfs.closeHandle(closed);
+  assert.strictEqual(await vfs.fillPendingRead(neverStarted), false);
+  assert.strictEqual(fills, 0, 'do not start provider I/O for an already closed read');
+  const a = vfs.createFile(GUEST, 0x80000000, 3);
+  const b = vfs.createFile(GUEST, 0x80000000, 3);
+  const pa = vfs.readFile(a, new Uint8Array(4), 4).pending;
+  const filling = vfs.fillPendingRead(pa);
+  const pb = vfs.readFile(b, new Uint8Array(4), 4).pending;
+  vfs.pendingRead = pb;
+  vfs.closeHandle(a);
+  assert.strictEqual(vfs.pendingRead, pb, 'closing A does not retire B');
+  complete();
+  assert.strictEqual(await filling, false, 'late success does not revive closed A');
+  assert.strictEqual(vfs.pendingRead, pb, 'A completion cannot clear B pending slot');
+  assert.strictEqual(vfs.getOpenFile(b).pos, 0);
+});
+
+test('a latched fault is discarded when its file entry is replaced', async () => {
+  const vfs = new VirtualFS();
+  vfs.setProviderFile(GUEST, { provider: {
+    size: 16, tryRead: () => null, fill: () => Promise.reject(new Error('read fault')),
+  } });
+  const handle = vfs.createFile(GUEST, 0x80000000, 3);
+  const pending = vfs.readFile(handle, new Uint8Array(4), 4).pending;
+  assert.strictEqual(await vfs.fillPendingRead(pending), false);
+  assert(vfs.readFaults.has(handle));
+  vfs.setProviderFile(GUEST, { provider: {
+    size: 16, tryRead: (off, len) => new Uint8Array(len), fill: () => Promise.resolve(),
+  } });
+  assert.strictEqual(vfs.readFile(handle, new Uint8Array(4), 4).ok, true);
+  assert.strictEqual(vfs.readFaults.has(handle), false);
+});
+
 test('an async-only provider raises a named error on a consumer that cannot wait',
   () => {
     const vfs = lazyVfs({ sync: false });
