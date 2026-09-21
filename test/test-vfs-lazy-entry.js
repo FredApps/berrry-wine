@@ -646,6 +646,51 @@ test('two real Workers preserve I/O ownership through compiled adapters and the 
   } finally { await Promise.all(workers.map(worker => worker.terminate())); }
 });
 
+test('mapping extension preserves lazy provider windows and adds a readable zero tail', async () => {
+  const { createFilesystemImports } = require('../lib/filesystem');
+  const vfs = new VirtualFS();
+  const source = Uint8Array.from([99, 98, 1, 2, 3, 4, 97]);
+  let reads = 0, fills = 0, ready = false;
+  vfs.setProviderFile(GUEST, { offset: 2, length: 4, provider: {
+    size: source.length,
+    tryRead(off, len) { reads++; return ready ? source.slice(off, off + len) : null; },
+    async fill() { fills++; ready = true; },
+    async readRange(off, len) { reads++; return source.slice(off, off + len); },
+  } });
+  const entry = vfs.files.get(vfs._normPath(GUEST));
+  const h = vfs.createFile(GUEST, 0xc0000000, 3);
+  vfs.setFilePointer(h, 2, 0);
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const imports = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000, guest_map_alloc: () => 0x410000 } });
+  const section = imports.fs_create_file_mapping(h, 4, 0, 12, 0);
+  assert(section);
+  assert(imports.fs_create_file_mapping(h, 4, 0, 16, 0), 'repeated extensions retain the original prefix');
+  assert.strictEqual(reads, 0);
+  assert.strictEqual(fills, 0);
+  assert.strictEqual(vfs.getOpenFile(h).pos, 2);
+  assert.strictEqual(vfs.getFileSize(h), 16);
+  assert.strictEqual(vfs.files.get(vfs._normPath(GUEST)), entry);
+  const out = new Uint8Array(6).fill(99);
+  const pending = vfs.readFile(h, out, 6).pending;
+  assert(pending);
+  await vfs.fillPendingRead(pending);
+  assert.strictEqual(vfs.readFile(h, out, 6).bytesRead, 6);
+  assert.deepStrictEqual([...out], [3, 4, 0, 0, 0, 0]);
+  const oldReads = reads;
+  assert.strictEqual(vfs.readFile(h, out, 6).bytesRead, 6);
+  assert(out.every(n => n === 0));
+  assert.strictEqual(reads, oldReads, 'tail-only reads do not access the original provider');
+  assert.strictEqual(imports.fs_map_view_of_file(section, 4, 0, 0, 0), 0);
+  await vfs.fillPendingRead(vfs.getPendingRead());
+  const addr = imports.fs_map_view_of_file(section, 4, 0, 0, 0);
+  assert(addr);
+  assert.deepStrictEqual([...new Uint8Array(memory.buffer, RegionMap.g2w(addr, 0x400000), 12)],
+    [1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0]);
+  await vfs.materialize(GUEST);
+  assert.deepStrictEqual([...entry.data], [1, 2, 3, 4, ...Array(12).fill(0)]);
+});
+
 test('concurrent lazy mappings of the same section keep distinct thread-owned completions', async () => {
   const { createFilesystemImports } = require('../lib/filesystem');
   const vfs = new VirtualFS();

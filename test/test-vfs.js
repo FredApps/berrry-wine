@@ -252,6 +252,17 @@ test('mapping views remain within the section size captured at creation', () => 
   assert.strictEqual(host.fs_create_file_mapping(h, 2, 0, 65, 0), 0);
   const empty = vfs.createFile('c:\\empty-section.bin', 0xc0000000, 2);
   assert.strictEqual(host.fs_create_file_mapping(empty, 2, 0, 0, 0), 0);
+  assert(host.fs_create_file_mapping(empty, 4, 0, 8, 0));
+  assert.strictEqual(vfs.getFileSize(empty), 8);
+  const original = vfs.files.get('c:\\bounds.bin');
+  original.data.set([1, 2, 3, 4]);
+  vfs.setFilePointer(h, 3, 0);
+  assert(host.fs_create_file_mapping(h, 4, 0, 80, 0));
+  assert.strictEqual(vfs.files.get('c:\\bounds.bin'), original);
+  assert.strictEqual(vfs.getOpenFile(h).pos, 3);
+  assert.strictEqual(vfs.getFileSize(h), 80);
+  assert.deepStrictEqual([...original.data.slice(0, 4)], [1, 2, 3, 4]);
+  assert(original.data.slice(64).every(n => n === 0));
 });
 
 test('append-only writes cannot overwrite and null writes cannot extend', () => {

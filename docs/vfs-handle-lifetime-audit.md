@@ -719,3 +719,30 @@ completed Win98 behavior. Allocation-granularity checks and mapping errors,
 along with the prior lifetime/coherence limitations, remain open.
 
 Lazy/provider regressions also pass 47/47 after this change.
+
+## Mapping-driven file extension (2026-09-21)
+
+The preceding oversized-section limitation is now addressed for writable
+sections within the supported size range. Creation extends the backing file
+without moving its shared seek cursor or replacing its entry identity. Existing
+prefix bytes are retained; newly added bytes are zero-filled. Read-only and
+copy-on-write sections still cannot extend the file.
+
+Provider-backed files retain a lazy view of their original provider window plus
+a zero tail. Extension itself neither fetches nor materializes the prefix.
+The view supports synchronous cache reads, async fill and streaming readRange,
+so crossing the old EOF, mapping the extended file, and later materializing it
+preserve the same bytes. Repeated extension preserves the original offset.
+Size and write-time notifications are issued after extension succeeds.
+
+This follows the writable-extension requirement in Microsoft's
+[CreateFileMapping documentation](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createfilemappinga).
+Zero filling is our defined backing behavior; Windows does not guarantee the
+contents of the extended range. Native Win98 comparison, larger-than-32-bit
+sections, alignment and the other mapping lifetime/error/coherence issues
+remain open.
+
+Verification for mapping-driven extension: VFS 40/40 and lazy/provider 48/48
+pass, including empty/eager files, repeated lazy extensions, offset windows,
+cross-EOF reads, mapped reads and full materialization. No browser benchmark
+or native run was performed for this change.
