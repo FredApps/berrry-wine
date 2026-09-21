@@ -63,3 +63,33 @@ Run explicitly with:
 ```bash
 node test/test-darkstone-gameplay.js
 ```
+
+## `--stuck-after` kills the asset load, and it looks like an emulator bug
+
+Driving this app by hand with a plain `test/run.js` command line ends at
+**batch 1183** with no error line, no crash dump and no unimplemented API —
+the process simply stops. That is not the guest. It is `run.js`'s own
+`--stuck-after`, which defaults to **10** (`test/run.js:773`): after ten
+batches that retire no new EIP the harness decides the run is wedged and ends
+it.
+
+The loop it trips on is legitimate. `0x004e7b2b` is the demo's asset-load
+loop reading `ddata.mtf`, and a load that reads 33 MB out of one archive
+spends a long time in one tight block by design. Nothing is wrong, so there
+is no diagnostic to find; the run just disappears.
+
+The fix is one flag:
+
+```
+--stuck-after=1000000
+```
+
+With it the demo runs straight through the logo, New Game, One Player,
+warrior creation and the forest loading animation into **Town**, with the
+full HUD — portrait, health and mana orbs, potion belt and minimap — on a
+champion standing on the forest road. Verified on the remote bench box under
+`--d3d9-renderer=software --d3d9-programmable`.
+
+Reach for this reading whenever a bounded run of *any* asset-heavy app ends
+early and silently: the absence of an error is the tell, because every real
+failure path in the emulator prints something.

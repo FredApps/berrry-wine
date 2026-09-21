@@ -606,6 +606,76 @@ button — it sits at roughly (447,262) in the 640x480 capture, with the
 cursor parked near (325,250), so a corner-slam `relmousemove` followed by a
 known offset and `di-mousedown:1` is a deterministic way to hit it.
 
+### SOLVED: the Name box clears, and the world resumes
+
+That suggestion is the answer. Corner-slam the cursor, move it to the OK
+button, click with DirectInput, and repeat the whole thing every 4000
+batches:
+
+```
+B:relmousemove:-2000:-2000,
+B+200:relmousemove:447:262,
+B+300:keypress:74,
+B+400:di-mousedown:1,
+B+500:di-mouseup:1
+```
+
+for `B` in `seq 610000 4000 780000`. The box is gone afterwards and every
+subsequent capture is a distinct hash, so the world is animating again. The
+run reaches the **prison-ship hold** — textured and lit, Jiub standing in
+frame, camera live — at batch ~636k of an 85-second headless-GL run. Pressing
+ESC there opens the in-game pause menu (Return / New / Load / Options /
+Exit), which is independent proof the world is live and taking input.
+
+A `keypress:74` was sent before each click and was not isolated from the
+click, so which of the two clears the box is still unknown. The click is the
+one with a mechanism behind it.
+
+That is character generation, not gameplay: no HUD, and the player has not
+been released from the census office. Two NPC conversations and a walk out of
+the hold remain, which is **wall clock, not a blocker** — at the measured
+9.4k batches/s the world appears at ~605k batches, around 65-85 s, leaving
+nothing in a 90 s budget. Give this one run **200-240 s** and a real gameplay
+frame is in reach.
+
+### Two more things the earlier runs got wrong
+
+- **ESC in the world opens the pause menu, and a blind DI click closes it.**
+  The "two opposite inputs, same result" reading above is wrong about why: a
+  DI click with the cursor near screen centre lands on the pause menu's
+  *first* item, which is `Return`. So a plain click train run through the
+  world silently undoes the pause menus the ESC train opens, and captures
+  alternate between menu-open and clean-world frames for that reason alone.
+- **`--quiet-api-fast` is worth ~25% here** and is not mentioned anywhere
+  above: 7,245 -> 9,027 batches/s on back-to-back runs with otherwise
+  identical flags. Morrowind makes ~20M API calls in 85 s, so the name-decode
+  path is a real share of the run.
+
+### A fixed-batch `--input` schedule is not reproducible for this app
+
+Batch numbers are reproducible *for a fixed input schedule*; how many batches
+fit in a fixed wall-clock budget is not. Across runs on one box the rate
+ranged **6,836-9,497 batches/s (+-33%)**, so the same 85 s reached anywhere
+between batch 604k and 807k. That is why an ESC train ending at 600k skips
+`mw_intro.bik` in one run and lets it play in the next. Either repeat every
+action across a wide batch span, or drive live with `--control-stdin` /
+`tools/ctl.js`; do not aim a single action at a single batch.
+
+**Build the train with `seq -f "%.0f"`.** BSD `seq` switches to `%g` past a
+million and prints `1.02e+06`; `run.js` parses that batch number as `1`, so
+every action above batch 1M fires immediately and silently. A run built with
+a bare `seq` loses its entire walk train and parks on whatever screen the
+sub-1M actions left up — which looks exactly like the app being stuck.
+
+Phase timeline on the current build at `--tick-ms-per-batch=2` with a
+**700-batch** ESC pulse spacing (denser than the 1500 used above): main menu
+up at **460k-545k**, New click then world-load splash ~30k batches later,
+`mw_intro.bik` next, world by **~605k** when the ESC train covers the intro.
+
+One run put up `[MessageBox] "Error": "Music Error: Can not play file. Data
+Files/Music/Special/morrowind title.mp3"` even at `--memory-mb=1024`. It did
+not block progress and did not recur.
+
 ### Cheap oracle: md5 the capture series
 
 Every one of these runs was diagnosed by

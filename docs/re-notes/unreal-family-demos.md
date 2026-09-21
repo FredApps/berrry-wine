@@ -143,7 +143,83 @@ The CLI software D3D backend reaches the same engine loop without an
 unimplemented API but rejects its GPU draw opcode; the native/browser WebGL
 backend remains the authoritative graphics verification.
 
-## UT3 API analysis
+## UT2004: the registered `-opengl` argument is the whole blocker
+
+UT2004's "further post-probe launch diagnosis" above is resolved. It is not an
+emulator gap at all — it is the command line `lib/apps.js` registers for
+`ut2004_demo`:
+
+```
+args: '-opengl -window'
+```
+
+### How the real error was recovered
+
+The app dies inside `MiniDumpWriteDump`, which reads as the bug and is not:
+that is only UE2's crash handler, running after the engine has already decided
+to die. UE2 reports through `appError`, which throws, so the message never
+reaches stdout. It is in memory, though — `core.dll` exports
+`?GErrorHist@@3PAGA` (ordinal 1036, original VA `0x101ad200`), a UTF-16 buffer
+holding the error text. Dumping it one batch before the crash gives the real
+complaint:
+
+```
+Missing symbols - aborting. History: UOpenGLRenderDevice::Init
+```
+
+**Recipe worth reusing on any UE2 title:** resolve `?GErrorHist@@3PAGA` to a
+runtime VA with `core+0x101ad200`, then `--input=N:dump-mem:<va>:512` at a
+batch just before the crash. `--dump=` is too late — it fires at exit, after
+the handler has run.
+
+A `GetProcAddress` census confirms it: **99 GL/WGL names resolve and 298 return
+NULL**, including core GL 1.1 entry points. `OpenGLDrv` cannot initialize
+against that surface, and the engine aborts rather than falling back.
+
+### The fix, and what it reaches
+
+Changing `ut2004_demo`'s args to
+
+```
+args: '-d3d -window -nosound'
+```
+
+routes it to the same D3D8 path UT2003 already uses, and the game reaches
+**gameplay**: DM-Rankin's lit brick-and-wood interior with a bot in frame.
+
+This change is **not applied** — `lib/apps.js` was held by another agent when
+it was found. It is a one-line edit to that one entry.
+
+## UT2003 under the CLI software backend
+
+The paragraph above ("the CLI software D3D backend ... rejects its GPU draw
+opcode") is narrower than it reads. With
+`--d3d9-renderer=software --d3d9-programmable` on the remote bench box, UT2003
+renders its full menu chain — intro logos, the NVIDIA splash, the main menu,
+and `Instant Action | Select Map` complete with a **live 3D Antalus preview**
+inside the map panel. PNG capture there comes off `dx slot 5 640x480`, the real
+primary surface, rather than the canvas the headless-GL path reports.
+
+Three things cost a session each and are worth writing down:
+
+- **A `mousemove` must precede the `mousedown`.** UT2003's menus are in-engine
+  widgets that track hover; a bare `mousedown` at the right coordinate is
+  silently discarded, the highlight never moves, and `--trace-api` shows a
+  perfectly healthy message pump. Two moves then a down/up 2000 batches apart
+  is what works.
+- **The game window is placed at (20,35) with a 1024x768 client**, so on a
+  1024x768 desktop its bottom edge — the row holding BACK / SPECTATE / PLAY —
+  falls off the screen. That is window placement, not UI scaling:
+  `--screen=1100x840` shows the whole dialog. `--screen=` enlarges the desktop
+  only; the viewport itself is a game-config property, set in
+  `System/UT2003.ini` under `[WinDrv.WindowsClient]`
+  (`WindowedViewportX/Y`, `FullscreenViewportX/Y`, `MenuViewportX/Y`).
+- **Do not quote batches/s across phases.** One UT2003 run on the box moved
+  13.8k -> 61k -> 65k batches/s between its intro, menu and idle phases. A
+  batch is a budget of blocks, so the unit changes meaning with the guest's
+  code shape.
+
+
 
 The fixed UT3 installer was executed directly in Wine Assembly. Its verified
 first runtime blocker is:
