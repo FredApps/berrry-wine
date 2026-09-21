@@ -25,6 +25,16 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_cache_menu") (param $id i32) (param $root i32)
+    (local $node i32) (local $w i32)
+    (local.set $node (call $heap_alloc (i32.const 12)))
+    (local.set $w (call $g2w (local.get $node)))
+    (i32.store (local.get $w) (global.get $detached_menus))
+    (i32.store offset=4 (local.get $w) (local.get $id))
+    (i32.store offset=8 (local.get $w) (local.get $root))
+    (global.set $detached_menus (local.get $node)))
+  (func (export "test_dynamic_alive") (param $h i32) (result i32)
+    (i32.ne (call $dynamic_menu_state_w (local.get $h)) (i32.const 0)))
   (func (export "test_menu_alloc") (param $len i32) (result i32)
     (call $heap_alloc (local.get $len)))
 
@@ -150,6 +160,28 @@ function check(name, pass, detail) {
     `count=${e.menu_handle_item_count(0x00be0003)}`);
   check('a handle with no resource tag is not claimed',
     e.test_menu_detached_handle(0x00040003) === 0);
+
+  // Seed the same alias record installed after lazy resource resolution.
+  // The tree itself came from the real MENUITEMTEMPLATE parser above.
+  e.test_cache_menu(101, hmenu);
+  check('detached alias resolves to the existing canonical tree',
+    e.test_menu_detached_handle(0xbe0065) === hmenu);
+  check('DestroyMenu accepts the detached alias', e.test_call_DestroyMenu(0xbe0065) === 1);
+  for (const [name, handle] of [['root', hmenu], ['File', file], ['Recent', recent], ['Help', help]]) {
+    check(`DestroyMenu retires ${name}`, e.test_dynamic_alive(handle) === 0);
+  }
+  check('destroyed alias cannot retrieve stale cached state',
+    e.test_menu_detached_handle(0xbe0065) === 0);
+
+  const fresh = e.test_menu_detached_level(guest, template.length);
+  e.test_cache_menu(102, fresh);
+  check('destroying the canonical root also retires its alias',
+    e.test_call_DestroyMenu(fresh) === 1 && e.test_menu_detached_handle(0xbe0066) === 0);
+
+  const cycle = e.test_call_CreatePopupMenu();
+  e.test_call_AppendMenuA(cycle, 0x10, cycle, 0);
+  check('recursive destruction safely retires a malformed self-link',
+    e.test_call_DestroyMenu(cycle) === 1 && e.test_dynamic_alive(cycle) === 0);
 
   const failed = checks.filter(c => !c.pass);
   console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

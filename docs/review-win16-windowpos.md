@@ -3055,3 +3055,12 @@ hit testing for mouse and touch. Unit tests (with an old-code negative) and
 the real wVis rerun confirm delivery; Clear becomes checked on reopening.
 Slower Fade remains checked as well, exposing a separate stale detached-menu
 state/lifetime issue rather than proving the complete round trip correct.
+
+The stale check was the detached cache surviving tagged DestroyMenu. The
+handler now unlinks that cached alias and recursively destroys its MNUD tree;
+direct root destruction also unlinks the alias. The 24-check regression
+passes and old code fails six checks. The rebuilt browser select/reopen
+assertions now pass: Clear becomes checked, Slower Fade clears, Blur remains
+checked. A separate wide-item string-release test fails identically with
+pre-fix menu code and is recorded, not counted as a pass. Early return from
+TrackPopupMenu and non-unique tagged LoadMenu identity remain unresolved.

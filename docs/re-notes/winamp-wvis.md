@@ -207,3 +207,48 @@ menu state reconstructed by the guest. However, Slower Fade (40041) remains
 checked too: **this is not a clean check-state round-trip**. The detached
 LoadMenu cache and DestroyMenu lifetime are the next concrete suspects;
 do not remove the production helper based solely on this partial success.
+
+## Detached destruction and fresh checks, 2026-09-21
+
+Confirmed the stale-state cause: DestroyMenu on the tagged LoadMenu handle
+fell through to host-map deletion. Its cached detached MNUD root remained
+live, so the next open reused the already-checked tree. Dynamic destruction
+also freed only the root and its labels, not descendant menus.
+
+DestroyMenu now unlinks the existing detached alias (without lazily building
+a new menu), destroys its canonical root and recursively retires owned MNUD
+children. Destroying the canonical root directly also removes its alias.
+The root's magic is retired before descent, with the allocation held until
+children/labels are released, so a malformed self-link cannot recurse forever.
+This implements the recursive destruction described by Microsoft's
+[DestroyMenu documentation](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-destroymenu).
+
+Validation:
+
+- `test-detached-menu-handle.js`: 24/24 on main and isolated sources. The
+  tree is parsed from a real-format MENUITEMTEMPLATE; only alias-cache setup
+  is synthetic. Coverage includes root/child/grandchild retirement, cache
+  invalidation through both tagged and canonical handles, and a self-link.
+  Old source fails six retirement/cache checks (18/24):
+  `/private/tmp/wa-wvis-destroy-negative.log`.
+- Main menu-insert (17/17), isolated nested-resource mutation, popup-text
+  (13 checks) and DeleteMenu tests pass.
+- `test-menu-item-info-wide.js` fails at line 149, before destruction, on
+  both current main and the isolated copy. Restoring HEAD's pre-fix menu
+  source on main produces the same string-release assertion failure:
+  `/private/tmp/wa-wvis-wide-main-baseline.log`. It is not claimed as passing
+  or fixed by this change.
+- Isolated full build passes (`/private/tmp/wa-wvis-destroy-build.log`):
+  1455021-byte wasm, 1455927-byte compat, layout `c5ccefca8909ee4b`.
+- Rebuilt browser test, helper disabled, passes explicit Clear-after-reopen
+  and Slower-Fade-cleared assertions in addition to the original test:
+  `/private/tmp/wa-wvis-destroy-browser.log`. Before/after flags are
+  Clear 0→4, Slower Fade 4→0, Blur 4→4; screenshot visually verified.
+
+Still not complete native menu lifetime: TrackPopupMenu returns too early;
+the tagged resource-handle scheme conflates simultaneous LoadMenu instances
+and resource identity, and unmatched host DestroyMenu still reports success.
+This fix retires an existing cached object instead of hiding destruction to
+keep the asynchronous popup alive. The independently copied tracking blob
+continues to paint; proper modal tracking remains open, as does removing the
+production wVis helper.

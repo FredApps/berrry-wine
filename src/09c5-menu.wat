@@ -638,15 +638,24 @@
     (local.get $flags))
 
   (func $dynamic_menu_destroy (param $hmenu i32) (result i32)
-    (local $sw i32)
+    (local $sw i32) (local $i i32) (local $count i32) (local $rec i32)
     (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
     (if (i32.eqz (local.get $sw)) (then (return (i32.const 0))))
-    (drop (call $resource_submenu_binding_forget_handle (local.get $hmenu)))
-    (call $dynamic_menu_owned_texts_release (local.get $sw))
-    ;; Retire the handle before returning its block to the heap. The allocator
-    ;; does not scrub payload bytes, so leaving "MNUD" behind made IsMenu and a
-    ;; second DestroyMenu accept a freed handle until that block was reused.
+    ;; Retire before descending so repeated/cyclic child links cannot recurse
+    ;; into this menu twice. Keep the record allocated until its children and
+    ;; owned labels have been released.
     (i32.store (local.get $sw) (i32.const 0))
+    (drop (call $menu_detached_take (local.get $hmenu)))
+    (drop (call $resource_submenu_binding_forget_handle (local.get $hmenu)))
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (block $done (loop $children
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (call $dmb_item_w (local.get $sw) (local.get $i)))
+      (if (i32.and (i32.load (local.get $rec)) (i32.const 0x10))
+        (then (drop (call $dynamic_menu_destroy (i32.load offset=12 (local.get $rec))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $children)))
+    (call $dynamic_menu_owned_texts_release (local.get $sw))
     (call $heap_free (local.get $hmenu))
     (i32.const 1))
 
@@ -3781,6 +3790,35 @@
         (global.set $detached_menus (local.get $node))))
     (local.get $built))
 
+  ;; Unlink an existing detached alias without materializing a new menu.
+  ;; Accept either its tagged resource handle or its canonical dynamic root.
+  ;; The caller owns destruction of the returned root.
+  (func $menu_detached_take (param $hmenu i32) (result i32)
+    (local $node i32) (local $nw i32) (local $prev i32)
+    (local $next i32) (local $root i32) (local $tagged i32)
+    (local.set $tagged (i32.eq
+      (i32.and (local.get $hmenu) (i32.const 0xFFFF0000)) (i32.const 0x00BE0000)))
+    (local.set $node (global.get $detached_menus))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $node)))
+      (local.set $nw (call $g2w (local.get $node)))
+      (local.set $next (i32.load (local.get $nw)))
+      (local.set $root (i32.load offset=8 (local.get $nw)))
+      (if (i32.or (i32.eq (local.get $root) (local.get $hmenu))
+            (i32.and (local.get $tagged)
+              (i32.eq (i32.load offset=4 (local.get $nw))
+                (i32.and (local.get $hmenu) (i32.const 0xFFFF)))))
+        (then
+          (if (local.get $prev)
+            (then (i32.store (local.get $prev) (local.get $next)))
+            (else (global.set $detached_menus (local.get $next))))
+          (call $heap_free (local.get $node))
+          (return (local.get $root))))
+      (local.set $prev (local.get $nw))
+      (local.set $node (local.get $next))
+      (br $scan)))
+    (i32.const 0))
+
   ;; ---- Menu handle queries (GetMenuItemCount / GetMenuItemID / GetMenuState)
   ;;
   ;; A menu handle here is the window's own menu id, and GetSubMenu turns that
@@ -4668,6 +4706,9 @@
 
   ;; 84: DestroyMenu(hMenu) — 1 arg stdcall, return TRUE
   (func $handle_DestroyMenu (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $detached i32)
+    (local.set $detached (call $menu_detached_take (local.get $arg0)))
+    (if (local.get $detached) (then (local.set $arg0 (local.get $detached))))
     (if (call $dynamic_menu_destroy (local.get $arg0))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
       (else (i32.store offset=0 (global.get $reg_base) (call $host_menu_destroy (local.get $arg0)))))
