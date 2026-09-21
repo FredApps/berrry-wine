@@ -736,6 +736,57 @@ async function main() {
     assert.strictEqual(callMethod(face, 2), 0);
   }
 
+  // Opaque guest layout: +4 is not a refcount. Raw host writes must not
+  // masquerade as vtable calls when a live face mirrors cached media.
+  for (const tymed of [4, 8]) for (const take of [0, 1]) {
+    const root = e.test_ole_create_static_handler(0) >>> 0;
+    const iid = alloc(16), out = alloc(4), result = alloc(12), snapshotOut = alloc(4);
+    [0x10e, 0, 0xc0, 0x46000000].forEach((v, i) => write(iid + 4 * i, v));
+    assert.strictEqual(callMethod(root, 0, iid, out), 0);
+    const face = read(out), object = alloc(40), vt = alloc(12), code = alloc(40);
+    bytes.fill(0, wa(object), wa(object) + 40);
+    bytes.fill(0, wa(vt), wa(vt) + 12);
+    write(object, vt); write(object + 4, 0x13572468); write(object + 24, 1);
+    bytes.set([0x8b,0x44,0x24,0x04, 0xff,0x40,0x18, 0xff,0x40,0x1c,
+      0x8b,0x40,0x18, 0xc2,0x04,0x00], wa(code));
+    bytes.set([0x8b,0x44,0x24,0x04, 0xff,0x48,0x18, 0xff,0x40,0x20,
+      0x8b,0x40,0x18, 0xc2,0x04,0x00], wa(code + 20));
+    write(vt + 4, code); write(vt + 8, code + 20);
+    const format = makeFormat(0xc542, tymed), medium = alloc(12);
+    write(medium, tymed); write(medium + 4, object); write(medium + 8, 0);
+    assert.strictEqual(callMethod(face, 7, format, medium, take), 0);
+    const ownedRefs = take ? 1 : 2;
+    check(`live face SetData(${take}) keeps one canonical TYMED ${tymed} owner`,
+      read(root + 104) === 1 && read(object + 24) === ownedRefs &&
+      read(object + 28) === (take ? 0 : 1) && read(object + 4) === 0x13572468);
+    assert.strictEqual(callMethod(face, 3, format, result), 0);
+    assert.strictEqual(read(result + 4), object);
+    assert.strictEqual(read(object + 24), ownedRefs + 1, 'GetData owns a guest reference');
+    releaseMedium(result);
+    assert.strictEqual(read(object + 24), ownedRefs);
+    assert.strictEqual(callMethod(root, 10, 0, snapshotOut), 0);
+    const snapshot = read(snapshotOut);
+    assert.notStrictEqual(snapshot, face);
+    assert.strictEqual(read(snapshot + 32), 0, 'clipboard snapshot is independent');
+    assert.strictEqual(read(object + 24), ownedRefs + 1);
+    if (!take) {
+      const connection = read(read(root + 100));
+      assert.strictEqual(callMethod(root + 52, 4, connection), 0);
+      check('Uncache retires canonical guest media without releasing the borrowed view twice',
+        read(object + 24) === ownedRefs && callMethod(face, 5, format) !== 0 &&
+        read(face + 16) === 0 && read(object + 4) === 0x13572468);
+    }
+    assert.strictEqual(callMethod(root, 2), 1);
+    assert.strictEqual(callMethod(face, 2), 0);
+    check('independent clipboard snapshot survives live-face destruction',
+      read(object + 24) === ownedRefs && read(object + 4) === 0x13572468);
+    assert.strictEqual(callMethod(snapshot, 2), 0);
+    if (!take) assert.strictEqual(callMethod(object, 2), 0);
+    check('opaque guest medium has exactly balanced vtable references',
+      read(object + 24) === 0 && read(object + 32) === read(object + 28) + 1 &&
+      read(object + 4) === 0x13572468);
+  }
+
   const cacheSequence = alloc(4);
   write(cacheSequence, 0);
   const cacheRoot = e.test_ole_create_static_handler(0) >>> 0;

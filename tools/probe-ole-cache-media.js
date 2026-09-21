@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-// Diagnostic, not a green test: DLL-private COM layout is opaque to the host.
+// DLL-private COM layout is opaque to the host.
 // Exit 1 when cache-to-data-face copying writes private fields or leaves an
-// unbalanced reference. Keep this executable until the refresh transaction is fixed.
+// unbalanced reference. Covers both cache/face creation orders.
 const fs = require('fs');
 const path = require('path');
 const { bootRenderHarness } = require('../test/render-helper');

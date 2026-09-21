@@ -195,3 +195,45 @@ metafiles and cache mutation together. Existing independent clipboard staging
 already models guest AddRef before publication; it is not interchangeable
 with a live aggregated interface. This diagnostic is the acceptance check
 for private-layout integrity and balanced final guest callbacks.
+
+## Correction: cache owns media; live face borrows
+
+The live face now owns only its entry array and copied FORMATETC metadata.
+Its STGMEDIUM descriptors borrow the canonical cache's media. All external
+references already keep the controlling root alive. Rebuilding or destroying
+the view therefore frees metadata without AddRef/Release on the borrowed
+media; final root cleanup releases the canonical cache once. The redundant
+child-media teardown scan was removed. Independent IDataObject instances
+and clipboard snapshots retain their existing owned-media behavior.
+
+IDataObject::SetData on a live face forwards to IOleCache's existing mutation
+transaction, including real guest AddRef for FALSE and guest retirement for
+replacement. It no longer creates a second media owner invisible to the
+cache. GetData still acquires the caller's own reference/copy through its
+existing public callback path.
+
+The corruption probe now passes both creation orders: the cookie remains
+0x13572468 throughout, refresh makes no guest reference calls, and final
+destruction makes exactly one Release, taking the real reference count to 0.
+The regular callback suite adds opaque-layout IStream/IStorage tests with
+SetData(TRUE/FALSE), owned GetData outputs, independent GetClipboardData
+snapshots that survive root destruction, and Uncache while the face is held.
+137 callback checks pass. Substituting the pre-change source in memory fails
+the new canonical-owner assertion, without editing the worktree.
+
+Static-handler 66, ROT 28 and WordPad text copy/cut/paste 5 checks pass.
+This does not prove allocation-failure atomicity of the descriptor rebuild:
+the existing refresh still ignores individual metadata-copy failures. Nor
+does it solve the general internal-final-release continuation limitation or
+exhaustive callback reentry. Those remain open rather than being hidden by
+the successful opaque-layout probe.
+
+Additional integration finding: `test/test-wordpad-ole-roundtrip.js` fails
+7/9, exporting a 177-byte RTF with two object positions but no WMF picture
+payloads. The same test against a separately compiled pre-change OLE fragment
+also fails 7/9 with the same 177-byte output. The baseline artifact was
+`/private/tmp/wa-ole-before-borrowed.wasm`, compiled with the normal source
+closure and only `09a7b-ole.wat` substituted from HEAD; `WINE_ASSEMBLY_WASM`
+pinned the CLI to it. Thus this patch does not establish picture round-trip
+support, and that failing integration route is the next investigation, not a
+passing result or a failure attributed to these borrowed-media changes.

@@ -5790,12 +5790,13 @@
         (if (local.get $data) (then (call $heap_free (local.get $data))))
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 120))))
         (if (local.get $data) (then (call $heap_free (local.get $data))))
-        ;; The IDataObject face holds copies of the cached media, so it is torn
-        ;; down like any other object we own.
+        ;; The live IDataObject face borrows cache media. Drop its metadata
+        ;; while its owner marker is still present; never release media twice.
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 164))))
         (if (local.get $data)
           (then
             (call $gs32 (i32.add (local.get $obj) (i32.const 164)) (i32.const 0))
+            (call $ole_data_clear_entries (local.get $data))
             ;; Retire privately owned face storage without delegating back
             ;; into the controlling object that is already being destroyed.
             (call $gs32 (i32.add (local.get $data) (i32.const 32)) (i32.const 0))
@@ -6345,6 +6346,9 @@
   ;; references delegate to the owner, so parent/child ownership cannot cycle.
   ;; +12 owned entries, +16 count, +20 capacity. Entry (32 bytes):
   ;; FORMATETC[20], STGMEDIUM[12]. FORMATETC::ptd is independently owned.
+  ;; With +32 nonzero, STGMEDIUM is borrowed from the controlling cache (or
+  ;; its synthesized metafile); only entry/FORMATETC storage belongs to the
+  ;; face. SetData forwards to that cache; GetData returns an owned copy/ref.
   ;; IEnumFORMATETC layout (28 bytes): +0 vtable, +4 refcount, +8 kind=5,
   ;; +12 owned FORMATETC snapshot, +16 count, +20 cursor, +24 owns snapshot.
   ;; Release an interface only when it is one of this runtime's bounded OLE
@@ -6526,7 +6530,9 @@
 
   (func $ole_owned_media_guest_releases_valid (param $obj i32) (result i32)
     (local $kind i32) (local $entries i32) (local $count i32)
-    (local $i i32) (local $medium i32) (local $child i32)
+    (local $i i32) (local $medium i32)
+    (if (call $ole_data_controlling_owner (local.get $obj))
+      (then (return (i32.const 1)))) ;; live-face media belong to the cache
     (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
     (if (i32.eq (local.get $kind) (i32.const 4))
       (then
@@ -6559,15 +6565,14 @@
           (if (i32.eqz (call $ole_medium_guest_releases_valid (local.get $medium)))
             (then (return (i32.const 0))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $cache_scan)))
-        (local.set $child (call $gl32 (i32.add (local.get $obj) (i32.const 164))))
-        (if (local.get $child)
-          (then (return (call $ole_owned_media_guest_releases_valid (local.get $child)))))))
+          (br $cache_scan)))))
     (i32.const 1))
 
   (func $ole_owned_media_has_guest (param $obj i32) (result i32)
     (local $kind i32) (local $entries i32) (local $count i32)
-    (local $i i32) (local $medium i32) (local $child i32)
+    (local $i i32) (local $medium i32)
+    (if (call $ole_data_controlling_owner (local.get $obj))
+      (then (return (i32.const 0))))
     (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
     (if (i32.eq (local.get $kind) (i32.const 4))
       (then
@@ -6575,10 +6580,6 @@
         (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))))
     (if (i32.eq (local.get $kind) (i32.const 6))
       (then
-        (local.set $child (call $gl32 (i32.add (local.get $obj) (i32.const 164))))
-        (if (local.get $child)
-          (then (if (call $ole_owned_media_has_guest (local.get $child))
-            (then (return (i32.const 1))))))
         (if (i32.and
               (call $gl32 (i32.add (local.get $obj) (i32.const 92)))
               (call $ole_medium_has_guest_release (i32.add (local.get $obj) (i32.const 60))))
@@ -6606,8 +6607,9 @@
   (func $ole_owned_media_find_next (param $ctx i32) (result i32)
     (local $obj i32) (local $kind i32) (local $cursor i32)
     (local $entries i32) (local $count i32) (local $medium i32)
-    (local $child i32) (local $base i32)
     (local.set $obj (call $gl32 (i32.add (local.get $ctx) (i32.const 20))))
+    (if (call $ole_data_controlling_owner (local.get $obj))
+      (then (return (i32.const 0))))
     (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
     (local.set $cursor (call $gl32 (i32.add (local.get $ctx) (i32.const 40))))
     (if (i32.eq (local.get $kind) (i32.const 4))
@@ -6648,23 +6650,7 @@
           (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (local.get $cursor))
           (if (call $ole_medium_has_guest_release (local.get $medium))
             (then (return (local.get $medium))))
-          (br $cache_scan)))
-        ;; Continue the same cursor through the privately owned data face.
-        (local.set $base (i32.add (local.get $count) (i32.const 1)))
-        (local.set $child (call $gl32 (i32.add (local.get $obj) (i32.const 164))))
-        (if (local.get $child)
-          (then
-            (local.set $entries (call $gl32 (i32.add (local.get $child) (i32.const 12))))
-            (local.set $count (call $gl32 (i32.add (local.get $child) (i32.const 16))))
-            (block $face_done (loop $face_scan
-              (br_if $face_done (i32.ge_u (i32.sub (local.get $cursor) (local.get $base)) (local.get $count)))
-              (local.set $medium (i32.add (local.get $entries)
-                (i32.add (i32.mul (i32.sub (local.get $cursor) (local.get $base)) (i32.const 32)) (i32.const 20))))
-              (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
-              (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (local.get $cursor))
-              (if (call $ole_medium_has_guest_release (local.get $medium))
-                (then (return (local.get $medium))))
-              (br $face_scan)))))))
+          (br $cache_scan)))))
     (i32.const 0))
 
   (func $ole_owned_media_prepare (param $ctx i32) (param $medium i32)
@@ -8316,6 +8302,16 @@
 
   (func $handle_IDataObject_SetData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $retired_out i32) (local $retired i32) (local $hr i32) (local $data_iface i32)
+    (local $owner i32)
+    (local.set $owner (call $ole_data_controlling_owner (local.get $arg0)))
+    (if (local.get $owner)
+      (then
+        ;; The cache is the sole media owner for every face of this object.
+        ;; Reuse its guest AddRef/retirement transaction and identical ABI.
+        (call $handle_IOleCache_SetData (i32.add (local.get $owner) (i32.const 52))
+          (local.get $arg1) (local.get $arg2) (local.get $arg3)
+          (local.get $arg4) (local.get $name_ptr))
+        (return)))
     (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003)))
       (else
@@ -9678,13 +9674,16 @@
   ;; Drop every format a data object is holding, keeping the array allocation.
   (func $ole_data_clear_entries (param $obj i32)
     (local $entries i32) (local $i i32) (local $entry i32)
+    (local $borrowed i32)
     (if (i32.eqz (local.get $obj)) (then (return)))
+    (local.set $borrowed (call $ole_data_controlling_owner (local.get $obj)))
     (local.set $entries (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i)
         (call $gl32 (i32.add (local.get $obj) (i32.const 16)))))
       (local.set $entry (i32.add (local.get $entries) (i32.shl (local.get $i) (i32.const 5))))
-      (call $ole_release_medium (i32.add (local.get $entry) (i32.const 20)))
+      (if (i32.eqz (local.get $borrowed))
+        (then (call $ole_release_medium (i32.add (local.get $entry) (i32.const 20)))))
       (call $ole_format_free (local.get $entry))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -9820,7 +9819,7 @@
 
   (func $ole_static_refresh_data_object (param $root i32) (result i32)
     (local $child i32) (local $entries i32) (local $count i32) (local $i i32)
-    (local $entry i32) (local $dib i32)
+    (local $entry i32) (local $dib i32) (local $medium i32) (local $medium_w i32)
     (if (i32.eqz (local.get $root)) (then (return (i32.const 0))))
     (local.set $child (call $gl32 (i32.add (local.get $root) (i32.const 164))))
     (if (i32.eqz (local.get $child))
@@ -9830,6 +9829,13 @@
         (call $gs32 (i32.add (local.get $root) (i32.const 164)) (local.get $child))
         (call $gs32 (i32.add (local.get $child) (i32.const 32)) (local.get $root)))
       (else (call $ole_data_clear_entries (local.get $child))))
+    ;; Copy only descriptors into this live view. No second reference is
+    ;; acquired: external face references already retain the owning root.
+    ;; A temporary descriptor lets the ordinary transfer helper consume it
+    ;; without clearing the cache's canonical STGMEDIUM.
+    (local.set $medium (call $heap_alloc (i32.const 12)))
+    (if (i32.eqz (local.get $medium)) (then (return (i32.const 0))))
+    (local.set $medium_w (call $g2w (local.get $medium)))
     (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
     (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
     (block $done (loop $scan
@@ -9839,9 +9845,11 @@
       ;; never filled; it has no bytes to offer and must not be advertised.
       (if (call $gl32 (i32.add (local.get $entry) (i32.const 28)))
         (then
+          (memory.copy (local.get $medium_w)
+            (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
           (drop (call $ole_data_set_entry (local.get $child)
             (i32.add (local.get $entry) (i32.const 8))
-            (i32.add (local.get $entry) (i32.const 28)) (i32.const 0)))
+            (local.get $medium) (i32.const 1)))
           ;; Remember the first cached DIB; the metafile below is built from it.
           (if (i32.and (i32.eqz (local.get $dib))
                 (i32.eq (call $gl16 (i32.add (local.get $entry) (i32.const 8))) (i32.const 8)))
@@ -9851,6 +9859,7 @@
       (br $scan)))
     (if (local.get $dib) (then (drop (call $ole_static_offer_metafile
       (local.get $root) (local.get $child) (local.get $dib)))))
+    (call $heap_free (local.get $medium))
     (local.get $child))
 
   ;; Advertise the cached picture as CF_METAFILEPICT too. Built once and kept on
