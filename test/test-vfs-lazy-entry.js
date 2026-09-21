@@ -378,6 +378,81 @@ test('a fill that never satisfies the read gives up instead of spinning', () => 
   assert.strictEqual(r.error, 30);
 });
 
+test('host-import retries remain bounded after fills and peer reads clear the slot', async () => {
+  const { createFilesystemImports } = require('../lib/filesystem');
+  const vfs = new VirtualFS();
+  let fills = 0, ready = false;
+  vfs.setProviderFile(GUEST, { provider: {
+    size: 64, tryRead: (_off, len) => ready ? new Uint8Array(len).fill(0x5a) : null,
+    fill: async () => { fills++; },
+  } });
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const imports = createFilesystemImports({ getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000 }, vfs });
+  const a = vfs.createFile(GUEST, 0x80000000, 3);
+  const b = vfs.createFile(GUEST, 0x80000000, 3);
+  const read = h => imports.fs_read_file_result(h, 0x400000, 16, 0x401000);
+  for (let round = 1; round <= 3; round++) {
+    for (const h of [a, b]) {
+      assert.strictEqual(read(h), 997);
+      const pending = vfs.pendingRead;
+      assert.strictEqual(pending.attempts, round, 'retry history survives slot retirement/peer reads');
+      assert.strictEqual(await vfs.fillPendingRead(pending), true);
+      assert.strictEqual(vfs.pendingRead, null);
+    }
+  }
+  for (const h of [a, b]) {
+    assert.strictEqual(read(h), 30, 'unsatisfied fills eventually report ERROR_READ_FAULT');
+    assert.strictEqual(vfs.getOpenFile(h).pos, 0);
+    assert.strictEqual(new DataView(memory.buffer).getUint32(0x13000, true), 0);
+    assert.strictEqual(imports.fs_read_pending(), 2);
+  }
+  assert.strictEqual(fills, 6, 'three fills per handle, no fourth fill');
+  ready = true;
+  assert.strictEqual(read(a), 0, 'a new call can recover after the reported failure');
+  assert.strictEqual(new DataView(memory.buffer).getUint32(0x13000, true), 16);
+  vfs.setFilePointer(a, 0, 0);
+  ready = false;
+  assert.strictEqual(read(a), 997);
+  assert.strictEqual(vfs.pendingRead.attempts, 1, 'successful progress resets retry history');
+});
+
+test('retry history survives cached prefixes but isolates ranges and file identities', async () => {
+  const vfs = new VirtualFS();
+  const provider = { size: 64,
+    tryRead: (off, len) => off === 0 ? new Uint8Array(len) : null,
+    fill: async () => {},
+  };
+  vfs.setProviderFile(GUEST, { provider });
+  const h = vfs.createFile(GUEST, 0x80000000, 3);
+  const buf = new Uint8Array(16);
+  for (let round = 1; round <= 3; round++) {
+    vfs.setFilePointer(h, 0, 0); // scatter retry replays its cached prefix
+    assert.strictEqual(vfs.readFile(h, buf, 8).bytesRead, 8);
+    const pending = vfs.readFile(h, buf, 8).pending;
+    assert.strictEqual(pending.attempts, round);
+    await vfs.fillPendingRead(pending);
+  }
+  const peer = vfs.readFile(vfs.duplicateFileHandle(h, 0, false, 2), buf, 8).pending;
+  assert.strictEqual(peer.attempts, 1, 'a duplicate has its own retry lifetime');
+  vfs.pendingRead = peer;
+  assert.strictEqual(vfs.readFile(h, buf, 8).error, 30);
+  assert.strictEqual(vfs.pendingRead, peer, 'exhaustion does not clear a peer');
+  assert.strictEqual(vfs.readFile(h, buf, 8).pending.attempts, 1,
+    'report the failure once, then permit a new call');
+  assert.strictEqual(vfs.readFile(h, buf, 16).pending.attempts, 1,
+    'a different requested range starts fresh');
+  vfs.setProviderFile(GUEST, { provider });
+  assert.strictEqual(vfs.readFile(h, buf, 16).pending.attempts, 1,
+    'replacement entry does not inherit old retry history');
+  vfs.closeHandle(h);
+  vfs._nextHandle = h;
+  const reused = vfs.createFile(GUEST, 0x80000000, 3);
+  assert.strictEqual(reused, h);
+  vfs.setFilePointer(reused, 8, 0);
+  assert.strictEqual(vfs.readFile(reused, buf, 16).pending.attempts, 1);
+});
+
 test('the pending record names the handle and position it belongs to', () => {
   const vfs = lazyVfs({ sync: false });
   const a = vfs.createFile(GUEST, 0x80000000, 3);

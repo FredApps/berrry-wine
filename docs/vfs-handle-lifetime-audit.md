@@ -417,3 +417,31 @@ thread-owned pending registry; simply removing the clears does not solve it.
 Verification: final shared-tree lazy suite 41/41, VFS 32/32, host/CLI/filesystem
 syntax and diff checks pass. The first regression run failed before the host
 edits, as recorded above. No new WASM/import changes or artifact rebuild.
+
+## Lazy retry-budget checkpoint — 2026-09-21
+
+The existing three-miss safeguard took its history from `pendingRead`, but the
+ReadFile import and fill completion both clear that scheduler slot. Real
+import/fill/retry cycles therefore restarted at attempt one indefinitely when
+a provider resolved its fill without making the range available. The earlier
+direct-VFS test retained the slot manually and did not exercise this lifecycle.
+
+Retry history now lives in a WeakMap keyed by the open-file record, with entry,
+provider, position and length identifying the missing range. Peer reads and slot
+retirement do not reset it. Cached-prefix replay preserves a later missing
+range's history; successful progress at that range, a consumed fill failure,
+exhaustion or close retires it. Replacement entries, different ranges, duplicate
+handles and numeric handle reuse do not inherit another operation's budget.
+Exhaustion reports ERROR_READ_FAULT once instead of also latching a second
+failure for the next call. This is the emulator's provider safeguard, not a
+claim that Windows 98 prescribes three retries.
+
+The new import-level regression failed before the fix (`1 !== 2` at the second
+retry). It alternates two handles through actual `fs_read_file_result` calls and
+awaited fills, checks the error/count/cursor and later recovery. Additional VFS
+checks cover cached prefixes, duplicate/reused handles, replacement and range
+changes. This does not fix shared scheduler request selection or establish real
+Worker coverage; no WASM imports/layout change and no performance claim.
+
+Verification: shared-tree lazy-provider suite 43/43, VFS 32/32, filesystem
+adoption and syntax/diff checks pass. No full artifact rebuild was needed.
