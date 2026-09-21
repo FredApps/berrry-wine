@@ -25,6 +25,14 @@
 // An id in none of the three (an imported program, a debug-only entry) keeps
 // the original behaviour: try the PNG, fall back to parsing the executable.
 //
+// An executable with no icon resource may name one in the registry instead:
+// `iconImage: { url, crop: [x, y, w, h] }`, a picture that ships in the app's
+// own distribution (Quake II's has no .rsrc at all, but its manual carries
+// id's emblem). The crop must be a square whose side is a whole multiple of
+// 32; it is box-averaged down in JS so the PNG is a function of the source
+// bytes and not of any platform's resampler, which is what keeps --check
+// stable. Skia only decodes, at 1:1.
+//
 // Scope is the apps the desktop *grid* can show: DESKTOP_APPS plus, on a LAN
 // host, LOCAL_CANDIDATE_APPS. DEBUG_ONLY_APPS are deliberately absent — they
 // appear only in the ?debug <select>, which has no images in it and so never
@@ -47,12 +55,42 @@ const expectedNames = new Set();
 const manifest = { icons: [], noIcon: [], runtime: [] };
 let failures = 0;
 
+async function iconFromImage(spec) {
+  const { loadImage, Canvas } = require('skia-canvas');
+  const [x, y, w, h] = spec.crop;
+  const k = w / 32;
+  if (w !== h || !Number.isInteger(k) || k < 1) {
+    throw new Error(`iconImage crop must be a square, a whole multiple of 32 (got ${w}x${h})`);
+  }
+  const img = await loadImage(fs.readFileSync(path.join(ROOT, spec.url)));
+  const cv = new Canvas(w, h);
+  const ctx = cv.getContext('2d');
+  ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+  const src = ctx.getImageData(0, 0, w, h).data;
+  const pixels = new Uint8Array(32 * 32 * 4);
+  for (let oy = 0; oy < 32; oy++) {
+    for (let ox = 0; ox < 32; ox++) {
+      for (let c = 0; c < 4; c++) {
+        let sum = 0;
+        for (let dy = 0; dy < k; dy++) {
+          for (let dx = 0; dx < k; dx++) {
+            sum += src[((oy * k + dy) * w + (ox * k + dx)) * 4 + c];
+          }
+        }
+        pixels[(oy * 32 + ox) * 4 + c] = Math.round(sum / (k * k));
+      }
+    }
+  }
+  return { w: 32, h: 32, pixels };
+}
+
 function encodePng(icon) {
   const png = new PNG({ width: icon.w, height: icon.h });
   png.data.set(icon.pixels);
   return PNG.sync.write(png);
 }
 
+(async () => {
 for (const [id] of listed) {
   const exe = APPS[id] && APPS[id].exe;
   if (APPS[id] && APPS[id].preExtractIcon === false) {
@@ -66,7 +104,8 @@ for (const [id] of listed) {
     failures++;
     continue;
   }
-  const icon = extractIconRgba(fs.readFileSync(exePath));
+  const icon = extractIconRgba(fs.readFileSync(exePath))
+    || (APPS[id].iconImage ? await iconFromImage(APPS[id].iconImage) : null);
   if (!icon) {
     console.log(`NO ICON      ${id}: desktop keeps its fallback glyph`);
     manifest.noIcon.push(id);
@@ -122,3 +161,4 @@ if (CHECK) {
   console.log(`PASS  ${expectedNames.size} pre-extracted desktop icons are current, ` +
     `manifest covers ${manifest.icons.length + manifest.noIcon.length + manifest.runtime.length} apps`);
 }
+})().catch(e => { console.error(e); process.exit(1); });
