@@ -255,6 +255,14 @@ const PUBLISHABLE_OUTSIDE_BINARIES = [
   // data. The Diablo manual explicitly describes installing that shareware
   // copy on other systems. Ship only the files the desktop registry mounts.
   'test/binaries/candidates/diablo-shareware/installed/',
+  // Quake II demo: id's "Limited Use Software Demo License" §3 permits free
+  // electronic distribution so long as the license accompanies the software,
+  // and the registry mounts DOCS/license.txt for exactly that. Every file is
+  // an unmodified extraction of id's q2-314-demo-x86.exe (MD5
+  // 4d1cd4618e80a38db59304132ea0856c, source in lib/quake2-demo-source.txt);
+  // only the files the registry mounts ship, so the 3Dfx/PowerVR drivers and
+  // the HTML manual stay behind.
+  'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/',
   'packages/freeware/dxball/',
   'packages/freeware/blobby-volley/',
 ];

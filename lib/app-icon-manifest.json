@@ -50,6 +50,7 @@
     "pyramid",
     "qblackjack",
     "qbob",
+    "quake2_demo",
     "rct",
     "regedit",
     "reversi",
@@ -73,7 +74,6 @@
     "cashcow",
     "curse_monkey_island_demo",
     "heaven7",
-    "quake2_demo",
     "quake2_demo_installer",
     "simgolf_demo"
   ],
