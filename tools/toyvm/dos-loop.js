@@ -326,6 +326,23 @@ class CodeCache {
       const mem = this.vm.mem;
       let ok = true;
       for (const prog of plan.progs) if (!prog.live) { ok = false; break; }
+      // ...and no program has been compiled over the range SINCE. A plan
+      // patches exactly the programs that covered the range when it was made,
+      // so a newer one -- a second entry traced through the same bytes, or the
+      // recompile a tree-fold install does -- would keep the old operand while
+      // the plan reported success. BRW's DOS extender is what this cost: its
+      // real-mode thunk patches the vector byte of an `int NN` before each
+      // call, the new copy went on issuing the previous `int 10h` where the
+      // guest had written `int 21h`, the open of BRW.EXE never happened and
+      // the demo died on a black screen. The plan's programs are all live and
+      // all still cover the range, so an equal count means an equal set.
+      if (ok) {
+        const now = new Set();
+        for (let p = lo >>> 4; p <= hi >>> 4; p++) {
+          for (const prog of (this.byPara.get(p) || [])) if (prog.live) now.add(prog);
+        }
+        if (now.size !== plan.progs.length) ok = false;
+      }
       const { at, byte } = plan;
       for (let i = 0; ok && i < at.length; i++) if (mem[at[i]] !== byte[i]) ok = false;
       if (ok) {

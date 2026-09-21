@@ -12,10 +12,11 @@
 // the arena holds up to their operand words, and rewrites just those words
 // (CodeCache.repairOperands).
 //
-// Three synthetic loops, each patching one operand kind ITER times: an imm8,
-// an imm16 and a ModRM disp16. Every one must print the right sum, keep the
-// arena at the size of one program, report ~ITER breaks repaired and never
-// promote a paragraph to volatile.
+// Four synthetic loops, each patching one operand ITER times: an imm8, an
+// imm16, a ModRM disp16, and an imm8 whose bytes two live programs cover (the
+// remembered plan must not patch only the one it first saw). Every one must
+// print the right sum, keep the arena small, report ~ITER breaks repaired and
+// never promote a paragraph to volatile.
 
 const assert = require('assert');
 const fs = require('fs');
@@ -89,6 +90,54 @@ const CASES = {
       return hex4(bx);
     },
   },
+  // The imm8 loop run twice over the SAME BYTES through two different code
+  // segments: once as CS:0109, then again as (CS+1):00F9, reached by a `retf`.
+  // A program is keyed by its code base, so the second pass compiles a
+  // second program over the patched `add` while the first is still live --
+  // and the first pass has already left a plan naming only the first. A plan
+  // that trusted its own list went on patching that one while the loop ran
+  // the other's stale imm8. BRW's DOS extender is the real case: its int
+  // thunk is real-mode 0110h and protected-mode selector 20h (base 1100h),
+  // and the stale copy kept issuing `int 10h` where the guest had written 21h.
+  alias: {
+    N1: 100,
+    program() {
+      const b = []; const w = (...x) => b.push(...x);
+      const N1 = this.N1;
+      w(0xB9, N1 & 0xFF, N1 >> 8);       // 0100 mov cx,N1
+      w(0x31, 0xDB);                     // 0103 xor bx,bx
+      w(0x31, 0xD2);                     // 0105 xor dx,dx
+      w(0x0E);                           // 0107 push cs
+      w(0x07);                           // 0108 pop es        (the store's segment, both passes)
+      w(0x88, 0xC8);                     // 0109 mov al,cl
+      w(0x26, 0xA2, 0x13, 0x01);         // 010B mov es:[0113],al
+      // `jmp $+2` ends the block, so the `add` is fetched after the store --
+      // an `es:` store into the same block runs the words already decoded.
+      w(0xEB, 0x00);                     // 010F jmp $+2
+      w(0x83, 0xC3, 0x00);               // 0111 add bx,imm8   (imm at 0113)
+      w(0xE2, 0xF3);                     // 0114 loop 0109
+      w(0x42);                           // 0116 inc dx
+      w(0x83, 0xFA, 0x01);               // 0117 cmp dx,1
+      w(0x75, 0x0C);                     // 011A jne 0128
+      w(0xB9, ITER & 0xFF, ITER >> 8);   // 011C mov cx,ITER
+      w(0x0E);                           // 011F push cs
+      w(0x58);                           // 0120 pop ax
+      w(0x40);                           // 0121 inc ax
+      w(0x50);                           // 0122 push ax
+      w(0xB8, 0xF9, 0x00);               // 0123 mov ax,00F9   (0109 - 10h)
+      w(0x50);                           // 0126 push ax
+      w(0xCB);                           // 0127 retf
+      tail(w);                           // 0128
+      return Buffer.from(b);
+    },
+    expected() {
+      const s8 = (i) => (i & 0xFF) << 24 >> 24;
+      let bx = 0;
+      for (let i = this.N1; i >= 1; i--) bx = (bx + s8(i)) & 0xFFFF;
+      for (let i = ITER; i >= 1; i--) bx = (bx + s8(i)) & 0xFFFF;
+      return hex4(bx);
+    },
+  },
   // disp16 of `mov al,[si+disp16]` <- 0200h + (CX & FFh), over a table at
   // 0200h holding table[i] = i; the sum lands in BL.
   disp16: {
@@ -140,8 +189,11 @@ for (const [name, c] of Object.entries(CASES)) {
   assert.ok(+m[2] >= ITER - 5, `${name}: expected ~${ITER} repairs, got ${m[2]} of ${m[1]} breaks`);
   // One site, one range: the first repair walks the decode and leaves a
   // plan, every later one is the plan re-read off memory (CYCLE's ISR takes
-  // 30k of these; the walk cost more than the compile it replaced).
-  assert.ok(+m[3] >= +m[2] - 2, `${name}: expected the repairs to come from a remembered plan, got ${m[3]} of ${m[2]}`);
+  // 30k of these; the walk cost more than the compile it replaced). Every
+  // program compiled over the range after the plan was made -- `alias`'s
+  // second code base, or a tree-fold install's recompile under
+  // TOYVM_TREE_FOLD=1 -- costs one more walk, so allow a few.
+  assert.ok(+m[3] >= +m[2] - 4, `${name}: expected the repairs to come from a remembered plan, got ${m[3]} of ${m[2]}`);
   assert.ok(!/volatile paragraph/.test(log), `${name}: a paragraph went volatile:\n${log}`);
   assert.ok(arenaKb(log) <= 8, `${name}: the arena grew to ${arenaKb(log)}KB`);
   summary.push(`${name} ${screen(log)} (${m[2]}/${m[1]} breaks repaired, ${arenaKb(log)}KB)`);
