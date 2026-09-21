@@ -19,6 +19,13 @@ const ROOT = path.resolve(__dirname, '..');
 
 // Text file extensions (served as-is)
 const TEXT_EXTS = new Set(['.html', '.js', '.json', '.wat', '.css', '.md', '.webmanifest', '.ini', '.xml']);
+// lib/ also ships .txt: apps mount notes from there (the Quake II demo's
+// source note). Not the root, where .txt is the agents' message board.
+const SUBDIR_TEXT_EXTS = { lib: new Set([...TEXT_EXTS, '.txt']), src: TEXT_EXTS };
+function shipsAsSiteText(rel) {
+  const exts = SUBDIR_TEXT_EXTS[rel.split('/')[0]];
+  return !!exts && exts.has(path.extname(rel));
+}
 
 // Skip these root text files. The Markdown entries are working notes for
 // the people and agents in this tree (an outreach plan, a TODO snapshot, a
@@ -170,10 +177,10 @@ function collectTextFiles() {
     }
   }
   // Subdirectories with text content (lib/, src/)
-  for (const subdir of ['lib', 'src']) {
+  for (const subdir of Object.keys(SUBDIR_TEXT_EXTS)) {
     const dir = path.join(ROOT, subdir);
     if (!fs.existsSync(dir)) continue;
-    const found = walk(dir, subdir, (name) => TEXT_EXTS.has(path.extname(name)));
+    const found = walk(dir, subdir, (name) => SUBDIR_TEXT_EXTS[subdir].has(path.extname(name)));
     for (const f of found)
       files.push({ name: f.rel, content: fs.readFileSync(f.full, 'utf-8') });
   }
@@ -946,5 +953,6 @@ module.exports = {
   SERVER_MAX_FILE_SIZE,
   encodeBinaryBytes,
   desktopAssetPaths,
+  shipsAsSiteText,
   neverPublish,
 };
