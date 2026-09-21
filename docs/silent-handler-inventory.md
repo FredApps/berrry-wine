@@ -406,3 +406,26 @@ ring and heap-backed overflow across all sixteen execution slots. Filtered
 retrieval, destruction purge, modal dispatch, wake predicates, slot reuse and
 forced thread exit all address that same queue, so authentic QBob's
 SetMessageQueue(96) cannot conceal an emulator-only ceiling or split-order bug.
+
+2026-09-21: 253 -> 252 manual handlers; metadata remains 22. `_onexit`
+previously returned its argument without registering anything. It now delegates
+to the existing `crt_atexit_register` registry and returns the callback pointer
+only on success, NULL on failure, preserving cdecl caller cleanup. This follows
+Microsoft's [_onexit contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/onexit-onexit-m?view=msvc-170).
+The existing termination dispatcher ignores callback return values and drains
+the mixed atexit/_onexit registry in LIFO order before host termination.
+
+`test/test-diablo-runtime-apis.js` failed before the fix because registration
+count remained zero. It now covers NULL rejection, successful pointer return,
+registry-capacity failure, cdecl stack delta, mixed LIFO dispatch and delayed
+host exit. The capacity failure uses test-only registry globals to reach the
+bounded-growth rejection; it is not a heap-exhaustion test. Callback dispatch
+targets are inspected by the harness, not executed guest callback bodies.
+The focused test, silent-handler pin and handler-ESP gate pass.
+
+This is the process termination registry, not completion of DLL-local
+`__dllonexit` registration/unload dispatch or `_cexit`'s returning cleanup path.
+Those remain open. The quiet-handler census also includes valid state queries
+(for example OleIsCurrentClipboard already compares the actual non-null owner),
+so its total must not be described as that many proven unconditional-success
+bugs. No classifier relaxation or arbitrary exclusion was used for this drop.

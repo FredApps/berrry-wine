@@ -1205,12 +1205,13 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) (return)
   )
 
-  ;; 269: _onexit(func) — cdecl; accept the shutdown registration.
-  ;; The emulator tears down the whole guest process at exit, so there is no
-  ;; process-global CRT state left for these callbacks to release. Returning
-  ;; the supplied function matches successful CRT registration.
+  ;; 269: _onexit(func) — cdecl; shares the CRT's LIFO atexit registry.
+  ;; Unlike atexit, return the function pointer on success and NULL on failure.
+  ;; Callback return values are ignored by the termination dispatcher.
   (func $handle__onexit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (local.get $arg0) (i32.const 0)
+        (i32.eqz (call $crt_atexit_register (local.get $arg0)))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
