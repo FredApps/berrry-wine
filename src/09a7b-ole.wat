@@ -9877,14 +9877,16 @@
   (func $ole_static_refresh_data_object (param $root i32) (result i32)
     (local $child i32) (local $entries i32) (local $count i32) (local $i i32)
     (local $entry i32) (local $dib i32) (local $medium i32) (local $medium_w i32)
-    (local $old_picture i32)
+    (local $old_picture i32) (local $created i32) (local $hr i32)
     (if (i32.eqz (local.get $root)) (then (return (i32.const 0))))
     (local.set $child (call $gl32 (i32.add (local.get $root) (i32.const 164))))
     (if (i32.eqz (local.get $child))
       (then
         (local.set $child (call $ole_create_data_object (i32.const 0) (i32.const 0)))
         (if (i32.eqz (local.get $child)) (then (return (i32.const 0))))
-        (call $gs32 (i32.add (local.get $root) (i32.const 164)) (local.get $child))
+        ;; Do not publish a lazily constructed face until all descriptors and
+        ;; its derived presentation exist. A failed QI must be retryable.
+        (local.set $created (i32.const 1))
         (call $gs32 (i32.add (local.get $child) (i32.const 32)) (local.get $root)))
       (else (call $ole_data_clear_entries (local.get $child))))
     ;; This is a cache mutation (repeated QI returns the existing face without
@@ -9897,8 +9899,9 @@
     ;; acquired: external face references already retain the owning root.
     ;; A temporary descriptor lets the ordinary transfer helper consume it
     ;; without clearing the cache's canonical STGMEDIUM.
+    (block $failed
     (local.set $medium (call $heap_alloc (i32.const 12)))
-    (if (i32.eqz (local.get $medium)) (then (return (i32.const 0))))
+    (br_if $failed (i32.eqz (local.get $medium)))
     (local.set $medium_w (call $g2w (local.get $medium)))
     (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
     (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
@@ -9911,9 +9914,10 @@
         (then
           (memory.copy (local.get $medium_w)
             (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
-          (drop (call $ole_data_set_entry (local.get $child)
+          (local.set $hr (call $ole_data_set_entry (local.get $child)
             (i32.add (local.get $entry) (i32.const 8))
             (local.get $medium) (i32.const 1)))
+          (br_if $failed (local.get $hr))
           ;; Remember the first cached DIB; the metafile below is built from it.
           (if (i32.and (i32.eqz (local.get $dib))
                 (i32.eq (call $gl16 (i32.add (local.get $entry) (i32.const 8))) (i32.const 8)))
@@ -9921,10 +9925,26 @@
               (call $gl32 (i32.add (local.get $entry) (i32.const 32))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (if (local.get $dib) (then (drop (call $ole_static_offer_metafile
-      (local.get $root) (local.get $child) (local.get $dib)))))
+    (if (local.get $dib) (then
+      (br_if $failed (call $ole_static_offer_metafile
+        (local.get $root) (local.get $child) (local.get $dib)))))
     (call $heap_free (local.get $medium))
-    (local.get $child))
+    (if (local.get $created)
+      (then (call $gs32 (i32.add (local.get $root) (i32.const 164)) (local.get $child))))
+    (return (local.get $child)))
+    ;; Descriptors borrow media from the canonical cache. Keep that owner
+    ;; attached while clearing them; ordinary Release would release the root.
+    (if (local.get $medium) (then (call $heap_free (local.get $medium))))
+    (call $ole_data_clear_entries (local.get $child))
+    (local.set $old_picture (call $gl32 (i32.add (local.get $root) (i32.const 168))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 168)) (i32.const 0))
+    (call $ole_free_metafile_picture (local.get $old_picture))
+    (if (local.get $created)
+      (then
+        (local.set $entries (call $gl32 (i32.add (local.get $child) (i32.const 12))))
+        (if (local.get $entries) (then (call $heap_free (local.get $entries))))
+        (call $heap_free (local.get $child))))
+    (i32.const 0))
 
   ;; Advertise the cached picture as CF_METAFILEPICT too. The root owns the
   ;; derived presentation until a cache mutation invalidates it or it dies.
@@ -10016,12 +10036,13 @@
           (i32.eq (local.get $data1) (i32.const 0x0000010D))
           (i32.eq (local.get $data1) (i32.const 0x00000127)))
       (then (local.set $iface (i32.add (local.get $root) (i32.const 56)))))
-    ;; IID_IDataObject is served by a separate object, so the reference the
-    ;; caller is handed belongs to that object and not to the handler.
+    ;; IID_IDataObject has a separate face but delegates its reference to the
+    ;; controlling root. Allocation failure is not an unsupported interface.
     (local.set $owner (local.get $root))
     (if (i32.eq (local.get $data1) (i32.const 0x0000010E))
       (then
         (local.set $iface (call $ole_static_data_object (local.get $root)))
+        (if (i32.eqz (local.get $iface)) (then (return (i32.const 0x8007000E))))
         (local.set $owner (local.get $iface))))
     (if (i32.eqz (local.get $iface)) (then (return (i32.const 0x80004002))))
     (call $gs32 (local.get $out) (local.get $iface))

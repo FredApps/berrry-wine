@@ -516,3 +516,35 @@ coverage, not Safari or performance evidence.
 Other mapping modes, cached EMF drawing and transactional allocation-failure
 handling during live data-face refresh remain open. No full-build success is
 claimed by these focused tests.
+
+## Initial IDataObject allocation failures — rollback before publication
+
+The first query used to attach the child before constructing its descriptors,
+drop descriptor/picture construction failures, and leave later queries returning
+the incomplete child. Failing the initial child allocation also incorrectly
+returned E_NOINTERFACE. Microsoft's [guidance on E_NOINTERFACE](https://devblogs.microsoft.com/oldnewthing/20061208-00/?p=28783)
+distinguishes allocation failure from an unsupported interface; a resource
+shortage must not change the object's supported interface set.
+
+Initial construction now publishes root+164 only after every descriptor and
+derived picture succeeds. Failure clears borrowed descriptors without releasing
+canonical cache media, retires the derived picture and unpublished child, leaves
+the output null, and reports E_OUTOFMEMORY. Descriptor insertion and picture
+construction results are no longer dropped. Already-published faces retain
+their identity; a failed refresh clears partial descriptors, but does not yet
+roll back the canonical mutation or automatically retry the refresh.
+
+The static-handler test injects a single failure at each of the **nine OLE heap
+allocations** observed while building a DIB-backed face (test-only source
+instrumentation, no production allocator hook). Before the fix it passed only
+68/85 checks: failures left partial faces and retries lost formats. After the
+fix all 85 pass, including null output, unchanged root reference count/cache
+count, unpublished child/picture pointers and successful retries exposing both
+DIB and WMF. This is not a sweep of allocations inside the GDI allocator or a
+claim that all live-cache mutations are transactional.
+
+Final verification: static-handler **85/85**, guest callback **164/164**, public
+metafile **14/14**, and fresh-process WordPad picture roundtrip **12/12** pass
+(275 checks). WordPad still reopens both pictures with 752 red and 736 blue
+pixels. All four test processes terminated successfully; no full-build or new
+browser verification is claimed for this allocation-failure slice.

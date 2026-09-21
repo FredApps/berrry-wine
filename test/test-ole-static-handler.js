@@ -10,7 +10,25 @@ const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
 
 async function main() {
-  const wasm = compileSrcWasm();
+  // Fail exactly one OLE allocation, without exhausting unrelated arenas or
+  // adding a production fault-injection branch to the allocator.
+  const wasm = compileSrcWasm((file, source) => {
+    if (file === '09a7b-ole.wat') return source.replaceAll('(call $heap_alloc ', '(call $test_ole_alloc ');
+    if (file === '13-exports.wat') return source + `
+      (global $test_ole_alloc_count (mut i32) (i32.const 0))
+      (global $test_ole_alloc_fail (mut i32) (i32.const 0))
+      (func (export "ole_alloc_arm") (param $nth i32)
+        (global.set $test_ole_alloc_count (i32.const 0))
+        (global.set $test_ole_alloc_fail (local.get $nth)))
+      (func (export "ole_alloc_count") (result i32) (global.get $test_ole_alloc_count))
+      (func $test_ole_alloc (param $size i32) (result i32)
+        (global.set $test_ole_alloc_count (i32.add (global.get $test_ole_alloc_count) (i32.const 1)))
+        (if (i32.eq (global.get $test_ole_alloc_count) (global.get $test_ole_alloc_fail))
+          (then (return (i32.const 0))))
+        (call $heap_alloc (local.get $size)))
+    `;
+    return source;
+  });
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const imports = createHostImports({ getMemory: () => memory.buffer, renderer: null, resourceJson: {} });
   imports.host.memory = memory;
@@ -485,6 +503,54 @@ async function main() {
     dv.getUint32(wa(testSite) + 16, true) === 2);
   check('caller client-site reference remains independently releasable', e.test_ole_release(testSite) === 0);
   check('caller lockbytes reference remains independently releasable', e.test_ole_release(lockbytes) === 0);
+
+  const dataIid = alloc(16), dataOut = alloc(4), pictureFormat = alloc(20), pictureMedium = alloc(12);
+  [[dataIid, 16], [dataOut, 4], [pictureFormat, 20], [pictureMedium, 12]]
+    .forEach(([p, size]) => u8.fill(0, wa(p), wa(p) + size));
+  dv.setUint32(wa(dataIid), 0x10e, true);
+  dv.setUint32(wa(dataIid) + 8, 0xc0, true);
+  dv.setUint32(wa(dataIid) + 12, 0x46000000, true);
+  [8, 0, 1, -1, 1].forEach((v, i) => dv.setUint32(wa(pictureFormat) + i * 4, v, true));
+  const dib = alloc(44);
+  u8.fill(0, wa(dib), wa(dib) + 44);
+  [[0, 40], [4, 1], [8, 1], [12, 0x00180001], [20, 4], [40, 0xff0000]]
+    .forEach(([offset, value]) => dv.setUint32(wa(dib) + offset, value, true));
+  dv.setUint32(wa(pictureMedium), 1, true);
+  dv.setUint32(wa(pictureMedium) + 4, dib, true);
+  const fixture = () => {
+    const root = e.test_ole_create_static_handler(0) >>> 0;
+    if (e.test_ole_cache_set_data(root, pictureFormat, pictureMedium, 0)) throw Error('cache fixture failed');
+    return root;
+  };
+  const baseline = fixture();
+  e.ole_alloc_arm(0);
+  check('baseline initial data face includes cached DIB and synthesized WMF',
+    e.test_ole_static_query(baseline, dataIid, dataOut) === 0 &&
+    e.test_ole_data_count(dv.getUint32(wa(dataOut), true)) === 2);
+  const allocations = e.ole_alloc_count();
+  if (allocations < 1) throw Error('allocation injection did not observe construction');
+  e.test_ole_release(dv.getUint32(wa(dataOut), true));
+  e.test_ole_release(baseline);
+  for (let nth = 1; nth <= allocations; nth++) {
+    e.ole_alloc_arm(0);
+    const root = fixture();
+    e.ole_alloc_arm(nth);
+    const hr = e.test_ole_static_query(root, dataIid, dataOut) >>> 0;
+    e.ole_alloc_arm(0);
+    const returned = dv.getUint32(wa(dataOut), true);
+    check(`initial data-face allocation ${nth} fails without publishing partial state`,
+      hr === 0x8007000e && returned === 0 &&
+      dv.getUint32(wa(root) + 164, true) === 0 &&
+      dv.getUint32(wa(root) + 168, true) === 0 &&
+      dv.getUint32(wa(root) + 4, true) === 1 && e.test_ole_cache_count(root) === 1);
+    if (hr === 0 && returned) e.test_ole_release(returned);
+    check(`initial data-face allocation ${nth} can retry with both formats`,
+      e.test_ole_static_query(root, dataIid, dataOut) === 0 &&
+      e.test_ole_data_count(dv.getUint32(wa(dataOut), true)) === 2);
+    e.test_ole_release(dv.getUint32(wa(dataOut), true));
+    e.test_ole_release(root);
+  }
+  [dataIid, dataOut, pictureFormat, pictureMedium, dib].forEach(p => e.guest_free(p));
 
   console.log(`\n${pass}/${pass + fail} checks passed`);
   if (fail) process.exit(1);
