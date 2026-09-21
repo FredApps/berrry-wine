@@ -67,6 +67,63 @@ test('handle allocation failure cannot truncate files and still honors duplicate
   assert.strictEqual(vfs.getOpenFile(h), null);
 });
 
+test('file data access is enforced before bytes, providers or cursors change', () => {
+  const vfs = makeVFS({ 'c:\\rights.bin': 4 });
+  const bytes = Uint8Array.from([9, 9]);
+  for (const access of [0, 0x80000000, 0x40000000, 0xc0000000, 0x10000000, 1, 2, 3, 0x80, 0x100]) {
+    const h = vfs.createFile('c:\\rights.bin', access, 3);
+    assert(h);
+    assert.strictEqual(vfs.getFileSize(h), 4, 'metadata remains queryable');
+    for (const count of [0, 2]) {
+      vfs.setFilePointer(h, 1, 0);
+      const dest = Uint8Array.from([7, 7]);
+      const read = vfs.readFile(h, dest, count);
+      if (access & 0x90000001) assert(read.ok);
+      else {
+        assert.strictEqual(read.error, 5);
+        assert.deepStrictEqual([...dest], [7, 7]);
+        assert.strictEqual(vfs.getOpenFile(h).pos, 1);
+      }
+      vfs.setFilePointer(h, 1, 0);
+      const before = [...vfs.files.get('c:\\rights.bin').data];
+      const write = vfs.writeFile(h, bytes, count);
+      if (access & 0x50000002) assert(write.ok);
+      else {
+        assert.strictEqual(write.error, 5);
+        assert.deepStrictEqual([...vfs.files.get('c:\\rights.bin').data], before);
+        assert.strictEqual(vfs.getOpenFile(h).pos, 1);
+      }
+    }
+  }
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const imports = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000 } });
+  vfs.setProviderFile('c:\\no-data.bin', { provider: { size: 8,
+    tryRead: () => { throw Error('unauthorized provider access'); }, fill: async () => {},
+  } });
+  const query = vfs.createFile('c:\\no-data.bin', 0, 3);
+  for (const count of [0, 2]) {
+    assert.strictEqual(imports.fs_read_file_result(query, 0xffffffff, count, 0), 5);
+    assert.strictEqual(imports.fs_read_pending(), 0);
+    assert.strictEqual(imports.fs_write_file_result(query, 0xffffffff, count, 0), 5);
+  }
+});
+
+test('append-only writes cannot overwrite and null writes cannot extend', () => {
+  const vfs = makeVFS({ 'c:\\append.bin': 4 });
+  const h = vfs.createFile('c:\\append.bin', 4, 3);
+  assert(vfs.writeFile(h, Uint8Array.from([9]), 1).ok);
+  assert.deepStrictEqual([...vfs.files.get('c:\\append.bin').data], [0, 0, 0, 0, 9]);
+  assert.strictEqual(vfs.getOpenFile(h).pos, 5);
+  for (const access of [4, 0x40000000]) {
+    const alias = vfs.createFile('c:\\append.bin', access, 3);
+    vfs.setFilePointer(alias, 100, 0);
+    assert(vfs.writeFile(alias, new Uint8Array(0), 0).ok);
+    assert.strictEqual(vfs.getOpenFile(alias).pos, 100);
+    assert.strictEqual(vfs.getFileSize(alias), 5);
+  }
+});
+
 test('closed file handles reject I/O and metadata without harming live duplicates', () => {
   const vfs = makeVFS({ 'c:\\lifetime.bin': 4 });
   const h = vfs.createFile('c:\\lifetime.bin', 0xc0000000, 3);
@@ -389,7 +446,7 @@ test('read-only drive permits reads and rejects every write path', () => {
   assert.strictEqual(vfs.createFile('D:\\manual.hlp', 0x40000000, 3), 0,
     'GENERIC_WRITE OPEN_EXISTING must fail');
   assert.deepStrictEqual(vfs.writeFile(readHandle, Uint8Array.of(1), 1),
-    { ok: false, bytesWritten: 0, error: 19 }, 'writes through a read handle on protected media must report ERROR_WRITE_PROTECT');
+    { ok: false, bytesWritten: 0, error: 5 }, 'a read-only handle denies writes before checking the medium');
   assert.strictEqual(vfs.setFileAttributes('D:\\manual.hlp', 0x20), false);
   assert.strictEqual(vfs.deleteFile('D:\\manual.hlp'), false);
   assert.strictEqual(vfs.createDirectory('D:\\cache'), false);

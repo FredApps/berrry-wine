@@ -288,6 +288,34 @@ const extraWat = `
     vfs.setDriveReadOnly('c', false);
   }
   console.log('PASS  public ReadFile/WriteFile preserve operation errors, byte counts, retry frames and stdcall cleanup');
+  for (const access of [0, 0x80000000, 0x40000000, 0xc0000000]) {
+    const h = vfs.createFile('c:\\write-error.bin', access, 3);
+    for (const count of [0, 4]) {
+      vfs.setFilePointer(h, 0, 0);
+      assert.strictEqual(wat.test_public_read(h, count), access & 0x80000000 ? 1 : 0);
+      assert.strictEqual(wat.test_dup_error(), access & 0x80000000 ? 0x1234 : 5);
+      assert.strictEqual(wat.test_read_parked(), 0);
+      assert.strictEqual(wat.test_read_guest32(0x00490110), 0);
+      const before = [...vfs.files.get('c:\\write-error.bin').data];
+      assert.strictEqual(wat.test_public_write(h, count), access & 0x40000000 ? 1 : 0);
+      assert.strictEqual(wat.test_dup_error(), access & 0x40000000 ? 0x1234 : 5);
+      assert.strictEqual(wat.test_read_guest32(0x00490110), access & 0x40000000 ? count : 0);
+      if (!(access & 0x40000000)) {
+        assert.deepStrictEqual([...vfs.files.get('c:\\write-error.bin').data], before);
+        assert.strictEqual(vfs.getOpenFile(h).pos, 0);
+      }
+    }
+    // Restore the empty fixture for the next rights combination.
+    vfs.createFile('c:\\write-error.bin', 0x40000000, 2);
+  }
+  console.log('PASS  public file data rights, zero counts and denied-write preservation');
+  assert.strictEqual(wat.test_file_duplicate(errorHandle, target, 0x80000000, 0), 1);
+  const readOnlyAlias = wat.test_read_guest32(target) >>> 0;
+  const sharedPosition = vfs.getOpenFile(errorHandle).pos;
+  assert.strictEqual(wat.test_public_write(readOnlyAlias, 4), 0);
+  assert.strictEqual(wat.test_dup_error(), 5);
+  assert.strictEqual(wat.test_read_guest32(0x00490110), 0);
+  assert.strictEqual(vfs.getOpenFile(errorHandle).pos, sharedPosition);
   const original = vfs.createFile('c:\\duplicate.bin', 0xc0000000, 2) >>> 0;
   vfs.writeFile(original, Uint8Array.from([10, 20, 30, 40]), 4);
   vfs.setFilePointer(original, 0, 0);

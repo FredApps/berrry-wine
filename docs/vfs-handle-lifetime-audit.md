@@ -558,3 +558,30 @@ nonoverlapping data segments. Winamp 2.95 `/S` reaches guest Exit code 0 after
 No full browser application run was performed here. General simultaneous
 ordinary reads sharing one seek cursor, file-object rename/delete lifetime,
 access enforcement and in-flight mapping teardown remain separate work.
+
+## File data-access enforcement (2026-09-21)
+
+ReadFile/WriteFile now reject handles lacking the corresponding data right with
+ERROR_ACCESS_DENIED, including zero-byte requests. Validation precedes guest
+data-buffer translation and lazy-provider access; rejected operations leave
+bytes and shared cursors unchanged and clear the returned byte count. Metadata
+queries remain available on handles opened with access zero. Generic read/write,
+GENERIC_ALL and the equivalent specific data rights are recognized. Append-only
+writes target EOF; null writes no longer extend a file beyond EOF.
+
+Contract references: Microsoft's [ReadFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile),
+[WriteFile](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile),
+and [file access rights](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights).
+This is documented Win32 behavior, not a new native Win98 measurement.
+
+Remaining: normalize generic/specific rights consistently at creation and
+duplication, enforce SetEndOfFile and mapping access, model sharing restrictions,
+and preserve open-file object identity across rename/delete. This change is not
+a complete security model or a fix for the outstanding mapping lifetime work.
+
+Verification: VFS 36/36 and lazy/provider 47/47 pass; source-compiled public
+Win32/CRT file API tests cover access denial, byte counts, stack cleanup and a
+read-only duplicate without changing its source cursor. File-time, IOCP and VFS
+adoption tests pass. Winamp 2.95 `/S` reaches guest Exit code 0 after 9,717
+batches / 81,075 API calls using the existing artifact and changed host JS.
+No performance or full-browser result is claimed.
