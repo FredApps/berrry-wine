@@ -8982,7 +8982,7 @@ async function main() {
     // frame restored and EIP on the thunk, so filling the chunk and clearing
     // the yield re-enters the same call, which then takes the cache hit.
     if (instance.exports.get_yield_reason() === 12) {
-      const pending = ctx.vfs && ctx.vfs.pendingRead;
+      const pending = ctx.vfs && ctx.vfs.getPendingRead(1);
       if (TRACE_YIELD) {
         console.log(`[yield] T0 reason=12 (io_wait) ` +
           (pending ? `path=${pending.path} off=${pending.offset} len=${pending.length}` : 'no pending record'));

@@ -1290,6 +1290,7 @@
         "i32",
         "i32",
         "i32",
+        "i32",
         "i32"
       ],
       "results": [
@@ -1303,6 +1304,7 @@
         "i32",
         "i32",
         "i32",
+        "i32",
         "i32"
       ],
       "results": [
@@ -1310,13 +1312,16 @@
       ]
     },
     "fs_read_pending": {
-      "params": [],
+      "params": [
+        "i32"
+      ],
       "results": [
         "i32"
       ]
     },
     "fs_read_file_result": {
       "params": [
+        "i32",
         "i32",
         "i32",
         "i32",
@@ -1740,6 +1745,7 @@
     },
     "fs_map_view_of_file": {
       "params": [
+        "i32",
         "i32",
         "i32",
         "i32",

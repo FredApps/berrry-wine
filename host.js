@@ -3927,11 +3927,10 @@ class WineAssembly {
         } else if (r.yield === 12) {
           // io_wait: ReadFile parked on a provider-backed VFS entry (mounted
           // zip/iso, dropped File, remote URL over Range). The brokered fs
-          // import already ran here on the main thread. Snapshot the shared
-          // pending record; clearing the yield retries the worker's call.
-          // Per-worker selection is still separate from fill completion.
+          // import already ran here on the main thread, carrying guest thread
+          // ID 1. Clearing the yield retries that same worker's call.
           const pvfs = self._helpCtx && self._helpCtx.vfs;
-          const pending = pvfs && pvfs.pendingRead;
+          const pending = pvfs && pvfs.getPendingRead(1);
           if (pending) {
             try { await pvfs.fillPendingRead(pending); }
             catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }
@@ -4773,7 +4772,7 @@ class WineAssembly {
           // thunk, so filling the chunk and clearing the yield re-enters the
           // same call — which then takes the synchronous cache hit.
           const vfs = self._helpCtx && self._helpCtx.vfs;
-          const pending = vfs && vfs.pendingRead;
+          const pending = vfs && vfs.getPendingRead(1);
           if (pending) {
             try { await vfs.fillPendingRead(pending); }
             catch (e) { self.logToUI(`[io] ${pending.path}: ${e && e.message}`); }

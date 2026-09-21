@@ -100,7 +100,9 @@ function extractFuncs(file, text) {
   const out = [];
   const lines = text.split('\n');
   const clean = stripComments(text);
-  const re = /\(func\s+(\$[^\s()]+|\(export\s+"[^"]+"\))/g;
+  // Match an import as one form before looking for its nested func signature.
+  // Equal host ABI signatures are declarations, not duplicated implementations.
+  const re = /\(import\b|\(func\s+(\$[^\s()]+|\(export\s+"[^"]+"\))/g;
   let m;
   while ((m = re.exec(clean)) !== null) {
     let depth = 0, end = m.index;
@@ -109,6 +111,8 @@ function extractFuncs(file, text) {
       if (clean[end] === ')' && --depth === 0) { end++; break; }
     }
     const body = clean.slice(m.index, end);
+    re.lastIndex = end;
+    if (m[1] === undefined) continue;
     const line = clean.slice(0, m.index).split('\n').length;
     const nlines = body.split('\n').length;
     const name = m[1];
@@ -117,6 +121,15 @@ function extractFuncs(file, text) {
     re.lastIndex = end;
   }
   return out;
+}
+
+{
+  const found = extractFuncs('self-check', `(import "host" "read"
+    (func $read (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+    (func $actual (result i32) (i32.const 1))`);
+  if (found.length !== 1 || found[0].name !== '$actual') {
+    throw new Error('duplicate extractor must exclude imported signatures');
+  }
 }
 
 const funcs = [];

@@ -116,6 +116,42 @@ function makeManager(backend, extraOpts) {
 (async () => {
   console.log('ThreadManager worker backend\n');
 
+  // I/O selection belongs to the yielding thread in both scheduling modes.
+  for (const workerMode of [true, false]) {
+    const { VirtualFS } = require('../lib/filesystem');
+    const vfs = new VirtualFS(), fills = [];
+    for (const tid of [1, 2]) {
+      const name = `c:\\thread-${tid}.bin`;
+      vfs.setProviderFile(name, { provider: { size: 8, tryRead: () => null,
+        fill: async () => { fills.push(tid); },
+      } });
+      const h = vfs.createFile(name, 0x80000000, 3);
+      const pending = vfs.readFile(h, new Uint8Array(8), 8, tid + 1).pending;
+      vfs.getIoState(tid + 1).pendingRead = pending;
+    }
+    const backend = workerMode ? makeBackend([[{ yield: 12 }], [{ yield: 12 }]]) : null;
+    const tm = makeManager(backend, { getVfs: () => vfs });
+    if (workerMode) {
+      tm.createThread(0x401500, 0, 0, 0);
+      tm.createThread(0x401600, 0, 0, 0);
+      await tm.runWorkerSlices(50000);
+      assert(backend.links.every(link => link.exports.includes('clear_yield')));
+    } else {
+      for (const tid of [1, 2]) tm.threads.set(tid, { tid, state: 'active', waitPolls: 0,
+        instance: { exports: { get_yield_reason: () => 12 } } });
+      tm.runSlice(2000);
+      await Promise.all([...tm.threads.values()].map(thread => thread.ioFill));
+      assert([...tm.threads.values()].every(thread => thread.ioFillDone));
+    }
+    assert.deepStrictEqual(fills.sort(), [1, 2]);
+    assert.strictEqual(vfs.getPendingRead(2), null);
+    assert.strictEqual(vfs.getPendingRead(3), null);
+    const [handle, thread] = tm.threads.entries().next().value;
+    tm._markThreadExited(handle, thread, 0, 'io-test');
+    assert(!vfs._threadIo.has(thread.tid + 1));
+    check(true, `${workerMode ? 'Worker' : 'cooperative'} scheduler fills each thread's own request and retires exit state`);
+  }
+
   // --- the backend is what decides the mode, and it says so ------------------
   {
     const tm = makeManager(makeBackend([]));

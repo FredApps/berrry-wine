@@ -508,3 +508,53 @@ the deterministic nested-service probe is not a real Worker execution test.
 
 Verification: lazy-provider 44/44, VFS 34/34, adoption, syntax and diff checks
 pass. No WASM/import changes or artifact rebuild in this checkpoint.
+
+## Thread-owned pending I/O checkpoint — 2026-09-21
+
+Implemented the explicit-caller route described above. Five internal WAT
+adapters attach `$current_thread_id` to ReadFile BOOL/result/positional imports,
+the legacy pending-status query and MapViewOfFile. Existing guest ABI/stack
+contracts are unchanged; host import signatures and their generated RPC mirror
+now include the caller ID. Adapters centralize the invariant for CRT, Win16,
+sound, font, help and other internal readers as well as the public Win32 APIs.
+The ID comes from the calling WASM instance, not the shared browser import table
+or a guessed CLI context.
+
+VirtualFS keeps pending requests, deferred faults and retry histories per guest
+thread. Main-thread direct VFS calls retain the existing state as their canonical
+owner rather than maintaining a second copy. Pending records retain their owner
+through asynchronous fill completion. Both browser main loops and the CLI main
+loop select ID 1; ordinary/nested Worker and cooperative thread scheduling
+select the yielding thread's ID. Close invalidates that handle in every owner's
+state. Thread exit retires its state, and late file-fill failures cannot publish
+into a subsequently created state with the same ID.
+
+Lazy mapping completion keys also include the caller ID: simultaneous identical
+MapViewOfFile requests cannot consume one another's allocated view. This does
+not add cancellation/rollback of mapping allocations already in flight at thread
+exit; mapping teardown remains a separate lifetime issue.
+
+Coverage includes interleaved zero-byte and lazy reads, legacy pending queries,
+same-handle positional reads with one failing range and one successful range,
+close/exit retirement, and identical concurrent mapping requests consumed in
+reverse order. Scheduler tests exercise ordinary Worker and cooperative I/O
+selection and exit cleanup; the lazy suite exercises nested send service.
+Two actual Node Workers instantiate the source adapters compiled by WATX and
+call through the production shared-memory RPC broker with one shared import
+table. This is real Worker/RPC/adapter coverage, not a full browser application
+or x86 file-call scheduling run.
+
+The enlarged import declaration exposed a census bug: `wat-dup-census` counted
+matching host signatures as duplicated function bodies. Its extractor now skips
+whole import forms, with a multiline-import self-check; the baseline was not
+expanded. It reports 138/142 groups and 532/548 members on this shared tree.
+
+Verification: lazy/provider suite 47/47 (including the two real Workers),
+scheduler suite 50/50, VFS 34/34, adoption and source-compiled public Win32/CRT
+file API tests pass. Full build passes: canonical 1,472,187 bytes, compatibility
+1,473,161 bytes, 251 imports, unchanged layout `54f430b349c8d55e`, 242
+nonoverlapping data segments. Winamp 2.95 `/S` reaches guest Exit code 0 after
+9,717 batches / 81,075 API calls on the rebuilt artifact; no timing claim.
+No full browser application run was performed here. General simultaneous
+ordinary reads sharing one seek cursor, file-object rename/delete lifetime,
+access enforcement and in-flight mapping teardown remain separate work.

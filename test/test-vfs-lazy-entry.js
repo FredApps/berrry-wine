@@ -488,6 +488,196 @@ test('scheduler retries without provider fills cannot exhaust the read budget', 
   assert.strictEqual(fills, 1);
 });
 
+test('thread-owned reads isolate pending selection, faults and same-handle positional retries', async () => {
+  const { createFilesystemImports } = require('../lib/filesystem');
+  const { ThreadManager } = require('../lib/thread-manager');
+  const vfs = new VirtualFS(), ready = new Set();
+  let rejectZero = false;
+  vfs.setProviderFile(GUEST, { provider: { size: 32,
+    tryRead: (off, len) => ready.has(off) ? new Uint8Array(len).fill(off + 1) : null,
+    fill: async off => { if (!off && rejectZero) throw Error('range zero failed'); ready.add(off); },
+  } });
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const imports = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000 } });
+  const h = vfs.createFile(GUEST, 0x80000000, 3);
+  assert.strictEqual(imports.fs_read_file(h, 0x400000, 8, 0, 2), 0);
+  const a = vfs.getPendingRead(2);
+  assert(a);
+  assert.strictEqual(imports.fs_read_file_result(h, 0x400100, 0, 0, 3), 0);
+  assert.strictEqual(imports.fs_read_pending(2), 1, 'peer success cannot erase legacy status');
+  assert.strictEqual(imports.fs_read_pending(3), 0);
+  assert.strictEqual(vfs.pendingRead, null, 'main thread has no borrowed pending request');
+  const manager = Object.create(ThreadManager.prototype);
+  manager._getVfs = () => vfs;
+  const link = { callExport: async name => assert.strictEqual(name, 'clear_yield') };
+  await manager.resolveThreadSendYield(link, { yield: 12 }, { tid: 1 }, new Set());
+  assert.strictEqual(imports.fs_read_file_result(h, 0x400000, 8, 0, 2), 0);
+  ready.clear(); rejectZero = true;
+  assert.strictEqual(imports.fs_read_file_at(h, 0x400000, 8, 0, 0, 0, 2), 997);
+  assert.strictEqual(imports.fs_read_file_at(h, 0x400100, 8, 0, 8, 0, 3), 997);
+  const pa = vfs.getPendingRead(2), pb = vfs.getPendingRead(3);
+  assert.notStrictEqual(pa, pb);
+  assert.strictEqual(await vfs.fillPendingRead(pa), false);
+  assert.strictEqual(vfs.getPendingRead(3), pb);
+  assert.strictEqual(await vfs.fillPendingRead(pb), true);
+  assert.strictEqual(imports.fs_read_file_at(h, 0x400100, 8, 0, 8, 0, 3), 0);
+  assert.strictEqual(imports.fs_read_file_at(h, 0x400000, 8, 0, 0, 0, 2), 30);
+  assert.strictEqual(imports.fs_read_pending(3), 0);
+  assert.strictEqual(imports.fs_read_pending(2), 2);
+  assert.strictEqual(vfs.getOpenFile(h).pos, 8, 'positional calls preserve shared cursor');
+  assert.strictEqual(imports.fs_read_file_at(h, 0x400000, 8, 0, 16, 0, 2), 997);
+  const retired = vfs.getPendingRead(2);
+  vfs.releaseIoState(2);
+  assert.strictEqual(await vfs.fillPendingRead(retired), false);
+  assert.strictEqual(vfs.getPendingRead(2), null);
+  assert.strictEqual(imports.fs_read_pending(2), 0, 'new thread state has no retired fault');
+  assert.strictEqual(imports.fs_read_file_at(h, 0x400000, 8, 0, 16, 0, 2), 997);
+  assert.strictEqual(imports.fs_read_file_at(h, 0x400100, 8, 0, 24, 0, 3), 997);
+  vfs.closeHandle(h);
+  assert.strictEqual(vfs.getPendingRead(2), null);
+  assert.strictEqual(vfs.getPendingRead(3), null);
+});
+
+test('two real Workers preserve I/O ownership through compiled adapters and the shared RPC table', async () => {
+  const { Worker } = require('worker_threads');
+  const { compileClosure } = require('../tools/watx-closure');
+  const RPC = require('../lib/guest-rpc');
+  const { createFilesystemImports } = require('../lib/filesystem');
+  const names = ['fs_read_file', 'fs_read_file_at', 'fs_read_pending',
+    'fs_read_file_result', 'fs_map_view_of_file'];
+  const header = fs.readFileSync(path.join(__dirname, '../src/01-header.wat'), 'utf8');
+  const importsWat = header.split('\n').filter(line => names.some(name =>
+    line.includes(`(import "host" "${name}"`))).join('\n');
+  const base = fs.readFileSync(path.join(__dirname, '../src/09a0b-handlers-base-late.wat'), 'utf8');
+  const adapters = base.slice(0, base.indexOf('  ;; ============================================================'));
+  assert.strictEqual((adapters.match(/\(func \$host_fs_/g) || []).length, 5);
+  const wat = `
+    (import "host" "memory" (memory 8192 8192 shared))
+    ${importsWat}
+    (global $current_thread_id (mut i32) (i32.const 1))
+    ${adapters}
+    (func (export "tid") (param i32) (global.set $current_thread_id (local.get 0)))
+    (func (export "read") (param i32 i32) (result i32)
+      (call $host_fs_read_file (local.get 0) (i32.const 0x400000) (local.get 1) (i32.const 0)))
+    (export "pending" (func $host_fs_read_pending))
+    (export "result" (func $host_fs_read_file_result))
+    (export "at" (func $host_fs_read_file_at))
+    (export "map" (func $host_fs_map_view_of_file))`;
+  const compiled = compileClosure({ source: wat, vfs: new Map() }, { tailCalls: true });
+  assert(compiled.success, compiled.error || 'I/O adapter compilation failed');
+  const module = await WebAssembly.compile(compiled.wasmBinary);
+  const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  const vfs = new VirtualFS(), handles = [];
+  for (const file of ['c:\\a.bin', 'c:\\b.bin']) {
+    let ready = false;
+    vfs.setProviderFile(file, { provider: { size: 16,
+      tryRead: (_off, len) => ready ? new Uint8Array(len) : null,
+      fill: async () => { ready = true; },
+    } });
+    handles.push(vfs.createFile(file, 0x80000000, 3));
+    assert(handles[handles.length - 1], 'Worker fixture file must open');
+  }
+  const allSigs = require('../lib/host-import-sigs.generated.json').sigs;
+  const sigs = Object.fromEntries(names.map(name => [name, allSigs[name]]));
+  const host = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000 } });
+  const callers = [];
+  for (const name of names) {
+    const original = host[name];
+    host[name] = (...args) => {
+      callers.push({ name, threadId: args[args.length - 1] });
+      return original(...args);
+    };
+  }
+  const errors = [];
+  const broker = RPC.createMainBroker(memory, host, sigs, { onError: (name, e) => errors.push([name, String(e)]) });
+  const workers = [];
+  try {
+    for (const threadId of [2, 3]) {
+      const worker = new Worker(`
+        const { parentPort, workerData: d } = require('worker_threads');
+        const RPC = require(d.rpc);
+        const rpc = RPC.createWorkerImports(d.memory, d.sigs,
+          message => parentPort.postMessage(message), { slot: d.threadId - 1 });
+        const instance = new WebAssembly.Instance(d.module, rpc.imports);
+        instance.exports.tid(d.threadId);
+        parentPort.on('message', ({ method, args }) => {
+          parentPort.postMessage({ result: instance.exports[method](...args) });
+        });
+      `, { eval: true, workerData: { rpc: require.resolve('../lib/guest-rpc'),
+        memory, module, sigs, threadId } });
+      workers.push(worker);
+      worker.on('message', msg => { if (msg.t === 'rpc') broker.serveRpc(msg.slot); });
+    }
+    const ask = (worker, method, ...args) => new Promise((resolve, reject) => {
+      const timer = setTimeout(() => finish(Error('I/O Worker reply timed out')), 90000);
+      const onMessage = msg => { if ('result' in msg) finish(null, msg.result); };
+      const finish = (error, value) => {
+        clearTimeout(timer); worker.off('message', onMessage); worker.off('error', finish);
+        error ? reject(error) : resolve(value);
+      };
+      worker.on('error', finish); worker.on('message', onMessage);
+      worker.postMessage({ method, args });
+    });
+    assert.strictEqual(await ask(workers[0], 'read', handles[0], 8), 0, 'worker A parks');
+    assert.deepStrictEqual(errors, [], 'first broker call');
+    assert.strictEqual(await ask(workers[1], 'read', handles[1], 0), 1, 'worker B zero-byte read succeeds');
+    assert.deepStrictEqual(errors, [], 'second broker call');
+    assert.strictEqual(await ask(workers[0], 'pending'), 1, 'A pending survives B zero-byte read');
+    assert.strictEqual(await ask(workers[1], 'read', handles[1], 8), 0);
+    assert.strictEqual(await ask(workers[0], 'pending'), 1, 'A pending survives B park');
+    assert.strictEqual(await ask(workers[1], 'pending'), 1, 'B owns its park');
+    assert.strictEqual(vfs.getPendingRead(2).handle, handles[0]);
+    assert.strictEqual(vfs.getPendingRead(3).handle, handles[1]);
+    await vfs.fillPendingRead(vfs.getPendingRead(2));
+    assert.strictEqual(await ask(workers[0], 'read', handles[0], 8), 1);
+    assert.strictEqual(await ask(workers[1], 'pending'), 1);
+    await vfs.fillPendingRead(vfs.getPendingRead(3));
+    assert.strictEqual(await ask(workers[1], 'read', handles[1], 8), 1);
+    assert.strictEqual(await ask(workers[0], 'result', handles[0], 0x400000, 0, 0), 0);
+    assert.strictEqual(await ask(workers[1], 'at', handles[1], 0x400000, 0, 0, 0, 0), 0);
+    assert.strictEqual(await ask(workers[0], 'map', 0, 4, 0, 0, 16), 0);
+    assert.deepStrictEqual([...new Set(callers.map(call => call.name))].sort(), names.slice().sort());
+    assert(callers.every(call => call.threadId === 2 || call.threadId === 3),
+      'every adapter supplies the calling WASM instance identity over RPC');
+    assert.deepStrictEqual(errors, []);
+  } finally { await Promise.all(workers.map(worker => worker.terminate())); }
+});
+
+test('concurrent lazy mappings of the same section keep distinct thread-owned completions', async () => {
+  const { createFilesystemImports } = require('../lib/filesystem');
+  const vfs = new VirtualFS();
+  vfs.setProviderFile(GUEST, { provider: { size: 16,
+    readRange: async (_off, len) => new Uint8Array(len).fill(0x6a),
+  } });
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  let next = 0x410000;
+  const imports = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000, guest_map_alloc: () => (next += 0x1000) } });
+  const h = vfs.createFile(GUEST, 0x80000000, 3);
+  const mapping = imports.fs_create_file_mapping(h, 2, 0, 0, 0);
+  assert(mapping);
+  const map = tid => imports.fs_map_view_of_file(mapping, 4, 0, 0, 16, tid);
+  assert.strictEqual(map(2), 0);
+  const a = vfs.getPendingRead(2);
+  assert.strictEqual(map(3), 0);
+  const b = vfs.getPendingRead(3);
+  assert(a && b && a !== b);
+  await vfs.fillPendingRead(a);
+  assert.strictEqual(vfs.getPendingRead(3), b);
+  await vfs.fillPendingRead(b);
+  // Reverse completion consumption used to let either caller take the one
+  // shared requestKey's address, leaking the other allocation.
+  const addrB = map(3), addrA = map(2);
+  assert.strictEqual(addrA, 0x411000);
+  assert.strictEqual(addrB, 0x412000);
+  for (const addr of [addrA, addrB]) {
+    assert.deepStrictEqual([...new Uint8Array(memory.buffer, addr - 0x400000 + 0x12000, 16)],
+      Array(16).fill(0x6a));
+  }
+});
+
 test('the pending record names the handle and position it belongs to', () => {
   const vfs = lazyVfs({ sync: false });
   const a = vfs.createFile(GUEST, 0x80000000, 3);
@@ -614,10 +804,10 @@ test('browser and CLI io-wait completion blocks preserve a newer pending request
       'const pvfs = self._helpCtx && self._helpCtx.vfs;',
       "await self.guestWorker.callExport('clear_yield');"],
     ['browser cooperative', path.join(__dirname, '..', 'host.js'),
-      'const vfs = self._helpCtx && self._helpCtx.vfs;\n          const pending = vfs && vfs.pendingRead;',
+      'const vfs = self._helpCtx && self._helpCtx.vfs;\n          const pending = vfs && vfs.getPendingRead(1);',
       'self.instance.exports.clear_yield();'],
     ['CLI', path.join(__dirname, 'run.js'),
-      'const pending = ctx.vfs && ctx.vfs.pendingRead;',
+      'const pending = ctx.vfs && ctx.vfs.getPendingRead(1);',
       'instance.exports.clear_yield();'],
   ];
   for (const [name, filename, startMarker, endMarker] of blocks) {

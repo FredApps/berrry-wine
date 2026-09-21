@@ -1,3 +1,17 @@
+  ;; Internal file-import adapters attach the calling WASM instance's
+  ;; 1-based thread ID. Browser broker tables may be shared across Workers;
+  ;; host closure identity is therefore not the identity of the guest caller.
+  (func $host_fs_read_file (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32) (result i32)
+    (call $host_fs_read_file_owned (local.get $a0) (local.get $a1) (local.get $a2) (local.get $a3) (global.get $current_thread_id)))
+  (func $host_fs_read_file_at (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32) (param $a4 i32) (param $a5 i32) (result i32)
+    (call $host_fs_read_file_at_owned (local.get $a0) (local.get $a1) (local.get $a2) (local.get $a3) (local.get $a4) (local.get $a5) (global.get $current_thread_id)))
+  (func $host_fs_read_pending  (result i32)
+    (call $host_fs_read_pending_owned  (global.get $current_thread_id)))
+  (func $host_fs_read_file_result (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32) (result i32)
+    (call $host_fs_read_file_result_owned (local.get $a0) (local.get $a1) (local.get $a2) (local.get $a3) (global.get $current_thread_id)))
+  (func $host_fs_map_view_of_file (param $a0 i32) (param $a1 i32) (param $a2 i32) (param $a3 i32) (param $a4 i32) (result i32)
+    (call $host_fs_map_view_of_file_owned (local.get $a0) (local.get $a1) (local.get $a2) (local.get $a3) (local.get $a4) (global.get $current_thread_id)))
+
   ;; ============================================================
   ;; LATE BASE SYSTEM HANDLERS
   ;; Environment, locale, process, console, synchronization, memory, filesystem and atom services.

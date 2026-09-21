@@ -743,16 +743,18 @@
   ;; fs_create_file(pathWA, access, creation, flagsAttrs, isWide) → handle
   (import "host" "fs_create_legacy_file" (func $host_fs_create_legacy_file (param i32 i32 i32 i32 i32) (result i32)))
   ;; fs_create_legacy_file(...) → 16-bit HFILE for _lopen/_lcreat
-  (import "host" "fs_read_file" (func $host_fs_read_file (param i32 i32 i32 i32) (result i32)))
-  (import "host" "fs_read_file_at" (func $host_fs_read_file_at (param i32 i32 i32 i32 i32 i32) (result i32)))
-  ;; fs_read_file(handle, bufGA, nToRead, nReadGA) → BOOL
-  (import "host" "fs_read_pending" (func $host_fs_read_pending (result i32)))
-  (import "host" "fs_read_file_result" (func $host_fs_read_file_result (param i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_read_file" (func $host_fs_read_file_owned (param i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_read_file_at" (func $host_fs_read_file_at_owned (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
+  ;; Read/map imports end in a 1-based guest thread ID. Internal adapters in
+  ;; base-late attach it from this instance, including legacy BOOL callers.
+  ;; fs_read_file(handle, bufGA, nToRead, nReadGA, threadId) → BOOL
+  (import "host" "fs_read_pending" (func $host_fs_read_pending_owned (param i32) (result i32)))
+  (import "host" "fs_read_file_result" (func $host_fs_read_file_result_owned (param i32 i32 i32 i32 i32) (result i32)))
   ;; Returns success (0), lazy-fill retry (997), or the operation's error.
-  ;; fs_read_pending() → 1 when the fs_read_file that just returned 0 is
+  ;; fs_read_pending(threadId) → 1 when that thread's fs_read_file returned 0
   ;; waiting on bytes from a lazy (provider-backed) mount rather than failing.
   ;; Legacy BOOL callers use this channel; ReadFile consumes its operation
-  ;; result directly without a second shared-state lookup.
+  ;; result directly without a second state lookup.
   (import "host" "fs_write_file" (func $host_fs_write_file (param i32 i32 i32 i32) (result i32)))
   ;; fs_write_file(handle, bufGA, nToWrite, nWrittenGA) → BOOL
   (import "host" "fs_write_file_result" (func $host_fs_write_file_result (param i32 i32 i32 i32) (result i32)))
@@ -819,7 +821,7 @@
   ;; which is how an app asks "is my other instance already running?".
   (import "host" "fs_open_file_mapping" (func $host_fs_open_file_mapping (param i32) (result i32)))
   ;; fs_open_file_mapping(nameWA) → mapping handle, or 0 when no such name exists
-  (import "host" "fs_map_view_of_file" (func $host_fs_map_view_of_file (param i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_map_view_of_file" (func $host_fs_map_view_of_file_owned (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; fs_map_view_of_file(hMapping, access, offsetHi, offsetLo, size) → guest addr
   (import "host" "fs_unmap_view" (func $host_fs_unmap_view (param i32) (result i32)))
   ;; fs_unmap_view(baseAddr) → BOOL
