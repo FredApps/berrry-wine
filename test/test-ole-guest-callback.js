@@ -275,11 +275,68 @@ async function main() {
     assert(synthesized && synthesizedMf);
     assert.strictEqual(callApi('IDataObject_GetData', face, makeFormat(3, 32), medium), 0);
     const copy = read(medium + 4), copyMf = read(copy + 12);
+    const metafilePixel = handle => {
+      const size = callApi('GetMetaFileBitsEx', handle, 0, 0);
+      assert(size >= 24);
+      const buffer = alloc(size);
+      assert.strictEqual(callApi('GetMetaFileBitsEx', handle, size, buffer), size);
+      const view = new DataView(memory.buffer);
+      let pixel;
+      for (let offset = 18; offset + 6 <= size;) {
+        const words = read(buffer + offset);
+        assert(words >= 3 && offset + words * 2 <= size);
+        if (view.getUint16(wa(buffer + offset + 4), true) === 0x0f43) {
+          const bmi = buffer + offset + 28;
+          pixel = read(bmi + read(bmi)) & 0xffffff;
+        }
+        offset += words * 2;
+      }
+      e.guest_free(buffer);
+      assert.notStrictEqual(pixel, undefined);
+      return pixel;
+    };
+    assert.strictEqual(metafilePixel(copyMf), 0x0000ff);
+    const updatedDib = callApi('GlobalAlloc', 0x40, 44);
+    [[0, 40], [4, 1], [8, 1], [12, 0x00180001], [20, 4], [40, 0xff0000]]
+      .forEach(([offset, value]) => write(updatedDib + offset, value));
+    const replacement = alloc(12);
+    [1, updatedDib, 0].forEach((value, i) => write(replacement + i * 4, value));
+    assert.strictEqual(callApi('IOleCache_SetData', root + 52, makeFormat(8), replacement, 1), 0);
+    const refreshed = alloc(12);
+    assert.strictEqual(callApi('IDataObject_GetData', face, makeFormat(3, 32), refreshed), 0);
+    check('held data face refreshes synthesized pixels without changing earlier GetData output',
+      metafilePixel(read(read(refreshed + 4) + 12)) === 0xff0000 &&
+      metafilePixel(copyMf) === 0x0000ff);
+    releaseMedium(refreshed);
+    const extent = alloc(8);
+    write(extent, 2540); write(extent + 4, 1270);
+    assert.strictEqual(callApi('IOleObject_SetExtent', root, 1, extent), 0);
+    assert.strictEqual(callApi('IDataObject_GetData', face, makeFormat(3, 32), refreshed), 0);
+    check('SetExtent refreshes synthesized METAFILEPICT dimensions on the held face',
+      read(read(refreshed + 4) + 4) === 2540 && read(read(refreshed + 4) + 8) === 1270 &&
+      read(copy + 4) !== 2540);
+    releaseMedium(refreshed);
+    const removedSynthesizedMf = read(read(root + 168) + 12);
+    const connection = read(read(root + 100));
+    assert.strictEqual(callApi('IOleCache_Uncache', root + 52, connection), 0);
+    check('Uncache removes the derived WMF from the held face and retires its handle',
+      read(root + 168) === 0 && callApi('GetObjectType', removedSynthesizedMf) === 0 &&
+      callApi('IDataObject_QueryGetData', face, makeFormat(3, 32)) !== 0 &&
+      metafilePixel(copyMf) === 0x0000ff);
+    // Populate again so the existing final-release assertion still proves
+    // destruction of a live synthesized presentation, not an empty cache.
+    const restoredDib = callApi('GlobalAlloc', 0x40, 44);
+    [[0, 40], [4, 1], [8, 1], [12, 0x00180001], [20, 4], [40, 0xff0000]]
+      .forEach(([offset, value]) => write(restoredDib + offset, value));
+    [1, restoredDib, 0].forEach((value, i) => write(replacement + i * 4, value));
+    assert.strictEqual(callApi('IOleCache_SetData', root + 52, makeFormat(8), replacement, 1), 0);
+    const finalSynthesizedMf = read(read(root + 168) + 12);
+    assert.strictEqual(callApi('GetObjectType', finalSynthesizedMf), 9);
     assert.strictEqual(callApi('IOleObject_Release', root), 1);
     assert.strictEqual(callApi('IDataObject_Release', face), 0);
     check('final live-face release retires root-owned synthesized metafile, not its GetData copy',
       copy !== synthesized && copyMf !== synthesizedMf &&
-      callApi('GetObjectType', synthesizedMf) === 0 && callApi('GetObjectType', copyMf) === 9);
+      callApi('GetObjectType', finalSynthesizedMf) === 0 && callApi('GetObjectType', copyMf) === 9);
     releaseMedium(medium);
     check('synthesized GetData copy is independently retired', callApi('GetObjectType', copyMf) === 0);
   }

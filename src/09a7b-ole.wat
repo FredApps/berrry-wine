@@ -9681,11 +9681,22 @@
   )
 
   (func $ole_static_set_extent (param $root i32) (param $aspect i32) (param $size i32) (result i32)
+    (local $root_w i32) (local $size_w i32) (local $picture i32)
     (if (i32.eqz (local.get $size)) (then (return (i32.const 0x80004003))))
     (if (i32.ne (local.get $aspect) (i32.const 1)) (then (return (i32.const 0x8004006B))))
-    (call $gs32 (i32.add (local.get $root) (i32.const 40)) (call $gl32 (local.get $size)))
-    (call $gs32 (i32.add (local.get $root) (i32.const 44)) (call $gl32 (i32.add (local.get $size) (i32.const 4))))
-    (call $gs32 (i32.add (local.get $root) (i32.const 48)) (i32.const 1))
+    (local.set $root_w (call $g2w (local.get $root)))
+    (local.set $size_w (call $g2w (local.get $size)))
+    (i32.store offset=40 (local.get $root_w) (i32.load (local.get $size_w)))
+    (i32.store offset=44 (local.get $root_w) (i32.load offset=4 (local.get $size_w)))
+    (i32.store offset=48 (local.get $root_w) (i32.const 1))
+    ;; Extents change the suggested display size, not the WMF record stream.
+    ;; The live face borrows this wrapper; previously returned copies do not.
+    (local.set $picture (i32.load offset=168 (local.get $root_w)))
+    (if (local.get $picture)
+      (then
+        (local.set $picture (call $g2w (local.get $picture)))
+        (i32.store offset=4 (local.get $picture) (i32.load (local.get $size_w)))
+        (i32.store offset=8 (local.get $picture) (i32.load offset=4 (local.get $size_w)))))
     (i32.const 0)
   )
 
@@ -9867,6 +9878,7 @@
   (func $ole_static_refresh_data_object (param $root i32) (result i32)
     (local $child i32) (local $entries i32) (local $count i32) (local $i i32)
     (local $entry i32) (local $dib i32) (local $medium i32) (local $medium_w i32)
+    (local $old_picture i32)
     (if (i32.eqz (local.get $root)) (then (return (i32.const 0))))
     (local.set $child (call $gl32 (i32.add (local.get $root) (i32.const 164))))
     (if (i32.eqz (local.get $child))
@@ -9876,6 +9888,12 @@
         (call $gs32 (i32.add (local.get $root) (i32.const 164)) (local.get $child))
         (call $gs32 (i32.add (local.get $child) (i32.const 32)) (local.get $root)))
       (else (call $ole_data_clear_entries (local.get $child))))
+    ;; This is a cache mutation (repeated QI returns the existing face without
+    ;; refreshing). Discard the derived picture after detaching its borrowed
+    ;; descriptor, so new GetData calls cannot observe obsolete DIB pixels.
+    (local.set $old_picture (call $gl32 (i32.add (local.get $root) (i32.const 168))))
+    (call $gs32 (i32.add (local.get $root) (i32.const 168)) (i32.const 0))
+    (call $ole_free_metafile_picture (local.get $old_picture))
     ;; Copy only descriptors into this live view. No second reference is
     ;; acquired: external face references already retain the owning root.
     ;; A temporary descriptor lets the ordinary transfer helper consume it
@@ -9909,9 +9927,8 @@
     (call $heap_free (local.get $medium))
     (local.get $child))
 
-  ;; Advertise the cached picture as CF_METAFILEPICT too. Built once and kept on
-  ;; the handler, so a rebuilt face re-offers the same metafile instead of
-  ;; leaking a new one each time.
+  ;; Advertise the cached picture as CF_METAFILEPICT too. The root owns the
+  ;; derived presentation until a cache mutation invalidates it or it dies.
   (func $ole_static_offer_metafile
         (param $root i32) (param $child i32) (param $dib i32) (result i32)
     (local $pict i32) (local $formatetc i32) (local $medium i32) (local $hr i32)

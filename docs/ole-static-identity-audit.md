@@ -414,3 +414,31 @@ blue=752 pixels; the public metafile suite is **13/13** and static OLE is
 root-presentation retirement; clipboard wrapping passes **13/13**.
 This does not close browser verification, mapping-mode support,
 metadata allocation-failure atomicity or guest final-release reentrancy.
+
+## Synthesized presentation freshness — fixed
+
+A held IDataObject could still return obsolete picture content: cache refresh
+reused root+168 after replacing the underlying DIB. A new public-thunk
+regression failed before the fix by replacing a blue pixel with red and
+reading back blue from the newly requested WMF.
+
+Refresh now removes the old borrowed descriptors, retires the root-owned
+derived picture, and builds a presentation from the current cache. Uncache
+also removes the derived format and frees its handle. Previously returned
+GetData copies keep their original bytes. Repeated QueryInterface remains a
+lookup, not a refresh, so it does not trigger regeneration.
+
+SetExtent now updates the synthesized wrapper's suggested HIMETRIC dimensions
+without reallocating or changing its WMF record stream. Earlier GetData
+copies retain their old dimensions. This keeps the derived presentation
+consistent with the extent accepted by the existing static-object setter;
+it does not claim full running-state or advisory-notification conformance
+for [IOleObject::SetExtent](https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-ioleobject-setextent).
+
+Coverage checks replacement pixels, independent earlier copies, new extents,
+Uncache withdrawal, and repopulation followed by final owner release. The
+guest callback suite passes **164/164** and static OLE passes **66/66**. The
+fresh-process WordPad picture roundtrip remains **12/12** (red=760, blue=752).
+Refresh metadata allocation-failure atomicity remains open: this change
+corrects freshness but does not make the existing descriptor rebuild
+transactional under out-of-memory conditions.
