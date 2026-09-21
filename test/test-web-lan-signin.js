@@ -21,6 +21,8 @@
 //             room's link and joins it
 //   resumed   a login that returns to the site root instead of the link: the
 //             page goes on to the link it left from (sessionStorage)
+//   copy      the share card's Copy link on plain http from another host,
+//             where navigator.clipboard does not exist: it still copies
 
 'use strict';
 
@@ -57,7 +59,10 @@ if (!fs.existsSync(require('path').join(__dirname, '..', 'packages', 'freeware',
   const browser = await puppeteer.launch({
     headless: !flag('headful'),
     executablePath: CHROME,
-    args: ['--no-sandbox', '--no-first-run', '--no-default-browser-check'],
+    // lan.test is this server under a name that is not localhost, so the
+    // page is not a secure context -- a phone on the LAN dev server.
+    args: ['--no-sandbox', '--no-first-run', '--no-default-browser-check',
+      '--host-resolver-rules=MAP lan.test 127.0.0.1'],
   });
   const problems = [];
   const context = async () => {
@@ -191,6 +196,31 @@ if (!fs.existsSync(require('path').join(__dirname, '..', 'packages', 'freeware',
     check('back on the root, the page went on to the room link', resumed.url() === link, resumed.url());
     check('and spent the note', await resumed.evaluate(() =>
       sessionStorage.getItem('wine-lan-signin-return')) === null);
+
+    // ---- copy: Copy link where navigator.clipboard is missing -------------
+    const copyPage = await context();
+    const lanBase = base.replace('127.0.0.1', 'lan.test');
+    await copyPage.goto(`${lanBase}/index.html?app=blobby_volley&room=${owner.id}`,
+      { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await copyPage.waitForFunction('window.browserShell && document.body', { timeout: 60000 });
+    const insecure = await copyPage.evaluate(() => {
+      // A desktop Chrome may offer navigator.share; a LAN phone test is the
+      // copy path, so take it away.
+      try { delete Navigator.prototype.share; } catch (_) {}
+      window.__copied = null;
+      document.addEventListener('copy', () => { window.__copied = String(document.getSelection()); });
+      document.getElementById('wine-lan-signin')?.remove();
+      window.browserShell.showShareCard({ lan: { label: 'Blobby Volley' } });
+      return { secure: window.isSecureContext, clipboard: !!navigator.clipboard };
+    });
+    await copyPage.click('#wine-lan-share button:last-child');
+    const copied = await copyPage.evaluate(() => ({
+      text: document.querySelector('#wine-lan-share button:last-child').textContent,
+      copied: window.__copied, href: location.href,
+    }));
+    check(`insecure page (secure=${insecure.secure}, clipboard=${insecure.clipboard}): Copy link copies the page link (${copied.text})`,
+      !insecure.secure && copied.text === 'Copied' && copied.copied === copied.href,
+      JSON.stringify(copied));
 
     check('no page reported an error', problems.length === 0, problems.join(' | '));
   } finally {
