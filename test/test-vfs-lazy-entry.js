@@ -361,10 +361,9 @@ test('a short Range response faults instead of becoming zero-filled bytes',
     assert.strictEqual(asked, 1, 'the bad chunk is not cached and retried as if complete');
   });
 
-test('a fill that never satisfies the read gives up instead of spinning', () => {
-  // Resolves, but hands back nothing — a provider lying about its size, or a
-  // Range response the server truncated.
-  const liar = { size: SIZE, readRange: () => Promise.resolve(new Uint8Array(0)) };
+test('a fill that never satisfies the read gives up instead of spinning', async () => {
+  // Resolves without caching the requested bytes.
+  const liar = { size: SIZE, tryRead: () => null, fill: async () => {} };
   const vfs = new VirtualFS();
   vfs.setProviderFile(GUEST, { provider: liar });
   const h = vfs.createFile(GUEST, 0x80000000, 3);
@@ -372,7 +371,8 @@ test('a fill that never satisfies the read gives up instead of spinning', () => 
   for (let i = 0; i < 6; i++) {
     r = vfs.readFile(h, new Uint8Array(64), 64);
     if (!r.pending) break;
-    vfs.pendingRead = r.pending;   // what the host loop records before filling
+    vfs.pendingRead = r.pending;
+    await vfs.fillPendingRead(r.pending);
   }
   assert(r && r.faulted, 'a read that never becomes servable must fault');
   assert.strictEqual(r.error, 30);
@@ -452,6 +452,40 @@ test('retry history survives cached prefixes but isolates ranges and file identi
   assert.strictEqual(reused, h);
   vfs.setFilePointer(reused, 8, 0);
   assert.strictEqual(vfs.readFile(reused, buf, 16).pending.attempts, 1);
+});
+
+test('scheduler retries without provider fills cannot exhaust the read budget', async () => {
+  const { createFilesystemImports } = require('../lib/filesystem');
+  const { ThreadManager } = require('../lib/thread-manager');
+  const vfs = new VirtualFS();
+  let fills = 0, ready = false;
+  vfs.setProviderFile(GUEST, { provider: { size: 16,
+    tryRead: (_off, len) => ready ? new Uint8Array(len) : null,
+    fill: async () => { fills++; ready = true; },
+  } });
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const imports = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000 } });
+  const h = vfs.createFile(GUEST, 0x80000000, 3);
+  const peer = vfs.createFile(GUEST, 0x80000000, 3);
+  const manager = Object.create(ThreadManager.prototype);
+  manager._getVfs = () => vfs;
+  const link = { callExport: async name => assert.strictEqual(name, 'clear_yield') };
+  let pending;
+  for (let i = 0; i < 8; i++) {
+    assert.strictEqual(imports.fs_read_file_result(h, 0x400000, 16, 0), 997);
+    pending = vfs.pendingRead;
+    // Simulate lost selection explicitly; this test must remain useful once
+    // production request selection is made thread-owned.
+    vfs.pendingRead = null;
+    assert.strictEqual(imports.fs_read_file_result(peer, 0x400100, 0, 0), 0);
+    await manager.resolveThreadSendYield(link, { yield: 12 }, { tid: 1 }, new Set());
+  }
+  assert.strictEqual(fills, 0);
+  assert.strictEqual(pending.attempts, 1);
+  assert.strictEqual(await vfs.fillPendingRead(pending), true);
+  assert.strictEqual(imports.fs_read_file_result(h, 0x400000, 16, 0), 0);
+  assert.strictEqual(fills, 1);
 });
 
 test('the pending record names the handle and position it belongs to', () => {

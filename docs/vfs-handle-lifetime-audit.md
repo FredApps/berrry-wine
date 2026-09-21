@@ -469,3 +469,42 @@ Verification: VFS 34/34, lazy-provider 43/43, legacy HFILE, handle-sign and
 adoption suites pass. The source-compiled public file-information/size/seek/
 read/write/close/duplicate and CRT-duplicate suite also passes, as do syntax and
 diff checks. No WASM or import-layout changes; no full artifact rebuild.
+
+## Scheduler-selection repro and actual-fill accounting — 2026-09-21
+
+An explicit interleaving through the real filesystem imports and
+`ThreadManager.resolveThreadSendYield` proves more than a possible stale slot:
+
+1. A's lazy read returns 997 and publishes its missing range.
+2. B's successful zero-byte read clears the process-wide pending slot.
+3. A's nested yield service finds no request and resumes A without a fill.
+4. Repeating this produced errors `[997,997,997,30]`, **zero provider calls**,
+   three resumes and an unchanged file cursor, although the provider would
+   satisfy the first fill immediately.
+
+This exposed a defect in the preceding retry-budget fix: recording a budget
+attempt at cache miss charged scheduler retries as if the provider had failed.
+History now advances at `fillPendingRead` start, after lifetime validation.
+Repeated misses without a fill cannot produce ERROR_READ_FAULT. Existing tests
+still enforce the bound after three real, unsuccessful fills; an added test
+executes eight no-fill nested yield cycles followed by a successful fill/read.
+The older direct "liar" test now actually awaits the fills it purported to test.
+
+This avoids a fabricated I/O error, **not the scheduling starvation**. Request
+selection remains open. The complete fix must cover all three scheduler paths
+(ordinary Worker, nested Worker send, cooperative thread), both host main loops,
+legacy `fs_read_file` + `fs_read_pending` pairs, result-returning ReadFile,
+positional ReadFile and lazy MapViewOfFile. Browser real Workers share the main
+import table, so merely adding `ctx.threadId` to CLI closures is insufficient.
+
+An explicit caller identity on the five affected imports is a viable integration
+route: guest `$current_thread_id` is 1-based, while scheduler `thread.tid` is
+0-based. The generated Worker signatures must change with the WAT imports;
+selection, fault reporting and retirement must use the same owner. Alternatively
+a request token can travel with yield 12, but must also survive the legacy BOOL
+and mapping front doors. Neither proposal is implemented or verified yet.
+Real two-Worker interleavings and same-handle reads remain required coverage;
+the deterministic nested-service probe is not a real Worker execution test.
+
+Verification: lazy-provider 44/44, VFS 34/34, adoption, syntax and diff checks
+pass. No WASM/import changes or artifact rebuild in this checkpoint.
