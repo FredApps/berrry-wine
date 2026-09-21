@@ -1,6 +1,7 @@
-# Static OLE identity/lifetime audit — OPEN
+# Static OLE identity/lifetime audit — controlling identity fixed, follow-ups open
 
-2026-09-21, after `9078985f`. This is a reproduced correctness gap, not a fix.
+Initial reproduction: 2026-09-21, after `9078985f`. The original observations
+below are preserved; the implemented correction and remaining gaps follow.
 
 Run `node tools/probe-ole-static-identity.js`. It initializes the real PE/COM
 thunks, invokes public vtable methods, prints its observations and exits 1
@@ -40,7 +41,7 @@ symmetric interface navigation. A clipboard snapshot can be an independent
 object; a face returned by this object's QueryInterface cannot silently be
 such a snapshot.
 
-## Ownership traced in current source
+## Ownership traced before the fix
 
 `ole_static_data_object` allocates a normal 32-byte kind-4 data object and
 stores it at root+164, holding its initial reference. It copies cached media
@@ -72,3 +73,41 @@ therefore actual teardown, not merely an independent refcount convention.
 The adjacent IDataObject QueryInterface still matches only Data1, unlike the
 recently corrected root query. Delegation must close that hole for aggregated
 faces without weakening independent-object GUID validation.
+
+## Implemented 2026-09-21
+
+The kind-4 allocation now reserves 36 bytes, with a controlling-owner pointer
+at +32. Standalone data objects and clipboard snapshots leave it zero. The
+static root privately owns its child storage; external AddRef/Release route
+to the root, including the internal reference helpers. Destruction detaches
+the owner before retiring the child's private reference, avoiding a cycle.
+The aggregated face delegates QueryInterface to the root's full-GUID check.
+
+Public final Release routes through the existing static guest continuation.
+Its preflight and media cursor now include the data face's owned entries,
+alongside the root's site, sinks and cache; no new callback mechanism is used.
+
+The public probe now returns one IUnknown pointer, successful reverse
+IOleObject navigation, original-root Release=1 and final-data Release=0.
+Guest callback coverage tests both release orders, public/internal reference
+delegation, malformed-GUID rejection, malformed guest Release preflight and
+exactly-once site/sink/stream/releaser cleanup. Existing independent snapshot
+and clipboard-media checks remain in that suite.
+
+Validation on the shared main worktree: guest callbacks 120/120, static
+handler 66/66, ROT 28/28 (plus GUID assertions), and WordPad copy/cut/paste
+5/5 passed. These are correctness checks, not performance measurements or
+a full embedded-picture browser/save run.
+An in-memory negative control substituting the pre-fix OLE source fails the
+new private-face ownership assertion (refcount 2 rather than 1); no worktree
+source was reverted to run it.
+
+Still open: cache refresh via repeated IDataObject QI currently clears and
+rebuilds entries synchronously; retained-face cache coherence and guest-media
+copy/retirement need their own transaction audit. Internal final releases of
+local objects do not generally schedule guest teardown (the pre-existing
+`ole_release_local_interface`/`ole_obj_release` limitation); routing a data
+reference to its owner does not solve that wider continuation problem.
+Standalone IDataObject QI still checks only Data1. Exhaustive reentrant
+cleanup, all-face navigation and WordPad embedded-picture save/browser
+coverage remain required before calling the entire ownership audit complete.

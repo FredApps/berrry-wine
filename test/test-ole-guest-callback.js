@@ -656,6 +656,50 @@ async function main() {
     read(ownedHglobalReleaser + 4) === 0 && read(ownedHglobalReleaser + 36) === 3 &&
     read(ownedHglobalPayload) === 0x78563412);
 
+  // An IDataObject obtained through static-handler QI is a face, not a snapshot.
+  for (const rootFirst of [true, false]) {
+    const root = e.test_ole_create_static_handler(0) >>> 0;
+    const iid = alloc(16), out = alloc(4);
+    [0x10e, 0, 0xc0, 0x46000000].forEach((v, i) => write(iid + 4 * i, v));
+    assert.strictEqual(callMethod(root, 0, iid, out), 0);
+    const face = read(out);
+    assert.strictEqual(e.test_ole_addref(face), 3, 'internal AddRef delegates to root');
+    assert.strictEqual(e.test_ole_release(face), 2, 'internal Release balances root');
+    assert.strictEqual(read(face + 4), 1, 'private face storage reference stays independent');
+    assert.strictEqual(callMethod(face, 1), 3, 'public AddRef delegates to root');
+    assert.strictEqual(callMethod(face, 2), 2, 'public Release balances root');
+    const site = makeGuestSite(), sink = makeGuestSite(), connection = alloc(4);
+    assert.strictEqual(callMethod(root, 3, site), 0);
+    assert.strictEqual(callMethod(root, 19, sink, connection), 0);
+    write(iid, 0);
+    assert.strictEqual(callMethod(face, 0, iid, out), 0);
+    assert.strictEqual(read(out), root, 'data face shares controlling IUnknown');
+    assert.strictEqual(callMethod(read(out), 2), 2);
+    write(iid + 4, 1);
+    assert.strictEqual(callMethod(face, 0, iid, out), 0x80004002);
+    assert.strictEqual(read(out), 0, 'delegated QI rejects forged GUID suffix');
+    const sequence = alloc(4);
+    write(sequence, 0);
+    const stream = makeGuestSite(sequence), releaser = makeGuestSite(sequence);
+    const medium = alloc(12);
+    write(medium, 4); write(medium + 4, stream); write(medium + 8, releaser);
+    assert.strictEqual(callMethod(face, 7, makeFormat(0xc540, 4), medium, 1), 0);
+    check(`static data face keeps owner alive (${rootFirst ? 'root' : 'face'} released first)`,
+      callMethod(rootFirst ? root : face, 2) === 1 && read(root + 4) === 1 &&
+      read(site + 12) === 0 && read(sink + 12) === 0 && read(sequence) === 0);
+    const last = rootFirst ? face : root;
+    const vt = read(releaser), release = read(vt + 8);
+    write(vt + 8, 0);
+    check('static final Release preflights data-face media before any guest teardown',
+      callMethod(last, 2) === 1 && read(root + 4) === 1 &&
+      read(site + 12) === 0 && read(sink + 12) === 0 && read(sequence) === 0);
+    write(vt + 8, release);
+    check('static final Release drains site, sink and data-face media exactly once',
+      callMethod(last, 2) === 0 && read(site + 12) === 1 && read(sink + 12) === 1 &&
+      read(stream + 4) === 0 && read(stream + 12) === 1 && read(stream + 36) === 1 &&
+      read(releaser + 4) === 0 && read(releaser + 12) === 1 && read(releaser + 36) === 2);
+  }
+
   const cacheSequence = alloc(4);
   write(cacheSequence, 0);
   const cacheRoot = e.test_ole_create_static_handler(0) >>> 0;

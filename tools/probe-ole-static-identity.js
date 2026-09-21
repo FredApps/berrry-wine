@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Diagnostic for the known static OLE identity split; exits 1 until the contract is fixed.
+// Public-thunk diagnostic for static OLE controlling identity and lifetime.
 'use strict';
 const fs = require('fs');
 const path = require('path');
@@ -50,5 +50,6 @@ const { bootRenderHarness } = require(root + '/test/render-helper');
   result.remainingDataCount = read(data.ptr + 4);
   result.releaseData = call(data.ptr, 2);
   console.log(JSON.stringify(result, null, 2));
-  if (!result.sameIUnknown || backToOle.hr !== 0 || backToOle.ptr !== object) process.exitCode = 1;
+  if (!result.sameIUnknown || backToOle.hr !== 0 || backToOle.ptr !== object ||
+      result.releaseOriginalRoot !== 1 || result.releaseData !== 0) process.exitCode = 1;
 })().catch(e => { console.error(e); process.exitCode = 1; });

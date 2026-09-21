@@ -2415,8 +2415,10 @@
   ;;   +20 cursor, +24 owns snapshot. Entry (48 bytes): object, name, type,
   ;;   size-low, CLSID[16], state bits, mode, locks supported, reserved.
   (func $ole_obj_addref (param $obj i32) (result i32)
-    (local $rc i32)
+    (local $rc i32) (local $owner i32)
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (local.set $owner (call $ole_data_controlling_owner (local.get $obj)))
+    (if (local.get $owner) (then (return (call $ole_obj_addref (local.get $owner)))))
     (if (i32.eq (call $gl32 (i32.add (local.get $obj) (i32.const 8))) (i32.const 9))
       (then (call $gs32 (i32.add (local.get $obj) (i32.const 12))
         (i32.add (call $gl32 (i32.add (local.get $obj) (i32.const 12))) (i32.const 1)))))
@@ -5663,6 +5665,8 @@
   (func $ole_obj_release (param $obj i32) (result i32)
     (local $rc i32) (local $kind i32) (local $data i32) (local $child i32) (local $next i32)
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (local.set $data (call $ole_data_controlling_owner (local.get $obj)))
+    (if (local.get $data) (then (return (call $ole_obj_release (local.get $data)))))
     (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
     (if (i32.eq (local.get $kind) (i32.const 9))
       (then (call $gs32 (i32.add (local.get $obj) (i32.const 16))
@@ -5792,6 +5796,9 @@
         (if (local.get $data)
           (then
             (call $gs32 (i32.add (local.get $obj) (i32.const 164)) (i32.const 0))
+            ;; Retire privately owned face storage without delegating back
+            ;; into the controlling object that is already being destroyed.
+            (call $gs32 (i32.add (local.get $data) (i32.const 32)) (i32.const 0))
             (drop (call $ole_obj_release (local.get $data)))))
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 148))))
         (local.set $child (i32.const 0))
@@ -6332,7 +6339,10 @@
           (else (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
-  ;; IDataObject layout (32 bytes): +0 vtable, +4 refcount, +8 kind=4,
+  ;; IDataObject layout (36 bytes): +0 vtable, +4 refcount, +8 kind=4,
+  ;; +32 controlling static owner (0 for independent objects/snapshots).
+  ;; An aggregated face keeps one private storage reference; all external
+  ;; references delegate to the owner, so parent/child ownership cannot cycle.
   ;; +12 owned entries, +16 count, +20 capacity. Entry (32 bytes):
   ;; FORMATETC[20], STGMEDIUM[12]. FORMATETC::ptd is independently owned.
   ;; IEnumFORMATETC layout (28 bytes): +0 vtable, +4 refcount, +8 kind=5,
@@ -6516,7 +6526,7 @@
 
   (func $ole_owned_media_guest_releases_valid (param $obj i32) (result i32)
     (local $kind i32) (local $entries i32) (local $count i32)
-    (local $i i32) (local $medium i32)
+    (local $i i32) (local $medium i32) (local $child i32)
     (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
     (if (i32.eq (local.get $kind) (i32.const 4))
       (then
@@ -6549,12 +6559,15 @@
           (if (i32.eqz (call $ole_medium_guest_releases_valid (local.get $medium)))
             (then (return (i32.const 0))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $cache_scan)))))
+          (br $cache_scan)))
+        (local.set $child (call $gl32 (i32.add (local.get $obj) (i32.const 164))))
+        (if (local.get $child)
+          (then (return (call $ole_owned_media_guest_releases_valid (local.get $child)))))))
     (i32.const 1))
 
   (func $ole_owned_media_has_guest (param $obj i32) (result i32)
     (local $kind i32) (local $entries i32) (local $count i32)
-    (local $i i32) (local $medium i32)
+    (local $i i32) (local $medium i32) (local $child i32)
     (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
     (if (i32.eq (local.get $kind) (i32.const 4))
       (then
@@ -6562,6 +6575,10 @@
         (local.set $count (call $gl32 (i32.add (local.get $obj) (i32.const 16))))))
     (if (i32.eq (local.get $kind) (i32.const 6))
       (then
+        (local.set $child (call $gl32 (i32.add (local.get $obj) (i32.const 164))))
+        (if (local.get $child)
+          (then (if (call $ole_owned_media_has_guest (local.get $child))
+            (then (return (i32.const 1))))))
         (if (i32.and
               (call $gl32 (i32.add (local.get $obj) (i32.const 92)))
               (call $ole_medium_has_guest_release (i32.add (local.get $obj) (i32.const 60))))
@@ -6589,6 +6606,7 @@
   (func $ole_owned_media_find_next (param $ctx i32) (result i32)
     (local $obj i32) (local $kind i32) (local $cursor i32)
     (local $entries i32) (local $count i32) (local $medium i32)
+    (local $child i32) (local $base i32)
     (local.set $obj (call $gl32 (i32.add (local.get $ctx) (i32.const 20))))
     (local.set $kind (call $gl32 (i32.add (local.get $obj) (i32.const 8))))
     (local.set $cursor (call $gl32 (i32.add (local.get $ctx) (i32.const 40))))
@@ -6630,7 +6648,23 @@
           (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (local.get $cursor))
           (if (call $ole_medium_has_guest_release (local.get $medium))
             (then (return (local.get $medium))))
-          (br $cache_scan)))))
+          (br $cache_scan)))
+        ;; Continue the same cursor through the privately owned data face.
+        (local.set $base (i32.add (local.get $count) (i32.const 1)))
+        (local.set $child (call $gl32 (i32.add (local.get $obj) (i32.const 164))))
+        (if (local.get $child)
+          (then
+            (local.set $entries (call $gl32 (i32.add (local.get $child) (i32.const 12))))
+            (local.set $count (call $gl32 (i32.add (local.get $child) (i32.const 16))))
+            (block $face_done (loop $face_scan
+              (br_if $face_done (i32.ge_u (i32.sub (local.get $cursor) (local.get $base)) (local.get $count)))
+              (local.set $medium (i32.add (local.get $entries)
+                (i32.add (i32.mul (i32.sub (local.get $cursor) (local.get $base)) (i32.const 32)) (i32.const 20))))
+              (local.set $cursor (i32.add (local.get $cursor) (i32.const 1)))
+              (call $gs32 (i32.add (local.get $ctx) (i32.const 40)) (local.get $cursor))
+              (if (call $ole_medium_has_guest_release (local.get $medium))
+                (then (return (local.get $medium))))
+              (br $face_scan)))))))
     (i32.const 0))
 
   (func $ole_owned_media_prepare (param $ctx i32) (param $medium i32)
@@ -6834,7 +6868,12 @@
     (i32.const 0))
 
   (func $ole_owned_object_release_api (param $obj i32) (param $pop_bytes i32)
-    (local $ret i32) (local $ctx i32)
+    (local $ret i32) (local $ctx i32) (local $owner i32)
+    (local.set $owner (call $ole_data_controlling_owner (local.get $obj)))
+    (if (local.get $owner)
+      (then
+        (call $ole_static_release_api (local.get $owner) (local.get $pop_bytes))
+        (return)))
     (if (i32.and
           (i32.eq (call $gl32 (i32.add (local.get $obj) (i32.const 8))) (i32.const 4))
           (i32.and
@@ -7530,11 +7569,19 @@
         (return (i32.const 0))))
     (i32.const 0x80040069)) ;; DV_E_TYMED
 
+  (func $ole_data_controlling_owner (param $obj i32) (result i32)
+    (local $w i32)
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (local.set $w (call $g2w (local.get $obj)))
+    (if (i32.ne (i32.load offset=8 (local.get $w)) (i32.const 4))
+      (then (return (i32.const 0))))
+    (i32.load offset=32 (local.get $w)))
+
   (func $ole_create_data_object (param $formatetc i32) (param $medium i32) (result i32)
     (local $obj i32) (local $hr i32)
-    (local.set $obj (call $heap_alloc (i32.const 32)))
+    (local.set $obj (call $heap_alloc (i32.const 36)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 32))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 36))
     (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_DATAOBJECT))
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 4))
@@ -8169,7 +8216,15 @@
     (local.get $obj))
 
   (func $handle_IDataObject_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $iid i32)
+    (local $iid i32) (local $owner i32)
+    (local.set $owner (call $ole_data_controlling_owner (local.get $arg0)))
+    (if (local.get $owner)
+      (then
+        (i32.store (global.get $reg_base) (call $ole_static_query_interface
+          (local.get $owner) (local.get $arg1) (local.get $arg2)))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
     (if (i32.eqz (local.get $arg2)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003)) (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))) (return)))
     (local.set $iid (select (call $gl32 (local.get $arg1)) (i32.const 0) (local.get $arg1)))
     (if (i32.or (i32.eqz (local.get $iid)) (i32.eq (local.get $iid) (i32.const 0x0000010E)))
@@ -9767,7 +9822,8 @@
       (then
         (local.set $child (call $ole_create_data_object (i32.const 0) (i32.const 0)))
         (if (i32.eqz (local.get $child)) (then (return (i32.const 0))))
-        (call $gs32 (i32.add (local.get $root) (i32.const 164)) (local.get $child)))
+        (call $gs32 (i32.add (local.get $root) (i32.const 164)) (local.get $child))
+        (call $gs32 (i32.add (local.get $child) (i32.const 32)) (local.get $root)))
       (else (call $ole_data_clear_entries (local.get $child))))
     (local.set $entries (call $gl32 (i32.add (local.get $root) (i32.const 100))))
     (local.set $count (call $gl32 (i32.add (local.get $root) (i32.const 104))))
