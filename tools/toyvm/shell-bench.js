@@ -79,7 +79,14 @@ function binOf(id) {
 // The runner, with every parameter baked in as a literal: argv reaches a shell
 // script differently in every engine, and a mis-parsed one would silently
 // benchmark a default. Only the file reader is feature-detected.
-function runnerSource(exe, budget) {
+// `--mode=interp` (default) is the threaded interpreter alone. `--mode=jit`
+// installs region-jit's compiled region into the same whole-program run, with
+// sweep-dos.js's own settings (profile a quarter of the budget, starting a
+// quarter in), so the jit arm is the corpus sweep's `--region-jit` run.
+function runnerSource(exe, budget, mode) {
+  const jit = mode === 'jit'
+    ? `, regionJit: { sampleAfter: ${Math.floor(budget / 4)}, profileFor: ${Math.floor(budget / 4)}, gateAt: 0, log: function () {} }`
+    : '';
   const dir = path.dirname(exe);
   const files = fs.readdirSync(dir).filter((f) => fs.statSync(path.join(dir, f)).isFile());
   return `'use strict';
@@ -112,9 +119,10 @@ for (var i = 0; i < FILES.length; i++) ToyVM.mount(FILES[i], readBin(DIR + '/' +
 var runDos = ToyVM.require('tools/toyvm/run-dos.js').runDos;
 var T1 = nowMs();
 runDos({ exe: ${JSON.stringify(path.basename(exe))}, variant: 'tailcall', budget: ${budget},
-  cpu: 386, autoKey: true, log: function () {} }).then(function (r) {
+  cpu: 386, autoKey: true, log: function () {}${jit} }).then(function (r) {
   say('SHELLBENCH ' + JSON.stringify({ secs: r.secs, guestSecs: r.guestSecs,
-    dispatched: r.dispatched, frame: r.frame, startMs: T1 - T0, totalMs: nowMs() - T0 }));
+    dispatched: r.dispatched, frame: r.frame, startMs: T1 - T0, totalMs: nowMs() - T0,
+    jit: r.jit ? { phase: r.jit.phase, installs: r.jit.installs, share: r.jit.share } : null }));
 }, function (e) { say('SHELLBENCH-ERR ' + String(e && e.stack || e).split('\\n').slice(0, 4).join(' | ')); });
 `;
 }
@@ -160,6 +168,8 @@ async function main() {
   for (const a of arms) if (!binOf(a)) throw new Error(`no binary for arm ${a} (npx jsvu --engines=v8,spidermonkey)`);
   const timeoutS = Number(arg('timeout', 300));
   const outFile = arg('out', null);
+  const mode = arg('mode', 'interp');
+  if (!['interp', 'jit'].includes(mode)) throw new Error(`--mode= is interp or jit, not ${mode}`);
 
   // The programs: a sweep's own rows and budget (so the frames it recorded are
   // a check on every arm), or an explicit list.
@@ -184,7 +194,7 @@ async function main() {
   for (let pi = 0; pi < progs.length; pi++) {
     const p = progs[pi];
     const script = path.join(work, `run-${pi}.js`);
-    fs.writeFileSync(script, runnerSource(p.exe, budget));
+    fs.writeFileSync(script, runnerSource(p.exe, budget, mode));
     const row = { exe: p.exe, name: path.basename(p.exe), load: os.loadavg()[0], arms: {} };
     for (let i = 0; i < arms.length; i++) {
       const a = arms[(i + pi) % arms.length];
@@ -193,7 +203,10 @@ async function main() {
     // Agreement: every arm that finished against the first that did, and
     // against the sweep's record when there is one.
     const done = arms.map((a) => row.arms[a]).filter((r) => r.ok);
-    const ref = p.sweepFrame ? { frame: p.sweepFrame, dispatched: p.sweepDispatched } : done[0];
+    // A region is allowed to move the picture by a phase against the plain
+    // sweep (docs: region census `phase`), so the jit arms answer to each other.
+    const ref = p.sweepFrame && mode === 'interp'
+      ? { frame: p.sweepFrame, dispatched: p.sweepDispatched } : done[0];
     const bad = done.length && ref ? arms.filter((a) => row.arms[a].ok
       && (row.arms[a].frame !== ref.frame || row.arms[a].dispatched !== ref.dispatched)) : [];
     row.disagree = bad;
