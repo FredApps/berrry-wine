@@ -2488,8 +2488,7 @@
     (i32.add (global.get $seg_base_ds) (i32.and (i32.load offset=8 (global.get $reg_base)) (i32.const 0xFFFF))))
 
   (func $dos_set_ax (param $v i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.or (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF0000))
-                             (i32.and (local.get $v) (i32.const 0xFFFF)))))
+    (i32.store16 (global.get $reg_base) (local.get $v)))
 
   ;; INT 31h — the DPMI services Windows gives every 16-bit task.
   ;;
@@ -5048,10 +5047,8 @@
     ;; caller. Civilization II's static initializers walk their table in SI/DI
     ;; across LoadLibrary("TILES"); returning hInstance in DI made that walk
     ;; step past its end and loop forever.
-    (i32.store offset=24 (global.get $reg_base) (i32.or (i32.and (i32.load offset=24 (global.get $reg_base)) (i32.const 0xFFFF0000))
-      (call $gl16 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 6)))))
-    (i32.store offset=28 (global.get $reg_base) (i32.or (i32.and (i32.load offset=28 (global.get $reg_base)) (i32.const 0xFFFF0000))
-      (call $gl16 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))))
+    (i32.store16 offset=24 (global.get $reg_base) (call $gl16 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 6))))
+    (i32.store16 offset=28 (global.get $reg_base) (call $gl16 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 14)))
     (call $win16_set_sreg (i32.const 3) (local.get $ds))
     ;; LibEntry/LibMain returns nonzero on success. A rejected dynamic module
@@ -5165,11 +5162,9 @@
             (local.set $data_sel (call $win16_dll_data_sel (local.get $id)))
             (call $win16_set_sreg (i32.const 3) (local.get $data_sel))
             (call $win16_set_sreg (i32.const 0) (i32.const 0))
-            (i32.store offset=24 (global.get $reg_base) (i32.and (i32.load offset=24 (global.get $reg_base)) (i32.const 0xFFFF0000)))
-            (i32.store offset=28 (global.get $reg_base) (i32.or (i32.and (i32.load offset=28 (global.get $reg_base)) (i32.const 0xFFFF0000))
-                                     (local.get $handle)))
-            (i32.store offset=4 (global.get $reg_base) (i32.or (i32.and (i32.load offset=4 (global.get $reg_base)) (i32.const 0xFFFF0000))
-              (call $win16_dll_heap_size (local.get $id))))
+            (i32.store16 offset=24 (global.get $reg_base) (i32.const 0))
+            (i32.store16 offset=28 (global.get $reg_base) (local.get $handle))
+            (i32.store16 offset=4 (global.get $reg_base) (call $win16_dll_heap_size (local.get $id)))
             (call $win16_set_sreg (i32.const 1) (i32.shr_u (local.get $init) (i32.const 16)))
             (global.set $eip (i32.add (global.get $seg_base_cs)
                                       (i32.and (local.get $init) (i32.const 0xFFFF))))
@@ -7109,8 +7104,7 @@
     (local.set $data_sel (call $win16_proc_data_sel (local.get $proc)))
     (if (local.get $data_sel)
       (then
-        (i32.store offset=0 (global.get $reg_base) (i32.or (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF0000))
-                  (local.get $data_sel)))))
+        (i32.store16 (global.get $reg_base) (local.get $data_sel))))
     (call $win16_set_sreg (i32.const 1) (i32.shr_u (local.get $proc) (i32.const 16)))
     (local.set $entry (i32.add (global.get $seg_base_cs)
                                (i32.and (local.get $proc) (i32.const 0xFFFF))))

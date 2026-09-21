@@ -5921,14 +5921,12 @@
       ;; Preserve the original ordering and alias behavior: the source and
       ;; destination are the same byte, and either may overlap the XLAT table.
       (local.set $byte (call $gl8 (i32.load offset=28 (global.get $reg_base))))
-      (i32.store offset=0 (global.get $reg_base) (i32.or (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFFFF00))
-          (local.get $byte)))
+      (i32.store8 (global.get $reg_base) (local.get $byte))
       ;; Match H280's translation path exactly: XLAT uses DS:[EBX+AL].
       (local.set $byte
         (i32.load8_u (call $g2w
           (i32.add (i32.load offset=12 (global.get $reg_base)) (local.get $byte)))))
-      (i32.store offset=0 (global.get $reg_base) (i32.or (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFFFF00))
-          (local.get $byte)))
+      (i32.store8 (global.get $reg_base) (local.get $byte))
       (call $gs8 (i32.load offset=28 (global.get $reg_base)) (local.get $byte))
       (i32.store offset=28 (global.get $reg_base) (i32.add (i32.load offset=28 (global.get $reg_base)) (local.get $step)))
       (i32.store offset=4 (global.get $reg_base) (i32.sub (i32.load offset=4 (global.get $reg_base)) (i32.const 1)))
@@ -6328,9 +6326,7 @@
         ;; high bits are the caller's and must survive; the accumulator keeps
         ;; the last streamed byte over its invariant high bits.
         (local.set $res_reg (i32.sub (local.get $res_field) (i32.const 1)))
-        (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $res_reg) (i32.const 2))) (i32.or
-            (i32.and (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $res_reg) (i32.const 2)))) (i32.const 0xFFFFFF00))
-            (local.get $b)))
+        (i32.store8 (i32.add (global.get $reg_base) (i32.shl (local.get $res_reg) (i32.const 2))) (local.get $b))
         (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $acc_reg) (i32.const 2))) (i32.or (local.get $acc_hi) (local.get $src_b))))
       (else
         (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $acc_reg) (i32.const 2))) (i32.or (local.get $acc_hi)
