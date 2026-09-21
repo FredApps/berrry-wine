@@ -5816,6 +5816,10 @@
             ;; into the controlling object that is already being destroyed.
             (call $gs32 (i32.add (local.get $data) (i32.const 32)) (i32.const 0))
             (drop (call $ole_obj_release (local.get $data)))))
+        ;; The synthesized presentation is root-owned; the live face only
+        ;; borrowed it, while GetData/standalone snapshots now own deep copies.
+        (call $ole_free_metafile_picture
+          (call $gl32 (i32.add (local.get $obj) (i32.const 168))))
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 148))))
         (local.set $child (i32.const 0))
         (block $advise_done (loop $advise_entries
@@ -6899,6 +6903,30 @@
     (i32.store offset=0 (global.get $reg_base) (call $ole_obj_release (local.get $obj)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $pop_bytes))))
 
+  ;; A METAFILEPICT owns both its Global-memory wrapper and a GDI metafile.
+  (func $ole_copy_metafile_picture (param $source i32) (result i32)
+    (local $source_w i32) (local $copy i32) (local $copy_w i32) (local $mf i32)
+    (if (i32.eqz (local.get $source)) (then (return (i32.const 0))))
+    (local.set $source_w (call $g2w (local.get $source)))
+    (local.set $mf (call $gdi_metafile_copy
+      (i32.load offset=12 (local.get $source_w)) (i32.const 6)))
+    (if (i32.eqz (local.get $mf)) (then (return (i32.const 0))))
+    (local.set $copy (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $copy))
+      (then (drop (call $gdi_object_delete_full (local.get $mf))) (return (i32.const 0))))
+    (local.set $copy_w (call $g2w (local.get $copy)))
+    (memory.copy (local.get $copy_w) (local.get $source_w) (i32.const 16))
+    (i32.store offset=12 (local.get $copy_w) (local.get $mf))
+    (call $heap_global_mark (local.get $copy))
+    (local.get $copy))
+
+  (func $ole_free_metafile_picture (param $picture i32)
+    (if (local.get $picture)
+      (then
+        (drop (call $gdi_object_delete_full
+          (i32.load offset=12 (call $g2w (local.get $picture)))))
+        (call $ole_free_buffer (local.get $picture)))))
+
   (func $ole_release_medium (param $medium i32)
     (local $tymed i32) (local $data i32) (local $unk i32)
     (if (i32.eqz (local.get $medium)) (then (return)))
@@ -6919,6 +6947,10 @@
     (if (local.get $unk)
       (then (drop (call $ole_release_local_interface (local.get $unk))))
       (else
+        (if (i32.eq (local.get $tymed) (i32.const 32))
+          (then (call $ole_free_metafile_picture (local.get $data))))
+        (if (i32.eq (local.get $tymed) (i32.const 64))
+          (then (drop (call $gdi_object_delete_full (local.get $data)))))
         ;; GetClipboardData returns borrowed system-owned handles. RichEdit can
         ;; wrap one in an fRelease STGMEDIUM while creating a static object;
         ;; consume the medium, but keep the clipboard's durable value alive.
@@ -6954,6 +6986,10 @@
       (then (local.set $data (call $ole_copy_hglobal (local.get $data)))))
     (if (i32.eq (local.get $tymed) (i32.const 2))
       (then (local.set $data (call $ole_wide_dup (local.get $data)))))
+    (if (i32.eq (local.get $tymed) (i32.const 32))
+      (then (local.set $data (call $ole_copy_metafile_picture (local.get $data)))))
+    (if (i32.eq (local.get $tymed) (i32.const 64))
+      (then (local.set $data (call $gdi_metafile_copy (local.get $data) (i32.const 7)))))
     (if (i32.and
           (i32.ne (call $gl32 (i32.add (local.get $src) (i32.const 4))) (i32.const 0))
           (i32.eqz (local.get $data)))
@@ -9711,7 +9747,7 @@
   ;; CF_METAFILEPICT it takes from an object before writing it into RTF, and
   ;; while the export was missing the save stopped there with an empty file.
   (func $handle_OleDuplicateData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $copy i32) (local $mf i32)
+    (local $copy i32)
     (if (i32.eqz (local.get $arg0))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -9719,17 +9755,7 @@
         (return)))
     (if (i32.eq (local.get $arg1) (i32.const 3))           ;; CF_METAFILEPICT
       (then
-        (local.set $mf (call $gdi_metafile_copy
-          (call $gl32 (i32.add (local.get $arg0) (i32.const 12))) (i32.const 6)))
-        (if (local.get $mf)
-          (then
-            (local.set $copy (call $heap_alloc (i32.const 16)))
-            (if (local.get $copy)
-              (then
-                (memory.copy (call $g2w (local.get $copy)) (call $g2w (local.get $arg0))
-                  (i32.const 16))
-                (call $gs32 (i32.add (local.get $copy) (i32.const 12)) (local.get $mf)))
-              (else (drop (call $gdi_object_delete_full (local.get $mf))))))))
+        (local.set $copy (call $ole_copy_metafile_picture (local.get $arg0))))
       (else
         (if (i32.eq (local.get $arg1) (i32.const 14))      ;; CF_ENHMETAFILE
           (then (local.set $copy (call $gdi_metafile_copy (local.get $arg0) (i32.const 7))))

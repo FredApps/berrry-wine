@@ -397,10 +397,8 @@ const RegionMap = require('../lib/region-map.generated.js');
     assert.strictEqual(wat.test_call_GetObjectType(metafile), 9,
       'drawing borrows, rather than consumes, the cached metafile');
     assert.strictEqual(wat.test_ole_release(object), 0);
-    // Existing TYMED_MFPICT copy/release ownership is a separate open gap:
-    // the cache currently aliases this medium and does not retire it.
-    assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
-    wat.guest_free(picture);
+    assert.strictEqual(wat.test_call_GetObjectType(metafile), 0,
+      'final owner release retires the cached metafile');
     wat.test_call_DeleteDC(hdc);
     wat.test_call_DeleteObject(bitmap);
   });

@@ -205,6 +205,84 @@ async function main() {
     check('SetMetaFileBitsEx rejects a declared extent beyond the input buffer',
       callApi('SetMetaFileBitsEx', 64, bits) === 0);
   }
+  for (const enhanced of [false, true]) {
+    const bits = alloc(108);
+    bytes.fill(0, wa(bits), wa(bits) + 108);
+    if (enhanced) {
+      [[0, 1], [4, 88], [40, 0x464d4520], [44, 0x10000], [48, 108],
+        [52, 2], [56, 1], [88, 14], [92, 20], [104, 20]]
+        .forEach(([offset, value]) => write(bits + offset, value));
+    } else {
+      [[0, 0x00090001], [4, 0x300], [6, 12], [12, 3], [18, 3]]
+        .forEach(([offset, value]) => write(bits + offset, value));
+    }
+    const mf = enhanced ? callApi('SetEnhMetaFileBits', 108, bits)
+      : callApi('SetMetaFileBitsEx', 24, bits);
+    assert(mf);
+    const picture = enhanced ? mf : callApi('GlobalAlloc', 0, 16);
+    if (!enhanced) [8, 529, 529, mf].forEach((value, i) => write(picture + i * 4, value));
+    const medium = alloc(12);
+    const tymed = enhanced ? 64 : 32;
+    const format = makeFormat(enhanced ? 14 : 3, tymed);
+    [tymed, picture, 0].forEach((value, i) => write(medium + i * 4, value));
+    const root = e.test_ole_create_static_handler(0) >>> 0;
+    assert.strictEqual(callApi('IOleCache_SetData', root + 52, format, medium, 0), 0);
+    const snapshot = e.test_ole_static_get_clipboard_data(root) >>> 0;
+    assert(snapshot);
+    const output = alloc(12);
+    assert.strictEqual(callApi('IDataObject_GetData', snapshot, format, output), 0);
+    const copiedPicture = read(output + 4);
+    const copiedMf = enhanced ? copiedPicture : read(copiedPicture + 12);
+    check(`cached ${enhanced ? 'EMF' : 'WMF'} GetData owns independent metafile records`,
+      copiedPicture !== picture && copiedMf !== mf && read(output + 8) === 0 &&
+      callApi('GetObjectType', copiedMf) === (enhanced ? 13 : 9));
+    if (!enhanced) check('copied METAFILEPICT is valid Global memory with preserved extents',
+      callApi('GlobalLock', copiedPicture) === copiedPicture &&
+      read(copiedPicture) === 8 && read(copiedPicture + 4) === 529);
+    releaseMedium(medium);
+    assert.strictEqual(callApi('IOleObject_Release', root), 0);
+    assert.strictEqual(callApi('IDataObject_Release', snapshot), 0);
+    check(`independent ${enhanced ? 'EMF' : 'WMF'} output survives source/cache/snapshot retirement`,
+      callApi('GetObjectType', mf) === 0 &&
+      callApi('GetObjectType', copiedMf) === (enhanced ? 13 : 9));
+    const releaser = makeGuestSite();
+    write(output + 8, releaser);
+    releaseMedium(output);
+    check(`custom releaser retains responsibility for ${enhanced ? 'EMF' : 'WMF'} payload`,
+      read(releaser + 4) === 0 && read(releaser + 12) === 1 &&
+      callApi('GetObjectType', copiedMf) === (enhanced ? 13 : 9));
+    [tymed, copiedPicture, 0].forEach((value, i) => write(output + i * 4, value));
+    releaseMedium(output);
+    check(`owned ${enhanced ? 'EMF' : 'WMF'} release retires handle and clears descriptor`,
+      callApi('GetObjectType', copiedMf) === 0 && read(output) === 0 && read(output + 4) === 0);
+    if (!enhanced) check('owned METAFILEPICT release also retires outer Global memory',
+      callApi('GlobalLock', copiedPicture) === 0);
+    releaseMedium(output); // cleared descriptor is harmless
+  }
+  {
+    const dib = callApi('GlobalAlloc', 0x40, 44);
+    [[0, 40], [4, 1], [8, 1], [12, 0x00180001], [20, 4], [40, 0x0000ff]]
+      .forEach(([offset, value]) => write(dib + offset, value));
+    const medium = alloc(12);
+    [1, dib, 0].forEach((value, i) => write(medium + i * 4, value));
+    const root = e.test_ole_create_static_handler(0) >>> 0;
+    assert.strictEqual(callApi('IOleCache_SetData', root + 52, makeFormat(8), medium, 1), 0);
+    const iid = alloc(16), out = alloc(4);
+    [0x10e, 0, 0xc0, 0x46000000].forEach((value, i) => write(iid + i * 4, value));
+    assert.strictEqual(callApi('IOleObject_QueryInterface', root, iid, out), 0);
+    const face = read(out);
+    const synthesized = read(root + 168), synthesizedMf = read(synthesized + 12);
+    assert(synthesized && synthesizedMf);
+    assert.strictEqual(callApi('IDataObject_GetData', face, makeFormat(3, 32), medium), 0);
+    const copy = read(medium + 4), copyMf = read(copy + 12);
+    assert.strictEqual(callApi('IOleObject_Release', root), 1);
+    assert.strictEqual(callApi('IDataObject_Release', face), 0);
+    check('final live-face release retires root-owned synthesized metafile, not its GetData copy',
+      copy !== synthesized && copyMf !== synthesizedMf &&
+      callApi('GetObjectType', synthesizedMf) === 0 && callApi('GetObjectType', copyMf) === 9);
+    releaseMedium(medium);
+    check('synthesized GetData copy is independently retired', callApi('GetObjectType', copyMf) === 0);
+  }
   for (const destroy of [0, 1]) {
     const out = alloc(4), handleOut = alloc(4), written = alloc(4), cloneOut = alloc(4);
     assert.strictEqual(callApi('CreateStreamOnHGlobal', 0, destroy, out), 0);

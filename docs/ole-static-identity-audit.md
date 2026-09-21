@@ -384,3 +384,33 @@ the fixture. Correct independent copies, pUnkForRelease ownership, and final
 retirement must be implemented together; adding deletion alone would turn
 the current aliasing into use-after-free. This is the next ownership task,
 not a claim that metafile lifetime is fixed by rendering it.
+
+## Metafile medium ownership — independent copies and retirement
+
+The follow-up fixes the alias/retirement pair together. TYMED_MFPICT copies
+now clone the GDI metafile and allocate an independent Global-memory wrapper;
+TYMED_ENHMF copies clone the enhanced metafile. A single WMF-picture cloning
+helper also serves OleDuplicateData, including rollback if the wrapper
+allocation fails. Normal medium release retires both WMF resources (or the
+EMF handle), while a non-null pUnkForRelease retains responsibility for the
+payload. This matches Microsoft's
+[ReleaseStgMedium ownership table](https://learn.microsoft.com/en-us/windows/win32/api/ole2/nf-ole2-releasestgmedium).
+
+The root-owned WMF synthesized from a DIB is now retired on final static
+object release, after detaching the borrowed live face. Independent GetData
+results and clipboard snapshots remain alive. The vector rendering test no
+longer manually deletes a leaked handle: it requires final owner release
+to delete it.
+
+Regression coverage uses real public API thunks for cache SetData(FALSE),
+IDataObject GetData and Release, and ReleaseStgMedium. Both WMF and EMF
+outputs must differ from their originals, survive source/cache/snapshot
+retirement, honor a DLL-private custom releaser, and retire cleanly when
+owned. WMF wrappers must also pass GlobalLock and become invalid on release.
+Substituting the pre-fix OLE fragment fails the independent-WMF assertion.
+The fresh-process WordPad roundtrip remains **12/12**, with the same red=760,
+blue=752 pixels; the public metafile suite is **13/13** and static OLE is
+**66/66**. Guest callback coverage passes **161/161**, including synthesized
+root-presentation retirement; clipboard wrapping passes **13/13**.
+This does not close browser verification, mapping-mode support,
+metadata allocation-failure atomicity or guest final-release reentrancy.
