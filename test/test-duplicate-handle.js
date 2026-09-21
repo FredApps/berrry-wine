@@ -36,6 +36,16 @@ const extraWat = `
       (then (unreachable)))
     (i32.load (global.get $reg_base)))
   (func (export "test_dup_error") (result i32) (global.get $last_error))
+  (func (export "test_public_write") (param $handle i32) (param $count i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $gs32 (i32.const 0x00490100) (i32.const 0x44434241))
+    (call $gs32 (i32.const 0x00490110) (i32.const -1))
+    (call $handle_WriteFile (local.get $handle) (i32.const 0x00490100)
+      (local.get $count) (i32.const 0x00490110) (i32.const 0) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff018))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
   (func (export "test_dup_errno") (result i32)
     (call $gl32 (global.get $msvcrt_errno_ptr)))
   (func (export "test_public_close") (param $handle i32) (result i32)
@@ -76,6 +86,40 @@ const extraWat = `
   assert.strictEqual(wat.get_eax(), 0, 'DuplicateHandle rejects a NULL output pointer');
 
   const vfs = hostCtx.vfs;
+  const writeHandle = vfs.createFile('c:\\write-result.bin', 0xc0000000, 2) >>> 0;
+  assert.strictEqual(wat.test_public_write(writeHandle, 4), 1);
+  assert.strictEqual(wat.test_dup_error(), 0x1234);
+  assert.strictEqual(wat.test_read_guest32(0x00490110), 4);
+  assert.deepStrictEqual(Array.from(vfs.files.get('c:\\write-result.bin').data), [65, 66, 67, 68]);
+  vfs.closeHandle(writeHandle);
+  for (const count of [0, 4]) {
+    assert.strictEqual(wat.test_public_write(writeHandle, count), 0);
+    assert.strictEqual(wat.test_dup_error(), 6, 'closed WriteFile reports its operation error');
+    assert.strictEqual(wat.test_read_guest32(0x00490110), 0, 'failure clears bytes written');
+  }
+  const realWrite = vfs.writeFile;
+  const errorHandle = vfs.createFile('c:\\write-error.bin', 0xc0000000, 2) >>> 0;
+  try {
+    for (const error of [19, 112]) {
+      vfs.writeFile = () => ({ ok: false, bytesWritten: 0, error });
+      assert.strictEqual(wat.test_public_write(errorHandle, 4), 0);
+      assert.strictEqual(wat.test_dup_error(), error, 'write error is returned with this operation');
+      assert.strictEqual(wat.test_read_guest32(0x00490110), 0);
+    }
+  } finally {
+    vfs.writeFile = realWrite;
+  }
+  assert.strictEqual(wat.test_public_write(errorHandle, 0), 1, 'success after failure does not reuse a host error');
+  assert.strictEqual(wat.test_dup_error(), 0x1234);
+  vfs.setDriveReadOnly('c', true);
+  try {
+    assert.strictEqual(wat.test_public_write(errorHandle, 4), 0);
+    assert.strictEqual(wat.test_dup_error(), 19, 'write-protected media reports ERROR_WRITE_PROTECT');
+    assert.strictEqual(vfs.files.get('c:\\write-error.bin').data.length, 0);
+  } finally {
+    vfs.setDriveReadOnly('c', false);
+  }
+  console.log('PASS  public WriteFile returns per-operation errors, byte counts and stdcall cleanup');
   const original = vfs.createFile('c:\\duplicate.bin', 0xc0000000, 2) >>> 0;
   vfs.writeFile(original, Uint8Array.from([10, 20, 30, 40]), 4);
   vfs.setFilePointer(original, 0, 0);

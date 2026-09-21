@@ -191,3 +191,31 @@ read/write/seek/size error paths. Those need operation-specific errors returned
 with the operation result; a shared host last-error getter would risk another
 Worker overwriting the error between calls. Tombstone reclamation and outstanding
 provider-I/O lifetime coverage remain open.
+
+## WriteFile operation-error checkpoint — 2026-09-21
+
+`fs_write_file_result` returns ERROR_SUCCESS or the error from the same write
+operation, as one i32 RPC result. The existing `fs_write_file` BOOL adapter calls
+that implementation, keeping CRT callers compatible without duplicating writes.
+The public Win32 handler converts the result to BOOL and sets its instance-local
+last-error on failure. The IOCP write branch also preserves the write error rather
+than replacing every failure with ERROR_WRITE_FAULT. Its existing multi-call
+seek/write/restore sequence is **not** made atomic by this change.
+
+Following Microsoft's [WriteFile contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-writefile),
+the bridge clears the byte-count output before checking the handle. Closed handles
+report 6 even for zero-byte writes; read-only drives report 19. The regression
+calls the public handler for successful writes, closed handles, read-only media,
+injected operation errors (including disk-full 112), and success after failure,
+checking byte counts and stdcall cleanup. Injected disk-full is an error transport
+test, not a claim that the VFS implements disk capacity.
+
+Access-mask enforcement, invalid-buffer probing, read/seek/size error transport,
+and real concurrent Worker I/O coverage remain open. The new bridge avoids a
+shared last-error getter; this alone does not establish all file-I/O thread safety.
+
+Verification: public write/duplicate, CRT-close, IOCP-overlapped, worker-import
+and VFS (32/32) suites pass. Full shared-tree build passes with 247 imports,
+canonical 1,472,601 bytes, compatibility 1,473,575 bytes, unchanged layout
+`54f430b349c8d55e`, and 242 nonoverlapping data segments. This is integration
+coverage, not an isolated benchmark or a real Worker write-error test.

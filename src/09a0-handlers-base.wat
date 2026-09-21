@@ -4665,14 +4665,14 @@
         (drop (call $host_fs_set_file_pointer (local.get $arg0)
           (call $gl32 (i32.add (local.get $arg4) (i32.const 8)))
           (i32.const 0))) ;; FILE_BEGIN
-        (local.set $ok (call $host_fs_write_file
+        (local.set $ok (call $host_fs_write_file_result
           (local.get $arg0) (local.get $arg1) (local.get $arg2)
           (i32.add (local.get $arg4) (i32.const 4))))
         (drop (call $host_fs_set_file_pointer
           (local.get $arg0) (local.get $saved_pos) (i32.const 0)))
-        (if (i32.eqz (local.get $ok))
+        (if (local.get $ok)
           (then
-            (global.set $last_error (i32.const 29)) ;; ERROR_WRITE_FAULT
+            (global.set $last_error (local.get $ok))
             (i32.store offset=0 (global.get $reg_base) (i32.const 0))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
             (return)))
@@ -4685,8 +4685,10 @@
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
     ;; File handles — delegate to virtual FS
-    (i32.store offset=0 (global.get $reg_base) (call $host_fs_write_file
+    (local.set $ok (call $host_fs_write_file_result
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (if (local.get $ok) (then (global.set $last_error (local.get $ok))))
+    (i32.store offset=0 (global.get $reg_base) (i32.eqz (local.get $ok)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
   )
 

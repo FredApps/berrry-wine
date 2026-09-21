@@ -346,7 +346,7 @@ test('read-only drive permits reads and rejects every write path', () => {
   assert.strictEqual(vfs.createFile('D:\\manual.hlp', 0x40000000, 3), 0,
     'GENERIC_WRITE OPEN_EXISTING must fail');
   assert.deepStrictEqual(vfs.writeFile(readHandle, Uint8Array.of(1), 1),
-    { ok: false, bytesWritten: 0 }, 'writes through a read handle must fail');
+    { ok: false, bytesWritten: 0, error: 19 }, 'writes through a read handle on protected media must report ERROR_WRITE_PROTECT');
   assert.strictEqual(vfs.setFileAttributes('D:\\manual.hlp', 0x20), false);
   assert.strictEqual(vfs.deleteFile('D:\\manual.hlp'), false);
   assert.strictEqual(vfs.createDirectory('D:\\cache'), false);

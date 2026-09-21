@@ -753,6 +753,8 @@
   ;; is already spoken for as a BOOL at its other call sites.
   (import "host" "fs_write_file" (func $host_fs_write_file (param i32 i32 i32 i32) (result i32)))
   ;; fs_write_file(handle, bufGA, nToWrite, nWrittenGA) → BOOL
+  (import "host" "fs_write_file_result" (func $host_fs_write_file_result (param i32 i32 i32 i32) (result i32)))
+  ;; Same write, returning ERROR_SUCCESS or the operation's Win32 error.
   (import "host" "fs_flush_file_buffers" (func $host_fs_flush_file_buffers (param i32) (result i32)))
   (import "host" "fs_close_handle" (func $host_fs_close_handle (param i32) (result i32)))
   (import "host" "fs_duplicate_handle" (func $host_fs_duplicate_handle (param i32 i32 i32 i32) (result i32)))
