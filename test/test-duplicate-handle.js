@@ -36,6 +36,17 @@ const extraWat = `
       (then (unreachable)))
     (i32.load (global.get $reg_base)))
   (func (export "test_dup_error") (result i32) (global.get $last_error))
+  (func (export "test_public_seek") (param $handle i32) (param $low i32)
+      (param $high i32) (param $use_high i32) (param $method i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $gs32 (i32.const 0x00490120) (local.get $high))
+    (call $handle_SetFilePointer (local.get $handle) (local.get $low)
+      (select (i32.const 0x00490120) (i32.const 0) (local.get $use_high))
+      (local.get $method) (i32.const 0) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff014))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
   (func (export "test_public_read") (param $handle i32) (param $count i32) (result i32)
     (global.set $last_error (i32.const 0x1234))
     (global.set $yield_flag (i32.const 0))
@@ -98,6 +109,34 @@ const extraWat = `
   assert.strictEqual(wat.get_eax(), 0, 'DuplicateHandle rejects a NULL output pointer');
 
   const vfs = hostCtx.vfs;
+  const seekHandle = vfs.createFile('c:\\seek-result.bin', 0xc0000000, 2) >>> 0;
+  vfs.writeFile(seekHandle, Uint8Array.from([1, 2, 3, 4]), 4);
+  assert.strictEqual(wat.test_public_seek(seekHandle, -1, 0, 0, 2), 3, 'FILE_END accepts negative distance');
+  for (const [low, high, useHigh, method, error] of [
+    [-4, 0, 0, 1, 131], [-1, -1, 1, 0, 131], [0, 0, 0, 9, 87],
+    [0, 1, 1, 9, 87], [0, 0x200000, 1, 0, 87],
+  ]) {
+    assert.strictEqual(wat.test_public_seek(seekHandle, low, high, useHigh, method) >>> 0, 0xffffffff);
+    assert.strictEqual(wat.test_dup_error(), error);
+    assert.strictEqual(vfs.getOpenFile(seekHandle).pos, 3, 'failure leaves shared cursor untouched');
+    assert.strictEqual(wat.test_read_guest32(0x00490120), high, 'failure does not overwrite high word');
+  }
+  assert.strictEqual(vfs.setFilePointer(seekHandle, -4, 1) >>> 0, 0xffffffff, 'legacy seek also rejects negative positions');
+  assert.strictEqual(vfs.getOpenFile(seekHandle).pos, 3);
+  assert.strictEqual(wat.test_public_seek(seekHandle, -1, 0, 1, 0) >>> 0, 0xffffffff);
+  assert.strictEqual(wat.test_dup_error(), 0, 'valid sentinel low word is distinguishable from failure');
+  assert.strictEqual(wat.test_read_guest32(0x00490120), 0);
+  assert.strictEqual(wat.test_public_seek(seekHandle, 1, 0, 0, 1) >>> 0, 0xffffffff);
+  assert.strictEqual(wat.test_dup_error(), 87, 'missing high output cannot truncate a >32-bit position');
+  assert.strictEqual(vfs.getOpenFile(seekHandle).pos, 0xffffffff);
+  assert.strictEqual(wat.test_public_seek(seekHandle, 1, 0, 1, 1), 0);
+  assert.strictEqual(wat.test_read_guest32(0x00490120), 1, 'carry is published in high output');
+  assert.strictEqual(vfs.getOpenFile(seekHandle).pos, 0x100000000);
+  assert.strictEqual(vfs.files.get('c:\\seek-result.bin').data.length, 4, 'seek past EOF does not grow file');
+  vfs.closeHandle(seekHandle);
+  assert.strictEqual(wat.test_public_seek(seekHandle, 0, 0, 0, 0) >>> 0, 0xffffffff);
+  assert.strictEqual(wat.test_dup_error(), 6);
+  console.log('PASS  public SetFilePointer errors, signed distance, high-word carry and cursor preservation');
   const writeHandle = vfs.createFile('c:\\write-result.bin', 0xc0000000, 2) >>> 0;
   assert.strictEqual(wat.test_public_write(writeHandle, 4), 1);
   assert.strictEqual(wat.test_dup_error(), 0x1234);

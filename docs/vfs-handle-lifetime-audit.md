@@ -247,3 +247,33 @@ and IOCP-overlapped suites pass. Full shared-tree build passes: 248 imports,
 canonical 1,472,619 bytes, compatibility 1,473,593 bytes, unchanged layout
 `54f430b349c8d55e`, 242 nonoverlapping data segments. Machine load exceeded 100
 during verification; no timing or isolated-artifact claim is made.
+
+## SetFilePointer result checkpoint — 2026-09-21
+
+The shared seek core no longer clamps a negative result to zero: it returns
+ERROR_NEGATIVE_SEEK (131) without changing the cursor. Bad handles return 6;
+invalid methods return 87. The legacy numeric adapter shares this validation.
+The public handler's new `fs_seek_result` bridge returns the error in the same
+RPC that writes the low/high outputs. WAT translates the optional high-word
+pointer once; the low result goes directly to the calling thread's EAX storage.
+
+Following the documented [SetFilePointer contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setfilepointer),
+distance is signed 32-bit without a high pointer and signed 64-bit with one.
+A result beyond 32 bits without a high output fails instead of truncating.
+Success clears last-error so a valid low word of 0xffffffff is not mistaken for
+failure. Seeking past EOF changes position, not file size. Failure leaves the
+cursor and high-word output untouched.
+
+Tests cover negative FILE_END distance, negative resulting position through
+both adapters, bad method, closed handle, valid sentinel low word, 4 GB carry,
+missing-high overflow and no file growth. The VFS still stores positions as
+exact JS Numbers: results above Number.MAX_SAFE_INTEGER are rejected with 87,
+not rounded. This is an emulator limit, not a claimed native Win98 limit.
+NO_BUFFERING alignment, access checks, SetFilePointerEx error behavior and
+size-query result transport remain outside this checkpoint.
+
+Verification: public seek/read/write/duplicate, legacy seek/HFILE, VFS 32/32 and
+lazy-provider 36/36 tests pass. Full shared-tree build passes with 249 imports,
+canonical 1,472,685 bytes, compatibility 1,473,659 bytes, unchanged layout
+`54f430b349c8d55e` and 242 nonoverlapping data segments. Load exceeded 300 during
+the build; this is correctness/integration evidence, not performance evidence.

@@ -2,11 +2,15 @@
   ;; LATE FILE, REGISTRY, SHELL AND DESKTOP HANDLERS\nFile and registry services followed by shell integration and desktop helpers.
   ;; ============================================================
 
-;; 408: SetFilePointer — STUB: unimplemented
+  ;; 408: SetFilePointer
   (func $handle_SetFilePointer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $high_wa i32)
     ;; SetFilePointer(hFile, lDistanceToMove, lpDistanceToMoveHigh, dwMoveMethod) — 4 args
-    (i32.store offset=0 (global.get $reg_base) (call $host_fs_set_file_pointer
-      (local.get $arg0) (local.get $arg1) (local.get $arg3)))
+    (if (local.get $arg2) (then (local.set $high_wa (call $g2w (local.get $arg2)))))
+    ;; Clear last error on success, including the valid low-word 0xffffffff.
+    (global.set $last_error (call $host_fs_seek_result
+      (local.get $arg0) (local.get $arg1) (local.get $high_wa)
+      (local.get $arg3) (global.get $reg_base)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
   )
 
