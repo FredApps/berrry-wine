@@ -1467,9 +1467,15 @@ Three registry fields keep Blobby's one-keyboard game undisturbed:
 - `local: true` keeps **Both players here** on the card. The card is shown even
   when nobody is serving, so that choice stays reachable; an empty card offers
   **Go online**, which is the silent join-or-open.
-- `join.hint`, since there is no `launchArgs`, is appended to the joiner's chip
-  (`pick NETZWERKSPIEL → ALS GAST SPIELEN… → SPIELE SUCHEN`). DirectPlay's own
-  broadcast finds the session, so nobody types an address.
+- `join.inGame` finishes the join from inside the game. `net_link_open(why)`
+  tells the page which networked act asked for the room: 1 `socket()`, 2
+  DirectPlay Open to host, 3 Open to join, 4 EnumSessions. A searcher (4) that
+  picks a row is already on SPIELE SUCHEN's session list, so the recipe waits
+  for the host's reply (`heard()`), then presses Up Enter to take the session.
+  Any other `why` falls back to `join.hint` in the chip (`pick NETZWERKSPIEL →
+  ALS GAST SPIELEN… → SPIELE SUCHEN`). DirectPlay's own broadcast finds the
+  session, so nobody types an address. The same recipe hook serves Quake's
+  mid-game toast (`why` 0), where the recipe types `connect` into the console.
 
 When an owner's last member drops, the page shows a notice rather than the
 brief chip, because most games keep serving to nobody without saying so.

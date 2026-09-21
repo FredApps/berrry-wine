@@ -345,11 +345,9 @@ const blobsAt = (band) => {
       document.querySelector('#wine-lan-card .wine-lan-room button').click());
     check('Join put the guest in the host\'s room (10.0.0.2)',
       !!(await wired(guest)) && (await guest.page.evaluate(wireOf)).address === '10.0.0.2');
-    const hint = await H.until(guest.page, 'guest: no hint', () => {
-      const chip = document.getElementById('wine-lan-chip');
-      return chip && /SPIELE SUCHEN/.test(chip.textContent) ? chip.textContent : null;
-    }, null, 10000);
-    check('and its chip says where to go in the game\'s menus', !!hint);
+    // The guest asked from SPIELE SUCHEN, so it is on the game's own session
+    // list: lan.join.inGame waits for the host's reply and picks the session
+    // itself. No key is pressed for it from here on.
     const pageUrl = await guest.page.evaluate(() => location.search);
     check(`its page address names the room (${pageUrl})`, /[?&]room=/.test(pageUrl));
     await H.sleep(3000);
@@ -360,9 +358,12 @@ const blobsAt = (band) => {
       null, MILESTONE_MS);
     check('the guest\'s search was answered over the data channel', !!found,
       JSON.stringify(await guest.page.evaluate(wireOf)));
-    await H.sleep(3000);
+    const picked = await H.until(guest.page, 'guest: the page never joined the game', () => {
+      const chip = document.getElementById('wine-lan-chip');
+      return chip && /in .*'s game/.test(chip.textContent) ? chip.textContent : null;
+    }, null, MILESTONE_MS);
+    check(`the page picked the host's session from the game's list itself (${picked})`, !!picked);
     await snap(guest, 'guest-found');
-    await keys(guest.page, [UP, ENTER]);
 
     await H.sleep(8000);
     const a = [await host.page.evaluate(wireOf), await guest.page.evaluate(wireOf)];

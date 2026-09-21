@@ -2227,7 +2227,9 @@
       "results": []
     },
     "net_link_open": {
-      "params": [],
+      "params": [
+        "i32"
+      ],
       "results": [
         "i32"
       ]

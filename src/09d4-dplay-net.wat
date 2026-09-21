@@ -572,7 +572,8 @@
         (return (i32.const -1))))
     ;; Hosting or joining is the first moment this app needs the room, so it
     ;; is where a host that asks the person which room to join gets to ask.
-    (if (i32.eqz (call $host_net_link_open))
+    (if (i32.eqz (call $host_net_link_open
+          (select (i32.const 2) (i32.const 3) (i32.and (local.get $flags) (i32.const 2))))) ;; DPOPEN_CREATE
       (then (call $vsock_block (i32.const 16)) (return (i32.const -1))))
     (if (i32.eqz (call $dpn_activate (local.get $owner)))
       (then (return (i32.const 0x8007000E))))
@@ -648,7 +649,7 @@
           (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057)) (return)))
         ;; Same as the Open path: searching for a game is a networked act, and
         ;; the host may still be asking the person which room to search.
-        (if (i32.eqz (call $host_net_link_open))
+        (if (i32.eqz (call $host_net_link_open (i32.const 4)))
           (then (call $vsock_block (i32.const 28)) (return)))
         (if (i32.eqz (call $dpn_activate (i32.const 0)))
           (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E)) (return)))

@@ -882,7 +882,7 @@
     ;; keeps the lobby out of every solo game. Checked after the argument
     ;; tests, so a refused IPX probe asks nothing. Every host without a lobby
     ;; answers 1 at once.
-    (if (i32.eqz (call $host_net_link_open))
+    (if (i32.eqz (call $host_net_link_open (i32.const 1)))
       (then (call $vsock_block (i32.const 16)) (return)))
     (local.set $idx (call $vsock_alloc))
     (if (i32.lt_s (local.get $idx) (i32.const 0))

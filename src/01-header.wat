@@ -921,7 +921,11 @@
   (import "host" "net_frame_peek" (func $host_net_frame_peek (param i32 i32) (result i32)))
   ;; net_frame_commit() — discard the frame most recently peeked.
   (import "host" "net_frame_commit" (func $host_net_frame_commit))
-  ;; net_link_open() → 1 this process may use the room now, 0 not yet.
+  ;; net_link_open(why) → 1 this process may use the room now, 0 not yet.
+  ;; `why` names the networked act asking: 1 socket(), 2 DirectPlay Open to
+  ;; host, 3 Open to join, 4 EnumSessions. A host that joins a room for the
+  ;; person may then carry on from there -- a searcher is already on the
+  ;; session list, a host is not (lib/apps.js lan.join.inGame).
   ;;
   ;; A wire can be attached long after boot, and a browser host that asks a
   ;; person who to play with cannot answer inside a host import — the lobby is
@@ -931,7 +935,7 @@
   ;; (the CLI, or an app launched with its wire already in place) answers 1 for
   ;; ever and no guest waits. Answering 1 with no wire at all is also correct:
   ;; that is a machine with no cable, and the search simply finds nobody.
-  (import "host" "net_link_open" (func $host_net_link_open (result i32)))
+  (import "host" "net_link_open" (func $host_net_link_open (param i32) (result i32)))
 
   ;; Minimum 8192 pages (512MB) and maximum 32768 (2GB): a host that creates
   ;; the 512MB memory every platform has always used still satisfies this
