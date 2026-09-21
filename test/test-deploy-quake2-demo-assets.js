@@ -12,7 +12,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 const { DESKTOP_APPS, APPS, appFileUrl } = require('../lib/apps');
-const { desktopAssetPaths } = require('../tools/deploy-berrry');
+const { desktopAssetPaths, shipsAsSiteText } = require('../tools/deploy-berrry');
 const iconManifest = require('../lib/app-icon-manifest.json');
 
 const ROOT = path.join(__dirname, '..');
@@ -34,10 +34,14 @@ const deployed = desktopAssetPaths();
 const haveAssets = fs.existsSync(path.join(ROOT, app.exe));
 if (haveAssets) {
   for (const file of mounted) {
-    if (file.startsWith('lib/')) continue;       // the site's own files
+    if (file.startsWith('lib/')) continue;       // the site's own files, below
     assert(deployed.has(file), `deploy is missing ${file}`);
   }
 }
+// A site file ships only if its extension is on the deploy's text list; the
+// source note 404'd on the first deploy because .txt was not.
+for (const file of mounted.filter(f => f.startsWith('lib/')))
+  assert(shipsAsSiteText(file), `deploy does not ship ${file}`);
 const extra = [...deployed].filter(p => p.startsWith(root) && !mounted.includes(p));
 assert.deepStrictEqual(extra, [], 'deploy ships Quake files the game does not mount');
 assert(![...deployed].some(p => /quake-2-demo-installer\/[^/]+\.exe$/i.test(p)),
