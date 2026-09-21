@@ -174,3 +174,36 @@ browser test does not assert that this extra action changed an option.
 Next capture menu hover/close and queued WM_COMMAND immediately around that
 click, then inspect the guest fade variable before claiming selection works.
 The production renderer helper remains installed.
+
+## Desktop forwarding stole submenu presses, 2026-09-21
+
+The previous select/reopen result was not a missing WAT hit test. Its browser
+`inputTrace` contains only handleMouseUp at (349,256), not handleMouseDown.
+`forwardEmptyDesktopClick` in `lib/browser-input.js` runs before renderer
+menu tracking and forwarded the press to an HTML desktop icon because that
+point lies outside every guest window rectangle. A popup is an overlay and
+can extend beyond its owner; app-window hit testing cannot establish that
+the click belongs to the desktop.
+
+The bridge now consults the renderer's live `_openMenuContext` before any
+desktop DOM hit test. While a menu is open, selection and outside clicks both
+go through menu tracking, including mouse and touch. It does not use the
+plugin title, a guessed menu rectangle, or a second menu-state cache.
+
+Validation: the actual DOM bridge test in `test-web-touch-input.js` covers a
+secondary-owner popup over an HTML icon, mouse press/release, touch tap,
+absence of desktop hit testing while open, and restored icon forwarding
+after closure. Main and isolated tests pass. With the old bridge loaded,
+the new mouse assertion fails (`[]` instead of the expected press), recorded
+in `/private/tmp/wa-wvis-desktop-negative.log`. Relative-mouse lock-gate,
+relative-mouse latch and Worker keyboard/menu tests also pass. No WAT or
+import ABI changed in this slice.
+
+The real wVis select/reopen run with the helper disabled exits 0 on its
+existing assertions (`/private/tmp/wa-wvis-desktop-browser.log`). The trace
+now includes both down and up at (349,256). Clear (40030) changes from flag 0
+to flag 4 after reopening, demonstrating that the selection now affects the
+menu state reconstructed by the guest. However, Slower Fade (40041) remains
+checked too: **this is not a clean check-state round-trip**. The detached
+LoadMenu cache and DestroyMenu lifetime are the next concrete suspects;
+do not remove the production helper based solely on this partial success.

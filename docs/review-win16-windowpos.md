@@ -3047,3 +3047,11 @@ those checks unchanged, so command selection is explicitly unverified despite
 the existing visualization/submenu browser assertions passing. The legacy
 attached-resource scope, live tracking-snapshot mutation, dynamic GetMenuState
 and popup modal lifetime remain open; details are in the binary notes.
+
+The missing Clear selection was traced to browser desktop forwarding: a
+cascade outside its app's window rectangle lost its mousedown to an HTML
+icon. The DOM bridge now honors the live open-menu context before desktop
+hit testing for mouse and touch. Unit tests (with an old-code negative) and
+the real wVis rerun confirm delivery; Clear becomes checked on reopening.
+Slower Fade remains checked as well, exposing a separate stale detached-menu
+state/lifetime issue rather than proving the complete round trip correct.

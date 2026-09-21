@@ -457,6 +457,46 @@ try {
   touchStart(tev([finger(92,200,150)],[finger(92,200,150)]));
   (listeners.get('touchcancel')||[]).at(-1)(tev([],[finger(92,200,150)]));
   assert.deepStrictEqual(heldEvents.at(-1),['up',200,150,0],'cancel also releases the held mouse');
+
+  // A cascade outside its app rectangle still owns mouse and touch input.
+  // Exercise the shipping (non-debug) bridge against an HTML desktop icon.
+  delete require.cache[require.resolve('../lib/browser-input')];
+  const menuBridge = require('../lib/browser-input');
+  let openMenu = { hwnd: 98305, exports: {} };
+  let desktopHits = 0;
+  let iconClicks = 0;
+  const menuPresses = [];
+  const oldMouseEvent = global.MouseEvent;
+  global.MouseEvent = class { constructor(type) { this.type = type; } };
+  global.document.pointerLockElement = null;
+  global.document.elementFromPoint = () => {
+    desktopHits++;
+    return { closest: () => ({ dispatchEvent() { iconClicks++; } }) };
+  };
+  try {
+    menuBridge.wireCanvasInput(canvas, {
+      windows: {},
+      _openMenuContext: () => openMenu,
+      handleMouseDown: (x, y, b) => menuPresses.push([x, y, b]),
+      handleMouseUp() {}, handleMouseMove() {}, handleMenuHover() {},
+    }, { runningApps: [], debugMode: false });
+    canvas.onmousedown({ ...event, clientX: 350, clientY: 257 });
+    assert.deepStrictEqual(menuPresses, [[350, 257, 0]],
+      'a menu press outside app bounds must reach the renderer');
+    (listeners.get('mouseup') || []).at(-1)(event);
+    const mt = finger(101, 350, 257);
+    canvasListeners.get('touchstart')(tev([mt], [mt]));
+    (listeners.get('touchend') || []).at(-1)(tev([], [mt]));
+    assert.deepStrictEqual(menuPresses, [[350, 257, 0], [350, 257, 0]]);
+    assert.strictEqual(desktopHits, 0, 'an open menu owns even outside-window clicks');
+    assert.strictEqual(iconClicks, 0, 'the desktop icon under a cascade must not launch');
+    openMenu = null;
+    canvas.onmousedown(event);
+    assert.strictEqual(iconClicks, 1, 'desktop forwarding resumes after menu tracking');
+    assert.strictEqual(menuPresses.length, 2, 'forwarded desktop clicks do not reach the guest');
+  } finally {
+    global.MouseEvent = oldMouseEvent;
+  }
 } finally {
   global.window = originalWindow;
   global.document = originalDocument;
