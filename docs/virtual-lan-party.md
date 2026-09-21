@@ -1490,13 +1490,19 @@ notice with only an OK. Now two moments show a sign-in card
 signed out (the card says you were invited, and nothing launches behind it),
 and the game going online signed out (the game waits in its network call).
 Launching signed out without a link asks nothing. **Sign in** goes to
-`/api/auth/login?return=<this page>`. The page URL names the app and the room,
-so coming back to it carries on from where it stopped. In case Berrry's
-login returns to the site root instead, the URL is also kept in
-sessionStorage, and `resumeAfterSignIn()` in index.html goes on to it. Whether
-the real login honours `return` has not been checked against Berrry yet.
-`tools/dev-server.js --require-login` answers 401 until a one-button stand-in
-login sets a cookie (public records stay readable). `test/test-web-lan-signin.js`
+`/api/auth/login?return=<this page's full URL>`. The page URL names the app and
+the room, so coming back to it carries on from where it stopped. From
+berrry-server's source (`src/backend-api/controllers.js` loginTrampoline,
+`src/users/controllers.js`, `src/subdomain-handler.js`): `return` must be
+**absolute**, because berrry.app's `/login` runs `new URL(return)`. After
+sign-in and consent the user lands on `return` plus `?token=…`, and the app's
+own server turns that into the `app_token` cookie and 302s to the same URL
+without `token`, keeping `app` and `room`. With no `return` it falls back to
+the Referer, then the app root. That fallback is also why the URL is kept in
+sessionStorage, where `resumeAfterSignIn()` in index.html goes on to it.
+`tools/dev-server.js --require-login` copies that hop: 401 until a one-button
+stand-in login returns with `?token=dev`, which becomes a cookie and a clean
+redirect. Public records stay readable signed out. `test/test-web-lan-signin.js`
 drives an invited link through sign-in and back, Play offline, and the
 root-return fallback.
 

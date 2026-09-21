@@ -347,9 +347,10 @@ async function handleApi(req, res, url, store, opts) {
       if (u.host === req.headers.host) target = u.pathname + u.search + u.hash;
     } catch (_) {}
     if (req.method === 'POST') {
+      // As Berrry does: back to `return` with ?token=, which the page
+      // request below turns into the cookie and a redirect without it.
       res.writeHead(303, {
-        'Set-Cookie': `${LOGIN_COOKIE}=1; Path=/; SameSite=Lax; Max-Age=86400`,
-        Location: target,
+        Location: `${target}${target.includes('?') ? '&' : '?'}token=dev`,
         'Cache-Control': 'no-store',
       });
       return res.end();
@@ -989,6 +990,19 @@ function createServer(opts) {
     // /dashboard is the multi-session grid (dashboard.html). Aliased because
     // the URL a human is handed should not carry a file extension, and because
     // the page's own tile links are written against this path.
+    // Berrry's app server takes the sign-in token off the URL: it becomes the
+    // session cookie, and the page is reloaded without it (other parameters
+    // kept), so it never reaches the address bar or a shared link.
+    if (opts && opts.requireLogin && url.searchParams.has('token')) {
+      url.searchParams.delete('token');
+      url.searchParams.delete('consent_granted');
+      res.writeHead(302, {
+        'Set-Cookie': `${LOGIN_COOKIE}=1; Path=/; SameSite=Lax; Max-Age=86400`,
+        Location: url.pathname + url.search,
+        'Cache-Control': 'no-store',
+      });
+      return res.end();
+    }
     let pathname = url.pathname;
     if (pathname === '/') pathname = '/index.html';
     else if (pathname === '/dashboard') pathname = '/dashboard.html';

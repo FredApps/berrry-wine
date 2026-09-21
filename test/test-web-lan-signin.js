@@ -99,8 +99,10 @@ if (!fs.existsSync(require('path').join(__dirname, '..', 'packages', 'freeware',
     check('nothing launched behind the card',
       await invited.evaluate(() => runningApps.length) === 0);
     await Promise.all([invited.waitForNavigation(), click(invited, 'signin')]);
-    check(`Sign in went to the login page (${new URL(invited.url()).pathname})`,
-      new URL(invited.url()).pathname === '/api/auth/login');
+    const loginAt = new URL(invited.url());
+    check(`Sign in went to the login page, asking to come back to the whole link (${loginAt.pathname})`,
+      loginAt.pathname === '/api/auth/login' && loginAt.searchParams.get('return') === link,
+      loginAt.searchParams.get('return'));
     await Promise.all([invited.waitForNavigation(), invited.click('#dev-sign-in')]);
     check('signing in came back to the same room link', invited.url() === link, invited.url());
     await shellReady(invited);
