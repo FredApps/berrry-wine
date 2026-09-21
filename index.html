@@ -2188,6 +2188,9 @@ Resource-aware Win98 emulator
     // selector is filtered down to the desktop set outside ?debug and a valid
     // registry id that is simply not in the dropdown should still launch.
     (() => {
+      // Back from a Berrry sign-in that returned to the site root rather
+      // than to the room link that sent it there: go on to that link.
+      if (window.browserShell.resumeAfterSignIn()) return;
       const wanted = new URLSearchParams(location.search).get('app');
       if (!wanted) return;
       window.addEventListener('load', () => {

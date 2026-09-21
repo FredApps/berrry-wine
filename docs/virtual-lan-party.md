@@ -1484,5 +1484,21 @@ Two things keep Blobby's one-keyboard game undisturbed:
   session, so nobody types an address. The same recipe hook serves Quake's
   mid-game toast (`why` 0), where the recipe types `connect` into the console.
 
+**Signing in (2026-09-21).** A 401 from the signaling API used to end in a
+notice with only an OK. Now two moments show a sign-in card
+(`#wine-lan-signin`, **Play offline** / **Sign in**): opening a room link
+signed out (the card says you were invited, and nothing launches behind it),
+and the game going online signed out (the game waits in its network call).
+Launching signed out without a link asks nothing. **Sign in** goes to
+`/api/auth/login?return=<this page>`. The page URL names the app and the room,
+so coming back to it carries on from where it stopped. In case Berrry's
+login returns to the site root instead, the URL is also kept in
+sessionStorage, and `resumeAfterSignIn()` in index.html goes on to it. Whether
+the real login honours `return` has not been checked against Berrry yet.
+`tools/dev-server.js --require-login` answers 401 until a one-button stand-in
+login sets a cookie (public records stay readable). `test/test-web-lan-signin.js`
+drives an invited link through sign-in and back, Play offline, and the
+root-return fallback.
+
 When an owner's last member drops, the page shows a notice rather than the
 brief chip, because most games keep serving to nobody without saying so.

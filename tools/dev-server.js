@@ -16,6 +16,9 @@
 //   node tools/dev-server.js                 # http://127.0.0.1:8080
 //   node tools/dev-server.js --port=9000
 //   node tools/dev-server.js --host=0.0.0.0  # other devices on your LAN
+//   node tools/dev-server.js --require-login
+//       # answer 401 until the browser signs in at /api/auth/login, the way
+//       # Berrry does, so the signed-out paths can be driven locally
 //   node tools/dev-server.js --host=0.0.0.0 --cert=lan.pem --key=lan-key.pem
 //       # the same over https: the virtual LAN lobby needs a secure context
 //       # (crypto.subtle), which a plain-http LAN address is not. Make the pair
@@ -25,6 +28,7 @@
 // talks to it does not change between local development and deployment:
 //
 //   GET    /api/auth/user            who am I (dev: always someone)
+//   GET    /api/auth/login?return=URL   sign in (only with --require-login)
 //   GET    /api/data/:key            read one of my own records
 //   PUT    /api/data/:key            write it; ?visibility=public to publish
 //   DELETE /api/data/:key            remove it
@@ -190,6 +194,7 @@ function parseCookies(header) {
 // tell each other apart. The cookie is that identity and nothing more: it
 // grants no rights, because in this server nothing is protected.
 const USER_COOKIE = 'wa_dev_user';
+const LOGIN_COOKIE = 'wa_dev_login';
 
 function identify(req, res) {
   const existing = parseCookies(req.headers.cookie)[USER_COOKIE];
@@ -326,9 +331,39 @@ function serveStatic(req, res, urlPath, agentInject) {
 
 const MAX_RECORD_BYTES = 256 * 1024;
 
-async function handleApi(req, res, url, store) {
+async function handleApi(req, res, url, store, opts) {
   const seg = url.pathname.split('/').filter(Boolean);   // ['api', ...]
   const userId = identify(req, res);
+
+  // --require-login: a stand-in for Berrry's sign-in. The login page is one
+  // button, and signing in sets a cookie and returns to `return` (a path on
+  // this origin; anything else goes to /). Public records stay readable
+  // signed out, as they are on the real backend; everything that needs an
+  // account answers 401 until then.
+  if (seg[1] === 'auth' && seg[2] === 'login' && seg.length === 3) {
+    let target = '/';
+    try {
+      const u = new URL(url.searchParams.get('return') || '/', `http://${req.headers.host}`);
+      if (u.host === req.headers.host) target = u.pathname + u.search + u.hash;
+    } catch (_) {}
+    if (req.method === 'POST') {
+      res.writeHead(303, {
+        'Set-Cookie': `${LOGIN_COOKIE}=1; Path=/; SameSite=Lax; Max-Age=86400`,
+        Location: target,
+        'Cache-Control': 'no-store',
+      });
+      return res.end();
+    }
+    const html = '<!doctype html><title>Dev sign-in</title>'
+      + `<form method="post" action="/api/auth/login?return=${encodeURIComponent(target)}">`
+      + '<p>Local stand-in for the Berrry sign-in page.</p>'
+      + '<button id="dev-sign-in" type="submit">Sign in</button></form>';
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    return res.end(html);
+  }
+  const signedIn = !(opts && opts.requireLogin)
+    || parseCookies(req.headers.cookie)[LOGIN_COOKIE] === '1';
+  if (!signedIn && seg[1] !== 'public-data') return sendJson(res, 401, { error: 'not signed in' });
 
   // GET /api/auth/user
   if (seg[1] === 'auth' && seg[2] === 'user' && seg.length === 3) {
@@ -931,7 +966,7 @@ function createServer(opts) {
           + `${(who || 'anon').slice(0, 8)} ${req.method} ${url.pathname}`
           + `${url.search || ''}`);
       }
-      handleApi(req, res, url, store).catch(err => {
+      handleApi(req, res, url, store, { requireLogin: !!(opts && opts.requireLogin) }).catch(err => {
         if (!res.headersSent) sendJson(res, 500, { error: String(err && err.message || err) });
       });
       return;
@@ -987,11 +1022,14 @@ function main() {
     agentToken,
     noAgentInject: process.argv.includes('--no-agent-inject'),
     tls,
+    requireLogin: process.argv.includes('--require-login'),
   });
   server.listen(port, host, () => {
     console.log(`wine-assembly dev server: ${scheme}://${host}:${port}`);
     console.log(`  serving ${ROOT}`);
-    console.log('  signaling API at /api/data, /api/public-data (no login, in memory)');
+    console.log(process.argv.includes('--require-login')
+      ? '  signaling API at /api/data, /api/public-data (401 until signed in at /api/auth/login)'
+      : '  signaling API at /api/data, /api/public-data (no login, in memory)');
     console.log(`  perf stream sink at /api/perf — open ${scheme}://${host}:${port}/?debug&perf&perf-stream`);
     console.log(`  threads probe: ${scheme}://${host}:${port}/threads-probe.html`
       + (ISOLATE ? '  (COOP/COEP served: isolated)' : '  (no COOP/COEP; use --isolate or the page\'s service-worker button)'));
