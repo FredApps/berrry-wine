@@ -395,8 +395,11 @@ async function main() {
     });
 
     await check('presence liveness comes from the store, not the record', async () => {
-      const rec = await alpha.signaling.read(beta.userId, beta.presenceKey);
-      assert.ok(rec.updatedAt, 'the store must stamp the record');
+      // Berrry stamps updated_at in the publisher list; a single read
+      // answers the bare value, so the list is where the clock comes from.
+      const list = await alpha.signaling.publishers(beta.presenceKey);
+      const rec = list.users.find(u => u.userId === beta.userId);
+      assert.ok(rec && rec.updatedAt, 'the store must stamp the record');
       assert.ok(!('at' in rec.value), 'a client clock must not be in the body');
       assert.ok(Number.isFinite(Date.parse(rec.updatedAt)));
     });
@@ -454,7 +457,7 @@ async function main() {
       const inbox = await inboxKeyFor(alpha.scope, beta.userId);
       // Gamma publishes into beta's inbox but claims to be alpha.
       const gamma = client();
-      await gamma._json('PUT', `/api/data/${encodeURIComponent(inbox)}?visibility=public`,
+      await gamma._json('POST', `/api/data/${encodeURIComponent(inbox)}?visibility=public`,
         Object.assign({ from: alpha.userId, publicKey: alphaSeen.publicKey },
           await sealed(betaKey, { role: 'offer', sdp: 'IMPOSTOR' })));
       const got = await beta._readInbox(inbox, alphaSeen, betaKey, 'offer');

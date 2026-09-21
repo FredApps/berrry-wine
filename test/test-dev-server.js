@@ -69,38 +69,56 @@ async function main() {
       assert.strictEqual(missing.status, 404);
     });
 
-    const put = await alice('PUT', '/api/data/vln-signal-room1?visibility=public',
+    // Berrry's shapes (berrry-server src/backend-api): PUT only updates,
+    // POST creates, and reads answer the stored value with no envelope.
+    const putMissing = await alice('PUT', '/api/data/vln-signal-room1?visibility=public',
       { sdp: 'opaque-ciphertext' });
-    check('a public write is accepted', () => {
-      assert.strictEqual(put.status, 200);
-      assert.strictEqual(put.json.visibility, 'public');
+    check('PUT on a key never written is 404, as on Berrry', () => {
+      assert.strictEqual(putMissing.status, 404);
     });
 
-    const priv = await alice('PUT', '/api/data/notes', { a: 1 });
-    check('a write with no visibility parameter stays private', () => {
-      assert.strictEqual(priv.json.visibility, 'private');
+    const post = await alice('POST', '/api/data/vln-signal-room1?visibility=public',
+      { sdp: 'opaque-ciphertext' });
+    check('a public POST creates the record', () => {
+      assert.strictEqual(post.status, 200);
+      assert.strictEqual(post.json.sdp, 'opaque-ciphertext');
     });
 
+    await alice('POST', '/api/data/notes', { a: 1 });
     const readBack = await alice('GET', '/api/data/vln-signal-room1');
-    check('the writer reads their own record back', () => {
-      assert.strictEqual(readBack.json.value.sdp, 'opaque-ciphertext');
+    check('the writer reads their own value back, unwrapped', () => {
+      assert.strictEqual(readBack.json.sdp, 'opaque-ciphertext');
+    });
+
+    const put = await alice('PUT', '/api/data/vln-signal-room1', { sdp: 'second' });
+    check('PUT updates an existing record and keeps it public', () => {
+      assert.strictEqual(put.status, 200);
+      assert.strictEqual(put.json.sdp, 'second');
     });
 
     // The discovery step: Bob has never met Alice and knows only the room key.
     const users = await bob('GET', '/api/public-data/users/vln-signal-room1');
     check('a peer discovers who published under the room key', () => {
       assert.strictEqual(users.status, 200);
-      assert.strictEqual(users.json.users.length, 1);
-      assert.strictEqual(users.json.users[0].userId, who.json.id);
+      assert.ok(Array.isArray(users.json), 'a bare array, as on Berrry');
+      assert.strictEqual(users.json.length, 1);
+      assert.strictEqual(users.json[0].userId, who.json.id);
+      assert.strictEqual(typeof users.json[0].userId, 'number');
+      assert.strictEqual(users.json[0].value.sdp, 'second');
+    });
+
+    const anon = await fetch(`${base}/api/public-data/users/vln-signal-room1`);
+    check('the public list needs no identity at all', () => {
+      assert.strictEqual(anon.status, 200);
     });
 
     const peerRead = await bob('GET', `/api/public-data/${who.json.id}/vln-signal-room1`);
     check('a peer reads the published record', () => {
-      assert.strictEqual(peerRead.json.value.sdp, 'opaque-ciphertext');
+      assert.strictEqual(peerRead.json.sdp, 'second');
     });
 
     const peerPrivate = await bob('GET', `/api/public-data/${who.json.id}/notes`);
-    check('a private record is not readable by a peer', () => {
+    check('a record written with no visibility stays private', () => {
       assert.strictEqual(peerPrivate.status, 404);
     });
 
@@ -112,7 +130,7 @@ async function main() {
     await alice('DELETE', '/api/data/vln-signal-room1');
     const afterDelete = await bob('GET', '/api/public-data/users/vln-signal-room1');
     check('deleting a record withdraws it from discovery', () => {
-      assert.strictEqual(afterDelete.json.users.length, 0);
+      assert.strictEqual(afterDelete.json.length, 0);
     });
 
     const reDelete = await alice('DELETE', '/api/data/vln-signal-room1');

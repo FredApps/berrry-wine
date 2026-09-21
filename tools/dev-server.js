@@ -78,20 +78,33 @@ const MIME = {
 // Storage
 // ---------------------------------------------------------------------------
 
-// users: userId -> { id, name, data: Map(key -> { value, visibility, updatedAt }) }
+// users: cookie -> { id, name, data: Map(key -> { value, visibility, updatedAt }) }
+//
+// Berrry's user ids are integers, and a browser's cookie is not its id, so
+// here too: the cookie finds the user and the user has a number. Code that
+// compares an id from a URL (always a string) with one from the API (a
+// number) then fails here the way it would on Berrry.
 class Store {
   constructor() {
     this.users = new Map();
+    this.byId = new Map();
+    this.nextId = 1;
     this.writes = 0;
   }
 
-  user(id) {
-    let u = this.users.get(id);
+  user(cookie) {
+    let u = this.users.get(cookie);
     if (!u) {
-      u = { id, name: `dev-${id.slice(0, 6)}`, data: new Map() };
-      this.users.set(id, u);
+      u = { id: this.nextId++, name: `dev-${cookie.slice(0, 6)}`, data: new Map() };
+      this.users.set(cookie, u);
+      this.byId.set(u.id, u);
     }
     return u;
+  }
+
+  // A user by the numeric id the API hands out, as a public read names it.
+  userById(id) {
+    return this.byId.get(Number(id)) || null;
   }
 
   put(userId, key, value, visibility) {
@@ -104,6 +117,12 @@ class Store {
   get(userId, key) {
     const u = this.users.get(userId);
     return u ? (u.data.get(key) || null) : null;
+  }
+
+  getPublic(id, key) {
+    const u = this.userById(id);
+    const rec = u ? u.data.get(key) : null;
+    return rec && rec.visibility === 'public' ? rec : null;
   }
 
   del(userId, key) {
@@ -119,10 +138,11 @@ class Store {
     for (const u of this.users.values()) {
       const rec = u.data.get(key);
       if (rec && rec.visibility === 'public') {
-        out.push({ userId: u.id, name: u.name, updatedAt: rec.updatedAt });
+        // Berrry's row: it also lists the value, and freshest first.
+        out.push({ userId: u.id, email: `${u.name}@dev.local`, updatedAt: rec.updatedAt, value: rec.value });
       }
     }
-    return out;
+    return out.sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0));
   }
 }
 
@@ -366,42 +386,47 @@ async function handleApi(req, res, url, store, opts) {
     || parseCookies(req.headers.cookie)[LOGIN_COOKIE] === '1';
   if (!signedIn && seg[1] !== 'public-data') return sendJson(res, 401, { error: 'not signed in' });
 
-  // GET /api/auth/user
+  // GET /api/auth/user -- Berrry's shape: a numeric id and three names.
   if (seg[1] === 'auth' && seg[2] === 'user' && seg.length === 3) {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
     const u = store.user(userId);
-    return sendJson(res, 200, { id: u.id, name: u.name, dev: true });
+    return sendJson(res, 200, {
+      id: u.id, email: `${u.name}@dev.local`, username: u.name, display_name: u.name, dev: true,
+    });
   }
 
   // /api/public-data/users/:key  and  /api/public-data/:userId/:key
+  //
+  // As on Berrry (src/backend-api/public-data-controllers.js): the list is a
+  // bare array of { userId, email, updatedAt, value }, freshest first, and a
+  // single read answers with the stored value itself, no envelope.
   if (seg[1] === 'public-data') {
     if (req.method !== 'GET') return sendJson(res, 405, { error: 'method not allowed' });
     if (seg[2] === 'users' && seg.length === 4) {
-      return sendJson(res, 200, { key: seg[3], users: store.publishers(seg[3]) });
+      return sendJson(res, 200, store.publishers(seg[3]));
     }
     if (seg.length === 4) {
-      const rec = store.get(seg[2], seg[3]);
-      if (!rec || rec.visibility !== 'public') {
-        return sendJson(res, 404, { error: 'not found' });
-      }
-      return sendJson(res, 200, {
-        key: seg[3], userId: seg[2], value: rec.value, updatedAt: rec.updatedAt,
-      });
+      const rec = store.getPublic(seg[2], seg[3]);
+      if (!rec) return sendJson(res, 404, { error: 'Public data not found' });
+      return sendJson(res, 200, rec.value);
     }
     return sendJson(res, 404, { error: 'not found' });
   }
 
-  // /api/data/:key
+  // /api/data/:key -- as on Berrry (src/backend-api/controllers.js): GET
+  // answers the value itself; POST creates or replaces, private unless
+  // ?visibility=public; PUT only updates, 404 for a key that was never
+  // written, and changes visibility only when asked to.
   if (seg[1] === 'data' && seg.length === 3) {
     const key = seg[2];
     if (req.method === 'GET') {
       const rec = store.get(userId, key);
-      if (!rec) return sendJson(res, 404, { error: 'not found' });
-      return sendJson(res, 200, {
-        key, value: rec.value, visibility: rec.visibility, updatedAt: rec.updatedAt,
-      });
+      if (!rec) return sendJson(res, 404, { error: 'Data not found' });
+      return sendJson(res, 200, rec.value);
     }
     if (req.method === 'PUT' || req.method === 'POST') {
+      const existing = store.get(userId, key);
+      if (req.method === 'PUT' && !existing) return sendJson(res, 404, { error: 'Data not found' });
       let raw;
       try {
         raw = await readBody(req, MAX_RECORD_BYTES);
@@ -414,16 +439,17 @@ async function handleApi(req, res, url, store, opts) {
       } catch (_) {
         return sendJson(res, 400, { error: 'body must be JSON' });
       }
-      const visibility = url.searchParams.get('visibility') === 'public'
-        ? 'public' : 'private';
+      const asked = url.searchParams.get('visibility');
+      const visibility = asked ? (asked === 'public' ? 'public' : 'private')
+        : req.method === 'PUT' ? existing.visibility : 'private';
       const rec = store.put(userId, key, value, visibility);
-      return sendJson(res, 200, { key, visibility, updatedAt: rec.updatedAt });
+      return sendJson(res, 200, rec.value);
     }
     if (req.method === 'DELETE') {
       // Deleting something that was already gone is the state the caller
       // wanted, so report it the same way rather than as a failure.
       store.del(userId, key);
-      return sendJson(res, 200, { key, deleted: true });
+      return sendJson(res, 200, { success: true });
     }
     return sendJson(res, 405, { error: 'method not allowed' });
   }

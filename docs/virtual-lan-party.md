@@ -1506,5 +1506,49 @@ redirect. Public records stay readable signed out. `test/test-web-lan-signin.js`
 drives an invited link through sign-in and back, Play offline, and the
 root-return fallback.
 
+**Rooms are public records, so signed-out pages see them (2026-09-21).**
+`GET /api/public-data/users/:key` and `GET /api/public-data/:userId/:key`
+need no session on Berrry, so `peekNetwork` no longer gives up on the 401
+from `/api/auth/user`: it reads presence anyway and reports `signedOut`, and
+`VlanRoom.hostedRooms()` carries that as a non-enumerable `rooms.signedOut`.
+A signed-out page therefore shows the same server list (with a line saying
+joining asks you to sign in, and no **Start my own room**), the room link
+card names who invited you, and the mid-game toast reads **Sign in to join**.
+Joining from any of them goes to the login with `return` set to that room's
+link (`signInToJoin`), and the page that comes back is an ordinary room link,
+signed in. Only publishing — hosting, joining, the offer/answer — needs the
+account.
+
+**Berrry's real record shapes, and why the LAN could not have worked live.**
+Read from berrry-server (`src/backend-api/controllers.js`,
+`public-data-controllers.js`), against what the client and the dev server
+had assumed:
+
+| call | Berrry answers | we assumed |
+|---|---|---|
+| `GET /api/auth/user` | `{id: <integer>, email, username, display_name}` | string id, `name` |
+| `POST /api/data/:key?visibility=public` | upsert; the value | (we used PUT) |
+| `PUT /api/data/:key` | **404 for a key never written**; the value | upsert |
+| `GET /api/data/:key` | the stored value, no envelope | `{value, updatedAt}` |
+| `GET /api/public-data/users/:key` | bare array `[{userId, email, updatedAt, value}]`, newest first | `{users: [...]}` |
+| `GET /api/public-data/:userId/:key` | the stored value, no envelope | `{value, updatedAt}` |
+| `DELETE /api/data/:key` | `{success: true}` | — |
+
+So on the live site presence was never created (PUT 404), the publisher list
+was never parsed, and reads were unwrapped. `SignalingClient` in
+`lib/vlan-rtc.js` now publishes with POST, accepts either list shape,
+normalizes ids to strings (a `?room=` is a string), and takes `updatedAt`
+and the value from the list row itself (`recordOf`), which also saves one
+read per peer per poll. `tools/dev-server.js` now answers with Berrry's
+shapes and integer ids, so a regression shows up in `test/test-dev-server.js`
+and every vlan test instead of only on the live site. Not yet verified
+against berrry.app itself.
+
+**Privacy note.** Berrry's public list returns each publisher's **email**
+with the row. Our UI never shows it (names come from our own presence
+record), but anyone can fetch the list for a game's presence key and read
+the emails of everyone who has played it online. That is a Berrry-side
+behaviour worth raising with its owner before rooms go public.
+
 When an owner's last member drops, the page shows a notice rather than the
 brief chip, because most games keep serving to nobody without saying so.

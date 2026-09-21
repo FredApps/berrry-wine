@@ -15,6 +15,10 @@
 //             back to the same link, now able to see the room
 //   offline   signed out, no link: launching asks nothing; when the game goes
 //             online the card appears, and Play offline lets the game go on
+//   listed    signed out, no link, while the host's game is serving: the
+//             server list still shows it (rooms are public records), Join
+//             goes to the login page, and signing in comes back to that
+//             room's link and joins it
 //   resumed   a login that returns to the site root instead of the link: the
 //             page goes on to the link it left from (sessionStorage)
 
@@ -139,6 +143,43 @@ if (!fs.existsSync(require('path').join(__dirname, '..', 'packages', 'freeware',
       () => wine._lanAsk && wine._lanAsk.state === 'done', null, 30000);
     check('Play offline answers the game and stays on the page',
       !!done && new URL(offline.url()).pathname === '/index.html');
+
+    // ---- listed: the server list, read signed out ---------------------------
+    await host.evaluate(() => window.__room.net.setHosting({ label: 'test match' }));
+    const listed = await context();
+    await listed.goto(`${base}/index.html`, { waitUntil: 'load', timeout: 60000 });
+    await shellReady(listed);
+    await listed.evaluate(() => {
+      document.getElementById('app-select').value = 'blobby_volley';
+      launchApp();
+    });
+    const row = await H.until(listed, 'listed: no server list signed out',
+      id => !!document.querySelector(`#wine-lan-card .wine-lan-room[data-user-id="${id}"]`),
+      owner.id, 30000);
+    const note = await listed.evaluate(() => {
+      const n = document.querySelector('#wine-lan-card .wine-lan-signin-note');
+      return n ? n.textContent : null;
+    });
+    check(`signed out, the server list shows the host's room (${note})`,
+      !!row && /sign in/i.test(note || ''));
+    check('no Start my own room while signed out', await listed.evaluate(() =>
+      !document.querySelector('#wine-lan-card button[data-choice="own"]')));
+    await Promise.all([listed.waitForNavigation(), listed.evaluate(id =>
+      document.querySelector(`#wine-lan-card .wine-lan-room[data-user-id="${id}"] button`).click(),
+    owner.id)]);
+    const listedLogin = new URL(listed.url());
+    const back = new URL(listedLogin.searchParams.get('return') || 'http://x/');
+    check(`Join went to the login page, coming back to that room (${back.search})`,
+      listedLogin.pathname === '/api/auth/login' && back.searchParams.get('room') === owner.id
+        && back.searchParams.get('app') === 'blobby_volley');
+    await Promise.all([listed.waitForNavigation(), listed.click('#dev-sign-in')]);
+    await shellReady(listed);
+    const joined = await H.until(listed, 'listed: never joined after signing in',
+      () => / room/.test(document.getElementById('log').textContent)
+        && /you are 10\.0\.0\.[2-9]/.test(document.getElementById('log').textContent),
+      null, MILESTONE_MS);
+    check('signed in, it joined the room it picked', !!joined,
+      await listed.evaluate(() => document.getElementById('log').textContent.slice(-400)));
 
     // ---- resumed: a login that lands on the site root ----------------------
     const resumed = await context();
