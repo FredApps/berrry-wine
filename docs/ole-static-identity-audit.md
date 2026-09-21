@@ -581,3 +581,36 @@ arbitrary guest IViewObject delegation, and transactional live-cache refresh.
 Additional regression verification: static-handler **85/85** and guest COM
 callbacks **164/164** pass, for **264 checks** across three terminal successful
 test processes. No new browser or full-build result is claimed for this slice.
+
+## Drawing failure contracts — distinct HRESULTs
+
+The shared static drawing core now distinguishes missing presentation data
+(`OLE_E_BLANK`) from unsupported/combined aspect values (`DV_E_DVASPECT`),
+non-whole-object indices (`DV_E_LINDEX`), null required bounds (`E_INVALIDARG`),
+zero-width/height bounds (`OLE_E_INVALIDRECT`), and native playback/DC failures
+(`VIEW_E_DRAW`). A valid but uncached aspect reports blank, not an invalid aspect.
+The DC validity check also precedes direct DIB drawing. Allocation failure for
+the EMF target rectangle still reports E_OUTOFMEMORY.
+
+These results follow the documented
+[IViewObject::Draw contract](https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-iviewobject-draw)
+and [OleDraw results](https://learn.microsoft.com/en-us/windows/win32/api/ole2/nf-ole2-oledraw);
+numeric HRESULTs were checked against Microsoft's
+[SDK winerror.h](https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/shared/winerror.h).
+The test failed on the empty-cache case before the fix (E_FAIL instead of
+OLE_E_BLANK). Public-handler coverage now exercises both drawing entry points,
+their stdcall cleanup, invalid index values through IViewObject, and unchanged
+DC state on argument rejection. Existing WMF/EMF pixel and ownership tests
+remain in place, with their previously generic failure expectations corrected.
+
+This is documented-contract coverage, not a native Win98 error-precedence
+comparison. Windowless optimized DVASPECT2 views, cancellation callbacks and
+arbitrary guest IViewObject delegation remain outside this static handler's
+implemented surface. Inverted-coordinate rectangle semantics are not changed
+by the zero-extent validation.
+
+Verification: public metafile **16/16**, static-handler **85/85**, guest callback
+**164/164** (265 checks); all processes terminal with exit 0. No new browser or
+full-build pass is claimed. An unrelated dirty `lib/api-format.js` currently
+labels 0x8004006A as DV_E_DVASPECT (the SDK says 0x8004006B); this diagnostic
+label issue was noted on the coordination board and left outside this commit.

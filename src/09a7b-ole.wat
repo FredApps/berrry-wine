@@ -11530,9 +11530,9 @@
     (if (i32.eqz (local.get $enhanced_handle))
       (then
         (if (i32.ne (i32.load (local.get $picture)) (i32.const 8))
-          (then (return (i32.const 0x80004005))))))
+          (then (return (i32.const 0x80040140)))))) ;; VIEW_E_DRAW
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
-    (if (i32.eqz (local.get $dc)) (then (return (i32.const 0x80004005))))
+    (if (i32.eqz (local.get $dc)) (then (return (i32.const 0x80040140))))
     (local.set $left (call $gdi_map_coordinate (i32.load (local.get $bounds))
       (load.field.memarg GdiDcState window_org_x (local.get $dc))
       (load.field.memarg GdiDcState window_ext_x (local.get $dc))
@@ -11555,7 +11555,7 @@
       (load.field.memarg GdiDcState viewport_ext_y (local.get $dc))))
     (if (i32.or (i32.eq (local.get $left) (local.get $right))
           (i32.eq (local.get $top) (local.get $bottom)))
-      (then (return (i32.const 0x80070057))))
+      (then (return (i32.const 0x8004000D)))) ;; OLE_E_INVALIDRECT
     (if (local.get $enhanced_handle)
       (then
         ;; The native EMF player owns SaveDC/RestoreDC and composes its records
@@ -11571,9 +11571,9 @@
           (local.get $hdc) (local.get $enhanced_handle) (local.get $target_w)))
         (call $heap_free (local.get $target))
         (return (if (result i32) (local.get $ok)
-          (then (i32.const 0)) (else (i32.const 0x80004005))))))
+          (then (i32.const 0)) (else (i32.const 0x80040140))))))
     (local.set $saved (call $gdi_dc_save (local.get $hdc)))
-    (if (i32.eqz (local.get $saved)) (then (return (i32.const 0x80004005))))
+    (if (i32.eqz (local.get $saved)) (then (return (i32.const 0x80040140))))
     (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 36) (i32.const 8) (i32.const 1)))
     (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 40) (i32.const 0) (i32.const 0)))
     (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 44) (i32.const 0) (i32.const 0)))
@@ -11589,7 +11589,7 @@
       (i32.load offset=12 (local.get $picture)) (i32.const 0) (i32.const 0) (i32.const 0)))
     (drop (call $gdi_dc_restore (local.get $hdc) (local.get $saved)))
     (if (result i32) (local.get $ok)
-      (then (i32.const 0)) (else (i32.const 0x80004005))))
+      (then (i32.const 0)) (else (i32.const 0x80040140))))
 
   ;; Shared cached-presentation draw for OleDraw and IViewObject::Draw.
   ;; Inspect the canonical cache, not just its legacy CF_DIB mirror.
@@ -11598,10 +11598,26 @@
     (local $root_wa i32) (local $entries i32) (local $count i32) (local $entry i32)
     (local $i i32) (local $format i32) (local $medium i32) (local $data i32)
     (local $bounds i32) (local $colors i32) (local $bits i32) (local $ok i32)
-    (if (i32.or (i32.eqz (local.get $root)) (i32.eqz (local.get $bounds_guest)))
-      (then (return (i32.const 0x80004003))))
+    (if (i32.eqz (local.get $root)) (then (return (i32.const 0x80004003))))
+    ;; Static, non-windowless views require a rectangle and support only the
+    ;; ordinary single DVASPECT values and whole-object lindex (-1).
+    (if (i32.eqz (local.get $bounds_guest)) (then (return (i32.const 0x80070057))))
+    (if (i32.ne (local.get $index) (i32.const -1))
+      (then (return (i32.const 0x80040068)))) ;; DV_E_LINDEX
+    (if (i32.eqz (i32.or
+          (i32.or (i32.eq (local.get $aspect) (i32.const 1))
+                  (i32.eq (local.get $aspect) (i32.const 2)))
+          (i32.or (i32.eq (local.get $aspect) (i32.const 4))
+                  (i32.eq (local.get $aspect) (i32.const 8)))))
+      (then (return (i32.const 0x8004006B)))) ;; DV_E_DVASPECT
     (local.set $root_wa (call $g2w (local.get $root)))
     (local.set $bounds (call $g2w (local.get $bounds_guest)))
+    (if (i32.or
+          (i32.eq (i32.load (local.get $bounds)) (i32.load offset=8 (local.get $bounds)))
+          (i32.eq (i32.load offset=4 (local.get $bounds)) (i32.load offset=12 (local.get $bounds))))
+      (then (return (i32.const 0x8004000D)))) ;; OLE_E_INVALIDRECT
+    (if (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+      (then (return (i32.const 0x80040140)))) ;; VIEW_E_DRAW (also covers DIBs)
     (local.set $count (i32.load offset=104 (local.get $root_wa)))
     (local.set $entries (call $g2w (i32.load offset=100 (local.get $root_wa))))
     (block $done (loop $scan
@@ -11644,10 +11660,10 @@
                     (i32.load offset=4 (local.get $data)) (i32.load offset=8 (local.get $data))
                     (local.get $bits) (local.get $data) (i32.const 0) (i32.const 0x00CC0020)))
                   (return (if (result i32) (i32.eq (local.get $ok) (i32.const -1))
-                    (then (i32.const 0x80004005)) (else (i32.const 0))))))))))
+                    (then (i32.const 0x80040140)) (else (i32.const 0))))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (i32.const 0x80004005))
+    (i32.const 0x80040007)) ;; OLE_E_BLANK: no drawable presentation for this aspect
 
   ;; IViewObject renders presentations retained by IOleCache.
   (func $handle_IViewObject_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

@@ -21,6 +21,11 @@ const RegionMap = require('../lib/region-map.generated.js');
     (call $ole_metafilepict_from_dib (local.get $dib) (i32.const 847) (i32.const 635)))
   (func (export "test_ole_draw_public") (param $obj i32) (param $aspect i32)
         (param $hdc i32) (param $bounds i32) (param $view i32) (result i32)
+    (call $test_ole_draw_index (local.get $obj) (local.get $aspect)
+      (local.get $hdc) (local.get $bounds) (local.get $view) (i32.const -1)))
+  (func $test_ole_draw_index (export "test_ole_draw_index")
+        (param $obj i32) (param $aspect i32) (param $hdc i32)
+        (param $bounds i32) (param $view i32) (param $index i32) (result i32)
     (local $esp i32)
     (local.set $esp (i32.load offset=16 (global.get $reg_base)))
     (if (local.get $view)
@@ -28,7 +33,7 @@ const RegionMap = require('../lib/region-map.generated.js');
         (call $gs32 (i32.add (local.get $esp) (i32.const 28)) (local.get $hdc))
         (call $gs32 (i32.add (local.get $esp) (i32.const 32)) (local.get $bounds))
         (call $handle_IViewObject_Draw (i32.add (local.get $obj) (i32.const 56))
-          (local.get $aspect) (i32.const -1) (i32.const 0) (i32.const 0) (i32.const 0)))
+          (local.get $aspect) (local.get $index) (i32.const 0) (i32.const 0) (i32.const 0)))
       (else (call $handle_OleDraw (local.get $obj) (local.get $aspect)
         (local.get $hdc) (local.get $bounds) (i32.const 0) (i32.const 0))))
     (if (i32.ne (i32.load offset=16 (global.get $reg_base))
@@ -337,6 +342,36 @@ const RegionMap = require('../lib/region-map.generated.js');
     assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 0);
   });
 
+  check('OLE drawing distinguishes blank data, invalid aspect/index and invalid bounds', () => {
+    const object = wat.test_ole_create_static_handler(0) >>> 0;
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0, bounds = allocZero(16);
+    const dc = wat.test_metafile_dc(hdc) >>> 0;
+    const before = Buffer.from(bytes.subarray(dc, dc + 96));
+    for (const view of [0, 1]) {
+      [0, 0, 20, 20].forEach((v, i) => wat.guest_write32(bounds + i * 4, v));
+      assert.strictEqual(wat.test_ole_draw_public(object, 1, hdc, bounds, view) >>> 0, 0x80040007,
+        'an empty cache is OLE_E_BLANK');
+      for (const aspect of [0, 3, 16, -1]) {
+        assert.strictEqual(wat.test_ole_draw_public(object, aspect, hdc, bounds, view) >>> 0,
+          0x8004006b, 'invalid/combined unsupported aspects are DV_E_DVASPECT');
+      }
+      assert.strictEqual(wat.test_ole_draw_public(object, 1, hdc, 0, view) >>> 0, 0x80070057,
+        'a static object requires bounds (E_INVALIDARG)');
+      for (const rect of [[0, 0, 0, 20], [0, 0, 20, 0]]) {
+        rect.forEach((v, i) => wat.guest_write32(bounds + i * 4, v));
+        assert.strictEqual(wat.test_ole_draw_public(object, 1, hdc, bounds, view) >>> 0, 0x8004000d);
+      }
+      assert.deepStrictEqual(Buffer.from(bytes.subarray(dc, dc + 96)), before);
+    }
+    [0, 0, 20, 20].forEach((v, i) => wat.guest_write32(bounds + i * 4, v));
+    for (const index of [0, 1, -2]) {
+      assert.strictEqual(wat.test_ole_draw_index(object, 1, hdc, bounds, 1, index) >>> 0, 0x80040068);
+    }
+    assert.strictEqual(wat.test_ole_release(object), 0);
+    wat.test_call_DeleteDC(hdc);
+    wat.guest_free(bounds);
+  });
+
   check('OLE cached WMF draws vectors in caller bounds and restores mapped/clipped DCs', () => {
     const { data, size } = makeVectorWmf([
       { fn: 0x0103, params: [8] },                 // MM_ANISOTROPIC
@@ -377,7 +412,7 @@ const RegionMap = require('../lib/region-map.generated.js');
       assert.strictEqual(wat.test_call_GetPixel(hdc, 32, 20) >>> 0, 0,
         'drawing stops at target bounds even within the caller clip');
       assert.strictEqual(wat.test_ole_draw_public(object, 2, hdc, bounds, view) >>> 0,
-        0x80004005, 'a content cache must not answer another aspect');
+        0x80040007, 'a content cache has no data for another valid aspect');
     }
     // A second DC selecting the same bitmap has neither mapping nor clipping.
     const inspectDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
@@ -393,7 +428,7 @@ const RegionMap = require('../lib/region-map.generated.js');
     wat.test_call_DeleteObject(replacement);
     const current = Buffer.from(bytes.subarray(dc, dc + 96));
     wat.guest_write32(picture + 12, 0); // invalid cached handle: must restore on failure
-    assert.strictEqual(wat.test_ole_draw_public(object, 1, hdc, bounds, 0) >>> 0, 0x80004005);
+    assert.strictEqual(wat.test_ole_draw_public(object, 1, hdc, bounds, 0) >>> 0, 0x80040140);
     assert.deepStrictEqual(Buffer.from(bytes.subarray(dc, dc + 96)), current);
     wat.guest_write32(picture + 12, metafile);
     assert.strictEqual(wat.test_call_GetObjectType(metafile), 9,
@@ -434,8 +469,8 @@ const RegionMap = require('../lib/region-map.generated.js');
       assert.strictEqual(wat.test_call_GetPixel(hdc, 20, 20) >>> 0, 0x00ff0000);
       assert.strictEqual(wat.test_call_GetPixel(hdc, 12, 20) >>> 0, 0, 'caller clip is retained');
       assert.strictEqual(wat.test_call_GetPixel(hdc, 32, 20) >>> 0, 0, 'requested bounds constrain drawing');
-      assert.strictEqual(wat.test_ole_draw_public(object, 2, hdc, bounds, view) >>> 0, 0x80004005);
-      assert.strictEqual(wat.test_ole_draw_public(object, 1, 0, bounds, view) >>> 0, 0x80004005);
+      assert.strictEqual(wat.test_ole_draw_public(object, 2, hdc, bounds, view) >>> 0, 0x80040007);
+      assert.strictEqual(wat.test_ole_draw_public(object, 1, 0, bounds, view) >>> 0, 0x80040140);
       assert.strictEqual(wat.test_call_GetObjectType(metafile), 13, 'drawing borrows the EMF handle');
       wat.test_call_DeleteDC(hdc);
       wat.test_call_DeleteObject(bitmap);
