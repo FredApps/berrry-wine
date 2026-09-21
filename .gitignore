@@ -57,6 +57,20 @@ build-info.js
 recordings/
 tmp/
 
+# Corpus source media: ISOs, installer archives and captured video. These are
+# untracked working material -- downloads/ alone is 9.8 GB -- and *.png/*.exe
+# above did not cover them, so a stray `git add .` in this shared worktree
+# would try to commit a 6.7 GB .7z. The notes written beside the payloads are
+# worth keeping, which is why this is `downloads/*` with a negation and not a
+# blanket `downloads/` (git cannot re-include a file inside an ignored dir).
+downloads/*
+!downloads/*.md
+exports/
+*.iso
+*.ISO
+*.7z
+*.mp4
+
 # Static site pages rendered by tools/gen-site-pages.js at deploy time
 # (story.html is the one committed output so a local http.server has it).
 apps/*.html
