@@ -879,10 +879,14 @@ TouchControls.destroy();
         `player ${i + 1}'s pad must send player ${i + 1}'s left/right and nothing else`);
       assert(layouts[i].buttons[0].vk.includes(keys[2]),
         `player ${i + 1}'s Jump button must send player ${i + 1}'s jump key`);
-      assert.strictEqual(dat.control[i], CONTROL.keyboard,
-        `player ${i + 1} must be on the keyboard: the mouse never reaches a `
-        + 'network client, and COMPUTER leaves the AI driving its blob');
     }
+    // Player one is the person; player two is the AI, so a solo launch is a
+    // game against ADAM. A network match overwrites both CONTROL dwords for
+    // its duration (the local player gets the network screen's CONTROL, the
+    // remote one 0x32) -- docs/re-notes/blobby-volley.md. Never the mouse:
+    // it cannot reach a network client.
+    assert.deepStrictEqual(dat.control, [CONTROL.keyboard, CONTROL.computer],
+      'shipped settings.dat: player one keyboard, player two computer');
     // The menu keys ride along in both layouts, so none may be a player key.
     const playerKeys = [...dat.keys1, ...dat.keys2];
     for (const vk of [0x26, 0x28, 0x0d]) {

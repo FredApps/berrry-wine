@@ -35,7 +35,7 @@ with `--save-vfs`; where we now ship something different, both are given.
 | 0x32 | 0x0d  | `+0x978288` | ShortString[12] player 2 name             | `09 "Spieler 2"` |
 | 0x3f | 0x04 **+ N×0x3c** | `[this+0x30]+0x1774` | **result-table count, then N records** | 0 |
 | 0x43 | 0x0d  | `+0x97cdcd` | ShortString[12] **network session name**  | empty → `game <0..99>` |
-| 0x50 | 0x04  | `+0x97cddc` | **network connection (provider) index**   | 0 |
+| 0x50 | 0x04  | `+0x97cddc` | **network screen's CONTROL** (0 kbd / 1 mouse) | 0 |
 | 0x54 | 0x1f  | `+0x97cde0` | ShortString[30] **host IP address**       | empty → `0.0.0.0` |
 | 0x73 | 0x01  | `+0x978287` | **player 1 colour index**                 | `00` = red |
 | 0x74 | 0x01  | `+0x9782db` | **player 2 colour index**                 | `03` = green |
@@ -63,9 +63,10 @@ Evidence for the three renamed fields, none of it inference:
   §3.2.2 field for field. `0x97cde0` is seeded at `0x44a46e` from the literal
   `07 "0.0.0.0"` at `0x44a6dc` when its length byte is zero — an IP address.
   `0x97cdcd` is seeded from `"game "` (`0x44abe4`) + `Random(100)`, a session
-  name. `0x97cddc` is not a value but a **label selector**: `0x44a8dc` adds it
-  to a string-table base (`[0x97cd8c] + it + 7`) before the same `GetString`,
-  which is how a DirectPlay provider row gets its text.
+  name. `0x97cddc` is the network screen's own **CONTROL** choice, not a
+  provider index: `0x44a8dc` uses it to pick the label text
+  (`[0x97cd8c] + it + 7`), and the network match copies it into the *local*
+  player's CONTROL dword (see "Network matches override CONTROL" below).
 
 **A truncated file is legal.** The reader re-checks `Position < Size`
 (`0x40ece8` = Position, `0x40eccc` = Size) before four of the groups — after
@@ -91,8 +92,9 @@ Read off the branches in the per-frame input path, not guessed:
   **confirmed in-game**: with `--control=keyboard,computer` the player-two
   label on the match screen changes from `Spieler 2` to **ADAM**, the AI's own
   name. That is the cheap oracle for this field — the label, not a memory read.
-- `4` exists and is compared against a coordinate; still unidentified. It is the
-  likely remote-player marker (see the network section).
+- `0x32` → **remote**: the network match writes it into the other machine's
+  player (see below). `4` is compared against a coordinate somewhere and is
+  still unidentified; it is *not* the remote marker.
 
 ### Any VK is a legal player key
 
@@ -122,9 +124,13 @@ That is what makes the touch remap below safe.
 
 `packages/freeware/blobby-volley/settings.dat` keeps the game's **stock** key
 assignment — player one `A`/`D`/`W`, player two `← → ↑` — with the single
-change that **player two is on the keyboard, not the mouse**
-(`tools/blobby-settings.js --control=keyboard,keyboard`), because the mouse
-never reaches a network client.
+change that **player two is the computer, not the mouse**
+(`tools/blobby-settings.js --control=keyboard,computer`, since 2026-09-21;
+before that `keyboard,keyboard`). A solo launch is then a game against ADAM,
+and a network match is unaffected, because both network entry points
+overwrite CONTROL for the match (see "Network matches override CONTROL"
+below). Player two's keys still matter: they are what the network guest
+drives its blob with.
 
 **The phone pad sends only the key set of the player this machine owns.**
 It used to send both (`A`+`←`, `D`+`→`) on the theory that each machine
@@ -201,35 +207,39 @@ Verified on a 375x667 touch viewport, 2026-09-20
 tapping the `OK` button starts the match, and holding the pad's right edge
 walks the blobs right.
 
-A person who wants solo-vs-AI sets player two to COMPUTER on the game's own
-options screen; we cannot preset it, for the reason below.
+### Network matches override CONTROL — a stored COMPUTER is harmless
 
-### Do not preset player two to COMPUTER — measured
-
-`--control=keyboard,computer` looks like the obvious solo preset, and it works
-locally (the ADAM label above). **It breaks a network match**, because the
-joining client does not override the stored value: the AI keeps driving the
-client's own blob and the person holding the phone is a spectator.
-
-Measured with the gate, 2026-09-20, `--control=keyboard,computer` shipped:
+Both network entry points save the two players' CONTROL dwords, overwrite
+them for the match, and put them back afterwards:
 
 ```
-green blob x: host 478.7 -> 527.1 -> 591.1   guest 478.7 -> 527.1 -> 591.1
-PASS  the guest moved its own player
-PASS  the host saw the guest's player move the same way
-FAIL  and saw it come back
+host   0x44b689..  mov eax,[esi+0x97cddc] / mov [esi+0x978220],eax   ; P1 = network CONTROL
+                   mov dword [esi+0x978224],0x32                      ; P2 = remote
+                   call 0x44ba9c / call 0x4453d4 (host match) / restore
+guest  0x44b87b..  mov eax,[ebx+0x97cddc] / mov [ebx+0x978224],eax   ; P2 = network CONTROL
+                   mov dword [ebx+0x978220],0x32                      ; P1 = remote
+                   call 0x44ba9c / call 0x44bad4 (guest match) / restore
 ```
 
-Both holds moved the blob the *same* direction — right under `D`, right again
-under `A` — which is not a key-driven blob at all; it is the AI chasing the
-ball while our keys land nowhere. Note that the first two checks **pass
-spuriously** on that run: any moving blob satisfies "it moved". The direction
-reversal is the check with the teeth, which is the reason the test holds two
-keys rather than one.
+`--count` hit `0x44b6b0`/`0x44b718` once on the host and `0x44b93a` once on the
+guest. **These globals are `this`-relative, not absolute**: `esi`/`ebx` is the
+game object (`0x7e170004` in our runs), so P1's CONTROL lives at runtime
+`0x7eae8224`, which is also the `buf=` `--trace-fs` shows for the 8-byte
+settings.dat read. `--dump=0x978220` reads zeros and proves nothing.
 
-So the network settings screen's own CONTROL point (`Instructions.txt` §3.2.2)
-does not write `[0x978220+4]`, or does not write it before the match starts.
-The unidentified value `4` remains the candidate for the remote marker.
+Measured 2026-09-21 with `settings.dat` from `--control=keyboard,computer`,
+`--dump=0x7eae8224:8` at exit of the gate: solo reads `00 00 00 00 02 00 00 00`
+(P2 = computer); in the match the host reads `00000000 00000032` and the guest
+`00000032 00000000` — the stored COMPUTER is gone on both machines. The green
+blob went `478.7 -> 628.5 -> 351.1` on the host and `-> 628.6 -> 437.5` on the
+guest: right under one key and back under the other, a key-driven blob, not
+the AI. (The final positions disagreed, the same way the stock settings fail
+that check at load 30-50; that is a separate flake.)
+
+The earlier "do not preset COMPUTER" verdict here was wrong. Its evidence,
+`478.7 -> 527.1 -> 591.1`, is byte-identical to the void pre-`--real-ticks`
+batch-clock sample, where no key reached the guest at all, so it measured the
+clock, not the AI.
 
 ### Colour: `0x0044a2c0(this, edx=player, cl=index)`
 
