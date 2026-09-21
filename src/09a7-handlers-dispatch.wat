@@ -439,15 +439,17 @@
   ;; Frequency is 1MHz (see below), so one tick = 1µs. host_get_ticks() is ms,
   ;; multiply by 1000. Also advance by $perf_counter_lo so consecutive calls
   ;; within the same ms still differ (some apps busy-wait on QPC). The global
-  ;; increment keeps monotonicity even when the wall clock doesn't move.
+  ;; increment advances a stationary clock until that legacy i32 wraps;
+  ;; clock-source rollover and cross-thread consistency remain separate issues.
   (func $handle_QueryPerformanceCounter (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32) (local $val i32)
+    (local $wa i32) (local $val i64)
     (local.set $wa (call $g2w (local.get $arg0)))
     (local.set $val
-      (i32.add (i32.mul (call $host_get_ticks) (i32.const 1000))
-               (global.get $perf_counter_lo)))
-    (i32.store (local.get $wa) (local.get $val))
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0))
+      (i64.add (i64.mul (i64.extend_i32_u (call $host_get_ticks)) (i64.const 1000))
+               (i64.extend_i32_u (global.get $perf_counter_lo))))
+    ;; LARGE_INTEGER is one 64-bit count: neither multiplication nor the
+    ;; sub-millisecond adjustment may discard the carry into its high DWORD.
+    (i64.store (local.get $wa) (local.get $val))
     (global.set $perf_counter_lo (i32.add (global.get $perf_counter_lo) (i32.const 1)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))  ;; stdcall, 1 arg
