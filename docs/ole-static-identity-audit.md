@@ -237,3 +237,33 @@ closure and only `09a7b-ole.wat` substituted from HEAD; `WINE_ASSEMBLY_WASM`
 pinned the CLI to it. Thus this patch does not establish picture round-trip
 support, and that failing integration route is the next investigation, not a
 passing result or a failure attributed to these borrowed-media changes.
+
+## WordPad picture-save correction: OleDuplicateData returns HGLOBAL
+
+The targeted API trace showed successful IDataObject::GetData for
+CF_METAFILEPICT and successful OleDuplicateData, followed by GlobalLock on
+the returned copy. No GetMetaFileBitsEx followed. The duplicate wrapper was
+allocated with `heap_alloc` but never marked as Global memory; the stricter
+GlobalLock correctly rejected that private allocation. RichEdit consequently
+serialized two empty `\\pict\\wmetafile0` groups. The trace is available from
+the investigation at `/private/tmp/wa-wordpad-picture-trace.log`.
+
+[Microsoft's OleDuplicateData contract](https://learn.microsoft.com/en-us/windows/win32/api/ole2/nf-ole2-oleduplicatedata)
+specifies GlobalAlloc flags for copied memory. The handler now publishes its
+memory result, including the METAFILEPICT wrapper, with `heap_global_mark`.
+The CF_ENHMETAFILE branch remains a GDI handle, not a Global allocation.
+GlobalLock's validation is unchanged. This fixes the producer's handle type
+rather than permitting arbitrary heap pointers through the consumer.
+
+The public-API regression duplicates text, DIB and registered-format memory,
+checks independent bytes and GlobalLock/GlobalSize, and verifies GlobalFree
+succeeds once while a second free/lock rejects the dead handle. The existing
+WordPad picture save test now passes **9/9**, exporting **10,261 bytes** with
+two structurally valid WMFs, each containing a complete 32x24 StretchDIB.
+This test validates saved bytes, not reopening them or browser interaction.
+Allocation flags beyond the runtime's current fixed-address Global-memory
+model and the other GDI clipboard formats remain separate coverage gaps.
+Guest callback suite: 143/143; opaque cache-media probe: both orders pass.
+The same new HGLOBAL assertion fails with the pre-change OLE source supplied
+in memory. Fragment balance and whitespace checks pass; no foreign changes
+were reverted for either comparison.

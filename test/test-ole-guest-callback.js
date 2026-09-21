@@ -173,6 +173,21 @@ async function main() {
   };
 
   const dragHwndA = 0x12345;
+  for (const format of [1, 8, 0xc560]) {
+    const source = callApi('GlobalAlloc', 0, 4);
+    assert(source);
+    write(source, 0x12345678);
+    const copy = callApi('OleDuplicateData', source, format, 0);
+    check('OleDuplicateData publishes copied memory as an independent HGLOBAL',
+      copy !== 0 && copy !== source && callApi('GlobalLock', copy) === copy &&
+      callApi('GlobalSize', copy) >= 4 && read(copy) === 0x12345678);
+    write(source, 0x87654321);
+    assert.strictEqual(read(copy), 0x12345678);
+    check('OleDuplicateData result can be freed through the Global API exactly once',
+      callApi('GlobalFree', copy) === 0 && callApi('GlobalLock', copy) === 0 &&
+      callApi('GlobalFree', copy) === copy && callApi('GlobalLock', source) === source);
+    assert.strictEqual(callApi('GlobalFree', source), 0);
+  }
   const dragHwndB = 0x12346;
   const dragHwndC = 0x12347;
   e.test_wnd_table_set(dragHwndA, 0x401000);

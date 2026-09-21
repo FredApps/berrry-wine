@@ -9721,6 +9721,12 @@
           ;; Everything else this transfer layer produces is a memory handle,
           ;; and its size is the allocation's own.
           (else (local.set $copy (call $ole_copy_hglobal (local.get $arg0)))))))
+    ;; Copied memory (including the METAFILEPICT wrapper) is an HGLOBAL,
+    ;; not a private heap pointer. Publish through the Global* ownership
+    ;; marker so callers can GlobalLock/GlobalSize/GlobalFree it. Enhanced
+    ;; metafiles remain GDI handles and must not receive a heap marker.
+    (if (i32.ne (local.get $arg1) (i32.const 14))
+      (then (call $heap_global_mark (local.get $copy))))
     (i32.store offset=0 (global.get $reg_base) (local.get $copy))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
