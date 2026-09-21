@@ -4,6 +4,7 @@
 const assert = require('assert');
 const { createFilesystemImports } = require('../lib/filesystem');
 const { readWatSourceClosure } = require('./wat-source-closure');
+const { compileClosure } = require('../tools/watx-closure');
 
 const handlers = readWatSourceClosure();
 const apiTable = require('../src/api_table.json');
@@ -14,20 +15,47 @@ for (const name of ['SetFileApisToOEM', 'SetFileApisToANSI', 'AreFileApisANSI'])
   assert.strictEqual(api.nargs, 0, `${name} takes no arguments`);
 }
 
-assert.match(handlers,
-  /\(func \$handle_SetFileApisToOEM[\s\S]*?\(global\.set \$file_apis_ansi \(i32\.const 0\)\)[\s\S]*?\(call \$host_fs_file_api_ansi \(i32\.const 0\)\)[\s\S]*?\(i32\.const 4\)\)\)\)/,
-  'OEM setter changes guest and host process mode and pops the return address');
-assert.match(handlers,
-  /\(func \$handle_SetFileApisToANSI[\s\S]*?\(global\.set \$file_apis_ansi \(i32\.const 1\)\)[\s\S]*?\(call \$host_fs_file_api_ansi \(i32\.const 1\)\)[\s\S]*?\(i32\.const 4\)\)\)\)/,
-  'ANSI setter restores guest and host process mode and pops the return address');
-assert.match(handlers,
-  /\(func \$handle_AreFileApisANSI[\s\S]*?\(global\.set \$eax \(call \$host_fs_file_api_ansi \(i32\.const -1\)\)\)[\s\S]*?\(i32\.const 4\)\)\)\)/,
-  'query reads the shared host process mode');
-
-const memory = new ArrayBuffer(0x2000);
+// Execute the actual three handlers rather than asserting their register
+// spelling. The isolated module has two thread-like instances over one VFS;
+// their private selector globals can disagree, but the public query must not.
+const names = ['SetFileApisToOEM', 'SetFileApisToANSI', 'AreFileApisANSI'];
+const bodies = names.map(name => {
+  const start = handlers.indexOf(`(func $handle_${name} `);
+  assert(start >= 0);
+  let depth = 0;
+  for (let end = start; end < handlers.length; end++) {
+    if (handlers[end] === '(') depth++;
+    if (handlers[end] === ')' && --depth === 0) return handlers.slice(start, end + 1);
+  }
+  throw Error(`Unbalanced handler: ${name}`);
+});
+const compiled = compileClosure({ source: `
+  (import "host" "memory" (memory 1))
+  (import "host" "reg_base" (global $reg_base i32))
+  (import "host" "fs_file_api_ansi" (func $host_fs_file_api_ansi (param i32) (result i32)))
+  (global $file_apis_ansi (mut i32) (i32.const 1))
+  ${bodies.join('\n')}
+  ${names.map(name => `(export "${name}" (func $handle_${name}))`).join('\n')}
+`, vfs: new Map() }, { tailCalls: true });
+assert(compiled.success, compiled.error);
+const moduleUnderTest = new WebAssembly.Module(compiled.wasmBinary);
+const wasmMemory = new WebAssembly.Memory({ initial: 1 });
+const memory = wasmMemory.buffer;
 const mem = new Uint8Array(memory);
 const ctx = { getMemory: () => memory };
 const host = createFilesystemImports(ctx);
+const siblingHost = createFilesystemImports({ getMemory: () => memory, vfs: ctx.vfs });
+const makeInstance = (imports, base) => ({ base, exports: new WebAssembly.Instance(moduleUnderTest,
+  { host: { memory: wasmMemory, reg_base: base, fs_file_api_ansi: imports.fs_file_api_ansi } }).exports });
+const first = makeInstance(host, 64), second = makeInstance(siblingHost, 96);
+const call = (instance, name) => {
+  const dv = new DataView(memory);
+  dv.setUint32(instance.base + 16, 0x1000, true);
+  instance.exports[name](0, 0, 0, 0, 0, 0);
+  assert.strictEqual(dv.getUint32(instance.base + 16, true), 0x1004, `${name} pops its return address`);
+  return dv.getUint32(instance.base, true);
+};
+assert.strictEqual(call(first, 'AreFileApisANSI'), 1);
 const pathAt = 0x100;
 const findAt = 0x400;
 
@@ -50,8 +78,8 @@ const created = host.fs_create_file(pathAt, 0, 2, 0, 0);
 assert.notStrictEqual(created >>> 0, 0xFFFFFFFF, 'ANSI APIs create the CP1252 name by default');
 host.fs_close_handle(created);
 
-host.fs_file_api_ansi(0);
-const siblingHost = createFilesystemImports({ getMemory: () => memory, vfs: ctx.vfs });
+call(first, 'SetFileApisToOEM');
+assert.strictEqual(call(second, 'AreFileApisANSI'), 0);
 assert.strictEqual(siblingHost.fs_file_api_ansi(-1), 0,
   'a second thread-facing import table observes the process OEM mode');
 writeBytes(oemPath);
@@ -65,7 +93,8 @@ assert.strictEqual(mem[findAt + 44 + 3], 0x82,
   'FindFirstFileA returns é in the selected OEM code page');
 host.fs_find_close(findOem);
 
-host.fs_file_api_ansi(1);
+call(second, 'SetFileApisToANSI');
+assert.strictEqual(call(first, 'AreFileApisANSI'), 1);
 assert.strictEqual(siblingHost.fs_file_api_ansi(-1), 1,
   'restoring ANSI is process-wide across import tables');
 writeBytes(ansiPath);
@@ -86,7 +115,8 @@ assert.strictEqual(mem[findAt + 44], 0x80,
   'CP1252 filename output encodes the euro sign as byte 0x80');
 host.fs_find_close(findEuro);
 
-host.fs_file_api_ansi(0);
+call(second, 'SetFileApisToOEM');
+assert.strictEqual(call(first, 'AreFileApisANSI'), 0);
 mem.fill(0, pathAt, pathAt + 64);
 mem.set(Buffer.from('C:\\café.txt\0', 'utf16le'), pathAt);
 const openedWide = host.fs_create_file(pathAt, 0, 3, 0, 1);

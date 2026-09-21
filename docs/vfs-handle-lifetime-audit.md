@@ -669,3 +669,15 @@ and stdcall cleanup. Legacy read tests pass. A separate codepage source test
 fails its stale assertion for `global.set $eax`; AreFileApisANSI now stores into
 register memory. That unrelated test was not changed. Full-build success is
 not claimed (the earlier unrelated toy-VM bundle gate remains outstanding).
+
+## File-codepage regression repaired (2026-09-21)
+
+The stale `$eax` source assertion is replaced with execution of the actual
+SetFileApisToOEM, SetFileApisToANSI and AreFileApisANSI handler bodies compiled
+by WATX. Two instances have distinct register slots and private selector globals
+but share the host VFS. Setting OEM in one and querying the other, then reversing
+the direction for ANSI, verifies process-wide selection rather than stale local
+state. Every call checks its four-byte stdcall cleanup. The existing CP1252 é
+and euro, CP437 é, FindFirstFile output, and unaffected UTF-16 filename checks
+remain. `node test/test-file-api-codepage.js` passes. This isolated handler test
+does not claim a real Worker/RPC or native Win98 run.
