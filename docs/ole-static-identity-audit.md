@@ -336,3 +336,51 @@ The final cropped run reports red=0, blue=0 and **11/12** checks passed:
 only reopened-picture rendering fails. Production source was unchanged in
 this verification slice. The image is CLI canonical output, not a browser
 screenshot; browser validation remains outstanding.
+
+## Cached anisotropic WMF drawing — fixed and pixel-verified
+
+`OleDraw` and `IViewObject::Draw` now share a canonical-cache draw helper,
+matching FORMATETC aspect/index rather than assuming the legacy DIB mirror
+is the only presentation. CF_DIB remains supported; CF_METAFILEPICT with
+MM_ANISOTROPIC is played through the existing native WMF interpreter.
+
+The wrapper maps the requested logical bounds through the caller's DC,
+saves its state, initializes the picture viewport, plays the records, and
+restores state on both success and failure. The metafile supplies its own
+logical window coordinates. This follows Microsoft's
+[MS-WMF mapping-mode guidance](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/2678f2fe-df2e-489d-83db-713a9f6397de).
+No temporary 640x480 raster surface or special-case StretchDIB extraction
+is involved. Cache, bounds and picture pointers are translated once per use.
+
+Verification:
+
+- The unchanged fresh-process WordPad regression passes **12/12**, including
+  red=760 and blue=752 document pixels after reopen. The canonical screenshot
+  was inspected: both 32x24 checker pictures are visible beside `before`.
+- Public metafile coverage passes **13/13**. The new vector fixture exercises
+  both OLE drawing entry points, nonzero window origin, a caller with 2x
+  scaling and viewport offset, caller clipping, target placement, aspect
+  selection, stdcall stack cleanup, full DC restoration, and an invalid
+  cached handle. Existing text/vector/region/EMF playback tests still pass.
+  Compiling the same test with only the pre-fix OLE fragment substituted
+  fails at the new public draw assertion (E_FAIL instead of S_OK).
+- Static OLE handler **66/66** and guest COM callbacks **149/149** pass.
+- The full build stops at 11 GdiObject variant-attribution errors in
+  `gdi_object_delete_full` (the shared worktree's `tools/union-gate.js` is
+  independently modified). This slice does not edit the GDI fragment or
+  that gate; focused tests compile the source with the canonical compiler.
+
+Scope still open: browser save/reopen verification; other METAFILEPICT
+mapping modes; cached EMF drawing; guest continuation/cancellation callbacks;
+general OleDraw delegation to arbitrary guest IViewObject implementations.
+The new WMF path deliberately reports failure for unsupported mapping modes.
+
+The vector test also exposed a **separate existing ownership gap**:
+`ole_copy_medium` aliases TYMED_MFPICT and `ole_release_medium` does not
+retire its metafile/outer memory. A trial final-release assertion observed
+GetObjectType=9 after releasing the static object. The drawing test checks
+that playback does not consume the cached handle, then explicitly cleans up
+the fixture. Correct independent copies, pUnkForRelease ownership, and final
+retirement must be implemented together; adding deletion alone would turn
+the current aliasing into use-after-free. This is the next ownership task,
+not a claim that metafile lifetime is fixed by rendering it.

@@ -17,6 +17,28 @@ const RegionMap = require('../lib/region-map.generated.js');
       gdi_text_mask: () => { canvasTextCalls.mask++; return 0; },
     },
     extraWat: `
+  (func (export "test_ole_draw_public") (param $obj i32) (param $aspect i32)
+        (param $hdc i32) (param $bounds i32) (param $view i32) (result i32)
+    (local $esp i32)
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (if (local.get $view)
+      (then
+        (call $gs32 (i32.add (local.get $esp) (i32.const 28)) (local.get $hdc))
+        (call $gs32 (i32.add (local.get $esp) (i32.const 32)) (local.get $bounds))
+        (call $handle_IViewObject_Draw (i32.add (local.get $obj) (i32.const 56))
+          (local.get $aspect) (i32.const -1) (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (call $handle_OleDraw (local.get $obj) (local.get $aspect)
+        (local.get $hdc) (local.get $bounds) (i32.const 0) (i32.const 0))))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base))
+          (i32.add (local.get $esp) (select (i32.const 48) (i32.const 20) (local.get $view))))
+      (then (unreachable)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $esp))
+    (i32.load (global.get $reg_base)))
+  (func (export "test_metafile_dc") (param $hdc i32) (result i32)
+    (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
+  (func (export "test_metafile_clip") (param $hdc i32) (result i32)
+    (call $gdi_dc_clip_intersect_rect (local.get $hdc)
+      (i32.const 15) (i32.const 10) (i32.const 35) (i32.const 30)))
   (func (export "test_start_EnumMetaFile")
         (param $hdc i32) (param $hmf i32) (param $callback i32)
         (param $data i32) (result i32)
@@ -50,6 +72,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   const exe = fs.readFileSync(path.join(root, 'test', 'binaries', 'calc.exe'));
   new Uint8Array(memory.buffer).set(exe, wat.get_staging());
   assert(wat.load_pe(exe.length), 'PE load must initialize callback continuation thunks');
+  wat.init_dx_com_thunks();
   const bytes = new Uint8Array(memory.buffer);
   const imageBase = wat.get_image_base() >>> 0;
   const wa = guest => RegionMap.g2w(guest, imageBase);
@@ -310,6 +333,76 @@ const RegionMap = require('../lib/region-map.generated.js');
     assert.deepStrictEqual(readBytes(output, 24), readBytes(source, 24));
     assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
     assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 0);
+  });
+
+  check('OLE cached WMF draws vectors in caller bounds and restores mapped/clipped DCs', () => {
+    const { data, size } = makeVectorWmf([
+      { fn: 0x0103, params: [8] },                 // MM_ANISOTROPIC
+      { fn: 0x020b, params: [5, 10] },             // nonzero logical origin
+      { fn: 0x020c, params: [20, 20] },            // logical size, not HIMETRIC
+      { fn: 0x02fc, params: [0, 0, 0x00ff, 0] },  // blue brush
+      { fn: 0x012d, params: [0] },
+      { fn: 0x012d, params: [0x8008] },            // null pen
+      { fn: 0x041b, params: [25, 30, 5, 10] },    // fill whole logical window
+      { fn: 0x0000 },
+    ], 1);
+    const metafile = wat.test_call_SetMetaFileBitsEx(size, data) >>> 0;
+    const picture = allocZero(16);
+    [8, 529, 529, metafile].forEach((value, i) => wat.guest_write32(picture + i * 4, value));
+    const format = allocZero(20);
+    [3, 0, 1, -1, 32].forEach((value, i) => wat.guest_write32(format + i * 4, value));
+    const medium = allocZero(12);
+    wat.guest_write32(medium, 32);
+    wat.guest_write32(medium + 4, picture);
+    const object = wat.test_ole_create_static_handler(0) >>> 0;
+    assert.strictEqual(wat.test_ole_cache_set_data(object, format, medium, 1), 0);
+    const bounds = allocZero(16);
+    [10, 10, 30, 30].forEach((value, i) => wat.guest_write32(bounds + i * 4, value));
+    const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    const bitmap = wat.test_call_CreateCompatibleBitmap(0, 100, 100) >>> 0;
+    wat.test_call_SelectObject(hdc, bitmap);
+    const dc = wat.test_metafile_dc(hdc) >>> 0;
+    const dv = new DataView(memory.buffer);
+    // Caller transform: x = 2*x+7, y = 2*y+9. GdiDcState mapping fields.
+    [8, 0, 0, 1, 1, 7, 9, 2, 2].forEach((value, i) => dv.setInt32(dc + 36 + i * 4, value, true));
+    assert(wat.test_metafile_clip(hdc));
+    const before = Buffer.from(bytes.subarray(dc, dc + 96));
+    for (const view of [0, 1]) {
+      assert.strictEqual(wat.test_ole_draw_public(object, 1, hdc, bounds, view), 0);
+      assert.deepStrictEqual(Buffer.from(bytes.subarray(dc, dc + 96)), before,
+        'all caller DC fields survive both public drawing frontdoors');
+      assert.strictEqual(wat.test_call_GetPixel(hdc, 20, 20) >>> 0, 0x00ff0000);
+      assert.strictEqual(wat.test_call_GetPixel(hdc, 32, 20) >>> 0, 0,
+        'drawing stops at target bounds even within the caller clip');
+      assert.strictEqual(wat.test_ole_draw_public(object, 2, hdc, bounds, view) >>> 0,
+        0x80004005, 'a content cache must not answer another aspect');
+    }
+    // A second DC selecting the same bitmap has neither mapping nor clipping.
+    const inspectDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+    // Select a replacement bitmap before inspecting the rendered bitmap.
+    const replacement = wat.test_call_CreateCompatibleBitmap(0, 1, 1) >>> 0;
+    wat.test_call_SelectObject(hdc, replacement);
+    wat.test_call_SelectObject(inspectDc, bitmap);
+    assert.strictEqual(wat.test_call_GetPixel(inspectDc, 32, 39) >>> 0, 0,
+      'caller clip excludes the left portion of the mapped target');
+    assert.strictEqual(wat.test_call_GetPixel(inspectDc, 42, 39) >>> 0, 0x00ff0000);
+    wat.test_call_DeleteDC(inspectDc);
+    wat.test_call_SelectObject(hdc, bitmap);
+    wat.test_call_DeleteObject(replacement);
+    const current = Buffer.from(bytes.subarray(dc, dc + 96));
+    wat.guest_write32(picture + 12, 0); // invalid cached handle: must restore on failure
+    assert.strictEqual(wat.test_ole_draw_public(object, 1, hdc, bounds, 0) >>> 0, 0x80004005);
+    assert.deepStrictEqual(Buffer.from(bytes.subarray(dc, dc + 96)), current);
+    wat.guest_write32(picture + 12, metafile);
+    assert.strictEqual(wat.test_call_GetObjectType(metafile), 9,
+      'drawing borrows, rather than consumes, the cached metafile');
+    assert.strictEqual(wat.test_ole_release(object), 0);
+    // Existing TYMED_MFPICT copy/release ownership is a separate open gap:
+    // the cache currently aliases this medium and does not retire it.
+    assert.strictEqual(wat.test_call_DeleteMetaFile(metafile), 1);
+    wat.guest_free(picture);
+    wat.test_call_DeleteDC(hdc);
+    wat.test_call_DeleteObject(bitmap);
   });
 
   check('classic recording serializes and replays canonical pixels', () => {
