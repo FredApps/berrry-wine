@@ -61,11 +61,22 @@ async function main() {
   check('IViewObject shares the root reference count', e.test_ole_release(object) === 1);
 
   const iidViewObject2 = alloc(16);
-  dv.setUint32(wa(iidViewObject2), 0x0000011d, true);
+  dv.setUint32(wa(iidViewObject2), 0x00000127, true);
+  dv.setUint32(wa(iidViewObject2) + 8, 0x000000c0, true);
+  dv.setUint32(wa(iidViewObject2) + 12, 0x46000000, true);
   check('QueryInterface exposes the extended IViewObject2 contract',
     e.test_ole_static_query(object, iidViewObject2, out) === 0 &&
     dv.getUint32(wa(out), true) === object + 56);
   check('IViewObject2 shares the root reference count', e.test_ole_release(object) === 1);
+
+  const iidOleLink = alloc(16);
+  dv.setUint32(wa(iidOleLink), 0x0000011d, true);
+  dv.setUint32(wa(iidOleLink) + 8, 0x000000c0, true);
+  dv.setUint32(wa(iidOleLink) + 12, 0x46000000, true);
+  dv.setUint32(wa(out), 0x12345678, true);
+  check('unsupported IOleLink cannot masquerade as IViewObject2',
+    (e.test_ole_static_query(object, iidOleLink, out) >>> 0) === 0x80004002 &&
+    dv.getUint32(wa(out), true) === 0 && dv.getUint32(wa(object) + 4, true) === 1);
 
   const unknownIid = alloc(16);
   dv.setUint32(wa(unknownIid), 0x00000119, true); // IAdviseSink

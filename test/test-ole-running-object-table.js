@@ -181,6 +181,18 @@ async function main() {
     const root = e.test_ole_create_static_handler(0) >>> 0;
     assert(root, `${iface} fixture must allocate`);
     const embedded = root + offset;
+    const qiOut = alloc(4);
+    const linkIid = writeComIid(0x11d);
+    for (const face of [root, embedded]) {
+      write(qiOut, 0x12345678);
+      assert.strictEqual(callMethod(face, 0, linkIid, qiOut), 0x80004002,
+        `${iface} must reject IOleLink rather than return a view vtable`);
+      assert.strictEqual(read(qiOut), 0);
+      assert.strictEqual(read(root + 4), 1, 'rejected QI must not AddRef');
+      assert.strictEqual(callMethod(face, 0, writeComIid(0x127), qiOut), 0);
+      assert.strictEqual(read(qiOut), root + 56, 'real IViewObject2 keeps its view identity');
+      assert.strictEqual(callMethod(read(qiOut), 2), 1);
+    }
     assert.strictEqual(callMethod(embedded, 1), 2, `${iface} AddRef returns root count`);
     assert.strictEqual(read(root + 4), 2, `${iface} increments the controlling object`);
     assert.strictEqual(callMethod(embedded, 2), 1, `${iface} Release balances AddRef`);

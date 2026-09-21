@@ -9858,17 +9858,12 @@
           (i32.eq (call $gl32 (i32.add (local.get $root) (i32.const 24)))
                   (i32.const 0xF9043C85)))
       (then (local.set $iface (i32.add (local.get $root) (i32.const 176)))))
-    ;; IViewObject (10D), IViewObject2 (127) and the cache-control interface
-    ;; (11D) all sit on the same vtable -- IViewObject2 only adds GetExtent, and
-    ;; this vtable is the 2 flavour, which is why it is named for it. Leaving 127
-    ;; out meant an MFC container asking for the interface it actually wants got
-    ;; E_NOINTERFACE from an object that implements it, and turned that into a
-    ;; COleException instead of inserting the object it had just created.
+    ;; IViewObject2 (127) extends IViewObject (10D) with GetExtent and shares
+    ;; this view vtable. IID 11D is IOleLink, whose unrelated methods cannot
+    ;; use a view pointer; this static embedded handler does not implement it.
     (if (i32.or
           (i32.eq (local.get $data1) (i32.const 0x0000010D))
-          (i32.or
-            (i32.eq (local.get $data1) (i32.const 0x00000127))
-            (i32.eq (local.get $data1) (i32.const 0x0000011D))))
+          (i32.eq (local.get $data1) (i32.const 0x00000127)))
       (then (local.set $iface (i32.add (local.get $root) (i32.const 56)))))
     ;; IID_IDataObject is served by a separate object, so the reference the
     ;; caller is handed belongs to that object and not to the handler.

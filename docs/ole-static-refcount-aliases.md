@@ -35,3 +35,32 @@ The live exact-duplicate census falls from 142 groups / 548 members to
 re-recording its baseline. API append-only and generated-dispatch freshness
 checks pass. The overall recommendation remains partial: other duplicate
 families still require individual contract and ownership review.
+
+## Follow-up: IOleLink is not IViewObject2
+
+The subsequent contract audit found an existing incorrect QueryInterface
+alias: Data1 `0000011D` returned the view interface, and the static-handler
+test used that ID while naming it IViewObject2. Microsoft's
+[SDK oleidl.h](https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/oleidl.h)
+identifies `0000011D-0000-0000-C000-000000000046` as IOleLink and
+`00000127-0000-0000-C000-000000000046` as IViewObject2. Their vtables are
+not interchangeable: IOleLink starts with SetUpdateOptions, while the view
+interface starts with Draw. The old comment incorrectly called 11D a
+cache-control interface.
+
+Removed the false IOleLink success. This static embedded handler does not
+implement linking, so IOleLink now returns E_NOINTERFACE, clears output and
+does not AddRef; the actual IViewObject2 IID still returns the view pointer.
+The fixture now uses the correct complete IIDs. Added public-vtable queries
+through IOleObject and each embedded IPersistStorage/IOleCache/IViewObject
+face, with reference-count and stdcall checks.
+Validation: static-handler 66/66 and ROT 28/28 plus its added public-vtable
+assertions pass on main. Substituting HEAD's pre-fix OLE source in memory
+fails the public IOleLink rejection assertion (S_OK rather than
+E_NOINTERFACE). Fragment and diff checks pass; no new browser run was made.
+
+This does not complete QueryInterface correctness. The common helper still
+matches most requests by Data1 only; full GUID validation and the separate
+IDataObject face's controlling-IUnknown identity remain audit items. The
+duplicate QueryInterface wrappers have deliberately not been consolidated
+before that contract review.
