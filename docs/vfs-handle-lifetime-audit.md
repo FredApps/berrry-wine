@@ -219,3 +219,31 @@ and VFS (32/32) suites pass. Full shared-tree build passes with 247 imports,
 canonical 1,472,601 bytes, compatibility 1,473,575 bytes, unchanged layout
 `54f430b349c8d55e`, and 242 nonoverlapping data segments. This is integration
 coverage, not an isolated benchmark or a real Worker write-error test.
+
+## ReadFile operation-error checkpoint — 2026-09-21
+
+The ordinary public `ReadFile` path now uses `fs_read_file_result`: success 0,
+internal lazy-fill retry 997, or the read's specific error, returned in one RPC.
+It no longer asks `fs_read_pending` in a second call that could observe another
+operation's state. Positional reads consume the same result directly. The legacy
+BOOL bridge delegates to this implementation; other front doors still use its
+pending/fault side channel and remain migration candidates.
+
+The [ReadFile byte-count and failure contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-readfile)
+is preserved: output starts at zero, closed handles fail with 6 (including
+zero-byte requests), ordinary EOF is successful with zero bytes, and failures
+publish the operation error. Internal lazy retry parks without publishing 997
+as a completed synchronous operation and restores the original stdcall frame.
+The public-handler regression covers real bytes/EOF/closed handles and injected
+ordinary errors, retry and terminal provider errors. Injection checks transport
+and frame handling, not a real concurrent provider run.
+
+This does not make the scheduler's shared `pendingRead` request ownership safe
+across concurrent operations, nor does it finish access rights, invalid buffers,
+partial multi-span failure/cursor semantics, or the remaining seek/size paths.
+
+Verification: final public read/write/duplicate regression, lazy-provider 36/36,
+and IOCP-overlapped suites pass. Full shared-tree build passes: 248 imports,
+canonical 1,472,619 bytes, compatibility 1,473,593 bytes, unchanged layout
+`54f430b349c8d55e`, 242 nonoverlapping data segments. Machine load exceeded 100
+during verification; no timing or isolated-artifact claim is made.

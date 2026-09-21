@@ -747,10 +747,12 @@
   (import "host" "fs_read_file_at" (func $host_fs_read_file_at (param i32 i32 i32 i32 i32 i32) (result i32)))
   ;; fs_read_file(handle, bufGA, nToRead, nReadGA) → BOOL
   (import "host" "fs_read_pending" (func $host_fs_read_pending (result i32)))
+  (import "host" "fs_read_file_result" (func $host_fs_read_file_result (param i32 i32 i32 i32) (result i32)))
+  ;; Returns success (0), lazy-fill retry (997), or the operation's error.
   ;; fs_read_pending() → 1 when the fs_read_file that just returned 0 is
   ;; waiting on bytes from a lazy (provider-backed) mount rather than failing.
-  ;; ReadFile asks only on a zero return; every other i32 the read can return
-  ;; is already spoken for as a BOOL at its other call sites.
+  ;; Legacy BOOL callers use this channel; ReadFile consumes its operation
+  ;; result directly without a second shared-state lookup.
   (import "host" "fs_write_file" (func $host_fs_write_file (param i32 i32 i32 i32) (result i32)))
   ;; fs_write_file(handle, bufGA, nToWrite, nWrittenGA) → BOOL
   (import "host" "fs_write_file_result" (func $host_fs_write_file_result (param i32 i32 i32 i32) (result i32)))

@@ -563,7 +563,7 @@
     (global.set $eip (local.get $callback)))
 
   (func $handle_ReadFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $lazy i32) (local $err i32) (local $bytes i32)
+    (local $err i32) (local $bytes i32)
     ;; ReadFile(hFile, lpBuffer, nToRead, lpBytesRead, lpOverlapped) — 5 args
     ;;
     ;; An OVERLAPPED on a handle bound to a completion port is a *positioned*
@@ -610,31 +610,17 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
-    (i32.store offset=0 (global.get $reg_base) (call $host_fs_read_file
+    (local.set $err (call $host_fs_read_file_result
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (i32.store offset=0 (global.get $reg_base) (i32.eqz (local.get $err)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-    ;; A zero return from a lazily mounted file can mean "not resident yet"
-    ;; rather than "failed". The host cannot answer that through the BOOL,
-    ;; so it is a separate question — asked only here, and only on a zero.
-    ;; 1 = park and retry this exact call, 2 = the fill failed for good, so
-    ;; complete the call as a Win32 read failure instead of parking forever.
-    (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
-      (then
-        (local.set $lazy (call $host_fs_read_pending))
-        ;; Any guest thread may park. The main thread's park is serviced by
-        ;; the host run loop; a spawned thread's by its scheduler — the
-        ;; cooperative runSlice and the Worker slice-result handler both fill
-        ;; the pending chunk and clear the yield (lib/thread-manager.js), so
-        ;; the same call re-runs and takes the cache hit. Storm reads its
-        ;; 500MB CD archive on a reader thread, which is why "main thread
-        ;; only" was a Data File Error, not a safety margin.
-        (if (i32.eq (local.get $lazy) (i32.const 1))
-          (then (call $io_block (i32.const 24)))
-          ;; 2 = the fill failed for good: complete the call as a real Win32
-          ;; read failure rather than a silent zero-byte success.
-          (else
-            (if (local.get $lazy)
-              (then (global.set $last_error (i32.const 30)))))))) ;; ERROR_READ_FAULT
+    ;; The result belongs to this read, without a second shared-state RPC.
+    ;; Lazy fill is an internal retry, not a completed guest operation.
+    (if (i32.eq (local.get $err) (i32.const 997))
+      (then (call $io_block (i32.const 24)))
+      (else
+        (if (local.get $err)
+          (then (global.set $last_error (local.get $err))))))
   )
 
   ;; 426: CreateFileW — STUB: unimplemented

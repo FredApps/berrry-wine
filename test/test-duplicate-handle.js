@@ -36,6 +36,18 @@ const extraWat = `
       (then (unreachable)))
     (i32.load (global.get $reg_base)))
   (func (export "test_dup_error") (result i32) (global.get $last_error))
+  (func (export "test_public_read") (param $handle i32) (param $count i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (global.set $yield_flag (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $gs32 (i32.const 0x00490110) (i32.const -1))
+    (call $handle_ReadFile (local.get $handle) (i32.const 0x00490100)
+      (local.get $count) (i32.const 0x00490110) (i32.const 0) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base))
+        (select (i32.const 0x074ff000) (i32.const 0x074ff018) (global.get $yield_flag)))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
+  (func (export "test_read_parked") (result i32) (global.get $yield_flag))
   (func (export "test_public_write") (param $handle i32) (param $count i32) (result i32)
     (global.set $last_error (i32.const 0x1234))
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
@@ -91,14 +103,46 @@ const extraWat = `
   assert.strictEqual(wat.test_dup_error(), 0x1234);
   assert.strictEqual(wat.test_read_guest32(0x00490110), 4);
   assert.deepStrictEqual(Array.from(vfs.files.get('c:\\write-result.bin').data), [65, 66, 67, 68]);
+  vfs.setFilePointer(writeHandle, 0, 0);
+  assert.strictEqual(wat.test_public_read(writeHandle, 4), 1);
+  assert.strictEqual(wat.test_read_guest32(0x00490100), 0x44434241);
+  assert.strictEqual(wat.test_read_guest32(0x00490110), 4);
+  assert.strictEqual(wat.test_dup_error(), 0x1234);
   vfs.closeHandle(writeHandle);
   for (const count of [0, 4]) {
+    assert.strictEqual(wat.test_public_read(writeHandle, count), 0);
+    assert.strictEqual(wat.test_dup_error(), 6, 'closed ReadFile reports ERROR_INVALID_HANDLE');
+    assert.strictEqual(wat.test_read_guest32(0x00490110), 0);
+    assert.strictEqual(wat.test_read_parked(), 0);
     assert.strictEqual(wat.test_public_write(writeHandle, count), 0);
     assert.strictEqual(wat.test_dup_error(), 6, 'closed WriteFile reports its operation error');
     assert.strictEqual(wat.test_read_guest32(0x00490110), 0, 'failure clears bytes written');
   }
   const realWrite = vfs.writeFile;
   const errorHandle = vfs.createFile('c:\\write-error.bin', 0xc0000000, 2) >>> 0;
+  const realRead = vfs.readFile;
+  try {
+    for (const error of [5, 30]) {
+      vfs.readFile = () => ({ ok: false, bytesRead: 0, error });
+      assert.strictEqual(wat.test_public_read(errorHandle, 4), 0);
+      assert.strictEqual(wat.test_dup_error(), error);
+      assert.strictEqual(wat.test_read_parked(), 0, 'ordinary errors do not park');
+      assert.strictEqual(wat.test_read_guest32(0x00490110), 0);
+    }
+    vfs.readFile = () => ({ ok: false, bytesRead: 0, pending: { handle: errorHandle } });
+    assert.strictEqual(wat.test_public_read(errorHandle, 4), 0);
+    assert.strictEqual(wat.test_read_parked(), 1, 'lazy retry preserves the caller frame and parks');
+    assert.strictEqual(wat.test_dup_error(), 0x1234, 'internal lazy retry does not publish an error');
+    vfs.readFile = () => ({ ok: false, bytesRead: 0, faulted: true, error: 23 });
+    assert.strictEqual(wat.test_public_read(errorHandle, 4), 0);
+    assert.strictEqual(wat.test_read_parked(), 0);
+    assert.strictEqual(wat.test_dup_error(), 23, 'terminal provider error retains its code');
+  } finally {
+    vfs.readFile = realRead;
+  }
+  assert.strictEqual(wat.test_public_read(errorHandle, 4), 1, 'EOF is a successful zero-byte synchronous read');
+  assert.strictEqual(wat.test_read_guest32(0x00490110), 0);
+  assert.strictEqual(wat.test_dup_error(), 0x1234);
   try {
     for (const error of [19, 112]) {
       vfs.writeFile = () => ({ ok: false, bytesWritten: 0, error });
@@ -119,7 +163,7 @@ const extraWat = `
   } finally {
     vfs.setDriveReadOnly('c', false);
   }
-  console.log('PASS  public WriteFile returns per-operation errors, byte counts and stdcall cleanup');
+  console.log('PASS  public ReadFile/WriteFile preserve operation errors, byte counts, retry frames and stdcall cleanup');
   const original = vfs.createFile('c:\\duplicate.bin', 0xc0000000, 2) >>> 0;
   vfs.writeFile(original, Uint8Array.from([10, 20, 30, 40]), 4);
   vfs.setFilePointer(original, 0, 0);
