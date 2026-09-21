@@ -161,7 +161,7 @@ async function main() {
     '--no-default-browser-check', '--disable-search-engine-choice-screen',
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${profile}`,
-    `http://127.0.0.1:${port}/index.html?debug&wordpad-web=${Date.now()}`,
+    `http://127.0.0.1:${port}/index.html?debug&compile-wat&wordpad-web=${Date.now()}`,
   ], { stdio: ['ignore', 'ignore', 'pipe'] });
   let chromeError = '';
   chrome.stderr.on('data', data => { chromeError += data.toString(); });
@@ -190,10 +190,18 @@ async function main() {
   await cdp.send('Runtime.enable');
 
   async function evaluate(expression, timeoutMs = 10000) {
-    const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('Runtime.evaluate timeout')), timeoutMs));
-    const response = await Promise.race([cdp.send('Runtime.evaluate', {
-      expression, awaitPromise: true, returnByValue: true,
-    }), timeout]);
+    let timer;
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error('Runtime.evaluate timeout')), timeoutMs);
+    });
+    let response;
+    try {
+      response = await Promise.race([cdp.send('Runtime.evaluate', {
+        expression, awaitPromise: true, returnByValue: true,
+      }), timeout]);
+    } finally {
+      clearTimeout(timer);
+    }
     if (response.exceptionDetails) throw new Error(response.exceptionDetails.text || JSON.stringify(response.exceptionDetails));
     return response.result && response.result.value;
   }
@@ -630,6 +638,106 @@ async function main() {
   console.log('PASS  browser formatting toolbar is visibly painted:', JSON.stringify(toolbarVisualState));
   console.log('PASS  browser menu font:', JSON.stringify(menuFontState));
   console.log('PASS  screenshot:', PNG);
+
+  const roundtrip = await evaluate(`(async () => {
+    const app = runningApps.find(item => item && item.name === 'wordpad');
+    const e = app.wine.instance.exports;
+    const vfs = app.wine.hostCtx.vfs;
+    const pause = () => new Promise(resolve => setTimeout(resolve, 50));
+    const until = async (test, label) => {
+      const start = performance.now();
+      while (performance.now() - start < 12000) {
+        if (!app.wine.running) throw new Error(label + ': WordPad stopped');
+        const value = test();
+        if (value) return value;
+        await pause();
+      }
+      throw new Error(label + ': timeout; windows=' + JSON.stringify(Object.values(sharedRenderer.windows)
+        .filter(win => win.visible && win.wasm === app.wine.instance)
+        .map(win => ({ title: win.title, hwnd: win.hwnd, dialog: win.isDialog }))) +
+        '; ' + document.getElementById('log').textContent.slice(-1500));
+    };
+    const command = id => {
+      e.post_message_q(${ready.main}, 0x0111, id, 0);
+      sharedRenderer._wakeMessageWait();
+    };
+    const chooseFile = async name => {
+      const dialog = await until(() => {
+        for (let slot = 0; slot < 256; slot++) {
+          const hwnd = e.wnd_slot_hwnd(slot);
+          if (hwnd && e.ctrl_get_class(hwnd) === 12) return hwnd;
+        }
+        return 0;
+      }, 'file dialog');
+      let edit = 0, slot = 0;
+      while ((slot = e.wnd_next_child_slot(dialog, slot)) !== -1) {
+        const hwnd = e.wnd_slot_hwnd(slot++);
+        if (e.ctrl_get_class(hwnd) === 2 && e.ctrl_get_id(hwnd) === 0x442) { edit = hwnd; break; }
+      }
+      if (!edit) throw new Error('file dialog lacks filename edit');
+      const text = e.guest_alloc(name.length + 1);
+      const pointer = app.wine._guestToWasmAddress(text);
+      new Uint8Array(app.wine.memory.buffer, pointer, name.length + 1)
+        .set(new TextEncoder().encode(name + '\\0'));
+      e.send_message(edit, 0x000c, 0, text);
+      e.guest_free(text);
+      e.send_message(dialog, 0x0111, 1, 0);
+      sharedRenderer._wakeMessageWait();
+    };
+    const length = () => e.send_message(${ready.editor}, 0x000e, 0, 0) | 0;
+    const expectedLength = length();
+    const filename = 'browser-picture-roundtrip.rtf';
+    command(57604); // Save As
+    await chooseFile(filename);
+    const saved = await until(() => [...vfs.files.entries()].find(([key, value]) =>
+      key.endsWith(filename) && value.data && value.data.length > 100), 'saved RTF');
+    const rtf = new TextDecoder().decode(saved[1].data);
+    if (!rtf.includes('\\\\pict\\\\wmetafile8')) throw new Error('saved RTF has no WMF picture');
+    command(57600); // New: force the document to discard its live picture cache
+    let acceptedNew = false;
+    await until(() => {
+      const dialog = Object.values(sharedRenderer.windows).find(win =>
+        win.visible && win.wasm === app.wine.instance && win.isDialog && /^New$/i.test(win.title || ''));
+      if (dialog && !acceptedNew) {
+        acceptedNew = true;
+        e.post_message_q(dialog.hwnd, 0x0111, 1, 0); // default document type
+        sharedRenderer._wakeMessageWait();
+      }
+      return length() === 0;
+    }, 'empty new document');
+    command(57601); // Open
+    await chooseFile(filename);
+    await until(() => length() === expectedLength, 'reopened text/object length');
+    const colors = () => {
+      sharedRenderer.repaint();
+      const canvas = document.getElementById('screen');
+      const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+      const left = Math.max(0, e.wnd_client_screen_x(${ready.editor}) + 2);
+      const top = Math.max(0, e.wnd_client_screen_y(${ready.editor}) + 2);
+      // The editor starts below the ruler. A bounded client crop excludes
+      // caption/toolbars and covers the first line containing our picture.
+      let red = 0, blue = 0;
+      for (let y = top; y < Math.min(top + 80, canvas.height); y++) {
+        for (let x = left; x < Math.min(left + 380, canvas.width); x++) {
+          const i = (y * canvas.width + x) * 4;
+          if (pixels[i] > 220 && pixels[i + 1] < 40 && pixels[i + 2] < 40) red++;
+          if (pixels[i] < 40 && pixels[i + 1] < 40 && pixels[i + 2] > 220) blue++;
+        }
+      }
+      return { red, blue };
+    };
+    const pixels = await until(() => {
+      const value = colors();
+      return value.red > 100 && value.blue > 100 ? value : null;
+    }, 'reopened document picture pixels');
+    return { bytes: saved[1].data.length, expectedLength, pixels,
+      png: document.getElementById('screen').toDataURL('image/png') };
+  })()`, 65000);
+  const reopenedPng = path.join(OUT, 'picture-reopened.png');
+  fs.writeFileSync(reopenedPng, Buffer.from(roundtrip.png.replace(/^data:image\/png;base64,/, ''), 'base64'));
+  delete roundtrip.png;
+  console.log('PASS  browser Save As/New/Open preserves visible picture:', JSON.stringify(roundtrip));
+  console.log('PASS  reopened screenshot:', reopenedPng);
   cleanup();
 }
 

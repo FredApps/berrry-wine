@@ -442,3 +442,33 @@ fresh-process WordPad picture roundtrip remains **12/12** (red=760, blue=752).
 Refresh metadata allocation-failure atomicity remains open: this change
 corrects freshness but does not make the existing descriptor rebuild
 transactional under out-of-memory conditions.
+
+## Browser document roundtrip — verified
+
+The browser test now forces `?compile-wat`, so it verifies the current source
+instead of silently exercising a potentially stale prebuilt artifact. Its
+existing startup, typing, date insertion and DIB-paste checks pass. It then
+uses WordPad's actual Save As command and native filename dialog, verifies
+the saved RTF contains a WMF picture, creates an empty new document (accepting
+the default type in WordPad's New dialog), and reopens the saved RTF.
+
+The document is 5,225 bytes; reopened text/object length is 35. The new
+editor-only pixel check sees **384 red and 384 blue pixels**. The capture
+`test/output/wordpad-web/picture-reopened.png` was visually inspected. This
+is headless Chrome browser rendering, not a performance measurement or
+Safari claim. It tests document teardown/reopen within one browser app;
+the separate CLI regression supplies fresh-process reopen coverage.
+
+Two initial harness attempts were corrected: posted IDOK did not complete
+the native file dialog, whereas the synchronous confirmation already used
+by the CLI does; File New presents a document-type dialog that must be
+accepted before expecting an empty editor. Neither timeout proved a
+picture-rendering failure.
+
+Build-gate attribution correction: the previously reported 11 union-gate
+errors are caused by **our earlier 62329da4** WMF validation adding five
+lines above `gdi_object_delete_full`. Its bySite anchors are five lines
+stale. Calling that blocker unrelated was too broad: it was unrelated to
+the later drawing/ownership slices, but is a missed earlier gate update
+that still needs repair. The dirty 10f attribution changes in the same
+gate belong to other work and must remain separate.
