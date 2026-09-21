@@ -15,6 +15,15 @@ const extraWat = String.raw`
     (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_diablo_acm_metric") (param $metric i32) (param $out i32) (result i32)
     (call $acm_metrics (i32.const 0) (local.get $metric) (local.get $out)))
+  (func (export "test_diablo_dllonexit") (param $fn i32) (param $begin i32) (param $end i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $handle___dllonexit (local.get $fn) (local.get $begin) (local.get $end)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x00300004))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
+  (func (export "test_diablo_table_free") (param $ptr i32)
+    (call $heap_free (local.get $ptr)))
   (func $test_diablo_onexit (export "test_diablo_onexit") (param $fn i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (call $handle__onexit (local.get $fn) (i32.const 0)
@@ -79,6 +88,41 @@ const extraWat = String.raw`
     'ACM_METRIC_COUNT_LOCAL_DRIVERS succeeds');
   assert.strictEqual(wat.guest_read32(metricOut), 1,
     'the built-in PCM converter is exposed as one local ACM driver');
+
+  const begin = 0x1300, end = 0x1304, otherBegin = 0x1310, otherEnd = 0x1314;
+  for (const p of [begin, end, otherBegin, otherEnd]) wat.guest_write32(p, 0);
+  const callbacks = Array.from({ length: 64 }, (_, i) => 0x405000 + i * 16);
+  for (const fn of callbacks) {
+    assert.strictEqual(wat.test_diablo_dllonexit(fn, begin, end), fn);
+  }
+  const table = wat.guest_read32(begin) >>> 0;
+  assert.notStrictEqual(table, 0, '__dllonexit allocates the caller-owned table');
+  assert.strictEqual(wat.guest_read32(end) >>> 0, table + callbacks.length * 4);
+  assert.deepStrictEqual(callbacks.map((_, i) => wat.guest_read32(table + i * 4)), callbacks,
+    'growth preserves registration order for reverse traversal by the DLL CRT');
+  assert.strictEqual(wat.test_diablo_dllonexit(0x406000, otherBegin, otherEnd), 0x406000);
+  assert.notStrictEqual(wat.guest_read32(otherBegin), table, 'DLLs own independent tables');
+  assert.strictEqual(wat.test_crt_atexit_count(), 0, 'DLL callbacks never enter the process queue');
+  assert.strictEqual(wat.test_diablo_dllonexit(0, begin, end), 0);
+  assert.strictEqual(wat.test_diablo_dllonexit(0x407000, 0, end), 0);
+  assert.strictEqual(wat.test_diablo_dllonexit(0x407000, begin, 0), 0);
+  assert.strictEqual(wat.guest_read32(begin) >>> 0, table);
+  assert.strictEqual(wat.guest_read32(end) >>> 0, table + 256);
+  // Defensive malformed-span rejection, not a native invalid-pointer contract.
+  wat.guest_write32(end, table - 4);
+  assert.strictEqual(wat.test_diablo_dllonexit(0x407000, begin, end), 0);
+  assert.strictEqual(wat.guest_read32(end) >>> 0, table - 4);
+  wat.guest_write32(end, table + 1);
+  assert.strictEqual(wat.test_diablo_dllonexit(0x407000, begin, end), 0);
+  assert.strictEqual(wat.guest_read32(end) >>> 0, table + 1);
+  // Synthetic span reaches heap_realloc's allocation refusal, without a huge allocation.
+  wat.guest_write32(end, table + 0x7ffffff0);
+  assert.strictEqual(wat.test_diablo_dllonexit(0x407000, begin, end), 0);
+  assert.strictEqual(wat.guest_read32(begin) >>> 0, table);
+  assert.strictEqual(wat.guest_read32(end) >>> 0, table + 0x7ffffff0);
+  assert.deepStrictEqual(callbacks.map((_, i) => wat.guest_read32(table + i * 4)), callbacks);
+  wat.test_diablo_table_free(table);
+  wat.test_diablo_table_free(wat.guest_read32(otherBegin));
 
   assert.strictEqual(wat.test_diablo_onexit(0), 0, '_onexit rejects a NULL callback');
   assert.strictEqual(wat.test_crt_atexit_count(), 0, 'rejection does not register a callback');

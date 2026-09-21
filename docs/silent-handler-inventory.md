@@ -429,3 +429,22 @@ Those remain open. The quiet-handler census also includes valid state queries
 (for example OleIsCurrentClipboard already compares the actual non-null owner),
 so its total must not be described as that many proven unconditional-success
 bugs. No classifier relaxation or arbitrary exclusion was used for this drop.
+
+2026-09-21: 252 -> 251 manual handlers; metadata remains 22. `__dllonexit`
+now appends to the caller's malloc-family callback table, updates both pointers
+after successful reallocation, and returns the callback pointer or NULL. Tables
+are independent of each other and of the process-wide atexit queue, following
+Microsoft's [__dllonexit contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/dllonexit?view=msvc-170).
+The caller's DLL CRT still owns reverse traversal and freeing at detach; this
+change does not implement or verify a DLL-unload callback dispatcher.
+
+The runtime regression first failed because 64 successful calls left the table
+NULL. It now checks 64 registrations across reallocations, preserved order,
+independent tables, no process registrations, cdecl cleanup, and unchanged
+table contents/pointers on rejection. A synthetic oversized span reaches the
+allocator's size refusal through heap_realloc; this is not a genuine exhausted
+heap test. Null arguments and reversed/misaligned spans are defensive handling,
+not behavior established by a Win98 differential. No callback bodies execute
+in these table tests. `_cexit` returning cleanup remains open.
+The focused runtime test, silent-handler pin and handler-ESP gate pass; no
+full-build, browser, or native Win98 differential claim is made for this change.

@@ -1215,9 +1215,39 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; DLL CRTs own these malloc-family tables and walk them backwards at detach.
+  ;; end is one past the last callback, not the allocation's capacity. Publish
+  ;; relocated pointers only after realloc succeeds; leave the process queue alone.
+  (func $crt_dllonexit_register (param $fn i32) (param $pbegin i32) (param $pend i32) (result i32)
+    (local $begin_w i32) (local $end_w i32) (local $begin i32) (local $end i32)
+    (local $bytes i32) (local $table i32)
+    (if (i32.eqz (local.get $fn)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $pbegin)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $pend)) (then (return (i32.const 0))))
+    (local.set $begin_w (call $g2w (local.get $pbegin)))
+    (local.set $end_w (call $g2w (local.get $pend)))
+    (local.set $begin (i32.load (local.get $begin_w)))
+    (local.set $end (i32.load (local.get $end_w)))
+    ;; Defensive span checks, including allocator rounding/size overflow.
+    (if (i32.lt_u (local.get $end) (local.get $begin)) (then (return (i32.const 0))))
+    (local.set $bytes (i32.sub (local.get $end) (local.get $begin)))
+    (if (i32.and (local.get $bytes) (i32.const 3)) (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $bytes) (i32.const 0x7ffffff0)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $begin))
+      (then (if (local.get $end) (then (return (i32.const 0))))))
+    (local.set $table (call $heap_realloc (local.get $begin)
+      (i32.add (local.get $bytes) (i32.const 4)) (i32.const 0)))
+    (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
+    (call $gs32 (i32.add (local.get $table) (local.get $bytes)) (local.get $fn))
+    (i32.store (local.get $begin_w) (local.get $table))
+    (i32.store (local.get $end_w) (i32.add (local.get $table)
+      (i32.add (local.get $bytes) (i32.const 4))))
+    (local.get $fn))
+
   ;; 270: __dllonexit(func, begin, end) — cdecl; DLL-local counterpart.
   (func $handle___dllonexit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $crt_dllonexit_register (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
