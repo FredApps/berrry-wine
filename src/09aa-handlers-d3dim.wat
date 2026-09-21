@@ -1717,12 +1717,17 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
   ;; IDirect3DVertexBuffer_ProcessVertices — 8 args (incl. this)
-  ;; Transforms and lights source vertices INTO this buffer. Returning S_OK
-  ;; without doing it leaves the destination as the zeros CreateVertexBuffer
-  ;; wrote, so every later draw off that buffer collapses to a single point --
-  ;; a silent-success stub whose symptom is again missing geometry.
+  ;; ProcessVertices(this, dwVertexOp, dwDestIndex, dwCount, lpSrcBuffer,
+  ;;                 dwSrcIndex, lpD3DDevice, dwFlags)
+  ;; Transforms and lights source vertices INTO this buffer, so the last three
+  ;; arguments come off the guest stack past arg4.
   (func $handle_IDirect3DVertexBuffer_ProcessVertices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
+    (i32.store offset=0 (global.get $reg_base) (call $d3dim_vb_process_vertices
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36))))
 
   ;; IDirect3DVertexBuffer_GetVertexBufferDesc — 2 args (incl. this)
   (func $handle_IDirect3DVertexBuffer_GetVertexBufferDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1762,8 +1767,14 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
   ;; IDirect3DVertexBuffer7_ProcessVertices — 8 args (incl. this)
+  ;; Same ABI as the v1 method; the device argument is an IDirect3DDevice7.
   (func $handle_IDirect3DVertexBuffer7_ProcessVertices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $crash_unimplemented (local.get $name_ptr)))
+    (i32.store offset=0 (global.get $reg_base) (call $d3dim_vb_process_vertices
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36))))
 
   ;; IDirect3DVertexBuffer7_GetVertexBufferDesc — 2 args (incl. this)
   (func $handle_IDirect3DVertexBuffer7_GetVertexBufferDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

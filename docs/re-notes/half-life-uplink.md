@@ -493,3 +493,70 @@ the only thing in the capture is the engine's menu text. **The remaining work is
 the D3D7 immediate-mode draw path, not DirectDraw activation** — read the
 texture slots as proof the renderer is live, and the `nonZero=0` primary as the
 open bug.
+
+## The D3D7 draw path: three gaps, and where gameplay stops now
+
+The "open bug" above turned out to be three separate gaps, each hidden behind
+the one before it. Reaching them needs the registry seed and the bare `--exe`
+form from the previous section; the clicks below drive the menu:
+
+```
+node test/run.js --exe=test/binaries/candidates/half-life-uplink-installer/installed/hldemo.exe \
+  --args='-D3D' --reg-import=/path/to/hl-d3d-reg.json --quiet-api --no-build \
+  --max-batches=300000 --max-seconds=540 --no-close --dx-surfaces \
+  --input='3200:mousedown:110:192,3230:mouseup:110:192,4500:mousedown:70:152,4530:mouseup:70:152' \
+  --png=/tmp/hl.png
+```
+
+(110,192) is **New game** on the main menu and (70,152) is **Easy** on the
+difficulty menu. Both need a real `mousedown`/`mouseup` pair — `click` is
+invisible to the engine's per-frame button sampler.
+
+**1. Mipmap chains did not exist.** `hw.dll` creates a mipmapped texture and
+then walks it with `GetAttachedSurface(DDSCAPS_TEXTURE|DDSCAPS_MIPMAP)`,
+**ignoring the HRESULT** — on real hardware the chain always exists. Our
+`CreateSurface` only billed the pyramid against video memory and never built the
+levels, so the walk got a NULL that `hw.dll` then called `Lock` through. The
+crash lands in `$g2w`, nowhere near the `CreateSurface` that caused it; the tell
+is `[eip-zero] … dbg_prev_eip=0x005f7502` (`hw+0x10031531`, `call [ebx+0x64]`,
+slot 25 = `Lock`). `$dx_create_mip_chain` now builds the levels at creation.
+Levels bill **zero** video memory on purpose: level 0 already books the whole
+4/3 pyramid estimate, and moving that would shift the `GetAvailableVidMem`
+deltas apps calibrate texture budgets against. `GetAttachedSurface` also zeroes
+`*ppv` when it fails now, so a caller that ignores the HRESULT gets a NULL
+rather than whatever it left in that variable.
+
+**2. `IDirect3DVertexBuffer::ProcessVertices` was a fail-fast stub.** GoldSrc
+batches every frame through it: source vertices in, transformed and lit vertices
+into the buffer it then draws from. The maths already existed for untransformed
+`DrawPrimitive`, so `$d3dim_vb_process_vertices` reuses it — pack the source FVF
+into the canonical 32-byte vertex, run `$d3dim_prepare_draw_vertex`, unpack into
+the destination's own FVF. The three arguments past `arg4` (`dwSrcIndex`,
+`lpD3DDevice`, `dwFlags`) come off the guest stack at ESP+24/+28/+32 and the
+handler pops 36.
+
+**3. The canonical `D3DLVERTEX` was packed two dwords short.** This is the one
+that mattered for the picture. `D3DLVERTEX` is `{x,y,z, dwReserved, dcColor,
+dcSpecular, tu, tv}` — the reserved DWORD at +12 puts colour at +16 and the
+texture coordinates at +24/+28, which is where `$d3dim_prepare_draw_vertex` and
+every other consumer read them. `$d3dim_pack_fvf_vertices`'s type-2 branch wrote
+colour at +12, specular at +16 and UV at +20/+24, so the transform was fed a
+zero colour and **the wrong pair of dwords as texture coordinates**. Nothing
+asserted, nothing crashed; the frame just came out white. A pre-existing bug
+that no test covered — any FVF-sourced `D3DLVERTEX` draw was affected, not only
+Half-Life.
+
+With all three in, the same command line reaches **gameplay**: the D3D menu
+draws in full (logo, items, PC Gamer badge), New game → Easy loads, the real
+Half-Life loading screen renders through D3D, and the frame at ~70,000 batches
+carries the HUD (health 100, suit, ammo) over the Lambda Complex intro text.
+Throughput went 130 batches/s where the pre-fix route managed 33.
+
+**Still open:** the world itself is not drawn. The HUD's 2D `TLVERTEX` sprites
+and the level text composite correctly onto the primary and back buffer
+(`nonZero=429/1850`, 210 colours), but the 3D geometry behind them is black, and
+the background carries a tiled repeat of the loading screen in the top-left
+quadrant. Read that quadrant as the next lead: content confined to a 320x240
+corner with a vertical repeat is a pitch/stride disagreement, not a missing
+draw. `--dump-ddraw-surfaces=DIR` plus the `640x480` names in the census is the
+fastest way to see which surface holds what.

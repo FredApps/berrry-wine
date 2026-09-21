@@ -2187,6 +2187,81 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))) ;; 5 args (this + 4)
 
+  ;; A mipmapped texture is a chain, not one surface: level N answers
+  ;; GetAttachedSurface(DDSCAPS_TEXTURE|DDSCAPS_MIPMAP) with level N+1, and that
+  ;; is how a renderer walks down to upload each level. Half-Life's hw.dll does
+  ;; exactly that at hw+0x10038b35 and **ignores the HRESULT** — on real
+  ;; hardware the chain always exists — so a missing attachment is not an error
+  ;; it reports. It is a NULL it then calls IDirectDrawSurface::Lock through,
+  ;; killing the guest a long way from the surface that never had the levels.
+  ;;
+  ;; Levels bill zero video memory on purpose: level 0 already books the whole
+  ;; 4/3 pyramid estimate, and moving that would shift GetAvailableVidMem deltas
+  ;; that apps calibrate their texture budgets against (MCM does).
+  (func $dx_create_mip_chain
+      (param $parent_obj i32) (param $owner i32) (param $caps i32)
+      (param $w i32) (param $h i32) (param $bpp i32) (param $fmt i32)
+      (param $want_levels i32)
+    (local $obj i32) (local $entry i32) (local $prev_entry i32)
+    (local $pitch i32) (local $size i32) (local $dib_guest i32) (local $dib_wa i32)
+    (local $level i32)
+    (local.set $prev_entry (call $dx_from_this (local.get $parent_obj)))
+    (if (i32.eqz (local.get $prev_entry)) (then (return)))
+    (local.set $level (i32.const 1))
+    (block $done
+      (loop $next
+        ;; A 1x1 level is the bottom of any pyramid.
+        (br_if $done (i32.and
+          (i32.eq (local.get $w) (i32.const 1))
+          (i32.eq (local.get $h) (i32.const 1))))
+        ;; 20 levels covers a 1048576-pixel edge; the bound is a guard, not a limit.
+        (br_if $done (i32.gt_u (local.get $level) (i32.const 20)))
+        ;; A caller that declared dwMipMapCount gets exactly that many levels.
+        (br_if $done (i32.and
+          (i32.ne (local.get $want_levels) (i32.const 0))
+          (i32.ge_u (local.get $level) (local.get $want_levels))))
+        (local.set $w (select (i32.shr_u (local.get $w) (i32.const 1)) (i32.const 1)
+          (i32.gt_u (local.get $w) (i32.const 1))))
+        (local.set $h (select (i32.shr_u (local.get $h) (i32.const 1)) (i32.const 1)
+          (i32.gt_u (local.get $h) (i32.const 1))))
+        (local.set $pitch (i32.and
+          (i32.add (i32.mul (local.get $w) (i32.div_u (local.get $bpp) (i32.const 8)))
+            (i32.const 3))
+          (i32.const 0xFFFFFFFC)))
+        (local.set $size (i32.mul (local.get $pitch) (local.get $h)))
+        ;; Same slack rows as every other surface: a renderer that writes a row
+        ;; long must not land on the next allocation.
+        (local.set $dib_guest (call $dib_alloc
+          (i32.add (local.get $size)
+            (i32.add (i32.mul (local.get $pitch) (i32.const 16)) (i32.const 64)))))
+        ;; An exhausted arena truncates the chain rather than failing the
+        ;; texture — a short chain is what a card with less memory reports.
+        (br_if $done (i32.eqz (local.get $dib_guest)))
+        (local.set $dib_wa (call $g2w (local.get $dib_guest)))
+        (call $zero_memory (local.get $dib_wa) (local.get $size))
+        (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
+        (br_if $done (i32.eqz (local.get $obj)))
+        (local.set $entry (call $dx_from_this (local.get $obj)))
+        (call $zero_memory (call $dx_surf_meta_ptr (local.get $entry)) (i32.const 16))
+        ;; The level carries its parent's caps, so the TEXTURE|MIPMAP request
+        ;; GetAttachedSurface tests against is satisfied by the attachment.
+        (i32.store (call $dx_surf_meta_ptr (local.get $entry)) (local.get $caps))
+        (call $dx_surf_billed_set (local.get $entry) (i32.const 0))
+        (i32.store (call $dx_surf_owner_ptr (local.get $entry)) (local.get $owner))
+        (store.field DxObject width (local.get $entry) (local.get $w))
+        (store.field DxObject height (local.get $entry) (local.get $h))
+        (store.field DxObject bpp (local.get $entry) (local.get $bpp))
+        (store.field DxObject pitch (local.get $entry) (local.get $pitch))
+        (store.field DxObject misc1 (local.get $entry) (local.get $dib_wa))
+        ;; misc2 on a surface is its colour key, so a fresh level leaves it 0.
+        (store.field DxObject misc2 (local.get $entry) (i32.const 0))
+        (store.field DxObject flags (local.get $entry) (i32.const 4)) ;; offscreen
+        (call $dx_surf_fmt_set (local.get $entry) (local.get $fmt))
+        (store.field DxObject misc0 (local.get $prev_entry) (local.get $obj))
+        (local.set $prev_entry (local.get $entry))
+        (local.set $level (i32.add (local.get $level) (i32.const 1)))
+        (br $next))))
+
   ;; CreateSurface(this, lpDDSD, lplpDDSurface, pUnkOuter)
   (func $handle_IDirectDraw_CreateSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ddsd_wa i32) (local $caps i32) (local $w i32) (local $h i32) (local $bpp i32)
@@ -2339,6 +2414,19 @@
     (store.field DxObject misc2 (local.get $entry) (local.get $vidmem_bytes))
     (store.field DxObject flags (local.get $entry) (local.get $flags))
     (call $dx_surf_fmt_set (local.get $entry) (local.get $fmt))
+    ;; DDSCAPS_MIPMAP=0x400000. Build the rest of the pyramid now, while the
+    ;; level-0 geometry and format are still in hand. DDSD_MIPMAPCOUNT=0x20000
+    ;; makes dwMipMapCount at +24 the caller's declared total level count;
+    ;; without it, run the pyramid down to 1x1.
+    (if (i32.and
+          (i32.ne (i32.and (local.get $caps) (i32.const 0x400000)) (i32.const 0))
+          (i32.eqz (i32.and (local.get $flags) (i32.const 0x200)))) ;; not caller-owned bits
+      (then (call $dx_create_mip_chain
+        (local.get $obj)
+        (i32.add (call $dx_slot_of (call $dx_from_this (local.get $arg0))) (i32.const 1))
+        (local.get $caps) (local.get $w) (local.get $h) (local.get $bpp) (local.get $fmt)
+        (select (i32.load offset=24 (local.get $ddsd_wa)) (i32.const 0)
+          (i32.ne (i32.and (local.get $ddsd_flags) (i32.const 0x20000)) (i32.const 0))))))
     ;; *lplpDDSurface = obj
     (call $gs32 (local.get $arg2) (local.get $obj))
     ;; An exclusive primary owns the display, so its cooperative window follows
@@ -4889,6 +4977,11 @@
         (call $gs32 (local.get $arg2) (local.get $child))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
       (else
+        ;; Zero the out pointer as well as failing. A caller that ignores the
+        ;; HRESULT -- hw.dll walking a mip chain does exactly that -- would
+        ;; otherwise carry whatever it happened to leave in that variable into
+        ;; the next Lock, which is a stale surface rather than an obvious NULL.
+        (call $gs32 (local.get $arg2) (i32.const 0))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x887600FF)))) ;; DDERR_NOTFOUND
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 

@@ -1211,25 +1211,32 @@
         (else
           (if (i32.eq (local.get $type) (i32.const 2))
             (then
+              ;; D3DLVERTEX is {x,y,z, dwReserved, dcColor, dcSpecular, tu, tv}:
+              ;; the reserved DWORD at +12 pushes colour to +16 and the texture
+              ;; coordinates to +24/+28, which is where $d3dim_prepare_draw_vertex
+              ;; and every other consumer of this canonical form read them.
+              ;; Packing them two dwords early (as this branch did) silently fed
+              ;; the transform a zero colour and the wrong pair of dwords as UV.
               (call $memcpy (local.get $dst) (local.get $src) (i32.const 12))
               (local.set $offset (i32.const 12))
-              (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0xFFFFFFFF))
-              (i32.store (i32.add (local.get $dst) (i32.const 16)) (i32.const 0))
+              (i32.store (i32.add (local.get $dst) (i32.const 12)) (i32.const 0))
+              (i32.store (i32.add (local.get $dst) (i32.const 16)) (i32.const 0xFFFFFFFF))
+              (i32.store (i32.add (local.get $dst) (i32.const 20)) (i32.const 0))
               (if (i32.and (local.get $fvf) (i32.const 0x0010))
                 (then (local.set $offset (i32.add (local.get $offset) (i32.const 12)))))
               (if (i32.and (local.get $fvf) (i32.const 0x0040)) (then
-                (i32.store (i32.add (local.get $dst) (i32.const 12))
+                (i32.store (i32.add (local.get $dst) (i32.const 16))
                   (i32.load (i32.add (local.get $src) (local.get $offset))))
                 (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
               (if (i32.and (local.get $fvf) (i32.const 0x0080)) (then
-                (i32.store (i32.add (local.get $dst) (i32.const 16))
+                (i32.store (i32.add (local.get $dst) (i32.const 20))
                   (i32.load (i32.add (local.get $src) (local.get $offset))))
                 (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
               (if (local.get $tex_count) (then
                 (local.set $offset (i32.add (local.get $offset) (i32.shl (local.get $tex_index) (i32.const 3))))
-                (i32.store (i32.add (local.get $dst) (i32.const 20))
-                  (i32.load (i32.add (local.get $src) (local.get $offset))))
                 (i32.store (i32.add (local.get $dst) (i32.const 24))
+                  (i32.load (i32.add (local.get $src) (local.get $offset))))
+                (i32.store (i32.add (local.get $dst) (i32.const 28))
                   (i32.load (i32.add (local.get $src) (i32.add (local.get $offset) (i32.const 4))))))))
             (else
               (call $memcpy (local.get $dst) (local.get $src) (i32.const 12))
@@ -1314,6 +1321,151 @@
       (else (call $zero_memory (local.get $desc_wa) (local.get $copy_size))))
     (i32.store (local.get $desc_wa) (local.get $copy_size))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+
+  ;; Write one canonical 32-byte TLVERTEX back out in an arbitrary destination
+  ;; FVF layout. The inverse of $d3dim_pack_fvf_vertices, and the half
+  ;; ProcessVertices needs: its destination buffer declares its own FVF, and a
+  ;; buffer that is XYZRHW|DIFFUSE|TEX1 (28 bytes) is not the 32-byte TLVERTEX
+  ;; the transform produces. Every texture stage gets the same UV pair, which
+  ;; is what the fixed pipeline computes -- it has one set of coordinates.
+  (func $d3dim_unpack_tl_vertex (param $fvf i32) (param $src_wa i32) (param $dst_wa i32)
+    (local $offset i32) (local $tex i32) (local $i i32)
+    (if (i32.and (local.get $fvf) (i32.const 0x0004))
+      (then
+        (call $memcpy (local.get $dst_wa) (local.get $src_wa) (i32.const 16))
+        (local.set $offset (i32.const 16)))
+      (else
+        ;; No position bits at all means a descriptor we never saw; the output
+        ;; of a transform is XYZRHW by definition, so lay it out that way.
+        (call $memcpy (local.get $dst_wa) (local.get $src_wa)
+          (select (i32.const 12) (i32.const 16)
+            (i32.ne (i32.and (local.get $fvf) (i32.const 0x0002)) (i32.const 0))))
+        (local.set $offset
+          (select (i32.const 12) (i32.const 16)
+            (i32.ne (i32.and (local.get $fvf) (i32.const 0x0002)) (i32.const 0))))))
+    (if (i32.and (local.get $fvf) (i32.const 0x0010)) (then
+      ;; A transformed vertex has no normal left to carry; zero rather than
+      ;; leave whatever the last batch wrote at that offset.
+      (call $zero_memory (i32.add (local.get $dst_wa) (local.get $offset)) (i32.const 12))
+      (local.set $offset (i32.add (local.get $offset) (i32.const 12)))))
+    (if (i32.and (local.get $fvf) (i32.const 0x0040)) (then
+      (i32.store (i32.add (local.get $dst_wa) (local.get $offset))
+        (i32.load (i32.add (local.get $src_wa) (i32.const 16))))
+      (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
+    (if (i32.and (local.get $fvf) (i32.const 0x0080)) (then
+      (i32.store (i32.add (local.get $dst_wa) (local.get $offset))
+        (i32.load (i32.add (local.get $src_wa) (i32.const 20))))
+      (local.set $offset (i32.add (local.get $offset) (i32.const 4)))))
+    (local.set $tex (i32.and (i32.shr_u (local.get $fvf) (i32.const 8)) (i32.const 0xF)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $tex)))
+      (i32.store (i32.add (local.get $dst_wa) (local.get $offset))
+        (i32.load (i32.add (local.get $src_wa) (i32.const 24))))
+      (i32.store (i32.add (local.get $dst_wa) (i32.add (local.get $offset) (i32.const 4)))
+        (i32.load (i32.add (local.get $src_wa) (i32.const 28))))
+      (local.set $offset (i32.add (local.get $offset) (i32.const 8)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp))))
+
+  ;; IDirect3DVertexBuffer::ProcessVertices -- transform and light dwCount
+  ;; vertices out of lpSrcBuffer INTO this buffer, which the caller then draws
+  ;; from with the transform already applied. Half-Life's D3D renderer batches
+  ;; every frame this way, so a stub that returns S_OK without doing the work
+  ;; leaves the destination as the zeros CreateVertexBuffer wrote and collapses
+  ;; the frame to a single point.
+  ;;
+  ;; The maths is the one $d3dim_draw_primitive already runs for untransformed
+  ;; vertices, reused rather than rebuilt: pack the source FVF into the
+  ;; canonical 32-byte vertex, project and light it through
+  ;; $d3dim_prepare_draw_vertex, then unpack into the destination's own FVF.
+  ;; dwVertexOp's TRANSFORM bit is not consulted because it is mandatory --
+  ;; D3D rejects a call without it, and every other bit (LIGHT, CLIP, EXTENTS)
+  ;; either already happens here or is an output we do not compute.
+  (func $d3dim_vb_process_vertices
+      (param $dst_this i32) (param $vertex_op i32) (param $dest_index i32) (param $count i32)
+      (param $src_this i32) (param $src_index i32) (param $device i32) (param $flags i32)
+      (result i32)
+    (local $dst_entry i32) (local $src_entry i32)
+    (local $src_data_g i32) (local $src_size i32) (local $src_fvf i32)
+    (local $src_stride i32) (local $src_vtx i32) (local $src_max i32)
+    (local $dst_data_g i32) (local $dst_size i32) (local $dst_fvf i32)
+    (local $dst_stride i32) (local $dst_max i32)
+    (local $state i32) (local $packed_g i32) (local $packed_wa i32)
+    (local $scratch_g i32) (local $scratch_wa i32) (local $dst_wa i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $dst_this)) (i32.eqz (local.get $src_this)))
+      (then (return (i32.const 0x80004003))))  ;; E_POINTER
+    (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
+    (local.set $state (call $d3ddev_state (local.get $device)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0x80004003))))
+    (local.set $dst_entry (call $dx_from_this (local.get $dst_this)))
+    (local.set $src_entry (call $dx_from_this (local.get $src_this)))
+    (if (i32.or (i32.eqz (local.get $dst_entry)) (i32.eqz (local.get $src_entry)))
+      (then (return (i32.const 0x80004003))))
+    (local.set $src_data_g (load.field DxObject misc0 (local.get $src_entry)))
+    (local.set $dst_data_g (load.field DxObject misc0 (local.get $dst_entry)))
+    (if (i32.or (i32.eqz (local.get $src_data_g)) (i32.eqz (local.get $dst_data_g)))
+      (then (return (i32.const 0x8007000E))))  ;; E_OUTOFMEMORY
+    (local.set $src_size (i32.load (i32.add (local.get $src_entry) (i32.const 12))))
+    (local.set $dst_size (i32.load (i32.add (local.get $dst_entry) (i32.const 12))))
+    (local.set $src_fvf (load.field DxObject misc1 (local.get $src_entry)))
+    (local.set $dst_fvf (load.field DxObject misc1 (local.get $dst_entry)))
+    ;; A destination whose descriptor never reached us has no layout to unpack
+    ;; into; the output of a transform is TLVERTEX, so say so explicitly rather
+    ;; than let $d3dim_fvf_stride's 32-byte fallback imply it.
+    (if (i32.eqz (i32.and (local.get $dst_fvf) (i32.const 0x0006)))
+      (then (local.set $dst_fvf (i32.const 0x1C4)))) ;; XYZRHW|DIFFUSE|SPECULAR|TEX1
+    (local.set $src_vtx (call $d3dim_fvf_vtxtype (local.get $src_fvf)))
+    ;; A source with no position bits carries nothing to transform.
+    (if (i32.eqz (local.get $src_vtx)) (then (return (i32.const 0x80070057)))) ;; E_INVALIDARG
+    (local.set $src_stride (call $d3dim_fvf_stride (local.get $src_fvf)))
+    (local.set $dst_stride (call $d3dim_fvf_stride (local.get $dst_fvf)))
+    ;; Clamp against what both buffers actually hold rather than trusting the
+    ;; caller's count: an over-long batch would otherwise walk off the heap
+    ;; block $d3dim_create_vb sized from the declared vertex count.
+    (local.set $src_max (i32.div_u (local.get $src_size) (local.get $src_stride)))
+    (local.set $dst_max (i32.div_u (local.get $dst_size) (local.get $dst_stride)))
+    (if (i32.or (i32.ge_u (local.get $src_index) (local.get $src_max))
+                (i32.ge_u (local.get $dest_index) (local.get $dst_max)))
+      (then (return (i32.const 0x80070057))))
+    (if (i32.gt_u (local.get $count) (i32.sub (local.get $src_max) (local.get $src_index)))
+      (then (local.set $count (i32.sub (local.get $src_max) (local.get $src_index)))))
+    (if (i32.gt_u (local.get $count) (i32.sub (local.get $dst_max) (local.get $dest_index)))
+      (then (local.set $count (i32.sub (local.get $dst_max) (local.get $dest_index)))))
+    (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
+    (local.set $packed_g (call $d3dim_pack_fvf_vertices
+      (local.get $src_fvf)
+      (i32.add (local.get $src_data_g) (i32.mul (local.get $src_index) (local.get $src_stride)))
+      (local.get $count)
+      (call $d3dim_texcoord_index (local.get $device))))
+    (if (i32.eqz (local.get $packed_g)) (then (return (i32.const 0x8007000E))))
+    ;; One scratch TLVERTEX for the whole call. Transforming in place would
+    ;; alias $vertex_project's source with its destination.
+    (local.set $scratch_g (call $heap_alloc (i32.const 32)))
+    (if (i32.eqz (local.get $scratch_g)) (then
+      (call $heap_free (local.get $packed_g))
+      (return (i32.const 0x8007000E))))
+    (call $d3ddev_composite_wvp (local.get $state))
+    (call $d3dim_lights_refresh (local.get $state))
+    (local.set $packed_wa (call $g2w (local.get $packed_g)))
+    (local.set $scratch_wa (call $g2w (local.get $scratch_g)))
+    (local.set $dst_wa (call $g2w
+      (i32.add (local.get $dst_data_g) (i32.mul (local.get $dest_index) (local.get $dst_stride)))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (call $d3dim_prepare_draw_vertex
+        (local.get $state) (local.get $src_vtx)
+        (i32.add (local.get $packed_wa) (i32.shl (local.get $i) (i32.const 5)))
+        (local.get $scratch_wa))
+      (call $d3dim_unpack_tl_vertex
+        (local.get $dst_fvf) (local.get $scratch_wa)
+        (i32.add (local.get $dst_wa) (i32.mul (local.get $i) (local.get $dst_stride))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (call $heap_free (local.get $scratch_g))
+    (call $heap_free (local.get $packed_g))
+    (i32.const 0))
 
   (func $d3dim_vb_draw_primitive
     (param $this i32) (param $primType i32) (param $vb i32) (param $start i32) (param $count i32)
