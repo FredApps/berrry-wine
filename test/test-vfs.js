@@ -102,6 +102,7 @@ test('file data access is enforced before bytes, providers or cursors change', (
     tryRead: () => { throw Error('unauthorized provider access'); }, fill: async () => {},
   } });
   const query = vfs.createFile('c:\\no-data.bin', 0, 3);
+  assert.strictEqual(vfs.createFile('c:\\no-data.bin', 0, 5), 0);
   assert.strictEqual(vfs.setEndOfFile(query), false);
   assert.strictEqual(imports.fs_set_end_of_file_result(query), 5);
   assert.strictEqual(imports.fs_set_end_of_file(query), 0);
@@ -144,6 +145,35 @@ test('generic and specific file rights compare by meaning without granting extra
     assert.strictEqual(open(access), 0, 'write intent cannot open protected media');
   }
   for (const access of [0, 1, 0x80, 0x80000000, 0x20000000]) assert(open(access) > 0);
+});
+
+test('creation dispositions validate truncation before mutation and permit protected existing opens', () => {
+  const vfs = makeVFS({ 'c:\\disposition.bin': 4 });
+  const entry = vfs.files.get('c:\\disposition.bin');
+  entry.data.set([1, 2, 3, 4]);
+  const nextHandle = vfs._nextHandle;
+  for (const access of [0, 1, 4, 0x80, 0x100, 0x80000000]) {
+    assert.strictEqual(vfs.createFile('c:\\disposition.bin', access, 5), 0);
+    assert.strictEqual(vfs.files.get('c:\\disposition.bin'), entry);
+    assert.deepStrictEqual([...entry.data], [1, 2, 3, 4]);
+    assert.strictEqual(vfs._nextHandle, nextHandle);
+  }
+  for (const disposition of [0, 6, -1, 1.5]) {
+    assert.strictEqual(vfs.createFile('c:\\disposition.bin', 0x40000000, disposition), 0);
+    assert.deepStrictEqual([...entry.data], [1, 2, 3, 4]);
+  }
+  vfs.setDriveReadOnly('c', true);
+  assert(vfs.createFile('c:\\disposition.bin', 0x80000000, 4) > 0,
+    'OPEN_ALWAYS of an existing file need not write the medium');
+  assert.strictEqual(vfs.createFile('c:\\new.bin', 0x80000000, 4), 0);
+  assert.strictEqual(vfs.files.has('c:\\new.bin'), false);
+  for (const disposition of [1, 2, 5]) {
+    assert.strictEqual(vfs.createFile('c:\\disposition.bin', 0x40000000, disposition), 0);
+    assert.deepStrictEqual([...entry.data], [1, 2, 3, 4]);
+  }
+  vfs.setDriveReadOnly('c', false);
+  assert(vfs.createFile('c:\\disposition.bin', 0x40000000, 5) > 0);
+  assert.strictEqual(entry.data.length, 0);
 });
 
 test('append-only writes cannot overwrite and null writes cannot extend', () => {

@@ -626,3 +626,24 @@ VFS 37/37, adoption, source-compiled public Win32/CRT file APIs and file-time
 tests pass. Creation-disposition validation, mapped-file
 permissions, sharing restrictions and file-object lifetime remain separate
 issues; normalizing masks does not resolve them.
+
+## Creation-disposition validation (2026-09-21)
+
+TRUNCATE_EXISTING rejects handles without write-data access before allocating
+a handle or changing file bytes, including provider-backed files. Invalid
+disposition values are rejected at the same boundary. OPEN_ALWAYS now separates
+opening an existing file from creating a missing one: a read-only open of an
+existing file on protected media succeeds, while creation there still fails.
+The old basename-fallback comment claimed modes that its guard had excluded;
+the code now explicitly retains only the existing read-only OPEN_EXISTING
+compatibility behavior, without redirecting creation or truncation.
+
+Reference: Microsoft's [CreateFile dispositions](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-createfilea).
+VFS tests cover rejected truncation preserving bytes, entry identity and handle
+allocation, invalid dispositions, protected-media OPEN_ALWAYS and successful
+truncation. This does not finish the public CreateFile error/result contract,
+read-only file attributes, sharing, parent-directory validation or native Win98
+verification. These remain open rather than being implied by VFS success.
+
+Verification: VFS 38/38, lazy/provider 47/47 and source-compiled public Win32/CRT
+file API regression tests pass. No new browser or native Win98 run here.
