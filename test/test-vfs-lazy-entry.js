@@ -478,6 +478,62 @@ test('a latched fault is discarded when its file entry is replaced', async () =>
   assert.strictEqual(vfs.readFaults.has(handle), false);
 });
 
+test('an immediate provider exception uses the same guarded failure completion', async () => {
+  const vfs = new VirtualFS();
+  vfs.setProviderFile(GUEST, { provider: {
+    size: 16, tryRead: () => null, fill: () => { throw new Error('immediate provider error'); },
+  } });
+  const handle = vfs.createFile(GUEST, 0x80000000, 3);
+  const pending = vfs.readFile(handle, new Uint8Array(4), 4).pending;
+  vfs.pendingRead = pending;
+  assert.strictEqual(await vfs.fillPendingRead(pending), false);
+  assert.strictEqual(vfs.pendingRead, null);
+  const retry = vfs.readFile(handle, new Uint8Array(4), 4);
+  assert.strictEqual(retry.error, 30);
+  assert.strictEqual(retry.faulted, true);
+});
+
+test('browser and CLI io-wait completion blocks preserve a newer pending request', async () => {
+  // Execute the actual inline await blocks, without booting the surrounding
+  // browser/CLI. This catches a host clearing the slot again after the VFS's
+  // identity-guarded completion has deliberately left a peer request alone.
+  const AsyncFunction = Object.getPrototypeOf(async function () {}).constructor;
+  const blocks = [
+    ['browser worker', path.join(__dirname, '..', 'host.js'),
+      'const pvfs = self._helpCtx && self._helpCtx.vfs;',
+      "await self.guestWorker.callExport('clear_yield');"],
+    ['browser cooperative', path.join(__dirname, '..', 'host.js'),
+      'const vfs = self._helpCtx && self._helpCtx.vfs;\n          const pending = vfs && vfs.pendingRead;',
+      'self.instance.exports.clear_yield();'],
+    ['CLI', path.join(__dirname, 'run.js'),
+      'const pending = ctx.vfs && ctx.vfs.pendingRead;',
+      'instance.exports.clear_yield();'],
+  ];
+  for (const [name, filename, startMarker, endMarker] of blocks) {
+    const source = fs.readFileSync(filename, 'utf8');
+    const start = source.indexOf(startMarker);
+    const end = source.indexOf(endMarker, start);
+    assert(start >= 0 && end > start, `${name}: io-wait block must remain discoverable`);
+    const service = new AsyncFunction('self', 'ctx', 'TRACE_YIELD', source.slice(start, end));
+    const vfs = new VirtualFS();
+    let complete;
+    vfs.setProviderFile(GUEST, { provider: {
+      size: 16, tryRead: () => null,
+      fill: () => new Promise(resolve => { complete = resolve; }),
+    } });
+    const a = vfs.createFile(GUEST, 0x80000000, 3);
+    const b = vfs.createFile(GUEST, 0x80000000, 3);
+    const pa = vfs.readFile(a, new Uint8Array(4), 4).pending;
+    const pb = vfs.readFile(b, new Uint8Array(4), 4).pending;
+    vfs.pendingRead = pa;
+    const running = service({ _helpCtx: { vfs }, logToUI: message => { throw Error(message); } }, { vfs }, false);
+    vfs.pendingRead = pb;
+    complete();
+    await running;
+    assert.strictEqual(vfs.pendingRead, pb, `${name}: late A completion must not clear B`);
+  }
+});
+
 test('an async-only provider raises a named error on a consumer that cannot wait',
   () => {
     const vfs = lazyVfs({ sync: false });

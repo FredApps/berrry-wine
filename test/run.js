@@ -8962,7 +8962,8 @@ async function main() {
         // Fail loudly rather than spinning: a provider that cannot deliver is
         // a mount bug, and a silent retry loop would look like a hang.
         await ctx.vfs.fillPendingRead(pending);
-        ctx.vfs.pendingRead = null;
+        // The VFS owns identity-guarded completion. A worker may have installed
+        // a newer pending request while the main guest awaited this fill.
       }
       instance.exports.clear_yield();
     }

@@ -389,3 +389,31 @@ Verification: lazy-provider 39/39, VFS 32/32 and adoption tests pass. A negative
 control loaded the committed filesystem source in memory: it published a stale
 fault after close, whereas the candidate did not. This host-only change adds no
 WASM import/layout changes; no artifact rebuild or performance claim.
+
+## Host-loop completion ownership checkpoint — 2026-09-21
+
+The two browser io-wait loops and the CLI main loop each cleared `pendingRead`
+unconditionally after awaiting a fill. That bypassed the VFS identity guard:
+when request B arrived while A awaited its provider, A's host continuation
+erased B. Removed those redundant clears; `fillPendingRead` owns retirement.
+It now normalizes an immediate provider exception through the same guarded
+failure path as a rejected promise, so the host need not supply fallback cleanup.
+
+A regression executes the actual inline io-wait blocks extracted from host.js
+(worker-main and cooperative) and test/run.js against deferred real VFS fills.
+It failed before the change with `browser worker: late A completion must not
+clear B`; all three blocks pass after it. This is focused host-block execution,
+not a complete browser or real Worker scheduling run. A separate test covers an
+immediate provider exception and its ERROR_READ_FAULT retry.
+
+Read-side ownership audit: the browser broker currently uses a shared host
+import table; the CLI can use per-slot tables, but both still publish one VFS
+pending slot. ThreadManager's ordinary/nested/cooperative io-wait paths select
+that slot rather than a request owned by the yielding thread. Their existing
+post-fill clears are identity-guarded (or omitted). Correct per-thread selection
+therefore still needs a request token carried with the yield, or an explicitly
+thread-owned pending registry; simply removing the clears does not solve it.
+
+Verification: final shared-tree lazy suite 41/41, VFS 32/32, host/CLI/filesystem
+syntax and diff checks pass. The first regression run failed before the host
+edits, as recorded above. No new WASM/import changes or artifact rebuild.
