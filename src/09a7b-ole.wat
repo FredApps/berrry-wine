@@ -9805,10 +9805,13 @@
     (if (i32.or (i32.le_s (local.get $width) (i32.const 0))
                 (i32.le_s (local.get $height) (i32.const 0)))
       (then (return (i32.const 0))))
+    ;; A clipboard metafile supplies the logical window; its player chooses
+    ;; the viewport (MS-WMF 3.1.3). Recording the original pixel viewport here
+    ;; would override a container's requested size during playback.
     ;; header 18 + SetMapMode 8 + SetWindowOrg 10 + SetWindowExt 10 +
-    ;; SetViewportExt 10 + STRETCHDIB (28 + DIB) + EOF 6, padded to a word.
+    ;; STRETCHDIB (28 + DIB) + EOF 6, padded to a word.
     (local.set $total (i32.and
-      (i32.add (i32.add (local.get $dib_size) (i32.const 90)) (i32.const 1))
+      (i32.add (i32.add (local.get $dib_size) (i32.const 80)) (i32.const 1))
       (i32.const -2)))
     (local.set $bytes (call $heap_alloc (local.get $total)))
     (if (i32.eqz (local.get $bytes)) (then (return (i32.const 0))))
@@ -9829,11 +9832,7 @@
     (i32.store16 offset=40 (local.get $p) (i32.const 0x020C)) ;; SetWindowExt
     (i32.store16 offset=42 (local.get $p) (local.get $height))
     (i32.store16 offset=44 (local.get $p) (local.get $width))
-    (i32.store offset=46 (local.get $p) (i32.const 5))
-    (i32.store16 offset=50 (local.get $p) (i32.const 0x020E)) ;; SetViewportExt
-    (i32.store16 offset=52 (local.get $p) (local.get $height))
-    (i32.store16 offset=54 (local.get $p) (local.get $width))
-    (local.set $record (i32.add (local.get $p) (i32.const 56)))
+    (local.set $record (i32.add (local.get $p) (i32.const 46)))
     (i32.store (local.get $record)
       (i32.shr_u (i32.add (local.get $dib_size) (i32.const 28)) (i32.const 1)))
     (i32.store16 offset=4 (local.get $record) (i32.const 0x0F43)) ;; META_STRETCHDIB

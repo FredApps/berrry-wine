@@ -491,3 +491,28 @@ A second full-build attempt after the owner's regeneration notice still
 finds ongoing source/bundle drift (now 1,770,392 to 1,771,444 bytes and
 1,741,737 to 1,742,789 bytes). Neither attempt reached a successful full
 build; both processes terminated with exit 1 at bundle freshness.
+
+## Synthesized clipboard WMF scaling — fixed
+
+The DIB-to-WMF producer recorded the original pixel viewport extent, which
+overrode the container's requested drawing bounds. A new regression failed
+before the fix: a 64×48 request painted only 768 pixels (32×24), not 3,072.
+Removed that viewport record; retained the logical window and bitmap record.
+This follows Microsoft's [MS-WMF clipboard initialization guidance](https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-wmf/2678f2fe-df2e-489d-83db-713a9f6397de):
+the metafile supplies window mapping and the player supplies viewport mapping.
+Normal playback still honors viewport records supplied by applications. This
+is a producer fix, not a rewrite of arbitrary existing WMFs or a native Win98
+comparison.
+
+Verification: public metafile **14/14**, guest COM callbacks **164/164**, and
+fresh-process WordPad roundtrip **12/12** pass. The new pixel regression covers
+64×48 enlargement, 16×12 reduction and 48×12 nonuniform scaling through OleDraw
+and IViewObject::Draw. The CLI RTF is 10,221 bytes; reopened pictures contain
+752 red and 736 blue pixels. Current-source browser Save As/New/Open also
+passes: 5,205-byte RTF, text/object length 35, 376 red and 368 blue pixels.
+The reopened browser capture was inspected. This is headless Chrome correctness
+coverage, not Safari or performance evidence.
+
+Other mapping modes, cached EMF drawing and transactional allocation-failure
+handling during live data-face refresh remain open. No full-build success is
+claimed by these focused tests.

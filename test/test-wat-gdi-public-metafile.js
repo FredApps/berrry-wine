@@ -17,6 +17,8 @@ const RegionMap = require('../lib/region-map.generated.js');
       gdi_text_mask: () => { canvasTextCalls.mask++; return 0; },
     },
     extraWat: `
+  (func (export "test_metafile_picture_from_dib") (param $dib i32) (result i32)
+    (call $ole_metafilepict_from_dib (local.get $dib) (i32.const 847) (i32.const 635)))
   (func (export "test_ole_draw_public") (param $obj i32) (param $aspect i32)
         (param $hdc i32) (param $bounds i32) (param $view i32) (result i32)
     (local $esp i32)
@@ -401,6 +403,38 @@ const RegionMap = require('../lib/region-map.generated.js');
       'final owner release retires the cached metafile');
     wat.test_call_DeleteDC(hdc);
     wat.test_call_DeleteObject(bitmap);
+  });
+
+  check('synthesized DIB metafile scales to OLE bounds instead of forcing its original pixel size', () => {
+    const dib = allocZero(40 + 32 * 24 * 3);
+    [[0, 40], [4, 32], [8, 24], [12, 0x00180001], [20, 32 * 24 * 3]]
+      .forEach(([offset, value]) => wat.guest_write32(dib + offset, value));
+    for (let i = 0; i < 32 * 24; i++) bytes[wa(dib) + 40 + i * 3 + 2] = 255;
+    const picture = wat.test_metafile_picture_from_dib(dib) >>> 0;
+    assert(picture);
+    const format = allocZero(20), medium = allocZero(12);
+    [3, 0, 1, -1, 32].forEach((value, i) => wat.guest_write32(format + i * 4, value));
+    wat.guest_write32(medium, 32);
+    wat.guest_write32(medium + 4, picture);
+    const object = wat.test_ole_create_static_handler(0) >>> 0;
+    assert.strictEqual(wat.test_ole_cache_set_data(object, format, medium, 1), 0);
+    for (const [view, width, height] of [[0, 64, 48], [1, 16, 12], [0, 48, 12]]) {
+      const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+      const bitmap = wat.test_call_CreateCompatibleBitmap(0, 100, 80) >>> 0;
+      wat.test_call_SelectObject(hdc, bitmap);
+      const bounds = allocZero(16);
+      [10, 10, 10 + width, 10 + height].forEach((value, i) => wat.guest_write32(bounds + i * 4, value));
+      assert.strictEqual(wat.test_ole_draw_public(object, 1, hdc, bounds, view), 0);
+      assert.strictEqual(countColor(hdc, 0, 0, 100, 80, 0x000000ff), width * height,
+        'upscale, downscale and nonuniform bounds must control the rendered area');
+      assert.strictEqual(wat.test_call_GetPixel(hdc, 10 + width - 1, 10 + height - 1), 0x000000ff);
+      assert.strictEqual(wat.test_call_GetPixel(hdc, 10 + width, 10 + height - 1), 0);
+      wat.test_call_DeleteDC(hdc);
+      wat.test_call_DeleteObject(bitmap);
+      wat.guest_free(bounds);
+    }
+    assert.strictEqual(wat.test_ole_release(object), 0);
+    wat.guest_free(dib);
   });
 
   check('classic recording serializes and replays canonical pixels', () => {
