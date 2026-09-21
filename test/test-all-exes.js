@@ -15,9 +15,16 @@ const BLANK_COLOR_THRESHOLD = 8;  // PASS requires > this many unique colors in 
 const ORGANIC_ART_D3DRM_SMOKE = {
   // Organic Art spends thousands of small batches reading scene/assets before
   // its first meaningful Direct3DRM frame, similar to the DX SDK globe sample.
-  maxBatches: 7000,
-  extraArgs: ['--args=/s', '--quiet-blocks'],
-  timeoutMs: 30000,
+  // 7000 was ~8x too small and stopped these mid-backdrop: the engine decodes
+  // an 800x678 GIF into an offscreen surface at roughly 17 batches per scanline
+  // (ARCHITEC's primary is nonZero=0/1850 at 7000 and 1845/1850 at 60000), so
+  // the whole family read as blank. --quiet-api is not optional at this budget:
+  // these make over 1.2M API calls per run and the default one-line-per-call
+  // trace is a blocking stdout write on the guest's own thread.
+  // See docs/re-notes/organic-art-screensavers.md.
+  maxBatches: 60000,
+  extraArgs: ['--args=/s', '--quiet-blocks', '--quiet-api'],
+  timeoutMs: 90000,
 };
 const VOLUME_CONTROL_SMOKE = {
   // sndvol32 creates a tiny hidden owner first and shows the mixer dialog via
