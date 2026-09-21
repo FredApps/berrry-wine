@@ -139,3 +139,59 @@ static handler (66 checks), and WordPad copy/cut/paste (5 checks) pass on the
 shared main worktree. The new repeated-QI assertion was observed failing
 before the source change (`0 !== 1` stored entries). Fragment balance and
 `git diff --check` pass. No full-browser embedded-picture save claim.
+
+## Guest-media refresh: private-layout corruption reproduced
+
+Run `node tools/probe-ole-cache-media.js` against the current source. This is
+a diagnostic that intentionally exits 1 while the contract is broken, not a
+passing suite entry. It loads PE/COM thunks and supplies guest x86 AddRef and
+Release methods. Unlike the older callback fixture, its COM reference count
+is at +24; +4 is a private cookie. COM does not expose an object's refcount
+layout to callers, so this distinguishes a real callback from host writes.
+
+Observed after `8c9fd2b1`, in both orders (populate cache then query the face,
+or query the face then populate cache):
+
+```text
+                         private cookie   refs  AddRef calls  Release calls
+initial                  0x13572468           1       0             0
+after face population    0x13572469           1       0             0
+after unrelated edit     0x1357246a           1       0             0
+after final Release      0x1357246a  0xffffffff       0             2
+```
+
+The cache takes ownership with SetData(TRUE), so it legitimately owns the
+initial reference. The face does not acquire a second real reference.
+Root-first Release returns 1 and final face Release returns 0, demonstrating
+that successful public return values alone do not prove balanced ownership.
+The fixture deliberately does not free itself on zero, allowing observation
+of the second Release; a real guest object could already have been freed.
+
+Source chain:
+
+1. `ole_static_refresh_data_object` copies each cached medium through
+   `ole_data_set_entry` -> `ole_copy_medium`.
+2. For IStream/IStorage, `ole_copy_medium` calls `ole_obj_addref` directly,
+   assuming the emulator's private object layout. This writes the guest's
+   +4 cookie without invoking its vtable. (The older fixture's refcount at
+   +4 made this mistake look superficially correct.)
+3. Refresh clears prior entries with `ole_release_medium`, whose local-only
+   interface release does not invoke the DLL-private Release. Another copy
+   then corrupts +4 again.
+4. Final public teardown correctly visits the cache and face media, exposing
+   the missing acquisition as two real Releases against one real reference.
+
+Do not fix this by skipping the second final Release: the copied face and
+cache claim separate ownership, and refresh must also retire previous copies.
+Do not merely reject guest pointers inside `ole_copy_medium`: refresh ignores
+the copy HRESULT and would silently omit the format instead of fixing it.
+
+The next implementation must either eliminate duplicated media ownership
+(make the aggregated data face operate on the canonical cache, while keeping
+clipboard snapshots independent), or stage/retain/commit/retire refresh via
+guest continuations, including failure rollback and reentry. Audit GetData,
+GetDataHere, QueryGetData, SetData, EnumFormatEtc, InitFromData, synthesized
+metafiles and cache mutation together. Existing independent clipboard staging
+already models guest AddRef before publication; it is not interchangeable
+with a live aggregated interface. This diagnostic is the acceptance check
+for private-layout integrity and balanced final guest callbacks.
