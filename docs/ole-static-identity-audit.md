@@ -472,3 +472,22 @@ stale. Calling that blocker unrelated was too broad: it was unrelated to
 the later drawing/ownership slices, but is a missed earlier gate update
 that still needs repair. The dirty 10f attribution changes in the same
 gate belong to other work and must remain separate.
+
+## Missed WMF gate annotations — repaired
+
+Rechecked all eleven `gdi_object_delete_full` accesses against their actual
+type-guarded branches and advanced the 10e bySite anchors by five lines.
+No variant exemptions or validation rules were removed. The union gate now
+passes **188 sites** (28 shared-prefix, 160 variant accesses).
+
+The full build retry passes the earlier gates but stops at a different
+concurrent-worktree issue: the toy-VM browser bundles no longer match their
+sources (reported deltas: 1,769,103 to 1,770,392 bytes and 1,740,448 to
+1,741,737 bytes). Those generated assets remain with their owner; this is
+not a full-build pass. The independent dirty 10f gate hunk is excluded from
+this repair's commit, using an isolated Git index for the two owned changes.
+`test/test-union-gate.js` passes all **38 checks**, including negative cases.
+A second full-build attempt after the owner's regeneration notice still
+finds ongoing source/bundle drift (now 1,770,392 to 1,771,444 bytes and
+1,741,737 to 1,742,789 bytes). Neither attempt reached a successful full
+build; both processes terminated with exit 1 at bundle freshness.
