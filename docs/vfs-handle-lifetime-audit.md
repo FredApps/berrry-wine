@@ -277,3 +277,32 @@ lazy-provider 36/36 tests pass. Full shared-tree build passes with 249 imports,
 canonical 1,472,685 bytes, compatibility 1,473,659 bytes, unchanged layout
 `54f430b349c8d55e` and 242 nonoverlapping data segments. Load exceeded 300 during
 the build; this is correctness/integration evidence, not performance evidence.
+
+## File-size result checkpoint — 2026-09-21
+
+`GetFileSize` no longer hardcodes the high DWORD to zero. Both it and the size
+fields of `GetFileInformationByHandle` use `fs_file_size_result`, which returns
+status separately from the low/high outputs in one RPC. The latter previously
+mistook any valid size with low DWORD 0xffffffff for an invalid handle. Closed
+handles now report ERROR_INVALID_HANDLE without overwriting size outputs.
+
+The documented [GetFileSize sentinel contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfilesize)
+requires last-error zero on successful 0xffffffff results. The public handler
+does this, and a NULL high pointer simply omits that output rather than forcing
+a large-file failure. Tests call both public handlers for sizes 0, 17,
+0xffffffff, 0x100000011 and 0x1ffffffff, verify stack cleanup and closed-handle
+errors, and use providers that throw if any bytes are requested. Thus the large
+metadata fixtures require no multi-gigabyte allocation or data download.
+
+This repairs size and error transport only. `GetFileInformationByHandle` still
+has synthetic timestamps/attributes and per-open file identity, which do not
+constitute complete metadata semantics. `GetCompressedFileSize` still has its
+older enumeration workaround, and GetFileSizeEx is not currently registered.
+Provider lengths remain bounded by the exact JS Number range. No native Win98
+differential or concurrent Worker run is claimed.
+
+Verification: the public file-size/seek/read/write/duplicate regression, VFS
+32/32 and lazy-provider 36/36 suites pass. Full shared-tree build passes with
+250 imports, canonical 1,472,728 bytes, compatibility 1,473,702 bytes, unchanged
+layout `54f430b349c8d55e` and 242 nonoverlapping data segments. No performance
+claim is made from this heavily loaded shared-machine run.

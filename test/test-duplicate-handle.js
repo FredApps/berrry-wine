@@ -36,6 +36,24 @@ const extraWat = `
       (then (unreachable)))
     (i32.load (global.get $reg_base)))
   (func (export "test_dup_error") (result i32) (global.get $last_error))
+  (func (export "test_public_size") (param $handle i32) (param $high i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $gs32 (i32.const 0x00490120) (i32.const 0x1234))
+    (call $handle_GetFileSize (local.get $handle)
+      (select (i32.const 0x00490120) (i32.const 0) (local.get $high))
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff00c))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
+  (func (export "test_public_file_info") (param $handle i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $handle_GetFileInformationByHandle (local.get $handle) (i32.const 0x00490200)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff00c))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
   (func (export "test_public_seek") (param $handle i32) (param $low i32)
       (param $high i32) (param $use_high i32) (param $method i32) (result i32)
     (global.set $last_error (i32.const 0x1234))
@@ -109,6 +127,32 @@ const extraWat = `
   assert.strictEqual(wat.get_eax(), 0, 'DuplicateHandle rejects a NULL output pointer');
 
   const vfs = hostCtx.vfs;
+  for (const size of [0, 17, 0xffffffff, 0x100000011, 0x1ffffffff]) {
+    let reads = 0;
+    const provider = {
+      size,
+      readRangeSync() { reads++; throw new Error('metadata must not read provider'); },
+      readRange() { reads++; throw new Error('metadata must not read provider'); },
+    };
+    vfs.setProviderFile('c:\\size-result.bin', { provider });
+    const handle = vfs.createFile('c:\\size-result.bin', 0x80000000, 3) >>> 0;
+    for (const high of [0, 1]) {
+      assert.strictEqual(wat.test_public_size(handle, high) >>> 0, size >>> 0);
+      assert.strictEqual(wat.test_dup_error(), 0, 'valid sentinel size clears error');
+      assert.strictEqual(wat.test_read_guest32(0x00490120), high ? Math.floor(size / 0x100000000) : 0x1234);
+    }
+    assert.strictEqual(wat.test_public_file_info(handle), 1, 'file information accepts sentinel low size');
+    assert.strictEqual(wat.test_read_guest32(0x00490220), Math.floor(size / 0x100000000));
+    assert.strictEqual(wat.test_read_guest32(0x00490224) >>> 0, size >>> 0);
+    assert.strictEqual(reads, 0, 'size front doors never fetch provider bytes');
+    vfs.closeHandle(handle);
+    assert.strictEqual(wat.test_public_size(handle, 1) >>> 0, 0xffffffff);
+    assert.strictEqual(wat.test_dup_error(), 6);
+    assert.strictEqual(wat.test_read_guest32(0x00490120), 0x1234, 'failed size query preserves output');
+    assert.strictEqual(wat.test_public_file_info(handle), 0);
+    assert.strictEqual(wat.test_dup_error(), 6);
+  }
+  console.log('PASS  file-size front doors preserve high words, sentinel sizes, errors and lazy metadata');
   const seekHandle = vfs.createFile('c:\\seek-result.bin', 0xc0000000, 2) >>> 0;
   vfs.writeFile(seekHandle, Uint8Array.from([1, 2, 3, 4]), 4);
   assert.strictEqual(wat.test_public_seek(seekHandle, -1, 0, 0, 2), 3, 'FILE_END accepts negative distance');
