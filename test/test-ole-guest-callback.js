@@ -189,6 +189,47 @@ async function main() {
     assert.strictEqual(callApi('GlobalFree', source), 0);
   }
   const dragHwndB = 0x12346;
+  {
+    const bits = alloc(64);
+    bytes.fill(0, wa(bits), wa(bits) + 64);
+    write(bits, 0x00090001); // memory WMF, nine-word header
+    write(bits + 4, 0x300);
+    write(bits + 6, 12); // header + three-word EOF = 24 bytes
+    write(bits + 12, 3);
+    write(bits + 18, 3);
+    const mf = callApi('SetMetaFileBitsEx', 64, bits);
+    check('SetMetaFileBitsEx excludes allocation padding from the WMF extent',
+      mf !== 0 && callApi('GetMetaFileBitsEx', mf, 0, 0) === 24);
+    assert(callApi('DeleteMetaFile', mf));
+    write(bits + 6, 33);
+    check('SetMetaFileBitsEx rejects a declared extent beyond the input buffer',
+      callApi('SetMetaFileBitsEx', 64, bits) === 0);
+  }
+  for (const destroy of [0, 1]) {
+    const out = alloc(4), handleOut = alloc(4), written = alloc(4), cloneOut = alloc(4);
+    assert.strictEqual(callApi('CreateStreamOnHGlobal', 0, destroy, out), 0);
+    const stream = read(out);
+    assert.strictEqual(callApi('GetHGlobalFromStream', stream, handleOut), 0);
+    const original = read(handleOut);
+    assert.strictEqual(callApi('GlobalLock', original), original);
+    const payload = alloc(4096);
+    write(payload, 0x12345678);
+    assert.strictEqual(callMethod(stream, 4, payload, 4096, written), 0);
+    assert.strictEqual(read(written), 4096);
+    assert.strictEqual(callApi('GetHGlobalFromStream', stream, handleOut), 0);
+    const grown = read(handleOut);
+    check(`HGLOBAL stream growth preserves Global provenance (delete=${destroy})`,
+      grown !== original && callApi('GlobalLock', original) === 0 &&
+      callApi('GlobalLock', grown) === grown && read(grown) === 0x12345678);
+    assert.strictEqual(callMethod(stream, 13, cloneOut), 0);
+    const clone = read(cloneOut);
+    assert.strictEqual(callMethod(stream, 2), 1);
+    assert.strictEqual(callApi('GlobalLock', grown), grown, 'clone keeps backing memory alive');
+    assert.strictEqual(callMethod(clone, 2), 0);
+    check(`HGLOBAL stream final release honors fDeleteOnRelease=${destroy}`,
+      callApi('GlobalLock', grown) === (destroy ? 0 : grown));
+    if (!destroy) assert.strictEqual(callApi('GlobalFree', grown), 0);
+  }
   const dragHwndC = 0x12347;
   e.test_wnd_table_set(dragHwndA, 0x401000);
   e.test_wnd_table_set(dragHwndB, 0x401000);

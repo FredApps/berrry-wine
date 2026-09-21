@@ -267,3 +267,43 @@ Guest callback suite: 143/143; opaque cache-media probe: both orders pass.
 The same new HGLOBAL assertion fails with the pre-change OLE source supplied
 in memory. Fragment balance and whitespace checks pass; no foreign changes
 were reverted for either comparison.
+
+## Fresh-process picture reopen and resave
+
+The roundtrip test now imports the saved RTF into a second WordPad process,
+opens it, verifies both U+FFFC object positions and saves it under a new name.
+The original strict WMF-size/StretchDIB checks also apply to that second file.
+The first draft reversed the VFS import arguments; that failed-import run
+was discarded. With the correct import, the first real run lost both objects
+and resaved a 135-byte text-only RTF (9/11 checks).
+
+The trace showed `CreateStreamOnHGlobal(NULL,FALSE)` and
+`GetHGlobalFromStream`, followed by `SetMetaFileBitsEx(0,0)` for each picture.
+Two stream contracts were wrong: newly created/grown buffers were private
+heap allocations, and creation/growth forced delete-on-release ownership.
+[Microsoft's CreateStreamOnHGlobal contract](https://learn.microsoft.com/en-us/windows/win32/api/combaseapi/nf-combaseapi-createstreamonhglobal)
+explicitly leaves the final handle to the caller when FALSE, including NULL
+input, and allows GetHGlobalFromStream to expose it for GlobalLock access.
+
+Streams now carry an explicit +60 HGLOBAL-backing flag (64-byte allocation).
+New and grown HGLOBAL buffers receive Global provenance. Growth retires the
+old allocation while retaining the requested final-delete policy; final
+release uses the appropriate Global/private free path. Shared resize checks
+kind=3 before reading the new field, so shorter ILockBytes records are not
+read past their layout. Tests cover TRUE/FALSE, growth, old-handle invalidation
+and a clone keeping the backing alive until the final interface is released.
+
+That restored both object positions (10/11), exposing a second boundary bug:
+SetMetaFileBitsEx stored all 4,100 allocation bytes although METAHEADER
+declared 2,438 bytes. It now validates the declared word count against the
+supplied buffer and stores only that extent. No picture-size assertion was
+weakened. A public regression supplies a valid 24-byte WMF in a 64-byte
+allocation and rejects a declared size beyond the supplied buffer.
+
+Final verification: fresh-process picture roundtrip **11/11**, guest COM
+callbacks **149/149**, public metafile suite **12/12**, and CreateMetaFile A/W
+coverage pass. Both saved RTFs are 10,261 bytes with two complete 32x24 WMFs.
+The storage suite passes 79/79 on the shared worktree (its pre-existing,
+uncommitted EOF-expectation edit remains unrelated and is not included here).
+Browser rendering and reopened-picture pixel verification remain separate;
+this result establishes parsing, object reconstruction and serialized data.

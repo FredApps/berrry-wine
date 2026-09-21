@@ -1886,7 +1886,10 @@
     (if (local.get $arg1) (then (local.set $data (call $g2w (local.get $arg1)))))
     (i32.store offset=0 (global.get $reg_base) (if (result i32) (call $gdi_metafile_valid_wmf (local.get $data) (local.get $arg0))
         (then (call $gdi_metafile_create
-          (i32.const 6) (local.get $data) (local.get $arg0)))
+          ;; The input allocation may have trailing padding. METAHEADER's
+          ;; bounded size is the actual metafile extent, in 16-bit words.
+          (i32.const 6) (local.get $data)
+          (i32.shl (i32.load offset=6 (local.get $data)) (i32.const 1))))
         (else (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 

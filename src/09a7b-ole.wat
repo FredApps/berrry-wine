@@ -3745,8 +3745,11 @@
 
   (func $ole_resize_buffer (param $obj i32) (param $new_size i32) (result i32)
     (local $data i32) (local $old_size i32) (local $capacity i32) (local $new_data i32) (local $new_data_wa i32) (local $new_capacity i32)
+    (local $global_stream i32)
     (local.set $obj (call $ole_stream_root (local.get $obj)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0x80004003))))
+    (if (i32.eq (call $gl32 (i32.add (local.get $obj) (i32.const 8))) (i32.const 3))
+      (then (local.set $global_stream (call $gl32 (i32.add (local.get $obj) (i32.const 60))))))
     (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
     (local.set $old_size (call $gl32 (i32.add (local.get $obj) (i32.const 16))))
     (local.set $capacity (call $gl32 (i32.add (local.get $obj) (i32.const 20))))
@@ -3784,13 +3787,22 @@
         (call $gl32 (i32.add (local.get $obj) (i32.const 16))))))
     (if (i32.and
           (i32.ne (local.get $data) (i32.const 0))
-          (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 32))) (i32.const 0)))
-      (then (call $heap_free (local.get $data))))
+          (i32.or (i32.ne (local.get $global_stream) (i32.const 0))
+            (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 32))) (i32.const 0))))
+      (then (call $ole_free_buffer (local.get $data))))
+    (if (local.get $global_stream) (then (call $heap_global_mark (local.get $new_data))))
     (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $new_data))
     (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (local.get $new_size))
     (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $new_capacity))
-    (call $gs32 (i32.add (local.get $obj) (i32.const 32)) (i32.const 1))
+    (if (i32.eqz (local.get $global_stream))
+      (then (call $gs32 (i32.add (local.get $obj) (i32.const 32)) (i32.const 1))))
     (i32.const 0))
+
+  ;; Stream buffers may be private storage or published Global memory.
+  (func $ole_free_buffer (param $data i32)
+    (if (call $heap_global_block_size (local.get $data) (i32.const 0))
+      (then (drop (call $heap_global_free (local.get $data))))
+      (else (call $heap_free (local.get $data)))))
 
   (func $ole_create_lockbytes (param $hglobal i32) (param $delete_on_release i32) (result i32)
     (local $obj i32) (local $size i32)
@@ -3856,9 +3868,10 @@
 
   (func $ole_create_stream (param $owner i32) (param $name i32) (result i32)
     (local $obj i32)
-    (local.set $obj (call $heap_alloc (i32.const 60)))
+    ;; +60 distinguishes HGLOBAL streams from private structured-storage data.
+    (local.set $obj (call $heap_alloc (i32.const 64)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 60))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 64))
     (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_STREAM))
     (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
     (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 3))
@@ -4027,6 +4040,7 @@
     (local $obj i32) (local $capacity i32)
     (local.set $obj (call $ole_create_stream (i32.const 0) (i32.const 0)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 60)) (i32.const 1))
     (if (i32.eqz (local.get $hglobal))
       (then
         ;; A NULL input requests a new zero-length HGLOBAL. Keep one backing
@@ -4034,13 +4048,14 @@
         (local.set $hglobal (call $heap_alloc (i32.const 1)))
         (if (i32.eqz (local.get $hglobal))
           (then (call $heap_free (local.get $obj)) (return (i32.const 0))))
+        (call $heap_global_mark (local.get $hglobal))
         (local.set $capacity
           (call $heap_payload_size_unchecked (local.get $hglobal)))
         (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $hglobal))
         (call $gs32 (i32.add (local.get $obj) (i32.const 16)) (i32.const 0))
         (call $gs32 (i32.add (local.get $obj) (i32.const 20)) (local.get $capacity))
-        ;; COM owns HGLOBALs it creates even when the caller supplied FALSE.
-        (call $gs32 (i32.add (local.get $obj) (i32.const 32)) (i32.const 1)))
+        ;; FALSE leaves the final HGLOBAL to the caller, even for NULL input.
+        (call $gs32 (i32.add (local.get $obj) (i32.const 32)) (local.get $delete_on_release)))
       (else
         (local.set $capacity
           (call $heap_payload_size_unchecked (local.get $hglobal)))
@@ -5729,7 +5744,7 @@
             (if (i32.and
                   (i32.ne (local.get $data) (i32.const 0))
                   (i32.ne (call $gl32 (i32.add (local.get $obj) (i32.const 32))) (i32.const 0)))
-              (then (call $heap_free (local.get $data))))
+              (then (call $ole_free_buffer (local.get $data))))
             (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 48))))
             (if (local.get $data) (then (call $heap_free (local.get $data))))
             (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 56))))

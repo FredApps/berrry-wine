@@ -491,7 +491,12 @@
       (then (i32.and
         (i32.or (i32.eq (i32.load16_u (local.get $data)) (i32.const 1))
           (i32.eq (i32.load16_u (local.get $data)) (i32.const 2)))
-        (i32.eq (i32.load16_u offset=2 (local.get $data)) (i32.const 9))))
+        (i32.and
+          (i32.eq (i32.load16_u offset=2 (local.get $data)) (i32.const 9))
+          (i32.and
+            (i32.ge_u (i32.load offset=6 (local.get $data)) (i32.const 9))
+            (i32.le_u (i32.load offset=6 (local.get $data))
+              (i32.shr_u (local.get $size) (i32.const 1)))))))
       (else (i32.const 0))))
 
   (func $gdi_metafile_valid_emf (param $data i32) (param $size i32) (result i32)
