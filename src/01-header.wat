@@ -3113,6 +3113,10 @@
   (global $tsc_last (mut i64) (i64.const 0))
   ;; FS segment base — points to fake TIB (allocated from heap during PE load)
   (global $fs_base (mut i32) (i32.const 0))
+  ;; Value of TIB+0x30 in every thread: a Win98 process-database address in
+  ;; the shared arena. Nothing is mapped there, so reads through it land on
+  ;; the NULL sentinel exactly as the old zero did; only its sign is load-bearing.
+  (global $WIN9X_PROCESS_DB i32 (i32.const 0x8167b2a4))
   ;; GS in a 16-bit task. A Win32 program never touches GS and nothing sets
   ;; these on that path, but a 16-bit one has six selectors to spend and uses
   ;; the last two like any other: Bad Toys 3D keeps a data selector in GS and

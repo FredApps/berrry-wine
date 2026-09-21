@@ -4613,9 +4613,25 @@
     ;; INSTDATA 16-bit thunk block that ThunkConnect32 never filled here.
     ;; Without this the emulator grinds through the whole page and any pages
     ;; after it, which reads as a hang rather than a missing feature.
+    ;;
+    ;; 32-bit code gets one exception, decided when the block runs: `00 00` is
+    ;; `add [eax],al`, and with EAX unmapped the CPU faults on it. Moorhuhn 3's
+    ;; packer wipes its own stub and falls into the zeros with EAX=0 on purpose,
+    ;; so its SEH handler takes the access violation and continues to the OEP.
+    ;; $th_zero_entry raises that fault, and keeps this trap for a mapped EAX.
     (if (i32.and
-          (i32.eqz (i32.load (call $g2w (global.get $d_pc))))
-          (i32.eqz (i32.load (call $g2w (i32.add (global.get $d_pc) (i32.const 4))))))
+          (i32.and
+            (i32.eqz (i32.load (call $g2w (global.get $d_pc))))
+            (i32.eqz (i32.load (call $g2w (i32.add (global.get $d_pc) (i32.const 4))))))
+          (i32.eqz (global.get $code16)))
+      (then
+        (call $te (i32.const 469) (local.get $start_eip))
+        (local.set $done (i32.const 1))))
+    (if (i32.and
+          (i32.and
+            (i32.eqz (i32.load (call $g2w (global.get $d_pc))))
+            (i32.eqz (i32.load (call $g2w (i32.add (global.get $d_pc) (i32.const 4))))))
+          (i32.ne (global.get $code16) (i32.const 0)))
       (then
         (call $host_log_i32 (i32.const 0xCA002E20))  ;; execution entered zeros
         (call $host_log_i32 (local.get $start_eip))

@@ -142,6 +142,11 @@
         (global.set $tls_slots (call $heap_alloc (i32.const 256)))
         (call $zero_memory (call $g2w (global.get $tls_slots)) (i32.const 256))))
     (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x2c)) (global.get $tls_slots))
+    ;; TIB+0x30: on Win9x this is the process database, a pointer into the
+    ;; shared arena above 0x80000000; NT keeps its PEB (below 2 GB) here. Code
+    ;; tells the two apart by the sign bit alone (Moorhuhn 3's packer takes
+    ;; its Win9x path on `test eax,eax / js`), so the high bit is the ABI.
+    (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x30)) (global.get $WIN9X_PROCESS_DB))
     ;; Static PE TLS: assign one slot, copy the template, and expose it through
     ;; FS:[0x2c][slot]. Delphi/VCL reads this vector directly instead of always
     ;; calling TlsGetValue.

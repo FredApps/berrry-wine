@@ -134,6 +134,109 @@
     (global.set $fault_raising (i32.const 0)))
 
   (func $raise_exception_walk (param $code i32)
+    (call $seh_walk_from (local.get $code) (call $gl32 (global.get $fs_base))))
+
+  ;; The guest address a CPU fault touched, for the access-violation record's
+  ;; ExceptionInformation[1]. Set by whoever raises 0xC0000005.
+  (global $fault_address (mut i32) (i32.const 0))
+  (global $seh_raw_thunk (mut i32) (i32.const 0))
+
+  ;; Does $seh_rec carry an MSVC __except_handler3 extended record? Its +8 is
+  ;; a scope table in the image and its +C a try level, -1 or a small index.
+  ;; Anything else -- a packer's bare two-word record, a hand-rolled frame --
+  ;; has no scope table to emulate and its handler must be called for real.
+  (func $seh_frame_is_msvc (param $seh_rec i32) (result i32)
+    (local $scopetable i32) (local $trylevel i32)
+    (local.set $scopetable (call $gl32 (i32.add (local.get $seh_rec) (i32.const 8))))
+    (local.set $trylevel (call $gl32 (i32.add (local.get $seh_rec) (i32.const 12))))
+    (if (i32.eqz (local.get $scopetable)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $guest_addr_mapped (local.get $scopetable))) (then (return (i32.const 0))))
+    (i32.or (i32.eq (local.get $trylevel) (i32.const -1))
+            (i32.lt_u (local.get $trylevel) (i32.const 0x400))))
+
+  ;; Call a frame handler the way KiUserExceptionDispatcher does:
+  ;; EXCEPTION_RECORD and CONTEXT built on the faulting thread's stack, then
+  ;; handler(ExceptionRecord, EstablisherFrame, ContextRecord, DispatcherContext)
+  ;; returning to a thunk that acts on the disposition ($seh_raw_continue).
+  (func $seh_call_raw_handler (param $code i32) (param $seh_rec i32) (param $handler i32)
+    (local $esp i32) (local $ctx i32) (local $rec i32) (local $sp i32)
+    (if (i32.eqz (global.get $seh_raw_thunk))
+      (then (global.set $seh_raw_thunk (call $com_cont_thunk (i32.const 0xCACA0037)))))
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $ctx (i32.and (i32.sub (local.get $esp) (i32.const 0x2cc)) (i32.const 0xFFFFFFFC)))
+    (local.set $rec (i32.sub (local.get $ctx) (i32.const 0x50)))
+    (call $zero_memory (call $g2w (local.get $rec)) (i32.const 0x31c))
+    ;; EXCEPTION_RECORD: code, flags, nested, address, NumberParameters, info[].
+    (call $gs32 (local.get $rec) (local.get $code))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 12)) (global.get $eip))
+    (if (i32.eq (local.get $code) (i32.const 0xC0000005))
+      (then
+        (call $gs32 (i32.add (local.get $rec) (i32.const 16)) (i32.const 2))
+        (call $gs32 (i32.add (local.get $rec) (i32.const 24)) (global.get $fault_address))))
+    ;; CONTEXT (x86): CONTEXT_FULL, segments, integer registers, control.
+    (call $gs32 (local.get $ctx) (i32.const 0x10007))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x90)) (i32.const 0x3b))   ;; SegFs
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x94)) (i32.const 0x23))   ;; SegEs
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x98)) (i32.const 0x23))   ;; SegDs
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x9c)) (i32.load offset=28 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xa0)) (i32.load offset=24 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xa4)) (i32.load offset=12 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xa8)) (i32.load offset=8 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xac)) (i32.load offset=4 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xb0)) (i32.load offset=0 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xb4)) (i32.load offset=20 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xb8)) (global.get $eip))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xbc)) (i32.const 0x1b))   ;; SegCs
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xc0)) (call $build_eflags))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xc4)) (local.get $esp))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xc8)) (i32.const 0x23))   ;; SegSs
+    (local.set $sp (i32.sub (local.get $rec) (i32.const 20)))
+    (call $gs32 (local.get $sp) (global.get $seh_raw_thunk))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 4)) (local.get $rec))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 8)) (local.get $seh_rec))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 12)) (local.get $ctx))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 16)) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+    (global.set $eip (local.get $handler))
+    (global.set $steps (i32.const 0)))
+
+  ;; Put the thread back exactly as the CONTEXT at $ctx describes it.
+  (func $seh_load_context (param $ctx i32)
+    (i32.store offset=28 (global.get $reg_base) (call $gl32 (i32.add (local.get $ctx) (i32.const 0x9c))))
+    (i32.store offset=24 (global.get $reg_base) (call $gl32 (i32.add (local.get $ctx) (i32.const 0xa0))))
+    (i32.store offset=12 (global.get $reg_base) (call $gl32 (i32.add (local.get $ctx) (i32.const 0xa4))))
+    (i32.store offset=8 (global.get $reg_base) (call $gl32 (i32.add (local.get $ctx) (i32.const 0xa8))))
+    (i32.store offset=4 (global.get $reg_base) (call $gl32 (i32.add (local.get $ctx) (i32.const 0xac))))
+    (i32.store offset=0 (global.get $reg_base) (call $gl32 (i32.add (local.get $ctx) (i32.const 0xb0))))
+    (i32.store offset=20 (global.get $reg_base) (call $gl32 (i32.add (local.get $ctx) (i32.const 0xb4))))
+    (call $load_eflags (call $gl32 (i32.add (local.get $ctx) (i32.const 0xc0))))
+    (i32.store offset=16 (global.get $reg_base) (call $gl32 (i32.add (local.get $ctx) (i32.const 0xc4))))
+    (global.set $eip (call $gl32 (i32.add (local.get $ctx) (i32.const 0xb8))))
+    (global.set $steps (i32.const 0)))
+
+  ;; 0xCACA0037: a handler called by $seh_call_raw_handler returned. The
+  ;; handler is cdecl, so ESP is at its four arguments.
+  ;; ExceptionContinueExecution (0) resumes from the CONTEXT, which is how a
+  ;; handler that edited Eip redirects the thread. ExceptionContinueSearch (1)
+  ;; restores the faulting state and offers the exception to the next frame.
+  (func $seh_raw_continue
+    (local $esp i32) (local $rec i32) (local $frame i32) (local $ctx i32) (local $disp i32)
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $rec (call $gl32 (local.get $esp)))
+    (local.set $frame (call $gl32 (i32.add (local.get $esp) (i32.const 4))))
+    (local.set $ctx (call $gl32 (i32.add (local.get $esp) (i32.const 8))))
+    (local.set $disp (i32.load offset=0 (global.get $reg_base)))
+    (call $seh_load_context (local.get $ctx))
+    (if (i32.eqz (local.get $disp)) (then (return)))
+    (if (i32.eq (local.get $disp) (i32.const 1))
+      (then
+        (global.set $fault_raising (i32.const 1))
+        (call $seh_walk_from (call $gl32 (local.get $rec)) (call $gl32 (local.get $frame)))
+        (global.set $fault_raising (i32.const 0))
+        (return)))
+    (call $host_exit (i32.or (i32.const 0xDE00) (call $gl32 (local.get $rec)))))
+
+  (func $seh_walk_from (param $code i32) (param $start i32)
     (local $seh_rec i32) (local $handler i32) (local $frame_ebp i32)
     (local $trylevel i32) (local $scopetable i32) (local $entry i32)
     (local $filter i32) (local $filter_wa i32) (local $except_body i32)
@@ -141,8 +244,7 @@
     ;; Every path out of here that returns has replaced $eip, so claim the
     ;; redirect up front rather than at each of the four exits. $run clears it.
     (global.set $eip_redirected (i32.const 1))
-    ;; Read SEH chain head from FS:[0]
-    (local.set $seh_rec (call $gl32 (global.get $fs_base)))
+    (local.set $seh_rec (local.get $start))
     (block $unhandled (loop $walk
       ;; End of chain?
       (br_if $unhandled (i32.eq (local.get $seh_rec) (i32.const 0xFFFFFFFF)))
@@ -203,6 +305,11 @@
           ;; Hardware exception — skip C++ handlers
           (local.set $seh_rec (call $gl32 (local.get $seh_rec)))
           (br $walk)))
+      ;; A frame with no MSVC scope table gets its handler called for real.
+      (if (i32.eqz (call $seh_frame_is_msvc (local.get $seh_rec)))
+        (then
+          (call $seh_call_raw_handler (local.get $code) (local.get $seh_rec) (local.get $handler))
+          (return)))
       ;; Non-C++ handler: assume __except_handler3 frame layout.
       ;; Read scopetable and trylevel from the stack frame.
       (local.set $scopetable (call $gl32 (i32.sub (local.get $frame_ebp) (i32.const 8))))

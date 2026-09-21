@@ -250,7 +250,9 @@
         ;; stops $run resuming the abandoned block.
         (if (i32.and (i32.eq (global.get $fault_unmapped) (i32.const 3))
                      (i32.eqz (global.get $fault_raising)))
-          (then (call $raise_exception (i32.const 0xC0000005))))))
+          (then
+            (global.set $fault_address (local.get $ga))
+            (call $raise_exception (i32.const 0xC0000005))))))
     (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
     (global.get $NULL_SENTINEL))
 
@@ -278,6 +280,20 @@
       (then (return (local.get $wa))))
     (call $g2w_miss (local.get $ga))
   )
+
+  ;; Would $g2w resolve $ga? The same three lookups with no miss side effect,
+  ;; for a handler that has to decide whether an access faults before making it.
+  (func $guest_addr_mapped (param $ga i32) (result i32)
+    (local $wa i32)
+    (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
+    (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
+                (i32.ge_u (local.get $wa) (region.end $DIRECT_WINDOW))))
+      (then (return (i32.const 1))))
+    (if (i32.lt_u
+          (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
+          (global.get $DIB_GUEST_CAPACITY))
+      (then (return (i32.const 1))))
+    (i32.ne (call $guest_page_translate (local.get $ga)) (global.get $NULL_SENTINEL)))
 
   ;; The lowest guest address a sparse VirtualAlloc reservation may occupy.
   ;;

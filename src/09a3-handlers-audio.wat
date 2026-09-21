@@ -301,6 +301,116 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
+  ;; acmFormatSuggest(had, pwfxSrc, pwfxDst, cbwfxDst, fdwSuggest) — pick a
+  ;; destination format the installed converters can reach from pwfxSrc.
+  ;; With only the PCM converter, the source must be 8- or 16-bit PCM and the
+  ;; answer is PCM; each ACM_FORMATSUGGESTF_* bit pins that field to what the
+  ;; caller already put in pwfxDst, the rest are copied from the source.
+  ;;   WFORMATTAG 0x10000  NCHANNELS 0x20000  NSAMPLESPERSEC 0x40000
+  ;;   WBITSPERSAMPLE 0x80000
+  (func $acm_format_suggest (param $src i32) (param $dst i32) (param $cb i32) (param $fdw i32) (result i32)
+    (local $sw i32) (local $dw i32) (local $ch i32) (local $rate i32) (local $bits i32)
+    (if (i32.or (i32.eqz (local.get $src)) (i32.eqz (local.get $dst)))
+      (then (return (i32.const 11))))                       ;; MMSYSERR_INVALPARAM
+    (if (i32.lt_u (local.get $cb) (i32.const 16))
+      (then (return (i32.const 11))))
+    (local.set $sw (call $g2w (local.get $src)))
+    (local.set $dw (call $g2w (local.get $dst)))
+    (if (i32.ne (i32.load16_u (local.get $sw)) (i32.const 1))
+      (then (return (i32.const 512))))                      ;; ACMERR_NOTPOSSIBLE
+    (if (i32.and (i32.ne (i32.and (local.get $fdw) (i32.const 0x10000)) (i32.const 0))
+                 (i32.ne (i32.load16_u (local.get $dw)) (i32.const 1)))
+      (then (return (i32.const 512))))
+    (local.set $ch (select (i32.load16_u offset=2 (local.get $dw))
+                           (i32.load16_u offset=2 (local.get $sw))
+                           (i32.ne (i32.and (local.get $fdw) (i32.const 0x20000)) (i32.const 0))))
+    (local.set $rate (select (i32.load offset=4 (local.get $dw))
+                             (i32.load offset=4 (local.get $sw))
+                             (i32.ne (i32.and (local.get $fdw) (i32.const 0x40000)) (i32.const 0))))
+    (local.set $bits (select (i32.load16_u offset=14 (local.get $dw))
+                             (i32.load16_u offset=14 (local.get $sw))
+                             (i32.ne (i32.and (local.get $fdw) (i32.const 0x80000)) (i32.const 0))))
+    (if (i32.and (i32.ne (local.get $bits) (i32.const 8)) (i32.ne (local.get $bits) (i32.const 16)))
+      (then (return (i32.const 512))))
+    (if (i32.or (i32.eqz (local.get $ch)) (i32.gt_u (local.get $ch) (i32.const 2)))
+      (then (return (i32.const 512))))
+    (if (i32.eqz (local.get $rate))
+      (then (return (i32.const 512))))
+    (i32.store16 (local.get $dw) (i32.const 1))                 ;; WAVE_FORMAT_PCM
+    (i32.store16 offset=2 (local.get $dw) (local.get $ch))
+    (i32.store offset=4 (local.get $dw) (local.get $rate))
+    (i32.store offset=8 (local.get $dw)                          ;; nAvgBytesPerSec
+      (i32.mul (local.get $rate)
+        (i32.mul (local.get $ch) (i32.shr_u (local.get $bits) (i32.const 3)))))
+    (i32.store16 offset=12 (local.get $dw)                       ;; nBlockAlign
+      (i32.mul (local.get $ch) (i32.shr_u (local.get $bits) (i32.const 3))))
+    (i32.store16 offset=14 (local.get $dw) (local.get $bits))
+    (if (i32.ge_u (local.get $cb) (i32.const 18))
+      (then (i32.store16 offset=16 (local.get $dw) (i32.const 0))))
+    (i32.const 0))
+
+  (func $handle_acmFormatSuggest (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $acm_format_suggest
+      (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))  ;; 5 args stdcall
+  )
+
+  ;; acmStreamOpen(phas, had, pwfxSrc, pwfxDst, pwfltr, dwCallback,
+  ;;               dwInstance, fdwOpen) — 8 args stdcall.
+  ;; No codec is installed, so any stream with a non-PCM end is
+  ;; ACMERR_NOTPOSSIBLE — for ACM_STREAMOPENF_QUERY and a real open alike,
+  ;; exactly as on a machine without that codec. PCM-to-PCM would be the
+  ;; built-in converter's job, which does not exist yet: fail fast.
+  (func $handle_acmStreamOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $result i32)
+    (local.set $result (i32.const 11))                      ;; MMSYSERR_INVALPARAM
+    (if (i32.and (i32.ne (local.get $arg2) (i32.const 0)) (i32.ne (local.get $arg3) (i32.const 0)))
+      (then
+        (if (i32.and
+              (i32.eq (i32.load16_u (call $g2w (local.get $arg2))) (i32.const 1))
+              (i32.eq (i32.load16_u (call $g2w (local.get $arg3))) (i32.const 1)))
+          (then (call $crash_unimplemented (local.get $name_ptr))))
+        (local.set $result (i32.const 512))))              ;; ACMERR_NOTPOSSIBLE
+    (if (i32.ne (local.get $arg0) (i32.const 0))
+      (then (call $gs32 (local.get $arg0) (i32.const 0))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $result))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36)))
+  )
+
+  ;; Every other stream call names an HACMSTREAM and validates it first.
+  ;; acmStreamOpen above never hands one out, so there is no stream table and
+  ;; no handle names a stream: each call answers MMSYSERR_INVALHANDLE. This is
+  ;; the lookup a PCM converter's stream table replaces.
+  (func $acm_stream_validate (param $has i32) (result i32)
+    (i32.const 5))                                          ;; MMSYSERR_INVALHANDLE
+
+  (func $handle_acmStreamClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $acm_stream_validate (local.get $arg0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+  )
+
+  (func $handle_acmStreamSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $acm_stream_validate (local.get $arg0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+  )
+
+  ;; acmStreamPrepareHeader / acmStreamUnprepareHeader / acmStreamConvert all
+  ;; take (has, pash, fdw) and dispatch here through their api_table handler.
+  (func $handle_acm_stream_header_op (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $acm_stream_validate (local.get $arg0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+  )
+
+  ;; mciGetErrorStringA(fdwError, lpszErrorText, cchErrorText). As in the
+  ;; Win16 ordinal 706: no MCI failure here carries a message, so the buffer
+  ;; comes back empty and the call reports FALSE, its answer for an unknown code.
+  (func $handle_mciGetErrorStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0)))
+      (then (call $gs8 (local.get $arg1) (i32.const 0))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+  )
+
   ;; 794: waveOutGetDevCapsA(uDeviceID, lpCaps, cbCaps) — 3 args stdcall
   ;; Fill WAVEOUTCAPSA struct with basic PCM support
   ;; waveOutGetDevCaps{A,W}(uDeviceID, lpCaps, cbCaps). WAVEOUTCAPSA and

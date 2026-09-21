@@ -4049,6 +4049,60 @@
       (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
+  ;; The 20-byte DDIB record: +0 magic, +4 nonzero after a successful
+  ;; DrawDibBegin, +8 the palette DrawDibSetPalette attached (0 = none).
+  ;; DrawDibBegin(hdd, hdc, dxDst, dyDst, lpbi, dxSrc, dySrc, wFlags) -> BOOL.
+  ;; Every draw here goes straight through StretchDIBits, so Begin only
+  ;; validates the format it will be handed and records that it succeeded.
+  (func $handle_DrawDibBegin (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ok i32) (local $lpbi_wa i32)
+    (if (i32.and (call $drawdib_dc_valid (local.get $arg0))
+                 (i32.ne (local.get $arg4) (i32.const 0)))
+      (then
+        (local.set $lpbi_wa (call $g2w (local.get $arg4)))
+        (local.set $ok
+          (i32.and
+            (i32.ge_u (i32.load (local.get $lpbi_wa)) (i32.const 40))
+            (i32.and (i32.gt_s (i32.load offset=4 (local.get $lpbi_wa)) (i32.const 0))
+                     (i32.gt_s (i32.load offset=8 (local.get $lpbi_wa)) (i32.const 0)))))
+        (i32.store offset=4 (call $g2w (local.get $arg0)) (local.get $ok))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $ok))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36))))
+
+  ;; DrawDibEnd(hdd) -> BOOL
+  (func $handle_DrawDibEnd (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ok i32)
+    (local.set $ok (call $drawdib_dc_valid (local.get $arg0)))
+    (if (local.get $ok)
+      (then (i32.store offset=4 (call $g2w (local.get $arg0)) (i32.const 0))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $ok))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
+  ;; DrawDibSetPalette(hdd, hpal) -> BOOL.  hpal = 0 detaches the palette.
+  (func $handle_DrawDibSetPalette (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $ok i32)
+    (local.set $ok (call $drawdib_dc_valid (local.get $arg0)))
+    (if (local.get $ok)
+      (then (i32.store offset=8 (call $g2w (local.get $arg0)) (local.get $arg1))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $ok))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+  ;; DrawDibRealize(hdd, hdc, fBackground) -> UINT: colours mapped into hdc's
+  ;; palette.  With no attached palette there is nothing to realize.
+  (func $handle_DrawDibRealize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hpal i32) (local $count i32)
+    (if (i32.and (call $drawdib_dc_valid (local.get $arg0))
+                 (i32.ne (local.get $arg1) (i32.const 0)))
+      (then
+        (local.set $hpal (i32.load offset=8 (call $g2w (local.get $arg0))))
+        (if (local.get $hpal)
+          (then
+            (drop (call $gdi_dc_select_palette (local.get $arg1) (local.get $hpal)))
+            (if (i32.eq (call $gdi_dc_selected_palette (local.get $arg1)) (local.get $hpal))
+              (then (local.set $count (call $gdi_palette_count (local.get $hpal)))))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $count))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
   ;; DrawDibDraw(hdd, hdc, xDst, yDst, dxDst, dyDst, lpbi, lpBits,
   ;;             xSrc, ySrc, dxSrc, dySrc, wFlags) -> BOOL
   (func $handle_DrawDibDraw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -4104,6 +4158,13 @@
       (then (local.set $arg4 (local.get $width))))
     (if (i32.eq (local.get $dy_dst) (i32.const -1))
       (then (local.set $dy_dst (local.get $height))))
+    ;; DrawDib's (0,0) is the bitmap's upper-left corner; StretchDIBits counts
+    ;; ySrc up from the lower-left.  A full-image draw is the same either way,
+    ;; a strip is not: Moorhuhn 3's puzzles repaint a 648x424 DIB in 8-row
+    ;; strips (ySrc = 0, 8, 16 ...), and read literally each strip took the
+    ;; rows mirrored about the middle of the picture.
+    (local.set $y_src (i32.sub (i32.sub (local.get $height) (local.get $y_src))
+                               (local.get $dy_src)))
     (local.set $drawn (call $host_gdi_stretch_dib_bits
       (local.get $arg1)                                             ;; hdc
       (local.get $arg2)                                             ;; xDst

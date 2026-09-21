@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 469 funcref)
+  (table $handlers 470 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -538,4 +538,5 @@
     $th_implode_cmp_run       ;; 466: PKWARE implode match-extension loop fold
     $th_load32_rop            ;; 467: mov r,[base+disp], disp packed in the operand
     $th_store32_rop           ;; 468: mov [base+disp],r, disp packed in the operand
+    $th_zero_entry            ;; 469: a block entered at zero bytes (operand = EIP)
   )

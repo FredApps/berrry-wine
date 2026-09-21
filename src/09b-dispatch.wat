@@ -1179,6 +1179,10 @@
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0036))
       (then (call $monitor_enum_continue) (return)))
 
+    ;; A frame handler called for a CPU fault returned (see $seh_raw_continue).
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0037))
+      (then (call $seh_raw_continue) (return)))
+
     ;; EnumChildWindows continuation — callback returned, try the next child
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002B))
       (then

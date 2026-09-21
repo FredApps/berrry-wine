@@ -26,6 +26,43 @@ const drawDibLifetimeWat = String.raw`
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
     (i32.load offset=0 (global.get $reg_base)))
+  ;; Each returns (bytes popped << 16) | result, so arity is checked too.
+  (func $drawdib_test_result (param $saved_esp i32) (result i32)
+    (local $popped i32)
+    (local.set $popped (i32.sub (i32.load offset=16 (global.get $reg_base))
+                                (local.get $saved_esp)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.or (i32.shl (local.get $popped) (i32.const 16))
+            (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF))))
+  (func (export "test_call_DrawDibBegin")
+      (param $hdd i32) (param $hdc i32) (param $lpbi i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_DrawDibBegin
+      (local.get $hdd) (local.get $hdc) (i32.const -1) (i32.const -1)
+      (local.get $lpbi) (i32.const 0))
+    (call $drawdib_test_result (local.get $saved_esp)))
+  (func (export "test_call_DrawDibEnd") (param $hdd i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_DrawDibEnd
+      (local.get $hdd) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $drawdib_test_result (local.get $saved_esp)))
+  (func (export "test_call_DrawDibSetPalette") (param $hdd i32) (param $hpal i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_DrawDibSetPalette
+      (local.get $hdd) (local.get $hpal) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $drawdib_test_result (local.get $saved_esp)))
+  (func (export "test_call_DrawDibRealize") (param $hdd i32) (param $hdc i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_DrawDibRealize
+      (local.get $hdd) (local.get $hdc) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $drawdib_test_result (local.get $saved_esp)))
 `;
 
 (async () => {
@@ -1041,6 +1078,50 @@ const drawDibLifetimeWat = String.raw`
       hdd, surface.hdc, 0, 0, 4, 4, bmiGa, bitsGa,
       0, 0, 2, 2, 0), 0, 'released DrawDib DC cannot draw');
     assert.strictEqual(wat.test_call_DrawDibClose(otherHdd), 1);
+  });
+
+  check('DrawDib source rectangles count from the top; Begin/End/SetPalette/Realize', () => {
+    const surface = makeDib(2, 4);
+    const hdd = wat.test_call_DrawDibOpen() >>> 0;
+    const bmiGa = wat.guest_alloc(40) >>> 0;
+    const bitsGa = wat.guest_alloc(24) >>> 0;
+    const imageBase = wat.get_image_base() >>> 0;
+    const bitsWa = RegionMap.GUEST_BASE + (bitsGa - imageBase);
+    for (let offset = 0; offset < 40; offset += 4) wat.guest_write32(bmiGa + offset, 0);
+    wat.guest_write32(bmiGa, 40);
+    wat.guest_write32(bmiGa + 4, 1);
+    wat.guest_write32(bmiGa + 8, 4);
+    wat.guest_write16(bmiGa + 12, 1);
+    wat.guest_write16(bmiGa + 14, 24);
+    // 1x4 bottom-up, 4-byte rows. Stored bottom first, so the picture reads
+    // red, green, blue, white from the top.
+    bytes = new Uint8Array(memory.buffer);
+    bytes.set([255, 255, 255, 0, 255, 0, 0, 0, 0, 255, 0, 0, 0, 0, 255, 0], bitsWa);
+    // Moorhuhn 3's puzzles repaint in strips: ySrc 0 is the top of the
+    // picture, not StretchDIBits' bottom.
+    assert.strictEqual(wat.test_call_DrawDibBegin(hdd, surface.hdc, bmiGa), (36 << 16) | 1);
+    for (let y = 0; y < 4; y++) {
+      assert.strictEqual(wat.test_call_DrawDibDraw(
+        hdd, surface.hdc, 0, y, 2, 1, bmiGa, bitsGa, 0, y, 1, 1, 0), 1);
+    }
+    assert.strictEqual(packed(surface, 0, 0), 0xFF0000, 'strip 0 is the top row');
+    assert.strictEqual(packed(surface, 1, 1), 0x00FF00);
+    assert.strictEqual(packed(surface, 0, 2), 0x0000FF);
+    assert.strictEqual(packed(surface, 1, 3), 0xFFFFFF, 'strip 3 is the bottom row');
+    assert.strictEqual(wat.test_call_DrawDibEnd(hdd), (8 << 16) | 1);
+    assert.strictEqual(wat.test_call_DrawDibRealize(hdd, surface.hdc), 16 << 16,
+      'nothing to realize without an attached palette');
+    assert.strictEqual(wat.test_call_DrawDibSetPalette(hdd, 0x3001F), (12 << 16) | 1);
+    assert.strictEqual(wat.test_call_DrawDibRealize(hdd, surface.hdc), (16 << 16) | 20,
+      'the attached palette is realized into the DC');
+    assert.strictEqual(wat.test_call_DrawDibBegin(1, surface.hdc, bmiGa), 36 << 16,
+      'invented handles fail Begin');
+    assert.strictEqual(wat.test_call_DrawDibEnd(1), 8 << 16);
+    assert.strictEqual(wat.test_call_DrawDibSetPalette(1, 0x3001F), 12 << 16);
+    wat.guest_write32(bmiGa + 8, -4);
+    assert.strictEqual(wat.test_call_DrawDibBegin(hdd, surface.hdc, bmiGa), 36 << 16,
+      'Begin refuses a top-down format, as DrawDibDraw does');
+    assert.strictEqual(wat.test_call_DrawDibClose(hdd), 1);
   });
 
   check('StretchDIBits interprets bottom-up source rectangles from the lower left', () => {

@@ -4279,6 +4279,7 @@ async function main() {
     faultUnmapped: FAULT_NULL,
     inheritedWasmGlobals,
     now: () => batchClock.batchTicks(),
+    sleepNow: () => Math.max(batchClock.batchTicks(), batchClock.state.lastTick),
     // For a spawned thread's io_wait park (yield 12). CLI providers usually
     // read synchronously, so this mostly matters to tests that mount an
     // async provider to mimic the browser's File-backed ISO reads.
@@ -5352,6 +5353,19 @@ async function main() {
     if (threadManager._renderSendTargets.has(ex)) return true;
     if (ex.get_yield_reason() === 10 && (threadManager.backend === 'worker' ||
         !threadManager.resolveCooperativeThreadSend(ex))) return true;
+    // Sleep(n) on the main thread. checkMainYield records the deadline after
+    // the batch that slept; host.js parks the main instance until it passes,
+    // and so must this loop, or Sleep(1001) lasts one batch of guest time.
+    // Moorhuhn 3 calibrates RDTSC across exactly that Sleep, and a TSC rate
+    // measured 5x low trips its speed-hack watchdog into ExitProcess.
+    // With no other guest thread to hand the idle batches to, skip them: move
+    // the clock to the deadline itself, so Sleep(1001) reads as 1001ms rather
+    // than rounding up to the next 200ms batch (a 240MHz TSC, still tripping
+    // the watchdog).
+    if (threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
+      tickState.pausedMs += threadManager.mainSleepRemaining();
+    }
+    if (threadManager.isMainSleeping()) return true;
     if (!threadManager.isMainThreadSuspended()) return false;
     return !(ex.is_mm_timer_callback_active && (ex.is_mm_timer_callback_active() | 0));
   };

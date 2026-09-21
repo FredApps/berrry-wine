@@ -30946,5 +30946,511 @@
       }
     ],
     "ret": "BOOL"
+  },
+  {
+    "id": 3692,
+    "name": "acmFormatSuggest",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3154390367,
+    "args": [
+      {
+        "name": "had",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pwfxSrc",
+        "type": "LPVOID"
+      },
+      {
+        "name": "pwfxDst",
+        "type": "LPVOID"
+      },
+      {
+        "name": "cbwfxDst",
+        "type": "DWORD"
+      },
+      {
+        "name": "fdwSuggest",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT"
+  },
+  {
+    "id": 3693,
+    "name": "acmStreamOpen",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 2824203672,
+    "args": [
+      {
+        "name": "phas",
+        "type": "LPVOID"
+      },
+      {
+        "name": "had",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pwfxSrc",
+        "type": "LPVOID"
+      },
+      {
+        "name": "pwfxDst",
+        "type": "LPVOID"
+      },
+      {
+        "name": "pwfltr",
+        "type": "LPVOID"
+      },
+      {
+        "name": "dwCallback",
+        "type": "DWORD"
+      },
+      {
+        "name": "dwInstance",
+        "type": "DWORD"
+      },
+      {
+        "name": "fdwOpen",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT"
+  },
+  {
+    "id": 3694,
+    "name": "acmStreamClose",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2799884308,
+    "args": [
+      {
+        "name": "has",
+        "type": "HANDLE"
+      },
+      {
+        "name": "fdwClose",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT"
+  },
+  {
+    "id": 3695,
+    "name": "acmStreamSize",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 239129825,
+    "args": [
+      {
+        "name": "has",
+        "type": "HANDLE"
+      },
+      {
+        "name": "cbInput",
+        "type": "DWORD"
+      },
+      {
+        "name": "pdwOutputBytes",
+        "type": "LPVOID"
+      },
+      {
+        "name": "fdwSize",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT"
+  },
+  {
+    "id": 3696,
+    "name": "acmStreamPrepareHeader",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3664537810,
+    "args": [
+      {
+        "name": "has",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pash",
+        "type": "LPVOID"
+      },
+      {
+        "name": "fdwPrepare",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT",
+    "handler": "acm_stream_header_op"
+  },
+  {
+    "id": 3697,
+    "name": "acmStreamUnprepareHeader",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 967539367,
+    "args": [
+      {
+        "name": "has",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pash",
+        "type": "LPVOID"
+      },
+      {
+        "name": "fdwUnprepare",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT",
+    "handler": "acm_stream_header_op"
+  },
+  {
+    "id": 3698,
+    "name": "acmStreamConvert",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 204842239,
+    "args": [
+      {
+        "name": "has",
+        "type": "HANDLE"
+      },
+      {
+        "name": "pash",
+        "type": "LPVOID"
+      },
+      {
+        "name": "fdwConvert",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT",
+    "handler": "acm_stream_header_op"
+  },
+  {
+    "id": 3699,
+    "name": "mciGetErrorStringA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3623365022,
+    "args": [
+      {
+        "name": "fdwError",
+        "type": "DWORD"
+      },
+      {
+        "name": "lpszErrorText",
+        "type": "LPSTR"
+      },
+      {
+        "name": "cchErrorText",
+        "type": "UINT"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3700,
+    "name": "InternetOpenA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3795556071,
+    "args": [
+      {
+        "name": "lpszAgent",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "dwAccessType",
+        "type": "DWORD"
+      },
+      {
+        "name": "lpszProxy",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpszProxyBypass",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "dwFlags",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 3701,
+    "name": "InternetConnectA",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 3156141353,
+    "args": [
+      {
+        "name": "hInternet",
+        "type": "HANDLE"
+      },
+      {
+        "name": "lpszServerName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "nServerPort",
+        "type": "DWORD"
+      },
+      {
+        "name": "lpszUserName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpszPassword",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "dwService",
+        "type": "DWORD"
+      },
+      {
+        "name": "dwFlags",
+        "type": "DWORD"
+      },
+      {
+        "name": "dwContext",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 3702,
+    "name": "HttpOpenRequestA",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 1845509757,
+    "args": [
+      {
+        "name": "hConnect",
+        "type": "HANDLE"
+      },
+      {
+        "name": "lpszVerb",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpszObjectName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpszVersion",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpszReferrer",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lplpszAcceptTypes",
+        "type": "LPVOID"
+      },
+      {
+        "name": "dwFlags",
+        "type": "DWORD"
+      },
+      {
+        "name": "dwContext",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 3703,
+    "name": "InternetCloseHandle",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1306388838,
+    "args": [
+      {
+        "name": "hInternet",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3704,
+    "name": "InternetReadFile",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2517415110,
+    "args": [
+      {
+        "name": "hFile",
+        "type": "HANDLE"
+      },
+      {
+        "name": "lpBuffer",
+        "type": "LPVOID"
+      },
+      {
+        "name": "dwNumberOfBytesToRead",
+        "type": "DWORD"
+      },
+      {
+        "name": "lpdwNumberOfBytesRead",
+        "type": "LPVOID"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3705,
+    "name": "HttpSendRequestA",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 3134761763,
+    "args": [
+      {
+        "name": "hRequest",
+        "type": "HANDLE"
+      },
+      {
+        "name": "lpszHeaders",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "dwHeadersLength",
+        "type": "DWORD"
+      },
+      {
+        "name": "lpOptional",
+        "type": "LPVOID"
+      },
+      {
+        "name": "dwOptionalLength",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3706,
+    "name": "waveOutSetPlaybackRate",
+    "nargs": 2,
+    "stub": { "pop": 12, "ret": 8 },
+    "convention": "stdcall",
+    "hash": 4174287963,
+    "args": [
+      {
+        "name": "hwo",
+        "type": "HANDLE"
+      },
+      {
+        "name": "dwRate",
+        "type": "DWORD"
+      }
+    ],
+    "ret": "MMRESULT"
+  },
+  {
+    "id": 3707,
+    "name": "DrawDibBegin",
+    "nargs": 8,
+    "convention": "stdcall",
+    "hash": 766324423,
+    "args": [
+      {
+        "name": "hdd",
+        "type": "HDRAWDIB"
+      },
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "dxDst",
+        "type": "INT"
+      },
+      {
+        "name": "dyDst",
+        "type": "INT"
+      },
+      {
+        "name": "lpbi",
+        "type": "BITMAPINFOHEADER*"
+      },
+      {
+        "name": "dxSrc",
+        "type": "INT"
+      },
+      {
+        "name": "dySrc",
+        "type": "INT"
+      },
+      {
+        "name": "wFlags",
+        "type": "UINT"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3708,
+    "name": "DrawDibEnd",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 822240431,
+    "args": [
+      {
+        "name": "hdd",
+        "type": "HDRAWDIB"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3709,
+    "name": "DrawDibSetPalette",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 537706397,
+    "args": [
+      {
+        "name": "hdd",
+        "type": "HDRAWDIB"
+      },
+      {
+        "name": "hpal",
+        "type": "HPALETTE"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3710,
+    "name": "DrawDibRealize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1485543468,
+    "args": [
+      {
+        "name": "hdd",
+        "type": "HDRAWDIB"
+      },
+      {
+        "name": "hdc",
+        "type": "HDC"
+      },
+      {
+        "name": "fBackground",
+        "type": "BOOL"
+      }
+    ],
+    "ret": "UINT"
   }
 ]

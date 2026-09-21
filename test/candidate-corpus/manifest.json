@@ -1445,6 +1445,211 @@
         }
       ],
       "notes": "The archive.org original is a RAR; the browser's zip mount cannot open RAR, so it was repacked locally as ArcanumDemo.zip (same tree, plus macOS __MACOSX forks) and mounted as zip:arcanumdemo. That mount crashed at launch with 'ChunkCache: fill did not satisfy read': a readRange wider than the cache's 64x256KB LRU bound evicted its own leading chunks, fixed in lib/byte-provider.js."
+    },
+    {
+      "id": "moorhuhn",
+      "name": "Moorhuhn",
+      "kind": "game",
+      "version": "1.0 retail (2000-05-02)",
+      "executables": [
+        "Moorhuhn.exe"
+      ],
+      "sourcePage": "https://archive.org/details/moorhuhn_1__2_with_addins",
+      "license": "proprietary freeware promotional release; keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/moorhuhn_1__2_with_addins/MH1_Retail.7z",
+          "sha1": "fa7c7fd33cbdfb1d91fb34fb5e0210b16ee308e5",
+          "type": "archive"
+        },
+        {
+          "url": "https://archive.org/download/moorhuhn_1__2_with_addins/MH1_exe.7z",
+          "sha1": "9e772e0d57210ca6c1744b4ce77dd8732f984976",
+          "type": "archive"
+        }
+      ],
+      "browser": {
+        "fileRoot": ".",
+        "exe": "Moorhuhn.exe"
+      },
+      "cli": {
+        "maxBatches": 1000,
+        "batchSize": 100000
+      }
+    },
+    {
+      "id": "moorhuhn-2",
+      "name": "Moorhuhn 2",
+      "kind": "game",
+      "version": "1.1",
+      "executables": [
+        "Moorhuhn2.exe"
+      ],
+      "sourcePage": "https://archive.org/details/moorhuhn_1__2_with_addins",
+      "license": "proprietary freeware promotional release; keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/moorhuhn_1__2_with_addins/MH2_v1.1.7z",
+          "sha1": "110f460d71fd2c6d45d3217ac033778f63789d7e",
+          "type": "archive"
+        }
+      ],
+      "browser": {
+        "fileRoot": ".",
+        "exe": "Moorhuhn2.exe"
+      },
+      "cli": {
+        "maxBatches": 1300,
+        "batchSize": 100000
+      }
+    },
+    {
+      "id": "moorhuhn-winter",
+      "name": "Moorhuhn Winter-Edition",
+      "kind": "game",
+      "version": "2001 Haribo promotional release",
+      "executables": [
+        "MoorhuhnWinter.exe"
+      ],
+      "sourcePage": "https://archive.org/details/moorhuhn_1__2_with_addins",
+      "license": "proprietary freeware promotional release; keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/moorhuhn_1__2_with_addins/MH2_WinterEdition.7z",
+          "sha1": "203707cf21a61f91ba859f10814a8163b7f100fb",
+          "type": "archive"
+        }
+      ],
+      "browser": {
+        "fileRoot": ".",
+        "exe": "MoorhuhnWinter.exe"
+      },
+      "cli": {
+        "maxBatches": 2400,
+        "batchSize": 100000
+      }
+    },
+    {
+      "id": "moorhuhn-3",
+      "name": "Moorhuhn 3",
+      "kind": "game",
+      "version": "2001 download edition (German)",
+      "executables": [
+        "installed-extracted/App_Executables/Moorhuhn3.exe"
+      ],
+      "sourcePage": "https://archive.org/details/moorhuhn_202112",
+      "license": "proprietary freeware promotional release; keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [
+        {
+          "url": "https://archive.org/download/moorhuhn_202112/Moorhuhn.zip",
+          "sha1": "a7754b137730261623d8c7c7585c28abf12b505f",
+          "type": "archive"
+        }
+      ],
+      "postExtract": [
+        {
+          "type": "extractArchive",
+          "archive": "Moorhuhn/MOORHUHN 3/MOORHUHN 3 - INSTALL/Setup_Moorhuhn3DL_DE.exe",
+          "into": "setup"
+        },
+        {
+          "type": "unshield",
+          "cab": "setup/Disk1/data1.cab",
+          "into": "installed-extracted",
+          "group": "App Executables"
+        }
+      ],
+      "browser": {
+        "fileRoot": "installed-extracted/App_Executables",
+        "exe": "installed-extracted/App_Executables/Moorhuhn3.exe"
+      },
+      "cli": {
+        "maxBatches": 2600,
+        "batchSize": 200000
+      }
+    },
+    {
+      "id": "moorhuhn-tennis",
+      "name": "Moorhuhn Tennis",
+      "kind": "game",
+      "version": "2002 promotional release (Flash Player 6 projector, German)",
+      "executables": [
+        "installed/MH_Tennis_V14.exe",
+        "Moorhuhn-Tennis.exe"
+      ],
+      "sourcePage": "https://archive.org/details/moorhuhn-tennis",
+      "license": "proprietary freeware promotional release; keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "manual": "Download https://archive.org/download/moorhuhn-tennis/Moorhuhn-Tennis.exe (1086352 bytes, SHA-1 449bb448ec7d693c8d6dfc6c711b4c68873369a7) into this fixture directory. Run that Wise installer inside Wine Assembly with --save-vfs, clicking Weiter (screen 378,395) through each page; it installs C:\\phenomedia\\Moorhuhn Tennis\\moorhuhn_tennis.exe. Run that wrapper with --save-vfs: it writes MH_Tennis_V14.exe (the Flash Player 6 projector with the game appended), source.swf and basepath.txt under C:\\WINDOWS\\TEMP\\<random>TMP\\ and CreateProcesses the projector. Copy those three files to installed/. The projector should hash to SHA-1 0276a9060da5512023cc5042a560ea9d50f27afc.",
+      "packages": [],
+      "cli": {
+        "maxBatches": 1500,
+        "batchSize": 100000
+      }
+    },
+    {
+      "id": "moorhuhn-3-puzzles",
+      "name": "Moorhuhn 3 Bonus Puzzles",
+      "kind": "game",
+      "version": "2001 Moorhuhn 3 CD bonus (Jigs@w Puzzle by Tibo Software, German)",
+      "executables": [
+        "moorhuhn3/setup.exe",
+        "fisch/setup.exe",
+        "leuchtturm/setup.exe"
+      ],
+      "sourcePage": "https://archive.org/details/moorhuhn_202112",
+      "license": "proprietary freeware promotional release; keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [],
+      "manual": "Fetch the moorhuhn-3 candidate first. Its archive holds three self-extracting puzzle loaders under Moorhuhn/MOORHUHN 3/MOORHUHN 3 - BONUS GAMES/: Moorhuhn 3.exe (SHA-1 ce331946e8a46f5cc1fa037d274e8dcdf91db961), Moorhuhn 3 Fisch.exe (5b0ae384837088d7ef4270280cb8a0404ae902d3) and Moorhuhn 3 Leuchtturm.exe (b2cd0910527e5eec5d13c69a7147f2dc39cd6235). Run each in Wine Assembly with --capture-launch=DIR: it unpacks ten files to C:\\WINDOWS\\TEMP\\tsldrl6660\\ and ShellExecutes setup.exe there (SHA-1 00b5d02ea437a3d3e395ab328b366457fb4ef4b9, identical for all three; the puzzle is in data.pck/puzzle.pzl). Copy DIR/windows/temp/tsldrl6660/* to moorhuhn3/, fisch/ and leuchtturm/ respectively.",
+      "cli": {
+        "maxBatches": 900,
+        "batchSize": 500000
+      }
+    },
+    {
+      "id": "best-of-moorhuhn",
+      "name": "Best Of Moorhuhn extras",
+      "kind": "game",
+      "version": "2001 Best Of Moorhuhn CD (German): Moorhuhn 1 training minigames and Making of Moorhuhn 2, Flash projectors",
+      "executables": [
+        "spiel1.exe",
+        "spiel2.exe",
+        "making_of.exe"
+      ],
+      "sourcePage": "https://archive.org/details/best_of_mh",
+      "license": "proprietary retail compilation; keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [],
+      "manual": "Download https://archive.org/download/best_of_mh/Best_Of_Moorhuhn.iso (125538304 bytes, SHA-1 5959f4e3b1ca6b4de725e7e108682178549a3bfc) and unshield Die Original Moorhuhn Jagd/Disk1/data1.cab. Its Ausfuehrbare Programmdateien group holds spiel1.exe (f48bcd97565caa2f2fe12ac8589c1fb6bb5dbfea), spiel2.exe (ad9db80f52969878df2a8fd445f1cdbed9d6d718) and making_of.exe (33b2566b2034e75408af418f88dc8718d4d95033): Jester wrappers that write the real Flash projector plus jesterrun0.dll to C:\\WINDOWS\\TEMP\\Jgl_Rt\\ and delete them again. Run each in Wine Assembly with --batch-size=5000 and --input=B:vfs-export:\\WINDOWS\\TEMP\\Jgl_Rt\\NAME.exe:HOSTPATH at batches 300-1500, and keep the final export as NAME.exe here (spiel1 6196fd32d5c85d8f1e069a562c85e415ecea1b40, spiel2 68cf4a2cf321747460b550466555b1a579a1aaa9, making_of f7d236e26e7836f67504649675598aaa62fd32a5). The ISO copies of Moorhuhn 1 (identical to the moorhuhn candidate), Moorhuhn 2 and Winter are other builds of games already listed.",
+      "cli": {
+        "maxBatches": 400,
+        "batchSize": 400000
+      }
+    },
+    {
+      "id": "gallinelle-xxl",
+      "name": "Gallinelle XXL",
+      "kind": "game",
+      "version": "2003 Italian Moorhuhn 1 (Gallinelle) CD with Training-Area 1/2 Flash bonuses",
+      "executables": [
+        "Game/Gallinelle.exe",
+        "Bonus/trainingsarea1.exe",
+        "Bonus/trainingsarea2.exe"
+      ],
+      "sourcePage": "https://archive.org/details/gallinelle-xxl",
+      "license": "proprietary retail release; keep as a local ignored candidate fixture",
+      "localOnly": true,
+      "packages": [],
+      "manual": "Download https://archive.org/download/gallinelle-xxl/GALLINELLE_XXL.zip (74287372 bytes, SHA-1 374449d553941dfd75301b09ba3fa0507c934029). It holds a raw MODE2/2352 BIN/CUE: keep bytes 24..2071 of each 2352-byte sector to get a 2048-byte ISO, then unshield SETUP/DATA1.CAB. Copy its Game group (Gallinelle.exe a6203f4aa18a931f1e6b08cf18c374c65f75b3a6, not the moorhuhn candidate build, plus Gallinelle.dat d8fda093d174e1a7bdff8c4d8193761e92e070c9) to Game/ and its Bonus group (two plain Flash Player 6 projectors) to Bonus/.",
+      "cli": {
+        "maxBatches": 700,
+        "batchSize": 100000
+      }
     }
   ]
 }

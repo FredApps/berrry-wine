@@ -3019,3 +3019,19 @@
         (global.set $flag_sign_shift (i32.const 31))
         (global.set $eip (local.get $exit_eip))))
     (return_call $branch_end))
+
+  ;; 469: a block whose entry is zero bytes (see the guard in $decode_block).
+  ;; `00 00` is `add [eax],al`; with EAX unmapped that faults, so raise the
+  ;; access violation at the entry exactly as the CPU would. A mapped EAX would
+  ;; run on through the zeros, which is never real code: keep the diagnostic.
+  (func $th_zero_entry (param $op i32)
+    (global.set $eip (local.get $op))
+    (if (i32.eqz (call $guest_addr_mapped (i32.load offset=0 (global.get $reg_base))))
+      (then
+        (global.set $fault_address (i32.load offset=0 (global.get $reg_base)))
+        (call $raise_exception (i32.const 0xC0000005))
+        (return)))
+    (call $host_log_i32 (i32.const 0xCA002E20))  ;; execution entered zeros
+    (call $host_log_i32 (local.get $op))
+    (call $host_log_i32 (global.get $dbg_prev2_eip))
+    (unreachable))
