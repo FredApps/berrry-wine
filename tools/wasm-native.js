@@ -91,9 +91,25 @@ const mod = new WebAssembly.Module(bytes);
 const c = wasmExtractCode(mod, ${JSON.stringify(tier)});
 if (!c) { print('ERR no code for tier ${tier}'); quit(1); }
 const segs = c.segments.filter(s => s.funcIndex !== undefined);
+// The segment offsets are not always offsets into c.code: an x64 shell
+// (SpiderMonkey 157) puts 64 bytes in front, so every function read 64 bytes
+// early -- the previous function's tail on top, this one's last 64 bytes cut.
+// Nothing in the result reports that base, but every normal entry opens with
+// the same prologue, so pick the skew at which the most entries agree.
+let skew = 0, best = -1;
+for (let k = 0; k <= 512; k += 4) {
+  const seen = new Map();
+  for (const s of segs.slice(0, 400)) {
+    const at = s.funcBodyBegin + k;
+    const key = c.code[at] | (c.code[at + 1] << 8) | (c.code[at + 2] << 16) | (c.code[at + 3] << 24);
+    seen.set(key, (seen.get(key) || 0) + 1);
+  }
+  const mode = Math.max(...seen.values());
+  if (mode > best) { best = mode; skew = k; }
+}
 os.file.writeTypedArrayToFile(${JSON.stringify(outBin)}, c.code);
 print('JSON' + JSON.stringify(segs.map(s =>
-  [s.funcIndex, s.funcBodyBegin, s.funcBodyEnd])));
+  [s.funcIndex, s.funcBodyBegin + skew, s.funcBodyEnd + skew])));
 `;
   const tmp = path.join(os.tmpdir(), `wasm-native-${process.pid}.js`);
   fs.writeFileSync(tmp, script);
