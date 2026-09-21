@@ -16,6 +16,16 @@ const RegionMap = require('../lib/region-map.generated.js');
 const ROOT = path.join(__dirname, '..');
 const oleSource = fs.readFileSync(path.join(ROOT, 'src', '09a7b-ole.wat'), 'utf8');
 const hasOleHandler = name => new RegExp(`\\(func \\$handle_${name}\\b`).test(oleSource);
+const embeddedStaticInterfaces = ['IPersistStorage', 'IOleCache', 'IViewObject'];
+for (const iface of embeddedStaticInterfaces) {
+  for (const method of ['AddRef', 'Release']) {
+    const name = `${iface}_${method}`;
+    assert.strictEqual(apiTable.find(api => api.name === name)?.handler,
+      `ole_static_interface_${method.toLowerCase()}`,
+      `${name} must retain the shared root-adjusting static-object path`);
+    assert(!hasOleHandler(name), `${name} must not regain a duplicate wrapper`);
+  }
+}
 const enumSkipApis = ['IEnumMoniker_Skip', 'IEnumString_Skip', 'IEnumFORMATETC_Skip'];
 for (const name of enumSkipApis) {
   assert.strictEqual(apiTable.find(api => api.name === name)?.handler, 'ole_enum_skip',
@@ -165,6 +175,17 @@ async function main() {
     dv.setUint32(thunkWa, savedName, true);
     dv.setUint32(thunkWa + 4, savedId, true);
     return result;
+  }
+
+  for (const [iface, offset] of [['IPersistStorage', 12], ['IOleCache', 52], ['IViewObject', 56]]) {
+    const root = e.test_ole_create_static_handler(0) >>> 0;
+    assert(root, `${iface} fixture must allocate`);
+    const embedded = root + offset;
+    assert.strictEqual(callMethod(embedded, 1), 2, `${iface} AddRef returns root count`);
+    assert.strictEqual(read(root + 4), 2, `${iface} increments the controlling object`);
+    assert.strictEqual(callMethod(embedded, 2), 1, `${iface} Release balances AddRef`);
+    assert.strictEqual(read(root + 4), 1);
+    assert.strictEqual(callMethod(embedded, 2), 0, `${iface} final Release uses static teardown`);
   }
 
   function createMoniker(text) {

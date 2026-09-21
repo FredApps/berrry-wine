@@ -391,6 +391,19 @@ async function main() {
     read(finalSite + 4) === 1 && read(finalSite + 12) === 1 &&
     read(finalSink + 4) === 1 && read(finalSink + 12) === 1);
 
+  for (const [iface, offset] of [['IPersistStorage', 12], ['IOleCache', 52], ['IViewObject', 56]]) {
+    const root = e.test_ole_create_static_handler(0) >>> 0;
+    const site = makeGuestSite();
+    const sink = makeGuestSite();
+    const connection = alloc(4);
+    assert.strictEqual(callMethod(root, 3, site), 0);
+    assert.strictEqual(callMethod(root, 19, sink, connection), 0);
+    check(`${iface} final Release completes guest site and sink teardown`,
+      callMethod(root + offset, 2) === 0 &&
+      read(site + 4) === 1 && read(site + 12) === 1 &&
+      read(sink + 4) === 1 && read(sink + 12) === 1);
+  }
+
   const notifyObject = e.test_ole_create_static_handler(0) >>> 0;
   const notifySite = makeGuestSite();
   const notifySinkA = makeGuestSite();

@@ -18161,14 +18161,16 @@
     "name": "IPersistStorage_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 311358282
+    "hash": 311358282,
+    "handler": "ole_static_interface_addref"
   },
   {
     "id": 2188,
     "name": "IPersistStorage_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2845451047
+    "hash": 2845451047,
+    "handler": "ole_static_interface_release"
   },
   {
     "id": 2189,
@@ -18272,14 +18274,16 @@
     "name": "IOleCache_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1488284197
+    "hash": 1488284197,
+    "handler": "ole_static_interface_addref"
   },
   {
     "id": 2200,
     "name": "IOleCache_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 220876194
+    "hash": 220876194,
+    "handler": "ole_static_interface_release"
   },
   {
     "id": 2201,
@@ -18345,14 +18349,16 @@
     "name": "IViewObject_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2383695659
+    "hash": 2383695659,
+    "handler": "ole_static_interface_addref"
   },
   {
     "id": 2208,
     "name": "IViewObject_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 4285216876
+    "hash": 4285216876,
+    "handler": "ole_static_interface_release"
   },
   {
     "id": 2209,
