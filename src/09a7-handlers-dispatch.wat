@@ -2844,7 +2844,16 @@
       (if (call $guid_words_equal (local.get $clsid_wa)
             (i32.const 0x4FD2A832) (i32.const 0x11D086C8)
             (i32.const 0xC000CA8F) (i32.const 0x9D18D94F))
-        (then (local.set $local_class (i32.const 8))))))
+        (then (local.set $local_class (i32.const 8))))
+      ;; CLSID_DirectDraw {D7B70EE0-4340-11CF-B063-0020AFC2CD35}. Half-Life's
+      ;; hw.dll builds its DirectDraw this way rather than through
+      ;; DirectDrawCreate, then calls IDirectDraw::Initialize; failing the
+      ;; activation is what made the engine report "The selected D3D mode is
+      ;; not supported by your video card" and unload the hardware renderer.
+      (if (call $guid_words_equal (local.get $clsid_wa)
+            (i32.const 0xD7B70EE0) (i32.const 0x11CF4340)
+            (i32.const 0x200063B0) (i32.const 0x35CDC2AF))
+        (then (local.set $local_class (i32.const 9))))))
 
     (if (local.get $local_class) (then
       (if (i32.eqz (local.get $arg4))
@@ -2885,6 +2894,14 @@
       (if (i32.eq (local.get $local_class) (i32.const 8))
         (then (local.set $obj_guest (call $dx_create_com_obj
           (i32.const 10) (global.get $DX_VTBL_DDFACTORY)))))
+      (if (i32.eq (local.get $local_class) (i32.const 9))
+        (then
+          (local.set $obj_guest (call $dx_create_com_obj
+            (i32.const 1) (global.get $DX_VTBL_DDRAW)))
+          (if (local.get $obj_guest)
+            (then
+              (global.set $dx_ddraw_this (local.get $obj_guest))
+              (call $dx_coop_hwnd_set (i32.const 0))))))
       (if (i32.eqz (local.get $obj_guest))
         (then
           (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E)) ;; E_OUTOFMEMORY
@@ -2922,6 +2939,9 @@
           (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)
           (i32.const 0x4FD2A823) (i32.const 0x11D086C8)
           (i32.const 0xC000CA8F) (i32.const 0x9D18D94F)))))
+      (if (i32.eq (local.get $local_class) (i32.const 9))
+        (then (local.set $hr (call $ddraw_cocreate_query_wa
+          (local.get $obj_guest) (local.get $iid_wa) (local.get $arg4)))))
       (drop (call $dx_com_release_basic (local.get $obj_guest)))
       (i32.store offset=0 (global.get $reg_base) (local.get $hr))
       (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))

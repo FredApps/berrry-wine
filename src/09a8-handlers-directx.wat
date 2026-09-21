@@ -1989,6 +1989,51 @@
       (then (return (i32.const 9)))) ;; IDirect3D7
     (i32.const 0))
 
+  ;; CoCreateInstance(CLSID_DirectDraw, ..., riid, ppv) hands back a DirectDraw
+  ;; object the caller then drives through IDirectDraw::Initialize — the route
+  ;; Half-Life's hw.dll takes instead of calling DirectDrawCreate. Only the
+  ;; DirectDraw family is reachable this way: Direct3D comes from a QI on an
+  ;; already-initialized object, so kinds 6..9 are refused here rather than
+  ;; manufacturing a D3D interface over an uninitialized device.
+  ;; Returns an HRESULT and writes *ppv on success.
+  (func $ddraw_cocreate_query_wa
+      (param $obj_guest i32) (param $iid_wa i32) (param $ppv_guest i32) (result i32)
+    (local $kind i32) (local $entry i32) (local $slot i32) (local $obj i32)
+    (local.set $kind (call $ddraw_iid_kind_wa (local.get $iid_wa)))
+    (if (i32.or (i32.eqz (local.get $kind)) (i32.gt_u (local.get $kind) (i32.const 5)))
+      (then (return (i32.const 0x80004002)))) ;; E_NOINTERFACE
+    (local.set $entry (call $dx_from_this (local.get $obj_guest)))
+    (if (i32.eqz (local.get $entry))
+      (then (return (i32.const 0x80004002))))
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (if (i32.eq (local.get $kind) (i32.const 1))
+      (then
+        (local.set $obj
+          (i32.add
+            (i32.sub
+              (i32.add (global.get $COM_WRAPPERS)
+                (i32.mul (local.get $slot) (i32.const 8)))
+              (global.get $GUEST_BASE))
+            (global.get $image_base)))))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DDRAW)))))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (global.get $DX_VTBL_DDRAW2)))))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (call $dx_get_ddraw4_vtbl)))))
+    (if (i32.eq (local.get $kind) (i32.const 5))
+      (then (local.set $obj (call $dx_get_wrapper_for_vtbl
+        (local.get $slot) (call $dx_get_ddraw7_vtbl)))))
+    (if (i32.eqz (local.get $obj))
+      (then (return (i32.const 0x80004002))))
+    (store.field DxObject refcount (local.get $entry)
+      (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+    (call $gs32 (local.get $ppv_guest) (local.get $obj))
+    (i32.const 0))
+
   ;; QueryInterface(this, riid, ppvObj)
   ;; Accept DDraw and D3D family interfaces with proper vtables.
   (func $handle_IDirectDraw_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

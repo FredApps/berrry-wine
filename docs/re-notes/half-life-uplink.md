@@ -387,3 +387,109 @@ right-wall panels and overhead opening move toward and past the camera. The
 before/held captures differ at 305,732 of 459,360 pixels (66.56%):
 `/private/tmp/hlu-keyboard-color3ubv/halflife_uplink-movement-before.png` and
 `/private/tmp/hlu-keyboard-color3ubv/halflife_uplink-movement-w-held.png`.
+
+## The Direct3D renderer: `CoCreateInstance(CLSID_DirectDraw)`, not `DirectDrawCreate`
+
+GoldSrc has a third renderer beside software and OpenGL, and reaching it is two
+separate switches. `-D3D` on the command line only sets a `COM_CheckParm` global
+at `0x00429b2d`; what actually selects the renderer is
+`HKCU\Software\Valve\HLDemo\Settings\EngineType`, read at `0x00411191` and
+clamped to 1..3 at `0x00411196`-`0x004111a0` (1 = software, 2 = OpenGL,
+**3 = D3D**). Passing `--args='-D3D'` alone leaves `EngineType` at 2 and the
+engine never loads a D3D anything.
+
+Seeding the value is awkward on purpose: `test/run.js` imports `--reg-import`
+at line 4707 and then applies the app manifest's `startupRegistry`
+**unconditionally** at 4752, so an import cannot override a key the manifest
+seeds — and `halflife_uplink` seeds `EngineType = 2`. A bare `--exe` run leaves
+`APP_ENTRY` null and skips `startupRegistry` entirely, which is the route that
+works without touching `lib/apps.js`:
+
+```
+node test/run.js \
+  --exe=test/binaries/candidates/half-life-uplink-installer/installed/hldemo.exe \
+  --args='-D3D' --vfs-include='**/*' --reg-import=hl-d3d-reg.json \
+  --quiet-api --quiet-api-fast --stuck-after=1000000 \
+  --max-seconds=170 --max-batches=99999999 --no-close --dx-surfaces
+```
+
+with `hl-d3d-reg.json` holding one entry, the store's own shape:
+
+```json
+{"reg:HKCU\\Software\\Valve\\HLDemo\\Settings":
+ "{\"values\":{\"EngineType\":{\"type\":4,\"data\":3}}}"}
+```
+
+With that, the engine boots and draws its own menus, and clicking `New game`
+at (113,192) produces **"The selected D3D mode is not supported by your video
+card."** — string 429 in `hl_res.dll`'s table, the D3D twin of the OpenGL 428
+this note's earlier sections hit.
+
+**The message is not about a mode and not about D3D.** Searching the binaries
+for it is a dead end (it is a UTF-16 resource string, invisible to a plain
+`strings`/`grep`; use `find_string.js --utf16` on `hl_res.dll`), and there is no
+`push 0x1ad` to xref — the four `imm32=0x1ad` hits in `hldemo.exe` are all
+`rel32` displacements. The answer came from a full `--trace-api` log instead,
+reading the last calls `hw.dll` makes before the engine unloads it:
+
+```
+CoInitialize(NULL)
+LoadLibraryA("ddraw.dll")                        => ok
+GetProcAddress("DirectDrawEnumerateExA")         => ok
+CoCreateInstance(0x0067b348, NULL, 1, 0x0067b368, ppv)   <- no success return
+CoUninitialize()
+...
+FreeLibrary(mod=h:0x005c6000)                    <- hw.dll unloaded
+```
+
+`hw.dll` is loaded at `0x5c6000` over origBase `0x10000000`, so those two GUID
+pointers are `hw+0x100b5348` and `hw+0x100b5368`; `tools/dump_va.js` names them
+**CLSID_DirectDraw {D7B70EE0-4340-11CF-B063-0020AFC2CD35}** and
+**IID_IDirectDraw {6C14DB80-A733-11CE-A521-0020AF0BE560}**. So the hardware
+renderer does not call `DirectDrawCreate` at all on this path — it activates
+DirectDraw as a COM class and then calls `IDirectDraw::Initialize`. Our
+`$handle_CoCreateInstance` knew eight local classes and not that one, the
+activation failed, and `hw.dll` correctly concluded it had no video hardware.
+
+Two traps worth keeping: `--trace-api=<names>` with a name the table does not
+recognize does **not** filter — it falls back to printing generic `[N] EIP=...`
+lines, which look like a stack walk and are not one, so `--trace-stack` and
+`--break-api` on such a name both produce the same useless dump. And the
+earlier D3D probe in `hldemo.exe` at `0x403b00`-`0x403d4e` (QI IDirectDraw2,
+then `IDirectDrawSurface3`, then `IDirectDrawSurface4`, storing `0x500` and
+then `0x600`) is only a DirectX *version* detector that tops out at DX6 by
+construction — it succeeds, and it is not where the decision is made.
+
+### After the fix: textures upload, the primary stays empty
+
+`$handle_CoCreateInstance` now classifies `CLSID_DirectDraw` as a local class and
+manufactures the same object `DirectDrawCreate` does, with
+`$ddraw_cocreate_query_wa` (in `09a8-handlers-directx.wat`) handing back the
+IDirectDraw/2/4/7 wrapper for the requested IID. It refuses the Direct3D kinds
+deliberately: D3D comes from a QI on an already-initialized object, so
+manufacturing one over a device that has not had `Initialize` called would be a
+lie the caller can act on. `IDirectDraw::Initialize` was already a DD_OK no-op,
+so nothing else was needed.
+
+The same command line now runs with **no message box at all** and
+`--dx-surfaces` reports ten live surfaces where it reported zero:
+
+```
+slot=6  640x480 bpp=16 flags=0x1 (primary)     colors=1  nonZero=0/1850
+slot=7  640x480 bpp=16 flags=0x2 (back buffer) colors=1  nonZero=0/1850
+slot=8  640x480 bpp=16 flags=0x4               colors=1  nonZero=0/1850
+slot=13 256x256 bpp=16 flags=0x4               colors=540 nonZero=1797/1849
+slot=14 256x256 … 15 256x256 … 16 128x128 … 17 64x64 … 18 8x8 … 20 16x16
+```
+
+Throughput moved with it — 106 batches/s before, **28,039 batches/s** after, on
+the same 150-second budget, because the engine is no longer spinning after a
+failed renderer init.
+
+So `hw.dll` initializes, creates a primary/back-buffer flip chain and uploads
+real texture content (slot 13 carries 540 distinct colours). What it does not do
+is put anything on the primary: all three 640x480 surfaces are `nonZero=0`, and
+the only thing in the capture is the engine's menu text. **The remaining work is
+the D3D7 immediate-mode draw path, not DirectDraw activation** — read the
+texture slots as proof the renderer is live, and the `nonZero=0` primary as the
+open bug.
