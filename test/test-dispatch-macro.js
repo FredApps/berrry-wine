@@ -27,11 +27,19 @@ for (const f of WAT_FILES) {
   text.split('\n').forEach((line, i) => { if (line.includes('(return_call $next)')) oldSites.push(`${f}:${i + 1}`); });
   macroDefs += (text.match(/\(defmacro \(dispatch-next\)/g) || []).length;
   nextDefs += (text.match(/\(func \$next\b/g) || []).length;
-  // Function extents: split on top-level "(func " and look inside each.
-  const parts = text.split(/\n(?=  \(func )/);
+  // Function extents: split on top-level "(func " / "(defmacro " and look
+  // inside each. A macro whose body expands (dispatch-next) -- 05-alu.wat's
+  // (jcc-finish) -- is not itself a site, but every function expanding IT is.
+  const parts = text.split(/\n(?=  \((?:func|defmacro) )/);
+  const wrappers = [];
   for (const part of parts) {
-    // The definition itself, `(defmacro (dispatch-next) ...)`, is not a site.
-    const n = (part.match(/(?<!\(defmacro )\(dispatch-next\)/g) || []).length;
+    const dm = /^\s*\(defmacro \(([^\s()]+)\)/.exec(part);
+    if (dm && dm[1] !== 'dispatch-next' && part.includes('(dispatch-next)')) wrappers.push(dm[1]);
+  }
+  for (const part of parts) {
+    if (/^\s*\(defmacro /.test(part)) continue;
+    const n = (part.match(/\(dispatch-next\)/g) || []).length
+      + wrappers.reduce((k, w) => k + part.split(`(${w})`).length - 1, 0);
     if (!n) continue;
     macroSites += n;
     const m = /^\s*\(func\s+(\$[^\s()]+)/.exec(part);

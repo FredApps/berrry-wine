@@ -73,3 +73,44 @@ as an ordinary dynamic (MNUD) menu built from its RT_MENU template, cached by
 resource id (`$menu_detached_handle`). Afterwards: 711k API calls and 60,000
 batches in 14.8s where the same route was 23M calls and 134k batches in 71s,
 and the map draws. Covered by `test/test-detached-menu-handle.js`.
+
+## City simulation: where the CPU goes (measured 2026-09-21)
+
+Window: batches 8000-20000 of the recipe above (game date Mar -> Jul 1982),
+`--handler-hist --handler-hist-thread=0 --handler-hist-start=8000
+--hot-block-dump=` plus `--quiet-blocks` (without it the per-batch register
+line is 45% of the process). Counts, not timings:
+
+* 47.2M ops, 12.09M block entries: **3.9 ops per block**, ~11-12M ops per
+  game month. Terminators: Jcc 75%, fall 7.2%, jmp 7.1%, ret 4.4%, call 4.1%.
+* The simulation is 128x128 tile passes written with 16-bit frame locals and
+  the same `0 <= x,y < 128` test repeated 2-3 times per tile, each compare its
+  own two-instruction block (`cmp word [ebp-x],imm / jl`). No loop matcher
+  sees any of it: loop-class-share says `none` 60%, `declined:call` 14%,
+  DIAMOND ~16%, SELF 0.4%.
+
+| region (share of block entries) | what it is |
+|---|---|
+| `0x45ad35` fn, loop `0x45b021` (18.2%) | per-tile score: two 4-compare bounds ladders, tile-bit tests via row tables `0x4b50f0`/`0x4b3710`, one if/else join `jmp` |
+| `0x448e20` (12.6%) | neighbour walk: `call 0x40171c` per neighbour, then a tile-type range ladder (`cmp ax,lo / jb / cmp ax,hi / jb`) |
+| `0x454f3e` (10.8%) | 128x128 pass clearing flag bits 0x10/0x08, four bounds checks per tile per bit |
+| `0x458117` (8.3%) | 128x128 bit-mask pass then tile-type tests |
+
+`0x40171c` is `jmp 0x423a11`: the exe is incrementally linked, 1624 `e9`
+thunks at `0x401000..0x402fb8`, and thunk blocks are 1.95% of all block
+entries in the window.
+
+Two decoder costs this code shape exposes (counts from the same window):
+
+* `$th_compute_ea_sib` (H149) is 2.76M ops, **5.8% of all ops** — a separate
+  dispatch computing an address because the 16/8-bit memory handlers
+  (`inc/dec word [ebp-x]`, movzx byte, `mov m16`) have no fused base+disp form.
+* The fused `test r,r + Jcc` (H404, 844k) always leaves through
+  `$branch_end`, so its not-taken edge never gets the free adjacent
+  fall-through a plain Jcc gets.
+
+Wasm self-time split (30000-batch run, `tools/dispatch-attribution.js`):
+`$branch_end_at` 9.4% (the desk, including its successor dispatch), the
+specialised Jcc handlers 10.9%, `$get_of` 2.1%, GDI/controls ~17% (font face
+string compares on every text out, `$gdi_bitmap_font_face_equal` 2.0%, and
+`$ctrl_get_wh_packed` 1.8%).

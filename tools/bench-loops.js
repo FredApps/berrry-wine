@@ -1511,6 +1511,68 @@ function mixShape(fixedUops, spacing, stride, fbEvery) {
   };
 }
 SHAPES.blk_mix512 = mixShape(null, 128, 0x20000);
+// SimCity 2000's hottest region (0x45b021): per tile, two four-compare
+// bounds ladders on 16-bit frame locals (never taken, so every Jcc is a
+// fall-through), two data-dependent tile-bit tests read from a random buffer,
+// and one if/else join `jmp`. ~13 blocks per iteration, ~2 x86 insns each.
+// It is the shape that priced the per-Jcc-handler dispatch in 05-alu.wat's
+// (jcc-finish): +9.7% here, +3.5% on cmp_ladder, 0% on blk_mix512.
+SHAPES.sc_ladder = {
+  describe: 'SimCity 2000 0x45b021: 16-bit bounds ladders + data-dependent tile tests',
+  real: 'simdemo.exe city simulation, 18% of block entries in the city window',
+  emit(a) {
+    const out = [], fix = [], lab = {};
+    const B = (...b) => out.push(...b);
+    const J = (op, name) => { out.push(op, 0); fix.push([out.length - 1, name]); };
+    const ladder = () => {
+      B(0x66, 0x83, 0x7D, 0xF0, 0x00); J(0x7C, 'out');         // cmp word [ebp-0x10],0 / jl
+      B(0x66, 0x81, 0x7D, 0xF0, 0x80, 0x00); J(0x7D, 'out');   // cmp word [ebp-0x10],0x80 / jge
+      B(0x66, 0x83, 0x7D, 0xF8, 0x00); J(0x7C, 'out');         // cmp word [ebp-8],0 / jl
+      B(0x66, 0x81, 0x7D, 0xF8, 0x80, 0x00); J(0x7D, 'out');   // cmp word [ebp-8],0x80 / jge
+    };
+    ladder();
+    B(0xF6, 0x06, 0x01); J(0x74, 'odd');                       // test byte [esi],1 / jz
+    B(0x66, 0x05, 0x04, 0x00); J(0xEB, 'join');                // add ax,4 / jmp
+    lab.odd = out.length; B(0x66, 0x05, 0x0C, 0x00);           // add ax,0xc
+    lab.join = out.length;
+    B(0xF6, 0x06, 0x02); J(0x74, 'skip2');                     // test byte [esi],2 / jz
+    B(0x66, 0x83, 0xC3, 0x04);                                 // add bx,4
+    lab.skip2 = out.length;
+    ladder();
+    lab.out = out.length;
+    B(0x46);                                                   // inc esi
+    B(0x66, 0xFF, 0x45, 0xF8);                                 // inc word [ebp-8]
+    B(0x66, 0x83, 0x65, 0xF8, 0x7F);                           // and word [ebp-8],0x7f
+    for (const [at, name] of fix) out[at] = (lab[name] - (at + 1)) & 0xFF;
+    const n = Math.min(Math.floor(a.bufBytes), 1_000_000);
+    let seed = 12345;
+    const bytes = new Uint8Array(n);
+    for (let i = 0; i < n; i++) { seed = (seed * 1103515245 + 12345) >>> 0; bytes[i] = seed >>> 24; }
+    let ax = 0, bx = 0;
+    for (let i = 0; i < n; i++) {
+      ax = (ax + ((bytes[i] & 1) ? 4 : 12)) & 0xFFFF;
+      if (bytes[i] & 2) bx = (bx + 4) & 0xFFFF;
+    }
+    const frame = a.stackTop - 0x100;
+    return {
+      iters: n, bytesTouched: n,
+      code: loopBack(out),
+      setup(e, mem, g2w) {
+        mem.set(bytes, g2w(a.buf));
+        const dv = new DataView(mem.buffer);
+        dv.setUint16(g2w(frame - 0x10), 5, true);
+        dv.setUint16(g2w(frame - 8), 0, true);
+        e.set_ebp(frame); e.set_esi(a.buf); e.set_ecx(n); e.set_eax(0); e.set_ebx(0);
+      },
+      verify(e) {
+        if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+        if ((e.get_eax() & 0xFFFF) !== ax) return `ax=${e.get_eax() & 0xFFFF}, expected ${ax}`;
+        if ((e.get_ebx() & 0xFFFF) !== bx) return `bx=${e.get_ebx() & 0xFFFF}, expected ${bx}`;
+        return null;
+      },
+    };
+  },
+};
 // ROUND 17 (section 27): the shape the widened leaf contract is about. Same
 // 512-block cold-predictor working set, but every second block carries one
 // `adc ebx,eax` -- so half the descriptors take the pure leaf H463 and half
