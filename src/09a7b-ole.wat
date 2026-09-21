@@ -9809,11 +9809,16 @@
   ;; \pict, so a saved document lost every picture in it.
   ;;
   ;; The face is a real data object of ours, created once and kept at root+164,
-  ;; so QueryInterface returns the same pointer every time as COM requires. Its
-  ;; contents are rebuilt from the cache here and on every cache change, and each
-  ;; medium is copied, so releasing this object can never free bytes the cache
-  ;; still owns.
+  ;; so repeated QueryInterface can return it without mutating its data. Cache
+  ;; changes explicitly refresh the face; interface navigation does not.
   (func $ole_static_data_object (param $root i32) (result i32)
+    (local $child i32)
+    (if (i32.eqz (local.get $root)) (then (return (i32.const 0))))
+    (local.set $child (call $gl32 (i32.add (local.get $root) (i32.const 164))))
+    (if (local.get $child) (then (return (local.get $child))))
+    (call $ole_static_refresh_data_object (local.get $root)))
+
+  (func $ole_static_refresh_data_object (param $root i32) (result i32)
     (local $child i32) (local $entries i32) (local $count i32) (local $i i32)
     (local $entry i32) (local $dib i32)
     (if (i32.eqz (local.get $root)) (then (return (i32.const 0))))
@@ -10852,7 +10857,7 @@
     ;; the cache changes — a container holding the pointer sees the new formats
     ;; rather than the ones the object had when it first asked.
     (if (call $gl32 (i32.add (local.get $root) (i32.const 164)))
-      (then (drop (call $ole_static_data_object (local.get $root)))))
+      (then (drop (call $ole_static_refresh_data_object (local.get $root)))))
     (if (call $gl32 (i32.add (local.get $root) (i32.const 92)))
       (then (call $ole_release_medium (i32.add (local.get $root) (i32.const 60)))))
     (call $ole_format_free (i32.add (local.get $root) (i32.const 72)))

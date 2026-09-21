@@ -102,12 +102,40 @@ An in-memory negative control substituting the pre-fix OLE source fails the
 new private-face ownership assertion (refcount 2 rather than 1); no worktree
 source was reverted to run it.
 
-Still open: cache refresh via repeated IDataObject QI currently clears and
-rebuilds entries synchronously; retained-face cache coherence and guest-media
-copy/retirement need their own transaction audit. Internal final releases of
+At that checkpoint, repeated IDataObject QI still cleared and rebuilt entries
+synchronously (corrected below). Guest-media cache copy/retirement needs its
+own transaction audit. Internal final releases of
 local objects do not generally schedule guest teardown (the pre-existing
 `ole_release_local_interface`/`ole_obj_release` limitation); routing a data
 reference to its owner does not solve that wider continuation problem.
 Standalone IDataObject QI still checks only Data1. Exhaustive reentrant
 cleanup, all-face navigation and WordPad embedded-picture save/browser
 coverage remain required before calling the entire ownership audit complete.
+
+## Follow-up: interface lookup must not refresh stored data
+
+A new public-thunk regression on `361df0bf` reproduced destructive repeated
+QI: SetData successfully transferred one guest stream/releaser entry to the
+face, then QI(IDataObject) reduced its entry count from 1 to 0. This is data
+loss caused by interface navigation, not an application cache mutation.
+
+Split lazy interface lookup (`ole_static_data_object`) from explicit cache
+refresh (`ole_static_refresh_data_object`). Existing faces are returned
+unchanged; initial creation and `ole_cache_sync_render_slot` still populate
+or refresh them. This is not a lazy stale-cache workaround: the regression
+also changes cache data twice and uncaches it while holding the same face.
+Repeated QI from root, data, persist, cache and view interfaces preserves the
+stored entry, its availability and its guest ownership until final Release.
+
+The broader guest-media refresh transaction remains open: cache changes still
+copy/retire face entries synchronously, so DLL-private AddRef/Release and
+failure rollback during those changes need a separate correction. The new
+cache-mutation checks use HGLOBAL, not evidence that guest-stream refresh is
+fixed. Microsoft's linked QI rules above establish interface navigation and
+identity; the data-loss finding itself is executable evidence from this repo.
+
+Validation: guest callback suite (123 checks, plus repeated-QI assertions),
+static handler (66 checks), and WordPad copy/cut/paste (5 checks) pass on the
+shared main worktree. The new repeated-QI assertion was observed failing
+before the source change (`0 !== 1` stored entries). Fragment balance and
+`git diff --check` pass. No full-browser embedded-picture save claim.

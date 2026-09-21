@@ -684,6 +684,19 @@ async function main() {
     const medium = alloc(12);
     write(medium, 4); write(medium + 4, stream); write(medium + 8, releaser);
     assert.strictEqual(callMethod(face, 7, makeFormat(0xc540, 4), medium, 1), 0);
+    // Merely reacquiring an interface must not clear its successfully stored
+    // media, lose their owned references, or invoke cleanup callbacks.
+    write(iid, 0x10e); write(iid + 4, 0);
+    const entriesBeforeQuery = read(face + 12);
+    for (const from of [root, face, root + 12, root + 52, root + 56]) {
+      assert.strictEqual(callMethod(from, 0, iid, out), 0);
+      assert.strictEqual(read(out), face);
+      assert.strictEqual(read(face + 12), entriesBeforeQuery);
+      assert.strictEqual(read(face + 16), 1, 'repeated QI preserves stored data');
+      assert.strictEqual(callMethod(face, 5, makeFormat(0xc540, 4)), 0);
+      assert.strictEqual(read(sequence), 0, 'QI must not retire owned guest media');
+      assert.strictEqual(callMethod(face, 2), 2);
+    }
     check(`static data face keeps owner alive (${rootFirst ? 'root' : 'face'} released first)`,
       callMethod(rootFirst ? root : face, 2) === 1 && read(root + 4) === 1 &&
       read(site + 12) === 0 && read(sink + 12) === 0 && read(sequence) === 0);
@@ -698,6 +711,29 @@ async function main() {
       callMethod(last, 2) === 0 && read(site + 12) === 1 && read(sink + 12) === 1 &&
       read(stream + 4) === 0 && read(stream + 12) === 1 && read(stream + 36) === 1 &&
       read(releaser + 4) === 0 && read(releaser + 12) === 1 && read(releaser + 36) === 2);
+  }
+
+  {
+    const root = e.test_ole_create_static_handler(0) >>> 0;
+    const iid = alloc(16), out = alloc(4), connection = alloc(4);
+    [0x10e, 0, 0xc0, 0x46000000].forEach((v, i) => write(iid + 4 * i, v));
+    assert.strictEqual(callMethod(root, 0, iid, out), 0);
+    const face = read(out), format = makeFormat(0xc541), result = alloc(12);
+    assert.strictEqual(callMethod(root + 52, 3, format, 0, connection), 0);
+    for (const value of [0x12345678, 0x23456789]) {
+      const payload = alloc(4), medium = alloc(12);
+      write(payload, value);
+      write(medium, 1); write(medium + 4, payload); write(medium + 8, 0);
+      assert.strictEqual(callMethod(root + 52, 7, format, medium, 1), 0);
+      check('cache SetData refreshes an already-held data interface',
+        callMethod(face, 3, format, result) === 0 && read(read(result + 4)) === value);
+      releaseMedium(result);
+    }
+    assert.strictEqual(callMethod(root + 52, 4, read(connection)), 0);
+    check('cache Uncache removes the format from an already-held data interface',
+      callMethod(face, 5, format) !== 0 && read(face + 16) === 0);
+    assert.strictEqual(callMethod(root, 2), 1);
+    assert.strictEqual(callMethod(face, 2), 0);
   }
 
   const cacheSequence = alloc(4);
