@@ -306,3 +306,26 @@ Verification: the public file-size/seek/read/write/duplicate regression, VFS
 250 imports, canonical 1,472,728 bytes, compatibility 1,473,702 bytes, unchanged
 layout `54f430b349c8d55e` and 242 nonoverlapping data segments. No performance
 claim is made from this heavily loaded shared-machine run.
+
+## Compressed-size workaround removal — 2026-09-21
+
+`GetCompressedFileSizeA/W` now queries the same metadata-only handle it opened
+through `fs_file_size_result`. Removed the second FindFirstFile lookup, ASCII
+basename comparison, regex-metacharacter exception, and 592-byte heap scratch.
+Those workarounds could discard a real high DWORD for valid literal filenames.
+The helper closes its temporary handle on query success and failure and retains
+path/output validation and the ambiguous-low-word last-error contract.
+
+For the current uncompressed, nonsparse VFS, logical size is the documented
+[GetCompressedFileSize result](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getcompressedfilesizea).
+The regression replaces fabricated enumeration outputs with real lazy providers
+at 0x100000011 and 0x1ffffffff bytes, through A/W entry points, with/without high
+outputs and with Unicode/regex-punctuation names. Enumeration imports throw if
+called; provider reads also throw. Failure injection checks output preservation
+and temporary-handle closure. This is not implementation of compressed/sparse
+storage, filesystem allocation accounting, or all CreateFile open-error codes.
+
+Verification: source-compiled `test-get-compressed-file-size.js`, handler ESP,
+WAT-fragment and silent-stub gates pass (250 manual + 22 metadata unchanged).
+This source-only cleanup adds no import or layout changes. No new full artifact
+build or browser run is claimed for this checkpoint.

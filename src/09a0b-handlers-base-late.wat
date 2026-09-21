@@ -1402,10 +1402,9 @@
   )
 
   ;; Validate one Win9x-length filename before handing it to the host string
-  ;; decoder.  Besides keeping an unmapped pointer out of JavaScript, rejecting
-  ;; wildcards is essential here: fs_find_first_file is used only as a metadata
-  ;; side channel below, and GetCompressedFileSize names one exact file rather
-  ;; than expanding a search pattern.  Return a Win32 error code, or zero.
+  ;; decoder. Besides keeping an unmapped pointer out of JavaScript, reject
+  ;; wildcards: GetCompressedFileSize names one file, not a search pattern.
+  ;; Return a Win32 error code, or zero.
   (func $compressed_file_path_error
       (param $path i32) (param $wide i32) (result i32)
     (local $i i32) (local $step i32) (local $wa i32) (local $ch i32)
@@ -1430,117 +1429,12 @@
       (br $scan)))
     (i32.const 206)) ;; ERROR_FILENAME_EXCED_RANGE
 
-  ;; The VFS lookup is case-insensitive but returns the entry's preserved name.
-  ;; Confirm that FindFirstFile did not select a different basename before
-  ;; trusting its high DWORD.  (Its non-C media fallback is allowed because it
-  ;; preserves the exact requested basename.)
-  (func $compressed_file_name_matches
-      (param $path i32) (param $find_data i32) (param $wide i32) (result i32)
-    (local $i i32) (local $base i32) (local $j i32) (local $step i32)
-    (local $ch i32) (local $found i32)
-    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
-    ;; Locate the byte/code-unit after the last slash or drive colon.
-    (block $base_done (loop $base_scan
-      (local.set $ch (select
-        (call $gl16 (i32.add (local.get $path)
-          (i32.mul (local.get $i) (local.get $step))))
-        (call $gl8 (i32.add (local.get $path)
-          (i32.mul (local.get $i) (local.get $step))))
-        (local.get $wide)))
-      (br_if $base_done (i32.eqz (local.get $ch)))
-      (if (i32.or
-            (i32.eq (local.get $ch) (i32.const 0x2F))
-            (i32.or (i32.eq (local.get $ch) (i32.const 0x5C))
-                    (i32.eq (local.get $ch) (i32.const 0x3A))))
-        (then (local.set $base (i32.add (local.get $i) (i32.const 1)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $base_scan)))
-    (block $different (loop $compare
-      (br_if $different (i32.ge_u (local.get $j) (i32.const 260)))
-      (local.set $ch (select
-        (call $gl16 (i32.add (local.get $path)
-          (i32.mul (i32.add (local.get $base) (local.get $j)) (local.get $step))))
-        (call $gl8 (i32.add (local.get $path)
-          (i32.mul (i32.add (local.get $base) (local.get $j)) (local.get $step))))
-        (local.get $wide)))
-      (local.set $found (select
-        (call $gl16 (i32.add (local.get $find_data)
-          (i32.add (i32.const 44) (i32.mul (local.get $j) (local.get $step)))))
-        (call $gl8 (i32.add (local.get $find_data)
-          (i32.add (i32.const 44) (i32.mul (local.get $j) (local.get $step)))))
-        (local.get $wide)))
-      ;; ASCII folding is sufficient to mirror the VFS's case-insensitive
-      ;; matching for the classic FAR/7-Zip filenames in this corpus.
-      (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41))
-                   (i32.le_u (local.get $ch) (i32.const 0x5A)))
-        (then (local.set $ch (i32.add (local.get $ch) (i32.const 0x20)))))
-      (if (i32.and (i32.ge_u (local.get $found) (i32.const 0x41))
-                   (i32.le_u (local.get $found) (i32.const 0x5A)))
-        (then (local.set $found (i32.add (local.get $found) (i32.const 0x20)))))
-      (br_if $different (i32.ne (local.get $ch) (local.get $found)))
-      (if (i32.eqz (local.get $ch)) (then (return (i32.const 1))))
-      (local.set $j (i32.add (local.get $j) (i32.const 1)))
-      (br $compare)))
-    (i32.const 0))
-
-  ;; fs_find_first_file's VFS matcher accepts Win32 wildcards, but its current
-  ;; implementation also feeds the basename to a JavaScript RegExp.  Valid
-  ;; Win32 literal names such as "copy(1).zip" therefore cannot safely use the
-  ;; optional metadata side channel.  The exact CreateFile path remains valid;
-  ;; skip enumeration and retain the current VFS high DWORD of zero.
-  (func $compressed_file_metadata_name_safe
-      (param $path i32) (param $wide i32) (result i32)
-    (local $i i32) (local $step i32) (local $ch i32) (local $safe i32)
-    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
-    (local.set $safe (i32.const 1))
-    (block $done (loop $scan
-      (local.set $ch (select
-        (call $gl16 (i32.add (local.get $path)
-          (i32.mul (local.get $i) (local.get $step))))
-        (call $gl8 (i32.add (local.get $path)
-          (i32.mul (local.get $i) (local.get $step))))
-        (local.get $wide)))
-      (br_if $done (i32.eqz (local.get $ch)))
-      (if (i32.or
-            (i32.eq (local.get $ch) (i32.const 0x2F))
-            (i32.or (i32.eq (local.get $ch) (i32.const 0x5C))
-                    (i32.eq (local.get $ch) (i32.const 0x3A))))
-        (then (local.set $safe (i32.const 1)))
-        (else
-          (if (i32.eq (local.get $ch) (i32.const 0x24))
-            (then (local.set $safe (i32.const 0))))
-          (if (i32.eq (local.get $ch) (i32.const 0x28))
-            (then (local.set $safe (i32.const 0))))
-          (if (i32.eq (local.get $ch) (i32.const 0x29))
-            (then (local.set $safe (i32.const 0))))
-          (if (i32.eq (local.get $ch) (i32.const 0x2B))
-            (then (local.set $safe (i32.const 0))))
-          (if (i32.eq (local.get $ch) (i32.const 0x5B))
-            (then (local.set $safe (i32.const 0))))
-          (if (i32.eq (local.get $ch) (i32.const 0x5D))
-            (then (local.set $safe (i32.const 0))))
-          (if (i32.eq (local.get $ch) (i32.const 0x5E))
-            (then (local.set $safe (i32.const 0))))
-          (if (i32.eq (local.get $ch) (i32.const 0x7B))
-            (then (local.set $safe (i32.const 0))))
-          (if (i32.eq (local.get $ch) (i32.const 0x7C))
-            (then (local.set $safe (i32.const 0))))
-          (if (i32.eq (local.get $ch) (i32.const 0x7D))
-            (then (local.set $safe (i32.const 0))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-    (local.get $safe))
-
-  ;; GetCompressedFileSizeA/W share the same VFS behavior.  The browser VFS
-  ;; models an uncompressed FAT-like volume, so allocated size equals logical
-  ;; size.  Its representable entries are below 4 GiB today; nevertheless the
-  ;; WIN32_FIND_DATA metadata path is kept 64-bit so a future host high DWORD
-  ;; can be returned without changing this ABI.
+  ;; On our uncompressed FAT-like VFS, compressed size equals logical size.
+  ;; Query the opened file itself; enumeration must not supply a second identity.
   (func $get_compressed_file_size
       (param $path i32) (param $high_out i32) (param $wide i32) (result i32)
     (local $err i32) (local $high_wa i32) (local $handle i32)
-    (local $low i32) (local $high i32) (local $find_data i32)
-    (local $find_handle i32)
+    (local $low i32)
     (local.set $err (call $compressed_file_path_error
       (local.get $path) (local.get $wide)))
     (if (local.get $err)
@@ -1564,36 +1458,14 @@
       (then
         (global.set $last_error (i32.const 2)) ;; ERROR_FILE_NOT_FOUND
         (return (i32.const -1))))
-    (local.set $low (call $host_fs_get_file_size (local.get $handle)))
+    (local.set $err (call $host_fs_file_size_result
+      (local.get $handle) (global.get $reg_base) (local.get $high_wa)))
+    (local.set $low (i32.load (global.get $reg_base)))
     (drop (call $host_fs_close_handle (local.get $handle)))
-
-    ;; Enumeration already carries a high/low pair.  Use it only when its
-    ;; basename is the exact requested one; otherwise retain the exact-open
-    ;; handle's low DWORD and the current VFS's honest high zero.
-    (if (call $compressed_file_metadata_name_safe
-          (local.get $path) (local.get $wide))
+    (if (local.get $err)
       (then
-        (local.set $find_data (call $heap_alloc (i32.const 592)))
-        (if (i32.eqz (local.get $find_data)) (then (br 0)))
-        (local.set $find_handle (call $host_fs_find_first_file
-          (call $g2w (local.get $path)) (local.get $find_data)
-          (local.get $wide)))
-        (if (i32.ne (local.get $find_handle) (i32.const -1))
-          (then
-            (if (i32.and
-                  (i32.eqz (i32.and (call $gl32 (local.get $find_data))
-                    (i32.const 0x10))) ;; FILE_ATTRIBUTE_DIRECTORY
-                  (call $compressed_file_name_matches
-                    (local.get $path) (local.get $find_data) (local.get $wide)))
-              (then
-                (local.set $high
-                  (call $gl32 (i32.add (local.get $find_data) (i32.const 28))))
-                (local.set $low
-                  (call $gl32 (i32.add (local.get $find_data) (i32.const 32))))))
-            (drop (call $host_fs_find_close (local.get $find_handle)))))
-        (call $heap_free (local.get $find_data))))
-    (if (local.get $high_out)
-      (then (i32.store (local.get $high_wa) (local.get $high))))
+        (global.set $last_error (local.get $err))
+        (return (i32.const -1))))
     ;; 0xffffffff is a valid low DWORD.  Only that ambiguous success must
     ;; publish NO_ERROR so callers can distinguish it from failure.
     (if (i32.eq (local.get $low) (i32.const -1))

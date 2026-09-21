@@ -68,7 +68,13 @@ function assertEsp(e, label) {
 }
 
 (async () => {
-  const harness = await bootRenderHarness({ fonts: 'none', extraWat });
+  const harness = await bootRenderHarness({
+    fonts: 'none', extraWat,
+    extraHostOverrides: {
+      fs_find_first_file() { throw new Error('size query must not enumerate'); },
+      fs_find_close() { throw new Error('size query must not create a find handle'); },
+    },
+  });
   const { exports: e, hostCtx } = harness;
   const { alloc, writeA, writeW } = installGuestHelpers(e);
   const high = alloc(4);
@@ -126,7 +132,7 @@ function assertEsp(e, label) {
     e.test_call_GetCompressedFileSizeA(writeA('c:\\copy[1].bin'), high, esp0) >>> 0,
     19, 'valid literal regex metacharacters stay on the exact-open path');
   assert.strictEqual(e.guest_read32(high) >>> 0, 0,
-    'the bounded exact-open fallback retains the representable VFS high DWORD');
+    'the opened file supplies the high DWORD even with regex metacharacters');
 
   e.guest_write32(high, 0xcafebabe);
   e.test_set_last_error(LAST_ERROR_SENTINEL);
@@ -176,50 +182,49 @@ function assertEsp(e, label) {
     INVALID_FILE_SIZE, 'a nonterminated MAX_PATH filename is rejected');
   assert.strictEqual(e.test_get_last_error() >>> 0, ERROR_FILENAME_EXCED_RANGE);
 
-  // The production VFS currently exposes sub-4GiB entries.  Inject a future
-  // 64-bit WIN32_FIND_DATA result without allocating a multi-gigabyte buffer
-  // to pin the handler's high/low and ambiguous-success contract.
-  let largeHarness;
-  largeHarness = await bootRenderHarness({
-    fonts: 'none', extraWat,
-    extraHostOverrides: {
-      fs_get_file_size(handle) {
-        const fh = largeHarness.hostCtx.vfs.handles.get(handle >>> 0);
-        return fh && fh.path === 'c:\\max.bin' ? -1 : 0;
-      },
-      fs_find_first_file(patternWA, findDataGA, isWide) {
-        const x = largeHarness.exports;
-        x.guest_write32(findDataGA, 0x20);
-        x.guest_write32(findDataGA + 28, 1);
-        x.guest_write32(findDataGA + 32, 0xffffffff);
-        const name = 'max.bin';
-        for (let i = 0; i < name.length; i++) {
-          if (isWide) x.guest_write16(findDataGA + 44 + i * 2, name.charCodeAt(i));
-          else x.guest_write8(findDataGA + 44 + i, name.charCodeAt(i));
-        }
-        if (isWide) x.guest_write16(findDataGA + 44 + name.length * 2, 0);
-        else x.guest_write8(findDataGA + 44 + name.length, 0);
-        return 0x7f001234;
-      },
-    },
-  });
-  const le = largeHarness.exports;
-  const largeGuest = installGuestHelpers(le);
-  largeHarness.hostCtx.vfs.files.set('c:\\max.bin', {
-    data: new Uint8Array(0), attrs: 0x20,
-  });
-  const largeHigh = largeGuest.alloc(4);
-  le.test_set_last_error(LAST_ERROR_SENTINEL);
-  assert.strictEqual(
-    le.test_call_GetCompressedFileSizeW(
-      largeGuest.writeW('c:\\max.bin'), largeHigh, esp0) >>> 0,
-    INVALID_FILE_SIZE, '0x1ffffffff returns its low DWORD without becoming failure');
-  assert.strictEqual(le.guest_read32(largeHigh) >>> 0, 1,
-    'the high DWORD is copied from 64-bit file metadata');
-  assert.strictEqual(le.test_get_last_error() >>> 0, 0,
-    'ambiguous INVALID_FILE_SIZE success publishes NO_ERROR');
-  assertEsp(le, 'ambiguous large-file success');
 
+  // Use real provider metadata, not fabricated FindFirstFile outputs. Neither
+  // the Unicode name nor regex punctuation should select a different path.
+  for (const name of ['max.bin', 'copy[1](résumé)+$.bin']) {
+    for (const size of [0x100000011, 0x1ffffffff]) {
+      const guestPath = `c:\\${name}`;
+      let reads = 0;
+      hostCtx.vfs.setProviderFile(guestPath, { provider: {
+        size,
+        readRangeSync() { reads++; throw new Error('metadata query fetched bytes'); },
+        readRange() { reads++; throw new Error('metadata query fetched bytes'); },
+      } });
+      for (const [write, invoke] of [
+        [writeA, e.test_call_GetCompressedFileSizeA],
+        [writeW, e.test_call_GetCompressedFileSizeW],
+      ]) {
+        for (const output of [0, high]) {
+          e.test_set_last_error(LAST_ERROR_SENTINEL);
+          assert.strictEqual(invoke(write(guestPath), output, esp0) >>> 0, size >>> 0);
+          if (output) assert.strictEqual(e.guest_read32(high) >>> 0, 1);
+          assert.strictEqual(e.test_get_last_error() >>> 0,
+            (size >>> 0) === 0xffffffff ? 0 : LAST_ERROR_SENTINEL);
+          assertEsp(e, 'large provider metadata');
+          assert.strictEqual([...hostCtx.vfs.handles.values()].filter(h => !h.closed).length, 0,
+            'temporary metadata handles are closed after every successful query');
+        }
+      }
+      assert.strictEqual(reads, 0, 'size query does not materialize provider bytes');
+    }
+  }
+  const realSize = hostCtx.vfs.getFileSize;
+  try {
+    hostCtx.vfs.getFileSize = () => NaN;
+    e.guest_write32(high, 0xcafebabe);
+    assert.strictEqual(e.test_call_GetCompressedFileSizeA(writeA('c:\\other.bin'), high, esp0) >>> 0,
+      INVALID_FILE_SIZE, 'metadata bridge errors propagate');
+    assert.strictEqual(e.test_get_last_error(), ERROR_INVALID_PARAMETER);
+    assert.strictEqual(e.guest_read32(high) >>> 0, 0xcafebabe);
+    assert.strictEqual([...hostCtx.vfs.handles.values()].filter(h => !h.closed).length, 0,
+      'temporary metadata handle also closes on query failure');
+  } finally {
+    hostCtx.vfs.getFileSize = realSize;
+  }
   console.log('GetCompressedFileSizeA/W behavior: PASS');
 })().catch(error => {
   console.error(error && error.stack || error);
