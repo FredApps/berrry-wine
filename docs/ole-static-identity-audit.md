@@ -614,3 +614,38 @@ Verification: public metafile **16/16**, static-handler **85/85**, guest callbac
 full-build pass is claimed. An unrelated dirty `lib/api-format.js` currently
 labels 0x8004006A as DV_E_DVASPECT (the SDK says 0x8004006B); this diagnostic
 label issue was noted on the coordination board and left outside this commit.
+
+## Mixed DIB/WMF caches — preserve the explicit presentation
+
+Tracing live refresh exposed an ownership failure independent of OOM: a cache
+containing both CF_DIB and CF_METAFILEPICT first copied both descriptors into
+the borrowing data face, then synthesized another WMF into the same FORMATETC
+slot. The ordinary owning-entry replacement helper retired the former medium,
+even though the canonical cache still owned it. The face also lost the explicit
+presentation in favor of a DIB-derived one.
+
+Refresh now detects an existing whole-content, null-target CF_METAFILEPICT /
+TYMED_MFPICT presentation and leaves it authoritative. It synthesizes only when
+that presentation is absent. An icon-aspect WMF is not a substitute for content
+and does not suppress content synthesis. No media-copy or generic replacement
+ownership rules were weakened.
+
+Before the fix, the mixed-cache regression failed preservation of the explicit
+owner and the borrowed pointer (88/90 checks). It now checks initial publication,
+DIB replacement while the caller holds the same face, distinct icon/content
+presentations, and final owner retirement. Existing nine-site initial allocation
+failure/retry coverage remains intact.
+
+Live-cache transaction follow-up: SetData and Uncache retire local old media
+before calling `ole_cache_sync_render_slot`; staged InitFromData exchanges the
+canonical collection before calling it. Consequently, simply retaining the old
+face descriptors when refresh fails is unsafe: they borrow those retired media.
+The fix must prepare the replacement view before committing/retiring the old
+canonical state across these mutation paths, or eliminate the duplicated view
+metadata. Current failure cleanup empties the face; it is not rollback and does
+not automatically recover on later QI. This remains open.
+
+The refresh scan now translates each canonical entry once for its local field
+reads and descriptor copy. Verification: static-handler **92/92**, guest COM
+callbacks **164/164**, public metafile **16/16** (272 checks). These are focused
+source-compiled tests, not a full-build or new browser verification claim.

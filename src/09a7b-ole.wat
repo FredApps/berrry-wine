@@ -9877,7 +9877,7 @@
   (func $ole_static_refresh_data_object (param $root i32) (result i32)
     (local $child i32) (local $entries i32) (local $count i32) (local $i i32)
     (local $entry i32) (local $dib i32) (local $medium i32) (local $medium_w i32)
-    (local $old_picture i32) (local $created i32) (local $hr i32)
+    (local $old_picture i32) (local $created i32) (local $hr i32) (local $has_metafile i32) (local $entry_w i32)
     (if (i32.eqz (local.get $root)) (then (return (i32.const 0))))
     (local.set $child (call $gl32 (i32.add (local.get $root) (i32.const 164))))
     (if (i32.eqz (local.get $child))
@@ -9910,22 +9910,36 @@
       (local.set $entry (i32.add (local.get $entries) (i32.mul (local.get $i) (i32.const 40))))
       ;; An empty cache slot is one that was declared by IOleCache::Cache but
       ;; never filled; it has no bytes to offer and must not be advertised.
-      (if (call $gl32 (i32.add (local.get $entry) (i32.const 28)))
+      (local.set $entry_w (call $g2w (local.get $entry)))
+      (if (i32.load offset=28 (local.get $entry_w))
         (then
           (memory.copy (local.get $medium_w)
-            (call $g2w (i32.add (local.get $entry) (i32.const 28))) (i32.const 12))
+            (i32.add (local.get $entry_w) (i32.const 28)) (i32.const 12))
           (local.set $hr (call $ole_data_set_entry (local.get $child)
             (i32.add (local.get $entry) (i32.const 8))
             (local.get $medium) (i32.const 1)))
           (br_if $failed (local.get $hr))
+          ;; Prefer an explicit presentation with the same FORMATETC as our
+          ;; synthesized content WMF. Replacing this borrowed entry through
+          ;; the ordinary owning helper would also retire canonical media.
+          (if (i32.and
+                (i32.and
+                  (i32.eq (i32.load16_u offset=8 (local.get $entry_w)) (i32.const 3))
+                  (i32.eq (i32.load offset=28 (local.get $entry_w)) (i32.const 32)))
+                (i32.and
+                  (i32.eqz (i32.load offset=12 (local.get $entry_w)))
+                  (i32.and
+                    (i32.eq (i32.load offset=16 (local.get $entry_w)) (i32.const 1))
+                    (i32.eq (i32.load offset=20 (local.get $entry_w)) (i32.const -1)))))
+            (then (local.set $has_metafile (i32.const 1))))
           ;; Remember the first cached DIB; the metafile below is built from it.
           (if (i32.and (i32.eqz (local.get $dib))
-                (i32.eq (call $gl16 (i32.add (local.get $entry) (i32.const 8))) (i32.const 8)))
+                (i32.eq (i32.load16_u offset=8 (local.get $entry_w)) (i32.const 8)))
             (then (local.set $dib
-              (call $gl32 (i32.add (local.get $entry) (i32.const 32))))))))
+              (i32.load offset=32 (local.get $entry_w)))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (if (local.get $dib) (then
+    (if (i32.and (i32.ne (local.get $dib) (i32.const 0)) (i32.eqz (local.get $has_metafile))) (then
       (br_if $failed (call $ole_static_offer_metafile
         (local.get $root) (local.get $child) (local.get $dib)))))
     (call $heap_free (local.get $medium))

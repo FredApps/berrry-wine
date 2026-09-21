@@ -529,8 +529,51 @@ async function main() {
     e.test_ole_data_count(dv.getUint32(wa(dataOut), true)) === 2);
   const allocations = e.ole_alloc_count();
   if (allocations < 1) throw Error('allocation injection did not observe construction');
+  const metafileFormat = alloc(20), metafileMedium = alloc(12);
+  u8.fill(0, wa(metafileMedium), wa(metafileMedium) + 12);
+  [3, 0, 1, -1, 32].forEach((v, i) => dv.setUint32(wa(metafileFormat) + i * 4, v, true));
+  check('explicit WMF fixture gets an independently owned presentation',
+    e.test_ole_data_get(dv.getUint32(wa(dataOut), true), metafileFormat, metafileMedium) === 0);
+  const explicitPicture = dv.getUint32(wa(metafileMedium) + 4, true);
+  const explicitHandle = dv.getUint32(wa(explicitPicture) + 12, true);
+  const mixed = fixture();
+  check('cache accepts both DIB and explicit WMF presentations',
+    e.test_ole_cache_set_data(mixed, metafileFormat, metafileMedium, 1) === 0);
   e.test_ole_release(dv.getUint32(wa(dataOut), true));
   e.test_ole_release(baseline);
+  check('building mixed-format data face preserves the explicit WMF owner',
+    e.test_ole_static_query(mixed, dataIid, dataOut) === 0 &&
+    e.test_call_GetObjectType(explicitHandle) === 9 &&
+    dv.getUint32(wa(mixed) + 168, true) === 0);
+  const mixedFace = dv.getUint32(wa(dataOut), true);
+  const mixedEntries = dv.getUint32(wa(mixedFace) + 12, true);
+  check('live face borrows explicit WMF rather than replacing it with DIB synthesis',
+    e.test_ole_data_count(mixedFace) === 2 &&
+    dv.getUint16(wa(mixedEntries) + 32, true) === 3 &&
+    dv.getUint32(wa(mixedEntries) + 32 + 24, true) === explicitPicture);
+  check('DIB replacement preserves explicit WMF on an already held data face',
+    e.test_ole_cache_set_data(mixed, pictureFormat, pictureMedium, 0) === 0 &&
+    e.test_call_GetObjectType(explicitHandle) === 9 &&
+    dv.getUint32(wa(mixed) + 164, true) === mixedFace &&
+    dv.getUint32(wa(mixed) + 168, true) === 0 && e.test_ole_data_count(mixedFace) === 2);
+  // An icon WMF is a different presentation and must not suppress synthesis
+  // of the DIB's content view. Copy it before destroying the owning cache.
+  dv.setUint32(wa(metafileFormat) + 8, 4, true);
+  dv.setUint32(wa(metafileMedium), 32, true);
+  dv.setUint32(wa(metafileMedium) + 4, explicitPicture, true);
+  const iconMixed = fixture();
+  check('an explicit icon WMF does not suppress synthesized content WMF',
+    e.test_ole_cache_set_data(iconMixed, metafileFormat, metafileMedium, 0) === 0 &&
+    e.test_ole_static_query(iconMixed, dataIid, dataOut) === 0 &&
+    e.test_ole_data_count(dv.getUint32(wa(dataOut), true)) === 3 &&
+    dv.getUint32(wa(iconMixed) + 168, true) !== 0);
+  e.test_ole_release(dv.getUint32(wa(dataOut), true));
+  e.test_ole_release(iconMixed);
+  e.test_ole_release(mixedFace);
+  e.test_ole_release(mixed);
+  check('final mixed cache release retires its explicit WMF', e.test_call_GetObjectType(explicitHandle) === 0);
+  e.guest_free(metafileFormat);
+  e.guest_free(metafileMedium);
   for (let nth = 1; nth <= allocations; nth++) {
     e.ole_alloc_arm(0);
     const root = fixture();
