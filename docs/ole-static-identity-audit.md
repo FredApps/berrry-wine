@@ -649,3 +649,43 @@ The refresh scan now translates each canonical entry once for its local field
 reads and descriptor copy. Verification: static-handler **92/92**, guest COM
 callbacks **164/164**, public metafile **16/16** (272 checks). These are focused
 source-compiled tests, not a full-build or new browser verification claim.
+
+## Integration checkpoint — 2026-09-21, after a742103d
+
+`bash tools/build.sh` completed successfully on the shared working tree. Both
+artifacts compiled and the 242 data-segment overlap check passed. This supersedes
+the earlier toy-VM bundle-freshness blocker for this checkpoint; it does not
+retroactively turn earlier failed build attempts into passes.
+
+| Artifact | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `build/wine-assembly.wasm` | 1,470,047 | `2074c374dfa1c4c140d454f69220e5a21cea422b97c9d3f72157d58b058e6358` |
+| `build/wine-assembly.compat.wasm` | 1,471,021 | `dcf5e5e6f644bebb3afb03587b43d37ec13a67a85db6b6f434c243d925ee4010` |
+
+Region layout hash: `8700ceb0bcf1a96d`. The tree contains other agents'
+uncommitted changes, including 15 appended APIs (3,707 total), so these hashes
+identify the actual shared-tree artifacts, not a reproducible clean a742103d
+build or an isolated OLE-only benchmark.
+
+Current gate inventory: 253 manual silent handlers plus 22 metadata stubs;
+140 exact-duplicate groups / 542 members (baseline 142 / 548); 240 A/W pairs
+(175 shared, 62 delegated, 3 divergent). The three divergent names remain
+`wsprintf`, `wvsprintf`, and `GetCommandLine`; the census classification is
+not itself evidence of three new behavior bugs. These measurements do not
+prove the full `fable-review.md` objective complete or justify banking changes
+from other agents' dirty files.
+
+The browser checkpoint first failed before application acceptance checks with
+CDP `Execution context was destroyed`. The harness had put its readiness poll
+inside a document that initial navigation could replace. Readiness now polls
+from Node, retrying only that specific error and only for the initial read-only
+check. Later evaluations, including guest mutations, are never replayed. An
+unmodified rerun already passed, confirming the startup failure is intermittent;
+the corrected harness is verified separately below.
+
+The corrected current-source Chrome run terminates with exit 0 and passes
+Save As/New/Open: 5,205-byte RTF, text/object length 35, 376 red and 368 blue
+reopened-picture pixels. The screenshot was inspected. This verifies the browser
+path through the accumulated fixes, not Safari or performance. The broader
+review and the previously listed OLE transaction/mapping/callback gaps remain
+open despite this successful integration checkpoint.

@@ -206,15 +206,22 @@ async function main() {
     return response.result && response.result.value;
   }
 
-  await evaluate(`new Promise((resolve, reject) => {
-    const started = performance.now();
-    const poll = () => {
-      if (document.readyState === 'complete' && typeof launchApp === 'function') resolve(1);
-      else if (performance.now() - started > 15000) reject(new Error('browser globals did not initialize'));
-      else setTimeout(poll, 50);
-    };
-    poll();
-  })`, 18000);
+  // CDP can expose the target URL before the initial navigation commits.
+  // A promise polling inside that old document dies with its execution
+  // context. Poll this read-only readiness check from the host instead;
+  // never retry later evaluations that mutate guest/application state.
+  const readyDeadline = Date.now() + 18000;
+  let initialized = false;
+  while (Date.now() < readyDeadline) {
+    try {
+      initialized = await evaluate("document.readyState === 'complete' && typeof launchApp === 'function'");
+      if (initialized) break;
+    } catch (error) {
+      if (!String(error.message).includes('Execution context was destroyed')) throw error;
+    }
+    await wait(50);
+  }
+  assert(initialized, 'browser globals did not initialize');
 
   await evaluate(`(() => {
     // Install acceptance-only instrumentation before WineAssembly creates its
