@@ -40,6 +40,8 @@ async function main() {
 
   const iidPersistStorage = alloc(16);
   dv.setUint32(wa(iidPersistStorage), 0x0000010a, true);
+  dv.setUint32(wa(iidPersistStorage) + 8, 0xc0, true);
+  dv.setUint32(wa(iidPersistStorage) + 12, 0x46000000, true);
   const out = alloc(4);
   check('QueryInterface exposes embedded IPersistStorage',
     e.test_ole_static_query(object, iidPersistStorage, out) === 0 &&
@@ -48,6 +50,8 @@ async function main() {
 
   const iidOleCache = alloc(16);
   dv.setUint32(wa(iidOleCache), 0x0000011e, true);
+  dv.setUint32(wa(iidOleCache) + 8, 0xc0, true);
+  dv.setUint32(wa(iidOleCache) + 12, 0x46000000, true);
   check('QueryInterface exposes the embedded static-presentation IOleCache',
     e.test_ole_static_query(object, iidOleCache, out) === 0 &&
     dv.getUint32(wa(out), true) === object + 52);
@@ -55,6 +59,8 @@ async function main() {
 
   const iidViewObject = alloc(16);
   dv.setUint32(wa(iidViewObject), 0x0000010d, true);
+  dv.setUint32(wa(iidViewObject) + 8, 0xc0, true);
+  dv.setUint32(wa(iidViewObject) + 12, 0x46000000, true);
   check('QueryInterface exposes the cached-presentation IViewObject',
     e.test_ole_static_query(object, iidViewObject, out) === 0 &&
     dv.getUint32(wa(out), true) === object + 56);

@@ -246,6 +246,9 @@ async function main() {
 
   const persistStreamInitIid = writeBytes(new Uint8Array(16));
   dv.setUint32(wa(persistStreamInitIid), 0x7fd52380, true);
+  dv.setUint32(wa(persistStreamInitIid) + 4, 0x101b4e07, true);
+  dv.setUint32(wa(persistStreamInitIid) + 8, 0x00082dae, true);
+  dv.setUint32(wa(persistStreamInitIid) + 12, 0x13c72e2b, true);
   dv.setUint32(wa(classOut), 0, true);
   check('Common Dialog exposes the IPersistStreamInit face required by VB6',
     e.test_common_dialog_persiststreaminit(comClsid, persistStreamInitIid, classOut) === 0 &&
@@ -253,6 +256,8 @@ async function main() {
 
   const dispatchIid = writeBytes(new Uint8Array(16));
   dv.setUint32(wa(dispatchIid), 0x00020400, true);
+  dv.setUint32(wa(dispatchIid) + 8, 0xc0, true);
+  dv.setUint32(wa(dispatchIid) + 12, 0x46000000, true);
   dv.setUint32(wa(classOut), 0, true);
   check('Common Dialog exposes IDispatch and round-trips scalar properties',
     e.test_common_dialog_scalar_dispatch(comClsid, dispatchIid, classOut) === 31);

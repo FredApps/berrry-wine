@@ -64,3 +64,32 @@ matches most requests by Data1 only; full GUID validation and the separate
 IDataObject face's controlling-IUnknown identity remain audit items. The
 duplicate QueryInterface wrappers have deliberately not been consolidated
 before that contract review.
+
+## Follow-up: complete static-object GUID checks
+
+The shared query helper now translates the IID once and validates the other
+three DWORDs before dispatching by Data1. Classic OLE/automation requests
+require the canonical COM suffix. IPersistStreamInit uses its distinct
+`7FD52380-4E07-101B-AE2D-08002B2EC713` identity, verified against
+[Microsoft's SDK ocidl.h](https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/ocidl.h).
+Rejected queries clear output, do not AddRef, and cannot trigger lazy
+IDataObject allocation. Existing interface/class availability is unchanged.
+
+The public-vtable regression flips each of the twelve suffix bytes for eight
+classic IDs through three embedded faces (288 rejections), plus 24 mutations
+of real IPersistStreamInit/IDispatch IDs on CommonDialog. Valid requests still
+succeed and their returned references release normally. Old source fails
+at the first forged IUnknown suffix byte. ROT 28/28 plus these assertions and
+static handler 66/66 pass. The storage suite passes 79/79 in the current
+worktree, including corrected CommonDialog GUID fixtures; its pre-existing,
+unrelated EOF-expectation edit is deliberately excluded from this commit,
+so that result is not a clean-commit storage-suite claim. The IID fixtures
+are committed independently of that edit. Initial excess parentheses were
+caught by the fragment check and corrected before runtime testing.
+
+Remaining: the separate IDataObject face's controlling-IUnknown identity,
+complete class-GUID checks in the CommonDialog factory, and the duplicate
+QI dispatch bodies. Full-GUID matching alone does not close those contracts.
+Fragment and A/W checks pass. The shared-tree duplicate gate currently
+reports three new ACM audio-stub members outside this change; no baseline
+was raised. No full build or browser claim is made for this slice.

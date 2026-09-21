@@ -9830,11 +9830,29 @@
     (local.get $hr))
 
   (func $ole_static_query_interface (param $root i32) (param $iid i32) (param $out i32) (result i32)
-    (local $data1 i32) (local $iface i32) (local $owner i32)
+    (local $data1 i32) (local $iface i32) (local $owner i32) (local $iid_w i32)
     (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80004003))))
     (call $gs32 (local.get $out) (i32.const 0))
     (if (i32.eqz (local.get $iid)) (then (return (i32.const 0x80004003))))
-    (local.set $data1 (call $gl32 (local.get $iid)))
+    (local.set $iid_w (call $g2w (local.get $iid)))
+    (local.set $data1 (i32.load (local.get $iid_w)))
+    ;; Translate once and validate all remaining GUID bytes before selecting
+    ;; an interface or creating the lazily allocated IDataObject face.
+    (if (i32.eq (local.get $data1) (i32.const 0x7FD52380))
+      (then
+        (if (i32.or
+              (i32.ne (i32.load offset=4 (local.get $iid_w)) (i32.const 0x101B4E07))
+              (i32.or
+                (i32.ne (i32.load offset=8 (local.get $iid_w)) (i32.const 0x00082DAE))
+                (i32.ne (i32.load offset=12 (local.get $iid_w)) (i32.const 0x13C72E2B))))
+          (then (return (i32.const 0x80004002)))))
+      (else
+        (if (i32.or
+              (i32.ne (i32.load offset=4 (local.get $iid_w)) (i32.const 0))
+              (i32.or
+                (i32.ne (i32.load offset=8 (local.get $iid_w)) (i32.const 0x000000C0))
+                (i32.ne (i32.load offset=12 (local.get $iid_w)) (i32.const 0x46000000))))
+          (then (return (i32.const 0x80004002))))))
     (if (i32.or (i32.eqz (local.get $data1)) (i32.eq (local.get $data1) (i32.const 0x00000112)))
       (then (local.set $iface (local.get $root))))
     (if (i32.or
