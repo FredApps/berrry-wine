@@ -1442,14 +1442,19 @@ only for the app the link names.
 **The server list (2026-09-21).** Opening a `room: 'auto'` game while
 anybody's room is serving shows every such room: one row per owner (their
 name and the probe's status line, e.g. `noname demo1 1/4`), each with its own
-Join, plus **Continue offline**. The list re-reads presence every 3 s while it
+Join, plus **Play offline**. The list re-reads presence every 3 s while it
 is open, so servers that start or stop while somebody is looking come and go.
-The same list comes back when the game first goes online, this time with
-**Play offline** and **Start my own room**. The latter is `openRoom({ownRoom})`:
+The same list comes back when the game first goes online. A plain `socket()`
+(why 1) cannot say whether it serves or joins, so that card adds **Start my own
+room**, which is `openRoom({ownRoom})`:
 a second room beside the listed ones, with no joining and no step-down. The
 step-down only settles two claims made on an *empty* channel at the same
 moment. With nobody serving, nothing is shown and going online joins or opens
-a room silently, as before.
+a room silently, as before. A DirectPlay Open to create (why 2) is never asked:
+it goes online at once (a room of its own when others are serving) and shows
+the **share card**, `#wine-lan-share`: "You are hosting …", the page URL in a
+read-only field, and **Share link** (the phone's share sheet) or **Copy link**.
+The page URL is the invitation, and until this card nothing on screen said so.
 
 **DirectPlay games: Blobby Volley (2026-09-21).** The probe also speaks dpl/1
 (`hostProbe: { protocol: 'dplay' }`). It asks with the provider's own
@@ -1459,15 +1464,12 @@ labels the row: its name and players, e.g. `game 40 1/2`.
 `test/test-blobby-host-probe.js` runs this against the real game: a host
 answers, and a copy searching with its own broadcast `ENUM_REQ`s never does.
 
-Three registry fields keep Blobby's one-keyboard game undisturbed:
+Two things keep Blobby's one-keyboard game undisturbed:
 
 - The list appears at launch (and as a mid-game toast) only when someone is
   hosting. With nobody hosting, the game starts on its own keyboard and the card
   waits until NETZWERKSPIEL makes the game's own DirectPlay call ask for a room.
   An invite link still joins at launch.
-- `local: true` keeps **Both players here** on the card. The card is shown even
-  when nobody is serving, so that choice stays reachable; an empty card offers
-  **Go online**, which is the silent join-or-open.
 - `join.inGame` finishes the join from inside the game. `net_link_open(why)`
   tells the page which networked act asked for the room: 1 `socket()`, 2
   DirectPlay Open to host, 3 Open to join, 4 EnumSessions. A searcher (4) that

@@ -14,7 +14,7 @@
 // +connect to the owner's seat over WebRTC. Each browser context is its own
 // cookie, so its own signaling user, as two people are.
 //
-// A third browser says "Continue offline", starts at the game's menu, and joins from
+// A third browser says "Play offline", starts at the game's menu, and joins from
 // the toast the shell shows it later. That join reaches a game already past
 // its command line, so it goes through lan.join.inGame typing into Quake's
 // console. It is also the three-player room where an unread UDP socket used
@@ -218,7 +218,7 @@ const snapWindow = () => {
       !!card && card.length === 1 && /demo1/.test(card[0]));
     check('with a way to continue offline', await guest.page.evaluate(() =>
       Array.from(document.querySelectorAll('#wine-lan-card button'))
-        .some(x => x.textContent === 'Continue offline')));
+        .some(x => x.textContent === 'Play offline')));
     check('and its game was not started behind the list',
       await guest.page.evaluate(() => runningApps.length === 0));
     const grown = await H.until(guest.page, 'guest: the list never refreshed',
@@ -262,7 +262,7 @@ const snapWindow = () => {
 
     // ---- a third player, already playing when they take the offer --------
     //
-    // "Continue offline" on the list, so the game starts at its own menu with no room.
+    // "Play offline" on the list, so the game starts at its own menu with no room.
     // The shell keeps looking, offers the same host again as a toast, and a
     // Join there has to reach a game that is past its command line: the
     // recipe types `connect 10.0.0.1 into its console. Three players is also
@@ -273,12 +273,12 @@ const snapWindow = () => {
     if (offered) {
       await third.page.evaluate(() => {
         Array.from(document.querySelectorAll('#wine-lan-card button'))
-          .find(x => x.textContent === 'Continue offline').click();
+          .find(x => x.textContent === 'Play offline').click();
       });
     }
     const running = await H.until(third.page, 'third: game never started',
       () => runningApps.length > 0 && !runningApps[0].wine.vlanWire, null, 60000);
-    check('"Continue offline" starts the game with no room', !!running);
+    check('"Play offline" starts the game with no room', !!running);
     const toast = await H.until(third.page, 'third: no toast',
       () => { const c = document.getElementById('wine-lan-card'); return c ? c.textContent : null; },
       null, 90000);

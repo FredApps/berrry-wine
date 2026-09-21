@@ -302,27 +302,30 @@ const blobsAt = (band) => {
 
     // ---- the host goes online, then hosts ---------------------------------
     //
-    // The room card opening is the game's own DirectPlay call asking for a
-    // room, so it is the first observable proof that the key script landed
-    // where it was aimed. Nobody is hosting yet, so the card is empty and
-    // offers Go online. NETZWERKSPIEL is one down from the top of an untouched
-    // main menu; ESC out of the settings screen instead leaves EINSTELLUNGEN
-    // selected, two up.
+    // SPIEL BEGINNEN! is the game's own DirectPlay Open to create, and a
+    // host is asked nothing: the page goes online and the share card offers
+    // the page link, so the card is the first observable proof that the key
+    // script landed where it was aimed. NETZWERKSPIEL is one down from the
+    // top of an untouched main menu; ESC out of the settings screen instead
+    // leaves EINSTELLUNGEN selected, two up.
     const toNetwork = flag('host-setup') ? [UP, UP] : [DOWN];
     await keys(host.page, [...toNetwork, ENTER, ENTER, DOWN, DOWN, ENTER]);
-    const choice = (side, c) => H.until(side.page, `${side.label}: no "${c}" on the room card`,
-      want => !!document.querySelector(`#wine-lan-card button[data-choice="${want}"]`),
-      c, 60000);
-    const hostAsked = !!(await choice(host, 'online'));
-    if (!hostAsked) await snap(host, 'host-no-card');
-    check('the host\'s game asked for a room, and nobody was hosting yet', hostAsked);
-    if (!hostAsked) throw new Error('no room card on the host; see host-no-card.png');
-    await host.page.evaluate(() =>
-      document.querySelector('#wine-lan-card button[data-choice="online"]').click());
+    const share = await H.until(host.page, 'host: no share card', () => {
+      const url = document.querySelector('#wine-lan-share .wine-lan-share-url');
+      return url && !document.getElementById('wine-lan-card') ? url.value : null;
+    }, null, 60000);
+    if (!share) await snap(host, 'host-no-card');
+    check(`hosting went online without a question and offered the page link (${share})`,
+      !!share && /[?&]room=/.test(share)
+      && share === await host.page.evaluate(() => location.href));
+    if (!share) throw new Error('no share card on the host; see host-no-card.png');
     const wired = ({ page, label }) => H.until(page, `${label}: never got a wire`,
       () => runningApps.length > 0 && !!runningApps[0].wine.vlanWire, null, MILESTONE_MS);
     check('the host went online as the room owner (10.0.0.1)',
       !!(await wired(host)) && (await host.page.evaluate(wireOf)).address === '10.0.0.1');
+    await host.page.evaluate(() =>
+      [...document.querySelectorAll('#wine-lan-share button')]
+        .find(b => b.textContent === 'OK').click());
     // Its own Open was parked while the card was up; now it returns, the
     // session opens, and the probe finds it serving.
     const hostChip = await H.until(host.page, 'host: never showed it was hosting', () => {

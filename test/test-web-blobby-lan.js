@@ -5,7 +5,8 @@
 //   node test/test-web-blobby-lan.js [--timeout=300] [--headful] [--keep]
 //
 // test-blobby-vlan.js plays the match between two OS processes. This is the
-// page: the room card's "Both players here", the tab's LoopbackSegment, and a
+// page: two copies launched onto the tab's LoopbackSegment (the room card no
+// longer offers this; `launchApp(id, {lanLink: joinPageSegment()})` does), and a
 // DirectPlay thread that in a browser runs in a Worker and reaches the wire
 // through the per-thread RPC block rather than a direct call.
 //
@@ -113,11 +114,6 @@ async function snap(page, index, name) {
   return s;
 }
 
-// The room card the game's own DirectPlay call opens (lib/browser-shell.js
-// pickRoom); "Both players here" is its local choice.
-const lobbyUp = page => page.evaluate(() =>
-  !!document.querySelector('#wine-lan-card button[data-choice="local"]'));
-
 // Wait for an instance at `index` to exist and put a window up.
 async function awaitInstance(page, index, label) {
   const started = await H.until(page, `${label}: instance never started`,
@@ -155,37 +151,29 @@ async function awaitInstance(page, index, label) {
 
     // ---- the host --------------------------------------------------------
     //
-    // Launching is just launching now: somebody playing a two-player game on
-    // one keyboard must never be asked who to connect to.
+    // Each copy is launched already wired to the tab segment, so neither is
+    // asked anything when its DirectPlay call goes online.
     const host = 0;
-    await page.evaluate(() => {
-      document.getElementById('app-select').value = 'blobby_volley';
-      launchApp();
+    const launchWired = () => page.evaluate(() => {
+      shell.launchApp('blobby_volley', { lanLink: shell.joinPageSegment() });
     });
+    await launchWired();
     check('the host launched', await awaitInstance(page, host, 'host'));
     await H.sleep(MENU_MS);
     await snap(page, host, 'host-menu');
-    check('no lobby before the guest asked for the network', !(await lobbyUp(page)));
 
-    // SPIEL BEGINNEN! is the app's own DirectPlay Open, and that is what the
-    // lobby waits for.
+    // SPIEL BEGINNEN! is the app's own DirectPlay Open.
     await keys(page, [DOWN, ENTER, ENTER, DOWN, DOWN, ENTER]);
-    const asked = await H.until(page, 'picking network play did not open the room card', () =>
-      !!document.querySelector('#wine-lan-card button[data-choice="local"]'), null, MILESTONE_MS);
-    check('picking network play opened the room card, with "Both players here"', !!asked);
-    await page.evaluate(() => {
-      document.querySelector('#wine-lan-card button[data-choice="local"]').click();
-    });
+    check('hosting asked nothing (no room card)',
+      !(await page.evaluate(() => !!document.getElementById('wine-lan-card'))));
 
-    // The guest is the second copy the lobby starts on the same segment. It
-    // is never asked anything, because it is launched already wired.
     const guest = 1;
+    await launchWired();
     check('a second Blobby started without stopping the first',
       await awaitInstance(page, guest, 'guest')
       && await page.evaluate(() => runningApps.length) === 2);
 
-    // The host's own Open was parked while the lobby was up; once it has a
-    // wire the call returns and the app reaches "WARTE AUF EINEN GAST".
+    // The host's Open returns at once and the app reaches "WARTE AUF EINEN GAST".
     await H.sleep(3000);
     await snap(page, host, 'host-waiting');
 
