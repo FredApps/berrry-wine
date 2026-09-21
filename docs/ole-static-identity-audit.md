@@ -548,3 +548,36 @@ metafile **14/14**, and fresh-process WordPad picture roundtrip **12/12** pass
 (275 checks). WordPad still reopens both pictures with 752 red and 736 blue
 pixels. All four test processes terminated successfully; no full-build or new
 browser verification is claimed for this allocation-failure slice.
+
+## Cached enhanced metafiles — routed through the native player
+
+`ole_static_draw` now recognizes CF_ENHMETAFILE/TYMED_ENHMF and sends its
+opaque GDI handle to the existing native EMF player. WMF and EMF paths share
+the caller-logical-to-device bounds conversion; the EMF path uses a private
+16-byte target rectangle and the player's existing SaveDC/RestoreDC. It does
+not translate a GDI handle as a guest pointer, rasterize to an intermediate
+fixed-size image, or duplicate the EMF record interpreter.
+
+Microsoft documents the caller rectangle as controlling positioning/stretching
+for [IViewObject::Draw](https://learn.microsoft.com/en-us/windows/win32/api/oleidl/nf-oleidl-iviewobject-draw)
+and specifies logical-coordinate bounds for
+[PlayEnhMetaFile](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-playenhmetafile).
+The internal native player expects the already-mapped target and retains the
+device origin independently, so the shared OLE adapter performs that mapping.
+
+The new public-handler regression failed with E_FAIL before the implementation.
+It now passes through both OleDraw and IViewObject::Draw using a vector EMF
+with nonzero source bounds, 2× caller scaling, viewport offset and clipping.
+It checks interior/exterior pixels, all 96 caller DC-state bytes, unsupported
+aspect and invalid DC rejection, handle survival across draws, and retirement
+on final cache-owner release. The public metafile suite passes **15/15**.
+
+This closes the missing cached-EMF dispatch, not every possible EMF record or
+mapping issue in the existing player. In particular, its header-bounds versus
+physical-frame treatment has not been established against native Windows here.
+Remaining OLE gaps include other WMF mapping modes, draw continuation callbacks,
+arbitrary guest IViewObject delegation, and transactional live-cache refresh.
+
+Additional regression verification: static-handler **85/85** and guest COM
+callbacks **164/164** pass, for **264 checks** across three terminal successful
+test processes. No new browser or full-build result is claimed for this slice.

@@ -11517,16 +11517,20 @@
             (return)))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
-  ;; Play an anisotropic clipboard metafile directly into the caller's DC.
+  ;; Play a cached WMF picture or enhanced-metafile handle into the caller DC.
   ;; MS-WMF 3.1.3: the picture supplies the window, the player the viewport.
   ;; Bounds are in the caller's logical coordinates, not screen coordinates.
   ;; Keep its device origin and clip intact; restore every DC field afterward.
-  (func $ole_draw_metafile_picture (param $hdc i32) (param $picture i32)
-        (param $bounds i32) (result i32)
+  ;; picture/bounds are translated addresses; enhanced_handle is opaque.
+  (func $ole_draw_cached_metafile (param $hdc i32) (param $picture i32)
+        (param $bounds i32) (param $enhanced_handle i32) (result i32)
     (local $dc i32) (local $left i32) (local $top i32)
     (local $right i32) (local $bottom i32) (local $saved i32) (local $ok i32)
-    (if (i32.ne (i32.load (local.get $picture)) (i32.const 8))
-      (then (return (i32.const 0x80004005))))
+    (local $target i32) (local $target_w i32)
+    (if (i32.eqz (local.get $enhanced_handle))
+      (then
+        (if (i32.ne (i32.load (local.get $picture)) (i32.const 8))
+          (then (return (i32.const 0x80004005))))))
     (local.set $dc (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
     (if (i32.eqz (local.get $dc)) (then (return (i32.const 0x80004005))))
     (local.set $left (call $gdi_map_coordinate (i32.load (local.get $bounds))
@@ -11552,6 +11556,22 @@
     (if (i32.or (i32.eq (local.get $left) (local.get $right))
           (i32.eq (local.get $top) (local.get $bottom)))
       (then (return (i32.const 0x80070057))))
+    (if (local.get $enhanced_handle)
+      (then
+        ;; The native EMF player owns SaveDC/RestoreDC and composes its records
+        ;; into this device-space target. Device origin remains in the DC.
+        (local.set $target (call $heap_alloc (i32.const 16)))
+        (if (i32.eqz (local.get $target)) (then (return (i32.const 0x8007000E))))
+        (local.set $target_w (call $g2w (local.get $target)))
+        (i32.store (local.get $target_w) (local.get $left))
+        (i32.store offset=4 (local.get $target_w) (local.get $top))
+        (i32.store offset=8 (local.get $target_w) (local.get $right))
+        (i32.store offset=12 (local.get $target_w) (local.get $bottom))
+        (local.set $ok (call $gdi_metafile_play_emf
+          (local.get $hdc) (local.get $enhanced_handle) (local.get $target_w)))
+        (call $heap_free (local.get $target))
+        (return (if (result i32) (local.get $ok)
+          (then (i32.const 0)) (else (i32.const 0x80004005))))))
     (local.set $saved (call $gdi_dc_save (local.get $hdc)))
     (if (i32.eqz (local.get $saved)) (then (return (i32.const 0x80004005))))
     (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 36) (i32.const 8) (i32.const 1)))
@@ -11595,11 +11615,17 @@
           (local.set $medium (i32.load offset=28 (local.get $entry)))
           (if (i32.load offset=32 (local.get $entry))
             (then
+              ;; TYMED_ENHMF contains a GDI handle, not a guest address.
+              (if (i32.and (i32.eq (local.get $format) (i32.const 14))
+                    (i32.eq (local.get $medium) (i32.const 64)))
+                (then (return (call $ole_draw_cached_metafile
+                  (local.get $hdc) (i32.const 0) (local.get $bounds)
+                  (i32.load offset=32 (local.get $entry))))))
               (local.set $data (call $g2w (i32.load offset=32 (local.get $entry))))
               (if (i32.and (i32.eq (local.get $format) (i32.const 3))
                     (i32.eq (local.get $medium) (i32.const 32)))
-                (then (return (call $ole_draw_metafile_picture
-                  (local.get $hdc) (local.get $data) (local.get $bounds)))))
+                (then (return (call $ole_draw_cached_metafile
+                  (local.get $hdc) (local.get $data) (local.get $bounds) (i32.const 0)))))
               (if (i32.and (i32.eq (local.get $format) (i32.const 8))
                     (i32.eq (local.get $medium) (i32.const 1)))
                 (then

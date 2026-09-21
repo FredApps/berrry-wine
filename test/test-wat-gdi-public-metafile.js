@@ -405,6 +405,46 @@ const RegionMap = require('../lib/region-map.generated.js');
     wat.test_call_DeleteObject(bitmap);
   });
 
+  check('OLE cached EMF draws through both frontdoors with caller mapping and clipping intact', () => {
+    const { data, size } = makeVectorEmf([
+      emfRecord(39, emfDwords(1, 0, 0x00ff0000, 0)), // blue brush
+      emfRecord(37, emfDwords(1)),
+      emfRecord(37, emfDwords(0x80000008)), // null pen
+      emfRecord(43, emfDwords(10, 5, 30, 25)),
+    ], { bounds: [10, 5, 30, 25] });
+    const metafile = wat.test_call_SetEnhMetaFileBits(size, data) >>> 0;
+    assert(metafile);
+    const format = allocZero(20), medium = allocZero(12), bounds = allocZero(16);
+    [14, 0, 1, -1, 64].forEach((v, i) => wat.guest_write32(format + i * 4, v));
+    wat.guest_write32(medium, 64);
+    wat.guest_write32(medium + 4, metafile);
+    [10, 10, 30, 30].forEach((v, i) => wat.guest_write32(bounds + i * 4, v));
+    const object = wat.test_ole_create_static_handler(0) >>> 0;
+    assert.strictEqual(wat.test_ole_cache_set_data(object, format, medium, 1), 0);
+    for (const view of [0, 1]) {
+      const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
+      const bitmap = wat.test_call_CreateCompatibleBitmap(0, 100, 100) >>> 0;
+      wat.test_call_SelectObject(hdc, bitmap);
+      const dc = wat.test_metafile_dc(hdc) >>> 0, dv = new DataView(memory.buffer);
+      [8, 0, 0, 1, 1, 7, 9, 2, 2].forEach((v, i) => dv.setInt32(dc + 36 + i * 4, v, true));
+      assert(wat.test_metafile_clip(hdc));
+      const before = Buffer.from(bytes.subarray(dc, dc + 96));
+      assert.strictEqual(wat.test_ole_draw_public(object, 1, hdc, bounds, view), 0);
+      assert.deepStrictEqual(Buffer.from(bytes.subarray(dc, dc + 96)), before);
+      assert.strictEqual(wat.test_call_GetPixel(hdc, 20, 20) >>> 0, 0x00ff0000);
+      assert.strictEqual(wat.test_call_GetPixel(hdc, 12, 20) >>> 0, 0, 'caller clip is retained');
+      assert.strictEqual(wat.test_call_GetPixel(hdc, 32, 20) >>> 0, 0, 'requested bounds constrain drawing');
+      assert.strictEqual(wat.test_ole_draw_public(object, 2, hdc, bounds, view) >>> 0, 0x80004005);
+      assert.strictEqual(wat.test_ole_draw_public(object, 1, 0, bounds, view) >>> 0, 0x80004005);
+      assert.strictEqual(wat.test_call_GetObjectType(metafile), 13, 'drawing borrows the EMF handle');
+      wat.test_call_DeleteDC(hdc);
+      wat.test_call_DeleteObject(bitmap);
+    }
+    assert.strictEqual(wat.test_ole_release(object), 0);
+    assert.strictEqual(wat.test_call_GetObjectType(metafile), 0);
+    [data, format, medium, bounds].forEach(p => wat.guest_free(p));
+  });
+
   check('synthesized DIB metafile scales to OLE bounds instead of forcing its original pixel size', () => {
     const dib = allocZero(40 + 32 * 24 * 3);
     [[0, 40], [4, 32], [8, 24], [12, 0x00180001], [20, 32 * 24 * 3]]
