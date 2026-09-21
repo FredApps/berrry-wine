@@ -4,6 +4,7 @@
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
@@ -13,6 +14,7 @@ const SAVE_NAME = 'wordpad-ole-roundtrip.rtf';
 const SAVED = path.join(OUT, SAVE_NAME);
 const RESAVE_NAME = 'wordpad-ole-reopened.rtf';
 const RESAVED = path.join(OUT, RESAVE_NAME);
+const REOPEN_PNG = path.join(OUT, 'wordpad-ole-reopened.png');
 const ID_EDIT_COPY = 57634;
 const ID_EDIT_PASTE = 57637;
 
@@ -21,7 +23,7 @@ if (!fs.existsSync(EXE)) {
   process.exit(0);
 }
 fs.mkdirSync(OUT, { recursive: true });
-for (const file of [SAVED, RESAVED]) {
+for (const file of [SAVED, RESAVED, REOPEN_PNG]) {
   try { fs.unlinkSync(file); } catch (_) {}
 }
 
@@ -71,6 +73,7 @@ const reopenOutput = fs.existsSync(SAVED) ? runWordPad([
   '80:0x111:57601',
   `130:open-dlg-pick:${SAVE_NAME}`,
   '220:dump-focus-unicode:after-reopen',
+  `225:png-pixels:${REOPEN_PNG}`,
   '240:0x111:57604',
   `295:open-dlg-pick:${RESAVE_NAME}`,
   `400:vfs-export:${RESAVE_NAME}:${RESAVED}`,
@@ -122,6 +125,21 @@ function validDibWmf(wmf) {
 const presentations = extractWmfPresentations(savedText);
 const resavedText = fs.existsSync(RESAVED) ? fs.readFileSync(RESAVED).toString('latin1') : '';
 const reopenedPresentations = extractWmfPresentations(resavedText);
+let redPixels = 0, bluePixels = 0;
+if (fs.existsSync(REOPEN_PNG)) {
+  const png = PNG.sync.read(fs.readFileSync(REOPEN_PNG));
+  // Fixed fixture window: exclude caption/toolbars, whose blue pixels are
+  // not evidence that a document picture rendered.
+  for (let y = 132; y < Math.min(275, png.height); y++) {
+    for (let x = 8; x < Math.min(392, png.width); x++) {
+      const i = (y * png.width + x) * 4;
+      const r = png.data[i], g = png.data[i + 1], b = png.data[i + 2];
+      if (r > 180 && g < 100 && b < 100) redPixels++;
+      if (b > 180 && r < 100 && g < 100) bluePixels++;
+    }
+  }
+}
+console.log(`  reopened bitmap pixels: red=${redPixels} blue=${bluePixels}`);
 
 const escapedName = SAVE_NAME.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 const checks = [
@@ -138,6 +156,7 @@ const checks = [
     /dump-focus-unicode after-reopen: .*U\+FFFC,U\+FFFC/.test(reopenOutput)],
   ['reopened document saves both complete pictures again',
     reopenedPresentations.length === 2 && reopenedPresentations.every(validDibWmf)],
+  ['reopened document renders the red and blue bitmap cells', redPixels > 200 && bluePixels > 200],
   ['no runtime or unimplemented crash', !/CRASH|UNIMPLEMENTED API:|Unreachable code/.test(output)],
 ];
 

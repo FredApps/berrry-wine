@@ -307,3 +307,32 @@ The storage suite passes 79/79 on the shared worktree (its pre-existing,
 uncommitted EOF-expectation edit remains unrelated and is not included here).
 Browser rendering and reopened-picture pixel verification remain separate;
 this result establishes parsing, object reconstruction and serialized data.
+
+## Reopened pixels — confirmed missing rendering, still open
+
+The roundtrip test now captures canonical pixels after the fresh-process
+reopen, before Save As, and checks the red/blue fixture bitmap colors inside
+the document client area (excluding caption/toolbars). This intentionally
+strengthens the existing test beyond object positions and saved bytes.
+The screenshot `test/output/wordpad-richedit/wordpad-ole-reopened.png` was
+visually inspected: it contains the text `before` and blank picture space.
+The first whole-image census counted only one red pixel and 666 blue UI
+pixels, demonstrating why the assertion must crop to the document area.
+
+Source inspection explains the missing branch: both IViewObject::Draw and
+OleDraw only read the legacy CF_DIB render slot at root+64/+92. Reopened
+pictures are retained as CF_METAFILEPICT, so their serialized bytes survive
+but the draw helpers report failure instead of playing the cached metafile.
+Native WMF playback already exists in `gdi_metafile_play_wmf`; OLE still
+needs a bounds-aware presentation path, preserving caller DC state, clipping,
+mapping and extent semantics. Extracting a particular StretchDIB record or
+rasterizing via the fixed 640x480 recording DC would only mask this gap and
+would not implement general cached-metafile drawing.
+
+The new pixel assertion is a known failing regression, not a rendering fix
+or a browser test. Keep the full data roundtrip assertions alongside it;
+blank pictures must not be called complete based on successful serialization.
+The final cropped run reports red=0, blue=0 and **11/12** checks passed:
+only reopened-picture rendering fails. Production source was unchanged in
+this verification slice. The image is CLI canonical output, not a browser
+screenshot; browser validation remains outstanding.
