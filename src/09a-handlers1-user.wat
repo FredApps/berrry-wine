@@ -2575,165 +2575,82 @@
       (then (drop (call $host_fs_create_directory
         (local.get $dst) (i32.const 1))))))
 
+  ;; The file-system CSIDLs of a single-user Win98 box (profiles off), with
+  ;; the IE4 desktop update's All Users tree and the paths shfolder.dll's own
+  ;; Win9x emulation hands out for the folders shell32 predates (LOCAL_APPDATA,
+  ;; MYPICTURES, ADMINTOOLS...). Returns the ANSI path, or 0 for a virtual
+  ;; folder (CONTROLS, PRINTERS, BITBUCKET, DRIVES, NETWORK) or an unknown id.
+  ;; Windows Installer resolves every one of these while it costs a package;
+  ;; one failure is "Internal Error 2103" (Arcanum's installer, CSIDL 0x30).
+  (func $csidl_win98_path (param $folder i32) (result i32)
+    (if (i32.eq (local.get $folder) (i32.const 0x00)) (then (return "C:\\WINDOWS\\Desktop"))) ;; DESKTOP
+    (if (i32.eq (local.get $folder) (i32.const 0x02)) (then (return "C:\\WINDOWS\\Start Menu\\Programs"))) ;; PROGRAMS
+    (if (i32.eq (local.get $folder) (i32.const 0x05)) (then (return "C:\\My Documents"))) ;; PERSONAL
+    (if (i32.eq (local.get $folder) (i32.const 0x06)) (then (return "C:\\WINDOWS\\Favorites"))) ;; FAVORITES
+    (if (i32.eq (local.get $folder) (i32.const 0x07)) (then (return "C:\\WINDOWS\\Start Menu\\Programs\\StartUp"))) ;; STARTUP
+    (if (i32.eq (local.get $folder) (i32.const 0x08)) (then (return "C:\\WINDOWS\\Recent"))) ;; RECENT
+    (if (i32.eq (local.get $folder) (i32.const 0x09)) (then (return "C:\\WINDOWS\\SendTo"))) ;; SENDTO
+    (if (i32.eq (local.get $folder) (i32.const 0x0b)) (then (return "C:\\WINDOWS\\Start Menu"))) ;; STARTMENU
+    (if (i32.eq (local.get $folder) (i32.const 0x10)) (then (return "C:\\WINDOWS\\Desktop"))) ;; DESKTOPDIRECTORY
+    (if (i32.eq (local.get $folder) (i32.const 0x13)) (then (return "C:\\WINDOWS\\NetHood"))) ;; NETHOOD
+    (if (i32.eq (local.get $folder) (i32.const 0x14)) (then (return "C:\\WINDOWS\\Fonts"))) ;; FONTS
+    (if (i32.eq (local.get $folder) (i32.const 0x15)) (then (return "C:\\WINDOWS\\ShellNew"))) ;; TEMPLATES
+    (if (i32.eq (local.get $folder) (i32.const 0x16)) (then (return "C:\\WINDOWS\\All Users\\Start Menu"))) ;; COMMON_STARTMENU
+    (if (i32.eq (local.get $folder) (i32.const 0x17)) (then (return "C:\\WINDOWS\\All Users\\Start Menu\\Programs"))) ;; COMMON_PROGRAMS
+    (if (i32.eq (local.get $folder) (i32.const 0x18)) (then (return "C:\\WINDOWS\\All Users\\Start Menu\\Programs\\StartUp"))) ;; COMMON_STARTUP
+    (if (i32.eq (local.get $folder) (i32.const 0x19)) (then (return "C:\\WINDOWS\\All Users\\Desktop"))) ;; COMMON_DESKTOPDIRECTORY
+    (if (i32.eq (local.get $folder) (i32.const 0x1a)) (then (return "C:\\WINDOWS\\Application Data"))) ;; APPDATA
+    (if (i32.eq (local.get $folder) (i32.const 0x1b)) (then (return "C:\\WINDOWS\\PrintHood"))) ;; PRINTHOOD
+    (if (i32.eq (local.get $folder) (i32.const 0x1c)) (then (return "C:\\WINDOWS\\Local Settings\\Application Data"))) ;; LOCAL_APPDATA
+    (if (i32.eq (local.get $folder) (i32.const 0x1f)) (then (return "C:\\WINDOWS\\All Users\\Favorites"))) ;; COMMON_FAVORITES
+    (if (i32.eq (local.get $folder) (i32.const 0x20)) (then (return "C:\\WINDOWS\\Temporary Internet Files"))) ;; INTERNET_CACHE
+    (if (i32.eq (local.get $folder) (i32.const 0x21)) (then (return "C:\\WINDOWS\\Cookies"))) ;; COOKIES
+    (if (i32.eq (local.get $folder) (i32.const 0x22)) (then (return "C:\\WINDOWS\\History"))) ;; HISTORY
+    (if (i32.eq (local.get $folder) (i32.const 0x23)) (then (return "C:\\WINDOWS\\All Users\\Application Data"))) ;; COMMON_APPDATA
+    (if (i32.eq (local.get $folder) (i32.const 0x24)) (then (return "C:\\WINDOWS"))) ;; WINDOWS
+    (if (i32.eq (local.get $folder) (i32.const 0x25)) (then (return "C:\\WINDOWS\\SYSTEM"))) ;; SYSTEM
+    (if (i32.eq (local.get $folder) (i32.const 0x26)) (then (return "C:\\Program Files"))) ;; PROGRAM_FILES
+    (if (i32.eq (local.get $folder) (i32.const 0x27)) (then (return "C:\\My Documents\\My Pictures"))) ;; MYPICTURES
+    (if (i32.eq (local.get $folder) (i32.const 0x29)) (then (return "C:\\WINDOWS\\SYSTEM"))) ;; SYSTEMX86
+    (if (i32.eq (local.get $folder) (i32.const 0x2a)) (then (return "C:\\Program Files"))) ;; PROGRAM_FILESX86
+    (if (i32.eq (local.get $folder) (i32.const 0x2b)) (then (return "C:\\Program Files\\Common Files"))) ;; PROGRAM_FILES_COMMON
+    (if (i32.eq (local.get $folder) (i32.const 0x2c)) (then (return "C:\\Program Files\\Common Files"))) ;; PROGRAM_FILES_COMMONX86
+    (if (i32.eq (local.get $folder) (i32.const 0x2d)) (then (return "C:\\WINDOWS\\All Users\\Templates"))) ;; COMMON_TEMPLATES
+    (if (i32.eq (local.get $folder) (i32.const 0x2e)) (then (return "C:\\WINDOWS\\All Users\\Documents"))) ;; COMMON_DOCUMENTS
+    (if (i32.eq (local.get $folder) (i32.const 0x2f)) (then (return "C:\\WINDOWS\\All Users\\Start Menu\\Programs\\Administrative Tools"))) ;; COMMON_ADMINTOOLS
+    (if (i32.eq (local.get $folder) (i32.const 0x30)) (then (return "C:\\WINDOWS\\Start Menu\\Programs\\Administrative Tools"))) ;; ADMINTOOLS
+    (i32.const 0))
+
   ;; SHGetFolderPathW(hwndOwner, nFolder, hToken, dwFlags, pszPath) -> HRESULT.
   ;; The Win2k shfolder forwarder resolves this dynamically before trying its
-  ;; legacy shell32 ordinal. Return the canonical paths for the system and
-  ;; Program Files CSIDLs used by setup engines; pszPath is always MAX_PATH.
+  ;; legacy shell32 ordinal. pszPath is always MAX_PATH.
   (func $handle_SHGetFolderPathW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32) (local $folder i32)
+    (local $src i32) (local $i i32) (local $ch i32)
     (drop (local.get $arg0)) (drop (local.get $arg2))
     (drop (local.get $arg3)) (drop (local.get $name_ptr))
-    ;; Mask CSIDL_FLAG_* from the high bits before selecting the folder.
-    (local.set $folder (i32.and (local.get $arg1) (i32.const 0x00ff)))
     (if (i32.eqz (local.get $arg4))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003)) ;; E_POINTER
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
-    (local.set $dst (call $g2w (local.get $arg4)))
-
-    ;; CSIDL_DESKTOPDIRECTORY(0x10): the current user's physical desktop.
-    ;; Inno Setup requests this for its {userdesktop} shortcut target.
-    (if (i32.eq (local.get $folder) (i32.const 0x10))
+    ;; Mask CSIDL_FLAG_* from the high bits before selecting the folder.
+    (local.set $src (call $csidl_win98_path (i32.and (local.get $arg1) (i32.const 0x00ff))))
+    (if (i32.eqz (local.get $src))
       (then
-        ;; UTF-16LE "C:\\WINDOWS\\Desktop\0".
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
-        (i32.store offset=20 (local.get $dst) (i32.const 0x0044005c))
-        (i32.store offset=24 (local.get $dst) (i32.const 0x00730065))
-        (i32.store offset=28 (local.get $dst) (i32.const 0x0074006b))
-        (i32.store offset=32 (local.get $dst) (i32.const 0x0070006f))
-        (i32.store16 offset=36 (local.get $dst) (i32.const 0))
-        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (call $gs16 (local.get $arg4) (i32.const 0))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070002)) ;; HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
-
-    ;; CSIDL_PROGRAMS(0x02): the Win2k shfolder used by Unicode Inno Setup
-    ;; reads the all-users Common Programs value on this compatibility path.
-    (if (i32.eq (local.get $folder) (i32.const 0x02))
-      (then
-        ;; UTF-16LE "C:\\WINDOWS\\Start Menu\\Programs\0".
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
-        (i32.store offset=20 (local.get $dst) (i32.const 0x0053005c))
-        (i32.store offset=24 (local.get $dst) (i32.const 0x00610074))
-        (i32.store offset=28 (local.get $dst) (i32.const 0x00740072))
-        (i32.store offset=32 (local.get $dst) (i32.const 0x004d0020))
-        (i32.store offset=36 (local.get $dst) (i32.const 0x006e0065))
-        (i32.store offset=40 (local.get $dst) (i32.const 0x005c0075))
-        (i32.store offset=44 (local.get $dst) (i32.const 0x00720050))
-        (i32.store offset=48 (local.get $dst) (i32.const 0x0067006f))
-        (i32.store offset=52 (local.get $dst) (i32.const 0x00610072))
-        (i32.store offset=56 (local.get $dst) (i32.const 0x0073006d))
-        (i32.store16 offset=60 (local.get $dst) (i32.const 0))
-        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-        (return)))
-
-    ;; CSIDL_COMMON_APPDATA(0x17).
-    (if (i32.eq (local.get $folder) (i32.const 0x17))
-      (then
-        ;; UTF-16LE "C:\\WINDOWS\\All Users\\Application Data\0".
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
-        (i32.store offset=20 (local.get $dst) (i32.const 0x0041005c))
-        (i32.store offset=24 (local.get $dst) (i32.const 0x006c006c))
-        (i32.store offset=28 (local.get $dst) (i32.const 0x00550020))
-        (i32.store offset=32 (local.get $dst) (i32.const 0x00650073))
-        (i32.store offset=36 (local.get $dst) (i32.const 0x00730072))
-        (i32.store offset=40 (local.get $dst) (i32.const 0x0041005c))
-        (i32.store offset=44 (local.get $dst) (i32.const 0x00700070))
-        (i32.store offset=48 (local.get $dst) (i32.const 0x0069006c))
-        (i32.store offset=52 (local.get $dst) (i32.const 0x00610063))
-        (i32.store offset=56 (local.get $dst) (i32.const 0x00690074))
-        (i32.store offset=60 (local.get $dst) (i32.const 0x006e006f))
-        (i32.store offset=64 (local.get $dst) (i32.const 0x00440020))
-        (i32.store offset=68 (local.get $dst) (i32.const 0x00740061))
-        (i32.store offset=72 (local.get $dst) (i32.const 0x00000061))
-        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-        (return)))
-
-    ;; CSIDL_PROGRAM_FILES(0x26)/PROGRAM_FILESX86(0x2A):
-    ;; UTF-16LE "C:\\Program Files\0".
-    (if (i32.or (i32.eq (local.get $folder) (i32.const 0x26))
-                (i32.eq (local.get $folder) (i32.const 0x2a)))
-      (then
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0050005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x006f0072))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x00720067))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x006d0061))
-        (i32.store offset=20 (local.get $dst) (i32.const 0x00460020))
-        (i32.store offset=24 (local.get $dst) (i32.const 0x006c0069))
-        (i32.store offset=28 (local.get $dst) (i32.const 0x00730065))
-        (i32.store16 offset=32 (local.get $dst) (i32.const 0))
-        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-        (return)))
-
-    ;; CSIDL_PROGRAM_FILES_COMMON(0x2B)/COMMONX86(0x2C):
-    ;; UTF-16LE "C:\\Program Files\\Common Files\0".
-    (if (i32.or (i32.eq (local.get $folder) (i32.const 0x2b))
-                (i32.eq (local.get $folder) (i32.const 0x2c)))
-      (then
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0050005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x006f0072))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x00720067))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x006d0061))
-        (i32.store offset=20 (local.get $dst) (i32.const 0x00460020))
-        (i32.store offset=24 (local.get $dst) (i32.const 0x006c0069))
-        (i32.store offset=28 (local.get $dst) (i32.const 0x00730065))
-        (i32.store offset=32 (local.get $dst) (i32.const 0x0043005c))
-        (i32.store offset=36 (local.get $dst) (i32.const 0x006d006f))
-        (i32.store offset=40 (local.get $dst) (i32.const 0x006f006d))
-        (i32.store offset=44 (local.get $dst) (i32.const 0x0020006e))
-        (i32.store offset=48 (local.get $dst) (i32.const 0x00690046))
-        (i32.store offset=52 (local.get $dst) (i32.const 0x0065006c))
-        (i32.store offset=56 (local.get $dst) (i32.const 0x00000073))
-        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-        (return)))
-
-    ;; CSIDL_WINDOWS(0x24) and CSIDL_SYSTEM(0x25)/SYSTEMX86(0x29).
-    (if (i32.or (i32.eq (local.get $folder) (i32.const 0x24))
-          (i32.or (i32.eq (local.get $folder) (i32.const 0x25))
-                  (i32.eq (local.get $folder) (i32.const 0x29))))
-      (then
-        (i32.store (local.get $dst) (i32.const 0x003a0043))
-        (i32.store offset=4 (local.get $dst) (i32.const 0x0057005c))
-        (i32.store offset=8 (local.get $dst) (i32.const 0x004e0049))
-        (i32.store offset=12 (local.get $dst) (i32.const 0x004f0044))
-        (i32.store offset=16 (local.get $dst) (i32.const 0x00530057))
-        (if (i32.eq (local.get $folder) (i32.const 0x24))
-          (then (i32.store16 offset=20 (local.get $dst) (i32.const 0)))
-          (else
-            (i32.store offset=20 (local.get $dst) (i32.const 0x0053005c))
-            (i32.store offset=24 (local.get $dst) (i32.const 0x00530059))
-            (i32.store offset=28 (local.get $dst) (i32.const 0x00450054))
-            (i32.store offset=32 (local.get $dst) (i32.const 0x0000004d))))
-        (call $sh_folder_maybe_create (local.get $arg1) (local.get $dst))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-        (return)))
-
-    (i32.store16 (local.get $dst) (i32.const 0))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070002)) ;; HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND)
+    ;; pszPath is MAX_PATH wide chars and may straddle a guest page: widen
+    ;; through $gs16, not through one g2w of the start.
+    (block $done (loop $widen
+      (local.set $ch (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (call $gs16 (i32.add (local.get $arg4) (i32.shl (local.get $i) (i32.const 1))) (local.get $ch))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $widen)))
+    (call $sh_folder_maybe_create (local.get $arg1) (call $g2w (local.get $arg4)))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
   )
 

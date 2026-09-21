@@ -124,6 +124,11 @@
   ;; recurse until the wasm stack gives out, so the walk runs bracketed by a
   ;; guard that $g2w_miss checks before it raises.
   (func $raise_exception (param $code i32)
+    ;; A CPU fault is rare and, once a guest __except has swallowed it, leaves
+    ;; no other trace: name the code and the faulting block.
+    (call $host_log_i32 (i32.const 0xCAE8C000))
+    (call $host_log_i32 (local.get $code))
+    (call $host_log_i32 (global.get $eip))
     (global.set $fault_raising (i32.const 1))
     (call $raise_exception_walk (local.get $code))
     (global.set $fault_raising (i32.const 0)))

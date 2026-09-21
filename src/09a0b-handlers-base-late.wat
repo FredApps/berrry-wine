@@ -291,6 +291,39 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))  ;; stdcall, 5 args
   )
 
+  ;; GetDiskFreeSpaceExA(lpDirectoryName, lpFreeBytesAvailableToCaller,
+  ;; lpTotalNumberOfBytes, lpTotalNumberOfFreeBytes) — the OSR2 byte-count
+  ;; form of the same geometry, so both calls always agree. No quotas: the
+  ;; caller's share is the whole free count. msi.dll requires this export on
+  ;; any Win9x build above 1000 and fails the install when it is missing.
+  (func $handle_GetDiskFreeSpaceExA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $geo i32) (local $unit i64) (local $free i64) (local $total i64)
+    (local.set $geo (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $geo))
+      (then
+        (global.set $last_error (i32.const 8)) ;; ERROR_NOT_ENOUGH_MEMORY
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+        (return)))
+    (call $disk_free_space (local.get $arg0)
+      (local.get $geo) (i32.add (local.get $geo) (i32.const 4))
+      (i32.add (local.get $geo) (i32.const 8)) (i32.add (local.get $geo) (i32.const 12))
+      (i32.const 0))
+    (local.set $unit (i64.mul
+      (i64.extend_i32_u (call $gl32 (local.get $geo)))
+      (i64.extend_i32_u (call $gl32 (i32.add (local.get $geo) (i32.const 4))))))
+    (local.set $free (i64.mul (local.get $unit)
+      (i64.extend_i32_u (call $gl32 (i32.add (local.get $geo) (i32.const 8))))))
+    (local.set $total (i64.mul (local.get $unit)
+      (i64.extend_i32_u (call $gl32 (i32.add (local.get $geo) (i32.const 12))))))
+    (call $heap_free (local.get $geo))
+    (if (local.get $arg1) (then (i64.store (call $g2w (local.get $arg1)) (local.get $free))))
+    (if (local.get $arg2) (then (i64.store (call $g2w (local.get $arg2)) (local.get $total))))
+    (if (local.get $arg3) (then (i64.store (call $g2w (local.get $arg3)) (local.get $free))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))  ;; stdcall, 4 args
+  )
+
   ;; 484: GetLogicalDrives() — one bit per currently assigned drive letter.
   (func $handle_GetLogicalDrives (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $host_fs_logical_drive_mask))

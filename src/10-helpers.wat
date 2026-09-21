@@ -3974,12 +3974,27 @@
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $scan))))
 
+  ;; A slot's paint bit is retrievable only by the thread that owns the window:
+  ;; Win32 delivers WM_PAINT (like every queued message) to the creating
+  ;; thread's queue. msi.dll's engine thread pumps PeekMessage(hwnd=0) while
+  ;; the main thread owns the setup dialog; handing it that dialog's paints
+  ;; ran msihnd's control painter on both threads at once and the main thread
+  ;; called through a torn-down control object. Slots with no recorded owner
+  ;; stay visible to everyone.
+  (func $paint_flag_mine (param $i i32) (result i32)
+    (local $owner i32)
+    (if (i32.eqz (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i))))
+      (then (return (i32.const 0))))
+    (local.set $owner (i32.load (call $wnd_thread_addr (local.get $i))))
+    (i32.or (i32.eqz (local.get $owner))
+            (i32.eq (local.get $owner) (global.get $current_thread_id))))
+
   ;; $paint_flag_first() → hwnd of first dirty slot (0 if none), no clear.
   (func $paint_flag_first (result i32)
     (local $i i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+      (if (call $paint_flag_mine (local.get $i))
         (then (return (i32.load (call $wnd_record_addr (local.get $i))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -3990,7 +4005,7 @@
     (local $i i32) (local $hwnd i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+      (if (call $paint_flag_mine (local.get $i))
         (then
           (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $i)) (i32.const 0))
           (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
@@ -4004,7 +4019,7 @@
     (local $i i32)
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+      (if (call $paint_flag_mine (local.get $i))
         (then (return (i32.const 1))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
@@ -4025,7 +4040,7 @@
       (then (call $paint_flag_set (global.get $main_hwnd))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+      (if (call $paint_flag_mine (local.get $i))
         (then
           (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
           (local.set $style (call $wnd_get_style (local.get $hwnd)))

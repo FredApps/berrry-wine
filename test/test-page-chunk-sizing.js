@@ -195,6 +195,22 @@ const extraWat = String.raw`
   assert.strictEqual(e.test_page_index_entry(protectedPage, 0x5b), 64,
     'guest heap writes must not overlap the decoded-page index arena');
 
+  // A block that fills its chunk to the last word must not set an END bit one
+  // past the op-boundary map. That bit is byte 0 of the next index slot -- the
+  // next page's offset-0 entry -- and made its even chunk offset odd, so the
+  // top of that page ran from a misaligned stream (Arcanum's bad dispatch of
+  // handler 0x02000000 at eip=0x500000). Indexes are handed out in order after
+  // a reset, so page C gets the slot directly after page A's.
+  e.test_page_storage_reset();
+  const pageC = pageA + 0x1000;
+  assert.strictEqual(e.test_page_publish_sized(pageA, 64, 0x81), 0);
+  assert.strictEqual(e.test_page_publish_sized(pageC, 64, 0x82), 0);
+  assert.strictEqual(e.test_page_index_entry(pageC, 0), 0);
+  assert.strictEqual(e.test_page_publish_sized(pageA + 4, 16384 - 64, 0x83), 64);
+  assert.strictEqual(e.test_page_used(pageA), 16384, 'page A should be exactly full');
+  assert.strictEqual(e.test_page_index_entry(pageC, 0), 0,
+    'filling the previous page\'s chunk must not touch this page\'s offset-0 entry');
+
   // Exercise relocation through the real decoder, not only through direct
   // page_publish calls. One address-ordered run emits enough threaded code to
   // cross the 4KB class boundary before its first block executes. decode_run

@@ -2505,8 +2505,29 @@
           (then (return (i32.const 2))))))
     (i32.const 0))
 
+  ;; CREATE_ALWAYS(2) and OPEN_ALWAYS(4) report through the last error whether
+  ;; they found the file already there, so it has to be sampled before the
+  ;; create. Returns 1 only for those dispositions over an existing path.
+  (func $create_file_existed (param $path_wa i32) (param $creation i32) (param $wide i32) (result i32)
+    (if (i32.eqz (i32.or (i32.eq (local.get $creation) (i32.const 2))
+                         (i32.eq (local.get $creation) (i32.const 4))))
+      (then (return (i32.const 0))))
+    (i32.ne (call $host_fs_get_file_attributes (local.get $path_wa) (local.get $wide))
+            (i32.const -1)))
+
+  ;; A successful CreateFile leaves ERROR_ALREADY_EXISTS or zero, never the
+  ;; error some earlier call left behind: msi.dll writes a file and then fails
+  ;; the whole install on any nonzero GetLastError() other than 183 (Internal
+  ;; Error 2932 with the stale 2 from the GetFileAttributes probe before it).
+  (func $create_file_set_last_error (param $handle i32) (param $existed i32)
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then (global.set $last_error (i32.const 2))) ;; ERROR_FILE_NOT_FOUND
+      (else (global.set $last_error
+        (select (i32.const 183) (i32.const 0) (local.get $existed))))))
+
   (func $handle_CreateFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa_esp i32) (local $creation i32) (local $flags i32) (local $device i32) (local $path_wa i32)
+    (local $existed i32)
     (local.set $path_wa (call $g2w (local.get $arg0)))
     (local.set $device (call $console_device_name (local.get $path_wa) (i32.const 0)))
     (if (local.get $device)
@@ -2518,14 +2539,14 @@
     (local.set $wa_esp (call $g2w (i32.load offset=16 (global.get $reg_base))))
     (local.set $creation (local.get $arg4))
     (local.set $flags (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
+    (local.set $existed (call $create_file_existed (local.get $path_wa) (local.get $creation) (i32.const 0)))
     (i32.store offset=0 (global.get $reg_base) (call $host_fs_create_file
       (local.get $path_wa)           ;; pathWA
       (local.get $arg1)               ;; access
       (local.get $creation)            ;; creation disposition
       (local.get $flags)               ;; flags and attributes
       (i32.const 0)))                  ;; isWide=0
-    (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const -1))
-      (then (global.set $last_error (i32.const 2)))) ;; ERROR_FILE_NOT_FOUND
+    (call $create_file_set_last_error (i32.load offset=0 (global.get $reg_base)) (local.get $existed))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))  ;; 7 args + ret
   )
 
@@ -3026,6 +3047,20 @@
     (global.set $last_error (i32.const 1008)) ;; ERROR_NO_TOKEN
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+  )
+
+  ;; SetThreadToken(Thread, Token). A NULL token ends impersonation, which for
+  ;; threads that never have a token (see OpenThreadToken) is already the
+  ;; state: success. Installing a token would need real impersonation, so that
+  ;; fails the way Win9x's ADVAPI32 fails every call. msi.dll drops its
+  ;; impersonation this way around each registry probe.
+  (func $handle_SetThreadToken (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg1)
+      (then
+        (global.set $last_error (i32.const 120)) ;; ERROR_CALL_NOT_IMPLEMENTED
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+      (else (i32.store offset=0 (global.get $reg_base) (i32.const 1))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
   ;; Shared access-token state.  TOKEN_OBJECTS begins with an initialization

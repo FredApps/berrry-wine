@@ -64,12 +64,12 @@ const extraWat = String.raw`
   assert.strictEqual(hostCtx.vfs.getFileAttributes(
     'C:\\WINDOWS\\Desktop'), 0x10,
   'CSIDL_FLAG_CREATE materializes the user desktop directory');
-  assert.strictEqual(e.test_sh_get_folder_path_w(0x17, buffer) | 0, 0,
+  assert.strictEqual(e.test_sh_get_folder_path_w(0x23, buffer) | 0, 0,
     'CSIDL_COMMON_APPDATA succeeds without CSIDL_FLAG_CREATE');
   assert.strictEqual(hostCtx.vfs.getFileAttributes(
     'C:\\WINDOWS\\All Users\\Application Data') >>> 0, 0xffffffff,
   'plain lookup does not create the common application-data directory');
-  assert.strictEqual(e.test_sh_get_folder_path_w(0x8017, buffer) | 0, 0,
+  assert.strictEqual(e.test_sh_get_folder_path_w(0x8023, buffer) | 0, 0,
     'CSIDL_COMMON_APPDATA succeeds with CSIDL_FLAG_CREATE');
   assert.strictEqual(readWide(), 'C:\\WINDOWS\\All Users\\Application Data');
   assert.strictEqual(hostCtx.vfs.getFileAttributes(
@@ -84,6 +84,20 @@ const extraWat = String.raw`
   assert.strictEqual(e.test_sh_get_folder_path_w(0x25, buffer) | 0, 0,
     'CSIDL_SYSTEM succeeds');
   assert.strictEqual(readWide(), 'C:\\WINDOWS\\SYSTEM');
+  assert.strictEqual(e.test_sh_get_folder_path_w(0x17, buffer) | 0, 0,
+    'CSIDL_COMMON_PROGRAMS succeeds');
+  assert.strictEqual(readWide(), 'C:\\WINDOWS\\All Users\\Start Menu\\Programs');
+  // Windows Installer resolves every shell folder while costing a package;
+  // a failed one is Internal Error 2103 (Arcanum's installer asks for 0x30).
+  assert.strictEqual(e.test_sh_get_folder_path_w(0x30, buffer) | 0, 0,
+    'CSIDL_ADMINTOOLS succeeds');
+  assert.strictEqual(readWide(), 'C:\\WINDOWS\\Start Menu\\Programs\\Administrative Tools');
+  assert.strictEqual(e.test_sh_get_folder_path_w(0x1c, buffer) | 0, 0,
+    'CSIDL_LOCAL_APPDATA succeeds');
+  assert.strictEqual(readWide(), 'C:\\WINDOWS\\Local Settings\\Application Data');
+  assert.notStrictEqual(e.test_sh_get_folder_path_w(0x03, buffer) | 0, 0,
+    'virtual CSIDL_CONTROLS has no file-system path');
+  assert.strictEqual(readWide(), '');
   assert.strictEqual(e.get_esp(), 0x00300018,
     'five-argument stdcall pops return address plus arguments');
 
@@ -97,7 +111,7 @@ const extraWat = String.raw`
     'SHGetFolderPathA narrows the canonical CSIDL mapping');
   assert.strictEqual(e.get_esp(), 0x00300018,
     'five-argument ANSI SHGetFolderPathA stdcall pops return address plus arguments');
-  assert.strictEqual(e.test_sh_get_special_folder_path_a(0x17, 1, buffer), 1,
+  assert.strictEqual(e.test_sh_get_special_folder_path_a(0x23, 1, buffer), 1,
     'ANSI fCreate succeeds');
   assert.strictEqual(readAnsi(), 'C:\\WINDOWS\\All Users\\Application Data');
   assert.strictEqual(hostCtx.vfs.getFileAttributes(

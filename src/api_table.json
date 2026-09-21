@@ -30866,5 +30866,79 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2877870796
+  },
+  {
+    "id": 3689,
+    "name": "ReadProcessMemory",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 158663941,
+    "args": [
+      {
+        "name": "hProcess",
+        "type": "HANDLE"
+      },
+      {
+        "name": "lpBaseAddress",
+        "type": "LPVOID"
+      },
+      {
+        "name": "lpBuffer",
+        "type": "LPVOID"
+      },
+      {
+        "name": "nSize",
+        "type": "int"
+      },
+      {
+        "name": "lpNumberOfBytesRead",
+        "type": "LPVOID"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3690,
+    "name": "SetThreadToken",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3621185672,
+    "args": [
+      {
+        "name": "Thread",
+        "type": "LPVOID"
+      },
+      {
+        "name": "Token",
+        "type": "HANDLE"
+      }
+    ],
+    "ret": "BOOL"
+  },
+  {
+    "id": 3691,
+    "name": "GetDiskFreeSpaceExA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1174598858,
+    "args": [
+      {
+        "name": "lpDirectoryName",
+        "type": "LPCSTR"
+      },
+      {
+        "name": "lpFreeBytesAvailableToCaller",
+        "type": "LPVOID"
+      },
+      {
+        "name": "lpTotalNumberOfBytes",
+        "type": "LPVOID"
+      },
+      {
+        "name": "lpTotalNumberOfFreeBytes",
+        "type": "LPVOID"
+      }
+    ],
+    "ret": "BOOL"
   }
 ]

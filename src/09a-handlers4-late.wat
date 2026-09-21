@@ -84,6 +84,34 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
   )
 
+  ;; ReadProcessMemory(hProcess, lpBaseAddress, lpBuffer, nSize,
+  ;; lpNumberOfBytesRead) -> BOOL. Only this process is addressable here, and a
+  ;; read of our own address space is the Win32 idiom for a guarded copy: the
+  ;; Windows Installer 1.1 engine (msi.dll) reads module bytes this way instead
+  ;; of under __try. A range with any unreadable page fails whole with
+  ;; ERROR_PARTIAL_COPY and zero bytes read, which is what Win98 reports.
+  (func $handle_ReadProcessMemory (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $read_ptr i32)
+    (local.set $read_ptr (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))  ;; stdcall, 5 args
+    (if (local.get $read_ptr) (then (call $gs32 (local.get $read_ptr) (i32.const 0))))
+    (if (i32.eqz (call $current_process_handle_valid (local.get $arg0)))
+      (then
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (return)))
+    (if (i32.or
+          (call $ptr_range_access_bad (local.get $arg1) (local.get $arg3) (i32.const 0))
+          (call $ptr_range_access_bad (local.get $arg2) (local.get $arg3) (i32.const 1)))
+      (then
+        (global.set $last_error (i32.const 299)) ;; ERROR_PARTIAL_COPY
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (return)))
+    (call $guest_memmove (local.get $arg2) (local.get $arg1) (local.get $arg3))
+    (if (local.get $read_ptr) (then (call $gs32 (local.get $read_ptr) (local.get $arg3))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+  )
+
   ;; 345: SetUnhandledExceptionFilter(lpTopLevelFilter) -> previous filter.
   ;;
   ;; The comment used to say "store filter" while the body stored nothing and

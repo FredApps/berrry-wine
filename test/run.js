@@ -259,6 +259,7 @@ const API_COUNTS_TOP = parseInt(getArg('api-counts-top', '40'));
 const ESP_DELTA = hasFlag('esp-delta');   // --esp-delta: log ESP before/after each API call (for stdcall pop audit)
 const TRACE_ESP = getArg('trace-esp', null); // --trace-esp=LO-HI: per-block (eip, esp) + Δ from prev block (hex; HI optional)
 const TRACE_EIP_RANGE = getArg('trace-eip-range', null); // --trace-eip-range=LO-HI: log every block-entry EIP inside [LO,HI] (module+0xVA OK)
+const TRACE_EIP_FROM = parseInt(getArg('trace-eip-from', '0'), 10) || 0; // --trace-eip-from=BATCH: arm --trace-eip-range at that batch instead of 0 (trace one late window without paying for the whole boot)
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
 const TRACE_EIP_STREAM = hasFlag('trace-eip-stream'); // --trace-eip-stream: write EIP lines immediately instead of buffering to the next batch boundary
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
@@ -8630,7 +8631,7 @@ async function main() {
     }
     // --trace-eip-range: arm only when resolution succeeded (skip at batch=0 if
     // module-relative range hasn't resolved yet — late LoadLibrary path re-arms).
-    if (traceEipOn && traceEipArmed && batch === 0 && instance.exports.set_trace_eip_range) {
+    if (traceEipOn && traceEipArmed && batch === TRACE_EIP_FROM && instance.exports.set_trace_eip_range) {
       instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
     }
     // Hit counters: arm any slot whose address is known and not armed yet. A
@@ -9090,7 +9091,7 @@ async function main() {
             else if (traceAtAddr) instance.exports.set_bp(traceAtAddr);
           }
           armCounts();
-          if (traceEipOn && traceEipArmed && instance.exports.set_trace_eip_range) {
+          if (traceEipOn && traceEipArmed && batch >= TRACE_EIP_FROM && instance.exports.set_trace_eip_range) {
             instance.exports.set_trace_eip_range(1, traceEipLo, traceEipHi);
           }
         },

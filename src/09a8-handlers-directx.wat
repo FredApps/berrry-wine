@@ -6398,8 +6398,12 @@
       (then (local.set $sz (i32.const 96))))
     (call $zero_memory (local.get $wa) (local.get $sz))
     (i32.store (local.get $wa) (local.get $sz))
-    ;; dwFlags: DSCAPS_PRIMARYSTEREO|DSCAPS_PRIMARY16BIT|DSCAPS_SECONDARYSTEREO|DSCAPS_SECONDARY16BIT
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0xF0))
+    ;; dwFlags: PRIMARY{MONO,STEREO,8BIT,16BIT} (0x0F) | CONTINUOUSRATE (0x10)
+    ;; | SECONDARY{MONO,STEREO,8BIT,16BIT} (0xF00). Never DSCAPS_EMULDRIVER
+    ;; (0x20): Miles reads that bit as "no real driver", closes DirectSound and
+    ;; reopens on waveOut, whose ~1.5s latency overflows Bink's audio sizing
+    ;; divide (Arcanum's first movie).
+    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0xF1F))
     ;; dwMaxSecondarySampleRate = 44100
     (i32.store (i32.add (local.get $wa) (i32.const 56)) (i32.const 44100))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))

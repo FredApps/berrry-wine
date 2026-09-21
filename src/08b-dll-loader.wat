@@ -690,12 +690,35 @@
   (func $find_loaded_dll (param $name_ptr i32) (result i32)
     (local $i i32) (local $tbl_ptr i32) (local $la i32) (local $exp_rva i32)
     (local $exp_name_rva i32) (local $exp_name_wa i32)
+    (local $path_g i32) (local $path_wa i32) (local $base_wa i32) (local $ch i32)
     (local.set $i (i32.const 0))
     (block $notfound (loop $search
       (br_if $notfound (i32.ge_u (local.get $i) (global.get $dll_count)))
       (local.set $tbl_ptr (i32.add (global.get $DLL_TABLE) (i32.mul (local.get $i) (i32.const 32))))
       (local.set $la (i32.load (local.get $tbl_ptr)))
       (local.set $exp_rva (i32.load (i32.add (local.get $tbl_ptr) (i32.const 8))))
+      ;; Windows identifies a loaded module by its file name, and a
+      ;; resource-only DLL has no export directory to name it at all.
+      ;; msi.dll loads msimsg.dll that way on every message lookup; unmatched,
+      ;; each call mapped another copy and yielded to the host, which a nested
+      ;; synchronous wndproc cannot service -- the wizard's Next did nothing.
+      (local.set $path_g (i32.load (i32.add (global.get $DLL_PATH_TABLE)
+        (i32.shl (local.get $i) (i32.const 2)))))
+      (if (local.get $path_g)
+        (then
+          (local.set $path_wa (call $g2w (local.get $path_g)))
+          (local.set $base_wa (local.get $path_wa))
+          (block $end (loop $scan
+            (local.set $ch (i32.load8_u (local.get $path_wa)))
+            (br_if $end (i32.eqz (local.get $ch)))
+            (local.set $path_wa (i32.add (local.get $path_wa) (i32.const 1)))
+            (if (i32.or (i32.eq (local.get $ch) (i32.const 92))
+                        (i32.or (i32.eq (local.get $ch) (i32.const 47))
+                                (i32.eq (local.get $ch) (i32.const 58))))
+              (then (local.set $base_wa (local.get $path_wa))))
+            (br $scan)))
+          (if (call $dll_name_match (local.get $name_ptr) (local.get $base_wa))
+            (then (return (local.get $i))))))
       (if (i32.ne (local.get $exp_rva) (i32.const 0))
         (then
           ;; Get export directory name RVA

@@ -2273,15 +2273,78 @@
   ;; StgIsStorageFile(pwcsName) — report "not a structured storage file".
 
   ;; StgOpenStorage(pwcsName, pstgPriority, grfMode, snbExclude, reserved, ppstgOpen)
-  ;; Structured storage is not implemented; zero the out pointer and fail
-  ;; gracefully so callers can fall back to flat-file handling where available.
+  ;; Read the named compound file into a memory ILockBytes and open it through
+  ;; the same CFB parser StgOpenStorageOnILockBytes uses. Opened for write, the
+  ;; lockbytes keeps the path, so IStorage::Commit writes the image back the
+  ;; way StgCreateDocfile's does. Windows Installer opens every .msi here; the
+  ;; old always-STG_E_FILENOTFOUND stub made msiexec report 1619.
   (func $handle_StgOpenStorage (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $out i32)
+    (local $out i32) (local $hr i32)
     (local.set $out (i32.load (i32.add (call $g2w (i32.load offset=16 (global.get $reg_base))) (i32.const 24))))
-    (if (local.get $out) (then (call $gs32 (local.get $out) (i32.const 0))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0x80030002)) ;; STG_E_FILENOTFOUND
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+    (if (local.get $out) (then (call $gs32 (local.get $out) (i32.const 0))))
+    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $out)))
+      (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80030009)) (return))) ;; STG_E_INVALIDPOINTER
+    (local.set $hr (call $ole_open_storage_file (local.get $arg0) (local.get $arg2) (local.get $out)))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
   )
+
+  (func $ole_open_storage_file (param $path i32) (param $mode i32) (param $out i32) (result i32)
+    (local $handle i32) (local $size i32) (local $data i32) (local $read i32)
+    (local $ok i32) (local $lockbytes i32) (local $owned_path i32) (local $hr i32)
+    (local $storage i32)
+    (local.set $handle (call $host_fs_create_file
+      (call $g2w (local.get $path))
+      (i32.const 0x80000000) ;; GENERIC_READ
+      (i32.const 3)          ;; OPEN_EXISTING
+      (i32.const 0x80)       ;; FILE_ATTRIBUTE_NORMAL
+      (i32.const 1)))        ;; UTF-16
+    (if (i32.eq (local.get $handle) (i32.const -1))
+      (then (return (i32.const 0x80030002)))) ;; STG_E_FILENOTFOUND
+    (local.set $size (call $host_fs_get_file_size (local.get $handle)))
+    (local.set $data (call $heap_alloc (select (local.get $size) (i32.const 1) (local.get $size))))
+    (local.set $read (call $heap_alloc (i32.const 4)))
+    (if (i32.or (i32.eqz (local.get $data)) (i32.eqz (local.get $read)))
+      (then
+        (if (local.get $data) (then (call $heap_free (local.get $data))))
+        (if (local.get $read) (then (call $heap_free (local.get $read))))
+        (drop (call $host_fs_close_handle (local.get $handle)))
+        (return (i32.const 0x80030008)))) ;; STG_E_INSUFFICIENTMEMORY
+    (call $gs32 (local.get $read) (i32.const 0))
+    (local.set $ok (call $host_fs_read_file
+      (local.get $handle) (local.get $data) (local.get $size) (local.get $read)))
+    (local.set $ok (i32.and (i32.ne (local.get $ok) (i32.const 0))
+      (i32.eq (call $gl32 (local.get $read)) (local.get $size))))
+    (call $heap_free (local.get $read))
+    (drop (call $host_fs_close_handle (local.get $handle)))
+    (if (i32.eqz (local.get $ok))
+      (then (call $heap_free (local.get $data)) (return (i32.const 0x8003001E)))) ;; STG_E_READFAULT
+    (local.set $lockbytes (call $ole_create_lockbytes (i32.const 0) (i32.const 1)))
+    (if (i32.eqz (local.get $lockbytes))
+      (then (call $heap_free (local.get $data)) (return (i32.const 0x80030008))))
+    (call $gs32 (i32.add (local.get $lockbytes) (i32.const 12)) (local.get $data))
+    (call $gs32 (i32.add (local.get $lockbytes) (i32.const 16)) (local.get $size))
+    (call $gs32 (i32.add (local.get $lockbytes) (i32.const 20)) (local.get $size))
+    (call $gs32 (i32.add (local.get $lockbytes) (i32.const 32)) (i32.const 1))
+    ;; STGM_WRITE (1) or STGM_READWRITE (2): Commit persists to the file.
+    (if (i32.ne (i32.and (local.get $mode) (i32.const 3)) (i32.const 0))
+      (then
+        (local.set $owned_path (call $ole_wide_dup (local.get $path)))
+        (if (local.get $owned_path)
+          (then (call $gs32 (i32.add (local.get $lockbytes) (i32.const 40)) (local.get $owned_path))))))
+    (local.set $hr (call $ole_cfb_deserialize (local.get $lockbytes) (local.get $out)))
+    ;; On success the root storage holds its own reference.
+    (drop (call $ole_obj_release (local.get $lockbytes)))
+    ;; A file-backed root's STATSTG.pwcsName is the file's path. msi.dll logs
+    ;; it as "Package we're running from" and builds SourceDir from its
+    ;; directory, so a nameless root raised Internal Error 2343 (empty path).
+    (if (i32.eqz (local.get $hr))
+      (then
+        (local.set $storage (call $gl32 (local.get $out)))
+        (if (i32.eqz (call $gl32 (i32.add (local.get $storage) (i32.const 40))))
+          (then (call $gs32 (i32.add (local.get $storage) (i32.const 40))
+            (call $ole_wide_dup (local.get $path)))))))
+    (local.get $hr))
 
   ;; StgCreateDocfile(pwcsName, grfMode, reserved, ppstgOpen)
   (func $handle_StgCreateDocfile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5876,14 +5939,21 @@
     (local.set $take (select (local.get $count) (local.get $available) (i32.lt_u (local.get $count) (local.get $available))))
     (if (call $ole_stream_lock_conflict (local.get $obj) (local.get $pos) (local.get $take) (i32.const 0))
       (then (return (i32.const 0x80030021))))
-    (if (local.get $take)
-      (then (memory.copy
-        (call $g2w (local.get $buf))
-        (i32.add (call $g2w (call $gl32 (i32.add (local.get $root) (i32.const 12)))) (local.get $pos))
-        (local.get $take))))
+    ;; The caller's buffer is a guest range and may straddle two VirtualAlloc
+    ;; pages whose backing is not adjacent: one memory.copy through g2w(buf)
+    ;; spilled every byte past the page boundary into foreign WASM memory.
+    ;; msi.dll's 1KB table reader sat 68 bytes below a page end, so tables
+    ;; loaded as zeros and the installer's ControlEvent lookups matched nothing.
+    (call $guest_memmove (local.get $buf)
+      (i32.add (call $gl32 (i32.add (local.get $root) (i32.const 12))) (local.get $pos))
+      (local.get $take))
     (call $ole_set_data_position (local.get $obj) (i32.add (local.get $pos) (local.get $take)))
     (if (local.get $read_out) (then (call $gs32 (local.get $read_out) (local.get $take))))
-    (select (i32.const 0) (i32.const 1) (i32.eq (local.get $take) (local.get $count))))
+    ;; A short read at end of stream is S_OK with the smaller count, as in
+    ;; OLE32's compound-file and HGLOBAL streams. msi.dll's 1KB buffered
+    ;; reader fails any nonzero HRESULT, so S_FALSE here rejected every
+    ;; SummaryInformation stream as ERROR_INSTALL_PACKAGE_INVALID.
+    (i32.const 0))
 
   (func $ole_stream_write (param $obj i32) (param $buf i32) (param $count i32) (param $written_out i32) (result i32)
     (local $root i32) (local $pos i32) (local $end i32) (local $hr i32)
@@ -5902,11 +5972,11 @@
       (select (local.get $end) (call $gl32 (i32.add (local.get $root) (i32.const 16)))
         (i32.gt_u (local.get $end) (call $gl32 (i32.add (local.get $root) (i32.const 16)))))))
     (if (local.get $hr) (then (return (local.get $hr))))
-    (if (local.get $count)
-      (then (memory.copy
-        (i32.add (call $g2w (call $gl32 (i32.add (local.get $root) (i32.const 12)))) (local.get $pos))
-        (call $g2w (local.get $buf))
-        (local.get $count))))
+    ;; Page-safe for the same reason as $ole_stream_read.
+    (call $guest_memmove
+      (i32.add (call $gl32 (i32.add (local.get $root) (i32.const 12))) (local.get $pos))
+      (local.get $buf)
+      (local.get $count))
     (call $ole_set_data_position (local.get $obj) (local.get $end))
     (if (local.get $written_out) (then (call $gs32 (local.get $written_out) (local.get $count))))
     (i32.const 0))

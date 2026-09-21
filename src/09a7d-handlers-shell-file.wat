@@ -631,6 +631,7 @@
   (func $handle_CreateFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; CreateFileW — 7 args, same as CreateFileA but wide
     (local $wa_esp_w i32) (local $creation_w i32) (local $flags_w i32) (local $device i32) (local $path_wa i32)
+    (local $existed i32)
     (local.set $path_wa (call $g2w (local.get $arg0)))
     (local.set $device (call $console_device_name (local.get $path_wa) (i32.const 1)))
     (if (local.get $device)
@@ -642,11 +643,11 @@
     (local.set $wa_esp_w (call $g2w (i32.load offset=16 (global.get $reg_base))))
     (local.set $creation_w (local.get $arg4))
     (local.set $flags_w (i32.load (i32.add (local.get $wa_esp_w) (i32.const 24))))
+    (local.set $existed (call $create_file_existed (local.get $path_wa) (local.get $creation_w) (i32.const 1)))
     (i32.store offset=0 (global.get $reg_base) (call $host_fs_create_file
       (local.get $path_wa) (local.get $arg1)
       (local.get $creation_w) (local.get $flags_w) (i32.const 1)))
-    (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const -1))
-      (then (global.set $last_error (i32.const 2)))) ;; ERROR_FILE_NOT_FOUND
+    (call $create_file_set_last_error (i32.load offset=0 (global.get $reg_base)) (local.get $existed))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
   )
 

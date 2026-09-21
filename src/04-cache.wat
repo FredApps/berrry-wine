@@ -847,7 +847,17 @@
         (then (call $page_opbit_clear (local.get $me) (local.get $w))))
       (local.set $w (i32.add (local.get $w) (i32.const 1)))
       (br $cs)))
-    (call $page_opbit_set (local.get $me) (local.get $wend))
+    ;; A block that fills the chunk to its last word has no word after it, so
+    ;; it gets no END bit: the maps hold one bit per chunk word, and word
+    ;; 4096 of a full 16KB chunk is byte 0x200 of the END map -- which is byte
+    ;; 0 of the NEXT slot's index, its page-offset-0 entry. Setting it turned
+    ;; that entry's even chunk offset odd, and the next entry at the top of
+    ;; that page ran from a misaligned stream (Arcanum: bad handler 0x02000000
+    ;; at eip=0x500000, then a garbage exit). Readers treat the chunk's used
+    ;; end as the implicit end of its last block.
+    (if (i32.lt_u (local.get $wend)
+                  (i32.shl (global.get $PAGE_OPBITS_BYTES) (i32.const 3)))
+      (then (call $page_opbit_set (local.get $me) (local.get $wend))))
     (if (global.get $op_index_poison) (then (return)))
     (local.set $n (global.get $op_index_n))
     (block $od (loop $os
@@ -1035,13 +1045,16 @@
     (local.set $wmax
       (i32.shr_u (call $page_desc_used (i32.load offset=12 (local.get $slot)))
                  (i32.const 2)))
+    ;; The used end bounds the last block even without its END bit, which a
+    ;; block filling the whole chunk does not get (see $page_opbits_publish),
+    ;; and stopping there keeps the test inside this slot's map.
     (local.set $w (i32.add (local.get $w0) (i32.const 1)))
+    (if (i32.gt_u (local.get $w) (local.get $wmax)) (then (return (i32.const 0))))
     (block $done (loop $scan
-      (br_if $done (i32.gt_u (local.get $w) (local.get $wmax)))
+      (br_if $done (i32.ge_u (local.get $w) (local.get $wmax)))
       (br_if $done (call $page_opbit_test (local.get $me) (local.get $w)))
       (local.set $w (i32.add (local.get $w) (i32.const 1)))
       (br $scan)))
-    (if (i32.gt_u (local.get $w) (local.get $wmax)) (then (return (i32.const 0))))
     (global.set $page_cached_stream_len
       (i32.shl (i32.sub (local.get $w) (local.get $w0)) (i32.const 2)))
     (i32.add (local.get $chunk) (local.get $coff)))
@@ -2038,6 +2051,17 @@
     (call $host_log_i32 (i32.const 0xCAC4BAD0))
     (call $host_log_i32 (local.get $fn))
     (call $host_log_i32 (global.get $eip))
+    ;; Where the bad word was read from, against the loaded page's chunk and
+    ;; the arena cursor: an $ip outside [chunk, chunk+cap) is a stale stream
+    ;; pointer, one inside it is a corrupt stream.
+    (call $host_log_i32 (i32.const 0xCAC4BAD1))
+    (call $host_log_i32 (i32.sub (global.get $ip) (i32.const 8)))
+    (call $host_log_i32 (global.get $dbg_prev_eip))
+    (call $host_log_i32 (global.get $cur_page_base))
+    (call $host_log_i32 (global.get $cur_page_chunk))
+    (call $host_log_i32 (global.get $cur_page_chunk_cap))
+    (call $host_log_i32 (global.get $thread_alloc))
+    (call $host_log_i32 (global.get $THREAD_BASE))
     (global.set $thread_alloc (global.get $THREAD_BASE))
     (call $clear_cache))
 

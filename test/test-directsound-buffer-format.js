@@ -32,6 +32,15 @@ const extraWat = String.raw`
     (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
     (i32.load offset=0 (global.get $reg_base)))
 
+  (func (export "test_ds_get_caps") (param $this i32) (param $caps i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_IDirectSound_GetCaps
+      (local.get $this) (local.get $caps) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+
   (func (export "test_ds_compact") (param $this i32) (result i32)
     (local $saved_esp i32)
     (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
@@ -152,6 +161,16 @@ async function main() {
   assert.strictEqual(e.test_ds_create(soundOutput) >>> 0, 0);
   const sound = dv.getUint32(soundOutputWa, true);
   assert(sound, 'DirectSound fixture allocates');
+  // Miles reads DSCAPS_EMULDRIVER (0x20) as "no real driver", drops
+  // DirectSound for waveOut, and reports ~1.5s of latency that overflows
+  // Bink's audio-buffer divide (Arcanum's first movie).
+  const devCaps = e.guest_alloc(96) >>> 0;
+  dv.setUint32(wa(devCaps), 96, true);
+  assert.strictEqual(e.test_ds_get_caps(sound, devCaps) >>> 0, 0);
+  const devFlags = dv.getUint32(wa(devCaps) + 4, true);
+  assert.strictEqual(devFlags & 0x20, 0, 'the device is not an emulated driver');
+  assert.strictEqual(devFlags & 0xa0a, 0xa0a,
+    'primary and secondary stereo 16-bit are supported');
   const topLevel = e.test_ds_make_window(0x10000000, 0) >>> 0;
   const child = e.test_ds_make_window(0x50000000, topLevel) >>> 0;
 
