@@ -224,6 +224,36 @@ test('file mapping and view access cannot exceed file or section rights', () => 
   }
 });
 
+test('mapping views remain within the section size captured at creation', () => {
+  const vfs = makeVFS({ 'c:\\bounds.bin': 32 });
+  const sizes = [];
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const host = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000,
+      guest_map_alloc: n => { sizes.push(n); return 0x410000; } } });
+  const h = vfs.createFile('c:\\bounds.bin', 0xc0000000, 3);
+  const section = host.fs_create_file_mapping(h, 2, 0, 16, 0);
+  assert(section);
+  assert.strictEqual(host.fs_map_view_of_file(section, 4, 0, 0, 17), 0);
+  assert.deepStrictEqual(sizes, []);
+  assert(host.fs_map_view_of_file(section, 4, 0, 0, 0));
+  assert.deepStrictEqual(sizes, [16]);
+  host.fs_unmap_view(0x410000);
+  vfs.setFilePointer(h, 64, 0);
+  vfs.setEndOfFile(h);
+  assert(host.fs_map_view_of_file(section, 4, 0, 0, 0));
+  assert.deepStrictEqual(sizes, [16, 16], 'file growth cannot grow the section');
+  host.fs_unmap_view(0x410000);
+  const anon = host.fs_create_file_mapping(-1, 4, 0, 16, 0);
+  assert.strictEqual(host.fs_map_view_of_file(anon, 2, 0, 16, 1), 0);
+  assert.strictEqual(host.fs_map_view_of_file(anon, 2, 0, 0, 17), 0);
+  assert.strictEqual(host.fs_create_file_mapping(-1, 4, 1, 16, 0), 0,
+    'unsupported high sizes must not wrap to a small section');
+  assert.strictEqual(host.fs_create_file_mapping(h, 2, 0, 65, 0), 0);
+  const empty = vfs.createFile('c:\\empty-section.bin', 0xc0000000, 2);
+  assert.strictEqual(host.fs_create_file_mapping(empty, 2, 0, 0, 0), 0);
+});
+
 test('append-only writes cannot overwrite and null writes cannot extend', () => {
   const vfs = makeVFS({ 'c:\\append.bin': 4 });
   const h = vfs.createFile('c:\\append.bin', 4, 3);

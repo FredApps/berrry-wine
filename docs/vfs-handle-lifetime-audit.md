@@ -700,3 +700,22 @@ provider read or allocation, and executable forms; lazy/provider 47/47 passes.
 This does **not** enforce guest CPU page permissions or finish public mapping
 GetLastError, named-section handle rights/lifetime, SEC_* semantics, mapping
 sizes/file extension, live-view coherence, or teardown. Those remain open.
+
+## Section-size bounds (2026-09-21)
+
+Section records now capture their maximum size at creation. MapViewOfFile
+validates the requested range before allocating a guest view, and a zero view
+length means the remaining section size, not the current backing file length.
+Growing the file cannot silently grow an existing section. Pagefile-backed
+views receive the same bounds checks. Zero-sized file sections fail at creation;
+unsupported nonzero high size DWORDs cannot wrap into smaller sections.
+
+Reference: Microsoft's [MapViewOfFile range contract](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile).
+The regression failed before the fix and VFS now passes 40/40. File extension
+during CreateFileMapping is still unimplemented, including async-provider
+resizing: a requested section larger than its file now fails explicitly instead
+of discarding the requested maximum. This remains a compatibility gap, not a
+completed Win98 behavior. Allocation-granularity checks and mapping errors,
+along with the prior lifetime/coherence limitations, remain open.
+
+Lazy/provider regressions also pass 47/47 after this change.
