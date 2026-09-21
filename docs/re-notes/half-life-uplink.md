@@ -560,3 +560,48 @@ quadrant. Read that quadrant as the next lead: content confined to a 320x240
 corner with a vertical repeat is a pitch/stride disagreement, not a missing
 draw. `--dump-ddraw-surfaces=DIR` plus the `640x480` names in the census is the
 fastest way to see which surface holds what.
+
+### Where the world geometry actually goes (2026-09-21)
+
+The "pitch/stride disagreement in a blit" lead recorded above is **wrong**, and
+the measurement that kills it is cheap enough to repeat: dump the surfaces
+(`--dump-ddraw-surfaces=DIR`) and count colours per quadrant of the back
+buffer.
+
+```
+BACK BUFFER (slot 7, 640x480, pitch 1280) at gameplay
+  top-left     2672 colours   loading-screen tile, HUD, location text
+  top-right       1 colour    black
+  bottom-left   286 colours   real world geometry: textured, very dark
+  bottom-right    1 colour    black
+```
+
+Two things follow. First, **the geometry is being drawn** — the bottom-left
+quadrant holds a textured surface with 286 colours, not a missing draw. Second,
+everything lands at **x < 320 while y uses the full 0..480**: the horizontal
+axis alone is wrong, so this is not a uniform half-scale render and not "the
+engine thinks the screen is 320x240" either.
+
+Three facts rule out our own raster and present path:
+
+- **`dx_boids` (DX SDK, same D3DIM rasterizer, same 640x480 16bpp flip chain)
+  fills all four quadrants.** A blit-stride or rasterizer-width bug would hit it
+  too.
+- **Only three 640x480 surfaces exist in the whole run** (primary, back buffer,
+  one offscreen); every other one of the 474 is a 4x4..256x256 texture. There is
+  no 320-wide surface for the frame to have been rendered into.
+- **The main menu draws correctly across the full 640 pixels**, and it is the
+  game's own art through the same device. So the engine's idea of the screen is
+  right at menu time and becomes 320 wide somewhere in level load.
+
+So the remaining question is what HL reads during level start that comes back
+half width — not what we do with the vertices afterwards. `--trace-dx` prints
+the `DPVtx` screen coordinates per vertex, which answers it directly; use the
+new `--trace-from=N`/`--trace-to=N` window, because the route is ~70,000
+batches and an unwindowed trace spends the whole wall clock on boot output.
+
+**The batch-scheduled click route is load-fragile.** The same command line
+reached gameplay at 225 batches/s on a quiet box and was still sitting on the
+main menu at batch 29,941 on a box at load 23 — the clicks at batch 3200/4500
+landed before the menu was up. Check `uptime` first, or drive the clicks from
+state over `--control-stdin` rather than from batch numbers.

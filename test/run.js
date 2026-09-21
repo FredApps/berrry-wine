@@ -475,6 +475,23 @@ const ASYNC_MM_TIMER_AFTER = Math.max(0,
   parseInt(getArg('async-mm-timer-after', '0'), 10) || 0);
 const TRACE_YIELD = hasFlag('trace-yield');   // --trace-yield: log yield_reason transitions per thread
 const TRACE_BATCH_TIMING = hasFlag('trace-batch-timing'); // --trace-batch-timing: log run/repaint wall time per batch
+// --trace-from=N / --trace-to=N: confine every trace category to a window of
+// batches. A route that only misbehaves at batch 70,000 cannot be traced
+// otherwise -- the flags themselves are affordable, but writing their output
+// for the 70,000 batches of boot that precede the question is not, and on an
+// API-heavy app that write is the whole wall clock (see --quiet-api).
+const TRACE_FROM = parseInt(getArg('trace-from', '-1'), 10);
+const TRACE_TO = parseInt(getArg('trace-to', '-1'), 10);
+const TRACE_WINDOWED = TRACE_FROM >= 0 || TRACE_TO >= 0;
+// -1 means "not inside the batch loop", so setup and the exit summary are
+// never windowed -- only per-batch output is.
+let traceGateBatch = -1;
+function traceWindowOpen() {
+  if (!TRACE_WINDOWED || traceGateBatch < 0) return true;
+  if (TRACE_FROM >= 0 && traceGateBatch < TRACE_FROM) return false;
+  if (TRACE_TO >= 0 && traceGateBatch > TRACE_TO) return false;
+  return true;
+}
 // --decode-stats[=FROM_BATCH]: per-batch distribution of block decodes and of
 // the guest slice's wall time, printed at exit.
 //
@@ -2581,6 +2598,10 @@ async function main() {
           }
         }
       }
+      // Outside a --trace-from/--trace-to window, skip the logging tracer
+      // entirely rather than only suppressing its output: its formatters scan
+      // 64KB of DIB per Lock/Unlock/Present, which is the expensive half.
+      if (!traceWindowOpen()) return;
       return rawDxTrace(kind, ...a);
     };
   }
@@ -5898,9 +5919,17 @@ async function main() {
       console.log(`[cpu-prof] batches ${this.startedAt}..${batch} -> ${CPU_PROF_WINDOW.file}`);
     },
   } : null;
+  if (TRACE_WINDOWED) {
+    const passthrough = console.log;
+    console.log = (...args) => { if (traceWindowOpen()) passthrough(...args); };
+    console.log(`[trace-window] tracing batches`
+      + ` ${TRACE_FROM >= 0 ? TRACE_FROM : 0}..${TRACE_TO >= 0 ? TRACE_TO : 'end'}`);
+  }
   const executionStartedAt = performance.now();
   for (let batch = 0; batch < MAX_BATCHES && !stopped; batch++) {
+    traceGateBatch = batch;
     if (deadlineMs && Date.now() >= deadlineMs) {
+      traceGateBatch = -1; // why the run stopped is not per-batch trace output
       console.log(`[max-seconds] stopping after ${MAX_SECONDS}s at batch ${batch}`);
       break;
     }
@@ -9430,6 +9459,7 @@ if (VERBOSE) {
       }
     }
   }
+  traceGateBatch = -1; // back outside the loop: the exit summary is never windowed
   const executionElapsedSeconds = Math.max(0, (performance.now() - executionStartedAt) / 1000);
   // A window whose stop is --max-batches (or past a crash/stop) is never
   // closed inside the loop; report it as ending at run end, not silently.
