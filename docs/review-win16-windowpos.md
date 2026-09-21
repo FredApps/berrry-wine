@@ -3037,3 +3037,13 @@ adjacent menu suites and the isolated full build pass; rebuilt wVis with
 the helper disabled now passes and visibly opens Rendering Options. The
 production helper remains pending command/check-state and modal-lifetime
 validation; this does not close the broader input/menu review.
+
+CheckMenuItem now also reaches dynamic and detached LoadMenu trees before
+tracking, rather than ignoring them while scanning attached windows. Compiled
+tests cover nested commands, exact positions, previous-state returns and
+unrelated-menu isolation; old code fails the new test. Rebuilt wVis visibly
+shows Slower Fade and Blur checked. A further Clear click/reopen probe leaves
+those checks unchanged, so command selection is explicitly unverified despite
+the existing visualization/submenu browser assertions passing. The legacy
+attached-resource scope, live tracking-snapshot mutation, dynamic GetMenuState
+and popup modal lifetime remain open; details are in the binary notes.

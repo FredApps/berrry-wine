@@ -125,3 +125,52 @@ it, proving command selection/check-state changes and fixing TrackPopupMenu's
 premature return remain open. The shared serializer's existing two-level
 child-depth limit is unchanged; this is not proof of arbitrary-depth menu
 tracking or native Win98 modal-loop fidelity.
+
+## Check-state setup, 2026-09-21
+
+The guest calls CheckMenuItem on the LoadMenu handle before GetSubMenu and
+TrackPopupMenu. For example, original VA `0x10003065` checks command
+`0x9c74 + [0x1000c0bc]`; the branches beginning at `0x10003078` select a fade
+command from `[0x1000c0a8]`. The old CheckMenuItem handler ignored dynamic and
+detached handles and scanned only window-attached menu blobs. Thus the guest
+could not check this detached tree before displaying it.
+
+Added a canonical dynamic-tree check operation. Position targets exactly one
+item on the specified menu; command lookup descends into submenus and stops
+at the first matching command. It preserves unrelated state bits and returns
+the previous check state, or -1 for a missing item. Tagged detached LoadMenu
+handles resolve to their existing canonical tree. The behavior follows the
+[CheckMenuItem contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-checkmenuitem)
+and Microsoft's [menu item addressing description](https://github.com/MicrosoftDocs/win32/blob/docs/desktop-src/menurc/about-menus.md).
+These are documentation references, not new native Win98 measurements.
+
+The compiled regression passes 13 checks on main and the isolated copy,
+including nested commands, repeated checks/previous-state returns, unchecking,
+duplicate ids, unrelated-menu isolation, invalid indices, popup-row checks by
+position and persistence into the next tracking blob. A seeded detached alias
+tests resolver identity without pretending to load a PE resource. The new
+dynamic-tree assertion failed before the runtime fix with return -1 rather
+than 0 (`/private/tmp/wa-wvis-check-before.log`); passing main log is
+`/private/tmp/wa-wvis-check-main.log`. Existing resource-position and nested
+resource-mutation tests also pass in isolation.
+
+Still open: the legacy attached-resource CheckMenuItem path scans unrelated
+window blobs; GetMenuState lacks equivalent dynamic-tree support; mutating
+an already-open tracking snapshot needs separate coverage. This change
+specifically fixes canonical state setup before tracking, not those paths.
+
+Isolated full build passes (`/private/tmp/wa-wvis-check-build.log`): wasm
+1454818 bytes, compat 1455724, unchanged layout `c5ccefca8909ee4b`.
+Rebuilt browser experiment with the workaround disabled exits 0 on the
+existing visualization/submenu assertions (`/private/tmp/wa-wvis-check-browser.log`).
+The menu probe now sees checked Slower Fade (40041) and Blur (40059), both
+internal flag 4, and the screenshot visibly shows both check marks.
+
+The extra select/reopen experiment is **not a command-selection pass**:
+after hovering Rendering Options, clicking guest (350,257), waiting 1200 ms,
+right-clicking (150,205), waiting 1200 ms and hovering (215,257) again, the
+submenu flags are unchanged. Clear (40030) remains unchecked. The original
+browser test does not assert that this extra action changed an option.
+Next capture menu hover/close and queued WM_COMMAND immediately around that
+click, then inspect the guest fade variable before claiming selection works.
+The production renderer helper remains installed.

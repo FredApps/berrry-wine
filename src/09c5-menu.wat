@@ -4723,13 +4723,64 @@
       (local.get $arg3) (local.get $arg4)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
 
-  ;; 122: CheckMenuItem(hMenu, uIDCheckItem, uCheck) → previous state
-  ;; We don't track HMENU-to-window mapping directly, so walk every
-  ;; window with a menu blob and toggle the first matching command id.
-  ;; uCheck combines MF_BYCOMMAND/MF_BYPOSITION with MF_CHECKED (8) or
-  ;; MF_UNCHECKED (0); MF_BYPOSITION isn't supported here — in practice
-  ;; callers use MF_BYCOMMAND, which is what our id-based walk matches.
+  ;; Check a canonical dynamic tree, including detached LoadMenu trees.
+  ;; By-position addresses this level only; by-command descends into popup
+  ;; children and stops at the first match. Never search unrelated menus.
+  (func $dynamic_menu_check
+        (param $hmenu i32) (param $item i32) (param $flags i32) (result i32)
+    (local $sw i32) (local $count i32) (local $i i32) (local $rec i32)
+    (local $old i32) (local $r i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (if (i32.and (local.get $flags) (i32.const 0x400))
+      (then
+        (if (i32.ge_u (local.get $item) (local.get $count))
+          (then (return (i32.const -1))))
+        (local.set $i (local.get $item))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (call $dmb_item_w (local.get $sw) (local.get $i)))
+      (local.set $old (i32.load (local.get $rec)))
+      (if (i32.or
+            (i32.ne (i32.and (local.get $flags) (i32.const 0x400)) (i32.const 0))
+            (i32.and
+              (i32.eqz (i32.and (local.get $old) (i32.const 0x10)))
+              (i32.eq (i32.load offset=4 (local.get $rec)) (local.get $item))))
+        (then
+          (i32.store (local.get $rec)
+            (i32.or (i32.and (local.get $old) (i32.const -9))
+              (i32.and (local.get $flags) (i32.const 8))))
+          (call $resource_submenu_binding_refresh (local.get $hmenu))
+          (return (i32.and (local.get $old) (i32.const 8)))))
+      (if (i32.and (local.get $old) (i32.const 0x10))
+        (then
+          (local.set $r (call $dynamic_menu_check
+            (i32.load offset=12 (local.get $rec)) (local.get $item) (local.get $flags)))
+          (if (i32.ne (local.get $r) (i32.const -1))
+            (then (return (local.get $r))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
+  ;; 122: CheckMenuItem(hMenu, uIDCheckItem, uCheck) → previous state.
+  ;; Attached resource blobs retain their legacy path below; dynamic and
+  ;; detached menus must update their canonical tree before popup tracking.
   (func $handle_CheckMenuItem (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $dynamic i32)
+    (local.set $dynamic (local.get $arg0))
+    (if (i32.eqz (call $dynamic_menu_state_w (local.get $dynamic)))
+      (then
+        (local.set $dynamic (i32.const 0))
+        (if (i32.eqz (call $menu_hwnd_from_handle (local.get $arg0)))
+          (then (local.set $dynamic (call $menu_detached_handle (local.get $arg0)))))))
+    (if (local.get $dynamic)
+      (then
+        (i32.store (global.get $reg_base) (call $dynamic_menu_check
+          (local.get $dynamic) (local.get $arg1) (local.get $arg2)))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
     (if (i32.and (local.get $arg2) (i32.const 0x400))
       (then (i32.store offset=0 (global.get $reg_base) (call $menu_check_position_global
         (local.get $arg0) (local.get $arg1)
