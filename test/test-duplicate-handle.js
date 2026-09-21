@@ -127,6 +127,47 @@ const extraWat = `
   assert.strictEqual(wat.get_eax(), 0, 'DuplicateHandle rejects a NULL output pointer');
 
   const vfs = hostCtx.vfs;
+  const metadataPath = 'c:\\file-information.bin';
+  const meta = vfs.createFile(metadataPath, 0xc0000000, 2) >>> 0;
+  vfs.writeFile(meta, Uint8Array.from([1, 2, 3]), 3);
+  vfs.setFileAttributes(metadataPath, 0x22);
+  const times = [{ lo: 11, hi: 12 }, { lo: 21, hi: 22 }, { lo: 31, hi: 32 }];
+  assert.strictEqual(vfs.setFileTimes(meta, ...times), 0);
+  vfs.volumeSerials = new Map([['c', 0xabcdef01]]);
+  const infoWords = handle => {
+    assert.strictEqual(wat.test_public_file_info(handle), 1);
+    return Array.from({ length: 13 }, (_, i) => wat.test_read_guest32(0x00490200 + i * 4) >>> 0);
+  };
+  const metadata = infoWords(meta);
+  assert.deepStrictEqual(metadata.slice(0, 11), [0x22, 11, 12, 21, 22, 31, 32, 0xabcdef01, 0, 3, 1]);
+  const fileId = metadata.slice(11);
+  assert.notDeepStrictEqual(fileId, [0, 0]);
+  const anotherOpen = vfs.createFile(metadataPath, 0x80000000, 3) >>> 0;
+  assert.deepStrictEqual(infoWords(anotherOpen), metadata, 'separate opens share entry metadata and identity');
+  const metadataAlias = vfs.duplicateFileHandle(meta, 0, false, 2);
+  assert.deepStrictEqual(infoWords(metadataAlias), metadata, 'duplicates report the same file identity');
+  vfs.setDriveReadOnly('c');
+  assert.strictEqual(infoWords(meta)[0], 0x23, 'immutable media contributes the read-only attribute');
+  vfs.setDriveReadOnly('c', false);
+  assert(vfs.copyFile(metadataPath, 'c:\\metadata-copy.bin', true));
+  const copy = vfs.createFile('c:\\metadata-copy.bin', 0x80000000, 3) >>> 0;
+  assert.notDeepStrictEqual(infoWords(copy).slice(11), fileId, 'copied file has independent identity');
+  const truncated = vfs.createFile(metadataPath, 0xc0000000, 2) >>> 0;
+  assert.deepStrictEqual(infoWords(truncated).slice(11), fileId, 'CREATE_ALWAYS preserves existing identity');
+  assert.strictEqual(infoWords(truncated)[9], 0);
+  const childVfs = new vfs.constructor();
+  childVfs.adoptFrom(vfs);
+  const inherited = childVfs.createFile(metadataPath, 0x80000000, 3);
+  assert.strictEqual(childVfs.getFileInformation(inherited).identity, vfs.getFileInformation(meta).identity,
+    'chain-launched filesystem shares the entry identity allocator');
+  for (const handle of [meta, anotherOpen, metadataAlias, copy, truncated]) vfs.closeHandle(handle);
+  assert.strictEqual(wat.test_public_file_info(meta), 0);
+  assert.strictEqual(wat.test_dup_error(), 6);
+  vfs.deleteFile(metadataPath);
+  const recreated = vfs.createFile(metadataPath, 0xc0000000, 2) >>> 0;
+  assert.notDeepStrictEqual(infoWords(recreated).slice(11), fileId, 'a newly created entry gets a new identity');
+  vfs.closeHandle(recreated);
+  console.log('PASS  file information uses stored times/attributes/volume and shared entry identity');
   for (const size of [0, 17, 0xffffffff, 0x100000011, 0x1ffffffff]) {
     let reads = 0;
     const provider = {

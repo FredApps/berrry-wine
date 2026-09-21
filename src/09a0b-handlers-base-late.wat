@@ -1250,9 +1250,7 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
 
   ;; 508: GetFileInformationByHandle(hFile, lpFileInformation) → BOOL
-  ;; Populate the stable fields exposed by the in-memory VFS. Timestamps are
-  ;; synthetic (as in GetFileTime), while file size and handle validity come
-  ;; from the host so callers can distinguish real VFS files from bad handles.
+  ;; One VFS snapshot supplies metadata and entry identity, shared by opens.
   (func $handle_GetFileInformationByHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $info i32) (local $error i32)
     (if (i32.eqz (local.get $arg1))
@@ -1262,26 +1260,14 @@
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
     (local.set $info (call $g2w (local.get $arg1)))
-    (local.set $error (call $host_fs_file_size_result (local.get $arg0)
-      (i32.add (local.get $info) (i32.const 36))
-      (i32.add (local.get $info) (i32.const 32))))
+    (local.set $error (call $host_fs_file_information
+      (local.get $arg0) (local.get $info)))
     (if (local.get $error)
       (then
         (global.set $last_error (local.get $error))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
-    (i32.store offset=0 (local.get $info) (i32.const 0x20))       ;; FILE_ATTRIBUTE_ARCHIVE
-    (i32.store offset=4 (local.get $info) (i32.const 0x256D4000)) ;; creation FILETIME low
-    (i32.store offset=8 (local.get $info) (i32.const 0x01BF53EB)) ;; creation FILETIME high
-    (i32.store offset=12 (local.get $info) (i32.const 0x256D4000))
-    (i32.store offset=16 (local.get $info) (i32.const 0x01BF53EB))
-    (i32.store offset=20 (local.get $info) (i32.const 0x256D4000))
-    (i32.store offset=24 (local.get $info) (i32.const 0x01BF53EB))
-    (i32.store offset=28 (local.get $info) (i32.const 0x57415458)) ;; stable volume serial, "WATX"
-    (i32.store offset=40 (local.get $info) (i32.const 1))         ;; link count
-    (i32.store offset=44 (local.get $info) (i32.const 0))
-    (i32.store offset=48 (local.get $info) (local.get $arg0))     ;; stable per-open file index
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )

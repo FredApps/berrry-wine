@@ -329,3 +329,38 @@ Verification: source-compiled `test-get-compressed-file-size.js`, handler ESP,
 WAT-fragment and silent-stub gates pass (250 manual + 22 metadata unchanged).
 This source-only cleanup adds no import or layout changes. No new full artifact
 build or browser run is claimed for this checkpoint.
+
+## File-information metadata checkpoint — 2026-09-21
+
+`GetFileInformationByHandle` now receives one VFS snapshot: stored creation,
+access and write timestamps; entry attributes plus immutable-media read-only;
+mounted volume serial (or the same default used by GetVolumeInformation);
+high/low size; one FAT-like link; and file-entry identity. Removed the WAT
+hardcoded dates, ARCHIVE attribute, unrelated volume serial and handle-as-ID.
+
+The [file-information identity contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/ns-fileapi-by_handle_file_information)
+lets callers compare distinct opens of one file. A VFS-owned weak identity map
+now assigns IDs to entries, not handles; duplicates and separate opens agree,
+copies get different IDs, and CREATE_ALWAYS retains an assigned ID. Chain-launch
+adoption shares the identity allocator with the adopted entry objects. Weak keys
+do not retain deleted entries solely for identity bookkeeping. IDs are opaque
+runtime identities, not emulated FAT directory-cluster/slot numbers or persisted
+on-disk IDs.
+
+The regression checks all stored timestamp words, attributes, mounted serial,
+link count, duplicates, separate opens, copies, truncation, deletion/recreation,
+adoption and closed-handle failure. Existing lazy large-size coverage also runs
+through the new snapshot without fetching provider contents.
+
+Remaining limits: file times are not yet quantized to FAT's field-specific
+resolution. Open handles still resolve entries by path, so rename/delete/recreate
+while open needs a full file-object lifetime model. CREATE_ALWAYS's existing
+timestamp/attribute reset and other creation-disposition details are not repaired
+by preserving identity. Invalid guest output spans and real concurrent Worker
+metadata/mutation tests remain separate work.
+
+Verification: public metadata/size/seek/read/write/duplicate, filesystem-adoption,
+VFS 32/32 and file-time suites pass. Full shared-tree build passes with 251 imports,
+canonical 1,472,099 bytes, compatibility 1,473,073 bytes, unchanged layout
+`54f430b349c8d55e` and 242 nonoverlapping data segments. This build also includes
+the preceding compressed-size workaround removal; no isolated timing claim.
