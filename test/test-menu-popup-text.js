@@ -35,6 +35,11 @@ function check(label, fn) {
 (async () => {
   const harness = await bootRenderHarness({
     extraWat: `
+    (func (export "test_get_menu_state")
+        (param $h i32) (param $item i32) (param $flags i32) (result i32)
+      (call $handle_GetMenuState (local.get $h) (local.get $item)
+        (local.get $flags) (i32.const 0) (i32.const 0) (i32.const 0))
+      (i32.load (global.get $reg_base)))
     (func (export "test_check_menu")
         (param $h i32) (param $item i32) (param $flags i32) (result i32)
       (call $handle_CheckMenuItem (local.get $h) (local.get $item)
@@ -217,6 +222,34 @@ function check(label, fn) {
     wat.test_detached_alias(101, root);
     assert.strictEqual(wat.test_check_menu(0xbe0065, 301, 8), 0);
     assert.strictEqual(wat.test_check_menu(root, 301, 0), 8);
+  });
+
+  check('GetMenuState queries canonical dynamic and detached trees without tracking', () => {
+    const root = wat.test_call_CreatePopupMenu() >>> 0;
+    const child = wat.test_call_CreatePopupMenu() >>> 0;
+    const other = wat.test_call_CreatePopupMenu() >>> 0;
+    wat.test_call_AppendMenuA(child, 8, 401, strA('Checked'));
+    wat.test_call_AppendMenuA(child, 0, 401, strA('Duplicate'));
+    wat.test_call_AppendMenuA(child, 0x100, 402, 0x12345678);
+    wat.test_call_AppendMenuA(root, 0x18, child, strA('Submenu'));
+    wat.test_call_AppendMenuA(root, MF_SEPARATOR, 0, 0);
+    wat.test_call_AppendMenuA(other, 0, 401, strA('Unrelated'));
+    const state = (h, item, flags = 0) => wat.test_get_menu_state(h, item, flags);
+    assert.strictEqual(state(root, 401), 8, 'recursive first command match');
+    assert.strictEqual(state(child, 1, 0x400), 0, 'exact position; no private text-ownership bit');
+    assert.strictEqual(state(other, 401), 0, 'unrelated menus remain isolated');
+    assert.strictEqual(state(root, 0, 0x400), 0x318, 'popup count in high byte, flags in low byte');
+    assert.strictEqual(state(root, 1, 0x400), MF_SEPARATOR);
+    assert.strictEqual(state(root, 402), 0x100, 'owner-draw flag survives');
+    assert.strictEqual(state(root, 999), -1);
+    assert.strictEqual(state(root, 99, 0x400), -1);
+    assert.strictEqual(state(root, -1, 0x400), -1);
+    assert.strictEqual(state(root, child), -1, 'a submenu handle is not a command id');
+    wat.test_detached_alias(102, root);
+    assert.strictEqual(state(0xbe0066, 401), 8);
+    assert.strictEqual(state(0xbe0066, 0, 0x400), 0x318);
+    assert.strictEqual(wat.test_check_menu(root, 401, 0), 8);
+    assert.strictEqual(state(0xbe0066, 401), 0, 'queries observe later mutations');
   });
 
   console.log(`test-menu-popup-text: ${passed} checks ok`);

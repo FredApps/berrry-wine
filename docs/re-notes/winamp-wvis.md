@@ -288,3 +288,28 @@ This removes the application-specific shortcut, not all generic menu gaps.
 TrackPopupMenu's early return, unique LoadMenu identity, attached-resource
 CheckMenuItem scope, dynamic GetMenuState and deeper cascade tracking remain
 separate open work.
+
+## Dynamic GetMenuState queries, 2026-09-21
+
+GetMenuState now resolves a dynamic menu or detached cached alias to its
+canonical record, rather than returning -1 merely because no window owns it.
+By-position queries address exactly one level; by-command queries search the
+tree and return the first match. Ordinary items return public MF flags (never
+the private owned-text bit); popup positions pack child count in the high byte
+and flags in the low byte. Missing items return UINT_MAX. Queries see subsequent
+CheckMenuItem mutations without opening a popup or rebuilding a paint snapshot.
+This follows [Microsoft's GetMenuState contract](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-getmenustate);
+it is not a new native Win98 oracle measurement.
+
+Validation: test-menu-popup-text.js passes all 14 checks on main and in the
+rsync-updated isolated workspace. Its new public-handler regression checks
+nested/duplicate IDs, exact positions, unrelated menus, owner-draw/separator
+flags, popup counts, missing items, aliases and subsequent mutation. Substituting
+HEAD's pre-fix menu source in memory makes that test fail at the first recursive
+query (-1 instead of 8), without changing worktree files. Resource CheckMenuItem
+and detached-menu lifetime tests also pass (the latter 24/24).
+
+Attached-resource query behavior is unchanged. Unique LoadMenu identity,
+resource CheckMenuItem scoping, modal tracking and deeper cascade support
+remain open. No new browser run was needed for this read-only API change;
+the preceding browser evidence belongs to the workaround-removal commit.

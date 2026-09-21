@@ -3992,9 +3992,66 @@
       (select (i32.const 8) (i32.const 0)
         (i32.ne (i32.and (local.get $flags) (i32.const 4)) (i32.const 0)))))
 
+  ;; Return the canonical dynamic record once, whether the public handle is
+  ;; a heap menu or an unattached LoadMenu alias. Attached resource menus keep
+  ;; their window-backed representation.
+  (func $menu_query_dynamic_w (param $hmenu i32) (result i32)
+    (local $sw i32)
+    (local.set $sw (call $dynamic_menu_state_w (local.get $hmenu)))
+    (if (local.get $sw) (then (return (local.get $sw))))
+    (if (call $menu_hwnd_from_handle (local.get $hmenu))
+      (then (return (i32.const 0))))
+    (call $dynamic_menu_state_w (call $menu_detached_handle (local.get $hmenu))))
+
+  ;; GetMenuState uses public MF bits, not the painter's compact flags. For
+  ;; popup rows the high byte contains the child count and the low byte flags.
+  (func $dynamic_menu_query_state
+        (param $sw i32) (param $item i32) (param $bypos i32) (result i32)
+    (local $i i32) (local $count i32) (local $rec i32) (local $flags i32)
+    (local $sub i32) (local $r i32)
+    (if (i32.eqz (local.get $sw)) (then (return (i32.const -1))))
+    (local.set $count (i32.load offset=4 (local.get $sw)))
+    (if (local.get $bypos)
+      (then
+        (if (i32.ge_u (local.get $item) (local.get $count))
+          (then (return (i32.const -1))))
+        (local.set $i (local.get $item))))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $rec (call $dmb_item_w (local.get $sw) (local.get $i)))
+      (local.set $flags (i32.and (i32.load (local.get $rec)) (i32.const 0x7FFFFFFF)))
+      (local.set $sub (i32.const 0))
+      (if (i32.and (local.get $flags) (i32.const 0x10))
+        (then (local.set $sub
+          (call $dynamic_menu_state_w (i32.load offset=12 (local.get $rec))))))
+      (if (i32.or (local.get $bypos)
+            (i32.and (i32.eqz (i32.and (local.get $flags) (i32.const 0x10)))
+              (i32.eq (i32.load offset=4 (local.get $rec)) (local.get $item))))
+        (then
+          (if (i32.and (local.get $flags) (i32.const 0x10))
+            (then
+              (if (i32.eqz (local.get $sub)) (then (return (i32.const -1))))
+              (return (i32.or (i32.and (local.get $flags) (i32.const 0xFF))
+                (i32.shl (i32.and (i32.load offset=4 (local.get $sub)) (i32.const 0xFF))
+                  (i32.const 8))))))
+          (return (local.get $flags))))
+      (if (local.get $sub)
+        (then
+          (local.set $r (call $dynamic_menu_query_state
+            (local.get $sub) (local.get $item) (i32.const 0)))
+          (if (i32.ne (local.get $r) (i32.const -1))
+            (then (return (local.get $r))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const -1))
+
   (func $menu_handle_item_state (export "menu_handle_item_state")
         (param $hmenu i32) (param $pos i32) (result i32)
-    (local $hwnd i32) (local $top i32)
+    (local $hwnd i32) (local $top i32) (local $sw i32)
+    (local.set $sw (call $menu_query_dynamic_w (local.get $hmenu)))
+    (if (local.get $sw)
+      (then (return (call $dynamic_menu_query_state
+        (local.get $sw) (local.get $pos) (i32.const 1)))))
     (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
     (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
@@ -4008,7 +4065,11 @@
   (func $menu_handle_state_by_id (export "menu_handle_state_by_id")
         (param $hmenu i32) (param $id i32) (result i32)
     (local $hwnd i32) (local $bar i32) (local $bars i32)
-    (local $i i32) (local $n i32)
+    (local $i i32) (local $n i32) (local $sw i32)
+    (local.set $sw (call $menu_query_dynamic_w (local.get $hmenu)))
+    (if (local.get $sw)
+      (then (return (call $dynamic_menu_query_state
+        (local.get $sw) (local.get $id) (i32.const 0)))))
     (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
     (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
     (local.set $bars (call $menu_bar_count (local.get $hwnd)))
@@ -5095,7 +5156,6 @@
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
   )
 
-  ;; 674: GetMenuState — STUB: unimplemented
   ;; GetMenuState(hMenu, uId, uFlags) → MF_* state, or -1 when the item is not
   ;; there. MF_BYPOSITION is 0x400; without it uId is a command id.
   (func $handle_GetMenuState (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
