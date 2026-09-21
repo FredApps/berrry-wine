@@ -647,3 +647,25 @@ verification. These remain open rather than being implied by VFS success.
 
 Verification: VFS 38/38, lazy/provider 47/47 and source-compiled public Win32/CRT
 file API regression tests pass. No new browser or native Win98 run here.
+
+## Public CreateFile operation results (2026-09-21)
+
+CreateFileA/W now receive the handle and status from one host operation. The
+host writes the handle directly into the calling thread's EAX slot and returns
+the error/status code; there is no shared last-error latch. Removed the separate
+GetFileAttributes existence probe and the helper that guessed FILE_NOT_FOUND
+for every failed open. Existing internal handle-only callers retain their ABI.
+
+VFS create results distinguish invalid dispositions (87), denied truncation
+(5), protected media (19), handle exhaustion (4), existing CREATE_NEW (80),
+missing OPEN_EXISTING/TRUNCATE_EXISTING (2), and existing-file success (183)
+for CREATE_ALWAYS/OPEN_ALWAYS. Success otherwise retains the existing zero
+last-error policy. Path validation, file attributes, sharing and native Win98
+error precedence are not completed by this result transport.
+
+VFS 38/38, lazy/provider 47/47 and source-compiled public file API tests pass;
+the public matrix exercises both A and W with errors, recovery, success status
+and stdcall cleanup. Legacy read tests pass. A separate codepage source test
+fails its stale assertion for `global.set $eax`; AreFileApisANSI now stores into
+register memory. That unrelated test was not changed. Full-build success is
+not claimed (the earlier unrelated toy-VM bundle gate remains outstanding).

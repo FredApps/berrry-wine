@@ -6,6 +6,21 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = `
+  (func (export "test_write_guest8") (param $address i32) (param $value i32)
+    (call $gs8 (local.get $address) (local.get $value)))
+  (func (export "test_public_create") (param $path i32) (param $access i32)
+    (param $creation i32) (param $wide i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $gs32 (i32.const 0x074ff018) (i32.const 0x80))
+    (if (local.get $wide)
+      (then (call $handle_CreateFileW (local.get $path) (local.get $access)
+        (i32.const 3) (i32.const 0) (local.get $creation) (i32.const 0)))
+      (else (call $handle_CreateFileA (local.get $path) (local.get $access)
+        (i32.const 3) (i32.const 0) (local.get $creation) (i32.const 0))))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff020))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
   (func (export "test_call_DuplicateHandle")
     (param $stack i32) (param $target i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (local.get $stack))
@@ -317,6 +332,42 @@ const extraWat = `
     vfs.createFile('c:\\write-error.bin', 0x40000000, 2);
   }
   console.log('PASS  public file data rights, zero counts and denied-write preservation');
+  for (const wide of [0, 1]) {
+    const filename = 'c:\\create-result-' + wide + '.bin';
+    const bytes = Buffer.from(filename + '\0', wide ? 'utf16le' : 'latin1');
+    bytes.forEach((b, i) => wat.test_write_guest8(0x00490200 + i, b));
+    const create = (access, disposition) => wat.test_public_create(0x00490200, access, disposition, wide);
+    assert.strictEqual(create(0x80000000, 3), -1);
+    assert.strictEqual(wat.test_dup_error(), 2);
+    assert(create(0xc0000000, 1) > 0);
+    assert.strictEqual(wat.test_dup_error(), 0);
+    assert.strictEqual(create(0xc0000000, 1), -1);
+    assert.strictEqual(wat.test_dup_error(), 80);
+    assert.strictEqual(create(0x80000000, 5), -1);
+    assert.strictEqual(wat.test_dup_error(), 5);
+    assert.strictEqual(create(0xc0000000, 6), -1);
+    assert.strictEqual(wat.test_dup_error(), 87);
+    for (const disposition of [2, 4]) {
+      assert(create(0xc0000000, disposition) > 0);
+      assert.strictEqual(wat.test_dup_error(), 183);
+    }
+    vfs.setDriveReadOnly('c', true);
+    try {
+      assert.strictEqual(create(0x40000000, 3), -1);
+      assert.strictEqual(wat.test_dup_error(), 19);
+      assert(create(0x80000000, 4) > 0);
+      assert.strictEqual(wat.test_dup_error(), 183);
+    } finally { vfs.setDriveReadOnly('c', false); }
+    const allocate = vfs._allocateFileHandle;
+    vfs._allocateFileHandle = () => 0;
+    try {
+      assert.strictEqual(create(0x80000000, 3), -1);
+      assert.strictEqual(wat.test_dup_error(), 4);
+    } finally { vfs._allocateFileHandle = allocate; }
+    assert(create(0x80000000, 3) > 0);
+    assert.strictEqual(wat.test_dup_error(), 0);
+  }
+  console.log('PASS  CreateFile A/W report operation errors and existing-file success status');
   for (const access of [0, 0x80000000, 4, 0x100, 2, 0x40000000, 0x10000000]) {
     const seed = vfs.createFile('c:\\eof-rights.bin', 0x40000000, 2);
     vfs.writeFile(seed, Uint8Array.from([1, 2, 3, 4]), 4);
