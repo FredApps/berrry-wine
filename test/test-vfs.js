@@ -176,6 +176,54 @@ test('creation dispositions validate truncation before mutation and permit prote
   assert.strictEqual(entry.data.length, 0);
 });
 
+test('file mapping and view access cannot exceed file or section rights', () => {
+  const vfs = makeVFS({ 'c:\\mapped.bin': 16 });
+  let allocations = 0;
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const host = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000,
+      guest_map_alloc: () => { allocations++; return 0x410000; } } });
+  for (const access of [0, 1, 2, 3, 4, 0x80000000, 0xc0000000, 0x10000000]) {
+    const h = vfs.createFile('c:\\mapped.bin', access, 3);
+    const read = !!(access & 0x90000001), write = !!(access & 0x50000002);
+    for (const protect of [2, 4, 8]) {
+      const mapping = host.fs_create_file_mapping(h, protect, 0, 0, 0);
+      assert.strictEqual(mapping !== 0, read && (protect !== 4 || write));
+      if (!mapping) continue;
+      for (const view of [1, 2, 4, 0xf001f, 0x24]) {
+        const before = allocations;
+        const allowed = !(view & 0x20) && (!(view & 2) || protect === 4);
+        const address = host.fs_map_view_of_file(mapping, view, 0, 0, 16);
+        assert.strictEqual(address !== 0, allowed);
+        assert.strictEqual(allocations - before, allowed ? 1 : 0);
+        if (address) host.fs_unmap_view(address);
+      }
+    }
+  }
+  const anon = host.fs_create_file_mapping(-1, 2, 0, 16, 0);
+  assert(anon);
+  assert.strictEqual(host.fs_map_view_of_file(anon, 2, 0, 0, 16), 0);
+  assert.strictEqual(host.fs_create_file_mapping(-1, 0, 0, 16, 0), 0);
+  vfs.setProviderFile('c:\\lazy-map.bin', { provider: { size: 16,
+    tryRead: () => { throw Error('denied view must not read provider'); }, fill: async () => {},
+  } });
+  const lazy = vfs.createFile('c:\\lazy-map.bin', 0x80000000, 3);
+  assert.strictEqual(host.fs_create_file_mapping(lazy, 4, 0, 0, 0), 0);
+  const section = host.fs_create_file_mapping(lazy, 2, 0, 0, 0);
+  assert(section);
+  const before = allocations;
+  assert.strictEqual(host.fs_map_view_of_file(section, 2, 0, 0, 16), 0);
+  assert.strictEqual(allocations, before);
+  assert.strictEqual(host.fs_read_pending(), 0);
+  const all = vfs.createFile('c:\\mapped.bin', 0x10000000, 3);
+  for (const protection of [0x20, 0x40, 0x80]) {
+    const executable = host.fs_create_file_mapping(all, protection, 0, 0, 0);
+    assert(executable);
+    assert(host.fs_map_view_of_file(executable, 0x24, 0, 0, 16));
+    host.fs_unmap_view(0x410000);
+  }
+});
+
 test('append-only writes cannot overwrite and null writes cannot extend', () => {
   const vfs = makeVFS({ 'c:\\append.bin': 4 });
   const h = vfs.createFile('c:\\append.bin', 4, 3);

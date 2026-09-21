@@ -681,3 +681,22 @@ state. Every call checks its four-byte stdcall cleanup. The existing CP1252 é
 and euro, CP437 é, FindFirstFile output, and unaffected UTF-16 filename checks
 remain. `node test/test-file-api-codepage.js` passes. This isolated handler test
 does not claim a real Worker/RPC or native Win98 run.
+
+## Mapping API permission checks (2026-09-21)
+
+CreateFileMapping now requires read data access for read-only/copy-on-write
+sections and both read and write data access for writable sections. Executable
+protection forms additionally require execute access; these are compatibility
+extensions, not a claim that Win98 supports those later flags. Unsupported base
+protection values fail rather than being ignored. Section records retain write
+and execute capabilities; MapViewOfFile rejects incompatible requests before
+provider access or guest allocation. FILE_MAP_ALL_ACCESS requires a writable
+section, and FILE_MAP_COPY does not grant shared writeback. Pagefile-backed
+sections also retain their requested protection capabilities.
+
+Reference: Microsoft's [CreateFileMapping protection table](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-createfilemappinga).
+VFS 39/39 includes file-right/section/view matrices, lazy denial without a
+provider read or allocation, and executable forms; lazy/provider 47/47 passes.
+This does **not** enforce guest CPU page permissions or finish public mapping
+GetLastError, named-section handle rights/lifetime, SEC_* semantics, mapping
+sizes/file extension, live-view coherence, or teardown. Those remain open.
