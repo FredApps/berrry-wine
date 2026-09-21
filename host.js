@@ -3743,7 +3743,28 @@ class WineAssembly {
             self._d3dMainWait = null; self._d3dParkedSlice = null;
             await self.guestWorker.callExport('clear_yield');
           }
-          return self.guestWorker.slice(steps, mainSync);
+          // A main-thread Sleep(n) holds the guest's main thread until its
+          // deadline on the guest clock, exactly as checkMainYield does in
+          // cooperative mode. Its threads keep their turns meanwhile.
+          if (self._workerMainSleepUntil) {
+            if (self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio)
+                < self._workerMainSleepUntil) {
+              return Object.assign({}, self._workerLastSlice,
+                { blocks: 0, ms: 0, sleepYielded: false, sleepMs: 0 });
+            }
+            self._workerMainSleepUntil = 0;
+          }
+          const slice = await self.guestWorker.slice(steps, mainSync);
+          self._workerLastSlice = slice;
+          // The worker reports a Sleep it yielded for; nothing else will make
+          // the guest wait it out. Ignored, Sleep(1001) lasted one slice
+          // (~15ms): Moorhuhn 3 calibrates RDTSC across that Sleep, got 3 MHz
+          // for a 200 MHz counter, and its speed-hack watchdog exited the game.
+          if (slice && slice.sleepMs && !slice.trapped) {
+            self._workerMainSleepUntil =
+              self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio) + (slice.sleepMs >>> 0);
+          }
+          return slice;
         };
         if (self.renderer && self.renderer.beginWorkerGuestSlice) {
           self.renderer.beginWorkerGuestSlice();
@@ -3965,6 +3986,19 @@ class WineAssembly {
       // Same unclamped scheduling the single-threaded loop uses: a nested
       // setTimeout chain is capped at 4ms once it is five deep, which would
       // hold worker mode to ~250 slices a second no matter how fast a slice is.
+      // A sleeping main thread with no guest thread to run has nothing to do
+      // until its deadline, so park rather than re-ask a thousand times.
+      if (self.running && self._workerMainSleepUntil &&
+          !(self.threadManager && self.threadManager.hasActiveThreads &&
+            self.threadManager.hasActiveThreads())) {
+        const left = self._workerMainSleepUntil -
+          self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio);
+        if (left > 0) {
+          self._scheduleStep(step,
+            Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS, Math.round(left))));
+          return;
+        }
+      }
       if (self.running) self._scheduleStep(step);
     };
     // Frozen at launch (a ?frozen tile, or the box checked before the app

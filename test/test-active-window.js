@@ -272,6 +272,14 @@ const extraWat = String.raw`
     'GetForegroundWindow reads renderer-wide state rather than this process main HWND');
   assert.strictEqual(finalEsp(packed), stack + 4,
     'zero-argument GetForegroundWindow pops its return address');
+  // Nothing foreground is not NULL on a real desktop: the shell owns it.
+  // Moorhuhn 2's fmod hands this to IDirectSound::SetCooperativeLevel before
+  // creating a window, and NULL failed DirectSound init (a silent game).
+  foreground = 0;
+  packed = e.test_get_foreground(stack);
+  assert.strictEqual(result(packed), 0x10000,
+    'GetForegroundWindow falls back to the desktop when no window is foreground');
+  foreground = externalForeground;
   packed = e.test_set_active(first, stack);
   assert.strictEqual(result(packed), 0,
     'first successful SetActiveWindow returns the previous NULL active window');

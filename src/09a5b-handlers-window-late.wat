@@ -131,7 +131,16 @@
   (func $handle_GetForegroundWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; This is system-wide, unlike GetActiveWindow's calling-thread queue.
     ;; The renderer owns the cross-process top-level z-order.
-    (i32.store offset=0 (global.get $reg_base) (call $host_foreground_window))
+    ;; With nothing of ours foreground, a real Win98 session still has the
+    ;; shell's window there, never NULL: an app launched from Explorer sees
+    ;; that before its own window exists. Answer with the desktop, the one
+    ;; shell-owned top level we model. Moorhuhn 2's fmod passes this to
+    ;; IDirectSound::SetCooperativeLevel before creating any window, and a
+    ;; NULL there failed DirectSound init and left the game silent.
+    (local $hwnd i32)
+    (local.set $hwnd (call $host_foreground_window))
+    (if (i32.eqz (local.get $hwnd)) (then (local.set $hwnd (i32.const 0x10000))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hwnd))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
