@@ -917,8 +917,9 @@ class Machine {
     this.sound = opts.sound || 'full';
     // `pressed`/`released` are the per-button transition counts INT 33h AX=05h
     // and 06h hand out and clear; they are separate from `buttons`, which is
-    // the level right now.
-    this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0, pressed: [0, 0, 0], released: [0, 0, 0] };
+    // the level right now. `reads` counts AX=03h polls, so a scripted click can
+    // be held until the guest has actually looked at it (run-dos.js --click).
+    this.mouse = { x: 160, y: 100, buttons: 0, dx: 0, dy: 0, pressed: [0, 0, 0], released: [0, 0, 0], reads: 0 };
     // A freshly loaded .EXE owns every paragraph up to the ceiling, so the
     // free pool starts empty and fills when the program shrinks its own block.
     this.allocTop = DEFAULT_ALLOC_TOP;
@@ -2263,9 +2264,10 @@ class Machine {
   // gate at all of them whatever it thinks of hardware interrupts. Reading that
   // as "the guest hooked the timer" sent a double fault every tick, and cd2.exe,
   // daretro.exe and AMBIENT.EXE each lost a full screen of picture to a printed
-  // "Exception fault." Where a pmode program remaps its PIC to is not something
-  // we track. What CAN be read is whether the gate still says what it said when
-  // the extender built the table -- see pmHookedVector below.
+  // "Exception fault." A program that remaps its PIC out of that range is
+  // answered by where it sent it (pic.base, see timerVector); for one that
+  // leaves it at 08h, what CAN be read is whether the gate still says what it
+  // said when the extender built the table -- see pmHookedVector below.
   hookedVector(v) {
     const at = v << 2;
     if ((this.mem[at + 2] | (this.mem[at + 3] << 8)) !== STUB_SEG) return true;
@@ -2869,7 +2871,22 @@ class Machine {
     this.vga.attrFlip = v;
   }
 
+  // A program that reprograms the master PIC has said where IRQ0 goes, and
+  // then the timer is that vector and nothing else. This is what the
+  // exception-number trap above could not see past: at 0x20 and up there is no
+  // CPU exception to mistake a gate for, so in protected mode a remapped IRQ0
+  // is delivered straight to the IDT like the Ultrasound's is. daretro.exe
+  // runs its own non-DPMI protected mode, sends ICW2=20h, points PIT channel 0
+  // at a one-shot and waits on a byte only its INT 20h handler sets -- with
+  // the tick offered at 08h and 1Ch only, it spun on that byte forever.
   timerVector() {
+    const base = this.pic.base[0];
+    if (base !== 0x08) {
+      if (base < 0x20 || (this.pic.imr[0] & 1)) return 0;
+      const ex = this.vmExports;
+      const pmode = ex && ex.get_cr0 && (ex.get_cr0() & 1) && !(ex.get_vm86 && ex.get_vm86());
+      return (pmode || this.hookedVector(base)) ? base : 0;
+    }
     if (this.hookedVector(0x08)) return 0x08;
     if (this.hookedVector(0x1C)) return 0x1C;
     return 0;
@@ -5425,6 +5442,7 @@ class Machine {
       case 0x00: r.set('ax', 0xFFFF); r.set('bx', 2); return true;   // present, 2 buttons
       case 0x01: case 0x02: return true;                             // show/hide cursor
       case 0x03:
+        this.mouse.reads++;
         r.set('bx', this.mouse.buttons);
         r.set('cx', this.mouse.x); r.set('dx', this.mouse.y);
         return true;

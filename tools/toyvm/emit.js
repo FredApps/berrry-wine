@@ -1750,6 +1750,15 @@ function genDoubleShifts() {
 // which is why every memory form below reads and writes through $rd8/$wr8
 // regardless of operand size.
 //
+// The byte address is stepped with $off_add, never a bare `& 0xFFFF`: under a
+// 0x67 prefix the effective address is 32-bit, and the mask folded it into the
+// first 64K. COUNTDWN.EXE's extender returns from its real-mode call helper
+// with `bt [esp-0x14],0` on a flat stack at 0x420c8, so the carry of the DOS
+// call was read from 0x20b4 -- a byte of its own code, bit 0 set -- and every
+// INT 31h 0100h reported failure. The demo then placed its Sound Blaster DMA
+// buffer at 0x4000, cleared it over the extender's code, and died on the next
+// INT 21h it made.
+//
 // Only CF is architecturally defined by the bit tests (BSF/BSR define only ZF).
 // The rest are left as they were rather than zeroed -- a program that reads
 // them is reading undefined state on real silicon too, and leaving them alone
@@ -1790,9 +1799,8 @@ function genBitOps() {
   ${ops(3)}
   ${EA_SETUP_PRE}
   (local.set $t3 ${IDX('(local.get $t2)', SEXT(`(call $rget${w} (local.get $t6))`))})
-  (local.set $t7 (i32.and
-    (i32.add (local.get $t4) (i32.shr_s (local.get $t3) (i32.const 3)))
-    (i32.const 0xFFFF)))
+  (local.set $t7 (call $off_add (local.get $t4)
+    (i32.shr_s (local.get $t3) (i32.const 3))))
   (local.set $t3 (i32.and (local.get $t3) (i32.const 7)))
   (local.set $t2 (call $rd8 (local.get $t5) (local.get $t7)))
   ${CF_ONLY('(i32.shr_u (local.get $t2) (local.get $t3))')}

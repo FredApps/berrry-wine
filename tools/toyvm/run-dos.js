@@ -350,7 +350,12 @@ async function runDos(o) {
     // Stamped with the dispatch count so a port write can be lined up with
     // the rendered audio (--pit-clock runs 10.0M dispatches per guest second
     // at the default dispatchesPerTick).
-    ioTrace: traceIo === null ? null : (line) => log(`  [io] @${(machine.audioNow() / 1e6).toFixed(4)}M ${line}`),
+    // `near` is the guest's cs:ip as the VM last published it -- the start of
+    // the block doing the I/O, not the IN/OUT itself -- which is enough to
+    // find the driver: a port sequence that matches no card can then be read
+    // in the code that wrote it instead of guessed at from the values.
+    ioTrace: traceIo === null ? null : (line) => log(`  [io] @${(machine.audioNow() / 1e6).toFixed(4)}M ${line}`
+      + `  near ${(vm.get('cs') & 0xFFFF).toString(16)}:${(vm.get('gip') >>> 0).toString(16)}`),
     ioPorts: traceIo && traceIo.length ? new Set(traceIo) : null,
     // A DOS program's data sits next to it, and that directory is the whole of
     // the filesystem it gets.
@@ -797,6 +802,13 @@ async function runDos(o) {
     // gets round to it, and a press that is up again by the next poll never
     // happened. Release is the same event backwards -- a button the guest
     // never sees go up leaves its button-down handler running.
+    //
+    // A fixed count of handbacks is not "long enough" for every program:
+    // AQUAPHOB.EXE's setup screen polls fn 03 once every ~330 handbacks, so a
+    // 200-handback press usually fell between two polls and its START DEMO
+    // button never saw a click. So the button stays down until the guest has
+    // read it at least twice as well -- with a ceiling, for a program that
+    // reads the buttons some other way and would otherwise never see it go up.
     for (const c of clicks) {
       if (c.done) continue;
       if (session.dispatched < c.at * budget) continue;
@@ -806,8 +818,10 @@ async function runDos(o) {
         machine.mouse.buttons = 1;
         machine.mouse.pressed[0]++;
         c.held = 0;
+        c.reads = machine.mouse.reads;
         log(`click at ${c.x},${c.y}`);
-      } else if (++c.held > 200) {
+      } else if (++c.held > 200
+          && (machine.mouse.reads - c.reads >= 2 || c.held > 100000)) {
         machine.mouse.buttons = 0;
         machine.mouse.released[0]++;
         c.done = true;
