@@ -1244,11 +1244,10 @@
                       (then (local.set $result (call $show_hide_menu_control_visible
                         (local.get $ctrl) (i32.ne (local.get $new_check) (i32.const 0)))))
                       (else (local.set $new_check (i32.const 0))))))
-                ;; Win98 updates the main menu and its first submenu. The WAT
-                ;; menu mutation walks the whole attached blob, so one call
-                ;; covers both identities without double-toggling anything.
+                ;; Search this window's attached menu tree, not every window
+                ;; sharing the same control command id.
                 (drop (call $menu_check_item_global
-                  (local.get $arg1) (local.get $new_check)))
+                  (local.get $hmenu) (local.get $arg1) (local.get $new_check)))
                 (br $done)))
             (local.set $pair (i32.add (local.get $pair) (i32.const 8)))
             (local.set $index (i32.add (local.get $index) (i32.const 1)))

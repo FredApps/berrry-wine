@@ -2000,7 +2000,7 @@
     (if (i32.eqz (local.get $it)) (then (return (i32.const 0))))
     (i32.load offset=4 (local.get $it)))
 
-  ;; Set/clear the "checked" flag bit (bit2, value 0x04) on every item in
+  ;; Set/clear the "checked" flag bit (bit2, value 0x04) on the first match in
   ;; one child header, recursing into cascading submenus. Returns the first
   ;; matched item's previous state (MF_CHECKED=8 or MF_UNCHECKED=0), or -1
   ;; if nothing matched.
@@ -2028,7 +2028,8 @@
       (br_if $done (i32.ge_u (local.get $i) (local.get $cc)))
       (local.set $it (i32.add (local.get $hdr)
                        (i32.add (i32.const 4) (i32.mul (local.get $i) (i32.const 28)))))
-      (if (i32.eq (i32.load offset=20 (local.get $it)) (local.get $id))
+      (if (i32.and (i32.eqz (i32.load offset=24 (local.get $it)))
+            (i32.eq (i32.load offset=20 (local.get $it)) (local.get $id)))
         (then
           (local.set $flags (i32.load offset=16 (local.get $it)))
           (if (i32.eq (local.get $prev) (i32.const -1))
@@ -2039,7 +2040,8 @@
           (if (local.get $check)
             (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x04))))
             (else (local.set $flags (i32.and (local.get $flags) (i32.const -5)))))
-          (i32.store offset=16 (local.get $it) (local.get $flags))))
+          (i32.store offset=16 (local.get $it) (local.get $flags))
+          (return (local.get $prev))))
       (local.set $child_off (i32.load offset=24 (local.get $it)))
       (if (i32.and
             (i32.ne (local.get $child_off) (i32.const 0))
@@ -2057,12 +2059,12 @@
           (if (i32.and
                 (i32.eq (local.get $prev) (i32.const -1))
                 (i32.ne (local.get $r) (i32.const -1)))
-            (then (local.set $prev (local.get $r))))))
+            (then (return (local.get $r))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (local.get $prev))
 
-  ;; Set/clear the "checked" flag bit (bit2, value 0x04) on every child
+  ;; Set/clear the "checked" flag bit (bit2, value 0x04) on the first child
   ;; item in this blob whose command id matches $id. Returns the item's
   ;; previous checked state (MF_CHECKED=8 or MF_UNCHECKED=0) for the
   ;; first match, or -1 if nothing matched.
@@ -2096,7 +2098,7 @@
           (if (i32.and
                 (i32.eq (local.get $prev) (i32.const -1))
                 (i32.ne (local.get $r) (i32.const -1)))
-            (then (local.set $prev (local.get $r))))))
+            (then (return (local.get $r))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $bar)))
     (local.get $prev))
@@ -2143,37 +2145,28 @@
 
   (func $menu_check_position_global (export "menu_check_position_global")
         (param $hmenu i32) (param $pos i32) (param $check i32) (result i32)
-    (local $i i32) (local $hwnd i32) (local $blob i32) (local $it i32)
-    (local $tidx i32) (local $id i32) (local $r i32) (local $prev i32)
-    (local.set $prev (i32.const -1))
-    (local.set $tidx (i32.sub (i32.shr_u (local.get $hmenu) (i32.const 16)) (i32.const 1)))
-    (if (i32.lt_s (local.get $tidx) (i32.const 0)) (then (return (local.get $prev))))
-    (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (local.set $hwnd (load.field WndRecord hwnd (call $wnd_record_addr (local.get $i))))
-      (if (local.get $hwnd)
-        (then
-          (local.set $blob (call $menu_blob_w (local.get $hwnd)))
-          (if (local.get $blob)
-            (then
-              (local.set $it (call $child_item_w (local.get $blob) (local.get $tidx) (local.get $pos)))
-              (if (local.get $it)
-                (then
-                  ;; Resolve MF_BYPOSITION to the command id, then use the
-                  ;; same blob walker as MF_BYCOMMAND. The old direct store
-                  ;; returned the right prior state without persisting the
-                  ;; checked bit in resource-backed Viewer menus.
-                  (local.set $id (i32.load offset=20 (local.get $it)))
-                  (local.set $r (call $menu_blob_set_check
-                    (local.get $blob) (call $menu_blob_size (local.get $hwnd))
-                    (local.get $id) (local.get $check)))
-                  (if (i32.ne (local.get $r) (i32.const -1))
-                    (then
-                      (call $invalidate_hwnd (local.get $hwnd))
-                      (return (local.get $r))))))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $scan)))
-    (local.get $prev))
+    (local $hwnd i32) (local $blob i32) (local $it i32) (local $top i32) (local $flags i32)
+    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
+    (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
+    ;; Menu-bar items cannot carry check marks.
+    (if (i32.lt_s (local.get $top) (i32.const 0)) (then (return (i32.const -1))))
+    (if (i32.ge_u (local.get $top) (call $menu_bar_count (local.get $hwnd)))
+      (then (return (i32.const -1))))
+    (if (i32.ge_u (local.get $pos) (call $menu_child_count (local.get $hwnd) (local.get $top)))
+      (then (return (i32.const -1))))
+    (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const -1))))
+    (local.set $it (call $child_item_w (local.get $blob) (local.get $top) (local.get $pos)))
+    (if (i32.eqz (local.get $it)) (then (return (i32.const -1))))
+    ;; Position identifies exactly this record, even with duplicate command IDs.
+    (local.set $flags (i32.load offset=16 (local.get $it)))
+    (i32.store offset=16 (local.get $it)
+      (select (i32.or (local.get $flags) (i32.const 4))
+        (i32.and (local.get $flags) (i32.const -5)) (local.get $check)))
+    (call $invalidate_hwnd (local.get $hwnd))
+    (select (i32.const 8) (i32.const 0)
+      (i32.ne (i32.and (local.get $flags) (i32.const 4)) (i32.const 0))))
 
   ;; Resource menu enable/disable state. Internal flag bit1 is rendered as
   ;; MF_GRAYED; return values use the public MF_GRAYED/MF_ENABLED constants.
@@ -2385,36 +2378,35 @@
       (br $loop)))
     (select (i32.const 1) (i32.const 0) (local.get $changed)))
 
-  ;; Walk every window that has a menu blob and toggle the check state
-  ;; of the first matching id. Invalidates any hwnd whose menu changed
-  ;; so the next dropdown paint reflects the new state. Returns the
+  ;; Resolve the requested resource menu and change its first matching id.
+  ;; A dropdown handle searches only that subtree, never sibling dropdowns
+  ;; or another window. Invalidates the owning window. Returns the
   ;; original state (MF_UNCHECKED=0, MF_CHECKED=8) or -1 if no match.
   (func $menu_check_item_global (export "menu_check_item_global")
-        (param $id i32) (param $check i32) (result i32)
-    (local $i i32) (local $hwnd i32) (local $blob_w i32) (local $blob_size i32)
-    (local $r i32) (local $prev i32)
-    (local.set $prev (i32.const -1))
-    (local.set $i (i32.const 0))
-    (block $done (loop $loop
-      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
-      (local.set $hwnd (load.field WndRecord hwnd (call $wnd_record_addr (local.get $i))))
-      (if (local.get $hwnd)
-        (then
-          (local.set $blob_w (call $menu_blob_w (local.get $hwnd)))
-          (if (local.get $blob_w)
-            (then
-              (local.set $blob_size (call $menu_blob_size (local.get $hwnd)))
-              (local.set $r (call $menu_blob_set_check
-                              (local.get $blob_w) (local.get $blob_size)
-                              (local.get $id) (local.get $check)))
-              (if (i32.ne (local.get $r) (i32.const -1))
-                (then
-                  (if (i32.eq (local.get $prev) (i32.const -1))
-                    (then (local.set $prev (local.get $r))))
-                  (call $invalidate_hwnd (local.get $hwnd))))))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $loop)))
-    (local.get $prev))
+        (param $hmenu i32) (param $id i32) (param $check i32) (result i32)
+    (local $hwnd i32) (local $blob i32) (local $size i32)
+    (local $top i32) (local $off i32) (local $r i32)
+    (local.set $hwnd (call $menu_hwnd_from_handle (local.get $hmenu)))
+    (if (i32.eqz (local.get $hwnd)) (then (return (i32.const -1))))
+    (local.set $blob (call $menu_blob_w (local.get $hwnd)))
+    (if (i32.eqz (local.get $blob)) (then (return (i32.const -1))))
+    (local.set $size (call $menu_blob_size (local.get $hwnd)))
+    (local.set $top (call $menu_handle_top_index (local.get $hwnd) (local.get $hmenu)))
+    (if (i32.lt_s (local.get $top) (i32.const 0))
+      (then (local.set $r (call $menu_blob_set_check
+        (local.get $blob) (local.get $size) (local.get $id) (local.get $check))))
+      (else
+        (if (i32.ge_u (local.get $top) (i32.load (local.get $blob)))
+          (then (return (i32.const -1))))
+        (local.set $off (i32.load offset=12
+          (i32.add (local.get $blob) (i32.mul (local.get $top) (i32.const 16)))))
+        (if (i32.eqz (local.get $off)) (then (return (i32.const -1))))
+        (local.set $r (call $menu_group_set_check
+          (local.get $blob) (local.get $size) (i32.add (local.get $blob) (local.get $off))
+          (local.get $id) (local.get $check)))))
+    (if (i32.ne (local.get $r) (i32.const -1))
+      (then (call $invalidate_hwnd (local.get $hwnd))))
+    (local.get $r))
 
   ;; Accel-char (uppercase ASCII) for top-level item $idx, or 0 if none.
   ;; The accel char is the byte after the first un-doubled '&'.
@@ -4865,7 +4857,7 @@
         (local.get $arg0) (local.get $arg1)
         (i32.and (local.get $arg2) (i32.const 8)))))
       (else (i32.store offset=0 (global.get $reg_base) (call $menu_check_item_global
-        (local.get $arg1)
+        (local.get $arg0) (local.get $arg1)
         (i32.and (local.get $arg2) (i32.const 8))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )

@@ -313,3 +313,30 @@ Attached-resource query behavior is unchanged. Unique LoadMenu identity,
 resource CheckMenuItem scoping, modal tracking and deeper cascade support
 remain open. No new browser run was needed for this read-only API change;
 the preceding browser evidence belongs to the workaround-removal commit.
+
+## Resource CheckMenuItem addressing, 2026-09-21
+
+The attached-resource path no longer changes every window with a matching
+command ID. It resolves the supplied menu, restricts dropdown handles to their
+own subtree, and stops after the first command match. By-position updates the
+exact row, including duplicate-ID rows, with explicit bounds checks; it no
+longer converts a position into a whole-tree command search. ShowHideMenuCtl's
+internal caller now supplies its menu handle as well. The contract is
+[Microsoft CheckMenuItem](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-checkmenuitem),
+not a new native Win98 trace.
+
+The expanded test-menu-check-position.js exercises two separate attached
+resource menus, duplicate IDs, sibling isolation, root searches and missing
+positions/commands. With both pre-fix WAT fragments substituted in memory,
+it fails because the duplicate row was also checked (4 instead of 0).
+The first candidate also exposed an unchecked child_item_w index; explicit
+position/count validation corrected it before commit.
+Final resource-position and ShowHideMenuCtl tests pass on main and the
+rsync-updated isolated tree; the dynamic popup suite passes all 14 checks
+on main. These tests compile the current source through WATX. No new browser
+run or full build-gate run was performed for this change.
+
+Resource handles still encode identity using resource IDs: two separately
+loaded menus sharing that ID remain ambiguous until LoadMenu identity is
+replaced. This patch does not fix EnableMenuItem/CheckMenuRadioItem's separate
+global scans, or stale canonical bindings after resource-blob mutations.
