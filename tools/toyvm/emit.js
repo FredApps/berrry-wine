@@ -2412,14 +2412,19 @@ function genArithIO() {
   }
 
   // LES/LDS load a far pointer into a segment register and a GPR at once.
-  for (const [nm, seg] of [['les', 0], ['lds', 3], ['lfs', 4], ['lgs', 5]]) {
-    h(nm, 2, `
+  // LSS is the same load into SS, through the same $sset as MOV SS. At operand
+  // size 32 the offset is a dword and the selector follows it at +4 -- the
+  // form `lss esp,[m]` a 32-bit program switches stacks with.
+  for (const w of [16, 32]) {
+    for (const [nm, seg] of [['les', 0], ['lds', 3], ['lss', 2], ['lfs', 4], ['lgs', 5]]) {
+      h(w === 16 ? nm : `${nm}32`, 2, `
   ${ops(2)}
   ${EA_SETUP_PRE}
-  (call $rset16 (local.get $t6) (call $rd16 (local.get $t5) (local.get $t4)))
+  (call $rset${w} (local.get $t6) (call $rd${w} (local.get $t5) (local.get $t4)))
   (call $sset (i32.const ${seg}) (call $rd16 (local.get $t5)
-    (call $off_add (local.get $t4) (i32.const 2))))
+    (call $off_add (local.get $t4) (i32.const ${w / 8}))))
 `);
+    }
   }
 }
 

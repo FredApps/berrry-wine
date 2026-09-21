@@ -771,7 +771,7 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
     case 0xC4: case 0xC5: {
       const m = modrm();
       if (m.isReg) return null;   // undefined encoding
-      words.push(H[op === 0xC4 ? 'les' : 'lds'], packEa(m), m.disp);
+      words.push(H[(op === 0xC4 ? 'les' : 'lds') + (opsize === 32 ? '32' : '')], packEa(m), m.disp);
       break;
     }
 
@@ -861,10 +861,14 @@ function decodeOne(rd, cs, ip, base = (cs << 4), mask = 0xFFFFF, d32 = false, be
         else words.push(H[`imul2_rm${opsize}`], packEa(m), m.disp);
         break;
       }
-      // LFS/LGS: LES and LDS with the two segment registers the 386 added.
-      if (op2 === 0xB4 || op2 === 0xB5) {
+      // LSS/LFS/LGS: LES and LDS with SS and the two segment registers the
+      // 386 added. LSS is how a program restores a saved SS:SP in one
+      // instruction -- CLX's DOPE.EXE exits through `cs: lss sp,[0x226]`, and
+      // refusing it parked the demo on that address forever.
+      if (op2 === 0xB2 || op2 === 0xB4 || op2 === 0xB5) {
         const m = modrm(); if (m.isReg) return null;
-        words.push(H[op2 === 0xB4 ? 'lfs' : 'lgs'], packEa(m), m.disp);
+        const nm = op2 === 0xB2 ? 'lss' : op2 === 0xB4 ? 'lfs' : 'lgs';
+        words.push(H[nm + (opsize === 32 ? '32' : '')], packEa(m), m.disp);
         break;
       }
       // INVD and WBINVD (486). There are no caches here to invalidate or write

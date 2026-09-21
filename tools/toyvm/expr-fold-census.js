@@ -210,7 +210,7 @@ function classify(name, width, args, eff) {
     }
     return { cls: 'stack', fold: false };
   }
-  if (/^(mov_r_sr|mov_sr_r|mov_m_sr|mov_sr_m|push_seg|pop_seg|push_seg32|pop_seg32|les|lds|lfs|lgs)$/.test(name)) {
+  if (/^(mov_r_sr|mov_sr_r|mov_m_sr|mov_sr_m|push_seg|pop_seg|push_seg32|pop_seg32|(les|lds|lss|lfs|lgs)(32)?)$/.test(name)) {
     return { cls: 'segment', fold: false };
   }
   if (/^(in|out)_(8|16)$/.test(name)) return { cls: 'io', fold: false };
