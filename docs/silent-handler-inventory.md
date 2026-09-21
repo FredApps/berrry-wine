@@ -473,3 +473,39 @@ streams after callbacks, remains open for both normal and returning cleanup.
 DLL-unload execution and concurrent CRT termination are not verified here.
 The runtime regression, quiet-handler pin and ESP gate pass. No full-build or
 browser result is claimed for this callback change.
+
+2026-09-21: CRT stream cleanup now follows the callback phase for both `exit`
+and `_cexit`. A process-shared, locked ownership list tracks successful `fopen`
+and replacement `freopen` handles; explicit close removes ownership before
+calling the host. Nodes are detached under the lock, with heap operations and
+host RPC outside it. A stream opened by a second WASM instance is therefore
+visible to main-thread cleanup. Ownership is reserved before opening, so node
+allocation failure cannot leave an untracked newly opened file.
+
+`freopen` also no longer returns the old handle as false success when opening
+the replacement fails: the old stream is closed and NULL is returned, matching
+Microsoft's [freopen contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/freopen-wfreopen?view=msvc-170).
+The CRT still represents FILE pointers as raw, unbuffered VFS handles; stable
+FILE identity, standard-stream redirection, full mode/text translation and real
+buffering are not established by this change. There is no pending CRT buffer to
+flush in the implemented write-through path.
+
+`test/test-crt-close.js` covers explicit close exclusion, repeated cleanup,
+handle reuse, failed open/reopen, successful replacement, close-error draining,
+cross-instance ownership and real guest callbacks writing before closure for
+normal and returning cleanup. Real-VFS runs verify retained file bytes and that
+the close operation lands. **Newly exposed host-layer gap:** `VirtualFS.closeHandle`
+retains records with `closed=true` for an NSIS workaround, while ordinary
+read/write methods do not reject those records. CRT cleanup is now issued, but
+complete post-close handle invalidation remains open; the test does not pin the
+workaround as correct behavior. Concurrent open/close/termination races are not
+covered by the sequential shared-memory test.
+
+Full shared-worktree build passes with layout hash `54f430b349c8d55e`; the JS
+mirror and both artifacts were regenerated/compiled together. Canonical WASM:
+1,470,811 bytes, SHA-256
+`6a8c61402a1c3ff68425b5f86ac47c707fb0f352cad2e88874412433d12ebe60`;
+compat: 1,471,785 bytes, SHA-256
+`03e7ae30bc08ede0923239bd5008d83156ef1a72beebdab554f4328f280c61d9`.
+These include other agents' uncommitted work, not clean-commit artifact proofs.
+The runtime callback suite also passes; quiet inventory remains 250 + 22.

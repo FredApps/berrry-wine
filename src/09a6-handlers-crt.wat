@@ -966,8 +966,55 @@
   ;; Minimal MSVCRT FILE* stream support. We use the VFS handle itself as the
   ;; stream pointer, which is sufficient for old games that only log and load
   ;; byte streams through their matching CRT imports.
-  (func $handle_fopen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; Ownership is process-shared, not a per-WASM-instance global: a stream
+  ;; opened by a Worker must be visible to cleanup on the main thread.
+  (global $CRT_STREAM_STATE i32 (region.addr $CRT_STREAM_STATE 0))
+  (global $CRT_STREAM_STATE_SIZE i32 (region.size $CRT_STREAM_STATE))
+
+  ;; Unlink one tracked handle. Nodes are {next guest pointer, VFS handle}.
+  ;; Never hold the list lock across host RPC or heap allocation/free.
+  (func $crt_stream_forget (param $handle i32)
+    (local $link_w i32) (local $node i32) (local $node_w i32)
+    (call $lock_acquire (global.get $CRT_STREAM_STATE))
+    (local.set $link_w (region.addr $CRT_STREAM_STATE 8))
+    (block $done (loop $scan
+      (local.set $node (i32.load (local.get $link_w)))
+      (br_if $done (i32.eqz (local.get $node)))
+      (local.set $node_w (call $g2w (local.get $node)))
+      (if (i32.eq (i32.load offset=4 (local.get $node_w)) (local.get $handle))
+        (then
+          (i32.store (local.get $link_w) (i32.load (local.get $node_w)))
+          (br $done)))
+      (local.set $link_w (local.get $node_w))
+      (br $scan)))
+    (call $lock_release (global.get $CRT_STREAM_STATE))
+    (if (local.get $node) (then (call $heap_free (local.get $node)))))
+
+  (func $crt_stream_close_all
+    (local $node i32) (local $node_w i32) (local $handle i32)
+    (block $done (loop $close
+      (call $lock_acquire (global.get $CRT_STREAM_STATE))
+      (local.set $node (i32.load offset=8 (global.get $CRT_STREAM_STATE)))
+      (if (local.get $node)
+        (then
+          (local.set $node_w (call $g2w (local.get $node)))
+          (i32.store offset=8 (global.get $CRT_STREAM_STATE) (i32.load (local.get $node_w)))
+          (local.set $handle (i32.load offset=4 (local.get $node_w)))))
+      (call $lock_release (global.get $CRT_STREAM_STATE))
+      (br_if $done (i32.eqz (local.get $node)))
+      (call $heap_free (local.get $node))
+      ;; Writes are already synchronous/unbuffered; closing is the final step.
+      (drop (call $crt_close_unbuffered_handle (local.get $handle)))
+      (br $close))))
+
+  (func $crt_fopen (param $arg0 i32) (param $arg1 i32) (result i32)
     (local $mode i32) (local $access i32) (local $creation i32) (local $handle i32)
+    (local $node i32) (local $node_w i32)
+    (if (i32.eqz (local.get $arg0)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $arg1)) (then (return (i32.const 0))))
+    ;; Reserve ownership before opening so OOM cannot leak an untracked stream.
+    (local.set $node (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $node)) (then (return (i32.const 0))))
     (local.set $mode (if (result i32) (local.get $arg1)
       (then (call $gl8 (local.get $arg1))) (else (i32.const 0))))
     (local.set $access (i32.const 0xC0000000)) ;; GENERIC_READ | GENERIC_WRITE
@@ -983,46 +1030,29 @@
       (i32.const 0x80)
       (i32.const 0)))
     (if (i32.eq (local.get $handle) (i32.const -1))
-      (then (local.set $handle (i32.const 0)))
+      (then (call $heap_free (local.get $node)) (return (i32.const 0)))
       (else
         (if (i32.eq (local.get $mode) (i32.const 0x61))
           (then (drop (call $host_fs_set_file_pointer
             (local.get $handle) (i32.const 0) (i32.const 2)))))))
-    (i32.store offset=0 (global.get $reg_base) (local.get $handle))
+    (local.set $node_w (call $g2w (local.get $node)))
+    (i32.store offset=4 (local.get $node_w) (local.get $handle))
+    (call $lock_acquire (global.get $CRT_STREAM_STATE))
+    (i32.store (local.get $node_w) (i32.load offset=8 (global.get $CRT_STREAM_STATE)))
+    (i32.store offset=8 (global.get $CRT_STREAM_STATE) (local.get $node))
+    (call $lock_release (global.get $CRT_STREAM_STATE))
+    (local.get $handle))
+
+  (func $handle_fopen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $crt_fopen (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
   (func $handle_freopen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $mode i32) (local $access i32) (local $creation i32) (local $handle i32)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (local.get $arg2))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (return)))
-    (local.set $mode (if (result i32) (local.get $arg1)
-      (then (call $gl8 (local.get $arg1))) (else (i32.const 0))))
-    (local.set $access (i32.const 0xC0000000)) ;; GENERIC_READ | GENERIC_WRITE
-    (local.set $creation (i32.const 3))        ;; OPEN_EXISTING
-    (if (i32.eq (local.get $mode) (i32.const 0x77))
-      (then (local.set $creation (i32.const 2))))
-    (if (i32.eq (local.get $mode) (i32.const 0x61))
-      (then (local.set $creation (i32.const 4))))
-    (local.set $handle (call $host_fs_create_file
-      (call $g2w (local.get $arg0))
-      (local.get $access)
-      (local.get $creation)
-      (i32.const 0x80)
-      (i32.const 0)))
-    (if (i32.eq (local.get $handle) (i32.const -1))
-      (then
-        ;; Console pseudo-files (CONOUT$/CONIN$) are not VFS files. Keep the
-        ;; caller's stream alive so console redirection remains harmless.
-        (local.set $handle (local.get $arg2)))
-      (else
-        (if (i32.eq (local.get $mode) (i32.const 0x61))
-          (then (drop (call $host_fs_set_file_pointer
-            (local.get $handle) (i32.const 0) (i32.const 2)))))))
-    (i32.store offset=0 (global.get $reg_base) (local.get $handle))
+    ;; Even a failed replacement closes the old stream; do not manufacture
+    ;; success by returning the old handle when the new path cannot be opened.
+    (drop (call $crt_close_unbuffered_handle (local.get $arg2)))
+    (i32.store offset=0 (global.get $reg_base) (call $crt_fopen (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -1047,6 +1077,7 @@
   ;; Keep the public handlers separate so richer FILE/descriptor state can be
   ;; added later without making one ABI front door an alias of the other.
   (func $crt_close_unbuffered_handle (param $handle i32) (result i32)
+    (call $crt_stream_forget (local.get $handle))
     (if (result i32) (call $host_fs_close_handle (local.get $handle))
       (then (i32.const 0))
       (else (i32.const -1)))
@@ -2655,6 +2686,7 @@
       (global.set $eip (local.get $fn))
       (global.set $steps (i32.const 0))
       (return)))
+    (call $crt_stream_close_all)
     (call $host_exit (global.get $atexit_exit_code))
     (global.set $eip (i32.const 0))
     (global.set $yield_flag (i32.const 1))
@@ -2680,7 +2712,7 @@
         (i32.store offset=16 (global.get $reg_base) (local.get $sp))
         (call $com_jump (local.get $fn)))
       (else
-        ;; Stream closure is a separate outstanding CRT lifecycle dependency.
+        (call $crt_stream_close_all)
         (local.set $ret (call $gl32 (local.get $sp)))
         (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $sp) (i32.const 4)))
         (call $com_jump (local.get $ret)))))
