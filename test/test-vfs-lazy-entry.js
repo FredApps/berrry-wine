@@ -446,6 +446,7 @@ test('retry history survives cached prefixes but isolates ranges and file identi
   assert.strictEqual(vfs.readFile(h, buf, 16).pending.attempts, 1,
     'replacement entry does not inherit old retry history');
   vfs.closeHandle(h);
+  vfs.handles.delete(h); // simulate future tombstone reclamation before reuse
   vfs._nextHandle = h;
   const reused = vfs.createFile(GUEST, 0x80000000, 3);
   assert.strictEqual(reused, h);
@@ -491,7 +492,8 @@ test('late file fills cannot publish faults after close, reuse, or entry replace
         fill: () => Promise.resolve(),
       } });
       if (mutation === 'reuse') {
-        // Force allocator wrap/reuse without billions of intervening opens.
+        // Simulate future tombstone reclamation and numeric handle reuse.
+        vfs.handles.delete(handle);
         vfs._nextHandle = handle;
         assert.strictEqual(vfs.createFile(GUEST, 0x80000000, 3) >>> 0, handle);
       }

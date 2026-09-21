@@ -445,3 +445,27 @@ Worker coverage; no WASM imports/layout change and no performance claim.
 
 Verification: shared-tree lazy-provider suite 43/43, VFS 32/32, filesystem
 adoption and syntax/diff checks pass. No full artifact rebuild was needed.
+
+## Handle-allocation ownership checkpoint — 2026-09-21
+
+CreateFile used an unchecked incrementing number while DuplicateHandle had its
+own collision scan. At wrap, an ordinary open overwrote the first live handle's
+record, silently changing which file the guest's existing handle referenced.
+Both paths now use one positive disk-namespace allocator, skipping live records
+and retained closed-handle tombstones. Allocation failure precedes creation or
+truncation, and DuplicateHandle still honors CLOSE_SOURCE on allocation failure.
+Failed opens can leave gaps in the opaque handle-number sequence.
+
+A forced-boundary regression failed before the change and now checks original
+record/cursor/size preservation, both allocation front doors, tombstones and
+invalid counter seeds. Injected allocation exhaustion checks that files are not
+created/truncated on failure; it does not populate the entire handle namespace.
+The stale-fill tests explicitly remove tombstones before simulating future
+numeric reuse, preserving their defensive identity checks without relying on the
+old allocator bug. Tombstone reclamation itself remains unimplemented; neither
+this change nor the fixed allocation range claims native Win98 handle values.
+
+Verification: VFS 34/34, lazy-provider 43/43, legacy HFILE, handle-sign and
+adoption suites pass. The source-compiled public file-information/size/seek/
+read/write/close/duplicate and CRT-duplicate suite also passes, as do syntax and
+diff checks. No WASM or import-layout changes; no full artifact rebuild.

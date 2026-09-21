@@ -24,6 +24,49 @@ function test(name, fn) {
 
 console.log('VFS tests:');
 
+test('file creation and duplication share collision-safe handle allocation across wrap', () => {
+  const vfs = makeVFS({ 'c:\\first.bin': 4, 'c:\\second.bin': 8 });
+  const first = vfs.createFile('c:\\first.bin', 0x80000000, 3);
+  const record = vfs.getOpenFile(first);
+  vfs.setFilePointer(first, 2, 0);
+  vfs._nextHandle = 0x7fffffff;
+  assert.strictEqual(vfs.createFile('c:\\second.bin', 0x80000000, 3), 0x7fffffff);
+  const afterWrap = vfs.createFile('c:\\second.bin', 0x80000000, 3);
+  assert.strictEqual(afterWrap, first + 1, 'wrap skips occupied first handle');
+  assert.strictEqual(vfs.getOpenFile(first), record, 'original record is not overwritten');
+  assert.strictEqual(vfs.getFileSize(first), 4);
+  assert.strictEqual(record.pos, 2);
+  vfs.closeHandle(afterWrap);
+  vfs._nextHandle = first;
+  const duplicate = vfs.duplicateFileHandle(first, 0, false, 2);
+  assert.strictEqual(duplicate, first + 2, 'duplicate skips live and tombstone records');
+  vfs._nextHandle = first;
+  const opened = vfs.createFile('c:\\second.bin', 0x80000000, 3);
+  assert.strictEqual(opened, first + 3, 'ordinary open uses the same collision policy');
+  assert.strictEqual(vfs.getOpenFile(afterWrap), null);
+  for (const seed of [0, 4, 0x80000000, 0xffffffff]) {
+    vfs._nextHandle = seed;
+    const h = vfs.createFile('c:\\second.bin', 0x80000000, 3);
+    assert(h >= 0x70000001 && h <= 0x7fffffff, 'disk handles stay in their positive namespace');
+    assert.strictEqual(vfs.getOpenFile(first), record);
+  }
+});
+
+test('handle allocation failure cannot truncate files and still honors duplicate close-source', () => {
+  const vfs = makeVFS({ 'c:\\original.bin': 8 });
+  const h = vfs.createFile('c:\\original.bin', 0xc0000000, 3);
+  // Exercise exhaustion without allocating a quarter billion handle records.
+  vfs._allocateFileHandle = () => 0;
+  assert.strictEqual(vfs.createFile('c:\\original.bin', 0xc0000000, 2), 0);
+  assert.strictEqual(vfs.getFileSize(h), 8);
+  assert.strictEqual(vfs.createFile('c:\\new.bin', 0xc0000000, 1), 0);
+  assert(!vfs.files.has('c:\\new.bin'));
+  assert.strictEqual(vfs.duplicateFileHandle(h, 0, false, 2), -4);
+  assert(vfs.getOpenFile(h));
+  assert.strictEqual(vfs.duplicateFileHandle(h, 0, false, 3), -4);
+  assert.strictEqual(vfs.getOpenFile(h), null);
+});
+
 test('closed file handles reject I/O and metadata without harming live duplicates', () => {
   const vfs = makeVFS({ 'c:\\lifetime.bin': 4 });
   const h = vfs.createFile('c:\\lifetime.bin', 0xc0000000, 3);
