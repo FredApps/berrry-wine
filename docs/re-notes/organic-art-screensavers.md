@@ -64,24 +64,33 @@ counter exactly. Textures decode fine; the render target has simply never been
 touched yet.
 
 At 60,000 batches the same two surfaces come back
-`colors=188 nonZero=1845/1850` and the capture is a fully textured 3D
-architectural scene — marble columns, stairs, malachite inlay, correct
-perspective.
+`colors=188 nonZero=1845/1850` and the capture shows marble columns, stairs and
+malachite inlay in correct perspective. **That is `AR_WALLP.GIF`, not a render.**
+It is extremely convincing as a 3D scene and it is a blitted photograph — see
+the root-cause section. The budget finding below is still correct (the blank at
+7000 is the capture landing before the first present); what is wrong is reading
+the resulting picture as evidence that the 3D path works.
 
 ## Status at 60,000 batches (`--batch-size=1000 --quiet-api`)
 
-**Look at the picture, not the colour count** — the sweep's blank threshold
-passes a backdrop gradient, and three of these draw nothing but their backdrop.
+**Look at the picture, not the colour count** — and then do not trust the
+picture either. **None of these is rendering a 3D scene.** Every pixel on screen
+is the DirectDraw backdrop blit; see the next section for the `--count` proof.
+The column below is what the capture *looks like*, which is a property of how
+scenic each saver's wallpaper GIF is, not of how much of it works.
 
-| saver | colours | what is actually on screen |
+| saver | colours | what is on screen (all of it backdrop) |
 |---|---|---|
-| ARCHITEC | 242 | **full scene** — textured marble columns, stairs, malachite |
-| FALLINGL | 218 | **full scene** — a dozen distinct textured leaves |
-| SCIFI | 123 | **full scene** — textured terrain under a red sky |
-| ROCKROLL | 84 | backdrop gradient only; `RO_GIT.X`/`RO_PICK.X` never appear |
-| GEOMETRY | 60 | backdrop gradient only; `GE_MESH1.X`/`GE_MESH2.X` never appear |
-| JAZZ | 1 | blank |
-| OASAVER | 1 | blank |
+| ARCHITEC | 242 | `AR_WALLP.GIF` — marble columns, stairs, malachite. Reads as a rendered scene. It is a photograph. |
+| FALLINGL | 218 | its wallpaper — leaves |
+| SCIFI | 123 | its wallpaper — terrain under a red sky |
+| ROCKROLL | 84 | wallpaper gradient |
+| GEOMETRY | 60 | wallpaper gradient |
+| JAZZ | 1 | blank — backdrop never finished decoding |
+| OASAVER | 1 | blank — backdrop never finished decoding |
+
+So the apparent three-way split (full scene / gradient / blank) is not a split at
+all. All seven are in the same state and differ only in their wallpaper.
 
 `WIN98.SCR` sits next to these in the directory and is **not** part of this
 family — it is an MFC saver and renders at 1714 colours.
@@ -106,11 +115,71 @@ involved:
 | GEOMETRY | 30,000 vs 50,000 (and 60k vs 200k) | 0 |
 
 ARCHITEC does change between 45,000 and 57,000 (99.4% of pixels) — that is the
-scene finishing construction, **not** animation. It is frozen either side of it.
+**backdrop decode finishing and being blitted**, not animation and not scene
+construction. It is frozen either side of it. (An earlier revision of this note
+called that change "the scene finishing construction". Wrong; see the root-cause
+section — there is no scene.)
 
-So GEOMETRY and ROCKROLL are most likely not a mesh gap at all; they are frozen
-at a point in scene construction that happens to be before their objects appear,
-and ARCHITEC/FALLINGL/SCIFI are frozen after theirs do. One cause, seven savers.
+## Root cause: d3drm's scene graph is empty, so no geometry is ever submitted
+
+The frame is static because **nothing is being drawn into it**. Measured on
+ARCHITEC and GEOMETRY with `--count` (WASM-native counters, full speed) over
+60,000 batches, on `IDirect3DRMViewport::Render`'s recursive frame-hierarchy
+walk at `d3drm+0x64798903`:
+
+| probe | what it is | ARCHITEC | GEOMETRY |
+|---|---|---|---|
+| `d3drm+0x64798903` | walk entry | 811 | 3604 |
+| `d3drm+0x647989f6` | reached the `cmp [edi+0x25c],0` visual-count test | 811 | — |
+| `d3drm+0x64798a07` | **visual loop body** | **0** | **0** |
+| `d3drm+0x64798a63` | returned from a visual's `Render` | **0** | — |
+| `d3drm+0x64798ae9` | the "no visuals" skip | 811 | 3604 |
+| `d3drm+0x64798cb9` | returned from child-frame recursion | **0** | **0** |
+
+The walk runs once per frame over a root frame with **zero visuals and zero
+child frames**. It never recurses and never renders a visual.
+
+`--trace-host=dx_trace` says the same from the other end: every single
+`IDirect3DDevice::Execute` in 50,000 batches is a 32-byte buffer holding one
+`D3DOP_STATERENDER` with 3 state records plus `D3DOP_EXIT` — no
+`D3DOP_TRIANGLE`, no `D3DOP_PROCESSVERTICES`, no matrix ops, `dwVertexCount=0`.
+d3drm rebuilds that buffer twice per frame and every rebuild is empty.
+
+The app's own per-frame machinery is healthy, which is why every timing
+hypothesis below failed. The engine names its own functions in debug strings:
+`DoFrame()` at `0x74437c00`, `FrameMove(double)` at `0x74436ff0`,
+`pfgUpdateScene(double)` at `0x7443b930`, `FrameShow()` at `0x744378f0`,
+`FrameShowDevice()` at `0x74437b30` (the Present is at `0x74437bb8`). At
+`--trace-at=0x74437d7b`, `tmElapsed` ≈ 2.8 s and `delta` = 2.0 every frame
+(clamped to `MaxFrameDelta`, default 2.0f at `0x744f7adc`), the timer's `last`
+at `0x744f7bc8` advances, and the scene-time accumulator at `0x744f8128`
+integrates monotonically (146,914 → 154,616 between batch 49,609 and 59,990).
+So the app computes scene state correctly every frame and then renders nothing.
+
+The byte countdown at `0x74437b8d..0x74437ba7` that looked like a scene/step
+timer is a CString refcount decrement (`rc` byte at `[ptr-1]`, `0xFF` =
+literal). Dead end — do not re-chase it.
+
+### Still open: did the app ever call AddVisual?
+
+The scene is proven empty **at render time**. What is not established is whether
+the app called `IDirect3DRMFrame::AddVisual`/`AddChild` and the add failed (our
+bug) or never called them because its scene build bailed earlier (a guest-side
+gap further upstream). Cheapest next steps:
+
+1. The frame's visual array is `frame+0x25c` (count) / `+0x264` (data),
+   initialised by the Frame ctor at `d3drm+0x647c095a` via `d3drm+0x647c0734`.
+   `find_field.js` finds no direct write to `+0x25c`, so the append goes through
+   a helper reached by `add reg,0x25c` — find it with
+   `tools/find_bytes.js test/binaries/dlls/d3drm.dll --imm32=0x25c`, then
+   `--count` its entry. **Zero = the app never added a visual; nonzero = we
+   broke the add, and that is our bug.**
+2. `tools/find_vtable_calls.js test/binaries/screensavers/ARCHITEC.SCR --disp=0x48`
+   enumerates the app's own AddVisual sites (slot 18); `--count` them to see
+   whether the app reaches its scene-population code at all.
+3. Organic Art is procedural (PFG), so its visuals would be in-memory
+   `IDirect3DRMMeshBuilder` objects — consistent with the `.X` files never being
+   read.
 
 ### Hypotheses tested and falsified
 
@@ -137,9 +206,11 @@ Recorded so nobody re-runs them:
 5. **Lazy headless present hiding updates.** No. The same capture mechanism
    shows ARCHITEC's 99.4% construction change, so presents do reach the capture.
 
-The next thing to look at is what the app feeds `IDirect3DRMFrame` motion /
-`IDirect3DRM::Tick` per frame — the render loop is alive and the transform is
-not changing, so the animation input is stuck rather than the renderer.
+6. **The animation input is stuck / a transform is not updating.** No — this was
+   the hypothesis that motivated the root-cause hunt, and it is also wrong. The
+   per-frame delta, the timer and the engine's scene-time accumulator all
+   advance correctly. There is no transform to update because there is nothing
+   in the scene graph to transform.
 
 ## Sweep config
 
