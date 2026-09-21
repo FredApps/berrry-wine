@@ -86,21 +86,60 @@ passes a backdrop gradient, and three of these draw nothing but their backdrop.
 `WIN98.SCR` sits next to these in the directory and is **not** part of this
 family — it is an MFC saver and renders at 1714 colours.
 
-## Four of the seven are a real gap, and it is not budget
+## The whole family renders a static frame — including the ones that "work"
 
-GEOMETRY, JAZZ and OASAVER were re-run at **200,000** batches (76s / 91s / 62s)
-and came back at exactly the same 60 / 1 / 1 colours. More budget does nothing
-for them.
+This is the open bug, and it subsumes the per-saver differences above.
 
-The split is by geometry, not by engine: the same renderer textures and
-rasterizes a full scene for ARCHITEC, FALLINGL and SCIFI. Suspect the `.X` mesh
-path. One lead, not yet chased — `--trace-fs` shows GEOMETRY opening
-`ge_mesh1.x` and `ge_mesh2.x` **four times each** and never issuing a single
-`ReadFile` against any of those handles. ARCHITEC opens `ar_mesh.x` eight times
-with no `ReadFile` either, though, so repeated opens are normal d3drm probing
-and the absent reads mean the bytes arrive by some path `--trace-fs` does not
-cover (file mapping?). Establish how a *working* saver gets its mesh bytes
-before reading anything into the failing one.
+Each saver runs a real render loop for the whole run — ~3562 frames in 60,000
+batches, each frame `BeginScene` / `Clear` / two `Execute` buffers / `EndScene`,
+with SCIFI and GEOMETRY submitting structurally identical execute data. **The
+presented image is byte-identical across all of it.** Measured with two `--input
+N:png:` captures inside one run, so no cross-run or cross-build comparison is
+involved:
+
+| saver | captures | differing pixels |
+|---|---|---|
+| ARCHITEC | 75,000 vs 95,000 | 0 of 307,200 |
+| SCIFI | 20,000 vs 30,000 vs 40,000 vs 45,000 | 0 |
+| ROCKROLL | 45,000 vs 57,000 | 0 |
+| FALLINGL | 45,000 vs 57,000 | 0 |
+| GEOMETRY | 30,000 vs 50,000 (and 60k vs 200k) | 0 |
+
+ARCHITEC does change between 45,000 and 57,000 (99.4% of pixels) — that is the
+scene finishing construction, **not** animation. It is frozen either side of it.
+
+So GEOMETRY and ROCKROLL are most likely not a mesh gap at all; they are frozen
+at a point in scene construction that happens to be before their objects appear,
+and ARCHITEC/FALLINGL/SCIFI are frozen after theirs do. One cause, seven savers.
+
+### Hypotheses tested and falsified
+
+Recorded so nobody re-runs them:
+
+1. **`.X` mesh loading is broken.** No. Neither the working nor the failing
+   savers ever *read* their `.X`. The repeated opens are a path-resolution
+   helper at `d3drm+0x1c37a` — `CreateFileA`; if `!= -1`, `CloseHandle` and
+   return the resolved name. ARCHITEC opens `ar_mesh.x` 8 times and reads it 0
+   times while rendering a full scene, so absent `.X` reads cannot be the
+   discriminator. The only files any of them read are their own `.SCR` (20
+   reads, the embedded scene) plus their GIFs.
+2. **A missing API.** No. GEOMETRY and SCIFI use the *same* 189 unique APIs;
+   `comm` on the sorted sets is empty in both directions.
+3. **`QueryPerformanceCounter` i32 overflow.** Tempting — the handler builds the
+   value in i32 as `ticks_ms * 1000` at a declared 1 MHz frequency and hardcodes
+   the high dword to 0, so it wraps at ~2147 s of guest time (batch ~10,735 at
+   the default 200 ms/batch). But `--tick-ms-per-batch=50` moves that wrap to
+   batch ~42,940 and SCIFI is still frozen at 20,000 / 30,000 / 41,000. The
+   overflow is real and worth fixing on its own, but it is not this.
+4. **Time pacing.** No. `--time-scale=20` gives the guest 20x the clock and
+   ARCHITEC's frame at batch 70,000 is byte-identical to `--time-scale=1`. The
+   scene state does not depend on the guest clock at all.
+5. **Lazy headless present hiding updates.** No. The same capture mechanism
+   shows ARCHITEC's 99.4% construction change, so presents do reach the capture.
+
+The next thing to look at is what the app feeds `IDirect3DRMFrame` motion /
+`IDirect3DRM::Tick` per frame — the render loop is alive and the transform is
+not changing, so the animation input is stuck rather than the renderer.
 
 ## Sweep config
 
