@@ -57,7 +57,8 @@ const VOLATILE_STALE = 256;
 const PROGRESS_REGS = ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es'];
 const { compileProgram } = require('./compile');
 const { decodeOne, readOperand, OPERAND_SIZE } = require('./decode');
-const { ARITY, NOFLAG, FUSE, TRACE, SPIN, PSPIN } = require('./emit');
+const { ARITY, NOFLAG, FUSE, TRACE, SPIN, PSPIN, EXIT_WHY } = require('./emit');
+const WHY_NAME = Object.fromEntries(Object.entries(EXIT_WHY).map(([k, v]) => [v, k]));
 const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
 
 // Is `h`, the op word a compiled program holds, what the compiler makes of
@@ -1144,6 +1145,15 @@ class DosSession {
 
     this.dispatched = 0;
     this.handbacks = 0;
+    // Why each handback happened, one key per kind (see `exitKind` in step).
+    // Every handback is a trip out of wasm into this loop, and the harness's
+    // own cost model is ~200ns apiece, so before moving any service into wasm
+    // the question is WHICH trips a program pays for. Counting only; nothing
+    // here reads it back.
+    this.exitKinds = new Map();
+    // ...and for the `early` kind, which has no single cause, the address the
+    // guest resumed at (cs * 2^32 + ip -> count), so a site can be disassembled.
+    this.earlySites = new Map();
     this.ints = 0;
     this.irqs = 0;
     this.smcBreaks = 0;
@@ -1217,6 +1227,8 @@ class DosSession {
     const ip = this.hooks.onIrq ? this.vm.get('gip') : 0;
     this.vm.exports.raise_irq(vec);
     this.irqs++;
+    const ik = `irq ${src}`;
+    this.exitKinds.set(ik, (this.exitKinds.get(ik) || 0) + 1);
     if (this.hooks.onIrq) {
       this.hooks.onIrq({
         vec, src, at: this.dispatched, handback: this.handbacks,
@@ -1716,19 +1728,38 @@ class DosSession {
       this.traps++;
       this.raise(1, 'trap');
     }
+    // What ended this slice. Read before anything below raises a vector, which
+    // moves cs:gip into a handler. An `int n` shows as a stop at the stub
+    // f000:1NN with AH still holding the function the guest asked for; a
+    // `cut` is Machine.endSlice (a port write that armed an IRQ); a slice
+    // that spent its budget is a `date` when it reached the schedule's stop
+    // and `budget` when a host cap ended it first; anything else with budget
+    // left is `early` -- an unresolved transfer or an uncompiled target.
+    const endCs = vm.get('cs');
+    let exitKind = stepping ? 'trap'
+      : endCs === STUB_SEG
+        ? `int ${(vm.get('gip') & 0xFF).toString(16).padStart(2, '0')}:${(vm.get('ax') >> 8).toString(16).padStart(2, '0')}`
+        : cut >= 0 ? 'cut'
+          : left <= 0 ? (atStop ? 'date' : 'budget')
+            : `early ${WHY_NAME[vm.raw('exitwhy')] || '?'}`;
+    vm.set('exitwhy', 0);
     if (vm.raw('smc')) {
       const kind = vm.raw('smc');
       vm.set('smc', 0);
       const lo = vm.exports.get_smclo() >>> 0, hi = vm.exports.get_smchi() >>> 0;
+      exitKind = kind === 1 ? 'smc1' : 'smc2';
       if (kind === 2) {
         // An operand rewritten in place leaves every cached program standing
         // and counts for nothing towards volatility; see repairOperands. The
         // shadow return stack is still emptied when anything is volatile: a
         // scratch block is never in byPara, so its copy of the operand is
         // stale, and a `ret` into it would run the old value.
+        const fast = this.cache.fastRepairs;
         if (this.cache.repairOperands(lo, hi)) {
+          exitKind = this.cache.fastRepairs !== fast ? 'smc2 plan' : 'smc2 walk';
           if (this.cache.volList.length) vm.set('rtop', 0);
         } else {
+          exitKind = 'smc2 flush';
           // A store into volatile code has nothing cached to drop, but the
           // shadow return stack may still point into the scratch block it
           // just rewrote; see CodeCache.noteSmc.
@@ -1756,6 +1787,11 @@ class DosSession {
               this.cache.siteRange.get(((vm.exports.get_csb() + vm.get('gip')) & 0xFFFFF) >>> 0));
         this.smcSites.set(key, (this.smcSites.get(key) || 0) + 1);
       }
+    }
+    this.exitKinds.set(exitKind, (this.exitKinds.get(exitKind) || 0) + 1);
+    if (exitKind.startsWith('early')) {
+      const at = endCs * 0x100000000 + (vm.get('gip') >>> 0);
+      this.earlySites.set(at, (this.earlySites.get(at) || 0) + 1);
     }
 
     // Time moves with work, not with the wall clock: a demo that spins on the
@@ -2117,6 +2153,9 @@ class DosSession {
       dispatched: this.dispatched, handbacks: this.handbacks, ints: this.ints,
       irqs: this.irqs, smcBreaks: this.smcBreaks, smcPatched: this.cache.patched, smcFastRepairs: this.cache.fastRepairs, stuckAt: this.stuckAt,
       smcSites: this.smcSites, retiredPatches: this.cache.benign.size,
+      exitKinds: Object.fromEntries(this.exitKinds),
+      earlySites: [...this.earlySites].sort((a, b) => b[1] - a[1]).slice(0, 8)
+        .map(([k, n]) => [`${Math.floor(k / 0x100000000).toString(16)}:${(k % 0x100000000).toString(16)}`, n]),
       repairWhy: this.cache.repairWhy,
       traps: this.traps, icebps: this.icebps,
       blockedOn32: this.blockedOn32 === undefined ? null : this.blockedOn32,

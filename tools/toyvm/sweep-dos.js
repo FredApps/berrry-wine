@@ -143,6 +143,9 @@ async function runOne(exe, o) {
     const any = [...seen.values()][0].r;
     row.dispatched = any.dispatched;
     row.handbacks = any.handbacks;
+    // Why each of those handbacks happened (DosSession.exitKinds).
+    row.exitKinds = any.exitKinds;
+    row.earlySites = any.earlySites;
     row.pixels = any.pixels;
     row.frame = any.frame;
     // What the budget bought in the guest's own time, and every video mode the

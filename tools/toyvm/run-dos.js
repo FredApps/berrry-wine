@@ -848,7 +848,7 @@ async function runDos(o) {
     }
   }
   const {
-    dispatched, handbacks, ints, irqs, smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector,
+    dispatched, handbacks, ints, irqs, smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector, exitKinds, earlySites,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
     deadFlagsDropped, tracedBlocks, spinBlocks, specOps, treeFolds, rep, volatile,
   } = session.stats();
@@ -900,7 +900,7 @@ async function runDos(o) {
     // parsing the printed line.
     tree: folder ? folder.stats() : null,
     smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, smcSites, retiredPatches,
-    stuckAt, blockedOn32, badSelector, ranOutOfTime,
+    stuckAt, blockedOn32, badSelector, ranOutOfTime, exitKinds, earlySites,
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // What the live region JIT did, or null when it was never asked for.
     jit: jit ? jit.stats() : null,
@@ -1470,6 +1470,13 @@ async function main() {
         console.log(`  exit ${e.region} -> ${e.ip === null ? 'computed' : '0x' + e.ip.toString(16)}: ${e.n}`);
       }
     }
+  }
+  // Why the guest left wasm, by kind: `int VV:AH`, `smc1`, `smc2 plan|walk|
+  // flush`, `early`, `cut`, `date`, `budget`, `trap`. The `irq SRC` rows are
+  // not handbacks -- they are vectors the host pushed in at one -- and are
+  // listed after them. One line, machine-readable, so a sweep can grep it.
+  if (flag('handback-kinds') && r.exitKinds) {
+    console.log(`  handback kinds: ${JSON.stringify(r.exitKinds)}`);
   }
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
     // Every vector the host raises, not just the timer: single-step traps and

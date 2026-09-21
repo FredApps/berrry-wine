@@ -214,7 +214,7 @@ function genTerminators() {
   h('end', 1, `
   ${ops(1)}
   (global.set $gip (local.get $t0))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  (global.set $exitwhy (i32.const ${EXIT_WHY.end})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
 
 // The same, for a block that just patched its own code. A write through a CS
@@ -582,6 +582,12 @@ const CONT = (arena) => `(select (i32.const 0) ${arena}
 // carrying flag liveness across a block edge (docs/toyvm-dead-flags.md).
 // Called, not inlined, because it is the cold arm of every branch.
 const SLICE_EXIT = '(call $slice_exit)';
+// ...with the reason written down first. `$exitwhy` is observation only -- the
+// host reads it after a handback that left budget unspent, to say WHICH early
+// exit the guest paid for (dos-loop.js, EXIT_WHY). It is set on the cold arm
+// alone, so it costs nothing on a linked edge and moves no dispatch count.
+const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9 };
+const EXIT = (why) => `(global.set $exitwhy (i32.const ${EXIT_WHY[why]})) ${SLICE_EXIT}`;
 // The first two lines of every dispatch shell, and the order of the two is a
 // CLOCK decision rather than a style one.
 //
@@ -611,7 +617,7 @@ const GO = (arena, guest) => `
   (global.set $gip ${guest})
   (if ${CONT(arena)}
     (then (global.set $ip ${arena}))
-    (else ${SLICE_EXIT}))`;
+    (else ${EXIT('edge')}))`;
 
 // A Jcc's body is its condition and nothing else, so it is built from the
 // condition rather than written out. genFusedBranches() rebuilds it with a
@@ -644,7 +650,7 @@ const jccTraceBody = (expr) => `
     (else
       (global.set $gip (local.get $t2))
       (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
-        (then ${SLICE_EXIT}))))
+        (then ${EXIT('edge')}))))
 `;
 
 // The taken arm of a branch that closes a loop over nothing.
@@ -677,7 +683,7 @@ const jccSpinArm = (steps) => `
         (then (global.set $steps
                 (i32.sub (i32.rem_s (global.get $steps) (i32.const ${steps}))
                          (i32.const ${steps})))))
-      ${SLICE_EXIT}`;
+      ${EXIT('spin')}`;
 
 const jccSpinBody = (expr, steps) => `
   ${ops(4)}
@@ -696,7 +702,7 @@ const jccSpinTraceBody = (expr, steps) => `
     (else
       (global.set $gip (local.get $t2))
       (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
-        (then ${SLICE_EXIT}))))
+        (then ${EXIT('edge')}))))
 `;
 
 function genBranches() {
@@ -874,7 +880,7 @@ function genExtras() {
     ${RESERVED}))
   (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
     (then (global.set $gip (local.get $t0))
-          (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
+          (global.set $exitwhy (i32.const ${EXIT_WHY.popf})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
   // PUSHFD / POPFD. Four bytes, not two, and getting that wrong is not a
   // wrong flags value -- it is a stack that is two bytes out from there on.
@@ -898,7 +904,7 @@ function genExtras() {
     ${RESERVED}))
   (if (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
     (then (global.set $gip (local.get $t0))
-          (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
+          (global.set $exitwhy (i32.const ${EXIT_WHY.popf})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))))
 `);
 
   // CALL near, relative. Operands: [arenaTarget][guestTarget][retIp][arenaRet].
@@ -920,7 +926,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (call $slice_exit)))`;
+    (else ${EXIT('ret')}))`;
   h('ret', 0, RET_BODY);
   h('ret_imm', 1, `
   ${ops(1)}
@@ -929,7 +935,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (call $slice_exit)))
+    (else ${EXIT('ret')}))
 `);
   // The same three, in a 32-bit code segment. The only difference is the width
   // of the return address on the stack -- but it is the difference between
@@ -946,7 +952,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (call $slice_exit)))
+    (else ${EXIT('ret')}))
 `);
   h('ret_imm32', 1, `
   ${ops(1)}
@@ -955,7 +961,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else (call $slice_exit)))
+    (else ${EXIT('ret')}))
 `);
 
   // LEA computes the effective address and never touches memory -- which is
@@ -1309,7 +1315,7 @@ function genExtras() {
   (call $flags_put (i32.or
     (i32.and (call $pop16) ${DEFINED})
     ${RESERVED}))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   // IRETD. The frame is three dwords, and the selector is the low half of the
   // middle one -- the upper half is pushed and popped but means nothing.
@@ -1338,7 +1344,7 @@ function genExtras() {
       (call $sset (i32.const 1) (i32.and (local.get $t1) (i32.const 0xFFFF)))
       (global.set $gip (local.get $t0))
       (call $flags_put (i32.or (i32.and (local.get $t2) ${DEFINED}) ${RESERVED}))))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
 }
 
@@ -2128,7 +2134,7 @@ function genArithIO() {
                          (global.get $smc)))
   (if ${CONT('(local.get $t3)')}
     (then (global.set $ip (local.get $t3)))
-    (else (call $slice_exit)))`;
+    (else ${EXIT('indirect')}))`;
 
   // Far transfers and indirect jumps. All of them land on an address that is
   // data, so all of them leave the trace.
@@ -2203,7 +2209,7 @@ function genArithIO() {
   (local.set $t1 (call $rd16 (i32.const 1) (i32.add (local.get $t2) (i32.const 4))))
   (call $sset (i32.const 1) (local.get $t1))
   (global.set $gip (local.get $t0))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  (global.set $exitwhy (i32.const ${EXIT_WHY.far32})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   h('call_far32', 4, `
   ${ops(4)}
@@ -2213,7 +2219,7 @@ function genArithIO() {
   (call $push32 (local.get $t2))
   (call $sset (i32.const 1) (local.get $t1))
   (global.set $gip (local.get $t0))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  (global.set $exitwhy (i32.const ${EXIT_WHY.far32})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
 `);
   // The target is a runtime value, so it is looked up in the jump-target cache
   // rather than baked in. A miss hands back exactly as before; a hit keeps a
@@ -3304,7 +3310,7 @@ function genFusedBranches() {
         (then
           (global.set $gip (local.get $t1))
           (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
-            (then ${SLICE_EXIT} (br $done)))
+            (then ${EXIT('edge')} (br $done)))
           (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
           (global.set $ip (i32.sub (global.get $ip) (i32.const ${(a.args + jn) * 4})))
           (br $spin))
@@ -3329,7 +3335,7 @@ function genFusedBranches() {
     (else ${turn(`
       (global.set $gip (local.get $t2))
       (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
-        (then ${SLICE_EXIT}))`, j.args - 1)}))
+        (then ${EXIT('edge')}))`, j.args - 1)}))
 `);
         PSPIN.set(idx, { takenAt: a.args + 1, twin: pidx });
         PSPIN.set(tidx, { takenAt: a.args + 1, twin: ptidx });
@@ -4916,7 +4922,7 @@ ${memAccessors()}
     (then
       (call $v86_to_monitor (i32.sub (local.get $g) (i32.const 1)) (local.get $ip)
                             (local.get $vec))
-      (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+      (global.set $exitwhy (i32.const ${EXIT_WHY.int})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
       (return)))
   (if (local.get $g)
     (then
@@ -4954,7 +4960,7 @@ ${memAccessors()}
       (local.set $v (i32.shl (local.get $vec) (i32.const 2)))
       (global.set $gip (call $rdphys16 (local.get $v)))
       (call $sset (i32.const 1) (call $rdphys16 (i32.add (local.get $v) (i32.const 2))))))
-  (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
+  (global.set $exitwhy (i32.const ${EXIT_WHY.int})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
 
 ;; Going the other way: an IRETD whose frame has VM set, which is how a monitor
 ;; hands control back to its guest.
@@ -5441,7 +5447,7 @@ function fpuHelpers() {
 // remembering only the last one would leave the earlier writes running stale
 // code, which is the exact bug the flag exists to prevent. Over-approximating
 // the gap between two distant stores only costs a recompile.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt'];
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually
@@ -6049,7 +6055,7 @@ function emit(variant, opts = {}) {
 // text rather than importing the interpreter's copies on purpose: a cross-module
 // call per $rget16 would be measuring module boundaries, not code generation.
 module.exports = {
-  emit, HANDLERS, VARIANTS: Object.keys(VARIANTS), helpers, LOCALS, STATE,
+  emit, HANDLERS, VARIANTS: Object.keys(VARIANTS), helpers, LOCALS, STATE, EXIT_WHY,
   EXTRA_GLOBALS,
   // The compiler walks a finished block op by op to find a fusable tail, which
   // it can only do if it knows how many operand words each handler eats.
