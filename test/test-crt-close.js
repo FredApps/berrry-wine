@@ -198,8 +198,7 @@ const extraWat = String.raw`
       ...(normal ? [['exit', 9]] : [])], 'callbacks retain usable streams until they finish');
   }
   // Repeat against the real VFS: bytes survive and the close operation lands.
-  // VFS currently retains closed records; rejecting subsequent I/O is a
-  // separate known host-layer gap, not a contract this test blesses.
+  // VFS may retain closed tombstones, but subsequent I/O must reject them.
   const actual = await bootRenderHarness({ extraWat, fonts: 'none' });
   e = actual.exports;
   e.test_stream_init();
@@ -220,9 +219,22 @@ const extraWat = String.raw`
     cleanup(normal);
     const record = vfs.handles.get(stream);
     assert(!record || record.closed, 'cleanup reaches the real VFS close operation');
+    assert.strictEqual(vfs.readFile(stream, new Uint8Array(1), 1).ok, false,
+      'closed CRT streams cannot keep reading through the VFS');
+    assert.strictEqual(vfs.writeFile(stream, Uint8Array.of(1), 1).ok, false,
+      'closed CRT streams cannot keep writing through the VFS');
     assert.strictEqual(Buffer.from(vfs.files.get(filePath).data).toString(), 'callback output',
       'callback output survives stream closure in the real VFS');
   }
+  const mappedFile = actual.hostCtx.vfs.createFile('c:\\retained-map.bin', 0xc0000000, 2);
+  actual.hostCtx.vfs.writeFile(mappedFile, Uint8Array.of(5, 6, 7, 8), 4);
+  const section = actual.host.fs_create_file_mapping(mappedFile, 2, 0, 0, 0);
+  assert(section);
+  actual.host.fs_close_handle(mappedFile);
+  assert.strictEqual(actual.host.fs_create_file_mapping(mappedFile, 2, 0, 0, 0), 0);
+  const view = actual.host.fs_map_view_of_file(section, 4, 0, 0, 4) >>> 0;
+  assert(view, 'an existing mapping survives closure of its source file handle');
+  assert.strictEqual(e.guest_read32(view) >>> 0, 0x08070605);
   console.log('PASS  fclose/_close share raw close mechanics and preserve distinct CRT ABIs');
   console.log('PASS  CRT streams close after callbacks, including cross-instance ownership and reopen failures');
 })().catch(error => {

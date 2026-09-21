@@ -1,8 +1,9 @@
 # VFS close/duplicate lifetime audit — 2026-09-21
 
-Status: **open**. CRT termination now issues stream closes (`f903f56b`), but
-the VFS still permits ordinary I/O through closed handles. Do not call complete
-FILE/handle lifetime support finished.
+Status: **open**. CRT termination issues stream closes (`f903f56b`), file
+duplicates have independent identities (`800a543a`), and closed VFS handles
+now reject ordinary I/O. Public error propagation and broader lifetime semantics
+remain incomplete; do not call complete FILE/handle lifetime support finished.
 
 ## Initial source findings (before the file-duplication fix)
 
@@ -130,3 +131,44 @@ Full shared-worktree build passes: canonical 1,471,730 bytes, compatibility
 1,472,704 bytes, layout `54f430b349c8d55e`, 246 host imports and 242
 nonoverlapping data segments. These are integration results on the shared tree,
 not isolated performance measurements or clean-commit artifact proofs.
+
+## Closed-file enforcement checkpoint — 2026-09-21
+
+One `getOpenFile` lookup now rejects tombstones for VFS read/write/seek, truncate,
+size, time and flush operations. The host bridges also reject zero-length
+read/write and positional reads before guest-buffer access, and reject creation
+of a new mapping through a closed file. Double close of a known file returns
+failure. This removes the NSIS-specific permission to continue I/O after close,
+consistent with Microsoft's [CloseHandle invalidation contract](https://learn.microsoft.com/en-us/windows/win32/api/handleapi/nf-handleapi-closehandle).
+
+`test/test-vfs.js` adds a closed-operation matrix proving no buffer, file bytes
+or shared cursor changes on rejection, while a valid duplicate still reads.
+`test/test-crt-close.js` now requires actual CRT-closed handles to reject I/O,
+and verifies that a mapping created before source-handle close can still create
+a view containing the original bytes. Mapping allocation/free ownership hunks
+already dirty in the worktree were not changed by this work.
+
+A current-production (no diagnostic preload) Winamp 2.95 `/S` extraction reaches
+exit 0, 9,717 batches and 81,075 API calls under the new policy. EXE/MP3/output
+plugin sizes remain 854016 / 274944 / 13824 bytes. Command:
+
+```sh
+node test/run.js --exe=test/binaries/installers/winamp295.exe --args=/S \
+  --max-batches=800000 --batch-size=5000 --max-seconds=30 \
+  --dump-vfs --quiet-api --no-build
+```
+
+Temporary output: `/private/tmp/wa-close-enforced-295.log`. The run uses the
+shared tree and previously compiled artifact; this change is in host JavaScript.
+It is not a browser/actual-Worker extraction or a timing benchmark.
+
+Next: error propagation at public Win32 front doors. Several existing BOOL/
+sentinel-return bridges do not carry the precise VFS error back to per-thread
+`GetLastError`; rejection alone is not full API correctness. Known closed-file
+records are still retained as tombstones, so reclamation remains open. General
+kernel-handle validation, deletion/rename of mapped backing files, and closing
+during outstanding provider I/O also need dedicated coverage.
+
+Verification: VFS 32/32, lazy-provider 36/36, file-time, duplicate-handle,
+CRT-close and legacy-HFILE suites pass; JavaScript syntax and diff checks pass.
+No new full WASM build was required or claimed for these host-only changes.

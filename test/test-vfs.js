@@ -24,6 +24,47 @@ function test(name, fn) {
 
 console.log('VFS tests:');
 
+test('closed file handles reject I/O and metadata without harming live duplicates', () => {
+  const vfs = makeVFS({ 'c:\\lifetime.bin': 4 });
+  const h = vfs.createFile('c:\\lifetime.bin', 0xc0000000, 3);
+  vfs.writeFile(h, Uint8Array.from([1, 2, 3, 4]), 4);
+  vfs.setFilePointer(h, 1, 0);
+  const alias = vfs.duplicateFileHandle(h, 0, false, 2);
+  assert(vfs.closeHandle(h));
+  assert.strictEqual(vfs.closeHandle(h), false, 'double close fails');
+  const buffer = Uint8Array.from([99]);
+  assert.strictEqual(vfs.readFile(h, buffer, 1).ok, false);
+  assert.strictEqual(vfs.readFile(h, buffer, 0).error, 6);
+  assert.strictEqual(buffer[0], 99, 'closed read leaves destination untouched');
+  assert.strictEqual(vfs.writeFile(h, buffer, 1).ok, false);
+  assert.strictEqual(vfs.writeFile(h, buffer, 0).error, 6);
+  assert.strictEqual(vfs.setFilePointer(h, 100, 0) >>> 0, 0xffffffff);
+  assert.strictEqual(vfs.setEndOfFile(h), false);
+  assert.strictEqual(vfs.getFileSize(h) >>> 0, 0xffffffff);
+  assert.strictEqual(vfs.getFileTimes(h).error, 6);
+  assert.strictEqual(vfs.setFileTimes(h, null, null, null), 6);
+  assert.strictEqual(vfs.flushFileBuffers(h), 6);
+  assert.strictEqual(vfs.handles.get(alias).pos, 1, 'rejected I/O cannot move the shared cursor');
+  assert.deepStrictEqual([...vfs.files.get('c:\\lifetime.bin').data], [1, 2, 3, 4]);
+  assert.strictEqual(vfs.readFile(alias, buffer, 1).bytesRead, 1);
+  assert.strictEqual(buffer[0], 2);
+});
+
+test('closed host I/O rejects even zero-length requests and new file mappings', () => {
+  const vfs = makeVFS({ 'c:\\mapping.bin': 4 });
+  const memory = new ArrayBuffer(0x1000);
+  const imports = createFilesystemImports({ vfs, getMemory: () => memory });
+  const h = vfs.createFile('c:\\mapping.bin', 0xc0000000, 3);
+  const mapping = imports.fs_create_file_mapping(h, 2, 0, 0, 0);
+  assert(mapping, 'a live file can create a mapping');
+  vfs.closeHandle(h);
+  assert.strictEqual(imports.fs_create_file_mapping(h, 2, 0, 0, 0), 0);
+  // No output pointer: validation must happen before guest-buffer translation.
+  assert.strictEqual(imports.fs_read_file(h, 0xdeadbeef, 0, 0), 0);
+  assert.strictEqual(imports.fs_write_file(h, 0xdeadbeef, 0, 0), 0);
+  assert.strictEqual(imports.fs_read_file_at(h, 0xdeadbeef, 0, 0, 0, 0), 6);
+});
+
 test('standard Win98 shell folders exist before an installer runs', () => {
   const vfs = makeVFS({});
   assert(vfs.dirs.has('c:\\windows\\start menu'));
