@@ -3064,3 +3064,11 @@ assertions now pass: Clear becomes checked, Slower Fade clears, Blur remains
 checked. A separate wide-item string-release test fails identically with
 pre-fix menu code and is recorded, not counted as a pass. Early return from
 TrackPopupMenu and non-unique tagged LoadMenu identity remain unresolved.
+
+Removed the wVis-specific renderer helper and release interception, plus the
+now-unused WAT synthetic-menu-opening export. The permanent browser test
+selects Clear via real browser input and checks fresh state after reopening;
+it passes on the rebuilt isolated artifact without a helper-disabling patch.
+Main input/Worker/touch tests and isolated compiled menu/activation tests
+pass. This closes that app-specific shortcut, not the remaining generic
+modal tracking, menu identity, scope and cascade-depth issues.

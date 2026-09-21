@@ -31,6 +31,9 @@ if (!fs.existsSync(VIS)) { console.log('SKIP  vis_w.dll candidate not found'); p
 fs.mkdirSync(OUTDIR, { recursive: true });
 try { fs.unlinkSync(SHOT); } catch (_) {}
 
+// Read-only snapshots through the existing profile eval step. Actual input
+// below still travels through browser mouse events, not menu exports.
+const menuChecks = 'eval:JSON.stringify(((m)=>Array.from({length:m.exports.menu_child_sub_count(m.hwnd,0,2)},(_,i)=>({id:m.exports.menu_subchild_id(m.hwnd,0,2,i),flags:m.exports.menu_subchild_flags(m.hwnd,0,2,i)})))(sharedRenderer._openMenuContext()))';
 const args = [
   PROFILE,
   '--dump-console',
@@ -44,16 +47,12 @@ const args = [
   // MilkDrop sit above it, one 13px row each)
   // > Start (184,323) > Stop (244,323) > Start again >
   // close Preferences (440,16) > play (66,129) > right-click the visualizer.
-  // The last step is a hover, not a click: a click on "Rendering Options"
-  // dismisses the whole popup, and menuStates is a final snapshot that only
-  // sees a menu still on screen. Hovering it leaves both the popup and its
-  // submenu up, which is what the subLabels assertion reads.
-  //
-  // The worker records the popup anchor at guest y=176. "Rendering Options"
-  // is child index 2, so its hit-test centre is 176 + 2 (top pad) + 2*20
-  // (row height) + half a row = 228. Keep this in guest coordinates: the
-  // browser driver converts them through the presentation viewport.
-  '--post-clicks=54,188;170,86;184,323;wait:2200;244,323;wait:2200;184,323;wait:2200;440,16;66,129;wait:4000;150,205,right;wait:1200;move:215,228',
+  // Guest TrackPopupMenu anchors near (149,204). Rendering Options is row 2
+  // (centre y=256); Clear is the first cascade row at the same y. Click it
+  // outside the app rectangle, then reopen and verify fresh check state.
+  // These are guest coordinates; the driver maps the presentation viewport.
+  '--post-clicks=54,188;170,86;184,323;wait:2200;244,323;wait:2200;184,323;wait:2200;440,16;66,129;wait:4000;150,205,right;wait:1200;move:215,257;' + menuChecks +
+    ';350,257;wait:1200;150,205,right;wait:1200;move:215,257;' + menuChecks,
   '--post-click-wait-ms=1200',
   '--screenshot', SHOT,
 ];
@@ -76,6 +75,23 @@ assert.strictEqual(r.status, 0, 'profile-winamp-web should exit cleanly\n' + out
 const jsonStart = out.indexOf('{');
 assert(jsonStart >= 0, 'profile output should include JSON\n' + out.slice(-4000));
 const result = JSON.parse(out.slice(jsonStart));
+const checkSnapshots = (result.postClickSnapshots || [])
+  .filter(s => s.action === 'eval' && s.expr === menuChecks.slice(5))
+  .map(s => JSON.parse(s.value));
+assert.strictEqual(checkSnapshots.length, 2, 'capture checks before selection and after reopening');
+const [beforeChecks, afterChecks] = checkSnapshots;
+const checked = (snapshot, id) => {
+  const item = snapshot.find(s => s.id === id);
+  assert(item, `menu command ${id} must exist`);
+  return !!(item.flags & 4);
+};
+assert.strictEqual(checked(beforeChecks, 40030), false, 'Clear must begin unselected');
+assert.strictEqual(checked(afterChecks, 40030), true, 'selecting Clear changes guest state');
+for (const id of [40044, 40043, 40005, 40041, 40042, 40004]) {
+  assert.strictEqual(checked(afterChecks, id), false, `reopening clears stale fade check ${id}`);
+}
+assert.strictEqual(checked(afterChecks, 40059), checked(beforeChecks, 40059),
+  'changing fade mode preserves independent Blur state');
 
 const windows = result.visibleWindows || [];
 const eq = windows.find(w => w.title === 'Winamp Equalizer');
@@ -106,11 +122,8 @@ assert((wvisMenu.labels || []).map(displayMenuText).includes('Rendering Options'
   'wVis popup should expose Rendering Options');
 assert((wvisMenu.subLabels || []).length > 0,
   'Rendering Options should expose a usable submenu');
-// Button messages only. The plug-in's thread goes modal inside its own popup,
-// so the WM_MOUSEMOVE (0x200) that precedes the right-click legitimately sits
-// in its queue until the menu closes -- a real Windows plug-in leaves the same
-// one there. A queued *button* message would mean the click never reached the
-// menu that is on screen, which is what this is guarding.
+// Check button delivery separately from pointer movement. This is not proof
+// of a native modal menu loop: TrackPopupMenu still returns early here.
 assert(!(result.inputQueue || []).some(e => e.hwnd === wvis.hwnd && (e.msg | 0) !== 0x200),
   'right-click should not leave an unconsumed wVis mouse button event queued');
 

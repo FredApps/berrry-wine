@@ -252,3 +252,39 @@ This fix retires an existing cached object instead of hiding destruction to
 keep the asynchronous popup alive. The independently copied tracking blob
 continues to paint; proper modal tracking remains open, as does removing the
 production wVis helper.
+
+## App-specific workaround removed, 2026-09-21
+
+Removed `_openWorkerContextMenu` and its right-button-release interception
+from `lib/renderer-input.js`: no window-title match, DLL-export-name scan,
+hard-coded resource 101, manual allocator-global synchronization or synthetic
+popup substitutes for the guest's WM_RBUTTONUP path. Its unreferenced WAT
+export `menu_track_popup_open_module` is removed too (116 JS lines and 23
+WAT lines). The compiled module has no such export and retains `menu_close`.
+
+`test-winamp-visualization-web.js` now permanently performs the successful
+browser sequence: open the guest menu, hover Rendering Options, snapshot
+checks, select Clear with a real mouse click outside the owner rectangle,
+reopen and snapshot checks again. It requires Clear to change from unchecked
+to checked, all six other fade choices to be unchecked, and independent Blur
+state to remain unchanged. Read-only eval snapshots use menu exports; the
+actual actions use browser input. There is no helper-disabling monkey patch.
+The obsolete comment claiming native modal behavior was removed.
+
+Renderer multi-app ownership, Worker input and mouse/touch bridge tests pass
+on main. Isolated compiled popup-text (13 checks) and active-window tests
+pass. The permanent browser test passed after the JS helper removal:
+`/private/tmp/wa-wvis-no-workaround-browser.log`. After deleting the unused
+export, the isolated full build passes with wasm 1454887 bytes, compat
+1455793 bytes and layout `c5ccefca8909ee4b`:
+`/private/tmp/wa-wvis-remove-helper-build-repeat.log`. The initial export edit
+accidentally removed the following function declaration as well; the fragment
+gate caught it, `menu_close` was restored, and the repeat is the passing build.
+The final permanent browser regression against that rebuilt artifact also
+passes, terminal exit 0 (`/private/tmp/wa-wvis-no-workaround-final-browser.log`),
+including the before/after check-state assertions. Final screenshot reviewed.
+
+This removes the application-specific shortcut, not all generic menu gaps.
+TrackPopupMenu's early return, unique LoadMenu identity, attached-resource
+CheckMenuItem scope, dynamic GetMenuState and deeper cascade tracking remain
+separate open work.
