@@ -136,9 +136,17 @@ So there are two layouts in `lib/apps.js`: `touchControls` (player one:
 `A`/`D`, jump `W`) and `lanClientTouchControls` (player two: `←`/`→`, jump
 `Space`). `touchControlsForSeat` in `lib/browser-shell.js` picks between them:
 before any room, and at the host seat `10.0.0.1`, this machine is player one;
-at any other seat it is player two. The on-demand lobby hands out the seat
+at any other seat it is player two. The room hands out the seat
 while the game is already running, so the shell rewrites that running app's
 record and calls `TouchControls.sync` again. The guest's state is not touched.
+
+Since 2026-09-21 that room is the star room (`room: 'auto'`, see
+docs/virtual-lan-party.md), and there seat `10.0.0.1` goes to whoever went
+online *first*, not to whoever hosts the DirectPlay session. The usual order
+(the host picks NETZWERKSPIEL first, the guest joins from the list) keeps the
+two aligned. If the searcher goes online first, the touch layouts are
+swapped. The keyboard is unaffected, because the shipped settings.dat gives both
+players the arrows.
 
 **On a touch device only, player two's jump moves from `↑` to `Space`**
 (`touchPatches` in `lib/apps.js`, applied by `applyTouchPatches` in

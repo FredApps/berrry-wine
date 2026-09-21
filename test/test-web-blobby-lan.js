@@ -5,7 +5,7 @@
 //   node test/test-web-blobby-lan.js [--timeout=300] [--headful] [--keep]
 //
 // test-blobby-vlan.js plays the match between two OS processes. This is the
-// page: the lobby's "Both players here", the tab's LoopbackSegment, and a
+// page: the room card's "Both players here", the tab's LoopbackSegment, and a
 // DirectPlay thread that in a browser runs in a Worker and reaches the wire
 // through the per-thread RPC block rather than a direct call.
 //
@@ -113,9 +113,10 @@ async function snap(page, index, name) {
   return s;
 }
 
+// The room card the game's own DirectPlay call opens (lib/browser-shell.js
+// pickRoom); "Both players here" is its local choice.
 const lobbyUp = page => page.evaluate(() =>
-  [...document.querySelectorAll('.vln-lobby button')]
-    .some(b => b.textContent === 'Both players here'));
+  !!document.querySelector('#wine-lan-card button[data-choice="local"]'));
 
 // Wait for an instance at `index` to exist and put a window up.
 async function awaitInstance(page, index, label) {
@@ -169,13 +170,11 @@ async function awaitInstance(page, index, label) {
     // SPIEL BEGINNEN! is the app's own DirectPlay Open, and that is what the
     // lobby waits for.
     await keys(page, [DOWN, ENTER, ENTER, DOWN, DOWN, ENTER]);
-    const asked = await H.until(page, 'picking network play did not open the lobby', () =>
-      [...document.querySelectorAll('.vln-lobby button')]
-        .some(b => b.textContent === 'Both players here'), null, MILESTONE_MS);
-    check('picking network play opened the lobby', !!asked);
+    const asked = await H.until(page, 'picking network play did not open the room card', () =>
+      !!document.querySelector('#wine-lan-card button[data-choice="local"]'), null, MILESTONE_MS);
+    check('picking network play opened the room card, with "Both players here"', !!asked);
     await page.evaluate(() => {
-      [...document.querySelectorAll('.vln-lobby button')]
-        .find(b => b.textContent === 'Both players here').click();
+      document.querySelector('#wine-lan-card button[data-choice="local"]').click();
     });
 
     // The guest is the second copy the lobby starts on the same segment. It

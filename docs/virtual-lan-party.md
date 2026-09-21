@@ -1424,7 +1424,8 @@ simultaneous owners settle by the higher userId stepping down. The owner's
 guest answering the app's `lan.hostProbe` marks the room *hosting* in presence,
 which is what the Join card shows: at launch ("Join alex / Not now"), at the
 first `socket()` ("Join / Play offline"), and as a toast over a running game.
-Apps without `lan.room: 'auto'` (Blobby, Liquid War) keep the lobby.
+Apps without `lan.room: 'auto'` (Liquid War) keep the lobby; Blobby moved to
+the room on 2026-09-21 (below).
 
 **Invite links.** `?app=ID&room=OWNER_USERID` names the room to join. There is
 no Invite button (one under the chip sat on top of the game's own UI): while a
@@ -1449,3 +1450,26 @@ a second room beside the listed ones, with no joining and no step-down. The
 step-down only settles two claims made on an *empty* channel at the same
 moment. With nobody serving, nothing is shown and going online joins or opens
 a room silently, as before.
+
+**DirectPlay games: Blobby Volley (2026-09-21).** The probe also speaks dpl/1
+(`hostProbe: { protocol: 'dplay' }`). It asks with the provider's own
+`ENUM_REQ` from seat .254, and only a machine with an open session answers
+(`$dpn_state == 1` in `src/09d4-dplay-net.wat`). The `ENUM_REPLY` session record
+labels the row: its name and players, e.g. `game 40 1/2`.
+`test/test-blobby-host-probe.js` runs this against the real game: a host
+answers, and a copy searching with its own broadcast `ENUM_REQ`s never does.
+
+Three registry fields keep Blobby's one-keyboard game undisturbed:
+
+- `waitForGame: true` drops the launch-time list and the mid-game toast, so the
+  card appears only when NETZWERKSPIEL makes the game's own DirectPlay call ask
+  for a room. An invite link still joins at launch.
+- `local: true` keeps **Both players here** on the card. The card is shown even
+  when nobody is serving, so that choice stays reachable; an empty card offers
+  **Go online**, which is the silent join-or-open.
+- `join.hint`, since there is no `launchArgs`, is appended to the joiner's chip
+  (`pick NETZWERKSPIEL → ALS GAST SPIELEN… → SPIELE SUCHEN`). DirectPlay's own
+  broadcast finds the session, so nobody types an address.
+
+When an owner's last member drops, the page shows a notice rather than the
+brief chip, because most games keep serving to nobody without saying so.
