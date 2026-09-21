@@ -113,6 +113,39 @@ test('file data access is enforced before bytes, providers or cursors change', (
   }
 });
 
+test('generic and specific file rights compare by meaning without granting extra rights', () => {
+  const vfs = makeVFS({ 'c:\\rights.bin': 4 });
+  const open = access => vfs.createFile('c:\\rights.bin', access, 3);
+  for (const [generic, specific] of [[0x80000000, 0x120089],
+    [0x40000000, 0x120116], [0x20000000, 0x1200a0], [0x10000000, 0x1f01ff]]) {
+    const h = open(generic);
+    const alias = vfs.duplicateFileHandle(h, specific, false, 0);
+    assert(alias > 0);
+    const reverse = vfs.duplicateFileHandle(open(specific), generic, false, 0);
+    assert(reverse > 0, 'equivalent explicit rights allow the generic request');
+    assert.strictEqual(vfs.getOpenFile(alias).access, specific);
+  }
+  const read = open(0x80000000);
+  const narrowed = vfs.duplicateFileHandle(read, 1, false, 0);
+  assert(narrowed > 0);
+  assert.strictEqual(vfs.duplicateFileHandle(narrowed, 0x80000000, false, 0), -5,
+    'data-only read cannot acquire attributes, EA, or standard rights');
+  assert.strictEqual(vfs.duplicateFileHandle(read, 2, false, 0), -5);
+  assert.strictEqual(vfs.duplicateFileHandle(read, 0x10000000, false, 0), -5);
+  const all = open(0x10000000);
+  assert(vfs.duplicateFileHandle(all, 0x80000000, false, 0) > 0);
+  assert.strictEqual(vfs.flushFileBuffers(all), 0);
+  assert.strictEqual(vfs.setFileTimes(all, null, null, null), 0);
+  assert.strictEqual(vfs.flushFileBuffers(open(2)), 0);
+  assert.strictEqual(vfs.setFileTimes(open(2), null, null, null), 5);
+  assert.strictEqual(vfs.setFileTimes(open(0x100), null, null, null), 0);
+  vfs.setDriveReadOnly('c', true);
+  for (const access of [2, 4, 0x10, 0x100, 0x10000000, 0x40000000]) {
+    assert.strictEqual(open(access), 0, 'write intent cannot open protected media');
+  }
+  for (const access of [0, 1, 0x80, 0x80000000, 0x20000000]) assert(open(access) > 0);
+});
+
 test('append-only writes cannot overwrite and null writes cannot extend', () => {
   const vfs = makeVFS({ 'c:\\append.bin': 4 });
   const h = vfs.createFile('c:\\append.bin', 4, 3);

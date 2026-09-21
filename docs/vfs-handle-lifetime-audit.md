@@ -606,3 +606,23 @@ The full build passes through the 252-import signature gate but is blocked by
 unrelated stale toy-VM browser bundles; no full-build success is claimed.
 Its earlier region gate exposed a raw GUEST_BASE in the prior lazy-mapping test;
 that assertion now uses RegionMap.g2w rather than a copied address.
+
+## Generic file-right comparisons (2026-09-21)
+
+DuplicateHandle compares expanded generic file rights, rather than raw generic
+bits against specific bits. Equivalent FILE_GENERIC_READ/WRITE/EXECUTE and
+FILE_ALL_ACCESS masks work in either direction; FILE_READ_DATA alone still
+cannot acquire the attributes, EA or standard rights included in GENERIC_READ.
+The original requested mask stays on each handle for diagnostics and SAME_ACCESS.
+
+CreateFile write intent now includes specific data, append, EA and attribute
+write rights, including those obtained through GENERIC_ALL. They cannot open
+protected media or qualify for the read-only basename fallback. Flush and
+SetFileTime validate their corresponding expanded rights consistently.
+Mappings follow Microsoft's [file-right table](https://learn.microsoft.com/en-us/windows/win32/fileio/file-security-and-access-rights);
+no native Win98 observation or ACL enforcement is claimed.
+
+VFS 37/37, adoption, source-compiled public Win32/CRT file APIs and file-time
+tests pass. Creation-disposition validation, mapped-file
+permissions, sharing restrictions and file-object lifetime remain separate
+issues; normalizing masks does not resolve them.
