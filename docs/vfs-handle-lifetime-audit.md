@@ -585,3 +585,24 @@ read-only duplicate without changing its source cursor. File-time, IOCP and VFS
 adoption tests pass. Winamp 2.95 `/S` reaches guest Exit code 0 after 9,717
 batches / 81,075 API calls using the existing artifact and changed host JS.
 No performance or full-browser result is claimed.
+
+## SetEndOfFile access and errors (2026-09-21)
+
+SetEndOfFile now checks write-data access before touching file bytes, including
+no-op size changes. Metadata-only, read-only and append-only handles fail with
+ERROR_ACCESS_DENIED; closed handles report ERROR_INVALID_HANDLE and writable
+handles on protected media report ERROR_WRITE_PROTECT. The public WAT handler
+uses an operation-result import to set GetLastError on failure and preserve it
+on success. The old Boolean import remains for backup-stream callers.
+
+Microsoft's [SetEndOfFile contract](https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-setendoffile)
+requires write access. Tests exercise truncation, extension, unchanged cursors,
+access denial, protected media, closed handles and stdcall cleanup. Native Win98
+comparison and mapped-file exclusion are still outstanding; this does not
+claim to complete mapping access or lifetime rules.
+
+VFS 36/36, source-compiled public file APIs and backup-stream tests pass.
+The full build passes through the 252-import signature gate but is blocked by
+unrelated stale toy-VM browser bundles; no full-build success is claimed.
+Its earlier region gate exposed a raw GUEST_BASE in the prior lazy-mapping test;
+that assertion now uses RegionMap.g2w rather than a copied address.

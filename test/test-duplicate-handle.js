@@ -89,6 +89,14 @@ const extraWat = `
     (i32.load (global.get $reg_base)))
   (func (export "test_dup_errno") (result i32)
     (call $gl32 (global.get $msvcrt_errno_ptr)))
+  (func (export "test_public_eof") (param $handle i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $handle_SetEndOfFile (local.get $handle) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff008))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
   (func (export "test_public_close") (param $handle i32) (result i32)
     (global.set $last_error (i32.const 0x1234))
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
@@ -309,6 +317,32 @@ const extraWat = `
     vfs.createFile('c:\\write-error.bin', 0x40000000, 2);
   }
   console.log('PASS  public file data rights, zero counts and denied-write preservation');
+  for (const access of [0, 0x80000000, 4, 0x100, 2, 0x40000000, 0x10000000]) {
+    const seed = vfs.createFile('c:\\eof-rights.bin', 0x40000000, 2);
+    vfs.writeFile(seed, Uint8Array.from([1, 2, 3, 4]), 4);
+    vfs.closeHandle(seed);
+    const h = vfs.createFile('c:\\eof-rights.bin', access, 3);
+    const allowed = !!(access & 0x50000002);
+    for (const position of [8, 3, 0]) {
+      const before = [...vfs.files.get('c:\\eof-rights.bin').data];
+      vfs.setFilePointer(h, position, 0);
+      assert.strictEqual(wat.test_public_eof(h), allowed ? 1 : 0);
+      assert.strictEqual(wat.test_dup_error(), allowed ? 0x1234 : 5);
+      assert.strictEqual(vfs.getOpenFile(h).pos, position);
+      if (allowed) assert.strictEqual(vfs.getFileSize(h), position);
+      else assert.deepStrictEqual([...vfs.files.get('c:\\eof-rights.bin').data], before);
+    }
+    vfs.closeHandle(h);
+    assert.strictEqual(wat.test_public_eof(h), 0);
+    assert.strictEqual(wat.test_dup_error(), 6);
+  }
+  const protectedEof = vfs.createFile('c:\\eof-rights.bin', 0x40000000, 3);
+  vfs.setDriveReadOnly('c', true);
+  try {
+    assert.strictEqual(wat.test_public_eof(protectedEof), 0);
+    assert.strictEqual(wat.test_dup_error(), 19);
+  } finally { vfs.setDriveReadOnly('c', false); }
+  console.log('PASS  public SetEndOfFile data rights, sizes, cursor preservation and error codes');
   assert.strictEqual(wat.test_file_duplicate(errorHandle, target, 0x80000000, 0), 1);
   const readOnlyAlias = wat.test_read_guest32(target) >>> 0;
   const sharedPosition = vfs.getOpenFile(errorHandle).pos;

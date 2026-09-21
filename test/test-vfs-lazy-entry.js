@@ -19,6 +19,7 @@ const path = require('path');
 
 const { VirtualFS } = require('../lib/filesystem');
 const bp = require('../lib/byte-provider');
+const RegionMap = require('../lib/region-map.generated');
 
 let passed = 0, failed = 0;
 const async_tests = [];
@@ -673,7 +674,7 @@ test('concurrent lazy mappings of the same section keep distinct thread-owned co
   assert.strictEqual(addrA, 0x411000);
   assert.strictEqual(addrB, 0x412000);
   for (const addr of [addrA, addrB]) {
-    assert.deepStrictEqual([...new Uint8Array(memory.buffer, addr - 0x400000 + 0x12000, 16)],
+    assert.deepStrictEqual([...new Uint8Array(memory.buffer, RegionMap.g2w(addr, 0x400000), 16)],
       Array(16).fill(0x6a));
   }
 });

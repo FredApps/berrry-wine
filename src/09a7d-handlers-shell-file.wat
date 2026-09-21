@@ -234,8 +234,11 @@
 
   ;; 421: SetEndOfFile
   (func $handle_SetEndOfFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $error i32)
     ;; SetEndOfFile(hFile) — truncate or extend at the current file pointer.
-    (i32.store offset=0 (global.get $reg_base) (call $host_fs_set_end_of_file (local.get $arg0)))
+    (local.set $error (call $host_fs_set_end_of_file_result (local.get $arg0)))
+    (if (local.get $error) (then (global.set $last_error (local.get $error))))
+    (i32.store offset=0 (global.get $reg_base) (i32.eqz (local.get $error)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 

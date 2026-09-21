@@ -766,6 +766,7 @@
   (import "host" "fs_seek_result" (func $host_fs_seek_result (param i32 i32 i32 i32 i32) (result i32)))
   ;; handle, distanceLow, optional high-word WA, method, result WA -> Win32 error
   (import "host" "fs_set_end_of_file" (func $host_fs_set_end_of_file (param i32) (result i32)))
+  (import "host" "fs_set_end_of_file_result" (func $host_fs_set_end_of_file_result (param i32) (result i32)))
   (import "host" "fs_get_file_size" (func $host_fs_get_file_size (param i32) (result i32)))
   (import "host" "fs_file_size_result" (func $host_fs_file_size_result (param i32 i32 i32) (result i32)))
   ;; handle, low output WA, optional high output WA -> Win32 error

@@ -102,6 +102,10 @@ test('file data access is enforced before bytes, providers or cursors change', (
     tryRead: () => { throw Error('unauthorized provider access'); }, fill: async () => {},
   } });
   const query = vfs.createFile('c:\\no-data.bin', 0, 3);
+  assert.strictEqual(vfs.setEndOfFile(query), false);
+  assert.strictEqual(imports.fs_set_end_of_file_result(query), 5);
+  assert.strictEqual(imports.fs_set_end_of_file(query), 0);
+  assert.strictEqual(vfs.getFileSize(query), 8);
   for (const count of [0, 2]) {
     assert.strictEqual(imports.fs_read_file_result(query, 0xffffffff, count, 0), 5);
     assert.strictEqual(imports.fs_read_pending(), 0);
