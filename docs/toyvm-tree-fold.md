@@ -73,10 +73,13 @@ Two rules are about the run rather than the op:
 
 * **Memory keeps its source order.** Every load and store stays a `$rd*`/`$wr*`
   call in the order it was emitted, so a run may contain as many as it likes.
-* **...but a store followed by a load ends the run.** Nothing here proves two
-  addresses miss each other, so every load after a store is assumed to alias.
-  This is the most expensive rule in the set and the first candidate for
-  relaxation (below).
+* **...and a store followed by a load no longer ends the run.** It used to:
+  nothing proved the two addresses missed each other, so every load after a
+  store was assumed to alias. That rule turned out to protect nothing — see
+  *Alias: the rule that protected nothing* below — and is now the `alias`
+  relaxation, on by default.
+* **A run is cut at 64 ops** (`MAX_OPS`). The next op starts a fresh run, so
+  nothing past the cap is refused; it just costs one more dispatch per 64.
 
 And three the fold adds on top, asked of the *lowered body* rather than the
 opcode, because the handler in the arena may be a flagless or specialized twin
@@ -288,7 +291,7 @@ to print an identical AX/BX/CX/DX/SI/DI/FLAGS line:
 | `addrloop` | a `loop`-terminated body walking a pointer | fold |
 | `incloop` | `inc si / cmp si,16 / jne` | fold |
 | `partial` | an 8-bit write in the middle | **not** fold |
-| `alias` | a store followed by a load | **not** fold |
+| `alias` | a store followed by a load | fold (was **not** fold before the `alias` relaxation) |
 | `flagcons` | an `adc` in the middle | **not** fold |
 
 The positive cases additionally assert that a handler was generated and
@@ -300,7 +303,7 @@ PASS test-toyvm-tree-fold:
   addrloop  0F0E607800004050021000000044   2 fold(s)/2 tree(s)
   incloop   003C01C0000001C0001000000044   2 fold(s)/2 tree(s)
   partial   123700AA129D0000000000000044   no fold
-  alias     1234567800001234000000000044   no fold
+  alias     1234567800001234000000000044   no fold   (folds now; see the Alias section)
   flagcons  1234567868ACD110000000000044   no fold
 ```
 
@@ -2035,6 +2038,125 @@ relaxation off and **every other one on** there is no run of four ops anywhere
 in the body. That `needs:` arm is what says the fold is credited to the right
 relaxation rather than to a neighbour. `tailshrd` is the FIXPT_MUL shape itself.
 
+## Alias: the rule that protected nothing (2026-09-21)
+
+*What is next* item 1 asked for a disjointness proof: two absolute addresses, or
+two displacements off one base, shown to miss each other, so a load after a
+store could stay in the run. It turns out no proof is needed, because nothing in
+this lowering could make use of one. Every pass rewrites one op's body in place,
+and the bodies are concatenated in source order. So each `$rd*`/`$wr*` is still
+a call, made where the interpreter makes it, against guest memory that no pass
+caches. No value is forwarded from a store to a load, and no load is hoisted,
+CSE'd or promoted. The registers and segment bases that promotion moves into
+locals are wasm globals, which no guest store can reach. A store into decoded
+code is cut at the block boundary in both arms: `$wr8` only raises `$smc`, and
+the interpreter also runs the rest of a block's pre-decoded words after it. A
+load that aliases the store therefore reads what the store left, and that is the
+whole requirement. The rule is now the `alias` relaxation, on by default. The
+`alias` case in `test/test-toyvm-tree-fold.js` flipped from "must not fold" to
+"must fold", and it loads an overlapping word to prove the point. A future pass
+that *does* hold a memory value in a local (store-to-load forwarding, a hoisted
+invariant load in a loop tree) has to bring its own disjointness test.
+
+### The run cap it needed: `MAX_OPS = 64`
+
+Before alias, a read-modify-write op (`add [mem],reg`) was a load after a store
+and ended every run it was in, so run length never needed a limit. With alias
+it does. Zero-filled memory decodes as exactly that op (`00 00` is
+`add [bx+si],al`), and EOD.EXE compiles straight through 64KB of it: 32,563 ops
+in one run, a 17MB handler, seven of them. The process died at a 2GB heap before
+its first install finished (the uncapped sweep's one `child-died`). A run that
+reaches 64 ops is now **cut, not declined**: the next op starts a fresh run, so
+the ops past the cap still fold, at one extra dispatch per 64. The `longrun`
+test case is 70 `inc cx` in a row, and asserts a `run cap` note and at least two
+trees. Loop and call trees go through `eligibleRuns` with the same cap and need
+one run covering the whole body, so a body over 64 ops now declines as
+`loop: body breaks at …`.
+
+### A bug it flushed out: the SMC plan fast path
+
+The first alias sweep stalled BRW. The cause was not tree code: HEAD's plain
+`--tree-fold` already stalled BRW in some windows. The cause was the remembered
+plan in `dos-loop.js` `repairOperands`. A plan records which programs covered a
+patched range when it was made, and every later store to the range patched only
+those. A program compiled over the same bytes *afterwards* kept the old operand.
+Two things compile one: a second code base reaching the same bytes, or a
+tree-fold install recompiling the paragraph. BRW's DOS extender reaches its
+`int NN` thunk as real-mode `0110h` and as protected-mode selector `20h` (base
+`1100h`). The stale copy kept issuing `int 10h` where the guest had written
+`21h`, so the extender never opened BRW.EXE. The plan is now also invalid when
+the number of live programs over the range has changed; its programs are all
+live and all still cover the range, so an equal count is an equal set.
+`test/test-toyvm-operand-patch.js` gained an `alias` case: the same patched
+`add bx,imm8` loop is run through CS and then through CS+1, reached by a
+`retf`. HEAD prints `1F72`; the right sum is `17B6`. The fix changes one
+plain-interpreter frame in the corpus, ZOKDTPLN (px 63885 → 63942). That is the
+same direction `--smc-flush` moves it (63951), which is consistent with a stale
+repair corrected.
+
+### Nothing the guest can see
+
+- **Witnesses:** DADEMO3, RUNDEMO, BLIQ, ACME-BIG, CONTAGIO and CATWALK at 80M
+  with `--pit-clock --auto-key --sound-pref=sb --env=ULTRASND=220,1,1,11,7`.
+  Frame and wav hash are identical across plain, `--tree-fold` without alias,
+  and `--tree-fold` with alias and the cap.
+- **Tests:** all 25 `test-toyvm-*` pass plain and under `TOYVM_TREE_FOLD=1`.
+  The operand-patch test's plan-reuse slack went from 2 to 4, because each
+  program compiled after a plan (the alias case's second code base, or a fold
+  install's recompile) costs one more walk.
+- **Corpus**, static fold (`--tree-fold`, hot=0) at the sweep's 44M: fold
+  without alias → fold with alias and the cap gives **191 programs, 0
+  regressions, 0 went blank**, and EOD back to `ok`. Nine rows changed. Five of
+  them keep the same frame and pixel count. CRUSADER returned to
+  its *plain* frame. CRITICAL, bit and diftro moved. For those three, the
+  per-handback register file (`--slice-log-regs`) of plain against alias was
+  joined on the cumulative dispatch count: **0 mismatches** over 2,851, 2,543
+  and 4,205 common points. What differs is only where the last slice stops.
+  Plain overshoots the 44M budget by 530–1,720 dispatches, the fold by
+  4,436–15,246, so the fold arm's frame is a later picture of the same run.
+  bit.exe matches plain at 10M, 20M and 100M.
+
+### What it is worth
+
+`fold-ab.js --det` priced every tree entry at `ops − 1`, and with that pricing
+alias looked like a disaster on BRW: 22.3% of dispatches removed without it, 2.2%
+with it. That was the counter's error. `--det` read the counters by index rather
+than by ordinal, and priced loop-tree entries as straight-line ones. Alias turns
+BRW's hot self-loop blocks, which the store/load rule used to split, into
+**loop trees**. A loop tree turns an uncounted number of iterations per entry, so
+the straight-line share collapses while the real work drops. `--det` now counts
+loop entries apart and prints **total handler entries**, trees included, which
+is the number to compare between two fold arms:
+
+| program | plain | fold, no alias | **fold, alias** |
+|---|---|---|---|
+| BRW | 18.00M | 9.88M | **9.17M** (−7.2%) |
+| DTM2 | 4.00M | 4.00M (builds nothing) | **3.89M** (−2.8%) |
+| DADEMO3 | 8.45M | 7.46M | **7.41M** |
+
+These are handler entries at 20M dispatches, `--tree-fold-hot=64`. DTM2 builds
+nothing without alias; with it, the hot gate finds 7 trees.
+
+Timing, `fold-ab.js --target=toyvm --work=20m --reps=8 --arm-on='--tree-fold
+--tree-fold-hot=64'` on the quiet bench box (loadavg ≤ 0.3 for every rep), in
+the no-alias tree and the alias tree. All twelve verdicts are **unresolvable**
+at 2 × the null spread, and BRW's gain is the same in both:
+
+| program | on−off min, no alias | on−off min, alias |
+|---|---|---|
+| BRW | −0.060 | −0.060 |
+| DTM2 | +0.020 | +0.025 |
+| CATWALK | +0.006 | +0.003 |
+| RUNDEMO | +0.008 | +0.009 |
+| DADEMO3 | +0.014 | +0.017 |
+| CYCLE | +0.030 | +0.022 |
+
+So alias is a dispatch-count win that the clock cannot see, which is the same
+verdict every dispatch-only change in this project has had. It stays on because
+it is free: nothing the guest can see changed, and the one thing it broke
+(EOD's run length) is capped. It also moves the flip condition no closer:
+`--tree-fold` stays OFF.
+
 ## What is next
 
 The decline histogram is the work list, and the three relaxations it points at,
@@ -2093,12 +2215,16 @@ worth a line of lowering each — **both are now in**, along with the sign-exten
 and the double shifts; see *The unsupported-op tail* above, which empties the
 `unsupported:` bucket entirely on sixteen of the seventeen demos measured there.
 
-**1. Alias disjointness.** Today every load after a store in the same run is
+**1. Alias disjointness.** *Done, and without the proof* — see *Alias: the
+rule that protected nothing*. The original argument, kept for the record:
+today every load after a store in the same run is
 assumed to alias, and the run ends there. Most of those pairs are provably
 disjoint at compile time — two absolute addresses, two displacements off the
 same base register with different constants, a stack slot against a data
 segment. Each of those is a decision the compiler can already make from the
 operand words it has in hand, and each one that holds joins two runs into one.
+The proof became necessary only if a pass holds a memory value in a local,
+which none does.
 
 **2. Partial registers as insert/extract.** An 8-bit write inside a 16-bit run
 is not unmodellable, it is unmodelled: AL is bits 0-7 of the promoted AX local

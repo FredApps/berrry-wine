@@ -120,6 +120,15 @@ function toyvmOpts(armFlags) {
     if (f === '--tree-fold') o.treeFold = Object.assign({}, o.treeFold);
     else if ((m = f.match(/^--tree-fold-hot=(\d+)$/))) o.treeFold = Object.assign({ hot: Number(m[1]) }, o.treeFold, { hot: Number(m[1]) });
     else if ((m = f.match(/^--tree-fold-min=(\d+)$/))) o.treeFold = Object.assign({}, o.treeFold, { minOps: Number(m[1]) });
+    // `--tree-fold-relax=LIST` / `=none`: price one relaxation by running the
+    // fold with and without it in two invocations, as for the calls flag below.
+    else if ((m = f.match(/^--tree-fold-relax=(.*)$/))) {
+      const { RELAXATIONS } = require(path.join(ROOT, 'tools', 'toyvm', 'tree-fold.js'));
+      const want = m[1] === 'none' ? [] : m[1].split(',').filter(Boolean);
+      const bogus = want.filter(x => !RELAXATIONS.includes(x));
+      if (bogus.length) throw new Error(`fold-ab: unknown --tree-fold-relax: ${bogus.join(',')}`);
+      o.treeFold = Object.assign({}, o.treeFold, { relax: want });
+    }
     // `--no-tree-fold-calls` only means anything alongside `--tree-fold` in the
     // SAME arm string: the toyvm off arm is always the bare interpreter (there
     // is no --base for this target), so the way to price leaf-call inlining is
@@ -163,19 +172,32 @@ async function det(target, opts) {
     });
     const t = r.tree || {};
     const entries = r.treeEntries || [];
-    // A tree standing for `ops` guest instructions, entered `n` times, removed
-    // n*(ops-1) trips through $next. That, over the dispatch count, is the
-    // share of the run's dispatch work the fold actually caught.
-    let removed = 0, runs = 0;
+    // A straight-line tree standing for `ops` guest instructions, entered `n`
+    // times, removed n*(ops-1) trips through $next. A LOOP tree turns an
+    // uncounted number of iterations per entry, so its entries are reported
+    // apart rather than priced at ops-1 -- when a relaxation turns straight
+    // trees into loop trees (alias on BRW) the priced share falls from 22% to
+    // 2% while the handler entries below go DOWN. Counters sit at each tree's
+    // ordinal in the shared tail, not at its index (run-dos.js does the same).
+    let removed = 0, runs = 0, loopRuns = 0;
+    const isLoop = t.treeIsLoop || [], ord = t.treeOrd || [];
     (t.treeOps || []).forEach((ops, i) => {
-      const n = entries[i] || 0; runs += n; removed += n * (ops - 1);
+      const n = entries[ord[i] !== undefined ? ord[i] : i] || 0;
+      if (isLoop[i]) { loopRuns += n; return; }
+      runs += n; removed += n * (ops - 1);
     });
+    // The whole-run number: every handler entry, trees included (`readHist`'s
+    // total stops at the static table, so the tree counters are added back).
+    // This is the one to compare between two fold arms; the priced share is not.
+    const handlerEntries = (r.hist ? r.hist.total : 0) + runs + loopRuns;
     console.log(`det ${opts.label}: dispatched ${r.dispatched} frame ${r.frame}`);
     console.log(`det ${opts.label}: trees ${t.trees || 0} installs ${t.installs || 0}`
       + ` folds ${t.folds || 0} foldedOps ${t.foldedOps || 0}`
       + ` hotPromoted ${t.hotPromoted || 0} coldSkipped ${t.coldSkipped || 0}`);
     console.log(`det ${opts.label}: tree entries ${runs}`
-      + ` dispatches removed ${removed} (${(100 * removed / r.dispatched).toFixed(3)}% of ${r.dispatched})`);
+      + ` dispatches removed ${removed} (${(100 * removed / r.dispatched).toFixed(3)}% of ${r.dispatched})`
+      + `, loop tree entries ${loopRuns} (iterations not counted)`);
+    console.log(`det ${opts.label}: handler entries ${handlerEntries}`);
     return;
   }
   // win98: --loopmatch-stats prints the TREE_FOLD census, --handler-hist the

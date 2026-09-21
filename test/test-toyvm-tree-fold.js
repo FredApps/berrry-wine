@@ -13,7 +13,7 @@
 //   ahal      AH and AL written apart, AX read whole         -- MUST fold
 //   narrowmem 8-bit absolute loads and stores in one run     -- MUST fold
 //   narrowrot an 8-bit `rol`, narrow AND not in the fold set -- MUST NOT fold
-//   alias     a store followed by a load                     -- MUST NOT fold
+//   alias     a store, then a load overlapping it            -- MUST fold
 //   flagcons  an `adc` in the middle                         -- MUST fold
 //   adcchain  a 32-bit add out of two 16-bit halves          -- MUST fold
 //   sbbchain  the same with the borrow                       -- MUST fold
@@ -39,6 +39,7 @@
 //   tailextend cbw/cwd, the implicit sign-extends              -- MUST fold
 //   tailxchg  `xchg` reg,reg, both encodings                   -- MUST fold
 //   tailshrd  `shrd`/`shld` by an immediate (the FIXPT_MUL op) -- MUST fold
+//   longrun   70 foldable ops in a row, past the 64-op run cap  -- MUST fold, CUT
 //
 // The five flag cases are the other half of the DOS fit. Flags here are LAZY --
 // a producer records its inputs, a consumer materializes the field it wants --
@@ -76,10 +77,11 @@
 // visible.
 //
 // And the three negative cases are not decoration. Each is a rule that costs
-// real folds (the decline histogram on ACCIDENT is thousands of `partial-reg`
-// and hundreds of `alias`), so each is a rule somebody will eventually want to
-// relax -- and relaxing one without noticing it also fires HERE is how a fold
-// starts computing something else.
+// real folds, so each is a rule somebody will eventually want to relax -- and
+// relaxing one without noticing it also fires HERE is how a fold starts
+// computing something else. (`partial-reg` and `alias` were negative cases
+// here once; both are relaxations now, and their cases flipped to MUST fold
+// with a plain-vs-folded comparison that would catch the wrong answer.)
 
 const assert = require('assert');
 const fs = require('fs');
@@ -389,18 +391,37 @@ const CASES = {
       w(0x31, 0xD9);             // xor cx,bx
     },
   },
-  // A load after a store, with no proof they miss each other. The fold keeps
-  // memory in source order but will not reorder a load across a store, so the
-  // run ends at the load: 3 ops either side and neither reaches four.
+  // THE `alias` RELAXATION: a load after a store, and one that really does hit
+  // it -- [0401h] is the stored word's high byte plus the byte after it. The
+  // lowering keeps every `$rd*`/`$wr*` a call in source order and forwards no
+  // memory value, so the load reads what the store left exactly as the
+  // interpreter's would; the old rule ended the run here on no proof it needed
+  // one. With the relaxation off it is 3 ops either side and nothing folds; on,
+  // it is one run of six, and the printed CX is the overlap read back.
   alias: {
-    folds: false,
+    folds: true, relaxed: true, needs: 'alias',
     body: ({ w }) => {
       w(0xB8, 0x34, 0x12);                 // mov ax,1234h
       w(0xBB, 0x78, 0x56);                 // mov bx,5678h
       w(0xA3, 0x00, 0x04);                 // mov [0400h],ax   <- store
-      w(0x8B, 0x0E, 0x02, 0x04);           // mov cx,[0402h]   <- possibly aliasing load
+      w(0x8B, 0x0E, 0x01, 0x04);           // mov cx,[0401h]   <- overlapping load
       w(0x89, 0xCA);                       // mov dx,cx
       w(0x31, 0xC2);                       // xor dx,ax
+    },
+  },
+  // THE RUN CAP, which `alias` made necessary: a read-modify-write op is a load
+  // after a store, so before `alias` every one of these ended its run, and
+  // zero-filled memory -- `00 00` is `add [bx+si],al` -- is exactly this shape
+  // at 64KB long (EOD.EXE built 17MB handlers out of it). The cap itself does
+  // not care what the ops are, so this is seventy one-byte `inc cx` -- past
+  // MAX_OPS, and short enough for the outer loop's rel8 `jnz` -- which must be
+  // cut, fold in both parts and still count to 70.
+  longrun: {
+    folds: true, capped: true,
+    body: ({ w }) => {
+      w(0x31, 0xC9);                               // xor cx,cx
+      for (let i = 0; i < 70; i++) w(0x41);        // inc cx
+      w(0x89, 0xCA);                               // mov dx,cx        -> 0046h
     },
   },
   // THE `stack` RELAXATION: a matched push/pop in the middle of arithmetic.
@@ -1360,6 +1381,14 @@ for (const [name, c] of Object.entries(CASES)) {
     assert.strictEqual(loops(nl), 0,
       `${name}: --no-tree-fold-loops still built ${loops(nl)} loop handler(s):\n${nl}`);
     loopNote = ` (${loops(on)} loop)`;
+  }
+  // THE RUN CAP. A run longer than MAX_OPS is cut, not refused: both halves
+  // must still fold, so the case asks for at least two handlers and for the
+  // histogram to name the cut.
+  if (c.capped) {
+    assert.ok(/run cap \d+/.test(on), `${name}: expected a 'run cap' in the histogram:\n${on}`);
+    assert.ok(trees(on) >= 2, `${name}: a capped run should leave at least two trees, got ${trees(on)}:\n${on}`);
+    loopNote += ' (capped)';
   }
 
   summary.push(`${name} ${a} ${c.folds === null ? `${n} fold(s)` : c.folds ? `${n} fold(s)/${trees(on)} tree(s)` : 'no fold'}${callNote}${loopNote}${exact}`);

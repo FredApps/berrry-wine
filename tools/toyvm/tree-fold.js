@@ -75,6 +75,19 @@ const { carryState } = require('./region-live');
 // across the corpus and decides which programs this can pay on.
 const MIN_OPS = 4;
 
+// ...and the most one handler may cover. A run that reaches it is CUT, not
+// declined: the next op starts a fresh run, so the ops past the cap still fold,
+// one dispatch per MAX_OPS instead of none. Past 64 ops that dispatch is under
+// 2% of the run, and the body is not: every op lowers to ~550 bytes of WAT.
+//
+// The cap did not matter until `alias` came in, because a read-modify-write op
+// (`add [mem],reg`) is a load after a store and used to end every run it was in.
+// Zero-filled memory decodes as exactly that -- `00 00` is `add [bx+si],al` --
+// and EOD.EXE compiles straight through 64KB of it: 32563 ops in one run, a
+// 17MB handler, seven of them, and the process died at a 2GB heap before its
+// first install finished.
+const MAX_OPS = 64;
+
 // The census's relaxations, as the fold implements them. `classify()` already
 // tags every op it declines with the relaxation that would take it
 // (`c.relax`), so turning one on here is "accept the class", not "reclassify".
@@ -199,16 +212,36 @@ const MIN_OPS = 4;
 //            a LOOP tree would skip region-jit's own epilogue, so the loop path
 //            passes `allowFault: false` and the histogram says so.
 //
-// The census's third relaxation, `alias`, is not here: it is a disjointness
-// PROOF over two operands rather than a class to accept, and it is the one
-// extension that needs code of its own.
+//   alias    a load after a store in the same run. The census counted this as
+//            a relaxation that would need a disjointness PROOF -- two absolute
+//            addresses, two displacements off one base -- and the proof turns
+//            out to be unnecessary, because nothing in this lowering could use
+//            one. Every pass rewrites one op's body in place and the bodies
+//            are concatenated in source order, so each `$rd*`/`$wr*` is still
+//            a call, made where the interpreter makes it, against guest memory
+//            no pass caches: no value is forwarded from a store to a load, no
+//            load is hoisted, CSE'd or promoted. The registers and segment
+//            bases the promotion moves into locals are wasm globals, which no
+//            guest store can reach. And a store into decoded code is cut at the
+//            block boundary in both arms -- `$wr8` only raises `$smc`, and the
+//            interpreter too runs the rest of a block's pre-decoded words after
+//            it -- so a tree sees exactly the bytes an unfolded block would.
+//            A load that aliases the store therefore reads what the store
+//            left, which is the whole requirement; test-toyvm-tree-fold.js's
+//            `alias` case loads an overlapping word to prove it.
+//
+//            What WOULD need the proof is any future pass that keeps a memory
+//            value in a local (store-to-load forwarding, a hoisted invariant
+//            load in a loop tree). Such a pass has to bring its own
+//            disjointness test; this relaxation does not supply one.
+//
 // `stack` is the sixth, and the one the census said was worth the most: a
 // plain push/pop lowered as a micro-op (see the note in expr-fold-census.js's
 // classifier and `inlineStack` in trace-jit.js). It admits the op AND it is
 // what lets SP be promoted, since the stack helpers are inlined for the same
 // run rather than called.
 //
-// The last four are THE UNSUPPORTED-OP TAIL, and they exist because
+// The four after it are THE UNSUPPORTED-OP TAIL, and they exist because
 // docs/hot-loop-vocabulary-2026-09.md section 9 finally priced it. That study
 // read 583 hot loops across 199 DOS demos and found exactly two arithmetic
 // trees spread across the corpus rather than concentrated in one program:
@@ -235,7 +268,7 @@ const MIN_OPS = 4;
 //            beside `$sh_*`, because it is the same shape: values in, a value
 //            out, the flag word its only global. See the note there.
 const RELAXATIONS = ['partial', 'flags', 'string', 'rep', 'shifts', 'muldiv', 'stack',
-  'nop', 'extend', 'xchg', 'dshift'];
+  'nop', 'extend', 'xchg', 'dshift', 'alias'];
 const RELAX_ALL = new Set(RELAXATIONS);
 
 // A handler that reads the dispatch clock cannot be folded: the interpreter
@@ -341,16 +374,14 @@ function bucketOf(c, stem) {
 //
 //   MEMORY KEEPS ITS SOURCE ORDER. Every load and store stays a `$rd*`/`$wr*`
 //   call in the emitted order, so a run may contain as many as it likes.
-//   * ...but A STORE FOLLOWED BY A LOAD ENDS THE RUN. This proves nothing about
-//     addresses, so every load after a store is assumed to alias. It is the
-//     most expensive rule here -- ACCIDENT's hottest block has sixteen
-//     consecutive foldable ops and yields a run of twelve because of it -- and
-//     relaxing it is the first of the three extensions in the doc.
+//   * ...and, with the `alias` relaxation off, A STORE FOLLOWED BY A LOAD ENDS
+//     THE RUN. That rule protected nothing: see `alias` in the relaxation list
+//     above for why a load after a store needs no disjointness proof here.
 // `allowFault` is false for a LOOP tree, where a `(return)` out of the middle
 // would skip region-jit's epilogue. It is the only option here that is about
 // the CALLER's lowering rather than about the ops.
 function eligibleRuns(ops, width,
-  { minOps = MIN_OPS, why = null, relax = RELAX_ALL, allowFault = true } = {}) {
+  { minOps = MIN_OPS, maxOps = MAX_OPS, why = null, relax = RELAX_ALL, allowFault = true } = {}) {
   const D = decompTable();
   const T = effectsTable();
   const runs = [];
@@ -410,15 +441,17 @@ function eligibleRuns(ops, width,
     // register file, constants -- and the bodies are then concatenated in
     // source order, so every `$rd*` and `$wr*` executes exactly where and when
     // the interpreter would run it. The alias rule is a conservatism on top of
-    // that (item 1 of *What is next*: most of those pairs are provably
-    // disjoint and it wants relaxing, not widening), and a `push` followed by
+    // that (now the `alias` relaxation, on by default), and a `push` followed by
     // its matching `pop` is a store followed by a load at the SAME address --
     // the single most common shape there is. Counting the stack as memory here
     // would split every matched pair back apart and give the `stack`
     // relaxation nothing to do.
     const memRead = eff.memRead.length > 0;
     const memWrite = eff.memWrite.length > 0;
-    if (sawStore && memRead) { close(); note('alias'); cur = [o]; sawStore = memWrite; continue; }
+    if (sawStore && memRead && !relax.has('alias')) {
+      close(); note('alias'); cur = [o]; sawStore = memWrite; continue;
+    }
+    if (cur.length >= maxOps) { close(); note('run cap'); }
     cur.push(o);
     if (memWrite) sawStore = true;
   }
@@ -1501,6 +1534,6 @@ const now = () => (typeof performance !== 'undefined' && performance.now
 
 module.exports = {
   TreeFolder, eligibleRuns, buildTree, buildLoopTree, buildCallTree,
-  treeKey, blockWidth, opAt, MIN_OPS,
+  treeKey, blockWidth, opAt, MIN_OPS, MAX_OPS,
   CLOCK_READERS, ESCAPES, RELAXATIONS, RELAX_ALL,
 };
