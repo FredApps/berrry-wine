@@ -448,3 +448,28 @@ not behavior established by a Win98 differential. No callback bodies execute
 in these table tests. `_cexit` returning cleanup remains open.
 The focused runtime test, silent-handler pin and handler-ESP gate pass; no
 full-build, browser, or native Win98 differential claim is made for this change.
+
+2026-09-21: 251 -> 250 manual handlers; metadata remains 22. `_cexit` now
+drains the process callback registry and returns to its caller without host
+termination. Normal `exit` and returning cleanup share one LIFO pop helper.
+The original return address stays on the guest stack, so nested cleanup cannot
+overwrite a singleton saved return address. A dedicated CACA0038 continuation
+resumes returning cleanup after each callback.
+
+The focused runtime test executes real x86 code through public `_cexit` and
+`_onexit` API thunks. It checks nested LIFO execution, continuation into the
+original caller, exact stack restoration, absence of host exit, repeated empty
+cleanup, registration after cleanup, and registration from inside a callback.
+The public normal `exit(7)` path also executes a real callback and reports status
+7 without resuming its caller. Existing dispatcher-target checks remain. The ESP
+gate recognizes only the specific returning helper as delegating cleanup;
+it does not exempt arbitrary CRT handlers.
+
+This is **partial `_cexit` coverage**, not complete CRT termination. Microsoft's
+[_cexit contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/cexit-c-exit?view=msvc-170)
+also requires stream flushing/closure. Current FILE pointers are unbuffered VFS
+handles and there is no open-stream registry; adding that lifecycle, then closing
+streams after callbacks, remains open for both normal and returning cleanup.
+DLL-unload execution and concurrent CRT termination are not verified here.
+The runtime regression, quiet-handler pin and ESP gate pass. No full-build or
+browser result is claimed for this callback change.

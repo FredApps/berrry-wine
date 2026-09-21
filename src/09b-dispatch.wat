@@ -1121,6 +1121,10 @@
         (call $crt_atexit_run_next)
         (return)))
 
+    ;; Returning CRT cleanup callback: the caller return frame is still on ESP.
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0038))
+      (then (call $crt_cexit_run_next) (return)))
+
     ;; bsearch continuation — comparator returned eax = sign(key - elem).
     ;; eax==0 → hit; eax<0 → narrow to [low, mid); eax>0 → narrow to [mid+1, high).
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000C))

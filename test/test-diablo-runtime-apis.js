@@ -7,7 +7,8 @@ const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
   (func (export "test_diablo_runtime_init")
-    (global.set $image_base (i32.const 0)))
+    (global.set $image_base (i32.const 0))
+    (global.set $thunk_guest_base (i32.sub (global.get $THUNK_BASE) (global.get $GUEST_BASE))))
   (func (export "test_diablo_strstr") (param $hay i32) (param $needle i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (call $handle_strstr (local.get $hay) (local.get $needle)
@@ -24,6 +25,13 @@ const extraWat = String.raw`
     (i32.load (global.get $reg_base)))
   (func (export "test_diablo_table_free") (param $ptr i32)
     (call $heap_free (local.get $ptr)))
+  (func (export "test_diablo_api_thunk") (param $id i32) (result i32)
+    (local $ptr i32)
+    (local.set $ptr (call $com_cont_thunk (i32.const 0)))
+    (i32.store offset=4 (call $g2w (local.get $ptr)) (local.get $id))
+    (local.get $ptr))
+  (func (export "test_diablo_exit_thunk_init")
+    (global.set $atexit_ret_thunk (call $com_cont_thunk (i32.const 0xCACA002C))))
   (func $test_diablo_onexit (export "test_diablo_onexit") (param $fn i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (call $handle__onexit (local.get $fn) (i32.const 0)
@@ -44,6 +52,7 @@ const extraWat = String.raw`
     (local.get $result))
   (func (export "test_diablo_atexit_begin") (param $first i32) (param $second i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (global.set $atexit_exit_code (i32.const 0))
     (global.set $atexit_ret_thunk (i32.const 0x0040DEAD))
     (drop (call $crt_atexit_register (local.get $first)))
     (drop (call $crt_atexit_register (local.get $second)))
@@ -123,6 +132,63 @@ const extraWat = String.raw`
   assert.deepStrictEqual(callbacks.map((_, i) => wat.guest_read32(table + i * 4)), callbacks);
   wat.test_diablo_table_free(table);
   wat.test_diablo_table_free(wat.guest_read32(otherBegin));
+
+  // Execute real guest callback bodies, including a nested public _cexit call.
+  const apiTable = require('../src/api_table.json');
+  const cexit = wat.test_diablo_api_thunk(apiTable.find(row => row.name === '_cexit').id) >>> 0;
+  const le32 = n => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, n >>> 24];
+  const emit = (at, bytes) => bytes.forEach((b, i) => wat.guest_write8(at + i, b));
+  const trace = 0x1400;
+  const appendDigit = digit => [0x6b, 0x05, ...le32(trace), 10, 0x83, 0xc0, digit,
+    0xa3, ...le32(trace)]; // eax = trace * 10 + digit; trace = eax
+  const first = 0x480000, second = 0x480100, driver = 0x480200;
+  emit(first, [...appendDigit(1), 0xc3]);
+  emit(second, [...appendDigit(2), 0xb8, ...le32(cexit), 0xff, 0xd0,
+    ...appendDigit(3), 0xc3]);
+  emit(driver, [0xb8, ...le32(cexit), 0xff, 0xd0, ...appendDigit(4), 0xc3]);
+  wat.guest_write32(trace, 0);
+  wat.test_diablo_onexit(first);
+  wat.test_crt_atexit_register(second);
+  const runCleanup = () => {
+    wat.set_esp(0x300000);
+    wat.guest_write32(0x300000, 0);
+    wat.set_eip(driver);
+    wat.run(1000);
+    assert.strictEqual(wat.get_eip(), 0, '_cexit resumes the caller to its sentinel return');
+    assert.strictEqual(wat.get_esp(), 0x300004, 'nested cleanup preserves the guest stack');
+    assert.strictEqual(exitCode, null, 'returning cleanup never calls host exit');
+    assert.strictEqual(wat.test_crt_atexit_count(), 0);
+  };
+  runCleanup();
+  assert.strictEqual(wat.guest_read32(trace), 2134,
+    'LIFO callback 2 nests cleanup of callback 1, resumes itself, then returns to caller');
+  runCleanup();
+  assert.strictEqual(wat.guest_read32(trace), 21344, 'empty repeat does not rerun callbacks');
+  wat.test_diablo_onexit(first);
+  runCleanup();
+  assert.strictEqual(wat.guest_read32(trace), 2134414, 'callbacks registered after cleanup still run');
+  const onexit = wat.test_diablo_api_thunk(apiTable.find(row => row.name === '_onexit').id) >>> 0;
+  const registering = 0x480300;
+  emit(registering, [0x68, ...le32(first), 0xb8, ...le32(onexit), 0xff, 0xd0,
+    0x83, 0xc4, 4, ...appendDigit(5), 0xc3]);
+  wat.guest_write32(trace, 0);
+  wat.test_crt_atexit_register(registering);
+  runCleanup();
+  assert.strictEqual(wat.guest_read32(trace), 514,
+    'a callback can register another callback before returning to cleanup');
+  wat.test_diablo_exit_thunk_init();
+  const exit = wat.test_diablo_api_thunk(apiTable.find(row => row.name === 'exit').id) >>> 0;
+  const exiting = 0x480400;
+  emit(exiting, [0x6a, 7, 0xb8, ...le32(exit), 0xff, 0xd0, ...appendDigit(8), 0xc3]);
+  wat.guest_write32(trace, 0);
+  wat.test_diablo_onexit(first);
+  wat.set_esp(0x300000);
+  wat.set_eip(exiting);
+  wat.run(1000);
+  assert.strictEqual(wat.guest_read32(trace), 1, 'normal exit runs the callback but never resumes its caller');
+  assert.strictEqual(exitCode, 7, 'normal exit retains the supplied status');
+  assert.strictEqual(wat.test_crt_atexit_count(), 0);
+  exitCode = null;
 
   assert.strictEqual(wat.test_diablo_onexit(0), 0, '_onexit rejects a NULL callback');
   assert.strictEqual(wat.test_crt_atexit_count(), 0, 'rejection does not register a callback');

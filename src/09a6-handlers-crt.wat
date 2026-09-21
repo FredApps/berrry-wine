@@ -2624,9 +2624,9 @@
     (i32.const 0)
   )
 
-  ;; Continue a normal exit() sequence. Callbacks are cdecl void(void), so the
-  ;; only stack word pushed here is their continuation return address.
-  (func $crt_atexit_run_next
+  ;; Both exit and returning cleanup consume the same LIFO registry. Pop before
+  ;; entering guest code so nested cleanup cannot run the same callback twice.
+  (func $crt_atexit_pop (result i32)
     (local $fn i32)
     (block $done (loop $scan
       (if (i32.eqz (global.get $atexit_count))
@@ -2641,6 +2641,15 @@
       ;; rest of the registry.
       (if (i32.eqz (local.get $fn))
         (then (br $scan)))
+      (return (local.get $fn))))
+    (i32.const 0))
+
+  ;; Continue a normal exit() sequence. Callbacks are cdecl void(void), so the
+  ;; only stack word pushed here is their continuation return address.
+  (func $crt_atexit_run_next
+    (local $fn i32)
+    (local.set $fn (call $crt_atexit_pop))
+    (if (local.get $fn) (then
       (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
       (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $atexit_ret_thunk))
       (global.set $eip (local.get $fn))
@@ -2652,6 +2661,29 @@
     (global.set $yield_reason (i32.const 2))
     (global.set $steps (i32.const 0))
   )
+
+  (global $crt_cexit_thunk (mut i32) (i32.const 0))
+
+  ;; The original _cexit return address stays on the guest stack throughout
+  ;; cleanup. A nested _cexit therefore has its own return frame automatically;
+  ;; no singleton saved EIP can be overwritten by a guest callback.
+  (func $crt_cexit_run_next
+    (local $fn i32) (local $sp i32) (local $ret i32)
+    (local.set $fn (call $crt_atexit_pop))
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (if (local.get $fn)
+      (then
+        (if (i32.eqz (global.get $crt_cexit_thunk))
+          (then (global.set $crt_cexit_thunk (call $com_cont_thunk (i32.const 0xCACA0038)))))
+        (local.set $sp (i32.sub (local.get $sp) (i32.const 4)))
+        (call $gs32 (local.get $sp) (global.get $crt_cexit_thunk))
+        (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+        (call $com_jump (local.get $fn)))
+      (else
+        ;; Stream closure is a separate outstanding CRT lifecycle dependency.
+        (local.set $ret (call $gl32 (local.get $sp)))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $sp) (i32.const 4)))
+        (call $com_jump (local.get $ret)))))
 
   ;; atexit(fn) — cdecl, so the caller retains the argument word.
   (func $handle_atexit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

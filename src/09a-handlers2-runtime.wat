@@ -15,11 +15,10 @@
     (global.set $steps (i32.const 0)) (return)
   )
 
-  ;; _cexit() — cdecl, run CRT cleanup without terminating the process. The
-  ;; current atexit runner is exit-oriented, so keep this as a startup-safe
-  ;; cleanup acknowledgement until a returning terminator chain exists.
+  ;; _cexit() — cdecl, drain callbacks and return without host termination.
+  ;; Its return address remains on the stack until the returning chain finishes.
   (func $handle__cexit (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $crt_cexit_run_next)
   )
 
   ;; 207: __getmainargs
