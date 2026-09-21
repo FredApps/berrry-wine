@@ -20,12 +20,30 @@ const extraWat = `
 
   (func (export "test_read_guest32") (param $address i32) (result i32)
     (call $gl32 (local.get $address)))
+  (func (export "test_file_duplicate") (param $handle i32) (param $target i32)
+    (param $access i32) (param $options i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $gs32 (i32.const 0x074ff018) (i32.const 1))
+    (call $gs32 (i32.const 0x074ff01c) (local.get $options))
+    (call $handle_DuplicateHandle (i32.const -1) (local.get $handle) (i32.const -1)
+      (local.get $target) (local.get $access) (i32.const 0))
+    (i32.load (global.get $reg_base)))
+  (func (export "test_crt_dup") (param $handle i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $handle__dup (local.get $handle) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff004))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
+  (func (export "test_dup_error") (result i32) (global.get $last_error))
+  (func (export "test_dup_errno") (result i32)
+    (call $gl32 (global.get $msvcrt_errno_ptr)))
 `;
 
 (async () => {
   const duplicateCalls = [];
   const realCurrentThreadHandle = 0x0e200001;
-  const { exports: wat } = await bootRenderHarness({
+  const { exports: wat, hostCtx } = await bootRenderHarness({
     extraWat,
     extraHostOverrides: {
       duplicate_current_thread: threadId => {
@@ -49,7 +67,48 @@ const extraWat = `
     'failed DuplicateHandle still cleans up its stdcall frame');
   assert.strictEqual(wat.get_eax(), 0, 'DuplicateHandle rejects a NULL output pointer');
 
+  const vfs = hostCtx.vfs;
+  const original = vfs.createFile('c:\\duplicate.bin', 0xc0000000, 2) >>> 0;
+  vfs.writeFile(original, Uint8Array.from([10, 20, 30, 40]), 4);
+  vfs.setFilePointer(original, 0, 0);
+  assert.strictEqual(wat.test_file_duplicate(original, target, 0, 2), 1);
+  assert.strictEqual(wat.get_esp() >>> 0, stack + 32);
+  const alias = wat.test_read_guest32(target) >>> 0;
+  assert.notStrictEqual(alias, original, 'file duplication allocates a distinct handle');
+  assert.strictEqual(vfs.handles.get(alias).inherit, true);
+  const byte = new Uint8Array(1);
+  assert.strictEqual(vfs.readFile(alias, byte, 1).bytesRead, 1);
+  assert.strictEqual(byte[0], 10);
+  assert.strictEqual(vfs.handles.get(original).pos, 1, 'duplicate reads advance the original position');
+  const independent = vfs.createFile('c:\\duplicate.bin', 0x80000000, 3) >>> 0;
+  assert.strictEqual(vfs.handles.get(independent).pos, 0, 'separate opens do not share position');
+  const crtAlias = wat.test_crt_dup(alias) >>> 0;
+  assert.notStrictEqual(crtAlias, alias);
+  assert.notStrictEqual(crtAlias, 0xffffffff);
+  vfs.setFilePointer(crtAlias, 2, 0);
+  assert.strictEqual(vfs.handles.get(original).pos, 2, 'duplicates of duplicates share the same position');
+  vfs.closeHandle(original);
+  assert.strictEqual(vfs.handles.get(alias).closed, false, 'closing source does not close an alias');
+  assert.strictEqual(vfs.readFile(alias, byte, 1).bytesRead, 1);
+  assert.strictEqual(byte[0], 30);
+  assert.strictEqual(wat.test_file_duplicate(original, target, 0, 2), 0);
+  assert.strictEqual(wat.test_dup_error(), 6, 'closed source is not duplicable');
+  assert.strictEqual(wat.test_crt_dup(original), -1);
+  assert.strictEqual(wat.test_crt_dup(0x77777777), -1, 'fabricated file descriptor fails');
+  assert.strictEqual(wat.test_dup_errno(), 9, '_dup reports EBADF through errno');
+  assert.strictEqual(wat.test_file_duplicate(alias, target, 0, 3), 1);
+  const transferred = wat.test_read_guest32(target) >>> 0;
+  assert.strictEqual(vfs.handles.get(alias).closed, true, 'DUPLICATE_CLOSE_SOURCE closes only source');
+  assert.strictEqual(vfs.handles.get(transferred).closed, false);
+  assert.strictEqual(vfs.handles.get(transferred).pos, 3);
+  assert.strictEqual(wat.test_file_duplicate(independent, target, 0xc0000000, 1), 0);
+  assert.strictEqual(wat.test_dup_error(), 5, 'file duplication cannot grant additional access');
+  assert.strictEqual(vfs.handles.get(independent).closed, true, 'close-source also applies on error');
+  assert.strictEqual(wat.test_file_duplicate(transferred, target, 0, 8), 0);
+  assert.strictEqual(wat.test_dup_error(), 87, 'unknown duplication options fail');
+
   console.log('PASS  DuplicateHandle materializes current-thread handles and preserves stdcall cleanup');
+  console.log('PASS  Win32/CRT file duplicates share position and retain independent close state');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

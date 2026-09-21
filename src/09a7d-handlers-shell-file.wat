@@ -237,12 +237,12 @@
 
   ;; 422: DuplicateHandle
   (func $handle_DuplicateHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $duplicate i32)
+    (local $duplicate i32) (local $file_duplicate i32) (local $stack_w i32)
     ;; Pseudo handles are contextual and cannot be copied into a durable output
     ;; handle. Miles duplicates GetCurrentThread() during startup, then its
     ;; WinMM callback suspends and resumes that real handle while servicing
-    ;; DirectSound. Give that case a process-owned thread handle; other kernel
-    ;; objects already use stable process-local IDs and may share their value.
+    ;; DirectSound. File handles also need distinct identities with shared seek
+    ;; state. Other kernel-object aliases remain a separate implementation gap.
     (if (local.get $arg3)
       (then
         (if (i32.or
@@ -253,7 +253,15 @@
           (then
             (local.set $duplicate (call $console_handle_duplicate (local.get $arg1))))
           (else
-            (local.set $duplicate (local.get $arg1))
+            (local.set $stack_w (call $g2w (i32.load offset=16 (global.get $reg_base))))
+            (local.set $file_duplicate (call $host_fs_duplicate_handle
+              (local.get $arg1) (local.get $arg4)
+              (i32.load offset=24 (local.get $stack_w))
+              (i32.load offset=28 (local.get $stack_w))))
+            (if (i32.gt_s (local.get $file_duplicate) (i32.const 0))
+              (then (local.set $duplicate (local.get $file_duplicate)))
+              (else (if (i32.eqz (local.get $file_duplicate))
+                (then (local.set $duplicate (local.get $arg1))))))
             (if (i32.eq (local.get $arg1) (i32.const 0xFFFFFFFE))
               (then
                 (local.set $duplicate
@@ -261,7 +269,9 @@
         (if (local.get $duplicate)
           (then (call $gs32 (local.get $arg3) (local.get $duplicate))))))
     (if (i32.eqz (local.get $duplicate))
-      (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
+      (then (global.set $last_error
+        (select (i32.sub (i32.const 0) (local.get $file_duplicate)) (i32.const 6)
+          (i32.lt_s (local.get $file_duplicate) (i32.const 0))))))
     (i32.store offset=0 (global.get $reg_base) (i32.and
       (i32.ne (local.get $arg3) (i32.const 0))
       (i32.ne (local.get $duplicate) (i32.const 0))))

@@ -4,7 +4,7 @@ Status: **open**. CRT termination now issues stream closes (`f903f56b`), but
 the VFS still permits ordinary I/O through closed handles. Do not call complete
 FILE/handle lifetime support finished.
 
-## Source findings
+## Initial source findings (before the file-duplication fix)
 
 - `VirtualFS.closeHandle` retains file records with `closed=true`, justified by
   a comment about an NSIS extraction thread using the installer after close.
@@ -91,3 +91,42 @@ artifacts are not assumed durable; the recipes and observations above are.
 
 No evidence here justifies preserving the workaround as correct Win98 behavior,
 nor claiming that deleting the handle alone completes the lifetime model.
+
+## File-duplication implementation checkpoint — 2026-09-21
+
+`DuplicateHandle` now dispatches recognized VFS files through a real host
+duplication operation; CRT `_dup` uses the same operation with SAME_ACCESS.
+Each duplicate has its own handle, closed flag, access metadata and inheritance
+flag. A shared position object is attached lazily on the first duplication,
+so independent opens keep independent positions and duplicate chains all share
+one cursor. File handles are allocated without colliding with existing values.
+The host import signature mirror was regenerated for Worker RPC.
+
+Recognized closed sources and fabricated high-namespace file handles fail;
+unknown option bits and access escalation fail with Win32 errors. CLOSE_SOURCE
+is honored on both successful duplication and recognized-file errors. `_dup`
+returns -1 with EBADF (or EMFILE for exhausted handle space), not a fake alias.
+Non-file kernel alias handling remains outside this fix.
+
+`test/test-duplicate-handle.js` exercises the real WAT handlers and real VFS:
+distinct identities; reads/seeks shared across Win32 and CRT duplicates;
+independent positions from separate opens; source close leaves its duplicate
+usable; duplicate-of-closed fails; transfer/close-source; access and option
+failures; CRT errno; and cdecl/stdcall stack cleanup. Existing current-thread
+pseudo-handle tests still pass. CRT stream-close and termination-callback suites
+also pass. The quiet-handler census remains 250 + 22 (the old `_dup` body was
+not part of that straight-line census).
+
+Remaining limits are explicit: ordinary post-close VFS I/O is still accepted
+until the next lifetime change; this checkpoint tests **independent closed
+state**, not enforcement through every I/O API. General cross-process duplication,
+null-target/null-output compatibility, kernel-object aliases, descriptor-number
+allocation and standard CRT descriptors remain incomplete. Access metadata is
+preserved/restricted at duplication, but comprehensive generic/specific-rights
+mapping and I/O access enforcement are not established. No real Worker/browser
+duplication test or native Win98 differential is claimed.
+
+Full shared-worktree build passes: canonical 1,471,730 bytes, compatibility
+1,472,704 bytes, layout `54f430b349c8d55e`, 246 host imports and 242
+nonoverlapping data segments. These are integration results on the shared tree,
+not isolated performance measurements or clean-commit artifact proofs.

@@ -755,6 +755,7 @@
   ;; fs_write_file(handle, bufGA, nToWrite, nWrittenGA) → BOOL
   (import "host" "fs_flush_file_buffers" (func $host_fs_flush_file_buffers (param i32) (result i32)))
   (import "host" "fs_close_handle" (func $host_fs_close_handle (param i32) (result i32)))
+  (import "host" "fs_duplicate_handle" (func $host_fs_duplicate_handle (param i32 i32 i32 i32) (result i32)))
   (import "host" "fs_set_file_pointer" (func $host_fs_set_file_pointer (param i32 i32 i32) (result i32)))
   (import "host" "fs_set_end_of_file" (func $host_fs_set_end_of_file (param i32) (result i32)))
   (import "host" "fs_get_file_size" (func $host_fs_get_file_size (param i32) (result i32)))

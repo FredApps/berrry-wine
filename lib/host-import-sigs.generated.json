@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 245,
+  "count": 246,
   "sigs": {
     "log": {
       "params": [
@@ -1336,6 +1336,17 @@
     },
     "fs_close_handle": {
       "params": [
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "fs_duplicate_handle": {
+      "params": [
+        "i32",
+        "i32",
+        "i32",
         "i32"
       ],
       "results": [

@@ -1241,9 +1241,20 @@
   )
 
   (func $handle__dup (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (if (result i32) (i32.ge_s (local.get $arg0) (i32.const 0))
-        (then (local.get $arg0))
-        (else (i32.const -1))))
+    (local $duplicate i32)
+    (local.set $duplicate (call $host_fs_duplicate_handle (local.get $arg0)
+      (i32.const 0) (i32.const 0) (i32.const 2)))
+    (if (i32.le_s (local.get $duplicate) (i32.const 0))
+      (then
+        (if (i32.eqz (global.get $msvcrt_errno_ptr))
+          (then (global.set $msvcrt_errno_ptr (call $heap_alloc (i32.const 4)))))
+        (if (global.get $msvcrt_errno_ptr)
+          (then (call $gs32 (global.get $msvcrt_errno_ptr)
+            (select (i32.const 24) (i32.const 9) ;; EMFILE / EBADF
+              (i32.eq (local.get $duplicate) (i32.const -4))))))))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (local.get $duplicate) (i32.const -1)
+        (i32.gt_s (local.get $duplicate) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
