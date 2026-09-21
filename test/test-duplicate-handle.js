@@ -38,6 +38,14 @@ const extraWat = `
   (func (export "test_dup_error") (result i32) (global.get $last_error))
   (func (export "test_dup_errno") (result i32)
     (call $gl32 (global.get $msvcrt_errno_ptr)))
+  (func (export "test_public_close") (param $handle i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $handle_CloseHandle (local.get $handle) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff008))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
 `;
 
 (async () => {
@@ -87,7 +95,10 @@ const extraWat = `
   assert.notStrictEqual(crtAlias, 0xffffffff);
   vfs.setFilePointer(crtAlias, 2, 0);
   assert.strictEqual(vfs.handles.get(original).pos, 2, 'duplicates of duplicates share the same position');
-  vfs.closeHandle(original);
+  assert.strictEqual(wat.test_public_close(original), 1, 'public CloseHandle closes a live file');
+  assert.strictEqual(wat.test_dup_error(), 0x1234, 'successful close does not manufacture an error');
+  assert.strictEqual(wat.test_public_close(original), 0, 'public CloseHandle must propagate double-close failure');
+  assert.strictEqual(wat.test_dup_error(), 6, 'double close reports ERROR_INVALID_HANDLE');
   assert.strictEqual(vfs.handles.get(alias).closed, false, 'closing source does not close an alias');
   assert.strictEqual(vfs.readFile(alias, byte, 1).bytesRead, 1);
   assert.strictEqual(byte[0], 30);

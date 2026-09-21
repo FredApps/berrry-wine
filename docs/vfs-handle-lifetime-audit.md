@@ -172,3 +172,22 @@ during outstanding provider I/O also need dedicated coverage.
 Verification: VFS 32/32, lazy-provider 36/36, file-time, duplicate-handle,
 CRT-close and legacy-HFILE suites pass; JavaScript syntax and diff checks pass.
 No new full WASM build was required or claimed for these host-only changes.
+
+## Public CloseHandle checkpoint — 2026-09-21
+
+The ordinary host-backed branch of `CloseHandle` discarded the host BOOL and
+unconditionally returned success. It now preserves that result and sets
+`ERROR_INVALID_HANDLE` (6) on failure. Successful close leaves the previous
+last-error value unchanged. Existing token, console and IOCP branches are unchanged.
+
+The source-compiled `test/test-duplicate-handle.js` regression calls the public
+WAT handler against the real VFS: first close succeeds, second close fails with
+last-error 6, both calls clean up eight stack bytes, and the duplicate remains
+readable. Duplicate-handle and CRT-close suites and the handler ESP gate pass.
+No full browser/Worker run or native Win98 differential is claimed here.
+
+This does not fix unknown non-file handle validation in the host, or the remaining
+read/write/seek/size error paths. Those need operation-specific errors returned
+with the operation result; a shared host last-error getter would risk another
+Worker overwriting the error between calls. Tombstone reclamation and outstanding
+provider-I/O lifetime coverage remain open.

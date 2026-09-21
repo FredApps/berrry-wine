@@ -3034,8 +3034,9 @@
     ;; the file nor the port, and a stale one would send a later request's
     ;; completion to a handle the guest has already reused.
     (call $iocp_assoc_drop (local.get $arg0))
-    (drop (call $host_fs_close_handle (local.get $arg0)))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+    (i32.store offset=0 (global.get $reg_base) (call $host_fs_close_handle (local.get $arg0)))
+    (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
+      (then (global.set $last_error (i32.const 6)))) ;; ERROR_INVALID_HANDLE
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
