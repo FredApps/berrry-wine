@@ -214,6 +214,28 @@ Three things cost a session each and are worth writing down:
   only; the viewport itself is a game-config property, set in
   `System/UT2003.ini` under `[WinDrv.WindowsClient]`
   (`WindowedViewportX/Y`, `FullscreenViewportX/Y`, `MenuViewportX/Y`).
+- **Open:** the `Instant Action | Select Map` dialog's bottom button row
+  (BACK / SPECTATE / PLAY) takes no input, so the match cannot be started from
+  the CLI yet. The click that opens the dialog — INSTANT ACTION on the main
+  menu at (536,578) — works every time, so the input path reaches the engine.
+  Inside the dialog nothing does. Measured, each in its own bounded run with a
+  hover pair before the press:
+  - BACK at screen y = **743, 760, 778, 790** and PLAY at y = **770, 778**:
+    all leave the dialog exactly where it was. Five rows spanning 47px, so
+    this is **not** a coordinate offset, and BACK failing rules out anything
+    PLAY-specific such as a disabled button.
+  - Double-clicking the selected map name (`dm-antalus`, (290,261)), which is
+    UT2003's own start-the-match shortcut: no effect.
+  - Tab x3 then Enter: no effect.
+
+  Two traps for whoever picks this up: the map preview panel cycles through
+  screenshots on its own and the map description types itself out one
+  character at a time, so **every capture of this dialog has a different
+  hash whether or not any input landed** — `md5` cannot be the oracle here,
+  only the dialog's identity can. And the row is drawn at client y ~743 of a
+  1024x768 client whose window origin is (20,35); `--trace-input` confirms
+  run.js injected each event, so whatever drops it is below that.
+
 - **Do not quote batches/s across phases.** One UT2003 run on the box moved
   13.8k -> 61k -> 65k batches/s between its intro, menu and idle phases. A
   batch is a budget of blocks, so the unit changes meaning with the guest's
