@@ -146,3 +146,23 @@ is unchanged. Existing console-input and sparse-count suites also pass, as
 do logical-AND, test-tier and whitespace checks. Rectangle, streamed screen
 output and other translated console buffers remain to inspect. No browser
 or performance claim is made here.
+
+## Streamed screen-buffer character and attribute arrays migrated
+
+WriteConsoleOutputCharacterA and WriteConsoleOutputAttribute now read caller
+arrays with guest byte/word loads. ReadConsoleOutputAttribute and the shared
+ReadConsoleOutputCharacterA/W core use guest stores. Private console cell
+accesses and existing coordinate validation, wrap and clipping rules remain
+unchanged. This does not add a missing WriteConsoleOutputCharacterW API.
+
+`test/test-console-stream-boundaries.js` failed before migration when the
+character writer loaded unrelated `0xa5` backing instead of the next input
+character. Its five frontend cases now pass all crossings of their byte/word
+arrays, including split WORDs, row wrapping and clipping at the final screen
+cell. Independent seeded cells verify the read results, and direct cell
+checks verify writes plus preservation of the other cell half. The tests
+also check untouched output tails, source/canary bytes, unrelated backing,
+counts and stdcall cleanup. Existing streamed-output clipping, attribute-read
+and A/W character-read suites pass. Logical-AND, tier and whitespace gates
+pass. Rectangular CHAR_INFO/SMALL_RECT buffers remain separate follow-up work;
+no Far browser or timing result is claimed.

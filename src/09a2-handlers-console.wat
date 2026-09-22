@@ -2013,7 +2013,7 @@
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
     (call $console_cells_ensure)
-    (local.set $src (call $g2w (local.get $arg1)))
+    (local.set $src (local.get $arg1))
     (local.set $x (i32.and (local.get $arg3) (i32.const 0xFFFF)))
     (local.set $y (i32.shr_u (local.get $arg3) (i32.const 16)))
     (local.set $i (i32.const 0))
@@ -2021,7 +2021,7 @@
       (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $off (i32.add (i32.mul (local.get $y) (global.get $console_width)) (local.get $x)))
       (i32.store16 (i32.add (global.get $console_text_base) (i32.mul (local.get $off) (i32.const 2)))
-        (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+        (call $gl8 (i32.add (local.get $src) (local.get $i))))
       (local.set $x (i32.add (local.get $x) (i32.const 1)))
       (if (i32.ge_u (local.get $x) (global.get $console_width))
         (then (local.set $x (i32.const 0)) (local.set $y (i32.add (local.get $y) (i32.const 1)))))
@@ -2053,7 +2053,7 @@
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
     (call $console_cells_ensure)
-    (local.set $src (call $g2w (local.get $arg1)))
+    (local.set $src (local.get $arg1))
     (local.set $x (i32.and (local.get $arg3) (i32.const 0xFFFF)))
     (local.set $y (i32.shr_u (local.get $arg3) (i32.const 16)))
     (local.set $i (i32.const 0))
@@ -2061,7 +2061,7 @@
       (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $off (i32.add (i32.mul (local.get $y) (global.get $console_width)) (local.get $x)))
       (i32.store16 (i32.add (global.get $console_attr_base) (i32.mul (local.get $off) (i32.const 2)))
-        (i32.load16_u (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))
+        (call $gl16 (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))
       (local.set $x (i32.add (local.get $x) (i32.const 1)))
       (if (i32.ge_u (local.get $x) (global.get $console_width))
         (then (local.set $x (i32.const 0)) (local.set $y (i32.add (local.get $y) (i32.const 1)))))
@@ -2307,14 +2307,14 @@
         (call $console_buffer_finish (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
-    (local.set $dst (call $g2w (local.get $arg1)))
+    (local.set $dst (local.get $arg1))
     (local.set $x (i32.and (local.get $arg3) (i32.const 0xFFFF)))
     (local.set $y (i32.shr_u (local.get $arg3) (i32.const 16)))
     (local.set $i (i32.const 0))
     (block $done (loop $read
       (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $off (i32.add (i32.mul (local.get $y) (global.get $console_width)) (local.get $x)))
-      (i32.store16 (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 2)))
+      (call $gs16 (i32.add (local.get $dst) (i32.mul (local.get $i) (i32.const 2)))
         (i32.load16_u (i32.add (global.get $console_attr_base) (i32.mul (local.get $off) (i32.const 2)))))
       (local.set $x (i32.add (local.get $x) (i32.const 1)))
       (if (i32.ge_u (local.get $x) (global.get $console_width))
@@ -2366,7 +2366,7 @@
     (if (local.get $limit)
       (then
         (call $console_cells_ensure)
-        (local.set $dst (call $g2w (local.get $buffer_g)))
+        (local.set $dst (local.get $buffer_g))
         (local.set $start
           (i32.add
             (i32.mul (i32.shr_s (local.get $coord) (i32.const 16))
@@ -2381,13 +2381,13 @@
                   (i32.const 1)))))
           (if (local.get $wide)
             (then
-              (i32.store16
+              (call $gs16
                 (i32.add (local.get $dst) (i32.shl (local.get $i) (i32.const 1)))
                 (local.get $ch)))
             (else
               ;; Match the runtime's existing console-code-page narrowing in
               ;; ReadConsoleOutputA: ANSI output exposes the low byte.
-              (i32.store8 (i32.add (local.get $dst) (local.get $i))
+              (call $gs8 (i32.add (local.get $dst) (local.get $i))
                 (local.get $ch))))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $read)))
