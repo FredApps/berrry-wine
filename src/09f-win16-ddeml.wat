@@ -329,6 +329,9 @@
       (local.get $conv) (local.get $hsz1) (local.get $hsz2) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0)))
 
+  ;; Consumes hdata: accepted callbacks release it when they finish; a full
+  ;; queue releases it here. Non-data notifications pass zero. Both POKE and
+  ;; ADVDATA transfer freshly allocated blocks, never borrowed app handles.
   (func $win16_dde_ask_push_data (param $type i32) (param $inst i32) (param $conv i32)
                                  (param $hsz1 i32) (param $hsz2 i32) (param $hdata i32)
                                  (param $fmt i32) (param $dw1 i32) (param $dw2 i32)
@@ -399,6 +402,7 @@
           (return (i32.const 1))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    (call $win16_dde_data_free (local.get $hdata))
     (i32.const 0))
 
   ;; The oldest unanswered question whose instance has a callback to ask, or -1.
@@ -977,13 +981,13 @@
         (local.set $i (i32.add (call $win16_dde_str_len (local.get $want))
                                (i32.const 1)))
         ;; select eagerly evaluates both arms: allocate only for a poke.
-        ;; Until the queue accepts it, this frame owns the data handle.
+        ;; ask_push_data consumes the handle even if the queue is full.
         (if (i32.eq (local.get $type) (i32.const 6))
           (then
             (local.set $hdata (call $win16_dde_data_take
               (i32.add (local.get $want) (local.get $i))
               (i32.sub (i32.load offset=20 (local.get $wa)) (local.get $i))))))
-        (if (i32.eqz (call $win16_dde_ask_push_data
+        (drop (call $win16_dde_ask_push_data
           (select (global.get $XTYP_POKE)
             (select (global.get $XTYP_EXECUTE) (global.get $XTYP_ADVSTART)
                     (i32.eq (local.get $type) (i32.const 7)))
@@ -993,7 +997,6 @@
           (call $win16_dde_hsz_intern_wa (local.get $want))
           (local.get $hdata)
           (i32.load offset=24 (local.get $wa)) (i32.const 0) (i32.const 0)))
-          (then (call $win16_dde_data_free (local.get $hdata))))
         (return)))
 
     ;; The far side has acknowledged a poke, execute or advise start.

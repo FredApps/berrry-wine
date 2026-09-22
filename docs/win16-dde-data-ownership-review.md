@@ -52,6 +52,25 @@ connect callbacks and transactions 25/25. The earlier failure above is retained
 as the investigation history, not the current outcome. No browser or native
 Windows capture was needed to establish this internal address collision.
 
+## Follow-up: one enqueue ownership rule for POKE and ADVDATA
+
+The ADVDATA branch had the same rejected-queue leak as POKE. Extending the
+ownership regression to frame type 10 reproduced 16 live handles for four
+callbacks and 12 remaining after completion. The shared `ask_push_data` now
+consumes its data handle on every call: accepted data remains owned by the
+callback, rejected data is freed immediately. The previous POKE-only cleanup
+was removed. All production callers were inspected: POKE and ADVDATA supply
+freshly allocated blocks; the wrapper, XACT_COMPLETE and ADVREQ supply zero.
+
+The expanded regression passes both frame types through queue saturation,
+checks accepted payloads survive rejection, checks completion releases all
+handles, then alternates 64 POKE/ADVDATA delivery/completion cycles. The real
+Win16 callback/transaction suite remains 25/25 green. Fragment, test-tier and
+silent-stub gates pass. Other agents' service/connection changes in this file
+were not included in this fix. EXECUTE semantics, string ownership and malformed
+frames remain separate review work; this does not claim all DDE lifetime paths
+are now correct.
+
 This is an internal ownership regression, not a native Win98 conformance
 capture or an end-to-end Hearts gameplay claim. EXECUTE's existing callback
 argument representation is unchanged and still needs separate review. Also
