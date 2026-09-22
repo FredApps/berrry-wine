@@ -29,6 +29,10 @@ const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const extraWat = String.raw`
+  (func (export "test_mv_fill_registry")
+    (i32.store (global.get $MAPPED_VIEW_TABLE) (global.get $MAX_MAPPED_VIEWS)))
+  (func (export "test_mv_cursor") (result i32)
+    (i32.load offset=8 (global.get $VIRTUAL_MAP_STATE)))
   (func (export "test_mv_force_gap")
     (i32.store offset=8 (global.get $VIRTUAL_MAP_STATE) (call $virtual_alloc_min))
     (global.set $virtual_alloc_top (call $virtual_alloc_min)))
@@ -105,6 +109,17 @@ async function main() {
   };
 
   const VIEW_BYTES = 8 * PAGE;
+
+  // Exhausted view bookkeeping must not hand out an unguarded allocation.
+  // Simulate capacity directly: the rejection must not inspect or alter slots.
+  wasm.test_mv_reset();
+  wasm.test_mv_fill_registry();
+  const fullCursor = wasm.test_mv_cursor();
+  assert.strictEqual(wasm.guest_map_alloc(PAGE), 0,
+    'full view registry must reject allocation instead of losing VirtualFree protection');
+  assert.strictEqual(wasm.test_mv_cursor(), fullCursor,
+    'registry exhaustion must fail before reserving address space');
+  console.log('PASS  full mapped-view registry refuses allocation without reserving memory');
 
   // Mapping sizes are page-rounded, but their bases must honor the larger
   // allocation granularity. Interleave awkward sizes to catch cursor drift.

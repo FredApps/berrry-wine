@@ -1102,3 +1102,19 @@ small view. Exact protection downgrade, disjoint-range commitment, alternative
 unmap orders and cross-process behavior still need additional native probes.
 
 This checkpoint changes the oracle only, not runtime ownership or permissions.
+
+## Mapped-view bookkeeping exhaustion (2026-09-21)
+
+Inspection for shared backing found another silent fallback: the mapped-view
+registry helper drops registrations when full, but `guest_map_alloc` still
+returned the allocation. VirtualFree could then treat those file bytes as
+ordinary virtual memory and decommit them. The host allocation export now
+checks registry capacity before reserving or committing any bytes and returns
+zero on exhaustion (the mapping import reports allocation failure).
+
+The source-compiled mapped-view test forces the registry to capacity and checks
+both rejection and an unchanged reservation cursor. Before the fix it failed
+with a nonzero returned address; afterwards it and the existing alignment,
+gap reuse, refused mapped decommit/release, and ordinary decommit checks pass.
+The 54-case native validation/status test also passes. This fixes resource-limit
+behavior, not shared-view coherence, and does not claim a full browser build.

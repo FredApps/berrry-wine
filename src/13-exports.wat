@@ -3509,6 +3509,12 @@
   ;; low-memory stack/thunk arenas on its way upward.
   (func (export "guest_map_alloc") (param $requested i32) (result i32)
     (local $size i32) (local $guest i32)
+    ;; Host mapping operations are serialized on the main host. Refuse a view
+    ;; before allocation if its VirtualFree exclusion cannot be recorded;
+    ;; otherwise the guest can decommit mapped file bytes as ordinary memory.
+    (if (i32.ge_u (i32.load (global.get $MAPPED_VIEW_TABLE))
+          (global.get $MAX_MAPPED_VIEWS))
+      (then (return (i32.const 0))))
     (local.set $size
       (i32.and (i32.add (local.get $requested) (i32.const 0xFFF))
         (i32.const 0xFFFFF000)))
