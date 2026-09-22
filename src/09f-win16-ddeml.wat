@@ -819,6 +819,62 @@
     (call $host_net_frame_send (local.get $wa)
       (i32.add (global.get $DDE_HDR) (local.get $len))))
 
+  ;; Bytes through the first NUL, or zero if the received extent has no NUL.
+  ;; Unlike str_len, this cannot accept a terminator in stale receive storage.
+  (func $win16_dde_frame_string_end (param $wa i32) (param $n i32) (result i32)
+    (local $i i32)
+    (block $missing (loop $scan
+      (br_if $missing (i32.ge_u (local.get $i) (local.get $n)))
+      (if (i32.eqz (i32.load8_u (i32.add (local.get $wa) (local.get $i))))
+        (then (return (i32.add (local.get $i) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Validate the private room protocol before any allocation or state change.
+  ;; n is the received byte count, not the capacity of the reusable buffer.
+  (func $win16_dde_frame_valid (param $wa i32) (param $n i32) (result i32)
+    (local $size i32) (local $len i32) (local $type i32) (local $end i32)
+    (local.set $size (i32.shl (memory.size) (i32.const 16)))
+    (if (i32.gt_u (local.get $wa) (local.get $size)) (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $n) (i32.sub (local.get $size) (local.get $wa)))
+      (then (return (i32.const 0))))
+    (if (i32.lt_u (local.get $n) (global.get $DDE_HDR)) (then (return (i32.const 0))))
+    (if (i32.ne (i32.load (local.get $wa)) (global.get $DDE_MAGIC))
+      (then (return (i32.const 0))))
+    (local.set $len (i32.load offset=20 (local.get $wa)))
+    (if (i32.or (i32.gt_u (local.get $len) (global.get $DDE_MAX_PAYLOAD))
+                 (i32.gt_u (local.get $len) (i32.sub (local.get $n) (global.get $DDE_HDR))))
+      (then (return (i32.const 0))))
+    (local.set $type (i32.load offset=4 (local.get $wa)))
+    (if (i32.or (i32.lt_u (local.get $type) (i32.const 1))
+                 (i32.gt_u (local.get $type) (i32.const 10)))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $type) (i32.const 9))
+      (then (return (i32.ge_u (local.get $len) (i32.const 4)))))
+    ;; Connect has two names. Request/POKE/ADVSTART/ADVDATA have one;
+    ;; EXECUTE has a command string, with no 128-byte name-reader limit.
+    (if (i32.or (i32.eq (local.get $type) (i32.const 1))
+        (i32.or (i32.eq (local.get $type) (i32.const 4))
+        (i32.or (i32.eq (local.get $type) (i32.const 6))
+        (i32.or (i32.eq (local.get $type) (i32.const 7))
+        (i32.or (i32.eq (local.get $type) (i32.const 8))
+                (i32.eq (local.get $type) (i32.const 10)))))))
+      (then
+        (local.set $wa (i32.add (local.get $wa) (global.get $DDE_HDR)))
+        (local.set $end (call $win16_dde_frame_string_end (local.get $wa) (local.get $len)))
+        (if (i32.eqz (local.get $end)) (then (return (i32.const 0))))
+        (if (i32.eq (local.get $type) (i32.const 7)) (then (return (i32.const 1))))
+        (if (i32.gt_u (local.get $end) (i32.const 129)) (then (return (i32.const 0))))
+        (if (i32.eq (local.get $type) (i32.const 1))
+          (then
+            (local.set $end (call $win16_dde_frame_string_end
+              (i32.add (local.get $wa) (local.get $end))
+              (i32.sub (local.get $len) (local.get $end))))
+            (return (i32.and (i32.ne (local.get $end) (i32.const 0))
+                             (i32.le_u (local.get $end) (i32.const 129))))))))
+    (i32.const 1))
+
   ;; Apply one inbound DDE frame. Always consumes it: unlike a socket frame
   ;; there is no per-connection ring that can be full, so nothing here can
   ;; ask for the frame to be left on the wire.
@@ -829,7 +885,8 @@
     (local $tag i32) (local $src_conv i32) (local $dst_conv i32)
     (local $i i32) (local $slot i32) (local $conv i32) (local $svc i32)
     (local $want i32) (local $wild i32) (local $topic_wa i32)
-    (if (i32.lt_u (local.get $n) (global.get $DDE_HDR)) (then (return)))
+    (if (i32.eqz (call $win16_dde_frame_valid (local.get $wa) (local.get $n)))
+      (then (return)))
     (local.set $type     (i32.load offset=4  (local.get $wa)))
     (local.set $tag      (i32.load offset=8  (local.get $wa)))
     (local.set $src_conv (i32.load offset=12 (local.get $wa)))
