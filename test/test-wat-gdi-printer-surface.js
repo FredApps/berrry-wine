@@ -17,7 +17,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   assert.strictEqual(wat.test_call_SetPixel(screenDc, 1, 1, 0x00FF0000) >>> 0,
     0x00FF0000, 'screen seed pixel must be writable');
 
-  const printerDc = wat.test_call_CreateDCA() >>> 0;
+  const printerDc = wat.test_call_CreateDCA(0, 0, 0, 0) >>> 0;
   assert(printerDc, 'CreateDCA must allocate a page DC');
   // The 30MB page raster is created on first use, not at CreateDC time: MFC
   // opens a printer DC during startup just to measure the page and usually
@@ -44,7 +44,7 @@ const RegionMap = require('../lib/region-map.generated.js');
 
   assert.strictEqual(wat.test_call_StartPage(printerDc), -1,
     'StartPage must reject calls outside a document');
-  assert.strictEqual(wat.test_call_StartDocA(printerDc), 1);
+  assert.strictEqual(wat.test_call_StartDocA(printerDc, 0), 1);
   assert.strictEqual(wat.test_call_StartPage(printerDc), 1);
   assert.strictEqual(wat.get_printer_doc_state(), 2);
   assert.strictEqual(wat.get_printer_page_count(), 1);
@@ -95,11 +95,11 @@ const RegionMap = require('../lib/region-map.generated.js');
   assert.strictEqual(wat.test_call_GetPixel(screenDc, 1, 1) >>> 0, 0x00FF0000,
     'printer teardown must leave the independent screen surface intact');
 
-  const metricsDc = wat.test_call_CreateDCA() >>> 0;
+  const metricsDc = wat.test_call_CreateDCA(0, 0, 0, 0) >>> 0;
   assert(metricsDc, 'post-job printer metrics DC must remain available');
   assert.strictEqual(wat.get_printer_page_count(), 2,
     'creating a metrics DC must not erase the completed job count');
-  assert.strictEqual(wat.test_call_StartDocA(metricsDc), 1);
+  assert.strictEqual(wat.test_call_StartDocA(metricsDc, 0), 1);
   assert.strictEqual(wat.get_printer_page_count(), 0,
     'StartDoc must reset the page count for the new job');
   assert.strictEqual(wat.test_call_AbortDoc(metricsDc), 1);

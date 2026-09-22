@@ -24,7 +24,7 @@ const extraWat = String.raw`
   const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const stack = e.test_stack() >>> 0;
   const callback = 0x00401000;
-  const printerDc = e.test_call_CreateDCA() >>> 0;
+  const printerDc = e.test_call_CreateDCA(0, 0, 0, 0) >>> 0;
   const memoryDc = e.test_call_CreateCompatibleDC(0) >>> 0;
   const screenDc = e.test_call_GetDC(0) >>> 0;
   assert(printerDc && memoryDc && screenDc, 'test device contexts allocate');

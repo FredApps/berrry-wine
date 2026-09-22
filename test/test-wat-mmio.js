@@ -95,7 +95,7 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(setBuffer(0x70000107, 0, 0x4000), 0,
     'Alpha Centauri 16 KiB internal-buffer request succeeds');
   const info = wat.guest_alloc(72);
-  assert.strictEqual(wat.test_call_mmioGetInfo(0x70000107, info), 0);
+  assert.strictEqual(wat.test_call_mmioGetInfo(0x70000107, info, 0), 0);
   const infoWa = (info - imageBase + guestBase) >>> 0;
   const view = new DataView(memory.buffer);
   assert.strictEqual(view.getUint32(infoWa + 20, true), 0x4000,
@@ -105,7 +105,7 @@ const { bootRenderHarness } = require('./render-helper');
   const callerBuffer = wat.guest_alloc(256);
   assert.strictEqual(setBuffer(0x70000107, callerBuffer, 256), 0,
     'an application-owned buffer succeeds');
-  assert.strictEqual(wat.test_call_mmioGetInfo(0x70000107, info), 0);
+  assert.strictEqual(wat.test_call_mmioGetInfo(0x70000107, info, 0), 0);
   assert.strictEqual(view.getUint32(infoWa + 20, true), 256,
     'mmioGetInfo reports a caller-owned buffer size');
   assert.strictEqual(view.getUint32(infoWa + 24, true), callerBuffer,
@@ -121,8 +121,11 @@ const { bootRenderHarness } = require('./render-helper');
   const lazyEsp = 0x30000;
   const lazyThunk = 0x0badf00d;
   wat.test_mmio_set_call_state(lazyEsp, lazyThunk);
-  assert.strictEqual(wat.test_mmio_lazy_read(0x70000120, lazyBuffer, lazyPayload.length), 0,
-    'a pending provider read does not masquerade as bytes read');
+  // IO_WAIT is a suspended call, not an API return. The shared read handler
+  // leaves EAX untouched until the retry completes; only then is it a count.
+  wat.set_eax(0x12345678);
+  assert.strictEqual(wat.test_mmio_lazy_read(0x70000120, lazyBuffer, lazyPayload.length), 0x12345678,
+    'a pending provider read does not publish a completed byte count');
   assert.strictEqual(wat.get_yield_reason(), 12,
     'a pending mmioRead parks on IO_WAIT');
   assert.strictEqual(wat.test_mmio_esp() >>> 0, lazyEsp,
@@ -148,10 +151,10 @@ const { bootRenderHarness } = require('./render-helper');
   const bufferedInfo = wat.guest_alloc(72) >>> 0;
   const bufferedInfoWa = (bufferedInfo - imageBase + guestBase) >>> 0;
   assert.strictEqual(setBuffer(bufferedHandle, bufferedStorage, lazyPayload.length), 0);
-  assert.strictEqual(wat.test_call_mmioGetInfo(bufferedHandle, bufferedInfo), 0);
+  assert.strictEqual(wat.test_call_mmioGetInfo(bufferedHandle, bufferedInfo, 0), 0);
   wat.test_mmio_set_call_state(lazyEsp, lazyThunk);
   assert.strictEqual(wat.test_mmio_lazy_advance(bufferedHandle, bufferedInfo), 0,
-    'a pending buffered refill retains the MMIO success contract');
+    'buffered refill leaves its internal result at zero while suspended');
   assert.strictEqual(wat.get_yield_reason(), 12,
     'a pending mmioAdvance parks on IO_WAIT');
   assert.strictEqual(wat.test_mmio_esp() >>> 0, lazyEsp,

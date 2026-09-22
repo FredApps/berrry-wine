@@ -469,6 +469,7 @@
   {
     "id": 55,
     "name": "CreateDCA",
+    "test_call": true,
     "nargs": 4,
     "convention": "stdcall",
     "hash": 913473419
@@ -476,6 +477,7 @@
   {
     "id": 56,
     "name": "CreateDCW",
+    "test_call": true,
     "nargs": 4,
     "convention": "stdcall",
     "hash": 1282581037
@@ -1760,6 +1762,7 @@
   {
     "id": 188,
     "name": "GetClassInfoW",
+    "test_call": true,
     "nargs": 3,
     "convention": "stdcall",
     "hash": 1625874786
@@ -6174,6 +6177,7 @@
   {
     "id": 679,
     "name": "StartDocA",
+    "test_call": true,
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1324418878
@@ -7719,6 +7723,7 @@
   {
     "id": 867,
     "name": "SHGetFileInfoW",
+    "test_call": true,
     "nargs": 5,
     "convention": "stdcall",
     "hash": 998752965
@@ -10832,6 +10837,7 @@
   {
     "id": 1240,
     "name": "OpenMutexA",
+    "test_call": true,
     "nargs": 3,
     "convention": "stdcall",
     "hash": 4094163651
@@ -10839,6 +10845,7 @@
   {
     "id": 1241,
     "name": "CreateMutexA",
+    "test_call": true,
     "nargs": 3,
     "convention": "stdcall",
     "hash": 997118615
@@ -24090,6 +24097,7 @@
   {
     "id": 2866,
     "name": "mmioGetInfo",
+    "test_call": true,
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3516870985

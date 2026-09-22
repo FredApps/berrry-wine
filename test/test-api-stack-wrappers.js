@@ -2,7 +2,7 @@
 'use strict';
 
 const assert = require('assert');
-const apis = require('../src/api_table.json').filter(api => api.test_call && api.nargs > 5);
+const apis = require('../src/api_table.json').filter(api => api.test_call);
 const compiler = require('./compile-src');
 const compile = compiler.compileSrcWasm;
 // Keep the generated wrappers intact; replace only their called endpoint with
@@ -40,25 +40,29 @@ const extraWat = String.raw`
     (call $gs32 (i32.add (global.get $test_stack_output) (i32.const 12)) (local.get $d))
     (call $gs32 (i32.add (global.get $test_stack_output) (i32.const 16)) (local.get $e))
     (call $gs32 (i32.add (global.get $test_stack_output) (i32.const 20)) (local.get $name))
-    (loop $copy
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (global.get $test_stack_count)))
       (call $gs32
         (i32.add (global.get $test_stack_output) (i32.add (i32.const 24) (i32.mul (local.get $i) (i32.const 4))))
         (call $gl32 (i32.add (local.get $sp) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 4)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br_if $copy (i32.lt_u (local.get $i) (global.get $test_stack_count))))
+      (br $copy)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x76543210))
     (i32.store offset=16 (global.get $reg_base)
       (i32.add (local.get $sp) (i32.mul (i32.add (global.get $test_stack_count) (i32.const 1)) (i32.const 4)))))
 `;
 
 (async () => {
-  assert(apis.length >= 23, 'stack-wrapper inventory must include migrated GDI and Winsock APIs');
+  assert(apis.some(api => api.nargs === 0), 'include zero-argument wrappers');
+  assert(apis.some(api => api.nargs > 0 && api.nargs <= 5), 'include direct-argument wrappers');
+  assert(apis.some(api => api.nargs > 5), 'include stack-argument wrappers');
   const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const stack = e.guest_alloc(256) >>> 0;
   const out = e.guest_alloc(128) >>> 0;
   const read = ptr => e.guest_read32(ptr) >>> 0;
   let count = 0;
   for (const api of apis) {
+    assert.strictEqual(e[`test_call_${api.name}`].length, api.nargs, `${api.name}: full signature`);
     const args = Array.from({ length: api.nargs }, (_, i) =>
       api.args?.[i]?.type === 'FLOAT' ? -37.25 + i : (0x81020304 + i * 0x01010101) >>> 0);
     const words = args.map((value, i) => {
@@ -75,10 +79,12 @@ const extraWat = String.raw`
       e.set_esp(sp);
       assert.strictEqual(e[`test_call_${api.name}`](...args) >>> 0, 0x76543210, api.name);
       assert.strictEqual(e.get_esp() >>> 0, sp, `${api.name}: restore ESP`);
-      assert.deepStrictEqual(Array.from({ length: 5 }, (_, i) => read(out + i * 4)), words.slice(0, 5),
+      assert.deepStrictEqual(Array.from({ length: 5 }, (_, i) => read(out + i * 4)),
+        Array.from({ length: 5 }, (_, i) => i < words.length ? words[i] : 0),
         `${api.name}: first five handler arguments`);
       assert.strictEqual(read(out + 20), 0, `${api.name}: zero name pointer`);
-      assert.deepStrictEqual(Array.from({ length: api.nargs }, (_, i) => read(out + 24 + i * 4)), words,
+      assert.deepStrictEqual(Array.from({ length: api.nargs }, (_, i) => read(out + 24 + i * 4)),
+        api.nargs > 5 ? words : Array(api.nargs).fill(0xcccccccc),
         `${api.name}: all stack words observed inside the handler at alignment ${alignment}`);
       assert.strictEqual(read(sp - 4), 0xcccccccc, 'before-frame guard');
       assert.strictEqual(read(sp), 0xcccccccc, 'return address untouched');
@@ -86,7 +92,7 @@ const extraWat = String.raw`
       count++;
     }
   }
-  console.log(`PASS ${count} generated stack-wrapper calls: arguments, alignment, guards, result and ESP`);
+  console.log(`PASS ${count} generated wrapper calls: signatures, arguments, alignment, guards, result and ESP`);
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

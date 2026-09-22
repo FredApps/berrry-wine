@@ -159,7 +159,7 @@ async function main() {
   assert.strictEqual(wat.test_call_GetObjectW(wideFont, 92, wideLogfont), 92);
   assert.strictEqual(wat.guest_read32(wideLogfont), -17);
   assert.strictEqual(wat.guest_read32(wideLogfont + 16), 700);
-  const wideDc = wat.test_call_CreateDCW() >>> 0;
+  const wideDc = wat.test_call_CreateDCW(0, 0, 0, 0) >>> 0;
   assert(wideDc, 'CreateDCW should allocate a usable screen/printer DC');
   assert.strictEqual(wat.test_call_GetObjectType(wideDc), 3);
 

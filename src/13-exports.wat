@@ -992,30 +992,6 @@
       (i32.const 0) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
     (i32.load offset=0 (global.get $reg_base)))
-  (func (export "test_call_CreateDCW") (result i32)
-    (local $saved_esp i32)
-    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
-    (call $handle_CreateDCW
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
-    (i32.load offset=0 (global.get $reg_base)))
-  (func (export "test_call_CreateDCA") (result i32)
-    (local $saved_esp i32)
-    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
-    (call $handle_CreateDCA
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
-    (i32.load offset=0 (global.get $reg_base)))
-  (func (export "test_call_StartDocA") (param i32) (result i32)
-    (local $saved_esp i32)
-    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
-    (call $handle_StartDocA
-      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
-    (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_call_CreateDIBSection")
         (param i32) (param i32) (param i32) (result i32)
     (call $handle_CreateDIBSection
@@ -1029,14 +1005,6 @@
     (call $handle_CreateDIBSection
       (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (i32.const 0) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
-    (i32.load offset=0 (global.get $reg_base)))
-  (func (export "test_call_mmioGetInfo") (param i32 i32) (result i32)
-    (local $saved_esp i32)
-    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
-    (call $handle_mmioGetInfo
-      (local.get 0) (local.get 1) (i32.const 0)
-      (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
     (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_gdi_bitmap_storage") (param i32) (result i32)
@@ -4076,28 +4044,11 @@
 
   (func (export "test_ole_flush_clipboard") (result i32)
     (call $ole_flush_clipboard_value))
-  (func (export "test_call_OpenMutexA") (param $name i32) (result i32)
-    (call $handle_OpenMutexA (i32.const 0x001f0001) (i32.const 0) (local.get $name)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (i32.load offset=0 (global.get $reg_base)))
-  (func (export "test_call_CreateMutexA") (param $name i32) (result i32)
-    (call $handle_CreateMutexA (i32.const 0) (i32.const 0) (local.get $name)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (i32.load offset=0 (global.get $reg_base)))
-  (func (export "test_call_GetClassInfoW") (param $name i32) (param $out i32) (result i32)
-    (call $handle_GetClassInfoW (i32.const 0) (local.get $name) (local.get $out)
-      (i32.const 0) (i32.const 0) (i32.const 0))
-    (i32.load offset=0 (global.get $reg_base)))
 
   ;; Direct formatter hook for Unicode/Win32-format regression tests.
   (func (export "test_wsprintf_w")
     (param $out i32) (param $fmt i32) (param $args i32) (result i32)
     (call $wsprintf_impl_w (local.get $out) (local.get $fmt) (local.get $args)))
-  (func (export "test_call_SHGetFileInfoW")
-    (param $path i32) (param $out i32) (param $size i32) (param $flags i32) (result i32)
-    (call $handle_SHGetFileInfoW (local.get $path) (i32.const 0) (local.get $out)
-      (local.get $size) (local.get $flags) (i32.const 0))
-    (i32.load offset=0 (global.get $reg_base)))
 
   ;; ============================================================
   ;; STEP 6 — WAT-side find/replace + edit-state inspection exports

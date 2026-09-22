@@ -169,3 +169,49 @@ generator freshness, append-only API IDs, fragment balance, logical operands,
 handler ESP, test tiers and whitespace checks pass. The benchmark caller was
 updated mechanically but no timing result is claimed. These are shared-worktree
 checks, not a full release or native Win98 GDI conformance sweep.
+
+## Eight defaulted adapters migrated
+
+CreateDCA/W, StartDocA, mmioGetInfo, OpenMutexA, CreateMutexA, GetClassInfoW
+and SHGetFileInfoW now expose the complete metadata signatures. Existing test
+callers explicitly supply their previous zero defaults, including the leading
+instance/security arguments; OpenMutexA retains its former `0x001f0001` access
+mask. No production handler changes. The last four old wrappers advanced ESP;
+their generated replacements preserve it. Inventory: **248 generated / 12
+manual**.
+
+The ABI recorder now exercises **every generated wrapper**, not only those
+with stack arguments: 248 exports at four alignments, **992 calls**. It checks
+arity, all five direct argument positions (including zero padding), FLOAT bit
+patterns, stack words for signatures above five, untouched stack words for
+short signatures, return-address/boundary guards, result and restored ESP.
+Zero-argument wrappers are covered without reading a nonexistent argument.
+A compiler-only negative control replacing CreateMutexA's name argument with
+zero fails the direct-argument assertion.
+
+The MMIO behavioral rerun found an existing stale assertion, reproduced with
+all WAT sources loaded from committed HEAD. A provider-backed read parked on
+IO_WAIT has not returned to the guest: `io_block` preserves EAX, restores the
+frame and redirects to the thunk. The test now seeds and checks unchanged EAX
+while suspended, retaining the yield/ESP/EIP checks and the actual byte count
+and copied bytes after retry. The buffered-refill assertion's wording likewise
+no longer calls its intermediate zero a completed API success. This changes
+test expectations, not the runtime's asynchronous read behavior.
+
+The remaining manual exports are GetVolumeInformationA, CreateFontW,
+CreateDIBSection, CreateDIBSectionUsage, ExtTextOutA/W, ExtTextOutAWithDx,
+WinHelpA/W, WSAFDIsSet, WSAIsBlocking and SetLastError. These still need explicit
+signature, endpoint or public-registration decisions; this is not full P5 #7
+closure.
+
+Verification includes printer-surface rendering, SetAbortProc, GDI state,
+MMIO buffer/lazy retry, 33 wide-API checks and 17 kernel32 error checks.
+While another agent's present-pacer edit temporarily left the shared DirectX
+fragment unbalanced, a temporary compiler harness pinned WAT to `7e0941d2`
+plus only these eight wrapper migrations. Its 992 ABI calls, MMIO, wide-API
+and kernel32 suites passed; JS/tests remained from the working tree, so this
+was a pinned-WAT check, not a clean full-tree release. The unbalanced fragment
+was subsequently repaired by its owner. No other agent's code was reverted.
+The MMIO, wide-API and kernel32 suites then passed again on current worktree
+WAT. Metadata/generation, API IDs, fragment balance, handler ESP, test tiers and
+whitespace checks passed. No full build, browser sweep or timing claim.

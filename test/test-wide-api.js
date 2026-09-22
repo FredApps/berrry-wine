@@ -240,7 +240,7 @@ async function main() {
   e.guest_write32(wc + 36, className);
   check('RegisterClassW returns atom', e.test_call_RegisterClassW(wc) !== 0);
   const out = e.guest_alloc(40);
-  check('GetClassInfoW finds RegisterClassW record', e.test_call_GetClassInfoW(className, out) === 1);
+  check('GetClassInfoW finds RegisterClassW record', e.test_call_GetClassInfoW(0, className, out) === 1);
   check('GetClassInfoW preserves WNDCLASSW wndproc', e.guest_read32(out + 4) === wndproc);
   check('GetClassInfoW preserves WNDCLASSW class pointer', e.guest_read32(out + 36) === className);
 
@@ -254,7 +254,7 @@ async function main() {
   e.guest_write32(wcx + 40, classNameEx);
   check('RegisterClassExW returns atom', e.test_call_RegisterClassExW(wcx) !== 0);
   const outEx = e.guest_alloc(40);
-  check('GetClassInfoW finds RegisterClassExW record', e.test_call_GetClassInfoW(classNameEx, outEx) === 1);
+  check('GetClassInfoW finds RegisterClassExW record', e.test_call_GetClassInfoW(0, classNameEx, outEx) === 1);
   check('GetClassInfoW maps WNDCLASSEXW wndproc into WNDCLASS slot',
     e.guest_read32(outEx + 4) === wndprocEx);
 
@@ -303,7 +303,7 @@ async function main() {
   const fileInfo = e.guest_alloc(692);
   const fullPath = writeWide('C:\\MEDIA\\PINBALL.MID');
   check('SHGetFileInfoW returns a display-name basename for an attributed synthetic path',
-    e.test_call_SHGetFileInfoW(fullPath, fileInfo, 692, 0x210) !== 0 &&
+    e.test_call_SHGetFileInfoW(fullPath, 0, fileInfo, 692, 0x210) !== 0 &&
       readWide(fileInfo + 12) === 'PINBALL.MID', readWide(fileInfo + 12));
 
   console.log(`--- wide-api: ${pass} passed, ${fail} failed`);

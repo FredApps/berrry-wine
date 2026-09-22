@@ -54,12 +54,12 @@ async function main() {
     String(e.test_call_GetLastError()));
 
   const mutexName = writeAscii('WineAssemblyLastErrorSmoke');
-  check('OpenMutexA reports a missing named mutex', e.test_call_OpenMutexA(mutexName) === 0);
+  check('OpenMutexA reports a missing named mutex', e.test_call_OpenMutexA(0x001f0001, 0, mutexName) === 0);
   check('OpenMutexA sets ERROR_FILE_NOT_FOUND',
     e.test_call_GetLastError() === 2,
     String(e.test_call_GetLastError()));
 
-  check('CreateMutexA returns a fresh handle', e.test_call_CreateMutexA(mutexName) !== 0);
+  check('CreateMutexA returns a fresh handle', e.test_call_CreateMutexA(0, 0, mutexName) !== 0);
   check('CreateMutexA clears last error for a new mutex',
     e.test_call_GetLastError() === 0,
     String(e.test_call_GetLastError()));
