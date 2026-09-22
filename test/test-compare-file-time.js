@@ -7,6 +7,13 @@ const apiTable = require('../src/api_table.json');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_map") (param $ga i32) (result i32)
+    (call $virtual_map_commit (local.get $ga) (i32.const 4096)))
+  (func (export "test_compare_pointers") (param $a i32) (param $b i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $handle_CompareFileTime (local.get $a) (local.get $b)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
   (func (export "test_compare_file_time")
       (param $stack i32) (param $a_lo i32) (param $a_hi i32)
       (param $b_lo i32) (param $b_hi i32) (result i32)
@@ -46,7 +53,27 @@ const extraWat = String.raw`
   assert.strictEqual(wat.get_esp() >>> 0, stack + 12,
     'CompareFileTime pops two arguments and the return address');
 
-  console.log('PASS  CompareFileTime orders unsigned 64-bit FILETIME values');
+  const page = 0x30000000;
+  for (const ga of [page, 0x28000000, page + 4096]) assert.strictEqual(wat.test_map(ga) >>> 0, ga);
+  assert.notStrictEqual(wat.guest_to_wasm(page + 4096), wat.guest_to_wasm(page) + 4096);
+  const put = (ga, n) => {
+    wat.guest_write32(ga, Number(n & 0xffffffffn));
+    wat.guest_write32(ga + 4, Number(n >> 32n));
+  };
+  const values = [0n, 1n, 0x7fffffffn, 0x80000000n, 0xffffffffn,
+    0x100000000n, 0x7fffffffffffffffn, 0x8000000000000000n, 0xffffffffffffffffn];
+  for (let split = 1; split < 8; split++) for (const reverse of [false, true]) {
+    const a = reverse ? page + 128 : page + 4096 - split;
+    const b = reverse ? page + 4096 - split : page + 128;
+    for (const av of values) for (const bv of values) {
+      put(a, av); put(b, bv);
+      assert.strictEqual(wat.test_compare_pointers(a, b), av < bv ? -1 : av > bv ? 1 : 0,
+        `split ${split}, reverse ${reverse}, ${av} vs ${bv}`);
+      assert.strictEqual(wat.get_esp() >>> 0, stack + 12);
+    }
+    assert.strictEqual(wat.test_compare_pointers(a, a), 0);
+  }
+  console.log('PASS  CompareFileTime: unsigned 64-bit ordering, both sparse inputs and stdcall');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

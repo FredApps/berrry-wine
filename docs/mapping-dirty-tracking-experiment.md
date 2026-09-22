@@ -508,3 +508,32 @@ The reverse frontend's existing lack of null validation is intentionally not
 presented as native-correct behavior. Null/error policy, timezone behavior,
 and the adjacent CompareFileTime's translated input reads remain follow-up
 work. No complete guest-write coverage or dirty-tracking claim follows.
+
+## CompareFileTime sparse inputs and review checkpoint
+
+`CompareFileTime` now reads its four input DWORDs through `gl32` instead of
+assuming both translated eight-byte structures are contiguous. Its unsigned
+high-word/low-word ordering is unchanged. The old implementation compared
+equal `0x7fffffff` values as unequal when the first input crossed a page after
+one byte. The expanded existing test passes nine representative unsigned
+64-bit values against one another, with either input at each of seven splits
+(1,134 comparisons), plus same-pointer equality and stdcall cleanup.
+
+At this checkpoint the actual review gates report:
+
+- A/W census: STUB 0, DIVERGENT 3, BOTH_STUB 0; ratchet passes.
+- Exact duplicates: 138 groups / 532 members, within 142 / 548 ceilings.
+- Silent-handler inventory: 250 manual + 22 metadata; inventory and D3D9
+  output-stub checks pass.
+- Logical-AND and diff whitespace checks pass.
+
+These counts supersede older census numbers for this working-tree snapshot,
+not the review's requirements. `fable-review.md` still marks common-core work
+(#5), metadata/test-call migration and handler review (#7), and carried
+cleanup (#8) partial. A passing inventory gate pins existing behavior; it does
+not prove all 250 manual quiet handlers are correct. The current memory work
+removes demonstrated unsafe address assumptions but does not close those
+broader items. Before implementing dirty-page writeback, remaining guest-write
+coverage and flush concurrency still need a complete design; timing decisions
+still require quiet game A/B evidence. No full-build/browser pass is claimed
+by this checkpoint.

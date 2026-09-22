@@ -162,15 +162,12 @@
   ;; FILETIME is an unsigned 64-bit tick count represented as two DWORDs, so
   ;; compare the high halves first and use the low halves only as a tiebreaker.
   (func $handle_CompareFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $a i32) (local $b i32)
     (local $a_hi i32) (local $b_hi i32)
     (local $a_lo i32) (local $b_lo i32)
-    (local.set $a (call $g2w (local.get $arg0)))
-    (local.set $b (call $g2w (local.get $arg1)))
-    (local.set $a_lo (i32.load (local.get $a)))
-    (local.set $b_lo (i32.load (local.get $b)))
-    (local.set $a_hi (i32.load offset=4 (local.get $a)))
-    (local.set $b_hi (i32.load offset=4 (local.get $b)))
+    (local.set $a_lo (call $gl32 (local.get $arg0)))
+    (local.set $b_lo (call $gl32 (local.get $arg1)))
+    (local.set $a_hi (call $gl32 (i32.add (local.get $arg0) (i32.const 4))))
+    (local.set $b_hi (call $gl32 (i32.add (local.get $arg1) (i32.const 4))))
     (if (i32.lt_u (local.get $a_hi) (local.get $b_hi))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const -1)))
       (else
