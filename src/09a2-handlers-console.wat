@@ -1800,52 +1800,54 @@
   ;; +10 wVirtualKeyCode, +12 wVirtualScanCode, +14 uChar, +16 dwControlKeyState.
   (func $console_read_input (param $buf_g i32) (param $nrec i32) (param $wide i32)
                             (result i32)
-    (local $i i32) (local $rec i32) (local $count i32) (local $type i32)
+    (local $i i32) (local $rec i32) (local $count i32) (local $type i32) (local $slot i32)
     (local.set $count (call $console_input_count))
     (if (i32.gt_u (local.get $nrec) (local.get $count)) (then (local.set $nrec (local.get $count))))
-    (local.set $rec (call $g2w (local.get $buf_g)))
+    (local.set $rec (local.get $buf_g))
     (block $done (loop $fill
       (br_if $done (i32.ge_u (local.get $i) (local.get $nrec)))
       (local.set $type (call $console_input_type (local.get $i)))
-      (i32.store16 (local.get $rec) (local.get $type))
+      (call $gs16 (local.get $rec) (local.get $type))
       (if (i32.eq (local.get $type) (i32.const 2)) ;; MOUSE_EVENT
         (then
-          (i32.store offset=4 (local.get $rec)
+          (call $gs32 (i32.add (local.get $rec) (i32.const 4))
             (call $console_input_char (local.get $i))) ;; COORD
-          (i32.store offset=8 (local.get $rec)
+          (call $gs32 (i32.add (local.get $rec) (i32.const 8))
             (call $console_input_vk (local.get $i))) ;; dwButtonState
-          (i32.store offset=12 (local.get $rec)
+          (call $gs32 (i32.add (local.get $rec) (i32.const 12))
             (call $console_input_control_state (local.get $i)))
-          (i32.store offset=16 (local.get $rec)
+          (call $gs32 (i32.add (local.get $rec) (i32.const 16))
             (call $console_input_event_flags (local.get $i))))
         (else
           (if (i32.eq (local.get $type) (i32.const 1)) ;; KEY_EVENT
             (then
-              (i32.store offset=4 (local.get $rec)
+              (call $gs32 (i32.add (local.get $rec) (i32.const 4))
                 (i32.eqz (i32.and
                   (call $console_input_event_flags (local.get $i))
                   (i32.const 0x80000000))))                         ;; bKeyDown
-              (i32.store16 offset=8 (local.get $rec)
+              (call $gs16 (i32.add (local.get $rec) (i32.const 8))
                 (i32.and (call $console_input_event_flags (local.get $i))
                   (i32.const 0xFFFF)))                              ;; repeat
-              (i32.store16 offset=10 (local.get $rec) (call $console_input_vk (local.get $i)))
-              (i32.store16 offset=12 (local.get $rec)
+              (call $gs16 (i32.add (local.get $rec) (i32.const 10)) (call $console_input_vk (local.get $i)))
+              (call $gs16 (i32.add (local.get $rec) (i32.const 12))
                 (i32.and
                   (i32.shr_u (call $console_input_event_flags (local.get $i)) (i32.const 16))
                   (i32.const 0xFF)))                                ;; scan code
-              (i32.store16 offset=14 (local.get $rec)
+              (call $gs16 (i32.add (local.get $rec) (i32.const 14))
                 (select
                   (call $console_input_char (local.get $i))
                   (i32.and (call $console_input_char (local.get $i)) (i32.const 0xFF))
                   (local.get $wide)))
-              (i32.store offset=16 (local.get $rec)
+              (call $gs32 (i32.add (local.get $rec) (i32.const 16))
                 (call $console_input_control_state (local.get $i))))
             (else
               ;; Other INPUT_RECORD unions already occupy the four raw dwords
               ;; used by the internal ring. Preserve them byte-for-byte.
-              (memory.copy (i32.add (local.get $rec) (i32.const 4))
-                (i32.add (call $console_input_slot (local.get $i)) (i32.const 4))
-                (i32.const 16))))))
+              (local.set $slot (call $console_input_slot (local.get $i)))
+              (call $gs32 (i32.add (local.get $rec) (i32.const 4)) (i32.load offset=4 (local.get $slot)))
+              (call $gs32 (i32.add (local.get $rec) (i32.const 8)) (i32.load offset=8 (local.get $slot)))
+              (call $gs32 (i32.add (local.get $rec) (i32.const 12)) (i32.load offset=12 (local.get $slot)))
+              (call $gs32 (i32.add (local.get $rec) (i32.const 16)) (i32.load offset=16 (local.get $slot)))))))
       (local.set $rec (i32.add (local.get $rec) (i32.const 20)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $fill)))
@@ -2599,7 +2601,7 @@
   (func $console_write_input
       (param $handle i32) (param $buffer i32) (param $length i32)
       (param $count_ptr i32) (param $wide i32)
-    (local $source i32) (local $record i32) (local $slot i32)
+    (local $record i32) (local $slot i32)
     (local $count i32) (local $limit i32) (local $i i32) (local $type i32)
     (if (i32.ne (call $console_handle_resolve (local.get $handle)) (i32.const 1))
       (then
@@ -2621,33 +2623,33 @@
         (i32.sub (global.get $CONSOLE_INPUT_MAX) (local.get $count))
         (i32.le_u (local.get $length)
           (i32.sub (global.get $CONSOLE_INPUT_MAX) (local.get $count)))))
-    (local.set $source (call $g2w (local.get $buffer)))
     (block $done (loop $write
       (br_if $done (i32.ge_u (local.get $i) (local.get $limit)))
       (local.set $record
-        (i32.add (local.get $source) (i32.mul (local.get $i) (i32.const 20))))
+        (i32.add (local.get $buffer) (i32.mul (local.get $i) (i32.const 20))))
       (local.set $slot (call $console_input_slot (i32.add (local.get $count) (local.get $i))))
-      (local.set $type (i32.load16_u (local.get $record)))
+      (local.set $type (call $gl16 (local.get $record)))
       (i32.store (local.get $slot) (local.get $type))
       (if (i32.eq (local.get $type) (i32.const 1)) ;; KEY_EVENT
         (then
           (i32.store offset=4 (local.get $slot)
-            (select
-              (i32.load16_u offset=14 (local.get $record))
-              (i32.load8_u offset=14 (local.get $record))
-              (local.get $wide)))
-          (i32.store offset=8 (local.get $slot) (i32.load16_u offset=10 (local.get $record)))
-          (i32.store offset=12 (local.get $slot) (i32.load offset=16 (local.get $record)))
+            (if (result i32) (local.get $wide)
+              (then (call $gl16 (i32.add (local.get $record) (i32.const 14))))
+              (else (call $gl8 (i32.add (local.get $record) (i32.const 14))))))
+          (i32.store offset=8 (local.get $slot) (call $gl16 (i32.add (local.get $record) (i32.const 10))))
+          (i32.store offset=12 (local.get $slot) (call $gl32 (i32.add (local.get $record) (i32.const 16))))
           (i32.store offset=16 (local.get $slot)
             (i32.or
               (i32.or
-                (i32.load16_u offset=8 (local.get $record))
-                (i32.shl (i32.load16_u offset=12 (local.get $record)) (i32.const 16)))
+                (call $gl16 (i32.add (local.get $record) (i32.const 8)))
+                (i32.shl (call $gl16 (i32.add (local.get $record) (i32.const 12))) (i32.const 16)))
               (select (i32.const 0x80000000) (i32.const 0)
-                (i32.eqz (i32.load offset=4 (local.get $record)))))))
+                (i32.eqz (call $gl32 (i32.add (local.get $record) (i32.const 4))))))))
         (else
-          (memory.copy (i32.add (local.get $slot) (i32.const 4))
-            (i32.add (local.get $record) (i32.const 4)) (i32.const 16))))
+          (i32.store offset=4 (local.get $slot) (call $gl32 (i32.add (local.get $record) (i32.const 4))))
+          (i32.store offset=8 (local.get $slot) (call $gl32 (i32.add (local.get $record) (i32.const 8))))
+          (i32.store offset=12 (local.get $slot) (call $gl32 (i32.add (local.get $record) (i32.const 12))))
+          (i32.store offset=16 (local.get $slot) (call $gl32 (i32.add (local.get $record) (i32.const 16))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $write)))
     (i32.store (global.get $CONSOLE_INPUT) (i32.add (local.get $count) (local.get $limit)))

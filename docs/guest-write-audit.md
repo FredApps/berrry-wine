@@ -104,3 +104,24 @@ whitespace gates pass. The absence of direct store-to-g2w matches in `09a2`
 after this change is only a syntactic milestone: translated local pointers,
 record arrays and text buffers remain to audit. No Far browser smoke or game
 performance measurement was performed for this batch.
+
+## Console INPUT_RECORD arrays migrated
+
+The shared `console_read_input` and `console_write_input` cores now retain
+guest addresses for caller record arrays. Public fields use `gs16/gs32` or
+`gl8/gl16/gl32`; internal ring slots retain private raw loads/stores. The raw
+16-byte union copies are expanded into four field transfers across that
+ownership boundary. Reading the A/W key character selects only the required
+byte/word load rather than eagerly evaluating both translations. Existing
+padding preservation and low-byte A encoding are unchanged.
+
+The real PeekConsoleInputA output failed at split 1 before the migration.
+`test/test-console-record-boundaries.js` now checks every split of a 60-byte
+three-record array, with source or destination split, for both encodings.
+Each case checks peek and consuming read: full bytes, outer canaries,
+unchanged padding, queue counts, returned count and stdcall cleanup. Key,
+mouse and another raw union type are all present; an unrelated mapped page
+must remain untouched. All 472 peek/read checks pass. Existing ordered-input,
+input-validation and sparse-count suites also pass. Logical-AND, tier and
+whitespace checks pass. Text buffers and screen-buffer rectangle structures
+remain outside this batch; no browser or dirty-writeback completion claim.
