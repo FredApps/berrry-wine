@@ -196,6 +196,20 @@ Driving it headlessly, three traps:
 
 ### Third city (2050 start, 2026-09-21): more UI gaps and workarounds
 
+* **The map view had no scrollbars. Fixed.** The view (class
+  `AfxFrameOrView`, WS_BORDER|WS_EX_CLIENTEDGE) creates two `SCROLLBAR`
+  children and a `STATIC` size box. Two gaps broke them:
+  1. HCBT_CREATEWND fired only for toolbar/combobox/edit native controls, so
+     MFC never attached the CScrollBar wrappers. `m_hWnd` (`[obj+0x1c]`)
+     stayed 0, and `MoveWindow(0, …)` at `0x40ca01`/`0x40cb59`/`0x40cc24`
+     went nowhere.
+  2. AdjustWindowRectEx gave the view a 4px border where nccalcsize gives it
+     1px, so MFC placed it at (-4,-4) instead of (-1,-1). Its children then
+     painted into the MDI child's frame.
+  Test: `test/test-child-cbt-native-scrollbar.js`. The brown area after
+  maximize is off-map background, not a missing redraw. The view keeps its
+  top-left origin, and the map edge (the grey earth wall) is already on
+  screen before the maximize.
 * **Budget spinners are dead.** The Budget window's up/down arrows are
   ScrollBar controls (WAT control class 7). They are not drawn and ignore
   clicks, and typing into the percent fields does nothing. Posting the

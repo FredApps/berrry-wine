@@ -743,25 +743,13 @@
             (return)))))
     ;; If a CBT hook is installed, fire HCBT_CREATEWND for this child so MFC
     ;; (and anything else using per-hwnd subclassing) can swap in its real
-    ;; wndproc via SetWindowLongA before we start delivering messages.
-    (if (i32.and
-          (i32.ne (global.get $cbt_hook_proc) (i32.const 0))
-          (i32.or
-            (i32.ne (call $wnd_table_get (local.get $hwnd)) (global.get $WNDPROC_CTRL_NATIVE))
-            ;; ToolbarWindow32 is WAT-native only as the common-control
-            ;; default proc. MFC still needs its CBT subclass hook so it can
-            ;; own WM_SIZEPARENT and chain TB_* messages to this default proc.
-            (i32.or
-              (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 21))
-              (i32.or
-                ;; MFC CComboBox wrappers also attach their m_hWnd through the
-                ;; WH_CBT/HCBT_CREATEWND hook. Without this, toolbar-hosted
-                ;; WordPad font/size combo setup calls SendMessageA(hwnd=0).
-                (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 5))
-                ;; Paint creates its text editor as a native EDIT through a
-                ;; CEdit wrapper. It likewise needs the hook to attach m_hWnd;
-                ;; otherwise Paint later calls ShowWindow/SetFocus with NULL.
-                (i32.eq (call $ctrl_table_get_class (local.get $hwnd)) (i32.const 2))))))
+    ;; wndproc via SetWindowLongA before we start delivering messages. USER
+    ;; fires it for every window, system controls included: MFC attaches each
+    ;; wrapper's m_hWnd in that hook. Firing it only for toolbar, combobox and
+    ;; edit left SimCity 2000's map-view CScrollBars at m_hWnd = 0, so every
+    ;; MoveWindow/SetScrollRange on them went to hwnd 0 and the view had no
+    ;; scrollbars at all.
+    (if (i32.ne (global.get $cbt_hook_proc) (i32.const 0))
     (then
     ;; Save state for CACA0026 continuation, clean CreateWindowExA frame (52 bytes).
     (global.set $child_cbt_saved_hwnd (local.get $hwnd))

@@ -1145,6 +1145,20 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (local.set $border (i32.ne (i32.and (local.get $arg1) (i32.const 0x00CC0000)) (i32.const 0)))
     ;; caption (chrome 20px) only with WS_CAPTION (which == DLGFRAME|BORDER)
     (local.set $caption (i32.eq (i32.and (local.get $arg1) (i32.const 0x00C00000)) (i32.const 0x00C00000)))
+    ;; A child with a border and no caption gets a 1px frame: the rule
+    ;; $defwndproc_do_nccalcsize applies. MFC places a view at
+    ;; AdjustWindowRectEx(WS_BORDER) outside its frame's client. With 4px here
+    ;; and 1px there, SimCity 2000's map view sat 3px too far up and left, and
+    ;; its scrollbars were painted into the MDI child's frame.
+    (if (i32.and
+          (i32.ne (i32.and (local.get $arg1) (i32.const 0x40000000)) (i32.const 0))
+          (i32.and (local.get $border) (i32.eqz (local.get $caption))))
+      (then
+        (local.set $border (i32.const 0))
+        (store.field Rect left (local.get $wa) (i32.sub (load.field Rect left (local.get $wa)) (i32.const 1)))
+        (store.field.memarg Rect top (local.get $wa) (i32.sub (load.field.memarg Rect top (local.get $wa)) (i32.const 1)))
+        (store.field.memarg Rect right (local.get $wa) (i32.add (load.field.memarg Rect right (local.get $wa)) (i32.const 1)))
+        (store.field.memarg Rect bottom (local.get $wa) (i32.add (load.field.memarg Rect bottom (local.get $wa)) (i32.const 1)))))
     (if (i32.or (local.get $border) (local.get $caption)) (then
       (store.field Rect left (local.get $wa) (i32.sub (load.field Rect left (local.get $wa)) (i32.const 4)))
       (store.field.memarg Rect top (local.get $wa)
