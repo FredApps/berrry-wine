@@ -126,24 +126,21 @@ async function main() {
     // ---- pass 1: session import, through the dialog, to a window ----------
     const page = await openPage(browser, base, 'session');
 
-    // Desktop furniture rule: the button shows with the desktop and hides
-    // with it — a fullscreen surface must not have a DOM button floating on
-    // top of the game.
-    const btnDisplay = (cls) => page.evaluate((toggled) => {
-      const body = document.body;
-      const had = body.className;
-      if (toggled) body.className = `${had} ${toggled}`.trim();
-      const display = getComputedStyle(
-        document.querySelector('.wa-media-import-btn')).display;
-      body.className = had;
-      return display;
-    }, cls);
-    assert.notStrictEqual(await btnDisplay(''), 'none',
-      'the + Add a game button shows on the idle desktop');
-    assert.strictEqual(await btnDisplay('exclusive-fullscreen'), 'none',
-      'the button hides over an exclusive-fullscreen surface');
-    assert.strictEqual(await btnDisplay('single-app app-running'), 'none',
-      'the button hides while a single-app page runs its app');
+    // Adding a game lives in the Start menu now, not in a DOM button floating
+    // on the desktop corner, and it opens the same picker.
+    const startAdd = await page.evaluate(() => {
+      let opened = 0;
+      const real = window.wineMedia.openPicker;
+      window.wineMedia.openPicker = () => { opened++; };
+      try {
+        document.getElementById('start-add-game-item').click();
+      } finally {
+        window.wineMedia.openPicker = real;
+      }
+      return { opened, cornerButton: !!document.querySelector('.wa-media-import-btn') };
+    });
+    assert.strictEqual(startAdd.opened, 1, 'Start > Add a Game... opens the file picker');
+    assert.strictEqual(startAdd.cornerButton, false, 'no corner + Add a game button on the desktop');
 
     // A kept CUE set is several OPFS files under one catalog row. Exercise
     // that storage shape independently of the ZIP launch below: original

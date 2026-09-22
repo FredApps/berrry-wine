@@ -384,6 +384,14 @@ async function handleApi(req, res, url, store, opts) {
   }
   const signedIn = !(opts && opts.requireLogin)
     || parseCookies(req.headers.cookie)[LOGIN_COOKIE] === '1';
+  // POST /api/auth/logout -- as Berrry: 401 when nobody is signed in, and
+  // signing out drops the session cookie.
+  if (seg[1] === 'auth' && seg[2] === 'logout' && seg.length === 3) {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'method not allowed' });
+    if (!signedIn) return sendJson(res, 401, { error: 'not signed in' });
+    res.setHeader('Set-Cookie', `${LOGIN_COOKIE}=; Path=/; SameSite=Lax; Max-Age=0`);
+    return sendJson(res, 200, { success: true });
+  }
   if (!signedIn && seg[1] !== 'public-data') return sendJson(res, 401, { error: 'not signed in' });
 
   // GET /api/auth/user -- Berrry's shape: a numeric id and three names.

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Single-app mode: on a phone-sized screen the page runs exactly one guest,
-// shows no taskbar, hides the desktop icons while it runs, and presents the
+// shows no taskbar while it runs (the desktop keeps a floating Start menu),
+// hides the desktop icons while it runs, and presents the
 // app scaled to fill the screen.
 //
 // The zoom is a presentation crop, not a second drawing path: the desktop
@@ -37,7 +38,13 @@ assert(html.includes("params.has('single-app')"), 'single-app mode should be for
 assert(!/function detectSingleAppMode\(\)[\s\S]{0,400}if \(DEBUG_MODE\) return false;/.test(html),
   '?debug is when you most need the phone layout: it must not turn the zoom off');
 assert(html.includes('body.single-app #taskbar { display: none; }'),
-  'single-app mode should never show the taskbar');
+  'single-app mode should not show the taskbar while an app runs');
+// The desktop view keeps the Start menu (Add a Game..., Log In...), floating
+// so it takes no layout height and the guest screen is not resized at launch.
+assert(/body\.single-app:not\(\.app-running\) #taskbar \{[^}]*display: flex;[^}]*position: fixed;/.test(html),
+  'the phone desktop shows a floating taskbar with the Start menu');
+assert(html.includes('body.single-app.app-running #start-menu { display: none; }'),
+  'the Start menu never shows over a running single-app guest');
 assert(html.includes('body.single-app.app-running #desktop-icons { display: none; }'),
   'desktop icons should hide only while an app is running, so they come back on exit');
 assert(html.includes('const MIN_BACKING_WIDTH = SINGLE_APP_MODE ? 400 : 640'),
