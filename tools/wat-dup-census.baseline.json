@@ -1,6 +1,6 @@
 {
   "comment": "Known exact duplicate members. --check allows groups/members to disappear, rejects a new member, and caps the group count.",
-  "maxExactGroups": 135,
+  "maxExactGroups": 134,
   "allowedMembers": [
     "05-alu.wat:$th_lea",
     "05-alu.wat:$th_mov_r_i32",
@@ -278,7 +278,6 @@
     "09a8-handlers-directx.wat:$handle_IDirectInputDevice_Initialize",
     "09a8-handlers-directx.wat:$handle_IDirectInputDevice_RunControlPanel",
     "09a8-handlers-directx.wat:$handle_IDirectInput_RunControlPanel",
-    "09a8-handlers-directx.wat:$handle_IDirectPlay3_AddRef",
     "09a8-handlers-directx.wat:$handle_IDirectPlay3_GetGroupConnectionSettings",
     "09a8-handlers-directx.wat:$handle_IDirectPlay3_GetGroupParent",
     "09a8-handlers-directx.wat:$handle_IDirectPlay3_GetPlayerAccount",
@@ -290,7 +289,6 @@
     "09a8-handlers-directx.wat:$handle_IDirectPlay3_SetGroupConnectionSettings",
     "09a8-handlers-directx.wat:$handle_IDirectPlay3_SetSessionDesc",
     "09a8-handlers-directx.wat:$handle_IDirectPlay3_StartSession",
-    "09a8-handlers-directx.wat:$handle_IDirectPlayLobby2_AddRef",
     "09a8-handlers-directx.wat:$handle_IDirectPlayLobby2_SendLobbyMessage",
     "09a8-handlers-directx.wat:$handle_IDirectPlayLobby2_SetConnectionSettings",
     "09a8-handlers-directx.wat:$handle_IDirectPlayLobby2_SetLobbyMessageEvent",

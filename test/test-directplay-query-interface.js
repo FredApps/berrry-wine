@@ -3,6 +3,12 @@
 
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+const apis = require('../src/api_table.json');
+const apiId = name => {
+  const api = apis.find(api => api.name === name);
+  if (!api) throw new Error(`Missing API ${name}`);
+  return api.id;
+};
 
 const extraWat = String.raw`
   (func (export "test_create_directplay3") (result i32)
@@ -59,7 +65,7 @@ const extraWat = String.raw`
 
   (func (export "test_call_lobby2_release") (param $obj i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
-    (call $handle_IDirectPlayLobby2_Release
+    (call $dispatch_api_table (i32.const ${apiId('IDirectPlayLobby2_Release')})
       (local.get $obj) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))

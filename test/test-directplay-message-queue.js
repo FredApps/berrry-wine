@@ -3,6 +3,8 @@
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
+const apis = require('../src/api_table.json');
+const addRefId = apis.find(api => api.name === 'IDirectPlay3_AddRef').id;
 
 const extraWat = String.raw`
   (export "test_enqueue" (func $dp_message_enqueue))
@@ -31,7 +33,7 @@ const extraWat = String.raw`
   (func (export "test_ref") (param $owner i32) (param $add i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x074FF000))
     (if (local.get $add)
-      (then (call $handle_IDirectPlay3_AddRef (local.get $owner) (i32.const 0)
+      (then (call $dispatch_api_table (i32.const ${addRefId}) (local.get $owner) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
       (else (call $handle_IDirectPlay3_Release (local.get $owner) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))

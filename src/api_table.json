@@ -13178,6 +13178,7 @@
   {
     "id": 1534,
     "name": "IDirectPlay3_AddRef",
+    "handler": "dx_com_addref",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1511343625
@@ -13523,6 +13524,7 @@
   {
     "id": 1581,
     "name": "IDirectPlayLobby2_AddRef",
+    "handler": "dx_com_addref",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2853561022
@@ -13530,6 +13532,7 @@
   {
     "id": 1582,
     "name": "IDirectPlayLobby2_Release",
+    "handler": "dx_com_release_basic",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1201154899

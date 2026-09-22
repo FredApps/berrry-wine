@@ -41,3 +41,31 @@ This addresses these remaining basic-counter copies, not all COM reference
 counting. Specialized teardown, controlling-IUnknown identity and concurrent
 AddRef/Release correctness remain separate contracts. No browser or
 performance benchmark was performed; tests use the shared worktree.
+
+## DirectPlay follow-up — 2026-09-22
+
+Three more entries now use the same generated-dispatch mechanism:
+`IDirectPlay3_AddRef`, `IDirectPlayLobby2_AddRef` and
+`IDirectPlayLobby2_Release`. Their private implementations are removed.
+`IDirectPlay3_Release` remains specialized: final release calls
+`dp_close_owner` before retiring the object, including owned-message cleanup.
+The Lobby implementation being replaced had no corresponding owned teardown.
+
+`test-directplay4.js` now exercises two AddRefs and two balancing non-final
+Releases through actual COM vtable thunks, before and after upgrading each
+object: DirectPlay3A/4A and Lobby2A/3A. All 16 new calls check return counts
+and exact stdcall cleanup. Existing final-release calls still pass. Metadata
+assertions guard the three shared endpoints and specialized DirectPlay Release.
+The query-interface and queue tests no longer call removed implementations;
+they select the relevant API ID through generated dispatch instead.
+
+Verification passed: the 53-slot DirectPlay4 and 19-slot Lobby3 ABI suite,
+message queue/Receive/count/non-final and final-release cleanup suite, and
+31 QueryInterface/factory/lifetime checks. API IDs, generator freshness,
+fragment balance, handler cleanup, logical operands, tier discovery and
+whitespace passed. The duplicate ratchet tightens from 135 groups / 524
+members to 134 / 522, removing just the two deleted AddRef members.
+
+This is shared implementation, not new networking behavior or a concurrency
+fix. No callback, session, player, transport or message-queue implementation
+was changed, and no native Win98, browser or performance run is claimed.
