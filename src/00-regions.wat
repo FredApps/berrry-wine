@@ -412,6 +412,9 @@
     (owner "10a-gdi-bitmap.wat:$gdi_bitmap_create_bitmap"))
   (region.declare $GDI_BITMAP_NAME (size 0x00000100) (align 0x00000010)
     (owner "10a-gdi-bitmap.wat:$gdi_bitmap_resource_name"))
+  ;; 124-byte BITMAPV5HEADER + 256 RGBQUADs, rounded up.
+  (region.declare $GDI_BITMAP_INFO_SCRATCH (size 0x00000480) (align 0x00000010)
+    (owner "10a-gdi-bitmap.wat:$gdi_bitmap_info_wa"))
   (region.declare $WINDOW_RECT_SCRATCH (size 0x00000010) (align 0x00000010)
     (owner "01-header.wat:$WINDOW_RECT_SCRATCH"))
   (region.declare $GDI_BRUSH_DESC (size 0x00000050) (align 0x00000010)

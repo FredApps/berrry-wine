@@ -2786,8 +2786,7 @@
     (local $handle i32) (local $record i32)
     (local.set $handle (call $gdi_bitmap_create_dib_section
       (local.get $arg0)
-      (if (result i32) (local.get $arg1)
-        (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
+      (call $gdi_bitmap_info_wa (local.get $arg1))
       (local.get $arg2)))
     (if (local.get $arg3)
       (then

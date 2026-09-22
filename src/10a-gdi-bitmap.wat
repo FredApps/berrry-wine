@@ -889,6 +889,55 @@
       (i32.const 0) (local.get $usage)
       (call $gdi_dc_selected_palette (local.get $hdc))))
 
+  ;; A BITMAPINFO is read in place through one translated pointer, header
+  ;; and color table alike, so it has to be linear in WASM memory. A guest heap
+  ;; block that straddles two sparse pages need not be: adjacent guest pages
+  ;; can be backed by blocks that are nowhere near each other. SimCity 2000's
+  ;; power-plant picker builds a 1064-byte BITMAPINFO at 0x7ee3aff8, where
+  ;; biHeight is the first dword of the next page. CreateDIBSection read the
+  ;; height from unrelated memory and returned NULL (no coal picture), or, when
+  ;; only the color table crossed, built the picture with a garbage palette.
+  ;; Return the direct pointer when the whole span is affine, and otherwise a
+  ;; copy gathered page by page.
+  (func $gdi_bitmap_info_wa (param $ga i32) (result i32)
+    (local $size i32) (local $header i32) (local $bpp i32) (local $colors i32)
+    (local $wa i32) (local $scratch i32) (local $i i32)
+    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
+    (local.set $header (call $gl32 (local.get $ga)))
+    (if (i32.eq (local.get $header) (i32.const 12))
+      (then
+        (local.set $bpp (call $gl16 (i32.add (local.get $ga) (i32.const 10))))
+        (local.set $size (i32.add (i32.const 12)
+          (select (i32.mul (i32.shl (i32.const 1) (local.get $bpp)) (i32.const 3))
+            (i32.const 0) (i32.le_u (local.get $bpp) (i32.const 8))))))
+      (else
+        (local.set $bpp (call $gl16 (i32.add (local.get $ga) (i32.const 14))))
+        (local.set $colors (call $gl32 (i32.add (local.get $ga) (i32.const 32))))
+        (if (i32.and (i32.eqz (local.get $colors))
+              (i32.le_u (local.get $bpp) (i32.const 8)))
+          (then (local.set $colors (i32.shl (i32.const 1) (local.get $bpp)))))
+        (if (i32.gt_u (local.get $colors) (i32.const 256))
+          (then (local.set $colors (i32.const 256))))
+        (local.set $size (i32.add (local.get $header)
+          (i32.shl (local.get $colors) (i32.const 2))))
+        ;; BI_BITFIELDS masks follow a plain 40-byte header.
+        (if (i32.and (i32.eq (local.get $header) (i32.const 40))
+              (i32.eq (call $gl32 (i32.add (local.get $ga) (i32.const 16))) (i32.const 3)))
+          (then (local.set $size (i32.add (local.get $size) (i32.const 12)))))))
+    (if (i32.gt_u (local.get $size) (global.get $GDI_BITMAP_INFO_SCRATCH_SIZE))
+      (then (local.set $size (global.get $GDI_BITMAP_INFO_SCRATCH_SIZE))))
+    (local.set $wa (call $g2w_affine_span (local.get $ga) (local.get $size)))
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then (return (local.get $wa))))
+    (local.set $scratch (global.get $GDI_BITMAP_INFO_SCRATCH))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $size)))
+      (i32.store8 (i32.add (local.get $scratch) (local.get $i))
+        (call $gl8 (i32.add (local.get $ga) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $scratch))
+
   (func $gdi_bitmap_create_dib_section (param $hdc i32) (param $info i32)
         (param $usage i32) (result i32)
     (if (i32.eqz (call $gdi_bitmap_plan_info

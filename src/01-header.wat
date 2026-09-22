@@ -2145,6 +2145,8 @@
   ;; plan and an ANSI conversion buffer for LoadBitmapW resource names.
   (global $GDI_BITMAP_PLAN i32 (region.addr $GDI_BITMAP_PLAN 0))
   (global $GDI_BITMAP_PLAN_SIZE i32 (region.size $GDI_BITMAP_PLAN))
+  (global $GDI_BITMAP_INFO_SCRATCH i32 (region.addr $GDI_BITMAP_INFO_SCRATCH 0))
+  (global $GDI_BITMAP_INFO_SCRATCH_SIZE i32 (region.size $GDI_BITMAP_INFO_SCRATCH))
   (global $GDI_RGB555_MASKS i32 (region.addr $DIB_DEFAULT_RGB555_MASKS 0x00000000))
   (global $GDI_BITMAP_NAME i32 (region.addr $GDI_BITMAP_NAME 0))
   (global $GDI_BITMAP_NAME_SIZE i32 (region.size $GDI_BITMAP_NAME))

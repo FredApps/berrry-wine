@@ -237,15 +237,19 @@ Driving it headlessly, three traps:
   the 13px cell. `$gdi_bitmap_font_height` used to squeeze the strike to 8px,
   which made the captions unreadable 5px smudges. "Mw" and the price now
   nearly touch on the long rows; that is the game's own x positions.
-* **Coal picture, intermittent (open).** All eight pictures come from one
-  builder (CreateDIBSection returns to `0x4656a0`). It sets
-  `biHeight = [obj+0x18] * height`, and leaves biXPels/biYPelsPerMeter
-  uninitialized (stale title text is seen there). For coal, the first item,
-  `[obj+0x18]` differs from run to run. At -1 the section was top-down
-  64x-56 and `CreateDIBSection` returned 0, so the cell stays empty (the blit
-  helper `0x466cae` bails on a null handle). At +1 it was created, but the
-  picture draws in pink and magenta. Reopening the picker creates all eight.
-  Next step: `--watch` the object's +0x18 to find its writer.
+* **Coal picture (Fixed 2026-09-22).** All eight pictures come from one
+  builder (CreateDIBSection returns to `0x4656a0`). It writes a 1064-byte
+  BITMAPINFO into a fresh heap block and leaves biXPels/biYPelsPerMeter
+  uninitialized (stale title text is seen there). The block for coal, the
+  first item, landed at `0x7ee3aff8`, so biHeight was the first dword of the
+  next sparse page. That page's backing was not adjacent in WASM memory, and
+  CreateDIBSection read the whole struct through one `g2w` pointer. The call
+  returned NULL, the cell stayed empty, and the blit helper `0x466cae` bailed
+  on the null handle. With a different trace-flag mix the block shifted to
+  `0x7ee3af80`, where only the color table crossed, and the coal plant drew
+  pink. `$gdi_bitmap_info_wa` now gathers a BITMAPINFO that is not affine
+  into a scratch copy. The constructor `0x464ee8` defaults the orientation
+  field `+0x18` to -1 (top-down), which is what coal uses.
 * **Recreation fly-out remembers its subtool.** Clicking the palette button
   re-arms the last-used item (Marina) and overrides an earlier posted
   WM_COMMAND. Click the palette button *first*, then post the item id (Zoo

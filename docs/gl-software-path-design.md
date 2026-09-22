@@ -256,29 +256,8 @@ needs none of it. Recorded here so it is not re-proposed.
    multitexture unit), light model ambient, 8 lights, material, fog. It is a
    new allocation rather than spare fields in `09a8e`'s 160-byte block, as
    predicted, and it keys off the encoder's `$gl_current_context` so all three
-   per-context tables agree.
-
-   `af15abb4` gave it its feed: `$gl_wat_encode_call` hands every GL call to
-   `$gl_mtx_observe` before `$gl_state_intercept`, which is not an arbitrary
-   placement — that function absorbs opcodes 76 and 77
-   (`glPushAttrib`/`glPopAttrib`) and returns 1, so observing after it would
-   leave the mirror silently stale for exactly the two calls that rewrite the
-   whole lighting and material state. The observer only **observes**: the call
-   goes on to the stream unchanged, so the WebGL path is untouched and this
-   cannot move a pixel. Verified so on Quake II under `--headless-gl` at a
-   fixed 300000 batches — pixel-identical, identical API counts — which
-   mattered because `$gl_mtx_block` allocates from the same guest heap the app
-   uses. Steps 2-4 are still what give the state a consumer.
-
-   Three families are **not** mirrored: `gluPerspective`, `gluLookAt` and
-   `gluOrtho2D` compose through helpers with no WAT copy, and
-   `glPushAttrib`/`glPopAttrib` save and restore lighting wholesale. Rather
-   than drift, each latches its opcode into a sticky UNTRUSTED field, so a
-   consumer can refuse to lower a draw instead of lowering a wrong one.
-   `--gl-census` prints, per run, every GL entry point the app actually issued
-   and whether that latch stayed clear — which turns "we think this app is
-   covered" into a measurement. The counters are load-immune, so it is
-   readable on a box too busy for any timing.
+   per-context tables agree. **Nothing calls it yet** — it is additive, the
+   WebGL path is untouched, and steps 2-4 are what give it a consumer.
 
    The oracle turned out better than `glGetFloatv`: `lib/gl-compat.js` exports
    `identity`, `multiply`, `frustum` and `ortho`, so `test-gl-matrix-stacks.js`

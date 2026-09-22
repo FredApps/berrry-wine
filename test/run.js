@@ -300,7 +300,6 @@ const TRACE_CLIP = hasFlag('trace-clip'); // --trace-clip: log _excludeChildrenC
 const TRACE_COMPOSITE = hasFlag('trace-composite'); // --trace-composite: one line per repaint: which path composited, and what each window contributed
 const TRACE_DX = hasFlag('trace-dx');   // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
 const DX_SURFACES = hasFlag('dx-surfaces'); // --dx-surfaces: print the DX_OBJECTS surface manifest at exit
-const GL_CENSUS = hasFlag('gl-census'); // --gl-census: at exit, which GL entry points this run actually issued, and whether the WAT mirror stayed trusted
 const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
@@ -10464,50 +10463,6 @@ if (VERBOSE) {
         ` flags=0x${s.flags.toString(16)} dib=0x${s.dib.toString(16)}` +
         ` pal=0x${s.paletteWa.toString(16)} colors=${score.colors} nonZero=${score.nonZero}/${score.total}`);
     }
-  }
-
-  if (GL_CENSUS) {
-    // Which GL entry points did this app really use? The counters are
-    // load-immune, so this is readable on a busy box where no timing is.
-    const GLCompat = require('../lib/gl-compat');
-    const stats = GLCompat.stats;
-    const ops = stats.ops;
-    const names = GLCompat.OP_NAMES || GLCompat.CALLS;
-    const seen = [];
-    for (let i = 0; i < ops.length; i++) {
-      if (ops[i]) seen.push([names[i] || `op${i}`, ops[i], i]);
-    }
-    seen.sort((a, b) => b[1] - a[1]);
-    const total = seen.reduce((n, entry) => n + entry[1], 0);
-    console.log(`[gl-census] ${seen.length} distinct GL entry point(s), ${total} call(s)`);
-    for (const [name, count, index] of seen) {
-      console.log(`  ${String(count).padStart(10)}  ${name} (#${index})`);
-    }
-    // Geometry does NOT show up as glBegin/glVertex in the list above once the
-    // encoder packs a span: it arrives as one packed-draw record carrying many
-    // vertices. Print the executor's own counters beside the histogram so a
-    // run that draws plenty can never read as a run that draws nothing.
-    console.log(`[gl-census] packed spans enqueued=${stats.enqueued} draws=${stats.draws}` +
-      ` vertices=${stats.drawVertices} presents=${stats.presents}` +
-      ` frontFlushes=${stats.frontFlushes}`);
-    // The families src/09a8f-gl-matrix.wat cannot mirror yet. A zero here is
-    // what licenses a consumer to trust the WAT state for THIS app; it is not
-    // a general claim, which is exactly why it is printed per run.
-    const UNMIRRORED = ['gluPerspective', 'gluLookAt', 'gluOrtho2D',
-      'glPushAttrib', 'glPopAttrib'];
-    const used = UNMIRRORED.filter(name => {
-      const index = GLCompat.CALL_INDEX[name];
-      return index !== undefined && ops[index];
-    });
-    // The WAT mirror's own verdict, which is the one that counts: the JS list
-    // above says what was called, this says whether the mirror noticed. They
-    // are printed together because a disagreement is itself the finding.
-    const latched = instance.exports.gl_mtx_untrusted
-      ? instance.exports.gl_mtx_untrusted() | 0 : -1;
-    const latchedName = latched > 0 ? (GLCompat.CALLS[latched] || `op${latched}`) : '';
-    console.log(`[gl-census] unmirrored families used: ${used.length ? used.join(', ') : 'none'}` +
-      `; WAT untrusted latch: ${latched < 0 ? 'export missing'
-        : latched === 0 ? 'clear' : `${latchedName} (#${latched})`}`);
   }
 
   if (PNG_OUT && renderer) {
