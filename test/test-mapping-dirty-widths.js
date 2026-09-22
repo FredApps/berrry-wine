@@ -7,7 +7,8 @@ const { createHostImports } = require('../lib/host-imports');
 
 // Correctness-only source transform. Unlike the cost prototype, this handles
 // every scalar width and both pages of a crossing. It is NOT a production hook
-// or a bulk-write implementation. Staging is unused: no PE is loaded here.
+// implementation. Bulk wrappers below are also experimental. Staging is unused:
+// no PE is loaded here.
 const widths = [1, 2, 4, 8];
 const extra = String.raw`
   (import "host" "dirty_pause" (func $dirty_pause))
@@ -48,6 +49,28 @@ const extra = String.raw`
     (call $dirty_end (local.get $first) (local.get $a))
     (if (i32.ne (local.get $first) (local.get $last))
       (then (call $dirty_end (local.get $last) (local.get $b)))))
+`).join('') + String.raw`
+  (func $dirty_range (param $ga i32) (param $size i32)
+    (local $page i32) (local $last i32)
+    (if (i32.eqz (local.get $size)) (then (return)))
+    (local.set $page (i32.shr_u (local.get $ga) (i32.const 12)))
+    (local.set $last (i32.shr_u
+      (i32.add (local.get $ga) (i32.sub (local.get $size) (i32.const 1))) (i32.const 12)))
+    (loop $pages
+      (drop (call $dirty_begin (local.get $page)))
+      (local.set $page (i32.add (local.get $page) (i32.const 1)))
+      (br_if $pages (i32.le_u (local.get $page) (local.get $last)))))
+` + ['memmove', 'memset'].map(name => `
+  (func $guest_${name} (export "dirty_${name}")
+      (param $dst i32) (param $arg i32) (param $size i32)
+    (if (i32.eqz (local.get $size)) (then (return)))
+    (call $dirty_range (local.get $dst) (local.get $size))
+    (call $dirty_pause)
+    (call $original_guest_${name} (local.get $dst) (local.get $arg) (local.get $size))
+    ;; Postmark avoids retaining an unbounded array of per-page generations.
+    ;; This is deliberately not the scalar generation-recheck cost candidate.
+    (if (global.get $dirty_repair)
+      (then (call $dirty_range (local.get $dst) (local.get $size)))))
 `).join('');
 
 (async () => {
@@ -56,6 +79,11 @@ const extra = String.raw`
       const name = `(func $gs${width * 8} `;
       assert(source.includes(name));
       source = source.replace(name, `(func $original_gs${width * 8} `);
+    }
+    if (file === '05b-string-ops.wat') for (const op of ['memmove', 'memset']) {
+      const name = `(func $guest_${op} `;
+      assert(source.includes(name));
+      source = source.replace(name, `(func $original_guest_${op} `);
     }
     return file === '13-exports.wat' ? source + extra : source;
   });
@@ -115,4 +143,62 @@ const extra = String.raw`
   assert.strictEqual(e.guest_read8(page), 7);
   assert(bytes.subarray(unrelated, unrelated + 4096).every(v => v === 0xa5));
   console.log(`PASS full-source scalar dirty candidate: ${cases} width/page/ownership/race cases and negative control`);
+
+  const bulk = 0x31000000, bulkPage = bulk >>> 12, length = 4 * 4096;
+  for (let i = 0; i < 4; i++) {
+    assert.strictEqual(e.dirty_map(bulk + i * 4096) >>> 0, bulk + i * 4096);
+    assert.strictEqual(e.dirty_map(0x29000000 + i * 4096) >>> 0, 0x29000000 + i * 4096);
+    const peer = e.guest_to_wasm(0x29000000 + i * 4096);
+    bytes.fill(0xa5, peer, peer + 4096);
+    if (i) assert.notStrictEqual(e.guest_to_wasm(bulk + i * 4096),
+      e.guest_to_wasm(bulk + (i - 1) * 4096) + 4096);
+  }
+  const initial = Uint8Array.from({ length }, (_, i) => (i * 37 + (i >>> 8)) & 255);
+  let bulkCases = 0;
+  for (const [op, dst, arg, size] of [
+    ['memset', 4010, 0x5a, 10000],
+    ['memmove', 300, 100, 12000],
+    ['memmove', 100, 300, 12000],
+    ['memmove', 8192, 0, 1024],
+    ['memset', 0, 0, 0],
+    ['memmove', 0, 0, 0],
+  ]) for (const mask of [0, 5, 10, 15]) for (const race of [false, true]) {
+    e.dirty_setup(table, 1);
+    for (let i = 0; i < length; i++) bytes[e.guest_to_wasm(bulk + i)] = initial[i];
+    const expected = initial.slice();
+    if (op === 'memset') expected.fill(arg, dst, dst + size);
+    else expected.copyWithin(dst, arg, arg + size);
+    for (let p = 0; p < 4; p++) flags[bulkPage + p] = 0x100 | ((mask >>> p) & 1);
+    let pauses = 0;
+    flush = () => {
+      pauses++;
+      if (!race) return;
+      for (let p = dst >>> 12; p <= (dst + size - 1) >>> 12; p++) {
+        if ((mask >>> p) & 1) {
+          assert(flags[bulkPage + p] & 2, 'every tracked page marked before bulk write');
+          Atomics.store(flags, bulkPage + p, (flags[bulkPage + p] + 4) & ~2);
+        }
+      }
+    };
+    e[`dirty_${op}`](size ? bulk + dst : 0xffffffff,
+      op === 'memmove' ? bulk + arg : arg, size);
+    flush = null;
+    assert.strictEqual(pauses, size ? 1 : 0, 'zero-length operations do not touch tracker');
+    assert.deepStrictEqual(Uint8Array.from(read(bulk, length)), expected);
+    for (let p = 0; p < 4; p++) {
+      const tracked = (mask >>> p) & 1;
+      const touched = size > 0 && p >= (dst >>> 12) && p <= ((dst + size - 1) >>> 12);
+      assert.strictEqual(flags[bulkPage + p], 0x100 + tracked
+        + (tracked && touched ? 2 + (race ? 4 : 0) : 0), `${op} destination-only page ${p}`);
+    }
+    bulkCases++;
+  }
+  e.dirty_setup(table, 0);
+  flags[bulkPage] = 1;
+  flush = () => Atomics.store(flags, bulkPage, 5);
+  e.dirty_memset(bulk, 0x77, 4);
+  assert.strictEqual(flags[bulkPage], 5, 'disabled bulk postmark loses dirty bit');
+  assert.strictEqual(e.guest_read32(bulk) >>> 0, 0x77777777);
+  assert(read(0x29000000, length).every(v => v === 0xa5), 'unrelated bulk backing preserved');
+  console.log(`PASS bulk dirty candidate: ${bulkCases} range/overlap/zero/ownership/race cases and negative control`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

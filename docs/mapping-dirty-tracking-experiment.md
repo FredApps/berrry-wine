@@ -777,3 +777,32 @@ wrap and failed writeback are not certified. The existing native mapping
 writeback failure is still open. Width coverage permits further experimental
 work; it does not justify shipping the scalar wrappers or extrapolating the
 earlier DWORD timings to them.
+
+## Bulk range candidate coverage (2026-09-22)
+
+The same source-harness fixture now wraps guest_memmove and guest_memset.
+Unlike scalar stores, an arbitrary bulk range cannot retain its generation
+snapshots in two locals. This experiment marks every tracked destination page
+before the original operation and again afterward, avoiding an unbounded
+per-call snapshot array. The postmark may conservatively leave a page dirty
+after a concurrent flush already captured it; it must not omit a later write.
+The original full-span contiguity checks and chunked overlap-safe copies still
+perform all data movement. No production bulk helper is edited.
+
+All **48 bulk cases** pass, alongside the existing 152 scalar cases: a fill
+crossing four noncontiguous pages, forward/backward overlapping memmove,
+nonoverlapping source/destination, four tracked-page masks, forced generation
+clear and no-clear cases, and zero-length calls (including an invalid pointer
+that must not be touched). Entire destination/source spans and unrelated
+backing are compared, including untouched bytes. Exact state words ensure
+middle pages are marked and source-only pages remain clean. The forced-clear
+callback also asserts that every tracked destination page was marked before
+the operation. Disabling postmark reproduces a written fill with DIRTY clear.
+Test-tier and whitespace checks pass.
+
+This closes the fixture's two canonical bulk-helper paths, not every bulk
+writer. REP/fused handlers with their own raw copy/fill sequences, JS/host
+outputs and asynchronous completions still need coverage; notification timing
+and partial failures require explicit contracts. The earlier scalar timings
+do not measure this bulk algorithm. Full-page concurrent-copy stress,
+lifetime/reuse/wrap behavior and production mapped-file writeback remain open.
