@@ -747,3 +747,33 @@ not performance neutrality or production readiness. Repeated game A/Bs need
 a width-complete candidate first; cross-page marking, real concurrent flush,
 write coverage, mapping lifetime and generation wrap remain correctness work.
 No production source changed. JavaScript syntax and whitespace checks pass.
+
+## Full-source scalar width/crossing candidate (2026-09-22)
+
+`test/test-mapping-dirty-widths.js` compiles the actual source tree with
+test-only wrappers around gs8/gs16/gs32/gs64. Each wrapper snapshots/marks both
+touched pages before calling the original accessor and rechecks each generation
+afterward. Existing scalar stores, translation, code invalidation and nested
+64-bit-to-32-bit fallback remain the real implementation. The test uses a
+DWORD/page table in unused PE staging; no executable is loaded and no production
+region or handler changes are made.
+
+All **152 cases** pass: four scalar widths, interior and page-end controls,
+every crossing position, neither/first/second/both pages tracked, and either
+no flush or a forced generation advance/clear before the actual store. Adjacent
+guest pages have noncontiguous backing, and expected output bytes, guards,
+unrelated backing and exact dirty/generation words are checked. A byte-store
+negative control disables repair and must leave DIRTY clear after the forced
+flush while the new byte is present. The initial fixture accidentally placed
+an interior case at a mapping start, leaving its preceding guard unmapped;
+moving that case inside the page corrected the fixture, not production code.
+Test-tier and whitespace checks pass.
+
+This is a correctness wrapper, **not** the inline timed candidate and not a
+game-ready tracker. Its forced flush is synchronous test injection, not a new
+uncontrolled-concurrency result. Bulk/REP stores, host/API direct writes,
+permission faults, address-space wrap, mapping retirement/reuse, generation
+wrap and failed writeback are not certified. The existing native mapping
+writeback failure is still open. Width coverage permits further experimental
+work; it does not justify shipping the scalar wrappers or extrapolating the
+earlier DWORD timings to them.
