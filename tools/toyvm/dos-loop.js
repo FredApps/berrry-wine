@@ -1630,6 +1630,13 @@ class DosSession {
     // these read the same expressions.
     due(this.lastIrq + this.timerInterval());
     due(this.lastKbIrq + this.kbInterval());
+    // The end of the run, when a driver set one. Without it a run stops at the
+    // first handback past its budget, and where that falls is a property of the
+    // code cache: brainbug's last slice used to end on an IRET handback at
+    // 44,061,077, and once IRET stopped handing back it ran on to the next date
+    // at 44,075,091 and photographed a different frame with every interrupt
+    // delivered to the same instruction in both arms.
+    if (this.endAt) due(this.endAt);
     if (this.vgaPeriod) due((this.vgaFrame + 1) * this.vgaPeriod);
     // The BIOS tick word, and with it the PIT phase a `latch`/`in 40h` reads
     // back. This one is not an interrupt at all and is here for the same
@@ -1648,6 +1655,10 @@ class DosSession {
     // So a port write inside the slice can say when it happened (audioNow).
     machine.sliceStart = this.dispatched;
     machine.sliceBudget = budget;
+    // Whether an IRET that re-enables interrupts has to stop here: see the
+    // IRET handlers in emit.js. Only the Sound Blaster's port-armed line is
+    // delivered off the schedule, so only it needs the boundary.
+    if (vm.exports.set_irqwant) vm.exports.set_irqwant(machine.sbForced && machine.sbForced() ? 1 : 0);
     vm.exports.run(entry, budget);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
     // when a handler handed control back early. Billing the slice either way
@@ -2063,6 +2074,7 @@ class DosSession {
   // driver's whole loop; the browser one calls step() instead so it can hand
   // the thread back between chunks.
   runUntil(budget) {
+    this.endAt = budget;
     while (this.dispatched < budget && !this.done) this.step();
     return this;
   }

@@ -586,7 +586,7 @@ const SLICE_EXIT = '(call $slice_exit)';
 // host reads it after a handback that left budget unspent, to say WHICH early
 // exit the guest paid for (dos-loop.js, EXIT_WHY). It is set on the cold arm
 // alone, so it costs nothing on a linked edge and moves no dispatch count.
-const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9 };
+const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9, v86: 10 };
 const EXIT = (why) => `(global.set $exitwhy (i32.const ${EXIT_WHY[why]})) ${SLICE_EXIT}`;
 // The first two lines of every dispatch shell, and the order of the two is a
 // CLOCK decision rather than a style one.
@@ -613,6 +613,14 @@ const EXIT = (why) => `(global.set $exitwhy (i32.const ${EXIT_WHY[why]})) ${SLIC
 // exactly what the linked one does and the clock counts guest work only.
 const HALT_FIRST = `(if (global.get $halt) (then (return)))
   (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))`;
+// Resolve $gip -- a transfer whose target is data -- against the block cache
+// and keep running if it is there; see the long comment at GO_INDIRECT.
+const GO_LOOKUP = (why) => `
+  (local.set $t3 (select (i32.const 0) (call $jlook (global.get $gip))
+                         (global.get $smc)))
+  (if ${CONT('(local.get $t3)')}
+    (then (global.set $ip (local.get $t3)))
+    (else ${EXIT(why)}))`;
 const GO = (arena, guest) => `
   (global.set $gip ${guest})
   (if ${CONT(arena)}
@@ -1305,9 +1313,20 @@ function genExtras() {
   // $intno is recorded for its convenience.
   // $fault is the whole sequence, shared with the arithmetic faults, and it is
   // what knows whether this machine currently has an IDT to go through.
+  //
+  // ...and an INT into a vector the GUEST installed is a far call, so it is
+  // resolved through the block cache like one instead of always handing back.
+  // It used to stop the slice unconditionally, and so did the IRET that ends
+  // the handler: 23% of every handback in the corpus was one of the two, with
+  // nothing for the host to do at either (UNTITLED.EXE: 530k of each). A
+  // vector still on our stub misses the lookup -- the stub byte is never
+  // compiled -- so a DOS or BIOS call hands back exactly as before. The V86
+  // monitor path changes the CPU mode and keeps its handback ($exitwhy v86).
   h('int_imm', 3, `
   ${ops(3)}
   (call $faultsw (local.get $t0) (local.get $t1) (local.get $t2))
+  (if (i32.eq (global.get $exitwhy) (i32.const ${EXIT_WHY.int}))
+    (then (global.set $halt (i32.const 0)) ${GO_LOOKUP('int')}))
 `);
   h('iret', 0, `
   (global.set $gip (call $pop16))
@@ -1315,7 +1334,16 @@ function genExtras() {
   (call $flags_put (i32.or
     (i32.and (call $pop16) ${DEFINED})
     ${RESERVED}))
-  (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+  ;; Staying in wasm is only right when nothing is owed at this boundary: TF
+  ;; asks for a trap after this instruction, and an IRQ the host is holding
+  ;; for IF ($irqwant, a Sound Blaster line armed by a port write inside the
+  ;; handler) is delivered at the handback the IRET used to take.
+  (if (i32.or (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
+              (i32.and (global.get $irqwant)
+                       (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.IF}))
+                               (i32.const 0))))
+    (then (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
+    (else ${GO_LOOKUP('iret')}))
 `);
   // IRETD. The frame is three dwords, and the selector is the low half of the
   // middle one -- the upper half is pushed and popped but means nothing.
@@ -1339,12 +1367,22 @@ function genExtras() {
                (i32.and (i32.eqz (global.get $vm86))
                         (i32.and (i32.shr_u (local.get $t2) (i32.const 17))
                                  (i32.const 1))))
-    (then (call $v86_from_monitor (local.get $t0) (local.get $t1) (local.get $t2)))
+    (then (call $v86_from_monitor (local.get $t0) (local.get $t1) (local.get $t2))
+      (global.set $exitwhy (i32.const ${EXIT_WHY.v86})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
     (else
       (call $sset (i32.const 1) (i32.and (local.get $t1) (i32.const 0xFFFF)))
       (global.set $gip (local.get $t0))
-      (call $flags_put (i32.or (i32.and (local.get $t2) ${DEFINED}) ${RESERVED}))))
-  (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+      (call $flags_put (i32.or (i32.and (local.get $t2) ${DEFINED}) ${RESERVED}))
+  ;; Staying in wasm is only right when nothing is owed at this boundary: TF
+  ;; asks for a trap after this instruction, and an IRQ the host is holding
+  ;; for IF ($irqwant, a Sound Blaster line armed by a port write inside the
+  ;; handler) is delivered at the handback the IRET used to take.
+  (if (i32.or (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))
+              (i32.and (global.get $irqwant)
+                       (i32.ne (i32.and (global.get $flags) (i32.const ${1 << isa.F.IF}))
+                               (i32.const 0))))
+    (then (global.set $exitwhy (i32.const ${EXIT_WHY.iret})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1)))
+    (else ${GO_LOOKUP('iret')}))))
 `);
 }
 
@@ -2129,12 +2167,7 @@ function genArithIO() {
   // screen and one of its two data files opened, and nothing in the run named
   // a decoder or a store as the cause. So the guard is part of the lookup, not
   // part of any one handler: any dirty byte this slice, take the handback.
-  const GO_INDIRECT = `
-  (local.set $t3 (select (i32.const 0) (call $jlook (global.get $gip))
-                         (global.get $smc)))
-  (if ${CONT('(local.get $t3)')}
-    (then (global.set $ip (local.get $t3)))
-    (else ${EXIT('indirect')}))`;
+  const GO_INDIRECT = GO_LOOKUP('indirect');
 
   // Far transfers and indirect jumps. All of them land on an address that is
   // data, so all of them leave the trace.
@@ -4922,7 +4955,7 @@ ${memAccessors()}
     (then
       (call $v86_to_monitor (i32.sub (local.get $g) (i32.const 1)) (local.get $ip)
                             (local.get $vec))
-      (global.set $exitwhy (i32.const ${EXIT_WHY.int})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
+      (global.set $exitwhy (i32.const ${EXIT_WHY.v86})) (global.set $left (global.get $steps)) (global.set $halt (i32.const 1))
       (return)))
   (if (local.get $g)
     (then
@@ -5447,7 +5480,7 @@ function fpuHelpers() {
 // remembering only the last one would leave the earlier writes running stale
 // code, which is the exact bug the flag exists to prevent. Over-approximating
 // the gap between two distant stores only costs a recompile.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy'];
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy', 'irqwant'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually
