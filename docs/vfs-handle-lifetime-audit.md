@@ -761,3 +761,19 @@ This implements the offset rule in Microsoft's
 not a new native Win98 measurement. Public mapping errors, preferred placement,
 returned-address alignment, lifetime and shared-view coherence still need
 separate verification/work.
+
+## Returned mapping-base alignment verified (2026-09-21)
+
+The real guest allocator already aligns returned bases to 64 KiB, both in its
+normal downward reservation and its fallback gap search. Added source-compiled
+execution coverage to test-virtual-free-mapped-view: eight simultaneous views
+with requested sizes around page and allocation-granularity boundaries, with
+the final request forcing the gap path. Every base is aligned; page-rounded
+ranges do not overlap; first/last-page sentinels survive peer allocations and
+releases. Each view can be freed independently.
+
+The enhanced test passes along with its existing mapped-view VirtualFree
+rejection and ordinary-memory decommit checks. The embedded-WAT address gate
+passes. No allocator change was needed. This closes the returned-base alignment
+verification item for these exercised paths, not preferred-address placement,
+concurrent reservation races or the broader section lifetime/coherence work.

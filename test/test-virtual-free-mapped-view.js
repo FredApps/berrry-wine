@@ -29,6 +29,9 @@ const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const extraWat = String.raw`
+  (func (export "test_mv_force_gap")
+    (i32.store offset=8 (global.get $VIRTUAL_MAP_STATE) (call $virtual_alloc_min))
+    (global.set $virtual_alloc_top (call $virtual_alloc_min)))
   (func (export "test_mv_reset")
     (call $zero_memory (global.get $VIRTUAL_MAP_STATE)
       (i32.add (global.get $VIRTUAL_MAP_STATE_SIZE)
@@ -102,6 +105,32 @@ async function main() {
   };
 
   const VIEW_BYTES = 8 * PAGE;
+
+  // Mapping sizes are page-rounded, but their bases must honor the larger
+  // allocation granularity. Interleave awkward sizes to catch cursor drift.
+  wasm.test_mv_reset();
+  const views = [];
+  for (const bytes of [1, PAGE - 1, PAGE, PAGE + 1, 65535, 65536, 65537, 131073]) {
+    if (views.length === 7) wasm.test_mv_force_gap();
+    const base = wasm.guest_map_alloc(bytes) >>> 0;
+    assert(base, `mapping allocation ${bytes}`);
+    assert.strictEqual(base % 65536, 0, 'mapping base is allocation-granularity aligned');
+    const rounded = Math.ceil(bytes / PAGE) * PAGE;
+    for (const other of views) {
+      assert(base + rounded <= other.base || other.base + other.rounded <= base,
+        'concurrent mapped ranges must not overlap');
+    }
+    const seed = views.length + 1;
+    wasm.test_mv_write32(base, seed);
+    wasm.test_mv_write32(base + rounded - 4, seed + 100);
+    views.push({ base, rounded, seed });
+  }
+  for (const { base, rounded, seed } of views) {
+    assert.strictEqual(wasm.test_mv_read32(base), seed);
+    assert.strictEqual(wasm.test_mv_read32(base + rounded - 4), seed + 100);
+    assert(wasm.guest_map_free(base), 'each allocated view releases independently');
+  }
+  console.log('PASS  mapped bases stay 64K aligned across page-rounded sizes and gap fallback without overlap');
 
   // 1. A decommit aimed at the middle of a view changes nothing and fails.
   //    The offsets are AoE's own shape: unaligned base, size that is not a
