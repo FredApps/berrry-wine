@@ -20,8 +20,10 @@ const extraWat = String.raw`
     (call $update_thunk_end)
     (i32.add (i32.sub (local.get $addr) (global.get $GUEST_BASE))
              (global.get $image_base)))
-  (func (export "test_free_list_head") (result i32)
-    (global.get $free_list))
+  (func (export "test_free_list_for_size") (param $size i32) (result i32)
+    (if (result i32) (i32.le_u (local.get $size) (global.get $HEAP_BIN_MAX))
+      (then (i32.wrap_i64 (call $heap_bin_get (call $heap_bin_index (local.get $size)))))
+      (else (global.get $free_list))))
 `;
 
 const u32 = value => [value, value >>> 8, value >>> 16, value >>> 24].map(v => v & 0xff);
@@ -195,16 +197,33 @@ async function main() {
   assert(iconArray, 'icon append should allocate an icon-handle array');
   const ownedReplacement = e.guest_read32(iconArray) >>> 0;
   const ownedSecond = e.guest_read32(iconArray + 4) >>> 0;
+  // Small allocations live in size bins, not necessarily the large-block
+  // free list. Check membership, without depending on adjacency or ordering.
+  const isFreed = pointer => {
+    const size = e.guest_read32(pointer - 4) >>> 0;
+    let block = e.test_free_list_for_size(size) >>> 0;
+    const seen = new Set();
+    while (block) {
+      assert(!seen.has(block), 'allocator free chain must not cycle');
+      assert(seen.size < 4096, 'free-chain inspection stays bounded');
+      if (block === pointer - 4) return true;
+      seen.add(block);
+      block = e.guest_read32(block + 4) >>> 0;
+    }
+    return false;
+  };
+  assert.strictEqual(isFreed(imageList), false, 'live list is not free');
+  assert.strictEqual(isFreed(iconArray), false, 'live icon array is not free');
   assert(ownedReplacement && ownedReplacement !== 0x123453,
     'image list copies the replacement instead of saving the caller HICON');
   assert(ownedSecond && ownedSecond !== 0x123452,
     'image list owns an independent copy of every appended icon');
   assert.strictEqual(destroy([0]), 0, 'destroying a null image list fails');
   assert.strictEqual(destroy([imageList]), 1, 'destroying a live image list succeeds');
-  assert.strictEqual(e.test_free_list_head() >>> 0, imageList - 4,
+  assert.strictEqual(isFreed(imageList), true,
     'destroy should return the image-list block to the heap');
-  assert.strictEqual(e.guest_read32(imageList) >>> 0, iconArray - 4,
-    'destroy should return the icon-handle array behind the image-list block');
+  assert.strictEqual(isFreed(iconArray), true,
+    'destroy should return the icon-handle array to the heap');
   assert.strictEqual(destroyIcon([ownedReplacement]), 0,
     'destroying the image list releases its private replacement copy');
   assert.strictEqual(destroyIcon([ownedSecond]), 0,

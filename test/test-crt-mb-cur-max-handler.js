@@ -291,7 +291,7 @@ const extraWat = String.raw`
 
 (async () => {
   testMsvcrtEnvironmentPatches();
-  const { exports } = await bootRenderHarness({ extraWat, fonts: 'none' });
+  const { exports, hostCtx } = await bootRenderHarness({ extraWat, fonts: 'none' });
   function guestCString(text, capacity = text.length + 1) {
     assert(capacity >= text.length + 1, 'guestCString capacity holds text and NUL');
     const ptr = exports.guest_alloc(capacity) >>> 0;
@@ -461,9 +461,16 @@ const extraWat = String.raw`
   assert.strictEqual(exports.guest_read8(tmpnamBuf + 1), 0x3a, 'tmpnam writes a drive prefix');
   assert.strictEqual(exports.last_esp_delta(), 4, 'tmpnam preserves cdecl cleanup');
 
-  exports.call_dup(7);
-  assert.strictEqual(exports.last_eax(), 7, '_dup aliases a non-negative CRT file handle');
+  const fd = hostCtx.vfs.createFile('C:\\crt-dup-test.bin', 0xc0000000, 2);
+  assert(fd > 0, 'dup fixture opens a real file');
+  exports.call_dup(fd);
+  const duplicate = exports.last_eax();
+  assert(duplicate > 0 && duplicate !== fd, '_dup returns a separately owned handle');
   assert.strictEqual(exports.last_esp_delta(), 4, '_dup preserves cdecl cleanup');
+  assert(hostCtx.vfs.closeHandle(fd), 'original handle closes independently');
+  assert(hostCtx.vfs.closeHandle(duplicate), 'duplicate remains open after original closes');
+  exports.call_dup(fd);
+  assert.strictEqual(exports.last_eax(), -1, '_dup rejects a closed positive handle');
   exports.call_dup(-1);
   assert.strictEqual(exports.last_eax(), -1, '_dup rejects a negative CRT file handle');
 
