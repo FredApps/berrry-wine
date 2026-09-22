@@ -4894,6 +4894,9 @@
           (i32.eq (i32.and (local.get $actual) (local.get $requested))
                   (local.get $requested)))
       (then
+        ;; The attachment keeps its reference; each successful retrieval
+        ;; transfers an additional reference for the caller to Release.
+        (drop (call $dx_com_addref (local.get $child)))
         (call $gs32 (local.get $arg2) (local.get $child))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
       (else

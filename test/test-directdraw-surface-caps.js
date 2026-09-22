@@ -5,6 +5,8 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_dx_caps_refs") (param $surface i32) (result i32)
+    (load.field DxObject refcount (call $dx_from_this (local.get $surface))))
   (func (export "test_dx_caps_seed") (param $ddraw_vtbl i32) (param $surface_vtbl i32)
     (global.set $DX_VTBL_DDRAW (local.get $ddraw_vtbl))
     (global.set $DX_VTBL_DDSURF2 (local.get $surface_vtbl)))
@@ -71,14 +73,31 @@ const extraWat = String.raw`
     wat.test_dx_caps_get_attached(primary, attachedCaps, attachedOut) >>> 0,
     0x887600ff,
     'GetAttachedSurface must reject a child missing any requested capability');
-  assert.strictEqual(wat.guest_read32(attachedOut) >>> 0, 0xdeadbeef,
-    'a failed attachment query must not publish the unrelated back buffer');
+  // Current runtime policy (also asserted by the mip-chain regression), not
+  // a native Win98 failure-output oracle: clear rather than publish a child.
+  assert.strictEqual(wat.guest_read32(attachedOut) >>> 0, 0,
+    'a failed attachment query clears output instead of publishing a back buffer');
 
   wat.guest_write32(attachedCaps, 0x4); // DDSCAPS_BACKBUFFER
   assert.strictEqual(
     wat.test_dx_caps_get_attached(primary, attachedCaps, attachedOut) >>> 0, 0);
   const attached = wat.guest_read32(attachedOut) >>> 0;
   assert(attached, 'attached back buffer should be returned');
+  assert.strictEqual(wat.test_dx_caps_refs(attached), 2,
+    'attachment ownership plus one caller reference');
+  assert.strictEqual(wat.test_dx_caps_get_attached(primary, attachedCaps, attachedOut), 0);
+  assert.strictEqual(wat.guest_read32(attachedOut) >>> 0, attached);
+  assert.strictEqual(wat.test_dx_caps_refs(attached), 3,
+    'each successful query transfers a separate reference');
+  wat.guest_write32(attachedCaps, 0x401000);
+  assert.strictEqual(wat.test_dx_caps_get_attached(primary, attachedCaps, attachedOut) >>> 0,
+    0x887600ff);
+  assert.strictEqual(wat.test_dx_caps_refs(attached), 3,
+    'a rejected query must not AddRef');
+  assert.strictEqual(wat.test_dx_caps_release(attached), 2);
+  assert.strictEqual(wat.test_dx_caps_release(attached), 1,
+    'releasing both caller references leaves the attachment alive');
+  wat.guest_write32(attachedCaps, 0x4);
 
   assert.strictEqual(wat.test_dx_caps_desc(attached, queryDesc) >>> 0, 0);
   assert.strictEqual(wat.guest_read32(queryDesc + 104) >>> 0, 0x601c,
