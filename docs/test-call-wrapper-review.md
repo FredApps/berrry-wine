@@ -248,3 +248,9 @@ IDs, fragment balance, handler ESP, tiers and whitespace checks passed. No
 production volume/text handler, native reference, browser or performance change
 is claimed. Remaining adapters: CreateFontW, CreateDIBSection and its Usage
 alias, WinHelpA/W, WSAFDIsSet, WSAIsBlocking, SetLastError.
+
+The subsequent [native volume-buffer oracle](../test/fixtures/win98-volume-buffers/README.md)
+captures 84 cases twice. Win98 rejects short ANSI buffers with error 111 and
+ordered partial output (scalars, filesystem name, then label); Unicode returns
+120 without touching outputs. Runtime correction remains open, and the current
+Unicode extension needs an explicit compatibility-policy distinction.
