@@ -1460,7 +1460,8 @@ async function main() {
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
   if (r.uop) {
     const u = r.uop;
-    console.log(`  uop: ${u.phase}  ${u.installs} head(s) [${u.heads.map((h) => `${h.head} e=${h.entries} s=${h.steps} b=${h.bails}`
+    console.log(`  uop: ${u.phase} ${u.outcome} (windows=${u.windows} samples=${u.samples}`
+      + ` best=${(100 * u.bestShare).toFixed(1)}%)  ${u.installs} head(s) [${u.heads.map((h) => `${h.head} e=${h.entries} s=${h.steps} b=${h.bails}`
       + (h.shape ? ` shape=${h.shape.insns}i/${h.shape.per.toFixed(2)}u/${h.shape.bail}x` : '')
       + ` {${h.bailAt.join(" | ")}}`).join(', ')}]`
       + `  entries=${u.entries} steps=${u.steps} (${(100 * u.steps / Math.max(1, r.dispatched)).toFixed(1)}% of dispatches)`

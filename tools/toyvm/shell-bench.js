@@ -132,8 +132,11 @@ runDos({ exe: ${JSON.stringify(path.basename(exe))}, variant: 'tailcall', budget
   say('SHELLBENCH ' + JSON.stringify({ secs: r.secs, guestSecs: r.guestSecs,
     dispatched: r.dispatched, frame: r.frame, startMs: T1 - T0, totalMs: nowMs() - T0,
     jit: r.jit ? { phase: r.jit.phase, installs: r.jit.installs, share: r.jit.share } : null,
-    uop: r.uop ? { installs: r.uop.installs, entries: r.uop.entries, steps: r.uop.steps, bails: r.uop.bails,
-      rebuilds: r.uop.rebuilds, gaveUp: r.uop.gaveUp, demoted: r.uop.demoted.length } : null }));
+    uop: r.uop ? { outcome: r.uop.outcome, windows: r.uop.windows, samples: r.uop.samples, bestShare: r.uop.bestShare,
+      installs: r.uop.installs, entries: r.uop.entries, steps: r.uop.steps, bails: r.uop.bails,
+      rebuilds: r.uop.rebuilds, gaveUp: r.uop.gaveUp, demoted: r.uop.demoted.length,
+      declined: r.uop.declined, demotedWhy: r.uop.demoted, refusedHeads: r.uop.refusedHeads,
+      demotedHeads: r.uop.demotedHeads, liveHeads: r.uop.heads.map(function (h) { return { head: h.head, share: h.share }; }) } : null }));
 }, function (e) { say('SHELLBENCH-ERR ' + String(e && e.stack || e).split('\\n').slice(0, 4).join(' | ')); });
 `;
 }

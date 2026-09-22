@@ -121,7 +121,19 @@ function rankSamples(r, sampleFrom = 0) {
   const perBlock = new Map();
   let total = 0;
   for (const [at, n] of samples) {
-    const o = owner(at);
+    // A sample is $ip after a budget-expired handback, and $ip is then one
+    // word PAST the op that took the handback: the handler consumed its
+    // operands before $next noticed $halt. When that op is a block's last
+    // (the branch whose CONT test ran out of steps -- where nearly all of
+    // them happen, since the budget is checked at block boundaries), the
+    // word after it is the FIRST WORD OF THE NEXT BLOCK LAID OUT, which for
+    // a loop is its fall-through exit. So charge the word before: the block
+    // that actually ran. Before this, the census had the time of whole loop
+    // nests landing on their exit tails -- CRITICAL.EXE's 98% on
+    // `mov ah,0 / mov al,[] / sub [],ax / ret` after a scaled blit whose
+    // inner loop is at 2b4:016d -- and every consumer then built from the
+    // exit: uop-live refused it as "not a loop: ret", region-live chose it.
+    const o = owner(at - 4);
     if (!o) continue;
     const k = `${o.cs.toString(16)}:${o.bip.toString(16)}`;
     if (!perBlock.has(k)) perBlock.set(k, { ...o, samples: 0 });

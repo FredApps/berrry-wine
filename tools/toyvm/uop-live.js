@@ -72,7 +72,7 @@ class UopLive {
     this.heads = new Map();        // `key:ip` -> head record
     this.refused = new Set();      // heads a build declined: not retried
     this.run = null;
-    this.stats = { installs: 0, declined: [], entries: 0, steps: 0, rebuilds: 0, gaveUp: 0, bails: 0, demoted: [] };
+    this.stats = { installs: 0, declined: [], entries: 0, steps: 0, rebuilds: 0, gaveUp: 0, bails: 0, demoted: [], windowLog: [], refusedHeads: [], demotedHeads: [] };
     session.uop = this;
   }
 
@@ -105,7 +105,13 @@ class UopLive {
     this.phase = 'live';
     this.windows++;
     const rank = rankSamples({ ipSamples: this.samples, ipSampleLog: [], regions: this.cache.regions });
-    const total = rank.ranked.reduce((s, b) => s + b.samples, 0) || 1;
+    const sampled = rank.ranked.reduce((s, b) => s + b.samples, 0);
+    const total = sampled || 1;
+    // What this window saw, whether or not it installs anything: a program
+    // that never installs a head has to say which gate stopped it, and every
+    // gate before build() leaves nothing in `declined` (see outcome()).
+    this.stats.windowLog.push({ samples: sampled, best: rank.ranked.length ? rank.ranked[0].samples / total : 0,
+      over: rank.ranked.slice(0, this.top).filter((b) => b.samples / total >= this.minShare).length });
     const mask = this.vm.exports.get_linmask() >>> 0;
     for (const b of rank.ranked.slice(0, this.top)) {
       if (this.heads.size >= this.maxHeads) break;
@@ -116,7 +122,14 @@ class UopLive {
       const h = { hk, key: b.cs, ip: b.bip, env, share: b.samples / total, prog: null, enter: null, rebuilds: 0 };
       if (this.spinCollapsed(h)) { h.why = 'L1 collapses this spin loop'; }
       else if (!this.build(h)) { /* h.why set by build */ }
-      if (h.why) { this.refused.add(hk); this.stats.declined.push(`${hk} ${h.why}`); continue; }
+      if (h.why) {
+        this.refused.add(hk);
+        this.stats.declined.push(`${hk} ${h.why}`);
+        // With its share of the window's samples, so a census can weigh a
+        // refusal by the time it leaves on the table (uop-coverage.js).
+        this.stats.refusedHeads.push({ head: hk, share: h.share, window: this.windows, why: h.why });
+        continue;
+      }
       this.heads.set(hk, h);
       this.cache.uopHeads.add(hk);
       // No linked edge may carry the guest past the head: the compiled code
@@ -158,16 +171,37 @@ class UopLive {
     return false;
   }
 
+  // Why discovery found no cycle through the head: everything that ended an
+  // explored path. Exploration stops at an instruction outside uop-x86.js's
+  // subset (`unsupported`), at a ret with no inlined caller to return to
+  // (`ret`: the head is in a function and the loop runs through its caller),
+  // at the inlining depth (`call depth`) and at the node cap (`node cap`).
+  // With none of those, every path left the explored code (`exits`): the
+  // head really is not on a loop. Kinds only, most frequent first, so the
+  // corpus census (uop-coverage.js) can group heads by what to build next.
+  cutOf(reg) {
+    const cut = new Map();
+    const bump = (k) => cut.set(k, (cut.get(k) || 0) + 1);
+    for (const n of reg.nodes.values()) {
+      if (n.unsupported === 'call depth') bump('call depth');
+      else if (n.unsupported) bump(`unsupported ${n.unsupported}`);
+      else if (n.d.kind === 'ret' && !n.ctx.length) bump('ret');
+    }
+    if (reg.nodes.size >= 400) bump('node cap');
+    if (!cut.size) return 'exits';
+    return [...cut].sort((a, b) => b[1] - a[1]).map(([k]) => k).join(', ');
+  }
+
   // Discover, optimize, lower and encode the program at a head from the bytes
   // there now. False (with h.why) when the region or the engine declines it.
   build(h) {
     try {
       const vm = this.vm;
       const reg = IR.discover((lin) => vm.mem[lin], h.env, h.ip);
-      if (!reg.body.size) { h.why = 'empty body'; return false; }
+      if (!reg.body.size) { h.why = `head unsupported: ${reg.nodes.get(reg.headKey).unsupported}`; return false; }
       // A straight line is entered, runs a few instructions and hands back:
       // it costs a host round trip and saves nothing. Loops only.
-      if (!reg.cyclic) { h.why = 'not a loop'; return false; }
+      if (!reg.cyclic) { h.why = `not a loop: ${this.cutOf(reg)}`; return false; }
       const passes = this.passes || OPT.ablationConfigs().find(([n]) => n === 'all')[1];
       const prog = OPT.build(reg, { passes, env: h.env, vm });
       const st = {};
@@ -190,7 +224,7 @@ class UopLive {
       // a winner's 0.05, for x1.35 (v8) / x1.81 (sm) over the whole program.
       // A bail somewhere off the loop -- a deopt arm, an exit -- is fine and
       // is not counted here; this is the body alone.
-      if (h.shape.bail) { h.why = `${h.shape.bail} bail block(s) in the loop body`; return false; }
+      if (h.shape.bail) { h.why = `bail block(s) in the loop body (${h.shape.bail})`; return false; }
       return true;
     } catch (e) {
       h.why = String(e && e.message || e).slice(0, 80);
@@ -243,6 +277,7 @@ class UopLive {
     this.refused.add(h.hk);
     this.cache.uopHeads.delete(h.hk);
     this.stats.demoted.push(`${h.hk} ${why}`);
+    this.stats.demotedHeads.push({ head: h.hk, share: h.share, why });
     this.release(h);
   }
 
@@ -400,6 +435,7 @@ class UopLive {
         this.cache.uopHeads.delete(h.hk);
         this.release(h);
         this.stats.gaveUp++;
+        this.stats.demotedHeads.push({ head: h.hk, share: h.share, why: `gave up: ${h.why || 'rebuilds'}` });
         return null;
       }
       this.stats.rebuilds++;
@@ -481,8 +517,37 @@ class UopLive {
     else { ex.set_smclo(a); ex.set_smchi(b); }
   }
 
+  // Why this run did or did not end with a µop program, as the FIRST gate in
+  // the install chain that stopped it. `declined` alone cannot answer this:
+  // only heads that reached spinCollapsed/build are recorded there, so a run
+  // that never finished a profile window, or never saw a block at minShare,
+  // leaves it empty and looks identical to one that was never asked.
+  //
+  //   no-window    the run ended before the first window opened (sampleAfter)
+  //   window-open  the run ended inside the first window
+  //   no-samples   every window closed with zero samples: no slice ran out of
+  //                budget in guest code (the time went to halts, host calls,
+  //                or slices a program already covered)
+  //   no-hot-head  samples, but no block reached minShare in any window
+  //   declined     candidates reached the install chain and every one was
+  //                refused (the reasons are in `declined`)
+  //   dropped      heads installed, and all were later demoted or given up
+  //   installed    at least one head still live at the end
+  outcome() {
+    if (this.heads.size) return 'installed';
+    if (this.stats.installs) return 'dropped';
+    if (this.stats.declined.length) return 'declined';
+    if (this.phase === 'wait') return 'no-window';
+    if (!this.windows) return 'window-open';
+    if (this.stats.windowLog.every((w) => !w.samples)) return 'no-samples';
+    return 'no-hot-head';
+  }
+
   report() {
-    return { phase: this.phase, windows: this.windows, heads: [...this.heads.values()].map((h) => ({ head: h.hk, share: h.share, rebuilds: h.rebuilds, entries: h.entries || 0, steps: h.steps || 0, bails: h.bails || 0, shape: h.shape,
+    const log = this.stats.windowLog;
+    return { phase: this.phase, outcome: this.outcome(), windows: this.windows,
+      bestShare: log.reduce((m, w) => Math.max(m, w.best), 0), samples: log.reduce((s, w) => s + w.samples, 0),
+      heads: [...this.heads.values()].map((h) => ({ head: h.hk, share: h.share, rebuilds: h.rebuilds, entries: h.entries || 0, steps: h.steps || 0, bails: h.bails || 0, shape: h.shape,
       bailAt: [...h.st.bailAt].sort((a, b) => b[1] - a[1]).slice(0, 3)
         .map(([bid, n]) => `${n}x B${bid} ${h.st.prog.blocks[bid].kind} ${h.st.low.blocks.get(bid).why || 'native'}`) })),
       ...this.stats };
