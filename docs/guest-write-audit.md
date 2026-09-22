@@ -304,3 +304,21 @@ whitespace gates passing. No runtime code was changed for this follow-up.
 This supersedes the earlier lack of mouse/pixel evidence for this specific
 route, not for all console rendering: it is a targeted painted-row assertion,
 not a full screenshot comparison, native Win98 oracle or timing measurement.
+
+## Keyboard-layout caller outputs migrated
+
+GetKeyboardLayoutNameA now uses guest DWORD/byte stores for its nine-byte
+ASCIIZ result. GetKeyboardLayoutList uses a guest DWORD store for its HKL.
+The existing single-US-layout policy and argument/return behavior are unchanged;
+this does not implement additional layouts or certify all invalid-argument
+semantics. Caller addresses no longer become one assumed-contiguous raw span.
+
+`test/test-keyboard-layout-boundaries.js` reproduced the name write failing at
+sparse split 1 before the fix. It now passes all eight name crossings and three
+HKL crossings plus page-local controls. Tests check exact bytes/terminator,
+capacity 0/1/2, query-only behavior, untouched capacity tails, NULL name rejection,
+guards, unrelated backing and stdcall cleanup. Logical-AND, test-tier and
+whitespace gates pass. Unlike the dirty-tracker fixtures, this is a production
+pointer correction; it does not add the experimental dirty hook or close
+mapped-file writeback. LoadKeyboardLayout input and other raw API buffers remain
+separate audit candidates.

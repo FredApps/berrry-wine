@@ -540,10 +540,10 @@
     (if (i32.eqz (local.get $arg0))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))) (return)))
-    (local.set $p (call $g2w (local.get $arg0)))
-    (i32.store (local.get $p) (i32.const 0x30303030))         ;; "0000"
-    (i32.store offset=4 (local.get $p) (i32.const 0x39303430)) ;; "0409"
-    (i32.store8 offset=8 (local.get $p) (i32.const 0))
+    (local.set $p (local.get $arg0))
+    (call $gs32 (local.get $p) (i32.const 0x30303030))         ;; "0000"
+    (call $gs32 (i32.add (local.get $p) (i32.const 4)) (i32.const 0x39303430)) ;; "0409"
+    (call $gs8 (i32.add (local.get $p) (i32.const 8)) (i32.const 0))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
@@ -552,7 +552,7 @@
   ;; If lpList non-NULL and nBuff>=1, write HKL 0x04090409. Return total count (1).
   (func $handle_GetKeyboardLayoutList (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ge_s (local.get $arg0) (i32.const 1)))
-      (then (i32.store (call $g2w (local.get $arg1)) (i32.const 0x04090409))))
+      (then (call $gs32 (local.get $arg1) (i32.const 0x04090409))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
