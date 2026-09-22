@@ -84,3 +84,45 @@ contract; this correction does not claim otherwise or establish native Win98
 OOM behavior. Unsupported-format inert success, binary sparse copies,
 Unicode/OEM conversion, empty-string format availability and general HGLOBAL
 lifetime handling remain candidates for separate behavioral work.
+
+## CF_DIB public handle boundary
+
+The next inspection did **not** establish a sparse-copy bug for legitimate
+binary input: our heap allocations are contiguous, and the binary helper
+expects a trusted heap allocation, not an arbitrary guest address. Replacing
+its copy loop alone would leave the real bug intact: the public CF_DIB branch
+passed unchecked input to `heap_payload_size_unchecked`.
+
+The public branch now uses the existing exact-boundary/provenance validator
+`heap_global_block_size` before calling the trusted copy helper. Invalid input
+returns NULL with ERROR_INVALID_HANDLE and leaves the previous snapshot and
+sequence untouched. This uses the emulator's existing Global API policy;
+the precise invalid-handle error has not been measured on native Win98.
+Successful SetClipboardData returns the supplied handle, consistent with the
+text/RTF branches, rather than returning the private copied buffer.
+
+The binary snapshot is now marked as a Global allocation before publication,
+so the handle GetClipboardData returns can actually pass GlobalLock/GlobalSize.
+Trusted host image injection still accepts ordinary guest heap blocks; it
+does not pretend those inputs came from the public API. Existing binary
+snapshot retention for RichEdit images is unchanged.
+
+`test-clipboard-dib-handles.js` exercises the real GlobalAlloc, Set/GetClipboardData,
+GlobalLock, GlobalSize, GlobalFree and sequence handlers. It supplies a minimal
+24-bit DIB and checks return handles, copied bytes, extent, stack cleanup and
+sequence. Rejection cases include NULL, ordinary heap, forged tagged interior,
+freed global, unmapped and interior-global pointers. A host-injected ordinary
+heap snapshot must also be lockable. The pre-fix implementation fails the
+successful SetClipboardData return-value check.
+
+After the fix, the new public CF_DIB regression, OLE clipboard wrapping
+(13/13), and the cross-Worker GlobalFlags/size/provenance regression pass.
+Fragment, ESP, logical-AND, silent-inventory, tier and whitespace gates pass;
+the silent inventory remains 248 manual + 22 metadata. No native Win98 or
+browser run was performed for this boundary change.
+
+This is not full HGLOBAL ownership transfer or movable-handle support. It does
+not enforce DIB content validity, solve concurrent misuse of caller-owned
+handles, or reclaim retained RichEdit snapshots. Text/RTF snapshot GlobalLock
+compatibility also needs its own producer/lifetime audit; the previous string
+fixes did not test that contract.

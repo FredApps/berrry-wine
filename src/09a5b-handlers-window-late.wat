@@ -2847,7 +2847,18 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
       (then
         (if (i32.eq (local.get $arg0) (i32.const 8)) ;; CF_DIB
           (then
-            (i32.store offset=0 (global.get $reg_base) (call $clipboard_store_binary_data (local.get $arg0) (local.get $arg1))) (if (i32.load offset=0 (global.get $reg_base)) (then (call $clipboard_sequence_bump)))
+            ;; Public callers supply a live HGLOBAL, not an arbitrary pointer
+            ;; with a plausible size word before it. The internal copy helper
+            ;; also serves trusted host image injection from ordinary heap blocks.
+            (if (i32.eqz (call $heap_global_block_size (local.get $arg1) (i32.const 0)))
+              (then
+                (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+                (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+              (else
+                (i32.store offset=0 (global.get $reg_base)
+                  (if (result i32) (call $clipboard_store_binary_data (local.get $arg0) (local.get $arg1))
+                    (then (local.get $arg1)) (else (i32.const 0))))))
+            (if (i32.load offset=0 (global.get $reg_base)) (then (call $clipboard_sequence_bump)))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
             (return)))
         (i32.store offset=0 (global.get $reg_base) (local.get $arg1))

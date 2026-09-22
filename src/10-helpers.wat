@@ -5692,6 +5692,9 @@
     (local.set $dst (call $heap_alloc (local.get $size)))
     (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
     (memory.copy (call $g2w (local.get $dst)) (call $g2w (local.get $src_g)) (local.get $size))
+    ;; GetClipboardData exposes this snapshot as an HGLOBAL. GlobalLock/Size
+    ;; validate provenance even though our global handles are direct pointers.
+    (call $heap_global_mark (local.get $dst))
     (global.set $clipboard_binary_format (local.get $fmt))
     (global.set $clipboard_binary_ptr (local.get $dst))
     (global.set $clipboard_binary_len (local.get $size))
