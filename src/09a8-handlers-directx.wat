@@ -4870,21 +4870,60 @@
           (load.field DxObject misc1 (local.get $entry))
           (local.get $tmp_dib))
         ;; Present front buffer
-        (call $dx_present (local.get $entry))))
+        (call $dx_present (local.get $entry))
+        (call $present_pace)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; GetAttachedSurface(this, lpDDSCaps, lplpDDAttachedSurface)
+  ;; Resolve only wrappers this runtime actually owns, without dx_from_this's
+  ;; invalid-slot clamp (which can alias an unrelated live object in slot 0).
+  (func $ddraw_surface_entry_checked (param $this i32) (result i32)
+    (local $offset i32) (local $wa i32) (local $slot i32) (local $entry i32)
+    (local.set $offset (i32.sub (local.get $this) (call $w2g (global.get $COM_WRAPPERS))))
+    (if (i32.lt_u (local.get $offset) (global.get $COM_WRAPPERS_SIZE))
+      (then (local.set $wa (i32.add (global.get $COM_WRAPPERS) (local.get $offset))))
+      (else
+        (local.set $offset (i32.sub (local.get $this) (call $w2g (global.get $COM_WRAPPERS_AUX))))
+        (if (i32.ge_u (local.get $offset) (global.get $COM_WRAPPERS_AUX_SIZE))
+          (then (return (i32.const 0))))
+        (if (i32.ge_u (i32.shr_u (local.get $offset) (i32.const 3))
+              (i32.load (global.get $COM_AUX_NEXT_SHARED)))
+          (then (return (i32.const 0))))
+        (local.set $wa (i32.add (global.get $COM_WRAPPERS_AUX) (local.get $offset)))))
+    (if (i32.and (local.get $offset) (i32.const 7)) (then (return (i32.const 0))))
+    (if (i32.eqz (i32.load (local.get $wa))) (then (return (i32.const 0))))
+    (local.set $slot (i32.load offset=4 (local.get $wa)))
+    (if (i32.ge_u (local.get $slot) (global.get $DX_MAX)) (then (return (i32.const 0))))
+    (local.set $entry (i32.add (global.get $DX_OBJECTS) (i32.shl (local.get $slot) (i32.const 5))))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 2))
+      (then (return (i32.const 0))))
+    (if (i32.le_s (load.field DxObject refcount (local.get $entry)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.get $entry))
+
   (func $handle_IDirectDrawSurface_GetAttachedSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $child i32) (local $child_entry i32)
     (local $requested i32) (local $actual i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
+    (local.set $entry (call $ddraw_surface_entry_checked (local.get $arg0)))
+    (if (i32.eqz (local.get $entry))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0x88760082)) ;; DDERR_INVALIDOBJECT
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
+    (if (i32.or (i32.eqz (local.get $arg1)) (i32.eqz (local.get $arg2)))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057)) ;; DDERR_INVALIDPARAMS
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
     (local.set $child (load.field DxObject misc0 (local.get $entry)))
     (if (local.get $child)
       (then
-        (local.set $child_entry (call $dx_from_this (local.get $child)))
+        (local.set $child_entry (call $ddraw_surface_entry_checked (local.get $child)))
+        (if (i32.eqz (local.get $child_entry)) (then (local.set $child (i32.const 0))))
         (local.set $requested (call $gl32 (local.get $arg1)))
-        (local.set $actual (i32.load (call $dx_surf_meta_ptr (local.get $child_entry))))))
+        (if (local.get $child_entry)
+          (then (local.set $actual (i32.load (call $dx_surf_meta_ptr (local.get $child_entry))))))))
     ;; Every requested capability must belong to the returned attachment.
     ;; Blitz probes a primary for TEXTURE|MIPMAP before converting loaded
     ;; images. Returning its unrelated back buffer makes Blitz copy that empty

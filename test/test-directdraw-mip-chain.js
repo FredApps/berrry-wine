@@ -30,6 +30,9 @@ const WALK_CAPS = DDSCAPS_TEXTURE | DDSCAPS_MIPMAP;
 const extraWat = String.raw`
   (func (export "mip_seed") (param $base i32) (param $extended i32)
     (global.set $DX_VTBL_DDRAW (local.get $base))
+    ;; A created surface must have a non-NULL interface vtable as in the
+    ;; initialized runtime, even though this test calls handlers directly.
+    (global.set $DX_VTBL_DDSURF2 (local.get $extended))
     (global.set $DX_VTBL_DDRAW2 (local.get $extended)))
 
   (func (export "mip_create_ddraw") (param $out i32) (result i32)

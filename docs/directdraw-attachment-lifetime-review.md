@@ -35,3 +35,31 @@ explicit attachments; ambiguity, invalid pointers/objects and full capability
 structures require further review. Parent teardown also does not yet retire
 its implicit child chain. Those gaps remain open. No native capture, browser
 gameplay, performance or full-release validation is claimed here.
+
+## Invalid receiver and NULL parameter follow-up
+
+GetAttachedSurface now resolves receivers and its stored child through a
+bounded primary/auxiliary COM-wrapper registry lookup. It rejects unaligned,
+foreign, null-vtable, out-of-range-slot, non-surface and retired wrappers
+without using `$dx_from_this`'s invalid-slot-to-zero fallback. This check is
+local to this API; other users of that fallback remain to be reviewed.
+NULL capability/output parameters return DDERR_INVALIDPARAMS before accessing
+either pointer or acquiring a reference. Invalid receivers return
+DDERR_INVALIDOBJECT. Both early returns retain the 16-byte stdcall cleanup.
+
+The public-handler regression exercises NULL/wild/unaligned/heap-forged
+receivers, a corrupted registered slot, retired receiver/child, NULL
+parameters, preserved output/refcount on invalid input, and a live auxiliary
+interface. Restoring only the previous handler during compilation fails the
+invalid-receiver assertion. The mip-chain fixture now seeds its surface
+vtable as production initialization does; it previously created null-vtable
+objects because it called handlers directly.
+Surface-caps, mip-chain and back-buffer suites pass after this change, as do
+fragment balance, handler ESP, logical-operand, tier and whitespace gates.
+
+The error categories follow Microsoft's documented API surface; exact
+Win98 fault precedence and output preservation on invalid input have not
+been captured natively. This does not validate arbitrary non-NULL guest
+buffer accessibility or enforce PAGE_* permissions. Recycled-wrapper ABA,
+concurrent lifetime races, explicit-attachment lookup and parent-chain
+teardown also remain open.
