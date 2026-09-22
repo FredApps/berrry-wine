@@ -71,6 +71,10 @@ const extraWat = String.raw`
     (call $handle_DialogBoxParamA
       (i32.const 0) (local.get $id) (local.get $owner)
       (local.get $dlgproc) (i32.const 0) (i32.const 0))
+    ;; USER shows a modal dialog once WM_INITDIALOG returns (CACA0004); this
+    ;; fixture never runs the DLGPROC, so stand in for that return here.
+    (if (global.get $dlg_show_pending)
+      (then (call $dlg_show_now (global.get $dlg_show_pending))))
     (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
     (global.get $dlg_hwnd))
 

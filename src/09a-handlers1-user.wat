@@ -1890,9 +1890,18 @@
   ;; 136: DialogBoxParamA(hInstance, lpTemplate, hWndParent, lpDialogFunc, dwInitParam)
   ;; DialogBoxParamA(hInstance, lpTemplateName, hWndParent, lpDialogFunc, dwInitParam)
   ;; Creates modal dialog, sends WM_INITDIALOG, enters message loop, returns EndDialog result
+  ;; Make a modal dialog visible: the WS_VISIBLE bit and the host window.
+  (func $dlg_show_now (param $hwnd i32)
+    (global.set $dlg_show_pending (i32.const 0))
+    (if (i32.eqz (call $wnd_table_get (local.get $hwnd))) (then (return)))
+    (drop (call $wnd_set_style (local.get $hwnd)
+      (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000))))
+    (drop (call $host_show_window (local.get $hwnd) (i32.const 1))))
+
   (func $handle_DialogBoxParamA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $hwnd i32) (local $init_param i32)
     (local $dlg_rec i32) (local $ctrl_count i32) (local $i i32) (local $ctrl_hwnd i32)
+    (local $tmpl_visible i32)
     ;; arg0=hInstance, arg1=lpTemplateName (resource ID), arg2=hWndParent
     ;; arg3=lpDialogFunc, arg4=dwInitParam. Five stdcall args live at
     ;; [esp+4]..[esp+20]; [esp+24] is already the caller's own frame, so
@@ -1941,17 +1950,25 @@
     (call $push_rsrc_ctx (local.get $arg0))
     (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
     (call $pop_rsrc_ctx)
-    ;; DialogBoxParam creates a top-level owned dialog and shows it before
-    ;; WM_INITDIALOG. Template styles commonly omit WS_VISIBLE; USER's modal
-    ;; creation path still makes the HWND visible, so keep WAT style in sync
-    ;; before visibility-dependent hit-testing/painting runs.
+    ;; DialogBoxParam creates a top-level owned dialog, hidden: USER strips
+    ;; WS_VISIBLE from a modal template and shows the window only once
+    ;; WM_INITDIALOG has returned (see $dlg_show_pending in CACA0004). An init
+    ;; that does real work would otherwise sit on screen half-built -- SimCity
+    ;; 2000's Select Power Plant box showed as an empty grey frame at (0,0)
+    ;; for ~1,900 batches while it built its eight plant pictures.
     (call $wnd_set_parent (local.get $hwnd) (i32.const 0))
     (call $wnd_set_owner (local.get $hwnd) (local.get $arg2))
+    (local.set $tmpl_visible
+      (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000)))
     (drop (call $wnd_set_style (local.get $hwnd)
-      (i32.or (call $wnd_get_style (local.get $hwnd)) (i32.const 0x10000000)))) (call $wnd_note_active_popup (local.get $hwnd))
+      (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0xEFFFFFFF)))) (call $wnd_note_active_popup (local.get $hwnd))
     ;; Tell the renderer the dialog has been loaded; JS reads geom /
     ;; style / controls from the dlg_* / ctrl_* exports.
     (call $host_dialog_loaded (local.get $hwnd) (local.get $arg2))
+    ;; The renderer takes the mirror's visibility from the template, which for
+    ;; a modal dialog is the one bit USER does not honour yet.
+    (if (local.get $tmpl_visible)
+      (then (drop (call $host_show_window (local.get $hwnd) (i32.const 0)))))
     ;; USER's dialog manager places the frame relative to the owner's client
     ;; area (DS_ABSALIGN opts out) and centres a DS_CENTER template. The host
     ;; has mirrored the window by now, so this measures both rects and moves.
@@ -1997,8 +2014,11 @@
     ;; Do not synchronously paint children during DialogBoxParamA creation.
     ;; The modal pump below drains seeded WAT-native paints after the dialog
     ;; is visible and its USER-style visible region is stable.
-    ;; Show the dialog — real DialogBoxParam auto-shows before WM_INITDIALOG
-    (drop (call $host_show_window (local.get $hwnd) (i32.const 1)))
+    ;; Shown after WM_INITDIALOG. A dialog opened from another's init takes
+    ;; the slot; show the outer one now rather than leave it hidden for good.
+    (if (global.get $dlg_show_pending)
+      (then (call $dlg_show_now (global.get $dlg_show_pending))))
+    (global.set $dlg_show_pending (local.get $hwnd))
     ;; Save return address — we'll restore it when EndDialog is called
     (global.set $dlg_ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
     ;; Apply the five-argument stdcall cleanup explicitly. The callback frame

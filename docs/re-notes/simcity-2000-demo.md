@@ -205,9 +205,13 @@ Driving it headlessly, three traps:
   raises it, and `SB_PAGEDOWN` does nothing. The post queue drops messages
   sent back to back, so step 30–40 batches between posts. Hwnds are per
   dialog instance: read them from the `[CreateDialog] ctrl` lines.
-* **Select Power Plant paints nothing.** The picker is a blank grey 308x431
-  box, and a plant button draws only after it has been clicked. It also
-  needs ~1500 batches before it accepts a click. Its buttons are 97x128
+* **Select Power Plant sets up for ~1,900 batches.** Its WM_INITDIALOG
+  moves the box to (0,0), builds eight plant pictures (7 CreateDIBSection)
+  and only then centres it at (358,169): guest CPU (88% of batches spend the
+  whole budget), not a paint bug. It looked like "a blank grey box whose
+  buttons draw only when clicked" because DialogBoxParamA used to show the
+  dialog *before* WM_INITDIALOG; since that was fixed it stays hidden until
+  init returns and first appears complete and centred. Its buttons are 97x128
   cells in a 3x3 grid (coal, hydro, oil / gas, nuclear, wind / solar,
   microwave, fusion), with the client origin at (3,22). One click on a cell
   picks that plant and closes the picker. `dlg-cmd:<id>` does not.

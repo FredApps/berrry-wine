@@ -3629,6 +3629,8 @@
   ;; proc returns TRUE, USER applies focus after init returns, after the app
   ;; has populated controls.
   (global $dlg_init_focus_hwnd (mut i32) (i32.const 0))
+  ;; Modal dialog created but not yet shown: DialogBoxParamA -> first CACA0004.
+  (global $dlg_show_pending (mut i32) (i32.const 0))
   ;; Flag set by continuation-thunk handlers that explicitly (re)direct EIP.
   ;; Read by $run's thunk-zone auto-pop: when a handler leaves EIP equal to
   ;; its own thunk addr (e.g. CACA0004 re-enters the dialog pump), the outer

@@ -726,6 +726,13 @@
               (global.get $dlg_init_focus_hwnd)
               (i32.load offset=0 (global.get $reg_base)))
             (global.set $dlg_init_focus_hwnd (i32.const 0))))
+        ;; First return from WM_INITDIALOG: USER shows the dialog now, unless
+        ;; the init already ended it (then it is never seen at all).
+        (if (i32.eq (global.get $dlg_show_pending) (global.get $dlg_pump_hwnd))
+          (then
+            (if (global.get $dlg_ended)
+              (then (global.set $dlg_show_pending (i32.const 0)))
+              (else (call $dlg_show_now (global.get $dlg_pump_hwnd))))))
         ;; If EndDialog was called, destroy dialog and return result
         (if (global.get $dlg_ended)
           (then
