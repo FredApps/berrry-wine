@@ -6,6 +6,14 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = `
+  (func (export "test_public_map") (param $section i32) (param $access i32)
+    (param $offset i32) (param $size i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (global.set $yield_flag (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $handle_MapViewOfFile (local.get $section) (local.get $access)
+      (i32.const 0) (local.get $offset) (local.get $size) (i32.const 0))
+    (i32.load (global.get $reg_base)))
   (func (export "test_public_section") (param $file i32) (param $protect i32)
     (param $high i32) (param $size i32) (param $name i32) (result i32)
     (global.set $last_error (i32.const 0x1234))
@@ -409,6 +417,48 @@ const extraWat = `
   assert.strictEqual(wat.test_public_section(sectionRead, 2, 0, 0, 0), 0);
   assert.strictEqual(wat.test_dup_error(), 6);
   console.log('PASS  CreateFileMappingA reports operation errors, named status and stdcall cleanup');
+  const readSection = wat.test_public_section(sectionFile, 2, 0, 0, 0);
+  for (const [section, access, offset, size, error] of [
+    [0x123456, 4, 0, 16, 6], [readSection, 2, 0, 16, 5],
+    [readSection, 4, 1, 1, 1132], [readSection, 4, 0, 17, 87],
+    [readSection, 0, 0, 1, 87],
+  ]) {
+    assert.strictEqual(wat.test_public_map(section, access, offset, size), 0);
+    assert.strictEqual(wat.test_dup_error(), error);
+    assert.strictEqual(wat.get_esp() >>> 0, 0x074ff018, 'ordinary mapping errors complete the call');
+  }
+  const view = wat.test_public_map(readSection, 4, 0, 16) >>> 0;
+  assert(view);
+  assert.strictEqual(wat.test_dup_error(), 0x1234, 'successful mapping preserves last error');
+  assert.strictEqual(wat.get_esp() >>> 0, 0x074ff018);
+  let providerReady = false;
+  vfs.setProviderFile('c:\\map-wait.bin', { provider: { size: 16,
+    tryRead: () => providerReady ? new Uint8Array(16) : null,
+    async fill() { providerReady = true; },
+  } });
+  const lazyFile = vfs.createFile('c:\\map-wait.bin', 0x80000000, 3);
+  const lazySection = wat.test_public_section(lazyFile, 2, 0, 0, 0);
+  assert.strictEqual(wat.test_public_map(lazySection, 4, 0, 16), 0);
+  assert.strictEqual(wat.get_esp() >>> 0, 0x074ff000, 'lazy wait preserves the caller stack');
+  assert.strictEqual(wat.test_dup_error(), 0x1234, 'internal wait is not a guest failure');
+  assert(vfs.getPendingRead(1));
+  await vfs.fillPendingRead(vfs.getPendingRead(1));
+  assert(wat.test_public_map(lazySection, 4, 0, 16));
+  assert.strictEqual(wat.get_esp() >>> 0, 0x074ff018);
+  assert.strictEqual(wat.test_dup_error(), 0x1234);
+  console.log('PASS  MapViewOfFile preserves specific errors, successful status and lazy retry frames');
+  vfs.setProviderFile('c:\\map-fault.bin', { provider: { size: 16,
+    tryRead: () => null, async fill() { throw Error('test provider failure'); },
+  } });
+  const faultFile = vfs.createFile('c:\\map-fault.bin', 0x80000000, 3);
+  const faultSection = wat.test_public_section(faultFile, 2, 0, 0, 0);
+  assert.strictEqual(wat.test_public_map(faultSection, 4, 0, 16), 0);
+  assert.strictEqual(wat.get_esp() >>> 0, 0x074ff000);
+  await vfs.fillPendingRead(vfs.getPendingRead(1));
+  assert.strictEqual(wat.test_public_map(faultSection, 4, 0, 16), 0);
+  assert.strictEqual(wat.test_dup_error(), 30);
+  assert.strictEqual(wat.get_esp() >>> 0, 0x074ff018);
+  assert.strictEqual(wat.test_read_parked(), 0);
   for (const access of [0, 0x80000000, 4, 0x100, 2, 0x40000000, 0x10000000]) {
     const seed = vfs.createFile('c:\\eof-rights.bin', 0x40000000, 2);
     vfs.writeFile(seed, Uint8Array.from([1, 2, 3, 4]), 4);

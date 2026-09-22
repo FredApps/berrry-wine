@@ -796,3 +796,27 @@ VFS 41/41 and lazy/provider 48/48 pass; source-compiled public tests cover
 creation errors, named status, recovery and stdcall cleanup. Import signature
 generation records 254 imports; the handler ESP gate passes. No full browser
 or native run, and no new full-build success, is claimed here.
+
+## MapViewOfFile operation errors and retry status (2026-09-21)
+
+MapViewOfFile and its Ex variant now use one operation-result import carrying
+the calling guest thread ID, EAX output location and error/retry status. The
+completion helper no longer asks fs_read_pending in a second RPC. Validation
+reports invalid handles (6), denied section rights (5), unsupported/invalid
+ranges or access (87), misaligned offsets (1132), and allocation failure (8).
+Provider failures retain 30. Successful views preserve the caller's last error.
+Internal lazy status 997 parks with the original stack frame and last error
+intact; it is not exposed as a failed guest mapping. Ex fixed placement remains
+unsupported and now explicitly reports 50 instead of leaving a stale error.
+
+Alignment status is defined by Microsoft's
+[system error list](https://learn.microsoft.com/en-us/windows/win32/debug/system-error-codes--1000-1299-).
+Native Win98 error precedence, named-section lifetime/rights, Unicode creation,
+preferred placement and shared-view coherence remain open. The legacy
+address-returning import and its thread-owner adapter remain available.
+
+VFS 41/41 and lazy/provider 48/48 pass. Source-compiled public tests exercise
+validation errors, success, lazy retry/resume and provider failure, including
+stack cleanup. MapViewOfFileEx tests use the result ABI and check owner ID and
+unsupported-placement error. Signature generation has 255 imports; handler
+ESP validation passes. No new full-build/browser/native result is claimed.

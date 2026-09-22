@@ -825,6 +825,7 @@
   (import "host" "fs_open_file_mapping" (func $host_fs_open_file_mapping (param i32) (result i32)))
   ;; fs_open_file_mapping(nameWA) → mapping handle, or 0 when no such name exists
   (import "host" "fs_map_view_of_file" (func $host_fs_map_view_of_file_owned (param i32 i32 i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_map_view_of_file_result" (func $host_fs_map_view_of_file_result (param i32 i32 i32 i32 i32 i32 i32) (result i32)))
   ;; fs_map_view_of_file(hMapping, access, offsetHi, offsetLo, size) → guest addr
   (import "host" "fs_unmap_view" (func $host_fs_unmap_view (param i32) (result i32)))
   ;; fs_unmap_view(baseAddr) → BOOL

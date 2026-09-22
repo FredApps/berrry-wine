@@ -3679,8 +3679,9 @@
 
   ;; 778: MapViewOfFile(hMapping, dwAccess, dwOffsetHi, dwOffsetLo, dwSize) — 5 args
   (func $handle_MapViewOfFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_map_view_complete (call $host_fs_map_view_of_file
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))
+    (call $handle_map_view_complete (call $host_fs_map_view_of_file_result
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (global.get $reg_base) (global.get $current_thread_id))
       (i32.const 24))
   )
 
@@ -3694,9 +3695,10 @@
     (local.set $base (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
     (call $handle_map_view_complete
       (if (result i32) (local.get $base)
-        (then (i32.const 0))
-        (else (call $host_fs_map_view_of_file
-          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))))
+        (then (i32.const 50)) ;; fixed placement is not supported yet
+        (else (call $host_fs_map_view_of_file_result
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+          (global.get $reg_base) (global.get $current_thread_id))))
       (i32.const 28))
   )
 
@@ -5588,17 +5590,14 @@
 
   ;; Complete a mapping immediately, or park an async provider-backed view
   ;; with its original stdcall frame intact and retry it after the host fill.
-  (func $handle_map_view_complete (param $result i32) (param $unpop i32)
-    (local $pending i32)
-    (i32.store offset=0 (global.get $reg_base) (local.get $result))
+  (func $handle_map_view_complete (param $error i32) (param $unpop i32)
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $unpop)))
-    (if (i32.eqz (local.get $result))
+    (if (local.get $error)
       (then
-        (local.set $pending (call $host_fs_read_pending))
-        (if (i32.eq (local.get $pending) (i32.const 1))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (if (i32.eq (local.get $error) (i32.const 997))
           (then (call $io_block (local.get $unpop)))
-          (else (if (local.get $pending)
-            (then (global.set $last_error (i32.const 30)))))))))
+          (else (global.set $last_error (local.get $error)))))))
 
   ;; ============================================================
   ;; I/O completion ports

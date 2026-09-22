@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 254,
+  "count": 255,
   "sigs": {
     "log": {
       "params": [
@@ -1779,6 +1779,20 @@
     },
     "fs_map_view_of_file": {
       "params": [
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "fs_map_view_of_file_result": {
+      "params": [
+        "i32",
         "i32",
         "i32",
         "i32",
