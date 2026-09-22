@@ -146,9 +146,12 @@ const snapWindow = () => {
             if (v && v.APPS && v.APPS.quake2_demo) v.APPS.quake2_demo.args = a;
           },
         });
+        // Cards other than the "Joining <host>'s game" progress card (be94aa32),
+        // which a room link shows on purpose while it connects.
         window.__cards = 0;
         new MutationObserver(() => {
-          if (document.getElementById('wine-lan-card')) window.__cards++;
+          const card = document.getElementById('wine-lan-card');
+          if (card && !/^Joining /.test(card.textContent)) window.__cards++;
         }).observe(document, { childList: true, subtree: true });
       }, args);
       await page.goto(link, { waitUntil: 'load', timeout: 60000 });

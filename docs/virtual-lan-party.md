@@ -1036,6 +1036,17 @@ connect nobody answers at all fails with `WSAETIMEDOUT` after 20 s of guest
 clock (`$VSOCK_CONNECT_TIMEOUT_MS`, checked on every pump, with an `RST` sent
 so a late `SYNACK` finds nothing).
 
+### A stale offer never blocks the door (implemented 2026-09-22)
+
+An offer outlives its author: a tab closed while waiting for an answer leaves
+it in the owner's inbox, and only its author could withdraw it. Answering one
+used to wait for a data channel with no bound, so the owner's admission loop
+hung and every later joiner waited behind it. Now `Network.accept` answers
+each offer once (keyed by its SDP, which is fresh per attempt), runs answers
+side by side, gives each 20 s (`ANSWER_ESTABLISH_MS`) to open its channel,
+and releases the seat a failed answer had reserved. A connection that opens
+after the `accept` call that answered it returned is queued for the next one.
+
 ## Observability
 
 Diagnostics must explain transport behavior without logging payloads.

@@ -614,6 +614,91 @@ async function main() {
       assert.strictEqual(wire.send(frame(1)), false);
     });
 
+    // ---- answering offers -------------------------------------------------
+    //
+    // An offer outlives its author: a tab closed while waiting for an answer
+    // leaves it in the inbox, and nobody else can withdraw it. The handshake
+    // is faked here only far enough to tell a live offer from a dead one --
+    // a live offerer opens the data channel once answered, a dead one never.
+    {
+      const made = [];
+      class HandshakePC {
+        constructor() {
+          this.iceGatheringState = 'complete';
+          this.connectionState = 'new';
+          this.closed = false;
+          made.push(this);
+        }
+        addEventListener() {}
+        removeEventListener() {}
+        async setRemoteDescription(d) { this.remote = d; }
+        async createAnswer() { return { type: 'answer', sdp: `answer to ${this.remote.sdp}` }; }
+        async setLocalDescription(d) {
+          this.localDescription = d;
+          if (/LIVE/.test(this.remote.sdp)) {
+            setTimeout(() => { if (!this.closed && this.ondatachannel) this.ondatachannel({ channel: new FakeChannel() }); }, 10);
+          }
+        }
+        close() { this.closed = true; }
+      }
+      const realPC = global.RTCPeerConnection;
+      global.RTCPeerConnection = HandshakePC;
+      const joinAs = name => joinNetwork({ exe: 'accept.exe', name, signaling: client() });
+      const host = await joinAs('host');
+      const ghost = await joinAs('ghost');
+      const live = await joinAs('live');
+      host.answerTimeoutMs = 400;
+      const offerFrom = async (net, sdp) => {
+        const hostSeen = (await net.peers()).find(p => p.userId === host.userId);
+        const key = await sharedKeyWith(net.identity, hostSeen.publicKey);
+        await net._post(await inboxKeyFor(net.scope, host.userId),
+          Object.assign({ from: net.userId, publicKey: net.identity.publicKey },
+            await sealed(key, { role: 'offer', sdp, at: Date.now() })));
+      };
+      const released = [];
+      const serveOnce = timeoutMs => host.accept({
+        timeoutMs, keepGoing: true,
+        answerExtra: peer => ({ seat: peer.name }),
+        release: extra => released.push(extra.seat),
+      });
+      try {
+        await offerFrom(ghost, 'v=0 GHOST');
+        await offerFrom(live, 'v=0 LIVE');
+
+        await check('a live joiner is admitted while a dead offer is still being answered', async () => {
+          const t0 = Date.now();
+          const got = await serveOnce(5000);
+          assert.strictEqual(got.peer.name, 'live');
+          assert.deepStrictEqual(got.extra, { seat: 'live' });
+          assert.ok(Date.now() - t0 < 3000, `took ${Date.now() - t0}ms`);
+          got.wire.close();
+        });
+
+        await check('answering a dead offer gives up on its own, and frees what it reserved', async () => {
+          const end = Date.now() + 3000;
+          while (!released.length && Date.now() < end) await new Promise(r => setTimeout(r, 20));
+          assert.deepStrictEqual(released, ['ghost']);
+          assert.ok(made.find(pc => /GHOST/.test(pc.remote.sdp)).closed, 'the dead attempt kept its connection');
+        });
+
+        await check('a dead offer is answered once, not again on every poll', async () => {
+          const before = made.length;
+          await assert.rejects(serveOnce(2500), /nobody tried to connect/);
+          assert.strictEqual(made.length, before, 'the same offer was answered again');
+        });
+
+        await check('the same peer offering again is a new attempt', async () => {
+          await offerFrom(ghost, 'v=0 LIVE again');
+          const got = await serveOnce(5000);
+          assert.strictEqual(got.peer.name, 'ghost');
+          got.wire.close();
+        });
+      } finally {
+        global.RTCPeerConnection = realPC;
+        await Promise.all([host.leave(), ghost.leave(), live.leave()]);
+      }
+    }
+
     // ---- the other player leaving ---------------------------------------
     //
     // The match ending is invisible from inside the guest: the frames just
