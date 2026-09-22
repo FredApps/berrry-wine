@@ -71,9 +71,7 @@
     (field rx_head     i32)      ;; +48   read offset into the ring
     (field rx_len      i32)      ;; +52   bytes currently readable
     (field flags       i32)      ;; +56   bit0 read-closed, bit1 write-closed,
-                                 ;;       bit2 reset, bit3 connect result unreported,
-                                 ;;       bits16-23 datagram reader patience
-                                 ;;       ($VSOCK_UDP_PATIENCE, see $vsock_deliver)
+                                 ;;       bit2 reset, bit3 connect result unreported
     (field backlog     i32)      ;; +60   listener backlog, clamped 1..15
     (field acc_count   i32)      ;; +64   queued accepts
     (field acc_queue   i32 15))  ;; +68   15 child record indexes, ends at +128
@@ -81,10 +79,23 @@
   (global $VSOCK_MAX i32 (i32.const 64))
   (global $VSOCK_REC_SIZE i32 (i32.const 128))
   (global $VSOCK_RX_CAP i32 (i32.const 16384))
-  ;; How many wire drains a datagram may wait at the head of the wire for a
-  ;; socket whose one slot is still full. recvfrom refills it; each stall
-  ;; spends one. See the DGRAM branch of $vsock_deliver.
-  (global $VSOCK_UDP_PATIENCE i32 (i32.const 64))
+  ;; A SOCK_DGRAM socket's ring is a queue of records, each
+  ;; [payload length][source ip][source port] then the payload, so packet
+  ;; boundaries and every sender survive queuing.
+  (global $VSOCK_DGRAM_HDR i32 (i32.const 12))
+  ;; At most this many datagrams wait per socket; later ones are dropped on
+  ;; arrival, as a full receive buffer drops them. The bound is a count, not
+  ;; only bytes, because a game can be written against a small real backlog:
+  ;; Atomic Bomberman's IPX reader pulls up to 64 datagrams per poll into a
+  ;; 64-slot ring, and exactly 64 laps the ring and reads as empty. A join
+  ;; request is sent on every pass of a one-second wait loop, so the queue
+  ;; would otherwise fill with hundreds of copies of it.
+  (global $VSOCK_DGRAM_MAX i32 (i32.const 32))
+  ;; ...and in at most this many bytes. A stream ring only has to hold what
+  ;; the peer's send window put in flight, but datagrams that do not fit are
+  ;; lost: Quake II's signon arrives as a burst of ~1400-byte packets, and a
+  ;; 16KB ring dropped enough of them that the client never entered the world.
+  (global $VSOCK_DGRAM_RX_CAP i32 (i32.const 65536))
   (global $VSOCK_HANDLE_TAG i32 (i32.const 0x53000000))
 
   ;; Room addressing. The host of the room owns 10.0.0.1 and every other
@@ -166,11 +177,6 @@
         (then
           (memory.fill (local.get $rec) (i32.const 0) (global.get $VSOCK_REC_SIZE))
           (store.field VSock peer (local.get $rec) (i32.const -1))
-          ;; A fresh socket starts with full datagram patience: an app that
-          ;; reads only when FD_READ or select() says so has not called
-          ;; recvfrom yet, and its first burst must not be lost for that.
-          (store.field VSock flags (local.get $rec)
-            (i32.shl (global.get $VSOCK_UDP_PATIENCE) (i32.const 16)))
           ;; Claim the record before releasing the lock. Every caller overwrites
           ;; this state a few instructions later, but "free until the caller gets
           ;; around to it" is exactly the window in which a second thread picks
@@ -213,12 +219,18 @@
   (global $vsock_sa_ip (mut i32) (i32.const 0))
   (global $vsock_sa_port (mut i32) (i32.const 0))
 
-  (func $vsock_read_sockaddr (param $addr_ga i32) (param $len i32) (result i32)
+  ;; `$family` is the socket's own: an address of any other family is refused.
+  (func $vsock_read_sockaddr (param $addr_ga i32) (param $len i32) (param $family i32)
+                             (result i32)
     (local $wa i32)
     (if (i32.eqz (local.get $addr_ga)) (then (return (i32.const 0))))
     (if (i32.lt_s (local.get $len) (i32.const 8)) (then (return (i32.const 0))))
     (local.set $wa (call $g2w (local.get $addr_ga)))
-    (if (i32.ne (i32.load16_u (local.get $wa)) (i32.const 2))
+    (if (i32.ne (i32.load16_u (local.get $wa)) (local.get $family))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $family) (i32.const 6))          ;; AF_IPX
+      (then (return (call $vsock_read_sockaddr_ipx (local.get $wa) (local.get $len)))))
+    (if (i32.ne (local.get $family) (i32.const 2))
       (then (return (i32.const 0))))
     (global.set $vsock_sa_port
       (call $bswap16 (i32.load16_u (i32.add (local.get $wa) (i32.const 2)))))
@@ -247,6 +259,66 @@
     (memory.fill (i32.add (local.get $wa) (i32.const 8)) (i32.const 0) (i32.const 8))
     (if (local.get $len_ga)
       (then (i32.store (local.get $len_wa) (i32.const 16)))))
+
+  ;; ---- AF_IPX ---------------------------------------------------------
+  ;;
+  ;; An IPX datagram socket is a room UDP socket under another address
+  ;; family, so IPX games (Atomic Bomberman's ipx95.c) join a room with no
+  ;; second wire format. SOCKADDR_IPX is 14 bytes:
+  ;;   +0 sa_family (6)  +2 sa_netnum[4]  +6 sa_nodenum[6]  +12 sa_socket (BE)
+  ;; The node carries the room address as 00 00 a b c d, the way Windows'
+  ;; IPX-over-IP shims derive a node from an IPv4 one, and the socket number
+  ;; is the port. Node FF FF FF FF FF FF is IPX broadcast, which is the room's
+  ;; limited broadcast (-1). Every room machine sits on network 0, the "this
+  ;; network" number IPX lets a sender use before it has learned its own.
+
+  (func $vsock_read_sockaddr_ipx (param $wa i32) (param $len i32) (result i32)
+    (if (i32.lt_s (local.get $len) (i32.const 14)) (then (return (i32.const 0))))
+    (global.set $vsock_sa_port
+      (call $bswap16 (i32.load16_u (i32.add (local.get $wa) (i32.const 12)))))
+    (if (i32.and
+          (i32.eq (i32.load16_u (i32.add (local.get $wa) (i32.const 6))) (i32.const 0xFFFF))
+          (i32.eq (i32.load (i32.add (local.get $wa) (i32.const 8))) (i32.const -1)))
+      (then
+        (global.set $vsock_sa_ip (i32.const -1))
+        (return (i32.const 1))))
+    ;; A node whose top two bytes are not zero names no room machine; it can
+    ;; only be a real Ethernet MAC, which this network has none of.
+    (if (i32.load16_u (i32.add (local.get $wa) (i32.const 6)))
+      (then (return (i32.const 0))))
+    (global.set $vsock_sa_ip
+      (call $bswap32 (i32.load (i32.add (local.get $wa) (i32.const 8)))))
+    (i32.const 1))
+
+  (func $vsock_write_sockaddr_ipx (param $addr_ga i32) (param $len_ga i32)
+                                  (param $ip i32) (param $port i32)
+    (local $wa i32) (local $len_wa i32) (local $cap i32)
+    (if (i32.eqz (local.get $addr_ga)) (then (return)))
+    (local.set $cap (i32.const 14))
+    (if (local.get $len_ga)
+      (then
+        (local.set $len_wa (call $g2w (local.get $len_ga)))
+        (local.set $cap (i32.load (local.get $len_wa)))))
+    (if (i32.lt_s (local.get $cap) (i32.const 14)) (then (return)))
+    (local.set $wa (call $g2w (local.get $addr_ga)))
+    (i32.store16 (local.get $wa) (i32.const 6))
+    (i32.store (i32.add (local.get $wa) (i32.const 2)) (i32.const 0))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 6)) (i32.const 0))
+    (i32.store (i32.add (local.get $wa) (i32.const 8)) (call $bswap32 (local.get $ip)))
+    (i32.store16 (i32.add (local.get $wa) (i32.const 12)) (call $bswap16 (local.get $port)))
+    (if (local.get $len_ga)
+      (then (i32.store (local.get $len_wa) (i32.const 14)))))
+
+  ;; Out-parameter address in the socket's own family.
+  (func $vsock_write_sockaddr_for (param $rec i32) (param $addr_ga i32) (param $len_ga i32)
+                                  (param $ip i32) (param $port i32)
+    (if (i32.eq (load.field VSock family (local.get $rec)) (i32.const 6))
+      (then
+        (call $vsock_write_sockaddr_ipx (local.get $addr_ga) (local.get $len_ga)
+          (local.get $ip) (local.get $port))
+        (return)))
+    (call $vsock_write_sockaddr (local.get $addr_ga) (local.get $len_ga)
+      (local.get $ip) (local.get $port)))
 
   ;; Is any live record already bound to this ip/port pair?
   (func $vsock_port_taken (param $ip i32) (param $port i32) (result i32)
@@ -322,14 +394,16 @@
     (i32.const -1))
 
   (func $vsock_alloc_ring (param $idx i32) (result i32)
-    (local $rec i32) (local $buf i32)
+    (local $rec i32) (local $buf i32) (local $cap i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))
     (if (load.field VSock rx_buf (local.get $rec))
       (then (return (i32.const 1))))
-    (local.set $buf (call $heap_alloc (global.get $VSOCK_RX_CAP)))
+    (local.set $cap (select (global.get $VSOCK_DGRAM_RX_CAP) (global.get $VSOCK_RX_CAP)
+      (i32.eq (load.field VSock type (local.get $rec)) (i32.const 2))))
+    (local.set $buf (call $heap_alloc (local.get $cap)))
     (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
     (store.field VSock rx_buf (local.get $rec) (local.get $buf))
-    (store.field VSock rx_cap (local.get $rec) (global.get $VSOCK_RX_CAP))
+    (store.field VSock rx_cap (local.get $rec) (local.get $cap))
     (store.field VSock rx_head (local.get $rec) (i32.const 0))
     (store.field VSock rx_len (local.get $rec) (i32.const 0))
     (i32.const 1))
@@ -384,6 +458,77 @@
     (store.field VSock rx_head (local.get $rec) (i32.rem_u (i32.add (local.get $head) (local.get $n)) (local.get $cap)))
     (store.field VSock rx_len (local.get $rec) (i32.sub (local.get $len) (local.get $n)))
     (local.get $n))
+
+  ;; ---- datagram records (see $VSOCK_DGRAM_HDR) --------------------------
+
+  ;; Append one little-endian dword to idx's ring. The caller checked space.
+  (func $vsock_ring_put32 (param $idx i32) (param $v i32)
+    (local $rec i32) (local $buf i32) (local $cap i32) (local $end i32) (local $i i32)
+    (local.set $rec (call $vsock_rec (local.get $idx)))
+    (local.set $buf (call $g2w (load.field VSock rx_buf (local.get $rec))))
+    (local.set $cap (load.field VSock rx_cap (local.get $rec)))
+    (local.set $end (i32.add (load.field VSock rx_head (local.get $rec))
+                             (load.field VSock rx_len (local.get $rec))))
+    (local.set $i (i32.const 0))
+    (block $done (loop $byte
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+      (i32.store8 (i32.add (local.get $buf)
+                    (i32.rem_u (i32.add (local.get $end) (local.get $i)) (local.get $cap)))
+        (i32.shr_u (local.get $v) (i32.shl (local.get $i) (i32.const 3))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $byte)))
+    (store.field VSock rx_len (local.get $rec)
+      (i32.add (load.field VSock rx_len (local.get $rec)) (i32.const 4))))
+
+  ;; The dword `off` bytes past idx's read head, without consuming it.
+  (func $vsock_ring_get32 (param $idx i32) (param $off i32) (result i32)
+    (local $rec i32) (local $buf i32) (local $cap i32) (local $at i32)
+    (local $i i32) (local $v i32)
+    (local.set $rec (call $vsock_rec (local.get $idx)))
+    (local.set $buf (call $g2w (load.field VSock rx_buf (local.get $rec))))
+    (local.set $cap (load.field VSock rx_cap (local.get $rec)))
+    (local.set $at (i32.add (load.field VSock rx_head (local.get $rec)) (local.get $off)))
+    (local.set $i (i32.const 0))
+    (block $done (loop $byte
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 4)))
+      (local.set $v (i32.or (local.get $v)
+        (i32.shl
+          (i32.load8_u (i32.add (local.get $buf)
+            (i32.rem_u (i32.add (local.get $at) (local.get $i)) (local.get $cap))))
+          (i32.shl (local.get $i) (i32.const 3)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $byte)))
+    (local.get $v))
+
+  ;; Discard n bytes at idx's read head.
+  (func $vsock_ring_skip (param $idx i32) (param $n i32)
+    (local $rec i32)
+    (local.set $rec (call $vsock_rec (local.get $idx)))
+    (store.field VSock rx_head (local.get $rec)
+      (i32.rem_u (i32.add (load.field VSock rx_head (local.get $rec)) (local.get $n))
+                 (load.field VSock rx_cap (local.get $rec))))
+    (store.field VSock rx_len (local.get $rec)
+      (i32.sub (load.field VSock rx_len (local.get $rec)) (local.get $n))))
+
+  ;; Walk idx's queued datagram records. Returns the record count, or with
+  ;; $payload set the total payload bytes (what FIONREAD reports).
+  (func $vsock_dgram_walk (param $idx i32) (param $payload i32) (result i32)
+    (local $rec i32) (local $len i32) (local $off i32) (local $n i32)
+    (local $sum i32) (local $plen i32)
+    (local.set $rec (call $vsock_rec (local.get $idx)))
+    (local.set $len (load.field VSock rx_len (local.get $rec)))
+    (block $done (loop $next
+      (br_if $done (i32.ge_u (local.get $off) (local.get $len)))
+      (local.set $plen (call $vsock_ring_get32 (local.get $idx) (local.get $off)))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (local.set $sum (i32.add (local.get $sum) (local.get $plen)))
+      (local.set $off (i32.add (local.get $off)
+        (i32.add (global.get $VSOCK_DGRAM_HDR) (local.get $plen))))
+      (br $next)))
+    (select (local.get $sum) (local.get $n) (local.get $payload)))
+
+  (func $vsock_dgram_count (param $idx i32) (result i32)
+    (call $vsock_dgram_walk (local.get $idx) (i32.const 0)))
 
   ;; Release a record and notify its peer. graceful=0 delivers a reset.
   (func $vsock_destroy (param $idx i32) (param $graceful i32)
@@ -567,10 +712,8 @@
     (i32.const -1))
 
   ;; Find the datagram socket that owns an inbound destination. UDP has no
-  ;; connection record: the sender carried by the current datagram is kept in
-  ;; remote_ip/remote_port until recvfrom consumes it. A full one-datagram
-  ;; receive slot applies lossless wire backpressure instead of merging packet
-  ;; boundaries into the stream ring.
+  ;; connection record: each queued datagram carries its own sender in its
+  ;; ring record (see $VSOCK_DGRAM_HDR).
   (func $vsock_find_udp (param $dip i32) (param $dport i32) (result i32)
     (local $i i32) (local $rec i32) (local $lip i32)
     (local.set $i (i32.const 0))
@@ -666,34 +809,25 @@
               (i32.eqz (call $vsock_is_local_addr (local.get $dip))))
           (then (return (i32.const 1))))
         (local.set $idx (call $vsock_find_udp (local.get $dip) (local.get $dport)))
-        ;; UDP silently discards a datagram for an unopened port. A matching
-        ;; socket with an unread datagram is different: keep this frame queued
-        ;; so packet boundaries and ordering survive the bounded receive slot.
+        ;; UDP silently discards a datagram for an unopened port...
         (if (i32.lt_s (local.get $idx) (i32.const 0))
           (then (return (i32.const 1))))
-        (local.set $rec (call $vsock_rec (local.get $idx)))
-        ;; ...but only while somebody is reading it. The wire has one reader
-        ;; for every socket, so a datagram held here holds up every frame
-        ;; behind it, and a socket nobody reads would hold them for ever. That
-        ;; socket is ordinary: every Quake II client binds the server port and
-        ;; never reads it unless it hosts, so one player's broadcast server
-        ;; search froze every other client's game. recvfrom tops the patience
-        ;; up and each stall spends one; a socket with none left gets real
-        ;; UDP behaviour and loses the datagram, as a full buffer would.
-        (if (load.field VSock rx_len (local.get $rec))
-          (then
-            (local.set $fl (load.field VSock flags (local.get $rec)))
-            (if (i32.eqz (i32.and (local.get $fl) (i32.const 0x00FF0000)))
-              (then (return (i32.const 1))))
-            (store.field VSock flags (local.get $rec)
-              (i32.sub (local.get $fl) (i32.const 0x10000)))
-            (return (i32.const 0))))
+        ;; ...and for a socket whose receive queue is full, which is what a
+        ;; real stack does. A datagram is therefore always consumed here and
+        ;; never holds up the frames behind it on the wire, whether or not
+        ;; anybody ever reads this socket (every Quake II client binds the
+        ;; server port and reads it only when it hosts).
         (if (i32.eqz (call $vsock_alloc_ring (local.get $idx)))
-          (then (return (i32.const 0))))
-        (if (i32.gt_u (local.get $plen) (global.get $VSOCK_RX_CAP))
           (then (return (i32.const 1))))
-        (store.field VSock remote_ip (local.get $rec) (local.get $sip))
-        (store.field VSock remote_port (local.get $rec) (local.get $sport))
+        (if (i32.or
+              (i32.ge_u (call $vsock_dgram_count (local.get $idx))
+                        (global.get $VSOCK_DGRAM_MAX))
+              (i32.lt_u (call $vsock_rx_space (local.get $idx))
+                        (i32.add (local.get $plen) (global.get $VSOCK_DGRAM_HDR))))
+          (then (return (i32.const 1))))
+        (call $vsock_ring_put32 (local.get $idx) (local.get $plen))
+        (call $vsock_ring_put32 (local.get $idx) (local.get $sip))
+        (call $vsock_ring_put32 (local.get $idx) (local.get $sport))
         (call $vsock_ring_write (local.get $idx)
           (i32.add (global.get $vsock_frame_buf) (global.get $VLN_HDR))
           (local.get $plen))
@@ -854,27 +988,44 @@
                        (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $idx i32) (local $rec i32)
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-    (if (i32.ne (local.get $arg0) (i32.const 2))          ;; AF_INET only
+    (if (i32.eq (local.get $arg0) (i32.const 6))          ;; AF_IPX
       (then
-        (call $vsock_set_error (i32.const 10047))          ;; WSAEAFNOSUPPORT
-        (i32.store offset=0 (global.get $reg_base) (i32.const -1))
-        (return)))
-    (if (i32.and (i32.ne (local.get $arg1) (i32.const 1))
-                 (i32.ne (local.get $arg1) (i32.const 2)))
-      (then
-        (call $vsock_set_error (i32.const 10044))          ;; WSAESOCKTNOSUPPORT
-        (i32.store offset=0 (global.get $reg_base) (i32.const -1))
-        (return)))
-    (if (i32.and
-          (i32.ne (local.get $arg2) (i32.const 0))
-          (i32.ne (local.get $arg2)
-            (if (result i32) (i32.eq (local.get $arg1) (i32.const 2))
-              (then (i32.const 17))                       ;; IPPROTO_UDP
-              (else (i32.const 6)))))                     ;; IPPROTO_TCP
-      (then
-        (call $vsock_set_error (i32.const 10043))          ;; WSAEPROTONOSUPPORT
-        (i32.store offset=0 (global.get $reg_base) (i32.const -1))
-        (return)))
+        ;; IPX datagrams only (see $vsock_read_sockaddr_ipx). The protocol is
+        ;; NSPROTO_IPX plus the packet type to send, 1000..1255; SPX
+        ;; (NSPROTO_SPX 1256, SOCK_SEQPACKET) is a stream this switch does
+        ;; not carry.
+        (if (i32.ne (local.get $arg1) (i32.const 2))
+          (then
+            (call $vsock_set_error (i32.const 10044))      ;; WSAESOCKTNOSUPPORT
+            (i32.store offset=0 (global.get $reg_base) (i32.const -1))
+            (return)))
+        (if (i32.gt_u (i32.sub (local.get $arg2) (i32.const 1000)) (i32.const 255))
+          (then
+            (call $vsock_set_error (i32.const 10043))      ;; WSAEPROTONOSUPPORT
+            (i32.store offset=0 (global.get $reg_base) (i32.const -1))
+            (return))))
+      (else
+        (if (i32.ne (local.get $arg0) (i32.const 2))      ;; AF_INET
+          (then
+            (call $vsock_set_error (i32.const 10047))      ;; WSAEAFNOSUPPORT
+            (i32.store offset=0 (global.get $reg_base) (i32.const -1))
+            (return)))
+        (if (i32.and (i32.ne (local.get $arg1) (i32.const 1))
+                     (i32.ne (local.get $arg1) (i32.const 2)))
+          (then
+            (call $vsock_set_error (i32.const 10044))      ;; WSAESOCKTNOSUPPORT
+            (i32.store offset=0 (global.get $reg_base) (i32.const -1))
+            (return)))
+        (if (i32.and
+              (i32.ne (local.get $arg2) (i32.const 0))
+              (i32.ne (local.get $arg2)
+                (if (result i32) (i32.eq (local.get $arg1) (i32.const 2))
+                  (then (i32.const 17))                   ;; IPPROTO_UDP
+                  (else (i32.const 6)))))                 ;; IPPROTO_TCP
+          (then
+            (call $vsock_set_error (i32.const 10043))      ;; WSAEPROTONOSUPPORT
+            (i32.store offset=0 (global.get $reg_base) (i32.const -1))
+            (return)))))
     ;; A socket is the first moment a Winsock game needs the room, the way
     ;; DPOPEN is for a DirectPlay one, so a host that asks the person which
     ;; room gets to ask here. Quake II is the case: WSAStartup runs at boot for
@@ -914,7 +1065,8 @@
         (call $vsock_set_error (i32.const 10022))          ;; WSAEINVAL
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
         (return)))
-    (if (i32.eqz (call $vsock_read_sockaddr (local.get $arg1) (local.get $arg2)))
+    (if (i32.eqz (call $vsock_read_sockaddr (local.get $arg1) (local.get $arg2)
+          (load.field VSock family (local.get $rec))))
       (then
         (call $vsock_set_error (i32.const 10047))          ;; WSAEAFNOSUPPORT
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
@@ -1027,7 +1179,8 @@
         (call $vsock_set_error (i32.const 10022))
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
         (return)))
-    (if (i32.eqz (call $vsock_read_sockaddr (local.get $arg1) (local.get $arg2)))
+    (if (i32.eqz (call $vsock_read_sockaddr (local.get $arg1) (local.get $arg2)
+          (load.field VSock family (local.get $rec))))
       (then
         (call $vsock_set_error (i32.const 10047))
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
@@ -1242,7 +1395,7 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const -1))
         (return)))
     (local.set $rec (call $vsock_rec (local.get $idx)))
-    (call $vsock_write_sockaddr (local.get $arg1) (local.get $arg2)
+    (call $vsock_write_sockaddr_for (local.get $rec) (local.get $arg1) (local.get $arg2)
       (load.field VSock local_ip (local.get $rec))
       (load.field VSock local_port (local.get $rec)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
@@ -1331,7 +1484,8 @@
     (if (i32.ne (load.field VSock type (local.get $rec)) (i32.const 2))
       (then (call $vsock_set_error (i32.const 10044))
         (i32.store offset=0 (global.get $reg_base) (i32.const -1)) (return)))
-    (if (i32.eqz (call $vsock_read_sockaddr (local.get $arg4) (local.get $to_len)))
+    (if (i32.eqz (call $vsock_read_sockaddr (local.get $arg4) (local.get $to_len)
+          (load.field VSock family (local.get $rec))))
       (then (call $vsock_set_error (i32.const 10047))
         (i32.store offset=0 (global.get $reg_base) (i32.const -1)) (return)))
     (local.set $dip (global.get $vsock_sa_ip))
@@ -1379,17 +1533,15 @@
     (if (i32.ne (load.field VSock type (local.get $rec)) (i32.const 2))
       (then (call $vsock_set_error (i32.const 10044))
         (i32.store offset=0 (global.get $reg_base) (i32.const -1)) (return)))
-    ;; This socket has a reader: let a datagram wait for it (see $vsock_deliver).
-    (store.field VSock flags (local.get $rec)
-      (i32.or (i32.and (load.field VSock flags (local.get $rec)) (i32.const 0xFF00FFFF))
-              (i32.shl (global.get $VSOCK_UDP_PATIENCE) (i32.const 16))))
     (call $vsock_pump)
-    (local.set $available (load.field VSock rx_len (local.get $rec)))
-    (if (local.get $available)
+    (if (load.field VSock rx_len (local.get $rec))
       (then
-        (call $vsock_write_sockaddr (local.get $arg4) (local.get $from_len)
-          (load.field VSock remote_ip (local.get $rec))
-          (load.field VSock remote_port (local.get $rec)))
+        ;; The head record: [payload length][source ip][source port].
+        (local.set $available (call $vsock_ring_get32 (local.get $idx) (i32.const 0)))
+        (call $vsock_write_sockaddr_for (local.get $rec) (local.get $arg4) (local.get $from_len)
+          (call $vsock_ring_get32 (local.get $idx) (i32.const 4))
+          (call $vsock_ring_get32 (local.get $idx) (i32.const 8)))
+        (call $vsock_ring_skip (local.get $idx) (global.get $VSOCK_DGRAM_HDR))
         (local.set $n (local.get $available))
         (if (i32.gt_u (local.get $n) (local.get $arg2))
           (then (local.set $n (local.get $arg2))))
@@ -1398,8 +1550,8 @@
         ;; as a second packet. Winsock reports WSAEMSGSIZE in that case.
         (if (i32.lt_u (local.get $n) (local.get $available))
           (then
-            (store.field VSock rx_len (local.get $rec) (i32.const 0))
-            (store.field VSock rx_head (local.get $rec) (i32.const 0))
+            (call $vsock_ring_skip (local.get $idx)
+              (i32.sub (local.get $available) (local.get $n)))
             (call $vsock_set_error (i32.const 10040))
             (i32.store offset=0 (global.get $reg_base) (i32.const -1))
             (return)))
@@ -1638,8 +1790,17 @@
         (return)))
     (if (i32.eq (local.get $arg1) (i32.const 0x4004667F))  ;; FIONREAD
       (then
+        ;; FIONREAD is a poll, like select: a real stack has been receiving
+        ;; in the background, so move the wire before answering. Atomic
+        ;; Bomberman's join waits one second on sendto + FIONREAD alone,
+        ;; never taking a message, and saw every reply only after giving up.
+        (call $vsock_pump)
+        ;; A datagram socket reports every queued payload byte, not the
+        ;; first datagram's size and not the record headers.
         (i32.store (call $g2w (local.get $arg2))
-          (load.field VSock rx_len (local.get $rec)))
+          (if (result i32) (i32.eq (load.field VSock type (local.get $rec)) (i32.const 2))
+            (then (call $vsock_dgram_walk (local.get $idx) (i32.const 1)))
+            (else (load.field VSock rx_len (local.get $rec)))))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (return)))
     (call $vsock_set_error (i32.const 10022))

@@ -811,6 +811,10 @@ const APP_ENTRY = (() => {
     Object.keys(APPS).sort().join(' '));
   process.exit(1);
 })();
+// An app's registry `wallClock` date pins the calendar origin like
+// --wall-clock-ms does; the flag wins.
+const CALENDAR_ORIGIN_MS = WALL_CLOCK_MS ||
+  (APP_ENTRY && APP_ENTRY.wallClock ? Date.parse(APP_ENTRY.wallClock) : 0);
 // Match the browser: an app registry opt-in is launch behavior, not a UI-only
 // hint. Keep explicit CLI flags as the A/B override, with `--no-…` strongest.
 const COPY_SUPEROPS = resolveCopySuperops(
@@ -2242,7 +2246,7 @@ async function main() {
     // separates "waiting for time to pass" from "doing work" in a slow run.
     guestNowMs: () => CLOCK_ORIGIN + (Date.now() - CLOCK_ORIGIN) * TIME_SCALE,
     // The calendar clock, pinned only when --wall-clock-ms= asked for it.
-    wallNowMs: WALL_CLOCK_MS ? () => WALL_CLOCK_MS : undefined,
+    wallNowMs: CALENDAR_ORIGIN_MS ? () => CALENDAR_ORIGIN_MS : undefined,
     // The room segment, when this process was launched into one. Without it
     // the guest's sockets still work; the room is just this process alone.
     vlanWire: VLAN_WIRE ? new (require('../lib/vlan-wire').ProcessWire)(process) : null,
@@ -3509,7 +3513,7 @@ async function main() {
   // far the guest got. batchTicks() is guest milliseconds since the run
   // started, so the calendar moves at the rate the guest believes time moves
   // and two runs of one --input script still see the identical calendar.
-  if (WALL_CLOCK_MS) ctx.wallNowMs = () => WALL_CLOCK_MS + batchClock.batchTicks();
+  if (CALENDAR_ORIGIN_MS) ctx.wallNowMs = () => CALENDAR_ORIGIN_MS + batchClock.batchTicks();
 
   // --- Override input for test injection ---
   let lastInputEvent = null;

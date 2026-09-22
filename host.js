@@ -1085,6 +1085,16 @@ class WineAssembly {
       d3d9Backend: self.d3d9Backend ||
         (typeof window !== 'undefined' && window.WineD3D && window.WineD3D.renderer) || null,
       d3d9Programmable: self.d3d9Programmable === true,
+      // `wallClock` in lib/apps.js: the calendar (GetLocalTime and friends)
+      // is moved back a whole number of days onto that date, for demos that
+      // refuse to run after an expiry date. Only the date moves: the time of
+      // day stays real, because games seed rand() from time() and two players
+      // pinned to one instant draw the same network id and drop each other's
+      // packets as their own (Atomic Bomberman).
+      wallNowMs: Number.isFinite(self.wallClockMs)
+        ? (shift => () => Date.now() - shift)(
+          Math.floor((Date.now() - self.wallClockMs) / 86400000) * 86400000)
+        : undefined,
       createD3DRenderWorker: () => self._createD3DRenderWorker(),
       apiTable: self.apiTable,
       get renderer() { return self.renderer; },

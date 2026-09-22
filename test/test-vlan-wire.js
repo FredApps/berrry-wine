@@ -129,11 +129,54 @@ async function main() {
     assert.strictEqual(host.wat.test_call_recvfrom(udpHost, rx, 8, 0, 0, 0) | 0, live.length,
       `the live socket got nothing: ${host.wire.pending} frame(s) still queued behind the idle one`);
     assert.deepStrictEqual(host.readBuf(rx, live.length), live);
-    // The idle socket kept the datagram that fit and lost the one that did
-    // not, which is what a full UDP buffer does.
+    // The idle socket queued both, in order, each still one datagram.
     assert.strictEqual(host.wat.test_call_recvfrom(idle, rx, 8, 0, 0, 0) | 0, 1);
     assert.deepStrictEqual(host.readBuf(rx, 1), [7]);
+    assert.strictEqual(host.wat.test_call_recvfrom(idle, rx, 8, 0, 0, 0) | 0, 1);
+    assert.deepStrictEqual(host.readBuf(rx, 1), [8]);
     assert.strictEqual(host.wat.test_call_recvfrom(idle, rx, 8, 0, 0, 0) | 0, -1);
+  });
+
+  // Atomic Bomberman's join request is sent on every pass of a one-second
+  // wait loop, and its IPX reader pulls up to 64 datagrams per poll into a
+  // 64-slot ring that reads as empty after exactly 64. A real receive buffer
+  // drops the flood; an unbounded queue hands all of it over.
+  check('a flooded datagram socket keeps a bounded backlog and drops the rest', () => {
+    const dst = peer.sockaddr(HOST_IP, GAME_PORT + 1);
+    for (let i = 0; i < 100; i++) {
+      assert.strictEqual(peer.wat.test_call_sendto(udpPeer, peer.buf([i]), 1, 0, dst, 16) | 0, 1);
+    }
+    settle(host, peer);
+    assert.strictEqual(host.wire.pending, 0, 'the flood must not wait on the wire');
+    const rx = host.buf(8);
+    const got = [];
+    for (let n; (n = host.wat.test_call_recvfrom(udpHost, rx, 8, 0, 0, 0) | 0) > 0;) {
+      got.push(host.readBuf(rx, n)[0]);
+    }
+    assert.deepStrictEqual(got, Array.from({ length: 32 }, (_, i) => i));
+  });
+
+  // FIONREAD is a poll: a program that loops on sendto + FIONREAD and never
+  // takes a message must still see what arrived, and a datagram socket
+  // reports the payload bytes of everything queued.
+  check('FIONREAD moves the wire and counts queued datagram payload', () => {
+    const FIONREAD = 0x4004667f | 0;
+    const dst = peer.sockaddr(HOST_IP, GAME_PORT + 1);
+    for (const d of [[1, 2, 3], [4, 5]]) {
+      assert.strictEqual(peer.wat.test_call_sendto(udpPeer, peer.buf(d), d.length, 0, dst, 16) | 0, d.length);
+    }
+    assert.strictEqual(host.wire.pending, 2);
+    const p = host.buf(4);
+    assert.strictEqual(host.wat.test_call_ioctlsocket(udpHost, FIONREAD, p) | 0, 0);
+    assert.deepStrictEqual(host.readBuf(p, 4), [5, 0, 0, 0]);
+    const rx = host.buf(8);
+    const from = host.buf(16);
+    const fromLen = host.buf([16, 0, 0, 0]);
+    assert.strictEqual(host.wat.test_call_recvfrom(udpHost, rx, 8, 0, from, fromLen) | 0, 3);
+    assert.strictEqual(host.readSockaddr(from).ip, PEER_IP);
+    assert.strictEqual(host.wat.test_call_ioctlsocket(udpHost, FIONREAD, p) | 0, 0);
+    assert.deepStrictEqual(host.readBuf(p, 4), [2, 0, 0, 0]);
+    assert.strictEqual(host.wat.test_call_recvfrom(udpHost, rx, 8, 0, 0, 0) | 0, 2);
   });
 
   check('a socket that is being read keeps every datagram in order', () => {
