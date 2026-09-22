@@ -766,12 +766,12 @@
   (import "host" "fs_duplicate_mapping_result" (func $host_fs_duplicate_mapping_result (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "fs_set_file_pointer" (func $host_fs_set_file_pointer (param i32 i32 i32) (result i32)))
   (import "host" "fs_seek_result" (func $host_fs_seek_result (param i32 i32 i32 i32 i32) (result i32)))
-  ;; handle, distanceLow, optional high-word WA, method, result WA -> Win32 error
+  ;; handle, distanceLow, optional high-word GA, method, private result WA -> Win32 error
   (import "host" "fs_set_end_of_file" (func $host_fs_set_end_of_file (param i32) (result i32)))
   (import "host" "fs_set_end_of_file_result" (func $host_fs_set_end_of_file_result (param i32) (result i32)))
   (import "host" "fs_get_file_size" (func $host_fs_get_file_size (param i32) (result i32)))
   (import "host" "fs_file_size_result" (func $host_fs_file_size_result (param i32 i32 i32) (result i32)))
-  ;; handle, low output WA, optional high output WA -> Win32 error
+  ;; handle, private low output WA, optional high output GA -> Win32 error
   (import "host" "fs_file_information" (func $host_fs_file_information (param i32 i32) (result i32)))
   ;; handle, BY_HANDLE_FILE_INFORMATION output guest address -> Win32 error
   ;; fs_file_time(handle, set, creationGA, accessGA, writeGA) → Win32 error code

@@ -3,6 +3,19 @@
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 const extraWat = String.raw`
+  (func (export "test_size_high") (param $h i32) (param $out i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $handle_GetFileSize (local.get $h) (local.get $out)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
+  (func (export "test_compressed_high") (param $path i32) (param $out i32) (result i32)
+    (call $get_compressed_file_size (local.get $path) (local.get $out) (i32.const 0)))
+  (func (export "test_seek_high") (param $h i32) (param $low i32)
+      (param $high i32) (param $method i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $handle_SetFilePointer (local.get $h) (local.get $low) (local.get $high)
+      (local.get $method) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
   (func (export "test_file_times") (param $set i32) (param $handle i32)
       (param $c i32) (param $a i32) (param $w i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
@@ -87,6 +100,44 @@ const extraWat = String.raw`
       assert.deepStrictEqual(notices, []);
     }
   }
+  const largeSize = 0x23456789a;
+  vfs.setProviderFile('c:\\large.bin', { provider: { size: largeSize,
+    readRange() { throw new Error('metadata must not read file data'); } } });
+  const large = vfs.createFile('c:\\large.bin', 0x80000000, 3);
+  const path = e.guest_alloc(32) >>> 0;
+  [...Buffer.from('c:\\large.bin'), 0].forEach((byte, i) => e.guest_write8(path + i, byte));
+  for (const split of [1, 2, 3]) {
+    const high = page + 4096 - split;
+    for (let i = -1; i <= 4; i++) e.guest_write8(high + i, 0xcc);
+    assert.strictEqual(e.test_size_high(large, high) >>> 0, largeSize >>> 0);
+    assert.deepStrictEqual(read(high - 1, 6), [0xcc, 2, 0, 0, 0, 0xcc]);
+    assert.strictEqual(e.get_esp(), 0x0030000c);
+    e.guest_write32(high, 0xcccccccc);
+    assert.strictEqual(e.test_compressed_high(path, high) >>> 0, largeSize >>> 0);
+    assert.strictEqual(e.guest_read32(high), 2);
+    e.guest_write32(high, 1);
+    assert.strictEqual(e.test_seek_high(large, 0xfffffff0, high, 0) >>> 0, 0xfffffff0);
+    assert.strictEqual(vfs.handles.get(large).pos, 0x1fffffff0);
+    e.guest_write32(high, 0);
+    assert.strictEqual(e.test_seek_high(large, 0x30, high, 1), 0x20);
+    assert.deepStrictEqual(read(high - 1, 6), [0xcc, 2, 0, 0, 0, 0xcc]);
+    assert.strictEqual(e.get_esp(), 0x00300014);
+    for (const fail of [() => e.test_size_high(0xdead, high),
+      () => e.test_seek_high(0xdead, 7, high, 0)]) {
+      e.guest_write32(high, 0x12345678);
+      assert.strictEqual(fail() >>> 0, 0xffffffff);
+      assert.strictEqual(e.test_info_error(), 6);
+      assert.strictEqual(e.guest_read32(high), 0x12345678);
+    }
+  }
+  for (const badHigh of [page + 8191, 0xfffffffe]) {
+    const handlesBefore = vfs.handles.size;
+    assert.strictEqual(e.test_compressed_high(path, badHigh) >>> 0, 0xffffffff);
+    assert.strictEqual(e.test_info_error(), 87, 'missing second page or wrap is rejected');
+    assert.strictEqual(vfs.handles.size, handlesBefore, 'invalid output does not open a handle');
+  }
+  e.guest_free(path);
+  vfs.closeHandle(large);
   vfs.closeHandle(handle);
-  console.log('PASS  file information and timestamps: real WAT ABI, all sparse splits and failure preservation');
+  console.log('PASS  file metadata: information, timestamps, size/seek high words and sparse boundaries');
 })().catch(error => { console.error(error); process.exit(1); });

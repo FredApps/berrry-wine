@@ -1391,12 +1391,10 @@
 
   ;; 518: GetFileSize
   (func $handle_GetFileSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $high_wa i32)
     ;; GetFileSize(hFile, lpFileSizeHigh) — 2 args
-    (if (local.get $arg1) (then (local.set $high_wa (call $g2w (local.get $arg1)))))
     (i32.store offset=0 (global.get $reg_base) (i32.const -1))
     (global.set $last_error (call $host_fs_file_size_result
-      (local.get $arg0) (global.get $reg_base) (local.get $high_wa)))
+      (local.get $arg0) (global.get $reg_base) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
@@ -1432,7 +1430,7 @@
   ;; Query the opened file itself; enumeration must not supply a second identity.
   (func $get_compressed_file_size
       (param $path i32) (param $high_out i32) (param $wide i32) (result i32)
-    (local $err i32) (local $high_wa i32) (local $handle i32)
+    (local $err i32) (local $head i32) (local $valid i32) (local $handle i32)
     (local $low i32)
     (local.set $err (call $compressed_file_path_error
       (local.get $path) (local.get $wide)))
@@ -1442,9 +1440,19 @@
         (return (i32.const -1))))
     (if (local.get $high_out)
       (then
-        (local.set $high_wa
-          (call $g2w_affine_span (local.get $high_out) (i32.const 4)))
-        (if (i32.eq (local.get $high_wa) (global.get $NULL_SENTINEL))
+        ;; Validate each page fragment, not physical adjacency of the DWORD.
+        ;; Reject wrap before translating the optional second fragment.
+        (if (i32.gt_u (local.get $high_out) (i32.const 0xfffffffc))
+          (then (global.set $last_error (i32.const 87)) (return (i32.const -1))))
+        (local.set $head (i32.sub (i32.const 4096) (i32.and (local.get $high_out) (i32.const 4095))))
+        (if (i32.gt_u (local.get $head) (i32.const 4)) (then (local.set $head (i32.const 4))))
+        (local.set $valid (i32.ne
+          (call $g2w_affine_span (local.get $high_out) (local.get $head)) (global.get $NULL_SENTINEL)))
+        (if (i32.lt_u (local.get $head) (i32.const 4))
+          (then (local.set $valid (i32.and (local.get $valid) (i32.ne
+            (call $g2w_affine_span (i32.add (local.get $high_out) (local.get $head))
+              (i32.sub (i32.const 4) (local.get $head))) (global.get $NULL_SENTINEL))))))
+        (if (i32.eqz (local.get $valid))
           (then
             (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
             (return (i32.const -1))))))
@@ -1458,7 +1466,7 @@
         (global.set $last_error (i32.const 2)) ;; ERROR_FILE_NOT_FOUND
         (return (i32.const -1))))
     (local.set $err (call $host_fs_file_size_result
-      (local.get $handle) (global.get $reg_base) (local.get $high_wa)))
+      (local.get $handle) (global.get $reg_base) (local.get $high_out)))
     (local.set $low (i32.load (global.get $reg_base)))
     (drop (call $host_fs_close_handle (local.get $handle)))
     (if (local.get $err)

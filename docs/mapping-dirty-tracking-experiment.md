@@ -377,3 +377,26 @@ values and calendar tests; their pointer-forwarding expectation now correctly
 requires guest addresses. Host-import signatures, logical-AND and duplicate
 gates pass. Remaining metadata interfaces are size-high, seek-high and calendar
 conversion; dirty-page tracking is still not implemented.
+
+## Size and seek high words keep guest addresses
+
+`fs_file_size_result` and `fs_seek_result` now distinguish their two pointer
+roles explicitly: the low result still targets private `reg_base` through a
+WASM address, while the optional high word retains its guest address and uses
+`gl32/gs32`. SetFilePointer still interprets that input as signed and writes
+the high output only on success. Import arities are unchanged.
+
+GetCompressedFileSize shares the high-output contract. Its guard now validates
+the DWORD as one or two page fragments instead of requiring contiguous backing
+for all four bytes. Each fragment is translated once during validation; wrap
+is rejected first. Unmapped output remains an error before opening a file.
+
+The real-handler regression failed before migration with three untouched
+GetFileSize high-word bytes. It now covers every DWORD split for ordinary and
+compressed size using a >8 GiB lazy provider whose reader throws if called;
+metadata never materializes bytes. Seek tests cover a 64-bit absolute input,
+relative carry into the next high word, canaries, stdcall cleanup and invalid
+handle preservation. Additional checks reject a missing second output page
+and address wrap without creating a handle. Host signature, logical-AND and
+duplicate gates pass. Calendar conversion is the remaining translated-pointer
+metadata interface in this bounded audit; dirty tracking remains open.
