@@ -1055,3 +1055,52 @@ worth capturing: gameplay. The matched set is `look-170-level.png` (D3D),
 `t16soft-170.png` (software) and `awake-170.png` (OpenGL), all at batch 170000
 on the same input route, with mean luma 54.18 / 56.44 / 58.48 — an 8% spread
 across three rasterizers at 16bpp, which is dithering and quantization.
+
+### The in-game renderer switch: the route works, the restart does not (2026-09-22)
+
+The guest can change renderer from its own UI, and the route is worth writing
+down because none of it is guessable from disk:
+
+    main menu            Configuration   click (110,250)
+      -> Video           click (110,216)
+      -> Video modes     click (110,184)      dialog 0x10032
+    tab strip at y=154   Software x=290, OpenGL x=371, Direct3D x=423
+    Ok #1                dismisses the driver-advice prompt (dialog 0x10045)
+    Ok #2                commits the mode dialog (0x10032)
+
+**Both Oks are mandatory.** The advice prompt owns control id **1**, the same id
+as the mode dialog's "&Ok", so a single `dlg-click:1` looks clean, crashes
+nothing, and never switches. The dumps name the dialog each click reached, so
+use them rather than assuming: `after-tab: dlg=0x10045`, `after-ok1:
+dlg=0x10032`.
+
+Also undocumented: merely *opening* Video modes writes `EngineType = 1` twice
+by itself. So a `[reg] set` line is not evidence of a switch — only the value
+after the second Ok is.
+
+Measured with `hl-chain.sh A gl d3d soft` (software seed, `--headless-gl`,
+`--tick-ms-per-batch=16`): the first leg writes `EngineType = 2`, so
+**software -> OpenGL does switch**. The second and third legs never reach a
+mode dialog at all (every dump reports `dlg=0x1002b`, then `0x10048`) and write
+nothing.
+
+### CORRECTION to the D3D teardown claim (2026-09-22)
+
+An earlier session attributed the post-switch corruption to Direct3D's
+teardown, on the evidence of one capture taken after a switch *to* D3D. That
+attribution was wrong. The OpenGL leg above does exactly the same thing:
+`chain-A-gl.png` is 85.4% `#c0c0c0` with 11% black -- Win98 dialog grey, not the
+game menu -- and the settled dump says `dlg=0x1002b`, i.e. the mode dialog
+closed and the Video config dialog is what owns the screen, with no re-rendered
+menu behind it. Two renderers, one symptom: the fault is in the **restart
+path**, not in either rasterizer.
+
+That has a direct consequence for any automated switch test. Every click after
+the first switch is scheduled against a window layout that no longer exists, so
+**a blind batch-scheduled chain cannot cross a renderer restart**. A test must
+either re-derive the route from a `dlg-dump` after each switch, or be N separate
+single-switch runs seeded from each starting renderer.
+
+Still unknown, and the next thing to measure: whether the grey window recovers
+on its own given more batches, or is terminal. One capture cannot tell those
+apart; take a series.
