@@ -1259,3 +1259,11 @@ with error 6 on this profile. The first matrix reused that handle and therefore
 invalidated its later cases. The committed probe instead opens a fresh handle
 per case, records this effect separately, and verifies disk bytes through a new
 open. Do not generalize the handle quirk or emulate it without further controls.
+
+The follow-up [write-path audit and isolated cost experiment](mapping-dirty-tracking-experiment.md)
+records bypassing x87/native/host writes, bulk/generated coverage still needed,
+and the concurrent flush/reset hazard. A clean temporary worktree experiment
+ran paired scalar-store A/B and A/A controls; raw samples are committed. The
+naive tracked-page atomic-OR hook measured +35.59% in that narrow fixture on a
+busy machine, not a game regression estimate. Production write paths remain
+unchanged; full tracking coverage and quiet game measurements remain open.
