@@ -1162,8 +1162,10 @@ const SAFE_CALLS = [
   // the flag word -- every register access belongs to the handler around them.
   [/^(sh_\w+|shld(16|32)|shrd(16|32)|off_add|pow2)$/, []],
   // ip/halt only. rpush/rpop are the shadow return stack, which is a cache over
-  // guest ip -> arena address and holds no guest register.
-  [/^(slice_exit|jlook|rpush|rpop)$/, []],
+  // guest ip -> arena address and holds no guest register. $jlook_edge is
+  // $jlook of $gip plus a store to $ip; in a region that $ip is dead, because
+  // every exit leaves through `br $out` and the epilogue re-resolves it.
+  [/^(slice_exit|jlook|jlook_edge|rpush|rpop)$/, []],
   [/^(port_in|port_out)$/, []],                      // leave to the host, take no register
   // REP widening's guards and its decline counter. Two queries over a linear
   // span and one statistic; none of the three reads or writes a guest register.

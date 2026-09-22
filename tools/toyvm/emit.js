@@ -93,6 +93,46 @@ const EA_ARMS = [
 // uses. Two copies in the wasm, one copy in the source: same rule EA_ARMS is
 // shared under, for the same reason. A drift here would be two disagreements
 // about where a store went, one of them only reachable from compiled code.
+function wideAccessors(b, p, a, setL) {
+  let s = '';
+  for (const [w, half, n] of [[16, 8, 2], [32, 16, 4]]) {
+    const last = 0x10000 - n;
+    const plain = `
+    (i32.and
+      (i32.and (i32.le_u (i32.and (local.get $off) (i32.const 0xFFFF)) (i32.const ${last}))
+               (i32.le_u (i32.and (local.get $l) (i32.const 0xFFFF)) (i32.const ${last})))
+      (i32.ne (i32.or (i32.and (local.get $l) (i32.const 0xFFF0000)) (i32.const 1))
+              (i32.load (i32.const ${isa.VGA_CTL_KEY}))))`;
+    const code = `
+    (i32.and (i32.load16_u (i32.add (i32.const ${isa.CODE_BITMAP})
+                                    (i32.shr_u (local.get $l) (i32.const 3))))
+             (i32.shl (i32.const ${(1 << n) - 1}) (i32.and (local.get $l) (i32.const 7))))`;
+    const load = w === 16 ? 'i32.load16_u' : 'i32.load';
+    const store = w === 16 ? 'i32.store16' : 'i32.store';
+    s += `
+(func $rd${w}${b} ${p} (param $off i32) (result i32)
+  (local $l i32)
+  ${setL}
+  (if ${plain}
+    (then (return (${load} (local.get $l)))))
+  (i32.or
+    (call $rd${half}${b} ${a} (local.get $off))
+    (i32.shl (call $rd${half}${b} ${a} (call $off_add (local.get $off) (i32.const ${n / 2})))
+             (i32.const ${half}))))
+
+(func $wr${w}${b} ${p} (param $off i32) (param $v i32)
+  (local $l i32)
+  ${setL}
+  (if (i32.and ${plain} (i32.eqz ${code}))
+    (then (${store} (local.get $l) (local.get $v)) (return)))
+  (call $wr${half}${b} ${a} (local.get $off) (local.get $v))
+  (call $wr${half}${b} ${a} (call $off_add (local.get $off) (i32.const ${n / 2}))
+    (i32.shr_u (local.get $v) (i32.const ${half}))))
+`;
+  }
+  return s;
+}
+
 function memAccessors() {
   let s = '';
   for (const b of ['', 'b']) {
@@ -139,28 +179,21 @@ function memAccessors() {
       (global.set $smc (i32.const 2))))
   (i32.store8 (local.get $l) (local.get $v)))
 
-(func $rd16${b} ${p} (param $off i32) (result i32)
-  (i32.or
-    (call $rd8${b} ${a} (local.get $off))
-    (i32.shl (call $rd8${b} ${a} (call $off_add (local.get $off) (i32.const 1)))
-             (i32.const 8))))
-
-(func $wr16${b} ${p} (param $off i32) (param $v i32)
-  (call $wr8${b} ${a} (local.get $off) (i32.and (local.get $v) (i32.const 0xFF)))
-  (call $wr8${b} ${a} (call $off_add (local.get $off) (i32.const 1))
-    (i32.shr_u (local.get $v) (i32.const 8))))
-
-;; 32-bit access, built from the 16-bit pair so it inherits the same wrap.
-(func $rd32${b} ${p} (param $off i32) (result i32)
-  (i32.or
-    (call $rd16${b} ${a} (local.get $off))
-    (i32.shl (call $rd16${b} ${a} (call $off_add (local.get $off) (i32.const 2)))
-             (i32.const 16))))
-
-(func $wr32${b} ${p} (param $off i32) (param $v i32)
-  (call $wr16${b} ${a} (local.get $off) (local.get $v))
-  (call $wr16${b} ${a} (call $off_add (local.get $off) (i32.const 2))
-    (i32.shr_u (local.get $v) (i32.const 16))))
+;; The wide accessors open with ONE guarded access and fall back to the
+;; byte-wise composition below it only when that access could differ from it.
+;; No wasm engine inlines this tree -- SpiderMonkey Ion compiled a byte-built
+;; rd32 as ten calls, each with its own frame, stack check and interrupt check,
+;; plus four br_table jumps inside $sbase -- so the byte path cost more than
+;; the handler that asked for it.
+;;
+;; The guard is exactly what makes the bytes contiguous and plain RAM:
+;;   the offset does not wrap inside its 64K page (the $off_add rule),
+;;   the linear address does not leave its 64K block, which with $linmask
+;;     always 2^n-1 and at least 0xFFFFF also rules out wrapping the bus,
+;;     and puts every byte under the same VGA key compare as the first,
+;;   and, for a store, no byte is already compiled (the CODE_BITMAP bits,
+;;     at most two bitmap bytes apart; the bitmap is padded to 64K after).
+${wideAccessors(b, p, a, setL)}
 `;
   }
   return s;
