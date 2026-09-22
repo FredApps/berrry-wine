@@ -2493,13 +2493,34 @@ function ensureBuilt() {
   }
 }
 
-async function newInstance() {
-  const { createHostImports } = require(path.join(ROOT, 'lib/host-imports'));
-  const wasmBytes = fs.readFileSync(WASM_PATH);
+// A synthetic shape never reaches Win32, so the host it needs is only an import
+// object that links. --stub-host gives it one without lib/host-imports, which is
+// what lets this file run in an engine shell (JSC, d8, SpiderMonkey) through
+// tools/shell-require.js -- those have no Node module graph to load it from.
+// Every host import returns i32 or nothing except the seven f64 math_* ones, so
+// "0, or the real Math function" is a complete, correctly typed set.
+const STUB_HOST = process.argv.includes('--stub-host') ||
+  !(typeof process.versions === 'object' && process.versions && process.versions.node);
+const STUB_MATH = {
+  math_sin: Math.sin, math_cos: Math.cos, math_tan: Math.tan, math_atan2: Math.atan2,
+  math_log2: Math.log2, math_pow: Math.pow, math_pow2: x => Math.pow(2, x),
+};
+function stubHostImports() {
+  return new Proxy({}, {
+    get(target, key) {
+      if (key in target) return target[key];
+      return STUB_MATH[key] || (() => 0);
+    },
+  });
+}
+
+async function newInstance(wasmPath = WASM_PATH) {
+  const wasmBytes = fs.readFileSync(wasmPath);
   const exeBytes = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'notepad.exe'));
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const ctx = { exports: null, getMemory: () => memory.buffer };
-  const h = createHostImports(ctx).host;
+  const h = STUB_HOST ? stubHostImports()
+    : require(path.join(ROOT, 'lib/host-imports')).createHostImports(ctx).host;
   h.memory = memory;
   h.exit = () => {};
   h.log = () => {};
@@ -2758,6 +2779,16 @@ async function main() {
   const bufBytes = parseBytes(arg('bytes', '4m'));
   const reps = Number(arg('reps', 9));
   const toggle = arg('toggle', null);
+  // --wasm=label=path[,label=path...]: one arm per module (see the note at the
+  // top of main's shape loop). A bare path is labelled by its basename.
+  const wasmArg = arg('wasm', null);
+  const wasmArms = wasmArg
+    ? wasmArg.split(',').filter(Boolean).map(s => {
+      const eq = s.indexOf('=');
+      const p = eq < 0 ? s : s.slice(eq + 1);
+      return { label: eq < 0 ? path.basename(p, '.wasm') : s.slice(0, eq), path: path.resolve(ROOT, p) };
+    })
+    : [{ label: '', path: WASM_PATH }];
   const wantJson = has('json');
   const mapping = arg('mapping', 'direct');
   const scatterPageCount = Number(arg('scatter-pages', 64));
@@ -2773,7 +2804,8 @@ async function main() {
     throw new Error(`bad --scatter-pages=${scatterPageCount} (expected integer 1..256)`);
   }
 
-  ensureBuilt();
+  if (!wasmArg) ensureBuilt();
+  for (const w of wasmArms) if (!fs.existsSync(w.path)) throw new Error(`--wasm: no such module ${w.path}`);
 
   const loadBefore = require('os').loadavg().map(x => x.toFixed(2)).join(' ');
   const results = [];
@@ -2782,28 +2814,44 @@ async function main() {
     // A fresh instance per shape: a block cache and code-page bitmap carried
     // over from the previous shape would make this one's numbers depend on run
     // order, which is the exact failure mode that wrecked the whole-app A/Bs.
-    const inst = await newInstance();
-    const a = layout(inst.imageBase, bufBytes);
-    a.scatterPageCount = scatterPageCount;
-    if (mapping === 'sparse') {
-      const sparse = inst.e.guest_map_alloc(bufBytes) >>> 0;
-      if (!sparse) throw new Error(`${name}: could not allocate ${bufBytes} sparse guest bytes`);
-      a.buf = sparse;
+    //
+    // With --wasm=, one instance per module: an arm is then (module, toggle
+    // value), and every module's arms interleave with every other's exactly as
+    // two toggle values do. Each instance gets its own layout and its own rep
+    // counter, because each has its own memory and its own block cache.
+    const modules = [];
+    for (const w of wasmArms) {
+      const inst = await newInstance(w.path);
+      const a = layout(inst.imageBase, bufBytes);
+      a.scatterPageCount = scatterPageCount;
+      if (mapping === 'sparse') {
+        const sparse = inst.e.guest_map_alloc(bufBytes) >>> 0;
+        if (!sparse) throw new Error(`${name}: could not allocate ${bufBytes} sparse guest bytes`);
+        a.buf = sparse;
+      }
+      if (shape.prepare) shape.prepare(inst, a);
+      modules.push({ label: w.label, inst, a, rep: 0 });
     }
-    if (shape.prepare) shape.prepare(inst, a);
 
-
-    const arms = toggle
+    const toggleValues = toggle
       ? String(arg('arms', '1,0')).split(',').map(Number)
       : [null];
-    const armNs = new Map(arms.map(v => [v, []]));
+    const arms = [];
+    for (const m of modules) {
+      for (const v of toggleValues) {
+        const parts = [];
+        if (m.label) parts.push(m.label);
+        if (v !== null) parts.push(`${toggle}=${v}`);
+        arms.push({ m, v, label: parts.join(' ') || 'base' });
+      }
+    }
+    const armNs = new Map(arms.map(arm => [arm, []]));
     const armOps = new Map();
     const armCheck = new Map();
 
-    let repIndex = 0;
-    for (const v of arms) {
-      if (v !== null) applyToggle(inst.e, toggle, v);
-      armOps.set(v, countOps(inst, shape, a, repIndex++));
+    for (const arm of arms) {
+      if (arm.v !== null) applyToggle(arm.m.inst.e, toggle, arm.v);
+      armOps.set(arm, countOps(arm.m.inst, shape, arm.m.a, arm.m.rep++));
     }
     // Interleave the arms rep by rep. Background load drifts on the scale of
     // seconds; alternating at millisecond granularity makes it common-mode.
@@ -2818,38 +2866,40 @@ async function main() {
       // arms, but leaves the middle arm permanently in slot 2 for three arms.
       const shift = r % arms.length;
       const order = arms.slice(shift).concat(arms.slice(0, shift));
-      for (const v of order) {
-        if (v !== null) applyToggle(inst.e, toggle, v);
-        const { ns, built, check, stackFastHits } = oneRep(inst, shape, a, repIndex++);
+      for (const arm of order) {
+        const v = arm.v;
+        if (v !== null) applyToggle(arm.m.inst.e, toggle, v);
+        const { ns, built, check, stackFastHits } = oneRep(arm.m.inst, shape, arm.m.a, arm.m.rep++);
         if (toggle === 'stack_candidate' && name.startsWith('stack_calls')) {
           if (stackFastHits !== (v ? built.iters * 2 : 0))
-            throw Error(`${name}: unexpected fast hits ${stackFastHits} in arm ${v}`);
+            throw Error(`${name}: unexpected fast hits ${stackFastHits} in arm ${arm.label}`);
         }
-        armNs.get(v).push(ns);
-        a.lastBuilt = built;
+        armNs.get(arm).push(ns);
+        arm.m.a.lastBuilt = built;
         if (check !== null) {
-          if (armCheck.has(v)) {
-            if (armCheck.get(v) !== check) {
-              throw new Error(`${name}: arm ${v} is not deterministic\n  ${armCheck.get(v)}\n  ${check}`);
+          if (armCheck.has(arm)) {
+            if (armCheck.get(arm) !== check) {
+              throw new Error(`${name}: arm ${arm.label} is not deterministic\n  ${armCheck.get(arm)}\n  ${check}`);
             }
           } else {
-            armCheck.set(v, check);
+            armCheck.set(arm, check);
           }
         }
       }
     }
     // Every arm must leave the same guest state. Without this a region
-    // descriptor that disagrees with its own x86 just reports a speedup.
+    // descriptor that disagrees with its own x86 just reports a speedup -- and
+    // a dispatch variant that loses an op reports one too.
     if (armCheck.size > 1) {
       const [[refArm, ref]] = [...armCheck];
-      for (const [v, c] of armCheck) {
+      for (const [arm, c] of armCheck) {
         if (c !== ref) {
-          throw new Error(`${name}: arms disagree on the result\n  ${toggle}=${refArm}: ${ref}\n  ${toggle}=${v}: ${c}`);
+          throw new Error(`${name}: arms disagree on the result\n  ${refArm.label}: ${ref}\n  ${arm.label}: ${c}`);
         }
       }
     }
 
-    const built = a.lastBuilt;
+    const built = modules[modules.length - 1].a.lastBuilt;
     const row = {
       shape: name,
       iters: built.iters,
@@ -2861,7 +2911,7 @@ async function main() {
         const min = ns[0];
         const median = ns[Math.floor(ns.length / 2)];
         return {
-          arm: v === null ? 'base' : `${toggle}=${v}`,
+          arm: v.label,
           minMs: min / 1e6,
           medianMs: median / 1e6,
           nsPerIter: min / built.iters,
@@ -2907,7 +2957,7 @@ async function main() {
       row.paired = arms.slice(0, -1).map(v => {
         const ratios = armNs.get(v).map((ns, i) =>
           (baseline[i] - ns) / baseline[i] * 100).sort((x, y) => x - y);
-        return { arm: `${toggle}=${v}`, vs: `${toggle}=${arms[arms.length - 1]}`,
+        return { arm: v.label, vs: arms[arms.length - 1].label,
           medianPct: ratios[Math.floor(ratios.length / 2)] };
       });
     }
@@ -2932,6 +2982,8 @@ async function main() {
   console.log(`\nloadavg ${loadBefore} at start, ${load()} at end` +
     (Number(loadBefore.split(' ')[0]) > 4 ? '  <-- LOADED, treat single percentages as noise' : ''));
   console.log(`working set ${fmt(bufBytes)} bytes (${mapping} guest mapping), ${reps} interleaved reps, minima quoted`);
+  if (wasmArg) console.log(`modules: ${wasmArms.map(w => `${w.label}=${path.relative(ROOT, w.path)}`).join('  ')}`);
+  const ARM_W = Math.max(16, ...results.flatMap(r => r.arms.map(x => x.arm.length)));
   if (toggle) console.log(`A/B toggle: ${toggle} (on vs off, same process, alternating)`);
   console.log('');
   for (const r of results) {
@@ -2945,46 +2997,47 @@ async function main() {
       // ns/op is the cross-shape number: it says what one interpreted x86
       // instruction of this kind costs.
       const mb = arm.guestMBps === null ? '' : `  ${arm.guestMBps.toFixed(0)} MB/s(same-shape only)`;
-      console.log(`    ${arm.arm.padEnd(16)} min ${arm.minMs.toFixed(1)}ms  med ${arm.medianMs.toFixed(1)}ms  ` +
+      console.log(`    ${arm.arm.padEnd(ARM_W)} min ${arm.minMs.toFixed(1)}ms  med ${arm.medianMs.toFixed(1)}ms  ` +
         // A REP is one op for the whole range, so per-op cost is not a
         // per-instruction number there and printing it invites nonsense.
         `${arm.nsPerIter.toFixed(1)} ns/iter  ${arm.opsPerIter >= 1 ? `${arm.nsPerOp.toFixed(1)} ns/op` : '(bulk op)'}  ` +
         `${arm.opsPerIter.toFixed(2)} ops/iter  ${arm.bytesPerIter} B/iter  ` +
         `${arm.blocksPerIter.toFixed(2)} blocks/iter${mb}`);
-      console.log(`    ${' '.repeat(16)} top handlers: ${arm.topHandlers.map(([i, c]) => `H${i}:${fmt(c)}`).join('  ')}`);
-      console.log(`    ${' '.repeat(16)} LUT matches/runs/bytes: ${fmt(arm.matched)}/${fmt(arm.lutRuns)}/${fmt(arm.lutBytes)}`);
+      console.log(`    ${' '.repeat(ARM_W)} top handlers: ${arm.topHandlers.map(([i, c]) => `H${i}:${fmt(c)}`).join('  ')}`);
+      console.log(`    ${' '.repeat(ARM_W)} LUT matches/runs/bytes: ${fmt(arm.matched)}/${fmt(arm.lutRuns)}/${fmt(arm.lutBytes)}`);
       if (toggle && toggle.startsWith('block_exec')) {
         // installs=0 means the descriptor never took, and every other number on
         // this line is then about a shape the block executor did not run at all.
         // fallback is the one round 11 moves: a memory-form ALU op is a FALLBACK
         // until the split converts it, and a native micro-op afterwards.
-        console.log(`    ${' '.repeat(16)} block-exec installs/native/fallback: ` +
+        console.log(`    ${' '.repeat(ARM_W)} block-exec installs/native/fallback: ` +
           `${fmt(arm.bxInstalls)}/${fmt(arm.bxNativeOps)}/${fmt(arm.bxFallbackOps)}  ` +
           `pass split/rle/movelim: ${fmt(arm.bxSplit)}/${fmt(arm.bxRle)}/${fmt(arm.bxMovelim)}` +
           (arm.bxInstalls ? '' : `  declWhy ${arm.bxDeclWhy}`));
         if (arm.bxX87 || arm.bxX87Native) {
-          console.log(`    ${' '.repeat(16)} x87 entries: ${fmt(arm.bxX87)} ` +
+          console.log(`    ${' '.repeat(ARM_W)} x87 entries: ${fmt(arm.bxX87)} ` +
             `(cheap ${fmt(arm.bxX87Run)}, trampoline ${fmt(arm.bxX87 - arm.bxX87Run)})  ` +
             `bare-native ${fmt(arm.bxX87Native)}`);
         }
       }
       if (arm.lut16Matches || arm.lut16Runs) {
-        console.log(`    ${' '.repeat(16)} RGB565 matches/runs/pixels: ` +
+        console.log(`    ${' '.repeat(ARM_W)} RGB565 matches/runs/pixels: ` +
           `${fmt(arm.lut16Matches)}/${fmt(arm.lut16Runs)}/${fmt(arm.lut16Bytes)}`);
       }
       if (arm.blockCollisions) {
-        console.log(`    ${' '.repeat(16)} (${fmt(arm.blockCollisions)} of those entries came from the collision counter, ` +
+        console.log(`    ${' '.repeat(ARM_W)} (${fmt(arm.blockCollisions)} of those entries came from the collision counter, ` +
           `not the bucket)`);
       }
       if (arm.foldsLive.length) {
-        console.log(`    ${' '.repeat(16)} NOTE: ${arm.foldsLive.join(',')} live — ops/iter is the unfolded-equivalent`);
-        console.log(`    ${' '.repeat(16)}       count, not the dispatch count, so ns/op is understated too.`);
-        console.log(`    ${' '.repeat(16)}       Compare blocks/iter and time.`);
+        console.log(`    ${' '.repeat(ARM_W)} NOTE: ${arm.foldsLive.join(',')} live — ops/iter is the unfolded-equivalent`);
+        console.log(`    ${' '.repeat(ARM_W)}       count, not the dispatch count, so ns/op is understated too.`);
+        console.log(`    ${' '.repeat(ARM_W)}       Compare blocks/iter and time.`);
       }
     }
     if (r.delta) {
       const sign = v => `${v >= 0 ? '+' : ''}${v.toFixed(1)}%`;
-      console.log(`    => fold is worth ${sign(r.delta.timePct)} time, ` +
+      const who = wasmArg ? `${r.arms[0].arm} vs ${r.arms[1].arm}:` : 'fold is worth';
+      console.log(`    => ${who} ${sign(r.delta.timePct)} time, ` +
         `${sign(r.delta.opsPct)} ops, ${sign(r.delta.blocksPct)} block entries`);
     }
     if (r.paired) {
