@@ -265,7 +265,8 @@
     (i32.add (call $win16_dde_base)
              (i32.add (i32.const 0xD300) (i32.mul (local.get $i) (i32.const 16)))))
 
-  (global $WIN16_DDE_CB i32 (i32.const 0xFF80))
+  ;; 0xFF80 belongs to WIN16_CONT_CREATE_SIZE; both use WIN16_THUNK_SEL.
+  (global $WIN16_DDE_CB i32 (i32.const 0xFF84))
   (global $win16_dde_cb_ret (mut i32) (i32.const 0))    ;; far return of the pump call
   (global $win16_dde_cb_msg (mut i32) (i32.const 0))    ;; the MSG it was filling
   (global $win16_dde_cb_item (mut i32) (i32.const -1))  ;; question being asked

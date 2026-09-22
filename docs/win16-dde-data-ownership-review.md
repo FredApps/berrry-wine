@@ -30,6 +30,28 @@ contents reproduces the same `unreachable` stack (functions 8109, 8400, 776,
 failure is independent of this patch. No shared files were reverted for the
 control runs. Investigating that connection-pump failure is a next candidate.
 
+## Follow-up: connection-pump trap resolved
+
+Compiling the same source closure with its diagnostic name section identified
+the failing function as `win16_enter_wndproc`. The existing `DBG_INV=1` trace
+showed a null procedure, window 15 and `WM_SIZE` immediately after the DDE
+callback returned. `WIN16_DDE_CB` and `WIN16_CONT_CREATE_SIZE` both occupied
+offset `0xFF80` in `WIN16_THUNK_SEL`; `win16_dispatch` handles the latter first.
+It consequently interpreted a DDE return as a CreateWindow stack continuation.
+
+Moved the DDE callback to the unused offset `0xFF84`. This changes only an
+emulator-private return address, not the guest DDE API. The new
+`test/test-win16-thunk-offsets.js` inspects the source manifest's constant
+Win16 globals in the reserved `0xFF00..0xFFFF` range and rejects duplicate
+offsets. It fails on the old collision and passes with 25 unique entries.
+It is a unit regression, not a complete parser for arbitrary computed slot
+definitions or an allocator for future continuation slots.
+
+After this fix the real Win16 task/loopback tests pass: room routing 18/18,
+connect callbacks and transactions 25/25. The earlier failure above is retained
+as the investigation history, not the current outcome. No browser or native
+Windows capture was needed to establish this internal address collision.
+
 This is an internal ownership regression, not a native Win98 conformance
 capture or an end-to-end Hearts gameplay claim. EXECUTE's existing callback
 argument representation is unchanged and still needs separate review. Also
