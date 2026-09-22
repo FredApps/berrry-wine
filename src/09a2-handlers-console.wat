@@ -1246,12 +1246,15 @@
       (then (return (i32.const 0))))
     (call $console_cells_ensure)
     (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
-    (local.set $src (call $g2w (local.get $buf_g)))
+    (local.set $src (local.get $buf_g))
     (local.set $i (i32.const 0))
     (block $done (loop $write
       (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
-      (call $console_put_char (call $load_char
-        (i32.add (local.get $src) (i32.mul (local.get $i) (local.get $step))) (local.get $wide)))
+      (call $console_put_char
+        (if (result i32) (local.get $wide)
+          (then (call $gl16 (local.get $src)))
+          (else (call $gl8 (local.get $src)))))
+      (local.set $src (i32.add (local.get $src) (local.get $step)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $write)))
     (call $console_buffer_finish (i32.const 1))
@@ -1761,7 +1764,7 @@
     ;; A previous park left the auto-pop suppressed; this call completes its
     ;; own frame, so hand the flag back before returning.
     (global.set $handler_set_eip (i32.const 0))
-    (local.set $dst (call $g2w (local.get $buf_g)))
+    (local.set $dst (local.get $buf_g))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (local.get $avail)))
       (br_if $done (i32.ge_u (local.get $out) (local.get $maxch)))
@@ -1773,16 +1776,16 @@
             (i32.ne (local.get $ch) (i32.const 0)))
         (then
           (if (local.get $wide)
-            (then (i32.store16 (i32.add (local.get $dst) (i32.mul (local.get $out) (i32.const 2))) (local.get $ch)))
-            (else (i32.store8 (i32.add (local.get $dst) (local.get $out)) (local.get $ch))))
+            (then (call $gs16 (i32.add (local.get $dst) (i32.mul (local.get $out) (i32.const 2))) (local.get $ch)))
+            (else (call $gs8 (i32.add (local.get $dst) (local.get $out)) (local.get $ch))))
           (local.set $out (i32.add (local.get $out) (i32.const 1)))
           ;; Enter reads back as CRLF, the way a real line-mode read does.
           (if (i32.and (i32.eq (local.get $ch) (i32.const 13))
                        (i32.lt_u (local.get $out) (local.get $maxch)))
             (then
               (if (local.get $wide)
-                (then (i32.store16 (i32.add (local.get $dst) (i32.mul (local.get $out) (i32.const 2))) (i32.const 10)))
-                (else (i32.store8 (i32.add (local.get $dst) (local.get $out)) (i32.const 10))))
+                (then (call $gs16 (i32.add (local.get $dst) (i32.mul (local.get $out) (i32.const 2))) (i32.const 10)))
+                (else (call $gs8 (i32.add (local.get $dst) (local.get $out)) (i32.const 10))))
               (local.set $out (i32.add (local.get $out) (i32.const 1)))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))

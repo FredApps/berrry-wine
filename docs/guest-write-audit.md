@@ -125,3 +125,24 @@ must remain untouched. All 472 peek/read checks pass. Existing ordered-input,
 input-validation and sparse-count suites also pass. Logical-AND, tier and
 whitespace checks pass. Text buffers and screen-buffer rectangle structures
 remain outside this batch; no browser or dirty-writeback completion claim.
+
+## High-level console text buffers migrated
+
+The shared ReadConsole and WriteConsole text cores now retain guest buffer
+addresses. Writes to the console load one byte or word through `gl8/gl16`;
+reads from its input queue store through `gs8/gs16`, including the synthesized
+LF after CR. The character loop, counts, filtering, line-mode availability
+and queue-consumption logic are otherwise unchanged. This does not expand
+code-page support or fix unrelated input semantics.
+
+The new `test/test-console-text-boundaries.js` reproduced WriteConsoleA
+reading `0xa5` characters from an unrelated mapped allocation after the first
+page. It now checks each crossing in A/W character buffers, including a split
+UTF-16 code unit and a non-ASCII character. Console cells provide independent
+write expectations. Read cases cover line/non-line mode, CRLF expansion and
+bounded reads that leave the unconsumed queue tail, with byte expectations,
+canaries, count/queue checks and stdcall cleanup. The complete unrelated page
+is unchanged. Existing console-input and sparse-count suites also pass, as
+do logical-AND, test-tier and whitespace checks. Rectangle, streamed screen
+output and other translated console buffers remain to inspect. No browser
+or performance claim is made here.
