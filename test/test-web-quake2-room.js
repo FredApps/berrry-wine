@@ -357,6 +357,22 @@ const snapWindow = () => {
       null, 240000);
     check(`the fourth player reached the server (${fourthIn || 0} frames received)`, !!fourthIn);
 
+    // A socket game that went online into an empty lobby opened a room only
+    // its link can reach, so it gets the card that hands the link out.
+    check('the host was shown the share card for its room',
+      await host.page.evaluate(() => !!document.querySelector('#wine-lan-share .wine-lan-share-url')));
+
+    // ---- quitting the game that opened the room ----------------------------
+    //
+    // The owner's "room open" chip is held with no timeout, so nothing but
+    // the quit takes it down.
+    await host.page.evaluate(() => stopAllApps());
+    const noticesGone = await H.until(host.page, 'host: room notices outlived the game',
+      () => (!document.getElementById('wine-lan-chip') && !document.getElementById('wine-lan-share')) || null,
+      null, 30000);
+    check('quitting the host takes its room chip and share card down', !!noticesGone,
+      `chip: ${await host.page.evaluate(chipText)}`);
+
     const sides = [host, guest, third].concat(fourth ? [fourth] : []);
     for (const side of sides) {
       check(`${side.label}: no page errors`, side.problems.length === 0, side.problems.slice(0, 3).join(' | '));
