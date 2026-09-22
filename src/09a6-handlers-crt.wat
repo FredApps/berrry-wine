@@ -2405,28 +2405,17 @@
 
   ;; 733: realloc(ptr, size) — cdecl
   (func $handle_realloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $new_ptr i32) (local $old_size i32)
-    ;; realloc(NULL, size) = malloc(size)
-    (if (i32.eqz (local.get $arg0))
-      (then
-        (i32.store offset=0 (global.get $reg_base) (call $heap_alloc (local.get $arg1)))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (return)))
-    ;; realloc(ptr, 0) = free(ptr)
-    (if (i32.eqz (local.get $arg1))
-      (then
-        (call $heap_free (local.get $arg0))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (return)))
-    ;; Read old block size from header (ptr-4 in guest space)
-    (local.set $old_size (call $heap_block_size_unchecked (local.get $arg0)))
-    (local.set $new_ptr (call $heap_alloc (local.get $arg1)))
-    ;; Copy min(old_size, new_size) bytes
-    (if (i32.gt_u (local.get $old_size) (local.get $arg1))
-      (then (local.set $old_size (local.get $arg1))))
-    (memory.copy (call $g2w (local.get $new_ptr)) (call $g2w (local.get $arg0)) (local.get $old_size))
-    (call $heap_free (local.get $arg0))
+    (local $new_ptr i32)
+    ;; The CRT frees a non-null allocation for size zero; the shared heap
+    ;; reallocator intentionally retains it for Global/LocalReAlloc callers.
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0)) (i32.eqz (local.get $arg1)))
+      (then (call $heap_free (local.get $arg0)))
+      (else
+        ;; Shared core copies only payload bytes and preserves the original
+        ;; allocation on failure. NULL input follows its allocation path.
+        (local.set $new_ptr (call $heap_realloc (local.get $arg0) (local.get $arg1) (i32.const 0)))
+        (if (i32.eqz (local.get $new_ptr))
+          (then (call $msvcrt_set_errno (i32.const 12)))))) ;; ENOMEM
     (i32.store offset=0 (global.get $reg_base) (local.get $new_ptr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )

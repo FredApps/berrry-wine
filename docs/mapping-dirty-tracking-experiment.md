@@ -173,3 +173,26 @@ code. The existing `test-sscanf.js` passes all 24 cases; logical-AND and duplica
 gates pass. This is not full CRT write coverage: the adjacent `realloc` still
 has a raw `memory.copy`, and its allocation-failure path needs investigation
 before merely substituting a copy helper. Dirty tracking remains unimplemented.
+
+## CRT realloc delegates to the failure-safe heap core
+
+The follow-up confirmed a separate ownership defect: refusing an oversized
+`realloc` request returned NULL but freed the original block, replacing its
+first four payload bytes with free-list bookkeeping. The private copy also used
+the block extent (including its header) instead of the payload extent.
+
+The CRT handler now delegates allocation/growth/shrink to `$heap_realloc`,
+which already preserves the old block when allocation fails and bounds copying
+to its payload. The wrapper retains the CRT-specific non-null size-zero free
+and reports ENOMEM on allocation failure. These follow the
+[Microsoft CRT contract](https://learn.microsoft.com/en-us/cpp/c-runtime-library/reference/realloc?view=msvc-170);
+this is not a new native-Win98 oracle or a claim about optional new-handler mode.
+
+`test-crt-realloc.js` fails before the change on original-payload preservation
+and passes after it. It covers refused oversized allocation with and without
+an original block, non-reuse of the retained block, preserved data on growth
+and shrink, zero-size free, errno and cdecl stack cleanup. The existing
+GlobalFlags and Diablo runtime suites pass; logical-AND, duplicate and test-tier
+gates pass. Shared `$heap_realloc` remains unchanged: its raw bulk copy/zero
+paths still need write-notification review. Removing the private copy does
+not itself close that coverage gap or implement dirty tracking.
