@@ -1,0 +1,68 @@
+FILE_MAPPING_V1
+GRANULARITY page=4096 allocation=65536
+CREATE anon=0 protect=2 ok=1 error=0
+VIEW anon=0 protect=2 access=4 offset=0 address=2191044608 error=4660
+VIEW anon=0 protect=2 access=4 offset=4096 address=0 error=87
+VIEW anon=0 protect=2 access=4 offset=65536 address=2191110144 error=4660
+VIEW anon=0 protect=2 access=2 offset=0 address=0 error=87
+VIEW anon=0 protect=2 access=2 offset=4096 address=0 error=87
+VIEW anon=0 protect=2 access=2 offset=65536 address=0 error=87
+VIEW anon=0 protect=2 access=1 offset=0 address=0 error=87
+VIEW anon=0 protect=2 access=1 offset=4096 address=0 error=87
+VIEW anon=0 protect=2 access=1 offset=65536 address=0 error=87
+CREATE anon=1 protect=2 ok=1 error=0
+VIEW anon=1 protect=2 access=4 offset=0 address=2191044608 error=4660
+VIEW anon=1 protect=2 access=4 offset=4096 address=0 error=87
+VIEW anon=1 protect=2 access=4 offset=65536 address=2191110144 error=4660
+VIEW anon=1 protect=2 access=2 offset=0 address=0 error=87
+VIEW anon=1 protect=2 access=2 offset=4096 address=0 error=87
+VIEW anon=1 protect=2 access=2 offset=65536 address=0 error=87
+VIEW anon=1 protect=2 access=1 offset=0 address=0 error=87
+VIEW anon=1 protect=2 access=1 offset=4096 address=0 error=87
+VIEW anon=1 protect=2 access=1 offset=65536 address=0 error=87
+CREATE anon=0 protect=4 ok=1 error=0
+VIEW anon=0 protect=4 access=4 offset=0 address=2191044608 error=4660
+VIEW anon=0 protect=4 access=4 offset=4096 address=0 error=87
+VIEW anon=0 protect=4 access=4 offset=65536 address=2191110144 error=4660
+VIEW anon=0 protect=4 access=2 offset=0 address=2191044608 error=4660
+VIEW anon=0 protect=4 access=2 offset=4096 address=0 error=87
+VIEW anon=0 protect=4 access=2 offset=65536 address=2191110144 error=4660
+VIEW anon=0 protect=4 access=1 offset=0 address=0 error=87
+VIEW anon=0 protect=4 access=1 offset=4096 address=0 error=87
+VIEW anon=0 protect=4 access=1 offset=65536 address=0 error=87
+CREATE anon=1 protect=4 ok=1 error=0
+VIEW anon=1 protect=4 access=4 offset=0 address=2191044608 error=4660
+VIEW anon=1 protect=4 access=4 offset=4096 address=0 error=87
+VIEW anon=1 protect=4 access=4 offset=65536 address=2191110144 error=4660
+VIEW anon=1 protect=4 access=2 offset=0 address=2191044608 error=4660
+VIEW anon=1 protect=4 access=2 offset=4096 address=0 error=87
+VIEW anon=1 protect=4 access=2 offset=65536 address=2191110144 error=4660
+VIEW anon=1 protect=4 access=1 offset=0 address=0 error=87
+VIEW anon=1 protect=4 access=1 offset=4096 address=0 error=87
+VIEW anon=1 protect=4 access=1 offset=65536 address=0 error=87
+CREATE anon=0 protect=8 ok=1 error=0
+VIEW anon=0 protect=8 access=4 offset=0 address=2191044608 error=4660
+VIEW anon=0 protect=8 access=4 offset=4096 address=0 error=87
+VIEW anon=0 protect=8 access=4 offset=65536 address=2191110144 error=4660
+VIEW anon=0 protect=8 access=2 offset=0 address=0 error=87
+VIEW anon=0 protect=8 access=2 offset=4096 address=0 error=87
+VIEW anon=0 protect=8 access=2 offset=65536 address=0 error=87
+VIEW anon=0 protect=8 access=1 offset=0 address=2191044608 error=4660
+VIEW anon=0 protect=8 access=1 offset=4096 address=0 error=87
+VIEW anon=0 protect=8 access=1 offset=65536 address=2191110144 error=4660
+CREATE anon=1 protect=8 ok=1 error=0
+VIEW anon=1 protect=8 access=4 offset=0 address=2191044608 error=4660
+VIEW anon=1 protect=8 access=4 offset=4096 address=0 error=87
+VIEW anon=1 protect=8 access=4 offset=65536 address=2191110144 error=4660
+VIEW anon=1 protect=8 access=2 offset=0 address=0 error=87
+VIEW anon=1 protect=8 access=2 offset=4096 address=0 error=87
+VIEW anon=1 protect=8 access=2 offset=65536 address=0 error=87
+VIEW anon=1 protect=8 access=1 offset=0 address=0 error=87
+VIEW anon=1 protect=8 access=1 offset=4096 address=0 error=87
+VIEW anon=1 protect=8 access=1 offset=65536 address=0 error=87
+COHERENCE protect=4 access=2 a=2191044608 b=2191044608 before=77 written=23 peer=23
+COHERENCE protect=8 access=1 a=2191044608 b=2191044608 before=23 written=77 peer=77
+W_EXPORT create=1 open=1
+W_CREATE ok=0 error=120
+W_OPEN ok=0 error=120
+FILE_MAPPING_DONE

@@ -1004,3 +1004,52 @@ Inheritance is retained as handle metadata, not yet validated through child
 process creation or GetHandleInformation. Generic-access expansion, security
 descriptors, shared cross-process namespace and native error precedence remain
 open. CreateFileMappingW and shared-view coherence are separate follow-ups.
+
+## Native Windows 98 oracle supersedes modern-doc assumptions (2026-09-21)
+
+The new `tools/v86-reference/probes/file-mapping.c` ran successfully under the
+repository's pinned native Windows 98/v86 profile. The source-only manifest is
+`tools/v86-reference/mapping-apps.json`; the serial transcript and capture
+provenance are committed under `test/fixtures/win98-file-mapping/`. No OS image,
+probe executable or screenshot is committed. Reproduce with:
+
+```sh
+node tools/v86-reference/capture.js --online \
+  --manifest tools/v86-reference/mapping-apps.json --app file-mapping \
+  --serial-output /private/tmp/wa-file-mapping-native.serial \
+  --output /private/tmp/wa-file-mapping-native.png \
+  --metadata /private/tmp/wa-file-mapping-native.json
+```
+
+**These observations contradict parts of the preceding implementation/tests.**
+Those earlier green tests verified our selected contract, not Win98 fidelity.
+
+| Contract | Native Win98 observation | Current implementation gap |
+|---|---|---|
+| Granularity | 4096-byte pages, 65536-byte allocation granularity; offset 4096 fails with 87 | Correct rejection, wrong error 1132 |
+| Section protection | WRITE view of READONLY/WRITECOPY fails with 87 | Reports 5 |
+| COPY mode | Succeeds only on file-backed WRITECOPY in the exercised matrix | Accepts COPY on READONLY/READWRITE and pagefile sections |
+| View identity/coherence | Two same-range views have the same address; writes immediately reach the peer for READWRITE and file WRITECOPY | Separately allocated copies; flush-time writeback is not coherence |
+| Wide entry points | Both exports exist; CreateFileMappingW and OpenFileMappingW return NULL/error 120 | Open W is a compatibility extension; Create W is absent |
+| Successful MapView | Preserves the sentinel last error 4660 | Matches |
+| Successful CreateFileMapping | Clears last error to zero | Matches |
+
+Microsoft's historical [KB125713](https://ftp.zx.net.nz/pub/Patches/ftp.microsoft.com/MISC/KB/en-us/125/713.HTM)
+(original Microsoft article preserved on a mirror) distinguishes Win9x from NT
+for COPY, shared addresses and namespace/lifetime behavior. The native probe
+is the evidence for Win98 specifically; modern Microsoft API pages alone are
+not sufficient to choose these details. No Wine source was used.
+
+Next: pin the measured 54-case view matrix in a regression and correct COPY
+validation/error codes, then implement native shared-view ownership/coherence.
+Do not add a functioning CreateFileMappingW merely for A/W symmetry: that
+would be an explicit compatibility extension, not the measured Win98 behavior.
+Whether existing wide compatibility support remains available is a separate
+policy choice; this checkpoint does not remove it.
+
+Integration recheck: the full build passes region/owner/layout, A/W and exact
+duplicate ratchets, test membership (1393), dispatch/API consistency, ESP,
+silent-handler inventory (250 manual + 22 metadata), 257 host signatures and
+browser cache identity, then fails on the two stale toy-VM browser bundles.
+No full-build pass is claimed. The broader review still has common-core and
+silent-handler work; this oracle is not completion of `fable-review.md`.
