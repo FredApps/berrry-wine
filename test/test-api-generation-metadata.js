@@ -5,6 +5,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const { parseWat } = require('../tools/struct-offset-census');
 
 const ROOT = path.join(__dirname, '..');
 const SRC = path.join(ROOT, 'src');
@@ -57,6 +58,52 @@ function functionsBy(source, pattern) {
 function normalize(source) {
   return source.replace(/;;.*$/gm, '').replace(/\s+/g, ' ').trim();
 }
+
+// Compare instruction trees, resolving local names to indices and flattening
+// grouped declarations. Comments and local spelling cannot hide boilerplate;
+// stack setup, different arguments and different return contracts remain distinct.
+function wrapperShape(source) {
+  const fn = parseWat(source).find(node => Array.isArray(node) && node[0] === 'func');
+  assert(fn, 'expected a function');
+  const slots = new Map();
+  const declarations = [];
+  let index = 0;
+  for (const kind of ['param', 'local']) {
+    for (const node of fn.filter(node => Array.isArray(node) && node[0] === kind)) {
+      let entries = node.slice(1);
+      if (entries[0]?.startsWith('$')) {
+        slots.set(entries[0], String(index));
+        entries = entries.slice(1);
+      }
+      for (const type of entries) { declarations.push([kind, type]); index++; }
+    }
+  }
+  const resolve = node => {
+    if (!Array.isArray(node)) return node;
+    if (['local.get', 'local.set', 'local.tee'].includes(node[0])) {
+      return [node[0], slots.get(node[1]) ?? node[1], ...node.slice(2).map(resolve)];
+    }
+    return node.map(resolve);
+  };
+  return JSON.stringify([declarations, ...fn.slice(1)
+    .filter(node => !(Array.isArray(node) && ['param', 'local'].includes(node[0])))
+    .map(resolve)]);
+}
+
+const sampleApi = { name: 'Sample', nargs: 2 };
+const sample = expectedTestCall(sampleApi);
+assert.strictEqual(wrapperShape(sample), wrapperShape(sample
+  .replaceAll('$saved_esp', '$sp').replaceAll('$arg0', '$first')
+  .replaceAll('$arg1', '$second')), 'renaming locals preserves the wrapper shape');
+assert.strictEqual(wrapperShape(sample), wrapperShape(sample
+  .replace('(param $arg0 i32) (param $arg1 i32)', '(param i32 i32)')
+  .replaceAll('(local.get $arg0)', '(local.get 0)')
+  .replaceAll('(local.get $arg1)', '(local.get 1)')),
+'numeric locals and grouped parameters preserve the wrapper shape');
+assert.notStrictEqual(wrapperShape(sample), wrapperShape(sample
+  .replace('(local.get $arg1)', '(i32.const 0)')), 'defaulted input is not boilerplate');
+assert.notStrictEqual(wrapperShape(sample), wrapperShape(sample
+  .replace('(call $handle_Sample', '(call $handle_Other')), 'different target is not boilerplate');
 
 function watI32(value) {
   return value > 0x7fffffff ? `0x${value.toString(16)}` : String(value);
@@ -135,10 +182,15 @@ const handwritten = new Map();
 for (const file of fs.readdirSync(SRC).filter(name => name.endsWith('.wat') && name !== GENERATED)) {
   const source = fs.readFileSync(path.join(SRC, file), 'utf8');
   const exports = functionsBy(source, /\(func\s+\(export\s+"test_call_([^"]+)"\)/g);
-  for (const [name] of exports) {
+  for (const [name, body] of exports) {
     assert(!handwritten.has(name),
       `handwritten test_call_${name} is duplicated in ${handwritten.get(name)} and ${file}`);
     handwritten.set(name, file);
+    const api = table.find(api => api.name === name);
+    if (api && Number.isInteger(api.nargs) && api.nargs >= 0 && api.nargs <= 5) {
+      assert.notStrictEqual(wrapperShape(body), wrapperShape(expectedTestCall(api)),
+        `${name}: mechanical test wrapper must use api_table test_call metadata`);
+    }
   }
 }
 for (const name of generatedTestCalls.keys()) {
