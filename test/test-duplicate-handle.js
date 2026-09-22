@@ -447,7 +447,14 @@ const extraWat = `
   assert.strictEqual(wat.test_public_map(readSectionAlias, 2, 0, 16), 0);
   assert.strictEqual(wat.test_dup_error(), 5);
   assert(wat.test_public_map(readSectionAlias, 4, 0, 16));
-  assert(wat.test_public_map(readSectionAlias, 1, 0, 16), 'read rights permit COPY views');
+  assert.strictEqual(wat.test_public_map(readSectionAlias, 1, 0, 16), 0,
+    'Win98 rejects COPY for a pagefile-backed READWRITE section');
+  assert.strictEqual(wat.test_dup_error(), 87);
+  const copySection = wat.test_public_section(sectionFile, 8, 0, 16, 0);
+  assert.strictEqual(wat.test_file_duplicate(copySection, target, 4, 0), 1);
+  const copyReadAlias = wat.test_read_guest32(target) >>> 0;
+  assert(wat.test_public_map(copyReadAlias, 1, 0, 16),
+    'read rights permit COPY on a file-backed WRITECOPY section');
   assert.strictEqual(wat.test_file_duplicate(readSectionAlias, target, 2, 0), 0);
   assert.strictEqual(wat.test_dup_error(), 5);
   assert.strictEqual(wat.test_file_duplicate(duplicateSection, target, 0, 0), 1);
@@ -505,8 +512,8 @@ const extraWat = `
   console.log('PASS  OpenFileMapping A/W share names, retain requested rights and report errors');
   const readSection = wat.test_public_section(sectionFile, 2, 0, 0, 0);
   for (const [section, access, offset, size, error] of [
-    [0x123456, 4, 0, 16, 6], [readSection, 2, 0, 16, 5],
-    [readSection, 4, 1, 1, 1132], [readSection, 4, 0, 17, 87],
+    [0x123456, 4, 0, 16, 6], [readSection, 2, 0, 16, 87],
+    [readSection, 4, 1, 1, 87], [readSection, 4, 0, 17, 87],
     [readSection, 0, 0, 1, 87],
   ]) {
     assert.strictEqual(wat.test_public_map(section, access, offset, size), 0);

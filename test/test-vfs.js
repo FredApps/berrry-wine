@@ -283,7 +283,8 @@ test('file mapping and view access cannot exceed file or section rights', () => 
       if (!mapping) continue;
       for (const view of [1, 2, 4, 0xf001f, 0x24]) {
         const before = allocations;
-        const allowed = !(view & 0x20) && (!(view & 2) || protect === 4);
+        const allowed = !(view & 0x20) && (!(view & 2) || protect === 4) &&
+          ((view & 7) !== 1 || protect === 8);
         const address = host.fs_map_view_of_file(mapping, view, 0, 0, 16);
         assert.strictEqual(address !== 0, allowed);
         assert.strictEqual(allocations - before, allowed ? 1 : 0);

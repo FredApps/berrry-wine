@@ -1053,3 +1053,20 @@ silent-handler inventory (250 manual + 22 metadata), 257 host signatures and
 browser cache identity, then fails on the two stale toy-VM browser bundles.
 No full-build pass is claimed. The broader review still has common-core and
 silent-handler work; this oracle is not completion of `fable-review.md`.
+
+## Native validation/status matrix implemented (2026-09-21)
+
+`test/test-win98-file-mapping-contract.js` reads the committed native transcript
+and checks all 54 protection/backing/access/offset combinations, including
+failure before allocation. It failed against the preceding implementation
+(1132 versus native 87). Sections now retain their original page protection;
+COPY mode requires a file-backed PAGE_WRITECOPY section, protection mismatches
+and misaligned offsets report 87. ALL_ACCESS remains WRITE mode even though
+its mask includes the COPY bit. Existing VFS/public tests were corrected rather
+than retained as assertions of NT behavior. Valid COPY flush/unmap also checks
+that the original file is unchanged.
+
+All 54 native validation/status cases, VFS 43/43, lazy/provider 51/51 and
+source-compiled public file/mapping regressions pass. Shared-view identity,
+immediate coherence and the wide compatibility-extension policy remain open;
+passing this matrix does not assert that those other native observations match.
