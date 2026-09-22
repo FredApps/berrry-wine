@@ -3644,10 +3644,11 @@
     (local $section i32)
     ;; lpName is the sixth argument, past the five in registers.
     (local.set $section (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
-    (i32.store offset=0 (global.get $reg_base) (call $host_fs_create_file_mapping
+    (global.set $last_error (call $host_fs_create_file_mapping_result
       (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $arg4)
       (if (result i32) (local.get $section)
-        (then (call $g2w (local.get $section))) (else (i32.const 0)))))
+        (then (call $g2w (local.get $section))) (else (i32.const 0)))
+      (global.get $reg_base)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))  ;; 6 args
   )
 

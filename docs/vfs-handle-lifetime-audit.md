@@ -777,3 +777,22 @@ rejection and ordinary-memory decommit checks. The embedded-WAT address gate
 passes. No allocator change was needed. This closes the returned-base alignment
 verification item for these exercised paths, not preferred-address placement,
 concurrent reservation races or the broader section lifetime/coherence work.
+
+## CreateFileMappingA operation errors (2026-09-21)
+
+The public handler now receives status plus its EAX handle output from one
+host call, without a shared error latch. It reports invalid/closed file handles
+(6), missing data rights or read-only extension (5), invalid base protection or
+unsupported high size (87), empty files (1006), protected media (19), and
+existing named sections (183). New-section success clears stale status. Caught
+host allocation failures report 8, and caught prefix-read failures report 30;
+host resource behavior is not claimed to reproduce native disk-full conditions.
+Handle zero is no longer accepted as the pagefile sentinel: only -1 selects it.
+
+The old handle-only host import remains available to internal callers. Named
+section lifetime/independent handles, CreateFileMappingW, MapViewOfFile errors,
+SEC_* handling and native Win98 error precedence remain separate work.
+VFS 41/41 and lazy/provider 48/48 pass; source-compiled public tests cover
+creation errors, named status, recovery and stdcall cleanup. Import signature
+generation records 254 imports; the handler ESP gate passes. No full browser
+or native run, and no new full-build success, is claimed here.

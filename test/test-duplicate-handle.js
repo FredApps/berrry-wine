@@ -6,6 +6,16 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = `
+  (func (export "test_public_section") (param $file i32) (param $protect i32)
+    (param $high i32) (param $size i32) (param $name i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $gs32 (i32.const 0x074ff018) (local.get $name))
+    (call $handle_CreateFileMappingA (local.get $file) (i32.const 0)
+      (local.get $protect) (local.get $high) (local.get $size) (i32.const 0))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff01c))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
   (func (export "test_write_guest8") (param $address i32) (param $value i32)
     (call $gs8 (local.get $address) (local.get $value)))
   (func (export "test_public_create") (param $path i32) (param $access i32)
@@ -368,6 +378,37 @@ const extraWat = `
     assert.strictEqual(wat.test_dup_error(), 0);
   }
   console.log('PASS  CreateFile A/W report operation errors and existing-file success status');
+  const sectionFile = vfs.createFile('c:\\section-result.bin', 0xc0000000, 2);
+  assert.strictEqual(wat.test_public_section(sectionFile, 2, 0, 0, 0), 0);
+  assert.strictEqual(wat.test_dup_error(), 1006, 'empty file section is ERROR_FILE_INVALID');
+  assert(wat.test_public_section(sectionFile, 4, 0, 16, 0));
+  assert.strictEqual(wat.test_dup_error(), 0);
+  const sectionRead = vfs.createFile('c:\\section-result.bin', 0x80000000, 3);
+  for (const [file, protect, high, size, error] of [
+    [0, 4, 0, 16, 6], [0x123456, 2, 0, 0, 6],
+    [sectionRead, 4, 0, 0, 5], [sectionRead, 2, 0, 32, 5],
+    [sectionFile, 0, 0, 16, 87], [-1, 4, 1, 16, 87], [-1, 4, 0, 0, 87],
+  ]) {
+    assert.strictEqual(wat.test_public_section(file, protect, high, size, 0), 0);
+    assert.strictEqual(wat.test_dup_error(), error);
+  }
+  Buffer.from('section-result\0').forEach((b, i) => wat.test_write_guest8(0x00490200 + i, b));
+  const named = wat.test_public_section(-1, 4, 0, 16, 0x00490200);
+  assert(named);
+  assert.strictEqual(wat.test_dup_error(), 0);
+  assert(wat.test_public_section(-1, 4, 0, 32, 0x00490200));
+  assert.strictEqual(wat.test_dup_error(), 183);
+  assert(wat.test_public_section(sectionRead, 2, 0, 0, 0));
+  assert.strictEqual(wat.test_dup_error(), 0, 'success does not reuse an old error');
+  vfs.setDriveReadOnly('c', true);
+  try {
+    assert.strictEqual(wat.test_public_section(sectionFile, 4, 0, 0, 0), 0);
+    assert.strictEqual(wat.test_dup_error(), 19);
+  } finally { vfs.setDriveReadOnly('c', false); }
+  vfs.closeHandle(sectionRead);
+  assert.strictEqual(wat.test_public_section(sectionRead, 2, 0, 0, 0), 0);
+  assert.strictEqual(wat.test_dup_error(), 6);
+  console.log('PASS  CreateFileMappingA reports operation errors, named status and stdcall cleanup');
   for (const access of [0, 0x80000000, 4, 0x100, 2, 0x40000000, 0x10000000]) {
     const seed = vfs.createFile('c:\\eof-rights.bin', 0x40000000, 2);
     vfs.writeFile(seed, Uint8Array.from([1, 2, 3, 4]), 4);
