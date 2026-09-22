@@ -184,7 +184,7 @@ const interfaces = [
   { prefix: 'IDirect3DViewport2', methods: [
     { name: 'QueryInterface',       nargs: 3 },
     { name: 'AddRef',               nargs: 1, handler: 'dx_com_addref' },
-    { name: 'Release',              nargs: 1 },
+    { name: 'Release',              nargs: 1, handler: 'IDirect3DViewport_Release' },
     { name: 'Initialize',           nargs: 2 },
     { name: 'GetViewport',          nargs: 2 },
     { name: 'SetViewport',          nargs: 2 },

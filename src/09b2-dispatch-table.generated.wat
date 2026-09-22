@@ -8338,7 +8338,7 @@
       (call $handle_dx_com_addref (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1414: IDirect3DViewport2_Release
-      (call $handle_IDirect3DViewport2_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3DViewport_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1415: IDirect3DViewport2_Initialize
       (call $handle_IDirect3DViewport2_Initialize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))

@@ -201,14 +201,14 @@ const extraWat = String.raw`
     (param $revision i32) (param $viewport i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (if (i32.eq (local.get $revision) (i32.const 1))
-      (then (call $handle_IDirect3DViewport_Release
+      (then (call $dispatch_api_table (call $lookup_api_id "IDirect3DViewport_Release")
         (local.get $viewport) (i32.const 0) (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0)))
       (else (if (i32.eq (local.get $revision) (i32.const 2))
-        (then (call $handle_IDirect3DViewport2_Release
+        (then (call $dispatch_api_table (call $lookup_api_id "IDirect3DViewport2_Release")
           (local.get $viewport) (i32.const 0) (i32.const 0) (i32.const 0)
           (i32.const 0) (i32.const 0)))
-        (else (call $handle_IDirect3DViewport3_Release
+        (else (call $dispatch_api_table (call $lookup_api_id "IDirect3DViewport3_Release")
           (local.get $viewport) (i32.const 0) (i32.const 0) (i32.const 0)
           (i32.const 0) (i32.const 0))))))
     (i32.load offset=0 (global.get $reg_base)))
@@ -693,6 +693,32 @@ const deviceAddRefIds = new Map([1, 2, 3, 7].map(revision => {
   }
   assert.strictEqual(wat.test_d3dim_viewport_release(1, otherViewport), 0);
 
+  // The v1/v2 alias must retain the specialized attached-light teardown.
+  assert.strictEqual(apiTable.find(a=>a.name==='IDirect3DViewport2_Release').handler,
+    'IDirect3DViewport_Release');
+  for (const revision of [1, 2]) {
+    const vp=wat.test_d3dim_create_viewport();
+    const retained=wat.test_d3dim_create_light(), sole=wat.test_d3dim_create_light();
+    assert.strictEqual(wat.test_d3dim_add_light(revision,vp,retained),0);
+    assert.strictEqual(wat.test_d3dim_add_light(revision,vp,sole),0);
+    assert.strictEqual(wat.test_d3dim_light_release(sole),1);
+    const prefix=revision===1?'IDirect3DViewport':'IDirect3DViewport2';
+    // This existing helper dispatches any AddRef id through the public table.
+    assert.strictEqual(wat.test_d3dim_device_add_ref(apiTable.find(a=>a.name===prefix+'_AddRef').id,vp),2);
+    wat.guest_write32(0x00300008,0xdeadbeef);
+    assert.strictEqual(wat.test_d3dim_viewport_release(revision,vp),1);
+    assert.strictEqual(wat.test_d3dim_object_ref(retained),2);
+    assert.strictEqual(wat.test_d3dim_object_ref(sole),1);
+    assert.strictEqual(wat.test_d3dim_viewport_release(revision,vp),0);
+    assert.strictEqual(wat.get_esp()>>>0,0x00300008);
+    assert.strictEqual(wat.guest_read32(0x00300008)>>>0,0xdeadbeef);
+    assert.strictEqual(wat.test_d3dim_object_type(vp),0);
+    assert.strictEqual(wat.test_d3dim_viewport_head(vp),0);
+    assert.strictEqual(wat.test_d3dim_light_owner(retained),0);
+    assert.strictEqual(wat.test_d3dim_object_ref(retained),1);
+    assert.strictEqual(wat.test_d3dim_object_type(sole),0);
+    assert.strictEqual(wat.test_d3dim_light_release(retained),0);
+  }
   console.log('PASS  D3DIM child creation and device/viewport/light ownership match legacy contracts');
 })().catch(error => {
   console.error(error && error.stack || error);

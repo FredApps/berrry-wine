@@ -1,6 +1,6 @@
 {
   "comment": "Known exact duplicate members. --check allows groups/members to disappear, rejects a new member, and caps the group count.",
-  "maxExactGroups": 127,
+  "maxExactGroups": 126,
   "allowedMembers": [
     "05-alu.wat:$th_lea",
     "05-alu.wat:$th_mov_r_i32",
@@ -408,7 +408,6 @@
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport2_LightElements",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport2_NextLight",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport2_QueryInterface",
-    "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport2_Release",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport2_SetBackground",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport2_SetBackgroundDepth",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport2_SetViewport",
@@ -424,7 +423,6 @@
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport_LightElements",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport_NextLight",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport_QueryInterface",
-    "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport_Release",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport_SetBackground",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport_SetBackgroundDepth",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DViewport_SetViewport",

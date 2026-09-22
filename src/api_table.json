@@ -12227,7 +12227,8 @@
     "name": "IDirect3DViewport2_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 900370660
+    "hash": 900370660,
+    "handler": "IDirect3DViewport_Release"
   },
   {
     "id": 1415,
