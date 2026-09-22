@@ -81,6 +81,37 @@ async function main() {
   assert.strictEqual(mainInstance.exports.test_call_TlsFree(64), 0,
     'TlsFree rejects an index beyond the process capacity');
 
+  // A direct test wrapper must preserve the caller's ESP, not replace it with
+  // a fixed scratch address. The two instances share indices but not values.
+  const tlsCall = (instance, name, ...args) => {
+    const e = instance.exports;
+    const sp = 0x07408000;
+    e.set_esp(sp);
+    const result = e[`test_call_${name}`](...args) >>> 0;
+    assert.strictEqual(e.get_esp() >>> 0, sp, `${name} preserves caller ESP`);
+    return result;
+  };
+  for (const owner of [mainInstance, workerInstance]) {
+    for (const index of [64, 0xffffffff]) {
+      assert.strictEqual(tlsCall(owner, 'TlsGetValue', index), 0);
+      assert.strictEqual(owner.exports.test_call_GetLastError(), 87);
+      assert.strictEqual(tlsCall(owner, 'TlsSetValue', index, 123), 0);
+      assert.strictEqual(owner.exports.test_call_GetLastError(), 87);
+      assert.strictEqual(tlsCall(owner, 'TlsFree', index), 0);
+      assert.strictEqual(owner.exports.test_call_GetLastError(), 87);
+    }
+  }
+  assert.strictEqual(tlsCall(mainInstance, 'TlsGetValue', 0), 0,
+    'an untouched main-thread TLS value is zero');
+  assert.strictEqual(mainInstance.exports.test_call_GetLastError(), 0,
+    'a successful zero read clears last error');
+  assert.strictEqual(tlsCall(mainInstance, 'TlsSetValue', 0, 0x81234567), 1);
+  assert.strictEqual(tlsCall(workerInstance, 'TlsGetValue', 0), 0,
+    'the worker does not inherit the main thread value');
+  assert.strictEqual(tlsCall(workerInstance, 'TlsSetValue', 0, 0xfedcba98), 1);
+  assert.strictEqual(tlsCall(mainInstance, 'TlsGetValue', 0), 0x81234567);
+  assert.strictEqual(tlsCall(workerInstance, 'TlsGetValue', 0), 0xfedcba98);
+
   console.log('PASS  process IDs and TLS indexes are stable and shared by threads');
 }
 

@@ -79,3 +79,40 @@ tier discovery and whitespace also passed in the shared worktree.
 The remaining 25 comprise the inventory's other five rows; their signature,
 setup or endpoint differences still require explicit handling. No claim of
 complete review closure or improved runtime performance follows from this work.
+
+## TLS wrapper audit
+
+Only `test-process-id.js` calls the three handwritten TLS Get/Set/Free exports.
+Its original checks inspected invalid-index results, not the helpers' stack
+effects. Each helper replaced ESP with `0x00300000` and left it advanced by the
+handler. That scratch address is not part of the API or needed by these handlers.
+The added tests require the caller's ESP to survive every direct test call,
+check both 64 and UINT_MAX as invalid indices with error 87, and exercise valid
+Get/Set values independently in two WASM instances sharing process memory.
+The old wrapper fails the new ESP assertion with `0x00300008` instead of the
+caller's `0x07408000`. The three wrappers now use generated metadata exports,
+bringing the inventory to **237 generated / 22 handwritten**. Their names,
+parameters and return values are unchanged; preservation of caller ESP is the
+intentional test-helper behavior change. Production TLS handlers are unchanged.
+Verification passed: the shared-process identity/TLS suite including new ABI,
+error and value-isolation checks; metadata generation, API IDs, fragment balance,
+logical operands, tier discovery and whitespace. The isolation check uses two
+instances sequentially, not simultaneous Worker stress.
+
+A separate runtime gap was found, not fixed by wrapper generation:
+`handle_TlsFree` returns success for any index below 64 but releases no index.
+`tls_reserve` is a monotonically increasing cursor which remains exhausted at
+64. Proper reusable allocation requires a coordinated allocator/free change
+and tests across thread creation/static TLS and shared-memory instances; the
+wrapper tests must not be cited as evidence that this lifetime contract works.
+Microsoft documents index reuse for
+[TlsFree](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsfree)
+and initially zero slots for
+[TlsAlloc](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-tlsalloc).
+These are current official contracts, not a fresh native Win98 capture.
+The allocator is also used by `08-pe-loader.wat` for static TLS; spawn metadata
+publishes a monotonic minimum through `set_tls_next_index`. Both paths need
+coverage before replacing the cursor with a reusable-index allocator.
+
+SetLastError remains handwritten here: its current export is void and advances
+ESP, so migrating it requires explicitly handling that test-call contract.

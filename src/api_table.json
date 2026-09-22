@@ -6365,6 +6365,7 @@
   {
     "id": 699,
     "name": "TlsFree",
+    "test_call": true,
     "nargs": 1,
     "convention": "stdcall",
     "hash": 405434144
@@ -6372,6 +6373,7 @@
   {
     "id": 700,
     "name": "TlsGetValue",
+    "test_call": true,
     "nargs": 1,
     "convention": "stdcall",
     "hash": 3436724359
@@ -6379,6 +6381,7 @@
   {
     "id": 701,
     "name": "TlsSetValue",
+    "test_call": true,
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2114826995
