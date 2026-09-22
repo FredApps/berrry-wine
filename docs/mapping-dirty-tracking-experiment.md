@@ -597,3 +597,45 @@ scalar-store loop, not a guest game or browser workload. Full write coverage,
 flush/store concurrency and a better candidate design remain prerequisites;
 quiet repeated game A/Bs are still required before selecting a production
 implementation. No runtime default or production memory path changed here.
+
+## Flush race model and next candidate (2026-09-22)
+
+`node test/test-mapping-dirty-interleavings.js` is an executable, bounded
+interleaving model, not a runtime memory implementation. Its negative control
+finds the premark-only loss directly:
+
+```text
+writer: read -> mark DIRTY --------------------------> store
+flusher:                 claim/clear -> copy old bytes
+result: new bytes in memory, stale file, no pending dirty bit
+```
+
+The candidate packs a generation and DIRTY bit into one atomic state word:
+
+1. Writer reads the state; if clean, atomically ORs DIRTY. An already-dirty
+   state can skip the redundant RMW.
+2. Writer performs its data store, then rereads the generation. If it changed
+   since step 1, atomically OR DIRTY again so a racing flush cannot lose it.
+3. A flusher atomically advances the generation and clears DIRTY in one CAS
+   operation (retry on interference), then copies the page. Flushers for one
+   page must be serialized through copy/publication; copying before clear or
+   clearing the bit independently of generation advancement is not this model.
+
+The model passed **1,075,830 schedules** across one/two writers, one/two
+serialized flushes, initially clean/dirty pages, distinct writes and
+write-then-restore. It tracks write identity separately from byte value:
+equal bytes cannot disguise an unflushed write. Each terminal schedule must
+either have flushed the latest store or retain DIRTY; a quiescent final flush
+must catch up. The premark-only negative control must actually fail the same
+invariant for the test to pass. Test-tier and whitespace checks pass.
+
+Limits matter: this assumes sequentially consistent indivisible model steps
+and an abstract page snapshot. It does not validate actual WASM non-atomic data
+access ordering, torn multi-byte copies, failed backing writes, page lifetime/
+reuse, generation wrap, missing host/API notifications or cross-page stores.
+Generation wrap requires an explicit quiescence/lifetime rule, not an assumption
+that 31 bits never wrap. A production flusher must preserve/re-mark failed
+writeback and must not race section retirement. The candidate still adds
+state reads to stores and is **not benchmarked**. Next is an isolated real-WASM
+candidate with forced interleavings and cost measurements; production remains
+unchanged and the native writeback regression remains open.
