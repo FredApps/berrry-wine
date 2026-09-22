@@ -8092,7 +8092,20 @@
     (local $copy i32) (local $len i32)
     (if (i32.eqz (local.get $src)) (then (return (i32.const 0))))
     (local.set $len (call $guest_strlen (local.get $src)))
+    ;; guest_strlen has a 64-KiB scan cap for its bounded callers. An owning
+    ;; duplicate must size the entire string before copying any of it.
+    (if (i32.eq (local.get $len) (i32.const 65536))
+      (then
+        (block $done (loop $scan
+          ;; Keep len+1 representable as a positive bounded-copy count.
+          (if (i32.ge_u (local.get $len) (i32.const 0x7FFFFFFE))
+            (then (return (i32.const 0))))
+          (br_if $done (i32.eqz (call $gl8
+            (i32.add (local.get $src) (local.get $len)))))
+          (local.set $len (i32.add (local.get $len) (i32.const 1)))
+          (br $scan)))))
     (local.set $copy (call $heap_alloc (i32.add (local.get $len) (i32.const 1))))
     (if (local.get $copy)
-      (then (call $guest_strcpy (local.get $copy) (local.get $src))))
+      (then (call $guest_strncpy (local.get $copy) (local.get $src)
+        (i32.add (local.get $len) (i32.const 1)))))
     (local.get $copy))

@@ -67,6 +67,25 @@ const extraWat = String.raw`
   assert.strictEqual(invoke(0), 0,
     'the shared guest duplication path returns NULL for a NULL source');
 
+  // guest_strlen's bounded scan must not make the owning helper underallocate.
+  // Probe both sides of its 64-KiB limit and then allocate/mutate another block:
+  // an unbounded copy into a capped allocation would overlap that new block.
+  for (const length of [65535, 65536, 65537, 70000]) {
+    const longSource = write('Q'.repeat(length));
+    const longCopy = invoke(longSource);
+    assert(longCopy && longCopy !== longSource, 'long string has an owned copy');
+    assert(e.guest_read32(longCopy - 4) >= length + 5,
+      `allocation covers ${length} bytes, the NUL, and its four-byte header`);
+    const neighbor = e.guest_alloc(32) >>> 0;
+    bytes.fill(0xa5, wa(neighbor), wa(neighbor) + 32);
+    assert(bytes.subarray(wa(longCopy), wa(longCopy) + length).every(b => b === 0x51),
+      `all ${length} copied bytes survive a subsequent allocation`);
+    assert.strictEqual(bytes[wa(longCopy) + length], 0, 'long copy ends at its actual NUL');
+    e.test_free(neighbor);
+    e.test_free(longCopy);
+    e.test_free(longSource);
+  }
+
   e.test_free(copy);
   e.test_free(emptyCopy);
   console.log('PASS  _strdup returns an independent owned guest string');

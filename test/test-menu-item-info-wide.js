@@ -61,8 +61,12 @@ const MFS_CHECKED = 0x08;
     (func (export "test_menu_destroy") (param $hmenu i32) (result i32)
       (call $dynamic_menu_destroy (local.get $hmenu)))
     (func (export "test_heap_free_contains") (param $ptr i32) (result i32)
-      (local $cur i32) (local $steps i32)
-      (local.set $cur (global.get $free_list))
+      (local $cur i32) (local $steps i32) (local $size i32)
+      (local.set $size (call $gl32 (i32.sub (local.get $ptr) (i32.const 4))))
+      (local.set $cur
+        (if (result i32) (i32.le_u (local.get $size) (global.get $HEAP_BIN_MAX))
+          (then (i32.wrap_i64 (call $heap_bin_get (call $heap_bin_index (local.get $size)))))
+          (else (global.get $free_list))))
       (block $done (loop $scan
         (br_if $done (i32.eqz (local.get $cur)))
         (if (i32.eq (local.get $cur) (i32.sub (local.get $ptr) (i32.const 4)))
@@ -231,6 +235,17 @@ const MFS_CHECKED = 0x08;
 
   const seedA = strA('Seed');
   assert.strictEqual(e.test_menu_append_a(menu, 11, seedA), 1);
+  const seedOwned = e.test_menu_item_field(menu, 0, 4) >>> 0;
+  assert(seedOwned && seedOwned !== seedA, 'AppendMenuA owns its label');
+  e.guest_write8(seedA, 0x58);
+  assert.strictEqual(readA(seedOwned, 8), 'Seed', 'append does not retain caller storage');
+  const emptyA = strA('');
+  assert.strictEqual(e.test_menu_set_info_a(menu, 0, 1,
+    menuItemInfo({ mask: MIIM_STRING, text: emptyA })), 1);
+  const emptyOwned = e.test_menu_item_field(menu, 0, 4) >>> 0;
+  assert(emptyOwned && emptyOwned !== emptyA, 'empty ANSI label is independently owned');
+  assert.strictEqual(e.guest_read8(emptyOwned), 0, 'empty label is terminated');
+  assert.strictEqual(e.test_heap_free_contains(seedOwned), 1, 'empty replacement retires old label');
   const inputA = strA('Owned');
   const setInfoA = menuItemInfo({ mask: MIIM_STRING, text: inputA });
   assert.strictEqual(e.test_menu_set_info_a(menu, 0, 1, setInfoA), 1);

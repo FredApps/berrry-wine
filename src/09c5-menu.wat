@@ -242,7 +242,7 @@
   ;; 04ef:635a), so keeping the pointer left every title reading as whatever
   ;; was loaded into that buffer last.
   (func $dynamic_menu_take_text (param $rec i32)
-    (local $flags i32) (local $text i32) (local $chars i32) (local $copy i32)
+    (local $flags i32) (local $text i32) (local $copy i32)
     (local.set $flags (i32.load (local.get $rec)))
     (local.set $text (i32.load offset=16 (local.get $rec)))
     (if (i32.or (i32.eqz (local.get $text))
@@ -251,11 +251,8 @@
             (i32.ne (i32.and (local.get $flags) (global.get $DYNAMIC_MENU_OWNS_TEXT))
                     (i32.const 0))))
       (then (return)))
-    (local.set $chars (call $guest_strlen (local.get $text)))
-    (local.set $copy (call $heap_alloc (i32.add (local.get $chars) (i32.const 1))))
+    (local.set $copy (call $guest_strdup (local.get $text)))
     (if (i32.eqz (local.get $copy)) (then (return)))
-    (call $guest_strncpy (local.get $copy) (local.get $text)
-      (i32.add (local.get $chars) (i32.const 1)))
     (i32.store offset=16 (local.get $rec) (local.get $copy))
     (i32.store (local.get $rec)
       (i32.or (local.get $flags) (global.get $DYNAMIC_MENU_OWNS_TEXT))))
@@ -467,21 +464,20 @@
         (local.set $text (call $gl32 (i32.add (local.get $mii) (i32.const 36))))
         (if (local.get $text)
           (then
-            (local.set $chars
-              (if (result i32) (local.get $wide)
-                (then (call $guest_wcslen (local.get $text)))
-                (else (call $guest_strlen (local.get $text)))))
-            (local.set $ansi_text
-              (call $heap_alloc (i32.add (local.get $chars) (i32.const 1))))
-            (if (i32.eqz (local.get $ansi_text))
-              (then (return (i32.const 0))))
             (if (local.get $wide)
-              (then (drop (call $wide_to_ansi
-                (local.get $text) (local.get $ansi_text)
-                (i32.add (local.get $chars) (i32.const 1)))))
-              (else (call $guest_strncpy
-                (local.get $ansi_text) (local.get $text)
-                (i32.add (local.get $chars) (i32.const 1)))))))))
+              (then
+                (local.set $chars (call $guest_wcslen (local.get $text)))
+                (local.set $ansi_text
+                  (call $heap_alloc (i32.add (local.get $chars) (i32.const 1))))
+                (if (i32.eqz (local.get $ansi_text))
+                  (then (return (i32.const 0))))
+                (drop (call $wide_to_ansi
+                  (local.get $text) (local.get $ansi_text)
+                  (i32.add (local.get $chars) (i32.const 1)))))
+              (else
+                (local.set $ansi_text (call $guest_strdup (local.get $text)))
+                (if (i32.eqz (local.get $ansi_text))
+                  (then (return (i32.const 0))))))))))
     ;; A string replacement, or a type transition away from string, retires the
     ;; previous owned copy. MIIM_DATA is independent and never changes text.
     (local.set $drop_text
