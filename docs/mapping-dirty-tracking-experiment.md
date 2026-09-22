@@ -639,3 +639,30 @@ writeback and must not race section retirement. The candidate still adds
 state reads to stores and is **not benchmarked**. Next is an isolated real-WASM
 candidate with forced interleavings and cost measurements; production remains
 unchanged and the native writeback regression remains open.
+
+## Real-WASM forced-interleaving fixture (2026-09-22)
+
+`test/test-mapping-dirty-wasm-races.js` compiles a standalone one-page shared
+memory module with the vendored WATX compiler. A Node worker executes one
+uninterrupted WASM writer call, pausing through a host rendezvous after its
+state read, conditional atomic OR, ordinary DWORD store and generation reread.
+The main instance can claim/clear using real WASM compare-exchange and copy the
+fixture DWORD while the writer is paused. This isolates the protocol without
+adding hooks, globals or test controls to the production module.
+
+The test passes 16 candidate cases: initially clean/dirty, four flush pause
+points, and a single write or write-then-restore. It also requires the disabled
+repair negative control to produce memory=9, disk=0 and DIRTY=false. Candidate
+cases verify a quiescent drain catches the final value and that flushing before
+the store leaves DIRTY pending even when the writer restores the original byte
+value. Every expected pause must occur; waits are bounded and workers are
+terminated in cleanup. Test-tier and whitespace checks pass.
+
+These tests validate emitted atomic instructions and the chosen operation
+ordering across real shared-memory WASM instances. The rendezvous deliberately
+adds synchronization: this is not proof of unrestricted non-atomic WASM data
+ordering, a contention stress test, or a test of full-page torn copies. It has
+one writer, serialized flushes, no reuse/wrap/failure handling and no emulator
+store-path coverage. No performance or production-writeback result follows.
+Next: benchmark the candidate only in isolated scratch, then address those
+remaining correctness obligations before integrating a runtime hook.
