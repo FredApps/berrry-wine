@@ -1266,16 +1266,15 @@
   ;; 508: GetFileInformationByHandle(hFile, lpFileInformation) → BOOL
   ;; One VFS snapshot supplies metadata and entry identity, shared by opens.
   (func $handle_GetFileInformationByHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $info i32) (local $error i32)
+    (local $error i32)
     (if (i32.eqz (local.get $arg1))
       (then
         (global.set $last_error (i32.const 87))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
-    (local.set $info (call $g2w (local.get $arg1)))
     (local.set $error (call $host_fs_file_information
-      (local.get $arg0) (local.get $info)))
+      (local.get $arg0) (local.get $arg1)))
     (if (local.get $error)
       (then
         (global.set $last_error (local.get $error))

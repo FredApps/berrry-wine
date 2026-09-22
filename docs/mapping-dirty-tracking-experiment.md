@@ -335,3 +335,25 @@ target is the 52-byte file-information output: one guest-only pointer avoids
 the mixed private/guest semantics of the other four interfaces. Keep import
 argument counts and worker transport synchronized while changing pointer
 meaning, and verify real WAT callers as well as isolated JavaScript tests.
+
+## File-information guest output migrated
+
+The first metadata interface above now keeps the output as a guest address
+across the WAT/host boundary. A real compiled GetFileInformationByHandle call
+failed before the change at split one, leaving 51 bytes untouched. The host
+encodes the 13 metadata DWORDs locally and scatters them through a common
+`writeGuestBytes` helper, also used by find-data. WAT no longer prematurely
+translates this buffer. Import arity remains two; its header contract comment
+now names a guest address. Private result-cell interfaces remain unchanged.
+
+`test-file-information-boundaries.js` runs the actual handler for all 51 split
+positions, comparing the complete result and neighbor canaries, checking
+attributes/size/link count, one exact output notification and stdcall cleanup.
+Invalid handles preserve all output bytes and notify nothing; null output
+retains the existing invalid-parameter result. Host-import signatures (257),
+test-tier, logical-AND and duplicate gates pass. The other four metadata
+interfaces in the audit are still open, as is actual dirty-page tracking.
+
+The existing DuplicateHandle/file-metadata public-API suite, filesystem A/W
+output-boundary suite and read-output notification suite also pass after this
+pointer-contract change.
