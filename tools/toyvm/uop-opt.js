@@ -111,7 +111,7 @@ function termUses(t) {
 // Pure ops can be deleted when their result is dead and moved when their
 // inputs allow. A guarded load is pure here: its only effect is a deopt, and
 // a deopt is invisible (the slow half redoes the instruction exactly).
-const PURE = new Set(['movi', 'mov', 'add', 'sub', 'and', 'or', 'xor', 'mul', 'imulov', 'eq', 'ne',
+const PURE = new Set(['movi', 'mov', 'add', 'sub', 'and', 'or', 'xor', 'mul', 'mulhu', 'mulhs', 'imulov', 'eq', 'ne',
   'addi', 'subi', 'andi', 'ori', 'xori', 'shli', 'shri', 'sari', 'sx8', 'sx16', 'merge16',
   'merge8l', 'merge8h', 'ext8h', 'cc', 'getr', 'gets', 'getm', 'getf', 'getfw', 'flagof',
   'addi16', 'addi8', 'shift']);
@@ -183,6 +183,9 @@ class Build {
         for (const fld of fields) if (typeof c[fld] === 'number') c[fld] = t(c[fld]);
         c.node = k;
         if (c.o === 'ld' || c.o === 'st') { c.chk = 'guard'; c.dx = this.deopt(k); }
+        // A divide the fast half cannot do leaves the way a memory guard does:
+        // the slow block redoes the instruction, and its own DCHK exits to L1.
+        if (c.o === 'dchk') c.dx = this.deopt(k);
         f.ops.push(c);
       }
       f.term = this.fastTerm(clone(s.term), t);
@@ -460,6 +463,8 @@ function evalPure(op, a, b) {
     case 'or': return a | b;
     case 'xor': return a ^ b;
     case 'mul': return Math.imul(a, b);
+    case 'mulhu': return Number(BigInt.asIntN(32, (BigInt(a >>> 0) * BigInt(b >>> 0)) >> 32n));
+    case 'mulhs': return Number(BigInt.asIntN(32, (BigInt(a | 0) * BigInt(b | 0)) >> 32n));
     case 'eq': return a === b ? 1 : 0;
     case 'ne': return a !== b ? 1 : 0;
     case 'addi': return (a + i) | 0;
@@ -557,8 +562,22 @@ function simplifyBlocks(B) {
     return r;
   };
   const defOp = (v) => (v >= FIRST_TEMP && defs.has(v) ? defs.get(v).op : null);
+  // coalesce wants the program's current use counts. Every rewrite below
+  // touches only the block being walked, so keep the other blocks' counts in
+  // `outside` and add this block's back after it -- recounting the whole
+  // program per block was quadratic, and on MORBID's 106-insn loop cost more
+  // than the µop program saved.
+  const outside = useCounts(B);
+  const usesOf = (b) => {
+    const us = [];
+    for (const op of b.ops) us.push(...opUses(op));
+    us.push(...termUses(b.term));
+    return us;
+  };
+  const count = (us, sign) => { for (const v of us) outside.set(v, (outside.get(v) || 0) + sign); };
 
   for (const b of B.fastBlocks()) {
+    count(usesOf(b), -1);
     // Within a block: the current value of each guest vreg, as a temp it is
     // known to equal (so later reads can use the temp, or vice versa).
     const eqTemp = new Map();        // guest vreg -> temp holding its value
@@ -582,7 +601,7 @@ function simplifyBlocks(B) {
       if (PURE.has(op.o) && op.o !== 'movi' && op.o !== 'getr' && op.o !== 'gets' && op.o !== 'getm'
           && op.o !== 'getf' && op.o !== 'getfw' && op.o !== 'flagof' && op.o !== 'ld') {
         const ka = op.a !== undefined && op.a >= 0 ? konst(op.a) : 0;
-        const needB = ['add', 'sub', 'and', 'or', 'xor', 'mul', 'eq', 'ne', 'merge16', 'merge8l', 'merge8h'].includes(op.o)
+        const needB = ['add', 'sub', 'and', 'or', 'xor', 'mul', 'mulhu', 'mulhs', 'eq', 'ne', 'merge16', 'merge8l', 'merge8h'].includes(op.o)
           || (op.o === 'cc' && op.b >= 0);
         const kb = needB ? konst(op.b) : 0;
         if (ka !== undefined && kb !== undefined) {
@@ -633,7 +652,11 @@ function simplifyBlocks(B) {
       }
     }
     if (b.term) mapTermUses(b.term, (v) => (guestCopy.has(v) ? (changed++, guestCopy.get(v)) : v));
-    changed += coalesce(B, b, useCounts(B));
+    const pre = usesOf(b);
+    count(pre, +1);                  // now the whole program's counts
+    changed += coalesce(B, b, outside);
+    count(pre, -1);
+    count(usesOf(b), +1);            // what coalesce left behind
   }
   // Branch folding and cc fusion into the terminator.
   for (const b of B.fastBlocks()) {
@@ -647,8 +670,10 @@ function simplifyBlocks(B) {
       continue;
     }
     if ((t.cc === 'nz' || t.cc === 'z') && d && (d.o === 'eq' || d.o === 'ne') && (uses.get(t.a) || 0) === 1) {
-      const neg = (d.o === 'ne') !== (t.cc === 'nz');
-      t.cc = neg ? 'ne' : 'eq';
+      // nz(ne a b) and z(eq a b) are `ne`; the other two are `eq`. (This
+      // read inverted until a multiply's OF, a `ne`, first reached a jno.)
+      const isNe = (d.o === 'ne') === (t.cc === 'nz');
+      t.cc = isNe ? 'ne' : 'eq';
       t.a = d.a; t.b = d.b; t.w = 32;
       changed++;
       continue;

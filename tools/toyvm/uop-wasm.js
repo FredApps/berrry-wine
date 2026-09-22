@@ -86,6 +86,34 @@ def('movi', 'vi', ({ I, SET }) => SET(0, I(1)));
 def('mov', 'vv', ({ V, SET }) => SET(0, V(1)));
 bin('add', 'i32.add'); bin('sub', 'i32.sub'); bin('and', 'i32.and'); bin('or', 'i32.or');
 bin('xor', 'i32.xor'); bin('mul', 'i32.mul');
+// The upper half of a 32x32 product, and CF/OF of a two-operand IMUL.
+def('mulhu', 'vvv', ({ V, SET }) => SET(0,
+  `(i32.wrap_i64 (i64.shr_u (i64.mul (i64.extend_i32_u ${V(1)}) (i64.extend_i32_u ${V(2)})) (i64.const 32)))`));
+def('mulhs', 'vvv', ({ V, SET }) => SET(0,
+  `(i32.wrap_i64 (i64.shr_s (i64.mul (i64.extend_i32_s ${V(1)}) (i64.extend_i32_s ${V(2)})) (i64.const 32)))`));
+def('imulov', 'vvv', ({ V, SET }) => `(local.set $q (i64.mul (i64.extend_i32_s ${V(1)}) (i64.extend_i32_s ${V(2)})))`
+  + SET(0, '(i64.ne (i64.extend_i32_s (i32.wrap_i64 (local.get $q))) (local.get $q))'));
+// DIV/IDIV of the dividend hi:lo (operands 0, 1) by operand 2. DCHK takes its
+// target where L1 faults: a zero divisor, or a quotient that does not survive
+// a round trip through the width (operand 3 is 64 - w). A signed divide by -1
+// is a negation, so the one i64.div_s that traps (INT64_MIN / -1) never runs.
+{
+  const N = (V) => `(i64.or (i64.shl (i64.extend_i32_u ${V(0)}) (i64.const 32)) (i64.extend_i32_u ${V(1)}))`;
+  const fits = (sh, sr) => `(i64.eq (${sr} (i64.shl (local.get $q) ${sh}) ${sh}) (local.get $q))`;
+  def('dchku', 'vvvit', ({ V, I, GOTO }) => `(if (i32.eqz ${V(2)}) (then ${GOTO(4)}))`
+    + `(local.set $q (i64.div_u ${N(V)} (i64.extend_i32_u ${V(2)})))`
+    + `(if (i32.eqz ${fits(`(i64.extend_i32_u ${I(3)})`, 'i64.shr_u')}) (then ${GOTO(4)}))`);
+  def('dchks', 'vvvit', ({ V, I, GOTO }) => `(if (i32.eqz ${V(2)}) (then ${GOTO(4)}))`
+    + `(local.set $q (if (result i64) (i32.eq ${V(2)} (i32.const -1)) (then (i64.sub (i64.const 0) ${N(V)}))`
+    + ` (else (i64.div_s ${N(V)} (i64.extend_i32_s ${V(2)})))))`
+    + `(if (i32.eqz ${fits(`(i64.extend_i32_u ${I(3)})`, 'i64.shr_s')}) (then ${GOTO(4)}))`);
+  // divq/divr: d hi lo divisor
+  const N1 = (V) => N((k) => V(k + 1));
+  def('divqu', 'vvvv', ({ V, SET }) => SET(0, `(i32.wrap_i64 (i64.div_u ${N1(V)} (i64.extend_i32_u ${V(3)})))`));
+  def('divqs', 'vvvv', ({ V, SET }) => SET(0, `(i32.wrap_i64 (i64.div_s ${N1(V)} (i64.extend_i32_s ${V(3)})))`));
+  def('divru', 'vvvv', ({ V, SET }) => SET(0, `(i32.wrap_i64 (i64.rem_u ${N1(V)} (i64.extend_i32_u ${V(3)})))`));
+  def('divrs', 'vvvv', ({ V, SET }) => SET(0, `(i32.wrap_i64 (i64.rem_s ${N1(V)} (i64.extend_i32_s ${V(3)})))`));
+}
 def('eq', 'vvv', ({ V, SET }) => SET(0, `(i32.eq ${V(1)} ${V(2)})`));
 def('ne', 'vvv', ({ V, SET }) => SET(0, `(i32.ne ${V(1)} ${V(2)})`));
 imm('addi', 'i32.add'); imm('andi', 'i32.and'); imm('ori', 'i32.or'); imm('xori', 'i32.xor');
@@ -260,7 +288,10 @@ function lowerProgram(p) {
       case 'movi': return E('movi', vr(op.d), im(op.i));
       case 'mov': return E('mov', vr(op.d), vr(op.a));
       case 'add': case 'sub': case 'and': case 'or': case 'xor': case 'mul': case 'eq': case 'ne':
+      case 'mulhu': case 'mulhs': case 'imulov':
         return E(op.o, vr(op.d), vr(op.a), vr(op.b));
+      case 'dchk': return E(op.sg ? 'dchks' : 'dchku', vr(op.a), vr(op.b), vr(op.c), im(64 - op.w), tg(op.dx));
+      case 'divq': case 'divr': return E(`${op.o}${op.sg ? 's' : 'u'}`, vr(op.d), vr(op.a), vr(op.b), vr(op.c));
       case 'addi': case 'andi': case 'ori': case 'xori': case 'shli': case 'shri': case 'sari':
       case 'addi16': case 'addi8':
         return E(op.o, vr(op.d), vr(op.a), im(op.i));
@@ -634,7 +665,7 @@ function loopWat(keys, K) {
   const slotLocals = slotRange(K).map(j => `(local $r${j} i32)`).join(' ');
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
-(func $run (export "run") ${PARAMS} (local $x i32) (local $l i32) ${slotLocals}
+(func $run (export "run") ${PARAMS} (local $x i32) (local $l i32) (local $q i64) ${slotLocals}
 ${loadSlots(K)}
 ${text}
 )
@@ -652,7 +683,7 @@ ${MACHINE.map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n')}
 (elem (i32.const 0) ${keys.map((_, i) => `$h${i}`).join(' ')})
 `;
   keys.forEach((k, i) => {
-    s += `;; ${k}\n(func $h${i} (type $h) ${hParams} (result i32) (local $x i32) (local $l i32)\n${variantBody(k, K, 'thread')}\n(unreachable))\n`;
+    s += `;; ${k}\n(func $h${i} (type $h) ${hParams} (result i32) (local $x i32) (local $l i32) (local $q i64)\n${variantBody(k, K, 'thread')}\n(unreachable))\n`;
   });
   s += `(func $run (export "run") ${PARAMS} ${sp.map(j => `(local $r${j} i32)`).join(' ')}
 ${MACHINE.map(g => `(global.set $${g} (local.get $${g}))`).join('\n')}
@@ -706,7 +737,7 @@ ${text}
 )`, index: idx };
 }
 
-const LOCALS = '(local $x i32) (local $l i32)';
+const LOCALS = '(local $x i32) (local $l i32) (local $q i64)';
 
 async function compile(name, wat) {
   const file = `${name}.wat`;

@@ -220,7 +220,10 @@ function decodeInsn(rd, base, mask, ip, d32, ip32 = d32) {
     if (m.reg === 0 || m.reg === 1) return done({ kind: 'test', w: w0, dst: m.rm, src: I(imm(w0), w0) });
     if (m.reg === 2) return done({ kind: 'not', w: w0, dst: m.rm });
     if (m.reg === 3) return done({ kind: 'neg', w: w0, dst: m.rm });
-    return bad(`f6/f7 /${m.reg}`);
+    // One-operand MUL/IMUL (/4 /5) and DIV/IDIV (/6 /7): the accumulator pair
+    // is implicit (AX, DX:AX or EDX:EAX by width).
+    if (m.reg === 4 || m.reg === 5) return done({ kind: 'mul1', signed: m.reg === 5, w: w0, src: m.rm });
+    return done({ kind: 'div1', signed: m.reg === 7, w: w0, src: m.rm });
   }
   if (op === 0xFE || op === 0xFF) {
     const m = modrm(w0);

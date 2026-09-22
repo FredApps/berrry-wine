@@ -5,7 +5,7 @@
 // from the new bytes, and -- the part that is easy to get wrong -- invisible on
 // the dispatch clock.
 //
-// Three programs, each checked against a closed-form answer computed here, so
+// Four programs, each checked against a closed-form answer computed here, so
 // two arms that agree on a wrong number cannot pass:
 //
 //   PATCH     a hot loop whose immediate is rewritten between two runs of it.
@@ -19,6 +19,8 @@
 //             add, setc after rol, xor ah), so the flag passes -- forwarding, liveness,
 //             the materialized word -- have to be right about a flag that is
 //             really read.
+//   MULDIV    mul/imul/div/idiv at 8, 16 and 32 bits on the wasm engine, with
+//             every CF/OF and remainder consumed.
 //
 // And for every program the DISPATCH COUNT must be identical with the tier on:
 // every timer, retrace and audio deadline in this emulator is a function of it,
@@ -253,6 +255,145 @@ function flagsExpected() {
   return { bx, bp, si };
 }
 
+// --- MULDIV -----------------------------------------------------------------
+// mul/imul/div/idiv at 8, 16 and 32 bits in one hot loop, every product's
+// CF/OF and every remainder consumed. Operands are shaped so no divide ever
+// faults: the divisor is cx|1 (nonzero; 0xFFFF unreachable, so no -32768/-1),
+// its 8-bit twin is (cl&7Fh)|1 (positive, so -128/-1 cannot happen), and each
+// unsigned dividend's high half is below its divisor.
+const M_ITERS = 0xF000, M_REPS = 28;    // ~57 dispatches/iter, ~98M total
+
+function muldivProgram() {
+  const a = asm();
+  const { w } = a;
+  w(0xB9, lo(M_REPS), hi(M_REPS));         // mov cx,REPS
+  w(0x31, 0xDB);                           // xor bx,bx
+  w(0x31, 0xED);                           // xor bp,bp
+  w(0x31, 0xF6);                           // xor si,si
+  a.label('outer');
+  w(0x51);                                 // push cx
+  w(0xB9, lo(M_ITERS), hi(M_ITERS));       // mov cx,ITERS
+  w(0xE8); a.rel16('hot');                 // call hot
+  w(0x59);                                 // pop cx
+  w(0xE2); a.rel8('outer');                // loop outer
+  w(0x89, 0xD8);                           // mov ax,bx
+  w(0xE8); a.rel16('hex');                 // call hex
+  w(0x89, 0xE8);                           // mov ax,bp
+  w(0xE8); a.rel16('hex');                 // call hex
+  w(0x89, 0xF0);                           // mov ax,si
+  w(0xE8); a.rel16('hex');                 // call hex
+  w(0xB8, 0x00, 0x4C);                     // mov ax,4C00h
+  w(0xCD, 0x21);                           // int 21h
+  hexRoutine(a);
+  a.label('hot');
+  w(0x89, 0xCF);                           // mov di,cx
+  w(0x83, 0xCF, 0x01);                     // or di,1
+  // 16-bit
+  w(0x89, 0xF8);                           // mov ax,di
+  w(0xF7, 0xE7);                           // mul di
+  w(0x01, 0xC3);                           // add bx,ax
+  w(0x11, 0xD5);                           // adc bp,dx
+  w(0x89, 0xD8);                           // mov ax,bx
+  w(0xF7, 0xEF);                           // imul di       (CF=OF: product left 16 bits)
+  w(0x11, 0xD6);                           // adc si,dx
+  w(0x89, 0xE8);                           // mov ax,bp
+  w(0x31, 0xD2);                           // xor dx,dx
+  w(0xF7, 0xF7);                           // div di
+  w(0x01, 0xC6);                           // add si,ax
+  w(0x31, 0xD3);                           // xor bx,dx
+  w(0x89, 0xF0);                           // mov ax,si
+  w(0x99);                                 // cwd
+  w(0xF7, 0xFF);                           // idiv di
+  w(0x01, 0xC5);                           // add bp,ax
+  // 8-bit
+  w(0x88, 0xD8);                           // mov al,bl
+  w(0xF6, 0xE1);                           // mul cl         (CF: AH nonzero)
+  w(0x11, 0xC3);                           // adc bx,ax
+  w(0x88, 0xCA);                           // mov dl,cl
+  w(0x80, 0xE2, 0x7F);                     // and dl,7Fh
+  w(0x80, 0xCA, 0x01);                     // or dl,1
+  w(0x88, 0xF8);                           // mov al,bh
+  w(0x30, 0xE4);                           // xor ah,ah
+  w(0xF6, 0xF2);                           // div dl
+  w(0x01, 0xC6);                           // add si,ax
+  w(0x88, 0xD8);                           // mov al,bl
+  w(0x98);                                 // cbw
+  w(0xF6, 0xFA);                           // idiv dl
+  w(0x31, 0xC5);                           // xor bp,ax
+  w(0x88, 0xD8);                           // mov al,bl
+  w(0xF6, 0xEA);                           // imul dl
+  w(0x83, 0xD5, 0x00);                     // adc bp,0
+  // 32-bit
+  w(0x66, 0x0F, 0xB7, 0xC3);               // movzx eax,bx
+  w(0x66, 0xC1, 0xE0, 0x10);               // shl eax,16
+  w(0x89, 0xF0);                           // mov ax,si
+  w(0x66, 0x0F, 0xB7, 0xFF);               // movzx edi,di
+  w(0x66, 0xF7, 0xE7);                     // mul edi
+  w(0x01, 0xC6);                           // add si,ax
+  w(0x11, 0xD5);                           // adc bp,dx
+  w(0x66, 0x83, 0xC0, 0x07);               // add eax,7
+  w(0x66, 0xF7, 0xF7);                     // div edi       (EDX < EDI, so it fits)
+  w(0x01, 0xC6);                           // add si,ax
+  w(0x31, 0xD3);                           // xor bx,dx
+  w(0x66, 0x0F, 0xBF, 0xC5);               // movsx eax,bp
+  w(0x66, 0x99);                           // cdq
+  w(0x66, 0xF7, 0xFF);                     // idiv edi
+  w(0x01, 0xC3);                           // add bx,ax
+  w(0x66, 0x0F, 0xBF, 0xC3);               // movsx eax,bx
+  w(0x66, 0xC1, 0xE0, 0x08);               // shl eax,8
+  w(0x66, 0xF7, 0xEF);                     // imul edi      (CF=OF: product left 32 bits)
+  w(0x11, 0xD6);                           // adc si,dx
+  w(0x49);                                 // dec cx
+  w(0x74, 0x03);                           // jz +3
+  w(0xE9); a.rel16('hot');                 // jmp hot       (too far for rel8)
+  w(0xC3);                                 // ret
+  return a.done();
+}
+
+function muldivExpected() {
+  const sx8 = (v) => (v << 24) >> 24, sx16 = (v) => (v << 16) >> 16;
+  const M16 = 0xFFFF, B32 = 1n << 32n;
+  let bx = 0, bp = 0, si = 0, s, p, q, r, n, cf;
+  for (let rep = 0; rep < M_REPS; rep++) {
+    for (let cx = M_ITERS; cx > 0; cx--) {
+      const di = cx | 1;
+      p = di * di;                                                   // mul di
+      s = bx + (p & M16); bx = s & M16; bp = (bp + (p >>> 16) + (s >> 16)) & M16;
+      p = sx16(bx) * sx16(di);                                       // imul di
+      cf = sx16(p & M16) !== p ? 1 : 0;
+      si = (si + ((p >> 16) & M16) + cf) & M16;
+      q = Math.floor(bp / di); r = bp % di;                          // div di
+      si = (si + q) & M16; bx ^= r;
+      q = Math.trunc(sx16(si) / sx16(di));                           // idiv di
+      bp = (bp + q) & M16;
+      p = (bx & 0xFF) * (cx & 0xFF);                                 // mul cl
+      bx = (bx + p + (p >> 8 ? 1 : 0)) & M16;
+      const dl = (cx & 0x7F) | 1;
+      q = Math.floor((bx >> 8) / dl); r = (bx >> 8) % dl;            // div dl
+      si = (si + (q | (r << 8))) & M16;
+      n = sx8(bx & 0xFF); q = Math.trunc(n / dl); r = n - q * dl;    // idiv dl
+      bp ^= (q & 0xFF) | ((r & 0xFF) << 8);
+      p = sx8(bx & 0xFF) * dl;                                       // imul dl
+      bp = (bp + (sx8(p & 0xFF) !== p ? 1 : 0)) & M16;
+      let eax = BigInt(((bx << 16) | si) >>> 0);                     // mul edi
+      p = eax * BigInt(di);
+      let edx = p >> 32n; eax = p & (B32 - 1n);
+      s = si + Number(eax & 0xFFFFn); si = s & M16;
+      bp = (bp + Number(edx & 0xFFFFn) + (s >> 16)) & M16;
+      eax = (eax + 7n) & (B32 - 1n);                                 // add eax,7; div edi
+      n = (edx << 32n) | eax;
+      si = (si + Number((n / BigInt(di)) & 0xFFFFn)) & M16;
+      bx ^= Number((n % BigInt(di)) & 0xFFFFn);
+      q = Math.trunc(sx16(bp) / di);                                 // idiv edi
+      bx = (bx + (q & M16)) & M16;
+      p = BigInt(sx16(bx) << 8) * BigInt(di);                        // imul edi
+      cf = BigInt.asIntN(32, p) !== p ? 1 : 0;
+      si = (si + Number(BigInt.asUintN(64, p) >> 32n & 0xFFFFn) + cf) & M16;
+    }
+  }
+  return { bx, bp, si };
+}
+
 async function run(com, uop) {
   const r = await runDos({
     exe: com,
@@ -301,8 +442,9 @@ async function main() {
   assert.ok(sideExitExpected().bp > 0, 'SIDEEXIT: the rare exit is never reached');
   void s;
   await check('FLAGS', flagsProgram(), flagsExpected(), ['bx', 'bp', 'si']);
+  await check('MULDIV', muldivProgram(), muldivExpected(), ['bx', 'bp', 'si']);
   console.log('test-toyvm-uop-live: ok');
 }
 
 if (require.main === module) main().catch((e) => { console.error(e); process.exit(1); });
-else module.exports = { patchProgram, sideExitProgram, flagsProgram };
+else module.exports = { patchProgram, sideExitProgram, flagsProgram, muldivProgram };

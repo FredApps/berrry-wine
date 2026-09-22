@@ -150,7 +150,8 @@ function flagEffect(d, shmask = 0x1F) {
       break;
     case 'test': case 'neg': W.push(...ALL6); break;
     case 'incdec': W.push('p', 'a', 'z', 's', 'o'); break;
-    case 'imul2': case 'imul3': W.push('c', 'o'); break;
+    case 'imul2': case 'imul3': case 'mul1': W.push('c', 'o'); break;
+    // DIV/IDIV leave the flags as they were in L1 (x86 calls them undefined).
     case 'shift': {
       // A count of zero writes nothing, so only a nonzero constant count is a
       // certain write.
@@ -274,6 +275,9 @@ function lower(region, opts = {}) {
     const n = nodes.get(k);
     const b = nb.get(k);
     const L = new Lowerer(p, b, n);
+    // A faulting instruction (a divide) leaves before it has changed anything,
+    // through a GO to its own ip: L1 runs it again and takes the fault.
+    L.faultExit = () => goStub(n.ip, 'fault');
     L.insn();
     const d = n.d;
     const s = successors(d);
@@ -560,6 +564,68 @@ class Lowerer {
         L.rec('mul', w, { nz });
         break;
       }
+      // One-operand MUL/IMUL into AX / DX:AX / EDX:EAX, as L1's mul_* and
+      // imul_* handlers: CF = OF = the upper half is not the extension of
+      // the lower (unsigned: is not zero). `nz` is any nonzero value when set.
+      case 'mul1': {
+        const w = d.w, sg = d.signed;
+        const b0 = L.read(d.src);
+        const a0 = L.getReg(0, w);
+        if (w === 32) {
+          const lo = L.bin('mul', a0, b0);
+          const hi = L.bin(sg ? 'mulhs' : 'mulhu', a0, b0);
+          L.putReg(0, 32, lo);
+          L.putReg(2, 32, hi);
+          L.rec('mul', 32, { nz: sg ? L.bin('ne', hi, L.imm('sari', lo, 31)) : hi });
+          break;
+        }
+        const sx = w === 8 ? 'sx8' : 'sx16';
+        const prod = sg ? L.bin('mul', L.un(sx, a0), L.un(sx, b0)) : L.bin('mul', a0, b0);
+        let nz;
+        if (w === 8) {
+          const ax = L.imm('andi', prod, 0xFFFF);
+          L.putReg(0, 16, ax);
+          nz = sg ? L.bin('ne', L.un('sx8', prod), prod) : L.imm('shri', ax, 8);
+        } else {
+          L.putReg(2, 16, L.imm('andi', L.imm('shri', prod, 16), 0xFFFF));
+          L.putReg(0, 16, L.imm('andi', prod, 0xFFFF));
+          nz = sg ? L.bin('ne', L.un('sx16', prod), prod) : L.imm('shri', prod, 16);
+        }
+        L.rec('mul', w, { nz });
+        break;
+      }
+      // DIV/IDIV: the dividend as a 64-bit hi:lo pair, so every width is one
+      // op shape. DCHK leaves (before any write) when L1 would fault: a zero
+      // divisor or a quotient that does not fit the width. The divide ops
+      // after it are never moved above it (they are not pure: a divide the
+      // check did not clear can trap in wasm).
+      case 'div1': {
+        const w = d.w, sg = d.signed ? 1 : 0;
+        let dv = L.read(d.src);
+        if (sg && w !== 32) dv = L.un(w === 8 ? 'sx8' : 'sx16', dv);
+        let hi, lo;
+        if (w === 32) { hi = L.getReg(2, 32); lo = L.getReg(0, 32); } else {
+          const num = w === 8 ? L.getReg(0, 16)
+            : L.bin('or', L.imm('shli', L.getReg(2, 16), 16), L.getReg(0, 16));
+          lo = sg && w === 8 ? L.un('sx16', num) : num;
+          hi = sg ? L.imm('sari', lo, 31) : L.movi(0);
+        }
+        L.op({ o: 'dchk', a: hi, b: lo, c: dv, w, sg, dx: L.faultExit() });
+        const q = L.t();
+        L.op({ o: 'divq', d: q, a: hi, b: lo, c: dv, sg });
+        const r = L.t();
+        L.op({ o: 'divr', d: r, a: hi, b: lo, c: dv, sg });
+        if (w === 8) {
+          L.putReg(0, 16, L.bin('or', L.imm('andi', q, 0xFF), L.imm('shli', L.imm('andi', r, 0xFF), 8)));
+        } else if (w === 16) {
+          L.putReg(2, 16, L.imm('andi', r, 0xFFFF));
+          L.putReg(0, 16, L.imm('andi', q, 0xFFFF));
+        } else {
+          L.putReg(2, 32, r);
+          L.putReg(0, 32, q);
+        }
+        break;
+      }
       case 'setcc': {
         const v = L.getcc(d.cc);
         const e = d.dst.t === 'm' ? L.ea(d.dst) : null;
@@ -667,7 +733,7 @@ function def(op) {
 }
 // Ops with an effect beyond their destination.
 const SIDE = new Set(['st', 'putr', 'rec', 'guard', 'step', 'callh', 'wrec', 'wflags', 'ld',
-  'getcc', 'getf', 'fvset', 'check']);
+  'getcc', 'getf', 'fvset', 'check', 'dchk', 'divq', 'divr']);
 function pure(op) { return !SIDE.has(op.o); }
 
 function dump(p, log = console.log) {

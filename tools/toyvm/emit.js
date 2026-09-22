@@ -3287,6 +3287,12 @@ const FUSE_FIRST = [
   // (daretro.exe: 97% of its `in` dispatches are followed by test_ri8), and
   // the port-poll twin below needs the pair fused to see it as one block.
   ['test_ri8', { fop: 'LOGIC', w: 8 }],
+  // ...and `in al,dx / and al,8 / jz` is the third. The uop coverage census
+  // (tools/toyvm/uop-coverage.js, 6de5073e) found it the largest unclaimed
+  // weight in the corpus after the loops L1 already collapses: CHANGE.EXE,
+  // DADEMO.EXE and DELAY_PT.COM wait for retrace this way, and the port-poll
+  // twin never saw it because the pair was not fused.
+  ['and_ri8', { fop: 'LOGIC', w: 8 }],
   ['cmp_rm8', { fop: 'SUB', w: 8 }],
   ['sbb_ri16', { fop: 'SUB', w: 16 }],
   ['cmp_ri16', { fop: 'SUB', w: 16 }],
@@ -3401,7 +3407,13 @@ function genFusedBranches() {
       // `in`'s port word, the swallowed fused handler's own index (skipped),
       // then the fused pair's operands where they already were. A port other
       // than 3DAh runs the three ops exactly as the interpreter would.
-      if (/^(cmp|test)_ri8$/.test(alu)) {
+      //
+      // `and` WRITES its register where cmp/test only compare, and the turn is
+      // still exact: each turn reloads AL from the port before running the
+      // ALU's own body, so AL = status & imm is what the interpreter's last
+      // turn would have left too. (The 1-op spin twin above stays cmp/test
+      // only: with no `in` in front, an `and` loop is not a pure spin.)
+      if (/^(cmp|test|and)_ri8$/.test(alu)) {
         // `jn` is the branch's operand count: four for the plain pair, three
         // for the traced one whose fall-through is the next word. Both the
         // read and the rewind have to agree with it -- one word over and the

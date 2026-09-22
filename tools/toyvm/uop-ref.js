@@ -154,6 +154,19 @@ function record(fl, op, v, fcf) {
   if (fcf !== null && ['inc', 'dec', 'inc32', 'dec32'].includes(op.k)) fl.fcf = fcf;
 }
 
+// DIV/IDIV of the 64-bit dividend hi:lo by d: [quotient, remainder] as i32,
+// or null where L1 faults (zero divisor, quotient outside w bits). `raw`
+// skips the range test: the divide ops run only after DCHK cleared it.
+function divide(hi, lo, d, sg, w, raw = false) {
+  const n = (BigInt(hi >>> 0) << 32n) | BigInt(lo >>> 0);
+  const N = sg ? BigInt.asIntN(64, n) : n;
+  const D = sg ? BigInt(d | 0) : BigInt(d >>> 0);
+  if (D === 0n) return null;
+  const q = N / D, r = N % D;
+  if (!raw && (sg ? BigInt.asIntN(w, q) : BigInt.asUintN(w, q)) !== q) return null;
+  return [Number(BigInt.asIntN(32, q)), Number(BigInt.asIntN(32, r))];
+}
+
 // Evaluate a branch condition on (a, b) at width w.
 function cond(cc, a, b, w) {
   const m = w === 32 ? 0xFFFFFFFF : (1 << w) - 1;
@@ -333,6 +346,11 @@ function runRef(vm, p, opts = {}) {
           v[op.d] = BigInt.asIntN(32, r) === r ? 0 : 1;
           break;
         }
+        case 'mulhu': v[op.d] = Number(BigInt.asIntN(32, (BigInt(v[op.a] >>> 0) * BigInt(v[op.b] >>> 0)) >> 32n)); break;
+        case 'mulhs': v[op.d] = Number(BigInt.asIntN(32, (BigInt(v[op.a] | 0) * BigInt(v[op.b] | 0)) >> 32n)); break;
+        case 'dchk': if (divide(v[op.a], v[op.b], v[op.c], op.sg, op.w) === null) next = op.dx; break;
+        case 'divq': v[op.d] = divide(v[op.a], v[op.b], v[op.c], op.sg, 32, true)[0]; break;
+        case 'divr': v[op.d] = divide(v[op.a], v[op.b], v[op.c], op.sg, 32, true)[1]; break;
         case 'eq': v[op.d] = v[op.a] === v[op.b] ? 1 : 0; break;
         case 'ne': v[op.d] = v[op.a] !== v[op.b] ? 1 : 0; break;
         case 'addi': v[op.d] = (v[op.a] + op.i) | 0; break;

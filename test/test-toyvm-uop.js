@@ -227,6 +227,92 @@ function carry() {
   return { com: a.done(), head: a.addr('top') };
 }
 
+// One-operand MUL/IMUL/DIV/IDIV at every width, register and memory forms,
+// with CF/OF read straight after a multiply. The divisors are forced odd and
+// the dividends small enough that no divide faults (see divfault for that).
+function muldiv() {
+  const a = asm();
+  prologue(a, 0x400);
+  a.w(0xC6, 0x06, 0x00, 0x24, 40); // mov byte [2400h],40
+  a.label('outer');
+  a.w(0xBE, 0x00, 0x10);       // mov si,1000h
+  a.w(0xB9, 0x00, 0x01);       // mov cx,100h
+  a.label('top');
+  a.w(0x8A, 0x04);             // mov al,[si]
+  a.w(0xF6, 0x64, 0x01);       // mul byte [si+1]
+  a.w(0x83, 0xD7, 0x00);       // adc di,0       (CF of the mul)
+  a.w(0x01, 0xC5);             // add bp,ax
+  a.w(0x8B, 0x04);             // mov ax,[si]
+  a.w(0xF7, 0x6C, 0x02);       // imul word [si+2]
+  a.w(0x71); a.rel8('noov');   // jno noov       (OF of the imul)
+  a.w(0x47);                   // inc di
+  a.label('noov');
+  a.w(0x01, 0xC5);             // add bp,ax
+  a.w(0x11, 0xD5);             // adc bp,dx
+  a.w(0x8B, 0x1C);             // mov bx,[si]
+  a.w(0x83, 0xCB, 0x01);       // or bx,1
+  a.w(0x89, 0xE8);             // mov ax,bp
+  a.w(0x31, 0xD2);             // xor dx,dx
+  a.w(0xF7, 0xF3);             // div bx
+  a.w(0x01, 0xD7);             // add di,dx
+  a.w(0x89, 0xE8);             // mov ax,bp
+  a.w(0x99);                   // cwd
+  a.w(0xF7, 0xFB);             // idiv bx
+  a.w(0x01, 0xC7);             // add di,ax
+  a.w(0x89, 0xE8);             // mov ax,bp
+  a.w(0x30, 0xE4);             // xor ah,ah
+  a.w(0xF6, 0xF3);             // div bl
+  a.w(0x01, 0xC7);             // add di,ax
+  a.w(0x8A, 0x44, 0x03);       // mov al,[si+3]
+  a.w(0x98);                   // cbw
+  a.w(0xF6, 0xFB);             // idiv bl
+  a.w(0x01, 0xC7);             // add di,ax
+  a.w(0x66, 0x0F, 0xB7, 0xDB); // movzx ebx,bx
+  a.w(0x66, 0x89, 0xE8);       // mov eax,ebp
+  a.w(0x66, 0xF7, 0xE3);       // mul ebx
+  a.w(0x66, 0x01, 0xD5);       // add ebp,edx
+  a.w(0x66, 0xF7, 0xEB);       // imul ebx
+  a.w(0x66, 0x01, 0xC7);       // add edi,eax
+  a.w(0x66, 0x99);             // cdq
+  a.w(0x66, 0xF7, 0xFB);       // idiv ebx
+  a.w(0x66, 0x01, 0xD7);       // add edi,edx
+  a.w(0x66, 0x31, 0xD2);       // xor edx,edx
+  a.w(0x66, 0xF7, 0xF3);       // div ebx
+  a.w(0x66, 0x01, 0xC5);       // add ebp,eax
+  a.w(0x46);                   // inc si
+  a.w(0xE2); a.rel8('top');    // loop top
+  a.w(0xFE, 0x0E, 0x00, 0x24); // dec byte [2400h]
+  a.w(0x75); a.rel8('outer');  // jnz outer
+  epilogue(a);
+  return { com: a.done(), head: a.addr('top') };
+}
+
+// A divide that faults: the dividend climbs by 4 every outer pass while the
+// (odd) byte divisor cycles through 1..7, so once it passes 255 the first
+// divide by 1 has a quotient that does not fit and the loop ends in INT 0 --
+// late enough (~100K steps) that the snapshot is taken first and only the
+// long budgets reach it. The micro-op program must leave before the divide
+// has changed anything, at exactly the state L1 faults in.
+function divfault() {
+  const a = asm();
+  prologue(a, 0x400);
+  a.w(0xBD, 0x00, 0x00);       // mov bp,0
+  a.label('outer');
+  a.w(0xBE, 0x00, 0x10);       // mov si,1000h
+  a.w(0xB9, 0x00, 0x01);       // mov cx,100h
+  a.label('top');
+  a.w(0x89, 0xE8);             // mov ax,bp
+  a.w(0x8A, 0x1C);             // mov bl,[si]
+  a.w(0x80, 0xCB, 0x01);       // or bl,1
+  a.w(0xF6, 0xF3);             // div bl
+  a.w(0x01, 0xC7);             // add di,ax
+  a.w(0x46);                   // inc si
+  a.w(0xE2); a.rel8('top');    // loop top
+  a.w(0x83, 0xC5, 0x04);       // add bp,4
+  a.w(0xEB); a.rel8('outer');  // jmp outer
+  return { com: a.done(), head: a.addr('top') };
+}
+
 async function capture(com) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-uop-'));
   const exe = path.join(dir, 'UOP.COM');
@@ -264,7 +350,8 @@ async function main() {
   const budgets = [0, 1, 2, 3, 5, 8, 13, 37, 100, 1001, 12345, 200000];
   const only = process.argv[2] || null;
   let checked = 0;
-  for (const [name, make] of [['sprite', sprite], ['checksum', checksum], ['mixed', mixed], ['flags', flags], ['carry', carry]]) {
+  for (const [name, make] of [['sprite', sprite], ['checksum', checksum], ['mixed', mixed], ['flags', flags], ['carry', carry],
+    ['muldiv', muldiv], ['divfault', divfault]]) {
     if (only && only !== name) continue;
     const c = await capture(make());
     const reg = IR.discover((lin) => c.vm.mem[lin], c.env, c.snap.regs.gip >>> 0);
@@ -289,6 +376,6 @@ async function main() {
   console.log(`ok test-toyvm-uop: ${checked} differential runs agree`);
 }
 
-module.exports = { sprite, checksum, mixed, flags, carry, capture, l1Arm, uopArm };
+module.exports = { sprite, checksum, mixed, flags, carry, muldiv, divfault, capture, l1Arm, uopArm };
 
 if (require.main === module) main().catch((e) => { console.error(e.stack || e); process.exit(1); });
