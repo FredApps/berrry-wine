@@ -31531,5 +31531,14 @@
       }
     ],
     "ret": "UINT"
+  },
+  {
+    "id": 3711,
+    "name": "WSAIsBlocking",
+    "nargs": 0,
+    "test_call": true,
+    "convention": "stdcall",
+    "hash": 3164277069,
+    "ret": "BOOL"
   }
 ]

@@ -3610,13 +3610,6 @@
           (i32.load offset=12 (local.get $slot)) (i32.const 0)))
         (i32.store (local.get $slot) (i32.const 0)))))
 
-  (func (export "test_call_WSAIsBlocking") (result i32)
-    (local $sp i32) (local.set $sp (i32.load offset=16 (global.get $reg_base)))
-    (call $handle_WSAIsBlocking
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
-    (i32.load offset=0 (global.get $reg_base)))
-
   (func (export "set_ansi_code_page") (param $cp i32)
     (if (call $is_supported_code_page (local.get $cp))
       (then (global.set $ansi_code_page (call $resolve_code_page (local.get $cp))))))

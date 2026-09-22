@@ -192,6 +192,7 @@ for (const file of fs.readdirSync(SRC).filter(name => name.endsWith('.wat') && n
       `handwritten test_call_${name} is duplicated in ${handwritten.get(name)} and ${file}`);
     handwritten.set(name, file);
     const api = table.find(api => api.name === name);
+    assert(api, `${name}: handwritten test wrapper bypasses an unregistered API`);
     if (api && Number.isInteger(api.nargs) && api.nargs >= 0 && api.nargs <= 16) {
       assert.notStrictEqual(wrapperShape(body), wrapperShape(expectedTestCall(api)),
         `${name}: mechanical test wrapper must use api_table test_call metadata`);

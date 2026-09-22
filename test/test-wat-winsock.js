@@ -43,7 +43,17 @@ const GAME_PORT = 8035;
 
 async function main() {
   const root = path.join(__dirname, '..');
-  const wasm = compileSrcWasm();
+  const wasm = compileSrcWasm((file, source) => file === '13-exports.wat' ? source + String.raw`
+    (func (export "test_wsa_is_blocking_lookup") (result i32)
+      (call $lookup_api_id "WSAIsBlocking"))
+    (func (export "test_wsa_is_blocking_dispatch") (result i64)
+      (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+      (call $dispatch_api_table (call $lookup_api_id "WSAIsBlocking")
+        (i32.const 0) (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0))
+      (i64.or (i64.extend_i32_u (i32.load (global.get $reg_base)))
+        (i64.shl (i64.extend_i32_u (i32.load offset=16 (global.get $reg_base))) (i64.const 32))))
+  ` : source);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const imports = createHostImports({ getMemory: () => memory.buffer, renderer: null, resourceJson: {} });
   Object.assign(imports.host, {
@@ -184,6 +194,15 @@ async function main() {
 
   check('WSAIsBlocking reports no nested blocking hook', () => {
     assert.strictEqual(wat.test_call_WSAIsBlocking() | 0, 0);
+  });
+  check('WSAIsBlocking is name-resolvable and dispatched with its zero-argument ABI', () => {
+    const api = require('../src/api_table.json').find(api => api.name === 'WSAIsBlocking');
+    assert(api, 'WSAIsBlocking must be registered, not only directly testable');
+    assert.strictEqual(api.nargs, 0);
+    assert.strictEqual(wat.test_wsa_is_blocking_lookup(), api.id);
+    const result = wat.test_wsa_is_blocking_dispatch();
+    assert.strictEqual(Number(result & 0xffffffffn), 0);
+    assert.strictEqual(Number(result >> 32n), 0x00300004);
   });
 
   check('htons/ntohs swap 16-bit values', () => {
