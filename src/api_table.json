@@ -5134,7 +5134,7 @@
   {
     "id": 569,
     "name": "SHRegGetUSValueA",
-    "nargs": 6,
+    "nargs": 8,
     "convention": "stdcall",
     "hash": 958162268
   },

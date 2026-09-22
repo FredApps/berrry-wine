@@ -671,3 +671,11 @@ the cleanup byte count generated from each API entry instead of always popping
 slots 3/4/5/6/8 and three for slot 7. All six failure paths now preserve the
 caller's stack. Replacing only this helper with its prior body reproduces the
 prior digest. No method implementation or new quiet handler is claimed.
+
+2026-09-22: 248 -> 248 manual, SHRegGetUSValueA ABI-only digest change.
+Microsoft's prototype has eight arguments; metadata and the existing error
+path incorrectly used six. Corrected nargs to eight and cleanup from 28 to
+36 bytes. The direct name/dispatch regression detects the old eight-byte
+imbalance. An in-memory old-constant substitution reproduces the prior hash.
+Registry/default-data semantics remain unimplemented; no quiet handler was
+removed or added. See `docs/shreg-get-us-value-abi-review.md`.

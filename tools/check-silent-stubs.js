@@ -100,7 +100,7 @@ const digest = crypto.createHash('sha256')
 // count changes and their behavior rationale live in
 // docs/silent-handler-inventory.md; executable policy and the pin stay here.
 const EXPECTED_COUNT = 248;
-const EXPECTED_SHA256 = '3833b8269d97732fa886ac8bc3bf629f37e72e10a22ba0d56b73720c819a7047';
+const EXPECTED_SHA256 = 'd16bb5b92ba90d5ff251354e6a0624603e0741382472da67a18e92b0b1a59d32';
 
 const pinLines = () => [
   `const EXPECTED_COUNT = ${quiet.length};`,

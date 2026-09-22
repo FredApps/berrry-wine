@@ -1995,10 +1995,11 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 767: SHRegGetUSValueA — return ERROR_FILE_NOT_FOUND
+  ;; SHRegGetUSValueA — registry/default-data behavior remains unimplemented.
+  ;; Its failure path must still consume all eight documented arguments.
   (func $handle_SHRegGetUSValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 2))  ;; ERROR_FILE_NOT_FOUND
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))  ;; stdcall, 6 args
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36)))  ;; stdcall, 8 args
   )
 
   ;; 768: SHGetPathFromIDListA(pidl, pszPath)
