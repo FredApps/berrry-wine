@@ -660,6 +660,14 @@
       display: flex; align-items: center; justify-content: center;
       font-size: 22px;
     }
+    /* A faint 1px halo plus a hard 1px drop, like the label's text-shadow.
+       Win98 drew icons bare, but some art is drawn in the desktop's own teal:
+       Quake II's emblem is teal-bodied and vanished into the background
+       without an edge. A hard edge keeps pixel art crisp where a soft
+       XP-style shadow would smear it. */
+    .desktop-icon .icon-img img {
+      filter: drop-shadow(0 0 1px rgba(0,0,0,.7)) drop-shadow(1px 1px 0 rgba(0,0,0,.85));
+    }
     .desktop-icon .icon-label {
       color: white;
       font-size: 11px;
