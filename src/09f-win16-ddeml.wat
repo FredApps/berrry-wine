@@ -819,6 +819,7 @@
   ;; ask for the frame to be left on the wire.
   (func $win16_dde_deliver (param $wa i32) (param $n i32)
     (local $type i32)
+    (local $hdata i32)
     (local $tag i32) (local $src_conv i32) (local $dst_conv i32)
     (local $i i32) (local $slot i32) (local $conv i32) (local $svc i32)
     (local $want i32) (local $wild i32) (local $topic_wa i32)
@@ -974,7 +975,14 @@
         (local.set $want (i32.add (local.get $wa) (global.get $DDE_HDR)))
         (local.set $i (i32.add (call $win16_dde_str_len (local.get $want))
                                (i32.const 1)))
-        (drop (call $win16_dde_ask_push_data
+        ;; select eagerly evaluates both arms: allocate only for a poke.
+        ;; Until the queue accepts it, this frame owns the data handle.
+        (if (i32.eq (local.get $type) (i32.const 6))
+          (then
+            (local.set $hdata (call $win16_dde_data_take
+              (i32.add (local.get $want) (local.get $i))
+              (i32.sub (i32.load offset=20 (local.get $wa)) (local.get $i))))))
+        (if (i32.eqz (call $win16_dde_ask_push_data
           (select (global.get $XTYP_POKE)
             (select (global.get $XTYP_EXECUTE) (global.get $XTYP_ADVSTART)
                     (i32.eq (local.get $type) (i32.const 7)))
@@ -982,13 +990,9 @@
           (i32.load offset=4 (local.get $slot)) (local.get $conv)
           (i32.load offset=20 (local.get $slot))
           (call $win16_dde_hsz_intern_wa (local.get $want))
-          (select
-            (call $win16_dde_data_take
-              (i32.add (local.get $want) (local.get $i))
-              (i32.sub (i32.load offset=20 (local.get $wa)) (local.get $i)))
-            (i32.const 0)
-            (i32.eq (local.get $type) (i32.const 6)))
+          (local.get $hdata)
           (i32.load offset=24 (local.get $wa)) (i32.const 0) (i32.const 0)))
+          (then (call $win16_dde_data_free (local.get $hdata))))
         (return)))
 
     ;; The far side has acknowledged a poke, execute or advise start.
