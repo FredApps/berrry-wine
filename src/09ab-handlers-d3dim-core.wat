@@ -4685,7 +4685,15 @@
     (local.set $state (call $d3ddev_state (local.get $this)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $mode (call $gl32 (i32.add (local.get $state) (i32.const 344))))
-    (if (i32.eqz (local.get $mode)) (then (return (i32.const 0))))
+    ;; D3D's documented default is D3DCULL_CCW, and D3DRM relies on it: the
+    ;; Plus! 98 Organic Art screensavers never issue a CULLMODE render state at
+    ;; all (7 SetRenderState calls in 20000 batches of FALLINGL, none of them
+    ;; rs=22). Treating unset as "no cull" drew every back face, and a back
+    ;; face shades to black by construction -- N.L <= 0 for every light -- so
+    ;; with one flat Z per triangle those black faces beat the lit front faces
+    ;; on roughly half the pixels. That is what "lit geometry shades to black"
+    ;; was across this whole cluster.
+    (if (i32.eqz (local.get $mode)) (then (local.set $mode (i32.const 3))))
     (if (i32.eq (local.get $mode) (i32.const 1)) (then (return (i32.const 0))))
     (local.set $cross
       (i32.sub
@@ -5633,7 +5641,7 @@
   (func $d3dim_draw_tl_triangle
     (param $this i32) (param $rt i32) (param $use_z i32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32)
-    (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z) (i32.const 0)
+    (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z) (i32.const 1)
       (call $d3dim_coord_i (f32.load (local.get $v0)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
       (f32.load (i32.add (local.get $v0) (i32.const 8)))
@@ -6076,6 +6084,18 @@
       (local.set $p1 (f32.gt (f32.load (i32.add (local.get $v1) (i32.const 12))) (f32.const 0.0)))
       (local.set $p2 (f32.gt (f32.load (i32.add (local.get $v2) (i32.const 12))) (f32.const 0.0)))
       (local.set $pos (i32.add (local.get $p0) (i32.add (local.get $p1) (local.get $p2))))
+      ;; kind=28 ExecTri, first triangle of each execute-buffer TRIANGLE op.
+      ;; "the geometry is right but the fill is wrong" has several causes that
+      ;; look identical in a capture -- point fill mode, every vertex behind
+      ;; the eye, a black vertex colour, sub-pixel screen coords -- and this
+      ;; separates them in one line.
+      (if (i32.eqz (local.get $i)) (then
+        (call $host_dx_trace (i32.const 28)
+          (i32.or (i32.or (local.get $fillmode) (i32.shl (local.get $pos) (i32.const 4)))
+                  (i32.shl (local.get $wCount) (i32.const 8)))
+          (i32.load (i32.add (local.get $v0) (i32.const 16)))
+          (i32.load (local.get $v0))
+          (i32.load (i32.add (local.get $v0) (i32.const 4))))))
       (if (i32.eqz (local.get $pos)) (then
         (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
