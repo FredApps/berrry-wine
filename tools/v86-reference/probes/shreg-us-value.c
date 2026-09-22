@@ -26,6 +26,8 @@ static BOOL seed(HKEY root, BOOL user) {
   for(i=0;i<8;i++) data[i]=(BYTE)((user?0x10:0x20)+i);
   result=setValue(key,"Both",0,REG_BINARY,data,4);
   result|=setValue(key,"Sized",0,REG_BINARY,data,user?8:4);
+  result|=setValue(key,"BothTooLarge",0,REG_BINARY,data,user?8:6);
+  if(user) result|=setValue(key,"UserOnlyLarge",0,REG_BINARY,data,8);
   if(!user) result|=setValue(key,"MachineOnly",0,REG_BINARY,data,4);
   result|=setValue(key,0,0,REG_BINARY,data,4);
   result|=closeKey(key);
@@ -74,7 +76,13 @@ void WinMainCRTStartup(void) {
   row("short-with-default",keyPath,"Both",FALSE,2,4,FALSE);
   row("user-too-large-machine-fits",keyPath,"Sized",FALSE,4,0,FALSE);
   row("user-too-large-default",keyPath,"Sized",FALSE,4,4,FALSE);
+  row("both-too-large",keyPath,"BothTooLarge",FALSE,4,0,FALSE);
+  row("both-too-large-default",keyPath,"BothTooLarge",FALSE,4,4,FALSE);
+  row("user-only-too-large",keyPath,"UserOnlyLarge",FALSE,4,0,FALSE);
+  row("user-only-too-large-default",keyPath,"UserOnlyLarge",FALSE,4,4,FALSE);
+  row("short-small-default",keyPath,"Both",FALSE,2,1,FALSE);
   row("missing-value",keyPath,"Absent",FALSE,16,0,FALSE);
+  row("missing-value-default",keyPath,"Absent",FALSE,16,4,FALSE);
   row("missing-key",missingPath,"Absent",FALSE,16,0,FALSE);
   row("default-cap0",missingPath,"Absent",FALSE,0,4,FALSE);
   row("default-cap2",missingPath,"Absent",FALSE,2,4,FALSE);

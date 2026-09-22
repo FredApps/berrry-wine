@@ -38,7 +38,7 @@ error is not the desired end state. Clipboard counting/ordering also remains
 open: the current count is approximate and enumeration does not retain
 publication order; this audit did not change either by inference.
 
-## Native probe prepared — capture pending
+## Initial native-probe preparation (before captures)
 
 `tools/v86-reference/probes/shreg-us-value.c` and `shreg-us-apps.json`
 prepare 16 serial-output cases for the reference Win98 VM. They distinguish
@@ -60,9 +60,9 @@ successfully. The final local artifact is `/private/tmp/wa-shreg-us-probe.exe`
 (not committed). Compilation needed Zig's explicit Windows include directory,
 as already supplied by `capture.js`.
 
-**No native results yet.** Capture was deferred for the other agent's
+At this checkpoint there were **no native results**. Capture was deferred for the other agent's
 2026-09-22 14:56 browser-sweep reservation. Runtime semantics are unchanged.
-After that reservation is released, run twice from fresh reference-VM state:
+The capture command for two fresh reference-VM runs is:
 
 ```sh
 node tools/v86-reference/capture.js --online \
@@ -76,3 +76,10 @@ Use different output paths for the repeat. Require all 16 rows, both begin/end
 markers, successful cleanup and matching observations before retaining a
 native fixture. Then implement precedence/default copying with guest-aware
 memory access and compare actual generated dispatch against those observations.
+
+## Native capture completed
+
+The probe was subsequently expanded to 22 cases and captured twice from fresh
+Win98 state. See [native observations](shreg-get-us-value-native.md) and
+`test/fixtures/win98-shreg-us-value/`. Registry/default runtime behavior remains
+unimplemented; the next step is a regression driven by these observations.

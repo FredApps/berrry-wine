@@ -6,7 +6,8 @@
       "probeSource": "tools/v86-reference/probes/shreg-us-value.c",
       "probeName": "SHREGUS.EXE",
       "launch": "D:\\SHREGUS.EXE",
-      "waitMs": 10000
+      "waitMs": 10000,
+      "files": []
     }
   }
 }
