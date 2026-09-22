@@ -1070,3 +1070,35 @@ All 54 native validation/status cases, VFS 43/43, lazy/provider 51/51 and
 source-compiled public file/mapping regressions pass. Shared-view identity,
 immediate coherence and the wide compatibility-extension policy remain open;
 passing this matrix does not assert that those other native observations match.
+
+## Native overlapping ranges and unmap lifetime (2026-09-21)
+
+Extended the same native probe and refreshed both transcript and provenance.
+The run reached `FILE_MAPPING_DONE`. A 128 KiB file-backed READWRITE section
+was mapped as 16 bytes READ at offset zero, 128 KiB WRITE at offset zero,
+and 16 bytes WRITE at offset 64 KiB, then its section handle was closed.
+
+Observed on this Win98 profile:
+
+- The small and large views return the same address; the tail returns that
+  address plus 65536. All three queries identify the same allocation base.
+- Before the larger map, VirtualQuery reports a 4096-byte committed READONLY
+  region at the small view. Afterwards, it reports 131072 committed READWRITE
+  bytes at the base. This is not evidence that the rest was initially committed;
+  the initial query does not inspect the following region.
+- Writing through the large view at offset 65536 is immediately visible through
+  the tail view, without a flush.
+- Both unmaps of the repeated base address succeed, preserving last error 4660.
+  The queried base remains committed after the first; the tail remains committed
+  after the second. Unmapping the tail succeeds and its address then queries as
+  MEM_FREE (65536). Repeating that unmap fails with ERROR_INVALID_ADDRESS (487).
+
+Implementation consequence: a single Map keyed by returned address cannot
+represent these view references, and freeing on the first unmap is incorrect.
+The next runtime change needs section-owned shared backing and counted view
+references, with range growth preserving existing addresses and dirty bytes.
+It must not eagerly materialize an entire large lazy file merely to share a
+small view. Exact protection downgrade, disjoint-range commitment, alternative
+unmap orders and cross-process behavior still need additional native probes.
+
+This checkpoint changes the oracle only, not runtime ownership or permissions.

@@ -57,6 +57,45 @@ static void coherence(HANDLE file, DWORD protection, DWORD access) {
   CloseHandle(section);
 }
 
+static void query(const char *label, void *address) {
+  MEMORY_BASIC_INFORMATION info;
+  DWORD count = VirtualQuery(address, &info, sizeof(info));
+  emit(label); field(" address=", (DWORD)address); field(" count=", count);
+  if (count) {
+    field(" base=", (DWORD)info.BaseAddress); field(" allocation=", (DWORD)info.AllocationBase);
+    field(" size=", info.RegionSize); field(" state=", info.State); field(" protect=", info.Protect);
+  }
+  emit("\r\n");
+}
+
+static void ranges(HANDLE file) {
+  HANDLE section = CreateFileMappingA(file, NULL, PAGE_READWRITE, 0, 131072, NULL);
+  void *small, *large, *tail; BOOL ok; DWORD error;
+  if (!section) return;
+  small = MapViewOfFile(section, FILE_MAP_READ, 0, 0, 16);
+  query("RANGE_SMALL", small);
+  large = MapViewOfFile(section, FILE_MAP_WRITE, 0, 0, 131072);
+  tail = MapViewOfFile(section, FILE_MAP_WRITE, 0, 65536, 16);
+  query("RANGE_LARGE", large); query("RANGE_TAIL", tail);
+  if (large && tail) {
+    volatile unsigned char *a = large, *b = tail;
+    a[65536] ^= 0x5a;
+    field("RANGE_ALIAS written=", a[65536]); field(" peer=", b[0]); emit("\r\n");
+  }
+  CloseHandle(section);
+  SetLastError(0x1234); ok = small ? UnmapViewOfFile(small) : FALSE; error = GetLastError();
+  field("UNMAP_SMALL ok=", ok); field(" error=", error); emit("\r\n");
+  query("AFTER_SMALL", large);
+  SetLastError(0x1234); ok = large ? UnmapViewOfFile(large) : FALSE; error = GetLastError();
+  field("UNMAP_LARGE ok=", ok); field(" error=", error); emit("\r\n");
+  query("AFTER_LARGE", tail);
+  SetLastError(0x1234); ok = tail ? UnmapViewOfFile(tail) : FALSE; error = GetLastError();
+  field("UNMAP_TAIL ok=", ok); field(" error=", error); emit("\r\n");
+  query("AFTER_TAIL", tail);
+  SetLastError(0x1234); ok = tail ? UnmapViewOfFile(tail) : FALSE; error = GetLastError();
+  field("UNMAP_STALE ok=", ok); field(" error=", error); emit("\r\n");
+}
+
 void WinMainCRTStartup(void) {
   typedef HANDLE (WINAPI *CreateMappingW)(HANDLE, LPSECURITY_ATTRIBUTES, DWORD, DWORD, DWORD, LPCWSTR);
   typedef HANDLE (WINAPI *OpenMappingW)(DWORD, BOOL, LPCWSTR);
@@ -79,6 +118,7 @@ void WinMainCRTStartup(void) {
   for (i = 0; i < 3; ++i) { views(file, protection[i], FALSE); views(INVALID_HANDLE_VALUE, protection[i], TRUE); }
   coherence(file, PAGE_READWRITE, FILE_MAP_WRITE);
   coherence(file, PAGE_WRITECOPY, FILE_MAP_COPY);
+  ranges(file);
   field("W_EXPORT create=", createW != NULL); field(" open=", openW != NULL); emit("\r\n");
   if (createW) {
     SetLastError(0x1234);
