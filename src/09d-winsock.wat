@@ -2198,7 +2198,11 @@
   (func $handle_WsControl (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
                           (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $resp_len_ga i32) (local $cap i32) (local $need i32)
-    (local $entity i32) (local $class i32) (local $id i32) (local $descr i32) (local $resp_wa i32)
+    (local $entity i32) (local $class i32) (local $id i32) (local $descr i32)
+    ;; Every response field is written with $gs8/$gs32 on the guest address.
+    ;; The buffer is the caller's and up to 92 bytes plus a description, so it
+    ;; can straddle two sparse guest pages that are not adjacent in WASM
+    ;; memory; one $g2w up front would have put the tail somewhere else.
     ;; arg0=protocol arg1=action arg2=pRequestInfo arg3=pcbRequestInfoLen
     ;; arg4=pResponseInfo, and the sixth argument is still on the guest stack.
     (local.set $resp_len_ga (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
@@ -2212,8 +2216,6 @@
       (local.set $id     (call $gl32 (i32.add (local.get $arg2) (i32.const 16))))
       (if (local.get $resp_len_ga)
         (then (local.set $cap (call $gl32 (local.get $resp_len_ga)))))
-      (if (local.get $arg4)
-        (then (local.set $resp_wa (call $g2w (local.get $arg4)))))
 
       ;; INFO_CLASS_GENERIC / ENTITY_LIST_ID — which entities exist.
       (if (i32.and (i32.eq (local.get $class) (i32.const 0x100))
@@ -2225,10 +2227,10 @@
           (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
             (then
               ;; IF_ENTITY instance 0, then CL_NL_ENTITY instance 0.
-              (i32.store (local.get $resp_wa) (i32.const 0x200))
-              (i32.store offset=4 (local.get $resp_wa) (i32.const 0))
-              (i32.store offset=8 (local.get $resp_wa) (i32.const 0x301))
-              (i32.store offset=12 (local.get $resp_wa) (i32.const 0))))
+              (call $gs32 (local.get $arg4) (i32.const 0x200))
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 4)) (i32.const 0))
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 8)) (i32.const 0x301))
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 12)) (i32.const 0))))
           (br $done)))
 
       ;; INFO_CLASS_GENERIC / ENTITY_TYPE_ID — what kind of entity this is.
@@ -2244,7 +2246,7 @@
                 (then (local.set $need (i32.const 0x202))))   ;; IF_MIB
               (if (i32.eq (local.get $entity) (i32.const 0x301))
                 (then (local.set $need (i32.const 0x303))))   ;; CL_NL_IP
-              (i32.store (local.get $resp_wa) (local.get $need))))
+              (call $gs32 (local.get $arg4) (local.get $need))))
           (br $done)))
 
       ;; Everything below is INFO_CLASS_PROTOCOL.
@@ -2259,11 +2261,11 @@
           (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
             (then
               (call $wsctl_zero (local.get $arg4) (i32.const 92))
-              (i32.store (local.get $resp_wa) (i32.const 2))          ;; not forwarding
-              (i32.store offset=4 (local.get $resp_wa) (i32.const 128)) ;; default TTL
-              (i32.store offset=80 (local.get $resp_wa) (i32.const 1))  ;; numif
-              (i32.store offset=84 (local.get $resp_wa) (i32.const 1))  ;; numaddr
-              (i32.store offset=88 (local.get $resp_wa) (i32.const 1))));; numroutes
+              (call $gs32 (local.get $arg4) (i32.const 2))          ;; not forwarding
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 4)) (i32.const 128)) ;; default TTL
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 80)) (i32.const 1))  ;; numif
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 84)) (i32.const 1))  ;; numaddr
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 88)) (i32.const 1))));; numroutes
           (br $done)))
 
       ;; IP entity: the address table — one IPAddrEntry for our adapter.
@@ -2275,13 +2277,13 @@
           (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
             (then
               (call $wsctl_zero (local.get $arg4) (i32.const 24))
-              (i32.store (local.get $resp_wa)
+              (call $gs32 (local.get $arg4)
                 (call $bswap32 (global.get $vsock_local_ip)))
-              (i32.store offset=4 (local.get $resp_wa) (i32.const 1))
-              (i32.store offset=8 (local.get $resp_wa)
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 4)) (i32.const 1))
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 8))
                 (call $bswap32 (global.get $wsctl_mask)))
-              (i32.store offset=12 (local.get $resp_wa) (i32.const 1))
-              (i32.store offset=16 (local.get $resp_wa) (i32.const 65535))))
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 12)) (i32.const 1))
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 16)) (i32.const 65535))))
           (br $done)))
 
       ;; IP entity: the route table — one default route through the room host.
@@ -2297,12 +2299,12 @@
           (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
             (then
               (call $wsctl_zero (local.get $arg4) (i32.const 48))
-              (i32.store offset=4 (local.get $resp_wa) (i32.const 1))  ;; index
-              (i32.store offset=8 (local.get $resp_wa) (i32.const 1))  ;; metric1
-              (i32.store offset=24 (local.get $resp_wa)
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 4)) (i32.const 1))  ;; index
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 8)) (i32.const 1))  ;; metric1
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 24))
                 (call $bswap32 (global.get $wsctl_gateway)))                                   ;; nexthop
-              (i32.store offset=28 (local.get $resp_wa) (i32.const 4)) ;; indirect
-              (i32.store offset=32 (local.get $resp_wa) (i32.const 3))));; proto
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 28)) (i32.const 4)) ;; indirect
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 32)) (i32.const 3))));; proto
           (br $done)))
 
       ;; Interface entity: the adapter itself, ending in its description.
@@ -2316,22 +2318,22 @@
           (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
             (then
               (call $wsctl_zero (local.get $arg4) (local.get $need))
-              (i32.store (local.get $resp_wa) (i32.const 1))            ;; if_index
-              (i32.store offset=4 (local.get $resp_wa) (i32.const 6))        ;; ethernet
-              (i32.store offset=8 (local.get $resp_wa) (i32.const 1500))     ;; mtu
-              (i32.store offset=12 (local.get $resp_wa) (i32.const 10000000));; speed
-              (i32.store offset=16 (local.get $resp_wa) (i32.const 6))       ;; physaddrlen
+              (call $gs32 (local.get $arg4) (i32.const 1))            ;; if_index
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 4)) (i32.const 6))        ;; ethernet
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 8)) (i32.const 1500))     ;; mtu
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 12)) (i32.const 10000000));; speed
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 16)) (i32.const 6))       ;; physaddrlen
               ;; Locally-administered MAC, fixed so the tool shows the same
               ;; adapter address on every run.
-              (i32.store8 offset=20 (local.get $resp_wa) (i32.const 0x02))
-              (i32.store8 offset=21 (local.get $resp_wa) (i32.const 0x57))
-              (i32.store8 offset=22 (local.get $resp_wa) (i32.const 0x41))
-              (i32.store8 offset=23 (local.get $resp_wa) (i32.const 0x53))
-              (i32.store8 offset=24 (local.get $resp_wa) (i32.const 0x4D))
-              (i32.store8 offset=25 (local.get $resp_wa) (i32.const 0x01))
-              (i32.store offset=28 (local.get $resp_wa) (i32.const 1))  ;; admin up
-              (i32.store offset=32 (local.get $resp_wa) (i32.const 1))  ;; oper up
-              (i32.store offset=88 (local.get $resp_wa) (local.get $descr))
+              (call $gs8 (i32.add (local.get $arg4) (i32.const 20)) (i32.const 0x02))
+              (call $gs8 (i32.add (local.get $arg4) (i32.const 21)) (i32.const 0x57))
+              (call $gs8 (i32.add (local.get $arg4) (i32.const 22)) (i32.const 0x41))
+              (call $gs8 (i32.add (local.get $arg4) (i32.const 23)) (i32.const 0x53))
+              (call $gs8 (i32.add (local.get $arg4) (i32.const 24)) (i32.const 0x4D))
+              (call $gs8 (i32.add (local.get $arg4) (i32.const 25)) (i32.const 0x01))
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 28)) (i32.const 1))  ;; admin up
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 32)) (i32.const 1))  ;; oper up
+              (call $gs32 (i32.add (local.get $arg4) (i32.const 88)) (local.get $descr))
               (call $wsctl_copy_str
                 (i32.add (local.get $arg4) (i32.const 92)) (region.addr $RESERVED_PAGE_STRINGS 0x10))))
           (br $done)))

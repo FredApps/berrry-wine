@@ -3404,8 +3404,12 @@
     (if (i32.lt_u (local.get $arg2) (i32.const 39))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))) (return)))
-    (local.set $src (call $g2w (local.get $arg0)))
-    (local.set $dst (call $g2w (local.get $arg1)))
+    ;; Both buffers are the caller's: a 16-byte GUID in and 39 wide chars out.
+    ;; Either can sit across a guest page boundary, and two adjacent sparse
+    ;; pages need not be adjacent in WASM memory, so neither is safe to walk
+    ;; through a single translation.
+    (local.set $src (call $guest_span_in (local.get $arg0) (i32.const 16)))
+    (local.set $dst (call $guest_span_in (local.get $arg1) (i32.const 78)))
     ;; Read GUID fields: Data1(4) Data2(2) Data3(2) Data4(8)
     (local.set $d1 (i32.load (local.get $src)))
     (local.set $d2 (i32.load16_u (i32.add (local.get $src) (i32.const 4))))
@@ -3442,6 +3446,9 @@
     (i32.store16 (i32.add (local.get $dst) (i32.const 74)) (i32.const 0x7D))
     ;; null terminator
     (i32.store16 (i32.add (local.get $dst) (i32.const 76)) (i32.const 0))
+    ;; Release in reverse order of acquisition.
+    (call $guest_span_writeback (local.get $arg1) (local.get $dst) (i32.const 78))
+    (call $guest_span_release (local.get $src) (i32.const 16))
     (i32.store offset=0 (global.get $reg_base) (i32.const 39))  ;; chars written including NUL
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))  ;; stdcall, 3 args
   )

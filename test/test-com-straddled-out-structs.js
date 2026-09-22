@@ -67,6 +67,28 @@ const extraWat = String.raw`
     (i32.store offset=16 (global.get $reg_base) (local.get $saved))
     (i32.load offset=0 (global.get $reg_base)))
 
+  (func (export "test_guid_string") (param $sp i32) (param $guid i32) (param $out i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (i32.load offset=16 (global.get $reg_base)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+    (call $handle_StringFromGUID2
+      (local.get $guid) (local.get $out) (i32.const 39) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved))
+    (i32.load offset=0 (global.get $reg_base)))
+
+  ;; WsControl takes its sixth argument (pcbResponseInfoLen) off the guest
+  ;; stack at [esp+24], so the caller's frame has to be built here.
+  (func (export "test_wscontrol") (param $sp i32) (param $req i32) (param $out i32)
+        (param $lenp i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (i32.load offset=16 (global.get $reg_base)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 24)) (local.get $lenp))
+    (call $handle_WsControl
+      (i32.const 0) (i32.const 0) (local.get $req) (i32.const 0) (local.get $out) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved))
+    (i32.load offset=0 (global.get $reg_base)))
+
   (func (export "test_gamma_create") (result i32)
     (local $obj i32) (local $entry i32)
     (local.set $obj (call $dx_create_com_obj
@@ -131,6 +153,49 @@ const extraWat = String.raw`
     for (const k of [4, 64, Math.floor(SIZE / 2), SIZE - 8]) {
       assert.deepStrictEqual(ask(split(SIZE, k)), want,
         `${name} with ${k} bytes on the far page: wrong record`);
+    }
+  }
+
+  // --- StringFromGUID2: both the GUID in and the 39 wide chars out ---------
+  {
+    const GUID = 16, OUT = 78;
+    const fillGuid = ga => { for (let i = 0; i < GUID; i++) e.guest_write8(ga + i, (i * 17 + 3) & 0xff); return ga; };
+    const ask = (guidGa, outGa) =>
+      [e.test_guid_string(sp, fillGuid(guidGa), zero(outGa, OUT)) | 0, ...read(outGa, OUT)];
+    const linearGuid = e.guest_alloc(GUID) >>> 0;
+    const want = ask(linearGuid, e.guest_alloc(OUT) >>> 0);
+    assert.strictEqual(want[0], 39, 'StringFromGUID2 reported 39 chars');
+    assert.strictEqual(want[1], 0x7b, 'the string opens with {');
+    // Split the output, then the input, then both.
+    for (const k of [4, 40, OUT - 8]) {
+      assert.deepStrictEqual(ask(linearGuid, split(OUT, k)), want,
+        `StringFromGUID2 with ${k} output bytes on the far page: wrong string`);
+    }
+    for (const k of [2, 8, 14]) {
+      assert.deepStrictEqual(ask(split(GUID, k), e.guest_alloc(OUT) >>> 0), want,
+        `StringFromGUID2 with ${k} GUID bytes on the far page: wrong string`);
+    }
+  }
+
+  // --- WsControl's IP statistics, 92 bytes of caller buffer ----------------
+  {
+    const RESP = 92;
+    const req = e.guest_alloc(24) >>> 0;
+    const lenp = e.guest_alloc(4) >>> 0;
+    const w32 = (ga, v) => { for (let i = 0; i < 4; i++) e.guest_write8(ga + i, (v >>> (i * 8)) & 0xff); };
+    w32(req, 0x301);      // entity: CL_NL_ENTITY
+    w32(req + 8, 0x200);  // class: INFO_CLASS_PROTOCOL
+    w32(req + 16, 1);     // id: statistics
+    const ask = ga => {
+      zero(ga, RESP); w32(lenp, RESP);
+      return [e.test_wscontrol(sp, req, ga, lenp) | 0, ...read(ga, RESP)];
+    };
+    const want = ask(e.guest_alloc(RESP) >>> 0);
+    assert.strictEqual(want[0], 0, 'WsControl answered the statistics query');
+    assert.ok(want.slice(1).some(v => v !== 0), 'WsControl wrote statistics');
+    for (const k of [4, 48, RESP - 8]) {
+      assert.deepStrictEqual(ask(split(RESP, k)), want,
+        `WsControl with ${k} bytes on the far page: wrong IPSNMPInfo`);
     }
   }
 
