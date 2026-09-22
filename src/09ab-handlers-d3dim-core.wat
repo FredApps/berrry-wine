@@ -4711,10 +4711,11 @@
     (param $color i32)
     (local $state i32) (local $zbuf i32) (local $zval f32) (local $alpha i32) (local $blend i32)
     (local $zfunc i32) (local $zwrite i32)
-    ;; Direct DrawPrimitive callers rely on culling when they do not use a
-    ;; z-buffer: otherwise later back faces overwrite the visible faces.  Keep
-    ;; the old no-cull workaround scoped to execute-buffer/D3DRM triangles,
-    ;; whose transformed winding still does not have full clip parity.
+    ;; Every caller relies on culling when it does not use a z-buffer: otherwise
+    ;; later back faces overwrite the visible faces.  Execute-buffer/D3DRM
+    ;; triangles used to be exempted here on the theory that their transformed
+    ;; winding lacked clip parity; that exemption was the bug, since a back face
+    ;; shades to black by construction and drew over the lit front faces.
     (if (local.get $honor_cull) (then
       (if (call $d3dim_cull_tri (local.get $this)
             (local.get $x0) (local.get $y0)

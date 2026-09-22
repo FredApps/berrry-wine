@@ -121,9 +121,45 @@ gold leaf had a black right half. That is a back face, not a material.
 An app that never sets CULLMODE at all is the second tell.
 
 `scr_jazz` is *not* this bug — culling made it marginally worse (13 → 9
-colours) and it still renders as sparse speckle. Its geometry, fill mode and
-vertex colours all trace clean, so it may simply be a sparse filament form
-rendered correctly; that one is still open.
+colours) and it still renders as sparse speckle. See below; every cause the
+instruments can see has now been ruled out for it.
+
+### `scr_jazz`: every visible cause ruled out, and it is still sparse
+
+The primary shows a clearly structured radial flower, six-fold symmetric,
+drawn in small bright fragments over black. Everything measurable about its
+input is healthy. A kind-28 census over 1500 batches:
+
+```
+ 236 fill=SOLID tris=224 col=0xff282828
+  67 fill=SOLID tris=124 col=0xffffffff
+  41 fill=SOLID tris=224 col=0xffffffff
+   9 fill=SOLID tris=224 col=0xffdbdbdb   … and a long tail of shaded greys
+```
+
+All `frontVerts=3/3`, all SOLID, 224 or 124 triangles a buffer, vertex colours
+spanning the whole lit range from the `0xff282828` ambient floor to white. So
+fill mode, eye-side, triangle count and lighting are all correct, which is the
+entire set of causes the instrument was built to separate.
+
+Depth is ruled out too, by the same `zbuf = 0` probe as GEOMETRY above: jazz
+went 9 → 16 colours and 15 → 17 of 1850 non-zero samples, and the picture stayed
+the same scattered fragments. Culling is ruled out by the fact that turning it
+on *reduced* the colour count rather than changing the shape.
+
+Its surfaces are worth recording, since they are not the usual arrangement:
+slot 3 primary (the speckle), slot 4 back buffer **empty at 0/1850**, slot 5
+offscreen uniformly one non-zero value across all 1850 samples. A back buffer
+that is never written while the primary is, is the thing to explain next — the
+scene is reaching the primary directly and whatever the back buffer is for, it
+is not receiving this geometry.
+
+Not ruled out, and the remaining candidates in order: the transform collapsing
+the form (the first vertices of one frame's four buffers sit inside a 40-pixel
+box near screen centre), or the form genuinely being this sparse at the point
+the capture is taken — these are growth animations and 120000 batches may still
+be early. Settle the second one first, by capturing the same run at two widely
+separated budgets; it is much cheaper than reading the transform.
 
 ### After the fix (`8b227b5c`), 120000 batches, captured DX surface
 
@@ -173,16 +209,27 @@ ambient floor, through `0xfffefe00`), then one `fill=WIRE` buffer whose colour
 is flat `0xff000000`. So GEOMETRY draws each octahedron lit and then outlines it
 in black, and the near ones — yellow bodies with black edges — are *correct*.
 
-What is wrong is that the distant ones keep the outline and lose the fill. Both
-passes have `frontVerts=3/3`, identical triangle counts and healthy colours, so
-the SOLID triangles are submitted and something drops them **per pixel**. Next
-step: find out whether the SOLID pass is failing the depth test that the WIRE
-pass skips. `$d3dim_draw_tri_culled` gives a triangle one flat Z (the mean of
-its three vertices), which is least accurate exactly where these objects are —
-small, distant, and steeply foreshortened — and a whole-object rejection is what
-a flat Z produces when the object spans a depth range. Instrument the reject,
-do not infer it; the counterpart tell is whether the blue background glow is
-geometry with a Z or a 2D clear, since only the first can reject anything.
+The distant ones keep the outline and lose the fill, and the obvious suspect —
+that the SOLID pass fails a depth test the WIRE pass skips — is **falsified**.
+`$d3dim_draw_tri_culled` gives a triangle one flat Z (the mean of its three
+vertices, `09ab:4747`), which is least accurate on exactly these objects, so a
+probe forced `zbuf = 0` there, making every triangle take the no-depth path, and
+rebuilt. The distant octahedra came back **still wire-only**. Depth rejects
+nothing here.
+
+What that leaves is the reading the trace already supported and I was slow to
+accept: GEOMETRY draws distant objects **wire-only on purpose**. The census
+counts roughly three SOLID buffers per WIRE one while the frame holds about six
+near objects and twenty distant ones, so the solid passes belong to the near
+cluster and the far field never gets one. A level-of-detail style, not a defect.
+`scr_geometry` is very likely rendering correctly.
+
+**Two cautions this cost.** The screensaver cycles scenes, so two runs at the
+same batch count photograph *different content* — one run listed a single 640x480
+surface, the next listed seven including two 512x512 textures. Never diff
+captures of this app across runs without checking the surface list first. And a
+picture that looks like a rendering failure can be an art direction; the probe
+that settles it is worth more than another hour of reading the rasterizer.
 
 ### The lighting code, for reference
 
