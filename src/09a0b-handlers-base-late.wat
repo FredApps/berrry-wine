@@ -1372,7 +1372,7 @@
           (then
             (local.set $buf_ga (call $heap_alloc
               (i32.shl (i32.add (local.get $len) (i32.const 1)) (i32.const 1))))
-            (i32.store (call $g2w (local.get $arg4)) (local.get $buf_ga))
+            (call $gs32 (local.get $arg4) (local.get $buf_ga))
             (local.set $dst (local.get $buf_ga))
             (local.set $nSize (i32.add (local.get $len) (i32.const 1))))
           (else

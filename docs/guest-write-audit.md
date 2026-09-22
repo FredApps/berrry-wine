@@ -352,3 +352,20 @@ checked. Existing durable/pseudo process and thread handle, affinity-mask
 validation and calling-thread identity cases also pass, as do logical-AND and
 whitespace checks. This is caller-addressing coverage, not proof of every NULL
 pointer/OS-version affinity behavior or an implementation of multiple CPUs.
+
+## FormatMessageW allocated-pointer output migrated
+
+The allocated-buffer pointer now uses gs32 rather than a raw translated DWORD
+store. The existing wide_to_ansi/ansi_to_wide converters already use guest
+accessors; their direct caller buffers need no additional migration here.
+Private heap-backed ANSI staging and formatting semantics are unchanged.
+
+`test/test-format-message-boundaries.js` covers three pointer-slot crossings
+and a page-local control, plus eleven UTF-16 byte crossings and a control for
+each of the template and direct-output paths (28 cases). It checks the returned
+allocation's complete text, caller guards, unrelated backing, input preservation
+and stdcall cleanup. Restoring the old store makes the split-1 pointer resolve
+to zero bytes instead of the expected text; the fixed version passes. The
+existing insert-language suite passes 21 checks. Logical-AND, tier membership
+and whitespace checks pass. This is addressing coverage, not a claim of native
+Unicode, small-buffer, allocation-failure or full FormatMessage flag fidelity.
