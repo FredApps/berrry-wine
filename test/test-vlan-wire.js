@@ -300,6 +300,82 @@ async function main() {
     assert.strictEqual(drained, MAX_PAYLOAD);
   });
 
+  // ---- flow control ---------------------------------------------------
+  //
+  // A stream frame that does not fit its ring cannot be dropped, and while it
+  // waits at the head of the wire nothing behind it moves. So the sender
+  // stops at the far ring's size, and the reader hands the room back.
+
+  const WINDOW = 16384;
+  const drainStream = () => {
+    const rx = host.buf(MAX_PAYLOAD);
+    let total = 0;
+    for (;;) {
+      settle(host, peer);
+      const got = host.wat.test_call_recv(acc, rx, MAX_PAYLOAD, 0) | 0;
+      if (got <= 0) break;
+      total += got;
+    }
+    settle(host, peer);
+    return total;
+  };
+  const writable = (node, s) =>
+    (node.wat.test_call_select(0, 0, node.fdset([s]), 0, node.timeval(0, 0)) | 0) === 1;
+
+  check('a sender stops at the far ring\'s size and is no longer writable', () => {
+    const big = peer.buf(new Array(MAX_PAYLOAD).fill(0x33));
+    let sent = 0;
+    for (let i = 0; i < 16; i++) {
+      const n = peer.wat.test_call_send(cli, big, MAX_PAYLOAD, 0) | 0;
+      if (n < 0) { assert.strictEqual(peer.err(), WSAEWOULDBLOCK); break; }
+      sent += n;
+      settle(host, peer);
+    }
+    assert.strictEqual(sent, WINDOW);
+    assert.strictEqual(writable(peer, cli), false);
+  });
+
+  check('a stalled connection does not hold up the rest of the wire', () => {
+    // Nobody has read the stream, yet a datagram sent after it arrives.
+    const msg = [9, 8, 7];
+    assert.strictEqual(peer.wat.test_call_sendto(udpPeer, peer.buf(msg), msg.length, 0,
+      peer.sockaddr(HOST_IP, GAME_PORT + 1), 16) | 0, msg.length);
+    settle(host, peer);
+    assert.strictEqual(host.wire.pending, 0, 'a frame is stuck at the head of the wire');
+    const rx = host.buf(8);
+    assert.strictEqual(host.wat.test_call_recvfrom(udpHost, rx, 8, 0, 0, 0) | 0, msg.length);
+    assert.deepStrictEqual(host.readBuf(rx, msg.length), msg);
+  });
+
+  check('reading hands the window back, and the sender carries on', () => {
+    const rx = host.buf(MAX_PAYLOAD);
+    assert.strictEqual(host.wat.test_call_recv(acc, rx, MAX_PAYLOAD, 0) | 0, MAX_PAYLOAD);
+    settle(host, peer);
+    assert.strictEqual(writable(peer, cli), true);
+    const big = peer.buf(new Array(MAX_PAYLOAD).fill(0x44));
+    assert.strictEqual(peer.wat.test_call_send(cli, big, MAX_PAYLOAD, 0) | 0, MAX_PAYLOAD);
+    settle(host, peer);
+    assert.strictEqual(drainStream(), WINDOW);
+  });
+
+  check('a flood of 1-byte sends is bounded in frames, not only bytes', () => {
+    const one = peer.buf([1]);
+    let frames = 0;
+    for (;;) {
+      const n = peer.wat.test_call_send(cli, one, 1, 0) | 0;
+      if (n < 0) { assert.strictEqual(peer.err(), WSAEWOULDBLOCK); break; }
+      frames++;
+      assert.ok(frames <= WINDOW, 'the window never closed');
+    }
+    assert.strictEqual(frames, WINDOW / 64);
+    assert.strictEqual(host.wire.pending, frames);
+    // Taking the frames off the wire returns their overhead without the
+    // guest reading a byte.
+    settle(host, peer);
+    assert.strictEqual(writable(peer, cli), true);
+    assert.strictEqual(drainStream(), frames);
+  });
+
   // ---- addressing and malformed input ---------------------------------
 
   check('a frame addressed to another member is ignored', () => {

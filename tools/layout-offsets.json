@@ -1505,8 +1505,24 @@
           "name": "acc_queue",
           "type": "i32",
           "offset": 68,
-          "size": 60,
-          "count": 15,
+          "size": 52,
+          "count": 13,
+          "stride": 4
+        },
+        {
+          "name": "tx_inflight",
+          "type": "i32",
+          "offset": 120,
+          "size": 4,
+          "count": 1,
+          "stride": 4
+        },
+        {
+          "name": "rx_credit",
+          "type": "i32",
+          "offset": 124,
+          "size": 4,
+          "count": 1,
           "stride": 4
         }
       ]

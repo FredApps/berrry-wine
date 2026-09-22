@@ -41,11 +41,17 @@
   ;;                         not been reported to the guest yet
   ;;                    bit4 that connect failed for want of an answer
   ;;                         (WSAETIMEDOUT), not by refusal
-  ;;   +60  backlog     listener backlog, clamped to 1..15; while a socket
+  ;;   +60  backlog     listener backlog, clamped to 1..13; while a socket
   ;;                    is connecting (state 6), its connect deadline in
   ;;                    host ticks instead
   ;;   +64  acc_count   queued accepts
-  ;;   +68  acc_queue   15 × i32 child record indexes (ends at +128)
+  ;;   +68  acc_queue   13 × i32 child record indexes (ends at +120)
+  ;;   +120 tx_inflight a wire stream's send window in use: every DATA frame
+  ;;                    sent and not yet credited back, each charged
+  ;;                    max(length, VSOCK_FRAME_CHARGE) (see "flow control")
+  ;;   +124 rx_credit   what this end owes its sender: bytes the guest has
+  ;;                    read plus the overhead of frames already taken off
+  ;;                    the wire, not yet returned in a WINDOW frame
   ;;
   ;; The table above is now DECLARED, not just described: the (layout VSock ...)
   ;; below is the single source of every offset in it, and each field access
@@ -76,10 +82,12 @@
     (field rx_len      i32)      ;; +52   bytes currently readable
     (field flags       i32)      ;; +56   bit0 read-closed, bit1 write-closed,
                                  ;;       bit2 reset, bit3 connect result unreported
-    (field backlog     i32)      ;; +60   listener backlog, clamped 1..15;
+    (field backlog     i32)      ;; +60   listener backlog, clamped 1..13;
                                  ;;       connect deadline while state 6
     (field acc_count   i32)      ;; +64   queued accepts
-    (field acc_queue   i32 15))  ;; +68   15 child record indexes, ends at +128
+    (field acc_queue   i32 13)   ;; +68   13 child record indexes, ends at +120
+    (field tx_inflight i32)      ;; +120  wire send window in use
+    (field rx_credit   i32))     ;; +124  credit owed to the wire sender
 
   (global $VSOCK_MAX i32 (i32.const 64))
   (global $VSOCK_REC_SIZE i32 (i32.const 128))
@@ -614,9 +622,11 @@
     (if (i32.and (load.field VSock flags (local.get $rec)) (i32.const 2))
       (then (return (i32.const 0))))
     (local.set $peer (load.field VSock peer (local.get $rec)))
-    ;; A remote peer has no visible ring here; the wire carries the bytes and
-    ;; reports its own backpressure when the frame is handed over.
-    (if (i32.eq (local.get $peer) (i32.const -2)) (then (return (i32.const 1))))
+    ;; A remote peer's ring is not visible here; the send window stands in
+    ;; for it (see "flow control" below).
+    (if (i32.eq (local.get $peer) (i32.const -2))
+      (then (return (i32.lt_s (load.field VSock tx_inflight (local.get $rec))
+                              (global.get $VSOCK_WINDOW)))))
     (if (i32.lt_s (local.get $peer) (i32.const 0)) (then (return (i32.const 0))))
     (i32.gt_u (call $vsock_rx_space (local.get $peer)) (i32.const 0)))
 
@@ -639,7 +649,7 @@
   ;;   +16 dst_ip         +20 dst_port           +24 payload length
   ;;
   ;; Types: 1 SYN (open), 2 SYNACK (accepted), 3 DATA, 4 FIN (orderly write
-  ;; close), 5 RST (refused or aborted), 6 DGRAM, and 7 GONE.
+  ;; close), 5 RST (refused or aborted), 6 DGRAM, 7 GONE, and 8 WINDOW.
   ;;
   ;; GONE is never sent by a guest. The host puts it into its own inbox when
   ;; the link to a room address closes (Wire.peerGone in lib/vlan-wire.js):
@@ -648,6 +658,30 @@
   ;; closed tab is silence, and silence is forever: a blocking recv, a
   ;; connect in flight and a DirectPlay session all wait on a peer that will
   ;; never answer.
+  ;;
+  ;; Flow control. A stream frame that does not fit its socket's ring cannot
+  ;; be dropped, and while it waits at the head of the wire nothing behind it
+  ;; moves -- not the other connections, not DirectPlay, not a datagram. So a
+  ;; sender never puts more in flight than the far ring is guaranteed to take:
+  ;; VSOCK_WINDOW bytes, the size of every stream ring. Each DATA frame is
+  ;; charged max(length, VSOCK_FRAME_CHARGE) against it, which also bounds the
+  ;; frames in flight (a flood of 1-byte sends is 256 frames, not 16384) for
+  ;; the wire's inbox. The receiver hands the charge back in type 8 WINDOW
+  ;; frames, a 4-byte payload of credit: the frame overhead as soon as the
+  ;; frame is in the ring, the bytes once the guest has read them, batched to
+  ;; VSOCK_CREDIT_STEP. A sender at zero window blocks, or reports
+  ;; WSAEWOULDBLOCK and gets FD_WRITE when credit returns. That cannot
+  ;; deadlock: a zero window means the whole charge is sitting in the far
+  ;; ring or its credit, so once the reader drains the ring the credit owed
+  ;; is the whole window, past the step.
+
+  ;; Must equal VSOCK_RX_CAP: the window is the far ring's guaranteed room.
+  (global $VSOCK_WINDOW i32 (i32.const 16384))
+  (global $VSOCK_FRAME_CHARGE i32 (i32.const 64))
+  (global $VSOCK_CREDIT_STEP i32 (i32.const 4096))
+  ;; Some record owes credit it could not send yet (the wire was full, or a
+  ;; frame was being delivered); the next pump retries.
+  (global $vsock_credit_due (mut i32) (i32.const 0))
 
   (global $VLN_MAGIC i32 (i32.const 0x314E4C56))
   (global $VLN_HDR i32 (i32.const 28))
@@ -708,6 +742,63 @@
       (load.field VSock remote_ip (local.get $rec))
       (load.field VSock remote_port (local.get $rec))
       (local.get $payload_ga) (local.get $len)))
+
+  ;; What one DATA frame of n bytes costs the send window.
+  (func $vsock_frame_charge (param $n i32) (result i32)
+    (select (local.get $n) (global.get $VSOCK_FRAME_CHARGE)
+      (i32.gt_u (local.get $n) (global.get $VSOCK_FRAME_CHARGE))))
+
+  ;; Owe record idx's wire sender n more units of credit, and send it once a
+  ;; step has built up. now=0 only records the debt: while a frame is being
+  ;; delivered the scratch buffer still holds it, so the pump sends later.
+  (func $vsock_owe_credit (param $idx i32) (param $n i32) (param $now i32)
+    (local $rec i32) (local $c i32)
+    (local.set $rec (call $vsock_rec (local.get $idx)))
+    (local.set $c (i32.add (load.field VSock rx_credit (local.get $rec)) (local.get $n)))
+    (store.field VSock rx_credit (local.get $rec) (local.get $c))
+    (if (i32.lt_u (local.get $c) (global.get $VSOCK_CREDIT_STEP)) (then (return)))
+    (if (local.get $now)
+      (then (if (call $vsock_send_credit (local.get $idx)) (then (return)))))
+    (global.set $vsock_credit_due (i32.const 1)))
+
+  ;; Return everything record idx owes in one WINDOW frame. 1 when sent or
+  ;; nothing was owed, 0 when the wire refused it.
+  (func $vsock_send_credit (param $idx i32) (result i32)
+    (local $rec i32) (local $wa i32)
+    (local.set $rec (call $vsock_rec (local.get $idx)))
+    (if (i32.eqz (load.field VSock rx_credit (local.get $rec))) (then (return (i32.const 1))))
+    (local.set $wa (call $vsock_frame_wa))
+    (if (i32.eqz (local.get $wa)) (then (return (i32.const 0))))
+    ;; The payload is written where $vsock_emit copies it to, so its copy
+    ;; moves nothing.
+    (i32.store (i32.add (local.get $wa) (global.get $VLN_HDR))
+      (load.field VSock rx_credit (local.get $rec)))
+    (if (i32.eqz (call $vsock_emit_from (local.get $idx) (i32.const 8)
+          (i32.add (global.get $vsock_frame_buf) (global.get $VLN_HDR)) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (store.field VSock rx_credit (local.get $rec) (i32.const 0))
+    (i32.const 1))
+
+  ;; Send every debt that a full wire or a delivery in progress deferred.
+  (func $vsock_flush_credit
+    (local $i i32) (local $rec i32)
+    (if (i32.eqz (global.get $vsock_credit_due)) (then (return)))
+    (global.set $vsock_credit_due (i32.const 0))
+    (local.set $i (i32.const 0))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $VSOCK_MAX)))
+      (local.set $rec (call $vsock_rec (local.get $i)))
+      (if (i32.and
+            (i32.eq (load.field VSock state (local.get $rec)) (i32.const 4))
+            (i32.and
+              (i32.eq (load.field VSock peer (local.get $rec)) (i32.const -2))
+              (i32.ge_u (load.field VSock rx_credit (local.get $rec))
+                        (global.get $VSOCK_CREDIT_STEP))))
+        (then
+          (if (i32.eqz (call $vsock_send_credit (local.get $i)))
+            (then (global.set $vsock_credit_due (i32.const 1))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan))))
 
   ;; Find a record in the given state whose remote endpoint and local port
   ;; match an inbound frame. Only remote-peered records are candidates.
@@ -961,6 +1052,30 @@
             (call $vsock_async_post (local.get $idx) (i32.const 0x10) (i32.const 0))
             (call $vsock_async_post (local.get $idx) (i32.const 0x02) (i32.const 0))))
         (return (i32.const 1))))
+    ;; WINDOW returns send credit. One for a connection that is already gone
+    ;; is stale news, not a stray segment, so it is never answered.
+    (if (i32.eq (local.get $type) (i32.const 8))
+      (then
+        (local.set $idx (call $vsock_find_conn (i32.const 4) (local.get $dport)
+                          (local.get $sip) (local.get $sport)))
+        (if (i32.and (i32.ge_s (local.get $idx) (i32.const 0))
+                     (i32.eq (local.get $plen) (i32.const 4)))
+          (then
+            (local.set $rec (call $vsock_rec (local.get $idx)))
+            (local.set $fl (load.field VSock tx_inflight (local.get $rec)))
+            (store.field VSock tx_inflight (local.get $rec)
+              (select (i32.const 0)
+                (i32.sub (local.get $fl)
+                  (i32.load (i32.add (call $vsock_frame_wa) (global.get $VLN_HDR))))
+                (i32.lt_s
+                  (i32.sub (local.get $fl)
+                    (i32.load (i32.add (call $vsock_frame_wa) (global.get $VLN_HDR))))
+                  (i32.const 0))))
+            ;; A closed window is where a nonblocking send failed with
+            ;; WSAEWOULDBLOCK, and FD_WRITE is the edge that answers it.
+            (if (i32.ge_s (local.get $fl) (global.get $VSOCK_WINDOW))
+              (then (call $vsock_async_post (local.get $idx) (i32.const 0x02) (i32.const 0))))))
+        (return (i32.const 1))))
     ;; DATA/FIN/RST target an established connection. A refusal can also
     ;; arrive while the local half is still in the connecting state, which
     ;; is how `connect` learns it was rejected.
@@ -987,6 +1102,11 @@
         (call $vsock_ring_write (local.get $idx)
           (i32.add (global.get $vsock_frame_buf) (global.get $VLN_HDR))
           (local.get $plen))
+        ;; The frame is off the wire: its overhead goes back now, its bytes
+        ;; once the guest reads them.
+        (call $vsock_owe_credit (local.get $idx)
+          (i32.sub (call $vsock_frame_charge (local.get $plen)) (local.get $plen))
+          (i32.const 0))
         (call $vsock_async_post (local.get $idx) (i32.const 0x01) (i32.const 0))
         (return (i32.const 1))))
     (if (i32.eq (local.get $type) (i32.const 4))
@@ -1062,7 +1182,8 @@
         ;; stream keeps its order once the reader drains its ring.
         (then (br $done)))
       (call $host_net_frame_commit)
-      (br $next))))
+      (br $next)))
+    (call $vsock_flush_credit))
 
   ;; Park the current API call. The handler has already dropped its stdcall
   ;; frame, so put those bytes back: EIP still points at the thunk, and the
@@ -1229,7 +1350,8 @@
         (return)))
     (local.set $bl (local.get $arg1))
     (if (i32.lt_s (local.get $bl) (i32.const 1)) (then (local.set $bl (i32.const 1))))
-    (if (i32.gt_s (local.get $bl) (i32.const 15)) (then (local.set $bl (i32.const 15))))
+    ;; Win98's own stack caps it at 5 (SOMAXCONN); 13 is the queue's size.
+    (if (i32.gt_s (local.get $bl) (i32.const 13)) (then (local.set $bl (i32.const 13))))
     (store.field VSock backlog (local.get $rec) (local.get $bl))
     (store.field VSock state (local.get $rec) (i32.const 3))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
@@ -1538,8 +1660,9 @@
         (return)))
     (local.set $peer (load.field VSock peer (local.get $rec)))
     ;; A peer in another process takes bytes as wire frames. One send
-    ;; produces at most one frame, so a large write returns a partial count
-    ;; — which a stream socket is always allowed to do.
+    ;; produces at most one frame and never more than the send window has
+    ;; room for, so a large write returns a partial count — which a stream
+    ;; socket is always allowed to do.
     (if (i32.eq (local.get $peer) (i32.const -2))
       (then
         (if (i32.eqz (local.get $arg2))
@@ -1547,14 +1670,24 @@
         (local.set $n (local.get $arg2))
         (if (i32.gt_u (local.get $n) (global.get $VLN_MAX_PAYLOAD))
           (then (local.set $n (global.get $VLN_MAX_PAYLOAD))))
-        (if (i32.eqz (call $vsock_emit_from (local.get $idx) (i32.const 3)
-                       (local.get $arg1) (local.get $n)))
-          (then
-            (if (i32.eqz (load.field VSock mode (local.get $rec)))
-              (then (call $vsock_block (i32.const 20)) (return)))
-            (call $vsock_set_error (i32.const 10035))
-            (i32.store offset=0 (global.get $reg_base) (i32.const -1))
-            (return)))
+        (local.set $space (i32.sub (global.get $VSOCK_WINDOW)
+          (load.field VSock tx_inflight (local.get $rec))))
+        (block $sent
+          (if (i32.gt_s (local.get $space) (i32.const 0))
+            (then
+              (if (i32.gt_u (local.get $n) (local.get $space))
+                (then (local.set $n (local.get $space))))
+              (br_if $sent (call $vsock_emit_from (local.get $idx) (i32.const 3)
+                             (local.get $arg1) (local.get $n)))))
+          ;; The window is closed or the wire is full.
+          (if (i32.eqz (load.field VSock mode (local.get $rec)))
+            (then (call $vsock_block (i32.const 20)) (return)))
+          (call $vsock_set_error (i32.const 10035))
+          (i32.store offset=0 (global.get $reg_base) (i32.const -1))
+          (return))
+        (store.field VSock tx_inflight (local.get $rec)
+          (i32.add (load.field VSock tx_inflight (local.get $rec))
+                   (call $vsock_frame_charge (local.get $n))))
         (i32.store offset=0 (global.get $reg_base) (local.get $n))
         (return)))
     (if (i32.lt_s (local.get $peer) (i32.const 0))
@@ -1678,7 +1811,7 @@
   ;; recv(s, buf, len, flags) — returns any available prefix, 0 at EOF.
   (func $handle_recv (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
                      (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $idx i32) (local $rec i32) (local $flags i32)
+    (local $idx i32) (local $rec i32) (local $flags i32) (local $n i32)
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
     (local.set $idx (call $vsock_index (local.get $arg0)))
     (if (i32.lt_s (local.get $idx) (i32.const 0))
@@ -1695,7 +1828,11 @@
         (return)))
     (if (i32.gt_u (load.field VSock rx_len (local.get $rec)) (i32.const 0))
       (then
-        (i32.store offset=0 (global.get $reg_base) (call $vsock_ring_read (local.get $idx) (local.get $arg1) (local.get $arg2)))
+        (local.set $n (call $vsock_ring_read (local.get $idx) (local.get $arg1) (local.get $arg2)))
+        ;; Bytes read are ring space the wire sender may use again.
+        (if (i32.eq (load.field VSock peer (local.get $rec)) (i32.const -2))
+          (then (call $vsock_owe_credit (local.get $idx) (local.get $n) (i32.const 1))))
+        (i32.store offset=0 (global.get $reg_base) (local.get $n))
         (return)))
     (local.set $flags (load.field VSock flags (local.get $rec)))
     ;; A reset outranks an orderly EOF once the buffer has drained.

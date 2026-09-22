@@ -1047,6 +1047,25 @@ side by side, gives each 20 s (`ANSWER_ESTABLISH_MS`) to open its channel,
 and releases the seat a failed answer had reserved. A connection that opens
 after the `accept` call that answered it returned is queued for the next one.
 
+### Stream flow control (implemented 2026-09-22)
+
+A stream frame that does not fit its socket's receive ring cannot be dropped,
+and it used to wait at the head of the wire — so one connection whose reader
+was busy stalled every other connection, DirectPlay and every datagram behind
+it, while the sender kept sending until the host's inbox bound threw.
+
+Now a sender never has more in flight than the far ring is guaranteed to
+take (`VSOCK_WINDOW`, 16 KB, the size of every stream ring). Each DATA frame
+is charged `max(length, 64)` against it, so the frames in flight are bounded
+too (256 per connection). The receiver returns the charge in `WINDOW` frames
+(vln/1 type 8, a 4-byte credit payload): the overhead as soon as the frame is
+in the ring, the bytes once the guest has read them, batched to 4 KB. A
+sender at zero window blocks, or fails with `WSAEWOULDBLOCK`, is not
+writable in `select`, and gets `FD_WRITE` when credit returns. A DATA frame
+therefore always fits its ring and never holds up the wire; the host's
+inbox throws for a stream frame only past 20,000 frames, which the window
+makes unreachable for an honest sender.
+
 ## Observability
 
 Diagnostics must explain transport behavior without logging payloads.
