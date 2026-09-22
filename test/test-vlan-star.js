@@ -332,6 +332,34 @@ async function main() {
     await r.close();
   });
 
+  await check('a room link to an owner that never answers fails, and hosts nothing', async () => {
+    const d = new Directory();
+    d.records.set('u0', { userId: 'u0', name: 'ghost', role: 'owner', address: '10.0.0.1', updatedAt: 1 });
+    await assert.rejects(
+      open(d, 'u7', 'zoe', { connectTimeoutMs: 30, preferOwner: 'u0', mustJoin: true }),
+      e => e.joinFailed && /ghost did not answer/.test(e.message) && e.owner.userId === 'u0');
+    assert.ok(!d.records.has('u7'), 'a failed join left a presence record behind');
+  });
+
+  await check('a room link to a room that is gone fails without trying anyone else', async () => {
+    const d = new Directory();
+    const a = await open(d, 'u1', 'ana');
+    await assert.rejects(
+      open(d, 'u7', 'zoe', { preferOwner: 'u9', mustJoin: true }),
+      e => e.joinFailed && /not open any more/.test(e.message));
+    assert.strictEqual(a.wire.memberCount, 0, 'joined a room nobody asked for');
+    await a.close();
+  });
+
+  await check('a room link to a live owner joins it', async () => {
+    const d = new Directory();
+    const a = await open(d, 'u1', 'ana');
+    const b = await open(d, 'u2', 'ben', { preferOwner: 'u1', mustJoin: true });
+    assert.strictEqual(b.role, 'member');
+    assert.strictEqual(b.owner.userId, 'u1');
+    await b.close(); await a.close();
+  });
+
   await check('the Join card\'s pick wins over the automatic choice', () => {
     const peers = [
       { userId: 'a', role: 'owner', address: '10.0.0.1', hosting: { label: 'x' }, updatedAt: 9 },
