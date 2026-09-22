@@ -12,6 +12,7 @@ const { createHostImports } = require('../lib/host-imports');
 
 const iterations = Number(process.env.DIRTY_BENCH_ITERATIONS || 2000000);
 const repetitions = Number(process.env.DIRTY_BENCH_REPETITIONS || 9);
+const generation = process.argv.includes('--generation');
 assert(Number.isSafeInteger(iterations) && iterations > 0 && iterations <= 0x7fffffff);
 assert(Number.isSafeInteger(repetitions) && repetitions >= 3);
 const extra = `
@@ -36,16 +37,41 @@ const extra = `
       (br_if $again (i32.lt_u (local.get $i) (local.get $n)))))
 `;
 
+const generationWrapper = `
+  ;; Cost prototype only: one DWORD per guest page; TRACKED=1, DIRTY=2,
+  ;; generation in bits 2..31. No PE is loaded, so staging is scratch.
+  ;; The benchmark writes aligned DWORDs within ONE page. Cross-page stores,
+  ;; flush, wrap and retirement are not implemented by this wrapper.
+  (func $gs32 (param $ga i32) (param $v i32)
+    (local $cell i32) (local $stamp i32)
+    (if (i32.lt_u (local.get $ga) (i32.const 0x08000000))
+      (then (call $bench_original_gs32 (local.get $ga) (local.get $v)) (return)))
+    (local.set $cell (i32.add (global.get $bench_dirty_table)
+      (i32.shl (i32.shr_u (local.get $ga) (i32.const 12)) (i32.const 2))))
+    (local.set $stamp (i32.atomic.load (local.get $cell)))
+    (if (i32.eqz (i32.and (local.get $stamp) (i32.const 1)))
+      (then (call $bench_original_gs32 (local.get $ga) (local.get $v)) (return)))
+    (if (i32.eqz (i32.and (local.get $stamp) (i32.const 2)))
+      (then (drop (i32.atomic.rmw.or (local.get $cell) (i32.const 2)))))
+    (call $bench_original_gs32 (local.get $ga) (local.get $v))
+    (if (i32.ne (i32.shr_u (local.get $stamp) (i32.const 2))
+                (i32.shr_u (i32.atomic.load (local.get $cell)) (i32.const 2)))
+      (then (drop (i32.atomic.rmw.or (local.get $cell) (i32.const 2))))))
+`;
+
 async function arm(hook) {
   let injected = false;
   const bytes = compileSrcWasm((file, source) => {
     if (hook && file === '03-registers.wat') {
       const pattern = /(\(func \$gs32 \(param \$ga i32\) \(param \$v i32\)\s*\(local \$wa i32\) \(local \$end_wa i32\))/;
       assert(pattern.test(source), 'gs32 seam changed');
-      source = source.replace(pattern, '$1\n    (call $bench_mark_dirty (local.get $ga))');
+      source = generation
+        ? source.replace('(func $gs32 ', '(func $bench_original_gs32 ')
+        : source.replace(pattern, '$1\n    (call $bench_mark_dirty (local.get $ga))');
       injected = true;
     }
-    return file === '13-exports.wat' ? source + extra : source;
+    return file === '13-exports.wat'
+      ? source + extra + (hook && generation ? generationWrapper : '') : source;
   });
   assert.strictEqual(injected, hook);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
@@ -57,7 +83,8 @@ async function arm(hook) {
   // No PE is loaded: its staging allocation is unused benchmark scratch, not
   // guest backing and not an invented address in the allocated region map.
   const table = e.get_staging();
-  const flags = new Uint8Array(memory.buffer, table, 1 << 20);
+  const flags = generation ? new Uint32Array(memory.buffer, table, 1 << 20)
+    : new Uint8Array(memory.buffer, table, 1 << 20);
   flags.fill(0);
   e.bench_setup(table);
   const sparse = e.guest_section_reserve(4096) >>> 0;
@@ -95,6 +122,7 @@ async function main() {
     results.push({ kind, controlMs, candidateMs, changePercent: (candidateMs / controlMs - 1) * 100, samples });
   }
   console.log(JSON.stringify({ node: process.version, arch: process.arch, iterations, repetitions,
-    controlOnly, beforeLoad, afterLoad: os.loadavg(), scope: 'gs32 microbenchmark only; incomplete tracking coverage', results }, null, 2));
+    controlOnly, candidate: generation ? 'generation-wrapper' : 'naive-premark',
+    beforeLoad, afterLoad: os.loadavg(), scope: 'gs32 microbenchmark only; incomplete tracking coverage', results }, null, 2));
 }
 main().catch(error => { console.error(error.stack || error); process.exitCode = 1; });

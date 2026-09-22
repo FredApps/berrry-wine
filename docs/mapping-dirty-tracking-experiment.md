@@ -666,3 +666,44 @@ one writer, serialized flushes, no reuse/wrap/failure handling and no emulator
 store-path coverage. No performance or production-writeback result follows.
 Next: benchmark the candidate only in isolated scratch, then address those
 remaining correctness obligations before integrating a runtime hook.
+
+## Generation-wrapper cost experiment (2026-09-22)
+
+`tools/bench-mapping-dirty.js --generation` adds an isolated source-transform
+candidate: rename the original gs32 body, wrap it with tracked-page state
+checks, conditionally mark a clean page and recheck the generation after the
+store. It uses a DWORD per page (TRACKED=1, DIRTY=2, 30 generation bits) in
+unused PE staging. This is not a proposed production allocation. The wrapper
+retains the fixture-only direct-address shortcut; it handles only the aligned
+single-page stores measured here, not cross-page writes, flush or retirement.
+The naive default and `--control-only` remain available.
+
+A short local scratch run checked compilation, final values and actual dirty
+activation; its busy-machine timings were not used. Only the changed benchmark
+script was rsynced onto the previous clean `679d3e99` remote source snapshot.
+On Node20.11.1 x64, nine alternating pairs of 20 million stores and three
+warmups per arm ran sequentially as A/B then A/A:
+
+```sh
+DIRTY_BENCH_ITERATIONS=20000000 node tools/bench-mapping-dirty.js --generation
+DIRTY_BENCH_ITERATIONS=20000000 node tools/bench-mapping-dirty.js --generation --control-only
+```
+
+| Store target | Control ms | Wrapper ms | A/B change | A/A change |
+|---|---:|---:|---:|---:|
+| Direct window | 212.343 | 247.942 | +16.77% | -0.09% |
+| Sparse, untracked | 265.659 | 309.233 | +16.40% | +0.07% |
+| Sparse, tracked | 265.431 | 326.598 | +23.04% | -0.06% |
+
+One-minute loads stayed low: 0.01 -> 0.35 and 0.29 -> 0.60. Raw samples and
+the script hash are in [mapping-dirty-generation-samples.json](mapping-dirty-generation-samples.json).
+The overhead greatly exceeds the observed A/A differences. **Do not integrate
+this wrapper shape.** Avoiding repeated atomic OR did not establish a win:
+this candidate also pays for wrapper calls and generation loads, so this is
+not an isolated comparison of OR versus generation checking or a lower bound
+on an inlined implementation. Nor is it a game slowdown estimate.
+
+Next candidate work should remove wrapper overhead and preserve the direct
+fast path before any repeated game A/B. The generation protocol still requires
+the correctness work listed above; no runtime default or production handler
+was changed. JavaScript syntax and whitespace checks pass.
