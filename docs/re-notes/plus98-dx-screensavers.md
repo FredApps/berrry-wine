@@ -88,6 +88,82 @@ One capture note for `scr_scifi` specifically: its `flags=0x1` primary is
 the primary is the *wrong* surface to judge by, which is the mirror image of
 the `scr_jazz` trap above.
 
+### Found it: the back faces were never culled
+
+The lighting was never wrong. `--trace-dx` kind 19 reports healthy state —
+`n=2 ambient=0x33333333 light0=DIRECTIONAL col=1.00,1.00,1.00
+material=diffuse=0.80,0.80,0.80` — and the new kind-28 `ExecTri` line shows the
+per-vertex colours coming out correctly shaded, greys from `0xff282828` (which
+is exactly the 0.2 ambient × 0.8 material floor the formula predicts) up to
+`0xfff0f0f0`, with `fill=SOLID` and `frontVerts=3/3`.
+
+What was wrong is that **execute-buffer triangles were never back-face culled**,
+and a back face shades to black *by construction*: N·L ≤ 0 for every light, so
+`$d3dim_vertex_lit_color` returns the ambient term alone. Two things in
+`src/09ab-handlers-d3dim-core.wat` combined:
+
+- `$d3dim_cull_tri` read CULLMODE from `state+344` (rs=22) and returned "do not
+  cull" when it was 0. D3D's documented default is `D3DCULL_CCW`, and D3DRM
+  relies on that default: FALLINGL issues **seven** `SetRenderState` calls in
+  20000 batches and none of them is rs=22.
+- `$d3dim_draw_tl_triangle` passed `honor_cull=0` outright, so those triangles
+  were unculled at any CULLMODE.
+
+`$d3dim_draw_tri_culled` then gives each triangle one **flat** Z — the mean of
+its three vertices — so the black back faces won the depth test on roughly half
+the covered pixels. Correct geometry, correct silhouettes, black interiors.
+
+The tell that names this without any tracing is a black region that is *half* an
+object: FALLINGL's leaves were gold on one side and black on the other, and one
+gold leaf had a black right half. That is a back face, not a material.
+
+**Check culling before lighting on any "right shape, wrong colour" 3D report.**
+An app that never sets CULLMODE at all is the second tell.
+
+`scr_jazz` is *not* this bug — culling made it marginally worse (13 → 9
+colours) and it still renders as sparse speckle. Its geometry, fill mode and
+vertex colours all trace clean, so it may simply be a sparse filament form
+rendered correctly; that one is still open.
+
+### After the fix (`8b227b5c`), 120000 batches, captured DX surface
+
+| app | colours before → after | what the capture shows now |
+|---|---|---|
+| `scr_architec` | 259 → **348** | rich textured marble interior |
+| `scr_fallingl` | 196 → **213** | leaves fully gold or teal; no half-black leaf |
+| `scr_oasaver` | 148 → — | butterflies over a cloud sky, stray white box gone |
+| `scr_scifi` | 119 → 118 | red sky, lit dunes, **five orange creatures** |
+| `scr_rockroll` | 119 → 107 | neutral |
+| `scr_geometry` | 83 → 82 | near octahedra lit yellow, distant ones still black |
+| `scr_jazz` | 13 → 9 | unchanged sparse speckle — separate cause |
+
+`dx_globe` is the control: it is a D3DRM sample outside this cluster that drew
+correctly before the change and still draws its lit textured sphere after. Its
+`--dx-surfaces` line reads `colors=29 nonZero=38/1850`, which looks alarming and
+is not — the sampler is a fixed 1850-point grid over the whole 640x480 surface
+and the sphere is small, so only 38 samples land on it. **Read the picture, not
+the sample count, on any app whose subject does not fill the frame.**
+
+Two readings that are *not* remaining bugs:
+
+- **`scr_scifi`'s three black shapes are shadows.** They sit flat on the dune
+  below the lit creatures and are squashed copies of their silhouettes. This is
+  also what the ExecTri census was saying before the fix and I misread as
+  corruption: the perfect odd-lit / even-black alternation is one lit pass and
+  one black shadow pass per creature, not identical objects shaded differently.
+- **`scr_oasaver` captures on slot 6**, not the primary; its slot 38 primary is
+  `colors=1 nonZero=0/1850`. Which surface holds the scene is per-app and the
+  `--dx-slot=N` flag is how you check rather than guess.
+
+Still open here: `scr_geometry`'s distant octahedra draw as black *outlines*
+with the blue background showing through the middle, while the near ones are
+solid lit yellow. Outlines rather than black fill means this is not the culling
+bug wearing a different hat — run the new kind-28 `ExecTri` trace on it and read
+`fill=`, since a per-object WIREFRAME fill mode would explain the picture
+exactly.
+
+### The lighting code, for reference
+
 `src/09ab-handlers-d3dim-core.wat` has the real implementation to interrogate:
 `$d3dim_vertex_lit_color` (emissive + ambient·mat.ambient + Σ light·mat.diffuse·N·L)
 and, above it, `$d3dim_vertex_shade_fallback`, which is what runs when
