@@ -209,3 +209,20 @@ pass, as do logical-AND, test-tier and whitespace gates.
 Console scrolling/window rectangles, titles and other translated guest pointers
 remain audit candidates. This is source-harness coverage, not a new native
 Win98 comparison, Far browser run or performance measurement.
+
+## Console viewport rectangle input migrated
+
+SetConsoleWindowInfo now reads the caller's SMALL_RECT through guest WORD
+loads with explicit signed extension. Private viewport storage, absolute and
+relative coordinate arithmetic, validation and failure-state preservation are
+unchanged. This closes an input-side counterpart of the output audit rather
+than adding a dirty-write hook to private state.
+
+`test/test-console-buffer-max-window.js` reproduced a valid rectangle being
+rejected at sparse split 1. All seven crossings now pass four scenarios each:
+absolute positioning, signed relative movement, rejected negative absolute
+coordinates and rejected relative movement. Tests check the resulting viewport,
+error 87 on rejection, unchanged caller bytes/guards and stdcall cleanup.
+Existing maximum-window and screen-buffer state/activation/lifetime tests pass;
+logical-AND and whitespace checks pass. Scroll structures and title strings
+remain candidates; no new browser or performance result is claimed.

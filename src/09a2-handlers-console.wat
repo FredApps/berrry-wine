@@ -1010,12 +1010,12 @@
         (call $console_buffer_finish (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
-    (local.set $src (call $g2w (local.get $arg2)))
+    (local.set $src (local.get $arg2))
     (local.set $win (call $console_loaded_window_record))
-    (local.set $left (i32.load16_s (local.get $src)))
-    (local.set $top (i32.load16_s offset=2 (local.get $src)))
-    (local.set $right (i32.load16_s offset=4 (local.get $src)))
-    (local.set $bottom (i32.load16_s offset=6 (local.get $src)))
+    (local.set $left (i32.extend16_s (call $gl16 (local.get $src))))
+    (local.set $top (i32.extend16_s (call $gl16 (i32.add (local.get $src) (i32.const 2)))))
+    (local.set $right (i32.extend16_s (call $gl16 (i32.add (local.get $src) (i32.const 4)))))
+    (local.set $bottom (i32.extend16_s (call $gl16 (i32.add (local.get $src) (i32.const 6)))))
     ;; Relative coordinates offset each corresponding side of the current
     ;; viewport; this moves/resizes exactly as Win32 SMALL_RECT semantics do.
     (if (i32.eqz (local.get $arg1))

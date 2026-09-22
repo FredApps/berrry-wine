@@ -7,6 +7,13 @@ const apiTable = require('../src/api_table.json');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_map") (param i32) (result i32)
+    (call $virtual_map_commit (local.get 0) (i32.const 4096)))
+  (func (export "test_window_relative") (param $rect i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $handle_SetConsoleWindowInfo (i32.const 0x30001) (i32.const 0)
+      (local.get $rect) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
   (func (export "test_get_console_info")
         (param $handle i32) (param $info i32) (param $stack i32) (result i64)
     (i32.store offset=16 (global.get $reg_base) (local.get $stack))
@@ -148,6 +155,36 @@ const resultOf = packed => ({
   assert.deepStrictEqual(
     Array.from({ length: 22 }, (_, index) => wat.guest_read8(privateInfo + index)),
     Array(22).fill(0xa5), 'invalid-handle query changed the destination');
+
+  const page = 0x30000000;
+  for (const ga of [page, 0x28000000, page + 4096]) assert.strictEqual(wat.test_map(ga) >>> 0, ga);
+  assert.notStrictEqual(wat.guest_to_wasm(page + 4096), wat.guest_to_wasm(page) + 4096);
+  const bytes = (ga, n) => Array.from({ length: n }, (_, i) => wat.guest_read8(ga + i));
+  const viewport = () => {
+    assert.strictEqual(resultOf(wat.test_get_console_info(active, info, stack)).eax, 1);
+    return [10, 12, 14, 16].map(offset => read16(info + offset));
+  };
+  for (let split = 1; split < 8; split++) {
+    const edge = page + 4096 - split;
+    for (const [absolute, values, expected, success] of [
+      [true, [4, 3, 30, 15], [4, 3, 30, 15], 1],
+      [false, [-2, -1, 3, 2], [2, 2, 33, 17], 1],
+      [true, [-1, 0, 10, 10], [2, 2, 33, 17], 0],
+      [false, [-3, 0, 0, 0], [2, 2, 33, 17], 0],
+    ]) {
+      wat.guest_write8(edge - 1, 0xcc);
+      wat.guest_write8(edge + 8, 0xcc);
+      values.forEach((v, i) => wat.guest_write16(edge + 2 * i, v));
+      const before = bytes(edge - 1, 10);
+      const result = absolute
+        ? resultOf(wat.test_set_window(active, edge, stack))
+        : { eax: wat.test_window_relative(edge), esp: wat.get_esp() >>> 0 };
+      assert.deepStrictEqual(result, { eax: success, esp: stack + 16 }, `window split ${split}`);
+      if (!success) assert.strictEqual(wat.test_get_last_error(), 87);
+      assert.deepStrictEqual(viewport(), expected);
+      assert.deepStrictEqual(bytes(edge - 1, 10), before, 'caller rectangle is read-only');
+    }
+  }
 
   console.log('console maximum-window reporting tests passed');
 })().catch(error => {
