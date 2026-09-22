@@ -239,6 +239,30 @@ const ROUND_LOOP = Uint8Array.from([
   assert.strictEqual(roundFused.ebp, (lastA & lastB & ROUND_MASK) >>> 0,
     'ordinary suffix publishes the final correction scratch register');
 
+  // Reject near misses in both cursor forms, not just the indexed RCR form.
+  // These mutations preserve a terminating DEC/JNZ loop and valid buffers.
+  const cursorMisses = [
+    ['shift unequal masks', AVS_LOOP, 16, 0x7e, runAvs, avsD0, avsD1, avsCount],
+    ['shift wrong cursor stride', AVS_LOOP, 27, 8, runAvs, avsD0, avsD1, avsCount],
+    ['rounded unequal masks', ROUND_LOOP, 25, 0xdf, runRound, roundD0, roundD1, roundCount],
+    ['rounded wrong correction source', ROUND_LOOP, 7, 0xe8, runRound, roundD0, roundD1, roundCount],
+    ['rounded wrong correction add', ROUND_LOOP, 32, 0xc2, runRound, roundD0, roundD1, roundCount],
+  ];
+  for (const [name, original, offset, value, run, d0, d1, n] of cursorMisses) {
+    const code = Uint8Array.from(original);
+    assert.notStrictEqual(code[offset], value, `${name}: mutation must change a byte`);
+    code[offset] = value;
+    const before = e.test_avg_matches();
+    e.set_loop_generic_copy_emit(0);
+    const ordinary = run(install(code), d0);
+    e.set_loop_generic_copy_emit(1);
+    const enabled = run(install(code), d1);
+    assert.strictEqual(e.test_avg_matches(), before, `${name}: must not recognize`);
+    assert.deepStrictEqual(enabled, ordinary, `${name}: preserves registers and flags`);
+    assert.deepStrictEqual(bytes.slice(wa(d1), wa(d1) + n * 4),
+      bytes.slice(wa(d0), wa(d0) + n * 4), `${name}: preserves output`);
+  }
+
   const near = Uint8Array.from(LOOP);
   near[13] ^= 1; // second mask differs
   const nearCode = install(near);
