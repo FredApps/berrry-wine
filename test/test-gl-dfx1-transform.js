@@ -16,10 +16,12 @@
 //     pass whether or not the transpose happened, which makes them worse than
 //     no test at all.
 //   - THE WORLD/VIEW SWAP. GL conflates world and view in one modelview
-//     stack; DFX1 has both. Putting the modelview in world and leaving view
-//     identity places geometry correctly and lights it in the wrong space,
-//     because DLT1 lowers light directions against the view matrix alone
-//     (src/09aj-d3d-fixed.wat:681-683). The geometry looking right is exactly
+//     stack; DFX1 has both, and geometry cannot tell them apart because it
+//     uses the product. The one consumer of the view matrix ALONE is the DLT1
+//     light direction (src/09aj-d3d-fixed.wat:681-683), and GL has already
+//     baked the modelview into its light positions at glLightfv time. So the
+//     modelview belongs in WORLD, with view identity, or every light is
+//     transformed twice -- geometry still lands correctly, which is exactly
 //     what makes it hard to find.
 //   - READING THE SELECTED STACK. The descriptor wants modelview and
 //     projection BY NAME. A build that reads "the current matrix" is correct
@@ -138,16 +140,16 @@ async function main() {
   assert.strictEqual(f32One(desc + OFF.minZ), 0.25, 'depth range near');
   assert.strictEqual(f32One(desc + OFF.maxZ), 0.75, 'depth range far');
 
-  assert.strictEqual(bits(f32At(desc + OFF.world)), bits(identity()),
-    'world is identity -- the modelview belongs in view, see DLT1');
-  assert.strictEqual(bits(f32At(desc + OFF.view)), bits(transpose(modelview)),
-    'view is the TRANSPOSED modelview (GL column-major -> DFX1 row-major)');
+  assert.strictEqual(bits(f32At(desc + OFF.world)), bits(transpose(modelview)),
+    'world is the TRANSPOSED modelview (GL column-major -> DFX1 row-major)');
+  assert.strictEqual(bits(f32At(desc + OFF.view)), bits(identity()),
+    'view is identity -- GL lights are already in eye space, see DLT1');
   assert.strictEqual(bits(f32At(desc + OFF.projection)), bits(transpose(projection)),
     'projection is the TRANSPOSED projection stack top');
 
   // The swap this test exists to catch would put the modelview here.
-  assert.notStrictEqual(bits(f32At(desc + OFF.world)), bits(transpose(modelview)),
-    'the modelview must not have landed in the world slot');
+  assert.notStrictEqual(bits(f32At(desc + OFF.view)), bits(transpose(modelview)),
+    'the modelview must not have landed in the view slot');
 
   assert.strictEqual(u8()[desc - 1], 0xAB, 'no write before the descriptor');
   assert.strictEqual(u8()[desc + DESC_BYTES], 0xCD, 'no write past 288 bytes');

@@ -802,11 +802,23 @@
   ;; so nothing downstream can catch this, and the test checks a matrix whose
   ;; transpose differs from itself.
   ;;
-  ;; GL's modelview goes to DFX1's VIEW slot and world is left identity. This
-  ;; is not a free choice: DLT1 lowers light directions against the view matrix
-  ;; alone (src/09aj-d3d-fixed.wat:681-683), so a modelview parked in world
-  ;; would light the scene in the wrong space while the geometry still landed
-  ;; in the right place. See docs/gl-software-path-design.md section 5.
+  ;; GL's modelview goes to DFX1's WORLD slot and view is left identity. This
+  ;; is not a free choice, and it is the opposite of what it first looks like.
+  ;; Geometry cannot tell the two apart -- it uses the product -- and neither
+  ;; can lighting's normal matrix, which inverse-transposes world*view
+  ;; (09aj:299-300). The ONLY consumer of the view matrix alone is the DLT1
+  ;; light direction (09aj:681-683), and GL has already transformed its light
+  ;; positions into EYE space at glLightfv time (:429-434). A modelview parked
+  ;; in view would therefore apply it to those a second time: the geometry
+  ;; still lands correctly and every light is lit from the wrong place, which
+  ;; is the hardest class of wrong picture to attribute. With view identity the
+  ;; eye-space direction passes through untouched, which is exactly GL's rule
+  ;; that a light is fixed in eye space once specified.
+  ;;
+  ;; What this does NOT reproduce is D3D's own rule, where a light is fixed in
+  ;; WORLD space and re-transformed every draw. There is no split to recover:
+  ;; GL has one modelview and does not say which part of it is the camera.
+  ;; See docs/gl-software-path-design.md section 5.
   ;;
   ;; Returns 0 and writes nothing when the mirror is untrusted. That is the
   ;; whole point of the latch: a descriptor built from state we know we failed
@@ -826,10 +838,10 @@
     (i32.store offset=80 (local.get $dst) (i32.load offset=9020 (local.get $b)))
     (f32.store offset=84 (local.get $dst) (f32.load offset=9024 (local.get $b)))
     (f32.store offset=88 (local.get $dst) (f32.load offset=9028 (local.get $b)))
-    ;; World stays identity; the modelview is the view.
-    (call $gl_mtx_identity_at (i32.add (local.get $dst) (i32.const 96)))
+    ;; The modelview is the world; view stays identity.
     (call $gl_dfx1_transpose_into
-      (i32.add (local.get $dst) (i32.const 160)) (call $gl_mtx_stack_top (local.get $b) (i32.const 0)))
+      (i32.add (local.get $dst) (i32.const 96)) (call $gl_mtx_stack_top (local.get $b) (i32.const 0)))
+    (call $gl_mtx_identity_at (i32.add (local.get $dst) (i32.const 160)))
     (call $gl_dfx1_transpose_into
       (i32.add (local.get $dst) (i32.const 224)) (call $gl_mtx_stack_top (local.get $b) (i32.const 1)))
     (i32.const 1))
@@ -859,9 +871,142 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br_if $row (i32.lt_u (local.get $i) (i32.const 4)))))
 
+  ;; Build a DLT1 lighting block (ABI1, 09aj:582-586) from the mirror's lights
+  ;; and material. $mask is the set of enabled lights, bit n = GL_LIGHT0 + n;
+  ;; it is a parameter rather than block state because glEnable lives in
+  ;; 09a8e and this block has no business guessing at it. Returns the number
+  ;; of bytes written -- 128 + 64 per light -- or 0 for a refusal.
+  ;;
+  ;; Three things here are REFUSALS rather than omissions, because each one is
+  ;; a case where a DLT1 exists that renders something, and the something is
+  ;; not what GL would have drawn:
+  ;;
+  ;;   - A POSITIONAL light (GL_POSITION with w != 0). DLT1 rows carry a
+  ;;     direction and $d3d_fixed_bind_lighting rejects any row whose type is
+  ;;     not 3 (09aj:644), so there is nowhere to put the position. Dropping
+  ;;     the light instead would darken the scene silently.
+  ;;   - A light whose SPECULAR term is not provably zero. DLT1's row has a
+  ;;     diffuse and an ambient and no third colour, and the lowering
+  ;;     accumulates exactly those two (09aj:688-691). GL's default light 0
+  ;;     specular is white, so refusing on that alone would refuse almost
+  ;;     every app; what is refused is a light whose specular can actually
+  ;;     reach the picture, which needs the MATERIAL specular to be nonzero
+  ;;     too. GL's default material specular is black, so an app that never
+  ;;     asks for highlights gets an exact build.
+  ;;   - More than 8 lights, or an UNTRUSTED mirror.
+  ;;
+  ;; Two conversions that are silent if wrong. GL's GL_POSITION with w == 0
+  ;; points TOWARD the light; D3D's direction points away from it, and the
+  ;; lowering negates what it reads (09aj:684), so the row carries the
+  ;; NEGATED GL vector. And the direction is stored in eye space, which is
+  ;; where GL put it at glLightfv time -- it survives the lowering's view
+  ;; multiply only because $gl_dfx1_transform leaves view identity. The two
+  ;; functions have to agree about that or every light moves.
+  ;;
+  ;; Not represented, and not detectable here: glColorMaterial. The three
+  ;; source selectors are written 0 (from the material), which is GL's state
+  ;; until an app turns colour material on, and 09a8e does not tell us when
+  ;; it does. Nor is the material's shininess, which only a specular term
+  ;; would use.
+  (func $gl_dlt1_lighting (param $dst i32) (param $mask i32) (result i32)
+    (local $b i32) (local $i i32) (local $n i32) (local $light i32) (local $row i32)
+    (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
+    (if (i32.ge_u (local.get $mask) (i32.const 256)) (then (return (i32.const 0))))
+    (local.set $b (call $gl_mtx_block))
+    (if (i32.load offset=28 (local.get $b)) (then (return (i32.const 0))))
+
+    ;; Validate every enabled light before writing a byte, so a refusal leaves
+    ;; the caller's buffer exactly as it found it.
+    (local.set $i (i32.const 0))
+    (local.set $n (i32.const 0))
+    (loop $check
+      (if (i32.and (i32.shr_u (local.get $mask) (local.get $i)) (i32.const 1))
+        (then
+          (local.set $light (call $gl_mtx_light_slot (local.get $b) (local.get $i)))
+          ;; w != 0: positional, and DLT1 has no row for it.
+          (if (f32.ne (f32.load offset=12 (local.get $light)) (f32.const 0))
+            (then (return (i32.const 0))))
+          (if (i32.and (call $gl_dlt1_lit (i32.add (local.get $light) (i32.const 48)))
+                (call $gl_dlt1_lit (i32.add (local.get $b) (i32.const 8912))))
+            (then (return (i32.const 0))))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $check (i32.lt_u (local.get $i) (i32.const 8))))
+
+    (memory.fill (local.get $dst) (i32.const 0)
+      (i32.add (i32.const 128) (i32.mul (local.get $n) (i32.const 64))))
+    (i32.store offset=0 (local.get $dst) (i32.const 0x444c5431))
+    (i32.store offset=4 (local.get $dst) (i32.const 1))
+    (i32.store offset=8 (local.get $dst) (local.get $n))
+    ;; normalReg 0 is a placeholder the caller completes, as in DFX1; the
+    ;; colour registers are 16, which is DLT1's "absent". 09aj:617-625 requires
+    ;; all three to differ unless the colour ones are both absent.
+    (i32.store offset=16 (local.get $dst) (i32.const 16))
+    (i32.store offset=20 (local.get $dst) (i32.const 16))
+    (i32.store offset=48 (local.get $dst)
+      (call $gl_dlt1_argb (i32.add (local.get $b) (i32.const 8352))))
+    (call $gl_mtx_copy4 (i32.add (local.get $dst) (i32.const 64))
+      (i32.add (local.get $b) (i32.const 8896)))
+    (call $gl_mtx_copy4 (i32.add (local.get $dst) (i32.const 80))
+      (i32.add (local.get $b) (i32.const 8880)))
+    (call $gl_mtx_copy4 (i32.add (local.get $dst) (i32.const 96))
+      (i32.add (local.get $b) (i32.const 8928)))
+
+    (local.set $i (i32.const 0))
+    (local.set $row (i32.add (local.get $dst) (i32.const 128)))
+    (loop $emit
+      (if (i32.and (i32.shr_u (local.get $mask) (local.get $i)) (i32.const 1))
+        (then
+          (local.set $light (call $gl_mtx_light_slot (local.get $b) (local.get $i)))
+          (i32.store offset=0 (local.get $row) (i32.const 3))
+          (call $gl_mtx_copy4 (i32.add (local.get $row) (i32.const 4))
+            (i32.add (local.get $light) (i32.const 32)))
+          (call $gl_mtx_copy4 (i32.add (local.get $row) (i32.const 20))
+            (i32.add (local.get $light) (i32.const 16)))
+          (f32.store offset=36 (local.get $row)
+            (f32.neg (f32.load offset=0 (local.get $light))))
+          (f32.store offset=40 (local.get $row)
+            (f32.neg (f32.load offset=4 (local.get $light))))
+          (f32.store offset=44 (local.get $row)
+            (f32.neg (f32.load offset=8 (local.get $light))))
+          (local.set $row (i32.add (local.get $row) (i32.const 64)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $emit (i32.lt_u (local.get $i) (i32.const 8))))
+    (i32.add (i32.const 128) (i32.mul (local.get $n) (i32.const 64))))
+
+  ;; Does this colour contribute anything? RGB only: alpha rides along in GL's
+  ;; light and material colours and never multiplies a term on its own.
+  (func $gl_dlt1_lit (param $p i32) (result i32)
+    (i32.or (f32.ne (f32.load offset=0 (local.get $p)) (f32.const 0))
+      (i32.or (f32.ne (f32.load offset=4 (local.get $p)) (f32.const 0))
+        (f32.ne (f32.load offset=8 (local.get $p)) (f32.const 0)))))
+
+  ;; Four f32 to a packed ARGB word, the encoding $d3d_fixed_argb decodes
+  ;; (09aj:208-213). This is DLT1's only lossy field: the global ambient goes
+  ;; through 8 bits per channel and comes back quantized. GL's own default of
+  ;; 0.2 survives exactly (51/255), which is the case that matters most.
+  (func $gl_dlt1_argb (param $p i32) (result i32)
+    (i32.or
+      (i32.or (i32.shl (call $gl_dlt1_channel (f32.load offset=12 (local.get $p))) (i32.const 24))
+        (i32.shl (call $gl_dlt1_channel (f32.load offset=0 (local.get $p))) (i32.const 16)))
+      (i32.or (i32.shl (call $gl_dlt1_channel (f32.load offset=4 (local.get $p))) (i32.const 8))
+        (call $gl_dlt1_channel (f32.load offset=8 (local.get $p))))))
+
+  ;; Clamped to 0..1 and rounded. trunc_sat rather than trunc because a NaN
+  ;; channel must not trap the whole emulator; f32.max propagates NaN, so a
+  ;; NaN arrives here and saturates to 0.
+  (func $gl_dlt1_channel (param $v f32) (result i32)
+    (i32.trunc_sat_f32_u
+      (f32.add (f32.const 0.5)
+        (f32.mul (f32.const 255)
+          (f32.min (f32.const 1) (f32.max (f32.const 0) (local.get $v)))))))
+
   (func $gl_mtx_export_dfx1_transform (export "gl_dfx1_transform")
       (param $dst i32) (result i32)
     (call $gl_dfx1_transform (local.get $dst)))
+  (func $gl_mtx_export_dlt1_lighting (export "gl_dlt1_lighting")
+      (param $dst i32) (param $mask i32) (result i32)
+    (call $gl_dlt1_lighting (local.get $dst) (local.get $mask)))
   (func $gl_mtx_export_viewport_ptr (export "gl_mtx_viewport_ptr") (result i32)
     (i32.add (call $gl_mtx_block) (i32.const 9008)))
 

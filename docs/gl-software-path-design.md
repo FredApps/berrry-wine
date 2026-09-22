@@ -189,10 +189,27 @@ GL uses the plain upper-left 3x3 of the modelview, no inverse or transpose
 
 GL stacks are column-major with world and view conflated
 (`lib/gl-compat.js:352-354`, `:242-243`). DFX1 is row-major with separate
-world/view/proj at +96/+160/+224. Transposing is mechanical, but DLT1's
-light-direction lowering reads **only** the view matrix
-(`src/09aj-d3d-fixed.wat:681-683`), so where GL's modelview is placed is not a
-free choice — lights land in the wrong space if world absorbs it.
+world/view/proj at +96/+160/+224. Transposing is mechanical, but where GL's
+modelview is placed is not a free choice, and it is the opposite of what it
+first looks like.
+
+Geometry cannot tell world from view — it uses the product — and neither can
+the normal matrix, which inverse-transposes `world * view`
+(`src/09aj-d3d-fixed.wat:299-300`). The **only** consumer of the view matrix
+alone is DLT1's light-direction lowering (`:681-683`). And GL has already
+transformed its light positions into **eye space**, at `glLightfv` time
+(`lib/gl-compat.js:645`). So the modelview belongs in **world**, with view left
+identity: the eye-space direction then passes through the lowering untouched,
+which is exactly GL's rule that a light is fixed in eye space once specified.
+Parking the modelview in view applies it to every light a second time —
+geometry still lands correctly, which is what makes it hard to attribute.
+
+What this cannot reproduce is D3D's own rule, where a light is fixed in
+**world** space and re-transformed by the view every draw. There is no split to
+recover: GL has one modelview and never says which part of it is the camera.
+An app that re-specifies its lights each frame under the camera modelview and
+then draws with per-object modelviews is the case where the two models
+genuinely disagree, and no placement fixes it.
 
 ### 6. Batch ceiling — already solved, for D3D
 
@@ -320,14 +337,45 @@ needs none of it. Recorded here so it is not re-proposed.
    transposed; a transposed transform still renders a scene, just the wrong
    one, so the test asserts against matrices whose transpose differs from
    themselves (an identity or a pure scale would pass either way). And GL's
-   modelview goes to DFX1's **view** slot with world left identity, per item 5
-   below — the swap places geometry correctly and lights it in the wrong
+   modelview goes to DFX1's **world** slot with view left identity, per item 5
+   above — the swap places geometry correctly and lights it in the wrong
    space, which is what makes it hard to find. Falsified by making the
    transpose a straight copy: the test fails.
 
    Refuses and writes nothing while the UNTRUSTED latch is set. Verified inert
    on Quake II at a fixed 40000 batches: 5,340,187 API calls, 530,916 packed
    draws, 3,185,496 vertices — identical to the run before the change.
+
+   **The lighting half is done too**: `$gl_dlt1_lighting(dst, mask)` writes a
+   DLT1 header plus one 64-byte row per enabled light and returns the byte
+   count. `mask` is a parameter rather than block state because `glEnable`
+   lives in `09a8e`; this block has no business guessing at it.
+
+   Three cases are **refusals**, not omissions, because each is a DLT1 that
+   would render something other than what GL draws: a positional light (DLT1
+   rows carry a direction and `$d3d_fixed_bind_lighting` rejects any row whose
+   type is not 3, `09aj:644`); a specular term that can reach the picture; and
+   an untrusted mirror. The specular predicate is deliberately narrow — GL's
+   default light 0 specular is white, so refusing on that alone would refuse
+   nearly every app, and what is refused is a light whose specular is nonzero
+   *and* whose material specular is too. GL's default material specular is
+   black, so an app that never asks for highlights gets an exact build.
+   Widening the predicate to either half alone refuses the default GL state
+   outright, which is how `test-gl-dlt1-lighting.js` falsifies it.
+
+   Two silent conversions, both asserted: GL's `GL_POSITION` with `w == 0`
+   points **toward** the light and D3D's direction points away from it, so the
+   row carries the negated vector — get it wrong and the scene is lit from
+   behind, still plausibly lit. And the direction is stored in eye space,
+   which survives the lowering's view multiply only because the DFX1 above
+   leaves view identity; the two functions have to agree or every light moves.
+   Falsified by dropping the negation, which the signed-zero bit pattern alone
+   catches.
+
+   Not represented and not detectable here: `glColorMaterial` (the three
+   source selectors are written 0, GL's state until an app turns colour
+   material on, and `09a8e` does not report when it does) and the material
+   shininess, which only a specular term would use.
 3. **Rotate GL's buffers** — adopt D3D's ownership protocol.
 4. **Point GL at the existing render worker** — same module, shared memory,
    WAT raster.
