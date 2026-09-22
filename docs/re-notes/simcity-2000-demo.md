@@ -229,6 +229,23 @@ Driving it headlessly, three traps:
   cells in a 3x3 grid (coal, hydro, oil / gas, nuclear, wind / solar,
   microwave, fusion), with the client origin at (3,22). One click on a cell
   picks that plant and closes the picker. `dlg-cmd:<id>` does not.
+* **Picker captions (Fixed 2026-09-22).** Each cell's "200 Mw $4,000 /
+  Coal Power" is drawn with `CreateFontA(8, ..., "MS Sans Serif")`,
+  `SetTextAlign(TA_UPDATECP)` and `MoveToEx` positions computed from
+  `GetTextExtentPointA`. A positive 8 is an 8px *cell*. MS Sans Serif's
+  smallest strike is 13px, and a raster strike cannot shrink, so Win98 returns
+  the 13px cell. `$gdi_bitmap_font_height` used to squeeze the strike to 8px,
+  which made the captions unreadable 5px smudges. "Mw" and the price now
+  nearly touch on the long rows; that is the game's own x positions.
+* **Coal picture, intermittent (open).** All eight pictures come from one
+  builder (CreateDIBSection returns to `0x4656a0`). It sets
+  `biHeight = [obj+0x18] * height`, and leaves biXPels/biYPelsPerMeter
+  uninitialized (stale title text is seen there). For coal, the first item,
+  `[obj+0x18]` differs from run to run. At -1 the section was top-down
+  64x-56 and `CreateDIBSection` returned 0, so the cell stays empty (the blit
+  helper `0x466cae` bails on a null handle). At +1 it was created, but the
+  picture draws in pink and magenta. Reopening the picker creates all eight.
+  Next step: `--watch` the object's +0x18 to find its writer.
 * **Recreation fly-out remembers its subtool.** Clicking the palette button
   re-arms the last-used item (Marina) and overrides an earlier posted
   WM_COMMAND. Click the palette button *first*, then post the item id (Zoo
@@ -238,6 +255,10 @@ Driving it headlessly, three traps:
   Pump action the map, and for a while the status bar, stay grey. The next
   tool change then shows the underground view one tool late. A few thousand
   batches of sim restore it.
+  Re-measured 2026-09-22 on a maximized 2050 city: the underground view
+  renders correctly. The switch takes ~1,000 batches because every batch
+  spends its full 1,000-block budget re-rendering the map (`--batch-stats`),
+  under ~2s of wall clock. That is CPU, not a paint bug.
 * **The status bar overprinted. Fixed.** Its text kept stale fragments of the
   previous string ("Pipes $3mp $100", "Small Park $20 0010"). The bar is an
   MFC CDialogBar, which means CreateDialogParamA with a NULL DlgProc on a

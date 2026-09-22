@@ -1425,6 +1425,18 @@
       (then
         (local.set $request (load.field.memarg GdiFont height (local.get $object)))
         (local.set $height (local.get $request))
+        ;; A positive request is a cell height, and an installed raster strike
+        ;; cannot be shrunk: below its dfPixHeight Win98 hands back the whole
+        ;; cell. SimCity 2000's power-plant picker asks MS Sans Serif for an
+        ;; 8px cell and gets the 13px strike; drawing it squeezed to 8px left
+        ;; its captions unreadable and spaced for glyphs that were not there.
+        (if (i32.and (i32.gt_s (local.get $request) (i32.const 0))
+              (i32.eq (i32.load (local.get $strike)) (i32.const 1)))
+          (then
+            (if (i32.lt_s (local.get $request)
+                  (i32.load offset=20 (local.get $strike)))
+              (then (local.set $height
+                (i32.load offset=20 (local.get $strike)))))))
         ;; Negative LOGFONT heights request character height. Bitmap selection
         ;; returns a complete cell. Fixedsys exposes the same integer-scaled
         ;; cells measured on native Win98 even though Wine stores one 8x15 base.
