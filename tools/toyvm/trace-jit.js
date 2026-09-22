@@ -1844,7 +1844,7 @@ async function benchTiers(exe, hot, ops, { iters, reps, log = console.log, dumpW
     // selector and the wrong base and address somewhere else entirely.
     const bases = arms.every(a => (a.vm ? a.vm.exports : a.exports)[`get_${isa.SEG[0]}b`])
       ? isa.SEG : [];
-    const regs = STATE.filter(g => !['ip', 'steps', 'left', 'intno', 'gip', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads'].includes(g))
+    const regs = STATE.filter(g => !['ip', 'steps', 'left', 'intno', 'gip', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads', 'edgelook'].includes(g))
       .map(g => `${g}=${ex[`get_${g}`]() >>> 0}`)
       .concat(bases.map(r => `${r}b=${ex[`get_${r}b`]() >>> 0}`))
       .join(' ');

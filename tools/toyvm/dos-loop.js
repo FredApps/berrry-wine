@@ -666,6 +666,25 @@ class CodeCache {
     this.volList.push(p);
     this.volList.sort((a, b) => a - b);
     this.promotions++;
+    // Cached blocks that start in this paragraph stay cached -- entryFor asks
+    // about volatility before the cache, so the host never resumes at them
+    // again -- but their heads are still in the jump table, and $jlook does not
+    // ask. A table hit would resume in code decoded from bytes the guest is now
+    // rewriting, with the stores that did it invisible once a pure uncached
+    // compile has taken the code bits down. So the heads leave the table here.
+    // Latent while only indirect jumps, INT and IRET consulted the table; a
+    // direct edge's cold arm now does too (emit.js GO).
+    for (const prog of (this.byPara.get(p) || [])) {
+      for (const [bip] of prog.blocks) {
+        if ((((prog.codeBase + bip) & prog.mask) >>> 4) !== p) continue;
+        const slot = isa.jhash(prog.cs, bip) * 4;
+        if (this.jtab[slot] === bip && this.jtab[slot + 1] === (prog.cs & 0xFFFF)) {
+          this.jtab[slot] = 0;
+          this.jtab[slot + 1] = 0;
+          this.jtab[slot + 2] = 0;
+        }
+      }
+    }
   }
 
   // Volatile paragraphs come in runs, and a run is one piece of code: the
@@ -992,10 +1011,32 @@ class CodeCache {
         list.push(prog);
       }
     }
-    // Publish every block head into the indirect-jump cache. Direct-mapped, so
-    // a later block simply evicts an earlier one -- the key check in $jlook
+    if (!this.regions.has(key)) this.regions.set(key, []);
+    this.regions.get(key).push(prog);
+    let idx = this.blockIndex.get(key);
+    if (!idx) this.blockIndex.set(key, idx = new Map());
+    for (const [bip] of prog.blocks) {
+      // First live program wins, as the list walk it replaces did.
+      const have = idx.get(bip);
+      if (have === undefined || !have.blocks.has(bip)) idx.set(bip, prog);
+    }
+    // Publish block heads into the indirect-jump cache. Direct-mapped, so a
+    // later block simply evicts an earlier one -- the key check in $jlook
     // turns that into a handback rather than a wrong jump.
+    //
+    // Only the heads entryFor itself would resume at: the block the index
+    // above names, at an ip that is not volatile. Two programs can both hold
+    // a block at one ip, decoded from different entries and so fused, traced
+    // and flag-trimmed differently, and they retire different dispatch counts
+    // for the same guest instructions. Publishing the newest one let a table
+    // hit bill the clock differently from the handback it replaces, which is
+    // invisible while only indirect jumps consult the table and moved
+    // ZOKDTPLN's retrace timing -- and its frame -- once every unresolved
+    // direct edge did (emit.js GO): same memory at every shared date, the
+    // guest a few instructions apart.
     for (const [bip, addr] of prog.blocks) {
+      if (idx.get(bip) !== prog) continue;
+      if (this.volList.length && this.volPara[((codeBase + bip) & mask) >>> 4] === 1) continue;
       const slot = isa.jhash(cs, bip) * 4;   // jtab is a view starting AT JTAB_BASE
       this.jtab[slot] = bip;
       this.jtab[slot + 1] = cs & 0xFFFF;
@@ -1005,15 +1046,6 @@ class CodeCache {
       // an extender reusing its real-mode segment numbers -- misses instead of
       // resuming in the other mode's code. Word 3 of the stride was spare.
       this.jtab[slot + 3] = codeBase | 0;
-    }
-    if (!this.regions.has(key)) this.regions.set(key, []);
-    this.regions.get(key).push(prog);
-    let idx = this.blockIndex.get(key);
-    if (!idx) this.blockIndex.set(key, idx = new Map());
-    for (const [bip] of prog.blocks) {
-      // First live program wins, as the list walk it replaces did.
-      const have = idx.get(bip);
-      if (have === undefined || !have.blocks.has(bip)) idx.set(bip, prog);
     }
     return prog.entryAddr;
   }
@@ -1124,6 +1156,9 @@ class DosSession {
       irqSchedule = true,
       // Let wasm answer the few host calls it can (emit.js $intfast).
       intFast = true,
+      // Let a direct edge nobody resolved look its target up in the jump table
+      // instead of handing back (emit.js GO / $jlook_edge).
+      edgeLookup = true,
       hooks = {},
     } = opts;
 
@@ -1133,6 +1168,7 @@ class DosSession {
     this.latticeClock = latticeClock;
     this.irqSchedule = irqSchedule;
     this.intFast = intFast;
+    this.edgeLookup = edgeLookup;
     this.mouse = mouse;
     this.irqEvery = irqEvery;
     this.dispatchesPerTick = dispatchesPerTick;
@@ -1666,6 +1702,14 @@ class DosSession {
     // IRET handlers in emit.js. Only the Sound Blaster's port-armed line is
     // delivered off the schedule, so only it needs the boundary.
     if (vm.exports.set_irqwant) vm.exports.set_irqwant(machine.sbForced && machine.sbForced() ? 1 : 0);
+    // Unresolved direct edges resolve through the jump table (emit.js GO) --
+    // not while single-stepping: a oneInsn block leaves its branch targets
+    // unresolved so that the handback after one instruction can raise INT 1,
+    // and a table hit would run on into cached code instead. Not under
+    // --no-cache either, where a handback recompiles and a hit would not.
+    if (vm.exports.set_edgelook) {
+      vm.exports.set_edgelook(this.edgeLookup && !stepping && !this.cache.noCache ? 1 : 0);
+    }
     // What $intfast answers from (emit.js): the tick count the host's own
     // INT 21h AH=2Ch reads, the PSP its pspSaveStack stamps, and the mouse its
     // INT 33h AX=3 reports. None of them moves inside a slice. Off while

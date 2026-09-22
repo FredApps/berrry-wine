@@ -625,11 +625,31 @@ const GO_LOOKUP = (why) => `
   (if ${CONT('(local.get $t3)')}
     (then (global.set $ip (local.get $t3)))
     (else ${EXIT(why)}))`;
+// A direct edge. Its successor's arena address is resolved only within the
+// compile that emitted it (compile.js "Resolve"), so an edge into a block some
+// OTHER trace compiled keeps its 0 forever -- and used to hand back on every
+// crossing: 1.37M of the corpus's 8.34M handbacks, 265k of them at one
+// fall-through in UNTITLED's mouse loop. The cold arm now asks the jump table
+// first, the same lookup an indirect jump or an int already trusts; only a
+// target no trace has compiled still hands back. Budget and self-patch exits
+// are unchanged: CONT refuses both inside GO_LOOKUP as it does here.
+//
+// Through $jlook_edge rather than $jlook so the analyses can tell the two
+// apart. This lookup resumes the guest at $gip, the successor's own head,
+// exactly as the $slice_exit handback it replaces did -- and a resolved edge
+// only reaches it with the budget spent or code patched, when CONT refuses the
+// result. So the flag analysis reads it as that same event (X), not as a host
+// exit that reads the flags, and handler-effects as a transfer. Read as plain
+// $jlook it turned every branch into a flag read (UNTITLED lost 13 of its 186
+// flagless ops) and into an unresolved call for the fold analyses.
+// It sets $ip itself and takes no local: GO is inlined into region bodies,
+// where a scratch local written on this arm could be an operand a later op in
+// the same region reads.
 const GO = (arena, guest) => `
   (global.set $gip ${guest})
   (if ${CONT(arena)}
     (then (global.set $ip ${arena}))
-    (else ${EXIT('edge')}))`;
+    (else (if (i32.eqz (call $jlook_edge)) (then ${EXIT('edge')}))))`;
 
 // A Jcc's body is its condition and nothing else, so it is built from the
 // condition rather than written out. genFusedBranches() rebuilds it with a
@@ -3500,7 +3520,7 @@ function analyzeFlags(bodies) {
       const at = close[o] >= 0 ? close[o] : m.index;
       const sure = depthAt[m.index] <= 2 && !bails;
       if (m[1]) {
-        if (m[1] === 'slice_exit') { ev.push({ t: 'X', at }); continue; }
+        if (m[1] === 'slice_exit' || m[1] === 'jlook_edge') { ev.push({ t: 'X', at }); continue; }
         if (HOST_EXIT.test(m[1])) { ev.push({ t: 'R', at }); continue; }
         if (!bodies.has(m[1])) continue;              // import, or $next
         if (FLAG_KILLERS.test(m[1])) ev.push({ t: sure ? 'CK' : 'C?', n: m[1], at });
@@ -5285,6 +5305,19 @@ ${memAccessors()}
                         (i32.eq (i32.load offset=12 (local.get $a)) (global.get $csb))))
     (then (return (i32.load offset=8 (local.get $a)))))
   (i32.const 0))
+
+;; A direct edge's cold arm (GO in emit.js): resume at $gip's block if the jump
+;; table has one and the boundary test allows it, setting $ip; 0 to hand back.
+;; Named apart from $jlook so the flag analysis and handler-effects.js can tell
+;; a block transfer from the host exits that also use the table.
+;; $edgelook is the host's A/B switch (run-dos --no-edge-lookup): 0 restores
+;; the handback on every unresolved edge.
+(func $jlook_edge (result i32) (local $a i32)
+  (if (i32.eqz (global.get $edgelook)) (then (return (i32.const 0))))
+  (local.set $a ${CONT('(call $jlook (global.get $gip))')})
+  (if (i32.eqz (local.get $a)) (then (return (i32.const 0))))
+  (global.set $ip (local.get $a))
+  (i32.const 1))
 ${SHIFT_FNS.join('')}${fpuHelpers()}${require('./emit-decoder').decoderWat()}`;
   return s;
 }
@@ -5571,7 +5604,7 @@ function fpuHelpers() {
 // remembering only the last one would leave the earlier writes running stale
 // code, which is the exact bug the flag exists to prevent. Over-approximating
 // the gap between two distant stores only costs a recompile.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads'];
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads', 'edgelook'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually

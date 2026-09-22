@@ -107,6 +107,7 @@ async function runOne(exe, o) {
           // clock owes moved any picture. See docs/toyvm-irq-schedule.md.
           irqSchedule: o.irqSchedule,
           intFast: o.intFast,
+          edgeLookup: o.edgeLookup,
           regionJit: o.regionJit ? {
             sampleAfter: Math.floor(o.budget / 4), profileFor: Math.floor(o.budget / 4),
             gateAt: 0, log: quiet,
@@ -210,7 +211,8 @@ function child(exe, o) {
       ...(o.treeFoldRelax ? [`--tree-fold-relax=${o.treeFoldRelax.join(',') || 'none'}`] : []),
       ...(o.latticeClock ? ['--lattice-clock'] : []),
       ...(o.irqSchedule ? [] : ['--no-irq-schedule']),
-      ...(o.intFast ? [] : ['--no-int-fast'])];
+      ...(o.intFast ? [] : ['--no-int-fast']),
+      ...(o.edgeLookup ? [] : ['--no-edge-lookup'])];
     const p = spawn(process.execPath, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
@@ -469,6 +471,7 @@ async function main() {
     latticeClock: flag('lattice-clock'),
     irqSchedule: !flag('no-irq-schedule'),
     intFast: !flag('no-int-fast'),
+    edgeLookup: !flag('no-edge-lookup'),
   };
 
   const one = arg('one');

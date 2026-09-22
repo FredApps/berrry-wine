@@ -259,6 +259,9 @@ async function runDos(o) {
     // Answer the INT 21h get-time and INT 33h reset calls inside wasm
     // (emit.js $intfast). `--no-int-fast` is the A/B partner.
     intFast = true,
+    // Resolve unlinked direct edges through the jump table (emit.js GO).
+    // `--no-edge-lookup` is the A/B partner.
+    edgeLookup = true,
     // The DOS command tail, verbatim. Several demos in this corpus name their
     // own silent-mode switch on the screen they refuse to start from.
     guestArgs = '',
@@ -545,7 +548,7 @@ async function runDos(o) {
     treeFold: folder,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit, pitClock,
-    stuckWork, latticeClock, irqSchedule, intFast,
+    stuckWork, latticeClock, irqSchedule, intFast, edgeLookup,
     // A watch reports through the census, so asking for one turns it on.
     smcCensus: smcCensus || watch.length > 0, watch,
     // The same count, not recomputed while the page it counts has not changed.
@@ -1338,6 +1341,7 @@ async function main() {
     latticeClock: flag('lattice-clock'),
     irqSchedule: !flag('no-irq-schedule'),
     intFast: !flag('no-int-fast'),
+    edgeLookup: !flag('no-edge-lookup'),
     // --stop-on-text='Runtime error 200' -- end the run the instant the guest
     // prints this, so --dump and --disasm photograph the failure instead of
     // whatever reused its memory afterwards. See Machine.conWatch.

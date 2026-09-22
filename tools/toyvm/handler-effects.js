@@ -61,8 +61,9 @@ const KIND = [
   // "is `si` the induction variable of this stream" is really made of.
   [/^ea(32)?$/, 'address'],
   // The block transfer's own budget-and-self-patch test. Every branch ends in
-  // one; it leaves the slice, it does not leave the analysis.
-  [/^slice_exit$/, 'transfer'],
+  // one; it leaves the slice, it does not leave the analysis. $jlook_edge is
+  // the same edge resolved through the jump table instead of handed back.
+  [/^(slice_exit|jlook_edge)$/, 'transfer'],
   // CX by another name, in `loop` and the string ops' REP counters.
   [/^(cx16|ecx32)$/, 'countRead'],
   [/^push(16|32)$/, 'stackWrite'],
