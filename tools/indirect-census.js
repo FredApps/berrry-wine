@@ -34,12 +34,28 @@
 // Read `table` + `icall` + `itail` as the data-dependent count and ignore
 // `tailrec`.
 //
-// LIMITS. The disassembly is SpiderMonkey Ion for the host arch (arm64 on this
-// box), exactly as tools/wasm-native.js -- read it for structure, never for a
-// cycle count attributed to V8. The classifier is arm64-only; on an x86 host it
-// reports `unknown` rather than guessing. A site count is STATIC: how many of
-// them one micro-op passes through is a path question, answered by --sites plus
-// the source.
+// LIMITS. The disassembly is SpiderMonkey Ion for the host arch, exactly as
+// tools/wasm-native.js -- read it for structure, never for a cycle count
+// attributed to V8. A site count is STATIC: how many of them one micro-op
+// passes through is a path question, answered by --sites plus the source.
+//
+// BOTH ARCHITECTURES are classified, from the instruction syntax rather than
+// from `process.arch`, so a dump made elsewhere reads correctly too:
+//
+//              arm64                         x86-64 (AT&T)
+//   table   ldr x16,[base,idx,lsl #3]     jmp *(%base,%idx,8)
+//           + br x16                      preceded by cmp $K,%reg + jae
+//   icall   blr xN                        call/callq *%reg or *disp(%reg)
+//   itail   any other br xN               any other jmp *...
+//   tailrec adr x17,<patch> + br x17      -- none: SM emits no static
+//                                            trampoline on x86, so every
+//                                            `jmp *` there is data-dependent
+//
+// This was arm64-only until 2026-09-22 and returned null for every x86
+// instruction, so a run on an x86 host reported `table 0 icall 0 itail 0` --
+// a plausible-looking zero -- for a module holding 521 indirect jumps. The
+// quiet bench box is x86_64, i.e. the tool was wrong exactly where it is most
+// likely to be run.
 
 const fs = require('fs');
 const os = require('os');
@@ -73,12 +89,40 @@ const ACCESSORS = new Set([
   '$get_reg', '$set_reg', '$get_reg8', '$set_reg8', '$get_reg16', '$set_reg16',
 ]);
 
+// The number of in-table arms, from the bounds check that precedes the jump.
+// arm64 writes it `cmp w9,#0x94`, x86 `cmp $0x94,%ebx`.
+function armsFrom(back) {
+  for (let j = back.length - 1; j >= 0; j--) {
+    const m = back[j].match(/\bcmp\s+[wx]\d+,\s*#0x([0-9a-f]+)/)
+      || back[j].match(/\bcmp[lqbw]?\s+\$0x([0-9a-f]+),\s*%/);
+    if (m) return parseInt(m[1], 16);
+  }
+  return null;
+}
+
+// One x86-64 indirect branch (AT&T syntax), or null.
+function classifyX86(instrs, i) {
+  const cur = instrs[i].text;
+  if (/\bcallq?\s+\*/.test(cur)) return { kind: 'icall' };
+  if (!/\bjmpq?\s+\*/.test(cur)) return null;
+  const back = instrs.slice(Math.max(0, i - 8), i).map(x => x.text);
+  // A jump table is indexed IN the operand: jmp *(%rax,%rbx,8). A scale of 8
+  // is the code-pointer stride; anything else is not one of Ion's tables.
+  if (/\bjmpq?\s+\*\(%[a-z0-9]+,%[a-z0-9]+,8\)/.test(cur)) {
+    return { kind: 'table', arms: armsFrom(back) };
+  }
+  // Everything else -- `jmp *%rax` after a funcref-table walk, or
+  // `jmp *disp(%reg)` -- is a data-dependent tail dispatch. There is no
+  // `tailrec` class here: SM emits no static trampoline on x86.
+  return { kind: 'itail' };
+}
+
 // One indirect branch, classified from the ~8 instructions in front of it.
 function classify(instrs, i) {
   const cur = instrs[i].text;
   if (/\bblr\s+x\d+/.test(cur)) return { kind: 'icall' };
   const reg = cur.match(/\bbr\s+x(\d+)/);
-  if (!reg) return null;
+  if (!reg) return classifyX86(instrs, i);
   const back = instrs.slice(Math.max(0, i - 8), i).map(x => x.text);
   // return_call trampoline: adr x17,<patch>; ldur x16,[x17,#4]; add x17,x17,x16; br x17
   if (back.some(t => /\badr\s+x17,/.test(t))) return { kind: 'tailrec' };
@@ -90,13 +134,7 @@ function classify(instrs, i) {
   // just before the jump, so the target is data-dependent exactly like an
   // `icall` and is counted with it.
   if (!tbl) return { kind: 'itail' };
-  // The bounds check that precedes it names the number of in-table arms.
-  let arms = null;
-  for (let j = back.length - 1; j >= 0; j--) {
-    const m = back[j].match(/\bcmp\s+[wx]\d+,\s*#0x([0-9a-f]+)/);
-    if (m) { arms = parseInt(m[1], 16); break; }
-  }
-  return { kind: 'table', arms };
+  return { kind: 'table', arms: armsFrom(back) };
 }
 
 function censusOne(instrs) {
@@ -154,7 +192,9 @@ function main() {
       // uses, so an accessor call is named rather than guessed at.
       const calls = [];
       for (const ins of instrs) {
-        const m = ins.text.match(/\b(?:bl|callq?)\s+\*?0x([0-9a-f]+)/);
+        // Direct only: an x86 `call *0x20(%r14)` is an icall, already counted
+        // as a site, and its displacement is not a code address.
+        const m = ins.text.match(/\b(?:bl|callq?)\s+0x([0-9a-f]+)/);
         if (!m) continue;
         const t = parseInt(m[1], 16);
         const hit = segs.find(sg => t >= sg[1] && t < sg[2]);
