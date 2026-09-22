@@ -162,6 +162,72 @@ const D3DTRANSFORMSTATE_WORLD = 1;
   assert.deepStrictEqual(readMatrix(output), TRANSLATE,
     'multiplying into an identity world stores the supplied matrix as-is');
 
+  // Quake's whole R_SetupGL sequence, with a camera that is not level.
+  //
+  // This exists because the first confirmation of the fix was made against a
+  // frame whose pitch and roll were exactly zero, and a yaw-only camera is the
+  // weakest possible test of a matrix ORDER: with the two middle rotations
+  // identity there are fewer non-commuting pairs left to disagree about. Roll
+  // and pitch both turn about axes the following yaw also turns about, so they
+  // are where the two orders come apart. The assertion below is that the device
+  // reproduces the hand-computed left-appending product for the full sequence,
+  // and that the reversed product's rotation block genuinely differs from it --
+  // so this sequence discriminates the orders rather than merely passing.
+  const rad = deg => deg * Math.PI / 180;
+  // glRotatef arrays, read row-major exactly as the guest hands them over.
+  const rotX = (deg) => {
+    const c = Math.cos(rad(deg)), s = Math.sin(rad(deg));
+    return [1, 0, 0, 0, 0, c, s, 0, 0, -s, c, 0, 0, 0, 0, 1];
+  };
+  const rotY = (deg) => {
+    const c = Math.cos(rad(deg)), s = Math.sin(rad(deg));
+    return [c, 0, -s, 0, 0, 1, 0, 0, s, 0, c, 0, 0, 0, 0, 1];
+  };
+  const rotZ = (deg) => {
+    const c = Math.cos(rad(deg)), s = Math.sin(rad(deg));
+    return [c, s, 0, 0, -s, c, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+  };
+  const pitch = 23.5, yaw = 137.25, roll = 11.75;
+  const sequence = [
+    rotX(-90),          // put Z going up
+    rotZ(90),
+    rotX(-roll),
+    rotY(-pitch),
+    rotZ(-yaw),
+    TRANSLATE,
+  ];
+
+  call(setTransform, IDENTITY);
+  for (const matrix of sequence) call(multiply, matrix);
+  call(getTransform, null);
+
+  // Each call appends on the left, so the composite is the reverse product.
+  let composite = IDENTITY;
+  for (const matrix of sequence) composite = mul(matrix, composite);
+  const live = readMatrix(output);
+  live.forEach((value, word) => {
+    assert.ok(Math.abs(value - composite[word]) < 1e-3,
+      `R_SetupGL composite word ${word} is ${value},`
+      + ` expected ${composite[word]}`);
+  });
+
+  let backwards = IDENTITY;
+  for (const matrix of sequence) backwards = mul(backwards, matrix);
+  const rotationBlock = m => [0, 1, 2, 4, 5, 6, 8, 9, 10].map(w => m[w]);
+  const spread = Math.max(...rotationBlock(composite)
+    .map((value, i) => Math.abs(value - rotationBlock(backwards)[i])));
+  assert.ok(spread > 0.5,
+    'a pitched and rolled camera makes the two orders disagree by'
+    + ` more than rounding (worst rotation-element delta ${spread})`);
+
+  // The composite is a rigid rotation either way -- det +1, orthonormal rows --
+  // which is exactly why the reversed one never looked broken. Assert it here
+  // so nobody re-derives "the matrix is malformed" from a bad frame.
+  const rows = [0, 1, 2].map(r => [0, 1, 2].map(c => composite[r * 4 + c]));
+  rows.forEach((row, r) => assert.ok(
+    Math.abs(Math.hypot(...row) - 1) < 1e-4,
+    `composite rotation row ${r} stays unit length`));
+
   console.log('PASS  Direct3D MultiplyTransform pre-multiplies the supplied matrix');
 })().catch(error => {
   console.error(error && error.stack || error);
