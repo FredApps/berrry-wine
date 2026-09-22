@@ -47,9 +47,15 @@ const memoryBytes = 8192 * 65536;   // (memory 8192 8192 shared)
 check(RPC.RPC_BASE === rpcBase, 'RPC_BASE matches $THREAD_RPC',
   `js=0x${RPC.RPC_BASE.toString(16)} wat=0x${rpcBase.toString(16)}`);
 
-const hi = rpcBase + RPC.RPC_MAX_SLOTS * RPC.RPC_STRIDE;
-check(hi === rpcBase + rpcSize, 'the slot table exactly fills $THREAD_RPC_SIZE',
-  `${RPC.RPC_MAX_SLOTS} slots x ${RPC.RPC_STRIDE}B = 0x${(hi - rpcBase).toString(16)}`);
+// The slot table, then the AudioWorklet voice block, fill the region exactly.
+const hi = rpcBase + RPC.RPC_MAX_SLOTS * RPC.RPC_STRIDE + RPC.AUDIO_BYTES;
+check(RPC.AUDIO_BASE === rpcBase + RPC.RPC_MAX_SLOTS * RPC.RPC_STRIDE,
+  'the audio voice block starts where the thread slots end',
+  `0x${RPC.AUDIO_BASE.toString(16)}`);
+check(RPC.AUDIO_MAP_BASE + RPC.AUDIO_VOICES * RPC.AUDIO_MAP_INTS * 4 <= RPC.AUDIO_BASE + RPC.AUDIO_BYTES,
+  'the audio descriptors and voice map fit their block');
+check(hi === rpcBase + rpcSize, 'thread slots + audio block exactly fill $THREAD_RPC_SIZE',
+  `${RPC.RPC_MAX_SLOTS} slots x ${RPC.RPC_STRIDE}B + ${RPC.AUDIO_BYTES}B = 0x${(hi - rpcBase).toString(16)}`);
 check(hi <= memoryBytes, 'the last slot is inside linear memory',
   `end=0x${hi.toString(16)} memory=0x${memoryBytes.toString(16)}`);
 

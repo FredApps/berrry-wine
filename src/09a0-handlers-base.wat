@@ -279,6 +279,8 @@
                 (local.get $dll_name) (call $g2w (local.get $dll_name)) (local.get $arg1)))
               (if (i32.ne (local.get $api_id) (i32.const -1))
                 (then
+                  ;; Any thread can get here: reserve the index process-wide.
+                  (global.set $num_thunks (call $thunk_reserve))
                   (local.set $thunk_wa (i32.add (global.get $THUNK_BASE)
                     (i32.mul (global.get $num_thunks) (i32.const 8))))
                   (i32.store (local.get $thunk_wa)

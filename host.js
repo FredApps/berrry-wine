@@ -97,14 +97,21 @@ function resolveShellLaunchPath(file, vfs, isWinExec) {
   return vfs._resolvePath(file);
 }
 
-// Cooperative-scheduler timing arms on by default; see _schedArm.
-const SCHED_ARMS_DEFAULT = 'b,e,g,w';
+// Cooperative-scheduler timing arms on by default; see _schedArm. Arm f
+// (free-running worker threads, worker mode only) measured level with w on
+// MH2's audio, HUD on and off (2026-09-22), and is on for throughput: a
+// thread no longer waits for the page's next step to get its next slice.
+const SCHED_ARMS_DEFAULT = 'b,e,g,w,f';
 // Arm w: a safety bound on how long a guest thread's Worker holds its slice
 // through local Sleeps — the step epoch normally ends it first, when the main
 // slice returns (measured on Moorhuhn 2: ~64ms per main slice) — and the
 // longest a sleeping main thread holds a step open for its threads.
 const WORKER_LOCAL_SLEEP_MAX_MS = 250;
 const WORKER_MAIN_ASLEEP_HOLD_MS = 16;
+// Arm f: a free-running thread's slice (it does not wait for the host step)
+// ends after this long at the latest, so per-instance state that is only
+// synced at slice boundaries -- the loaded-DLL count -- is never staler.
+const WORKER_FREE_RUN_SLICE_MS = 50;
 
 // ---------------------------------------------------------------------------
 // Frozen (agent-stepped) mode — docs/design-agent-control.md
@@ -2547,6 +2554,10 @@ class WineAssembly {
       // messages for slot 0 instead of calling exports on the idle instance.
       if (!this.renderer._guestWorkerWasms) this.renderer._guestWorkerWasms = new WeakSet();
       this.renderer._guestWorkerWasms.add(this.instance);
+      // Guest threads now run beside the page rather than inside its steps, so
+      // a DirectSound ring is kept full on its own and the AudioWorklet may
+      // play it straight out of shared memory (lib/host-audio.js playRing).
+      if (this.hostCtx) this.hostCtx.liveAudioRing = true;
       this.logToUI('[threads] guest main thread is running in a Worker (experimental)');
     } catch (err) {
       this.guestWorker = null;
@@ -3786,12 +3797,16 @@ class WineAssembly {
         const serial = typeof window !== 'undefined' && !!window.WINE_THREADS_SERIAL;
         const localSleep = !!(Rpc && Rpc.endStepEpoch && self.memory && !serial && !self._frozen
           && self.threadManager && self.threadManager.backend === 'worker' && self._schedArm('w'));
+        const freeRun = localSleep && self._schedArm('f');
         if (self.threadManager) {
+          self.threadManager.workerFreeRun = freeRun;
           self.threadManager.workerLocalSleep = localSleep
-            ? { epoch: Rpc.readStepEpoch(self.memory), maxMs: WORKER_LOCAL_SLEEP_MAX_MS }
+            ? { epoch: Rpc.readStepEpoch(self.memory),
+                maxMs: freeRun ? WORKER_FREE_RUN_SLICE_MS : WORKER_LOCAL_SLEEP_MAX_MS }
             : null;
         }
-        let stepEnded = !localSleep;
+        // Free-running threads are not ended by the step at all.
+        let stepEnded = !localSleep || freeRun;
         const endStep = () => {
           if (stepEnded) return;
           stepEnded = true;
@@ -3882,6 +3897,15 @@ class WineAssembly {
         if (!inputBurstSlice && ranBlocks >= steps * 0.75 && ranMs > 0) {
           const measured = Math.round((ranBlocks * 12 / ranMs) / 1000) * 1000;
           self._workerAdaptiveSteps = Math.max(1000, Math.min(configuredSteps, measured));
+        }
+        // Nothing ran this step while threads are still mid-slice: park until
+        // one of them finishes (or the main thread's Sleep is up) rather than
+        // spinning steps that each find everything busy.
+        self._workerIdleMs = 0;
+        if (freeRun && !(ranBlocks > 0) && !(threadsRun > 0)) {
+          const until = self._workerMainSleepUntil;
+          const left = until ? until - self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio) : 0;
+          self._workerIdleMs = left > 0 ? Math.min(left, WORKER_MAIN_ASLEEP_HOLD_MS) : 2;
         }
         self._workerFocusHwnd = r.focusHwnd | 0;
         if (self.threadManager) self.threadManager.publishWorkerThunkState(r);
@@ -4079,6 +4103,15 @@ class WineAssembly {
             Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS, Math.round(left))));
           return;
         }
+      }
+      if (self.running && self._workerIdleMs > 0 && self.threadManager
+          && self.threadManager.waitForWorkerSlice) {
+        const ms = self._workerIdleMs;
+        self._workerIdleMs = 0;
+        self.threadManager.waitForWorkerSlice(ms).then(() => {
+          if (self.running) self._scheduleStep(step);
+        });
+        return;
       }
       if (self.running) self._scheduleStep(step);
     };
@@ -4643,6 +4676,9 @@ class WineAssembly {
   //   g  global deadline clock: those wakes see the time they were due at
   //      (ThreadManager.deadlineNow), and every clock read agrees on it
   //   a  (off) exempt timed sleepers from idle demotion; `g` implies it
+  //   f  Worker mode, with w: guest threads free-run -- the host step neither
+  //      waits for their slices nor ends them, so a thread sleeping through
+  //      its slice keeps running while the page presents or stalls
   //   w  Worker mode: a guest thread's Worker waits out a short Sleep itself
   //      and keeps running until the host step's main slice is done, instead
   //      of waking at most once per host step (lib/guest-worker.js)
