@@ -2737,7 +2737,7 @@
         (i32.store offset=8 (local.get $desc_wa)                  (i32.const 0x4C414820))
         (i32.store8 offset=12 (local.get $desc_wa)                (i32.const 0))
         ;; "hal\0"
-        (i32.store (local.get $name_wa) (i32.const 0x0000006C61681))
+        (i32.store (local.get $name_wa) (i32.const 0x006C6168))
         (local.set $is_hal (i32.const 1))))
     ;; HW + HEL descs
     (local.set $hw  (call $heap_alloc (i32.const 252)))
