@@ -59,6 +59,14 @@ class PairLink extends Wire {
     this.other.closed = true;
     if (typeof this.other.onClosed === 'function') this.other.onClosed('channel-closed');
   }
+  // The other kind of leaving: no goodbye, the connection just gives up
+  // under the far end, as a dead Wi-Fi or a phone asleep does.
+  drop() {
+    if (this.closed) return;
+    this.closed = true;
+    this.other.closed = true;
+    if (typeof this.other.onClosed === 'function') this.other.onClosed('failed');
+  }
 }
 function linkPair() {
   const a = new PairLink();
@@ -306,7 +314,8 @@ async function main() {
   await check('a member leaving drops only their link, and frees their seat', async () => {
     sam.wire.link.close();
     await until(() => alex.memberCount === 1, 'the owner to drop sam');
-    assert.ok(alex.events.some(e => e.type === 'left' && e.name === 'sam'));
+    assert.ok(alex.events.some(e => e.type === 'left' && e.name === 'sam' && e.quit === true),
+      'a closed channel is a goodbye');
     await sam.close();
     // The owner's guest is told that address is gone, so its connections
     // to sam reset instead of waiting forever.
@@ -320,10 +329,23 @@ async function main() {
     await lee.close();
   });
 
+  await check('a member whose connection gives up is reported as lost, not as leaving', async () => {
+    const pat = await open(dir, 'u5', 'pat');
+    await until(() => alex.memberCount === 2, 'the owner to admit pat');
+    pat.wire.link.drop();
+    await until(() => alex.memberCount === 1, 'the owner to drop pat');
+    const left = alex.events.filter(e => e.type === 'left' && e.name === 'pat');
+    assert.deepStrictEqual(left.map(e => e.quit), [false]);
+    drain(alex.wire);
+    await pat.close();
+  });
+
   await check('the owner leaving ends the room for every member', async () => {
     await alex.close();
     await until(() => kim.events.some(e => e.type === 'closed'), 'kim to hear the room closed');
-    assert.match(kim.events.find(e => e.type === 'closed').message, /alex closed the room/);
+    const closed = kim.events.find(e => e.type === 'closed');
+    assert.match(closed.message, /alex closed the room/);
+    assert.strictEqual(closed.quit, true);
     // Every other seat was reached through alex, so all of them are gone.
     assert.deepStrictEqual(drain(kim.wire).map(f => [field(f, 4), field(f, 8)]), [[7, 0xFFFFFFFF]]);
     await kim.close();
