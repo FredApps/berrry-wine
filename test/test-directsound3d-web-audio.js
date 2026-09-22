@@ -132,10 +132,11 @@ try {
     'IDirectSoundBuffer::QueryInterface should return the 3D auxiliary wrapper');
   assert(/\$handle_IDirectSound3DBuffer_SetPosition[\s\S]*?\$host_voice_3d_set[\s\S]*?\(i32\.const 24\)/.test(wat),
     'SetPosition should forward all coordinates and pop its five-argument COM frame');
-  const registryCount = wat.match(/\$DX_VTBL_REGISTRY_COUNT i32 \(i32\.const (\d+)\)/);
+  const generated = fs.readFileSync(path.join(root, 'src', '09b2-dispatch-table.generated.wat'), 'utf8');
+  const registryCount = generated.match(/\$DX_VTBL_REGISTRY_COUNT i32 \(i32\.const (\d+)\)/);
   assert(registryCount && Number(registryCount[1]) > 55,
     'the registry must include the DirectSound3DBuffer vtable at slot 55');
-  assert(/\$DX_VTBL_DS3DBUF \(i32\.load offset=220/.test(wat),
+  assert(/\$DX_VTBL_DS3DBUF \(i32\.load offset=220/.test(generated),
     'worker instances should restore the appended 3D vtable');
 
   console.log('PASS  DirectSound3D maps to Web Audio HRTF positioning and distance');
