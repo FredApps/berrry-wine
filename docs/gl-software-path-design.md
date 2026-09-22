@@ -293,6 +293,26 @@ needs none of it. Recorded here so it is not re-proposed.
    drift, each latches its opcode into a sticky UNTRUSTED field, so a consumer
    can refuse to lower a draw instead of lowering a wrong one.
 
+   **It is not a rare family, and that is measured, not assumed.**
+   `tools/gl-name-census.js` (2026-09-22) finds 35 GL-using binaries in the
+   corpus and **18 of them name `glPushAttrib`/`glPopAttrib`**. A string search
+   rather than an import walk, because every GL engine we run resolves GL
+   through `GetProcAddress` — `pe-imports.js ref_gl.dll` lists KERNEL32,
+   USER32, GDI32 and no OpenGL at all, so the import table is blind here by
+   construction.
+
+   Half of those 18 are not evidence about any app: a GL driver
+   (`3dfxgl.dll`, `pvrgl.dll`) and SDL's loader table name the entire API
+   whatever the program does. The ones that count are engine code — Quake II's
+   `ref_gl.dll`, whose QGL table is hand-written and lists only what the
+   renderer uses, GoldSrc's `hw.dll`, both Unreal `opengldrv.dll`s, Deus Ex,
+   `IDDemo.exe`. So the attribute stack is the next thing worth mirroring, and
+   it is a gate on several apps rather than a one-app fold.
+
+   Static reach is not hotness, and the two disagree here already: `ref_gl.dll`
+   names `glPushAttrib` and a 40,000-batch Quake II menu census counted **zero**
+   calls to it. Which is the point of having both readings.
+
    `gluPerspective`, `gluLookAt` and `gluOrtho2D` were in that list and are now
    mirrored (`test-gl-glu-mirror.js`). They are library code, not GL entry
    points, so each is written as the composition `lib/gl-compat.js` performs —
