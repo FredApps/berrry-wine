@@ -124,6 +124,48 @@ async function main() {
     `stored=0x${stored.toString(16)} handle=0x${handle.toString(16)}`);
   check('GetClipboardData RTF bytes round-trip', readAscii(handle) === rtfText, readAscii(handle));
 
+  // An owning duplicate must not inherit guest_strlen's 64-KiB scan cap.
+  for (const length of [65535, 65536, 65537, 70000]) {
+    const longText = '{\\rtf1 ' + 'Q'.repeat(length - 8) + '}';
+    const source = writeAscii(longText);
+    const owned = e.clipboard_store_rtf_data(source) >>> 0;
+    check(`RTF preserves all ${length} bytes and NUL`, owned !== 0 &&
+      readAscii(owned, length + 1) === longText && u8[wa(owned) + length] === 0);
+    check(`RTF reports its full ${length}-byte length`, e.clipboard_rtf_len() === length);
+    u8[wa(source)] = 0x58;
+    check(`RTF ${length}-byte snapshot is independent`, u8[wa(owned)] === 0x7b);
+  }
+  const current = e.clipboard_get_data_handle(fmtA) >>> 0;
+  const aliasText = readAscii(current, 70001);
+  const alias = e.clipboard_store_rtf_data(current) >>> 0;
+  check('RTF can duplicate its current owned buffer', alias !== 0 &&
+    readAscii(alias, 70001) === aliasText);
+  const suffixText = aliasText.slice(7);
+  const suffix = e.clipboard_store_rtf_data(alias + 7) >>> 0;
+  check('RTF can duplicate an overlapping suffix before retiring old storage', suffix !== 0 &&
+    readAscii(suffix, 70001) === suffixText);
+  check('NULL RTF source fails without discarding current data',
+    e.clipboard_store_rtf_data(0) === 0 && e.clipboard_get_data_handle(fmtA) >>> 0 === suffix &&
+    readAscii(suffix, 70001) === suffixText);
+
+  const page = 0x30000000;
+  for (const address of [page, 0x28000000, page + 4096]) {
+    if ((e.test_virtual_map_commit(address, 4096) >>> 0) !== address)
+      throw new Error('failed to construct sparse clipboard source');
+  }
+  if (e.guest_to_wasm(page + 4096) === e.guest_to_wasm(page) + 4096)
+    throw new Error('sparse source must have nonadjacent physical backing');
+  const sparseText = '{\\rtf1 sparse pages\\par owned copy}';
+  const sparseSource = page + 4096 - 9;
+  [...Buffer.from(sparseText + '\0', 'ascii')].forEach((byte, i) =>
+    e.guest_write8(sparseSource + i, byte));
+  const sparseOwned = e.clipboard_store_rtf_data(sparseSource) >>> 0;
+  check('RTF gathers a source crossing noncontiguous guest pages',
+    sparseOwned !== 0 && readAscii(sparseOwned) === sparseText &&
+    e.clipboard_rtf_len() === sparseText.length);
+  e.guest_write8(sparseSource, 0x58);
+  check('sparse RTF copy owns its bytes independently', readAscii(sparseOwned) === sparseText);
+
   e.clipboard_clear_all_data();
   check('EmptyClipboard clears RTF availability', e.clipboard_is_format_available(fmtA) === 0);
   check('EmptyClipboard clears format count', e.clipboard_count_formats() === 0);

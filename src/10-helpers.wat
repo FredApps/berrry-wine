@@ -5698,31 +5698,23 @@
     (local.get $dst))
 
   (func $clipboard_store_rtf_data (param $src_g i32) (result i32)
-    (local $len i32) (local $need i32) (local $cap i32)
+    (local $copy i32) (local $len i32)
     (if (i32.eqz (local.get $src_g)) (then (return (i32.const 0))))
-    (local.set $len (call $guest_strlen (local.get $src_g)))
-    (local.set $need (i32.add (local.get $len) (i32.const 1)))
-    (if (i32.gt_u (local.get $need) (global.get $clipboard_rtf_cap))
-      (then
-        (if (global.get $clipboard_rtf_ptr)
-          (then
-            (call $heap_free (global.get $clipboard_rtf_ptr))
-            (global.set $clipboard_rtf_ptr (i32.const 0))))
-        (local.set $cap
-          (i32.and (i32.add (local.get $need) (i32.const 63)) (i32.const -64)))
-        (global.set $clipboard_rtf_ptr (call $heap_alloc (local.get $cap)))
-        (global.set $clipboard_rtf_cap (local.get $cap))))
-    (if (i32.eqz (global.get $clipboard_rtf_ptr))
-      (then
-        (global.set $clipboard_rtf_len (i32.const 0))
-        (return (i32.const 0))))
+    ;; The owning helper sizes the complete string and copies through guest
+    ;; translation, including non-affine sparse pages. Duplicate before freeing:
+    ;; src may be the current clipboard buffer (or a suffix of it).
+    (local.set $copy (call $guest_strdup (local.get $src_g)))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    ;; The new heap allocation is contiguous; scan our owned copy, not caller
+    ;; memory through a single translation or guest_strlen's 64-KiB cap.
+    (local.set $len (call $strlen (call $g2w (local.get $copy))))
+    (if (global.get $clipboard_rtf_ptr)
+      (then (call $heap_free (global.get $clipboard_rtf_ptr))))
+    (global.set $clipboard_rtf_ptr (local.get $copy))
+    (global.set $clipboard_rtf_cap (i32.add (local.get $len) (i32.const 1)))
     (drop (call $clipboard_get_rtf_format_id))
-    (call $memcpy
-      (call $g2w (global.get $clipboard_rtf_ptr))
-      (call $g2w (local.get $src_g))
-      (local.get $need))
     (global.set $clipboard_rtf_len (local.get $len))
-    (global.get $clipboard_rtf_ptr))
+    (local.get $copy))
 
   (func $clipboard_rtf_append_byte
         (param $dst_w i32) (param $pos i32) (param $ch i32) (result i32)
