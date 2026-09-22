@@ -19,7 +19,7 @@
   ;; equivalent, so a rotation about a non-unit axis can differ in the last
   ;; ulp. Tests compare rotations with a tolerance for exactly this reason.
   ;;
-  ;; Per-context block, 9008 bytes:
+  ;; Per-context block, 9032 bytes:
   ;;   +0    matrix mode (0x1700 MODELVIEW, 0x1701 PROJECTION, 0x1702 TEXTURE)
   ;;   +4    active texture unit (0 or 1)
   ;;   +8    depth of stack 0 (modelview), index of its top entry
@@ -37,7 +37,14 @@
   ;;         then shininess f32 at +8944, padding to +8960
   ;;   +8960 fog: mode i32, density f32, start f32, end f32, colour 4 f32
   ;;   +8992 scratch for a scalar setter that must present four f32
-  ;;         (ends at +9008)
+  ;;   +9008 viewport x, y, width, height (4 i32, as glViewport was given them)
+  ;;   +9024 depth range near, far (2 f32, demoted from GL's GLclampd)
+  ;;         (ends at +9032)
+  ;;
+  ;; Viewport and depth range are here rather than with the rest of the GL
+  ;; state in 09a8e because DFX1 wants them (+68..+88) and this is the block
+  ;; the descriptor is built from. They are the only two fields in it that no
+  ;; matrix or light operation touches.
   ;;
   ;; The depth cap is 32, which is GL's own required minimum for the modelview
   ;; stack. Real GL raises GL_STACK_OVERFLOW rather than growing, so a push
@@ -133,12 +140,17 @@
     (local.set $guest (call $heap_alloc (i32.const 12)))
     (if (i32.eqz (local.get $guest)) (then (unreachable)))
     (local.set $p (call $g2w (local.get $guest)))
-    (local.set $guest (call $heap_alloc (i32.const 9008)))
+    (local.set $guest (call $heap_alloc (i32.const 9032)))
     (if (i32.eqz (local.get $guest)) (then
       (call $heap_free (call $w2g (local.get $p))) (unreachable)))
     (local.set $block (call $g2w (local.get $guest)))
-    (memory.fill (local.get $block) (i32.const 0) (i32.const 9008))
+    (memory.fill (local.get $block) (i32.const 0) (i32.const 9032))
     (i32.store (local.get $block) (i32.const 0x1700))
+    ;; A zeroed depth range is not GL's default and is not even a legal one --
+    ;; near == far collapses depth entirely. GL starts at 0..1, and the
+    ;; viewport legitimately starts at all zeroes until the app sets one.
+    (f32.store offset=9024 (local.get $block) (f32.const 0))
+    (f32.store offset=9028 (local.get $block) (f32.const 1))
     ;; Every stack starts one deep, holding identity.
     (local.set $s (i32.const 0))
     (loop $init
@@ -592,12 +604,41 @@
     ;; Cheapest possible rejection of the common case: almost every GL call in
     ;; a frame is a vertex, a texture bind or a state toggle, none of which
     ;; reach this state at all. Everything handled below is in 32..41 (the
-    ;; matrix ops), or is one of a short list above 58.
-    (if (i32.and (i32.or (i32.lt_u (local.get $op) (i32.const 32))
-          (i32.gt_u (local.get $op) (i32.const 41)))
-        (i32.lt_u (local.get $op) (i32.const 59)))
+    ;; matrix ops), 7 and 20 (depth range and viewport), or a short list above
+    ;; 58.
+    ;;
+    ;; The upper bound goes first because it is what the hottest call in a
+    ;; frame hits: the packed draw is opcode 0x10000, far above every CALLS
+    ;; index, and without this it passes the range test below and walks the
+    ;; whole compare chain. Measured on Quake II's menu, that is 530916 calls
+    ;; a run taking the long way to do nothing.
+    (if (i32.gt_u (local.get $op) (i32.const 107)) (then (return)))
+    (if (i32.and
+          (i32.and (i32.or (i32.lt_u (local.get $op) (i32.const 32))
+              (i32.gt_u (local.get $op) (i32.const 41)))
+            (i32.lt_u (local.get $op) (i32.const 59)))
+          (i32.and (i32.ne (local.get $op) (i32.const 7))
+            (i32.ne (local.get $op) (i32.const 20))))
       (then (return)))
     (local.set $b (call $gl_mtx_block))
+
+    ;; 20 glViewport (4 GLint), 7 glDepthRange (2 GLclampd, so two words each).
+    ;; Neither is transform state, but DFX1 wants both, and this is the block
+    ;; the descriptor gets built from.
+    (if (i32.eq (local.get $op) (i32.const 20))
+      (then
+        (i32.store offset=9008 (local.get $b) (i32.load offset=4 (local.get $stack)))
+        (i32.store offset=9012 (local.get $b) (i32.load offset=8 (local.get $stack)))
+        (i32.store offset=9016 (local.get $b) (i32.load offset=12 (local.get $stack)))
+        (i32.store offset=9020 (local.get $b) (i32.load offset=16 (local.get $stack)))
+        (return)))
+    (if (i32.eq (local.get $op) (i32.const 7))
+      (then
+        (f32.store offset=9024 (local.get $b)
+          (f32.demote_f64 (f64.load offset=4 (local.get $stack))))
+        (f32.store offset=9028 (local.get $b)
+          (f32.demote_f64 (f64.load offset=12 (local.get $stack))))
+        (return)))
 
     ;; 35 glMatrixMode, 33 glLoadIdentity, 38 glPushMatrix, 37 glPopMatrix
     (if (i32.eq (local.get $op) (i32.const 35))
@@ -742,6 +783,88 @@
     (i32.add (call $gl_mtx_base (call $gl_mtx_block)
         (i32.and (local.get $s) (i32.const 3)))
       (i32.mul (i32.const 64) (i32.and (local.get $index) (i32.const 31)))))
+  ;; ---- DFX1, the transform half -------------------------------------------
+  ;;
+  ;; The first thing on this side that produces a backend-neutral descriptor
+  ;; instead of consuming GL calls. It fills ONLY the fields this block owns:
+  ;; magic, ABI, viewport, depth range and the three matrices. Flags, register
+  ;; indices and every stage field stay zero, because they describe the vertex
+  ;; data and the texture stages, which this block knows nothing about. A
+  ;; caller completes those. Writing a guess for them would be worse than
+  ;; leaving them out: a descriptor is read as authoritative, and a wrong flag
+  ;; word draws confidently wrong instead of failing.
+  ;;
+  ;; Two conversions, both of which are mistakes waiting to happen:
+  ;;
+  ;; GL matrices are column-major (m[col*4+row]) and DFX1 is row-major, so
+  ;; every matrix is TRANSPOSED on the way in. A transposed transform is still
+  ;; a valid-looking transform -- it will render a scene, just the wrong one --
+  ;; so nothing downstream can catch this, and the test checks a matrix whose
+  ;; transpose differs from itself.
+  ;;
+  ;; GL's modelview goes to DFX1's VIEW slot and world is left identity. This
+  ;; is not a free choice: DLT1 lowers light directions against the view matrix
+  ;; alone (src/09aj-d3d-fixed.wat:681-683), so a modelview parked in world
+  ;; would light the scene in the wrong space while the geometry still landed
+  ;; in the right place. See docs/gl-software-path-design.md section 5.
+  ;;
+  ;; Returns 0 and writes nothing when the mirror is untrusted. That is the
+  ;; whole point of the latch: a descriptor built from state we know we failed
+  ;; to track is a confident wrong answer, and refusing is the only honest one.
+  (func $gl_dfx1_transform (param $dst i32) (result i32)
+    (local $b i32)
+    (if (i32.eqz (local.get $dst)) (then (return (i32.const 0))))
+    (local.set $b (call $gl_mtx_block))
+    (if (i32.load offset=28 (local.get $b)) (then (return (i32.const 0))))
+    (memory.fill (local.get $dst) (i32.const 0) (i32.const 288))
+    (i32.store offset=0 (local.get $dst) (i32.const 0x44465831))
+    (i32.store offset=4 (local.get $dst) (i32.const 1))
+    ;; Viewport and depth range, DFX1 +68..+88.
+    (i32.store offset=68 (local.get $dst) (i32.load offset=9008 (local.get $b)))
+    (i32.store offset=72 (local.get $dst) (i32.load offset=9012 (local.get $b)))
+    (i32.store offset=76 (local.get $dst) (i32.load offset=9016 (local.get $b)))
+    (i32.store offset=80 (local.get $dst) (i32.load offset=9020 (local.get $b)))
+    (f32.store offset=84 (local.get $dst) (f32.load offset=9024 (local.get $b)))
+    (f32.store offset=88 (local.get $dst) (f32.load offset=9028 (local.get $b)))
+    ;; World stays identity; the modelview is the view.
+    (call $gl_mtx_identity_at (i32.add (local.get $dst) (i32.const 96)))
+    (call $gl_dfx1_transpose_into
+      (i32.add (local.get $dst) (i32.const 160)) (call $gl_mtx_stack_top (local.get $b) (i32.const 0)))
+    (call $gl_dfx1_transpose_into
+      (i32.add (local.get $dst) (i32.const 224)) (call $gl_mtx_stack_top (local.get $b) (i32.const 1)))
+    (i32.const 1))
+
+  ;; Top of stack $s regardless of which one the mode currently selects --
+  ;; the descriptor always wants modelview and projection by name.
+  (func $gl_mtx_stack_top (param $b i32) (param $s i32) (result i32)
+    (i32.add (call $gl_mtx_base (local.get $b) (local.get $s))
+      (i32.mul (i32.const 64)
+        (i32.load (call $gl_mtx_depth_addr (local.get $b) (local.get $s))))))
+
+  ;; dst[row*4+col] = src[col*4+row]
+  (func $gl_dfx1_transpose_into (param $dst i32) (param $src i32)
+    (local $i i32) (local $j i32)
+    (local.set $i (i32.const 0))
+    (loop $row
+      (local.set $j (i32.const 0))
+      (loop $col
+        (f32.store
+          (i32.add (local.get $dst)
+            (i32.mul (i32.const 4) (i32.add (i32.mul (local.get $i) (i32.const 4)) (local.get $j))))
+          (f32.load
+            (i32.add (local.get $src)
+              (i32.mul (i32.const 4) (i32.add (i32.mul (local.get $j) (i32.const 4)) (local.get $i))))))
+        (local.set $j (i32.add (local.get $j) (i32.const 1)))
+        (br_if $col (i32.lt_u (local.get $j) (i32.const 4))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $row (i32.lt_u (local.get $i) (i32.const 4)))))
+
+  (func $gl_mtx_export_dfx1_transform (export "gl_dfx1_transform")
+      (param $dst i32) (result i32)
+    (call $gl_dfx1_transform (local.get $dst)))
+  (func $gl_mtx_export_viewport_ptr (export "gl_mtx_viewport_ptr") (result i32)
+    (i32.add (call $gl_mtx_block) (i32.const 9008)))
+
   (func $gl_mtx_export_staging_ptr (export "gl_mtx_staging_ptr") (result i32)
     (call $gl_mtx_staging (call $gl_mtx_block)))
   (func $gl_mtx_export_depth (export "gl_mtx_depth") (param $s i32) (result i32)

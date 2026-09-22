@@ -295,7 +295,39 @@ needs none of it. Recorded here so it is not re-proposed.
    And a zeroed block is not a legal GL state — light 0 is white, material
    diffuse is 0.8 grey — so the defaults are initialized explicitly.
 2. **Translate at record time in WAT** — GL draw to a DFX1/DLT1-shaped
-   descriptor.
+   descriptor. **The transform half is done**: `$gl_dfx1_transform` writes a
+   288-byte ABI1 DFX1 from the mirror — magic, ABI, viewport, depth range and
+   the three matrices — and is the first thing on this side that *produces* a
+   backend-neutral descriptor instead of consuming GL calls.
+
+   It fills only what the mirror owns. Flags, register indices and every stage
+   field stay zero for a caller to complete, because those describe the vertex
+   data and the texture stages and this block knows nothing about either.
+   Guessing them would be worse than leaving them out: a descriptor is read as
+   authoritative, so a wrong flag word draws confidently wrong instead of
+   failing.
+
+   Viewport and depth range had to be lifted for it (`glViewport`,
+   `glDepthRange` — neither is transform state, but DFX1 wants both at
+   +68..+88), so the block is now 9032 bytes. The observer also grew an upper
+   bound on the opcode, which is not cosmetic: the packed draw is `0x10000`,
+   far above every `CALLS` index, and without it the hottest call in a frame
+   walked the entire compare chain to do nothing — 530,916 times a run on
+   Quake II's menu alone.
+
+   Two conversions carry all the risk, and `test-gl-dfx1-transform.js` exists
+   for them. GL is column-major and DFX1 row-major, so every matrix is
+   transposed; a transposed transform still renders a scene, just the wrong
+   one, so the test asserts against matrices whose transpose differs from
+   themselves (an identity or a pure scale would pass either way). And GL's
+   modelview goes to DFX1's **view** slot with world left identity, per item 5
+   below — the swap places geometry correctly and lights it in the wrong
+   space, which is what makes it hard to find. Falsified by making the
+   transpose a straight copy: the test fails.
+
+   Refuses and writes nothing while the UNTRUSTED latch is set. Verified inert
+   on Quake II at a fixed 40000 batches: 5,340,187 API calls, 530,916 packed
+   draws, 3,185,496 vertices — identical to the run before the change.
 3. **Rotate GL's buffers** — adopt D3D's ownership protocol.
 4. **Point GL at the existing render worker** — same module, shared memory,
    WAT raster.
