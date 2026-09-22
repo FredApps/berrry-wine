@@ -34,6 +34,8 @@ const extraWat = String.raw`
     (call $virtual_map_commit (local.get $guest) (local.get $size)))
   (func (export "test_g2w") (param $guest i32) (result i32)
     (call $g2w (local.get $guest)))
+  (func (export "test_contiguous") (param $guest i32) (param $size i32) (result i32)
+    (call $string_guest_range_contiguous (local.get $guest) (local.get $size)))
   (func (export "test_gl16") (param $guest i32) (result i32)
     (call $gl16 (local.get $guest)))
   (func (export "test_gl32") (param $guest i32) (result i32)
@@ -228,6 +230,33 @@ async function main() {
     new Array(12).fill(0xa5),
     'bulk fill should cross non-contiguous backing');
 
+  // The first and last pages appear affine, but the middle physical slot
+  // belongs to an unrelated mapping. Endpoint checks alone accept this layout.
+  const three = 0x32000000, unrelated = 0x29000000;
+  for (const ga of [three, unrelated, three + 8192, three + 4096]) {
+    assert.strictEqual(e.test_sparse_map(ga, 4096) >>> 0, ga);
+  }
+  assert.strictEqual(e.test_g2w(three + 12287), e.test_g2w(three) + 12287);
+  assert.notStrictEqual(e.test_g2w(three + 4096), e.test_g2w(three) + 4096);
+  assert.strictEqual(e.test_contiguous(three, 12288), 0, 'middle page must be checked');
+  const linear = e.guest_alloc(12288) >>> 0;
+  const readRange = (ga, n) => Array.from({ length: n }, (_, i) => read8(ga + i));
+  for (let i = 0; i < 12288; i++) write8(linear + i, (i * 13 + (i >> 12)) & 255);
+  for (let i = 0; i < 4096; i++) write8(unrelated + i, 0xcc);
+  const pattern = readRange(linear, 12288);
+  e.test_guest_memmove(three, linear, 12288);
+  assert.deepStrictEqual(readRange(three, 12288), pattern, 'copy into non-affine middle');
+  e.test_guest_memset(linear, 0, 12288);
+  e.test_guest_memmove(linear, three, 12288);
+  assert.deepStrictEqual(readRange(linear, 12288), pattern, 'copy from non-affine middle');
+  e.test_guest_memmove(three + 1, three, 12287);
+  assert.deepStrictEqual(readRange(three + 1, 12287), pattern.slice(0, 12287), 'backward overlap');
+  e.test_guest_memmove(three, three + 1, 12287);
+  assert.deepStrictEqual(readRange(three, 12287), pattern.slice(0, 12287), 'forward overlap');
+  e.test_guest_memset(three, 0xa7, 12288);
+  assert.deepStrictEqual(readRange(three, 12288), new Array(12288).fill(0xa7));
+  assert.deepStrictEqual(readRange(unrelated, 4096), new Array(4096).fill(0xcc), 'unrelated backing untouched');
+  e.guest_free(linear);
   console.log('PASS  scalar, x87, MMX, CRT and bulk accesses cross non-contiguous sparse backing safely');
 }
 

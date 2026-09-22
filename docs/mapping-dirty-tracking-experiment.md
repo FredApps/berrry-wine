@@ -424,3 +424,26 @@ This closes the bounded five-interface migration, not the global write audit
 or native calendar conformance. Guest writes elsewhere, true dirty-page
 tracking, flush concurrency and quiet game performance measurements remain
 open; no production dirty tracking or performance result is introduced here.
+
+## Bulk spans must validate their middle pages
+
+The shared string/CRT contiguity predicate compared only endpoint translations.
+A real allocation sequence (first page, unrelated page, third page, second
+page) produces matching endpoints while the middle guest page has different
+backing. The old predicate incorrectly returned true for the complete 12 KiB
+range, permitting `memory.copy/fill` to access the unrelated physical page.
+
+It now delegates to the existing `g2w_affine_span` validator rather than owning
+a weaker second definition of contiguity. Direct-window and DIB spans retain
+that validator's constant-time range checks; sparse spans check every page.
+Zero-length operations remain accepted without translation. This changes the
+shared predicate used by CRT bulk operations and REP paths, not their overlap
+or register-update rules.
+
+The regression first failed with the old predicate accepting the three-page
+fixture. With the fix, copy in both directions, forward/backward overlapping
+memmove and fill all match expected guest bytes, and the entire unrelated
+page stays untouched. The existing REP MOVSD sparse-boundary test and generated
+code-cache invalidation suite also pass, as does the logical-AND gate. No game
+performance estimate follows from these correctness tests; quiet A/B work
+remains required for performance decisions.

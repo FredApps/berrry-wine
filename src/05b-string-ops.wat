@@ -4,20 +4,19 @@
 
   ;; memory.copy/fill operate on linear WASM offsets. Sparse guest mappings can
   ;; be adjacent in guest space but backed by non-adjacent WASM blocks when
-  ;; commits are interleaved. Only use the bulk instructions when translating
-  ;; both ends proves that the whole guest range is linear.
+  ;; commits are interleaved. The canonical span validator checks every sparse
+  ;; page; matching endpoints cannot prove that the middle is linear.
   (func $string_guest_range_contiguous (param $guest i32) (param $size i32) (result i32)
     (if (result i32) (i32.eqz (local.get $size))
       (then (i32.const 1))
       (else
-        (i32.eq
-          (call $g2w (i32.add (local.get $guest) (i32.sub (local.get $size) (i32.const 1))))
-          (i32.add (call $g2w (local.get $guest))
-            (i32.sub (local.get $size) (i32.const 1)))))))
+        (i32.ne
+          (call $g2w_affine_span (local.get $guest) (local.get $size))
+          (global.get $NULL_SENTINEL)))))
 
   ;; Bulk CRT/kernel copies take guest pointers, not already-translated WASM
   ;; offsets.  Adjacent sparse guest pages do not necessarily have adjacent
-  ;; backing, so translate both range endpoints before using memory.copy/fill.
+  ;; backing, so validate the complete spans before using memory.copy/fill.
   ;; The byte fallback also preserves memmove overlap semantics.
   (func $guest_memmove (param $dst i32) (param $src i32) (param $size i32)
     (local $i i32) (local $chunk i32) (local $remaining i32)
