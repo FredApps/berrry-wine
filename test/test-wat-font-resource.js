@@ -161,8 +161,11 @@ const familyNameOf = buffer => {
     'writable media gets a concrete resource file');
   assert.strictEqual(add(writableFot), 1,
     'AddFontResourceA must install the TTF represented by a created .FOT');
+  assert.strictEqual(registered(family).toLowerCase(), ARIAL.toLowerCase(),
+    'a known FOT resolves its source before registering, even when a copied file exists');
   assert.strictEqual(remove(writableFot), 1,
     'RemoveFontResourceA must remove a face installed through its .FOT');
+  assert.strictEqual(registered(family), null, 'FOT removal uses the same source identity');
   assert.strictEqual(createScalable(writableFot, ARIAL), 0,
     'an existing destination must fail instead of being overwritten');
 

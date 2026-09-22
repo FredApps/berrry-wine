@@ -1832,35 +1832,34 @@
   ;; call used to return 0 - and 0 is not a soft failure to a guest, it is
   ;; "no fonts were added". fontview.exe tests the result and destroys its own
   ;; window without painting, so the file it was launched on never appeared.
+  ;; One path resolution for installation and retirement. A known scalable
+  ;; resource names its source font; do not register the compatibility .FOT
+  ;; copy as a second independent TrueType file before consulting that mapping.
+  (func $font_resource_change (param $resource i32) (param $remove i32) (result i32)
+    (local $source i32) (local $result i32)
+    (if (i32.eqz (local.get $resource)) (then (return (i32.const 0))))
+    (local.set $source (call $scalable_font_source_for (local.get $resource)))
+    (if (i32.eqz (local.get $source))
+      (then (local.set $source (local.get $resource))))
+    (local.set $result
+      (if (result i32) (local.get $remove)
+        (then (call $gdi_bitmap_font_remove_resource (local.get $source)))
+        (else (call $gdi_bitmap_font_add_resource (local.get $source)))))
+    (if (i32.le_s (local.get $result) (i32.const 0))
+      (then (local.set $result
+        (if (result i32) (local.get $remove)
+          (then (call $tt_reg_remove (local.get $source)))
+          (else (call $tt_reg_add (local.get $source)))))))
+    (local.get $result))
+
   (func $handle_AddFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $added i32) (local $source i32)
-    (if (local.get $arg0)
-      (then
-        (local.set $added (call $gdi_bitmap_font_add_resource (local.get $arg0)))
-        (if (i32.le_s (local.get $added) (i32.const 0))
-          (then (local.set $added (call $tt_reg_add (local.get $arg0)))))
-        (if (i32.le_s (local.get $added) (i32.const 0))
-          (then
-            (local.set $source (call $scalable_font_source_for (local.get $arg0)))
-            (if (local.get $source)
-              (then (local.set $added (call $tt_reg_add (local.get $source)))))))))
-    (i32.store offset=0 (global.get $reg_base) (local.get $added))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $font_resource_change (local.get $arg0) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
   (func $handle_RemoveFontResourceA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $removed i32) (local $source i32)
-    (if (local.get $arg0)
-      (then
-        (local.set $removed
-          (call $gdi_bitmap_font_remove_resource (local.get $arg0)))
-        (if (i32.le_s (local.get $removed) (i32.const 0))
-          (then (local.set $removed (call $tt_reg_remove (local.get $arg0)))))
-        (if (i32.le_s (local.get $removed) (i32.const 0))
-          (then
-            (local.set $source (call $scalable_font_source_for (local.get $arg0)))
-            (if (local.get $source)
-              (then (local.set $removed (call $tt_reg_remove (local.get $source)))))))))
-    (i32.store offset=0 (global.get $reg_base) (local.get $removed))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $font_resource_change (local.get $arg0) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
   (func $handle_EnumFontsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
