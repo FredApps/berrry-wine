@@ -237,3 +237,21 @@ claim is made for this correctness change.
 Validation: the cache-reuse suite, CRT realloc failure/ownership, GlobalFlags
 cross-worker validation, and sparse heap-arena release/growth/reclamation suites
 pass. Logical-AND and duplicate gates also pass (138/142 groups, 532/548 members).
+
+## File-read prefixes notify on early exits
+
+`fs_read_file_result` already scatters reads across sparse mappings, but its
+code invalidation ran only after the read loop completed. A later mapping
+chunk could park or fault after earlier chunks had written guest bytes,
+returning without retiring code in that changed prefix. The notification now
+lives in `finally` around the loop: one notification for the actual written
+prefix on success, park or failure, none for an empty read. Existing cursor
+rewind, byte-count and thread-owned pending/error behavior remain unchanged.
+
+`test-file-read-invalidation.js` reproduces the missing parked-prefix notice
+before the fix. It uses real VFS reads and noncontiguous packed-PTE backing,
+with a controlled second-chunk outcome to exercise each exit. Assertions cover
+actual guest bytes, exact notification span/count, error/pending status,
+cursor and zero-length behavior. This is host-import notification coverage,
+not a new native read-failure oracle, worker publication proof or dirty-page
+implementation. The broader lazy-provider suite passes 51/51 cases.
