@@ -322,3 +322,18 @@ whitespace gates pass. Unlike the dirty-tracker fixtures, this is a production
 pointer correction; it does not add the experimental dirty hook or close
 mapped-file writeback. LoadKeyboardLayout input and other raw API buffers remain
 separate audit candidates.
+
+## Keyboard-layout input parser migrated
+
+LoadKeyboardLayoutA now retains the guest address and uses byte guest reads
+for its eight hexadecimal characters and terminating NUL. The current
+single-installed-layout fallback, NULL handling and flags policy are unchanged.
+The previous translated-span parser rejected a valid `00000409` input at
+sparse split 1 in the new regression.
+
+The expanded keyboard-layout test passes 90 input cases: eight crossings and
+one page-local control, each with the valid ID, an invalid hexadecimal byte at
+each of eight positions, and a missing terminator. It checks input/guard
+preservation, unrelated backing and stdcall cleanup, plus NULL rejection.
+The prior output tests and logical-AND/whitespace checks also pass. This fixes
+addressing, not general keyboard-layout installation or native flags fidelity.

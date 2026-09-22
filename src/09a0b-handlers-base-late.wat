@@ -510,14 +510,14 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
-    ;; Translate the caller pointer once, then validate exactly KL_NAMELENGTH:
-    ;; eight hexadecimal bytes followed by NUL.
-    (local.set $p (call $g2w (local.get $arg0)))
+    ;; Keep the guest address while validating KL_NAMELENGTH: adjacent bytes
+    ;; can cross noncontiguous backing pages. Read eight hex bytes then NUL.
+    (local.set $p (local.get $arg0))
     (block $valid (loop $digit
       (br_if $valid (i32.ge_u (local.get $i) (i32.const 8)))
       (if (i32.lt_s
             (call $hex_digit_value
-              (i32.load8_u (i32.add (local.get $p) (local.get $i))))
+              (call $gl8 (i32.add (local.get $p) (local.get $i))))
             (i32.const 0))
         (then
           (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -525,7 +525,7 @@
           (return)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $digit)))
-    (if (i32.load8_u offset=8 (local.get $p))
+    (if (call $gl8 (i32.add (local.get $p) (i32.const 8)))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))

@@ -17,6 +17,11 @@ const { bootRenderHarness } = require('./render-helper');
       (call $handle_GetKeyboardLayoutList (local.get $count) (local.get $out)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
       (i32.load (global.get $reg_base)))
+    (func (export "layout_load") (param $input i32) (result i32)
+      (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+      (call $handle_LoadKeyboardLayoutA (local.get $input) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+      (i32.load (global.get $reg_base)))
   ` });
   const page = 0x30000000, unrelated = 0x28000000;
   for (const ga of [page, unrelated, page + 4096]) assert.strictEqual(e.map_layout_page(ga) >>> 0, ga);
@@ -44,6 +49,26 @@ const { bootRenderHarness } = require('./render-helper');
       ? [0xcc, 9, 4, 9, 4, ...Array(5).fill(0xcc)] : Array(10).fill(0xcc),
     `list split ${split} capacity ${count}`);
   }
+  assert.deepStrictEqual(read(unrelated, 4096), Array(4096).fill(0xa5));
+  for (let split = 1; split <= 9; split++) {
+    const input = page + 4096 - split;
+    const good = [...Buffer.from('00000409\0')];
+    const cases = [[good, 0x04090409]];
+    for (let position = 0; position < 8; position++) {
+      const bad = good.slice();
+      bad[position] = 0x47;
+      cases.push([bad, 0]);
+    }
+    cases.push([[...good.slice(0, 8), 0x31], 0]);
+    for (const [data, expected] of cases) {
+      const before = [0xcc, ...data, 0xcc];
+      before.forEach((value, i) => e.guest_write8(input - 1 + i, value));
+      assert.strictEqual(e.layout_load(input) >>> 0, expected, `load split ${split}`);
+      assert.strictEqual(e.get_esp() >>> 0, 0x074ff00c);
+      assert.deepStrictEqual(read(input - 1, before.length), before, 'input is read-only');
+    }
+  }
+  assert.strictEqual(e.layout_load(0), 0);
   assert.deepStrictEqual(read(unrelated, 4096), Array(4096).fill(0xa5));
   console.log('PASS keyboard-layout output boundaries, query-only, guards, capacity tails and stdcall');
 })().catch(error => { console.error(error); process.exitCode = 1; });
