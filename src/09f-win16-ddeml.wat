@@ -330,8 +330,8 @@
       (i32.const 0) (i32.const 0) (i32.const 0)))
 
   ;; Consumes hdata: accepted callbacks release it when they finish; a full
-  ;; queue releases it here. Non-data notifications pass zero. Both POKE and
-  ;; ADVDATA transfer freshly allocated blocks, never borrowed app handles.
+  ;; queue releases it here. Non-data notifications pass zero. POKE, EXECUTE
+  ;; and ADVDATA transfer freshly allocated blocks, never borrowed app handles.
   (func $win16_dde_ask_push_data (param $type i32) (param $inst i32) (param $conv i32)
                                  (param $hsz1 i32) (param $hsz2 i32) (param $hdata i32)
                                  (param $fmt i32) (param $dw1 i32) (param $dw2 i32)
@@ -825,6 +825,7 @@
   (func $win16_dde_deliver (param $wa i32) (param $n i32)
     (local $type i32)
     (local $hdata i32)
+    (local $item i32)
     (local $tag i32) (local $src_conv i32) (local $dst_conv i32)
     (local $i i32) (local $slot i32) (local $conv i32) (local $svc i32)
     (local $want i32) (local $wild i32) (local $topic_wa i32)
@@ -978,15 +979,22 @@
         ;; A poke and an advise start name an item and then, for a poke, carry
         ;; its bytes after it. An execute carries only the command string.
         (local.set $want (i32.add (local.get $wa) (global.get $DDE_HDR)))
-        (local.set $i (i32.add (call $win16_dde_str_len (local.get $want))
-                               (i32.const 1)))
-        ;; select eagerly evaluates both arms: allocate only for a poke.
-        ;; ask_push_data consumes the handle even if the queue is full.
-        (if (i32.eq (local.get $type) (i32.const 6))
+        ;; EXECUTE carries the command in hdata, not a string handle. Its
+        ;; command has no item-name prefix and hsz2 is unused.
+        (if (i32.eq (local.get $type) (i32.const 7))
           (then
             (local.set $hdata (call $win16_dde_data_take
-              (i32.add (local.get $want) (local.get $i))
-              (i32.sub (i32.load offset=20 (local.get $wa)) (local.get $i))))))
+              (local.get $want) (i32.load offset=20 (local.get $wa)))))
+          (else
+            (local.set $item (call $win16_dde_hsz_intern_wa (local.get $want)))
+            (local.set $i (i32.add (call $win16_dde_str_len (local.get $want))
+                                   (i32.const 1)))
+            ;; Allocation must be conditional, not an eager select operand.
+            (if (i32.eq (local.get $type) (i32.const 6))
+              (then
+                (local.set $hdata (call $win16_dde_data_take
+                  (i32.add (local.get $want) (local.get $i))
+                  (i32.sub (i32.load offset=20 (local.get $wa)) (local.get $i))))))))
         (drop (call $win16_dde_ask_push_data
           (select (global.get $XTYP_POKE)
             (select (global.get $XTYP_EXECUTE) (global.get $XTYP_ADVSTART)
@@ -994,7 +1002,7 @@
             (i32.eq (local.get $type) (i32.const 6)))
           (i32.load offset=4 (local.get $slot)) (local.get $conv)
           (i32.load offset=20 (local.get $slot))
-          (call $win16_dde_hsz_intern_wa (local.get $want))
+          (local.get $item)
           (local.get $hdata)
           (i32.load offset=24 (local.get $wa)) (i32.const 0) (i32.const 0)))
         (return)))
@@ -1492,16 +1500,9 @@
   ;;   HSZ hszItem, UINT wFmt, UINT wType, DWORD dwTimeout, LPDWORD pdwResult)
   ;;   -> HDDEDATA in DX:AX.
   ;;
-  ;; Nothing carries a transaction yet — that needs the server's own callback,
-  ;; since the data being asked for lives in the application and nowhere else.
-  ;;
-  ;; Which error it fails with is not a detail. Now that a conversation can
-  ;; really be established, answering DMLERR_NO_CONV_ESTABLISHED on a live
-  ;; conversation would be the emulator telling the app something untrue about
-  ;; its own state. A live conversation whose transaction nobody served is
-  ;; DMLERR_NOTPROCESSED, which is exactly what a server that ignores the
-  ;; transaction produces on Windows; only a handle naming no conversation
-  ;; gets the other error.
+  ;; Transactions are queued across the room for the server's callback.
+  ;; A rejected transaction and a nonexistent conversation are different:
+  ;; only the latter gets DMLERR_NO_CONV_ESTABLISHED.
   (func $win16_DdeClientTransaction
     (local $result i32) (local $conv i32) (local $live i32) (local $wtype i32)
     (local $item i32) (local $pend i32) (local $wa i32) (local $len i32)
@@ -1541,6 +1542,18 @@
         (call $win16_api_return (i32.const 28))
         (return)))
 
+    ;; Do not truncate an EXECUTE command into a different command. The wire
+    ;; currently has one bounded payload; larger commands (including the
+    ;; not-yet-supported cbData=-1 handle form) cannot be transported here.
+    (if (i32.and (i32.eq (local.get $frame) (i32.const 7))
+                 (i32.gt_u (call $win16_arg32 (i32.const 10)) (global.get $DDE_MAX_PAYLOAD)))
+      (then
+        (call $win16_dde_set_error (i32.const 0x4007)) ;; DMLERR_LOW_MEMORY
+        (i32.store offset=8 (global.get $reg_base) (i32.const 0))
+        (i32.store (global.get $reg_base) (i32.const 0))
+        (call $win16_api_return (i32.const 28))
+        (return)))
+
     ;; TIMEOUT_ASYNC: start it and get out of the way. The caller is told the
     ;; transaction id and carries on; the answer reaches its callback later as
     ;; XTYP_XACT_COMPLETE. Blocking such a caller instead is not a slower
@@ -1577,10 +1590,12 @@
           (select (call $win16_far_to_guest
                     (call $win16_arg16 (i32.const 13)) (call $win16_arg16 (i32.const 12)))
                   (i32.const 0)
-                  (i32.eq (local.get $frame) (i32.const 6))))
+                  (i32.or (i32.eq (local.get $frame) (i32.const 6))
+                          (i32.eq (local.get $frame) (i32.const 7)))))
         (i32.store offset=44 (local.get $pend)
           (select (call $win16_arg32 (i32.const 10)) (i32.const 0)
-                  (i32.eq (local.get $frame) (i32.const 6))))
+                  (i32.or (i32.eq (local.get $frame) (i32.const 6))
+                          (i32.eq (local.get $frame) (i32.const 7)))))
         (i32.store offset=52 (local.get $pend) (call $win16_arg16 (i32.const 5)))
         (i32.store offset=56 (local.get $pend) (global.get $win16_dde_xid))
         (call $win16_dde_send_xact (local.get $pend))
@@ -1630,10 +1645,12 @@
       (select (call $win16_far_to_guest
                 (call $win16_arg16 (i32.const 13)) (call $win16_arg16 (i32.const 12)))
               (i32.const 0)
-              (i32.eq (local.get $frame) (i32.const 6))))
+              (i32.or (i32.eq (local.get $frame) (i32.const 6))
+                      (i32.eq (local.get $frame) (i32.const 7)))))
     (i32.store offset=44 (local.get $pend)
       (select (call $win16_arg32 (i32.const 10)) (i32.const 0)
-              (i32.eq (local.get $frame) (i32.const 6))))
+              (i32.or (i32.eq (local.get $frame) (i32.const 6))
+                      (i32.eq (local.get $frame) (i32.const 7)))))
     (i32.store offset=48 (local.get $pend) (call $host_real_time_ms))
     ;; The caller's wFmt, kept with everything else needed to send this again.
     (i32.store offset=52 (local.get $pend) (call $win16_arg16 (i32.const 5)))
@@ -1650,11 +1667,15 @@
     (local.set $wa (call $win16_dde_frame_wa))
     (if (local.get $wa)
       (then
-        (local.set $len (call $win16_dde_put_hsz
-          (local.get $wa) (global.get $DDE_HDR) (i32.load offset=36 (local.get $pend))))
+        (local.set $len (global.get $DDE_HDR))
+        (if (i32.ne (local.get $frame) (i32.const 7))
+          (then (local.set $len (call $win16_dde_put_hsz
+            (local.get $wa) (local.get $len) (i32.load offset=36 (local.get $pend))))))
         ;; A poke carries the caller's bytes after the item name; a request or
-        ;; an advise start names the item and nothing else.
-        (if (i32.eq (local.get $frame) (i32.const 6))
+        ;; an advise start names the item and nothing else. EXECUTE carries
+        ;; only command bytes, including the caller-supplied terminator.
+        (if (i32.or (i32.eq (local.get $frame) (i32.const 6))
+                    (i32.eq (local.get $frame) (i32.const 7)))
           (then
             (local.set $cb (i32.load offset=44 (local.get $pend)))
             (if (i32.gt_u (i32.add (local.get $len) (local.get $cb))
