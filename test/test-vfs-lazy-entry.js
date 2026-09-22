@@ -776,10 +776,64 @@ test('parked mapping retains section across close and scheduler polls reuse the 
       assert(address);
       assert.strictEqual(allocations, 1);
       assert.strictEqual(new Uint8Array(memory.buffer)[RegionMap.g2w(address, 0x400000)], 0x5a);
+      vfs.releaseIoState(2);
+      assert.strictEqual(host.fs_flush_view(address, 1), 1,
+        'a returned view belongs to the process, not the exited calling thread');
       assert.strictEqual(host.fs_unmap_view(address), 1);
     }
     assert.strictEqual(map(), 6, 'completed operation cannot resurrect the closed handle');
     assert.strictEqual(host.fs_open_file_mapping(96), 0, 'consumed operation releases its name reference');
+  }
+});
+
+test('thread exit retires pending maps and late fills cannot corrupt reused allocations', async () => {
+  const { createFilesystemImports } = require('../lib/filesystem');
+  for (const access of [2, 4]) for (const phase of ['before', 'during', 'after', 'failure']) {
+    const vfs = new VirtualFS();
+    let start, complete, freed = 0;
+    const started = new Promise(resolve => { start = resolve; });
+    const gate = new Promise(resolve => { complete = resolve; });
+    vfs.setProviderFile(GUEST, { provider: { size: 16,
+      async readRange(_off, len) {
+        start(); await gate;
+        if (phase === 'failure') throw new Error('retired map read failure');
+        return new Uint8Array(len).fill(0x41);
+      },
+    } });
+    const memory = new WebAssembly.Memory({ initial: 40 });
+    const bytes = new Uint8Array(memory.buffer);
+    bytes.set(Buffer.from('retired-section\0'), 96);
+    const host = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+      exports: { get_image_base: () => 0x400000, guest_map_alloc: () => 0x410000,
+        guest_map_free: address => { assert.strictEqual(address, 0x410000); freed++; } } });
+    const file = vfs.createFile(GUEST, 0xc0000000, 3);
+    const section = host.fs_create_file_mapping(file, 4, 0, 0, 96);
+    const map = () => host.fs_map_view_of_file_result(section, access, 0, 0, 16, 64, 2);
+    assert.strictEqual(map(), 997);
+    const oldIo = vfs.getIoState(2), pending = vfs.getPendingRead(2);
+    let filling;
+    if (phase !== 'before') {
+      filling = vfs.fillPendingRead(pending);
+      await started;
+      if (phase === 'after') { complete(); await filling; }
+    }
+    assert.strictEqual(host.fs_close_handle(section), 1);
+    vfs.releaseIoState(2);
+    assert.strictEqual(freed, access === 4 ? 1 : 0);
+    assert.strictEqual(host.fs_open_file_mapping(96), 0);
+    const newIo = vfs.getIoState(2);
+    assert.notStrictEqual(newIo, oldIo);
+    assert.strictEqual(map(), 6, 'reused thread ID cannot receive old success or failure');
+    const wa = RegionMap.g2w(0x410000, 0x400000);
+    bytes.fill(0x7b, wa, wa + 16); // simulate allocation reuse after cancellation
+    complete();
+    if (filling) await filling;
+    else assert.strictEqual(await vfs.fillPendingRead(pending), false);
+    assert(bytes.subarray(wa, wa + 16).every(b => b === 0x7b), 'late fill cannot write freed bytes');
+    assert.strictEqual(freed, access === 4 ? 1 : 0, 'retirement releases at most once');
+    assert.strictEqual(newIo.readFaults.size, 0);
+    assert.strictEqual(newIo.pendingRead, null);
+    assert.strictEqual(host.fs_flush_view(0x410000, 1), 0, 'no abandoned view remains registered');
   }
 });
 

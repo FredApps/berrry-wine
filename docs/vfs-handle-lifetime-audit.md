@@ -921,3 +921,28 @@ Thread-exit cancellation and stale completions across numeric thread-ID reuse
 still need explicit retirement; operations whose owners never resume are not
 covered by this checkpoint. Shared-view coherence, mapping access/duplication
 and ordinary file-handle identity also remain open.
+
+## Thread-exit mapping retirement (2026-09-21)
+
+Pending mappings now register cleanup on their actual thread I/O state object.
+releaseIoState retires unconsumed operations, removes their section-name/view
+references and releases any allocated guest view exactly once. Provider reads
+check retirement after awaiting bytes and before writing guest memory. Late
+success or failure cannot publish into a replacement thread's state or touch
+an allocation that has already been reused. The two numeric-keyed completion
+collections are removed; result address/error live on the owned operation.
+
+Once a result is consumed, its cleanup registration is removed: a returned
+view belongs to the process and survives the creating thread's exit. Provider
+fetches themselves are not aborted; writable materialization may still finish
+populating its retained file entry, but does not publish an abandoned view.
+The existing allocation-release helper is integrated as the shared dependency
+for pending-map cancellation/failure; the other agent's unmap edits remain
+outside this commit.
+
+Tests cover exit before fill, during fill, after fill before retry, late failure,
+numeric thread-ID reuse, untouched sentinel bytes in reused allocation storage,
+single release, name retirement and returned-view survival. VFS 43/43,
+lazy/provider 51/51, scheduler 50/50, public file/mapping tests and FlushView
+regression pass; region ratchet passes. Main-process shutdown is not exercised
+here. No full-build, browser or native Win98 pass is claimed.
