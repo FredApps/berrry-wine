@@ -257,6 +257,15 @@ async function main() {
   await check('someone about to launch sees that room offered, with its label', async () => {
     const offered = await hostedRooms({ rtc: fakeRtc(dir, 'u9', 'lee') });
     assert.deepStrictEqual(offered.map(p => [p.name, p.hosting.label]), [['alex', 'noname demo1 1/4']]);
+    // The list names who looked, so a room link naming that account can be
+    // told apart from a room that is not open.
+    assert.strictEqual(offered.userId, 'u9');
+  });
+
+  await check('the owner looking never sees its own room, and is told who it is', async () => {
+    const own = await hostedRooms({ rtc: fakeRtc(dir, 'u1', 'alex'), includeIdle: true });
+    assert.ok(!own.some(p => p.userId === 'u1'), 'own room listed');
+    assert.strictEqual(own.userId, 'u1');
   });
 
   await check('a game that stops answering stops being offered', async () => {
