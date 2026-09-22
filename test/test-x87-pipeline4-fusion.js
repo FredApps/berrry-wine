@@ -10,10 +10,15 @@ const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
-const RegionMap = require('../lib/region-map.generated');
+const { compileSrcWasm } = require('./compile-src');
 
 const ROOT = path.join(__dirname, '..');
-const wasm = fs.readFileSync(path.join(ROOT, 'build', 'wine-assembly.wasm'));
+const wasm = compileSrcWasm((file, source) => file === '13-exports.wat' ? source + `
+  (func (export "test_sparse_map") (param $guest i32) (result i32)
+    (call $virtual_map_commit (local.get $guest) (i32.const 4096)))
+  (func (export "test_g2w") (param $guest i32) (result i32)
+    (call $g2w (local.get $guest)))
+` : source);
 const exe = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'notepad.exe'));
 
 function le32(v) {
@@ -35,19 +40,32 @@ async function runArm(testCase, mode) {
   assert(e.load_pe(exe.length), 'fixture PE must load');
 
   const imageBase = e.get_image_base() >>> 0;
-  const g2w = ga => RegionMap.g2w(ga >>> 0, imageBase);
+  const g2w = ga => e.test_g2w(ga) >>> 0;
   const code = (imageBase + 0x30000) >>> 0;
   const data = (imageBase + 0x50000) >>> 0;
-  const output = (data + 0x100) >>> 0;
+  const alignedOutput = (data + 0x100) >>> 0;
+  const output = testCase.split ? 0x30001000 - testCase.split : alignedOutput;
   const state = (data + 0x200) >>> 0;
   const stack = (imageBase + 0xD00000) >>> 0;
 
-  testCase.initialize(dv, g2w, data, output);
+  testCase.initialize(dv, g2w, data, alignedOutput);
+  if (testCase.split) {
+    for (const page of [0x30000000, 0x28000000, 0x30001000]) {
+      assert.strictEqual(e.test_sparse_map(page) >>> 0, page);
+    }
+    assert.notStrictEqual(g2w(0x30000fff) + 1, g2w(0x30001000),
+      'fixture must have noncontiguous backing');
+    mem.fill(0xCC, g2w(0x28000000), g2w(0x28000000) + 4096);
+    for (let i = -1; i <= testCase.outputBytes; i++) mem[g2w(output + i)] = 0xCC;
+    for (let i = 0; i < testCase.outputBytes; i++) {
+      mem[g2w(output + i)] = mem[g2w(alignedOutput + i)];
+    }
+  }
   mem.fill(0xA5, g2w(state), g2w(state) + 108);
   const body = testCase.code({ data, output });
-  // FNSAVE [EDI+0x100] makes even the payloads of now-empty physical x87
+  // FNSAVE [absolute state] makes even the payloads of now-empty physical x87
   // slots observable, then RETs through a zero sentinel.
-  mem.set([...body, 0xDD, 0xB7, ...le32(0x100), 0xC3], g2w(code));
+  mem.set([...body, 0xDD, 0x35, ...le32(state), 0xC3], g2w(code));
   dv.setUint32(g2w(stack), 0, true);
 
   e.set_x87_pipeline4_fusion(mode >= 1 ? 1 : 0);
@@ -59,11 +77,17 @@ async function runArm(testCase, mode) {
   e.set_esi(data); e.set_edi(output); e.set_esp(stack); e.set_eip(code);
   e.run(100000);
   assert.strictEqual(e.get_eip() >>> 0, 0, `${testCase.name}: code must return`);
+  if (testCase.split) {
+    assert.strictEqual(mem[g2w(output - 1)], 0xCC, 'leading canary');
+    assert.strictEqual(mem[g2w(output + testCase.outputBytes)], 0xCC, 'trailing canary');
+    assert(mem.subarray(g2w(0x28000000), g2w(0x28000000) + 4096)
+      .every(byte => byte === 0xCC), 'unrelated backing page must remain untouched');
+  }
 
   const hist = new Uint32Array(memory.buffer, e.get_handler_hist_base(),
     e.get_handler_hist_slots());
   return {
-    output: [...mem.slice(g2w(output), g2w(output) + testCase.outputBytes)],
+    output: Array.from({ length: testCase.outputBytes }, (_, i) => mem[g2w(output + i)]),
     fsave: [...mem.slice(g2w(state), g2w(state) + 108)],
     registers: [e.get_eax(), e.get_ecx(), e.get_edx(), e.get_ebx(), e.get_esp(),
       e.get_ebp(), e.get_esi(), e.get_edi(), e.get_eip()],
@@ -259,6 +283,12 @@ const cases = [
 ];
 
 (async () => {
+  // Both fused store handlers, both output widths, every crossing position.
+  for (const original of [cases[0], cases[1], cases[7], cases[8]]) {
+    for (let split = 1; split < original.outputBytes; split++) {
+      cases.push({ ...original, split, name: `${original.name}, sparse split ${split}` });
+    }
+  }
   for (const testCase of cases) {
     const scalar = await runArm(testCase, false);
     const fused = await runArm(testCase, true);

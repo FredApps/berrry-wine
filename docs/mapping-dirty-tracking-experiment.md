@@ -137,3 +137,22 @@ FPU register bank and emulated status-register destinations. That statement
 is limited to this fragment: fused/generated x87 paths elsewhere, native CRT
 outputs, host writes, input-side cross-page accesses and architectural precision
 limitations remain open. No dirty bit is yet recorded by these common helpers.
+
+## Fused x87 output paths migrated
+
+The pipeline and tree handlers in `07b-loop-match.wat` also bypassed guest
+stores. A source-compiled differential regression reproduced the error: with
+one destination byte before a noncontiguous sparse boundary, the fused 64-bit
+store left the other seven destination bytes unchanged. Both handlers now use
+`$gs32/$gs64`, removing their redundant local translation and inheriting code
+invalidation. The affine arithmetic handlers do not store guest results; the
+island handler delegates its memory operations to `$fpu_exec_mem`.
+
+`test-x87-pipeline4-fusion.js` now compiles current source instead of reading a
+potentially stale build artifact. Its 31 differential cases include all crossing
+positions for both widths in both handlers, checking output bytes, full FNSAVE
+state, registers, flags, actual fusion counts, destination canaries and the
+unrelated backing page. These pass, as does the shared duplicate gate
+(138/142 groups, 532/548 members). Input-side raw loads remain a separate gap;
+this change neither implements dirty-page tracking nor establishes game
+performance or architectural fault/precision equivalence.

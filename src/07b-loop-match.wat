@@ -848,7 +848,7 @@
     (dispatch-next))
   (func $x87_pipeline4_body (param $op i32)
     (local $tp i32) (local $a0 i32) (local $a1 i32)
-    (local $a2 i32) (local $a3 i32) (local $wa i32) (local $mode i32)
+    (local $a2 i32) (local $a3 i32) (local $mode i32)
     (local $v f64) (local $rhs f64)
     (local.set $tp (global.get $ip))
     (local.set $mode (i32.and (i32.shr_u (local.get $op) (i32.const 26)) (i32.const 3)))
@@ -923,13 +923,13 @@
           (then (local.set $v (f64.neg (local.get $v))))
           (else (local.set $v (f64.abs (local.get $v)))))))
 
-    ;; Evaluate the output translation before FSTP mutates the stack, exactly
-    ;; like the scalar store handler's Wasm operand evaluation order.
-    (local.set $wa (call $g2w (local.get $a3)))
+    ;; Use the scalar handler's guest stores for sparse page boundaries and
+    ;; decoded-code invalidation, with the same FSTP operand evaluation order.
     (call $fpu_set (i32.const 0) (local.get $v))
     (if (i32.and (i32.shr_u (local.get $op) (i32.const 25)) (i32.const 1))
-      (then (f64.store (local.get $wa) (call $fpu_pop)))
-      (else (f32.store (local.get $wa) (f32.demote_f64 (call $fpu_pop)))))
+      (then (call $gs64 (local.get $a3) (i64.reinterpret_f64 (call $fpu_pop))))
+      (else (call $gs32 (local.get $a3)
+        (i32.reinterpret_f32 (f32.demote_f64 (call $fpu_pop))))))
     (global.set $x87_pipeline4_runs
       (i32.add (global.get $x87_pipeline4_runs) (i32.const 1))))
 
@@ -1043,7 +1043,7 @@
     (dispatch-next))
   (func $x87_tree4_body (param $op i32)
     (local $tp i32) (local $a0 i32) (local $a1 i32) (local $a3 i32)
-    (local $older f64) (local $top f64) (local $v f64) (local $wa i32)
+    (local $older f64) (local $top f64) (local $v f64)
     (local.set $tp (global.get $ip))
     (local.set $a0
       (call $x87_pipeline_addr
@@ -1088,10 +1088,10 @@
     (global.set $fpu_top
       (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
 
-    (local.set $wa (call $g2w (local.get $a3)))
     (if (i32.and (i32.shr_u (local.get $op) (i32.const 17)) (i32.const 1))
-      (then (f64.store (local.get $wa) (local.get $v)))
-      (else (f32.store (local.get $wa) (f32.demote_f64 (local.get $v)))))
+      (then (call $gs64 (local.get $a3) (i64.reinterpret_f64 (local.get $v))))
+      (else (call $gs32 (local.get $a3)
+        (i32.reinterpret_f32 (f32.demote_f64 (local.get $v))))))
     (call $fpu_mark_empty (i32.const 0))
     (global.set $fpu_top
       (i32.and (i32.add (global.get $fpu_top) (i32.const 1)) (i32.const 7)))
