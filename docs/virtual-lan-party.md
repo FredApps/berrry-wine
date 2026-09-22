@@ -1066,6 +1066,27 @@ therefore always fits its ring and never holds up the wire; the host's
 inbox throws for a stream frame only past 20,000 frames, which the window
 makes unreachable for an honest sender.
 
+### Datagrams on an unordered channel (implemented 2026-09-22)
+
+Over WebRTC a lost packet on the reliable `vln` channel holds up every frame
+behind it while SCTP retransmits it, and for a UDP game that retransmission
+is worthless: the game has already sent a newer copy. So once `vln` is open
+the offering side adds a second channel, `vln-dg` (`ordered: false,
+maxRetransmits: 0`), to the same peer connection. `RtcWire.send` puts vln/1
+`DGRAM` frames on it when it is open, and everything else (streams, control,
+DirectPlay) stays on `vln`. A full `vln-dg` (256 KB buffered) drops the
+datagram and still reports it sent, as UDP does, so `sendto` never blocks.
+
+It is opened late on purpose: an answerer built before it resolves on the
+first channel it is offered and takes that as the stream, which is still
+`vln`. Losing `vln-dg` is not losing the peer; datagrams fall back to `vln`.
+A star room needs no change, because the owner forwards through
+`link.send`, which chooses the channel again per frame.
+
+DirectPlay `DATA` is not moved: dpl/1 does not yet carry whether the guest
+asked for `DPSEND_GUARANTEED`, and treating a guaranteed send as droppable
+would lose game state.
+
 ## Observability
 
 Diagnostics must explain transport behavior without logging payloads.

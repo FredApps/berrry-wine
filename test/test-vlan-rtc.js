@@ -614,6 +614,84 @@ async function main() {
       assert.strictEqual(wire.send(frame(1)), false);
     });
 
+    // ---- the unordered datagram channel -----------------------------------
+    //
+    // A lost UDP packet on the reliable channel stalls everything behind it
+    // while SCTP retransmits it; datagrams get a channel of their own.
+    const vln = (type, n) => {
+      const b = frame(n);
+      const dv = new DataView(b.buffer);
+      dv.setUint32(0, 0x314E4C56, true);
+      dv.setUint32(4, type, true);
+      return b;
+    };
+    const DGRAM = 6, DATA = 3;
+    const withDatagrams = () => {
+      const ch = new FakeChannel();
+      const dg = new FakeChannel();
+      const made = [];
+      const pc = Object.assign(new FakePeerConnection(), {
+        createDataChannel(label, opts) { made.push({ label, opts }); return dg; },
+      });
+      const wire = new RtcWire(ch, pc);
+      wire.openDatagramChannel();
+      return { ch, dg, wire, made };
+    };
+
+    await check('the datagram channel is unordered and never retransmits', () => {
+      const { made } = withDatagrams();
+      assert.deepStrictEqual(made, [{ label: 'vln-dg', opts: { ordered: false, maxRetransmits: 0 } }]);
+    });
+
+    await check('a datagram takes the datagram channel, a stream frame does not', () => {
+      const { ch, dg, wire } = withDatagrams();
+      assert.strictEqual(wire.send(vln(DGRAM, 8)), true);
+      assert.strictEqual(wire.send(vln(DATA, 8)), true);
+      assert.strictEqual(dg.sent.length, 1);
+      assert.strictEqual(new DataView(dg.sent[0].buffer).getUint32(4, true), DGRAM);
+      assert.strictEqual(ch.sent.length, 1);
+      assert.strictEqual(new DataView(ch.sent[0].buffer).getUint32(4, true), DATA);
+    });
+
+    await check('a datagram waits for nothing: a full datagram channel drops it', () => {
+      const { ch, dg, wire } = withDatagrams();
+      dg.bufferedAmount = 1 << 20;
+      assert.strictEqual(wire.send(vln(DGRAM, 8)), true);
+      assert.strictEqual(dg.sent.length + ch.sent.length, 0);
+      assert.strictEqual(wire.droppedFrames, 1);
+    });
+
+    await check('until the datagram channel opens, datagrams use the reliable one', () => {
+      const { ch, dg, wire } = withDatagrams();
+      dg.readyState = 'connecting';
+      wire.send(vln(DGRAM, 8));
+      assert.strictEqual(ch.sent.length, 1);
+      assert.strictEqual(dg.sent.length, 0);
+    });
+
+    await check('losing the datagram channel is not losing the peer', () => {
+      const { ch, dg, wire } = withDatagrams();
+      let fired = 0;
+      wire.onClosed = () => { fired++; };
+      dg.hangUp();
+      assert.strictEqual(fired, 0);
+      assert.strictEqual(wire.closed, false);
+      assert.strictEqual(wire.send(vln(DGRAM, 8)), true);
+      assert.strictEqual(ch.sent.length, 1);
+    });
+
+    await check('a datagram arriving on its channel reaches the guest', () => {
+      const { dg, wire } = withDatagrams();
+      dg.arrive(vln(DGRAM, 4));
+      assert.strictEqual(wire.pending, 1);
+    });
+
+    await check('closing the wire closes both channels', () => {
+      const { ch, dg, wire } = withDatagrams();
+      wire.close();
+      assert.strictEqual(ch.closed && dg.closed, true);
+    });
+
     // ---- answering offers -------------------------------------------------
     //
     // An offer outlives its author: a tab closed while waiting for an answer
@@ -637,6 +715,14 @@ async function main() {
           this.localDescription = d;
           if (/LIVE/.test(this.remote.sdp)) {
             setTimeout(() => { if (!this.closed && this.ondatachannel) this.ondatachannel({ channel: new FakeChannel() }); }, 10);
+          }
+          // A current offerer adds the datagram channel after the stream one.
+          if (/LIVE/.test(this.remote.sdp) && /DGRAM/.test(this.remote.sdp)) {
+            setTimeout(() => {
+              if (this.closed || !this.ondatachannel) return;
+              this.dg = Object.assign(new FakeChannel(), { label: 'vln-dg' });
+              this.ondatachannel({ channel: this.dg });
+            }, 30);
           }
         }
         close() { this.closed = true; }
@@ -691,6 +777,17 @@ async function main() {
           await offerFrom(ghost, 'v=0 LIVE again');
           const got = await serveOnce(5000);
           assert.strictEqual(got.peer.name, 'ghost');
+          got.wire.close();
+        });
+
+        await check('an answerer joins the late datagram channel to the stream wire', async () => {
+          await offerFrom(live, 'v=0 LIVE DGRAM');
+          const got = await serveOnce(5000);
+          const pc = made.find(p => /DGRAM/.test(p.remote.sdp));
+          const end = Date.now() + 2000;
+          while (!got.wire.dgChannel && Date.now() < end) await new Promise(r => setTimeout(r, 10));
+          assert.strictEqual(got.wire.dgChannel, pc.dg, 'the datagram channel was not attached');
+          assert.notStrictEqual(got.wire.channel, pc.dg, 'the datagram channel became the stream');
           got.wire.close();
         });
       } finally {

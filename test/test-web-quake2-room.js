@@ -82,6 +82,9 @@ const wireOf = () => {
     address: w.address, sent: w.sentFrames, recv: w.recvFrames,
     members: w.memberCount === undefined ? null : w.memberCount,
     forwarded: w.forwardedFrames === undefined ? null : w.forwardedFrames,
+    // Which of its peer links carry datagrams on the unordered channel.
+    dg: (w.link ? [w.link] : Array.from((w.links || new Map()).values()))
+      .map(l => !!(l.dgChannel && l.dgChannel.readyState === 'open')),
   } : null;
 };
 const snapWindow = () => {
@@ -255,6 +258,9 @@ const snapWindow = () => {
     check(`the server's frames reach the joiner (${flowing || 0} received)`, !!flowing);
     check('the owner counts one member', hw && hw.members === 1);
     check('the joiner talks to the server too', gw && gw.sent > 50);
+    check('datagrams travel the unordered channel at both ends',
+      hw && gw && hw.dg.length === 1 && hw.dg[0] && gw.dg.length === 1 && gw.dg[0],
+      `owner ${JSON.stringify(hw && hw.dg)} joiner ${JSON.stringify(gw && gw.dg)}`);
 
     await H.sleep(8000);
     const hp = await snap(host, 'host-match');
