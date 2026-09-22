@@ -21739,42 +21739,42 @@
   {
     "id": 2567,
     "name": "IVBDirectDrawClipper_DirectSlot003",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 1147537389
   },
   {
     "id": 2568,
     "name": "IVBDirectDrawClipper_DirectSlot004",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 1030094056
   },
   {
     "id": 2569,
     "name": "IVBDirectDrawClipper_DirectSlot005",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 1046871675
   },
   {
     "id": 2570,
     "name": "IVBDirectDrawClipper_DirectSlot006",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 1063649294
   },
   {
     "id": 2571,
     "name": "IVBDirectDrawClipper_DirectSlot007",
-    "nargs": 1,
+    "nargs": 3,
     "convention": "stdcall",
     "hash": 1080426913
   },
   {
     "id": 2572,
     "name": "IVBDirectDrawClipper_DirectSlot008",
-    "nargs": 1,
+    "nargs": 2,
     "convention": "stdcall",
     "hash": 962983580
   },

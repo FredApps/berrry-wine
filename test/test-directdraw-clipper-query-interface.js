@@ -49,6 +49,15 @@ const extraWat = String.raw`
       (local.get $obj) (local.get $out) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load (global.get $reg_base)))
+  (func (export "test_fallback") (param $obj i32) (param $slot i32) (param $out i32) (result i32)
+    (local $thunk i32)
+    (local.set $thunk (call $gl32 (i32.add (call $gl32 (local.get $obj))
+      (i32.mul (local.get $slot) (i32.const 4)))))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x30000))
+    (call $dispatch_api_table (call $gl32 (i32.add (local.get $thunk) (i32.const 4)))
+      (local.get $obj) (local.get $out) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
 `;
 (async () => {
   const { exports: wat, memory } = await bootRenderHarness({ extraWat, fonts: 'none' });
@@ -98,6 +107,22 @@ const extraWat = String.raw`
       }
       assert.strictEqual(wat.test_tail(obj, 0) >>> 0, 0x80070057);
       assert.strictEqual(wat.test_refs(obj), 1, 'tail does not acquire a reference');
+      const native = fs.readFileSync(path.join(__dirname,
+        'fixtures/win98-clipper-interfaces/serial.txt'), 'utf8');
+      const methods = [...native.matchAll(/METHOD name=(\w+) offset=([0-9a-f]+) params=([0-9a-f]+)/g)];
+      for (const [, name, offset, params] of methods) {
+        const slot = parseInt(offset, 16) / 4;
+        if (slot < 3 || slot > 8) continue;
+        wat.guest_write32(out, 0xcccccccc);
+        assert.strictEqual(wat.test_fallback(obj, slot, out) >>> 0, 0x80004001,
+          `${name} remains explicitly unimplemented`);
+        const nargs = 1 + parseInt(params, 16); // implicit this + typelib parameters
+        assert.strictEqual(wat.test_esp(), 0x30000 + (nargs + 1) * 4,
+          `${name} failure must consume its complete native ABI`);
+        assert.strictEqual(api[first + slot].nargs, nargs, `${name} metadata agrees with native`);
+        assert.strictEqual(wat.guest_read32(out) >>> 0, 0xcccccccc, 'failure publishes no invented output');
+        assert.strictEqual(wat.test_refs(obj), 1, 'unsupported methods do not change lifetime');
+      }
     }
     const query = (iid, dest = out) => {
       const hr = wat.test_query(vb, obj, iid, dest) >>> 0;

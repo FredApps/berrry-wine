@@ -285,8 +285,10 @@ function handlerCall(api) {
   }
   const vbClipSlot = api.name.match(/^IVBDirectDrawClipper_DirectSlot(\d+)$/);
   if (vbClipSlot) {
-    const slot = parseInt(vbClipSlot[1], 10);
-    return `      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const ${slot}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
+    // Even an unsupported method must consume the complete typelib ABI.
+    // Keep the argument count in api_table, not a second per-slot WAT table.
+    const stackBytes = (api.nargs + 1) * 4;
+    return `      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const ${stackBytes}) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))`;
   }
   const vbSoundSlot = api.name.match(/^IVBDirectSound_DirectSlot(\d+)$/);
   if (vbSoundSlot) {

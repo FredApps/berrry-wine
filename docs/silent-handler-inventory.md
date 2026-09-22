@@ -663,3 +663,11 @@ accepts the full palette IID and IUnknown, acquires a reference, clears the
 output on unsupported IID, and rejects NULL output. Specialized palette Release
 is unchanged. See `docs/directdraw-palette-query-interface-review.md` for tests
 and remaining limitations. Metadata remains 22.
+
+2026-09-22: 248 -> 248 manual, ABI-only digest change. The shared
+IVBDirectDrawClipper_DirectSlot fallback still returns E_NOTIMPL, but consumes
+the cleanup byte count generated from each API entry instead of always popping
+8 bytes. Native typelib metadata establishes two arguments including this for
+slots 3/4/5/6/8 and three for slot 7. All six failure paths now preserve the
+caller's stack. Replacing only this helper with its prior body reproduces the
+prior digest. No method implementation or new quiet handler is claimed.

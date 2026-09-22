@@ -13109,22 +13109,22 @@
       (call $handle_IVBDirectDrawClipper_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 2567: IVBDirectDrawClipper_DirectSlot003
-      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 3) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 12) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 2568: IVBDirectDrawClipper_DirectSlot004
-      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 4) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 12) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 2569: IVBDirectDrawClipper_DirectSlot005
-      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 5) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 12) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 2570: IVBDirectDrawClipper_DirectSlot006
-      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 6) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 12) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 2571: IVBDirectDrawClipper_DirectSlot007
-      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 7) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 16) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 2572: IVBDirectDrawClipper_DirectSlot008
-      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 8) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IVBDirectDrawClipper_DirectSlot (i32.const 12) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 2573: IVBDirectDrawClipper_SetHWnd
       (call $handle_IVBDirectDrawClipper_SetHWnd (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))

@@ -37,6 +37,7 @@ balance, logical-AND, test-tier and whitespace checks pass.
 
 - The missing VB tail slot is now fixed (details below).
 - VB's other DirectSlot fallbacks are not implementations of its full typelib.
+  Their failure-path ABI is now repaired as described below.
 - NULL riid keeps the shared helper's defensive policy; arbitrary invalid
   pointers, sparse-page-straddling IIDs and concurrent refcounts remain outside
   this change. Factory aggregation/argument validation also remains separate.
@@ -63,3 +64,30 @@ The extended runtime regression, surface-clipper ownership suite and refreshed
 native fixture integrity test pass. The first ten VB slot API identities are
 also checked unchanged; six fixture mutations include substituting VT_BOOL
 for the measured VT_INT and must all fail validation.
+
+## Unsupported-method stack cleanup
+
+The native typelib also exposed wrong argument counts in all six remaining
+VB fallback entries (slots 3–8). They were marked `nargs: 1` and their shared
+handler popped eight bytes, consuming only the return address and `this`.
+InternalSetObject, InternalGetObject, GetClipListSize, GetClipList and GetHWnd
+each have one further parameter; SetClipList has two. Even though these methods
+return E_NOTIMPL, leaving arguments on the caller's stack is incorrect.
+
+The API table now declares two arguments including `this`, or three for
+SetClipList. The generator passes `(nargs + 1) * 4` to the shared fallback;
+there is no second hardcoded slot/count table in WAT. It still returns
+E_NOTIMPL without changing output or references. This is an ABI repair, not
+an implementation of those methods.
+
+The regression reads parameter counts from the retained native serial fixture
+and dispatches all six actual VB vtable entries. Before the fix,
+InternalSetObject left ESP at 0x30008 instead of 0x3000c. Each entry now checks
+HRESULT, complete stack cleanup, metadata agreement, untouched output and
+unchanged reference ownership. Existing slot identities are preserved.
+The full runtime regression passes, as do generated-table freshness, API-table
+integrity, handler ESP/epilogue, fragment, logical-AND, native-fixture, tier and
+whitespace checks. The quiet inventory remains 248 manual + 22 metadata;
+only its digest changes for the shared fallback's corrected cleanup expression.
+An in-memory substitution of that one helper's old body reproduces the old
+digest, ruling out an unrelated inventory change in the shared worktree.
