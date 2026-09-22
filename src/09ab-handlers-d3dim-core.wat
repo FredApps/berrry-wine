@@ -4460,10 +4460,15 @@
   (func $d3dim_viewport_clear (param $this i32) (param $dwCount i32) (param $lpRects i32) (param $dwFlags i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
-  ;; Real "Clear2" called from $handle_IDirect3DViewport3_Clear/Clear2 once
-  ;; the viewport is associated with a device. For now those handlers in 09a8
-  ;; return S_OK without painting; we expose a richer worker for the rasterizer
-  ;; to call once Phase 1 lands. Keeping it a no-op-callable stub.
+  ;; The real clear, called from $handle_IDirect3DViewport3_Clear (09a8) with
+  ;; an implied D3DCLEAR_TARGET and from $handle_IDirect3DViewport3_Clear2
+  ;; (09a8) with the caller's own dwFlags/dwColor/dvZ. Both of those handlers
+  ;; paint through here -- this is not a stub, and it honours exactly the bits
+  ;; it is handed: D3DCLEAR_TARGET (0x1) fills colour, D3DCLEAR_ZBUFFER (0x2)
+  ;; fills Z. An app may legitimately pass 0x2 alone and rely on its own
+  ;; full-screen geometry to cover the colour buffer -- Half-Life does, so a
+  ;; stale-looking backdrop under a D3D scene is a coverage bug in the draw
+  ;; path, never a missing clear here (docs/re-notes/half-life-uplink.md).
   (func $d3dim_viewport_clear_full
     (param $vp_this i32)
     (param $dwFlags i32) (param $color i32) (param $zval f32)

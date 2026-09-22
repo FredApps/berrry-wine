@@ -605,3 +605,252 @@ reached gameplay at 225 batches/s on a quiet box and was still sitting on the
 main menu at batch 29,941 on a box at load 23 — the clicks at batch 3200/4500
 landed before the menu was up. Check `uptime` first, or drive the clicks from
 state over `--control-stdin` rather than from batch numbers.
+
+### CORRECTION: look at the canvas, not the DIB (2026-09-21)
+
+Everything above about "geometry confined to the left half / a 320x240 corner"
+was read out of `--png` captures, and **`--png` has been photographing the wrong
+surface for this app.** Measured on one run, capturing both at the same instant:
+
+| capture | flag | what it shows |
+|---|---|---|
+| composited screen | `--input=N:png:PATH` | the game at full 640x480 |
+| DirectDraw surface DIB | `--png=PATH` | the same image at half size in the top-left quadrant, black elsewhere |
+
+`canvas(2x, 2y)` matches `dib(x, y)` at every probe — `(200,300)=63514a` vs
+`(100,150)=605048`, `(400,120)=4a2808` vs `(200,60)=482808`,
+`(120,440)=735142` vs `(60,220)=705040`. Every DIB channel value is a multiple
+of 8 (RGB565) and the canvas ones are not, so the DIB is a **half-size 565
+requantization** of the presented frame, not the frame. `chooseDxPresentationSurface`
+picks it because it is 640x480 and nonzero. So on this app, judge with
+`--input=N:png:` and treat `--png`/`--dump-ddraw-surfaces` as a lead only.
+
+**What the canvas actually shows at gameplay** (batches 70k/80k/90k, `-D3D`):
+
+- The route reaches gameplay. The HUD is correct and full-scale: health `100`,
+  armor `0`, suit icon, and the live "CURRENT LOCATION: LAMBDA REACTOR COMPLEX /
+  CONTAINMENT FAILURE" text, whose contents differ between the 70k and 80k
+  frames, so the engine is running rather than parked.
+- **The world geometry is absent.** Behind the HUD is the *loading screen*,
+  tiled three times vertically with a scale break around x=200 — stale pixels
+  that nothing overwrote.
+
+So the 2D overlay path (HUD, text) is correct at full resolution and the 3D
+world draw produces nothing at all. That is a different bug from "the geometry
+lands in the wrong corner", and it rules out the viewport/vertex-scale theories
+above: a wrongly scaled transform would still put *something* on the screen.
+
+`IDirectDraw_SetDisplayMode(0x280, 0x1e0, 0x10)` — 640x480x16 — is the only mode
+call in boot, so the guest asks for the right mode and our half-size DIB is
+downstream of that, not a cause.
+
+### All three renderers fail identically (2026-09-21)
+
+Same click route (New Game -> Easy, repeated), same batch budget, canvas
+captures at 50k/70k/90k:
+
+| leg | args | EngineType | result | HUD | world |
+|---|---|---|---|---|---|
+| software | `-soft` | 0 | reaches gameplay | correct | **black** |
+| opengl | `-gl` | 2 | reaches gameplay, 92k batches in 80s | correct | **black** |
+| direct3d | `-D3D` | 3 | reaches gameplay | correct | **stale pixels** |
+
+No crash in any leg; T2 exits normally in all three. The D3D leg's leftover
+loading screen and the other two legs' black are the same condition seen
+through different buffer-clear behaviour, not two bugs.
+
+**So this is not a D3DIM bug** — three independent backends cannot share a
+rasterizer fault, and the HUD proves each renderer is alive and drawing through
+the same pipe that shows nothing else. Every earlier D3D-specific theory in this
+file is therefore dead: the vertex path, the viewport transform, the render
+target, `SetDisplayMode`. Do not re-investigate them.
+
+**The level loads.** `--trace-fs` over the whole route:
+
+- `c:/valve/maps/hldemo1.bsp` misses as a loose file, which is normal — HL probes
+  loose first and then the PAK — and `maps/hldemo1.bsp` **is** in `pak0.pak`.
+- 1193 `pak0.pak` reads; 769 loose-file misses, all of them assets that live in
+  the PAK (sprites, sounds, `pldecal.wad`).
+- Zero engine errors: no `Host_Error`, no "couldn't load", no message box.
+
+And the engine is clearly simulating: the level-start title card
+("CURRENT LOCATION: LAMBDA REACTOR COMPLEX", "STATUS: EVALUATION IN PROGRESS")
+is driven from `titles.txt` by a map trigger, so entities are ticking, and the
+player holds 100 health rather than falling out of a broken world.
+
+So: geometry data present, level running, 2D correct, world pass produces
+nothing in every backend. The next question is what all three renderers share
+upstream — the most likely candidate is the engine's 3D viewport rect
+(`r_refdef.vrect` / `vid` dimensions): an empty vrect makes every renderer draw
+2D only, which is exactly this picture. Confirm by counting what the GL leg
+issues during a gameplay frame; zero world triangles points at the refdef, a
+normal triangle count points at the surface they land on.
+
+### The clock was the cause, and the three legs then diverge (2026-09-21)
+
+**`--tick-ms-per-batch=200` (the default) renders no world at all, in any
+renderer.** At 200ms of guest time per batch the engine's simulation step is so
+coarse that the world pass produces nothing; the HUD and the level-start title
+card still draw, which is what made this look like a renderer bug for a whole
+session. This is the headless-clock trap in CLAUDE.md, and on this app it is
+total rather than merely slow.
+
+**Always pass `--tick-ms-per-batch=16` to Half-Life Uplink headless.** The route
+then needs roughly twice the batches, since boot and menu take more of them:
+
+```
+IN='6000:mousedown:110:192,6030:mouseup:110:192,12000:…,24000:…,
+    30000:mousedown:70:152,…,48000:…,130000:png:OUT.png'
+node test/run.js --exe=…/hldemo.exe --args='-soft' --reg-import=SEED.json \
+  --no-build --quiet-api --tick-ms-per-batch=16 \
+  --max-batches=175000 --max-seconds=900 --no-close --input="$IN"
+```
+
+With that fixed, the three renderers stop agreeing, and the software one is now
+the reference:
+
+| leg | at 200ms/batch | at 16ms/batch |
+|---|---|---|
+| software (`-soft`, EngineType 0) | nothing | **correct** — corridor, floor tiles, ceiling, stairs, wall panels, signage |
+| opengl (`-gl`, EngineType 2) | nothing | scattered lit polygons on black; static across 130k/170k |
+| direct3d (`-D3D`, EngineType 3) | nothing | some geometry (gold fan-shaped streaks) over an **uncleared** loading screen |
+
+So there are two real remaining bugs, and they are renderer-specific after all —
+just not the ones hypothesised above:
+
+1. **OpenGL draws only part of the world.** Software proves the BSP, the PVS and
+   the camera are right, so this is in the GL leg. Note the software leg's frame
+   moves (92.0% of pixels differ between 130k and 170k) while the GL leg's is
+   byte-identical at both, so GL is not merely mis-drawing — it is drawing the
+   same dead frame.
+2. **Direct3D never clears the colour buffer**, so each frame composites over
+   the previous loading screen, and what geometry it does draw is wrong.
+
+Use the software leg as the oracle for both: same route, same tick, `png-diff`
+against `t16soft-*.png`.
+
+### OpenGL: the backend silently drops `glDepthRange`, which kills `gl_ztrick` (2026-09-21)
+
+**Before any of this: `--headless-gl` needs `caffeinate -u`.** When the Mac's
+display is asleep GLFW's display list goes empty, `glfwInit()` still succeeds,
+and Half-Life reports "The selected OpenGL mode is not supported by your video
+card." — which reads exactly like a renderer bug and is not one. `caffeinate -d`
+is not enough: it only *prevents* sleep and cannot wake a display that is
+already asleep. `-u` asserts user activity and does. The diagnostic is already
+printed, so read it before theorising:
+`[gl] --headless-gl requested but UNUSABLE: headless GL loaded but GLFW sees ZERO displays`.
+Several runs and a whole texture/lightmap investigation were spent on phantom
+bugs behind this line.
+
+**The GL leg's root cause was `glDepthRange`, and the symptom named it.**
+GoldSrc's `gl_ztrick` (on by default) **never clears the depth buffer**. Instead
+it alternates, every frame:
+
+```
+even frames:  glDepthFunc(GL_LEQUAL)  glDepthRange(0, 0.5)
+odd  frames:  glDepthFunc(GL_GEQUAL)  glDepthRange(1, 0.5)
+```
+
+so each frame's depth values beat the previous frame's leftovers by
+construction. Verified in one run: 216 calls of each range and **zero
+`glClear` calls**.
+
+`@node-3d/webgl` (the `--headless-gl` backend) rejects *every* non-default
+depth range with `GL_INVALID_OPERATION` (1282) — including the perfectly legal
+`glDepthRange(0, 0.5)` — and silently leaves the range at `[0,1]`. Both z-trick
+phases then wrote the full range and fought each other's leftovers, so **both**
+rendered partially: the scattered-lit-polygons-on-black frame recorded in the
+table above.
+
+**The shape of the symptom is the diagnostic, and it is worth keeping.** A
+missing depth *clear* breaks only the GEQUAL phase and gives alternating
+good/bad frames. A dropped depth *range* breaks both phases and gives a stable
+half-drawn scene — which is why the GL frame was byte-identical at 130k and
+170k. That "it's drawing the same dead frame" observation was the real clue.
+
+**Fix (in `lib/gl-compat.js`): fold the range into the projection matrix.**
+Depth range is just an affine map on clip-space z —
+`d = ((f-n)/2)*z_ndc + (n+f)/2` — so against a driver stuck at `[0,1]`
+(`d = 0.5*z' + 0.5`) pre-transforming clip z as
+
+```
+z' = (f-n)*z + (n+f-1)*w
+```
+
+reproduces `d` exactly. It handles the reversed `f < n` case with no separate
+negation, and `z'` stays inside `[-1,1]` for any `0<=n,f<=1`, so nothing is
+clipped that would not have been. A one-time probe in the `FixedFunctionGL`
+constructor (`_probeDepthRange`) sets `depthRangeEmulated` only when the
+backend actually refuses a range, so browsers — where `depthRange` works — stay
+on the original path, including the pre-existing reversed-range negation.
+`test/test-opengl-depth-range-fold.js` pins the arithmetic against real GL's
+mapping at five depths and pins that an honouring backend is left alone.
+
+**Result: the GL leg renders the corridor correctly with stock `gl_ztrick 1`.**
+No cvar workaround is needed and none should be added.
+
+#### GL is not "slow", and the command stream already buffers
+
+Measured with `tools/gl-stats-preload.js` on the gameplay route, per frame:
+
+```
+calls=7.3  batches=7.3  enq=592.7  draws=91.8  verts=5238  spans/draw=6.46
+```
+
+592.7 enqueued spans collapse into **7.3 host crossings**. The GL path already
+does what D3D does — batch the command stream in WAT and submit it in bulk — so
+transport is not a bottleneck and "buffer the calls like D3D" is already the
+implementation. Do not re-open this.
+
+#### GL hypotheses eliminated with evidence — do not re-investigate
+
+- **Paletted textures** — not advertised, and HL checks before using them.
+- **Hardware gamma** — HL has a `gamma` cvar but `hw.dll` has no `GammaRamp`
+  import; `SetDeviceGammaRamp` is never called.
+- **Multitexture / all-zero `texcoord1`** — expected, not a bug. `hw.dll` checks
+  for `GL_SGIS_multitexture`, **not** the `GL_ARB_multitexture` we advertise, so
+  it prints "NO Multitexture extensions found" and takes the single-texture
+  two-pass path where `texcoord1` is legitimately unused.
+- **Lightmap uploads** — 143 `SUB 128x128` RGBA uploads, none blank, maxByte 255.
+- **Span merging across texture binds** — `enqueuePacked`'s mode-only merge is
+  correct: `_call` already flushes pending geometry before every non-packed GL
+  command (`lib/gl-compat.js`, the flush inside the dispatcher).
+- **Blend state / `preserveDrawingBuffer` / depth persistence** — ruled out by an
+  alternation test that captured five consecutive frames and found them
+  identical.
+
+Two traps in the *instrumentation* that produced false readings first: a
+`_call` wrapper must record state **after** `origCall.apply`, because `_call`
+flushes pending geometry inside it (recording before credits every draw to the
+state that came after it, which made the lightmap pass look like it never
+blends); and `glDepthRange` takes `GLclampd`, so a census must read it with
+`_f64(stack,0)`/`_f64(stack,2)` — misread as floats it prints `0.000..0.000`
+and `0.000..1.875` (the high dword of double 1.0, `0x3FF00000`, is float
+1.875). `lib/gl-compat.js` itself was always correct on both counts.
+`tools/gl-texture-census.js` is the corrected census, a `-r` preload needing no
+source edit or rebuild.
+
+### D3D: `D3DCLEAR_ZBUFFER` alone is deliberate (2026-09-21)
+
+The earlier reading that "Direct3D never clears the colour buffer" is a
+**misattribution**. HL calls
+
+```
+IDirect3DViewport3_Clear2(..., dwFlags=0x00000002, ...)
+```
+
+which is `D3DCLEAR_ZBUFFER` only, deliberately, relying on its own full-screen
+world geometry to cover the colour buffer. Our `Clear2` honours the mask it is
+handed and is correctly wired; a stale-looking backdrop under a D3D scene is a
+**coverage bug in the draw path**, never a missing clear here. The stale comment
+on `$d3dim_viewport_clear_full` in `src/09ab-handlers-d3dim-core.wat` that
+claimed the 09a8 handlers return S_OK without painting is wrong and has been
+corrected.
+
+**Current D3D state at 16ms/batch**: further along than the table above, but not
+gameplay. The capture at 170k batches shows the loading screen — "CURRENT
+LOCATION: LAMBDA … COMPLEX", "STATUS: … EVALUATION IN PROGRESS" with
+overlapping/doubled text lines, a brown crate texture tiled vertically, yellow
+streaked fan geometry down the left edge, and a correct HUD (100 health) at the
+bottom. So the engine is in gameplay and the 2D overlay is right, while the
+world pass does not cover the screen. This is the one remaining leg.
