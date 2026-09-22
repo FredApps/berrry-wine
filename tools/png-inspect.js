@@ -217,6 +217,26 @@ function runStats(argv) {
   console.log(`${file}  ${image.width}x${image.height}  region ${x0},${y0} ${x1 - x0}x${y1 - y0}`);
   const transparentShare = result.total ? 100 * result.transparent / result.total : 0;
   console.log(`  distinct colours: ${result.counts.size}   fully transparent: ${result.transparent} (${transparentShare.toFixed(2)}%)`);
+  // Mean channel values and Rec.601 luma over the region. "Renderer A looks
+  // darker than renderer B" is an impression until it is a number, and two
+  // captures of the same scene from slightly different camera positions read as
+  // a brightness difference when they are a geometry difference -- which is
+  // exactly the trap this line exists to close. A missing MODULATE2X or a
+  // dropped lightmap pass halves the mean; dithering and 16bpp quantization
+  // move it by a percent or two.
+  let sumR = 0, sumG = 0, sumB = 0;
+  for (const [key, count] of result.counts) {
+    sumR += ((key >>> 24) & 0xff) * count;
+    sumG += ((key >>> 16) & 0xff) * count;
+    sumB += ((key >>> 8) & 0xff) * count;
+  }
+  if (result.total) {
+    const meanR = sumR / result.total, meanG = sumG / result.total;
+    const meanB = sumB / result.total;
+    const luma = 0.299 * meanR + 0.587 * meanG + 0.114 * meanB;
+    console.log(`  mean rgb: ${meanR.toFixed(2)} ${meanG.toFixed(2)}`
+      + ` ${meanB.toFixed(2)}   mean luma: ${luma.toFixed(2)}`);
+  }
   for (const [key, count] of [...result.counts].sort((a, b) => b[1] - a[1]).slice(0, top)) {
     const r = (key >>> 24) & 0xff, g = (key >>> 16) & 0xff;
     const b = (key >>> 8) & 0xff, a = key & 0xff;

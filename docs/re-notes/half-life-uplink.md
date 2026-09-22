@@ -1001,3 +1001,42 @@ and asserts the reversed product's rotation block differs from it by more than
 rounding — so the test proves it discriminates the orders rather than merely
 passing. It also asserts the composite's rotation rows stay unit length, which
 records *why* the reversed matrix never looked malformed.
+
+### The D3D-vs-software "lighting difference" does not exist (2026-09-21)
+
+Worth recording because it was on the next-steps list twice. The D3D corridor
+*looked* darker than the software oracle with flatter wall-sign detail. It is
+not: `node tools/png-inspect.js stats FILE` now prints mean RGB and Rec.601
+luma, and the two captures of the same scene come out at **54.18** (D3D) and
+**56.44** (software) — a 4% difference, which is 16bpp quantization and
+dithering, not a missing pass. A dropped `MODULATE2X` or an unrendered lightmap
+halves the mean; nothing here is halved. The top-colour histograms overlap too
+(`#3a4921` 1.86% vs 1.93%, `#424d29` 1.63% vs 1.75%).
+
+The impression came from comparing two captures taken at slightly *different
+camera positions*, where more or less of a dark ceiling is in frame. Measure the
+mean before believing a brightness difference.
+
+Two hypotheses died on the way, both by measurement rather than argument:
+
+- **Missing `D3DTOP_MODULATE2X`.** Real gap — `$d3dim_texture_stage_combine`
+  implements only `SELECTARG1` (2), `SELECTARG2` (3) and `MODULATE` (4), and
+  `lib/d3dim-gpu.js` collapses everything else to 4 with
+  `const op = v => (v === 2 || v === 3 ? v : 4)`, while `lib/d3d9-fixed.js:295`
+  has the full table. But Half-Life never uses it: a census over one gameplay
+  frame has `COLOROP` ∈ {2, 4} and `ALPHAOP` ∈ {1, 3, 4} and nothing else. The
+  gap is real and worth closing for *some other* app; it is not this symptom.
+- **Missing 2x framebuffer blend.** GoldSrc's overbright pass sets
+  `SRCBLEND=D3DBLEND_DESTCOLOR (9)` with `DESTBLEND=D3DBLEND_SRCCOLOR (3)`,
+  which is `src*dst + dst*src` = 2x modulate. `$d3dim_blend_channel` already
+  implements both factors. The rest of the frame's render states are
+  `ALPHABLENDENABLE` (202 toggles), `ZWRITEENABLE` (162), `SHADEMODE` (84),
+  `ALPHATESTENABLE` (40), `ZFUNC`, `CULLMODE`, `ALPHAREF`/`ALPHAFUNC` — all
+  covered.
+
+Census command, for anyone re-opening this:
+
+```
+--trace-api=IDirect3DDevice3_SetTextureStageState,IDirect3DDevice3_SetRenderState \
+--trace-from=168600 --trace-to=170000
+```
