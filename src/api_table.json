@@ -10247,7 +10247,8 @@
     "name": "IDirect3DDevice3_SetTransform",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 4265567830
+    "hash": 4265567830,
+    "handler": "IDirect3DDevice2_SetTransform"
   },
   {
     "id": 1172,

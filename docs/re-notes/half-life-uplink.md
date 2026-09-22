@@ -847,10 +847,108 @@ on `$d3dim_viewport_clear_full` in `src/09ab-handlers-d3dim-core.wat` that
 claimed the 09a8 handlers return S_OK without painting is wrong and has been
 corrected.
 
-**Current D3D state at 16ms/batch**: further along than the table above, but not
-gameplay. The capture at 170k batches shows the loading screen — "CURRENT
-LOCATION: LAMBDA … COMPLEX", "STATUS: … EVALUATION IN PROGRESS" with
-overlapping/doubled text lines, a brown crate texture tiled vertically, yellow
-streaked fan geometry down the left edge, and a correct HUD (100 health) at the
-bottom. So the engine is in gameplay and the 2D overlay is right, while the
-world pass does not cover the screen. This is the one remaining leg.
+### D3D: `MultiplyTransform` had its operands the wrong way round — FIXED (2026-09-21)
+
+**All three renderers now draw the Uplink corridor.** The D3D capture at 170k
+batches matches the software oracle geometrically: walls, floor tiles, ceiling,
+the wall panels, the stairs at the far end, HUD at 100 health.
+
+The bug was one line in `$d3dim_multiply_transform`
+(`src/09ab-handlers-d3dim-core.wat`): it computed `current × supplied` when D3D
+requires the supplied matrix on the **left**. D3D transforms row vectors
+(`v * World * View * Proj`), so the factor a `MultiplyTransform` appends has to
+end up leftmost to be the one applied to the vertex *first* — which is what
+makes a run of these calls behave like OpenGL's matrix stack, where
+`glMultMatrix` post-multiplies a column-vector matrix. The two conventions are
+transposes and `(M*A)^T = A^T * M^T`. Sealed by
+`test/test-d3dim-multiply-transform-order.js`, which fails on the old order with
+exactly the reversed translation row.
+
+**Why it took a while to see.** The wrong product is still a proper rotation
+(det +1), so nothing about the matrix looked malformed — it was a *valid camera
+rolled 180°*, with the world upside down and 130 of 178 transformed vertices
+behind the eye. Every cheaper hypothesis looked plausible and was wrong. Do not
+re-investigate these:
+
+- **The projection is not the problem.** HL uploads
+  `[1 0 0 0 | 0 1.333 0 0 | 0 0 -1.002 -1 | 0 0 -8.008 0]`, which is exactly
+  `glFrustum(near=4, far=4004)` — GL depth convention, `z_ndc ∈ [-1,1]`, which
+  our D3D-convention clipper would halve. It is **also** a valid right-handed
+  D3D projection with near ≈ 7.99, far 4004, and the two readings are
+  indistinguishable from the matrix alone. Under the D3D reading it clips only
+  closer than ~8 units, which is harmless. Handing raw GL column-major arrays
+  to `SetTransform` is likewise *correct*, not a bug: row-vector × the
+  row-major read of a column-major array equals column-vector × the original.
+- **The near/far clipper is correct.** `$d3dim_tl_clip_distance` reconstructs
+  clip z as `z_ndc/rhw` and `w - z` as `(1-z_ndc)/rhw`, and
+  `$d3dim_interp_tl_clip_vertex` un-projects to clip space, interpolates there
+  and re-projects. Behind-eye vertices are recoverable from a TL vertex exactly,
+  because `rhw = 1/w` keeps w's sign.
+- **No double transform, no FVF or stride mismatch.** ProcessVertices reports
+  `srcFVF=0x242 stride=32 → dstFVF=0x1c4 stride=32` and the VB draw sees
+  `vtxType=TLVERTEX`.
+- **The scratch "aliasing" at state+3200 is deliberate and safe** — the three
+  vertices are memcpy'd to `+3744` before the clip buffer reuses it.
+- **`$d3dim_multiply_transform`'s multiply direction and `$d3dim_get_transform`'s
+  copy direction** were both read and are correct; only the operand order was
+  wrong.
+
+**What the real path is.** HL's D3D world geometry is
+`VB Lock → ProcessVertices → Unlock → IDirect3DDevice3_DrawIndexedPrimitiveVB`,
+~164× per frame — *not* `DrawPrimitive`, which is why the `DPBlend`/`DPVtx`
+records show nothing. A one-frame API census reads: 632 `SetRenderState`,
+491 `DrawIndexedPrimitiveVB`, 457 `SetTexture`, **221 `MultiplyTransform`**,
+106 `SetTransform`, 100 `GetTransform`. That Multiply/Get/Set mix is a GL
+matrix stack (`glPushMatrix` → Get, `glPopMatrix` → Set, `glMultMatrix`/
+`glRotatef`/`glTranslatef` → Multiply), and the sequence is Quake's `R_SetupGL`
+verbatim: rotate −90 about x, rotate 90 about z, roll, pitch, yaw, then
+translate by −`vieworg`.
+
+**The tell, for next time.** The composite's translation row. Under the correct
+order the translate is leftmost, so the rotations that follow rotate its offset;
+under the reversed order it is last and its operand survives *verbatim*. Seeing
+the raw `glTranslatef` argument sitting in the composite is the whole diagnosis.
+HL confirms it independently: it also caches its own modelview and pushes it
+through `SetTransform(WORLD)` 102×/frame with translation
+`(-2047.969, -64.031, -744.031)` — the **rotated** origin, which is what the
+corrected accumulation produces; the old order produced the unrotated
+`(2047.969, -744.031, -64.031)`.
+
+Two diagnostics were added for this and are worth reaching for again
+(`--trace-dx`, and window them — a 60-batch window at gameplay contains *no*
+frame, since HL runs 400–667 batches per frame):
+
+| record | says |
+|---|---|
+| `[dx] Xform Set/Mul WORLD\|VIEW\|PROJECTION [matrix]` | every raw matrix the guest supplies, before composition — the sequence, which is the only thing that explains a composite |
+| `[dx] PVout n=… v0 screen=…,… rhw=… BEHIND-EYE` | the first vertex ProcessVertices produced, flagged when `rhw <= 0`. The **share** is the signal: 2% is normal, 73% is a broken camera |
+| `[dx] SetMtx handle=0xC0FFEE […]` | the composite world×view×proj actually used for a transform |
+| `[dx] PVtx` / `[dx] DrawVB` | the VB path's layouts and vertex counts (change-gated, so they fire once per transition) |
+
+Also fixed alongside: `IDirect3DDevice3_SetTransform` was a third hand-written
+copy of the same memcpy and now aliases the canonical Device2 handler through
+`api_table.json`'s `handler` field, as the Device7 slot already did. The copy had
+drifted — it never unbound the execute-buffer matrix handle for the slot it
+overwrote (so a later `$d3dim_refresh_bound_matrix` could put the handle's
+matrix back over an explicit `SetTransform`), and it emitted no trace, so a run
+whose census counted 106 `SetTransform` calls produced not one `Xform` record
+and the transform sequence read as pure `MultiplyTransform` accumulation with no
+reset anywhere in it. That missing reset was itself a red herring for an hour.
+
+And one efficiency bug found on the way: `DrawIndexedPrimitiveVB` has no vertex
+count in its signature — the whole buffer is the pool and the indices choose —
+so the callers pass `count = -1` and the capacity clamp turned that into the
+buffer's *capacity*. HL's is 32768 vertices, so every draw packed 1 MB and did
+32768 conversions to rasterize the handful of vertices the indices named,
+~164 draws a frame. Worse than slow: a failed 1 MB `heap_alloc` drops the draw
+in silence. Now clamped to `max(index)+1` (`verts=32768` → `verts=4`). It was
+*not* the visual bug — fixing it moved the frame 3.29% — but it is why that path
+looked like it might be dropping geometry.
+
+**Previous state, for the record**: before the fix the capture at 170k batches
+showed the loading screen — "CURRENT LOCATION: LAMBDA … COMPLEX", "STATUS: …
+EVALUATION IN PROGRESS" with overlapping/doubled text, a brown crate texture
+tiled vertically, yellow streaked fan geometry down the left edge, and a correct
+HUD. The HUD was right because it supplies TLVERTEX and never touches a matrix,
+which is precisely why the matrices were only observable from inside
+ProcessVertices.

@@ -11886,17 +11886,16 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; SetTransform(this, dtstTransformStateType, lpD3DMATRIX) — 3 args
-  (func $handle_IDirect3DDevice3_SetTransform (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $state i32) (local $slot i32)
-    (local.set $state (call $d3ddev_state (local.get $arg0)))
-    (if (i32.and (i32.ne (local.get $state) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0))) (then
-      (local.set $slot (call $d3ddev_matrix_slot (local.get $arg1)))
-      (call $memcpy
-        (call $g2w (i32.add (local.get $state) (i32.mul (local.get $slot) (i32.const 64))))
-        (call $g2w (local.get $arg2))
-        (i32.const 64))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+  ;; IDirect3DDevice3_SetTransform now dispatches to the canonical Device2
+  ;; handler through api_table.json's "handler" field, exactly as the Device7
+  ;; slot already did -- the wrapper that used to live here is gone. It was a
+  ;; third copy of the same memcpy, and it had drifted in two ways that only
+  ;; showed up from outside: it never unbound the execute-buffer matrix handle
+  ;; for the slot it overwrote, so a later $d3dim_refresh_bound_matrix could
+  ;; put the handle's matrix back over an explicit SetTransform; and it emitted
+  ;; no trace, so a run whose API census counted 106 of these calls produced
+  ;; not one Xform record and Half-Life's transform sequence read as pure
+  ;; MultiplyTransform accumulation with no reset anywhere in it.
 
   ;; GetTransform(this, dtstTransformStateType, lpD3DMATRIX) — 3 args
   (func $handle_IDirect3DDevice3_GetTransform (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

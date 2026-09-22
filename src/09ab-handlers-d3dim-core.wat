@@ -842,6 +842,13 @@
 
   (func $d3dim_set_transform (param $this i32) (param $xtype i32) (param $lpmat i32)
     (if (local.get $lpmat) (then
+      ;; kind=27 Xform: the raw matrix the guest supplied, before any
+      ;; composition. Half-Life's D3D renderer is a GL shim -- 221
+      ;; MultiplyTransform calls to 106 SetTransform in three frames is a GL
+      ;; matrix stack -- so the accumulated world matrix is a product of many
+      ;; supplied matrices and only the sequence says which step is wrong.
+      (call $host_dx_trace (i32.const 27) (local.get $xtype)
+        (call $g2w (local.get $lpmat)) (i32.const 0) (i32.const 0))
       (call $d3dim_bind_transform_handle (local.get $this) (local.get $xtype) (i32.const 0))
       (call $d3dim_apply_transform (local.get $this) (local.get $xtype)
         (call $g2w (local.get $lpmat)))))
@@ -868,7 +875,25 @@
     (local.set $slot (call $d3ddev_matrix_slot (local.get $xtype)))
     (local.set $dst_wa (i32.add (local.get $sw) (i32.mul (local.get $slot) (i32.const 64))))
     (local.set $tmp_wa (i32.add (local.get $sw) (i32.const 3136)))
-    (call $mat4_mul (local.get $tmp_wa) (local.get $dst_wa) (call $g2w (local.get $lpmat)))
+    (call $host_dx_trace (i32.const 27) (i32.or (local.get $xtype) (i32.const 0x100))
+      (call $g2w (local.get $lpmat)) (i32.const 0) (i32.const 0))
+    ;; The supplied matrix goes on the LEFT. D3D transforms row vectors as
+    ;; v * World * View * Proj, so the factor appended by a MultiplyTransform
+    ;; has to end up leftmost to be the one applied to the vertex FIRST -- that
+    ;; is what makes a sequence of these calls behave like OpenGL's matrix
+    ;; stack, where glMultMatrix post-multiplies a column-vector matrix. The
+    ;; two conventions are transposes, and (M*A)^T = A^T * M^T.
+    ;;
+    ;; With the operands the other way round Half-Life's D3D renderer -- which
+    ;; is a GL shim, and drives this entry point 74 times a frame with Quake's
+    ;; R_SetupGL sequence (rotate -90 x, rotate 90 z, pitch, roll, yaw,
+    ;; translate -vieworg) and no SetTransform at all -- got its camera basis
+    ;; built in reverse. The product was still a proper rotation, so nothing
+    ;; looked malformed: it was a valid camera rolled 180 degrees, with the
+    ;; glTranslatef operand surviving verbatim in the composite's translation
+    ;; row instead of being rotated by the factors that must precede it. The
+    ;; world then rendered upside down with most of it behind the eye.
+    (call $mat4_mul (local.get $tmp_wa) (call $g2w (local.get $lpmat)) (local.get $dst_wa))
     (call $memcpy (local.get $dst_wa) (local.get $tmp_wa) (i32.const 64))
     (call $d3dim_bind_transform_handle (local.get $this) (local.get $xtype) (i32.const 0))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
@@ -1368,6 +1393,18 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
+  ;; The vertex-buffer draw path had no tracing of its own. DPBlend/DPVtx
+  ;; (kinds 17/18) are emitted by $d3dim_draw_primitive only, so an app that
+  ;; batches through ProcessVertices + DrawIndexedPrimitiveVB -- Half-Life's
+  ;; D3D renderer does, ~164 draws a frame -- produced texture binds and
+  ;; presents with not one line saying what was drawn, which reads exactly
+  ;; like "the world is never submitted". These two say what the VB path
+  ;; actually saw. Both are change-gated like $d3dim_dbg_tex_last, so a
+  ;; per-draw call site stays quiet while every transition is still reported.
+  ;; -1 can never collide with a real key.
+  (global $d3dim_dbg_pv_last (mut i32) (i32.const -1))
+  (global $d3dim_dbg_vb_last (mut i32) (i32.const -1))
+
   ;; IDirect3DVertexBuffer::ProcessVertices -- transform and light dwCount
   ;; vertices out of lpSrcBuffer INTO this buffer, which the caller then draws
   ;; from with the transform already applied. Half-Life's D3D renderer batches
@@ -1393,6 +1430,7 @@
     (local $dst_stride i32) (local $dst_max i32)
     (local $state i32) (local $packed_g i32) (local $packed_wa i32)
     (local $scratch_g i32) (local $scratch_wa i32) (local $dst_wa i32) (local $i i32)
+    (local $dbg_key i32)
     (if (i32.or (i32.eqz (local.get $dst_this)) (i32.eqz (local.get $src_this)))
       (then (return (i32.const 0x80004003))))  ;; E_POINTER
     (if (i32.eqz (local.get $count)) (then (return (i32.const 0))))
@@ -1420,6 +1458,19 @@
     (if (i32.eqz (local.get $src_vtx)) (then (return (i32.const 0x80070057)))) ;; E_INVALIDARG
     (local.set $src_stride (call $d3dim_fvf_stride (local.get $src_fvf)))
     (local.set $dst_stride (call $d3dim_fvf_stride (local.get $dst_fvf)))
+    ;; kind=24 PVtx: the source and destination layouts this transform saw.
+    ;; The destination FVF is the one that decides whether the later
+    ;; DrawIndexedPrimitiveVB treats these vertices as already transformed;
+    ;; if it does not, they are transformed a second time and the frame
+    ;; collapses. Report it rather than infer it.
+    (local.set $dbg_key (i32.xor (local.get $src_fvf)
+      (i32.shl (local.get $dst_fvf) (i32.const 16))))
+    (if (i32.ne (local.get $dbg_key) (global.get $d3dim_dbg_pv_last)) (then
+      (global.set $d3dim_dbg_pv_last (local.get $dbg_key))
+      (call $host_dx_trace (i32.const 24) (local.get $count)
+        (local.get $src_fvf) (local.get $dst_fvf)
+        (i32.or (local.get $src_stride)
+                (i32.shl (local.get $dst_stride) (i32.const 16))))))
     ;; Clamp against what both buffers actually hold rather than trusting the
     ;; caller's count: an over-long batch would otherwise walk off the heap
     ;; block $d3dim_create_vb sized from the declared vertex count.
@@ -1463,6 +1514,25 @@
         (i32.add (local.get $dst_wa) (i32.mul (local.get $i) (local.get $dst_stride))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
+    ;; kind=20 SetMtx over the composite world*view*projection actually used,
+    ;; and kind=26 PVout for the first vertex it produced. Together these say
+    ;; whether a missing world is a bad matrix or a bad vertex: the HUD is
+    ;; correct on this same device because it supplies TLVERTEX and never
+    ;; touches a matrix, so the matrices are only observable here. Both are
+    ;; per-call, so window them with --trace-from/--trace-to.
+    ;; The composite, tagged 0xC0FFEE so it reads apart from the guest's own
+    ;; SetTransform records. A composite can be internally consistent -- a
+    ;; proper rotation, a plausible eye -- and still describe a camera the
+    ;; guest never asked for, which is what a large BEHIND-EYE share below
+    ;; means. When it disagrees with the guest, the kind=27 Xform records are
+    ;; the sequence that built it.
+    (call $host_dx_trace (i32.const 20) (i32.const 0xC0FFEE)
+      (i32.add (call $g2w (local.get $state)) (i32.const 192))
+      (i32.const 0) (i32.const 0))
+    (call $host_dx_trace (i32.const 26) (local.get $count)
+      (i32.load (local.get $dst_wa))
+      (i32.load (i32.add (local.get $dst_wa) (i32.const 4)))
+      (i32.load (i32.add (local.get $dst_wa) (i32.const 12))))
     (call $heap_free (local.get $scratch_g))
     (call $heap_free (local.get $packed_g))
     (i32.const 0))
@@ -1503,6 +1573,7 @@
     (param $indices i32) (param $index_count i32)
     (local $entry i32) (local $data_g i32) (local $size i32) (local $fvf i32)
     (local $stride i32) (local $max_count i32) (local $vtxType i32) (local $packed i32)
+    (local $dbg_key i32) (local $ibase_wa i32) (local $i i32) (local $idx i32) (local $need i32)
     (if (i32.or
           (i32.or (i32.eqz (local.get $vb)) (i32.eqz (local.get $count)))
           (i32.or (i32.eqz (local.get $indices)) (i32.eqz (local.get $index_count))))
@@ -1520,6 +1591,47 @@
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
     (if (i32.gt_u (local.get $count) (i32.sub (local.get $max_count) (local.get $start)))
       (then (local.set $count (i32.sub (local.get $max_count) (local.get $start)))))
+    ;; DrawIndexedPrimitiveVB has no vertex count in its signature -- the whole
+    ;; buffer is the pool and the indices choose from it -- so the callers pass
+    ;; count=-1 and the clamp above turns that into the buffer's CAPACITY. That
+    ;; is a real buffer: Half-Life's is 32768 vertices, so packing it whole cost
+    ;; a 1MB $heap_alloc and 32768 conversions on every draw, ~164 draws a
+    ;; frame, to rasterize the handful of vertices the indices name. Worse than
+    ;; slow: when that 1MB allocation fails the pack returns 0 and the draw is
+    ;; dropped in silence, which is most of a frame's world geometry going
+    ;; missing with nothing logged.
+    ;; The indices are what is actually referenced, so pack only up to the
+    ;; highest one. Bounded by the clamped count, so a hostile index cannot
+    ;; grow the pack, and the per-index validation in
+    ;; $d3dim_draw_indexed_primitive still rejects anything past it.
+    (local.set $ibase_wa (call $g2w (local.get $indices)))
+    (local.set $i (i32.const 0))
+    (local.set $need (i32.const 0))
+    (block $scanned (loop $scan
+      (br_if $scanned (i32.ge_u (local.get $i) (local.get $index_count)))
+      (local.set $idx (i32.load16_u
+        (i32.add (local.get $ibase_wa) (i32.shl (local.get $i) (i32.const 1)))))
+      (if (i32.gt_u (local.get $idx) (local.get $need))
+        (then (local.set $need (local.get $idx))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $need (i32.add (local.get $need) (i32.const 1)))
+    (if (i32.lt_u (local.get $need) (local.get $count))
+      (then (local.set $count (local.get $need))))
+    ;; kind=25 DrawVB: what the VB draw believes it is holding. vtxType 3 is
+    ;; TLVERTEX (already transformed, rasterize as-is); 1 or 2 mean this draw
+    ;; will run the transform over vertices ProcessVertices already
+    ;; transformed. The primitive type and index count come along because a
+    ;; wrong primType silently draws nothing on this path.
+    (local.set $dbg_key (i32.xor (local.get $fvf)
+      (i32.shl (local.get $vtxType) (i32.const 24))))
+    (if (i32.ne (local.get $dbg_key) (global.get $d3dim_dbg_vb_last)) (then
+      (global.set $d3dim_dbg_vb_last (local.get $dbg_key))
+      (call $host_dx_trace (i32.const 25)
+        (i32.or (local.get $primType) (i32.shl (local.get $index_count) (i32.const 8)))
+        (local.get $fvf)
+        (i32.or (local.get $stride) (i32.shl (local.get $vtxType) (i32.const 16)))
+        (local.get $count))))
     (local.set $packed (call $d3dim_pack_fvf_vertices
       (local.get $fvf)
       (i32.add (local.get $data_g) (i32.mul (local.get $start) (local.get $stride)))
