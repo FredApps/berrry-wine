@@ -696,3 +696,10 @@ validation and sparse-safe getter output. The old conditional output stores
 already excluded these handlers from this inventory, so neither count nor hash
 changes. See `docs/directsound-volume-pan-review.md` for runtime evidence and
 remaining frequency, channel attenuation, primary mixer and shared-PCM work.
+
+2026-09-22: 247 -> 247 manual, DirectSound frequency state follow-up.
+SetFrequency now retains the requested playback rate before a voice exists;
+GetFrequency reports it without mutating the original PCM format. Both old
+handlers already contained calls/branches and were outside the classifier.
+No pin change. See `docs/directsound-frequency-review.md` for dispatch/host
+tests and the separate outstanding live-cursor continuity audit.

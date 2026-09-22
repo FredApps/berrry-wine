@@ -144,6 +144,7 @@
   ;;   +0 owner DirectSound slot + 1, +4 creation DSBCAPS, +8 current DSSCL,
   ;;   +12 play-cursor base (the stopped position or live snapshot origin).
   ;;   +16 volume and +20 pan, signed centibels; zero is the initial value.
+  ;;   +24 playback frequency override (0 = original PCM format rate in misc2).
   ;; $dx_create_com_obj clears the full record before either type publishes it.
   (global $DX_SURF_STATE i32 (region.addr $DX_SURF_STATE 0))
   (global $DX_SURF_STATE_SIZE i32 (region.size $DX_SURF_STATE))
@@ -6852,7 +6853,9 @@
     (if (local.get $handle) (then
       (local.set $state (call $dx_surf_state_ptr (local.get $entry)))
       (call $host_voice_set_volume_db (local.get $handle) (i32.load offset=16 (local.get $state)))
-      (call $host_voice_set_pan (local.get $handle) (i32.load offset=20 (local.get $state)))))
+      (call $host_voice_set_pan (local.get $handle) (i32.load offset=20 (local.get $state)))
+      (if (i32.load offset=24 (local.get $state)) (then
+        (call $host_voice_set_freq (local.get $handle) (i32.load offset=24 (local.get $state)))))))
     (local.get $handle))
 
   ;; IID_IDirectSound3DBuffer = {279AFA86-4981-11CE-A521-0020AF0BE560}.
@@ -7129,11 +7132,21 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   (func $handle_IDirectSoundBuffer_GetFrequency (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (if (local.get $arg1) (then
-      (call $gs32 (local.get $arg1) (load.field DxObject misc2 (local.get $entry)))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (local $entry i32) (local $state i32) (local $rate i32) (local $hr i32)
+    (block $done
+      (local.set $hr (i32.const 0x80070057))
+      (br_if $done (i32.eqz (local.get $arg1)))
+      (local.set $entry (call $dx_from_this (local.get $arg0)))
+      (br_if $done (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 5)))
+      (local.set $state (call $dx_surf_state_ptr (local.get $entry)))
+      (local.set $hr (i32.const 0x8878001E)) ;; DSERR_CONTROLUNAVAIL
+      (br_if $done (i32.eqz (i32.and (i32.load offset=4 (local.get $state)) (i32.const 0x20))))
+      (local.set $rate (i32.load offset=24 (local.get $state)))
+      (if (i32.eqz (local.get $rate)) (then
+        (local.set $rate (load.field DxObject misc2 (local.get $entry)))))
+      (call $gs32 (local.get $arg1) (local.get $rate))
+      (local.set $hr (i32.const 0)))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; GetStatus(this, lpdwStatus)
@@ -7368,12 +7381,27 @@
 
   ;; SetFrequency(this, dwFrequency) — playback rate in Hz; 0 = original
   (func $handle_IDirectSoundBuffer_SetFrequency (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $handle i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $handle (load.field DxObject misc0 (local.get $entry)))
-    (if (local.get $handle) (then
-      (call $host_voice_set_freq (local.get $handle) (local.get $arg1))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (local $entry i32) (local $handle i32) (local $state i32) (local $caps i32) (local $hr i32)
+    (block $done
+      (local.set $hr (i32.const 0x80070057))
+      ;; Legacy IDirectSoundBuffer range, not the newer 200 kHz extension.
+      ;; Zero is DSBFREQUENCY_ORIGINAL and never changes the PCM format.
+      (if (local.get $arg1) (then
+        (br_if $done (i32.or (i32.lt_u (local.get $arg1) (i32.const 100))
+                            (i32.gt_u (local.get $arg1) (i32.const 100000))))))
+      (local.set $entry (call $dx_from_this (local.get $arg0)))
+      (br_if $done (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 5)))
+      (local.set $state (call $dx_surf_state_ptr (local.get $entry)))
+      (local.set $caps (i32.load offset=4 (local.get $state)))
+      (local.set $hr (i32.const 0x8878001E))
+      (br_if $done (i32.or (i32.eqz (i32.and (local.get $caps) (i32.const 0x20)))
+                          (i32.ne (i32.and (local.get $caps) (i32.const 1)) (i32.const 0))))
+      (i32.store offset=24 (local.get $state) (local.get $arg1))
+      (local.set $handle (load.field DxObject misc0 (local.get $entry)))
+      (if (local.get $handle) (then
+        (call $host_voice_set_freq (local.get $handle) (local.get $arg1))))
+      (local.set $hr (i32.const 0)))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; Stop(this) — stop playback but keep the voice; Play() may be called again

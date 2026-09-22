@@ -74,9 +74,10 @@ arguments are invalid simultaneously.
 
 ## Next candidates / known limits
 
-1. SetFrequency has the same pre-voice loss and GetFrequency still reads the
-   original format rate, not the selected playback frequency. Keep those two
-   rates distinct when fixing it.
+1. Frequency state follow-up: implemented in
+   [directsound-frequency-review.md](directsound-frequency-review.md), retaining
+   a separate playback rate. Host cursor continuity across live rate changes
+   remains a separate issue.
 2. Host pan currently maps centibels linearly to StereoPanner [-1,1]. That is
    not DirectSound's one-channel attenuation law. Test actual channel gain,
    both browser and frozen/headless paths, before changing it.
