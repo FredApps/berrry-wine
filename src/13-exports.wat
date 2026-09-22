@@ -4437,6 +4437,10 @@
     (local.set $rec (call $dlg_record_for_hwnd (local.get $hwnd)))
     (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
     (i32.load offset=24 (local.get $rec)))
+  ;; This dialog's base units, x | y<<16: measured from its DS_SETFONT
+  ;; template font, else the stock 6x13 (Win16 8x16).
+  (func (export "dlg_get_base_units") (param $hwnd i32) (result i32)
+    (call $dialog_base_units (local.get $hwnd)))
   ;; Generic resource data accessor. Finds (type, name_id_or_str) and
   ;; returns the WASM linear address of the data payload; the size
   ;; sits in a WAT global readable via rsrc_last_size. Used by

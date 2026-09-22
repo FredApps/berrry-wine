@@ -2429,6 +2429,11 @@
   ;;   +12 DWL_USER (offset 8)
   (global $DIALOG_STATE_TABLE i32 (region.addr $DIALOG_STATE_TABLE 0))
   (global $DIALOG_STATE_TABLE_SIZE i32 (region.size $DIALOG_STATE_TABLE))
+  ;; Per-slot dialog font, parallel to DIALOG_STATE_TABLE (256 x 8 bytes):
+  ;;   +0  HFONT the dialog manager created for DS_SETFONT (0 = stock font)
+  ;;   +4  dialog base units, x | y<<16 (0 = the 6x13 / Win16 8x16 default)
+  (global $DIALOG_FONT_TABLE i32 (region.addr $DIALOG_FONT_TABLE 0))
+  (global $DIALOG_FONT_TABLE_SIZE i32 (region.size $DIALOG_FONT_TABLE))
   (global $WINDOW_UNICODE_TABLE i32 (region.addr $WINDOW_UNICODE_TABLE 0))
   (global $WINDOW_UNICODE_TABLE_SIZE i32 (region.size $WINDOW_UNICODE_TABLE))
   ;; Process identity lives in shared linear memory rather than a mutable

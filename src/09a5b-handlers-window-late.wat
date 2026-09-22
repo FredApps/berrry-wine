@@ -2234,10 +2234,11 @@ GetTopWindow(hWnd) — 1 arg stdcall
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
     (local.set $p (call $g2w (local.get $arg1)))
+    ;; The units of THIS dialog: a DS_SETFONT template's own font, else stock.
     (local.set $base_x
-      (select (i32.const 8) (i32.const 6) (global.get $is_win16)))
+      (i32.and (call $dialog_base_units (local.get $arg0)) (i32.const 0xFFFF)))
     (local.set $base_y
-      (select (i32.const 16) (i32.const 13) (global.get $is_win16)))
+      (i32.shr_u (call $dialog_base_units (local.get $arg0)) (i32.const 16)))
     ;; x pixels = MulDiv(dialogX, baseX, 4)
     (store.field.memarg Rect left (local.get $p)
       (i32.div_s (i32.mul (load.field.memarg Rect left (local.get $p)) (local.get $base_x)) (i32.const 4)))

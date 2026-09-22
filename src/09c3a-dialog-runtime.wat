@@ -308,6 +308,10 @@
       (then
         (drop (call $dlg_focus_first_tabstop (local.get $hwnd)))
         (return (i32.const 0))))
+    ;; WM_GETFONT: the font the dialog manager made from a DS_SETFONT template.
+    (if (i32.and (i32.eq (local.get $msg) (i32.const 0x0031))
+                 (i32.ne (call $dialog_font_get (local.get $hwnd)) (i32.const 0)))
+      (then (return (call $dialog_font_get (local.get $hwnd)))))
     ;; FALSE from the DLGPROC hands WM_WINDOWPOSCHANGED to DefDlgProc's
     ;; DefWindowProc tail, which owns the derived WM_MOVE/WM_SIZE messages.
     (if (i32.eq (local.get $msg) (i32.const 0x0047))

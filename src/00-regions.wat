@@ -104,6 +104,10 @@
     (owner "09e-win16-api.wat:$WIN16_MMSYSTEM_NAMES"))
   (region.declare $DIALOG_STATE_TABLE (size 0x00001000) (align 0x00001000)
     (owner "09c0-window-table.wat:$dialog_state_addr"))
+  ;; 256 slots x 8 bytes: the DS_SETFONT font the dialog manager created and
+  ;; the base units measured from it.
+  (region.declare $DIALOG_FONT_TABLE (size 0x00000800) (align 0x00000010)
+    (owner "09c0-window-table.wat:$dialog_font_addr"))
   (region.declare $WINDOW_UNICODE_TABLE (size 0x00000100) (align 0x00001000)
     (owner "09c0-window-table.wat:$wnd_unicode_reset_slot"))
   (region.declare $SHARED_PROCESS_ID (size 0x00000004) (align 0x00000100)

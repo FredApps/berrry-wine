@@ -7231,6 +7231,87 @@
   ;; The caller is expected to have already registered $dlg_hwnd in
   ;; WND_RECORDS via $wnd_table_set — $dlg_load uses the slot index as
   ;; the key into WND_DLG_RECORDS.
+  ;; The font a DS_SETFONT template names, created the way USER does:
+  ;; lfHeight = -MulDiv(points, 96, 72), the template's weight and italic.
+  ;; $face is the template's UTF-16 typeface. Returns 0 for the stock dialog
+  ;; font -- an MS Sans Serif alias at 8pt, normal weight, upright -- which
+  ;; controls already draw with and whose 6x13 base the loader already uses.
+  (func $dlg_template_font (param $face i32) (param $points i32)
+        (param $weight i32) (param $italic i32) (result i32)
+    (local $buf i32) (local $buf_wa i32) (local $i i32) (local $ch i32)
+    (local $font i32)
+    (if (i32.le_s (local.get $points) (i32.const 0)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $weight)) (then (local.set $weight (i32.const 400))))
+    (local.set $buf (call $heap_alloc (i32.const 32)))
+    (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
+    (local.set $buf_wa (call $g2w (local.get $buf)))
+    (memory.fill (local.get $buf_wa) (i32.const 0) (i32.const 32))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 31)))
+      (local.set $ch (i32.load16_u
+        (i32.add (local.get $face) (i32.shl (local.get $i) (i32.const 1)))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (i32.store8 (i32.add (local.get $buf_wa) (local.get $i))
+        (select (local.get $ch) (i32.const 0x3F) (i32.lt_u (local.get $ch) (i32.const 0x80))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (if (i32.eqz (i32.or
+          (i32.or (i32.ne (local.get $points) (i32.const 8))
+                  (i32.gt_u (local.get $weight) (i32.const 400)))
+          (i32.or (i32.ne (local.get $italic) (i32.const 0))
+                  (i32.eqz (call $gdi_bitmap_font_face_matches (local.get $buf_wa)
+                    (region.addr $GDI_BITMAP_FONT_STATIC 0x0AC))))))
+      (then
+        (call $heap_free (local.get $buf))
+        (return (i32.const 0))))
+    (local.set $font (call $gdi_font_create
+      (i32.sub (i32.const 0)
+        (i32.div_u (i32.add (i32.mul (local.get $points) (i32.const 96)) (i32.const 36))
+          (i32.const 72)))
+      (local.get $weight) (local.get $italic) (local.get $buf_wa)))
+    (if (local.get $font)
+      (then (call $gdi_bitmap_font_bind (local.get $font) (local.get $buf_wa))))
+    (call $heap_free (local.get $buf))
+    (local.get $font))
+
+  ;; Dialog base units of $font, as USER computes them: the height is
+  ;; tmHeight, the width the average of the 52 letters rounded half up,
+  ;; ((extent("A..Za..z") / 26) + 1) / 2. Returns x | y<<16, or 0 when the
+  ;; font cannot be measured.
+  (func $dlg_font_base_units (param $font i32) (result i32)
+    (local $hdc i32) (local $old i32) (local $buf i32) (local $buf_wa i32)
+    (local $i i32) (local $height i32) (local $extent i32)
+    (local.set $hdc (call $gdi_screen_dc_alloc))
+    (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
+    (local.set $buf (call $heap_alloc (i32.const 52)))
+    (if (i32.eqz (local.get $buf))
+      (then
+        (drop (call $gdi_dc_delete (local.get $hdc)))
+        (return (i32.const 0))))
+    (local.set $buf_wa (call $g2w (local.get $buf)))
+    (block $done (loop $fill
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 26)))
+      (i32.store8 (i32.add (local.get $buf_wa) (local.get $i))
+        (i32.add (i32.const 0x41) (local.get $i)))
+      (i32.store8 (i32.add (local.get $buf_wa) (i32.add (local.get $i) (i32.const 26)))
+        (i32.add (i32.const 0x61) (local.get $i)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $fill)))
+    (local.set $old (call $host_gdi_select_object (local.get $hdc) (local.get $font)))
+    (local.set $height (i32.and (call $host_get_text_metrics (local.get $hdc)) (i32.const 0xFFFF)))
+    (local.set $extent (call $host_measure_text (local.get $hdc) (local.get $buf_wa)
+      (i32.const 52) (i32.const 0)))
+    (if (local.get $old)
+      (then (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old)))))
+    (drop (call $gdi_dc_delete (local.get $hdc)))
+    (call $heap_free (local.get $buf))
+    (if (i32.or (i32.eqz (local.get $height)) (i32.eqz (local.get $extent)))
+      (then (return (i32.const 0))))
+    (i32.or
+      (i32.shr_u (i32.add (i32.div_u (local.get $extent) (i32.const 26)) (i32.const 1))
+        (i32.const 1))
+      (i32.shl (local.get $height) (i32.const 16))))
+
   (func $dlg_load_impl
       (param $dlg_hwnd i32) (param $dlg_id i32) (param $wide i32) (result i32)
     (local $data_entry i32) (local $rva i32) (local $wa i32) (local $p i32)
@@ -7246,6 +7327,8 @@
     (local $custom_wndproc i32) (local $native_tab i32)
     (local $text_ptr i32) (local $text_wa i32) (local $text_ord i32) (local $cs i32) (local $cs_wa i32)
     (local $base_x i32) (local $base_y i32)
+    (local $font_pts i32) (local $font_weight i32) (local $font_italic i32)
+    (local $dlg_font i32) (local $font_units i32)
     ;; Win16 USER uses the classic 8x16 SYSTEM_FONT dialog base. Win32
     ;; dialogs in this runtime use the measured 8pt MS Sans Serif 6x13 base.
     (local.set $base_x
@@ -7337,12 +7420,31 @@
     (call $dlg_read_text (local.get $p))
     (local.set $title_ptr (global.get $dlg_text_ptr))
     (local.set $p (global.get $dlg_text_wa))
-    ;; If DS_SETFONT (0x40), skip font fields
+    ;; DS_SETFONT (0x40): the template names the font its dialog units are
+    ;; measured in. Anything but the stock 8pt MS Sans Serif gets created,
+    ;; measured into this dialog's base units, and installed on every control.
     (if (i32.and (local.get $style) (i32.const 0x40))
       (then
+        (local.set $font_pts (i32.load16_u (local.get $p)))
         (local.set $p (i32.add (local.get $p) (i32.const 2)))  ;; pointsize
         (if (local.get $is_ex)
-          (then (local.set $p (i32.add (local.get $p) (i32.const 4)))))  ;; weight+italic+charset
+          (then
+            (local.set $font_weight (i32.load16_u (local.get $p)))
+            (local.set $font_italic (i32.load8_u offset=2 (local.get $p)))
+            (local.set $p (i32.add (local.get $p) (i32.const 4)))))  ;; weight+italic+charset
+        (if (i32.eqz (global.get $is_win16))
+          (then
+            (local.set $dlg_font (call $dlg_template_font (local.get $p)
+              (local.get $font_pts) (local.get $font_weight) (local.get $font_italic)))
+            (if (local.get $dlg_font)
+              (then
+                (local.set $font_units (call $dlg_font_base_units (local.get $dlg_font)))
+                (if (local.get $font_units)
+                  (then
+                    (local.set $base_x (i32.and (local.get $font_units) (i32.const 0xFFFF)))
+                    (local.set $base_y (i32.shr_u (local.get $font_units) (i32.const 16)))))
+                (call $dialog_font_set (local.get $dlg_slot)
+                  (local.get $dlg_font) (local.get $font_units))))))
         (local.set $p (call $dlg_skip_sz (local.get $p)))))  ;; typeface
     ;; Propagate dialog style onto the hwnd so $wnd_get_style sees it —
     ;; needed by $defwndproc_do_ncpaint to recognise WS_CAPTION and draw
@@ -7645,13 +7747,20 @@
       ;; canonical stock font.  Otherwise the real tab wndproc sizes and hit
       ;; tests items with the taller SYSTEM_FONT while the shared-surface
       ;; painter draws DEFAULT_GUI_FONT, making clicks select the next page.
-      (if (i32.and
-            (i32.ne (i32.and (local.get $style) (i32.const 0x40)) (i32.const 0))
-            (i32.ne (local.get $native_tab) (i32.const 0)))
+      ;; A template font of its own goes to every control, tabs included.
+      (if (local.get $dlg_font)
         (then
           (drop (call $wnd_send_message
             (local.get $ctrl_hwnd) (i32.const 0x0030)
-            (i32.const 0x30021) (i32.const 0)))))
+            (local.get $dlg_font) (i32.const 0))))
+        (else
+          (if (i32.and
+                (i32.ne (i32.and (local.get $style) (i32.const 0x40)) (i32.const 0))
+                (i32.ne (local.get $native_tab) (i32.const 0)))
+            (then
+              (drop (call $wnd_send_message
+                (local.get $ctrl_hwnd) (i32.const 0x0030)
+                (i32.const 0x30021) (i32.const 0)))))))
       ;; Control wndproc has copied text into its own state struct;
       ;; free the template-side copy to avoid leaking per dialog open.
       (if (local.get $text_ptr) (then (call $heap_free (local.get $text_ptr))))

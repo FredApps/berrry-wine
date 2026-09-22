@@ -654,7 +654,49 @@
     (i32.store (local.get $p) (i32.const 0))
     (i32.store offset=4 (local.get $p) (i32.const 0))
     (i32.store offset=8 (local.get $p) (i32.const 0))
-    (i32.store offset=12 (local.get $p) (i32.const 0)))
+    (i32.store offset=12 (local.get $p) (i32.const 0))
+    (call $dialog_font_reset_slot (local.get $slot)))
+
+  ;; A DS_SETFONT dialog owns the font the dialog manager created for it, and
+  ;; USER deletes that font with the dialog. Its base units are measured from
+  ;; the same font, so MapDialogRect and the template layout cannot disagree.
+  (func $dialog_font_addr (param $slot i32) (result i32)
+    (i32.add (global.get $DIALOG_FONT_TABLE)
+      (i32.shl (local.get $slot) (i32.const 3))))
+
+  (func $dialog_font_reset_slot (param $slot i32)
+    (local $p i32)
+    (local.set $p (call $dialog_font_addr (local.get $slot)))
+    (if (i32.load (local.get $p))
+      (then (drop (call $gdi_object_delete_full (i32.load (local.get $p))))))
+    (i64.store (local.get $p) (i64.const 0)))
+
+  (func $dialog_font_set (param $slot i32) (param $font i32) (param $units i32)
+    (local $p i32)
+    (local.set $p (call $dialog_font_addr (local.get $slot)))
+    (i32.store (local.get $p) (local.get $font))
+    (i32.store offset=4 (local.get $p) (local.get $units)))
+
+  (func $dialog_font_get (param $hwnd i32) (result i32)
+    (local $slot i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.lt_s (local.get $slot) (i32.const 0))
+      (then (return (i32.const 0))))
+    (i32.load (call $dialog_font_addr (local.get $slot))))
+
+  ;; x | y<<16. A dialog without a measured font, or a window that is no
+  ;; dialog at all, gets the stock base: Win16's 8x16 SYSTEM_FONT or Win32's
+  ;; 6x13 8pt MS Sans Serif.
+  (func $dialog_base_units (param $hwnd i32) (result i32)
+    (local $slot i32) (local $units i32)
+    (local.set $slot (call $wnd_table_find (local.get $hwnd)))
+    (if (i32.ge_s (local.get $slot) (i32.const 0))
+      (then (local.set $units
+        (i32.load offset=4 (call $dialog_font_addr (local.get $slot))))))
+    (if (result i32) (local.get $units)
+      (then (local.get $units))
+      (else (select (i32.const 0x00100008) (i32.const 0x000D0006)
+        (global.get $is_win16)))))
 
   (func $dialog_proc_get (param $hwnd i32) (result i32)
     (local $slot i32)
