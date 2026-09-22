@@ -3652,9 +3652,6 @@
     (call $is_dbcs_lead_byte (local.get $ch)))
   (func (export "test_mbsinc") (param $gp i32) (result i32)
     (call $mbsinc_ptr (local.get $gp)))
-  (func (export "test_call_SetLastError") (param $err i32)
-    (call $handle_SetLastError (local.get $err)
-      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
 
   ;; Direct test surface for the memory-backed OLE storage foundation. These
   ;; helpers intentionally bypass stdcall ESP bookkeeping while exercising the

@@ -5682,6 +5682,7 @@
   {
     "id": 625,
     "name": "SetLastError",
+    "test_call": true,
     "nargs": 1,
     "convention": "stdcall",
     "hash": 568184203

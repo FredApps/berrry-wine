@@ -287,3 +287,23 @@ Remaining handwritten adapters: CreateFontW, CreateDIBSection,
 CreateDIBSectionUsage, WSAIsBlocking and SetLastError. Their special signatures
 or missing public registration still require individual review; P5 #7 is not
 yet closed.
+
+## SetLastError adapter stack lifetime
+
+SetLastError now uses the generated adapter: **256 generated / 4 manual**.
+Its old handwritten adapter leaked the public handler's eight-byte stdcall
+cleanup on every test call. The generated adapter restores ESP. SetLastError
+itself remains void; the adapter's standard EAX snapshot is not an API return
+value and callers must not interpret it as one. No production handler change.
+
+The kernel32 regression checks all DWORD bits for zero, a positive value,
+the high bit and all ones, and checks ESP after each call: **25 checks pass**.
+A compiler-only negative control removes just this adapter's ESP restore:
+all four new stack assertions fail while the error-code assertions still pass.
+The complete ABI recorder passes **1,024 calls**. TLS native replay (108 API
+observations), cross-thread clearing/static-template checks, and
+DisableThreadLibraryCalls tests pass. Metadata, generator freshness, API IDs,
+fragment balance, handler ESP, tiers and whitespace checks pass. No browser,
+performance or full release-build claim. Remaining: CreateFontW, the two DIB
+adapters and WSAIsBlocking; DIB migration is deferred during another agent's
+active sparse-BITMAPINFO correction.
