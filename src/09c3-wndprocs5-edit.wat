@@ -403,12 +403,13 @@
     (local.set $pos (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.gt_u (local.get $pos) (local.get $text_len)))
-      (local.set $len (call $edit_line_len (local.get $state_w) (local.get $pos)))
+      (local.set $len (call $edit_line_text_len (local.get $state_w) (local.get $pos)))
       (if (i32.gt_u (local.get $len) (local.get $best_len))
         (then
           (local.set $best_len (local.get $len))
           (local.set $best_start (local.get $pos))))
-      (local.set $pos (i32.add (i32.add (local.get $pos) (local.get $len)) (i32.const 1)))
+      (local.set $pos (i32.add (i32.add (local.get $pos)
+        (call $edit_line_len (local.get $state_w) (local.get $pos))) (i32.const 1)))
       (br $scan)))
     (if (i32.eqz (local.get $best_len)) (then (return (i32.const 0))))
     (local.set $w (call $host_measure_text (local.get $hdc)
@@ -462,7 +463,7 @@
     (if (i32.ge_u (local.get $line_num) (local.get $total_lines))
       (then (local.set $line_num (i32.sub (local.get $total_lines) (i32.const 1)))))
     (local.set $line_start (call $edit_line_index (local.get $state_w) (local.get $line_num)))
-    (local.set $line_len (call $edit_line_len (local.get $state_w) (local.get $line_start)))
+    (local.set $line_len (call $edit_line_text_len (local.get $state_w) (local.get $line_start)))
     (local.set $line_w (i32.add (call $g2w (local.get $buf_g)) (local.get $line_start)))
     (local.set $prev_w (i32.const 0))
     (local.set $i (i32.const 0))
@@ -1450,7 +1451,7 @@
               (else
                 (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $cur)))
                 (local.set $cur (i32.add (local.get $lo)
-                  (call $edit_line_len (local.get $state_w) (local.get $lo))))))
+                  (call $edit_line_text_len (local.get $state_w) (local.get $lo))))))
             (store.field.memarg EditState cursor (local.get $state_w) (local.get $cur))
             (if (i32.eqz (local.get $a))
               (then (store.field.memarg EditState sel_anchor (local.get $state_w) (local.get $cur))))
@@ -1502,7 +1503,7 @@
                 ;; find start of previous line
                 (local.set $lo (call $edit_line_start (local.get $state_w) (i32.sub (local.get $lo) (i32.const 1))))
                 ;; prev line length
-                (local.set $px (call $edit_line_len (local.get $state_w) (local.get $lo)))
+                (local.set $px (call $edit_line_text_len (local.get $state_w) (local.get $lo)))
                 ;; clamp col to prev line length
                 (if (i32.gt_u (local.get $hi) (local.get $px))
                   (then (local.set $hi (local.get $px))))
@@ -1525,7 +1526,7 @@
                 ;; next line starts after the \n
                 (local.set $lo (i32.add (local.get $px) (i32.const 1)))
                 ;; next line length
-                (local.set $px (call $edit_line_len (local.get $state_w) (local.get $lo)))
+                (local.set $px (call $edit_line_text_len (local.get $state_w) (local.get $lo)))
                 ;; clamp col
                 (if (i32.gt_u (local.get $hi) (local.get $px))
                   (then (local.set $hi (local.get $px))))
@@ -2072,6 +2073,8 @@
               (br_if $lines_done (i32.gt_u (local.get $lo) (local.get $text_len)))
               (local.set $hi (call $edit_line_len (local.get $state_w) (local.get $lo)))
               (local.set $line_end (i32.add (local.get $lo) (local.get $hi)))
+              ;; line_end (the \n) steps the loop; only the text is drawn.
+              (local.set $hi (call $edit_line_text_len (local.get $state_w) (local.get $lo)))
               (local.set $line_buf_w (i32.add (call $g2w (local.get $buf)) (local.get $lo)))
               ;; Selection intersection within this line (relative to line start).
               (local.set $a (i32.const 0))
@@ -2086,7 +2089,16 @@
                   (local.set $b (local.get $sel_hi))
                   (if (i32.gt_u (local.get $b) (local.get $line_end)) (then (local.set $b (local.get $line_end))))
                   (local.set $b (i32.sub (local.get $b) (local.get $lo)))))
-              (if (i32.lt_u (local.get $a) (local.get $b))
+              ;; A selection may cover the CR; it is not drawn.
+              (if (i32.gt_u (local.get $b) (local.get $hi)) (then (local.set $b (local.get $hi))))
+              (if (i32.gt_u (local.get $a) (local.get $hi)) (then (local.set $a (local.get $hi))))
+              ;; ...but a selection running on past the line break still pads
+              ;; to the right edge, even on a blank CRLF line.
+              (if (i32.or
+                    (i32.lt_u (local.get $a) (local.get $b))
+                    (i32.and (i32.lt_u (local.get $sel_lo) (local.get $sel_hi))
+                             (i32.and (i32.le_u (local.get $sel_lo) (local.get $line_end))
+                                      (i32.gt_u (local.get $sel_hi) (local.get $line_end)))))
                 (then
                   ;; Highlight rect: measure widths up to $a and up to $b.
                   (local.set $pre_w (i32.const 0))
@@ -2490,7 +2502,7 @@
         (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
         (local.set $state_w (call $g2w (local.get $state)))
         (local.set $lo (call $edit_line_start (local.get $state_w) (local.get $wParam)))
-        (return (call $edit_line_len (local.get $state_w) (local.get $lo)))))
+        (return (call $edit_line_text_len (local.get $state_w) (local.get $lo)))))
 
     ;; ---------- EM_SCROLLCARET (0x00B7) ----------
     ;; The EM_SETSEL + EM_SCROLLCARET pair is how an app (notepad's Find, for
@@ -2572,6 +2584,24 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (i32.sub (local.get $i) (local.get $line_start)))
+
+  ;; The line's text length: $edit_line_len without the CR of a CRLF break.
+  ;; $edit_line_len stops at the \n and so still counts that CR, which is
+  ;; right for stepping to the next line (start + len + 1) and wrong for
+  ;; anything that draws, measures or places a caret in the line: USER's
+  ;; EM_LINELENGTH excludes it, and drawn it is a '?' glyph at every line end
+  ;; (SC2000's budget header "New City\r\n1903 Budget\r\n...").
+  (func $edit_line_text_len (param $state_w ptr<EditState>) (param $line_start i32) (result i32)
+    (local $len i32)
+    (local.set $len (call $edit_line_len (local.get $state_w) (local.get $line_start)))
+    (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
+    (if (i32.eq
+          (i32.load8_u (i32.add
+            (call $g2w (load.field EditState text_buf_ptr (local.get $state_w)))
+            (i32.sub (i32.add (local.get $line_start) (local.get $len)) (i32.const 1))))
+          (i32.const 0x0D))
+      (then (return (i32.sub (local.get $len) (i32.const 1)))))
+    (local.get $len))
 
   ;; Return 0-based line number containing char at $pos.
   (func $edit_line_from_char (param $state_w ptr<EditState>) (param $pos i32) (result i32)
