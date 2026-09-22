@@ -469,3 +469,21 @@ This is not a calendar-conformance verdict: month-specific day validation and
 native range limits were not changed here. The scan also identified the three
 raw 64-bit `GetDiskFreeSpaceExA` output stores in `09a0b` as a next migration
 candidate; the rest of the WAT guest-write inventory remains open.
+
+## Extended disk-space outputs use the shared 64-bit writer
+
+`GetDiskFreeSpaceExA` now routes each of its three optional ULARGE_INTEGER
+outputs through `gs64`. Geometry calculation, allocation-failure handling,
+null-output behavior and returned values are unchanged. The new real-handler
+regression failed before migration at the first output's one-byte split.
+It now passes all seven crossings for each of the three outputs, checking
+all eight result bytes and surrounding canaries. It also checks simultaneous
+aligned outputs, all-null outputs and 20-byte stdcall cleanup. The full
+metadata boundary suite and logical-AND gate pass; diff whitespace is clean.
+
+No raw `i64.store` remains in `09a0b`. This is a syntactic milestone, not proof
+that every guest output there is covered: raw narrower stores and translated
+bulk buffers remain. The neighboring `LocalFileTimeToFileTime` handler in
+`09a7d` still copies through raw translated `i64.load/store` and is another
+confirmed guest-buffer candidate. Its existing no-timezone policy is a
+separate behavior question, not justification for a sparse-address shortcut.

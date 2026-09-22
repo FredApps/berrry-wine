@@ -331,9 +331,9 @@
     (local.set $total (i64.mul (local.get $unit)
       (i64.extend_i32_u (call $gl32 (i32.add (local.get $geo) (i32.const 12))))))
     (call $heap_free (local.get $geo))
-    (if (local.get $arg1) (then (i64.store (call $g2w (local.get $arg1)) (local.get $free))))
-    (if (local.get $arg2) (then (i64.store (call $g2w (local.get $arg2)) (local.get $total))))
-    (if (local.get $arg3) (then (i64.store (call $g2w (local.get $arg3)) (local.get $free))))
+    (if (local.get $arg1) (then (call $gs64 (local.get $arg1) (local.get $free))))
+    (if (local.get $arg2) (then (call $gs64 (local.get $arg2) (local.get $total))))
+    (if (local.get $arg3) (then (call $gs64 (local.get $arg3) (local.get $free))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))  ;; stdcall, 4 args
   )

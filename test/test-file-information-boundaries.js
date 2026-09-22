@@ -3,6 +3,11 @@
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 const extraWat = String.raw`
+  (func (export "test_disk_free_ex") (param $available i32) (param $total i32) (param $free i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $handle_GetDiskFreeSpaceExA (i32.const 0) (local.get $available) (local.get $total)
+      (local.get $free) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
   (func (export "test_system_to_file") (param $st i32) (param $ft i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (call $handle_SystemTimeToFileTime (local.get $st) (local.get $ft)
@@ -67,6 +72,26 @@ const extraWat = String.raw`
   const handle = vfs.createFile('c:\\info.bin', 0xc0000100, 3);
   const read = (ga, n) => Array.from({ length: n }, (_, i) => e.guest_read8(ga + i));
   const aligned = page + 0x100;
+  // Fixed-disk geometry policy is unchanged; verify all three optional
+  // ULARGE_INTEGER outputs, not just an aligned high/low pair.
+  const diskSizes = [262143n * 4096n, 524287n * 4096n, 262143n * 4096n];
+  for (let field = 0; field < 3; field++) {
+    const expectedBytes = Array.from({ length: 8 }, (_, i) => Number((diskSizes[field] >> BigInt(i * 8)) & 255n));
+    for (let split = 1; split < 8; split++) {
+      const out = page + 4096 - split;
+      const pointers = [0, 0, 0]; pointers[field] = out;
+      for (let i = -1; i <= 8; i++) e.guest_write8(out + i, 0xcc);
+      assert.strictEqual(e.test_disk_free_ex(...pointers), 1);
+      assert.deepStrictEqual(read(out - 1, 10), [0xcc, ...expectedBytes, 0xcc], `disk field ${field}, split ${split}`);
+      assert.strictEqual(e.get_esp(), 0x00300014);
+    }
+  }
+  assert.strictEqual(e.test_disk_free_ex(aligned, aligned + 8, aligned + 16), 1);
+  for (let field = 0; field < 3; field++) {
+    assert.strictEqual(BigInt(e.guest_read32(aligned + field * 8) >>> 0) |
+      (BigInt(e.guest_read32(aligned + field * 8 + 4) >>> 0) << 32n), diskSizes[field]);
+  }
+  assert.strictEqual(e.test_disk_free_ex(0, 0, 0), 1);
   assert.strictEqual(e.test_info(handle, aligned), 1);
   const expected = read(aligned, 52);
   assert.strictEqual(e.guest_read32(aligned), 0x20);
