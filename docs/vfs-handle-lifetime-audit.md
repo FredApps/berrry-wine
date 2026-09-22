@@ -1219,3 +1219,43 @@ This fixes metadata and PTE protection state, not fault enforcement. Unprobed
 VirtualProtect/remap combinations, execute modes, native shared-arena placement
 above 2 GiB and the corresponding query boundary remain separate work. Current
 runtime sections still use its existing below-2-GiB sparse allocation arena.
+
+## Distinct sections are not coherent; dirty writeback gap (2026-09-21)
+
+Native testing changes the next action: do NOT merge separately created
+sections merely because they refer to the same file. All nine READONLY /
+READWRITE / WRITECOPY protection pairs created successfully, returned different
+view addresses, and retained independent visible bytes. Writes through the
+first section were not immediately visible in the second, even READWRITE /
+READWRITE. Closing/unmapping the first did not change the second's bytes.
+The source-compiled regression now checks those identity/visibility observations.
+
+The probe initializes the first two file bytes to 65/66 for every case and
+reopens the disk file after both sections retire. Native behavior distinguishes
+clean from dirty pages: a WRITE through the first section changes byte zero to
+27; closing an untouched READWRITE second section preserves 27 on disk. If the
+second section instead changes byte one to 24, its writeback replaces the first
+byte with its older value 65 as well. Thus this is page writeback, not a merge
+of changed individual bytes. WRITECOPY changes never reach the file.
+
+**Current runtime mismatch reproduced:** unconditional writable-view copying
+lets the untouched second section restore 65 over 27. The explicit diagnostic
+`node test/test-virtual-free-mapped-view.js --verify-writeback` fails at
+`native dirty writeback 4/4/0`, actual `[65,66]`, expected `[27,66]`. The normal
+test checks distinct-section identity/visibility only; a green result there
+does not establish correct dirty writeback. Keep this diagnostic until real
+dirty-page accounting is implemented, then make its assertions unconditional.
+
+Next work is write tracking and its performance measurement, not shared backing
+between independent sections. Comparing original and final byte snapshots is
+not a complete dirty-bit model: writing and then restoring a byte still dirties
+its page on Win98. A correct implementation must cover scalar, bulk, generated
+and host-originated guest writes and should be benchmarked in a temporary
+workspace before changing hot memory paths. No runtime workaround was added.
+
+Another native observation remains unresolved: after two distinct sections
+backed by one open file handle retire, GetFileSize on that original handle fails
+with error 6 on this profile. The first matrix reused that handle and therefore
+invalidated its later cases. The committed probe instead opens a fresh handle
+per case, records this effect separately, and verifies disk bytes through a new
+open. Do not generalize the handle quirk or emulate it without further controls.

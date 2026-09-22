@@ -75,6 +75,44 @@ static void query(const char *label, void *address) {
   emit("\r\n");
 }
 
+static void distinctSections(const char *path, DWORD first, DWORD second, BOOL dirtyPeer) {
+  HANDLE file = CreateFileA(path, GENERIC_READ | GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE,
+    NULL, OPEN_EXISTING, 0, NULL);
+  HANDLE a, b; volatile unsigned char *av, *bv; DWORD ae, be;
+  unsigned char seed[2] = { 65, 66 }; DWORD count;
+  DWORD am = first == PAGE_READONLY ? FILE_MAP_READ : first == PAGE_WRITECOPY ? FILE_MAP_COPY : FILE_MAP_WRITE;
+  DWORD bm = second == PAGE_READONLY ? FILE_MAP_READ : second == PAGE_WRITECOPY ? FILE_MAP_COPY : FILE_MAP_WRITE;
+  WriteFile(file, seed, 2, &count, NULL); FlushFileBuffers(file);
+  SetLastError(0x1234); a = CreateFileMappingA(file, NULL, first, 0, 131072, NULL); ae = GetLastError();
+  SetLastError(0x1234); b = CreateFileMappingA(file, NULL, second, 0, 131072, NULL); be = GetLastError();
+  av = a ? MapViewOfFile(a, am, 0, 0, 16) : NULL;
+  bv = b ? MapViewOfFile(b, bm, 0, 0, 16) : NULL;
+  field("DISTINCT first=", first); field(" second=", second);
+  field(" dirtyPeer=", dirtyPeer);
+  field(" file=", (DWORD)file);
+  field(" aHandle=", (DWORD)a); field(" bHandle=", (DWORD)b);
+  field(" aError=", ae); field(" bError=", be);
+  field(" a=", (DWORD)av); field(" b=", (DWORD)bv);
+  if (av && bv && first != PAGE_READONLY) {
+    field(" before=", bv[0]); av[0] ^= 0x5a;
+    field(" written=", av[0]); field(" peer=", bv[0]);
+  }
+  if (bv && dirtyPeer) { bv[1] ^= 0x5a; field(" peerSecond=", bv[1]); }
+  emit("\r\n");
+  if (a) CloseHandle(a);
+  if (av) UnmapViewOfFile((void *)av);
+  if (bv) { field("DISTINCT_SURVIVOR value=", bv[0]); emit("\r\n"); UnmapViewOfFile((void *)bv); }
+  if (b) CloseHandle(b);
+  SetLastError(0x1234);
+  ae = GetFileSize(file, NULL); be = GetLastError();
+  field("DISTINCT_FILE size=", ae); field(" error=", be); emit("\r\n");
+  CloseHandle(file);
+  file = CreateFileA(path, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING, 0, NULL);
+  count = 0;
+  if (file != INVALID_HANDLE_VALUE) { ReadFile(file, seed, 2, &count, NULL); CloseHandle(file); }
+  field("DISTINCT_DISK count=", count); field(" first=", seed[0]); field(" second=", seed[1]); emit("\r\n");
+}
+
 static void protectionChanges(HANDLE file, DWORD protection) {
   HANDLE section = CreateFileMappingA(file, NULL, protection, 0, 131072, NULL);
   void *read, *write, *again;
@@ -150,6 +188,12 @@ void WinMainCRTStartup(void) {
   ranges(file);
   protectionChanges(file, PAGE_READWRITE);
   protectionChanges(file, PAGE_WRITECOPY);
+  CloseHandle(file); file = INVALID_HANDLE_VALUE;
+  for (i = 0; i < 3; ++i) {
+    int j;
+    for (j = 0; j < 3; ++j) distinctSections(path, protection[i], protection[j], FALSE);
+  }
+  distinctSections(path, PAGE_READWRITE, PAGE_READWRITE, TRUE);
   field("W_EXPORT create=", createW != NULL); field(" open=", openW != NULL); emit("\r\n");
   if (createW) {
     SetLastError(0x1234);
@@ -165,6 +209,7 @@ void WinMainCRTStartup(void) {
     if (wide) CloseHandle(wide);
   }
   if (section) CloseHandle(section);
-  CloseHandle(file); DeleteFileA(path);
+  if (file != INVALID_HANDLE_VALUE) CloseHandle(file);
+  DeleteFileA(path);
   emit("FILE_MAPPING_DONE\r\n"); CloseHandle(serial); ExitProcess(0);
 }

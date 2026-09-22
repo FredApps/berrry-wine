@@ -93,6 +93,46 @@ PROTECT_READ_AGAIN address=2191044608 count=28 base=2191044608 allocation=219104
 PROTECT_READ_TAIL address=2191048704 count=28 base=2191048704 allocation=2191044608 size=4096 state=4096 protect=4 allocationProtect=1 type=131072
 PROTECT_UNMAP_READ address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
 PROTECT_UNMAP_WRITE address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
+DISTINCT first=2 second=2 dirtyPeer=0 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=65 second=66
+DISTINCT first=2 second=4 dirtyPeer=0 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=65 second=66
+DISTINCT first=2 second=8 dirtyPeer=0 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=65 second=66
+DISTINCT first=4 second=2 dirtyPeer=0 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880 before=65 written=27 peer=65
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=27 second=66
+DISTINCT first=4 second=4 dirtyPeer=0 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880 before=65 written=27 peer=65
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=27 second=66
+DISTINCT first=4 second=8 dirtyPeer=0 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880 before=65 written=27 peer=65
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=27 second=66
+DISTINCT first=8 second=2 dirtyPeer=0 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880 before=65 written=27 peer=65
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=65 second=66
+DISTINCT first=8 second=4 dirtyPeer=0 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880 before=65 written=27 peer=65
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=65 second=66
+DISTINCT first=8 second=8 dirtyPeer=0 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880 before=65 written=27 peer=65
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=65 second=66
+DISTINCT first=4 second=4 dirtyPeer=1 file=12 aHandle=16 bHandle=20 aError=0 bError=0 a=2191044608 b=2191482880 before=65 written=27 peer=65 peerSecond=24
+DISTINCT_SURVIVOR value=65
+DISTINCT_FILE size=4294967295 error=6
+DISTINCT_DISK count=2 first=65 second=24
 W_EXPORT create=1 open=1
 W_CREATE ok=0 error=120
 W_OPEN ok=0 error=120

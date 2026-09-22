@@ -217,6 +217,47 @@ async function main() {
     fsHost.fs_close_handle(handle);
   }
   console.log('PASS  14 native Win98 protection/VirtualQuery observations match compiled runtime');
+  const distinctCases = [];
+  for (const line of native.split('\n')) {
+    const fields = Object.fromEntries([...line.matchAll(/(\w+)=(\d+)/g)]
+      .map(([, key, value]) => [key, Number(value)]));
+    if (line.startsWith('DISTINCT ')) distinctCases.push({ ...fields });
+    if (line.startsWith('DISTINCT_DISK ')) distinctCases[distinctCases.length - 1].disk = fields;
+  }
+  assert.strictEqual(distinctCases.length, 10);
+  for (const row of distinctCases) {
+    const data = vfs.files.get('c:\\shared.bin').data;
+    data.fill(0x41); data[1] = 0x42;
+    const a = fsHost.fs_create_file_mapping(file, row.first, 0, 131072, 0);
+    const b = fsHost.fs_create_file_mapping(file, row.second, 0, 131072, 0);
+    const mode = protection => protection === 2 ? 4 : protection === 8 ? 1 : 2;
+    const av = map(a, mode(row.first), 0, 16);
+    const bv = map(b, mode(row.second), 0, 16);
+    assert(a && b && row.aHandle && row.bHandle);
+    assert(av.address && bv.address && row.a && row.b);
+    assert.strictEqual(av.address === bv.address, row.a === row.b,
+      'distinct native section objects have distinct addresses');
+    if (row.first !== 2) {
+      wasm.test_mv_write32(av.address, wasm.test_mv_read32(av.address) ^ 0x5a);
+      assert.strictEqual(wasm.test_mv_read32(av.address) & 255, row.written);
+      assert.strictEqual(wasm.test_mv_read32(bv.address) & 255, row.peer,
+        'distinct sections do not immediately observe peer writes');
+    }
+    if (row.dirtyPeer) wasm.test_mv_write32(bv.address, wasm.test_mv_read32(bv.address) ^ 0x5a00);
+    fsHost.fs_close_handle(a);
+    fsHost.fs_unmap_view(av.address);
+    assert.strictEqual(wasm.test_mv_read32(bv.address) & 255, 65, 'surviving section keeps its bytes');
+    fsHost.fs_unmap_view(bv.address);
+    fsHost.fs_close_handle(b);
+    assert.strictEqual(row.disk.count, 2, 'native disk verification completed');
+    // Explicit diagnostic for the still-open dirty-page implementation. The
+    // ordinary regression above covers identity/visibility, not disk writeback.
+    if (process.argv.includes('--verify-writeback')) {
+      assert.deepStrictEqual([...data.subarray(0, 2)], [row.disk.first, row.disk.second],
+        `native dirty writeback ${row.first}/${row.second}/${row.dirtyPeer}`);
+    }
+  }
+  console.log('PASS  native distinct-section identity, visibility and retirement');
   for (const protection of [4, 8]) {
     const handle = fsHost.fs_create_file_mapping(file, protection, 0, 131072, 0);
     const first = map(handle, 4, 0, 16);
