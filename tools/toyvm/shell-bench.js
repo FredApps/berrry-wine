@@ -88,8 +88,13 @@ function runnerSource(exe, budget, mode) {
     ? `, regionJit: { sampleAfter: ${Math.floor(budget / 4)}, profileFor: ${Math.floor(budget / 4)}, gateAt: 0, log: function () {} }`
     // `--mode=uop`: the µop tier (uop-live.js), first profile window a tenth
     // of the way in, then one every 10M dispatches.
+    // `--uop-opts=` overrides those two (and adds any other UopLive option) for
+    // a diagnosis arm: `--uop-opts={"sampleAfter":1e18}` leaves the tier
+    // installed and never profiling, which prices the hook against the
+    // programs. Defaulted away, so a run without it is byte-identical.
     : mode === 'uop'
-      ? `, uop: { sampleAfter: ${Math.floor(budget / 10)}, profileFor: 1000000 }`
+      ? `, uop: { sampleAfter: ${Math.floor(budget / 10)}, profileFor: 1000000`
+        + `${arg('uop-opts') ? `, ...${arg('uop-opts')}` : ''} }`
       : '';
   const dir = path.dirname(exe);
   const files = fs.readdirSync(dir).filter((f) => fs.statSync(path.join(dir, f)).isFile());

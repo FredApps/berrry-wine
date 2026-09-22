@@ -819,13 +819,19 @@ function enterOver(vm, p, low, { run, target, install }, stats) {
   if (stats) { stats.install = put; stats.low = low; stats.prog = p; stats.native = native; stats.bails = 0; stats.bailAt = new Map(); }
   const vfile = new Int32Array(vm.memory.buffer, VBASE, low.nvTotal);
   const outv = new Int32Array(vm.memory.buffer, OUT, 4);
+  // Made once, like the two views above. The memory never grows (dos-loop
+  // creates it with initial === maximum), so the buffer this is bound to is
+  // the one every entry reads -- and a `new DataView` per entry is an
+  // allocation on the entry path, which is the path this tier is trying to
+  // make cheap.
+  const dv = new DataView(vm.memory.buffer);
   const ex = vm.exports;
   return (vm2, left) => {
     if (resident.get(vm.memory) !== token) put();
     ex.set_steps(left);
     let steps = left | 0;
     let F = ex.get_flags() >>> 0;
-    const lm = ex.mget_linmask() | 0, vk = new DataView(vm.memory.buffer).getInt32(isa.VGA_CTL_KEY, true);
+    const lm = ex.mget_linmask() | 0, vk = dv.getInt32(isa.VGA_CTL_KEY, true);
     const spm = ex.mget_spm() | 0, shm = ex.mget_shmask() | 0;
     let bid = low.entry;
     for (;;) {

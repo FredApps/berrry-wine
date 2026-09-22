@@ -28,6 +28,11 @@ const OPT = require('./uop-opt');
 const W = require('./uop-wasm');
 const isa = require('./isa');
 const { H } = require('./decode');
+const { SPIN, PSPIN } = require('./emit');
+// The handler indices L1 rewrites a collapsed spin loop INTO (compile.js
+// `spinBlocks`): every twin in either table, by value rather than by name, so
+// a renumbered handler table cannot make this go quietly stale.
+const SPIN_TWINS = new Set([...SPIN.values(), ...PSPIN.values()].map((s) => s.twin));
 const { rankSamples } = require('./trace-jit');
 function envFromKey(key, mask) {
   const d32 = typeof key === 'string' && key.endsWith('d');
@@ -37,7 +42,8 @@ function envFromKey(key, mask) {
 
 class UopLive {
   constructor({ session, vm, sampleAfter = 0, profileFor = 2e6, top = 4, minShare = 0.03,
-    maxRebuilds = 16, every = 0, maxHeads = 16, judgeAfter = 256, minPerEntry = 200, bailEvery = 64, passes = null, resume = true, log = () => {} }) {
+    maxRebuilds = 16, every = 0, maxHeads = 16, judgeAfter = 256, minPerEntry = 200, bailEvery = 64,
+    minBailSteps = 20000, passes = null, resume = true, log = () => {} }) {
     this.session = session;
     this.vm = vm;
     this.cache = session.cache;
@@ -56,6 +62,7 @@ class UopLive {
     this.judgeAfter = judgeAfter;
     this.minPerEntry = minPerEntry;
     this.bailEvery = bailEvery;
+    this.minBailSteps = minBailSteps;
     this.nextAt = sampleAfter;
     this.windowEnd = 0;
     this.samples = null;
@@ -107,7 +114,9 @@ class UopLive {
       if (this.heads.has(hk) || this.refused.has(hk)) continue;
       const env = envFromKey(b.cs, mask);
       const h = { hk, key: b.cs, ip: b.bip, env, share: b.samples / total, prog: null, enter: null, rebuilds: 0 };
-      if (!this.build(h)) { this.refused.add(hk); this.stats.declined.push(`${hk} ${h.why}`); continue; }
+      if (this.spinCollapsed(h)) { h.why = 'L1 collapses this spin loop'; }
+      else if (!this.build(h)) { /* h.why set by build */ }
+      if (h.why) { this.refused.add(hk); this.stats.declined.push(`${hk} ${h.why}`); continue; }
       this.heads.set(hk, h);
       this.cache.uopHeads.add(hk);
       // No linked edge may carry the guest past the head: the compiled code
@@ -115,8 +124,38 @@ class UopLive {
       // compile leaves it a handback on its own.
       this.hold(h);
       this.stats.installs++;
-      this.log(`uop: window ${this.windows}: head ${hk} (${(h.share * 100).toFixed(1)}% of samples) installed`);
+      this.log(`uop: window ${this.windows}: head ${hk} (${(h.share * 100).toFixed(1)}% of samples) installed`
+        + ` [${h.shape.insns} insns, ${h.shape.per.toFixed(2)} uop/insn, ${h.shape.bail} bail block(s)]`);
     }
+  }
+
+  // L1 ALREADY RUNS THIS LOOP IN ONE DISPATCH, so a micro-op program at the
+  // same head can only lose it, however fast the engine is. compile.js
+  // rewrites a block that is one branch back to its own head into a `_spin`
+  // twin, and that twin spends the WHOLE remaining budget in a single
+  // dispatch (emit.js jccSpinArm) instead of going round the loop. A program
+  // installed over it goes round the loop for real.
+  //
+  // This is DEMO5.EXE, the corpus's worst regression at x1.38 (v8) / x1.54
+  // (sm): its hot head at 4352:a5c is `jmp short $`, a one-instruction spin
+  // waiting for an interrupt, and 78.6% of its dispatches were being spent
+  // inside a micro-op program running it. The program was not bailing, was
+  // entered only 934 times for 21,279 steps each, and was still 1.47x slower
+  // than L1 on the stretch it covered -- because L1's stretch is one handler
+  // call and the program's is 19.8M iterations of a two-micro-op loop.
+  //
+  // Asked of the COMPILED CODE rather than of the region, because the rule is
+  // L1's and reading its answer cannot drift from it: the twin is in the
+  // arena word, put there by the same pass that decides a block is eligible.
+  spinCollapsed(h) {
+    const lin = (h.env.codeBase + h.ip) & h.env.mask;
+    for (const prog of (this.cache.byPara.get(lin >>> 4) || [])) {
+      if (!prog.live || `${prog.key}` !== `${h.key}`) continue;
+      const addr = prog.blocks.get(h.ip);
+      if (addr === undefined) continue;
+      if (SPIN_TWINS.has(prog.words[(addr - prog.arenaBase) >> 2])) return true;
+    }
+    return false;
   }
 
   // Discover, optimize, lower and encode the program at a head from the bytes
@@ -142,11 +181,47 @@ class UopLive {
       }
       h.prog = { covered };
       h.snap = this.snapshot(covered);
+      h.shape = this.shapeOf(reg, h.st);
+      // A BLOCK IN THE LOOP'S BODY THE ENGINE CANNOT RUN is a hand-off to the
+      // JS reference interpreter on EVERY iteration -- the engine's setup and
+      // write-back paid in full, and then the slow path. Measured: do.exe's
+      // three heads each carry two of them (an `op 8e`, `mov sreg,r/m`, that
+      // the lowering does not have) and bail 47 times per 1000 steps against
+      // a winner's 0.05, for x1.35 (v8) / x1.81 (sm) over the whole program.
+      // A bail somewhere off the loop -- a deopt arm, an exit -- is fine and
+      // is not counted here; this is the body alone.
+      if (h.shape.bail) { h.why = `${h.shape.bail} bail block(s) in the loop body`; return false; }
       return true;
     } catch (e) {
       h.why = String(e && e.message || e).slice(0, 80);
       return false;
     }
+  }
+
+  // WHAT A HEAD IS, BEFORE IT HAS RUN ONCE. Three numbers, all of them free
+  // (the lowering has already computed everything they read), and all three
+  // measured to separate the corpus's winners from its losers:
+  //
+  //   insns  x86 instructions in the region's body. A body of one or two is a
+  //          spin loop, and the engine cannot win one: L1 dispatches one
+  //          handler per instruction and the engine runs `per` micro-ops.
+  //   per    micro-ops in the FAST body per x86 instruction of it. ANARCHY
+  //          (x0.40) is 1.20; DEMO5 (x1.38) is 2.00 over a one-instruction
+  //          body; do.exe (x1.35) is 2.03.
+  //   bail   fast body blocks the engine cannot run natively. One of these in
+  //          the body is a hand-off to the JS reference interpreter EVERY
+  //          iteration, which is the shape do.exe and acme-sns lose on -- 47
+  //          and 23 bails per 1000 steps against a winner's 0.05.
+  shapeOf(reg, st) {
+    let uops = 0, bail = 0, body = 0;
+    for (const [id, b] of st.low.blocks) {
+      const pb = st.prog.blocks[id];
+      if (!pb || !pb.fast || pb.kind !== 'body') continue;
+      body++;
+      if (b.native) uops += b.ops.length; else bail++;
+    }
+    return { insns: reg.body.size, blocks: body, uops, bail,
+      per: uops / Math.max(1, reg.body.size) };
   }
 
   snapshot(covered) {
@@ -192,7 +267,7 @@ class UopLive {
   // resume at it: a slice would hand straight back) and out of the jump
   // table. Everything goes back as it was on release.
   hold(h) {
-    const cache = this.cache, arena = new Int32Array(this.vm.mem.buffer);
+    const cache = this.cache, arena = this.arena;
     const lin = (h.env.codeBase + h.ip) & h.env.mask;
     h.holds = [];
     const drop = new Set();
@@ -239,13 +314,24 @@ class UopLive {
   // may be among the three a hold overwrote. The repair lands in prog.words
   // too, which is what release restores from, so here it is only undone in
   // the arena. Once per slice, before the slice runs.
+  // The arena as words. ONE view, not one per call: `keep()` below runs at
+  // every slice for as long as any head is installed, and a
+  // `new Int32Array(buffer)` there is an allocation on the per-slice path of
+  // every program that ever installs anything -- including the ones whose
+  // heads the guest hardly ever stands at. The toy VM's memory is created with
+  // initial === maximum and never grows, so the view cannot go stale.
+  get arena() {
+    if (!this._arena || this._arena.buffer !== this.vm.mem.buffer) this._arena = new Int32Array(this.vm.mem.buffer);
+    return this._arena;
+  }
+
   keep() {
     let arena = null;
     for (const h of this.heads.values()) {
       if (!h.holds) continue;
       for (const rec of h.holds) {
         if (!this.held(rec)) continue;
-        arena = arena || new Int32Array(this.vm.mem.buffer);
+        arena = arena || this.arena;
         const at = rec.addr >> 2;
         if (arena[at] !== H.jmp_syn || arena[at + 1] !== 0 || arena[at + 2] !== h.ip) this.patch(rec, h.ip, arena);
       }
@@ -254,7 +340,7 @@ class UopLive {
 
   // The head goes back to the compiled path: every held block as it was.
   release(h) {
-    const cache = this.cache, arena = new Int32Array(this.vm.mem.buffer);
+    const cache = this.cache, arena = this.arena;
     for (const rec of h.holds || []) {
       if (!this.held(rec)) continue;
       const { prog, q, addr } = rec;
@@ -337,9 +423,21 @@ class UopLive {
       // and one that keeps bailing to the reference interpreter (a VGA
       // window, a straddle, an op the engine lacks) runs slower than L1: give
       // the head back to the compiler.
-      if (h.entries % self.judgeAfter === 0) {
-        if (h.steps < self.minPerEntry * h.entries) self.demote(h, 'short entries');
-        else if (h.bails * self.bailEvery > h.steps) self.demote(h, `bails ${h.bails} in ${h.steps}`);
+      //
+      // THE BAIL RATE IS READ AS SOON AS IT MEANS ANYTHING, not at the 256th
+      // entry. It is a ratio, and it is stable from the start: acme-sns.exe's
+      // two heads sit at 22 bails per 1000 steps from their first entries and
+      // the worst WINNER in the corpus (CLASH.EXE) is 1.17, so `minBailSteps`
+      // of them is already a decided question. Waiting for `judgeAfter`
+      // entries bought acme-sns 3.9M and 4.0M steps of running slowly before
+      // either head was given back -- 17.9% of its dispatches, and its whole
+      // x1.28. The short-entry test still waits, because that one is a
+      // statement about how the GUEST uses the loop and a handful of entries
+      // says nothing about it.
+      if (h.steps >= self.minBailSteps && h.bails * self.bailEvery > h.steps) {
+        self.demote(h, `bails ${h.bails} in ${h.steps}`);
+      } else if (h.entries % self.judgeAfter === 0 && h.steps < self.minPerEntry * h.entries) {
+        self.demote(h, 'short entries');
       }
       return out;
     };
@@ -384,7 +482,7 @@ class UopLive {
   }
 
   report() {
-    return { phase: this.phase, windows: this.windows, heads: [...this.heads.values()].map((h) => ({ head: h.hk, share: h.share, rebuilds: h.rebuilds, entries: h.entries || 0, steps: h.steps || 0, bails: h.bails || 0,
+    return { phase: this.phase, windows: this.windows, heads: [...this.heads.values()].map((h) => ({ head: h.hk, share: h.share, rebuilds: h.rebuilds, entries: h.entries || 0, steps: h.steps || 0, bails: h.bails || 0, shape: h.shape,
       bailAt: [...h.st.bailAt].sort((a, b) => b[1] - a[1]).slice(0, 3)
         .map(([bid, n]) => `${n}x B${bid} ${h.st.prog.blocks[bid].kind} ${h.st.low.blocks.get(bid).why || 'native'}`) })),
       ...this.stats };
