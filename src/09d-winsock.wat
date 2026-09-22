@@ -2804,7 +2804,10 @@
                            (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32)
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
-    (local.set $wa (call $g2w (local.get $arg1)))
+    ;; 400 bytes crosses a guest page boundary from most addresses, and two
+    ;; adjacent sparse guest pages need not be adjacent in WASM memory, so the
+    ;; record is gathered and written back instead of filled through one $g2w.
+    (local.set $wa (call $guest_span_in (local.get $arg1) (i32.const 400)))
     ;; Win32 WSADATA is 400 bytes. Clear the character arrays, alignment
     ;; padding, and provider pointer before publishing the fields supported by
     ;; this virtual provider. MFC's AfxSocketInit reads iMaxSockets at +390;
@@ -2822,6 +2825,7 @@
       (global.get $VLN_MAX_PAYLOAD))                            ;; iMaxUdpDg
     (i32.store (i32.add (local.get $wa) (i32.const 396)) (i32.const 0))
                                                                ;; lpVendorInfo
+    (call $guest_span_writeback (local.get $arg1) (local.get $wa) (i32.const 400))
     (global.set $wsa_started (i32.add (global.get $wsa_started) (i32.const 1)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 

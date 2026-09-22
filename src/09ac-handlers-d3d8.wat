@@ -76,7 +76,10 @@
     ;; then version, PCI ids, GUID and WHQL level, all left zero so no vendor
     ;; or certification is invented.  The two names match D3D9's identity;
     ;; launchers list Description in their adapter picker.
-    (local.set $arg4 (call $g2w (local.get $arg3)))
+    ;; 0x42c bytes crosses a guest page boundary from most addresses, and two
+    ;; adjacent sparse guest pages need not be adjacent in WASM memory -- so the
+    ;; record is gathered and written back rather than filled through one $g2w.
+    (local.set $arg4 (call $guest_span_in (local.get $arg3) (i32.const 0x42c)))
     (call $zero_memory (local.get $arg4) (i32.const 0x42c))
     (i32.store (local.get $arg4) (i32.const 0x656e6977))            ;; "wine"
     (i32.store offset=4 (local.get $arg4) (i32.const 0x7373612d))   ;; "-ass"
@@ -87,6 +90,7 @@
     (i32.store offset=520 (local.get $arg4) (i32.const 0x6c626d65)) ;; "embl"
     (i32.store offset=524 (local.get $arg4) (i32.const 0x33442079)) ;; "y D3"
     (i32.store offset=528 (local.get $arg4) (i32.const 0x003844))   ;; "D8"
+    (call $guest_span_writeback (local.get $arg3) (local.get $arg4) (i32.const 0x42c))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $handle_IDirect3D8_GetAdapterModeCount (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

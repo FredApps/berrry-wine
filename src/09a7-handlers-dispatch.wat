@@ -2369,7 +2369,11 @@
       (else (if (i32.or (local.get $arg1) (i32.eqz (local.get $arg2)))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057)))
       (else
-        (local.set $ramp (call $g2w (local.get $arg2)))
+        ;; A DDGAMMARAMP is 1536 bytes and always crosses a guest page
+        ;; boundary, whose two halves need not be adjacent in WASM memory.
+        ;; The stored ramp is our own heap allocation, so only the caller's
+        ;; buffer needs gathering.
+        (local.set $ramp (call $guest_span_in (local.get $arg2) (i32.const 1536)))
         (if (global.get $gdi_gamma_ramp_guest)
           (then
             (memory.copy (local.get $ramp)
@@ -2384,6 +2388,7 @@
               (i32.store16 (i32.add (i32.add (local.get $ramp) (i32.const 1024)) (i32.shl (local.get $i) (i32.const 1))) (local.get $value))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $fill)))))
+        (call $guest_span_writeback (local.get $arg2) (local.get $ramp) (i32.const 1536))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
@@ -2405,8 +2410,12 @@
                   (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
                   (return)))
               (global.set $gdi_gamma_ramp_guest (local.get $ramp))))
+          ;; The caller's 1536-byte ramp can straddle two sparse guest pages
+          ;; that are not adjacent in WASM memory; gather it before copying.
+          (local.set $ramp (call $guest_span_in (local.get $arg2) (i32.const 1536)))
           (memory.copy (call $g2w (global.get $gdi_gamma_ramp_guest))
-            (call $g2w (local.get $arg2)) (i32.const 1536))
+            (local.get $ramp) (i32.const 1536))
+          (call $guest_span_release (local.get $ramp) (i32.const 1536))
           (i32.store offset=0 (global.get $reg_base) (i32.const 0))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 

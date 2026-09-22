@@ -665,9 +665,13 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x8876086C))
     (block $done
       (br_if $done (i32.eqz (local.get $arg3)))
-      (local.set $wa (call $g2w (local.get $arg3)))
       ;; D3DADAPTER_IDENTIFIER9: 512-byte strings, 32-byte device name,
       ;; 64-bit version, four PCI ids, GUID and WHQLLevel (1100 field bytes).
+      ;; At 1100 bytes this record crosses a guest page boundary from most
+      ;; addresses, and two adjacent sparse pages need not be adjacent in WASM
+      ;; memory -- so it is gathered and written back rather than stored
+      ;; through one translation.
+      (local.set $wa (call $guest_span_in (local.get $arg3) (i32.const 1100)))
       (call $zero_memory (local.get $wa) (i32.const 1100))
       (br_if $done (local.get $arg1))
       (br_if $done (i32.and (local.get $arg2) (i32.const -3)))
@@ -694,6 +698,8 @@
       (i32.store offset=1088 (local.get $wa) (i32.const 0x454e4957))
       (i32.store offset=1092 (local.get $wa) (i32.const 0x00000001))
       (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+    ;; Also on the early-out paths: the zeroing above is itself an answer.
+    (call $guest_span_writeback (local.get $arg3) (local.get $wa) (i32.const 1100))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
   ;; IDirect3D9_GetAdapterModeCount — 3 args (incl. this)
