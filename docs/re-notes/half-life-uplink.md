@@ -952,3 +952,52 @@ tiled vertically, yellow streaked fan geometry down the left edge, and a correct
 HUD. The HUD was right because it supplies TLVERTEX and never touches a matrix,
 which is precisely why the matrices were only observable from inside
 ProcessVertices.
+
+### Confirmed again at a camera that is not level (2026-09-21)
+
+The first confirmation of the operand order was made at a frame whose pitch and
+roll were **exactly zero**, which is the weakest possible test of a matrix
+*order*: with the middle rotations identity there are fewer non-commuting pairs
+left to disagree about. So the route was extended to mouse-look. Deliver the
+look with `relmousemove`, spread over batches — the docs' warning is real, a
+single lump is a delta no hand could produce:
+
+```
+IN="$IN,171000:relmousemove:0:-160:40"   # up
+IN="$IN,177000:relmousemove:0:320:40"    # back down, past level
+```
+
+At batch ~175k the `Xform` records show six `Mul WORLD` calls in this order —
+`R_SetupGL` with **pitch 5.3° and roll zero** (GoldSrc omits the roll rotation
+when the view has no punch, so there are four rotations, not five):
+
+| # | supplied matrix | what it is |
+|---|---|---|
+| 1 | `[1 0 0 / 0 0 -1 / 0 1 0]` | `glRotatef(-90,1,0,0)` |
+| 2 | `[0 1 0 / -1 0 0 / 0 0 1]` | `glRotatef(90,0,0,1)` |
+| 3 | `[0.996 0 -0.092 / 0 1 0 / 0.092 0 0.996]` | **pitch, −5.3°** |
+| 4 | `[0 1 0 / -1 0 0 / 0 0 1]` | yaw, −90° |
+| 5 | `[… / 2047.969 -744.031 -64.031 1]` | `glTranslatef(-vieworg)` |
+
+Appending each on the left gives rotation `[-1 0 0 / 0 0.092 0.996 /
+0 0.996 -0.092]` and translation `(-2047.969, -132.2, -735.1)`. HL's own cached
+modelview, pushed through `SetTransform(WORLD)` 90× in the same window, reads
+`[-1 0 0 / 0 0.092 0.996 / 0 0.996 -0.092 / -2047.969 -132.228 -734.982]` —
+**agreement to three decimals on a pitched basis**, computed two independent
+ways. Under the reversed order the translation row would still be the raw
+`glTranslatef` operand, so the two orders are genuinely discriminated here.
+
+The composite (`SetMtx handle=0xC0FFEE`) is that world times the projection and
+checks out arithmetically against it, `BEHIND-EYE` is 3 of 522 `PVout` records
+(0.6%), and the three captures — `look-170-level.png`, `look-176-up.png`,
+`look-182-down.png`, 93%/95% different from each other — all show the corridor
+upright with the horizon pitching, walls vertical, floor below and ceiling
+above. Nothing streaks or inverts at any pitch.
+
+`test/test-d3dim-multiply-transform-order.js` now also drives the whole
+`R_SetupGL` sequence with pitch 23.5°, yaw 137.25° **and** roll 11.75°, asserts
+the device reproduces the hand-computed left-appending composite word for word,
+and asserts the reversed product's rotation block differs from it by more than
+rounding — so the test proves it discriminates the orders rather than merely
+passing. It also asserts the composite's rotation rows stay unit length, which
+records *why* the reversed matrix never looked malformed.
