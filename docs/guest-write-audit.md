@@ -80,3 +80,27 @@ flush/clear race handling and quiet game A/B performance evidence. The
 broader `fable-review.md` common-core, quiet-handler and cleanup work remains
 partial. This checkpoint ran read-only scans; it introduces no runtime change
 and claims no new game/browser test result.
+
+## Console count/mode batch implemented
+
+All 20 stores identified above now call `gs32` with the original guest
+address. No console record/text layout, backing store, handle validation,
+queue consumption or return/cleanup branch was changed. A split DWORD can
+therefore use noncontiguous page backing and reaches the existing guest-write
+notification path rather than bypassing it through a raw store.
+
+The new `test/test-console-count-boundaries.js` failed before migration at
+GetConsoleMode split 1. It now exercises all three DWORD crossings through
+17 API frontends, with byte-for-byte output and canary checks and stdcall
+cleanup. Cases cover successful counts, clipping at the last screen cell,
+empty requests, invalid coordinates, null record buffers and invalid handles
+that preserve the caller's previous count. Both A/W text and record routes
+are included. These are count-buffer tests, not sparse text/record tests.
+
+Existing suites also pass: console input (mouse, aliases, flush, tab stops),
+input validation, WriteConsoleInput ordered records, fill clipping, streamed
+output clipping and attribute reads. Test-tier, logical-AND, duplicate and
+whitespace gates pass. The absence of direct store-to-g2w matches in `09a2`
+after this change is only a syntactic milestone: translated local pointers,
+record arrays and text buffers remain to audit. No Far browser smoke or game
+performance measurement was performed for this batch.

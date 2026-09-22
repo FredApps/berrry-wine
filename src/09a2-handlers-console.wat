@@ -1136,7 +1136,7 @@
     (if (i32.eq (local.get $limit) (i32.const -1))
       (then
         (if (local.get $arg4)
-          (then (i32.store (call $g2w (local.get $arg4)) (i32.const 0))))
+          (then (call $gs32 (local.get $arg4) (i32.const 0))))
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (call $console_buffer_finish (i32.const 0))
@@ -1158,7 +1158,7 @@
       (br $fill)))
     ;; Write count to lpNumberOfCharsWritten
     (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $limit))))
+      (then (call $gs32 (local.get $arg4) (local.get $limit))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $console_buffer_finish (i32.ne (local.get $limit) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
@@ -1176,7 +1176,7 @@
     (if (i32.eq (local.get $limit) (i32.const -1))
       (then
         (if (local.get $arg4)
-          (then (i32.store (call $g2w (local.get $arg4)) (i32.const 0))))
+          (then (call $gs32 (local.get $arg4) (i32.const 0))))
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (call $console_buffer_finish (i32.const 0))
@@ -1197,7 +1197,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $fill)))
     (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $limit))))
+      (then (call $gs32 (local.get $arg4) (local.get $limit))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $console_buffer_finish (i32.ne (local.get $limit) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
@@ -1792,7 +1792,7 @@
         (call $console_input_block)
         (return (i32.const 1))))
     (if (local.get $pread)
-      (then (i32.store (call $g2w (local.get $pread)) (local.get $out))))
+      (then (call $gs32 (local.get $pread) (local.get $out))))
     (i32.const 0))
 
   ;; Fill INPUT_RECORDs from the queue. Returns the number of records written.
@@ -1856,7 +1856,7 @@
     (i32.store offset=0 (global.get $reg_base) (call $console_write
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
     (if (i32.and (i32.ne (i32.load offset=0 (global.get $reg_base)) (i32.const 0)) (i32.ne (local.get $arg3) (i32.const 0)))
-      (then (i32.store (call $g2w (local.get $arg3)) (local.get $arg2))))
+      (then (call $gs32 (local.get $arg3) (local.get $arg2))))
     (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
       (then (global.set $last_error (i32.const 6))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
@@ -2001,7 +2001,7 @@
     (if (i32.eq (local.get $limit) (i32.const -1))
       (then
         (if (local.get $arg4)
-          (then (i32.store (call $g2w (local.get $arg4)) (i32.const 0))))
+          (then (call $gs32 (local.get $arg4) (i32.const 0))))
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (call $console_buffer_finish (i32.const 0))
@@ -2023,7 +2023,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $fill)))
     (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $limit))))
+      (then (call $gs32 (local.get $arg4) (local.get $limit))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $console_buffer_finish (i32.ne (local.get $limit) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
@@ -2041,7 +2041,7 @@
     (if (i32.eq (local.get $limit) (i32.const -1))
       (then
         (if (local.get $arg4)
-          (then (i32.store (call $g2w (local.get $arg4)) (i32.const 0))))
+          (then (call $gs32 (local.get $arg4) (i32.const 0))))
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (call $console_buffer_finish (i32.const 0))
@@ -2063,7 +2063,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $fill)))
     (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $limit))))
+      (then (call $gs32 (local.get $arg4) (local.get $limit))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $console_buffer_finish (i32.ne (local.get $limit) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
@@ -2095,7 +2095,7 @@
                    (i32.eqz (local.get $buffer))))
       (then
         (if (local.get $count_ptr)
-          (then (i32.store (call $g2w (local.get $count_ptr)) (i32.const 0))))
+          (then (call $gs32 (local.get $count_ptr) (i32.const 0))))
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (return (i32.const 0))))
@@ -2103,7 +2103,7 @@
     ;; blocking and without touching the queue or the (possibly NULL) buffer.
     (if (i32.eqz (local.get $length))
       (then
-        (i32.store (call $g2w (local.get $count_ptr)) (i32.const 0))
+        (call $gs32 (local.get $count_ptr) (i32.const 0))
         (if (i32.eqz (local.get $peek))
           (then (global.set $handler_set_eip (i32.const 0))))
         (i32.store offset=0 (global.get $reg_base) (i32.const 1))
@@ -2122,7 +2122,7 @@
       (local.get $buffer) (local.get $length) (local.get $wide)))
     (if (i32.eqz (local.get $peek))
       (then (call $console_input_drop (local.get $n))))
-    (i32.store (call $g2w (local.get $count_ptr)) (local.get $n))
+    (call $gs32 (local.get $count_ptr) (local.get $n))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.const 0))
 
@@ -2141,7 +2141,7 @@
     (call $console_input_poll_host)
     (if (global.get $console_ctrl_dispatching)
       (then (return (i32.const 1))))
-    (i32.store (call $g2w (local.get $count_ptr)) (call $console_input_count))
+    (call $gs32 (local.get $count_ptr) (call $console_input_count))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.const 0))
 
@@ -2296,7 +2296,7 @@
     (if (i32.eq (local.get $limit) (i32.const -1))
       (then
         (if (local.get $arg4)
-          (then (i32.store (call $g2w (local.get $arg4)) (i32.const 0))))
+          (then (call $gs32 (local.get $arg4) (i32.const 0))))
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (call $console_buffer_finish (i32.const 0))
@@ -2317,7 +2317,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $read)))
     (if (local.get $arg4)
-      (then (i32.store (call $g2w (local.get $arg4)) (local.get $limit))))
+      (then (call $gs32 (local.get $arg4) (local.get $limit))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $console_buffer_finish (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
@@ -2611,7 +2611,7 @@
                    (i32.eqz (local.get $buffer))))
       (then
         (if (local.get $count_ptr)
-          (then (i32.store (call $g2w (local.get $count_ptr)) (i32.const 0))))
+          (then (call $gs32 (local.get $count_ptr) (i32.const 0))))
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (return)))
@@ -2653,7 +2653,7 @@
     (i32.store (global.get $CONSOLE_INPUT) (i32.add (local.get $count) (local.get $limit)))
     (if (local.get $limit)
       (then (drop (call $host_set_event (call $console_input_event)))))
-    (i32.store (call $g2w (local.get $count_ptr)) (local.get $limit))
+    (call $gs32 (local.get $count_ptr) (local.get $limit))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
 
   (func $handle_WriteConsoleInputA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

@@ -1246,7 +1246,7 @@
 
   ;; 506: GetConsoleMode(hConsole, lpMode) → BOOL
   (func $handle_GetConsoleMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store (call $g2w (local.get $arg1)) (call $console_input_mode))
+    (call $gs32 (local.get $arg1) (call $console_input_mode))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
@@ -1255,7 +1255,7 @@
     (i32.store offset=0 (global.get $reg_base) (call $console_write
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
     (if (i32.and (i32.ne (i32.load offset=0 (global.get $reg_base)) (i32.const 0)) (i32.ne (local.get $arg3) (i32.const 0)))
-      (then (i32.store (call $g2w (local.get $arg3)) (local.get $arg2))))
+      (then (call $gs32 (local.get $arg3) (local.get $arg2))))
     (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
       (then (global.set $last_error (i32.const 6))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
