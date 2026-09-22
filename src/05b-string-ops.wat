@@ -22,6 +22,8 @@
   (func $guest_memmove (param $dst i32) (param $src i32) (param $size i32)
     (local $i i32) (local $chunk i32) (local $remaining i32)
     (if (i32.eqz (local.get $size)) (then (return)))
+    ;; One destination notification covers both linear and chunked copies.
+    (call $invalidate_code_write (local.get $dst) (local.get $size))
     (if (i32.and
           (call $string_guest_range_contiguous (local.get $dst) (local.get $size))
           (call $string_guest_range_contiguous (local.get $src) (local.get $size)))
@@ -90,6 +92,7 @@
   (func $guest_memset (param $dst i32) (param $value i32) (param $size i32)
     (local $i i32) (local $chunk i32)
     (if (i32.eqz (local.get $size)) (then (return)))
+    (call $invalidate_code_write (local.get $dst) (local.get $size))
     (if (call $string_guest_range_contiguous (local.get $dst) (local.get $size))
       (then
         (memory.fill

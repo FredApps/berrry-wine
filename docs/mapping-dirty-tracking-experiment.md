@@ -196,3 +196,23 @@ GlobalFlags and Diablo runtime suites pass; logical-AND, duplicate and test-tier
 gates pass. Shared `$heap_realloc` remains unchanged: its raw bulk copy/zero
 paths still need write-notification review. Removing the private copy does
 not itself close that coverage gap or implement dirty tracking.
+
+## Common bulk writes notify decoded-code invalidation
+
+The public `memcpy`, `memmove` and `memset` handlers delegated to guest-aware
+bulk helpers, but those helpers did not notify code invalidation. The new
+regression failed before the change on public `memcpy`: its destination bytes
+changed while the decoded entry remained cached. Both `$guest_memmove` and
+`$guest_memset` now notify `$invalidate_code_write` once per non-empty operation,
+before selecting linear or page-chunked copying/filling. Empty writes still
+return before translating or invalidating anything. REP handlers retain their
+separate existing notification paths; they do not call these helpers.
+
+The source-compiled cache regression exercises all three CRT entry points,
+checks their cdecl stack/result, and executes the changed instruction to verify
+its new immediate. It covers linear buffers, noncontiguous split sources and
+destinations, and zero-length preservation of an existing decoded entry.
+Sparse-width tests retain overlap/canary coverage for copy and fill. This does
+not establish process-wide publication for every write, page permissions,
+dirty-file writeback or game performance. The heap core and other raw-memory
+callers do not automatically inherit this hook and remain audit work.

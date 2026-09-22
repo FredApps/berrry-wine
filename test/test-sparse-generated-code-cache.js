@@ -8,6 +8,20 @@ const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const extraWat = String.raw`
+  (func (export "test_bulk_code_store")
+      (param $mode i32) (param $dst i32) (param $value i32) (param $size i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (if (i32.eqz (local.get $mode))
+      (then (call $handle_memcpy (local.get $dst) (local.get $value) (local.get $size)
+        (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (if (i32.eq (local.get $mode) (i32.const 1))
+        (then (call $handle_memmove (local.get $dst) (local.get $value) (local.get $size)
+          (i32.const 0) (i32.const 0) (i32.const 0)))
+        (else (call $handle_memset (local.get $dst) (local.get $value) (local.get $size)
+          (i32.const 0) (i32.const 0) (i32.const 0))))))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x00300004))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
   (func (export "test_x87_code_store") (param $guest i32) (param $group i32) (param $op i32)
     (global.set $fpu_top (i32.const 0))
     (global.set $fpu_tag (i32.const 0))
@@ -254,6 +268,40 @@ async function main() {
     assert.strictEqual(e.test_sparse_cache_lookup(code) >>> 0, 0,
       `x87 ${group}/${op} store must retire decoded destination bytes`);
   }
+  // Public CRT bulk writes must invalidate both contiguous and page-chunked
+  // paths. A split source forces chunking while the destination stays code.
+  for (const page of [0x30000000, 0x28000000, 0x30001000]) {
+    assert.strictEqual(e.test_sparse_map_for_code(page, 4096) >>> 0, page);
+  }
+  assert.notStrictEqual(e.test_sparse_guest_to_wasm(0x30000fff) + 1,
+    e.test_sparse_guest_to_wasm(0x30001000));
+  for (const source of [0x30000080, 0x30000ffe]) {
+    le32(0x78563412).forEach((byte, i) => e.guest_write8(source + i, byte));
+    for (const mode of [0, 1, 2]) {
+      const value = mode === 2 ? 0x5a : source;
+      install(0x11223344);
+      assert.strictEqual(execute(), 0x11223344);
+      assert.strictEqual(e.test_bulk_code_store(mode, code + 1, value, 0) >>> 0, code + 1);
+      assert.notStrictEqual(e.test_sparse_cache_lookup(code), 0, 'empty bulk write keeps decoded code');
+      assert.strictEqual(e.test_bulk_code_store(mode, code + 1, value, 4) >>> 0, code + 1);
+      assert.strictEqual(e.test_sparse_cache_lookup(code), 0, `bulk mode ${mode} retires destination`);
+      assert.strictEqual(execute(), mode === 2 ? 0x5a5a5a5a : 0x78563412,
+        'guest execution must observe the bulk-written immediate');
+    }
+  }
+
+  const splitCode = 0x30000ffd;
+  const copySource = 0x28000080;
+  le32(0x78563412).forEach((byte, i) => e.guest_write8(copySource + i, byte));
+  for (const mode of [0, 1, 2]) {
+    codeFor(0x11223344).forEach((byte, i) => e.guest_write8(splitCode + i, byte));
+    assert.strictEqual(executeOverlap(splitCode), 0x11223344);
+    e.test_bulk_code_store(mode, splitCode + 1, mode === 2 ? 0x5a : copySource, 4);
+    assert.strictEqual(e.test_sparse_cache_lookup(splitCode), 0,
+      `bulk mode ${mode} retires code spanning noncontiguous destination pages`);
+    assert.strictEqual(executeOverlap(splitCode), mode === 2 ? 0x5a5a5a5a : 0x78563412);
+  }
+
   const scanSource = e.guest_alloc(8) >>> 0;
   const scanFormat = e.guest_alloc(8) >>> 0;
   const scanArgs = e.guest_alloc(4) >>> 0;
