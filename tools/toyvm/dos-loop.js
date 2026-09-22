@@ -243,6 +243,9 @@ class CodeCache {
     // address is unique while it is live, and every path that recycles or drops
     // one empties this with it.
     this.refusedEntries = new Set();
+    // `cache key:ip` of every µop program head (uop-live.js). The compiler
+    // leaves these as handbacks so the host gets to run the program there.
+    this.uopHeads = new Set();
   }
 
   // Everything compiled is now suspect, because the guest wrote into code that
@@ -938,6 +941,7 @@ class CodeCache {
       regionBytes: this.regionBytes,
       regionCodeBits: this.regionCodeBits,
       regionBase: vm.regionBase,
+      handbackAt: this.uopHeads,
       volatile: this.volList.length
         ? (gip) => this.volPara[((codeBase + gip) & mask) >>> 4] === 1 : null,
       volatileHeads: this.volatileHeadsFor(codeBase, mask),
@@ -1513,7 +1517,13 @@ class DosSession {
     const int1seg = vm.mem[6] | (vm.mem[7] << 8);
     const int1Hooked = !(int1seg === STUB_SEG && int1 === STUB_OFF + 1);
     const stepping = int1Hooked && (vm.get('flags') & (1 << isa.F.TF)) !== 0;
-    const entry = stepping
+    // A µop program's head (uop-live.js): the program runs this slice instead
+    // of the compiled code. Null when there is none, or it has been dropped.
+    const uopEnter = !stepping && this.uop ? this.uop.at(ip, codeBase, mask, d32, ip32) : null;
+    // Where a µop program left, the program it stands in for resumes: its
+    // own edge to that block, not a fresh entry (uop-live.js resume).
+    const resumed = !uopEnter && !stepping && this.uop ? this.uop.resume(ip, codeBase, d32, ip32) : 0;
+    const entry = uopEnter ? 0 : resumed ? resumed : stepping
       ? this.cache.stepOne(cs, ip, codeBase, mask, d32, ip32)
       : this.cache.entryFor(cs, ip, codeBase, mask, d32, ip32);
     if (this.hooks.beforeSlice) this.hooks.beforeSlice();
@@ -1724,7 +1734,8 @@ class DosSession {
       vm.exports.set_mousex(m.x); vm.exports.set_mousey(m.y); vm.exports.set_mousebtn(m.buttons);
       vm.exports.set_intfast(on ? (1 | (m.buttons ? 0 : 2)) : 0);
     }
-    vm.exports.run(entry, budget);
+    if (uopEnter) vm.exports.set_steps(uopEnter(vm, budget));
+    else vm.exports.run(entry, budget);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
     // when a handler handed control back early. Billing the slice either way
     // makes a demo that bounces off an unresolved jump every few instructions

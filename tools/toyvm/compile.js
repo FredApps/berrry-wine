@@ -370,6 +370,19 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     }
   }
 
+  // A µop program's head (uop-live.js) is a HANDBACK, not a block. The host
+  // runs the program when it stands there, and it can only stand there if no
+  // compiled edge carries the guest past it: so the head is marked up front,
+  // which stops a straight line from absorbing it, and never decoded except
+  // as the entry of a compile the host itself asked for -- which it does only
+  // when it has no program to run there. Every edge into it stays unresolved
+  // and hands back, and a handback is free on the clock (emit.js HALT_FIRST).
+  const handbackAt = opts.handbackAt && opts.handbackAt.size ? opts.handbackAt : null;
+  if (handbackAt) {
+    const myKey = `${csKey}:`;
+    for (const key of handbackAt) if (key.startsWith(myKey)) markHead(Number(key.slice(myKey.length)));
+  }
+
   while (pending.length) {
     const blockIp = pending.pop();
     if (blocks.has(blockIp)) continue;
@@ -377,6 +390,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     // that queued it stays unresolved, so it hands back, and the host's
     // entryFor sends it to the right kind of compile.
     if (blockIp !== entry && cutBlock(blockIp)) continue;
+    if (blockIp !== entry && handbackAt && handbackAt.has(`${csKey}:${blockIp}`)) continue;
     const blockStart = words.length;
     // Emission order, for the flag-liveness pass at the end. Blocks are laid
     // out back to back, so block b spans [starts[b], starts[b+1]).

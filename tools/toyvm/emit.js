@@ -6122,6 +6122,11 @@ ${EXTRA_GLOBALS}
 (func (export "get_vga_reads") (result i32) (global.get $vga_reads))
 (func (export "set_vga_reads") (param $v i32) (global.set $vga_reads (local.get $v)))
 (func (export "vga_status") (result i32) (call $vga_status))
+;; The planar byte accessors themselves, for the micro-op tier's reference
+;; interpreter (uop-ref.js): a slow-half access that lands in the VGA window
+;; goes through exactly the code L1's $rd8/$wr8 call, latches and all.
+(func (export "uop_vga_rd8") (param $l i32) (result i32) (call $vga_rd8 (local.get $l)))
+(func (export "uop_vga_wr8") (param $l i32) (param $v i32) (call $vga_wr8 (local.get $l) (local.get $v)))
 ;; The widened REP MOVS/STOS (see $rep_span_ok); --no-rep-fast is the A/B arm.
 (func (export "set_rep_fast") (param $v i32) (global.set $rep_fast (local.get $v)))
 ;; A hardware IRQ, delivered the same way the CPU delivers everything else.

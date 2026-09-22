@@ -194,6 +194,11 @@ async function runDos(o) {
     // page uses. `true` for the defaults, or an options object -- see
     // tools/toyvm/region-live.js.
     regionJit = null,
+    // `--uop`: the micro-op tier (tools/toyvm/uop-live.js). OFF by default.
+    // Profiles a window of this run, builds µop programs at its hottest
+    // blocks and runs them on the E1 engine from then on. `true` for the
+    // defaults, or an options object.
+    uop = null,
     // `--tree-fold`: the decode-time expression-tree fold
     // (tools/toyvm/tree-fold.js). OFF by default. `true` for the defaults, or
     // an options object. Like the region JIT it installs into the running
@@ -711,6 +716,7 @@ async function runDos(o) {
         // sample map: its window is a stretch of THIS run rather than a
         // fraction of a finished one.
         if (jit) jit.sample({ left, dispatched });
+        if (uopLive) uopLive.sample({ left, dispatched });
         // `--slice-log=FILE`: the cumulative dispatch count at every handback,
         // one per line. A frame hash says two runs ended somewhere different;
         // this says WHERE THE CUT MOVED, which is the only way to tell "the
@@ -764,6 +770,12 @@ async function runDos(o) {
       extras,
       ...(regionJit === true ? {} : regionJit),
     })
+    : null;
+  // The µop tier installs into the session's code cache and step(), so it is
+  // built after the session too. Its E1 module is compiled here, before the
+  // first slice; nothing it does later generates wasm.
+  const uopLive = uop
+    ? await new (require('./uop-live').UopLive)({ session, vm, log, ...(uop === true ? {} : uop) }).init()
     : null;
   let sliceT0 = 0n;
   let sliceCpu0 = null;
@@ -913,6 +925,7 @@ async function runDos(o) {
     entryHist, unimplemented, ipSamples, ipSampleLog, regions,
     // What the live region JIT did, or null when it was never asked for.
     jit: jit ? jit.stats() : null,
+    uop: uopLive ? uopLive.report() : null,
     // A program that never put the adapter in a graphics mode has no frame to
     // count, and reading A000 anyway is how ACME-SUX.EXE and AKM_DOB.EXE came
     // back with ~61,700 "pixels" each while sitting in text mode the whole run.
@@ -1112,6 +1125,14 @@ async function main() {
       gateAt: Number(arg('region-jit-gate', 1)),
       gateIters: count(arg('region-jit-gate-iters'), 4000),
       log: flag('region-jit-verbose') ? console.log : (() => {}),
+    } : null,
+    // `--uop` runs the hottest blocks of a profile window as µop programs
+    // (tools/toyvm/uop-live.js). OFF by default.
+    uop: flag('uop') ? {
+      sampleAfter: count(arg('uop-after'), 2e6),
+      profileFor: count(arg('uop-window'), 2e6),
+      top: Number(arg('uop-top', 4)),
+      log: flag('uop-verbose') ? console.log : (() => {}),
     } : null,
     // `--tree-fold` folds a block's straight-line arithmetic into one generated
     // handler (tools/toyvm/tree-fold.js). OFF by default. `--tree-fold-min=N`
@@ -1437,6 +1458,14 @@ async function main() {
   }
 
   console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
+  if (r.uop) {
+    const u = r.uop;
+    console.log(`  uop: ${u.phase}  ${u.installs} head(s) [${u.heads.map((h) => `${h.head} e=${h.entries} s=${h.steps} b=${h.bails} {${h.bailAt.join(" | ")}}`).join(', ')}]`
+      + `  entries=${u.entries} steps=${u.steps} (${(100 * u.steps / Math.max(1, r.dispatched)).toFixed(1)}% of dispatches)`
+      + `  bails=${u.bails} rebuilds=${u.rebuilds} gaveUp=${u.gaveUp}`
+      + (u.declined.length ? `  declined: ${u.declined.join('; ')}` : '')
+      + (u.demoted.length ? `  demoted: ${u.demoted.join('; ')}` : ''));
+  }
   // The live JIT's verdict, in one line: where it got to, what it installed and
   // what each stage cost. A run with `--region-jit` that says `declined` did
   // not silently fall back -- it looked, and the reason is the whole finding.

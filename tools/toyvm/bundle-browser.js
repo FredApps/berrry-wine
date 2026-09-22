@@ -367,4 +367,7 @@ function main() {
   if (!ok.every(Boolean)) process.exit(1);
 }
 
+// uop-shell-bench.js builds a private bundle from other roots.
+module.exports = { buildBundle, moduleList };
+
 if (require.main === module) main();

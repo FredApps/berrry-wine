@@ -1,0 +1,1674 @@
+'use strict';
+
+// The micro-op optimizer.
+//
+// build() turns a discovered region into ONE program with two halves:
+//
+//   SLOW  the naive lowering (uop-ir.js lower), untouched: exact L1 semantics
+//         in any machine state, one block per x86 instruction, the budget
+//         tested at every transfer. Never runs unless the fast half sends it.
+//   FAST  a copy of the same CFG that every pass below rewrites. It assumes
+//         things -- machine settings, that memory is plain RAM, that the
+//         budget covers a whole iteration -- and checks each assumption at a
+//         place where failing is cheap: a machine GUARD at entry, a memory
+//         GUARD at an access (or hoisted to the loop's preheader), and a
+//         budget CHECK at each loop header.
+//
+// A failed assumption DEOPTS: the fast half writes its state back (registers
+// to the register file, flags into L1's record) and branches to the slow
+// block for the instruction that was about to run, which then runs it the way
+// L1 would have. Every fast→slow edge lands on an instruction boundary, and
+// every fast instruction's register and flag writes come after its last
+// memory access (the lowering orders them so), so "the state before this
+// instruction" is always what the deopt writes back. The slow half re-enters
+// the fast half at a loop header, through a FASTENTER block that reloads.
+//
+// Passes (each switchable; `ablationConfigs` builds the table):
+//   promote    guest registers and segment bases live in vregs, not the
+//              register file; written back only at exits and deopts
+//   mergesink  ...and a register only ever accessed at 16 (or 8) bits stays
+//              narrow: its partial-register merges sink to the exit
+//   constprop  constant/copy propagation, algebraic simplification, DCE,
+//              coalescing of `r = mov t` into the op that made t
+//   addrfold   address arithmetic folded into the memory op's own
+//              [base + a + (c << sc) + disp] & mask form
+//   flagfwd    flag consumers read the producer's operands directly (a
+//              cmp/jcc becomes one compare-and-branch); nothing writes the L1
+//              lazy-flag record inside the loop
+//   flaglive   flag liveness as a fixpoint over the loop, back edges included,
+//              with every exit's live-out read off the code it goes to
+//   guards     machine settings (SP width, DF, shift mask) specialized under
+//              an entry guard; memory guards hoisted to the loop preheader as
+//              range checks over the induction variables and the trip count
+//   rle        redundant-load elimination and store-to-load forwarding
+//   stack      stack coalescing: SP arithmetic cancelled modulo its width, a
+//              pop forwarded from its push, and an inlined call's `ret`
+//              folded to a branch
+//   licm       loop-invariant pure ops hoisted to the preheader
+//   fuse       µop superinstructions (see FUSIONS)
+//   clock      one budget CHECK per loop header with a lookahead of the
+//              longest path to the next header; step charges summed per edge
+//              instead of one STEP per instruction
+
+const IR = require('./uop-ir');
+const { FIRST_TEMP, NREG, SEGV, CC_READS, ALL6, liveFlagsAt, flagEffect } = IR;
+
+const PASSES = ['promote', 'mergesink', 'constprop', 'addrfold', 'flagfwd', 'flaglive',
+  'guards', 'rle', 'stack', 'licm', 'fuse', 'clock'];
+const GUEST = [0, 1, 2, 3, 4, 5, 6, 7];
+
+function ablationConfigs(which = PASSES) {
+  const all = Object.fromEntries(PASSES.map(p => [p, true]));
+  const out = [['naive', null], ['none', Object.fromEntries(PASSES.map(p => [p, false]))], ['all', all]];
+  for (const p of which) out.push([`-${p}`, { ...all, [p]: false }]);
+  return out;
+}
+
+// ---------------------------------------------------------------------------
+// Operand bookkeeping for the fast half.
+// ---------------------------------------------------------------------------
+// WFLAGS names its six bit operands fc..fo, clear of the ordinary fields.
+const FLAG_FIELDS = ['fc', 'fp', 'fa', 'fz', 'fs', 'fo'];
+// The fields of an op that READ a vreg.
+function useFields(op) {
+  switch (op.o) {
+    case 'movi': case 'getr': case 'gets': case 'getm': case 'getf': case 'getfw':
+    case 'step': case 'reload': case 'guard': case 'check': case 'flush':
+      return [];
+    case 'putr': return ['a'];
+    case 'ld': return ['s', 'a', 'c'];
+    case 'st': return ['s', 'a', 'c', 'b'];
+    case 'rec': case 'wrec': case 'flagof': return ['a', 'b', 's', 'r', 'cin', 'nz', 'fcf'];
+    case 'wflags': return FLAG_FIELDS;
+    case 'grange': return ['s', 'x', 'n'];
+    default: return ['a', 'b', 'c'];
+  }
+}
+function opUses(op) {
+  const u = [];
+  for (const f of useFields(op)) { const v = op[f]; if (v !== undefined && v !== null && v >= 0) u.push(v); }
+  if (op.o === 'flush') u.push(...GUEST);
+  return u;
+}
+function mapUses(op, fn) {
+  for (const f of useFields(op)) { const v = op[f]; if (v !== undefined && v !== null && v >= 0) op[f] = fn(v, f); }
+}
+function mapTermUses(t, fn) {
+  if (!t) return;
+  if (t.o === 'bcc') { t.a = fn(t.a); if (t.b !== undefined && t.b >= 0) t.b = fn(t.b); }
+  if (t.o === 'exit' && t.ipv !== undefined) t.ipv = fn(t.ipv);
+}
+function opDef(op) {
+  if (op.o === 'reload') return -1;   // defines 0..13 (handled specially)
+  return (op.d !== undefined && op.d >= 0) ? op.d : -1;
+}
+function termUses(t) {
+  if (!t) return [];
+  if (t.o === 'bcc') return [t.a, ...(t.b !== undefined && t.b >= 0 ? [t.b] : [])];
+  if (t.o === 'exit' && t.ipv !== undefined) return [t.ipv];
+  return [];
+}
+// Pure ops can be deleted when their result is dead and moved when their
+// inputs allow. A guarded load is pure here: its only effect is a deopt, and
+// a deopt is invisible (the slow half redoes the instruction exactly).
+const PURE = new Set(['movi', 'mov', 'add', 'sub', 'and', 'or', 'xor', 'mul', 'imulov', 'eq', 'ne',
+  'addi', 'subi', 'andi', 'ori', 'xori', 'shli', 'shri', 'sari', 'sx8', 'sx16', 'merge16',
+  'merge8l', 'merge8h', 'ext8h', 'cc', 'getr', 'gets', 'getm', 'getf', 'getfw', 'flagof',
+  'addi16', 'addi8', 'shift']);
+const isPure = (op) => PURE.has(op.o) || (op.o === 'ld' && op.chk !== 'full');
+
+const clone = (o) => JSON.parse(JSON.stringify(o));
+
+// ---------------------------------------------------------------------------
+// Building the two halves.
+// ---------------------------------------------------------------------------
+class Build {
+  constructor(reg, opts) {
+    this.reg = reg;
+    this.env = opts.env || reg.env;
+    this.passes = opts.passes;
+    this.shmask = opts.shmask === undefined ? 0x1F : opts.shmask;
+    this.p = IR.lower(reg);
+    this.vm = opts.vm || null;
+    this.rd = opts.rd || (this.vm ? (lin) => this.vm.mem[lin] : null);
+    if (this.vm && opts.shmask === undefined) this.shmask = this.vm.exports.mget_shmask();
+    this.machine = opts.machine || (this.vm ? {
+      spm: this.vm.exports.mget_spm(),
+      df: (this.vm.exports.get_flags() >>> 10) & 1,
+      shmask: this.vm.exports.mget_shmask(),
+    } : null);
+    this.stats = {};
+    this.liveMemo = new Map();
+  }
+  on(name) { return !!this.passes[name]; }
+  temp() { return this.p.nv++; }
+  block(kind) {
+    const b = this.p.block(kind);
+    b.preds = []; b.succs = [];
+    return b;
+  }
+  liveAt(ip) {
+    if (!this.on('flaglive') || !this.rd) return new Set(ALL6);
+    return liveFlagsAt(this.rd, this.env, ip, { shmask: this.shmask, memo: this.liveMemo });
+  }
+  fastBlocks() { return this.p.blocks.filter(b => b.fast && b.kind !== 'dead'); }
+
+  // Copy the slow CFG into a fast one.
+  makeFast() {
+    const p = this.p;
+    const nodes = this.reg.nodes;
+    this.slowOf = p.nodeBlock;                       // node key -> slow block id
+    this.fastOf = new Map();
+    const tmap = new Map();
+    const t = (v) => {
+      if (v === undefined || v === null || v < FIRST_TEMP) return v;
+      if (!tmap.has(v)) tmap.set(v, this.temp());
+      return tmap.get(v);
+    };
+    for (const [k] of this.slowOf) {
+      const f = this.block('body');
+      f.fast = true;
+      f.nodes = [k];
+      f.ip = nodes.get(k).ip;
+      this.fastOf.set(k, f.id);
+    }
+    this.deoptStub = new Map();
+    for (const [k, sid] of this.slowOf) {
+      const s = p.blocks[sid];
+      const f = p.blocks[this.fastOf.get(k)];
+      for (const op of s.ops) {
+        const c = clone(op);
+        const fields = ['getr', 'gets', 'getm', 'movi', 'getcc', 'getf'].includes(c.o) ? ['d']
+          : c.o === 'putr' ? ['a'] : ['d', 'a', 'b', 'c', 's', 'r', 'cin', 'nz'];
+        for (const fld of fields) if (typeof c[fld] === 'number') c[fld] = t(c[fld]);
+        c.node = k;
+        if (c.o === 'ld' || c.o === 'st') { c.chk = 'guard'; c.dx = this.deopt(k); }
+        f.ops.push(c);
+      }
+      f.term = this.fastTerm(clone(s.term), t);
+    }
+    // Slow back edges re-enter the fast half at a header, set up later.
+  }
+  // Fast terminator from a slow one: body targets become fast blocks, GO stubs
+  // become fast exit stubs (which write the state back first).
+  fastTerm(term, t) {
+    const p = this.p;
+    const map = (id) => {
+      if (id === undefined || id < 0) return id;
+      const b = p.blocks[id];
+      if (b.kind === 'body' && !b.fast) return this.fastOf.get(b.node);
+      if (b.kind === 'exit') return this.exitStub(b.term, t);
+      throw new Error(`fastTerm: target ${b.kind}`);
+    };
+    if (term.o === 'br') { term.t = map(term.t); term.tx = map(term.tx); }
+    else if (term.o === 'bcc') {
+      term.t = map(term.t); term.f = map(term.f); term.tx = map(term.tx); term.fx = map(term.fx);
+      term.a = t(term.a);
+      if (term.b !== undefined && term.b >= 0) term.b = t(term.b);
+    }
+    return term;
+  }
+  exitStub(slowTerm, t) {
+    const b = this.block('fexit');
+    b.fast = true;
+    b.nodes = [];
+    b.ip = slowTerm.ip;
+    b.ops.push({ o: 'flush', exitIp: slowTerm.ip, dyn: slowTerm.ipv !== undefined });
+    b.term = { ...slowTerm };
+    if (slowTerm.ipv !== undefined) b.term.ipv = t(slowTerm.ipv);
+    return b.id;
+  }
+  // The deopt stub of an instruction: write back, then run it slowly.
+  deopt(k) {
+    if (this.deoptStub.has(k)) return this.deoptStub.get(k);
+    const b = this.block('deopt');
+    b.fast = true;
+    b.nodes = [];
+    b.node = k;
+    b.ip = this.reg.nodes.get(k).ip;
+    b.ops.push({ o: 'flush', exitIp: b.ip, node: k });
+    b.term = { o: 'br', t: this.slowOf.get(k), tx: -1, st: 0 };
+    this.deoptStub.set(k, b.id);
+    return b.id;
+  }
+
+  // Recompute preds/succs over the whole program.
+  cfg() {
+    const p = this.p;
+    for (const b of p.blocks) { b.preds = []; b.succs = []; }
+    for (const b of p.blocks) {
+      if (b.kind === 'dead') continue;
+      b.succs = [...new Set(IR.succOf(b))];
+      for (const s of b.succs) p.blocks[s].preds.push(b.id);
+    }
+  }
+
+  // Straight-line fast blocks merge into one: B -> C when B's only exit is an
+  // unchecked, uncharged br to C and B is C's only predecessor.
+  mergeStraight() {
+    const p = this.p;
+    let changed = true;
+    while (changed) {
+      changed = false;
+      this.cfg();
+      for (const b of this.fastBlocks()) {
+        if (b.kind !== 'body' || !b.term || b.term.o !== 'br' || b.term.tx >= 0 || b.term.st) continue;
+        const c = p.blocks[b.term.t];
+        if (!c.fast || c.kind !== 'body' || c === b || c.preds.length !== 1 || c.header) continue;
+        if (c.id === this.fastHead) continue;
+        b.ops.push(...c.ops);
+        b.nodes.push(...c.nodes);
+        b.term = c.term;
+        c.kind = 'dead'; c.ops = []; c.term = null;
+        changed = true;
+        break;
+      }
+    }
+    this.cfg();
+  }
+
+  // Loop headers of the fast half: DFS back-edge targets from the head.
+  findHeaders() {
+    const p = this.p;
+    for (const b of this.fastBlocks()) b.header = false;
+    const state = new Map();
+    const order = [];
+    const backEdges = [];
+    const visit = (id) => {
+      state.set(id, 1);
+      for (const s of p.blocks[id].succs) {
+        const sb = p.blocks[s];
+        if (!sb.fast || sb.kind !== 'body') continue;
+        if (state.get(s) === 1) { sb.header = true; backEdges.push([id, s]); } else if (!state.has(s)) visit(s);
+      }
+      state.set(id, 2);
+      order.push(id);
+    };
+    visit(this.fastHead);
+    p.blocks[this.fastHead].header = true;
+    this.rpo = order.reverse();
+    this.backEdges = backEdges;
+    this.backSet = new Set(backEdges.map(([a, b]) => `${a}>${b}`));
+  }
+
+  // Natural loop body of each header (for LICM, guards): blocks that reach a
+  // back edge into h without passing through h.
+  loopOf(h) {
+    const p = this.p;
+    const body = new Set([h]);
+    const st = this.backEdges.filter(([, t]) => t === h).map(([s]) => s);
+    while (st.length) {
+      const x = st.pop();
+      if (body.has(x)) continue;
+      body.add(x);
+      for (const q of p.blocks[x].preds) if (p.blocks[q].fast && p.blocks[q].kind === 'body') st.push(q);
+    }
+    return body;
+  }
+
+  // FASTENTER(h): machine guards, reload, then into the loop at h. The
+  // program's own entry is FASTENTER(head); slow back edges into a header go
+  // to that header's FASTENTER.
+  makeEntries() {
+    const p = this.p;
+    this.enterOf = new Map();
+    for (const b of this.fastBlocks()) {
+      if (!b.header) continue;
+      const e = this.block('fenter');
+      e.fast = true;
+      e.nodes = [];
+      e.header_of = b.id;
+      e.ip = b.ip;
+      e.ops.push({ o: 'reload' });
+      e.term = { o: 'br', t: b.id, tx: -1, st: 0 };
+      this.enterOf.set(b.id, e.id);
+    }
+    p.entry = this.enterOf.get(this.fastHead);
+    // Slow edges into a header's slow block re-enter the fast half there.
+    const slowToFast = new Map();
+    for (const [k, sid] of this.slowOf) {
+      const f = this.fastOf.get(k);
+      const fb = p.blocks[f];
+      if (fb && fb.header && fb.nodes[0] === k) slowToFast.set(sid, this.enterOf.get(f));
+    }
+    for (const b of p.blocks) {
+      if (b.fast || b.kind !== 'body' || !b.term) continue;
+      const t = b.term;
+      if (t.o === 'br' && slowToFast.has(t.t)) t.t = slowToFast.get(t.t);
+      if (t.o === 'bcc') {
+        if (slowToFast.has(t.t)) t.t = slowToFast.get(t.t);
+        if (slowToFast.has(t.f)) t.f = slowToFast.get(t.f);
+      }
+    }
+    this.cfg();
+  }
+
+  // Every op in the fast half, with its block and position.
+  *allOps() {
+    for (const b of this.fastBlocks()) for (let i = 0; i < b.ops.length; i++) yield [b, i, b.ops[i]];
+  }
+}
+
+// ---------------------------------------------------------------------------
+// promote (+ mergesink)
+// ---------------------------------------------------------------------------
+function promote(B) {
+  const narrow = new Map();      // reg -> 16 | 8 (low byte) when mergesink holds
+  if (B.on('mergesink')) {
+    const widths = new Map();
+    for (const [, , op] of B.allOps()) {
+      if (op.o !== 'getr' && op.o !== 'putr') continue;
+      if (!widths.has(op.r)) widths.set(op.r, new Set());
+      widths.get(op.r).add(op.w);
+    }
+    for (const [r, ws] of widths) {
+      if (ws.has(32)) continue;
+      if (ws.size === 1 && ws.has(8)) narrow.set(r, 8);
+      else narrow.set(r, 16);
+    }
+  }
+  B.narrow = narrow;
+  let n = 0;
+  for (const [, , op] of B.allOps()) {
+    if (op.o === 'getr') {
+      const nw = narrow.get(op.r);
+      const r = op.r;
+      delete op.r;
+      if (op.w === 32 || (nw && op.w === nw) || (nw === 16 && op.w === 16)) { op.o = 'mov'; op.a = r; }
+      else if (op.w === 16) { op.o = 'andi'; op.a = r; op.i = 0xFFFF; }
+      else if (op.w === 8) { op.o = 'andi'; op.a = r; op.i = 0xFF; }
+      else if (op.w === 9) { op.o = 'ext8h'; op.a = r; }
+      op.w = 32;
+      n++;
+    } else if (op.o === 'putr') {
+      const nw = narrow.get(op.r);
+      const r = op.r;
+      delete op.r;
+      op.d = r;
+      if (op.w === 32 || (nw && op.w === nw)) { op.o = 'mov'; }
+      else if (op.w === 16) { op.o = 'merge16'; op.b = op.a; op.a = r; }
+      else if (op.w === 8) { op.o = 'merge8l'; op.b = op.a; op.a = r; }
+      else if (op.w === 9) { op.o = 'merge8h'; op.b = op.a; op.a = r; }
+      op.w = 32;
+      n++;
+    } else if (op.o === 'gets') {
+      op.o = 'mov'; op.a = SEGV + op.s; delete op.s; n++;
+    }
+  }
+  B.promoted = true;
+  B.stats.promoted = n;
+}
+
+// ---------------------------------------------------------------------------
+// Liveness of vregs over the fast half (dx edges included).
+// ---------------------------------------------------------------------------
+function vregLiveness(B) {
+  const p = B.p;
+  const blocks = B.fastBlocks();
+  const liveIn = new Map();
+  for (const b of blocks) liveIn.set(b.id, new Set());
+  const blockLiveIn = (b, liveOut) => {
+    const live = new Set(liveOut);
+    for (const u of termUses(b.term)) live.add(u);
+    for (let i = b.ops.length - 1; i >= 0; i--) {
+      const op = b.ops[i];
+      const d = opDef(op);
+      if (d >= 0) live.delete(d);
+      if (op.o === 'reload') for (let r = 0; r < FIRST_TEMP; r++) live.delete(r);
+      for (const u of opUses(op)) live.add(u);
+      if (op.dx !== undefined && op.dx >= 0 && liveIn.has(op.dx)) for (const u of liveIn.get(op.dx)) live.add(u);
+    }
+    return live;
+  };
+  const liveOutOf = (b) => {
+    const out = new Set();
+    for (const s of IR.succOf(b)) {
+      const sb = p.blocks[s];
+      if (!sb.fast) continue;
+      if (b.ops.some(o => o.dx === s)) continue;       // dx edges are mid-block
+      for (const u of liveIn.get(s) || []) out.add(u);
+    }
+    return out;
+  };
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let k = blocks.length - 1; k >= 0; k--) {
+      const b = blocks[k];
+      const li = blockLiveIn(b, liveOutOf(b));
+      const old = liveIn.get(b.id);
+      if (li.size !== old.size || [...li].some(x => !old.has(x))) { liveIn.set(b.id, li); changed = true; }
+    }
+  }
+  return { liveIn, liveOutOf };
+}
+
+// ---------------------------------------------------------------------------
+// constprop: forward simplification per block + global DCE, to a fixpoint.
+// ---------------------------------------------------------------------------
+const U32 = (v) => v >>> 0;
+const isMask = (m) => m !== 0 && ((m >>> 0) & ((m >>> 0) + 1)) === 0;    // 2^k - 1
+const bitsOfConst = (v) => (v >>> 0 === 0 ? 0 : 32 - Math.clz32(v >>> 0));
+
+function evalPure(op, a, b) {
+  const i = op.i | 0;
+  switch (op.o) {
+    case 'mov': return a;
+    case 'add': return (a + b) | 0;
+    case 'sub': return (a - b) | 0;
+    case 'and': return a & b;
+    case 'or': return a | b;
+    case 'xor': return a ^ b;
+    case 'mul': return Math.imul(a, b);
+    case 'eq': return a === b ? 1 : 0;
+    case 'ne': return a !== b ? 1 : 0;
+    case 'addi': return (a + i) | 0;
+    case 'subi': return (a - i) | 0;
+    case 'andi': return a & i;
+    case 'ori': return a | i;
+    case 'xori': return a ^ i;
+    case 'shli': return a << i;
+    case 'shri': return a >>> i;
+    case 'sari': return a >> i;
+    case 'sx8': return (a << 24) >> 24;
+    case 'sx16': return (a << 16) >> 16;
+    case 'ext8h': return (a >>> 8) & 0xFF;
+    case 'merge16': return (a & ~0xFFFF) | (b & 0xFFFF);
+    case 'merge8l': return (a & ~0xFF) | (b & 0xFF);
+    case 'merge8h': return (a & ~0xFF00) | ((b & 0xFF) << 8);
+    case 'addi16': return (a + i) & 0xFFFF;
+    case 'addi8': return (a + i) & 0xFF;
+    case 'cc': return require('./uop-ref').cond(op.cc, a, op.b >= 0 ? b : op.i | 0, op.w) ? 1 : 0;
+    default: return undefined;
+  }
+}
+
+function constprop(B) {
+  let total = 0;
+  for (let round = 0; round < 12; round++) {
+    let changed = simplifyBlocks(B);
+    changed += dce(B);
+    total += changed;
+    if (!changed) break;
+  }
+  B.stats.constprop = (B.stats.constprop || 0) + total;
+}
+
+// Global facts about single-def temps.
+function tempDefs(B) {
+  const defs = new Map();
+  const count = new Map();
+  for (const [b, i, op] of B.allOps()) {
+    const d = opDef(op);
+    if (d < FIRST_TEMP) continue;
+    count.set(d, (count.get(d) || 0) + 1);
+    defs.set(d, { b, i, op });
+  }
+  for (const [d, n] of count) if (n > 1) defs.delete(d);
+  return defs;
+}
+function useCounts(B) {
+  const n = new Map();
+  const inc = (v) => n.set(v, (n.get(v) || 0) + 1);
+  for (const [, , op] of B.allOps()) for (const u of opUses(op)) inc(u);
+  for (const b of B.fastBlocks()) for (const u of termUses(b.term)) inc(u);
+  return n;
+}
+
+function simplifyBlocks(B) {
+  const defs = tempDefs(B);
+  const uses = useCounts(B);
+  let changed = 0;
+  // Constant and bit-width facts for single-def temps, computed lazily.
+  const konst = (v) => {
+    if (v < FIRST_TEMP) return undefined;
+    const d = defs.get(v);
+    return d && d.op.o === 'movi' ? d.op.i | 0 : undefined;
+  };
+  const narrowBits = (r) => (B.narrow && B.narrow.get(r)) || 32;
+  const bitsMemo = new Map();
+  const bits = (v, depth = 0) => {
+    if (v < 0) return 32;
+    if (v < NREG) return narrowBits(v);
+    if (v < FIRST_TEMP) return 32;
+    if (bitsMemo.has(v)) return bitsMemo.get(v);
+    const d = defs.get(v);
+    let r = 32;
+    if (d && depth < 8) {
+      const op = d.op;
+      switch (op.o) {
+        case 'movi': r = bitsOfConst(op.i); break;
+        case 'andi': r = Math.min(bitsOfConst(op.i), bits(op.a, depth + 1)); break;
+        case 'and': r = Math.min(bits(op.a, depth + 1), bits(op.b, depth + 1)); break;
+        case 'ld': r = op.w; break;
+        case 'ext8h': r = 8; break;
+        case 'mov': r = bits(op.a, depth + 1); break;
+        case 'cc': case 'eq': case 'ne': case 'flagof': case 'getf': case 'imulov': case 'parity': r = 1; break;
+        case 'shri': r = Math.max(0, bits(op.a, depth + 1) - op.i); break;
+        case 'or': case 'xor': r = Math.max(bits(op.a, depth + 1), bits(op.b, depth + 1)); break;
+        case 'merge8l': r = Math.max(8, bits(op.a, depth + 1)); break;
+        case 'merge8h': r = Math.max(16, bits(op.a, depth + 1)); break;
+        case 'merge16': r = Math.max(16, bits(op.a, depth + 1)); break;
+        case 'addim': r = bitsOfConst(op.m); break;
+        default: r = 32;
+      }
+    }
+    bitsMemo.set(v, r);
+    return r;
+  };
+  const defOp = (v) => (v >= FIRST_TEMP && defs.has(v) ? defs.get(v).op : null);
+
+  for (const b of B.fastBlocks()) {
+    // Within a block: the current value of each guest vreg, as a temp it is
+    // known to equal (so later reads can use the temp, or vice versa).
+    const eqTemp = new Map();        // guest vreg -> temp holding its value
+    const guestCopy = new Map();     // temp -> guest vreg it is a copy of
+    const lastDef = new Map();       // guest vreg -> op index of its latest def
+    for (let i = 0; i < b.ops.length; i++) {
+      const op = b.ops[i];
+      // Replace temp operands that are plain copies of another single-def temp.
+      if (!op.pin) {
+        mapUses(op, (v) => {
+          if (v < FIRST_TEMP) return v;
+          const d = defOp(v);
+          if (d && d.o === 'mov' && d.a >= FIRST_TEMP && defs.has(d.a)) { changed++; return d.a; }
+          return v;
+        });
+      }
+      // A copy of a guest vreg made earlier in this block: read the guest
+      // vreg itself, while it still holds that value.
+      mapUses(op, (v) => (guestCopy.has(v) ? (changed++, guestCopy.get(v)) : v));
+      // Constant folding.
+      if (PURE.has(op.o) && op.o !== 'movi' && op.o !== 'getr' && op.o !== 'gets' && op.o !== 'getm'
+          && op.o !== 'getf' && op.o !== 'getfw' && op.o !== 'flagof' && op.o !== 'ld') {
+        const ka = op.a !== undefined && op.a >= 0 ? konst(op.a) : 0;
+        const needB = ['add', 'sub', 'and', 'or', 'xor', 'mul', 'eq', 'ne', 'merge16', 'merge8l', 'merge8h'].includes(op.o)
+          || (op.o === 'cc' && op.b >= 0);
+        const kb = needB ? konst(op.b) : 0;
+        if (ka !== undefined && kb !== undefined) {
+          const v = evalPure(op, ka, kb);
+          if (v !== undefined) { rewrite(op, { o: 'movi', d: op.d, i: v | 0 }); changed++; }
+        }
+      }
+      // Algebra. `fwd(D, regs)`: may this op read D's operands `regs` in
+      // place of D's result? Yes when they still hold the values D saw:
+      // D earlier in this block with no redefinition since, or every one a
+      // temp defined ahead of D in D's own block.
+      const fwd = (D, regs) => {
+        const e = defs.get(D.d);
+        if (!e) return false;
+        const j = e.b === b ? b.ops.indexOf(D) : -1;
+        if (j >= 0 && j < i) {
+          for (let k = j + 1; k < i; k++) {
+            const x = b.ops[k];
+            if (x.o === 'reload' || regs.includes(opDef(x))) return false;
+          }
+          return true;
+        }
+        const jd = e.b.ops.indexOf(D);
+        return regs.every((r) => {
+          if (r < FIRST_TEMP) return false;
+          const f = defs.get(r);
+          return f && f.b === e.b && f.b.ops.indexOf(f.op) < jd;
+        });
+      };
+      changed += algebra(op, konst, bits, defOp, fwd, B, b, i);
+      const d = opDef(op);
+      if (d >= FIRST_TEMP) for (const [r, tv] of eqTemp) if (tv === d) eqTemp.delete(r);
+      if (d >= 0) {
+        guestCopy.delete(d);
+        for (const [tv, r] of guestCopy) if (r === d) guestCopy.delete(tv);
+        if (op.o === 'mov' && d >= FIRST_TEMP && op.a < FIRST_TEMP && op.a >= 0) guestCopy.set(d, op.a);
+      }
+      if (op.o === 'reload') guestCopy.clear();
+      if (d >= 0 && d < NREG) {
+        eqTemp.delete(d);
+        if (op.o === 'mov' && op.a >= FIRST_TEMP && defs.has(op.a)) eqTemp.set(d, op.a);
+        lastDef.set(d, i);
+      }
+      if (op.o === 'reload') { eqTemp.clear(); }
+      // A guest-vreg read whose value is a known temp: read the temp instead.
+      if (op.o === 'mov' && op.a >= 0 && op.a < NREG && eqTemp.has(op.a) && op.d >= FIRST_TEMP) {
+        op.a = eqTemp.get(op.a); changed++;
+      }
+    }
+    if (b.term) mapTermUses(b.term, (v) => (guestCopy.has(v) ? (changed++, guestCopy.get(v)) : v));
+    changed += coalesce(B, b, useCounts(B));
+  }
+  // Branch folding and cc fusion into the terminator.
+  for (const b of B.fastBlocks()) {
+    const t = b.term;
+    if (!t || t.o !== 'bcc') continue;
+    const d = defOp(t.a);
+    if (t.cc === 'nz' && d && d.o === 'cc' && (uses.get(t.a) || 0) === 1 && t.w === 32
+        && d.w !== undefined) {
+      t.cc = d.cc; t.a = d.a; t.b = d.b; t.i = d.i; t.w = d.w;
+      changed++;
+      continue;
+    }
+    if ((t.cc === 'nz' || t.cc === 'z') && d && (d.o === 'eq' || d.o === 'ne') && (uses.get(t.a) || 0) === 1) {
+      const neg = (d.o === 'ne') !== (t.cc === 'nz');
+      t.cc = neg ? 'ne' : 'eq';
+      t.a = d.a; t.b = d.b; t.w = 32;
+      changed++;
+      continue;
+    }
+    const hasB = t.b !== undefined && t.b >= 0;
+    const kbv = hasB ? konst(t.b) : undefined;
+    if (hasB && kbv !== undefined) { t.i = kbv; t.b = -1; changed++; }
+    const ka = konst(t.a);
+    if (ka !== undefined && !(t.b >= 0)) {
+      const taken = require('./uop-ref').cond(t.cc, ka, t.i | 0, t.w || 32);
+      b.term = taken ? { o: 'br', t: t.t, tx: t.tx, st: t.sT || 0 } : { o: 'br', t: t.f, tx: t.fx, st: t.sF || 0 };
+      changed++;
+    }
+  }
+  if (changed) B.cfg();
+  return changed;
+}
+
+function rewrite(op, n) {
+  for (const k of Object.keys(op)) if (!['ip', 'node'].includes(k)) delete op[k];
+  Object.assign(op, n);
+}
+
+// Local algebraic rules. Returns 1 when it changed the op. A rule that reads
+// through a defining op D to D's operands asks fwd(D, operands) first.
+function algebra(op, konst, bits, defOp, fwd, B, b, i) {
+  const o = op.o;
+  const kb = (op.b !== undefined && op.b >= 0) ? konst(op.b) : undefined;
+  const ka = (op.a !== undefined && op.a >= 0) ? konst(op.a) : undefined;
+  const imm = { add: 'addi', and: 'andi', or: 'ori', xor: 'xori' };
+  if (imm[o] && kb !== undefined) { rewrite(op, { o: imm[o], d: op.d, a: op.a, i: kb, w: 32 }); return 1; }
+  if (imm[o] && ka !== undefined && o !== 'sub') { rewrite(op, { o: imm[o], d: op.d, a: op.b, i: ka, w: 32 }); return 1; }
+  if ((o === 'xor' || o === 'sub') && op.a === op.b) { rewrite(op, { o: 'movi', d: op.d, i: 0 }); return 1; }
+  if ((o === 'and' || o === 'or') && op.a === op.b) { rewrite(op, { o: 'mov', d: op.d, a: op.a }); return 1; }
+  if (o === 'sub' && kb !== undefined) { rewrite(op, { o: 'addi', d: op.d, a: op.a, i: -kb | 0, w: 32 }); return 1; }
+  if (o === 'subi') { rewrite(op, { o: 'addi', d: op.d, a: op.a, i: -op.i | 0, w: 32 }); return 1; }
+  if ((o === 'addi' || o === 'ori' || o === 'xori' || o === 'shli' || o === 'shri' || o === 'sari') && (op.i | 0) === 0) {
+    rewrite(op, { o: 'mov', d: op.d, a: op.a }); return 1;
+  }
+  const D = (o !== 'movi' && op.a >= 0) ? defOp(op.a) : null;
+  if (o === 'andi') {
+    const m = op.i >>> 0;
+    if (m === 0xFFFFFFFF || (isMask(m) && bits(op.a) <= bitsOfConst(m))) { rewrite(op, { o: 'mov', d: op.d, a: op.a }); return 1; }
+    if (D && D.o === 'andi' && fwd(D, [D.a])) { rewrite(op, { o: 'andi', d: op.d, a: D.a, i: (D.i & op.i) | 0, w: 32 }); return 1; }
+    // Arithmetic mod 2^n: ((y & M) + k) & M == (y + k) & M. The sum is a new
+    // op (D itself may have other readers); it lands just ahead of this one.
+    if (B && B.on('stack') && isMask(m) && D && D.o === 'addi') {
+      const E = defOp(D.a);
+      if (E && E.o === 'andi' && (E.i >>> 0) === m && fwd(E, [E.a]) && fwd(D, [D.a])) {
+        const t = B.temp();
+        b.ops.splice(i, 0, { o: 'addi', d: t, a: E.a, i: D.i, w: 32 });
+        op.a = t;
+        return 1;
+      }
+    }
+  }
+  if (o === 'addi' && D && D.o === 'addi' && fwd(D, [D.a])) {
+    rewrite(op, { o: 'addi', d: op.d, a: D.a, i: (D.i + op.i) | 0, w: 32 }); return 1;
+  }
+  if (o === 'merge16' || o === 'merge8l') {
+    const lim = o === 'merge16' ? 16 : 8;
+    const M = o === 'merge16' ? 0xFFFF : 0xFF;
+    if (bits(op.a) <= lim && bits(op.b) <= lim) { rewrite(op, { o: 'mov', d: op.d, a: op.b }); return 1; }
+    if (op.a === op.b) { rewrite(op, { o: 'mov', d: op.d, a: op.a }); return 1; }
+    // merge(merge(x, y), z): the inner low half is overwritten.
+    if (D && D.o === o && fwd(D, [D.a])) { op.a = D.a; return 1; }
+    const Bd = op.b >= 0 ? defOp(op.b) : null;
+    if (Bd) {
+      // merge(a, a & M) == a
+      if (Bd.o === 'andi' && (Bd.i >>> 0) === M && Bd.a === op.a && fwd(Bd, [Bd.a])) {
+        rewrite(op, { o: 'mov', d: op.d, a: op.a }); return 1;
+      }
+      // merge(a, (a & M) ^ k) == a ^ k for k within M; likewise |.
+      if ((Bd.o === 'xori' || Bd.o === 'ori') && ((Bd.i >>> 0) & ~M) === 0) {
+        const C = defOp(Bd.a);
+        if (C && C.o === 'andi' && (C.i >>> 0) === M && C.a === op.a && fwd(C, [C.a]) && fwd(Bd, [Bd.a])) {
+          rewrite(op, { o: Bd.o, d: op.d, a: op.a, i: Bd.i, w: 32 }); return 1;
+        }
+      }
+      // merge(a, b & M) == merge(a, b)
+      if (Bd.o === 'andi' && ((Bd.i >>> 0) & M) === M && fwd(Bd, [Bd.a])) { op.b = Bd.a; return 1; }
+    }
+  }
+  if (o === 'sx8' && bits(op.a) <= 7) { rewrite(op, { o: 'mov', d: op.d, a: op.a }); return 1; }
+  if (o === 'sx16' && bits(op.a) <= 15) { rewrite(op, { o: 'mov', d: op.d, a: op.a }); return 1; }
+  if (o === 'getm' && op.k !== undefined) { rewrite(op, { o: 'movi', d: op.d, i: op.k }); return 1; }
+  return 0;
+}
+
+// `t = f(...); ...; r = mov t` with t used only in this block after the mov,
+// and r neither read nor written between: make f write r directly.
+function coalesce(B, b, uses) {
+  let changed = 0;
+  for (let i = 0; i < b.ops.length; i++) {
+    const mv = b.ops[i];
+    if (mv.o !== 'mov' || mv.d < 0 || mv.a < FIRST_TEMP || mv.d === mv.a) continue;
+    const t = mv.a, r = mv.d;
+    let j = i - 1;
+    while (j >= 0 && opDef(b.ops[j]) !== t) j--;
+    if (j < 0) continue;
+    const src = b.ops[j];
+    if (!isPure(src) && src.o !== 'ld') continue;
+    // r untouched and t unused between src and mv.
+    let ok = true;
+    for (let k = j + 1; k < i && ok; k++) {
+      const x = b.ops[k];
+      if (opUses(x).includes(r) || opDef(x) === r || opUses(x).includes(t)) ok = false;
+      if (x.dx !== undefined) ok = false;         // a deopt between must see the old r
+      if (x.o === 'reload' || x.o === 'flush') ok = false;
+    }
+    if (!ok) continue;
+    // Every other use of t: after mv in this block, before any redefinition of r.
+    let local = 0, redef = false;
+    for (let k = i + 1; k < b.ops.length; k++) {
+      const x = b.ops[k];
+      if (opUses(x).includes(t)) { if (redef) { ok = false; break; } local++; }
+      if (opDef(x) === r) redef = true;
+    }
+    if (!ok) continue;
+    const tu = termUses(b.term).filter(u => u === t).length;
+    if (tu && redef) continue;
+    if ((uses.get(t) || 0) !== 1 + local + tu) continue;
+    src.d = r;
+    for (let k = i + 1; k < b.ops.length; k++) mapUses(b.ops[k], (v) => (v === t ? r : v));
+    mapTermUses(b.term, (v) => (v === t ? r : v));
+    b.ops.splice(i, 1);
+    i--;
+    changed++;
+  }
+  return changed;
+}
+
+function dce(B) {
+  const { liveIn, liveOutOf } = vregLiveness(B);
+  let removed = 0;
+  for (const b of B.fastBlocks()) {
+    const live = liveOutOf(b);
+    for (const u of termUses(b.term)) live.add(u);
+    for (let i = b.ops.length - 1; i >= 0; i--) {
+      const op = b.ops[i];
+      const d = opDef(op);
+      if (isPure(op) && d >= 0 && !live.has(d)) { b.ops.splice(i, 1); removed++; continue; }
+      if (op.o === 'mov' && op.d === op.a) { b.ops.splice(i, 1); removed++; continue; }
+      if (d >= 0) live.delete(d);
+      if (op.o === 'reload') for (let r = 0; r < FIRST_TEMP; r++) live.delete(r);
+      for (const u of opUses(op)) live.add(u);
+      if (op.dx !== undefined && op.dx >= 0 && liveIn.has(op.dx)) for (const u of liveIn.get(op.dx)) live.add(u);
+    }
+  }
+  return removed;
+}
+
+// ---------------------------------------------------------------------------
+// Flags: liveness, and forwarding.
+// ---------------------------------------------------------------------------
+const REC_DEFS = {
+  add: ALL6, sub: ALL6, add32: ALL6, sub32: ALL6, logic: ALL6,
+  inc: ['p', 'a', 'z', 's', 'o'], dec: ['p', 'a', 'z', 's', 'o'],
+  inc32: ['p', 'a', 'z', 's', 'o'], dec32: ['p', 'a', 'z', 's', 'o'],
+  mul: ['c', 'o'],
+};
+// A constant-count shift writes CF and OF, and a shift proper SF/ZF/PF too;
+// AF is left alone, and a rotate leaves SF/ZF/PF alone as well.
+function recDefs(op) {
+  if (op.k === 'shift') return op.sh === 'rol' || op.sh === 'ror' ? ['c', 'o'] : ['c', 'o', 'p', 'z', 's'];
+  return REC_DEFS[op.k];
+}
+// Flags a shift certainly writes (a count that is a nonzero constant).
+function callhDefs(op, shmask) {
+  const n = op.nconst === null || op.nconst === undefined ? 0 : (op.nconst & shmask);
+  if (!n) return [];
+  return op.sh === 'rol' || op.sh === 'ror' ? ['c', 'o'] : ['c', 'o', 'p', 'z', 's'];
+}
+
+// Which flags each flush point needs, by where it goes.
+function flushFlags(B, op) {
+  if (op.dyn) return new Set(ALL6);          // a return to an unknown address
+  return B.liveAt(op.exitIp);
+}
+
+// Backward flag liveness. Returns liveAfter per op (Map op -> Set).
+function flagLiveness(B) {
+  const p = B.p;
+  const blocks = B.fastBlocks();
+  const liveIn = new Map(blocks.map(b => [b.id, new Set()]));
+  const after = new Map();
+  const step = (b, out) => {
+    const live = new Set(out);
+    for (let i = b.ops.length - 1; i >= 0; i--) {
+      const op = b.ops[i];
+      if (op.dx !== undefined && op.dx >= 0) for (const f of liveIn.get(op.dx) || []) live.add(f);
+      after.set(op, new Set(live));
+      if (op.o === 'rec') for (const f of recDefs(op)) live.delete(f);
+      else if (op.o === 'getcc') for (const f of CC_READS[op.cc]) live.add(f);
+      else if (op.o === 'callh') for (const f of callhDefs(op, B.shmask)) live.delete(f);
+      else if (op.o === 'flush') for (const f of flushFlags(B, op)) live.add(f);
+      else if (op.o === 'reload') live.clear();
+    }
+    return live;
+  };
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let k = blocks.length - 1; k >= 0; k--) {
+      const b = blocks[k];
+      const out = new Set();
+      for (const s of IR.succOf(b)) {
+        if (!p.blocks[s].fast || b.ops.some(o => o.dx === s)) continue;
+        for (const f of liveIn.get(s) || []) out.add(f);
+      }
+      const li = step(b, out);
+      const old = liveIn.get(b.id);
+      if (li.size !== old.size || [...li].some(x => !old.has(x))) { liveIn.set(b.id, li); changed = true; }
+    }
+  }
+  return { after, liveIn };
+}
+
+// Dead-record elimination on the L1 model (flaglive without flagfwd).
+function killDeadRecs(B) {
+  const { after } = flagLiveness(B);
+  let n = 0;
+  for (const b of B.fastBlocks()) {
+    b.ops = b.ops.filter(op => {
+      if (op.o !== 'rec') return true;
+      const live = after.get(op);
+      if (recDefs(op).some(f => live.has(f))) return true;
+      n++;
+      return false;
+    });
+  }
+  B.stats.deadRecs = n;
+}
+
+// Forwarding. Each flag's SOURCE at a point is a set of rec ops, or 'L1' (the
+// lazy record as it stood at a FASTENTER or after a shift helper -- both leave
+// the value in L1's state, where a getter can read it). A consumer whose flag
+// has one source reads it straight off that producer's operands; one with
+// several reads a merge vreg FV_f that every producer of f keeps up to date.
+//
+// A producer's operands are vregs, and a vreg can be redefined between the
+// producer and a consumer -- a loop whose consumer comes around the back edge
+// to its own producer's instruction, or a promoted register the producer read
+// and a later instruction wrote. The dataflow tracks, per point, which
+// producers are DIRTY that way, and a consumer of a dirty producer goes
+// through FV_f as well.
+function forwardFlags(B) {
+  const p = B.p;
+  const blocks = B.fastBlocks();
+  const { after: liveAfter } = flagLiveness(B);
+  const L1 = 'L1';
+  const REC_OPS = ['a', 'b', 's', 'r', 'cin', 'nz'];
+  // A shift by a nonzero constant (under the shift-mask guard) is computed
+  // inline, with a SHIFT record in place of the helper's direct flag write.
+  if (B.on('guards')) {
+    for (const b of blocks) {
+      for (let i = 0; i < b.ops.length; i++) {
+        const op = b.ops[i];
+        if (op.o !== 'callh' || op.nconst === null || op.nconst === undefined) continue;
+        const n = op.nconst & B.shmask;
+        if (!n) continue;
+        // The record reads the shift's INPUT and goes in after the rest of the
+        // instruction -- after the promoted write-back `mov edx = t` too. So
+        // when the shift, or anything between it and the record, writes the
+        // register the input came from (rol dx,1 is exactly that), the record
+        // would see the rotated value: keep the input in a temp. Dead flags
+        // take the rec and the copy out together.
+        let j = i + 1;
+        while (j < b.ops.length && b.ops[j].node === op.node) j++;
+        let src = op.a;
+        const clobbered = op.d === op.a || b.ops.slice(i + 1, j).some(x => opDef(x) === op.a);
+        if (clobbered) {
+          src = B.temp();
+          b.ops.splice(i, 0, { o: 'mov', d: src, a: op.a, w: 32, node: op.node, ip: op.ip });
+          i++; j++;
+        }
+        const rec = { o: 'rec', k: 'shift', sh: op.sh, w: op.w, a: src, i: n, r: op.d, node: op.node, ip: op.ip };
+        rewrite(op, { o: 'shift', d: op.d, a: op.a, sh: op.sh, w: op.w, i: n });
+        b.ops.splice(j, 0, rec);
+      }
+    }
+  }
+  // An inc/dec's operand is its result less one: derive it, and the producer
+  // keeps only the result alive.
+  for (const [, , op] of B.allOps()) {
+    if (op.o === 'rec' && ['inc', 'dec', 'inc32', 'dec32'].includes(op.k)) { op.a = -1; op.s = -1; }
+  }
+  const readsOf = new Map();
+  for (const [, , op] of B.allOps()) {
+    if (op.o === 'rec') readsOf.set(op, new Set(REC_OPS.map(f => op[f]).filter(x => x !== undefined && x >= 0)));
+  }
+  const empty = () => ({ ...Object.fromEntries(ALL6.map(f => [f, new Set()])), dirty: new Set() });
+  const copy = (s) => ({ ...Object.fromEntries(ALL6.map(f => [f, new Set(s[f])])), dirty: new Set(s.dirty) });
+  const join = (into, o) => { for (const f of [...ALL6, 'dirty']) for (const x of o[f]) into[f].add(x); };
+  const eq = (x, y) => [...ALL6, 'dirty'].every(f => x[f].size === y[f].size && [...x[f]].every(v => y[f].has(v)));
+  const before = new Map();
+  const transfer = (op, s) => {
+    const d = opDef(op);
+    const clobbers = (x) => {
+      for (const f of ALL6) for (const src of s[f]) if (src !== L1 && readsOf.get(src).has(x)) s.dirty.add(src);
+    };
+    if (d >= 0) clobbers(d);
+    if (op.o === 'reload') for (let r = 0; r < FIRST_TEMP; r++) clobbers(r);
+    if (op.o === 'rec') { for (const f of recDefs(op)) s[f] = new Set([op]); s.dirty.delete(op); }
+    else if (op.o === 'callh' || op.o === 'reload') for (const f of ALL6) s[f] = new Set([L1]);
+  };
+  const run = (b, s) => {
+    s = copy(s);
+    for (const op of b.ops) { before.set(op, copy(s)); transfer(op, s); }
+    return s;
+  };
+  const srcIn = new Map();
+  const outOf = new Map();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const b of blocks) {
+      let inS = null;
+      const add = (o) => { if (!inS) inS = copy(o); else join(inS, o); };
+      if (b.kind === 'fenter') add(empty());
+      for (const q of b.preds) {
+        const qb = p.blocks[q];
+        if (!qb.fast) continue;
+        const viaDx = qb.ops.filter(op => op.dx === b.id);
+        if (viaDx.length) { for (const op of viaDx) if (before.has(op)) add(before.get(op)); } else if (outOf.has(q)) add(outOf.get(q));
+      }
+      if (!inS) continue;
+      const old = srcIn.get(b.id);
+      if (old && eq(old, inS) && outOf.has(b.id)) continue;
+      srcIn.set(b.id, inS);
+      outOf.set(b.id, run(b, inS));
+      changed = true;
+    }
+  }
+
+  // Consumers, and the flags each one needs.
+  const needOf = (op) => {
+    if (op.o === 'getcc') return CC_READS[op.cc];
+    if (op.o === 'flush') return [...flushFlags(B, op)];
+    if (op.o === 'callh') {
+      const live = liveAfter.get(op) || new Set(ALL6);
+      const defs = callhDefs(op, B.shmask);
+      return [...live].filter(f => !defs.includes(f));
+    }
+    return null;
+  };
+  // A source set is DIRECT when it is one clean producer, or L1 alone.
+  const direct = (pre, f) => {
+    const s = pre[f];
+    if (s.size !== 1) return false;
+    const [src] = s;
+    return src === L1 || !pre.dirty.has(src);
+  };
+  const needFV = new Set();
+  for (const b of blocks) {
+    for (const op of b.ops) {
+      const need = needOf(op);
+      if (!need || !before.has(op)) continue;
+      for (const f of need) if (!direct(before.get(op), f)) needFV.add(f);
+    }
+  }
+  const FV = {};
+  for (const f of needFV) FV[f] = B.temp();
+  B.stats.flagMerge = [...needFV].join('') || '-';
+
+  // One flag of a producer, carrying only the operands that flag reads.
+  const flagOf = (rec, f, out) => {
+    const d = B.temp();
+    const op = { o: 'flagof', d, f, k: rec.k, w: rec.w, pin: true };
+    for (const x of flagOperands(rec, f)) op[x] = rec[x];
+    if (rec.k === 'shift') { op.sh = rec.sh; op.i = rec.i; }
+    out.push(op);
+    return d;
+  };
+  const valueOf = (f, pre, out) => {
+    if (!direct(pre, f)) return FV[f];
+    const [src] = pre[f];
+    if (src === L1) { const d = B.temp(); out.push({ o: 'getf', d, f }); return d; }
+    return flagOf(src, f, out);
+  };
+  const reloadFV = (ops) => { for (const f of ALL6) if (FV[f] !== undefined) ops.push({ o: 'getf', d: FV[f], f }); };
+
+  // Write the live flags into L1's record: one record rewrite when a single
+  // clean producer defines all of them, else the individual bits.
+  const materialize = (need, pre, ops) => {
+    const own = need.filter(f => !(direct(pre, f) && pre[f].has(L1)));
+    if (!own.length) return;
+    const one = own.every(f => direct(pre, f)) ? new Set(own.map(f => [...pre[f]][0])) : null;
+    if (one && one.size === 1) {
+      const [P] = one;
+      const covered = recDefs(P);
+      if (P.k !== 'mul' && P.k !== 'shift' && own.every(f => covered.includes(f))) {
+        const w = { o: 'wrec', k: P.k, w: P.w, a: P.a, b: P.b, s: P.s, r: P.r, cin: P.cin, fcf: -2, pin: true };
+        if (['inc', 'dec', 'inc32', 'dec32'].includes(P.k) && need.includes('c')) w.fcf = valueOf('c', pre, ops);
+        ops.push(w);
+        return;
+      }
+    }
+    const w = { o: 'wflags' };
+    for (const f of FLAG_FIELDS) w[f] = -1;
+    for (const f of own) w[`f${f}`] = valueOf(f, pre, ops);
+    ops.push(w);
+  };
+
+  let fused = 0, composed = 0;
+  for (const b of blocks) {
+    const ops = [];
+    for (const op of b.ops) {
+      const pre = before.get(op);
+      if (!pre) { if (op.o !== 'rec') ops.push(op); continue; }     // unreachable
+      if (op.o === 'rec') {
+        const live = liveAfter.get(op) || new Set(ALL6);
+        for (const f of recDefs(op)) {
+          if (FV[f] !== undefined && live.has(f)) ops.push({ o: 'mov', d: FV[f], a: flagOf(op, f, ops) });
+        }
+        continue;
+      }
+      if (op.o === 'getcc') {
+        const need = CC_READS[op.cc];
+        const srcs = need.map(f => (direct(pre, f) ? [...pre[f]][0] : null));
+        if (srcs[0] && srcs[0] !== L1 && srcs.every(x => x === srcs[0])) {
+          const fz = fuseCC(srcs[0], op.cc);
+          if (fz) { ops.push({ ...fz, d: op.d, ip: op.ip, node: op.node, pin: true }); fused++; continue; }
+        }
+        const vals = {};
+        for (const f of need) vals[f] = valueOf(f, pre, ops);
+        composeCC(op.cc, vals, op.d, ops, B);
+        composed++;
+        continue;
+      }
+      if (op.o === 'callh') {
+        materialize(needOf(op), pre, ops);
+        ops.push(op);
+        reloadFV(ops);
+        continue;
+      }
+      if (op.o === 'flush') {
+        materialize(needOf(op), pre, ops);
+        ops.push(op);
+        continue;
+      }
+      ops.push(op);
+      if (op.o === 'reload') reloadFV(ops);
+    }
+    b.ops = ops;
+  }
+  B.stats.flagFused = fused;
+  B.stats.flagComposed = composed;
+}
+
+// Which of a record's operands one of its flags depends on (the recorders in
+// uop-ref.js / emit.js: an 8/16-bit add/sub keeps its unmasked sum, so its
+// carry, zero, sign and parity need nothing else).
+function flagOperands(rec, f) {
+  const k = rec.k;
+  const has = (x) => rec[x] !== undefined && rec[x] >= 0;
+  const pick = (...xs) => xs.filter(has);
+  switch (k) {
+    case 'add': case 'sub': return (f === 'a' || f === 'o') ? pick('a', 'b', 's') : pick('s');
+    case 'add32': return f === 'c' ? pick('a', 'r', 'cin') : (f === 'a' || f === 'o') ? pick('a', 'b', 'r') : pick('r');
+    case 'sub32': return f === 'c' ? pick('a', 'b', 'cin') : (f === 'a' || f === 'o') ? pick('a', 'b', 'r') : pick('r');
+    case 'logic': return pick('r');
+    case 'inc': case 'dec': case 'inc32': case 'dec32': return pick('a', 's', 'r');
+    case 'mul': return pick('nz');
+    case 'shift': return pick('a');
+    default: return pick('a', 'b', 's', 'r', 'cin', 'nz');
+  }
+}
+
+// A condition code from one producer's operands, as a single `cc` op, or null.
+function fuseCC(P, cc) {
+  const w = P.w;
+  const name = IR.CC_NAMES[cc];
+  const cmp = (c, a, b, i) => ({ o: 'cc', cc: c, a, b: b === undefined ? -1 : b, i: i || 0, w });
+  const onR = (c) => ({ o: 'cc', cc: c, a: P.r, b: -1, i: 0, w });
+  const noCarryIn = (P.cin === undefined || P.cin < 0) && !P.adc;
+  switch (P.k) {
+    case 'sub': case 'sub32': {
+      if (!noCarryIn) break;
+      const m = { b: 'ltu', ae: 'geu', e: 'eq', ne: 'ne', be: 'leu', a: 'gtu', l: 'lt', ge: 'ge', le: 'le', g: 'gt' }[name];
+      if (m) return cmp(m, P.a, P.b);
+      if (name === 's') return onR('s');
+      if (name === 'ns') return onR('ns');
+      if (name === 'p') return onR('p');
+      if (name === 'np') return onR('np');
+      break;
+    }
+    case 'add': case 'add32':
+      if (!noCarryIn) break;
+      // fallthrough
+    case 'inc': case 'dec': case 'inc32': case 'dec32': {
+      const m = { e: 'z', ne: 'nz', s: 's', ns: 'ns', p: 'p', np: 'np' }[name];
+      if (m) return onR(m);
+      break;
+    }
+    case 'logic': {
+      const m = { e: 'z', ne: 'nz', s: 's', ns: 'ns', be: 'z', a: 'nz', l: 's', ge: 'ns', p: 'p', np: 'np' }[name];
+      if (m) return onR(m);
+      if (name === 'le') return cmp('le', P.r, -1, 0);
+      if (name === 'g') return cmp('gt', P.r, -1, 0);
+      if (name === 'b' || name === 'o') return { o: 'movi', i: 0 };
+      if (name === 'ae' || name === 'no') return { o: 'movi', i: 1 };
+      break;
+    }
+    case 'shift': {
+      if (P.sh === 'rol' || P.sh === 'ror') break;
+      const m = { e: 'z', ne: 'nz', s: 's', ns: 'ns', p: 'p', np: 'np' }[name];
+      if (m) return onR(m);
+      break;
+    }
+    case 'mul': {
+      if (name === 'o' || name === 'b') return { o: 'cc', cc: 'nz', a: P.nz, b: -1, i: 0, w: 32 };
+      if (name === 'no' || name === 'ae') return { o: 'cc', cc: 'z', a: P.nz, b: -1, i: 0, w: 32 };
+      break;
+    }
+    default: break;
+  }
+  return null;
+}
+
+// A condition code from individual flag bits (0/1 vregs).
+function composeCC(cc, v, d, ops, B) {
+  const t = () => B.temp();
+  let r;
+  switch (cc >> 1) {
+    case 0: r = v.o; break;
+    case 1: r = v.c; break;
+    case 2: r = v.z; break;
+    case 3: { r = t(); ops.push({ o: 'or', d: r, a: v.c, b: v.z }); break; }
+    case 4: r = v.s; break;
+    case 5: r = v.p; break;
+    case 6: { r = t(); ops.push({ o: 'xor', d: r, a: v.s, b: v.o }); break; }
+    default: {
+      const x = t(); ops.push({ o: 'xor', d: x, a: v.s, b: v.o });
+      r = t(); ops.push({ o: 'or', d: r, a: v.z, b: x });
+    }
+  }
+  if (cc & 1) ops.push({ o: 'xori', d, a: r, i: 1, w: 32 });
+  else ops.push({ o: 'mov', d, a: r });
+}
+
+// ---------------------------------------------------------------------------
+// The clock.
+// ---------------------------------------------------------------------------
+// Without the pass: the fast half keeps the slow half's clock -- STEP 1 after
+// every instruction and the budget test on every transfer -- and a deopt owes
+// no refund. With it: charges move onto edges, one CHECK per header.
+function stripClock(B) {
+  for (const b of B.fastBlocks().filter(x => x.kind === 'body' || x.kind === 'pre')) {
+    b.ops = b.ops.filter(o => o.o !== 'step');
+    const t = b.term;
+    if (t.o === 'br') t.tx = -1;
+    if (t.o === 'bcc') { t.tx = -1; t.fx = -1; }
+  }
+}
+function clock(B) {
+  const p = B.p;
+  const blocks = B.fastBlocks().filter(b => b.kind === 'body' || b.kind === 'pre');
+  const n = (b) => b.nodes.length;
+  stripClock(B);
+  B.cfg();
+  // Charge every edge into a counted block with that block's count.
+  const isCounted = (id) => { const x = p.blocks[id]; return x.fast && (x.kind === 'body' || x.kind === 'pre'); };
+  const prepaid = new Map();
+  for (const b of blocks) prepaid.set(b.id, n(b));
+  const charge = (from, to) => (isCounted(to) ? n(p.blocks[to]) : 0);
+  for (const b of B.fastBlocks()) {
+    const t = b.term;
+    if (!t) continue;
+    if (t.o === 'br') t.st = (t.st || 0) + charge(b.id, t.t);
+    else if (t.o === 'bcc') { t.sT = (t.sT || 0) + charge(b.id, t.t); t.sF = (t.sF || 0) + charge(b.id, t.f); }
+  }
+  // Hoist: a non-header counted block with one plain exit pays its
+  // successor's charge on its own in-edges instead.
+  const edgeCharge = (b) => (b.term.o === 'br' ? b.term.st || 0 : 0);
+  let moved = true;
+  while (moved) {
+    moved = false;
+    for (const b of blocks) {
+      if (b.header || b.term.o !== 'br' || !edgeCharge(b)) continue;
+      if (b.ops.some(o => o.o === 'check')) continue;
+      const x = b.term.st;
+      const preds = b.preds.filter(q => p.blocks[q].fast);
+      if (preds.length !== b.preds.length) continue;
+      // Every in-edge must be a terminator edge that can carry it.
+      let ok = preds.length > 0;
+      for (const q of preds) {
+        const qb = p.blocks[q];
+        if (qb.ops.some(o => o.dx === b.id)) ok = false;
+        if (qb.kind === 'fenter') ok = false;
+      }
+      if (!ok) continue;
+      for (const q of preds) {
+        const t = p.blocks[q].term;
+        if (t.o === 'br' && t.t === b.id) t.st += x;
+        if (t.o === 'bcc') { if (t.t === b.id) t.sT += x; if (t.f === b.id) t.sF += x; }
+      }
+      b.term.st = 0;
+      prepaid.set(b.id, prepaid.get(b.id) + x);
+      moved = true;
+    }
+  }
+  // Longest path, in instructions, from each header to the next header or
+  // out of the fast half.
+  const memo = new Map();
+  const longest = (id, first) => {
+    const b = p.blocks[id];
+    if (!isCounted(id)) return 0;
+    if (!first && b.header) return 0;
+    if (memo.has(id)) return memo.get(id);
+    memo.set(id, 0);
+    let best = 0;
+    const t = b.term;
+    const outs = t.o === 'br' ? [t.t] : t.o === 'bcc' ? [t.t, t.f] : [];
+    for (const s of outs) best = Math.max(best, longest(s, false));
+    const v = n(b) + best;
+    memo.set(id, v);
+    return v;
+  };
+  for (const b of blocks) {
+    if (!b.header) continue;
+    memo.clear();
+    const M = longest(b.id, true);
+    b.ops.unshift({ o: 'check', m: M - prepaid.get(b.id), M, node: b.nodes[0], dx: B.deopt(b.nodes[0]) });
+  }
+  B.prepaid = prepaid;
+  B.clocked = true;
+  B.cfg();
+}
+
+// ---------------------------------------------------------------------------
+// Finishing: expand FLUSH / RELOAD, set deopt refunds.
+// ---------------------------------------------------------------------------
+function finalize(B) {
+  const p = B.p;
+  // Registers the fast half writes, and the ones it reads at all.
+  const written = new Set(), used = new Set();
+  for (const [, , op] of B.allOps()) {
+    if (op.o === 'flush' || op.o === 'reload') continue;
+    const d = opDef(op);
+    if (d >= 0 && d < FIRST_TEMP) written.add(d);
+    for (const u of opUses(op)) if (u < FIRST_TEMP) used.add(u);
+  }
+  for (const b of B.fastBlocks()) for (const u of termUses(b.term)) if (u < FIRST_TEMP) used.add(u);
+  for (const r of written) used.add(r);
+  const width = (r) => (B.narrow && B.narrow.get(r)) || 32;
+  for (const [b, , op] of [...B.allOps()]) {
+    if (op.o === 'reload') {
+      const ops = [];
+      if (B.promoted) {
+        for (const r of [...used].sort((x, y) => x - y)) {
+          if (r < NREG) ops.push({ o: 'getr', d: r, r, w: width(r) });
+          else ops.push({ o: 'gets', d: r, s: r - SEGV });
+        }
+      }
+      b.ops.splice(b.ops.indexOf(op), 1, ...ops);
+    } else if (op.o === 'flush') {
+      const ops = [];
+      if (B.promoted) for (const r of [...written].sort((x, y) => x - y)) ops.push({ o: 'putr', r, w: width(r), a: r });
+      b.ops.splice(b.ops.indexOf(op), 1, ...ops);
+    }
+  }
+  // Deopt refunds: the steps charged ahead for instructions not yet run.
+  // Per deopt SITE: the holder block's prepaid steps less the instructions
+  // of it already run. Sites that disagree get their own copy of the stub.
+  if (B.clocked) {
+    const refundOf = new Map();
+    for (const b of B.fastBlocks()) {
+      if (b.kind !== 'body') continue;
+      for (const op of b.ops) {
+        if (op.dx === undefined || op.dx < 0 || p.blocks[op.dx].kind !== 'deopt') continue;
+        const j = b.nodes.indexOf(op.node);
+        if (j < 0) throw new Error(`finalize: deopt site for ${op.node} outside its block`);
+        const refund = (B.prepaid.get(b.id) || 0) - j;
+        let sid = op.dx;
+        if (refundOf.has(sid) && refundOf.get(sid) !== refund) {
+          const c = B.block('deopt');
+          const orig = p.blocks[sid];
+          Object.assign(c, { fast: true, nodes: [], node: orig.node, ip: orig.ip, ops: clone(orig.ops), term: clone(orig.term) });
+          sid = c.id;
+          op.dx = sid;
+        }
+        refundOf.set(sid, refund);
+        p.blocks[sid].term.st = -refund;
+      }
+    }
+  }
+  // Machine guards at every FASTENTER: fail straight into the slow block.
+  for (const b of B.fastBlocks()) {
+    if (b.kind !== 'fenter') continue;
+    const h = p.blocks[b.header_of];
+    const slow = B.slowOf.get(h.nodes[0]);
+    const g = (B.machineGuards || []).map(x => ({ o: 'guard', g: x.g, v: x.v, dx: slow }));
+    b.ops.unshift(...g);
+  }
+  // Temps defined in slow blocks were numbered before the fast ones: fine.
+  p.fastHead = B.fastHead;
+  B.cfg();
+}
+
+// ---------------------------------------------------------------------------
+// Cold sinking: a pure op whose result only the off-trace stubs (deopts and
+// exits) read -- typically an operand kept alive for a flag the exit has to
+// materialize -- moves into those stubs, when every path from it to them
+// leaves its operands alone.
+// ---------------------------------------------------------------------------
+const isCold = (b) => b.kind === 'deopt' || b.kind === 'fexit';
+function availableAlong(B, b0, i0, X) {
+  const p = B.p;
+  const operands = new Set(opUses(X));
+  const inV = new Map();
+  const work = [];
+  const flow = (bid, val) => {
+    if (!p.blocks[bid].fast) return;
+    const old = inV.get(bid);
+    const nv = old === undefined ? val : (old && val);
+    if (old !== nv) { inV.set(bid, nv); work.push(bid); }
+  };
+  const walk = (b, from, val) => {
+    for (let k = from; k < b.ops.length; k++) {
+      const op = b.ops[k];
+      if (op.dx !== undefined && op.dx >= 0) flow(op.dx, val);
+      if (b === b0 && k === i0) { val = true; continue; }
+      if (op.o === 'reload' || operands.has(opDef(op))) val = false;
+    }
+    const t = b.term;
+    if (t && t.o === 'br') flow(t.t, val);
+    if (t && t.o === 'bcc') { flow(t.t, val); flow(t.f, val); }
+  };
+  walk(b0, i0 + 1, true);
+  while (work.length) { const id = work.pop(); walk(p.blocks[id], 0, inV.get(id)); }
+  return inV;
+}
+function sinkCold(B) {
+  const p = B.p;
+  let moved = 0;
+  for (let round = 0; round < 64; round++) {
+    const where = new Map();
+    const note = (t, id) => { if (t >= FIRST_TEMP) { if (!where.has(t)) where.set(t, new Set()); where.get(t).add(id); } };
+    for (const b of B.fastBlocks()) {
+      for (const op of b.ops) for (const u of opUses(op)) note(u, b.id);
+      for (const u of termUses(b.term)) note(u, b.id);
+    }
+    const defs = tempDefs(B);
+    let done = false;
+    for (const [t, { b, op }] of defs) {
+      if (!isPure(op) || op.o === 'ld' || isCold(b) || b.kind !== 'body') continue;
+      const ub = where.get(t);
+      if (!ub || [...ub].some(id => !isCold(p.blocks[id]))) continue;
+      const i = b.ops.indexOf(op);
+      const inV = availableAlong(B, b, i, op);
+      if ([...ub].some(id => inV.get(id) !== true)) continue;
+      b.ops.splice(i, 1);
+      for (const id of ub) p.blocks[id].ops.unshift(clone(op));
+      moved++;
+      done = true;
+      break;
+    }
+    if (!done) break;
+  }
+  B.stats.sunk = moved;
+}
+
+// Unreachable fast blocks (exit stubs for edges the passes removed).
+function prune(B) {
+  const p = B.p;
+  const seen = new Set([p.entry]);
+  const st = [p.entry];
+  // finalize gives every FASTENTER machine guards that fail into the slow
+  // block of its header, so those blocks stay even with no edge in yet.
+  for (const b of p.blocks) {
+    if (b.kind !== 'fenter' || !b.fast) continue;
+    const s = B.slowOf.get(p.blocks[b.header_of].nodes[0]);
+    if (s !== undefined && !seen.has(s)) { seen.add(s); st.push(s); }
+  }
+  while (st.length) {
+    const id = st.pop();
+    for (const s of IR.succOf(p.blocks[id])) if (!seen.has(s)) { seen.add(s); st.push(s); }
+  }
+  for (const b of p.blocks) if (!seen.has(b.id) && b.kind !== 'dead') { b.kind = 'dead'; b.ops = []; b.term = null; }
+  B.cfg();
+}
+
+// ---------------------------------------------------------------------------
+// addrfold: a memory op's address is [a + (c << sc) + i] & am (am 0 = none).
+// Fold the ops that computed it, innermost last, within the block.
+// ---------------------------------------------------------------------------
+function addrfold(B) {
+  let n = 0;
+  for (const b of B.fastBlocks()) {
+    for (let m = 0; m < b.ops.length; m++) {
+      const M = b.ops[m];
+      if (M.o !== 'ld' && M.o !== 'st') continue;
+      const localDef = (x) => {
+        if (x < FIRST_TEMP) return null;
+        for (let j = m - 1; j >= 0; j--) if (opDef(b.ops[j]) === x) return j;
+        return null;
+      };
+      const clean = (j, regs) => {
+        for (let k = j + 1; k < m; k++) if (regs.includes(opDef(b.ops[k])) || b.ops[k].o === 'reload') return false;
+        return true;
+      };
+      for (let guard = 0; guard < 8; guard++) {
+        let did = false;
+        const j = M.a >= 0 ? localDef(M.a) : null;
+        if (j !== null) {
+          const D = b.ops[j];
+          if (D.o === 'andi' && !M.am && !M.i && M.c < 0 && isMask(D.i) && clean(j, [D.a])) { M.a = D.a; M.am = D.i; did = true; }
+          else if (D.o === 'addi' && clean(j, [D.a])) { M.a = D.a; M.i = (M.i + D.i) | 0; did = true; }
+          else if (D.o === 'mov' && clean(j, [D.a])) { M.a = D.a; did = true; }
+          else if (D.o === 'movi' && M.c < 0) { M.a = -1; M.i = (M.i + D.i) | 0; did = true; }
+          else if (D.o === 'add' && M.c < 0 && clean(j, [D.a, D.b])) { M.a = D.a; M.c = D.b; M.sc = 0; did = true; }
+        }
+        const jc = M.c >= 0 ? localDef(M.c) : null;
+        if (!did && jc !== null) {
+          const D = b.ops[jc];
+          if (D.o === 'shli' && !M.sc && D.i <= 3 && clean(jc, [D.a])) { M.c = D.a; M.sc = D.i; did = true; }
+          else if (D.o === 'mov' && clean(jc, [D.a])) { M.c = D.a; did = true; }
+        }
+        if (!did) break;
+        n++;
+      }
+    }
+  }
+  B.stats.addrfold = n;
+  if (n) dce(B);
+}
+
+// ---------------------------------------------------------------------------
+// fuse: µop superinstructions, picked from the pair census (uop-bench.js
+// pairs): `andi (addi x k) 0xFFFF` -> addi16, the same at 0xFF -> addi8.
+// ---------------------------------------------------------------------------
+function fuse(B) {
+  const uses = useCounts(B);
+  let n = 0;
+  for (const b of B.fastBlocks()) {
+    for (let i = 0; i < b.ops.length; i++) {
+      const op = b.ops[i];
+      if (op.o !== 'andi' || (op.i !== 0xFFFF && op.i !== 0xFF) || op.a < FIRST_TEMP) continue;
+      let j = i - 1;
+      while (j >= 0 && opDef(b.ops[j]) !== op.a) j--;
+      if (j < 0) continue;
+      const D = b.ops[j];
+      if (D.o !== 'addi' || (uses.get(op.a) || 0) !== 1) continue;
+      let ok = true;
+      for (let k = j + 1; k < i; k++) if (opDef(b.ops[k]) === D.a || b.ops[k].o === 'reload') ok = false;
+      if (!ok) continue;
+      rewrite(op, { o: op.i === 0xFFFF ? 'addi16' : 'addi8', d: op.d, a: D.a, i: D.i });
+      b.ops.splice(j, 1);
+      i--;
+      n++;
+    }
+  }
+  B.stats.fused = n;
+}
+
+// ---------------------------------------------------------------------------
+// rle / stack: redundant-load elimination and store-to-load forwarding over
+// each block. An access is remembered by its address operands; a later load
+// of the same address and width reads the remembered value instead, while
+// nothing in between could have changed it. `stack` covers accesses through
+// SS (a pop meeting its push, a ret meeting its call's return address) and
+// `rle` everything else.
+// ---------------------------------------------------------------------------
+function forwardMemory(B) {
+  const want = (op) => (op.s === SEGV + 2 ? B.on('stack') : B.on('rle'));
+  let n = 0;
+  // Address operands that are constants (addrfold has not folded them into
+  // the displacement yet) compare by value: each instruction's [1673] got
+  // its own movi temp.
+  const defs = tempDefs(B);
+  const kval = (v) => {
+    if (v === undefined || v < 0) return null;
+    const e = defs.get(v);
+    return e && e.op.o === 'movi' ? e.op.i | 0 : null;
+  };
+  const normCache = new Map();
+  const norm = (x) => {
+    if (normCache.has(x)) return normCache.get(x);
+    const ka = kval(x.a), kc = kval(x.c);
+    const r = { s: x.s, a: ka !== null ? -1 : (x.a === undefined ? -1 : x.a),
+      c: kc !== null ? -1 : (x.c === undefined ? -1 : x.c), sc: x.c >= 0 && kc === null ? (x.sc | 0) : 0,
+      am: x.am, i: ((x.i | 0) + (ka || 0) + (kc !== null ? kc << (x.sc | 0) : 0)) | 0 };
+    normCache.set(x, r);
+    return r;
+  };
+  const sameAddr = (x0, y0) => {
+    const x = norm(x0), y = norm(y0);
+    return x.s === y.s && x.a === y.a && x.c === y.c && x.sc === y.sc && x.am === y.am;
+  };
+  // Two accesses through the same address operands are disjoint when their
+  // displacement ranges do not meet (modulo the mask's wrap).
+  const disjoint = (x, y) => {
+    if (!sameAddr(x, y)) return false;
+    const span = x.am ? (x.am >>> 0) + 1 : 2 ** 32;
+    const d = (((norm(y).i - norm(x).i) % span) + span) % span;
+    return d >= x.w / 8 && span - d >= y.w / 8;
+  };
+  for (const b of B.fastBlocks()) {
+    let avail = [];          // { op (address), w, v }
+    for (let i = 0; i < b.ops.length; i++) {
+      const op = b.ops[i];
+      if (op.o === 'ld' && want(op)) {
+        const hit = avail.find(e => sameAddr(e.at, op) && norm(e.at).i === norm(op).i && e.w === op.w);
+        if (hit) {
+          const d = op.d;
+          rewrite(op, op.w === 32 || hit.fromLoad ? { o: 'mov', d, a: hit.v } : { o: 'andi', d, a: hit.v, i: op.w === 8 ? 0xFF : 0xFFFF, w: 32 });
+          n++;
+        }
+      }
+      const d = opDef(op);
+      if (op.o === 'st') {
+        avail = avail.filter(e => disjoint(e.at, op));
+      }
+      if (d >= 0 || op.o === 'reload') {
+        avail = avail.filter(e => op.o !== 'reload' && ![e.at.s, e.at.a, e.at.c, e.v].includes(d));
+      }
+      if (op.o === 'st') avail.push({ at: op, w: op.w, v: op.b, fromLoad: false });
+      else if (op.o === 'ld' && op.d !== op.s && op.d !== op.a && op.d !== op.c) avail.push({ at: op, w: op.w, v: op.d, fromLoad: true });
+    }
+  }
+  B.stats.memfwd = n;
+  return n;
+}
+
+// ---------------------------------------------------------------------------
+// mergesink, part two: a guest-register write that the same block overwrites
+// before anything reads it is dead on the trace -- only a DEOPT between the
+// two can see it, because the deopt writes the architectural state back. Move
+// the write into those deopt stubs (each site gets its own copy of the stub).
+// The partial-register merges of a register only ever touched in part are
+// the common case, and a push's SP update that the pop undoes another.
+// ---------------------------------------------------------------------------
+function sinkDeoptDefs(B) {
+  const p = B.p;
+  let n = 0;
+  for (const b of B.fastBlocks()) {
+    if (b.kind !== 'body') continue;
+    for (let i = 0; i < b.ops.length; i++) {
+      const G = b.ops[i];
+      const r = opDef(G);
+      if (r < 0 || r >= NREG || !isPure(G) || G.o === 'ld') continue;
+      let k = i + 1;
+      while (k < b.ops.length && opDef(b.ops[k]) !== r && b.ops[k].o !== 'reload') k++;
+      if (k >= b.ops.length || b.ops[k].o === 'reload') continue;
+      const operands = opUses(G);
+      if (operands.includes(r)) continue;
+      let ok = true;
+      const sites = [];
+      for (let j = i + 1; j <= k && ok; j++) {
+        const x = b.ops[j];
+        if (opUses(x).includes(r)) ok = false;
+        if (x.dx !== undefined && x.dx >= 0) {
+          // The site sees G's value; G's operands must still be what G read.
+          for (let q = i + 1; q < j; q++) if (operands.includes(opDef(b.ops[q]))) ok = false;
+          sites.push(x);
+        }
+      }
+      if (!ok) continue;
+      b.ops.splice(i, 1);
+      for (const x of sites) {
+        const orig = p.blocks[x.dx];
+        const c = B.block(orig.kind);
+        Object.assign(c, { fast: true, nodes: [], node: orig.node, ip: orig.ip, ops: [clone(G), ...clone(orig.ops)], term: clone(orig.term) });
+        x.dx = c.id;
+      }
+      i--;
+      n++;
+    }
+  }
+  B.stats.deoptSunk = n;
+  if (n) B.cfg();
+}
+
+// ---------------------------------------------------------------------------
+function build(reg, opts = {}) {
+  const passes = opts.passes;
+  if (!passes) return IR.lower(reg);
+  const B = new Build(reg, { ...opts, passes });
+  B.makeFast();
+  B.fastHead = B.fastOf.get(reg.headKey);
+  // With the clock pass the fast half tests the budget only at headers, so
+  // straight-line runs across transfers (calls, returns, jumps) can merge.
+  if (B.on('clock')) stripClock(B);
+  B.cfg();
+  B.mergeStraight();
+  B.findHeaders();
+  B.makeEntries();
+  if (B.on('guards')) machineGuards(B);
+  if (B.on('promote')) promote(B);
+  if (B.on('constprop')) constprop(B);
+  if ((B.on('rle') || B.on('stack')) && forwardMemory(B) && B.on('constprop')) constprop(B);
+  if (B.on('flagfwd')) forwardFlags(B);
+  else if (B.on('flaglive')) killDeadRecs(B);
+  if (B.on('constprop')) constprop(B);
+  prune(B);
+  if (B.on('mergesink')) { sinkDeoptDefs(B); if (B.on('constprop')) constprop(B); }
+  if (B.on('addrfold')) addrfold(B);
+  if (B.on('fuse')) fuse(B);
+  if (B.on('clock')) clock(B);
+  prune(B);
+  if (B.on('constprop')) { sinkCold(B); dce(B); }
+  finalize(B);
+  B.p.stats = B.stats;
+  B.p.build = B;
+  B.p.headBlocks = new Set([B.fastHead, B.slowOf.get(reg.headKey)]);
+  return B.p;
+}
+
+// Machine settings the loop reads: specialize them under an entry guard.
+function machineGuards(B) {
+  const want = new Map();
+  if (B.machine && [...B.allOps()].some(([, , op]) => op.o === 'callh')) want.set('shmask', B.machine.shmask);
+  for (const [, , op] of B.allOps()) {
+    if (op.o === 'getm' && B.machine && B.machine[op.g] !== undefined) {
+      want.set(op.g, B.machine[op.g]);
+      op.k = B.machine[op.g];
+    }
+  }
+  B.machineGuards = [...want].map(([g, v]) => ({ g, v }));
+}
+
+module.exports = { build, ablationConfigs, PASSES, fuseCC, composeCC };

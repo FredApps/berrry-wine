@@ -86,7 +86,11 @@ function binOf(id) {
 function runnerSource(exe, budget, mode) {
   const jit = mode === 'jit'
     ? `, regionJit: { sampleAfter: ${Math.floor(budget / 4)}, profileFor: ${Math.floor(budget / 4)}, gateAt: 0, log: function () {} }`
-    : '';
+    // `--mode=uop`: the µop tier (uop-live.js), first profile window a tenth
+    // of the way in, then one every 10M dispatches.
+    : mode === 'uop'
+      ? `, uop: { sampleAfter: ${Math.floor(budget / 10)}, profileFor: 1000000 }`
+      : '';
   const dir = path.dirname(exe);
   const files = fs.readdirSync(dir).filter((f) => fs.statSync(path.join(dir, f)).isFile());
   return `'use strict';
@@ -122,7 +126,9 @@ runDos({ exe: ${JSON.stringify(path.basename(exe))}, variant: 'tailcall', budget
   cpu: 386, autoKey: true, log: function () {}${jit} }).then(function (r) {
   say('SHELLBENCH ' + JSON.stringify({ secs: r.secs, guestSecs: r.guestSecs,
     dispatched: r.dispatched, frame: r.frame, startMs: T1 - T0, totalMs: nowMs() - T0,
-    jit: r.jit ? { phase: r.jit.phase, installs: r.jit.installs, share: r.jit.share } : null }));
+    jit: r.jit ? { phase: r.jit.phase, installs: r.jit.installs, share: r.jit.share } : null,
+    uop: r.uop ? { installs: r.uop.installs, entries: r.uop.entries, steps: r.uop.steps, bails: r.uop.bails,
+      rebuilds: r.uop.rebuilds, gaveUp: r.uop.gaveUp, demoted: r.uop.demoted.length } : null }));
 }, function (e) { say('SHELLBENCH-ERR ' + String(e && e.stack || e).split('\\n').slice(0, 4).join(' | ')); });
 `;
 }
@@ -169,7 +175,7 @@ async function main() {
   const timeoutS = Number(arg('timeout', 300));
   const outFile = arg('out', null);
   const mode = arg('mode', 'interp');
-  if (!['interp', 'jit'].includes(mode)) throw new Error(`--mode= is interp or jit, not ${mode}`);
+  if (!['interp', 'jit', 'uop'].includes(mode)) throw new Error(`--mode= is interp, jit or uop, not ${mode}`);
 
   // The programs: a sweep's own rows and budget (so the frames it recorded are
   // a check on every arm), or an explicit list.
