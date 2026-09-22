@@ -156,3 +156,20 @@ unrelated backing page. These pass, as does the shared duplicate gate
 (138/142 groups, 532/548 members). Input-side raw loads remain a separate gap;
 this change neither implements dirty-page tracking nor establishes game
 performance or architectural fault/precision equivalence.
+
+## CRT floating-point scan outputs migrated
+
+`sscanf_impl` used the common guest stores for integer/string outputs but raw
+WASM stores for floating-point outputs. Both defects were reproduced before
+the change: `%f` with one destination byte before a sparse boundary left the
+next three bytes untouched, and an aligned `%f` output into decoded sparse
+code left its cache entry live. The float/double branches now use `$gs32/$gs64`
+with bit reinterpretation; parsing and assignment-count logic are unchanged.
+
+Source-compiled sparse tests pass for `%f`, `%lf`, `%e`, and `%lg`, aligned and
+at every crossing position, using positive, negative and negative-zero values
+and destination canaries. Float and double outputs retire decoded destination
+code. The existing `test-sscanf.js` passes all 24 cases; logical-AND and duplicate
+gates pass. This is not full CRT write coverage: the adjacent `realloc` still
+has a raw `memory.copy`, and its allocation-failure path needs investigation
+before merely substituting a copy helper. Dirty tracking remains unimplemented.

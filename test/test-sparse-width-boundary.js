@@ -181,6 +181,32 @@ async function main() {
     }
   }
 
+  // CRT float outputs must scatter just like integer/string conversions.
+  const scanSource = e.guest_alloc(32) >>> 0;
+  const scanFormat = e.guest_alloc(16) >>> 0;
+  const scanArgs = e.guest_alloc(4) >>> 0;
+  const putString = (address, text) => {
+    [...Buffer.from(text), 0].forEach((byte, i) => write8(address + i, byte));
+  };
+  for (const [format, size] of [['%f', 4], ['%lf', 8], ['%e', 4], ['%lg', 8]]) {
+    putString(scanFormat, format);
+    for (const value of [1.25, -2.5, -0]) {
+      putString(scanSource, Object.is(value, -0) ? '-0' : String(value));
+      const expected = Buffer.alloc(size);
+      if (size === 4) expected.writeFloatLE(value);
+      else expected.writeDoubleLE(value);
+      for (const split of [0, ...Array.from({ length: size - 1 }, (_, i) => i + 1)]) {
+        const address = split ? page2 - split : page1 + 0x100;
+        for (let i = -1; i <= size; i++) write8(address + i, 0xcc);
+        e.guest_write32(scanArgs, address);
+        assert.strictEqual(e.test_sscanf(scanSource, scanFormat, scanArgs), 1);
+        assert.deepStrictEqual(Array.from({ length: size + 2 }, (_, i) => read8(address - 1 + i)),
+          [0xcc, ...expected, 0xcc], `sscanf ${format} value ${value}, split ${split}`);
+      }
+    }
+  }
+  for (const address of [scanSource, scanFormat, scanArgs]) e.guest_free(address);
+
   const destination = page1 + 0xffc;
   for (let i = 0; i < 16; i++) write8(source + i, i + 1);
   e.test_guest_memmove(destination, source, 12);
@@ -202,7 +228,7 @@ async function main() {
     new Array(12).fill(0xa5),
     'bulk fill should cross non-contiguous backing');
 
-  console.log('PASS  scalar, x87, MMX and bulk accesses cross non-contiguous sparse backing safely');
+  console.log('PASS  scalar, x87, MMX, CRT and bulk accesses cross non-contiguous sparse backing safely');
 }
 
 main().catch(error => {

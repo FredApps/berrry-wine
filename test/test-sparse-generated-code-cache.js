@@ -254,7 +254,22 @@ async function main() {
     assert.strictEqual(e.test_sparse_cache_lookup(code) >>> 0, 0,
       `x87 ${group}/${op} store must retire decoded destination bytes`);
   }
-  console.log('PASS  sparse scalar/x87 writes and process-wide FlushInstructionCache invalidate decoded blocks');
+  const scanSource = e.guest_alloc(8) >>> 0;
+  const scanFormat = e.guest_alloc(8) >>> 0;
+  const scanArgs = e.guest_alloc(4) >>> 0;
+  [...Buffer.from('1.25'), 0].forEach((byte, i) => e.guest_write8(scanSource + i, byte));
+  e.guest_write32(scanArgs, code);
+  for (const format of ['%f', '%lf']) {
+    [...Buffer.from(format), 0].forEach((byte, i) => e.guest_write8(scanFormat + i, byte));
+    install(0x11223344);
+    assert.strictEqual(execute(), 0x11223344);
+    assert.notStrictEqual(e.test_sparse_cache_lookup(code) >>> 0, 0);
+    assert.strictEqual(e.test_sscanf(scanSource, scanFormat, scanArgs), 1);
+    assert.strictEqual(e.test_sparse_cache_lookup(code) >>> 0, 0,
+      `sscanf ${format} must retire decoded destination bytes`);
+  }
+  for (const address of [scanSource, scanFormat, scanArgs]) e.guest_free(address);
+  console.log('PASS  sparse scalar/x87/CRT writes and process-wide FlushInstructionCache invalidate decoded blocks');
 }
 
 main().catch(error => {

@@ -2337,9 +2337,9 @@
             (then
               ;; 'l'/'L' means double; a bare %f is a float.
               (if (i32.eq (local.get $len) (i32.const 2))
-                (then (f64.store (call $g2w (local.get $dst)) (local.get $fval)))
-                (else (f32.store (call $g2w (local.get $dst))
-                        (f32.demote_f64 (local.get $fval)))))))
+                (then (call $gs64 (local.get $dst) (i64.reinterpret_f64 (local.get $fval))))
+                (else (call $gs32 (local.get $dst)
+                        (i32.reinterpret_f32 (f32.demote_f64 (local.get $fval))))))))
           (if (i32.eqz (local.get $suppress))
             (then (local.set $assigned (i32.add (local.get $assigned) (i32.const 1)))))
           (br $next_fmt)))
