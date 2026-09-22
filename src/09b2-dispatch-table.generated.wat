@@ -8491,19 +8491,19 @@
       (call $handle_dx_com_addref (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1465: IDirect3DVertexBuffer7_Release
-      (call $handle_IDirect3DVertexBuffer7_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3DVertexBuffer_Release (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1466: IDirect3DVertexBuffer7_Lock
-      (call $handle_IDirect3DVertexBuffer7_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3DVertexBuffer_Lock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1467: IDirect3DVertexBuffer7_Unlock
       (call $handle_IDirect3DVertexBuffer7_Unlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1468: IDirect3DVertexBuffer7_ProcessVertices
-      (call $handle_IDirect3DVertexBuffer7_ProcessVertices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3DVertexBuffer_ProcessVertices (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1469: IDirect3DVertexBuffer7_GetVertexBufferDesc
-      (call $handle_IDirect3DVertexBuffer7_GetVertexBufferDesc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3DVertexBuffer_GetVertexBufferDesc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1470: IDirect3DVertexBuffer7_Optimize
       (call $handle_IDirect3DVertexBuffer7_Optimize (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))

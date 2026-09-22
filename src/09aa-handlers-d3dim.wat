@@ -1746,40 +1746,14 @@
     (i32.store offset=0 (global.get $reg_base) (call $d3dim_qi (i32.const 6) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
-  ;; IDirect3DVertexBuffer7_Release — 1 args (incl. this)
-  (func $handle_IDirect3DVertexBuffer7_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $rc i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
-    (if (i32.le_s (local.get $rc) (i32.const 0))
-      (then (call $d3dim_vb_free_entry (local.get $entry)) (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
-      (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (i32.store offset=0 (global.get $reg_base) (local.get $rc))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
-  ;; IDirect3DVertexBuffer7_Lock — 4 args (incl. this)
-  (func $handle_IDirect3DVertexBuffer7_Lock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_vb_lock (local.get $arg0) (local.get $arg2) (local.get $arg3))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
   ;; IDirect3DVertexBuffer7_Unlock — 1 args (incl. this)
   (func $handle_IDirect3DVertexBuffer7_Unlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
-  ;; IDirect3DVertexBuffer7_ProcessVertices — 8 args (incl. this)
-  ;; Same ABI as the v1 method; the device argument is an IDirect3DDevice7.
-  (func $handle_IDirect3DVertexBuffer7_ProcessVertices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $d3dim_vb_process_vertices
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
-      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
-      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36))))
 
-  ;; IDirect3DVertexBuffer7_GetVertexBufferDesc — 2 args (incl. this)
-  (func $handle_IDirect3DVertexBuffer7_GetVertexBufferDesc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_vb_get_desc (local.get $arg0) (local.get $arg1))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; IDirect3DVertexBuffer7_Optimize — 3 args (incl. this)
   (func $handle_IDirect3DVertexBuffer7_Optimize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

@@ -74,6 +74,7 @@ const extraWat = String.raw`
   ;; The stdcall route: three of the eight arguments only exist on the guest
   ;; stack, and the handler owns the pop.
   (func (export "pv_process_stdcall")
+      (param $version i32)
       (param $dst i32) (param $op i32) (param $destIndex i32) (param $count i32)
       (param $src i32) (param $srcIndex i32) (param $device i32) (param $flags i32)
       (result i32)
@@ -81,7 +82,9 @@ const extraWat = String.raw`
     (call $gs32 (i32.const 0x00300018) (local.get $srcIndex))
     (call $gs32 (i32.const 0x0030001C) (local.get $device))
     (call $gs32 (i32.const 0x00300020) (local.get $flags))
-    (call $handle_IDirect3DVertexBuffer7_ProcessVertices
+    (call $dispatch_api_table
+      (select (call $lookup_api_id "IDirect3DVertexBuffer7_ProcessVertices")
+              (call $lookup_api_id "IDirect3DVertexBuffer_ProcessVertices") (local.get $version))
       (local.get $dst) (local.get $op) (local.get $destIndex)
       (local.get $count) (local.get $src) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
@@ -224,16 +227,18 @@ const extraWat = String.raw`
 
   // The stdcall route reads dwSrcIndex/lpD3DDevice/dwFlags off the guest stack
   // and pops all eight arguments plus the return address.
-  for (let i = 0; i < 32 * VERTS; i += 4) wat.guest_write32(dstData + i, 0);
-  assert.strictEqual(
-    wat.pv_process_stdcall(dstVb, 0x401, 0, VERTS, srcVb, 0, device, 0) >>> 0, 0,
-    'the COM entry point succeeds');
-  assert.strictEqual(wat.pv_esp() >>> 0, 0x00300024,
-    'ProcessVertices pops its return address and eight stdcall arguments');
-  near(readF32(dstData), originX + source[0].x * scaleX,
-    'the COM entry point transformed through the same path');
-  assert.strictEqual(wat.guest_read32(dstData + 16 + 32) >>> 0, source[1].color,
-    'the stack-resident device argument reached the transform');
+  for (const version of [0, 1]) {
+    for (let i = 0; i < 32 * VERTS; i += 4) wat.guest_write32(dstData + i, 0);
+    assert.strictEqual(
+      wat.pv_process_stdcall(version, dstVb, 0x401, 0, VERTS, srcVb, 0, device, 0) >>> 0, 0,
+      'the COM entry point succeeds');
+    assert.strictEqual(wat.pv_esp() >>> 0, 0x00300024,
+      'ProcessVertices pops its return address and eight stdcall arguments');
+    near(readF32(dstData), originX + source[0].x * scaleX,
+      'the COM entry point transformed through the same path');
+    assert.strictEqual(wat.guest_read32(dstData + 16 + 32) >>> 0, source[1].color,
+      'the stack-resident device argument reached the transform');
+  }
 
   console.log('test-d3dim-process-vertices: PASS');
 })().catch((err) => {

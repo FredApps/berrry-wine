@@ -12671,14 +12671,16 @@
     "name": "IDirect3DVertexBuffer7_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1541311869
+    "hash": 1541311869,
+    "handler": "IDirect3DVertexBuffer_Release"
   },
   {
     "id": 1466,
     "name": "IDirect3DVertexBuffer7_Lock",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3458090823
+    "hash": 3458090823,
+    "handler": "IDirect3DVertexBuffer_Lock"
   },
   {
     "id": 1467,
@@ -12692,14 +12694,16 @@
     "name": "IDirect3DVertexBuffer7_ProcessVertices",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2177878198
+    "hash": 2177878198,
+    "handler": "IDirect3DVertexBuffer_ProcessVertices"
   },
   {
     "id": 1469,
     "name": "IDirect3DVertexBuffer7_GetVertexBufferDesc",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3930517573
+    "hash": 3930517573,
+    "handler": "IDirect3DVertexBuffer_GetVertexBufferDesc"
   },
   {
     "id": 1470,
