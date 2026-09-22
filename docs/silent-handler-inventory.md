@@ -656,3 +656,10 @@ unchanged LastError and stdcall cleanup. The fixture and scope limits are in
 `test/fixtures/win98-profile-struct/README.md`. Existing profile-string/section
 tests pass. The pin changes in the same commit as the implementation; metadata
 remains 22. This does not certify every profile API or INI registry mapping.
+
+2026-09-22: 249 -> 248 manual. IDirectDrawPalette_QueryInterface no longer
+unconditionally returns E_NOINTERFACE. The shared COM single-interface helper
+accepts the full palette IID and IUnknown, acquires a reference, clears the
+output on unsupported IID, and rejects NULL output. Specialized palette Release
+is unchanged. See `docs/directdraw-palette-query-interface-review.md` for tests
+and remaining limitations. Metadata remains 22.
