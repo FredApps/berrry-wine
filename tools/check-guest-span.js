@@ -57,8 +57,16 @@ function functions(text) {
         continue;
       }
       if (c === '"') { // string literal
+        // Count the backslashes, don't look at one: a WAT literal ending in an
+        // escaped backslash ("Interface\\") closes, and reading that closing
+        // quote as escaped swallows the rest of the file into one function --
+        // which is how four $ole_cfb locals were reported at line 1851.
         j++;
-        while (j < text.length && !(text[j] === '"' && text[j - 1] !== '\\')) j++;
+        while (j < text.length) {
+          if (text[j] === '\\') { j += 2; continue; }
+          if (text[j] === '"') break;
+          j++;
+        }
         continue;
       }
       if (c === '(') depth++;
