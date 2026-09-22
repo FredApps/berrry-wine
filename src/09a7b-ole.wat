@@ -12123,8 +12123,13 @@
   ;; called through address zero. AddRef through the object's own vtable instead,
   ;; which means suspending the handler on the standard OLE continuation.
   (func $handle_OleSetClipboard (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $old i32) (local $new_guest i32) (local $ctx i32)
+    (local $old i32) (local $new_guest i32) (local $ctx i32) (local $new_local i32)
     (local.set $old (global.get $clipboard_ole_data_object))
+    ;; Retain before retiring the previous clipboard reference, including when
+    ;; the incoming and outgoing pointers identify the same local object.
+    (local.set $new_local (call $ole_clipboard_owner_is_local (local.get $arg0)))
+    (if (local.get $new_local)
+      (then (drop (call $ole_obj_addref (local.get $arg0)))))
     ;; Our own objects have no guest code to run, so their half stays inline.
     (if (call $ole_clipboard_owner_is_local (local.get $old))
       (then
@@ -12132,9 +12137,8 @@
         (local.set $old (i32.const 0))))
     (call $clipboard_clear_binary_data)
     (global.set $clipboard_ole_data_object (local.get $arg0))
-    (if (call $ole_clipboard_owner_is_local (local.get $arg0))
-      (then (drop (call $ole_obj_addref (local.get $arg0))))
-      (else
+    (if (i32.eqz (local.get $new_local))
+      (then
         (local.set $new_guest (local.get $arg0))
         ;; Paint currently publishes a DLL-private delayed-render object, so
         ;; materialize its newest bitmap eagerly. Applying that heuristic to
