@@ -295,3 +295,43 @@ claim is made by this patch.
 
 Validation also passes the existing file-API ANSI/OEM codepage, exact timestamp,
 FindFirst/FindNext error, read data/count notification and test-tier checks.
+
+## Remaining filesystem raw-write classification (after e8de2997)
+
+An end-to-end inspection of direct writes in `createFilesystemImports`, paired
+with their WAT callers, narrows the next work to five translated-pointer
+interfaces. These are not safely fixed by treating every WASM address as a
+guest address, or by applying dirty marking to every `.set` found in JavaScript.
+
+| Interface | Actual destination / outstanding work |
+| --- | --- |
+| `fs_file_information` | `GetFileInformationByHandle` passes `g2w(arg1)`; the host writes 13 DWORDs linearly. Migrate the guest output pointer and test all 51 crossing positions, errors and identity fields. |
+| `fs_file_time` | Get/SetFileTime pass translated optional guest pointers. Each FILETIME has two DWORDs; reads and writes both assume contiguous backing. Preserve null/sentinel and error semantics while migrating both directions. |
+| `fs_file_size_result` | Low result is private `reg_base`; optional high result is translated guest memory. GetFileSize and GetCompressedFileSize share this mixed contract. Keep the private low result raw; fix the high output. Compressed-size validation currently requires an affine four-byte span, so migration must address that guard too. |
+| `fs_seek_result` | Result is private `reg_base`; optional high word is guest in/out memory translated once in SetFilePointer. Preserve signed input and success-only high-word output, while making the guest access page-aware. |
+| `fs_filetime_to_systemtime` | Host reads eight bytes and writes sixteen through translated pointers. Inspect both FileTimeToSystemTime and FileTimeToDosDateTime callers before changing the interface; the latter uses scratch output. |
+
+Other raw-write categories deliberately excluded from a guest-write sweep:
+
+- CreateFile, mapping create/open/map and mapping-duplicate result cells are
+  passed `reg_base` by their WAT wrappers. These are emulator-private outputs,
+  not guest buffers; dirty-page or guest-address conversion would be wrong.
+- `copyFresh` and legacy eager/async mapping fills initialize newly committed
+  backing. They must remain distinct from subsequent guest modifications.
+  Existing initialized-interval and pending-lifetime guards prevent late fills
+  from replacing guest data. Initialization may need code-cache retirement on
+  reused storage, but must not make a file page dirty merely by loading it.
+- `syncMappedView`'s `dest.set` copies **from** guest backing **to** file data;
+  it is writeback, not a guest-memory output. Its unconditional writable-view
+  copy is the still-open clean-page overwrite defect established by the native
+  distinct-section oracle.
+- Remaining RTF byte-array assembly and VFS file-data copies are host-owned
+  buffers. The migrated find-data `DataView` is now local staging, not guest
+  memory; its later scatter is the guest write.
+
+This is a bounded filesystem audit, not proof of coverage for other host
+modules, generated code, allocator metadata or graphics. Next implementation
+target is the 52-byte file-information output: one guest-only pointer avoids
+the mixed private/guest semantics of the other four interfaces. Keep import
+argument counts and worker transport synchronized while changing pointer
+meaning, and verify real WAT callers as well as isolated JavaScript tests.
