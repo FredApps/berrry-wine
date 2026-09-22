@@ -226,3 +226,23 @@ error 87 on rejection, unchanged caller bytes/guards and stdcall cleanup.
 Existing maximum-window and screen-buffer state/activation/lifetime tests pass;
 logical-AND and whitespace checks pass. Scroll structures and title strings
 remain candidates; no new browser or performance result is claimed.
+
+## Shared console title guest buffers migrated
+
+SetConsoleTitleA/W now use lazy byte/WORD guest reads. GetConsoleTitleA/W
+share one bounded copy loop with guest stores, including the terminator;
+reads from private title storage remain raw. The previous ANSI memory.copy
+assumed that the entire caller destination had contiguous physical backing.
+
+The new `test/test-console-title-boundaries.js` failed before migration when
+SetConsoleTitleA read unrelated backing bytes as title text after the first
+page crossing. It now passes all source crossings for A/W strings (including
+split UTF-16 characters and terminators), plus destination crossings with
+capacities 0, 1, 2, 4 and 6. Expected bytes, untouched tails/guards, unrelated
+backing and stdcall cleanup are checked. Existing screen-buffer/title tests,
+logical-AND, test-tier and whitespace gates pass.
+
+This deliberately preserves the existing shared ANSI storage and lossy wide
+conversion; full Unicode/code-page title fidelity is still unproven and is
+not certified by these tests. Scroll structures remain to migrate. No browser
+or performance result is claimed.

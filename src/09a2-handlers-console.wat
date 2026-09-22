@@ -920,15 +920,15 @@
       (then
         (global.set $last_error (i32.const 87))
         (return (i32.const 0))))
-    (local.set $src (call $g2w (local.get $title_gp)))
+    (local.set $src (local.get $title_gp))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $len)
         (i32.sub (global.get $CONSOLE_TITLE_MAX) (i32.const 1))))
       (local.set $ch
         (if (result i32) (local.get $wide)
-          (then (i32.load16_u (i32.add (local.get $src)
+          (then (call $gl16 (i32.add (local.get $src)
             (i32.shl (local.get $len) (i32.const 1)))))
-          (else (i32.load8_u (i32.add (local.get $src) (local.get $len))))))
+          (else (call $gl8 (i32.add (local.get $src) (local.get $len))))))
       (br_if $done (i32.eqz (local.get $ch)))
       (i32.store8 (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $len))
         (select
@@ -960,29 +960,28 @@
   ;; but not the limit.
   (func $console_title_get (param $title_gp i32) (param $size i32)
         (param $wide i32) (result i32)
-    (local $dst i32) (local $len i32) (local $copy i32) (local $i i32)
+    (local $dst i32) (local $len i32) (local $copy i32) (local $i i32) (local $ch i32)
     (call $console_title_ensure)
     (if (i32.or (i32.eqz (local.get $title_gp)) (i32.eqz (local.get $size)))
       (then (return (i32.const 0))))
     (local.set $len (call $strlen (global.get $CONSOLE_TITLE_STORAGE)))
-    (local.set $dst (call $g2w (local.get $title_gp)))
+    (local.set $dst (local.get $title_gp))
     (local.set $copy (local.get $len))
     (if (i32.ge_u (local.get $copy) (local.get $size))
       (then (local.set $copy (i32.sub (local.get $size) (i32.const 1)))))
-    (if (local.get $wide)
-      (then
-        (block $done (loop $widen
-          (br_if $done (i32.ge_u (local.get $i) (local.get $copy)))
-          (i32.store16 (i32.add (local.get $dst)
-              (i32.shl (local.get $i) (i32.const 1)))
-            (i32.load8_u (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $i))))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $widen)))
-        (i32.store16 (i32.add (local.get $dst)
-          (i32.shl (local.get $copy) (i32.const 1))) (i32.const 0)))
-      (else
-        (memory.copy (local.get $dst) (global.get $CONSOLE_TITLE_STORAGE) (local.get $copy))
-        (i32.store8 (i32.add (local.get $dst) (local.get $copy)) (i32.const 0))))
+    ;; Include the terminator in the shared bounded copy. Storage is private;
+    ;; only the caller destination goes through guest translation.
+    (loop $copy_title
+      (local.set $ch
+        (if (result i32) (i32.lt_u (local.get $i) (local.get $copy))
+          (then (i32.load8_u (i32.add (global.get $CONSOLE_TITLE_STORAGE) (local.get $i))))
+          (else (i32.const 0))))
+      (if (local.get $wide)
+        (then (call $gs16 (i32.add (local.get $dst)
+          (i32.shl (local.get $i) (i32.const 1))) (local.get $ch)))
+        (else (call $gs8 (i32.add (local.get $dst) (local.get $i)) (local.get $ch))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $copy_title (i32.le_u (local.get $i) (local.get $copy))))
     (local.get $copy))
 
   (func $handle_GetConsoleTitleA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
