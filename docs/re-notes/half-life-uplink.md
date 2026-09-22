@@ -1127,3 +1127,32 @@ whether it is spinning in a pump, blocked in a wait, or looping inside the
 engine's own restart. Until that is known, no fix should be attempted — and no
 automated multi-switch test can pass, because one switch per process is all the
 app currently survives.
+
+### "D3D does not fill the screen" is a page bug, not an emulator one (2026-09-22)
+
+Reported from the browser: Half-Life under `-D3D` renders correctly but sits in
+the top-left corner of a large page. The guest was cleared first — `hl5.log`
+shows its last `IDirectDraw_SetDisplayMode` is `640x480x16` with **no**
+`RestoreDisplayMode` anywhere, so a mode is in effect and the app is not
+asking for a window the size of the page.
+
+That leaves one difference between the working CLI capture and the broken
+browser one: the size of the screen the frame is composited onto. Running the
+identical D3D route at `--screen=1600x1000` **does not reproduce it** — the
+menu fills all 1600x1000 (`menu-big-8k.png`, 307 distinct colours, the Half-Life
+banner spanning the full width). So the emulator's own compositor scales a
+640x480 guest surface to whatever screen it is given, and the fault is above
+the emulator, in the page.
+
+Two things about how to measure this, because the first attempt wasted 25
+minutes. **The question is where the frame lands, not what is in it**, so the
+main menu answers it exactly as well as gameplay and arrives before batch 6000
+instead of after 120000: `hl-bigmenu.sh` is 9000 batches and 38s of wall clock
+against `hl-bigscreen.sh`'s 170000, which died on its 1500s guard at batch
+67398 having captured nothing. And the throughput difference is not noise —
+the same build runs **235 batches/s at the menu and 45 in gameplay**, so a
+batch budget calibrated on one is off by 5x on the other.
+
+Not yet known: whether the page sizes the canvas wrongly, or sizes it right and
+fails to scale into it. That is a `lib/browser-shell.js` / `host.js` question
+and needs a browser, not a CLI run.
