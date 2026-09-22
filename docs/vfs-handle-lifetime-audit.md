@@ -820,3 +820,25 @@ validation errors, success, lazy retry/resume and provider failure, including
 stack cleanup. MapViewOfFileEx tests use the result ABI and check owner ID and
 unsupported-placement error. Signature generation has 255 imports; handler
 ESP validation passes. No new full-build/browser/native result is claimed.
+
+## Integration gate checkpoint (2026-09-21)
+
+The full build exposed a census false positive introduced by the generic-rights
+work: GENERIC_EXECUTE numerically equals the exclusive end of THREAD_RPC.
+Production and test code now name it as access-mask bit 29. Its value and
+behavior are unchanged; no census exemption or baseline increase was added.
+The pre-existing mapping fallback address remains separate technical debt.
+
+VFS 41/41, lazy/provider 48/48 and source-compiled public file/mapping tests pass.
+The build passes region safety, all five layout shake modes, test membership,
+API/dispatch, ESP, silent-handler and 255-import signature gates, then fails
+the toy-VM browser-bundle freshness gate for both browser bundles. Those source
+changes belong to another agent; they were not regenerated or committed here.
+This is not a full-build, browser, native Win98 or performance pass.
+
+Next VFS priority is section identity/lifetime: independent named-section
+handles, views surviving handle closure, and backing-file identity independent
+of its path. Shared-view coherence, Unicode section creation, preferred-address
+placement and native error-precedence checks remain open. The wider review
+also retains common-core consolidation and silent-handler work; these VFS
+checkpoints do not close the overall review.

@@ -115,10 +115,11 @@ test('file data access is enforced before bytes, providers or cursors change', (
 });
 
 test('generic and specific file rights compare by meaning without granting extra rights', () => {
+  const GENERIC_EXECUTE = 1 << 29;
   const vfs = makeVFS({ 'c:\\rights.bin': 4 });
   const open = access => vfs.createFile('c:\\rights.bin', access, 3);
   for (const [generic, specific] of [[0x80000000, 0x120089],
-    [0x40000000, 0x120116], [0x20000000, 0x1200a0], [0x10000000, 0x1f01ff]]) {
+    [0x40000000, 0x120116], [GENERIC_EXECUTE, 0x1200a0], [0x10000000, 0x1f01ff]]) {
     const h = open(generic);
     const alias = vfs.duplicateFileHandle(h, specific, false, 0);
     assert(alias > 0);
@@ -144,7 +145,7 @@ test('generic and specific file rights compare by meaning without granting extra
   for (const access of [2, 4, 0x10, 0x100, 0x10000000, 0x40000000]) {
     assert.strictEqual(open(access), 0, 'write intent cannot open protected media');
   }
-  for (const access of [0, 1, 0x80, 0x80000000, 0x20000000]) assert(open(access) > 0);
+  for (const access of [0, 1, 0x80, 0x80000000, GENERIC_EXECUTE]) assert(open(access) > 0);
 });
 
 test('creation dispositions validate truncation before mutation and permit protected existing opens', () => {
