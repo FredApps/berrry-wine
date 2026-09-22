@@ -298,8 +298,6 @@
     "09a8-handlers-directx.wat:$handle_IDirectSound3DListener_AddRef",
     "09a8-handlers-directx.wat:$handle_IDirectSound3DListener_QueryInterface",
     "09a8-handlers-directx.wat:$handle_IDirectSound3DListener_Release",
-    "09a8-handlers-directx.wat:$handle_IDirectSoundBuffer_GetPan",
-    "09a8-handlers-directx.wat:$handle_IDirectSoundBuffer_GetVolume",
     "09a8-handlers-directx.wat:$handle_IDirectSoundBuffer_Initialize",
     "09a8-handlers-directx.wat:$handle_IDirectSoundBuffer_Restore",
     "09a8-handlers-directx.wat:$handle_IDirectX7_DirectInputCreate",

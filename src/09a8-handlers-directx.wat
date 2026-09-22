@@ -143,6 +143,7 @@
   ;; DirectSound buffers use the same per-slot storage as a disjoint union:
   ;;   +0 owner DirectSound slot + 1, +4 creation DSBCAPS, +8 current DSSCL,
   ;;   +12 play-cursor base (the stopped position or live snapshot origin).
+  ;;   +16 volume and +20 pan, signed centibels; zero is the initial value.
   ;; $dx_create_com_obj clears the full record before either type publishes it.
   (global $DX_SURF_STATE i32 (region.addr $DX_SURF_STATE 0))
   (global $DX_SURF_STATE_SIZE i32 (region.size $DX_SURF_STATE))
@@ -6833,6 +6834,7 @@
   ;; by IDirectSoundBuffer::Play, so QI does not duplicate PCM or playback.
   (func $dsbuf_ensure_voice (param $entry i32) (result i32)
     (local $handle i32) (local $channels i32) (local $bits i32) (local $rate i32)
+    (local $state i32)
     (local.set $handle (load.field DxObject misc0 (local.get $entry)))
     (if (local.get $handle) (then (return (local.get $handle))))
     (local.set $channels (load.field DxObject bpp (local.get $entry)))
@@ -6844,6 +6846,13 @@
     (local.set $handle
       (call $host_voice_open (local.get $rate) (local.get $channels) (local.get $bits)))
     (store.field DxObject misc0 (local.get $entry) (local.get $handle))
+    ;; Controls belong to the buffer, not the lazily-created browser voice.
+    ;; This also restores them after SetFormat recreates a primary voice and
+    ;; gives duplicates their copied controls before their first Play.
+    (if (local.get $handle) (then
+      (local.set $state (call $dx_surf_state_ptr (local.get $entry)))
+      (call $host_voice_set_volume_db (local.get $handle) (i32.load offset=16 (local.get $state)))
+      (call $host_voice_set_pan (local.get $handle) (i32.load offset=20 (local.get $state)))))
     (local.get $handle))
 
   ;; IID_IDirectSound3DBuffer = {279AFA86-4981-11CE-A521-0020AF0BE560}.
@@ -7063,15 +7072,60 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
-  ;; GetVolume / GetPan / GetFrequency — return 0
+  ;; Volume/pan share validation and buffer-owned state. A missing creation
+  ;; capability is not a successful no-op. CTRL3D buffers cannot be panned.
+  (func $dsbuf_control_available (param $state i32) (param $pan i32) (result i32)
+    (local $caps i32)
+    (local.set $caps (i32.load offset=4 (local.get $state)))
+    (i32.and
+      (i32.ne (i32.and (local.get $caps)
+        (select (i32.const 0x40) (i32.const 0x80) (local.get $pan))) (i32.const 0))
+      (i32.eqz (i32.and (local.get $pan)
+        (i32.ne (i32.and (local.get $caps) (i32.const 0x10)) (i32.const 0))))))
+
+  (func $dsbuf_get_control (param $this i32) (param $out i32) (param $pan i32) (result i32)
+    (local $entry i32) (local $state i32)
+    (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80070057))))
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 5))
+      (then (return (i32.const 0x80070057))))
+    (local.set $state (call $dx_surf_state_ptr (local.get $entry)))
+    (if (i32.eqz (call $dsbuf_control_available (local.get $state) (local.get $pan)))
+      (then (return (i32.const 0x8878001E)))) ;; DSERR_CONTROLUNAVAIL
+    (call $gs32 (local.get $out)
+      (i32.load (i32.add (local.get $state)
+        (select (i32.const 20) (i32.const 16) (local.get $pan)))))
+    (i32.const 0))
+
+  (func $dsbuf_set_control (param $this i32) (param $value i32) (param $pan i32) (result i32)
+    (local $entry i32) (local $state i32) (local $handle i32)
+    (if (i32.or (i32.lt_s (local.get $value) (i32.const -10000))
+          (i32.gt_s (local.get $value)
+            (select (i32.const 10000) (i32.const 0) (local.get $pan))))
+      (then (return (i32.const 0x80070057))))
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (if (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 5))
+      (then (return (i32.const 0x80070057))))
+    (local.set $state (call $dx_surf_state_ptr (local.get $entry)))
+    (if (i32.eqz (call $dsbuf_control_available (local.get $state) (local.get $pan)))
+      (then (return (i32.const 0x8878001E))))
+    (i32.store (i32.add (local.get $state)
+      (select (i32.const 20) (i32.const 16) (local.get $pan))) (local.get $value))
+    (local.set $handle (load.field DxObject misc0 (local.get $entry)))
+    (if (local.get $handle) (then
+      (if (local.get $pan)
+        (then (call $host_voice_set_pan (local.get $handle) (local.get $value)))
+        (else (call $host_voice_set_volume_db (local.get $handle) (local.get $value))))))
+    (i32.const 0))
+
   (func $handle_IDirectSoundBuffer_GetVolume (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $dsbuf_get_control (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   (func $handle_IDirectSoundBuffer_GetPan (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (local.get $arg1) (then (call $gs32 (local.get $arg1) (i32.const 0))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $dsbuf_get_control (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   (func $handle_IDirectSoundBuffer_GetFrequency (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -7161,22 +7215,12 @@
   ;; each other the way the old single-waveOut routing did.
   (func $handle_IDirectSoundBuffer_Play (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $handle i32) (local $dib_wa i32) (local $buf_size i32)
-    (local $state i32) (local $channels i32) (local $bits i32)
-    (local $rate i32) (local $loop i32) (local $start i32)
+    (local $state i32) (local $loop i32) (local $start i32)
     (local.set $entry (call $dx_from_this (local.get $arg0)))
     (local.set $state (call $dx_surf_state_ptr (local.get $entry)))
     (local.set $dib_wa (load.field DxObject misc1 (local.get $entry)))
     (local.set $buf_size (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    (local.set $channels (load.field DxObject bpp (local.get $entry)))
-    (local.set $bits (load.field DxObject pitch (local.get $entry)))
-    (local.set $rate (load.field DxObject misc2 (local.get $entry)))
-    (if (i32.eqz (local.get $channels)) (then (local.set $channels (i32.const 1))))
-    (if (i32.eqz (local.get $bits)) (then (local.set $bits (i32.const 16))))
-    (if (i32.eqz (local.get $rate)) (then (local.set $rate (i32.const 22050))))
-    (local.set $handle (load.field DxObject misc0 (local.get $entry)))
-    (if (i32.eqz (local.get $handle)) (then
-      (local.set $handle (call $host_voice_open (local.get $rate) (local.get $channels) (local.get $bits)))
-      (store.field DxObject misc0 (local.get $entry) (local.get $handle))))
+    (local.set $handle (call $dsbuf_ensure_voice (local.get $entry)))
     ;; DSBPLAY_LOOPING = 1
     (local.set $loop (i32.and (local.get $arg3) (i32.const 1)))
     (local.set $start (i32.load offset=12 (local.get $state)))
@@ -7312,22 +7356,14 @@
 
   ;; SetVolume(this, lVolume) — DSOUND attenuation centibels (0=full, -10000=silent)
   (func $handle_IDirectSoundBuffer_SetVolume (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $handle i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $handle (load.field DxObject misc0 (local.get $entry)))
-    (if (local.get $handle) (then
-      (call $host_voice_set_volume_db (local.get $handle) (local.get $arg1))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $dsbuf_set_control (local.get $arg0) (local.get $arg1) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; SetPan(this, lPan) — centibels, -10000=left .. +10000=right
   (func $handle_IDirectSoundBuffer_SetPan (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $handle i32)
-    (local.set $entry (call $dx_from_this (local.get $arg0)))
-    (local.set $handle (load.field DxObject misc0 (local.get $entry)))
-    (if (local.get $handle) (then
-      (call $host_voice_set_pan (local.get $handle) (local.get $arg1))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $dsbuf_set_control (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; SetFrequency(this, dwFrequency) — playback rate in Hz; 0 = original

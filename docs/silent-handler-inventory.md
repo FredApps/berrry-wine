@@ -687,3 +687,12 @@ Owned host-query buffers and guest-aware copying cover sparse caller memory.
 The metadata-stub count remains 22. No classifier change or new allowance;
 the former constant missing-key handler alone leaves the inventory. Broader
 registry type/error coverage and malformed-pointer behavior remain separate.
+
+2026-09-22: 247 -> 247 manual, DirectSound volume/pan behavior repaired outside
+the narrow classifier. Both getters previously wrote fixed zero; setters lost
+changes before lazy voice creation. Buffer-owned state now survives initial
+playback, duplication, stop/restart and voice recreation, with capability/range
+validation and sparse-safe getter output. The old conditional output stores
+already excluded these handlers from this inventory, so neither count nor hash
+changes. See `docs/directsound-volume-pan-review.md` for runtime evidence and
+remaining frequency, channel attenuation, primary mixer and shared-PCM work.
