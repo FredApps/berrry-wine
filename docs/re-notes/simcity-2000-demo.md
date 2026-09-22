@@ -114,3 +114,114 @@ Wasm self-time split (30000-batch run, `tools/dispatch-attribution.js`):
 specialised Jcc handlers 10.9%, `$get_of` 2.1%, GDI/controls ~17% (font face
 string compares on every text out, `$gdi_bitmap_font_face_equal` 2.0%, and
 `$ctrl_get_wh_packed` 1.8%).
+
+### What those three leads are worth (judged 2026-09-21)
+
+App win = per-event saving × the event's share. Worked out for each lead before
+spending the quiet box on it:
+
+* **ILT thunk elision: built, correct, parked.** A direct `call`/`jmp` whose
+  target is an `E9` thunk in the code section gets emitted at the thunk's
+  destination. New handlers 470/471 bill the skipped block, so a batch still
+  buys the same guest work. The result was pixel- and API-count-identical to
+  baseline on SimCity, Caesar III, Marbles, Diablo and Heroes II, and it has a
+  unit test with a negative control on the write guard. `bench-loops` `ilt_call`
+  measured it at ~19ns saved per thunk (+18%). But thunks are 1.95% of block
+  entries here and 1.01% on Caesar III, which comes to ~0.1-0.2% of app CPU,
+  well inside the 1-3% null band. Not committed. Two traps if it is ever picked
+  up again:
+  1. **Follow one hop only.** This exe chains thunk to thunk (`0x401ae6` →
+     `0x40d94a` → `0x490f93`), and the handler bills exactly one skipped block.
+     Billing two as one shifted batch boundaries: +4% API calls, and a
+     different PNG.
+  2. **Land on the thunk when the transfer into it would have stopped**
+     (budget ≤ 0, yield, `$dbg_chain_guard`, a bp on the thunk). Billing it
+     anyway moves a batch boundary by one block, and PeekMessage then sees
+     input one call early (first divergence at batch 106).
+
+  Because `$dbg_chain_guard` includes the handler histogram, `--handler-hist`
+  never shows an elided thunk. Use the plain-run PNG/API oracle and
+  `bench-loops` instead.
+* **H149 SIB fusion: not built.** Its consumers are spread over 7+ handlers
+  (`test_m8_i8`, `movzx8`, `unary_m16`, `alu_m8_i8`, `movzx_r16_m8`, `mov_m16_r16`,
+  `mov_r16_m16`, 184k-520k each). Broad fused SIB handlers were already
+  measured as a loss in `docs/aoe-performance-optimization.md`. Upper bound
+  ~0.5-0.9%.
+* **H404 free fall-through: not built.** It is 1.8% of ops and saves at most
+  one transfer on an adjacent not-taken edge, so ≤0.3%.
+
+What is left is the 16-bit ALU / compare-ladder code itself: `alu_r16_i16` →
+Jcc is the top pair at 3.7% of ops. A fold for that shape is the only lead here
+that could clear the null band.
+
+## "Zones never develop" was the city, not the emulator (2026-09-21)
+
+A hand-built test city sat for a year of game time with every zone empty.
+Hit counters on the monthly zone pass (the function holding call site
+`0x42a465`) showed why, and each rejection was the game's own rule:
+
+* `0x42a423 call 0x402450` → `0x448d3d`: is any road tile (XBLD `0x1d..0x2b`,
+  plus a few crossing ids) within the 24 offsets at `0x4b1ec0` (a runtime-filled
+  BSS table: the four axes out to 3 tiles, plus the ring at distance 2). 41 of 42
+  zone tiles failed it.
+* `0x42a465 call 0x401af5` → `0x42b083`: does the tile, or any of its
+  neighbours, have XBIT (`0x4b3710`) bit `0x40` (powered)? Empty zone tiles
+  never get `0x80`/`0x40` themselves. Only lines, plants and *developed*
+  buildings carry power, so an empty block develops only from the edge that
+  touches a powered tile, then spreads as buildings appear.
+
+A second city laid out to those rules (zones ≤3 tiles from a road, a power
+line touching every block) developed within four sim months and kept
+growing. The budget, too, behaves: taxes accrue and are paid in January, so
+funds are flat for eleven months of the year. Useful layers besides XBIT:
+XBLD `0x4b50f0` (building id; `0x1d..0x2b` roads, `0x0e..0x1c` lines, `0xcf`
+coal plant), XZON `0x4b2df0` (low nibble zone type, `0x10..0x80` building
+corner bits), XTER `0x4b2b58` (low nibble slope; 0 = flat). All are 128-entry
+row-pointer tables indexed `[table + y*4] + x`.
+
+Driving it headlessly, three traps:
+
+* **The demo's 30-minute limit is guest time.** The title-bar countdown
+  runs on the headless clock, 200 ms per batch by default, and at zero the
+  demo plays a disaster reel (Fire Storm, Volcano) over the city. "No
+  Disasters" (WM_COMMAND 32782 to the frame) does not stop it. Pass
+  `--tick-ms-per-batch=10`: the sim itself is interpreter-bound (one month is
+  ~4000 batches either way), so this buys ~20x the game time.
+* **Invisible modals eat input.** "Select Bridge", "connect to your
+  neighbor for $1000?" and the January newspaper all block every later click
+  without a word. Check a PNG after each batch of actions.
+* **Placement is silent.** A building overlapping a road or water is simply
+  not placed. A 3x3 building anchors at the clicked tile's top corner, and a
+  4x4 one at clicked tile −1.
+
+### Third city (2050 start, 2026-09-21): more UI gaps and workarounds
+
+* **Budget spinners are dead.** The Budget window's up/down arrows are
+  ScrollBar controls (WAT control class 7). They are not drawn and ignore
+  clicks, and typing into the percent fields does nothing. Posting the
+  scroll message works:
+  `exports.post_message_q(0x10088, 0x115 /*WM_VSCROLL*/, SB, hwndScroll)`.
+  `SB_LINEDOWN` (1) lowers a service by 3% or the tax by 1, `SB_LINEUP` (0)
+  raises it, and `SB_PAGEDOWN` does nothing. The post queue drops messages
+  sent back to back, so step 30–40 batches between posts. Hwnds are per
+  dialog instance: read them from the `[CreateDialog] ctrl` lines.
+* **Select Power Plant paints nothing.** The picker is a blank grey 308x431
+  box, and a plant button draws only after it has been clicked. It also
+  needs ~1500 batches before it accepts a click. Its buttons are 97x128
+  cells in a 3x3 grid (coal, hydro, oil / gas, nuclear, wind / solar,
+  microwave, fusion), with the client origin at (3,22). One click on a cell
+  picks that plant and closes the picker. `dlg-cmd:<id>` does not.
+* **Recreation fly-out remembers its subtool.** Clicking the palette button
+  re-arms the last-used item (Marina) and overrides an earlier posted
+  WM_COMMAND. Click the palette button *first*, then post the item id (Zoo
+  32881). The same applies to the power button: its click alone arms
+  Power Lines.
+* **The underground (pipes) view leaves the map blank.** After a Pipes or
+  Pump action the map, and for a while the status bar, stay grey. The next
+  tool change then shows the underground view one tool late. A few thousand
+  batches of sim restore it.
+* **The status bar overprints.** Its text keeps stale fragments of the
+  previous string ("Pipes $3mp $100", "Small Park $20 0010").
+* **Placement rules seen this run:** "Marinas must be placed across
+  shorelines" (the 3x3 must include a water tile). The 4x4 solar plant and
+  4x4 zoo take the clicked tile −1 as their top corner, like the coal plant.
