@@ -679,6 +679,29 @@
        every pixel. The way back to the desktop is the app's own close button —
        when the last guest exits, the icons return. */
     body.single-app #taskbar { display: none; }
+    /* ...except on the phone's desktop, where the Start menu is the way to
+       add a game and to log in. It floats over the bottom of the desktop
+       rather than taking layout height, so the guest screen is not resized
+       when an app starts and the taskbar goes away again. */
+    body.single-app:not(.app-running) #taskbar {
+      display: flex;
+      position: fixed; left: 0; right: 0; bottom: 0;
+      z-index: 20;
+      padding-bottom: calc(2px + env(safe-area-inset-bottom, 0px));
+    }
+    body.single-app #start-menu {
+      position: fixed;
+      bottom: calc(30px + env(safe-area-inset-bottom, 0px));
+      z-index: 21;
+    }
+    body.single-app.app-running #start-menu { display: none; }
+    body.single-app:not(.app-running) #build-stamp {
+      bottom: calc(38px + env(safe-area-inset-bottom, 0px));
+    }
+    /* The last icon row must scroll clear of the floating taskbar. */
+    body.single-app:not(.app-running) #desktop-icons {
+      padding-bottom: calc(44px + env(safe-area-inset-bottom, 0px));
+    }
     /* The on-screen keyboard covers the page without resizing it. The guest
        screen keeps its size (a keyboard is not a display-mode change) and is
        translated up instead, by lib/mobile-keyboard.js. The transition is
@@ -1636,6 +1659,8 @@ Resource-aware Win98 emulator
   <div id="start-menu">
     <div class="banner">Wine&nbsp;Assembly</div>
     <div class="items">
+      <a class="item" href="#" id="start-add-game-item" onclick="addGameFromStart(event)" title="Open a game, disc image or archive from this device"><span class="ico">&#128190;</span>Add a Game...</a>
+      <div class="sep"></div>
       <a class="item" href="#" onclick="openReadmeFromStart(event)"><span class="ico">&#128196;</span>Read Me</a>
       <a class="item" href="apps/"><span class="ico">&#127918;</span>Apps</a>
       <a class="item" href="design/"><span class="ico">&#128208;</span>Design</a>
@@ -1647,6 +1672,7 @@ Resource-aware Win98 emulator
       <div class="sep"></div>
       <a class="item" href="?debug"><span class="ico">&#128295;</span>Debug Mode</a>
       <div class="sep"></div>
+      <a class="item" href="#" id="start-account-item" onclick="accountFromStart(event)" title="Your berrry account: online play and saves"><span class="ico">&#128100;</span><span id="start-account-label">Log In...</span></a>
       <a class="item" href="#" id="start-shutdown-item" onclick="openShutdownFromStart(event)" title="Shut Down Windows"><span class="ico"><svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true"><rect x="0.5" y="1.5" width="13" height="9" fill="#c0c0c0" stroke="#000"/><rect x="2" y="3" width="10" height="6" fill="#1084d0"/><rect x="5" y="11" width="4" height="2" fill="#808080"/><rect x="3" y="13" width="8" height="1.5" fill="#000"/><circle cx="12.5" cy="12" r="3" fill="#ffd700" stroke="#000"/></svg></span>Shut Down...</a>
     </div>
   </div>
@@ -1669,6 +1695,36 @@ Resource-aware Win98 emulator
       const b = document.getElementById('start-btn');
       const open = m.classList.toggle('open');
       b.classList.toggle('open', open);
+      if (open) refreshStartAccount();
+    }
+    function addGameFromStart(e) {
+      if (e) e.preventDefault();
+      closeStartMenu();
+      // Still inside the click, so the file picker is allowed to open.
+      if (window.wineMedia) window.wineMedia.openPicker();
+    }
+    // Log In... / Log Out <name>. The label is refreshed on load, every time
+    // the menu opens, and whenever a sign-in may have finished elsewhere.
+    let startAccountUser = null;
+    async function refreshStartAccount() {
+      const shell = window.browserShell;
+      if (!shell || !shell.accountUser) return;
+      startAccountUser = await shell.accountUser();
+      const label = document.getElementById('start-account-label');
+      if (label) {
+        label.textContent = startAccountUser
+          ? `Log Out${startAccountUser.name ? ' ' + startAccountUser.name : ''}...`
+          : 'Log In...';
+      }
+    }
+    async function accountFromStart(e) {
+      if (e) e.preventDefault();
+      closeStartMenu();
+      const shell = window.browserShell;
+      if (!shell || !shell.accountSignIn) return;
+      if (startAccountUser) await shell.accountSignOut();
+      else shell.accountSignIn();
+      refreshStartAccount();
     }
     function toggleRecordingFromStart(e) {
       if (e) {
@@ -2078,6 +2134,8 @@ Resource-aware Win98 emulator
     // lib/media-import.js.
     const mediaUI = window.mediaImportUI.install({
       dropTarget: document.getElementById('screen-wrap'),
+      // Start > Add a Game... replaces the corner button.
+      showButton: false,
       desktopIcons: document.getElementById('desktop-icons'),
       apps,
       shell,
@@ -2085,6 +2143,8 @@ Resource-aware Win98 emulator
       appendLog: text => appendDebugLog(text),
     });
     window.wineMedia = mediaUI;
+    window.browserShell.onAccountChange(refreshStartAccount);
+    refreshStartAccount();
     // Kept media becomes desktop icons again on every visit. Nothing is read
     // from OPFS here beyond the catalog -- the disc itself is opened on launch.
     mediaUI.restoreLibrary().catch(e => appendDebugLog(`[media] ${e && e.message || e}`));
