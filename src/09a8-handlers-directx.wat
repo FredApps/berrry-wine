@@ -1568,9 +1568,13 @@
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   (func $handle_IVBDirectDrawClipper_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $handle_IDirectDrawClipper_QueryInterface
+    ;; DX7VB typelib DirectDrawClipper, not the native IDirectDrawClipper ABI.
+    ;; This wrapper is its own COM identity; never hand its vtable to native callers.
+    (i32.store offset=0 (global.get $reg_base) (call $dx_query_interface_single
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
-      (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
+      (i32.const 0x9F76FDCA) (i32.const 0x11D18E92)
+      (i32.const 0xC0000888) (i32.const 0x02C6C24F)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
   (func $handle_IVBDirectDrawClipper_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $handle_IDirectDrawClipper_Release
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
@@ -5908,9 +5912,11 @@
   ;; ════════════════════════════════════════════════════════════
 
   (func $handle_IDirectDrawClipper_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return same object for IUnknown / IDirectDrawClipper
-    (call $gs32 (local.get $arg2) (local.get $arg0))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    ;; IID_IDirectDrawClipper {6C14DB85-A733-11CE-A521-0020AF0BE560}.
+    (i32.store offset=0 (global.get $reg_base) (call $dx_query_interface_single
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0x6C14DB85) (i32.const 0x11CEA733)
+      (i32.const 0x200021A5) (i32.const 0x60E50BAF)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
 

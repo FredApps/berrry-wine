@@ -30,10 +30,9 @@ policy; this is not a native Win98 observation or a promised COM input.
 
 ## Remaining work
 
-- The clipper QueryInterface currently accepts every IID and omits AddRef.
-  Its VB interface forwards to the same handler, so fixing it requires reviewing
-  both interface identities and returning the correct vtable, not simply
-  substituting the native clipper IID into this fix.
+- The subsequent [clipper QI fix](directdraw-clipper-query-interface-review.md)
+  separates native/VB identities and acquires references. The native probe also
+  exposed a missing VB vtable tail slot, which remains open.
 - Arbitrary invalid pointers, cross-page IID buffers, concurrent refcount
   updates and PAGE permissions are not covered by this change.
 - This is a focused handler regression, not a browser/game performance result
