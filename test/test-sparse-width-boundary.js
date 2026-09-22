@@ -10,8 +10,16 @@ const { createHostImports } = require('../lib/host-imports');
 const extraWat = String.raw`
   (func (export "test_x87_store")
       (param $guest i32) (param $group i32) (param $op i32) (param $value f64)
+    (local $i i32)
     (global.set $fpu_top (i32.const 0))
     (global.set $fpu_tag (i32.const 0))
+    (global.set $fpu_cw (i32.const 0x37f))
+    (global.set $fpu_sw (i32.const 0))
+    (global.set $fpu_raw_tag (i32.const 0))
+    (loop $regs
+      (call $fpu_set_phys (local.get $i) (f64.convert_i32_s (local.get $i)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $regs (i32.lt_u (local.get $i) (i32.const 8))))
     (call $fpu_push (local.get $value))
     (call $fpu_exec_mem (local.get $group) (local.get $op) (local.get $guest)))
   (func (export "test_x87_raw_store") (param $guest i32) (param $value i64)
@@ -145,6 +153,31 @@ async function main() {
       store(address, value);
       assert.deepStrictEqual(Array.from({ length: 10 }, (_, i) => read8(address - 1 + i)),
         [0xcc, ...expected, 0xcc], 'raw integer/MMX store preserves all bits and neighboring bytes');
+    }
+  }
+
+  // Compound x87 outputs: every possible split, checked against a stable
+  // aligned encoding. Explicit m80/BCD vectors also prevent a wrong encoder
+  // from agreeing with itself at both destinations.
+  for (const row of [
+    { group: 3, op: 7, size: 10, value: 1.25, hex: '00000000000000a0ff3f' },
+    { group: 3, op: 7, size: 10, value: -0, hex: '00000000000000000080' },
+    { group: 3, op: 7, size: 10, value: Infinity, hex: '0000000000000080ff7f' },
+    { group: 3, op: 7, size: 10, value: NaN, hex: '00000000000000c0ff7f' },
+    { group: 7, op: 6, size: 10, value: -123456789, hex: '89674523010000000080' },
+    { group: 1, op: 6, size: 28, value: 1.25 },
+    { group: 5, op: 6, size: 108, value: 1.25 },
+  ]) {
+    const aligned = page1 + 0x100;
+    e.test_x87_store(aligned, row.group, row.op, row.value);
+    const expected = Array.from({ length: row.size }, (_, i) => read8(aligned + i));
+    if (row.hex) assert.strictEqual(Buffer.from(expected).toString('hex'), row.hex);
+    for (let split = 1; split < row.size; split++) {
+      const address = page2 - split;
+      for (let i = -1; i <= row.size; i++) write8(address + i, 0xcc);
+      e.test_x87_store(address, row.group, row.op, row.value);
+      assert.deepStrictEqual(Array.from({ length: row.size + 2 }, (_, i) => read8(address - 1 + i)),
+        [0xcc, ...expected, 0xcc], `compound x87 ${row.group}/${row.op}, split ${split}`);
     }
   }
 

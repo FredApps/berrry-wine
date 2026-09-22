@@ -482,28 +482,28 @@
     (if (local.get $sign) (then (local.set $val (f64.neg (local.get $val)))))
     (local.get $val))
 
+  (func $fpu_store_m80_bits (param $addr i32) (param $mant i64) (param $sign_exp i32)
+    (call $gs64 (local.get $addr) (local.get $mant))
+    (call $gs16 (i32.add (local.get $addr) (i32.const 8)) (local.get $sign_exp)))
+
   (func $fpu_store_m80 (param $addr i32) (param $val f64)
-    (local $w i32) (local $sign i32) (local $exp i32)
+    (local $sign i32) (local $exp i32) (local $mant i64)
     (local $abs f64) (local $scaled f64)
-    (local.set $w (call $g2w (local.get $addr)))
     (local.set $abs (f64.abs (local.get $val)))
     (if (i64.lt_s (i64.reinterpret_f64 (local.get $val)) (i64.const 0))
       (then (local.set $sign (i32.const 0x8000))))
     (if (call $fpu_is_nan (local.get $val))
       (then
-        (i64.store (local.get $w) (i64.const -4611686018427387904))
-        (i32.store16 (i32.add (local.get $w) (i32.const 8))
+        (call $fpu_store_m80_bits (local.get $addr) (i64.const -4611686018427387904)
           (i32.or (local.get $sign) (i32.const 0x7FFF)))
         (return)))
     (if (f64.eq (local.get $abs) (f64.const 0))
       (then
-        (i64.store (local.get $w) (i64.const 0))
-        (i32.store16 (i32.add (local.get $w) (i32.const 8)) (local.get $sign))
+        (call $fpu_store_m80_bits (local.get $addr) (i64.const 0) (local.get $sign))
         (return)))
     (if (f64.ge (local.get $abs) (f64.const 1.7976931348623157e308))
       (then
-        (i64.store (local.get $w) (i64.const -9223372036854775808))
-        (i32.store16 (i32.add (local.get $w) (i32.const 8))
+        (call $fpu_store_m80_bits (local.get $addr) (i64.const -9223372036854775808)
           (i32.or (local.get $sign) (i32.const 0x7FFF)))
         (return)))
     (local.set $exp (i32.trunc_f64_s (f64.floor (call $host_math_log2 (local.get $abs)))))
@@ -514,11 +514,11 @@
         (f64.const 9223372036854775808.0)))
     (if (f64.ge (local.get $scaled) (f64.const 18446744073709551616.0))
       (then
-        (i64.store (local.get $w) (i64.const -9223372036854775808))
+        (local.set $mant (i64.const -9223372036854775808))
         (local.set $exp (i32.add (local.get $exp) (i32.const 1))))
       (else
-        (i64.store (local.get $w) (i64.trunc_f64_u (local.get $scaled)))))
-    (i32.store16 (i32.add (local.get $w) (i32.const 8))
+        (local.set $mant (i64.trunc_f64_u (local.get $scaled)))))
+    (call $fpu_store_m80_bits (local.get $addr) (local.get $mant)
       (i32.or (local.get $sign)
         (i32.and (i32.add (local.get $exp) (i32.const 16383)) (i32.const 0x7FFF)))))
 
@@ -559,17 +559,15 @@
   ;; document the gap. If a guest ever does parse them it sees a null
   ;; selector — easy to spot if it ever matters.
   (func $fpu_store_env (param $addr i32)
-    (local $w i32)
-    (local.set $w (call $g2w (local.get $addr)))
-    (i32.store (local.get $w) (global.get $fpu_cw))
-    (i32.store (i32.add (local.get $w) (i32.const 4))
+    (call $gs32 (local.get $addr) (global.get $fpu_cw))
+    (call $gs32 (i32.add (local.get $addr) (i32.const 4))
       (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
               (i32.shl (global.get $fpu_top) (i32.const 11))))
-    (i32.store (i32.add (local.get $w) (i32.const 8)) (call $fpu_pack_tag_word))
-    (i32.store (i32.add (local.get $w) (i32.const 12)) (i32.const 0))   ;; FIP
-    (i32.store (i32.add (local.get $w) (i32.const 16)) (i32.const 0))   ;; FCS:FOP
-    (i32.store (i32.add (local.get $w) (i32.const 20)) (i32.const 0))   ;; FDP
-    (i32.store (i32.add (local.get $w) (i32.const 24)) (i32.const 0)))  ;; FDS
+    (call $gs32 (i32.add (local.get $addr) (i32.const 8)) (call $fpu_pack_tag_word))
+    (call $gs32 (i32.add (local.get $addr) (i32.const 12)) (i32.const 0))   ;; FIP
+    (call $gs32 (i32.add (local.get $addr) (i32.const 16)) (i32.const 0))   ;; FCS:FOP
+    (call $gs32 (i32.add (local.get $addr) (i32.const 20)) (i32.const 0))   ;; FDP
+    (call $gs32 (i32.add (local.get $addr) (i32.const 24)) (i32.const 0)))  ;; FDS
 
   (func $fpu_load_env (param $addr i32)
     (local $w i32) (local $sw i32)
@@ -584,12 +582,9 @@
 
   ;; FNSAVE/FRSTOR ST area: 8 x 10-byte slots in PHYSICAL order.
   (func $fpu_store_regs (param $addr i32)
-    (local $i i32) (local $base i32) (local $slot i32)
-    (local.set $base (call $g2w (local.get $addr)))
+    (local $i i32)
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
-      (local.set $slot (i32.add (local.get $base)
-        (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1)))))
       (call $fpu_store_m80
         (i32.add (local.get $addr)
           (i32.add (i32.shl (local.get $i) (i32.const 3)) (i32.shl (local.get $i) (i32.const 1))))
@@ -636,9 +631,8 @@
 
   ;; FBSTP: ST(0) → 80-bit packed BCD, then pop.
   (func $fpu_bstp (param $addr i32)
-    (local $i i32) (local $w i32) (local $sign i32) (local $val f64) (local $vi i64)
+    (local $i i32) (local $sign i32) (local $val f64) (local $vi i64)
     (local $rem i32) (local $tens i32) (local $ones i32)
-    (local.set $w (call $g2w (local.get $addr)))
     (local.set $val (call $fpu_pop))
     (if (f64.lt (local.get $val) (f64.const 0))
       (then (local.set $sign (i32.const 0x80)) (local.set $val (f64.neg (local.get $val)))))
@@ -654,11 +648,11 @@
       (local.set $vi  (i64.div_u (local.get $vi) (i64.const 100)))
       (local.set $ones (i32.rem_u (local.get $rem) (i32.const 10)))
       (local.set $tens (i32.div_u (local.get $rem) (i32.const 10)))
-      (i32.store8 (i32.add (local.get $w) (local.get $i))
+      (call $gs8 (i32.add (local.get $addr) (local.get $i))
         (i32.or (i32.shl (local.get $tens) (i32.const 4)) (local.get $ones)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp)))
-    (i32.store8 (i32.add (local.get $w) (i32.const 9)) (local.get $sign)))
+    (call $gs8 (i32.add (local.get $addr) (i32.const 9)) (local.get $sign)))
 
   (func $fpu_exec_mem (param $group i32) (param $reg i32) (param $addr i32)
     (local $val f64) (local $raw i64)

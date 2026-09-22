@@ -115,3 +115,25 @@ reports two unrelated Direct3D SetTransform members from parallel edits. With
 only these three changed WAT files copied into the temporary baseline tree,
 the gate passes at 138/142 exact groups and 532/548 members. No ratchet baseline
 was changed, and no full-build pass is claimed.
+
+## Compound x87 output paths migrated
+
+The extended-real boundary regression also failed before migration: FSTP m80
+with one byte before the sparse boundary left all nine bytes of the next guest
+page untouched. Extended-real output now encodes through one `$fpu_store_m80_bits`
+helper using `$gs64/$gs16`; environment output uses `$gs32`; packed BCD output
+uses `$gs8`. FNSAVE inherits the environment and extended-real helpers. Unused
+WASM-base/slot calculations were removed from the register-save loop.
+
+The boundary test compares all split positions for 10-, 28- and 108-byte outputs
+against a deterministic aligned result, plus explicit extended-real encodings
+for 1.25, negative zero, infinity and NaN and a signed packed-BCD vector. It
+checks the untouched bytes on both sides. Code-cache tests now cover m80, BCD,
+FNSTENV and FNSAVE alongside scalar x87 stores; FPU instance isolation still
+passes. Logical-AND and region gates pass.
+
+Inspection of remaining raw stores in `src/06-fpu.wat` finds only the private
+FPU register bank and emulated status-register destinations. That statement
+is limited to this fragment: fused/generated x87 paths elsewhere, native CRT
+outputs, host writes, input-side cross-page accesses and architectural precision
+limitations remain open. No dirty bit is yet recorded by these common helpers.

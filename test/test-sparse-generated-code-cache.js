@@ -8,13 +8,11 @@ const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const extraWat = String.raw`
-  (func (export "test_x87_code_store") (param $guest i32) (param $group i32)
+  (func (export "test_x87_code_store") (param $guest i32) (param $group i32) (param $op i32)
     (global.set $fpu_top (i32.const 0))
     (global.set $fpu_tag (i32.const 0))
     (call $fpu_push (f64.const 1.25))
-    (call $fpu_exec_mem (local.get $group)
-      (select (i32.const 7) (i32.const 3) (i32.eq (local.get $group) (i32.const 7)))
-      (local.get $guest)))
+    (call $fpu_exec_mem (local.get $group) (local.get $op) (local.get $guest)))
   (func (export "test_sparse_map_for_code") (param $guest i32) (param $size i32) (result i32)
     (call $virtual_map_commit (local.get $guest) (local.get $size)))
   (func (export "test_sparse_code_start") (result i32)
@@ -248,13 +246,13 @@ async function main() {
   assert.strictEqual(e.test_call_FlushInstructionCache(processHandle, sharedCode, 0), 1,
     'OpenProcess handles accept a successful empty range');
 
-  for (const group of [1, 5, 7]) {
+  for (const [group, op] of [[1, 3], [5, 3], [7, 7], [3, 7], [7, 6], [1, 6], [5, 6]]) {
     install(0x11223344);
     assert.strictEqual(execute(), 0x11223344);
     assert.notStrictEqual(e.test_sparse_cache_lookup(code) >>> 0, 0);
-    e.test_x87_code_store(code, group);
+    e.test_x87_code_store(code, group, op);
     assert.strictEqual(e.test_sparse_cache_lookup(code) >>> 0, 0,
-      `x87 group ${group} store must retire decoded destination bytes`);
+      `x87 ${group}/${op} store must retire decoded destination bytes`);
   }
   console.log('PASS  sparse scalar/x87 writes and process-wide FlushInstructionCache invalidate decoded blocks');
 }
