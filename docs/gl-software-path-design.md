@@ -433,6 +433,60 @@ needs none of it. Recorded here so it is not re-proposed.
    WAT raster.
 5. **Close or decline the semantic gaps** — items 1-5 above.
 
+### What steps 3-4 actually cost, surveyed 2026-09-22
+
+Steps 1 and 2 above produce descriptors. **Nothing in WAT consumes one.**
+`$gl_dfx1_transform` and `$gl_dlt1_lighting` are exported for tests only
+(`src/09a8f-gl-matrix.wat:1212`, `:1215`); no `src/*.wat` and no `lib/*.js`
+calls either. Every DFX1, DLT1 and DSP1 that reaches the WAT lowering today is
+assembled **in JavaScript**, in `lib/d3d9-software-backend.js` — the only DFX1
+builder in the tree is `fixedPrograms` at `:242-381`, and the only DSP1 builder
+is `prepareBatch` at `:735-746`. So steps 3-4 are not "hook the GL descriptor
+into an existing WAT producer". They are "write in WAT what `prepareBatch` does
+in JS, or reach the same JS the D3D9 path reaches".
+
+Three things do not exist anywhere and each is real work:
+
+1. **A WAT DFX1/cascade-table/DSP1 assembler.** `$gl_dfx1_transform` fills the
+   transform half and deliberately leaves flags, register indices and every
+   stage field zero. The consumer needs all of them, plus the separate 6x160
+   cascade table (`src/09aj-d3d-fixed.wat:793-801`) and the 128-byte DSP1
+   (`src/09ah-d3d-software.wat:1-17`).
+2. **A GL render target.** DSP1 wants a BGRA pointer and pitch at +16/+20 and an
+   f32 depth pointer and pitch at +24/+28. GL's output today is a WebGL drawable
+   owned by `lib/gl-compat.js`; there is no GL-side surface allocation to hand
+   over.
+3. **A vertex repack.** GL vertices are 14 floats / 56 bytes
+   (`src/09a8c-gl-encoder.wat:134`: xyz, rgba, st0, nxyz, st1); the VM reads the
+   float4-per-register layout the DSP1 input nibbles at +116/+124 describe.
+   Chunking to `≤256 vertices / ≤768 indices / count % 3 == 0`
+   (`src/09ah-d3d-software.wat:76-87`) is already safe, because
+   `$gl_finish_immediate` expands every topology down to points/lines/triangles.
+
+Two things are better than expected. The packed GL record payload is *already*
+a contiguous, interleaved, fully expanded, non-indexed triangle array at a fixed
+stride in WASM-addressable memory — structurally what DSP1+32/+36/+40 wants.
+And "adopt D3D's ownership protocol" has a precise meaning: `Encoder` in
+`lib/d3d-command-stream.js:35` keeps three 2MB `SharedArrayBuffer` slots, stamps
+each with a sequence from `Atomics.add(control, CTRL.SUBMITTED, 1)`, rotates,
+and never reuses a slot whose sequence has not retired. GL has **one** 2MB range
+that `$gl_wat_stream_flush` resets to zero the instant the synchronous host call
+returns (`src/09a8c-gl-encoder.wat:88-93`), which is why `FLAG_POINTER_BORROW`
+is sound today and would stop being sound the moment the consumer is a worker.
+
+**Recommendation: take the decline model below first.** The survey does not
+change what the full path is worth, but it does change what it costs, and the
+decline model reaches a working software GL without items 1-3 — the D3DIM
+rasterizer (`$d3dim_draw_tl_triangle` → `$d3dim_draw_tri_culled`,
+`src/09ab-handlers-d3dim-core.wat:5641`) is the existing proof that a WAT
+frontend can drive a WAT raster with zero JS crossings, and it is a different,
+simpler pipeline than 09ah. Its coverage cliff has to be measured per app rather
+than assumed, which is the honest cost.
+
+Nothing pins this seam: there is no `gl-d3d-*` test, and no test wires a GL
+descriptor to a D3D consumer. `test/test-d3d-fixed-native.js`, which hand-builds
+a DFX1 and drives `d3d_fixed_compile*`, is the closest model for the first one.
+
 A smaller alternative worth weighing: extend the **decline** model instead. GL
 draws inside the intersection — directional lights, no specular, linear/exp
 fog — take the WAT path; everything else falls back to WebGL, exactly as
