@@ -31,6 +31,12 @@
   ;;   +32   four stacks, 32 entries of 64 bytes each (8192 bytes)
   ;;   +8224 scratch used by a multiply whose destination aliases a source
   ;;   +8288 staging matrix a caller writes before load/mult (64 bytes)
+  ;;   +8352 light model ambient, 4 f32
+  ;;   +8368 eight lights, 64 bytes each: position, ambient, diffuse, specular
+  ;;   +8880 material: ambient, diffuse, specular, emission (16 each),
+  ;;         then shininess f32 at +8944, padding to +8960
+  ;;   +8960 fog: mode i32, density f32, start f32, end f32, colour 4 f32
+  ;;         (ends at +8992)
   ;;
   ;; The depth cap is 32, which is GL's own required minimum for the modelview
   ;; stack. Real GL raises GL_STACK_OVERFLOW rather than growing, so a push
@@ -52,6 +58,62 @@
     (i32.add (local.get $b)
       (i32.add (i32.const 32) (i32.mul (local.get $s) (i32.const 2048)))))
 
+  ;; Store four f32 at a vector slot.
+  (func $gl_mtx_set4 (param $p i32)
+      (param $x f32) (param $y f32) (param $z f32) (param $w f32)
+    (f32.store offset=0 (local.get $p) (local.get $x))
+    (f32.store offset=4 (local.get $p) (local.get $y))
+    (f32.store offset=8 (local.get $p) (local.get $z))
+    (f32.store offset=12 (local.get $p) (local.get $w)))
+
+  ;; GL's lighting, material and fog defaults (lib/gl-compat.js:378-393). They
+  ;; are not all zero, so a freshly zeroed block is NOT a legal GL state: an
+  ;; app that enables lighting without setting anything must still get light 0
+  ;; white and the material's 0.8 grey diffuse, or everything it draws comes
+  ;; out black.
+  (func $gl_mtx_init_lighting (param $b i32)
+    (local $i i32) (local $light i32)
+    (call $gl_mtx_set4 (i32.add (local.get $b) (i32.const 8352))
+      (f32.const 0.2) (f32.const 0.2) (f32.const 0.2) (f32.const 1))
+    (local.set $i (i32.const 0))
+    (loop $lights
+      (local.set $light (i32.add (local.get $b)
+        (i32.add (i32.const 8368) (i32.mul (local.get $i) (i32.const 64)))))
+      (call $gl_mtx_set4 (local.get $light)
+        (f32.const 0) (f32.const 0) (f32.const 1) (f32.const 0))
+      (call $gl_mtx_set4 (i32.add (local.get $light) (i32.const 16))
+        (f32.const 0) (f32.const 0) (f32.const 0) (f32.const 1))
+      ;; Only light 0 is lit by default; every other light contributes nothing
+      ;; until the app gives it a colour.
+      (if (i32.eqz (local.get $i))
+        (then
+          (call $gl_mtx_set4 (i32.add (local.get $light) (i32.const 32))
+            (f32.const 1) (f32.const 1) (f32.const 1) (f32.const 1))
+          (call $gl_mtx_set4 (i32.add (local.get $light) (i32.const 48))
+            (f32.const 1) (f32.const 1) (f32.const 1) (f32.const 1)))
+        (else
+          (call $gl_mtx_set4 (i32.add (local.get $light) (i32.const 32))
+            (f32.const 0) (f32.const 0) (f32.const 0) (f32.const 1))
+          (call $gl_mtx_set4 (i32.add (local.get $light) (i32.const 48))
+            (f32.const 0) (f32.const 0) (f32.const 0) (f32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $lights (i32.lt_u (local.get $i) (i32.const 8))))
+    (call $gl_mtx_set4 (i32.add (local.get $b) (i32.const 8880))
+      (f32.const 0.2) (f32.const 0.2) (f32.const 0.2) (f32.const 1))
+    (call $gl_mtx_set4 (i32.add (local.get $b) (i32.const 8896))
+      (f32.const 0.8) (f32.const 0.8) (f32.const 0.8) (f32.const 1))
+    (call $gl_mtx_set4 (i32.add (local.get $b) (i32.const 8912))
+      (f32.const 0) (f32.const 0) (f32.const 0) (f32.const 1))
+    (call $gl_mtx_set4 (i32.add (local.get $b) (i32.const 8928))
+      (f32.const 0) (f32.const 0) (f32.const 0) (f32.const 1))
+    (f32.store offset=8944 (local.get $b) (f32.const 0))
+    (i32.store offset=8960 (local.get $b) (i32.const 0x0800))
+    (f32.store offset=8964 (local.get $b) (f32.const 1))
+    (f32.store offset=8968 (local.get $b) (f32.const 0))
+    (f32.store offset=8972 (local.get $b) (f32.const 1))
+    (call $gl_mtx_set4 (i32.add (local.get $b) (i32.const 8976))
+      (f32.const 0) (f32.const 0) (f32.const 0) (f32.const 0)))
+
   ;; Context blocks are looked up the way $gl_state_slot does it, and for the
   ;; same reason: a linked list matches JS Map identity with no slot ceiling.
   ;; Unlike that table these are never recycled, because a matrix stack has no
@@ -70,11 +132,11 @@
     (local.set $guest (call $heap_alloc (i32.const 12)))
     (if (i32.eqz (local.get $guest)) (then (unreachable)))
     (local.set $p (call $g2w (local.get $guest)))
-    (local.set $guest (call $heap_alloc (i32.const 8352)))
+    (local.set $guest (call $heap_alloc (i32.const 8992)))
     (if (i32.eqz (local.get $guest)) (then
       (call $heap_free (call $w2g (local.get $p))) (unreachable)))
     (local.set $block (call $g2w (local.get $guest)))
-    (memory.fill (local.get $block) (i32.const 0) (i32.const 8352))
+    (memory.fill (local.get $block) (i32.const 0) (i32.const 8992))
     (i32.store (local.get $block) (i32.const 0x1700))
     ;; Every stack starts one deep, holding identity.
     (local.set $s (i32.const 0))
@@ -83,6 +145,7 @@
         (call $gl_mtx_base (local.get $block) (local.get $s)))
       (local.set $s (i32.add (local.get $s) (i32.const 1)))
       (br_if $init (i32.lt_u (local.get $s) (i32.const 4))))
+    (call $gl_mtx_init_lighting (local.get $block))
     (i32.store (local.get $p) (local.get $context))
     (i32.store offset=4 (local.get $p) (global.get $gl_mtx_contexts))
     (i32.store offset=8 (local.get $p) (local.get $block))
@@ -348,6 +411,138 @@
         (f64.sub (local.get $f) (local.get $n))))))
     (call $gl_mtx_apply (local.get $b) (local.get $m)))
 
+  ;; Lighting, material and fog. These are pure state: unlike the matrices
+  ;; there is no arithmetic to get wrong, with one exception that matters --
+  ;; glLightfv(GL_POSITION) transforms its argument by the MODELVIEW matrix at
+  ;; the time of the call, and by the modelview specifically, not by whichever
+  ;; stack glMatrixMode happens to have selected. lib/gl-compat.js:645 reaches
+  ;; past _stack() into matrices[MODELVIEW] for exactly that reason, and a
+  ;; mirror that used the selected stack would place every light wrongly in any
+  ;; app that sets a light while a texture or projection matrix is current.
+
+  ;; Copy four f32 from $src to $dst.
+  (func $gl_mtx_copy4 (param $dst i32) (param $src i32)
+    (memory.copy (local.get $dst) (local.get $src) (i32.const 16)))
+
+  (func $gl_mtx_light_slot (param $b i32) (param $index i32) (result i32)
+    (i32.add (local.get $b)
+      (i32.add (i32.const 8368) (i32.mul (local.get $index) (i32.const 64)))))
+
+  ;; transform4 (lib/gl-compat.js:193-200): a column-major matrix times a
+  ;; 4-vector, accumulated in f64 and demoted on store like everything else.
+  (func $gl_mtx_transform4 (param $dst i32) (param $m i32) (param $v i32)
+    (local $row i32) (local $k i32) (local $acc f64)
+    (local.set $row (i32.const 0))
+    (loop $rows
+      (local.set $acc (f64.const 0))
+      (local.set $k (i32.const 0))
+      (loop $ks
+        (local.set $acc (f64.add (local.get $acc)
+          (f64.mul
+            (f64.promote_f32 (f32.load (i32.add (local.get $m)
+              (i32.mul (i32.const 4)
+                (i32.add (i32.mul (local.get $k) (i32.const 4))
+                  (local.get $row))))))
+            (f64.promote_f32 (f32.load (i32.add (local.get $v)
+              (i32.mul (local.get $k) (i32.const 4))))))))
+        (local.set $k (i32.add (local.get $k) (i32.const 1)))
+        (br_if $ks (i32.lt_u (local.get $k) (i32.const 4))))
+      (f32.store (i32.add (local.get $dst) (i32.mul (local.get $row) (i32.const 4)))
+        (f32.demote_f64 (local.get $acc)))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br_if $rows (i32.lt_u (local.get $row) (i32.const 4)))))
+
+  ;; glLightfv. $light is the GL enum (GL_LIGHT0 + n); out-of-range lights are
+  ;; ignored, as they are in the JS. $values points at four f32.
+  (func $gl_mtx_set_light (param $light i32) (param $pname i32) (param $values i32)
+    (local $b i32) (local $index i32) (local $slot i32)
+    (local.set $b (call $gl_mtx_block))
+    (local.set $index (i32.sub (local.get $light) (i32.const 0x4000)))
+    (if (i32.ge_u (local.get $index) (i32.const 8)) (then (return)))
+    (local.set $slot (call $gl_mtx_light_slot (local.get $b) (local.get $index)))
+    ;; GL_POSITION 0x1203, AMBIENT 0x1200, DIFFUSE 0x1201, SPECULAR 0x1202.
+    (if (i32.eq (local.get $pname) (i32.const 0x1203))
+      (then
+        ;; Stack 0 is the modelview, whatever the current matrix mode is.
+        (call $gl_mtx_transform4 (local.get $slot)
+          (i32.add (call $gl_mtx_base (local.get $b) (i32.const 0))
+            (i32.mul (i32.const 64) (i32.load offset=8 (local.get $b))))
+          (local.get $values))
+        (return)))
+    (if (i32.eq (local.get $pname) (i32.const 0x1200))
+      (then (call $gl_mtx_copy4 (i32.add (local.get $slot) (i32.const 16))
+        (local.get $values)) (return)))
+    (if (i32.eq (local.get $pname) (i32.const 0x1201))
+      (then (call $gl_mtx_copy4 (i32.add (local.get $slot) (i32.const 32))
+        (local.get $values)) (return)))
+    (if (i32.eq (local.get $pname) (i32.const 0x1202))
+      (then (call $gl_mtx_copy4 (i32.add (local.get $slot) (i32.const 48))
+        (local.get $values)))))
+
+  ;; glLightModelfv(GL_LIGHT_MODEL_AMBIENT).
+  (func $gl_mtx_set_light_model_ambient (param $values i32)
+    (call $gl_mtx_copy4 (i32.add (call $gl_mtx_block) (i32.const 8352))
+      (local.get $values)))
+
+  ;; glMaterialfv. GL_AMBIENT_AND_DIFFUSE writes both, which is why these are
+  ;; independent tests rather than a chain.
+  (func $gl_mtx_set_material (param $pname i32) (param $values i32)
+    (local $b i32) (local $v f32)
+    (local.set $b (call $gl_mtx_block))
+    (if (i32.or (i32.eq (local.get $pname) (i32.const 0x1200))
+        (i32.eq (local.get $pname) (i32.const 0x1602)))
+      (then (call $gl_mtx_copy4 (i32.add (local.get $b) (i32.const 8880))
+        (local.get $values))))
+    (if (i32.or (i32.eq (local.get $pname) (i32.const 0x1201))
+        (i32.eq (local.get $pname) (i32.const 0x1602)))
+      (then (call $gl_mtx_copy4 (i32.add (local.get $b) (i32.const 8896))
+        (local.get $values))))
+    (if (i32.eq (local.get $pname) (i32.const 0x1202))
+      (then (call $gl_mtx_copy4 (i32.add (local.get $b) (i32.const 8912))
+        (local.get $values))))
+    (if (i32.eq (local.get $pname) (i32.const 0x1600))
+      (then (call $gl_mtx_copy4 (i32.add (local.get $b) (i32.const 8928))
+        (local.get $values))))
+    (if (i32.eq (local.get $pname) (i32.const 0x1601))
+      (then
+        ;; Clamped to [0, 128], as the JS does. f32.min/f32.max propagate NaN
+        ;; rather than returning the other operand, so a NaN shininess stays
+        ;; NaN here and in JS alike -- Math.max(0, NaN) is also NaN.
+        (local.set $v (f32.load (local.get $values)))
+        (f32.store offset=8944 (local.get $b)
+          (f32.min (f32.const 128) (f32.max (f32.const 0) (local.get $v)))))))
+
+  ;; glFog*(GL_FOG_MODE, ...), with the mode already decoded to an integer.
+  (func $gl_mtx_set_fog_mode (param $mode i32)
+    (i32.store offset=8960 (call $gl_mtx_block) (local.get $mode)))
+
+  ;; glFogf / glFogfv, for every parameter but the mode.
+  (func $gl_mtx_set_fog (param $pname i32) (param $values i32)
+    (local $b i32)
+    (local.set $b (call $gl_mtx_block))
+    ;; GL_FOG_MODE 0x0B65, DENSITY 0x0B62, START 0x0B63, END 0x0B64, COLOR 0x0B66
+    ;; GL_FOG_MODE is NOT handled here. The JS takes values[0]|0, and whether
+    ;; the bytes at $values are an int (glFogi) or a float (glFogf) depends on
+    ;; which entry point the guest called -- reading them the wrong way gives
+    ;; a garbage mode rather than a wrong-looking one. $gl_mtx_set_fog_mode
+    ;; takes the already-decoded integer instead, so the ambiguity stays with
+    ;; the caller, which is the only place that knows.
+    (if (i32.eq (local.get $pname) (i32.const 0x0B65)) (then (unreachable)))
+    (if (i32.eq (local.get $pname) (i32.const 0x0B62))
+      (then
+        (f32.store offset=8964 (local.get $b)
+          (f32.max (f32.const 0) (f32.load (local.get $values))))
+        (return)))
+    (if (i32.eq (local.get $pname) (i32.const 0x0B63))
+      (then (f32.store offset=8968 (local.get $b)
+        (f32.load (local.get $values))) (return)))
+    (if (i32.eq (local.get $pname) (i32.const 0x0B64))
+      (then (f32.store offset=8972 (local.get $b)
+        (f32.load (local.get $values))) (return)))
+    (if (i32.eq (local.get $pname) (i32.const 0x0B66))
+      (then (call $gl_mtx_copy4 (i32.add (local.get $b) (i32.const 8976))
+        (local.get $values)))))
+
   ;; Exports. These live here rather than in 13-exports.wat because nothing
   ;; outside a test calls them yet, and a fragment that owns its own test
   ;; surface is one less file to contend for.
@@ -406,3 +601,47 @@
       (param $t f64) (param $n f64) (param $f f64)
     (call $gl_mtx_ortho (local.get $l) (local.get $r) (local.get $b)
       (local.get $t) (local.get $n) (local.get $f)))
+
+  ;; Lighting, material and fog. The setters take a pointer to four f32, which
+  ;; a test fills at gl_mtx_staging_ptr; the getters hand back the address of
+  ;; the stored vector so it can be read straight out of linear memory.
+  (func $gl_mtx_export_set_light (export "gl_mtx_set_light")
+      (param $light i32) (param $pname i32) (param $values i32)
+    (call $gl_mtx_set_light (local.get $light) (local.get $pname)
+      (local.get $values)))
+  (func $gl_mtx_export_light_ptr (export "gl_mtx_light_ptr")
+      (param $index i32) (param $field i32) (result i32)
+    (i32.add (call $gl_mtx_light_slot (call $gl_mtx_block)
+        (i32.and (local.get $index) (i32.const 7)))
+      (i32.mul (i32.and (local.get $field) (i32.const 3)) (i32.const 16))))
+  (func $gl_mtx_export_set_light_model_ambient
+      (export "gl_mtx_set_light_model_ambient") (param $values i32)
+    (call $gl_mtx_set_light_model_ambient (local.get $values)))
+  (func $gl_mtx_export_light_model_ambient_ptr
+      (export "gl_mtx_light_model_ambient_ptr") (result i32)
+    (i32.add (call $gl_mtx_block) (i32.const 8352)))
+  (func $gl_mtx_export_set_material (export "gl_mtx_set_material")
+      (param $pname i32) (param $values i32)
+    (call $gl_mtx_set_material (local.get $pname) (local.get $values)))
+  (func $gl_mtx_export_material_ptr (export "gl_mtx_material_ptr")
+      (param $field i32) (result i32)
+    (i32.add (call $gl_mtx_block)
+      (i32.add (i32.const 8880)
+        (i32.mul (i32.and (local.get $field) (i32.const 3)) (i32.const 16)))))
+  (func $gl_mtx_export_shininess (export "gl_mtx_shininess") (result f32)
+    (f32.load offset=8944 (call $gl_mtx_block)))
+  (func $gl_mtx_export_set_fog (export "gl_mtx_set_fog")
+      (param $pname i32) (param $values i32)
+    (call $gl_mtx_set_fog (local.get $pname) (local.get $values)))
+  (func $gl_mtx_export_set_fog_mode (export "gl_mtx_set_fog_mode") (param $mode i32)
+    (call $gl_mtx_set_fog_mode (local.get $mode)))
+  (func $gl_mtx_export_fog_mode (export "gl_mtx_fog_mode") (result i32)
+    (i32.load offset=8960 (call $gl_mtx_block)))
+  (func $gl_mtx_export_fog_density (export "gl_mtx_fog_density") (result f32)
+    (f32.load offset=8964 (call $gl_mtx_block)))
+  (func $gl_mtx_export_fog_start (export "gl_mtx_fog_start") (result f32)
+    (f32.load offset=8968 (call $gl_mtx_block)))
+  (func $gl_mtx_export_fog_end (export "gl_mtx_fog_end") (result f32)
+    (f32.load offset=8972 (call $gl_mtx_block)))
+  (func $gl_mtx_export_fog_color_ptr (export "gl_mtx_fog_color_ptr") (result i32)
+    (i32.add (call $gl_mtx_block) (i32.const 8976)))

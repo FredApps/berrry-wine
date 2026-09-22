@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-// The WAT matrix stacks (src/09a8f-gl-matrix.wat) against the JavaScript ones
-// they are lifted from (lib/gl-compat.js:112-166, :450-465).
+// The WAT fixed-function GL state (src/09a8f-gl-matrix.wat) -- matrix stacks,
+// lights, material and fog -- against the JavaScript it is lifted from
+// (lib/gl-compat.js:112-166, :378-393, :450-465, :640-676).
 //
 // WHY A MIRROR TEST. GL's transform state is the reason the OpenGL command
 // stream is a log of calls rather than a backend-neutral descriptor: nothing
@@ -21,6 +22,14 @@
 // transcription cannot catch a misreading shared by both copies, so those
 // three additionally get a semantic check -- transform a known vector and
 // assert where it lands -- which does not depend on either transcription.
+//
+// The lighting, material and fog half has no exported oracle at all -- all of
+// it lives on FixedFunctionGL, which needs a live WebGL program to construct.
+// So it is checked against the DEFAULTS read off lib/gl-compat.js:378-393 and
+// against behaviour: which field a pname reaches, that GL_AMBIENT_AND_DIFFUSE
+// writes two, that the clamps clamp, that an out-of-range light index is
+// ignored instead of writing past the array, and that glLightfv(GL_POSITION)
+// is transformed by the modelview and not by the selected matrix.
 //
 // Rotation is compared with a tolerance rather than bitwise. JS normalizes the
 // axis with Math.hypot, which is correctly rounded; wasm has no such
@@ -337,5 +346,173 @@ function transform(m, x, y, z) {
   assert.strictEqual(e.gl_mtx_selected(), before,
     'an unknown glMatrixMode argument leaves the mode alone');
 
-  console.log('PASS  WAT GL matrix stacks mirror lib/gl-compat.js');
+  // ---- lighting, material and fog ----------------------------------------
+  //
+  // These are pure state, so the interesting content is the DEFAULTS and the
+  // one operation with arithmetic in it. A zeroed block is not a legal GL
+  // state: an app that enables lighting without setting anything must still
+  // get a white light 0 and the material's 0.8 grey diffuse, or everything it
+  // draws comes out black. The values below are read off lib/gl-compat.js:378.
+  const LIGHT0 = 0x4000;
+  const POSITION = 0x1203, AMBIENT = 0x1200, DIFFUSE = 0x1201, SPECULAR = 0x1202;
+  const EMISSION = 0x1600, SHININESS = 0x1601, AMBIENT_AND_DIFFUSE = 0x1602;
+  const FOG_DENSITY = 0x0B62, FOG_START = 0x0B63, FOG_END = 0x0B64;
+  const FOG_COLOR = 0x0B66, FOG_EXP = 0x0800, FOG_LINEAR = 0x2601;
+  // Field order inside a light and inside the material, as 09a8f lays them out.
+  const F_POSITION = 0, F_AMBIENT = 1, F_DIFFUSE = 2, F_SPECULAR = 3;
+  const M_AMBIENT = 0, M_DIFFUSE = 1, M_SPECULAR = 2, M_EMISSION = 3;
+
+  // Expected vectors go through Math.fround, because the block stores f32 and
+  // most of GL's defaults (0.2, 0.8) have no exact f32 form -- comparing them
+  // against the JS literal fails on correct data.
+  const f32v = (...values) => values.map(Math.fround);
+  const vec4 = ptr => [...new Float32Array(memory.buffer.slice(ptr, ptr + 16))];
+  const light = (i, f) => vec4(e.gl_mtx_light_ptr(i, f) >>> 0);
+  const material = f => vec4(e.gl_mtx_material_ptr(f) >>> 0);
+  // Every setter takes a pointer to four f32; the staging slot is the scratch
+  // a caller fills first, and is not otherwise live between calls.
+  const stage = (...values) => {
+    const ptr = e.gl_mtx_staging_ptr() >>> 0;
+    new Float32Array(memory.buffer, ptr, 4).set(
+      Float32Array.from(values.concat([0, 0, 0, 0]).slice(0, 4)));
+    return ptr;
+  };
+
+  assert.deepStrictEqual(vec4(e.gl_mtx_light_model_ambient_ptr() >>> 0),
+    f32v(0.2, 0.2, 0.2, 1), 'the default light model ambient is a dim grey');
+  assert.deepStrictEqual(light(0, F_DIFFUSE), [1, 1, 1, 1],
+    'light 0 is white by default');
+  assert.deepStrictEqual(light(0, F_SPECULAR), [1, 1, 1, 1],
+    'light 0 is specular-white by default');
+  for (let i = 1; i < 8; i++) {
+    assert.deepStrictEqual(light(i, F_DIFFUSE), [0, 0, 0, 1],
+      `light ${i} contributes nothing until the app gives it a colour`);
+    assert.deepStrictEqual(light(i, F_SPECULAR), [0, 0, 0, 1],
+      `light ${i} has no default specular`);
+  }
+  for (let i = 0; i < 8; i++) {
+    assert.deepStrictEqual(light(i, F_POSITION), [0, 0, 1, 0],
+      `light ${i} defaults to the directional light down -z`);
+    assert.deepStrictEqual(light(i, F_AMBIENT), [0, 0, 0, 1],
+      `light ${i} has no default ambient`);
+  }
+  assert.deepStrictEqual(material(M_AMBIENT), f32v(0.2, 0.2, 0.2, 1),
+    'default material ambient');
+  assert.deepStrictEqual(material(M_DIFFUSE), f32v(0.8, 0.8, 0.8, 1),
+    'default material diffuse');
+  assert.deepStrictEqual(material(M_SPECULAR), [0, 0, 0, 1],
+    'default material specular');
+  assert.deepStrictEqual(material(M_EMISSION), [0, 0, 0, 1],
+    'default material emission');
+  assert.strictEqual(e.gl_mtx_shininess(), 0, 'default shininess');
+  assert.strictEqual(e.gl_mtx_fog_mode(), FOG_EXP, 'fog defaults to GL_EXP');
+  assert.strictEqual(e.gl_mtx_fog_density(), 1, 'default fog density');
+  assert.strictEqual(e.gl_mtx_fog_start(), 0, 'default fog start');
+  assert.strictEqual(e.gl_mtx_fog_end(), 1, 'default fog end');
+  assert.deepStrictEqual(vec4(e.gl_mtx_fog_color_ptr() >>> 0), [0, 0, 0, 0],
+    'default fog colour is transparent black');
+
+  // The one operation with arithmetic in it: glLightfv(GL_POSITION) is
+  // transformed by the MODELVIEW matrix at the time of the call -- and by the
+  // modelview specifically, NOT by whichever stack glMatrixMode has selected.
+  // A mirror that used the selected stack would place every light wrongly in
+  // an app that sets a light while a texture matrix is current, which is why
+  // this is checked with a texture matrix deliberately selected and scaled.
+  e.gl_mtx_set_mode(MODELVIEW);
+  e.gl_mtx_load_identity();
+  e.gl_mtx_translate(5, 0, 0);
+  e.gl_mtx_set_mode(TEXTURE);
+  e.gl_mtx_set_active_texture(0);
+  e.gl_mtx_load_identity();
+  e.gl_mtx_scale(100, 100, 100);
+  e.gl_mtx_set_light(LIGHT0, POSITION, stage(1, 2, 3, 1));
+  assert.deepStrictEqual(light(0, F_POSITION), [6, 2, 3, 1],
+    'a positional light is transformed by the MODELVIEW, not by the selected'
+    + ' matrix -- [6,2,3,1] is the translate applied; [100,200,300,1] would be'
+    + ' the texture matrix having been used by mistake');
+  // A directional light has w = 0, so the translation must not reach it.
+  e.gl_mtx_set_light(LIGHT0, POSITION, stage(0, 1, 0, 0));
+  assert.deepStrictEqual(light(0, F_POSITION), [0, 1, 0, 0],
+    'a directional light (w=0) is unaffected by the translation');
+
+  e.gl_mtx_set_mode(MODELVIEW);
+  e.gl_mtx_set_light(LIGHT0 + 3, DIFFUSE, stage(0.25, 0.5, 0.75, 1));
+  assert.deepStrictEqual(light(3, F_DIFFUSE), f32v(0.25, 0.5, 0.75, 1),
+    'glLightfv reaches the light it names');
+  assert.deepStrictEqual(light(2, F_DIFFUSE), [0, 0, 0, 1],
+    'and only that one');
+  e.gl_mtx_set_light(LIGHT0 + 5, AMBIENT, stage(1, 0, 0, 1));
+  assert.deepStrictEqual(light(5, F_AMBIENT), [1, 0, 0, 1], 'GL_AMBIENT');
+  e.gl_mtx_set_light(LIGHT0 + 5, SPECULAR, stage(0, 1, 0, 1));
+  assert.deepStrictEqual(light(5, F_SPECULAR), [0, 1, 0, 1], 'GL_SPECULAR');
+  // Out of range is ignored rather than corrupting the block behind it.
+  const before8 = light(7, F_DIFFUSE);
+  e.gl_mtx_set_light(LIGHT0 + 8, DIFFUSE, stage(9, 9, 9, 9));
+  e.gl_mtx_set_light(LIGHT0 - 1, DIFFUSE, stage(9, 9, 9, 9));
+  assert.deepStrictEqual(light(7, F_DIFFUSE), before8,
+    'a light index past GL_LIGHT7 is ignored, not written past the array');
+  assert.strictEqual(e.gl_mtx_shininess(), 0,
+    'and does not scribble into the material that follows the lights');
+
+  e.gl_mtx_set_light_model_ambient(stage(0.5, 0.5, 0.5, 1));
+  assert.deepStrictEqual(vec4(e.gl_mtx_light_model_ambient_ptr() >>> 0),
+    f32v(0.5, 0.5, 0.5, 1), 'glLightModelfv(GL_LIGHT_MODEL_AMBIENT)');
+
+  // GL_AMBIENT_AND_DIFFUSE writes BOTH, which is the one material case that
+  // is not a straight assignment.
+  e.gl_mtx_set_material(AMBIENT_AND_DIFFUSE, stage(0.1, 0.2, 0.3, 1));
+  assert.deepStrictEqual(material(M_AMBIENT),
+    f32v(0.1, 0.2, 0.3, 1),
+    'GL_AMBIENT_AND_DIFFUSE writes the ambient');
+  assert.deepStrictEqual(material(M_DIFFUSE),
+    f32v(0.1, 0.2, 0.3, 1),
+    'GL_AMBIENT_AND_DIFFUSE writes the diffuse too');
+  e.gl_mtx_set_material(SPECULAR, stage(1, 1, 1, 1));
+  assert.deepStrictEqual(material(M_SPECULAR), [1, 1, 1, 1], 'GL_SPECULAR');
+  e.gl_mtx_set_material(EMISSION, stage(0, 0, 1, 1));
+  assert.deepStrictEqual(material(M_EMISSION), [0, 0, 1, 1], 'GL_EMISSION');
+  e.gl_mtx_set_material(AMBIENT, stage(1, 0, 0, 1));
+  assert.deepStrictEqual(material(M_AMBIENT), [1, 0, 0, 1],
+    'GL_AMBIENT alone writes only the ambient');
+  assert.deepStrictEqual(material(M_DIFFUSE),
+    f32v(0.1, 0.2, 0.3, 1),
+    'and leaves the diffuse where GL_AMBIENT_AND_DIFFUSE put it');
+
+  // Shininess is clamped to [0, 128], as lib/gl-compat.js:660 does.
+  e.gl_mtx_set_material(SHININESS, stage(64));
+  assert.strictEqual(e.gl_mtx_shininess(), 64, 'shininess in range');
+  e.gl_mtx_set_material(SHININESS, stage(500));
+  assert.strictEqual(e.gl_mtx_shininess(), 128, 'shininess clamps at 128');
+  e.gl_mtx_set_material(SHININESS, stage(-5));
+  assert.strictEqual(e.gl_mtx_shininess(), 0, 'shininess clamps at 0');
+
+  e.gl_mtx_set_fog_mode(FOG_LINEAR);
+  assert.strictEqual(e.gl_mtx_fog_mode(), FOG_LINEAR, 'glFog*(GL_FOG_MODE)');
+  e.gl_mtx_set_fog(FOG_START, stage(16));
+  e.gl_mtx_set_fog(FOG_END, stage(4096));
+  assert.strictEqual(e.gl_mtx_fog_start(), 16, 'fog start');
+  assert.strictEqual(e.gl_mtx_fog_end(), 4096, 'fog end');
+  e.gl_mtx_set_fog(FOG_DENSITY, stage(0.75));
+  assert.strictEqual(e.gl_mtx_fog_density(), Math.fround(0.75), 'fog density');
+  // Density is clamped at 0 the same way, and start/end are NOT -- a negative
+  // fog start is legal and means the fog begins behind the eye.
+  e.gl_mtx_set_fog(FOG_DENSITY, stage(-1));
+  assert.strictEqual(e.gl_mtx_fog_density(), 0, 'fog density clamps at 0');
+  e.gl_mtx_set_fog(FOG_START, stage(-10));
+  assert.strictEqual(e.gl_mtx_fog_start(), -10,
+    'a negative fog start is left alone');
+  e.gl_mtx_set_fog(FOG_COLOR, stage(0.2, 0.3, 0.4, 1));
+  assert.deepStrictEqual(vec4(e.gl_mtx_fog_color_ptr() >>> 0),
+    f32v(0.2, 0.3, 0.4, 1), 'fog colour');
+
+  // None of the lighting work may have disturbed the matrices, which share the
+  // block with it -- an offset typo in either direction lands in the other.
+  e.gl_mtx_set_mode(MODELVIEW);
+  e.gl_mtx_load_identity();
+  e.gl_mtx_translate(7, 8, 9);
+  assert.deepStrictEqual(transform(top(), 0, 0, 0), [7, 8, 9],
+    'the matrix stacks still work after the lighting block was written');
+
+  console.log('PASS  WAT GL matrix, lighting, material and fog state'
+    + ' mirrors lib/gl-compat.js');
 })().catch(error => { console.error(error); process.exit(1); });
