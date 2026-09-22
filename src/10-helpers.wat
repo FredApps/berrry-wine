@@ -2598,7 +2598,7 @@
   ;; Returns new guest pointer (or 0 on failure). Copies old data, frees old block.
   ;; flags: bit 6 = LMEM_ZEROINIT/GMEM_ZEROINIT
   (func $heap_realloc (param $old_ptr i32) (param $new_size i32) (param $flags i32) (result i32)
-    (local $new_ptr i32) (local $new_wa i32) (local $old_header i32)
+    (local $new_ptr i32) (local $old_header i32)
     (local $old_block_size i32) (local $old_data_size i32) (local $copy_size i32)
     ;; If old_ptr is NULL, just allocate
     (if (i32.eqz (local.get $old_ptr))
@@ -2606,7 +2606,7 @@
         (local.set $new_ptr (call $heap_alloc (local.get $new_size)))
         (if (i32.and (local.get $flags) (i32.const 0x40))
           (then (if (local.get $new_ptr)
-            (then (call $zero_memory (call $g2w (local.get $new_ptr)) (local.get $new_size))))))
+            (then (call $guest_memset (local.get $new_ptr) (i32.const 0) (local.get $new_size))))))
         (return (local.get $new_ptr))))
     ;; Read old block size from header at [ptr-4] (includes 4-byte header)
     (local.set $old_header
@@ -2618,16 +2618,16 @@
       (then (return (local.get $old_ptr))))
     ;; Allocate new block
     (local.set $new_ptr (call $heap_alloc (local.get $new_size)))
-    (if (i32.eqz (local.get $new_ptr)) (then (return (i32.const 0)))) (local.set $new_wa (call $g2w (local.get $new_ptr)))
+    (if (i32.eqz (local.get $new_ptr)) (then (return (i32.const 0))))
     ;; Copy old data
     (local.set $copy_size (local.get $old_data_size))
     (if (i32.gt_u (local.get $copy_size) (local.get $new_size))
       (then (local.set $copy_size (local.get $new_size))))
-    (call $memcpy (local.get $new_wa) (call $g2w (local.get $old_ptr)) (local.get $copy_size))
+    (call $guest_memmove (local.get $new_ptr) (local.get $old_ptr) (local.get $copy_size))
     ;; Zero new portion if ZEROINIT flag set
     (if (i32.and (local.get $flags) (i32.const 0x40))
-      (then (call $zero_memory
-        (i32.add (local.get $new_wa) (local.get $copy_size))
+      (then (call $guest_memset
+        (i32.add (local.get $new_ptr) (local.get $copy_size)) (i32.const 0)
         (i32.sub (local.get $new_size) (local.get $copy_size)))))
     ;; Free old block
     (if (i32.and (local.get $old_header) (i32.const 1))

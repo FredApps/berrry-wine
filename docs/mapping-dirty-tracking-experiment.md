@@ -216,3 +216,24 @@ Sparse-width tests retain overlap/canary coverage for copy and fill. This does
 not establish process-wide publication for every write, page permissions,
 dirty-file writeback or game performance. The heap core and other raw-memory
 callers do not automatically inherit this hook and remain audit work.
+
+## Heap reallocation copy and zero paths use the guest helpers
+
+A real heap-reuse regression confirmed the remaining bypass: after executing
+code in an allocation, freeing it, and growing a different allocation into
+that exact reused block, `$heap_realloc` copied new bytes but retained the old
+decoded entry. Its payload copy now calls `$guest_memmove`; its NULL-input
+zero-initialization and expanded-tail zeroing call `$guest_memset`. The unused
+translated destination local is removed. Allocation policy, payload bounds,
+failure ownership and Global/Local flags are unchanged.
+
+The source-compiled cache suite checks actual reuse, decoded-entry retirement,
+execution of the new copied instructions, and zeroed bytes in both zero paths.
+This closes the three identified `$heap_realloc` output bypasses, not every
+allocator write: header/free-list bookkeeping, other raw API outputs, host
+writes and dirty-page tracking still require separate review. No performance
+claim is made for this correctness change.
+
+Validation: the cache-reuse suite, CRT realloc failure/ownership, GlobalFlags
+cross-worker validation, and sparse heap-arena release/growth/reclamation suites
+pass. Logical-AND and duplicate gates also pass (138/142 groups, 532/548 members).

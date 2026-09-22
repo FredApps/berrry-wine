@@ -8,6 +8,9 @@ const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const extraWat = String.raw`
+  (func (export "test_heap_realloc_code")
+      (param $ptr i32) (param $size i32) (param $flags i32) (result i32)
+    (call $heap_realloc (local.get $ptr) (local.get $size) (local.get $flags)))
   (func (export "test_bulk_code_store")
       (param $mode i32) (param $dst i32) (param $value i32) (param $size i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
@@ -300,6 +303,25 @@ async function main() {
     assert.strictEqual(e.test_sparse_cache_lookup(splitCode), 0,
       `bulk mode ${mode} retires code spanning noncontiguous destination pages`);
     assert.strictEqual(executeOverlap(splitCode), mode === 2 ? 0x5a5a5a5a : 0x78563412);
+  }
+
+  // Realloc can reuse a previously executed heap block. Neither copying its
+  // new payload nor zeroing the expanded tail may leave its old decode live.
+  for (const mode of ['copy', 'zero-tail', 'zero-new']) {
+    const old = mode === 'zero-new' ? 0 : e.guest_alloc(64) >>> 0;
+    if (old) codeFor(0x78563412).forEach((byte, i) => e.guest_write8(old + 16 + i, byte));
+    const recycled = e.guest_alloc(256) >>> 0;
+    const offset = mode === 'zero-tail' ? 96 : 16;
+    codeFor(0x11223344).forEach((byte, i) => e.guest_write8(recycled + offset + i, byte));
+    assert.strictEqual(executeOverlap(recycled + offset), 0x11223344);
+    e.guest_free(recycled);
+    const result = e.test_heap_realloc_code(old, 256, mode === 'copy' ? 0 : 0x40) >>> 0;
+    assert.strictEqual(result, recycled, 'fixture must reuse the decoded allocation');
+    assert.strictEqual(e.test_sparse_cache_lookup(result + offset), 0,
+      `heap realloc ${mode} must retire reused destination code`);
+    if (mode === 'copy') assert.strictEqual(executeOverlap(result + offset), 0x78563412);
+    else for (let i = 0; i < 6; i++) assert.strictEqual(e.guest_read8(result + offset + i), 0);
+    e.guest_free(result);
   }
 
   const scanSource = e.guest_alloc(8) >>> 0;
