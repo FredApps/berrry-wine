@@ -77,7 +77,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   const face = allocZero(32);
   [...'Compat'].forEach((character, index) =>
     wat.guest_write16(face + index * 2, character.charCodeAt(0)));
-  const font = wat.test_call_CreateFontW(-8, 400, 0, face) >>> 0;
+  const font = wat.test_call_CreateFontW(-8, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, face) >>> 0;
   assert(font);
   wat.test_call_SelectObject(hdc, font);
   assert(wat.test_gdi_bitmap_font_selected(hdc));
@@ -213,7 +213,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   const arialFace = allocZero(32);
   [...'Arial'].forEach((character, index) =>
     wat.guest_write16(arialFace + index * 2, character.charCodeAt(0)));
-  const scalable = wat.test_call_CreateFontW(-13, 400, 0, arialFace) >>> 0;
+  const scalable = wat.test_call_CreateFontW(-13, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, arialFace) >>> 0;
   assert(scalable);
   assert.notStrictEqual(wat.test_call_SelectObject(hdc, scalable) | 0, -1);
   // Arial used to resolve to nothing here and fall through to Canvas. It now

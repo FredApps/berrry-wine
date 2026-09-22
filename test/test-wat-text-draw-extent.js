@@ -116,7 +116,7 @@ const TEXT = 'The quick brown fox jumps over the lazy dog';
   for (const face of ['Arial', 'Times New Roman', 'Courier New', 'Verdana']) {
     for (const height of [-11, -16, -24]) {
       const hdc = createTextDc();
-      const font = wat.test_call_CreateFontW(height, 400, 0, allocFaceW(face)) >>> 0;
+      const font = wat.test_call_CreateFontW(height, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, allocFaceW(face)) >>> 0;
       assert.ok(font, `CreateFontW must produce a font for ${face}`);
       wat.test_call_SelectObject(hdc, font);
 

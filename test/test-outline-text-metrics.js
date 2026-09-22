@@ -80,7 +80,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   for (const [index, character] of [...'Arial'].entries()) {
     wat.guest_write16(face + index * 2, character.charCodeAt(0));
   }
-  const font = wat.test_call_CreateFontW(-24, 400, 0, face) >>> 0;
+  const font = wat.test_call_CreateFontW(-24, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, face) >>> 0;
   assert(font, 'CreateFontW Arial failed');
   assert.notStrictEqual(wat.test_call_SelectObject(hdc, font) | 0, -1);
 

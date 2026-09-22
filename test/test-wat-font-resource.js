@@ -323,7 +323,7 @@ const familyNameOf = buffer => {
   wat.test_call_SelectObject(hdc, bitmap);
   wat.test_call_PatBlt(hdc, 0, 0, WIDTH, HEIGHT, 0x00FF0062); // WHITENESS
 
-  const font = wat.test_call_CreateFontW(-16, 400, 0, allocFaceW(family)) >>> 0;
+  const font = wat.test_call_CreateFontW(-16, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, allocFaceW(family)) >>> 0;
   assert.ok(font, 'CreateFont must produce a WAT font object');
   wat.test_call_SelectObject(hdc, font);
   assert.ok(wat.test_gdi_bitmap_font_selected(hdc) >>> 0,

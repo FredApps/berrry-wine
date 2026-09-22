@@ -136,7 +136,7 @@ const BITMAP_FACES = ['Courier', 'MS Sans Serif', 'System', 'Terminal', 'Fixedsy
   // strike under the face's own name -- the state the regression needed.
   const text = writeAnsi('Sphinx of black quartz');
   for (const { face, px } of SCALABLE_USE) {
-    const font = wat.test_call_CreateFontW(-px, 400, 0, wa(writeWide(face))) >>> 0;
+    const font = wat.test_call_CreateFontW(-px, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, wa(writeWide(face))) >>> 0;
     assert(font, `CreateFontW must give a handle for ${face}`);
     wat.test_call_SelectObject(hdc, font);
     assert.strictEqual(wat.test_call_TextOutA(hdc, 2, 2, text, 22), 1,

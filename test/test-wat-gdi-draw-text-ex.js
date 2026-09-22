@@ -97,7 +97,7 @@ const extraWat = String.raw`
   const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
   wat.test_call_SelectObject(hdc, bitmap);
   const face = writeWide('ExParams');
-  const font = wat.test_call_CreateFontW(-8, 400, 0, face) >>> 0;
+  const font = wat.test_call_CreateFontW(-8, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, face) >>> 0;
   wat.test_call_SelectObject(hdc, font);
   wat.test_gdi_dc_set_field(hdc, 28, 1, 2); // TRANSPARENT
   wat.test_gdi_dc_set_field(hdc, 20, 0x000000, 0); // black

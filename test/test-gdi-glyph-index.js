@@ -18,7 +18,7 @@ const {bootRenderHarness}=require('./render-helper');
  hostCtx.vfs.files.set('c:\\windows\\fonts\\arial.ttf',{data:new Uint8Array(fs.readFileSync(path.join(__dirname,'../fonts/liberation/LiberationSans-Regular.ttf'))),attrs:0x20});
  const alloc=n=>e.guest_alloc(n)>>>0,wa=p=>e.guest_to_wasm(p)>>>0;
  const name=alloc(32);for(let i=0;i<5;i++)e.guest_write16(name+i*2,'Arial'.charCodeAt(i));
- const font=e.test_call_CreateFontW(-16,400,0,name),dc=e.test_call_CreateCompatibleDC(0);
+ const font=e.test_call_CreateFontW(-16, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, name),dc=e.test_call_CreateCompatibleDC(0);
  const bmi=alloc(40),out=alloc(4),width=64,height=32;
  for(const [o,n]of[[0,40],[4,width],[8,-height]])e.guest_write32(bmi+o,n);
  e.guest_write16(bmi+12,1);e.guest_write16(bmi+14,32);

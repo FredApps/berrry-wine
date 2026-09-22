@@ -41,7 +41,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   bytes.set(Buffer.from('200\0', 'latin1'), wa(text));
   const size = allocZero(8);
   const extentFor = height => {
-    const font = wat.test_call_CreateFontW(height, 400, 0, writeWide('MS Sans Serif')) >>> 0;
+    const font = wat.test_call_CreateFontW(height, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, writeWide('MS Sans Serif')) >>> 0;
     assert(font, 'CreateFontW failed');
     wat.test_call_SelectObject(hdc, font);
     assert.strictEqual(wat.test_call_GetTextExtentExPointA(hdc, text, 3, 0x7fffffff, 0, 0, size), 1);

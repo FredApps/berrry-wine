@@ -67,7 +67,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   const face = allocZero(32);
   [...'Layout'].forEach((character, index) =>
     wat.guest_write16(face + index * 2, character.charCodeAt(0)));
-  const font = wat.test_call_CreateFontW(-8, 400, 0, face) >>> 0;
+  const font = wat.test_call_CreateFontW(-8, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, face) >>> 0;
   assert(font);
   wat.test_call_SelectObject(hdc, font);
   assert(wat.test_gdi_bitmap_font_selected(hdc));

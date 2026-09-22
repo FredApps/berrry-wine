@@ -307,3 +307,29 @@ fragment balance, handler ESP, tiers and whitespace checks pass. No browser,
 performance or full release-build claim. Remaining: CreateFontW, the two DIB
 adapters and WSAIsBlocking; DIB migration is deferred during another agent's
 active sparse-BITMAPINFO correction.
+
+## CreateFontW full signature
+
+CreateFontW now uses its metadata's full 14-argument generated adapter,
+bringing the inventory to **257 generated / 3 manual**. All 24 caller files
+(tests and the font-specimen tool) now pass explicit values instead of relying
+on the former four-argument helper. Height, weight, italic and face retain
+their prior inputs; the other arguments are zero. This also initializes
+charset, which the old helper left as whatever occupied ESP+36. No production
+font handler was changed.
+
+The font-object regression now supplies nonzero width, charset and
+pitch/family, checks those fields alongside height, weight, italic and face
+through public GetObjectW, checks ESP preservation, and deletes the object.
+The complete ABI recorder passes **1,028 calls**, covering all 14 argument
+positions at four stack alignments. All 24 caller files pass syntax checks.
+Font-object, default-bitmap-font, wide text extents, GDI state, scalable text
+and glyph-index tests pass. The 224-record Win98 metric
+reference test passes its existing measured tolerances; those tolerances
+include substantial mismatches and are **not** pixel-exact or general font
+conformance. Metadata, generator freshness, API IDs, fragment balance,
+handler ESP, test tiers and whitespace checks pass. No specimen rendering,
+benchmark, browser sweep or full release-build result is claimed.
+
+Remaining adapters are CreateDIBSection, CreateDIBSectionUsage and
+WSAIsBlocking. Broader review closure remains open.

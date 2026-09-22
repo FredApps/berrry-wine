@@ -73,7 +73,7 @@ const REPO = path.join(__dirname, '..');
     return pointer;
   };
   const createFont = (height, weight, italic, face) =>
-    wat.test_call_CreateFontW(height, weight, italic, allocFaceW(face)) >>> 0;
+    wat.test_call_CreateFontW(height, 0, 0, 0, weight, italic, 0, 0, 0, 0, 0, 0, 0, allocFaceW(face)) >>> 0;
 
   const WIDTH = 160;
   const HEIGHT = 48;

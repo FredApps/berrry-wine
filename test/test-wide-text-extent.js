@@ -76,7 +76,7 @@ for (const suffix of ['A', 'W']) {
   for (let i = 0; i < 5; i++) dv.setUint16(wa(face) + i * 2, 'Arial'.charCodeAt(i), true);
 
   const hdc = e.test_call_CreateCompatibleDC(0) >>> 0;
-  const font = e.test_call_CreateFontW(-18, 400, 0, face) >>> 0;
+  const font = e.test_call_CreateFontW(-18, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, face) >>> 0;
   assert.ok(hdc && font, 'test needs a proportional-font memory DC');
   e.test_call_SelectObject(hdc, font);
 

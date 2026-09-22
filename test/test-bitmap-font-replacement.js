@@ -62,7 +62,7 @@ function repeated(count, malformedLast = false) {
   const face = strike.subarray(faceOffset, strike.indexOf(0, faceOffset)).toString('ascii');
   const wide = allocate(Buffer.from(face + '\0', 'utf16le'));
   const dc = e.test_call_CreateCompatibleDC(0);
-  const font = e.test_call_CreateFontW(-strike.readUInt16LE(88), 400, 0, wide);
+  const font = e.test_call_CreateFontW(-strike.readUInt16LE(88), 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, wide);
   assert(dc && font); e.test_call_SelectObject(dc, font);
   const bound = e.test_gdi_bitmap_font_selected(dc); assert(bound, 'fixture must bind the old FNT');
   function snapshot() {

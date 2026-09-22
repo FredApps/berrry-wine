@@ -149,7 +149,7 @@ const PER_SIZE = process.argv.includes('--per-size');
       // A height the reference itself did not resolve to this face proves
       // nothing about our mapping of it.
       if (want.actualFace !== face.name) continue;
-      const font = wat.test_call_CreateFontW(Number(request), 400, 0, faceName) >>> 0;
+      const font = wat.test_call_CreateFontW(Number(request), 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, faceName) >>> 0;
       if (!font) continue;
       wat.test_call_SelectObject(hdc, font);
       sizes += 1;

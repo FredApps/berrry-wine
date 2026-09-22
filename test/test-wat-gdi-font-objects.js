@@ -62,7 +62,23 @@ const RegionMap = require('../lib/region-map.generated.js');
   };
 
   const face = writeWide('Arial');
-  const font = wat.test_call_CreateFontW(-17, 600, 1, face) >>> 0;
+  assert.strictEqual(wat.test_call_CreateFontW.length, 14);
+  const beforeFontEsp = wat.get_esp();
+  const explicitFont = wat.test_call_CreateFontW(
+    -19, 7, 0, 0, 700, 1, 0, 0, 2, 0, 0, 0, 0x22, face) >>> 0;
+  assert(explicitFont, 'full-signature CreateFontW creates an object');
+  assert.strictEqual(wat.get_esp(), beforeFontEsp, 'CreateFontW adapter restores ESP');
+  const explicitLogfont = allocZero(92);
+  assert.strictEqual(wat.test_call_GetObjectW(explicitFont, 92, explicitLogfont), 92);
+  assert.strictEqual(wat.guest_read32(explicitLogfont) | 0, -19);
+  assert.strictEqual(wat.guest_read32(explicitLogfont + 4), 7);
+  assert.strictEqual(wat.guest_read32(explicitLogfont + 16), 700);
+  assert.strictEqual(bytes[wa(explicitLogfont) + 20], 1);
+  assert.strictEqual(bytes[wa(explicitLogfont) + 23], 2);
+  assert.strictEqual(bytes[wa(explicitLogfont) + 27], 0x22);
+  assert.strictEqual(readWideGuest(explicitLogfont + 28), 'Arial');
+  assert.strictEqual(wat.test_call_DeleteObject(explicitFont), 1);
+  const font = wat.test_call_CreateFontW(-17, 0, 0, 0, 600, 1, 0, 0, 0, 0, 0, 0, 0, face) >>> 0;
   assert(font >= 0x410001, `dynamic font handle must come from WAT namespace: 0x${font.toString(16)}`);
   assert.strictEqual(wat.test_call_GetObjectType(font), 6, 'GetObjectType must report OBJ_FONT');
 

@@ -45,7 +45,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   assert(bitmap && hdc);
   wat.test_call_SelectObject(hdc, bitmap);
 
-  const font = wat.test_call_CreateFontW(-13, 400, 0, writeWide('Times New Roman')) >>> 0;
+  const font = wat.test_call_CreateFontW(-13, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, writeWide('Times New Roman')) >>> 0;
   assert(font, 'CreateFontW should return a font handle');
   wat.test_call_SelectObject(hdc, font);
 

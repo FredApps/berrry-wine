@@ -53,7 +53,7 @@ const RegionMap = require('../lib/region-map.generated.js');
     assert.strictEqual(wat.font_language_info(hdc),0,'stock bitmap font is normalized');
     const face=allocZero(32);
     [...'Arial'].forEach((c,i)=>wat.guest_write16(face+i*2,c.charCodeAt(0)));
-    const font=wat.test_call_CreateFontW(-16,400,0,face)>>>0;
+    const font=wat.test_call_CreateFontW(-16, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, face)>>>0;
     assert(font);wat.test_call_SelectObject(hdc,font);
     assert.strictEqual(wat.font_language_info(hdc)&8,8,'real classic kerning table advertised');
     assert.strictEqual(wat.get_esp()>>>0,0x074ff008);
@@ -167,7 +167,7 @@ const RegionMap = require('../lib/region-map.generated.js');
     const face = allocZero(32);
     [...'UnitFnt'].forEach((character, index) =>
       wat.guest_write16(face + index * 2, character.charCodeAt(0)));
-    const font = wat.test_call_CreateFontW(-8, 400, 0, face) >>> 0;
+    const font = wat.test_call_CreateFontW(-8, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, face) >>> 0;
     assert(font);
     assert(wat.test_gdi_bitmap_font_bound(font));
     wat.test_call_SelectObject(hdc, font);

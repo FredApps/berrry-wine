@@ -938,24 +938,6 @@
       (local.get 0) (local.get 1) (local.get 2) (local.get 3)
       (local.get 4) (local.get 5) (local.get 6) (local.get 7) (i32.const 0)))
   (func (export "get_gdi_region_table") (result i32) (global.get $GDI_REGION_TABLE))
-  (func (export "test_call_CreateFontW")
-        (param i32) (param i32) (param i32) (param i32) (result i32)
-    (local $saved_esp i32)
-    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
-    ;; A real CreateFontW frame: fnWeight is the 5th argument at esp+20,
-    ;; fdwItalic the 6th at esp+24, lpszFace the 14th at esp+56. This helper
-    ;; used to lay them out one slot short, matching the handler's own
-    ;; off-by-one, so no test could see that every created font was nameless.
-    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 8)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 20)) (local.get 1))
-    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get 2))
-    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 52)) (i32.const 0))
-    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 56)) (local.get 3))
-    (call $handle_CreateFontW
-      (local.get 0) (i32.const 0) (i32.const 0) (i32.const 0)
-      (i32.const 0) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
-    (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_call_CreateDIBSection")
         (param i32) (param i32) (param i32) (result i32)
     (call $handle_CreateDIBSection

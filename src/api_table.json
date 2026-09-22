@@ -710,6 +710,7 @@
   {
     "id": 73,
     "name": "CreateFontW",
+    "test_call": true,
     "nargs": 14,
     "convention": "stdcall",
     "hash": 4048576717

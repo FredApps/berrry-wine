@@ -119,7 +119,7 @@ try { ({ PNG } = require('pngjs')); } catch (_) {
 
     if (face) {
       const font = wat.test_call_CreateFontW(
-        -size, weight, italic, allocFaceW(face)) >>> 0;
+        -size, 0, 0, 0, weight, italic, 0, 0, 0, 0, 0, 0, 0, allocFaceW(face)) >>> 0;
       wat.test_call_SelectObject(hdc, font);
       wat.test_call_TextOutA(hdc, LABEL_WIDTH, 2, allocStr(text), text.length);
     }

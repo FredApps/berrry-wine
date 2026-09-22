@@ -275,7 +275,7 @@ for (const suffix of ['A', 'W']) {
     sum + wat.guest_read32(justified.dx + index * 4), 0), justifiedWidth);
 
   const arial = writeWide('Arial');
-  const scalable = wat.test_call_CreateFontW(-24, 400, 0, arial) >>> 0;
+  const scalable = wat.test_call_CreateFontW(-24, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, arial) >>> 0;
   assert(scalable);
   wat.test_call_SelectObject(hdc, scalable);
   assert.strictEqual(wat.test_public_char_widths(hdc, 65, 67, widths, 1), 1);

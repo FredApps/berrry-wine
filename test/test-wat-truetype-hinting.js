@@ -875,7 +875,7 @@ const tag = text => ((text.charCodeAt(0) << 24) | (text.charCodeAt(1) << 16) |
       memory.buffer, kData, strikeHeight)).some(row => row & 0x08),
     'Arial K strike storage must preserve ink in its rightmost column');
     const fontHandle = wat.test_call_CreateFontW(
-      -24, 400, 0, allocFaceW('Arial')) >>> 0;
+      -24, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, allocFaceW('Arial')) >>> 0;
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     assert.ok(fontHandle && hdc, 'the local Win98 GDI oracle needs a font and DC');
     wat.test_call_SelectObject(hdc, fontHandle);

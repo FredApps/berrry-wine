@@ -97,7 +97,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   assert.strictEqual(wat.test_gdi_bitmap_font_count(), 3,
     'fixed stock selection should load only Terminal, Fixedsys, and Courier');
 
-  const terminal = wat.test_call_CreateFontW(-12, 400, 0, writeWide('Terminal')) >>> 0;
+  const terminal = wat.test_call_CreateFontW(-12, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, writeWide('Terminal')) >>> 0;
   assert(terminal && wat.test_gdi_bitmap_font_bound(terminal),
     'an explicit Terminal LOGFONT should bind to ANAKRON');
   wat.test_call_SelectObject(hdc, terminal);
@@ -118,7 +118,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   'CP437 0xb3 must render as one uninterrupted WAT-surface column');
   assertNoCanvasText('CP437 box drawing must stay in WAT');
 
-  const created = wat.test_call_CreateFontW(-16, 400, 0, writeWide('Fixedsys')) >>> 0;
+  const created = wat.test_call_CreateFontW(-16, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, writeWide('Fixedsys')) >>> 0;
   assert(created && wat.test_gdi_bitmap_font_bound(created),
     'an explicit Fixedsys LOGFONT should bind to the bundled strike');
   wat.test_call_SelectObject(hdc, created);
@@ -137,7 +137,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   ];
   const selected = [];
   for (const { request, width, height } of nativeSizes) {
-    const font = wat.test_call_CreateFontW(-request, 400, 0, writeWide('Fixedsys')) >>> 0;
+    const font = wat.test_call_CreateFontW(-request, 0, 0, 0, 400, 0, 0, 0, 0, 0, 0, 0, 0, writeWide('Fixedsys')) >>> 0;
     const strike = wat.test_gdi_bitmap_font_bound(font) >>> 0;
     assert(font && strike, `${request}px Fixedsys should bind to Wine's base strike`);
     assert.strictEqual(view.getUint32(strike + 20, true), 15,

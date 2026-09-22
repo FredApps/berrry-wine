@@ -152,7 +152,7 @@ async function main() {
   const wideFace = wat.guest_alloc(32) >>> 0;
   'Arial'.split('').forEach((ch, i) => wat.guest_write16(wideFace + i * 2, ch.charCodeAt(0)));
   wat.guest_write16(wideFace + 10, 0);
-  const wideFont = wat.test_call_CreateFontW(-17, 700, 1, wideFace) >>> 0;
+  const wideFont = wat.test_call_CreateFontW(-17, 0, 0, 0, 700, 1, 0, 0, 0, 0, 0, 0, 0, wideFace) >>> 0;
   assert(wideFont, 'CreateFontW should allocate through the text-only host boundary');
   assert.strictEqual(wat.test_gdi_object_type(wideFont), 4);
   const wideLogfont = wat.guest_alloc(92) >>> 0;

@@ -28,7 +28,7 @@ const RegionMap = require('../lib/region-map.generated.js');
 
   const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
   assert(hdc, 'CreateCompatibleDC must allocate a font-only memory DC');
-  const font = wat.test_call_CreateFontW(-20, 500, 0, writeWide('Arial')) >>> 0;
+  const font = wat.test_call_CreateFontW(-20, 0, 0, 0, 500, 0, 0, 0, 0, 0, 0, 0, 0, writeWide('Arial')) >>> 0;
   assert(font, 'CreateFont must allocate the MW3-shaped scalable font');
   wat.test_call_SelectObject(hdc, font);
 
