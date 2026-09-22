@@ -10,6 +10,11 @@ const { clearStore, exportStore } = require('../lib/storage');
 const stdole = SYSTEM_DATA_FILES.find(file => /stdole2\.tlb$/i.test(file.vfsPath));
 assert(stdole, 'shared process boot must declare stdole2.tlb');
 assert.strictEqual(stdole.vfsPath.toLowerCase(), 'c:\\windows\\system\\stdole2.tlb');
+// The live site does not publish it, so the browser must not ask for it there.
+assert.strictEqual(stdole.localOnly, true, 'stdole2.tlb is a local-only system file');
+const shell = fs.readFileSync(path.join(__dirname, '..', 'lib', 'browser-shell.js'), 'utf8');
+assert(/deployed && file\.localOnly/.test(shell),
+  'browser shell must skip localOnly system files on a deployed site');
 
 const bytes = new Uint8Array(fs.readFileSync(path.join(__dirname, '..', stdole.url)));
 assert.strictEqual(Buffer.from(bytes.subarray(0, 4)).toString('ascii'), 'MSFT',
