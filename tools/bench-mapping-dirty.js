@@ -12,7 +12,8 @@ const { createHostImports } = require('../lib/host-imports');
 
 const iterations = Number(process.env.DIRTY_BENCH_ITERATIONS || 2000000);
 const repetitions = Number(process.env.DIRTY_BENCH_REPETITIONS || 9);
-const generation = process.argv.includes('--generation');
+const inlineGeneration = process.argv.includes('--generation-inline');
+const generation = inlineGeneration || process.argv.includes('--generation');
 assert(Number.isSafeInteger(iterations) && iterations > 0 && iterations <= 0x7fffffff);
 assert(Number.isSafeInteger(repetitions) && repetitions >= 3);
 const extra = `
@@ -59,19 +60,49 @@ const generationWrapper = `
       (then (drop (i32.atomic.rmw.or (local.get $cell) (i32.const 2))))))
 `;
 
+function inlineGenerationStore(source) {
+  const start = source.indexOf('  (func $gs32 ');
+  const end = source.indexOf('  (func $gs64 ', start);
+  assert(start >= 0 && end > start, 'gs32 boundaries changed');
+  let body = source.slice(start, end);
+  const locals = '(local $wa i32) (local $end_wa i32)';
+  assert(body.includes(locals), 'gs32 locals changed');
+  body = body.replace(locals, locals + ' (local $cell i32) (local $stamp i32)');
+  const store = '(then (i32.store (local.get $wa) (local.get $v)) (return))';
+  assert(body.includes(store), 'gs32 same-page store changed');
+  // Replace only the first, same-page store branch. Cross-page tracking is
+  // deliberately outside this cost fixture, not silently claimed as covered.
+  body = body.replace(store, `(then
+      (if (i32.lt_u (local.get $ga) (i32.const 0x08000000))
+        (then (i32.store (local.get $wa) (local.get $v)) (return)))
+      (local.set $cell (i32.add (global.get $bench_dirty_table)
+        (i32.shl (i32.shr_u (local.get $ga) (i32.const 12)) (i32.const 2))))
+      (local.set $stamp (i32.atomic.load (local.get $cell)))
+      (if (i32.eq (i32.and (local.get $stamp) (i32.const 3)) (i32.const 1))
+        (then (drop (i32.atomic.rmw.or (local.get $cell) (i32.const 2)))))
+      (i32.store (local.get $wa) (local.get $v))
+      (if (i32.and (local.get $stamp) (i32.const 1))
+        (then
+          (if (i32.ne (i32.shr_u (local.get $stamp) (i32.const 2))
+                      (i32.shr_u (i32.atomic.load (local.get $cell)) (i32.const 2)))
+            (then (drop (i32.atomic.rmw.or (local.get $cell) (i32.const 2)))))))
+      (return))`);
+  return source.slice(0, start) + body + source.slice(end);
+}
+
 async function arm(hook) {
   let injected = false;
   const bytes = compileSrcWasm((file, source) => {
     if (hook && file === '03-registers.wat') {
       const pattern = /(\(func \$gs32 \(param \$ga i32\) \(param \$v i32\)\s*\(local \$wa i32\) \(local \$end_wa i32\))/;
       assert(pattern.test(source), 'gs32 seam changed');
-      source = generation
+      source = inlineGeneration ? inlineGenerationStore(source) : generation
         ? source.replace('(func $gs32 ', '(func $bench_original_gs32 ')
         : source.replace(pattern, '$1\n    (call $bench_mark_dirty (local.get $ga))');
       injected = true;
     }
     return file === '13-exports.wat'
-      ? source + extra + (hook && generation ? generationWrapper : '') : source;
+      ? source + extra + (hook && generation && !inlineGeneration ? generationWrapper : '') : source;
   });
   assert.strictEqual(injected, hook);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
@@ -122,7 +153,7 @@ async function main() {
     results.push({ kind, controlMs, candidateMs, changePercent: (candidateMs / controlMs - 1) * 100, samples });
   }
   console.log(JSON.stringify({ node: process.version, arch: process.arch, iterations, repetitions,
-    controlOnly, candidate: generation ? 'generation-wrapper' : 'naive-premark',
+    controlOnly, candidate: inlineGeneration ? 'generation-inline' : generation ? 'generation-wrapper' : 'naive-premark',
     beforeLoad, afterLoad: os.loadavg(), scope: 'gs32 microbenchmark only; incomplete tracking coverage', results }, null, 2));
 }
 main().catch(error => { console.error(error.stack || error); process.exitCode = 1; });

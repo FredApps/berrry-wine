@@ -707,3 +707,43 @@ Next candidate work should remove wrapper overhead and preserve the direct
 fast path before any repeated game A/B. The generation protocol still requires
 the correctness work listed above; no runtime default or production handler
 was changed. JavaScript syntax and whitespace checks pass.
+
+## Inline generation cost experiment (2026-09-22)
+
+`--generation-inline` removes the extra wrapper call. The source transform
+keeps gs32's original translation/invalidation and changes only its same-page
+store branch. The fixture's direct-address branch stores and returns without
+looking up dirty state. Sparse stores read the packed state, conditionally OR
+DIRTY, store, then recheck the generation when tracked. This still uses the
+fixture-only address shortcut and does **not** track cross-page stores.
+
+The unchanged clean-source baseline `679d3e99` was used in the same local and
+remote scratch directories, with only the benchmark script rsynced again.
+A local 1,000-store smoke checked values/dirty activation, not performance.
+Quiet remote Node20.11.1 x64 A/B and A/A ran sequentially with the same nine
+pairs, 20 million stores and three warmups per arm:
+
+```sh
+DIRTY_BENCH_ITERATIONS=20000000 node tools/bench-mapping-dirty.js --generation-inline
+DIRTY_BENCH_ITERATIONS=20000000 node tools/bench-mapping-dirty.js --generation-inline --control-only
+```
+
+| Store target | Control ms | Inline ms | A/B change | A/A change |
+|---|---:|---:|---:|---:|
+| Direct window | 212.399 | 217.212 | +2.27% | +0.01% |
+| Sparse, untracked | 265.152 | 285.271 | +7.59% | -0.08% |
+| Sparse, tracked | 265.452 | 290.712 | +9.52% | -0.08% |
+
+One-minute loads: 0.06 -> 0.38 and 0.23 -> 0.49. Raw samples and script hash:
+[mapping-dirty-inline-samples.json](mapping-dirty-inline-samples.json).
+This shape substantially reduces the measured overhead relative to the earlier
+wrapper experiment, but each A/B effect still exceeds this run's observed A/A
+difference. Avoiding a lookup on the direct path does not make that path free:
+the accessor's branch/code shape changed. The experiments do not isolate a
+specific machine-code cause or establish a universal overhead percentage.
+
+**Keep experimental.** This is promising relative to the rejected wrapper,
+not performance neutrality or production readiness. Repeated game A/Bs need
+a width-complete candidate first; cross-page marking, real concurrent flush,
+write coverage, mapping lifetime and generation wrap remain correctness work.
+No production source changed. JavaScript syntax and whitespace checks pass.
