@@ -1491,7 +1491,7 @@ for (const api of existing) {
   if (cdeclCrtApis.has(api.name)) api.convention = 'cdecl';
 }
 
-// Pull Direct3D Immediate Mode methods from shared spec (used by gen_d3dim_stubs.js too)
+// Pull Direct3D Immediate Mode identities/aliases from the shared interface spec.
 const { interfaces: d3dimIfaces } = require('./d3dim-methods');
 for (const iface of d3dimIfaces) {
   for (const m of iface.methods) {
