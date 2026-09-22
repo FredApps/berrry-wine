@@ -487,3 +487,24 @@ bulk buffers remain. The neighboring `LocalFileTimeToFileTime` handler in
 `09a7d` still copies through raw translated `i64.load/store` and is another
 confirmed guest-buffer candidate. Its existing no-timezone policy is a
 separate behavior question, not justification for a sparse-address shortcut.
+
+## Local/UTC FILETIME copies share a guest-aware snapshot
+
+Both `LocalFileTimeToFileTime` and `FileTimeToLocalFileTime` now use one
+`filetime_copy_bits` core: gather both DWORDs through `gl32`, assemble their
+unchanged bits and pass the complete value to `gs64`. This removes raw
+translated copies and ensures the entire input is read before any output,
+including an in-place buffer or overlap in either direction. The APIs still
+use the existing identity conversion policy; timezone/DST modeling is not
+implemented by this pointer migration.
+
+The local-to-UTC output failed red at split 1 before the fix. The metadata
+regression now runs seven boundary positions through five source/destination
+arrangements for each frontend (70 cases), checking full bytes, surrounding
+canaries and stdcall cleanup. It also checks LocalFileTimeToFileTime's existing
+null failures and output preservation. The metadata suite and logical-AND
+gate pass; the timestamp suite also passed the initial local-to-UTC change.
+The reverse frontend's existing lack of null validation is intentionally not
+presented as native-correct behavior. Null/error policy, timezone behavior,
+and the adjacent CompareFileTime's translated input reads remain follow-up
+work. No complete guest-write coverage or dirty-tracking claim follows.

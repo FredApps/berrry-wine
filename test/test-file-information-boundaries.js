@@ -3,6 +3,16 @@
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 const extraWat = String.raw`
+  (func (export "test_file_to_local") (param $src i32) (param $dst i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $handle_FileTimeToLocalFileTime (local.get $src) (local.get $dst)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
+  (func (export "test_local_to_file") (param $src i32) (param $dst i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $handle_LocalFileTimeToFileTime (local.get $src) (local.get $dst)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
   (func (export "test_disk_free_ex") (param $available i32) (param $total i32) (param $free i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (call $handle_GetDiskFreeSpaceExA (i32.const 0) (local.get $available) (local.get $total)
@@ -72,6 +82,25 @@ const extraWat = String.raw`
   const handle = vfs.createFile('c:\\info.bin', 0xc0000100, 3);
   const read = (ga, n) => Array.from({ length: n }, (_, i) => e.guest_read8(ga + i));
   const aligned = page + 0x100;
+  const fileTimeBytes = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0x01];
+  for (const convert of [e.test_local_to_file, e.test_file_to_local]) for (let split = 1; split < 8; split++) {
+    const edge = page + 4096 - split;
+    for (const [src, dst] of [[aligned, edge], [edge, aligned], [edge, edge],
+      [edge, edge + 1], [edge + 1, edge]]) {
+      for (let i = -1; i <= 8; i++) e.guest_write8(dst + i, 0xcc);
+      fileTimeBytes.forEach((b, i) => e.guest_write8(src + i, b));
+      const before = e.guest_read8(dst - 1), after = e.guest_read8(dst + 8);
+      assert.strictEqual(convert(src, dst), 1);
+      assert.deepStrictEqual(read(dst - 1, 10), [before, ...fileTimeBytes, after], `local FILETIME split ${split}`);
+      assert.strictEqual(e.get_esp(), 0x0030000c);
+    }
+  }
+  fileTimeBytes.forEach((b, i) => e.guest_write8(aligned + i, b));
+  for (const [src, dst] of [[0, aligned], [aligned, 0], [0, 0]]) {
+    assert.strictEqual(e.test_local_to_file(src, dst), 0);
+    assert.deepStrictEqual(read(aligned, 8), fileTimeBytes);
+    assert.strictEqual(e.get_esp(), 0x0030000c);
+  }
   // Fixed-disk geometry policy is unchanged; verify all three optional
   // ULARGE_INTEGER outputs, not just an aligned high/low pair.
   const diskSizes = [262143n * 4096n, 524287n * 4096n, 262143n * 4096n];

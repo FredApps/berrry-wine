@@ -153,11 +153,7 @@
   ;; 415: FileTimeToLocalFileTime(const FILETIME *src, LPFILETIME dst) → BOOL.
   ;; 2-arg stdcall. We don't model timezones — just copy the 8 bytes.
   (func $handle_FileTimeToLocalFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $s i32) (local $d i32)
-    (local.set $s (call $g2w (local.get $arg0)))
-    (local.set $d (call $g2w (local.get $arg1)))
-    (i32.store (local.get $d) (i32.load (local.get $s)))
-    (i32.store (i32.add (local.get $d) (i32.const 4)) (i32.load (i32.add (local.get $s) (i32.const 4))))
+    (call $filetime_copy_bits (local.get $arg0) (local.get $arg1))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
@@ -678,15 +674,21 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
   )
 
+  ;; Snapshot before writing, so both identity conversions also handle overlap.
+  (func $filetime_copy_bits (param $src i32) (param $dst i32)
+    (call $gs64 (local.get $dst)
+      (i64.or
+        (i64.extend_i32_u (call $gl32 (local.get $src)))
+        (i64.shl
+          (i64.extend_i32_u (call $gl32 (i32.add (local.get $src) (i32.const 4))))
+          (i64.const 32)))))
+
   ;; 428: LocalFileTimeToFileTime. The emulator does not model a timezone, so
   ;; local and UTC FILETIMEs have the same bit representation.
   (func $handle_LocalFileTimeToFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src i32) (local $dst i32)
     (if (i32.and (i32.ne (local.get $arg0) (i32.const 0)) (i32.ne (local.get $arg1) (i32.const 0)))
       (then
-        (local.set $src (call $g2w (local.get $arg0)))
-        (local.set $dst (call $g2w (local.get $arg1)))
-        (i64.store (local.get $dst) (i64.load (local.get $src)))
+        (call $filetime_copy_bits (local.get $arg0) (local.get $arg1))
         (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
       (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
