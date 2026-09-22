@@ -250,12 +250,29 @@ needs none of it. Recorded here so it is not re-proposed.
 
 ## Shape of the work
 
-1. **GL state into a new per-context WAT block** — matrices, 8 lights,
-   material, fog. `src/09a8e-gl-state.wat`'s block is 160 bytes with only 16
-   unused (+0, +148..+159, neither declared reserved), and GL's matrix stacks
-   are unbounded, so this needs a new allocation, not spare fields. Testable
-   against `glGetFloatv(GL_*_MATRIX)` (`lib/gl-compat.js:1404-1407`) as an
-   oracle. Pays for itself in removed barriers before anything else lands.
+1. ~~**GL state into a new per-context WAT block**~~ — **DONE**, `cb172c82`
+   and `a929765d`. `src/09a8f-gl-matrix.wat`, 8992 bytes per context: four
+   32-deep matrix stacks (modelview, projection, one texture stack per
+   multitexture unit), light model ambient, 8 lights, material, fog. It is a
+   new allocation rather than spare fields in `09a8e`'s 160-byte block, as
+   predicted, and it keys off the encoder's `$gl_current_context` so all three
+   per-context tables agree. **Nothing calls it yet** — it is additive, the
+   WebGL path is untouched, and steps 2-4 are what give it a consumer.
+
+   The oracle turned out better than `glGetFloatv`: `lib/gl-compat.js` exports
+   `identity`, `multiply`, `frustum` and `ortho`, so `test-gl-matrix-stacks.js`
+   drives both implementations through one scripted sequence and compares raw
+   f32 bit patterns after every step. To make that meaningful the WAT mirrors
+   the JS rather than improving on it — column-major, f64 accumulation demoted
+   once on store, host `math_sin`/`math_cos`. One deviation is documented:
+   JS normalizes a rotation axis with `Math.hypot` and wasm has no equivalent.
+
+   Three things worth carrying forward. `translation`/`scale`/`rotation` are
+   **not** exported, so those references are transcriptions and get a semantic
+   check as well. The lighting half has no exported oracle at all, because it
+   lives on `FixedFunctionGL`, which needs a live WebGL program to construct.
+   And a zeroed block is not a legal GL state — light 0 is white, material
+   diffuse is 0.8 grey — so the defaults are initialized explicitly.
 2. **Translate at record time in WAT** — GL draw to a DFX1/DLT1-shaped
    descriptor.
 3. **Rotate GL's buffers** — adopt D3D's ownership protocol.
