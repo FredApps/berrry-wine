@@ -242,10 +242,55 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
+  ;; Win98's profile decoder is intentionally not a strict hex parser. Native
+  ;; printable-ASCII probes show decimal digits map normally, every other byte
+  ;; uses (ch - 'A' + 10) & 15. Do not reuse the strict GUID hex validator.
+  (func $profile_struct_nibble (param $ch i32) (result i32)
+    (i32.and (i32.sub (local.get $ch)
+      (select (i32.const 48) (i32.const 55)
+        (i32.and (i32.ge_u (local.get $ch) (i32.const 48))
+                 (i32.le_u (local.get $ch) (i32.const 57))))) (i32.const 15)))
+
+  (func $ini_get_struct (param $app i32) (param $key i32) (param $out i32)
+      (param $size i32) (param $file i32) (result i32)
+    (local $encoded i32) (local $buffer i32) (local $i i32)
+    (local $value i32) (local $sum i32) (local $result i32)
+    (if (i32.or (i32.eqz (local.get $app)) (i32.eqz (local.get $key)))
+      (then (return (i32.const 0))))
+    (if (i32.or (i32.eqz (local.get $out))
+                 (i32.gt_u (local.get $size) (i32.const 0x3ffffffd)))
+      (then (return (i32.const 0))))
+    ;; Two hex digits per byte, two checksum digits, NUL, and one extra byte
+    ;; so a truncated longer value cannot masquerade as an exact-length value.
+    (local.set $encoded (i32.add (i32.shl (local.get $size) (i32.const 1)) (i32.const 2)))
+    (local.set $buffer (call $heap_alloc (i32.add (local.get $encoded) (i32.const 2))))
+    (if (i32.eqz (local.get $buffer)) (then (return (i32.const 0))))
+    (if (i32.eq (call $ini_get_string (local.get $app) (local.get $key) (i32.const 0)
+        (local.get $buffer) (i32.add (local.get $encoded) (i32.const 2))
+        (local.get $file) (i32.const 0)) (local.get $encoded))
+      (then
+        (loop $decode
+          (local.set $value (i32.or
+            (i32.shl (call $profile_struct_nibble
+              (call $gl8 (i32.add (local.get $buffer) (i32.shl (local.get $i) (i32.const 1))))) (i32.const 4))
+            (call $profile_struct_nibble (call $gl8 (i32.add (local.get $buffer)
+              (i32.add (i32.shl (local.get $i) (i32.const 1)) (i32.const 1)))))))
+          (if (i32.eq (local.get $i) (local.get $size))
+            (then (local.set $result
+              (i32.eq (local.get $value) (i32.and (local.get $sum) (i32.const 255)))))
+            (else
+              ;; Native publishes decoded bytes even when the checksum fails.
+              (call $gs8 (i32.add (local.get $out) (local.get $i)) (local.get $value))
+              (local.set $sum (i32.add (local.get $sum) (local.get $value)))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $decode))))))
+    (call $heap_free (local.get $buffer))
+    (local.get $result))
+
   ;; GetPrivateProfileStructA(appName, keyName, lpStruct, nSize, fileName) — 5 args stdcall
   (func $handle_GetPrivateProfileStructA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return 0 (failure) — struct not found in INI
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base) (call $ini_get_struct
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
   )
 

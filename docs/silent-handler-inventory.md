@@ -644,3 +644,15 @@ takes 6 dwords with `this`, not 7 (dwStartVertex/dwNumVertices are the v7
 addition). Popping one dword too many left the caller's epilogue a slot
 high, so its `ret` took the caller's own first argument as a return address
 -- Diablo II's Direct3D backend jumped to 320/640 during the Act I load.
+
+2026-09-22: 250 -> 249 manual. GetPrivateProfileStructA no longer reports
+unconditional failure. It uses the shared INI reader and decodes the stored
+bytes/checksum into guest memory. Native Win98 evidence established exact
+encoded length, additive checksum, output publication before checksum failure,
+and permissive printable-ASCII nibble conversion; a strict hex parser would
+have disagreed with native behavior. All 203 native read cases pass at four
+output positions (812 comparisons), including noncontiguous backing, with
+unchanged LastError and stdcall cleanup. The fixture and scope limits are in
+`test/fixtures/win98-profile-struct/README.md`. Existing profile-string/section
+tests pass. The pin changes in the same commit as the implementation; metadata
+remains 22. This does not certify every profile API or INI registry mapping.
