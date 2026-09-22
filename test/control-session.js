@@ -22,7 +22,15 @@ function startControlSession(args, options = {}) {
   let lineBuffer = '';
   let nextId = 1;
   const pending = new Map();
-  const exited = new Promise(resolve => child.on('exit', resolve));
+  let closed = false;
+  let terminalError = null;
+  // close follows exit AND stdio draining, so a final reply isn't discarded
+  // merely because the process exited before its stdout data was delivered.
+  const exited = new Promise(resolve => child.on('close', resolve));
+  function rejectPending(error) {
+    for (const waiter of pending.values()) waiter.reject(error);
+    pending.clear();
+  }
 
   child.stdout.on('data', data => {
     output += data;
@@ -34,6 +42,7 @@ function startControlSession(args, options = {}) {
       if (!match) continue;
       let reply;
       try { reply = JSON.parse(match[1]); } catch (_) { continue; }
+      if (!reply || typeof reply !== 'object' || Array.isArray(reply)) continue;
       const waiter = pending.get(reply.id);
       if (!waiter) continue;
       pending.delete(reply.id);
@@ -42,21 +51,35 @@ function startControlSession(args, options = {}) {
     }
   });
   child.stderr.on('data', data => { output += data; });
-  child.on('exit', code => {
-    for (const [id, waiter] of pending) {
-      waiter.reject(new Error(`run.js exited before replying to ${id} (exit ${code})`));
-    }
-    pending.clear();
+  child.on('error', error => {
+    terminalError = error;
+    rejectPending(error);
+  });
+  child.stdin.on('error', error => {
+    terminalError = terminalError || error;
+    rejectPending(terminalError);
+  });
+  child.on('close', (code, signal) => {
+    closed = true;
+    terminalError = terminalError || new Error(
+      `run.js exited before replying (exit ${code}${signal ? `, signal ${signal}` : ''})`);
+    rejectPending(terminalError);
   });
 
   function send(commandValue) {
     const id = `${idPrefix}${nextId++}`;
     const payload = typeof commandValue === 'string'
       ? { id, cmd: commandValue }
-      : { id, ...commandValue };
+      : { ...commandValue, id };
     return new Promise((resolve, reject) => {
+      if (terminalError || closed || child.exitCode !== null || child.signalCode !== null) {
+        reject(terminalError || new Error('run.js exited; control session is closed'));
+        return;
+      }
+      // Serialize before adding a waiter: cyclic inputs must not leak one.
+      const line = `${JSON.stringify(payload)}\n`;
       pending.set(id, { resolve, reject });
-      child.stdin.write(`${JSON.stringify(payload)}\n`, error => {
+      child.stdin.write(line, error => {
         if (!error) return;
         pending.delete(id);
         reject(error);
@@ -68,7 +91,7 @@ function startControlSession(args, options = {}) {
   async function quit(optionsValue = {}) {
     const { ignoreReplyError = false } = optionsValue;
     let replyError = null;
-    if (child.exitCode === null) {
+    if (!closed && !terminalError && child.exitCode === null && child.signalCode === null) {
       try { await send({ action: 'quit' }); } catch (error) { replyError = error; }
       child.stdin.end();
     }
