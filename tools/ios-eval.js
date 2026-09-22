@@ -4,6 +4,7 @@
 //   node tools/ios-eval.js 'innerHeight'
 //   node tools/ios-eval.js --file=probe.js
 //   node tools/ios-eval.js 'document.body.style.background="red"'
+//   node tools/ios-eval.js --port=8097 --token=SECRET 'location.href'   (server behind a tunnel)
 //
 // There is no debugger into an iPhone on someone else's desk. Web Inspector
 // over USB is the official answer, needs the cable and a Mac in front of the
@@ -29,6 +30,8 @@ function arg(name, fallback) {
 const PORT = Number(arg('port', '8099'));
 const HOST = arg('host', '127.0.0.1');
 const FILE = arg('file', '');
+// The server's --token, when it runs behind a public tunnel.
+const TOKEN = arg('token', '');
 const code = FILE ? fs.readFileSync(FILE, 'utf8')
   : process.argv.slice(2).filter(value => !value.startsWith('--')).join(' ');
 
@@ -38,7 +41,7 @@ if (!code) {
 }
 
 const request = http.request({
-  host: HOST, port: PORT, path: '/ios-eval', method: 'POST',
+  host: HOST, port: PORT, path: TOKEN ? `/ios-eval?t=${encodeURIComponent(TOKEN)}` : '/ios-eval', method: 'POST',
   headers: { 'Content-Type': 'text/plain', 'Content-Length': Buffer.byteLength(code) },
 }, response => {
   let body = '';

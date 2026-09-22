@@ -8,7 +8,7 @@
 // is no WebDriver into Simulator Safari without WebDriverAgent -- so the page
 // drives itself and posts what it found here, and this prints it.
 //
-//   node tools/ios-selftest-server.js [--port=8099] [--log=out.ndjson]
+//   node tools/ios-selftest-server.js [--port=8099] [--log=out.ndjson] [--token=SECRET]
 //   xcrun simctl openurl booted http://127.0.0.1:8099/test/ios-selftest.html
 //
 // Reports are printed as they arrive, one line each, so a run is readable
@@ -29,6 +29,18 @@ function arg(name, fallback) {
 
 const PORT = Number(arg('port', '8099'));
 const LOG = arg('log', '');
+// --token=SECRET: for putting this behind a public https tunnel (ngrok), so a
+// page on the live https site can reach it -- an https page cannot fetch
+// plain http://127.0.0.1 in Chrome (Local Network Access), and the site's
+// isolation service worker re-fetches every request anyway. Public means the
+// eval queue must not be open and the repo (.env.berrry included) must not
+// be served: with a token, every /ios-* request needs ?t=SECRET and nothing
+// else is answered at all.
+const TOKEN = arg('token', '');
+function tokenOk(url) {
+  if (!TOKEN) return true;
+  try { return new URL(url, 'http://x').searchParams.get('t') === TOKEN; } catch (_) { return false; }
+}
 
 const TYPES = {
   '.css': 'text/css', '.html': 'text/html', '.js': 'text/javascript',
@@ -143,9 +155,11 @@ function print(stamp, item) {
 // report. That makes `tools/ios-eval.js 'innerHeight'` a REPL into a real
 // iPhone, which is the only place this bug exists.
 //
-// Deliberately not authenticated and bound to the LAN: it is a debugging
+// Not authenticated by default and bound to the LAN: it is a debugging
 // server for a machine on the user's own network, started by hand, and it
-// serves the repo to that network already.
+// serves the repo to that network already. Behind a public tunnel, pass
+// --token (see above) -- then the queue needs the secret and nothing else is
+// served.
 const commands = [];
 const waiting = new Map();
 let nextCommandId = 1;
@@ -183,10 +197,17 @@ const server = http.createServer((request, response) => {
   if (request.method === 'OPTIONS') {
     response.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Headers': 'content-type',
-      'Access-Control-Allow-Methods': 'POST, OPTIONS',
+      // ngrok's free tier answers a browser with an HTML warning page
+      // unless the request carries this header.
+      'Access-Control-Allow-Headers': 'content-type, ngrok-skip-browser-warning',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
     });
     response.end();
+    return;
+  }
+  if (TOKEN && !tokenOk(request.url)) {
+    response.writeHead(403, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+    response.end('forbidden\n');
     return;
   }
   if (request.method === 'POST' && request.url.startsWith('/ios-report')) {
@@ -205,6 +226,11 @@ const server = http.createServer((request, response) => {
       'Access-Control-Allow-Origin': '*',
     });
     response.end(JSON.stringify(batch));
+    return;
+  }
+  if (TOKEN) {
+    response.writeHead(404, { 'Content-Type': 'text/plain' });
+    response.end('not served with --token\n');
     return;
   }
   serveFile(request, response);
