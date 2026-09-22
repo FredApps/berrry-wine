@@ -54,6 +54,20 @@
     (i32.add (call $win16_dde_base)
              (i32.add (i32.const 0x9140) (i32.mul (local.get $i) (i32.const 4)))))
 
+  ;; Is any instance offering a service -- Hearts' dealer at its table? The
+  ;; shell asks this to mark a room hosting (hostProbe protocol 'serving').
+  ;; Asking over the wire instead would reach the dealer's XTYP_CONNECT
+  ;; callback, which is Hearts deciding whether to seat a player.
+  (func (export "dde_serving") (result i32)
+    (local $i i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (if (i32.load (call $win16_dde_service_slot (local.get $i)))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   ;; 8 conversations of {used, inst, peer_tag, peer_conv, is_server, topic}.
   ;; The topic is kept because a later transaction on this conversation has to
   ;; tell the application which one it is about: XTYP_REQUEST hands the callback
@@ -1320,6 +1334,13 @@
                      (i32.sub (local.get $inst) (i32.const 1)))
           (select (i32.const 0) (local.get $hsz)
                   (i32.eq (local.get $cmd) (i32.const 2))))))
+    ;; Registering a service is Hearts' dealer taking its seat: the first
+    ;; moment it needs the room, the way socket() is for a Winsock game. It
+    ;; is asked without waiting (why 6, src/01-header.wat): a dealer has no
+    ;; answer to wait for, and the room it opens is the one players find.
+    (if (i32.and (i32.ne (local.get $hsz) (i32.const 0))
+                 (i32.ne (i32.and (local.get $cmd) (i32.const 1)) (i32.const 0)))
+      (then (drop (call $host_net_link_open (i32.const 6)))))
     (i32.store offset=8 (global.get $reg_base) (i32.const 0))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $win16_dde_set_error (i32.const 0))
@@ -1409,6 +1430,23 @@
     ;; has no way to tell which of its games the data belongs to.
     (i32.store offset=20 (call $win16_dde_conv_slot
       (i32.sub (local.get $conv) (i32.const 1))) (local.get $topic))
+    ;; A connect is a player looking for a dealer: the moment it needs the
+    ;; room (why 7). A host still asking the person which room answers 0, and
+    ;; the request waits in the pending slot (+60 unsent, +64 service, +68
+    ;; topic) for $win16_dde_pump_step to send once there is a room to hear it.
+    (i32.store offset=64 (local.get $pend) (local.get $svc))
+    (i32.store offset=68 (local.get $pend) (local.get $topic))
+    (i32.store offset=60 (local.get $pend) (i32.const 1))
+    (if (call $host_net_link_open (i32.const 7))
+      (then
+        (i32.store offset=60 (local.get $pend) (i32.const 0))
+        (call $win16_dde_send_connect (local.get $conv) (local.get $svc) (local.get $topic))))
+
+    (call $win16_dde_park (i32.const 16)))
+
+  ;; A connect request on the wire: the service and topic names.
+  (func $win16_dde_send_connect (param $conv i32) (param $svc i32) (param $topic i32)
+    (local $wa i32) (local $len i32)
     (local.set $wa (call $win16_dde_frame_wa))
     (if (local.get $wa)
       (then
@@ -1417,9 +1455,7 @@
         (local.set $len (call $win16_dde_put_hsz
           (local.get $wa) (local.get $len) (local.get $topic)))
         (drop (call $win16_dde_emit (i32.const 1) (local.get $conv) (i32.const 0)
-          (i32.sub (local.get $len) (global.get $DDE_HDR))))))
-
-    (call $win16_dde_park (i32.const 16)))
+          (i32.sub (local.get $len) (global.get $DDE_HDR)))))))
 
   ;; Take the call apart the way the modal message box does: remember the far
   ;; return, drop the whole frame, and park EIP on a slot the run loop will
@@ -1470,6 +1506,21 @@
     (local.set $pend (call $win16_dde_pending_slot))
     (call $win16_dde_pump)
     (local.set $conv (i32.load offset=8 (local.get $pend)))
+    ;; A connect still waiting for the room: the person is choosing one, and
+    ;; that is not the far side failing to answer, so the clock does not run.
+    (if (i32.and
+          (i32.eq (i32.load offset=16 (local.get $pend)) (global.get $DDE_WAIT_CONNECT))
+          (i32.ne (i32.load offset=60 (local.get $pend)) (i32.const 0)))
+      (then
+        (i32.store offset=4 (local.get $pend) (call $host_real_time_ms))
+        (if (call $host_net_link_open (i32.const 7))
+          (then
+            (i32.store offset=60 (local.get $pend) (i32.const 0))
+            (call $win16_dde_send_connect (local.get $conv)
+              (i32.load offset=64 (local.get $pend)) (i32.load offset=68 (local.get $pend)))))
+        (global.set $yield_reason (i32.const 8))
+        (global.set $yield_flag (i32.const 1))
+        (return (i32.const 1))))
     (if (i32.load offset=12 (local.get $pend))
       (then
         (i32.store (local.get $pend) (i32.const 0))

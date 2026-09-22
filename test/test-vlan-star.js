@@ -425,6 +425,37 @@ async function main() {
     assert.strictEqual(chooseOwner([peers[2]]), null);
   });
 
+  await check('a serving probe follows the game, not the wire', () => {
+    // Hearts, TetriNET and Liquid War say nothing on the wire while they wait
+    // for players, so the probe asks the emulator (the page's gameServing).
+    const wire = new Wire();
+    const seen = [];
+    const probe = new star.HostProbe(wire, { protocol: 'serving', listen: 31457, labelText: 'TetriNET' },
+      h => seen.push(h));
+    assert.ok(!wire.intercept, 'a serving probe must not take the wire');
+    probe.ask();
+    assert.deepStrictEqual(seen, [], 'no answer yet (serving unset) is not a change');
+    let now = false, asked = null;
+    probe.serving = spec => { asked = spec; return now; };
+    probe.ask();
+    assert.deepStrictEqual(seen, []);
+    assert.strictEqual(asked.listen, 31457, 'the spec reaches the question');
+    now = true;
+    probe.ask(); probe.ask();
+    assert.deepStrictEqual(seen, [{ label: 'TetriNET' }], 'hosting once, labelled');
+    now = null;
+    probe.ask();
+    assert.strictEqual(seen.length, 1, 'an unknown answer keeps the last verdict');
+    probe.serving = () => { throw new Error('instance gone'); };
+    probe.ask();
+    assert.strictEqual(seen.length, 1, 'a throwing question reads as unknown');
+    now = false;
+    probe.serving = () => now;
+    probe.ask();
+    assert.deepStrictEqual(seen, [{ label: 'TetriNET' }, null], 'stopped serving drops the room');
+    probe.stop();
+  });
+
   console.log(failures ? `test-vlan-star: ${failures} FAILED` : 'test-vlan-star: all checks passed');
   process.exit(failures ? 1 : 0);
 }

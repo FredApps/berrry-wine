@@ -13,6 +13,8 @@ const path = require('path');
 const fs = require('fs');
 const { fork } = require('child_process');
 const { ProcessHub } = require('../lib/vlan-wire');
+const { APPS } = require('../lib/apps');
+const { askServing } = require('./lan-serving');
 
 const ROOT = path.join(__dirname, '..');
 const LW = path.join(ROOT, 'test', 'binaries', 'candidates', 'liquid-war', 'LW5');
@@ -78,7 +80,7 @@ const WINDOW_BYTES = 64 * 1024;
 // recorded whether or not anyone is waiting on it yet.
 function spawn(name, args, logEnvVar, watch) {
   const child = fork(path.join(ROOT, 'test', 'run.js'), args,
-    { cwd: ROOT, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+    { cwd: ROOT, stdio: ['pipe', 'pipe', 'pipe', 'ipc'] });
   const logPath = process.env[logEnvVar];
   const fd = logPath ? fs.openSync(logPath, 'w') : null;
   const state = {
@@ -137,6 +139,8 @@ async function main() {
     `--exe=${SERVER_EXE}`,
     '--args=-private -2 -nobeep',
     '--vlan-wire',
+    // Asked whether it is serving, the way the page's host probe asks.
+    '--control-stdin',
     `--vlan-ip=${HOST_IP}`,
     '--trace-api=socket,bind,listen,accept,recv,send,closesocket',
     // The plain one-line [API] log is separate from --trace-api and is on by
@@ -159,6 +163,7 @@ async function main() {
     '--vlan-wire',
     `--vlan-ip=${PEER_IP}`,
     `--input=${keystrokes()}`,
+    '--control-stdin',
     '--trace-api=socket,bind,connect,send,recv,select,closesocket',
     '--quiet-api',
     '--quiet-blocks',
@@ -177,12 +182,20 @@ async function main() {
     await waitFor(server, SERVER_SIGNS.listen, 'the server to listen');
     check('lwwinsrv.exe listens on the room address');
 
+    // What marks the server's room as hosting, so a client opening Liquid
+    // War is offered it: the registry's hostProbe, from its socket table.
+    const probe = APPS.liquid_war_server.lan.hostProbe;
+    check(`the server reads as serving on ${probe.listen} (lib/apps.js hostProbe)`,
+      await askServing(server.child, probe));
+
     // The client opens its socket on a worker thread, whose API calls carry no
     // name for ordinal-only imports, so the client's own trace cannot name
     // them. The server's accept is the honest evidence that the client
     // connected — it is the far end of the same connection.
     await waitFor(server, SERVER_SIGNS.accept, 'the server to accept', 600000);
     check('lwwinsrv.exe accepts the client across the wire');
+    check('a connected client does not read as serving',
+      !(await askServing(client.child, probe)));
 
     await waitFor(server, SERVER_SIGNS.recv, 'the server to read the client', 600000);
     check('the server reads the client protocol stream');

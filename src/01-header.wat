@@ -943,7 +943,9 @@
   (import "host" "net_frame_commit" (func $host_net_frame_commit))
   ;; net_link_open(why) → 1 this process may use the room now, 0 not yet.
   ;; `why` names the networked act asking: 1 socket(), 2 DirectPlay Open to
-  ;; host, 3 Open to join, 4 EnumSessions. A host that joins a room for the
+  ;; host, 3 Open to join, 4 EnumSessions, 6 DDE DdeNameService (a dealer
+  ;; offering its service; asked without waiting, the answer is ignored),
+  ;; 7 DdeConnect. (5 is the shell's own: the list shown at launch.) A host that joins a room for the
   ;; person may then carry on from there -- a searcher is already on the
   ;; session list, a host is not (lib/apps.js lan.join.inGame).
   ;;

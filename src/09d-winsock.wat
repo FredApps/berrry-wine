@@ -414,6 +414,25 @@
       (br $scan)))
     (i32.const -1))
 
+;; Is this machine's game SERVING on `port` -- a TCP socket listening there,
+  ;; whatever address it bound (0 = any port)? The shell asks this to mark a
+  ;; room hosting (lib/vlan-star.js, hostProbe protocol 'serving'), because
+  ;; nothing on the wire says so: a listener sends nothing until somebody
+  ;; connects, and probing it with a SYN would hand the game a phantom player.
+  (func (export "net_listening") (param $port i32) (result i32)
+    (local $i i32) (local $rec i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $VSOCK_MAX)))
+      (local.set $rec (call $vsock_rec (local.get $i)))
+      (if (i32.and
+            (i32.eq (load.field VSock state (local.get $rec)) (i32.const 3))
+            (i32.or (i32.eqz (local.get $port))
+                    (i32.eq (load.field VSock local_port (local.get $rec)) (local.get $port))))
+        (then (return (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
   (func $vsock_alloc_ring (param $idx i32) (result i32)
     (local $rec i32) (local $buf i32) (local $cap i32)
     (local.set $rec (call $vsock_rec (local.get $idx)))

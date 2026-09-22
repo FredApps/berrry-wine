@@ -22,6 +22,8 @@ const path = require('path');
 const fs = require('fs');
 const { fork } = require('child_process');
 const { ProcessHub } = require('../lib/vlan-wire');
+const { APPS } = require('../lib/apps');
+const { askServing } = require('./lan-serving');
 
 const ROOT = path.join(__dirname, '..');
 const EXE = path.join(ROOT, 'test', 'binaries', 'candidates', 'tetrinet', 'TETRINET.EXE');
@@ -156,6 +158,8 @@ async function main() {
   const server = spawn('server', [
     `--exe=${EXE}`, `--vlan-ip=${HOST_IP}`, `--input=${SERVER_INPUT}`,
     '--max-seconds=300',
+    // Asked whether it is serving, the way the page's host probe asks.
+    '--control-stdin',
     '--trace-api=socket,bind,listen,accept,recv,send,closesocket',
     ...COMMON, ...extra(process.env.VLAN_SERVER_ARGS),
   ], 'VLAN_SERVER_LOG', SERVER_SIGNS);
@@ -172,6 +176,12 @@ async function main() {
     await waitFor(server, SERVER_SIGNS.listen, 'the server to listen');
     check('TETRINET.EXE listens on the room address');
 
+    // What marks the owner's room as hosting, so others are offered it: the
+    // registry's hostProbe, answered from the server's own socket table.
+    const probe = APPS.tetrinet.lan.hostProbe;
+    check(`the server reads as serving on ${probe.listen} (lib/apps.js hostProbe)`,
+      await askServing(server.child, probe));
+
     client = spawn('client', [
       `--exe=${EXE}`, `--vlan-ip=${PEER_IP}`, `--input=${CLIENT_INPUT}`,
       '--max-seconds=300',
@@ -183,6 +193,8 @@ async function main() {
 
     await waitFor(client, CLIENT_SIGNS.connect, 'the client to connect');
     check('the client drives its own UI to a connect');
+    check('a connected client does not read as serving',
+      !(await askServing(client.child, probe)));
 
     await waitFor(server, SERVER_SIGNS.accept, 'the server to accept');
     check('the server accepts the client across the wire');
