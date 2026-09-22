@@ -40,9 +40,13 @@ const GUEST_IP = '10.0.0.2';
 
 // Menu routes, one op per lockstep batch unless it says wait:N.
 // key:VK is a one-batch press. hold:VK-N keeps VK down for N batches.
-const HOST_SCRIPT = 'wait:900 key:13 wait:100 key:13 wait:100 key:40 wait:30 key:13 ' +
+// BOMB_HOST_SCRIPT / BOMB_GUEST_SCRIPT replace either route for a probe
+// without an edit (a phone has Space and Esc on its overlay, not Enter).
+const HOST_SCRIPT = process.env.BOMB_HOST_SCRIPT ||
+  'wait:900 key:13 wait:100 key:13 wait:100 key:40 wait:30 key:13 ' +
   'wait:1500 key:13 wait:300 key:13 wait:300 key:13 wait:400 png:arena';
-const GUEST_SCRIPT = 'wait:900 key:13 wait:100 key:13 wait:100 key:40 wait:20 key:40 ' +
+const GUEST_SCRIPT = process.env.BOMB_GUEST_SCRIPT ||
+  'wait:900 key:13 wait:100 key:13 wait:100 key:40 wait:20 key:40 ' +
   'wait:30 key:13 wait:400 key:13 wait:2103 hold:39-100 wait:200 png:arena';
 
 let failures = 0;

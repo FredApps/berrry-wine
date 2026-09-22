@@ -113,6 +113,12 @@ the reply always lands too late):
 - Give the joiner a different `--wall-clock-ms` than the server, or both draw
   one node id. Hold keys for exactly one batch: three batches trigger the
   game's key repeat and one Down moves the menu cursor two items.
+- **Space does everything Enter does past the title**, including the server's
+  three starts and the joiner's pick from "Available net games" — measured
+  2026-09-22 with every Enter after the second replaced by Space on both
+  sides (`BOMB_HOST_SCRIPT`/`BOMB_GUEST_SCRIPT` override the routes), all ten
+  checks green. That is why the phone overlay needs no Enter button: its Bomb
+  button is Space, and Esc skips the publisher logos straight to the menu.
 - `test/test-atomic-bomberman-vlan-gameplay.js` runs exactly this route
   (~75 s) and checks the announce, join request, join reply and both in-match
   streams on `--trace-net`. It SKIPs when the demo is not installed.
