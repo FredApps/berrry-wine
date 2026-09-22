@@ -479,6 +479,14 @@
     (local $spec i64) (local $ptr i32) (local $len i32) (local $borrow i32) (local $result i32)
     (global.set $gl_wat_stat_calls (i64.add (global.get $gl_wat_stat_calls) (i64.const 1)))
     (if (i32.eqz (call $gl_wat_init)) (then (unreachable)))
+    ;; Shadow the fixed-function transform/lighting state into WAT. This only
+    ;; observes -- the call goes on to the stream unchanged, so nothing about
+    ;; what gets drawn moves. It runs BEFORE $gl_state_intercept because that
+    ;; function absorbs some of the calls the mirror has to see: 76 and 77
+    ;; (glPushAttrib/glPopAttrib) return 1 from it and would otherwise never
+    ;; reach the observer, leaving the mirror silently stale instead of
+    ;; marked untrusted. See src/09a8f-gl-matrix.wat.
+    (call $gl_mtx_observe (local.get $op) (local.get $stack))
     (if (call $gl_state_intercept (local.get $op) (local.get $stack))
       (then (return (i32.const 0))))
     (if (i32.eq (local.get $op) (i32.const 19)) (then

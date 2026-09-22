@@ -19,7 +19,7 @@
   ;; equivalent, so a rotation about a non-unit axis can differ in the last
   ;; ulp. Tests compare rotations with a tolerance for exactly this reason.
   ;;
-  ;; Per-context block, 8352 bytes:
+  ;; Per-context block, 9008 bytes:
   ;;   +0    matrix mode (0x1700 MODELVIEW, 0x1701 PROJECTION, 0x1702 TEXTURE)
   ;;   +4    active texture unit (0 or 1)
   ;;   +8    depth of stack 0 (modelview), index of its top entry
@@ -27,7 +27,7 @@
   ;;   +16   depth of stack 2 (texture unit 0)
   ;;   +20   depth of stack 3 (texture unit 1)
   ;;   +24   sticky stack error: 0, GL_STACK_OVERFLOW or GL_STACK_UNDERFLOW
-  ;;   +28   reserved, 0
+  ;;   +28   sticky UNTRUSTED flag: the opcode this block could not mirror
   ;;   +32   four stacks, 32 entries of 64 bytes each (8192 bytes)
   ;;   +8224 scratch used by a multiply whose destination aliases a source
   ;;   +8288 staging matrix a caller writes before load/mult (64 bytes)
@@ -36,7 +36,8 @@
   ;;   +8880 material: ambient, diffuse, specular, emission (16 each),
   ;;         then shininess f32 at +8944, padding to +8960
   ;;   +8960 fog: mode i32, density f32, start f32, end f32, colour 4 f32
-  ;;         (ends at +8992)
+  ;;   +8992 scratch for a scalar setter that must present four f32
+  ;;         (ends at +9008)
   ;;
   ;; The depth cap is 32, which is GL's own required minimum for the modelview
   ;; stack. Real GL raises GL_STACK_OVERFLOW rather than growing, so a push
@@ -132,11 +133,11 @@
     (local.set $guest (call $heap_alloc (i32.const 12)))
     (if (i32.eqz (local.get $guest)) (then (unreachable)))
     (local.set $p (call $g2w (local.get $guest)))
-    (local.set $guest (call $heap_alloc (i32.const 8992)))
+    (local.set $guest (call $heap_alloc (i32.const 9008)))
     (if (i32.eqz (local.get $guest)) (then
       (call $heap_free (call $w2g (local.get $p))) (unreachable)))
     (local.set $block (call $g2w (local.get $guest)))
-    (memory.fill (local.get $block) (i32.const 0) (i32.const 8992))
+    (memory.fill (local.get $block) (i32.const 0) (i32.const 9008))
     (i32.store (local.get $block) (i32.const 0x1700))
     ;; Every stack starts one deep, holding identity.
     (local.set $s (i32.const 0))
@@ -543,6 +544,189 @@
       (then (call $gl_mtx_copy4 (i32.add (local.get $b) (i32.const 8976))
         (local.get $values)))))
 
+  ;; ---- the encoder's observer -------------------------------------------
+  ;;
+  ;; $gl_wat_encode_call hands every GL call here before recording it. This
+  ;; OBSERVES: it updates the WAT state and returns, and the call still goes
+  ;; on to the stream exactly as before, so the WebGL path is untouched and
+  ;; this cannot change what anything draws. That is the whole point of the
+  ;; step -- the mirror has to be shown correct on real apps before anything
+  ;; is allowed to depend on it.
+  ;;
+  ;; THE HONEST PART. Three families of call move this state and are not
+  ;; mirrored here: gluPerspective/gluLookAt/gluOrtho2D compose matrices
+  ;; (lib/gl-compat.js:1368-1391) through helpers this fragment has no copy
+  ;; of, and glPushAttrib/glPopAttrib save and restore the lighting and
+  ;; material state wholesale (:695-719). Rather than let the block drift
+  ;; silently away from the truth, each of those latches the opcode into the
+  ;; UNTRUSTED field at +28. A consumer must refuse to lower a draw from a
+  ;; block whose UNTRUSTED field is nonzero; a test can assert it stayed zero
+  ;; for a given app, which turns "we think we cover this app" into a measured
+  ;; claim. Clearing it is deliberate and belongs to whoever implements the
+  ;; missing family.
+  ;;
+  ;; Opcodes are the CALLS index from lib/gl-compat.js:65, the same numbering
+  ;; $gl_arg_words and $gl_is_barrier are generated against, and the same bare
+  ;; integers the rest of this encoder path already uses. A reordering of that
+  ;; array breaks every one of them together, which is why it is append-only
+  ;; in practice.
+  ;;
+  ;; Stack layout matches the rest of the encoder: argument i is at
+  ;; offset 4 + i*4, and a GLdouble occupies two slots.
+
+  (func $gl_mtx_untrusted (param $b i32) (param $op i32)
+    (if (i32.eqz (i32.load offset=28 (local.get $b)))
+      (then (i32.store offset=28 (local.get $b) (local.get $op)))))
+
+  ;; A scalar setter has to present four f32 to the vector setters, because
+  ;; that is the shape glMaterialfv and friends take. Only element 0 is read
+  ;; for the scalar pnames, but the other three are cleared so a stale value
+  ;; from an earlier call can never be mistaken for data.
+  (func $gl_mtx_scalar (param $b i32) (param $v f32) (result i32)
+    (call $gl_mtx_set4 (i32.add (local.get $b) (i32.const 8992))
+      (local.get $v) (f32.const 0) (f32.const 0) (f32.const 0))
+    (i32.add (local.get $b) (i32.const 8992)))
+
+  (func $gl_mtx_observe (param $op i32) (param $stack i32)
+    (local $b i32)
+    ;; Cheapest possible rejection of the common case: almost every GL call in
+    ;; a frame is a vertex, a texture bind or a state toggle, none of which
+    ;; reach this state at all. Everything handled below is in 32..41 (the
+    ;; matrix ops), or is one of a short list above 58.
+    (if (i32.and (i32.or (i32.lt_u (local.get $op) (i32.const 32))
+          (i32.gt_u (local.get $op) (i32.const 41)))
+        (i32.lt_u (local.get $op) (i32.const 59)))
+      (then (return)))
+    (local.set $b (call $gl_mtx_block))
+
+    ;; 35 glMatrixMode, 33 glLoadIdentity, 38 glPushMatrix, 37 glPopMatrix
+    (if (i32.eq (local.get $op) (i32.const 35))
+      (then (call $gl_mtx_set_mode (i32.load offset=4 (local.get $stack)))
+        (return)))
+    (if (i32.eq (local.get $op) (i32.const 33))
+      (then (call $gl_mtx_load_identity) (return)))
+    (if (i32.eq (local.get $op) (i32.const 38))
+      (then (call $gl_mtx_push) (return)))
+    (if (i32.eq (local.get $op) (i32.const 37))
+      (then (call $gl_mtx_pop) (return)))
+
+    ;; 34 glLoadMatrixf takes a GUEST pointer to 16 floats.
+    (if (i32.eq (local.get $op) (i32.const 34))
+      (then (call $gl_mtx_load (call $g2w (i32.load offset=4 (local.get $stack))))
+        (return)))
+
+    ;; 41 glTranslatef, 40 glScalef, 39 glRotatef -- GLfloat arguments.
+    (if (i32.eq (local.get $op) (i32.const 41))
+      (then (call $gl_mtx_translate
+        (f64.promote_f32 (f32.load offset=4 (local.get $stack)))
+        (f64.promote_f32 (f32.load offset=8 (local.get $stack)))
+        (f64.promote_f32 (f32.load offset=12 (local.get $stack)))) (return)))
+    (if (i32.eq (local.get $op) (i32.const 40))
+      (then (call $gl_mtx_scale
+        (f64.promote_f32 (f32.load offset=4 (local.get $stack)))
+        (f64.promote_f32 (f32.load offset=8 (local.get $stack)))
+        (f64.promote_f32 (f32.load offset=12 (local.get $stack)))) (return)))
+    (if (i32.eq (local.get $op) (i32.const 39))
+      (then (call $gl_mtx_rotate
+        (f64.promote_f32 (f32.load offset=4 (local.get $stack)))
+        (f64.promote_f32 (f32.load offset=8 (local.get $stack)))
+        (f64.promote_f32 (f32.load offset=12 (local.get $stack)))
+        (f64.promote_f32 (f32.load offset=16 (local.get $stack)))) (return)))
+
+    ;; 32 glFrustum, 36 glOrtho -- GLdouble arguments, two stack slots each.
+    (if (i32.eq (local.get $op) (i32.const 32))
+      (then (call $gl_mtx_frustum
+        (f64.load offset=4 (local.get $stack))
+        (f64.load offset=12 (local.get $stack))
+        (f64.load offset=20 (local.get $stack))
+        (f64.load offset=28 (local.get $stack))
+        (f64.load offset=36 (local.get $stack))
+        (f64.load offset=44 (local.get $stack))) (return)))
+    (if (i32.eq (local.get $op) (i32.const 36))
+      (then (call $gl_mtx_ortho
+        (f64.load offset=4 (local.get $stack))
+        (f64.load offset=12 (local.get $stack))
+        (f64.load offset=20 (local.get $stack))
+        (f64.load offset=28 (local.get $stack))
+        (f64.load offset=36 (local.get $stack))
+        (f64.load offset=44 (local.get $stack))) (return)))
+
+    ;; 90 glRotated -- the same operation with GLdouble arguments.
+    (if (i32.eq (local.get $op) (i32.const 90))
+      (then (call $gl_mtx_rotate
+        (f64.load offset=4 (local.get $stack))
+        (f64.load offset=12 (local.get $stack))
+        (f64.load offset=20 (local.get $stack))
+        (f64.load offset=28 (local.get $stack))) (return)))
+
+    ;; 105 glActiveTextureARB(GL_TEXTUREn_ARB) selects the texture matrix
+    ;; stack as well as the binding, which is why it is observed here.
+    (if (i32.eq (local.get $op) (i32.const 105))
+      (then (call $gl_mtx_set_active_texture
+        (i32.sub (i32.load offset=4 (local.get $stack)) (i32.const 0x84C0)))
+        (return)))
+
+    ;; 67 glLightfv(light, pname, params), 68 glMaterialfv(face, pname,
+    ;; params), 69 glLightModelfv(pname, params), 78 glFogfv(pname, params).
+    ;; The trailing argument is a guest pointer in every case.
+    (if (i32.eq (local.get $op) (i32.const 67))
+      (then (call $gl_mtx_set_light
+        (i32.load offset=4 (local.get $stack))
+        (i32.load offset=8 (local.get $stack))
+        (call $g2w (i32.load offset=12 (local.get $stack)))) (return)))
+    (if (i32.eq (local.get $op) (i32.const 68))
+      (then (call $gl_mtx_set_material
+        (i32.load offset=8 (local.get $stack))
+        (call $g2w (i32.load offset=12 (local.get $stack)))) (return)))
+    (if (i32.eq (local.get $op) (i32.const 69))
+      (then (call $gl_mtx_set_light_model_ambient
+        (call $g2w (i32.load offset=8 (local.get $stack)))) (return)))
+    (if (i32.eq (local.get $op) (i32.const 78))
+      (then (call $gl_mtx_set_fog
+        (i32.load offset=4 (local.get $stack))
+        (call $g2w (i32.load offset=8 (local.get $stack)))) (return)))
+
+    ;; 71 glMaterialf(face, pname, GLfloat), 79 glFogf(pname, GLfloat).
+    (if (i32.eq (local.get $op) (i32.const 71))
+      (then (call $gl_mtx_set_material
+        (i32.load offset=8 (local.get $stack))
+        (call $gl_mtx_scalar (local.get $b)
+          (f32.load offset=12 (local.get $stack)))) (return)))
+    (if (i32.eq (local.get $op) (i32.const 79))
+      (then
+        ;; GL_FOG_MODE through the float spelling is a mode, not a value.
+        (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0B65))
+          (then (call $gl_mtx_set_fog_mode
+            (i32.trunc_sat_f32_s (f32.load offset=8 (local.get $stack)))))
+          (else (call $gl_mtx_set_fog
+            (i32.load offset=4 (local.get $stack))
+            (call $gl_mtx_scalar (local.get $b)
+              (f32.load offset=8 (local.get $stack))))))
+        (return)))
+
+    ;; 80 glFogi(pname, GLint) -- the integer spelling, where the mode arrives
+    ;; as an int and does not go through the float path at all.
+    (if (i32.eq (local.get $op) (i32.const 80))
+      (then
+        (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0B65))
+          (then (call $gl_mtx_set_fog_mode (i32.load offset=8 (local.get $stack))))
+          (else (call $gl_mtx_set_fog
+            (i32.load offset=4 (local.get $stack))
+            (call $gl_mtx_scalar (local.get $b)
+              (f32.convert_i32_s (i32.load offset=8 (local.get $stack)))))))
+        (return)))
+
+    ;; The families this fragment cannot mirror yet. See the header above:
+    ;; 59 gluPerspective, 60 gluLookAt, 62 gluOrtho2D compose matrices through
+    ;; helpers there is no WAT copy of; 76 glPushAttrib and 77 glPopAttrib
+    ;; save and restore the lighting and material state wholesale.
+    (if (i32.or (i32.eq (local.get $op) (i32.const 59))
+        (i32.or (i32.eq (local.get $op) (i32.const 60))
+          (i32.or (i32.eq (local.get $op) (i32.const 62))
+            (i32.or (i32.eq (local.get $op) (i32.const 76))
+              (i32.eq (local.get $op) (i32.const 77))))))
+      (then (call $gl_mtx_untrusted (local.get $b) (local.get $op)))))
+
   ;; Exports. These live here rather than in 13-exports.wat because nothing
   ;; outside a test calls them yet, and a fragment that owns its own test
   ;; surface is one less file to contend for.
@@ -567,6 +751,15 @@
     (i32.load offset=24 (call $gl_mtx_block)))
   (func $gl_mtx_export_clear_error (export "gl_mtx_clear_error")
     (i32.store offset=24 (call $gl_mtx_block) (i32.const 0)))
+  ;; Nonzero = the opcode that this block could not mirror. A consumer must
+  ;; refuse to lower a draw while it is set; a test asserts it stayed zero.
+  (func $gl_mtx_export_untrusted (export "gl_mtx_untrusted") (result i32)
+    (i32.load offset=28 (call $gl_mtx_block)))
+  (func $gl_mtx_export_clear_untrusted (export "gl_mtx_clear_untrusted")
+    (i32.store offset=28 (call $gl_mtx_block) (i32.const 0)))
+  (func $gl_mtx_export_observe (export "gl_mtx_observe")
+      (param $op i32) (param $stack i32)
+    (call $gl_mtx_observe (local.get $op) (local.get $stack)))
   (func $gl_mtx_export_selected (export "gl_mtx_selected") (result i32)
     (call $gl_mtx_sel (call $gl_mtx_block)))
   (func $gl_mtx_export_set_mode (export "gl_mtx_set_mode") (param $mode i32)
