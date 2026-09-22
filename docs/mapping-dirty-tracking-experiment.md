@@ -552,3 +552,48 @@ every result byte, surrounding canaries, unrelated backing preservation,
 return value and stdcall cleanup. The new test is automatically tiered;
 test-tier, logical-AND and whitespace gates pass. Broader API semantics,
 remaining raw guest writes and dirty-page writeback remain open.
+
+## Quiet-host scalar remeasurement (2026-09-22)
+
+Revalidated the native writeback diagnostic on the current worktree: 4/4/0
+still returns `[65,66]` rather than `[27,66]`. The 14 protection observations
+and sparse lifetime checks preceding it pass; they do not close writeback.
+
+Local load was 12.10, so no local timing was used. A clean tracked-source
+worktree at `679d3e99f6f466b3444642003dab48259b098c9d` was created under
+`/private/tmp/wa-dirty-quiet.UTx4J2/tree`; its asset-link helper adds an
+untracked node_modules symlink, not source modifications. `src`, `lib`,
+`tools` and `test/compile-src.js` were transferred with rsync to
+`fast-near-9tb-1:/home/vg/tmp/wa-dirty-quiet.sPIiKa/`. The first transfer to
+`/tmp/wa-dirty-quiet.UMRAA9` failed because the root volume was full; no old
+data was deleted. The separate home volume had 836 GiB available.
+
+Used the unchanged benchmark script, Node v20.11.1 x64, 20 million stores per
+sample, three warmups per arm and nine alternating pairs. A/B and A/A ran
+sequentially, with one-minute loads 0.00 -> 0.45 and 0.35 -> 0.57 respectively.
+Run from the remote scratch directory:
+
+```sh
+DIRTY_BENCH_ITERATIONS=20000000 node tools/bench-mapping-dirty.js
+DIRTY_BENCH_ITERATIONS=20000000 node tools/bench-mapping-dirty.js --control-only
+```
+
+| Store target | Control ms | Hook ms | A/B change | A/A change |
+|---|---:|---:|---:|---:|
+| Direct window | 215.931 | 236.447 | +9.50% | +2.01% |
+| Sparse, untracked | 267.467 | 300.371 | +12.30% | +0.17% |
+| Sparse, tracked | 268.004 | 328.876 | +22.71% | +0.21% |
+
+Raw samples, loads and benchmark-script hash are retained in
+[mapping-dirty-tracking-quiet-samples.json](mapping-dirty-tracking-quiet-samples.json).
+These A/B effects exceed the observed A/A differences for all three shapes.
+That is evidence against calling this naive hook free or neutral, including
+its direct-window rejection path. A/A differences are not confidence bounds.
+Do not compare the absolute times or deltas to the earlier arm64/Node24 run as
+though only load changed: source revision, architecture and engine differ.
+
+Verdict remains **do not integrate the naive hook**. This is a single-page
+scalar-store loop, not a guest game or browser workload. Full write coverage,
+flush/store concurrency and a better candidate design remain prerequisites;
+quiet repeated game A/Bs are still required before selecting a production
+implementation. No runtime default or production memory path changed here.
