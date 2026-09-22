@@ -287,11 +287,24 @@ needs none of it. Recorded here so it is not re-proposed.
    mattered because `$gl_mtx_block` allocates from the same guest heap the app
    uses. Steps 2-4 are still what give the state a consumer.
 
-   Three families are **not** mirrored: `gluPerspective`, `gluLookAt` and
-   `gluOrtho2D` compose through helpers with no WAT copy, and
-   `glPushAttrib`/`glPopAttrib` save and restore lighting wholesale. Rather
-   than drift, each latches its opcode into a sticky UNTRUSTED field, so a
-   consumer can refuse to lower a draw instead of lowering a wrong one.
+   One family is **not** mirrored: `glPushAttrib`/`glPopAttrib` save and
+   restore lighting and material wholesale, so following them means owning a
+   copy of GL's attribute stack rather than composing a matrix. Rather than
+   drift, each latches its opcode into a sticky UNTRUSTED field, so a consumer
+   can refuse to lower a draw instead of lowering a wrong one.
+
+   `gluPerspective`, `gluLookAt` and `gluOrtho2D` were in that list and are now
+   mirrored (`test-gl-glu-mirror.js`). They are library code, not GL entry
+   points, so each is written as the composition `lib/gl-compat.js` performs —
+   perspective through the existing frustum, `gluOrtho2D` through ortho with
+   GL's default −1..1 — and the test checks them against the **shipping**
+   `perspective()`/`lookAt()`, now exported for that purpose, rather than a
+   transcription. The one divergence is deliberate and recorded in the source:
+   `Math.hypot(…) || 1` becomes a plain sqrt of the sum of squares, which
+   agrees across the range a camera basis can occupy and differs only where the
+   operands' squares would overflow f64. The `|| 1` itself is kept, and is what
+   stops a degenerate camera (eye == centre) filling the stack with NaN that
+   would then poison every later multiply.
    `--gl-census` prints, per run, every GL entry point the app actually issued
    and whether that latch stayed clear — which turns "we think this app is
    covered" into a measurement. The counters are load-immune, so it is

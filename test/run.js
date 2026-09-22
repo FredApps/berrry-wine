@@ -10495,8 +10495,10 @@ if (VERBOSE) {
     // The families src/09a8f-gl-matrix.wat cannot mirror yet. A zero here is
     // what licenses a consumer to trust the WAT state for THIS app; it is not
     // a general claim, which is exactly why it is printed per run.
-    const UNMIRRORED = ['gluPerspective', 'gluLookAt', 'gluOrtho2D',
-      'glPushAttrib', 'glPopAttrib'];
+    // gluPerspective/gluLookAt/gluOrtho2D were here until the mirror grew
+    // copies of them; these two remain because following them means owning a
+    // copy of GL's attribute stack, not composing a matrix.
+    const UNMIRRORED = ['glPushAttrib', 'glPopAttrib'];
     const used = UNMIRRORED.filter(name => {
       const index = GLCompat.CALL_INDEX[name];
       return index !== undefined && ops[index];

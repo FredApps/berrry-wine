@@ -424,6 +424,113 @@
         (f64.sub (local.get $f) (local.get $n))))))
     (call $gl_mtx_apply (local.get $b) (local.get $m)))
 
+  ;; The GLU helpers. These are not GL entry points at all -- they are library
+  ;; functions that compose the primitives above -- which is why they were the
+  ;; first things this mirror could not follow. Each is written here as the
+  ;; composition lib/gl-compat.js performs, not as an independent derivation,
+  ;; so the two cannot drift apart in the algebra.
+
+  ;; gluPerspective (lib/gl-compat.js:185-190): a symmetric frustum.
+  (func $gl_mtx_perspective (param $fovy f64) (param $aspect f64)
+      (param $n f64) (param $f f64)
+    (local $top f64) (local $right f64)
+    (local.set $top (f64.mul (local.get $n)
+      (call $host_math_tan (f64.div (f64.mul (local.get $fovy)
+        (f64.const 3.141592653589793)) (f64.const 360)))))
+    (local.set $right (f64.mul (local.get $top) (local.get $aspect)))
+    (call $gl_mtx_frustum (f64.neg (local.get $right)) (local.get $right)
+      (f64.neg (local.get $top)) (local.get $top) (local.get $n) (local.get $f)))
+
+  ;; gluOrtho2D (:1418-1420): an ortho with GL's default -1..1 depth range.
+  (func $gl_mtx_ortho2d (param $l f64) (param $r f64) (param $bo f64) (param $t f64)
+    (call $gl_mtx_ortho (local.get $l) (local.get $r) (local.get $bo)
+      (local.get $t) (f64.const -1) (f64.const 1)))
+
+  ;; gluLookAt (:191-212). Builds a view basis directly rather than through the
+  ;; factor helpers, so this is the one GLU function with arithmetic of its own.
+  ;;
+  ;; Its length normalizations are `Math.hypot(...) || 1` in the JS. This uses
+  ;; sqrt of the sum of squares instead: hypot is written to survive operands
+  ;; whose squares overflow or underflow f64, which a camera basis vector
+  ;; cannot do -- these are eye-minus-centre distances and an up vector. The
+  ;; two agree to the last bit across the ordinary range and differ only where
+  ;; the scene is already meaningless, which is the trade this comment exists
+  ;; to record rather than hide.
+  (func $gl_mtx_look_at
+      (param $ex f64) (param $ey f64) (param $ez f64)
+      (param $cx f64) (param $cy f64) (param $cz f64)
+      (param $ux f64) (param $uy f64) (param $uz f64)
+    (local $b i32) (local $m i32) (local $len f64)
+    (local $fx f64) (local $fy f64) (local $fz f64)
+    (local $sx f64) (local $sy f64) (local $sz f64)
+    (local $vx f64) (local $vy f64) (local $vz f64)
+    (local.set $b (call $gl_mtx_block))
+    (local.set $m (call $gl_mtx_staging (local.get $b)))
+    (local.set $fx (f64.sub (local.get $cx) (local.get $ex)))
+    (local.set $fy (f64.sub (local.get $cy) (local.get $ey)))
+    (local.set $fz (f64.sub (local.get $cz) (local.get $ez)))
+    (local.set $len (call $gl_mtx_length
+      (local.get $fx) (local.get $fy) (local.get $fz)))
+    (local.set $fx (f64.div (local.get $fx) (local.get $len)))
+    (local.set $fy (f64.div (local.get $fy) (local.get $len)))
+    (local.set $fz (f64.div (local.get $fz) (local.get $len)))
+    ;; s = f x up
+    (local.set $sx (f64.sub (f64.mul (local.get $fy) (local.get $uz))
+      (f64.mul (local.get $fz) (local.get $uy))))
+    (local.set $sy (f64.sub (f64.mul (local.get $fz) (local.get $ux))
+      (f64.mul (local.get $fx) (local.get $uz))))
+    (local.set $sz (f64.sub (f64.mul (local.get $fx) (local.get $uy))
+      (f64.mul (local.get $fy) (local.get $ux))))
+    (local.set $len (call $gl_mtx_length
+      (local.get $sx) (local.get $sy) (local.get $sz)))
+    (local.set $sx (f64.div (local.get $sx) (local.get $len)))
+    (local.set $sy (f64.div (local.get $sy) (local.get $len)))
+    (local.set $sz (f64.div (local.get $sz) (local.get $len)))
+    ;; u = s x f, already unit because s and f are orthonormal.
+    (local.set $vx (f64.sub (f64.mul (local.get $sy) (local.get $fz))
+      (f64.mul (local.get $sz) (local.get $fy))))
+    (local.set $vy (f64.sub (f64.mul (local.get $sz) (local.get $fx))
+      (f64.mul (local.get $sx) (local.get $fz))))
+    (local.set $vz (f64.sub (f64.mul (local.get $sx) (local.get $fy))
+      (f64.mul (local.get $sy) (local.get $fx))))
+    (memory.fill (local.get $m) (i32.const 0) (i32.const 64))
+    (f32.store offset=0 (local.get $m) (f32.demote_f64 (local.get $sx)))
+    (f32.store offset=4 (local.get $m) (f32.demote_f64 (local.get $vx)))
+    (f32.store offset=8 (local.get $m) (f32.demote_f64 (f64.neg (local.get $fx))))
+    (f32.store offset=16 (local.get $m) (f32.demote_f64 (local.get $sy)))
+    (f32.store offset=20 (local.get $m) (f32.demote_f64 (local.get $vy)))
+    (f32.store offset=24 (local.get $m) (f32.demote_f64 (f64.neg (local.get $fy))))
+    (f32.store offset=32 (local.get $m) (f32.demote_f64 (local.get $sz)))
+    (f32.store offset=36 (local.get $m) (f32.demote_f64 (local.get $vz)))
+    (f32.store offset=40 (local.get $m) (f32.demote_f64 (f64.neg (local.get $fz))))
+    (f32.store offset=48 (local.get $m) (f32.demote_f64 (f64.neg (f64.add
+      (f64.mul (local.get $sx) (local.get $ex))
+      (f64.add (f64.mul (local.get $sy) (local.get $ey))
+        (f64.mul (local.get $sz) (local.get $ez)))))))
+    (f32.store offset=52 (local.get $m) (f32.demote_f64 (f64.neg (f64.add
+      (f64.mul (local.get $vx) (local.get $ex))
+      (f64.add (f64.mul (local.get $vy) (local.get $ey))
+        (f64.mul (local.get $vz) (local.get $ez)))))))
+    (f32.store offset=56 (local.get $m) (f32.demote_f64 (f64.add
+      (f64.mul (local.get $fx) (local.get $ex))
+      (f64.add (f64.mul (local.get $fy) (local.get $ey))
+        (f64.mul (local.get $fz) (local.get $ez))))))
+    (f32.store offset=60 (local.get $m) (f32.const 1))
+    (call $gl_mtx_apply (local.get $b) (local.get $m)))
+
+  ;; `Math.hypot(x, y, z) || 1` -- the `|| 1` matters, and not only for a zero
+  ;; vector: it is what keeps a degenerate camera (eye == centre, or an up
+  ;; vector parallel to the view direction) from dividing by zero and filling
+  ;; the matrix with NaN, which would then poison every later multiply.
+  (func $gl_mtx_length (param $x f64) (param $y f64) (param $z f64) (result f64)
+    (local $len f64)
+    (local.set $len (f64.sqrt (f64.add (f64.mul (local.get $x) (local.get $x))
+      (f64.add (f64.mul (local.get $y) (local.get $y))
+        (f64.mul (local.get $z) (local.get $z))))))
+    (select (f64.const 1) (local.get $len)
+      (i32.or (f64.eq (local.get $len) (f64.const 0))
+        (f64.ne (local.get $len) (local.get $len)))))
+
   ;; Lighting, material and fog. These are pure state: unlike the matrices
   ;; there is no arithmetic to get wrong, with one exception that matters --
   ;; glLightfv(GL_POSITION) transforms its argument by the MODELVIEW matrix at
@@ -565,12 +672,14 @@
   ;; step -- the mirror has to be shown correct on real apps before anything
   ;; is allowed to depend on it.
   ;;
-  ;; THE HONEST PART. Three families of call move this state and are not
-  ;; mirrored here: gluPerspective/gluLookAt/gluOrtho2D compose matrices
-  ;; (lib/gl-compat.js:1368-1391) through helpers this fragment has no copy
-  ;; of, and glPushAttrib/glPopAttrib save and restore the lighting and
-  ;; material state wholesale (:695-719). Rather than let the block drift
-  ;; silently away from the truth, each of those latches the opcode into the
+  ;; THE HONEST PART. One family of call moves this state and is not mirrored
+  ;; here: glPushAttrib/glPopAttrib save and restore the lighting and material
+  ;; state wholesale (lib/gl-compat.js:695-719), so following them means owning
+  ;; a copy of the attribute stack rather than composing a matrix.
+  ;; gluPerspective/gluLookAt/gluOrtho2D used to be in this list and are now
+  ;; mirrored below, written as the compositions gl-compat performs so the two
+  ;; cannot drift apart in the algebra. Rather than let the block drift
+  ;; silently away from the truth, what is left latches the opcode into the
   ;; UNTRUSTED field at +28. A consumer must refuse to lower a draw from a
   ;; block whose UNTRUSTED field is nonzero; a test can assert it stayed zero
   ;; for a given app, which turns "we think we cover this app" into a measured
@@ -757,15 +866,38 @@
               (f32.convert_i32_s (i32.load offset=8 (local.get $stack)))))))
         (return)))
 
-    ;; The families this fragment cannot mirror yet. See the header above:
-    ;; 59 gluPerspective, 60 gluLookAt, 62 gluOrtho2D compose matrices through
-    ;; helpers there is no WAT copy of; 76 glPushAttrib and 77 glPopAttrib
-    ;; save and restore the lighting and material state wholesale.
-    (if (i32.or (i32.eq (local.get $op) (i32.const 59))
-        (i32.or (i32.eq (local.get $op) (i32.const 60))
-          (i32.or (i32.eq (local.get $op) (i32.const 62))
-            (i32.or (i32.eq (local.get $op) (i32.const 76))
-              (i32.eq (local.get $op) (i32.const 77))))))
+    ;; 59 gluPerspective, 62 gluOrtho2D, 60 gluLookAt -- GLdouble arguments,
+    ;; two stack slots each, like glFrustum above.
+    (if (i32.eq (local.get $op) (i32.const 59))
+      (then (call $gl_mtx_perspective
+        (f64.load offset=4 (local.get $stack))
+        (f64.load offset=12 (local.get $stack))
+        (f64.load offset=20 (local.get $stack))
+        (f64.load offset=28 (local.get $stack))) (return)))
+    (if (i32.eq (local.get $op) (i32.const 62))
+      (then (call $gl_mtx_ortho2d
+        (f64.load offset=4 (local.get $stack))
+        (f64.load offset=12 (local.get $stack))
+        (f64.load offset=20 (local.get $stack))
+        (f64.load offset=28 (local.get $stack))) (return)))
+    (if (i32.eq (local.get $op) (i32.const 60))
+      (then (call $gl_mtx_look_at
+        (f64.load offset=4 (local.get $stack))
+        (f64.load offset=12 (local.get $stack))
+        (f64.load offset=20 (local.get $stack))
+        (f64.load offset=28 (local.get $stack))
+        (f64.load offset=36 (local.get $stack))
+        (f64.load offset=44 (local.get $stack))
+        (f64.load offset=52 (local.get $stack))
+        (f64.load offset=60 (local.get $stack))
+        (f64.load offset=68 (local.get $stack))) (return)))
+
+    ;; The families this fragment still cannot mirror: 76 glPushAttrib and
+    ;; 77 glPopAttrib save and restore the lighting and material state
+    ;; wholesale (lib/gl-compat.js:695-719), so following them means owning a
+    ;; copy of the attribute stack, not composing a matrix. See the header.
+    (if (i32.or (i32.eq (local.get $op) (i32.const 76))
+        (i32.eq (local.get $op) (i32.const 77)))
       (then (call $gl_mtx_untrusted (local.get $b) (local.get $op)))))
 
   ;; Exports. These live here rather than in 13-exports.wat because nothing

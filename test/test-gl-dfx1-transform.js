@@ -156,14 +156,15 @@ async function main() {
 
   // --- the contract that makes the latch worth having --------------------
   //
-  // gluPerspective is one of the families the mirror cannot reproduce. After
-  // it, the descriptor must not be built at all -- not built from stale state,
-  // and not built from a guess.
+  // glPushAttrib saves the lighting and material state wholesale and the
+  // mirror has no copy of GL's attribute stack, so it is one of the families
+  // the mirror cannot reproduce. After it, the descriptor must not be built at
+  // all -- not built from stale state, and not built from a guess.
   const before = memory.buffer.slice(desc, desc + DESC_BYTES);
   words().fill(0);
-  e.gl_mtx_observe(CALL_INDEX.gluPerspective, sp);
-  assert.strictEqual(e.gl_mtx_untrusted(), CALL_INDEX.gluPerspective,
-    'gluPerspective latches UNTRUSTED');
+  e.gl_mtx_observe(CALL_INDEX.glPushAttrib, sp);
+  assert.strictEqual(e.gl_mtx_untrusted(), CALL_INDEX.glPushAttrib,
+    'glPushAttrib latches UNTRUSTED');
   assert.strictEqual(e.gl_dfx1_transform(desc), 0,
     'an untrusted mirror must refuse to build a descriptor');
   assert.deepStrictEqual(Buffer.from(memory.buffer.slice(desc, desc + DESC_BYTES)),
