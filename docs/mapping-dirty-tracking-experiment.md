@@ -84,3 +84,34 @@ another reason not to treat this busy-machine measurement as a release verdict.
 Next: complete output-span coverage and concurrent-flush design, then compare
 candidate implementations on a quiet machine before integrating a hot-path
 change. Game A/Bs remain required; this microbenchmark cannot select a default.
+
+## Prerequisite fixed: scalar x87 store bypasses
+
+The write audit reproduced an independent correctness defect: FST m32 at guest
+page offset 0xffd wrote three bytes into the first backing extent but left the
+last byte in the next guest page unchanged. The fixture deliberately places
+unrelated backing between adjacent guest pages. Before the fix, storing 1.25
+produced the wrong fourth byte (`0xcc` instead of `0x3f`).
+
+FST/FSTP m32 now use `$gs32`; FST/FSTP m64 and both raw/converted FISTP m64
+paths use a shared `$gs64`. MMX delegates its 64-bit store to the same helper.
+The ordinary 64-bit same-page path translates once; boundary cases check
+backing continuity and scatter through the existing dword helpers when needed.
+These paths now also use the existing code-cache invalidation contract.
+
+`test-sparse-width-boundary.js` exercises every crossing offset for the affected
+widths, unchanged surrounding bytes, raw signed integers beyond f64's exact
+range, and MMX stores. `test-sparse-generated-code-cache.js` checks that x87
+32-bit, 64-bit and integer stores retire decoded destination code. The existing
+FPU-instance isolation/raw-integer and SSE scalar regressions also pass.
+
+This is a guest-store correctness/common-helper change, not dirty tracking.
+Extended-real, environment/save-state, x87 loads, native CRT and other host
+output paths still require review. The audit table above describes the original
+benchmark baseline, which remains available at its recorded commit.
+
+Logical-AND and region gates pass. The shared worktree's duplicate gate currently
+reports two unrelated Direct3D SetTransform members from parallel edits. With
+only these three changed WAT files copied into the temporary baseline tree,
+the gate passes at 138/142 exact groups and 532/548 members. No ratchet baseline
+was changed, and no full-build pass is claimed.

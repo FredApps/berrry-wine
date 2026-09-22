@@ -689,11 +689,13 @@
           (then (call $fpu_push (f64.promote_f32 (f32.load (call $g2w (local.get $addr))))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 2))
           (then
-            (f32.store (call $g2w (local.get $addr)) (f32.demote_f64 (call $fpu_get (i32.const 0))))
+            (call $gs32 (local.get $addr)
+              (i32.reinterpret_f32 (f32.demote_f64 (call $fpu_get (i32.const 0)))))
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 3))
           (then
-            (f32.store (call $g2w (local.get $addr)) (f32.demote_f64 (call $fpu_pop)))
+            (call $gs32 (local.get $addr)
+              (i32.reinterpret_f32 (f32.demote_f64 (call $fpu_pop))))
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 5))
           (then (global.set $fpu_cw (i32.load16_u (call $g2w (local.get $addr)))) (return)))
@@ -715,11 +717,11 @@
           (then (call $fpu_push (f64.load (call $g2w (local.get $addr)))) (return)))
         (if (i32.eq (local.get $reg) (i32.const 2))
           (then
-            (f64.store (call $g2w (local.get $addr)) (call $fpu_get (i32.const 0)))
+            (call $gs64 (local.get $addr) (i64.reinterpret_f64 (call $fpu_get (i32.const 0))))
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 3))
           (then
-            (f64.store (call $g2w (local.get $addr)) (call $fpu_pop))
+            (call $gs64 (local.get $addr) (i64.reinterpret_f64 (call $fpu_pop)))
             (return)))
         (if (i32.eq (local.get $reg) (i32.const 7))
           (then
@@ -779,10 +781,10 @@
           (then
             (if (call $fpu_raw_valid (i32.const 0))
               (then
-                (i64.store (call $g2w (local.get $addr)) (call $fpu_raw_get (i32.const 0)))
+                (call $gs64 (local.get $addr) (call $fpu_raw_get (i32.const 0)))
                 (drop (call $fpu_pop))
                 (return)))
-            (i64.store (call $g2w (local.get $addr)) (call $fpu_to_i64 (call $fpu_pop)))
+            (call $gs64 (local.get $addr) (call $fpu_to_i64 (call $fpu_pop)))
             (return)))
         (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0)) (return)))
     (call $fpu_crash_op (local.get $group) (local.get $reg) (i32.const 0))

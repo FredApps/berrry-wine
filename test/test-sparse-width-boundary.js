@@ -8,6 +8,20 @@ const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const extraWat = String.raw`
+  (func (export "test_x87_store")
+      (param $guest i32) (param $group i32) (param $op i32) (param $value f64)
+    (global.set $fpu_top (i32.const 0))
+    (global.set $fpu_tag (i32.const 0))
+    (call $fpu_push (local.get $value))
+    (call $fpu_exec_mem (local.get $group) (local.get $op) (local.get $guest)))
+  (func (export "test_x87_raw_store") (param $guest i32) (param $value i64)
+    (global.set $fpu_top (i32.const 0))
+    (global.set $fpu_tag (i32.const 0))
+    (call $fpu_push (f64.convert_i64_s (local.get $value)))
+    (call $fpu_raw_set (i32.const 0) (local.get $value))
+    (call $fpu_exec_mem (i32.const 7) (i32.const 7) (local.get $guest)))
+  (func (export "test_mmx_store") (param $guest i32) (param $value i64)
+    (call $mmx_store64 (local.get $guest) (local.get $value)))
   (func (export "test_sparse_map") (param $guest i32) (param $size i32) (result i32)
     (call $virtual_map_commit (local.get $guest) (local.get $size)))
   (func (export "test_g2w") (param $guest i32) (result i32)
@@ -102,6 +116,38 @@ async function main() {
   }
 
   const source = page1 + 0xff8;
+  const cases = [
+    { group: 1, op: 2, bytes: 4, value: 1.25 },
+    { group: 1, op: 3, bytes: 4, value: -2.5 },
+    { group: 5, op: 2, bytes: 8, value: 1.25 },
+    { group: 5, op: 3, bytes: 8, value: -2.5 },
+    { group: 7, op: 7, bytes: 8, value: -1234 },
+  ];
+  for (const row of cases) {
+    const expected = Buffer.alloc(row.bytes);
+    if (row.group === 7) expected.writeBigInt64LE(BigInt(row.value));
+    else if (row.bytes === 4) expected.writeFloatLE(row.value);
+    else expected.writeDoubleLE(row.value);
+    for (const offset of [0x80, ...Array.from({ length: row.bytes - 1 }, (_, i) => 4096 - row.bytes + 1 + i)]) {
+      const address = page1 + offset;
+      for (let i = -1; i <= row.bytes; i++) write8(address + i, 0xcc);
+      e.test_x87_store(address, row.group, row.op, row.value);
+      assert.deepStrictEqual(Array.from({ length: row.bytes + 2 }, (_, i) => read8(address - 1 + i)),
+        [0xcc, ...expected, 0xcc], `x87 ${row.group}/${row.op} at ${offset.toString(16)}`);
+    }
+  }
+  for (const store of [e.test_x87_raw_store, e.test_mmx_store]) {
+    const value = -9007199254740995n;
+    const expected = Buffer.alloc(8); expected.writeBigInt64LE(value);
+    for (let offset = 4089; offset < 4096; offset++) {
+      const address = page1 + offset;
+      for (let i = -1; i <= 8; i++) write8(address + i, 0xcc);
+      store(address, value);
+      assert.deepStrictEqual(Array.from({ length: 10 }, (_, i) => read8(address - 1 + i)),
+        [0xcc, ...expected, 0xcc], 'raw integer/MMX store preserves all bits and neighboring bytes');
+    }
+  }
+
   const destination = page1 + 0xffc;
   for (let i = 0; i < 16; i++) write8(source + i, i + 1);
   e.test_guest_memmove(destination, source, 12);
@@ -123,7 +169,7 @@ async function main() {
     new Array(12).fill(0xa5),
     'bulk fill should cross non-contiguous backing');
 
-  console.log('PASS  scalar and bulk accesses cross non-contiguous sparse backing safely');
+  console.log('PASS  scalar, x87, MMX and bulk accesses cross non-contiguous sparse backing safely');
 }
 
 main().catch(error => {

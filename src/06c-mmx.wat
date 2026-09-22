@@ -492,9 +492,7 @@
                (i64.const 32))))
 
   (func $mmx_store64 (param $ga i32) (param $v i64)
-    (call $gs32 (local.get $ga) (i32.wrap_i64 (local.get $v)))
-    (call $gs32 (i32.add (local.get $ga) (i32.const 4))
-                (i32.wrap_i64 (i64.shr_u (local.get $v) (i64.const 32)))))
+    (call $gs64 (local.get $ga) (local.get $v)))
 
   ;; ---- Packed ops ----
   ;; $sub is the subop id assigned by $mmx_opcode_subop below. Whole-register
