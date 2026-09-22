@@ -26,7 +26,7 @@ const {Device:SoftwareDevice} = require('../lib/d3d9-software-backend');
     extraHostOverrides:{gpu_gl_call:(op,p,a)=>bridge.call(op,p,a)},extraWat:`
     ${['Apply','Release'].map(n=>`(func (export "block_${n}") (param $b i32) (result i32)
       (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
-      (call $handle_IDirect3DStateBlock9_${n} (local.get $b) (i32.const 0) (i32.const 0)
+      (call $handle_${require('../src/api_table.json').find(a=>a.name===`IDirect3DStateBlock9_${n}`).handler||`IDirect3DStateBlock9_${n}`} (local.get $b) (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0)) (i32.load offset=0 (global.get $reg_base)))`).join('\n')}
     (func (export "create_depth") (param $d i32) (param $format i32) (param $out i32) (result i32)
       (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))

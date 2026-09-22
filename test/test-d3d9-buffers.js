@@ -20,7 +20,7 @@ const {bootRenderHarness}=require('./render-helper');
     ${names.map(name=>`(func (export "${name}") (param $a i32) (param $b i32) (param $c i32)
       (param $d i32) (param $f i32) (result i32)
       (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
-      (call $handle_IDirect3DBuffer9_${name} (local.get $a) (local.get $b) (local.get $c)
+      (call $handle_${require('../src/api_table.json').find(a=>a.name===`IDirect3DBuffer9_${name}`).handler||`IDirect3DBuffer9_${name}`} (local.get $a) (local.get $b) (local.get $c)
         (local.get $d) (local.get $f) (i32.const 0)) (i32.load offset=0 (global.get $reg_base)))`).join('\n')}
   `});
   e.init_dx_com_thunks();

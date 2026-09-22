@@ -23,7 +23,7 @@ const {CommandQueue}=require('../lib/d3d-command-stream');
     ${['QueryInterface','AddRef','Release','GetDevice','GetType','GetDataSize','Issue','GetData'].map(n=>`
     (func (export "${n}") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (result i32)
       (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
-      (call $handle_IDirect3DQuery9_${n} (local.get $a) (local.get $b) (local.get $c) (local.get $d) (i32.const 0) (i32.const 0))
+      (call $handle_${require('../src/api_table.json').find(a=>a.name===`IDirect3DQuery9_${n}`).handler||`IDirect3DQuery9_${n}`} (local.get $a) (local.get $b) (local.get $c) (local.get $d) (i32.const 0) (i32.const 0))
       (i32.load offset=0 (global.get $reg_base)))`).join('\n')}
   `});
   e.init_dx_com_thunks();

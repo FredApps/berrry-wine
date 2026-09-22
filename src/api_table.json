@@ -28285,21 +28285,24 @@
     "name": "IDirect3DBuffer9_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1401859284
+    "hash": 1401859284,
+    "handler": "IDirect3DShader9_AddRef"
   },
   {
     "id": 3331,
     "name": "IDirect3DBuffer9_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3237482869
+    "hash": 3237482869,
+    "handler": "IDirect3DShader9_Release"
   },
   {
     "id": 3332,
     "name": "IDirect3DBuffer9_GetDevice",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 808555630
+    "hash": 808555630,
+    "handler": "IDirect3DShader9_GetDevice"
   },
   {
     "id": 3333,
@@ -28383,21 +28386,24 @@
     "name": "IDirect3DVertexDeclaration9_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 3248373916
+    "hash": 3248373916,
+    "handler": "IDirect3DShader9_AddRef"
   },
   {
     "id": 3345,
     "name": "IDirect3DVertexDeclaration9_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 2568355453
+    "hash": 2568355453,
+    "handler": "IDirect3DShader9_Release"
   },
   {
     "id": 3346,
     "name": "IDirect3DVertexDeclaration9_GetDevice",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 1189194134
+    "hash": 1189194134,
+    "handler": "IDirect3DShader9_GetDevice"
   },
   {
     "id": 3347,
@@ -28418,21 +28424,24 @@
     "name": "IDirect3DStateBlock9_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1938304424
+    "hash": 1938304424,
+    "handler": "IDirect3DShader9_AddRef"
   },
   {
     "id": 3350,
     "name": "IDirect3DStateBlock9_Release",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 319741457
+    "hash": 319741457,
+    "handler": "IDirect3DShader9_Release"
   },
   {
     "id": 3351,
     "name": "IDirect3DStateBlock9_GetDevice",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 145936098
+    "hash": 145936098,
+    "handler": "IDirect3DShader9_GetDevice"
   },
   {
     "id": 3352,
@@ -28481,7 +28490,8 @@
     "name": "IDirect3DQuery9_AddRef",
     "nargs": 1,
     "convention": "stdcall",
-    "hash": 1986462002
+    "hash": 1986462002,
+    "handler": "IDirect3DShader9_AddRef"
   },
   {
     "id": 3359,
@@ -28495,7 +28505,8 @@
     "name": "IDirect3DQuery9_GetDevice",
     "nargs": 2,
     "convention": "stdcall",
-    "hash": 2445305476
+    "hash": 2445305476,
+    "handler": "IDirect3DShader9_GetDevice"
   },
   {
     "id": 3361,

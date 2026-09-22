@@ -38,7 +38,7 @@ const {bootRenderHarness}=require('./render-helper');
     ${[...methods.map(n=>['IDirect3DDevice9',n]),...blockMethods.map(n=>['IDirect3DStateBlock9',n])].map(([type,name])=>`
     (func (export "${name}") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (param $f i32) (result i32)
       (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
-      (call $handle_${type}_${name} (local.get $a) (local.get $b) (local.get $c)
+      (call $handle_${require('../src/api_table.json').find(a=>a.name===`${type}_${name}`).handler||`${type}_${name}`} (local.get $a) (local.get $b) (local.get $c)
         (local.get $d) (local.get $f) (i32.const 0)) (i32.load offset=0 (global.get $reg_base)))`).join('\n')}
   `});
   e.init_dx_com_thunks();

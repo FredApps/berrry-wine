@@ -22,7 +22,7 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
       ['Query9','Issue'],['Query9','GetData'],['Query9','Release']].map(([type,name])=>`
     (func (export "${type}_${name}") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (param $f i32) (result i32)
       (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
-      (call $handle_IDirect3D${type}_${name} (local.get $a) (local.get $b) (local.get $c) (local.get $d) (local.get $f) (i32.const 0))
+      (call $handle_${require('../src/api_table.json').find(a=>a.name===`IDirect3D${type}_${name}`).handler||`IDirect3D${type}_${name}`} (local.get $a) (local.get $b) (local.get $c) (local.get $d) (local.get $f) (i32.const 0))
       (i32.load offset=0 (global.get $reg_base)))`).join('\n')}`});
   e.d3dim_worker_init(0x400000);e.init_dx_com_thunks();
   const alloc=n=>e.guest_alloc(n)>>>0,wa=p=>e.guest_to_wasm(p)>>>0,read=p=>e.guest_read32(p)>>>0;

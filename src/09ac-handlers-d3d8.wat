@@ -761,7 +761,7 @@
     (if (i32.ge_u (local.get $arg1) (i32.const 0x10000))
       (then
         (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
-        (call $handle_IDirect3DVertexDeclaration9_Release
+        (call $handle_IDirect3DShader9_Release
           (local.get $arg1) (i32.const 0) (i32.const 0)
           (i32.const 0) (i32.const 0) (local.get $name_ptr))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
