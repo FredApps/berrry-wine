@@ -149,6 +149,61 @@ if (!fs.existsSync(require('path').join(__dirname, '..', 'packages', 'freeware',
     check('Play offline answers the game and stays on the page',
       !!done && new URL(offline.url()).pathname === '/index.html');
 
+    // ---- popup: going online signs in without restarting the game ---------
+    const popup = await context();
+    await popup.goto(`${base}/index.html`, { waitUntil: 'load', timeout: 60000 });
+    await shellReady(popup);
+    await popup.evaluate(() => {
+      document.getElementById('app-select').value = 'blobby_volley';
+      launchApp();
+    });
+    await H.until(popup, 'popup: never launched', () => runningApps.length > 0, null, MILESTONE_MS);
+    await popup.evaluate(() => { window.__wineBefore = wine; wine.openLanLink(2); });
+    await H.until(popup, 'popup: no sign-in card', () =>
+      !!document.getElementById('wine-lan-signin'), null, 30000);
+    const opened = new Promise(resolve => popup.once('popup', resolve));
+    await click(popup, 'signin');
+    const login = await Promise.race([opened, H.sleep(10000).then(() => null)]);
+    check('Sign in opened the login in a popup', !!login);
+    if (login) {
+      await login.waitForSelector('#dev-sign-in', { timeout: 30000 });
+      const waiting = await popup.evaluate(() => !!document.getElementById('wine-lan-signin-wait'));
+      check('the game waits with a "finish signing in" card', waiting);
+      await Promise.all([login.waitForNavigation().catch(() => {}), login.click('#dev-sign-in')]);
+      const online = await H.until(popup, 'popup: the game never went online',
+        () => wine._lanAsk && wine._lanAsk.state === 'done' && !!wine._lanRoom, null, 60000);
+      const same = await popup.evaluate(() => ({
+        wine: window.__wineBefore === wine, apps: runningApps.length, path: location.pathname,
+      }));
+      check(`signed in from the popup, the same running game went online (${JSON.stringify(same)})`,
+        !!online && same.wine && same.apps === 1 && same.path === '/index.html',
+        await popup.evaluate(() => document.getElementById('log').textContent.slice(-400)));
+    }
+
+    // ---- blocked: no popup, the login comes back to the same game ----------
+    const blocked = await context();
+    await blocked.goto(`${base}/index.html`, { waitUntil: 'load', timeout: 60000 });
+    await shellReady(blocked);
+    await blocked.evaluate(() => {
+      window.open = () => null;
+      document.getElementById('app-select').value = 'blobby_volley';
+      launchApp();
+    });
+    await H.until(blocked, 'blocked: never launched', () => runningApps.length > 0, null, MILESTONE_MS);
+    await blocked.evaluate(() => { wine.openLanLink(2); });
+    await H.until(blocked, 'blocked: no sign-in card', () =>
+      !!document.getElementById('wine-lan-signin'), null, 30000);
+    await Promise.all([blocked.waitForNavigation(), click(blocked, 'signin')]);
+    const blockedLogin = new URL(blocked.url());
+    const blockedBack = new URL(blockedLogin.searchParams.get('return') || 'http://x/');
+    check(`popup blocked, Sign in went to the login, coming back to the game (${blockedBack.search})`,
+      blockedLogin.pathname === '/api/auth/login' && blockedBack.searchParams.get('app') === 'blobby_volley');
+    await Promise.all([blocked.waitForNavigation(), blocked.click('#dev-sign-in')]);
+    await shellReady(blocked);
+    const relaunched = await H.until(blocked, 'blocked: the game did not start after signing in',
+      () => runningApps.length > 0 && /[?&]app=blobby_volley/.test(location.search), null, MILESTONE_MS);
+    check('back from the login, the same game started again', !!relaunched, blocked.url());
+
     // ---- listed: the server list, read signed out ---------------------------
     await host.evaluate(() => window.__room.net.setHosting({ label: 'test match' }));
     const listed = await context();
