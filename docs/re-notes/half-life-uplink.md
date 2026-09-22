@@ -1040,3 +1040,18 @@ Census command, for anyone re-opening this:
 --trace-api=IDirect3DDevice3_SetTextureStageState,IDirect3DDevice3_SetRenderState \
 --trace-from=168600 --trace-to=170000
 ```
+
+### The launcher menu is renderer-independent (2026-09-22)
+
+Captured at batch 5000 through all three registry seeds — `-D3D`, software and
+`-gl` with `--headless-gl` — the menu PNG is **byte-identical** in every case
+(md5 `3467bf3489b9d683b92396c084d54580`). Half-Life draws that screen in 2D
+before the 3D device engages, so `EngineType` has not taken effect yet.
+
+Two consequences. A menu screenshot proves nothing about which renderer is
+selected, so do not use one as evidence a renderer works — the earliest honest
+check is the first world frame. And a renderer comparison only has one leg
+worth capturing: gameplay. The matched set is `look-170-level.png` (D3D),
+`t16soft-170.png` (software) and `awake-170.png` (OpenGL), all at batch 170000
+on the same input route, with mean luma 54.18 / 56.44 / 58.48 — an 8% spread
+across three rasterizers at 16bpp, which is dithering and quantization.
