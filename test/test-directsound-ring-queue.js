@@ -26,7 +26,7 @@ class FakeBuffer {
 class FakeSource extends FakeNode {
   constructor(owner) { super(); this.owner = owner; this.playbackRate = new FakeParam(1); this.loop = false; this.starts = []; }
   start(time, offset) { this.starts.push({ time, offset }); this.owner.started.push(this); }
-  stop() { if (this.onended) this.onended(); }
+  stop() { this.stopped = true; if (this.onended) this.onended(); }
 }
 class FakeAudioContext {
   constructor() { this.currentTime = 3; this.destination = new FakeNode(); this.state = 'running'; this.started = []; }
@@ -137,7 +137,48 @@ try {
     assert(q && q.delaySec === 0.04, '?audio-delay=MS queues every looping ring with MS of slack');
   }
 
-  console.log('PASS  small DirectSound rings play from a 10ms Unlock queue; large rings and ?audio-delay=off do not');
+  // --- a suspended context queues nothing; a backlog is trimmed ---
+  {
+    const { ctx, host, pcm } = boot('');
+    const ptr = 0x1000;
+    pcm.fill(128, ptr, ptr + SMALL);
+    const voice = host.voice_open(RATE, 1, 8);
+    host.voice_play_ring(voice, ptr, SMALL, 0, 1);
+    host.voice_play_ring(voice, ptr, SMALL, 0, 2);
+    const ac = ctx._voices._ac;
+    const v = ctx._voices._map[voice];
+    const before = ac.started.length;
+
+    // Autoplay policy: suspended until the first click, clock standing still,
+    // while the guest keeps mixing. None of it may wait in the queue.
+    ac.state = 'suspended';
+    for (let i = 0; i < 20; i++) {
+      pcm.fill(i + 1, ptr + (i % 4) * 320, ptr + (i % 4) * 320 + 320);
+      host.voice_play_ring(voice, ptr, SMALL, 0, 2);
+    }
+    assert.strictEqual(ac.started.length, before, 'nothing queued while the context is suspended');
+    ac.state = 'running';
+    pcm.fill(99, ptr, ptr + 320);
+    host.voice_play_ring(voice, ptr, SMALL, 0, 2);
+    const first = ac.started[ac.started.length - 1];
+    assert(Math.abs(first.starts[0].time - (ac.currentTime + 0.010)) < 1e-9,
+      'the first write after resume plays at the slack, not behind a backlog');
+
+    // A mixer running ahead of the clock (the clock does not move here):
+    // the lead is held to slack + 150ms by stopping spans not yet started.
+    for (let i = 0; i < 40; i++) {
+      const at = ((i + 1) % 4) * 320;
+      pcm.fill(150 + (i % 50), ptr + at, ptr + at + 320);
+      host.voice_play_ring(voice, ptr, SMALL, 0, 2);
+    }
+    const q = v.delayQ;
+    assert(q.stats.trims > 0, 'a backlog is trimmed');
+    assert(q.next - ac.currentTime <= 0.010 + 0.150 + 320 / RATE + 1e-9,
+      `lead stays bounded (${((q.next - ac.currentTime) * 1000).toFixed(1)}ms)`);
+    assert(ac.started.some(src => src.stopped), 'trimmed spans are stopped');
+  }
+
+  console.log('PASS  small DirectSound rings play from a 10ms Unlock queue; large rings and ?audio-delay=off do not; suspended contexts queue nothing; lead capped');
 } finally {
   globalThis.AudioContext = oldAudioContext;
   if (oldLocation === undefined) delete globalThis.location;
