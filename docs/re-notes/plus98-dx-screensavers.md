@@ -155,12 +155,34 @@ Two readings that are *not* remaining bugs:
   `colors=1 nonZero=0/1850`. Which surface holds the scene is per-app and the
   `--dx-slot=N` flag is how you check rather than guess.
 
-Still open here: `scr_geometry`'s distant octahedra draw as black *outlines*
-with the blue background showing through the middle, while the near ones are
-solid lit yellow. Outlines rather than black fill means this is not the culling
-bug wearing a different hat — run the new kind-28 `ExecTri` trace on it and read
-`fill=`, since a per-object WIREFRAME fill mode would explain the picture
-exactly.
+### `scr_geometry`: the black outlines are the app's own, the missing fill is ours
+
+Still open, but narrowed. The distant octahedra draw as black *outlines* with
+the blue background showing through, while the near ones are solid lit yellow.
+The kind-28 trace says the outline is intended:
+
+```
+[dx] ExecTri fill=SOLID tris=96 v0=291.4,301.6 col=0xff676700 frontVerts=3/3
+[dx] ExecTri fill=SOLID tris=96 v0=264.0,275.8 col=0xff333300 frontVerts=3/3
+[dx] ExecTri fill=WIRE  tris=96 v0=265.6,259.1 col=0xff000000 frontVerts=3/3
+```
+
+Every object gets **both** passes and always `tris=96`: two or three SOLID
+buffers whose vertex colours are properly shaded yellows (`0xff333300`, the
+ambient floor, through `0xfffefe00`), then one `fill=WIRE` buffer whose colour
+is flat `0xff000000`. So GEOMETRY draws each octahedron lit and then outlines it
+in black, and the near ones — yellow bodies with black edges — are *correct*.
+
+What is wrong is that the distant ones keep the outline and lose the fill. Both
+passes have `frontVerts=3/3`, identical triangle counts and healthy colours, so
+the SOLID triangles are submitted and something drops them **per pixel**. Next
+step: find out whether the SOLID pass is failing the depth test that the WIRE
+pass skips. `$d3dim_draw_tri_culled` gives a triangle one flat Z (the mean of
+its three vertices), which is least accurate exactly where these objects are —
+small, distant, and steeply foreshortened — and a whole-object rejection is what
+a flat Z produces when the object spans a depth range. Instrument the reject,
+do not infer it; the counterpart tell is whether the blue background glow is
+geometry with a Z or a 2D clear, since only the first can reject anything.
 
 ### The lighting code, for reference
 

@@ -177,6 +177,33 @@ about its own arms; it is measuring something narrower than its table reads as.
    1.59% at tol=32 against a bit-identical null band.** Both arms show the Wild
    Demo playfield, so this is a fidelity difference, not a coverage one.
 
+## Addendum 2026-09-22: three "blocked/blank" rows are stale
+
+The **software** arm only (no `--headless-gl`), 120000 batches, `--dx-surfaces`
+to pick the surface, after `8b227b5c` made execute-buffer triangles back-face
+culled. The GPU arm of each is *not* re-measured here.
+
+| app | this doc's row | software arm today |
+|---|---|---|
+| `dx_flip3dtl` | blank, black + yellow text overlay | **draws** — the textured flipping Win95 95/blue panels, HUD reads `FPS 00 Frame 16889 (HAL)` |
+| `dx_globe` | blocked, `D3DRMERR_BADFILE` modal then STUCK | **draws** — lit textured sphere, no modal |
+| `dx_viewer` | blocked, `D3DRMERR_BADFILE` modal then STUCK | **draws** — two lit quads, no modal |
+
+The `.x` loader gap those two were blocked on has since been closed (see
+`docs/re-notes/dx-sdk-d3drm-samples.md`), so item 3 under "What the sweep got
+wrong" is itself now out of date.
+
+`dx_flip3dtl` is the interesting one, because this doc had already narrowed it
+correctly — "the executor *is* drawing, so the loss is between the render target
+and the primary". It was neither: the triangles reached the primary all along
+and were **black**, because a back face shades to black by construction and
+nothing culled it. A one-colour frame and a two-colour frame both read as "no
+geometry arrives", which is exactly the blind spot item 1 warns about.
+
+Read `colors=` from `--dx-surfaces` with care on these: it samples a fixed
+1850-point grid over the whole surface, so `dx_globe`'s healthy lit sphere
+reports `colors=29 nonZero=38/1850` purely because the sphere is small.
+
 ## Blocked, and why
 
 - **dx_globe, dx_viewer** — `D3DRMERR_BADFILE` on `sphere3.x` / `camera.x`.
