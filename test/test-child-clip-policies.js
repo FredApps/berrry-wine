@@ -40,7 +40,7 @@ const extraWat = `
   assert(dc);
   const bmi = e.guest_alloc(40), bits = e.guest_alloc(4);
   [40, 64, -64, 0x200001].forEach((v, i) => e.guest_write32(bmi + 4 * i, v));
-  const bitmap = e.test_call_CreateDIBSection(0, bmi, bits);
+  const bitmap = e.test_call_CreateDIBSection(0, bmi, 0, bits, 0, 0);
   assert(bitmap);
   e.test_call_SelectObject(dc, bitmap);
   let checked = 0;

@@ -409,7 +409,7 @@ async function main() {
   wat.guest_write32(bmi + 8, -2);
   wat.guest_write16(bmi + 12, 1);
   wat.guest_write16(bmi + 14, 32);
-  const sourceBitmap = wat.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
+  const sourceBitmap = wat.test_call_CreateDIBSection(0, bmi, 0, bitsOut, 0, 0) >>> 0;
   const sourceDc = wat.test_call_CreateCompatibleDC(0) >>> 0;
   assert(sourceBitmap && sourceDc);
   assert.strictEqual(wat.test_call_SelectObject(hdc, sourceBitmap) >>> 0, 0,
@@ -545,7 +545,7 @@ async function main() {
       wat.guest_write32(dragBmi + 8, -height);
       wat.guest_write16(dragBmi + 12, 1);
       wat.guest_write16(dragBmi + 14, 32);
-      const bitmap = wat.test_call_CreateDIBSection(0, dragBmi, dragBitsOut) >>> 0;
+      const bitmap = wat.test_call_CreateDIBSection(0, dragBmi, 0, dragBitsOut, 0, 0) >>> 0;
       const dc = wat.test_call_CreateCompatibleDC(0) >>> 0;
       assert(bitmap && dc,
         `drag scratch DIB/DC allocation failed (bitmap=0x${bitmap.toString(16)}, dc=0x${dc.toString(16)})`);

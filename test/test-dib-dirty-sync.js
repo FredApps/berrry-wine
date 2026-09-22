@@ -22,7 +22,7 @@ const DESCRIPTOR = RegionMap.BASE.GDI_LINE_DESC;
   e.guest_write16(bmi + 12, 1);
   e.guest_write16(bmi + 14, 32);
 
-  const bitmap = e.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
+  const bitmap = e.test_call_CreateDIBSection(0, bmi, 0, bitsOut, 0, 0) >>> 0;
   const bitsGA = e.guest_read32(bitsOut) >>> 0;
   assert(bitmap, 'CreateDIBSection should allocate a WAT bitmap handle');
   assert.strictEqual(bitsGA, 0x50000000,

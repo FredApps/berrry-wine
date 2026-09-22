@@ -205,7 +205,7 @@ const ES_MULTILINE = 0x0004;
       e.guest_write32(bmi + 8, -16);
       e.guest_write16(bmi + 12, 1);
       e.guest_write16(bmi + 14, 32);
-      const bitmap = e.test_call_CreateDIBSection(0, bmi, out) >>> 0;
+      const bitmap = e.test_call_CreateDIBSection(0, bmi, 0, out, 0, 0) >>> 0;
       const hdc = e.test_call_CreateCompatibleDC(0) >>> 0;
       assert(bitmap && hdc);
       e.test_call_SelectObject(hdc, bitmap);

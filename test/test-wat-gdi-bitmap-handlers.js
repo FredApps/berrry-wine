@@ -217,7 +217,7 @@ function readBitmapObject(wat, handle, wide = false) {
     rw.guest_write32(bmi + 4, 2);
     rw.guest_write32(bmi + 8, -2);
     rw.guest_write32(bmi + 12, 1 | (32 << 16));
-    const dstBitmap = rw.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
+    const dstBitmap = rw.test_call_CreateDIBSection(0, bmi, 0, bitsOut, 0, 0) >>> 0;
     const dstDc = rw.test_call_CreateCompatibleDC(0) >>> 0;
     assert(dstBitmap && dstDc);
     assert.strictEqual(rw.test_call_SelectObject(dstDc, dstBitmap) >>> 0, 0x30007);
@@ -260,7 +260,7 @@ function readBitmapObject(wat, handle, wide = false) {
     rw.guest_write32(bmi + 4, 2);
     rw.guest_write32(bmi + 8, -2);
     rw.guest_write32(bmi + 12, 1 | (32 << 16));
-    const dstBitmap = rw.test_call_CreateDIBSection(0, bmi, bitsOut) >>> 0;
+    const dstBitmap = rw.test_call_CreateDIBSection(0, bmi, 0, bitsOut, 0, 0) >>> 0;
     const dstDc = rw.test_call_CreateCompatibleDC(0) >>> 0;
     assert(dstBitmap && dstDc);
     assert.strictEqual(rw.test_call_SelectObject(dstDc, dstBitmap) >>> 0, 0x30007);

@@ -63,7 +63,10 @@ const RegionMap = require('../lib/region-map.generated.js');
   function makeSurface32(width, height) {
     const bmi = makeBmi(width, -height, 32, []);
     const out = wat.guest_alloc(4) >>> 0;
-    const bitmap = wat.test_call_CreateDIBSection(0, bmi, out) >>> 0;
+    assert.strictEqual(wat.test_call_CreateDIBSection.length, 6);
+    const savedEsp = wat.get_esp();
+    const bitmap = wat.test_call_CreateDIBSection(0, bmi, 0, out, 0, 0) >>> 0;
+    assert.strictEqual(wat.get_esp(), savedEsp, 'DIB adapter restores ESP');
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     assert(bitmap && hdc);
     assert.strictEqual(wat.test_call_SelectObject(hdc, bitmap) >>> 0, 0x30007);
@@ -130,7 +133,7 @@ const RegionMap = require('../lib/region-map.generated.js');
     assert.strictEqual(wat.test_call_SelectPalette(hdc, palette, 0) >>> 0, 0x3001F);
     const bmi = makeBmi(2, -1, 8, [1, 0], 1);
     const out = wat.guest_alloc(4) >>> 0;
-    const bitmap = wat.test_call_CreateDIBSectionUsage(hdc, bmi, 1, out) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(hdc, bmi, 1, out, 0, 0) >>> 0;
     assert(bitmap);
     const storage = wat.test_gdi_bitmap_storage(bitmap) >>> 0;
     assert.deepStrictEqual([...bytes.slice(storage + 4, storage + 12)], [
@@ -154,7 +157,7 @@ const RegionMap = require('../lib/region-map.generated.js');
     const indexes = Array.from({ length: 256 }, (_, i) => i);
     const bmi = makeBmi(4, -1, 8, indexes, 1);
     const out = wat.guest_alloc(4) >>> 0;
-    const bitmap = wat.test_call_CreateDIBSectionUsage(hdc, bmi, 1, out) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(hdc, bmi, 1, out, 0, 0) >>> 0;
     assert(bitmap, 'a 256-slot identity table must accept a 236-entry palette');
     const storage = wat.test_gdi_bitmap_storage(bitmap) >>> 0;
     assert.deepStrictEqual([...bytes.slice(storage + 4, storage + 8)],
@@ -185,7 +188,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   check('SetDIBColorTable recolors indexed pixels without changing their bits', () => {
     const bmi = makeBmi(1, -1, 8, [0x00000000, 0x00FFFFFF]);
     const out = wat.guest_alloc(4) >>> 0;
-    const bitmap = wat.test_call_CreateDIBSection(0, bmi, out) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(0, bmi, 0, out, 0, 0) >>> 0;
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     wat.test_call_SelectObject(hdc, bitmap);
     const storage = wat.test_gdi_bitmap_storage(bitmap) >>> 0;
@@ -243,7 +246,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   check('GetDIBits emits WORD logical-palette indexes for DIB_PAL_COLORS', () => {
     const sourceBmi = makeBmi(2, -1, 8, [0x000000FF, 0x0000FF00]);
     const sourceOut = wat.guest_alloc(4) >>> 0;
-    const bitmap = wat.test_call_CreateDIBSection(0, sourceBmi, sourceOut) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(0, sourceBmi, 0, sourceOut, 0, 0) >>> 0;
     const storage = wat.test_gdi_bitmap_storage(bitmap) >>> 0;
     bytes.set([0, 1, 0, 0], storage);
     const palette = createPalette([0x000000FF, 0x0000FF00]);

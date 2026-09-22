@@ -22,7 +22,7 @@ const {bootRenderHarness}=require('./render-helper');
  const bmi=alloc(40),out=alloc(4),width=64,height=32;
  for(const [o,n]of[[0,40],[4,width],[8,-height]])e.guest_write32(bmi+o,n);
  e.guest_write16(bmi+12,1);e.guest_write16(bmi+14,32);
- const bitmap=e.test_call_CreateDIBSection(0,bmi,out);e.test_call_SelectObject(dc,bitmap);e.test_call_SelectObject(dc,font);
+ const bitmap=e.test_call_CreateDIBSection(0, bmi, 0, out, 0, 0);e.test_call_SelectObject(dc,bitmap);e.test_call_SelectObject(dc,font);
  const pixels=wa(e.guest_read32(out)),faceName=alloc(8);bytes.set(Buffer.from('Arial\0'),wa(faceName));
  const face=e.test_tt_face_for_logfont(wa(faceName),400,0),ppem=e.test_tt_face_ppem(face,-16);
  assert(face>=0);const text=alloc(8),gidText=alloc(8),rect=alloc(16),dx=alloc(16);

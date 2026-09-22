@@ -86,7 +86,7 @@ async function main() {
     wat.guest_write32(bmi + 8, -height);
     wat.guest_write16(bmi + 12, 1);
     wat.guest_write16(bmi + 14, 32);
-    const bitmap = wat.test_call_CreateDIBSection(0, bmi, out) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(0, bmi, 0, out, 0, 0) >>> 0;
     const bitsGuest = wat.guest_read32(out) >>> 0;
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     assert(bitmap && bitsGuest && hdc);

@@ -68,7 +68,7 @@ const extraWat = String.raw`
   const bmi = e.guest_alloc(40), out = e.guest_alloc(4);
   e.guest_write32(bmi, 40); e.guest_write32(bmi + 4, 32); e.guest_write32(bmi + 8, -24);
   e.guest_write16(bmi + 12, 1); e.guest_write16(bmi + 14, 32);
-  const bitmap = e.test_call_CreateDIBSection(0, bmi, out);
+  const bitmap = e.test_call_CreateDIBSection(0, bmi, 0, out, 0, 0);
   const dc = e.test_call_CreateCompatibleDC(0);
   e.test_call_SelectObject(dc, bitmap);
   e.test_clip(dc);

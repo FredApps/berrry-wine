@@ -493,6 +493,7 @@
   {
     "id": 58,
     "name": "CreateDIBSection",
+    "test_call": true,
     "nargs": 6,
     "convention": "stdcall",
     "hash": 1775273563,

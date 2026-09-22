@@ -88,7 +88,7 @@ const drawDibLifetimeWat = String.raw`
     wat.guest_write32(bmi + 8, -height);
     wat.guest_write16(bmi + 12, 1);
     wat.guest_write16(bmi + 14, 32);
-    const bitmap = wat.test_call_CreateDIBSection(0, bmi, out) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(0, bmi, 0, out, 0, 0) >>> 0;
     const bitsGa = wat.guest_read32(out) >>> 0;
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     assert(bitmap && bitsGa && hdc, 'CreateDIBSection/DC failed');
@@ -488,7 +488,7 @@ const drawDibLifetimeWat = String.raw`
     // Media Player's RT_BITMAP 101 uses index 8 for COLOR_BTNFACE and index 0
     // for its glyphs.
     bytes.set([0xC0, 0xC0, 0xC0, 0], bmiWa + 40 + 8 * 4);
-    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, bitsOutGa) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, 0, bitsOutGa, 0, 0) >>> 0;
     const bitsGa = wat.guest_read32(bitsOutGa) >>> 0;
     const bitsWa = RegionMap.BASE.DIB_BACKING_BASE + (bitsGa - 0x50000000);
     const indexed = wat.test_call_CreateCompatibleDC(0) >>> 0;
@@ -884,7 +884,7 @@ const drawDibLifetimeWat = String.raw`
     wat.guest_write16(infoGa + 8, 1);
     wat.guest_write16(infoGa + 10, 1);
     bytes.set([0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00], infoWa + 12);
-    const bitmap = wat.test_call_CreateDIBSection(0, infoGa, ppvGa) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(0, infoGa, 0, ppvGa, 0, 0) >>> 0;
     const bitsGa = wat.guest_read32(ppvGa) >>> 0;
     assert(bitmap && bitsGa, 'core DIB section creation failed');
     const bitsWa = RegionMap.BASE.DIB_BACKING_BASE + (bitsGa - 0x50000000);
@@ -907,7 +907,7 @@ const drawDibLifetimeWat = String.raw`
       [0x40, 0, 0, 0, 0x80, 0, 0, 0]);
 
     const copyPpvGa = wat.guest_alloc(4) >>> 0;
-    const copy = wat.test_call_CreateDIBSection(0, queryGa, copyPpvGa) >>> 0;
+    const copy = wat.test_call_CreateDIBSection(0, queryGa, 0, copyPpvGa, 0, 0) >>> 0;
     assert(copy, 'queried core DIB format must remain creatable');
     assert.strictEqual(wat.test_gdi_set_dibits(
       0, copy, 0, 2, bitsOutWa, queryWa, 0), 2);
@@ -953,7 +953,7 @@ const drawDibLifetimeWat = String.raw`
     wat.guest_write32(bmiGa + 40, 0xF800);
     wat.guest_write32(bmiGa + 44, 0x07E0);
     wat.guest_write32(bmiGa + 48, 0x001F);
-    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, bitsOutGa) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, 0, bitsOutGa, 0, 0) >>> 0;
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     assert(bitmap && hdc);
     assert.strictEqual(wat.test_call_SelectObject(hdc, bitmap) >>> 0, 0x30007);
@@ -995,7 +995,7 @@ const drawDibLifetimeWat = String.raw`
     wat.guest_write16(bmiGa + 14, 1);
     wat.guest_write32(bmiGa + 32, 2);
     bytes.set([0x00, 0x00, 0xFF, 0x00, 0x00, 0xFF, 0x00, 0x00], bmiWa + 40);
-    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, outGa) >>> 0;
+    const bitmap = wat.test_call_CreateDIBSection(0, bmiGa, 0, outGa, 0, 0) >>> 0;
     const hdc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     wat.test_call_SelectObject(hdc, bitmap);
     const colorsGa = wat.guest_alloc(8) >>> 0;

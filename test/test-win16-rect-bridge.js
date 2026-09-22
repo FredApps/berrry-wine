@@ -48,7 +48,7 @@ const extraWat = String.raw`
   function surface() {
     const bmi = e.guest_alloc(40), out = e.guest_alloc(4);
     [40, size, -size, 0x200001].forEach((v, i) => e.guest_write32(bmi + i * 4, v));
-    const bitmap = e.test_call_CreateDIBSection(0, bmi, out);
+    const bitmap = e.test_call_CreateDIBSection(0, bmi, 0, out, 0, 0);
     const dc = e.test_call_CreateCompatibleDC(0);
     assert(bitmap && dc);
     e.test_call_SelectObject(dc, bitmap);

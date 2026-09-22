@@ -333,3 +333,37 @@ benchmark, browser sweep or full release-build result is claimed.
 
 Remaining adapters are CreateDIBSection, CreateDIBSectionUsage and
 WSAIsBlocking. Broader review closure remains open.
+
+## DIB adapters and final registration gap
+
+CreateDIBSection now has one generated six-argument export. The three-argument
+helper and four-argument Usage alias are removed; RGB and logical-palette
+callers pass their usage explicitly, followed by the output pointer and zero
+section/offset. The inventory is **258 generated / 1 manual**. The old
+three-argument helper leaked 28 bytes of ESP per call; the generated adapter
+restores ESP, now asserted in the public palette suite. All 39 working-tree
+caller files pass syntax checks. This commit migrates 38 existing caller files;
+the sparse-BITMAPINFO test's one call was migrated in the shared worktree and
+included by its owner in `bd56cd1f`, without claiming that agent's file.
+
+The full ABI recorder passes **1,032 calls**. Palette checks pass 10/10 and
+raster checks pass 39/39. Bitmap handlers and DIB address translation each
+pass 9/9; dirty-sync and the other agent's sparse-BITMAPINFO regression pass
+on the shared worktree (the latter includes that agent's production fix).
+Metadata/generation, API IDs, fragment balance,
+handler ESP, tiers and whitespace checks pass. This migration does not change
+production DIB behavior or claim support for mapping-backed DIBs: the handler
+still ignores hSection/offset, and behavioral callers here supply zero.
+That runtime gap remains open, as do native/browser/full-release validation.
+
+The final handwritten adapter, WSAIsBlocking, is not ordinary boilerplate
+waiting for a metadata flag: its handler is absent from the API table, and
+its test invokes it directly. [Microsoft's WSAIsBlocking documentation](https://learn.microsoft.com/en-us/windows/win32/api/winsock2/nf-winsock2-wsaisblocking)
+places this legacy API behind WINSOCK/WSOCK32 compatibility, not a direct
+WS2_32 export. The existing handler always returns false because this runtime
+does not execute nested blocking hooks. [Microsoft's blocking-hook description](https://learn.microsoft.com/en-us/windows/win32/winsock/blocking-hook-2)
+also describes per-thread application hooks and nested Winsock restrictions.
+Adding a name to the global table would not establish those semantics or
+DLL-scoped visibility. Registration, ordinal resolution and blocking-hook
+behavior need a coordinated correction, not a census-only migration. P5 #7
+and the wider review remain open.
