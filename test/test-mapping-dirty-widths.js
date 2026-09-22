@@ -10,6 +10,7 @@ const { createHostImports } = require('../lib/host-imports');
 // implementation. Bulk wrappers below are also experimental. Staging is unused:
 // no PE is loaded here.
 const widths = [1, 2, 4, 8];
+const repOps = ['movsb', 'movsd', 'stosb', 'stosd'];
 const extra = String.raw`
   (import "host" "dirty_pause" (func $dirty_pause))
   (global $dirty_table (mut i32) (i32.const 0))
@@ -71,7 +72,33 @@ const extra = String.raw`
     ;; This is deliberately not the scalar generation-recheck cost candidate.
     (if (global.get $dirty_repair)
       (then (call $dirty_range (local.get $dst) (local.get $size)))))
-`).join('');
+`).join('') + String.raw`
+  (func (export "dirty_regs") (param $dst i32) (param $src i32)
+      (param $count i32) (param $value i32) (param $direction i32)
+    (i32.store offset=28 (global.get $reg_base) (local.get $dst))
+    (i32.store offset=24 (global.get $reg_base) (local.get $src))
+    (i32.store offset=4 (global.get $reg_base) (local.get $count))
+    (i32.store (global.get $reg_base) (local.get $value))
+    (global.set $df (local.get $direction)))
+` + repOps.map(op => {
+  const width = op.endsWith('d') ? 4 : 1;
+  return `
+  (func $rep_${op}_do (export "dirty_rep_${op}")
+    (local $n i32) (local $dst i32) (local $size i32)
+    (local.set $n (i32.load offset=4 (global.get $reg_base)))
+    (if (i32.eqz (local.get $n)) (then (call $original_rep_${op}_do) (return)))
+    (local.set $size (i32.mul (local.get $n) (i32.const ${width})))
+    (local.set $dst (i32.load offset=28 (global.get $reg_base)))
+    (if (global.get $df)
+      (then (local.set $dst (i32.sub (local.get $dst)
+        (i32.sub (local.get $size) (i32.const ${width}))))))
+    (call $dirty_range (local.get $dst) (local.get $size))
+    (call $dirty_pause)
+    (call $original_rep_${op}_do)
+    (if (global.get $dirty_repair)
+      (then (call $dirty_range (local.get $dst) (local.get $size)))))
+`;
+}).join('');
 
 (async () => {
   const wasm = compileSrcWasm((file, source) => {
@@ -84,6 +111,11 @@ const extra = String.raw`
       const name = `(func $guest_${op} `;
       assert(source.includes(name));
       source = source.replace(name, `(func $original_guest_${op} `);
+    }
+    if (file === '05b-string-ops.wat') for (const op of repOps) {
+      const name = `(func $rep_${op}_do\n`;
+      assert(source.includes(name));
+      source = source.replace(name, `(func $original_rep_${op}_do\n`);
     }
     return file === '13-exports.wat' ? source + extra : source;
   });
@@ -201,4 +233,51 @@ const extra = String.raw`
   assert.strictEqual(e.guest_read32(bulk) >>> 0, 0x77777777);
   assert(read(0x29000000, length).every(v => v === 0xa5), 'unrelated bulk backing preserved');
   console.log(`PASS bulk dirty candidate: ${bulkCases} range/overlap/zero/ownership/race cases and negative control`);
+
+  let repCases = 0;
+  for (const op of repOps) for (const direction of [0, 1])
+    for (const count of [0, 3, 1025]) for (const mask of [0, 5, 10, 15])
+      for (const race of [false, true]) {
+        const width = op.endsWith('d') ? 4 : 1, size = count * width;
+        const dst = 8190, src = 16, value = 0x5a5a5a5a;
+        const dstStart = bulk + dst + (direction && count ? size - width : 0);
+        const srcStart = bulk + src + (direction && count ? size - width : 0);
+        e.dirty_setup(table, 1);
+        for (let i = 0; i < length; i++) bytes[e.guest_to_wasm(bulk + i)] = initial[i];
+        const expected = initial.slice();
+        if (op.startsWith('mov')) expected.set(initial.slice(src, src + size), dst);
+        else expected.fill(0x5a, dst, dst + size);
+        for (let p = 0; p < 4; p++) flags[bulkPage + p] = 0x100 | ((mask >>> p) & 1);
+        flush = race && count ? () => {
+          for (let p = dst >>> 12; p <= ((dst + size - 1) >>> 12); p++)
+            if ((mask >>> p) & 1) {
+              assert(flags[bulkPage + p] & 2);
+              Atomics.store(flags, bulkPage + p, (flags[bulkPage + p] + 4) & ~2);
+            }
+        } : null;
+        e.dirty_regs(dstStart, srcStart, count, value, direction);
+        e[`dirty_rep_${op}`]();
+        flush = null;
+        assert.deepStrictEqual(Uint8Array.from(read(bulk, length)), expected, `${op} DF=${direction} count=${count}`);
+        assert.strictEqual(e.get_ecx(), 0);
+        assert.strictEqual(e.get_edi() >>> 0, (dstStart + (direction ? -size : size)) >>> 0);
+        assert.strictEqual(e.get_esi() >>> 0,
+          (srcStart + (op.startsWith('mov') ? (direction ? -size : size) : 0)) >>> 0);
+        for (let p = 0; p < 4; p++) {
+          const tracked = (mask >>> p) & 1;
+          const touched = size > 0 && p >= (dst >>> 12) && p <= ((dst + size - 1) >>> 12);
+          assert.strictEqual(flags[bulkPage + p], 0x100 + tracked
+            + (tracked && touched ? 2 + (race ? 4 : 0) : 0), `${op} dirty page ${p}`);
+        }
+        repCases++;
+      }
+  assert(read(0x29000000, length).every(v => v === 0xa5));
+  e.dirty_setup(table, 0);
+  flags[bulkPage] = 1;
+  flush = () => Atomics.store(flags, bulkPage, 5);
+  e.dirty_regs(bulk + 16, bulk, 8, 0x66, 0);
+  e.dirty_rep_stosb();
+  assert.strictEqual(flags[bulkPage], 5, 'disabled REP postmark loses dirty bit on raw fill path');
+  assert.deepStrictEqual(read(bulk + 16, 8), Array(8).fill(0x66));
+  console.log(`PASS REP dirty candidate: ${repCases} byte/DWORD/direction/count/ownership/race cases`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

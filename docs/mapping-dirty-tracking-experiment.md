@@ -806,3 +806,37 @@ outputs and asynchronous completions still need coverage; notification timing
 and partial failures require explicit contracts. The earlier scalar timings
 do not measure this bulk algorithm. Full-page concurrent-copy stress,
 lifetime/reuse/wrap behavior and production mapped-file writeback remain open.
+
+## Canonical REP candidate coverage and fused-path audit (2026-09-22)
+
+The width fixture now wraps the actual rep_movsb_do, rep_movsd_do,
+rep_stosb_do and rep_stosd_do cores. It snapshots the initial count and
+destination, derives the low destination address for DF=1, and applies the
+experimental pre/post range markers around the original core. The core still
+owns copy order, contiguity/fallback choices and register updates; it is not
+replaced with memmove, which would change overlapping REP semantics.
+
+All **192 REP cases** pass: four cores, both DF settings, zero/small/multi-page
+counts, four tracking masks, and a forced generation clear or no clear. Entire
+buffer contents, unrelated backing, ECX/ESI/EDI, destination-only page state
+and both sides of sparse crossings are checked. A disabled-postmark control
+uses the raw REP STOSB fill path and reproduces the lost dirty bit. The earlier
+152 scalar and 48 bulk cases continue to pass, as do tier/whitespace checks.
+This fixture's REP data cases use disjoint source/destination; it does not
+claim new overlap or fault-restart coverage for REP.
+
+Inspection also found separate fused fast paths in `07b-loop-match.wat`:
+32-byte MMX row copies can choose memory.copy or v128.store after one
+invalidate_code_write; 64-byte row copies and strided byte-copy chunks likewise
+use raw stores after a pre-write notification. Scalar fallback arms inherit
+the candidate wrappers, but those fast arms do not. Attaching a dirty hook
+only to gs*/guest_memmove/guest_memset therefore remains incomplete, and using
+the existing pre-write invalidation alone would retain the demonstrated race.
+The `07c-block-exec.wat` memory.copy sites inspected here save/restore threaded
+instruction bytes rather than caller output; ownership matters more than the
+presence of a copy opcode. This is a bounded source audit, not a certificate
+for every generated store, host output or optimized loop.
+
+No production handler or default changed. The wrappers are correctness
+experiments, not the timed inline candidate, and game A/B readiness remains
+unproven until those remaining fast writers and lifecycle contracts are covered.
