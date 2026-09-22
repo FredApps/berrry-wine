@@ -31,8 +31,8 @@ assert.deepStrictEqual(APPS.jazz2_demo.runSlice,
   'the app registry owns Jazz scheduling rather than the browser shell');
 assert.strictEqual(resolveRunSlice('notepad', false, false), 100000,
   'unconfigured tail-call apps retain the generic cooperative budget');
-assert.strictEqual(resolveRunSlice('notepad', true, false), 500,
-  'unconfigured compatibility-dispatch apps retain the generic cap');
+assert.strictEqual(resolveRunSlice('notepad', true, false), 100000,
+  'compatibility dispatch gets the same ceiling; the 8ms deadline bounds the step');
 
 assert.strictEqual(shell.selectedRunSlice('jazz2_demo'), 1000,
   'the default and cooperative Jazz path stays at 1k');
@@ -65,6 +65,12 @@ assert.strictEqual(shell.selectedRunSlice('jazz2_demo', true), 100000,
   'the Worker auto policy does not depend on the dispatch implementation');
 assert.strictEqual(shell.selectedRunSlice('jazz2_demo', false), 1000,
   'the compatibility cooperative path remains bounded');
+assert.strictEqual(shell.selectedRunSlice('notepad', false), 100000,
+  'an unconfigured app is not starved under compatibility dispatch');
+selected = '20000';
+assert.strictEqual(shell.selectedRunSlice('spider', false), 20000,
+  'a manual slice is authoritative under compatibility dispatch too');
+selected = 'auto';
 
 const fs = require('fs');
 const path = require('path');

@@ -415,9 +415,9 @@ assert(webApp.includes('app.runSliceAppKey || app.name, !!app.wine.guestWorker')
   'live auto-slice updates should preserve the Worker/cooperative distinction');
 assert.strictEqual(resolveRunSlice('spider', true), 100,
   'auto slice should cap Spider/card games for no-tail-call browsers');
-assert.strictEqual(resolveRunSlice('notepad', true), 500,
-  'auto slice should cap default apps for no-tail-call browsers');
-assert(webApp.includes('return compatDispatch ? Math.min(selected, autoSlice) : selected;'), 'manual slice should be clamped in no-tail-call browsers');
+assert.strictEqual(resolveRunSlice('notepad', true), 100000,
+  'no-tail-call browsers get the default ceiling; the 8ms step deadline bounds it');
+assert(!webApp.includes('Math.min(selected, autoSlice)'), 'a manual slice is authoritative in no-tail-call browsers too');
 assert.strictEqual(resolveRunSlice('winamp', false), 100000,
   'Winamp auto slice should not rely on slice=1 startup masking');
 assert(!/case ['"](?:jazz2_demo|spider|cue:speed-demons)['"]/.test(

@@ -67,8 +67,8 @@ const { resolveRunSlice } = require('../lib/apps');
       'a provider-backed ShellExecute child must be resident before CLI capture exports it');
     assert.strictEqual(resolveRunSlice('cue:speed-demons', false), 500000,
       'the app registry should give the measured Win16 installer copy loop a non-stalling quantum');
-    assert.strictEqual(resolveRunSlice('cue:speed-demons', true), 500,
-      'the same media policy should retain the compatibility-dispatch cap');
+    assert.strictEqual(resolveRunSlice('cue:speed-demons', true), 500000,
+      'compatibility dispatch uses the same media policy; the step deadline bounds it');
     assert.match(mediaHarnessSource, /const \{ spawn \} = require\('child_process'\)/);
     assert.doesNotMatch(mediaHarnessSource, /spawnSync/,
       'the media parent must keep its event loop live for --control-stdin commands');
