@@ -550,7 +550,7 @@ async function main() {
     set = fdset([srv]);
     assert.strictEqual(wat.test_call_select(0, set, 0, 0, timeval(0, 0)) | 0, 1);
     assert.deepStrictEqual(fdsetList(set), [srv]);
-    assert.strictEqual(wat.test_call_WSAFDIsSet(srv, set) | 0, 1);
+    assert.strictEqual(wat.test_call___WSAFDIsSet(srv, set) | 0, 1);
   });
 
   check('select rewrites each set to only ready handles', () => {
@@ -563,9 +563,9 @@ async function main() {
     const set = fdset([idle, acc, cli]);
     assert.strictEqual(wat.test_call_select(0, set, 0, 0, timeval(0, 0)) | 0, 1);
     assert.deepStrictEqual(fdsetList(set), [acc]);
-    assert.strictEqual(wat.test_call_WSAFDIsSet(acc, set) | 0, 1);
-    assert.strictEqual(wat.test_call_WSAFDIsSet(cli, set) | 0, 0);
-    assert.strictEqual(wat.test_call_WSAFDIsSet(idle, set) | 0, 0);
+    assert.strictEqual(wat.test_call___WSAFDIsSet(acc, set) | 0, 1);
+    assert.strictEqual(wat.test_call___WSAFDIsSet(cli, set) | 0, 0);
+    assert.strictEqual(wat.test_call___WSAFDIsSet(idle, set) | 0, 0);
   });
 
   check('select counts ready handles across all three sets', () => {

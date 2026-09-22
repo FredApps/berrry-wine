@@ -6574,6 +6574,7 @@
   {
     "id": 726,
     "name": "WinHelpA",
+    "test_call": true,
     "nargs": 4,
     "convention": "stdcall",
     "hash": 2210761837
@@ -6581,6 +6582,7 @@
   {
     "id": 727,
     "name": "WinHelpW",
+    "test_call": true,
     "nargs": 4,
     "convention": "stdcall",
     "hash": 1841654219
@@ -19814,6 +19816,7 @@
   {
     "id": 2377,
     "name": "__WSAFDIsSet",
+    "test_call": true,
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3919210010,

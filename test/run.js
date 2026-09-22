@@ -8250,7 +8250,7 @@ async function main() {
         // application runs a help macro, including one bound to a routine the
         // help file registered from its own DLL.
         const we = instance.exports;
-        if (!we.test_invoke_WinHelpA || !we.guest_alloc) {
+        if (!we.test_call_WinHelpA || !we.guest_alloc) {
           logs.push(`[input] help-macro: build has no WinHelp entry at batch ${batch}`);
         } else {
           const writeAnsi = text => {
@@ -8260,7 +8260,7 @@ async function main() {
             new Uint8Array(memory.buffer, g2w(ga) + buf.length, 1)[0] = 0;
             return ga;
           };
-          const status = we.test_invoke_WinHelpA(0x8888,
+          const status = we.test_call_WinHelpA(0x8888,
             writeAnsi(ev.filename), 0x0102, writeAnsi(ev.macro));
           logs.push(`[input] help-macro ${ev.filename} ${JSON.stringify(ev.macro)}` +
             ` -> accepted=${status}` +

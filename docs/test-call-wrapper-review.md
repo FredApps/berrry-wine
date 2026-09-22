@@ -259,3 +259,31 @@ The [volume runtime follow-up](volume-buffer-review.md) now fixes ANSI bounds
 and output order against all 42 native ANSI cases. The existing Unicode
 extension receives the same safeguards without claiming native W conformance.
 Its generated test export brings the inventory to **252 generated / 8 manual**.
+
+## WinHelp endpoints and Winsock alias
+
+WinHelpA/W and __WSAFDIsSet now use generated public-handler wrappers:
+**255 generated / 5 manual**. The two handwritten WinHelp invocation bodies
+and the handwritten WSAFDIsSet alias are removed; their callers use canonical
+`test_call_WinHelpA/W` and `test_call___WSAFDIsSet` exports.
+
+The old exports named `test_call_WinHelpA/W` actually bypassed the public
+handlers and called the help dispatch core directly. Those useful lower-layer
+hooks remain, explicitly named `test_help_dispatch_a/w`. Parser tests keep
+using that layer; public UI/lifetime tests and the CLI help-macro action use
+the generated public-handler layer. This is not merely a census rename:
+three boilerplate bodies are deleted without conflating the two help layers.
+No production help or network handler changes.
+
+Verification passed: **1,020 ABI recorder calls** (255 wrappers at four stack
+alignments), **621 WinHelp checks** and **42 Winsock checks**. Metadata,
+generated dispatch freshness, append-only API IDs, fragment balance, handler
+ESP, test tiers, CLI JavaScript syntax and whitespace checks pass. The CLI
+help-macro call site was migrated but not exercised through a real CLI app
+run here. No new native reference, browser sweep, performance result or full
+release-build claim.
+
+Remaining handwritten adapters: CreateFontW, CreateDIBSection,
+CreateDIBSectionUsage, WSAIsBlocking and SetLastError. Their special signatures
+or missing public registration still require individual review; P5 #7 is not
+yet closed.

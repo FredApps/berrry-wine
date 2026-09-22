@@ -2846,22 +2846,22 @@ async function main() {
 
   const mountedPathA = allocGuestAnsi('c:\\fixture.hlp');
   check('WinHelpA ABI normalizes its guest path into the unified dispatcher',
-    e.test_call_WinHelpA(0x4444, mountedPathA, 0x0003, 0) === 1 &&
+    e.test_help_dispatch_a(0x4444, mountedPathA, 0x0003, 0) === 1 &&
     e.get_help_session_owner() === 0x4444 && e.get_help_session_topic_ref() === 0 &&
     e.get_help_dispatch_status() === 1,
     `status=${e.get_help_dispatch_status()} parse=${e.get_help_last_error()} owner=${e.get_help_session_owner()} ref=${e.get_help_session_topic_ref()}`);
   check('WinHelpA null path reuses only the matching active session',
-    e.test_call_WinHelpA(0x4444, 0, 0x0003, 0) === 1 &&
-    e.test_call_WinHelpA(0x5555, 0, 0x0003, 0) === 0 &&
+    e.test_help_dispatch_a(0x4444, 0, 0x0003, 0) === 1 &&
+    e.test_help_dispatch_a(0x5555, 0, 0x0003, 0) === 0 &&
     e.get_help_session_owner() === 0x4444 && e.get_help_dispatch_status() === 3);
   check('WinHelpA propagates unsupported command failure instead of TRUE',
-    e.test_call_WinHelpA(0x4444, 0, 0x7777, 0) === 0 && e.get_help_dispatch_status() === 6);
+    e.test_help_dispatch_a(0x4444, 0, 0x7777, 0) === 0 && e.get_help_dispatch_status() === 6);
   check('WinHelpA matching HELP_QUIT releases the active ABI session',
-    e.test_call_WinHelpA(0x4444, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
+    e.test_help_dispatch_a(0x4444, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
 
   const mountedPathW = allocGuestWide('c:\\fixture.hlp');
   check('WinHelpW converts UTF-16 paths and shares the WinHelpA engine',
-    e.test_call_WinHelpW(0x6666, mountedPathW, 0x0003, 0) === 1 &&
+    e.test_help_dispatch_w(0x6666, mountedPathW, 0x0003, 0) === 1 &&
     e.get_help_session_owner() === 0x6666 && e.get_help_session_topic_ref() === 0 &&
     e.get_help_dispatch_status() === 1,
     `status=${e.get_help_dispatch_status()} parse=${e.get_help_last_error()} owner=${e.get_help_session_owner()} ref=${e.get_help_session_topic_ref()}`);
@@ -2869,18 +2869,18 @@ async function main() {
   const keywordPathW = allocGuestWide('c:\\keyword.hlp');
   const betaW = allocGuestWide('BETA');
   check('WinHelpW converts command-specific UTF-16 keyword data',
-    e.test_call_WinHelpW(0x7777, keywordPathW, 0x0101, betaW) === 1 &&
+    e.test_help_dispatch_w(0x7777, keywordPathW, 0x0101, betaW) === 1 &&
     e.get_help_session_owner() === 0x7777 && e.get_help_session_topic_ref() === 10 &&
     e.get_help_session_topic_index() === 1,
     `status=${e.get_help_dispatch_status()} parse=${e.get_help_last_error()} owner=${e.get_help_session_owner()} ref=${e.get_help_session_topic_ref()}`);
   const oversizedWidePath = allocGuestWide('a'.repeat(1024));
   check('WinHelpW bounds UTF-16 pathname normalization before dispatch',
-    e.test_call_WinHelpW(0x7777, oversizedWidePath, 0x0003, 0) === 0 &&
+    e.test_help_dispatch_w(0x7777, oversizedWidePath, 0x0003, 0) === 0 &&
     e.get_help_session_owner() === 0x7777 && e.get_help_session_topic_ref() === 10 &&
     e.get_help_dispatch_status() === 5,
     `status=${e.get_help_dispatch_status()} owner=${e.get_help_session_owner()} ref=${e.get_help_session_topic_ref()}`);
   check('WinHelpW matching HELP_QUIT releases converted session state',
-    e.test_call_WinHelpW(0x7777, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
+    e.test_help_dispatch_w(0x7777, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
 
   const notepadMounted = fs.readFileSync(path.join(HELP, 'notepad.hlp'));
   const notepadMountedCnt = fs.readFileSync(path.join(HELP, 'notepad.cnt'));
@@ -2888,7 +2888,7 @@ async function main() {
   ctx.vfs.files.set('c:\\notepad.cnt', { data: new Uint8Array(notepadMountedCnt), attrs: 0x20 });
   const notepadPathA = allocGuestAnsi('c:\\notepad.hlp');
   check('HELP_FINDER opens a separate WAT-native Topics window',
-    e.test_invoke_WinHelpA(0x8888, notepadPathA, 0x000b, 0) === 1 &&
+    e.test_call_WinHelpA(0x8888, notepadPathA, 0x000b, 0) === 1 &&
     e.get_help_topics_hwnd() !== 0 && e.get_help_window() === 0 &&
     e.get_help_session_mode() === 3 && e.get_help_topics_contents_selection() === 0);
   // $wnd_table_set zeroes the record's style, and $paint_select_next_dirty
@@ -2945,7 +2945,7 @@ async function main() {
     e.test_help_topics_message(0x0100, 0x1b, 0) === 0 &&
     e.get_help_topics_hwnd() === 0 && e.get_help_session_mode() === 0 &&
     e.get_help_file_ptr() !== 0 &&
-    e.test_invoke_WinHelpA(0x8888, 0, 0x000b, 0) === 1 && e.get_help_topics_hwnd() !== 0);
+    e.test_call_WinHelpA(0x8888, 0, 0x000b, 0) === 1 && e.get_help_topics_hwnd() !== 0);
   check('Topics Display closes the dialog and presents its resolved CNT leaf',
     e.test_help_topics_message(0x0100, 0x0d, 0) === 0 &&
     e.get_help_topics_hwnd() === 0 && e.get_help_window() !== 0 &&
@@ -2965,7 +2965,7 @@ async function main() {
   check('the help viewer closes from its title bar',
     e.test_help_window_message(0x00A1, 20, 0) === 0 && e.get_help_window() === 0);
   check('HELP_QUIT tears down both Topics and main help windows',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_topics_hwnd() === 0 && e.get_help_window() === 0);
 
   {
@@ -2975,7 +2975,7 @@ async function main() {
     // its keywords are what the Index tab lists.
     ctx.vfs.files.set('c:\\hover.hlp', { data: new Uint8Array(hoverHelp), attrs: 0x20 });
     const hoverPathA = allocGuestAnsi('c:\\hover.hlp');
-    const opened = e.test_invoke_WinHelpA(0x8888, hoverPathA, 0x000b, 0) === 1;
+    const opened = e.test_call_WinHelpA(0x8888, hoverPathA, 0x000b, 0) === 1;
     e.send_message(e.get_help_topics_control(0x502), 0x0201, 0, (8 << 16) | 70);
     const list = e.get_help_topics_list_hwnd();
     const dest = e.guest_alloc(160);
@@ -2992,14 +2992,14 @@ async function main() {
       e.listbox_get_count(list) === e.get_help_keyword_count() && first.length > 0,
       `keywords=${e.get_help_keyword_count()} rows=${e.listbox_get_count(list)} ` +
       `first=${JSON.stringify(first)}`);
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0);
+    e.test_call_WinHelpA(0x8888, 0, 0x0002, 0);
   }
 
   ctx.vfs.files.set('c:\\bitmap-view.hlp', {
     data: new Uint8Array(bitmapViewHelp.file), attrs: 0x20,
   });
   const bitmapViewPathA = allocGuestAnsi('c:\\bitmap-view.hlp');
-  const bitmapWindowAccepted = e.test_invoke_WinHelpA(
+  const bitmapWindowAccepted = e.test_call_WinHelpA(
     0x8888, bitmapViewPathA, 0x0001, 8);
   const bitmapWindowHandle = e.get_help_view_bitmap_handle(0);
   const bitmapWindowFont = e.get_help_view_font_handle(2);
@@ -3010,7 +3010,7 @@ async function main() {
     e.get_help_view_font_count() === 1 && bitmapWindowFont !== 0 &&
     e.test_gdi_object_type(bitmapWindowFont) === 4);
   check('HELP_QUIT releases embedded bitmap/font objects and source DC state',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_window() === 0 && e.get_help_view_bitmap_count() === 0 &&
     e.get_help_view_bitmap_dc() === 0 && e.get_help_view_font_count() === 0 &&
     e.test_gdi_object_type(bitmapWindowHandle) === 0 &&
@@ -3026,7 +3026,7 @@ async function main() {
     data: new Uint8Array(hotspotHelp.file), attrs: 0x20,
   });
   const hotspotPathA = allocGuestAnsi('c:\\hotspot.hlp');
-  const hotspotAccepted = e.test_invoke_WinHelpA(0x8888, hotspotPathA, 0x0001, 8);
+  const hotspotAccepted = e.test_call_WinHelpA(0x8888, hotspotPathA, 0x0001, 8);
   check('formatted hotspot fixture opens through the real WinHelp handler',
     hotspotAccepted === 1 &&
     e.get_help_session_topic_ref() === 0 && e.get_help_view_run_count() > 0,
@@ -3171,7 +3171,7 @@ async function main() {
     ctx.vfs.files.set('c:\\pipe.hlp', {
       data: new Uint8Array(pipeHelp), attrs: 0x20,
     });
-    const opened = e.test_invoke_WinHelpA(
+    const opened = e.test_call_WinHelpA(
       0x8888, allocGuestAnsi('c:\\pipe.hlp'), 0x0003, 0) === 1;
     const pipeHwnd = e.get_help_window();
     const runs = opened ? visibleHotspotRuns() : [];
@@ -3232,7 +3232,7 @@ async function main() {
       `style=0x${(e.wnd_get_style_export(pipeHwnd) >>> 0).toString(16)} ` +
         `client=${e.get_help_client_width()}x${e.get_help_client_height()} ` +
         `layout=${e.get_help_view_layout_width()}`);
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0);
+    e.test_call_WinHelpA(0x8888, 0, 0x0002, 0);
   }
 
   const fixedOpcodeCases = [
@@ -3253,7 +3253,7 @@ async function main() {
     ctx.vfs.files.set(fixedCasePath, {
       data: new Uint8Array(fixedCaseHelp.file), attrs: 0x20,
     });
-    const fixedCaseAccepted = e.test_invoke_WinHelpA(
+    const fixedCaseAccepted = e.test_call_WinHelpA(
       0x8888, allocGuestAnsi(fixedCasePath), 0x0001, 8);
     const run = fixedCaseAccepted === 1 ? firstVisibleHotspotRun() : null;
     const clicked = run && e.test_help_window_message(0x0201, 0,
@@ -3284,7 +3284,7 @@ async function main() {
     ctx.vfs.files.set(currentFilePath, {
       data: new Uint8Array(currentFileHelp.file), attrs: 0x20,
     });
-    const accepted = e.test_invoke_WinHelpA(
+    const accepted = e.test_call_WinHelpA(
       0x8888, allocGuestAnsi(currentFilePath), 0x0001, 8);
     const run = accepted === 1 ? firstVisibleHotspotRun() : null;
     const clicked = run && e.test_help_window_message(0x0201, 0,
@@ -3324,7 +3324,7 @@ async function main() {
     data: new Uint8Array(buildWindowSelectorHelp(
       buildExternalHotspot(0xeb, 1, 20, { windowNumber: 1 })).file), attrs: 0x20,
   });
-  const numericAccepted = e.test_invoke_WinHelpA(
+  const numericAccepted = e.test_call_WinHelpA(
     0x8888, allocGuestAnsi(numericWindowPath), 0x0001, 8);
   const glossaryRecord = e.get_help_window_record(1);
   check('synthetic SYSTEM records publish exact normalized window metadata',
@@ -3353,7 +3353,7 @@ async function main() {
 
   const mainMoveBase = windowMoves.length;
   check('an API-issued command returns the viewer to the main presentation',
-    e.test_invoke_WinHelpA(0x8888, allocGuestAnsi(numericWindowPath), 0x0001, 8) === 1 &&
+    e.test_call_WinHelpA(0x8888, allocGuestAnsi(numericWindowPath), 0x0001, 8) === 1 &&
     e.get_help_active_window_index() === -1 &&
     windowMoves.length === mainMoveBase + 1 &&
     JSON.stringify(windowMoves[mainMoveBase].slice(1)) ===
@@ -3364,7 +3364,7 @@ async function main() {
     data: new Uint8Array(buildWindowSelectorHelp(
       buildExternalHotspot(0xeb, 1, 20, { windowNumber: 4 })).file), attrs: 0x20,
   });
-  const badNumberAccepted = e.test_invoke_WinHelpA(
+  const badNumberAccepted = e.test_call_WinHelpA(
     0x8888, allocGuestAnsi(badNumberPath), 0x0001, 8);
   const badNumberRun = badNumberAccepted === 1 ? firstVisibleHotspotRun() : null;
   const badNumberMoveBase = windowMoves.length;
@@ -3387,7 +3387,7 @@ async function main() {
   });
   const popupPathA = allocGuestAnsi('c:\\popup.hlp');
   check('fixed popup hotspot fixture replaces the active document transactionally',
-    e.test_invoke_WinHelpA(0x8888, popupPathA, 0x0001, 8) === 1 &&
+    e.test_call_WinHelpA(0x8888, popupPathA, 0x0001, 8) === 1 &&
     e.get_help_session_topic_ref() === 0 && e.get_help_session_mode() === 1 &&
     e.get_help_view_back_count() === 0);
   const popupMainHwnd = e.get_help_window();
@@ -3435,7 +3435,7 @@ async function main() {
     e.get_help_view_run_ptr() === popupMainRunsPtr &&
     windowDestroys.includes(popupHwnd) && windowDestroys.includes(popupShadowHwnd));
   check('HELP_CONTEXTPOPUP uses the same separate popup lifecycle',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
     e.get_help_window() === popupMainHwnd && e.get_help_popup_hwnd() !== 0 &&
     e.get_help_session_topic_ref() === 20 && e.get_help_session_mode() === 2 &&
     e.get_help_view_back_count() === 0);
@@ -3449,19 +3449,19 @@ async function main() {
     (!apiPopupFont || e.test_gdi_object_type(apiPopupFont) === 0) &&
     (!popupMainFont || e.test_gdi_object_type(popupMainFont) === 4));
   check('a primary-window background click dismisses the owned popup',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
     e.test_help_window_message(0x0201, 0, 0) === 0 &&
     e.get_help_popup_hwnd() === 0 && e.get_help_session_topic_ref() === 0 &&
     e.get_help_view_topic_ptr() === popupMainTopicPtr);
   check('popup focus loss restores the primary transaction',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
     e.test_help_popup_message(0x0008, popupMainHwnd, 0) === 0 &&
     e.get_help_popup_hwnd() === 0 && e.get_help_session_mode() === 1 &&
     e.get_help_view_topic_ptr() === popupMainTopicPtr);
   check('HELP_QUIT releases both views while a context popup is live',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x0008, 7) === 1 &&
     e.get_help_popup_hwnd() !== 0 &&
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_window() === 0 && e.get_help_popup_hwnd() === 0 &&
     e.get_help_popup_shadow_hwnd() === 0 && e.get_help_view_topic_ptr() === 0 &&
     (!popupMainFont || e.test_gdi_object_type(popupMainFont) === 0));
@@ -3487,7 +3487,7 @@ async function main() {
   ctx.vfs.files.set(externalSourcePath, {
     data: new Uint8Array(externalSourceHelp.file), attrs: 0x20,
   });
-  const externalSourceAccepted = e.test_invoke_WinHelpA(
+  const externalSourceAccepted = e.test_call_WinHelpA(
     0x8888, allocGuestAnsi(externalSourcePath), 0x0001, 8);
   const externalMainHwnd = e.get_help_window();
   const externalRun = externalSourceAccepted === 1 ? firstVisibleHotspotRun() : null;
@@ -3522,7 +3522,7 @@ async function main() {
     data: new Uint8Array(buildRuntimeHotspotHelp(buildExternalHotspot(0xef, 6, 20,
       { file: 'window-target.hlp', window: 'GLOSSARY' })).file), attrs: 0x20,
   });
-  const namedWindowAccepted = e.test_invoke_WinHelpA(
+  const namedWindowAccepted = e.test_call_WinHelpA(
     0x8888, allocGuestAnsi(namedWindowSourcePath), 0x0001, 8);
   const namedWindowRun = namedWindowAccepted === 1 ? firstVisibleHotspotRun() : null;
   const namedWindowMoveBase = windowMoves.length;
@@ -3552,7 +3552,7 @@ async function main() {
     data: new Uint8Array(buildRuntimeHotspotHelp(buildExternalHotspot(0xef, 6, 20,
       { file: 'window-target.hlp', window: 'nosuchwin' })).file), attrs: 0x20,
   });
-  const unknownWindowAccepted = e.test_invoke_WinHelpA(
+  const unknownWindowAccepted = e.test_call_WinHelpA(
     0x8888, allocGuestAnsi(unknownWindowSourcePath), 0x0001, 8);
   const unknownWindowRun = unknownWindowAccepted === 1 ? firstVisibleHotspotRun() : null;
   const unknownWindowDoc = e.get_help_file_ptr();
@@ -3575,7 +3575,7 @@ async function main() {
   ctx.vfs.files.set(missingSourcePath, {
     data: new Uint8Array(missingSourceHelp.file), attrs: 0x20,
   });
-  const missingAccepted = e.test_invoke_WinHelpA(
+  const missingAccepted = e.test_call_WinHelpA(
     0x8888, allocGuestAnsi(missingSourcePath), 0x0001, 8);
   const missingRun = missingAccepted === 1 ? firstVisibleHotspotRun() : null;
   const missingDoc = e.get_help_file_ptr();
@@ -3596,7 +3596,7 @@ async function main() {
   ctx.vfs.files.set(externalPopupSourcePath, {
     data: new Uint8Array(externalPopupSourceHelp.file), attrs: 0x20,
   });
-  const externalPopupAccepted = e.test_invoke_WinHelpA(
+  const externalPopupAccepted = e.test_call_WinHelpA(
     0x8888, allocGuestAnsi(externalPopupSourcePath), 0x0001, 8);
   const externalPopupMainView = e.get_help_view_topic_ptr();
   const externalPopupMainRuns = e.get_help_view_run_ptr();
@@ -3645,7 +3645,7 @@ async function main() {
       `n=${e.get_help_routine_count()}`);
     // Closing the file drops them; the next document starts unbound.
     check('closing the document unbinds its routines',
-      e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+      e.test_call_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
       e.get_help_routine_count() === 0);
   }
 
@@ -3657,7 +3657,7 @@ async function main() {
       buildExternalHotspot(0xeb, 4, -10, { file: nextName }));
     ctx.vfs.files.set(chainPath, { data: new Uint8Array(chainHelp.file), attrs: 0x20 });
   });
-  let chainOk = e.test_invoke_WinHelpA(
+  let chainOk = e.test_call_WinHelpA(
     0x8888, allocGuestAnsi(chainPaths[0]), 0x0001, 8) === 1;
   for (let depth = 0; depth < 4 && chainOk; depth++) {
     const run = firstVisibleHotspotRun();
@@ -3685,48 +3685,48 @@ async function main() {
   }
   check('cross-document Back unwinds every suspended path in LIFO order', unwindOk);
   check('HELP_QUIT releases the active document and all suspended external roots',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_window() === 0 && e.get_help_file_ptr() === 0 &&
     e.get_help_document_snapshot_count() === 0);
 
   check('WinHelpA handler opens a window from WAT-owned title/topic state',
-    e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&
+    e.test_call_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&
     e.get_help_window() !== 0 && e.get_help_view_topic_ptr() !== 0 &&
     e.get_help_view_topic_len() === EXPECTED_SEMANTICS['freecell.hlp'].rawTopicLengths[0] &&
     readLatin1(e.get_help_view_title_ptr(), e.get_help_view_title_len()) === 'Free Cell' &&
     e.get_help_view_run_count() > 0 && e.get_help_view_run_ptr() !== 0 &&
     e.get_help_view_extent_height() >= 16);
   check('WinHelpW handler reuses the same visible dispatcher/window path',
-    e.test_invoke_WinHelpW(0x8888, 0, 0x0003, 0) === 1 &&
+    e.test_call_WinHelpW(0x8888, 0, 0x0003, 0) === 1 &&
     e.get_help_window() !== 0 && e.get_help_session_owner() === 0x8888 &&
     e.get_help_view_topic_len() === EXPECTED_SEMANTICS['freecell.hlp'].rawTopicLengths[0]);
   check('actual WinHelp handler returns FALSE for unsupported commands',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x7777, 0) === 0 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x7777, 0) === 0 &&
     e.get_help_window() !== 0 && e.get_help_dispatch_status() === 6);
   const keywordPathA = allocGuestAnsi('c:\\keyword.hlp');
   const betaA = allocGuestAnsi('Beta');
   const alphaA = allocGuestAnsi('Alpha');
   check('visible keyword navigation starts fresh after document replacement',
-    e.test_invoke_WinHelpA(0x8888, keywordPathA, 0x0101, betaA) === 1 &&
+    e.test_call_WinHelpA(0x8888, keywordPathA, 0x0101, betaA) === 1 &&
     e.get_help_session_topic_ref() === 10 && e.get_help_view_topic_index() === 1 &&
     e.get_help_view_back_count() === 0);
   check('visible WAT navigation records canonical Back history',
-    e.test_invoke_WinHelpA(0x8888, 0, 0x0101, alphaA) === 1 &&
+    e.test_call_WinHelpA(0x8888, 0, 0x0101, alphaA) === 1 &&
     e.get_help_session_topic_ref() === 0 && e.get_help_view_back_count() === 1);
   e.test_help_view_go_back();
   check('Back restores a WAT-owned canonical topic without a host callback',
     e.get_help_session_topic_ref() === 10 && e.get_help_view_topic_index() === 1 &&
     e.get_help_view_back_count() === 0);
   check('a different document clears stale Back history before presentation',
-    e.test_invoke_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&
+    e.test_call_WinHelpA(0x8888, mountedPathA, 0x0003, 0) === 1 &&
     e.get_help_session_topic_ref() === 0 && e.get_help_view_back_count() === 0);
   const missingPathA = allocGuestAnsi('c:\\not-mounted.hlp');
   check('failed replacement closes the old window instead of showing stale text',
-    e.test_invoke_WinHelpA(0x8888, missingPathA, 0x0003, 0) === 0 &&
+    e.test_call_WinHelpA(0x8888, missingPathA, 0x0003, 0) === 0 &&
     e.get_help_window() === 0 && e.get_help_view_topic_ptr() === 0 &&
     e.get_help_file_ptr() === 0 && e.get_help_dispatch_status() === 7);
   check('actual HELP_QUIT remains idempotent after a failed replacement',
-    e.test_invoke_WinHelpW(0x8888, 0, 0x0002, 0) === 1 &&
+    e.test_call_WinHelpW(0x8888, 0, 0x0002, 0) === 1 &&
     e.get_help_window() === 0 && e.get_help_view_topic_ptr() === 0 &&
     e.get_help_view_title_ptr() === 0 && e.get_help_view_run_ptr() === 0 &&
     e.get_help_view_run_count() === 0 && e.get_help_file_ptr() === 0);
