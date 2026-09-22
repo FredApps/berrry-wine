@@ -35,3 +35,34 @@ font visibility, establish repeated Add/Remove reference counting, or certify
 all resource search-path semantics. The existing read-only-media association
 policy is retained, not presented as native Win98 file-creation behavior.
 No native VM or game-performance measurement was performed for this change.
+
+## Follow-up: balanced TrueType registrations
+
+The TrueType registry previously returned success for a repeated add without
+retaining another reference. One removal then cleared the entry even when
+several successful adds were outstanding. Record +0 now stores a registration
+count rather than an occupied Boolean; existing lookup and enumeration already
+test it for nonzero. Removal decrements the count, freeing the slot only at zero.
+An add at UINT32_MAX fails instead of wrapping into a free slot (an emulator
+safety bound, not a measured native limit).
+
+Microsoft's [RemoveFontResource contract](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-removefontresourcea)
+explicitly describes reducing the resource count with repeated removals and
+restoring it with the same number of adds. This change follows that documented
+contract; it is not a fresh native Win98 capture.
+
+The public-handler regression adds one font three times through its FOT,
+uppercase TTF and lowercase TTF paths, then checks that two removals retain
+the registered face, the third clears it, and an extra removal fails. It also
+checks that a reused slot starts at one reference. The old implementation
+failed immediately after the first removal because the face was already gone.
+The full font-resource suite (20 fonts / 28 mounts and real raster output),
+seven public-font API checks, logical-AND, handler-ESP, test-tier and whitespace
+checks pass. No browser/game run or performance claim is attached to this fix.
+
+Scope is the process-local TrueType registration table, not selected-HFONT
+or cached-outline lifetime. Bitmap resources still use replacement/removal
+of their strike records and need a separate lifetime audit. The one-time font
+directory scan also calls the registration helper; its installed-versus-dynamic
+ownership policy is unchanged. Concurrent registry mutation, native FOT files,
+hidden/system-wide visibility and full path canonicalization remain open.

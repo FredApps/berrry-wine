@@ -3815,6 +3815,8 @@
   (global $TT_REG_MAX i32 (i32.const 32))
   (global $TT_REG_NAME_MAX i32 (i32.const 64))
   (global $TT_REG_PATH_MAX i32 (i32.const 132))
+  ;; Record +0 is the registration count: zero is a free slot. Lookup and
+  ;; enumeration test nonzero, so repeated adds do not duplicate the face.
   (global $TT_REG_STRIDE i32 (i32.const 208))
   (global $TT_REG_NAME_OFF i32 (i32.const 12))
   (global $TT_REG_PATH_OFF i32 (i32.const 76))
@@ -3888,7 +3890,14 @@
 
     (local.set $index (call $tt_reg_find_path (local.get $table) (local.get $path)))
     (if (i32.ge_s (local.get $index) (i32.const 0))
-      (then (return (i32.const 1))))
+      (then
+        (local.set $record (call $tt_reg_record (local.get $table) (local.get $index)))
+        ;; Fail rather than wrap a live registration into a free slot.
+        (if (i32.eq (i32.load (local.get $record)) (i32.const -1))
+          (then (return (i32.const 0))))
+        (i32.store (local.get $record)
+          (i32.add (i32.load (local.get $record)) (i32.const 1)))
+        (return (i32.const 1))))
 
     (local.set $free (i32.const -1))
     (local.set $index (i32.const 0))
@@ -3922,7 +3931,7 @@
     (i32.const 1))
 
   (func $tt_reg_remove (param $path_guest i32) (result i32)
-    (local $table i32) (local $index i32)
+    (local $table i32) (local $index i32) (local $record i32)
     (if (i32.eqz (local.get $path_guest)) (then (return (i32.const 0))))
     (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
     (local.set $table (call $tt_reg_ensure))
@@ -3930,8 +3939,9 @@
     (local.set $index (call $tt_reg_find_path (local.get $table)
       (call $g2w (local.get $path_guest))))
     (if (i32.lt_s (local.get $index) (i32.const 0)) (then (return (i32.const 0))))
-    (i32.store (call $tt_reg_record (local.get $table) (local.get $index))
-      (i32.const 0))
+    (local.set $record (call $tt_reg_record (local.get $table) (local.get $index)))
+    (i32.store (local.get $record)
+      (i32.sub (i32.load (local.get $record)) (i32.const 1)))
     (i32.const 1))
 
   ;; Best registered file for a face name, or 0. Unlike the static table,
