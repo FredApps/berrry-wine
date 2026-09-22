@@ -976,3 +976,31 @@ yet carry desired access/inheritance/errors.
 VFS 43/43, lazy/provider 51/51 and public file/mapping tests pass. Host signature
 generation/check reports 256 imports; ESP, region census and diff gates pass.
 No new full-build/browser result is claimed.
+
+## OpenFileMapping A/W operation results (2026-09-21)
+
+The public A/W handlers now share one stdcall implementation carrying desired
+access, inheritance and name encoding to the host. Returned handles retain the
+requested rights; zero-access handles cannot map data, read/COPY opens cannot
+create shared writable views, and write opens permit read views. Missing names
+report 2, null names/unsupported masks report 87, and allocation exhaustion
+reports 4. Success preserves the caller's last error. The legacy name-only
+host import remains available for internal callers.
+
+W names are decoded directly rather than narrowed through atom scratch.
+CreateFileMappingA and OpenFileMappingA now decode object names with CP1252,
+independent of the process's ANSI/OEM filename mode, so their namespace agrees
+with UTF-16 OpenFileMappingW for names containing euro and accented characters.
+
+Consulted Microsoft's
+[OpenFileMapping](https://learn.microsoft.com/en-us/windows/win32/api/winbase/nf-winbase-openfilemappinga)
+and mapping-access contract. Public source-compiled tests cover both encodings,
+case-sensitive lookup, same-name aliases, rights, COPY normalization, stale-error
+preservation, missing/null names, unsupported masks and exact stack cleanup.
+VFS 43/43 and lazy/provider 51/51 pass; A/W, ESP, region and 257-import signature
+gates pass. No full-build, browser or native Win98 pass is claimed.
+
+Inheritance is retained as handle metadata, not yet validated through child
+process creation or GetHandleInformation. Generic-access expansion, security
+descriptors, shared cross-process namespace and native error precedence remain
+open. CreateFileMappingW and shared-view coherence are separate follow-ups.

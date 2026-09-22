@@ -3657,25 +3657,22 @@
   ;; for a name another process would have published: Kodak Imaging opens
   ;; "EastManSoftwarePrvFile" purely to find out whether its Preview
   ;; counterpart is already live, and copes fine with being told it is not.
-  (func $handle_OpenFileMappingA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (if (result i32) (local.get $arg2)
-        (then (call $host_fs_open_file_mapping (call $g2w (local.get $arg2))))
-        (else (i32.const 0))))
+  (func $handle_open_file_mapping (param $access i32) (param $inherit i32) (param $name i32) (param $wide i32)
+    (local $error i32)
+    (local.set $error (call $host_fs_open_file_mapping_result
+      (if (result i32) (local.get $name)
+        (then (call $g2w (local.get $name))) (else (i32.const 0)))
+      (local.get $access) (local.get $inherit) (local.get $wide) (global.get $reg_base)))
+    (if (local.get $error) (then (global.set $last_error (local.get $error))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
-  ;; The section namespace is shared between the A and W entry points, so
-  ;; narrow the name and look it up in the same table. $atom_narrow_w is the
-  ;; generic UTF-16-to-ANSI copy helper; it happens to live with the atoms.
+  (func $handle_OpenFileMappingA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $handle_open_file_mapping (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 0)))
+
+  ;; Decode UTF-16 directly; no lossy narrowing allocation or atom scratch.
   (func $handle_OpenFileMappingW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $narrow i32)
-    (local.set $narrow (call $atom_narrow_w (local.get $arg2)))
-    (i32.store offset=0 (global.get $reg_base) (if (result i32) (local.get $narrow)
-        (then (call $host_fs_open_file_mapping (call $g2w (local.get $narrow))))
-        (else (i32.const 0))))
-    (call $atom_narrow_free (local.get $arg2) (local.get $narrow))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-  )
+    (call $handle_open_file_mapping (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
 
   ;; 778: MapViewOfFile(hMapping, dwAccess, dwOffsetHi, dwOffsetLo, dwSize) — 5 args
   (func $handle_MapViewOfFile (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

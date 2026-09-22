@@ -824,6 +824,7 @@
   ;; nameWA is 0 for an unnamed section. A named one can be reopened by name,
   ;; which is how an app asks "is my other instance already running?".
   (import "host" "fs_open_file_mapping" (func $host_fs_open_file_mapping (param i32) (result i32)))
+  (import "host" "fs_open_file_mapping_result" (func $host_fs_open_file_mapping_result (param i32 i32 i32 i32 i32) (result i32)))
   ;; fs_open_file_mapping(nameWA) → mapping handle, or 0 when no such name exists
   (import "host" "fs_map_view_of_file" (func $host_fs_map_view_of_file_owned (param i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "fs_map_view_of_file_result" (func $host_fs_map_view_of_file_result (param i32 i32 i32 i32 i32 i32 i32) (result i32)))

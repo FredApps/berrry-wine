@@ -6,6 +6,18 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = `
+  (func (export "test_public_open_section") (param $name i32) (param $access i32)
+    (param $inherit i32) (param $wide i32) (result i32)
+    (global.set $last_error (i32.const 0x1234))
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (if (local.get $wide)
+      (then (call $handle_OpenFileMappingW (local.get $access) (local.get $inherit)
+        (local.get $name) (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (call $handle_OpenFileMappingA (local.get $access) (local.get $inherit)
+        (local.get $name) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.ne (i32.load offset=16 (global.get $reg_base)) (i32.const 0x074ff010))
+      (then (unreachable)))
+    (i32.load (global.get $reg_base)))
   (func (export "test_public_map") (param $section i32) (param $access i32)
     (param $offset i32) (param $size i32) (result i32)
     (global.set $last_error (i32.const 0x1234))
@@ -459,6 +471,38 @@ const extraWat = `
   assert.strictEqual(wat.test_file_duplicate(duplicateSection, target, 0, 2), 0);
   assert.strictEqual(wat.test_dup_error(), 6);
   console.log('PASS  mapping duplicates preserve section identity, per-handle rights and independent lifetime');
+  const sectionNameA = 0x00490200, sectionNameW = 0x00490300;
+  Buffer.from([0x73, 0x65, 0x63, 0x80, 0xe9, 0]).forEach((b, i) =>
+    wat.test_write_guest8(sectionNameA + i, b));
+  Buffer.from('sec€é\0', 'utf16le').forEach((b, i) => wat.test_write_guest8(sectionNameW + i, b));
+  vfs.fileApisAnsi = false;
+  const unicodeSection = wat.test_public_section(-1, 4, 0, 16, sectionNameA);
+  assert(unicodeSection);
+  try {
+    for (const [name, wide] of [[sectionNameA, 0], [sectionNameW, 1]]) {
+      for (const access of [0, 1, 2, 4]) {
+        const opened = wat.test_public_open_section(name, access, 1, wide);
+        assert(opened);
+        assert.notStrictEqual(opened, unicodeSection);
+        assert.strictEqual(wat.test_dup_error(), 0x1234, 'successful open preserves last error');
+        const writable = wat.test_public_map(opened, 2, 0, 16);
+        assert.strictEqual(!!writable, access === 2);
+        if (!writable) assert.strictEqual(wat.test_dup_error(), 5);
+        const readable = wat.test_public_map(opened, 4, 0, 16);
+        assert.strictEqual(!!readable, access !== 0);
+        assert.strictEqual(wat.test_public_close(opened), 1);
+      }
+      assert.strictEqual(wat.test_public_open_section(name, 0x40000000, 0, wide), 0);
+      assert.strictEqual(wat.test_dup_error(), 87, 'unsupported generic mask is not silently broadened');
+      assert.strictEqual(wat.test_public_open_section(0, 4, 0, wide), 0);
+      assert.strictEqual(wat.test_dup_error(), 87);
+      wat.test_write_guest8(name, 0x53); // names are case-sensitive
+      assert.strictEqual(wat.test_public_open_section(name, 4, 0, wide), 0);
+      assert.strictEqual(wat.test_dup_error(), 2);
+      wat.test_write_guest8(name, 0x73);
+    }
+  } finally { vfs.fileApisAnsi = true; }
+  console.log('PASS  OpenFileMapping A/W share names, retain requested rights and report errors');
   const readSection = wat.test_public_section(sectionFile, 2, 0, 0, 0);
   for (const [section, access, offset, size, error] of [
     [0x123456, 4, 0, 16, 6], [readSection, 2, 0, 16, 5],
