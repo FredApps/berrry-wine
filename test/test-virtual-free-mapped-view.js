@@ -29,6 +29,16 @@ const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 
 const extraWat = String.raw`
+  (func (export "test_mv_backed_bytes") (result i32)
+    (local $i i32) (local $sum i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.load (global.get $VIRTUAL_MAP_STATE))))
+      (local.set $sum (i32.add (local.get $sum)
+        (i32.load offset=4 (i32.add (global.get $VIRTUAL_MAP_TABLE)
+          (i32.shl (local.get $i) (i32.const 4))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $sum))
   (func (export "test_mv_fill_registry")
     (i32.store (global.get $MAPPED_VIEW_TABLE) (global.get $MAX_MAPPED_VIEWS)))
   (func (export "test_mv_cursor") (result i32)
@@ -110,6 +120,42 @@ async function main() {
 
   const VIEW_BYTES = 8 * PAGE;
 
+  // One section address spans a large lazy file without backing all its bytes.
+  // Commit tail first, then overlapping/growing ranges, with another allocation
+  // interleaved so preserving bytes cannot depend on contiguous WASM backing.
+  wasm.test_mv_reset();
+  const sectionSize = 600 * 1024 * 1024;
+  const section = wasm.guest_section_reserve(sectionSize) >>> 0;
+  assert(section);
+  assert.strictEqual(section % 65536, 0);
+  assert.strictEqual(wasm.test_mv_backed_bytes(), 0, 'reservation is not materialization');
+  assert.strictEqual(wasm.guest_section_commit(section, 65536, 16) >>> 0, section + 65536);
+  wasm.test_mv_write32(section + 65536, 0x12345678);
+  const neighbor = wasm.guest_map_alloc(PAGE) >>> 0;
+  assert(neighbor);
+  wasm.test_mv_write32(neighbor, 0x76543210);
+  assert.strictEqual(wasm.guest_section_commit(section, 0, 16) >>> 0, section);
+  wasm.test_mv_write32(section, 0x1234);
+  assert.strictEqual(wasm.guest_section_commit(section, 0, 131072) >>> 0, section);
+  assert.strictEqual(wasm.test_mv_read32(section), 0x1234, 'growth preserves the first page');
+  assert.strictEqual(wasm.test_mv_read32(section + 65536), 0x12345678, 'growth preserves tail');
+  assert.strictEqual(wasm.test_mv_backed_bytes(), 131072 + PAGE, 'only mapped ranges are backed');
+  for (const [offset, size] of [[sectionSize, 1], [sectionSize - PAGE, PAGE + 1], [1, PAGE], [0, 0], [0, 0xffffffff]]) {
+    assert.strictEqual(wasm.guest_section_commit(section, offset, size), 0, 'invalid commit rejected');
+  }
+  assert.strictEqual(wasm.test_mv_free(section + 65536, PAGE, MEM_DECOMMIT), 0);
+  assert.strictEqual(wasm.test_mv_read32(section + 65536), 0x12345678);
+  assert.strictEqual(wasm.guest_section_free(section), 1);
+  assert.strictEqual(wasm.test_mv_backed_bytes(), PAGE, 'all section extents retired');
+  assert.strictEqual(wasm.test_mv_read32(neighbor), 0x76543210, 'neighbor remains intact');
+  assert.strictEqual(wasm.guest_section_free(section), 0, 'double release rejected');
+  assert(wasm.guest_map_free(neighbor));
+  const emptySection = wasm.guest_section_reserve(sectionSize) >>> 0;
+  assert(emptySection, 'large reservation is reusable after release');
+  assert.strictEqual(wasm.guest_section_free(emptySection), 1, 'uncommitted section can be released');
+  for (const size of [0, 0xffffffff]) assert.strictEqual(wasm.guest_section_reserve(size), 0);
+  console.log('PASS  stable sparse section growth, bounded commits and complete retirement');
+
   // Exhausted view bookkeeping must not hand out an unguarded allocation.
   // Simulate capacity directly: the rejection must not inspect or alter slots.
   wasm.test_mv_reset();
@@ -117,6 +163,8 @@ async function main() {
   const fullCursor = wasm.test_mv_cursor();
   assert.strictEqual(wasm.guest_map_alloc(PAGE), 0,
     'full view registry must reject allocation instead of losing VirtualFree protection');
+  assert.strictEqual(wasm.guest_section_reserve(sectionSize), 0,
+    'section reservations also require tracked VirtualFree protection');
   assert.strictEqual(wasm.test_mv_cursor(), fullCursor,
     'registry exhaustion must fail before reserving address space');
   console.log('PASS  full mapped-view registry refuses allocation without reserving memory');

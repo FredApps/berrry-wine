@@ -1118,3 +1118,31 @@ with a nonzero returned address; afterwards it and the existing alignment,
 gap reuse, refused mapped decommit/release, and ordinary decommit checks pass.
 The 54-case native validation/status test also passes. This fixes resource-limit
 behavior, not shared-view coherence, and does not claim a full browser build.
+
+## Sparse section allocation foundation (2026-09-21)
+
+Added host exports `guest_section_reserve`, `guest_section_commit`, and
+`guest_section_free` for the shared-view migration. They reserve one stable
+guest span without allocating file-sized backing, record it against competing
+reservations and VirtualFree, commit page-rounded subranges, and release all
+disjoint committed extents plus the reservation. Bounds/overflow and registry
+capacity are checked. Reservation and commit metadata operations use the
+existing virtual-map lock. These exports are not yet used by MapViewOfFile.
+
+A source-compiled regression reserves 600 MiB but backs only 128 KiB, commits
+the tail before the head, interleaves an unrelated allocation, and grows across
+both existing ranges. The first implementation using the ordinary commit
+helper failed by shadowing the tail's dirty bytes with zeroed backing. The
+section path now scans existing extents and commits only uncovered intervals.
+The regression verifies retained bytes, exact backed-byte total, rejected
+out-of-bounds/misaligned/overflow commits, VirtualFree exclusion, full section
+retirement, neighboring data preservation, double-release rejection and reuse
+of an uncommitted reservation. Existing mapped-view tests also pass.
+
+This is allocator groundwork, not a claim that runtime views are coherent yet.
+Next connect section-owned backing to MapViewOfFile, count duplicate returned
+addresses, fill only newly mapped bytes, and retain/cancel parked provider
+operations without overwriting dirty shared bytes. Protection changes and
+rollback of partially successful out-of-memory commits remain follow-ups;
+the current section commit uses READWRITE backing and can leave newly committed
+extents owned by the section when a later extent fails.

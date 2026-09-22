@@ -3501,6 +3501,130 @@
       (select (i32.const 0) (call $g2w (local.get $dst_g)) (i32.eqz (local.get $dst_g)))
       (local.get $max) (local.get $args_g)))
 
+  ;; A section owns one stable reservation; views commit subranges without
+  ;; allocating backing for the whole file. Only the main host uses these
+  ;; exports. Keep reservation publication atomic against guest VirtualAlloc.
+  (func (export "guest_section_reserve") (param $requested i32) (result i32)
+    (local $size i32) (local $guest i32)
+    (if (i32.or (i32.eqz (local.get $requested))
+          (i32.gt_u (local.get $requested) (i32.const 0xFFFFF000)))
+      (then (return (i32.const 0))))
+    (local.set $size (i32.and (i32.add (local.get $requested) (i32.const 4095))
+      (i32.const -4096)))
+    (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
+    (if (i32.or
+          (i32.ge_u (i32.load (global.get $MAPPED_VIEW_TABLE)) (global.get $MAX_MAPPED_VIEWS))
+          (i32.ge_u (i32.load offset=16 (global.get $VIRTUAL_MAP_STATE))
+            (global.get $MAX_VIRTUAL_RESERVES)))
+      (then
+        (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+        (return (i32.const 0))))
+    (local.set $guest (call $virtual_reserve_down (local.get $size)))
+    (if (local.get $guest)
+      (then
+        (call $virtual_reserve_record (local.get $guest) (local.get $size) (i32.const 4))
+        (call $mapped_view_register (local.get $guest) (local.get $size))))
+    (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+    (local.get $guest))
+
+  (func $host_mapped_range_size (param $guest i32) (result i32)
+    (local $i i32) (local $slot i32)
+    (local.set $i (i32.const 1))
+    (block $done (loop $scan
+      (br_if $done (i32.gt_u (local.get $i) (i32.load (global.get $MAPPED_VIEW_TABLE))))
+      (local.set $slot (call $mapped_view_slot (local.get $i)))
+      (if (i32.eq (i32.load (local.get $slot)) (local.get $guest))
+        (then (return (i32.load offset=4 (local.get $slot)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Commit holes only. The general commit helper handles forward extension,
+  ;; but a request enclosing an already committed island would otherwise
+  ;; publish overlapping records and shadow bytes written through an older view.
+  (func $host_section_commit_range (param $guest i32) (param $size i32) (result i32)
+    (local $cursor i32) (local $end i32) (local $next i32)
+    (local $i i32) (local $rec i32) (local $base i32) (local $limit i32)
+    (local $covered i32)
+    (local.set $cursor (local.get $guest))
+    (local.set $end (i32.add (local.get $guest) (local.get $size)))
+    (block $done (loop $ranges
+      (br_if $done (i32.ge_u (local.get $cursor) (local.get $end)))
+      (local.set $next (local.get $end))
+      (local.set $covered (i32.const 0))
+      (local.set $i (i32.const 0))
+      (block $scanned (loop $scan
+        (br_if $scanned (i32.ge_u (local.get $i) (i32.load (global.get $VIRTUAL_MAP_STATE))))
+        (local.set $rec (i32.add (global.get $VIRTUAL_MAP_TABLE)
+          (i32.shl (local.get $i) (i32.const 4))))
+        (local.set $base (i32.load (local.get $rec)))
+        (local.set $limit (i32.add (local.get $base) (i32.load offset=4 (local.get $rec))))
+        (if (i32.and (i32.le_u (local.get $base) (local.get $cursor))
+              (i32.gt_u (local.get $limit) (local.get $cursor)))
+          (then
+            (local.set $covered (i32.const 1))
+            (local.set $next (local.get $limit))
+            (br $scanned)))
+        (if (i32.and (i32.gt_u (local.get $base) (local.get $cursor))
+              (i32.lt_u (local.get $base) (local.get $next)))
+          (then (local.set $next (local.get $base))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $scan)))
+      (if (i32.eqz (local.get $covered))
+        (then (if (i32.eqz (call $virtual_map_commit_locked
+                    (local.get $cursor) (i32.sub (local.get $next) (local.get $cursor))
+                    (i32.const 4) (i32.const 0)))
+          (then (return (i32.const 0))))))
+      (local.set $cursor (local.get $next))
+      (br $ranges)))
+    (local.get $guest))
+
+  (func (export "guest_section_commit")
+      (param $base i32) (param $offset i32) (param $requested i32) (result i32)
+    (local $size i32) (local $extent i32) (local $result i32)
+    (if (i32.or (i32.eqz (local.get $requested))
+          (i32.or (i32.gt_u (local.get $requested) (i32.const 0xFFFFF000))
+            (i32.ne (i32.and (local.get $offset) (i32.const 4095)) (i32.const 0))))
+      (then (return (i32.const 0))))
+    (local.set $size (i32.and (i32.add (local.get $requested) (i32.const 4095))
+      (i32.const -4096)))
+    (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
+    (local.set $extent (call $host_mapped_range_size (local.get $base)))
+    (if (i32.le_u (local.get $offset) (local.get $extent))
+      (then (if (i32.le_u (local.get $size) (i32.sub (local.get $extent) (local.get $offset)))
+        (then
+          ;; Do not coalesce with another section's adjacent record. Recommit
+          ;; preserves existing bytes; only missing backing is zero-initialized.
+          (local.set $result (call $host_section_commit_range
+            (i32.add (local.get $base) (local.get $offset)) (local.get $size)))))))
+    (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+    (local.get $result))
+
+  (func (export "guest_section_free") (param $base i32) (result i32)
+    (local $size i32) (local $i i32) (local $guest i32)
+    (call $lock_acquire (global.get $LOCK_VIRTUAL_MAP))
+    (local.set $size (call $host_mapped_range_size (local.get $base)))
+    (if (i32.eqz (local.get $size))
+      (then
+        (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+        (return (i32.const 0))))
+    ;; Disjoint commits need not form a continuation chain. Each release
+    ;; compacts the table, so revisit that index before advancing.
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (i32.load (global.get $VIRTUAL_MAP_STATE))))
+      (local.set $guest (i32.load (i32.add (global.get $VIRTUAL_MAP_TABLE)
+        (i32.shl (local.get $i) (i32.const 4)))))
+      (if (i32.and (i32.ge_u (local.get $guest) (local.get $base))
+            (i32.lt_u (i32.sub (local.get $guest) (local.get $base)) (local.get $size)))
+        (then (drop (call $virtual_map_release_one (local.get $guest))))
+        (else (local.set $i (i32.add (local.get $i) (i32.const 1)))))
+      (br $scan)))
+    (call $mapped_view_unregister (local.get $base))
+    (call $virtual_reserve_forget_locked (local.get $base))
+    (call $virtual_reserve_reclaim_locked)
+    (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
+    (i32.const 1))
+
   ;; Allocate guest heap memory (returns guest address)
   (func (export "guest_alloc") (param $size i32) (result i32)
     (call $heap_alloc (local.get $size)))
