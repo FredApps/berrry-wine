@@ -953,12 +953,18 @@ function genExtras() {
   // a manufactured return address, a stack the callee rearranged, a call whose
   // return point was never compiled -- falls back to handing the guest IP to
   // the host, which is what always used to happen.
+  // A miss -- the shadow stack emptied by an uncached compile, overflowed, or
+  // a return address the callee rewrote -- asks the jump table before it hands
+  // back, the same lookup an unresolved direct edge takes (GO). The table holds
+  // exactly the head the host would resume at, so this bills what the handback
+  // would have. STHINTRO's 0.40M early-ret handbacks are this arm.
+  const RET_MISS = `(if (i32.eqz (call $jlook_edge)) (then ${EXIT('ret')}))`;
   const RET_BODY = `
   (global.set $gip (call $pop16))
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else ${EXIT('ret')}))`;
+    (else ${RET_MISS}))`;
   h('ret', 0, RET_BODY);
   h('ret_imm', 1, `
   ${ops(1)}
@@ -967,7 +973,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else ${EXIT('ret')}))
+    (else ${RET_MISS}))
 `);
   // The same three, in a 32-bit code segment. The only difference is the width
   // of the return address on the stack -- but it is the difference between
@@ -984,7 +990,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else ${EXIT('ret')}))
+    (else ${RET_MISS}))
 `);
   h('ret_imm32', 1, `
   ${ops(1)}
@@ -993,7 +999,7 @@ function genExtras() {
   (local.set $t7 (call $rpop (global.get $gip)))
   (if ${CONT('(local.get $t7)')}
     (then (global.set $ip (local.get $t7)))
-    (else ${EXIT('ret')}))
+    (else ${RET_MISS}))
 `);
 
   // LEA computes the effective address and never touches memory -- which is
@@ -5306,12 +5312,13 @@ ${memAccessors()}
     (then (return (i32.load offset=8 (local.get $a)))))
   (i32.const 0))
 
-;; A direct edge's cold arm (GO in emit.js): resume at $gip's block if the jump
-;; table has one and the boundary test allows it, setting $ip; 0 to hand back.
+;; The cold arm of a direct edge (GO) and of a shadow-stack miss on RET: resume
+;; at $gip's block if the jump table has one and the boundary test allows it,
+;; setting $ip; 0 to hand back.
 ;; Named apart from $jlook so the flag analysis and handler-effects.js can tell
 ;; a block transfer from the host exits that also use the table.
 ;; $edgelook is the host's A/B switch (run-dos --no-edge-lookup): 0 restores
-;; the handback on every unresolved edge.
+;; the handback on every unresolved edge and every missed return.
 (func $jlook_edge (result i32) (local $a i32)
   (if (i32.eqz (global.get $edgelook)) (then (return (i32.const 0))))
   (local.set $a ${CONT('(call $jlook (global.get $gip))')})
