@@ -728,6 +728,61 @@ test('lazy sections materialize their retained entry, not a replacement path occ
   }
 });
 
+test('parked mapping retains section across close and scheduler polls reuse the operation', async () => {
+  const { createFilesystemImports } = require('../lib/filesystem');
+  for (const access of [2, 4]) for (const fails of [false, true]) {
+    const vfs = new VirtualFS();
+    let start, complete, reads = 0, allocations = 0;
+    const started = new Promise(resolve => { start = resolve; });
+    const gate = new Promise(resolve => { complete = resolve; });
+    vfs.setProviderFile(GUEST, { provider: { size: 16,
+      async readRange(_off, len) {
+        reads++; start(); await gate;
+        if (fails) throw new Error('mapping provider failed');
+        return new Uint8Array(len).fill(0x5a);
+      },
+    } });
+    const memory = new WebAssembly.Memory({ initial: 40 });
+    new Uint8Array(memory.buffer).set(Buffer.from('pending-section\0'), 96);
+    const host = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+      exports: { get_image_base: () => 0x400000,
+        guest_map_alloc: () => { allocations++; return 0x410000; } } });
+    const file = vfs.createFile(GUEST, 0xc0000000, 3);
+    const section = host.fs_create_file_mapping(file, 4, 0, 0, 96);
+    const map = () => host.fs_map_view_of_file_result(section, access, 0, 0, 16, 64, 2);
+    assert.strictEqual(map(), 997);
+    const pending = vfs.getPendingRead(2);
+    const firstAllocations = allocations;
+    assert.strictEqual(map(), 997);
+    assert.strictEqual(vfs.getPendingRead(2), pending);
+    assert.strictEqual(allocations, firstAllocations);
+    const filling = vfs.fillPendingRead(pending);
+    await started;
+    assert.strictEqual(host.fs_close_handle(section), 1);
+    assert.strictEqual(map(), 997, 'accepted operation survives close while loading');
+    const peerFill = vfs.fillPendingRead(vfs.getPendingRead(2));
+    const alias = host.fs_open_file_mapping(96);
+    assert(alias, 'pending operation retains named section before any view exists');
+    assert.strictEqual(host.fs_close_handle(alias), 1);
+    assert.strictEqual(host.fs_map_view_of_file_result(section, access, 0, 0, 16, 68, 3), 6,
+      'another thread cannot start a new operation with the closed handle');
+    complete();
+    await Promise.all([filling, peerFill]);
+    assert.strictEqual(reads, 1, 'repeated fill requests share the in-flight provider work');
+    assert.strictEqual(map(), fails ? 30 : 0);
+    const address = new DataView(memory.buffer).getUint32(64, true);
+    if (fails) assert.strictEqual(address, 0);
+    else {
+      assert(address);
+      assert.strictEqual(allocations, 1);
+      assert.strictEqual(new Uint8Array(memory.buffer)[RegionMap.g2w(address, 0x400000)], 0x5a);
+      assert.strictEqual(host.fs_unmap_view(address), 1);
+    }
+    assert.strictEqual(map(), 6, 'completed operation cannot resurrect the closed handle');
+    assert.strictEqual(host.fs_open_file_mapping(96), 0, 'consumed operation releases its name reference');
+  }
+});
+
 test('concurrent lazy mappings of the same section keep distinct thread-owned completions', async () => {
   const { createFilesystemImports } = require('../lib/filesystem');
   const vfs = new VirtualFS();

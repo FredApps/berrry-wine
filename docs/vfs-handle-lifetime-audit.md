@@ -895,3 +895,29 @@ backing object. Native Win98 behavior and browser performance are not measured.
 Validation: VFS 43/43, lazy/provider 49/49, source-compiled public file/mapping
 tests and FlushViewOfFile regression pass; region census and diff checks pass.
 The full build was not rerun in this checkpoint.
+
+## Parked mapping operation ownership (2026-09-21)
+
+An accepted lazy MapView operation now retains its section independently of
+the source handle until its caller consumes the completion. Its name remains
+discoverable during loading even before a view exists. Closing the handle
+prevents new calls but no longer strands the already-accepted operation's
+completed allocation or hides a provider failure behind invalid-handle status.
+Writable materialization retries also retain the original section.
+
+Scheduler polls reuse the same pending record, and multiple fill requests
+share its promise rather than allocating or fetching repeatedly. The operation
+reference retires on completion consumption; subsequent calls on that closed
+handle fail. This is an internal park/resume ownership rule, not a claim about
+native Win98's ordering for concurrent CloseHandle and MapViewOfFile calls.
+
+The new test covers read-only/writable success and provider failure, duplicate
+poll/fill requests, close during loading, named reopening before completion,
+rejection of a new call from another thread, and reference retirement.
+VFS 43/43, lazy/provider 50/50 and source-compiled public file/mapping tests pass;
+region census and diff checks pass. No full-build/browser/native run is claimed.
+
+Thread-exit cancellation and stale completions across numeric thread-ID reuse
+still need explicit retirement; operations whose owners never resume are not
+covered by this checkpoint. Shared-view coherence, mapping access/duplication
+and ordinary file-handle identity also remain open.
