@@ -763,6 +763,7 @@
   (import "host" "fs_flush_file_buffers" (func $host_fs_flush_file_buffers (param i32) (result i32)))
   (import "host" "fs_close_handle" (func $host_fs_close_handle (param i32) (result i32)))
   (import "host" "fs_duplicate_handle" (func $host_fs_duplicate_handle (param i32 i32 i32 i32) (result i32)))
+  (import "host" "fs_duplicate_mapping_result" (func $host_fs_duplicate_mapping_result (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "fs_set_file_pointer" (func $host_fs_set_file_pointer (param i32 i32 i32) (result i32)))
   (import "host" "fs_seek_result" (func $host_fs_seek_result (param i32 i32 i32 i32 i32) (result i32)))
   ;; handle, distanceLow, optional high-word WA, method, result WA -> Win32 error

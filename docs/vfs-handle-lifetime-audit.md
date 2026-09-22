@@ -946,3 +946,33 @@ single release, name retirement and returned-view survival. VFS 43/43,
 lazy/provider 51/51, scheduler 50/50, public file/mapping tests and FlushView
 regression pass; region ratchet passes. Main-process shutdown is not exercised
 here. No full-build, browser or native Win98 pass is claimed.
+
+## Mapping DuplicateHandle and per-handle rights (2026-09-21)
+
+Mapping handles now hold access/inherit metadata separately from the shared
+section. The public DuplicateHandle path recognizes that namespace and creates
+a distinct alias, honors SAME_ACCESS and CLOSE_SOURCE (including failures),
+rejects closed sources/invalid options, and can narrow rights without changing
+the section or other handles. MapView enforces the selected handle's rights
+before allocating/fetching; write access permits read views, and read access
+permits COPY views without shared writeback.
+
+The host bridge returns status separately from the handle through the caller's
+register slot: mapping handles have the high bit set and cannot use the CRT
+file-only import's positive-handle/negative-error convention. That old import
+remains file-only. Tests exercise actual public WAT handlers, high-bit output,
+independent lifetime, rights reduction, zero access, read/COPY/write views,
+close-source success/failure, invalid options and stack cleanup.
+
+Contracts consulted: Microsoft's
+[DuplicateHandle](https://learn.microsoft.com/windows/win32/api/handleapi/nf-handleapi-duplicatehandle)
+and [mapping access rights](https://learn.microsoft.com/en-us/windows/win32/memory/file-mapping-security-and-access-rights).
+This is not full NT security or native Win98 verification: generic-access
+expansion, ACL-mediated elevation, cross-process duplication, null-target
+legacy semantics and observable handle-inheritance APIs remain unsupported or
+unverified. OpenFileMapping still has its old name-only host ABI and does not
+yet carry desired access/inheritance/errors.
+
+VFS 43/43, lazy/provider 51/51 and public file/mapping tests pass. Host signature
+generation/check reports 256 imports; ESP, region census and diff gates pass.
+No new full-build/browser result is claimed.

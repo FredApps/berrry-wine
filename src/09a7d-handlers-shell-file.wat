@@ -261,14 +261,25 @@
             (local.set $duplicate (call $console_handle_duplicate (local.get $arg1))))
           (else
             (local.set $stack_w (call $g2w (i32.load offset=16 (global.get $reg_base))))
-            (local.set $file_duplicate (call $host_fs_duplicate_handle
-              (local.get $arg1) (local.get $arg4)
-              (i32.load offset=24 (local.get $stack_w))
-              (i32.load offset=28 (local.get $stack_w))))
-            (if (i32.gt_s (local.get $file_duplicate) (i32.const 0))
-              (then (local.set $duplicate (local.get $file_duplicate)))
-              (else (if (i32.eqz (local.get $file_duplicate))
-                (then (local.set $duplicate (local.get $arg1))))))
+            (if (i32.eq (i32.shr_u (local.get $arg1) (i32.const 24)) (i32.const 0xfb))
+              (then
+                (local.set $file_duplicate (call $host_fs_duplicate_mapping_result
+                  (local.get $arg1) (local.get $arg4)
+                  (i32.load offset=24 (local.get $stack_w))
+                  (i32.load offset=28 (local.get $stack_w)) (global.get $reg_base)))
+                (if (i32.eqz (local.get $file_duplicate))
+                  (then (local.set $duplicate (i32.load (global.get $reg_base))))
+                  (else (local.set $file_duplicate
+                    (i32.sub (i32.const 0) (local.get $file_duplicate))))))
+              (else
+                (local.set $file_duplicate (call $host_fs_duplicate_handle
+                  (local.get $arg1) (local.get $arg4)
+                  (i32.load offset=24 (local.get $stack_w))
+                  (i32.load offset=28 (local.get $stack_w))))
+                (if (i32.gt_s (local.get $file_duplicate) (i32.const 0))
+                  (then (local.set $duplicate (local.get $file_duplicate)))
+                  (else (if (i32.eqz (local.get $file_duplicate))
+                    (then (local.set $duplicate (local.get $arg1))))))))
             (if (i32.eq (local.get $arg1) (i32.const 0xFFFFFFFE))
               (then
                 (local.set $duplicate
