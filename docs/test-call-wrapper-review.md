@@ -124,3 +124,6 @@ index-64 rejection is an implementation-limit assertion, **not native
 conformance**, and must be replaced in the runtime fix. The repeated native
 fixture now defines that follow-up's target; this wrapper migration did not
 correct those runtime discrepancies.
+
+The later [TLS runtime change](tls-lifetime-review.md) implements that captured
+sequence and adds generated TlsAlloc test calls: **238 generated / 22 manual**.

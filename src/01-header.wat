@@ -3111,10 +3111,14 @@
   (global $exe_export_rva (mut i32) (i32.const 0))
   ;; rand() state
   (global $rand_seed (mut i32) (i32.const 12345))
-  ;; TLS: simple fixed-size TLS (64 slots), allocated in heap on first use
-  (global $tls_slots (mut i32) (i32.const 0))  ;; guest ptr to 64 x i32 = 256 bytes
+  ;; Native Win98 reference exposes 80 slots. Each instance registers its vector
+  ;; so releasing an index clears existing threads, including direct FS reads.
+  (global $TLS_SLOT_COUNT i32 (i32.const 80))
+  (global $tls_slots (mut i32) (i32.const 0))
+  (global $tls_registry_node (mut i32) (i32.const 0))
   ;; TLS indexes belong to the process, not one guest-thread WASM instance.
-  ;; Give the atomic cursor its own cache line in shared memory.
+  ;; Existing 64-byte region: +0 high-water mark, +4 lock, +8 vector-list head,
+  ;; +12/+16/+20 allocation bitmap. High-water metadata never resurrects holes.
   (global $TLS_NEXT_INDEX_SHARED i32 (region.addr $TLS_NEXT_INDEX_SHARED 0))
   (global $TLS_NEXT_INDEX_SHARED_SIZE i32 (region.size $TLS_NEXT_INDEX_SHARED))
   ;; Performance counter (monotonic, incremented per query)

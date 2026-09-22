@@ -28,6 +28,11 @@ async function main() {
     get_thunk_end: () => 0x07501000,
     get_num_thunks: () => 1,
     get_rsrc_rva: () => 0,
+    get_fs_base: () => 0x40000,
+    guest_read32: addr => {
+      assert.strictEqual(addr, 0x40030);
+      return 0x80012340;
+    },
     guest_alloc: size => {
       const result = nextGuest;
       nextGuest = (nextGuest + (size >>> 0)) >>> 0;
@@ -51,7 +56,11 @@ async function main() {
       set_eip(value) { fakeThread.eip = value >>> 0; },
       set_hwnd_base: () => {},
       set_fs_base(value) { fakeThread.fsBase = value >>> 0; },
-      set_tls_slots(value) { fakeThread.tlsSlots = value >>> 0; },
+      ensure_tls_slots() {
+        fakeThread.tlsSlots = mainExports.guest_alloc(80 * 4);
+        new Uint8Array(memory.buffer, guestToWasm(fakeThread.tlsSlots), 80 * 4).fill(0);
+        return fakeThread.tlsSlots;
+      },
     },
   };
   const tm = new ThreadManager({}, memory, { exports: mainExports }, () => ({ host: {} }), {
@@ -67,12 +76,13 @@ async function main() {
   assert.strictEqual(fakeThread.esp, sparseBase + stackSize - 8);
   assert.strictEqual(fakeThread.eip, 0x00401000);
   assert.strictEqual(fakeThread.fsBase, sparseBase + stackSize);
-  assert.strictEqual(fakeThread.tlsSlots, sparseBase + stackSize + 0x30);
+  assert.strictEqual(fakeThread.tlsSlots, sparseBase + stackSize + 0x34);
   const dv = new DataView(memory.buffer);
   assert.strictEqual(dv.getUint32(guestToWasm(sparseBase + stackSize - 4), true), 0x12345678);
   assert.strictEqual(dv.getUint32(guestToWasm(sparseBase + stackSize - 8), true), 0);
+  assert.strictEqual(dv.getUint32(guestToWasm(fakeThread.fsBase + 0x30), true), 0x80012340);
   assert.strictEqual(new Uint8Array(memory.buffer,
-    guestToWasm(fakeThread.tlsSlots), 0x100).some(byte => byte !== 0), false);
+    guestToWasm(fakeThread.tlsSlots), 80 * 4).some(byte => byte !== 0), false);
   assert.strictEqual(tm.threads.get(handle).state, 'active');
 
   console.log('PASS cooperative ThreadManager initializes sparse high guest stacks and TLS');

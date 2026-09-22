@@ -6358,6 +6358,7 @@
   {
     "id": 698,
     "name": "TlsAlloc",
+    "test_call": true,
     "nargs": 0,
     "convention": "stdcall",
     "hash": 1400863067

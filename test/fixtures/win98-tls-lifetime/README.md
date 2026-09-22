@@ -41,9 +41,9 @@ requires index reuse, and [TlsAlloc](https://learn.microsoft.com/en-us/windows/w
 specifies initially zero slots. The fixture supplies target-specific bounds,
 error behavior and existing-thread observations beyond those broad contracts.
 
-## Runtime follow-up, not completed here
+## Runtime follow-up
 
-The current implementation uses a monotonic 64-index cursor, 256-byte vectors,
+At capture time the implementation used a monotonic 64-index cursor, 256-byte vectors,
 and an in-range TlsFree success return without release. A complete fix must:
 
 1. Give the process a shared reusable allocator with correct double-free and
@@ -61,3 +61,8 @@ missing, duplicate or altered observations. It does **not** exercise or certify
 the emulator. This probe does not establish allocation order with multiple
 holes, races with active SetValue calls, static TLS interactions, or allocation
 failure under memory pressure. Those still need tests/native observations.
+
+The subsequent [runtime implementation and verification](../../../docs/tls-lifetime-review.md)
+replay the native sequence, add reusable allocation and register 80-slot
+vectors across thread backends. That report distinguishes passing lifecycle
+checks from remaining thread-exit reclamation and DLL static-TLS work.

@@ -673,26 +673,125 @@ nW — STUB: unimplemented
     ;; cdecl: only pop return address
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
 
-  ;; 326: TlsAlloc — return next TLS index
+  ;; TLS state is process-shared; no host calls or allocation occur under this
+  ;; lock. Bitmap changes, vector publication and API reads/writes serialize.
+  (func $tls_lock
+    (loop $retry
+      (br_if $retry (i32.atomic.rmw.cmpxchg offset=4
+        (global.get $TLS_NEXT_INDEX_SHARED) (i32.const 0) (i32.const 1)))))
+  (func $tls_unlock
+    (i32.atomic.store offset=4 (global.get $TLS_NEXT_INDEX_SHARED) (i32.const 0)))
+  (func $tls_bitmap_word (param $index i32) (result i32)
+    (i32.add (global.get $TLS_NEXT_INDEX_SHARED)
+      (i32.add (i32.const 12) (i32.shl (i32.shr_u (local.get $index) (i32.const 5)) (i32.const 2)))))
+  ;; Caller holds TLS lock. Vectors are process-lifetime allocations, as before;
+  ;; clearing never frees the application-owned values stored in their slots.
+  (func $tls_clear_index (param $index i32)
+    (local $node i32) (local $vector i32)
+    (local.set $node (i32.load offset=8 (global.get $TLS_NEXT_INDEX_SHARED)))
+    (block $done (loop $next
+      (br_if $done (i32.eqz (local.get $node)))
+      (local.set $vector (call $gl32 (i32.add (local.get $node) (i32.const 4))))
+      (if (local.get $vector)
+        (then (call $gs32 (i32.add (local.get $vector) (i32.shl (local.get $index) (i32.const 2))) (i32.const 0))))
+      (local.set $node (call $gl32 (local.get $node)))
+      (br $next))))
+  (func $tls_attach_slots (param $vector i32) (result i32)
+    (local $node i32)
+    (if (i32.eqz (global.get $tls_registry_node))
+      (then
+        (local.set $node (call $heap_alloc (i32.const 8)))
+        (if (i32.eqz (local.get $node)) (then (return (i32.const 0))))))
+    (call $tls_lock)
+    (if (local.get $node)
+      (then
+        (call $gs32 (local.get $node) (i32.load offset=8 (global.get $TLS_NEXT_INDEX_SHARED)))
+        (i32.store offset=8 (global.get $TLS_NEXT_INDEX_SHARED) (local.get $node))
+        (global.set $tls_registry_node (local.get $node))))
+    (call $gs32 (i32.add (global.get $tls_registry_node) (i32.const 4)) (local.get $vector))
+    (global.set $tls_slots (local.get $vector))
+    (call $tls_unlock)
+    (i32.const 1))
+  (func $tls_ensure_slots (result i32)
+    (local $vector i32)
+    (if (global.get $tls_slots) (then (return (global.get $tls_slots))))
+    (local.set $vector (call $heap_alloc (i32.shl (global.get $TLS_SLOT_COUNT) (i32.const 2))))
+    (if (i32.eqz (local.get $vector)) (then (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $vector)) (i32.shl (global.get $TLS_SLOT_COUNT) (i32.const 2)))
+    (if (i32.eqz (call $tls_attach_slots (local.get $vector)))
+      (then (call $heap_free (local.get $vector)) (return (i32.const 0))))
+    (local.get $vector))
+  (func $tls_reserve (result i32)
+    (local $index i32) (local $word i32) (local $mask i32)
+    (call $tls_lock)
+    (block $full (loop $scan
+      (br_if $full (i32.ge_u (local.get $index) (global.get $TLS_SLOT_COUNT)))
+      (local.set $word (call $tls_bitmap_word (local.get $index)))
+      (local.set $mask (i32.shl (i32.const 1) (local.get $index)))
+      (if (i32.eqz (i32.and (i32.load (local.get $word)) (local.get $mask)))
+        (then
+          (call $tls_clear_index (local.get $index))
+          (i32.store (local.get $word) (i32.or (i32.load (local.get $word)) (local.get $mask)))
+          (if (i32.ge_u (local.get $index) (i32.atomic.load (global.get $TLS_NEXT_INDEX_SHARED)))
+            (then (i32.atomic.store (global.get $TLS_NEXT_INDEX_SHARED) (i32.add (local.get $index) (i32.const 1)))))
+          (call $tls_unlock)
+          (return (local.get $index))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (call $tls_unlock)
+    (i32.const -1))
+  (func $tls_release_index (param $index i32) (result i32)
+    (local $word i32) (local $mask i32)
+    (if (i32.ge_u (local.get $index) (global.get $TLS_SLOT_COUNT)) (then (return (i32.const 0))))
+    (local.set $word (call $tls_bitmap_word (local.get $index)))
+    (local.set $mask (i32.shl (i32.const 1) (local.get $index)))
+    (call $tls_lock)
+    (if (i32.eqz (i32.and (i32.load (local.get $word)) (local.get $mask)))
+      (then (call $tls_unlock) (return (i32.const 0))))
+    (call $tls_clear_index (local.get $index))
+    (i32.store (local.get $word) (i32.and (i32.load (local.get $word)) (i32.xor (local.get $mask) (i32.const -1))))
+    (call $tls_unlock)
+    (i32.const 1))
+  ;; Compatibility spawn metadata is a high-water mark, not the current used
+  ;; set. Never reserve a freed hole merely because a stale snapshot arrives.
+  (func $tls_publish_minimum (param $minimum i32)
+    (local $index i32) (local $word i32)
+    (if (i32.gt_u (local.get $minimum) (global.get $TLS_SLOT_COUNT))
+      (then (local.set $minimum (global.get $TLS_SLOT_COUNT))))
+    (call $tls_lock)
+    (local.set $index (i32.atomic.load (global.get $TLS_NEXT_INDEX_SHARED)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $index) (local.get $minimum)))
+      (local.set $word (call $tls_bitmap_word (local.get $index)))
+      (i32.store (local.get $word) (i32.or (i32.load (local.get $word)) (i32.shl (i32.const 1) (local.get $index))))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (i32.atomic.store (global.get $TLS_NEXT_INDEX_SHARED) (local.get $index))
+    (call $tls_unlock))
+
+  ;; 326: TlsAlloc — reserve a reusable process index, with a per-thread vector.
   (func $handle_TlsAlloc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $index i32)
+    (if (i32.eqz (call $tls_ensure_slots))
+      (then
+        (global.set $last_error (i32.const 8))
+        (i32.store offset=0 (global.get $reg_base) (i32.const -1))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+        (return)))
     (local.set $index (call $tls_reserve))
     (if (i32.eq (local.get $index) (i32.const -1))
       (then
+        (global.set $last_error (i32.const 259))
         (i32.store offset=0 (global.get $reg_base) (i32.const -1)) ;; TLS_OUT_OF_INDEXES
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
         (return)))
-    (if (i32.eqz (global.get $tls_slots))
-      (then
-        (global.set $tls_slots (call $heap_alloc (i32.const 256)))
-        (call $zero_memory (call $g2w (global.get $tls_slots)) (i32.const 256))))
     (i32.store offset=0 (global.get $reg_base) (local.get $index))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) (return)
   )
 
   ;; 327: TlsGetValue(index)
   (func $handle_TlsGetValue (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.ge_u (local.get $arg0) (i32.const 64))
+    (if (i32.ge_u (local.get $arg0) (global.get $TLS_SLOT_COUNT))
       (then
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -704,38 +803,42 @@ nW — STUB: unimplemented
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
         (return)))
+    (call $tls_lock)
     (i32.store offset=0 (global.get $reg_base) (call $gl32 (i32.add (global.get $tls_slots) (i32.shl (local.get $arg0) (i32.const 2)))))
+    (call $tls_unlock)
     (global.set $last_error (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))) (return)
   )
 
   ;; 328: TlsSetValue(index, value)
   (func $handle_TlsSetValue (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.ge_u (local.get $arg0) (i32.const 64))
+    (if (i32.ge_u (local.get $arg0) (global.get $TLS_SLOT_COUNT))
       (then
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
-    (if (i32.eqz (global.get $tls_slots))
+    (if (i32.eqz (call $tls_ensure_slots))
       (then
-        (global.set $tls_slots (call $heap_alloc (i32.const 256)))
-        (call $zero_memory (call $g2w (global.get $tls_slots)) (i32.const 256))))
+        (global.set $last_error (i32.const 8))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+        (return)))
+    (call $tls_lock)
     (call $gs32 (i32.add (global.get $tls_slots) (i32.shl (local.get $arg0) (i32.const 2))) (local.get $arg1))
-    (global.set $last_error (i32.const 0))
+    (call $tls_unlock)
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))) (return)
   )
 
-  ;; 329: TlsFree(index) — return TRUE
+  ;; 329: TlsFree(index) — clear all vectors and return the index to the bitmap.
   (func $handle_TlsFree (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.ge_u (local.get $arg0) (i32.const 64))
+    (if (i32.eqz (call $tls_release_index (local.get $arg0)))
       (then
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
         (return)))
-    (global.set $last_error (i32.const 0))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )

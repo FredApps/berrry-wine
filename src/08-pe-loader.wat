@@ -137,10 +137,8 @@
     ;; TIB+0x2c: ThreadLocalStoragePointer — point at our TLS slot array so that
     ;; apps doing direct FS:[0x2c][index*4] reads (bypassing TlsGetValue) see the
     ;; same values our TlsSetValue writes. Eagerly allocate the slot array.
-    (if (i32.eqz (global.get $tls_slots))
-      (then
-        (global.set $tls_slots (call $heap_alloc (i32.const 256)))
-        (call $zero_memory (call $g2w (global.get $tls_slots)) (i32.const 256))))
+    (if (i32.eqz (call $tls_ensure_slots))
+      (then (global.set $last_error (i32.const 8)) (return (i32.const 0))))
     (call $gs32 (i32.add (global.get $fs_base) (i32.const 0x2c)) (global.get $tls_slots))
     ;; TIB+0x30: on Win9x this is the process database, a pointer into the
     ;; shared arena above 0x80000000; NT keeps its PEB (below 2 GB) here. Code

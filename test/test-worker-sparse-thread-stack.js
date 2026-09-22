@@ -119,6 +119,14 @@ async function main() {
     assert.strictEqual(await thread.callExport('guest_read32', thread.stackTop - 4),
       0x12345678);
     assert.strictEqual(await thread.callExport('guest_read32', thread.stackTop - 8), 0);
+    const vector = await thread.callExport('get_tls_slots') >>> 0;
+    assert(vector, 'real Worker setup registers its TLS vector');
+    assert.strictEqual(await thread.callExport('test_call_TlsSetValue', 79, 0x12345678), 1);
+    assert.strictEqual(await thread.callExport('guest_read32', vector + 79 * 4), 0x12345678);
+    await host.callExport('set_tls_next_index', 80);
+    assert.strictEqual(await host.callExport('test_call_TlsFree', 79), 1);
+    assert.strictEqual(await thread.callExport('guest_read32', vector + 79 * 4), 0,
+      'main instance Free clears the real guest Worker vector without a GetValue call');
   } finally {
     host.stop();
   }
