@@ -32,7 +32,8 @@ policy; this is not a native Win98 observation or a promised COM input.
 
 - The subsequent [clipper QI fix](directdraw-clipper-query-interface-review.md)
   separates native/VB identities and acquires references. The native probe also
-  exposed a missing VB vtable tail slot, which remains open.
+  exposed a missing VB vtable tail slot; the follow-up native ABI probe and
+  regression now cover its repair. Other VB methods remain incomplete.
 - Arbitrary invalid pointers, cross-page IID buffers, concurrent refcount
   updates and PAGE permissions are not covered by this change.
 - This is a focused handler regression, not a browser/game performance result

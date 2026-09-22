@@ -17,7 +17,7 @@ node tools/v86-reference/capture.js --online \
 LF endings. Capture metadata records the VM sources and payload hashes;
 `probeSourceSha256` additionally pins the final probe source. Executables,
 OS images and screenshots are not committed. The fixture integrity test checks
-the observations and five deliberately corrupted variants; it is not a test
+the observations and six deliberately corrupted variants; it is not a test
 of the emulator's runtime implementation.
 
 ## Findings that change the fix
@@ -32,6 +32,12 @@ of the emulator's runtime implementation.
   GetClipList, SetClipList, GetHWnd, SetHWnd, IsClipListChanged. Parameters and
   byte offsets are preserved in the serial output. Our native/VB shared QI
   cannot return the VB pointer for a native IID: their method layouts differ.
+- The extended FUNCDESC probe reports tail return VT_HRESULT (25), parameter
+  VT_PTR (26) to VT_INT (22), flags FOUT|FRETVAL (0x0a). On this 32-bit ABI
+  that is a four-byte `int*`, not the two-byte VT_BOOL/VARIANT_BOOL type.
+  Microsoft's [VARENUM definitions](https://learn.microsoft.com/en-us/windows/win32/api/wtypes/ne-wtypes-varenum)
+  distinguish these types. The retained captures were both rerun with this
+  extension; their executable and source hashes match the updated probe.
 - The actual VB class factory and DirectX7 root creation succeed. Its
   DirectDrawCreate with an empty BSTR returns E_FAIL in this VM, so **no VB
   clipper object QI behavior was observed**. Do not convert that failure into
@@ -48,8 +54,9 @@ probe compares the exact UTF-16 name locally.
 
 ## Runtime work still required
 
-Separate native/VB interface identities, add successful-query ownership,
-validate complete IIDs, and repair the missing VB tail slot without changing
-specialized clipper destruction. Native NULL-pointer fault behavior and
-concurrent reference updates have not been measured. This commit records the
-oracle only; the emulator's clipper implementation is still unchanged.
+Native/VB interface identities and successful-query ownership were fixed in
+`b856290d`. The follow-up tail fix allocates eleven slots and shares native
+IsClipListChanged's compatible thunk; specialized destruction is unchanged.
+See [runtime review](../../../docs/directdraw-clipper-query-interface-review.md).
+Native NULL-pointer fault behavior, VB object QI and concurrent reference
+updates have not been measured. Other VB clipper methods remain incomplete.

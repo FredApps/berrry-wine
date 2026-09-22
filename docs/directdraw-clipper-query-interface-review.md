@@ -35,9 +35,7 @@ balance, logical-AND, test-tier and whitespace checks pass.
 
 ## Open
 
-- The VB factory still builds 10 slots instead of the typelib's 11. Repairing
-  its IsClipListChanged tail requires establishing the output type/width and
-  adapting it, not blindly wiring a native BOOL writer into a VB method.
+- The missing VB tail slot is now fixed (details below).
 - VB's other DirectSlot fallbacks are not implementations of its full typelib.
 - NULL riid keeps the shared helper's defensive policy; arbitrary invalid
   pointers, sparse-page-straddling IIDs and concurrent refcounts remain outside
@@ -45,3 +43,23 @@ balance, logical-AND, test-tier and whitespace checks pass.
 - No browser/game, performance, full-build or comprehensive Win98 result is
   claimed by this focused fix. The quiet-handler pin does not change: the old
   clipper already wrote an output and therefore was not a quiet entry.
+
+## Missing VB tail follow-up
+
+Two fresh native captures with an extended FUNCDESC probe agree: the tail is
+HRESULT with an `[out, retval] int*` parameter (VT_PTR to VT_INT), **not**
+VARIANT_BOOL. The factory now allocates eleven vtable entries and installs the
+existing native IsClipListChanged thunk in VB slot 10 before returning the
+wrapper. No new API entry, handwritten adapter, or duplicate state implementation
+is needed. Slots 0–9 remain as before; native uses its original slot 6.
+
+Before the fix, the extended regression failed because VB slot 10 did not
+contain a COM thunk. It now dispatches via the actual slot's API id, checks
+zero/changed/zero state, complete four-byte output overwriting a sentinel,
+unchanged neighboring dwords, NULL-output error, reference count and 12-byte
+stdcall cleanup. The state is controlled directly in this unit test; this is
+not a claim about native VB window-movement timing or app-level behavior.
+The extended runtime regression, surface-clipper ownership suite and refreshed
+native fixture integrity test pass. The first ten VB slot API identities are
+also checked unchanged; six fixture mutations include substituting VT_BOOL
+for the measured VT_INT and must all fail validation.

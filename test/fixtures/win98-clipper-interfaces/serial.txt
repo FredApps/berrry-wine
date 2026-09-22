@@ -9,6 +9,7 @@ METHOD name=SetClipList offset=0000001c params=00000002
 METHOD name=GetHWnd offset=00000020 params=00000001
 METHOD name=SetHWnd offset=00000024 params=00000001
 METHOD name=IsClipListChanged offset=00000028 params=00000001
+TAIL return=00000019 param=0000001a flags=0000000a pointee=00000016
 CREATE hr=00000000
 QI name=IUnknown hr=00000000 null=00000000 same=00000001 release=00000001
 QI name=native hr=00000000 null=00000000 same=00000001 release=00000001

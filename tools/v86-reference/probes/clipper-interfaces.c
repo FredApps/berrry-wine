@@ -67,6 +67,14 @@ void WinMainCRTStartup(void) {
               ITypeInfo_GetDocumentation(info,fn->memid,&method,0,0,0);
               emit("METHOD name="); wide(method); emit(" offset="); hex(fn->oVft);
               emit(" params="); hex(fn->cParams); emit("\r\n");
+              if(nameIs(method,"IsClipListChanged") && fn->cParams==1) {
+                TYPEDESC *td=&fn->lprgelemdescParam[0].tdesc;
+                emit("TAIL return="); hex(fn->elemdescFunc.tdesc.vt);
+                emit(" param="); hex(td->vt);
+                emit(" flags="); hex(fn->lprgelemdescParam[0].paramdesc.wParamFlags);
+                emit(" pointee="); hex(td->vt==VT_PTR?td->lptdesc->vt:0xffffffff);
+                emit("\r\n");
+              }
               freeBstr(method); ITypeInfo_ReleaseFuncDesc(info,fn);
             }
           }

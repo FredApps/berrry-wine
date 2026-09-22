@@ -1526,19 +1526,25 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
   (func $handle_IVBDirectDraw7_CreateClipper (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $native_obj i32) (local $entry i32) (local $slot i32) (local $wrapper i32)
+    (local $vb_vtbl i32)
     (call $handle_IDirectDraw_CreateClipper
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (i32.const 0) (i32.const 0) (local.get $name_ptr))
-    ;; DX7VB inserts one typelib slot ahead of SetHWnd. Keep the native
-    ;; clipper state, but publish a same-slot auxiliary wrapper with that
-    ;; ten-entry layout rather than letting the client call past slot 8.
+    ;; DX7VB's typelib has eleven slots, ending in IsClipListChanged at 10.
+    ;; That method is HRESULT(this, [out, retval] int*), ABI-compatible with
+    ;; native slot 6, so share its thunk rather than inventing a second handler.
     (if (i32.and (i32.eqz (i32.load offset=0 (global.get $reg_base))) (i32.ne (local.get $arg2) (i32.const 0))) (then
       (local.set $native_obj (call $gl32 (local.get $arg2)))
       (if (local.get $native_obj) (then
         (local.set $entry (call $dx_from_this (local.get $native_obj)))
         (local.set $slot (call $dx_slot_of (local.get $entry)))
+        (local.set $vb_vtbl (call $init_com_vtable (i32.const 2564) (i32.const 11)))
+        ;; The first ten API ids are contiguous; the tail is not. Replace the
+        ;; provisional final entry before publishing this wrapper to the guest.
+        (call $gs32 (i32.add (local.get $vb_vtbl) (i32.const 40))
+          (call $gl32 (i32.add (global.get $DX_VTBL_DDCLIP) (i32.const 24))))
         (local.set $wrapper (call $dx_get_wrapper_for_vtbl
-          (local.get $slot) (call $init_com_vtable (i32.const 2564) (i32.const 10))))
+          (local.get $slot) (local.get $vb_vtbl)))
         (call $gs32 (local.get $arg2) (local.get $wrapper))))))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
   (func $handle_IVBDirectDraw7_CreateSurface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

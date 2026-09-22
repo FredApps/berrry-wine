@@ -21,6 +21,7 @@ function verify(text) {
   const hex = n => n.toString(16).padStart(8, '0');
   methods.forEach(([name, args], i) => assert.strictEqual(lines.shift(),
     `METHOD name=${name} offset=${hex((i + 3) * 4)} params=${hex(args)}`));
+  assert.strictEqual(lines.shift(), 'TAIL return=00000019 param=0000001a flags=0000000a pointee=00000016');
   assert.deepStrictEqual(lines, [
     'CREATE hr=00000000',
     'QI name=IUnknown hr=00000000 null=00000000 same=00000001 release=00000001',
@@ -58,5 +59,6 @@ for (const corrupted of [
   first.replace('release=00000001', 'release=00000000'),
   first.replace('hr=80004002', 'hr=00000000'),
   first.replace('VBDRAW hr=80004005', 'VBDRAW hr=00000000'),
+  first.replace('pointee=00000016', 'pointee=0000000b'),
 ]) assert.throws(() => verify(corrupted));
-console.log('PASS native clipper fixture: repeated IID/refcount/ABI observations; five negative controls');
+console.log('PASS native clipper fixture: repeated IID/refcount/ABI observations; six negative controls');

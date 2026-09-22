@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "capturedAt": "2026-09-22T20:54:21.172Z",
+  "capturedAt": "2026-09-22T21:02:01.251Z",
   "app": {
     "id": "clipper-interfaces",
     "title": "Native DirectDraw clipper interfaces and DX7VB type metadata",
@@ -12,7 +12,7 @@
     "display": "block",
     "running": true
   },
-  "output": "../../../../../../private/tmp/wa-clipper-native.png",
+  "output": "../../../../../../private/tmp/wa-clipper-abi.png",
   "screenshotSha256": "1b96efc00582d4275cbcb116e71d011ad8ab13a499214ad0ff04599f17cc6b55",
   "v86": {
     "package": "v86@0.5.432",
@@ -29,7 +29,7 @@
     {
       "name": "CLIPREF.EXE",
       "source": ".cache/v86-reference/clipper-interfaces.exe",
-      "sha256": "a8b20f7978a18e312dcaba8def90ae9e8bab764d5c5fcd138a55acdbf7be6156"
+      "sha256": "ae96bea205cafc52c4a22c818a66fb39b6b59fdf3fb985c6c7bafc2bcbeae22c"
     },
     {
       "name": "DX7VB.DLL",
@@ -37,5 +37,5 @@
       "sha256": "ce95fbf5e51371a3dc6f571b72fd0a1f6b710e33c101d1e7122c45533985e17b"
     }
   ],
-  "probeSourceSha256": "7c95690e6eeec8c71d407768ab05af79c6a73482bd1bf8c55ffbdffba91043c1"
+  "probeSourceSha256": "8bbfc4950e7e0b18f0d6a1781ef9959fdf033096ae9b38b366db59a92fef4e03"
 }
