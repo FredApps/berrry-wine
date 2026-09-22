@@ -2484,7 +2484,8 @@
       (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))       ;; wSrc
       (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36)))       ;; hSrc
       (call $g2w (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 40))))  ;; lpBits → WASM addr
-      (call $g2w (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44))))  ;; lpBmi → WASM addr
+      (call $gdi_bitmap_info_wa
+        (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44))))  ;; lpBmi → WASM addr
       (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 48)))       ;; iUsage
       (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 52)))       ;; dwRop
     ))
@@ -2733,7 +2734,7 @@
     (i32.store offset=0 (global.get $reg_base) (call $host_gdi_set_dib_bits
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
       (call $g2w (local.get $arg4))
-      (call $g2w (local.get $lpBMI))
+      (call $gdi_bitmap_info_wa (local.get $lpBMI))
       (local.get $fuColorUse)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))  ;; stdcall, 7 args
   )
@@ -2754,7 +2755,8 @@
     (i32.store offset=0 (global.get $reg_base) (call $host_gdi_set_dib_to_device
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
       (local.get $xSrc) (local.get $ySrc) (local.get $startScan) (local.get $cLines)
-      (call $g2w (local.get $lpBits)) (call $g2w (local.get $lpBMI)) (local.get $colorUse)))
+      (call $g2w (local.get $lpBits)) (call $gdi_bitmap_info_wa (local.get $lpBMI))
+      (local.get $colorUse)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 52)))  ;; stdcall, 12 args
   )
 
@@ -2800,18 +2802,23 @@
 
   ;; 448: GetDIBits(hdc, hbmp, uStartScan, cScanLines, lpvBits, lpbmi, uUsage) — 7 args stdcall
   (func $handle_GetDIBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa_esp i32) (local $lpbmi i32) (local $uUsage i32)
+    (local $wa_esp i32) (local $lpbmi i32) (local $uUsage i32) (local $bmi_wa i32)
     (local.set $wa_esp (call $g2w (i32.load offset=16 (global.get $reg_base))))
     (local.set $lpbmi (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
     (local.set $uUsage (i32.load (i32.add (local.get $wa_esp) (i32.const 28))))
+    ;; This one is an output buffer as well: GetDIBits describes the bitmap in
+    ;; the caller's header. A straddling BITMAPINFO is read through a gathered
+    ;; copy, so what the call wrote there has to be put back afterwards.
+    (local.set $bmi_wa (call $gdi_bitmap_info_wa_out (local.get $lpbmi)))
     (i32.store offset=0 (global.get $reg_base) (call $host_gdi_get_di_bits
       (local.get $arg0)              ;; hdc
       (local.get $arg1)              ;; hbmp
       (local.get $arg2)              ;; uStartScan
       (local.get $arg3)              ;; cScanLines
       (local.get $arg4)              ;; lpvBits (guest address)
-      (if (result i32) (local.get $lpbmi) (then (call $g2w (local.get $lpbmi))) (else (i32.const 0)))  ;; lpbmi (WASM ptr)
+      (local.get $bmi_wa)            ;; lpbmi (WASM ptr)
       (local.get $uUsage)))
+    (call $gdi_bitmap_info_writeback (local.get $lpbmi) (local.get $bmi_wa))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))  ;; 7 args + ret
   )
 
@@ -2821,7 +2828,7 @@
     ;; true-color callers that omit the duplicate BITMAPINFO pointer.
     (i32.store offset=0 (global.get $reg_base) (call $gdi_bitmap_create_dibitmap
       (local.get $arg0)
-      (call $g2w (select (local.get $arg4) (local.get $arg1)
+      (call $gdi_bitmap_info_wa (select (local.get $arg4) (local.get $arg1)
         (i32.ne (local.get $arg4) (i32.const 0))))
       (if (result i32) (local.get $arg3)
         (then (call $g2w (local.get $arg3))) (else (i32.const 0)))

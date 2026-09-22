@@ -899,20 +899,36 @@
   ;; only the color table crossed, built the picture with a garbage palette.
   ;; Return the direct pointer when the whole span is affine, and otherwise a
   ;; copy gathered page by page.
-  (func $gdi_bitmap_info_wa (param $ga i32) (result i32)
+  ;; Bytes of BITMAPINFO the header at $ga describes: header, color table and
+  ;; any BI_BITFIELDS masks, clamped to the scratch block. A caller that passes
+  ;; a bare BITMAPINFOHEADER is counted as if its color table were present,
+  ;; which over-reads a few bytes of guest memory and never under-copies.
+  ;; One field of the structure, from the gathered copy when there is one.
+  (func $gdi_bitmap_info_u32 (param $ga i32) (param $wa i32) (param $off i32) (result i32)
+    (if (local.get $wa)
+      (then (return (i32.load (i32.add (local.get $wa) (local.get $off))))))
+    (call $gl32 (i32.add (local.get $ga) (local.get $off))))
+  (func $gdi_bitmap_info_u16 (param $ga i32) (param $wa i32) (param $off i32) (result i32)
+    (if (local.get $wa)
+      (then (return (i32.load16_u (i32.add (local.get $wa) (local.get $off))))))
+    (call $gl16 (i32.add (local.get $ga) (local.get $off))))
+
+  (func $gdi_bitmap_info_size (param $ga i32) (result i32)
+    (call $gdi_bitmap_info_size_at (local.get $ga) (i32.const 0)))
+
+  (func $gdi_bitmap_info_size_at (param $ga i32) (param $wa i32) (result i32)
     (local $size i32) (local $header i32) (local $bpp i32) (local $colors i32)
-    (local $wa i32) (local $scratch i32) (local $i i32)
     (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
-    (local.set $header (call $gl32 (local.get $ga)))
+    (local.set $header (call $gdi_bitmap_info_u32 (local.get $ga) (local.get $wa) (i32.const 0)))
     (if (i32.eq (local.get $header) (i32.const 12))
       (then
-        (local.set $bpp (call $gl16 (i32.add (local.get $ga) (i32.const 10))))
+        (local.set $bpp (call $gdi_bitmap_info_u16 (local.get $ga) (local.get $wa) (i32.const 10)))
         (local.set $size (i32.add (i32.const 12)
           (select (i32.mul (i32.shl (i32.const 1) (local.get $bpp)) (i32.const 3))
             (i32.const 0) (i32.le_u (local.get $bpp) (i32.const 8))))))
       (else
-        (local.set $bpp (call $gl16 (i32.add (local.get $ga) (i32.const 14))))
-        (local.set $colors (call $gl32 (i32.add (local.get $ga) (i32.const 32))))
+        (local.set $bpp (call $gdi_bitmap_info_u16 (local.get $ga) (local.get $wa) (i32.const 14)))
+        (local.set $colors (call $gdi_bitmap_info_u32 (local.get $ga) (local.get $wa) (i32.const 32)))
         (if (i32.and (i32.eqz (local.get $colors))
               (i32.le_u (local.get $bpp) (i32.const 8)))
           (then (local.set $colors (i32.shl (i32.const 1) (local.get $bpp)))))
@@ -922,10 +938,17 @@
           (i32.shl (local.get $colors) (i32.const 2))))
         ;; BI_BITFIELDS masks follow a plain 40-byte header.
         (if (i32.and (i32.eq (local.get $header) (i32.const 40))
-              (i32.eq (call $gl32 (i32.add (local.get $ga) (i32.const 16))) (i32.const 3)))
+              (i32.eq (call $gdi_bitmap_info_u32 (local.get $ga) (local.get $wa) (i32.const 16))
+            (i32.const 3)))
           (then (local.set $size (i32.add (local.get $size) (i32.const 12)))))))
     (if (i32.gt_u (local.get $size) (global.get $GDI_BITMAP_INFO_SCRATCH_SIZE))
       (then (local.set $size (global.get $GDI_BITMAP_INFO_SCRATCH_SIZE))))
+    (local.get $size))
+
+  (func $gdi_bitmap_info_wa (param $ga i32) (result i32)
+    (local $size i32) (local $wa i32) (local $scratch i32) (local $i i32)
+    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
+    (local.set $size (call $gdi_bitmap_info_size (local.get $ga)))
     (local.set $wa (call $g2w_affine_span (local.get $ga) (local.get $size)))
     (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
       (then (return (local.get $wa))))
@@ -937,6 +960,54 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $copy)))
     (local.get $scratch))
+
+  ;; GetDIBits is told how big the structure is by what it writes, not by what
+  ;; arrives: a format query comes in as a bare 40-byte header and leaves
+  ;; describing a 256-entry color table. Cover a full table, so the call cannot
+  ;; write past the span we checked (or gathered) and lose the tail into the
+  ;; page the caller's buffer straddles into.
+  (func $gdi_bitmap_info_wa_out (param $ga i32) (result i32)
+    (local $size i32) (local $header i32) (local $wa i32) (local $scratch i32) (local $i i32)
+    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
+    (local.set $header (call $gl32 (local.get $ga)))
+    (local.set $size (i32.add
+      (select (i32.const 12) (local.get $header) (i32.eq (local.get $header) (i32.const 12)))
+      (select (i32.const 768) (i32.const 1036)      ;; 256 RGBTRIPLEs / RGBQUADs + masks
+        (i32.eq (local.get $header) (i32.const 12)))))
+    (if (i32.gt_u (local.get $size) (global.get $GDI_BITMAP_INFO_SCRATCH_SIZE))
+      (then (local.set $size (global.get $GDI_BITMAP_INFO_SCRATCH_SIZE))))
+    (if (i32.lt_u (local.get $size) (call $gdi_bitmap_info_size (local.get $ga)))
+      (then (local.set $size (call $gdi_bitmap_info_size (local.get $ga)))))
+    (local.set $wa (call $g2w_affine_span (local.get $ga) (local.get $size)))
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then (return (local.get $wa))))
+    (local.set $scratch (global.get $GDI_BITMAP_INFO_SCRATCH))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $size)))
+      (i32.store8 (i32.add (local.get $scratch) (local.get $i))
+        (call $gl8 (i32.add (local.get $ga) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $scratch))
+
+  ;; GetDIBits fills in the caller's BITMAPINFO, so a gathered copy has to go
+  ;; back byte by byte. A $wa that is not the scratch block is the caller's own
+  ;; memory and was written in place.
+  (func $gdi_bitmap_info_writeback (param $ga i32) (param $wa i32)
+    (local $size i32) (local $i i32)
+    (if (i32.ne (local.get $wa) (global.get $GDI_BITMAP_INFO_SCRATCH)) (then (return)))
+    ;; Size the copy-back from the header the call filled in, not from the one
+    ;; the caller passed: a GetDIBits format query arrives with a bare 40-byte
+    ;; header and leaves describing a bitmap with a 256-entry color table.
+    (local.set $size (call $gdi_bitmap_info_size_at (local.get $ga) (local.get $wa)))
+    (if (i32.lt_u (local.get $size) (call $gdi_bitmap_info_size (local.get $ga)))
+      (then (local.set $size (call $gdi_bitmap_info_size (local.get $ga)))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $size)))
+      (call $gs8 (i32.add (local.get $ga) (local.get $i))
+        (i32.load8_u (i32.add (local.get $wa) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy))))
 
   (func $gdi_bitmap_create_dib_section (param $hdc i32) (param $info i32)
         (param $usage i32) (result i32)
