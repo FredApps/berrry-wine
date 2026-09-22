@@ -238,10 +238,7 @@
 
   ;; 480: GetTimeZoneInformation(lpTZI) — zero-fill 172-byte struct, return TIME_ZONE_ID_UNKNOWN (0)
   (func $handle_GetTimeZoneInformation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $arg0)))
-    ;; Zero-fill 172 bytes
-    (memory.fill (local.get $wa) (i32.const 0) (i32.const 172))
+    (call $guest_memset (local.get $arg0) (i32.const 0) (i32.const 172))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))  ;; TIME_ZONE_ID_UNKNOWN
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))  ;; stdcall, 1 arg
   )

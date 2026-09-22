@@ -537,3 +537,18 @@ broader items. Before implementing dirty-page writeback, remaining guest-write
 coverage and flush concurrency still need a complete design; timing decisions
 still require quiet game A/B evidence. No full-build/browser pass is claimed
 by this checkpoint.
+
+## Timezone structure uses the shared guest fill
+
+`GetTimeZoneInformation` was still clearing a translated raw 172-byte span.
+It now calls `guest_memset` with the original guest pointer, so page splitting
+and write notification follow the same core as CRT fills and startup-info
+initialization. The existing zero-bias/no-transition structure and
+TIME_ZONE_ID_UNKNOWN return are unchanged; this is not timezone/DST modeling.
+
+`test/test-timezone-info-boundaries.js` failed before the change at split 1.
+Afterward all 171 sparse crossings and a page-local control pass, checking
+every result byte, surrounding canaries, unrelated backing preservation,
+return value and stdcall cleanup. The new test is automatically tiered;
+test-tier, logical-AND and whitespace gates pass. Broader API semantics,
+remaining raw guest writes and dirty-page writeback remain open.
