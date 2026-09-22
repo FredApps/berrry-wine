@@ -37,3 +37,42 @@ default data, caller buffer sizing and guest-aware reads/writes. A constant
 error is not the desired end state. Clipboard counting/ordering also remains
 open: the current count is approximate and enumeration does not retain
 publication order; this audit did not change either by inference.
+
+## Native probe prepared — capture pending
+
+`tools/v86-reference/probes/shreg-us-value.c` and `shreg-us-apps.json`
+prepare 16 serial-output cases for the reference Win98 VM. They distinguish
+HKCU-first lookup, ignore-HKCU (including BOOL 2), HKLM-only values, unnamed
+values, size-only queries, missing keys/values, short buffers, and defaults
+with capacities 0/2/4/16. A larger HKCU value with a smaller HKLM value tests
+whether a buffer error triggers fallback. Each row records return code, type,
+size, LastError and all 16 output bytes, initially filled with a sentinel.
+
+The probe creates only its own `Software\WineAssemblySHRegUSReference`
+key under HKCU/HKLM in the VM. It refuses existing keys before writing, tracks
+which keys it created, and deletes only those keys. It uses dynamically
+resolved registry/shell APIs and imports only KERNEL32; there is no CRT.
+NULL-output queries with nonempty defaults are deliberately not included yet.
+
+Verified: Zig 0.13.0 compiles the probe to PE32/i386 with OS/subsystem version
+4.0; import inspection shows only KERNEL32, and the capture manifest lists
+successfully. The final local artifact is `/private/tmp/wa-shreg-us-probe.exe`
+(not committed). Compilation needed Zig's explicit Windows include directory,
+as already supplied by `capture.js`.
+
+**No native results yet.** Capture was deferred for the other agent's
+2026-09-22 14:56 browser-sweep reservation. Runtime semantics are unchanged.
+After that reservation is released, run twice from fresh reference-VM state:
+
+```sh
+node tools/v86-reference/capture.js --online \
+  --manifest tools/v86-reference/shreg-us-apps.json --app shreg-us-value \
+  --output /private/tmp/wa-shreg-us.png \
+  --metadata /private/tmp/wa-shreg-us.json \
+  --serial-output /private/tmp/wa-shreg-us.serial.txt
+```
+
+Use different output paths for the repeat. Require all 16 rows, both begin/end
+markers, successful cleanup and matching observations before retaining a
+native fixture. Then implement precedence/default copying with guest-aware
+memory access and compare actual generated dispatch against those observations.
