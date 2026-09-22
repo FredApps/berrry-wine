@@ -1,185 +1,243 @@
-# A software path for OpenGL guests: scope, 2026-09-22
+# A backend-neutral render stream: scope, 2026-09-22
 
 ## ASCII TL;DR
 
-    FRONTEND (WAT)            DESCRIPTOR                CONSUMER
+Today, one frontend already has the whole topology and the other does not:
 
-    D3DIM  09ab ───────────────────────────────────────→ WAT raster 09ah  ✅
-           TL verts + 31-dword state                     (0 crossings)
+    D3D    WAT frontend ─→ descriptors ─→ ring (3 SABs) ─→ render worker ─→ WAT raster
+           09a*             DFX1/DLT1/     d3d-command-     2nd wasm         09ah   ✅
+                            cascade        stream.js        instance,
+                                           held to fence    shared memory
 
-    D3D9   09a*  ──→ JS builds DFX1/DLT1/cascade ──────→ WAT raster 09ah  ✅
-                     d3d9-software-backend.js:284-377    (JS orchestrates,
-                                                          no pixels in JS)
+    GL     WAT frontend ─→ call log ─────→ one borrowed ──→ JS replay ────→ WebGL
+           09a8c/e          gl-command-     range,           gl-compat.js          ❌
+           verts ✅          stream.js       reused at once   state lives here
+           state ❌                                          no software path
 
-    OpenGL 09a8e ──→ ??? ──────────────────────────────→ WAT raster       ❌
-           verts ✅  matrices ❌  lights ❌  fog ❌            DOES NOT EXIST
-           material ❌   (all in lib/gl-compat.js)
-
-Goal: give the OpenGL frontend what D3DIM already has — rasterization that
-never leaves WAT — by reusing the descriptor format `09aj`/`09ah` already
-define, rather than by routing GL through a JavaScript device object.
+Target: GL joins that topology. The stream carries **descriptors translated in
+WAT at record time**, not a log of GL calls, so it is backend-neutral by
+construction and any consumer — WAT software raster, WebGL, WebGPU later —
+reads the same thing.
 
 **This document is scope, not a plan of record. Nothing here is implemented.**
 
-## Why not the obvious shortcut
+## The ordering that makes it worth doing
 
-The tempting move is to make `lib/d3dim-gpu.js` and `lib/gl-compat.js` share
-`lib/d3d9-backend.js`'s `Device.draw(snapshot)`, which is already backend-neutral
-and already has two implementations selected at `lib/d3d9-host.js:62`.
+Lifting GL state into WAT is not merely a prerequisite for a software
+rasterizer. It pays immediately, in round trips, because **most GL barriers
+exist only because the state lives in JavaScript**.
 
-For D3DIM that is a **regression**, and it is worth recording why so nobody
-proposes it again. D3DIM's software path today is `$d3dim_draw_tl_triangle`
-(`src/09ab-handlers-d3dim-core.wat:5632`) — WAT frontend straight into WAT
-raster, zero boundary crossings. Routing it through the JS device would insert
-`lib/d3dim-gpu.js:_draw`, which builds a `Uint8Array` and byte-swaps every
-vertex's D3DCOLOR in JavaScript (`lib/d3dim-gpu.js:340-347`), in front of a
-rasterizer that needs none of it. That JS loop is acceptable on the opt-in
-`--d3dim-gpu` path, where the destination is WebGL anyway. It is not acceptable
-as the default software path.
+`lib/gl-command-stream.js:45-62` forces a flush for `glGetError` (12),
+`glGetFloatv` (13), `glIsEnabled` (65) and `glGetIntegerv` (103). Every one of
+those is a *state* query. The comment at `:58-64` records why it had to be a
+barrier: Warcraft III queries `GL_MAX_TEXTURE_UNITS_ARB` and copies the answer
+on the very next instruction, and batched, "the copy ran first and read zero,
+and a renderer that believes it has no texture units never calls
+`glEnable(GL_TEXTURE_2D)` at all".
 
-So the shared artifact is the **descriptor format**, which lives in WAT, and not
-a JS object. JavaScript's remaining role is orchestration — allocation,
-submission, worker dispatch, fences — which is what
-`lib/d3d9-software-backend.js` already is: ~30 WAT export calls
-(`d3d_software_create/bind_*/step/clear`), with no pixel ever entering JS.
+With state in WAT those are local reads and the flush disappears. Only the
+genuinely device-dependent barriers remain real: `glReadPixels` (17),
+`gpuPresent` (55), `glFinish` (11). That reduction is what makes asynchronous
+consumption worth having; doing the ring first would mostly be draining it.
 
-## What already exists, and where the line falls
+## Why the earlier rejection does not block this
 
-| | GL | D3DIM | D3D9 |
-|---|---|---|---|
-| vertices in WAT | ✅ `09a8e` (immediate, client arrays, `glDrawElements` expanded at `:442-472`) | ✅ | ✅ |
-| topology expansion | ✅ WAT (`$gl_finish_immediate`, `09a8c:256-429`) | JS (`d3dim-gpu.js:314-320`) | ✅ |
-| transform state | ❌ JS `gl-compat.js:352-354` | n/a (pre-transformed) | ✅ DFX1 +96/+160/+224 |
-| lighting | ❌ JS `gl-compat.js:378-384` | n/a | ✅ DLT1 |
-| material | ❌ JS `gl-compat.js:385-391` | n/a | ✅ DLT1 +64..+111 |
-| fog | ❌ JS `gl-compat.js:392-393` | n/a | ✅ cascade5 row +136..+156 |
-| software raster | ❌ **none** | ✅ `09ab` | ✅ `09ah` |
+`docs/wat-gl-encoder.md` ("D3D transport boundary") rejected sharing a
+transport: "D3DIM also rotates three asynchronous buffers, each held until its
+sequence completes, while GL borrows one range only for synchronous replay.
+They cannot share a mutable ring without changing that ownership protocol."
 
-`src/09a8e-gl-state.wat`'s per-context block is **160 bytes** and has **16 free
-bytes** (+0, and +148..+159 — neither declared reserved, both simply unwritten
-by `$gl_state_save`/`$gl_state_context_changed`). GL's missing state does not
-fit in it: the matrix stacks alone are unbounded, and lights are 8 × 4 × float4.
-A new per-context allocation is required; this is not a matter of filling spare
-fields.
+That is an argument against merging the two transports **as they are**. It is
+not an argument against giving GL the same rotation. Buffer rotation is exactly
+the mechanism that lets a borrowed range outlive the producer's next call, and
+both live in shared memory, so `FLAG_POINTER_BORROW`
+(`lib/gl-command-stream.js:11`) still works across a worker boundary provided
+the range is not recycled before its fence. The conflict is resolved by
+adopting D3D's protocol, not by merging two incompatible ones.
 
-## The five real costs
+## How the two streams differ today
 
-These are the items that make this a project rather than a wiring change. Each
-is a measured difference between the two implementations, not a general-knowledge
-concern.
+| | GL (`lib/gl-command-stream.js`) | D3D (`lib/d3d-command-stream.js`) |
+|---|---|---|
+| a record is | one *call* — opcode + raw stdcall stack image | one *job* — `DRAW 0x20000`, `FENCE 0x20001`, `READY 0x20002`, `FLIP 0x20003` |
+| opcodes | guest-visible `gl*`/`wgl*` ordinals 0..110, per-call `ARG_WORDS` | four internal |
+| state | imperative, **in-stream** (`glEnable` is a record) | out-of-band, `STATE_BYTES = 4096` per record |
+| buffers | **one** 2 MB range inside *guest linear memory* (`gl_stream_wa`), reused immediately | **three** `SharedArrayBuffer`s (`DEFAULT_BUFFERS = 3`), each held until its seq completes |
+| sync | **in-band barriers**, `BARRIERS` set | explicit fence + `Int32Array` control block, `CTRL.{READY,COMPLETED,ERROR,SUBMITTED}` |
+| consumer | synchronous JS replay | second wasm instance in a worker (`lib/d3d-render-worker.js`) |
+| pointer args | `FLAG_POINTER_COPY` / `FLAG_POINTER_BORROW` | n/a, vertices pre-expanded |
+| growth | overflow flushes; never grows | fixed capacity per buffer |
 
-### 1. Specular does not exist in the D3D lowering
+Both headers are 32 bytes with **different fields** — a coincidence that has
+already misled one session.
 
-GL computes Blinn half-vector specular per light and folds it into the vertex
-colour (`lib/gl-compat.js:260-263`). The DLT1 accumulator has no specular term
-at all: the light loop does `dp3(N,L)` → clamp → `mad` into a diffuse
-accumulator, then emits `oD0.rgb = md*r5 + r4`
-(`src/09aj-d3d-fixed.wat:686-697`). The DLT1 header carries no shininess and no
-material-specular field (`:582-586`).
+Worth carrying across in the other direction: D3D's `READY_OPCODE` is asked
+**before WAT expands an indexed draw**, so the expansion is skipped entirely
+when no consumer is attached (`lib/d3d-command-stream.js:13-14`). GL expands
+`glDrawElements` unconditionally (`src/09a8e-gl-state.wat:442-472`).
 
-So reusing DLT1 unchanged means **GL loses specular highlights**. Either DLT1
-grows those fields and the lowering grows the term, or the GL path declines to
-WebGL whenever `uMaterialShininess > 0`.
+## The descriptor is already PSO-shaped
 
-### 2. Positional lights
+`src/09af-d3d-shader-ir.wat` is an explicitly **backend-neutral shader IR**
+("All public pointers are WASM addresses", ABI 1, own error taxonomy), and
+`src/09aj-d3d-fixed.wat` already lowers fixed-function state into it. DFX1 +
+DLT1 + the cascade row are structurally a pipeline-state object plus a bind
+group: pull-based, immutable per draw, no global mutable state. That is the
+shape modern APIs want, arrived at here for unrelated reasons.
+
+A WebGPU backend would therefore need a **WGSL emitter from that IR**, parallel
+to the GLSL emitter in `lib/d3d9-fixed.js`, plus explicit render passes and
+barriers, which nothing here models. There is **no WebGPU anywhere in `lib/` or
+`src/` today**, and Node has none either, so headless testing would need Dawn
+bindings where GL already has `--headless-gl`. The IR makes a WebGPU backend
+plausible; the emitter and the test story are the real cost.
+
+## What the descriptor must grow to carry
+
+These are measured differences between GL as implemented in `lib/gl-compat.js`
+and what `src/09aj-d3d-fixed.wat` lowers. Each is either an extension to the
+shared descriptor or an explicit decline to WebGL.
+
+Note first that **DFX1 carries no lighting, material or fog**. Those live in a
+separate `DLT1` block (128-byte header + 64 bytes per light,
+`src/09aj-d3d-fixed.wat:582-587`) and in the cascade5 row's fog tail
+(`:365-366`, offsets +136..+156). And **all of them are built in JavaScript
+today** (`lib/d3d9-software-backend.js:284-377`) — no WAT code builds
+descriptors for anyone yet, so "translate in WAT at record time" is new
+capability rather than reuse of an existing WAT builder.
+
+### 1. No specular in the D3D lowering
+
+GL computes Blinn half-vector specular per light into the vertex colour
+(`lib/gl-compat.js:260-263`). The DLT1 accumulator has no specular term: the
+loop does `dp3(N,L)` → clamp → `mad` into a diffuse accumulator, then emits
+`oD0.rgb = md*r5 + r4` (`src/09aj-d3d-fixed.wat:686-697`). The header carries
+no shininess and no material-specular field (`:582-586`).
+
+### 2. Directional lights only
 
 GL branches on `uLightPosition[i].w` and supports positional lights
-(`lib/gl-compat.js:254-256`). `$d3d_fixed_bind_lighting` **rejects any light
-whose type is not 3 (directional)** (`src/09aj-d3d-fixed.wat:646`), and the JS
-producer refuses earlier with `'point and spot lighting are not implemented'`
+(`lib/gl-compat.js:254-256`). `$d3d_fixed_bind_lighting` rejects any light
+whose type is not 3 (`src/09aj-d3d-fixed.wat:646`); the JS producer refuses
+earlier with `'point and spot lighting are not implemented'`
 (`lib/d3d9-software-backend.js:371`). Neither side implements attenuation or
-spot at all, so those stay dropped — but positional-vs-directional is a
-difference GL guests can actually observe.
+spot at all — GL's `glLightf` is a no-op (`lib/gl-compat.js:1304`) — so those
+stay dropped either way.
 
-### 3. The 256-vertex / 768-index batch ceiling
+### 3. Fog is a different stage on each side
 
-`09ah` validates `3 <= vertices <= 256` and `3 <= indices <= 768` with
-`indices % 3 == 0` (`src/09ah-d3d-software.wat:266-271`), and the file is
-explicit that these are implementation limits rather than advertised adapter
-caps (`:25-26`). GL guests submit far larger arrays in one call. A GL software
-path therefore needs **chunking** — splitting a draw into ≤256-vertex batches
-with the descriptor rebuilt per batch — which is new code with its own
-correctness surface (shared state across chunks, index remapping) and its own
-per-batch overhead. This is the item most likely to decide whether the result
-is fast enough to be worth having.
-
-### 4. Fog is a different stage on each side
-
-GL interpolates `vFogDistance = abs(eyePosition.z)` and computes **both the
-factor and the colour blend in the fragment shader**
+GL interpolates `vFogDistance = abs(eyePosition.z)` and computes both the
+factor and the colour blend **in the fragment shader**
 (`lib/gl-compat.js:279`, `:324-330`). D3D computes the factor in the **vertex**
-shader and hands it to the rasterizer, which owns the RGB blend
-(`src/09aj-d3d-fixed.wat:410`, `:366`). The encodings also disagree: GL maps
-`LINEAR→0` (`lib/gl-compat.js:547`) where D3D's linear is mode 3, and D3D's
-mode 0 means "take fog from the specular input register"
-(`src/09aj-d3d-fixed.wat:377-381`) — a case GL cannot express. D3D additionally
-*rejects* a draw with non-finite or equal start/end (`:386-387`) where GL guards
-the denominator and always produces a finite factor (`:326`).
+shader and the rasterizer owns the RGB blend (`src/09aj-d3d-fixed.wat:410`,
+`:366`). Encodings disagree: GL maps `LINEAR→0` (`lib/gl-compat.js:547`) where
+D3D's linear is mode 3, and D3D's mode 0 means "take fog from the specular
+input register" (`:377-381`), which GL cannot express. D3D *rejects* non-finite
+or equal start/end (`:386-387`) where GL guards the denominator (`:326`).
+Per-vertex versus per-fragment fog is also a visibly different picture on large
+triangles.
 
-Per-vertex fog is also simply a different picture from per-fragment fog on large
-triangles. This is a visible difference, not a plumbing detail.
+### 4. Normal matrix
 
-### 5. Normal matrix and matrix convention
+GL uses the plain upper-left 3x3 of the modelview, no inverse or transpose
+(`lib/gl-compat.js:211`, used `:246`). D3D computes a full world-view
+**inverse** and dots against its rows (`src/09aj-d3d-fixed.wat:284-286`,
+`:659-660`). They agree only without non-uniform scale or shear.
 
-GL uses the plain upper-left 3×3 of the modelview with no inverse or transpose
-(`lib/gl-compat.js:211`, used `:246`). D3D computes a full world-view **inverse**
-and dots against its rows (`src/09aj-d3d-fixed.wat:284-286`, `:659-660`). These
-agree only when the modelview has no non-uniform scale or shear.
+### 5. Matrix convention and the world/view split
 
-The convention change itself is mechanical and cheap by comparison: GL stacks
-are column-major with world and view conflated (`lib/gl-compat.js:352-354`,
-`:242-243`); DFX1 is row-major with separate world/view/proj at +96/+160/+224.
-Transpose, and put identity in world — except that DLT1's light-direction
-lowering reads **only** the view matrix (`src/09aj-d3d-fixed.wat:681-683`), so
-conflating GL's modelview into view alone is required for lights to land in the
-right space, and that interacts with the world-matrix choice rather than being
-independent of it.
+GL stacks are column-major with world and view conflated
+(`lib/gl-compat.js:352-354`, `:242-243`). DFX1 is row-major with separate
+world/view/proj at +96/+160/+224. Transposing is mechanical, but DLT1's
+light-direction lowering reads **only** the view matrix
+(`src/09aj-d3d-fixed.wat:681-683`), so where GL's modelview is placed is not a
+free choice — lights land in the wrong space if world absorbs it.
 
-## Two smaller facts worth knowing before estimating
+### 6. Batch ceiling — already solved, for D3D
 
-- **The descriptors are built in JavaScript today** — `DFX1` at
-  `lib/d3d9-software-backend.js:284-306`, the 6×160-byte cascade table with the
-  fog tail at `:308-351`, `DLT1` at `:357-377`. No WAT code builds them for
-  anyone. "GL builds descriptors in WAT" is therefore new capability, not reuse
-  of an existing WAT builder; alternatively GL can build them in JS like D3D9
-  does, which is less pure but is the shape that already works and keeps pixels
-  out of JS either way.
-- **GL state that is already in WAT** is the per-vertex current values (colour,
-  normal, texcoord, shade model) and the client-array pointers
-  (`src/09a8e-gl-state.wat:47-83`). Nothing transform- or light-related.
+`09ah` validates `3 <= vertices <= 256`, `3 <= indices <= 768`, `indices % 3 == 0`
+(`src/09ah-d3d-software.wat:266-271`), explicitly implementation limits rather
+than advertised caps (`:25-26`). The reason is the allocation model: context is
+`288 + indexCount*1134` and workspace `3552 + vertexCount*160 + indexCount*2`
+(`:51`, `:56`). That `1134` is a 160-byte vertex snapshot times the worst-case
+seven-triangle clip expansion (`:26-27`), pre-allocated whether or not anything
+clips — the price of a bounded, resumable draw. At the ceiling that is ~851 KB
+of context to draw 256 triangles.
 
-## Where this leaves the decision
+**`lib/d3d9-software-backend.js:442-457` already chunks oversized draws** via
+`Geometry.split` (`lib/d3d-geometry-batches.js`) and walks the batches
+incrementally (`:910-917`), with `maxTriangles = clip?.mask ? 210 : 256`
+matching the private clipping limit. GL inherits this if GL descriptors are
+built the way D3D9's are.
 
-Shape of the work, in dependency order:
+Chunking is also *safe* for GL specifically: `$gl_finish_immediate`
+(`src/09a8c-gl-encoder.wat:256-429`) already expands all topology to
+POINTS/LINES/TRIANGLES with flat shading baked per vertex, so strips and fans
+never reach this layer and splitting at any multiple of three is correct with
+no index remapping and no provoking-vertex hazard.
 
-1. GL state lift into a new per-context WAT block — matrices, 8 lights,
-   material, fog. Mechanical, bounded, testable against
-   `glGetFloatv(GL_*_MATRIX)` (`lib/gl-compat.js:1404-1407`) as an oracle.
-2. Descriptor build for a GL draw — DFX1 + DLT1 + cascade fog row. Decide JS
-   (matches D3D9 today) or WAT (matches the stated goal).
-3. Chunking to the 256/768 ceiling. Item 3 above.
-4. Semantic gaps: specular (item 1), positional lights (item 2), fog stage
-   (item 4), normal matrix (item 5). Each is either an extension to the shared
-   descriptor or an explicit decline to WebGL.
+## JavaScript patterns this should remove
 
-Steps 1 and 2 are the unification. Steps 3 and 4 are the reason a GL software
-path would not be pixel-identical to the WebGL one on day one, and they should
-be priced before any of it starts.
+Shared wins, not GL-only:
 
-An honest smaller alternative exists and should be weighed against the above:
-extend the *decline* model instead. GL draws that fit the intersection —
-directional lights, no specular, ≤256 vertices, linear/exp fog — take the WAT
-path; everything else falls back to WebGL, exactly as D3DIM's `_draw` returns 0
-and drops to WAT today. That yields a working software GL for simple content
+- **Per-texel swizzle loops in JS** — `lib/d3d9-software-backend.js:410` and
+  `:894` both run `for (let j = 0; j < pixels.length; j += 4)` to swap R and B
+  on every texture upload, on the path into a WAT rasterizer.
+- **Whole-surface `.slice()` copies** — `:151` `readColor`, `:1020`
+  `readPixels`. Same family as `lib/d3dim-gpu.js`'s `gl.readPixels` plus repack
+  on every fence.
+- **Per-vertex D3DCOLOR byte-swap** — `lib/d3dim-gpu.js:340-347`. Only on the
+  opt-in WebGL path today, and the reason not to make the JS device the
+  software path.
+- **Reaching through the device abstraction** — `t.device.gpu`
+  (`lib/d3dim-gpu.js:180`, `:251`) grabs raw WebGL for upload and readback. Two
+  named methods on the device contract close it; the software device already
+  has both operations.
+
+## Rejected: route everything through the JS device
+
+`lib/d3d9-backend.js`'s `Device.draw(snapshot)` is backend-neutral with two
+implementations selected at `lib/d3d9-host.js:62`, and `lib/d3dim-gpu.js`
+already builds that snapshot shape — but hardwires `new Backend.Device(canvas)`
+at `:116`. Making everyone share it looks like the cheap unification.
+
+For D3DIM it is a **regression**. Its software path today is
+`$d3dim_draw_tl_triangle` (`src/09ab-handlers-d3dim-core.wat:5632`) — WAT
+frontend straight into WAT raster, zero crossings. Routing it through the JS
+device inserts the per-vertex colour swap above in front of a rasterizer that
+needs none of it. Recorded here so it is not re-proposed.
+
+## Shape of the work
+
+1. **GL state into a new per-context WAT block** — matrices, 8 lights,
+   material, fog. `src/09a8e-gl-state.wat`'s block is 160 bytes with only 16
+   unused (+0, +148..+159, neither declared reserved), and GL's matrix stacks
+   are unbounded, so this needs a new allocation, not spare fields. Testable
+   against `glGetFloatv(GL_*_MATRIX)` (`lib/gl-compat.js:1404-1407`) as an
+   oracle. Pays for itself in removed barriers before anything else lands.
+2. **Translate at record time in WAT** — GL draw to a DFX1/DLT1-shaped
+   descriptor.
+3. **Rotate GL's buffers** — adopt D3D's ownership protocol.
+4. **Point GL at the existing render worker** — same module, shared memory,
+   WAT raster.
+5. **Close or decline the semantic gaps** — items 1-5 above.
+
+A smaller alternative worth weighing: extend the **decline** model instead. GL
+draws inside the intersection — directional lights, no specular, linear/exp
+fog — take the WAT path; everything else falls back to WebGL, exactly as
+`lib/d3dim-gpu.js:_draw` returns 0 and drops to WAT today. Working software GL
 without first closing four semantic gaps, at the cost of a coverage cliff that
-has to be measured per app rather than assumed.
+must be measured per app rather than assumed.
 
 ## Unverified
 
 - Whether the D3D VM saturates `oD0` after lighting; not visible in
   `09aj-d3d-fixed.wat`. GL explicitly clamps (`lib/gl-compat.js:269`).
 - The rasterizer's exact fog blend expression
-  (`src/09ah-d3d-software.wat:53`, "interpolated four-lane factor264..279"),
-  so equivalence with GL's `mix(fogColor, color, factor)` is not established.
-- Whether chunking at the 256-vertex ceiling is fast enough to matter, for any
+  (`src/09ah-d3d-software.wat:53`), so equivalence with GL's
+  `mix(fogColor, color, factor)` is not established.
+- Whether chunking at the 256-vertex ceiling is fast enough to matter for any
   real GL guest. Nothing here has been measured on a running app.
+- Whether GL's barrier traffic is dominated by the state queries this removes.
+  The claim is structural; it has not been counted on a real workload, and
+  `--rpc-census` or the GL host-call counters could count it.
