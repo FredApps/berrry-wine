@@ -22,6 +22,8 @@ const { bootRenderHarness } = require('./render-helper');
       (i32.load (global.get $reg_base)))
   ` });
   e.init_dx_com_thunks();
+  assert.strictEqual(e.test_ole_set_clipboard, undefined, 'no separate test-only ownership setter');
+  assert.strictEqual(e.test_ole_get_clipboard, undefined, 'no separate test-only ownership getter');
   const refcount = obj => e.guest_read32(obj + 4);
   const set = obj => {
     assert.strictEqual(e.clipboard_set_api(obj), 0);

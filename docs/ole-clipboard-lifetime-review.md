@@ -38,3 +38,20 @@ atomicity and full native OLE semantics are not certified here. The existing
 release-before-retain shape; it is not evidence for the public API. Its source
 file has unrelated pending edits and was left untouched. Migrating that test
 setup to a canonical lifecycle remains follow-up shared-harness work.
+
+## Follow-up: duplicated Set/Get test ownership removed
+
+The two state-mutating exports are now deleted. The local-only data-object
+suite opts into generated `test_call_OleSetClipboard` / `OleGetClipboard`
+wrappers through API metadata. These preserve ESP and call the actual handlers;
+they are used only for synchronous local objects. The guest-callback suite now
+uses its existing API-thunk runner for both calls, including running suspended
+callbacks to completion and checking HRESULT before reading the returned pointer.
+The lifetime regression also asserts that the old exports are absent.
+
+All 55 data-object and 164 guest-callback checks pass through these real API
+paths, as does the same-object lifetime regression. Dispatch freshness,
+append-only API-table, quiet-inventory, A/W, and whitespace checks pass.
+Only the clipboard-helper removal hunk is staged from `13-exports.wat`; the
+unrelated DLL-capacity change remains in the working tree. This resolves the
+test-helper follow-up above, not the wider clipboard behavior gaps.

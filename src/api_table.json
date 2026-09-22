@@ -17658,6 +17658,7 @@
   {
     "id": 2134,
     "name": "OleSetClipboard",
+    "test_call": true,
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2614966087,
@@ -17672,6 +17673,7 @@
   {
     "id": 2135,
     "name": "OleGetClipboard",
+    "test_call": true,
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2528419507,

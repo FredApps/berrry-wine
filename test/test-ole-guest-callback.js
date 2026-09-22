@@ -1473,10 +1473,11 @@ async function main() {
   write(flushMedium + 8, 0);
   const flushOwner = e.test_ole_create_data_object(0, 0) >>> 0;
   assert.strictEqual(e.test_ole_data_set(flushOwner, flushFormat, flushMedium, 1), 0);
-  e.test_ole_set_clipboard(flushOwner);
+  assert.strictEqual(callApi('OleSetClipboard', flushOwner), 0);
   assert.strictEqual(e.test_ole_release(flushOwner), 1);
   const flushHr = callApi('OleFlushClipboard');
-  const durableOwner = e.test_ole_get_clipboard() >>> 0;
+  assert.strictEqual(callApi('OleGetClipboard', out), 0);
+  const durableOwner = read(out);
   const durableMedium = alloc(12);
   const durableGetHr = e.test_ole_data_get(durableOwner, flushFormat, durableMedium) >>> 0;
   const durableStream = read(durableMedium + 4);
@@ -1530,7 +1531,7 @@ async function main() {
   write(rejectedStreamMedium + 8, 0);
   assert.strictEqual(e.test_ole_data_set(
     rejectedOwner, rejectedStreamFormat, rejectedStreamMedium, 1), 0);
-  e.test_ole_set_clipboard(rejectedOwner);
+  assert.strictEqual(callApi('OleSetClipboard', rejectedOwner), 0);
   const rejectedHr = callApi('OleFlushClipboard');
   check('OleFlushClipboard rejects a malformed later guest format without partial publication',
     rejectedHr === 0x80004002 && e.clipboard_ole_data_object() === rejectedOwner &&
@@ -1551,7 +1552,7 @@ async function main() {
     e.clipboard_ole_data_object() === rejectedOwner &&
     e.test_ole_stream_position(rejectedSource) === 7 && read(rejectedSource + 4) === 1);
   write(rejectedGuestVtable + 13 * 4, rejectedClone);
-  e.test_ole_set_clipboard(0);
+  assert.strictEqual(callApi('OleSetClipboard', 0), 0);
   assert.strictEqual(read(rejectedOwner + 4), 1);
   assert.strictEqual(callMethod(rejectedOwner, 2), 0);
 
@@ -1595,10 +1596,11 @@ async function main() {
   const flushStorageOwner = e.test_ole_create_data_object(0, 0) >>> 0;
   assert.strictEqual(e.test_ole_data_set(
     flushStorageOwner, flushStorageFormat, flushStorageMedium, 1), 0);
-  e.test_ole_set_clipboard(flushStorageOwner);
+  assert.strictEqual(callApi('OleSetClipboard', flushStorageOwner), 0);
   assert.strictEqual(e.test_ole_release(flushStorageOwner), 1);
   const flushStorageHr = callApi('OleFlushClipboard');
-  const durableStorageOwner = e.test_ole_get_clipboard() >>> 0;
+  assert.strictEqual(callApi('OleGetClipboard', out), 0);
+  const durableStorageOwner = read(out);
   const durableStorageMedium = alloc(12);
   assert.strictEqual(e.test_ole_data_get(
     durableStorageOwner, flushStorageFormat, durableStorageMedium), 0);

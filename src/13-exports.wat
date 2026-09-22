@@ -4523,15 +4523,6 @@
       (local.get $medium) (i32.const 0) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0))
     (global.get $eip))
-  (func (export "test_ole_set_clipboard") (param $obj i32)
-    (if (global.get $clipboard_ole_data_object)
-      (then (drop (call $ole_obj_release (global.get $clipboard_ole_data_object)))))
-    (global.set $clipboard_ole_data_object (local.get $obj))
-    (if (local.get $obj) (then (drop (call $ole_obj_addref (local.get $obj))))))
-  (func (export "test_ole_get_clipboard") (result i32)
-    (if (global.get $clipboard_ole_data_object)
-      (then (drop (call $ole_obj_addref (global.get $clipboard_ole_data_object)))))
-    (global.get $clipboard_ole_data_object))
   ;; Native OpenGL encoder controls and parity-test surface. stackWa is a
   ;; linear-memory address whose first dword is the x86 return address.
   (func (export "gl_wat_encoder_call") (param $opcode i32) (param $stackWa i32)

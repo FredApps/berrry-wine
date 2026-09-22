@@ -2,6 +2,7 @@
 'use strict';
 
 const fs = require('fs');
+const assert = require('assert');
 const path = require('path');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
@@ -27,6 +28,14 @@ async function main() {
   const dv = new DataView(memory.buffer);
   const wa = gp => gp - e.get_image_base() + e.get_guest_base();
   const alloc = n => e.guest_alloc(n) >>> 0;
+  // These objects are local/synchronous. DLL-private callbacks require the
+  // real thunk runner exercised separately by test-ole-guest-callback.js.
+  const clipboardOut = alloc(4);
+  const setClipboard = obj => assert.strictEqual(e.test_call_OleSetClipboard(obj), 0);
+  const getClipboard = () => {
+    assert.strictEqual(e.test_call_OleGetClipboard(clipboardOut), 0);
+    return e.guest_read32(clipboardOut) >>> 0;
+  };
   let pass = 0, fail = 0;
   const check = (name, ok, detail = '') => {
     console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}${detail ? `  ${detail}` : ''}`);
@@ -112,11 +121,11 @@ async function main() {
   check('clearing clipboard metadata preserves a retained RichEdit DIB presentation',
     e.clipboard_get_data_handle(8) === 0 && u8[wa(clipboardHandle)] === 0xee);
 
-  e.test_ole_set_clipboard(object);
+  setClipboard(object);
   check('Ole clipboard holds a reference after the caller releases', e.test_ole_release(object) === 1);
-  const current = e.test_ole_get_clipboard() >>> 0;
+  const current = getClipboard();
   check('OleGetClipboard returns the current IDataObject with AddRef', current === object && e.test_ole_release(current) === 1);
-  e.test_ole_set_clipboard(0);
+  setClipboard(0);
 
   const stream = e.test_ole_create_stream(0, 0) >>> 0;
   const streamFormat = alloc(20);
@@ -462,10 +471,10 @@ async function main() {
   dv.setUint32(wa(flushStorageMedium), 8, true);
   dv.setUint32(wa(flushStorageMedium) + 4, flushStorage, true);
   e.test_ole_data_set(flushObject, flushStorageFormat, flushStorageMedium, 0);
-  e.test_ole_set_clipboard(flushObject);
+  setClipboard(flushObject);
   check('OleFlushClipboard replaces the owner with a distinct durable data object',
     e.test_ole_flush_clipboard() === 0 && e.clipboard_ole_data_object() !== flushObject);
-  const flushedObject = e.test_ole_get_clipboard() >>> 0;
+  const flushedObject = getClipboard();
   const changedPayload = makeHglobalMedium(Uint8Array.from([9, 9, 9, 0]));
   e.test_ole_data_set(flushObject, flushFormat, changedPayload.value, 0);
   e.test_ole_stream_seek(flushStream, 0);
@@ -506,7 +515,7 @@ async function main() {
     e.test_ole_data_count(flushedObject) === 3 &&
     (e.test_ole_data_query(flushedObject, addedAfterFlushFormat) >>> 0) === 0x80040064);
   e.test_ole_release(flushedObject);
-  e.test_ole_set_clipboard(0);
+  setClipboard(0);
   e.test_ole_release(flushObject);
   e.test_ole_release(flushStream);
   e.test_ole_release(flushStorageStream);
