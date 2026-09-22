@@ -415,6 +415,11 @@
   ;; 124-byte BITMAPV5HEADER + 256 RGBQUADs, rounded up.
   (region.declare $GDI_BITMAP_INFO_SCRATCH (size 0x00000480) (align 0x00000010)
     (owner "10a-gdi-bitmap.wat:$gdi_bitmap_info_wa"))
+  ;; A LIFO arena for gathering a guest struct that straddles two sparse pages
+  ;; whose backing is not adjacent. Sized for several of the largest spans any
+  ;; one handler gathers (a 1028-byte LOGPALETTE or 1024-byte color table).
+  (region.declare $GUEST_SPAN_SCRATCH (size 0x00004000) (align 0x00000010)
+    (owner "10-helpers.wat:$guest_span_in"))
   (region.declare $WINDOW_RECT_SCRATCH (size 0x00000010) (align 0x00000010)
     (owner "01-header.wat:$WINDOW_RECT_SCRATCH"))
   (region.declare $GDI_BRUSH_DESC (size 0x00000050) (align 0x00000010)

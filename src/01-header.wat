@@ -2147,6 +2147,13 @@
   (global $GDI_BITMAP_PLAN_SIZE i32 (region.size $GDI_BITMAP_PLAN))
   (global $GDI_BITMAP_INFO_SCRATCH i32 (region.addr $GDI_BITMAP_INFO_SCRATCH 0))
   (global $GDI_BITMAP_INFO_SCRATCH_SIZE i32 (region.size $GDI_BITMAP_INFO_SCRATCH))
+  (global $GUEST_SPAN_SCRATCH i32 (region.addr $GUEST_SPAN_SCRATCH 0))
+  (global $GUEST_SPAN_SCRATCH_SIZE i32 (region.size $GUEST_SPAN_SCRATCH))
+  ;; Bytes of the arena currently lent out, and how often a span did not fit.
+  ;; Nothing here is silent: a handler whose span overflows falls back to the
+  ;; plain translation and this counter says so.
+  (global $guest_span_cursor (mut i32) (i32.const 0))
+  (global $guest_span_overflow (mut i32) (i32.const 0))
   (global $GDI_RGB555_MASKS i32 (region.addr $DIB_DEFAULT_RGB555_MASKS 0x00000000))
   (global $GDI_BITMAP_NAME i32 (region.addr $GDI_BITMAP_NAME 0))
   (global $GDI_BITMAP_NAME_SIZE i32 (region.size $GDI_BITMAP_NAME))

@@ -8121,3 +8121,69 @@
       (then (call $guest_strncpy (local.get $copy) (local.get $src)
         (i32.add (local.get $len) (i32.const 1)))))
     (local.get $copy))
+
+
+  ;; ---- straddling guest structs ---------------------------------------
+  ;; A handler that hands a guest pointer to code doing plain i32.load/store
+  ;; assumes the whole struct is linear in WASM memory. Two adjacent sparse
+  ;; guest pages need not be: they can come from different allocations and be
+  ;; backed nowhere near each other, which is how SimCity 2000's power-plant
+  ;; picker lost half of a BITMAPINFO (bd56cd1f). $guest_span_in returns a
+  ;; pointer safe to read as one block -- the direct translation when the span
+  ;; really is linear, otherwise a gathered copy in a LIFO arena. A span the
+  ;; span is always gathered, since a call may fill in only part of an output
+  ;; struct and the bytes it leaves alone have to survive the round trip. An
+  ;; output span is put back with $guest_span_writeback, which also releases
+  ;; the arena; a read-only one is released with $guest_span_release.
+  ;;
+  ;; Rules: release in reverse order of acquisition, and always release, or the
+  ;; arena leaks for the rest of the run.
+  (func $guest_span_in (param $ga i32) (param $len i32) (result i32)
+    (local $wa i32) (local $base i32) (local $i i32)
+    (if (i32.or (i32.eqz (local.get $ga)) (i32.eqz (local.get $len)))
+      (then (return (i32.const 0))))
+    (local.set $wa (call $g2w_affine_span (local.get $ga) (local.get $len)))
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then (return (local.get $wa))))
+    ;; No room: say so in a counter rather than quietly handing back a copy
+    ;; nothing will write back, and fall back to the plain translation.
+    (if (i32.gt_u (i32.add (global.get $guest_span_cursor) (local.get $len))
+          (global.get $GUEST_SPAN_SCRATCH_SIZE))
+      (then
+        (global.set $guest_span_overflow (i32.add (global.get $guest_span_overflow) (i32.const 1)))
+        (return (call $g2w (local.get $ga)))))
+    (local.set $base (i32.add (global.get $GUEST_SPAN_SCRATCH) (global.get $guest_span_cursor)))
+    (global.set $guest_span_cursor (i32.add (global.get $guest_span_cursor) (local.get $len)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (i32.store8 (i32.add (local.get $base) (local.get $i))
+        (call $gl8 (i32.add (local.get $ga) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $base))
+
+  ;; True when $wa is a copy this arena lent out rather than guest memory.
+  (func $guest_span_is_copy (param $wa i32) (result i32)
+    (i32.and
+      (i32.ge_u (local.get $wa) (global.get $GUEST_SPAN_SCRATCH))
+      (i32.lt_u (local.get $wa)
+        (i32.add (global.get $GUEST_SPAN_SCRATCH) (global.get $GUEST_SPAN_SCRATCH_SIZE)))))
+
+  (func $guest_span_release (param $wa i32) (param $len i32)
+    (if (call $guest_span_is_copy (local.get $wa))
+      (then (global.set $guest_span_cursor
+        (i32.sub (global.get $guest_span_cursor) (local.get $len))))))
+
+  (func $guest_span_writeback (param $ga i32) (param $wa i32) (param $len i32)
+    (local $i i32)
+    (if (i32.eqz (call $guest_span_is_copy (local.get $wa))) (then (return)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (call $gs8 (i32.add (local.get $ga) (local.get $i))
+        (i32.load8_u (i32.add (local.get $wa) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $guest_span_release (local.get $wa) (local.get $len)))
+
+  (func (export "guest_span_overflow_count") (result i32) (global.get $guest_span_overflow))
+  (func (export "guest_span_cursor_bytes") (result i32) (global.get $guest_span_cursor))
