@@ -1186,3 +1186,36 @@ error precedence, cross-process sections, partial-commit rollback, shared
 coherence between separately created sections of the same file, and the wide
 entry-point compatibility policy. The legacy host fallback is not a coherent
 Win98 implementation. No full-build or game/browser performance claim is made.
+
+## Native section protection and query metadata (2026-09-21)
+
+Extended the native probe to query allocation protection/type and a READ →
+WRITE/COPY → READ → unmap sequence for both READWRITE and WRITECOPY sections.
+The complete run and refreshed provenance are in the existing fixture.
+
+Measured Win98 reports these file sections as MEM_PRIVATE (131072), with
+AllocationProtect PAGE_NOACCESS (1). The initial small READ view commits one
+READONLY page (2); the rest remains MEM_RESERVE with Protect PAGE_NOACCESS.
+Mapping 8192 writable bytes upgrades both pages to READWRITE (4), including
+FILE_MAP_COPY on a WRITECOPY section. A subsequent short READ view does not
+downgrade them, nor does unmapping either kind of view. This differs from an
+assumption that mapped files must report MEM_MAPPED or COPY page protection.
+
+The section reservation now records allocation protection 1. The commit export
+takes explicit READONLY/READWRITE protection, initializes missing ranges with
+that value, upgrades existing pages for WRITE/COPY, and leaves existing pages
+unchanged for READ. VirtualQuery distinguishes uncommitted section pages from
+ordinary VirtualAlloc reservations when reporting protection. The section
+classification is computed once per query, not once per page in a large hole.
+
+The source-compiled runtime test reads all 14 protection-sequence query rows
+from the native fixture and compares region sizes, allocation base, current
+and allocation protections, state, and type (addresses are normalized to the
+runtime allocation, not hard-coded to the reference VM). Existing shared-view
+tests and ordinary VirtualQuery memory-map/user-boundary regressions pass.
+The 54-case validation matrix and source-only reference harness also pass.
+
+This fixes metadata and PTE protection state, not fault enforcement. Unprobed
+VirtualProtect/remap combinations, execute modes, native shared-arena placement
+above 2 GiB and the corresponding query boundary remain separate work. Current
+runtime sections still use its existing below-2-GiB sparse allocation arena.

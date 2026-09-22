@@ -3522,7 +3522,9 @@
     (local.set $guest (call $virtual_reserve_down (local.get $size)))
     (if (local.get $guest)
       (then
-        (call $virtual_reserve_record (local.get $guest) (local.get $size) (i32.const 4))
+        ;; Native Win98 section reservations report PAGE_NOACCESS even after
+        ;; individual pages acquire READONLY/READWRITE view protection.
+        (call $virtual_reserve_record (local.get $guest) (local.get $size) (i32.const 1))
         (call $mapped_view_register (local.get $guest) (local.get $size))))
     (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
     (local.get $guest))
@@ -3542,7 +3544,8 @@
   ;; Commit holes only. The general commit helper handles forward extension,
   ;; but a request enclosing an already committed island would otherwise
   ;; publish overlapping records and shadow bytes written through an older view.
-  (func $host_section_commit_range (param $guest i32) (param $size i32) (result i32)
+  (func $host_section_commit_range
+      (param $guest i32) (param $size i32) (param $protect i32) (result i32)
     (local $cursor i32) (local $end i32) (local $next i32)
     (local $i i32) (local $rec i32) (local $base i32) (local $limit i32)
     (local $covered i32)
@@ -3573,15 +3576,19 @@
       (if (i32.eqz (local.get $covered))
         (then (if (i32.eqz (call $virtual_map_commit_locked
                     (local.get $cursor) (i32.sub (local.get $next) (local.get $cursor))
-                    (i32.const 4) (i32.const 0)))
+                    (local.get $protect) (i32.const 0)))
           (then (return (i32.const 0))))))
       (local.set $cursor (local.get $next))
       (br $ranges)))
     (local.get $guest))
 
   (func (export "guest_section_commit")
-      (param $base i32) (param $offset i32) (param $requested i32) (result i32)
+      (param $base i32) (param $offset i32) (param $requested i32)
+      (param $protect i32) (result i32)
     (local $size i32) (local $extent i32) (local $result i32)
+    (if (i32.and (i32.ne (local.get $protect) (i32.const 2))
+          (i32.ne (local.get $protect) (i32.const 4)))
+      (then (return (i32.const 0))))
     (if (i32.or (i32.eqz (local.get $requested))
           (i32.or (i32.gt_u (local.get $requested) (i32.const 0xFFFFF000))
             (i32.ne (i32.and (local.get $offset) (i32.const 4095)) (i32.const 0))))
@@ -3596,7 +3603,15 @@
           ;; Do not coalesce with another section's adjacent record. Recommit
           ;; preserves existing bytes; only missing backing is zero-initialized.
           (local.set $result (call $host_section_commit_range
-            (i32.add (local.get $base) (local.get $offset)) (local.get $size)))))))
+            (i32.add (local.get $base) (local.get $offset)) (local.get $size)
+            (local.get $protect)))))))
+    ;; READ maps never downgrade existing writable pages. WRITE/COPY maps
+    ;; upgrade the whole requested run, even when some pages were already
+    ;; committed. Win98 keeps that protection after those views are unmapped.
+    (if (i32.and (i32.ne (local.get $result) (i32.const 0))
+          (i32.eq (local.get $protect) (i32.const 4)))
+      (then (drop (call $guest_page_protect_range
+        (local.get $result) (local.get $size) (local.get $protect)))))
     (call $lock_release (global.get $LOCK_VIRTUAL_MAP))
     (local.get $result))
 

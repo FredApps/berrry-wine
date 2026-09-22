@@ -61,22 +61,38 @@ VIEW anon=1 protect=8 access=1 offset=0 address=0 error=87
 VIEW anon=1 protect=8 access=1 offset=4096 address=0 error=87
 VIEW anon=1 protect=8 access=1 offset=65536 address=0 error=87
 COHERENCE protect=4 access=2 a=2191044608 b=2191044608 before=77 written=23 peer=23
-COHERENCE_UNMAPPED address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=4
+COHERENCE_UNMAPPED address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=4 allocationProtect=1 type=131072
 COHERENCE_REOPEN protect=4 address=2191044608 value=23
 COHERENCE protect=8 access=1 a=2191044608 b=2191044608 before=23 written=77 peer=77
-COHERENCE_UNMAPPED address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=4
+COHERENCE_UNMAPPED address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=4 allocationProtect=1 type=131072
 COHERENCE_REOPEN protect=8 address=2191044608 value=77
-RANGE_SMALL address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=2
-RANGE_LARGE address=2191044608 count=28 base=2191044608 allocation=2191044608 size=131072 state=4096 protect=4
-RANGE_TAIL address=2191110144 count=28 base=2191110144 allocation=2191044608 size=65536 state=4096 protect=4
+RANGE_SMALL address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=2 allocationProtect=1 type=131072
+RANGE_LARGE address=2191044608 count=28 base=2191044608 allocation=2191044608 size=131072 state=4096 protect=4 allocationProtect=1 type=131072
+RANGE_TAIL address=2191110144 count=28 base=2191110144 allocation=2191044608 size=65536 state=4096 protect=4 allocationProtect=1 type=131072
 RANGE_ALIAS written=65 peer=65
 UNMAP_SMALL ok=1 error=4660
-AFTER_SMALL address=2191044608 count=28 base=2191044608 allocation=2191044608 size=131072 state=4096 protect=4
+AFTER_SMALL address=2191044608 count=28 base=2191044608 allocation=2191044608 size=131072 state=4096 protect=4 allocationProtect=1 type=131072
 UNMAP_LARGE ok=1 error=4660
-AFTER_LARGE address=2191110144 count=28 base=2191110144 allocation=2191044608 size=65536 state=4096 protect=4
+AFTER_LARGE address=2191110144 count=28 base=2191110144 allocation=2191044608 size=65536 state=4096 protect=4 allocationProtect=1 type=131072
 UNMAP_TAIL ok=1 error=4660
-AFTER_TAIL address=2191110144 count=28 base=2191110144 allocation=2191044608 size=180224 state=65536 protect=1
+AFTER_TAIL address=2191110144 count=28 base=2191110144 allocation=2191044608 size=180224 state=65536 protect=1 allocationProtect=0 type=131072
 UNMAP_STALE ok=0 error=487
+PROTECTION_CASE section=4
+PROTECT_INITIAL address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=2 allocationProtect=1 type=131072
+PROTECT_UNTOUCHED address=2191048704 count=28 base=2191048704 allocation=2191044608 size=126976 state=8192 protect=1 allocationProtect=1 type=131072
+PROTECT_WRITABLE address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
+PROTECT_READ_AGAIN address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
+PROTECT_READ_TAIL address=2191048704 count=28 base=2191048704 allocation=2191044608 size=4096 state=4096 protect=4 allocationProtect=1 type=131072
+PROTECT_UNMAP_READ address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
+PROTECT_UNMAP_WRITE address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
+PROTECTION_CASE section=8
+PROTECT_INITIAL address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=2 allocationProtect=1 type=131072
+PROTECT_UNTOUCHED address=2191048704 count=28 base=2191048704 allocation=2191044608 size=126976 state=8192 protect=1 allocationProtect=1 type=131072
+PROTECT_WRITABLE address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
+PROTECT_READ_AGAIN address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
+PROTECT_READ_TAIL address=2191048704 count=28 base=2191048704 allocation=2191044608 size=4096 state=4096 protect=4 allocationProtect=1 type=131072
+PROTECT_UNMAP_READ address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
+PROTECT_UNMAP_WRITE address=2191044608 count=28 base=2191044608 allocation=2191044608 size=8192 state=4096 protect=4 allocationProtect=1 type=131072
 W_EXPORT create=1 open=1
 W_CREATE ok=0 error=120
 W_OPEN ok=0 error=120

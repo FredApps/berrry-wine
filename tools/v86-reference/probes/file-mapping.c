@@ -70,8 +70,31 @@ static void query(const char *label, void *address) {
   if (count) {
     field(" base=", (DWORD)info.BaseAddress); field(" allocation=", (DWORD)info.AllocationBase);
     field(" size=", info.RegionSize); field(" state=", info.State); field(" protect=", info.Protect);
+    field(" allocationProtect=", info.AllocationProtect); field(" type=", info.Type);
   }
   emit("\r\n");
+}
+
+static void protectionChanges(HANDLE file, DWORD protection) {
+  HANDLE section = CreateFileMappingA(file, NULL, protection, 0, 131072, NULL);
+  void *read, *write, *again;
+  if (!section) return;
+  field("PROTECTION_CASE section=", protection); emit("\r\n");
+  read = MapViewOfFile(section, FILE_MAP_READ, 0, 0, 16);
+  if (!read) { CloseHandle(section); return; }
+  query("PROTECT_INITIAL", read);
+  query("PROTECT_UNTOUCHED", (char *)read + 4096);
+  write = MapViewOfFile(section, protection == PAGE_WRITECOPY ? FILE_MAP_COPY : FILE_MAP_WRITE, 0, 0, 8192);
+  query("PROTECT_WRITABLE", read);
+  again = MapViewOfFile(section, FILE_MAP_READ, 0, 0, 16);
+  query("PROTECT_READ_AGAIN", read);
+  query("PROTECT_READ_TAIL", (char *)read + 4096);
+  if (again) UnmapViewOfFile(again);
+  query("PROTECT_UNMAP_READ", read);
+  if (write) UnmapViewOfFile(write);
+  query("PROTECT_UNMAP_WRITE", read);
+  UnmapViewOfFile(read);
+  CloseHandle(section);
 }
 
 static void ranges(HANDLE file) {
@@ -125,6 +148,8 @@ void WinMainCRTStartup(void) {
   coherence(file, PAGE_READWRITE, FILE_MAP_WRITE);
   coherence(file, PAGE_WRITECOPY, FILE_MAP_COPY);
   ranges(file);
+  protectionChanges(file, PAGE_READWRITE);
+  protectionChanges(file, PAGE_WRITECOPY);
   field("W_EXPORT create=", createW != NULL); field(" open=", openW != NULL); emit("\r\n");
   if (createW) {
     SetLastError(0x1234);

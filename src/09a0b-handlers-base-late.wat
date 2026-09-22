@@ -2156,6 +2156,7 @@
     (local $allocation_base i32) (local $allocation_protect i32)
     (local $pte i32) (local $state i32) (local $signature i32)
     (local $next_pte i32) (local $next_signature i32)
+    (local $reserved_protect i32)
     (local $direct_start i32) (local $direct_end i32)
     (if (i32.eqz (local.get $arg1))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -2207,6 +2208,8 @@
           (call $virtual_query_sparse_base (local.get $page)))
         (if (local.get $allocation_base)
           (then
+            (local.set $reserved_protect (select (i32.const 1) (i32.const 0)
+              (call $mapped_view_contains (local.get $page))))
             (local.set $end (call $virtual_query_sparse_end
               (local.get $page) (local.get $allocation_base)))
             (local.set $allocation_protect
@@ -2220,7 +2223,9 @@
                   (i32.and (local.get $pte) (global.get $GUEST_PTE_PROTECT_MASK))))
               (else
                 (local.set $state (i32.const 0x2000))
-                (local.set $protect (i32.const 0))))
+                ;; Native Win98 section holes report PAGE_NOACCESS, while
+                ;; ordinary VirtualAlloc reservations retain their own path.
+                (local.set $protect (local.get $reserved_protect))))
             (local.set $signature
               (i32.or (local.get $state) (i32.shl (local.get $protect) (i32.const 16))))
             (local.set $next (i32.add (local.get $page) (i32.const 0x1000)))
@@ -2233,7 +2238,9 @@
                   (i32.or (i32.const 0x1000)
                     (i32.shl (i32.and (local.get $next_pte)
                       (global.get $GUEST_PTE_PROTECT_MASK)) (i32.const 16)))))
-                (else (local.set $next_signature (i32.const 0x2000))))
+                (else (local.set $next_signature
+                  (i32.or (i32.const 0x2000)
+                    (i32.shl (local.get $reserved_protect) (i32.const 16))))))
               (br_if $sparse_done
                 (i32.ne (local.get $next_signature) (local.get $signature)))
               (local.set $next (i32.add (local.get $next) (i32.const 0x1000)))

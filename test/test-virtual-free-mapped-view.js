@@ -25,11 +25,19 @@
 // -- a decommit of ordinary VirtualAlloc'd memory still clears it.
 
 const assert = require('assert');
+const fs = require('fs');
+const path = require('path');
 const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
 const { VirtualFS, createFilesystemImports } = require('../lib/filesystem');
 
 const extraWat = String.raw`
+  (func (export "test_mv_query") (param $guest i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00500000))
+    (call $handle_VirtualQuery (local.get $guest) (i32.const 0x00510000)
+      (i32.const 28) (i32.const 0) (i32.const 0) (i32.const 0))
+    (if (result i32) (i32.eq (i32.load (global.get $reg_base)) (i32.const 28))
+      (then (call $g2w (i32.const 0x00510000))) (else (i32.const 0))))
   (func (export "test_mv_backed_bytes") (result i32)
     (local $i i32) (local $sum i32)
     (block $done (loop $scan
@@ -130,19 +138,19 @@ async function main() {
   assert(section);
   assert.strictEqual(section % 65536, 0);
   assert.strictEqual(wasm.test_mv_backed_bytes(), 0, 'reservation is not materialization');
-  assert.strictEqual(wasm.guest_section_commit(section, 65536, 16) >>> 0, section + 65536);
+  assert.strictEqual(wasm.guest_section_commit(section, 65536, 16, 4) >>> 0, section + 65536);
   wasm.test_mv_write32(section + 65536, 0x12345678);
   const neighbor = wasm.guest_map_alloc(PAGE) >>> 0;
   assert(neighbor);
   wasm.test_mv_write32(neighbor, 0x76543210);
-  assert.strictEqual(wasm.guest_section_commit(section, 0, 16) >>> 0, section);
+  assert.strictEqual(wasm.guest_section_commit(section, 0, 16, 4) >>> 0, section);
   wasm.test_mv_write32(section, 0x1234);
-  assert.strictEqual(wasm.guest_section_commit(section, 0, 131072) >>> 0, section);
+  assert.strictEqual(wasm.guest_section_commit(section, 0, 131072, 4) >>> 0, section);
   assert.strictEqual(wasm.test_mv_read32(section), 0x1234, 'growth preserves the first page');
   assert.strictEqual(wasm.test_mv_read32(section + 65536), 0x12345678, 'growth preserves tail');
   assert.strictEqual(wasm.test_mv_backed_bytes(), 131072 + PAGE, 'only mapped ranges are backed');
   for (const [offset, size] of [[sectionSize, 1], [sectionSize - PAGE, PAGE + 1], [1, PAGE], [0, 0], [0, 0xffffffff]]) {
-    assert.strictEqual(wasm.guest_section_commit(section, offset, size), 0, 'invalid commit rejected');
+    assert.strictEqual(wasm.guest_section_commit(section, offset, size, 4), 0, 'invalid commit rejected');
   }
   assert.strictEqual(wasm.test_mv_free(section + 65536, PAGE, MEM_DECOMMIT), 0);
   assert.strictEqual(wasm.test_mv_read32(section + 65536), 0x12345678);
@@ -166,6 +174,49 @@ async function main() {
   };
   vfs.files.set('c:\\shared.bin', { data: new Uint8Array(131072).fill(0x41), attrs: 0x20 });
   const file = vfs.createFile('c:\\shared.bin', 0xc0000000, 3);
+  const native = fs.readFileSync(path.join(__dirname, 'fixtures/win98-file-mapping/native.serial.txt'), 'utf8');
+  const protectionCases = new Map();
+  let nativeCase;
+  for (const line of native.split('\n')) {
+    if (line.startsWith('PROTECTION_CASE ')) {
+      nativeCase = new Map();
+      protectionCases.set(Number(line.split('=')[1]), nativeCase);
+    } else if (line.startsWith('PROTECT_')) {
+      nativeCase.set(line.split(' ')[0], Object.fromEntries(
+        [...line.matchAll(/(\w+)=(\d+)/g)].map(([, key, value]) => [key, Number(value)])));
+    }
+  }
+  assert.strictEqual(protectionCases.size, 2);
+  for (const [protection, expected] of protectionCases) {
+    assert.strictEqual(expected.size, 7, 'complete native protection sequence');
+    const handle = fsHost.fs_create_file_mapping(file, protection, 0, 131072, 0);
+    const first = map(handle, 4, 0, 16);
+    const query = (label, address = first.address) => {
+      const output = wasm.test_mv_query(address) >>> 0;
+      assert(output, label);
+      const view = new DataView(memory.buffer, output, 28);
+      assert.strictEqual(view.getUint32(0, true), Math.floor(address / PAGE) * PAGE, label);
+      assert.strictEqual(view.getUint32(4, true), first.address, label);
+      for (const [key, offset] of [['allocationProtect', 8], ['size', 12], ['state', 16], ['protect', 20], ['type', 24]]) {
+        assert.strictEqual(view.getUint32(offset, true), expected.get(label)[key], `${protection} ${label} ${key}`);
+      }
+    };
+    query('PROTECT_INITIAL');
+    query('PROTECT_UNTOUCHED', first.address + PAGE);
+    const writable = map(handle, protection === 8 ? 1 : 2, 0, 8192);
+    assert.strictEqual(writable.address, first.address);
+    query('PROTECT_WRITABLE');
+    const again = map(handle, 4, 0, 16);
+    query('PROTECT_READ_AGAIN');
+    query('PROTECT_READ_TAIL', first.address + PAGE);
+    fsHost.fs_unmap_view(again.address);
+    query('PROTECT_UNMAP_READ');
+    fsHost.fs_unmap_view(writable.address);
+    query('PROTECT_UNMAP_WRITE');
+    fsHost.fs_unmap_view(first.address);
+    fsHost.fs_close_handle(handle);
+  }
+  console.log('PASS  14 native Win98 protection/VirtualQuery observations match compiled runtime');
   for (const protection of [4, 8]) {
     const handle = fsHost.fs_create_file_mapping(file, protection, 0, 131072, 0);
     const first = map(handle, 4, 0, 16);
