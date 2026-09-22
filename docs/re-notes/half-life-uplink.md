@@ -1101,6 +1101,29 @@ the first switch is scheduled against a window layout that no longer exists, so
 either re-derive the route from a `dlg-dump` after each switch, or be N separate
 single-switch runs seeded from each starting renderer.
 
-Still unknown, and the next thing to measure: whether the grey window recovers
-on its own given more batches, or is terminal. One capture cannot tell those
-apart; take a series.
+### It is terminal: the app never comes back (2026-09-22)
+
+Measured with `hl-recover.sh` — software seed, switch to OpenGL, then a capture
+*and* a `dlg-dump` every 3000 batches for 30000 batches after the second Ok
+(~8 minutes of guest time at `--tick-ms-per-batch=16`):
+
+    c273227718fa6808f57f166c55f85f67  rec-0.png .. rec-10.png   (all 11)
+    dlg-dump:t0 .. t10:  dlg=0x1002b modal=none                 (all 11)
+
+**One md5 across the whole series.** Eleven captures spanning 30000 batches are
+byte-identical, and the same dialog owns the screen at every one of them. The
+app is not slow, not mid-teardown and not waiting on a frame it will eventually
+draw — after an in-game renderer switch it stops making progress entirely.
+
+So the switch route works (`EngineType = 2` is written, confirmed again here)
+and the restart that should follow it never happens. Note the dumps report
+`modal=none`, so this is not the usual "blocked on a message box" shape that a
+single hash normally indicates; whatever holds the app is not a modal we are
+failing to dismiss.
+
+Next measurement, not yet done: where the guest is actually parked. `--trace-sched`
+across the switch, and an API census either side of batch 17000, would say
+whether it is spinning in a pump, blocked in a wait, or looping inside the
+engine's own restart. Until that is known, no fix should be attempted — and no
+automated multi-switch test can pass, because one switch per process is all the
+app currently survives.
