@@ -230,6 +230,43 @@ test('named mapping handles close independently and views retain the section', (
   assert.strictEqual(vfs.files.get('c:\\lifetime.bin').data[0], 0x7b);
 });
 
+test('file sections retain backing identity across rename and path replacement', () => {
+  const originalPath = 'c:\\identity.bin', renamedPath = 'c:\\renamed.bin';
+  const vfs = makeVFS({ [originalPath]: 16 });
+  const entry = vfs.files.get(originalPath);
+  entry.data.fill(0x41);
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const bytes = new Uint8Array(memory.buffer);
+  const { g2w } = require('../lib/region-map.generated');
+  let next = 0x410000;
+  const host = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000,
+      guest_map_alloc: () => { const address = next; next += 65536; return address; } } });
+  const file = vfs.createFile(originalPath, 0xc0000000, 3);
+  const section = host.fs_create_file_mapping(file, 4, 0, 0, 0);
+  assert(section);
+  const before = host.fs_map_view_of_file(section, 2, 0, 0, 16);
+  assert(before);
+  assert.strictEqual(host.fs_close_handle(file), 1);
+  assert(vfs.moveFile(originalPath, renamedPath));
+  const replacement = { data: new Uint8Array(16).fill(0x62), attrs: 0x20 };
+  vfs.files.set(originalPath, replacement);
+  const after = host.fs_map_view_of_file(section, 2, 0, 0, 16);
+  assert(after);
+  assert.strictEqual(bytes[g2w(after, 0x400000)], 0x41);
+  bytes[g2w(before, 0x400000)] = 0x73;
+  assert.strictEqual(host.fs_flush_view(before, 1), 1);
+  assert.strictEqual(entry.data[0], 0x73);
+  assert.strictEqual(replacement.data[0], 0x62, 'flush must not modify the new path occupant');
+  vfs.files.delete(renamedPath);
+  assert.strictEqual(host.fs_close_handle(section), 1);
+  bytes[g2w(after, 0x400000)] = 0x74;
+  assert.strictEqual(host.fs_unmap_view(after), 1);
+  assert.strictEqual(entry.data[0], 0x74, 'view owns backing even without any directory entry');
+  assert.strictEqual(replacement.data[0], 0x62);
+  assert.strictEqual(host.fs_unmap_view(before), 1);
+});
+
 test('file mapping and view access cannot exceed file or section rights', () => {
   const vfs = makeVFS({ 'c:\\mapped.bin': 16 });
   let allocations = 0;

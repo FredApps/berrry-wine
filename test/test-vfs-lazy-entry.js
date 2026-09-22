@@ -691,6 +691,43 @@ test('mapping extension preserves lazy provider windows and adds a readable zero
   assert.deepStrictEqual([...entry.data], [1, 2, 3, 4, ...Array(12).fill(0)]);
 });
 
+test('lazy sections materialize their retained entry, not a replacement path occupant', async () => {
+  const { createFilesystemImports } = require('../lib/filesystem');
+  for (const access of [2, 4]) {
+    const vfs = new VirtualFS();
+    let reads = 0;
+    vfs.setProviderFile(GUEST, { provider: { size: 16,
+      async readRange(_off, len) { reads++; return new Uint8Array(len).fill(0x41); },
+    } });
+    const path = vfs._normPath(GUEST), original = vfs.files.get(path);
+    const memory = new WebAssembly.Memory({ initial: 40 });
+    const host = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+      exports: { get_image_base: () => 0x400000, guest_map_alloc: () => 0x410000 } });
+    const file = vfs.createFile(GUEST, 0xc0000000, 3);
+    const section = host.fs_create_file_mapping(file, 4, 0, 0, 0);
+    assert(section);
+    assert.strictEqual(host.fs_close_handle(file), 1);
+    const replacement = { data: new Uint8Array(16).fill(0x62), attrs: 0x20 };
+    vfs.files.set(path, replacement);
+    assert.strictEqual(host.fs_map_view_of_file(section, access, 0, 0, 16), 0);
+    const pending = vfs.getPendingRead();
+    assert(pending, 'retained provider, not eager replacement, drives the park');
+    vfs.files.delete(path);
+    await vfs.fillPendingRead(pending);
+    const view = host.fs_map_view_of_file(section, access, 0, 0, 16);
+    assert(view);
+    assert(reads > 0);
+    const bytes = new Uint8Array(memory.buffer, RegionMap.g2w(view, 0x400000), 16);
+    assert(bytes.every(b => b === 0x41));
+    assert.strictEqual(host.fs_close_handle(section), 1);
+    bytes[0] = 0x73;
+    assert.strictEqual(host.fs_unmap_view(view), 1);
+    assert(replacement.data.every(b => b === 0x62));
+    if (access === 2) assert.strictEqual(original.data[0], 0x73);
+    else assert(original._provider, 'read-only mapping does not materialize original');
+  }
+});
+
 test('concurrent lazy mappings of the same section keep distinct thread-owned completions', async () => {
   const { createFilesystemImports } = require('../lib/filesystem');
   const vfs = new VirtualFS();

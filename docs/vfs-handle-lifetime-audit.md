@@ -870,3 +870,28 @@ OpenFileMapping desired-access/inheritance/error transport. Its legacy host
 ABI currently accepts only a name. Shared-view coherence and native validation
 precedence are not solved by this lifetime change. No new full-build or browser
 pass is claimed; the prior toy-VM bundle freshness blocker remains separate.
+
+## Section backing-entry identity checkpoint (2026-09-21)
+
+A file-backed section now captures its backing entry at creation. MapView and
+view writeback use that object, never a fresh lookup of its former path. The
+path remains diagnostic metadata. Lazy writable sections use the same
+materialization implementation as mounted files through an entry-based helper;
+the path-based public method resolves once and delegates. This preserves the
+existing provider-change guard and avoids materializing a replacement file.
+
+The eager regression fails against the previous commit by reading replacement
+byte 98 instead of original byte 65. It now covers rename, replacement, flush,
+directory-entry removal, section-handle closure and final view writeback.
+Lazy read-only and writable cases replace the path before mapping, remove it
+while parked, then verify original bytes and untouched replacement data.
+
+This does not implement Windows file-sharing restrictions on rename/delete,
+fix ordinary file handles that still resolve paths, or establish shared-view
+coherence. Closing a section handle during pending mapping remains open.
+Those limitations are separate from retaining an already-created section's
+backing object. Native Win98 behavior and browser performance are not measured.
+
+Validation: VFS 43/43, lazy/provider 49/49, source-compiled public file/mapping
+tests and FlushViewOfFile regression pass; region census and diff checks pass.
+The full build was not rerun in this checkpoint.
