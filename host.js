@@ -97,6 +97,9 @@ function resolveShellLaunchPath(file, vfs, isWinExec) {
   return vfs._resolvePath(file);
 }
 
+// Cooperative-scheduler timing arms on by default; see _schedArm.
+const SCHED_ARMS_DEFAULT = 'b,e,g';
+
 // ---------------------------------------------------------------------------
 // Frozen (agent-stepped) mode — docs/design-agent-control.md
 // ---------------------------------------------------------------------------
@@ -864,6 +867,8 @@ class WineAssembly {
     const tick = Math.max(batchMs, last) & 0x7FFFFFFF;
     st.batchMs = tick;
     st.lastReturnedMs = tick;
+    const tm = this.threadManager;
+    if (tm && tm.deadlineClock) return Math.floor(tm._waitNow()) & 0x7FFFFFFF;
     return tick;
   }
 
@@ -881,6 +886,23 @@ class WineAssembly {
   }
 
   _guestAudioClockMs(sharedAudio) {
+    const tm = this.threadManager;
+    if (tm && tm.deadlineClock) return tm._waitNow();
+    return this._guestAudioClockRawMs(sharedAudio);
+  }
+
+  // Wall time since the guest clock's origin, unstepped (fractional ms), and
+  // never behind what the stepped clock already handed out.
+  _guestContinuousMs(sharedAudio) {
+    const st = this._guestTickState(sharedAudio);
+    const base = Math.max(Number.isFinite(st.batchMs) ? st.batchMs : 0,
+      Number.isFinite(st.lastReturnedMs) ? st.lastReturnedMs : 0);
+    if (!Number.isFinite(st.wallStartMs) || st.wallStartMs <= 0) return base;
+    return Math.max(base, this._audioSchedulerNow() - st.wallStartMs);
+  }
+
+  // The real (host-advanced) guest clock, never held back by the deadline clock.
+  _guestAudioClockRawMs(sharedAudio) {
     const st = this._guestTickState(sharedAudio);
     return Number.isFinite(st.batchMs) ? st.batchMs : 0;
   }
@@ -1100,6 +1122,11 @@ class WineAssembly {
       sharedAudio,
       sharedMixer,
       audioClockMs: () => self._guestAudioClockMs(sharedAudio),
+      // How far the global deadline clock trails real time (0 when off).
+      deadlineLagMs: () => {
+        const tm = self.threadManager;
+        return tm && tm.deadlineClock ? tm.deadlineLagMs() : 0;
+      },
       // Frozen session recorder (docs/design-frozen-recording.md): host-audio
       // asks for a tap on every PCM submit and gets null unless one is armed,
       // so an unrecorded session pays one property read per buffer. The pump
@@ -2136,7 +2163,7 @@ class WineAssembly {
       onRenderWait: token => self.hostCtx.waitD3DRender(token),
       hasMessage: () => !!(self.renderer && self.renderer.inputQueue && self.renderer.inputQueue.length),
       now: () => self.renderer && self.renderer._profileNow ? self.renderer._profileNow() : Date.now(),
-      waitNow: () => self._guestAudioClockMs(self.hostCtx && self.hostCtx.sharedAudio),
+      waitNow: () => self._guestAudioClockRawMs(self.hostCtx && self.hostCtx.sharedAudio),
       resolveThreadSendExternalYield: async (link, r) => {
         if (r.yield === 3) await self._handleComDllLoadThreaded(link);
         else if (r.yield === 5) await self._handleLoadLibraryThreaded(link);
@@ -2150,6 +2177,16 @@ class WineAssembly {
         }
       },
     });
+    // Arm `g` (default on): one shared clock that stands at the earliest
+    // overdue timed-sleep deadline (see ThreadManager). Not in frozen mode,
+    // whose clock only moves when the agent steps it.
+    this.threadManager.deadlineClock = !this._frozen && this._schedArm('g');
+    // Its real time is continuous, not the stepped batch clock: the audible
+    // cursor it is compared against moves continuously too, and a stepped
+    // base shows a sleeper the cursor as it was at the last step instead.
+    if (this.threadManager.deadlineClock) {
+      this.threadManager._realWaitNow = () => self._guestContinuousMs(self.hostCtx && self.hostCtx.sharedAudio);
+    }
     // Future CreateThread instances need the same decoder configuration. A
     // mutable WASM global is instance-local, including the meaningful OFF=0.
     this.threadManager.recordInheritedWasmGlobal('set_x87_pipeline4_fusion', x87Fusion);
@@ -4553,6 +4590,28 @@ class WineAssembly {
   // non-preemptible (including a native guest API), so use small measured
   // quanta and check elapsed host time between them. A guest yield/debug halt
   // must return to the existing host state machine, never be resumed here.
+  // Cooperative-scheduler timing arms. The default, SCHED_ARMS_DEFAULT, is
+  // what keeps a Sleep(5) DirectSound mixer (fmod in Moorhuhn 2) at real
+  // time while the page runs guest threads in bursts 17-63ms apart:
+  //   b  run due sleepers between main-slice quanta, not only once a step
+  //   e  catch up: a late periodic sleeper's next deadline counts from the
+  //      one it missed, so owed wakes run back to back instead of being lost
+  //   g  global deadline clock: those wakes see the time they were due at
+  //      (ThreadManager.deadlineNow), and every clock read agrees on it
+  //   a  (off) exempt timed sleepers from idle demotion; `g` implies it
+  // `?sched-arm=LIST` replaces the default set for an A/B; `?sched-arm=none`
+  // turns every arm off.
+  _schedArm(name) {
+    if (this._schedArms === undefined) {
+      let v = null;
+      try {
+        if (typeof location !== 'undefined') v = new URLSearchParams(location.search).get('sched-arm');
+      } catch (_) {}
+      this._schedArms = new Set((v === null ? SCHED_ARMS_DEFAULT : v).split(',').filter(Boolean));
+    }
+    return this._schedArms.has(name);
+  }
+
   _runCooperativeSlice(maxBlocks) {
     const ex = this.instance.exports;
     const now = () => this._audioSchedulerNow();
@@ -4581,6 +4640,16 @@ class WineAssembly {
       if (!this._frozen && now() - start >= 8) {
         hitDeadline = true;
         break;
+      }
+      // A quantum boundary is the only point inside a host step where another
+      // guest thread can run. A mixer thread that slept 5ms is otherwise not
+      // seen again until this step's thread phase.
+      if (!this._frozen && this._schedArm('b') && this.threadManager &&
+          this.threadManager.hasDueSleeper && this.threadManager.hasDueSleeper()) {
+        this.threadManager.runDueSleepers({ maxWallMs: 2,
+          catchUpSleep: this._schedArm('e'),
+          // The deadline clock serves one overdue wake per thread per round.
+          rounds: this._schedArm('g') ? 32 : (this._schedArm('e') ? 8 : 1) });
       }
     } while (remaining > 0);
     return { blocks, hitDeadline, elapsedMs: Math.max(0, now() - start) };
@@ -4903,8 +4972,17 @@ class WineAssembly {
                   quantumSteps,
                   maxWallMs,
                   prioritizeAudioThreads: audioHot && !menuOpen,
+                  exemptTimedSleepers: self._schedArm('a'),
+                  catchUpSleep: self._schedArm('e'),
                   stopIfMessagePending: false,
                 });
+                // Catch-up arm: wakes owed to periodic sleepers at the end of
+                // the step, before the render gap in which nothing can run.
+                if (self._schedArm('e') && self.threadManager.hasDueSleeper &&
+                    self.threadManager.hasDueSleeper()) {
+                  self.threadManager.runDueSleepers({ maxWallMs: 3, catchUpSleep: true,
+                    rounds: self._schedArm('g') ? 32 : 8 });
+                }
                 // hitDeadline means the worker was cut off by maxWallMs with
                 // work still to do — the guest is being throttled by us, not
                 // by its own idle loop. That distinction is invisible from
