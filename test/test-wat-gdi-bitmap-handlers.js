@@ -117,7 +117,7 @@ function readBitmapObject(wat, handle, wide = false) {
     const palette = wat.test_call_CreatePalette(logical) >>> 0;
     const dc = wat.test_call_CreateCompatibleDC(0) >>> 0;
     assert(palette && dc);
-    assert.strictEqual(wat.test_call_SelectPalette(dc, palette) >>> 0, 0x3001F);
+    assert.strictEqual(wat.test_call_SelectPalette(dc, palette, 0) >>> 0, 0x3001F);
     wat.guest_write32(bmi + 40, 0x00000001); // WORD palette indexes [1, 0]
     const palBitmap = wat.test_call_CreateDIBitmap(dc, bmi, 4, pixelsGa, bmi, 1) >>> 0;
     assert(palBitmap, 'DIB_PAL_COLORS should resolve through the source DC palette');

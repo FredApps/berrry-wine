@@ -4206,6 +4206,7 @@
   {
     "id": 468,
     "name": "MoveToEx",
+    "test_call": true,
     "nargs": 4,
     "convention": "stdcall",
     "hash": 3465295632
@@ -5271,6 +5272,7 @@
   {
     "id": 581,
     "name": "SelectPalette",
+    "test_call": true,
     "nargs": 3,
     "convention": "stdcall",
     "hash": 3979802408

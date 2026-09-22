@@ -127,3 +127,45 @@ correct those runtime discrepancies.
 
 The later [TLS runtime change](tls-lifetime-review.md) implements that captured
 sequence and adds generated TlsAlloc test calls: **238 generated / 22 manual**.
+
+## Full-signature GDI follow-up
+
+MoveToEx and SelectPalette now use generated full-signature test exports:
+**240 generated / 20 manual**. All existing callers explicitly supply the
+formerly hidden NULL previous-point pointer or FALSE background flag. This is
+an intentional test-export ABI extension, not a production API change.
+MoveToEx also now preserves ESP; its old helper left it advanced by 20 bytes.
+
+`test-gdi-wrapper-signatures.js` fails against the old export's three-argument
+signature. With generation enabled it verifies the four-argument MoveToEx
+surface, signed previous-position output, guards around that POINT, and ESP
+preservation for NULL and non-NULL output. SelectPalette exposes all three
+arguments and preserves ESP with either background flag. The production
+SelectPalette implementation currently does not distinguish the background
+flag; those checks are not evidence of foreground/background palette behavior
+on native indexed displays.
+
+### Correction: AngleArc is not an all-integer signature
+
+The broader path suite exposed a regression introduced by `1369e721`: its
+AngleArc export originally accepted two `f32` angles, but the all-i32 generator
+changed their interpretation to integer bit patterns. The earlier statement
+that every export signature was unchanged was wrong. Restoring HEAD's wrappers
+in a compiler-only baseline reproduces the same path failure, excluding today's
+MoveToEx/SelectPalette migration as its cause.
+
+Generation now derives `f32` parameters from existing `args[].type: "FLOAT"`
+metadata and reinterprets their bits into both direct handler arguments and
+stack words. No separate type list is introduced. The ABI recorder now passes
+fractional negative numbers for FLOAT arguments and independently computes
+their expected IEEE-754 words. The existing AngleArc path checks cover a
+90-degree sweep, multiple turns, and NaN/infinite input rejection. This restores
+the original floating-point test ABI; the production handler is unchanged.
+
+Verification: full-signature/POINT/ESP regression, 92 ABI recorder calls,
+28 path checks, 10 palette checks, nine geometry checks, nine Priority-0/1
+checks, nine bitmap checks and the real-window surface test pass. Metadata,
+generator freshness, append-only API IDs, fragment balance, logical operands,
+handler ESP, test tiers and whitespace checks pass. The benchmark caller was
+updated mechanically but no timing result is claimed. These are shared-worktree
+checks, not a full release or native Win98 GDI conformance sweep.

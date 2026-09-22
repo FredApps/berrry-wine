@@ -154,7 +154,7 @@ async function main() {
 
   check('MoveToEx, LineTo, and PolylineTo own current position', () => {
     clear(dib);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 8, 2), 1);
     assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, 0), 8);
     assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, 0), 2);
@@ -170,7 +170,7 @@ async function main() {
     const widePen = wat.test_call_CreatePen(0, 3, 0x000000FF) >>> 0;
     assert(widePen);
     wat.test_call_SelectObject(dib.hdc, widePen);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 3), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 3, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 7, 3), 1);
     for (let y = 0; y < dib.height; y++) {
       for (let x = 0; x < dib.width; x++) {
@@ -199,7 +199,7 @@ async function main() {
     assert(curvePixels.length >= 8, 'Bezier should rasterize a visible curve');
     assert(curvePixels.every(color => color === 0xFF0000), 'Bezier must not produce antialias colors');
 
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 1, 8), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 1, 8, 0), 1);
     assert.strictEqual(wat.test_call_PolyBezierTo(
       dib.hdc, points([[3, 7], [8, 7], [10, 2]]), 3), 1);
     assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, 0), 10);
@@ -251,7 +251,7 @@ async function main() {
   check('clockwise ArcTo connects and updates the current position', () => {
     clear(dib);
     assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 2), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 0, 5), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 0, 5, 0), 1);
     assert.strictEqual(wat.test_call_ArcTo(dib.hdc, 1, 1, 11, 9, 11, 5, 6, 1), 1);
     assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 12, 0), 6);
     assert.strictEqual(wat.test_gdi_dc_get_field(dib.hdc, 16, 0), 1);

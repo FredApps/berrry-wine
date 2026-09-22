@@ -156,16 +156,18 @@ for (const api of testCallApis) {
     continue;
   }
   const handler = watName(api.handler || api.name, `API ${api.name} handler`);
-  const params = Array.from({ length: api.nargs }, (_, i) => ` (param $arg${i} i32)`).join('');
+  const isFloat = i => api.args?.[i]?.type === 'FLOAT';
+  const word = i => isFloat(i) ? `(i32.reinterpret_f32 (local.get $arg${i}))` : `(local.get $arg${i})`;
+  const params = Array.from({ length: api.nargs }, (_, i) => ` (param $arg${i} ${isFloat(i) ? 'f32' : 'i32'})`).join('');
   const args = Array.from({ length: 5 }, (_, i) =>
-    i < api.nargs ? `(local.get $arg${i})` : '(i32.const 0)');
+    i < api.nargs ? word(i) : '(i32.const 0)');
   args.push('(i32.const 0)');
   out.push(`  (func (export "test_call_${api.name}")${params} (result i32)`);
   out.push('    (local $saved_esp i32)');
   out.push(`    (local.set $saved_esp ${getR('esp')})`);
   if (api.nargs > 5) {
     for (let i = 0; i < api.nargs; i++) {
-      out.push(`    (call $gs32 (i32.add (local.get $saved_esp) (i32.const ${4 * (i + 1)})) (local.get $arg${i}))`);
+      out.push(`    (call $gs32 (i32.add (local.get $saved_esp) (i32.const ${4 * (i + 1)})) ${word(i)})`);
     }
   }
   out.push(`    (call $handle_${handler}`);

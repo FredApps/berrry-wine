@@ -113,7 +113,7 @@ function formatNumber(value) {
       run(count) {
         for (let i = 0; i < count; i++) {
           const y = i & 127;
-          wat.test_call_MoveToEx(target.hdc, 0, y);
+          wat.test_call_MoveToEx(target.hdc, 0, y, 0);
           wat.test_call_LineTo(target.hdc, 128, 127 - y);
         }
       },

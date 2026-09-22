@@ -119,13 +119,15 @@ function expectedStub(api) {
 }
 
 function expectedTestCall(api) {
+  const isFloat = i => api.args?.[i]?.type === 'FLOAT';
+  const word = i => isFloat(i) ? `(i32.reinterpret_f32 (local.get $arg${i}))` : `(local.get $arg${i})`;
   const params = Array.from({ length: api.nargs }, (_, i) =>
-    ` (param $arg${i} i32)`).join('');
+    ` (param $arg${i} ${isFloat(i) ? 'f32' : 'i32'})`).join('');
   const args = Array.from({ length: 5 }, (_, i) =>
-    i < api.nargs ? `(local.get $arg${i})` : '(i32.const 0)');
+    i < api.nargs ? word(i) : '(i32.const 0)');
   args.push('(i32.const 0)');
   const stack = api.nargs > 5 ? Array.from({ length: api.nargs }, (_, i) =>
-    `(call $gs32 (i32.add (local.get $saved_esp) (i32.const ${4 * (i + 1)})) (local.get $arg${i}))`).join('\n') : '';
+    `(call $gs32 (i32.add (local.get $saved_esp) (i32.const ${4 * (i + 1)})) ${word(i)})`).join('\n') : '';
   return `
     (func (export "test_call_${api.name}")${params} (result i32)
       (local $saved_esp i32)

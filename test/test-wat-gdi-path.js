@@ -138,7 +138,7 @@ async function main() {
     bytes.fill(0x5a, dib.bits, dib.bits + dib.size);
     const before = bytes.slice(dib.bits, dib.bits + dib.size);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 12, 2), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 12, 10), 1);
     assert.strictEqual(wat.test_call_CloseFigure(dib.hdc), 1);
@@ -166,7 +166,7 @@ async function main() {
     assert.strictEqual(wat.test_gdi_dc_set_field(dib.hdc, 64, 4, 1), 1);
     assert.strictEqual(wat.test_gdi_dc_set_field(dib.hdc, 68, 6, 1), 1);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 12, 23), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 12, 23, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 14, 26), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
     assert.deepStrictEqual(readPath(dib.hdc), {
@@ -211,7 +211,7 @@ async function main() {
     const tail = allocPoints([[9, 8], [10, 9]]);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
     assert.strictEqual(wat.test_call_Polygon(dib.hdc, triangle, 3), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 8, 7), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 8, 7, 0), 1);
     assert.strictEqual(wat.test_call_PolylineTo(dib.hdc, tail, 2), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
     assert.deepStrictEqual(readPath(dib.hdc), {
@@ -302,7 +302,7 @@ async function main() {
     });
     assert.strictEqual(wat.test_call_AbortPath(dib.hdc), 1);
 
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8, 0), 1);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
     assert.strictEqual(wat.test_call_ArcTo(dib.hdc, 2, 2, 18, 14, 18, 8, 10, 2), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
@@ -361,7 +361,7 @@ async function main() {
 
   check('AngleArc records its connector and sweep while preserving arc direction', () => {
     assert.strictEqual(wat.test_call_SetArcDirection(dib.hdc, 2), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8, 0), 1);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
     assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 6, 0, 90), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
@@ -379,7 +379,7 @@ async function main() {
   });
 
   check('AngleArc retains complete multi-turn sweeps instead of normalizing them away', () => {
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8, 0), 1);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
     assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 6, 0, 450), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
@@ -426,7 +426,7 @@ async function main() {
     assert.strictEqual(wat.test_call_Pie(dib.hdc, 2, 2, 18, 14, 18, 8, 10, 2), 1);
     assert.deepStrictEqual(readPath(dib.hdc), retained);
     assert.deepStrictEqual(pixel(dib, 13, 5), [0, 255, 0]);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 8, 0), 1);
     assert.strictEqual(wat.test_call_AngleArc(dib.hdc, 10, 8, 6, 0, 90), 1);
     assert.deepStrictEqual(readPath(dib.hdc), retained);
     assert.deepStrictEqual(pixel(dib, 5, 8), [0, 0, 255]);
@@ -514,7 +514,7 @@ async function main() {
     assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
     assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, brush) | 0, -1);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 12, 2), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 12, 10), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 2, 10), 1);
@@ -560,7 +560,7 @@ async function main() {
     assert.strictEqual(wat.test_call_StrokeAndFillPath(dib.hdc), 0);
     assert.strictEqual(wat.test_call_FlattenPath(dib.hdc), 0);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 1, 1), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 1, 1, 0), 1);
     assert.strictEqual(wat.test_call_FillPath(dib.hdc), 0);
     assert.strictEqual(wat.test_call_StrokePath(dib.hdc), 0);
     assert.strictEqual(wat.test_call_GetPath(dib.hdc, 0, 0, 0) | 0, -1);
@@ -575,7 +575,7 @@ async function main() {
     assert(pen && brush);
     assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 3, 6), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 3, 6, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 12, 6), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
     const before = bytes.slice(dib.bits, dib.bits + dib.size);
@@ -604,7 +604,7 @@ async function main() {
     assert(pen && brush);
     assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 3, 3), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 3, 3, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 13, 11), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
     assert.strictEqual(wat.test_call_StrokePath(dib.hdc), 1);
@@ -612,7 +612,7 @@ async function main() {
 
     clearDib(dib);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 3, 3), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 3, 3, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 13, 11), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
     assert.strictEqual(wat.test_call_WidenPath(dib.hdc), 1);
@@ -631,7 +631,7 @@ async function main() {
     assert(pen);
     assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 2, 2, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 8, 7), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
     const retained = readPath(dib.hdc);
@@ -647,7 +647,7 @@ async function main() {
     assert(pen);
     assert.notStrictEqual(wat.test_call_SelectObject(dib.hdc, pen) | 0, -1);
     assert.strictEqual(wat.test_call_BeginPath(dib.hdc), 1);
-    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 0, 0), 1);
+    assert.strictEqual(wat.test_call_MoveToEx(dib.hdc, 0, 0, 0), 1);
     assert.strictEqual(wat.test_call_LineTo(dib.hdc, 800, 600), 1);
     assert.strictEqual(wat.test_call_EndPath(dib.hdc), 1);
     assert.strictEqual(wat.test_call_WidenPath(dib.hdc), 1);

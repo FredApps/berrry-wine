@@ -188,7 +188,7 @@ async function main() {
       assert(pen);
       assert.notStrictEqual(wat.test_call_SelectObject(dc, pen) | 0, -1);
       assert.strictEqual(wat.test_call_BeginPath(dc), 1);
-      assert.strictEqual(wat.test_call_MoveToEx(dc, 5, 10), 1);
+      assert.strictEqual(wat.test_call_MoveToEx(dc, 5, 10, 0), 1);
       assert.strictEqual(wat.test_call_LineTo(dc, 15, 10), 1);
       assert.strictEqual(wat.test_call_EndPath(dc), 1);
       assert.strictEqual(wat.test_call_WidenPath(dc), 1);
@@ -217,7 +217,7 @@ async function main() {
       assert.strictEqual(view.getUint32(wat.test_gdi_object_record(pen) + 20, true) & 0xf000, join);
       assert.notStrictEqual(wat.test_call_SelectObject(dc, pen) | 0, -1);
       assert.strictEqual(wat.test_call_BeginPath(dc), 1);
-      assert.strictEqual(wat.test_call_MoveToEx(dc, 5, 15), 1);
+      assert.strictEqual(wat.test_call_MoveToEx(dc, 5, 15, 0), 1);
       assert.strictEqual(wat.test_call_LineTo(dc, 10, 10), 1);
       assert.strictEqual(wat.test_call_LineTo(dc, 15, 15), 1);
       assert.strictEqual(wat.test_call_EndPath(dc), 1);

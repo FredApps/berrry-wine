@@ -514,7 +514,7 @@ async function main() {
 
   const bluePen = wat.test_call_CreatePen(0, 1, 0x00FF0000) >>> 0;
   assert.strictEqual(wat.test_call_SelectObject(hdc, bluePen), 0x30017);
-  assert.strictEqual(wat.test_call_MoveToEx(hdc, 0, 0), 1);
+  assert.strictEqual(wat.test_call_MoveToEx(hdc, 0, 0, 0), 1);
   assert.strictEqual(wat.test_call_LineTo(hdc, 6, 0), 1);
   assert.deepStrictEqual(
     [...canvas.getContext('2d').getImageData(3, 5, 1, 1).data.subarray(0, 3)],

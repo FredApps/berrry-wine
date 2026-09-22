@@ -59,7 +59,14 @@ const extraWat = String.raw`
   const read = ptr => e.guest_read32(ptr) >>> 0;
   let count = 0;
   for (const api of apis) {
-    const args = Array.from({ length: api.nargs }, (_, i) => (0x81020304 + i * 0x01010101) >>> 0);
+    const args = Array.from({ length: api.nargs }, (_, i) =>
+      api.args?.[i]?.type === 'FLOAT' ? -37.25 + i : (0x81020304 + i * 0x01010101) >>> 0);
+    const words = args.map((value, i) => {
+      if (api.args?.[i]?.type !== 'FLOAT') return value;
+      const bytes = Buffer.alloc(4);
+      bytes.writeFloatLE(value);
+      return bytes.readUInt32LE();
+    });
     for (let alignment = 0; alignment < 4; alignment++) {
       const sp = stack + 8 + alignment;
       for (let i = 0; i < 256; i++) e.guest_write8(stack + i, 0xcc);
@@ -68,10 +75,10 @@ const extraWat = String.raw`
       e.set_esp(sp);
       assert.strictEqual(e[`test_call_${api.name}`](...args) >>> 0, 0x76543210, api.name);
       assert.strictEqual(e.get_esp() >>> 0, sp, `${api.name}: restore ESP`);
-      assert.deepStrictEqual(Array.from({ length: 5 }, (_, i) => read(out + i * 4)), args.slice(0, 5),
+      assert.deepStrictEqual(Array.from({ length: 5 }, (_, i) => read(out + i * 4)), words.slice(0, 5),
         `${api.name}: first five handler arguments`);
       assert.strictEqual(read(out + 20), 0, `${api.name}: zero name pointer`);
-      assert.deepStrictEqual(Array.from({ length: api.nargs }, (_, i) => read(out + 24 + i * 4)), args,
+      assert.deepStrictEqual(Array.from({ length: api.nargs }, (_, i) => read(out + 24 + i * 4)), words,
         `${api.name}: all stack words observed inside the handler at alignment ${alignment}`);
       assert.strictEqual(read(sp - 4), 0xcccccccc, 'before-frame guard');
       assert.strictEqual(read(sp), 0xcccccccc, 'return address untouched');
