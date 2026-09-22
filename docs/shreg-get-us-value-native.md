@@ -60,7 +60,9 @@ operations, preserve original capacity between attempts, use guest-aware
 copying for sparse buffers, and compare actual name/generated dispatch to
 `observations.json`. The ABI regression already checks the eight-argument
 36-byte stdcall cleanup. The runtime still returns a constant missing-key
-error today.
+error at the capture checkpoint. The subsequent
+[implementation](shreg-get-us-value-implementation.md) now passes this fixture
+on both contiguous and non-affine sparse caller memory.
 
 Separate audit lead: `win16_dde_deliver`'s transaction branch (in
 `09f-win16-ddeml.wat`, near the `win16_dde_ask_push_data` call) uses `select`

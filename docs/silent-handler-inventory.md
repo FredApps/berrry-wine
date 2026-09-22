@@ -679,3 +679,11 @@ path incorrectly used six. Corrected nargs to eight and cleanup from 28 to
 imbalance. An in-memory old-constant substitution reproduces the prior hash.
 Registry/default-data semantics remain unimplemented; no quiet handler was
 removed or added. See `docs/shreg-get-us-value-abi-review.md`.
+
+2026-09-22: 248 -> 247 manual, SHRegGetUSValueA implemented against 22
+repeated native Win98 observations. HKCU/HKLM fallback and defaults preserve
+original capacity; missing value/key metadata and LastError match the fixture.
+Owned host-query buffers and guest-aware copying cover sparse caller memory.
+The metadata-stub count remains 22. No classifier change or new allowance;
+the former constant missing-key handler alone leaves the inventory. Broader
+registry type/error coverage and malformed-pointer behavior remain separate.

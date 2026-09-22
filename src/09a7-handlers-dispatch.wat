@@ -1995,10 +1995,87 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; SHRegGetUSValueA — registry/default-data behavior remains unimplemented.
-  ;; Its failure path must still consume all eight documented arguments.
+  ;; Host registry imports require contiguous buffers. Query size into owned
+  ;; metadata first, then read only the required bytes into owned storage and
+  ;; scatter through guest_memmove. Caller strings/metadata/data may straddle
+  ;; unrelated sparse backing pages; never pass those directly to the host.
+  (func $shreg_us_query (param $key i32) (param $name_wa i32)
+      (param $type i32) (param $data i32) (param $size i32) (param $capacity i32) (result i32)
+    (local $meta i32) (local $buffer i32) (local $needed i32) (local $result i32)
+    (local.set $meta (call $heap_alloc (i32.const 8)))
+    (if (i32.eqz (local.get $meta)) (then (return (i32.const 8))))
+    (call $gs32 (local.get $meta) (local.get $capacity))
+    (call $gs32 (i32.add (local.get $meta) (i32.const 4)) (i32.const 0))
+    (local.set $result (call $host_reg_query_value (local.get $key) (local.get $name_wa)
+      (i32.add (local.get $meta) (i32.const 4)) (i32.const 0) (local.get $meta) (i32.const 0)))
+    (local.set $needed (call $gl32 (local.get $meta)))
+    (if (i32.and (i32.eqz (local.get $result)) (i32.ne (local.get $data) (i32.const 0))) (then
+      (if (i32.gt_u (local.get $needed) (local.get $capacity))
+        (then (local.set $result (i32.const 234)))
+        (else (if (local.get $needed) (then
+          (local.set $buffer (call $heap_alloc (local.get $needed)))
+          (if (i32.eqz (local.get $buffer))
+            (then (local.set $result (i32.const 8)))
+            (else
+              ;; Registry host calls are synchronous; no guest callback or
+              ;; yield can change the value between the size and data reads.
+              (local.set $result (call $host_reg_query_value (local.get $key) (local.get $name_wa)
+                (i32.add (local.get $meta) (i32.const 4)) (local.get $buffer) (local.get $meta) (i32.const 0)))
+              (if (i32.eqz (local.get $result)) (then
+                (call $guest_memmove (local.get $data) (local.get $buffer) (call $gl32 (local.get $meta)))))
+              (call $heap_free (local.get $buffer))))))))))
+    (if (local.get $type) (then
+      (call $gs32 (local.get $type) (call $gl32 (i32.add (local.get $meta) (i32.const 4))))))
+    (call $gs32 (local.get $size) (call $gl32 (local.get $meta)))
+    (call $heap_free (local.get $meta))
+    (local.get $result))
+
+  (func $shreg_get_us_value (param $path i32) (param $name i32)
+      (param $type i32) (param $data i32) (param $size i32)
+      (param $ignore_user i32) (param $fallback i32) (param $fallback_size i32) (result i32)
+    (local $path_copy i32) (local $name_copy i32) (local $name_wa i32)
+    (local $capacity i32) (local $attempt i32) (local $key i32) (local $result i32)
+    (if (i32.or (i32.eqz (local.get $path)) (i32.eqz (local.get $size)))
+      (then (return (i32.const 87))))
+    (local.set $path_copy (call $guest_strdup (local.get $path)))
+    (if (i32.eqz (local.get $path_copy)) (then (return (i32.const 8))))
+    (if (local.get $name) (then
+      (local.set $name_copy (call $guest_strdup (local.get $name)))
+      (if (i32.eqz (local.get $name_copy)) (then
+        (call $heap_free (local.get $path_copy)) (return (i32.const 8))))
+      (local.set $name_wa (call $g2w (local.get $name_copy)))))
+    (local.set $capacity (call $gl32 (local.get $size)))
+    (local.set $attempt (i32.ne (local.get $ignore_user) (i32.const 0)))
+    (block $done (loop $lookup
+      (local.set $key (call $host_reg_open_key
+        (i32.add (i32.const 0x80000001) (local.get $attempt))
+        (call $g2w (local.get $path_copy)) (i32.const 0)))
+      (local.set $result (i32.const 2))
+      (if (local.get $key) (then
+        (local.set $result (call $shreg_us_query (local.get $key) (local.get $name_wa)
+          (local.get $type) (local.get $data) (local.get $size) (local.get $capacity)))
+        (drop (call $host_reg_close_key (local.get $key)))))
+      (br_if $done (i32.eqz (local.get $result)))
+      (local.set $attempt (i32.add (local.get $attempt) (i32.const 1)))
+      (br_if $lookup (i32.lt_u (local.get $attempt) (i32.const 2)))))
+    (if (i32.and (i32.ne (local.get $result) (i32.const 0))
+      (i32.and (i32.ne (local.get $fallback) (i32.const 0)) (i32.ne (local.get $data) (i32.const 0)))) (then
+      (if (i32.and (i32.ne (local.get $fallback_size) (i32.const 0))
+        (i32.le_u (local.get $fallback_size) (local.get $capacity))) (then
+        (call $guest_memmove (local.get $data) (local.get $fallback) (local.get $fallback_size))
+        (call $gs32 (local.get $size) (local.get $fallback_size))
+        (local.set $result (i32.const 0))))))
+    (if (local.get $name_copy) (then (call $heap_free (local.get $name_copy))))
+    (call $heap_free (local.get $path_copy))
+    (local.get $result))
+
+  ;; Eight arguments, including ignore-HKCU and the default payload pair.
   (func $handle_SHRegGetUSValueA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const 2))  ;; ERROR_FILE_NOT_FOUND
+    (i32.store offset=0 (global.get $reg_base) (call $shreg_get_us_value
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36)))  ;; stdcall, 8 args
   )
 

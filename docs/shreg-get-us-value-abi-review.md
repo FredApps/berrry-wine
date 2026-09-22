@@ -81,5 +81,7 @@ memory access and compare actual generated dispatch against those observations.
 
 The probe was subsequently expanded to 22 cases and captured twice from fresh
 Win98 state. See [native observations](shreg-get-us-value-native.md) and
-`test/fixtures/win98-shreg-us-value/`. Registry/default runtime behavior remains
-unimplemented; the next step is a regression driven by these observations.
+`test/fixtures/win98-shreg-us-value/`. The subsequent
+[runtime implementation](shreg-get-us-value-implementation.md) passes those
+observations with contiguous and sparse inputs/outputs. The earlier sections
+describe the ABI-only checkpoint, not the current semantic implementation.
