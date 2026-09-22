@@ -250,7 +250,10 @@
     (global.set $dialog_last_proc_handled (i32.const 0))
     (local.set $installed (call $wnd_table_get (local.get $hwnd)))
     (local.set $proc (call $dialog_proc_get (local.get $hwnd)))
-    (if (i32.eqz (local.get $proc)) (then (return (i32.const 0))))
+    ;; A dialog with no DLGPROC (CreateDialogParam(..., NULL, ...), MFC's
+    ;; CDialogBar) skips only the callback: USER still does the default
+    ;; processing below, and WM_ERASEBKGND is the one such a dialog relies on.
+    (if (local.get $proc) (then
     (call $wnd_table_set (local.get $hwnd) (local.get $proc))
     (local.set $handled (call $wnd_send_message
       (local.get $hwnd) (local.get $msg)
@@ -284,7 +287,7 @@
                     (i32.eq (local.get $msg) (i32.const 0x002F))   ;; WM_CHARTOITEM
                     (i32.eq (local.get $msg) (i32.const 0x0037)))))) ;; WM_QUERYDRAGICON
           (then (return (local.get $handled))))
-        (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))
+        (return (call $dialog_extra_get (local.get $hwnd) (i32.const 0)))))))
     ;; BUTTON notifications arrive through the ordinary message pump so a
     ;; dialog procedure can enter another modal loop without stranding a
     ;; recursive WAT interpreter frame. If a true DialogBox DLGPROC leaves
@@ -322,6 +325,12 @@
     (if (i32.eq (local.get $msg) (i32.const 0x0014)) ;; WM_ERASEBKGND
       (then
         (call $nc_flags_clear (local.get $hwnd) (i32.const 2))
+        ;; Erase through wParam's DC: BeginPaint's is clipped to the update
+        ;; region, and filling the whole client through a fresh DC wiped
+        ;; SimCity's status-bar frames, which the clipped paint cannot redraw.
+        (if (local.get $wParam)
+          (then (return (call $erase_background_dc
+            (local.get $hwnd) (local.get $wParam) (i32.const 16)))))
         (return (call $host_erase_background
           (local.get $hwnd) (i32.const 16))))) ;; COLOR_BTNFACE+1
     (if (i32.eq (local.get $msg) (i32.const 0x000F)) ;; WM_PAINT

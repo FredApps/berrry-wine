@@ -964,6 +964,20 @@
     (call $push_rsrc_ctx (local.get $arg0))
     (drop (call $dlg_load (local.get $hwnd) (local.get $arg1)))
     (call $pop_rsrc_ctx)
+    ;; With no DLGPROC, USER gives the window its template's class procedure,
+    ;; and a template that names no class gets the dialog class, DefDlgProc.
+    ;; Handing it the app's own registered wndproc instead (the fallback above,
+    ;; which predates class parsing) made MFC's CBT subclass see AfxWndProc as
+    ;; the old procedure and keep no super proc, so WM_ERASEBKGND went to
+    ;; DefWindowProc and the NULL-brush dialog class erased nothing: SimCity
+    ;; 2000's CDialogBar status bar drew each message over the last one.
+    (if (i32.eqz (local.get $arg3))
+      (then
+        (if (global.get $dlg_tmpl_class_wndproc)
+          (then (call $wnd_table_set (local.get $hwnd) (global.get $dlg_tmpl_class_wndproc)))
+          (else
+            (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_DIALOG))
+            (drop (call $dialog_proc_set (local.get $hwnd) (i32.const 0)))))))
     ;; Dialog owner vs parent follows normal CreateWindow rules. Keep the
     ;; early parent assignment above for legacy WM_INITDIALOG/GetParent timing,
     ;; then normalize once the template style is known.

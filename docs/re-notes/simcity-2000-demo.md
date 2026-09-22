@@ -224,8 +224,19 @@ Driving it headlessly, three traps:
   Pump action the map, and for a while the status bar, stay grey. The next
   tool change then shows the underground view one tool late. A few thousand
   batches of sim restore it.
-* **The status bar overprints.** Its text keeps stale fragments of the
-  previous string ("Pipes $3mp $100", "Small Park $20 0010").
+* **The status bar overprinted. Fixed.** Its text kept stale fragments of the
+  previous string ("Pipes $3mp $100", "Small Park $20 0010"). The bar is an
+  MFC CDialogBar, which means CreateDialogParamA with a NULL DlgProc on a
+  classless template. There were three causes:
+  1. We gave it the app's main wndproc. MFC's CBT subclass then saw
+     AfxWndProc as the old proc and kept no super proc, so WM_ERASEBKGND went
+     to DefWindowProc against the NULL-brush class.
+  2. DefDlgProc returned at once when there was no DLGPROC.
+  3. Its erase ignored wParam's clipped DC and wiped the panel frames.
+  Now the bar gets DefDlgProc, which does its default erase through wParam.
+  Test: `test/test-dialog-null-dlgproc-erase.js`. Each WM_PAINT is
+  BeginPaint (the erase), three `FrameRect(BLACK_BRUSH)`, then
+  `ExtTextOutA(ETO_CLIPPED)`.
 * **Placement rules seen this run:** "Marinas must be placed across
   shorelines" (the 3x3 must include a water tile). The 4x4 solar plant and
   4x4 zoo take the clicked tile −1 as their top corner, like the coal plant.

@@ -7231,6 +7231,7 @@
     (local $style i32) (local $ex_style i32) (local $ctrl_count i32)
     (local $dlg_x i32) (local $dlg_y i32) (local $dlg_cx i32) (local $dlg_cy i32)
     (local $title_ptr i32) (local $title_wa i32) (local $menu_key i32) (local $dialog_class_ptr i32)
+    (local $tmpl_slot i32)
     (local $dlg_slot i32) (local $dlg_rec i32) (local $dlg_key i32)
     (local $i i32) (local $ctrl_hwnd i32) (local $ctrl_slot i32) (local $ctrl_rec i32)
     (local $cx i32) (local $cy i32) (local $cw i32) (local $ch i32)
@@ -7306,8 +7307,17 @@
     (local.set $p (global.get $dlg_text_wa))
     ;; Ordinal class atoms fit below the guest heap. Only named classes can
     ;; participate in the registered-class lookup helpers.
+    (global.set $dlg_tmpl_class_wndproc (i32.const 0))
     (if (i32.ge_u (local.get $dialog_class_ptr) (i32.const 0x10000))
       (then
+        ;; The named class's WNDPROC is the dialog's own procedure when the
+        ;; creator passes no DLGPROC (calc's "SciCalc").
+        (local.set $tmpl_slot (call $class_find_slot
+          (call $class_name_key (local.get $dialog_class_ptr))))
+        (if (i32.and (i32.ge_s (local.get $tmpl_slot) (i32.const 0))
+                     (i32.lt_u (local.get $tmpl_slot) (global.get $MAX_CLASSES)))
+          (then (global.set $dlg_tmpl_class_wndproc
+            (i32.load offset=4 (call $class_wndclass_addr (local.get $tmpl_slot))))))
         (call $wnd_set_class_bg_brush_from_name
           (local.get $dlg_hwnd) (local.get $dialog_class_ptr))
         (call $wnd_set_class_cursor_from_name
