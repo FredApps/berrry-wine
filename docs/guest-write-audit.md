@@ -246,3 +246,25 @@ This deliberately preserves the existing shared ANSI storage and lossy wide
 conversion; full Unicode/code-page title fidelity is still unproven and is
 not certified by these tests. Scroll structures remain to migrate. No browser
 or performance result is claimed.
+
+## Console scrolling caller structures migrated
+
+ScrollConsoleScreenBufferW now reads its source/optional clip SMALL_RECTs
+through guest WORD loads with signed extension, and its CHAR_INFO fill through
+guest WORD loads. Private screen character/attribute storage and the overlap
+traversal, clipping, validation and fill rules are unchanged.
+
+The expanded `test/test-console-scroll-buffer.js` reproduced rejection of a
+valid source rectangle at sparse split 1. It now passes all seven source and
+clip crossings and all three fill crossings, each with positive and negative
+clip origins (34 cases). Independent expected characters/attributes check the
+moved and filled cells, unchanged cells, caller bytes/guards, unrelated backing
+and stdcall cleanup. Existing upward/downward/rightward overlap, off-screen
+destination, inactive-buffer and error cases also pass, along with the separate
+screen-buffer suite and logical-AND/whitespace checks.
+
+A fresh `g2w`/`w2g` search of `09a2-handlers-console.wat` leaves only the
+screen-buffer creation conversion of its own heap allocation to private
+backing. That is a bounded pointer-site audit, not proof that every console
+API or guest memory access elsewhere is correct. Browser verification, full
+Unicode title fidelity and mapped-file dirty tracking remain open.

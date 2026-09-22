@@ -7,6 +7,8 @@ const apiTable = require('../src/api_table.json');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_map") (param i32) (result i32)
+    (call $virtual_map_commit (local.get 0) (i32.const 4096)))
   (func (export "test_scroll")
         (param $handle i32) (param $scroll i32) (param $clip i32)
         (param $destination i32) (param $fill i32) (param $stack i32) (result i64)
@@ -204,6 +206,46 @@ const resultOf = packed => ({
   assert.deepStrictEqual(scroll(active, coord(0, 0), clipRect), { eax: 0, esp: stack + 24 },
     'inverted clip rectangle did not fail');
   assert.strictEqual(wat.test_get_last_error(), 87);
+
+  const page = 0x30000000;
+  for (const ga of [page, 0x28000000, page + 4096]) assert.strictEqual(wat.test_map(ga) >>> 0, ga);
+  assert.notStrictEqual(wat.guest_to_wasm(page + 4096), wat.guest_to_wasm(page) + 4096);
+  for (let i = 0; i < 4096; i++) wat.guest_write8(0x28000000 + i, 0xa5);
+  const bytes = (p, n) => Array.from({ length: n }, (_, i) => wat.guest_read8(p + i));
+  for (const [kind, length] of [['scroll', 8], ['clip', 8], ['fill', 4]]) {
+    for (let split = 1; split < length; split++) {
+      for (const clipLeft of [1, -2]) {
+        seedGrid(active);
+        const edge = page + 4096 - split;
+        const source = kind === 'scroll' ? edge : scrollRect;
+        const clipping = kind === 'clip' ? edge : clipRect;
+        const fillInfo = kind === 'fill' ? edge : fill;
+        wat.guest_write8(edge - 1, 0xcc);
+        wat.guest_write8(edge + length, 0xcc);
+        writeRect(source, -1, 1, 3, 3);
+        writeRect(clipping, clipLeft, 0, 2, 3);
+        wat.guest_write16(fillInfo, 0x03a9);
+        wat.guest_write16(fillInfo + 2, 0xbeef);
+        const before = bytes(edge - 1, length + 2);
+        assert.deepStrictEqual(scroll(active, coord(-1, 0), clipping, source, fillInfo),
+          { eax: 1, esp: stack + 24 }, `${kind} split ${split}`);
+        for (let y = 0; y < 4; y++) {
+          for (let x = 0; x < 5; x++) {
+            const changed = x >= Math.max(0, clipLeft) && x <= 2;
+            const expected = changed && y === 3
+              ? { character: 0x03a9, attribute: 0xbeef }
+              : { character: 0x41 + (y + (changed ? 1 : 0)) * 5 + x,
+                  attribute: 0x10 + y + (changed ? 1 : 0) };
+            assert.deepStrictEqual(getCell(active, x, y), expected,
+              `${kind} split ${split} clip ${clipLeft} cell ${x},${y}`);
+          }
+        }
+        assert.deepStrictEqual(bytes(edge - 1, length + 2), before,
+          'scroll inputs and guards are read-only');
+      }
+    }
+  }
+  assert.deepStrictEqual(bytes(0x28000000, 4096), Array(4096).fill(0xa5));
 
   console.log('PASS console screen-buffer scrolling copies, fills, clips, and preserves state');
 })().catch(error => {
