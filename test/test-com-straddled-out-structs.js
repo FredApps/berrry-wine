@@ -3,8 +3,9 @@
 
 // The biggest caller-supplied output records in the emulator are COM and
 // Winsock ones: D3DADAPTER_IDENTIFIER9 (1100 bytes), its D3D8 twin (0x42c),
-// a DDGAMMARAMP (1536) and WSADATA (400). Each used to be filled through one
-// $g2w translation, which is only good for a single guest page -- two adjacent
+// a DDGAMMARAMP (1536), D3DCAPS9 (304), D3DCAPS8 (0xd4) and WSADATA (400).
+// Each used to be filled through one $g2w translation, which is only good for
+// a single guest page -- two adjacent
 // sparse guest pages need not be adjacent in WASM memory, so a caller whose
 // buffer crossed a boundary got the head of its record and the tail written
 // into unrelated memory. A 1536-byte record crosses a boundary from more than
@@ -36,6 +37,24 @@ const extraWat = String.raw`
     (i32.store offset=16 (global.get $reg_base) (local.get $sp))
     (call $handle_IDirect3D8_GetAdapterIdentifier
       (i32.const 0) (i32.const 0) (i32.const 0) (local.get $out) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved))
+    (i32.load offset=0 (global.get $reg_base)))
+
+  (func (export "test_d3d9_caps") (param $sp i32) (param $out i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (i32.load offset=16 (global.get $reg_base)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+    (call $handle_IDirect3D9_GetDeviceCaps
+      (i32.const 0) (i32.const 0) (i32.const 1) (local.get $out) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved))
+    (i32.load offset=0 (global.get $reg_base)))
+
+  (func (export "test_d3d8_caps") (param $sp i32) (param $out i32) (result i32)
+    (local $saved i32)
+    (local.set $saved (i32.load offset=16 (global.get $reg_base)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+    (call $handle_IDirect3D8_GetDeviceCaps
+      (i32.const 0) (i32.const 0) (i32.const 1) (local.get $out) (i32.const 0) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (local.get $saved))
     (i32.load offset=0 (global.get $reg_base)))
 
@@ -97,10 +116,12 @@ const extraWat = String.raw`
   const cursor0 = e.guest_span_cursor_bytes() >>> 0;
   const overflow0 = e.guest_span_overflow_count() >>> 0;
 
-  // --- the two adapter identifiers and WSADATA -----------------------------
+  // --- the adapter identifiers, the device caps and WSADATA ----------------
   for (const [name, call, SIZE] of [
     ['IDirect3D9::GetAdapterIdentifier', e.test_d3d9_adapter_id, 1100],
     ['IDirect3D8::GetAdapterIdentifier', e.test_d3d8_adapter_id, 0x42c],
+    ['IDirect3D9::GetDeviceCaps', e.test_d3d9_caps, 304],
+    ['IDirect3D8::GetDeviceCaps', e.test_d3d8_caps, 0xd4],
     ['WSAStartup', e.test_wsastartup, 400],
   ]) {
     const ask = ga => [call(sp, zero(ga, SIZE)) | 0, ...read(ga, SIZE)];
@@ -149,5 +170,5 @@ const extraWat = String.raw`
   assert.strictEqual(e.guest_span_overflow_count() >>> 0, overflow0,
     'a span did not fit the gather arena');
 
-  console.log('PASS  adapter identifiers, gamma ramps and WSADATA survive a sparse page split');
+  console.log('PASS  adapter identifiers, device caps, gamma ramps and WSADATA survive a sparse page split');
 })().catch(err => { console.error('FAIL ', err && err.stack || err); process.exit(1); });

@@ -819,7 +819,11 @@
   (func $d3d9_fill_caps (param $dest i32) (result i32)
     (local $wa i32)
     (if (i32.eqz (local.get $dest)) (then (return (i32.const 0x8876086C))))
-    (local.set $wa (call $g2w (local.get $dest)))
+    ;; D3DCAPS9 is 304 bytes, so it crosses a guest page boundary from most
+    ;; addresses, and two adjacent sparse pages need not be adjacent in WASM
+    ;; memory -- gather it and write it back rather than fill it through one
+    ;; translation.
+    (local.set $wa (call $guest_span_in (local.get $dest) (i32.const 304)))
     (call $zero_memory (local.get $wa) (i32.const 304))
     (i32.store (local.get $wa) (i32.const 1)) ;; D3DDEVTYPE_HAL
     (i32.store offset=20 (local.get $wa) (i32.const 0x80000001)) ;; presentation intervals
@@ -849,6 +853,7 @@
       (i32.store offset=200 (local.get $wa) (i32.const 96))
       (i32.store offset=204 (local.get $wa) (i32.const 0xffff0101))
       (f32.store offset=208 (local.get $wa) (f32.const 8))))
+    (call $guest_span_writeback (local.get $dest) (local.get $wa) (i32.const 304))
     (i32.const 0))
 
   (func $handle_IDirect3D9_GetDeviceCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

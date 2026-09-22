@@ -202,7 +202,9 @@
   (func $d3d8_fill_caps (param $out i32) (result i32)
     (local $caps i32)
     (if (i32.eqz (local.get $out)) (then (return (i32.const 0x8876086c))))
-    (local.set $caps (call $g2w (local.get $out)))
+    ;; D3DCAPS8 is 0xd4 bytes and crosses a guest page boundary from most
+    ;; addresses; the two halves need not be adjacent in WASM memory.
+    (local.set $caps (call $guest_span_in (local.get $out) (i32.const 0xd4)))
     (call $zero_memory (local.get $caps) (i32.const 0xd4))
     (i32.store (local.get $caps) (i32.const 1))       ;; DeviceType = HAL
     ;; Advertise the fixed-function surface the shared WebGL backend actually
@@ -244,6 +246,7 @@
     (i32.store offset=0xbc (local.get $caps) (i32.const 8)) ;; MaxStreams
     (i32.store offset=0xc0 (local.get $caps) (i32.const 255))
     (i32.store offset=0xc8 (local.get $caps) (i32.const 96)) ;; MaxVertexShaderConst
+    (call $guest_span_writeback (local.get $out) (local.get $caps) (i32.const 0xd4))
     (i32.const 0))
 
   (func $handle_IDirect3D8_GetDeviceCaps (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
