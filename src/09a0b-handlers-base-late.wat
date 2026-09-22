@@ -2374,9 +2374,9 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (return)))
     (if (local.get $arg1)
-      (then (i32.store (call $g2w (local.get $arg1)) (i32.const 1))))
+      (then (call $gs32 (local.get $arg1) (i32.const 1))))
     (if (local.get $arg2)
-      (then (i32.store (call $g2w (local.get $arg2)) (i32.const 1))))
+      (then (call $gs32 (local.get $arg2) (i32.const 1))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
   )
 

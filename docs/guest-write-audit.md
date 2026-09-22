@@ -337,3 +337,18 @@ each of eight positions, and a missing terminator. It checks input/guard
 preservation, unrelated backing and stdcall cleanup, plus NULL rejection.
 The prior output tests and logical-AND/whitespace checks also pass. This fixes
 addressing, not general keyboard-layout installation or native flags fidelity.
+
+## Process-affinity output masks migrated
+
+GetProcessAffinityMask now writes both caller DWORDs through gs32 rather than
+raw translated stores. Existing current-process handle validation, optional
+pointer handling, one-CPU masks and LastError behavior are unchanged.
+
+The expanded `test/test-thread-affinity.js` reproduced a process-mask output
+failure at split 1. Both output positions now pass three sparse crossings and
+a page-local control with valid/invalid handles (16 cases). Exact output bytes,
+guards, the other mask, unrelated backing, LastError and stdcall cleanup are
+checked. Existing durable/pseudo process and thread handle, affinity-mask
+validation and calling-thread identity cases also pass, as do logical-AND and
+whitespace checks. This is caller-addressing coverage, not proof of every NULL
+pointer/OS-version affinity behavior or an implementation of multiple CPUs.

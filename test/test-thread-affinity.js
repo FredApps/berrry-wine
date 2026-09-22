@@ -6,6 +6,8 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_map_affinity") (param i32) (result i32)
+    (call $virtual_map_commit (local.get 0) (i32.const 4096)))
   (func (export "test_alloc") (param $bytes i32) (result i32)
     (call $heap_alloc (local.get $bytes)))
   (func (export "test_peek32") (param $ptr i32) (result i32)
@@ -69,6 +71,29 @@ const extraWat = String.raw`
 
   const processMask = e.test_alloc(4) >>> 0;
   const systemMask = e.test_alloc(4) >>> 0;
+  const page = 0x30000000, unrelated = 0x28000000;
+  for (const ga of [page, unrelated, page + 4096]) assert.strictEqual(e.test_map_affinity(ga) >>> 0, ga);
+  assert.notStrictEqual(e.guest_to_wasm(page + 4096), e.guest_to_wasm(page) + 4096);
+  const bytes = (ga, n) => Array.from({ length: n }, (_, i) => e.guest_read8(ga + i));
+  for (let i = 0; i < 4096; i++) e.guest_write8(unrelated + i, 0xa5);
+  for (let split = 1; split <= 4; split++) for (const field of [0, 1]) {
+    const edge = page + 4096 - split;
+    const pointers = field === 0 ? [edge, systemMask] : [processMask, edge];
+    for (const handle of [CURRENT_PROCESS, 0x7777]) {
+      for (let i = -1; i <= 4; i++) e.guest_write8(edge + i, 0xcc);
+      const other = pointers[1 - field];
+      e.test_poke32(other, 0xcccccccc);
+      e.test_set_last_error(0x1234);
+      const valid = handle === CURRENT_PROCESS;
+      assert.strictEqual(e.test_get_process_affinity(handle, ...pointers), valid ? 1 : 0);
+      assert.strictEqual(e.get_esp() >>> 0, 0x00300010);
+      assert.strictEqual(e.test_get_last_error(), valid ? 0x1234 : 6);
+      assert.deepStrictEqual(bytes(edge - 1, 6), valid
+        ? [0xcc, 1, 0, 0, 0, 0xcc] : Array(6).fill(0xcc), `field ${field} split ${split}`);
+      assert.strictEqual(e.test_peek32(other) >>> 0, valid ? 1 : 0xcccccccc);
+    }
+  }
+  assert.deepStrictEqual(bytes(unrelated, 4096), Array(4096).fill(0xa5));
   e.test_poke32(processMask, 0x12345678);
   e.test_poke32(systemMask, 0x76543210);
   e.test_set_last_error(0x1111);
