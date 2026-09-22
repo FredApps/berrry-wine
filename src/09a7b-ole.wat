@@ -11944,14 +11944,14 @@
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
     ;; CF_TEXT is stored without its terminator, but a paste target reading an
     ;; HGLOBAL expects one, so the copy is one byte longer than the text.
-    (if (global.get $clipboard_len)
+    (if (global.get $clipboard_text_present)
       (then
         (if (i32.eqz (call $ole_clipboard_wrap_format (local.get $obj) (i32.const 1)
               (global.get $clipboard_ptr)
               (i32.add (global.get $clipboard_len) (i32.const 1))))
           (then (local.set $added (i32.const 1))))))
     (if (i32.and (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
-                 (i32.ne (global.get $clipboard_rtf_len) (i32.const 0)))
+                 (i32.ne (global.get $clipboard_rtf_present) (i32.const 0)))
       (then
         (if (i32.eqz (call $ole_clipboard_wrap_format (local.get $obj)
               (global.get $clipboard_rtf_format_id)

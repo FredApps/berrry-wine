@@ -6,6 +6,7 @@ const { bootRenderHarness } = require('./render-helper');
 const extraWat = String.raw`
   (func (export "prepare_dib_clipboard")
     (global.set $clipboard_open (i32.const 1))
+    (global.set $clipboard_open_hwnd (i32.const 0x10001))
     (global.set $clipboard_owner_hwnd (i32.const 0x10001))
     (global.set $clipboard_emptied_by_opener (i32.const 1)))
   (func (export "dib_api") (param $op i32) (param $arg i32) (result i64)
@@ -34,6 +35,12 @@ const extraWat = String.raw`
     (if (i32.eq (local.get $op) (i32.const 7)) (then
       (call $handle_SetClipboardData (i32.const 1) (local.get $arg)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $op) (i32.const 8)) (then
+      (call $handle_EnumClipboardFormats (local.get $arg) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $op) (i32.const 9)) (then
+      (call $handle_EmptyClipboard (i32.const 0) (i32.const 0)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (i64.or (i64.extend_i32_u (i32.load (global.get $reg_base)))
       (i64.shl (i64.extend_i32_u (i32.load offset=16 (global.get $reg_base))) (i64.const 32))))
   (func (export "synthesize_clipboard_rtf")
@@ -44,7 +51,7 @@ const extraWat = String.raw`
   const { exports: e, memory } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const api = (op, arg = 0) => {
     const result = e.dib_api(op, arg);
-    assert.strictEqual(Number(result >> 32n), 0x00300000 + (op < 2 || op === 7 ? 12 : op === 6 ? 4 : 8));
+    assert.strictEqual(Number(result >> 32n), 0x00300000 + (op < 2 || op === 7 ? 12 : op === 6 || op === 9 ? 4 : 8));
     return Number(result & 0xffffffffn);
   };
   e.prepare_dib_clipboard();
@@ -114,6 +121,61 @@ const extraWat = String.raw`
   // This is the same synthesis helper used by native Edit/RichEdit copy.
   e.synthesize_clipboard_rtf();
   lockFormat(format, e.clipboard_rtf_len() + 1);
+  const absent = () => {
+    assert.strictEqual(e.clipboard_count_formats(), 0);
+    for (const fmt of [1, 7, format]) {
+      assert.strictEqual(e.clipboard_is_format_available(fmt), 0);
+      assert.strictEqual(api(2, fmt), 0);
+    }
+    assert.strictEqual(api(8, 0), 0);
+  };
+  const wrappedEmpty = fmt => {
+    const object = e.test_ole_clipboard_wrap_win32() >>> 0;
+    assert(object, 'present empty payload wraps as an OLE data object');
+    const fe = e.guest_alloc(20) >>> 0;
+    const medium = e.guest_alloc(12) >>> 0;
+    for (let i = 0; i < 20; i++) e.guest_write8(fe + i, 0);
+    e.guest_write32(fe, fmt);
+    e.guest_write32(fe + 8, 1); // DVASPECT_CONTENT
+    e.guest_write32(fe + 12, -1);
+    e.guest_write32(fe + 16, 1); // TYMED_HGLOBAL
+    assert.strictEqual(e.test_ole_data_query(object, fe), 0);
+    assert.strictEqual(e.test_ole_data_get(object, fe, medium), 0);
+    const data = e.guest_read32(medium + 4) >>> 0;
+    assert(data);
+    assert.strictEqual(e.guest_read8(data), 0, 'OLE copies the empty payload terminator');
+  };
+  assert.strictEqual(api(9), 1);
+  absent();
+  e.prepare_dib_clipboard(); // Restore the synthetic owner's open transaction.
+  const empty = putString('');
+  assert.strictEqual(api(7, empty), empty);
+  assert.strictEqual(e.clipboard_text_len(), 0);
+  assert(e.clipboard_count_formats() > 0, 'empty text is a present format');
+  for (const fmt of [1, 7]) {
+    assert.strictEqual(e.clipboard_is_format_available(fmt), 1);
+    const handle = lockFormat(fmt, 1);
+    assert.strictEqual(e.guest_read8(handle), 0);
+  }
+  assert.strictEqual(api(8, 0), 1);
+  assert.strictEqual(api(8, 1), 7);
+  assert.strictEqual(api(8, 7), 0);
+  wrappedEmpty(1);
+  e.synthesize_clipboard_rtf();
+  assert(e.clipboard_rtf_len() > 0, 'present empty text can synthesize an empty RTF document');
+  lockFormat(format, e.clipboard_rtf_len() + 1);
+  assert.strictEqual(api(9), 1);
+  absent();
+  assert(e.clipboard_store_rtf_data(empty));
+  assert.strictEqual(e.clipboard_rtf_len(), 0);
+  assert.strictEqual(e.clipboard_is_format_available(format), 1);
+  assert(e.clipboard_count_formats() > 0);
+  lockFormat(format, 1);
+  assert.strictEqual(api(8, 0), format);
+  assert.strictEqual(api(8, format), 0);
+  wrappedEmpty(format);
+  assert.strictEqual(api(9), 1);
+  absent();
   // Force a replacement and a larger synthesized allocation after publication.
   api(7, putString('larger '.repeat(200)));
   lockFormat(1, 1401);

@@ -8,6 +8,12 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_seed_empty_text") (param $src i32)
+    (global.set $clipboard_open (i32.const 1))
+    (global.set $clipboard_owner_hwnd (i32.const 0x10001))
+    (global.set $clipboard_emptied_by_opener (i32.const 1))
+    (call $handle_SetClipboardData (i32.const 1) (local.get $src)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
   (func (export "test_create_unicode_edit") (param $class i32) (param $title i32) (result i32)
     (local $saved_esp i32) (local $hwnd i32)
     (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
@@ -89,6 +95,22 @@ const extraWat = String.raw`
     roundTrip += String.fromCharCode(code);
   }
   assert.strictEqual(roundTrip, value);
+
+  e.clipboard_clear_all_data();
+  e.test_edit_message(hwnd, 0x00b1, 0, -1); // EM_SETSEL, whole text
+  e.test_edit_message(hwnd, 0x0302, 0, 0); // WM_PASTE: absent format is a no-op
+  assert.strictEqual(e.test_edit_message(hwnd, 0x000e, 0, 0), value.length);
+  const empty = e.guest_alloc(1) >>> 0;
+  e.guest_write8(empty, 0);
+  e.test_seed_empty_text(empty);
+  e.test_edit_message(hwnd, 0x0302, 0, 0);
+  assert.strictEqual(e.test_edit_message(hwnd, 0x000e, 0, 0), value.length,
+    'existing empty-text paste policy stays unchanged pending native evidence');
+  e.test_edit_message(hwnd, 0x000c, 0, src);
+  e.test_edit_message(hwnd, 0x00b1, 0, 3);
+  e.test_edit_message(hwnd, 0x0301, 0, 0); // WM_COPY publishes nonempty native text
+  assert.strictEqual(e.clipboard_text_len(), 3);
+  assert.strictEqual(e.clipboard_is_format_available(1), 1);
 
   console.log('PASS  Unicode EDIT window text round-trips through UTF-16 messages');
 })().catch(error => {

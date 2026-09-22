@@ -366,6 +366,8 @@
       (then
         (if (global.get $clipboard_ptr)
           (then (call $heap_free (global.get $clipboard_ptr))
+                (global.set $clipboard_text_present (i32.const 0))
+                (global.set $clipboard_len (i32.const 0))
                 (global.set $clipboard_ptr (i32.const 0))))
         (local.set $cap (i32.and (i32.add (local.get $need) (i32.const 63)) (i32.const -64)))
         (global.set $clipboard_ptr (call $heap_alloc (local.get $cap)))
@@ -377,7 +379,7 @@
       (i32.add (call $g2w (local.get $src_g)) (local.get $lo))
       (local.get $len))
     (i32.store8 (i32.add (call $g2w (local.get $dst_g)) (local.get $len)) (i32.const 0))
-    (global.set $clipboard_len (local.get $len))
+    (global.set $clipboard_text_present (i32.const 1)) (global.set $clipboard_len (local.get $len))
     (call $richedit_clipboard_clear_format)
     (call $clipboard_clear_rtf_data)
   )

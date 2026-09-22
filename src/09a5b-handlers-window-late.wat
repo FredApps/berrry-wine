@@ -2728,14 +2728,14 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
 
     (if (i32.and
           (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
-          (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0)))
+          (i32.ne (global.get $clipboard_rtf_present) (i32.const 0)))
       (then
         (local.set $candidate (global.get $clipboard_rtf_format_id))
         (if (local.get $seen) (then (return (local.get $candidate))))
         (if (i32.eq (local.get $current) (local.get $candidate))
           (then (local.set $seen (i32.const 1))))))
 
-    (if (i32.gt_u (global.get $clipboard_len) (i32.const 0))
+    (if (i32.ne (global.get $clipboard_text_present) (i32.const 0))
       (then
         ;; CF_TEXT is the stored representation. CF_OEMTEXT follows as the
         ;; system-provided conversion exposed by GetClipboardData.
@@ -2879,7 +2879,7 @@ Layout(hdc) -> DWORD — return 0 (LTR layout)
     (call $richedit_clipboard_clear_format)
     (global.set $clipboard_ptr (local.get $copy))
     (global.set $clipboard_cap (i32.add (local.get $len) (i32.const 1)))
-    (global.set $clipboard_len (local.get $len)) (call $clipboard_sequence_bump)
+    (global.set $clipboard_text_present (i32.const 1)) (global.set $clipboard_len (local.get $len)) (call $clipboard_sequence_bump)
     (i32.store offset=0 (global.get $reg_base) (local.get $arg1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )

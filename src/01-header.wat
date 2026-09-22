@@ -3324,11 +3324,13 @@
   ;; Clipboard: heap-allocated text buffer (CF_TEXT semantics). Each copy
   ;; replaces the contents — no append/grow. On WM_COPY/Ctrl+C/WM_CUT the
   ;; current ptr is freed (if cap too small) and a fresh one is allocated
-  ;; to fit the selection. $clipboard_ptr is a guest address; 0 = empty.
-  ;; $clipboard_len is authoritative (no NUL terminator).
+  ;; to fit the selection. $clipboard_ptr is a guest address; 0 = no buffer.
+  ;; Length excludes NUL. Presence is independent: an empty string is data,
+  ;; while EmptyClipboard may retain allocated capacity for the next copy.
   (global $clipboard_ptr (mut i32) (i32.const 0))
   (global $clipboard_cap (mut i32) (i32.const 0))
   (global $clipboard_len (mut i32) (i32.const 0))
+  (global $clipboard_text_present (mut i32) (i32.const 0))
   ;; Registered non-OLE "Rich Text Format" clipboard payload. This is separate
   ;; from embedded-object/OLE transfer; it stores a NUL-terminated RTF byte
   ;; string and uses a stable registered format id for the process.
@@ -3336,6 +3338,7 @@
   (global $clipboard_rtf_ptr (mut i32) (i32.const 0))
   (global $clipboard_rtf_cap (mut i32) (i32.const 0))
   (global $clipboard_rtf_len (mut i32) (i32.const 0))
+  (global $clipboard_rtf_present (mut i32) (i32.const 0))
   ;; Current OLE clipboard IDataObject. The object owns copied STGMEDIUM data;
   ;; OleSetClipboard swaps this reference and OleGetClipboard AddRefs it.
   (global $clipboard_ole_data_object (mut i32) (i32.const 0))

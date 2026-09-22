@@ -20,9 +20,9 @@ const extraWat = String.raw`
     (if (i32.ne (i32.and (local.get $mask) (i32.const 2)) (i32.const 0))
       (then
         (global.set $clipboard_rtf_format_id (i32.const 0xc123))
-        (global.set $clipboard_rtf_len (i32.const 1))))
+        (global.set $clipboard_rtf_present (i32.const 1)) (global.set $clipboard_rtf_len (i32.const 1))))
     (if (i32.ne (i32.and (local.get $mask) (i32.const 4)) (i32.const 0))
-      (then (global.set $clipboard_len (i32.const 1)))))
+      (then (global.set $clipboard_text_present (i32.const 1)) (global.set $clipboard_len (i32.const 1)))))
 
   (func (export "test_clipboard_set_open") (param $open i32)
     (global.set $clipboard_open (local.get $open)))

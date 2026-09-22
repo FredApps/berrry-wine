@@ -5661,7 +5661,7 @@
     (local.get $dst))
 
   (func $clipboard_clear_rtf_data
-    (global.set $clipboard_rtf_len (i32.const 0))
+    (global.set $clipboard_rtf_present (i32.const 0)) (global.set $clipboard_rtf_len (i32.const 0))
     (if (global.get $clipboard_rtf_ptr)
       (then (call $gs8 (global.get $clipboard_rtf_ptr) (i32.const 0)))))
 
@@ -5676,7 +5676,7 @@
     (global.set $clipboard_binary_len (i32.const 0)))
 
   (func $clipboard_clear_all_data
-    (global.set $clipboard_len (i32.const 0))
+    (global.set $clipboard_text_present (i32.const 0)) (global.set $clipboard_len (i32.const 0))
     (if (global.get $clipboard_ptr)
       (then (call $gs8 (global.get $clipboard_ptr) (i32.const 0))))
     (call $clipboard_clear_rtf_data)
@@ -5716,7 +5716,7 @@
     (global.set $clipboard_rtf_ptr (local.get $copy))
     (global.set $clipboard_rtf_cap (i32.add (local.get $len) (i32.const 1)))
     (drop (call $clipboard_get_rtf_format_id))
-    (global.set $clipboard_rtf_len (local.get $len))
+    (global.set $clipboard_rtf_present (i32.const 1)) (global.set $clipboard_rtf_len (local.get $len))
     (local.get $copy))
 
   (func $clipboard_rtf_append_byte
@@ -5727,7 +5727,7 @@
   (func $clipboard_build_basic_rtf_from_text_clipboard
     (local $need i32) (local $cap i32) (local $dst_w i32)
     (local $pos i32) (local $i i32) (local $ch i32) (local $next i32)
-    (if (i32.or (i32.eqz (global.get $clipboard_ptr)) (i32.eqz (global.get $clipboard_len)))
+    (if (i32.or (i32.eqz (global.get $clipboard_ptr)) (i32.eqz (global.get $clipboard_text_present)))
       (then (call $clipboard_clear_rtf_data) (return)))
     (local.set $need
       (i32.add (i32.mul (global.get $clipboard_len) (i32.const 5)) (i32.const 64)))
@@ -5736,13 +5736,14 @@
         (if (global.get $clipboard_rtf_ptr)
           (then
             (call $heap_free (global.get $clipboard_rtf_ptr))
+            (global.set $clipboard_rtf_present (i32.const 0))
             (global.set $clipboard_rtf_ptr (i32.const 0))))
         (local.set $cap
           (i32.and (i32.add (local.get $need) (i32.const 63)) (i32.const -64)))
         (global.set $clipboard_rtf_ptr (call $heap_alloc (local.get $cap)))
         (global.set $clipboard_rtf_cap (local.get $cap))))
     (if (i32.eqz (global.get $clipboard_rtf_ptr))
-      (then (global.set $clipboard_rtf_len (i32.const 0)) (return)))
+      (then (global.set $clipboard_rtf_present (i32.const 0)) (global.set $clipboard_rtf_len (i32.const 0)) (return)))
     (drop (call $clipboard_get_rtf_format_id))
     (local.set $dst_w (call $g2w (global.get $clipboard_rtf_ptr)))
     ;; "{\\rtf1\\ansi "
@@ -5815,13 +5816,13 @@
       (br $scan)))
     (local.set $pos (call $clipboard_rtf_append_byte (local.get $dst_w) (local.get $pos) (i32.const 125)))
     (i32.store8 (i32.add (local.get $dst_w) (local.get $pos)) (i32.const 0))
-    (global.set $clipboard_rtf_len (local.get $pos)))
+    (global.set $clipboard_rtf_present (i32.const 1)) (global.set $clipboard_rtf_len (local.get $pos)))
 
   (func $clipboard_count_formats (result i32)
     (local $n i32)
-    (if (i32.gt_u (global.get $clipboard_len) (i32.const 0))
+    (if (i32.ne (global.get $clipboard_text_present) (i32.const 0))
       (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
-    (if (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0))
+    (if (i32.ne (global.get $clipboard_rtf_present) (i32.const 0))
       (then (local.set $n (i32.add (local.get $n) (i32.const 1)))))
     (if (i32.and
           (i32.ne (global.get $clipboard_binary_format) (i32.const 0))
@@ -5842,7 +5843,7 @@
     (if (i32.and
           (i32.or (i32.eq (local.get $fmt) (i32.const 1))  ;; CF_TEXT
                   (i32.eq (local.get $fmt) (i32.const 7))) ;; CF_OEMTEXT
-          (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
+          (i32.ne (global.get $clipboard_text_present) (i32.const 0)))
       (then (return (i32.const 1))))
     (if (i32.and
           (i32.eq (local.get $fmt) (global.get $clipboard_binary_format))
@@ -5852,7 +5853,7 @@
           (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
           (i32.and
             (i32.eq (local.get $fmt) (global.get $clipboard_rtf_format_id))
-            (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0))))
+            (i32.ne (global.get $clipboard_rtf_present) (i32.const 0))))
       (then (return (i32.const 1))))
     (i32.const 0))
 
@@ -5864,7 +5865,7 @@
     (if (i32.and
           (i32.or (i32.eq (local.get $fmt) (i32.const 1))  ;; CF_TEXT
                   (i32.eq (local.get $fmt) (i32.const 7))) ;; CF_OEMTEXT
-          (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
+          (i32.ne (global.get $clipboard_text_present) (i32.const 0)))
       (then
         (call $heap_global_mark (global.get $clipboard_ptr))
         (return (global.get $clipboard_ptr))))
@@ -5872,7 +5873,7 @@
           (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
           (i32.and
             (i32.eq (local.get $fmt) (global.get $clipboard_rtf_format_id))
-            (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0))))
+            (i32.ne (global.get $clipboard_rtf_present) (i32.const 0))))
       (then
         (call $heap_global_mark (global.get $clipboard_rtf_ptr))
         (return (global.get $clipboard_rtf_ptr))))
@@ -6068,6 +6069,8 @@
             (if (global.get $clipboard_ptr)
               (then
                 (call $heap_free (global.get $clipboard_ptr))
+                (global.set $clipboard_text_present (i32.const 0))
+                (global.set $clipboard_len (i32.const 0))
                 (global.set $clipboard_ptr (i32.const 0))))
             (local.set $new_cap
               (i32.and (i32.add (local.get $need) (i32.const 63)) (i32.const -64)))
@@ -6080,7 +6083,7 @@
               (i32.add (call $g2w (local.get $text_g)) (local.get $a))
               (local.get $len))
             (call $gs8 (i32.add (global.get $clipboard_ptr) (local.get $len)) (i32.const 0))
-            (global.set $clipboard_len (local.get $len))
+            (global.set $clipboard_text_present (i32.const 1)) (global.set $clipboard_len (local.get $len))
             (call $richedit_clipboard_capture_format (local.get $hwnd))
             (call $clipboard_build_basic_rtf_from_text_clipboard)))))
     (if (i32.and
@@ -6089,7 +6092,7 @@
       (then
         ;; Do not advertise the ANSI/RTF one-space projection beside CF_DIB.
         ;; RichEdit prefers RTF and would paste that placeholder as text.
-        (global.set $clipboard_len (i32.const 0))
+        (global.set $clipboard_text_present (i32.const 0)) (global.set $clipboard_len (i32.const 0))
         (if (global.get $clipboard_ptr)
           (then (call $gs8 (global.get $clipboard_ptr) (i32.const 0))))
         (call $clipboard_clear_rtf_data)
