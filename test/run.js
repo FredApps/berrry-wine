@@ -10495,10 +10495,17 @@ if (VERBOSE) {
     // The families src/09a8f-gl-matrix.wat cannot mirror yet. A zero here is
     // what licenses a consumer to trust the WAT state for THIS app; it is not
     // a general claim, which is exactly why it is printed per run.
-    // gluPerspective/gluLookAt/gluOrtho2D were here until the mirror grew
-    // copies of them; these two remain because following them means owning a
-    // copy of GL's attribute stack, not composing a matrix.
-    const UNMIRRORED = ['glPushAttrib', 'glPopAttrib'];
+    // This list is EMPTY for the first time: gluPerspective/gluLookAt/
+    // gluOrtho2D, then glPushAttrib/glPopAttrib, all grew mirrors. It is kept
+    // rather than deleted because it is the shape the next gap gets reported
+    // in, and because an empty list and a missing check print differently
+    // below.
+    //
+    // With nothing in it the latch beside it is the only reading that can
+    // move, and it still can: the mirror caps the attribute stack at GL's
+    // required minimum of 16 and latches on a deeper push, because a dropped
+    // push leaves every later pop restoring the wrong nesting level.
+    const UNMIRRORED = [];
     const used = UNMIRRORED.filter(name => {
       const index = GLCompat.CALL_INDEX[name];
       return index !== undefined && ops[index];

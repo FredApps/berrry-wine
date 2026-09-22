@@ -287,13 +287,32 @@ needs none of it. Recorded here so it is not re-proposed.
    mattered because `$gl_mtx_block` allocates from the same guest heap the app
    uses. Steps 2-4 are still what give the state a consumer.
 
-   One family is **not** mirrored: `glPushAttrib`/`glPopAttrib` save and
-   restore lighting and material wholesale, so following them means owning a
-   copy of GL's attribute stack rather than composing a matrix. Rather than
-   drift, each latches its opcode into a sticky UNTRUSTED field, so a consumer
-   can refuse to lower a draw instead of lowering a wrong one.
+   `glPushAttrib`/`glPopAttrib` were the last family **not** mirrored, and are
+   now mirrored too (`test-gl-attrib-stack.js`). They save and restore lighting
+   and material wholesale, so following them meant owning a copy of GL's
+   attribute stack rather than composing a matrix: the per-context block grew
+   from 9032 to 10832 bytes, holding 16 frames of 112.
 
-   **It is not a rare family, and that is measured, not assumed.**
+   **The saved set is deliberately smaller than real GL's.** Real GL's
+   `GL_LIGHTING_BIT` restores the light parameters; `lib/gl-compat.js:709-720`
+   saves only the active texture unit, the light model ambient and the
+   material, and the mirror saves exactly that and no more. Saving more would
+   be a regression, not an improvement: the WAT descriptor and the WebGL
+   picture would then disagree after a pop, only in scenes that push
+   attributes, only as lighting that is subtly wrong in one backend — strictly
+   harder to find than the shared gap. The gap is real and belongs on both
+   sides at once. `test-gl-attrib-stack.js` asserts the *absence* of the extra
+   restore for that reason, so a well-meaning one-sided fix fails a test rather
+   than shipping. Same for the mask: both sides record it and neither consults
+   it on restore.
+
+   The latch is not retired with the family. A push past the cap still latches,
+   because a dropped push is not a dropped operation — its matching pop still
+   arrives and restores an outer frame, so everything after it is built from
+   state the app never asked for. Underflow does **not** latch: it corrupts
+   nothing.
+
+   **It was not a rare family, and that was measured, not assumed.**
    `tools/gl-name-census.js` (2026-09-22) finds 35 GL-using binaries in the
    corpus and **18 of them name `glPushAttrib`/`glPopAttrib`**. A string search
    rather than an import walk, because every GL engine we run resolves GL
@@ -306,8 +325,8 @@ needs none of it. Recorded here so it is not re-proposed.
    whatever the program does. The ones that count are engine code — Quake II's
    `ref_gl.dll`, whose QGL table is hand-written and lists only what the
    renderer uses, GoldSrc's `hw.dll`, both Unreal `opengldrv.dll`s, Deus Ex,
-   `IDDemo.exe`. So the attribute stack is the next thing worth mirroring, and
-   it is a gate on several apps rather than a one-app fold.
+   `IDDemo.exe`. So the attribute stack was a gate on several apps rather than
+   a one-app fold, which is what justified building it.
 
    Static reach is not hotness, and the two disagree here already: `ref_gl.dll`
    names `glPushAttrib` and a 40,000-batch Quake II menu census counted **zero**

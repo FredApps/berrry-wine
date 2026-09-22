@@ -19,7 +19,7 @@
   ;; equivalent, so a rotation about a non-unit axis can differ in the last
   ;; ulp. Tests compare rotations with a tolerance for exactly this reason.
   ;;
-  ;; Per-context block, 9032 bytes:
+  ;; Per-context block, 10832 bytes:
   ;;   +0    matrix mode (0x1700 MODELVIEW, 0x1701 PROJECTION, 0x1702 TEXTURE)
   ;;   +4    active texture unit (0 or 1)
   ;;   +8    depth of stack 0 (modelview), index of its top entry
@@ -39,7 +39,28 @@
   ;;   +8992 scratch for a scalar setter that must present four f32
   ;;   +9008 viewport x, y, width, height (4 i32, as glViewport was given them)
   ;;   +9024 depth range near, far (2 f32, demoted from GL's GLclampd)
-  ;;         (ends at +9032)
+  ;;   +9032 depth of the attribute stack, the count of saved frames
+  ;;   +9040 attribute stack, 16 frames of 112 bytes (1792 bytes)
+  ;;         (ends at +10832)
+  ;;
+  ;; An attribute frame is: mask, active texture unit, light model ambient
+  ;; (4 f32), material (the whole 80 bytes at +8880, shininess included).
+  ;;
+  ;; THAT SET IS SMALLER THAN REAL GL'S, DELIBERATELY. glPushAttrib with
+  ;; GL_LIGHTING_BIT saves the light parameters too, and this saves neither
+  ;; those nor fog nor the viewport -- because lib/gl-compat.js:709-720 does not
+  ;; save them either, and the whole point of this fragment is that the two
+  ;; agree element-for-element. Saving more here would make the WAT descriptor
+  ;; and the WebGL picture disagree after a pop, which is a worse failure than
+  ;; the one being mirrored: it appears only in scenes that push attributes, and
+  ;; only as lighting that is subtly wrong in one backend. The gap is real and
+  ;; belongs on both sides at once, not on one.
+  ;;
+  ;; The mask is recorded but not consulted on restore, again because the JS
+  ;; does not consult it: it saves one set and restores that set whatever was
+  ;; asked for. Kept in the frame because it is the first thing a future
+  ;; mask-honest restore needs, and because a frame that does not carry it
+  ;; cannot be checked against the call that made it.
   ;;
   ;; Viewport and depth range are here rather than with the rest of the GL
   ;; state in 09a8e because DFX1 wants them (+68..+88) and this is the block
@@ -140,11 +161,11 @@
     (local.set $guest (call $heap_alloc (i32.const 12)))
     (if (i32.eqz (local.get $guest)) (then (unreachable)))
     (local.set $p (call $g2w (local.get $guest)))
-    (local.set $guest (call $heap_alloc (i32.const 9032)))
+    (local.set $guest (call $heap_alloc (i32.const 10832)))
     (if (i32.eqz (local.get $guest)) (then
       (call $heap_free (call $w2g (local.get $p))) (unreachable)))
     (local.set $block (call $g2w (local.get $guest)))
-    (memory.fill (local.get $block) (i32.const 0) (i32.const 9032))
+    (memory.fill (local.get $block) (i32.const 0) (i32.const 10832))
     (i32.store (local.get $block) (i32.const 0x1700))
     ;; A zeroed depth range is not GL's default and is not even a legal one --
     ;; near == far collapses depth entirely. GL starts at 0..1, and the
@@ -298,6 +319,62 @@
         (return)))
     (i32.store (call $gl_mtx_depth_addr (local.get $b) (local.get $s))
       (i32.sub (local.get $d) (i32.const 1))))
+
+  ;; The attribute stack. Address of frame $i.
+  (func $gl_mtx_attrib_frame (param $b i32) (param $i i32) (result i32)
+    (i32.add (local.get $b)
+      (i32.add (i32.const 9040) (i32.mul (local.get $i) (i32.const 112)))))
+
+  ;; glPushAttrib. Saves the state listed in the header -- which is the state
+  ;; lib/gl-compat.js:709-720 saves, no more -- and records the mask beside it.
+  ;;
+  ;; At the cap this latches GL_STACK_OVERFLOW and changes nothing, exactly as
+  ;; $gl_mtx_push does. GL's own required minimum depth is 16 and that is the
+  ;; cap here; the JS has no cap, so a 17th push is the one place the two stop
+  ;; agreeing, and it is the place where real GL stops agreeing with the JS too.
+  (func $gl_mtx_push_attrib (param $mask i32)
+    (local $b i32) (local $d i32) (local $f i32)
+    (local.set $b (call $gl_mtx_block))
+    (local.set $d (i32.load offset=9032 (local.get $b)))
+    (if (i32.ge_u (local.get $d) (i32.const 16))
+      (then
+        (i32.store offset=24 (local.get $b) (i32.const 0x0503))
+        ;; And this one latches UNTRUSTED as well, unlike a matrix overflow.
+        ;; A dropped push is not a dropped operation: the pop that matches it
+        ;; still arrives, and it restores the frame belonging to some outer
+        ;; nesting level. Everything after that point is built from state the
+        ;; app never asked for, so no descriptor from this block can be
+        ;; trusted again.
+        (call $gl_mtx_untrusted (local.get $b) (i32.const 76))
+        (return)))
+    (local.set $f (call $gl_mtx_attrib_frame (local.get $b) (local.get $d)))
+    (i32.store offset=0 (local.get $f) (local.get $mask))
+    (i32.store offset=4 (local.get $f) (i32.load offset=4 (local.get $b)))
+    (memory.copy (i32.add (local.get $f) (i32.const 8))
+      (i32.add (local.get $b) (i32.const 8352)) (i32.const 16))
+    (memory.copy (i32.add (local.get $f) (i32.const 24))
+      (i32.add (local.get $b) (i32.const 8880)) (i32.const 80))
+    (i32.store offset=9032 (local.get $b) (i32.add (local.get $d) (i32.const 1))))
+
+  ;; glPopAttrib. An empty stack is a no-op that latches GL_STACK_UNDERFLOW --
+  ;; lib/gl-compat.js:724-725 returns silently on the same condition, and the
+  ;; error word is diagnostic only, so the two behave identically.
+  (func $gl_mtx_pop_attrib
+    (local $b i32) (local $d i32) (local $f i32)
+    (local.set $b (call $gl_mtx_block))
+    (local.set $d (i32.load offset=9032 (local.get $b)))
+    (if (i32.eqz (local.get $d))
+      (then
+        (i32.store offset=24 (local.get $b) (i32.const 0x0504))
+        (return)))
+    (local.set $d (i32.sub (local.get $d) (i32.const 1)))
+    (local.set $f (call $gl_mtx_attrib_frame (local.get $b) (local.get $d)))
+    (i32.store offset=4 (local.get $b) (i32.load offset=4 (local.get $f)))
+    (memory.copy (i32.add (local.get $b) (i32.const 8352))
+      (i32.add (local.get $f) (i32.const 8)) (i32.const 16))
+    (memory.copy (i32.add (local.get $b) (i32.const 8880))
+      (i32.add (local.get $f) (i32.const 24)) (i32.const 80))
+    (i32.store offset=9032 (local.get $b) (local.get $d)))
 
   ;; The generated factors below are built in the staging slot as f32, which is
   ;; what JS does (each helper returns a Float32Array), then multiplied in.
@@ -892,13 +969,12 @@
         (f64.load offset=60 (local.get $stack))
         (f64.load offset=68 (local.get $stack))) (return)))
 
-    ;; The families this fragment still cannot mirror: 76 glPushAttrib and
-    ;; 77 glPopAttrib save and restore the lighting and material state
-    ;; wholesale (lib/gl-compat.js:695-719), so following them means owning a
-    ;; copy of the attribute stack, not composing a matrix. See the header.
-    (if (i32.or (i32.eq (local.get $op) (i32.const 76))
-        (i32.eq (local.get $op) (i32.const 77)))
-      (then (call $gl_mtx_untrusted (local.get $b) (local.get $op)))))
+    ;; 76 glPushAttrib (one GLbitfield), 77 glPopAttrib (no arguments).
+    (if (i32.eq (local.get $op) (i32.const 76))
+      (then (call $gl_mtx_push_attrib (i32.load offset=4 (local.get $stack)))
+        (return)))
+    (if (i32.eq (local.get $op) (i32.const 77))
+      (then (call $gl_mtx_pop_attrib) (return))))
 
   ;; Exports. These live here rather than in 13-exports.wat because nothing
   ;; outside a test calls them yet, and a fragment that owns its own test
@@ -1157,6 +1233,12 @@
     (i32.load offset=28 (call $gl_mtx_block)))
   (func $gl_mtx_export_clear_untrusted (export "gl_mtx_clear_untrusted")
     (i32.store offset=28 (call $gl_mtx_block) (i32.const 0)))
+  ;; Attribute stack depth, so a test can tell "restored the right values" from
+  ;; "never pushed at all" -- a pop that silently did nothing leaves every
+  ;; value already correct, and is indistinguishable from a correct round trip
+  ;; without this.
+  (func $gl_mtx_export_attrib_depth (export "gl_mtx_attrib_depth") (result i32)
+    (i32.load offset=9032 (call $gl_mtx_block)))
   (func $gl_mtx_export_observe (export "gl_mtx_observe")
       (param $op i32) (param $stack i32)
     (call $gl_mtx_observe (local.get $op) (local.get $stack)))

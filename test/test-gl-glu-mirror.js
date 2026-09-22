@@ -128,21 +128,23 @@ async function main() {
   assert.ok([...top()].every(Number.isFinite),
     `a degenerate gluLookAt must not produce NaN, got ${[...top()]}`);
 
-  // --- what still latches ------------------------------------------------
+  // --- the latch still works ---------------------------------------------
   //
-  // The point of clearing three families is that the remaining one still
-  // works. glPushAttrib saves lighting and material wholesale and has no
-  // mirror, so it must go on refusing.
+  // The point of clearing a family is that the refusal machinery behind it
+  // still fires; a latch nothing can trip is not a safety net. glPushAttrib
+  // has a mirror now (test-gl-attrib-stack.js), so the trigger here is the one
+  // condition that mirror cannot represent: a push past the cap, whose
+  // matching pop then restores the wrong nesting level.
   e.gl_mtx_set_mode(MODELVIEW);
   e.gl_mtx_load_identity();
+  for (let i = 0; i < 16; i++) observe(CALL_INDEX.glPushAttrib, []);
+  assert.strictEqual(e.gl_mtx_untrusted(), 0,
+    'sixteen pushes are legal and must not latch');
   observe(CALL_INDEX.glPushAttrib, []);
   assert.strictEqual(e.gl_mtx_untrusted(), CALL_INDEX.glPushAttrib,
-    'glPushAttrib still latches UNTRUSTED');
+    'a push past the cap must latch UNTRUSTED');
   e.gl_mtx_clear_untrusted();
-  observe(CALL_INDEX.glPopAttrib, []);
-  assert.strictEqual(e.gl_mtx_untrusted(), CALL_INDEX.glPopAttrib,
-    'glPopAttrib still latches UNTRUSTED');
-  e.gl_mtx_clear_untrusted();
+  for (let i = 0; i < 16; i++) observe(CALL_INDEX.glPopAttrib, []);
 
   // And a descriptor can now be built for a program that used GLU, which is
   // the whole point of the change.

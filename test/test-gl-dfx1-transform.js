@@ -156,15 +156,16 @@ async function main() {
 
   // --- the contract that makes the latch worth having --------------------
   //
-  // glPushAttrib saves the lighting and material state wholesale and the
-  // mirror has no copy of GL's attribute stack, so it is one of the families
-  // the mirror cannot reproduce. After it, the descriptor must not be built at
-  // all -- not built from stale state, and not built from a guess.
+  // The mirror's attribute stack is capped at GL's required minimum of 16, and
+  // a push past it is dropped -- which desynchronizes every later pop, since
+  // the pop that matched the dropped push restores an outer frame instead.
+  // That is a state the mirror cannot reproduce, so after it the descriptor
+  // must not be built at all: not from stale state, and not from a guess.
   const before = memory.buffer.slice(desc, desc + DESC_BYTES);
   words().fill(0);
-  e.gl_mtx_observe(CALL_INDEX.glPushAttrib, sp);
+  for (let i = 0; i < 17; i++) e.gl_mtx_observe(CALL_INDEX.glPushAttrib, sp);
   assert.strictEqual(e.gl_mtx_untrusted(), CALL_INDEX.glPushAttrib,
-    'glPushAttrib latches UNTRUSTED');
+    'a push past the cap latches UNTRUSTED');
   assert.strictEqual(e.gl_dfx1_transform(desc), 0,
     'an untrusted mirror must refuse to build a descriptor');
   assert.deepStrictEqual(Buffer.from(memory.buffer.slice(desc, desc + DESC_BYTES)),

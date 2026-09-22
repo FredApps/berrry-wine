@@ -221,11 +221,15 @@ async function main() {
   assert.strictEqual(e.gl_dlt1_lighting(0, 0b1), 0, 'a null destination is refused');
 
   // --- the untrusted latch ------------------------------------------------
+  //
+  // glPushAttrib is mirrored now (test-gl-attrib-stack.js), so the trigger is
+  // the one thing that mirror cannot represent: a push past its 16-deep cap,
+  // after which the matching pop restores the wrong nesting level.
   const stack = toHost(e.guest_alloc(64));
   new Int32Array(memory.buffer, stack, 16).fill(0);
-  e.gl_mtx_observe(CALL_INDEX.glPushAttrib, stack);
+  for (let i = 0; i < 17; i++) e.gl_mtx_observe(CALL_INDEX.glPushAttrib, stack);
   assert.strictEqual(e.gl_mtx_untrusted(), CALL_INDEX.glPushAttrib,
-    'glPushAttrib latches UNTRUSTED -- it saves lighting state wholesale');
+    'a push past the attribute-stack cap latches UNTRUSTED');
   refuses(0b1, 'an untrusted mirror');
   e.gl_mtx_clear_untrusted();
   assert.strictEqual(e.gl_dlt1_lighting(dst, 0b1), HEADER_BYTES + ROW_BYTES,
