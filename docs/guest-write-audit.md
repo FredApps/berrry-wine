@@ -189,3 +189,23 @@ This covers these two transfer cores, not every console structure: scrolling,
 cursor/screen information and other translated pointers still need inspection.
 No Far browser session, global write-coverage certificate or performance
 result is claimed.
+
+## Cursor and screen information migrated
+
+Get/SetConsoleCursorInfo retain caller guest addresses and use DWORD guest
+accessors. GetConsoleScreenBufferInfo uses WORD/64-bit guest stores for its
+22-byte output; the loaded window record remains private backing memory.
+Handle/null validation, size range 1..100, visibility normalization, per-buffer
+state and maximum-window calculations are unchanged.
+
+The expanded `test/test-console-cursor-info.js` first reproduced a cursor
+output failure at the first sparse-page split. It now covers all seven cursor
+structure crossings for reads and writes, invalid-size state preservation,
+and all 21 screen-info crossings against the aligned result. Guards, unrelated
+physical backing and stdcall cleanup are checked. Existing cursor validation,
+independent-buffer state, maximum-window and screen-buffer lifetime suites
+pass, as do logical-AND, test-tier and whitespace gates.
+
+Console scrolling/window rectangles, titles and other translated guest pointers
+remain audit candidates. This is source-harness coverage, not a new native
+Win98 comparison, Far browser run or performance measurement.

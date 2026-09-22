@@ -7,6 +7,13 @@ const apiTable = require('../src/api_table.json');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_info_map") (param i32) (result i32)
+    (call $virtual_map_commit (local.get 0) (i32.const 4096)))
+  (func (export "test_screen_info") (param $out i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
+    (call $handle_GetConsoleScreenBufferInfo (i32.const 0x30001) (local.get $out)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
   (func $pack_cursor_result (result i64)
     (i64.or
       (i64.extend_i32_u (i32.load offset=0 (global.get $reg_base)))
@@ -73,6 +80,39 @@ const resultOf = packed => ({
     wat.guest_read32(pointer) >>> 0,
     wat.guest_read32(pointer + 4) >>> 0,
   ];
+
+  const page = 0x30000000;
+  for (const ga of [page, 0x28000000, page + 4096]) assert.strictEqual(wat.test_info_map(ga) >>> 0, ga);
+  assert.notStrictEqual(wat.guest_to_wasm(page + 4096), wat.guest_to_wasm(page) + 4096);
+  const bytes = (ga, n) => Array.from({ length: n }, (_, i) => wat.guest_read8(ga + i));
+  for (let i = 0; i < 4096; i++) wat.guest_write8(0x28000000 + i, 0xa5);
+  for (let split = 1; split < 8; split++) {
+    const edge = page + 4096 - split;
+    assert.strictEqual(set(active, 37, 1).eax, 1);
+    for (let i = -1; i <= 8; i++) wat.guest_write8(edge + i, 0xcc);
+    assert.deepStrictEqual(get(active, edge), { eax: 1, esp: stack + 12 });
+    assert.deepStrictEqual(bytes(edge - 1, 10), [0xcc, 37, 0, 0, 0, 1, 0, 0, 0, 0xcc]);
+    assert.deepStrictEqual(set(active, split + 10, 7, edge), { eax: 1, esp: stack + 12 });
+    get(active);
+    assert.deepStrictEqual(read(output), [split + 10, 1]);
+    assert.strictEqual(set(active, 101, 0, edge).eax, 0);
+    get(active);
+    assert.deepStrictEqual(read(output), [split + 10, 1], 'invalid split input preserves state');
+  }
+  set(active, 25, 1);
+  const screenInfo = wat.guest_alloc(22) >>> 0;
+  assert.strictEqual(wat.test_screen_info(screenInfo), 1);
+  const expectedScreen = bytes(screenInfo, 22);
+  assert.deepStrictEqual(expectedScreen.slice(0, 4), [80, 0, 25, 0]);
+  for (let split = 1; split < 22; split++) {
+    const edge = page + 4096 - split;
+    for (let i = -1; i <= 22; i++) wat.guest_write8(edge + i, 0xcc);
+    assert.strictEqual(wat.test_screen_info(edge), 1);
+    assert.deepStrictEqual(bytes(edge - 1, 24), [0xcc, ...expectedScreen, 0xcc]);
+    assert.strictEqual(wat.get_esp() >>> 0, stack + 12);
+  }
+  assert.deepStrictEqual(bytes(0x28000000, 4096), Array(4096).fill(0xa5),
+    'info APIs preserve unrelated physical backing');
 
   assert.deepStrictEqual(get(active), { eax: 1, esp: stack + 12 },
     'GetConsoleCursorInfo succeeds and pops both arguments');

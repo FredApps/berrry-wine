@@ -667,30 +667,30 @@
         (call $console_buffer_finish (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
-    (local.set $p (call $g2w (local.get $arg1)))
+    (local.set $p (local.get $arg1))
     ;; dwSize.X, dwSize.Y
-    (i32.store16 (local.get $p) (global.get $console_width))
-    (i32.store16 (i32.add (local.get $p) (i32.const 2)) (global.get $console_height))
+    (call $gs16 (local.get $p) (global.get $console_width))
+    (call $gs16 (i32.add (local.get $p) (i32.const 2)) (global.get $console_height))
     ;; dwCursorPosition.X, Y
-    (i32.store16 (i32.add (local.get $p) (i32.const 4)) (global.get $console_cursor_x))
-    (i32.store16 (i32.add (local.get $p) (i32.const 6)) (global.get $console_cursor_y))
+    (call $gs16 (i32.add (local.get $p) (i32.const 4)) (global.get $console_cursor_x))
+    (call $gs16 (i32.add (local.get $p) (i32.const 6)) (global.get $console_cursor_y))
     ;; wAttributes
-    (i32.store16 (i32.add (local.get $p) (i32.const 8)) (global.get $console_attr))
+    (call $gs16 (i32.add (local.get $p) (i32.const 8)) (global.get $console_attr))
     ;; srWindow is an inclusive SMALL_RECT and may be smaller than or offset
     ;; within the backing screen buffer.
     (local.set $win (call $console_loaded_window_record))
-    (i64.store (i32.add (local.get $p) (i32.const 10)) (i64.load (local.get $win)))
+    (call $gs64 (i32.add (local.get $p) (i32.const 10)) (i64.load (local.get $win)))
     ;; dwMaximumWindowSize is constrained by both the display/font and this
     ;; screen buffer. It is not simply dwSize, nor is it always the display
     ;; maximum returned by GetLargestConsoleWindowSize.
     (local.set $largest (call $console_largest_window_size))
-    (i32.store16 (i32.add (local.get $p) (i32.const 18))
+    (call $gs16 (i32.add (local.get $p) (i32.const 18))
       (select
         (global.get $console_width)
         (i32.and (local.get $largest) (i32.const 0xFFFF))
         (i32.le_u (global.get $console_width)
           (i32.and (local.get $largest) (i32.const 0xFFFF)))))
-    (i32.store16 (i32.add (local.get $p) (i32.const 20))
+    (call $gs16 (i32.add (local.get $p) (i32.const 20))
       (select
         (global.get $console_height)
         (i32.shr_u (local.get $largest) (i32.const 16))
@@ -843,8 +843,8 @@
         (call $console_buffer_finish (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
-    (local.set $p (call $g2w (local.get $arg1)))
-    (local.set $size (i32.load (local.get $p)))
+    (local.set $p (local.get $arg1))
+    (local.set $size (call $gl32 (local.get $p)))
     (if (i32.or (i32.lt_u (local.get $size) (i32.const 1))
                 (i32.gt_u (local.get $size) (i32.const 100)))
       (then
@@ -855,7 +855,7 @@
         (return)))
     (global.set $console_cursor_size (local.get $size))
     (global.set $console_cursor_visible
-      (i32.ne (i32.load (i32.add (local.get $p) (i32.const 4))) (i32.const 0)))
+      (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 4))) (i32.const 0)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $console_buffer_finish (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
@@ -891,9 +891,9 @@
         (call $console_buffer_finish (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
-    (local.set $p (call $g2w (local.get $arg1)))
-    (i32.store (local.get $p) (global.get $console_cursor_size))
-    (i32.store (i32.add (local.get $p) (i32.const 4)) (global.get $console_cursor_visible))
+    (local.set $p (local.get $arg1))
+    (call $gs32 (local.get $p) (global.get $console_cursor_size))
+    (call $gs32 (i32.add (local.get $p) (i32.const 4)) (global.get $console_cursor_visible))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $console_buffer_finish (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
