@@ -4039,6 +4039,180 @@ function buildHandlers(lazy, fuseCond) {
 // part of what the JIT sees, and whether it inlines them is exactly the kind of
 // thing tools/wasm-native.js is for.
 // ---------------------------------------------------------------------------
+// --- The register file, lowered to linear memory ----------------------------
+//
+// Handler bodies, the helpers and every JIT pass are WRITTEN against the
+// register file's old shape: `(global.get $ax)` for a register by name and
+// `(call $rget16 IDX)` for one by number. That text is what foldRegisterFile,
+// promoteRegs, handler-effects and the flag analysis read, and it stays their
+// input unchanged. The registers themselves live in memory now (see
+// isa.REGFILE_BASE), and `lowerRegs` is the one place that says so: it runs
+// over the FINISHED module text, after every pass, and rewrites
+//
+//   (global.get $ax)          -> (i32.load (i32.const A))
+//   (global.set $ax V)        -> (i32.store (i32.const A) V)
+//   (call $rget32 I)          -> (i32.load (i32.add B (i32.shl I 2)))
+//   (call $rset16 I V)        -> (i32.store16 (i32.add B (i32.shl I 2)) V)
+//   (call $rget8 I)           -> (i32.load8_u (i32.add B BYTE(I)))
+//
+// inline, with a literal index folded to an absolute address. Every rewrite is
+// exact -- the store16/store8 forms ARE the merge the old helpers did, and the
+// operands are evaluated in the order the call evaluated them -- so a pass that
+// was right about the global form is right about the lowered one.
+//
+// A computed address is written `(i32.add (i32.const B) X)` rather than as
+// `offset=B`: the region is at ~40MB, past SpiderMonkey's offset guard, so an
+// `offset=` that large makes Ion emit an add plus an overflow branch per
+// access, where a wrapping i32.add lands inside the ordinary guard region and
+// needs no check at all (measured in tools/wasm-native.js on $mov_rr32).
+//
+// BYTE(I) is where 8-bit register I lives: 0-3 are AL CL DL BL at 4*I, 4-7 are
+// AH CH DH BH at 4*(I-4)+1. As one expression that uses I once, and so needs
+// no temporary: bits b1b0 go to 3..2 and b2 to 0, which is
+// ((I * 17) >> 2) & 13.
+const REGFILE = isa.REGFILE_BASE;
+const REG_SLOT = Object.fromEntries(isa.REG16.map((r, i) => [r, REGFILE + 4 * i]));
+// Step two of the same move: the six selectors and their six derived bases.
+// `(global.get $ds)`/`(global.get $dsb)` become constant-address loads, and
+// `(call $sget I)`/`(call $sbase I)` a load at SLOT + 4 * I. $sset stays a
+// function -- a segment load recomputes the base through the descriptor table
+// -- but without its br_table (see helpers()).
+const SEG_SLOT = Object.fromEntries(isa.SEG.flatMap((r, i) =>
+  [[r, isa.REGFILE_SEL + 4 * i], [`${r}b`, isa.REGFILE_SEGB + 4 * i]]));
+const SLOT = { ...REG_SLOT, ...SEG_SLOT };
+const segLoad = (at, idx) => {
+  const k = litOf(idx);
+  return k !== null && k >= 0 && k < isa.SEG.length
+    ? `(i32.load (i32.const ${at + 4 * k}))`
+    : `(i32.load (i32.add (i32.const ${at}) (i32.shl ${idx} (i32.const 2))))`;
+};
+const byteAddr8 = (k) => REGFILE + 4 * (k & 3) + (k >> 2);
+const LIT = /^\(i32\.const\s+(0x[0-9a-fA-F]+|\d+)\)$/;
+const litOf = (x) => { const m = LIT.exec(x.trim()); return m ? Number(m[1]) : null; };
+const regLoad = (w, idx) => {
+  const k = litOf(idx);
+  const op = { 32: 'i32.load', 16: 'i32.load16_u', 8: 'i32.load8_u' }[w];
+  if (k !== null && k >= 0 && k < 8) {
+    return `(${op} (i32.const ${w === 8 ? byteAddr8(k) : REGFILE + 4 * k}))`;
+  }
+  return w === 8
+    ? `(${op} (i32.add (i32.const ${REGFILE}) (i32.and (i32.shr_u (i32.mul ${idx} (i32.const 17)) (i32.const 2)) (i32.const 13))))`
+    : `(${op} (i32.add (i32.const ${REGFILE}) (i32.shl ${idx} (i32.const 2))))`;
+};
+const regStore = (w, idx, v) => {
+  const k = litOf(idx);
+  const op = { 32: 'i32.store', 16: 'i32.store16', 8: 'i32.store8' }[w];
+  if (k !== null && k >= 0 && k < 8) {
+    return `(${op} (i32.const ${w === 8 ? byteAddr8(k) : REGFILE + 4 * k}) ${v})`;
+  }
+  return w === 8
+    ? `(${op} (i32.add (i32.const ${REGFILE}) (i32.and (i32.shr_u (i32.mul ${idx} (i32.const 17)) (i32.const 2)) (i32.const 13))) ${v})`
+    : `(${op} (i32.add (i32.const ${REGFILE}) (i32.shl ${idx} (i32.const 2))) ${v})`;
+};
+
+// End of the balanced s-expression opening at s[i], skipping `;;` comments.
+function sexpEnd(s, i) {
+  let d = 0;
+  for (let j = i; j < s.length; j++) {
+    const c = s[j];
+    if (c === ';' && s[j + 1] === ';') { while (j < s.length && s[j] !== '\n') j++; continue; }
+    if (c === '(') d++;
+    else if (c === ')' && --d === 0) return j + 1;
+  }
+  throw new Error(`lowerRegs: unbalanced s-expression at ${i}`);
+}
+// The top-level children of `(head c1 c2 ...)`, starting after `from`. Only
+// parenthesized children -- every operand the rewrites take is one.
+function sexpKids(s, from, end) {
+  const kids = [];
+  for (let j = from; j < end - 1; j++) {
+    const c = s[j];
+    if (c === ';' && s[j + 1] === ';') { while (j < end && s[j] !== '\n') j++; continue; }
+    if (c === '(') { const e = sexpEnd(s, j); kids.push(s.slice(j, e)); j = e - 1; }
+    else if (!/\s/.test(c)) throw new Error(`lowerRegs: bare operand at ${j}: ${s.slice(j, j + 40)}`);
+  }
+  return kids;
+}
+
+// A value with no side effects: nothing in it can move a register between the
+// load of the old word and the store of the new one.
+const PURE = (x) => !/\b(call|set|tee|store\d*)\b/.test(x);
+// A register write that merges part of a value into the old word, in the shape
+// the JIT's folds produce it, as the narrow store it is. Only when the new part
+// is pure: `(global.set $sp (merge (global.get $sp) (call $pop16)))` reads SP
+// before the pop moves it, and a store16 would not.
+function narrowMerge(a, v) {
+  try { return narrowMerge1(a, v); } catch (e) { return null; }
+}
+function narrowMerge1(a, v) {
+  const m = /^\(i32\.or\s+\(i32\.and\s+\(i32\.load \(i32\.const (\d+)\)\)\s+\(i32\.const (0xFFFF0000|0xFFFFFF00|0xFFFF00FF)\)\)\s+/.exec(v);
+  if (!m || Number(m[1]) !== a) return null;
+  const rest = v.slice(m[0].length);
+  if (!rest.startsWith('(')) return null;
+  const e = sexpEnd(rest, 0);
+  if (rest.slice(e).trim() !== ')') return null;
+  const part = rest.slice(0, e);
+  const k = sexpKids(part, part.indexOf(' '), part.length);
+  const head = /^\((\S+)/.exec(part)[1];
+  // The part is `(i32.and X mask)`, or the narrow load the peephole below
+  // already made of one -- either way the store only keeps its low bytes.
+  const low = (p, hd, ks, mask, narrow) => {
+    if (hd === 'i32.and' && litOf(ks[1]) === mask) return ks[0];
+    if (hd === narrow) return p;
+    return null;
+  };
+  let x = null, op = null, at = a;
+  if (m[2] === '0xFFFF0000') { x = low(part, head, k, 0xFFFF, 'i32.load16_u'); op = 'i32.store16'; }
+  if (m[2] === '0xFFFFFF00') { x = low(part, head, k, 0xFF, 'i32.load8_u'); op = 'i32.store8'; }
+  if (m[2] === '0xFFFF00FF' && head === 'i32.shl' && litOf(k[1]) === 8) {
+    const h2 = /^\((\S+)/.exec(k[0])[1];
+    const kk = k[0].startsWith('(i32.and ') ? sexpKids(k[0], k[0].indexOf(' '), k[0].length) : [];
+    x = low(k[0], h2, kk, 0xFF, 'i32.load8_u'); op = 'i32.store8'; at = a + 1;
+  }
+  if (!x || !PURE(x)) return null;
+  return `(${op} (i32.const ${at}) ${x})`;
+}
+
+const REG_HEAD = /\((global\.get|global\.set|call) \$(ax|cx|dx|bx|sp|bp|si|di|[ecsdfg]sb?|r(get|set)(8|16|32)|s(get|base))(?=[\s)])/y;
+function lowerRegs(src) {
+  let out = '', last = 0;
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (c === ';' && src[i + 1] === ';') { while (i < src.length && src[i] !== '\n') i++; continue; }
+    if (c !== '(') continue;
+    REG_HEAD.lastIndex = i;
+    const m = REG_HEAD.exec(src);
+    if (!m) continue;
+    const [, kind, name, gs, w, sk] = m;
+    // `(call $ax` and `(global.get $rget8` are not ours; the SLOT test is a
+    // guard that a name the pattern admits really is a register slot.
+    if ((kind === 'call') !== !!(gs || sk)) continue;
+    if (kind !== 'call' && SLOT[name] === undefined) continue;
+    const end = sexpEnd(src, i);
+    const kids = sexpKids(src, i + m[0].length, end).map(lowerRegs);
+    let repl;
+    if (kind === 'global.get') repl = `(i32.load (i32.const ${SLOT[name]}))`;
+    else if (kind === 'global.set') {
+      repl = (REG_SLOT[name] !== undefined && narrowMerge(REG_SLOT[name], kids[0]))
+        || `(i32.store (i32.const ${SLOT[name]}) ${kids[0]})`;
+    } else if (sk) repl = segLoad(sk === 'get' ? isa.REGFILE_SEL : isa.REGFILE_SEGB, kids[0]);
+    else if (gs === 'get') repl = regLoad(Number(w), kids[0]);
+    else repl = regStore(Number(w), kids[0], kids[1]);
+    out += src.slice(last, i) + repl;
+    last = end;
+    i = end - 1;
+  }
+  out += src.slice(last);
+  // A masked read of a whole register is a narrow load of its low bytes. The
+  // pattern admits any constant-address load, which is still exact: memory is
+  // little-endian, so the low bytes of a word are the ones at its address.
+  return out
+    .replace(/\(i32\.and\s+\(i32\.load \(i32\.const (\d+)\)\)\s+\(i32\.const (0xFFFF|0xffff|65535)\)\)/g,
+      '(i32.load16_u (i32.const $1))')
+    .replace(/\(i32\.and\s+\(i32\.load \(i32\.const (\d+)\)\)\s+\(i32\.const (0xFF|0xff|255)\)\)/g,
+      '(i32.load8_u (i32.const $1))');
+}
+
 function brTableFn(name, params, result, arms, idx = '(local.get $i)') {
   // Build the nested-block br_table shape by hand; it is the same one
   // $get_reg uses in src/03-registers.wat.
@@ -4096,36 +4270,21 @@ function helpers() {
   // as the hardware does -- a 386-era demo sets ESI once and then addresses
   // through SI, and zeroing the top half on every 16-bit write turns that into
   // a wild pointer thousands of instructions later.
-  s += brTableFn('rget32', '(param $i i32)', '(result i32)',
-    R.map(r => `(return (global.get $${r}))`));
-  s += brTableFn('rset32', '(param $i i32) (param $v i32)', '',
-    R.map(r => `(global.set $${r} (local.get $v)) (return)`));
-
-  s += brTableFn('rget16', '(param $i i32)', '(result i32)',
-    R.map(r => `(return (i32.and (global.get $${r}) (i32.const 0xFFFF)))`));
-  s += brTableFn('rset16', '(param $i i32) (param $v i32)', '',
-    R.map(r => `(global.set $${r} (i32.or (i32.and (global.get $${r}) (i32.const 0xFFFF0000))`
-      + ` (i32.and (local.get $v) (i32.const 0xFFFF)))) (return)`));
-
-  // 8-bit halves. 0-3 are the low bytes of AX/CX/DX/BX, 4-7 the high bytes.
-  s += brTableFn('rget8', '(param $i i32)', '(result i32)',
-    isa.REG8.map((_, i) => {
-      const host = R[i & 3];
-      return i < 4
-        ? `(return (i32.and (global.get $${host}) (i32.const 0xFF)))`
-        : `(return (i32.and (i32.shr_u (global.get $${host}) (i32.const 8)) (i32.const 0xFF)))`;
-    }));
-  s += brTableFn('rset8', '(param $i i32) (param $v i32)', '',
-    isa.REG8.map((_, i) => {
-      const host = R[i & 3];
-      return i < 4
-        ? `(global.set $${host} (i32.or (i32.and (global.get $${host}) (i32.const 0xFFFFFF00)) (i32.and (local.get $v) (i32.const 0xFF)))) (return)`
-        : `(global.set $${host} (i32.or (i32.and (global.get $${host}) (i32.const 0xFFFF00FF)) (i32.shl (i32.and (local.get $v) (i32.const 0xFF)) (i32.const 8)))) (return)`;
-    }));
-  s += brTableFn('sget', '(param $i i32)', '(result i32)',
-    isa.SEG.map(r => `(return (global.get $${r}))`));
-  s += brTableFn('sbase', '(param $i i32)', '(result i32)',
-    isa.SEG.map(r => `(return (global.get $${r}b))`));
+  // They are plain loads and stores now (see lowerRegs), and lowerRegs expands
+  // every call to one of these inline, so the functions are never called by the
+  // finished module. They stay because the analyses read helper bodies by name
+  // (helperBodies) and the handler text still spells a numbered register this
+  // way.
+  const I = '(local.get $i)', V = '(local.get $v)';
+  for (const w of [32, 16, 8]) {
+    s += `(func $rget${w} (param $i i32) (result i32) ${regLoad(w, I)})\n`;
+    s += `(func $rset${w} (param $i i32) (param $v i32) ${regStore(w, I, V)})\n`;
+  }
+  // Segment registers, in memory beside the general ones (isa.REGFILE_SEL /
+  // REGFILE_SEGB). $sget and $sbase are single loads that lowerRegs inlines at
+  // every call; the functions stay only as the named form the analyses read.
+  s += `(func $sget (param $i i32) (result i32) ${segLoad(isa.REGFILE_SEL, I)})\n`;
+  s += `(func $sbase (param $i i32) (result i32) ${segLoad(isa.REGFILE_SEGB, I)})\n`;
   // Loading CS also republishes the default operand size, since that lives in
   // the descriptor CS came from and nothing else can change it.
   //
@@ -4137,13 +4296,17 @@ function helpers() {
   // nothing was ever 32-bit -- throws away the high half of every ESP a flat
   // stack uses, and the first `ret` after it lands somewhere in the first 64KB
   // of the program.
-  s += brTableFn('sset', '(param $i i32) (param $v i32)', '',
-    isa.SEG.map(r => `(global.set $${r} (local.get $v))`
-      + ` (global.set $${r}b (call $segbase (local.get $v)))`
-      + (r === 'cs' ? ` (global.set $d32 (call $segd32 (local.get $v)))` : '')
-      + (r === 'ss' ? ` (global.set $spm (select (i32.const -1) (i32.const 0xFFFF)`
-        + ` (call $segd32 (local.get $v))))` : '')
-      + ` (return)`));
+  // An index past the six traps, as the br_table this replaced did.
+  s += `(func $sset (param $i i32) (param $v i32)
+  (if (i32.ge_u (local.get $i) (i32.const ${isa.SEG.length})) (then (unreachable)))
+  (i32.store (i32.add (i32.const ${isa.REGFILE_SEL}) (i32.shl (local.get $i) (i32.const 2))) (local.get $v))
+  (i32.store (i32.add (i32.const ${isa.REGFILE_SEGB}) (i32.shl (local.get $i) (i32.const 2)))
+    (call $segbase (local.get $v)))
+  (if (i32.eq (local.get $i) (i32.const ${isa.SEG.indexOf('cs')}))
+    (then (global.set $d32 (call $segd32 (local.get $v)))))
+  (if (i32.eq (local.get $i) (i32.const ${isa.SEG.indexOf('ss')}))
+    (then (global.set $spm (select (i32.const -1) (i32.const 0xFFFF)
+      (call $segd32 (local.get $v)))))))\n`;
 
   // Effective address. Every form masks to 16 bits: the 8086 wraps an EA inside
   // its segment rather than carrying into the segment base.
@@ -5803,7 +5966,8 @@ ${[...Array(8).keys()].map(i => `(global $st${i} (mut f64) (f64.const 0))`).join
 ;; Derived state, so there is exactly one writer: $sset. Nothing else may
 ;; assign a segment global, including the host, whose set_es/set_cs/... exports
 ;; are routed through $sset for this reason.
-${isa.SEG.map(r => `(global $${r}b (mut i32) (i32.const 0))`).join('\n')}
+;; (They live in memory now, at isa.REGFILE_SEGB, beside the selectors; the
+;; name is still how the text spells them. See lowerRegs.)
 
 ;; The descriptor tables, as LGDT/LIDT left them, and the D bit of whatever
 ;; descriptor CS was last loaded from. $d32 is what makes a code segment
@@ -5911,9 +6075,18 @@ function stateAccessors() {
     .map(r => `\n(func (export "get_${r}b") (result i32) (global.get $${r}b))`).join('');
 }
 
+// Every STATE name that is a wasm global -- all of them but the general
+// registers, which live in memory (isa.REGFILE_BASE). Their get_/set_ exports
+// are still written as `(global.get $ax)` and lowerRegs turns them into the
+// load and store. Leaving the eight globals declared would be worse than
+// useless: a register reference that escaped the lowering would then compile
+// and quietly read a copy nothing writes, where without them it is an
+// `unknown global` at build time.
+const stateGlobals = () => STATE.filter(g => !isa.REG16.includes(g) && !isa.SEG.includes(g))
+  .map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
+
 function preamble() {
-  const globals = STATE
-    .map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
+  const globals = stateGlobals();
   const accessors = stateAccessors();
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
@@ -6244,7 +6417,7 @@ function emit(variant, opts = {}) {
   if (opts.ipHist && variant !== 'tailcall') {
     throw new Error(`--block-hits is only implemented for the tailcall shell, not ${variant}`);
   }
-  return checkNesting(fn(opts));
+  return checkNesting(lowerRegs(fn(opts)));
 }
 
 // helpers/LOCALS/STATE are exported for tools/toyvm/trace-jit.js, which builds
@@ -6290,6 +6463,9 @@ module.exports = {
   MACHINE_STATE, FPU_STATE,
   machineAccessors,
   stateAccessors,
+  // The register file's lowering to memory, for a second module built from the
+  // same text (trace-jit.js moduleWat).
+  stateGlobals, lowerRegs,
   // A handler index -> the same handler without its flag write, and what every
   // handler does to the flag state. The compiler walks a finished block
   // backwards with these and swaps in the variant where the write is dead.

@@ -268,7 +268,30 @@ const DEC_INSNS_MAX = 0x4000;
 // ~16MB the pair table already reserves.
 const IPHIST_BASE = DEC_INSNS + DEC_INSNS_MAX * 8;
 const IPHIST_SIZE = THREAD_SIZE;
-const DEC_END = IPHIST_BASE + IPHIST_SIZE;
+
+// The general register file: EAX ECX EDX EBX ESP EBP ESI EDI, one little-endian
+// dword each in x86 encoding order, so AX is the low half of EAX's slot and AL
+// and AH are its first two bytes. It used to be eight wasm globals, and a
+// global cannot be indexed -- so every register access whose number came out
+// of the arena went through a helper FUNCTION holding a br_table over the
+// eight, which no engine inlines: a frame, a stack check and an indirect jump
+// per operand. In memory the same access is one load or store at
+// REGFILE_BASE + 4 * index, emitted inline (emit.js lowerRegs).
+//
+// The segment registers follow in the same block for the same reason: six
+// selectors (ES CS SS DS FS GS, one dword each) at REGFILE_SEL and the six
+// linear bases derived from them at REGFILE_SEGB, so $sget/$sbase are one load
+// at SLOT + 4 * index instead of a call into a br_table -- and $lin, which
+// every memory access goes through, loses its call with it.
+//
+// Outside the guest's reach on purpose: $lin masks every guest address to at
+// most GUEST_RAM_SIZE - 1, so no guest store can alias a register, which is
+// what lets the region JIT keep one in a wasm local across a loop.
+const REGFILE_BASE = IPHIST_BASE + IPHIST_SIZE;
+const REGFILE_SEL = REGFILE_BASE + 32;
+const REGFILE_SEGB = REGFILE_BASE + 64;
+const REGFILE_SIZE = 128;
+const DEC_END = REGFILE_BASE + REGFILE_SIZE;
 
 const MEM_PAGES = ((DEC_END + 0xFFFF) & ~0xFFFF) >> 16;
 
@@ -308,6 +331,6 @@ module.exports = {
   CODE_BITMAP, CODE_BITMAP_SIZE,
   DEC_TAB, DEC_TAB_SIZE, DEC_FIXUPS, DEC_FIXUPS_MAX, DEC_FIXUP_WORDS,
   DEC_HEADS, DEC_HEADS_SIZE, DEC_SCRATCH, DEC_SCRATCH_WORDS, DEC_INSNS, DEC_INSNS_MAX, DEC_END,
-  IPHIST_BASE, IPHIST_SIZE,
+  IPHIST_BASE, IPHIST_SIZE, REGFILE_BASE, REGFILE_SEL, REGFILE_SEGB, REGFILE_SIZE,
   EA, EA_DEFAULT_SEG, EA_A32,
 };

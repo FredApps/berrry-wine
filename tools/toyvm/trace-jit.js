@@ -1503,16 +1503,17 @@ function emitTier3(ops, passes) {
 // price side exits. That is the honest limit of the measurement: a trace JIT
 // also has to pay for leaving the trace, and this says nothing about it.
 const { helpers, LOCALS, STATE, EXTRA_GLOBALS, MACHINE_STATE, machineAccessors,
-  stateAccessors } = require('./emit');
+  stateAccessors, stateGlobals, lowerRegs } = require('./emit');
 
 function moduleWat(body, extra = {}) {
   const { locals = '', pro = '', epi = '' } = extra;
-  const globals = STATE.map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n');
+  const globals = stateGlobals();
   // Shared with the interpreter's own preamble. Writing a second, simpler set
   // here is what made every segmented access in a compiled trace read from
   // linear address `0 + off`; see the note on stateAccessors() in emit.js.
   const accessors = stateAccessors();
-  return `(module
+  // Lowered like the interpreter's module: the registers live in memory.
+  return lowerRegs(`(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
 (import "host" "port_in" (func $port_in (param i32) (param i32) (result i32)))
 (import "host" "port_out" (func $port_out (param i32) (param i32) (param i32)))
@@ -1531,7 +1532,7 @@ ${body}
     (local.set $k (i32.sub (local.get $k) (i32.const 1)))
     (br $l)))
 ${epi})
-)`;
+)`);
 }
 
 // Guest RAM only -- the first megabyte. Hashing the whole linear memory would
