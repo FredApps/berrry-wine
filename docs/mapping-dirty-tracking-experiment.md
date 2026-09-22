@@ -447,3 +447,25 @@ page stays untouched. The existing REP MOVSD sparse-boundary test and generated
 code-cache invalidation suite also pass, as does the logical-AND gate. No game
 performance estimate follows from these correctness tests; quiet A/B work
 remains required for performance decisions.
+
+## Reverse calendar conversion also uses guest accessors
+
+The earlier five-interface audit covered filesystem host imports, not all WAT
+handlers. Continuing into `09a7d` found `SystemTimeToFileTime` reading seven
+SYSTEMTIME fields from one translated pointer and writing FILETIME with a raw
+`i64.store`. It now uses `gl16` for each consumed field and `gs64` for the
+result, preserving the existing null checks, date validation, civil-days
+arithmetic and stdcall result handling. The unused day-of-week field remains
+ignored.
+
+The source-compiled real-handler test failed before migration at output split
+1. It now verifies all seven FILETIME output crossings with canaries and all
+15 SYSTEMTIME input crossings against independently computed leap-day ticks.
+Invalid month 13 must return failure without changing the eight output bytes
+at every input split. Metadata-boundary and existing timestamp suites, the
+logical-AND gate and diff whitespace check pass.
+
+This is not a calendar-conformance verdict: month-specific day validation and
+native range limits were not changed here. The scan also identified the three
+raw 64-bit `GetDiskFreeSpaceExA` output stores in `09a0b` as a next migration
+candidate; the rest of the WAT guest-write inventory remains open.

@@ -700,7 +700,6 @@
   ;; MFC 6.00's CTime/COleDateTime path runs this on every document save, so a
   ;; missing one stopped MSPaint's file round trip at the first Save As.
   (func $handle_SystemTimeToFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $st i32)
     (local $year i32) (local $mon i32) (local $day i32)
     (local $hour i32) (local $min i32) (local $sec i32) (local $ms i32)
     (local $y i32) (local $era i32) (local $yoe i32) (local $doy i32) (local $doe i32)
@@ -710,14 +709,13 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
-    (local.set $st (call $g2w (local.get $arg0)))
-    (local.set $year (i32.load16_u          (local.get $st)))
-    (local.set $mon  (i32.load16_u offset=2  (local.get $st)))
-    (local.set $day  (i32.load16_u offset=6  (local.get $st)))
-    (local.set $hour (i32.load16_u offset=8  (local.get $st)))
-    (local.set $min  (i32.load16_u offset=10 (local.get $st)))
-    (local.set $sec  (i32.load16_u offset=12 (local.get $st)))
-    (local.set $ms   (i32.load16_u offset=14 (local.get $st)))
+    (local.set $year (call $gl16 (local.get $arg0)))
+    (local.set $mon  (call $gl16 (i32.add (local.get $arg0) (i32.const 2))))
+    (local.set $day  (call $gl16 (i32.add (local.get $arg0) (i32.const 6))))
+    (local.set $hour (call $gl16 (i32.add (local.get $arg0) (i32.const 8))))
+    (local.set $min  (call $gl16 (i32.add (local.get $arg0) (i32.const 10))))
+    (local.set $sec  (call $gl16 (i32.add (local.get $arg0) (i32.const 12))))
+    (local.set $ms   (call $gl16 (i32.add (local.get $arg0) (i32.const 14))))
     ;; FILETIME cannot represent anything before 1601, and Win32 rejects a
     ;; SYSTEMTIME whose fields are out of range rather than normalizing it.
     (if (i32.or
@@ -758,7 +756,7 @@
     (local.set $days (i32.sub
       (i32.add (i32.mul (local.get $era) (i32.const 146097)) (local.get $doe))
       (i32.const 584694)))
-    (i64.store (call $g2w (local.get $arg1))
+    (call $gs64 (local.get $arg1)
       (i64.add
         (i64.mul
           (i64.add

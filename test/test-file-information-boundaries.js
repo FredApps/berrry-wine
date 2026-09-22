@@ -3,6 +3,11 @@
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 const extraWat = String.raw`
+  (func (export "test_system_to_file") (param $st i32) (param $ft i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $handle_SystemTimeToFileTime (local.get $st) (local.get $ft)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
   (func (export "test_calendar") (param $dos i32) (param $ft i32) (param $out i32) (param $time i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (if (local.get $dos)
@@ -113,6 +118,26 @@ const extraWat = String.raw`
   const putTime = ga => { e.guest_write32(ga, Number(ticks & 0xffffffffn));
     e.guest_write32(ga + 4, Number(ticks >> 32n)); };
   const expectedCalendar = [2000, 2, 2, 29, 12, 34, 56, 789].flatMap(w => [w & 255, w >> 8]);
+  const expectedTicks = Array.from({ length: 8 }, (_, i) => Number((ticks >> BigInt(i * 8)) & 255n));
+  for (let split = 1; split < 8; split++) {
+    const ft = page + 4096 - split;
+    expectedCalendar.forEach((b, i) => e.guest_write8(aligned + i, b));
+    for (let i = -1; i <= 8; i++) e.guest_write8(ft + i, 0xcc);
+    assert.strictEqual(e.test_system_to_file(aligned, ft), 1);
+    assert.deepStrictEqual(read(ft - 1, 10), [0xcc, ...expectedTicks, 0xcc], `converted FILETIME split ${split}`);
+    assert.strictEqual(e.get_esp(), 0x0030000c);
+  }
+  for (let split = 1; split < 16; split++) {
+    const st = page + 4096 - split;
+    expectedCalendar.forEach((b, i) => e.guest_write8(st + i, b));
+    assert.strictEqual(e.test_system_to_file(st, aligned), 1);
+    assert.deepStrictEqual(read(aligned, 8), expectedTicks, `SYSTEMTIME input split ${split}`);
+    // Existing invalid-field failure must not partially write the output.
+    e.guest_write8(st + 2, 13);
+    for (let i = 0; i < 8; i++) e.guest_write8(aligned + i, 0xcc);
+    assert.strictEqual(e.test_system_to_file(st, aligned), 0);
+    assert.deepStrictEqual(read(aligned, 8), new Array(8).fill(0xcc));
+  }
   for (let split = 1; split < 16; split++) {
     const out = page + 4096 - split;
     putTime(aligned);
