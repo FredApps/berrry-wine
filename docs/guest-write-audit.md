@@ -290,3 +290,17 @@ host changes; it is not a clean-commit benchmark. Assertions read the console
 model, not rendered pixels. Mouse selection, pixel-level rendering, native
 Win98 parity and performance still require their own evidence. The test skips
 explicitly when Chrome or the locally installed candidate is absent.
+
+### Mouse and painted-row follow-up
+
+The Far browser test now finds the `app.exe` row, verifies its unselected dark
+blue pixels on the screen canvas, and sends a real Puppeteer mouse click using
+the window's client origin and canvas CSS scaling. It waits for over 500 teal
+pixels in that row and independently checks `app.exe` in the panel's status
+line. Home restores directory selection before the existing F9 and child/parent
+navigation checks. The full route passed on 2026-09-22, with test-tier and
+whitespace gates passing. No runtime code was changed for this follow-up.
+
+This supersedes the earlier lack of mouse/pixel evidence for this specific
+route, not for all console rendering: it is a targeted painted-row assertion,
+not a full screenshot comparison, native Win98 oracle or timing measurement.

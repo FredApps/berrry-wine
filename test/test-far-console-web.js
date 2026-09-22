@@ -72,6 +72,40 @@ const chrome = process.env.CHROME || '/Applications/Google Chrome.app/Contents/M
     });
     await page.waitForFunction(() => /far\.exe/i.test(window.farSnapshot()), { timeout: 90000 });
     console.log('Far root panels:\n' + await page.evaluate(() => window.farSnapshot()));
+    await page.evaluate(() => {
+      window.farCellPoint = (column, row) => {
+        const renderer = window.sharedRenderer;
+        const win = Object.values(renderer.windows).find(w => w.visible && !w.isChild && / - Far/.test(w.title || ''));
+        if (!win) throw new Error('Far console window missing');
+        const origin = renderer._mouseMsgOriginScreen(win.hwnd);
+        const canvas = document.getElementById('screen');
+        const rect = canvas.getBoundingClientRect();
+        const gx = origin.x + column * 8, gy = origin.y + row * 12;
+        return { gx, gy, x: rect.left + gx * rect.width / canvas.width,
+          y: rect.top + gy * rect.height / canvas.height };
+      };
+      window.farPixelCount = (row, rgb) => {
+        const { gx, gy } = window.farCellPoint(1, row);
+        const canvas = document.getElementById('screen');
+        const data = canvas.getContext('2d').getImageData(gx, gy, 18 * 8, 12).data;
+        let count = 0;
+        for (let i = 0; i < data.length; i += 4)
+          if (data[i] === rgb[0] && data[i + 1] === rgb[1] && data[i + 2] === rgb[2]) count++;
+        return count;
+      };
+    });
+    const appRow = await page.evaluate(() => window.farSnapshot().split('\n').findIndex(r => /app\.exe/.test(r)));
+    assert(appRow > 1, 'app.exe appears in a selectable file row');
+    await page.waitForFunction(row => window.farPixelCount(row, [0, 0, 128]) > 500,
+      { timeout: 15000 }, appRow);
+    const point = await page.evaluate(row => window.farCellPoint(8, row + 0.5), appRow);
+    await page.mouse.click(point.x, point.y);
+    await page.waitForFunction(row => window.farPixelCount(row, [0, 128, 128]) > 500,
+      { timeout: 15000 }, appRow);
+    assert(/app\.exe/.test(await page.evaluate(() => window.farSnapshot().split('\n')[21])),
+      'mouse selects app.exe in the left panel status row');
+    console.log('PASS Far browser mouse selected app.exe and repainted blue row teal');
+    await page.keyboard.press('Home');
     await page.keyboard.press('F9');
     await page.waitForFunction(() => /Left\s+Files\s+Commands\s+Options\s+Right/.test(window.farSnapshot()),
       { timeout: 15000 });
