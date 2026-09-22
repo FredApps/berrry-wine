@@ -146,10 +146,18 @@
   ;;       drag_anchor_y (= row_y) and drag_anchor_top (= current top)
   ;;       at ListBoxState+28 / +32 so WM_MOUSEMOVE can recompute top
   ;;       from the cursor delta.
+  ;; Arrow length along the long axis. USER gives each arrow SM_CYVSCROLL
+  ;; (16) until the bar is too short for two of them plus a 4px minimum
+  ;; track; below that the two arrows split what is left, (len - 4) / 2 each.
+  ;; That is what makes a 24px SBS_VERT bar a spinner (SimCity 2000's budget
+  ;; window): two 10px arrows and no thumb. Returning 0 there left the
+  ;; control with nothing to draw and nothing to click.
   (func $scrollbar_arrow_size (param $long_dim i32) (result i32)
-    (if (result i32) (i32.lt_s (local.get $long_dim) (i32.const 36))
-      (then (i32.const 0))
-      (else (i32.const 16))))
+    (if (result i32) (i32.gt_s (local.get $long_dim) (i32.const 36))
+      (then (i32.const 16))
+      (else (if (result i32) (i32.gt_s (local.get $long_dim) (i32.const 4))
+        (then (i32.shr_u (i32.sub (local.get $long_dim) (i32.const 4)) (i32.const 1)))
+        (else (i32.const 0))))))
 
   (func $scrollbar_thumb_size (param $long_dim i32) (param $range i32) (result i32)
     (local $arrow i32) (local $track_len i32) (local $thumb_size i32)
@@ -160,7 +168,8 @@
         (select (i32.mul (local.get $arrow) (i32.const 2))
                 (i32.const 4)
                 (local.get $arrow))))
-    (if (i32.le_s (local.get $track_len) (i32.const 0)) (then (return (i32.const 0))))
+    ;; Under 6px of track USER draws no thumb at all (SCROLL_MIN_THUMB).
+    (if (i32.lt_s (local.get $track_len) (i32.const 6)) (then (return (i32.const 0))))
     (local.set $thumb_size (i32.div_u (local.get $track_len) (i32.add (local.get $range) (i32.const 1))))
     (if (i32.lt_u (local.get $thumb_size) (i32.const 16))
       (then (local.set $thumb_size (i32.const 16))))
@@ -207,7 +216,7 @@
   ;; Thumb length in pixels. total = smax - smin + 1 scroll units.
   (func $sb_page_thumb (param $track i32) (param $page i32) (param $total i32) (result i32)
     (local $thumb i32)
-    (if (i32.or (i32.le_s (local.get $track) (i32.const 0))
+    (if (i32.or (i32.lt_s (local.get $track) (i32.const 6))
                 (i32.le_s (local.get $total) (i32.const 0)))
       (then (return (i32.const 0))))
     (local.set $thumb

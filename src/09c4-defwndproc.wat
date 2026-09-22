@@ -555,6 +555,7 @@
       (then (return)))
     (local.set $thumb (call $sb_page_thumb
       (local.get $track) (local.get $page) (local.get $total)))
+    (if (i32.eqz (local.get $thumb)) (then (return)))
     (local.set $thumb_pos (call $sb_page_thumb_pos
       (local.get $long) (local.get $pos) (local.get $smin) (local.get $smax) (local.get $page)))
     (if (local.get $vert)
