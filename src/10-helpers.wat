@@ -4718,17 +4718,18 @@
 
   ;; $title_table_set(hwnd, wa_ptr, len): copy title bytes into a heap buffer
   ;; and store ptr/len in the slot. Frees any prior heap buffer. wa_ptr=0
-  ;; clears the slot.
+  ;; clears the slot. Copy before releasing old storage: input may alias it,
+  ;; and an allocation failure must leave the existing title intact.
   (func $title_table_set (param $hwnd i32) (param $wa_ptr i32) (param $len i32)
     (local $idx i32) (local $rec i32) (local $old_ptr i32)
-    (local $buf i32) (local $buf_wa i32) (local $i i32)
+    (local $buf i32) (local $buf_wa i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
     (local.set $rec (i32.add (global.get $TITLE_TABLE) (i32.mul (local.get $idx) (i32.const 8))))
     (local.set $old_ptr (i32.load (local.get $rec)))
-    (if (local.get $old_ptr) (then (call $heap_free (local.get $old_ptr))))
     (if (i32.or (i32.eqz (local.get $wa_ptr)) (i32.eqz (local.get $len)))
       (then
+        (if (local.get $old_ptr) (then (call $heap_free (local.get $old_ptr))))
         (i32.store         (local.get $rec) (i32.const 0))
         (i32.store offset=4 (local.get $rec) (i32.const 0))
         (return)))
@@ -4740,6 +4741,7 @@
     ;; $buf is a guest pointer; convert to WASM for memory.copy.
     (memory.copy (local.get $buf_wa) (local.get $wa_ptr) (local.get $len))
     (i32.store8 (i32.add (local.get $buf_wa) (local.get $len)) (i32.const 0))
+    (if (local.get $old_ptr) (then (call $heap_free (local.get $old_ptr))))
     (i32.store         (local.get $rec) (local.get $buf))
     (i32.store offset=4 (local.get $rec) (local.get $len)))
 
