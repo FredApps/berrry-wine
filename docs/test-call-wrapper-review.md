@@ -116,3 +116,11 @@ coverage before replacing the cursor with a reusable-index allocator.
 
 SetLastError remains handwritten here: its current export is void and advances
 ESP, so migrating it requires explicitly handling that test-call contract.
+
+Subsequent [native Win98 observations](../test/fixtures/win98-tls-lifetime/README.md)
+show **80** slots, immediate cross-thread clearing on free, and preservation
+of LastError on successful Alloc/Set/Free. Thus the existing emulator tests'
+index-64 rejection is an implementation-limit assertion, **not native
+conformance**, and must be replaced in the runtime fix. The repeated native
+fixture now defines that follow-up's target; this wrapper migration did not
+correct those runtime discrepancies.
