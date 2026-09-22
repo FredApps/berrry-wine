@@ -57,9 +57,13 @@ const VOLATILE_STALE = 256;
 const PROGRESS_REGS = ['ax', 'bx', 'cx', 'dx', 'si', 'di', 'bp', 'sp', 'ds', 'es'];
 const { compileProgram } = require('./compile');
 const { decodeOne, readOperand, OPERAND_SIZE } = require('./decode');
-const { ARITY, NOFLAG, FUSE, TRACE, SPIN, PSPIN, EXIT_WHY } = require('./emit');
+const { ARITY, NOFLAG, FUSE, TRACE, SPIN, PSPIN, EXIT_WHY, INT_STUB } = require('./emit');
 const WHY_NAME = Object.fromEntries(Object.entries(EXIT_WHY).map(([k, v]) => [v, k]));
 const { STUB_SEG, STUB_OFF, STUB_BYTE } = require('./dos');
+// $intfast recognises an unhooked vector by this address; see emit.js.
+if (INT_STUB.seg !== STUB_SEG || INT_STUB.off !== STUB_OFF) {
+  throw new Error('emit.js INT_STUB disagrees with dos.js STUB_SEG/STUB_OFF');
+}
 
 // Is `h`, the op word a compiled program holds, what the compiler makes of
 // the decoded handler `x`? The passes after decoding swap an op for a twin
@@ -1118,6 +1122,8 @@ class DosSession {
       // and a fold that removes a handback re-times the audio.
       // `--no-irq-schedule` is the A/B partner.
       irqSchedule = true,
+      // Let wasm answer the few host calls it can (emit.js $intfast).
+      intFast = true,
       hooks = {},
     } = opts;
 
@@ -1126,6 +1132,7 @@ class DosSession {
     this.slice = slice;
     this.latticeClock = latticeClock;
     this.irqSchedule = irqSchedule;
+    this.intFast = intFast;
     this.mouse = mouse;
     this.irqEvery = irqEvery;
     this.dispatchesPerTick = dispatchesPerTick;
@@ -1659,6 +1666,20 @@ class DosSession {
     // IRET handlers in emit.js. Only the Sound Blaster's port-armed line is
     // delivered off the schedule, so only it needs the boundary.
     if (vm.exports.set_irqwant) vm.exports.set_irqwant(machine.sbForced && machine.sbForced() ? 1 : 0);
+    // What $intfast answers from (emit.js): the tick count the host's own
+    // INT 21h AH=2Ch reads, the PSP its pspSaveStack stamps, and the mouse its
+    // INT 33h AX=3 reports. None of them moves inside a slice. Off while
+    // anything watches the host's INT service, since an answered call never
+    // reaches it; the mouse read also waits out a held button, which a scripted
+    // click releases by counting reads between slices.
+    if (vm.exports.set_intfast) {
+      const on = this.intFast && !this.hooks.onInt && !(this.smcSites && this.cache.watch.length);
+      const m = machine.mouse;
+      vm.exports.set_dosticks(machine.ticks >>> 0);
+      vm.exports.set_curpsp(machine.curPsp & 0xFFFF);
+      vm.exports.set_mousex(m.x); vm.exports.set_mousey(m.y); vm.exports.set_mousebtn(m.buttons);
+      vm.exports.set_intfast(on ? (1 | (m.buttons ? 0 : 2)) : 0);
+    }
     vm.exports.run(entry, budget);
     // $left is -1 when the slice ran to exhaustion and holds the unspent budget
     // when a handler handed control back early. Billing the slice either way
@@ -1668,6 +1689,10 @@ class DosSession {
     // the guest promptly) reports $left as -1 like an exhausted one, so ask for
     // the count it saved on the way out rather than billing the whole budget.
     const cut = this.machine.takeSliceCut ? this.machine.takeSliceCut() : -1;
+    if (vm.exports.get_mousereads) {
+      machine.mouse.reads += vm.exports.get_mousereads();
+      vm.exports.set_mousereads(0);
+    }
     // Bill the steps actually charged, overshoot included. $next charges a step
     // BEFORE it runs a handler and a block only tests the budget at its
     // transfer, so an exhausted slice ends with $steps a few below zero -- the
@@ -2163,6 +2188,7 @@ class DosSession {
   stats() {
     return {
       dispatched: this.dispatched, handbacks: this.handbacks, ints: this.ints,
+      intsFast: this.vm.exports.get_intfastn ? this.vm.exports.get_intfastn() : 0,
       irqs: this.irqs, smcBreaks: this.smcBreaks, smcPatched: this.cache.patched, smcFastRepairs: this.cache.fastRepairs, stuckAt: this.stuckAt,
       smcSites: this.smcSites, retiredPatches: this.cache.benign.size,
       exitKinds: Object.fromEntries(this.exitKinds),

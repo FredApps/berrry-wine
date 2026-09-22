@@ -587,6 +587,10 @@ const SLICE_EXIT = '(call $slice_exit)';
 // exit the guest paid for (dos-loop.js, EXIT_WHY). It is set on the cold arm
 // alone, so it costs nothing on a linked edge and moves no dispatch count.
 const EXIT_WHY = { edge: 1, indirect: 2, ret: 3, end: 4, iret: 5, popf: 6, far32: 7, int: 8, spin: 9, v86: 10 };
+// Where dos.js parks every vector (its STUB_SEG:STUB_OFF+v), repeated here
+// because emit.js does not load the machine; dos-loop.js refuses to start if
+// the two ever disagree.
+const INT_STUB = { seg: 0xF000, off: 0x100 };
 const EXIT = (why) => `(global.set $exitwhy (i32.const ${EXIT_WHY[why]})) ${SLICE_EXIT}`;
 // The first two lines of every dispatch shell, and the order of the two is a
 // CLOCK decision rather than a style one.
@@ -1322,11 +1326,22 @@ function genExtras() {
   // vector still on our stub misses the lookup -- the stub byte is never
   // compiled -- so a DOS or BIOS call hands back exactly as before. The V86
   // monitor path changes the CPU mode and keeps its handback ($exitwhy v86).
+  //
+  // A few host calls are answered right here instead ($intfast): the ones a
+  // demo makes from inside its frame loop, whose answer is a pure function of
+  // state the host refreshes before every slice. Those were a stop and a JS
+  // round trip apiece -- AQUAPHOB asked for the time 150k times in 44M.
   h('int_imm', 3, `
   ${ops(3)}
-  (call $faultsw (local.get $t0) (local.get $t1) (local.get $t2))
-  (if (i32.eq (global.get $exitwhy) (i32.const ${EXIT_WHY.int}))
-    (then (global.set $halt (i32.const 0)) ${GO_LOOKUP('int')}))
+  (if (call $intfast (local.get $t0) (local.get $t1))
+    (then
+      (global.set $exitwhy (i32.const ${EXIT_WHY.int}))
+      (global.set $gip (local.get $t1))
+      ${GO_LOOKUP('int')})
+    (else
+      (call $faultsw (local.get $t0) (local.get $t1) (local.get $t2))
+      (if (i32.eq (global.get $exitwhy) (i32.const ${EXIT_WHY.int}))
+        (then (global.set $halt (i32.const 0)) ${GO_LOOKUP('int')}))))
 `);
   h('iret', 0, `
   (global.set $gip (call $pop16))
@@ -5132,6 +5147,82 @@ ${memAccessors()}
           (return)))))
   (call $fault (local.get $vec) (local.get $next)))
 
+;; Host calls answered without leaving wasm: INT 21h AH=2Ch (get time), INT
+;; 33h AX=0 (mouse reset) and INT 33h AX=3 (position and buttons). Returns 1
+;; when it answered, 0 to take the ordinary path to the stub.
+;;
+;; The contract is that the guest cannot tell which way the call went, so this
+;; repeats every guest-visible effect of dos-loop.js serviceInterrupt and
+;; dos.js for these two, not just the registers:
+;;  - the IRET frame is still pushed, so the six bytes below SP hold what the
+;;    stub path leaves there, and SP comes back as the host's (sp+6)&0xFFFF;
+;;  - INT 21h stamps SS:SP (the frame's SP) into PSP:2Eh, as pspSaveStack does;
+;;  - registers are set whole, as vm.set does, which clears the high halves;
+;;  - the time is computed from $dosticks, which the host writes before every
+;;    slice from the same tick count its own AH=2Ch reads, which only moves at a
+;;    handback, so the value cannot go stale inside a slice. The mouse is the
+;;    same: $mousex/$mousey/$mousebtn are the host's mouse state, and the reads
+;;    are counted into $mousereads for it to add back to its own count;
+;;  - $intfast is a bit set: 1 = time and reset, 2 = the position read. The host
+;;    withholds 2 while a scripted click is held, because it releases the button
+;;    by counting reads BETWEEN slices and must see each one.
+;; Only where the stub path is the plain real-mode one: PE off (V86 goes
+;; through a monitor, protected mode through an IDT), TF clear (the stub path
+;; then owes a trap), and the vector still on our own stub -- a program that
+;; hooked INT 21h gets its hook.
+(func $intfast (param $vec i32) (param $next i32) (result i32)
+  (local $v i32) (local $ah i32) (local $t i64)
+  (if (i32.or (i32.eqz (global.get $intfast))
+              (i32.or (i32.and (global.get $cr0) (i32.const 1))
+                      (i32.and (global.get $flags) (i32.const ${1 << isa.F.TF}))))
+    (then (return (i32.const 0))))
+  (local.set $v (i32.shl (local.get $vec) (i32.const 2)))
+  (if (i32.or (i32.ne (call $rdphys16 (local.get $v))
+                      (i32.add (local.get $vec) (i32.const ${INT_STUB.off})))
+              (i32.ne (call $rdphys16 (i32.add (local.get $v) (i32.const 2)))
+                      (i32.const ${INT_STUB.seg})))
+    (then (return (i32.const 0))))
+  (local.set $ah (i32.and (i32.shr_u (global.get $ax) (i32.const 8)) (i32.const 0xFF)))
+  (if (i32.eqz (i32.or
+        (i32.and (i32.eq (local.get $vec) (i32.const 0x21))
+                 (i32.eq (local.get $ah) (i32.const 0x2C)))
+        (i32.or
+          (i32.and (i32.eq (local.get $vec) (i32.const 0x33))
+                   (i32.eqz (i32.and (global.get $ax) (i32.const 0xFFFF))))
+          (i32.and (i32.and (i32.eq (local.get $vec) (i32.const 0x33))
+                            (i32.eq (i32.and (global.get $ax) (i32.const 0xFFFF)) (i32.const 3)))
+                   (i32.ne (i32.and (global.get $intfast) (i32.const 2)) (i32.const 0))))))
+    (then (return (i32.const 0))))
+  (call $push16 (call $flags_word))
+  (call $push16 (call $sget (i32.const 1)))
+  (call $push16 (local.get $next))
+  (if (i32.eq (local.get $vec) (i32.const 0x21))
+    (then
+      (local.set $v (i32.add (i32.shl (global.get $curpsp) (i32.const 4)) (i32.const 0x2E)))
+      (i32.store16 (local.get $v) (i32.and (global.get $sp) (i32.const 0xFFFF)))
+      (i32.store16 offset=2 (local.get $v) (i32.and (call $sget (i32.const 2)) (i32.const 0xFFFF)))
+      ;; t = ticks * 55 ms; CX = hours<<8 | minutes, DX = seconds<<8 | centis.
+      (local.set $t (i64.mul (i64.extend_i32_u (global.get $dosticks)) (i64.const 55)))
+      (global.set $cx (i32.or
+        (i32.shl (i32.wrap_i64 (i64.div_u (local.get $t) (i64.const 3600000))) (i32.const 8))
+        (i32.wrap_i64 (i64.rem_u (i64.div_u (local.get $t) (i64.const 60000)) (i64.const 60)))))
+      (global.set $dx (i32.or
+        (i32.shl (i32.wrap_i64 (i64.rem_u (i64.div_u (local.get $t) (i64.const 1000)) (i64.const 60)))
+                 (i32.const 8))
+        (i32.wrap_i64 (i64.rem_u (i64.div_u (local.get $t) (i64.const 10)) (i64.const 100))))))
+    (else (if (i32.eq (i32.and (global.get $ax) (i32.const 0xFFFF)) (i32.const 3))
+      (then
+        (global.set $bx (global.get $mousebtn))
+        (global.set $cx (global.get $mousex))
+        (global.set $dx (global.get $mousey))
+        (global.set $mousereads (i32.add (global.get $mousereads) (i32.const 1))))
+      (else
+        (global.set $ax (i32.const 0xFFFF))
+        (global.set $bx (i32.const 2))))))
+  (global.set $sp (i32.and (i32.add (global.get $sp) (i32.const 6)) (i32.const 0xFFFF)))
+  (global.set $intfastn (i32.add (global.get $intfastn) (i32.const 1)))
+  (i32.const 1))
+
 ;; Divide error -- the only fault the arithmetic handlers raise.
 (func $fault0 (param $ip i32)
   (call $fault (i32.const 0) (local.get $ip)))
@@ -5480,7 +5571,7 @@ function fpuHelpers() {
 // remembering only the last one would leave the earlier writes running stale
 // code, which is the exact bug the flag exists to prevent. Over-approximating
 // the gap between two distant stores only costs a recompile.
-const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy', 'irqwant'];
+const STATE = [...isa.REG16, ...isa.SEG, 'gip', 'flags', 'ip', 'steps', 'intno', 'left', 'rtop', 'smc', 'smclo', 'smchi', 'halt', 'exitwhy', 'irqwant', 'dosticks', 'curpsp', 'intfast', 'intfastn', 'mousex', 'mousey', 'mousebtn', 'mousereads'];
 
 // Memory is IMPORTED and state is read through accessor functions rather than
 // inline-exported, because that is the shape lib/compile-wat.js actually
@@ -6088,7 +6179,7 @@ function emit(variant, opts = {}) {
 // text rather than importing the interpreter's copies on purpose: a cross-module
 // call per $rget16 would be measuring module boundaries, not code generation.
 module.exports = {
-  emit, HANDLERS, VARIANTS: Object.keys(VARIANTS), helpers, LOCALS, STATE, EXIT_WHY,
+  emit, HANDLERS, VARIANTS: Object.keys(VARIANTS), helpers, LOCALS, STATE, EXIT_WHY, INT_STUB,
   EXTRA_GLOBALS,
   // The compiler walks a finished block op by op to find a fusable tail, which
   // it can only do if it knows how many operand words each handler eats.

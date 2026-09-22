@@ -256,6 +256,9 @@ async function runDos(o) {
     // schedule in dos-loop.js `step`, and the way to reproduce a wav recorded
     // before it. See docs/toyvm-irq-schedule.md.
     irqSchedule = true,
+    // Answer the INT 21h get-time and INT 33h reset calls inside wasm
+    // (emit.js $intfast). `--no-int-fast` is the A/B partner.
+    intFast = true,
     // The DOS command tail, verbatim. Several demos in this corpus name their
     // own silent-mode switch on the screen they refuse to start from.
     guestArgs = '',
@@ -542,7 +545,7 @@ async function runDos(o) {
     treeFold: folder,
     traceDeadFlags: traceDeadFlags ? ((s) => log(s)) : null,
     mouse, irqEvery, dispatchesPerTick, tickScale, stuckLimit, pitClock,
-    stuckWork, latticeClock, irqSchedule,
+    stuckWork, latticeClock, irqSchedule, intFast,
     // A watch reports through the census, so asking for one turns it on.
     smcCensus: smcCensus || watch.length > 0, watch,
     // The same count, not recomputed while the page it counts has not changed.
@@ -851,7 +854,7 @@ async function runDos(o) {
     }
   }
   const {
-    dispatched, handbacks, ints, irqs, smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector, exitKinds, earlySites,
+    dispatched, handbacks, ints, intsFast, irqs, smcBreaks, smcPatched, smcFastRepairs, repairWhy, traps, icebps, stuckAt, blockedOn32, badSelector, exitKinds, earlySites,
     compiles, compiledWords, arenaResets, unimplemented, regions, jtab, smcSites, retiredPatches,
     deadFlagsDropped, tracedBlocks, spinBlocks, specOps, treeFolds, rep, volatile,
   } = session.stats();
@@ -896,7 +899,7 @@ async function runDos(o) {
     // in, and the one a budget should be expressed in. See DosSession.
     guestSeconds: session.guestSeconds(dispatched),
     guestCpuSecs: guestCpuUs / 1e6,
-    dispatched, handbacks, ints, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
+    dispatched, handbacks, ints, intsFast, irqs, compiles, compiledWords, arenaResets, deadFlagsDropped,
     tracedBlocks, spinBlocks, specOps, treeFolds, rep, volatile,
     // Everything the tree fold did, or null when it was off. Kept whole rather
     // than flattened so a harness can read the decline histogram without
@@ -1334,6 +1337,7 @@ async function main() {
     // absolute dispatch count. Both arms of a comparison, or neither.
     latticeClock: flag('lattice-clock'),
     irqSchedule: !flag('no-irq-schedule'),
+    intFast: !flag('no-int-fast'),
     // --stop-on-text='Runtime error 200' -- end the run the instant the guest
     // prints this, so --dump and --disasm photograph the failure instead of
     // whatever reused its memory afterwards. See Machine.conWatch.
@@ -1482,6 +1486,7 @@ async function main() {
     console.log(`  handback kinds: ${JSON.stringify(r.exitKinds)}`);
   }
   console.log(`  ${r.handbacks} handbacks, ${r.ints} interrupts`
+    + `${r.intsFast ? ` (+${r.intsFast} answered in wasm)` : ''}`
     // Every vector the host raises, not just the timer: single-step traps and
     // stepped-over ICEBPs go through the same path and are broken out below.
     + `${r.irqs ? ` (+${r.irqs} vectors raised by the host)` : ''}, ${r.compiles} traces `
