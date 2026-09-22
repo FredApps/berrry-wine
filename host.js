@@ -714,6 +714,10 @@ class WineAssembly {
     // CPUID SSE advertisement is opt-in until each app's reachable SIMD path
     // has passed an authentic run against the decoder.
     this.cpuSSE = false;
+    // Explicit frame ends (Flip, D3D Present, SwapBuffers, a full blit to the
+    // primary) are paced to at most this many per second; 0 = unpaced. A rate
+    // cap, not vsync: see $present_pace. lib/browser-shell.js sets it.
+    this.presentCap = 0;
   }
 
   _normalizePerfLogicalFrame(perf) {
@@ -2055,6 +2059,8 @@ class WineAssembly {
     }
     const cpuSSE = this.cpuSSE === true ? 1 : 0;
     if (this.instance.exports.set_cpu_sse) this.instance.exports.set_cpu_sse(cpuSSE);
+    const presentCap = Math.max(0, this.presentCap | 0);
+    if (this.instance.exports.set_present_cap) this.instance.exports.set_present_cap(presentCap);
     this._wasmModule = wasmModule;
     // Kept so an experimental guest worker can be handed the SAME host import
     // table this instance uses — the point of the broker is that there is one
@@ -2095,6 +2101,9 @@ class WineAssembly {
       }
       if (this.instance.exports.set_cpu_sse) {
         await this.guestWorker.callExport('set_cpu_sse', cpuSSE);
+      }
+      if (this.instance.exports.set_present_cap) {
+        await this.guestWorker.callExport('set_present_cap', presentCap);
       }
     }
     if (this.renderer) {
@@ -2223,6 +2232,7 @@ class WineAssembly {
         x87FuseDebug[0] | 0, x87FuseDebug[1] | 0, x87FuseDebug[2] | 0);
     }
     this.threadManager.recordInheritedWasmGlobal('set_cpu_sse', cpuSSE);
+    this.threadManager.recordInheritedWasmGlobal('set_present_cap', presentCap);
 
     // A room address is a property of this whole process, and the guest reads
     // it the moment it opens a socket, so it has to be in place before the

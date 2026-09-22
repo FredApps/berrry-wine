@@ -1589,6 +1589,7 @@
         (i32.const 0)))
     (if (local.get $ok)
       (then
+        (call $present_pace)
         (i32.store offset=0 (global.get $reg_base) (local.get $ok))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
         (return)))
@@ -1602,7 +1603,8 @@
           (i32.const 0) (i32.const 0)
           (i32.load offset=4 (local.get $desc))
           (i32.load offset=8 (local.get $desc)))
-        (local.set $ok (i32.const 1))))
+        (local.set $ok (i32.const 1))
+        (call $present_pace)))
     (i32.store offset=0 (global.get $reg_base) (local.get $ok))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 

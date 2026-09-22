@@ -3539,6 +3539,116 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
+  ;; ---- present pacing -----------------------------------------------------
+  ;; A game loop with no limiter of its own presents as fast as the machine
+  ;; allows, and a display shows at most its refresh: everything past that is
+  ;; guest work nobody sees, on the thread the page, the audio and the other
+  ;; guest threads also need. $present_pace caps explicit frame ends at
+  ;; $present_cap per second.
+  ;;
+  ;; It is a rate cap, not vsync. The deadline is one period after the
+  ;; previous frame's, wherever that falls; a frame that arrives before it
+  ;; sleeps out the rest, and a frame that arrives after it passes untouched.
+  ;; So a loop slower than the cap is never slowed, and a frame that runs a
+  ;; little long costs a little -- not the whole extra refresh that a
+  ;; boundary-aligned wait costs (Moorhuhn 2 on a vsync'd Flip fell from ~75
+  ;; to ~31 fps).
+  ;;
+  ;; Time is kept in units of ms*cap, where one period is exactly 1000, so a
+  ;; 60 Hz cadence carries no rounding drift. A late frame may pull the next
+  ;; one in by at most one period: the deadline never trails `now` by more,
+  ;; so a stall is followed by one catch-up frame, not a burst of them.
+  ;;
+  ;; The wait is an ordinary Sleep taken after the present has completed --
+  ;; every host already honours that on every thread -- so the frame is shown
+  ;; at once and it is the NEXT frame's work that starts at the deadline. Call
+  ;; it only from a path that completes the present; a handler that parks and
+  ;; re-runs would pace twice.
+  (global $present_cap (mut i32) (i32.const 0))          ;; frames/s, 0 = off
+  (global $present_deadline_u (mut i64) (i64.const 0))  ;; ms*cap, 0 = unarmed
+  (global $present_paced_ms (mut i32) (i32.const 0))    ;; total ms slept
+  (global $present_paced_count (mut i32) (i32.const 0)) ;; frames that slept
+  (global $present_lock_whole (mut i32) (i32.const 0))  ;; primary entry under a NULL-rect Lock
+
+  (func $present_set_cap (param $cap i32)
+    (global.set $present_cap
+      (select (i32.const 0) (local.get $cap) (i32.lt_s (local.get $cap) (i32.const 0))))
+    (global.set $present_deadline_u (i64.const 0)))
+
+  (func $present_pace
+    (local $cap i64) (local $now_u i64) (local $ahead_u i64) (local $wait i32)
+    (if (i32.eqz (global.get $present_cap)) (then (return)))
+    (local.set $cap (i64.extend_i32_u (global.get $present_cap)))
+    (local.set $now_u (i64.mul (i64.extend_i32_u (call $host_get_ticks)) (local.get $cap)))
+    (local.set $ahead_u (i64.sub (global.get $present_deadline_u) (local.get $now_u)))
+    ;; First frame, or a deadline more than two periods out (a clock that
+    ;; stepped backwards, a cap just lowered): re-arm from now, never sleep
+    ;; toward a deadline the guest did not earn.
+    (if (i32.or (i64.eqz (global.get $present_deadline_u))
+                (i64.gt_s (local.get $ahead_u) (i64.const 2000)))
+      (then
+        (global.set $present_deadline_u (i64.add (local.get $now_u) (i64.const 1000)))
+        (return)))
+    (if (i64.gt_s (local.get $ahead_u) (i64.const 0))
+      (then
+        ;; Early: sleep to the deadline (rounded up to whole ms), and the
+        ;; next deadline is exactly one period on.
+        (local.set $wait (i32.wrap_i64 (i64.div_u
+          (i64.add (local.get $ahead_u) (i64.sub (local.get $cap) (i64.const 1)))
+          (local.get $cap))))
+        (global.set $yield_flag (i32.const 1))
+        (global.set $sleep_yielded (i32.const 1))
+        (global.set $sleep_timeout (local.get $wait))
+        (global.set $present_paced_ms
+          (i32.add (global.get $present_paced_ms) (local.get $wait)))
+        (global.set $present_paced_count
+          (i32.add (global.get $present_paced_count) (i32.const 1)))
+        (global.set $present_deadline_u
+          (i64.add (global.get $present_deadline_u) (i64.const 1000))))
+      (else
+        ;; Late: no wait. Carry at most one period of the lateness forward.
+        (global.set $present_deadline_u (i64.add (i64.const 1000)
+          (select (global.get $present_deadline_u)
+                  (i64.sub (local.get $now_u) (i64.const 1000))
+                  (i64.gt_s (global.get $present_deadline_u)
+                            (i64.sub (local.get $now_u) (i64.const 1000)))))))))
+
+  ;; Pace a blit to the primary only when it covers most of the surface: that
+  ;; is a back buffer being shown. A sprite drawn straight onto the primary is
+  ;; one of many per frame, and pacing each of them would divide the frame
+  ;; rate by the sprite count. A windowed primary is screen-sized and its
+  ;; back buffer only ever covers the clipper window's client area, so there
+  ;; the surface means that area (dx_tunnel: a clipped Blt of the viewport,
+  ;; ~350 frames/s uncapped).
+  (func $present_pace_full_blit (param $dst_entry i32) (param $w i32) (param $h i32)
+    (local $need_w i32) (local $need_h i32) (local $clipper i32) (local $clip_entry i32)
+    (local $hwnd i32)
+    (local.set $need_w (load.field DxObject width (local.get $dst_entry)))
+    (local.set $need_h (load.field DxObject height (local.get $dst_entry)))
+    (local.set $clipper (call $dx_surface_clipper_get (local.get $dst_entry)))
+    (if (local.get $clipper)
+      (then
+        (local.set $clip_entry (call $dx_from_this (local.get $clipper)))
+        (if (i32.eq (load.field DxObject type (local.get $clip_entry)) (i32.const 10))
+          (then (local.set $hwnd (load.field DxObject misc0 (local.get $clip_entry)))))))
+    (if (local.get $hwnd)
+      (then
+        (local.set $need_w (select (call $wnd_client_w_for_clip (local.get $hwnd)) (local.get $need_w)
+          (i32.lt_s (call $wnd_client_w_for_clip (local.get $hwnd)) (local.get $need_w))))
+        (local.set $need_h (select (call $wnd_client_h_for_clip (local.get $hwnd)) (local.get $need_h)
+          (i32.lt_s (call $wnd_client_h_for_clip (local.get $hwnd)) (local.get $need_h))))))
+    ;; More than half the area, not all of it: a dirty-rect presenter shows
+    ;; the 3D viewport and a small text strip as two blits (dx_tunnel), and
+    ;; the strict half means at most one blit per frame can qualify.
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return)))
+    (if (i64.gt_u
+          (i64.mul (i64.extend_i32_u (local.get $w)) (i64.extend_i32_u (local.get $h)))
+          (i64.shr_u
+            (i64.mul (i64.extend_i32_u (local.get $need_w)) (i64.extend_i32_u (local.get $need_h)))
+            (i64.const 1)))
+      (then (call $present_pace))))
+
   ;; Initialize — no-op
   (func $handle_IDirectDraw_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -4366,7 +4476,9 @@
               (br $ckblit_row)))
             ;; A primary copy may still contain a map-only intermediate frame.
             (if (i32.and (load.field DxObject flags (local.get $dst_entry)) (i32.const 1))
-              (then (call $dx_present (local.get $dst_entry))))
+              (then
+                (call $dx_present (local.get $dst_entry))
+                (call $present_pace_full_blit (local.get $dst_entry) (local.get $dw) (local.get $dh))))
             (call $dx_surf_note_copy
               (local.get $dst_entry) (local.get $src_entry)
               (local.get $dx) (local.get $dy) (local.get $sx) (local.get $sy)
@@ -4528,7 +4640,9 @@
     ;; Preserve guest pixels; $dx_present holds scanout until the static
     ;; sidebar indices return, including through intervening palette updates.
     (if (i32.and (load.field DxObject flags (local.get $dst_entry)) (i32.const 1))
-      (then (call $dx_present (local.get $dst_entry))))
+      (then
+        (call $dx_present (local.get $dst_entry))
+        (call $present_pace_full_blit (local.get $dst_entry) (local.get $dw) (local.get $dh))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
 
@@ -4681,7 +4795,9 @@
           (br $bf_row)))))
     ;; If dest is primary, present
     (if (i32.and (load.field DxObject flags (local.get $dst_entry)) (i32.const 1))
-      (then (call $dx_present (local.get $dst_entry))))
+      (then
+        (call $dx_present (local.get $dst_entry))
+        (call $present_pace_full_blit (local.get $dst_entry) (local.get $sw) (local.get $sh))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))) ;; 6 args
 
@@ -4864,6 +4980,7 @@
               (call $dx_slot_of (local.get $back_entry))
               (load.field DxObject misc1 (local.get $back_entry))
               (load.field DxObject misc1 (local.get $entry)))
+            (call $present_pace)
             (i32.store offset=0 (global.get $reg_base) (i32.const 0))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
             (return)))))
@@ -5247,6 +5364,10 @@
     (local.set $dib_guest (call $w2g (local.get $dib_wa)))
     (i32.store (i32.add (local.get $wa) (i32.const 36)) (local.get $dib_guest))
     (call $dx_fill_surface_pixel_format (i32.add (local.get $wa) (i32.const 72)) (local.get $entry))
+    (global.set $present_lock_whole
+      (select (local.get $entry) (i32.const 0)
+        (i32.and (i32.eqz (local.get $arg1))
+          (i32.ne (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 1)) (i32.const 0)))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))) ;; 5 args
 
@@ -5376,9 +5497,16 @@
       (load.field DxObject misc1 (local.get $entry))
       (i32.const 0))
     (call $dx_surf_note_cpu_write (local.get $entry))
-    ;; If primary, present on unlock
+    ;; If primary, present on unlock. Pace only the unlock that closes a
+    ;; whole-surface Lock: that is a frame drawn straight into the primary
+    ;; (Diablo, Elasto Mania's menus); a rect lock is one sprite of many.
     (if (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 1))
-      (then (call $dx_present (local.get $entry))))
+      (then
+        (call $dx_present (local.get $entry))
+        (if (i32.eq (global.get $present_lock_whole) (local.get $entry))
+          (then
+            (global.set $present_lock_whole (i32.const 0))
+            (call $present_pace)))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 

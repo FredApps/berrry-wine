@@ -775,7 +775,8 @@
     (local.set $rt (call $d3ddev_rt_entry (local.get $this)))
     (if (local.get $rt) (then
       (if (i32.and (i32.load (i32.add (local.get $rt) (i32.const 28))) (i32.const 1))
-        (then (call $d3dim_worker_fence) (call $dx_present (local.get $rt))))))
+        (then (call $d3dim_worker_fence) (call $dx_present (local.get $rt))
+          (call $present_pace)))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   ;; ── State-block forwarders ────────────────────────────────────

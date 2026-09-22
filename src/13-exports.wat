@@ -1658,6 +1658,11 @@
   (func (export "get_vblank_deadline_ms") (result i32) (global.get $vblank_deadline_ms))
   (func (export "get_vblank_wait_active") (result i32) (global.get $vblank_wait_active))
   (func (export "get_vblank_counter") (result i32) (global.get $vblank_counter))
+  ;; Present pacing (src/09a8-handlers-directx.wat $present_pace): frames/s,
+  ;; 0 = off. Per instance, so a host sets it on every thread instance.
+  (func (export "set_present_cap") (param $cap i32) (call $present_set_cap (local.get $cap)))
+  (func (export "get_present_paced_ms") (result i32) (global.get $present_paced_ms))
+  (func (export "get_present_paced_count") (result i32) (global.get $present_paced_count))
   (func (export "set_flip_vsync") (param $on i32)
     (global.set $dx_flip_vsync (i32.ne (local.get $on) (i32.const 0))))
   ;; Unit-test seams for the model itself: both are pure functions of a guest

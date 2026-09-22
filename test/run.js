@@ -441,6 +441,11 @@ const VBLANK = {
 // real hardware does, instead of returning immediately. Off by default — see
 // $dx_flip_vsync in src/01-header.wat.
 const FLIP_VSYNC = hasFlag('flip-vsync');
+// --present-cap=N: pace explicit frame ends (Flip, full-surface blits to the
+// primary, D3D Present, SwapBuffers) to at most N per GUEST second -- the
+// browser's per-app presentCap, here on the batch clock. Off by default so a
+// headless run's pacing stays the app's own. See $present_pace.
+const PRESENT_CAP = Math.max(0, parseInt(getArg('present-cap', '0'), 10) || 0);
 // --- spin parking --------------------------------------------------------
 // Eight of the games in docs/frame-pacing-census.md busy-wait on the
 // millisecond clock and four more on an empty PeekMessage. Both detectors are
@@ -4285,6 +4290,7 @@ async function main() {
     recordInheritedWasmGlobal(inheritedWasmGlobals, setter, args);
   experiments.recordInherited(inheritWasm, { copySuperops: COPY_SUPEROPS, verbose: VERBOSE });
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
+  if (PRESENT_CAP) inheritWasm('set_present_cap', PRESENT_CAP);
   // Guest threads run their own module instance over the shared memory, so the
   // spin state is per-thread by construction — but the THRESHOLD is a setting
   // and has to be propagated like every other one.
@@ -5179,6 +5185,9 @@ async function main() {
   experiments.applyMain(instance, { copySuperops: COPY_SUPEROPS });
   if (FLIP_VSYNC && instance.exports.set_flip_vsync) {
     instance.exports.set_flip_vsync(1);
+  }
+  if (PRESENT_CAP && instance.exports.set_present_cap) {
+    instance.exports.set_present_cap(PRESENT_CAP);
   }
   if (instance.exports.set_spin_park_k) {
     if (NO_SPIN_PARK) instance.exports.set_spin_park_k(0);
@@ -9772,6 +9781,11 @@ if (VERBOSE) {
 
   console.log(`\nStats: ${apiCount} API calls, ${batchesRun} batches`
     + ` in ${executionElapsedSeconds.toFixed(3)}s (${(batchesRun / Math.max(executionElapsedSeconds,0.001)).toFixed(0)} batches/s)`);
+  if (PRESENT_CAP && instance.exports.get_present_paced_count) {
+    console.log(`present pacing (main instance): cap ${PRESENT_CAP}/s, `
+      + `${instance.exports.get_present_paced_count()} frames slept `
+      + `${instance.exports.get_present_paced_ms()} guest ms`);
+  }
   reportMmx();
   reportGuestPageStats();
 
