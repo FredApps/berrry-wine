@@ -246,6 +246,7 @@ async function main() {
   const mem = new Uint8Array(memory.buffer);
   const guestBase = exports.get_guest_base();
   const rootGA = 0x2000, bufGA = 0x2100, stackGA = 0x2200;
+  exports.set_esp(stackGA);
   const at = ga => guestBase + ga;
   const writeAnsi = (ga, value) => {
     mem.fill(0, at(ga), at(ga) + 64);
@@ -274,7 +275,8 @@ async function main() {
     const serialGA = 0x2300;
     mem.fill(0, at(serialGA), at(serialGA) + 8);
     assert.strictEqual(
-      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, stackGA, serialGA), 1);
+      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, serialGA, 0, 0, 0, 0), 1);
+    assert.strictEqual(exports.get_esp() >>> 0, stackGA);
     const end = mem.indexOf(0, at(bufGA));
     const label = Buffer.from(mem.subarray(at(bufGA), end)).toString('ascii');
     assert.strictEqual(label, LABEL);
@@ -288,7 +290,7 @@ async function main() {
     mem.fill(0xcc, at(bufGA), at(bufGA) + 64);
     writeAnsi(rootGA, 'C:\\');
     assert.strictEqual(
-      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, stackGA, 0), 1);
+      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, 0, 0, 0, 0, 0), 1);
     assert.strictEqual(mem[at(bufGA)], 0, 'C: has no volume label');
   });
 
@@ -302,7 +304,7 @@ async function main() {
     mem.fill(0xcc, at(bufGA), at(bufGA) + 64);
     writeAnsi(rootGA, 'F:\\');
     assert.strictEqual(
-      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 5, stackGA, 0), 1);
+      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 5, 0, 0, 0, 0, 0), 1);
     assert.strictEqual(
       Buffer.from(mem.subarray(at(bufGA), at(bufGA) + 4)).toString('ascii'), 'A_VE');
     assert.strictEqual(mem[at(bufGA) + 4], 0, 'the terminator fits inside the buffer');
@@ -313,21 +315,19 @@ async function main() {
   test('GetVolumeInformationA names the filesystem CDFS on the mounted letter', () => {
     // Diablo's CD check XOR-folds the fs-name string, BytesPerSector and the
     // drive type into a constant, so "CDFS" here is load-bearing, not garnish.
-    const dv = new DataView(memory.buffer);
     const fsNameGA = 0x2400;
     mem.fill(0, at(stackGA), at(stackGA) + 64);
-    dv.setUint32(at(stackGA) + 28, fsNameGA, true); // 7th stdcall arg: lpFileSystemNameBuffer
     mem.fill(0xcc, at(fsNameGA), at(fsNameGA) + 16);
     writeAnsi(rootGA, 'E:\\');
     assert.strictEqual(
-      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, stackGA, 0), 1);
+      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, 0, 0, 0, fsNameGA, 16), 1);
     let end = mem.indexOf(0, at(fsNameGA));
     assert.strictEqual(
       Buffer.from(mem.subarray(at(fsNameGA), end)).toString('ascii'), 'CDFS');
     mem.fill(0xcc, at(fsNameGA), at(fsNameGA) + 16);
     writeAnsi(rootGA, 'C:\\');
     assert.strictEqual(
-      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, stackGA, 0), 1);
+      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 32, 0, 0, 0, fsNameGA, 16), 1);
     end = mem.indexOf(0, at(fsNameGA));
     assert.strictEqual(
       Buffer.from(mem.subarray(at(fsNameGA), end)).toString('ascii'), 'FAT',

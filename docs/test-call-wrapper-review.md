@@ -215,3 +215,36 @@ was subsequently repaired by its owner. No other agent's code was reverted.
 The MMIO, wide-API and kernel32 suites then passed again on current worktree
 WAT. Metadata/generation, API IDs, fragment balance, handler ESP, test tiers and
 whitespace checks passed. No full build, browser sweep or timing claim.
+
+## Volume and text stack-argument adapters
+
+GetVolumeInformationA and ExtTextOutA/W now use the generated eight-argument
+exports. ExtTextOutAWithDx is removed: its callers use ExtTextOutA's normal
+eighth argument, and every former seven-argument caller explicitly supplies
+NULL. The dynamic A/W glyph-index call site is migrated too. The inventory is
+**251 generated / 8 manual**, and the complete ABI recorder passes **1,004
+calls** at four alignments.
+
+Volume callers no longer supply a private stack pointer as an API argument or
+poke the filesystem-name pointer into that private frame. They set ESP to
+writable test storage and pass all eight real arguments, including a nonzero
+filesystem-name capacity. The volume-label helper now allocates the full
+36-byte return-plus-arguments frame; generated calls restore ESP.
+
+This exposes a separate production gap, **not fixed here**:
+`volume_information` reads the filesystem-name pointer at ESP+28 but ignores
+the capacity at ESP+32 and writes the complete FAT/CDFS string. The prior ISO
+test omitted that capacity yet expected the string; its success therefore did
+not establish bounded-buffer correctness. The migrated ISO test supplies 16
+characters. Zero/short capacities and output/error semantics need a native
+Win98 reference and a bounded A/W runtime fix; do not cite these green tests
+as conformance for that case.
+
+Verification passed: 24 ISO checks, volume-label mutation, ExtTextOut clipping
+and opaque backgrounds, A/W glyph-index rendering including explicit ETO_PDY
+advances, default bitmap fonts, bitmap layout and text-path compatibility,
+and 21 Diablo font-atlas checks. Metadata/generator freshness, append-only API
+IDs, fragment balance, handler ESP, tiers and whitespace checks passed. No
+production volume/text handler, native reference, browser or performance change
+is claimed. Remaining adapters: CreateFontW, CreateDIBSection and its Usage
+alias, WinHelpA/W, WSAFDIsSet, WSAIsBlocking, SetLastError.

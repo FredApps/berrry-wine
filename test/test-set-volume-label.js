@@ -71,12 +71,13 @@ function installGuestHelpers(e) {
   const rootC = writeA('C:\\');
   const rootD = writeA('D:\\');
   const volumeOut = alloc(32);
-  const volumeStack = alloc(32);
-  for (let i = 0; i < 32; i += 4) e.guest_write32(volumeStack + i, 0);
+  const volumeStack = alloc(36);
   const getLabel = root => {
+    e.set_esp(volumeStack);
     for (let i = 0; i < 32; i++) e.guest_write8(volumeOut + i, 0xcc);
     assert.strictEqual(
-      e.test_call_GetVolumeInformationA(root, volumeOut, 32, volumeStack, 0), 1);
+      e.test_call_GetVolumeInformationA(root, volumeOut, 32, 0, 0, 0, 0, 0), 1);
+    assert.strictEqual(e.get_esp() >>> 0, volumeStack);
     return readA(volumeOut);
   };
 

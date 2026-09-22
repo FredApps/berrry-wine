@@ -33,10 +33,10 @@ const {bootRenderHarness}=require('./render-helper');
  const capture=()=>bytes.slice(pixels,pixels+width*height*4);
  for(const code of[65,103,233]){
   const gid=e.index_gid(face,code);assert(gid);e.guest_write16(gidText,gid);e.guest_write16(text,code);
-  reset();assert.strictEqual(e.test_call_ExtTextOutW(dc,0,0,0,0,text,1),1);const expected=capture(),advance=e.test_gdi_dc_get_field(dc,12,0);
+  reset();assert.strictEqual(e.test_call_ExtTextOutW(dc,0,0,0,0,text,1, 0),1);const expected=capture(),advance=e.test_gdi_dc_get_field(dc,12,0);
   assert(expected.some((v,i)=>i%4!==3&&v===0),'reference has glyph pixels');
   for(const wide of[false,true])for(const flags of[0,2,4,6])for(const r of[0,rect]){
-   reset();assert.strictEqual(e[wide?'test_call_ExtTextOutW':'test_call_ExtTextOutA'](dc,0,0,16|flags,r,gidText,1),1);
+   reset();assert.strictEqual(e[wide?'test_call_ExtTextOutW':'test_call_ExtTextOutA'](dc,0,0,16|flags,r,gidText,1,0),1);
    assert.deepStrictEqual(capture(),expected,`direct gid${gid} code${code} W${wide} flags${flags} rect${!!r}`);
    assert.strictEqual(e.test_gdi_dc_get_field(dc,12,0),advance,'direct glyph advance drives TA_UPDATECP');
   }
@@ -45,25 +45,25 @@ const {bootRenderHarness}=require('./render-helper');
  let gid=0,entry=0;for(let candidate=256;candidate<512;candidate++){
   const value=e.index_entry(face,candidate,ppem);if(e.test_tt_entry_width(value)&&e.test_tt_entry_height(value)){gid=candidate;entry=value;break;}}
  assert(gid>255,'font exposes an inked glyph above255');assert(entry);
- e.guest_write16(gidText,gid);reset();assert.strictEqual(e.test_call_ExtTextOutA(dc,0,0,16,0,gidText,1),1);
+ e.guest_write16(gidText,gid);reset();assert.strictEqual(e.test_call_ExtTextOutA(dc,0,0,16,0,gidText,1, 0),1);
  const glyphPixels=capture(),gw=e.test_tt_entry_width(entry),gh=e.test_tt_entry_height(entry),left=e.test_tt_entry_left(entry),top=e.test_tt_entry_top(entry),ascent=e.test_tt_face_metric(face,ppem,1);
  let ink=0;for(let y=0;y<height;y++)for(let x=0;x<width;x++){
   const gx=x-3-left,gy=y-2-ascent+top,expected=gx>=0&&gy>=0&&gx<gw&&gy<gh?e.test_tt_entry_pixel(entry,gx,gy):0;
   assert.strictEqual(glyphPixels[(y*width+x)*4],expected?0:255,'direct cache bitmap equals compositor pixels');ink+=!!expected;
  }assert(ink>0);assert.strictEqual(e.test_gdi_dc_get_field(dc,12,0),3+e.index_advance(face,gid,ppem));
  const firstGid=e.index_gid(face,65);e.guest_write16(gidText,firstGid);e.guest_write16(gidText+2,gid);
- reset();assert.strictEqual(e.test_call_ExtTextOutA(dc,0,0,16,0,gidText,2),1);const pair=capture(),pairCP=e.test_gdi_dc_get_field(dc,12,0);
- reset();assert.strictEqual(e.test_call_ExtTextOutW(dc,0,0,16,0,gidText,2),1);assert.deepStrictEqual(capture(),pair,'A/W both consume WORD glyph arrays');assert.strictEqual(e.test_gdi_dc_get_field(dc,12,0),pairCP);
+ reset();assert.strictEqual(e.test_call_ExtTextOutA(dc,0,0,16,0,gidText,2, 0),1);const pair=capture(),pairCP=e.test_gdi_dc_get_field(dc,12,0);
+ reset();assert.strictEqual(e.test_call_ExtTextOutW(dc,0,0,16,0,gidText,2, 0),1);assert.deepStrictEqual(capture(),pair,'A/W both consume WORD glyph arrays');assert.strictEqual(e.test_gdi_dc_get_field(dc,12,0),pairCP);
  [13,2,17,-1].forEach((n,i)=>e.guest_write32(dx+i*4,n));reset();
- assert.strictEqual(e.test_call_ExtTextOutAWithDx(dc,99,99,16|0x2000,0,gidText,2,dx),1);
+ assert.strictEqual(e.test_call_ExtTextOutA(dc,99,99,16|0x2000,0,gidText,2,dx),1);
  assert.strictEqual(e.test_gdi_dc_get_field(dc,12,0),33,'ETO_PDY explicit horizontal advances');assert.strictEqual(e.test_gdi_dc_get_field(dc,16,0),3,'ETO_PDY vertical advances');
  assert(capture().some((v,i)=>i%4!==3&&v===0));
  reset();e.guest_write16(gidText,firstGid);const empty=capture();
- assert.strictEqual(e.test_call_BeginPath(dc),1);assert.strictEqual(e.test_call_ExtTextOutA(dc,0,0,16,0,gidText,1),1);
+ assert.strictEqual(e.test_call_BeginPath(dc),1);assert.strictEqual(e.test_call_ExtTextOutA(dc,0,0,16,0,gidText,1, 0),1);
  assert.strictEqual(e.test_call_EndPath(dc),1);assert.deepStrictEqual(capture(),empty,'glyph path records without painting');
  assert(e.test_call_GetPath(dc,0,0,0)>0,'direct glyph ink is captured by existing path machinery');
  assert.strictEqual(e.test_call_AbortPath(dc),1);
- reset();e.guest_write16(gidText,65535);const before=capture();assert.strictEqual(e.test_call_ExtTextOutA(dc,0,0,18,rect,gidText,1),0);
+ reset();e.guest_write16(gidText,65535);const before=capture();assert.strictEqual(e.test_call_ExtTextOutA(dc,0,0,18,rect,gidText,1, 0),0);
  assert.deepStrictEqual(capture(),before,'bad index does not paint background');assert.strictEqual(e.test_gdi_dc_get_field(dc,12,0),3);
  console.log('PASS direct TrueType WORD glyph indices: A/W native-oracle flags, pixels/advance, >255 cache pixels and atomic invalid-index rejection');
 })().catch(error=>{console.error(error.stack||error);process.exitCode=1;});

@@ -55,7 +55,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   assert.strictEqual(wat.test_call_GetTextExtentExPointA(
     hdc, text, 10, 0x7fffffff, 0, 0, size), 1);
   assert(wat.guest_read32(size) > 0 && wat.guest_read32(size + 4) === 16);
-  assert.strictEqual(wat.test_call_ExtTextOutA(hdc, 2, 16, 0, 0, text, 10), 1);
+  assert.strictEqual(wat.test_call_ExtTextOutA(hdc, 2, 16, 0, 0, text, 10, 0), 1);
   assert.strictEqual(wat.test_call_DrawTextA(hdc, text, 10, rect, 0x20), 16);
 
   assert.strictEqual(wat.test_call_SelectObject(hdc, 0x30021) >>> 0, 0x3001d);

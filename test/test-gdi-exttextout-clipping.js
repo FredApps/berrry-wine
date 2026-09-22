@@ -44,10 +44,10 @@ const RegionMap = require('../lib/region-map.generated.js');
   wat.test_gdi_dc_set_field(hdc, 28, 1, 2); // TRANSPARENT
   wat.test_gdi_dc_set_field(hdc, 20, 0x000000, 0); // black
   assert.strictEqual(
-    wat.test_call_ExtTextOutA(hdc, 0, 5, 0x4, clipRect, textGa, text.length), 1);
+    wat.test_call_ExtTextOutA(hdc, 0, 5, 0x4, clipRect, textGa, text.length, 0), 1);
   wat.test_gdi_dc_set_field(hdc, 24, 0x000000FF, 0xFFFFFF); // red COLORREF
   assert.strictEqual(
-    wat.test_call_ExtTextOutA(hdc, 0, 0, 0x2, opaqueRect, 0, 0), 1);
+    wat.test_call_ExtTextOutA(hdc, 0, 0, 0x2, opaqueRect, 0, 0, 0), 1);
   wat.test_gdi_dc_set_field(hdc, 28, 2, 2); // OPAQUE
   wat.test_gdi_dc_set_field(hdc, 20, 0x000000FF, 0); // red COLORREF
   wat.test_gdi_dc_set_field(hdc, 24, 0x0000FF00, 0xFFFFFF); // green COLORREF
@@ -92,7 +92,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   wat.test_gdi_dc_set_field(hdc,32,1,0); // TA_UPDATECP
   wat.test_gdi_dc_set_field(hdc,12,2,0);
   wat.test_gdi_dc_set_field(hdc,16,2,0);
-  assert.strictEqual(wat.test_call_ExtTextOutA(hdc,0,0,0,0,textGa,1),1);
+  assert.strictEqual(wat.test_call_ExtTextOutA(hdc,0,0,0,0,textGa,1, 0),1);
   const expectedAdvance=wat.test_gdi_dc_get_field(hdc,12,0);
   const expectedPixels=bytes.slice(bitsWa,bitsWa+width*height*4);
   assert(expectedAdvance>2,'ordinary text advances current position');
@@ -100,7 +100,7 @@ const RegionMap = require('../lib/region-map.generated.js');
     bytes.set(beforeNullRect,bitsWa);
     wat.test_gdi_dc_set_field(hdc,12,2,0);
     wat.test_gdi_dc_set_field(hdc,16,2,0);
-    assert.strictEqual(wat.test_call_ExtTextOutA(hdc,0,0,options,0,textGa,1),1);
+    assert.strictEqual(wat.test_call_ExtTextOutA(hdc,0,0,options,0,textGa,1, 0),1);
     assert.strictEqual(wat.test_gdi_dc_get_field(hdc,12,0),expectedAdvance);
     assert.deepStrictEqual(bytes.slice(bitsWa,bitsWa+width*height*4),expectedPixels);
   }

@@ -88,13 +88,13 @@ const RegionMap = require('../lib/region-map.generated.js');
   writeRect(clip, 0, 0, 10, 9);
 
   clear();
-  assert.strictEqual(wat.test_call_ExtTextOutAWithDx(
+  assert.strictEqual(wat.test_call_ExtTextOutA(
     hdc, 0, 0, 0x4, clip, textAA, 2, advances), 1);
   assert.strictEqual(pixel(5, 4), 0, 'first glyph must render inside ETO_CLIPPED');
   assert.strictEqual(pixel(9, 4), 0xffffff, 'clip must reject the first glyph overhang');
   assert.strictEqual(pixel(12, 4), 0xffffff, 'clip must reject the lpDx-positioned glyph');
 
-  assert.strictEqual(wat.test_call_ExtTextOutAWithDx(
+  assert.strictEqual(wat.test_call_ExtTextOutA(
     hdc, 0, 10, 0, 0, textAA, 2, advances), 1);
   assert.strictEqual(pixel(7, 13), 0);
   assert.strictEqual(pixel(9, 13), 0xffffff, 'lpDx must leave its requested inter-glyph gap');
@@ -103,7 +103,7 @@ const RegionMap = require('../lib/region-map.generated.js');
   const opaque = allocZero(16);
   writeRect(opaque, 50, 2, 60, 8);
   wat.test_gdi_dc_set_field(hdc, 24, 0x000000ff, 0xffffff); // red COLORREF
-  assert.strictEqual(wat.test_call_ExtTextOutAWithDx(
+  assert.strictEqual(wat.test_call_ExtTextOutA(
     hdc, 0, 0, 0x2, opaque, 0, 0, 0), 1);
   assert.strictEqual(pixel(55, 5), 0xff0000,
     'ETO_OPAQUE must erase its rectangle on the WAT bitmap path');

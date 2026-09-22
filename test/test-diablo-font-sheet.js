@@ -164,7 +164,7 @@ async function buildAtlas(table) {
     wat.guest_write32(rc + 12, row * CELL + CELL);
     wat.guest_write16(ch, code);               // one char, NUL-terminated
     wat.test_call_ExtTextOutA(hdc, col * CELL + 1, row * CELL + 1,
-      ETO_OPAQUE, rc, ch, 1);
+      ETO_OPAQUE, rc, ch, 1, 0);
   }
 
   // Before the readback: what is actually in the bitmap's own pixels? This

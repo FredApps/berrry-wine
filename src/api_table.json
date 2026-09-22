@@ -1435,6 +1435,7 @@
   {
     "id": 149,
     "name": "ExtTextOutW",
+    "test_call": true,
     "nargs": 8,
     "convention": "stdcall",
     "hash": 2195762886
@@ -3199,6 +3200,7 @@
   {
     "id": 350,
     "name": "GetVolumeInformationA",
+    "test_call": true,
     "nargs": 8,
     "convention": "stdcall",
     "hash": 3336373344
@@ -8481,6 +8483,7 @@
   {
     "id": 949,
     "name": "ExtTextOutA",
+    "test_call": true,
     "nargs": 8,
     "convention": "stdcall",
     "hash": 2497760028,
