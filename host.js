@@ -98,7 +98,13 @@ function resolveShellLaunchPath(file, vfs, isWinExec) {
 }
 
 // Cooperative-scheduler timing arms on by default; see _schedArm.
-const SCHED_ARMS_DEFAULT = 'b,e,g';
+const SCHED_ARMS_DEFAULT = 'b,e,g,w';
+// Arm w: a safety bound on how long a guest thread's Worker holds its slice
+// through local Sleeps — the step epoch normally ends it first, when the main
+// slice returns (measured on Moorhuhn 2: ~64ms per main slice) — and the
+// longest a sleeping main thread holds a step open for its threads.
+const WORKER_LOCAL_SLEEP_MAX_MS = 250;
+const WORKER_MAIN_ASLEEP_HOLD_MS = 16;
 
 // ---------------------------------------------------------------------------
 // Frozen (agent-stepped) mode — docs/design-agent-control.md
@@ -3773,6 +3779,24 @@ class WineAssembly {
           ? sync
           : Object.assign({}, sync || {}, { focusHwnd: pendingFocus | 0 });
         let r, threadsRun;
+        // Arm w: the step epoch. Threads keep their slice through short Sleeps
+        // until endStep() below; serial mode runs them after the main slice,
+        // so there would be nothing left to end it.
+        const Rpc = typeof GuestRpc !== 'undefined' ? GuestRpc : null;
+        const serial = typeof window !== 'undefined' && !!window.WINE_THREADS_SERIAL;
+        const localSleep = !!(Rpc && Rpc.endStepEpoch && self.memory && !serial && !self._frozen
+          && self.threadManager && self.threadManager.backend === 'worker' && self._schedArm('w'));
+        if (self.threadManager) {
+          self.threadManager.workerLocalSleep = localSleep
+            ? { epoch: Rpc.readStepEpoch(self.memory), maxMs: WORKER_LOCAL_SLEEP_MAX_MS }
+            : null;
+        }
+        let stepEnded = !localSleep;
+        const endStep = () => {
+          if (stepEnded) return;
+          stepEnded = true;
+          Rpc.endStepEpoch(self.memory);
+        };
         const runMain = async () => {
           const wait = self._d3dMainWait;
           if (wait) {
@@ -3803,6 +3827,24 @@ class WineAssembly {
           }
           return slice;
         };
+        // Arm w: the step ends when the main slice does. A main thread that is
+        // itself asleep ran nothing, so its threads get until its deadline
+        // (bounded) rather than one run each.
+        const runMainThenEnd = async () => {
+          try {
+            const slice = await runMain();
+            const until = self._workerMainSleepUntil;
+            if (!stepEnded && slice && !(slice.blocks | 0) && until) {
+              const left = until - self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio);
+              if (left > 0) {
+                await new Promise(res => setTimeout(res, Math.min(left, WORKER_MAIN_ASLEEP_HOLD_MS)));
+              }
+            }
+            return slice;
+          } finally {
+            endStep();
+          }
+        };
         if (self.renderer && self.renderer.beginWorkerGuestSlice) {
           self.renderer.beginWorkerGuestSlice();
         }
@@ -3818,9 +3860,11 @@ class WineAssembly {
             r = await runMain();
             threadsRun = await runThreads();
           } else {
-            [r, threadsRun] = await Promise.all([runMain(), runThreads()]);
+            [r, threadsRun] = await Promise.all([runMainThenEnd(), runThreads()]);
           }
         } finally {
+          endStep();
+          if (self.threadManager) self.threadManager.workerLocalSleep = null;
           if (perf) perfRendezvousMs = performance.now() - perfRendezvousStart;
           if (self.renderer && self.renderer.endWorkerGuestSlice) {
             self.renderer.endWorkerGuestSlice();
@@ -4599,6 +4643,9 @@ class WineAssembly {
   //   g  global deadline clock: those wakes see the time they were due at
   //      (ThreadManager.deadlineNow), and every clock read agrees on it
   //   a  (off) exempt timed sleepers from idle demotion; `g` implies it
+  //   w  Worker mode: a guest thread's Worker waits out a short Sleep itself
+  //      and keeps running until the host step's main slice is done, instead
+  //      of waking at most once per host step (lib/guest-worker.js)
   // `?sched-arm=LIST` replaces the default set for an A/B; `?sched-arm=none`
   // turns every arm off.
   _schedArm(name) {

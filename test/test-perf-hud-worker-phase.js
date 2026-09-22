@@ -50,7 +50,7 @@ const startAt = hostSrc.indexOf('const perfRendezvousStart = perf ? performance.
 ok(startAt > 0, 'the worker rendezvous is bracketed by a wall-clock timer');
 
 const block = hostSrc.slice(startAt, startAt + 1200);
-ok(/await Promise\.all\(\[runMain\(\), runThreads\(\)\]\)/.test(block),
+ok(/await Promise\.all\(\[runMain(?:ThenEnd)?\(\), runThreads\(\)\]\)/.test(block),
   'and the bracket encloses the Promise.all the step actually parks on');
 ok(/finally \{[\s\S]*?perfRendezvousMs = performance\.now\(\) - perfRendezvousStart/.test(block),
   'the elapsed time is taken in a finally, so a trapped slice is still accounted');
