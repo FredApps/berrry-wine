@@ -23,8 +23,8 @@ are:
 
 - Curse of Monkey Island `COMI.EXE`:
   `b55524231edacc7d184c22c762d25193d616adc55d0141785fb21b8890d352b9`
-- Atomic Bomberman `_BOMB.EXE`:
-  `0ff14a352d6626660ceb66ea0e6743cd33c457e754cfd5705120bacae0530638`
+- Atomic Bomberman `_BOMB.EXE` (April 1997 alpha; no longer registered, see
+  below): `0ff14a352d6626660ceb66ea0e6743cd33c457e754cfd5705120bacae0530638`
 - Broken Sword installed `winsword.exe`:
   `8ca6e3f0c56e1f289f79e2d52ca8cd98466c5b5c2817b3d05b7f7d80425c4177`
 - Dungeon Keeper `KEEPER95.EXE`:
@@ -41,9 +41,12 @@ playable café scene, Dungeon Keeper's live dungeon level, and Darkstone's town.
 Atomic Bomberman's browser route is now a durable functional gate rather than
 only a manual audit. `test/test-atomic-bomberman-gameplay.js` crosses the
 title/menu sequence through ordinary Win32 keys, then verifies arena
-movement, visible bomb placement, and an explosion. The selected `BMANDEMO`
-tree contains no installer executable to bypass; its launch and data hashes are
-recorded in `docs/re-notes/atomic-bomberman-demo.md`.
+movement, visible bomb placement, and an explosion. Since 2026-09-22 it runs
+the June 1997 public demo (`atomic_bomberman_june_demo`, installed by
+`tools/install-atomic-bomberman-demo.js` from archive.org), the only Atomic
+Bomberman in the registry: the April alpha from this tree needed its expiry
+patched out of the binary and never had working network play, so it was
+dropped. Both builds' hashes are in `docs/re-notes/atomic-bomberman-demo.md`.
 
 Broken Sword is installed by running the archive's original `SETUP.EXE`
 (SHA-256 `091ad0e2e8f1f49f6c2cb69067c7c0b7c7d75f3255ab227b6ef17152bb6f40ae`)

@@ -6,8 +6,6 @@ const path = require('path');
 const {
   APPS, DESKTOP_APPS, LOCAL_CANDIDATE_APPS, DEBUG_ONLY_APPS,
 } = require('../lib/apps');
-const { EXE_PATCHES, applyExeCompatibilityPatches } = require('../lib/app-profiles');
-const { GUEST_BASE: guestBase } = require('../lib/region-map.generated');
 
 const root = path.join(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
@@ -16,7 +14,7 @@ const publicIds = new Set(DESKTOP_APPS.map(([id]) => id));
 const debugIds = new Set(DEBUG_ONLY_APPS.map(([id]) => id));
 const expected = {
   curse_monkey_island_demo: ['COMI.EXE', 11],
-  atomic_bomberman_demo: ['_BOMB.EXE', 151],
+  atomic_bomberman_june_demo: ['BM95DEMO.EXE', 172],
   broken_sword_demo: ['winsword.exe', 63],
   dungeon_keeper_demo: ['KEEPER95.EXE', 165],
   darkstone_demo: ['darkstonedemo.exe', 13],
@@ -75,23 +73,10 @@ assert(APPS.dungeon_keeper_demo.exe.includes(
   'Dungeon Keeper launches only the original installer output');
 assert(APPS.darkstone_demo.exe.includes('DarkstoneDemo-D3D/installed/'),
   'Darkstone launches only the original installer output');
-assert.strictEqual(APPS.atomic_bomberman_demo.touchControls.dpad.ways, 4);
-assert.deepStrictEqual(APPS.atomic_bomberman_demo.touchControls.buttons,
-  [{ vk: 0x20, label: 'Bomb', pos: 'br' }]);
-
-const expiryPatch = EXE_PATCHES['_bomb.exe'];
-assert.strictEqual(expiryPatch.length, 1, 'Atomic Bomberman patch count');
-const memory = new ArrayBuffer(0x220000);
-const bytes = new Uint8Array(memory);
-const expiryWa = expiryPatch[0].addr - 0x400000 + guestBase;
-bytes.set(expiryPatch[0].expected, expiryWa);
-assert.strictEqual(applyExeCompatibilityPatches('_BOMB.EXE', {
-  get_image_base: () => 0x400000,
-  get_guest_base: () => guestBase,
-}, memory, { log: () => {} }), 1, 'verified Atomic Bomberman alpha is patched');
-assert.deepStrictEqual(
-  [...bytes.slice(expiryWa, expiryWa + expiryPatch[0].replacement.length)],
-  expiryPatch[0].replacement,
-  'the alpha upper expiry cutoff is extended');
+assert.strictEqual(APPS.atomic_bomberman_june_demo.touchControls.dpad.ways, 4);
+assert.deepStrictEqual(APPS.atomic_bomberman_june_demo.touchControls.buttons,
+  [{ vk: 0x20, label: 'Bomb', pos: 'br' }, { vk: 0x1B, label: 'Esc', pos: 'tl' }]);
+// The June demo's expiry is a calendar pin, not a patch to the binary.
+assert.strictEqual(APPS.atomic_bomberman_june_demo.wallClock, '1997-07-01T12:00:00Z');
 
 console.log('PASS  five Archive.org Windows 98 demos are reproducible local apps');

@@ -1,6 +1,12 @@
-# Atomic Bomberman alpha demo
+# Atomic Bomberman demo
 
-## Package
+The registry has one Atomic Bomberman, the June 1997 public demo
+(`atomic_bomberman_june_demo`, below). The April 1997 alpha described first
+was dropped on 2026-09-22: it needed its expiry patched out of the binary
+(`lib/app-profiles.js`, `0x416e42`), and the June build does everything it did
+plus network play. Its notes stay for anyone who digs it out again.
+
+## April 1997 alpha (no longer registered)
 
 The tested April 7, 1997 alpha is the ready-to-run `BMANDEMO` tree from the
 local Windows 98 A-D compatibility archive documented in `sources.md`. That
@@ -20,6 +26,7 @@ tree nor the executable belongs in a public deployment.
 
 ## Gameplay route
 
+Written against the April alpha; the test now drives the June demo.
 `test/test-atomic-bomberman-gameplay.js` launches the registered browser app
 in headless Chromium. It waits for each publisher logo to render, skips it,
 and synchronizes on the title, main menu, input selection, options, and arena

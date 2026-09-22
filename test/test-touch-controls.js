@@ -830,7 +830,7 @@ TouchControls.destroy();
   const { APPS } = require('../lib/apps');
   const actionApps = [
     'blobby_volley', 'cave_story', 'generally', 'little_fighter_2',
-    'icy_tower', 'elasto_mania', 'atomic_bomberman_demo', 'jazz2_demo',
+    'icy_tower', 'elasto_mania', 'atomic_bomberman_june_demo', 'jazz2_demo',
     'quake2_demo', 'gta2_demo', 'halflife_uplink', 'deus_ex_demo', 'abedemo',
   ];
   for (const id of actionApps) {

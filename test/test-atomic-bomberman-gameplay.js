@@ -11,9 +11,10 @@ const puppeteer = require('puppeteer');
 const { PNG } = require('pngjs');
 
 const ROOT = path.join(__dirname, '..');
+// The June 1997 public demo, installed by tools/install-atomic-bomberman-demo.js.
 const GAME = path.join(ROOT, 'test/binaries/win98-games-a-d',
-  'Aotmic BOMBMAN demo-SW/BMANDEMO');
-const EXE = path.join(GAME, '_BOMB.EXE');
+  'Atomic Bomberman Demo-archive/installed');
+const EXE = path.join(GAME, 'BM95DEMO.EXE');
 const CHROME = process.env.CHROME ||
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const OUT = process.env.ATOMIC_BOMBERMAN_CAPTURE_DIR ||
@@ -117,15 +118,11 @@ async function main() {
     return;
   }
   if (!fs.existsSync(EXE)) {
-    console.log('SKIP Atomic Bomberman gameplay: local A-D demo tree is absent');
+    console.log('SKIP Atomic Bomberman gameplay: the June demo is not installed (tools/install-atomic-bomberman-demo.js)');
     return;
   }
   assert.strictEqual(sha256(EXE),
-    '0ff14a352d6626660ceb66ea0e6743cd33c457e754cfd5705120bacae0530638');
-  assert.strictEqual(sha256(path.join(GAME, 'LEVELS.DAT')),
-    '7f647eb426f93799e190b5697bec20c81d350cc5cc23b0adc9a29e2d814ad796');
-  assert.strictEqual(sha256(path.join(GAME, 'README.BM')),
-    '8cf26bf5541592dae04769eb3e50a90b506214dd1941ab84b15f445faadf3433');
+    '6133d5aa74df524373501028548fa3e9b28798c118bfa379dc3ad3afba1eba71');
 
   fs.rmSync(OUT, { recursive: true, force: true });
   fs.mkdirSync(OUT, { recursive: true });
@@ -153,7 +150,7 @@ async function main() {
     await page.waitForFunction('typeof launchApp === "function"', { timeout: 60000 });
     await page.evaluate(async () => {
       stopAllApps();
-      document.getElementById('app-select').value = 'atomic_bomberman_demo';
+      document.getElementById('app-select').value = 'atomic_bomberman_june_demo';
       await launchApp();
     });
     await page.waitForFunction(

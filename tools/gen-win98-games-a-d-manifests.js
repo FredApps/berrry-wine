@@ -20,11 +20,6 @@ const GAMES = [
     exe: 'COMI.EXE',
   },
   {
-    id: 'atomic_bomberman_demo',
-    root: 'Aotmic BOMBMAN demo-SW/BMANDEMO',
-    exe: '_BOMB.EXE',
-  },
-  {
     id: 'broken_sword_demo',
     root: 'Broken_Sword_demo-SW/installed',
     exe: 'winsword.exe',

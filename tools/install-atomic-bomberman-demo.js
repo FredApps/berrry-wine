@@ -53,7 +53,9 @@ function main() {
     const dest = path.join(OUTPUT, rel);
     fs.mkdirSync(path.dirname(dest), { recursive: true });
     fs.writeFileSync(dest, bytes);
-    manifest.files.push({ url: rel, vfsPath: 'c:\\' + f.path });
+    // The app's own exe is already fetched as its executable; listing it
+    // again would download it twice.
+    if (rel !== 'BM95DEMO.EXE') manifest.files.push({ url: rel, vfsPath: 'c:\\' + f.path });
   }
   assert.strictEqual(total, PAYLOAD_BYTES);
   assert.strictEqual(sha256(fs.readFileSync(path.join(OUTPUT, 'BM95DEMO.EXE'))), EXE_SHA256);
