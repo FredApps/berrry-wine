@@ -74,3 +74,7 @@ It is **fixture integrity, not emulator conformance**. Invalid pointers,
 inaccessible drives, simultaneous short buffers, nonempty FAT labels,
 arbitrary filesystems, race conditions and bytes beyond the captured prefixes
 remain outside this probe's coverage.
+
+The subsequent [runtime fix](../../../docs/volume-buffer-review.md) replays
+the 42 ANSI observations and fixes bounds and output order. It keeps the
+pre-existing Unicode extension explicitly separate from native conformance.

@@ -254,3 +254,8 @@ captures 84 cases twice. Win98 rejects short ANSI buffers with error 111 and
 ordered partial output (scalars, filesystem name, then label); Unicode returns
 120 without touching outputs. Runtime correction remains open, and the current
 Unicode extension needs an explicit compatibility-policy distinction.
+
+The [volume runtime follow-up](volume-buffer-review.md) now fixes ANSI bounds
+and output order against all 42 native ANSI cases. The existing Unicode
+extension receives the same safeguards without claiming native W conformance.
+Its generated test export brings the inventory to **252 generated / 8 manual**.

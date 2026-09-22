@@ -2633,84 +2633,65 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36))) ;; stdcall 8 args
   )
 
-  ;; 782: GetVolumeInformationA — 8 args stdcall, return TRUE with fake data
-  ;; The volume this emulator presents, filled into the caller's out
-  ;; parameters. Both spellings describe the same volume and differ only in
-  ;; how the two strings are written, so $wide decides that and nothing else.
-  ;; The three arguments past arg4 are read off the guest stack here, before
-  ;; either entry point pops it.
+  ;; Win98 ANSI output order is scalar fields, filesystem name, then label.
+  ;; Each string is all-or-nothing: short buffers fail with error 111.
+  ;; The W entry point intentionally retains the project's Unicode extension;
+  ;; native Win98 W returns error 120 instead (see native volume fixture).
   (func $volume_information (param $root i32) (param $name_buf i32)
                             (param $name_size i32) (param $serial i32)
                             (param $max_comp i32) (param $wide i32) (result i32)
-    (local $wa_esp i32) (local $fs_flags i32) (local $fs_name i32)
-    (local $mounted_serial i32) (local $root_wa i32) (local $name_wa i32) (local $fs_wa i32)
-    (local.set $wa_esp (call $g2w (i32.load offset=16 (global.get $reg_base))))
-    (local.set $fs_flags (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (local.set $fs_name (i32.load (i32.add (local.get $wa_esp) (i32.const 28)))) (if (local.get $root) (then (local.set $root_wa (call $g2w (local.get $root)))))
-    ;; A mounted volume's label — the string an era CD check compares against.
-    ;; Nothing mounted at this letter has a label, so the volume has none: an
-    ;; empty string, in the caller's encoding.
-    (if (local.get $name_buf)
-      (then (local.set $name_wa (call $g2w (local.get $name_buf)))
-        (if (i32.eqz (call $host_fs_volume_label
-              (if (result i32) (local.get $root)
-                (then (local.get $root_wa))
-                (else (i32.const 0)))
-              (local.get $wide)
-              (local.get $name_wa)
-              (local.get $name_size)))
-          (then
-            (if (local.get $wide)
-              (then (i32.store16 (local.get $name_wa) (i32.const 0)))
-              (else (i32.store8 (local.get $name_wa) (i32.const 0))))))))
-    ;; A mounted volume's own serial when one is mounted here; the emulator's
-    ;; fixed C: serial otherwise.
+    (local $sp i32) (local $fs_flags i32) (local $fs_name i32)
+    (local $fs_size i32) (local $root_wa i32) (local $mounted_serial i32)
+    (local $cd i32) (local $length i32) (local $packed i32)
+    (local $i i32) (local $at i32) (local $ch i32) (local $label_length i32)
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $fs_flags (call $gl32 (i32.add (local.get $sp) (i32.const 24))))
+    (local.set $fs_name (call $gl32 (i32.add (local.get $sp) (i32.const 28))))
+    (local.set $fs_size (call $gl32 (i32.add (local.get $sp) (i32.const 32))))
+    (if (local.get $root) (then (local.set $root_wa (call $g2w (local.get $root)))))
+    (local.set $cd (i32.eq (call $host_fs_drive_type
+      (local.get $root_wa) (local.get $wide)) (i32.const 5)))
     (if (local.get $serial)
       (then
-        (local.set $mounted_serial (call $host_fs_volume_serial
-          (if (result i32) (local.get $root)
-            (then (local.get $root_wa))
-            (else (i32.const 0)))
-          (local.get $wide)))
+        (local.set $mounted_serial (call $host_fs_volume_serial (local.get $root_wa) (local.get $wide)))
         (call $gs32 (local.get $serial)
           (select (local.get $mounted_serial) (i32.const 0x12345678)
-                  (i32.ne (local.get $mounted_serial) (i32.const 0))))))
+            (i32.ne (local.get $mounted_serial) (i32.const 0))))))
     (if (local.get $max_comp)
-      (then (call $gs32 (local.get $max_comp) (i32.const 255))))
-    ;; FILE_CASE_PRESERVED_NAMES | FILE_CASE_SENSITIVE_SEARCH
+      (then (call $gs32 (local.get $max_comp)
+        (select (i32.const 221) (i32.const 255) (local.get $cd)))))
     (if (local.get $fs_flags)
-      (then (call $gs32 (local.get $fs_flags) (i32.const 0x00000003))))
-    ;; The filesystem name is part of era CD checks: Diablo XOR-folds the first
-    ;; four bytes of this string into the constant it compares, so a mounted
-    ;; CD-ROM must say "CDFS" the way Win98 does, not "FAT".
+      (then (call $gs32 (local.get $fs_flags)
+        (select (i32.const 0x4000) (i32.const 0x4006) (local.get $cd)))))
     (if (local.get $fs_name)
-      (then (local.set $fs_wa (call $g2w (local.get $fs_name)))
-        (if (i32.eq (call $host_fs_drive_type
-              (if (result i32) (local.get $root)
-                (then (local.get $root_wa))
-                (else (i32.const 0)))
-              (local.get $wide))
-              (i32.const 5)) ;; DRIVE_CDROM
-          (then
-            (if (local.get $wide)
-              (then
-                (i32.store16 (local.get $fs_wa) (i32.const 0x43))          ;; 'C'
-                (i32.store16 offset=2 (local.get $fs_wa) (i32.const 0x44)) ;; 'D'
-                (i32.store16 offset=4 (local.get $fs_wa) (i32.const 0x46)) ;; 'F'
-                (i32.store16 offset=6 (local.get $fs_wa) (i32.const 0x53)) ;; 'S'
-                (i32.store16 offset=8 (local.get $fs_wa) (i32.const 0)))
-              (else
-                (i32.store (local.get $fs_wa) (i32.const 0x53464443))     ;; "CDFS"
-                (i32.store8 offset=4 (local.get $fs_wa) (i32.const 0)))))
-          (else
-            (if (local.get $wide)
-              (then
-                (i32.store16 (local.get $fs_wa) (i32.const 0x46))          ;; 'F'
-                (i32.store16 offset=2 (local.get $fs_wa) (i32.const 0x41)) ;; 'A'
-                (i32.store16 offset=4 (local.get $fs_wa) (i32.const 0x54)) ;; 'T'
-                (i32.store16 offset=6 (local.get $fs_wa) (i32.const 0)))
-              (else
-                (i32.store (local.get $fs_wa) (i32.const 0x00544146)))))))) ;; "FAT"
+      (then
+        (local.set $length (select (i32.const 4) (i32.const 3) (local.get $cd)))
+        (if (i32.le_u (local.get $fs_size) (local.get $length))
+          (then (global.set $last_error (i32.const 111)) (return (i32.const 0))))
+        (local.set $packed (select (i32.const 0x53464443) (i32.const 0x00544146) (local.get $cd)))
+        (local.set $at (local.get $fs_name))
+        (loop $copy_fs
+          (local.set $ch (if (result i32) (i32.lt_u (local.get $i) (local.get $length))
+            (then (i32.and (i32.shr_u (local.get $packed)
+              (i32.shl (local.get $i) (i32.const 3))) (i32.const 255)))
+            (else (i32.const 0))))
+          (if (local.get $wide)
+            (then (call $gs16 (local.get $at) (local.get $ch)))
+            (else (call $gs8 (local.get $at) (local.get $ch))))
+          (local.set $at (i32.add (local.get $at)
+            (select (i32.const 2) (i32.const 1) (local.get $wide))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br_if $copy_fs (i32.le_u (local.get $i) (local.get $length))))))
+    (if (local.get $name_buf)
+      (then
+        (local.set $label_length (call $host_fs_volume_label
+          (local.get $root_wa) (local.get $wide) (local.get $name_buf) (local.get $name_size)))
+        (if (i32.eq (local.get $label_length) (i32.const -1))
+          (then (global.set $last_error (i32.const 111)) (return (i32.const 0))))
+        ;; The native empty FAT-label query leaves ERROR_FILE_NOT_FOUND even
+        ;; though the overall volume query succeeds. NULL label skips it.
+        (if (i32.and (i32.eqz (local.get $cd)) (i32.eqz (local.get $label_length)))
+          (then (global.set $last_error (i32.const 2))))))
     (i32.const 1))
 
   (func $handle_GetVolumeInformationA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

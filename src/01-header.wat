@@ -803,8 +803,9 @@
   ;; fs_drive_type(rootWA, isWide) → DRIVE_* value, or 0 when no mount claims
   ;; that letter and the caller should keep its built-in answer.
   (import "host" "fs_volume_label" (func $host_fs_volume_label (param i32 i32 i32 i32) (result i32)))
-  ;; fs_volume_label(rootWA, isWide, outWA, maxChars) → characters written,
-  ;; NUL-terminated; 0 when the drive has no label of its own.
+  ;; fs_volume_label(rootWA, isWide, outGA, maxChars) → characters written,
+  ;; NUL-terminated; empty labels write NUL. -1 = short buffer, no writes.
+  ;; Output is a guest pointer so the host translates each written byte.
   (import "host" "fs_set_volume_label" (func $host_fs_set_volume_label (param i32 i32 i32) (result i32)))
   ;; fs_set_volume_label(driveIndex, labelGA, chars) → Win32 error code;
   ;; driveIndex 0 selects the current drive and chars 0 removes the label.

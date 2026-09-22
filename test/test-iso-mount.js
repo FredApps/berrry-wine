@@ -243,6 +243,7 @@ async function main() {
   imports.host.com_create_instance = () => 0x80004002;
   const instance = await WebAssembly.instantiate(module, imports);
   const { exports } = instance;
+  ctx.exports = exports;
   const mem = new Uint8Array(memory.buffer);
   const guestBase = exports.get_guest_base();
   const rootGA = 0x2000, bufGA = 0x2100, stackGA = 0x2200;
@@ -294,7 +295,7 @@ async function main() {
     assert.strictEqual(mem[at(bufGA)], 0, 'C: has no volume label');
   });
 
-  test('a label longer than the caller\'s buffer is truncated, not overrun', () => {
+  test('a label longer than the caller\'s buffer fails without partial writes', () => {
     const small = new VirtualFS();
     iso9660.mountIso(small, bytes, { drive: 'F' });
     small.volumeLabels.set('f', 'A_VERY_LONG_VOLUME_LABEL');
@@ -304,11 +305,10 @@ async function main() {
     mem.fill(0xcc, at(bufGA), at(bufGA) + 64);
     writeAnsi(rootGA, 'F:\\');
     assert.strictEqual(
-      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 5, 0, 0, 0, 0, 0), 1);
-    assert.strictEqual(
-      Buffer.from(mem.subarray(at(bufGA), at(bufGA) + 4)).toString('ascii'), 'A_VE');
-    assert.strictEqual(mem[at(bufGA) + 4], 0, 'the terminator fits inside the buffer');
-    assert.strictEqual(mem[at(bufGA) + 5], 0xcc, 'nothing is written past the buffer');
+      exports.test_call_GetVolumeInformationA(rootGA, bufGA, 5, 0, 0, 0, 0, 0), 0);
+    assert.strictEqual(exports.test_call_GetLastError(), 111);
+    assert(mem.subarray(at(bufGA), at(bufGA) + 64).every(byte => byte === 0xcc),
+      'short label leaves the complete caller buffer untouched');
     ctx.vfs = saved;
   });
 
