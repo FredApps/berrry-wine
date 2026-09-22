@@ -255,3 +255,20 @@ actual guest bytes, exact notification span/count, error/pending status,
 cursor and zero-length behavior. This is host-import notification coverage,
 not a new native read-failure oracle, worker publication proof or dirty-page
 implementation. The broader lazy-provider suite passes 51/51 cases.
+
+## Filesystem scalar outputs use the canonical guest writer
+
+The filesystem-local `gs32` still used one raw `DataView.setUint32` after
+translating only the first byte. A byte-count output with one byte before a
+noncontiguous boundary reproduced three missing output bytes. The production
+path now delegates to the exported `guest_write32`, inheriting the CPU writer's
+sparse handling and notification. Lightweight hosts without that export use
+page-bounded chunks and one explicit invalidation. This covers callers of this
+local helper, including read/write byte counts and file-part pointers; it does
+not migrate the separately encoded find-data structures or strings.
+
+The focused test covers all three DWORD crossing positions, neighboring
+canaries, zero-byte read counts and fallback notices. A separate wiring check
+requires exactly one exported-writer call per scalar assignment and no duplicate
+host notification. The real-WASM ReadFileEx callback/ABI test and all 51 lazy
+provider tests pass. Dirty bits are still not recorded by the canonical writer.
