@@ -166,3 +166,26 @@ counts and stdcall cleanup. Existing streamed-output clipping, attribute-read
 and A/W character-read suites pass. Logical-AND, tier and whitespace gates
 pass. Rectangular CHAR_INFO/SMALL_RECT buffers remain separate follow-up work;
 no Far browser or timing result is claimed.
+
+## Rectangular console transfers migrated
+
+The shared ReadConsoleOutputA/W and WriteConsoleOutputA/W cores now use
+guest accessors for caller CHAR_INFO arrays and SMALL_RECT input/output.
+Rectangle WORDs are explicitly sign-extended after guest reads; clipping
+arithmetic and empty-rectangle policy are unchanged. Private screen cells
+remain raw memory accesses. The writer selects only the A byte or W word
+character read, avoiding eager reads of both widths.
+
+The new `test/test-console-rectangle-boundaries.js` reproduced a split
+ReadConsoleOutputA destination failure. All 288 cases now pass: four APIs,
+11 CHAR_INFO-array crossings or seven SMALL_RECT crossings, and four geometry
+cases (full, end clipping, negative-coordinate clipping, empty). Expected
+screen cells and caller bytes are independent, with guards, untouched clipped
+buffer areas, unrelated-page preservation and stdcall cleanup checked.
+Existing rectangular-write clipping and screen-buffer identity/activation/
+lifetime suites pass, as do logical-AND, tier and whitespace gates.
+
+This covers these two transfer cores, not every console structure: scrolling,
+cursor/screen information and other translated pointers still need inspection.
+No Far browser session, global write-coverage certificate or performance
+result is claimed.
