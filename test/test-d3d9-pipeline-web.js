@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 'use strict';
 const assert = require('assert');
-const http = require('http');
+const { startStaticServer } = require('./static-server');
 const path = require('path');
 const puppeteer = require('puppeteer');
 const { compileSrcWasm } = require('./compile-src');
@@ -126,11 +126,11 @@ const { compileSrcWasm } = require('./compile-src');
       (i32.load offset=0 (global.get $reg_base)))`).join('\n')}`;
   const bytes = compileSrcWasm((file, source) => file === '13-exports.wat' ? source+'\n'+extra : source);
   // This endpoint serves only an empty isolated test document, not repo files.
-  const server = http.createServer((req,res) => {
+  const server = await startStaticServer({ root: path.join(__dirname, '..'), handleRequest(req,res) {
     res.writeHead(200, { 'Content-Type': 'text/html', 'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp' }); res.end('<!doctype html><title>D3D9 pipeline test</title>');
-  });
-  await new Promise(resolve => server.listen(0,'127.0.0.1',resolve));
+    return true;
+  } });
   let browser;
   try {
     browser = await puppeteer.launch({ headless: true,

@@ -5,7 +5,7 @@
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
-const http = require('http');
+const { startStaticServer } = require('./static-server');
 const path = require('path');
 const puppeteer = require('puppeteer');
 const { PNG } = require('pngjs');
@@ -24,44 +24,8 @@ function sha256(filename) {
   return crypto.createHash('sha256').update(fs.readFileSync(filename)).digest('hex');
 }
 
-function mimeType(filename) {
-  if (filename.endsWith('.html')) return 'text/html';
-  if (filename.endsWith('.js')) return 'text/javascript';
-  if (filename.endsWith('.css')) return 'text/css';
-  if (filename.endsWith('.json')) return 'application/json';
-  if (filename.endsWith('.wasm')) return 'application/wasm';
-  if (filename.endsWith('.png')) return 'image/png';
-  return 'application/octet-stream';
-}
-
 function startServer() {
-  const root = fs.realpathSync(ROOT);
-  const server = http.createServer((req, res) => {
-    let pathname;
-    try { pathname = decodeURIComponent(new URL(req.url, 'http://127.0.0.1').pathname); }
-    catch (_) { res.writeHead(400); res.end('bad url'); return; }
-    if (pathname === '/') pathname = '/index.html';
-    const filename = path.normalize(path.join(root, pathname));
-    if (filename !== root && !filename.startsWith(root + path.sep)) {
-      res.writeHead(403); res.end('forbidden'); return;
-    }
-    fs.readFile(filename, (error, data) => {
-      if (error) {
-        res.writeHead(error.code === 'ENOENT' ? 404 : 500);
-        res.end(error.code || 'read error');
-        return;
-      }
-      res.writeHead(200, {
-        'Content-Type': mimeType(filename),
-        'Cache-Control': 'no-store',
-      });
-      res.end(data);
-    });
-  });
-  return new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', () => resolve(server));
-  });
+  return startStaticServer({ root: ROOT });
 }
 
 function readFrame(filename) {

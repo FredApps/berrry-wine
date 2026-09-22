@@ -6,7 +6,7 @@
 const assert = require('assert');
 const crypto = require('crypto');
 const fs = require('fs');
-const http = require('http');
+const { startStaticServer } = require('./static-server');
 const path = require('path');
 const puppeteer = require('puppeteer');
 
@@ -14,18 +14,10 @@ const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
 async function startServer() {
-  const server = http.createServer((request, response) => {
-    if (new URL(request.url, 'http://localhost').pathname !== '/lib/overlay-store.js') {
-      response.writeHead(404); response.end(); return;
-    }
-    response.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-store' });
-    response.end(fs.readFileSync(path.join(ROOT, 'lib/overlay-store.js')));
-  });
-  await new Promise((resolve, reject) => {
-    server.once('error', reject);
-    server.listen(0, '127.0.0.1', resolve);
-  });
-  return server;
+  return startStaticServer({ root: ROOT, handleRequest(request, response) {
+    if (new URL(request.url, 'http://localhost').pathname === '/lib/overlay-store.js') return false;
+    response.writeHead(404); response.end(); return true;
+  } });
 }
 
 async function preparePage(browser, base) {
