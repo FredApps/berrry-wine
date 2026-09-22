@@ -509,3 +509,138 @@ compat: 1,471,785 bytes, SHA-256
 `03e7ae30bc08ede0923239bd5008d83156ef1a72beebdab554f4328f280c61d9`.
 These include other agents' uncommitted work, not clean-commit artifact proofs.
 The runtime callback suite also passes; quiet inventory remains 250 + 22.
+
+## Historical entries recovered from the gate — 2026-09-22
+
+These entries were retained or reintroduced in executable gate source after the
+original documentation move. They are preserved verbatim as dated history, not
+as fresh verification of the API claims or a continuous count ledger. The 58
+entries already preserved above are not duplicated. Current enforcement remains
+250 manual handlers plus 22 metadata handlers; the classifier and pin are unchanged.
+
+2026-09-09: 437 -> 423. Seventeen D3D9 quiet setters/resource methods now
+implement/delegate behavior or fail explicitly. Three legitimate additions:
+fixed system UI locale, DirectXSetup's already-installed runtime result,
+and buffer PreLoad (residency hint; Draw synchronously uploads canonical bytes).
+Texture/Surface GetType constants now report their actual resource kinds.
+Speculative DLL/proxy registration successes were removed, not blessed here.
+
+2026-09-09: 423 -> 411. BeginStateBlock now allocates real selective state.
+Eleven existing quiet state setters now reject unsupported recording via
+a shared guard. Their old non-recording stubs are NOT claimed implemented.
+
+2026-09-09: 411 -> 410. SetGammaRamp retains the per-device API ramp;
+unsupported display gamma remains unadvertised. Get/default/copy tested.
+
+2026-09-10: 405 -> 404. GetNPatchMode returns the disabled-only backend's
+FLOAT through x87 ST(0), not an unrelated EAX zero. Nonzero setters reject.
+
+2026-09-10: 404 -> 403. SetDepthStencilSurface now validates a same-device
+surface, retains its binding, switches persistent depth identity, and retires
+the previous binding; NULL disables depth. Reset remains separately pending.
+
+2026-09-10: 403 -> 401. Reset now preflights resource ownership and creates
+replacement state/targets transactionally across the render fence;
+TestCooperativeLevel reports native Reset-failure/recovery state.
+
+2026-09-10: 401 -> 359 manual. API metadata now owns 34 reviewed constant
+compatibility stubs; mixer and common-control lifetime/behavior fixes remove
+the remaining eight quiet handlers instead of blessing them as exceptions.
+
+2026-09-10 merge: 359 -> 357. DirectPlay Receive and Send now use the
+owned local message queues; all 34 metadata compatibility stubs remain.
+
+2026-09-11: 348 -> 346. RegisterDragDrop/RevokeDragDrop now own one retained
+IDropTarget per live HWND and report invalid, duplicate, and absent
+registrations instead of returning unconditional success.
+
+2026-09-11: 346 -> 345. CoLockObjectExternal now retains one strong COM
+reference per lock and releases exactly one per balanced unlock, including
+DLL-private objects reached through the guest callback continuation.
+
+2026-09-11: 332 -> 331. keybd_event now synchronously enters the ordinary
+hardware-input FIFO with Win98 keyboard-message state instead of succeeding
+without generating input.
+
+2026-09-11: 329 -> 335. The rest of the IMM32 surface Warcraft III imports:
+ImmGet/SetOpenStatus, ImmGet/SetConversionStatus, ImmGetCompositionStringA,
+ImmGetCandidateListA. These are constant because the answer does not vary,
+not because the work was skipped. This machine has no IME installed, so
+$handle_ImmGetContext returns NULL exactly as Windows does there, and every
+one of these is then reached with a context that does not exist -- for which
+each of them has a documented result. ImmGetCompositionStringA returns
+IMM_ERROR_GENERAL (-2) rather than 0 for precisely this reason: its return is
+a byte count, so 0 would claim an empty composition string and a valid
+buffer. ImmGetConversionStatus deliberately does not write its two output
+DWORDs, because a failing call on Windows leaves them untouched.
+
+2026-09-11: 335 -> 334. IDirect3DDevice9::GetAvailableTextureMem answered 0,
+which tells a caller there is no texture memory at all. It now reports what
+the sparse backing pool can still commit, rounded down to a megabyte the way
+a real driver does -- the same pool GlobalMemoryStatusEx now describes.
+
+2026-09-12: 334 -> 333. IDirect3D9::CheckDeviceFormat answered S_OK to every
+question. For a plain texture that is a lie the very next call contradicts:
+the app creates one, CreateTexture refuses the format and the app is left
+holding a NULL it never checked for. It now answers D3DRTYPE_TEXTURE with no
+usage bits from the same list the create gate reads, so a format fallback
+chain walks down to something we really do store. Other resource types keep
+the permissive answer, which is still a stub and still counted as one.
+
+2026-09-15: 283 -> 282. GetKeyboardType now rejects selector values outside
+the documented 0..2 range instead of misreporting every one as an enhanced
+keyboard-type query. The modeled US 101/102-key answers remain 4/0/12.
+
+2026-09-15: 282 -> 280. SetupDiCreateDeviceInfoList now allocates a real
+empty, optionally class-associated device information set instead of always
+failing, and SetupDiDestroyDeviceInfoList atomically consumes only a live
+matching handle instead of reporting success for arbitrary/stale values.
+
+2026-09-15: 280 -> 279. DrawAnimatedRects now validates its HWND, legacy
+Win98 animation selector and both readable RECTs, then schedules a clipped
+client-coordinate wire-frame transition instead of reporting false success.
+
+2026-09-15: 279 -> 278. WriteFmtUserTypeStg now transactionally persists the
+standard or registered clipboard format and Unicode user type in a valid
+MS-OLEDS \1CompObj stream instead of returning S_OK without touching storage.
+
+2026-09-15: 278 -> 276. RegisterDeviceNotificationW now owns copied,
+generation-tagged window/interface registrations and routes matching audio
+topology changes as WM_DEVICECHANGE. UnregisterDeviceNotification consumes
+only the exact live HDEVNOTIFY instead of accepting arbitrary handles.
+
+2026-09-15: 276 -> 273. D3D8 device-type, texture-format and multisample
+capability queries now validate their complete COM argument tuples against
+the exposed adapter and shared texture backend. The multisample query reads
+its real final stack argument instead of mistaking Windowed for the mode.
+
+2026-09-15: 272 -> 271. D3D9 CheckDeviceMultiSampleType now validates the
+complete tuple against the render/depth creators: only NONE and their stored
+formats succeed, unsupported techniques fail, and quality count is written.
+
+2026-09-15: 269 -> 267. D3D9 CheckDeviceType and CheckDepthStencilMatch now
+validate complete adapter/color/depth tuples against the formats advertised
+and stored by the renderer instead of promising every combination works.
+
+2026-09-15: 267 -> 266. GetOutlineTextMetricsA/W now return selected
+TrueType outline metrics and bounded name data instead of always failing.
+
+2026-09-15: 266 -> 265. D3D9 ValidateDevice now validates the live device,
+output and one-pass texture-stage state and writes the required pass count.
+
+2026-09-18: 265 -> 266. SwapMouseButton records the primary-button setting,
+returns the previous one, and SM_SWAPBUTTON reads it back. Morrowind calls
+it twice at startup to read and restore the setting; that round trip is the
+whole contract a guest can observe.
+
+2026-09-18: 266 -> 267. IDirect3DDevice8_SetPixelShader validates: D3D8
+CreatePixelShader fails loudly, so 0 (fixed function) is the only handle
+that can exist; it succeeds and every other handle is D3DERR_INVALIDCALL.
+GetPixelShader reports that same 0. Morrowind saves and restores it.
+
+2026-09-20: 266 -> 266, text only. IDirect3DDevice3_DrawIndexedPrimitiveVB
+is still a quiet handler, but it now pops 28 rather than 32: the v3 form
+takes 6 dwords with `this`, not 7 (dwStartVertex/dwNumVertices are the v7
+addition). Popping one dword too many left the caller's epilogue a slot
+high, so its `ret` took the caller's own first argument as a return address
+-- Diablo II's Direct3D backend jumped to 320/640 during the Act I load.
