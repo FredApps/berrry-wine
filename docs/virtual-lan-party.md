@@ -1010,6 +1010,32 @@ The host leaving closes the room. Host migration is deferred because moving
 the peer switch is easy compared with moving the authoritative
 `lwwinsrv.exe` process and its live connections.
 
+### When a peer disappears (implemented 2026-09-22)
+
+A closed tab sends no FIN, so the guest has to be told. The host injects a
+`GONE` frame (vln/1 type 7) into the process's own inbox — it is never sent on
+the wire — whose source address is the departed seat, or `255.255.255.255`
+for "every remote address at once":
+
+| Who notices | What is injected |
+|---|---|
+| owner, a member's link closes (`StarOwnerWire.removeLink`) | `GONE` for that seat |
+| member, the owner's link closes (`joinAsMember`) | `GONE` for everyone |
+| a point-to-point `RtcWire` is lost | `GONE` for everyone |
+| `ProcessHub`, a child process exits | `vln-gone` to every other child |
+
+WAT resets every wire socket to that address: an established stream reports
+`WSAECONNRESET` (a parked `recv` returns), a connect still in flight reports
+`WSAETIMEDOUT`, and asynchronous sockets get `FD_CLOSE`/`FD_CONNECT` with that
+error. DirectPlay drops the player, and a client whose session host went gets
+`DPSYS_SESSIONLOST`.
+
+Two failures that used to hang are closed too. A `SYN` for a seat nobody holds
+is answered at once by the owner with an `RST` (`WSAECONNREFUSED`), and a
+connect nobody answers at all fails with `WSAETIMEDOUT` after 20 s of guest
+clock (`$VSOCK_CONNECT_TIMEOUT_MS`, checked on every pump, with an `RST` sent
+so a late `SYNACK` finds nothing).
+
 ## Observability
 
 Diagnostics must explain transport behavior without logging payloads.

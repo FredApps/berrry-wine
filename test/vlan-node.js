@@ -25,10 +25,12 @@ async function compile() {
   return compileSrcWasm();
 }
 
-async function makeNode(wasm, wire, ip) {
+async function makeNode(wasm, wire, ip, opts = {}) {
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const imports = createHostImports({
     getMemory: () => memory.buffer, renderer: null, resourceJson: {}, vlanWire: wire,
+    // A test that needs to wait out a timeout passes its own clock.
+    guestNowMs: opts.guestNowMs,
   });
   Object.assign(imports.host, {
     memory,

@@ -154,6 +154,16 @@ function drain(wire) {
   return out;
 }
 const payloadOf = f => Buffer.from(f.subarray(28)).toString('latin1');
+function vlnFrame(type, src, sport, dst, dport) {
+  const f = new Uint8Array(28);
+  const dv = new DataView(f.buffer);
+  dv.setUint32(0, 0x314E4C56, true);
+  dv.setUint32(4, type, true);
+  dv.setUint32(8, ip(src), true); dv.setUint32(12, sport, true);
+  dv.setUint32(16, ip(dst), true); dv.setUint32(20, dport, true);
+  return f;
+}
+const field = (f, at) => new DataView(f.buffer, f.byteOffset, f.byteLength).getUint32(at, true);
 
 // ---- the frame is the address -------------------------------------------
 
@@ -222,6 +232,21 @@ async function main() {
     assert.strictEqual(alex.wire.send(dgram('10.0.0.1', '10.0.0.9', 'nobody')), true);
   });
 
+  await check('a connect to a seat nobody holds is refused at once, not left to time out', () => {
+    // Member to an empty seat: the owner answers on the member's own link.
+    kim.wire.send(vlnFrame(1, '10.0.0.3', 49152, '10.0.0.9', 8035));
+    const [rst] = drain(kim.wire);
+    assert.ok(rst, 'no answer to the SYN');
+    assert.deepStrictEqual([field(rst, 4), field(rst, 8), field(rst, 12), field(rst, 16), field(rst, 20)],
+      [5, ip('10.0.0.9'), 8035, ip('10.0.0.3'), 49152]);
+    // The owner's own guest to an empty seat: answered on its own inbox.
+    alex.wire.send(vlnFrame(1, '10.0.0.1', 49153, '10.0.0.9', 8035));
+    assert.deepStrictEqual(drain(alex.wire).map(f => field(f, 4)), [5]);
+    // Anything but a SYN to nobody still goes nowhere.
+    kim.wire.send(dgram('10.0.0.3', '10.0.0.9', 'nobody'));
+    assert.strictEqual(drain(kim.wire).length + drain(alex.wire).length, 0);
+  });
+
   await check('a frame back to the owner reaches the owner\'s guest', () => {
     kim.wire.send(dgram('10.0.0.3', '10.0.0.1', 'to alex'));
     assert.deepStrictEqual(drain(alex.wire).map(payloadOf), ['to alex']);
@@ -283,8 +308,13 @@ async function main() {
     await until(() => alex.memberCount === 1, 'the owner to drop sam');
     assert.ok(alex.events.some(e => e.type === 'left' && e.name === 'sam'));
     await sam.close();
+    // The owner's guest is told that address is gone, so its connections
+    // to sam reset instead of waiting forever.
+    const gone = drain(alex.wire);
+    assert.deepStrictEqual(gone.map(f => [field(f, 4), field(f, 8)]), [[7, ip('10.0.0.2')]]);
     kim.wire.send(dgram('10.0.0.3', '10.0.0.1', 'still here'));
     assert.deepStrictEqual(drain(alex.wire).map(payloadOf), ['still here']);
+    assert.strictEqual(drain(kim.wire).length, 0, 'kim heard of a seat it never talked to');
     const lee = await open(dir, 'u4', 'lee');
     assert.strictEqual(lee.address, '10.0.0.2', 'the freed seat was not reused');
     await lee.close();
@@ -294,6 +324,8 @@ async function main() {
     await alex.close();
     await until(() => kim.events.some(e => e.type === 'closed'), 'kim to hear the room closed');
     assert.match(kim.events.find(e => e.type === 'closed').message, /alex closed the room/);
+    // Every other seat was reached through alex, so all of them are gone.
+    assert.deepStrictEqual(drain(kim.wire).map(f => [field(f, 4), field(f, 8)]), [[7, 0xFFFFFFFF]]);
     await kim.close();
   });
 

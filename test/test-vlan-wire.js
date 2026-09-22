@@ -26,6 +26,7 @@ const SD_SEND = 1;
 const WSAEWOULDBLOCK = 10035;
 const WSAEALREADY = 10037;
 const WSAECONNRESET = 10054;
+const WSAETIMEDOUT = 10060;
 const WSAECONNREFUSED = 10061;
 
 const HOST_IP = '10.0.0.1';
@@ -466,7 +467,80 @@ async function main() {
     host.wat.test_call_closesocket(s8);
   });
 
+  // ---- a peer that leaves without a word ------------------------------
+
+  check('a closed link resets every connection to that address', () => {
+    const s9 = host.wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0;
+    host.nonblocking(s9);
+    assert.strictEqual(host.wat.test_call_bind(s9, host.sockaddr('0.0.0.0', 9600), 16) | 0, 0);
+    assert.strictEqual(host.wat.test_call_listen(s9, 5) | 0, 0);
+    const c9 = peer.wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0;
+    peer.nonblocking(c9);
+    peer.wat.test_call_connect(c9, peer.sockaddr(HOST_IP, 9600), 16);
+    settle(host, peer);
+    const a9 = host.wat.test_call_accept(s9, 0, 0) | 0;
+    assert.notStrictEqual(a9, INVALID_SOCKET);
+    // a9 stays blocking: with no GONE this recv would park for ever.
+    host.wat.test_call_recv(a9, host.buf(8), 8, 0);
+    assert.strictEqual(host.wat.get_yield_reason() | 0, 8, 'parked before the link closes');
+    host.wat.clear_yield();
+    host.wire.peerGone(ip2int(PEER_IP));
+    assert.strictEqual(host.wat.test_call_recv(a9, host.buf(8), 8, 0) | 0, -1);
+    assert.strictEqual(host.err(), WSAECONNRESET);
+    assert.strictEqual(host.wat.get_yield_reason() | 0, 0, 'answered, not parked');
+    // The listener belongs to nobody in particular and keeps listening.
+    const set = host.fdset([s9]);
+    assert.strictEqual(host.wat.test_call_select(0, 0, 0, set, host.timeval(0, 0)) | 0, 0);
+    host.wat.test_call_closesocket(a9);
+    host.wat.test_call_closesocket(s9);
+    peer.wat.test_call_closesocket(c9);
+    host.wire.inbox.length = 0;
+  });
+
+  check('losing every address fails a connect in flight with WSAETIMEDOUT', () => {
+    const c10 = peer.wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0;
+    peer.nonblocking(c10);
+    assert.strictEqual(peer.wat.test_call_connect(c10, peer.sockaddr(HOST_IP, 9700), 16) | 0, -1);
+    assert.strictEqual(peer.err(), WSAEWOULDBLOCK);
+    host.wire.inbox.length = 0;         // the SYN is lost with the link
+    peer.wire.peerGone(0xFFFFFFFF);
+    assert.strictEqual(peer.wat.test_call_connect(c10, peer.sockaddr(HOST_IP, 9700), 16) | 0, -1);
+    assert.strictEqual(peer.err(), WSAETIMEDOUT);
+    peer.wat.test_call_closesocket(c10);
+  });
+
+  await mutePeer(wasm);
+
   console.log(`\n${passed}/${passed} virtual LAN wire checks passed`);
+}
+
+// A connect whose SYN reaches nobody gives up after the 20 s the switch
+// allows, measured on the guest clock -- here a clock the test moves.
+async function mutePeer(wasm) {
+  const segment = new LoopbackSegment();
+  let now = 1000;
+  const node = await makeNode(wasm, segment.attach(), PEER_IP, { guestNowMs: () => now });
+  segment.attach();                     // a seat that never reads its wire
+  check('a connect nobody answers times out on the guest clock', () => {
+    const c = node.wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0;
+    // Blocking: the call parks and is re-entered, as the host does.
+    node.wat.test_call_connect(c, node.sockaddr(HOST_IP, 9800), 16);
+    assert.strictEqual(node.wat.get_yield_reason() | 0, 8, 'net_wait');
+    node.wat.clear_yield();
+    now += 19000;
+    node.wat.test_call_connect(c, node.sockaddr(HOST_IP, 9800), 16);
+    assert.strictEqual(node.wat.get_yield_reason() | 0, 8, 'still waiting at 19 s');
+    node.wat.clear_yield();
+    now += 2000;
+    assert.strictEqual(node.wat.test_call_connect(c, node.sockaddr(HOST_IP, 9800), 16) | 0, -1);
+    assert.strictEqual(node.err(), WSAETIMEDOUT);
+    // A late answer is refused for it: the switch sent a reset after the SYN.
+    assert.strictEqual(node.wire.sentFrames, 2);
+    // And the socket can be pointed somewhere else.
+    node.wat.test_call_connect(c, node.sockaddr(HOST_IP, 9801), 16);
+    assert.strictEqual(node.wat.get_yield_reason() | 0, 8, 'a fresh connect');
+    node.wat.clear_yield();
+  });
 }
 
 main().catch(err => {

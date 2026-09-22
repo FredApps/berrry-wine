@@ -540,14 +540,34 @@
         (return)))
 
     (if (i32.eq (local.get $type) (i32.const 8))
+      (then (call $dpn_peer_gone (local.get $src)) (return))))
+
+  ;; A peer's session is gone: it said LEAVE, or its link closed without a
+  ;; word (a vln/1 GONE frame, 09d-winsock.wat; $ip -1 means every remote
+  ;; address at once). Its players leave the name table, and a joiner whose
+  ;; host was among them has lost the session.
+  (func $dpn_peer_gone (param $ip i32)
+    (local $i i32) (local $peer i32)
+    (if (i32.eqz (global.get $dp_net_users)) (then (return)))
+    (if (i32.eq (local.get $ip) (i32.const -1))
       (then
-        (call $dpn_drop_peer (local.get $src))
-        (if (i32.and (i32.eq (global.get $dpn_state) (i32.const 3))
-              (i32.eq (local.get $src) (global.get $dpn_host_ip)))
+        (if (global.get $dpn_peers)
           (then
-            (call $dpn_sysmsg_session_lost)
-            (global.set $dpn_state (i32.const 0))))
-        (return))))
+            (block $done (loop $scan
+              (br_if $done (i32.ge_u (local.get $i) (global.get $DPN_PEER_MAX)))
+              (local.set $peer (call $gl32 (i32.add (global.get $dpn_peers)
+                (i32.shl (local.get $i) (i32.const 2)))))
+              (if (local.get $peer) (then (call $dpn_drop_peer (local.get $peer))))
+              (local.set $i (i32.add (local.get $i) (i32.const 1)))
+              (br $scan)))))
+        (if (global.get $dpn_host_ip) (then (call $dpn_drop_peer (global.get $dpn_host_ip)))))
+      (else (call $dpn_drop_peer (local.get $ip))))
+    (if (i32.and (i32.eq (global.get $dpn_state) (i32.const 3))
+          (i32.or (i32.eq (local.get $ip) (i32.const -1))
+                  (i32.eq (local.get $ip) (global.get $dpn_host_ip))))
+      (then
+        (call $dpn_sysmsg_session_lost)
+        (global.set $dpn_state (i32.const 0)))))
 
   ;; ---- Open ----------------------------------------------------------------
 

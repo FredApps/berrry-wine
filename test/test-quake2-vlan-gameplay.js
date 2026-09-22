@@ -107,8 +107,11 @@ const serverPng = path.join(OUT, 'server.png');
 if (fs.existsSync(clientPng) && fs.existsSync(serverPng)) {
   const c = sceneStats(clientPng);
   const s = sceneStats(serverPng);
+  // Measured: a client that lost its signon to a full ring drew 16% lit in 43
+  // colours; healthy clients drew 50-93% in 146-166, the low end being a
+  // darker spawn room that either build lands in, so 50% is not a margin.
   check(`the client renders a lit world (${(c.lit * 100).toFixed(0)}% lit, ${c.colours} colours)`,
-    c.lit > 0.5 && c.colours > 64);
+    c.lit > 0.3 && c.colours > 100);
   const differ = c.data.length !== s.data.length || !c.data.equals(s.data);
   check('the client is its own player, not a copy of the server\'s view', differ);
 } else {

@@ -39,7 +39,11 @@
   ;;                    bit2 reset (peer aborted)
   ;;                    bit3 a connect is outstanding and its result has
   ;;                         not been reported to the guest yet
-  ;;   +60  backlog     listener backlog, clamped to 1..15
+  ;;                    bit4 that connect failed for want of an answer
+  ;;                         (WSAETIMEDOUT), not by refusal
+  ;;   +60  backlog     listener backlog, clamped to 1..15; while a socket
+  ;;                    is connecting (state 6), its connect deadline in
+  ;;                    host ticks instead
   ;;   +64  acc_count   queued accepts
   ;;   +68  acc_queue   15 × i32 child record indexes (ends at +128)
   ;;
@@ -72,7 +76,8 @@
     (field rx_len      i32)      ;; +52   bytes currently readable
     (field flags       i32)      ;; +56   bit0 read-closed, bit1 write-closed,
                                  ;;       bit2 reset, bit3 connect result unreported
-    (field backlog     i32)      ;; +60   listener backlog, clamped 1..15
+    (field backlog     i32)      ;; +60   listener backlog, clamped 1..15;
+                                 ;;       connect deadline while state 6
     (field acc_count   i32)      ;; +64   queued accepts
     (field acc_queue   i32 15))  ;; +68   15 child record indexes, ends at +128
 
@@ -96,6 +101,14 @@
   ;; lost: Quake II's signon arrives as a burst of ~1400-byte packets, and a
   ;; 16KB ring dropped enough of them that the client never entered the world.
   (global $VSOCK_DGRAM_RX_CAP i32 (i32.const 65536))
+  ;; A connect to a room seat whose machine never answers gives up after
+  ;; this long (host ticks, ms) with WSAETIMEDOUT, as a SYN nobody acknowledges
+  ;; does. The owner answers a SYN for an empty seat with a reset
+  ;; (lib/vlan-star.js), so this is for a peer that is there but mute.
+  (global $VSOCK_CONNECT_TIMEOUT_MS i32 (i32.const 20000))
+  ;; The earliest deadline of any connect in flight, 0 when none: the wire
+  ;; drain checks it so an idle process scans nothing.
+  (global $vsock_connect_next (mut i32) (i32.const 0))
   (global $VSOCK_HANDLE_TAG i32 (i32.const 0x53000000))
 
   ;; Room addressing. The host of the room owns 10.0.0.1 and every other
@@ -626,7 +639,15 @@
   ;;   +16 dst_ip         +20 dst_port           +24 payload length
   ;;
   ;; Types: 1 SYN (open), 2 SYNACK (accepted), 3 DATA, 4 FIN (orderly write
-  ;; close), 5 RST (refused or aborted).
+  ;; close), 5 RST (refused or aborted), 6 DGRAM, and 7 GONE.
+  ;;
+  ;; GONE is never sent by a guest. The host puts it into its own inbox when
+  ;; the link to a room address closes (Wire.peerGone in lib/vlan-wire.js):
+  ;; src_ip is the address that left, or -1 when every remote address left
+  ;; at once (a member whose one link, to the owner, closed). Without it a
+  ;; closed tab is silence, and silence is forever: a blocking recv, a
+  ;; connect in flight and a DirectPlay session all wait on a peer that will
+  ;; never answer.
 
   (global $VLN_MAGIC i32 (i32.const 0x314E4C56))
   (global $VLN_HDR i32 (i32.const 28))
@@ -790,12 +811,102 @@
     (call $vsock_async_post (local.get $lis) (i32.const 0x08) (i32.const 0))
     (i32.const 1))
 
+  ;; A connection that will never hear from its peer again: an RST, a GONE, or
+  ;; a connect that timed out. The guest finds out the way Winsock tells it --
+  ;; the next recv/send fails with $err, a parked connect returns it, and a
+  ;; WSAAsyncSelect app gets FD_CONNECT(err) or FD_CLOSE(err).
+  (func $vsock_abort (param $idx i32) (param $err i32)
+    (local $rec i32)
+    (local.set $rec (call $vsock_rec (local.get $idx)))
+    (store.field VSock flags (local.get $rec)
+      (i32.or (load.field VSock flags (local.get $rec))
+        (select (i32.const 0x15) (i32.const 5) (i32.eq (local.get $err) (i32.const 10060)))))
+    (store.field VSock peer (local.get $rec) (i32.const -1))
+    ;; A failure before the connection came up is a failed connect, and the
+    ;; app learns the reason from the error half of lParam rather than from a
+    ;; close it never opened.
+    (if (i32.eq (load.field VSock state (local.get $rec)) (i32.const 6))
+      (then (call $vsock_async_post (local.get $idx) (i32.const 0x10) (local.get $err)))
+      (else (call $vsock_async_post (local.get $idx) (i32.const 0x20) (local.get $err)))))
+
+  ;; GONE: every live connection to $ip (-1: to any remote address) loses its
+  ;; peer, and so does the DirectPlay session. Connected sockets read
+  ;; WSAECONNRESET; connects in flight fail with WSAETIMEDOUT, the answer a
+  ;; SYN into a dead link would eventually get.
+  (func $vsock_peer_gone (param $ip i32)
+    (local $i i32) (local $rec i32) (local $state i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $VSOCK_MAX)))
+      (local.set $rec (call $vsock_rec (local.get $i)))
+      (local.set $state (load.field VSock state (local.get $rec)))
+      (if (i32.and
+            (i32.eq (load.field VSock peer (local.get $rec)) (i32.const -2))
+            (i32.or (i32.eq (local.get $state) (i32.const 4))
+                    (i32.eq (local.get $state) (i32.const 6))))
+        (then
+          (if (i32.or (i32.eq (local.get $ip) (i32.const -1))
+                      (i32.eq (load.field VSock remote_ip (local.get $rec)) (local.get $ip)))
+            (then
+              (call $vsock_abort (local.get $i)
+                (select (i32.const 10060) (i32.const 10054)
+                  (i32.eq (local.get $state) (i32.const 6))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (call $dpn_peer_gone (local.get $ip)))
+
+  ;; Start a connecting record's clock (see $VSOCK_CONNECT_TIMEOUT_MS).
+  (func $vsock_arm_connect_deadline (param $rec i32)
+    (local $due i32)
+    (local.set $due (i32.add (call $host_get_ticks) (global.get $VSOCK_CONNECT_TIMEOUT_MS)))
+    (store.field VSock backlog (local.get $rec) (local.get $due))
+    (if (i32.or (i32.eqz (global.get $vsock_connect_next))
+                (i32.lt_s (i32.sub (local.get $due) (global.get $vsock_connect_next)) (i32.const 0)))
+      (then (global.set $vsock_connect_next
+        ;; 0 means "none in flight", so a deadline that lands on 0 moves by 1.
+        (select (local.get $due) (i32.const 1) (local.get $due))))))
+
+  ;; Fail every connect whose deadline has passed. Cheap when nothing is in
+  ;; flight: $vsock_connect_next is 0 then, and nothing is scanned.
+  (func $vsock_expire_connects
+    (local $now i32) (local $i i32) (local $rec i32) (local $due i32) (local $next i32)
+    (if (i32.eqz (global.get $vsock_connect_next)) (then (return)))
+    (local.set $now (call $host_get_ticks))
+    ;; Signed difference so a tick counter that wraps still expires.
+    (if (i32.lt_s (i32.sub (local.get $now) (global.get $vsock_connect_next)) (i32.const 0))
+      (then (return)))
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $VSOCK_MAX)))
+      (local.set $rec (call $vsock_rec (local.get $i)))
+      (if (i32.and
+            (i32.eq (load.field VSock state (local.get $rec)) (i32.const 6))
+            (i32.eq (load.field VSock peer (local.get $rec)) (i32.const -2)))
+        (then
+          (local.set $due (load.field VSock backlog (local.get $rec)))
+          (if (i32.ge_s (i32.sub (local.get $now) (local.get $due)) (i32.const 0))
+            (then
+              ;; Tell the far end too, in case it answers late: a SYNACK for
+              ;; a socket we gave up on would otherwise open a connection
+              ;; there that nobody here will ever use.
+              (drop (call $vsock_emit_from (local.get $i) (i32.const 5) (i32.const 0) (i32.const 0)))
+              (call $vsock_abort (local.get $i) (i32.const 10060)))
+            (else
+              (if (i32.or (i32.eqz (local.get $next))
+                          (i32.lt_s (i32.sub (local.get $due) (local.get $next)) (i32.const 0)))
+                (then (local.set $next (local.get $due))))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (global.set $vsock_connect_next (local.get $next)))
+
   ;; Apply one inbound frame. Returns 1 when the frame has been consumed and
   ;; 0 when it must stay queued because the destination ring is full — a
   ;; byte stream may reorder nothing and lose nothing.
   (func $vsock_deliver (param $type i32) (param $sip i32) (param $sport i32)
                        (param $dip i32) (param $dport i32) (param $plen i32) (result i32)
     (local $idx i32) (local $rec i32) (local $fl i32)
+    ;; GONE comes from this process's own host, never from the segment, so it
+    ;; carries no destination to check.
+    (if (i32.eq (local.get $type) (i32.const 7))
+      (then (call $vsock_peer_gone (local.get $sip)) (return (i32.const 1))))
     ;; Not ours: the wire is a broadcast segment, so silently ignore. Limited
     ;; broadcast is meaningful only for datagrams and is accepted below.
     (if (i32.and
@@ -843,6 +954,7 @@
         (if (i32.ge_s (local.get $idx) (i32.const 0))
           (then
             (store.field VSock state (call $vsock_rec (local.get $idx)) (i32.const 4))
+            (store.field VSock backlog (call $vsock_rec (local.get $idx)) (i32.const 0))
             ;; The connection completed. Winsock reports FD_WRITE alongside
             ;; FD_CONNECT, because a freshly connected socket is writable and
             ;; that first edge is the only one an app will ever get.
@@ -884,14 +996,9 @@
         (return (i32.const 1))))
     (if (i32.eq (local.get $type) (i32.const 5))
       (then
-        (store.field VSock flags (local.get $rec) (i32.or (load.field VSock flags (local.get $rec)) (i32.const 5)))
-        (store.field VSock peer (local.get $rec) (i32.const -1))
-        ;; A reset before the connection came up is a failed connect, and the
-        ;; app learns the reason from the error half of lParam rather than
-        ;; from a close it never opened.
-        (if (i32.eq (load.field VSock state (local.get $rec)) (i32.const 6))
-          (then (call $vsock_async_post (local.get $idx) (i32.const 0x10) (i32.const 10061)))
-          (else (call $vsock_async_post (local.get $idx) (i32.const 0x20) (i32.const 10054))))
+        (call $vsock_abort (local.get $idx)
+          (select (i32.const 10061) (i32.const 10054)
+            (i32.eq (load.field VSock state (local.get $rec)) (i32.const 6))))
         (return (i32.const 1))))
     (i32.const 1))
 
@@ -903,6 +1010,7 @@
           (i32.and (i32.eqz (global.get $win16_dde_users))
                    (i32.eqz (global.get $dp_net_users))))
       (then (return)))
+    (call $vsock_expire_connects)
     (local.set $wa (call $vsock_frame_wa))
     (if (i32.eqz (local.get $wa)) (then (return)))
     (local.set $guard (i32.const 0))
@@ -1152,14 +1260,18 @@
             (return)))
         (if (i32.and (load.field VSock flags (local.get $rec)) (i32.const 4))
           (then
-            ;; Refused. Put the socket back where it was so the guest can
-            ;; bind or connect it again.
+            ;; Refused, or nobody answered. Put the socket back where it was
+            ;; so the guest can bind or connect it again.
+            (call $vsock_set_error
+              (select (i32.const 10060) (i32.const 10061)       ;; WSAETIMEDOUT / WSAECONNREFUSED
+                (i32.ne (i32.and (load.field VSock flags (local.get $rec)) (i32.const 0x10))
+                        (i32.const 0))))
             (store.field VSock flags (local.get $rec) (i32.const 0))
+            (store.field VSock backlog (local.get $rec) (i32.const 0))
             (store.field VSock peer (local.get $rec) (i32.const -1))
             (store.field VSock remote_ip (local.get $rec) (i32.const 0))
             (store.field VSock remote_port (local.get $rec) (i32.const 0))
             (store.field VSock state (local.get $rec) (i32.const 2))
-            (call $vsock_set_error (i32.const 10061))      ;; WSAECONNREFUSED
             (i32.store offset=0 (global.get $reg_base) (i32.const -1))
             (return)))
         (if (load.field VSock mode (local.get $rec))
@@ -1230,6 +1342,7 @@
             (return)))
         (store.field VSock state (local.get $rec) (i32.const 6))
         (store.field VSock flags (local.get $rec) (i32.or (load.field VSock flags (local.get $rec)) (i32.const 8)))
+        (call $vsock_arm_connect_deadline (local.get $rec))
         (if (load.field VSock mode (local.get $rec))
           (then
             (call $vsock_set_error (i32.const 10035))      ;; WSAEWOULDBLOCK
