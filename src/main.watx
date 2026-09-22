@@ -73,6 +73,7 @@
 (include "09a8d-gl-abi.generated.wat")
 (include "09a8e-gl-state.wat")
 (include "09a8f-gl-matrix.wat")
+(include "09a8g-gl-raster.wat")
 (include "09a9-comctl32.wat")
 (include "09aa-handlers-d3dim.wat")
 (include "09ab-handlers-d3dim-core.wat")

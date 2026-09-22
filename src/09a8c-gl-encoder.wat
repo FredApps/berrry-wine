@@ -251,7 +251,12 @@
     (i32.store offset=20 (local.get $start) (local.get $bytes))
     (global.set $gl_stream_used_bytes (i32.add (global.get $gl_stream_used_bytes)
       (i32.add (local.get $bytes) (i32.const 32))))
-    (global.set $gl_stream_command_count (i32.add (global.get $gl_stream_command_count) (i32.const 1))))
+    (global.set $gl_stream_command_count (i32.add (global.get $gl_stream_command_count) (i32.const 1)))
+    ;; The one funnel every immediate-mode and vertex-array draw passes
+    ;; through, and the record is complete here -- so it is where the WAT
+    ;; software rasterizer reads a draw (src/09a8g-gl-raster.wat). Inert
+    ;; unless a host enabled it.
+    (call $gl_sw_consume (local.get $start) (local.get $vertices)))
 
   (func $gl_finish_immediate (result i32)
     (local $count i32) (local $mode i32) (local $out_mode i32)
