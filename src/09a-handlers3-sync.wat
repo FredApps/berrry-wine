@@ -40,11 +40,15 @@
     (call $handle_LoadLibraryEx_core
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const 1)))
 
+  ;; Both startup-info encodings currently expose no strings or inherited
+  ;; handles. Keep their identical structure initialization guest-addressed.
+  (func $startup_info_init (param $out i32)
+    (call $guest_memset (local.get $out) (i32.const 0) (i32.const 68))
+    (call $gs32 (local.get $out) (i32.const 68)))
+
   ;; 301: GetStartupInfoW — zero-fill the struct
   (func $handle_GetStartupInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $zero_memory (call $g2w (local.get $arg0)) (i32.const 68))
-    ;; Set cb = 68 (sizeof STARTUPINFOW)
-    (call $gs32 (local.get $arg0) (i32.const 68))
+    (call $startup_info_init (local.get $arg0))
     (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))) (return)
   )
@@ -1165,4 +1169,3 @@ nW — STUB: unimplemented
       (then (call $gs32 (local.get $arg0) (local.get $arg1))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
-

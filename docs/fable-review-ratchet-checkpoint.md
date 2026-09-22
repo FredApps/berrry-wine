@@ -31,3 +31,20 @@ handler/test-call migration (#7), and carried cleanup (#8) remain partial.
 The separate memory-boundary and dirty-write work is recorded in
 `mapping-dirty-tracking-experiment.md`; it is not a completion claim for the
 whole review.
+
+## Shared startup-info initialization
+
+`GetStartupInfoA/W` duplicated a raw zero-fill over a translated 68-byte
+caller buffer. At a sparse-page split, the first four bytes were subsequently
+fixed by `gs32(cb)` but most of the structure stayed untouched, while the raw
+fill targeted unrelated backing. Both frontends now call `startup_info_init`,
+which uses the shared guest-aware fill and writes `cb = 68`. Their existing
+empty startup-data policy and distinct incidental EAX behavior are preserved;
+this does not implement inherited handles or launcher-provided startup data.
+
+`test/test-startup-info-boundaries.js` reproduced the A frontend failure at
+split 1 before the fix. All 67 boundary positions now pass for both encodings
+(134 cases), with full-structure expectations, canaries, unrelated-page
+preservation and stdcall cleanup. A/W, exact-duplicate, logical-AND and test-tier
+gates pass; the new test is discovered automatically (1,400 tests total).
+This advances shared-core work (#5) without claiming the entire item complete.
