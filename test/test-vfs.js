@@ -265,6 +265,38 @@ test('mapping views remain within the section size captured at creation', () => 
   assert(original.data.slice(64).every(n => n === 0));
 });
 
+test('mapped offsets require allocation granularity, not just page alignment', () => {
+  const vfs = makeVFS({ 'c:\\aligned.bin': 131072 });
+  let allocations = 0, reads = 0;
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const host = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000,
+      guest_map_alloc: () => { allocations++; return 0x410000; } } });
+  vfs.setProviderFile('c:\\lazy-aligned.bin', { provider: { size: 131072,
+    tryRead: () => { reads++; return null; },
+    fill: async () => { reads++; },
+  } });
+  const eager = vfs.createFile('c:\\aligned.bin', 0x80000000, 3);
+  const lazy = vfs.createFile('c:\\lazy-aligned.bin', 0x80000000, 3);
+  for (const h of [eager, lazy, -1]) {
+    const section = host.fs_create_file_mapping(h, 2, 0, 131072, 0);
+    assert(section);
+    for (const offset of [1, 4096, 65535, 65537]) {
+      assert.strictEqual(host.fs_map_view_of_file(section, 4, 0, offset, 1), 0);
+      assert.strictEqual(allocations, 0);
+      assert.strictEqual(reads, 0);
+      assert.strictEqual(host.fs_read_pending(), 0);
+    }
+  }
+  vfs.files.get('c:\\aligned.bin').data[65536] = 0x7b;
+  const section = host.fs_create_file_mapping(eager, 2, 0, 0, 0);
+  assert.strictEqual(host.fs_map_view_of_file(section, 4, 0, 65536, 1), 0x410000,
+    'view length need not be page aligned');
+  assert.strictEqual(allocations, 1);
+  const { g2w } = require('../lib/region-map.generated');
+  assert.strictEqual(new Uint8Array(memory.buffer)[g2w(0x410000, 0x400000)], 0x7b);
+});
+
 test('append-only writes cannot overwrite and null writes cannot extend', () => {
   const vfs = makeVFS({ 'c:\\append.bin': 4 });
   const h = vfs.createFile('c:\\append.bin', 4, 3);

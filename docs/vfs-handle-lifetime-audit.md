@@ -746,3 +746,18 @@ Verification for mapping-driven extension: VFS 40/40 and lazy/provider 48/48
 pass, including empty/eager files, repeated lazy extensions, offset windows,
 cross-EOF reads, mapped reads and full materialization. No browser benchmark
 or native run was performed for this change.
+
+## Mapped-view offset alignment (2026-09-21)
+
+MapViewOfFile now rejects offsets that are not multiples of 64 KiB, matching
+the allocation granularity returned by our GetSystemInfo implementation.
+The check precedes data access and view allocation for eager, lazy and
+pagefile-backed sections. View lengths need not be page aligned: a one-byte
+view at offset 65536 succeeds and reads the correct byte.
+
+The regression failed before the fix; VFS 41/41 and lazy/provider 48/48 pass.
+This implements the offset rule in Microsoft's
+[MapViewOfFile documentation](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-mapviewoffile),
+not a new native Win98 measurement. Public mapping errors, preferred placement,
+returned-address alignment, lifetime and shared-view coherence still need
+separate verification/work.
