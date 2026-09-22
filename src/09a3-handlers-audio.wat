@@ -1582,11 +1582,15 @@
   (func $handle_EnumDisplaySettingsA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buf i32) (local $screen i32) (local $size i32)
     (local $legacy i32) (local $w i32) (local $h i32) (local $bpp i32) (local $raw i32)
+    (local $len i32)
     (if (i32.eqz (local.get $arg2))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))) (return)))
-    (local.set $buf (call $g2w (local.get $arg2)))
-    (local.set $size (i32.load16_u offset=36 (local.get $buf)))
+    ;; dmSize is read off the guest address, because the span to gather is not
+    ;; known until it has been read; the buffer itself is then gathered, since
+    ;; a DEVMODE spanning two sparsely-backed guest pages is not contiguous in
+    ;; WASM memory and every field below is written through $buf.
+    (local.set $size (call $gl16 (i32.add (local.get $arg2) (i32.const 36))))
     ;; Win9x accepts a zero-initialized DEVMODE. Compact intros including PTCT
     ;; depend on that leniency while still walking the complete mode list.
     ;; An unset stack structure can contain a return address in dmSize rather
@@ -1619,6 +1623,15 @@
     (if (i32.lt_u (local.get $size) (i32.const 124))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))) (return)))
+    ;; Gather exactly what is about to be touched: the fields below end at 124,
+    ;; and the clear covers at most 156. Nothing past that is read or written,
+    ;; so nothing past that is copied back either.
+    (local.set $len
+      (select (i32.const 124)
+        (select (local.get $size) (i32.const 156)
+          (i32.lt_u (local.get $size) (i32.const 156)))
+        (local.get $legacy)))
+    (local.set $buf (call $guest_span_in (local.get $arg2) (local.get $len)))
     ;; A zero-size legacy buffer has no declared extent.  Populate only the
     ;; display fields below; clearing a guessed 156 bytes can overwrite the
     ;; caller's stack immediately past its shorter Win95-era structure.
@@ -1637,6 +1650,7 @@
     (i32.store offset=108 (local.get $buf) (local.get $w))       ;; dmPelsWidth
     (i32.store offset=112 (local.get $buf) (local.get $h))       ;; dmPelsHeight
     (i32.store offset=120 (local.get $buf) (i32.const 60))       ;; dmDisplayFrequency
+    (call $guest_span_writeback (local.get $arg2) (local.get $buf) (local.get $len))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
@@ -1647,11 +1661,12 @@
   (func $handle_EnumDisplaySettingsW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $buf i32) (local $screen i32) (local $size i32)
     (local $legacy i32) (local $w i32) (local $h i32) (local $bpp i32) (local $raw i32)
+    (local $len i32)
     (if (i32.eqz (local.get $arg2))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))) (return)))
-    (local.set $buf (call $g2w (local.get $arg2)))
-    (local.set $size (i32.load16_u offset=68 (local.get $buf)))
+    ;; As in the ANSI twin: dmSize off the guest address, then gather the buffer.
+    (local.set $size (call $gl16 (i32.add (local.get $arg2) (i32.const 68))))
     (local.set $legacy
       (i32.or (i32.eqz (local.get $size))
               (i32.gt_u (local.get $size) (i32.const 220))))
@@ -1676,18 +1691,26 @@
     (if (i32.lt_u (local.get $size) (i32.const 156))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))) (return)))
+    ;; The fields below end at 156 and the clear covers at most 220.
+    (local.set $len
+      (select (i32.const 156)
+        (select (local.get $size) (i32.const 220)
+          (i32.lt_u (local.get $size) (i32.const 220)))
+        (local.get $legacy)))
+    (local.set $buf (call $guest_span_in (local.get $arg2) (local.get $len)))
     (if (i32.eqz (local.get $legacy))
       (then
         (memory.fill (local.get $buf) (i32.const 0)
           (select (local.get $size) (i32.const 220)
             (i32.lt_u (local.get $size) (i32.const 220))))))
-    (i32.store16 offset=68 (local.get $buf)
+    (i32.store16 offset=68 (local.get $buf) ;; dmSize
       (select (i32.const 0) (local.get $size) (local.get $legacy)))
     (i32.store offset=72 (local.get $buf) (i32.const 0x5C0000)) ;; dmFields
     (i32.store offset=136 (local.get $buf) (local.get $bpp))    ;; dmBitsPerPel
     (i32.store offset=140 (local.get $buf) (local.get $w))      ;; dmPelsWidth
     (i32.store offset=144 (local.get $buf) (local.get $h))      ;; dmPelsHeight
     (i32.store offset=152 (local.get $buf) (i32.const 60))      ;; dmDisplayFrequency
+    (call $guest_span_writeback (local.get $arg2) (local.get $buf) (local.get $len))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
@@ -1704,9 +1727,11 @@
   ;; it will create a window.
   (func $edd_fill_ansi (param $arg0 i32) (param $arg2 i32) (result i32)
     (local $dst i32)
-    (local.set $dst (call $g2w (local.get $arg2)))
-    (if (i32.lt_u (i32.load (local.get $dst)) (i32.const 0x1A8))
+    ;; cb off the guest address, then the whole 424-byte record gathered: it is
+    ;; written through $dst below and may straddle two sparse guest pages.
+    (if (i32.lt_u (call $gl32 (local.get $arg2)) (i32.const 0x1A8))
       (then (return (i32.const 0))))
+    (local.set $dst (call $guest_span_in (local.get $arg2) (i32.const 0x1A8)))
     (memory.fill (local.get $dst) (i32.const 0) (i32.const 0x1A8))
     (i32.store (local.get $dst) (i32.const 0x1A8))
     (if (i32.eqz (local.get $arg0))
@@ -1738,6 +1763,7 @@
         (i32.store offset=48 (local.get $dst) (i32.const 0x00726F74))
         ;; DISPLAY_DEVICE_ACTIVE (same bit value as ATTACHED_TO_DESKTOP).
         (i32.store offset=164 (local.get $dst) (i32.const 0x1))))
+    (call $guest_span_writeback (local.get $arg2) (local.get $dst) (i32.const 0x1A8))
     (i32.const 1)
   )
 
@@ -1769,11 +1795,12 @@
       (then
         (i32.store offset=0 (global.get $reg_base) (call $edd_fill_ansi (local.get $arg0) (local.get $arg2)))
         (return)))
-    (local.set $dst (call $g2w (local.get $arg2)))
-    (if (i32.lt_u (i32.load (local.get $dst)) (i32.const 0x348))
+    (if (i32.lt_u (call $gl32 (local.get $arg2)) (i32.const 0x348))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (return)))
+    ;; 840 bytes is a fifth of a page: this record straddles readily.
+    (local.set $dst (call $guest_span_in (local.get $arg2) (i32.const 0x348)))
     (memory.fill (local.get $dst) (i32.const 0) (i32.const 0x348))
     (i32.store (local.get $dst) (i32.const 0x348))
     (if (i32.eqz (local.get $arg0))
@@ -1823,6 +1850,7 @@
         (i32.store offset=96 (local.get $dst) (i32.const 0x00000072))
         ;; DISPLAY_DEVICE_ACTIVE (same bit value as ATTACHED_TO_DESKTOP).
         (i32.store offset=324 (local.get $dst) (i32.const 0x1))))
+    (call $guest_span_writeback (local.get $arg2) (local.get $dst) (i32.const 0x348))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
   )
 
