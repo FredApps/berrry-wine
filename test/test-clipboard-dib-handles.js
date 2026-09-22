@@ -17,7 +17,7 @@ const extraWat = String.raw`
       (call $handle_SetClipboardData (i32.const 8) (local.get $arg)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (if (i32.eq (local.get $op) (i32.const 2)) (then
-      (call $handle_GetClipboardData (i32.const 8) (i32.const 0)
+      (call $handle_GetClipboardData (local.get $arg) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (if (i32.eq (local.get $op) (i32.const 3)) (then
       (call $handle_GlobalLock (local.get $arg) (i32.const 0)
@@ -31,15 +31,20 @@ const extraWat = String.raw`
     (if (i32.eq (local.get $op) (i32.const 6)) (then
       (call $handle_GetClipboardSequenceNumber (i32.const 0) (i32.const 0)
         (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $op) (i32.const 7)) (then
+      (call $handle_SetClipboardData (i32.const 1) (local.get $arg)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (i64.or (i64.extend_i32_u (i32.load (global.get $reg_base)))
       (i64.shl (i64.extend_i32_u (i32.load offset=16 (global.get $reg_base))) (i64.const 32))))
+  (func (export "synthesize_clipboard_rtf")
+    (call $clipboard_build_basic_rtf_from_text_clipboard))
 `;
 
 (async () => {
   const { exports: e, memory } = await bootRenderHarness({ extraWat, fonts: 'none' });
   const api = (op, arg = 0) => {
     const result = e.dib_api(op, arg);
-    assert.strictEqual(Number(result >> 32n), 0x00300000 + (op < 2 ? 12 : op === 6 ? 4 : 8));
+    assert.strictEqual(Number(result >> 32n), 0x00300000 + (op < 2 || op === 7 ? 12 : op === 6 ? 4 : 8));
     return Number(result & 0xffffffffn);
   };
   e.prepare_dib_clipboard();
@@ -60,7 +65,7 @@ const extraWat = String.raw`
   const before = api(6);
   assert.strictEqual(api(1, source), source, 'SetClipboardData returns the supplied handle');
   assert.strictEqual(api(6), before + 1);
-  const snapshot = api(2);
+  const snapshot = api(2, 8);
   assert(snapshot);
   assert.strictEqual(api(3, snapshot), snapshot, 'GetClipboardData result can be GlobalLocked');
   assert.strictEqual(api(4, snapshot), size, 'GlobalSize preserves the copied extent');
@@ -75,11 +80,44 @@ const extraWat = String.raw`
   for (const invalid of [0, ordinaryHeap, ordinaryHeap + 8, stale, 0x30000000, source + 8]) {
     assert.strictEqual(api(1, invalid), 0, `reject invalid HGLOBAL 0x${invalid.toString(16)}`);
     assert.strictEqual(api(6), before + 1, 'failed store preserves sequence');
-    assert.strictEqual(api(2), snapshot, 'failed store preserves clipboard');
+    assert.strictEqual(api(2, 8), snapshot, 'failed store preserves clipboard');
   }
   // Host image injection deliberately accepts a trusted guest_alloc block.
   const injected = e.clipboard_store_binary_data(8, ordinaryHeap) >>> 0;
   assert(injected);
   assert.strictEqual(api(3, injected), injected, 'host-injected snapshot is also lockable');
-  console.log('PASS CF_DIB public handle validation, return, lock/size, bytes, ESP and sequence');
+
+  const putString = text => {
+    const data = Buffer.from(text + '\0');
+    const ptr = api(0, data.length);
+    bytes.set(data, e.guest_to_wasm(ptr) >>> 0);
+    return ptr;
+  };
+  const lockFormat = (fmt, minimumSize) => {
+    const sequence = api(6);
+    const handle = api(2, fmt);
+    assert(handle, `format ${fmt} has a handle`);
+    assert.strictEqual(api(3, handle), handle, `format ${fmt} is GlobalLock-able`);
+    assert(api(4, handle) >= minimumSize, `format ${fmt} GlobalSize covers bytes and terminator`);
+    assert.strictEqual(api(2, fmt), handle, 'repeated publication keeps identity');
+    assert.strictEqual(api(6), sequence, 'reading a format does not mutate its sequence');
+    return handle;
+  };
+  const text = putString('clipboard text');
+  assert.strictEqual(api(7, text), text);
+  lockFormat(1, 15);
+  lockFormat(7, 15); // ASCII only: no code-page-conversion claim.
+  const rtf = putString('{\\rtf1 explicit}');
+  e.clipboard_store_rtf_data(rtf);
+  const format = e.clipboard_get_rtf_format_id();
+  lockFormat(format, 17);
+  // This is the same synthesis helper used by native Edit/RichEdit copy.
+  e.synthesize_clipboard_rtf();
+  lockFormat(format, e.clipboard_rtf_len() + 1);
+  // Force a replacement and a larger synthesized allocation after publication.
+  api(7, putString('larger '.repeat(200)));
+  lockFormat(1, 1401);
+  e.synthesize_clipboard_rtf();
+  lockFormat(format, e.clipboard_rtf_len() + 1);
+  console.log('PASS clipboard public handles: DIB validation, text/RTF lockability, ESP and sequence');
 })().catch(error => { console.error(error); process.exitCode = 1; });

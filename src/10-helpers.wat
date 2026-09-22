@@ -5857,17 +5857,25 @@
     (i32.const 0))
 
   (func $clipboard_get_data_handle (param $fmt i32) (result i32)
+    ;; Text producers include SetClipboardData, native Edit/RichEdit copy and
+    ;; RTF synthesis. Publish their owned heap buffers as Global allocations
+    ;; here, so every returned HGLOBAL supports GlobalLock/GlobalSize without
+    ;; duplicating provenance maintenance in each producer or growth path.
     (if (i32.and
           (i32.or (i32.eq (local.get $fmt) (i32.const 1))  ;; CF_TEXT
                   (i32.eq (local.get $fmt) (i32.const 7))) ;; CF_OEMTEXT
           (i32.gt_u (global.get $clipboard_len) (i32.const 0)))
-      (then (return (global.get $clipboard_ptr))))
+      (then
+        (call $heap_global_mark (global.get $clipboard_ptr))
+        (return (global.get $clipboard_ptr))))
     (if (i32.and
           (i32.ne (global.get $clipboard_rtf_format_id) (i32.const 0))
           (i32.and
             (i32.eq (local.get $fmt) (global.get $clipboard_rtf_format_id))
             (i32.gt_u (global.get $clipboard_rtf_len) (i32.const 0))))
-      (then (return (global.get $clipboard_rtf_ptr))))
+      (then
+        (call $heap_global_mark (global.get $clipboard_rtf_ptr))
+        (return (global.get $clipboard_rtf_ptr))))
     (if (i32.and
           (i32.eq (local.get $fmt) (global.get $clipboard_binary_format))
           (i32.ne (global.get $clipboard_binary_ptr) (i32.const 0)))

@@ -124,5 +124,31 @@ browser run was performed for this boundary change.
 This is not full HGLOBAL ownership transfer or movable-handle support. It does
 not enforce DIB content validity, solve concurrent misuse of caller-owned
 handles, or reclaim retained RichEdit snapshots. Text/RTF snapshot GlobalLock
-compatibility also needs its own producer/lifetime audit; the previous string
+compatibility was left for the publication audit below; the earlier string
 fixes did not test that contract.
+
+## Text/RTF HGLOBAL publication
+
+The follow-up audit found a common publication point: `clipboard_get_data_handle`
+returns the buffers populated by SetClipboardData, native Edit/RichEdit copy
+and basic RTF synthesis. It now marks owned text/RTF buffers as Global
+allocations immediately before returning them. This avoids scattering marker
+maintenance across producers and capacity-growth paths. Repeated retrieval
+is idempotent, retains handle identity and does not bump the clipboard sequence.
+Binary snapshots retain their creation-time marking because the host injection
+helper itself returns that handle.
+
+The public-handle regression now checks GetClipboardData -> GlobalLock ->
+GlobalSize for CF_TEXT, ASCII CF_OEMTEXT, explicitly stored RTF and synthesized
+RTF. A larger text replacement followed by RTF synthesis exercises fresh/grown
+allocations after an earlier handle was published. The synthesis helper is
+called directly in this unit test; this is not a WordPad UI/end-to-end claim.
+The pre-fix regression fails because GlobalLock returns NULL for CF_TEXT.
+After the change, the expanded public-handle test, long/sparse text-copy test
+and RTF suite (36/36) pass. Fragment, handler-ESP, logical-AND, quiet-inventory,
+tier and whitespace checks pass; the quiet count remains 248 + 22.
+
+This repairs publication compatibility, not ownership transfer. Guest attempts
+to free clipboard-owned memory, stale handles after replacement/EmptyClipboard,
+empty-string format availability, code-page conversion and delayed rendering
+still require separate behavior and lifetime work.
