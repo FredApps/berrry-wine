@@ -76,11 +76,11 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x0409))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
 
-  ;; 414: FileTimeToSystemTime — STUB: unimplemented
+  ;; 414: FileTimeToSystemTime
   (func $handle_FileTimeToSystemTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; FileTimeToSystemTime(lpFileTime, lpSystemTime) — 2 args
     (i32.store offset=0 (global.get $reg_base) (call $host_fs_filetime_to_systemtime
-      (call $g2w (local.get $arg0)) (call $g2w (local.get $arg1))))
+      (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; 2 args
   )
 
@@ -116,7 +116,7 @@
         (return)))
     (local.set $st (call $g2w (global.get $dosdate_scratch)))
     (if (i32.eqz (call $host_fs_filetime_to_systemtime
-                   (call $g2w (local.get $arg0)) (local.get $st)))
+                   (local.get $arg0) (global.get $dosdate_scratch)))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
@@ -132,14 +132,14 @@
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
     (if (local.get $arg1)
-      (then (i32.store16 (call $g2w (local.get $arg1))
+      (then (call $gs16 (local.get $arg1)
         (i32.or
           (i32.shl (i32.sub (local.get $year) (i32.const 1980)) (i32.const 9))
           (i32.or
             (i32.shl (i32.load16_u offset=2 (local.get $st)) (i32.const 5))
             (i32.load16_u offset=6 (local.get $st)))))))
     (if (local.get $arg2)
-      (then (i32.store16 (call $g2w (local.get $arg2))
+      (then (call $gs16 (local.get $arg2)
         (i32.or
           (i32.shl (i32.load16_u offset=8 (local.get $st)) (i32.const 11))
           (i32.or

@@ -3,6 +3,14 @@
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 const extraWat = String.raw`
+  (func (export "test_calendar") (param $dos i32) (param $ft i32) (param $out i32) (param $time i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (if (local.get $dos)
+      (then (call $handle_FileTimeToDosDateTime (local.get $ft) (local.get $out) (local.get $time)
+        (i32.const 0) (i32.const 0) (i32.const 0)))
+      (else (call $handle_FileTimeToSystemTime (local.get $ft) (local.get $out)
+        (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
+    (i32.load (global.get $reg_base)))
   (func (export "test_size_high") (param $h i32) (param $out i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
     (call $handle_GetFileSize (local.get $h) (local.get $out)
@@ -100,6 +108,38 @@ const extraWat = String.raw`
       assert.deepStrictEqual(notices, []);
     }
   }
+  // Independent calendar expectation: 2000-02-29 Tuesday, 12:34:56.789 UTC.
+  const ticks = BigInt(Date.UTC(2000, 1, 29, 12, 34, 56, 789)) * 10000n + 116444736000000000n;
+  const putTime = ga => { e.guest_write32(ga, Number(ticks & 0xffffffffn));
+    e.guest_write32(ga + 4, Number(ticks >> 32n)); };
+  const expectedCalendar = [2000, 2, 2, 29, 12, 34, 56, 789].flatMap(w => [w & 255, w >> 8]);
+  for (let split = 1; split < 16; split++) {
+    const out = page + 4096 - split;
+    putTime(aligned);
+    for (let i = -1; i <= 16; i++) e.guest_write8(out + i, 0xcc);
+    notices.length = 0;
+    assert.strictEqual(e.test_calendar(0, aligned, out, 0), 1);
+    assert.deepStrictEqual(read(out - 1, 18), [0xcc, ...expectedCalendar, 0xcc], `SYSTEMTIME split ${split}`);
+    assert.deepStrictEqual(notices, [[out, 16]]);
+    assert.strictEqual(e.get_esp(), 0x0030000c);
+  }
+  for (let split = 1; split < 8; split++) {
+    const ft = page + 4096 - split;
+    putTime(ft);
+    assert.strictEqual(e.test_calendar(0, ft, aligned, 0), 1);
+    assert.deepStrictEqual(read(aligned, 16), expectedCalendar, `FILETIME split ${split}`);
+    assert.strictEqual(e.test_calendar(1, ft, aligned, aligned + 2), 1);
+    assert.deepStrictEqual(read(aligned, 4), [0x5d, 0x28, 0x5c, 0x64]);
+    assert.strictEqual(e.get_esp(), 0x00300010);
+  }
+  for (const timeOutput of [false, true]) {
+    const out = page + 4095;
+    putTime(aligned);
+    for (let i = -1; i <= 2; i++) e.guest_write8(out + i, 0xcc);
+    assert.strictEqual(e.test_calendar(1, aligned, timeOutput ? aligned + 32 : out,
+      timeOutput ? out : aligned + 32), 1);
+    assert.deepStrictEqual(read(out - 1, 4), [0xcc, ...(timeOutput ? [0x5c, 0x64] : [0x5d, 0x28]), 0xcc]);
+  }
   const largeSize = 0x23456789a;
   vfs.setProviderFile('c:\\large.bin', { provider: { size: largeSize,
     readRange() { throw new Error('metadata must not read file data'); } } });
@@ -139,5 +179,5 @@ const extraWat = String.raw`
   e.guest_free(path);
   vfs.closeHandle(large);
   vfs.closeHandle(handle);
-  console.log('PASS  file metadata: information, timestamps, size/seek high words and sparse boundaries');
+  console.log('PASS  file metadata: information, timestamps, calendar conversion, size/seek high words and sparse boundaries');
 })().catch(error => { console.error(error); process.exit(1); });

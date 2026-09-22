@@ -400,3 +400,27 @@ handle preservation. Additional checks reject a missing second output page
 and address wrap without creating a handle. Host signature, logical-AND and
 duplicate gates pass. Calendar conversion is the remaining translated-pointer
 metadata interface in this bounded audit; dirty tracking remains open.
+
+## Calendar conversion retains guest addresses
+
+The last of the five translated-pointer metadata interfaces identified above,
+`fs_filetime_to_systemtime`, now reads its FILETIME through `gl32` and scatters
+its locally encoded 16-byte SYSTEMTIME through `writeGuestBytes`. Both real
+WAT callers pass guest addresses. The DOS conversion keeps its existing owned
+scratch allocation and private translated reads, but its two caller-owned FAT
+WORD outputs now use `gs16` rather than raw stores. Import arity, calendar
+arithmetic and scratch lifetime are unchanged.
+
+Before the fix, the real-handler regression failed at SYSTEMTIME split 1:
+only its first byte reached the intended guest buffer. It now passes all 15
+SYSTEMTIME output crossings with canaries and one 16-byte notification, all
+seven FILETIME input crossings through both calendar and DOS conversion, and
+both FAT WORD output crossings. Expectations use an independently specified
+leap-day calendar, not an aligned invocation of the same conversion. Stdcall
+cleanup is checked. Existing file timestamp and CoFileTimeToDosDateTime tests
+also pass, including FAT year limits, leap day and invalid-pointer rejection.
+
+This closes the bounded five-interface migration, not the global write audit
+or native calendar conformance. Guest writes elsewhere, true dirty-page
+tracking, flush concurrency and quiet game performance measurements remain
+open; no production dirty tracking or performance result is introduced here.
