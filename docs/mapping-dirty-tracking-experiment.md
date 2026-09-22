@@ -272,3 +272,26 @@ canaries, zero-byte read counts and fallback notices. A separate wiring check
 requires exactly one exported-writer call per scalar assignment and no duplicate
 host notification. The real-WASM ReadFileEx callback/ABI test and all 51 lazy
 provider tests pass. Dirty bits are still not recorded by the canonical writer.
+
+## Find-data and string output paths
+
+`fillFindData` still assumed its complete A/W structure occupied contiguous
+WASM bytes. The regression failed with one ANSI output byte before a sparse
+boundary: only that byte reached the intended structure. It now encodes into
+a zero-initialized local byte buffer and scatters it through `guestChunk`,
+then notifies the complete output span once. Layout, timestamps and file-name
+encoding are unchanged. The ANSI and wide string writers already scattered
+correctly but lacked notifications; both now notify their bytes including the
+terminator. These paths, scalar fallback and file-read prefixes share one
+filesystem-local notification helper rather than repeated export checks.
+
+`test-filesystem-output-boundaries.js` exercises all 319 ANSI and 591 wide
+structure crossing positions against an aligned result, explicit attributes,
+file size/name bytes, and destination canaries. Current-directory strings cover
+every crossing position, including odd-byte UTF-16 splits, with exact notices.
+The notification helper still represents decoded-code invalidation, not a
+complete dirty-page protocol; no native layout/encoding expansion or performance
+claim is made by this patch.
+
+Validation also passes the existing file-API ANSI/OEM codepage, exact timestamp,
+FindFirst/FindNext error, read data/count notification and test-tier checks.
