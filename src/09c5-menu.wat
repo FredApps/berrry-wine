@@ -53,6 +53,13 @@
   ;; the one currently displayed.
   (global $menu_open_dynamic_hmenu (mut i32) (i32.const 0))
 
+  ;; TPM_RETURNCMD: USER runs the menu loop inside TrackPopupMenu and returns
+  ;; the picked id instead of posting WM_COMMAND. The call parks on its thunk
+  ;; while the popup is open. State 0 = no such call, 1 = popup open, 2 = the
+  ;; popup closed and $menu_track_result holds the id (0 = dismissed).
+  (global $menu_track_state (mut i32) (i32.const 0))
+  (global $menu_track_result (mut i32) (i32.const 0))
+
   ;; Resource menus are stored as immutable-layout paint blobs, but Win32
   ;; still lets applications mutate an HMENU returned for a cascading popup.
   ;; Keep those second-level popup handles in a small heap-backed binding list
@@ -4194,6 +4201,7 @@
       (local.get $popup) (local.get $top_idx)))
 
   (func $menu_open (export "menu_open") (param $hwnd i32) (param $top_idx i32)
+    (call $menu_track_finish)
     (if (global.get $menu_open_popup_blob)
       (then
         (call $heap_free (global.get $menu_open_popup_blob))
@@ -4211,9 +4219,9 @@
         (param $hmenu i32) (param $flags i32) (param $x i32) (param $y i32) (param $hwnd i32)
         (result i32)
     (local $menu_id i32) (local $top_idx i32)
-    ;; TPM_RETURNCMD asks USER32 to return the selected command synchronously.
-    ;; We do not run a nested modal menu loop yet, so report no selection.
-    (if (i32.and (local.get $flags) (i32.const 0x0100)) (then (return (i32.const 0))))
+    ;; A new popup replaces any open one. An outstanding TPM_RETURNCMD call
+    ;; then completes as dismissed, the way USER ends one menu loop.
+    (call $menu_track_finish)
     (if (call $dynamic_menu_state_w (local.get $hmenu))
       (then
         (if (global.get $menu_open_popup_blob)
@@ -4258,7 +4266,18 @@
     (global.set $menu_open_y     (local.get $y))
     (i32.const 1))
 
+  ;; An open TPM_RETURNCMD popup is closing, with or without a pick.
+  (func $menu_track_finish
+    (if (i32.eq (global.get $menu_track_state) (i32.const 1))
+      (then (global.set $menu_track_state (i32.const 2)))))
+
+  ;; Is the guest parked in a TPM_RETURNCMD TrackPopupMenu? Hosts exempt that
+  ;; wait from their stalled-wire cap: it lasts as long as the user looks.
+  (func (export "menu_track_parked") (result i32)
+    (i32.eq (global.get $menu_track_state) (i32.const 1)))
+
   (func $menu_close (export "menu_close")
+    (call $menu_track_finish)
     (if (global.get $menu_open_popup_blob)
       (then
         (call $heap_free (global.get $menu_open_popup_blob))
@@ -4627,17 +4646,22 @@
           (then (return (i32.const 0))))
         (local.set $id (call $menu_subchild_id
                          (local.get $hwnd) (local.get $top) (local.get $hover) (local.get $sub)))
-        (if (call $menu_try_edit_command (local.get $id))
-          (then (nop))
-          (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))
+        (call $menu_deliver_command (local.get $hwnd) (local.get $id))
         (call $menu_close)
         (return (local.get $id))))
     (local.set $id (call $menu_child_id (local.get $hwnd) (local.get $top) (local.get $hover)))
-    (if (call $menu_try_edit_command (local.get $id))
-      (then (nop))
-      (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0))))
+    (call $menu_deliver_command (local.get $hwnd) (local.get $id))
     (call $menu_close)
     (local.get $id))
+
+  ;; A picked command goes back to a TPM_RETURNCMD caller as its return value
+  ;; and is not posted; otherwise it is an edit command or a WM_COMMAND.
+  (func $menu_deliver_command (param $hwnd i32) (param $id i32)
+    (if (i32.eq (global.get $menu_track_state) (i32.const 1))
+      (then (global.set $menu_track_result (local.get $id)) (return)))
+    (if (call $menu_try_edit_command (local.get $id))
+      (then (nop))
+      (else (call $menu_post (local.get $hwnd) (i32.const 0x0111) (local.get $id) (i32.const 0)))))
 
   ;; Find the bar item index whose accelerator char (uppercase ASCII)
   ;; matches $ch, or -1.
@@ -4874,11 +4898,47 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
+  ;; TrackPopupMenu[Ex] core. Returns 1 when the call completed with EAX set
+  ;; (the handler then pops its frame), 0 when it parked. Without TPM_RETURNCMD the popup stays open after the call returns
+  ;; TRUE and a pick is posted as WM_COMMAND. With it (0x100) the call parks on
+  ;; its thunk until the popup closes and returns the picked id, or 0 when it
+  ;; was dismissed; SimCity 2000's palette fly-outs read that id.
+  (func $menu_track_call (param $hmenu i32) (param $flags i32) (param $x i32) (param $y i32)
+        (param $hwnd i32) (result i32)
+    (local $ret i32)
+    (block $done
+      (if (i32.eq (global.get $menu_track_state) (i32.const 2))
+        (then
+          (local.set $ret (global.get $menu_track_result))
+          (global.set $menu_track_state (i32.const 0))
+          (br $done)))
+      (if (i32.eq (global.get $menu_track_state) (i32.const 1))
+        (then (call $menu_track_park) (return (i32.const 0))))
+      (local.set $ret (call $menu_track_popup_open
+        (local.get $hmenu) (local.get $flags) (local.get $x) (local.get $y) (local.get $hwnd)))
+      (if (i32.eqz (i32.and (local.get $flags) (i32.const 0x0100))) (then (br $done)))
+      (if (i32.eqz (local.get $ret)) (then (br $done)))
+      (global.set $menu_track_result (i32.const 0))
+      (global.set $menu_track_state (i32.const 1))
+      (call $menu_track_park)
+      (return (i32.const 0)))
+    (i32.store offset=0 (global.get $reg_base) (local.get $ret))
+    (i32.const 1))
+
+  ;; Leave the stdcall frame on the stack and re-enter this call on the next
+  ;; slice, the net-wait park: hosts clear the yield and resume at the thunk.
+  (func $menu_track_park
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $eip (global.get $current_thunk_eip))
+    (global.set $yield_reason (i32.const 8))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
   ;; 138: TrackPopupMenuEx(hMenu, uFlags, x, y, hWnd, lptpm)
   (func $handle_TrackPopupMenuEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $menu_track_popup_open
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+    (if (call $menu_track_call (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (local.get $arg4))
+      (then (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))))
   )
 
   ;; 292: LoadMenuW — ordinals share the A path; named resources keep the
@@ -4909,9 +4969,9 @@
     (local $wa_esp i32) (local $hwnd i32)
     (local.set $wa_esp (call $g2w (i32.load offset=16 (global.get $reg_base))))
     (local.set $hwnd (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
-    (i32.store offset=0 (global.get $reg_base) (call $menu_track_popup_open
-      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $hwnd)))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
+    (if (call $menu_track_call (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (local.get $hwnd))
+      (then (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))))
   )
 
   ;; 620: GetMenuItemID(hMenu, nPos). A NULL id, submenu, invalid menu, or

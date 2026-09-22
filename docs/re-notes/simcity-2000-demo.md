@@ -250,11 +250,20 @@ Driving it headlessly, three traps:
   pink. `$gdi_bitmap_info_wa` now gathers a BITMAPINFO that is not affine
   into a scratch copy. The constructor `0x464ee8` defaults the orientation
   field `+0x18` to -1 (top-down), which is what coal uses.
-* **Recreation fly-out remembers its subtool.** Clicking the palette button
-  re-arms the last-used item (Marina) and overrides an earlier posted
-  WM_COMMAND. Click the palette button *first*, then post the item id (Zoo
-  32881). The same applies to the power button: its click alone arms
-  Power Lines.
+* **Palette fly-outs never opened (Fixed 2026-09-22).** A press on a group
+  button (Recreation, Power, ...) calls MFC's CMenu::TrackPopupMenu
+  (`0x48ca94`, called back to `0x48cae4`) with `TPM_RETURNCMD` (0x100),
+  owner = the palette `0x10008`, anchored at the press point. The game
+  arms whatever id comes back, or re-arms the group's last subtool on 0.
+  We returned 0 at once for `TPM_RETURNCMD` and drew nothing. That looked
+  like "the button remembers its subtool and overrides a posted
+  WM_COMMAND". The call now parks on its thunk (yield 8) while the popup is
+  open and returns the picked id (0 when dismissed), without posting it.
+  The fly-out opens on the *press*. Click an item to pick it. After a pick
+  the game redraws the whole map, ~1,000-3,000 batches of CPU at the
+  default budget, and does not read input until it finishes; a press in
+  that window is queued, not lost. Power > "Power Plant..." opens the
+  Select Power Plant picker `0x10054` the same as posting 32839.
 * **The underground (pipes) view leaves the map blank.** After a Pipes or
   Pump action the map, and for a while the status bar, stay grey. The next
   tool change then shows the underground view one tool late. A few thousand

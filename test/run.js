@@ -9080,8 +9080,10 @@ async function main() {
       // task parked on a continuation slot is a different shape: it is bounded
       // by its own wall-clock timeout and can legitimately spend hundreds of
       // thousands of turns inside it, so counting those trips the cap on a
-      // wait that is working exactly as designed.
-      if (!(instance.exports.win16_pump_parked && instance.exports.win16_pump_parked())) {
+      // wait that is working exactly as designed. A TPM_RETURNCMD popup menu
+      // parks the same way for as long as it stays open.
+      if (!(instance.exports.win16_pump_parked && instance.exports.win16_pump_parked()) &&
+          !(instance.exports.menu_track_parked && instance.exports.menu_track_parked())) {
         netWaits++;
       }
       if (netWaits > VLAN_MAX_WAITS) {
