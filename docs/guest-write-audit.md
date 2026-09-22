@@ -268,3 +268,25 @@ screen-buffer creation conversion of its own heap allocation to private
 backing. That is a bounded pointer-site audit, not proof that every console
 API or guest memory access elsewhere is correct. Browser verification, full
 Unicode title fidelity and mapped-file dirty tracking remain open.
+
+## Far browser Worker regression
+
+`node test/test-far-console-web.js` serves a fresh source compilation through
+the shared static-server helper without replacing the shared build artifact.
+The only test-only WASM addition is a read-only active-console-record export.
+The test launches the locally installed Far 1.70 candidate through the actual
+debug dropdown with Worker mode enabled and a cross-origin-isolated page.
+
+On 2026-09-22 the Chrome headless run passed: both panels contained `far.exe`
+and the mounted language/help files, browser F9 input exposed the Left/Files/
+Commands/Options/Right menu, and Enter opened Program Files with a visible
+`..` console entry. No captured page error, API trap, layout mismatch or Worker
+startup failure occurred. An initial test attempt timed out because the probe
+used `wine.exports` instead of `wine.instance.exports`; the corrected probe
+now also runs once outside the polling callback to expose such mistakes early.
+
+This exercised the current shared worktree, including unrelated uncommitted
+host changes; it is not a clean-commit benchmark. Assertions read the console
+model, not rendered pixels. Mouse selection, pixel-level rendering, native
+Win98 parity and performance still require their own evidence. The test skips
+explicitly when Chrome or the locally installed candidate is absent.
