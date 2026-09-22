@@ -404,8 +404,15 @@ const extraWat = `
   const named = wat.test_public_section(-1, 4, 0, 16, 0x00490200);
   assert(named);
   assert.strictEqual(wat.test_dup_error(), 0);
-  assert(wat.test_public_section(-1, 4, 0, 32, 0x00490200));
+  const namedAlias = wat.test_public_section(-1, 4, 0, 32, 0x00490200);
+  assert(namedAlias && namedAlias !== named);
   assert.strictEqual(wat.test_dup_error(), 183);
+  assert.strictEqual(wat.test_public_close(named), 1);
+  assert.strictEqual(wat.test_public_close(named), 0);
+  assert.strictEqual(wat.test_dup_error(), 6);
+  assert.strictEqual(wat.test_public_map(named, 4, 0, 16), 0);
+  assert.strictEqual(wat.test_dup_error(), 6);
+  assert(wat.test_public_map(namedAlias, 4, 0, 16), 'peer section handle survives close');
   assert(wat.test_public_section(sectionRead, 2, 0, 0, 0));
   assert.strictEqual(wat.test_dup_error(), 0, 'success does not reuse an old error');
   vfs.setDriveReadOnly('c', true);

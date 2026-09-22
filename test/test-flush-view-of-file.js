@@ -143,7 +143,7 @@ function makeCtx() {
   // --- the WAT handler ------------------------------------------------------
   const seen = [];
   let mapAttempts = 0;
-  const { exports: wat } = await bootRenderHarness({
+  const { exports: wat, memory } = await bootRenderHarness({
     extraWat: String.raw`
       (func (export "g2w") (param $g i32) (result i32) (call $g2w (local.get $g)))
       (func (export "map_count") (result i32) (i32.load (global.get $VIRTUAL_MAP_STATE)))
@@ -171,8 +171,13 @@ function makeCtx() {
     `,
     extraHostOverrides: {
       fs_flush_view: (...args) => { seen.push(args); return 1; },
-      fs_map_view_of_file: () => (++mapAttempts === 1 ? 0 : 0x00420000),
-      fs_read_pending: () => (mapAttempts === 1 ? 1 : 0),
+      fs_map_view_of_file_result: (_handle, _access, _high, _low, _size, resultWA, owner) => {
+        assert.strictEqual(owner, 1);
+        const pending = ++mapAttempts === 1;
+        new DataView(memory.buffer).setUint32(resultWA, pending ? 0 : 0x00420000, true);
+        return pending ? 997 : 0;
+      },
+      fs_read_pending: () => { throw new Error('mapping result needs no second status RPC'); },
     },
   });
 

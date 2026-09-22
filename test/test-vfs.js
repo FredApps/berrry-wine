@@ -177,6 +177,59 @@ test('creation dispositions validate truncation before mutation and permit prote
   assert.strictEqual(entry.data.length, 0);
 });
 
+test('named mapping handles close independently and views retain the section', () => {
+  const vfs = makeVFS({ 'c:\\lifetime.bin': 16 });
+  const memory = new WebAssembly.Memory({ initial: 40 });
+  const bytes = new Uint8Array(memory.buffer);
+  const regions = require('../lib/region-map.generated');
+  const wa = guest => regions.g2w(guest, 0x400000);
+  let next = 0x410000;
+  const host = createFilesystemImports({ vfs, getMemory: () => memory.buffer,
+    exports: { get_image_base: () => 0x400000,
+      guest_map_alloc: () => { const address = next; next += 65536; return address; } } });
+  bytes.set(Buffer.from('section-lifetime\0'), 64);
+  const first = host.fs_create_file_mapping(-1, 4, 0, 16, 64);
+  const second = host.fs_create_file_mapping(-1, 4, 0, 32, 64);
+  const third = host.fs_open_file_mapping(64);
+  assert(first && second && third);
+  assert.strictEqual(new Set([first, second, third]).size, 3);
+  const view = host.fs_map_view_of_file(first, 2, 0, 0, 0);
+  assert(view);
+  assert.strictEqual(host.fs_close_handle(first >>> 0), 1);
+  assert.strictEqual(host.fs_close_handle(first), 0, 'double close is invalid');
+  assert.strictEqual(host.fs_map_view_of_file(first, 2, 0, 0, 16), 0);
+  assert.strictEqual(host.fs_map_view_of_file(second, 2, 0, 0, 32), 0,
+    'reopening ignores the new maximum and retains the original section size');
+  assert.strictEqual(host.fs_close_handle(second), 1);
+  assert.strictEqual(host.fs_close_handle(third), 1);
+  bytes[wa(view)] = 0x5a;
+  assert.strictEqual(host.fs_flush_view(view, 1), 1);
+  const reopened = host.fs_open_file_mapping(64);
+  assert(reopened, 'a view alone keeps the name and section alive');
+  const reader = host.fs_map_view_of_file(reopened, 4, 0, 0, 0);
+  assert.strictEqual(bytes[wa(reader)], 0x5a, 'flush works after originating handle closes');
+  assert.strictEqual(host.fs_unmap_view(view), 1);
+  assert.strictEqual(host.fs_unmap_view(reader), 1);
+  assert.strictEqual(host.fs_close_handle(reopened), 1);
+  assert.strictEqual(host.fs_open_file_mapping(64), 0, 'last view plus last handle retires name');
+  const replacement = host.fs_create_file_mapping(-1, 4, 0, 32, 64);
+  const fresh = host.fs_map_view_of_file(replacement, 4, 0, 0, 32);
+  assert(fresh);
+  assert.strictEqual(bytes[wa(fresh)], 0, 'recreated name has new backing');
+  assert.strictEqual(host.fs_close_handle(replacement), 1);
+  assert.strictEqual(host.fs_unmap_view(fresh), 1);
+  assert.strictEqual(host.fs_open_file_mapping(64), 0, 'reverse release order also retires name');
+
+  const file = vfs.createFile('c:\\lifetime.bin', 0xc0000000, 3);
+  const section = host.fs_create_file_mapping(file, 4, 0, 0, 0);
+  const fileView = host.fs_map_view_of_file(section, 2, 0, 0, 16);
+  assert.strictEqual(host.fs_close_handle(file), 1);
+  assert.strictEqual(host.fs_close_handle(section), 1);
+  bytes[wa(fileView)] = 0x7b;
+  assert.strictEqual(host.fs_unmap_view(fileView), 1);
+  assert.strictEqual(vfs.files.get('c:\\lifetime.bin').data[0], 0x7b);
+});
+
 test('file mapping and view access cannot exceed file or section rights', () => {
   const vfs = makeVFS({ 'c:\\mapped.bin': 16 });
   let allocations = 0;

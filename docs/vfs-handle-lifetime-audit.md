@@ -842,3 +842,31 @@ of its path. Shared-view coherence, Unicode section creation, preferred-address
 placement and native error-precedence checks remain open. The wider review
 also retains common-core consolidation and silent-handler work; these VFS
 checkpoints do not close the overall review.
+
+## Section handle/view lifetime checkpoint (2026-09-21)
+
+Named creation and OpenFileMapping now allocate distinct handles referencing
+the same section object. CloseHandle retires only that alias and rejects a
+second close; MapView rejects a retired alias. Views retain the section object
+directly, so flushing or unmapping a writable view still writes back after its
+originating section handle closes. Name lookup considers live handles and
+views, and stops finding the object after both are gone. Recreating that name
+then gets fresh backing. The reserved mapping-handle namespace does not wrap
+into unrelated handles.
+
+This follows Microsoft's documented independent handle/view references in
+[CreateFileMapping](https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-createfilemappingw).
+It is not native Win98 verification. The new regression fails against the
+previous committed implementation (one handle instead of three), then passes
+with this change. VFS 42/42, lazy/provider 48/48 and source-compiled public
+file/mapping tests pass, including public close/stale-map errors. The raw-region
+ratchet passes unchanged. The FlushView test's obsolete mapping-import mock
+was updated to the operation-result ABI, retaining retry-frame assertions and
+rejecting a redundant pending-status RPC.
+
+Still open: closing a handle during an unfinished provider map, backing-entry
+identity across rename/replacement, mapping DuplicateHandle support and
+OpenFileMapping desired-access/inheritance/error transport. Its legacy host
+ABI currently accepts only a name. Shared-view coherence and native validation
+precedence are not solved by this lifetime change. No new full-build or browser
+pass is claimed; the prior toy-VM bundle freshness blocker remains separate.
