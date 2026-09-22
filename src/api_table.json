@@ -26049,6 +26049,7 @@
   {
     "id": 3077,
     "name": "IDirectMusic_AddRef",
+    "handler": "dx_com_addref",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1460223485
@@ -26056,6 +26057,7 @@
   {
     "id": 3078,
     "name": "IDirectMusic_Release",
+    "handler": "dx_com_release_basic",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 968630362
@@ -26070,6 +26072,7 @@
   {
     "id": 3080,
     "name": "IDirectDrawGammaControl_AddRef",
+    "handler": "dx_com_addref",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1697827258
@@ -26077,6 +26080,7 @@
   {
     "id": 3081,
     "name": "IDirectDrawGammaControl_Release",
+    "handler": "dx_com_release_basic",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 4203858967
@@ -27160,6 +27164,7 @@
   {
     "id": 3220,
     "name": "IAMMultiMediaStream_AddRef",
+    "handler": "dx_com_addref",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 985466014
@@ -27167,6 +27172,7 @@
   {
     "id": 3221,
     "name": "IAMMultiMediaStream_Release",
+    "handler": "dx_com_release_basic",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 1538703347

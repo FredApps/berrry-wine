@@ -1,8 +1,17 @@
 #!/usr/bin/env node
 'use strict';
 
+const assert = require('assert');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+const apiTable = require('../src/api_table.json');
+const apiId = name => apiTable.find(api => api.name === name).id;
+for (const family of ['IDirectMusic', 'IAMMultiMediaStream', 'IDirectDrawGammaControl']) {
+  for (const [method, handler] of [['AddRef', 'dx_com_addref'], ['Release', 'dx_com_release_basic']]) {
+    assert.strictEqual(apiTable.find(api => api.name === `${family}_${method}`).handler,
+      handler, `${family}_${method} retains its canonical lifetime implementation`);
+  }
+}
 
 const extraWat = String.raw`
   (func (export "test_create_directmusic") (result i32)
@@ -68,10 +77,15 @@ const extraWat = String.raw`
 
   (func (export "test_call_IDirectMusic_Release") (param $obj i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
-    (call $handle_IDirectMusic_Release
+    (call $dispatch_api_table (i32.const ${apiId('IDirectMusic_Release')})
       (local.get $obj) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_ref_dispatch") (param $api i32) (param $obj i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x00300000))
+    (call $dispatch_api_table (local.get $api) (local.get $obj)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load (global.get $reg_base)))
 `;
 
 async function main() {
@@ -105,6 +119,24 @@ async function main() {
   };
 
   const iunknown = writeGuid([0, 0, 0x000000c0, 0x46000000]);
+  for (const [family, create] of [
+    ['IDirectMusic', e.test_create_directmusic],
+    ['IAMMultiMediaStream', e.test_create_amstream],
+    ['IDirectDrawGammaControl', e.test_create_gamma_control],
+  ]) {
+    const live = e.test_dx_live_count();
+    const object = create() >>> 0;
+    check(`${family} starts with one owned reference`, object !== 0 &&
+      e.test_directmusic_refcount(object) === 1 && e.test_dx_live_count() === live + 1);
+    for (const [method, expected] of [['AddRef', 2], ['AddRef', 3], ['Release', 2], ['Release', 1]]) {
+      check(`${family} dispatched ${method} returns ${expected} and pops once`,
+        e.test_ref_dispatch(apiId(`${family}_${method}`), object) === expected &&
+        e.test_directmusic_refcount(object) === expected && e.get_esp() === 0x00300008);
+    }
+    check(`${family} final dispatched release retires its object`,
+      e.test_ref_dispatch(apiId(`${family}_Release`), object) === 0 &&
+      e.test_dx_live_count() === live && e.get_esp() === 0x00300008);
+  }
   const clsidDirectMusic = writeGuid([0x636b9f10, 0x11d10c7d, 0x2000b295, 0x2174dcaf]);
   const clsidDirectMusicWrongSuffix = writeGuid([0x636b9f10, 0, 0, 0]);
   const clsidAMStream = writeGuid([0x49c47ce5, 0x11d09ba4, 0xc0001282, 0x452cc34f]);

@@ -17,7 +17,8 @@ const extraWat = String.raw`
 
   (func (export "test_release_amstream") (param $this i32) (result i32)
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x30000))
-    (call $handle_IAMMultiMediaStream_Release
+    (call $dispatch_api_table
+      (i32.const ${require('../src/api_table.json').find(api => api.name === 'IAMMultiMediaStream_Release').id})
       (local.get $this) (i32.const 0) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
