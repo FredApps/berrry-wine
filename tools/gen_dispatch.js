@@ -133,8 +133,11 @@ for (const api of stubApis) {
 // Test-only direct-call exports used by focused WAT harnesses.  These have one
 // mechanical ABI: expose the API's declared arguments, zero-fill the handler's
 // remaining argument registers/name pointer, and restore ESP after the stdcall
-// handler advances it.  Anything needing a synthetic stack frame or other
-// setup remains hand-written in 13-exports.wat.
+// handler advances it. For >5 i32 arguments, mirror the entire argument list
+// into the caller-provided guest stack: some handlers also read early words
+// there. These are synchronous test calls, not callback-aware guest runners;
+// callers must provide writable stack space for return address + arguments.
+// Reduced signatures and other setup remain hand-written in 13-exports.wat.
 const testCallApis = apiTable.filter(api => api.test_call === true);
 for (const api of apiTable) {
   if (api.test_call !== undefined && api.test_call !== true) {
@@ -148,8 +151,8 @@ if (testCallApis.length) {
   out.push('  ;; ============================================================');
 }
 for (const api of testCallApis) {
-  if (!Number.isInteger(api.nargs) || api.nargs < 0 || api.nargs > 5) {
-    fatal(`API ${api.name} test_call requires integer nargs in range 0..5`);
+  if (!Number.isInteger(api.nargs) || api.nargs < 0 || api.nargs > 16) {
+    fatal(`API ${api.name} test_call requires integer nargs in range 0..16`);
     continue;
   }
   const handler = watName(api.handler || api.name, `API ${api.name} handler`);
@@ -160,6 +163,11 @@ for (const api of testCallApis) {
   out.push(`  (func (export "test_call_${api.name}")${params} (result i32)`);
   out.push('    (local $saved_esp i32)');
   out.push(`    (local.set $saved_esp ${getR('esp')})`);
+  if (api.nargs > 5) {
+    for (let i = 0; i < api.nargs; i++) {
+      out.push(`    (call $gs32 (i32.add (local.get $saved_esp) (i32.const ${4 * (i + 1)})) (local.get $arg${i}))`);
+    }
+  }
   out.push(`    (call $handle_${handler}`);
   out.push(`      ${args.slice(0, 3).join(' ')}`);
   out.push(`      ${args.slice(3).join(' ')})`);

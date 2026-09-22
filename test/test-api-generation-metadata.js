@@ -124,10 +124,13 @@ function expectedTestCall(api) {
   const args = Array.from({ length: 5 }, (_, i) =>
     i < api.nargs ? `(local.get $arg${i})` : '(i32.const 0)');
   args.push('(i32.const 0)');
+  const stack = api.nargs > 5 ? Array.from({ length: api.nargs }, (_, i) =>
+    `(call $gs32 (i32.add (local.get $saved_esp) (i32.const ${4 * (i + 1)})) (local.get $arg${i}))`).join('\n') : '';
   return `
     (func (export "test_call_${api.name}")${params} (result i32)
       (local $saved_esp i32)
       (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+      ${stack}
       (call $handle_${api.handler || api.name}
         ${args.slice(0, 3).join(' ')}
         ${args.slice(3).join(' ')})
@@ -170,8 +173,8 @@ for (const api of table) {
     `${api.name}: test_call must be true when present`);
 }
 for (const api of metadataTestCalls) {
-  assert(Number.isInteger(api.nargs) && api.nargs >= 0 && api.nargs <= 5,
-    `${api.name}: generated test call requires nargs in range 0..5`);
+  assert(Number.isInteger(api.nargs) && api.nargs >= 0 && api.nargs <= 16,
+    `${api.name}: generated test call requires nargs in range 0..16`);
   const actual = generatedTestCalls.get(api.name);
   assert(actual, `${api.name}: test_call metadata has no generated export`);
   assert.strictEqual(normalize(actual), normalize(expectedTestCall(api)),
@@ -187,7 +190,7 @@ for (const file of fs.readdirSync(SRC).filter(name => name.endsWith('.wat') && n
       `handwritten test_call_${name} is duplicated in ${handwritten.get(name)} and ${file}`);
     handwritten.set(name, file);
     const api = table.find(api => api.name === name);
-    if (api && Number.isInteger(api.nargs) && api.nargs >= 0 && api.nargs <= 5) {
+    if (api && Number.isInteger(api.nargs) && api.nargs >= 0 && api.nargs <= 16) {
       assert.notStrictEqual(wrapperShape(body), wrapperShape(expectedTestCall(api)),
         `${name}: mechanical test wrapper must use api_table test_call metadata`);
     }

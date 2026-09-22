@@ -52,6 +52,7 @@
   {
     "id": 7,
     "name": "Arc",
+    "test_call": true,
     "nargs": 9,
     "convention": "stdcall",
     "hash": 2633717115
@@ -59,6 +60,7 @@
   {
     "id": 8,
     "name": "ArcTo",
+    "test_call": true,
     "nargs": 9,
     "convention": "stdcall",
     "hash": 1661709782
@@ -87,6 +89,7 @@
   {
     "id": 12,
     "name": "BitBlt",
+    "test_call": true,
     "nargs": 9,
     "convention": "stdcall",
     "hash": 712574158,
@@ -523,6 +526,7 @@
   {
     "id": 59,
     "name": "CreateDIBitmap",
+    "test_call": true,
     "nargs": 6,
     "convention": "stdcall",
     "hash": 1889378205,
@@ -3921,6 +3925,7 @@
   {
     "id": 439,
     "name": "LoadImageA",
+    "test_call": true,
     "nargs": 6,
     "convention": "stdcall",
     "hash": 2831074045
@@ -4379,6 +4384,7 @@
   {
     "id": 486,
     "name": "PatBlt",
+    "test_call": true,
     "nargs": 6,
     "convention": "stdcall",
     "hash": 221597160,
@@ -5062,6 +5068,7 @@
   {
     "id": 561,
     "name": "RoundRect",
+    "test_call": true,
     "nargs": 7,
     "convention": "stdcall",
     "hash": 2710615405
@@ -5528,6 +5535,7 @@
   {
     "id": 609,
     "name": "SetDIBitsToDevice",
+    "test_call": true,
     "nargs": 12,
     "convention": "stdcall",
     "hash": 2575315803
@@ -6200,6 +6208,7 @@
   {
     "id": 684,
     "name": "StretchBlt",
+    "test_call": true,
     "nargs": 11,
     "convention": "stdcall",
     "hash": 3201689656
@@ -6256,6 +6265,7 @@
   {
     "id": 692,
     "name": "TabbedTextOutA",
+    "test_call": true,
     "nargs": 8,
     "convention": "stdcall",
     "hash": 3430445091
@@ -6263,6 +6273,7 @@
   {
     "id": 693,
     "name": "TabbedTextOutW",
+    "test_call": true,
     "nargs": 8,
     "convention": "stdcall",
     "hash": 3262668901
@@ -18567,6 +18578,7 @@
   {
     "id": 2232,
     "name": "CreateRoundRectRgn",
+    "test_call": true,
     "nargs": 6,
     "convention": "stdcall",
     "hash": 641841592
@@ -18606,6 +18618,7 @@
   {
     "id": 2237,
     "name": "MaskBlt",
+    "test_call": true,
     "nargs": 12,
     "convention": "stdcall",
     "hash": 1501640265
@@ -18748,6 +18761,7 @@
   {
     "id": 2255,
     "name": "GetGlyphOutlineA",
+    "test_call": true,
     "nargs": 7,
     "convention": "stdcall",
     "hash": 3100394838
@@ -18755,6 +18769,7 @@
   {
     "id": 2256,
     "name": "GetTextExtentExPointA",
+    "test_call": true,
     "nargs": 7,
     "convention": "stdcall",
     "hash": 2331778848
@@ -18762,6 +18777,7 @@
   {
     "id": 2257,
     "name": "GetTextExtentExPointW",
+    "test_call": true,
     "nargs": 7,
     "convention": "stdcall",
     "hash": 2700886466
@@ -19812,6 +19828,7 @@
   {
     "id": 2379,
     "name": "AngleArc",
+    "test_call": true,
     "nargs": 6,
     "convention": "stdcall",
     "hash": 3484032984,
@@ -19846,6 +19863,7 @@
   {
     "id": 2380,
     "name": "Chord",
+    "test_call": true,
     "nargs": 9,
     "convention": "stdcall",
     "hash": 272082677,
@@ -19892,6 +19910,7 @@
   {
     "id": 2381,
     "name": "Pie",
+    "test_call": true,
     "nargs": 9,
     "convention": "stdcall",
     "hash": 3477574229,
@@ -20912,6 +20931,7 @@
   {
     "id": 2474,
     "name": "GetCharacterPlacementA",
+    "test_call": true,
     "nargs": 6,
     "convention": "stdcall",
     "hash": 788745880
@@ -27060,6 +27080,7 @@
   {
     "id": 3210,
     "name": "DrawDibDraw",
+    "test_call": true,
     "nargs": 13,
     "convention": "stdcall",
     "hash": 939389100,
@@ -30080,6 +30101,7 @@
   {
     "id": 3580,
     "name": "sendto",
+    "test_call": true,
     "nargs": 6,
     "convention": "stdcall",
     "hash": 2223612394
@@ -30087,6 +30109,7 @@
   {
     "id": 3581,
     "name": "recvfrom",
+    "test_call": true,
     "nargs": 6,
     "convention": "stdcall",
     "hash": 2287937341

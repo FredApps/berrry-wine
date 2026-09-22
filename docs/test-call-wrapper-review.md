@@ -42,3 +42,40 @@ This is not closure of all test-wrapper work. No networking implementation,
 stub return, callback behavior or production API ABI was changed. Tests run
 in the shared worktree, including another agent's pending Winsock changes;
 no clean release, native Win98 or performance result is claimed.
+
+## Stack-argument follow-up
+
+The generator now accepts opted-in i32-word signatures through 16 arguments.
+For signatures above five, it writes **all** arguments at ESP+4, +8, ...
+through guest `gs32`, passes the first five to the handler, and restores ESP
+after the synchronous call. Writing only the tail would miss handlers such
+as PatBlt which also read early stack words. The caller supplies writable
+space for return address plus arguments; the return slot is not overwritten.
+This is a direct test bridge, not a callback/async runner or a variadic/64-bit
+argument ABI. Existing five-or-fewer generated wrappers are unchanged.
+
+All 23 full-signature wrappers in the inventory's first row are migrated:
+**234 generated / 25 handwritten**. Public handler implementations and export
+signatures are unchanged. Unlike the old CreateDIBitmap test wrapper, the
+generated one restores ESP; the other wrappers already restored it. The
+full-frame write is intentional, not an instruction-identical refactor.
+
+`test-api-stack-wrappers.js` replaces only the generated wrappers'
+called endpoints with an ABI recorder during compilation. It exercises all
+23 at four byte alignments: **92 calls**, checking first-five handler inputs,
+zero name pointer, every stack argument observed inside the handler, return
+value, ESP restoration, and guards before/after the frame and in the return
+slot. A compiler-only negative control omitting the 13th argument write fails
+DrawDibDraw's recorded-stack assertion. No source/artifact changes are needed
+for that negative control. Real-handler GDI and Winsock suites run separately.
+
+Verification passed: the 92 ABI calls, 39 raster-handler checks, six LoadImage
+DIB-section checks, bitmap text layout, 42 Winsock checks and the existing
+224-record font-metric tolerance gate. That last gate permits documented
+metric differences; passing it is not exact native font compatibility.
+Metadata/generator, API IDs, fragments, logical operands, handler cleanup,
+tier discovery and whitespace also passed in the shared worktree.
+
+The remaining 25 comprise the inventory's other five rows; their signature,
+setup or endpoint differences still require explicit handling. No claim of
+complete review closure or improved runtime performance follows from this work.
