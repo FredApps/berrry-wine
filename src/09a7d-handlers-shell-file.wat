@@ -669,9 +669,7 @@
     (local $err i32)
     (local.set $err (call $host_fs_file_time
       (local.get $arg0) (i32.const 1)
-      (if (result i32) (local.get $arg1) (then (call $g2w (local.get $arg1))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg2) (then (call $g2w (local.get $arg2))) (else (i32.const 0)))
-      (if (result i32) (local.get $arg3) (then (call $g2w (local.get $arg3))) (else (i32.const 0)))))
+      (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (if (local.get $err)
       (then
         (global.set $last_error (local.get $err))

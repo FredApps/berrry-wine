@@ -165,8 +165,8 @@ function readSystemTime(at) {
   let result = wat.test_set_file_time(0x77, cGuest, 0, wGuest);
   assert.strictEqual(Number(result & 0xFFFFFFFFn), 1, 'SetFileTime returns TRUE');
   assert.strictEqual(Number(result >> 32n), 0, 'successful SetFileTime clears LastError');
-  assert.deepStrictEqual(calls.shift(), [0x77, 1, 0x13000, 0, 0x14000],
-    'SetFileTime forwards nullable translated pointers');
+  assert.deepStrictEqual(calls.shift(), [0x77, 1, cGuest, 0, wGuest],
+    'SetFileTime preserves nullable guest pointers');
   assert.strictEqual(wat.get_esp() >>> 0, 0x00300014, 'SetFileTime pops four arguments');
 
   result = wat.test_get_file_time(0x88, 0, 0, 0);

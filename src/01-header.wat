@@ -774,7 +774,7 @@
   ;; handle, low output WA, optional high output WA -> Win32 error
   (import "host" "fs_file_information" (func $host_fs_file_information (param i32 i32) (result i32)))
   ;; handle, BY_HANDLE_FILE_INFORMATION output guest address -> Win32 error
-  ;; fs_file_time(handle, set, creationWA, accessWA, writeWA) → Win32 error code
+  ;; fs_file_time(handle, set, creationGA, accessGA, writeGA) → Win32 error code
   (import "host" "fs_file_time" (func $host_fs_file_time (param i32 i32 i32 i32 i32) (result i32)))
   (import "host" "fs_get_file_attributes" (func $host_fs_get_file_attributes (param i32 i32) (result i32)))
   (import "host" "fs_set_file_attributes" (func $host_fs_set_file_attributes (param i32 i32 i32) (result i32)))

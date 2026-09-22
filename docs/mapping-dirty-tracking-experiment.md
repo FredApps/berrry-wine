@@ -357,3 +357,23 @@ interfaces in the audit are still open, as is actual dirty-page tracking.
 The existing DuplicateHandle/file-metadata public-API suite, filesystem A/W
 output-boundary suite and read-output notification suite also pass after this
 pointer-contract change.
+
+## File timestamp input/output interface migrated
+
+GetFileTime and SetFileTime now pass nullable guest addresses to `fs_file_time`
+instead of translating each pointer prematurely. Input DWORDs use a shared
+filesystem `gl32` that delegates to the exported guest reader when available,
+with a page-chunked fallback for lightweight hosts. Output FILETIMEs encode
+locally and use `writeGuestBytes` once per supplied timestamp. The import's
+five-argument shape and status semantics are unchanged.
+
+The metadata boundary suite reproduced the old GetFileTime split-one failure
+and now checks all seven crossings for creation, access and write timestamps
+in both directions. SetFileTime's stored VFS values are checked independently
+before reading them back. GetFileTime checks complete bytes, neighbor canaries,
+exact eight-byte notifications, failure preservation and stdcall cleanup.
+Existing timestamp tests retain null, all-ones sentinel, rights, exact stored
+values and calendar tests; their pointer-forwarding expectation now correctly
+requires guest addresses. Host-import signatures, logical-AND and duplicate
+gates pass. Remaining metadata interfaces are size-high, seek-high and calendar
+conversion; dirty-page tracking is still not implemented.
