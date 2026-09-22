@@ -27,6 +27,7 @@
 const assert = require('assert');
 const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
+const { VirtualFS, createFilesystemImports } = require('../lib/filesystem');
 
 const extraWat = String.raw`
   (func (export "test_mv_backed_bytes") (result i32)
@@ -155,6 +156,135 @@ async function main() {
   assert.strictEqual(wasm.guest_section_free(emptySection), 1, 'uncommitted section can be released');
   for (const size of [0, 0xffffffff]) assert.strictEqual(wasm.guest_section_reserve(size), 0);
   console.log('PASS  stable sparse section growth, bounded commits and complete retirement');
+
+  wasm.test_mv_reset();
+  const vfs = new VirtualFS();
+  const fsHost = createFilesystemImports({ vfs, exports: wasm, getMemory: () => memory.buffer });
+  const map = (handle, access, offset, bytes, thread = 1) => {
+    const error = fsHost.fs_map_view_of_file_result(handle, access, 0, offset, bytes, 64, thread);
+    return { error, address: new DataView(memory.buffer).getUint32(64, true) };
+  };
+  vfs.files.set('c:\\shared.bin', { data: new Uint8Array(131072).fill(0x41), attrs: 0x20 });
+  const file = vfs.createFile('c:\\shared.bin', 0xc0000000, 3);
+  for (const protection of [4, 8]) {
+    const handle = fsHost.fs_create_file_mapping(file, protection, 0, 131072, 0);
+    const first = map(handle, 4, 0, 16);
+    const mode = protection === 4 ? 2 : 1;
+    assert.strictEqual(first.error, 0);
+    const second = map(handle, mode, 0, 131072);
+    const tail = map(handle, mode, 65536, 16);
+    assert.strictEqual(second.address, first.address, 'native same-base identity');
+    assert.strictEqual(tail.address, first.address + 65536, 'native offset identity');
+    wasm.test_mv_write32(first.address + 65536, 0x12345678);
+    assert.strictEqual(wasm.test_mv_read32(tail.address), 0x12345678, 'immediate peer visibility');
+    const again = map(handle, mode, 0, 16);
+    assert.strictEqual(again.address, first.address);
+    assert.strictEqual(wasm.test_mv_read32(tail.address), 0x12345678, 'new map does not reload dirty bytes');
+    assert.strictEqual(fsHost.fs_close_handle(handle), 1);
+    for (let i = 0; i < 3; i++) {
+      assert.strictEqual(fsHost.fs_unmap_view(first.address), 1, 'each repeated base owns a reference');
+      assert.strictEqual(wasm.test_mv_read32(tail.address), 0x12345678, 'tail survives base unmaps');
+    }
+    assert.strictEqual(fsHost.fs_unmap_view(first.address), 0);
+    assert.strictEqual(fsHost.fs_unmap_view(tail.address), 1);
+    assert.strictEqual(wasm.test_mv_backed_bytes(), 0, 'last handle/view releases backing');
+    const data = vfs.files.get('c:\\shared.bin').data;
+    assert.strictEqual(new DataView(data.buffer).getUint32(65536, true),
+      protection === 4 ? 0x12345678 : 0x41414141, 'COPY never writes back');
+    data.fill(0x41);
+  }
+  console.log('PASS  runtime shared READWRITE/WRITECOPY identity, coherence and counted unmaps');
+
+  const retained = fsHost.fs_create_file_mapping(file, 8, 0, 131072, 0);
+  const beforeUnmap = map(retained, 1, 0, 16);
+  wasm.test_mv_write32(beforeUnmap.address, 0x12345678);
+  assert.strictEqual(fsHost.fs_unmap_view(beforeUnmap.address), 1);
+  assert.strictEqual(wasm.test_mv_backed_bytes(), PAGE, 'native open handle retains committed section');
+  const reopened = map(retained, 1, 0, 16);
+  assert.strictEqual(reopened.address, beforeUnmap.address);
+  assert.strictEqual(wasm.test_mv_read32(reopened.address), 0x12345678, 'COPY edits survive last-view unmap');
+  assert.strictEqual(fsHost.fs_unmap_view(reopened.address), 1);
+  assert.strictEqual(fsHost.fs_close_handle(retained), 1);
+  assert.strictEqual(wasm.test_mv_backed_bytes(), 0, 'closing final handle retires viewless backing');
+
+  // Race two reads of one lazy section, then retire one while its provider is
+  // parked. A late completion must not touch a surviving view's dirty bytes.
+  const waits = [];
+  vfs.setProviderFile('c:\\lazy.bin', { length: sectionSize, provider: {
+    size: sectionSize,
+    tryRead: () => null,
+    fill: () => { throw new Error('readRange expected'); },
+    readRange: (offset, size) => new Promise(resolve => waits.push({ offset, size, resolve })),
+  } });
+  const lazyFile = vfs.createFile('c:\\lazy.bin', 0x80000000, 3);
+  const lazyHandle = fsHost.fs_create_file_mapping(lazyFile, 8, 0, 0, 0);
+  assert.strictEqual(map(lazyHandle, 1, 0, 16, 2).error, 997);
+  assert.strictEqual(map(lazyHandle, 1, 0, 16, 3).error, 997);
+  assert.strictEqual(map(lazyHandle, 1, 0, 16, 4).error, 997);
+  const fillA = vfs.getIoState(2).pendingRead.provider.fill();
+  const fillB = vfs.getIoState(3).pendingRead.provider.fill();
+  const fillC = vfs.getIoState(4).pendingRead.provider.fill();
+  waits[1].resolve(new Uint8Array(waits[1].size).fill(0x41));
+  await fillB;
+  const survivor = map(lazyHandle, 1, 0, 16, 3);
+  assert.strictEqual(survivor.error, 0);
+  wasm.test_mv_write32(survivor.address, 0x12345678);
+  waits[2].resolve(new Uint8Array(waits[2].size).fill(0x43));
+  await fillC;
+  const peer = map(lazyHandle, 1, 0, 16, 4);
+  assert.strictEqual(peer.address, survivor.address);
+  assert.strictEqual(wasm.test_mv_read32(peer.address), 0x12345678,
+    'late successful overlapping fill also preserves dirty bytes');
+  vfs.releaseIoState(2);
+  fsHost.fs_close_handle(lazyHandle);
+  waits[0].resolve(new Uint8Array(waits[0].size).fill(0x42));
+  await fillA;
+  assert.strictEqual(wasm.test_mv_read32(survivor.address), 0x12345678);
+  assert.strictEqual(wasm.test_mv_backed_bytes(), PAGE, 'large lazy section backs only the mapped page');
+  assert(vfs.files.get('c:\\lazy.bin')._provider, 'COPY does not materialize the file');
+  assert.strictEqual(fsHost.fs_unmap_view(survivor.address), 1);
+  assert.strictEqual(wasm.test_mv_read32(peer.address), 0x12345678);
+  assert.strictEqual(fsHost.fs_unmap_view(peer.address), 1);
+  assert.strictEqual(wasm.test_mv_backed_bytes(), 0);
+  console.log('PASS  canceled lazy shared fill cannot overwrite or free a surviving view');
+
+  vfs.setProviderFile('c:\\bad-map.bin', { length: PAGE, provider: {
+    size: PAGE, tryRead: () => null, fill: () => {},
+    readRange: async () => new Uint8Array(1),
+  } });
+  const badFile = vfs.createFile('c:\\bad-map.bin', 0x80000000, 3);
+  const badSection = fsHost.fs_create_file_mapping(badFile, 2, 0, 0, 0);
+  assert.strictEqual(map(badSection, 4, 0, 16, 5).error, 997);
+  await assert.rejects(vfs.getIoState(5).pendingRead.provider.fill(), /short provider read/);
+  assert.strictEqual(map(badSection, 4, 0, 16, 5).error, 30);
+  vfs.releaseIoState(5); // failed operation already released its own reference
+  assert.strictEqual(fsHost.fs_close_handle(badSection), 1);
+  assert.strictEqual(wasm.test_mv_backed_bytes(), 0, 'failed fill has no leaked view reference');
+
+  const writeBytes = new Uint8Array(131072).fill(0x41);
+  vfs.setProviderFile('c:\\write-map.bin', { provider: {
+    size: writeBytes.length, tryRead: () => null, fill: () => {},
+    readRange: async (offset, length) => writeBytes.slice(offset, offset + length),
+  } });
+  const writeFile = vfs.createFile('c:\\write-map.bin', 0xc0000000, 3);
+  const writeSection = fsHost.fs_create_file_mapping(writeFile, 4, 0, 0, 0);
+  assert.strictEqual(map(writeSection, 4, 0, 16, 6).error, 997);
+  await vfs.getIoState(6).pendingRead.provider.fill();
+  const readView = map(writeSection, 4, 0, 16, 6);
+  assert.strictEqual(map(writeSection, 2, 0, 131072, 7).error, 997);
+  await vfs.getIoState(7).pendingRead.provider.fill();
+  const writeView = map(writeSection, 2, 0, 131072, 7);
+  assert.strictEqual(writeView.address, readView.address);
+  wasm.test_mv_write32(writeView.address, 0x12345678);
+  assert.strictEqual(wasm.test_mv_read32(readView.address), 0x12345678);
+  assert.strictEqual(fsHost.fs_flush_view(writeView.address, 4), 1);
+  const written = vfs.files.get('c:\\write-map.bin').data;
+  assert.strictEqual(new DataView(written.buffer).getUint32(0, true), 0x12345678);
+  fsHost.fs_close_handle(writeSection);
+  fsHost.fs_unmap_view(readView.address);
+  fsHost.fs_unmap_view(writeView.address);
+  assert.strictEqual(wasm.test_mv_backed_bytes(), 0);
+  console.log('PASS  lazy shared write promotion, flush and failed-fill retirement');
 
   // Exhausted view bookkeeping must not hand out an unguarded allocation.
   // Simulate capacity directly: the rejection must not inspect or alter slots.

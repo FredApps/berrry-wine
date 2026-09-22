@@ -1146,3 +1146,43 @@ operations without overwriting dirty shared bytes. Protection changes and
 rollback of partially successful out-of-memory commits remain follow-ups;
 the current section commit uses READWRITE backing and can leave newly committed
 extents owned by the section when a later extent fails.
+
+## Shared-section runtime integration (2026-09-21)
+
+MapViewOfFile now uses the sparse section exports when available (the current
+compiled runtime supplies all three). A section owns one reservation; every
+successful map retains a view reference, including repeated maps returning the
+same base. Offset views return section base plus offset. Closing a handle and
+unmapping a view retire independent references; only the final reference frees
+the section. DuplicateHandle's close-source path uses that same retirement.
+Old allocator-only host adapters retain their existing independent-view path.
+
+Initialization is tracked as section byte intervals. Opening another view fills
+only previously uninitialized bytes, including the final mapped page up to the
+section size. Overlapping provider completions recheck these intervals after
+awaiting bytes, so neither a late successful fill nor a canceled operation can
+overwrite already visible dirty data. Parked operations retain independent
+references and publish per-thread results. READ/COPY providers remain lazy;
+WRITE still materializes its backing entry for the existing flush path. COPY
+shares modified section bytes with peer views but never writes them to the file.
+
+The native probe was extended and completed again: after BOTH same-base views
+are unmapped while the section handle remains open, VirtualQuery still reports
+the page committed. Reopening returns the same address and modified byte for
+both READWRITE and WRITECOPY. The refreshed transcript/provenance records this
+evidence; retaining backing for open handles is not an NT-based assumption.
+
+Source-compiled tests using the real filesystem imports and sparse allocator
+cover overlapping READWRITE/WRITECOPY identity and visibility, opening another
+view without reloading dirty bytes, counted repeated unmaps, handle-retained
+COPY bytes, final release, concurrent/canceled lazy fills, short-read failure
+retirement, lazy READ-to-WRITE promotion and flush. A 600 MiB lazy section uses
+only one backed page for its small views. The ordinary VFS 43/43, provider
+51/51, public file/mapping/duplicate tests, flush regression, native 54-case
+validation matrix and reference-harness checks pass.
+
+Remaining: native page protection transitions/VirtualQuery allocation metadata,
+error precedence, cross-process sections, partial-commit rollback, shared
+coherence between separately created sections of the same file, and the wide
+entry-point compatibility policy. The legacy host fallback is not a coherent
+Win98 implementation. No full-build or game/browser performance claim is made.

@@ -38,6 +38,7 @@ static void views(HANDLE file, DWORD protection, BOOL anonymous) {
   CloseHandle(section);
 }
 
+static void query(const char *label, void *address);
 static void coherence(HANDLE file, DWORD protection, DWORD access) {
   HANDLE section = CreateFileMappingA(file, NULL, protection, 0, 131072, NULL);
   volatile unsigned char *a, *b;
@@ -54,6 +55,11 @@ static void coherence(HANDLE file, DWORD protection, DWORD access) {
   emit("\r\n");
   if (a) UnmapViewOfFile((void *)a);
   if (b) UnmapViewOfFile((void *)b);
+  if (a) query("COHERENCE_UNMAPPED", (void *)a);
+  b = MapViewOfFile(section, access, 0, 0, 16);
+  field("COHERENCE_REOPEN protect=", protection); field(" address=", (DWORD)b);
+  if (b) { field(" value=", b[0]); UnmapViewOfFile((void *)b); }
+  emit("\r\n");
   CloseHandle(section);
 }
 

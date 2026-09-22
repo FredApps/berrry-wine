@@ -61,7 +61,11 @@ VIEW anon=1 protect=8 access=1 offset=0 address=0 error=87
 VIEW anon=1 protect=8 access=1 offset=4096 address=0 error=87
 VIEW anon=1 protect=8 access=1 offset=65536 address=0 error=87
 COHERENCE protect=4 access=2 a=2191044608 b=2191044608 before=77 written=23 peer=23
+COHERENCE_UNMAPPED address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=4
+COHERENCE_REOPEN protect=4 address=2191044608 value=23
 COHERENCE protect=8 access=1 a=2191044608 b=2191044608 before=23 written=77 peer=77
+COHERENCE_UNMAPPED address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=4
+COHERENCE_REOPEN protect=8 address=2191044608 value=77
 RANGE_SMALL address=2191044608 count=28 base=2191044608 allocation=2191044608 size=4096 state=4096 protect=2
 RANGE_LARGE address=2191044608 count=28 base=2191044608 allocation=2191044608 size=131072 state=4096 protect=4
 RANGE_TAIL address=2191110144 count=28 base=2191110144 allocation=2191044608 size=65536 state=4096 protect=4
