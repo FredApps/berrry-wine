@@ -113,6 +113,36 @@ const extraWat = String.raw`
   for (let i = 0; i < 2200; i++) { large.writeUInt32LE(8, 4 + i * 8); large.writeUInt32LE(i, 8 + i * 8); }
   large.writeUInt32LE(11, large.length - 4);
   run(base + 64, 256, large, true); // No whole-group 16KiB scratch limit.
+  let branchCases = 0;
+  // Status comes either from SetExecuteData or an executed SETSTATUS record.
+  // Use a high bit and noncanonical TRUE to catch signed/boolean shortcuts.
+  for (const status of [0, 0x80000000, 0xa5a55a5a, 0xffffffff])
+    for (const mask of [0, 0x80000000, 0xff, 0xffffffff])
+      for (const value of [0, 0x80000000, 0x5a, 0xffffffff])
+        for (const negate of [0, 1, 2]) for (const seedOpcode of [false, true])
+          for (const split of [0, 7, 17]) {
+            const buf = split ? base + 64 : regular;
+            const offset = split ? 4096 - 64 - split : 256;
+            e.buffer(eb, buf);
+            const branchWords = seedOpcode ? [14 | (24 << 8) | (1 << 16), 1, status, 0, 0, 0, 0] : [];
+            branchWords.push(12 | (16 << 8) | (1 << 16), mask, value, negate, 32,
+              8 | (8 << 8) | (1 << 16), 8, 7, 11, 0);
+            branchWords.forEach((v, i) => e.guest_write32(buf + offset + i * 4, v));
+            // Unlock ensures the existing per-buffer status owner before seeding.
+            call('IDirect3DExecuteBuffer_Unlock', 8, eb);
+            [48, 0, 0, offset, branchWords.length * 4, 0, 1, seedOpcode ? 0 : status, 0, 0, 0, 0]
+              .forEach((v, i) => e.guest_write32(data + i * 4, v));
+            call('IDirect3DExecuteBuffer_SetExecuteData', 12, eb, data);
+            e.guest_write32(state + 288, 0);
+            call('IDirect3DDevice_Execute', 20, dev, eb);
+            const equal = ((status & mask) >>> 0) === value;
+            const taken = negate ? !equal : equal;
+            assert.strictEqual(e.guest_read32(state + 288), taken ? 0 : 7,
+              `branch status=${status} mask=${mask} value=${value} negate=${negate} opcode=${seedOpcode} split=${split}`);
+            call('IDirect3DExecuteBuffer_GetExecuteData', 12, eb, out);
+            assert.strictEqual(e.guest_read32(out + 28) >>> 0, status, 'branch preserves status');
+            branchCases++;
+          }
   // Real render target: vary instruction and vertex crossings independently.
   const surfaceDesc = e.guest_alloc(128);
   for (let i = 0; i < 128; i++) e.guest_write8(surfaceDesc + i, 0);
@@ -170,5 +200,5 @@ const extraWat = String.raw`
     assert.strictEqual(e.guest_read8(base + 0x10000 + page * 4096 + i), 0xa7, 'neighbor backing');
   e.buffer(eb, ownedBuffer); // Borrowed test mappings are not heap owners.
   call('IDirect3DExecuteBuffer_Release', 8, eb);
-  console.log(`PASS Execute instruction walker: control + ${stream.length - 1} sparse splits + 2200-record group + ${primitiveCases} record / ${vertexCases} vertex pixel comparisons, state/matrix/status/COPY/branches/trace/ABI/guards`);
+  console.log(`PASS Execute instruction walker: control + ${stream.length - 1} sparse splits + 2200-record group + ${primitiveCases} record / ${vertexCases} vertex pixel comparisons + ${branchCases} masked branches, trace/ABI/guards`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

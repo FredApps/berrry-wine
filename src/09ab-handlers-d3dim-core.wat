@@ -6509,13 +6509,19 @@
   ;;   -1 ⇒ fall through (branch not taken; caller advances normally)
   ;;    0 ⇒ terminate execute loop (branch taken, offset==0 per spec)
   ;;   N  ⇒ resume at guest addr N (= instr_start + dwOffset; existing policy)
-  ;; Status is not yet tracked; assume 0 — so condition reduces to (value==0).
-  (func $d3dim_exec_branch (param $rec_guest i32) (param $instr_start i32) (result i32)
+  ;; SDK D3DBRANCH: compare (driver status & dwMask) with dwValue, then negate.
+  ;; Read the same retained status exposed by GetExecuteData and SETSTATUS.
+  (func $d3dim_exec_branch (param $eb_this i32) (param $rec_guest i32) (param $instr_start i32) (result i32)
+    (local $header i32) (local $status i32) (local $mask i32)
     (local $value i32) (local $negate i32) (local $offset i32) (local $taken i32)
+    (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $eb_this)))
+    (if (local.get $header) (then
+      (local.set $status (call $gl32 (i32.add (local.get $header) (i32.const 12))))))
+    (local.set $mask (call $gl32 (local.get $rec_guest)))
     (local.set $value  (call $gl32 (i32.add (local.get $rec_guest) (i32.const 4))))
     (local.set $negate (call $gl32 (i32.add (local.get $rec_guest) (i32.const 8))))
     (local.set $offset (call $gl32 (i32.add (local.get $rec_guest) (i32.const 12))))
-    (local.set $taken (i32.eqz (local.get $value)))
+    (local.set $taken (i32.eq (i32.and (local.get $status) (local.get $mask)) (local.get $value)))
     (if (local.get $negate) (then (local.set $taken (i32.eqz (local.get $taken)))))
     (if (i32.eqz (local.get $taken)) (then (return (i32.const -1))))
     (if (i32.eqz (local.get $offset)) (then (return (i32.const 0))))

@@ -228,3 +228,37 @@ full-build, browser gameplay or performance claim is made by this change.
 Remaining: malformed record sizes and vertex indices, overflow/range checking,
 branch status semantics and full application/browser verification. A trap on
 scratch exhaustion is still an emulator safety stop, not graceful API recovery.
+
+## Branch comparison follow-up (2026-09-22)
+
+Microsoft's [SDK d3dtypes.h](https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/d3dtypes.h)
+describes D3DBRANCH as masking driver status, comparing the result to dwValue,
+and optionally negating the comparison. Its D3DSTATUS definition identifies
+dwStatus separately from the flags and extent. This is the primary-source
+basis for the comparison change; Wine implementation behavior is not its basis.
+
+The old branch helper ignored dwMask and assumed status zero. Execute now
+passes the execute-buffer identity, and the helper reads the same guest-safe
+retained status that SETSTATUS writes and GetExecuteData returns. It compares
+`(status & mask) == value`, with any nonzero bNegate reversing the result.
+Target arithmetic, zero-offset termination and first-record-only handling
+are unchanged, not newly certified by this change.
+
+The extended Execute regression failed before the fix for status/mask
+0x80000000, value zero, negate zero: it incorrectly skipped a state write.
+Afterward all 1,152 combinations pass: four statuses, four masks, four values,
+three negate values (0/1/2), status seeded through either SetExecuteData or a
+SETSTATUS instruction, and three direct/sparse stream placements. Each case
+checks the observable render-state write, retained status readback and public
+stdcall ABI. Existing 195 instruction boundaries, 65 record/pixel comparisons,
+2,470 vertex layouts and the large record group still pass, as do the 32
+ExecuteData layouts and scoped static gates. Quiet243+22 and dup117/471 remain
+unchanged. No native/browser/full-build/performance claim is made.
+
+Important remaining status work: storage is still tied to the source cache;
+the regression intentionally Unlocks before seeding status. SetExecuteData
+and SETSTATUS without that owner can still lose status, and cache-allocation
+failure is not repaired here. SETSTATUS flag-selective updates, multi-record
+branch dispatch, clip-generated status and device-vs-buffer lifetime across
+Execute calls still require review/native evidence. The SDK's device-status
+lifetime comment is not sufficient evidence to certify our per-buffer storage.

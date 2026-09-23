@@ -485,7 +485,7 @@
           ;; 12 = D3DOP_BRANCHFORWARD (16-byte record; cnt is always 1 in practice)
           (if (i32.eq (local.get $op) (i32.const 12)) (then
             (local.set $branch (call $d3dim_exec_branch
-              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cursor)))
+              (local.get $arg1) (i32.add (local.get $cursor) (i32.const 4)) (local.get $cursor)))
             (if (i32.eqz (local.get $branch))
               (then (br $done)))
             (if (i32.ne (local.get $branch) (i32.const -1))
