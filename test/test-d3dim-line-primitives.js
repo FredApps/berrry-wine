@@ -34,13 +34,14 @@ const { PNG } = require('pngjs');
 const ROOT = path.join(__dirname, '..');
 const RUN = path.join(__dirname, 'run.js');
 const EXE = path.join(__dirname, 'binaries', 'dx-sdk', 'bin', 'boids.exe');
-const WASM = path.join(ROOT, 'build', 'wine-assembly.wasm');
+const WASM = process.env.WINE_ASSEMBLY_WASM || path.join(ROOT, 'build', 'wine-assembly.wasm');
 
 if (!fs.existsSync(EXE)) {
   console.log('SKIP: test/binaries/dx-sdk/bin/boids.exe not present');
   process.exit(0);
 }
 if (!fs.existsSync(WASM)) {
+  if (process.env.WINE_ASSEMBLY_WASM) throw new Error(`Pinned WASM is unavailable: ${WASM}`);
   console.log('SKIP: build/wine-assembly.wasm not built');
   process.exit(0);
 }
@@ -57,6 +58,10 @@ const result = spawnSync('node', [
   '--no-build',
   `--wasm=${WASM}`,
   '--no-close',
+  '--quiet-api',
+  // The SDK seeds the flock with srand(time(NULL)); pin its calendar origin
+  // so the same capture does not alternate between birds and terrain only.
+  '--wall-clock-ms=978307200000',
   '--max-batches=9000',
   '--dx-surfaces',
   `--input=8000:png:${png}`,

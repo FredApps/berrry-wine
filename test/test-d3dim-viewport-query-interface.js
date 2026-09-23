@@ -9,6 +9,7 @@ const extraWat=String.raw`
    (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
  (func (export "invoke") (param $id i32) (param $sp i32) (param $p i32) (param $iid i32) (param $out i32) (result i32)
    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+   (i32.store (global.get $reg_base) (i32.const 0xdeadbeef))
    (call $dispatch_api_table (local.get $id) (local.get $p) (local.get $iid) (local.get $out)
      (i32.const 0) (i32.const 0) (i32.const 0))
    (i32.load (global.get $reg_base)))
@@ -35,6 +36,13 @@ const extraWat=String.raw`
  const vtables=versions.map(v=>{const p=e.create(v),vt=e.guest_read32(p);e.release(p);return vt;});
  for(const v of versions) {
    const p=e.create(v),original=e.guest_read32(p);
+   // Clear has the same four-argument ABI on all three interfaces. A no-op
+   // clear must still write its HRESULT, not return the incoming EAX poison.
+   const clearName='IDirect3DViewport'+(v===1?'':v)+'_Clear';
+   e.guest_write32(sp+20,0x12345678);
+   assert.strictEqual(e.invoke(apis.find(a=>a.name===clearName).id,sp,p,0,0)>>>0,0,clearName+' HRESULT');
+   assert.strictEqual(e.get_esp(),sp+20,clearName+' stdcall');
+   assert.strictEqual(e.guest_read32(sp+20),0x12345678,clearName+' stack guard');
    write(iid,ddraw);e.guest_write32(out,0xdeadbeef);
    assert.strictEqual(query(v,p),0x80004002,'complete unrelated interface rejected');
    assert.strictEqual(e.guest_read32(out),0);assert.strictEqual(e.refs(p),1);

@@ -11,6 +11,9 @@ perspective with the flock above it. The bug was ours and it was in the x87:
 the (correct) investigation that led there, kept because each step rules
 something out.
 
+A separate 2026-09-22 blank-frame regression was fixed in the legacy viewport
+Clear wrappers; see [the HRESULT follow-up](#blank-again-legacy-viewport-clear-omitted-hresult-2026-09-22).
+
 Status was **WARN — BLANK (1 colour, 100%)**. This note records why, because
 the symptom reads convincingly like a dead rasterizer and is not one.
 
@@ -156,3 +159,65 @@ through an MSVC or Borland CRT, which is the usual way.
 The 2026-09-19 D3DIM/GL sweep scored `dx_boids` **IDENTICAL, 0% diff** between
 the GPU and software backends. That is two blank frames agreeing, not coverage;
 see `docs/d3d-backend-coverage.md`.
+
+## Blank again: legacy Viewport Clear omitted HRESULT (2026-09-22)
+
+A later blank frame was **not** the x87 issue above. The projection at
+`0x420720` is finite (diagonal words `3f6c835e`, `3f6c835e`, `3ec46ccc`),
+and textures contain 92 sampled colours. Nevertheless all three large render
+surfaces hold only the clear colour. The direct primitive renderer is never
+called: a one-batch, 100000-block trace reports 1619 Viewport2 Clear calls and
+1618 flips, with no draw calls.
+
+Original Microsoft DX5 `samples/boids/boids.cpp`, `D3DScene::Render`, tests
+Clear's HRESULT against D3D_OK and returns before BeginScene if it is nonzero.
+Our Viewport1 and Viewport2 Clear wrappers called the clearing helper but
+never wrote EAX. They therefore returned whatever register value the guest
+had left there. Viewport3's wrapper already writes S_OK correctly.
+
+The two legacy wrappers now forward to the shared Viewport3 handler, retaining
+its worker fence, return value and identical four-argument stdcall cleanup.
+This is not a new always-success shortcut: it uses the existing implementation
+and leaves its rectangle/error-policy limitations unchanged. The interface
+regression seeds EAX with `0xdeadbeef`, invokes Clear through each version,
+and checks S_OK, ESP+20 and the following stack guard. Before the fix it fails
+with `3735928559 !== 0`; after the fix all three versions pass.
+
+The existing real-app line test now honours `WINE_ASSEMBLY_WASM` for isolated
+candidate testing (a missing pin is an error) and uses quiet API logging. Its 9000-batch run, 8000-batch
+capture and image assertions are unchanged. The original noisy run timed out
+at its 180-second harness limit on this loaded host; independent short probes
+established the blank frame instead of interpreting that timeout as rendering
+evidence.
+
+With the isolated rebuilt candidate:
+
+- `test-d3dim-line-primitives.js` passes: 10 colours, 0.64% geometry.
+- A three-batch 100000-block run records 385 DrawIndexedPrimitive calls,
+  six BeginScene calls and five EndScene calls. Its capture visibly contains
+  the terrain grid and coloured flock rather than a flat clear surface.
+- Viewport interface/ABI regression, 211-method interface spec, fragment,
+  logical-operand, ESP and duplicate/silent-stub gates pass. Inventories remain
+  243+22 silent handlers and 117/471 duplicate groups/members.
+
+Artifacts/logs: `/private/tmp/wa-boids-clear-fixed.wasm`,
+`/private/tmp/wa-boids-clear-fixed.png`, `/private/tmp/wa-boids-clear-fixed.log`.
+The failing projection/census probe is `/private/tmp/wa-boids-isolated.log`;
+the clear/flip trace is `/private/tmp/wa-boids-draw-trace.log`. No performance
+claim is made, and this does not certify native near-plane line clipping.
+
+The full main build also passes (1,505,311-byte normal / 1,507,717-byte compat;
+layout `ef4939693f389572`). The main normal artifact is byte-identical to the
+isolated candidate, SHA-256
+`66b533e57bc12b889be5d8c465dce44bf2ece4236f327f25f813aaa32db64ef4`.
+The browser probe `tools/web-input-probe.js --app=dx_boids` with a six-second
+post-launch wait shows multiple coloured birds over the terrain grid;
+capture `/private/tmp/wa-boids-browser-fixed.png` was visually inspected.
+
+Repeating the original unpinned-clock test against those identical artifacts
+gave both a two-colour failure and a nine-colour pass. SDK `boids.cpp:281`
+calls `srand(time(NULL))`, so the flock's position at the capture depends on
+launch calendar time. The test now pins `--wall-clock-ms=978307200000` using
+the existing harness option. It does not loosen its colour/geometry assertions
+or change the runtime clock default for users.
+Two consecutive pinned-clock runs pass identically: 14 colours, 0.88% geometry.

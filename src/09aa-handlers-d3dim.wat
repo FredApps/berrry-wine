@@ -1407,9 +1407,8 @@
 
   ;; IDirect3DViewport_Clear — 4 args (incl. this)
   (func $handle_IDirect3DViewport_Clear (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_viewport_clear_full (local.get $arg0) (local.get $arg3)
-      (call $d3dim_viewport_background_color (local.get $arg0)) (f32.const 1.0))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
+    (call $handle_IDirect3DViewport3_Clear (local.get $arg0) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; IDirect3DViewport_AddLight — 2 args (incl. this)
   (func $handle_IDirect3DViewport_AddLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -1480,9 +1479,8 @@
 
   ;; IDirect3DViewport2_Clear — 4 args (incl. this)
   (func $handle_IDirect3DViewport2_Clear (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_viewport_clear_full (local.get $arg0) (local.get $arg3)
-      (call $d3dim_viewport_background_color (local.get $arg0)) (f32.const 1.0))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
+    (call $handle_IDirect3DViewport3_Clear (local.get $arg0) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; IDirect3DViewport2_AddLight — 2 args (incl. this)
   (func $handle_IDirect3DViewport2_AddLight (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
