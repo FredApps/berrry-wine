@@ -505,14 +505,54 @@ const blobsAt = (band) => {
     // clean case the game itself could notice.
     const guestProblems = [...guest.problems];
     await guest.ctx.close();
-    const banner = await host.page.waitForFunction(() => {
-      const el = document.getElementById('wine-lan-notice');
-      if (!el || el.style.display === 'none') return null;
-      return el.querySelector('.wine-lan-notice-text').textContent;
-    }, { timeout: 30000, polling: 500 }).then(h => h.jsonValue(), () => null);
+    const over = await host.page.waitForFunction(() => {
+      const el = document.querySelector('#wine-lan-card.wine-lan-over');
+      if (!el) return null;
+      return {
+        title: el.querySelector('.wine-lan-over-title').textContent,
+        choices: [...el.querySelectorAll('button')].map(b => b.dataset.choice),
+      };
+    }, { timeout: 60000, polling: 500 }).then(h => h.jsonValue(), () => null);
     check('the host is told the other player disconnected',
-      !!banner && /disconnect/i.test(banner), String(banner));
+      !!over && /disconnect|left/i.test(over.title), JSON.stringify(over));
+    check('and is offered to wait, host again, find another game or quit',
+      !!over && ['stay', 'host', 'find', 'quit'].every(c => over.choices.includes(c)),
+      JSON.stringify(over));
     await snap(host, 'host-peer-gone');
+
+    // ---- "Host a new game": the page, not the game, gets it back online -----
+    //
+    // The old match is serving to nobody, and nothing in the game will leave
+    // it. The card boots Blobby again in a room of its own, and lan.host.inGame
+    // walks the fresh game's menus to SPIEL BEGINNEN!; the probe seeing a
+    // DirectPlay session again is the proof it got there.
+    const firstWine = await host.page.evaluate(() => {
+      window.__firstWine = runningApps[0] && runningApps[0].wine;
+      document.querySelector('#wine-lan-card.wine-lan-over button[data-choice="host"]').click();
+      return !!window.__firstWine;
+    });
+    const rebooted = await H.until(host.page, 'host: never started over', () =>
+      runningApps.length === 1 && runningApps[0].wine !== window.__firstWine
+      && !!runningApps[0].wine.vlanWire, null, MILESTONE_MS);
+    check('Host a new game started the game over in a new room',
+      firstWine && !!rebooted && (await host.page.evaluate(wireOf)).address === '10.0.0.1');
+    const reshared = await H.until(host.page, 'host: no share card after starting over', () =>
+      !!document.querySelector('#wine-lan-share .wine-lan-share-url'), null, 60000);
+    check('the new room offers its link to share', !!reshared);
+    await host.page.evaluate(() => {
+      const ok = [...document.querySelectorAll('#wine-lan-share button')].find(b => b.textContent === 'OK');
+      if (ok) ok.click();
+    });
+    const walked = await H.until(host.page, 'host: the host recipe never finished', () =>
+      /is hosting a new game/.test(document.getElementById('log').textContent), null, MILESTONE_MS);
+    check('lan.host.inGame walked the fresh game into hosting', !!walked);
+    const rehosted = await H.until(host.page, 'host: the probe never saw the new session', () => {
+      const chip = document.getElementById('wine-lan-chip');
+      const t = chip ? chip.textContent : '';
+      return /hosting/.test(t) ? t : null;
+    }, null, MILESTONE_MS);
+    check(`the probe saw the new DirectPlay session (${rehosted})`, !!rehosted);
+    await snap(host, 'host-rehosted');
 
     const problems = [...host.problems, ...guestProblems];
     check('neither page reported an error', problems.length === 0, problems.join(' | '));
