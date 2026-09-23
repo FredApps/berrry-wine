@@ -3725,13 +3725,8 @@
   (global $propsheet_finish_page (mut i32) (i32.const 0))
   (global $propsheet_finish_nmhdr (mut i32) (i32.const 0))
   (global $ddenum_ret_thunk (mut i32) (i32.const 0)) ;; CACA0007 DDEnumerate callback return
-  ;; D3D EnumDevices multi-device iteration state (CACA000B)
+  ;; D3D EnumDevices continuation (CACA000B); invocation state is stack-owned.
   (global $d3d_enum_dev_thunk (mut i32) (i32.const 0))
-  (global $d3d_enum_dev_idx   (mut i32) (i32.const 0))
-  (global $d3d_enum_dev_cb    (mut i32) (i32.const 0))
-  (global $d3d_enum_dev_ctx   (mut i32) (i32.const 0))
-  (global $d3d_enum_dev_ret   (mut i32) (i32.const 0))
-  (global $d3d_enum_dev_mode  (mut i32) (i32.const 0)) ;; 0=legacy D3D1/2/3, 7=D3D7
 
   ;; EnumChildWindows iteration state (CACA002B). The callback runs once per
   ;; child and may stop the walk by returning FALSE, so the scan position has

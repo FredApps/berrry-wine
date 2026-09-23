@@ -2656,43 +2656,64 @@
   ;; count only RGB HEL descriptors and assume one such entry per adapter.
   ;; Caller has captured the saved return addr and already popped stdcall args.
   ;; Dispatches callback N times via CACA000B continuation thunk.
+  ;; Invocation-owned 588-byte record: cb/ctx/ret/index/version (20 bytes),
+  ;; GUID (16), description (32), name (16), HW/caps7 (252), HEL (252).
+  ;; The hidden stack slot owns it until cancellation or exhaustion.
   (func $d3d_enum_devices_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32) (param $version i32)
-    ;; Push saved caller ret once (stays on stack across all iterations).
+    (local $record i32) (local $state i32)
+    (local.set $record (call $heap_alloc (i32.const 588)))
+    (if (i32.eqz (local.get $record))
+      (then
+        (i32.store (global.get $reg_base) (i32.const 0x8007000E))
+        (global.set $eip (local.get $ret_addr))
+        (return)))
+    (local.set $state (call $g2w (local.get $record)))
+    (i32.store (local.get $state) (local.get $cb))
+    (i32.store offset=4 (local.get $state) (local.get $ctx))
+    (i32.store offset=8 (local.get $state) (local.get $ret_addr))
+    (i32.store offset=12 (local.get $state) (i32.const 0))
+    (i32.store offset=16 (local.get $state) (local.get $version))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret_addr))
-    (global.set $d3d_enum_dev_mode (local.get $version))
-    (global.set $d3d_enum_dev_cb  (local.get $cb))
-    (global.set $d3d_enum_dev_ctx (local.get $ctx))
-    (global.set $d3d_enum_dev_ret (local.get $ret_addr))
-    (global.set $d3d_enum_dev_idx (i32.const 0))
-    (call $d3d_enum_devices_dispatch))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $record))
+    (if (i32.eq (local.get $version) (i32.const 7))
+      (then (call $d3d_enum_devices7_dispatch (local.get $record)))
+      (else (call $d3d_enum_devices_dispatch (local.get $record)))))
+
+  (func $d3d_enum_devices_finish (param $record i32)
+    (local $ret_addr i32)
+    (local.set $ret_addr (call $gl32 (i32.add (local.get $record) (i32.const 8))))
+    (call $heap_free (local.get $record))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (i32.store (global.get $reg_base) (i32.const 0))
+    (global.set $eip (local.get $ret_addr)))
 
   ;; Fills per-device GUID/desc/name and invokes the guest callback.
-  ;; If idx past end, pops saved ret + sets EAX=DD_OK and returns to caller.
-  (func $d3d_enum_devices_dispatch
+  ;; If idx past end, frees the record and returns DD_OK to the caller.
+  (func $d3d_enum_devices_dispatch (param $record i32)
+    (local $state i32)
     (local $idx i32) (local $kind i32) (local $count i32)
     (local $guid i32) (local $desc i32) (local $name i32)
     (local $hw i32) (local $hel i32) (local $wa i32) (local $is_hal i32) (local $desc_wa i32) (local $name_wa i32)
-    (local.set $idx (global.get $d3d_enum_dev_idx))
+    (local.set $state (call $g2w (local.get $record)))
+    (local.set $idx (i32.load offset=12 (local.get $state)))
     ;; Device kinds: 0=Ramp, 1=RGB, 2=HAL.  D3D3 starts at RGB.
     (local.set $count
       (select (i32.const 3) (i32.const 2)
-        (i32.le_u (global.get $d3d_enum_dev_mode) (i32.const 2))))
+        (i32.le_u (i32.load offset=16 (local.get $state)) (i32.const 2))))
     (if (i32.ge_u (local.get $idx) (local.get $count))
       (then
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) ;; pop saved ret
-        (global.set $eip (global.get $d3d_enum_dev_ret))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (call $d3d_enum_devices_finish (local.get $record))
         (return)))
     (local.set $kind
       (i32.add (local.get $idx)
         (select (i32.const 0) (i32.const 1)
-          (i32.le_u (global.get $d3d_enum_dev_mode) (i32.const 2)))))
-    (local.set $guid (call $heap_alloc (i32.const 16)))
-    (local.set $wa (call $g2w (local.get $guid)))
-    (local.set $desc (call $heap_alloc (i32.const 32)))
-    (local.set $name (call $heap_alloc (i32.const 16)))
-    (local.set $desc_wa (call $g2w (local.get $desc))) (local.set $name_wa (call $g2w (local.get $name)))
+          (i32.le_u (i32.load offset=16 (local.get $state)) (i32.const 2)))))
+    (local.set $guid (i32.add (local.get $record) (i32.const 20)))
+    (local.set $wa (i32.add (local.get $state) (i32.const 20)))
+    (local.set $desc (i32.add (local.get $record) (i32.const 36)))
+    (local.set $name (i32.add (local.get $record) (i32.const 68)))
+    (local.set $desc_wa (i32.add (local.get $state) (i32.const 36)))
+    (local.set $name_wa (i32.add (local.get $state) (i32.const 68)))
     (local.set $is_hal (i32.const 0))
     (if (i32.eq (local.get $kind) (i32.const 0))
       (then
@@ -2739,9 +2760,9 @@
         (i32.store (local.get $name_wa) (i32.const 0x006C6168))
         (local.set $is_hal (i32.const 1))))
     ;; HW + HEL descs
-    (local.set $hw  (call $heap_alloc (i32.const 252)))
+    (local.set $hw (i32.add (local.get $record) (i32.const 84)))
     (call $fill_d3d_device_desc (local.get $hw)  (local.get $is_hal))
-    (local.set $hel (call $heap_alloc (i32.const 252)))
+    (local.set $hel (i32.add (local.get $record) (i32.const 336)))
     (call $fill_d3d_device_desc (local.get $hel) (i32.const 0))
     ;; RGB/Ramp are software devices, so their HW descriptor is invalid.
     ;; HAL's HEL descriptor is valid fallback data but has no color model.
@@ -2756,7 +2777,7 @@
       (then (call $gs32 (i32.add (local.get $hel) (i32.const 8)) (i32.const 1))))
     ;; Push callback args right-to-left: ctx, helDesc, hwDesc, name, desc, guid
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_dev_ctx))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.load offset=4 (local.get $state)))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $hel))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
@@ -2770,52 +2791,41 @@
     ;; Push callback return = CACA000B
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_dev_thunk))
-    (global.set $eip (global.get $d3d_enum_dev_cb))
+    (global.set $eip (i32.load offset=0 (local.get $state)))
     (global.set $steps (i32.const 0)))
 
-  ;; CACA000B: callback returned; callback popped its 6 args via `ret 0x18`.
+  ;; CACA000B: callback returned; callback popped 6 legacy args or 4 D3D7 args.
   ;; If callback returned DDENUMRET_CANCEL (0), stop; else advance idx.
   (func $d3d_enum_devices_continue
-    (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
-      (then
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) ;; pop saved ret
-        (global.set $eip (global.get $d3d_enum_dev_ret))
-        (global.set $d3d_enum_dev_mode (i32.const 0))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (return)))
-    (global.set $d3d_enum_dev_idx (i32.add (global.get $d3d_enum_dev_idx) (i32.const 1)))
-    (if (i32.eq (global.get $d3d_enum_dev_mode) (i32.const 7))
-      (then
-        (call $d3d_enum_devices7_dispatch)
-        (return)))
-    (call $d3d_enum_devices_dispatch))
+    (local $record i32) (local $state i32)
+    (local.set $record (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (if (i32.eqz (i32.load (global.get $reg_base)))
+      (then (call $d3d_enum_devices_finish (local.get $record)) (return)))
+    (local.set $state (call $g2w (local.get $record)))
+    (i32.store offset=12 (local.get $state) (i32.add (i32.load offset=12 (local.get $state)) (i32.const 1)))
+    (if (i32.eq (i32.load offset=16 (local.get $state)) (i32.const 7))
+      (then (call $d3d_enum_devices7_dispatch (local.get $record)))
+      (else (call $d3d_enum_devices_dispatch (local.get $record)))))
 
   ;; D3D7 EnumDevices callback signature:
   ;; EnumDevicesCallback(lpDeviceDescription, lpDeviceName, lpD3DDeviceDesc7, lpContext).
   (func $d3d_enum_devices7_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret_addr))
-    (global.set $d3d_enum_dev_mode (i32.const 7))
-    (global.set $d3d_enum_dev_cb  (local.get $cb))
-    (global.set $d3d_enum_dev_ctx (local.get $ctx))
-    (global.set $d3d_enum_dev_ret (local.get $ret_addr))
-    (global.set $d3d_enum_dev_idx (i32.const 0))
-    (call $d3d_enum_devices7_dispatch))
+    (call $d3d_enum_devices_invoke (local.get $cb) (local.get $ctx) (local.get $ret_addr) (i32.const 7)))
 
-  (func $d3d_enum_devices7_dispatch
+  (func $d3d_enum_devices7_dispatch (param $record i32)
+    (local $state i32)
     (local $idx i32) (local $desc i32) (local $name i32) (local $caps i32) (local $desc_wa i32) (local $name_wa i32)
-    (local.set $idx (global.get $d3d_enum_dev_idx))
+    (local.set $state (call $g2w (local.get $record)))
+    (local.set $idx (i32.load offset=12 (local.get $state)))
     ;; 0=HAL, 1=RGB software. D3D7 exposes no GUID in the callback.
     (if (i32.ge_u (local.get $idx) (i32.const 2))
       (then
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) ;; pop saved ret
-        (global.set $eip (global.get $d3d_enum_dev_ret))
-        (global.set $d3d_enum_dev_mode (i32.const 0))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (call $d3d_enum_devices_finish (local.get $record))
         (return)))
-    (local.set $desc (call $heap_alloc (i32.const 32)))
-    (local.set $name (call $heap_alloc (i32.const 16)))
-    (local.set $desc_wa (call $g2w (local.get $desc))) (local.set $name_wa (call $g2w (local.get $name)))
+    (local.set $desc (i32.add (local.get $record) (i32.const 36)))
+    (local.set $name (i32.add (local.get $record) (i32.const 68)))
+    (local.set $desc_wa (i32.add (local.get $state) (i32.const 36)))
+    (local.set $name_wa (i32.add (local.get $state) (i32.const 68)))
     (if (i32.eq (local.get $idx) (i32.const 0))
       (then
         ;; "Direct3D HAL\0"
@@ -2834,14 +2844,14 @@
         (i32.store offset=12 (local.get $desc_wa)                 (i32.const 0x0000006E))
         ;; "rgb\0"
         (i32.store (local.get $name_wa) (i32.const 0x00626772))))
-    (local.set $caps (call $heap_alloc (i32.const 236)))
+    (local.set $caps (i32.add (local.get $record) (i32.const 84)))
     (call $d3dim_fill_device_desc7 (local.get $caps))
     (if (i32.eq (local.get $idx) (i32.const 0))
       (then
-        (i32.store (call $g2w (local.get $caps)) (i32.const 0x8AEA0)))) ;; HAL-style dev caps
+        (i32.store offset=84 (local.get $state) (i32.const 0x8AEA0)))) ;; HAL-style dev caps
     ;; Push callback args right-to-left: ctx, caps7, name, desc.
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_dev_ctx))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.load offset=4 (local.get $state)))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $caps))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
@@ -2850,7 +2860,7 @@
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $desc))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_dev_thunk))
-    (global.set $eip (global.get $d3d_enum_dev_cb))
+    (global.set $eip (i32.load offset=0 (local.get $state)))
     (global.set $steps (i32.const 0)))
 
   ;; ── IDirect3D3::EnumZBufferFormats — report a single 16-bit Z format ──
