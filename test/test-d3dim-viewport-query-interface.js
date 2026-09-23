@@ -34,6 +34,7 @@ const extraWat=String.raw`
  (export "detach" (func $d3dim_device_delete_viewport))
  (export "release_device" (func $d3dim_device_release))
  (export "select_viewport" (func $d3dim_device_set_current_viewport))
+ (export "device_state" (func $d3ddev_state))
  (func (export "max_slots") (result i32) (global.get $DX_MAX))
  (func (export "slot") (param $p i32) (result i32) (call $dx_slot_of (call $dx_from_this (local.get $p))))
  (func (export "data_slots") (result i32) (i32.div_u (global.get $D3DIM_VIEWPORT_DATA_SIZE) (i32.const 4)))
@@ -225,6 +226,51 @@ const extraWat=String.raw`
    write(vp,[44,...Array(10).fill(0)]);
    assert.strictEqual(invoke(3,'GetViewport2',obj,vp),0);
    assert.deepStrictEqual(words(vp),desc);
+ }
+ // MS Device3 SetCurrentViewport explicitly accepts an unset descriptor:
+ // 5666fd12 tests initialized, then jumps over activation to the ref transfer.
+ // An unset selection must not manufacture data or replace transform cache.
+ const deviceCall=(revision,method,arg)=>{
+   const name=`IDirect3DDevice${revision}_${method}`;
+   e.guest_write32(sp+12,0x12345678);
+   const hr=e.invoke(apis.find(a=>a.name===name).id,sp,device,arg,0)>>>0;
+   assert.strictEqual(e.get_esp(),sp+12,name+' stdcall');
+   assert.strictEqual(e.guest_read32(sp+12),0x12345678,name+' stack guard');
+   abiCalls++;return hr;
+ };
+ const state=e.device_state(device);
+ const transformCache=()=>[
+   ...Array.from({length:10},(_,i)=>e.guest_read32(state+3088+i*4)),
+   ...Array.from({length:7},(_,i)=>e.guest_read32(state+3904+i*4)),
+ ];
+ for(const revision of [2,3]) {
+   const unset=e.create(revision),heap=e.live_heap();
+   const cached=transformCache(),oldRefs=e.refs(a);
+   assert.strictEqual(e.attach(device,unset),0);
+   for(let repeat=0;repeat<2;repeat++) {
+     assert.strictEqual(deviceCall(revision,'SetCurrentViewport',unset),0);
+     assert.strictEqual(e.refs(unset),3,'list and selection each own a reference');
+     assert.strictEqual(e.refs(a),oldRefs-1,'old selection reference released only once');
+     assert.strictEqual(e.data(unset),0,'selection does not initialize descriptor');
+     assert.strictEqual(e.live_heap(),heap+1,'only the attachment node was allocated');
+     assert.deepStrictEqual(transformCache(),cached,'unset selection preserves transform cache');
+   }
+   assert.strictEqual(deviceCall(revision,'GetCurrentViewport',out),0);
+   assert.strictEqual(e.guest_read32(out),unset);
+   assert.strictEqual(e.release(unset),3);
+   write(vp,[44,...Array(10).fill(0x12345678)]);
+   assert.strictEqual(invoke(revision,'GetViewport2',unset,vp),0x88760305);
+   assert.deepStrictEqual(words(vp),[44,...Array(10).fill(0x12345678)]);
+   write(vp,descB);
+   assert.strictEqual(invoke(revision,'SetViewport2',unset,vp),0);
+   assert.deepStrictEqual(Array.from({length:4},(_,i)=>e.guest_read32(state+3088+i*4)),descB.slice(1,5),
+     'initializing the selected viewport activates its rectangle');
+   assert.notDeepStrictEqual(transformCache(),cached,'late initialization activates clip coefficients');
+   assert.strictEqual(e.select_viewport(device,a),0);
+   assert.deepStrictEqual(transformCache(),cached,'previous initialized viewport can be restored');
+   assert.strictEqual(e.detach(device,unset),0);
+   assert.strictEqual(e.release(unset),0);
+   assert.strictEqual(e.live_heap(),heap,'late descriptor and attachment allocation freed');
  }
  // Exercise the actual highest DX slot, not just a small-slot happy path.
  assert(e.data_slots()>=e.max_slots());assert(e.light_slots()>=e.max_slots());

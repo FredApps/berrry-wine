@@ -188,7 +188,8 @@ compiled test module; production has no fault flag. Viewport2 adapters forward
 to the Viewport3 handlers so ABI cleanup is not duplicated.
 
 Still open: **projection/clip/depth application**, device-generation-dependent
-validation and render-target bounds, rejecting uninitialized SetCurrentViewport,
+validation and render-target bounds, verifying uninitialized SetCurrentViewport
+(later resolved below: selection is allowed),
 and native floating-point exception/rounding details. Legacy GetViewport on an
 unset record returns the error without synthesizing bytes from uninitialized
 stack memory; those native failure-output bytes are not modeled. This state
@@ -273,7 +274,7 @@ height, clip dimensions and depth span before writing its cached transform.
 Its target `0x566afe46` is `pop esi; leave; ret`. Application now similarly
 leaves the previous transform cache unchanged for those degenerate inputs.
 This does not implement the separate generation-dependent setter validation,
-activation HRESULT or uninitialized-selection policy. NaN/infinity and exact
+activation HRESULT policy. Uninitialized selection is resolved below. NaN/infinity and exact
 x87 rounding still need native execution evidence.
 
 Regression started red: identity WVP with clip box `[1,3] x [0,2]`, depth
@@ -297,3 +298,37 @@ Rebuilt Boids passes at14 colours/0.75% geometry (previous state-only step:
 conformance claim: nondefault viewport scales now affect projection.
 Interface211, fragment109, ESP/epilogue, logical-operand, tier1498, silent243+22,
 duplicate117/467 and diff checks pass. No benchmark was run.
+
+## Correction: uninitialized selection is allowed (2026-09-23)
+
+The earlier suggestion to reject an uninitialized SetCurrentViewport was
+incorrect. The activation helper's `0x88760305` is not the setter's behavior:
+the public setter deliberately avoids that helper for an unset descriptor.
+
+- Device2 table `0x566612d8`, slot13, points to `0x5666fc34`. This adapter
+  adjusts the interface pointer by+4 and calls Device3 slot12.
+- Device3 table `0x56661230`, slot12, points to `0x5666fc48`.
+- The core validates viewport ownership at `0x5666fce0`, saves the old current
+  pointer at `0x5666fcfb`, and tentatively selects the new pointer at
+  `0x5666fd01`.
+- At `0x5666fd12` it tests viewport+`0x5c` (initialized). Zero jumps to
+  `0x5666fd3b`, bypassing activation. Otherwise activation is called at
+  `0x5666fd19`; failure restores the previous pointer at `0x5666fd25`.
+- The successful path releases the old selection, AddRefs the new selection,
+  then returns S_OK at `0x5666fd5d`. The unset path takes this same path.
+
+No production change is needed for unset selection. New public Device2/3
+regressions seal S_OK/ABI, repeated selection reference balance, unchanged
+transform cache, no invented descriptor/allocation, GetCurrentViewport identity,
+GetViewport2 still reporting unset, and later SetViewport2 activating the
+selected viewport. Restoring the previous viewport restores its cache, and
+detachment/final release balances the late allocation.
+
+This removes a false work item, not the remaining activation-error work:
+rollback on an initialized viewport's backend failure and generation-dependent
+SetViewport2 range validation remain open. Evidence is static Microsoft binary
+inspection, not a native Windows execution claim.
+
+Validation: updated viewport suite passes450 poisoned-EAX/stack-guard calls;
+tier membership1499 and diff checks pass. No runtime source or build artifact
+changed in this correction.
