@@ -41,6 +41,7 @@ const path = require('path');
 const { makeVm } = require('../tools/toyvm/vm');
 const { runDos } = require('../tools/toyvm/run-dos');
 const { PSP_SEG } = require('../tools/toyvm/dos');
+const { compileProgram } = require('../tools/toyvm/compile');
 
 const fail = [];
 const check = (ok, msg) => { if (!ok) fail.push(msg); console.log(`${ok ? 'PASS' : 'FAIL'}  ${msg}`); };
@@ -132,6 +133,16 @@ const SHAPES = {
   jmpnext: (until) => loop([0xEC, 0xEB, 0x00, 0xA8, 0x08], until ? 0x74 : 0x75),
   // mov dx,3DAh / in / mov ah,0 / test ax,8 / jcc               (alpha)
   testax: (until) => loop([0xBA, 0xDA, 0x03, 0xEC, 0xB4, 0x00, 0xA9, 0x08, 0x00], until ? 0x74 : 0x75),
+  // L: mov dx,3DAh / in / and al,8 / cmp al,8 / jcc out / jmp L / out:
+  // -- the exit is not the loop's last op, so a route out could in principle
+  // tie with the `jmp` round; the exit search has to clear it  (BABYTRO)
+  jmpback: (until) => [0xBA, 0xDA, 0x03, 0xEC, 0x24, 0x08, 0x3C, 0x08,
+    until ? 0x74 : 0x75, 0x02, 0xEB, 0xF4],
+  // L: mov dx,3DAh / in / test al,8 / jnz L, then the canonical `jz` wait,
+  // which the twin takes -- the first wait's exit runs straight into that
+  // twin, which the exit search must see through                 (JULTRO)
+  intotwin: (until) => (until ? SHAPES.canonical(true)
+    : loop([0xBA, 0xDA, 0x03, 0xEC, 0xA8, 0x08], 0x75)),
   // in / inc bx / test al,8 / jcc -- a pass count, so NOT a pure spin
   counter: (until) => loop([0xEC, 0x43, 0xA8, 0x08], until ? 0x74 : 0x75),
 };
@@ -216,11 +227,40 @@ async function spellings(dir) {
   }
 }
 
+// 5. THE TIE. `L: mov dx,3DAh / in / and / cmp / jz out / jmp L` with
+// `out: ret` must NOT be taken: a return to L after the `jz` costs exactly
+// what the `jmp` round does, so the arm could not tell that pass from one
+// round the loop, and the ret's target is unknown at compile time. The same
+// loop exiting into straight-line code that cannot get back that cheaply
+// must be taken. Compile-only: this is the compiler's decision, not a clock.
+function tie() {
+  const poll = [0xBA, 0xDA, 0x03, 0xEC, 0x24, 0x08, 0x3C, 0x08, 0x74, 0x02, 0xEB, 0xF4];
+  const spins = (out) => {
+    const mem = new Uint8Array(0x10000);
+    mem.set([...poll, ...out], 0x100);
+    return compileProgram((a) => mem[a & 0xFFFF], 0, 0x100, { arenaBase: 0x100000 }).spinBlocks;
+  };
+  const ret = spins([0xC3]);
+  check(ret === 0, `a ret right behind the exit ties with the loop's own jmp: not taken (${ret})`);
+  // out: mov ax,[bp-2] / cmp ax,[bp-6] / int 20h -- three steps before anything can jump
+  const far = spins([0x8B, 0x46, 0xFE, 0x3B, 0x46, 0xFA, 0xCD, 0x20]);
+  check(far === 1, `an exit into code that cannot get back in two steps: taken (${far})`);
+  // JULTRO: `L1: mov dx,3DAh / in / test al,8 / jnz L1 / L2: in / test al,8 /
+  // jz L2 / int 20h`. L2 becomes a port-spin twin first, which has no fixed
+  // charge; it only takes steps, so the search follows it as a lower bound and
+  // L1 is taken too -- two sites, not one.
+  const mem = new Uint8Array(0x10000);
+  mem.set([0xBA, 0xDA, 0x03, 0xEC, 0xA8, 0x08, 0x75, 0xF8, 0xEC, 0xA8, 0x08, 0x74, 0xFB, 0xCD, 0x20], 0x100);
+  const both = compileProgram((a) => mem[a & 0xFFFF], 0, 0x100, { arenaBase: 0x100000 }).spinBlocks;
+  check(both === 2, `a wait whose exit falls into a twin: both folded (${both} site(s))`);
+}
+
 async function main() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-retrace-'));
   const com = path.join(dir, 'RETRACE.COM');
   fs.writeFileSync(com, retraceCom());
   await shape();
+  tie();
   await rate(com);
   await spellings(dir);
   fs.rmSync(dir, { recursive: true, force: true });

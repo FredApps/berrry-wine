@@ -340,12 +340,32 @@ property the skip needs instead, and puts `in_8_gspin` on the `in`:
   read follows an op that writes all flags. `inc bx` in the loop declines.
 - **No tie.** The twin arms on (site, `$steps`, status) and matches "one pass
   of steps later, same site, same status". An exit followed by other code
-  that re-enters the loop at a block start could in principle arrive at the
-  same count; it has run at least one step of its own, so it can only tie if
-  the loop reaches that block start from the exit at cost >= 1. A loop where
-  every block start after an exit is reached at cost 0 has no such route;
-  anything else declines. (That is what leaves BABYTRO's `jz out / jmp head`
-  alone.)
+  that gets back to the `in` could in principle arrive at the same count. So
+  from each exit's target the compiled code is walked by exact step count,
+  and the site declines if any route reaches the `in` at exactly the cost the
+  loop itself takes from that exit. A route the walk cannot follow (a return,
+  an indirect jump, an edge out of this compile, an op with no fixed charge)
+  counts as a tie if it is taken early enough that some landing could still
+  make up the difference. A handback ends a route harmlessly, because run()
+  clears the arm each slice. The one variable-charge op the walk does see
+  through is the pspin twin: it only takes steps (at least 3) and leaves by
+  its own edges, so the walk carries on from it with the cost as a lower
+  bound.
+
+The loop itself is the *shortest* cycle back to the `in` (a BFS over the arena
+edges), not the first one a depth-first walk meets — BABYTRO's wait exits into
+a frame loop that comes back round too, and the first-edge walk handed the
+purity test the whole frame loop.
+
+That takes BABYTRO's `L: mov dx,3DAh / in / and / cmp / jz out / jmp L`, whose
+`jz` exit is not the loop's last op, and still declines the same loop followed
+by `out: ret`, where the return could land on `L` at exactly the `jmp`'s cost.
+A first version treated the pspin twin as unknown and so declined every
+`jnz L1 / L2: in / test / jz L2` pair whose second wait was already a twin
+(JULTRO lost 5 of its 10 sites, and 25% of its time); following the twin as a
+lower bound gave them back. Against a53e91b2: **199/199 exact**, BABYTRO
+x0.35 (~210 -> 74ms, interleaved three times), JULTRO at parity, and nothing
+else outside noise when re-timed interleaved.
 
 Then a pass is a function of the status it reads, a hit proves the last pass
 went round, and every pass that reads the same status again does too.
@@ -356,4 +376,6 @@ x0.271, NFO x0.37, brainbug x0.48, DIESEL x0.65, DRAGON x0.68. The slow tail
 (RUN_IT x1.14, DFUSE x1.08, BLUE x1.16) re-timed interleaved three times is
 within noise. `test/test-toyvm-retrace.js` runs each spelling folded and with
 `spinLoops: false` and requires the same dispatches, BIOS ticks and 3DAh read
-count, that the pure spellings were rewritten and that the counter was not.
+count, that the pure spellings were rewritten and that the counter was not;
+its compile-only `tie()` checks the `ret` tie declines, an exit into
+straight-line code is taken, and a wait falling into a twin gives two sites.

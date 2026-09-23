@@ -1165,19 +1165,50 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
 //  3. The only way back at exactly one pass's cost is round the loop. The
 //     twin's arm matches on "one pass of steps since this site read", and an
 //     exit edge followed by other code could in principle come back to the
-//     loop at the same count. It enters the loop at a block start X, having
-//     run at least one step of its own; the loop runs from the exit to X in
-//     some cost d. The two routes can tie only if d >= 1 -- so a loop in which
-//     every block start after an exit is reached at cost 0 has no such route,
-//     and one that has any declines.
+//     `in` at the same count -- BABYTRO's `jz out / jmp head` would tie with an
+//     `out: ret` that returned to the head. So from each exit's target the
+//     compiled code is searched, by exact step count, for any route that
+//     reaches the `in` at the cost the loop itself takes from that exit. A
+//     route the search cannot follow (a return, an indirect jump, an edge out
+//     of this compile, an op with no fixed charge) counts as a tie if it is
+//     taken within that cost, because it could land anywhere. A handback ends
+//     the slice, and run() clears the arm, so it ends a route harmlessly.
 //
 // The walk follows the arena edges (TAKEN_AT, and a branch's operand tail says
 // which kind it is: 2 words for a jump, 3 for a traced branch, 4 for a plain
 // one). Straight-line flow into the next block start is only a traced
 // branch's fall-through; anything else there is a handback, and ends it.
 const GS_FACTS = [];
+const GS_FLOW = [];
 let gsSite = 0;
 let gsEffects = null;
+
+// What $next charges plus what the handler charges itself: a fused
+// compare-and-branch pays for the op it swallowed, the synthetic jump gives its
+// step back. Any other write to $steps is not a fixed charge (undefined).
+function gsCharge(x) {
+  const sets = (x.body.match(/global\.set \$steps/g) || []).length;
+  if (x.name === 'jmp_syn') return 0;
+  if (sets === 0) return 1;
+  if (sets === 1 && /_j[a-z]+(_t)?$/.test(x.name)
+    && x.body.includes('(global.set $steps (i32.sub (global.get $steps) (i32.const 1)))')) return 2;
+  return undefined;
+}
+
+// Handler index -> { charge, jumps } for the exit search: `jumps` when the op
+// can move $ip somewhere other than past its own operands without handing back
+// -- a return, an indirect jump, a call, an in-wasm interrupt -- which the
+// search cannot follow. The one legitimate $ip write, ops(n)'s advance, is
+// taken out first.
+function gsFlow(idx) {
+  const x = HANDLERS[idx];
+  const c = GS_FLOW[idx];
+  if (c && c.x === x) return c.f;
+  const rest = x.body.replace(/\(global\.set \$ip \(i32\.add \(global\.get \$ip\) \(i32\.const \d+\)\)\)/g, '');
+  const f = { charge: gsCharge(x), jumps: /\$jlook|global\.set \$ip\b/.test(rest) };
+  GS_FLOW[idx] = { x, f };
+  return f;
+}
 
 // Handler index -> { charge, reads, writes, fe } or null when it may not sit
 // in a spin loop. `reads`/`writes` are handler-effects entries, materialized
@@ -1191,15 +1222,7 @@ function gsFacts(idx) {
   if (c && c.x === x && c.fe === fe) return c.f;
   let f = null;
   if (x && fe) {
-    // What $next charges plus what the handler charges itself: a fused
-    // compare-and-branch pays for the op it swallowed, the synthetic jump
-    // gives its step back. Any other write to $steps is not a fixed charge.
-    const sets = (x.body.match(/global\.set \$steps/g) || []).length;
-    let charge;
-    if (x.name === 'jmp_syn') charge = 0;
-    else if (sets === 0) charge = 1;
-    else if (sets === 1 && /_j[a-z]+(_t)?$/.test(x.name)
-      && x.body.includes('(global.set $steps (i32.sub (global.get $steps) (i32.const 1)))')) charge = 2;
+    const charge = gsCharge(x);
     if (charge !== undefined) {
       if (!gsEffects) gsEffects = require('./handler-effects');
       const e = gsEffects.effectsOf(x);
@@ -1230,44 +1253,116 @@ function generalPortSpin(words, blockStarts, blockIps) {
   const startOf = new Set(blockStarts);
   const ipIndex = new Map();
   for (let b = 0; b < nb; b++) ipIndex.set(blockIps[b], b);
+  const PSPIN_TWINS = new Set(Array.from(PSPIN.values(), s => s.twin));
   let rewritten = 0;
 
-  // One simple cycle from q back to q, as [{ pos, exit }] where `exit` says
-  // the op also has an edge that leaves the cycle. Depth-first over the
-  // conditional edges; a poll loop is a handful of ops, so both caps are loose.
-  const cycleFrom = (q) => {
-    let budget = 400;
-    const path = [];
-    const on = new Set();
-    const go = (pos) => {
-      if (--budget < 0) return false;
-      if (path.length && pos === q) return true;
-      if (path.length >= 48 || on.has(pos) || pos >= words.length) return false;
-      const op = words[pos];
-      if (ARITY[op] === undefined) return false;
-      const next = pos + 1 + ARITY[op];
-      const step = (to, exit) => {
-        path.push({ pos, exit }); on.add(pos);
-        if (go(to)) return true;
-        path.pop(); on.delete(pos);
-        return false;
-      };
-      const blockAt = (ip) => { const b = ipIndex.get(ip); return b === undefined ? -1 : blockStarts[b]; };
-      const at = TAKEN_AT.get(op);
-      if (at === undefined) return !startOf.has(next) && step(next, false);
-      const tail = ARITY[op] - (at - 1);
-      const taken = blockAt(words[pos + 1 + at]);
-      if (tail === 2) return taken >= 0 && step(taken, false);
-      if (tail === 3) return (taken >= 0 && step(taken, true)) || step(next, true);
-      if (tail === 4) {
-        const fall = blockAt(words[pos + 1 + at + 2]);
-        return (taken >= 0 && step(taken, true)) || (fall >= 0 && step(fall, true));
-      }
-      return false;
-    };
-    return go(q) ? path : null;
+  const blockAt = (ip) => { const b = ipIndex.get(ip); return b === undefined ? -1 : blockStarts[b]; };
+
+  // An op's successors, as arena positions (-1 for an edge out of this
+  // compile), or null when it has none the walk can name.
+  const succOf = (pos) => {
+    const op = words[pos];
+    if (ARITY[op] === undefined) return null;
+    const next = pos + 1 + ARITY[op];
+    const at = TAKEN_AT.get(op);
+    if (at === undefined) return startOf.has(next) || next >= words.length ? null : [next];
+    const tail = ARITY[op] - (at - 1);
+    const taken = blockAt(words[pos + 1 + at]);
+    if (tail === 2) return [taken];
+    if (tail === 3) return [taken, next];
+    if (tail === 4) return [taken, blockAt(words[pos + 1 + at + 2])];
+    return null;
   };
 
+  // The SHORTEST cycle from q back to q, as [{ pos, exits }] where `exits`
+  // are the op's other successors -- the edges that leave it. Shortest,
+  // because a poll loop's exit often leads into more code that loops back
+  // round too, and a walk that took the first edge it met would hand the
+  // purity test the whole frame loop instead of the wait inside it.
+  const cycleFrom = (q) => {
+    const parent = new Map([[q, -1]]);
+    let frontier = [q];
+    for (let depth = 0; depth < 48 && frontier.length; depth++) {
+      const nextFrontier = [];
+      for (const pos of frontier) {
+        for (const to of succOf(pos) || []) {
+          if (to < 0) continue;
+          if (to === q) {
+            const path = [];
+            for (let p = pos; p !== -1; p = parent.get(p)) path.push(p);
+            path.reverse();
+            return path.map((p, k) => {
+              const want = k + 1 < path.length ? path[k + 1] : q;
+              const succ = succOf(p);
+              const i = succ.indexOf(want);
+              return { pos: p, exits: succ.filter((_, j) => j !== i) };
+            });
+          }
+          if (parent.has(to)) continue;
+          parent.set(to, pos);
+          nextFrontier.push(to);
+        }
+      }
+      frontier = nextFrontier;
+    }
+    return null;
+  };
+
+  // Can a route from exit target `from` reach the `in` at q having charged
+  // exactly D steps? Walked over the compiled code by exact cost; `m` is the
+  // least a route that lands on an arbitrary head of this compile still pays
+  // to reach q (0 when q is itself a head, else its block's prefix). A route
+  // the walk cannot follow ties if it happens early enough that some landing
+  // could still make up the difference: at cost c it could land on a head of
+  // this compile (c + m), and an edge out of the compile lands on code that
+  // charges at least one step of its own first (c + 1 + m).
+  //
+  // A port-spin twin (in_*_pspin, placed by the pass before this one) has no
+  // fixed charge, but it only ever takes steps -- at least 3, one turn -- and
+  // leaves by its own edges. So the walk goes on through it with `c` as a
+  // lower bound from there (`lo`), and a route then ties by reaching q at any
+  // cost up to D. That is what lets `jnz L1 / L2: in / test / jz L2` keep its
+  // first wait when the second one is already a twin (JULTRO).
+  const ties = (from, q, D, m) => {
+    const seen = new Set();
+    let budget = 2000;
+    const visit = (pos, c, lo) => {
+      if (c > D) return false;
+      if (pos === q && (lo ? c <= D : c === D)) return true;
+      if (--budget < 0) return true;
+      const key = (pos * 4096 + c) * 2 + (lo ? 1 : 0);
+      if (seen.has(key)) return false;
+      seen.add(key);
+      const op = words[pos];
+      if (ARITY[op] === undefined) return true;
+      const f = gsFlow(op);
+      const twin = PSPIN_TWINS.has(op);
+      if (f.charge === undefined && !twin) return c + 1 <= D;
+      const c2 = c + (twin ? 3 : f.charge);
+      const lo2 = lo || twin;
+      const next = pos + 1 + ARITY[op];
+      const edge = (to) => (to < 0 ? c2 + 1 + m <= D : visit(to, c2, lo2));
+      const at = TAKEN_AT.get(op);
+      if (at !== undefined) {
+        const tail = ARITY[op] - (at - 1);
+        const taken = blockAt(words[pos + 1 + at]);
+        if (tail === 2) return edge(taken);
+        if (tail === 3) return edge(taken) || visit(next, c2, lo2);
+        if (tail === 4) return edge(taken) || edge(blockAt(words[pos + 1 + at + 2]));
+        return c2 + m <= D;
+      }
+      if (f.jumps && c2 + m <= D) return true;
+      // A block that ends without a branch ends in a handback: the slice is
+      // over and run() clears the arm.
+      if (startOf.has(next) || next >= words.length) return false;
+      return visit(next, c2, lo2);
+    };
+    return from < 0 ? 1 + m <= D : visit(from, 0, false);
+  };
+
+  // Decide every site before rewriting any, so the exit search reads the
+  // arena as the interpreter would run it.
+  const sites = [];
   for (let b = 0; b < nb; b++) {
     const end = b + 1 < nb ? blockStarts[b + 1] : words.length;
     for (let q = blockStarts[b]; q < end; q += 1 + ARITY[words[q]]) {
@@ -1308,23 +1403,31 @@ function generalPortSpin(words, blockStarts, blockIps) {
         pure = good;
       }
       if (!pure) continue;
-      // 3. Every block start the loop reaches after an exit, reached at cost 0.
+      // 3. No exit route back to the `in` at the loop's own cost. D is what
+      // the loop charges from after exit op i to q (cyc[0]).
+      let m = 0;
+      if (!startOf.has(q)) {
+        let h = q;
+        while (!startOf.has(h)) h--;
+        // A lower bound: an op with no fixed charge counts nothing.
+        for (let p = h; p < q; p += 1 + ARITY[words[p]]) m += gsFlow(words[p]).charge || 0;
+      }
       let tie = false;
-      for (let i = 0; i < L && !tie; i++) {
-        if (!cyc[i].exit) continue;
-        let d = 0;
-        for (let k = i + 1; k <= L && !tie; k++) {
-          const pos = cyc[k % L].pos;
-          if (startOf.has(pos) && d >= 1) tie = true;
-          if (k < L) d += pos === q ? 1 : gsFacts(words[pos]).charge;
-        }
+      for (let i = 1; i < L && !tie; i++) {
+        if (!cyc[i].exits.length) continue;
+        let D = 0;
+        for (let k = i + 1; k < L; k++) D += gsFacts(words[cyc[k].pos]).charge;
+        for (const from of cyc[i].exits) if (ties(from, q, D, m)) tie = true;
       }
       if (tie) continue;
-      gsSite = gsSite >= 0xFFFFF ? 1 : gsSite + 1;
-      words[q] = GSPIN;
-      words[q + 1] = (gsSite << 12) | cost;
-      rewritten++;
+      sites.push({ q, cost });
     }
+  }
+  for (const { q, cost } of sites) {
+    gsSite = gsSite >= 0xFFFFF ? 1 : gsSite + 1;
+    words[q] = GSPIN;
+    words[q + 1] = (gsSite << 12) | cost;
+    rewritten++;
   }
   return rewritten;
 }
