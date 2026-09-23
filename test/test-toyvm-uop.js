@@ -411,6 +411,43 @@ function dshift(reps = 40) {
   return { com: a.done(), head: a.addr('top'), alt: [a.addr('ovf')] };
 }
 
+// [bp+k] locals re-read across a byte store through ES. ES alternates each
+// outer pass between DS+1000h (windows apart: the store keeps the locals
+// under an sdisj guard) and DS itself with DI walking over the locals, so the
+// store really does overwrite them and the guard has to deopt.
+function segfwd(reps = 250) {
+  const a = asm();
+  prologue(a, 0x400);
+  a.w(0x89, 0xE5);             // mov bp,sp
+  a.w(0x83, 0xED, 0x40);       // sub bp,40h
+  a.w(0xC7, 0x46, 0x00, 0x03, 0x00); // mov word [bp+0],3
+  a.w(0xC7, 0x46, 0x02, 0x05, 0x00); // mov word [bp+2],5
+  a.w(0x8C, 0xC0);             // mov ax,es
+  a.w(0xA3, 0x04, 0x24);       // mov [2404h],ax
+  a.w(0x8C, 0xD8);             // mov ax,ds
+  a.w(0xA3, 0x02, 0x24);       // mov [2402h],ax
+  a.w(0xC6, 0x06, 0x00, 0x24, reps); // mov byte [2400h],reps
+  a.label('outer');
+  a.w(0xA1, 0x02, 0x24);       // mov ax,[2402h]
+  a.w(0x87, 0x06, 0x04, 0x24); // xchg ax,[2404h]
+  a.w(0xA3, 0x02, 0x24);       // mov [2402h],ax
+  a.w(0x8E, 0xC0);             // mov es,ax
+  a.w(0x89, 0xEF);             // mov di,bp
+  a.w(0xB9, 0x30, 0x00);       // mov cx,30h
+  a.label('top');
+  a.w(0x8B, 0x46, 0x00);       // mov ax,[bp+0]
+  a.w(0x03, 0x46, 0x02);       // add ax,[bp+2]
+  a.w(0x26, 0x88, 0x05);       // mov es:[di],al
+  a.w(0x03, 0x46, 0x00);       // add ax,[bp+0]   (forwarded across the ES store)
+  a.w(0x01, 0x46, 0x02);       // add [bp+2],ax
+  a.w(0x47);                   // inc di
+  a.w(0xE2); a.rel8('top');    // loop top
+  a.w(0xFE, 0x0E, 0x00, 0x24); // dec byte [2400h]
+  a.w(0x75); a.rel8('outer');  // jnz outer
+  epilogue(a);
+  return { com: a.done(), head: a.addr('top'), segdisj: true };
+}
+
 async function capture(com) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-uop-'));
   const exe = path.join(dir, 'UOP.COM');
@@ -449,7 +486,7 @@ async function main() {
   const only = process.argv[2] || null;
   let checked = 0;
   for (const [name, make] of [['sprite', sprite], ['checksum', checksum], ['mixed', mixed], ['flags', flags], ['carry', carry],
-    ['muldiv', muldiv], ['divfault', divfault], ['segloads', segloads], ['dshift', dshift]]) {
+    ['muldiv', muldiv], ['divfault', divfault], ['segloads', segloads], ['dshift', dshift], ['segfwd', segfwd]]) {
     if (only && only !== name) continue;
     const made = make();
     // A case may name further heads inside the same loop: a header whose
@@ -464,6 +501,10 @@ async function main() {
     const configs = OPT.ablationConfigs();
     const perIter = [];
     for (const [cname, passes] of configs) {
+      // The optimizer reads the machine (segment bases, for one): build from
+      // the snapshot, not from wherever the previous configuration's last run
+      // left the VM.
+      H.seed(c.vm, c.snap);
       const prog = OPT.build(reg, { passes, env: c.env, vm: c.vm });
       budgets.forEach((B, i) => {
         const u = uopArm(c.vm, c.snap, prog, B);
@@ -474,6 +515,12 @@ async function main() {
         checked++;
       });
     }
+    if (made.segdisj) {
+      // The case is only worth its runs if the guard is really there.
+      H.seed(c.vm, c.snap);
+      const all = OPT.build(reg, { passes: Object.fromEntries(OPT.PASSES.map(p => [p, true])), env: c.env, vm: c.vm });
+      assert.ok(all.stats.segdisj > 0, `${tag}: no sdisj guard was placed`);
+    }
     console.log(`ok ${tag}: ${configs.length} pass configurations x ${budgets.length} budgets agree`);
     console.log(`   µops/iteration: ${perIter.join(', ')}`);
     }
@@ -481,6 +528,6 @@ async function main() {
   console.log(`ok test-toyvm-uop: ${checked} differential runs agree`);
 }
 
-module.exports = { sprite, checksum, mixed, flags, carry, muldiv, divfault, segloads, dshift, capture, l1Arm, uopArm };
+module.exports = { sprite, checksum, mixed, flags, carry, muldiv, divfault, segloads, dshift, segfwd, capture, l1Arm, uopArm };
 
 if (require.main === module) main().catch((e) => { console.error(e.stack || e); process.exit(1); });

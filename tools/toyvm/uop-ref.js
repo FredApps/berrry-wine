@@ -452,6 +452,14 @@ function runRef(vm, p, opts = {}) {
         case 'check':
           if (steps < op.m || smc) next = op.dx;
           break;
+        // Two segment windows apart: a store's window starts d bytes past a
+        // remembered access's, modulo the linear space, and must end before
+        // that access's window comes round again (uop-opt.js forwardMemory).
+        case 'sdisj': {
+          const d = ((v[op.a] - v[op.b] + op.i) & linmask) >>> 0;
+          if (d < op.n2 || (linmask >>> 0) + 1 - d < op.n1) next = op.dx;
+          break;
+        }
         default: throw new Error(`ref: op ${op.o}`);
       }
     }

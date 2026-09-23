@@ -51,10 +51,11 @@
 //              instead of one STEP per instruction
 
 const IR = require('./uop-ir');
+const isa = require('./isa');
 const { FIRST_TEMP, NREG, SEGV, CC_READS, ALL6, liveFlagsAt, flagEffect } = IR;
 
 const PASSES = ['promote', 'mergesink', 'constprop', 'addrfold', 'flagfwd', 'flaglive',
-  'guards', 'rle', 'stack', 'licm', 'fuse', 'clock'];
+  'guards', 'rle', 'stack', 'segdisj', 'licm', 'fuse', 'clock'];
 // Every guest vreg a FLUSH writes back: the eight registers AND the six
 // segment bases. Leaving the bases out once a segment load could write one
 // (PUTS) let a pass drop that write as dead, and the deopt stub stored the
@@ -1569,70 +1570,237 @@ function fuse(B) {
 
 // ---------------------------------------------------------------------------
 // rle / stack: redundant-load elimination and store-to-load forwarding over
-// each block. An access is remembered by its address operands; a later load
-// of the same address and width reads the remembered value instead, while
-// nothing in between could have changed it. `stack` covers accesses through
-// SS (a pop meeting its push, a ret meeting its call's return address) and
+// each block. `stack` covers accesses through SS (a pop meeting its push, a
+// ret meeting its call's return address, a [bp+k] local read twice) and
 // `rle` everything else.
+//
+// Addresses compare by VALUE, not by vreg: every instruction computes its own
+// address temp, so two `[bp+4]` are two different temps holding one value.
+// A value number is { b, k, h, f }: base b plus constant k. h marks a value
+// equal to b+k in its LOW 16 BITS only (a 16-bit register write, merge16);
+// it matches under a 0xFFFF address mask and, elsewhere, only by its full
+// identity f. An `andi 0xFFFF`/`addi16` result is zero-extended, so its full
+// identity is fixed by (b, k) too -- the form a 16-bit `[bp+k]` takes before
+// addrfold, where it is an `andi (add bp k) 0xFFFF` fed to an unmasked load.
+//
+// A remembered value lives in a holder vreg. When the holder is redefined
+// before the matching load, the value is first copied to a fresh temp right
+// after the access that produced it.
+//
+// `segdisj`: a store through one segment kills everything it cannot be
+// proved apart from, and a pixel store through ES would otherwise kill every
+// remembered SS local and DS global. When both offsets are bounded (a 16-bit
+// address) and the two segment windows are disjoint in the machine this is
+// built from, the store keeps them under an `sdisj` guard in front of it,
+// which deopts to the store's own instruction if the windows ever meet. Not
+// guarded when they meet at build time: in a .COM program CS=DS=ES=SS, and
+// the guard would deopt on every iteration.
 // ---------------------------------------------------------------------------
 function forwardMemory(B) {
   const want = (op) => (op.s === SEGV + 2 ? B.on('stack') : B.on('rle'));
-  let n = 0;
-  // Address operands that are constants (addrfold has not folded them into
-  // the displacement yet) compare by value: each instruction's [1673] got
-  // its own movi temp.
-  const defs = tempDefs(B);
-  const kval = (v) => {
-    if (v === undefined || v < 0) return null;
-    const e = defs.get(v);
-    return e && e.op.o === 'movi' ? e.op.i | 0 : null;
-  };
-  const normCache = new Map();
-  const norm = (x) => {
-    if (normCache.has(x)) return normCache.get(x);
-    const ka = kval(x.a), kc = kval(x.c);
-    const r = { s: x.s, a: ka !== null ? -1 : (x.a === undefined ? -1 : x.a),
-      c: kc !== null ? -1 : (x.c === undefined ? -1 : x.c), sc: x.c >= 0 && kc === null ? (x.sc | 0) : 0,
-      am: x.am, i: ((x.i | 0) + (ka || 0) + (kc !== null ? kc << (x.sc | 0) : 0)) | 0 };
-    normCache.set(x, r);
-    return r;
-  };
-  const sameAddr = (x0, y0) => {
-    const x = norm(x0), y = norm(y0);
-    return x.s === y.s && x.a === y.a && x.c === y.c && x.sc === y.sc && x.am === y.am;
-  };
-  // Two accesses through the same address operands are disjoint when their
-  // displacement ranges do not meet (modulo the mask's wrap).
-  const disjoint = (x, y) => {
-    if (!sameAddr(x, y)) return false;
-    const span = x.am ? (x.am >>> 0) + 1 : 2 ** 32;
-    const d = (((norm(y).i - norm(x).i) % span) + span) % span;
-    return d >= x.w / 8 && span - d >= y.w / 8;
-  };
-  for (const b of B.fastBlocks()) {
-    let avail = [];          // { op (address), w, v }
+  const segdisj = B.on('segdisj') && B.vm;
+  const lm = segdisj ? B.vm.exports.mget_linmask() >>> 0 : 0;
+  const segBase = segdisj ? (() => {
+    const dv = new DataView(B.vm.mem.buffer);
+    return (s) => dv.getInt32(isa.REGFILE_SEGB + 4 * s, true) >>> 0;
+  })() : null;
+  let n = 0, guards = 0, fresh = 0;
+  const newId = () => 'n' + (fresh++);
+  const opIds = new WeakMap();
+  const opId = (op) => { if (!opIds.has(op)) opIds.set(op, fresh++); return opIds.get(op); };
+  // One walk over a block. `plan` changes nothing and returns the guards a
+  // forwarded load depended on; the real walk places only those, so a guard
+  // is never paid for a remembered access nobody reads again.
+  const pass = (b, plan, allowed) => {
+    const used = new Set();
+    const val = new Map(), ver = new Map(), putsver = new Map();
+    let epoch = 0;
+    const get = (v) => {
+      if (!val.has(v)) {
+        const b = `in${v}e${epoch}`;
+        // A guest register the program keeps narrow (B.narrow) holds its
+        // zero-extended 16-bit value: bounded, which is why constprop drops
+        // the 0xFFFF mask from a [bp] that uses it bare.
+        val.set(v, v < NREG && B.narrow && B.narrow.get(v) === 16 ? { b, k: 0, h: true, f: `z:${b}:0` }
+          : { b, k: 0, h: false, f: null, s: v >= SEGV && v < FIRST_TEMP ? v - SEGV : -1 });
+      }
+      return val.get(v);
+    };
+    const def = (op) => {
+      const d = opDef(op);
+      if (d < 0) return;
+      let r = null;
+      const z = (x, k) => ({ b: x.b, k, h: true, f: `z:${x.b}:${k & 0xFFFF}` });
+      switch (op.o) {
+        case 'movi': r = { b: 'K', k: op.i | 0, h: false, f: null }; break;
+        case 'mov': r = get(op.a); break;
+        case 'addi': case 'subi': {
+          const x = get(op.a), k = (x.k + (op.o === 'addi' ? op.i : -op.i)) | 0;
+          r = x.h ? { b: x.b, k, h: true, f: `${x.f}+${k - x.k}` } : { b: x.b, k, h: false, f: null };
+          break;
+        }
+        case 'add': {
+          const x = get(op.a), y = get(op.b);
+          const [c, o] = y.b === 'K' ? [y, x] : x.b === 'K' ? [x, y] : [null, null];
+          if (c) r = o.h ? { b: o.b, k: (o.k + c.k) | 0, h: true, f: `${o.f}+${c.k}` } : { b: o.b, k: (o.k + c.k) | 0, h: false, f: null };
+          break;
+        }
+        case 'addi16': { const x = get(op.a); r = z(x, (x.k + op.i) | 0); break; }
+        case 'andi': if ((op.i >>> 0) === 0xFFFF) { const x = get(op.a); r = z(x, x.k); } break;
+        case 'merge16': { const x = get(op.b); r = { b: x.b, k: x.k, h: true, f: newId() }; break; }
+        case 'gets': r = { b: `S${op.s}@${epoch}.${putsver.get(op.s) || 0}`, k: 0, h: false, f: null, s: op.s }; break;
+        default: break;
+      }
+      if (!r) {
+        // Nothing known but its width: a result of at most 16 bits is still
+        // a bounded offset (a DI from `shl di,1`, a word loaded from a table).
+        const id = newId();
+        const w = op.o === 'ld' || op.o === 'getr' || op.o === 'shift' ? op.w
+          : op.o === 'andi' && (op.i >>> 0) <= 0xFFFF ? 16
+            : ['addi8', 'ext8h', 'cc', 'eq', 'ne', 'getf', 'flagof'].includes(op.o) ? 8 : 32;
+        r = w <= 16 ? { b: id, k: 0, h: true, f: `z:${id}:0` } : { b: id, k: 0, h: false, f: null };
+      }
+      // A segment base written in the loop (`pop es`: the selector << 4) is
+      // still that segment's base; the build-time distance check reads the
+      // machine's current one, and the guard checks the one the loop made.
+      if (d >= SEGV && d < FIRST_TEMP) r = { ...r, s: d - SEGV };
+      val.set(d, r);
+      ver.set(d, (ver.get(d) || 0) + 1);
+    };
+    // One address operand as a key term and a constant; `lo..hi` bounds its
+    // contribution to the offset, or null when nothing bounds it.
+    const term = (x, sc, m16) => {
+      if (x.b === 'K') return { t: null, k: x.k << sc, lo: x.k << sc, hi: x.k << sc };
+      // Exactly a zero-extended 16-bit value; `z:...+k` is past that range.
+      const zx = x.h && x.f && x.f.startsWith('z:') && !x.f.includes('+');
+      const rng = zx ? { lo: 0, hi: 0xFFFF << sc } : null;
+      if (x.h && !m16) return { t: `${x.f}*${sc}`, k: 0, ...(rng || { lo: null }) };
+      return { t: `${x.b}*${sc}`, k: x.k << sc, ...(rng || { lo: null }) };
+    };
+    const addr = (op) => {
+      const m16 = (op.am >>> 0) === 0xFFFF;
+      if (op.am && !m16) return null;
+      const ts = [];
+      let k = op.i | 0, lo = op.i | 0, hi = op.i | 0, bounded = true;
+      for (const [f, sc] of [['a', 0], ['c', op.sc | 0]]) {
+        if (op[f] === undefined || op[f] < 0) continue;
+        const r = term(get(op[f]), sc, m16);
+        if (r.t) ts.push(r.t);
+        k = (k + r.k) | 0;
+        if (r.lo === null) bounded = false; else { lo += r.lo; hi += r.hi; }
+      }
+      const sv = get(op.s);
+      const seg = sv.b === 'K' ? `K${sv.k}` : (sv.h ? sv.f : `${sv.b}+${sv.k}`);
+      // A 16-bit access ends by 0x10000: its own guard deopts a wrap, and it
+      // runs after the sdisj in front of it. So segments exactly 64K apart
+      // (ES = DS + 1000h) are apart.
+      // The same holds for an unmasked offset proved inside [0, 0xFFFF].
+      const win = m16 ? [0, 0x10000] : !bounded ? null
+        : lo >= 0 && hi <= 0xFFFF ? [lo, Math.min(hi + op.w / 8, 0x10000)] : [lo, hi + op.w / 8];
+      return { seg, key: ts.sort().join('+') + (m16 ? '/16' : '/32'), k, span: m16 ? 0x10000 : 2 ** 32,
+        win, sreg: !sv.h && sv.k === 0 && sv.s >= 0 ? sv.s : -1 };
+    };
+    const disjoint = (e, A, w) => {
+      if (!e.A || !A || e.A.seg !== A.seg || e.A.key !== A.key) return false;
+      const span = A.span;
+      const d = (((A.k - e.A.k) % span) + span) % span;
+      return d >= e.w / 8 && span - d >= w / 8;
+    };
+    const same = (e, A) => e.A && A && e.A.seg === A.seg && e.A.key === A.key &&
+      ((((e.A.k - A.k) % A.span) + A.span) % A.span) === 0;
+    // Store window [lo1,hi1) through segment vreg a vs access window [lo2,hi2)
+    // through b: the sdisj operands, and whether they hold right now.
+    const apart = (a, b, s1, w1, s2, w2) => {
+      const i = w1[0] - w2[0], n1 = w1[1] - w1[0], n2 = w2[1] - w2[0];
+      const d = ((segBase(s1) - segBase(s2) + i) & lm) >>> 0;
+      return { g: { o: 'sdisj', a, b, i, n1, n2 }, ok: n1 <= 0x20000 && n2 <= 0x20000 && d >= n2 && lm + 1 - d >= n1 };
+    };
+    // Guards in force in this block: segment vregs a, b at versions av, bv,
+    // and the windows they proved apart, relative to the access window's start.
+    const done = [];
+    const covers = (x, y) => x[0] <= y[0] && y[1] <= x[1];
+    const rel = (w1, w2) => ({ r1: [w1[0] - w2[0], w1[1] - w2[0]], r2: [0, w2[1] - w2[0]] });
+    let avail = [];
     for (let i = 0; i < b.ops.length; i++) {
       const op = b.ops[i];
-      if (op.o === 'ld' && want(op)) {
-        const hit = avail.find(e => sameAddr(e.at, op) && norm(e.at).i === norm(op).i && e.w === op.w);
+      const A = (op.o === 'ld' || op.o === 'st') ? addr(op) : null;
+      if (op.o === 'ld' && want(op) && A) {
+        const hit = avail.find(e => e.w === op.w && same(e, A));
         if (hit) {
+          for (const k of hit.gk || []) used.add(k);
+          if (plan) {
+            // What the rewrite below would leave: the load now names the
+            // remembered value, and a refreshed holder is never redefined.
+            if ((ver.get(hit.v) || 0) !== hit.vv) { hit.v = -2 - i; hit.vv = 0; }
+            val.set(op.d, hit.val);
+            ver.set(op.d, (ver.get(op.d) || 0) + 1);
+            continue;
+          }
+          if ((ver.get(hit.v) || 0) !== hit.vv) {
+            const t = B.temp(), pos = hit.idx + 1;
+            b.ops.splice(pos, 0, { o: 'mov', d: t, a: hit.v });
+            for (const e of avail) if (e.idx >= pos) e.idx++;
+            i++;
+            hit.v = t; hit.vv = 0;
+            val.set(t, hit.val);
+          }
           const d = op.d;
           rewrite(op, op.w === 32 || hit.fromLoad ? { o: 'mov', d, a: hit.v } : { o: 'andi', d, a: hit.v, i: op.w === 8 ? 0xFF : 0xFFFF, w: 32 });
           n++;
         }
       }
-      const d = opDef(op);
+      // A guard an earlier walk placed (addrfold's rerun meets the first
+      // run's): still in force for later stores while neither base changes.
+      if (op.o === 'sdisj') {
+        done.push({ a: op.a, av: ver.get(op.a) || 0, b: op.b, bv: ver.get(op.b) || 0,
+          r1: [op.i, op.i + op.n1], r2: [0, op.n2], key: null });
+        continue;
+      }
       if (op.o === 'st') {
-        avail = avail.filter(e => disjoint(e.at, op));
+        const keep = [], other = new Map();
+        for (const e of avail) {
+          if (disjoint(e, A, op.w)) keep.push(e);
+          else if (segdisj && op.dx !== undefined && op.dx >= 0 && A && A.win && A.sreg >= 0 && e.A && e.A.win
+            && e.A.sreg >= 0 && e.A.seg !== A.seg && e.sreg !== op.s && (ver.get(e.sreg) || 0) === e.sver) {
+            const g = other.get(e.sreg) || { es: e.A.sreg, sv: e.sver, w2: [...e.A.win], list: [] };
+            g.w2 = [Math.min(g.w2[0], e.A.win[0]), Math.max(g.w2[1], e.A.win[1])];
+            g.list.push(e);
+            other.set(e.sreg, g);
+          }
+        }
+        for (const [sreg, g] of other) {
+          const av = ver.get(op.s) || 0, R = rel(A.win, g.w2);
+          const have = done.find(x => x.a === op.s && x.av === av && x.b === sreg && x.bv === g.sv
+            && covers(x.r1, R.r1) && covers(x.r2, R.r2));
+          const key = have ? have.key : `${opId(op)}:${sreg}`;
+          if (!have) {
+            const { g: gop, ok } = apart(op.s, sreg, A.sreg, A.win, g.es, g.w2);
+            if (!ok || (!plan && !allowed.has(key))) continue;
+            if (!plan) {
+              b.ops.splice(i, 0, { ...gop, dx: op.dx, node: op.node, ip: op.ip });
+              for (const e of avail) if (e.idx >= i) e.idx++;
+              i++;
+              guards++;
+            }
+            done.push({ a: op.s, av, b: sreg, bv: g.sv, ...R, key });
+          }
+          for (const e of g.list) if (key !== null) e.gk = [...(e.gk || []), key];
+          keep.push(...g.list);
+        }
+        avail = keep;
       }
-      if (d >= 0 || op.o === 'reload') {
-        avail = avail.filter(e => op.o !== 'reload' && ![e.at.s, e.at.a, e.at.c, e.v].includes(d));
-      }
-      if (op.o === 'st') avail.push({ at: op, w: op.w, v: op.b, fromLoad: false });
-      else if (op.o === 'ld' && op.d !== op.s && op.d !== op.a && op.d !== op.c) avail.push({ at: op, w: op.w, v: op.d, fromLoad: true });
+      if (op.o === 'reload') { avail = []; val.clear(); epoch++; }
+      if (op.o === 'puts') putsver.set(op.s, (putsver.get(op.s) || 0) + 1);
+      const rec = (v) => ({ A, w: op.w, v, vv: ver.get(v) || 0, val: get(v), idx: i, sreg: op.s, sver: ver.get(op.s) || 0 });
+      if (op.o === 'st') avail.push({ ...rec(op.b), fromLoad: false });
+      def(op);
+      if (op.o === 'ld' && A) avail.push({ ...rec(op.d), fromLoad: true });
     }
-  }
-  B.stats.memfwd = n;
+    return used;
+  };
+  for (const b of B.fastBlocks()) pass(b, false, segdisj ? pass(b, true, null) : new Set());
+  B.stats.memfwd = (B.stats.memfwd || 0) + n;
+  B.stats.segdisj = (B.stats.segdisj || 0) + guards;
   return n;
 }
 
@@ -1722,6 +1890,9 @@ function build(reg, opts = {}) {
   prune(B);
   if (B.on('mergesink')) { sinkDeoptDefs(B); if (B.on('constprop')) constprop(B); }
   if (B.on('addrfold')) addrfold(B);
+  // Again once addrfold has folded [bp+k] into (bp, k): forms the first run
+  // could not match by value still match by operand here.
+  if (B.on('addrfold') && (B.on('rle') || B.on('stack')) && forwardMemory(B) && B.on('constprop')) constprop(B);
   if (B.on('fuse')) fuse(B);
   if (B.on('clock')) clock(B);
   prune(B);

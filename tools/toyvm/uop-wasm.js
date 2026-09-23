@@ -225,6 +225,10 @@ def('wflags', 'ivvvvvv', ({ V, I }) => `(local.set $F (i32.or (i32.and (local.ge
 // The clock and the guards.
 def('step', 'i', ({ I }) => `(local.set $steps (i32.sub (local.get $steps) ${I(0)}))`);
 def('check', 'it', ({ I, GOTO }) => `(if (i32.or (i32.lt_s (local.get $steps) ${I(0)}) (local.get $smc)) (then ${GOTO(1)}))`);
+// Segment windows apart (uop-ref.js 'sdisj'): a b i=start delta n2 n1 dx.
+def('sdisj', 'vviiit', ({ V, I, GOTO }) => `(local.set $x (i32.and (i32.add (i32.sub ${V(0)} ${V(1)}) ${I(2)}) (local.get $lm)))`
+  + `(if (i32.or (i32.lt_u (local.get $x) ${I(3)})`
+  + ` (i32.lt_u (i32.add (i32.sub (local.get $lm) (local.get $x)) (i32.const 1)) ${I(4)})) (then ${GOTO(5)}))`);
 for (const g of ['spm', 'shm', 'df', 'smc']) {
   const val = g === 'df' ? '(i32.and (i32.shr_u (local.get $F) (i32.const 10)) (i32.const 1))' : `(local.get $${g})`;
   def(`guard_${g}`, 'it', ({ I, GOTO }) => `(if (i32.ne ${val} ${I(0)}) (then ${GOTO(1)}))`);
@@ -359,6 +363,7 @@ function lowerProgram(p) {
         return E(`guard_${g}`, im(op.v), tg(op.dx));
       }
       case 'check': return E('check', im(op.m), tg(op.dx));
+      case 'sdisj': return E('sdisj', vr(op.a), vr(op.b), im(op.i), im(op.n2), im(op.n1), tg(op.dx));
       default: throw new Unsupported(op.o);
     }
   };
