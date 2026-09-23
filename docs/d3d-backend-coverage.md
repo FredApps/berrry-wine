@@ -240,3 +240,19 @@ reports `colors=29 nonZero=38/1850` purely because the sphere is small.
 - Diff a textured 3D frame at `--tolerance=32` and always alongside that app's
   own null band. At tolerance 0, MW3's software arm differs from *itself* by
   33%.
+
+## Addendum 2026-09-22 (late): Pawn plays on software; the GL rows
+
+- **pawn on `--d3d9-renderer=software` no longer crashes.** The repro above
+  (same `--input` route, `--max-batches=20000`) makes the e2-e4 drag, the
+  engine answers e7-e5, and both moves carry the yellow last-move outline —
+  the same picture the GPU arm gave. A capture at batch 8800 can catch the
+  reply mid-animation, with a black block over e7/e6; by 12000 it has landed.
+  The row is **gameplay / gameplay**.
+- The OpenGL half now has a software arm too (`--gl-renderer=software`,
+  `src/09a8g-gl-raster.wat`). Gameplay on it, measured this date: Half-Life
+  Uplink (corridor), Quake II `demo1`, SimGolf (course + clubhouse), plus the
+  Warcraft III menu and PTCT's scene. Commands are in each app's re-notes.
+- UT2004 on the software D3D9 arm could not be judged on this laptop: at load
+  14 it managed 154k batches in 330s and had drawn nothing yet. The splash
+  result in `docs/re-notes/unreal-family-demos.md` came from the quiet bench box.
