@@ -45,6 +45,23 @@ const extraWat = String.raw`
 
   (func (export "test_diptex_set_viewport") (param $viewport i32) (param $desc i32)
     (call $d3dim_viewport_set (local.get $viewport) (local.get $desc)))
+  (export "test_diptex_set_viewport2" (func $d3dim_viewport_set2))
+  (export "test_diptex_set_viewport7" (func $d3dim_device7_set_viewport))
+  (func (export "test_diptex_project_clip") (param $device i32) (param $vertex i32)
+      (param $out i32) (param $header i32) (param $w f32)
+    (local $state i32) (local $sw i32)
+    (local.set $state (call $d3ddev_state (local.get $device)))
+    (local.set $sw (call $g2w (local.get $state)))
+    (call $d3ddev_composite_wvp (local.get $state))
+    (f32.store offset=252 (local.get $sw) (local.get $w))
+    (call $vertex_project (local.get $state) (call $g2w (local.get $vertex)) (call $g2w (local.get $out)))
+    (call $d3dim_exec_clip_status (local.get $header) (i32.add (local.get $sw) (i32.const 4064))))
+  (func (export "test_diptex_snapshot") (param $device i32) (param $out i32)
+    (memory.copy (call $g2w (local.get $out)) (call $g2w (call $d3ddev_state (local.get $device))) (i32.const 4096)))
+  (func (export "test_diptex_override") (param $snapshot i32)
+    (global.set $d3dim_state_override (local.get $snapshot)))
+  (func (export "test_diptex_point") (param $device i32) (param $vertex i32)
+    (call $d3dim_draw_primitive (local.get $device) (i32.const 1) (i32.const 2) (local.get $vertex) (i32.const 1)))
 
   (func (export "test_diptex_viewport_state")
       (param $device i32) (param $index i32) (result i32)
@@ -315,6 +332,8 @@ function writeFloat(wat, addr, value) {
     wat.guest_write32(vpDesc + 8, 0);
     wat.guest_write32(vpDesc + 12, width);
     wat.guest_write32(vpDesc + 16, height);
+    writeFloat(wat, vpDesc + 20, width / 2);
+    writeFloat(wat, vpDesc + 24, height / 2);
   };
   wat.test_diptex_attach_viewport(device, largeViewport);
   wat.test_diptex_attach_viewport(device, smallViewport);
@@ -374,6 +393,79 @@ function writeFloat(wat, addr, value) {
     0xffc02010, 0x10203040, 0x3e800000, 0x3f000000,
     0xff10c020, 0x50607080, 0x3f400000, 0x3f800000,
   ], 'legacy lit vertices lost their diffuse/specular/uv fields or 32-byte boundary');
+
+  // Identity WVP, but an off-centre clip volume [1,3] x [0,2], z [.25,.75].
+  // Its centre is screen(4,4), not the default volume's off-target (12,0).
+  const customViewport = () => {
+    [44,0,0,8,8].forEach((n,i)=>wat.guest_write32(vpDesc+i*4,n));
+    [1,2,2,2,0.25,0.75].forEach((n,i)=>writeFloat(wat,vpDesc+20+i*4,n));
+    wat.test_diptex_set_viewport2(largeViewport,vpDesc);
+  };
+  customViewport();
+  lvertex(0,2,0xffff0000,0,0,0);
+  writeFloat(wat,lvertices+4,1);
+  writeFloat(wat,lvertices+8,0.375);
+  const preparedXYZ=()=>[0,4,8,12].map(n=>mem.getFloat32(wat.guest_to_wasm(lprepared)+n,true));
+  wat.test_diptex_prepare_lvertices(device,lvertices,lprepared);
+  assert.deepStrictEqual(preparedXYZ(),[4,4,0.25,1],'clip volume must affect homogeneous projection');
+  new Uint8Array(memory.buffer,rtDib,8*8*2).fill(0);
+  wat.test_diptex_point(device,lvertices);
+  assert.notStrictEqual(mem.getUint16(rtDib+(4*8+4)*2,true),0,'custom-volume point reaches the render target');
+  const clipHeader = wat.guest_alloc(32);
+  const projectClip = (xyz, w = 1) => {
+    xyz.forEach((n, i) => writeFloat(wat, lvertices + i * 4, n));
+    wat.guest_write32(clipHeader + 12, 0x3f000);
+    wat.test_diptex_project_clip(device, lvertices, lprepared, clipHeader, w);
+    return wat.guest_read32(clipHeader + 12) >>> 0;
+  };
+  for (const [xyz, code] of [
+    [[2,1,.5],0], [[.5,1,.5],1], [[3.5,1,.5],2],
+    [[2,2.5,.5],4], [[2,-.5,.5],8], [[2,1,.125],16], [[2,1,.875],32],
+  ]) {
+    assert.strictEqual(projectClip(xyz), code | (code << 12), `custom clip planes: ${xyz}`);
+  }
+  assert.strictEqual(projectClip([-2,-1,-.375], -1), 0x3f03f, 'negative w remains outside all six planes');
+  assert.deepStrictEqual(preparedXYZ(), [4,4,.25,-1], 'clip translations must scale with negative w');
+  projectClip([2,1,.375]);
+  for (const [offset, value, isFloat] of [
+    [12,0,false], [16,0,false], [28,0,true], [32,0,true], [40,.25,true],
+  ]) {
+    customViewport();
+    if (isFloat) writeFloat(wat,vpDesc+offset,value);
+    else wat.guest_write32(vpDesc+offset,value);
+    wat.test_diptex_set_viewport2(largeViewport,vpDesc);
+    wat.test_diptex_prepare_lvertices(device,lvertices,lprepared);
+    assert.deepStrictEqual(preparedXYZ(),[4,4,.25,1],`degenerate field ${offset} preserves transform cache`);
+  }
+  customViewport();
+  const snapshot=wat.guest_alloc(4096);
+  wat.test_diptex_snapshot(device,snapshot);
+  setViewportDesc(8,8);wat.test_diptex_set_viewport(largeViewport,vpDesc);
+  wat.test_diptex_prepare_lvertices(device,lvertices,lprepared);
+  assert.deepStrictEqual(preparedXYZ(),[12,0,0.375,1],'default volume clears the custom transform');
+  wat.test_diptex_override(snapshot);
+  wat.test_diptex_prepare_lvertices(device,lvertices,lprepared);
+  assert.deepStrictEqual(preparedXYZ(),[4,4,0.25,1],'queued snapshot must not read the live viewport descriptor');
+  wat.test_diptex_override(0);
+  customViewport();wat.test_diptex_set_current_viewport(device,smallViewport);
+  wat.test_diptex_prepare_lvertices(device,lvertices,lprepared);
+  assert.deepStrictEqual(preparedXYZ(),[192,0,0.375,1],'switching restores the other viewport transform');
+  wat.test_diptex_set_current_viewport(device,largeViewport);
+  wat.test_diptex_prepare_lvertices(device,lvertices,lprepared);
+  assert.deepStrictEqual(preparedXYZ(),[4,4,0.25,1]);
+  // Device7 uses its own normalized clip volume, never a stale legacy one.
+  const vp7 = wat.guest_alloc(24);
+  [0,0,8,8,0,0x3f800000].forEach((n,i)=>wat.guest_write32(vp7+i*4,n));
+  wat.test_diptex_set_viewport7(device,vp7);
+  wat.test_diptex_prepare_lvertices(device,lvertices,lprepared);
+  assert.deepStrictEqual(preparedXYZ(),[12,0,.375,1]);
+  setViewportDesc(8,8);
+  writeFloat(wat,vpDesc+20,2);
+  writeFloat(wat,vpDesc+24,1);
+  wat.test_diptex_set_viewport(largeViewport,vpDesc);
+  projectClip([.5,.5,.375]);
+  assert.deepStrictEqual(preparedXYZ(),[5,3.5,.375,1],'legacy nondefault scales must affect projection');
+  setViewportDesc(640,480);wat.test_diptex_set_viewport(largeViewport,vpDesc);
 
   // The direct DrawPrimitive path receives projected vertices, so its near
   // clipper reconstructs homogeneous coordinates from screen xy, z/w and

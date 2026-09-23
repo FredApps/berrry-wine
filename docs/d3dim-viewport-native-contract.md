@@ -242,3 +242,58 @@ Driver/logs: `/private/tmp/wa-viewport-browser-control.js`,
 `/private/tmp/wa-viewport-browser-old-layout.log`. The server logs confirm
 that the old wasm and, for the second control, old mirror were actually served.
 No performance or complete native-conformance claim is made.
+
+## Clip-volume application (2026-09-23)
+
+The retained descriptor now feeds the common untransformed-vertex path rather
+than only its screen rectangle. For finite nondegenerate Viewport2 values:
+
+```text
+x' = (2/clipWidth)*x + (-2*clipX/clipWidth - 1)*w
+y' = (2/clipHeight)*y + (1 - 2*clipY/clipHeight)*w
+z' = (z - minZ*w)/(maxZ - minZ)
+w' = w
+```
+
+The existing symmetric viewport projection and six homogeneous clip planes
+then consume these normalized coordinates. This also feeds PROCESSVERTICES
+clip status before division. Already-transformed TL vertices bypass projection.
+Legacy SetViewport's converted scales use the same path. Default clip bounds
+skip the extra arithmetic; this is a structural fast path, not a performance
+measurement.
+
+Six coefficients and an enable word occupy device-state bytes3904..3931,
+previously unused. They are copied by the existing4096-byte render-command
+snapshot: replay never reads the live viewport descriptor. Device7 SetViewport
+clears legacy normalization; Device7 depth mapping is **not** fixed by this work.
+No region placement or snapshot size changes.
+
+The original Microsoft transform helper at `0x566afa8a` checks zero width,
+height, clip dimensions and depth span before writing its cached transform.
+Its target `0x566afe46` is `pop esi; leave; ret`. Application now similarly
+leaves the previous transform cache unchanged for those degenerate inputs.
+This does not implement the separate generation-dependent setter validation,
+activation HRESULT or uninitialized-selection policy. NaN/infinity and exact
+x87 rounding still need native execution evidence.
+
+Regression started red: identity WVP with clip box `[1,3] x [0,2]`, depth
+`[.25,.75]`, and vertex `(2,1,.375)` projected to `(12,0,.375)` instead of
+`(4,4,.25)`. It now passes and produces a rendered point at `(4,4)`.
+Additional checks cover all six clip-status planes, negative homogeneous w,
+live-vs-snapshot isolation, viewport switching, default restoration, Device7
+reset, all five zero-dimension/depth guards, and nondefault legacy scale factors.
+Both rendering fixtures now provide
+valid legacy scale fields instead of relying on zero scales being ignored.
+
+The unchanged Execute sparse suite passes (including324 clip-status cases),
+viewport state/ABI passes440 calls, and v3 vertex-buffer draw still covers961
+pixels. The earlier Worker dialog composition failure remains open and is not
+claimed fixed by these transformation changes.
+
+Full build passes: normal1,506,297 bytes, compat1,508,703 bytes, unchanged
+layout `68ce5b9062e11919`; log `/private/tmp/wa-viewport-clip-build.log`.
+Rebuilt Boids passes at14 colours/0.75% geometry (previous state-only step:
+14/0.88%). This is a functional render check, not a pixel-identical or native
+conformance claim: nondefault viewport scales now affect projection.
+Interface211, fragment109, ESP/epilogue, logical-operand, tier1498, silent243+22,
+duplicate117/467 and diff checks pass. No benchmark was run.

@@ -35,6 +35,9 @@
   ;;   +3552  extended texture-stage state[8 × 6]       (192)         → ends 3744
   ;;          types 11,13,14,16,17,18 (TCI/address/filter/mip filter)
   ;;   +3744  direct-primitive clip polygon A (5 × 32)  (160)         → ends 3904
+  ;;   +3904  legacy clip normalization (sx,tx,sy,ty,sz,tz) (24)
+  ;;   +3928  legacy clip normalization enabled        (i32, 4)
+  ;;   +3968  render Worker producer descriptor scratch (32)
   ;;   +4000  D3DCLIPSTATUS round-trip storage          (24)
   ;;   +4032  vertex_project vec temp                  (16)
   ;;   +4064  vertex_project clip temp                 (16)
@@ -2818,10 +2821,13 @@
     (if (local.get $addr) (then (return (call $gl32 (local.get $addr)))))
     (i32.const 0))
 
-  ;; A legacy viewport object owns its rectangle.  The device keeps a cached
-  ;; copy only for the viewport currently selected for transformation.
+  ;; Cache the selected viewport, including its homogeneous clip transform.
+  ;; Render Worker commands copy this state; they must not read a live COM
+  ;; viewport descriptor after the guest has changed or released it.
   (func $d3dim_viewport_apply_entry (param $state i32) (param $entry i32)
     (local $sw i32) (local $x i32) (local $y i32) (local $w i32) (local $h i32)
+    (local $data i32) (local $cx f32) (local $cy f32)
+    (local $cw f32) (local $ch f32) (local $minz f32) (local $dz f32)
     (if (i32.or (i32.eqz (local.get $state)) (i32.eqz (local.get $entry)))
       (then (return)))
     (local.set $sw (call $g2w (local.get $state)))
@@ -2829,6 +2835,35 @@
     (local.set $y (i32.load (i32.add (local.get $entry) (i32.const 16))))
     (local.set $w (load.field DxObject misc1 (local.get $entry)))
     (local.set $h (load.field DxObject misc2 (local.get $entry)))
+    (local.set $data (i32.load (call $d3dim_viewport_data_addr (local.get $entry))))
+    (if (i32.eqz (local.get $data)) (then (return)))
+    ;; Emulator-owned 44-byte heap record is contiguous, not a caller span.
+    (local.set $data (call $g2w (local.get $data)))
+    (local.set $cx (f32.load offset=20 (local.get $data)))
+    (local.set $cy (f32.load offset=24 (local.get $data)))
+    (local.set $cw (f32.load offset=28 (local.get $data)))
+    (local.set $ch (f32.load offset=32 (local.get $data)))
+    (local.set $minz (f32.load offset=36 (local.get $data)))
+    (local.set $dz (f32.sub (f32.load offset=40 (local.get $data)) (local.get $minz)))
+    ;; MS d3dim 4.06.02.0436 transform helper 566afa8a returns before stores
+    ;; on zero dimensions/depth span. Setter HRESULT policy is separate.
+    (if (i32.or (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h)))
+          (i32.or (f32.eq (local.get $cw) (f32.const 0))
+            (i32.or (f32.eq (local.get $ch) (f32.const 0))
+              (f32.eq (local.get $dz) (f32.const 0))))) (then (return)))
+    (f32.store offset=3904 (local.get $sw) (f32.div (f32.const 2) (local.get $cw)))
+    (f32.store offset=3908 (local.get $sw)
+      (f32.sub (f32.mul (f32.neg (local.get $cx)) (f32.load offset=3904 (local.get $sw))) (f32.const 1)))
+    (f32.store offset=3912 (local.get $sw) (f32.div (f32.const 2) (local.get $ch)))
+    (f32.store offset=3916 (local.get $sw)
+      (f32.sub (f32.const 1) (f32.mul (local.get $cy) (f32.load offset=3912 (local.get $sw)))))
+    (f32.store offset=3920 (local.get $sw) (f32.div (f32.const 1) (local.get $dz)))
+    (f32.store offset=3924 (local.get $sw)
+      (f32.mul (f32.neg (local.get $minz)) (f32.load offset=3920 (local.get $sw))))
+    (i32.store offset=3928 (local.get $sw)
+      (i32.or (i32.or (f32.ne (local.get $cx) (f32.const -1)) (f32.ne (local.get $cy) (f32.const 1)))
+        (i32.or (i32.or (f32.ne (local.get $cw) (f32.const 2)) (f32.ne (local.get $ch) (f32.const 2)))
+          (i32.or (f32.ne (local.get $minz) (f32.const 0)) (f32.ne (local.get $dz) (f32.const 1))))))
     (i32.store (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_RECT)) (local.get $x))
     (i32.store (i32.add (local.get $sw)
       (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 4))) (local.get $y))
@@ -3138,6 +3173,8 @@
     (local.set $state (call $d3ddev_state (local.get $this)))
     (if (i32.eqz (local.get $state)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
     (local.set $sw (call $g2w (local.get $state)))
+    ;; D3DVIEWPORT7 does not describe a legacy clip volume.
+    (i32.store offset=3928 (local.get $sw) (i32.const 0))
     (local.set $vp_wa (call $g2w (local.get $lpVp)))
     (local.set $x (i32.load (local.get $vp_wa)))
     (local.set $y (i32.load (i32.add (local.get $vp_wa) (i32.const 4))))
@@ -3276,12 +3313,8 @@
     (local $sw i32) (local $vec_wa i32) (local $clip_wa i32) (local $w f32) (local $inv_w f32)
     (if (i32.eqz (local.get $state_guest)) (then (return)))
     (local.set $sw (call $g2w (local.get $state_guest)))
-    ;; Pack input into a 16-byte (x,y,z,1) vec on the call stack region we own.
-    ;; We borrow the trailing 32 bytes of scratch slot 3 (only first 64 used by mat).
-    ;; Instead use D3DIM_OFF_VP_RECT-32..-16 area which is unused while clearing.
-    ;; Simpler: write into vout_wa first (it's caller-owned 16 bytes), then overwrite.
-    ;; Use two separate temp buffers within the device state block reserved tail
-    ;; (offsets 4032 and 4064 — both within the 4096 alloc, free per layout note).
+    ;; Pack (x,y,z,1) into the device-owned scratch vector; the separate clip
+    ;; vector remains available to PROCESSVERTICES after projection.
     (local.set $vec_wa  (i32.add (local.get $sw) (i32.const 4032)))
     (local.set $clip_wa (i32.add (local.get $sw) (i32.const 4064)))
     (f32.store (local.get $vec_wa)                       (f32.load (local.get $vin_wa)))
@@ -3292,6 +3325,20 @@
     (call $mat4_transform_vec4 (local.get $clip_wa)
       (i32.add (local.get $sw) (i32.const 192))
       (local.get $vec_wa))
+    ;; Normalize before division AND clip-status accumulation. Multiplying
+    ;; translations by the original w also preserves negative-w clipping.
+    ;; The usual [-1,1] XY / [0,1] Z volume skips this arithmetic entirely.
+    (if (i32.load offset=3928 (local.get $sw)) (then
+      (local.set $w (f32.load offset=12 (local.get $clip_wa)))
+      (f32.store (local.get $clip_wa)
+        (f32.add (f32.mul (f32.load (local.get $clip_wa)) (f32.load offset=3904 (local.get $sw)))
+          (f32.mul (local.get $w) (f32.load offset=3908 (local.get $sw)))))
+      (f32.store offset=4 (local.get $clip_wa)
+        (f32.add (f32.mul (f32.load offset=4 (local.get $clip_wa)) (f32.load offset=3912 (local.get $sw)))
+          (f32.mul (local.get $w) (f32.load offset=3916 (local.get $sw)))))
+      (f32.store offset=8 (local.get $clip_wa)
+        (f32.add (f32.mul (f32.load offset=8 (local.get $clip_wa)) (f32.load offset=3920 (local.get $sw)))
+          (f32.mul (local.get $w) (f32.load offset=3924 (local.get $sw)))))))
     ;; inv_w = 1 / w. Clamp a near-zero divisor while preserving its sign;
     ;; otherwise a vertex on the eye plane produces +/-inf screen coordinates
     ;; and traps the integer scanline rasterizer before clipping can reject it.
@@ -6593,8 +6640,8 @@
     (local.set $vbase (local.get $buf_guest))
     (local.set $srcbase (call $d3dim_execbuf_source_guest (local.get $buf_guest)))
     (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $eb_this)))
-    ;; vertex_project leaves the original homogeneous vector here, before its
-    ;; near-zero divisor clamp. Device state is emulator-owned affine storage.
+    ;; vertex_project leaves the clip-volume-normalized homogeneous vector
+    ;; here, before its near-zero divisor clamp. State is owned affine storage.
     (local.set $clip (i32.add (call $g2w (local.get $state_g)) (i32.const 4064)))
     (if (i32.eqz (local.get $srcbase)) (then (local.set $srcbase (local.get $vbase))))
     (local.set $i (i32.const 0))

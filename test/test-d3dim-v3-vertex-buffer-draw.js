@@ -163,6 +163,8 @@ function writeFloat(wat, addr, value) {
   wat.guest_write32(vpDesc + 8, 0);
   wat.guest_write32(vpDesc + 12, RT);
   wat.guest_write32(vpDesc + 16, RT);
+  writeFloat(wat, vpDesc + 20, RT / 2);
+  writeFloat(wat, vpDesc + 24, RT / 2);
   assert(wat.test_v3vb_viewport(device, vpDesc), 'viewport was not created');
 
   // D3DVERTEXBUFFERDESC: dwSize, dwCaps, dwFVF, dwNumVertices.
