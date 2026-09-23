@@ -1138,3 +1138,40 @@ draws: two calls per vertex on a quad-heavy immediate-mode path, and every one
 of them is an individual wasm->JS import call today. `glTexImage2D` and
 `glGenTextures` at 13/frame say textures are being re-created every frame, not
 cached — worth its own look.
+
+## 2026-09-22: the WAT software GL path (`--gl-renderer=software`)
+
+SimGolf now draws its course on the WAT software rasterizer with no JS in the
+draw path. Three things stood between it and a clean picture, and each looked
+like a different one:
+
+1. **sound.dll overflowed an mmio memory file into Terrain's textures**
+   (fixed in `3c7b023e`). `mmioOpen` with `fccIOProc='MEM '` was treated as a
+   disk file; the reads ran past the caller's buffer and corrupted the texture
+   uploads and the GL command stream downstream of them.
+2. **The span rasterizer always packed RGB565** (fixed in `9bebacdb`). The GL
+   target is the app's own `CreateDIBSection` bitmap, `800x-600`, 16bpp BI_RGB —
+   which is **X1R5G5B5**. Packing 565 into it moves green's top bit into red, so
+   grass and trees read as red/magenta speckle that was worst at blended
+   borders. The uploads were clean the whole time; checking them first is what
+   ruled out the texture path.
+3. **`glTexEnvi(GL_TEXTURE_2D, GL_TEXTURE_ENV_MODE, GL_REPLACE)` ×474** — the
+   wrong target, which real GL rejects with GL_INVALID_ENUM. Honouring it drew
+   the lit terrain unlit (same commit, both backends).
+
+**"The course goes black after batch ~1850" is not a bug.** Every frame
+afterwards does `StretchBlt(0x310009 @(64,40) ← cache 0x31000b)` — a scroll —
+and GL fills the exposed strip. The headless cursor sits at (0,0), which is the
+top-left scroll edge, so the view scrolls off the course into void. Park the
+mouse mid-screen:
+
+```
+node test/run.js --app=simgolf_demo --no-build --gl-renderer=software --quiet-api \
+  --quiet-blocks --batch-size=100000 --max-batches=2400 --max-seconds=280 --no-close \
+  --input=100:mousemove:400:300,1500:mousemove:400:300,1900:mousemove:401:300,2350:png:out.png
+```
+
+At 2350 that shows the course, the clubhouse and the welcome dialog.
+GL context: `CreateCompatibleDC` → `0x310009`, bitmap `0x410008`; the
+`SelectObject(0x310009, 0x41000a/b/c)` pairs returning `0x3001d` are font
+swaps for text drawn into the GL DC, not a change of render target.
