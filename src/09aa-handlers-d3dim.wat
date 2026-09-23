@@ -291,16 +291,6 @@
     (call $d3dim_create_vb (local.get $arg1) (local.get $arg2) (global.get $DX_VTBL_D3DVB7))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
-  ;; IDirect3D7_EnumZBufferFormats — 4 args (incl. this)
-  (func $handle_IDirect3D7_EnumZBufferFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32)
-    (if (i32.eqz (local.get $arg2)) (then
-      (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
-      (return)))
-    (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
-    (call $d3d_enum_zbuf_invoke (local.get $arg2) (local.get $arg3) (local.get $ret_addr)))
 
   ;; IDirect3D7_EvictManagedTextures — 1 args (incl. this)
   (func $handle_IDirect3D7_EvictManagedTextures (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -701,16 +691,6 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
-  ;; IDirect3DDevice_EnumTextureFormats — 3 args (incl. this)
-  (func $handle_IDirect3DDevice_EnumTextureFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32)
-    (if (i32.eqz (local.get $arg1)) (then
-      (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-      (return)))
-    (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-    (call $d3d_enum_tex_desc_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
 
   ;; IDirect3DDevice_CreateMatrix(this, lpHandle) — 2 args (incl. this)
   ;; Linear scan for a free entry in D3DIM_MATRIX_USED, write slot+1 to
@@ -1050,16 +1030,6 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
-  ;; IDirect3DDevice7_EnumTextureFormats — 3 args (incl. this)
-  (func $handle_IDirect3DDevice7_EnumTextureFormats (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32)
-    (if (i32.eqz (local.get $arg1)) (then
-      (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-      (return)))
-    (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-    (call $d3d_enum_tex_invoke (local.get $arg1) (local.get $arg2) (local.get $ret_addr)))
 
   ;; IDirect3DDevice7_BeginScene — 1 args (incl. this)
   (func $handle_IDirect3DDevice7_BeginScene (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

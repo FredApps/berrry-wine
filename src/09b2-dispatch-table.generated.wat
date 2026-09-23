@@ -7966,7 +7966,7 @@
       (call $handle_IDirect3D7_CreateVertexBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1290: IDirect3D7_EnumZBufferFormats
-      (call $handle_IDirect3D7_EnumZBufferFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3D3_EnumZBufferFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1291: IDirect3D7_EvictManagedTextures
       (call $handle_IDirect3D7_EvictManagedTextures (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
@@ -8014,7 +8014,7 @@
       (call $handle_IDirect3DDevice_GetPickRecords (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1306: IDirect3DDevice_EnumTextureFormats
-      (call $handle_IDirect3DDevice_EnumTextureFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3DDevice2_EnumTextureFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1307: IDirect3DDevice_CreateMatrix
       (call $handle_IDirect3DDevice_CreateMatrix (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
@@ -8149,7 +8149,7 @@
       (call $handle_IDirect3DDevice7_GetCaps (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1351: IDirect3DDevice7_EnumTextureFormats
-      (call $handle_IDirect3DDevice7_EnumTextureFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (call $handle_IDirect3DDevice3_EnumTextureFormats (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
     ) ;; 1352: IDirect3DDevice7_BeginScene
       (call $handle_IDirect3DDevice7_BeginScene (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))

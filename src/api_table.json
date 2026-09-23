@@ -11270,7 +11270,8 @@
     "name": "IDirect3D7_EnumZBufferFormats",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 577012621
+    "hash": 577012621,
+    "handler": "IDirect3D3_EnumZBufferFormats"
   },
   {
     "id": 1291,
@@ -11399,7 +11400,8 @@
     "name": "IDirect3DDevice_EnumTextureFormats",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2545828129
+    "hash": 2545828129,
+    "handler": "IDirect3DDevice2_EnumTextureFormats"
   },
   {
     "id": 1307,
@@ -11748,7 +11750,8 @@
     "name": "IDirect3DDevice7_EnumTextureFormats",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 2131998094
+    "hash": 2131998094,
+    "handler": "IDirect3DDevice3_EnumTextureFormats"
   },
   {
     "id": 1352,
