@@ -30,10 +30,10 @@ const extra = String.raw`
    (load.field DxObject misc0 (call $dx_from_this (local.get $p))))
  (func (export "desc") (param $p i32) (result i32)
    (i32.load offset=16 (call $dx_from_this (local.get $p))))
- (func (export "invoke") (param $id i32) (param $sp i32) (param $p i32) (param $desc i32) (param $out i32) (result i32)
+ (func (export "invoke") (param $id i32) (param $sp i32) (param $p i32) (param $desc i32) (param $out i32) (param $fourth i32) (result i32)
    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
    (call $dispatch_api_table (local.get $id) (local.get $p) (local.get $desc) (local.get $out)
-     (i32.const 0) (i32.const 0) (i32.const 0))
+     (local.get $fourth) (i32.const 0) (i32.const 0))
    (i32.load (global.get $reg_base)))
 `;
 (async () => {
@@ -88,4 +88,29 @@ const extra = String.raw`
     assert.strictEqual(e.live_heap(), heap); assert.strictEqual(e.live_dx(), objects);
   }
   console.log('PASS VB creation: 24 descriptor/data/object failures + successful retries, no leaks or premature DX slots');
+  for (const version of [3, 7]) {
+    const create = apis.find(a => a.name === `IDirect3D${version}_CreateVertexBuffer`).id;
+    const release = apis.find(a => a.name === `IDirect3DVertexBuffer${version === 7 ? '7' : ''}_Release`).id;
+    const lock = apis.find(a => a.name === `IDirect3DVertexBuffer${version === 7 ? '7' : ''}_Lock`).id;
+    for (const count of [0x40000000, 0x15555556, 0xffffffff, 0x10000000]) {
+      e.fail(0); e.guest_write32(desc + 12, count); e.guest_write32(out, 0xdeadbeef);
+      assert.strictEqual(e.invoke(create, sp, 0, desc, out) >>> 0, 0x8007000e, 'oversized product cannot wrap or truncate into success');
+      assert.strictEqual(e.guest_read32(out), 0); assert.strictEqual(e.attempts(), 0);
+      assert.strictEqual(e.live_heap(), heap); assert.strictEqual(e.live_dx(), objects);
+    }
+    const count = Math.floor(0x400000 / 12) + 1, bytes = count * 12;
+    e.guest_write32(desc + 12, count);
+    assert.strictEqual(e.invoke(create, sp, 0, desc, out), 0);
+    const p = e.guest_read32(out), data = e.data(p);
+    assert.strictEqual(e.guest_read32(e.desc(p) + 12), count);
+    assert.strictEqual(e.invoke(lock, sp, p, 0, 0, out), 0);
+    assert.strictEqual(e.guest_read32(out), bytes, 'Lock reports exact storage beyond 4MiB');
+    for (let i = 0; i < bytes; i += 4096) assert.strictEqual(e.guest_read8(data + i), 0);
+    assert.strictEqual(e.guest_read8(data + bytes - 1), 0);
+    e.guest_write8(data + bytes - 1, 0xa5);
+    assert.strictEqual(e.guest_read8(data + bytes - 1), 0xa5);
+    assert.strictEqual(e.invoke(release, sp, p, 0, 0), 0);
+    assert.strictEqual(e.live_heap(), heap); assert.strictEqual(e.live_dx(), objects);
+  }
+  console.log('PASS VB sizes: eight overflow/oversize rejections and exact >4MiB allocation/Lock/release on both versions');
 })().catch(error => { console.error(error); process.exitCode = 1; });

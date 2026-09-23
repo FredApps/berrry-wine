@@ -1368,6 +1368,7 @@
   (func $d3dim_create_vb (param $lpDesc i32) (param $ppVB i32) (param $vtbl i32)
     (local $obj i32) (local $entry i32) (local $desc_g i32) (local $data_g i32)
     (local $desc_size i32) (local $fvf i32) (local $count i32) (local $size i32)
+    (local $bytes i64)
     (if (i32.eqz (local.get $ppVB)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003)) (return)))
     (call $gs32 (local.get $ppVB) (i32.const 0))
     ;; Stage owned allocations before consuming a permanent COM wrapper slot.
@@ -1383,9 +1384,15 @@
       (call $guest_memset (local.get $desc_g) (i32.const 0) (i32.const 32))
       (call $guest_memmove (local.get $desc_g) (local.get $lpDesc) (local.get $desc_size))
       (call $gs32 (local.get $desc_g) (local.get $desc_size))))
-    (local.set $size (i32.mul (call $d3dim_fvf_stride (local.get $fvf)) (local.get $count)))
+    ;; Never let vertex count describe more storage than was allocated.
+    (local.set $bytes (i64.mul
+      (i64.extend_i32_u (call $d3dim_fvf_stride (local.get $fvf)))
+      (i64.extend_i32_u (local.get $count))))
+    (if (i64.gt_u (local.get $bytes) (i64.const 0xFFFFFFFF)) (then
+      (if (local.get $desc_g) (then (call $heap_free (local.get $desc_g))))
+      (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E)) (return)))
+    (local.set $size (i32.wrap_i64 (local.get $bytes)))
     (if (i32.eqz (local.get $size)) (then (local.set $size (i32.const 4096))))
-    (if (i32.gt_u (local.get $size) (i32.const 0x400000)) (then (local.set $size (i32.const 0x400000))))
     (local.set $data_g (call $heap_alloc (local.get $size)))
     (if (i32.eqz (local.get $data_g)) (then
       (if (local.get $desc_g) (then (call $heap_free (local.get $desc_g))))
