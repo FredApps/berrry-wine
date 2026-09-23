@@ -36,8 +36,11 @@ function usage(msg) {
   console.error(`usage: node tools/dump2png.js <log-or-binary> [options]
 
   --width=N        row width in PIXELS (required)
-  --bpp=1|4|8      bits per pixel (default 8). 1 and 4 unpack MSB-first, and
-                   the row stride is rounded up to 4 bytes, as every DIB is
+  --bpp=1|4|8|24|32  bits per pixel (default 8). 1 and 4 unpack MSB-first, and
+                   the row stride is rounded up to 4 bytes, as every DIB is.
+                   24 and 32 are true colour and ignore --mode
+  --order=bgr|rgb  byte order of a 24/32bpp pixel (default bgr, a DIB's). A
+                   glTexImage2D GL_RGB/GL_RGBA upload is rgb
   --height=N       rows to draw (default: all the bytes allow)
   --addr=0xADDR    pick one region when the log holds several hexdumps
   --nth=N          pick the Nth region (0-based) -- use when one address was
@@ -146,7 +149,10 @@ if (skip) data = data.subarray(skip);
 const width = num('width', 0);
 if (width <= 0) usage('--width is required and must be positive');
 const bpp = num('bpp', 8);
-if (![1, 4, 8].includes(bpp)) usage(`--bpp must be 1, 4 or 8 (got ${bpp})`);
+if (![1, 4, 8, 24, 32].includes(bpp)) usage(`--bpp must be 1, 4, 8, 24 or 32 (got ${bpp})`);
+const trueColor = bpp >= 24;
+const order = flag('order', 'bgr');
+if (!['bgr', 'rgb'].includes(order)) usage(`unknown --order=${order}`);
 // DIB rows are DWORD-aligned whatever the depth, and getting that wrong is
 // itself one of the shears this tool exists to make visible.
 const stride = (Math.ceil(width * bpp / 8) + 3) & ~3;
@@ -158,6 +164,14 @@ const flip = args.includes('--flip');
 const pixelAt = (x, yIn) => {
   const y = flip ? (height - 1 - yIn) : yIn;
   const row = y * stride;
+  if (trueColor) {
+    // Packed as one 24-bit value so the zero/distinct counts below still mean
+    // something: 0 is black, and the set counts distinct colours.
+    const p = row + x * (bpp >> 3);
+    const [r, g, b] = order === 'rgb' ? [data[p], data[p + 1], data[p + 2]]
+      : [data[p + 2], data[p + 1], data[p]];
+    return (r << 16) | (g << 8) | b;
+  }
   if (bpp === 8) return data[row + x];
   if (bpp === 4) {
     const b = data[row + (x >> 1)];
@@ -183,6 +197,7 @@ const HUES = [
 ];
 
 function colorOf(b) {
+  if (trueColor) return [(b >> 16) & 255, (b >> 8) & 255, b & 255];
   if (mode === 'gray') { const v = bpp === 8 ? b : Math.round(b * 255 / ((1 << bpp) - 1)); return [v, v, v]; }
   if (mode === 'mask') return b ? [255, 255, 255] : [0, 0, 0];
   return b === 0 ? [0, 0, 0] : HUES[b & 15];
@@ -225,7 +240,7 @@ const total = width * height;
 console.log(`${out}: ${width}x${height} ${bpp}bpp (stride ${stride}) from 0x${origin.toString(16)}+${skip}` +
   (scale > 1 ? ` (scaled ${scale}x)` : ''));
 console.log(`  ${nonZero}/${total} non-zero (${(nonZero / total * 100).toFixed(1)}%), ` +
-  `${seen.size} distinct byte values`);
+  `${seen.size} distinct ${trueColor ? 'colours' : 'byte values'}`);
 // Per-row occupancy in eighths, printed as one line. A stride error shows up
 // here before you even open the PNG: an alternating run means the stride is
 // doubled, and a cliff partway down means the source ran out early.

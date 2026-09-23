@@ -231,6 +231,22 @@ async function main() {
     `the left half samples texel 0 (blue); got 0x${pick(VP / 4, VP / 2).toString(16)}`);
   assert.strictEqual(pick(VP * 3 / 4, VP / 2), 0xFFFFFF00,
     `the right half samples texel 1 (yellow); got 0x${pick(VP * 3 / 4, VP / 2).toString(16)}`);
+  // glTexEnvi on any target but GL_TEXTURE_ENV is GL_INVALID_ENUM and must
+  // not change the mode. SimGolf asks for REPLACE on GL_TEXTURE_2D 474 times;
+  // honouring it drew its lit terrain unlit. Here: a MODULATE request on the
+  // wrong target leaves REPLACE, so a red vertex still shows pure blue.
+  glCall(CALL_INDEX.glTexEnvi, GL_TEXTURE_2D, 0x2200, 0x2100);
+  quad(0, [1, 0, 0, 1]);
+  px = back();
+  assert.strictEqual(pick(VP / 4, VP / 2), 0xFF0000FF,
+    `glTexEnvi(GL_TEXTURE_2D, ...) is ignored; got 0x${pick(VP / 4, VP / 2).toString(16)}`);
+  // The same request on GL_TEXTURE_ENV takes: blue texel times red vertex.
+  glCall(CALL_INDEX.glTexEnvi, 0x2300, 0x2200, 0x2100);
+  quad(0, [1, 0, 0, 1]);
+  px = back();
+  assert.strictEqual(pick(VP / 4, VP / 2) & 0xFFFFFF, 0,
+    `MODULATE on GL_TEXTURE_ENV multiplies; got 0x${pick(VP / 4, VP / 2).toString(16)}`);
+  glCall(CALL_INDEX.glTexEnvi, 0x2300, 0x2200, 0x1E01);
   // An unsupported type is refused and counted, not guessed at.
   glCall(CALL_INDEX.glTexImage2D, GL_TEXTURE_2D, 0, 0x1908, 2, 1, 0, 0x1908, 0x1406, texels);
   assert.strictEqual(e.gl_sw_tex_unsupported(), 1, 'a GL_FLOAT upload is counted as unsupported');

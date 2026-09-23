@@ -961,10 +961,13 @@
         (return)))
     ;; 44 glTexEnvf / 82 glTexEnvi (GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, mode).
     ;; REPLACE and DECAL both take the texture's colour; DECAL's blend by
-    ;; texture alpha is not modelled.
+    ;; texture alpha is not modelled. Any other target is GL_INVALID_ENUM and
+    ;; changes nothing: SimGolf passes GL_TEXTURE_2D 474 times asking for
+    ;; REPLACE, and real GL keeps MODULATE, so its terrain stays lit.
     (if (i32.or (i32.eq (local.get $op) (i32.const 44)) (i32.eq (local.get $op) (i32.const 82)))
       (then
-        (if (i32.eq (i32.load offset=8 (local.get $stack)) (i32.const 0x2200))
+        (if (i32.and (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x2300))
+                     (i32.eq (i32.load offset=8 (local.get $stack)) (i32.const 0x2200)))
           (then
             (local.set $mask (select
               (i32.trunc_sat_f32_s (f32.load offset=12 (local.get $stack)))
