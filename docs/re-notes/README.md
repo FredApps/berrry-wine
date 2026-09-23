@@ -52,6 +52,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 |---|---|
 | Abe's Oddysee demo | [abes-oddysee-demo.md](abes-oddysee-demo.md) |
 | Age of Empires (1997 shareware demo) | [age-of-empires.md](age-of-empires.md) |
+| Arcanum demo | [arcanum-demo.md](arcanum-demo.md) |
 | Bricks I | [bricks.md](bricks.md) |
 | DX-Ball | [dxball.md](dxball.md) |
 | Diablo II Shareware demo | [diablo2-demo.md](diablo2-demo.md) |
