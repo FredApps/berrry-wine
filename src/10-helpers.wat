@@ -1737,6 +1737,22 @@
       ;; which is numerically below this region and would admit oversized chunks.
       (if (i32.lt_u (i32.add (local.get $cursor) (local.get $chunk)) (local.get $cursor))
         (then (return (i32.const 0))))
+      ;; The window is not contiguous. Between the end of GUEST_BASE and the
+      ;; start of GUEST_HEAP_BASE the allocator places emulator-private regions
+      ;; (MM_TIMER_TABLE, CS_RING, CLIENT_RECT, ...), and $g2w's direct window
+      ;; maps those guest addresses straight onto them. An arena reaching into
+      ;; that band hands the guest emulator state as heap: Moorhuhn 2 blitted
+      ;; sprites over MM_TIMER_TABLE and DispatchMessage then called a pixel.
+      ;; Move the shared cursor past the band and recompute.
+      (if (i32.and
+            (i32.lt_u (local.get $cursor)
+              (call $w2g (global.get $GUEST_HEAP_BASE)))
+            (i32.gt_u (i32.add (local.get $cursor) (local.get $chunk))
+              (call $w2g (region.end $GUEST_BASE))))
+        (then
+          (drop (i32.atomic.rmw.cmpxchg (local.get $state) (local.get $cursor)
+            (call $w2g (global.get $GUEST_HEAP_BASE))))
+          (br $retry)))
       (if (i32.gt_u
             (i32.add (local.get $cursor) (local.get $chunk))
             (call $w2g (region.end $GUEST_HEAP_BASE)))
