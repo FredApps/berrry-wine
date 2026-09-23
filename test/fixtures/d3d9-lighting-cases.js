@@ -31,6 +31,28 @@
   add('inverse transpose world',(d,s)=>{s.world[10]=2;s.projection[10]=.5;},[64,32,16,191]);
   add('inverse transpose normalized',(d,s)=>{s.world[10]=2;s.projection[10]=.5;s.normalizeNormals=true;},[128,64,32,191]);
   for(const length of[0,1e-30,1e30])add('degenerate direction '+length,(d,s)=>s.lights[0].direction[2]=length,[0,0,0,191]);
+  // Point and spot lights (DLT1 ABI2). The light sits 10000 units up +z, so
+  // its vector is the directional case's to within f32 noise at every vertex
+  // and attenuation, range and the cone are what move the colour.
+  const point=(extra={})=>({type:1,diffuse:f([1,1,1,0]),ambient:f([0,0,0,0]),position:f([0,0,1e4]),direction:f([0,0,0]),
+   range:1e6,attenuation0:1,attenuation1:0,attenuation2:0,falloff:1,theta:0,phi:0,...extra});
+  const spot=(alpha,extra={})=>point({type:2,direction:f([Math.sin(alpha),0,-Math.cos(alpha)]),theta:.2,phi:.6,...extra});
+  add('point unattenuated',(d,s)=>s.lights=[point()],[128,64,32,191]);
+  add('point constant attenuation',(d,s)=>s.lights=[point({attenuation0:2})],[64,32,16,191]);
+  add('point quadratic attenuation',(d,s)=>s.lights=[point({attenuation0:0,attenuation2:4e-8})],[32,16,8,191]);
+  add('point all-zero attenuation reads as 1',(d,s)=>s.lights=[point({attenuation0:0})],[128,64,32,191]);
+  add('point out of range',(d,s)=>s.lights=[point({range:10})],[0,0,0,191]);
+  add('point behind the surface',(d,s)=>s.lights=[point({position:f([0,0,-1e4])})],[0,0,0,191]);
+  add('point ambient is attenuated',(d,s)=>{s.lights=[point({attenuation0:2,diffuse:f([0,0,0,0]),ambient:f([.25,.5,.75,1])})];s.material.ambient=f([.5,.5,.5,0]);},[16,32,48,191]);
+  add('spot inside the inner cone',(d,s)=>s.lights=[spot(0)],[128,64,32,191]);
+  add('spot pointing away',(d,s)=>s.lights=[spot(Math.PI)],[0,0,0,191]);
+  add('spot outside the outer cone',(d,s)=>s.lights=[spot(.5)],[0,0,0,191]);
+  // rho=cos(.2) between cos(.1) and cos(.3): t=(rho-cos .3)/(cos .1-cos .3)=.6236.
+  add('spot penumbra falloff 1',(d,s)=>s.lights=[spot(.2)],[80,40,20,191]);
+  add('spot penumbra falloff 2',(d,s)=>s.lights=[spot(.2,{falloff:2})],[50,25,12,191]);
+  add('spot penumbra falloff 0',(d,s)=>s.lights=[spot(.2,{falloff:0})],[128,64,32,191]);
+  add('eight mixed lights',(d,s)=>s.lights=Array.from({length:8},(_,i)=>i%2?spot(0,{diffuse:f([.125,.125,.125,1])}):
+   point({diffuse:f([.125,.125,.125,1])})),[128,64,32,191]);
   return out;
  }
  const api={draw,cases};if(typeof module!=='undefined')module.exports=api;else root.D3D9LightingCases=api;
