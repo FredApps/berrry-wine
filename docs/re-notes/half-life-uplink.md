@@ -1173,3 +1173,13 @@ node test/run.js --app=halflife_uplink --no-build --gl-renderer=software \
 
 319,586 batches in 280s; census: 2,054,590 triangles, 32,462 dropped at the
 eye plane, 57,496 culled, 755 presents, 471 texture uploads, none refused.
+
+## 2026-09-23: gameplay on the WebGL D3DIM path (`--d3dim-gpu`)
+
+The Direct3D leg also plays on the GPU executor. It uses the same route as above, plus `--headless-gl --d3dim-gpu` (with `caffeinate -d -u` running) and `--tick-ms-per-batch=16`:
+
+```
+[d3dim-gpu] draws=197673 triangles=5104439 clears=1426 fallbacks=0 errors=0 fences=3027
+```
+
+That was 741,285 batches in 280s, with zero fallbacks to the software rasterizer. The capture shows the corridor with its floor tiles, the ceiling, the wall panels and signage, and the HUD (`100`/`0`). That is the same picture as the software reference. It is the top-left quadrant of the `--png` DIB, which is the half-size copy described under "look at the canvas, not the DIB". So all four legs now reach a rendered world: software, OpenGL on WebGL, OpenGL on WAT software GL, and Direct3D on both the software D3DIM rasterizer and WebGL.
