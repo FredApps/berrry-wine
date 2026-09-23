@@ -2319,6 +2319,15 @@
         (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
     (call $zero_memory (call $dx_surf_meta_ptr (local.get $entry)) (i32.const 16))
+    ;; The stored caps are what GetSurfaceDesc reports, so they must name
+    ;; where DirectDraw put the surface, not only what was asked for. A
+    ;; request with neither SYSTEMMEMORY nor VIDEOMEMORY lands in local video
+    ;; memory. d3dapp (every DX5 SDK sample) creates its textures as
+    ;; TEXTURE|ALLOCONLOAD, reads the caps back after Load, and on a hardware
+    ;; driver releases any texture without VIDEOMEMORY -- Tunnel drew its
+    ;; walls untextured.
+    (if (i32.eqz (i32.and (local.get $caps) (i32.const 0x4800))) ;; SYSTEM|VIDEOMEMORY
+      (then (local.set $caps (i32.or (local.get $caps) (i32.const 0x10004000))))) ;; LOCALVIDMEM|VIDEOMEMORY
     (i32.store (call $dx_surf_meta_ptr (local.get $entry)) (local.get $caps))
     (call $dx_surf_billed_set (local.get $entry) (local.get $vidmem_bytes))
     (i32.store (call $dx_surf_owner_ptr (local.get $entry))

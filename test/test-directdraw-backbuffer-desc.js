@@ -90,8 +90,10 @@ const extraWat = String.raw`
     'GetSurfaceDesc should report DDSD_BACKBUFFERCOUNT');
   assert.strictEqual(wat.guest_read32(queryDesc + 20) >>> 0, 1,
     'GetSurfaceDesc should retain the created back-buffer count');
-  assert.strictEqual(wat.guest_read32(queryDesc + 104) >>> 0, 0x218,
-    'primary description should retain PRIMARY|FLIP|COMPLEX caps');
+  // No memory flag was requested, so DirectDraw placed it in local video
+  // memory and says so: LOCALVIDMEM|VIDEOMEMORY join the requested caps.
+  assert.strictEqual(wat.guest_read32(queryDesc + 104) >>> 0, 0x10004218,
+    'primary description should retain PRIMARY|FLIP|COMPLEX caps and report its placement');
 
   wat.guest_write32(caps, 0x4); // DDSCAPS_BACKBUFFER
   assert.strictEqual(wat.test_dx_backbuffer_get(primary, caps, attachedOut) >>> 0, 0);

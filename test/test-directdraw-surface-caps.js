@@ -163,8 +163,10 @@ const extraWat = String.raw`
     'an internally allocated flip-chain back buffer reports video memory');
   const defaultAttached = wat.guest_read32(defaultAttachedOut) >>> 0;
   assert.strictEqual(wat.test_dx_caps_desc(defaultAttached, queryDesc) >>> 0, 0);
-  assert.strictEqual(wat.guest_read32(queryDesc + 104) >>> 0, 0x401c,
-    'default back-buffer caps include actual VIDEOMEMORY placement');
+  // A primary requested with no memory flag is placed in local video memory,
+  // and its back buffer inherits both placement bits.
+  assert.strictEqual(wat.guest_read32(queryDesc + 104) >>> 0, 0x1000401c,
+    'default back-buffer caps include actual LOCALVIDMEM|VIDEOMEMORY placement');
 
   const externalDesc = 0x411000;
   const externalOut = 0x411100;
