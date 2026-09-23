@@ -31569,5 +31569,93 @@
     "convention": "stdcall",
     "hash": 3164277069,
     "ret": "BOOL"
+  },
+  {
+    "id": 3712,
+    "name": "ImageList_Read",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1974049503,
+    "ret": "HANDLE"
+  },
+  {
+    "id": 3713,
+    "name": "ImageList_Add",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 1430645694,
+    "ret": "int"
+  },
+  {
+    "id": 3714,
+    "name": "ImageList_GetIconSize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2210696609,
+    "ret": "BOOL"
+  },
+  {
+    "id": 3715,
+    "name": "ImageList_SetIconSize",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 864757549,
+    "ret": "BOOL"
+  },
+  {
+    "id": 3716,
+    "name": "ImageList_Draw",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 2443252953,
+    "ret": "BOOL"
+  },
+  {
+    "id": 3717,
+    "name": "ImageList_DrawEx",
+    "nargs": 10,
+    "convention": "stdcall",
+    "hash": 672945796,
+    "ret": "BOOL"
+  },
+  {
+    "id": 3718,
+    "name": "CreateMDIWindowA",
+    "nargs": 10,
+    "convention": "stdcall",
+    "hash": 3130410986,
+    "ret": "HWND"
+  },
+  {
+    "id": 3719,
+    "name": "CreateItemMoniker",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3979334899,
+    "ret": "HRESULT"
+  },
+  {
+    "id": 3720,
+    "name": "IsTextUnicode",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 4094454969,
+    "ret": "BOOL"
+  },
+  {
+    "id": 3721,
+    "name": "IIDFromString",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2345636636,
+    "ret": "HRESULT"
+  },
+  {
+    "id": 3722,
+    "name": "OleSetMenuDescriptor",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1563692465,
+    "ret": "HRESULT"
   }
 ]

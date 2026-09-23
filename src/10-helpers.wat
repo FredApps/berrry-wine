@@ -7759,11 +7759,14 @@
       (drop (call $wnd_send_message (local.get $ctrl_hwnd) (i32.const 0x0001) (i32.const 0) (local.get $cs)))
       ;; DS_SETFONT makes the dialog manager install its dialog font on every
       ;; control.  Resource dialogs here already use the measured Win98 8pt
-      ;; MS Sans Serif base above, so give native COMCTL32 tabs that same
-      ;; canonical stock font.  Otherwise the real tab wndproc sizes and hit
-      ;; tests items with the taller SYSTEM_FONT while the shared-surface
-      ;; painter draws DEFAULT_GUI_FONT, making clicks select the next page.
-      ;; A template font of its own goes to every control, tabs included.
+      ;; MS Sans Serif base above, so the stock template face is the
+      ;; canonical DEFAULT_GUI_FONT, which the shared-surface painters already
+      ;; draw with.  Every control needs a real HFONT back from WM_GETFONT:
+      ;; the native COMCTL32 tab otherwise sizes and hit tests items with the
+      ;; taller SYSTEM_FONT (clicks selected the next page), and InstallShield's
+      ;; setup.exe copies GetObject(WM_GETFONT) into a LOGFONT, so a NULL
+      ;; font left stack garbage in lfWidth. A template font of its own goes
+      ;; to every control, tabs included.
       (if (local.get $dlg_font)
         (then
           (drop (call $wnd_send_message
@@ -7772,7 +7775,8 @@
         (else
           (if (i32.and
                 (i32.ne (i32.and (local.get $style) (i32.const 0x40)) (i32.const 0))
-                (i32.ne (local.get $native_tab) (i32.const 0)))
+                (i32.or (i32.eqz (global.get $is_win16))
+                  (i32.ne (local.get $native_tab) (i32.const 0))))
             (then
               (drop (call $wnd_send_message
                 (local.get $ctrl_hwnd) (i32.const 0x0030)

@@ -2746,12 +2746,15 @@
     (if (i32.eq (local.get $wndproc) (global.get $WNDPROC_BUILTIN))
       (then
         (if (i32.ne (local.get $ctrl_class) (i32.const 0))
-          (then (i32.store offset=0 (global.get $reg_base) (call $control_wndproc_dispatch
-                  (call $gl32 (local.get $arg0))
-                  (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
-                  (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
-                  (call $gl32 (i32.add (local.get $arg0) (i32.const 12))))))
-          (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+          (then
+            (call $ctrl_dispatch_with_tail
+              (call $gl32 (local.get $arg0))
+              (call $gl32 (i32.add (local.get $arg0) (i32.const 4)))
+              (call $gl32 (i32.add (local.get $arg0) (i32.const 8)))
+              (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))
+              (i32.const 8))
+            (return)))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
         (return)))
     ;; x86 WndProc dispatch: use window table result, or fall back to globals
@@ -3682,6 +3685,60 @@
             (local.get $arg2) (local.get $arg3)))))))
     (i32.store offset=0 (global.get $reg_base) (local.get $ok))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+  )
+
+  ;; CreateMDIWindowA(class, title, style, x, y, cx, cy, hwndClient, hInst,
+  ;; lParam): USER's direct form of WM_MDICREATE (VB5CCE.EXE creates its code
+  ;; and form windows this way). Build the MDICREATESTRUCT the child's
+  ;; WM_CREATE receives as lpCreateParams, then rewrite the 44-byte frame into
+  ;; the 52-byte CreateWindowEx frame exactly as the WM_MDICREATE path does, so
+  ;; creation callbacks and the stdcall return stay CreateWindowEx's.
+  (func $handle_CreateMDIWindowA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $esp i32) (local $mdi i32) (local $client i32) (local $style i32)
+    (local $ret_addr i32) (local $mdi_eip i32) (local $mdi_id i32)
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $client (call $gl32 (i32.add (local.get $esp) (i32.const 32))))
+    (if (i32.ne (call $ctrl_table_get_class (local.get $client)) (i32.const 33))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44)))
+        (return)))
+    (local.set $mdi (call $heap_alloc (i32.const 36)))
+    (call $gs32 (local.get $mdi) (local.get $arg0))
+    (call $gs32 (i32.add (local.get $mdi) (i32.const 4)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $mdi) (i32.const 8)) (call $gl32 (i32.add (local.get $esp) (i32.const 36))))
+    (call $gs32 (i32.add (local.get $mdi) (i32.const 12)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $mdi) (i32.const 16)) (local.get $arg4))
+    (call $gs32 (i32.add (local.get $mdi) (i32.const 20)) (call $gl32 (i32.add (local.get $esp) (i32.const 24))))
+    (call $gs32 (i32.add (local.get $mdi) (i32.const 24)) (call $gl32 (i32.add (local.get $esp) (i32.const 28))))
+    (call $gs32 (i32.add (local.get $mdi) (i32.const 28)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $mdi) (i32.const 32)) (call $gl32 (i32.add (local.get $esp) (i32.const 40))))
+    (local.set $ret_addr (call $gl32 (local.get $esp)))
+    (local.set $mdi_eip (global.get $eip))
+    (local.set $mdi_id (call $mdi_client_take_child_id (local.get $client)))
+    (local.set $style (i32.or (local.get $arg2) (i32.const 0x46CF0000)))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (call $gs32 (local.get $esp) (local.get $ret_addr))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 4)) (i32.const 0x40)) ;; WS_EX_MDICHILD
+    (call $gs32 (i32.add (local.get $esp) (i32.const 8)) (local.get $arg0))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 12)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 16)) (local.get $style))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 20)) (call $gl32 (i32.add (local.get $mdi) (i32.const 12))))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 24)) (call $gl32 (i32.add (local.get $mdi) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 28)) (call $gl32 (i32.add (local.get $mdi) (i32.const 20))))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 32)) (call $gl32 (i32.add (local.get $mdi) (i32.const 24))))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 36)) (local.get $client))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 40)) (local.get $mdi_id))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 44)) (call $gl32 (i32.add (local.get $mdi) (i32.const 8))))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 48)) (local.get $mdi))
+    (call $handle_CreateWindowExA
+      (i32.const 0x40) (local.get $arg0) (local.get $arg1) (local.get $style)
+      (local.get $arg3) (local.get $name_ptr))
+    (if (i32.and
+          (i32.ne (i32.load offset=0 (global.get $reg_base)) (i32.const 0))
+          (i32.eq (global.get $eip) (local.get $mdi_eip)))
+      (then (drop (call $mdi_client_register_child (i32.load offset=0 (global.get $reg_base))))))
   )
 
   ;; 81: SendMessageA(hwnd, msg, wParam, lParam) — 4 args stdcall

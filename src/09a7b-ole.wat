@@ -1740,6 +1740,38 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
+  ;; OleSetMenuDescriptor(holemenu, hwndFrame, hwndActiveObject, lpFrame,
+  ;; lpActiveObject) — 5 args stdcall. A NULL holemenu removes the frame's
+  ;; menu-dispatch hook; no hook is ever installed here, so that is S_OK with
+  ;; nothing to undo (VB5 does it on every in-place deactivation). Installing
+  ;; one means routing the frame's menu messages to the active object, which
+  ;; is not implemented.
+  (func $handle_OleSetMenuDescriptor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg0)
+      (then (call $crash_unimplemented (local.get $name_ptr)) (return)))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+  )
+
+  ;; CreateItemMoniker(lpszDelim, lpszItem, ppmk). OLEAUT32's
+  ;; RegisterActiveObject/GetActiveObject key the ROT with "!" + "{CLSID}".
+  (func $handle_CreateItemMoniker (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32)
+    (if (i32.eqz (local.get $arg2))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003)) ;; E_POINTER
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
+    (call $gs32 (local.get $arg2) (i32.const 0))
+    (local.set $obj (call $ole_create_item_moniker (local.get $arg0) (local.get $arg1)))
+    (if (local.get $obj)
+      (then
+        (call $gs32 (local.get $arg2) (local.get $obj))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+      (else (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E)))) ;; E_OUTOFMEMORY
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+  )
+
   ;; MkParseDisplayName(pbc, displayName, eaten, ppmk) recognizes the file
   ;; display names consumed by the Win9x InstallShield runtime. The full OLE
   ;; parser also delegates class/item/composite syntaxes; keep this path
@@ -1959,8 +1991,11 @@
     (if (i32.eqz (local.get $arg1))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003)))
       (else
-        ;; CLSID_FileMoniker {00000303-0000-0000-C000-000000000046}
-        (call $gs32 (local.get $arg1) (i32.const 0x00000303))
+        ;; CLSID_FileMoniker {00000303-0000-0000-C000-000000000046};
+        ;; CLSID_ItemMoniker is {00000304-...}.
+        (call $gs32 (local.get $arg1)
+          (select (i32.const 0x00000304) (i32.const 0x00000303)
+            (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 8))) (i32.const 23))))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 0x000000C0))
         (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 0x46000000))
@@ -1970,6 +2005,9 @@
 
   (func $handle_IMoniker_Load (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $state i32) (local $ret i32) (local $ctx i32)
+    ;; Only the file-moniker stream format is implemented.
+    (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 8))) (i32.const 23))
+      (then (call $crash_unimplemented (local.get $name_ptr)) (return)))
     (if (i32.eqz (local.get $arg1))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003))
@@ -2010,6 +2048,9 @@
   (func $handle_IMoniker_Save (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $blob i32) (local $size i32) (local $written i32)
     (local $hr i32) (local $ret i32) (local $ctx i32)
+    ;; Only the file-moniker stream format is implemented.
+    (if (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 8))) (i32.const 23))
+      (then (call $crash_unimplemented (local.get $name_ptr)) (return)))
     (if (i32.eqz (local.get $arg1))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003))
@@ -2169,11 +2210,8 @@
     (if (i32.eqz (local.get $arg1))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80070057))) ;; E_INVALIDARG
       (else
-        (i32.store offset=0 (global.get $reg_base) (if (result i32) (i32.and
-                (i32.eq (call $gl32 (local.get $arg1)) (global.get $DX_VTBL_OLE_MONIKER))
-                (call $ole_moniker_paths_equal
-                  (call $gl32 (i32.add (local.get $arg0) (i32.const 12)))
-                  (call $gl32 (i32.add (local.get $arg1) (i32.const 12)))))
+        (i32.store offset=0 (global.get $reg_base) (if (result i32)
+              (call $ole_rot_monikers_equal (local.get $arg0) (local.get $arg1))
             (then (i32.const 0))
             (else (i32.const 1))))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
@@ -2266,7 +2304,9 @@
     (if (i32.eqz (local.get $arg1))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003)))
       (else
-        (call $gs32 (local.get $arg1) (i32.const 2)) ;; MKSYS_FILEMONIKER
+        (call $gs32 (local.get $arg1) ;; MKSYS_ITEMMONIKER / MKSYS_FILEMONIKER
+          (select (i32.const 4) (i32.const 2)
+            (i32.eq (call $gl32 (i32.add (local.get $arg0) (i32.const 8))) (i32.const 23))))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
@@ -2518,6 +2558,49 @@
       (call $ole_moniker_hash_path (local.get $copy)))
     (local.get $obj))
 
+  ;; IMoniker item value (20 bytes, kind=23): the file-moniker layout, with
+  ;; +12 owning delimiter+item as one UTF-16 string — which is exactly the
+  ;; item moniker's display name ("!{CLSID}" for RegisterActiveObject).
+  (func $ole_create_item_moniker (param $delim i32) (param $item i32) (result i32)
+    (local $obj i32) (local $copy i32) (local $dlen i32) (local $ilen i32)
+    (if (local.get $delim) (then (local.set $dlen (call $guest_wcslen (local.get $delim)))))
+    (if (local.get $item) (then (local.set $ilen (call $guest_wcslen (local.get $item)))))
+    (local.set $copy (call $heap_alloc
+      (i32.shl (i32.add (i32.add (local.get $dlen) (local.get $ilen)) (i32.const 1)) (i32.const 1))))
+    (if (i32.eqz (local.get $copy)) (then (return (i32.const 0))))
+    (call $gs16 (local.get $copy) (i32.const 0))
+    (if (local.get $dlen) (then (call $guest_wcscpy (local.get $copy) (local.get $delim))))
+    (if (local.get $ilen)
+      (then (call $guest_wcscpy
+        (i32.add (local.get $copy) (i32.shl (local.get $dlen) (i32.const 1))) (local.get $item))))
+    (local.set $obj (call $heap_alloc (i32.const 20)))
+    (if (i32.eqz (local.get $obj))
+      (then (call $heap_free (local.get $copy)) (return (i32.const 0))))
+    (call $zero_memory (call $g2w (local.get $obj)) (i32.const 20))
+    (call $gs32 (local.get $obj) (global.get $DX_VTBL_OLE_MONIKER))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 4)) (i32.const 1))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 8)) (i32.const 23))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 12)) (local.get $copy))
+    (call $gs32 (i32.add (local.get $obj) (i32.const 16))
+      (call $ole_moniker_hash_path (local.get $copy)))
+    (local.get $obj))
+
+  ;; Item names compare case-insensitively (lstrcmpiW), with no path folding.
+  (func $ole_moniker_items_equal (param $left i32) (param $right i32) (result i32)
+    (local $index i32) (local $a i32) (local $b i32)
+    (if (i32.or (i32.eqz (local.get $left)) (i32.eqz (local.get $right)))
+      (then (return (i32.const 0))))
+    (block $equal (loop $scan
+      (local.set $a (call $tolower
+        (call $gl16 (i32.add (local.get $left) (i32.shl (local.get $index) (i32.const 1))))))
+      (local.set $b (call $tolower
+        (call $gl16 (i32.add (local.get $right) (i32.shl (local.get $index) (i32.const 1))))))
+      (if (i32.ne (local.get $a) (local.get $b)) (then (return (i32.const 0))))
+      (br_if $equal (i32.eqz (local.get $a)))
+      (local.set $index (i32.add (local.get $index) (i32.const 1)))
+      (br $scan)))
+    (i32.const 1))
+
   ;; XP-compatible file-moniker IPersistStream payload. The leading size word
   ;; is private bookkeeping and is not written to the stream. The persisted
   ;; bytes are: WORD zero, ANSI byte count/path, DEADFFFF, five zero DWORDs,
@@ -2761,20 +2844,30 @@
   ;; runtime implements; unsupported moniker classes fail instead of silently
   ;; comparing interface addresses.
   (func $ole_rot_moniker_supported (param $moniker i32) (result i32)
-    (i32.and
-      (i32.ne (local.get $moniker) (i32.const 0))
-      (i32.and
-        (i32.eq (call $gl32 (local.get $moniker)) (global.get $DX_VTBL_OLE_MONIKER))
-        (i32.eq (call $gl32 (i32.add (local.get $moniker) (i32.const 8))) (i32.const 11)))))
+    (local $kind i32)
+    (if (i32.eqz (local.get $moniker)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl32 (local.get $moniker)) (global.get $DX_VTBL_OLE_MONIKER))
+      (then (return (i32.const 0))))
+    (local.set $kind (call $gl32 (i32.add (local.get $moniker) (i32.const 8))))
+    (i32.or (i32.eq (local.get $kind) (i32.const 11))    ;; file
+            (i32.eq (local.get $kind) (i32.const 23))))  ;; item
 
   (func $ole_rot_monikers_equal (param $left i32) (param $right i32) (result i32)
-    (i32.and
-      (i32.and
-        (call $ole_rot_moniker_supported (local.get $left))
-        (call $ole_rot_moniker_supported (local.get $right)))
-      (call $ole_moniker_paths_equal
+    (local $kind i32)
+    (if (i32.eqz (i32.and
+          (call $ole_rot_moniker_supported (local.get $left))
+          (call $ole_rot_moniker_supported (local.get $right))))
+      (then (return (i32.const 0))))
+    (local.set $kind (call $gl32 (i32.add (local.get $left) (i32.const 8))))
+    (if (i32.ne (local.get $kind) (call $gl32 (i32.add (local.get $right) (i32.const 8))))
+      (then (return (i32.const 0))))
+    (if (i32.eq (local.get $kind) (i32.const 23))
+      (then (return (call $ole_moniker_items_equal
         (call $gl32 (i32.add (local.get $left) (i32.const 12)))
-        (call $gl32 (i32.add (local.get $right) (i32.const 12))))))
+        (call $gl32 (i32.add (local.get $right) (i32.const 12)))))))
+    (call $ole_moniker_paths_equal
+      (call $gl32 (i32.add (local.get $left) (i32.const 12)))
+      (call $gl32 (i32.add (local.get $right) (i32.const 12)))))
 
   (func $ole_rot_find_moniker (param $moniker i32) (result i32)
     (local $entry i32)
@@ -5874,7 +5967,8 @@
           (local.set $child (i32.add (local.get $child) (i32.const 1)))
           (br $advise_enum_entries)))
         (if (local.get $data) (then (call $heap_free (local.get $data))))))
-    (if (i32.eq (local.get $kind) (i32.const 11))
+    (if (i32.or (i32.eq (local.get $kind) (i32.const 11))   ;; file moniker
+                (i32.eq (local.get $kind) (i32.const 23)))  ;; item moniker
       (then
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
         (if (local.get $data) (then (call $heap_free (local.get $data))))))
@@ -8769,6 +8863,7 @@
   ;; 34: CoSetState AddRef/Release replacement transaction;
   ;; 35: CoGetState returned-reference AddRef.
   ;; 36: DoDragDrop source/target modal callback sequence.
+  ;; 37: COMCTL32 ImageList_Read through a DLL-private IStream (09a9).
   (func $ole_guest_callback_continue
     (local $ctx i32) (local $operation i32) (local $stage i32)
     (local $root i32) (local $p1 i32) (local $p2 i32) (local $p3 i32) (local $p4 i32)
@@ -8784,6 +8879,10 @@
     (if (i32.eq (local.get $operation) (i32.const 36))
       (then
         (call $ole_drag_continue (local.get $ctx) (local.get $root))
+        (return)))
+    (if (i32.eq (local.get $operation) (i32.const 37))
+      (then
+        (call $image_list_read_continue (local.get $ctx) (local.get $p1))
         (return)))
     (if (i32.eq (local.get $operation) (i32.const 1))
       (then

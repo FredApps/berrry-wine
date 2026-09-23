@@ -1046,13 +1046,44 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
         (return)))
+    ;; Windows Installer is not part of a stock Win98 box: instmsi.exe puts
+    ;; msi.dll in the system directory, and from then on the VFS test above
+    ;; loads that real file. Wise's MSI bootstrap (Arcanum's Setup.exe) probes
+    ;; with exactly this LoadLibrary; the image_base fallback below told it MSI
+    ;; was present, so it skipped instmsi and shell-executed the .msi into
+    ;; nothing.
+    (if (call $dll_name_match (local.get $arg0) "msi.dll")
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (global.set $last_error (i32.const 126)) ;; ERROR_MOD_NOT_FOUND
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
     (local.set $tmp (call $guest_name_is_static_system_dll (local.get $arg0)))
     ;; Not a system module by name and not a file we hold: a module whose name
     ;; is not a .dll at all has no static dispatch behind it, so report the
     ;; load failure Windows would rather than hand back a handle that resolves
     ;; to nothing.
+    ;; A qualified path names one file on disk, and $host_has_dll_file already
+    ;; said it is not there, so the load fails. Only a bare name may stand for
+    ;; a component we dispatch by API name (dynamic d3d9.dll). Winamp's NSIS
+    ;; installer unregisters a previous install's plug-ins by full path; a
+    ;; handle here sent it into DllUnregisterServer on our own image.
+    (local.set $src (i32.const 0))
+    (local.set $dst (i32.const 0))
+    (if (i32.eqz (local.get $tmp))
+      (then
+        (block $end (loop $scan
+          (local.set $ch (call $gl8 (i32.add (local.get $arg0) (local.get $src))))
+          (br_if $end (i32.eqz (local.get $ch)))
+          (if (i32.or (i32.eq (local.get $ch) (i32.const 92))
+                      (i32.or (i32.eq (local.get $ch) (i32.const 47))
+                              (i32.eq (local.get $ch) (i32.const 58))))
+            (then (local.set $dst (i32.const 1)) (br $end)))
+          (local.set $src (i32.add (local.get $src) (i32.const 1)))
+          (br $scan)))))
     (if (i32.and (i32.eqz (local.get $tmp))
-                 (i32.eqz (call $guest_name_has_dll_ext (local.get $arg0))))
+                 (i32.or (i32.eq (local.get $dst) (i32.const 1))
+                         (i32.eqz (call $guest_name_has_dll_ext (local.get $arg0)))))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (global.set $last_error (i32.const 126))
@@ -2469,9 +2500,24 @@
 
   ;; 13: DeleteFileA(lpFileName) — 1 arg stdcall
   (func $handle_DeleteFileA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_fs_delete_file (call $g2w (local.get $arg0)) (i32.const 0)))
+    (i32.store offset=0 (global.get $reg_base) (call $fs_path_result
+      (call $host_fs_delete_file (call $g2w (local.get $arg0)) (i32.const 0))
+      (local.get $arg0) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
+
+  ;; A path operation's BOOL, with the failure's last error set the way
+  ;; Windows does: a name that does not exist is ERROR_FILE_NOT_FOUND, one
+  ;; that exists and still refused is ERROR_ACCESS_DENIED. Callers branch on
+  ;; that code — SetupAPI's DelFiles skips a missing file and reports any other
+  ;; error, so a stale last error turns "nothing to delete" into a failure.
+  (func $fs_path_result (param $ok i32) (param $path i32) (param $wide i32) (result i32)
+    (if (i32.eqz (local.get $ok))
+      (then (global.set $last_error
+        (select (i32.const 2) (i32.const 5)
+          (i32.eq (call $host_fs_get_file_attributes (call $g2w (local.get $path)) (local.get $wide))
+                  (i32.const -1))))))
+    (local.get $ok))
 
   ;; 14: CreateFileA(lpFileName, dwDesiredAccess, dwShareMode, lpSecAttr, dwCreation, dwFlags, hTemplate) — 7 args
   (func $console_device_name (param $name i32) (param $wide i32) (result i32)

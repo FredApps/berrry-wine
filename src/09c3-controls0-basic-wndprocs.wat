@@ -441,7 +441,9 @@
               (local.get $hwnd) (i32.const 0xBD11)
               (local.get $cmd_id) (local.get $hwnd))))
           (else
-            (drop (call $wnd_send_message
+            ;; A tail call when a USER entry point armed one (see
+            ;; $ctrl_notify_parent): the handler may open a modal loop.
+            (drop (call $ctrl_notify_parent
               (local.get $parent)
               (i32.const 0x0111)  ;; WM_COMMAND
               ;; wParam: low 16 = current ctrl_id, high 16 = BN_CLICKED (0)

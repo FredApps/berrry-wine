@@ -282,27 +282,15 @@
       (then (call $guest_wcsncpy (local.get $dst) (local.get $src) (local.get $max)))
       (else (call $guest_strncpy (local.get $dst) (local.get $src) (local.get $max)))))
 
-  ;; Negative / zero / positive, optionally ASCII case-insensitive. A NULL
-  ;; string sorts before a non-NULL one, and two NULLs are equal.
+  ;; lstrcmp[i]: CompareString(LOCALE_USER_DEFAULT) order as -1/0/1, not a
+  ;; byte compare — "a" < "B" and "a" < "A". A NULL string sorts before a
+  ;; non-NULL one, and two NULLs are equal.
   (func $lstr_cmp (param $a i32) (param $b i32) (param $wide i32) (param $fold i32) (result i32)
-    (local $i i32) (local $step i32) (local $c1 i32) (local $c2 i32)
     (if (i32.or (i32.eqz (local.get $a)) (i32.eqz (local.get $b)))
       (then (return (i32.sub (i32.ne (local.get $a) (i32.const 0))
                              (i32.ne (local.get $b) (i32.const 0))))))
-    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
-    (block $done (loop $cmp
-      (local.set $c1 (call $gl_char (i32.add (local.get $a) (local.get $i)) (local.get $wide)))
-      (local.set $c2 (call $gl_char (i32.add (local.get $b) (local.get $i)) (local.get $wide)))
-      (if (local.get $fold)
-        (then
-          (local.set $c1 (call $tolower (local.get $c1)))
-          (local.set $c2 (call $tolower (local.get $c2)))))
-      (if (i32.ne (local.get $c1) (local.get $c2))
-        (then (return (i32.sub (local.get $c1) (local.get $c2)))))
-      (br_if $done (i32.eqz (local.get $c1)))
-      (local.set $i (i32.add (local.get $i) (local.get $step)))
-      (br $cmp)))
-    (i32.const 0))
+    (call $nls_compare (local.get $a) (i32.const -1) (local.get $b) (i32.const -1)
+      (local.get $wide) (i32.ne (local.get $fold) (i32.const 0))))
 
   ;; PathRemoveFileSpecA/W(pszPath) removes the final component in place and
   ;; returns TRUE only when the string actually changed.

@@ -3551,68 +3551,146 @@
     (call $guid_hex32 (local.get $dst) (local.get $byte) (i32.const 2)))
 
   ;; 772: CLSIDFromString(lpsz, pclsid) — 2 args stdcall
-  ;; Parse "{xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx}" from wide string into 16-byte GUID
+  ;; A braced GUID is parsed strictly: exactly "{8-4-4-4-12}" and nothing
+  ;; after it. Anything else is a ProgID and resolves through HKCR, the way
+  ;; ole32 does it. An unregistered name is CO_E_CLASSSTRING, never S_OK —
+  ;; VB5 loads every "Begin VB.PropertyPage" through this call and treats a
+  ;; success as an external designer to instantiate, so the old anything-parses
+  ;; version made every sample with a property page fail to load.
   (func $handle_CLSIDFromString (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $src i32) (local $dst i32) (local $pos i32)
-    (local $d1 i32) (local $d2 i32) (local $d3 i32) (local $i i32) (local $b i32)
-    (if (i32.eqz (local.get $arg0))
-      (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003))  ;; E_POINTER
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))) (return)))
-    (local.set $src (call $g2w (local.get $arg0)))
-    (local.set $dst (call $g2w (local.get $arg1)))
-    ;; Skip optional '{'
-    (local.set $pos (local.get $src))
-    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x7B))
-      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
-    ;; Parse Data1 (8 hex digits)
-    (local.set $d1 (call $parse_hex_wide (local.get $pos) (i32.const 8)))
-    (i32.store (local.get $dst) (local.get $d1))
-    (local.set $pos (i32.add (local.get $pos) (i32.const 16)))  ;; 8 chars * 2 bytes
-    ;; Skip '-'
-    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x2D))
-      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
-    ;; Parse Data2 (4 hex digits)
-    (local.set $d2 (call $parse_hex_wide (local.get $pos) (i32.const 4)))
-    (i32.store16 (i32.add (local.get $dst) (i32.const 4)) (local.get $d2))
-    (local.set $pos (i32.add (local.get $pos) (i32.const 8)))
-    ;; Skip '-'
-    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x2D))
-      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
-    ;; Parse Data3 (4 hex digits)
-    (local.set $d3 (call $parse_hex_wide (local.get $pos) (i32.const 4)))
-    (i32.store16 (i32.add (local.get $dst) (i32.const 6)) (local.get $d3))
-    (local.set $pos (i32.add (local.get $pos) (i32.const 8)))
-    ;; Skip '-'
-    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x2D))
-      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
-    ;; Parse Data4[0..1] (4 hex digits = 2 bytes)
-    (i32.store8 (i32.add (local.get $dst) (i32.const 8))
-      (call $parse_hex_wide (local.get $pos) (i32.const 2)))
-    (local.set $pos (i32.add (local.get $pos) (i32.const 4)))
-    (i32.store8 (i32.add (local.get $dst) (i32.const 9))
-      (call $parse_hex_wide (local.get $pos) (i32.const 2)))
-    (local.set $pos (i32.add (local.get $pos) (i32.const 4)))
-    ;; Skip '-'
-    (if (i32.eq (i32.load16_u (local.get $pos)) (i32.const 0x2D))
-      (then (local.set $pos (i32.add (local.get $pos) (i32.const 2)))))
-    ;; Parse Data4[2..7] (12 hex digits = 6 bytes)
-    (local.set $i (i32.const 0))
-    (block $done (loop $lp
-      (br_if $done (i32.ge_u (local.get $i) (i32.const 6)))
-      (i32.store8 (i32.add (local.get $dst) (i32.add (i32.const 10) (local.get $i)))
-        (call $parse_hex_wide (local.get $pos) (i32.const 2)))
-      (local.set $pos (i32.add (local.get $pos) (i32.const 4)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $lp)))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))  ;; S_OK
+    (local $hr i32)
+    (if (i32.eqz (local.get $arg1))
+      (then (local.set $hr (i32.const 0x80004003)))  ;; E_POINTER
+      (else (if (i32.eqz (local.get $arg0))
+        (then  ;; NULL string: CLSID_NULL
+          (call $gs32 (local.get $arg1) (i32.const 0))
+          (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
+          (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 0))
+          (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 0)))
+        (else (local.set $hr (call $clsid_from_string_g (local.get $arg0) (local.get $arg1)))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
   )
 
+  ;; IIDFromString(lpsz, lpiid) — 2 args stdcall. Braced form only, no
+  ;; ProgID lookup; NULL is IID_NULL.
+  (func $handle_IIDFromString (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hr i32)
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (call $gs32 (local.get $arg1) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 4)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 8)) (i32.const 0))
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 12)) (i32.const 0)))
+      (else (if (i32.eqz (call $clsid_parse_braced_g (local.get $arg0) (local.get $arg1)))
+        (then (local.set $hr (i32.const 0x800401F4))))))  ;; CO_E_IIDSTRING
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+  )
+
+  ;; Wide string at guest $src → CLSID at guest $dst: braced GUID or ProgID.
+  (func $clsid_from_string_g (param $src i32) (param $dst i32) (result i32)
+    (if (i32.eq (call $gl16 (local.get $src)) (i32.const 0x7B))
+      (then (return (select (i32.const 0) (i32.const 0x800401F3)  ;; CO_E_CLASSSTRING
+        (call $clsid_parse_braced_g (local.get $src) (local.get $dst))))))
+    (call $progid_to_clsid_g (local.get $src) (local.get $dst)))
+
+  ;; One UTF-16 hex digit's value, or -1.
+  (func $hex_digit_wide (param $ch i32) (result i32)
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x30)) (i32.le_u (local.get $ch) (i32.const 0x39)))
+      (then (return (i32.sub (local.get $ch) (i32.const 0x30)))))
+    (local.set $ch (i32.or (local.get $ch) (i32.const 0x20)))
+    (if (i32.and (i32.ge_u (local.get $ch) (i32.const 0x61)) (i32.le_u (local.get $ch) (i32.const 0x66)))
+      (then (return (i32.sub (local.get $ch) (i32.const 0x57)))))
+    (i32.const -1))
+
+  ;; "{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}" + NUL at guest $src. Writes the
+  ;; CLSID only when the whole string is well-formed; returns 1/0.
+  (func $clsid_parse_braced_g (param $src i32) (param $dst i32) (result i32)
+    (local $i i32) (local $ch i32) (local $v i32) (local $n i32)
+    (local $d1 i32) (local $d2 i32) (local $d3 i32) (local $cur i32) (local $q i64)
+    (if (i32.ne (call $gl16 (local.get $src)) (i32.const 0x7B)) (then (return (i32.const 0))))
+    (local.set $i (i32.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.gt_u (local.get $i) (i32.const 36)))
+      (local.set $ch (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))))
+      (if (i32.or (i32.or (i32.eq (local.get $i) (i32.const 9)) (i32.eq (local.get $i) (i32.const 14)))
+                  (i32.or (i32.eq (local.get $i) (i32.const 19)) (i32.eq (local.get $i) (i32.const 24))))
+        (then (if (i32.ne (local.get $ch) (i32.const 0x2D)) (then (return (i32.const 0)))))
+        (else
+          (local.set $v (call $hex_digit_wide (local.get $ch)))
+          (if (i32.lt_s (local.get $v) (i32.const 0)) (then (return (i32.const 0))))
+          (if (i32.lt_u (local.get $n) (i32.const 8))
+            (then (local.set $d1 (i32.or (i32.shl (local.get $d1) (i32.const 4)) (local.get $v))))
+          (else (if (i32.lt_u (local.get $n) (i32.const 12))
+            (then (local.set $d2 (i32.or (i32.shl (local.get $d2) (i32.const 4)) (local.get $v))))
+          (else (if (i32.lt_u (local.get $n) (i32.const 16))
+            (then (local.set $d3 (i32.or (i32.shl (local.get $d3) (i32.const 4)) (local.get $v))))
+          (else
+            ;; Data4: bytes in text order, stored in memory order.
+            (if (i32.and (local.get $n) (i32.const 1))
+              (then
+                (local.set $q (i64.or (local.get $q)
+                  (i64.shl (i64.extend_i32_u (i32.or (local.get $cur) (local.get $v)))
+                           (i64.extend_i32_u (i32.shl (i32.shr_u (i32.sub (local.get $n) (i32.const 16)) (i32.const 1))
+                                                      (i32.const 3)))))))
+              (else (local.set $cur (i32.shl (local.get $v) (i32.const 4)))))))))))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp)))
+    (if (i32.ne (call $gl16 (i32.add (local.get $src) (i32.const 74))) (i32.const 0x7D)) (then (return (i32.const 0))))
+    (if (i32.ne (call $gl16 (i32.add (local.get $src) (i32.const 76))) (i32.const 0)) (then (return (i32.const 0))))
+    (call $gs32 (local.get $dst) (local.get $d1))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 4))
+      (i32.or (local.get $d2) (i32.shl (local.get $d3) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 8)) (i32.wrap_i64 (local.get $q)))
+    (call $gs32 (i32.add (local.get $dst) (i32.const 12))
+      (i32.wrap_i64 (i64.shr_u (local.get $q) (i64.const 32))))
+    (i32.const 1))
+
+  ;; ProgID (wide, guest) → CLSID through HKCR\<ProgID>\CLSID's default
+  ;; value. S_OK or CO_E_CLASSSTRING, as ole32 answers for an unknown name.
+  (func $progid_to_clsid_g (param $src i32) (param $dst i32) (result i32)
+    (local $len i32) (local $key i32) (local $buf i32) (local $cb i32) (local $i i32) (local $hr i32)
+    (local.set $hr (i32.const 0x800401F3))
+    (block $n (loop $l
+      (br_if $n (i32.eqz (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $len) (i32.const 1))))))
+      (local.set $len (i32.add (local.get $len) (i32.const 1)))
+      (br_if $n (i32.ge_u (local.get $len) (i32.const 256)))
+      (br $l)))
+    ;; ProgIDs are at most 39 characters; anything longer is no ProgID.
+    (if (i32.or (i32.eqz (local.get $len)) (i32.gt_u (local.get $len) (i32.const 39)))
+      (then (return (local.get $hr))))
+    (local.set $key (call $heap_alloc (i32.const 112)))   ;; name + "\CLSID" + NUL, wide
+    (local.set $buf (call $heap_alloc (i32.const 84)))    ;; 40 wide chars + cb
+    (if (i32.or (i32.eqz (local.get $key)) (i32.eqz (local.get $buf)))
+      (then (if (local.get $key) (then (call $heap_free (local.get $key))))
+            (if (local.get $buf) (then (call $heap_free (local.get $buf))))
+            (return (i32.const 0x8007000E))))  ;; E_OUTOFMEMORY
+    (block $c (loop $l
+      (br_if $c (i32.ge_u (local.get $i) (local.get $len)))
+      (call $gs16 (i32.add (local.get $key) (i32.shl (local.get $i) (i32.const 1)))
+        (call $gl16 (i32.add (local.get $src) (i32.shl (local.get $i) (i32.const 1)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (call $gs32 (i32.add (local.get $key) (i32.shl (local.get $len) (i32.const 1))) (i32.const 0x0043005C)) ;; "\C"
+    (call $gs32 (i32.add (local.get $key) (i32.add (i32.shl (local.get $len) (i32.const 1)) (i32.const 4))) (i32.const 0x0053004C)) ;; "LS"
+    (call $gs32 (i32.add (local.get $key) (i32.add (i32.shl (local.get $len) (i32.const 1)) (i32.const 8))) (i32.const 0x00440049)) ;; "ID"
+    (call $gs16 (i32.add (local.get $key) (i32.add (i32.shl (local.get $len) (i32.const 1)) (i32.const 12))) (i32.const 0))
+    (call $gs32 (i32.add (local.get $buf) (i32.const 80)) (i32.const 80))
+    (if (i32.eqz (call $reg_query_value (i32.const 0x80000000) (local.get $key)
+                   (local.get $buf) (i32.add (local.get $buf) (i32.const 80)) (i32.const 1)))
+      (then (if (call $clsid_parse_braced_g (local.get $buf) (local.get $dst))
+        (then (local.set $hr (i32.const 0))))))
+    (call $heap_free (local.get $key))
+    (call $heap_free (local.get $buf))
+    (local.get $hr))
+
   ;; CLSIDFromProgID(lpszProgID, pclsid) — 2 args stdcall
-  ;; Wide ProgID string → CLSID. We only recognise the DirectAnimation ProgIDs
-  ;; used by the Plus!98 MFC screensavers and return private sentinel CLSIDs
-  ;; that $handle_CoCreateInstance consumes above. Everything else remains
-  ;; class-not-registered.
+  ;; Wide ProgID string → CLSID. The DirectAnimation ProgIDs used by the
+  ;; Plus!98 MFC screensavers map to private sentinel CLSIDs that
+  ;; $handle_CoCreateInstance consumes above; every other name resolves
+  ;; through HKCR, so a component an installer registered is found.
   (func $handle_CLSIDFromProgID (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $src i32) (local $dst i32)
     (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
@@ -3638,28 +3716,11 @@
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (return)))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0x80040154))  ;; REGDB_E_CLASSNOTREG
+    ;; Every other ProgID is whatever HKCR says it is.
+    (i32.store offset=0 (global.get $reg_base)
+      (call $progid_to_clsid_g (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; ret + 2 args
   )
-
-  ;; Helper: parse N hex digits from wide string at WASM addr, return integer value
-  (func $parse_hex_wide (param $src i32) (param $ndigits i32) (result i32)
-    (local $result i32) (local $i i32) (local $ch i32) (local $digit i32)
-    (local.set $result (i32.const 0))
-    (local.set $i (i32.const 0))
-    (block $done (loop $lp
-      (br_if $done (i32.ge_u (local.get $i) (local.get $ndigits)))
-      (local.set $ch (i32.load16_u (i32.add (local.get $src) (i32.mul (local.get $i) (i32.const 2)))))
-      (local.set $digit
-        (if (result i32) (i32.and (i32.ge_u (local.get $ch) (i32.const 0x30)) (i32.le_u (local.get $ch) (i32.const 0x39)))
-          (then (i32.sub (local.get $ch) (i32.const 0x30)))
-          (else (if (result i32) (i32.and (i32.ge_u (local.get $ch) (i32.const 0x41)) (i32.le_u (local.get $ch) (i32.const 0x46)))
-            (then (i32.sub (local.get $ch) (i32.const 0x37)))  ;; 'A'-10
-            (else (i32.sub (local.get $ch) (i32.const 0x57)))))))  ;; 'a'-10
-      (local.set $result (i32.or (i32.shl (local.get $result) (i32.const 4)) (local.get $digit)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $lp)))
-    (local.get $result))
 
   ;; 773: GetTempPathA(nBufferLength, lpBuffer) — 2 args stdcall
   (func $handle_GetTempPathA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -3781,6 +3842,41 @@
   (func $handle_ThunkConnect32 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+  )
+
+  ;; IsTextUnicode(lpv, iSize, lpiResult) — SetupAPI sniffs every INF with it.
+  ;; Implements the byte-order-mark tests and the ASCII16/statistics tests
+  ;; (every 16-bit unit has a zero high byte and a nonzero low byte). lpiResult,
+  ;; when given, is the mask of tests to run on entry and the passing subset on
+  ;; return; the call succeeds when a Unicode-positive test passed.
+  (func $handle_IsTextUnicode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $flags i32) (local $mask i32) (local $units i32) (local $i i32)
+    (local $lo i32) (local $hi i32) (local $plain i32)
+    (local.set $mask (i32.const -1))
+    (if (local.get $arg2) (then (local.set $mask (call $gl32 (local.get $arg2)))))
+    (local.set $units (i32.shr_s (local.get $arg1) (i32.const 1)))
+    (if (i32.and (i32.gt_s (local.get $units) (i32.const 0)) (i32.ne (local.get $arg0) (i32.const 0)))
+      (then
+        (if (i32.eq (call $gl16 (local.get $arg0)) (i32.const 0xFEFF))
+          (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x8)))))    ;; SIGNATURE
+        (if (i32.eq (call $gl16 (local.get $arg0)) (i32.const 0xFFFE))
+          (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x80)))))   ;; REVERSE_SIGNATURE
+        (local.set $plain (i32.const 1))
+        (block $done (loop $scan
+          (br_if $done (i32.ge_s (local.get $i) (local.get $units)))
+          (local.set $lo (call $gl8 (i32.add (local.get $arg0) (i32.shl (local.get $i) (i32.const 1)))))
+          (local.set $hi (call $gl8 (i32.add (local.get $arg0) (i32.add (i32.shl (local.get $i) (i32.const 1)) (i32.const 1)))))
+          (if (i32.or (i32.ne (local.get $hi) (i32.const 0)) (i32.eqz (local.get $lo)))
+            (then (local.set $plain (i32.const 0)) (br $done)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))
+        (if (local.get $plain)
+          (then (local.set $flags (i32.or (local.get $flags) (i32.const 0x3)))))))  ;; ASCII16 | STATISTICS
+    (local.set $flags (i32.and (local.get $flags) (local.get $mask)))
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (local.get $flags))))
+    (i32.store offset=0 (global.get $reg_base)
+      (i32.ne (i32.and (local.get $flags) (i32.const 0xB)) (i32.const 0)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
   ;; 1503: VkKeyScanW(WCHAR ch) → SHORT — low byte = vkey, high byte = shift state.

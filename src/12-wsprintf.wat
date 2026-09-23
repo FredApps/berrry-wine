@@ -143,6 +143,8 @@
     (local $sptr i32) (local $sch i32) (local $written i32)
     (local $pad_zero i32) (local $width i32) (local $length i32)
     (local $unit i32) (local $src_wide i32) (local $src_unit i32)
+    (local $prec i32) (local $start i32) (local $neg i32) (local $min_digits i32)
+    (local $alt i32)
     (local.set $unit (call $fmt_unit (local.get $wide)))
     (block $done (loop $loop
       (local.set $ch (call $fmt_get (i32.add (local.get $fmt) (local.get $fi)) (local.get $wide)))
@@ -155,11 +157,12 @@
           (br $loop)))
       ;; Got '%' — reset per-conversion state.
       (local.set $pad_zero (i32.const 0))
+      (local.set $alt (i32.const 0))
       (local.set $width (i32.const 0))
       (local.set $length (i32.const 0))
       (local.set $fi (i32.add (local.get $fi) (local.get $unit)))
       (local.set $ch (call $fmt_get (i32.add (local.get $fmt) (local.get $fi)) (local.get $wide)))
-      ;; Flags: '-', '+', '0', ' ', '#'. Only '0' affects the output here.
+      ;; Flags: '-', '+', '0', ' ', '#'. Only '0' and '#' affect the output here.
       (block $skip_flags (loop $fl
         (br_if $skip_flags (i32.and (i32.ne (local.get $ch) (i32.const 45))
           (i32.and (i32.ne (local.get $ch) (i32.const 43))
@@ -168,6 +171,8 @@
                    (i32.ne (local.get $ch) (i32.const 35)))))))
         (if (i32.eq (local.get $ch) (i32.const 48))
           (then (local.set $pad_zero (i32.const 1))))
+        (if (i32.eq (local.get $ch) (i32.const 35))
+          (then (local.set $alt (i32.const 1))))
         (local.set $fi (i32.add (local.get $fi) (local.get $unit)))
         (local.set $ch (call $fmt_get (i32.add (local.get $fmt) (local.get $fi)) (local.get $wide)))
         (br $fl)))
@@ -179,13 +184,21 @@
         (local.set $fi (i32.add (local.get $fi) (local.get $unit)))
         (local.set $ch (call $fmt_get (i32.add (local.get $fmt) (local.get $fi)) (local.get $wide)))
         (br $wl)))
-      ;; Precision (.digits) is parsed and ignored.
+      ;; Precision: the minimum digit count of an integer (zero-filled after
+      ;; any sign) and the maximum character count of a string. msi.dll writes
+      ;; its log prefix with "%s (%.2X%c%.2X): " and then writes the message at
+      ;; a fixed offset of 17, so "(E8:2)" instead of "(E8:02)" left the
+      ;; prefix's NUL in front of every message.
+      (local.set $prec (i32.const -1))
       (if (i32.eq (local.get $ch) (i32.const 46))
         (then
+          (local.set $prec (i32.const 0))
           (local.set $fi (i32.add (local.get $fi) (local.get $unit)))
           (local.set $ch (call $fmt_get (i32.add (local.get $fmt) (local.get $fi)) (local.get $wide)))
           (block $skip_p (loop $pl
             (br_if $skip_p (i32.or (i32.lt_u (local.get $ch) (i32.const 48)) (i32.gt_u (local.get $ch) (i32.const 57))))
+            (local.set $prec (i32.add (i32.mul (local.get $prec) (i32.const 10))
+                                      (i32.sub (local.get $ch) (i32.const 48))))
             (local.set $fi (i32.add (local.get $fi) (local.get $unit)))
             (local.set $ch (call $fmt_get (i32.add (local.get $fmt) (local.get $fi)) (local.get $wide)))
             (br $pl)))))
@@ -211,32 +224,55 @@
       ;; Read the next argument.
       (local.set $arg (call $gl32 (local.get $arg_ptr)))
       (local.set $arg_ptr (i32.add (local.get $arg_ptr) (i32.const 4)))
-      ;; 'd' or 'i': signed decimal
-      (if (i32.or (i32.eq (local.get $ch) (i32.const 100)) (i32.eq (local.get $ch) (i32.const 105)))
+      ;; 'd'/'i' signed decimal, 'u' unsigned decimal, 'x'/'X' hex. The sign
+      ;; goes first, then the digits zero-filled to the precision (or, with the
+      ;; '0' flag and no precision, to the field width less the sign), then the
+      ;; whole field is space-padded to the width.
+      (if (i32.or
+            (i32.or (i32.eq (local.get $ch) (i32.const 100)) (i32.eq (local.get $ch) (i32.const 105)))
+            (i32.or (i32.eq (local.get $ch) (i32.const 117))
+              (i32.or (i32.eq (local.get $ch) (i32.const 120)) (i32.eq (local.get $ch) (i32.const 88)))))
         (then
-          (local.set $written (call $write_int_x (i32.add (local.get $out) (local.get $oi))
-            (local.get $arg) (local.get $wide)))
+          (local.set $start (local.get $oi))
+          (local.set $neg (i32.and
+            (i32.or (i32.eq (local.get $ch) (i32.const 100)) (i32.eq (local.get $ch) (i32.const 105)))
+            (i32.lt_s (local.get $arg) (i32.const 0))))
+          (if (local.get $neg)
+            (then
+              (call $fmt_put (i32.add (local.get $out) (local.get $oi)) (local.get $wide) (i32.const 45)) ;; '-'
+              (local.set $oi (i32.add (local.get $oi) (local.get $unit)))
+              (local.set $arg (i32.sub (i32.const 0) (local.get $arg)))))
+          ;; '#' prefixes a nonzero hex value with 0x/0X. USER32 zero-fills the
+          ;; digits to the whole width after the prefix: InstallShield's
+          ;; setup.exe names its string table wsprintf("%#04x", 0x409) and
+          ;; ships it as 0x0409.ini.
+          (if (i32.and (i32.ne (local.get $alt) (i32.const 0))
+                (i32.and (i32.ne (local.get $arg) (i32.const 0))
+                  (i32.or (i32.eq (local.get $ch) (i32.const 120)) (i32.eq (local.get $ch) (i32.const 88)))))
+            (then
+              (call $fmt_put (i32.add (local.get $out) (local.get $oi)) (local.get $wide) (i32.const 48))
+              (local.set $oi (i32.add (local.get $oi) (local.get $unit)))
+              (call $fmt_put (i32.add (local.get $out) (local.get $oi)) (local.get $wide) (local.get $ch))
+              (local.set $oi (i32.add (local.get $oi) (local.get $unit)))))
+          (local.set $written
+            (if (result i32) (i32.or (i32.eq (local.get $ch) (i32.const 120)) (i32.eq (local.get $ch) (i32.const 88)))
+              (then (call $write_hex_x (i32.add (local.get $out) (local.get $oi))
+                (local.get $arg) (i32.eq (local.get $ch) (i32.const 88)) (local.get $wide)))
+              (else (call $write_uint_x (i32.add (local.get $out) (local.get $oi))
+                (local.get $arg) (local.get $wide)))))
+          (local.set $min_digits
+            (if (result i32) (i32.ge_s (local.get $prec) (i32.const 0))
+              (then (local.get $prec))
+              (else (if (result i32) (i32.and (i32.ne (local.get $pad_zero) (i32.const 0))
+                                              (i32.gt_u (local.get $width) (local.get $neg)))
+                (then (i32.sub (local.get $width) (local.get $neg)))
+                (else (i32.const 0))))))
           (local.set $oi (i32.add (local.get $oi)
-            (call $apply_pad_x (i32.add (local.get $out) (local.get $oi)) (local.get $written) (local.get $width)
-              (select (i32.const 48) (i32.const 32) (local.get $pad_zero)) (local.get $wide))))
-          (br $loop)))
-      ;; 'u': unsigned decimal
-      (if (i32.eq (local.get $ch) (i32.const 117))
-        (then
-          (local.set $written (call $write_uint_x (i32.add (local.get $out) (local.get $oi))
-            (local.get $arg) (local.get $wide)))
-          (local.set $oi (i32.add (local.get $oi)
-            (call $apply_pad_x (i32.add (local.get $out) (local.get $oi)) (local.get $written) (local.get $width)
-              (select (i32.const 48) (i32.const 32) (local.get $pad_zero)) (local.get $wide))))
-          (br $loop)))
-      ;; 'x' / 'X': hex
-      (if (i32.or (i32.eq (local.get $ch) (i32.const 120)) (i32.eq (local.get $ch) (i32.const 88)))
-        (then
-          (local.set $written (call $write_hex_x (i32.add (local.get $out) (local.get $oi))
-            (local.get $arg) (i32.eq (local.get $ch) (i32.const 88)) (local.get $wide)))
-          (local.set $oi (i32.add (local.get $oi)
-            (call $apply_pad_x (i32.add (local.get $out) (local.get $oi)) (local.get $written) (local.get $width)
-              (select (i32.const 48) (i32.const 32) (local.get $pad_zero)) (local.get $wide))))
+            (call $apply_pad_x (i32.add (local.get $out) (local.get $oi)) (local.get $written)
+              (local.get $min_digits) (i32.const 48) (local.get $wide))))
+          (local.set $oi (i32.add (local.get $start)
+            (call $apply_pad_x (i32.add (local.get $out) (local.get $start))
+              (i32.sub (local.get $oi) (local.get $start)) (local.get $width) (i32.const 32) (local.get $wide))))
           (br $loop)))
       ;; 'c': character
       (if (i32.eq (local.get $ch) (i32.const 99))
@@ -276,6 +312,8 @@
               (local.set $src_unit (call $fmt_unit (local.get $src_wide)))
               (local.set $sptr (local.get $arg))
               (block $sd (loop $sl
+                (br_if $sd (i32.eqz (local.get $prec)))
+                (local.set $prec (i32.sub (local.get $prec) (i32.const 1)))
                 (local.set $sch (call $fmt_get (local.get $sptr) (local.get $src_wide)))
                 (br_if $sd (i32.eqz (local.get $sch)))
                 (call $fmt_put (i32.add (local.get $out) (local.get $oi)) (local.get $wide) (local.get $sch))

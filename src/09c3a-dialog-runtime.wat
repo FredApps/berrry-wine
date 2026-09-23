@@ -233,6 +233,107 @@
     (local.get $result)
   )
 
+  ;; A native control's notification to an x86 parent, as a guest tail call.
+  ;;
+  ;; $wnd_send_message runs an x86 wndproc in a bounded nested $run, and a
+  ;; handler that opens a modal loop there can never receive the input that
+  ;; would end it: after 64 rounds the rest of the handler is abandoned. When
+  ;; the control is running under a USER entry point that returns straight to
+  ;; guest code (DispatchMessage, CallWindowProc), there is a better frame to
+  ;; use: that entry point's own. The control records the notification, and
+  ;; once it returns, the entry point replaces its frame with a call to the
+  ;; parent's wndproc that returns to the entry point's caller — the same
+  ;; shape DispatchMessage already uses for any x86 window. The parent then
+  ;; runs on the ordinary interpreter stack, modal loops and all. VB5's
+  ;; ThunderCommandButton chains WM_LBUTTONUP to BUTTON through CallWindowProc,
+  ;; and every VB Click handler that shows a MsgBox needs this.
+  ;;
+  ;; $ctrl_tail_depth is the $sync_msg_depth of the entry point that armed the
+  ;; tail (-1: none), so a notification from inside some deeper nested run is
+  ;; never hoisted out of it. One slot suffices: an entry point finishes its
+  ;; tail before returning, and a second notification in the same dispatch
+  ;; falls back to the synchronous send.
+  (global $ctrl_tail_depth (mut i32) (i32.const -1))
+  (global $ctrl_tail_pending (mut i32) (i32.const 0))
+  (global $ctrl_tail_proc (mut i32) (i32.const 0))
+  (global $ctrl_tail_hwnd (mut i32) (i32.const 0))
+  (global $ctrl_tail_msg (mut i32) (i32.const 0))
+  (global $ctrl_tail_wparam (mut i32) (i32.const 0))
+  (global $ctrl_tail_lparam (mut i32) (i32.const 0))
+
+  ;; Arm the tail for this entry point; returns the value to hand back to
+  ;; $ctrl_tail_disarm.
+  (func $ctrl_tail_arm (result i32)
+    (local $saved i32)
+    (local.set $saved (global.get $ctrl_tail_depth))
+    (global.set $ctrl_tail_depth (global.get $sync_msg_depth))
+    (local.get $saved))
+
+  (func $ctrl_tail_disarm (param $saved i32)
+    (global.set $ctrl_tail_depth (local.get $saved)))
+
+  ;; Notify an x86 parent: as a recorded tail call when the current entry
+  ;; point armed one, otherwise through $wnd_send_message. Returns the send's
+  ;; LRESULT, or 0 for a deferred call (whose result becomes the entry
+  ;; point's).
+  (func $ctrl_notify_parent
+    (param $parent i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
+    (local $proc i32)
+    (local.set $proc (call $wnd_table_get (local.get $parent)))
+    (if (i32.and
+          (i32.and
+            (i32.eq (global.get $ctrl_tail_depth) (global.get $sync_msg_depth))
+            (i32.eqz (global.get $ctrl_tail_pending)))
+          (i32.and
+            (i32.and (i32.ne (local.get $proc) (i32.const 0))
+                     (i32.lt_u (local.get $proc) (i32.const 0xFFFE0000)))
+            (i32.and (i32.eqz (global.get $code16))
+                     (i32.eqz (call $ctrl_table_get_class (local.get $parent))))))
+      (then
+        ;; Same pre-dispatch rule $wnd_send_message applies to a guest frame.
+        (if (i32.eq (local.get $msg) (i32.const 0x0111))
+          (then
+            (if (call $menu_try_edit_command (i32.and (local.get $wParam) (i32.const 0xFFFF)))
+              (then (return (i32.const 0))))))
+        (global.set $ctrl_tail_pending (i32.const 1))
+        (global.set $ctrl_tail_proc (local.get $proc))
+        (global.set $ctrl_tail_hwnd (local.get $parent))
+        (global.set $ctrl_tail_msg (local.get $msg))
+        (global.set $ctrl_tail_wparam (local.get $wParam))
+        (global.set $ctrl_tail_lparam (local.get $lParam))
+        (return (i32.const 0))))
+    (call $wnd_send_message (local.get $parent) (local.get $msg) (local.get $wParam) (local.get $lParam)))
+
+  ;; Called by the entry point after the control returned and after it popped
+  ;; its own frame as usual (so ESP is the caller's post-return ESP). If a
+  ;; tail is pending, push the parent's wndproc frame returning to $ret and
+  ;; jump there.
+  (func $ctrl_tail_finish (param $ret i32)
+    (if (i32.eqz (global.get $ctrl_tail_pending)) (then (return)))
+    (global.set $ctrl_tail_pending (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret))
+    (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)) (global.get $ctrl_tail_hwnd))
+    (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)) (global.get $ctrl_tail_msg))
+    (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)) (global.get $ctrl_tail_wparam))
+    (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)) (global.get $ctrl_tail_lparam))
+    (global.set $eip (global.get $ctrl_tail_proc))
+    (global.set $steps (i32.const 0)))
+
+  ;; $control_wndproc_dispatch for an entry point whose frame is FRAME bytes
+  ;; including the return address: dispatches with the tail armed, stores
+  ;; EAX, pops the frame, and completes a pending tail.
+  (func $ctrl_dispatch_with_tail
+    (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (param $frame i32)
+    (local $saved i32) (local $ret i32)
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (local.set $saved (call $ctrl_tail_arm))
+    (i32.store offset=0 (global.get $reg_base) (call $control_wndproc_dispatch
+      (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))
+    (call $ctrl_tail_disarm (local.get $saved))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $frame)))
+    (call $ctrl_tail_finish (local.get $ret)))
+
   ;; The most recent dialog-procedure handled BOOL is separate from the
   ;; message LRESULT returned by DefDlgProc. In particular, a DLGPROC can
   ;; handle WM_COMMAND (TRUE) while leaving DWL_MSGRESULT at zero. Control-side

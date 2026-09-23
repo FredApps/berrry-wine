@@ -181,10 +181,7 @@
   ;; correct after the source list is changed or destroyed.
   (func $image_list_icon_handle (param $list i32) (param $index i32) (result i32)
     (local $sw i32) (local $cx i32) (local $cy i32) (local $icons i32)
-    (local $retained i32) (local $source_bitmap i32) (local $mask_key i32)
-    (local $source i32) (local $color_desc i32) (local $mask_desc i32)
-    (local $color i32) (local $mask i32) (local $mask_stride i32)
-    (local $x i32) (local $y i32) (local $pixel i32) (local $result i32)
+    (local $retained i32) (local $source_bitmap i32)
     (if (i32.eqz (local.get $list)) (then (return (i32.const 0))))
     (local.set $sw (call $g2w (local.get $list)))
     (if (i32.or
@@ -215,6 +212,22 @@
             (i32.lt_s (call $host_gdi_get_object_h (local.get $source_bitmap))
               (local.get $cy))))
       (then (return (i32.const 0))))
+    (call $image_list_cell_icon (local.get $source_bitmap) (i32.const 0)
+      (i32.mul (local.get $index) (local.get $cx)) (i32.const 0)
+      (local.get $cx) (local.get $cy) (i32.load offset=20 (local.get $sw))))
+
+  ;; Materialize one cx*cy cell at (sx, sy) of a source bitmap into an owned
+  ;; HICON. Transparency comes from $mask_bitmap when one is given (a set bit,
+  ;; i.e. a non-black pixel, is transparent, as in every comctl32 mask plane);
+  ;; otherwise from $mask_key, a COLORREF, CLR_DEFAULT or CLR_NONE.
+  (func $image_list_cell_icon
+        (param $source_bitmap i32) (param $mask_bitmap i32)
+        (param $sx i32) (param $sy i32) (param $cx i32) (param $cy i32)
+        (param $mask_key i32) (result i32)
+    (local $source i32) (local $color_desc i32) (local $mask_desc i32)
+    (local $mask_source i32) (local $transparent i32)
+    (local $color i32) (local $mask i32) (local $mask_stride i32)
+    (local $x i32) (local $y i32) (local $pixel i32) (local $result i32)
 
     ;; Owned 32-bpp colour plane.
     (memory.fill (global.get $GDI_BITMAP_PLAN) (i32.const 0) (i32.const 48))
@@ -265,7 +278,17 @@
         (drop (call $gdi_object_delete_full (local.get $mask)))
         (drop (call $gdi_object_delete_full (local.get $color)))
         (return (i32.const 0))))
-    (local.set $mask_key (i32.load offset=20 (local.get $sw)))
+    ;; No blit is in flight here, so the blit destination half is free to
+    ;; describe the explicit mask source.
+    (if (local.get $mask_bitmap)
+      (then
+        (local.set $mask_source (global.get $GDI_BLIT_DESC))
+        (if (i32.eqz (call $gdi_raster_desc_from_bitmap
+              (local.get $mask_bitmap) (local.get $mask_source)))
+          (then
+            (drop (call $gdi_object_delete_full (local.get $mask)))
+            (drop (call $gdi_object_delete_full (local.get $color)))
+            (return (i32.const 0))))))
     ;; CLR_DEFAULT asks common controls to derive transparency from the
     ;; bitmap's upper-left pixel.  gdi_raster_read already returns the
     ;; canonical channel order; an explicit COLORREF still needs conversion.
@@ -283,19 +306,31 @@
       (block $cols_done (loop $cols
         (br_if $cols_done (i32.ge_u (local.get $x) (local.get $cx)))
         (local.set $pixel (call $gdi_raster_read (local.get $source)
-          (i32.add (i32.mul (local.get $index) (local.get $cx)) (local.get $x))
-          (local.get $y)))
+          (i32.add (local.get $sx) (local.get $x))
+          (i32.add (local.get $sy) (local.get $y))))
         (if (i32.eq (local.get $pixel) (i32.const -1))
           (then
             (drop (call $gdi_object_delete_full (local.get $mask)))
             (drop (call $gdi_object_delete_full (local.get $color)))
             (return (i32.const 0))))
+        (if (local.get $mask_source)
+          (then
+            (local.set $transparent (i32.ne
+              (i32.and (call $gdi_raster_read (local.get $mask_source)
+                  (i32.add (local.get $sx) (local.get $x))
+                  (i32.add (local.get $sy) (local.get $y)))
+                (i32.const 0x00FFFFFF))
+              (i32.const 0)))
+            ;; An icon's XOR plane is black under a set AND bit.
+            (if (local.get $transparent) (then (local.set $pixel (i32.const 0)))))
+          (else
+            (local.set $transparent
+              (i32.and (i32.ne (local.get $mask_key) (i32.const -1))
+                (i32.eq (local.get $pixel) (local.get $mask_key))))))
         (drop (call $gdi_raster_write (local.get $color_desc)
           (local.get $x) (local.get $y) (local.get $pixel)))
         (drop (call $gdi_raster_write_index (local.get $mask_desc)
-          (local.get $x) (local.get $y)
-          (i32.and (i32.ne (local.get $mask_key) (i32.const -1))
-            (i32.eq (local.get $pixel) (local.get $mask_key)))))
+          (local.get $x) (local.get $y) (local.get $transparent)))
         (local.set $x (i32.add (local.get $x) (i32.const 1)))
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
@@ -516,47 +551,43 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
   )
 
-  ;; ImageList_AddMasked(himl, hbmImage, crMask) — 3 args, returns image index
-  (func $handle_ImageList_AddMasked (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  ;; Append every whole cell of $bitmap to $list. Transparency comes from
+  ;; $mask_bitmap when given (ImageList_Add), else from $mask_key
+  ;; (ImageList_AddMasked). Returns the first new index, or -1.
+  (func $image_list_add (param $list i32) (param $bitmap i32)
+        (param $mask_bitmap i32) (param $mask_key i32) (result i32)
     (local $count i32) (local $cx i32) (local $cy i32)
     (local $bmp_w i32) (local $bmp_h i32) (local $add_count i32)
     (local $new_count i32) (local $capacity i32) (local $sw i32)
     (local $old_icons i32) (local $new_icons i32) (local $new_icons_wa i32)
-    (local $probe i32) (local $probe_wa i32)
     (local $i i32) (local $icon i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const -1))
-    (if (i32.or (i32.eqz (local.get $arg0)) (i32.eqz (local.get $arg1)))
-      (then
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-        (return)))
-    (local.set $sw (call $g2w (local.get $arg0)))
+    (if (i32.or (i32.eqz (local.get $list)) (i32.eqz (local.get $bitmap)))
+      (then (return (i32.const -1))))
+    (local.set $sw (call $g2w (local.get $list)))
     (if (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0x4C4D4948))
-      (then
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-        (return)))
+      (then (return (i32.const -1))))
     (local.set $count (i32.load offset=12 (local.get $sw)))
     (local.set $cx (i32.load (local.get $sw)))
     (local.set $cy (i32.load offset=4 (local.get $sw)))
-    (local.set $bmp_w (call $host_gdi_get_object_w (local.get $arg1)))
-    (local.set $bmp_h (call $host_gdi_get_object_h (local.get $arg1)))
+    (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bitmap)))
+    (local.set $bmp_h (call $host_gdi_get_object_h (local.get $bitmap)))
     (if (i32.or
-          (i32.or (i32.le_s (local.get $cx) (i32.const 0))
-            (i32.le_s (local.get $cy) (i32.const 0)))
+          (i32.or
+            (i32.or (i32.le_s (local.get $cx) (i32.const 0))
+              (i32.gt_s (local.get $cx) (i32.const 256)))
+            (i32.or (i32.le_s (local.get $cy) (i32.const 0))
+              (i32.gt_s (local.get $cy) (i32.const 256))))
           (i32.or (i32.lt_s (local.get $bmp_w) (local.get $cx))
             (i32.lt_s (local.get $bmp_h) (local.get $cy))))
-      (then
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-        (return)))
+      (then (return (i32.const -1))))
     (local.set $add_count (i32.div_u (local.get $bmp_w) (local.get $cx)))
     (local.set $new_count (i32.add (local.get $count) (local.get $add_count)))
     (if (i32.or (i32.lt_u (local.get $new_count) (local.get $count))
           (i32.gt_u (local.get $new_count) (i32.const 0x10000)))
-      (then
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-        (return)))
+      (then (return (i32.const -1))))
 
     ;; Build the complete replacement array before touching the live list.
-    ;; This gives ImageList_AddMasked its documented copy semantics: the
+    ;; This gives ImageList_Add/AddMasked their documented copy semantics: the
     ;; caller may DeleteObject(hbmImage) immediately after this function.
     (local.set $capacity (i32.const 4))
     (block $capacity_ready (loop $grow_capacity
@@ -566,10 +597,7 @@
       (br $grow_capacity)))
     (local.set $new_icons
       (call $heap_alloc (i32.shl (local.get $capacity) (i32.const 2))))
-    (if (i32.eqz (local.get $new_icons))
-      (then
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-        (return)))
+    (if (i32.eqz (local.get $new_icons)) (then (return (i32.const -1))))
     (local.set $new_icons_wa (call $g2w (local.get $new_icons)))
     (call $zero_memory (local.get $new_icons_wa)
       (i32.shl (local.get $capacity) (i32.const 2)))
@@ -579,64 +607,165 @@
     (block $old_done (loop $old_entries
       (br_if $old_done (i32.ge_u (local.get $i) (local.get $count)))
       (local.set $icon
-        (call $image_list_icon_handle (local.get $arg0) (local.get $i)))
+        (call $image_list_icon_handle (local.get $list) (local.get $i)))
       (if (i32.eqz (local.get $icon))
         (then
           (call $image_list_destroy_icon_array
             (local.get $new_icons) (local.get $i))
-          (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-          (return)))
+          (return (i32.const -1))))
       (i32.store (i32.add (local.get $new_icons_wa)
         (i32.shl (local.get $i) (i32.const 2))) (local.get $icon))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $old_entries)))
 
-    ;; A small temporary list lets the canonical bitmap-cell extractor apply
-    ;; the colour key and create private colour/mask planes for each new cell.
-    (local.set $probe (call $heap_alloc (i32.const 36)))
-    (if (i32.eqz (local.get $probe))
-      (then
-        (call $image_list_destroy_icon_array
-          (local.get $new_icons) (local.get $count))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-        (return)))
-    (local.set $probe_wa (call $g2w (local.get $probe)))
-    (call $zero_memory (local.get $probe_wa) (i32.const 36))
-    (i32.store          (local.get $probe_wa) (local.get $cx))
-    (i32.store offset=4 (local.get $probe_wa) (local.get $cy))
-    (i32.store offset=12 (local.get $probe_wa) (local.get $add_count))
-    (i32.store offset=16 (local.get $probe_wa) (local.get $arg1))
-    (i32.store offset=20 (local.get $probe_wa) (local.get $arg2))
-    (i32.store offset=32 (local.get $probe_wa) (i32.const 0x4C4D4948))
     (local.set $i (i32.const 0))
     (block $new_done (loop $new_entries
       (br_if $new_done (i32.ge_u (local.get $i) (local.get $add_count)))
-      (local.set $icon
-        (call $image_list_icon_handle (local.get $probe) (local.get $i)))
+      (local.set $icon (call $image_list_cell_icon
+        (local.get $bitmap) (local.get $mask_bitmap)
+        (i32.mul (local.get $i) (local.get $cx)) (i32.const 0)
+        (local.get $cx) (local.get $cy) (local.get $mask_key)))
       (if (i32.eqz (local.get $icon))
         (then
-          (call $heap_free (local.get $probe))
           (call $image_list_destroy_icon_array
             (local.get $new_icons) (i32.add (local.get $count) (local.get $i)))
-          (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
-          (return)))
+          (return (i32.const -1))))
       (i32.store (i32.add (local.get $new_icons_wa)
         (i32.shl (i32.add (local.get $count) (local.get $i)) (i32.const 2)))
         (local.get $icon))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $new_entries)))
-    (call $heap_free (local.get $probe))
 
     (local.set $old_icons (i32.load offset=24 (local.get $sw)))
     (call $image_list_destroy_icon_array
       (local.get $old_icons) (local.get $count))
+    ;; A resource-loaded strip is now fully copied into owned icons.
+    (if (i32.load offset=16 (local.get $sw))
+      (then (drop (call $gdi_object_delete_full (i32.load offset=16 (local.get $sw))))))
     (i32.store offset=12 (local.get $sw) (local.get $new_count))
     (i32.store offset=16 (local.get $sw) (i32.const 0))
     (i32.store offset=20 (local.get $sw) (i32.const -1))
     (i32.store offset=24 (local.get $sw) (local.get $new_icons))
     (i32.store offset=28 (local.get $sw) (local.get $capacity))
-    (i32.store offset=0 (global.get $reg_base) (local.get $count))
+    (local.get $count))
+
+  ;; ImageList_AddMasked(himl, hbmImage, crMask) — 3 args, returns image index
+  (func $handle_ImageList_AddMasked (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $image_list_add
+      (local.get $arg0) (local.get $arg1) (i32.const 0) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+  )
+
+  ;; ImageList_Add(himl, hbmImage, hbmMask) — 3 args, returns image index.
+  ;; A NULL mask adds the cells fully opaque.
+  (func $handle_ImageList_Add (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $image_list_add
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (i32.const -1)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+  )
+
+  ;; ImageList_GetIconSize(himl, *cx, *cy) — 3 args, returns BOOL
+  (func $handle_ImageList_GetIconSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $sw i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+          (i32.and (i32.ne (local.get $arg1) (i32.const 0)) (i32.ne (local.get $arg2) (i32.const 0))))
+      (then
+        (local.set $sw (call $g2w_affine_span (local.get $arg0) (i32.const 36)))
+        (if (i32.and (i32.ne (local.get $sw) (global.get $NULL_SENTINEL))
+              (i32.eq (i32.load offset=32 (local.get $sw)) (i32.const 0x4C4D4948)))
+          (then
+            (call $gs32 (local.get $arg1) (i32.load (local.get $sw)))
+            (call $gs32 (local.get $arg2) (i32.load offset=4 (local.get $sw)))
+            (i32.store offset=0 (global.get $reg_base) (i32.const 1))))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+  )
+
+  ;; ImageList_SetIconSize(himl, cx, cy) — 3 args, returns BOOL. Changing the
+  ;; cell size discards every image, as in comctl32.
+  (func $handle_ImageList_SetIconSize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $sw i32) (local $bitmap i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0))
+          (i32.and (i32.gt_s (local.get $arg1) (i32.const 0)) (i32.gt_s (local.get $arg2) (i32.const 0))))
+      (then
+        (local.set $sw (call $g2w_affine_span (local.get $arg0) (i32.const 36)))
+        (if (i32.and (i32.ne (local.get $sw) (global.get $NULL_SENTINEL))
+              (i32.eq (i32.load offset=32 (local.get $sw)) (i32.const 0x4C4D4948)))
+          (then
+            (call $image_list_destroy_icon_array
+              (i32.load offset=24 (local.get $sw)) (i32.load offset=12 (local.get $sw)))
+            (local.set $bitmap (i32.load offset=16 (local.get $sw)))
+            (if (local.get $bitmap) (then (drop (call $gdi_object_delete_full (local.get $bitmap)))))
+            (i32.store (local.get $sw) (local.get $arg1))
+            (i32.store offset=4 (local.get $sw) (local.get $arg2))
+            (i32.store offset=12 (local.get $sw) (i32.const 0))
+            (i32.store offset=16 (local.get $sw) (i32.const 0))
+            (i32.store offset=24 (local.get $sw) (i32.const 0))
+            (i32.store offset=28 (local.get $sw) (i32.const 0))
+            (i32.store offset=0 (global.get $reg_base) (i32.const 1))))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+  )
+
+  ;; Draw image $index at (x, y), scaled to cx*cy when those are nonzero.
+  ;; ILD_MASK (0x10) draws the mask plane; every other style draws the image
+  ;; transparently. A background colour (CLR_NONE by default) is filled
+  ;; behind the image for ILD_NORMAL, as comctl32 does.
+  (func $image_list_draw (param $list i32) (param $index i32) (param $hdc i32)
+        (param $x i32) (param $y i32) (param $cx i32) (param $cy i32)
+        (param $style i32) (result i32)
+    (local $sw i32) (local $icon i32) (local $bk i32) (local $brush i32) (local $ok i32)
+    (if (i32.eqz (local.get $list)) (then (return (i32.const 0))))
+    (local.set $sw (call $g2w_affine_span (local.get $list) (i32.const 36)))
+    (if (i32.or (i32.eq (local.get $sw) (global.get $NULL_SENTINEL))
+          (i32.ne (i32.load offset=32 (local.get $sw)) (i32.const 0x4C4D4948)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $cx)) (then (local.set $cx (i32.load (local.get $sw)))))
+    (if (i32.eqz (local.get $cy)) (then (local.set $cy (i32.load offset=4 (local.get $sw)))))
+    (local.set $bk (i32.load offset=8 (local.get $sw)))
+    (if (i32.and
+          (i32.eqz (i32.and (local.get $style) (i32.const 0x11))) ;; neither ILD_TRANSPARENT nor ILD_MASK
+          (i32.ne (local.get $bk) (i32.const -1)))
+      (then
+        (local.set $brush (call $host_gdi_create_solid_brush (local.get $bk)))
+        (if (local.get $brush)
+          (then
+            (drop (call $host_gdi_fill_rect (local.get $hdc) (local.get $x) (local.get $y)
+              (i32.add (local.get $x) (local.get $cx)) (i32.add (local.get $y) (local.get $cy))
+              (local.get $brush)))
+            (drop (call $host_gdi_delete_object (local.get $brush)))))))
+    (local.set $icon (call $image_list_icon_handle (local.get $list) (local.get $index)))
+    (if (i32.eqz (local.get $icon)) (then (return (i32.const 0))))
+    (local.set $ok (call $icon_draw_handle (local.get $icon) (local.get $hdc)
+      (local.get $x) (local.get $y) (local.get $cx) (local.get $cy)
+      (select (global.get $DI_MASK) (global.get $DI_NORMAL)
+        (i32.ne (i32.and (local.get $style) (i32.const 0x10)) (i32.const 0)))))
+    (drop (call $icon_destroy_handle (local.get $icon)))
+    (i32.ne (local.get $ok) (i32.const 0)))
+
+  ;; ImageList_Draw(himl, i, hdcDst, x, y, fStyle) — 6 args, returns BOOL
+  (func $handle_ImageList_Draw (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $image_list_draw
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (i32.const 0) (i32.const 0)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
+  )
+
+  ;; ImageList_DrawEx(himl, i, hdcDst, x, y, dx, dy, rgbBk, rgbFg, fStyle) —
+  ;; 10 args, returns BOOL. rgbBk/rgbFg select blend colours; blending is not
+  ;; modelled, so the image draws as ILD_NORMAL/ILD_TRANSPARENT would.
+  (func $handle_ImageList_DrawEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $esp i32)
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (i32.store offset=0 (global.get $reg_base) (call $image_list_draw
+      (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (local.get $esp) (i32.const 24)))
+      (call $gl32 (i32.add (local.get $esp) (i32.const 28)))
+      (i32.or (call $gl32 (i32.add (local.get $esp) (i32.const 40)))
+        ;; rgbBk == CLR_NONE is a transparent draw whatever fStyle says.
+        (i32.eq (call $gl32 (i32.add (local.get $esp) (i32.const 32))) (i32.const -1)))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 44)))
   )
 
   ;; ImageList_ReplaceIcon(himl, i, hicon) — replace an existing image, or
@@ -726,6 +855,299 @@
     (i32.store offset=0 (global.get $reg_base) (call $image_list_icon_handle (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
+
+  ;; ImageList_Read(pstm) — rebuild an image list from the comctl32 stream
+  ;; format ImageList_Write produces: a 28-byte ILHEAD, then a BMP file of the
+  ;; colour sheet and, when ILC_MASK is set, a BMP file of the mask sheet.
+  ;; Both sheets are grids of cx*cy cells, left to right then top to bottom
+  ;; (four columns wide in every comctl32 we have seen; the column count is
+  ;; taken from the sheet width rather than assumed).
+  ;;
+  ;; VCL's TCustomImageList.ReadData hands in a TStreamAdapter, a DLL-private
+  ;; IStream, so each Read is a guest COM call resumed through the OLE callback
+  ;; continuation (operation 37). One of our own streams is read directly.
+  ;;
+  ;; Read state (guest heap, 128 bytes):
+  ;;   +0 phase, +4 stream, +8 bytes wanted, +12 bytes read (IStream out),
+  ;;   +16 destination, +20/+24 colour file and size, +28/+32 mask file and
+  ;;   size, +36 result HIMAGELIST, +40 ILHEAD (28), +68 BITMAPFILEHEADER (14),
+  ;;   +84 BITMAPINFOHEADER (40).
+  (global $IMAGE_LIST_READ_STATE_SIZE i32 (i32.const 128))
+
+  (func $image_list_read_state_free (param $state i32)
+    (local $p i32)
+    (local.set $p (call $gl32 (i32.add (local.get $state) (i32.const 20))))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (local.set $p (call $gl32 (i32.add (local.get $state) (i32.const 28))))
+    (if (local.get $p) (then (call $heap_free (local.get $p))))
+    (call $heap_free (local.get $state)))
+
+  (func $image_list_read_request (param $state i32) (param $phase i32)
+        (param $dest i32) (param $want i32) (result i32)
+    (call $gs32 (local.get $state) (local.get $phase))
+    (call $gs32 (i32.add (local.get $state) (i32.const 16)) (local.get $dest))
+    (call $gs32 (i32.add (local.get $state) (i32.const 8)) (local.get $want))
+    (call $gs32 (i32.add (local.get $state) (i32.const 12)) (i32.const 0))
+    (i32.const 1))
+
+  ;; The BITMAPFILEHEADER just read must say "BM". Its bfSize is NOT the file
+  ;; size — comctl32 writes only the header size there (0x36 for a 32-bpp
+  ;; sheet) — so the length comes from the BITMAPINFOHEADER read next.
+  (func $image_list_read_bmp_header (param $state i32) (param $phase i32) (result i32)
+    (if (i32.ne (i32.load16_u (call $g2w (i32.add (local.get $state) (i32.const 68))))
+          (i32.const 0x4D42)) ;; "BM"
+      (then (return (i32.const 0))))
+    (call $image_list_read_request (local.get $state) (local.get $phase)
+      (i32.add (local.get $state) (i32.const 84)) (i32.const 40)))
+
+  ;; Size the sheet from its BITMAPINFOHEADER, allocate the whole file with
+  ;; both headers copied in, and request the palette and bits after them.
+  (func $image_list_read_file (param $state i32) (param $slot i32) (param $phase i32)
+        (result i32)
+    (local $info i32) (local $width i32) (local $height i32) (local $bpp i32)
+    (local $colors i32) (local $body i64) (local $size i32) (local $file i32)
+    (local.set $info (call $g2w (i32.add (local.get $state) (i32.const 84))))
+    (local.set $width (i32.load offset=4 (local.get $info)))
+    (local.set $height (i32.load offset=8 (local.get $info)))
+    (if (i32.lt_s (local.get $height) (i32.const 0))
+      (then (local.set $height (i32.sub (i32.const 0) (local.get $height)))))
+    (local.set $bpp (i32.load16_u offset=14 (local.get $info)))
+    (if (i32.or
+          (i32.or (i32.ne (i32.load (local.get $info)) (i32.const 40))
+            (i32.ne (i32.load offset=16 (local.get $info)) (i32.const 0))) ;; BI_RGB only
+          (i32.or
+            (i32.or (i32.le_s (local.get $width) (i32.const 0))
+              (i32.le_s (local.get $height) (i32.const 0)))
+            (i32.or (i32.gt_s (local.get $width) (i32.const 0x4000))
+              (i32.gt_s (local.get $height) (i32.const 0x4000)))))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (i32.or
+          (i32.or (i32.eq (local.get $bpp) (i32.const 1)) (i32.eq (local.get $bpp) (i32.const 4)))
+          (i32.or
+            (i32.or (i32.eq (local.get $bpp) (i32.const 8)) (i32.eq (local.get $bpp) (i32.const 16)))
+            (i32.or (i32.eq (local.get $bpp) (i32.const 24)) (i32.eq (local.get $bpp) (i32.const 32))))))
+      (then (return (i32.const 0))))
+    (local.set $colors (i32.load offset=32 (local.get $info)))
+    (if (i32.and (i32.eqz (local.get $colors)) (i32.le_u (local.get $bpp) (i32.const 8)))
+      (then (local.set $colors (i32.shl (i32.const 1) (local.get $bpp)))))
+    (if (i32.gt_u (local.get $colors) (i32.const 256)) (then (return (i32.const 0))))
+    ;; DWORD-aligned rows of width*bpp bits, plus the colour table.
+    (local.set $body (i64.add
+      (i64.extend_i32_u (i32.shl (local.get $colors) (i32.const 2)))
+      (i64.mul
+        (i64.extend_i32_u (i32.shl
+          (i32.shr_u (i32.add (i32.mul (local.get $width) (local.get $bpp)) (i32.const 31))
+            (i32.const 5))
+          (i32.const 2)))
+        (i64.extend_i32_u (local.get $height)))))
+    (if (i64.gt_u (local.get $body) (i64.const 0x02000000)) (then (return (i32.const 0))))
+    (local.set $size (i32.add (i32.wrap_i64 (local.get $body)) (i32.const 54)))
+    (local.set $file (call $heap_alloc (local.get $size)))
+    (if (i32.eqz (local.get $file)) (then (return (i32.const 0))))
+    (call $memcpy (call $g2w (local.get $file))
+      (call $g2w (i32.add (local.get $state) (i32.const 68))) (i32.const 14))
+    (call $memcpy (i32.add (call $g2w (local.get $file)) (i32.const 14))
+      (local.get $info) (i32.const 40))
+    (call $gs32 (i32.add (local.get $state) (local.get $slot)) (local.get $file))
+    (call $gs32 (i32.add (local.get $state) (i32.add (local.get $slot) (i32.const 4)))
+      (local.get $size))
+    (call $image_list_read_request (local.get $state) (local.get $phase)
+      (i32.add (local.get $file) (i32.const 54))
+      (i32.wrap_i64 (local.get $body))))
+
+  ;; Build the list from the two sheets. Returns the HIMAGELIST or 0.
+  (func $image_list_read_build (param $state i32) (result i32)
+    (local $head i32) (local $count i32) (local $cx i32) (local $cy i32)
+    (local $color i32) (local $mask i32) (local $cols i32) (local $rows i32)
+    (local $list i32) (local $list_wa i32) (local $icons i32) (local $icons_wa i32)
+    (local $capacity i32) (local $i i32) (local $icon i32) (local $file i32)
+    (local.set $head (call $g2w (i32.add (local.get $state) (i32.const 40))))
+    (local.set $count (i32.load16_u offset=4 (local.get $head)))
+    (local.set $cx (i32.load16_u offset=10 (local.get $head)))
+    (local.set $cy (i32.load16_u offset=12 (local.get $head)))
+    (local.set $file (call $gl32 (i32.add (local.get $state) (i32.const 20))))
+    (local.set $color (call $gdi_bitmap_create_resource
+      (call $g2w (i32.add (local.get $file) (i32.const 14)))
+      (i32.sub (call $gl32 (i32.add (local.get $state) (i32.const 24))) (i32.const 14))))
+    (if (i32.eqz (local.get $color)) (then (return (i32.const 0))))
+    (local.set $file (call $gl32 (i32.add (local.get $state) (i32.const 28))))
+    (if (local.get $file)
+      (then
+        (local.set $mask (call $gdi_bitmap_create_resource
+          (call $g2w (i32.add (local.get $file) (i32.const 14)))
+          (i32.sub (call $gl32 (i32.add (local.get $state) (i32.const 32))) (i32.const 14))))
+        (if (i32.eqz (local.get $mask))
+          (then
+            (drop (call $gdi_object_delete_full (local.get $color)))
+            (return (i32.const 0))))))
+    (local.set $cols (i32.div_u (call $host_gdi_get_object_w (local.get $color)) (local.get $cx)))
+    (local.set $rows (i32.div_u (call $host_gdi_get_object_h (local.get $color)) (local.get $cy)))
+    (local.set $capacity (i32.const 4))
+    (block $sized (loop $grow
+      (br_if $sized (i32.ge_u (local.get $capacity) (local.get $count)))
+      (local.set $capacity (i32.shl (local.get $capacity) (i32.const 1)))
+      (br $grow)))
+    (local.set $list (call $heap_alloc (i32.const 36)))
+    (local.set $icons (call $heap_alloc (i32.shl (local.get $capacity) (i32.const 2))))
+    (block $fail_early
+    (if (i32.or
+          (i32.or (i32.eqz (local.get $list)) (i32.eqz (local.get $icons)))
+          (i32.and (i32.ne (local.get $count) (i32.const 0))
+            (i32.gt_u (local.get $count) (i32.mul (local.get $cols) (local.get $rows)))))
+      (then (br $fail_early)))
+    (local.set $icons_wa (call $g2w (local.get $icons)))
+    (call $zero_memory (local.get $icons_wa) (i32.shl (local.get $capacity) (i32.const 2)))
+    (block $built (loop $cells
+      (br_if $built (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $icon (call $image_list_cell_icon (local.get $color) (local.get $mask)
+        (i32.mul (i32.rem_u (local.get $i) (local.get $cols)) (local.get $cx))
+        (i32.mul (i32.div_u (local.get $i) (local.get $cols)) (local.get $cy))
+        (local.get $cx) (local.get $cy) (i32.const -1)))
+      (if (i32.eqz (local.get $icon))
+        (then
+          (call $image_list_destroy_icon_array (local.get $icons) (local.get $i))
+          (local.set $icons (i32.const 0))
+          (br $fail_early)))
+      (i32.store (i32.add (local.get $icons_wa) (i32.shl (local.get $i) (i32.const 2)))
+        (local.get $icon))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $cells)))
+    (drop (call $gdi_object_delete_full (local.get $color)))
+    (if (local.get $mask) (then (drop (call $gdi_object_delete_full (local.get $mask)))))
+    (local.set $list_wa (call $g2w (local.get $list)))
+    (call $zero_memory (local.get $list_wa) (i32.const 36))
+    (i32.store (local.get $list_wa) (local.get $cx))
+    (i32.store offset=4 (local.get $list_wa) (local.get $cy))
+    (i32.store offset=8 (local.get $list_wa) (i32.load offset=14 (local.get $head)))
+    (i32.store offset=12 (local.get $list_wa) (local.get $count))
+    (i32.store offset=20 (local.get $list_wa) (i32.const -1))
+    (i32.store offset=24 (local.get $list_wa) (local.get $icons))
+    (i32.store offset=28 (local.get $list_wa) (local.get $capacity))
+    (i32.store offset=32 (local.get $list_wa) (i32.const 0x4C4D4948))
+    (return (local.get $list)))
+    (if (local.get $list) (then (call $heap_free (local.get $list))))
+    (if (local.get $icons) (then (call $heap_free (local.get $icons))))
+    (drop (call $gdi_object_delete_full (local.get $color)))
+    (if (local.get $mask) (then (drop (call $gdi_object_delete_full (local.get $mask)))))
+    (i32.const 0))
+
+  ;; Advance after a completed read of exactly the bytes wanted. Returns 1
+  ;; when another read has been requested, 0 when finished (result at +36).
+  (func $image_list_read_advance (param $state i32) (result i32)
+    (local $phase i32) (local $head i32) (local $cx i32) (local $cy i32)
+    (local.set $phase (call $gl32 (local.get $state)))
+    (local.set $head (call $g2w (i32.add (local.get $state) (i32.const 40))))
+    (if (i32.eqz (local.get $phase))
+      (then (return (call $image_list_read_request (local.get $state) (i32.const 1)
+        (i32.add (local.get $state) (i32.const 40)) (i32.const 28)))))
+    (if (i32.eq (local.get $phase) (i32.const 1))
+      (then
+        (local.set $cx (i32.load16_u offset=10 (local.get $head)))
+        (local.set $cy (i32.load16_u offset=12 (local.get $head)))
+        (if (i32.or
+              (i32.or (i32.ne (i32.load16_u (local.get $head)) (i32.const 0x4C49)) ;; "IL"
+                (i32.lt_u (i32.load16_u offset=2 (local.get $head)) (i32.const 0x100)))
+              (i32.or
+                (i32.or (i32.eqz (local.get $cx)) (i32.gt_u (local.get $cx) (i32.const 256)))
+                (i32.or (i32.eqz (local.get $cy)) (i32.gt_u (local.get $cy) (i32.const 256)))))
+          (then (return (i32.const 0))))
+        (return (call $image_list_read_request (local.get $state) (i32.const 2)
+          (i32.add (local.get $state) (i32.const 68)) (i32.const 14)))))
+    ;; Colour sheet: file header (2), info header (3), body (4); then the
+    ;; mask sheet the same way (5, 6, 7) when ILC_MASK is set.
+    (if (i32.eq (local.get $phase) (i32.const 2))
+      (then (return (call $image_list_read_bmp_header (local.get $state) (i32.const 3)))))
+    (if (i32.eq (local.get $phase) (i32.const 3))
+      (then (return (call $image_list_read_file (local.get $state) (i32.const 20) (i32.const 4)))))
+    (if (i32.and
+          (i32.eq (local.get $phase) (i32.const 4))
+          (i32.ne (i32.and (i32.load16_u offset=18 (local.get $head)) (i32.const 1)) (i32.const 0)))
+      (then (return (call $image_list_read_request (local.get $state) (i32.const 5)
+        (i32.add (local.get $state) (i32.const 68)) (i32.const 14)))))
+    (if (i32.eq (local.get $phase) (i32.const 5))
+      (then (return (call $image_list_read_bmp_header (local.get $state) (i32.const 6)))))
+    (if (i32.eq (local.get $phase) (i32.const 6))
+      (then (return (call $image_list_read_file (local.get $state) (i32.const 28) (i32.const 7)))))
+    (call $gs32 (i32.add (local.get $state) (i32.const 36))
+      (call $image_list_read_build (local.get $state)))
+    (i32.const 0))
+
+  ;; Called with the HRESULT of the read just completed. Returns 1 while a
+  ;; further read is pending; otherwise frees the state and returns 0 with
+  ;; the HIMAGELIST (or 0) in $image_list_read_result.
+  (global $image_list_read_result (mut i32) (i32.const 0))
+  (func $image_list_read_step (param $state i32) (param $hr i32) (result i32)
+    (if (i32.and
+          (i32.ge_s (local.get $hr) (i32.const 0))
+          (i32.eq (call $gl32 (i32.add (local.get $state) (i32.const 12)))
+            (call $gl32 (i32.add (local.get $state) (i32.const 8)))))
+      (then
+        (if (call $image_list_read_advance (local.get $state))
+          (then (return (i32.const 1))))))
+    (global.set $image_list_read_result
+      (call $gl32 (i32.add (local.get $state) (i32.const 36))))
+    (call $image_list_read_state_free (local.get $state))
+    (i32.const 0))
+
+  (func $handle_ImageList_Read (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $state i32) (local $ret i32) (local $ctx i32) (local $hr i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (if (i32.eqz (local.get $arg0))
+      (then
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
+    (local.set $state (call $heap_alloc (global.get $IMAGE_LIST_READ_STATE_SIZE)))
+    (if (i32.eqz (local.get $state))
+      (then
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
+    (call $zero_memory (call $g2w (local.get $state)) (global.get $IMAGE_LIST_READ_STATE_SIZE))
+    (call $gs32 (i32.add (local.get $state) (i32.const 4)) (local.get $arg0))
+    (drop (call $image_list_read_advance (local.get $state)))
+    (if (call $ole_interface_is_local (local.get $arg0))
+      (then
+        ;; One of our own streams: every read completes synchronously.
+        (block $done (loop $reads
+          (local.set $hr (i32.const 0x80004002))
+          (if (i32.eq (call $gl32 (local.get $arg0)) (global.get $DX_VTBL_OLE_STREAM))
+            (then (local.set $hr (call $ole_stream_read (local.get $arg0)
+              (call $gl32 (i32.add (local.get $state) (i32.const 16)))
+              (call $gl32 (i32.add (local.get $state) (i32.const 8)))
+              (i32.add (local.get $state) (i32.const 12))))))
+          (br_if $reads (call $image_list_read_step (local.get $state) (local.get $hr)))))
+        (i32.store offset=0 (global.get $reg_base) (global.get $image_list_read_result))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
+    (if (i32.eqz (call $ole_guest_method_addr (local.get $arg0) (i32.const 3)))
+      (then
+        (call $image_list_read_state_free (local.get $state))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (local.set $ctx (call $ole_guest_callback_context
+      (i32.const 37) (i32.const 0) (local.get $ret)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))
+      (i32.const 0) (local.get $state) (local.get $arg0)
+      (i32.const 0) (i32.const 0)))
+    (drop (call $image_list_read_invoke (local.get $ctx) (local.get $state))))
+
+  ;; Issue IStream::Read (vtable slot 3) for the read the state requests.
+  (func $image_list_read_invoke (param $ctx i32) (param $state i32) (result i32)
+    (call $ole_guest_callback_invoke4
+      (local.get $ctx) (call $gl32 (i32.add (local.get $state) (i32.const 4))) (i32.const 3)
+      (call $gl32 (i32.add (local.get $state) (i32.const 16)))
+      (call $gl32 (i32.add (local.get $state) (i32.const 8)))
+      (i32.add (local.get $state) (i32.const 12))))
+
+  ;; OLE callback continuation for operation 37: one guest Read returned.
+  (func $image_list_read_continue (param $ctx i32) (param $state i32)
+    (if (call $image_list_read_step (local.get $state)
+          (i32.load offset=0 (global.get $reg_base)))
+      (then
+        (if (call $image_list_read_invoke (local.get $ctx) (local.get $state))
+          (then (return)))
+        (drop (call $image_list_read_step (local.get $state) (i32.const 0x80004002)))))
+    (call $ole_guest_callback_finish (local.get $ctx) (global.get $image_list_read_result)))
 
   ;; ImageList_Remove(himl, i) — remove one image and close the index gap, or
   ;; remove every image when i == -1.  Rebuild through owned HICONs before

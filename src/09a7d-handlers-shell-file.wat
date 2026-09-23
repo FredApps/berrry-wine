@@ -194,8 +194,9 @@
   ;; 417: SetFileAttributesW — STUB: unimplemented
   (func $handle_SetFileAttributesW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetFileAttributesW(lpFileName, dwFileAttributes) — 2 args
-    (i32.store offset=0 (global.get $reg_base) (call $host_fs_set_file_attributes
-      (call $g2w (local.get $arg0)) (local.get $arg1) (i32.const 1)))
+    (i32.store offset=0 (global.get $reg_base) (call $fs_path_result
+      (call $host_fs_set_file_attributes (call $g2w (local.get $arg0)) (local.get $arg1) (i32.const 1))
+      (local.get $arg0) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
@@ -210,8 +211,9 @@
   ;; 419: DeleteFileW — STUB: unimplemented
   (func $handle_DeleteFileW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; DeleteFileW(lpFileName) — 1 arg
-    (i32.store offset=0 (global.get $reg_base) (call $host_fs_delete_file
-      (call $g2w (local.get $arg0)) (i32.const 1)))
+    (i32.store offset=0 (global.get $reg_base) (call $fs_path_result
+      (call $host_fs_delete_file (call $g2w (local.get $arg0)) (i32.const 1))
+      (local.get $arg0) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 

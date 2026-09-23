@@ -108,42 +108,92 @@
     (i32.store offset=0 (global.get $reg_base) (call $env_set (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
-  ;; CompareString core, shared by both spellings: the comparison rules are the
-  ;; same, only the character stride differs. $p1/$p2 are WASM addresses,
-  ;; lengths are in characters and -1 means "NUL-terminated". Returns
-  ;; CSTR_LESS_THAN(1), CSTR_EQUAL(2), CSTR_GREATER_THAN(3).
-  (func $compare_string (param $flags i32) (param $p1 i32) (param $len1 i32)
-                        (param $p2 i32) (param $len2 i32) (param $wide i32) (result i32)
-    (local $i i32) (local $c1 i32) (local $c2 i32) (local $minlen i32) (local $step i32)
-    (local.set $step (select (i32.const 2) (i32.const 1) (local.get $wide)))
-    (if (i32.eq (local.get $len1) (i32.const -1))
-      (then (local.set $len1 (select
-        (call $strlen_w (local.get $p1)) (call $strlen_a (local.get $p1)) (local.get $wide)))))
-    (if (i32.eq (local.get $len2) (i32.const -1))
-      (then (local.set $len2 (select
-        (call $strlen_w (local.get $p2)) (call $strlen_a (local.get $p2)) (local.get $wide)))))
-    (local.set $minlen (select (local.get $len1) (local.get $len2) (i32.lt_u (local.get $len1) (local.get $len2))))
-    (block $cmp_done (loop $cmp
-      (br_if $cmp_done (i32.ge_u (local.get $i) (local.get $minlen)))
-      (local.set $c1 (call $load_char
-        (i32.add (local.get $p1) (i32.mul (local.get $i) (local.get $step))) (local.get $wide)))
-      (local.set $c2 (call $load_char
-        (i32.add (local.get $p2) (i32.mul (local.get $i) (local.get $step))) (local.get $wide)))
-      ;; NORM_IGNORECASE (flag 1): uppercase both
+  ;; Primary sort weight of one character in the default (en-US) word sort:
+  ;; symbols, then digits, then letters with case folded, then everything
+  ;; above ASCII. 0 is the end of the string.
+  (func $nls_sort_weight (param $c i32) (result i32)
+    (if (i32.eqz (local.get $c)) (then (return (i32.const 0))))
+    (if (i32.and (i32.ge_u (local.get $c) (i32.const 0x41)) (i32.le_u (local.get $c) (i32.const 0x5A)))
+      (then (return (i32.add (i32.const 0x300) (i32.sub (local.get $c) (i32.const 0x41))))))
+    (if (i32.and (i32.ge_u (local.get $c) (i32.const 0x61)) (i32.le_u (local.get $c) (i32.const 0x7A)))
+      (then (return (i32.add (i32.const 0x300) (i32.sub (local.get $c) (i32.const 0x61))))))
+    (if (i32.and (i32.ge_u (local.get $c) (i32.const 0x30)) (i32.le_u (local.get $c) (i32.const 0x39)))
+      (then (return (i32.add (i32.const 0x200) (local.get $c)))))
+    (if (i32.lt_u (local.get $c) (i32.const 0x80))
+      (then (return (i32.add (i32.const 0x100) (local.get $c)))))
+    (i32.add (i32.const 0x400) (local.get $c)))
+
+  ;; Character $i of a guest string, or 0 past its length (-1 = NUL-terminated).
+  (func $nls_char_at (param $p i32) (param $i i32) (param $len i32) (param $wide i32) (result i32)
+    (if (i32.and (i32.ne (local.get $len) (i32.const -1)) (i32.ge_u (local.get $i) (local.get $len)))
+      (then (return (i32.const 0))))
+    (if (local.get $wide)
+      (then (return (call $gl16 (i32.add (local.get $p) (i32.shl (local.get $i) (i32.const 1)))))))
+    (call $gl8 (i32.add (local.get $p) (local.get $i))))
+
+  ;; Characters the word sort skips at the primary level: hyphen and apostrophe
+  ;; always (unless SORT_STRINGSORT), every symbol under NORM_IGNORESYMBOLS.
+  (func $nls_ignorable (param $c i32) (param $flags i32) (result i32)
+    (if (i32.eqz (local.get $c)) (then (return (i32.const 0))))
+    (if (i32.and (i32.eqz (i32.and (local.get $flags) (i32.const 0x1000)))
+                 (i32.or (i32.eq (local.get $c) (i32.const 0x2D)) (i32.eq (local.get $c) (i32.const 0x27))))
+      (then (return (i32.const 1))))
+    (if (i32.and (local.get $flags) (i32.const 4))
+      (then (return (i32.and (i32.ge_u (call $nls_sort_weight (local.get $c)) (i32.const 0x100))
+                             (i32.lt_u (call $nls_sort_weight (local.get $c)) (i32.const 0x200))))))
+    (i32.const 0))
+
+  ;; CompareString's ordering over guest strings, as -1/0/1: letters compare
+  ;; case-insensitively first, so "commonfilesdir" < "SetupkitSetup1" (a byte
+  ;; compare says the opposite, which broke SetupAPI's sorted string table).
+  ;; Case is only a tie-break (lowercase first) unless NORM_IGNORECASE, and
+  ;; the skipped hyphens/apostrophes decide last.
+  (func $nls_compare (param $p1 i32) (param $len1 i32) (param $p2 i32) (param $len2 i32)
+                     (param $wide i32) (param $flags i32) (result i32)
+    (local $i1 i32) (local $i2 i32) (local $c1 i32) (local $c2 i32)
+    (local $w1 i32) (local $w2 i32) (local $case i32)
+    (block $primary_done (loop $primary
+      (loop $skip1
+        (local.set $c1 (call $nls_char_at (local.get $p1) (local.get $i1) (local.get $len1) (local.get $wide)))
+        (if (call $nls_ignorable (local.get $c1) (local.get $flags))
+          (then (local.set $i1 (i32.add (local.get $i1) (i32.const 1))) (br $skip1))))
+      (loop $skip2
+        (local.set $c2 (call $nls_char_at (local.get $p2) (local.get $i2) (local.get $len2) (local.get $wide)))
+        (if (call $nls_ignorable (local.get $c2) (local.get $flags))
+          (then (local.set $i2 (i32.add (local.get $i2) (i32.const 1))) (br $skip2))))
+      (local.set $w1 (call $nls_sort_weight (local.get $c1)))
+      (local.set $w2 (call $nls_sort_weight (local.get $c2)))
+      (if (i32.ne (local.get $w1) (local.get $w2))
+        (then (return (select (i32.const -1) (i32.const 1) (i32.lt_u (local.get $w1) (local.get $w2))))))
+      (br_if $primary_done (i32.eqz (local.get $c1)))
+      (if (i32.and (i32.eqz (local.get $case)) (i32.ne (local.get $c1) (local.get $c2)))
+        (then (local.set $case (select (i32.const -1) (i32.const 1)
+          (i32.and (i32.ge_u (local.get $c1) (i32.const 0x61)) (i32.le_u (local.get $c1) (i32.const 0x7A)))))))
+      (local.set $i1 (i32.add (local.get $i1) (i32.const 1)))
+      (local.set $i2 (i32.add (local.get $i2) (i32.const 1)))
+      (br $primary)))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 1)))
+      (then (if (local.get $case) (then (return (local.get $case))))))
+    ;; Equal apart from skipped characters: the first position where only one
+    ;; string has a skipped character makes that string the greater ("coop" <
+    ;; "co-op"); otherwise plain code order decides.
+    (local.set $i1 (i32.const 0))
+    (block $raw_done (loop $raw
+      (local.set $c1 (call $nls_char_at (local.get $p1) (local.get $i1) (local.get $len1) (local.get $wide)))
+      (local.set $c2 (call $nls_char_at (local.get $p2) (local.get $i1) (local.get $len2) (local.get $wide)))
+      (local.set $w1 (call $nls_ignorable (local.get $c1) (local.get $flags)))
+      (local.set $w2 (call $nls_ignorable (local.get $c2) (local.get $flags)))
+      (if (i32.ne (local.get $w1) (local.get $w2))
+        (then (return (select (i32.const 1) (i32.const -1) (local.get $w1)))))
       (if (i32.and (local.get $flags) (i32.const 1))
-        (then
-          (if (i32.and (i32.ge_u (local.get $c1) (i32.const 97)) (i32.le_u (local.get $c1) (i32.const 122)))
-            (then (local.set $c1 (i32.sub (local.get $c1) (i32.const 32)))))
-          (if (i32.and (i32.ge_u (local.get $c2) (i32.const 97)) (i32.le_u (local.get $c2) (i32.const 122)))
-            (then (local.set $c2 (i32.sub (local.get $c2) (i32.const 32)))))))
-      (if (i32.lt_u (local.get $c1) (local.get $c2)) (then (return (i32.const 1))))
-      (if (i32.gt_u (local.get $c1) (local.get $c2)) (then (return (i32.const 3))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $cmp)))
-    ;; Common prefix: the shorter string sorts first.
-    (select (i32.const 1) (select (i32.const 3) (i32.const 2)
-      (i32.gt_u (local.get $len1) (local.get $len2)))
-      (i32.lt_u (local.get $len1) (local.get $len2))))
+        (then (local.set $c1 (call $tolower (local.get $c1)))
+              (local.set $c2 (call $tolower (local.get $c2)))))
+      (if (i32.ne (local.get $c1) (local.get $c2))
+        (then (return (select (i32.const -1) (i32.const 1) (i32.lt_u (local.get $c1) (local.get $c2))))))
+      (br_if $raw_done (i32.eqz (local.get $c1)))
+      (local.set $i1 (i32.add (local.get $i1) (i32.const 1)))
+      (br $raw)))
+    (i32.const 0))
 
   ;; One character at a WASM address, ANSI or wide.
   (func $load_char (param $p i32) (param $wide i32) (result i32)
@@ -153,18 +203,18 @@
   ;; 475: CompareStringA(Locale, dwCmpFlags, lpString1, cchCount1, lpString2, cchCount2) → int
   (func $handle_CompareStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; arg4 = lpString2, cchCount2 (6th arg) is still on the guest stack at esp+24
-    (i32.store offset=0 (global.get $reg_base) (call $compare_string (local.get $arg1)
-      (call $g2w (local.get $arg2)) (local.get $arg3)
-      (call $g2w (local.get $arg4)) (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-      (i32.const 0)))
+    (i32.store offset=0 (global.get $reg_base) (i32.add (i32.const 2) (call $nls_compare
+      (local.get $arg2) (local.get $arg3)
+      (local.get $arg4) (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+      (i32.const 0) (local.get $arg1))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
 
   ;; 476: CompareStringW — same comparison, wide characters
   (func $handle_CompareStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $compare_string (local.get $arg1)
-      (call $g2w (local.get $arg2)) (local.get $arg3)
-      (call $g2w (local.get $arg4)) (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-      (i32.const 1)))
+    (i32.store offset=0 (global.get $reg_base) (i32.add (i32.const 2) (call $nls_compare
+      (local.get $arg2) (local.get $arg3)
+      (local.get $arg4) (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+      (i32.const 1) (local.get $arg1))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
 
   ;; 477: IsValidLocale(Locale, dwFlags) → BOOL
@@ -594,8 +644,9 @@
   ;; 488: SetFileAttributesA — STUB: unimplemented
   (func $handle_SetFileAttributesA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; SetFileAttributesA(lpFileName, dwFileAttributes) — 2 args
-    (i32.store offset=0 (global.get $reg_base) (call $host_fs_set_file_attributes
-      (call $g2w (local.get $arg0)) (local.get $arg1) (i32.const 0)))
+    (i32.store offset=0 (global.get $reg_base) (call $fs_path_result
+      (call $host_fs_set_file_attributes (call $g2w (local.get $arg0)) (local.get $arg1) (i32.const 0))
+      (local.get $arg0) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 

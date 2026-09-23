@@ -35,9 +35,23 @@
         (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
-    ;; Private message pumps use the handle only as another wake source. Polling
-    ;; it here would consume auto-reset events before the worker can observe
-    ;; them, so let the worker scheduler progress and retry on the next slice.
+    ;; A signaled handle is a result, not just a wake source: Win32 reports it
+    ;; as WAIT_OBJECT_0+i and a successful wait consumes an auto-reset event,
+    ;; exactly as WaitForMultipleObjects would. msi.dll's cross-thread Invoke
+    ;; loop waits here for the main thread's completion event and only leaves
+    ;; on WAIT_OBJECT_0; reporting WAIT_TIMEOUT forever stranded its engine
+    ;; thread, so the installer wizard's Next button never advanced.
+    (if (i32.gt_u (local.get $arg0) (i32.const 0))
+      (then
+        (local.set $result (call $host_wait_multiple
+          (local.get $arg0) (call $g2w (local.get $arg1))
+          (local.get $arg2) (i32.const 0)))
+        (if (i32.and (i32.ne (local.get $result) (i32.const 0xFFFF))
+                     (i32.ne (local.get $result) (i32.const 0x102)))
+          (then
+            (i32.store offset=0 (global.get $reg_base) (local.get $result))
+            (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+            (return)))))
     ;; Nothing ready — if timeout is 0, return WAIT_TIMEOUT
     (if (i32.eqz (local.get $arg3))
       (then
@@ -269,6 +283,14 @@
                   (local.get $ctrl_class)
                   (call $ctrl_table_get_id (local.get $arg1)))
                 (call $sysclass_replay_create (local.get $arg1) (local.get $thunk_idx))))))
+        (if (i32.ne (local.get $arg2) (i32.const 0x0081))
+          (then
+            ;; Pops the 24-byte frame itself, and turns a control's parent
+            ;; notification into a tail call returning to our caller.
+            (call $ctrl_dispatch_with_tail
+              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+              (i32.const 24))
+            (return)))
         (i32.store offset=0 (global.get $reg_base) (call $control_wndproc_dispatch
           (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
         ;; Every USER system-class default proc accepts WM_NCCREATE. The
@@ -291,10 +313,11 @@
         (local.set $ctrl_class (call $ctrl_table_get_class (local.get $arg1)))
         (if (i32.ne (local.get $ctrl_class) (i32.const 0))
           (then
-            (i32.store offset=0 (global.get $reg_base) (call $control_wndproc_dispatch
-              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4))))
-          (else
-            (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+            (call $ctrl_dispatch_with_tail
+              (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+              (i32.const 24))
+            (return)))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))
     ;; DefDlgProc marker returned by GWL_WNDPROC before a dialog is
