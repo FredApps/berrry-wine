@@ -353,13 +353,15 @@ Driving notes:
   `WinHelpA(0x10004, "...sc2usa.hlp", HELP_FINDER=0xB, 0)`. There is no
   .cnt, so Help Topics opens on its Index tab (150 keywords) with no
   Contents tab, as Win98 does. It used to show an empty Contents tab (fixed
-  2026-09-22). Right-click a tile, then pick "Query Tile" (32939). The
-  query box greys out the map behind it while it is up.
-* **The first map click after a tool pick is often dropped**, even after
-  2,500 batches of settle, and so was one pump placement. Re-issue it, and
-  verify placements against XBLD/XUND rather than the screen.
-* **A power-line drag across 15 tiles laid only its first tile.** Road drags
-  work. Place lines tile by tile.
+  2026-09-22). Right-click a tile, then pick "Query Tile" (32939). The map
+  stays drawn behind the query box on a build with 866f4550 (see above).
+* **"Dropped" first clicks and one-tile line drags were the harness, not
+  the game.** After a tool pick the game redraws for ~1-3k batches before it
+  reads input, and a drag sent as one mousemove only reaches the tiles the
+  pointer visits. Wait for each `[check_input] msg=0x201/0x200/0x202` line
+  before the next event, and send one mousemove per tile. With that, line,
+  pipe, zone and bulldoze drags all place every tile. Still verify against
+  XBLD/XUND, not the screen.
 * **The underground view shifts clicks by (-1,-1) tiles** from the surface
   mapping (it draws the grid at a different altitude). Aim at (x+1, y+1).
 * **Clock:** `{"action":"tick","ms":0.5}` before `record on` (tick changes
@@ -369,3 +371,36 @@ Driving notes:
   `mpdecimate`, drop frames with full-frame `signalstats` SATAVG < 10 (the
   grey map of the frozen stretch and the Query boxes), and play at 2x. The
   result is 68s for 1901-1919.
+
+## Fifth city (1950 start, 2026-09-22): a 32px-zoom timelapse
+
+A 7x2 road grid (blocks of 6x6), coal plant west, pumps on the river bank,
+recorded at the default 32px zoom instead of the whole-map view.
+
+* **Pause is one-way over WM_COMMAND.** Posting `32768` (Pause) to the
+  frame `0x10004` pauses, but posting it again does not resume. Posting
+  a speed (`32771` Cheetah) resumes.
+* **Tick `0.2` ms/batch** gives about one sim month per ~25k batches and
+  ~0.8s of the demo's 25-minute clock per 4k-batch chunk (Jun 1960 to May
+  1964 in 1.2M batches and 238 demo-seconds).
+* **The RCI gauge decides what to zone.** By 1952 about a third of the
+  residential and commercial tiles were abandoned, with water mostly fixed.
+  The gauge showed R and C negative and I strongly positive: the city had
+  two industrial blocks against eleven residential ones. After two more
+  industrial strips (and more pumps), built residential tiles went from 106
+  (Apr 1952) to 237 (May 1964).
+* **Buildings carry water.** Developed tiles next to a watered tile become
+  watered, so a pipe every ~4 rows reaches a whole block. Supply is still
+  the limit.
+* **Screen-to-tile at 32px:** `sx = AX + (y-x)*16`, `sy = AY + ((x+y)*4+2)*2`
+  for altitude-4 ground. One click on a scroll arrow moves the view about
+  16 tiles, but a right-then-left pair does not come back to the same pixel.
+  Recalibrate after every scroll with one cheap placement (a $10 road on
+  empty ground), and read where it landed from XBLD.
+* **Hills cover the tiles behind them.** A click aimed at an altitude-4
+  tile two rows above an altitude-6 hill hits the hill tile, whatever the
+  offset. Reach such a tile from another side (bulldoze a neighbour and
+  build through it) rather than tuning the aim.
+* **Roads and power lines that reach water raise "Select Bridge"**, a modal
+  that eats every later click. Cancel it (its Cancel button is top left)
+  and stop the drag one tile short of the shore.
