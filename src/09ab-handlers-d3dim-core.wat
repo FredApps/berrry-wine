@@ -6492,6 +6492,9 @@
   (global $d3dim_exec_batch (mut i32) (i32.const 0))      ;; guest pointer
   (global $d3dim_exec_batch_cap (mut i32) (i32.const 0))  ;; bytes
   (global $d3dim_exec_batch_len (mut i32) (i32.const 0))  ;; vertices
+  ;; 4 = triangle list (SOLID), 2 = line list (WIREFRAME edges, drawn with the
+  ;; software line's rules: flat first-vertex colour, no depth, no blend).
+  (global $d3dim_exec_batch_prim (mut i32) (i32.const 4))
 
   ;; Append one 32-byte TL vertex (a wasm address). The buffer is heap memory
   ;; the emulator owns, so it is linear and one $g2w covers it.
@@ -6519,6 +6522,25 @@
       (local.get $v) (i32.const 32))
     (global.set $d3dim_exec_batch_len (i32.add (global.get $d3dim_exec_batch_len) (i32.const 1))))
 
+  ;; One wireframe edge into a line batch, near-clipped first exactly as
+  ;; $d3dim_draw_tl_line clips it; the push copies, so $scratch is reusable.
+  (func $d3dim_exec_batch_push_line (param $va i32) (param $vb i32) (param $scratch i32)
+    (local $pa i32) (local $pb i32)
+    (local.set $pa (f32.gt (f32.load (i32.add (local.get $va) (i32.const 12))) (f32.const 0.0)))
+    (local.set $pb (f32.gt (f32.load (i32.add (local.get $vb) (i32.const 12))) (f32.const 0.0)))
+    (if (i32.eqz (i32.or (local.get $pa) (local.get $pb))) (then (return)))
+    (if (i32.eqz (i32.and (local.get $pa) (local.get $pb))) (then
+      (if (i32.eqz (local.get $scratch)) (then (return)))
+      (if (local.get $pa)
+        (then
+          (call $d3dim_interp_tl_vertex (local.get $va) (local.get $vb) (local.get $scratch))
+          (local.set $vb (local.get $scratch)))
+        (else
+          (call $d3dim_interp_tl_vertex (local.get $vb) (local.get $va) (local.get $scratch))
+          (local.set $va (local.get $scratch))))))
+    (call $d3dim_exec_batch_push (local.get $va))
+    (call $d3dim_exec_batch_push (local.get $vb)))
+
   ;; Hand the batch to the executor; when it declines (an 8bpp target, say),
   ;; $d3dim_worker_route has fenced and the batch rasterizes here instead.
   (func $d3dim_exec_batch_flush (param $dev_this i32) (param $rt i32)
@@ -6526,6 +6548,21 @@
     (global.set $d3dim_exec_batching (i32.const 0))
     (local.set $n (global.get $d3dim_exec_batch_len))
     (global.set $d3dim_exec_batch_len (i32.const 0))
+    (if (i32.eq (global.get $d3dim_exec_batch_prim) (i32.const 2)) (then
+      (if (i32.lt_u (local.get $n) (i32.const 2)) (then (return)))
+      (if (call $d3dim_worker_route (local.get $dev_this) (i32.const 2)
+            (global.get $d3dim_exec_batch) (local.get $n))
+        (then (return)))
+      (local.set $wa (call $g2w (global.get $d3dim_exec_batch)))
+      (block $ldone (loop $llp
+        (br_if $ldone (i32.gt_u (i32.add (local.get $i) (i32.const 2)) (local.get $n)))
+        (call $d3dim_draw_tl_line (local.get $rt)
+          (i32.add (local.get $wa) (i32.shl (local.get $i) (i32.const 5)))
+          (i32.add (local.get $wa) (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 5)))
+          (i32.const 0))
+        (local.set $i (i32.add (local.get $i) (i32.const 2)))
+        (br $llp)))
+      (return)))
     (if (i32.lt_u (local.get $n) (i32.const 3)) (then (return)))
     (if (call $d3dim_worker_route (local.get $dev_this) (i32.const 4)
           (global.get $d3dim_exec_batch) (local.get $n))
@@ -6563,8 +6600,11 @@
     (global.set $d3dim_exec_batch_len (i32.const 0))
     (global.set $d3dim_exec_batching
       (i32.and (i32.ne (global.get $d3dim_gpu_on) (i32.const 0))
-        (i32.and (i32.eq (local.get $fillmode) (i32.const 3))
+        (i32.and (i32.or (i32.eq (local.get $fillmode) (i32.const 3))
+                         (i32.eq (local.get $fillmode) (i32.const 2)))
                  (i32.ne (local.get $state) (i32.const 0)))))
+    (global.set $d3dim_exec_batch_prim
+      (select (i32.const 2) (i32.const 4) (i32.eq (local.get $fillmode) (i32.const 2))))
     (if (i32.eqz (global.get $d3dim_exec_batching)) (then (call $d3dim_worker_fence)))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
@@ -6617,9 +6657,15 @@
           (br $vertex_done)))
         (if (i32.eq (local.get $fillmode) (i32.const 2)) (then
           ;; The line helper clips edges crossing the retained-mode near plane.
-          (call $d3dim_draw_tl_line (local.get $rt) (local.get $v0) (local.get $v1) (local.get $c0))
-          (call $d3dim_draw_tl_line (local.get $rt) (local.get $v1) (local.get $v2) (local.get $c0))
-          (call $d3dim_draw_tl_line (local.get $rt) (local.get $v2) (local.get $v0) (local.get $c0))
+          (if (global.get $d3dim_exec_batching)
+            (then
+              (call $d3dim_exec_batch_push_line (local.get $v0) (local.get $v1) (local.get $c0))
+              (call $d3dim_exec_batch_push_line (local.get $v1) (local.get $v2) (local.get $c0))
+              (call $d3dim_exec_batch_push_line (local.get $v2) (local.get $v0) (local.get $c0)))
+            (else
+              (call $d3dim_draw_tl_line (local.get $rt) (local.get $v0) (local.get $v1) (local.get $c0))
+              (call $d3dim_draw_tl_line (local.get $rt) (local.get $v1) (local.get $v2) (local.get $c0))
+              (call $d3dim_draw_tl_line (local.get $rt) (local.get $v2) (local.get $v0) (local.get $c0))))
           (br $vertex_done)))
         (if (i32.eq (local.get $pos) (i32.const 3)) (then
           (if (global.get $d3dim_exec_batching)
