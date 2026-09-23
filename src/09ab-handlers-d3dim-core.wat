@@ -1058,9 +1058,48 @@
   ;; D3D execute buffers may PROCESSVERTICES in-place every frame. Keep the
   ;; original source vertex bytes so repeated transforms do not read TLVERTEX
   ;; output as D3DVERTEX input.
+  ;; One owner for lazy snapshots and Unlock refreshes. Return a guest header.
+  ;; Keep an old cache owned until a replacement has allocated and initialized.
+  (func $d3dim_execbuf_cache_ensure
+    (param $entry i32) (param $refresh i32) (result i32)
+    (local $slot i32) (local $tbl i32) (local $buf i32) (local $size i32)
+    (local $old i32) (local $cache i32)
+    (local.set $slot (call $dx_slot_of (local.get $entry)))
+    (if (i32.ge_u (local.get $slot) (global.get $D3DIM_EB_CACHE_MAX))
+      (then (return (i32.const 0))))
+    (local.set $buf (load.field DxObject misc0 (local.get $entry)))
+    (local.set $size (i32.load offset=12 (local.get $entry)))
+    (if (i32.or (i32.eqz (local.get $buf))
+          (i32.or (i32.eqz (local.get $size)) (i32.gt_u (local.get $size) (i32.const 0x100000))))
+      (then (return (i32.const 0))))
+    (local.set $tbl (i32.add (global.get $D3DIM_EB_CACHE_PTRS)
+      (i32.mul (local.get $slot) (i32.const 4))))
+    (local.set $old (i32.load (local.get $tbl)))
+    (if (local.get $old) (then
+      (if (i32.and
+            (i32.eq (call $gl32 (local.get $old)) (local.get $buf))
+            (i32.eq (call $gl32 (i32.add (local.get $old) (i32.const 4))) (local.get $size)))
+        (then
+          (if (local.get $refresh) (then
+            (call $guest_memmove
+              (i32.add (local.get $old) (global.get $D3DIM_EB_CACHE_HEADER))
+              (local.get $buf) (local.get $size))))
+          (return (local.get $old))))))
+    (local.set $cache (call $heap_alloc
+      (i32.add (local.get $size) (global.get $D3DIM_EB_CACHE_HEADER))))
+    (if (i32.eqz (local.get $cache)) (then (return (i32.const 0))))
+    (call $gs32 (local.get $cache) (local.get $buf))
+    (call $gs32 (i32.add (local.get $cache) (i32.const 4)) (local.get $size))
+    (call $guest_memset (i32.add (local.get $cache) (i32.const 8)) (i32.const 0) (i32.const 24))
+    (call $guest_memmove
+      (i32.add (local.get $cache) (global.get $D3DIM_EB_CACHE_HEADER))
+      (local.get $buf) (local.get $size))
+    (i32.store (local.get $tbl) (local.get $cache))
+    (if (local.get $old) (then (call $heap_free (local.get $old))))
+    (local.get $cache))
+
   (func $d3dim_execbuf_source_base (param $buf_guest i32) (result i32)
-    (local $i i32) (local $entry i32) (local $tbl i32)
-    (local $cache_g i32) (local $cache_wa i32) (local $buf_size i32)
+    (local $i i32) (local $entry i32) (local $cache_g i32)
     (if (i32.eqz (local.get $buf_guest)) (then (return (i32.const 0))))
     (local.set $i (i32.const 0))
     (block $found (loop $scan
@@ -1075,32 +1114,11 @@
       (br $scan)))
     (if (i32.ge_u (local.get $i) (global.get $D3DIM_EB_CACHE_MAX))
       (then (return (call $g2w (local.get $buf_guest)))))
-    (local.set $tbl (i32.add (global.get $D3DIM_EB_CACHE_PTRS)
-      (i32.mul (local.get $i) (i32.const 4))))
-    (local.set $buf_size (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    (if (i32.or (i32.eqz (local.get $buf_size)) (i32.gt_u (local.get $buf_size) (i32.const 0x100000)))
-      (then (return (call $g2w (local.get $buf_guest)))))
-    (local.set $cache_g (i32.load (local.get $tbl)))
-    (if (local.get $cache_g) (then
-      (local.set $cache_wa (call $g2w (local.get $cache_g)))
-      (if (i32.and
-            (i32.eq (i32.load (local.get $cache_wa)) (local.get $buf_guest))
-            (i32.eq (i32.load (i32.add (local.get $cache_wa) (i32.const 4))) (local.get $buf_size)))
-        (then (return (i32.add (local.get $cache_wa) (global.get $D3DIM_EB_CACHE_HEADER)))))))
-    (local.set $cache_g (call $heap_alloc
-      (i32.add (local.get $buf_size) (global.get $D3DIM_EB_CACHE_HEADER))))
+    (local.set $cache_g (call $d3dim_execbuf_cache_ensure (local.get $entry) (i32.const 0)))
     (if (i32.eqz (local.get $cache_g))
       (then (return (call $g2w (local.get $buf_guest)))))
-    (local.set $cache_wa (call $g2w (local.get $cache_g)))
-    (i32.store (local.get $cache_wa) (local.get $buf_guest))
-    (i32.store (i32.add (local.get $cache_wa) (i32.const 4)) (local.get $buf_size))
-    (call $zero_memory (i32.add (local.get $cache_wa) (i32.const 8)) (i32.const 24))
-    (call $memcpy
-      (i32.add (local.get $cache_wa) (global.get $D3DIM_EB_CACHE_HEADER))
-      (call $g2w (local.get $buf_guest))
-      (local.get $buf_size))
-    (i32.store (local.get $tbl) (local.get $cache_g))
-    (i32.add (local.get $cache_wa) (global.get $D3DIM_EB_CACHE_HEADER)))
+    ;; Legacy consumer still expects a WASM pointer; its sparse walk is separate.
+    (call $g2w (i32.add (local.get $cache_g) (global.get $D3DIM_EB_CACHE_HEADER))))
 
   ;; Return the cache header for one execute-buffer COM object. Unlock creates
   ;; this before SetExecuteData, which is the order used by the DX1 runtime.
@@ -1168,46 +1186,9 @@
       (i32.store (local.get $tbl) (i32.const 0)))))
 
   (func $d3dim_execbuf_cache_refresh (param $this i32)
-    (local $entry i32) (local $slot i32) (local $tbl i32)
-    (local $buf_guest i32) (local $buf_size i32) (local $cache_g i32) (local $cache_wa i32)
     (if (i32.eqz (local.get $this)) (then (return)))
-    (local.set $entry (call $dx_from_this (local.get $this)))
-    (if (i32.eqz (local.get $entry)) (then (return)))
-    (local.set $slot (call $dx_slot_of (local.get $entry)))
-    (if (i32.ge_u (local.get $slot) (global.get $D3DIM_EB_CACHE_MAX)) (then (return)))
-    (local.set $buf_guest (load.field DxObject misc0 (local.get $entry)))
-    (local.set $buf_size (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    (if (i32.or
-          (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $buf_size)))
-          (i32.gt_u (local.get $buf_size) (i32.const 0x100000)))
-      (then (return)))
-    (local.set $tbl (i32.add (global.get $D3DIM_EB_CACHE_PTRS)
-      (i32.mul (local.get $slot) (i32.const 4))))
-    (local.set $cache_g (i32.load (local.get $tbl)))
-    (if (local.get $cache_g) (then
-      (local.set $cache_wa (call $g2w (local.get $cache_g)))
-      (if (i32.or
-            (i32.ne (i32.load (local.get $cache_wa)) (local.get $buf_guest))
-            (i32.ne (i32.load (i32.add (local.get $cache_wa) (i32.const 4))) (local.get $buf_size)))
-        (then
-          (call $heap_free (local.get $cache_g))
-          (i32.store (local.get $tbl) (i32.const 0))
-          (local.set $cache_g (i32.const 0))))))
-    (if (i32.eqz (local.get $cache_g)) (then
-      (local.set $cache_g (call $heap_alloc
-        (i32.add (local.get $buf_size) (global.get $D3DIM_EB_CACHE_HEADER))))
-      (if (i32.eqz (local.get $cache_g)) (then (return)))
-      (i32.store (local.get $tbl) (local.get $cache_g))
-      (local.set $cache_wa (call $g2w (local.get $cache_g)))
-      (i32.store (local.get $cache_wa) (local.get $buf_guest))
-      (i32.store (i32.add (local.get $cache_wa) (i32.const 4)) (local.get $buf_size))
-      (call $zero_memory (i32.add (local.get $cache_wa) (i32.const 8)) (i32.const 24))))
-    (if (i32.eqz (local.get $cache_wa)) (then
-      (local.set $cache_wa (call $g2w (local.get $cache_g)))))
-    (call $memcpy
-      (i32.add (local.get $cache_wa) (global.get $D3DIM_EB_CACHE_HEADER))
-      (call $g2w (local.get $buf_guest))
-      (local.get $buf_size)))
+    (drop (call $d3dim_execbuf_cache_ensure
+      (call $dx_from_this (local.get $this)) (i32.const 1))))
 
   ;; ── Vertex-buffer backing storage ─────────────────────────────
   ;; DX7 vertex buffers need at least enough guest memory for Lock callers to

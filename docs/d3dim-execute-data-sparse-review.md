@@ -38,9 +38,9 @@ duplicates remain 117 groups / 471 members.
 This fixes the caller's ExecuteData buffers, not the whole Execute engine.
 The audit found these additional dependencies:
 
-- d3dim_execbuf_source_base and cache_refresh duplicate cache allocation and
-  whole-buffer memcpy logic. Their cache headers and payloads use raw WASM
-  offsets; source_base also replaces a mismatched cache without freeing it.
+- Cache allocation/copy duplication and the mismatched-cache replacement leak
+  are addressed by the shared-owner follow-up below. Source-base return values
+  and downstream consumers still use raw WASM pointers.
 - PROCESSVERTICES receives a WASM source base and offsets it across vertices;
   destination vertices also use a once-translated buffer base.
 - Execute and Pick walk instruction records with WASM-pointer arithmetic,
@@ -54,3 +54,37 @@ The audit found these additional dependencies:
 
 No native Win98, real x86 indirect-call, browser/game rendering or full-build
 validation is claimed by this focused regression.
+
+## Shared cache owner follow-up
+
+The new cache regression reproduced the lazy source path leaking one allocation
+on size mismatch (live heap 74 instead of 73). Both lazy source lookup and Unlock
+refresh now use d3dim_execbuf_cache_ensure. It owns guest-address header reads,
+allocation, initialization, page-aware snapshot copying and replacement. A
+matching lazy lookup preserves its snapshot; matching Unlock refreshes only
+the payload and preserves status. A successful replacement clears status,
+publishes the complete new cache, and frees the old allocation. Failed
+allocation leaves the old cache owned and unchanged; a subsequent retry or
+final Release can still retire it. No failure switch is added to production.
+
+`test/test-d3dim-execute-cache.js` first verified 32 direct/sparse source
+snapshots and replacements across both paths, every snapshot byte, unchanged
+interleaved backing, lazy reuse versus Unlock refresh, status preservation
+and final heap balance. The fixture varies stored size explicitly to exercise
+replacement; it does not claim a public resize API exists. It borrows its
+payload and detaches it before public Release, leaving cache ownership real.
+The extended regression injects failure only at the shared cache allocation
+site and checks eight initial/replacement failures plus retries: no publication
+on initial failure, old pointer/bytes/count preserved on replacement failure,
+and balanced final cleanup. The unchanged lazy allocation-failure fallback
+returns the original buffer's translated base; that fallback is not yet safe
+for downstream cross-page consumers.
+
+All 32 snapshot cases and eight fault/retry cases pass, along with the sixteen
+ExecuteData layouts, eight lifetime cases and scoped static gates. Quiet and
+duplicate counts remain unchanged.
+
+This consolidates the writer/owner, not the entire execution engine. The
+source-base API and cache-header/status readers still need guest-relative
+contracts. Tests currently force sparse source storage, not sparse allocated
+cache storage or complete vertex/instruction execution.
