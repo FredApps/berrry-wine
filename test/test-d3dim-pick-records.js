@@ -10,6 +10,11 @@ const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
 
 const extraWat = String.raw`
+  (func (export "test_pick_buffer") (param $p i32) (param $buf i32)
+    (store.field DxObject misc0 (call $dx_from_this (local.get $p)) (local.get $buf)))
+  (func (export "test_pick_release") (param $p i32)
+    (call $handle_IDirect3DExecuteBuffer_Release (local.get $p) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0)))
   (func (export "test_pick_create") (param $desc i32) (param $out i32) (result i32)
     (global.set $DX_VTBL_D3DEXEC (i32.const 0x52000000))
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x30000))
@@ -150,7 +155,44 @@ const bitsf32 = value => {
   assert.strictEqual(wat.test_pick_get(count, 0) >>> 0, 0);
   assert.strictEqual(wat.guest_read32(count) >>> 0, 0, 'outside point should clear old records');
 
-  console.log('PASS  D3DIM GetStats initializes outputs and Pick returns triangle offset/depth');
+  // Two records: a degenerate miss followed by the real triangle. This checks
+  // record advancement and preserves the instruction-relative hit offset.
+  wat.guest_write32(buf + instr, 0x00020803);
+  wat.guest_write32(buf + instr + 4, 0);
+  wat.guest_write32(buf + instr + 8, 0);
+  wat.guest_write32(buf + instr + 12, 0x00010000);
+  wat.guest_write32(buf + instr + 16, 2);
+  wat.guest_write32(buf + instr + 20, 11);
+  wat.guest_write32(data + 16, 24);
+  assert.strictEqual(wat.test_pick_set_data(obj, data), 0);
+  const original = Array.from({ length: 256 }, (_, i) => wat.guest_read8(buf + i));
+  const base = 0x3d000000;
+  for (const p of [base, base + 0x10000, base + 4096]) wat.test_virtual_map_commit(p, 4096);
+  assert.notStrictEqual(wat.guest_to_wasm(base + 4096), wat.guest_to_wasm(base) + 4096);
+  for (let i = 0; i < 4096; i++) wat.guest_write8(base + 0x10000 + i, 0xa7);
+  const offsets = [4094, 4090, 4086, 4062, 3998, 3995, 3993, 3991, 3987, 3985, 3983];
+  for (const target of [buf, ...offsets.map(n => base + n)]) {
+    original.forEach((v, i) => wat.guest_write8(target + i, v));
+    wat.test_pick_buffer(obj, target);
+    for (const hit of [true, false]) {
+      wat.guest_write32(rect, hit ? 20 : 150); wat.guest_write32(rect + 4, hit ? 20 : 150);
+      assert.strictEqual(wat.test_pick_run(obj, rect), 0);
+      assert.strictEqual(wat.get_esp(), 0x30018, 'Pick stdcall cleanup');
+      assert.strictEqual(wat.test_pick_get(count, record), 0);
+      assert.strictEqual(wat.get_esp(), 0x30010, 'GetPickRecords stdcall cleanup');
+      assert.strictEqual(wat.guest_read32(count), hit ? 1 : 0, `target=${target.toString(16)}`);
+      if (hit) {
+        assert.strictEqual(wat.guest_read32(record) & 255, 3);
+        assert.strictEqual(wat.guest_read32(record + 4), 12, 'second triangle offset');
+        assert(Math.abs(bitsf32(wat.guest_read32(record + 8)) - 1 / 3) < 0.0001);
+      }
+    }
+    assert.deepStrictEqual(Array.from({ length: 256 }, (_, i) => wat.guest_read8(target + i)), original);
+    for (let i = 0; i < 4096; i++) assert.strictEqual(wat.guest_read8(base + 0x10000 + i), 0xa7);
+  }
+  wat.test_pick_buffer(obj, buf); // Restore owned payload before releasing.
+  wat.test_pick_release(obj);
+  console.log('PASS D3DIM GetStats/Pick: original offset/depth + 12 multirecord direct/sparse hit/miss layouts, bytes/neighbor/ABI');
 })().catch(error => {
   console.error(error && error.stack || error);
   process.exit(1);

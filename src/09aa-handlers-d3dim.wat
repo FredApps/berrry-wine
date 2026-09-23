@@ -542,19 +542,20 @@
   ;; Test a screen-space point against one transformed execute-buffer
   ;; triangle.  D3DRM calls Pick after PROCESSVERTICES has produced TL
   ;; vertices, so this is the same geometry the rasterizer consumes.
-  (func $d3dim_pick_tl_triangle
+  ;; Vertex addresses and the Pick instruction cursor are guest-relative.
+  (func $d3dim_pick_tl_triangle_guest
     (param $px f32) (param $py f32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32) (result i32)
     (local $x0 f32) (local $y0 f32) (local $x1 f32) (local $y1 f32)
     (local $x2 f32) (local $y2 f32)
     (local $e0 f32) (local $e1 f32) (local $e2 f32)
     (local $den f32) (local $w0 f32) (local $w1 f32) (local $w2 f32)
-    (local.set $x0 (f32.load (local.get $v0)))
-    (local.set $y0 (f32.load (i32.add (local.get $v0) (i32.const 4))))
-    (local.set $x1 (f32.load (local.get $v1)))
-    (local.set $y1 (f32.load (i32.add (local.get $v1) (i32.const 4))))
-    (local.set $x2 (f32.load (local.get $v2)))
-    (local.set $y2 (f32.load (i32.add (local.get $v2) (i32.const 4))))
+    (local.set $x0 (f32.reinterpret_i32 (call $gl32 (local.get $v0))))
+    (local.set $y0 (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v0) (i32.const 4)))))
+    (local.set $x1 (f32.reinterpret_i32 (call $gl32 (local.get $v1))))
+    (local.set $y1 (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v1) (i32.const 4)))))
+    (local.set $x2 (f32.reinterpret_i32 (call $gl32 (local.get $v2))))
+    (local.set $y2 (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v2) (i32.const 4)))))
     (local.set $e0
       (f32.sub
         (f32.mul (f32.sub (local.get $x1) (local.get $x0))
@@ -613,16 +614,16 @@
     (global.set $D3DIM_PICK_Z
       (f32.add
         (f32.add
-          (f32.mul (local.get $w0) (f32.load (i32.add (local.get $v0) (i32.const 8))))
-          (f32.mul (local.get $w1) (f32.load (i32.add (local.get $v1) (i32.const 8)))))
-        (f32.mul (local.get $w2) (f32.load (i32.add (local.get $v2) (i32.const 8))))))
+          (f32.mul (local.get $w0) (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v0) (i32.const 8)))))
+          (f32.mul (local.get $w1) (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v1) (i32.const 8))))))
+        (f32.mul (local.get $w2) (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v2) (i32.const 8)))))))
     (i32.const 1))
 
   ;; IDirect3DDevice_Pick — 5 args (incl. this)
   (func $handle_IDirect3DDevice_Pick (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $entry i32) (local $buf i32) (local $vert_off i32)
     (local $instr_off i32) (local $instr_len i32) (local $base i32)
-    (local $wa i32) (local $end i32) (local $op i32) (local $sz i32)
+    (local $cursor i32) (local $end i32) (local $op i32) (local $sz i32)
     (local $cnt i32) (local $step i32) (local $i i32) (local $rec i32)
     (local $vbase i32) (local $v0 i32) (local $v1 i32) (local $v2 i32)
     (local $px f32) (local $py f32)
@@ -637,29 +638,29 @@
         (local.set $instr_len (load.field DxObject flags (local.get $entry)))
         (if (i32.and (i32.ne (local.get $buf) (i32.const 0))
                      (i32.ne (local.get $instr_len) (i32.const 0))) (then
-          (local.set $vbase (call $g2w (i32.add (local.get $buf) (local.get $vert_off))))
-          (local.set $base (call $g2w (i32.add (local.get $buf) (local.get $instr_off))))
-          (local.set $wa (local.get $base))
-          (local.set $end (i32.add (local.get $wa) (local.get $instr_len)))
+          (local.set $vbase (i32.add (local.get $buf) (local.get $vert_off)))
+          (local.set $base (i32.add (local.get $buf) (local.get $instr_off)))
+          (local.set $cursor (local.get $base))
+          (local.set $end (i32.add (local.get $cursor) (local.get $instr_len)))
           (local.set $px (f32.convert_i32_s (call $gl32 (local.get $arg4))))
           (local.set $py (f32.convert_i32_s (call $gl32 (i32.add (local.get $arg4) (i32.const 4)))))
           (block $done (loop $lp
-            (br_if $done (i32.gt_u (i32.add (local.get $wa) (i32.const 4)) (local.get $end)))
-            (local.set $op (i32.load8_u (local.get $wa)))
-            (local.set $sz (i32.load8_u (i32.add (local.get $wa) (i32.const 1))))
-            (local.set $cnt (i32.load16_u (i32.add (local.get $wa) (i32.const 2))))
-            (local.set $rec (i32.add (local.get $wa) (i32.const 4)))
+            (br_if $done (i32.gt_u (i32.add (local.get $cursor) (i32.const 4)) (local.get $end)))
+            (local.set $op (call $gl8 (local.get $cursor)))
+            (local.set $sz (call $gl8 (i32.add (local.get $cursor) (i32.const 1))))
+            (local.set $cnt (call $gl16 (i32.add (local.get $cursor) (i32.const 2))))
+            (local.set $rec (i32.add (local.get $cursor) (i32.const 4)))
             (if (i32.eq (local.get $op) (i32.const 3)) (then
               (local.set $i (i32.const 0))
               (block $tris (loop $tri
                 (br_if $tris (i32.ge_u (local.get $i) (local.get $cnt)))
                 (local.set $v0 (i32.add (local.get $vbase)
-                  (i32.mul (i32.load16_u (local.get $rec)) (i32.const 32))))
+                  (i32.mul (call $gl16 (local.get $rec)) (i32.const 32))))
                 (local.set $v1 (i32.add (local.get $vbase)
-                  (i32.mul (i32.load16_u (i32.add (local.get $rec) (i32.const 2))) (i32.const 32))))
+                  (i32.mul (call $gl16 (i32.add (local.get $rec) (i32.const 2))) (i32.const 32))))
                 (local.set $v2 (i32.add (local.get $vbase)
-                  (i32.mul (i32.load16_u (i32.add (local.get $rec) (i32.const 4))) (i32.const 32))))
-                (if (call $d3dim_pick_tl_triangle
+                  (i32.mul (call $gl16 (i32.add (local.get $rec) (i32.const 4))) (i32.const 32))))
+                (if (call $d3dim_pick_tl_triangle_guest
                       (local.get $px) (local.get $py)
                       (local.get $v0) (local.get $v1) (local.get $v2))
                   (then
@@ -672,7 +673,7 @@
                 (br $tri)))))
             (local.set $step (i32.add (i32.const 4) (i32.mul (local.get $sz) (local.get $cnt))))
             (br_if $done (i32.eqz (local.get $step)))
-            (local.set $wa (i32.add (local.get $wa) (local.get $step)))
+            (local.set $cursor (i32.add (local.get $cursor) (local.get $step)))
             (br $lp)))))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
