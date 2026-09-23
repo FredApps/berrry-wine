@@ -151,3 +151,49 @@ The generic span arena's unsafe exhaustion fallback is removed in the
 now stops explicitly before copying. This vertex path uses at most 64
 additional bytes and the test observes no overflow; graceful recovery from
 arena exhaustion remains separate work.
+
+## Execute instruction/record follow-up (2026-09-22)
+
+Execute now retains a guest-address cursor for instruction headers, operand
+records, branch targets and trace offsets. All nine record helpers share
+that contract: points, lines, triangles, matrix load/multiply, state walking,
+PROCESSVERTICES, branch and status. Scalar reads use gl8/gl16/gl32;
+SETSTATUS copies its 24 bytes with guest_memmove. No whole-stream gather or
+record-group scratch allocation is needed. The two existing helper-level
+tests now pass guest record addresses instead of translating them first.
+
+`node test/test-d3dim-execute-instructions-sparse.js` first passed its
+contiguous control, then failed on the first sparse layout: render state
+remained zero instead of becoming one. With the migration it passes:
+
+- One control and 195 page-boundary placements across every byte of a
+  multi-opcode stream, including headers, multirecord operands and a taken
+  branch that skips a state write. Untaken branches are also exercised.
+- Matrix load/multiply, transform/light/render state, COPY vertex output,
+  public GetExecuteData status readback, guest-relative opcode traces,
+  stdcall stack checks, unchanged instruction bytes and surrounding canaries.
+- A 2,200-record render-state group spanning nonaffine pages, larger than the
+  16KiB span arena, without consuming scratch or changing overflow counters.
+- 65 sparse/control pixel comparisons for point, line and triangle record
+  streams on a real 32x32 surface. Two records per opcode exercise record
+  advancement. Triangle coverage uses point fill; vertex bytes themselves
+  deliberately remain within one page. Interleaved backing pages stay intact.
+
+The fixture uses public Execute/CreateExecuteBuffer/SetExecuteData/Unlock/
+GetExecuteData/Release dispatch, with an initialized synthetic device and
+borrowed sparse buffer mappings. It restores the owned buffer before Release.
+It does not exercise x86 indirect calls or certify native driver behavior.
+
+Adjacent ExecuteData (32 layouts), PROCESSVERTICES (18 comparisons), cache
+(32 snapshots/replacements plus eight allocation faults/retries), interface
+metadata and scoped static gates pass. Quiet remains 243 manual + 22 metadata;
+duplicate census remains 117 groups / 471 members. No browser/full-build or
+performance result is claimed. The unrelated in-progress GL fog hunk in the
+same core file is excluded from this change.
+
+Still open: primitive vertex-base translation; invalid record sizes, bounds,
+indices, arithmetic overflow and branch loops; actual branch status/mask
+semantics (the current helper still assumes status zero); the end-of-range
+header comparison (tests pad EXIT to preserve that separate policy); full
+application rendering. Pick walking and output crossings were handled in
+the separate [Pick review](d3dim-pick-sparse-review.md).

@@ -369,8 +369,8 @@
   ;; Walk D3DINSTRUCTION stream and emit a trace event per opcode.
   ;; D3DINSTRUCTION: {u8 bOpcode; u8 bSize; u16 wCount;} = 4 bytes, then wCount*bSize operand bytes.
   (func $handle_IDirect3DDevice_Execute (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $eb_entry i32) (local $buf i32) (local $buf_wa i32) (local $instr_off i32) (local $instr_len i32)
-    (local $wa i32) (local $end i32) (local $op i32) (local $sz i32) (local $cnt i32) (local $step i32)
+    (local $eb_entry i32) (local $buf i32) (local $instr_off i32) (local $instr_len i32)
+    (local $cursor i32) (local $end i32) (local $op i32) (local $sz i32) (local $cnt i32) (local $step i32)
     (local $branch i32) (local $handled i32)
     (local $state i32) (local $vp_entry i32) (local $sw i32)
     (local $vp_x i32) (local $vp_y i32) (local $vp_w i32) (local $vp_h i32)
@@ -422,74 +422,75 @@
       (call $host_dx_trace (i32.const 8) (local.get $buf) (local.get $instr_off)
         (local.get $instr_len) (i32.const 0))
       (if (i32.and (i32.ne (local.get $buf) (i32.const 0)) (i32.ne (local.get $instr_len) (i32.const 0))) (then
-        (local.set $buf_wa (call $g2w (local.get $buf))) (local.set $wa (call $g2w (i32.add (local.get $buf) (local.get $instr_off))))
-        (local.set $end (i32.add (local.get $wa) (local.get $instr_len)))
+        ;; Instruction cursors and record inputs are guest addresses throughout.
+        (local.set $cursor (i32.add (local.get $buf) (local.get $instr_off)))
+        (local.set $end (i32.add (local.get $cursor) (local.get $instr_len)))
         (block $done (loop $lp
-          (br_if $done (i32.ge_u (i32.add (local.get $wa) (i32.const 4)) (local.get $end)))
-          (local.set $op  (i32.load8_u (local.get $wa)))
-          (local.set $sz  (i32.load8_u (i32.add (local.get $wa) (i32.const 1))))
-          (local.set $cnt (i32.load16_u (i32.add (local.get $wa) (i32.const 2))))
+          (br_if $done (i32.ge_u (i32.add (local.get $cursor) (i32.const 4)) (local.get $end)))
+          (local.set $op  (call $gl8 (local.get $cursor)))
+          (local.set $sz  (call $gl8 (i32.add (local.get $cursor) (i32.const 1))))
+          (local.set $cnt (call $gl16 (i32.add (local.get $cursor) (i32.const 2))))
           (local.set $handled (i32.const 0))
           ;; kind=7 → Execute instruction trace
           (call $host_dx_trace (i32.const 7) (local.get $op) (local.get $sz) (local.get $cnt)
-            (i32.sub (local.get $wa) (local.get $buf_wa)))
+            (i32.sub (local.get $cursor) (local.get $buf)))
           ;; D3DOP_EXIT (11)
           (br_if $done (i32.eq (local.get $op) (i32.const 11)))
           ;; ── Opcode dispatch ──────────────────────────────────────
           ;; 1 = D3DOP_POINT        (4-byte records)
           (if (i32.eq (local.get $op) (i32.const 1)) (then
             (call $d3dim_exec_points (local.get $arg0) (local.get $buf)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 2 = D3DOP_LINE         (4-byte records)
           (if (i32.eq (local.get $op) (i32.const 2)) (then
             (call $d3dim_exec_lines (local.get $arg0) (local.get $buf)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 3 = D3DOP_TRIANGLE     (8-byte records)
           (if (i32.eq (local.get $op) (i32.const 3)) (then
             (call $d3dim_exec_triangles (local.get $arg0) (local.get $buf)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 4 = D3DOP_MATRIXLOAD   (8-byte records)
           (if (i32.eq (local.get $op) (i32.const 4)) (then
             (call $d3dim_exec_matrix_load
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 5 = D3DOP_MATRIXMULTIPLY (12-byte records)
           (if (i32.eq (local.get $op) (i32.const 5)) (then
             (call $d3dim_exec_matrix_multiply
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 6 = D3DOP_STATETRANSFORM  (8-byte D3DSTATE records)
           (if (i32.eq (local.get $op) (i32.const 6)) (then
             (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 6)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 7 = D3DOP_STATELIGHT   (8-byte D3DSTATE records)
           (if (i32.eq (local.get $op) (i32.const 7)) (then
             (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 7)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 8 = D3DOP_STATERENDER  (8-byte D3DSTATE records)
           (if (i32.eq (local.get $op) (i32.const 8)) (then
             (call $d3dim_exec_state_walk (local.get $arg0) (i32.const 8)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 9 = D3DOP_PROCESSVERTICES (16-byte records)
           (if (i32.eq (local.get $op) (i32.const 9)) (then
             (call $d3dim_exec_process_vertices (local.get $arg0) (local.get $buf)
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $cnt))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 12 = D3DOP_BRANCHFORWARD (16-byte record; cnt is always 1 in practice)
           (if (i32.eq (local.get $op) (i32.const 12)) (then
             (local.set $branch (call $d3dim_exec_branch
-              (i32.add (local.get $wa) (i32.const 4)) (local.get $wa)))
+              (i32.add (local.get $cursor) (i32.const 4)) (local.get $cursor)))
             (if (i32.eqz (local.get $branch))
               (then (br $done)))
             (if (i32.ne (local.get $branch) (i32.const -1))
               (then
-                (local.set $wa (local.get $branch))
+                (local.set $cursor (local.get $branch))
                 (br $lp)))
             (local.set $handled (i32.const 1))))
           ;; 14 = D3DOP_SETSTATUS  (24-byte D3DSTATUS record). Retained-mode
@@ -498,19 +499,19 @@
           (if (i32.eq (local.get $op) (i32.const 14)) (then
             (if (local.get $cnt) (then
               (call $d3dim_exec_set_status (local.get $arg0) (local.get $arg1)
-                (i32.add (local.get $wa) (i32.const 4)))))
+                (i32.add (local.get $cursor) (i32.const 4)))))
             (local.set $handled (i32.const 1))))
           ;; Known-but-unimplemented: 10=TEXTURELOAD, 13=SPAN. Anything else
           ;; is malformed — log + crash so we can see what hit us.
           (if (i32.eqz (local.get $handled))
             (then
               (call $host_dx_trace (i32.const 9) (local.get $op) (local.get $sz)
-                (local.get $cnt) (i32.sub (local.get $wa) (local.get $buf_wa)))
+                (local.get $cnt) (i32.sub (local.get $cursor) (local.get $buf)))
               (call $crash_unimplemented (global.get $D3DIM_UNIMPL_EXEC_OP))))
           (local.set $step (i32.add (i32.const 4) (i32.mul (local.get $sz) (local.get $cnt))))
           ;; Guard against zero/huge step to avoid infinite loops.
           (br_if $done (i32.eqz (local.get $step)))
-          (local.set $wa (i32.add (local.get $wa) (local.get $step)))
+          (local.set $cursor (i32.add (local.get $cursor) (local.get $step)))
           (br $lp)))))
       ;; After Execute returns, apps expect the back buffer to be updated.
       ;; Present immediately if the RT is the primary (same rule as EndScene).

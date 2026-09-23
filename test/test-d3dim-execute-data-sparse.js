@@ -65,7 +65,7 @@ const extraWat = String.raw`
       if (!cached) expected.fill(0, 24);
       assert.deepStrictEqual(read(output), expected, `cached=${cached} offset=${offset} input=${sparseIn} output=${sparseOut}`);
       // Exercise the opcode status writer too, independently of SetExecuteData.
-      e.status(p, e.guest_to_wasm(status));
+      e.status(p, status);
       call('IDirect3DExecuteBuffer_GetExecuteData', 12, p, output);
       if (cached) for (let i = 0; i < 24; i++) expected[24 + i] = e.guest_read8(status + i);
       assert.deepStrictEqual(read(output), expected, 'opcode status readback');

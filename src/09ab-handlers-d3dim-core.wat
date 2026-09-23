@@ -1145,18 +1145,13 @@
   ;; rasterizer currently draws the complete retained-mode viewport, so its
   ;; viewport rectangle is the conservative dirty extent D3DRM needs.
   (func $d3dim_exec_set_status
-    (param $dev_this i32) (param $eb_this i32) (param $rec_wa i32)
+    (param $dev_this i32) (param $eb_this i32) (param $rec_guest i32)
     (local $header i32) (local $status i32) (local $state i32) (local $sw i32)
-    (local $x i32) (local $y i32) (local $w i32) (local $h i32) (local $off i32)
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32)
     (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $eb_this)))
     (if (i32.eqz (local.get $header)) (then (return)))
     (local.set $status (i32.add (local.get $header) (i32.const 8)))
-    ;; rec_wa retains the decoder's WASM-address contract; status is guest memory.
-    (loop $copy_status
-      (call $gs32 (i32.add (local.get $status) (local.get $off))
-        (i32.load (i32.add (local.get $rec_wa) (local.get $off))))
-      (local.set $off (i32.add (local.get $off) (i32.const 4)))
-      (br_if $copy_status (i32.lt_u (local.get $off) (i32.const 24))))
+    (call $guest_memmove (local.get $status) (local.get $rec_guest) (i32.const 24))
     ;; D3DSETSTATUS_EXTENTS = 2.
     (if (i32.and (call $gl32 (local.get $status)) (i32.const 2)) (then
       (local.set $state (call $d3ddev_state (local.get $dev_this)))
@@ -6149,7 +6144,7 @@
   ;; PROCESSVERTICES path preserves original source bytes in a side cache while
   ;; writing transformed TL vertices back into this live buffer.
   (func $d3dim_exec_triangles
-    (param $dev_this i32) (param $buf_guest i32) (param $rec_wa i32) (param $wCount i32)
+    (param $dev_this i32) (param $buf_guest i32) (param $rec_guest i32) (param $wCount i32)
     (local $rt i32) (local $vbase i32) (local $i i32)
     (local $iv0 i32) (local $iv1 i32) (local $iv2 i32)
     (local $v0 i32) (local $v1 i32) (local $v2 i32)
@@ -6170,9 +6165,9 @@
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
-      (local.set $iv0 (i32.load16_u (local.get $rec_wa)))
-      (local.set $iv1 (i32.load16_u (i32.add (local.get $rec_wa) (i32.const 2))))
-      (local.set $iv2 (i32.load16_u (i32.add (local.get $rec_wa) (i32.const 4))))
+      (local.set $iv0 (call $gl16 (local.get $rec_guest)))
+      (local.set $iv1 (call $gl16 (i32.add (local.get $rec_guest) (i32.const 2))))
+      (local.set $iv2 (call $gl16 (i32.add (local.get $rec_guest) (i32.const 4))))
       (local.set $v0 (i32.add (local.get $vbase) (i32.mul (local.get $iv0) (i32.const 32))))
       (local.set $v1 (i32.add (local.get $vbase) (i32.mul (local.get $iv1) (i32.const 32))))
       (local.set $v2 (i32.add (local.get $vbase) (i32.mul (local.get $iv2) (i32.const 32))))
@@ -6193,7 +6188,7 @@
           (i32.load (local.get $v0))
           (i32.load (i32.add (local.get $v0) (i32.const 4))))))
       (if (i32.eqz (local.get $pos)) (then
-        (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+        (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $lp)))
       (if (i32.eq (local.get $fillmode) (i32.const 1)) (then
@@ -6211,7 +6206,7 @@
           (call $d3dim_coord_i (f32.load (local.get $v2)))
           (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
           (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v2) (i32.const 16))))))
-        (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+        (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $lp)))
       (if (i32.eq (local.get $fillmode) (i32.const 2)) (then
@@ -6219,7 +6214,7 @@
         (call $d3dim_draw_tl_line (local.get $rt) (local.get $v0) (local.get $v1) (local.get $c0))
         (call $d3dim_draw_tl_line (local.get $rt) (local.get $v1) (local.get $v2) (local.get $c0))
         (call $d3dim_draw_tl_line (local.get $rt) (local.get $v2) (local.get $v0) (local.get $c0))
-        (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+        (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $lp)))
       (if (i32.eq (local.get $pos) (i32.const 3)) (then
@@ -6228,7 +6223,7 @@
           (local.get $v0) (local.get $v1) (local.get $v2))))
       (if (i32.ne (local.get $pos) (i32.const 3)) (then
         (if (i32.eqz (local.get $state)) (then
-          (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+          (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
           (local.set $i (i32.add (local.get $i) (i32.const 1)))
           (br $lp)))
         (local.set $c0 (i32.add (local.get $sw) (i32.const 3296)))
@@ -6280,7 +6275,7 @@
             (call $d3dim_draw_tl_triangle_maybe_textured
               (local.get $dev_this) (local.get $rt) (i32.const 1)
               (local.get $v0) (local.get $c1) (local.get $c0))))))))
-      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+      (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
@@ -6289,7 +6284,7 @@
   ;; Each record draws `wCount` consecutive vertices as 2×2 dots starting
   ;; at index `wFirst`. Vertices treated as TLVERTEX (32 bytes).
   (func $d3dim_exec_points
-    (param $dev_this i32) (param $buf_guest i32) (param $rec_wa i32) (param $wCount i32)
+    (param $dev_this i32) (param $buf_guest i32) (param $rec_guest i32) (param $wCount i32)
     (local $rt i32) (local $vbase i32) (local $i i32)
     (local $pcount i32) (local $pfirst i32) (local $j i32) (local $v i32)
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
@@ -6299,8 +6294,8 @@
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
-      (local.set $pcount (i32.load16_u (local.get $rec_wa)))
-      (local.set $pfirst (i32.load16_u (i32.add (local.get $rec_wa) (i32.const 2))))
+      (local.set $pcount (call $gl16 (local.get $rec_guest)))
+      (local.set $pfirst (call $gl16 (i32.add (local.get $rec_guest) (i32.const 2))))
       (local.set $j (i32.const 0))
       (block $pdone (loop $plp
         (br_if $pdone (i32.ge_u (local.get $j) (local.get $pcount)))
@@ -6313,7 +6308,7 @@
           (i32.load (i32.add (local.get $v) (i32.const 16))))
         (local.set $j (i32.add (local.get $j) (i32.const 1)))
         (br $plp)))
-      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 4)))
+      (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 4)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
@@ -6353,7 +6348,7 @@
   ;; ── Execute-buffer: LINE (op=2) ───────────────────────────────
   ;; Walks `wCount` D3DLINE records {u16 v1, u16 v2}.
   (func $d3dim_exec_lines
-    (param $dev_this i32) (param $buf_guest i32) (param $rec_wa i32) (param $wCount i32)
+    (param $dev_this i32) (param $buf_guest i32) (param $rec_guest i32) (param $wCount i32)
     (local $rt i32) (local $vbase i32) (local $i i32)
     (local $iv1 i32) (local $iv2 i32) (local $v1 i32) (local $v2 i32)
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
@@ -6363,8 +6358,8 @@
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
-      (local.set $iv1 (i32.load16_u (local.get $rec_wa)))
-      (local.set $iv2 (i32.load16_u (i32.add (local.get $rec_wa) (i32.const 2))))
+      (local.set $iv1 (call $gl16 (local.get $rec_guest)))
+      (local.set $iv2 (call $gl16 (i32.add (local.get $rec_guest) (i32.const 2))))
       (local.set $v1 (i32.add (local.get $vbase) (i32.mul (local.get $iv1) (i32.const 32))))
       (local.set $v2 (i32.add (local.get $vbase) (i32.mul (local.get $iv2) (i32.const 32))))
       (call $rasterize_line_flat (local.get $rt)
@@ -6373,20 +6368,20 @@
         (call $d3dim_coord_i (f32.load (local.get $v2)))
         (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
         (i32.load (i32.add (local.get $v1) (i32.const 16))))
-      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 4)))
+      (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 4)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
   ;; ── Execute-buffer: MATRIXLOAD (op=4) ─────────────────────────
   ;; Each D3DMATRIXLOAD record (8B): {DWORD hDest, DWORD hSrc}. Copies 64B.
   (func $d3dim_exec_matrix_load
-    (param $rec_wa i32) (param $wCount i32)
+    (param $rec_guest i32) (param $wCount i32)
     (local $i i32) (local $hD i32) (local $hS i32)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
-      (local.set $hD (i32.load (local.get $rec_wa)))
-      (local.set $hS (i32.load (i32.add (local.get $rec_wa) (i32.const 4))))
+      (local.set $hD (call $gl32 (local.get $rec_guest)))
+      (local.set $hS (call $gl32 (i32.add (local.get $rec_guest) (i32.const 4))))
       (if (i32.and
             (i32.and (i32.ge_u (local.get $hD) (i32.const 1))
                      (i32.le_u (local.get $hD) (global.get $D3DIM_MATRIX_MAX)))
@@ -6399,7 +6394,7 @@
             (i32.add (global.get $D3DIM_MATRICES)
                      (i32.mul (i32.sub (local.get $hS) (i32.const 1)) (i32.const 64)))
             (i32.const 64))))
-      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+      (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
@@ -6407,14 +6402,14 @@
   ;; Each D3DMATRIXMULTIPLY record (12B): {DWORD hDest, hSrc1, hSrc2}.
   ;; out = src1 * src2 via the row-major multiply shared with WVP compose.
   (func $d3dim_exec_matrix_multiply
-    (param $rec_wa i32) (param $wCount i32)
+    (param $rec_guest i32) (param $wCount i32)
     (local $i i32) (local $hD i32) (local $h1 i32) (local $h2 i32)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
-      (local.set $hD (i32.load (local.get $rec_wa)))
-      (local.set $h1 (i32.load (i32.add (local.get $rec_wa) (i32.const 4))))
-      (local.set $h2 (i32.load (i32.add (local.get $rec_wa) (i32.const 8))))
+      (local.set $hD (call $gl32 (local.get $rec_guest)))
+      (local.set $h1 (call $gl32 (i32.add (local.get $rec_guest) (i32.const 4))))
+      (local.set $h2 (call $gl32 (i32.add (local.get $rec_guest) (i32.const 8))))
       (if (i32.and (i32.and
             (i32.and (i32.ge_u (local.get $hD) (i32.const 1))
                      (i32.le_u (local.get $hD) (global.get $D3DIM_MATRIX_MAX)))
@@ -6430,7 +6425,7 @@
                      (i32.mul (i32.sub (local.get $h1) (i32.const 1)) (i32.const 64)))
             (i32.add (global.get $D3DIM_MATRICES)
                      (i32.mul (i32.sub (local.get $h2) (i32.const 1)) (i32.const 64))))))
-      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 12)))
+      (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 12)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
@@ -6444,7 +6439,7 @@
   ;; through; VERTEX has no color → write white 0xFFFFFFFF. Lighting is not
   ;; yet implemented; TRANSFORMLIGHT degenerates to TRANSFORM + default color.
   (func $d3dim_exec_process_vertices
-    (param $dev_this i32) (param $buf_guest i32) (param $rec_wa i32) (param $wCount i32)
+    (param $dev_this i32) (param $buf_guest i32) (param $rec_guest i32) (param $wCount i32)
     (local $state_g i32) (local $vbase i32) (local $srcbase i32)
     (local $i i32) (local $mode i32) (local $wStart i32) (local $wDest i32) (local $cnt i32)
     (local $j i32) (local $src i32) (local $dst i32) (local $color i32) (local $spec i32)
@@ -6460,10 +6455,10 @@
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
-      (local.set $mode   (i32.and (i32.load (local.get $rec_wa)) (i32.const 7)))
-      (local.set $wStart (i32.load16_u (i32.add (local.get $rec_wa) (i32.const 4))))
-      (local.set $wDest  (i32.load16_u (i32.add (local.get $rec_wa) (i32.const 6))))
-      (local.set $cnt    (i32.load        (i32.add (local.get $rec_wa) (i32.const 8))))
+      (local.set $mode   (i32.and (call $gl32 (local.get $rec_guest)) (i32.const 7)))
+      (local.set $wStart (call $gl16 (i32.add (local.get $rec_guest) (i32.const 4))))
+      (local.set $wDest  (call $gl16 (i32.add (local.get $rec_guest) (i32.const 6))))
+      (local.set $cnt    (call $gl32 (i32.add (local.get $rec_guest) (i32.const 8))))
       (local.set $src_stride (i32.const 32))
       (local.set $j (i32.const 0))
       (block $vdone (loop $vlp
@@ -6502,7 +6497,7 @@
             (call $guest_span_release (local.get $src) (i32.const 32))))
         (local.set $j (i32.add (local.get $j) (i32.const 1)))
         (br $vlp)))
-      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 16)))
+      (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 16)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 
@@ -6511,13 +6506,13 @@
   ;; Returns:
   ;;   -1 ⇒ fall through (branch not taken; caller advances normally)
   ;;    0 ⇒ terminate execute loop (branch taken, offset==0 per spec)
-  ;;   N  ⇒ resume at WASM addr N (= instr_start + dwOffset, per Wine's reading)
+  ;;   N  ⇒ resume at guest addr N (= instr_start + dwOffset; existing policy)
   ;; Status is not yet tracked; assume 0 — so condition reduces to (value==0).
-  (func $d3dim_exec_branch (param $rec_wa i32) (param $instr_start i32) (result i32)
+  (func $d3dim_exec_branch (param $rec_guest i32) (param $instr_start i32) (result i32)
     (local $value i32) (local $negate i32) (local $offset i32) (local $taken i32)
-    (local.set $value  (i32.load (i32.add (local.get $rec_wa) (i32.const 4))))
-    (local.set $negate (i32.load (i32.add (local.get $rec_wa) (i32.const 8))))
-    (local.set $offset (i32.load (i32.add (local.get $rec_wa) (i32.const 12))))
+    (local.set $value  (call $gl32 (i32.add (local.get $rec_guest) (i32.const 4))))
+    (local.set $negate (call $gl32 (i32.add (local.get $rec_guest) (i32.const 8))))
+    (local.set $offset (call $gl32 (i32.add (local.get $rec_guest) (i32.const 12))))
     (local.set $taken (i32.eqz (local.get $value)))
     (if (local.get $negate) (then (local.set $taken (i32.eqz (local.get $taken)))))
     (if (i32.eqz (local.get $taken)) (then (return (i32.const -1))))
@@ -6529,13 +6524,13 @@
   ;; the supplied per-state forwarder. kind: 7=light, 8=render, 6=transform
   ;; (matches D3DOP_LIGHTSTATE/RENDERSTATE/STATETRANSFORM opcode values).
   (func $d3dim_exec_state_walk
-    (param $dev_this i32) (param $kind i32) (param $rec_wa i32) (param $wCount i32)
+    (param $dev_this i32) (param $kind i32) (param $rec_guest i32) (param $wCount i32)
     (local $i i32) (local $a i32) (local $v i32)
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
-      (local.set $a (i32.load (local.get $rec_wa)))
-      (local.set $v (i32.load (i32.add (local.get $rec_wa) (i32.const 4))))
+      (local.set $a (call $gl32 (local.get $rec_guest)))
+      (local.set $v (call $gl32 (i32.add (local.get $rec_guest) (i32.const 4))))
       (if (i32.eq (local.get $kind) (i32.const 8))
         (then (call $d3dim_set_render_state (local.get $dev_this) (local.get $a) (local.get $v))))
       (if (i32.eq (local.get $kind) (i32.const 7))
@@ -6555,7 +6550,7 @@
                 (local.get $dev_this) (local.get $a)
                 (i32.add (global.get $D3DIM_MATRICES)
                          (i32.mul (i32.sub (local.get $v) (i32.const 1)) (i32.const 64))))))))
-      (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 8)))
+      (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
 

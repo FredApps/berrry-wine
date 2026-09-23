@@ -29,7 +29,7 @@ const extraWat = String.raw`
    (call $d3dim_execbuf_cache_clear (local.get $p))
    (call $dx_free (call $dx_from_this (local.get $p))))
  (func (export "process") (param $dev i32) (param $buf i32) (param $rec i32)
-   (call $d3dim_exec_process_vertices (local.get $dev) (local.get $buf) (call $g2w (local.get $rec)) (i32.const 1)))
+   (call $d3dim_exec_process_vertices (local.get $dev) (local.get $buf) (local.get $rec) (i32.const 1)))
 `;
 (async () => {
   const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
