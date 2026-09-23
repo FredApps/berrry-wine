@@ -49,8 +49,11 @@ QueryInterface still recognizes partial GUIDs and its DirectDraw-parent
 lookup has a slot-zero ambiguity and a fallback scan. DirectDraw-created
 D3D roots remain independent entries without a retained DirectDraw parent;
 cross-interface controlling-IUnknown identity and native Win98 generation
-rules need a dedicated review. Render-target/texture retention, device
-creation allocation-failure rollback, thread-safe reference counts and
-retired-slot reuse are also outside this change.
+rules need a dedicated review. Render-target/texture retention, thread-safe
+reference counts and retired-slot reuse are also outside this change.
 
 No native Win98, browser/gameplay, full-build or performance claim is made.
+
+Follow-up: the shared device-creation allocation-failure path is now
+transactional; see [allocation review](d3d-device-creation-oom-review.md).
+This closes state/object allocation rollback, not the other limitations above.

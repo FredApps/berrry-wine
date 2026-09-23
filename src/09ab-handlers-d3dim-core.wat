@@ -703,9 +703,9 @@
     (store.field DxObject refcount (local.get $entry) (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
     (i32.const 0))
 
-  ;; ── CreateDevice forwarding (D3D2/D3D7) ───────────────────────
-  ;; Matches the IDirect3D3::CreateDevice path in 09a8 (device type 20,
-  ;; 4KB state block on guest heap). For D3D2/D3D7 we use the same
+  ;; ── CreateDevice forwarding (D3D2/D3D3/D3D7) ──────────────────
+  ;; Shared device type 20 and 4KB state block on the guest heap.
+  ;; All three versions use the same
   ;; underlying type — the only externally-visible difference is the vtable
   ;; the caller sees on the returned object, and QI handles upgrades.
   ;; Device entry fields: +8 = current render-target slot, +12 = creator
@@ -713,11 +713,21 @@
   (func $d3dim_create_device (param $this i32) (param $rt_surf i32) (param $ppDev i32) (param $vtbl i32)
     (local $obj i32) (local $entry i32) (local $rt_entry i32) (local $rt_slot i32) (local $state i32)
     (local $parent_entry i32) (local $parent_slot i32)
+    (call $gs32 (local.get $ppDev) (i32.const 0))
+    ;; Acquire fallible heap storage before consuming a permanently retired
+    ;; DX slot. No parent reference or output is published until both exist.
+    (local.set $state (call $heap_alloc (i32.const 4096)))
+    (if (i32.eqz (local.get $state)) (then
+      (i32.store (global.get $reg_base) (i32.const 0x8007000E))
+      (return)))
     (local.set $obj (call $dx_create_com_obj (i32.const 20) (local.get $vtbl)))
     (if (i32.eqz (local.get $obj)) (then
+      (call $heap_free (local.get $state))
       (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005))
       (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
+    (call $d3ddev_init_state (local.get $state))
+    (i32.store offset=16 (local.get $entry) (local.get $state))
     (if (local.get $this) (then
       (local.set $parent_entry (call $dx_from_this (local.get $this)))
       (if (i32.ne (i32.load (local.get $parent_entry)) (i32.const 0)) (then
@@ -730,9 +740,6 @@
       (local.set $rt_entry (call $dx_from_this (local.get $rt_surf)))
       (local.set $rt_slot (call $dx_slot_of (local.get $rt_entry)))
       (store.field DxObject misc0 (local.get $entry) (local.get $rt_slot))))
-    (local.set $state (call $heap_alloc (i32.const 4096)))
-    (call $d3ddev_init_state (local.get $state))
-    (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $state))
     (call $gs32 (local.get $ppDev) (local.get $obj))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
