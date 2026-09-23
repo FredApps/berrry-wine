@@ -21,6 +21,9 @@
   for(const normalize of[false,true])add('normal length '+normalize,(d,s)=>{s.normalizeNormals=normalize;const v=new Float32Array(d.vertices.buffer);for(let i=0;i<3;i++)v[i*15+5]=.5;},normalize?[128,64,32,191]:[64,32,16,191]);
   add('light direction normalized',(d,s)=>s.lights[0].direction[2]=-7,[128,64,32,191]);
   add('global ambient and emissive',(d,s)=>{s.lights=[];s.ambientColor=0xff804020;s.material.ambient=f([.5,1,1,0]);s.material.emissive=f([.125,.125,.125,0]);},[96,96,64,191]);
+  // No NORMAL element: D3D9 reads N as zero, so the directional light adds
+  // nothing and only the ambient and emissive sums reach the vertex.
+  add('missing NORMAL lights as zero',(d,s)=>{d.attributes=d.attributes.filter(a=>a.usage!==3);s.ambientColor=0xff804020;s.material.ambient=f([.5,1,1,0]);s.material.emissive=f([.125,.125,.125,0]);},[96,96,64,191]);
   add('light ambient',(d,s)=>{s.lights[0].diffuse.fill(0);s.lights[0].ambient=f([.25,.5,.75,1]);s.material.ambient=f([.5,.5,.5,0]);},[32,64,96,191]);
   add('eight lights',(d,s)=>{s.lights=Array.from({length:8},()=>({type:3,direction:f([0,0,-1]),diffuse:f([.125,.125,.125,1]),ambient:f([0,0,0,0])}));},[128,64,32,191]);
   for(const source of[0,1,2])add('diffuse source '+source,(d,s)=>{s.diffuseMaterialSource=source;s.material.diffuse=f([1,0,0,.5]);},[[255,0,0,128],[128,64,32,191],[64,128,191,64]][source]);

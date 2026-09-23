@@ -697,15 +697,19 @@
     (i32.gt_u (i32.add (i32.load offset=16 (local.get $old)) (i32.add (i32.const 32) (i32.mul (local.get $n) (select (i32.const 30) (i32.const 7) (local.get $v2)))))
       (select (i32.const 512) (i32.const 128) (local.get $v2)))) (then (return (i32.const 0))))
   (if (i32.eqz (call $d3d_shader_vm_range (local.get $lighting) (i32.add (i32.const 128) (i32.shl (local.get $n) (local.get $shift))))) (then (return (i32.const 0))))
-  (if (i32.or (i32.gt_u (i32.load offset=12 (local.get $lighting)) (i32.const 15))
+  ;; normalReg 16 = the declaration has no NORMAL. D3D9 lights such a vertex
+  ;; with N = 0: every diffuse and specular term vanishes and only the ambient
+  ;; and emissive sums remain (Morrowind's unlit-mesh draws).
+  (if (i32.or (i32.gt_u (i32.load offset=12 (local.get $lighting)) (i32.const 16))
     (i32.or (i32.gt_u (i32.load offset=16 (local.get $lighting)) (i32.const 16))
       (i32.gt_u (i32.load offset=20 (local.get $lighting)) (i32.const 16)))) (then (return (i32.const 0))))
   (if (i32.or (i32.gt_u (i32.load offset=24 (local.get $lighting)) (i32.const 1))
     (i32.gt_u (i32.load offset=28 (local.get $lighting)) (i32.const 1))) (then (return (i32.const 0))))
-  (if (i32.or (i32.eq (i32.load offset=12 (local.get $lighting)) (i32.load offset=16 (local.get $lighting)))
-    (i32.or (i32.eq (i32.load offset=12 (local.get $lighting)) (i32.load offset=20 (local.get $lighting)))
-      (i32.and (i32.lt_u (i32.load offset=16 (local.get $lighting)) (i32.const 16))
-        (i32.eq (i32.load offset=16 (local.get $lighting)) (i32.load offset=20 (local.get $lighting)))))) (then (return (i32.const 0))))
+  (if (i32.or (i32.and (i32.lt_u (i32.load offset=12 (local.get $lighting)) (i32.const 16))
+      (i32.or (i32.eq (i32.load offset=12 (local.get $lighting)) (i32.load offset=16 (local.get $lighting)))
+        (i32.eq (i32.load offset=12 (local.get $lighting)) (i32.load offset=20 (local.get $lighting)))))
+    (i32.and (i32.lt_u (i32.load offset=16 (local.get $lighting)) (i32.const 16))
+      (i32.eq (i32.load offset=16 (local.get $lighting)) (i32.load offset=20 (local.get $lighting))))) (then (return (i32.const 0))))
   (if (i32.load offset=44 (local.get $lighting)) (then (return (i32.const 0))))
   (local.set $i (i32.const 52))
   (loop $reserved
@@ -746,8 +750,11 @@
   (block $failure
     (br_if $failure (i32.eqz (call $d3d_fixed_normal_matrix (local.get $desc) (local.get $ir))))
     (call $d3d_fixed_def (local.get $ir) (i32.const 43) (f32.const 0) (f32.const 0) (f32.const 1) (f32.const 3.4028234663852886e38))
+    (if (i32.eq (i32.load offset=12 (local.get $lighting)) (i32.const 16)) (then
+    (call $d3d_fixed_op (local.get $ir) (i32.const 1) (i32.const 0) (i32.const 8) (i32.const 7) (i32.const 0) (call $d3d_fixed_source (i32.const 2) (i32.const 43) (i32.const 0) (i32.const 0)) (i32.const 0) (i32.const 0)))
+    (else
     (call $d3d_fixed_op (local.get $ir) (i32.const 23) (i32.const 0) (i32.const 8) (i32.const 7) (i32.const 0) (call $d3d_fixed_source (i32.const 1) (i32.load offset=12 (local.get $lighting)) (i32.const 228) (i32.const 0)) (call $d3d_fixed_source (i32.const 2) (i32.const 40) (i32.const 228) (i32.const 0)) (i32.const 0))
-    (if (i32.load offset=24 (local.get $lighting)) (then (call $d3d_fixed_normalize (local.get $ir) (i32.const 8))))
+    (if (i32.load offset=24 (local.get $lighting)) (then (call $d3d_fixed_normalize (local.get $ir) (i32.const 8))))))
     (local.set $i (i32.const 0))
     (loop $material_defs
       (local.set $p (i32.add (local.get $lighting) (i32.add (i32.const 64) (i32.shl (local.get $i) (i32.const 4)))))

@@ -6,7 +6,8 @@ const fixtures=require('./fixtures/d3d9-lighting-cases');
  let calls=0;
  const native={...e,d3d_fixed_bind_lighting(bundle,desc,lighting){
   const before=new Uint32Array(memory.buffer,bundle,8).slice(),words=new Uint32Array(memory.buffer,lighting,32);
-  for(const [slot,value]of[[1,3],[2,9],[3,16],[4,3],[6,2],[8,3],[11,1],[13,1],[28,1]]){
+  // Slot 4 = the normal's register is a collision only when a NORMAL exists.
+  if(words[3]!==16)for(const [slot,value]of[[1,3],[2,9],[3,17],[4,3],[6,2],[8,3],[11,1],[13,1],[28,1]]){
    const old=words[slot];words[slot]=value;assert.strictEqual(e.d3d_fixed_bind_lighting(bundle,desc,lighting),0,'malformed lighting '+slot);
    assert.deepStrictEqual(new Uint32Array(memory.buffer,bundle,8),before,'failure retains original bundle');words[slot]=old;
   }
@@ -20,8 +21,7 @@ const fixtures=require('./fixtures/d3d9-lighting-cases');
    p.forEach((n,i)=>assert(Math.abs(n-c.expected[i])<=1,`${c.name}: ${p} != ${c.expected}`));
    assert.strictEqual(d.bytes,base,'temporary allocation retirement');
   }
-  for(const edit of[(d,s)=>s.lights[0].type=1,(d,s)=>s.specular=true,(d,s)=>s.lights[0].direction[0]=NaN,
-   (d,s)=>d.attributes=d.attributes.filter(a=>a.usage!==3)]){
+  for(const edit of[(d,s)=>s.lights[0].type=1,(d,s)=>s.specular=true,(d,s)=>s.lights[0].direction[0]=NaN]){
    const snapshot=fixtures.draw();edit(snapshot,snapshot.fixedFunction);assert.throws(()=>d.draw(snapshot));assert.strictEqual(d.bytes,base);
   }
  }finally{d.destroy();}
