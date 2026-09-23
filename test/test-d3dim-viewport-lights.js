@@ -12,6 +12,8 @@ const apiTable = require('../src/api_table.json');
 const extraWat = String.raw`
   (func (export "test_d3dim_light_init")
     (global.set $current_thread_id (i32.const 1))
+    (global.set $DX_VTBL_D3DVP1 (i32.const 0x56000000))
+    (global.set $DX_VTBL_D3DVP2 (i32.const 0x57000000))
     (global.set $DX_VTBL_D3DVP3 (i32.const 0x51000000))
     (global.set $DX_VTBL_D3DLIGHT (i32.const 0x52000000)))
   (func (export "test_d3dim_create_viewport") (result i32)

@@ -11093,11 +11093,11 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
-  ;; IDirect3D::CreateViewport — DX type 23, vtbl D3DVP3
+  ;; IDirect3D::CreateViewport — DX type 23, vtbl D3DVP1
   (func $handle_IDirect3D_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $d3dim_create_child
       (local.get $arg1) (local.get $arg2)
-      (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
+      (i32.const 23) (global.get $DX_VTBL_D3DVP1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; IDirect3D::FindDevice — return a concrete legacy RGB device GUID. D3DRM

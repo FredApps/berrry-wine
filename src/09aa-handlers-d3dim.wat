@@ -235,7 +235,7 @@
   ;; IDirect3D2_CreateMaterial — 3 args (incl. this)
   (func $handle_IDirect3D2_CreateMaterial (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 25) (global.get $DX_VTBL_D3DMAT3)))
+    (local.set $obj (call $dx_create_com_obj (i32.const 25) (global.get $DX_VTBL_D3DMAT2)))
     (if (i32.eqz (local.get $obj)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005))
       (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))) (return)))
     (call $gs32 (local.get $arg1) (local.get $obj))
@@ -246,7 +246,7 @@
   (func $handle_IDirect3D2_CreateViewport (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $d3dim_create_child
       (local.get $arg1) (local.get $arg2)
-      (i32.const 23) (global.get $DX_VTBL_D3DVP3)))
+      (i32.const 23) (global.get $DX_VTBL_D3DVP2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; IDirect3D2_FindDevice — 3 args (incl. this)

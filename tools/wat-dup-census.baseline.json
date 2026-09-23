@@ -1,6 +1,6 @@
 {
   "comment": "Known exact duplicate members. --check allows groups/members to disappear, rejects a new member, and caps the group count.",
-  "maxExactGroups": 119,
+  "maxExactGroups": 117,
   "allowedMembers": [
     "05-alu.wat:$th_lea",
     "05-alu.wat:$th_mov_r_i32",
@@ -162,8 +162,6 @@
     "09a8-handlers-directx.wat:$handle_ICInfo",
     "09a8-handlers-directx.wat:$handle_ICOpen",
     "09a8-handlers-directx.wat:$handle_IDirect3D3_CreateLight",
-    "09a8-handlers-directx.wat:$handle_IDirect3D3_CreateMaterial",
-    "09a8-handlers-directx.wat:$handle_IDirect3D3_CreateViewport",
     "09a8-handlers-directx.wat:$handle_IDirect3D3_EvictManagedTextures",
     "09a8-handlers-directx.wat:$handle_IDirect3D3_FindDevice",
     "09a8-handlers-directx.wat:$handle_IDirect3DDevice3_Begin",
@@ -207,7 +205,6 @@
     "09a8-handlers-directx.wat:$handle_IDirect3DViewport3_SetViewport2",
     "09a8-handlers-directx.wat:$handle_IDirect3DViewport3_TransformVertices",
     "09a8-handlers-directx.wat:$handle_IDirect3D_CreateLight",
-    "09a8-handlers-directx.wat:$handle_IDirect3D_CreateViewport",
     "09a8-handlers-directx.wat:$handle_IDirect3D_FindDevice",
     "09a8-handlers-directx.wat:$handle_IDirect3D_Initialize",
     "09a8-handlers-directx.wat:$handle_IDirectAnimationDABehavior_AddRef",
@@ -300,8 +297,6 @@
     "09a8-handlers-directx.wat:$handle_IVBDirectSound_DirectSlot",
     "09a9-comctl32.wat:$handle_InitCommonControls",
     "09aa-handlers-d3dim.wat:$handle_IDirect3D2_CreateLight",
-    "09aa-handlers-d3dim.wat:$handle_IDirect3D2_CreateMaterial",
-    "09aa-handlers-d3dim.wat:$handle_IDirect3D2_CreateViewport",
     "09aa-handlers-d3dim.wat:$handle_IDirect3D2_FindDevice",
     "09aa-handlers-d3dim.wat:$handle_IDirect3D7_EvictManagedTextures",
     "09aa-handlers-d3dim.wat:$handle_IDirect3DDevice2_Begin",
