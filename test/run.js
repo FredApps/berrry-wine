@@ -308,6 +308,9 @@ const TRACE_CLIP = hasFlag('trace-clip'); // --trace-clip: log _excludeChildrenC
 const TRACE_COMPOSITE = hasFlag('trace-composite'); // --trace-composite: one line per repaint: which path composited, and what each window contributed
 const TRACE_DX = hasFlag('trace-dx');   // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
 const DX_SURFACES = hasFlag('dx-surfaces'); // --dx-surfaces: print the DX_OBJECTS surface manifest at exit
+// --dump-dx-surfaces=DIR: at exit, write every live DX surface as DIR/slotN-WxH-FMT.png, decoded by its
+// real pixel format (565/555/1555/4444/8888) through the same WAT decoder both D3DIM backends sample with.
+const DUMP_DX_SURFACES = getArg('dump-dx-surfaces', null);
 const GL_CENSUS = hasFlag('gl-census'); // --gl-census: at exit, which GL entry points this run actually issued, and whether the WAT mirror stayed trusted
 // --trace-gl[=Name1,Name2]: one line per GL command as the backend receives it,
 // arguments as hex with a float reading beside any word that looks like one
@@ -10365,7 +10368,7 @@ if (VERBOSE) {
       // must be decoded with that one, not with whichever palette happened to
       // be allocated first.
       const ownPal = dv.getUint32(DX_SURF_PAL + slot * 4, true);
-      surfaces.push({ slot, flags, w, h, bpp, pitch, dib, firstNonZero, checksum,
+      surfaces.push({ slot, entry, flags, w, h, bpp, pitch, dib, firstNonZero, checksum,
         paletteWa: ownPal || paletteWa });
     }
     return { mem, surfaces };
@@ -10530,6 +10533,8 @@ if (VERBOSE) {
 
   if (DX_SURFACES) {
     const { mem, surfaces } = getDxSurfaceManifest();
+    // $dx_surf_fmt_get's codes (src/09a8-handlers-directx.wat).
+    const DX_SURFACE_FORMATS = ['default', '565', 'x555', 'a1555', 'a4444', 'a8888', 'x888'];
     // Every 8bpp upload resolves its colours through the single primary-palette
     // global, not through the per-surface palette printed below. When those two
     // disagree the picture is drawn with somebody else's palette, so print both.
@@ -10539,10 +10544,33 @@ if (VERBOSE) {
       ` primaryPal=0x${globalPal.toString(16)}`);
     for (const s of surfaces) {
       const score = dxSurfaceContentScore(s, mem);
-      console.log(`  slot=${s.slot} ${s.w}x${s.h} bpp=${s.bpp} pitch=${s.pitch}` +
+      // The pixel layout, not just the depth: a 16bpp surface is 565, 555 or
+      // 1555/4444, and decoding one as another shifts every hue.
+      const fmt = instance.exports.d3dim_gpu_surface_fmt
+        ? DX_SURFACE_FORMATS[instance.exports.d3dim_gpu_surface_fmt(s.entry) | 0] || '?' : '?';
+      console.log(`  slot=${s.slot} ${s.w}x${s.h} bpp=${s.bpp} fmt=${fmt} pitch=${s.pitch}` +
         ` flags=0x${s.flags.toString(16)} dib=0x${s.dib.toString(16)}` +
         ` pal=0x${s.paletteWa.toString(16)} colors=${score.colors} nonZero=${score.nonZero}/${score.total}`);
     }
+  }
+
+  if (DUMP_DX_SURFACES) {
+    const { surfaces } = getDxSurfaceManifest();
+    const decode = instance.exports.d3dim_gpu_decode_texture;
+    const fmtOf = instance.exports.d3dim_gpu_surface_fmt;
+    const names = ['default', '565', 'x555', 'a1555', 'a4444', 'a8888', 'x888'];
+    fs.mkdirSync(DUMP_DX_SURFACES, { recursive: true });
+    let written = 0;
+    for (const s of surfaces) {
+      const wa = decode ? decode(s.entry, 0) >>> 0 : 0;
+      if (!wa) continue;
+      // Re-read the buffer: the decoder's scratch allocation may have grown memory.
+      const rgba = new Uint8Array(memory.buffer).slice(wa, wa + s.w * s.h * 4);
+      const fmt = names[fmtOf(s.entry) | 0] || 'fmt' + (fmtOf(s.entry) | 0);
+      writeRgbaPng(path.join(DUMP_DX_SURFACES, `slot${s.slot}-${s.w}x${s.h}-${fmt}.png`), s.w, s.h, rgba);
+      written++;
+    }
+    console.log(`[dump-dx-surfaces] wrote ${written} surface(s) to ${DUMP_DX_SURFACES}`);
   }
 
   if (GL_CENSUS) {
