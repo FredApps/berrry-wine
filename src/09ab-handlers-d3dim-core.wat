@@ -570,7 +570,7 @@
   ;;
   ;; Returns S_OK (0) on match (and writes ppvObj), E_NOINTERFACE (0x80004002)
   ;; on miss (and writes NULL to ppvObj).
-  ;; Microsoft d3d.h child identities: family 3=viewport, 4=material.
+  ;; Microsoft d3d.h child identities: family 3=viewport, 4=material, 7=light.
   ;; Share span/identity/refcount ownership, but never cross the family ABI.
   (func $d3dim_child_qi (param $family i32) (param $this i32) (param $riid i32) (param $out i32) (result i32)
     (local $iid i32) (local $unknown i32) (local $vtbl i32) (local $entry i32) (local $obj i32)
@@ -600,6 +600,10 @@
       (if (call $guid_words_equal (local.get $iid)
             (i32.const 0xCA9C46F4) (i32.const 0x11D1D3C5) (i32.const 0x60005AB7) (i32.const 0x12B35208))
         (then (local.set $vtbl (global.get $DX_VTBL_D3DMAT3))))))
+    (if (i32.eq (local.get $family) (i32.const 7)) (then
+      (if (call $guid_words_equal (local.get $iid)
+            (i32.const 0x4417C142) (i32.const 0x11CF33AD) (i32.const 0x00006F81) (i32.const 0x6E1520C0))
+        (then (local.set $vtbl (global.get $DX_VTBL_D3DLIGHT))))))
     (call $guest_span_release (local.get $iid) (i32.const 16))
     (if (i32.and (i32.eqz (local.get $unknown)) (i32.eqz (local.get $vtbl)))
       (then (return (i32.const 0x80004002))))
