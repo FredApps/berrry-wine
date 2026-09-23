@@ -671,6 +671,21 @@
     ;; arg2 = dwOpenFlags
     ;; Determine creation disposition from flags
     ;; MMIO_CREATE (0x1000) → CREATE_ALWAYS (2), else OPEN_EXISTING (3)
+    ;; A memory file never touches the filesystem: lpmmioinfo names FOURCC_MEM
+    ;; with no custom IOProc, and the buffer it describes is the file.
+    ;; SimGolf's sound.dll streams into a 128 KB one; opened as a path instead,
+    ;; mmioGetInfo bound it an 8 KB default and the stream overran that by
+    ;; 120 KB into textures and the GL command buffer.
+    (if (i32.ne (local.get $arg1) (i32.const 0))
+      (then
+        (if (i32.and
+              (i32.eq (call $gl32 (i32.add (local.get $arg1) (i32.const 4))) (i32.const 0x204D454D))
+              (i32.eqz (call $gl32 (i32.add (local.get $arg1) (i32.const 8)))))
+          (then
+            (i32.store offset=0 (global.get $reg_base)
+              (call $mmio_open_mem (local.get $arg1) (local.get $arg2) (local.get $name_ptr)))
+            (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+            (return)))))
     (local.set $creation (i32.const 3))  ;; OPEN_EXISTING
     (if (i32.and (local.get $arg2) (i32.const 0x1000))
       (then (local.set $creation (i32.const 2))))  ;; CREATE_ALWAYS
@@ -681,20 +696,22 @@
       (local.get $creation)
       (i32.const 0x80)                ;; FILE_ATTRIBUTE_NORMAL
       (i32.const 0)))                 ;; isWide=0
-    ;; If lpmmioinfo is non-NULL, store error code at offset +64 (wErrorRet)
+    ;; If lpmmioinfo is non-NULL, report the result in wErrorRet (+12).
     (if (local.get $arg1)
       (then
-        (if (local.get $handle)
-          (then (call $gs32 (local.get $arg1) (i32.const 0)))  ;; wErrorRet = 0 (no error) — but actually at +64
-          (else (call $gs32 (local.get $arg1) (i32.const 256)))))) ;; MMIOERR_FILENOTFOUND
+        (call $gs32 (i32.add (local.get $arg1) (i32.const 12))
+          (select (i32.const 0) (i32.const 257) (i32.ne (local.get $handle) (i32.const 0)))))) ;; MMIOERR_FILENOTFOUND
     (i32.store offset=0 (global.get $reg_base) (local.get $handle))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
   ;; 805: mmioClose(hmmio, wFlags) — 2 args stdcall
   (func $handle_mmioClose (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $mmio_buf_release (local.get $arg0))
-    (drop (call $host_fs_close_handle (local.get $arg0)))
+    (if (call $mmio_mem_slot (local.get $arg0))
+      (then (call $mmio_buf_release (local.get $arg0)))
+      (else
+        (call $mmio_buf_release (local.get $arg0))
+        (drop (call $host_fs_close_handle (local.get $arg0)))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
@@ -748,6 +765,9 @@
     (local $search_id i32) (local $search_type i32) (local $fcc_type i32)
     (local $end_pos i32) (local $bytes_read_ga i32) (local $bytes_read_wa i32)
     (local $data_offset i32) (local $parent_wa i32)
+    ;; RIFF parsing below reads through the host filesystem.
+    (if (call $mmio_mem_slot (local.get $arg0))
+      (then (call $crash_unimplemented (local.get $name_ptr))))
     (local.set $ck_wa (call $g2w (local.get $arg1)))
     ;; arg3 = wFlags (passed as 5th stack arg), read from [esp+24] in caller
     ;; Actually arg3 = wFlags since dispatcher reads 5 args
@@ -866,6 +886,22 @@
   ;; Its signed-count and return contracts match _hread: EOF is zero, a read
   ;; failure is -1, and provider-backed reads park rather than inventing EOF.
   (func $handle_mmioRead (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $n i32) (local $pos i32)
+    (local.set $slot (call $mmio_mem_slot (local.get $arg0)))
+    (if (local.get $slot)
+      (then
+        (local.set $pos (i32.load offset=20 (local.get $slot)))
+        (local.set $n (i32.sub (i32.load offset=24 (local.get $slot)) (local.get $pos)))
+        (if (i32.lt_s (local.get $arg2) (i32.const 0))
+          (then (local.set $n (i32.const -1)))
+          (else
+            (if (i32.lt_u (local.get $arg2) (local.get $n)) (then (local.set $n (local.get $arg2))))
+            (call $guest_memmove (local.get $arg1)
+              (i32.add (i32.load offset=4 (local.get $slot)) (local.get $pos)) (local.get $n))
+            (i32.store offset=20 (local.get $slot) (i32.add (local.get $pos) (local.get $n)))))
+        (i32.store offset=0 (global.get $reg_base) (local.get $n))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        (return)))
     (call $handle__hread
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
@@ -875,6 +911,8 @@
   ;; Ascends out of a chunk — seeks past remaining chunk data
   (func $handle_mmioAscend (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $ck_wa i32) (local $end_pos i32)
+    (if (call $mmio_mem_slot (local.get $arg0))
+      (then (call $crash_unimplemented (local.get $name_ptr))))
     (local.set $ck_wa (call $g2w (local.get $arg1)))
     ;; End of chunk = dwDataOffset + cksize, word-aligned
     (local.set $end_pos
@@ -890,9 +928,28 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
-  ;; The currently modeled unbuffered mmioSeek operation has the same
-  ;; offset/origin/result contract as _llseek and dispatches to that canonical
-  ;; handler through api_table.json.  HMMIO remains a distinct public type.
+  ;; mmioSeek(hmmio, lOffset, iOrigin) — 3 args stdcall. A file handle has
+  ;; _llseek's offset/origin/result contract; a memory file seeks inside its
+  ;; buffer and cannot move past its end (-1, as a failed seek).
+  (func $handle_mmioSeek (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $slot i32) (local $pos i32)
+    (local.set $slot (call $mmio_mem_slot (local.get $arg0)))
+    (if (i32.eqz (local.get $slot))
+      (then
+        (call $handle__llseek (local.get $arg0) (local.get $arg1) (local.get $arg2)
+          (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (return)))
+    (local.set $pos (local.get $arg1))
+    (if (i32.eq (local.get $arg2) (i32.const 1))                     ;; SEEK_CUR
+      (then (local.set $pos (i32.add (local.get $pos) (i32.load offset=20 (local.get $slot))))))
+    (if (i32.eq (local.get $arg2) (i32.const 2))                     ;; SEEK_END
+      (then (local.set $pos (i32.add (local.get $pos) (i32.load offset=24 (local.get $slot))))))
+    (if (i32.or (i32.gt_u (local.get $arg2) (i32.const 2))
+                (i32.gt_u (local.get $pos) (i32.load offset=8 (local.get $slot))))
+      (then (local.set $pos (i32.const -1)))
+      (else (i32.store offset=20 (local.get $slot) (local.get $pos))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $pos))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; --- MMIO buffered I/O ------------------------------------------------
   ;; MMIOINFO: +0 dwFlags, +4 fccIOProc, +8 pIOProc, +12 wErrorRet, +16 htask,
@@ -903,37 +960,43 @@
   ;; so the buffer must be a real guest block that stays put for the life of
   ;; the handle. $mmio_buf_for binds a default 8KB block per HMMIO unless
   ;; mmioSetBuffer has selected a caller-owned or differently-sized buffer.
+  ;; Slot layout (32 bytes, wasm addresses in the shared region):
+  ;;   +0 hmmio, +4 buffer (guest), +8 buffer size, +12 owned (we allocated it),
+  ;;   +16 kind (1 = memory file), +20 memory-file position,
+  ;;   +24 memory-file data length, +28 open flags.
   (func $mmio_slot_addr (param $slot i32) (result i32)
-    (i32.add (global.get $mmio_buf_table) (i32.mul (local.get $slot) (i32.const 16))))
+    (i32.add (global.get $MMIO_BUF_TABLE)
+      (i32.mul (local.get $slot) (global.get $MMIO_SLOT_BYTES))))
 
   ;; Returns the slot for $h, optionally allocating a new binding.
   (func $mmio_slot_for (param $h i32) (param $create i32) (result i32)
     (local $i i32) (local $addr i32) (local $free i32)
-    (if (i32.eqz (global.get $mmio_buf_table))
-      (then
-        (if (i32.eqz (local.get $create)) (then (return (i32.const 0))))
-        (global.set $mmio_buf_table
-          (call $heap_alloc (i32.mul (global.get $MMIO_BUF_SLOTS) (i32.const 16))))
-        (if (i32.eqz (global.get $mmio_buf_table)) (then (return (i32.const 0))))
-        (call $zero_memory (call $g2w (global.get $mmio_buf_table))
-          (i32.mul (global.get $MMIO_BUF_SLOTS) (i32.const 16)))))
-    (local.set $free (i32.const 0))
-    (local.set $i (i32.const 0))
+    (if (i32.eqz (local.get $h)) (then (return (i32.const 0))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MMIO_BUF_SLOTS)))
       (local.set $addr (call $mmio_slot_addr (local.get $i)))
-      (if (i32.eq (call $gl32 (local.get $addr)) (local.get $h))
+      (if (i32.eq (i32.load (local.get $addr)) (local.get $h))
         (then (return (local.get $addr))))
-      (if (i32.and (i32.eqz (local.get $free)) (i32.eqz (call $gl32 (local.get $addr))))
+      (if (i32.and (i32.eqz (local.get $free)) (i32.eqz (i32.load (local.get $addr))))
         (then (local.set $free (local.get $addr))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (if (i32.and (i32.ne (local.get $create) (i32.const 0))
                  (i32.ne (local.get $free) (i32.const 0)))
       (then
-        (call $gs32 (local.get $free) (local.get $h))
+        (i32.store (local.get $free) (local.get $h))
         (return (local.get $free))))
     (i32.const 0))
+
+  ;; The slot of an open memory file (mmioOpen with fccIOProc FOURCC_MEM), or 0.
+  (func $mmio_mem_slot (param $h i32) (result i32)
+    (local $addr i32)
+    (local.set $addr (call $mmio_slot_for (local.get $h) (i32.const 0)))
+    (if (result i32)
+        (i32.and (i32.ne (local.get $addr) (i32.const 0))
+                 (i32.eq (i32.load offset=16 (local.get $addr)) (i32.const 1)))
+      (then (local.get $addr))
+      (else (i32.const 0))))
 
   ;; Returns the guest buffer bound to $h, binding a default internal buffer on
   ;; first use. 0 if the slot table or heap is exhausted.
@@ -941,26 +1004,115 @@
     (local $addr i32) (local $buf i32)
     (local.set $addr (call $mmio_slot_for (local.get $h) (i32.const 1)))
     (if (i32.eqz (local.get $addr)) (then (return (i32.const 0))))
-    (local.set $buf (call $gl32 (i32.add (local.get $addr) (i32.const 4))))
+    (local.set $buf (i32.load offset=4 (local.get $addr)))
     (if (i32.eqz (local.get $buf))
       (then
         (local.set $buf (call $heap_alloc (global.get $MMIO_BUF_SIZE)))
         (if (i32.eqz (local.get $buf)) (then (return (i32.const 0))))
-        (call $gs32 (i32.add (local.get $addr) (i32.const 4)) (local.get $buf))
-        (call $gs32 (i32.add (local.get $addr) (i32.const 8)) (global.get $MMIO_BUF_SIZE))
-        (call $gs32 (i32.add (local.get $addr) (i32.const 12)) (i32.const 1))))
+        (i32.store offset=4 (local.get $addr) (local.get $buf))
+        (i32.store offset=8 (local.get $addr) (global.get $MMIO_BUF_SIZE))
+        (i32.store offset=12 (local.get $addr) (i32.const 1))))
     (local.get $buf))
 
-  ;; Drops the handle→buffer binding and releases an internally-owned block.
+  ;; Drops the handle->buffer binding and releases an internally-owned block.
   (func $mmio_buf_release (param $h i32)
     (local $addr i32)
     (local.set $addr (call $mmio_slot_for (local.get $h) (i32.const 0)))
     (if (i32.eqz (local.get $addr)) (then (return)))
     (if (i32.and
-          (i32.ne (call $gl32 (i32.add (local.get $addr) (i32.const 12))) (i32.const 0))
-          (i32.ne (call $gl32 (i32.add (local.get $addr) (i32.const 4))) (i32.const 0)))
-      (then (call $heap_free (call $gl32 (i32.add (local.get $addr) (i32.const 4))))))
-    (call $zero_memory (call $g2w (local.get $addr)) (i32.const 16)))
+          (i32.ne (i32.load offset=12 (local.get $addr)) (i32.const 0))
+          (i32.ne (i32.load offset=4 (local.get $addr)) (i32.const 0)))
+      (then (call $heap_free (i32.load offset=4 (local.get $addr)))))
+    (call $zero_memory (local.get $addr) (global.get $MMIO_SLOT_BYTES)))
+
+  ;; A memory file keeps its whole contents in the buffer, so the app's own
+  ;; MMIOINFO is the authority on how far it got: pchNext is the position and
+  ;; anything it read or dirtied past the recorded length extends the file.
+  (func $mmio_mem_sync (param $slot i32) (param $info i32)
+    (local $wa i32) (local $buf i32) (local $size i32) (local $pos i32) (local $end i32)
+    (local.set $wa (call $g2w (local.get $info)))
+    (local.set $buf (i32.load offset=4 (local.get $slot)))
+    (local.set $size (i32.load offset=8 (local.get $slot)))
+    (local.set $pos (i32.sub (i32.load offset=28 (local.get $wa)) (local.get $buf)))
+    (if (i32.gt_u (local.get $pos) (local.get $size)) (then (local.set $pos (local.get $size))))
+    (i32.store offset=20 (local.get $slot) (local.get $pos))
+    (local.set $end (i32.sub (i32.load offset=32 (local.get $wa)) (local.get $buf)))
+    (if (i32.ne (i32.and (i32.load (local.get $wa)) (i32.const 0x10000000)) (i32.const 0)) ;; MMIO_DIRTY
+      (then (if (i32.gt_u (local.get $pos) (local.get $end))
+        (then (local.set $end (local.get $pos))))))
+    (if (i32.gt_u (local.get $end) (local.get $size)) (then (local.set $end (local.get $size))))
+    (if (i32.gt_u (local.get $end) (i32.load offset=24 (local.get $slot)))
+      (then (i32.store offset=24 (local.get $slot) (local.get $end)))))
+
+  ;; Fills lpmmioinfo for a memory file: the buffer is the file, lBufOffset is
+  ;; always 0 and pchEndRead marks the end of the data written so far.
+  (func $mmio_mem_fill_info (param $slot i32) (param $info i32) (param $h i32)
+    (local $wa i32) (local $buf i32)
+    (local.set $wa (call $g2w (local.get $info)))
+    (local.set $buf (i32.load offset=4 (local.get $slot)))
+    (call $zero_memory (local.get $wa) (i32.const 72))
+    (i32.store (local.get $wa)
+      (i32.and (i32.load offset=28 (local.get $slot)) (i32.const 0x0FFFFFFF)))    ;; dwFlags, DIRTY clear
+    (i32.store offset=4 (local.get $wa) (i32.const 0x204D454D))                   ;; fccIOProc "MEM "
+    (i32.store offset=20 (local.get $wa) (i32.load offset=8 (local.get $slot)))   ;; cchBuffer
+    (i32.store offset=24 (local.get $wa) (local.get $buf))                        ;; pchBuffer
+    (i32.store offset=28 (local.get $wa)
+      (i32.add (local.get $buf) (i32.load offset=20 (local.get $slot))))          ;; pchNext
+    (i32.store offset=32 (local.get $wa)
+      (i32.add (local.get $buf) (i32.load offset=24 (local.get $slot))))          ;; pchEndRead
+    (i32.store offset=36 (local.get $wa)
+      (i32.add (local.get $buf) (i32.load offset=8 (local.get $slot))))           ;; pchEndWrite
+    (i32.store offset=44 (local.get $wa) (i32.load offset=24 (local.get $slot)))  ;; lDiskOffset
+    (i32.store offset=68 (local.get $wa) (local.get $h)))                         ;; hmmio
+
+  ;; mmioOpen on a memory file: lpmmioinfo names FOURCC_MEM and supplies the
+  ;; buffer (or, with a NULL pchBuffer, its size for us to allocate). Without
+  ;; MMIO_CREATE the buffer's whole contents are the file. Returns the HMMIO,
+  ;; or 0 with wErrorRet set.
+  (func $mmio_open_mem (param $info i32) (param $flags i32) (param $name_ptr i32) (result i32)
+    (local $wa i32) (local $i i32) (local $h i32) (local $slot i32)
+    (local $buf i32) (local $size i32) (local $owned i32)
+    (local.set $wa (call $g2w (local.get $info)))
+    (local.set $size (i32.load offset=20 (local.get $wa)))
+    (local.set $buf (i32.load offset=24 (local.get $wa)))
+    (if (i32.ne (i32.load offset=48 (local.get $wa)) (i32.const 0))
+      ;; adwInfo[0] is the growth increment of an expandable memory file.
+      (then (call $crash_unimplemented (local.get $name_ptr))))
+    (if (i32.le_s (local.get $size) (i32.const 0))
+      (then
+        (i32.store offset=12 (local.get $wa) (i32.const 5))                       ;; MMSYSERR_INVALPARAM
+        (return (i32.const 0))))
+    ;; Handles below the host filesystem's 0x70000001 range, one per slot.
+    (block $found (loop $scan
+      (if (i32.ge_u (local.get $i) (global.get $MMIO_BUF_SLOTS))
+        (then
+          (i32.store offset=12 (local.get $wa) (i32.const 258))                   ;; MMIOERR_OUTOFMEMORY
+          (return (i32.const 0))))
+      (local.set $slot (call $mmio_slot_addr (local.get $i)))
+      (br_if $found (i32.eqz (i32.load (local.get $slot))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $h (i32.or (i32.const 0x6D4D0010) (local.get $i)))
+    (if (i32.eqz (local.get $buf))
+      (then
+        (local.set $buf (call $heap_alloc (local.get $size)))
+        (if (i32.eqz (local.get $buf))
+          (then
+            (i32.store offset=12 (local.get $wa) (i32.const 258))                 ;; MMIOERR_OUTOFMEMORY
+            (return (i32.const 0))))
+        (local.set $owned (i32.const 1))))
+    (call $zero_memory (local.get $slot) (global.get $MMIO_SLOT_BYTES))
+    (i32.store (local.get $slot) (local.get $h))
+    (i32.store offset=4 (local.get $slot) (local.get $buf))
+    (i32.store offset=8 (local.get $slot) (local.get $size))
+    (i32.store offset=12 (local.get $slot) (local.get $owned))
+    (i32.store offset=16 (local.get $slot) (i32.const 1))
+    (i32.store offset=24 (local.get $slot)
+      (select (i32.const 0) (local.get $size)
+        (i32.ne (i32.and (local.get $flags) (i32.const 0x1000)) (i32.const 0))))   ;; MMIO_CREATE: empty
+    (i32.store offset=28 (local.get $slot) (local.get $flags))
+    (i32.store offset=12 (local.get $wa) (i32.const 0))
+    (local.get $h))
 
   ;; Refills lpmmioinfo's buffer from the file. The app's own pchNext says how
   ;; much of the previous fill it consumed, so the next disk read starts there.
@@ -998,6 +1150,11 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
     (if (i32.eqz (local.get $arg1))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 5)) (return)))                ;; MMSYSERR_INVALPARAM
+    (if (call $mmio_mem_slot (local.get $arg0))
+      (then
+        (call $mmio_mem_fill_info (call $mmio_mem_slot (local.get $arg0)) (local.get $arg1) (local.get $arg0))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (return)))
     (local.set $buf (call $mmio_buf_for (local.get $arg0)))
     (if (i32.eqz (local.get $buf))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 7)) (return)))                ;; MMSYSERR_NOMEM
@@ -1007,7 +1164,7 @@
     (i32.store (local.get $info_wa) (i32.const 0x00010000))           ;; dwFlags = MMIO_ALLOCBUF
     (i32.store (i32.add (local.get $info_wa) (i32.const 4)) (i32.const 0x454C4946))  ;; fccIOProc "FILE"
     (i32.store (i32.add (local.get $info_wa) (i32.const 20))
-      (call $gl32 (i32.add (call $mmio_slot_for (local.get $arg0) (i32.const 0)) (i32.const 8))))
+      (i32.load offset=8 (call $mmio_slot_for (local.get $arg0) (i32.const 0))))
     (i32.store (i32.add (local.get $info_wa) (i32.const 24)) (local.get $buf))       ;; pchBuffer
     ;; Buffer starts empty: pchNext == pchEndRead makes the app call mmioAdvance.
     (i32.store (i32.add (local.get $info_wa) (i32.const 28)) (local.get $buf))       ;; pchNext
@@ -1021,10 +1178,23 @@
 
   ;; mmioAdvance(hmmio, lpmmioinfo, fuAdvance) — 3 args stdcall
   (func $handle_mmioAdvance (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $result i32)
+    (local $result i32) (local $slot i32)
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
     (if (i32.eqz (local.get $arg1))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 5)) (return)))                ;; MMSYSERR_INVALPARAM
+    ;; A memory file has nothing behind its buffer: reading on finds only the
+    ;; data already there, and writing past a full fixed-size buffer fails.
+    (local.set $slot (call $mmio_mem_slot (local.get $arg0)))
+    (if (local.get $slot)
+      (then
+        (call $mmio_mem_sync (local.get $slot) (local.get $arg1))
+        (if (i32.and
+              (i32.eq (local.get $arg2) (i32.const 1))                                  ;; MMIO_WRITE
+              (i32.ge_u (i32.load offset=20 (local.get $slot)) (i32.load offset=8 (local.get $slot))))
+          (then (i32.store offset=0 (global.get $reg_base) (i32.const 268)) (return)))  ;; MMIOERR_CANNOTEXPAND
+        (call $mmio_mem_fill_info (local.get $slot) (local.get $arg1) (local.get $arg0))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (return)))
     (local.set $result (call $mmio_refill (local.get $arg0) (local.get $arg1)))
     (i32.store offset=0 (global.get $reg_base) (local.get $result))
     ;; Buffered ISO input has the same asynchronous provider boundary as
@@ -1047,6 +1217,11 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
     (if (i32.eqz (local.get $arg1))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 5)) (return)))                ;; MMSYSERR_INVALPARAM
+    (if (call $mmio_mem_slot (local.get $arg0))
+      (then
+        (call $mmio_mem_sync (call $mmio_mem_slot (local.get $arg0)) (local.get $arg1))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (return)))
     (local.set $info_wa (call $g2w (local.get $arg1)))
     (local.set $buf (i32.load (i32.add (local.get $info_wa) (i32.const 24))))
     (if (local.get $buf)
@@ -1067,6 +1242,9 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
     (if (i32.or (local.get $arg3) (i32.lt_s (local.get $arg2) (i32.const 0)))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 5)) (return)))               ;; MMSYSERR_INVALPARAM
+    ;; A memory file's buffer is its contents; replacing it is not modeled.
+    (if (call $mmio_mem_slot (local.get $arg0))
+      (then (call $crash_unimplemented (local.get $name_ptr))))
     (if (i32.eqz (local.get $arg2))
       (then
         (call $mmio_buf_release (local.get $arg0))
@@ -1082,15 +1260,15 @@
         (if (i32.eqz (local.get $buf))
           (then (i32.store offset=0 (global.get $reg_base) (i32.const 258)) (return)))         ;; MMIOERR_OUTOFMEMORY
         (local.set $owned (i32.const 1))))
-    (local.set $old (call $gl32 (i32.add (local.get $slot) (i32.const 4))))
+    (local.set $old (i32.load offset=4 (local.get $slot)))
     (if (i32.and
-          (i32.ne (call $gl32 (i32.add (local.get $slot) (i32.const 12))) (i32.const 0))
+          (i32.ne (i32.load offset=12 (local.get $slot)) (i32.const 0))
           (i32.and (i32.ne (local.get $old) (i32.const 0))
                    (i32.ne (local.get $old) (local.get $buf))))
       (then (call $heap_free (local.get $old))))
-    (call $gs32 (i32.add (local.get $slot) (i32.const 4)) (local.get $buf))
-    (call $gs32 (i32.add (local.get $slot) (i32.const 8)) (local.get $arg2))
-    (call $gs32 (i32.add (local.get $slot) (i32.const 12)) (local.get $owned))
+    (i32.store offset=4 (local.get $slot) (local.get $buf))
+    (i32.store offset=8 (local.get $slot) (local.get $arg2))
+    (i32.store offset=12 (local.get $slot) (local.get $owned))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $mci_slot_addr (param $slot i32) (result i32)

@@ -13142,8 +13142,7 @@
     "name": "mmioSeek",
     "nargs": 3,
     "convention": "stdcall",
-    "hash": 3500785251,
-    "handler": "_llseek"
+    "hash": 3500785251
   },
   {
     "id": 1523,

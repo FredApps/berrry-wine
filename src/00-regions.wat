@@ -204,6 +204,11 @@
     (owner "01-header.wat:$MM_TIMER_NEXT_ID"))
   (region.declare $MCI_DEVICE_TABLE (size 0x00000100) (align 0x00000100)
     (owner "09a3-handlers-audio.wat:$mci_slot_addr"))
+  ;; Open HMMIO state: 8 x 32-byte slots. Shared memory rather than a lazily
+  ;; heap-allocated per-instance table, because one guest thread opens a
+  ;; handle and another advances it -- SimGolf's sound.dll does exactly that.
+  (region.declare $MMIO_BUF_TABLE (size 0x00000100) (align 0x00000010)
+    (owner "09a3-handlers-audio.wat:$mmio_slot_addr"))
   (region.declare $OWNER_TABLE (size 0x00000400) (align 0x00000100)
     (owner "09c0-window-table.wat:$wnd_owner_reset_slot"))
   ;; The system colours a program changed with SetSysColors, as 32 pairs of

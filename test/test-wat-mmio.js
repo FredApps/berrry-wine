@@ -27,6 +27,28 @@ const { bootRenderHarness } = require('./render-helper');
       (local.get $handle) (local.get $info) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_mmio3")
+        (param $api i32) (param $a i32) (param $b i32) (param $c i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x30000))
+    (if (i32.eq (local.get $api) (i32.const 0))
+      (then (call $handle_mmioOpenA (local.get $a) (local.get $b) (local.get $c)
+        (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $api) (i32.const 1))
+      (then (call $handle_mmioSetInfo (local.get $a) (local.get $b) (local.get $c)
+        (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $api) (i32.const 2))
+      (then (call $handle_mmioSeek (local.get $a) (local.get $b) (local.get $c)
+        (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $api) (i32.const 3))
+      (then (call $handle_mmioRead (local.get $a) (local.get $b) (local.get $c)
+        (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $api) (i32.const 4))
+      (then (call $handle_mmioAdvance (local.get $a) (local.get $b) (local.get $c)
+        (i32.const 0) (i32.const 0) (i32.const 0))))
+    (if (i32.eq (local.get $api) (i32.const 5))
+      (then (call $handle_mmioClose (local.get $a) (local.get $b) (local.get $c)
+        (i32.const 0) (i32.const 0) (i32.const 0))))
+    (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_mmio_set_call_state") (param $esp_value i32) (param $thunk i32)
     (i32.store offset=16 (global.get $reg_base) (local.get $esp_value))
     (global.set $current_thunk_eip (local.get $thunk))
@@ -179,7 +201,76 @@ const { bootRenderHarness } = require('./render-helper');
   assert.strictEqual(bufferedReads, 2,
     'one pending mmioAdvance refill is retried exactly once');
 
-  console.log('PASS: mmio FOURCC conversion, buffer management, and lazy read/refill retry');
+  // Memory files (fccIOProc FOURCC_MEM, NULL filename). SimGolf's sound.dll
+  // opens one over its own 128 KB malloc and then writes through the
+  // pchBuffer mmioGetInfo hands back, wrapping at 0x20000. That pointer has
+  // to be the caller's buffer at the caller's size, not a default 8 KB block.
+  const FOURCC_MEM = 0x204d454d;
+  const MMIO_CREATE = 0x1000, MMIO_READWRITE = 2, MMIO_DIRTY = 0x10000000;
+  const toWa = guest => (guest - imageBase + guestBase) >>> 0;
+  const newMemInfo = (buffer, size) => {
+    const guest = wat.guest_alloc(72) >>> 0;
+    bytes.fill(0, toWa(guest), toWa(guest) + 72);
+    view.setUint32(toWa(guest) + 4, FOURCC_MEM, true);
+    view.setUint32(toWa(guest) + 20, size, true);
+    view.setUint32(toWa(guest) + 24, buffer, true);
+    return guest;
+  };
+  const ringSize = 0x20000;
+  const ring = wat.guest_alloc(ringSize) >>> 0;
+  const openInfo = newMemInfo(ring, ringSize);
+  const memHandle = wat.test_mmio3(0, 0, openInfo, MMIO_CREATE | MMIO_READWRITE) >>> 0;
+  assert.ok(memHandle !== 0 && memHandle < 0x70000000,
+    `a memory file opens without the filesystem (got 0x${memHandle.toString(16)})`);
+  assert.strictEqual(view.getUint32(toWa(openInfo) + 12, true), 0, 'wErrorRet is clear');
+  const memInfo = wat.guest_alloc(72) >>> 0;
+  assert.strictEqual(wat.test_call_mmioGetInfo(memHandle, memInfo, 0), 0);
+  assert.strictEqual(view.getUint32(toWa(memInfo) + 24, true), ring,
+    'mmioGetInfo hands back the caller\'s buffer');
+  assert.strictEqual(view.getUint32(toWa(memInfo) + 20, true), ringSize,
+    'at the caller\'s size, not the 8 KB default');
+  assert.strictEqual(view.getUint32(toWa(memInfo) + 36, true), ring + ringSize,
+    'pchEndWrite spans the whole buffer');
+  assert.strictEqual(view.getUint32(toWa(memInfo) + 32, true), ring,
+    'a created memory file starts empty');
+  for (let i = 0; i < 6; i++) wat.guest_write8(ring + i, 0x41 + i);
+  view.setUint32(toWa(memInfo) + 28, ring + 6, true);
+  view.setUint32(toWa(memInfo), view.getUint32(toWa(memInfo), true) | MMIO_DIRTY, true);
+  assert.strictEqual(wat.test_mmio3(1, memHandle, memInfo, 0), 0, 'mmioSetInfo');
+  assert.strictEqual(wat.test_mmio3(2, memHandle, 1, 0), 1, 'mmioSeek SEEK_SET inside the data');
+  assert.strictEqual(wat.test_mmio3(2, memHandle, 0, 2), 6, 'SEEK_END is the dirtied length');
+  assert.strictEqual(wat.test_mmio3(2, memHandle, 2, 0), 2);
+  const readBack = wat.guest_alloc(16) >>> 0;
+  assert.strictEqual(wat.test_mmio3(3, memHandle, readBack, 16), 4,
+    'mmioRead stops at the end of the data');
+  assert.deepStrictEqual([0, 1, 2, 3].map(i => wat.guest_read8(readBack + i)),
+    [0x43, 0x44, 0x45, 0x46], 'mmioRead copies out of the memory file');
+  assert.strictEqual(wat.test_mmio_esp() >>> 0, 0x30010, 'mmioRead pops three arguments');
+  assert.strictEqual(wat.test_mmio3(2, memHandle, ringSize + 1, 0), -1,
+    'a memory file cannot seek past its buffer');
+  view.setUint32(toWa(memInfo) + 28, ring + ringSize, true);
+  assert.strictEqual(wat.test_mmio3(4, memHandle, memInfo, 1), 268,
+    'writing past a full fixed-size memory file is MMIOERR_CANNOTEXPAND');
+  assert.strictEqual(wat.test_mmio3(5, memHandle, 0, 0), 0, 'mmioClose');
+  assert.strictEqual(wat.test_call_mmioGetInfo(memHandle, memInfo, 0) === 0
+    && view.getUint32(toWa(memInfo) + 24, true) === ring, false,
+    'a closed memory file no longer answers with its buffer');
+
+  const fullInfo = newMemInfo(ring, 64);
+  const fullHandle = wat.test_mmio3(0, 0, fullInfo, 0) >>> 0;
+  assert.ok(fullHandle !== 0);
+  assert.strictEqual(wat.test_call_mmioGetInfo(fullHandle, memInfo, 0), 0);
+  assert.strictEqual(view.getUint32(toWa(memInfo) + 32, true), ring + 64,
+    'without MMIO_CREATE the whole buffer is the file');
+  assert.strictEqual(wat.test_mmio3(5, fullHandle, 0, 0), 0);
+  const ownedHandle = wat.test_mmio3(0, 0, newMemInfo(0, 512), MMIO_CREATE) >>> 0;
+  assert.strictEqual(wat.test_call_mmioGetInfo(ownedHandle, memInfo, 0), 0);
+  assert.ok(view.getUint32(toWa(memInfo) + 24, true) !== 0
+    && view.getUint32(toWa(memInfo) + 20, true) === 512,
+    'a NULL pchBuffer gets an allocated buffer of the requested size');
+  assert.strictEqual(wat.test_mmio3(5, ownedHandle, 0, 0), 0);
+
+  console.log('PASS: mmio FOURCC conversion, buffer management, memory files, and lazy read/refill retry');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);

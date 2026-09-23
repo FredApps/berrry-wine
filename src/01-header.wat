@@ -3071,10 +3071,13 @@
   (global $wave_out_volume (mut i32) (i32.const 0xFFFFFFFF))  ;; packed L|R, default max
   ;; MMIO buffered-I/O slots. mmioGetInfo/mmioAdvance hand the app a real
   ;; read buffer it memcpy's out of, so each open HMMIO that asks for one
-  ;; needs a stable guest block. Lazily allocated table of $MMIO_BUF_SLOTS
-  ;; {hmmio, pchBuffer, cchBuffer, owned} records; owned blocks die on close.
-  (global $mmio_buf_table (mut i32) (i32.const 0))
+  ;; needs a stable guest block. $MMIO_BUF_SLOTS 32-byte records in the
+  ;; shared $MMIO_BUF_TABLE region (layout at $mmio_slot_addr); owned blocks
+  ;; die on close.
+  (global $MMIO_BUF_TABLE i32 (region.addr $MMIO_BUF_TABLE 0))
+  (global $MMIO_BUF_TABLE_SIZE i32 (region.size $MMIO_BUF_TABLE))
   (global $MMIO_BUF_SLOTS i32 (i32.const 8))
+  (global $MMIO_SLOT_BYTES i32 (i32.const 32))
   (global $MMIO_BUF_SIZE i32 (i32.const 8192))
   (global $rgn_counter (mut i32) (i32.const 0))
   ;; _initterm trampoline state
