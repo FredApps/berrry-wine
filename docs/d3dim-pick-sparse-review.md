@@ -41,6 +41,26 @@ membership passes there. The temporary checkout is test-only, not a branch
 carrying unintegrated implementation work.
 
 This addresses Pick's valid instruction/vertex reads, not Execute's opcode
-dispatch, malformed range/count/index handling, full native picking semantics,
-or sparse GetPickRecords output. Those remain separate work. No browser/game
+dispatch, malformed range/count/index handling or full native picking semantics.
+Sparse GetPickRecords output is covered by the follow-up below. No browser/game
 rendering or full-build validation is claimed.
+
+## GetPickRecords output follow-up
+
+GetPickRecords already wrote its count and instruction offset with guest
+accessors, but opcode/pad bytes and the float depth used a once-translated
+record pointer. The expanded regression reproduced the pad remaining 0xcc
+when it landed on the next nonaffine page. All output fields now use gs8/gs32;
+depth is reinterpreted to its DWORD bits, not numerically converted. The two
+alignment bytes remain untouched, and no-hit calls still leave the record
+untouched. No input-count/capacity or null-policy change is included.
+
+Sixteen hit/miss output cases cross pad, offset and depth boundaries, with
+independently direct or crossing count storage. Assertions cover opcode,
+pad, preserved alignment bytes, instruction offset, interpolated depth,
+count, record canaries, neighboring backing pages and stdcall cleanup. They
+run after the twelve input layouts in the same public-method regression.
+
+All twelve input and sixteen output layouts pass on main, along with scoped
+fragment, ESP/epilogue, logical-operand, silent-stub, duplicate and test-tier
+gates. Quiet remains 243 manual + 22 metadata; duplicates remain 117 / 471.

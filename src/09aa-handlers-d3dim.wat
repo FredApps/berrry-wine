@@ -680,18 +680,17 @@
 
   ;; IDirect3DDevice_GetPickRecords — 3 args (incl. this)
   (func $handle_IDirect3DDevice_GetPickRecords (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $record_wa i32)
     (if (local.get $arg1) (then
       (call $gs32 (local.get $arg1) (global.get $D3DIM_PICK_COUNT))
       (if (i32.and (i32.ne (local.get $arg2) (i32.const 0))
                    (i32.ne (global.get $D3DIM_PICK_COUNT) (i32.const 0))) (then
-        (local.set $record_wa (call $g2w (local.get $arg2)))
         ;; D3DPICKRECORD is {u8 opcode, u8 pad, 2 alignment bytes,
         ;; u32 instruction offset, float z}.
-        (i32.store8 (local.get $record_wa) (global.get $D3DIM_PICK_OPCODE))
-        (i32.store8 offset=1 (local.get $record_wa) (i32.const 0))
+        (call $gs8 (local.get $arg2) (global.get $D3DIM_PICK_OPCODE))
+        (call $gs8 (i32.add (local.get $arg2) (i32.const 1)) (i32.const 0))
         (call $gs32 (i32.add (local.get $arg2) (i32.const 4)) (global.get $D3DIM_PICK_OFFSET))
-        (f32.store offset=8 (local.get $record_wa) (global.get $D3DIM_PICK_Z))))))
+        (call $gs32 (i32.add (local.get $arg2) (i32.const 8))
+          (i32.reinterpret_f32 (global.get $D3DIM_PICK_Z)))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
