@@ -6154,7 +6154,7 @@
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
     (local.set $rt (call $d3ddev_rt_entry (local.get $dev_this)))
     (if (i32.eqz (local.get $rt)) (then (return)))
-    (local.set $vbase (call $g2w (local.get $buf_guest)))
+    (local.set $vbase (local.get $buf_guest))
     (local.set $state (call $d3ddev_state (local.get $dev_this)))
     (if (local.get $state) (then
       (local.set $sw (call $g2w (local.get $state)))
@@ -6168,113 +6168,115 @@
       (local.set $iv0 (call $gl16 (local.get $rec_guest)))
       (local.set $iv1 (call $gl16 (i32.add (local.get $rec_guest) (i32.const 2))))
       (local.set $iv2 (call $gl16 (i32.add (local.get $rec_guest) (i32.const 4))))
-      (local.set $v0 (i32.add (local.get $vbase) (i32.mul (local.get $iv0) (i32.const 32))))
-      (local.set $v1 (i32.add (local.get $vbase) (i32.mul (local.get $iv1) (i32.const 32))))
-      (local.set $v2 (i32.add (local.get $vbase) (i32.mul (local.get $iv2) (i32.const 32))))
-      (local.set $p0 (f32.gt (f32.load (i32.add (local.get $v0) (i32.const 12))) (f32.const 0.0)))
-      (local.set $p1 (f32.gt (f32.load (i32.add (local.get $v1) (i32.const 12))) (f32.const 0.0)))
-      (local.set $p2 (f32.gt (f32.load (i32.add (local.get $v2) (i32.const 12))) (f32.const 0.0)))
-      (local.set $pos (i32.add (local.get $p0) (i32.add (local.get $p1) (local.get $p2))))
-      ;; kind=28 ExecTri, first triangle of each execute-buffer TRIANGLE op.
-      ;; "the geometry is right but the fill is wrong" has several causes that
-      ;; look identical in a capture -- point fill mode, every vertex behind
-      ;; the eye, a black vertex colour, sub-pixel screen coords -- and this
-      ;; separates them in one line.
-      (if (i32.eqz (local.get $i)) (then
-        (call $host_dx_trace (i32.const 28)
-          (i32.or (i32.or (local.get $fillmode) (i32.shl (local.get $pos) (i32.const 4)))
-                  (i32.shl (local.get $wCount) (i32.const 8)))
-          (i32.load (i32.add (local.get $v0) (i32.const 16)))
-          (i32.load (local.get $v0))
-          (i32.load (i32.add (local.get $v0) (i32.const 4))))))
-      (if (i32.eqz (local.get $pos)) (then
-        (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $lp)))
-      (if (i32.eq (local.get $fillmode) (i32.const 1)) (then
-        ;; Point fill mode plots each visible triangle vertex. Shared vertices
-        ;; may be written more than once, matching immediate-mode overdraw.
-        (if (local.get $p0) (then (call $viewport_fill_rect (local.get $rt)
-          (call $d3dim_coord_i (f32.load (local.get $v0)))
-          (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
-          (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v0) (i32.const 16))))))
-        (if (local.get $p1) (then (call $viewport_fill_rect (local.get $rt)
-          (call $d3dim_coord_i (f32.load (local.get $v1)))
-          (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
-          (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v1) (i32.const 16))))))
-        (if (local.get $p2) (then (call $viewport_fill_rect (local.get $rt)
-          (call $d3dim_coord_i (f32.load (local.get $v2)))
-          (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
-          (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v2) (i32.const 16))))))
-        (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $lp)))
-      (if (i32.eq (local.get $fillmode) (i32.const 2)) (then
-        ;; The line helper clips edges crossing the retained-mode near plane.
-        (call $d3dim_draw_tl_line (local.get $rt) (local.get $v0) (local.get $v1) (local.get $c0))
-        (call $d3dim_draw_tl_line (local.get $rt) (local.get $v1) (local.get $v2) (local.get $c0))
-        (call $d3dim_draw_tl_line (local.get $rt) (local.get $v2) (local.get $v0) (local.get $c0))
-        (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
-        (local.set $i (i32.add (local.get $i) (i32.const 1)))
-        (br $lp)))
-      (if (i32.eq (local.get $pos) (i32.const 3)) (then
-        (call $d3dim_draw_tl_triangle_maybe_textured
-          (local.get $dev_this) (local.get $rt) (i32.const 1)
-          (local.get $v0) (local.get $v1) (local.get $v2))))
-      (if (i32.ne (local.get $pos) (i32.const 3)) (then
-        (if (i32.eqz (local.get $state)) (then
-          (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $lp)))
-        (local.set $c0 (i32.add (local.get $sw) (i32.const 3296)))
-        (local.set $c1 (i32.add (local.get $sw) (i32.const 3328)))
-        (if (i32.eq (local.get $pos) (i32.const 1)) (then
-          (if (local.get $p0) (then
-            (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v1) (local.get $c0))
-            (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v2) (local.get $c1))
-            (call $d3dim_draw_tl_triangle_maybe_textured
-              (local.get $dev_this) (local.get $rt) (i32.const 1)
-              (local.get $v0) (local.get $c0) (local.get $c1))))
-          (if (local.get $p1) (then
-            (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v2) (local.get $c0))
-            (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v0) (local.get $c1))
-            (call $d3dim_draw_tl_triangle_maybe_textured
-              (local.get $dev_this) (local.get $rt) (i32.const 1)
-              (local.get $v1) (local.get $c0) (local.get $c1))))
-          (if (local.get $p2) (then
-            (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v0) (local.get $c0))
-            (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v1) (local.get $c1))
-            (call $d3dim_draw_tl_triangle_maybe_textured
-              (local.get $dev_this) (local.get $rt) (i32.const 1)
-              (local.get $v2) (local.get $c0) (local.get $c1))))))
-        (if (i32.eq (local.get $pos) (i32.const 2)) (then
-          (if (i32.eqz (local.get $p0)) (then
-            (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v0) (local.get $c0))
-            (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v0) (local.get $c1))
-            (call $d3dim_draw_tl_triangle_maybe_textured
-              (local.get $dev_this) (local.get $rt) (i32.const 1)
-              (local.get $v1) (local.get $v2) (local.get $c1))
-            (call $d3dim_draw_tl_triangle_maybe_textured
-              (local.get $dev_this) (local.get $rt) (i32.const 1)
-              (local.get $v1) (local.get $c1) (local.get $c0))))
-          (if (i32.eqz (local.get $p1)) (then
-            (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v1) (local.get $c0))
-            (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v1) (local.get $c1))
-            (call $d3dim_draw_tl_triangle_maybe_textured
-              (local.get $dev_this) (local.get $rt) (i32.const 1)
-              (local.get $v2) (local.get $v0) (local.get $c1))
-            (call $d3dim_draw_tl_triangle_maybe_textured
-              (local.get $dev_this) (local.get $rt) (i32.const 1)
-              (local.get $v2) (local.get $c1) (local.get $c0))))
-          (if (i32.eqz (local.get $p2)) (then
-            (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v2) (local.get $c0))
-            (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v2) (local.get $c1))
-            (call $d3dim_draw_tl_triangle_maybe_textured
-              (local.get $dev_this) (local.get $rt) (i32.const 1)
-              (local.get $v0) (local.get $v1) (local.get $c1))
-            (call $d3dim_draw_tl_triangle_maybe_textured
-              (local.get $dev_this) (local.get $rt) (i32.const 1)
-              (local.get $v0) (local.get $c1) (local.get $c0))))))))
+      (local.set $v0 (call $guest_span_in
+        (i32.add (local.get $vbase) (i32.mul (local.get $iv0) (i32.const 32))) (i32.const 32)))
+      (local.set $v1 (call $guest_span_in
+        (i32.add (local.get $vbase) (i32.mul (local.get $iv1) (i32.const 32))) (i32.const 32)))
+      (local.set $v2 (call $guest_span_in
+        (i32.add (local.get $vbase) (i32.mul (local.get $iv2) (i32.const 32))) (i32.const 32)))
+      ;; Only the math/raster helpers require contiguous vertex records.
+      ;; Every draw/skip path converges here before releasing gathered spans.
+      (block $vertex_done
+        (local.set $p0 (f32.gt (f32.load (i32.add (local.get $v0) (i32.const 12))) (f32.const 0.0)))
+        (local.set $p1 (f32.gt (f32.load (i32.add (local.get $v1) (i32.const 12))) (f32.const 0.0)))
+        (local.set $p2 (f32.gt (f32.load (i32.add (local.get $v2) (i32.const 12))) (f32.const 0.0)))
+        (local.set $pos (i32.add (local.get $p0) (i32.add (local.get $p1) (local.get $p2))))
+        ;; kind=28 ExecTri, first triangle of each execute-buffer TRIANGLE op.
+        ;; "the geometry is right but the fill is wrong" has several causes that
+        ;; look identical in a capture -- point fill mode, every vertex behind
+        ;; the eye, a black vertex colour, sub-pixel screen coords -- and this
+        ;; separates them in one line.
+        (if (i32.eqz (local.get $i)) (then
+          (call $host_dx_trace (i32.const 28)
+            (i32.or (i32.or (local.get $fillmode) (i32.shl (local.get $pos) (i32.const 4)))
+                    (i32.shl (local.get $wCount) (i32.const 8)))
+            (i32.load (i32.add (local.get $v0) (i32.const 16)))
+            (i32.load (local.get $v0))
+            (i32.load (i32.add (local.get $v0) (i32.const 4))))))
+        (if (i32.eqz (local.get $pos)) (then
+          (br $vertex_done)))
+        (if (i32.eq (local.get $fillmode) (i32.const 1)) (then
+          ;; Point fill mode plots each visible triangle vertex. Shared vertices
+          ;; may be written more than once, matching immediate-mode overdraw.
+          (if (local.get $p0) (then (call $viewport_fill_rect (local.get $rt)
+            (call $d3dim_coord_i (f32.load (local.get $v0)))
+            (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
+            (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v0) (i32.const 16))))))
+          (if (local.get $p1) (then (call $viewport_fill_rect (local.get $rt)
+            (call $d3dim_coord_i (f32.load (local.get $v1)))
+            (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
+            (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v1) (i32.const 16))))))
+          (if (local.get $p2) (then (call $viewport_fill_rect (local.get $rt)
+            (call $d3dim_coord_i (f32.load (local.get $v2)))
+            (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
+            (i32.const 2) (i32.const 2) (i32.load (i32.add (local.get $v2) (i32.const 16))))))
+          (br $vertex_done)))
+        (if (i32.eq (local.get $fillmode) (i32.const 2)) (then
+          ;; The line helper clips edges crossing the retained-mode near plane.
+          (call $d3dim_draw_tl_line (local.get $rt) (local.get $v0) (local.get $v1) (local.get $c0))
+          (call $d3dim_draw_tl_line (local.get $rt) (local.get $v1) (local.get $v2) (local.get $c0))
+          (call $d3dim_draw_tl_line (local.get $rt) (local.get $v2) (local.get $v0) (local.get $c0))
+          (br $vertex_done)))
+        (if (i32.eq (local.get $pos) (i32.const 3)) (then
+          (call $d3dim_draw_tl_triangle_maybe_textured
+            (local.get $dev_this) (local.get $rt) (i32.const 1)
+            (local.get $v0) (local.get $v1) (local.get $v2))))
+        (if (i32.ne (local.get $pos) (i32.const 3)) (then
+          (if (i32.eqz (local.get $state)) (then
+            (br $vertex_done)))
+          (local.set $c0 (i32.add (local.get $sw) (i32.const 3296)))
+          (local.set $c1 (i32.add (local.get $sw) (i32.const 3328)))
+          (if (i32.eq (local.get $pos) (i32.const 1)) (then
+            (if (local.get $p0) (then
+              (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v1) (local.get $c0))
+              (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v2) (local.get $c1))
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v0) (local.get $c0) (local.get $c1))))
+            (if (local.get $p1) (then
+              (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v2) (local.get $c0))
+              (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v0) (local.get $c1))
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v1) (local.get $c0) (local.get $c1))))
+            (if (local.get $p2) (then
+              (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v0) (local.get $c0))
+              (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v1) (local.get $c1))
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v2) (local.get $c0) (local.get $c1))))))
+          (if (i32.eq (local.get $pos) (i32.const 2)) (then
+            (if (i32.eqz (local.get $p0)) (then
+              (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v0) (local.get $c0))
+              (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v0) (local.get $c1))
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v1) (local.get $v2) (local.get $c1))
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v1) (local.get $c1) (local.get $c0))))
+            (if (i32.eqz (local.get $p1)) (then
+              (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v1) (local.get $c0))
+              (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v1) (local.get $c1))
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v2) (local.get $v0) (local.get $c1))
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v2) (local.get $c1) (local.get $c0))))
+            (if (i32.eqz (local.get $p2)) (then
+              (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v2) (local.get $c0))
+              (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v2) (local.get $c1))
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v0) (local.get $v1) (local.get $c1))
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v0) (local.get $c1) (local.get $c0))))))))
+      )
+      (call $guest_span_release (local.get $v2) (i32.const 32))
+      (call $guest_span_release (local.get $v1) (i32.const 32))
+      (call $guest_span_release (local.get $v0) (i32.const 32))
       (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
@@ -6290,7 +6292,7 @@
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
     (local.set $rt (call $d3ddev_rt_entry (local.get $dev_this)))
     (if (i32.eqz (local.get $rt)) (then (return)))
-    (local.set $vbase (call $g2w (local.get $buf_guest)))
+    (local.set $vbase (local.get $buf_guest))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
@@ -6302,10 +6304,10 @@
         (local.set $v (i32.add (local.get $vbase)
           (i32.mul (i32.add (local.get $pfirst) (local.get $j)) (i32.const 32))))
         (call $viewport_fill_rect (local.get $rt)
-          (call $d3dim_coord_i (f32.load (local.get $v)))
-          (call $d3dim_coord_i (f32.load (i32.add (local.get $v) (i32.const 4))))
+          (call $d3dim_coord_i (f32.reinterpret_i32 (call $gl32 (local.get $v))))
+          (call $d3dim_coord_i (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v) (i32.const 4)))))
           (i32.const 2) (i32.const 2)
-          (i32.load (i32.add (local.get $v) (i32.const 16))))
+          (call $gl32 (i32.add (local.get $v) (i32.const 16))))
         (local.set $j (i32.add (local.get $j) (i32.const 1)))
         (br $plp)))
       (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 4)))
@@ -6354,7 +6356,7 @@
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
     (local.set $rt (call $d3ddev_rt_entry (local.get $dev_this)))
     (if (i32.eqz (local.get $rt)) (then (return)))
-    (local.set $vbase (call $g2w (local.get $buf_guest)))
+    (local.set $vbase (local.get $buf_guest))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
@@ -6363,11 +6365,11 @@
       (local.set $v1 (i32.add (local.get $vbase) (i32.mul (local.get $iv1) (i32.const 32))))
       (local.set $v2 (i32.add (local.get $vbase) (i32.mul (local.get $iv2) (i32.const 32))))
       (call $rasterize_line_flat (local.get $rt)
-        (call $d3dim_coord_i (f32.load (local.get $v1)))
-        (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
-        (call $d3dim_coord_i (f32.load (local.get $v2)))
-        (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
-        (i32.load (i32.add (local.get $v1) (i32.const 16))))
+        (call $d3dim_coord_i (f32.reinterpret_i32 (call $gl32 (local.get $v1))))
+        (call $d3dim_coord_i (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v1) (i32.const 4)))))
+        (call $d3dim_coord_i (f32.reinterpret_i32 (call $gl32 (local.get $v2))))
+        (call $d3dim_coord_i (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $v2) (i32.const 4)))))
+        (call $gl32 (i32.add (local.get $v1) (i32.const 16))))
       (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 4)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))

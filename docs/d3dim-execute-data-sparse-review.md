@@ -197,3 +197,34 @@ semantics (the current helper still assumes status zero); the end-of-range
 header comparison (tests pad EXIT to preserve that separate policy); full
 application rendering. Pick walking and output crossings were handled in
 the separate [Pick review](d3dim-pick-sparse-review.md).
+
+## Primitive vertex follow-up (2026-09-22)
+
+Points and lines now index vertices using guest addresses and read positions
+and color through guest scalar accessors. Triangles acquire three bounded
+32-byte vertex spans for the existing raster/math helpers. A single cleanup
+block releases them in reverse order after all normal draw/skip paths, including
+point fill, wireframe, fully hidden triangles and partially clipped triangles.
+It also removes four duplicated record-advance/loop-continue sequences.
+Directly contiguous vertices use the span helper's existing no-copy path;
+at most 96 bytes are gathered by this caller, not the entire execute buffer.
+
+The Execute regression first failed with unrelated positions/colors for a
+point whose first vertex crossed a page. It now compares 2,470 sparse/control
+vertex layouts: 95 byte-boundary placements for points and lines, plus all
+three triangle fill modes and eight positive/negative-rhw combinations.
+Every draw verifies unchanged input vertices and balanced span cursor/overflow
+counters; neighboring backing pages retain their sentinels. The all-visible
+controls must actually draw pixels, rather than merely agree on a blank image.
+The existing 195 instruction-boundary cases, 65 record/pixel comparisons and
+2,200-record group remain covered. This is layout-equivalence evidence for the
+existing rasterizer, not new native clipping/lighting/texture conformance.
+
+The 18 PROCESSVERTICES sparse comparisons and existing v3 vertex-buffer draw
+regression (961 indexed pixels) also pass, alongside interface/dispatch and
+scoped static gates. Quiet and duplicate inventories remain unchanged. No
+full-build, browser gameplay or performance claim is made by this change.
+
+Remaining: malformed record sizes and vertex indices, overflow/range checking,
+branch status semantics and full application/browser verification. A trap on
+scratch exhaustion is still an emulator safety stop, not graceful API recovery.

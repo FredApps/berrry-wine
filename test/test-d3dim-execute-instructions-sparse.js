@@ -113,8 +113,7 @@ const extraWat = String.raw`
   for (let i = 0; i < 2200; i++) { large.writeUInt32LE(8, 4 + i * 8); large.writeUInt32LE(i, 8 + i * 8); }
   large.writeUInt32LE(11, large.length - 4);
   run(base + 64, 256, large, true); // No whole-group 16KiB scratch limit.
-  // Real render target; only instruction records cross here, vertices stay
-  // within the first page. The primitive vertex-base contract is a follow-up.
+  // Real render target: vary instruction and vertex crossings independently.
   const surfaceDesc = e.guest_alloc(128);
   for (let i = 0; i < 128; i++) e.guest_write8(surfaceDesc + i, 0);
   for (const [off, value] of [[0, 108], [4, 0x1007], [8, 32], [12, 32],
@@ -125,22 +124,28 @@ const extraWat = String.raw`
   const pixels = new Uint8Array(memory.buffer, dib, 32 * 32 * 2);
   const bits = value => new Uint32Array(new Float32Array([value]).buffer)[0];
   let primitiveCases = 0;
+  let vertexCases = 0;
   for (const [code, stride, records] of [[1, 4, [1, 0x00010001]],
     [2, 4, [0x00010000, 0x00020001]], [3, 8, [0, 0, 0x00010000, 2]]]) {
     const primitive = [code | (stride << 8) | (2 << 16), ...records, 11, 0];
-    function draw(buf, offset) {
+    function draw(buf, offset, fill = 1, visible = 7) {
       e.buffer(eb, buf);
       [[2, 2], [20, 2], [2, 20]].forEach(([x, y], i) => {
-        [bits(x), bits(y), bits(0.5), bits(1), 0xffff0000, 0, 0, 0]
+        [bits(x), bits(y), bits(0.5), bits(visible & (1 << i) ? 1 : -1), 0xffff0000, 0, 0, 0]
           .forEach((v, j) => e.guest_write32(buf + i * 32 + j * 4, v));
       });
       primitive.forEach((v, i) => e.guest_write32(buf + offset + i * 4, v));
       [48, 0, 3, offset, primitive.length * 4, 0, 0, 0, 0, 0, 0, 0]
         .forEach((v, i) => e.guest_write32(data + i * 4, v));
       call('IDirect3DExecuteBuffer_SetExecuteData', 12, eb, data);
-      e.guest_write32(state + 288, 1); // Point fill keeps triangle checks simple.
+      e.guest_write32(state + 288, fill);
+      const before = Array.from({ length: 96 }, (_, i) => e.guest_read8(buf + i));
+      const cursor = e.guest_span_cursor_bytes(), overflow = e.guest_span_overflow_count();
       pixels.fill(0);
       call('IDirect3DDevice_Execute', 20, dev, eb);
+      assert.deepStrictEqual(Array.from({ length: 96 }, (_, i) => e.guest_read8(buf + i)), before, 'vertices unchanged');
+      assert.strictEqual(e.guest_span_cursor_bytes(), cursor, 'primitive spans released');
+      assert.strictEqual(e.guest_span_overflow_count(), overflow);
       return Buffer.from(pixels);
     }
     const expected = draw(regular, 256);
@@ -149,10 +154,21 @@ const extraWat = String.raw`
       assert.deepStrictEqual(draw(base + 64, 4096 - 64 - split), expected, `opcode=${code} split=${split}`);
       primitiveCases++;
     }
+    for (const fill of code === 3 ? [1, 2, 3] : [1]) {
+      for (const visible of code === 3 ? [0, 1, 2, 3, 4, 5, 6, 7] : [7]) {
+        const control = draw(regular, 256, fill, visible);
+        if (visible === 7) assert(control.some(byte => byte !== 0), `opcode=${code} fill=${fill} rendered`);
+        for (let split = 1; split < 96; split++) {
+          assert.deepStrictEqual(draw(base + 4096 - split, 256, fill, visible), control,
+            `vertex opcode=${code} fill=${fill} visible=${visible} split=${split}`);
+          vertexCases++;
+        }
+      }
+    }
   }
   for (let page = 0; page < 7; page++) for (let i = 0; i < 4096; i++)
     assert.strictEqual(e.guest_read8(base + 0x10000 + page * 4096 + i), 0xa7, 'neighbor backing');
   e.buffer(eb, ownedBuffer); // Borrowed test mappings are not heap owners.
   call('IDirect3DExecuteBuffer_Release', 8, eb);
-  console.log(`PASS Execute instruction walker: control + ${stream.length - 1} sparse splits + 2200-record group + ${primitiveCases} primitive pixel comparisons, state/matrix/status/COPY/branches/trace/ABI/guards`);
+  console.log(`PASS Execute instruction walker: control + ${stream.length - 1} sparse splits + 2200-record group + ${primitiveCases} record / ${vertexCases} vertex pixel comparisons, state/matrix/status/COPY/branches/trace/ABI/guards`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
