@@ -468,10 +468,32 @@
           ;; path now rechecks while holding this same lock; one final purge
           ;; after hwnd=0 therefore closes both sides of that race.
           (call $shared_post_queue_purge_hwnd (local.get $hwnd))
+          (call $wnd_legacy_dc_release (local.get $hwnd))
           (return)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
   )
+
+  ;; The internal window DCs, hwnd+0x40000 (client) and hwnd+0xC0000 (whole
+  ;; window), are never handed out by GetDC, so nothing ever ReleaseDCs them:
+  ;; $gdi_dc_state_entry adopts a record for one the first time a native
+  ;; control paints through it, and that record outlived the window. Every
+  ;; dialog leaked one per control; SimCity 2000's yearly budget dialog has
+  ;; ~70, so by its seventh January all 512 DC slots belonged to dead windows,
+  ;; GetDC returned NULL and MFC threw CResourceException on every repaint.
+  ;; Runs after the hwnd is unpublished: the lookup adopts a record for a
+  ;; *live* window's encoding, so releasing earlier would just recreate it.
+  ;; Each encoding is only that window's inside its own range; past it the
+  ;; same number is another window's DC of the other kind.
+  (func $wnd_legacy_dc_release (param $hwnd i32)
+    (if (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x00010000))
+                 (i32.lt_u (local.get $hwnd) (i32.const 0x00090000)))
+      (then (drop (call $host_release_dc
+        (i32.add (local.get $hwnd) (i32.const 0x00040000))))))
+    (if (i32.and (i32.ge_u (local.get $hwnd) (i32.const 0x00010000))
+                 (i32.lt_u (local.get $hwnd) (i32.const 0x00110000)))
+      (then (drop (call $host_release_dc
+        (i32.add (local.get $hwnd) (i32.const 0x000C0000)))))))
 
   ;; Recursively destroy a window and all its children. Real DestroyWindow
   ;; notifies the wndproc before the HWND finally disappears; MFC relies on
