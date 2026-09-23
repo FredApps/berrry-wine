@@ -2269,6 +2269,20 @@
     (global.get $gl_sw_front))
   (func $gl_sw_export_presents (export "gl_sw_presents") (result i32)
     (global.get $gl_sw_presents))
+
+  ;; Put the presented frame on screen: blit the front surface into $hwnd's
+  ;; client area, as a GDI BitBlt of the frame would. SwapBuffers only swaps
+  ;; surfaces, and nothing composites a GL window from a DirectDraw surface
+  ;; -- the CLI's --png finds the surface by slot, which is why the frames
+  ;; were right there and a browser window stayed black. The frame is
+  ;; client-sized with (0,0) at the client origin, so a client DC is exact.
+  ;; Result 1 when a frame was blitted.
+  (func (export "gl_sw_present_window") (param $hwnd i32) (result i32)
+    (if (i32.or (i32.eqz (global.get $gl_sw_front)) (i32.eqz (local.get $hwnd)))
+      (then (return (i32.const 0))))
+    (call $dx_blit_entry_to_hdc (global.get $gl_sw_front)
+      (i32.or (local.get $hwnd) (i32.const 0x40000)))
+    (i32.const 1))
   ;; The drawable size the host last reported, (w << 16) | h, or 0 when none
   ;; has been: the target then sizes itself from the viewport instead.
   (func $gl_sw_export_drawable (export "gl_sw_drawable") (result i32)

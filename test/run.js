@@ -322,6 +322,9 @@ if (TRACE_GL_RAW) {
   const only = TRACE_GL_RAW.includes('=')
     ? new Set(TRACE_GL_RAW.slice(TRACE_GL_RAW.indexOf('=') + 1).split(',').filter(Boolean)) : null;
   const names = GLCompatTrace.OP_NAMES || GLCompatTrace.CALLS;
+  // Entry points whose arguments are all GLdouble, and how many.
+  const GL_DOUBLE_ARGS = { gluLookAt: 9, gluPerspective: 4, gluOrtho2D: 4, glOrtho: 6,
+    glFrustum: 6, glDepthRange: 2, glClearDepth: 1, glTranslated: 3, glScaled: 3, glRotated: 4 };
   const word = (dv, off) => {
     const u = dv.getUint32(off, true) >>> 0;
     const f = dv.getFloat32(off, true);
@@ -334,7 +337,13 @@ if (TRACE_GL_RAW) {
     const name = names[slot] || `op${opcode}`;
     if (only && !only.has(name)) return;
     const parts = [];
-    if (capture && capture.buffer && capture.stackBytes >= 8) {
+    const doubles = GL_DOUBLE_ARGS[name] || 0;
+    if (capture && capture.buffer && doubles && capture.stackBytes >= 4 + doubles * 8) {
+      // Every argument is a GLdouble: print them as numbers, all of them.
+      // Split into words and capped at ten, gluLookAt lost its up vector.
+      const dv = new DataView(capture.buffer, capture.stackOffset, capture.stackBytes);
+      for (let i = 0; i < doubles; i++) parts.push(`${+dv.getFloat64(4 + i * 8, true).toPrecision(6)}`);
+    } else if (capture && capture.buffer && capture.stackBytes >= 8) {
       const dv = new DataView(capture.buffer, capture.stackOffset, capture.stackBytes);
       for (let off = 4; off + 4 <= capture.stackBytes && parts.length < 10; off += 4) parts.push(word(dv, off));
     }
