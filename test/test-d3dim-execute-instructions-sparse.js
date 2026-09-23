@@ -240,6 +240,59 @@ const extraWat = String.raw`
       }
     }
   }
+  // Globe seeds DEFAULT, transforms vertices, then exits if a common clip plane remains.
+  // Exercise the public stream/status/branch contract, not only projected coordinates.
+  let clipCases = 0;
+  const inside = [0, 0, 0.5];
+  const outside = [[-2, 0, 0.5], [2, 0, 0.5], [0, 2, 0.5], [0, -2, 0.5], [0, 0, -1], [0, 0, 2]];
+  const clips = [{ vertices: [inside], union: 0, intersection: 0 },
+    { vertices: [], union: 0, intersection: 63 }];
+  outside.forEach((v, plane) => {
+    clips.push({ vertices: [v, v], union: 1 << plane, intersection: 1 << plane });
+    clips.push({ vertices: [v, inside], union: 1 << plane, intersection: 0 });
+  });
+  clips.push({ vertices: outside, union: 63, intersection: 0 });
+  clips.push({ vertices: [[1.5, 0, 0.5]], w: 2, union: 0, intersection: 0 });
+  clips.push({ vertices: [inside], w: -1, union: 47, intersection: 47 });
+  clips.push({ vertices: [[0.0001, 0, 0.000005]], w: 0.00001, union: 2, intersection: 2 });
+  for (const buf of [regular, base + 4090, base + 4030]) for (const mode of [0, 1, 2]) for (const grouped of [false, true]) {
+    for (const { vertices, union, intersection, w = 1 } of clips) {
+      e.buffer(eb, buf);
+      const matrices = new Float32Array(memory.buffer, e.guest_to_wasm(state), 48);
+      matrices.fill(0);
+      for (let matrix = 0; matrix < 3; matrix++) for (let axis = 0; axis < 4; axis++)
+        matrices[matrix * 16 + axis * 5] = 1;
+      matrices[47] = w;
+      vertices.forEach((v, i) => {
+        const f = new Float32Array([...v, 0, 0, 1, 0, 0]);
+        new Uint32Array(f.buffer).forEach((word, j) => e.guest_write32(buf + i * 32 + j * 4, word));
+      });
+      const instructions = [14 | (24 << 8) | (1 << 16), 1, 0x01fff000, 0, 0, 0, 0,
+        9 | (16 << 8) | ((grouped ? 1 : vertices.length) << 16)];
+      if (grouped) instructions.push(mode, 8 << 16, vertices.length, 0);
+      else vertices.forEach((_, i) => instructions.push(mode, i | ((i + 8) << 16), 1, 0));
+      instructions.push(12 | (16 << 8) | (1 << 16), 0x3f000, 0, 1, 0,
+        8 | (8 << 8) | (1 << 16), 8, 123, 11, 0);
+      instructions.forEach((v, i) => e.guest_write32(buf + 512 + i * 4, v));
+      [48, 0, vertices.length, 512, instructions.length * 4, 0, 0, 0, 0, 0, 0, 0]
+        .forEach((v, i) => e.guest_write32(data + i * 4, v));
+      call('IDirect3DExecuteBuffer_SetExecuteData', 12, eb, data);
+      call('IDirect3DExecuteBuffer_Unlock', 8, eb);
+      e.guest_write32(state + 288, 0);
+      const cursor = e.guest_span_cursor_bytes(), overflow = e.guest_span_overflow_count();
+      call('IDirect3DDevice_Execute', 20, dev, eb);
+      e.guest_write32(out, 48);
+      call('IDirect3DExecuteBuffer_GetExecuteData', 12, eb, out);
+      const expected = mode === 2 ? 0x01fff000 : 0x01fc0000 | union | (intersection << 12);
+      assert.strictEqual(e.guest_read32(out + 28) >>> 0, expected >>> 0,
+        `clip status mode=${mode} vertices=${JSON.stringify(vertices)} buf=${buf.toString(16)}`);
+      assert.strictEqual(e.guest_read32(state + 288), (expected & 0x3f000) ? 0 : 123, 'clip branch');
+      assert.strictEqual(e.guest_span_cursor_bytes(), cursor);
+      assert.strictEqual(e.guest_span_overflow_count(), overflow);
+      clipCases++;
+    }
+  }
+  console.log(`PASS Execute clip status: ${clipCases} public stream/status/branch cases`);
   for (let page = 0; page < 7; page++) for (let i = 0; i < 4096; i++)
     assert.strictEqual(e.guest_read8(base + 0x10000 + page * 4096 + i), 0xa7, 'neighbor backing');
   e.buffer(eb, ownedBuffer); // Borrowed test mappings are not heap owners.

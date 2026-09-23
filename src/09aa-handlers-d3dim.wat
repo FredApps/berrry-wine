@@ -479,7 +479,7 @@
             (local.set $handled (i32.const 1))))
           ;; 9 = D3DOP_PROCESSVERTICES (16-byte records)
           (if (i32.eq (local.get $op) (i32.const 9)) (then
-            (call $d3dim_exec_process_vertices (local.get $arg0) (local.get $buf)
+            (call $d3dim_exec_process_vertices (local.get $arg0) (local.get $arg1) (local.get $buf)
               (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
           ;; 12 = D3DOP_BRANCHFORWARD. Examine each record until one branches.

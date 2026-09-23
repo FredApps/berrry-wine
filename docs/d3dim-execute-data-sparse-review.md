@@ -324,3 +324,64 @@ native device-vs-buffer lifetime, invalid ranges/indices and browser application
 verification remain open. Direct internal SETSTATUS calls with no prepared
 owner still do nothing; normal public instruction setup now prepares the owner
 or reports failure instead of accepting a descriptor without status storage.
+
+## Real-app follow-up: PROCESSVERTICES clip status (2026-09-22)
+
+The full shared-main build passed, as did Viewer Open/menu browser coverage in
+cooperative and threaded modes. That browser test does not assert scene pixels.
+Globe's CLI Render-menu regression failed: both point and wireframe captures
+had zero lit pixels. Synthetic branch correctness was insufficient coverage.
+
+DX tracing and a guest instruction dump identified this sequence:
+
+```
+SETSTATUS       status = 0x01fff000 (D3DSTATUS_DEFAULT)
+PROCESSVERTICES transform/light 56 vertices
+BRANCHFORWARD   mask = 0x0003f000, value = 0, negate = 1, offset = 0
+TRIANGLE        ... never reached
+```
+
+The masked comparison was correct; PROCESSVERTICES never changed the seeded
+intersection bits. A temporary rsync-mirrored control changed only the branch
+comparison back to its former assumed-zero shortcut. Globe then passed with
+222 / 2982 / 31713 lit pixels in point / wire / solid modes. That shortcut is
+not the fix and was not restored on main.
+
+PROCESSVERTICES now accumulates the six standard clip-plane union/intersection
+bits from each transformed homogeneous vector. It reads the existing projection
+scratch before perspective division and before the near-zero-w clamp, and
+updates the ExecuteBuffer's retained guest status with sparse-safe accessors.
+The caller explicitly passes the buffer owner; no extra status table or guessed
+owner is introduced. COPY and zero-vertex operations leave status unchanged.
+
+The basis is Microsoft's [SDK d3dtypes.h](https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/d3dtypes.h)
+for clip/status bit definitions and [transformation pipeline](https://learn.microsoft.com/en-us/windows/win32/dxtecharts/the-direct3d-transformation-pipeline)
+for homogeneous clipping. Clip edges follow this renderer's inclusive plane
+convention; native Win98 exact-edge/rounding behavior has not been measured.
+User-plane bits and ZNOTVISIBLE are preserved, not falsely calculated by a
+position-only transform. Their semantics, SETSTATUS flag selection, actual
+extent accumulation, device-vs-buffer native lifetime and malformed stream
+validation remain open.
+
+The new public regression was RED for a single inside vertex (DEFAULT retained
+instead of clearing standard intersection bits). It covers all six planes,
+inside/outside mixtures, grouped and separate records, zero counts, all three
+vertex modes, direct/sparse layouts, non-unit and negative w, and a tiny w that
+would be misclassified after divisor clamping. Assertions include status
+readback, downstream branching, ABI, span balance and neighboring-page guards.
+
+Validation on the fixed shared-main worktree:
+
+- Full build/gates PASS (normal WASM 1,504,139 bytes; unchanged region layout
+  hash `4f4410e063257228`). Other agents' unrelated pending changes were present;
+  this is not a pristine-commit build or performance measurement.
+- 324 new clip-status cases PASS, together with 195 instruction splits,
+  65 record / 2470 vertex pixel comparisons, 1152 masked branches, 68
+  multi-record cases and the 2200-record group.
+- PROCESSVERTICES 18 sparse/control cases and ExecuteData 32 layouts PASS;
+  interface-spec and scoped gates PASS. Quiet243+22 and dup117/471 unchanged.
+- Globe Render-menu PASS: all 11 items survive; point / wire / solid produce
+  222 / 2982 / 31713 lit pixels, identical counts to the temporary control.
+- Viewer rendered-mesh selection / Change Color CLI regression PASS.
+- Viewer Open / Renderer menu browser regression PASS again after the fix,
+  in cooperative and threaded modes (input/menu coverage, not a pixel oracle).

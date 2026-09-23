@@ -28,8 +28,8 @@ const extraWat = String.raw`
        (i32.mul (call $dx_slot_of (call $dx_from_this (local.get $p))) (i32.const 4))) (i32.const 0))))
    (call $d3dim_execbuf_cache_clear (local.get $p))
    (call $dx_free (call $dx_from_this (local.get $p))))
- (func (export "process") (param $dev i32) (param $buf i32) (param $rec i32)
-   (call $d3dim_exec_process_vertices (local.get $dev) (local.get $buf) (local.get $rec) (i32.const 1)))
+ (func (export "process") (param $dev i32) (param $p i32) (param $buf i32) (param $rec i32)
+   (call $d3dim_exec_process_vertices (local.get $dev) (local.get $p) (local.get $buf) (local.get $rec) (i32.const 1)))
 `;
 (async () => {
   const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
@@ -49,7 +49,7 @@ const extraWat = String.raw`
     const p = cacheMode ? e.make(buf, borrowed) : 0;
     [mode, 2 << 16, 2, 0].forEach((v, i) => e.guest_write32(rec + i * 4, v));
     const cursor = e.guest_span_cursor_bytes(), overflow = e.guest_span_overflow_count();
-    e.process(dev, buf, rec);
+    e.process(dev, p, buf, rec);
     assert.strictEqual(e.guest_span_cursor_bytes(), cursor, 'vertex spans released');
     assert.strictEqual(e.guest_span_overflow_count(), overflow);
     const result = Array.from({ length: 128 }, (_, i) => e.guest_read8(buf + i));

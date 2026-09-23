@@ -6436,13 +6436,35 @@
   ;;                           DWORD dwCount; DWORD dwReserved.
   ;; Low 3 bits of dwFlags: 0=TRANSFORMLIGHT (src=D3DVERTEX),
   ;; 1=TRANSFORM (src=D3DLVERTEX), 2=COPY (src=D3DTLVERTEX).
-  ;; Composes WORLD*VIEW*PROJ into scratch slot 3, then projects each source
-  ;; vertex's xyz into TLVERTEX sx/sy/z/rhw at dest. Color: LVERTEX passes
-  ;; through; VERTEX has no color → write white 0xFFFFFFFF. Lighting is not
-  ;; yet implemented; TRANSFORMLIGHT degenerates to TRANSFORM + default color.
+  ;; Accumulate the six standard homogeneous clip planes into D3DSTATUS.
+  ;; Union marks any outside vertex; intersection retains only common planes.
+  ;; User-plane and ZNOTVISIBLE bits are separate, not inferred from projection.
+  (func $d3dim_exec_clip_status (param $header i32) (param $clip i32)
+    (local $x f32) (local $y f32) (local $z f32) (local $w f32)
+    (local $code i32) (local $status i32)
+    (local.set $x (f32.load (local.get $clip)))
+    (local.set $y (f32.load offset=4 (local.get $clip)))
+    (local.set $z (f32.load offset=8 (local.get $clip)))
+    (local.set $w (f32.load offset=12 (local.get $clip)))
+    (local.set $code (f32.lt (local.get $x) (f32.neg (local.get $w))))
+    (local.set $code (i32.or (local.get $code) (i32.shl (f32.gt (local.get $x) (local.get $w)) (i32.const 1))))
+    (local.set $code (i32.or (local.get $code) (i32.shl (f32.gt (local.get $y) (local.get $w)) (i32.const 2))))
+    (local.set $code (i32.or (local.get $code) (i32.shl (f32.lt (local.get $y) (f32.neg (local.get $w))) (i32.const 3))))
+    (local.set $code (i32.or (local.get $code) (i32.shl (f32.lt (local.get $z) (f32.const 0)) (i32.const 4))))
+    (local.set $code (i32.or (local.get $code) (i32.shl (f32.gt (local.get $z) (local.get $w)) (i32.const 5))))
+    (local.set $status (call $gl32 (i32.add (local.get $header) (i32.const 12))))
+    (call $gs32 (i32.add (local.get $header) (i32.const 12))
+      (i32.or (local.get $code)
+        (i32.and (local.get $status)
+          (i32.or (i32.const 0xfffc0fff) (i32.shl (local.get $code) (i32.const 12)))))))
+
+  ;; Compose WORLD*VIEW*PROJ, project source xyz to TLVERTEX, and accumulate
+  ;; clip status. TRANSFORM preserves LVERTEX colors; TRANSFORMLIGHT lights
+  ;; VERTEX normals. COPY transfers already-transformed bytes without clipping.
   (func $d3dim_exec_process_vertices
-    (param $dev_this i32) (param $buf_guest i32) (param $rec_guest i32) (param $wCount i32)
+    (param $dev_this i32) (param $eb_this i32) (param $buf_guest i32) (param $rec_guest i32) (param $wCount i32)
     (local $state_g i32) (local $vbase i32) (local $srcbase i32)
+    (local $header i32) (local $clip i32)
     (local $i i32) (local $mode i32) (local $wStart i32) (local $wDest i32) (local $cnt i32)
     (local $j i32) (local $src i32) (local $dst i32) (local $color i32) (local $spec i32)
     (local $tu i32) (local $tv i32) (local $src_stride i32) (local $dst_g i32)
@@ -6453,6 +6475,10 @@
     (call $d3dim_lights_refresh (local.get $state_g))
     (local.set $vbase (local.get $buf_guest))
     (local.set $srcbase (call $d3dim_execbuf_source_guest (local.get $buf_guest)))
+    (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $eb_this)))
+    ;; vertex_project leaves the original homogeneous vector here, before its
+    ;; near-zero divisor clamp. Device state is emulator-owned affine storage.
+    (local.set $clip (i32.add (call $g2w (local.get $state_g)) (i32.const 4064)))
     (if (i32.eqz (local.get $srcbase)) (then (local.set $srcbase (local.get $vbase))))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
@@ -6491,6 +6517,8 @@
                 (local.set $tu    (i32.load (i32.add (local.get $src) (i32.const 24))))
                 (local.set $tv    (i32.load (i32.add (local.get $src) (i32.const 28))))))
             (call $vertex_project (local.get $state_g) (local.get $src) (local.get $dst))
+            (if (local.get $header) (then
+              (call $d3dim_exec_clip_status (local.get $header) (local.get $clip))))
             (i32.store (i32.add (local.get $dst) (i32.const 16)) (local.get $color))
             (i32.store (i32.add (local.get $dst) (i32.const 20)) (local.get $spec))
             (i32.store (i32.add (local.get $dst) (i32.const 24)) (local.get $tu))

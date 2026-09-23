@@ -78,3 +78,25 @@ older notes.
 in your game, video hardware or driver installation. We must now test your
 video memory..."*. That is a dialog to answer, not a render bug — see
 `tools/startup-modal-sweep.js`.
+
+## Globe blank after masked Execute branches (2026-09-22)
+
+The masked BRANCHFORWARD implementation exposed a missing PROCESSVERTICES
+side effect, independently of the loader issue above. Globe sets driver status
+to 0x01fff000, transforms 56 vertices, then conditionally exits the buffer if
+any common standard clip-plane bit (mask 0x0003f000) remains. Vertex processing
+never updated those bits, so every triangle was skipped. Trace and guest record
+dumps established the sequence; a temporary control restoring only the old
+assumed-zero branch comparison recovered rendering and passed the Render-menu
+test (222 / 2982 / 31713 point / wire / solid lit pixels).
+
+The main-tree fix accumulates standard homogeneous clip union/intersection
+status during transformation, keeping the masked branch comparison. See
+[Execute review](../d3dim-execute-data-sparse-review.md) for scope and remaining
+status/extent limitations. Viewer Open/menu browser coverage passed in both
+scheduling modes before this fix, but does not prove its scene is rendered.
+
+After the fix, the full build and Globe Render-menu test pass with the same
+222 / 2982 / 31713 pixel counts as the control. Viewer also passes its CLI
+mesh-selection / Change Color test. These are scoped regression results, not
+certification of texture quality or the whole D3DRM/screensaver cluster.
