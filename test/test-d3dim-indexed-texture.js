@@ -105,8 +105,8 @@ const extraWat = String.raw`
   (func (export "test_diptex_flags") (param $surface i32) (result i32)
     (i32.load offset=28 (call $dx_from_this (local.get $surface))))
 
-  (func (export "test_diptex_clip_near")
-      (param $device i32) (param $a i32) (param $b i32) (param $out i32)
+  (func (export "test_diptex_clip_depth")
+      (param $device i32) (param $a i32) (param $b i32) (param $out i32) (param $plane i32)
     (local $state i32) (local $sw i32)
     (local.set $state (call $d3ddev_state (local.get $device)))
     (local.set $sw (call $g2w (local.get $state)))
@@ -118,7 +118,7 @@ const extraWat = String.raw`
       (i32.add (global.get $D3DIM_OFF_VP_ORIGIN) (i32.const 4))) (f32.const 4.0))
     (call $d3dim_interp_tl_clip_vertex
       (local.get $state) (call $g2w (local.get $a)) (call $g2w (local.get $b))
-      (call $g2w (local.get $out)) (i32.const 0)))
+      (call $g2w (local.get $out)) (local.get $plane)))
 
   (func (export "test_diptex_lvertex_stride") (result i32)
     (call $d3dim_vertex_type_stride (i32.const 2)))
@@ -391,7 +391,7 @@ function writeFloat(wat, addr, value) {
   };
   clipVertex(clipVertices, 0.25, 1.0, 0.0, 0xff000000);
   clipVertex(clipVertices + 32, 1.0, -1.0, 1.0, 0xffffffff);
-  wat.test_diptex_clip_near(device, clipVertices, clipVertices + 32, clipVertices + 64);
+  wat.test_diptex_clip_depth(device, clipVertices, clipVertices + 32, clipVertices + 64, 0);
   const clipOut = clipVertices + 64;
   const clipFloat = offset => {
     const bits = new ArrayBuffer(4);
@@ -584,10 +584,33 @@ function writeFloat(wat, addr, value) {
     wat.guest_write32(p + 20, 0);
     writeFloat(wat, p + 24, u); writeFloat(wat, p + 28, v);
   });
-  clearRt(0x001f);
-  wat.test_diptex_draw_tl_triangle(device, rt, vertices);
-  assert.notStrictEqual(mem.getUint16(rtDib + 3 * 2, true), 0x001f,
-    'behind-eye edge was intersected with z=0 instead of the far plane z=w');
+  // Clipping this negative-W input yields the projected polygon
+  // (0,-1), (1,1), (6,1), (7.5,-1), whose winding is counterclockwise.
+  // The default CCW cull must reject it. Test the visible strip with culling
+  // disabled and with CW culling, then independently check CCW rejection.
+  for (const [index, expectedX] of [[0, 0], [1, 7.5]]) {
+    wat.test_diptex_clip_depth(device, vertices + index * VERTEX_STRIDE,
+      vertices + 2 * VERTEX_STRIDE, clipOut, 1);
+    for (const [offset, expected] of [[0, expectedX], [4, -1], [8, 1], [12, 2]]) {
+      assert(Math.abs(clipFloat(offset) - expected) < 0.001,
+        `far-plane intersection edge=${index} field=${offset}: ${clipFloat(offset)} vs ${expected}`);
+    }
+  }
+  for (const cull of [1, 2, 3]) {
+    wat.test_diptex_set_rs(device, 22, cull);
+    clearRt(0x001f);
+    wat.test_diptex_draw_tl_triangle(device, rt, vertices);
+    if (cull === 3) {
+      assert(Array.from({ length: 64 }, (_, i) => mem.getUint16(rtDib + i * 2, true))
+        .every(pixel => pixel === 0x001f), 'CCW culling accepted the clipped back face');
+    } else {
+      assert.notStrictEqual(mem.getUint16(rtDib + 3 * 2, true), 0x001f,
+        `far-plane visible strip missing with cull=${cull}`);
+    }
+  }
+  // The sampler checks below reuse this CCW clipped strip; make their
+  // no-culling requirement explicit instead of relying on the old default.
+  wat.test_diptex_set_rs(device, 22, 1);
 
   // A 0..4 screen span covers pixels 0..3. Pixel 4 is the geometric edge,
   // not a fragment centre; drawing it samples u=1.0, which WRAP aliases to

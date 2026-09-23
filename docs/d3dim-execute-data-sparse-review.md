@@ -616,3 +616,31 @@ Comparison uses `tools/png-diff.js` with zero tolerance. Temporary driver:
 `/private/tmp/wa-globe-frame-`. Both images at callback 10 visibly contain the
 sphere, including the same known texture defect. These are scene checkpoints,
 not blank-image equality or performance measurements (host load was above 20).
+
+### Indexed-texture far-plane regression triage (2026-09-22)
+
+The reported `test-d3dim-indexed-texture.js` failure reproduced at its
+behind-eye far-plane assertion. It was a test-state error, not evidence that
+the new Execute extent collector changed clipping. That fixture uses the
+direct primitive helper, outside Execute collection.
+
+Its projected inputs are `(1,1,.5,1)`, `(6,1,.5,1)` and `(3,5,-.5,-1)`
+(screen x/y, z/w, reciprocal w). Reconstructing homogeneous coordinates puts
+the last vertex beyond the far plane. Each crossing has interpolation fraction
+1/4 and w=1/2. Projecting the generated vertices gives `(0,-1)` and `(7.5,-1)`,
+with z/w=1 and reciprocal w=2. The resulting polygon is counterclockwise in
+screen space, so default CCW culling correctly discards it. The original DX5
+reference's `D3DCULL` section explicitly distinguishes NONE, CW and CCW; the
+overview describes rasterization's screen-winding test. No Wine source used.
+
+The regression now checks both generated intersections numerically, requires
+the strip to render with NONE and CW culling, and requires an untouched target
+with CCW culling. Subsequent sampler assertions reuse that same CCW geometry,
+so they explicitly select NONE instead of implicitly relying on the former
+unset-means-no-cull behavior. This preserves the renderer's correct default
+and adds coverage instead of weakening culling to satisfy a stale test.
+
+The full indexed-texture suite passes after this correction, covering later
+UV-set, filter/address, color-key, blend and reversed-depth assertions that the
+early failure previously prevented from running. No production source change
+is needed. The separately reported blank Boids frame remains untriaged.
