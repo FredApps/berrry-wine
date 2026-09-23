@@ -8276,13 +8276,20 @@
     (local.set $wa (call $g2w_affine_span (local.get $ga) (local.get $len)))
     (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
       (then (return (local.get $wa))))
-    ;; No room: say so in a counter rather than quietly handing back a copy
-    ;; nothing will write back, and fall back to the plain translation.
-    (if (i32.gt_u (i32.add (global.get $guest_span_cursor) (local.get $len))
-          (global.get $GUEST_SPAN_SCRATCH_SIZE))
+    ;; No room: callers require a contiguous span and cannot accept a raw
+    ;; translation here. Fail before handing them a pointer into other pages.
+    ;; Widen the sum so a huge length cannot wrap past the capacity check.
+    (if (i64.gt_u
+          (i64.add (i64.extend_i32_u (global.get $guest_span_cursor))
+                   (i64.extend_i32_u (local.get $len)))
+          (i64.extend_i32_u (global.get $GUEST_SPAN_SCRATCH_SIZE)))
       (then
         (global.set $guest_span_overflow (i32.add (global.get $guest_span_overflow) (i32.const 1)))
-        (return (call $g2w (local.get $ga)))))
+        ;; SPAN, occupied bytes, requested bytes; retained by host diagnostics.
+        (call $host_log_i32 (i32.const 0x5350414E))
+        (call $host_log_i32 (global.get $guest_span_cursor))
+        (call $host_log_i32 (local.get $len))
+        (unreachable)))
     (local.set $base (i32.add (global.get $GUEST_SPAN_SCRATCH) (global.get $guest_span_cursor)))
     (global.set $guest_span_cursor (i32.add (global.get $guest_span_cursor) (local.get $len)))
     (block $done (loop $copy

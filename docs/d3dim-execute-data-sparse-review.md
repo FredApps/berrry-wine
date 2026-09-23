@@ -146,6 +146,8 @@ not newly certified by comparing two layouts of the same implementation.
 
 Remaining: Execute/Pick instruction walking and record inputs, other primitive
 vertex readers, range/overflow validation, and full application rendering.
-The generic span arena still falls back to plain translation if exhausted;
-this path uses at most 64 additional bytes and the test observes no overflow,
-but arena-exhaustion safety remains a shared issue rather than a solved claim.
+The generic span arena's unsafe exhaustion fallback is removed in the
+[shared exhaustion follow-up](guest-span-exhaustion-review.md): exhaustion
+now stops explicitly before copying. This vertex path uses at most 64
+additional bytes and the test observes no overflow; graceful recovery from
+arena exhaustion remains separate work.
