@@ -9413,7 +9413,16 @@ if (VERBOSE) {
       console.log(`[${batch}] ${regs()}`);
     } else {
       const ex = instance.exports;
-      const regFp = ((ex.get_eax() ^ ex.get_ecx() ^ ex.get_edx() ^ ex.get_ebx() ^ ex.get_esi() ^ ex.get_edi() ^ ex.get_ebp() ^ ex.get_esp()) | 0);
+      // Order-dependent on purpose. A plain XOR of the registers cancels any
+      // two that hold the same value: SimGolf's vector-constructor loop ends
+      // every batch at 0x4935a4 with EAX == ESI == the element pointer, so a
+      // 56,640-element array walking forward read as an unchanged CPU and was
+      // reported STUCK while it was making steady progress.
+      let regFp = 0;
+      for (const v of [ex.get_eax(), ex.get_ecx(), ex.get_edx(), ex.get_ebx(),
+                       ex.get_esi(), ex.get_edi(), ex.get_ebp(), ex.get_esp()]) {
+        regFp = (Math.imul(regFp, 0x01000193) ^ (v | 0)) | 0;
+      }
       // A 16-bit task makes none of the calls `apiCount` counts -- that is the
       // 32-bit dispatch path, which is why every Win16 run reports "0 API
       // calls" -- so its only evidence of life was EIP and the registers, and

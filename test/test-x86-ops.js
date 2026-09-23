@@ -48,9 +48,13 @@ async function main() {
 
   function le32(v) { return [v & 0xFF, (v >> 8) & 0xFF, (v >> 16) & 0xFF, (v >> 24) & 0xFF]; }
 
-  // Each test gets a unique code address to avoid block cache collisions
+  // Each test gets a unique code address to avoid block cache collisions.
+  // Test data lives at +0x8000..+0x9FFF (scratch, sseA...), so code steps over
+  // that window: once enough tests existed, the next one's code landed on the
+  // scratch buffers and a later setMem rewrote it mid-suite.
   let codeOffset = 0;
   function runCode(bytes, setup) {
+    if (0x1000 + codeOffset >= 0x8000 && 0x1000 + codeOffset < 0xA000) codeOffset = 0xA000 - 0x1000;
     const codeAddr = imageBase + 0x1000 + codeOffset;
     codeOffset += 256;
     const wa = g2w(codeAddr);
