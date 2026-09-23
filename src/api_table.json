@@ -10416,6 +10416,7 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3101062033,
+    "handler": "IDirect3DViewport_QueryInterface",
     "args": [
       {
         "name": "this",
@@ -12207,6 +12208,7 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 3250248736,
+    "handler": "IDirect3DViewport_QueryInterface",
     "args": [
       {
         "name": "this",

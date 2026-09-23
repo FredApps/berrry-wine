@@ -1393,10 +1393,7 @@
 
 
   ;; ── IDirect3DViewport2 — 18 methods ─────────────
-  ;; IDirect3DViewport2_QueryInterface — 3 args (incl. this)
-  (func $handle_IDirect3DViewport2_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $d3dim_qi (i32.const 3) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+  ;; QueryInterface aliases IDirect3DViewport_QueryInterface.
 
   ;; IDirect3DViewport2_Initialize — 2 args (incl. this)
   (func $handle_IDirect3DViewport2_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
