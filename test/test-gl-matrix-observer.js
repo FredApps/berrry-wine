@@ -206,22 +206,21 @@ class Stack {
   assert.deepStrictEqual(vec4(e.gl_mtx_fog_color_ptr() >>> 0),
     f32v(0.2, 0.3, 0.4, 1), 'glFogfv(GL_FOG_COLOR)');
 
-  // ---- calls that are NOT mirrored ---------------------------------------
-  // These move the state through helpers the WAT has no copy of. The point of
-  // the untrusted latch is that they say so instead of drifting.
+  // ---- the families that used to latch UNTRUSTED ---------------------------
+  // gluPerspective/gluLookAt/gluOrtho2D (0401f9b4) and glPushAttrib/
+  // glPopAttrib (1a892cf0) are mirrored now, so they must NOT mark the block
+  // untrusted -- a latch here would make every software-GL draw after them
+  // refuse. What they compute is pinned by test-gl-glu-mirror.js and
+  // test-gl-attrib-stack.js.
   assert.strictEqual(e.gl_mtx_untrusted(), 0,
     'nothing so far should have marked the block untrusted');
   call('gluPerspective', s => s.f64(90).f64(1.333).f64(1).f64(4096));
-  assert.strictEqual(e.gl_mtx_untrusted(), CALL_INDEX.gluPerspective,
-    'gluPerspective marks the block untrusted and names itself');
-  e.gl_mtx_clear_untrusted();
-  for (const name of ['gluLookAt', 'gluOrtho2D', 'glPushAttrib', 'glPopAttrib']) {
-    e.gl_mtx_clear_untrusted();
-    call(name, s => s.i32(0).i32(0).i32(0).i32(0).i32(0).i32(0));
-    assert.strictEqual(e.gl_mtx_untrusted(), CALL_INDEX[name],
-      `${name} marks the block untrusted`);
-  }
-  e.gl_mtx_clear_untrusted();
+  call('gluLookAt', s => s.f64(0).f64(0).f64(5).f64(0).f64(0).f64(0).f64(0).f64(1).f64(0));
+  call('gluOrtho2D', s => s.f64(0).f64(640).f64(0).f64(480));
+  call('glPushAttrib', s => s.i32(0x1000));
+  call('glPopAttrib', s => s);
+  assert.strictEqual(e.gl_mtx_untrusted(), 0,
+    'the mirrored GLU and attrib-stack calls leave the block trusted');
 
   // A call the observer has no business touching must leave everything alone,
   // including the untrusted latch -- a too-broad opcode range would show up
