@@ -143,6 +143,50 @@ const extraWat = String.raw`
             assert.strictEqual(e.guest_read32(out + 28) >>> 0, status, 'branch preserves status');
             branchCases++;
           }
+  let multiCases = 0;
+  // First, middle, last and no matching branch; distinct destinations make
+  // first-match ordering observable. Also cover taken zero-offset termination.
+  for (const count of [0, 1, 3]) for (const match of [-1, 0, 1, 2])
+    for (const terminate of [false, true]) for (const split of [0, 7, 23, 39]) {
+      if (match >= count) continue;
+      const buf = split ? base + 64 : regular;
+      const offset = split ? 4096 - 64 - split : 256;
+      const program = [12 | (16 << 8) | (count << 16)];
+      const destinations = 4 + count * 16;
+      for (let i = 0; i < count; i++) program.push(0xffffffff, i >= match && match >= 0 ? 5 : 6, 0,
+        terminate ? 0 : destinations + (i + 1) * 16);
+      // Four independently observable write-and-exit destinations.
+      for (let i = 0; i < 4; i++) program.push(8 | (8 << 8) | (1 << 16), 8, i + 1, 11);
+      program.push(0);
+      e.buffer(eb, buf);
+      program.forEach((v, i) => e.guest_write32(buf + offset + i * 4, v));
+      call('IDirect3DExecuteBuffer_Unlock', 8, eb);
+      [48, 0, 0, offset, program.length * 4, 0, 1, 5, 0, 0, 0, 0]
+        .forEach((v, i) => e.guest_write32(data + i * 4, v));
+      call('IDirect3DExecuteBuffer_SetExecuteData', 12, eb, data);
+      e.guest_write32(state + 288, 0);
+      call('IDirect3DDevice_Execute', 20, dev, eb);
+      assert.strictEqual(e.guest_read32(state + 288), match < 0 ? 1 : terminate ? 0 : match + 2,
+        `multi branch count=${count} match=${match} terminate=${terminate} split=${split}`);
+      multiCases++;
+    }
+  for (const count of [0, 1, 3]) for (const split of [0, 7, 29, 53]) {
+    const buf = split ? base + 64 : regular;
+    const offset = split ? 4096 - 64 - split : 256;
+    const program = [14 | (24 << 8) | (count << 16)];
+    for (let i = 0; i < count; i++) program.push(1, 0x100 + i, 0, 0, 0, 0);
+    program.push(11, 0);
+    e.buffer(eb, buf);
+    program.forEach((v, i) => e.guest_write32(buf + offset + i * 4, v));
+    call('IDirect3DExecuteBuffer_Unlock', 8, eb);
+    [48, 0, 0, offset, program.length * 4, 0, 1, 5, 0, 0, 0, 0]
+      .forEach((v, i) => e.guest_write32(data + i * 4, v));
+    call('IDirect3DExecuteBuffer_SetExecuteData', 12, eb, data);
+    call('IDirect3DDevice_Execute', 20, dev, eb);
+    call('IDirect3DExecuteBuffer_GetExecuteData', 12, eb, out);
+    assert.strictEqual(e.guest_read32(out + 28), count ? 0x100 + count - 1 : 5, `status count=${count} split=${split}`);
+    multiCases++;
+  }
   // Real render target: vary instruction and vertex crossings independently.
   const surfaceDesc = e.guest_alloc(128);
   for (let i = 0; i < 128; i++) e.guest_write8(surfaceDesc + i, 0);
@@ -200,5 +244,5 @@ const extraWat = String.raw`
     assert.strictEqual(e.guest_read8(base + 0x10000 + page * 4096 + i), 0xa7, 'neighbor backing');
   e.buffer(eb, ownedBuffer); // Borrowed test mappings are not heap owners.
   call('IDirect3DExecuteBuffer_Release', 8, eb);
-  console.log(`PASS Execute instruction walker: control + ${stream.length - 1} sparse splits + 2200-record group + ${primitiveCases} record / ${vertexCases} vertex pixel comparisons + ${branchCases} masked branches, trace/ABI/guards`);
+  console.log(`PASS Execute instruction walker: control + ${stream.length - 1} sparse splits + 2200-record group + ${primitiveCases} record / ${vertexCases} vertex pixel comparisons + ${branchCases} masked branches + ${multiCases} multi-record cases, trace/ABI/guards`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -262,3 +262,29 @@ failure is not repaired here. SETSTATUS flag-selective updates, multi-record
 branch dispatch, clip-generated status and device-vs-buffer lifetime across
 Execute calls still require review/native evidence. The SDK's device-status
 lifetime comment is not sufficient evidence to certify our per-buffer storage.
+
+## Multi-record branch/status traversal (2026-09-22)
+
+The same Microsoft SDK header defines D3DINSTRUCTION.bSize as the size of
+each data unit and wCount as the number that follow. Execute previously
+ignored that count for BRANCHFORWARD and used only the first SETSTATUS record.
+Both now traverse the declared count/stride. The first taken branch transfers
+control immediately; no match falls through. Zero records consume no operands.
+SETSTATUS applies each record in order using the existing status writer.
+
+The regression initially trapped on a zero-record branch: the old helper
+interpreted the following render-state instruction as a branch record and
+jumped into invalid instruction bytes. After the fix, 68 cases pass across
+zero/one/three records and direct/sparse placement. Branch cases cover first,
+middle, last and no matches, multiple simultaneously matching records with
+distinct destinations, and taken zero-offset termination. SETSTATUS cases
+verify that the final record is retained, or the existing status survives a
+zero-record instruction. All calls check the public Execute ABI.
+
+The complete Execute sparse/render suite, 32 ExecuteData layouts and scoped
+static gates pass; quiet243+22 and dup117/471 are unchanged. The test uses
+standard record sizes, not malformed sizes or an assertion that arbitrary
+padded records are native-compatible. Branch offset origin/zero-offset policy
+are preserved and regression-tested, not newly native-verified. Status flags,
+cache-independent ownership, clip status, device lifetime, buffer/index bounds
+and browser/full-application verification remain open.

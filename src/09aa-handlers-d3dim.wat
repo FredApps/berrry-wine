@@ -371,7 +371,7 @@
   (func $handle_IDirect3DDevice_Execute (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $eb_entry i32) (local $buf i32) (local $instr_off i32) (local $instr_len i32)
     (local $cursor i32) (local $end i32) (local $op i32) (local $sz i32) (local $cnt i32) (local $step i32)
-    (local $branch i32) (local $handled i32)
+    (local $branch i32) (local $handled i32) (local $record_index i32)
     (local $state i32) (local $vp_entry i32) (local $sw i32)
     (local $vp_x i32) (local $vp_y i32) (local $vp_w i32) (local $vp_h i32)
     ;; Execute buffers rasterize here, never on the render Worker.
@@ -482,24 +482,37 @@
             (call $d3dim_exec_process_vertices (local.get $arg0) (local.get $buf)
               (i32.add (local.get $cursor) (i32.const 4)) (local.get $cnt))
             (local.set $handled (i32.const 1))))
-          ;; 12 = D3DOP_BRANCHFORWARD (16-byte record; cnt is always 1 in practice)
+          ;; 12 = D3DOP_BRANCHFORWARD. Examine each record until one branches.
           (if (i32.eq (local.get $op) (i32.const 12)) (then
-            (local.set $branch (call $d3dim_exec_branch
-              (local.get $arg1) (i32.add (local.get $cursor) (i32.const 4)) (local.get $cursor)))
-            (if (i32.eqz (local.get $branch))
-              (then (br $done)))
-            (if (i32.ne (local.get $branch) (i32.const -1))
-              (then
-                (local.set $cursor (local.get $branch))
-                (br $lp)))
+            (local.set $record_index (i32.const 0))
+            (block $branches_done (loop $branches
+              (br_if $branches_done (i32.ge_u (local.get $record_index) (local.get $cnt)))
+              (local.set $branch (call $d3dim_exec_branch
+                (local.get $arg1)
+                (i32.add (i32.add (local.get $cursor) (i32.const 4))
+                  (i32.mul (local.get $record_index) (local.get $sz)))
+                (local.get $cursor)))
+              (if (i32.eqz (local.get $branch))
+                (then (br $done)))
+              (if (i32.ne (local.get $branch) (i32.const -1))
+                (then
+                  (local.set $cursor (local.get $branch))
+                  (br $lp)))
+              (local.set $record_index (i32.add (local.get $record_index) (i32.const 1)))
+              (br $branches)))
             (local.set $handled (i32.const 1))))
           ;; 14 = D3DOP_SETSTATUS  (24-byte D3DSTATUS record). Retained-mode
           ;; D3DRM reads the resulting extent through GetExecuteData and skips
           ;; its primary-surface Blt when the driver reports an empty rect.
           (if (i32.eq (local.get $op) (i32.const 14)) (then
-            (if (local.get $cnt) (then
+            (local.set $record_index (i32.const 0))
+            (block $statuses_done (loop $statuses
+              (br_if $statuses_done (i32.ge_u (local.get $record_index) (local.get $cnt)))
               (call $d3dim_exec_set_status (local.get $arg0) (local.get $arg1)
-                (i32.add (local.get $cursor) (i32.const 4)))))
+                (i32.add (i32.add (local.get $cursor) (i32.const 4))
+                  (i32.mul (local.get $record_index) (local.get $sz))))
+              (local.set $record_index (i32.add (local.get $record_index) (i32.const 1)))
+              (br $statuses)))
             (local.set $handled (i32.const 1))))
           ;; Known-but-unimplemented: 10=TEXTURELOAD, 13=SPAN. Anything else
           ;; is malformed — log + crash so we can see what hit us.
