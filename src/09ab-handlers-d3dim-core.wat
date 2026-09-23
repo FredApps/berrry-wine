@@ -326,6 +326,7 @@
   ;;   16 zenable 17 zfunc 18 zwrite  19 blend 20 src 21 dst
   ;;   22 colorop 23 alphaop 24 addr u 25 addr v 26 linear 27 cull 28 shade
   ;;   29 alphafunc (0 = test off, else D3DCMPFUNC)  30 alpharef
+  ;;   31 vertex fog (FOGENABLE with FOGTABLEMODE NONE)  32 fogcolor
   (func (export "d3dim_gpu_describe") (param $this i32) (result i32)
     (local $out i32) (local $rt i32) (local $state i32) (local $tex i32) (local $filter i32)
     (local $zen i32) (local $zfunc i32) (local $zwrite i32) (local $v i32)
@@ -334,7 +335,7 @@
     (if (i32.or (i32.eqz (local.get $rt)) (i32.eqz (local.get $state)))
       (then (return (i32.const 0))))
     (local.set $out (i32.add (call $d3dim_gpu_buffer) (i32.const 64)))
-    (call $zero_memory (local.get $out) (i32.const 124))
+    (call $zero_memory (local.get $out) (i32.const 132))
     (i32.store offset=0 (local.get $out) (local.get $rt))
     (i32.store offset=4 (local.get $out) (i32.load16_u offset=12 (local.get $rt)))
     (i32.store offset=8 (local.get $out) (i32.load16_u offset=14 (local.get $rt)))
@@ -404,6 +405,10 @@
       (i32.store offset=120 (local.get $out)
         (i32.and (call $gl32 (i32.add (local.get $state) (i32.const 352)))
                  (i32.const 0xFF)))))
+    (i32.store offset=124 (local.get $out) (i32.and
+      (i32.ne (call $gl32 (i32.add (local.get $state) (i32.const 368))) (i32.const 0))
+      (i32.eqz (call $gl32 (i32.add (local.get $state) (i32.const 396))))))
+    (i32.store offset=128 (local.get $out) (call $gl32 (i32.add (local.get $state) (i32.const 392))))
     (local.get $out))
 
   ;; Texture $tex decoded to RGBA8 bytes in a reused scratch buffer (result is
@@ -5975,7 +5980,7 @@
     (local $colorop i32) (local $alphaop i32) (local $filter i32) (local $shade i32)
     (local $dither i32) (local $antialias i32)
     (local $c0 i32) (local $c1 i32) (local $c2 i32)
-    (local $color_key_enable i32) (local $alpha_test i32)
+    (local $color_key_enable i32) (local $alpha_test i32) (local $fog i32)
     (if (i32.eqz (local.get $tex)) (then
       (call $d3dim_draw_tl_triangle
         (local.get $this) (local.get $rt) (local.get $use_z)
@@ -6017,6 +6022,11 @@
       (if (i32.eqz (local.get $filter))
         (then (local.set $filter (call $gl32 (i32.add (local.get $state) (i32.const 328))))))
       (local.set $shade (call $gl32 (i32.add (local.get $state) (i32.const 292))))
+      ;; Vertex fog: FOGENABLE=28 (offset 368) with FOGTABLEMODE=35 (396)
+      ;; NONE. A TL vertex carries its own factor in the specular alpha.
+      (local.set $fog (i32.and
+        (i32.ne (call $gl32 (i32.add (local.get $state) (i32.const 368))) (i32.const 0))
+        (i32.eqz (call $gl32 (i32.add (local.get $state) (i32.const 396))))))
       (if (i32.eq (local.get $filter) (i32.const 2)) (then (local.set $linear (i32.const 1))))))
     (if (i32.eqz (local.get $address_u)) (then (local.set $address_u (i32.const 1))))
     (if (i32.eqz (local.get $address_v)) (then (local.set $address_v (i32.const 1))))
@@ -6041,6 +6051,18 @@
     (if (i32.eq (local.get $shade) (i32.const 1)) (then
       (local.set $c1 (local.get $c0))
       (local.set $c2 (local.get $c0))))
+    (if (local.get $fog) (then
+      (call $rast_fog_plane
+        (call $d3dim_coord_i (f32.load (local.get $v0)))
+        (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
+        (call $d3dim_fog_factor (local.get $v0))
+        (call $d3dim_coord_i (f32.load (local.get $v1)))
+        (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
+        (call $d3dim_fog_factor (local.get $v1))
+        (call $d3dim_coord_i (f32.load (local.get $v2)))
+        (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
+        (call $d3dim_fog_factor (local.get $v2))
+        (call $gl32 (i32.add (local.get $state) (i32.const 392))))))
     (call $rasterize_triangle_textured
       (local.get $rt) (local.get $tex)
       (local.get $blend) (local.get $src_blend) (local.get $dst_blend)
@@ -6069,7 +6091,14 @@
       (f32.load (i32.add (local.get $v2) (i32.const 12)))
       (local.get $c2)
       (f32.load (i32.add (local.get $v2) (i32.const 8)))
-      (local.get $zbuf) (local.get $zfunc) (local.get $zwrite)))
+      (local.get $zbuf) (local.get $zfunc) (local.get $zwrite))
+    (global.set $rast_fog_on (i32.const 0)))
+
+  ;; A TL vertex's fog factor: its specular alpha, 255 = no fog.
+  (func $d3dim_fog_factor (param $v i32) (result f32)
+    (f32.div
+      (f32.convert_i32_u (i32.load8_u (i32.add (local.get $v) (i32.const 23))))
+      (f32.const 255)))
 
   (func $d3dim_draw_tl_triangle_maybe_textured
     (param $this i32) (param $rt i32) (param $use_z i32)

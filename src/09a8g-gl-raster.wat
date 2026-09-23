@@ -1652,36 +1652,48 @@
               (i32.and (local.get $color) (i32.const 0xFF000000)))
       (local.get $color) (local.get $f)))
 
-  ;; The fog plane through the three screen records' (x, y, factor at +28).
-  ;; A degenerate triangle gets the first vertex's factor everywhere.
-  (func $gl_sw_fog_plane (param $s0 i32) (param $s1 i32) (param $s2 i32)
-    (local $x1 f32) (local $y1 f32) (local $x2 f32) (local $y2 f32)
-    (local $f0 f32) (local $f1 f32) (local $f2 f32) (local $det f32)
-    (local.set $x1 (f32.convert_i32_s (i32.sub (i32.load (local.get $s1)) (i32.load (local.get $s0)))))
-    (local.set $y1 (f32.convert_i32_s (i32.sub (i32.load offset=4 (local.get $s1)) (i32.load offset=4 (local.get $s0)))))
-    (local.set $x2 (f32.convert_i32_s (i32.sub (i32.load (local.get $s2)) (i32.load (local.get $s0)))))
-    (local.set $y2 (f32.convert_i32_s (i32.sub (i32.load offset=4 (local.get $s2)) (i32.load offset=4 (local.get $s0)))))
-    (local.set $f0 (f32.load offset=28 (local.get $s0)))
-    (local.set $f1 (f32.sub (f32.load offset=28 (local.get $s1)) (local.get $f0)))
-    (local.set $f2 (f32.sub (f32.load offset=28 (local.get $s2)) (local.get $f0)))
-    (local.set $det (f32.sub (f32.mul (local.get $x1) (local.get $y2))
-                             (f32.mul (local.get $x2) (local.get $y1))))
+  ;; The span rasterizer's fog plane f(x, y) = a*x + b*y + c through three
+  ;; screen points' fog factors (1 = unfogged), with $color the fog colour.
+  ;; A degenerate triangle gets the first vertex's factor everywhere. Shared
+  ;; by GL fog and D3D vertex fog (specular alpha), which have the same sense.
+  (func $rast_fog_plane
+    (param $x0 i32) (param $y0 i32) (param $f0 f32)
+    (param $x1 i32) (param $y1 i32) (param $f1 f32)
+    (param $x2 i32) (param $y2 i32) (param $f2 f32) (param $color i32)
+    (local $dx1 f32) (local $dy1 f32) (local $dx2 f32) (local $dy2 f32)
+    (local $df1 f32) (local $df2 f32) (local $det f32)
+    (local.set $dx1 (f32.convert_i32_s (i32.sub (local.get $x1) (local.get $x0))))
+    (local.set $dy1 (f32.convert_i32_s (i32.sub (local.get $y1) (local.get $y0))))
+    (local.set $dx2 (f32.convert_i32_s (i32.sub (local.get $x2) (local.get $x0))))
+    (local.set $dy2 (f32.convert_i32_s (i32.sub (local.get $y2) (local.get $y0))))
+    (local.set $df1 (f32.sub (local.get $f1) (local.get $f0)))
+    (local.set $df2 (f32.sub (local.get $f2) (local.get $f0)))
+    (local.set $det (f32.sub (f32.mul (local.get $dx1) (local.get $dy2))
+                             (f32.mul (local.get $dx2) (local.get $dy1))))
     (if (f32.eq (local.get $det) (f32.const 0))
       (then
         (global.set $rast_fog_a (f32.const 0))
         (global.set $rast_fog_b (f32.const 0)))
       (else
         (global.set $rast_fog_a (f32.div
-          (f32.sub (f32.mul (local.get $f1) (local.get $y2)) (f32.mul (local.get $f2) (local.get $y1)))
+          (f32.sub (f32.mul (local.get $df1) (local.get $dy2)) (f32.mul (local.get $df2) (local.get $dy1)))
           (local.get $det)))
         (global.set $rast_fog_b (f32.div
-          (f32.sub (f32.mul (local.get $x1) (local.get $f2)) (f32.mul (local.get $x2) (local.get $f1)))
+          (f32.sub (f32.mul (local.get $dx1) (local.get $df2)) (f32.mul (local.get $dx2) (local.get $df1)))
           (local.get $det)))))
     (global.set $rast_fog_c (f32.sub (local.get $f0)
-      (f32.add (f32.mul (global.get $rast_fog_a) (f32.convert_i32_s (i32.load (local.get $s0))))
-               (f32.mul (global.get $rast_fog_b) (f32.convert_i32_s (i32.load offset=4 (local.get $s0)))))))
-    (global.set $rast_fog_color (global.get $gl_sw_fog_color))
+      (f32.add (f32.mul (global.get $rast_fog_a) (f32.convert_i32_s (local.get $x0)))
+               (f32.mul (global.get $rast_fog_b) (f32.convert_i32_s (local.get $y0))))))
+    (global.set $rast_fog_color (local.get $color))
     (global.set $rast_fog_on (i32.const 1)))
+
+  ;; The fog plane through the three screen records' (x, y, factor at +28).
+  (func $gl_sw_fog_plane (param $s0 i32) (param $s1 i32) (param $s2 i32)
+    (call $rast_fog_plane
+      (i32.load (local.get $s0)) (i32.load offset=4 (local.get $s0)) (f32.load offset=28 (local.get $s0))
+      (i32.load (local.get $s1)) (i32.load offset=4 (local.get $s1)) (f32.load offset=28 (local.get $s1))
+      (i32.load (local.get $s2)) (i32.load offset=4 (local.get $s2)) (f32.load offset=28 (local.get $s2))
+      (global.get $gl_sw_fog_color)))
 
   ;; One clip record's screen record, slot $k. 0 when it has no screen
   ;; position: after the near clip w is at least the near distance for any
