@@ -6446,12 +6446,78 @@
     (local.set $i (i32.const 1))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $count)))
+      (if (global.get $d3dim_exec_batching)
+        (then
+          (call $d3dim_exec_batch_push (local.get $a))
+          (call $d3dim_exec_batch_push (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 32))))
+          (call $d3dim_exec_batch_push
+            (i32.add (local.get $a) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32)))))
+        (else
+          (call $d3dim_draw_tl_triangle_maybe_textured
+            (local.get $dev_this) (local.get $rt) (i32.const 1)
+            (local.get $a)
+            (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 32)))
+            (i32.add (local.get $a) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp))))
+
+  ;; With the GPU executor attached, one execute-buffer TRIANGLE op becomes
+  ;; one TL triangle list on the same seam DrawPrimitive uses; near-clipped
+  ;; triangles contribute their clipped fans. Without this the D3DRM apps
+  ;; (every Plus! 98 saver) never reached WebGL: they draw only through
+  ;; execute buffers, so "WebGL +DX7" rasterized them in software. Render
+  ;; state cannot change inside one op, so one batch has one state.
+  (global $d3dim_exec_batching (mut i32) (i32.const 0))
+  (global $d3dim_exec_batch (mut i32) (i32.const 0))      ;; guest pointer
+  (global $d3dim_exec_batch_cap (mut i32) (i32.const 0))  ;; bytes
+  (global $d3dim_exec_batch_len (mut i32) (i32.const 0))  ;; vertices
+
+  ;; Append one 32-byte TL vertex (a wasm address). The buffer is heap memory
+  ;; the emulator owns, so it is linear and one $g2w covers it.
+  (func $d3dim_exec_batch_push (param $v i32)
+    (local $need i32) (local $cap i32) (local $grown i32)
+    (local.set $need (i32.shl (i32.add (global.get $d3dim_exec_batch_len) (i32.const 1)) (i32.const 5)))
+    (if (i32.gt_u (local.get $need) (global.get $d3dim_exec_batch_cap)) (then
+      (local.set $cap (select (global.get $d3dim_exec_batch_cap) (i32.const 0x8000)
+        (i32.ne (global.get $d3dim_exec_batch_cap) (i32.const 0))))
+      (block $sized (loop $grow
+        (br_if $sized (i32.ge_u (local.get $cap) (local.get $need)))
+        (local.set $cap (i32.shl (local.get $cap) (i32.const 1)))
+        (br $grow)))
+      (local.set $grown (call $heap_alloc (local.get $cap)))
+      (if (i32.eqz (local.get $grown)) (then (unreachable)))
+      (if (global.get $d3dim_exec_batch) (then
+        (call $memcpy (call $g2w (local.get $grown)) (call $g2w (global.get $d3dim_exec_batch))
+          (i32.shl (global.get $d3dim_exec_batch_len) (i32.const 5)))
+        (call $heap_free (global.get $d3dim_exec_batch))))
+      (global.set $d3dim_exec_batch (local.get $grown))
+      (global.set $d3dim_exec_batch_cap (local.get $cap))))
+    (call $memcpy
+      (i32.add (call $g2w (global.get $d3dim_exec_batch))
+        (i32.shl (global.get $d3dim_exec_batch_len) (i32.const 5)))
+      (local.get $v) (i32.const 32))
+    (global.set $d3dim_exec_batch_len (i32.add (global.get $d3dim_exec_batch_len) (i32.const 1))))
+
+  ;; Hand the batch to the executor; when it declines (an 8bpp target, say),
+  ;; $d3dim_worker_route has fenced and the batch rasterizes here instead.
+  (func $d3dim_exec_batch_flush (param $dev_this i32) (param $rt i32)
+    (local $n i32) (local $i i32) (local $wa i32)
+    (global.set $d3dim_exec_batching (i32.const 0))
+    (local.set $n (global.get $d3dim_exec_batch_len))
+    (global.set $d3dim_exec_batch_len (i32.const 0))
+    (if (i32.lt_u (local.get $n) (i32.const 3)) (then (return)))
+    (if (call $d3dim_worker_route (local.get $dev_this) (i32.const 4)
+          (global.get $d3dim_exec_batch) (local.get $n))
+      (then (return)))
+    (local.set $wa (call $g2w (global.get $d3dim_exec_batch)))
+    (block $done (loop $lp
+      (br_if $done (i32.gt_u (i32.add (local.get $i) (i32.const 3)) (local.get $n)))
       (call $d3dim_draw_tl_triangle_maybe_textured
         (local.get $dev_this) (local.get $rt) (i32.const 1)
-        (local.get $a)
-        (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 32)))
-        (i32.add (local.get $a) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (i32.add (local.get $wa) (i32.shl (local.get $i) (i32.const 5)))
+        (i32.add (local.get $wa) (i32.shl (i32.add (local.get $i) (i32.const 1)) (i32.const 5)))
+        (i32.add (local.get $wa) (i32.shl (i32.add (local.get $i) (i32.const 2)) (i32.const 5))))
+      (local.set $i (i32.add (local.get $i) (i32.const 3)))
       (br $lp))))
 
   (func $d3dim_exec_triangles
@@ -6473,6 +6539,12 @@
       ;; D3DRENDERSTATE_FILLMODE = 8; 1 point, 2 wireframe, 3 solid.
       (local.set $fillmode (call $gl32 (i32.add (local.get $state) (i32.const 288))))))
     (if (i32.eqz (local.get $fillmode)) (then (local.set $fillmode (i32.const 3))))
+    (global.set $d3dim_exec_batch_len (i32.const 0))
+    (global.set $d3dim_exec_batching
+      (i32.and (i32.ne (global.get $d3dim_gpu_on) (i32.const 0))
+        (i32.and (i32.eq (local.get $fillmode) (i32.const 3))
+                 (i32.ne (local.get $state) (i32.const 0)))))
+    (if (i32.eqz (global.get $d3dim_exec_batching)) (then (call $d3dim_worker_fence)))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
@@ -6529,9 +6601,15 @@
           (call $d3dim_draw_tl_line (local.get $rt) (local.get $v2) (local.get $v0) (local.get $c0))
           (br $vertex_done)))
         (if (i32.eq (local.get $pos) (i32.const 3)) (then
-          (call $d3dim_draw_tl_triangle_maybe_textured
-            (local.get $dev_this) (local.get $rt) (i32.const 1)
-            (local.get $v0) (local.get $v1) (local.get $v2))))
+          (if (global.get $d3dim_exec_batching)
+            (then
+              (call $d3dim_exec_batch_push (local.get $v0))
+              (call $d3dim_exec_batch_push (local.get $v1))
+              (call $d3dim_exec_batch_push (local.get $v2)))
+            (else
+              (call $d3dim_draw_tl_triangle_maybe_textured
+                (local.get $dev_this) (local.get $rt) (i32.const 1)
+                (local.get $v0) (local.get $v1) (local.get $v2))))))
         (if (i32.ne (local.get $pos) (i32.const 3)) (then
           (if (i32.eqz (local.get $state)) (then
             (br $vertex_done)))
@@ -6549,7 +6627,9 @@
       (call $guest_span_release (local.get $v0) (i32.const 32))
       (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 8)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $lp))))
+      (br $lp)))
+    (if (global.get $d3dim_exec_batching)
+      (then (call $d3dim_exec_batch_flush (local.get $dev_this) (local.get $rt)))))
 
   ;; ── Execute-buffer: POINT (op=1) ──────────────────────────────
   ;; Walks `wCount` D3DPOINT records {u16 wCount, u16 wFirst}.
@@ -6562,6 +6642,7 @@
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
     (local.set $rt (call $d3ddev_rt_entry (local.get $dev_this)))
     (if (i32.eqz (local.get $rt)) (then (return)))
+    (call $d3dim_worker_fence)
     (local.set $vbase (local.get $buf_guest))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
@@ -6626,6 +6707,7 @@
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
     (local.set $rt (call $d3ddev_rt_entry (local.get $dev_this)))
     (if (i32.eqz (local.get $rt)) (then (return)))
+    (call $d3dim_worker_fence)
     (local.set $vbase (local.get $buf_guest))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
