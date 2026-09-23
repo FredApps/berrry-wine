@@ -217,7 +217,7 @@ const interfaces = [
 
   // ── IDirect3DMaterial2 ──────────────────────────────────────────────
   { prefix: 'IDirect3DMaterial2', methods: [
-    { name: 'QueryInterface', nargs: 3 },
+    { name: 'QueryInterface', nargs: 3, handler: 'IDirect3DMaterial_QueryInterface' },
     { name: 'AddRef',         nargs: 1, handler: 'dx_com_addref' },
     { name: 'Release',        nargs: 1, handler: 'dx_com_release_basic' },
     { name: 'SetMaterial',    nargs: 2 },

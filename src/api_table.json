@@ -10640,6 +10640,7 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 635542,
+    "handler": "IDirect3DMaterial_QueryInterface",
     "args": [
       {
         "name": "this",
@@ -12434,6 +12435,7 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2408145839,
+    "handler": "IDirect3DMaterial_QueryInterface",
     "args": [
       {
         "name": "this",

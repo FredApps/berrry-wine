@@ -42,6 +42,10 @@ Quiet inventory remains 243 manual + 22 metadata.
 This is not native Win98 generation-policy or error-precedence certification,
 nor a browser/gameplay/full-build result. Invalid non-null pointers,
 wrapper-allocation failure and span-arena exhaustion are not fault-injected.
-Device, material, texture and execute/vertex-buffer QI paths still need their
+Device, texture and execute/vertex-buffer QI paths still need their
 own complete-IID/ABI/ownership reviews. The separate DirectDraw/D3D parent
 identity and retention issues remain open.
+
+Follow-up: [material QI](d3dim-material-query-interface-review.md) now shares
+the child span/identity/refcount core. Both families remain independently
+classified; viewport tests also reject a complete material IID.

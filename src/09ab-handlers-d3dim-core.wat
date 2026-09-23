@@ -570,8 +570,9 @@
   ;;
   ;; Returns S_OK (0) on match (and writes ppvObj), E_NOINTERFACE (0x80004002)
   ;; on miss (and writes NULL to ppvObj).
-  ;; Microsoft d3d.h viewport identities; each version has a distinct ABI.
-  (func $d3dim_viewport_qi (param $this i32) (param $riid i32) (param $out i32) (result i32)
+  ;; Microsoft d3d.h child identities: family 3=viewport, 4=material.
+  ;; Share span/identity/refcount ownership, but never cross the family ABI.
+  (func $d3dim_child_qi (param $family i32) (param $this i32) (param $riid i32) (param $out i32) (result i32)
     (local $iid i32) (local $unknown i32) (local $vtbl i32) (local $entry i32) (local $obj i32)
     (if (i32.eqz (local.get $out)) (then (return (i32.const 0x80004003))))
     (call $gs32 (local.get $out) (i32.const 0))
@@ -579,15 +580,26 @@
     (local.set $iid (call $guest_span_in (local.get $riid) (i32.const 16)))
     (local.set $unknown (call $guid_words_equal (local.get $iid)
       (i32.const 0) (i32.const 0) (i32.const 0xC0) (i32.const 0x46000000)))
-    (if (call $guid_words_equal (local.get $iid)
-          (i32.const 0x4417C146) (i32.const 0x11CF33AD) (i32.const 0x00006F81) (i32.const 0x6E1520C0))
-      (then (local.set $vtbl (global.get $DX_VTBL_D3DVP1))))
-    (if (call $guid_words_equal (local.get $iid)
-          (i32.const 0x93281500) (i32.const 0x11D08CF8) (i32.const 0xA000AB89) (i32.const 0x294105C9))
-      (then (local.set $vtbl (global.get $DX_VTBL_D3DVP2))))
-    (if (call $guid_words_equal (local.get $iid)
-          (i32.const 0xB0AB3B61) (i32.const 0x11D133D7) (i32.const 0xC00081A9) (i32.const 0x74B1D74F))
-      (then (local.set $vtbl (global.get $DX_VTBL_D3DVP3))))
+    (if (i32.eq (local.get $family) (i32.const 3)) (then
+      (if (call $guid_words_equal (local.get $iid)
+            (i32.const 0x4417C146) (i32.const 0x11CF33AD) (i32.const 0x00006F81) (i32.const 0x6E1520C0))
+        (then (local.set $vtbl (global.get $DX_VTBL_D3DVP1))))
+      (if (call $guid_words_equal (local.get $iid)
+            (i32.const 0x93281500) (i32.const 0x11D08CF8) (i32.const 0xA000AB89) (i32.const 0x294105C9))
+        (then (local.set $vtbl (global.get $DX_VTBL_D3DVP2))))
+      (if (call $guid_words_equal (local.get $iid)
+            (i32.const 0xB0AB3B61) (i32.const 0x11D133D7) (i32.const 0xC00081A9) (i32.const 0x74B1D74F))
+        (then (local.set $vtbl (global.get $DX_VTBL_D3DVP3))))))
+    (if (i32.eq (local.get $family) (i32.const 4)) (then
+      (if (call $guid_words_equal (local.get $iid)
+            (i32.const 0x4417C144) (i32.const 0x11CF33AD) (i32.const 0x00006F81) (i32.const 0x6E1520C0))
+        (then (local.set $vtbl (global.get $DX_VTBL_D3DMAT1))))
+      (if (call $guid_words_equal (local.get $iid)
+            (i32.const 0x93281503) (i32.const 0x11D08CF8) (i32.const 0xA000AB89) (i32.const 0x294105C9))
+        (then (local.set $vtbl (global.get $DX_VTBL_D3DMAT2))))
+      (if (call $guid_words_equal (local.get $iid)
+            (i32.const 0xCA9C46F4) (i32.const 0x11D1D3C5) (i32.const 0x60005AB7) (i32.const 0x12B35208))
+        (then (local.set $vtbl (global.get $DX_VTBL_D3DMAT3))))))
     (call $guest_span_release (local.get $iid) (i32.const 16))
     (if (i32.and (i32.eqz (local.get $unknown)) (i32.eqz (local.get $vtbl)))
       (then (return (i32.const 0x80004002))))
@@ -605,8 +617,8 @@
     (local $iid0 i32) (local $entry i32) (local $vtbl i32) (local $obj_wa i32)
     (local $iid_wa i32) (local $kind i32)
     (local $i i32) (local $ptr i32) (local $ddraw_guest i32)
-    (if (i32.eq (local.get $family) (i32.const 3))
-      (then (return (call $d3dim_viewport_qi (local.get $this) (local.get $riid) (local.get $ppvObj)))))
+    (if (i32.or (i32.eq (local.get $family) (i32.const 3)) (i32.eq (local.get $family) (i32.const 4)))
+      (then (return (call $d3dim_child_qi (local.get $family) (local.get $this) (local.get $riid) (local.get $ppvObj)))))
     ;; Sanity: NULL ppvObj ⇒ E_POINTER
     (if (i32.eqz (local.get $ppvObj)) (then (return (i32.const 0x80004003))))
     ;; Root interfaces share the complete identity classifier with DirectDraw.
@@ -713,10 +725,6 @@
       (if (i32.eq (local.get $iid0) (i32.const 0x93281501)) (then (local.set $vtbl (global.get $DX_VTBL_D3DDEV2))))
       (if (i32.eq (local.get $iid0) (i32.const 0xB0AB3B60)) (then (local.set $vtbl (global.get $DX_VTBL_D3DDEV3))))
       (if (i32.eq (local.get $iid0) (i32.const 0xF5049E79)) (then (local.set $vtbl (global.get $DX_VTBL_D3DDEV7))))))
-    (if (i32.eq (local.get $family) (i32.const 4)) (then
-      (if (i32.eqz (local.get $obj_wa))
-        (then (local.set $obj_wa (call $g2w (local.get $this)))))
-      (local.set $vtbl (i32.load (local.get $obj_wa)))))
     (if (i32.eq (local.get $family) (i32.const 5)) (then
       ;; Texture family — recognize Texture IIDs and DDSurface IIDs
       ;; (the texture wraps a DDSurface; QI'ing back for a surface IID is a
