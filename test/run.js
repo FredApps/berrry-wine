@@ -342,6 +342,13 @@ if (TRACE_GL_RAW) {
         const v = new Float32Array(capture.buffer, capture.pointerOffset, 14);
         tail += ` verts=${capture.pointerLength / 56} v0=(${Array.from(v.slice(0, 3), x => +x.toPrecision(4))})`
           + ` rgba=(${Array.from(v.slice(3, 7), x => +x.toPrecision(3))})`;
+      } else if (capture.pointerLength <= 64 && capture.pointerLength % 4 === 0) {
+        // A small array argument (glFogfv, glLightfv, glLoadMatrixf): its
+        // values, since the guest pointer is gone by the time anyone asks.
+        const dv = new DataView(capture.buffer, capture.pointerOffset, capture.pointerLength);
+        const vals = [];
+        for (let off = 0; off < capture.pointerLength; off += 4) vals.push(+dv.getFloat32(off, true).toPrecision(5));
+        tail += ` [${vals.join(', ')}]`;
       }
     }
     console.log(`[gl] ${traceGateBatch >= 0 ? `b${traceGateBatch} ` : ''}${name}(${parts.join(', ')}) aux=0x${(aux >>> 0).toString(16)}${tail}`);

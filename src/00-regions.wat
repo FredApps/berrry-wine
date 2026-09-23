@@ -660,8 +660,10 @@
   ;; modelview-projection product, the vertex being transformed, three 32-byte
   ;; screen records, three 48-byte clip records and the up-to-four records
   ;; near-plane clipping leaves, then at +0x300 the default viewport a draw
-  ;; with no glViewport maps through. 784 bytes used of 1024.
-  (region.declare $GL_SW_SCRATCH (size 0x00000400) (align 0x00001000)
+  ;; with no glViewport maps through, +0x310 the far-clipped records and at
+  ;; +0x400 the lighting normal matrix and per-vertex vectors. 1152 bytes
+  ;; used of 2048.
+  (region.declare $GL_SW_SCRATCH (size 0x00000800) (align 0x00001000)
     (owner "09a8g-gl-raster.wat:$gl_sw_consume"))
   ;; The GL state the software rasterizer decides pixels by: a 64-byte block
   ;; at +0, then sixteen 96-byte glPushAttrib frames at +64 (1600 bytes).

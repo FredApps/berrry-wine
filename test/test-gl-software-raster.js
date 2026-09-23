@@ -318,6 +318,115 @@ async function main() {
   assert.strictEqual(pick(VP / 2, VP * 3 / 4) & 0xFFFFFF, 0x00FF00,
     `the floor shows below the horizon; got 0x${pick(VP / 2, VP * 3 / 4).toString(16)}`);
 
+  // --- linear fog --------------------------------------------------------
+  // Under this frustum clip w is the eye distance. GL_LINEAR from 10 to 90
+  // puts a quad at eye z=-50 exactly halfway, so green fogged toward red is
+  // half of each; one at z=-5, nearer than the fog start, is untouched.
+  // Start/end go through glFogi because glCall writes integers as integers.
+  const GL_FOG = 0x0B60;
+  const fogColor = e.guest_alloc(16) >>> 0;
+  new Float32Array(memory.buffer, toWasm(fogColor), 4).set([1, 0, 0, 1]);
+  glCall(CALL_INDEX.glFogi, 0x0B65, 0x2601);        // GL_FOG_MODE, GL_LINEAR
+  glCall(CALL_INDEX.glFogi, 0x0B63, 10);            // GL_FOG_START
+  glCall(CALL_INDEX.glFogi, 0x0B64, 90);            // GL_FOG_END
+  glCall(CALL_INDEX.glFogfv, 0x0B66, fogColor);     // GL_FOG_COLOR
+  glCall(CALL_INDEX.glEnable, GL_FOG);
+  const wall = (z, colour) => {
+    const r = -z * 1.5;                             // wider than the view at z
+    triangle([[-r, -r, z], [r, -r, z], [r, r, z]], colour);
+    triangle([[-r, -r, z], [r, r, z], [-r, r, z]], colour);
+  };
+  wall(-50, [0, 1, 0, 1]);
+  px = back();
+  const fogged = rgb(VP / 2, VP / 2);
+  const near = (v, want) => Math.abs(v - want) <= 2;
+  assert.ok(near(fogged >>> 16, 0x80) && near((fogged >>> 8) & 0xFF, 0x80) && (fogged & 0xFF) === 0,
+    `z=-50 under LINEAR 10..90 is half green, half fog red; got 0x${fogged.toString(16)}`);
+  wall(-5, [0, 1, 0, 1]);
+  px = back();
+  assert.strictEqual(rgb(VP / 2, VP / 2), 0x00FF00, 'nearer than GL_FOG_START is unfogged');
+  glCall(CALL_INDEX.glDisable, GL_FOG);
+  wall(-50, [0, 1, 0, 1]);
+  px = back();
+  assert.strictEqual(rgb(VP / 2, VP / 2), 0x00FF00, 'with GL_FOG off nothing is fogged');
+
+  // --- fixed-function lighting --------------------------------------------
+  // Light 0 is directional toward the viewer. A wall facing it gets the full
+  // material diffuse; one edge-on gets only emission plus ambient. The light
+  // and material go through the matrix mirror, which is where the path
+  // reads them from.
+  const GL_LIGHTING = 0x0B50, GL_LIGHT0 = 0x4000, GL_COLOR_MATERIAL = 0x0B57;
+  const vec = e.guest_alloc(16) >>> 0;
+  const vecSet = v => new Float32Array(memory.buffer, toWasm(vec), 4).set(v);
+  const mtxCall = (op, ...args) => {
+    const words = new Int32Array(memory.buffer, stack, 16);
+    words.fill(0);
+    words.set(args, 1);
+    e.gl_mtx_observe(op, stack);
+  };
+  vecSet([0, 0, 1, 0]); mtxCall(CALL_INDEX.glLightfv, GL_LIGHT0, 0x1203, vec);  // POSITION
+  vecSet([1, 1, 1, 1]); mtxCall(CALL_INDEX.glLightfv, GL_LIGHT0, 0x1201, vec);  // DIFFUSE
+  vecSet([0, 0, 0, 1]); mtxCall(CALL_INDEX.glLightModelfv, 0x0B53, vec);        // no global ambient
+  vecSet([0, 0, 0, 1]); mtxCall(CALL_INDEX.glMaterialfv, 0x408, 0x1200, vec);   // AMBIENT
+  vecSet([0, 1, 0, 1]); mtxCall(CALL_INDEX.glMaterialfv, 0x408, 0x1201, vec);   // DIFFUSE
+  vecSet([0, 0, 0.5, 1]); mtxCall(CALL_INDEX.glMaterialfv, 0x408, 0x1600, vec); // EMISSION
+  const litWall = (z, colour, n) => {
+    const r = -z * 1.5;
+    const tri = pts => {
+      pts.forEach(([x, y], i) => {
+        putVertex(i, x, y, z, ...colour);
+        new Float32Array(memory.buffer, verts + i * VERT_BYTES, VERT_FLOATS).set(n, 9);
+      });
+      e.gl_sw_emit_triangles(verts, 3);
+    };
+    tri([[-r, -r], [r, -r], [r, r]]);
+    tri([[-r, -r], [r, r], [-r, r]]);
+  };
+  glCall(CALL_INDEX.glEnable, GL_LIGHTING);
+  glCall(CALL_INDEX.glEnable, GL_LIGHT0);
+  litWall(-20, [1, 0, 0, 1], [0, 0, 1]);
+  px = back();
+  assert.strictEqual(rgb(VP / 2, VP / 2), 0x00FF80,
+    `facing the light: diffuse green plus emission blue, vertex red ignored; got 0x${rgb(VP / 2, VP / 2).toString(16)}`);
+  litWall(-20, [1, 0, 0, 1], [1, 0, 0]);
+  px = back();
+  assert.ok(near(rgb(VP / 2, VP / 2), 0x000080),
+    `edge-on to the light: emission only; got 0x${rgb(VP / 2, VP / 2).toString(16)}`);
+  glCall(CALL_INDEX.glEnable, GL_COLOR_MATERIAL);
+  litWall(-20, [1, 0, 0, 1], [0, 0, 1]);
+  px = back();
+  assert.strictEqual(rgb(VP / 2, VP / 2), 0xFF0080,
+    `COLOR_MATERIAL takes diffuse from the vertex colour; got 0x${rgb(VP / 2, VP / 2).toString(16)}`);
+  glCall(CALL_INDEX.glDisable, GL_COLOR_MATERIAL);
+  glCall(CALL_INDEX.glDisable, GL_LIGHT0);
+  litWall(-20, [1, 0, 0, 1], [0, 0, 1]);
+  px = back();
+  assert.ok(near(rgb(VP / 2, VP / 2), 0x000080), 'a disabled light contributes nothing');
+  glCall(CALL_INDEX.glDisable, GL_LIGHTING);
+  litWall(-20, [1, 0, 0, 1], [0, 0, 1]);
+  px = back();
+  assert.strictEqual(rgb(VP / 2, VP / 2), 0xFF0000, 'with GL_LIGHTING off the vertex colour is used');
+
+  // --- far plane ------------------------------------------------------------
+  // The frustum's far plane is 100. A wall past it is clipped away whole
+  // (Warcraft III's sky dome drew white until this), one straddling it keeps
+  // its near part.
+  litWall(-20, [0, 0, 1, 1], [0, 0, 1]);
+  glCall(CALL_INDEX.glDisable, 0x0B71);             // no depth test: order decides
+  litWall(-150, [1, 1, 0, 1], [0, 0, 1]);
+  px = back();
+  assert.strictEqual(rgb(VP / 2, VP / 2), 0x0000FF, 'a wall beyond the far plane draws nothing');
+  const tilted = pts => {
+    pts.forEach(([x, y, z], i) => putVertex(i, x, y, z, 1, 1, 0, 1));
+    e.gl_sw_emit_triangles(verts, 3);
+  };
+  // A floor-like strip from eye z=-50 to z=-200 across the centre column.
+  tilted([[-10, -1, -50], [10, -1, -50], [10, -4, -200]]);
+  tilted([[-10, -1, -50], [10, -4, -200], [-10, -4, -200]]);
+  px = back();
+  const straddle = [...Array(VP).keys()].filter(y => rgb(VP / 2, y) === 0xFFFF00).length;
+  assert.ok(straddle > 0, 'the part of a straddling strip inside the far plane draws');
+
   console.log('PASS test-gl-software-raster');
 }
 
