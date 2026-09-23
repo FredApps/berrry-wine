@@ -285,3 +285,9 @@ pinned clock. Fragment/logical-operand/ESP/epilogue/interface/tier checks and
 duplicate ratchet pass; quiet inventory remains 243+22, duplicates 117/471.
 Build log: `/private/tmp/wa-viewport-validation-build.log`. No new browser,
 native-runtime or performance comparison was performed for this change.
+
+Follow-up: [Microsoft runtime viewport contract](../d3dim-viewport-native-contract.md)
+establishes that full state must be canonical Viewport2 with legacy conversion,
+not independent byte-for-byte retention of both layouts. It also identifies
+the initialized flag and attached-device checks still missing here. The
+size44 validation is corroborated by the original runtime's explicit checks.
