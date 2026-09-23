@@ -132,6 +132,7 @@
 (include "10e-gdi-metafile.wat")
 (include "10f-gdi-dc.wat")
 (include "10g-gdi-raster.wat")
+(include "10h-gdi-adapters.wat")
 (include "11-seh.wat")
 (include "12-wsprintf.wat")
 (include "13-exports.wat")

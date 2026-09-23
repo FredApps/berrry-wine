@@ -278,6 +278,7 @@ from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. 
 | `10e-gdi-metafile.wat` | GDI palettes, WMF/EMF recorder and player, bitmap objects |
 | `10f-gdi-dc.wat` | GDI device-context state: save/restore, selected objects, surface descriptors, text metrics, the `$host_gdi_*` entry points |
 | `10g-gdi-raster.wat` | GDI software rasterizer: span fill, clip bands, brush sampling, shape primitives, region combine |
+| `10h-gdi-adapters.wat` | Native GDI adapters moved out of the import header; retained import-era names are WAT functions, not JS calls |
 | `11-seh.wat` | Win32 Structured Exception Handling |
 | `12-wsprintf.wat` | wsprintf/sprintf implementation |
 | `13-exports.wat` | WASM exports (run, get_eip, register accessors, etc.) |

@@ -50,3 +50,29 @@ and relocation out of `01-header.wat`. This cleanup does not claim that the
 whole header split, GDI ownership migration, or `fable-review.md` is complete.
 No performance benchmark was run; removing unreachable wrappers is not proof
 of a gameplay speed improvement. Deleted code is recoverable from git history.
+
+## Live adapter relocation
+
+The remaining47 header definitions now live in `src/10h-gdi-adapters.wat`,
+included through the authoritative `src/main.watx` list. All47 bodies and their
+attached comments were compared with the pre-move text and match byte for byte.
+Names and call sites remain unchanged for a separately reviewable rename.
+`01-header.wat` retains all7 real GDI imports and no native `$host_gdi_*`
+function definitions. The source catalog in CLAUDE.md identifies the new part.
+
+The migration-status test now scans unsupported native stubs across all WAT
+fragments, rather than only the header. A new assertion prevents native GDI
+definitions returning to the import header. This keeps relocation from making
+the old stub inventory test vacuously pass. The dirty shared `10f-gdi-dc.wat`
+was not edited. Its existing native adapters remain in their owning subsystem.
+
+Live-symbol renaming is still outstanding; no claim that import-era naming has
+been fixed by moving the definitions. This relocation changes function indices
+but not API behavior, import signatures or region layout.
+
+Validation: full build passes (normal1,506,142/compat1,508,548 bytes, unchanged
+layout); migration-status compilation/import policy, core architecture,
+foreground caption and modal button regressions pass. Negative controls reject
+both a native GDI function restored in the header and an unsupported stub
+added outside it. Manifest/fragment110, duplicate117/467, tiers1499 and diff
+checks pass. Build log: `/private/tmp/wa-gdi-adapter-relocation-build.log`.
