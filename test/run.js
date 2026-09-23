@@ -10589,6 +10589,15 @@ if (VERBOSE) {
         ` dropped-at-eye-plane=${sw.gl_sw_clipped() >>> 0} culled=${sw.gl_sw_culled() >>> 0}` +
         ` presents=${sw.gl_sw_presents() >>> 0} tex-uploads=${sw.gl_sw_tex_uploads() >>> 0}` +
         ` tex-unsupported=${sw.gl_sw_tex_unsupported() >>> 0} target-slot=${sw.gl_sw_slot() | 0}` +
+        (() => {
+          // The target's size beside the drawable the host reported: a
+          // mismatch is a frame drawn into the wrong-sized buffer.
+          const e = sw.gl_sw_entry ? sw.gl_sw_entry() >>> 0 : 0;
+          const u16 = new Uint16Array(memory.buffer);
+          const t = e ? ` target=${u16[(e + 12) >>> 1]}x${u16[(e + 14) >>> 1]}` : '';
+          const d = sw.gl_sw_drawable ? sw.gl_sw_drawable() >>> 0 : 0;
+          return t + ` drawable=${d ? `${d >>> 16}x${d & 0xFFFF}` : 'unreported'}`;
+        })() +
         (sw.gl_sw_bitmap && sw.gl_sw_bitmap() ? ` bitmap=0x${(sw.gl_sw_bitmap() >>> 0).toString(16)}` : ''));
     }
   }

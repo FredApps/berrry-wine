@@ -81,6 +81,18 @@
   ;; host sets it from the window's client area; a bound DIB sets its own.
   (global $gl_sw_default_w (mut i32) (i32.const 640))
   (global $gl_sw_default_h (mut i32) (i32.const 480))
+  ;; Set once the host has reported the window's client size: from then on
+  ;; our own target is exactly that size, and follows it when the window
+  ;; resizes (the host reports again after every present).
+  (global $gl_sw_drawable_known (mut i32) (i32.const 0))
+  ;; glActiveTextureARB's unit, and the name bound on the units above 0. Only
+  ;; unit 0 is rasterized, so while another unit is active its TEXTURE_2D
+  ;; enable, its env mode and its binding must not land in unit 0's state --
+  ;; Warcraft III selects unit 1 and disables texturing there around nearly
+  ;; every draw, which read as "texturing off" and drew its whole menu white.
+  ;; Uploads still go to the texture that unit has bound: names are shared.
+  (global $gl_sw_active_unit (mut i32) (i32.const 0))
+  (global $gl_sw_other_bound (mut i32) (i32.const 0))
   (global $gl_sw_rt_obj (mut i32) (i32.const 0))
   (global $gl_sw_zbuf_obj (mut i32) (i32.const 0))
   ;; A 1x1 opaque white texture: an untextured triangle is drawn as this
@@ -316,10 +328,10 @@
       (i32.le_u (i32.sub (local.get $internal) (i32.const 0x804F)) (i32.const 5))))
 
   ;; Convert a w x h rectangle of client pixels at guest $pixels into the
-  ;; texture surface $entry at (x, y). Rows are $gl_sw unpack-aligned. The
-  ;; whole rectangle is gathered through $guest_span_in because a texture is
-  ;; routinely larger than one guest page and adjacent sparse pages need not
-  ;; be adjacent in WASM memory.
+  ;; texture surface $entry at (x, y). Rows are $gl_sw unpack-aligned. Each
+  ;; row is gathered through $guest_span_in because a texture is routinely
+  ;; larger than one guest page and adjacent sparse pages need not be
+  ;; adjacent in WASM memory.
   (func $gl_sw_tex_store (param $entry i32) (param $x i32) (param $y i32)
       (param $w i32) (param $h i32) (param $format i32) (param $pixels i32)
       (param $opaque i32)
@@ -338,10 +350,16 @@
     (local.set $th (load.field DxObject height (local.get $entry)))
     (local.set $pitch (load.field DxObject pitch (local.get $entry)))
     (local.set $dib (load.field DxObject misc1 (local.get $entry)))
-    (local.set $src (call $guest_span_in (local.get $pixels) (local.get $len)))
+    ;; One row at a time: a whole level need not be linear in wasm memory,
+    ;; and at 32KB+ it does not fit the span scratch that would gather it
+    ;; (Warcraft III's first 128x64 RGBA upload trapped there). A row of the
+    ;; largest texture we accept is at most 4096 texels.
     (local.set $row (i32.const 0))
     (block $rows_done (loop $rows
       (br_if $rows_done (i32.ge_s (local.get $row) (local.get $h)))
+      (local.set $src (call $guest_span_in
+        (i32.add (local.get $pixels) (i32.mul (local.get $row) (local.get $stride)))
+        (local.get $stride)))
       (local.set $col (i32.const 0))
       (block $cols_done (loop $cols
         (br_if $cols_done (i32.ge_s (local.get $col) (local.get $w)))
@@ -350,9 +368,7 @@
               (i32.lt_u (i32.add (local.get $y) (local.get $row)) (local.get $th)))
           (then
             (local.set $px (call $gl_sw_texel
-              (i32.add (local.get $src)
-                (i32.add (i32.mul (local.get $row) (local.get $stride))
-                         (i32.mul (local.get $col) (local.get $bpp))))
+              (i32.add (local.get $src) (i32.mul (local.get $col) (local.get $bpp)))
               (local.get $format)))
             (if (local.get $opaque)
               (then (local.set $px (i32.or (local.get $px) (i32.const 0xFF000000)))))
@@ -362,9 +378,9 @@
             (i32.store (local.get $dst) (local.get $px))))
         (local.set $col (i32.add (local.get $col) (i32.const 1)))
         (br $cols)))
+      (call $guest_span_release (local.get $src) (local.get $stride))
       (local.set $row (i32.add (local.get $row) (i32.const 1)))
-      (br $rows)))
-    (call $guest_span_release (local.get $src) (local.get $len)))
+      (br $rows))))
 
   (func $gl_sw_tex_release (param $slot i32)
     (local $obj i32)
@@ -570,28 +586,44 @@
         (if (i32.eqz (global.get $gl_sw_rt_obj)) (then (return (global.get $gl_sw_rt))))
         (local.set $cw (load.field DxObject width (global.get $gl_sw_rt)))
         (local.set $ch (load.field DxObject height (global.get $gl_sw_rt)))
-        ;; The target is sized from the viewport current at the first draw,
-        ;; and that need not be the window's: Half-Life draws its loading
-        ;; plaque under a 320x240 viewport before it sets the 640x480 one it
-        ;; plays in, which pinned the whole run at quarter size. Grow (never
-        ;; shrink -- a small viewport is as often a sub-view as a mode) and
-        ;; start the new buffers clean; the next present fills the front.
-        (if (i32.or (i32.or (i32.lt_s (local.get $w) (i32.const 1))
-                            (i32.gt_s (local.get $w) (i32.const 4096)))
-                    (i32.or (i32.lt_s (local.get $h) (i32.const 1))
-                            (i32.gt_s (local.get $h) (i32.const 4096))))
-          (then (return (global.get $gl_sw_rt))))
-        (if (i32.and (i32.le_s (local.get $w) (local.get $cw))
-                     (i32.le_s (local.get $h) (local.get $ch)))
-          (then (return (global.get $gl_sw_rt))))
-        (if (i32.lt_s (local.get $w) (local.get $cw)) (then (local.set $w (local.get $cw))))
-        (if (i32.lt_s (local.get $h) (local.get $ch)) (then (local.set $h (local.get $ch))))
+        (if (global.get $gl_sw_drawable_known)
+          (then
+            ;; The host told us the drawable: the target IS it, exactly as a
+            ;; WebGL canvas is the window's client area. A viewport bigger
+            ;; than it is clipped, not honoured -- Warcraft III sets 800x600
+            ;; once on a 640x480 client before settling on 640x480, and
+            ;; growing for it left the menu in one corner of a black frame.
+            (if (i32.and (i32.eq (global.get $gl_sw_default_w) (local.get $cw))
+                         (i32.eq (global.get $gl_sw_default_h) (local.get $ch)))
+              (then (return (global.get $gl_sw_rt))))
+            (local.set $w (global.get $gl_sw_default_w))
+            (local.set $h (global.get $gl_sw_default_h)))
+          (else
+            ;; No host (a unit test driving the exports): the target is sized
+            ;; from the viewport, and that need not be the final one --
+            ;; Half-Life draws its loading plaque under a 320x240 viewport
+            ;; before the 640x480 one it plays in. Grow, never shrink (a small
+            ;; viewport is as often a sub-view as a mode), start clean.
+            (if (i32.or (i32.or (i32.lt_s (local.get $w) (i32.const 1))
+                                (i32.gt_s (local.get $w) (i32.const 4096)))
+                        (i32.or (i32.lt_s (local.get $h) (i32.const 1))
+                                (i32.gt_s (local.get $h) (i32.const 4096))))
+              (then (return (global.get $gl_sw_rt))))
+            (if (i32.and (i32.le_s (local.get $w) (local.get $cw))
+                         (i32.le_s (local.get $h) (local.get $ch)))
+              (then (return (global.get $gl_sw_rt))))
+            (if (i32.lt_s (local.get $w) (local.get $cw)) (then (local.set $w (local.get $cw))))
+            (if (i32.lt_s (local.get $h) (local.get $ch)) (then (local.set $h (local.get $ch))))))
         (call $gl_sw_drop_surface (global.get $gl_sw_front_obj))
         (call $gl_sw_drop_surface (global.get $gl_sw_rt_obj))
         (global.set $gl_sw_front_obj (i32.const 0))
         (global.set $gl_sw_rt_obj (i32.const 0))
         (global.set $gl_sw_front (i32.const 0))
         (global.set $gl_sw_rt (i32.const 0))))
+    (if (global.get $gl_sw_drawable_known)
+      (then
+        (local.set $w (global.get $gl_sw_default_w))
+        (local.set $h (global.get $gl_sw_default_h))))
     ;; A context given no glViewport yet reports all zeroes; fall back to the
     ;; drawable's size, which is GL's own default viewport, and refuse the
     ;; absurd rather than allocate it.
@@ -808,6 +840,36 @@
     (local $s i32) (local $rt i32) (local $bit i32) (local $mask i32) (local $zv i32)
     (if (i32.eqz (global.get $gl_sw_enabled)) (then (return)))
     (local.set $s (global.get $GL_SW_STATE))
+    ;; 105 glActiveTextureARB(GL_TEXTURE0_ARB + unit)
+    (if (i32.eq (local.get $op) (i32.const 105))
+      (then (global.set $gl_sw_active_unit
+          (i32.sub (i32.load offset=4 (local.get $stack)) (i32.const 0x84C0)))
+        (return)))
+    (if (global.get $gl_sw_active_unit)
+      (then
+        ;; Another unit is active: its texture state is not unit 0's.
+        (if (i32.or (i32.eq (local.get $op) (i32.const 10)) (i32.eq (local.get $op) (i32.const 8)))
+          (then (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0DE1))
+              (then (return)))))
+        (if (i32.or (i32.eq (local.get $op) (i32.const 44)) (i32.eq (local.get $op) (i32.const 82)))
+          (then (return)))
+        (if (i32.eq (local.get $op) (i32.const 42))
+          (then
+            (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0DE1))
+              (then (global.set $gl_sw_other_bound (i32.load offset=8 (local.get $stack)))))
+            (return)))
+        ;; Texture uploads and parameters go to the name this unit has bound.
+        (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const 45)) (i32.eq (local.get $op) (i32.const 47)))
+                    (i32.or (i32.or (i32.eq (local.get $op) (i32.const 46)) (i32.eq (local.get $op) (i32.const 96)))
+                            (i32.eq (local.get $op) (i32.const 61))))
+          (then
+            (local.set $bit (i32.load offset=40 (local.get $s)))
+            (i32.store offset=40 (local.get $s) (global.get $gl_sw_other_bound))
+            (global.set $gl_sw_active_unit (i32.const 0))
+            (call $gl_sw_observe (local.get $op) (local.get $stack))
+            (global.set $gl_sw_active_unit (i32.const 1))
+            (i32.store offset=40 (local.get $s) (local.get $bit))
+            (return)))))
     ;; 10 glEnable / 8 glDisable
     (if (i32.or (i32.eq (local.get $op) (i32.const 10)) (i32.eq (local.get $op) (i32.const 8)))
       (then
@@ -1280,6 +1342,13 @@
     (global.get $gl_sw_front))
   (func $gl_sw_export_presents (export "gl_sw_presents") (result i32)
     (global.get $gl_sw_presents))
+  ;; The drawable size the host last reported, (w << 16) | h, or 0 when none
+  ;; has been: the target then sizes itself from the viewport instead.
+  (func $gl_sw_export_drawable (export "gl_sw_drawable") (result i32)
+    (if (result i32) (global.get $gl_sw_drawable_known)
+      (then (i32.or (i32.shl (global.get $gl_sw_default_w) (i32.const 16))
+                    (global.get $gl_sw_default_h)))
+      (else (i32.const 0))))
 
   ;; Push $vertices 56-byte GL vertices through the REAL packed-draw funnel.
   ;; A test that called $gl_sw_consume directly would exercise a private copy
@@ -1306,10 +1375,14 @@
     (if (i32.and (i32.and (i32.gt_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $w) (i32.const 4096)))
                  (i32.and (i32.gt_s (local.get $h) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 4096))))
       (then
+        (global.set $gl_sw_drawable_known (i32.const 1))
         (global.set $gl_sw_default_w (local.get $w))
         (global.set $gl_sw_default_h (local.get $h)))))
 
   (func $gl_sw_export_reset (export "gl_sw_reset")
+    (global.set $gl_sw_drawable_known (i32.const 0))
+    (global.set $gl_sw_active_unit (i32.const 0))
+    (global.set $gl_sw_other_bound (i32.const 0))
     (global.set $gl_sw_rt (i32.const 0))
     (global.set $gl_sw_front (i32.const 0))
     (global.set $gl_sw_flip_y (i32.const 1))
