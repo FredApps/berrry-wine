@@ -622,3 +622,21 @@ first try landed in the Game submenu. The recipe reads `cls.key_dest`
 disconnected, `key_game` already feeds `Key_Console`, so typing is enough; in
 a level, `` ` `` opens the console first. `test/test-web-quake2-room.js`
 covers both joins across three browsers.
+
+## 2026-09-22: `demo1` gameplay on the WAT software GL path
+
+`ref_gl` through `--gl-renderer=software` renders Outer Base — world,
+lightmaps (multi-pass: `GL_SGIS_multitexture` is reported absent), view
+weapon and HUD. Loading is the slow part: at `--batch-size=20000` the console
+still reads `loopback: client_connect` after 200s; at `--batch-size=100000` the
+level is up inside 300s.
+
+```
+node test/run.js --app=quake2_demo --no-build --gl-renderer=software \
+  --args='+set vid_ref gl +map demo1' --quiet-api --quiet-blocks \
+  --stuck-after=1000000 --batch-size=100000 --max-batches=99999999 \
+  --max-seconds=300 --no-close --gl-census --png=out.png
+```
+
+Census at exit: 4,710,009 triangles, 101,281 dropped at the eye plane,
+1,065,868 culled, 1,570 presents, 217 texture uploads, none refused.

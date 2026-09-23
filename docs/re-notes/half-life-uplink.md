@@ -1156,3 +1156,20 @@ batch budget calibrated on one is off by 5x on the other.
 Not yet known: whether the page sizes the canvas wrongly, or sizes it right and
 fails to scale into it. That is a `lib/browser-shell.js` / `host.js` question
 and needs a browser, not a CLI run.
+
+## 2026-09-22: gameplay on the WAT software GL path
+
+With the registry's default `EngineType = 2` (OpenGL) and the WAT rasterizer
+in place of WebGL, the corridor draws textured, lit and with the HUD — no
+display, no `caffeinate`, since nothing here touches GLFW:
+
+```
+node test/run.js --app=halflife_uplink --no-build --gl-renderer=software \
+  --tick-ms-per-batch=16 --quiet-api --quiet-blocks --stuck-after=1000000 \
+  --max-batches=99999999 --max-seconds=280 --no-close --gl-census \
+  --input='3200:mousedown:110:192,3230:mouseup:110:192,4500:mousedown:70:152,4530:mouseup:70:152' \
+  --png=out.png
+```
+
+319,586 batches in 280s; census: 2,054,590 triangles, 32,462 dropped at the
+eye plane, 57,496 culled, 755 presents, 471 texture uploads, none refused.
