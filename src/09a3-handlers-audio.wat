@@ -1030,7 +1030,7 @@
   ;; anything it read or dirtied past the recorded length extends the file.
   (func $mmio_mem_sync (param $slot i32) (param $info i32)
     (local $wa i32) (local $buf i32) (local $size i32) (local $pos i32) (local $end i32)
-    (local.set $wa (call $g2w (local.get $info)))
+    (local.set $wa (call $guest_span_in (local.get $info) (i32.const 72)))
     (local.set $buf (i32.load offset=4 (local.get $slot)))
     (local.set $size (i32.load offset=8 (local.get $slot)))
     (local.set $pos (i32.sub (i32.load offset=28 (local.get $wa)) (local.get $buf)))
@@ -1042,13 +1042,14 @@
         (then (local.set $end (local.get $pos))))))
     (if (i32.gt_u (local.get $end) (local.get $size)) (then (local.set $end (local.get $size))))
     (if (i32.gt_u (local.get $end) (i32.load offset=24 (local.get $slot)))
-      (then (i32.store offset=24 (local.get $slot) (local.get $end)))))
+      (then (i32.store offset=24 (local.get $slot) (local.get $end))))
+    (call $guest_span_release (local.get $wa) (i32.const 72)))
 
   ;; Fills lpmmioinfo for a memory file: the buffer is the file, lBufOffset is
   ;; always 0 and pchEndRead marks the end of the data written so far.
   (func $mmio_mem_fill_info (param $slot i32) (param $info i32) (param $h i32)
     (local $wa i32) (local $buf i32)
-    (local.set $wa (call $g2w (local.get $info)))
+    (local.set $wa (call $guest_span_in (local.get $info) (i32.const 72)))
     (local.set $buf (i32.load offset=4 (local.get $slot)))
     (call $zero_memory (local.get $wa) (i32.const 72))
     (i32.store (local.get $wa)
@@ -1063,16 +1064,25 @@
     (i32.store offset=36 (local.get $wa)
       (i32.add (local.get $buf) (i32.load offset=8 (local.get $slot))))           ;; pchEndWrite
     (i32.store offset=44 (local.get $wa) (i32.load offset=24 (local.get $slot)))  ;; lDiskOffset
-    (i32.store offset=68 (local.get $wa) (local.get $h)))                         ;; hmmio
+    (i32.store offset=68 (local.get $wa) (local.get $h))                          ;; hmmio
+    (call $guest_span_writeback (local.get $info) (local.get $wa) (i32.const 72)))
 
   ;; mmioOpen on a memory file: lpmmioinfo names FOURCC_MEM and supplies the
   ;; buffer (or, with a NULL pchBuffer, its size for us to allocate). Without
   ;; MMIO_CREATE the buffer's whole contents are the file. Returns the HMMIO,
   ;; or 0 with wErrorRet set.
   (func $mmio_open_mem (param $info i32) (param $flags i32) (param $name_ptr i32) (result i32)
-    (local $wa i32) (local $i i32) (local $h i32) (local $slot i32)
+    (local $wa i32) (local $result i32)
+    ;; One bounded translation, including every early wErrorRet return below.
+    (local.set $wa (call $guest_span_in (local.get $info) (i32.const 72)))
+    (local.set $result (call $mmio_open_mem_span
+      (local.get $wa) (local.get $flags) (local.get $name_ptr)))
+    (call $guest_span_writeback (local.get $info) (local.get $wa) (i32.const 72))
+    (local.get $result))
+
+  (func $mmio_open_mem_span (param $wa i32) (param $flags i32) (param $name_ptr i32) (result i32)
+    (local $i i32) (local $h i32) (local $slot i32)
     (local $buf i32) (local $size i32) (local $owned i32)
-    (local.set $wa (call $g2w (local.get $info)))
     (local.set $size (i32.load offset=20 (local.get $wa)))
     (local.set $buf (i32.load offset=24 (local.get $wa)))
     (if (i32.ne (i32.load offset=48 (local.get $wa)) (i32.const 0))
@@ -1119,9 +1129,11 @@
   (func $mmio_refill (param $h i32) (param $info i32) (result i32)
     (local $info_wa i32) (local $buf i32) (local $pos i32)
     (local $read_ga i32) (local $read_wa i32) (local $got i32)
-    (local.set $info_wa (call $g2w (local.get $info)))
+    (local.set $info_wa (call $guest_span_in (local.get $info) (i32.const 72)))
     (local.set $buf (i32.load (i32.add (local.get $info_wa) (i32.const 24))))
-    (if (i32.eqz (local.get $buf)) (then (return (i32.const 259))))  ;; MMIOERR_UNBUFFERED
+    (if (i32.eqz (local.get $buf)) (then
+      (call $guest_span_release (local.get $info_wa) (i32.const 72))
+      (return (i32.const 259))))  ;; MMIOERR_UNBUFFERED
     (local.set $pos (i32.add
       (i32.load (i32.add (local.get $info_wa) (i32.const 40)))       ;; lBufOffset
       (i32.sub (i32.load (i32.add (local.get $info_wa) (i32.const 28)))  ;; pchNext
@@ -1142,6 +1154,7 @@
     (i32.store (i32.add (local.get $info_wa) (i32.const 40)) (local.get $pos))          ;; lBufOffset
     (i32.store (i32.add (local.get $info_wa) (i32.const 44))
       (i32.add (local.get $pos) (local.get $got)))                                      ;; lDiskOffset
+    (call $guest_span_writeback (local.get $info) (local.get $info_wa) (i32.const 72))
     (i32.const 0))
 
   ;; mmioGetInfo(hmmio, lpmmioinfo, wFlags) — 3 args stdcall
@@ -1159,7 +1172,7 @@
     (if (i32.eqz (local.get $buf))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 7)) (return)))                ;; MMSYSERR_NOMEM
     (local.set $pos (call $host_fs_set_file_pointer (local.get $arg0) (i32.const 0) (i32.const 1)))
-    (local.set $info_wa (call $g2w (local.get $arg1)))
+    (local.set $info_wa (call $guest_span_in (local.get $arg1) (i32.const 72)))
     (call $zero_memory (local.get $info_wa) (i32.const 72))
     (i32.store (local.get $info_wa) (i32.const 0x00010000))           ;; dwFlags = MMIO_ALLOCBUF
     (i32.store (i32.add (local.get $info_wa) (i32.const 4)) (i32.const 0x454C4946))  ;; fccIOProc "FILE"
@@ -1174,6 +1187,7 @@
     (i32.store (i32.add (local.get $info_wa) (i32.const 40)) (local.get $pos))       ;; lBufOffset
     (i32.store (i32.add (local.get $info_wa) (i32.const 44)) (local.get $pos))       ;; lDiskOffset
     (i32.store (i32.add (local.get $info_wa) (i32.const 68)) (local.get $arg0))      ;; hmmio
+    (call $guest_span_writeback (local.get $arg1) (local.get $info_wa) (i32.const 72))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   ;; mmioAdvance(hmmio, lpmmioinfo, fuAdvance) — 3 args stdcall
@@ -1222,7 +1236,7 @@
         (call $mmio_mem_sync (call $mmio_mem_slot (local.get $arg0)) (local.get $arg1))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
         (return)))
-    (local.set $info_wa (call $g2w (local.get $arg1)))
+    (local.set $info_wa (call $guest_span_in (local.get $arg1) (i32.const 72)))
     (local.set $buf (i32.load (i32.add (local.get $info_wa) (i32.const 24))))
     (if (local.get $buf)
       (then
@@ -1232,6 +1246,7 @@
             (i32.sub (i32.load (i32.add (local.get $info_wa) (i32.const 28)))
                      (local.get $buf)))                               ;; + consumed
           (i32.const 0)))))
+    (call $guest_span_release (local.get $info_wa) (i32.const 72))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   ;; mmioSetBuffer(hmmio, pchBuffer, cchBuffer, fuBuffer) — 4 args stdcall.
