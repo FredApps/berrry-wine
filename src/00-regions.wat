@@ -659,12 +659,13 @@
   ;; Working space for one GL triangle on its way to the rasterizer: the
   ;; modelview-projection product, the vertex being transformed, three 32-byte
   ;; screen records, three 48-byte clip records and the up-to-four records
-  ;; near-plane clipping leaves. 704 bytes used of 1024.
+  ;; near-plane clipping leaves, then at +0x300 the default viewport a draw
+  ;; with no glViewport maps through. 784 bytes used of 1024.
   (region.declare $GL_SW_SCRATCH (size 0x00000400) (align 0x00001000)
     (owner "09a8g-gl-raster.wat:$gl_sw_consume"))
-  ;; The GL state the software rasterizer decides pixels by: a 48-byte block
-  ;; at +0, then sixteen 64-byte glPushAttrib frames at +64.
-  (region.declare $GL_SW_STATE (size 0x00000500) (align 0x00000100)
+  ;; The GL state the software rasterizer decides pixels by: a 64-byte block
+  ;; at +0, then sixteen 96-byte glPushAttrib frames at +64 (1600 bytes).
+  (region.declare $GL_SW_STATE (size 0x00000700) (align 0x00000100)
     (owner "09a8g-gl-raster.wat:$gl_sw_observe"))
   ;; GL matrix-mirror context records: an atomic claim counter at +0, then from
   ;; +0x40 a 16-byte list node plus the 10832-byte block (09a8f's header),

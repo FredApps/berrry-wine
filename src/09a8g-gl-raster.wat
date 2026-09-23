@@ -74,6 +74,13 @@
   ;; replaced by a rebind, is released rather than leaked. 0 for a surface
   ;; this file did not allocate (a bound DIB describes the guest's own bits).
   (global $gl_sw_front_obj (mut i32) (i32.const 0))
+  ;; The drawable's size, which GL makes the viewport when a context is first
+  ;; made current. An app may rely on that and never call glViewport -- ptct
+  ;; does -- so a draw with no viewport set maps through this instead of the
+  ;; mirror's all-zero one, which collapses every triangle to nothing. The
+  ;; host sets it from the window's client area; a bound DIB sets its own.
+  (global $gl_sw_default_w (mut i32) (i32.const 640))
+  (global $gl_sw_default_h (mut i32) (i32.const 480))
   (global $gl_sw_rt_obj (mut i32) (i32.const 0))
   (global $gl_sw_zbuf_obj (mut i32) (i32.const 0))
   ;; A 1x1 opaque white texture: an untextured triangle is drawn as this
@@ -92,15 +99,18 @@
   ;; glPushAttrib depth, 0..16. GL requires at least 16.
   (global $gl_sw_attrib_depth (mut i32) (i32.const 0))
 
-  ;; $GL_SW_STATE: the current state block (+0..+47), then the attrib stack
-  ;; at +64, sixteen 64-byte frames of { mask, copy of the block }.
-  ;;   +0  caps: 1 TEXTURE_2D, 2 BLEND, 4 ALPHA_TEST, 8 DEPTH_TEST, 16 CULL_FACE
+  ;; $GL_SW_STATE: the current state block (+0..+63), then the attrib stack
+  ;; at +64, sixteen 96-byte frames of { mask, copy of the block }.
+  ;;   +0  caps: 1 TEXTURE_2D, 2 BLEND, 4 ALPHA_TEST, 8 DEPTH_TEST, 16 CULL_FACE,
+  ;;       32 SCISSOR_TEST
   ;;   +4  source blend (D3DBLEND)        +8  destination blend (D3DBLEND)
   ;;   +12 alpha func (D3DCMP)            +16 alpha reference, 0..255
   ;;   +20 depth func (D3DCMP)            +24 depth mask, 0/1
   ;;   +28 cull face (GL enum)            +32 front face is CCW, 0/1
   ;;   +36 texture env (D3DTOP: 4 MODULATE, 2 SELECTARG1 = texture)
   ;;   +40 bound TEXTURE_2D name          +44 unpack alignment
+  ;;   +48 scissor box x, +52 y (GL, bottom-up), +56 w, +60 h; w < 0 means
+  ;;       never set, which GL defines as the whole drawable
   (func $gl_sw_state_defaults
     (local $s i32)
     (local.set $s (global.get $GL_SW_STATE))
@@ -116,6 +126,10 @@
     (i32.store offset=36 (local.get $s) (i32.const 4))      ;; GL_MODULATE
     (i32.store offset=40 (local.get $s) (i32.const 0))
     (i32.store offset=44 (local.get $s) (i32.const 4))
+    (i32.store offset=48 (local.get $s) (i32.const 0))
+    (i32.store offset=52 (local.get $s) (i32.const 0))
+    (i32.store offset=56 (local.get $s) (i32.const -1))
+    (i32.store offset=60 (local.get $s) (i32.const -1))
     (global.set $gl_sw_attrib_depth (i32.const 0)))
 
   (func $gl_sw_cap_bit (param $cap i32) (result i32)
@@ -124,6 +138,7 @@
     (if (i32.eq (local.get $cap) (i32.const 0x0BC0)) (then (return (i32.const 4))))
     (if (i32.eq (local.get $cap) (i32.const 0x0B71)) (then (return (i32.const 8))))
     (if (i32.eq (local.get $cap) (i32.const 0x0B44)) (then (return (i32.const 16))))
+    (if (i32.eq (local.get $cap) (i32.const 0x0C11)) (then (return (i32.const 32))))
     (i32.const 0))
 
   ;; GL comparison (0x200 NEVER .. 0x207 ALWAYS) to D3DCMP (1 .. 8).
@@ -148,9 +163,9 @@
     ;; dropped too, by the depth test in $gl_sw_pop_attrib.
     (if (i32.ge_u (global.get $gl_sw_attrib_depth) (i32.const 16)) (then (return)))
     (local.set $frame (i32.add (global.get $GL_SW_STATE)
-      (i32.add (i32.const 64) (i32.mul (global.get $gl_sw_attrib_depth) (i32.const 64)))))
+      (i32.add (i32.const 64) (i32.mul (global.get $gl_sw_attrib_depth) (i32.const 96)))))
     (i32.store (local.get $frame) (local.get $mask))
-    (call $memcpy (i32.add (local.get $frame) (i32.const 4)) (global.get $GL_SW_STATE) (i32.const 48))
+    (call $memcpy (i32.add (local.get $frame) (i32.const 4)) (global.get $GL_SW_STATE) (i32.const 64))
     (global.set $gl_sw_attrib_depth (i32.add (global.get $gl_sw_attrib_depth) (i32.const 1))))
 
   ;; Restore one caps bit from a saved frame.
@@ -166,13 +181,19 @@
     (if (i32.eqz (global.get $gl_sw_attrib_depth)) (then (return)))
     (global.set $gl_sw_attrib_depth (i32.sub (global.get $gl_sw_attrib_depth) (i32.const 1)))
     (local.set $frame (i32.add (global.get $GL_SW_STATE)
-      (i32.add (i32.const 64) (i32.mul (global.get $gl_sw_attrib_depth) (i32.const 64)))))
+      (i32.add (i32.const 64) (i32.mul (global.get $gl_sw_attrib_depth) (i32.const 96)))))
     (local.set $mask (i32.load (local.get $frame)))
     (local.set $saved (i32.add (local.get $frame) (i32.const 4)))
     (local.set $s (global.get $GL_SW_STATE))
     ;; GL_ENABLE_BIT: every enable this file tracks.
     (if (i32.and (local.get $mask) (i32.const 0x2000))
-      (then (call $gl_sw_restore_caps (local.get $saved) (i32.const 31))))
+      (then (call $gl_sw_restore_caps (local.get $saved) (i32.const 63))))
+    ;; GL_SCISSOR_BIT: the scissor enable and box.
+    (if (i32.and (local.get $mask) (i32.const 0x80000))
+      (then
+        (call $gl_sw_restore_caps (local.get $saved) (i32.const 32))
+        (call $memcpy (i32.add (local.get $s) (i32.const 48))
+          (i32.add (local.get $saved) (i32.const 48)) (i32.const 16))))
     ;; GL_COLOR_BUFFER_BIT: blend and alpha-test enables, functions, reference.
     (if (i32.and (local.get $mask) (i32.const 0x4000))
       (then
@@ -428,7 +449,8 @@
 
   ;; ---- small helpers ------------------------------------------------------
   ;; Scratch: +0 the MVP, +64 one object-space vec4, +128 three screen
-  ;; records, +256 three clip records, +512 up to four clipped ones.
+  ;; records, +256 three clip records, +512 up to four clipped ones, +0x300
+  ;; the default viewport $gl_sw_consume substitutes when none is set.
   ;; Clip record, 48 bytes: +0 x, +4 y, +8 z, +12 w, +16 u, +20 v, then
   ;; r, g, b, a at +24..+36 -- all f32, so clipping lerps ten floats alike.
   (func $gl_sw_clip_at (param $k i32) (result i32)
@@ -571,14 +593,14 @@
         (global.set $gl_sw_front (i32.const 0))
         (global.set $gl_sw_rt (i32.const 0))))
     ;; A context given no glViewport yet reports all zeroes; fall back to the
-    ;; 640x480 the rest of the DX path defaults to rather than a zero-sized
-    ;; surface, and refuse the absurd rather than allocate it.
+    ;; drawable's size, which is GL's own default viewport, and refuse the
+    ;; absurd rather than allocate it.
     (if (i32.or (i32.lt_s (local.get $w) (i32.const 1))
                 (i32.gt_s (local.get $w) (i32.const 4096)))
-      (then (local.set $w (i32.const 640))))
+      (then (local.set $w (global.get $gl_sw_default_w))))
     (if (i32.or (i32.lt_s (local.get $h) (i32.const 1))
                 (i32.gt_s (local.get $h) (i32.const 4096)))
-      (then (local.set $h (i32.const 480))))
+      (then (local.set $h (global.get $gl_sw_default_h))))
     ;; Front first: it is the primary a capture or the browser shows, and a
     ;; front without a back is still a picture, where the reverse is not.
     (local.set $obj (call $d3d9_create_surface
@@ -668,6 +690,8 @@
     (global.set $gl_sw_front_obj (i32.const 0))
     (global.set $gl_sw_rt_obj (i32.const 0))
     (global.set $gl_sw_rt (local.get $entry))
+    (global.set $gl_sw_default_w (local.get $w))
+    (global.set $gl_sw_default_h (local.get $h))
     (global.set $gl_sw_bitmap (local.get $hbmp))
     (global.set $gl_sw_front (i32.const 0))
     (global.set $gl_sw_flip_y (i32.ne
@@ -676,19 +700,112 @@
     (i32.const 1))
 
   (func $gl_sw_clear_depth
-    (local $z i32)
-    (local.set $z (global.get $gl_sw_zbuf))
+    (call $gl_sw_fill_depth (global.get $gl_sw_zbuf)))
+
+  ;; Depth 1.0 over a 16bpp depth surface or a view into one, row by row so a
+  ;; scissor view leaves the rest of each row alone.
+  (func $gl_sw_fill_depth (param $z i32)
+    (local $y i32) (local $h i32) (local $row i32) (local $pitch i32) (local $bytes i32)
     (if (i32.eqz (local.get $z)) (then (return)))
-    (memory.fill (load.field DxObject misc1 (local.get $z)) (i32.const 0xFF)
-      (i32.mul (load.field DxObject pitch (local.get $z))
-               (load.field DxObject height (local.get $z)))))
+    (local.set $h (load.field DxObject height (local.get $z)))
+    (local.set $pitch (load.field DxObject pitch (local.get $z)))
+    (local.set $bytes (i32.shl (load.field DxObject width (local.get $z)) (i32.const 1)))
+    (local.set $row (load.field DxObject misc1 (local.get $z)))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_s (local.get $y) (local.get $h)))
+      (memory.fill (local.get $row) (i32.const 0xFF) (local.get $bytes))
+      (local.set $row (i32.add (local.get $row) (local.get $pitch)))
+      (local.set $y (i32.add (local.get $y) (i32.const 1)))
+      (br $lp))))
+
+  ;; ---- scissor ------------------------------------------------------------
+  ;; GL_SCISSOR_TEST is honoured by drawing through a VIEW: a descriptor-only
+  ;; DxObject whose bits start at the box's top-left pixel, sized to the box,
+  ;; with the parent's pitch. The span walker already clips every span to its
+  ;; target's width and height, so a view scissors triangles and clears alike
+  ;; with no per-pixel test. The two views (colour, depth) own no memory, are
+  ;; never released, and are refilled on every use.
+  (global $gl_sw_sc_view (mut i32) (i32.const 0))
+  (global $gl_sw_sc_zview (mut i32) (i32.const 0))
+  ;; The box's origin in surface pixels, row 0 = the surface's first row.
+  (global $gl_sw_sc_x (mut i32) (i32.const 0))
+  (global $gl_sw_sc_y (mut i32) (i32.const 0))
+
+  (func $gl_sw_view_entry (result i32)
+    (local $obj i32)
+    (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (call $dx_from_this (local.get $obj)))
+
+  ;; Point $view at the $x,$y,$w,$h rectangle of surface $parent.
+  (func $gl_sw_view_fill (param $view i32) (param $parent i32)
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (store.field DxObject width (local.get $view) (local.get $w))
+    (store.field DxObject height (local.get $view) (local.get $h))
+    (store.field DxObject bpp (local.get $view) (load.field DxObject bpp (local.get $parent)))
+    (store.field DxObject pitch (local.get $view) (load.field DxObject pitch (local.get $parent)))
+    (store.field DxObject misc1 (local.get $view)
+      (i32.add (load.field DxObject misc1 (local.get $parent))
+        (i32.add (i32.mul (local.get $y) (load.field DxObject pitch (local.get $parent)))
+          (i32.mul (local.get $x)
+            (i32.shr_u (load.field DxObject bpp (local.get $parent)) (i32.const 3))))))
+    (store.field DxObject misc2 (local.get $view) (i32.const 0))
+    ;; Not offscreen, not primary: nothing that walks the DX table for a
+    ;; picture should ever mistake a view for one.
+    (store.field DxObject flags (local.get $view) (i32.const 0))
+    (call $dx_surf_fmt_set (local.get $view) (call $dx_surf_fmt_get (local.get $parent))))
+
+  ;; The colour view for the current scissor box, clamped to the target, with
+  ;; the depth view beside it when there is a depth surface; 0 when the box is
+  ;; empty, which draws nothing, exactly as GL does.
+  (func $gl_sw_scissor_view (result i32)
+    (local $s i32) (local $rt i32) (local $tw i32) (local $th i32)
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32) (local $x1 i32) (local $y1 i32)
+    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $rt (global.get $gl_sw_rt))
+    (if (i32.eqz (local.get $rt)) (then (return (i32.const 0))))
+    (local.set $tw (load.field DxObject width (local.get $rt)))
+    (local.set $th (load.field DxObject height (local.get $rt)))
+    (local.set $w (i32.load offset=56 (local.get $s)))
+    (local.set $h (i32.load offset=60 (local.get $s)))
+    (if (i32.lt_s (local.get $w) (i32.const 0)) (then (return (local.get $rt))))
+    (local.set $x (i32.load offset=48 (local.get $s)))
+    ;; GL's box is bottom-up; a flipped target's row 0 is the top.
+    (local.set $y (select
+      (i32.sub (local.get $th) (i32.add (i32.load offset=52 (local.get $s)) (local.get $h)))
+      (i32.load offset=52 (local.get $s))
+      (global.get $gl_sw_flip_y)))
+    (local.set $x1 (i32.add (local.get $x) (local.get $w)))
+    (local.set $y1 (i32.add (local.get $y) (local.get $h)))
+    (if (i32.lt_s (local.get $x) (i32.const 0)) (then (local.set $x (i32.const 0))))
+    (if (i32.lt_s (local.get $y) (i32.const 0)) (then (local.set $y (i32.const 0))))
+    (if (i32.gt_s (local.get $x1) (local.get $tw)) (then (local.set $x1 (local.get $tw))))
+    (if (i32.gt_s (local.get $y1) (local.get $th)) (then (local.set $y1 (local.get $th))))
+    (if (i32.or (i32.le_s (local.get $x1) (local.get $x)) (i32.le_s (local.get $y1) (local.get $y)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $gl_sw_sc_view))
+      (then (global.set $gl_sw_sc_view (call $gl_sw_view_entry))))
+    (if (i32.eqz (global.get $gl_sw_sc_view)) (then (return (local.get $rt))))
+    (call $gl_sw_view_fill (global.get $gl_sw_sc_view) (local.get $rt) (local.get $x) (local.get $y)
+      (i32.sub (local.get $x1) (local.get $x)) (i32.sub (local.get $y1) (local.get $y)))
+    (if (global.get $gl_sw_zbuf)
+      (then
+        (if (i32.eqz (global.get $gl_sw_sc_zview))
+          (then (global.set $gl_sw_sc_zview (call $gl_sw_view_entry))))
+        (if (global.get $gl_sw_sc_zview)
+          (then (call $gl_sw_view_fill (global.get $gl_sw_sc_zview) (global.get $gl_sw_zbuf)
+            (local.get $x) (local.get $y)
+            (i32.sub (local.get $x1) (local.get $x)) (i32.sub (local.get $y1) (local.get $y)))))))
+    (global.set $gl_sw_sc_x (local.get $x))
+    (global.set $gl_sw_sc_y (local.get $y))
+    (global.get $gl_sw_sc_view))
 
   ;; ---- the call stream ------------------------------------------------------
   ;; Every GL call on its way into the stream, seen beside $gl_mtx_observe.
   ;; Only calls that change what the software target holds are read. Argument
   ;; i of a call lives at $stack + 4 + 4*i; GLfloat arguments are f32 there.
   (func $gl_sw_observe (param $op i32) (param $stack i32)
-    (local $s i32) (local $rt i32) (local $bit i32) (local $mask i32)
+    (local $s i32) (local $rt i32) (local $bit i32) (local $mask i32) (local $zv i32)
     (if (i32.eqz (global.get $gl_sw_enabled)) (then (return)))
     (local.set $s (global.get $GL_SW_STATE))
     ;; 10 glEnable / 8 glDisable
@@ -846,19 +963,33 @@
                        (load.field DxObject height (global.get $gl_sw_rt))))
             (global.set $gl_sw_presents (i32.add (global.get $gl_sw_presents) (i32.const 1)))))
         (return)))
+    ;; 18 glScissor(x, y, w, h)
+    (if (i32.eq (local.get $op) (i32.const 18))
+      (then
+        (call $memcpy (i32.add (local.get $s) (i32.const 48))
+          (i32.add (local.get $stack) (i32.const 4)) (i32.const 16))
+        (return)))
     ;; 2 glClear(mask): COLOR_BUFFER_BIT 0x4000, DEPTH_BUFFER_BIT 0x100.
     (if (i32.eq (local.get $op) (i32.const 2))
       (then
         (local.set $mask (i32.load offset=4 (local.get $stack)))
         (local.set $rt (call $gl_sw_target))
         (if (i32.eqz (local.get $rt)) (then (return)))
+        ;; glClear is scissored too.
+        (local.set $zv (global.get $gl_sw_zbuf))
+        (if (i32.and (i32.load (local.get $s)) (i32.const 32))
+          (then
+            (local.set $rt (call $gl_sw_scissor_view))
+            (if (i32.eqz (local.get $rt)) (then (return)))
+            (if (i32.ne (local.get $rt) (global.get $gl_sw_rt))
+              (then (local.set $zv (global.get $gl_sw_sc_zview))))))
         (if (i32.and (local.get $mask) (i32.const 0x4000))
           (then (call $viewport_fill_rect (local.get $rt) (i32.const 0) (i32.const 0)
             (load.field DxObject width (local.get $rt))
             (load.field DxObject height (local.get $rt))
             (global.get $gl_sw_clear_color))))
         (if (i32.and (local.get $mask) (i32.const 0x100))
-          (then (call $gl_sw_clear_depth))))))
+          (then (call $gl_sw_fill_depth (local.get $zv)))))))
 
   ;; ---- triangles ----------------------------------------------------------
   ;; One triangle: three 56-byte GL vertices starting at $v0. Transformed to
@@ -959,7 +1090,7 @@
   (func $gl_sw_emit (param $vp i32) (param $c0 i32) (param $c1 i32) (param $c2 i32)
     (local $s i32) (local $caps i32) (local $area i32) (local $front i32) (local $cull i32)
     (local $slot i32) (local $tex i32) (local $flags i32) (local $alpha_test i32)
-    (local $zbuf i32) (local $s0 i32) (local $s1 i32) (local $s2 i32)
+    (local $zbuf i32) (local $s0 i32) (local $s1 i32) (local $s2 i32) (local $rt i32) (local $k i32)
     (if (i32.eqz (i32.and
           (i32.and (call $gl_sw_emit_vertex (local.get $c0) (local.get $vp) (i32.const 0))
                    (call $gl_sw_emit_vertex (local.get $c1) (local.get $vp) (i32.const 1)))
@@ -1014,9 +1145,28 @@
         (i32.shl (i32.load offset=16 (local.get $s)) (i32.const 8))))))
     (if (i32.and (local.get $caps) (i32.const 8))
       (then (local.set $zbuf (global.get $gl_sw_zbuf))))
+    (local.set $rt (global.get $gl_sw_rt))
+    ;; GL_SCISSOR_TEST: draw through the box's view, in the view's own
+    ;; coordinates.
+    (if (i32.and (local.get $caps) (i32.const 32))
+      (then
+        (local.set $rt (call $gl_sw_scissor_view))
+        (if (i32.eqz (local.get $rt)) (then (return)))
+        (if (i32.ne (local.get $rt) (global.get $gl_sw_rt))
+          (then
+            (if (local.get $zbuf) (then (local.set $zbuf (global.get $gl_sw_sc_zview))))
+            (local.set $k (i32.const 0))
+            (loop $shift
+              (local.set $s0 (call $gl_sw_screen_at (local.get $k)))
+              (i32.store (local.get $s0) (i32.sub (i32.load (local.get $s0)) (global.get $gl_sw_sc_x)))
+              (i32.store offset=4 (local.get $s0)
+                (i32.sub (i32.load offset=4 (local.get $s0)) (global.get $gl_sw_sc_y)))
+              (local.set $k (i32.add (local.get $k) (i32.const 1)))
+              (br_if $shift (i32.lt_u (local.get $k) (i32.const 3))))
+            (local.set $s0 (call $gl_sw_screen_at (i32.const 0)))))))
     (global.set $gl_sw_triangles (i32.add (global.get $gl_sw_triangles) (i32.const 1)))
     (call $rasterize_triangle_textured
-      (global.get $gl_sw_rt) (local.get $tex)
+      (local.get $rt) (local.get $tex)
       (i32.ne (i32.and (local.get $caps) (i32.const 2)) (i32.const 0))
       (i32.load offset=4 (local.get $s)) (i32.load offset=8 (local.get $s))
       ;; D3DTADDRESS: 1 WRAP, 3 CLAMP.
@@ -1071,6 +1221,15 @@
       (call $gl_mtx_stack_top (local.get $b) (i32.const 1))
       (call $gl_mtx_stack_top (local.get $b) (i32.const 0)))
     (local.set $vp (call $gl_mtx_export_viewport_ptr))
+    ;; No glViewport yet: GL's default is the whole drawable.
+    (if (i32.or (i32.le_s (i32.load offset=8 (local.get $vp)) (i32.const 0))
+                (i32.le_s (i32.load offset=12 (local.get $vp)) (i32.const 0)))
+      (then
+        (local.set $vp (region.addr $GL_SW_SCRATCH 0x300))
+        (i32.store (local.get $vp) (i32.const 0))
+        (i32.store offset=4 (local.get $vp) (i32.const 0))
+        (i32.store offset=8 (local.get $vp) (global.get $gl_sw_default_w))
+        (i32.store offset=12 (local.get $vp) (global.get $gl_sw_default_h))))
     (local.set $base (i32.add (local.get $start) (i32.const 32)))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
@@ -1140,6 +1299,15 @@
   ;; test can set state (glEnable, glTexImage2D...) through the real decoder.
   (func $gl_sw_export_observe (export "gl_sw_observe") (param $op i32) (param $stack i32)
     (call $gl_sw_observe (local.get $op) (local.get $stack)))
+
+  ;; The host's word on the window a context draws into: its client size.
+  (func $gl_sw_export_set_default_size (export "gl_sw_set_default_size")
+    (param $w i32) (param $h i32)
+    (if (i32.and (i32.and (i32.gt_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $w) (i32.const 4096)))
+                 (i32.and (i32.gt_s (local.get $h) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 4096))))
+      (then
+        (global.set $gl_sw_default_w (local.get $w))
+        (global.set $gl_sw_default_h (local.get $h)))))
 
   (func $gl_sw_export_reset (export "gl_sw_reset")
     (global.set $gl_sw_rt (i32.const 0))

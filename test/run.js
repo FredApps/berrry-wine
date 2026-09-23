@@ -309,6 +309,44 @@ const TRACE_COMPOSITE = hasFlag('trace-composite'); // --trace-composite: one li
 const TRACE_DX = hasFlag('trace-dx');   // --trace-dx: log DirectX COM methods with decoded rects/surface metadata
 const DX_SURFACES = hasFlag('dx-surfaces'); // --dx-surfaces: print the DX_OBJECTS surface manifest at exit
 const GL_CENSUS = hasFlag('gl-census'); // --gl-census: at exit, which GL entry points this run actually issued, and whether the WAT mirror stayed trusted
+// --trace-gl[=Name1,Name2]: one line per GL command as the backend receives it,
+// arguments as hex with a float reading beside any word that looks like one
+// (GL passes GLfloat and GLenum through the same stack slots), and for a
+// packed draw its vertex count and first vertex. Honours --trace-from/-to.
+const TRACE_GL_RAW = args.find(a => a === '--trace-gl' || a.startsWith('--trace-gl='));
+if (TRACE_GL_RAW) {
+  const GLCompatTrace = require('../lib/gl-compat');
+  const only = TRACE_GL_RAW.includes('=')
+    ? new Set(TRACE_GL_RAW.slice(TRACE_GL_RAW.indexOf('=') + 1).split(',').filter(Boolean)) : null;
+  const names = GLCompatTrace.OP_NAMES || GLCompatTrace.CALLS;
+  const word = (dv, off) => {
+    const u = dv.getUint32(off, true) >>> 0;
+    const f = dv.getFloat32(off, true);
+    const a = Math.abs(f);
+    const floaty = u > 0xFFFF && Number.isFinite(f) && a >= 1e-4 && a <= 1e6;
+    return floaty ? `0x${u.toString(16)}~${+f.toPrecision(5)}` : `0x${u.toString(16)}`;
+  };
+  GLCompatTrace.hooks.trace = (slot, opcode, aux, capture) => {
+    if (!traceWindowOpen()) return;
+    const name = names[slot] || `op${opcode}`;
+    if (only && !only.has(name)) return;
+    const parts = [];
+    if (capture && capture.buffer && capture.stackBytes >= 8) {
+      const dv = new DataView(capture.buffer, capture.stackOffset, capture.stackBytes);
+      for (let off = 4; off + 4 <= capture.stackBytes && parts.length < 10; off += 4) parts.push(word(dv, off));
+    }
+    let tail = '';
+    if (capture && capture.pointerOffset && capture.pointerLength) {
+      tail = ` ptr=${capture.pointerLength}B`;
+      if (capture.pointerLength % 56 === 0) {
+        const v = new Float32Array(capture.buffer, capture.pointerOffset, 14);
+        tail += ` verts=${capture.pointerLength / 56} v0=(${Array.from(v.slice(0, 3), x => +x.toPrecision(4))})`
+          + ` rgba=(${Array.from(v.slice(3, 7), x => +x.toPrecision(3))})`;
+      }
+    }
+    console.log(`[gl] ${traceGateBatch >= 0 ? `b${traceGateBatch} ` : ''}${name}(${parts.join(', ')}) aux=0x${(aux >>> 0).toString(16)}${tail}`);
+  };
+}
 const TRACE_DX_RAW = hasFlag('trace-dx-raw'); // --trace-dx-raw: on each Execute, walk+hexdump the full instruction stream
 const TRACE_FS = hasFlag('trace-fs');     // --trace-fs: log filesystem CreateFile hits/misses
 const TRACE_INI = hasFlag('trace-ini');   // --trace-ini: log GetPrivateProfileString resolutions
@@ -10564,8 +10602,16 @@ if (VERBOSE) {
     const ex = instance.exports;
     const glBitmapOnly = ex.gl_sw_enabled && ex.gl_sw_enabled() && ex.gl_sw_front
       && !ex.gl_sw_front() && ex.gl_sw_entry && ex.gl_sw_entry();
+    // A software GL front buffer IS the picture, black or not. Left to the
+    // content chooser, a black front loses to the 16bpp depth buffer, whose
+    // clear to 0xFFFF reads as "content" -- ptct's intro came out as a flat
+    // depth-buffer capture that way.
+    const glFrontSlot = (ex.gl_sw_enabled && ex.gl_sw_enabled() && ex.gl_sw_front
+      && ex.gl_sw_front()) ? (ex.gl_sw_slot() | 0) : null;
+    const glFront = glFrontSlot === null ? null
+      : (surfaces.find(s => s.slot === glFrontSlot) || null);
     const surface = (PNG_CANVAS || (glBitmapOnly && wantSlot === null)) ? null
-      : (wantSlot === null ? chooseDxPresentationSurface(surfaces, mem)
+      : (wantSlot === null ? (glFront || chooseDxPresentationSurface(surfaces, mem))
         : (surfaces.find(s => s.slot === wantSlot) || null));
     if (wantSlot !== null && !surface) {
       console.log(`[dx-slot] no live surface in slot ${wantSlot} — falling back to the screen canvas`);

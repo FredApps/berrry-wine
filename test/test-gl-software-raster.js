@@ -265,6 +265,31 @@ async function main() {
   assert.strictEqual(pick(VP / 2, VP / 2) & 0xFFFFFF, 0x0000FF, 'alpha 0.75 passes it');
   glCall(CALL_INDEX.glDisable, 0x0BC0);
 
+  // --- the scissor test ----------------------------------------------------
+  // GL scissors glClear as well as triangles. Fill everything red, then with
+  // a box on GL's bottom-left quadrant (surface rows VP/2.., since GL is
+  // bottom-up) clear blue, then draw a green quad over the whole view.
+  // Nothing outside the box may change. 0.999 stands for 1.0: glCall writes
+  // an integer argument as an integer.
+  const GL_SCISSOR_TEST = 0x0C11;
+  glCall(CALL_INDEX.glClearColor, 0.999, 0, 0, 0.999);
+  glCall(CALL_INDEX.glClear, 0x4000);
+  glCall(CALL_INDEX.glEnable, GL_SCISSOR_TEST);
+  glCall(CALL_INDEX.glScissor, 0, 0, VP / 2, VP / 2);
+  glCall(CALL_INDEX.glClearColor, 0, 0, 0.999, 0.999);
+  glCall(CALL_INDEX.glClear, 0x4000);
+  px = back();
+  const rgb = (x, y) => pick(x, y) & 0xFFFFFF;
+  assert.strictEqual(rgb(VP / 4, VP * 3 / 4), 0x0000FF, 'a scissored clear fills the box');
+  assert.strictEqual(rgb(VP / 4, VP / 4), 0xFF0000, 'and not the rows above it');
+  assert.strictEqual(rgb(VP * 3 / 4, VP * 3 / 4), 0xFF0000, 'nor the columns right of it');
+  quad(0, [0, 1, 0, 1]);
+  px = back();
+  assert.strictEqual(rgb(VP / 4, VP * 3 / 4), 0x00FF00, 'inside the box the quad is drawn');
+  assert.strictEqual(rgb(VP * 3 / 4, VP / 4), 0xFF0000, 'outside it, nothing is');
+  assert.strictEqual(rgb(VP * 3 / 4, VP * 3 / 4), 0xFF0000, 'the quad is cut at the box edge');
+  glCall(CALL_INDEX.glDisable, GL_SCISSOR_TEST);
+
   // --- behind the eye is dropped, not mirrored ---------------------------
   // A frustum with near=1 puts z=0 geometry at w=0, which has no screen
   // position at all.
