@@ -61,3 +61,7 @@ supported-interface matrix before implementing version negotiation. Do not
 substitute a successful SKIP or SDK vtable declarations for native results.
 Vertex-buffer accept-all QI remains open. Creation allocation rollback and
 buffer-payload ownership can be tested independently in the meantime.
+
+Follow-up: [creation allocation rollback](d3dim-vb-creation-oom-review.md)
+now has fault-injected runtime coverage and a transactional implementation.
+That result does not resolve the native QI matrix.

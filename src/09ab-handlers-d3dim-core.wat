@@ -1366,12 +1366,11 @@
     (local.get $dst_g))
 
   (func $d3dim_create_vb (param $lpDesc i32) (param $ppVB i32) (param $vtbl i32)
-    (local $obj i32) (local $entry i32) (local $desc_g i32) (local $data_g i32) (local $desc_wa i32)
+    (local $obj i32) (local $entry i32) (local $desc_g i32) (local $data_g i32)
     (local $desc_size i32) (local $fvf i32) (local $count i32) (local $size i32)
     (if (i32.eqz (local.get $ppVB)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004003)) (return)))
-    (local.set $obj (call $dx_create_com_obj (i32.const 22) (local.get $vtbl)))
-    (if (i32.eqz (local.get $obj)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005)) (return)))
-    (local.set $entry (call $dx_from_this (local.get $obj)))
+    (call $gs32 (local.get $ppVB) (i32.const 0))
+    ;; Stage owned allocations before consuming a permanent COM wrapper slot.
     (if (local.get $lpDesc) (then
       (local.set $desc_size (call $gl32 (local.get $lpDesc)))
       (if (i32.lt_u (local.get $desc_size) (i32.const 16)) (then (local.set $desc_size (i32.const 16))))
@@ -1379,18 +1378,27 @@
       (local.set $fvf (call $gl32 (i32.add (local.get $lpDesc) (i32.const 8))))
       (local.set $count (call $gl32 (i32.add (local.get $lpDesc) (i32.const 12))))
       (local.set $desc_g (call $heap_alloc (i32.const 32)))
-      (if (local.get $desc_g) (then
-        (local.set $desc_wa (call $g2w (local.get $desc_g))) (call $zero_memory (local.get $desc_wa) (i32.const 32))
-        (call $memcpy (local.get $desc_wa) (call $g2w (local.get $lpDesc)) (local.get $desc_size))
-        (i32.store (local.get $desc_wa) (local.get $desc_size))
-        (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $desc_g))))))
+      (if (i32.eqz (local.get $desc_g)) (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E)) (return)))
+      (call $guest_memset (local.get $desc_g) (i32.const 0) (i32.const 32))
+      (call $guest_memmove (local.get $desc_g) (local.get $lpDesc) (local.get $desc_size))
+      (call $gs32 (local.get $desc_g) (local.get $desc_size))))
     (local.set $size (i32.mul (call $d3dim_fvf_stride (local.get $fvf)) (local.get $count)))
     (if (i32.eqz (local.get $size)) (then (local.set $size (i32.const 4096))))
     (if (i32.gt_u (local.get $size) (i32.const 0x400000)) (then (local.set $size (i32.const 0x400000))))
     (local.set $data_g (call $heap_alloc (local.get $size)))
-    (if (local.get $data_g) (then
-      (call $zero_memory (call $g2w (local.get $data_g)) (local.get $size))
-      (store.field DxObject misc0 (local.get $entry) (local.get $data_g))))
+    (if (i32.eqz (local.get $data_g)) (then
+      (if (local.get $desc_g) (then (call $heap_free (local.get $desc_g))))
+      (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E)) (return)))
+    (local.set $obj (call $dx_create_com_obj (i32.const 22) (local.get $vtbl)))
+    (if (i32.eqz (local.get $obj)) (then
+      (call $heap_free (local.get $data_g))
+      (if (local.get $desc_g) (then (call $heap_free (local.get $desc_g))))
+      (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005)) (return)))
+    (call $guest_memset (local.get $data_g) (i32.const 0) (local.get $size))
+    (local.set $entry (call $dx_from_this (local.get $obj)))
+    (store.field DxObject misc0 (local.get $entry) (local.get $data_g))
+    (i32.store offset=16 (local.get $entry) (local.get $desc_g))
     (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $size))
     (store.field DxObject misc1 (local.get $entry) (local.get $fvf))
     (store.field DxObject misc2 (local.get $entry) (local.get $count))
