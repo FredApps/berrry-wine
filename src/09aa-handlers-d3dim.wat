@@ -372,10 +372,18 @@
     (local $eb_entry i32) (local $buf i32) (local $instr_off i32) (local $instr_len i32)
     (local $cursor i32) (local $end i32) (local $op i32) (local $sz i32) (local $cnt i32) (local $step i32)
     (local $branch i32) (local $handled i32) (local $record_index i32)
+    (local $saved_extent i32) (local $saved_extent_rt i32) (local $extent_header i32)
     (local $state i32) (local $vp_entry i32) (local $sw i32)
     (local $vp_x i32) (local $vp_y i32) (local $vp_w i32) (local $vp_h i32)
     ;; Execute buffers rasterize here, never on the render Worker.
     (call $d3dim_worker_fence)
+    (local.set $saved_extent (global.get $d3dim_exec_extent_guest))
+    (local.set $saved_extent_rt (global.get $d3dim_exec_extent_rt))
+    (global.set $d3dim_exec_extent_guest (i32.const 0))
+    (global.set $d3dim_exec_extent_rt (call $d3ddev_rt_entry (local.get $arg0)))
+    (local.set $extent_header (call $d3dim_execbuf_cache_header_guest (local.get $arg1)))
+    (if (local.get $extent_header) (then
+      (global.set $d3dim_exec_extent_guest (i32.add (local.get $extent_header) (i32.const 16)))))
     ;; DX1 selects the transform viewport per Execute call. It has no
     ;; Device2::SetCurrentViewport requirement, so legacy apps commonly only
     ;; AddViewport/SetViewport and pass that object here (Tunnel and Twist do).
@@ -508,7 +516,7 @@
             (local.set $record_index (i32.const 0))
             (block $statuses_done (loop $statuses
               (br_if $statuses_done (i32.ge_u (local.get $record_index) (local.get $cnt)))
-              (call $d3dim_exec_set_status (local.get $arg0) (local.get $arg1)
+              (call $d3dim_exec_set_status (local.get $arg1)
                 (i32.add (i32.add (local.get $cursor) (i32.const 4))
                   (i32.mul (local.get $record_index) (local.get $sz))))
               (local.set $record_index (i32.add (local.get $record_index) (i32.const 1)))
@@ -526,9 +534,14 @@
           (br_if $done (i32.eqz (local.get $step)))
           (local.set $cursor (i32.add (local.get $cursor) (local.get $step)))
           (br $lp)))))
+      ;; End collection before presentation can reenter the host.
+      (global.set $d3dim_exec_extent_guest (local.get $saved_extent))
+      (global.set $d3dim_exec_extent_rt (local.get $saved_extent_rt))
       ;; After Execute returns, apps expect the back buffer to be updated.
       ;; Present immediately if the RT is the primary (same rule as EndScene).
       (call $d3dim_end_scene (local.get $arg0))))
+    (global.set $d3dim_exec_extent_guest (local.get $saved_extent))
+    (global.set $d3dim_exec_extent_rt (local.get $saved_extent_rt))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 

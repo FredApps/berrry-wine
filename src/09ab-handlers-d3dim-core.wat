@@ -1140,44 +1140,45 @@
       (then (return (i32.const 0))))
     (local.get $cache_g))
 
-  ;; D3DOP_SETSTATUS updates the selected dsStatus fields.
-  ;; TODO: replace the legacy viewport-sized dirty extent below with actual
-  ;; extent accumulation during processing/drawing. This approximation is not
-  ;; the SETSTATUS contract and over-reports even empty/clipped buffers.
-  (func $d3dim_exec_set_status
-    (param $dev_this i32) (param $eb_this i32) (param $rec_guest i32)
-    (local $header i32) (local $status i32) (local $flags i32) (local $state i32) (local $sw i32)
-    (local $x i32) (local $y i32) (local $w i32) (local $h i32)
+  ;; SETSTATUS installs exactly the selected fields, including inverted seeds.
+  (func $d3dim_exec_set_status (param $eb_this i32) (param $rec_guest i32)
+    (local $header i32) (local $status i32) (local $flags i32)
     (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $eb_this)))
     (if (i32.eqz (local.get $header)) (then (return)))
     (local.set $status (i32.add (local.get $header) (i32.const 8)))
-    ;; D3DSTATUS.dwFlags selects fields independently. In particular, an
-    ;; extents-only reset must not replace the status consumed by branches.
     (local.set $flags (call $gl32 (local.get $rec_guest)))
     (call $gs32 (local.get $status) (local.get $flags))
     (if (i32.and (local.get $flags) (i32.const 1)) (then
       (call $gs32 (i32.add (local.get $status) (i32.const 4))
         (call $gl32 (i32.add (local.get $rec_guest) (i32.const 4))))))
-    ;; D3DSETSTATUS_EXTENTS = 2.
     (if (i32.and (local.get $flags) (i32.const 2)) (then
       (call $guest_memmove (i32.add (local.get $status) (i32.const 8))
-        (i32.add (local.get $rec_guest) (i32.const 8)) (i32.const 16))
-      (local.set $state (call $d3ddev_state (local.get $dev_this)))
-      (if (local.get $state) (then
-        (local.set $sw (call $g2w (local.get $state)))
-        (local.set $x (i32.load (i32.add (local.get $sw) (global.get $D3DIM_OFF_VP_RECT))))
-        (local.set $y (i32.load (i32.add (local.get $sw)
-          (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 4)))))
-        (local.set $w (i32.load (i32.add (local.get $sw)
-          (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 8)))))
-        (local.set $h (i32.load (i32.add (local.get $sw)
-          (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 12)))))
-        (call $gs32 (i32.add (local.get $status) (i32.const 8)) (local.get $x))
-        (call $gs32 (i32.add (local.get $status) (i32.const 12)) (local.get $y))
-        (call $gs32 (i32.add (local.get $status) (i32.const 16))
-          (i32.add (local.get $x) (local.get $w)))
-        (call $gs32 (i32.add (local.get $status) (i32.const 20))
-          (i32.add (local.get $y) (local.get $h))))))))
+        (i32.add (local.get $rec_guest) (i32.const 8)) (i32.const 16)))))
+
+  ;; Synchronous Execute saves/restores this per-instance (thread-local) scope.
+  ;; The rectangle itself has one owner: the ExecuteBuffer's guest status.
+  (global $d3dim_exec_extent_guest (mut i32) (i32.const 0))
+  (global $d3dim_exec_extent_rt (mut i32) (i32.const 0))
+  (func $d3dim_extent_add (param $rect i32)
+    (param $x1 i32) (param $y1 i32) (param $x2 i32) (param $y2 i32)
+    (if (i32.lt_s (local.get $x1) (call $gl32 (i32.add (local.get $rect) (i32.const 0)))) (then
+      (call $gs32 (i32.add (local.get $rect) (i32.const 0)) (local.get $x1))))
+    (if (i32.lt_s (local.get $y1) (call $gl32 (i32.add (local.get $rect) (i32.const 4)))) (then
+      (call $gs32 (i32.add (local.get $rect) (i32.const 4)) (local.get $y1))))
+    (if (i32.gt_s (local.get $x2) (call $gl32 (i32.add (local.get $rect) (i32.const 8)))) (then
+      (call $gs32 (i32.add (local.get $rect) (i32.const 8)) (local.get $x2))))
+    (if (i32.gt_s (local.get $y2) (call $gl32 (i32.add (local.get $rect) (i32.const 12)))) (then
+      (call $gs32 (i32.add (local.get $rect) (i32.const 12)) (local.get $y2))))
+  )
+  ;; Call only after raster clipping, for nonempty spans/rectangles. This bounds
+  ;; coverage, before per-fragment alpha/depth rejection, not a pixel diff.
+  (func $d3dim_exec_extent_draw (param $rt i32)
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (if (i32.eqz (global.get $d3dim_exec_extent_guest)) (then (return)))
+    (if (i32.ne (local.get $rt) (global.get $d3dim_exec_extent_rt)) (then (return)))
+    (call $d3dim_extent_add (global.get $d3dim_exec_extent_guest)
+      (local.get $x) (local.get $y)
+      (i32.add (local.get $x) (local.get $w)) (i32.add (local.get $y) (local.get $h))))
 
   (func $d3dim_execbuf_cache_clear (param $this i32)
     (local $entry i32) (local $slot i32) (local $tbl i32) (local $cache_g i32)
@@ -3351,6 +3352,8 @@
       (then (local.set $h (i32.sub (local.get $sh) (local.get $y)))))
     (if (i32.or (i32.le_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 0)))
       (then (return)))
+    (call $d3dim_exec_extent_draw (local.get $rt_entry)
+      (local.get $x) (local.get $y) (local.get $w) (local.get $h))
     ;; Convert color to 16-bit 5-6-5 if needed (assumes input is 0x00RRGGBB).
     (local.set $px16 (i32.or (i32.or
       (i32.shl (i32.and (i32.shr_u (local.get $color) (i32.const 19)) (i32.const 0x1F)) (i32.const 11))
@@ -3473,6 +3476,8 @@
       (then (local.set $h (i32.sub (local.get $sh) (local.get $y)))))
     (if (i32.or (i32.le_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 0)))
       (then (return)))
+    (call $d3dim_exec_extent_draw (local.get $rt_entry)
+      (local.get $x) (local.get $y) (local.get $w) (local.get $h))
     (if (i32.eq (local.get $bpp) (i32.const 8)) (then
       (call $viewport_fill_rect
         (local.get $rt_entry) (local.get $x) (local.get $y)
@@ -3586,6 +3591,8 @@
       (then (local.set $h (i32.sub (local.get $sh) (local.get $y)))))
     (if (i32.or (i32.le_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 0)))
       (then (return)))
+    (call $d3dim_exec_extent_draw (local.get $rt_entry)
+      (local.get $x) (local.get $y) (local.get $w) (local.get $h))
     (local.set $px16 (i32.or (i32.or
       (i32.shl (i32.and (i32.shr_u (local.get $color) (i32.const 19)) (i32.const 0x1F)) (i32.const 11))
       (i32.shl (i32.and (i32.shr_u (local.get $color) (i32.const 10)) (i32.const 0x3F)) (i32.const  5)))
@@ -4353,6 +4360,8 @@
     (if (i32.lt_s (local.get $xs) (i32.const 0)) (then (local.set $xs (i32.const 0))))
     (if (i32.ge_s (local.get $xe) (local.get $sw)) (then (local.set $xe (i32.sub (local.get $sw) (i32.const 1)))))
     (if (i32.lt_s (local.get $xe) (local.get $xs)) (then (return)))
+    (call $d3dim_exec_extent_draw (local.get $rt_entry) (local.get $xs) (local.get $y)
+      (i32.add (i32.sub (local.get $xe) (local.get $xs)) (i32.const 1)) (i32.const 1))
     (local.set $den (f32.convert_i32_s (i32.sub (local.get $x1) (local.get $x0))))
     (if (f32.eq (local.get $den) (f32.const 0.0)) (then (local.set $den (f32.const 1.0))))
     (local.set $invden (f32.div (f32.const 1.0) (local.get $den)))
@@ -6472,7 +6481,7 @@
   (func $d3dim_exec_process_vertices
     (param $dev_this i32) (param $eb_this i32) (param $buf_guest i32) (param $rec_guest i32) (param $wCount i32)
     (local $state_g i32) (local $vbase i32) (local $srcbase i32)
-    (local $header i32) (local $clip i32)
+    (local $header i32) (local $clip i32) (local $flags i32) (local $ex i32) (local $ey i32)
     (local $i i32) (local $mode i32) (local $wStart i32) (local $wDest i32) (local $cnt i32)
     (local $j i32) (local $src i32) (local $dst i32) (local $color i32) (local $spec i32)
     (local $tu i32) (local $tv i32) (local $src_stride i32) (local $dst_g i32)
@@ -6491,7 +6500,8 @@
     (local.set $i (i32.const 0))
     (block $done (loop $lp
       (br_if $done (i32.ge_u (local.get $i) (local.get $wCount)))
-      (local.set $mode   (i32.and (call $gl32 (local.get $rec_guest)) (i32.const 7)))
+      (local.set $flags (call $gl32 (local.get $rec_guest)))
+      (local.set $mode (i32.and (local.get $flags) (i32.const 7)))
       (local.set $wStart (call $gl16 (i32.add (local.get $rec_guest) (i32.const 4))))
       (local.set $wDest  (call $gl16 (i32.add (local.get $rec_guest) (i32.const 6))))
       (local.set $cnt    (call $gl32 (i32.add (local.get $rec_guest) (i32.const 8))))
@@ -6533,6 +6543,18 @@
             (i32.store (i32.add (local.get $dst) (i32.const 28)) (local.get $tv))
             (call $guest_span_writeback (local.get $dst_g) (local.get $dst) (i32.const 32))
             (call $guest_span_release (local.get $src) (i32.const 32))))
+        ;; UPDATEEXTENTS also applies to copied TL vertices. Use the same
+        ;; rounded screen coordinate convention as the software rasterizer.
+        (if (i32.and (i32.ne (local.get $header) (i32.const 0))
+              (i32.ne (i32.and (local.get $flags) (i32.const 8)) (i32.const 0))) (then
+          (local.set $dst_g (i32.add (local.get $vbase)
+            (i32.mul (i32.add (local.get $wDest) (local.get $j)) (i32.const 32))))
+          (local.set $ex (call $d3dim_coord_i (f32.reinterpret_i32 (call $gl32 (local.get $dst_g)))))
+          (local.set $ey (call $d3dim_coord_i (f32.reinterpret_i32
+            (call $gl32 (i32.add (local.get $dst_g) (i32.const 4))))))
+          (call $d3dim_extent_add (i32.add (local.get $header) (i32.const 16))
+            (local.get $ex) (local.get $ey)
+            (i32.add (local.get $ex) (i32.const 1)) (i32.add (local.get $ey) (i32.const 1)))))
         (local.set $j (i32.add (local.get $j) (i32.const 1)))
         (br $vlp)))
       (local.set $rec_guest (i32.add (local.get $rec_guest) (i32.const 16)))

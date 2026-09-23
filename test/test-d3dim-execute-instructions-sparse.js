@@ -11,6 +11,19 @@ const extraWat = String.raw`
    (i32.store offset=16 (call $dx_from_this (local.get $p)) (local.get $s))
    (local.get $p))
  (func (export "state") (param $p i32) (result i32) (call $d3ddev_state (local.get $p)))
+ (func (export "extent_scope") (result i32) (global.get $d3dim_exec_extent_guest))
+ (func (export "set_extent_scope") (param $rect i32) (param $dev i32)
+   (global.set $d3dim_exec_extent_guest (local.get $rect))
+   (global.set $d3dim_exec_extent_rt (call $d3ddev_rt_entry (local.get $dev))))
+ (func (export "outside_draw") (param $dev i32)
+   (call $viewport_fill_rect (call $d3ddev_rt_entry (local.get $dev))
+     (i32.const 25) (i32.const 25) (i32.const 2) (i32.const 2) (i32.const 0xffffff)))
+ (func (export "unit_viewport") (param $p i32)
+   (local $s i32)
+   (local.set $s (call $g2w (call $d3ddev_state (local.get $p))))
+   (f32.store (i32.add (local.get $s) (global.get $D3DIM_OFF_VP_SCALE)) (f32.const 1))
+   (f32.store offset=4 (i32.add (local.get $s) (global.get $D3DIM_OFF_VP_SCALE)) (f32.const 1))
+   (i64.store (i32.add (local.get $s) (global.get $D3DIM_OFF_VP_ORIGIN)) (i64.const 0)))
  (func (export "buffer") (param $p i32) (param $buf i32)
    (store.field DxObject misc0 (call $dx_from_this (local.get $p)) (local.get $buf)))
  (func (export "matrix") (param $n i32) (result i32)
@@ -204,8 +217,8 @@ const extraWat = String.raw`
     call('IDirect3DExecuteBuffer_GetExecuteData', 12, eb, out);
     assert.strictEqual(e.guest_read32(out + 28), flags & 1 ? 0 : 0x55, 'selected status');
     assert.strictEqual(e.guest_read32(state + 288), flags & 1 ? 123 : 0, 'selected status drives branch');
-    if (!(flags & 2)) [11, 22, 33, 44].forEach((v, i) =>
-      assert.strictEqual(e.guest_read32(out + 32 + i * 4), v, 'unselected extents unchanged'));
+    (flags & 2 ? [101, 102, 103, 104] : [11, 22, 33, 44]).forEach((v, i) =>
+      assert.strictEqual(e.guest_read32(out + 32 + i * 4), v, 'selected extent payload'));
     statusFlagCases++;
   }
   console.log(`PASS SETSTATUS field selection: ${statusFlagCases} public branch cases`);
@@ -231,7 +244,7 @@ const extraWat = String.raw`
           .forEach((v, j) => e.guest_write32(buf + i * 32 + j * 4, v));
       });
       primitive.forEach((v, i) => e.guest_write32(buf + offset + i * 4, v));
-      [48, 0, 3, offset, primitive.length * 4, 0, 0, 0, 0, 0, 0, 0]
+      [48, 0, 3, offset, primitive.length * 4, 0, 3, 0, 2048, 2048, 0, 0]
         .forEach((v, i) => e.guest_write32(data + i * 4, v));
       call('IDirect3DExecuteBuffer_SetExecuteData', 12, eb, data);
       e.guest_write32(state + 288, fill);
@@ -240,6 +253,14 @@ const extraWat = String.raw`
       pixels.fill(0);
       call('IDirect3DDevice_Execute', 20, dev, eb);
       assert.deepStrictEqual(Array.from({ length: 96 }, (_, i) => e.guest_read8(buf + i)), before, 'vertices unchanged');
+      call('IDirect3DExecuteBuffer_GetExecuteData', 12, eb, out);
+      const bounds = [2048, 2048, 0, 0];
+      for (let y = 0; y < 32; y++) for (let x = 0; x < 32; x++) if (pixels[y * 64 + x * 2] || pixels[y * 64 + x * 2 + 1]) {
+        bounds[0] = Math.min(bounds[0], x); bounds[1] = Math.min(bounds[1], y);
+        bounds[2] = Math.max(bounds[2], x + 1); bounds[3] = Math.max(bounds[3], y + 1);
+      }
+      assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => e.guest_read32(out + 32 + i * 4)), bounds,
+        `opaque raster extent code=${code} fill=${fill} visible=${visible}`);
       assert.strictEqual(e.guest_span_cursor_bytes(), cursor, 'primitive spans released');
       assert.strictEqual(e.guest_span_overflow_count(), overflow);
       return Buffer.from(pixels);
@@ -315,6 +336,54 @@ const extraWat = String.raw`
     }
   }
   console.log(`PASS Execute clip status: ${clipCases} public stream/status/branch cases`);
+  const outerRect = e.guest_alloc(16);
+  let extentCases = 0;
+  for (const buf of [regular, base + 4090, base + 4030]) for (const mode of [0, 1, 2])
+    for (const update of [0, 8]) for (const count of [0, 2]) {
+      e.buffer(eb, buf);
+      const matrices = new Float32Array(memory.buffer, e.guest_to_wasm(state), 48);
+      matrices.fill(0);
+      for (let m = 0; m < 3; m++) for (let axis = 0; axis < 4; axis++) matrices[m * 16 + axis * 5] = 1;
+      e.unit_viewport(dev);
+      const program = [9 | (16 << 8) | (1 << 16), mode | update, 4 << 16, count, 0, 11, 0];
+      program.forEach((v, i) => e.guest_write32(buf + 512 + i * 4, v));
+      [48, 0, count, 512, program.length * 4, 0, 3, 0x01fff000, 2048, 2048, 0, 0]
+        .forEach((v, i) => e.guest_write32(data + i * 4, v));
+      call('IDirect3DExecuteBuffer_SetExecuteData', 12, eb, data);
+      const expected = [2048, 2048, 0, 0];
+      for (const vertices of [[[2, 3], [5, 7]], [[-4, -8], [1, 2]]]) {
+        vertices.forEach(([x, y], i) => [bits(x), bits(mode === 2 ? y : -y), bits(0.5), bits(1), 0xffffffff, 0, 0, 0]
+          .forEach((v, j) => e.guest_write32(buf + i * 32 + j * 4, v)));
+        call('IDirect3DExecuteBuffer_Unlock', 8, eb);
+        call('IDirect3DDevice_Execute', 20, dev, eb);
+        assert.strictEqual(e.extent_scope(), 0, 'Execute scope restored');
+        if (update && count) for (const [x, y] of vertices) {
+          expected[0] = Math.min(expected[0], x); expected[1] = Math.min(expected[1], y);
+          expected[2] = Math.max(expected[2], x + 1); expected[3] = Math.max(expected[3], y + 1);
+        }
+        call('IDirect3DExecuteBuffer_GetExecuteData', 12, eb, out);
+        assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => e.guest_read32(out + 32 + i * 4) | 0), expected,
+          `rolling transform extent mode=${mode} update=${update} count=${count}`);
+        extentCases++;
+      }
+      // A reset installs its rectangle even on a real device, after prior work.
+      const reset = [14 | (24 << 8) | (1 << 16), 2, 0xdeadbeef, 19, 20, 21, 22, 11, 0];
+      reset.forEach((v, i) => e.guest_write32(buf + 512 + i * 4, v));
+      e.guest_write32(out + 16, reset.length * 4);
+      call('IDirect3DExecuteBuffer_SetExecuteData', 12, eb, out);
+      [100, 100, 101, 101].forEach((v, i) => e.guest_write32(outerRect + i * 4, v));
+      e.set_extent_scope(outerRect, dev);
+      call('IDirect3DDevice_Execute', 20, dev, eb);
+      assert.strictEqual(e.extent_scope(), outerRect, 'enclosing scope restored');
+      assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => e.guest_read32(outerRect + i * 4)), [100, 100, 101, 101]);
+      call('IDirect3DExecuteBuffer_GetExecuteData', 12, eb, out);
+      assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => e.guest_read32(out + 32 + i * 4)), [19, 20, 21, 22]);
+      e.set_extent_scope(0, dev);
+      e.outside_draw(dev);
+      call('IDirect3DExecuteBuffer_GetExecuteData', 12, eb, out);
+      assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => e.guest_read32(out + 32 + i * 4)), [19, 20, 21, 22], 'later draw cannot alter retired Execute scope');
+    }
+  console.log(`PASS Execute transform extents: ${extentCases} flag/mode/count/sparse/rolling cases + ${extentCases / 2} reset/scope-lifetime cases`);
   for (let page = 0; page < 7; page++) for (let i = 0; i < 4096; i++)
     assert.strictEqual(e.guest_read8(base + 0x10000 + page * 4096 + i), 0xa7, 'neighbor backing');
   e.buffer(eb, ownedBuffer); // Borrowed test mappings are not heap owners.

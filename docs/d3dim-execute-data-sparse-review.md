@@ -482,3 +482,76 @@ cannot currently supply a DirectDraw rendering oracle (see
 [native probe limitation](d3dim-vertex-buffer-native-probe.md)); that is not a
 reason to label these policies verified. No production fix or Win98-conformance
 claim is made by this documentation recovery.
+
+## Execute extent accumulation (2026-09-22)
+
+The viewport substitution is now removed. SETSTATUS copies its selected
+rectangle verbatim, including inverted seeds, without consulting device state.
+The helper no longer needs a device argument; the synthetic state-less device
+workaround described above is consequently removed from its test fixture.
+
+Two producers expand the existing per-buffer status rectangle:
+
+- PROCESSVERTICES with UPDATEEXTENTS adds processed screen coordinates, even
+  without drawing. The implementation includes COPY and uses the software
+  renderer's rounded coordinates with exclusive upper bounds.
+- Execute's raster path adds nonempty, clipped rectangles/spans from flat,
+  alpha, depth and textured drawing. Collection is restricted to that Execute's
+  render target. Two per-instance globals identify the active scope; the actual
+  rectangle remains in the existing guest-owned cache header. Execute saves and
+  restores the scope, restoring it before presentation. No new allocation or
+  second persistent extent table is introduced.
+
+The rectangle persists across executions and Unlock refreshes. SETSTATUS can
+reset it after prior work. Public SetExecuteData still explicitly installs its
+supplied status as before; this change does not establish native lifetime rules
+across devices or concurrent use of one ExecuteBuffer.
+
+Regression evidence:
+
+- RED before the fix: an opaque point draw retained `[2048,2048,0,0]` instead
+  of its rendered bounds `[2,2,22,4]`.
+- Existing 65 instruction-record and 2470 vertex-layout pixel comparisons now
+  also compare returned extents against the nonzero opaque pixel bounding box.
+  These cover points, lines and three triangle fill modes, including reciprocal-W
+  visibility masks, with sparse instruction and vertex storage.
+- 72 no-draw transform cases cover three vertex modes, flag on/off, empty and
+  two-vertex ranges, direct/sparse storage and accumulation over two executions.
+  Another 36 cases check explicit reset, restoration of a synthetic enclosing
+  collector, and isolation from drawing after Execute returns. This is not a
+  real nested host-callback test.
+- 384 data field-selection cases, 16 public SETSTATUS branch cases, 324 clip
+  cases and the complete prior Execute instruction/branch suite pass.
+- Full build passes: normal WASM 1,504,413 bytes, compatibility 1,506,819 bytes,
+  unchanged layout hash `4f4410e063257228`. Silent inventory remains 243+22.
+- Viewer CLI mesh-selection/Change Color and browser Open/Renderer menu tests
+  pass; browser covers both cooperative and threaded scheduling.
+- Globe Render-menu passes twice with all 11 items and point/wire/solid counts
+  224 / 3642 / 13535. These differ from the prior viewport-substitution counts;
+  the test checks menu behavior and fill-mode separation, not image equality.
+  A 150-batch capture still shows the sphere and the known texture-band defect.
+
+An isolated control compiled the same current source closure with only 09aa
+and 09ab restored to pre-change HEAD. Running the same main-tree test with
+`WINE_ASSEMBLY_WASM=/private/tmp/wa-extent-control.wasm` reproduces the old
+222 / 2982 / 31713 counts. Both arms render a sphere in 150-batch captures,
+but at different apparent sizes/orientations. The original SDK `globe.c`
+advances its camera animation by 0.08 per move callback, independently of the
+callback delta. Different extent-driven guest work can therefore change the
+scene reached at a fixed block budget; this is a plausible explanation, not
+proof that the entire image difference is harmless. A frame-aligned comparison
+remains open. Control artifacts and captures are under `/private/tmp/wa-extent-*`
+and `/private/tmp/wa-globe-extent*`; main's artifact was not replaced.
+
+The full-build result above predates the concurrent `3c7b023e` MMIO region
+addition. It certifies this change against the then-current shared tree, not
+that later region-map/artifact pairs remain synchronized.
+
+Limits: these are coverage bounds before per-fragment depth, alpha-test and
+color-key rejection, so they can over-report pixels actually written. Native
+rounding, COPY+UPDATEEXTENTS and rejection details are not verified by the SDK
+text or the available 4bpp v86 profile. Dedicated multi-buffer, XY-offscreen,
+culling and textured/depth/alpha extent-oracle tests remain useful follow-ups.
+Uvis source is available but its executable is absent from the local corpus;
+its ForceUpdate interaction is not runtime-verified. No performance claim is
+made on this loaded shared machine.

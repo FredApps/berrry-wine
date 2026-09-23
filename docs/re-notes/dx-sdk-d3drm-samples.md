@@ -113,3 +113,26 @@ PROCESSVERTICES record omitting UPDATEEXTENTS. This is a useful small source
 reference for replacing our viewport-sized extent approximation. The geometry
 and update rectangle paths both need testing; getting nonblank pixels alone
 does not verify this interaction.
+
+## Execute extents replace viewport substitution (2026-09-22)
+
+SETSTATUS now installs its actual rectangle; flagged PROCESSVERTICES and
+clipped raster coverage expand it across executions. See the
+[Execute review](../d3dim-execute-data-sparse-review.md#execute-extent-accumulation-2026-09-22)
+for regression coverage and explicit native-rounding/rejection limitations.
+
+After rebuilding, Globe's Render-menu test passes twice (all 11 items), with
+point/wire/solid counts 224 / 3642 / 13535. Those are changed, not pixel-identical
+to the old viewport approximation. A 150-batch capture still shows the sphere
+with the previously observed texture-band defect. Viewer passes mesh selection
+and Change Color on CLI, and Open/Renderer-menu browser coverage in cooperative
+and threaded modes. None of these assertions is a native rendering oracle.
+
+An isolated old-code control reproduces 222 / 2982 / 31713. SDK `globe.c` moves
+the camera on each callback, so fixed block-budget screenshots need not show
+the same scene after extent-driven work changes. That is an explanation to
+test with frame-aligned captures, not an established pixel-equivalence result.
+
+Uvis is present as original SDK source, but neither local SDK binary directory
+contains `uvis.exe`; its ForceUpdate route remains to be built or sourced and
+tested. Do not treat source inspection as an end-to-end Uvis pass.
