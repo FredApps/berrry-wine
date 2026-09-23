@@ -1611,9 +1611,9 @@
       ;; D3DEXECUTEDATA.dsStatus @+24 is driver-owned after Execute. Keep it
       ;; alongside the cached source bytes so every execute buffer has its own
       ;; status without widening the shared 32-byte DX_OBJECTS entry.
-      (local.set $header (call $d3dim_execbuf_cache_header (local.get $arg0)))
+      (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $arg0)))
       (if (local.get $header) (then
-        (call $guest_memmove (i32.add (call $w2g (local.get $header)) (i32.const 8))
+        (call $guest_memmove (i32.add (local.get $header) (i32.const 8))
           (i32.add (local.get $arg1) (i32.const 24))
           (i32.const 24))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -1634,10 +1634,10 @@
         (load.field DxObject misc2 (local.get $entry)))
       (call $gs32 (i32.add (local.get $arg1) (i32.const 16))
         (load.field DxObject flags (local.get $entry)))
-      (local.set $header (call $d3dim_execbuf_cache_header (local.get $arg0)))
+      (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $arg0)))
       (if (local.get $header) (then
         (call $guest_memmove (i32.add (local.get $arg1) (i32.const 24))
-          (i32.add (call $w2g (local.get $header)) (i32.const 8))
+          (i32.add (local.get $header) (i32.const 8))
           (i32.const 24))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))

@@ -46,7 +46,7 @@ The audit found these additional dependencies:
 - Execute and Pick walk instruction records with WASM-pointer arithmetic,
   then hand those addresses to opcode handlers. Repairing the backing copy
   alone cannot repair those consumers.
-- Cache status helpers also return/consume raw header pointers. A complete
+- Cache status helpers now use guest headers (follow-up below). The remaining
   migration must keep persistent addresses guest-relative and acquire bounded
   spans at consumers requiring contiguous records, with explicit release and
   writeback. Span allocation/failure limits must be verified before using a
@@ -85,6 +85,35 @@ ExecuteData layouts, eight lifetime cases and scoped static gates. Quiet and
 duplicate counts remain unchanged.
 
 This consolidates the writer/owner, not the entire execution engine. The
-source-base API and cache-header/status readers still need guest-relative
-contracts. Tests currently force sparse source storage, not sparse allocated
-cache storage or complete vertex/instruction execution.
+source-base API still needs a guest-relative contract. Cache-header/status
+readers are migrated in the follow-up below. The owner test forces sparse
+source storage, not sparse allocator-returned cache storage or complete
+vertex/instruction execution.
+
+## Guest-address header/status contract
+
+The expanded ExecuteData regression relocated a real cache into borrowed
+nonaffine test pages, retaining the original owned allocation for cleanup.
+It reproduced lost status when the first identity DWORD crossed a page:
+cache_header rejected a valid cache after reading unrelated backing bytes.
+
+The helper is now explicitly named d3dim_execbuf_cache_header_guest, reads
+both identity fields with guest accessors and returns the persistent guest
+address. All three consumers use that contract: public Set/GetExecuteData
+no longer reverse-translate a WASM header, and the opcode status writer uses
+guest stores for its six status DWORDs and its extent updates. The opcode
+record itself retains its existing WASM-address input contract; this does not
+repair the instruction decoder's separate sparse-read assumptions.
+
+The regression expands to 32 layouts: absent, original, header-crossing and
+status-crossing caches, crossed caller dwSize/status fields, and independent
+input/output placement. Each cached case also invokes the opcode status writer
+with a contiguous status record and verifies readback. All three interleaved
+backing pages and caller canaries are checked. Borrowed caches are detached
+and their original heap-owned pointers restored before public Release.
+The opcode record requests status only; native extent semantics and the
+device-state-dependent extent calculation are not certified by this fixture.
+
+All 32 ExecuteData layouts, 32 cache snapshots/replacements with eight forced
+allocation failures/retries, eight lifetime cycles and scoped static gates
+pass. Quiet remains 243 manual + 22 metadata and duplicates 117 / 471.

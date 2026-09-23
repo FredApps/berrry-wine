@@ -1120,10 +1120,10 @@
     ;; Legacy consumer still expects a WASM pointer; its sparse walk is separate.
     (call $g2w (i32.add (local.get $cache_g) (global.get $D3DIM_EB_CACHE_HEADER))))
 
-  ;; Return the cache header for one execute-buffer COM object. Unlock creates
+  ;; Return the guest cache header for one execute-buffer COM object. Unlock creates
   ;; this before SetExecuteData, which is the order used by the DX1 runtime.
-  (func $d3dim_execbuf_cache_header (param $this i32) (result i32)
-    (local $entry i32) (local $slot i32) (local $cache_g i32) (local $cache_wa i32)
+  (func $d3dim_execbuf_cache_header_guest (param $this i32) (result i32)
+    (local $entry i32) (local $slot i32) (local $cache_g i32)
     (if (i32.eqz (local.get $this)) (then (return (i32.const 0))))
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.eqz (local.get $entry)) (then (return (i32.const 0))))
@@ -1133,14 +1133,13 @@
     (local.set $cache_g (i32.load (i32.add (global.get $D3DIM_EB_CACHE_PTRS)
       (i32.mul (local.get $slot) (i32.const 4)))))
     (if (i32.eqz (local.get $cache_g)) (then (return (i32.const 0))))
-    (local.set $cache_wa (call $g2w (local.get $cache_g)))
     (if (i32.or
-          (i32.ne (i32.load (local.get $cache_wa))
+          (i32.ne (call $gl32 (local.get $cache_g))
             (load.field DxObject misc0 (local.get $entry)))
-          (i32.ne (i32.load (i32.add (local.get $cache_wa) (i32.const 4)))
+          (i32.ne (call $gl32 (i32.add (local.get $cache_g) (i32.const 4)))
             (i32.load (i32.add (local.get $entry) (i32.const 12)))))
       (then (return (i32.const 0))))
-    (local.get $cache_wa))
+    (local.get $cache_g))
 
   ;; D3DOP_SETSTATUS seeds dsStatus, then the driver replaces its sentinel
   ;; extent with the pixels affected by the execute buffer. The software
@@ -1149,13 +1148,18 @@
   (func $d3dim_exec_set_status
     (param $dev_this i32) (param $eb_this i32) (param $rec_wa i32)
     (local $header i32) (local $status i32) (local $state i32) (local $sw i32)
-    (local $x i32) (local $y i32) (local $w i32) (local $h i32)
-    (local.set $header (call $d3dim_execbuf_cache_header (local.get $eb_this)))
+    (local $x i32) (local $y i32) (local $w i32) (local $h i32) (local $off i32)
+    (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $eb_this)))
     (if (i32.eqz (local.get $header)) (then (return)))
     (local.set $status (i32.add (local.get $header) (i32.const 8)))
-    (call $memcpy (local.get $status) (local.get $rec_wa) (i32.const 24))
+    ;; rec_wa retains the decoder's WASM-address contract; status is guest memory.
+    (loop $copy_status
+      (call $gs32 (i32.add (local.get $status) (local.get $off))
+        (i32.load (i32.add (local.get $rec_wa) (local.get $off))))
+      (local.set $off (i32.add (local.get $off) (i32.const 4)))
+      (br_if $copy_status (i32.lt_u (local.get $off) (i32.const 24))))
     ;; D3DSETSTATUS_EXTENTS = 2.
-    (if (i32.and (i32.load (local.get $status)) (i32.const 2)) (then
+    (if (i32.and (call $gl32 (local.get $status)) (i32.const 2)) (then
       (local.set $state (call $d3ddev_state (local.get $dev_this)))
       (if (local.get $state) (then
         (local.set $sw (call $g2w (local.get $state)))
@@ -1166,11 +1170,11 @@
           (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 8)))))
         (local.set $h (i32.load (i32.add (local.get $sw)
           (i32.add (global.get $D3DIM_OFF_VP_RECT) (i32.const 12)))))
-        (i32.store (i32.add (local.get $status) (i32.const 8)) (local.get $x))
-        (i32.store (i32.add (local.get $status) (i32.const 12)) (local.get $y))
-        (i32.store (i32.add (local.get $status) (i32.const 16))
+        (call $gs32 (i32.add (local.get $status) (i32.const 8)) (local.get $x))
+        (call $gs32 (i32.add (local.get $status) (i32.const 12)) (local.get $y))
+        (call $gs32 (i32.add (local.get $status) (i32.const 16))
           (i32.add (local.get $x) (local.get $w)))
-        (i32.store (i32.add (local.get $status) (i32.const 20))
+        (call $gs32 (i32.add (local.get $status) (i32.const 20))
           (i32.add (local.get $y) (local.get $h))))))))
 
   (func $d3dim_execbuf_cache_clear (param $this i32)
