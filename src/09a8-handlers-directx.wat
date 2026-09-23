@@ -11045,8 +11045,7 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
   ;; ════════════════════════════════════════════════════════════
-  ;; IDirect3D stub methods (9 methods)
-  ;; All return E_FAIL (0x80004005) with correct stdcall stack cleanup.
+  ;; IDirect3D methods
   ;; ════════════════════════════════════════════════════════════
 
   ;; IDirect3D::QueryInterface(this, riid, ppvObj) — 3 args
@@ -11055,15 +11054,7 @@
     (i32.store offset=0 (global.get $reg_base) (call $d3dim_qi (i32.const 1) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
-  ;; IDirect3D::AddRef(this) — 1 arg
-  (func $handle_IDirect3D_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
-
-  ;; IDirect3D::Release(this) — 1 arg
-  (func $handle_IDirect3D_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+  ;; AddRef/Release use the shared DX lifetime handlers via api_table aliases.
 
   ;; IDirect3D::Initialize(this, riid) — 2 args
   (func $handle_IDirect3D_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -11117,7 +11108,7 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; ════════════════════════════════════════════════════════════
-  ;; IDirect3D3 stub methods (10 methods)
+  ;; IDirect3D3 methods
   ;; ════════════════════════════════════════════════════════════
 
   ;; IDirect3D3::QueryInterface — routes upgrades across D3D family (v1/v2/v3/v7).
@@ -11125,15 +11116,7 @@
     (i32.store offset=0 (global.get $reg_base) (call $d3dim_qi (i32.const 1) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
-  ;; IDirect3D3::AddRef(this) — 1 arg
-  (func $handle_IDirect3D3_AddRef (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
-
-  ;; IDirect3D3::Release(this) — 1 arg
-  (func $handle_IDirect3D3_Release (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+  ;; AddRef/Release use the shared DX lifetime handlers via api_table aliases.
 
   ;; IDirect3D3::EnumDevices(this, lpEnumDevicesCallback, lpUserArg) — 3 args
   (func $handle_IDirect3D3_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -11232,32 +11215,7 @@
   ;; Device entry fields: +8 = current render-target slot, +12 = creator
   ;; D3D slot + 1 for GetDirect3D.
   (func $handle_IDirect3D3_CreateDevice (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $obj i32) (local $entry i32) (local $rt_entry i32) (local $rt_slot i32) (local $state i32)
-    (local $parent_entry i32) (local $parent_slot i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 20) (global.get $DX_VTBL_D3DDEV3)))
-    (if (i32.eqz (local.get $obj)) (then
-      (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005))
-      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-      (return)))
-    (local.set $entry (call $dx_from_this (local.get $obj)))
-    (local.set $parent_entry (call $dx_from_this (local.get $arg0)))
-    (if (i32.ne (i32.load (local.get $parent_entry)) (i32.const 0)) (then
-      (local.set $parent_slot (call $dx_slot_of (local.get $parent_entry)))
-      (i32.store (i32.add (local.get $entry) (i32.const 12))
-        (i32.add (local.get $parent_slot) (i32.const 1)))))
-    ;; Record render-target DDSurface slot on the device entry at +8.
-    (if (local.get $arg2) (then
-      (local.set $rt_entry (call $dx_from_this (local.get $arg2)))
-      (local.set $rt_slot (i32.div_u
-        (i32.sub (local.get $rt_entry) (global.get $DX_OBJECTS))
-        (i32.const 32)))
-      (store.field DxObject misc0 (local.get $entry) (local.get $rt_slot))))
-    ;; Allocate 4KB state block on guest heap, initialize, store ptr at entry+16.
-    (local.set $state (call $heap_alloc (i32.const 4096)))
-    (call $d3ddev_init_state (local.get $state))
-    (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $state))
-    (call $gs32 (local.get $arg3) (local.get $obj))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (call $d3dim_create_device (local.get $arg0) (local.get $arg2) (local.get $arg3) (global.get $DX_VTBL_D3DDEV3))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
 
   ;; Helper: given device "this", return guest addr of its state block (or 0).

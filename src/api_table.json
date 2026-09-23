@@ -9851,14 +9851,16 @@
     "name": "IDirect3D_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 4273929347
+    "hash": 4273929347,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1118,
     "name": "IDirect3D_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1501242244
+    "hash": 1501242244,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1119,
@@ -9930,14 +9932,16 @@
     "name": "IDirect3D3_AddRef",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 3084695000
+    "hash": 3084695000,
+    "handler": "dx_com_addref"
   },
   {
     "id": 1127,
     "name": "IDirect3D3_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1347481985
+    "hash": 1347481985,
+    "handler": "dx_com_release_basic"
   },
   {
     "id": 1128,

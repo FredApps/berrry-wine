@@ -723,7 +723,9 @@
       (if (i32.ne (i32.load (local.get $parent_entry)) (i32.const 0)) (then
         (local.set $parent_slot (call $dx_slot_of (local.get $parent_entry)))
         (i32.store (i32.add (local.get $entry) (i32.const 12))
-          (i32.add (local.get $parent_slot) (i32.const 1)))))))
+          (i32.add (local.get $parent_slot) (i32.const 1)))
+        (store.field DxObject refcount (local.get $parent_entry)
+          (i32.add (load.field DxObject refcount (local.get $parent_entry)) (i32.const 1)))))))
     (if (local.get $rt_surf) (then
       (local.set $rt_entry (call $dx_from_this (local.get $rt_surf)))
       (local.set $rt_slot (call $dx_slot_of (local.get $rt_entry)))
@@ -6896,6 +6898,7 @@
   ;; device retained, including the independent current-viewport reference.
   (func $d3dim_device_release_entry (param $entry i32) (result i32)
     (local $rc i32) (local $state i32)
+    (local $parent_idx i32) (local $parent_entry i32)
     (local $current i32) (local $i i32) (local $vp_entry i32) (local $vp_slot i32)
     (local $owner i32) (local $node_head i32) (local $node i32)
     (local $node_next i32) (local $steps i32)
@@ -6983,6 +6986,16 @@
       (local.set $steps (i32.add (local.get $steps) (i32.const 1)))
       (br $free_nodes)))
     (if (local.get $state) (then (call $heap_free (local.get $state))))
+    ;; The creator reference belongs to the device, not each device interface.
+    ;; Clear the link before retiring either object; a nonfinal Release above
+    ;; must leave it intact. Surface-QI devices have no creator (zero).
+    (local.set $parent_idx (i32.load offset=12 (local.get $entry)))
+    (i32.store offset=12 (local.get $entry) (i32.const 0))
+    (if (i32.ne (local.get $parent_idx) (i32.const 0))
+      (then
+        (local.set $parent_entry (i32.add (global.get $DX_OBJECTS)
+          (i32.mul (i32.sub (local.get $parent_idx) (i32.const 1)) (global.get $DX_ENTRY_SIZE))))
+        (drop (call $dx_com_release_basic (call $d3dim_primary_guest (local.get $parent_entry))))))
     (call $dx_free (local.get $entry))
     (i32.const 0))
 

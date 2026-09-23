@@ -703,3 +703,13 @@ GetFrequency reports it without mutating the original PCM format. Both old
 handlers already contained calls/branches and were outside the classifier.
 No pin change. See `docs/directsound-frequency-review.md` for dispatch/host
 tests and the separate outstanding live-cursor continuity audit.
+
+2026-09-22: 247 -> 243 manual, legacy IDirect3D / IDirect3D3 AddRef and
+Release now route through the existing DX reference-count handlers, matching
+the version-2/7 dispatch paths instead of returning constants. Device creation
+retains its creator, and final device release drops that reference, so making
+root Release real does not invalidate a device's GetDirect3D parent. D3D3
+creation now uses the shared version-2/7 core. Public-dispatch reference counts,
+nonfinal/final retirement, both parent/device release orders and heap balance
+are covered in test/test-d3d-root-lifetime.js. See
+docs/d3d-root-lifetime-review.md for remaining identity/ownership limitations.
