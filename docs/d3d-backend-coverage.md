@@ -256,3 +256,29 @@ reports `colors=29 nonZero=38/1850` purely because the sphere is small.
 - UT2004 on the software D3D9 arm could not be judged on this laptop: at load
   14 it managed 154k batches in 330s and had drawn nothing yet. The splash
   result in `docs/re-notes/unreal-family-demos.md` came from the quiet bench box.
+
+## Addendum 2026-09-23: the last three "blank" SDK rows
+
+Each was a separate D3DIM bug. None of them involved the render target or the
+primary, which is where the "Blocked, and why" list above had guessed.
+
+| app | cause | fix |
+|---|---|---|
+| `dx_twist` | `D3DOP_MATRIXMULTIPLY` names handles, so `dest` can also be a source. Twist accumulates `dest = dest * step`, and `$mat4_mul` stored rows while it was still reading them, so the rotation shrank each frame until the object was a one-pixel sliver | `ede28ab8` |
+| `dx_boids` | the same aliased multiply | `ede28ab8` |
+| `dx_tunnel` | (a) execute-buffer triangles crossing the eye plane were clipped in screen space, which turns the walls into stretched shards. (b) d3dapp releases any texture whose surface does not report `DDSCAPS_VIDEOMEMORY`, and an unplaced surface never reported it, so the walls drew untextured | (a) `bdd20a78`, homogeneous `$d3dim_clip_tl_polygon`. (b) a `CreateSurface` caps change in `09a8`, landing after the `gdi_native_*` rename |
+
+`test/test-d3dim-sdk-twist-tunnel.js` guards all three on the composited canvas.
+It checks the lit-pixel count for Twist, and the colour count plus the yellow
+hazard-stripe count for Tunnel. Measured on Tunnel: textured and clipped gives
+95 colours / 5393 yellow, screen-space shards 20 / 99, texture dropped 5 / 0.
+The execute-buffer path is WAT and shared by both arms, so each fix applies to
+software and GPU alike.
+
+Also fixed on the software D3D9 arm (`321a6193`): a lit draw whose declaration
+has no `NORMAL` was refused with "lighting requires one FLOAT3/4 NORMAL".
+D3D9, and our WebGL arm, read the missing normal as zero, so only ambient and
+emissive remain. Morrowind issued 41,194 such draws on its route, and its
+canvas stayed on the first loading frame. With the fix it draws the loading
+screens through "Loading Interior". The world was not re-measured, because the
+route runs for many minutes.
