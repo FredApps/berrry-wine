@@ -273,11 +273,27 @@
     (call $dx_surf_fmt_get (local.get $entry)))
 
   ;; Result 1: the executor took the clear, and it now owes a fence.
+  ;; $tex nonzero is a viewport background image: the colour half becomes that
+  ;; texture stretched over the rect, as $viewport_fill_rect_texture paints it.
+  ;; Its surface fields ride at +32 in describe's texture order (entry, w, h,
+  ;; bpp, pitch, dib_wa, key raw, palette); keyed is always 0, since the
+  ;; software fill ignores the colour key too.
   (func $d3dim_gpu_try_clear
     (param $rt i32) (param $flags i32) (param $color i32) (param $z f32)
-    (param $x i32) (param $y i32) (param $w i32) (param $h i32) (result i32)
+    (param $x i32) (param $y i32) (param $w i32) (param $h i32) (param $tex i32) (result i32)
     (local $d i32)
     (local.set $d (call $d3dim_gpu_buffer))
+    (call $zero_memory (i32.add (local.get $d) (i32.const 32)) (i32.const 32))
+    (if (local.get $tex) (then
+      (i32.store offset=32 (local.get $d) (local.get $tex))
+      (i32.store offset=36 (local.get $d) (i32.load16_u offset=12 (local.get $tex)))
+      (i32.store offset=40 (local.get $d) (i32.load16_u offset=14 (local.get $tex)))
+      (i32.store offset=44 (local.get $d) (i32.load16_u offset=16 (local.get $tex)))
+      (i32.store offset=48 (local.get $d) (i32.load16_u offset=18 (local.get $tex)))
+      (i32.store offset=52 (local.get $d) (i32.load offset=20 (local.get $tex)))
+      (i32.store offset=56 (local.get $d) (i32.load offset=24 (local.get $tex)))
+      (if (i32.eq (i32.load16_u offset=16 (local.get $tex)) (i32.const 8))
+        (then (i32.store offset=60 (local.get $d) (call $dx_surf_pal_get (local.get $tex)))))))
     (i32.store offset=0 (local.get $d) (local.get $rt))
     (i32.store offset=4 (local.get $d) (i32.and (local.get $flags) (i32.const 3)))
     (i32.store offset=8 (local.get $d) (local.get $color))
@@ -316,7 +332,7 @@
       (else (local.set $z (f32.div
         (f32.convert_i32_u (local.get $fill)) (f32.const 4294967295)))))
     (call $d3dim_gpu_try_clear (local.get $parent) (i32.const 2) (i32.const 0) (local.get $z)
-      (local.get $x) (local.get $y) (local.get $w) (local.get $h)))
+      (local.get $x) (local.get $y) (local.get $w) (local.get $h) (i32.const 0)))
 
   ;; The draw state of device $this, normalized the way
   ;; $d3dim_draw_tl_triangle_textured reads it, into dwords in the seam
@@ -4928,14 +4944,19 @@
       (local.set $vw (i32.and (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 0xFFFF)))
       (local.set $vh (i32.shr_u (i32.load (i32.add (local.get $rt) (i32.const 12))) (i32.const 16)))))
     (if (global.get $d3dim_gpu_on) (then
-      ;; A background image is a textured fill the executor has no command
-      ;; for; that clear, and any the executor declines, stays in software.
-      (if (i32.or (i32.eqz (i32.and (local.get $dwFlags) (i32.const 1)))
-                  (i32.eqz (call $d3dim_viewport_background_texture (local.get $vp_this))))
-        (then (if (call $d3dim_gpu_try_clear (local.get $rt) (local.get $dwFlags)
-                    (local.get $color) (local.get $zval)
-                    (local.get $vx) (local.get $vy) (local.get $vw) (local.get $vh))
-          (then (return)))))
+      ;; A background image goes as a textured clear, under the same rule the
+      ;; software fill below uses (not on an 8bpp target). Architec and SciFi
+      ;; clear through one every frame; in software that was a readback and a
+      ;; full-frame upload per frame, most of their GPU time.
+      (if (i32.and (local.get $dwFlags) (i32.const 1)) (then
+        (local.set $bgtex (call $d3dim_viewport_background_texture (local.get $vp_this)))
+        (if (i32.eq (i32.and (i32.load (i32.add (local.get $rt) (i32.const 16))) (i32.const 0xFFFF))
+                    (i32.const 8))
+          (then (local.set $bgtex (i32.const 0))))))
+      (if (call $d3dim_gpu_try_clear (local.get $rt) (local.get $dwFlags)
+            (local.get $color) (local.get $zval)
+            (local.get $vx) (local.get $vy) (local.get $vw) (local.get $vh) (local.get $bgtex))
+        (then (return)))
       (call $d3dim_worker_fence)))
     (if (i32.and (local.get $dwFlags) (i32.const 1)) (then
       ;; A background material carrying an image wins over its (usually white)
@@ -4981,7 +5002,7 @@
     (if (global.get $d3dim_gpu_on) (then
       (if (call $d3dim_gpu_try_clear (local.get $rt) (local.get $dwFlags)
             (local.get $color) (local.get $zval)
-            (local.get $vx) (local.get $vy) (local.get $vw) (local.get $vh))
+            (local.get $vx) (local.get $vy) (local.get $vw) (local.get $vh) (i32.const 0))
         (then (return)))
       (call $d3dim_worker_fence)))
     (if (i32.and (local.get $dwFlags) (i32.const 1)) (then

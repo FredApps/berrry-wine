@@ -126,6 +126,19 @@ instruments can see has now been ruled out for it.
 
 ### `scr_jazz`: every visible cause ruled out, and it is still sparse
 
+**Superseded 2026-09-23: jazz renders correctly.** It is white musical notes
+(quarter/eighth notes, lit, a few large ones in front) swirling over black.
+"Sparse speckle" was small distant notes seen at a low budget — the form is
+genuinely sparse. Everything below is the record of how that looked from inside.
+
+On WebGL (`?d3dim-gpu`, commit 3aa3db04) the savers' execute buffers go to the GPU:
+execute buffers are batched into one DRAW per Execute, and fences are lazy. A 40 s
+browser probe gives architec 37,608 GPU draws, fallingl 34,463 and jazz 140,050,
+each with the correct picture. Before that commit the savers were entirely
+software, even with the flag on. Jazz was the degenerate case: every
+`Viewport::Clear` turned into a GPU clear plus a readback, so 28 of its 30 s went
+to fences. `lib/d3dim-gpu.js` now declines clears on targets it has never drawn.
+
 The primary shows a clearly structured radial flower, six-fold symmetric,
 drawn in small bright fragments over black. Everything measurable about its
 input is healthy. A kind-28 census over 1500 batches:
