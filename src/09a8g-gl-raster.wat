@@ -34,9 +34,12 @@
   ;; state comes from a D3D device's render-state block -- there is no D3D
   ;; device here.  It calls the rasterizer directly with GL's state.
   ;;
-  ;; NOT DONE YET, each one visible rather than silent: near-plane clipping (a
-  ;; triangle with a vertex at or behind the eye is dropped and counted in
-  ;; gl_sw_clipped), lines and points, fixed-function lighting (vertex colours
+  ;; Triangles are clipped against the near plane only; one whose vertices
+  ;; are all behind it (or that a non-frustum projection leaves at w <= 0) is
+  ;; dropped and counted in gl_sw_clipped. The other planes need no clip:
+  ;; the rasterizer clips spans to the target and coordinates are saturated.
+  ;;
+  ;; NOT DONE YET, each one visible rather than silent: lines and points, fixed-function lighting (vertex colours
   ;; are used as given), fog, texgen and the second texture unit, and texture
   ;; formats other than 8-bit RGBA/RGB/BGRA/LUMINANCE/ALPHA/LUMINANCE_ALPHA
   ;; (counted in gl_sw_tex_unsupported; such a texture samples as white).
@@ -66,6 +69,13 @@
   (global $gl_sw_bitmap (mut i32) (i32.const 0))
   (global $gl_sw_presents (mut i32) (i32.const 0))
   (global $gl_sw_zbuf (mut i32) (i32.const 0))
+  ;; The COM objects (guest `this`) behind the surfaces this file allocated,
+  ;; kept so a target outgrown by a later glViewport, or a depth buffer
+  ;; replaced by a rebind, is released rather than leaked. 0 for a surface
+  ;; this file did not allocate (a bound DIB describes the guest's own bits).
+  (global $gl_sw_front_obj (mut i32) (i32.const 0))
+  (global $gl_sw_rt_obj (mut i32) (i32.const 0))
+  (global $gl_sw_zbuf_obj (mut i32) (i32.const 0))
   ;; A 1x1 opaque white texture: an untextured triangle is drawn as this
   ;; texture MODULATEd by its vertex colours, which is exactly Gouraud colour
   ;; through the same depth, blend and alpha-test path as a textured one.
@@ -417,9 +427,32 @@
       (br $lp))))
 
   ;; ---- small helpers ------------------------------------------------------
+  ;; Scratch: +0 the MVP, +64 one object-space vec4, +128 three screen
+  ;; records, +256 three clip records, +512 up to four clipped ones.
+  ;; Clip record, 48 bytes: +0 x, +4 y, +8 z, +12 w, +16 u, +20 v, then
+  ;; r, g, b, a at +24..+36 -- all f32, so clipping lerps ten floats alike.
   (func $gl_sw_clip_at (param $k i32) (result i32)
     (i32.add (global.get $GL_SW_SCRATCH)
-      (i32.add (i32.const 64) (i32.mul (local.get $k) (i32.const 16)))))
+      (i32.add (i32.const 256) (i32.mul (local.get $k) (i32.const 48)))))
+  (func $gl_sw_poly_at (param $k i32) (result i32)
+    (i32.add (global.get $GL_SW_SCRATCH)
+      (i32.add (i32.const 512) (i32.mul (local.get $k) (i32.const 48)))))
+  ;; Signed distance to GL's near clip plane, z >= -w.
+  (func $gl_sw_near_d (param $c i32) (result f32)
+    (f32.add (f32.load offset=8 (local.get $c)) (f32.load offset=12 (local.get $c))))
+  ;; $dst = $a + ($b - $a) * $t over a whole clip record. Clip space is
+  ;; linear, so this is exact for position and perspective-correct for
+  ;; everything else once the rasterizer divides by w.
+  (func $gl_sw_lerp_into (param $dst i32) (param $a i32) (param $b i32) (param $t f32)
+    (local $i i32) (local $x f32)
+    (loop $lp
+      (local.set $x (f32.load (i32.add (local.get $a) (local.get $i))))
+      (f32.store (i32.add (local.get $dst) (local.get $i))
+        (f32.add (local.get $x)
+          (f32.mul (f32.sub (f32.load (i32.add (local.get $b) (local.get $i))) (local.get $x))
+                   (local.get $t))))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br_if $lp (i32.lt_u (local.get $i) (i32.const 40)))))
   ;; Per-vertex screen record, 32 bytes: +0 x, +4 y (i32), +8 z, +12 rhw,
   ;; +16 u, +20 v (f32), +24 colour (0xAARRGGBB).
   (func $gl_sw_screen_at (param $k i32) (result i32)
@@ -505,10 +538,38 @@
   ;; capture and the browser present path find it without being told a slot.
   (func $gl_sw_target (result i32)
     (local $vp i32) (local $w i32) (local $h i32) (local $obj i32) (local $px i32)
-    (if (global.get $gl_sw_rt) (then (return (global.get $gl_sw_rt))))
+    (local $cw i32) (local $ch i32)
     (local.set $vp (call $gl_mtx_export_viewport_ptr))
     (local.set $w (i32.add (i32.load (local.get $vp)) (i32.load offset=8 (local.get $vp))))
     (local.set $h (i32.add (i32.load offset=4 (local.get $vp)) (i32.load offset=12 (local.get $vp))))
+    (if (global.get $gl_sw_rt)
+      (then
+        ;; A bound DIB is the size it is; only our own target can grow.
+        (if (i32.eqz (global.get $gl_sw_rt_obj)) (then (return (global.get $gl_sw_rt))))
+        (local.set $cw (load.field DxObject width (global.get $gl_sw_rt)))
+        (local.set $ch (load.field DxObject height (global.get $gl_sw_rt)))
+        ;; The target is sized from the viewport current at the first draw,
+        ;; and that need not be the window's: Half-Life draws its loading
+        ;; plaque under a 320x240 viewport before it sets the 640x480 one it
+        ;; plays in, which pinned the whole run at quarter size. Grow (never
+        ;; shrink -- a small viewport is as often a sub-view as a mode) and
+        ;; start the new buffers clean; the next present fills the front.
+        (if (i32.or (i32.or (i32.lt_s (local.get $w) (i32.const 1))
+                            (i32.gt_s (local.get $w) (i32.const 4096)))
+                    (i32.or (i32.lt_s (local.get $h) (i32.const 1))
+                            (i32.gt_s (local.get $h) (i32.const 4096))))
+          (then (return (global.get $gl_sw_rt))))
+        (if (i32.and (i32.le_s (local.get $w) (local.get $cw))
+                     (i32.le_s (local.get $h) (local.get $ch)))
+          (then (return (global.get $gl_sw_rt))))
+        (if (i32.lt_s (local.get $w) (local.get $cw)) (then (local.set $w (local.get $cw))))
+        (if (i32.lt_s (local.get $h) (local.get $ch)) (then (local.set $h (local.get $ch))))
+        (call $gl_sw_drop_surface (global.get $gl_sw_front_obj))
+        (call $gl_sw_drop_surface (global.get $gl_sw_rt_obj))
+        (global.set $gl_sw_front_obj (i32.const 0))
+        (global.set $gl_sw_rt_obj (i32.const 0))
+        (global.set $gl_sw_front (i32.const 0))
+        (global.set $gl_sw_rt (i32.const 0))))
     ;; A context given no glViewport yet reports all zeroes; fall back to the
     ;; 640x480 the rest of the DX path defaults to rather than a zero-sized
     ;; surface, and refuse the absurd rather than allocate it.
@@ -523,23 +584,34 @@
     (local.set $obj (call $d3d9_create_surface
       (local.get $w) (local.get $h) (i32.const 32) (i32.const 1)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (global.set $gl_sw_front_obj (local.get $obj))
     (global.set $gl_sw_front (call $dx_from_this (local.get $obj)))
     (local.set $obj (call $d3d9_create_surface
       (local.get $w) (local.get $h) (i32.const 32) (i32.const 4)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (global.set $gl_sw_rt_obj (local.get $obj))
     (global.set $gl_sw_rt (call $dx_from_this (local.get $obj)))
     (call $gl_sw_aux_surfaces (local.get $w) (local.get $h))
     (global.get $gl_sw_rt))
 
+  ;; Final release of a surface this file allocated; 0 is no surface.
+  (func $gl_sw_drop_surface (param $obj i32)
+    (if (local.get $obj)
+      (then (drop (call $dx_surface_release (local.get $obj))))))
+
   ;; The depth surface for a w x h target, and the shared white texel.
   (func $gl_sw_aux_surfaces (param $w i32) (param $h i32)
     (local $obj i32)
+    (call $gl_sw_drop_surface (global.get $gl_sw_zbuf_obj))
+    (global.set $gl_sw_zbuf_obj (i32.const 0))
+    (global.set $gl_sw_zbuf (i32.const 0))
     ;; 16bpp depth: the rasterizer stores z * 65535, so a clear to all-ones
     ;; bytes is exactly GL's default clear depth of 1.0.
     (local.set $obj (call $d3d9_create_surface
       (local.get $w) (local.get $h) (i32.const 16) (i32.const 4)))
     (if (local.get $obj)
       (then
+        (global.set $gl_sw_zbuf_obj (local.get $obj))
         (global.set $gl_sw_zbuf (call $dx_from_this (local.get $obj)))
         (call $gl_sw_clear_depth)))
     (if (i32.eqz (global.get $gl_sw_white))
@@ -591,6 +663,10 @@
     ;; A BI_RGB 16bpp DIB is X1R5G5B5.
     (if (i32.eq (local.get $bpp) (i32.const 16))
       (then (call $dx_surf_fmt_set (local.get $entry) (i32.const 2))))
+    (call $gl_sw_drop_surface (global.get $gl_sw_front_obj))
+    (call $gl_sw_drop_surface (global.get $gl_sw_rt_obj))
+    (global.set $gl_sw_front_obj (i32.const 0))
+    (global.set $gl_sw_rt_obj (i32.const 0))
     (global.set $gl_sw_rt (local.get $entry))
     (global.set $gl_sw_bitmap (local.get $hbmp))
     (global.set $gl_sw_front (i32.const 0))
@@ -747,8 +823,7 @@
             (call $gl_sw_u8 (f32.load offset=12 (local.get $stack))))))
         (return)))
     ;; 55 SwapBuffers / wglSwapLayerBuffers: the back buffer becomes the
-    ;; picture. The back keeps its contents, which GL leaves undefined and
-    ;; every app we run clears anyway.
+    ;; picture.
     (if (i32.eq (local.get $op) (i32.const 55))
       (then
         (if (i32.and (i32.ne (global.get $gl_sw_rt) (i32.const 0))
@@ -756,6 +831,17 @@
           (then
             (call $memcpy (load.field DxObject misc1 (global.get $gl_sw_front))
               (load.field DxObject misc1 (global.get $gl_sw_rt))
+              (i32.mul (load.field DxObject pitch (global.get $gl_sw_rt))
+                       (load.field DxObject height (global.get $gl_sw_rt))))
+            ;; Then clear the back's colour to (0,0,0,0), which is what the
+            ;; WebGL backend's drawing buffer does after every composite
+            ;; (preserveDrawingBuffer is off). GoldSrc never calls glClear --
+            ;; its world covers the screen -- so during Half-Life's black
+            ;; intro fade a kept back showed the loading plaque's leftovers
+            ;; as a strip down the right edge that the WebGL picture lacks.
+            ;; Depth is deliberately kept: the z-trick alternates halves of
+            ;; the depth range precisely so it never has to clear it.
+            (memory.fill (load.field DxObject misc1 (global.get $gl_sw_rt)) (i32.const 0)
               (i32.mul (load.field DxObject pitch (global.get $gl_sw_rt))
                        (load.field DxObject height (global.get $gl_sw_rt))))
             (global.set $gl_sw_presents (i32.add (global.get $gl_sw_presents) (i32.const 1)))))
@@ -775,13 +861,16 @@
           (then (call $gl_sw_clear_depth))))))
 
   ;; ---- triangles ----------------------------------------------------------
-  ;; One triangle: three 56-byte GL vertices starting at $v0.
+  ;; One triangle: three 56-byte GL vertices starting at $v0. Transformed to
+  ;; clip space, clipped against the near plane, and fanned out to $gl_sw_emit.
+  ;; Without the clip, a triangle with a vertex behind the eye had to be
+  ;; dropped whole (dividing by a negative w mirrors it about the origin), and
+  ;; Half-Life's corridor lost a wedge of floor at every step.
   (func $gl_sw_triangle (param $mvp i32) (param $vp i32) (param $v0 i32)
-    (local $k i32) (local $src i32) (local $clip i32) (local $tmp i32) (local $out i32)
-    (local $s i32) (local $caps i32) (local $area i32) (local $front i32) (local $cull i32)
-    (local $slot i32) (local $tex i32) (local $flags i32) (local $alpha_test i32)
-    (local $zbuf i32) (local $s0 i32) (local $s1 i32) (local $s2 i32) (local $flat i32)
-    (local.set $tmp (region.addr $GL_SW_SCRATCH 112))
+    (local $k i32) (local $src i32) (local $clip i32) (local $tmp i32)
+    (local $inside i32) (local $n i32) (local $a i32) (local $b i32)
+    (local $da f32) (local $db f32)
+    (local.set $tmp (region.addr $GL_SW_SCRATCH 64))
     (local.set $k (i32.const 0))
     (loop $lp
       (local.set $src (i32.add (local.get $v0) (i32.mul (local.get $k) (i32.const 56))))
@@ -792,21 +881,92 @@
         (f32.const 1))
       (local.set $clip (call $gl_sw_clip_at (local.get $k)))
       (call $gl_mtx_transform4 (local.get $clip) (local.get $mvp) (local.get $tmp))
-      ;; A vertex at or behind the eye plane has no screen position. Near-plane
-      ;; clipping is not built yet, so the triangle is dropped whole: dividing
-      ;; by a negative w mirrors the geometry about the origin and draws a
-      ;; convincing wrong picture instead of an obviously absent one.
-      (if (f32.le (f32.load offset=12 (local.get $clip)) (f32.const 0.0001))
-        (then
-          (global.set $gl_sw_clipped (i32.add (global.get $gl_sw_clipped) (i32.const 1)))
-          (return)))
-      (local.set $out (call $gl_sw_screen_at (local.get $k)))
-      (call $gl_sw_project (local.get $clip) (local.get $vp) (local.get $out))
-      (f32.store offset=16 (local.get $out) (f32.load offset=28 (local.get $src)))
-      (f32.store offset=20 (local.get $out) (f32.load offset=32 (local.get $src)))
-      (i32.store offset=24 (local.get $out) (call $gl_sw_color (local.get $src)))
+      (f32.store offset=16 (local.get $clip) (f32.load offset=28 (local.get $src)))
+      (f32.store offset=20 (local.get $clip) (f32.load offset=32 (local.get $src)))
+      (call $memcpy (i32.add (local.get $clip) (i32.const 24))
+        (i32.add (local.get $src) (i32.const 12)) (i32.const 16))
+      (if (f32.ge (call $gl_sw_near_d (local.get $clip)) (f32.const 0))
+        (then (local.set $inside (i32.or (local.get $inside)
+          (i32.shl (i32.const 1) (local.get $k))))))
       (local.set $k (i32.add (local.get $k) (i32.const 1)))
       (br_if $lp (i32.lt_u (local.get $k) (i32.const 3))))
+    ;; GL_FLAT takes every colour from the provoking vertex, which for a GL
+    ;; triangle is the LAST one -- decided before clipping invents vertices.
+    (if (i32.eq (global.get $gl_shade_model) (i32.const 0x1D00))
+      (then
+        (call $memcpy (i32.add (call $gl_sw_clip_at (i32.const 0)) (i32.const 24))
+          (i32.add (call $gl_sw_clip_at (i32.const 2)) (i32.const 24)) (i32.const 16))
+        (call $memcpy (i32.add (call $gl_sw_clip_at (i32.const 1)) (i32.const 24))
+          (i32.add (call $gl_sw_clip_at (i32.const 2)) (i32.const 24)) (i32.const 16))))
+    (if (i32.eq (local.get $inside) (i32.const 7))
+      (then
+        (call $gl_sw_emit (local.get $vp) (call $gl_sw_clip_at (i32.const 0))
+          (call $gl_sw_clip_at (i32.const 1)) (call $gl_sw_clip_at (i32.const 2)))
+        (return)))
+    (if (i32.eqz (local.get $inside))
+      (then
+        (global.set $gl_sw_clipped (i32.add (global.get $gl_sw_clipped) (i32.const 1)))
+        (return)))
+    ;; Sutherland-Hodgman against the one plane: a triangle straddling it
+    ;; becomes a triangle or a quad, and both keep the input winding.
+    (local.set $k (i32.const 0))
+    (loop $edge
+      (local.set $a (call $gl_sw_clip_at (local.get $k)))
+      (local.set $b (call $gl_sw_clip_at
+        (select (i32.const 0) (i32.add (local.get $k) (i32.const 1)) (i32.eq (local.get $k) (i32.const 2)))))
+      (local.set $da (call $gl_sw_near_d (local.get $a)))
+      (local.set $db (call $gl_sw_near_d (local.get $b)))
+      (if (f32.ge (local.get $da) (f32.const 0))
+        (then
+          (call $memcpy (call $gl_sw_poly_at (local.get $n)) (local.get $a) (i32.const 40))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (if (i32.ne (f32.ge (local.get $da) (f32.const 0)) (f32.ge (local.get $db) (f32.const 0)))
+        (then
+          (call $gl_sw_lerp_into (call $gl_sw_poly_at (local.get $n)) (local.get $a) (local.get $b)
+            (f32.div (local.get $da) (f32.sub (local.get $da) (local.get $db))))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br_if $edge (i32.lt_u (local.get $k) (i32.const 3))))
+    (local.set $k (i32.const 1))
+    (block $done (loop $fan
+      (br_if $done (i32.ge_s (i32.add (local.get $k) (i32.const 1)) (local.get $n)))
+      (call $gl_sw_emit (local.get $vp) (call $gl_sw_poly_at (i32.const 0))
+        (call $gl_sw_poly_at (local.get $k))
+        (call $gl_sw_poly_at (i32.add (local.get $k) (i32.const 1))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $fan))))
+
+  ;; One clip record's screen record, slot $k. 0 when it has no screen
+  ;; position: after the near clip w is at least the near distance for any
+  ;; frustum, so this is left only for projections whose near plane is not in
+  ;; front of the eye, where a divide would still mirror the geometry.
+  (func $gl_sw_emit_vertex (param $c i32) (param $vp i32) (param $k i32) (result i32)
+    (local $out i32)
+    (if (f32.le (f32.load offset=12 (local.get $c)) (f32.const 0.0001))
+      (then (return (i32.const 0))))
+    (local.set $out (call $gl_sw_screen_at (local.get $k)))
+    (call $gl_sw_project (local.get $c) (local.get $vp) (local.get $out))
+    (f32.store offset=16 (local.get $out) (f32.load offset=16 (local.get $c)))
+    (f32.store offset=20 (local.get $out) (f32.load offset=20 (local.get $c)))
+    ;; $gl_sw_color reads r,g,b,a at +12..+24 of a GL vertex; the clip
+    ;; record keeps them twelve bytes further on.
+    (i32.store offset=24 (local.get $out)
+      (call $gl_sw_color (i32.add (local.get $c) (i32.const 12))))
+    (i32.const 1))
+
+  ;; One clip-space triangle, already in front of the near plane: project,
+  ;; cull, pick the texture and rasterize with GL's state.
+  (func $gl_sw_emit (param $vp i32) (param $c0 i32) (param $c1 i32) (param $c2 i32)
+    (local $s i32) (local $caps i32) (local $area i32) (local $front i32) (local $cull i32)
+    (local $slot i32) (local $tex i32) (local $flags i32) (local $alpha_test i32)
+    (local $zbuf i32) (local $s0 i32) (local $s1 i32) (local $s2 i32)
+    (if (i32.eqz (i32.and
+          (i32.and (call $gl_sw_emit_vertex (local.get $c0) (local.get $vp) (i32.const 0))
+                   (call $gl_sw_emit_vertex (local.get $c1) (local.get $vp) (i32.const 1)))
+          (call $gl_sw_emit_vertex (local.get $c2) (local.get $vp) (i32.const 2))))
+      (then
+        (global.set $gl_sw_clipped (i32.add (global.get $gl_sw_clipped) (i32.const 1)))
+        (return)))
     (local.set $s (global.get $GL_SW_STATE))
     (local.set $caps (i32.load (local.get $s)))
     (local.set $s0 (call $gl_sw_screen_at (i32.const 0)))
@@ -834,12 +994,6 @@
           (then
             (global.set $gl_sw_culled (i32.add (global.get $gl_sw_culled) (i32.const 1)))
             (return)))))
-    ;; GL_FLAT takes every colour from the provoking vertex, which for a GL
-    ;; triangle is the LAST one.
-    (if (i32.eq (global.get $gl_shade_model) (i32.const 0x1D00))
-      (then
-        (i32.store offset=24 (local.get $s0) (i32.load offset=24 (local.get $s2)))
-        (i32.store offset=24 (local.get $s1) (i32.load offset=24 (local.get $s2)))))
     ;; Texture: the bound name's surface when TEXTURE_2D is on and it has an
     ;; image, otherwise the white texel, which MODULATE reduces to the
     ;; vertex colour.
@@ -994,6 +1148,9 @@
     (global.set $gl_sw_bitmap (i32.const 0))
     (global.set $gl_sw_presents (i32.const 0))
     (global.set $gl_sw_zbuf (i32.const 0))
+    (global.set $gl_sw_front_obj (i32.const 0))
+    (global.set $gl_sw_rt_obj (i32.const 0))
+    (global.set $gl_sw_zbuf_obj (i32.const 0))
     (global.set $gl_sw_triangles (i32.const 0))
     (global.set $gl_sw_clipped (i32.const 0))
     (global.set $gl_sw_culled (i32.const 0))

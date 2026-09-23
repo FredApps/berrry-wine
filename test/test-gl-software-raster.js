@@ -27,9 +27,10 @@
 //     D3D's default is D3DCULL_CCW, which 8b227b5c made this emulator honour.
 //     A lowering that routed through $d3dim_draw_tl_triangle would silently
 //     discard half of every model, so both windings are drawn below.
-//   - PROJECTING THROUGH A NEGATIVE W. Near-plane clipping is not built yet.
-//     Dividing by a negative w mirrors geometry about the origin and draws a
-//     convincing wrong picture, so such triangles must be DROPPED and counted.
+//   - PROJECTING THROUGH A NEGATIVE W. Dividing by a negative w mirrors
+//     geometry about the origin and draws a convincing wrong picture. A
+//     triangle wholly behind the near plane must be DROPPED and counted; one
+//     straddling it must be CLIPPED and its visible part drawn.
 //
 // Pixel colour is deliberately asserted only as zero / non-zero plus one
 // equality against what the surface actually holds: the point of the test is
@@ -275,6 +276,22 @@ async function main() {
   assert.strictEqual(e.gl_sw_triangles(), drawn,
     'a triangle at the eye plane must not be rasterized');
   assert.strictEqual(e.gl_sw_clipped(), 1, 'and must be counted as dropped');
+
+  // --- a triangle straddling the near plane is clipped, not dropped --------
+  // A floor running from eye z=-0.5 (in front of the eye, short of near=1)
+  // out to z=-10: the visible part covers the bottom-centre of the view,
+  // from the bottom edge (y=-1 at the near plane) up to ndc y=-0.1. Before
+  // near clipping this whole triangle was dropped -- Half-Life's corridor
+  // floor lost a wedge at every step.
+  glCall(CALL_INDEX.glDisable, 0x0B44);
+  const beforeStraddle = e.gl_sw_triangles();
+  triangle([[-5, -1, -0.5], [5, -1, -0.5], [0, -1, -10]], [0, 1, 0, 1]);
+  assert.ok(e.gl_sw_triangles() > beforeStraddle, 'the visible part of a straddling triangle is drawn');
+  assert.strictEqual(e.gl_sw_clipped(), 1, 'and nothing more is counted as dropped');
+  px = back();
+  // ndc y=-0.5 is GL row VP/4, surface row 3*VP/4.
+  assert.strictEqual(pick(VP / 2, VP * 3 / 4) & 0xFFFFFF, 0x00FF00,
+    `the floor shows below the horizon; got 0x${pick(VP / 2, VP * 3 / 4).toString(16)}`);
 
   console.log('PASS test-gl-software-raster');
 }

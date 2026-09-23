@@ -657,9 +657,10 @@
     (stride 0x4 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:$dx_surf_owner_ptr"))
   ;; Working space for one GL triangle on its way to the rasterizer: the
-  ;; modelview-projection product, three clip-space vertices, the vertex being
-  ;; transformed, and three 32-byte screen records. 224 bytes used of 256.
-  (region.declare $GL_SW_SCRATCH (size 0x00000100) (align 0x00001000)
+  ;; modelview-projection product, the vertex being transformed, three 32-byte
+  ;; screen records, three 48-byte clip records and the up-to-four records
+  ;; near-plane clipping leaves. 704 bytes used of 1024.
+  (region.declare $GL_SW_SCRATCH (size 0x00000400) (align 0x00001000)
     (owner "09a8g-gl-raster.wat:$gl_sw_consume"))
   ;; The GL state the software rasterizer decides pixels by: a 48-byte block
   ;; at +0, then sixteen 64-byte glPushAttrib frames at +64.
