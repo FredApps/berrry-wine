@@ -53,7 +53,10 @@ const route = [
   '770:relmousemove:115:0', '773:relmousemove:0:88',
   '790:mousedown:576:432', '820:mouseup:576:432',
   // Capture only after the dark cockpit/terrain frame is actually present.
-  '830:wait-canvas-dark-pixels:85000:140000:900',
+  // Loading frames are ~183k near-black; the cockpit over brown terrain is
+  // ~42k on both D3DIM arms. (The old 85k-140k window matched a transitional
+  // frame only while a biased 565 dither was turning the terrain olive-black.)
+  '830:wait-canvas-dark-pixels:30000:70000:900',
 ];
 
 function analyze(filename, mode) {

@@ -4392,8 +4392,12 @@
                 (i32.eqz (i32.and (local.get $x) (i32.const 1)))))
               (if (i32.and (local.get $x) (i32.const 2))
                 (then (local.set $t (i32.sub (local.get $t) (i32.const 2)))))))))))
-      ;; Centre the threshold around zero. RGB565 steps are 8/4/8 levels.
-      (local.set $t (i32.sub (local.get $t) (i32.const 8)))
+      ;; Add a threshold in [0, step) and truncate: RGB565 steps are 8/4/8
+      ;; levels, so 0-7/0-3/0-7. Do not centre it on zero -- truncation
+      ;; already rounds down, and a centred threshold is half a step dark on
+      ;; average and moves exactly-representable pixels. MW3's ZERO/SRCCOLOR
+      ;; light-map passes read the 565 target back and repack it, so each
+      ;; pass lost a step and dark brown terrain came out olive.
       (local.set $r (i32.add (local.get $r) (i32.shr_s (local.get $t) (i32.const 1))))
       (local.set $g (i32.add (local.get $g) (i32.shr_s (local.get $t) (i32.const 2))))
       (local.set $b (i32.add (local.get $b) (i32.shr_s (local.get $t) (i32.const 1))))

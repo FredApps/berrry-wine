@@ -968,3 +968,44 @@ full method in [docs/d3d-backend-coverage.md](../d3d-backend-coverage.md).
 
 Note the 2026-09-19 corpus sweep scored MW3 `IDENTICAL, 0%`. It was comparing a
 menu: a startup slice never reaches the cockpit.
+
+### Resolved (2026-09-23): the software arm's 565 dither was biased dark
+
+**The WebGL arm was right.** The near terrain is the brown base texture
+(slot 319, 128x128 565, mostly `#6b5139`) times grey vertex diffuse
+`0xff737373`: `#302418`, which is the executor's `#312418` to the bit.
+
+A `--watch-word` on one back-buffer pixel (slot 6, pixel 80,320) gave its
+value after each of the three passes on the software arm:
+
+| pass (return address) | 565 | colour |
+|---|---|---|
+| base `MODULATE`, TCI 0 (`0x54a87f`) | `0x28e2` | `#281c10` brown -- correct |
+| light map `ZERO/SRCCOLOR`, TCI 1 (`0x54a991`, ESI=1) | `0x20c1` | `#201808` |
+| all-white no-op `ZERO/SRCCOLOR`, TCI 2 (`0x54a991`, ESI=2) | `0x18a0` | `#181400` olive |
+
+The last pass multiplies by pure white (`--dump-dx-surfaces` confirmed
+slot 1401 is 1024 texels of `#ffffff` at that very frame), yet it took every
+channel down exactly one 565 step. The cause was `$d3dim_pack_rgb565`:
+`DITHERENABLE` added a Bayer threshold **centred on zero** (`-4..+3` for
+red/blue) and then truncated. Truncation already rounds down, so the pair is
+half a step dark on average, and a destination read back from 565 (red 4 reads
+as 32, the bottom of its bucket) lands one step lower on half the pixels. Each
+read-modify-write pass drifts darker; at these levels blue is only two steps
+above zero, so two passes erase it and brown becomes olive. The threshold is
+now `[0, step)`, which is unbiased and leaves exactly-representable pixels
+alone; `test/test-d3dim-dither-bias.js` checks both properties over all 65536
+565 values and the whole 4x4 cell.
+
+Ruled out on the way, so nobody re-checks them: `TEXCOORDINDEX` (both arms get
+the same packed TL vertices), texture decode (both call
+`$d3dim_texture_fetch_prepared`; the a4444 set decodes to sensible sprites),
+the inline `fast16` sampler (forcing the general sampler changed nothing), the
+`SRCALPHA/INVSRCALPHA` overlay pass, and fog (FOGCOLOR is never set; neither
+arm implements D3DIM vertex fog, which MW3 enables with fog factor in specular
+alpha, e.g. `0xd4`).
+
+`test/test-mw3-gameplay.js`'s cockpit gate was tuned on the olive frame: the
+dark terrain counted as near-black, and 85k-140k matched a transitional frame
+at batch ~882. Loading frames are ~183k near-black and the corrected cockpit
+~42k on both arms (GPU 43.3k), so the window is now 30k-70k. Both modes pass.
