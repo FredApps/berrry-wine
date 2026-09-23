@@ -18,6 +18,11 @@ const extraWat = String.raw`
     (global.set $DX_VTBL_D3DLIGHT (i32.const 0x52000000)))
   (func (export "test_d3dim_create_viewport") (result i32)
     (call $dx_create_com_obj (i32.const 23) (i32.const 0x51000000)))
+  (func (export "test_d3dim_viewport_vtbl") (param $revision i32) (result i32)
+    (if (result i32) (i32.eq (local.get $revision) (i32.const 2))
+      (then (global.get $DX_VTBL_D3DVP2)) (else (global.get $DX_VTBL_D3DVP3))))
+  (func (export "test_d3dim_same_object") (param $a i32) (param $b i32) (result i32)
+    (i32.eq (call $dx_from_this (local.get $a)) (call $dx_from_this (local.get $b))))
   (func (export "test_d3dim_create_light") (result i32)
     (call $dx_create_com_obj (i32.const 24) (i32.const 0x52000000)))
   (func (export "test_d3dim_create_device") (result i32)
@@ -503,7 +508,14 @@ const deviceAddRefIds = new Map([1, 2, 3, 7].map(revision => {
       assert.strictEqual(
         wat.test_d3dim_get_current_viewport(revision, deviceAlias, currentOut) >>> 0,
         D3D_OK, 'GetCurrentViewport returns the selected viewport');
-      assert.strictEqual(wat.guest_read32(currentOut) >>> 0, attached);
+      // The same COM object, through the interface the calling device
+      // revision returns -- not whichever one it was created through (this
+      // one has a placeholder vtable, as a d3drm-made v1 viewport would).
+      const current = wat.guest_read32(currentOut) >>> 0;
+      assert.strictEqual(wat.test_d3dim_same_object(current, attached), 1,
+        'GetCurrentViewport returns the selected viewport object');
+      assert.strictEqual(wat.guest_read32(current) >>> 0, wat.test_d3dim_viewport_vtbl(revision) >>> 0,
+        `D3D${revision} GetCurrentViewport returns an IDirect3DViewport${revision}`);
       assert.strictEqual(wat.test_d3dim_object_ref(attached), 4,
         'GetCurrentViewport AddRefs its returned interface');
       assert.strictEqual(wat.test_d3dim_viewport_release(revision, attached), 3,

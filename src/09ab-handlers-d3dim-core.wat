@@ -2952,11 +2952,11 @@
     ;;
     )
 
-  (func $d3dim_get_current_viewport (param $this i32) (param $ppVp i32)
+  (func $d3dim_get_current_viewport (param $this i32) (param $ppVp i32) (param $vtbl i32)
     ;; Clear output before failure, report no-current distinctly, validate the
     ;; stored slot still belongs to this device, and AddRef on success.
     (i32.store offset=0 (global.get $reg_base) (call $d3dim_device_get_current_viewport
-        (local.get $this) (local.get $ppVp)))
+        (local.get $this) (local.get $ppVp) (local.get $vtbl)))
     ;;
     ;; As above, the interface wrappers retain ownership of stack cleanup.
     ;;
@@ -7381,7 +7381,13 @@
     (call $lock_release (global.get $LOCK_DX))
     (i32.const 0))
 
-  (func $d3dim_device_get_current_viewport (param $this i32) (param $out i32) (result i32)
+  ;; $vtbl is the viewport interface the calling device revision returns:
+  ;; Device2 hands back an IDirect3DViewport2, Device3 an IDirect3DViewport3,
+  ;; whatever interface the viewport was created or selected through. OASAVER
+  ;; creates its viewport through d3drm's IDirect3D (a v1 object), selects
+  ;; the QI'd v2, then calls GetViewport2 (slot 16) on what comes back -- a
+  ;; slot the v1 vtable does not have.
+  (func $d3dim_device_get_current_viewport (param $this i32) (param $out i32) (param $vtbl i32) (result i32)
     (local $dev_entry i32) (local $state i32) (local $slot i32)
     (local $vp_entry i32) (local $viewport i32) (local $owner i32) (local $hr i32)
     (if (local.get $out) (then (call $gs32 (local.get $out) (i32.const 0))))
@@ -7406,10 +7412,14 @@
               (i32.eq (load.field DxObject type (local.get $vp_entry)) (i32.const 23))
               (i32.eq (load.field DxObject misc0 (local.get $vp_entry)) (local.get $owner)))
           (then
-            (local.set $viewport (call $d3dim_primary_guest (local.get $vp_entry)))
-            (store.field DxObject refcount (local.get $vp_entry)
-              (i32.add (load.field DxObject refcount (local.get $vp_entry)) (i32.const 1)))
-            (call $gs32 (local.get $out) (local.get $viewport)))
+            (local.set $viewport (call $dx_get_wrapper_for_vtbl_locked
+              (local.get $slot) (local.get $vtbl)))
+            (if (local.get $viewport)
+              (then
+                (store.field DxObject refcount (local.get $vp_entry)
+                  (i32.add (load.field DxObject refcount (local.get $vp_entry)) (i32.const 1)))
+                (call $gs32 (local.get $out) (local.get $viewport)))
+              (else (local.set $hr (i32.const 0x8007000E)))))
           (else (local.set $hr (i32.const 0x88760307)))))
       (else (local.set $hr (i32.const 0x88760307)))) ;; D3DERR_NOCURRENTVIEWPORT
     (call $lock_release (global.get $LOCK_DX))
