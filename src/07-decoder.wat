@@ -6339,6 +6339,12 @@
               (br $decode)))
 
           ;; 0x0F 0xAF: IMUL r32, r/m32 (or r16, r/m16 with 66h)
+          ;; IMUL has no control flow and every one of these handlers chains
+          ;; with (dispatch-next), so decoding continues past it exactly as it
+          ;; does for the 0x69/0x6B immediate forms. It used to end the block,
+          ;; which split any loop containing one into two blocks — Moorhuhn 2's
+          ;; span blitter paid an extra block transfer per span for it, and a
+          ;; loop split that way never reaches $loop_match_block.
           (if (i32.eq (local.get $op) (i32.const 175))
             (then
               (call $decode_modrm)
@@ -6347,38 +6353,32 @@
                   (if (i32.eq (global.get $mr_mod) (i32.const 3))
                     (then
                       (call $te (i32.const 288) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
-                      (call $te (i32.const 45) (global.get $d_pc))
-                      (local.set $done (i32.const 1)) (br $decode))
+                      (br $decode))
                     (else (call $apply_seg_override)
                       (if (call $mr_simple_base)
                         (then
                           (call $te (i32.const 290) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_base)))
                           (call $te_raw (global.get $mr_disp))
-                          (call $te (i32.const 45) (global.get $d_pc))
-                          (local.set $done (i32.const 1)) (br $decode))
+                          (br $decode))
                         (else (local.set $imm (call $emit_sib_or_abs))
                               (call $te (i32.const 289) (global.get $mr_reg))
                               (call $te_raw (local.get $imm))
-                              (call $te (i32.const 45) (global.get $d_pc))
-                              (local.set $done (i32.const 1)) (br $decode))))))
+                              (br $decode))))))
                 (else
                   (if (i32.eq (global.get $mr_mod) (i32.const 3))
                     (then
                       (call $te (i32.const 118) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val)))
-                      (call $te (i32.const 45) (global.get $d_pc))
-                      (local.set $done (i32.const 1)) (br $decode))
+                      (br $decode))
                     (else ;; imul reg, [mem] — dedicated opcodes to avoid clobbering dst
                       (if (call $mr_simple_base)
                         (then
                           (call $te (i32.const 157) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_base)))
                           (call $te_raw (global.get $mr_disp))
-                          (call $te (i32.const 45) (global.get $d_pc))
-                          (local.set $done (i32.const 1)) (br $decode))
+                          (br $decode))
                         (else (local.set $imm (call $emit_sib_or_abs))
                               (call $te (i32.const 158) (global.get $mr_reg))
                               (call $te_raw (local.get $imm))
-                              (call $te (i32.const 45) (global.get $d_pc))
-                              (local.set $done (i32.const 1)) (br $decode)))))))))
+                              (br $decode)))))))))
 
           ;; 0x0F 0xB6: MOVZX r32, r/m8 (with 66h → r16, low half only)
           (if (i32.eq (local.get $op) (i32.const 0xB6))

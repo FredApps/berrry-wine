@@ -383,6 +383,52 @@ async function main() {
     sinOutOfRange.st0, 9223372036854775808.0, 1e4);
 
   // ================================================================
+  // IMUL r, r/m (0F AF) — every form continues its block
+  // ================================================================
+  // IMUL has no control flow, so the decoder keeps going after it. Each case
+  // runs instructions after the IMUL that read its result and its CF/OF, so a
+  // form that stopped the block, or lost state across a block that no longer
+  // stops, would show here.
+  const imulFlagsTail = [0x8D, 0x58, 0x01, 0x0F, 0x90, 0xC2, 0x0F, 0x92, 0xC6]; // lea ebx,[eax+1]; seto dl; setc dh
+  runCode([0x31, 0xD2, 0x0F, 0xAF, 0xC1, ...imulFlagsTail], () => { e.set_eax(7); e.set_ecx(6); });
+  test('IMUL eax,ecx result', e.get_eax(), 42);
+  test('IMUL eax,ecx then lea in the same block', e.get_ebx(), 43);
+  test('IMUL eax,ecx no overflow clears OF/CF', e.get_edx(), 0);
+  runCode([0x31, 0xD2, 0x0F, 0xAF, 0xC1, ...imulFlagsTail], () => { e.set_eax(0x10000); e.set_ecx(0x10000); });
+  test('IMUL eax,ecx overflow truncates', e.get_eax(), 0);
+  test('IMUL eax,ecx overflow sets OF and CF', e.get_edx(), 0x0101);
+
+  setMem(scratch + 4, -3 >>> 0);
+  runCode([0x0F, 0xAF, 0x43, 0x04, 0x05, ...le32(100)], () => { e.set_eax(5); e.set_ebx(scratch); });
+  test('IMUL eax,[ebx+4] then add', e.get_eax(), 85);
+  setMem(scratchA, 9);
+  runCode([0x0F, 0xAF, 0x05, ...le32(scratchA), 0x40], () => e.set_eax(11));
+  test('IMUL eax,[abs] then inc', e.get_eax(), 100);
+  runCode([0x0F, 0xAF, 0x04, 0x8E, 0x83, 0xC0, 0x02], () => { e.set_eax(4); e.set_esi(scratch); e.set_ecx(1); });
+  test('IMUL eax,[esi+ecx*4] then add', e.get_eax(), -10 >>> 0);
+
+  runCode([0x66, 0x0F, 0xAF, 0xC1, 0x8D, 0x58, 0x01], () => { e.set_eax(0xABCD0007); e.set_ecx(0x1234FFFE); });
+  test('IMUL ax,cx keeps the high half', e.get_eax(), 0xABCDFFF2);
+  test('IMUL ax,cx then lea', e.get_ebx(), 0xABCDFFF3);
+  runCode([0x66, 0x0F, 0xAF, 0x43, 0x04, 0x40], () => { e.set_eax(0x11110005); e.set_ebx(scratch); });
+  test('IMUL ax,[ebx+4] then inc', e.get_eax(), 0x1111FFF2);
+  runCode([0x66, 0x0F, 0xAF, 0x05, ...le32(scratchA), 0x40], () => e.set_eax(0x2222000B));
+  test('IMUL ax,[abs] then inc', e.get_eax(), 0x22220064);
+
+  // A loop whose body holds an IMUL is now one block that branches to itself.
+  //   xor eax,eax; mov ecx,5
+  //   top: mov edx,ecx; imul edx,[ebx]; add eax,edx; dec ecx; jnz top
+  setMem(scratch, 3);
+  const imulLoop = runCode([
+    0x31, 0xC0, 0xB9, ...le32(5),
+    0x89, 0xCA, 0x0F, 0xAF, 0x13, 0x01, 0xD0, 0x49, 0x75, 0xF6,
+  ], () => e.set_ebx(scratch));
+  test('IMUL self-loop sums 3*(5+4+3+2+1)', e.get_eax(), 45);
+  setMem(scratch, 4);
+  rerunCachedCode(imulLoop, () => e.set_ebx(scratch));
+  test('IMUL self-loop from the cached block rereads memory', e.get_eax(), 60);
+
+  // ================================================================
   // MUL dword [mem] — unsigned 32×32→64 multiply
   // ================================================================
   setMem(scratch, 3);
