@@ -19,6 +19,7 @@ const fs = require('fs');
 const { ThreadManager } = require('../lib/thread-manager');
 const { createHostImports } = require('../lib/host-imports');
 const { compileSrcWasm } = require('./compile-src');
+const RegionMap = require('../lib/region-map.generated.js');
 
 let passed = 0, failed = 0;
 function check(ok, label, detail) {
@@ -53,14 +54,14 @@ const apiId = name => {
     ctx.exports = e;
 
     const thunkGuest = 0x7500000;
-    const thunkWasm = 0x07112000;
+    const thunkWasm = RegionMap.BASE.THUNK_BASE;
     new DataView(memory.buffer).setUint32(thunkWasm + 4, apiId('PeekMessageA'), true);
     e.init_thread(0, 0x400000, 0x400000, 0x600000, thunkGuest, thunkGuest + 16, 2);
 
     // push PM_REMOVE; push 0; push 0; push 0; push msg; call PeekMessageA;
     // mov ebx,eax; jmp $
     const code = 0x401000, msgBuf = 0x520000;
-    const toWasm = g => g - 0x400000 + 0x12000;
+    const toWasm = g => g - 0x400000 + RegionMap.BASE.GUEST_BASE;
     const prog = new Uint8Array(22);
     prog.set([0x6A, 0x01, 0x6A, 0x00, 0x6A, 0x00, 0x6A, 0x00, 0x68], 0);
     new DataView(prog.buffer).setUint32(9, msgBuf, true);
