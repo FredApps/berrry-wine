@@ -221,3 +221,27 @@ launch calendar time. The test now pins `--wall-clock-ms=978307200000` using
 the existing harness option. It does not loosen its colour/geometry assertions
 or change the runtime clock default for users.
 Two consecutive pinned-clock runs pass identically: 14 colours, 0.88% geometry.
+
+## Neighboring HRESULT audit (2026-09-23)
+
+After the Clear fix, an omission scan of all 177 handlers in
+`09aa-handlers-d3dim.wat` found no further handler without a reachable EAX
+store or explicit trap. The temporary scan followed direct helper calls across
+the source files. This is only an existence check: a store on one branch does
+not establish that every returning branch initializes EAX. It is not a
+conformance gate or evidence that the remaining silent-success APIs are correct.
+
+The durable coverage is in `test/test-d3dim-viewport-query-interface.js`:
+29 public-dispatch calls start with poisoned EAX and check HRESULT, exact
+stdcall cleanup and a stack guard. These cover Clear, Set/GetBackground with
+no material, and Set/GetViewport on versions 1/2/3, plus Set/GetViewport2 on
+versions 2/3. Rectangle round-trips run with both direct allocations and a
+structure crossing nonadjacent sparse backing pages; an output guard catches
+overwrites. All pass against freshly compiled current sources, alongside the
+existing GUID, identity, sparse-output and reference-lifetime checks.
+
+No additional runtime fix was warranted by this audit. Full viewport field
+retention, null/size validation, nonzero background material semantics and
+all-path return analysis remain outside this test. In particular, the current
+shared viewport helper only retains the rectangle; passing this regression
+does not certify its scale, clipping-volume or depth fields.

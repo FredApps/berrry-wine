@@ -26,6 +26,16 @@ const extraWat=String.raw`
    [0xb0ab3b61,0x11d133d7,0xc00081a9,0x74b1d74f],
  ], unknown=[0,0,0xc0,0x46000000],ddraw=[0x6c14db80,0x11cea733,0x200021a5,0x60e50baf];
  const write=(p,words)=>words.forEach((n,i)=>e.guest_write32(p+i*4,n));
+ let abiCalls=0;
+ const invoke=(v,method,p,a=0,b=0,pop=12)=>{
+   const name='IDirect3DViewport'+(v===1?'':v)+'_'+method;
+   e.guest_write32(sp+pop,0x12345678);
+   const hr=e.invoke(apis.find(a=>a.name===name).id,sp,p,a,b)>>>0;
+   assert.strictEqual(e.get_esp(),sp+pop,name+' stdcall');
+   assert.strictEqual(e.guest_read32(sp+pop),0x12345678,name+' stack guard');
+   abiCalls++;
+   return hr;
+ };
  const query=(v,p,g=iid,o=out)=>{
    e.guest_write32(sp+16,0xdeadbeef);
    const name='IDirect3DViewport'+(v===1?'':v)+'_QueryInterface';
@@ -34,15 +44,33 @@ const extraWat=String.raw`
    return hr;
  };
  const vtables=versions.map(v=>{const p=e.create(v),vt=e.guest_read32(p);e.release(p);return vt;});
+ // The rectangle is common to D3DVIEWPORT and D3DVIEWPORT2. This is a
+ // return/ABI and rectangle regression, not coverage of their remaining fields.
+ const vp=e.guest_alloc(52),valid=e.guest_alloc(4);
+ const sparseBase=0x33000000;
+ for(const p of [sparseBase,sparseBase+0x10000,sparseBase+4096])e.test_virtual_map_commit(p,4096);
+ assert.notStrictEqual(e.guest_to_wasm(sparseBase+4096),e.guest_to_wasm(sparseBase)+4096);
+ const sparseVp=sparseBase+4090;
  for(const v of versions) {
    const p=e.create(v),original=e.guest_read32(p);
    // Clear has the same four-argument ABI on all three interfaces. A no-op
    // clear must still write its HRESULT, not return the incoming EAX poison.
-   const clearName='IDirect3DViewport'+(v===1?'':v)+'_Clear';
-   e.guest_write32(sp+20,0x12345678);
-   assert.strictEqual(e.invoke(apis.find(a=>a.name===clearName).id,sp,p,0,0)>>>0,0,clearName+' HRESULT');
-   assert.strictEqual(e.get_esp(),sp+20,clearName+' stdcall');
-   assert.strictEqual(e.guest_read32(sp+20),0x12345678,clearName+' stack guard');
+   assert.strictEqual(invoke(v,'Clear',p,0,0,20),0,'Clear HRESULT');
+   for(const suffix of v===1?['']:['','2']) for(const buffer of [vp,sparseVp]) {
+     const rectangle=[3+v,5+v,91+v,73+v];
+     write(buffer,[44,...rectangle,...Array(6).fill(0)]);
+     e.guest_write32(buffer+44,0x24681357);
+     assert.strictEqual(invoke(v,'SetViewport'+suffix,p,buffer),0,'SetViewport HRESULT');
+     write(buffer,[44,0,0,0,0,...Array(6).fill(0)]);
+     assert.strictEqual(invoke(v,'GetViewport'+suffix,p,buffer),0,'GetViewport HRESULT');
+     assert.deepStrictEqual([4,8,12,16].map(n=>e.guest_read32(buffer+n)),rectangle);
+     assert.strictEqual(e.guest_read32(buffer+44),0x24681357,'viewport output guard');
+   }
+   assert.strictEqual(invoke(v,'SetBackground',p,0),0,'SetBackground HRESULT');
+   write(out,[0xdeadbeef]);write(valid,[0xdeadbeef]);
+   assert.strictEqual(invoke(v,'GetBackground',p,out,valid,16),0,'GetBackground HRESULT');
+   assert.strictEqual(e.guest_read32(out),0,'no background material');
+   assert.strictEqual(e.guest_read32(valid),0,'background validity');
    write(iid,ddraw);e.guest_write32(out,0xdeadbeef);
    assert.strictEqual(query(v,p),0x80004002,'complete unrelated interface rejected');
    assert.strictEqual(e.guest_read32(out),0);assert.strictEqual(e.refs(p),1);
@@ -82,5 +110,5 @@ const extraWat=String.raw`
    assert.strictEqual(e.guest_read32(sparseOut),p);assert.strictEqual(e.release(p),1);
  }
  assert.strictEqual(e.release(p),0);
- console.log('PASS D3D viewport full GUIDs: 60 corruptions, 9 identity upgrades, nulls, sparse GUID/output and balanced refs/spans');
+ console.log(`PASS D3D viewport: ${abiCalls} poisoned-EAX calls with ABI guards, direct/sparse rectangles, full GUIDs, 9 identity upgrades, nulls and balanced refs/spans`);
 })().catch(error=>{console.error(error);process.exitCode=1;});
