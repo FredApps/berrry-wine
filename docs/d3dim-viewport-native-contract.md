@@ -154,3 +154,91 @@ node tools/dump_va.js '<dll>' 0x56662618 12
 
 `disasm_fn` stops at some jumps/returns, so the branch-target entries above
 are intentional. No original DLL or SDK document is added by this note.
+
+## Implementation: canonical storage and lifetime
+
+The first implementation step now stores one heap-owned 44-byte Viewport2
+descriptor per DX object slot, shared by every COM view. The shared pointer
+table covers all 8192 DX slots; a null pointer is the unset state. Publication,
+updates, reads and final descriptor cleanup use LOCK_DX. The screen rectangle
+is mirrored in the existing DX entry for existing clear/draw consumers; no
+second descriptor or per-interface copy is retained.
+
+SetViewport converts its scales to symmetric clip dimensions and normalizes
+depth to 0/1. GetViewport synthesizes its legacy fields from the canonical
+record. Set/GetViewport2 preserve the canonical fields. Both reject invalid
+object families and descriptors; setters reject a detached viewport. Getter
+unset state returns `0x88760305`. Allocation failure returns E_OUTOFMEMORY
+before descriptor publication or rectangle mutation; later setters reuse the
+allocation. Final viewport Release and device-owned final Release share the
+same descriptor/light cleanup owner.
+
+The existing light-head table had only 4096 entries despite DX_MAX=8192. It is
+expanded to 8192 as part of making high-slot viewport teardown safe. The new
+descriptor pointer table is also 8192 entries. The generated memory-map mirror
+must ship with the rebuilt wasm; this changes region placement and layout hash.
+
+The viewport regression now uses real device-state objects and Add/DeleteViewport
+ownership rather than detached successful setters. It checks finite conversion
+formulas in both directions, complete Viewport2 fields, direct and two sparse
+layouts, allocation failure/retry/reuse, COM alias sharing, interleaved objects,
+highest-slot state/cleanup, and both direct and device-owned final release.
+Its allocator fault hook replaces only the descriptor allocation in a temporary
+compiled test module; production has no fault flag. Viewport2 adapters forward
+to the Viewport3 handlers so ABI cleanup is not duplicated.
+
+Still open: **projection/clip/depth application**, device-generation-dependent
+validation and render-target bounds, rejecting uninitialized SetCurrentViewport,
+and native floating-point exception/rounding details. Legacy GetViewport on an
+unset record returns the error without synthesizing bytes from uninitialized
+stack memory; those native failure-output bytes are not modeled. This state
+implementation is not a claim of complete viewport or rendering conformance.
+
+Validation for this step:
+
+- 440 public calls with poisoned EAX and exact stack guards pass, including
+  allocation-failure/retry/reuse, cross-layout, sparse, alias, final-release
+  and confirmed DX slot 8191 coverage.
+- Indexed texture, v3 vertex-buffer draw (961 pixels), and viewport/light
+  ownership tests pass. The full build passes: normal 1,505,923 bytes,
+  compat 1,508,329 bytes, layout `68ce5b9062e11919`.
+- Rebuilt Boids passes at 14 colours/0.88% geometry. Globe's 11 Render items
+  pass at 224/3642/13535 point/wire/solid pixels; Viewer selection opens its
+  Change Color dialog.
+- The duplicate ratchet is reduced from 471 to 467 members, still 117 groups.
+  The first build stopped at newly split duplicate adapter groups; delegation
+  removed those copies, and the subsequent full build passed. Quiet-handler
+  inventory remains 243+22. Interface/tier/fragment/ESP/logical checks pass.
+
+Build logs: `/private/tmp/wa-viewport-state-build.log` (duplicate gate failure)
+and `/private/tmp/wa-viewport-state-build-fixed.log` (success).
+
+### Browser failure and controls
+
+`test-d3dim-viewer-open-web.js` passes its cooperative route but fails the
+Worker Open-dialog visual check: backing-canvas controls are populated,
+yet only about4% of sampled display pixels match. This is not reported as a
+browser pass. The sandbox initially refused the local listening socket; the
+actual runs below used the permitted browser/local-server execution path.
+
+Two isolated controls retain the current shared-tree host/UI code and replace
+the viewport fragments with their `41ebab20` versions. One keeps the new region
+layout; the other also restores the old `00-regions.wat` and serves the matching
+old JS region mirror. Neither overwrites the main artifact or source tree.
+
+| Viewport code | Layout | Worker display-match ratio | Result |
+|---|---|---|---|
+| New | `68ce5b9062e11919` | 0.039451 | Fail |
+| Old | `68ce5b9062e11919` | 0.045883 | Fail |
+| Old | `ef4939693f389572` | 0.040738 | Fail |
+
+All three report the same backing-canvas census: 75402 opaque pixels, 31557
+button-face pixels, 39359 white pixels. The controls establish that neither
+the new viewport logic nor the layout change is required for this failure;
+they do not identify its cause. Worker dialog composition remains open.
+
+Driver/logs: `/private/tmp/wa-viewport-browser-control.js`,
+`/private/tmp/wa-viewport-browser-control.log`,
+`/private/tmp/wa-viewport-browser-old-layout.log`. The server logs confirm
+that the old wasm and, for the second control, old mirror were actually served.
+No performance or complete native-conformance claim is made.

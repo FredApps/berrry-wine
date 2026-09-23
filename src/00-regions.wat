@@ -562,8 +562,10 @@
     (owner "04-cache.wat:$code_page_mark"))
   (region.declare $SYNC_TABLE (size 0x00010000) (align 0x00001000)
     (owner "01-header.wat:$SYNC_TABLE"))
-  (region.declare $D3DIM_VIEWPORT_LIGHT_HEAD (size 0x00004000) (align 0x00001000)
+  (region.declare $D3DIM_VIEWPORT_LIGHT_HEAD (size 0x00008000) (align 0x00001000)
     (owner "09aa-handlers-d3dim.wat:$D3DIM_VIEWPORT_LIGHT_HEAD"))
+  (region.declare $D3DIM_VIEWPORT_DATA (size 0x00008000) (align 0x00001000)
+    (owner "09ab-handlers-d3dim-core.wat:$D3DIM_VIEWPORT_DATA"))
   (region.declare $HIT_COUNT_BASE (size 0x00000100) (align 0x00001000)
     (owner "01-header.wat:$HIT_COUNT_BASE"))
   ;; Eight I/O completion ports, each with a 256-entry queue of three dwords

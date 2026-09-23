@@ -1,8 +1,14 @@
 'use strict';
 const assert=require('assert');
-const {bootRenderHarness}=require('./render-helper');
+const {compileSrcWasm}=require('./compile-src');
+const {createHostImports}=require('../lib/host-imports');
 const apis=require('../src/api_table.json');
 const extraWat=String.raw`
+ (global $vp_fail_alloc (mut i32) (i32.const 0))
+ (func (export "fail_alloc") (param $v i32) (global.set $vp_fail_alloc (local.get $v)))
+ (func $vp_test_alloc (param $n i32) (result i32)
+   (if (global.get $vp_fail_alloc) (then (return (i32.const 0))))
+   (call $heap_alloc (local.get $n)))
  (func (export "create") (param $v i32) (result i32)
    (if (i32.eq (local.get $v) (i32.const 1)) (then (return (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP1)))))
    (if (i32.eq (local.get $v) (i32.const 2)) (then (return (call $dx_create_com_obj (i32.const 23) (global.get $DX_VTBL_D3DVP2)))))
@@ -14,11 +20,47 @@ const extraWat=String.raw`
      (i32.const 0) (i32.const 0) (i32.const 0))
    (i32.load (global.get $reg_base)))
  (func (export "refs") (param $p i32) (result i32) (load.field DxObject refcount (call $dx_from_this (local.get $p))))
- (func (export "release") (param $p i32) (result i32) (call $dx_com_release_basic (local.get $p)))
+ (func (export "release") (param $p i32) (result i32)
+   (call $handle_IDirect3DViewport_Release (local.get $p) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+   (i32.load (global.get $reg_base)))
+ (func (export "device") (result i32)
+   (local $p i32) (local $s i32)
+   (local.set $p (call $dx_create_com_obj (i32.const 20) (global.get $DX_VTBL_D3DDEV3)))
+   (local.set $s (call $heap_alloc (i32.const 4096)))
+   (call $d3ddev_init_state (local.get $s))
+   (i32.store offset=16 (call $dx_from_this (local.get $p)) (local.get $s))
+   (local.get $p))
+ (export "attach" (func $d3dim_device_add_viewport))
+ (export "detach" (func $d3dim_device_delete_viewport))
+ (export "release_device" (func $d3dim_device_release))
+ (export "select_viewport" (func $d3dim_device_set_current_viewport))
+ (func (export "max_slots") (result i32) (global.get $DX_MAX))
+ (func (export "slot") (param $p i32) (result i32) (call $dx_slot_of (call $dx_from_this (local.get $p))))
+ (func (export "data_slots") (result i32) (i32.div_u (global.get $D3DIM_VIEWPORT_DATA_SIZE) (i32.const 4)))
+ (func (export "light_slots") (result i32) (i32.div_u (global.get $D3DIM_VIEWPORT_LIGHT_HEAD_SIZE) (i32.const 4)))
+ (func (export "data") (param $p i32) (result i32)
+   (i32.load (call $d3dim_viewport_data_addr (call $dx_from_this (local.get $p)))))
+ (func (export "live_heap") (result i32)
+   (i32.sub (global.get $heap_stat_allocs) (global.get $heap_stat_frees)))
  (func (export "span_cursor") (result i32) (global.get $guest_span_cursor))
 `;
 (async()=>{
- const {exports:e}=await bootRenderHarness({extraWat,fonts:'none'});e.init_dx_com_thunks();
+ let patched=0;
+ const wasm=compileSrcWasm((file,source)=>{
+   if(file==='09ab-handlers-d3dim-core.wat') {
+     const start=source.indexOf('  (func $d3dim_viewport_set_data '),end=source.indexOf('  (func $d3dim_viewport_get ',start);
+     assert(start>=0&&end>start);
+     const body=source.slice(start,end),site='(call $heap_alloc (i32.const 44))';
+     assert.strictEqual(body.split(site).length,2);patched++;
+     return source.slice(0,start)+body.replace(site,'(call $vp_test_alloc (i32.const 44))')+source.slice(end);
+   }
+   return file==='13-exports.wat'?source+'\n'+extraWat:source;
+ });
+ assert.strictEqual(patched,1);
+ const memory=new WebAssembly.Memory({initial:8192,maximum:8192,shared:true});
+ const ctx={getMemory:()=>memory.buffer},imports=createHostImports(ctx);imports.host.memory=memory;
+ const {instance}=await WebAssembly.instantiate(wasm,imports),e=instance.exports;ctx.exports=e;
+ e.init_dx_com_thunks();
  const sp=e.guest_alloc(128),iid=e.guest_alloc(16),out=e.guest_alloc(4);
  const versions=[1,2,3], guids=[
    [0x4417c146,0x11cf33ad,0x00006f81,0x6e1520c0],
@@ -44,26 +86,61 @@ const extraWat=String.raw`
    return hr;
  };
  const vtables=versions.map(v=>{const p=e.create(v),vt=e.guest_read32(p);e.release(p);return vt;});
- // The rectangle is common to D3DVIEWPORT and D3DVIEWPORT2. This is a
- // return/ABI and rectangle regression, not coverage of their remaining fields.
  const vp=e.guest_alloc(52),valid=e.guest_alloc(4);
+ const device=e.device();assert(device);
+ const bits=f=>{const b=Buffer.alloc(4);b.writeFloatLE(f);return b.readUInt32LE();};
+ const words=p=>Array.from({length:11},(_,n)=>e.guest_read32(p+n*4)>>>0);
  const sparseBase=0x33000000;
  for(const p of [sparseBase,sparseBase+0x10000,sparseBase+4096])e.test_virtual_map_commit(p,4096);
  assert.notStrictEqual(e.guest_to_wasm(sparseBase+4096),e.guest_to_wasm(sparseBase)+4096);
  const sparseVp=sparseBase+4090;
  for(const v of versions) {
    const p=e.create(v),original=e.guest_read32(p);
+   const heap=e.live_heap();
+   write(vp,[44,...Array(10).fill(0x12345678)]);
+   for(const method of ['GetViewport','SetViewport']) {
+     assert.strictEqual(invoke(v,method,0,0),0x88760082,'object error precedes descriptor error');
+     assert.strictEqual(invoke(v,method,device,vp),0x88760082,'wrong object family rejected');
+   }
+   if(v!==1) {
+     assert.strictEqual(invoke(v,'GetViewport2',p,vp),0x88760305,'uninitialized viewport');
+     assert.deepStrictEqual(words(vp),[44,...Array(10).fill(0x12345678)]);
+   }
+   assert.strictEqual(invoke(v,'SetViewport',p,vp),0x88760306,'detached viewport');
+   assert.strictEqual(e.data(p),0);assert.strictEqual(e.live_heap(),heap);
+   assert.strictEqual(e.attach(device,p),0);
+   // Failure must not publish a descriptor or alter the rectangle. A retry
+   // then succeeds, and future setters reuse that same owned allocation.
+   write(vp,[44,0,0,80,60,...[40,30,1,1,0,1].map(bits)]);
+   e.fail_alloc(1);
+   assert.strictEqual(invoke(v,'SetViewport',p,vp),0x8007000e);
+   assert.strictEqual(e.data(p),0);assert.strictEqual(e.live_heap(),heap+1);
+   e.fail_alloc(0);
+   assert.strictEqual(invoke(v,'SetViewport',p,vp),0);
+   const owned=e.data(p);assert(owned);
+   e.fail_alloc(1);
    // Clear has the same four-argument ABI on all three interfaces. A no-op
    // clear must still write its HRESULT, not return the incoming EAX poison.
    assert.strictEqual(invoke(v,'Clear',p,0,0,20),0,'Clear HRESULT');
    for(const suffix of v===1?['']:['','2']) for(const buffer of [vp,sparseVp,sparseBase+4094]) {
      const rectangle=[3+v,5+v,91+v,73+v];
-     write(buffer,[44,...rectangle,...Array(6).fill(0)]);
+     const tail=suffix==='2'?[-0.25,0.75,2,1.5,0.125,0.875]:[23,19,99,98,0.25,0.75];
+     write(buffer,[44,...rectangle,...tail.map(bits)]);
      e.guest_write32(buffer+44,0x24681357);
      assert.strictEqual(invoke(v,'SetViewport'+suffix,p,buffer),0,'SetViewport HRESULT');
      write(buffer,[44,0,0,0,0,...Array(6).fill(0)]);
      assert.strictEqual(invoke(v,'GetViewport'+suffix,p,buffer),0,'GetViewport HRESULT');
      assert.deepStrictEqual([4,8,12,16].map(n=>e.guest_read32(buffer+n)),rectangle);
+     const cw=Math.fround(rectangle[2]/23),ch=Math.fround(rectangle[3]/19);
+     const expectedTail=suffix==='2'?tail.map(bits):
+       [Math.fround(rectangle[2]/cw),Math.fround(rectangle[3]/ch),cw/2,ch/2,0,1].map(bits);
+     assert.deepStrictEqual(words(buffer).slice(5),expectedTail,'complete converted descriptor');
+     if(v!==1) {
+       assert.strictEqual(invoke(v,suffix==='2'?'GetViewport':'GetViewport2',p,buffer),0);
+       const cross=suffix==='2'?[rectangle[2]/2,rectangle[3]/1.5,1.75,0.75,0,1]:[-cw/2,ch/2,cw,ch,0,1];
+       assert.deepStrictEqual(words(buffer),[44,...rectangle,...cross.map(bits)],'cross-layout conversion');
+     }
+     assert.strictEqual(e.data(p),owned,'setters reuse one descriptor');
      assert.strictEqual(e.guest_read32(buffer+44),0x24681357,'viewport output guard');
      for(const size of [0,20,40,43,45,80,0xffffffff]) {
        const rejected=[size,101,102,103,104,...Array(6).fill(0x3f800000)];
@@ -83,6 +160,9 @@ const extraWat=String.raw`
      assert.strictEqual(invoke(v,'GetViewport'+suffix,p,buffer),0,'read after null setter');
      assert.deepStrictEqual([4,8,12,16].map(n=>e.guest_read32(buffer+n)),rectangle);
    }
+   e.fail_alloc(0);
+   assert.strictEqual(e.detach(device,p),0);
+   assert.strictEqual(e.live_heap(),heap+1,'one retained descriptor, no attachment node');
    assert.strictEqual(invoke(v,'SetBackground',p,0),0,'SetBackground HRESULT');
    write(out,[0xdeadbeef]);write(valid,[0xdeadbeef]);
    assert.strictEqual(invoke(v,'GetBackground',p,out,valid,16),0,'GetBackground HRESULT');
@@ -107,12 +187,15 @@ const extraWat=String.raw`
      write(iid,guids[target]);assert.strictEqual(query(v,p),0);
      const view=e.guest_read32(out);assert.strictEqual(e.refs(p),2);
      assert.strictEqual(e.guest_read32(view),vtables[target],'requested viewport ABI');
+     assert.strictEqual(e.data(view),e.data(p),'one descriptor owner across interface views');
      assert.strictEqual(e.guest_read32(p),original,'upgrades do not mutate original vtable');
      write(iid,unknown);assert.strictEqual(query(versions[target],view),0);
      assert.strictEqual(e.guest_read32(out),p,'one controlling viewport IUnknown');
      assert.strictEqual(e.release(p),2);assert.strictEqual(e.release(view),1);
    }
    assert.strictEqual(e.release(p),0);
+   assert.strictEqual(e.data(p),0,'final release clears descriptor owner');
+   assert.strictEqual(e.live_heap(),heap,'final release frees descriptor');
  }
  // Deliberately interleave sparse backing so a crossing IID is not affine.
  const base=0x32000000;
@@ -127,5 +210,36 @@ const extraWat=String.raw`
    assert.strictEqual(e.guest_read32(sparseOut),p);assert.strictEqual(e.release(p),1);
  }
  assert.strictEqual(e.release(p),0);
+ // Two descriptors survive interleaved selection independently. Drop the
+ // application's references and let device teardown own their final release.
+ const heapBefore=e.live_heap(),a=e.create(3),b=e.create(3);
+ const descA=[44,1,2,80,60,...[-1,1,2,2,0,1].map(bits)];
+ const descB=[44,3,4,20,30,...[-0.5,0.25,1,0.5,0.2,0.8].map(bits)];
+ for(const [obj,desc] of [[a,descA],[b,descB]]) {
+   assert.strictEqual(e.attach(device,obj),0);write(vp,desc);
+   assert.strictEqual(invoke(3,'SetViewport2',obj,vp),0);
+ }
+ assert.notStrictEqual(e.data(a),e.data(b));
+ for(const obj of [a,b,a])assert.strictEqual(e.select_viewport(device,obj),0);
+ for(const [obj,desc] of [[a,descA],[b,descB]]) {
+   write(vp,[44,...Array(10).fill(0)]);
+   assert.strictEqual(invoke(3,'GetViewport2',obj,vp),0);
+   assert.deepStrictEqual(words(vp),desc);
+ }
+ // Exercise the actual highest DX slot, not just a small-slot happy path.
+ assert(e.data_slots()>=e.max_slots());assert(e.light_slots()>=e.max_slots());
+ let last=0,created=0,next;
+ while((next=e.create(3))!==0){if(e.slot(next)===e.max_slots()-1)last=next;assert(++created<=e.max_slots());}
+ assert(last);assert.strictEqual(e.slot(last),e.max_slots()-1);
+ assert.strictEqual(e.attach(device,last),0);write(vp,descB);
+ assert.strictEqual(invoke(3,'SetViewport2',last,vp),0);
+ assert.strictEqual(e.detach(device,last),0);assert.strictEqual(e.release(last),0);
+ assert.strictEqual(e.data(last),0);
+ write(vp,[44,...Array(10).fill(0)]);assert.strictEqual(invoke(3,'GetViewport2',a,vp),0);
+ assert.deepStrictEqual(words(vp),descA,'high-slot cleanup preserves another owner');
+ assert.strictEqual(e.release(a),2);assert.strictEqual(e.release(b),1);
+ assert.strictEqual(e.release_device(device),0);
+ assert.strictEqual(e.data(a),0);assert.strictEqual(e.data(b),0);
+ assert.strictEqual(e.live_heap(),heapBefore-1,'device state, list nodes and descriptors freed');
  console.log(`PASS D3D viewport: ${abiCalls} poisoned-EAX calls with ABI guards, direct/sparse rectangles, full GUIDs, 9 identity upgrades, nulls and balanced refs/spans`);
 })().catch(error=>{console.error(error);process.exitCode=1;});

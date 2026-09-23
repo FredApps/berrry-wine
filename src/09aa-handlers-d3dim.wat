@@ -187,13 +187,13 @@
     (call $lock_release (global.get $LOCK_DX))
     (local.get $hr))
 
-  (func $d3dim_viewport_release_lights (param $this i32)
+  (func $d3dim_viewport_release_owned (param $this i32)
     ;; Viewport::Release enters here without holding LOCK_DX.  Device teardown
     ;; and current-viewport replacement already hold it, so the list walker is
     ;; split into the locked core appended in 09ab and this locking wrapper.
     (if (i32.eqz (local.get $this)) (then (return)))
     (call $lock_acquire (global.get $LOCK_DX))
-    (call $d3dim_viewport_release_lights_locked (local.get $this))
+    (call $d3dim_viewport_release_owned_locked (local.get $this))
     ;; Do not make the locked core acquire recursively: the DX lock is shared
     ;; between real Worker instances, and device destruction needs to drop two
     ;; viewport references while keeping owner/current state atomic.
@@ -1352,7 +1352,7 @@
     (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
     (if (i32.le_s (local.get $rc) (i32.const 0))
       (then
-        (call $d3dim_viewport_release_lights (local.get $arg0))
+        (call $d3dim_viewport_release_owned (local.get $arg0))
         (call $dx_free (local.get $entry))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
       (else (store.field DxObject refcount (local.get $entry) (local.get $rc)) (i32.store offset=0 (global.get $reg_base) (local.get $rc))))
@@ -1500,13 +1500,13 @@
 
   ;; IDirect3DViewport2_GetViewport2 — 2 args (incl. this)
   (func $handle_IDirect3DViewport2_GetViewport2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_viewport_get (local.get $arg0) (local.get $arg1))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+    (call $handle_IDirect3DViewport3_GetViewport2 (local.get $arg0) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
   ;; IDirect3DViewport2_SetViewport2 — 2 args (incl. this)
   (func $handle_IDirect3DViewport2_SetViewport2 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $d3dim_viewport_set (local.get $arg0) (local.get $arg1))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+    (call $handle_IDirect3DViewport3_SetViewport2 (local.get $arg0) (local.get $arg1)
+      (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr)))
 
 
   ;; ── IDirect3DMaterial — 9 methods ─────────────

@@ -2997,6 +2997,15 @@
       (load.field DxObject flags (local.get $entry))))
 
   ;; ── Viewport rect get/set ─────────────────────────────────────
+  ;; One canonical D3DVIEWPORT2 guest allocation per COM identity. A zero
+  ;; pointer means data has not been set. The DX entry retains its rectangle
+  ;; mirror for clear/draw consumers; it is not a second descriptor owner.
+  (global $D3DIM_VIEWPORT_DATA i32 (region.addr $D3DIM_VIEWPORT_DATA 0))
+  (global $D3DIM_VIEWPORT_DATA_SIZE i32 (region.size $D3DIM_VIEWPORT_DATA))
+  (func $d3dim_viewport_data_addr (param $entry i32) (result i32)
+    (i32.add (global.get $D3DIM_VIEWPORT_DATA)
+      (i32.shl (call $dx_slot_of (local.get $entry)) (i32.const 2))))
+
   ;; Both legacy D3DVIEWPORT layouts are 44 bytes. Validate the caller's
   ;; initialized header before touching viewport state or getter output.
   ;; Use guest scalars: even the size DWORD may cross sparse backing pages.
@@ -3007,15 +3016,60 @@
   ;; SetViewport(lpD3DVIEWPORT) / SetViewport2(lpD3DVIEWPORT2). Persist the
   ;; rectangle and derive the transform viewport used by vertex_project.
   (func $d3dim_viewport_set (param $this i32) (param $lpVp i32)
+    (call $d3dim_viewport_set_data (local.get $this) (local.get $lpVp) (i32.const 0)))
+
+  (func $d3dim_viewport_set2 (param $this i32) (param $lpVp i32)
+    (call $d3dim_viewport_set_data (local.get $this) (local.get $lpVp) (i32.const 1)))
+
+  (func $d3dim_viewport_set_data (param $this i32) (param $lpVp i32) (param $v2 i32)
     (local $entry i32) (local $dev_this i32) (local $state i32)
     (local $x i32) (local $y i32) (local $w i32) (local $h i32)
+    (local $owner i32) (local $data i32) (local $off i32)
+    (local $sx f32) (local $sy f32) (local $cw f32) (local $ch f32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (if (i32.or (i32.eqz (local.get $this))
+          (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 23)))
+      (then (i32.store (global.get $reg_base) (i32.const 0x88760082)) (return)))
     (if (i32.eqz (call $d3dim_viewport_desc_valid (local.get $lpVp)))
       (then (i32.store (global.get $reg_base) (i32.const 0x80070057)) (return))) ;; DDERR_INVALIDPARAMS
-    (local.set $entry (call $dx_from_this (local.get $this)))
+    (local.set $dev_this (load.field DxObject misc0 (local.get $entry)))
+    (if (i32.eqz (local.get $dev_this))
+      (then (i32.store (global.get $reg_base) (i32.const 0x88760306)) (return)))
     (local.set $x (call $gl32 (i32.add (local.get $lpVp) (i32.const 4))))
     (local.set $y (call $gl32 (i32.add (local.get $lpVp) (i32.const 8))))
     (local.set $w (call $gl32 (i32.add (local.get $lpVp) (i32.const 12))))
     (local.set $h (call $gl32 (i32.add (local.get $lpVp) (i32.const 16))))
+    ;; Legacy SetViewport converts to Viewport2. MaxX/MaxY and legacy depth
+    ;; are not retained by Microsoft's runtime. Either zero scale produces
+    ;; two zero clip dimensions. The f32 stores match its temporary record.
+    (if (i32.eqz (local.get $v2)) (then
+      (local.set $sx (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $lpVp) (i32.const 20)))))
+      (local.set $sy (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $lpVp) (i32.const 24)))))
+      (if (i32.and (f32.gt (f32.abs (local.get $sx)) (f32.const 0))
+                   (f32.gt (f32.abs (local.get $sy)) (f32.const 0))) (then
+        (local.set $cw (f32.demote_f64 (f64.div (f64.convert_i32_u (local.get $w)) (f64.promote_f32 (local.get $sx)))))
+        (local.set $ch (f32.demote_f64 (f64.div (f64.convert_i32_u (local.get $h)) (f64.promote_f32 (local.get $sy)))))))))
+    (call $lock_acquire (global.get $LOCK_DX))
+    (local.set $owner (call $d3dim_viewport_data_addr (local.get $entry)))
+    (local.set $data (i32.load (local.get $owner)))
+    (if (i32.eqz (local.get $data)) (then
+      (local.set $data (call $heap_alloc (i32.const 44)))
+      (if (i32.eqz (local.get $data)) (then
+        (call $lock_release (global.get $LOCK_DX))
+        (i32.store (global.get $reg_base) (i32.const 0x8007000e)) (return)))))
+    (loop $copy
+      (call $gs32 (i32.add (local.get $data) (local.get $off))
+        (call $gl32 (i32.add (local.get $lpVp) (local.get $off))))
+      (local.set $off (i32.add (local.get $off) (i32.const 4)))
+      (br_if $copy (i32.lt_u (local.get $off) (i32.const 44))))
+    (if (i32.eqz (local.get $v2)) (then
+      (call $gs32 (i32.add (local.get $data) (i32.const 20)) (i32.reinterpret_f32 (f32.mul (local.get $cw) (f32.const -0.5))))
+      (call $gs32 (i32.add (local.get $data) (i32.const 24)) (i32.reinterpret_f32 (f32.mul (local.get $ch) (f32.const 0.5))))
+      (call $gs32 (i32.add (local.get $data) (i32.const 28)) (i32.reinterpret_f32 (local.get $cw)))
+      (call $gs32 (i32.add (local.get $data) (i32.const 32)) (i32.reinterpret_f32 (local.get $ch)))
+      (call $gs32 (i32.add (local.get $data) (i32.const 36)) (i32.const 0))
+      (call $gs32 (i32.add (local.get $data) (i32.const 40)) (i32.const 0x3f800000))))
+    (i32.store (local.get $owner) (local.get $data))
     (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $x))
     (i32.store (i32.add (local.get $entry) (i32.const 16)) (local.get $y))
     (store.field DxObject misc1 (local.get $entry) (local.get $w))
@@ -3029,17 +3083,50 @@
               (call $dx_slot_of (local.get $entry))))
         (then (call $d3dim_viewport_apply_entry
           (local.get $state) (local.get $entry))))))
+    (call $lock_release (global.get $LOCK_DX))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $d3dim_viewport_get (param $this i32) (param $lpVp i32)
-    (local $entry i32)
+    (call $d3dim_viewport_get_data (local.get $this) (local.get $lpVp) (i32.const 0)))
+
+  (func $d3dim_viewport_get2 (param $this i32) (param $lpVp i32)
+    (call $d3dim_viewport_get_data (local.get $this) (local.get $lpVp) (i32.const 1)))
+
+  (func $d3dim_viewport_get_data (param $this i32) (param $lpVp i32) (param $v2 i32)
+    (local $entry i32) (local $data i32) (local $off i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (if (i32.or (i32.eqz (local.get $this))
+          (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 23)))
+      (then (i32.store (global.get $reg_base) (i32.const 0x88760082)) (return)))
     (if (i32.eqz (call $d3dim_viewport_desc_valid (local.get $lpVp)))
       (then (i32.store (global.get $reg_base) (i32.const 0x80070057)) (return))) ;; DDERR_INVALIDPARAMS
-    (local.set $entry (call $dx_from_this (local.get $this)))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 4))              (i32.load (i32.add (local.get $entry) (i32.const 12))))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 8))              (i32.load (i32.add (local.get $entry) (i32.const 16))))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 12))             (load.field DxObject misc1 (local.get $entry)))
-    (call $gs32 (i32.add (local.get $lpVp) (i32.const 16))             (load.field DxObject misc2 (local.get $entry)))
+    (call $lock_acquire (global.get $LOCK_DX))
+    (local.set $data (i32.load (call $d3dim_viewport_data_addr (local.get $entry))))
+    (if (i32.eqz (local.get $data)) (then
+      (call $lock_release (global.get $LOCK_DX))
+      (i32.store (global.get $reg_base) (i32.const 0x88760305)) (return)))
+    (loop $copy
+      (call $gs32 (i32.add (local.get $lpVp) (local.get $off))
+        (call $gl32 (i32.add (local.get $data) (local.get $off))))
+      (local.set $off (i32.add (local.get $off) (i32.const 4)))
+      (br_if $copy (i32.lt_u (local.get $off) (i32.const 44))))
+    (if (i32.eqz (local.get $v2)) (then
+      (call $gs32 (i32.add (local.get $lpVp) (i32.const 20))
+        (i32.reinterpret_f32 (f32.demote_f64 (f64.div
+          (f64.convert_i32_u (call $gl32 (i32.add (local.get $data) (i32.const 12))))
+          (f64.promote_f32 (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $data) (i32.const 28)))))))))
+      (call $gs32 (i32.add (local.get $lpVp) (i32.const 24))
+        (i32.reinterpret_f32 (f32.demote_f64 (f64.div
+          (f64.convert_i32_u (call $gl32 (i32.add (local.get $data) (i32.const 16))))
+          (f64.promote_f32 (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $data) (i32.const 32)))))))))
+      (call $gs32 (i32.add (local.get $lpVp) (i32.const 28))
+        (i32.reinterpret_f32 (f32.add
+          (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $data) (i32.const 20))))
+          (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $data) (i32.const 28)))))))
+      (call $gs32 (i32.add (local.get $lpVp) (i32.const 32)) (call $gl32 (i32.add (local.get $data) (i32.const 24))))
+      (call $gs32 (i32.add (local.get $lpVp) (i32.const 36)) (i32.const 0))
+      (call $gs32 (i32.add (local.get $lpVp) (i32.const 40)) (i32.const 0x3f800000))))
+    (call $lock_release (global.get $LOCK_DX))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   ;; DX7 stores viewport directly on the device instead of through an
@@ -6734,11 +6821,16 @@
     (call $gs32 (local.get $out) (local.get $obj))
     (i32.const 0))
 
-  ;; Release all lights while LOCK_DX is already held. This is shared by a
+  ;; Release descriptor storage and all lights while LOCK_DX is held. Shared by a
   ;; direct viewport Release and by device/current-viewport lifetime changes.
-  (func $d3dim_viewport_release_lights_locked (param $this i32)
+  (func $d3dim_viewport_release_owned_locked (param $this i32)
     (local $head_addr i32) (local $light i32) (local $entry i32)
     (local $next i32) (local $count i32)
+    (local $owner i32) (local $data i32)
+    (local.set $owner (call $d3dim_viewport_data_addr (call $dx_from_this (local.get $this))))
+    (local.set $data (i32.load (local.get $owner)))
+    (i32.store (local.get $owner) (i32.const 0))
+    (if (local.get $data) (then (call $heap_free (local.get $data))))
     (local.set $head_addr (call $d3dim_viewport_light_head_addr (local.get $this)))
     (local.set $light (i32.load (local.get $head_addr)))
     (i32.store (local.get $head_addr) (i32.const 0))
@@ -6775,7 +6867,7 @@
     (if (i32.le_s (local.get $rc) (i32.const 0))
       (then
         (local.set $this (call $d3dim_primary_guest (local.get $entry)))
-        (call $d3dim_viewport_release_lights_locked (local.get $this))
+        (call $d3dim_viewport_release_owned_locked (local.get $this))
         (call $dx_free (local.get $entry)))
       (else (store.field DxObject refcount (local.get $entry) (local.get $rc)))))
 
