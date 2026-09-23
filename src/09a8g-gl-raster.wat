@@ -45,8 +45,12 @@
   ;; last pixel left off and widened to glLineWidth across the minor one.
   ;; Antialiased (smooth) points and lines draw aliased.
   ;;
-  ;; NOT DONE YET, each one visible rather than silent: texgen and the second
-  ;; texture unit, and texture formats other than 8-bit RGBA/RGB/BGRA/
+  ;; Texgen is GL_SPHERE_MAP on S and T together, the one mode the WebGL
+  ;; backend draws; any other mode leaves the vertex's coordinates, as it
+  ;; does there.
+  ;;
+  ;; NOT DONE YET, each one visible rather than silent: the second texture
+  ;; unit, and texture formats other than 8-bit RGBA/RGB/BGRA/
   ;; LUMINANCE/ALPHA/LUMINANCE_ALPHA (counted in gl_sw_tex_unsupported; such
   ;; a texture samples as white).
   ;; =========================================================================
@@ -131,6 +135,11 @@
   ;; glPointSize / glLineWidth, in pixels as GL passed them.
   (global $gl_sw_point_size (mut f32) (f32.const 1))
   (global $gl_sw_line_width (mut f32) (f32.const 1))
+  ;; glTexGen modes for unit 0: S in the low half, T in the high half.
+  ;; GL's default for both is EYE_LINEAR (0x2400).
+  (global $gl_sw_texgen_modes (mut i32) (i32.const 0x24002400))
+  ;; Set per draw: both S and T generate SPHERE_MAP.
+  (global $gl_sw_sphere (mut i32) (i32.const 0))
   (global $gl_sw_clipped (mut i32) (i32.const 0))
   (global $gl_sw_culled (mut i32) (i32.const 0))
   (global $gl_sw_tex_uploads (mut i32) (i32.const 0))
@@ -143,7 +152,8 @@
   ;; $GL_SW_STATE: the current state block (+0..+63), then the attrib stack
   ;; at +64, sixteen 96-byte frames of { mask, copy of the block }.
   ;;   +0  caps: 1 TEXTURE_2D, 2 BLEND, 4 ALPHA_TEST, 8 DEPTH_TEST, 16 CULL_FACE,
-  ;;       32 SCISSOR_TEST
+  ;;       32 SCISSOR_TEST, 64 FOG, 128 LIGHTING, 0xFF00 LIGHT0..7,
+  ;;       0x10000 COLOR_MATERIAL, 0x20000/0x40000 TEXTURE_GEN_S/_T
   ;;   +4  source blend (D3DBLEND)        +8  destination blend (D3DBLEND)
   ;;   +12 alpha func (D3DCMP)            +16 alpha reference, 0..255
   ;;   +20 depth func (D3DCMP)            +24 depth mask, 0/1
@@ -173,6 +183,7 @@
     (i32.store offset=60 (local.get $s) (i32.const -1))
     (global.set $gl_sw_point_size (f32.const 1))
     (global.set $gl_sw_line_width (f32.const 1))
+    (global.set $gl_sw_texgen_modes (i32.const 0x24002400))
     (global.set $gl_sw_attrib_depth (i32.const 0)))
 
   (func $gl_sw_cap_bit (param $cap i32) (result i32)
@@ -188,6 +199,9 @@
     (if (i32.lt_u (i32.sub (local.get $cap) (i32.const 0x4000)) (i32.const 8))
       (then (return (i32.shl (i32.const 256) (i32.sub (local.get $cap) (i32.const 0x4000))))))
     (if (i32.eq (local.get $cap) (i32.const 0x0B57)) (then (return (i32.const 0x10000))))
+    ;; GL_TEXTURE_GEN_S / _T, bits 17 and 18.
+    (if (i32.eq (local.get $cap) (i32.const 0x0C60)) (then (return (i32.const 0x20000))))
+    (if (i32.eq (local.get $cap) (i32.const 0x0C61)) (then (return (i32.const 0x40000))))
     (i32.const 0))
 
   ;; GL comparison (0x200 NEVER .. 0x207 ALWAYS) to D3DCMP (1 .. 8).
@@ -219,12 +233,21 @@
     (local.set $frame (call $gl_sw_attrib_sizes (global.get $gl_sw_attrib_depth)))
     (f32.store (local.get $frame) (global.get $gl_sw_point_size))
     (f32.store offset=4 (local.get $frame) (global.get $gl_sw_line_width))
+    ;; Texgen modes, one word per level after the sizes (+1728).
+    (i32.store (call $gl_sw_attrib_texgen (global.get $gl_sw_attrib_depth))
+      (global.get $gl_sw_texgen_modes))
     (global.set $gl_sw_attrib_depth (i32.add (global.get $gl_sw_attrib_depth) (i32.const 1))))
 
   ;; Level $depth's saved point size (+0) and line width (+4).
   (func $gl_sw_attrib_sizes (param $depth i32) (result i32)
     (i32.add (global.get $GL_SW_STATE)
       (i32.add (i32.const 1600) (i32.shl (local.get $depth) (i32.const 3)))))
+
+  ;; Level $depth's saved texgen modes, after the sizes: +1728 + 4 * depth,
+  ;; which ends exactly at the region's 0x700.
+  (func $gl_sw_attrib_texgen (param $depth i32) (result i32)
+    (i32.add (global.get $GL_SW_STATE)
+      (i32.add (i32.const 1728) (i32.shl (local.get $depth) (i32.const 2)))))
 
   ;; Restore one caps bit from a saved frame.
   (func $gl_sw_restore_caps (param $saved i32) (param $bits i32)
@@ -252,7 +275,7 @@
         (call $gl_sw_attrib_sizes (global.get $gl_sw_attrib_depth))))))
     ;; GL_ENABLE_BIT: every enable this file tracks.
     (if (i32.and (local.get $mask) (i32.const 0x2000))
-      (then (call $gl_sw_restore_caps (local.get $saved) (i32.const 0x1FFFF))))
+      (then (call $gl_sw_restore_caps (local.get $saved) (i32.const 0x7FFFF))))
     ;; GL_LIGHTING_BIT: the lighting, light and colour-material enables. The
     ;; light parameters themselves are the matrix mirror's (09a8f).
     (if (i32.and (local.get $mask) (i32.const 0x40))
@@ -284,7 +307,9 @@
     ;; GL_TEXTURE_BIT: TEXTURE_2D enable, texture env, binding.
     (if (i32.and (local.get $mask) (i32.const 0x40000))
       (then
-        (call $gl_sw_restore_caps (local.get $saved) (i32.const 1))
+        (call $gl_sw_restore_caps (local.get $saved) (i32.const 0x60001))
+        (global.set $gl_sw_texgen_modes (i32.load
+          (call $gl_sw_attrib_texgen (global.get $gl_sw_attrib_depth))))
         (call $memcpy (i32.add (local.get $s) (i32.const 36))
           (i32.add (local.get $saved) (i32.const 36)) (i32.const 8)))))
 
@@ -914,8 +939,12 @@
       (then
         ;; Another unit is active: its texture state is not unit 0's.
         (if (i32.or (i32.eq (local.get $op) (i32.const 10)) (i32.eq (local.get $op) (i32.const 8)))
-          (then (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0DE1))
+          (then (if (i32.or (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0DE1))
+                            (i32.lt_u (i32.sub (i32.load offset=4 (local.get $stack)) (i32.const 0x0C60))
+                                      (i32.const 4)))
               (then (return)))))
+        (if (i32.lt_u (i32.sub (local.get $op) (i32.const 83)) (i32.const 3))
+          (then (return)))
         (if (i32.or (i32.eq (local.get $op) (i32.const 44)) (i32.eq (local.get $op) (i32.const 82)))
           (then (return)))
         (if (i32.eq (local.get $op) (i32.const 42))
@@ -950,6 +979,30 @@
           (then (call $gl_sw_fog_param (i32.load offset=4 (local.get $stack))
             (f32.reinterpret_i32 (call $gl32 (i32.load offset=8 (local.get $stack))))
             (i32.load offset=8 (local.get $stack)))))
+        (return)))
+    ;; 83 glTexGeni / 84 glTexGenf / 85 glTexGenfv (coord, GL_TEXTURE_GEN_MODE,
+    ;; mode). Only S and T are kept; R and Q have no effect on a 2D lookup.
+    (if (i32.lt_u (i32.sub (local.get $op) (i32.const 83)) (i32.const 3))
+      (then
+        (if (i32.eq (i32.load offset=8 (local.get $stack)) (i32.const 0x2500))
+          (then
+            (local.set $mask (if (result i32) (i32.eq (local.get $op) (i32.const 83))
+              (then (i32.load offset=12 (local.get $stack)))
+              (else (if (result i32) (i32.eq (local.get $op) (i32.const 84))
+                (then (i32.trunc_sat_f32_s (f32.load offset=12 (local.get $stack))))
+                (else (if (result i32) (i32.load offset=12 (local.get $stack))
+                  (then (i32.trunc_sat_f32_s (f32.reinterpret_i32
+                    (call $gl32 (i32.load offset=12 (local.get $stack))))))
+                  (else (i32.const 0))))))))
+            (local.set $mask (i32.and (local.get $mask) (i32.const 0xFFFF)))
+            (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x2000))   ;; GL_S
+              (then (global.set $gl_sw_texgen_modes (i32.or
+                (i32.and (global.get $gl_sw_texgen_modes) (i32.const 0xFFFF0000))
+                (local.get $mask)))))
+            (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x2001))   ;; GL_T
+              (then (global.set $gl_sw_texgen_modes (i32.or
+                (i32.and (global.get $gl_sw_texgen_modes) (i32.const 0xFFFF))
+                (i32.shl (local.get $mask) (i32.const 16))))))))
         (return)))
     ;; 15 glPointSize(size) / 94 glLineWidth(width). GL ignores a size
     ;; that is not positive (GL_INVALID_VALUE).
@@ -1340,6 +1393,51 @@
     ;; Alpha is the material diffuse's.
     (f32.store offset=12 (local.get $dst) (f32.load offset=12 (local.get $dif))))
 
+  ;; ---- texgen ---------------------------------------------------------------
+  ;; GL_SPHERE_MAP on S and T, the one texgen mode the WebGL backend draws, by
+  ;; the same formula: reflect the eye vector about the eye normal, then
+  ;; s,t = r.xy / (2 sqrt(rx^2 + ry^2 + (rz+1)^2)) + 0.5. The texture matrix
+  ;; still applies after. Scratch +0x600: eye normal, eye position, a vec4.
+  (func $gl_sw_sphere_map (param $v i32) (param $clip i32)
+    (local $nm i32) (local $t i32) (local $k i32) (local $d f32)
+    (local $rx f32) (local $ry f32) (local $rz f32) (local $m f32)
+    (local.set $nm (region.addr $GL_SW_SCRATCH 0x400))
+    (local.set $t (region.addr $GL_SW_SCRATCH 0x600))
+    (loop $rows
+      (f32.store (i32.add (local.get $t) (i32.shl (local.get $k) (i32.const 2)))
+        (f32.mul (f32.load offset=36 (local.get $nm))
+          (f32.add (f32.add
+            (f32.mul (f32.load (i32.add (local.get $nm) (i32.mul (local.get $k) (i32.const 12))))
+                     (f32.load offset=36 (local.get $v)))
+            (f32.mul (f32.load offset=4 (i32.add (local.get $nm) (i32.mul (local.get $k) (i32.const 12))))
+                     (f32.load offset=40 (local.get $v))))
+            (f32.mul (f32.load offset=8 (i32.add (local.get $nm) (i32.mul (local.get $k) (i32.const 12))))
+                     (f32.load offset=44 (local.get $v))))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br_if $rows (i32.lt_u (local.get $k) (i32.const 3))))
+    (call $gl_sw_normalize3 (local.get $t))
+    (call $gl_mtx_set4 (i32.add (local.get $t) (i32.const 32))
+      (f32.load (local.get $v)) (f32.load offset=4 (local.get $v))
+      (f32.load offset=8 (local.get $v)) (f32.const 1))
+    (call $gl_mtx_transform4 (i32.add (local.get $t) (i32.const 16))
+      (call $gl_mtx_stack_top (global.get $gl_sw_light_block) (i32.const 0))
+      (i32.add (local.get $t) (i32.const 32)))
+    (call $gl_sw_normalize3 (i32.add (local.get $t) (i32.const 16)))
+    ;; r = e - 2 (n . e) n
+    (local.set $d (f32.mul (f32.const 2)
+      (call $gl_sw_dot3 (local.get $t) (i32.add (local.get $t) (i32.const 16)))))
+    (local.set $rx (f32.sub (f32.load offset=16 (local.get $t)) (f32.mul (local.get $d) (f32.load (local.get $t)))))
+    (local.set $ry (f32.sub (f32.load offset=20 (local.get $t)) (f32.mul (local.get $d) (f32.load offset=4 (local.get $t)))))
+    (local.set $rz (f32.add (f32.sub (f32.load offset=24 (local.get $t))
+      (f32.mul (local.get $d) (f32.load offset=8 (local.get $t)))) (f32.const 1)))
+    (local.set $m (f32.mul (f32.const 2) (f32.sqrt (f32.add
+      (f32.add (f32.mul (local.get $rx) (local.get $rx)) (f32.mul (local.get $ry) (local.get $ry)))
+      (f32.mul (local.get $rz) (local.get $rz))))))
+    (if (f32.gt (local.get $m) (f32.const 0.000001))
+      (then
+        (f32.store offset=16 (local.get $clip) (f32.add (f32.div (local.get $rx) (local.get $m)) (f32.const 0.5)))
+        (f32.store offset=20 (local.get $clip) (f32.add (f32.div (local.get $ry) (local.get $m)) (f32.const 0.5))))))
+
   ;; ---- texture matrix -------------------------------------------------------
   ;; Top of texture unit 0's stack while a draw is consumed, or 0 for identity.
   (global $gl_sw_texmtx (mut i32) (i32.const 0))
@@ -1393,6 +1491,8 @@
     (call $gl_mtx_transform4 (local.get $clip) (local.get $mvp) (local.get $tmp))
     (f32.store offset=16 (local.get $clip) (f32.load offset=28 (local.get $src)))
     (f32.store offset=20 (local.get $clip) (f32.load offset=32 (local.get $src)))
+    (if (global.get $gl_sw_sphere)
+      (then (call $gl_sw_sphere_map (local.get $src) (local.get $clip))))
     (if (global.get $gl_sw_texmtx)
       (then (call $gl_sw_tex_transform (local.get $clip))))
     (if (global.get $gl_sw_lit)
@@ -2078,7 +2178,12 @@
       (call $gl_mtx_stack_top (local.get $b) (i32.const 0)))
     (global.set $gl_sw_lit (i32.ne (i32.and (i32.load (global.get $GL_SW_STATE))
       (i32.const 128)) (i32.const 0)))
-    (if (global.get $gl_sw_lit) (then (call $gl_sw_light_setup (local.get $b))))
+    (global.set $gl_sw_sphere (i32.and
+      (i32.eq (i32.and (i32.load (global.get $GL_SW_STATE)) (i32.const 0x60000)) (i32.const 0x60000))
+      (i32.eq (global.get $gl_sw_texgen_modes) (i32.const 0x24022402))))  ;; SPHERE_MAP x2
+    ;; The normal matrix serves lighting and the sphere map alike.
+    (if (i32.or (global.get $gl_sw_lit) (global.get $gl_sw_sphere))
+      (then (call $gl_sw_light_setup (local.get $b))))
     ;; Texture unit 0's matrix (stack 2). WC3 loads one every frame to
     ;; scroll and scale its sky; identity is the common case and costs nothing.
     (global.set $gl_sw_texmtx (call $gl_mtx_stack_top (local.get $b) (i32.const 2)))
