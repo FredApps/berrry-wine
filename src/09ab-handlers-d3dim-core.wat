@@ -1865,7 +1865,7 @@
   ;; Material objects keep a private D3DMATERIAL copy at entry+8, with the
   ;; stored byte count at entry+12. Legacy material handles are DX slot ids.
   (func $d3dim_material_set (param $this i32) (param $lpMat i32)
-    (local $entry i32) (local $dst i32) (local $sz i32) (local $dst_wa i32)
+    (local $entry i32) (local $dst i32) (local $sz i32)
     (if (i32.eqz (local.get $lpMat)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.eqz (local.get $entry)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
@@ -1877,17 +1877,17 @@
     (if (i32.eqz (local.get $dst)) (then
       (local.set $dst (call $heap_alloc (i32.const 80)))
       (store.field DxObject misc0 (local.get $entry) (local.get $dst))))
-    (local.set $dst_wa (call $g2w (local.get $dst))) (call $zero_memory (local.get $dst_wa) (i32.const 80))
-    (call $memcpy (local.get $dst_wa) (call $g2w (local.get $lpMat)) (local.get $sz))
+    (call $guest_memset (local.get $dst) (i32.const 0) (i32.const 80))
+    (call $guest_memmove (local.get $dst) (local.get $lpMat) (local.get $sz))
     (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $sz))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $d3dim_material_get (param $this i32) (param $lpMat i32)
-    (local $entry i32) (local $src i32) (local $dst_wa i32) (local $stored_sz i32) (local $sz i32)
+    (local $entry i32) (local $src i32) (local $stored_sz i32) (local $sz i32)
     (if (i32.eqz (local.get $lpMat)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.eqz (local.get $entry)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
-    (local.set $dst_wa (call $g2w (local.get $lpMat))) (local.set $src (load.field DxObject misc0 (local.get $entry)))
+    (local.set $src (load.field DxObject misc0 (local.get $entry)))
     (local.set $stored_sz (i32.load (i32.add (local.get $entry) (i32.const 12))))
     (local.set $sz (call $gl32 (local.get $lpMat)))
     (if (i32.eqz (local.get $stored_sz)) (then (local.set $stored_sz (i32.const 80))))
@@ -1895,9 +1895,9 @@
       (then (local.set $sz (local.get $stored_sz))))
     (if (i32.gt_u (local.get $sz) (i32.const 80)) (then (local.set $sz (i32.const 80))))
     (if (local.get $src)
-      (then (call $memcpy (local.get $dst_wa) (call $g2w (local.get $src)) (local.get $sz)))
-      (else (call $zero_memory (local.get $dst_wa) (local.get $sz))))
-    (i32.store (local.get $dst_wa) (local.get $sz))
+      (then (call $guest_memmove (local.get $lpMat) (local.get $src) (local.get $sz)))
+      (else (call $guest_memset (local.get $lpMat) (i32.const 0) (local.get $sz))))
+    (call $gs32 (local.get $lpMat) (local.get $sz))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $d3dim_material_get_handle (param $this i32) (param $lpDev i32) (param $lpHandle i32)
@@ -1912,9 +1912,9 @@
     (if (i32.eqz (local.get $lpMat)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
     (local.set $state (call $d3ddev_state (local.get $this)))
     (if (local.get $state)
-      (then (call $memcpy
-              (call $g2w (i32.add (local.get $state) (global.get $D3DIM_OFF_D3D7_MAT)))
-              (call $g2w (local.get $lpMat))
+      (then (call $guest_memmove
+              (i32.add (local.get $state) (global.get $D3DIM_OFF_D3D7_MAT))
+              (local.get $lpMat)
               (i32.const 68))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
@@ -1923,11 +1923,11 @@
     (if (i32.eqz (local.get $lpMat)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
     (local.set $state (call $d3ddev_state (local.get $this)))
     (if (local.get $state)
-      (then (call $memcpy
-              (call $g2w (local.get $lpMat))
-              (call $g2w (i32.add (local.get $state) (global.get $D3DIM_OFF_D3D7_MAT)))
+      (then (call $guest_memmove
+              (local.get $lpMat)
+              (i32.add (local.get $state) (global.get $D3DIM_OFF_D3D7_MAT))
               (i32.const 68)))
-      (else (call $zero_memory (call $g2w (local.get $lpMat)) (i32.const 68))))
+      (else (call $guest_memset (local.get $lpMat) (i32.const 0) (i32.const 68))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $d3dim_device7_light_table (param $state i32) (result i32)
