@@ -9,8 +9,14 @@ const extraWat = String.raw`
      (i32.mul (call $dx_slot_of (call $dx_from_this (local.get $p))) (i32.const 4))))
    (local.set $old (i32.load (local.get $tbl)))
    (i32.store (local.get $tbl) (local.get $new)) (local.get $old))
- (func (export "status") (param $p i32) (param $rec i32)
-   (call $d3dim_exec_set_status (i32.const 0) (local.get $p) (local.get $rec)))
+ ;; A state-less device isolates selected payload copying from the separately
+ ;; tracked viewport-extent approximation. Null this is not a device handle.
+ (func (export "device") (result i32)
+   (call $dx_create_com_obj (i32.const 20) (global.get $DX_VTBL_D3DDEV1)))
+ (func (export "close_device") (param $p i32)
+   (call $dx_free (call $dx_from_this (local.get $p))))
+ (func (export "status") (param $dev i32) (param $p i32) (param $rec i32)
+   (call $d3dim_exec_set_status (local.get $dev) (local.get $p) (local.get $rec)))
  (func (export "invoke") (param $id i32) (param $sp i32) (param $a i32) (param $b i32) (param $c i32) (result i32)
    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
    (call $dispatch_api_table (local.get $id) (local.get $a) (local.get $b) (local.get $c)
@@ -20,9 +26,10 @@ const extraWat = String.raw`
 (async () => {
   const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
   e.init_dx_com_thunks();
+  const dev = e.device();
   const sp = e.guest_alloc(128), desc = e.guest_alloc(20), out = e.guest_alloc(4);
   const regularInput = e.guest_alloc(64) + 4, regularOutput = e.guest_alloc(64) + 4;
-  const bases = [0x36000000, 0x37000000, 0x39000000];
+  const bases = [0x36000000, 0x37000000, 0x39000000, 0x3e000000];
   const status = e.guest_alloc(24);
   [1, 0xabcdef01, 11, 22, 33, 44].forEach((v, i) => e.guest_write32(status + i * 4, v));
   for (const base of bases) {
@@ -64,10 +71,16 @@ const extraWat = String.raw`
       const expected = before.slice();
       assert.deepStrictEqual(read(output), expected, `cached=${cached} offset=${offset} input=${sparseIn} output=${sparseOut}`);
       // Exercise the opcode status writer too, independently of SetExecuteData.
-      e.status(p, status);
-      call('IDirect3DExecuteBuffer_GetExecuteData', 12, p, output);
-      for (let i = 0; i < 24; i++) expected[24 + i] = e.guest_read8(status + i);
-      assert.deepStrictEqual(read(output), expected, 'opcode status readback');
+      for (const flags of [0, 1, 2, 3]) for (const record of [status, bases[3] + 4090, bases[3] + 4082]) {
+        call('IDirect3DExecuteBuffer_SetExecuteData', 12, p, input);
+        [flags, 0xabcdef01, 11, 22, 33, 44].forEach((v, i) => e.guest_write32(record + i * 4, v));
+        e.status(dev, p, record);
+        call('IDirect3DExecuteBuffer_GetExecuteData', 12, p, output);
+        const selected = before.slice();
+        for (let i = 0; i < 24; i++) if (i < 4 || (i < 8 ? flags & 1 : flags & 2))
+          selected[24 + i] = e.guest_read8(record + i);
+        assert.deepStrictEqual(read(output), selected, `opcode selected fields flags=${flags}`);
+      }
       assert.deepStrictEqual(read(input), before, 'input untouched');
       for (let i = 1; i <= 4; i++) assert.strictEqual(e.guest_read8(output - i), 0xcc);
       for (let i = 48; i < 52; i++) assert.strictEqual(e.guest_read8(output + i), 0xcc);
@@ -76,5 +89,6 @@ const extraWat = String.raw`
       if (savedCache) e.cache_swap(p, savedCache); // Release only real heap ownership.
       call('IDirect3DExecuteBuffer_Release', 8, p); cases++;
     }
-  console.log(`PASS ExecuteData: ${cases} cached/uncached input/output layouts, crossing size/status, all bytes and neighbor/ABI guards`);
+  e.close_device(dev);
+  console.log(`PASS ExecuteData: ${cases} cached/uncached layouts + ${cases * 12} field selections, sparse records/cache, bytes and neighbor/ABI guards`);
 })().catch(error => { console.error(error); process.exitCode = 1; });

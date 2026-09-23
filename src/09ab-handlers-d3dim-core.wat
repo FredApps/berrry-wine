@@ -1140,20 +1140,28 @@
       (then (return (i32.const 0))))
     (local.get $cache_g))
 
-  ;; D3DOP_SETSTATUS seeds dsStatus, then the driver replaces its sentinel
-  ;; extent with the pixels affected by the execute buffer. The software
-  ;; rasterizer currently draws the complete retained-mode viewport, so its
-  ;; viewport rectangle is the conservative dirty extent D3DRM needs.
+  ;; D3DOP_SETSTATUS updates the selected dsStatus fields.
+  ;; TODO: replace the legacy viewport-sized dirty extent below with actual
+  ;; extent accumulation during processing/drawing. This approximation is not
+  ;; the SETSTATUS contract and over-reports even empty/clipped buffers.
   (func $d3dim_exec_set_status
     (param $dev_this i32) (param $eb_this i32) (param $rec_guest i32)
-    (local $header i32) (local $status i32) (local $state i32) (local $sw i32)
+    (local $header i32) (local $status i32) (local $flags i32) (local $state i32) (local $sw i32)
     (local $x i32) (local $y i32) (local $w i32) (local $h i32)
     (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $eb_this)))
     (if (i32.eqz (local.get $header)) (then (return)))
     (local.set $status (i32.add (local.get $header) (i32.const 8)))
-    (call $guest_memmove (local.get $status) (local.get $rec_guest) (i32.const 24))
+    ;; D3DSTATUS.dwFlags selects fields independently. In particular, an
+    ;; extents-only reset must not replace the status consumed by branches.
+    (local.set $flags (call $gl32 (local.get $rec_guest)))
+    (call $gs32 (local.get $status) (local.get $flags))
+    (if (i32.and (local.get $flags) (i32.const 1)) (then
+      (call $gs32 (i32.add (local.get $status) (i32.const 4))
+        (call $gl32 (i32.add (local.get $rec_guest) (i32.const 4))))))
     ;; D3DSETSTATUS_EXTENTS = 2.
-    (if (i32.and (call $gl32 (local.get $status)) (i32.const 2)) (then
+    (if (i32.and (local.get $flags) (i32.const 2)) (then
+      (call $guest_memmove (i32.add (local.get $status) (i32.const 8))
+        (i32.add (local.get $rec_guest) (i32.const 8)) (i32.const 16))
       (local.set $state (call $d3ddev_state (local.get $dev_this)))
       (if (local.get $state) (then
         (local.set $sw (call $g2w (local.get $state)))

@@ -385,3 +385,44 @@ Validation on the fixed shared-main worktree:
 - Viewer rendered-mesh selection / Change Color CLI regression PASS.
 - Viewer Open / Renderer menu browser regression PASS again after the fix,
   in cooperative and threaded modes (input/menu coverage, not a pixel oracle).
+
+## SETSTATUS field selection (2026-09-22)
+
+Microsoft's SDK `D3DSTATUS.dwFlags` selects status and extents independently
+(`D3DSETSTATUS_STATUS=1`, `D3DSETSTATUS_EXTENTS=2`); see the SDK header linked
+above. The unconditional 24-byte copy violated both directions: an extents-only
+record changed subsequent branch decisions, and a status-only record replaced
+the prior rectangle. A zero-selection record also changed both payloads.
+
+The writer now copies only selected payload fields with guest-safe accesses.
+It retains the existing flags-word readback policy. Public Execute tests cover
+all four selections with direct/page-crossing records and verify downstream
+masked branches plus preservation of unselected extents. The existing data
+fixture covers 384 field-selection combinations across 32 input/output/cache
+layouts and three record placements, including non-affine cache headers and
+records. Its state-less device fixture verifies the supplied selected payload;
+it is not evidence that device-backed extent reporting is correct. The first
+RED assertion was selection zero overwriting both status and rectangle.
+
+The old helper fixture passed a null device handle. Extending it to EXTENTS
+exposed that the unchecked internal device accessor treats that as slot zero,
+which was an ExecuteBuffer, reading its vertex offset as a device-state pointer.
+The fixture now supplies an explicit synthetic device with no state rather than
+depending on accidental null-handle behavior. Public cases use a real initialized
+state and cover the selected-status branch semantics independently.
+
+**Still open:** when EXTENTS is selected on a real device, the pre-existing
+viewport rectangle substitution remains. This change does not remove that
+approximation or claim actual extent accumulation. That requires following
+PROCESSVERTICES_UPDATEEXTENTS and primitive/raster effects, including empty,
+clipped and culled draws, rather than merely deleting the substitution and
+leaving the guest's inverted sentinel rectangle untouched. Native flags-word
+readback/error policy and device-vs-buffer status lifetime also remain unproven.
+
+Verification: all 384 data-field selections and 16 public branch cases PASS,
+as do the existing 324 clip-status cases and complete sparse Execute suite.
+Full shared-main build/gates PASS (1,504,180-byte normal WASM, unchanged layout
+hash `4f4410e063257228`). Quiet243+22 and dup117/471 remain unchanged. This was
+a correctness run on a heavily loaded shared machine, not a performance result.
+Globe's real Render-menu test also PASSes after rebuilding: all 11 items survive,
+with unchanged point / wire / solid counts of 222 / 2982 / 31713 lit pixels.
