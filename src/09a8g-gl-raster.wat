@@ -60,6 +60,10 @@
   ;; with its plaque and two of five items missing exactly that way.
   (global $gl_sw_rt (mut i32) (i32.const 0))
   (global $gl_sw_front (mut i32) (i32.const 0))
+  ;; 1 when the target's row 0 is the TOP scanline (every surface we allocate,
+  ;; and a top-down DIB), 0 for a bottom-up DIB, whose row 0 is GL's bottom.
+  (global $gl_sw_flip_y (mut i32) (i32.const 1))
+  (global $gl_sw_bitmap (mut i32) (i32.const 0))
   (global $gl_sw_presents (mut i32) (i32.const 0))
   (global $gl_sw_zbuf (mut i32) (i32.const 0))
   ;; A 1x1 opaque white texture: an untextured triangle is drawn as this
@@ -456,7 +460,7 @@
   ;; Perspective divide, viewport map and depth-range map for one clip-space
   ;; vertex, written into its screen record.
   (func $gl_sw_project (param $clip i32) (param $vp i32) (param $out i32)
-    (local $w f32) (local $rhw f32) (local $n f32) (local $f f32) (local $b i32)
+    (local $w f32) (local $rhw f32) (local $n f32) (local $f f32) (local $b i32) (local $row i32)
     (local.set $w (f32.load offset=12 (local.get $clip)))
     (local.set $rhw (f32.div (f32.const 1) (local.get $w)))
     (i32.store (local.get $out) (i32.add (i32.load (local.get $vp))
@@ -465,17 +469,20 @@
                           (f32.const 1))
                  (f32.const 0.5))
         (f32.convert_i32_s (i32.load offset=8 (local.get $vp)))))))
-    ;; GL's window origin is bottom-left and a DIB surface's is top-left, so y
-    ;; is flipped here and nowhere else. glViewport's y is also bottom-up.
+    ;; GL's window origin is bottom-left and a surface's row 0 is its top, so
+    ;; y is flipped here and nowhere else -- except into a bottom-up DIB,
+    ;; whose row 0 already is GL's bottom. glViewport's y is bottom-up too.
+    (local.set $row (i32.add (i32.load offset=4 (local.get $vp))
+      (call $gl_sw_coord (f32.mul
+        (f32.mul (f32.add (f32.mul (f32.load offset=4 (local.get $clip)) (local.get $rhw))
+                          (f32.const 1))
+                 (f32.const 0.5))
+        (f32.convert_i32_s (i32.load offset=12 (local.get $vp)))))))
     (i32.store offset=4 (local.get $out)
-      (i32.sub
-        (i32.sub (load.field DxObject height (global.get $gl_sw_rt))
-                 (i32.load offset=4 (local.get $vp)))
-        (call $gl_sw_coord (f32.mul
-          (f32.mul (f32.add (f32.mul (f32.load offset=4 (local.get $clip)) (local.get $rhw))
-                            (f32.const 1))
-                   (f32.const 0.5))
-          (f32.convert_i32_s (i32.load offset=12 (local.get $vp)))))))
+      (select
+        (i32.sub (load.field DxObject height (global.get $gl_sw_rt)) (local.get $row))
+        (local.get $row)
+        (global.get $gl_sw_flip_y)))
     ;; glDepthRange, which the mirror keeps beside the viewport. A block never
     ;; given one reads (0,0); that is legal GL but also exactly what "never
     ;; set" looks like, and far more often the latter, so it reads as (0,1).
@@ -521,6 +528,12 @@
       (local.get $w) (local.get $h) (i32.const 32) (i32.const 4)))
     (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
     (global.set $gl_sw_rt (call $dx_from_this (local.get $obj)))
+    (call $gl_sw_aux_surfaces (local.get $w) (local.get $h))
+    (global.get $gl_sw_rt))
+
+  ;; The depth surface for a w x h target, and the shared white texel.
+  (func $gl_sw_aux_surfaces (param $w i32) (param $h i32)
+    (local $obj i32)
     ;; 16bpp depth: the rasterizer stores z * 65535, so a clear to all-ones
     ;; bytes is exactly GL's default clear depth of 1.0.
     (local.set $obj (call $d3d9_create_surface
@@ -538,8 +551,53 @@
             (global.set $gl_sw_white (call $dx_from_this (local.get $obj)))
             (call $dx_surf_fmt_set (global.get $gl_sw_white) (i32.const 5))
             (i32.store (load.field DxObject misc1 (global.get $gl_sw_white))
-              (i32.const 0xFFFFFFFF))))))
-    (global.get $gl_sw_rt))
+              (i32.const 0xFFFFFFFF)))))))
+
+  ;; PFD_DRAW_TO_BITMAP: draw straight into the DIB selected into the memory
+  ;; DC the context was created on. The DIB *is* the colour buffer there --
+  ;; the app composes GDI into the same bits between frames and blits them
+  ;; around itself (SimGolf, docs/re-notes/simgolf-demo.md) -- so rasterizing
+  ;; in place is both the cheapest and the only correct option: a copy from a
+  ;; private target would overwrite the guest's own GDI with our background.
+  ;; The DxObject made here only DESCRIBES the bitmap's bits; it owns none of
+  ;; them and bills no video memory, and nothing ever releases it.
+  ;; A bottom-up DIB stores GL's bottom row first, so it needs no y flip.
+  ;; Returns 1 when bound, 0 for a bitmap the rasterizer cannot target.
+  (func $gl_sw_export_bind_bitmap (export "gl_sw_bind_bitmap") (param $hbmp i32) (result i32)
+    (local $rec i32) (local $bpp i32) (local $obj i32) (local $entry i32)
+    (local $w i32) (local $h i32) (local $stride i32)
+    (local.set $rec (call $gdi_object_record (local.get $hbmp)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
+    (if (i32.eqz (call $gdi_bitmap_record_valid (local.get $rec))) (then (return (i32.const 0))))
+    (local.set $bpp (load.field.memarg GdiBitmap bpp (local.get $rec)))
+    (local.set $w (load.field.memarg GdiBitmap width (local.get $rec)))
+    (local.set $h (load.field.memarg GdiBitmap height (local.get $rec)))
+    (local.set $stride (load.field.memarg GdiBitmap stride (local.get $rec)))
+    ;; The rasterizer writes 16- and 32-bit targets only.
+    (if (i32.and (i32.ne (local.get $bpp) (i32.const 16)) (i32.ne (local.get $bpp) (i32.const 32)))
+      (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $stride) (i32.const 0xFFFF))
+      (then (return (i32.const 0))))
+    (local.set $obj (call $dx_create_com_obj (i32.const 2) (global.get $DX_VTBL_DDSURF2)))
+    (if (i32.eqz (local.get $obj)) (then (return (i32.const 0))))
+    (local.set $entry (call $dx_from_this (local.get $obj)))
+    (store.field DxObject width (local.get $entry) (local.get $w))
+    (store.field DxObject height (local.get $entry) (local.get $h))
+    (store.field DxObject bpp (local.get $entry) (local.get $bpp))
+    (store.field DxObject pitch (local.get $entry) (local.get $stride))
+    (store.field DxObject misc1 (local.get $entry) (load.field.memarg GdiBitmap bits (local.get $rec)))
+    (store.field DxObject misc2 (local.get $entry) (i32.const 0))
+    (store.field DxObject flags (local.get $entry) (i32.const 4))
+    ;; A BI_RGB 16bpp DIB is X1R5G5B5.
+    (if (i32.eq (local.get $bpp) (i32.const 16))
+      (then (call $dx_surf_fmt_set (local.get $entry) (i32.const 2))))
+    (global.set $gl_sw_rt (local.get $entry))
+    (global.set $gl_sw_bitmap (local.get $hbmp))
+    (global.set $gl_sw_front (i32.const 0))
+    (global.set $gl_sw_flip_y (i32.ne
+      (i32.and (load.field.memarg GdiBitmap flags (local.get $rec)) (i32.const 2)) (i32.const 0)))
+    (call $gl_sw_aux_surfaces (local.get $w) (local.get $h))
+    (i32.const 1))
 
   (func $gl_sw_clear_depth
     (local $z i32)
@@ -763,8 +821,10 @@
                    (i32.sub (i32.load offset=4 (local.get $s2)) (i32.load offset=4 (local.get $s0))))
           (i32.mul (i32.sub (i32.load (local.get $s2)) (i32.load (local.get $s0)))
                    (i32.sub (i32.load offset=4 (local.get $s1)) (i32.load offset=4 (local.get $s0))))))
-        (local.set $front (i32.eq (i32.lt_s (local.get $area) (i32.const 0))
-                                  (i32.load offset=32 (local.get $s))))
+        ;; Unflipped (a bottom-up DIB), screen winding is GL's own.
+        (local.set $front (i32.eq
+          (i32.xor (i32.lt_s (local.get $area) (i32.const 0)) (i32.eqz (global.get $gl_sw_flip_y)))
+          (i32.load offset=32 (local.get $s))))
         (local.set $cull (i32.load offset=28 (local.get $s)))
         (if (i32.or
               (i32.eq (local.get $cull) (i32.const 0x408))
@@ -885,10 +945,18 @@
     (global.get $gl_sw_tex_unsupported))
   ;; The DX slot of the presented (front) surface, or -1 before the first
   ;; draw, so a test or a capture can name it without guessing.
+  ;; With a bitmap target there is no front, and this names the descriptor
+  ;; over the DIB instead, so --dx-slot can still capture what GL drew.
   (func $gl_sw_export_slot (export "gl_sw_slot") (result i32)
-    (if (i32.eqz (global.get $gl_sw_front)) (then (return (i32.const -1))))
-    (i32.div_u (i32.sub (global.get $gl_sw_front) (global.get $DX_OBJECTS))
+    (local $e i32)
+    (local.set $e (select (global.get $gl_sw_front) (global.get $gl_sw_rt)
+      (i32.ne (global.get $gl_sw_front) (i32.const 0))))
+    (if (i32.eqz (local.get $e)) (then (return (i32.const -1))))
+    (i32.div_u (i32.sub (local.get $e) (global.get $DX_OBJECTS))
                (i32.const 32)))
+  ;; The HBITMAP a PFD_DRAW_TO_BITMAP context is drawing into, 0 otherwise.
+  (func $gl_sw_export_bitmap (export "gl_sw_bitmap") (result i32)
+    (global.get $gl_sw_bitmap))
   ;; The back buffer's DxObject entry -- where draws land -- or 0 before the
   ;; first draw. The record is the one $d3d9_create_surface documents at
   ;; 09ad-handlers-d3d9: +12 w, +14 h, +16 bpp, +18 pitch, +20 DIB (WASM
@@ -922,6 +990,8 @@
   (func $gl_sw_export_reset (export "gl_sw_reset")
     (global.set $gl_sw_rt (i32.const 0))
     (global.set $gl_sw_front (i32.const 0))
+    (global.set $gl_sw_flip_y (i32.const 1))
+    (global.set $gl_sw_bitmap (i32.const 0))
     (global.set $gl_sw_presents (i32.const 0))
     (global.set $gl_sw_zbuf (i32.const 0))
     (global.set $gl_sw_triangles (i32.const 0))

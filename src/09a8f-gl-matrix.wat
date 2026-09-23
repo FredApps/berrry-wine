@@ -147,6 +147,9 @@
   ;; same reason: a linked list matches JS Map identity with no slot ceiling.
   ;; Unlike that table these are never recycled, because a matrix stack has no
   ;; meaningful "default" to restore a reused block to.
+  (global $GL_MTX_BLOCKS i32 (region.addr $GL_MTX_BLOCKS 0))
+  (global $GL_MTX_BLOCKS_SIZE i32 (region.size $GL_MTX_BLOCKS))
+
   (func $gl_mtx_slot (param $context i32) (param $create i32) (result i32)
     (local $p i32) (local $guest i32) (local $block i32) (local $s i32)
     (local.set $p (global.get $gl_mtx_contexts))
@@ -158,13 +161,29 @@
         (local.set $p (i32.load offset=4 (local.get $p)))
         (br $scan)))
     (if (i32.eqz (local.get $create)) (then (return (i32.const 0))))
-    (local.set $guest (call $heap_alloc (i32.const 12)))
-    (if (i32.eqz (local.get $guest)) (then (unreachable)))
-    (local.set $p (call $g2w (local.get $guest)))
-    (local.set $guest (call $heap_alloc (i32.const 10832)))
-    (if (i32.eqz (local.get $guest)) (then
-      (call $heap_free (call $w2g (local.get $p))) (unreachable)))
-    (local.set $block (call $g2w (local.get $guest)))
+    ;; The node and block live in $GL_MTX_BLOCKS, not in guest heap. Every
+    ;; access here goes through ONE translated base plus an offset up to
+    ;; 10832, and a guest heap block only guarantees that for the page it
+    ;; starts on: once the low heap is exhausted it spills to the sparse
+    ;; arena, whose adjacent guest pages need not be adjacent in WASM memory.
+    ;; SimGolf got exactly that after 7257cb44 closed the region band to the
+    ;; heap -- glLoadIdentity trapped out of bounds at batch 233887.
+    ;; Eight contexts cover every app in the corpus; a ninth takes a heap
+    ;; block that $gl_alloc_affine has checked is contiguous, or traps.
+    ;; The claim counter is the region's first word, taken atomically: every
+    ;; guest-thread instance has its own globals over this one shared memory,
+    ;; so a global counter would hand two instances the same block.
+    (local.set $s (i32.atomic.rmw.add (global.get $GL_MTX_BLOCKS) (i32.const 1)))
+    (if (i32.lt_u (local.get $s) (i32.const 8))
+      (then
+        (local.set $p (i32.add (region.addr $GL_MTX_BLOCKS 0x40)
+          (i32.mul (local.get $s) (i32.const 0x2C00))))
+        (local.set $block (i32.add (local.get $p) (i32.const 16))))
+      (else
+        (local.set $guest (call $gl_alloc_affine (i32.const 10848)))
+        (if (i32.eqz (local.get $guest)) (then (unreachable)))
+        (local.set $p (call $g2w (local.get $guest)))
+        (local.set $block (i32.add (local.get $p) (i32.const 16)))))
     (memory.fill (local.get $block) (i32.const 0) (i32.const 10832))
     (i32.store (local.get $block) (i32.const 0x1700))
     ;; A zeroed depth range is not GL's default and is not even a legal one --

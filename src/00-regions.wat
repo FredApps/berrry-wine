@@ -665,6 +665,11 @@
   ;; at +0, then sixteen 64-byte glPushAttrib frames at +64.
   (region.declare $GL_SW_STATE (size 0x00000500) (align 0x00000100)
     (owner "09a8g-gl-raster.wat:$gl_sw_observe"))
+  ;; GL matrix-mirror context records: an atomic claim counter at +0, then from
+  ;; +0x40 a 16-byte list node plus the 10832-byte block (09a8f's header),
+  ;; 0x2C00 apart, for the first eight contexts.
+  (region.declare $GL_MTX_BLOCKS (size 0x00017000) (align 0x00001000)
+    (owner "09a8f-gl-matrix.wat:$gl_mtx_slot"))
   ;; One 8-byte slot per GL texture name below 4096: surface COM object, flags.
   (region.declare $GL_SW_TEXTURES (size 0x00008000) (align 0x00001000)
     (stride 0x8 (count 4096))

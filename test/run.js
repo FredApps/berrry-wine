@@ -10550,14 +10550,21 @@ if (VERBOSE) {
       console.log(`[gl-census] software raster: triangles=${sw.gl_sw_triangles() >>> 0}` +
         ` dropped-at-eye-plane=${sw.gl_sw_clipped() >>> 0} culled=${sw.gl_sw_culled() >>> 0}` +
         ` presents=${sw.gl_sw_presents() >>> 0} tex-uploads=${sw.gl_sw_tex_uploads() >>> 0}` +
-        ` tex-unsupported=${sw.gl_sw_tex_unsupported() >>> 0} target-slot=${sw.gl_sw_slot() | 0}`);
+        ` tex-unsupported=${sw.gl_sw_tex_unsupported() >>> 0} target-slot=${sw.gl_sw_slot() | 0}` +
+        (sw.gl_sw_bitmap && sw.gl_sw_bitmap() ? ` bitmap=0x${(sw.gl_sw_bitmap() >>> 0).toString(16)}` : ''));
     }
   }
 
   if (PNG_OUT && renderer) {
     const { mem, surfaces } = getDxSurfaceManifest();
     const wantSlot = DX_SLOT === null ? null : (parseInt(DX_SLOT, 10) | 0);
-    const surface = PNG_CANVAS ? null
+    // Software GL drawing into a PFD_DRAW_TO_BITMAP DIB leaves only helper
+    // surfaces (depth, descriptors) in the DX table and no front buffer; the
+    // app shows that DIB through GDI, so the window canvas is the picture.
+    const ex = instance.exports;
+    const glBitmapOnly = ex.gl_sw_enabled && ex.gl_sw_enabled() && ex.gl_sw_front
+      && !ex.gl_sw_front() && ex.gl_sw_entry && ex.gl_sw_entry();
+    const surface = (PNG_CANVAS || (glBitmapOnly && wantSlot === null)) ? null
       : (wantSlot === null ? chooseDxPresentationSurface(surfaces, mem)
         : (surfaces.find(s => s.slot === wantSlot) || null));
     if (wantSlot !== null && !surface) {

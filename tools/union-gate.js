@@ -126,6 +126,7 @@ const UNIONS = {
       '$gdi_raster_desc_from_bitmap':'GdiBitmap',  // 10g:5736 record_valid
       '$gdi_get_dibits':             'GdiBitmap',  // 10g:5772 desc_from_bitmap first
       '$win16_DeleteObject':         'GdiBitmap',  // 09e gdi_object_type == 3 guard
+      '$gl_sw_export_bind_bitmap':   'GdiBitmap',  // 09a8g $gdi_bitmap_record_valid
 
       // --- font (type 4) ---
       '$handle_GetFontData':         'GdiFont',    // 09a4:1255 handle is DC+88
