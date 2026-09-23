@@ -2,7 +2,8 @@
 'use strict';
 
 // Compiles the two canonical artifacts, build/wine-assembly.wasm (tail calls)
-// and build/wine-assembly.compat.wasm (no tail calls).
+// and build/wine-assembly.compat.wasm (no tail calls; trampoline dispatch,
+// lib/dispatch-trampoline.js).
 //
 // The compiler is the vendored WATX compiler (tools/watx.js over
 // src/main.watx's include closure) — Milestone 5 of docs/watx-migration-plan.md
@@ -163,8 +164,14 @@ function compileWatx(replicatedDispatch) {
   // for why a mismatch is otherwise silent rather than loud.
   const { layoutHash, appendSection } = require(path.join(__dirname, 'region-layout-hash.js'));
   let stamp = null;
+  // The compat artifact dispatches through a flat trampoline, not nested
+  // call;return chains — see lib/dispatch-trampoline.js. Overlay on a copy of
+  // the vfs, so the tail artifact still compiles the sources as written.
+  const { applyToVfs } = require(path.join(ROOT, 'lib', 'dispatch-trampoline.js'));
+  const compatClosure = Object.assign({}, closure, { vfs: applyToVfs(new Map(closure.vfs)) });
   for (const [key, tailCalls] of [['bytes', true], ['compatBytes', false]]) {
-    const r = compileClosure(closure, { tailCalls, regionShake: shake ? shake.value : null });
+    const r = compileClosure(tailCalls ? closure : compatClosure,
+      { tailCalls, regionShake: shake ? shake.value : null });
     if (tailCalls && r && r.success) reportRegionLayout(r.regions, shake);
     if (r && r.success && r.regions && !stamp) {
       stamp = layoutHash(r.regions.regions);

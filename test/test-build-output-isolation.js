@@ -20,6 +20,8 @@ try {
   `);
   fs.writeFileSync(path.join(root, 'tools/region-layout-hash.js'),
     'exports.appendSection = bytes => bytes; exports.layoutHash = () => "fixture";');
+  fs.mkdirSync(path.join(root, 'lib'));
+  fs.writeFileSync(path.join(root, 'lib/dispatch-trampoline.js'), 'exports.applyToVfs = vfs => vfs;');
   const shared = ['wine-assembly.wasm', 'wine-assembly.compat.wasm', 'wine-assembly.named.wasm'];
   shared.forEach(name => fs.writeFileSync(path.join(root, 'build', name), `shared:${name}`));
   function run(args, ok = true) {
