@@ -6365,6 +6365,38 @@
   ;; Treats vertices as D3DTLVERTEX (32 bytes) laid out from buf+0. The
   ;; PROCESSVERTICES path preserves original source bytes in a side cache while
   ;; writing transformed TL vertices back into this live buffer.
+  ;; Execute-buffer twin of the DrawPrimitive clip below: clip one TL triangle
+  ;; against the near (clip z = 0) and far (clip z = w) planes, then fan the
+  ;; result through the execute path's own textured/flat decision. Uses the same
+  ;; state-block scratch as the DrawPrimitive path; nothing else holds it while
+  ;; an execute buffer's TRIANGLE op runs.
+  (func $d3dim_exec_draw_near_clipped
+    (param $dev_this i32) (param $rt i32) (param $state i32)
+    (param $v0 i32) (param $v1 i32) (param $v2 i32)
+    (local $sw i32) (local $a i32) (local $b i32) (local $count i32) (local $i i32)
+    (local.set $sw (call $g2w (local.get $state)))
+    (local.set $a (i32.add (local.get $sw) (i32.const 3744)))
+    (local.set $b (i32.add (local.get $sw) (i32.const 3200)))
+    (call $memcpy (local.get $a) (local.get $v0) (i32.const 32))
+    (call $memcpy (i32.add (local.get $a) (i32.const 32)) (local.get $v1) (i32.const 32))
+    (call $memcpy (i32.add (local.get $a) (i32.const 64)) (local.get $v2) (i32.const 32))
+    (local.set $count (call $d3dim_clip_tl_polygon
+      (local.get $state) (local.get $a) (i32.const 3) (local.get $b) (i32.const 0)))
+    (if (i32.lt_u (local.get $count) (i32.const 3)) (then (return)))
+    (local.set $count (call $d3dim_clip_tl_polygon
+      (local.get $state) (local.get $b) (local.get $count) (local.get $a) (i32.const 1)))
+    (if (i32.lt_u (local.get $count) (i32.const 3)) (then (return)))
+    (local.set $i (i32.const 1))
+    (block $done (loop $lp
+      (br_if $done (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $count)))
+      (call $d3dim_draw_tl_triangle_maybe_textured
+        (local.get $dev_this) (local.get $rt) (i32.const 1)
+        (local.get $a)
+        (i32.add (local.get $a) (i32.mul (local.get $i) (i32.const 32)))
+        (i32.add (local.get $a) (i32.mul (i32.add (local.get $i) (i32.const 1)) (i32.const 32))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $lp))))
+
   (func $d3dim_exec_triangles
     (param $dev_this i32) (param $buf_guest i32) (param $rec_guest i32) (param $wCount i32)
     (local $rt i32) (local $vbase i32) (local $i i32)
@@ -6446,55 +6478,14 @@
         (if (i32.ne (local.get $pos) (i32.const 3)) (then
           (if (i32.eqz (local.get $state)) (then
             (br $vertex_done)))
-          (local.set $c0 (i32.add (local.get $sw) (i32.const 3296)))
-          (local.set $c1 (i32.add (local.get $sw) (i32.const 3328)))
-          (if (i32.eq (local.get $pos) (i32.const 1)) (then
-            (if (local.get $p0) (then
-              (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v1) (local.get $c0))
-              (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v2) (local.get $c1))
-              (call $d3dim_draw_tl_triangle_maybe_textured
-                (local.get $dev_this) (local.get $rt) (i32.const 1)
-                (local.get $v0) (local.get $c0) (local.get $c1))))
-            (if (local.get $p1) (then
-              (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v2) (local.get $c0))
-              (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v0) (local.get $c1))
-              (call $d3dim_draw_tl_triangle_maybe_textured
-                (local.get $dev_this) (local.get $rt) (i32.const 1)
-                (local.get $v1) (local.get $c0) (local.get $c1))))
-            (if (local.get $p2) (then
-              (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v0) (local.get $c0))
-              (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v1) (local.get $c1))
-              (call $d3dim_draw_tl_triangle_maybe_textured
-                (local.get $dev_this) (local.get $rt) (i32.const 1)
-                (local.get $v2) (local.get $c0) (local.get $c1))))))
-          (if (i32.eq (local.get $pos) (i32.const 2)) (then
-            (if (i32.eqz (local.get $p0)) (then
-              (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v0) (local.get $c0))
-              (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v0) (local.get $c1))
-              (call $d3dim_draw_tl_triangle_maybe_textured
-                (local.get $dev_this) (local.get $rt) (i32.const 1)
-                (local.get $v1) (local.get $v2) (local.get $c1))
-              (call $d3dim_draw_tl_triangle_maybe_textured
-                (local.get $dev_this) (local.get $rt) (i32.const 1)
-                (local.get $v1) (local.get $c1) (local.get $c0))))
-            (if (i32.eqz (local.get $p1)) (then
-              (call $d3dim_interp_tl_vertex (local.get $v2) (local.get $v1) (local.get $c0))
-              (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v1) (local.get $c1))
-              (call $d3dim_draw_tl_triangle_maybe_textured
-                (local.get $dev_this) (local.get $rt) (i32.const 1)
-                (local.get $v2) (local.get $v0) (local.get $c1))
-              (call $d3dim_draw_tl_triangle_maybe_textured
-                (local.get $dev_this) (local.get $rt) (i32.const 1)
-                (local.get $v2) (local.get $c1) (local.get $c0))))
-            (if (i32.eqz (local.get $p2)) (then
-              (call $d3dim_interp_tl_vertex (local.get $v0) (local.get $v2) (local.get $c0))
-              (call $d3dim_interp_tl_vertex (local.get $v1) (local.get $v2) (local.get $c1))
-              (call $d3dim_draw_tl_triangle_maybe_textured
-                (local.get $dev_this) (local.get $rt) (i32.const 1)
-                (local.get $v0) (local.get $v1) (local.get $c1))
-              (call $d3dim_draw_tl_triangle_maybe_textured
-                (local.get $dev_this) (local.get $rt) (i32.const 1)
-                (local.get $v0) (local.get $c1) (local.get $c0))))))))
+          ;; One or two vertices behind the eye: clip in homogeneous space.
+          ;; Interpolating screen x/y and rhw linearly (the old
+          ;; $d3dim_interp_tl_vertex) put the cut in the wrong place and moved
+          ;; the generated vertex, so every wall triangle next to the camera in
+          ;; the SDK's Tunnel became a stretched shard.
+          (call $d3dim_exec_draw_near_clipped
+            (local.get $dev_this) (local.get $rt) (local.get $state)
+            (local.get $v0) (local.get $v1) (local.get $v2))))
       )
       (call $guest_span_release (local.get $v2) (i32.const 32))
       (call $guest_span_release (local.get $v1) (i32.const 32))
