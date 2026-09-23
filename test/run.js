@@ -126,6 +126,14 @@ const NO_RENDERER = hasFlag('no-renderer'); // --no-renderer: skip CLI canvas/re
 // Keep capability opt-in separate: the implementation is not a full SM profile.
 const D3D9_RENDERER = getArg('d3d9-renderer', null);
 const D3D9_PROGRAMMABLE = hasFlag('d3d9-programmable');
+// --gl-renderer=software: draw OpenGL in WAT (src/09a8g-gl-raster.wat) into a
+// DirectDraw surface. Needs no --headless-gl and no native deps, so it is the
+// only way a GL app gets a context on a box without a display; --png captures
+// the surface like any DX primary. The browser twin is ?gl-renderer=software.
+const GL_RENDERER = getArg('gl-renderer', null);
+if (GL_RENDERER !== null && GL_RENDERER !== 'software' && GL_RENDERER !== 'webgl') {
+  throw new Error('--gl-renderer must be software or webgl');
+}
 // --d3d-worker: rasterize D3DIM (DX2-7) draws on a render worker_thread over
 // the shared memory, the CLI twin of the browser's render Worker. The guest's
 // main instance can Atomics.wait here, so no --threads is needed.
@@ -2219,6 +2227,7 @@ async function main() {
   const ctx = {
     getMemory: () => ctx._memory ? ctx._memory.buffer : null,
     d3d9Backend: D3D9_RENDERER || 'webgl',
+    glBackend: GL_RENDERER || 'webgl',
     d3d9Programmable: D3D9_PROGRAMMABLE || APP_ENTRY?.d3d9Programmable === true,
     createD3DRenderWorker: () => {
       const {Worker} = require('worker_threads');
@@ -10533,6 +10542,16 @@ if (VERBOSE) {
     console.log(`[gl-census] unmirrored families used: ${used.length ? used.join(', ') : 'none'}` +
       `; WAT untrusted latch: ${latched < 0 ? 'export missing'
         : latched === 0 ? 'clear' : `${latchedName} (#${latched})`}`);
+    // The WAT software rasterizer (src/09a8g-gl-raster.wat): what it drew and
+    // what it had to drop for want of near-plane clipping, so a black frame
+    // reads as "never asked", "asked and dropped" or "drew" at a glance.
+    const sw = instance.exports;
+    if (sw.gl_sw_enabled && sw.gl_sw_enabled()) {
+      console.log(`[gl-census] software raster: triangles=${sw.gl_sw_triangles() >>> 0}` +
+        ` dropped-at-eye-plane=${sw.gl_sw_clipped() >>> 0} culled=${sw.gl_sw_culled() >>> 0}` +
+        ` presents=${sw.gl_sw_presents() >>> 0} tex-uploads=${sw.gl_sw_tex_uploads() >>> 0}` +
+        ` tex-unsupported=${sw.gl_sw_tex_unsupported() >>> 0} target-slot=${sw.gl_sw_slot() | 0}`);
+    }
   }
 
   if (PNG_OUT && renderer) {

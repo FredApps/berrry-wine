@@ -55,15 +55,29 @@ async function main() {
   // One 14-float GL vertex: x,y,z, r,g,b,a, s0,t0, nx,ny,nz, s1,t1
   // (src/09a8c-gl-encoder.wat:134, mirrored as VERTEX_FLOATS in
   // lib/gl-command-stream.js).
-  const putVertex = (i, x, y, z, r, g, b, a) => {
+  const putVertex = (i, x, y, z, r, g, b, a, s = 0, t = 0) => {
     const f = new Float32Array(memory.buffer, verts + i * VERT_BYTES, VERT_FLOATS);
     f.fill(0);
     f[0] = x; f[1] = y; f[2] = z;
     f[3] = r; f[4] = g; f[5] = b; f[6] = a;
+    f[7] = s; f[8] = t;
   };
   const triangle = (pts, colour) => {
-    pts.forEach(([x, y, z], i) => putVertex(i, x, y, z, ...colour));
+    pts.forEach(([x, y, z, s, t], i) => putVertex(i, x, y, z, ...colour, s, t));
     e.gl_sw_emit_triangles(verts, 3);
+  };
+
+  // One GL call through the state observer the encoder calls, arguments laid
+  // out as the guest's stdcall frame: argument i at 4 + 4*i. A number that is
+  // not an integer is written as a GLfloat.
+  const glCall = (op, ...args) => {
+    const words = new Int32Array(memory.buffer, stack, 16);
+    const floats = new Float32Array(memory.buffer, stack, 16);
+    words.fill(0);
+    args.forEach((v, i) => {
+      if (Number.isInteger(v)) words[1 + i] = v; else floats[1 + i] = v;
+    });
+    e.gl_sw_observe(op, stack);
   };
 
   // --- glViewport, through the observer the encoder really uses ---------
@@ -110,7 +124,15 @@ async function main() {
   assert.strictEqual(w, VP, 'surface width follows the viewport');
   assert.strictEqual(h, VP, 'surface height follows the viewport');
   assert.strictEqual(bpp, 32, 'surface is 32bpp');
-  assert.strictEqual(i32(28), 1, 'flagged primary, so a --png capture finds it');
+  assert.strictEqual(i32(28), 4, 'draws land in the offscreen back buffer');
+  const front = e.gl_sw_front() >>> 0;
+  assert.notStrictEqual(front, 0, 'a front buffer was created with it');
+  assert.strictEqual(new Int32Array(memory.buffer.slice(front + 28, front + 32))[0], 1,
+    'the front is flagged primary, so a --png capture finds it');
+  assert.ok(e.gl_sw_slot() >= 0, 'gl_sw_slot names a DX slot once a target exists');
+  const frontDib = new Int32Array(memory.buffer.slice(front + 20, front + 24))[0] >>> 0;
+  const frontPixels = () => new Uint32Array(memory.buffer.slice(frontDib, frontDib + pitch * h));
+  assert.ok(frontPixels().every(v => v === 0), 'nothing is shown before SwapBuffers');
 
   const pixels = new Uint32Array(memory.buffer.slice(dib, dib + pitch * h));
   const at = (x, y) => pixels[(y * pitch) / 4 + x];
@@ -143,14 +165,104 @@ async function main() {
 
   // --- the opposite winding draws too ------------------------------------
   // Inheriting D3D's D3DCULL_CCW default would drop exactly one of these.
+  // The first triangle is counter-clockwise in GL's window; this one runs up
+  // the left edge first, so it is clockwise.
+  const CW = [[-0.4, -0.9, 0], [-0.4, -0.1, 0], [0.4, -0.1, 0]];
   const before = e.gl_sw_triangles();
-  triangle([[-0.4, -0.9, 0], [0.4, -0.1, 0], [-0.4, -0.1, 0]], [0, 1, 0, 1]);
+  triangle(CW, [0, 1, 0, 1]);
   assert.strictEqual(e.gl_sw_triangles(), before + 1,
     'a clockwise triangle draws too -- GL_CULL_FACE is off by default');
   let green = 0;
   const after = new Uint32Array(memory.buffer.slice(dib, dib + pitch * h));
   for (const v of after) if ((v >>> 0) === 0xFF00FF00) green++;
   assert.ok(green > 150, `the second winding painted ${green} pixels, expected hundreds`);
+
+  // --- SwapBuffers is what makes the back buffer visible ------------------
+  glCall(CALL_INDEX.gpuPresent);
+  assert.strictEqual(e.gl_sw_presents(), 1, 'one present counted');
+  assert.deepStrictEqual(Array.from(frontPixels()), Array.from(after),
+    'SwapBuffers copies the back buffer to the front');
+
+  // --- GL_CULL_FACE, with GL's defaults: cull BACK, front is CCW ----------
+  const GL_CULL_FACE = 0x0B44, GL_TEXTURE_2D = 0x0DE1, GL_DEPTH_TEST = 0x0B71;
+  glCall(CALL_INDEX.glEnable, GL_CULL_FACE);
+  const beforeCull = e.gl_sw_triangles();
+  triangle(CW, [0, 1, 0, 1]);
+  assert.strictEqual(e.gl_sw_culled(), 1, 'a clockwise triangle is a back face and is culled');
+  triangle([[-0.4, 0.1, 0], [0.4, 0.1, 0], [0.4, 0.9, 0]], [1, 0, 0, 1]);
+  assert.strictEqual(e.gl_sw_triangles(), beforeCull + 1, 'a counter-clockwise one is drawn');
+  // Cull state saved and restored by glPushAttrib(GL_POLYGON_BIT)/glPopAttrib.
+  glCall(CALL_INDEX.glPushAttrib, 0x8);
+  glCall(CALL_INDEX.glDisable, GL_CULL_FACE);
+  glCall(CALL_INDEX.glPopAttrib);
+  triangle(CW, [0, 1, 0, 1]);
+  assert.strictEqual(e.gl_sw_culled(), 2, 'glPopAttrib(GL_POLYGON_BIT) restored GL_CULL_FACE');
+  glCall(CALL_INDEX.glDisable, GL_CULL_FACE);
+
+  // Everything below draws in the whole viewport, untranslated.
+  e.gl_mtx_set_mode(MODELVIEW);
+  e.gl_mtx_load_identity();
+  e.gl_mtx_set_mode(PROJECTION);
+  const back = () => new Uint32Array(memory.buffer.slice(dib, dib + pitch * h));
+  const quad = (z, colour, st = true) => {
+    triangle([[-1, -1, z, 0, 0.5], [1, -1, z, 1, 0.5], [1, 1, z, 1, 0.5]], colour);
+    triangle([[-1, -1, z, 0, 0.5], [1, 1, z, 1, 0.5], [-1, 1, z, 0, 0.5]], colour);
+  };
+
+  // --- a texture uploaded through glTexImage2D, sampled NEAREST -----------
+  // 2x1 RGB, blue then yellow, with UNPACK_ALIGNMENT 1 so the row is 6
+  // bytes. GL_REPLACE puts the texel on screen unmodulated, and the opaque
+  // internal format forces alpha to 0xFF.
+  const texels = e.guest_alloc(8) >>> 0;
+  new Uint8Array(memory.buffer, toWasm(texels), 6).set([0, 0, 255, 255, 255, 0]);
+  glCall(CALL_INDEX.glClear, 0x4000);
+  glCall(CALL_INDEX.glBindTexture, GL_TEXTURE_2D, 7);
+  glCall(CALL_INDEX.glPixelStorei, 0x0CF5, 1);
+  glCall(CALL_INDEX.glTexImage2D, GL_TEXTURE_2D, 0, 0x1907, 2, 1, 0, 0x1907, 0x1401, texels);
+  assert.strictEqual(e.gl_sw_tex_uploads(), 1, 'the upload was accepted');
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2800, 0x2600);  // MAG_FILTER NEAREST
+  glCall(CALL_INDEX.glTexEnvi, 0x2300, 0x2200, 0x1E01);                // REPLACE
+  glCall(CALL_INDEX.glEnable, GL_TEXTURE_2D);
+  quad(0, [1, 1, 1, 1]);
+  let px = back();
+  const pick = (x, y) => px[(y * pitch) / 4 + x] >>> 0;
+  assert.strictEqual(pick(VP / 4, VP / 2), 0xFF0000FF,
+    `the left half samples texel 0 (blue); got 0x${pick(VP / 4, VP / 2).toString(16)}`);
+  assert.strictEqual(pick(VP * 3 / 4, VP / 2), 0xFFFFFF00,
+    `the right half samples texel 1 (yellow); got 0x${pick(VP * 3 / 4, VP / 2).toString(16)}`);
+  // An unsupported type is refused and counted, not guessed at.
+  glCall(CALL_INDEX.glTexImage2D, GL_TEXTURE_2D, 0, 0x1908, 2, 1, 0, 0x1908, 0x1406, texels);
+  assert.strictEqual(e.gl_sw_tex_unsupported(), 1, 'a GL_FLOAT upload is counted as unsupported');
+  glCall(CALL_INDEX.glDisable, GL_TEXTURE_2D);
+
+  // --- the depth test ------------------------------------------------------
+  // ortho(-1,1,-1,1,-1,1) maps eye z=+0.5 to window depth 0.25 and z=-0.5
+  // to 0.75, so the green quad is nearer and the later red one must lose.
+  glCall(CALL_INDEX.glEnable, GL_DEPTH_TEST);
+  glCall(CALL_INDEX.glClear, 0x4100);
+  quad(0.5, [0, 1, 0, 1]);
+  quad(-0.5, [1, 0, 0, 1]);
+  px = back();
+  assert.strictEqual(pick(VP / 2, VP / 2), 0xFF00FF00,
+    `the nearer green quad survives the farther red one; got 0x${pick(VP / 2, VP / 2).toString(16)}`);
+  glCall(CALL_INDEX.glDisable, GL_DEPTH_TEST);
+  quad(-0.5, [1, 0, 0, 1]);
+  px = back();
+  assert.strictEqual(pick(VP / 2, VP / 2), 0xFFFF0000, 'with GL_DEPTH_TEST off the later quad wins');
+
+  // --- the alpha test --------------------------------------------------------
+  // glAlphaFunc(GL_GREATER, 0.5): a quad with vertex alpha 0.25 is rejected
+  // whole, and one with alpha 0.75 is not. Written against a raw-value
+  // i32.and that once made this test impossible to switch on.
+  glCall(CALL_INDEX.glEnable, 0x0BC0);
+  glCall(CALL_INDEX.glAlphaFunc, 0x204, 0.5);
+  quad(0, [0, 0, 1, 0.25]);
+  px = back();
+  assert.strictEqual(pick(VP / 2, VP / 2), 0xFFFF0000, 'alpha 0.25 fails GL_GREATER 0.5');
+  quad(0, [0, 0, 1, 0.75]);
+  px = back();
+  assert.strictEqual(pick(VP / 2, VP / 2) & 0xFFFFFF, 0x0000FF, 'alpha 0.75 passes it');
+  glCall(CALL_INDEX.glDisable, 0x0BC0);
 
   // --- behind the eye is dropped, not mirrored ---------------------------
   // A frustum with near=1 puts z=0 geometry at w=0, which has no screen

@@ -492,6 +492,8 @@
     ;; reach the observer, leaving the mirror silently stale instead of
     ;; marked untrusted. See src/09a8f-gl-matrix.wat.
     (call $gl_mtx_observe (local.get $op) (local.get $stack))
+    ;; glClear/glClearColor for the WAT software target; inert when it is off.
+    (call $gl_sw_observe (local.get $op) (local.get $stack))
     (if (call $gl_state_intercept (local.get $op) (local.get $stack))
       (then (return (i32.const 0))))
     (if (i32.eq (local.get $op) (i32.const 19)) (then

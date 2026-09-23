@@ -658,9 +658,17 @@
     (owner "09a8-handlers-directx.wat:$dx_surf_owner_ptr"))
   ;; Working space for one GL triangle on its way to the rasterizer: the
   ;; modelview-projection product, three clip-space vertices, the vertex being
-  ;; transformed, and three screen positions. 152 bytes used of 256.
+  ;; transformed, and three 32-byte screen records. 224 bytes used of 256.
   (region.declare $GL_SW_SCRATCH (size 0x00000100) (align 0x00001000)
     (owner "09a8g-gl-raster.wat:$gl_sw_consume"))
+  ;; The GL state the software rasterizer decides pixels by: a 48-byte block
+  ;; at +0, then sixteen 64-byte glPushAttrib frames at +64.
+  (region.declare $GL_SW_STATE (size 0x00000500) (align 0x00000100)
+    (owner "09a8g-gl-raster.wat:$gl_sw_observe"))
+  ;; One 8-byte slot per GL texture name below 4096: surface COM object, flags.
+  (region.declare $GL_SW_TEXTURES (size 0x00008000) (align 0x00001000)
+    (stride 0x8 (count 4096))
+    (owner "09a8g-gl-raster.wat:$gl_sw_tex_slot"))
   (region.declare $CP1252_TO_CP437 (size 0x00000100) (align 0x00001000)
     (owner "09a-handlers4-late.wat:$CP1252_TO_CP437"))
   (region.declare $CP437_TO_CP1252 (size 0x00000100) (align 0x00000100)
