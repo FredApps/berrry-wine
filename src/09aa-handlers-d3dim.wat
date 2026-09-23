@@ -1613,8 +1613,8 @@
       ;; status without widening the shared 32-byte DX_OBJECTS entry.
       (local.set $header (call $d3dim_execbuf_cache_header (local.get $arg0)))
       (if (local.get $header) (then
-        (call $memcpy (i32.add (local.get $header) (i32.const 8))
-          (call $g2w (i32.add (local.get $arg1) (i32.const 24)))
+        (call $guest_memmove (i32.add (call $w2g (local.get $header)) (i32.const 8))
+          (i32.add (local.get $arg1) (i32.const 24))
           (i32.const 24))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
@@ -1624,7 +1624,7 @@
     (local $entry i32) (local $header i32)
     (if (local.get $arg1) (then
       (local.set $entry (call $dx_from_this (local.get $arg0)))
-      (call $zero_memory (call $g2w (local.get $arg1)) (i32.const 48))
+      (call $guest_memset (local.get $arg1) (i32.const 0) (i32.const 48))
       (call $gs32 (local.get $arg1) (i32.const 48))
       (call $gs32 (i32.add (local.get $arg1) (i32.const 4))
         (i32.load (i32.add (local.get $entry) (i32.const 16))))
@@ -1636,8 +1636,8 @@
         (load.field DxObject flags (local.get $entry)))
       (local.set $header (call $d3dim_execbuf_cache_header (local.get $arg0)))
       (if (local.get $header) (then
-        (call $memcpy (call $g2w (i32.add (local.get $arg1) (i32.const 24)))
-          (i32.add (local.get $header) (i32.const 8))
+        (call $guest_memmove (i32.add (local.get $arg1) (i32.const 24))
+          (i32.add (call $w2g (local.get $header)) (i32.const 8))
           (i32.const 24))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
