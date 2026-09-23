@@ -18,7 +18,7 @@ const extraWat = String.raw`
       (param $ddraw_vtbl i32) (param $surface_vtbl i32) (param $device_vtbl i32)
     (global.set $DX_VTBL_DDRAW (local.get $ddraw_vtbl))
     (global.set $DX_VTBL_DDSURF2 (local.get $surface_vtbl))
-    (global.set $DX_VTBL_D3DDEV3 (local.get $device_vtbl)))
+    (global.set $DX_VTBL_D3DDEV1 (local.get $device_vtbl)))
 
   (func (export "test_diptex_create_surface") (param $desc i32) (param $out i32) (result i32)
     (local $ddraw i32)
@@ -30,8 +30,10 @@ const extraWat = String.raw`
     (i32.load offset=0 (global.get $reg_base)))
 
   (func (export "test_diptex_create_device") (param $surface i32) (param $out i32) (result i32)
+    ;; Legacy creation policy deliberately permits viewports larger than this
+    ;; tiny raster target. Strict Device2/3 setters have separate coverage.
     (call $d3dim_create_device
-      (i32.const 0) (local.get $surface) (local.get $out) (global.get $DX_VTBL_D3DDEV3))
+      (i32.const 0) (local.get $surface) (local.get $out) (global.get $DX_VTBL_D3DDEV1))
     (i32.load offset=0 (global.get $reg_base)))
 
   (func (export "test_diptex_create_viewport") (result i32)

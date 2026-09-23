@@ -37,6 +37,7 @@
   ;;   +3744  direct-primitive clip polygon A (5 × 32)  (160)         → ends 3904
   ;;   +3904  legacy clip normalization (sx,tx,sy,ty,sz,tz) (24)
   ;;   +3928  legacy clip normalization enabled        (i32, 4)
+  ;;   +3932  immutable legacy creation version (0=other) (i32, 4)
   ;;   +3968  render Worker producer descriptor scratch (32)
   ;;   +4000  D3DCLIPSTATUS round-trip storage          (24)
   ;;   +4032  vertex_project vec temp                  (16)
@@ -786,7 +787,7 @@
   ;; D3D slot + 1 (0 means no parent, e.g. surface-QI-created device).
   (func $d3dim_create_device (param $this i32) (param $rt_surf i32) (param $ppDev i32) (param $vtbl i32)
     (local $obj i32) (local $entry i32) (local $rt_entry i32) (local $rt_slot i32) (local $state i32)
-    (local $parent_entry i32) (local $parent_slot i32)
+    (local $parent_entry i32) (local $parent_slot i32) (local $version i32)
     (call $gs32 (local.get $ppDev) (i32.const 0))
     ;; Acquire fallible heap storage before consuming a permanently retired
     ;; DX slot. No parent reference or output is published until both exist.
@@ -801,6 +802,11 @@
       (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
     (call $d3ddev_init_state (local.get $state))
+    ;; QueryInterface changes the visible interface, not this creation policy.
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_D3DDEV1)) (then (local.set $version (i32.const 1))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_D3DDEV2)) (then (local.set $version (i32.const 2))))
+    (if (i32.eq (local.get $vtbl) (global.get $DX_VTBL_D3DDEV3)) (then (local.set $version (i32.const 3))))
+    (call $gs32 (i32.add (local.get $state) (i32.const 3932)) (local.get $version))
     (i32.store offset=16 (local.get $entry) (local.get $state))
     (if (local.get $this) (then
       (local.set $parent_entry (call $dx_from_this (local.get $this)))
@@ -3056,11 +3062,45 @@
   (func $d3dim_viewport_set2 (param $this i32) (param $lpVp i32)
     (call $d3dim_viewport_set_data (local.get $this) (local.get $lpVp) (i32.const 1)))
 
+  ;; DX6 runtime: creation versions 2/3 validate the converted Viewport2
+  ;; before publication. Device1 is permissive even through newer aliases;
+  ;; Device7/9 policy is separate, not inferred from this runtime's >=2 test.
+  (func $d3dim_viewport_range_valid (param $device i32) (param $desc i32)
+      (param $cw f32) (param $ch f32) (param $minz f32) (param $maxz f32) (result i32)
+    (local $state i32) (local $version i32) (local $rt i32)
+    (local $x i32) (local $y i32) (local $width i32) (local $height i32)
+    (local.set $state (call $d3ddev_state (local.get $device)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 1))))
+    (local.set $version (call $gl32 (i32.add (local.get $state) (i32.const 3932))))
+    (if (i32.and (i32.ne (local.get $version) (i32.const 2))
+                 (i32.ne (local.get $version) (i32.const 3))) (then (return (i32.const 1))))
+    ;; FCOMP/SAHF/JZ rejects unordered as well as equal; negative and reversed
+    ;; finite spans are allowed. Do not replace this with positivity tests.
+    (if (i32.or (i32.eqz (f32.gt (f32.abs (local.get $cw)) (f32.const 0)))
+          (i32.or (i32.eqz (f32.gt (f32.abs (local.get $ch)) (f32.const 0)))
+            (i32.eqz (i32.or (f32.lt (local.get $minz) (local.get $maxz))
+                            (f32.gt (local.get $minz) (local.get $maxz))))))
+      (then (return (i32.const 0))))
+    (local.set $rt (load.field DxObject misc0 (call $dx_from_this (local.get $device))))
+    (if (i32.or (i32.eqz (local.get $rt)) (i32.ge_u (local.get $rt) (global.get $DX_MAX)))
+      (then (return (i32.const 0))))
+    (local.set $rt (i32.add (global.get $DX_OBJECTS) (i32.mul (local.get $rt) (global.get $DX_ENTRY_SIZE))))
+    (local.set $width (load.field DxObject width (local.get $rt)))
+    (local.set $height (load.field DxObject height (local.get $rt)))
+    (local.set $x (call $gl32 (i32.add (local.get $desc) (i32.const 4))))
+    (local.set $y (call $gl32 (i32.add (local.get $desc) (i32.const 8))))
+    ;; Preserve the original unsigned comparisons and wrapping DWORD sums.
+    (i32.and (i32.and (i32.le_u (local.get $x) (local.get $width)) (i32.le_u (local.get $y) (local.get $height)))
+      (i32.and
+        (i32.le_u (i32.add (local.get $x) (call $gl32 (i32.add (local.get $desc) (i32.const 12)))) (local.get $width))
+        (i32.le_u (i32.add (local.get $y) (call $gl32 (i32.add (local.get $desc) (i32.const 16)))) (local.get $height)))))
+
   (func $d3dim_viewport_set_data (param $this i32) (param $lpVp i32) (param $v2 i32)
     (local $entry i32) (local $dev_this i32) (local $state i32)
     (local $x i32) (local $y i32) (local $w i32) (local $h i32)
     (local $owner i32) (local $data i32) (local $off i32)
     (local $sx f32) (local $sy f32) (local $cw f32) (local $ch f32)
+    (local $minz f32) (local $maxz f32)
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.or (i32.eqz (local.get $this))
           (i32.ne (load.field DxObject type (local.get $entry)) (i32.const 23)))
@@ -3084,7 +3124,17 @@
                    (f32.gt (f32.abs (local.get $sy)) (f32.const 0))) (then
         (local.set $cw (f32.demote_f64 (f64.div (f64.convert_i32_u (local.get $w)) (f64.promote_f32 (local.get $sx)))))
         (local.set $ch (f32.demote_f64 (f64.div (f64.convert_i32_u (local.get $h)) (f64.promote_f32 (local.get $sy)))))))))
+    (local.set $maxz (f32.const 1))
+    (if (local.get $v2) (then
+      (local.set $cw (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $lpVp) (i32.const 28)))))
+      (local.set $ch (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $lpVp) (i32.const 32)))))
+      (local.set $minz (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $lpVp) (i32.const 36)))))
+      (local.set $maxz (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $lpVp) (i32.const 40)))))))
     (call $lock_acquire (global.get $LOCK_DX))
+    (if (i32.eqz (call $d3dim_viewport_range_valid (local.get $dev_this) (local.get $lpVp)
+          (local.get $cw) (local.get $ch) (local.get $minz) (local.get $maxz))) (then
+      (call $lock_release (global.get $LOCK_DX))
+      (i32.store (global.get $reg_base) (i32.const 0x80070057)) (return)))
     (local.set $owner (call $d3dim_viewport_data_addr (local.get $entry)))
     (local.set $data (i32.load (local.get $owner)))
     (if (i32.eqz (local.get $data)) (then

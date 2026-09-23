@@ -391,3 +391,48 @@ dimensions, exact target edges and the documented native overflow behavior.
 
 This section resolves the evidence gap, not the implementation gap. No runtime
 behavior changed and no new native execution or performance claim is made.
+
+## Implementation: creation-sensitive setter validation (2026-09-23)
+
+The implementation gap above is now closed for creation versions1/2/3.
+`$d3dim_create_device` records the legacy creation version at state+3932.
+QueryInterface aliases share it; version1 stays permissive when queried as3,
+and version2/3 stays strict when queried as1. Zero denotes other/synthetic
+creation paths. Device7/9 deliberately remain outside this proven policy;
+their state initialization/reset leaves the tag zero.
+
+After legacy conversion, the common setter checks clip/depth comparisons and
+current target bounds under LOCK_DX, before allocating or publishing descriptor
+state. Invalid calls return DDERR_INVALIDPARAMS and preserve descriptor,
+rectangle mirrors, active transform cache and heap balance. The unordered
+comparison behavior, negative spans, reversed depth, zero screen dimensions,
+and wrapping rectangle sums follow the inspected Microsoft instructions.
+An absent target on a strict device returns invalid parameters rather than
+dereferencing an invalid target; native absent-target behavior was not tested.
+
+The indexed-texture regression now explicitly creates a Device1-origin device
+for its oversized and degenerate projection cases. Its geometry, clipping,
+sampler and pixel assertions remain intact. Strict Device2/3 behavior is tested
+separately against an80x60 target, not bypassed by a production exception.
+
+The viewport suite adds a matrix of three creation versions, three viewport
+interfaces and three direct/noncontiguous-sparse descriptor placements. It
+checks rejected calls before first allocation (including forced allocation
+failure), rejection after initialization with an active viewport, unchanged
+input bytes/state/cache/heap, boundary and overflow acceptance, NaNs, zero
+clip dimensions, equal depth, legacy ignored-depth conversion, public
+QueryInterface aliases and balanced final release. Total1188 poisoned-EAX
+calls with stack guards pass. The preexisting synthetic device helper remains
+untagged for state/lifetime tests; all new policy cases use the real factory.
+
+Indexed-texture, v3 vertex-buffer draw961pixels and the complete sparse Execute
+regression pass. Boids on the first rebuilt candidate passes14colours/0.75%
+geometry. Interface211, tiers1499 and diff checks pass. Remaining gaps are
+initialized activation-failure propagation/rollback, Device7 depth semantics,
+native exception/rounding details and the earlier Worker dialog composition
+failure; this does not establish whole-runtime native conformance.
+
+Final rebuild passes: normal1,506,664 bytes, compat1,509,070 bytes; layout stays
+`68ce5b9062e11919`. Log: `/private/tmp/wa-viewport-validation-build-final.log`.
+Final-source viewport rerun passes1188 calls. Silent inventory243+22 and
+duplicate ratchet117/467 remain unchanged. No benchmark was run.
