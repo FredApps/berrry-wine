@@ -2997,12 +2997,20 @@
       (load.field DxObject flags (local.get $entry))))
 
   ;; ── Viewport rect get/set ─────────────────────────────────────
+  ;; Both legacy D3DVIEWPORT layouts are 44 bytes. Validate the caller's
+  ;; initialized header before touching viewport state or getter output.
+  ;; Use guest scalars: even the size DWORD may cross sparse backing pages.
+  (func $d3dim_viewport_desc_valid (param $desc i32) (result i32)
+    (if (i32.eqz (local.get $desc)) (then (return (i32.const 0))))
+    (i32.eq (call $gl32 (local.get $desc)) (i32.const 44)))
+
   ;; SetViewport(lpD3DVIEWPORT) / SetViewport2(lpD3DVIEWPORT2). Persist the
   ;; rectangle and derive the transform viewport used by vertex_project.
   (func $d3dim_viewport_set (param $this i32) (param $lpVp i32)
     (local $entry i32) (local $dev_this i32) (local $state i32)
     (local $x i32) (local $y i32) (local $w i32) (local $h i32)
-    (if (i32.eqz (local.get $lpVp)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
+    (if (i32.eqz (call $d3dim_viewport_desc_valid (local.get $lpVp)))
+      (then (i32.store (global.get $reg_base) (i32.const 0x80070057)) (return))) ;; DDERR_INVALIDPARAMS
     (local.set $entry (call $dx_from_this (local.get $this)))
     (local.set $x (call $gl32 (i32.add (local.get $lpVp) (i32.const 4))))
     (local.set $y (call $gl32 (i32.add (local.get $lpVp) (i32.const 8))))
@@ -3024,12 +3032,10 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $d3dim_viewport_get (param $this i32) (param $lpVp i32)
-    (local $entry i32) (local $size i32)
-    (if (i32.eqz (local.get $lpVp)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
+    (local $entry i32)
+    (if (i32.eqz (call $d3dim_viewport_desc_valid (local.get $lpVp)))
+      (then (i32.store (global.get $reg_base) (i32.const 0x80070057)) (return))) ;; DDERR_INVALIDPARAMS
     (local.set $entry (call $dx_from_this (local.get $this)))
-    (local.set $size (call $gl32 (local.get $lpVp)))
-    (if (i32.eqz (local.get $size)) (then (local.set $size (i32.const 80))))
-    (call $gs32 (local.get $lpVp)                                      (local.get $size))
     (call $gs32 (i32.add (local.get $lpVp) (i32.const 4))              (i32.load (i32.add (local.get $entry) (i32.const 12))))
     (call $gs32 (i32.add (local.get $lpVp) (i32.const 8))              (i32.load (i32.add (local.get $entry) (i32.const 16))))
     (call $gs32 (i32.add (local.get $lpVp) (i32.const 12))             (load.field DxObject misc1 (local.get $entry)))

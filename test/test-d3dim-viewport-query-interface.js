@@ -56,7 +56,7 @@ const extraWat=String.raw`
    // Clear has the same four-argument ABI on all three interfaces. A no-op
    // clear must still write its HRESULT, not return the incoming EAX poison.
    assert.strictEqual(invoke(v,'Clear',p,0,0,20),0,'Clear HRESULT');
-   for(const suffix of v===1?['']:['','2']) for(const buffer of [vp,sparseVp]) {
+   for(const suffix of v===1?['']:['','2']) for(const buffer of [vp,sparseVp,sparseBase+4094]) {
      const rectangle=[3+v,5+v,91+v,73+v];
      write(buffer,[44,...rectangle,...Array(6).fill(0)]);
      e.guest_write32(buffer+44,0x24681357);
@@ -65,6 +65,23 @@ const extraWat=String.raw`
      assert.strictEqual(invoke(v,'GetViewport'+suffix,p,buffer),0,'GetViewport HRESULT');
      assert.deepStrictEqual([4,8,12,16].map(n=>e.guest_read32(buffer+n)),rectangle);
      assert.strictEqual(e.guest_read32(buffer+44),0x24681357,'viewport output guard');
+     for(const size of [0,20,40,43,45,80,0xffffffff]) {
+       const rejected=[size,101,102,103,104,...Array(6).fill(0x3f800000)];
+       write(buffer,rejected);
+       assert.strictEqual(invoke(v,'SetViewport'+suffix,p,buffer),0x80070057,'invalid setter size');
+       assert.strictEqual(invoke(v,'GetViewport'+suffix,p,buffer),0x80070057,'invalid getter size');
+       assert.deepStrictEqual(Array.from({length:11},(_,n)=>e.guest_read32(buffer+n*4)>>>0),rejected,
+         'rejected descriptor remains untouched');
+       assert.strictEqual(e.guest_read32(buffer+44),0x24681357,'rejected output guard');
+       e.guest_write32(buffer,44);
+       assert.strictEqual(invoke(v,'GetViewport'+suffix,p,buffer),0,'read after rejected setter');
+       assert.deepStrictEqual([4,8,12,16].map(n=>e.guest_read32(buffer+n)),rectangle,
+         'rejected setter preserves viewport');
+     }
+     assert.strictEqual(invoke(v,'SetViewport'+suffix,p,0),0x80070057,'null setter');
+     assert.strictEqual(invoke(v,'GetViewport'+suffix,p,0),0x80070057,'null getter');
+     assert.strictEqual(invoke(v,'GetViewport'+suffix,p,buffer),0,'read after null setter');
+     assert.deepStrictEqual([4,8,12,16].map(n=>e.guest_read32(buffer+n)),rectangle);
    }
    assert.strictEqual(invoke(v,'SetBackground',p,0),0,'SetBackground HRESULT');
    write(out,[0xdeadbeef]);write(valid,[0xdeadbeef]);

@@ -245,3 +245,43 @@ retention, null/size validation, nonzero background material semantics and
 all-path return analysis remain outside this test. In particular, the current
 shared viewport helper only retains the rectangle; passing this regression
 does not certify its scale, clipping-volume or depth fields.
+
+## Legacy viewport descriptor validation (2026-09-23)
+
+The original Microsoft DX5 `d3dimref.doc` (archival source and hashes in
+`docs/d3dim-execute-data-sparse-review.md`) defines both D3DVIEWPORT and
+D3DVIEWPORT2 as eleven DWORD/float fields, 44 bytes, and requires an initialized
+`dwSize`. Its Get/SetViewport and Get/SetViewport2 entries list
+DDERR_INVALIDPARAMS among the errors. The converted reference locations are
+1370–1403, 1476–1509 and 3392–3481 in the recovered `d3dimref.txt`.
+
+Previously the shared setter ignored size and accepted null; the getter also
+accepted null and replaced a zero size with an invented 80. Both now validate
+the nonnull descriptor's size through the same guest-scalar helper and return
+DDERR_INVALIDPARAMS (`0x80070057`) before mutation if it is not 44.
+The regression first failed with S_OK instead of that error. It tests sizes
+0, 20, 40, 43, 45, 80 and 0xffffffff, plus null, through all five applicable
+interface/method pairs. Direct buffers and two sparse layouts exercise a
+crossing rectangle field and a crossing size DWORD. Rejected getters leave
+the entire descriptor and guard untouched; a subsequent valid getter proves
+rejected setters did not replace the rectangle. Every call poisons EAX and
+checks stack cleanup.
+
+Two renderer fixtures had copied the same erroneous size80 convention:
+`test-d3dim-indexed-texture.js` and `test-d3dim-v3-vertex-buffer-draw.js` now
+declare size44. Their rendering expectations were not changed; both pass,
+including the vertex-buffer test's 961 indexed pixels.
+
+This fixes input validation, not full viewport state. Retaining scale/clip/
+depth fields, applying them to transformation, cross-layout conversion and
+invalid-object handling still need work. Exact native error precedence is
+not established by the SDK's error list and has not been claimed here.
+
+Validation: all 399 poisoned-EAX/ABI calls pass; indexed-texture and v3
+vertex-buffer tests pass; full build passes (1,505,321-byte normal /
+1,507,727-byte compat, unchanged layout `ef4939693f389572`). Boids against
+that rebuilt artifact still passes at 14 colours and 0.88% geometry with the
+pinned clock. Fragment/logical-operand/ESP/epilogue/interface/tier checks and
+duplicate ratchet pass; quiet inventory remains 243+22, duplicates 117/471.
+Build log: `/private/tmp/wa-viewport-validation-build.log`. No new browser,
+native-runtime or performance comparison was performed for this change.

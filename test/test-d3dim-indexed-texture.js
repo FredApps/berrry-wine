@@ -310,7 +310,7 @@ function writeFloat(wat, addr, value) {
   const smallViewport = wat.test_diptex_create_viewport() >>> 0;
   const vpDesc = 0x410200;
   const setViewportDesc = (width, height) => {
-    wat.guest_write32(vpDesc, 80);
+    wat.guest_write32(vpDesc, 44); // sizeof(D3DVIEWPORT)
     wat.guest_write32(vpDesc + 4, 0);
     wat.guest_write32(vpDesc + 8, 0);
     wat.guest_write32(vpDesc + 12, width);
