@@ -199,6 +199,28 @@ keys.length = 0;
 dpad.dispatch('touchend', touchEvent([touch(999, 0, 0)]));
 assert.deepStrictEqual(keys, [], 'an unknown touch identifier changes nothing');
 
+// A touch whose end never reached its widget -- the canvas's window-capture
+// handler stopped it, or iOS never sent it -- is let go of by the next touch
+// event anywhere, once the browser stops listing it in e.touches. A touch
+// that is ending in that same event belongs to its widget and is untouched.
+keys.length = 0;
+dpad.dispatch('touchstart', touchEvent([touch(60, 166 + 60, 366)]));
+btnZ.dispatch('touchstart', touchEvent([touch(61, 0, 0)]));
+assert.deepStrictEqual(keys, [['down', VK_RIGHT], ['down', 0x5A]],
+  'pad and button held by two fingers');
+// The button hears its end at window capture (its own listener, not the
+// reconciler); the pad, still listed in e.touches, keeps its key.
+window.dispatch('touchend', touchEvent([touch(61, 0, 0)], [touch(60, 166 + 60, 366)]));
+btnZ.dispatch('touchend', touchEvent([touch(61, 0, 0)], [touch(60, 166 + 60, 366)]));
+assert.deepStrictEqual(keys.slice(2), [['up', 0x5A]],
+  'the ending touch is released once by its widget and the listed one is kept');
+// The pad's touchend was swallowed; the next event no longer lists it.
+window.dispatch('touchstart', touchEvent([touch(62, 0, 0)]));
+assert.deepStrictEqual(keys.slice(3), [['up', VK_RIGHT]],
+  'a touch the browser no longer lists releases the key it held');
+dpad.dispatch('touchend', touchEvent([touch(60, 166 + 60, 366)], []));
+assert.deepStrictEqual(keys.slice(4), [], 'a late end for a reconciled touch is a no-op');
+
 // 5. Teardown: every held key goes up and every listener comes off.
 keys.length = 0;
 btnZ.dispatch('touchstart', touchEvent([touch(40, 0, 0)]));
