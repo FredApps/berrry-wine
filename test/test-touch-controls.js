@@ -901,6 +901,16 @@ TouchControls.destroy();
     'Half-Life should combine its WASD pad with deterministic trackpad look');
   assert.strictEqual(APPS.deus_ex_demo.mobileTouch, 'trackpad',
     'Deus Ex should combine its WASD pad with deterministic trackpad look');
+  for (const id of ['moorhuhn', 'moorhuhn_2', 'moorhuhn_winter', 'moorhuhn_3'])
+    assert.strictEqual(APPS[id].mobileTouch, 'trackpad',
+      `${id} aims a crosshair; a finger must move it without shooting`);
+  // Moorhuhn 2 integrates DirectInput deltas into its own crosshair: the
+  // host pointer can only disagree with it, and reload is the right button.
+  assert.strictEqual(APPS.moorhuhn_2.hideHostCursor, true);
+  // Reload is a zone over the magazine the game draws bottom-right.
+  assert.deepStrictEqual(APPS.moorhuhn_2.touchControls.zones.map(z => z.mouseButton), [2]);
+  assert.ok(APPS.moorhuhn_2.touchControls.zones[0].rect.x > 0.5 &&
+    APPS.moorhuhn_2.touchControls.zones[0].rect.y > 0.5, 'reload zone sits over the shells');
 }
 
 // Pinball zones follow the table, not the score panel, in Normal view.
