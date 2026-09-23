@@ -100,3 +100,16 @@ After the fix, the full build and Globe Render-menu test pass with the same
 222 / 2982 / 31713 pixel counts as the control. Viewer also passes its CLI
 mesh-selection / Change Color test. These are scoped regression results, not
 certification of texture quality or the whole D3DRM/screensaver cluster.
+
+## Original SDK source now located (2026-09-22)
+
+The Microsoft DX5 SDK archive also contains the actual samples and English Word
+reference manuals. Provenance and document hashes are recorded in the
+[Execute review](../d3dim-execute-data-sparse-review.md). Temporary extracted
+sources are at `/private/tmp/wa-dx5-docs.59DpEl/sdk-source/cdrom/sdk/samples/`;
+they are not committed. In particular, `uvis/uvis.cpp` provides a direct example
+of using ExecuteData extents to drive retained-mode ForceUpdate, despite its
+PROCESSVERTICES record omitting UPDATEEXTENTS. This is a useful small source
+reference for replacing our viewport-sized extent approximation. The geometry
+and update rectangle paths both need testing; getting nonblank pixels alone
+does not verify this interaction.

@@ -426,3 +426,59 @@ hash `4f4410e063257228`). Quiet243+22 and dup117/471 remain unchanged. This was
 a correctness run on a heavily loaded shared machine, not a performance result.
 Globe's real Render-menu test also PASSes after rebuilding: all 11 items survive,
 with unchanged point / wire / solid counts of 222 / 2982 / 31713 lit pixels.
+
+## Original DX5 documentation recovered: extent design evidence (2026-09-22)
+
+The original Microsoft SDK is available as
+[idx5sdk.exe](https://archive.org/download/idx5sdk/idx5sdk.exe), via the
+[archive item](https://archive.org/details/idx5sdk). The downloaded 33,018,416-byte
+self-extractor has SHA-1 `b14370372307360a9e8de2ebd8fcd13173fd3b4a`, matching
+the archive metadata. Its nested `DX5SDK.EXE` contains the original English
+Word references, dated July 14, 1997:
+
+| Archive path | SHA-256 |
+| --- | --- |
+| `/cdrom/docs/worddoc/d3dimref.doc` | `f76cbc4e1b3f0311df4205371703b31e911088fcf1d6744e5493aeff166fa6ad` |
+| `/cdrom/docs/worddoc/d3dimovr.doc` | `947b8ef0f779d07ee37d28c939295a2ee5ef542b64d2259c943516c524791538` |
+
+Extract with 7-Zip, then use `textutil -convert txt` on macOS to search without
+running an installer. Working copies for this investigation are under
+`/private/tmp/wa-dx5-docs.59DpEl/`; these proprietary source documents and SDK
+binaries are not committed. This is original Microsoft documentation and sample
+code, not a compatibility implementation or a modern API analogy.
+
+The `D3DPROCESSVERTICES`, `D3DSTATUS`, and `D3DEXECUTEDATA` sections establish:
+
+- UPDATEEXTENTS includes transformed vertices in the returned rectangle.
+- Status accumulates over executions; the rectangle expands, and SETSTATUS
+  supplies its reset.
+- ExecuteData exposes the screen extent of rendered geometry.
+
+Microsoft's `sdk/samples/uvis/uvis.cpp` provides the other half of the evidence:
+`CreateFireObjects` seeds an inverted rectangle, uses TRANSFORMLIGHT **without**
+UPDATEEXTENTS, and issues triangles. `RenderFire` later passes GetExecuteData's
+rectangle to the retained-mode viewport's ForceUpdate. The accompanying
+`misc/d3dmacs.h` writes the supplied process flags verbatim. Thus this real sample
+depends on rendering updating extents even without the transform flag.
+
+This changes the implementation/test plan, not production behavior yet:
+
+1. Track both explicit transformed-vertex updates and rendered primitive bounds;
+   a pixel-write-only tracker would omit the former, while a flag-only tracker
+   would omit the sample's draw path.
+2. SETSTATUS must install the supplied rectangle, including an inverted seed,
+   rather than substitute the viewport. Preserve accumulation across executions
+   and across records until an explicit reset.
+3. Cover no-draw transforms with the flag on/off, clipped and culled rendering,
+   sparse status storage, multiple buffers and repeated executions, as well as
+   Globe/Uvis presentation. Do not infer exact native rounding or whether a
+   rejected primitive contributes solely from the documented bounding-box term.
+
+The earlier suggestion that every fully clipped operation must preserve the
+rectangle was too broad: a flagged transform can request extents independently
+of subsequent drawing. Native edge rounding, COPY+UPDATEEXTENTS and rejection
+details still need evidence. The available v86 reference profile is 4bpp and
+cannot currently supply a DirectDraw rendering oracle (see
+[native probe limitation](d3dim-vertex-buffer-native-probe.md)); that is not a
+reason to label these policies verified. No production fix or Win98-conformance
+claim is made by this documentation recovery.
