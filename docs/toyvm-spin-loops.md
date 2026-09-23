@@ -310,3 +310,50 @@ it would change when the key arrives. The twin declines it — the port test
 takes the interpreter path — and CMA_SHRT is a keyboard-model question, not a
 spin one. daretro's `in_8 -> test_ri8` (2.7%) sits behind a `jmp`, a 3-op
 block, so it gets the clock and not the twin.
+
+## Skipping identical turns, and every spelling of the poll (2026-09-22)
+
+Turning the loop inside one handler still turns it: a 70Hz frame is ~143k
+dispatches, so a poll that waits most of a frame goes round ~48k times per
+frame at 3 steps each. But a turn's outcome is a function of the status alone,
+and the status is a pure function of the clock, so turns that read the same
+answer are identical except for their steps. `$vga_run` says how many
+dispatches the current answer holds (to the end of vertical blanking, else the
+next horizontal edge or the frame wrap), and the pspin twin charges every whole
+further turn that would read it, and pass the budget test at its branch, in one
+subtraction. That was e9da9915: 199/199 programs exact on dispatches and frame
+against the turn-by-turn twin, geomean x0.658, CHROME x0.097.
+
+The twin still only takes `in al,dx / alu al,imm / jcc head`, and the corpus
+spells the wait several other ways — `mov dx,3DAh` inside the loop (BTW,
+alpha), `and al,8 / cmp al,8 / jnz` (DIESEL, DRAGON), `in / jmp $+2 / test al,8
+/ jz` across two blocks (XMAS, KUKOO2), `mov ah,0 / test ax,8`. A fused twin
+per spelling does not scale, so `generalPortSpin` in compile.js proves the
+property the skip needs instead, and puts `in_8_gspin` on the `in`:
+
+- **Pure ops.** Registers and flags only, every register index resolved by
+  handler-effects.js, a known step charge (1, 2 for a fused compare-and-branch,
+  0 for `jmp_syn`). No memory, stack, segment write, other port, FPU or
+  CX-counting op.
+- **No carried state.** From some rotation of the loop, every register byte
+  read is never written in it or written earlier in the pass, and every flag
+  read follows an op that writes all flags. `inc bx` in the loop declines.
+- **No tie.** The twin arms on (site, `$steps`, status) and matches "one pass
+  of steps later, same site, same status". An exit followed by other code
+  that re-enters the loop at a block start could in principle arrive at the
+  same count; it has run at least one step of its own, so it can only tie if
+  the loop reaches that block start from the exit at cost >= 1. A loop where
+  every block start after an exit is reached at cost 0 has no such route;
+  anything else declines. (That is what leaves BABYTRO's `jz out / jmp head`
+  alone.)
+
+Then a pass is a function of the status it reads, a hit proves the last pass
+went round, and every pass that reads the same status again does too.
+
+**199/199 exact** on dispatches and frame against HEAD, geomean x0.944, total
+33.0s -> 31.7s. BTW x0.168, KUKOO2 x0.187, XMAS x0.192, alpha x0.201, BAGGER
+x0.271, NFO x0.37, brainbug x0.48, DIESEL x0.65, DRAGON x0.68. The slow tail
+(RUN_IT x1.14, DFUSE x1.08, BLUE x1.16) re-timed interleaved three times is
+within noise. `test/test-toyvm-retrace.js` runs each spelling folded and with
+`spinLoops: false` and requires the same dispatches, BIOS ticks and 3DAh read
+count, that the pure spellings were rewritten and that the counter was not.

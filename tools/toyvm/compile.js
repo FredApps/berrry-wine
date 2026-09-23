@@ -27,10 +27,13 @@ const { eligibleRuns, treeKey, blockWidth: treeBlockWidth } = require('./tree-fo
 // plus a findIndex or a regex per op was 20% of a scratch compile's own time
 // on CYCLE's mixer, which recompiles 66k times a minute.
 let IN8 = -1;
+let GSPIN = -1;
 let CALL_OP = null;   // Uint8Array over handler index: 1 for a call
 function handlerFacts() {
   if (CALL_OP !== null && CALL_OP.length === HANDLERS.length) return;
   IN8 = HANDLERS.findIndex(x => x.name === 'in_8');
+  GSPIN = HANDLERS.findIndex(x => x.name === 'in_8_gspin');
+  GS_FACTS.length = 0;
   CALL_OP = new Uint8Array(HANDLERS.length);
   for (let i = 0; i < HANDLERS.length; i++) if (/call/.test(HANDLERS[i].name)) CALL_OP[i] = 1;
 }
@@ -717,6 +720,7 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
       spinBlocks++;
     }
   }
+  if (spinLoops && portSpin && GSPIN >= 0) spinBlocks += generalPortSpin(words, blockStarts, blockIps);
 
   // Flag liveness over the finished region. Per block this is the same
   // backward walk as before; what is new is where it starts from.
@@ -1136,6 +1140,193 @@ function compileProgram(readByte, cs, entryIp, opts = {}) {
     arenaBase,
     byteLength: words.length * 4,
   };
+}
+
+// --- The general port-poll spin ----------------------------------------------
+//
+// in_*_pspin collapses exactly one shape, `in al,dx / alu al,imm / jcc head`.
+// The corpus polls 3DAh in several more, and they are where retrace-paced demos
+// spend their time: `mov dx,3DAh` inside the loop (BTW, alpha), `and al,8 /
+// cmp al,8 / jnz` (DIESEL), `in / jmp $+2 / test al,8 / jz` across two blocks
+// (XMAS). One fused twin per shape does not scale, so this proves the property
+// the twin needs instead and puts in_8_gspin (emit.js) on the `in`.
+//
+// The property: a PASS round the loop is a function of the 3DAh status it
+// reads, and nothing else. Three things make that true.
+//
+//  1. Pure ops. Registers and flags only -- no memory, stack, segment write,
+//     port, FPU or CX-counting op, every register index resolved
+//     (handler-effects.js), and a known step charge.
+//  2. No carried state. Starting from SOME op of the loop, every register byte
+//     it reads is either never written in the loop or written earlier in the
+//     same pass, and every flag read is preceded by an op that writes all the
+//     flags. So a counter -- `inc cx` -- declines, and `mov dx,3DAh` in front
+//     of the `in` does not.
+//  3. The only way back at exactly one pass's cost is round the loop. The
+//     twin's arm matches on "one pass of steps since this site read", and an
+//     exit edge followed by other code could in principle come back to the
+//     loop at the same count. It enters the loop at a block start X, having
+//     run at least one step of its own; the loop runs from the exit to X in
+//     some cost d. The two routes can tie only if d >= 1 -- so a loop in which
+//     every block start after an exit is reached at cost 0 has no such route,
+//     and one that has any declines.
+//
+// The walk follows the arena edges (TAKEN_AT, and a branch's operand tail says
+// which kind it is: 2 words for a jump, 3 for a traced branch, 4 for a plain
+// one). Straight-line flow into the next block start is only a traced
+// branch's fall-through; anything else there is a handback, and ends it.
+const GS_FACTS = [];
+let gsSite = 0;
+let gsEffects = null;
+
+// Handler index -> { charge, reads, writes, fe } or null when it may not sit
+// in a spin loop. `reads`/`writes` are handler-effects entries, materialized
+// per op by at().
+function gsFacts(idx) {
+  const x = HANDLERS[idx];
+  const fe = FLAG_EFFECTS[idx];
+  // Keyed on the handler and flag record actually at the index: a rebuild
+  // under the other flag scheme swaps both without changing the table size.
+  const c = GS_FACTS[idx];
+  if (c && c.x === x && c.fe === fe) return c.f;
+  let f = null;
+  if (x && fe) {
+    // What $next charges plus what the handler charges itself: a fused
+    // compare-and-branch pays for the op it swallowed, the synthetic jump
+    // gives its step back. Any other write to $steps is not a fixed charge.
+    const sets = (x.body.match(/global\.set \$steps/g) || []).length;
+    let charge;
+    if (x.name === 'jmp_syn') charge = 0;
+    else if (sets === 0) charge = 1;
+    else if (sets === 1 && /_j[a-z]+(_t)?$/.test(x.name)
+      && x.body.includes('(global.set $steps (i32.sub (global.get $steps) (i32.const 1)))')) charge = 2;
+    if (charge !== undefined) {
+      if (!gsEffects) gsEffects = require('./handler-effects');
+      const e = gsEffects.effectsOf(x);
+      if (e.readable && !e.memRead.length && !e.memWrite.length && !e.segWrite.length
+        && !e.stack.length && !e.address.length && !e.countDown && !e.countRead) {
+        // A transfer's own flag read is its condition; the rest of readsIn is
+        // the successor's, which inside the loop is the loop's next op and on
+        // an exit is no concern of a pass. So a branch is judged with its edge
+        // known, as the cross-block flag walk judges it.
+        const readsIn = TAKEN_AT.has(idx) ? fe.readsInX : fe.readsIn;
+        f = { charge, reads: e.regRead, writes: e.regWrite, fe: { readsIn, kills: fe.kills } };
+      }
+    }
+  }
+  GS_FACTS[idx] = { x, fe, f };
+  return f;
+}
+
+// A register access -> [32-bit register, byte mask]. An 8-bit index 4..7 is
+// the high byte of register index-4.
+function gsBytes(r, width) {
+  if (width === 8) return r < 4 ? [r, 1] : [r - 4, 2];
+  return [r, width === 16 ? 3 : 15];
+}
+
+function generalPortSpin(words, blockStarts, blockIps) {
+  const nb = blockStarts.length;
+  const startOf = new Set(blockStarts);
+  const ipIndex = new Map();
+  for (let b = 0; b < nb; b++) ipIndex.set(blockIps[b], b);
+  let rewritten = 0;
+
+  // One simple cycle from q back to q, as [{ pos, exit }] where `exit` says
+  // the op also has an edge that leaves the cycle. Depth-first over the
+  // conditional edges; a poll loop is a handful of ops, so both caps are loose.
+  const cycleFrom = (q) => {
+    let budget = 400;
+    const path = [];
+    const on = new Set();
+    const go = (pos) => {
+      if (--budget < 0) return false;
+      if (path.length && pos === q) return true;
+      if (path.length >= 48 || on.has(pos) || pos >= words.length) return false;
+      const op = words[pos];
+      if (ARITY[op] === undefined) return false;
+      const next = pos + 1 + ARITY[op];
+      const step = (to, exit) => {
+        path.push({ pos, exit }); on.add(pos);
+        if (go(to)) return true;
+        path.pop(); on.delete(pos);
+        return false;
+      };
+      const blockAt = (ip) => { const b = ipIndex.get(ip); return b === undefined ? -1 : blockStarts[b]; };
+      const at = TAKEN_AT.get(op);
+      if (at === undefined) return !startOf.has(next) && step(next, false);
+      const tail = ARITY[op] - (at - 1);
+      const taken = blockAt(words[pos + 1 + at]);
+      if (tail === 2) return taken >= 0 && step(taken, false);
+      if (tail === 3) return (taken >= 0 && step(taken, true)) || step(next, true);
+      if (tail === 4) {
+        const fall = blockAt(words[pos + 1 + at + 2]);
+        return (taken >= 0 && step(taken, true)) || (fall >= 0 && step(fall, true));
+      }
+      return false;
+    };
+    return go(q) ? path : null;
+  };
+
+  for (let b = 0; b < nb; b++) {
+    const end = b + 1 < nb ? blockStarts[b + 1] : words.length;
+    for (let q = blockStarts[b]; q < end; q += 1 + ARITY[words[q]]) {
+      if (words[q] !== IN8 || (words[q + 1] | 0) !== -1) continue;
+      const cyc = cycleFrom(q);
+      if (!cyc) continue;
+      const L = cyc.length;
+      // 1. Pure ops, and the one `in`.
+      const ops = [];
+      let cost = 0, ok = true;
+      for (const { pos } of cyc) {
+        if (pos === q) {
+          ops.push({ reads: [gsBytes(2, 16)], writes: [gsBytes(0, 8)], fe: { readsIn: false, kills: false } });
+          cost += 1;
+          continue;
+        }
+        const f = gsFacts(words[pos]);
+        if (!f) { ok = false; break; }
+        const reg = (list) => list.map(r => gsBytes(gsEffects.at(r, words, pos), r.width));
+        ops.push({ reads: reg(f.reads), writes: reg(f.writes), fe: f.fe });
+        cost += f.charge;
+      }
+      if (!ok || cost < 1 || cost > 0xFFF) continue;
+      // 2. No carried state, from some rotation.
+      const any = new Int32Array(8);
+      for (const o of ops) for (const [r, m] of o.writes) any[r] |= m;
+      let pure = false;
+      for (let z = 0; z < L && !pure; z++) {
+        const w = new Int32Array(8);
+        let killed = false, good = true;
+        for (let k = 0; k < L && good; k++) {
+          const o = ops[(z + k) % L];
+          for (const [r, m] of o.reads) if (m & any[r] & ~w[r]) good = false;
+          if (o.fe.readsIn && !killed) good = false;
+          for (const [r, m] of o.writes) w[r] |= m;
+          if (o.fe.kills) killed = true;
+        }
+        pure = good;
+      }
+      if (!pure) continue;
+      // 3. Every block start the loop reaches after an exit, reached at cost 0.
+      let tie = false;
+      for (let i = 0; i < L && !tie; i++) {
+        if (!cyc[i].exit) continue;
+        let d = 0;
+        for (let k = i + 1; k <= L && !tie; k++) {
+          const pos = cyc[k % L].pos;
+          if (startOf.has(pos) && d >= 1) tie = true;
+          if (k < L) d += pos === q ? 1 : gsFacts(words[pos]).charge;
+        }
+      }
+      if (tie) continue;
+      gsSite = gsSite >= 0xFFFFF ? 1 : gsSite + 1;
+      words[q] = GSPIN;
+      words[q + 1] = (gsSite << 12) | cost;
+      rewritten++;
+    }
+  }
+  return rewritten;
 }
 
 // Write a compiled program into a VM's linear memory.

@@ -2177,6 +2177,57 @@ function genArithIO() {
 `);
   }
 
+  // `in al,dx` at the one 3DAh read of a poll loop compile.js proved pure --
+  // every register and flag the loop reads is either never written in it or
+  // written earlier in the same pass, nothing touches memory, and the only way
+  // back to this op at exactly the pass's cost is round the loop
+  // (compileProgram's general port-spin pass says why each of those is
+  // needed). Then a pass is a function of the status it reads alone, so two
+  // passes that read the same status run identically, and once one has, the
+  // run of further passes that would read it again can be charged at once --
+  // the same skip in_*_pspin makes, for any loop shape rather than one.
+  //
+  // The operand is (site << 12) | cost: a number unique to this op in this
+  // compile, and the steps one pass charges. The arm is ($gs_site, $gs_steps,
+  // $gs_status) as the last read left it. A hit needs the same site, exactly
+  // one pass of steps since, and the same status: then the pass just finished
+  // went round, and so does every pass that reads that status again. Skip n of
+  // them, n bounded by how long the status holds ($vga_run) and by the budget
+  // test every skipped pass would have made at its transfers -- all of them
+  // see $steps >= S - n*cost >= 0. The one real read below is the next pass's,
+  // at the clock the skipped ones leave. $vga_reads counts the skipped reads;
+  // $vga_status counts the two real calls, one of which is the first skipped.
+  h('in_8_gspin', 1, `
+  ${ops(1)}
+  (local.set $t1 (call $rget16 (i32.const 2)))
+  (if (i32.ne (local.get $t1) (i32.const 0x3DA))
+    (then
+      (global.set $gs_site (i32.const 0))
+      (call $rset8 (i32.const 0) (call $port_in (local.get $t1) (i32.const 8))))
+    (else
+      (local.set $t2 (i32.shr_u (local.get $t0) (i32.const 12)))
+      (local.set $t3 (i32.and (local.get $t0) (i32.const 0xFFF)))
+      (local.set $t4 (call $vga_status))
+      (if (i32.and (i32.and (i32.eq (global.get $gs_site) (local.get $t2))
+                            (i32.eq (global.get $gs_status) (local.get $t4)))
+                   (i32.and (i32.eq (i32.sub (global.get $gs_steps) (global.get $steps)) (local.get $t3))
+                            (i32.ge_s (global.get $steps) (i32.const 0))))
+        (then
+          (local.set $t5 (i32.add (i32.div_u (i32.sub (call $vga_run) (i32.const 1)) (local.get $t3))
+                                  (i32.const 1)))
+          (local.set $t6 (i32.div_u (global.get $steps) (local.get $t3)))
+          (if (i32.lt_u (local.get $t6) (local.get $t5)) (then (local.set $t5 (local.get $t6))))
+          (if (local.get $t5)
+            (then
+              (global.set $steps (i32.sub (global.get $steps) (i32.mul (local.get $t5) (local.get $t3))))
+              (global.set $vga_reads (i32.add (global.get $vga_reads) (i32.sub (local.get $t5) (i32.const 1))))
+              (local.set $t4 (call $vga_status))))))
+      (global.set $gs_site (local.get $t2))
+      (global.set $gs_steps (global.get $steps))
+      (global.set $gs_status (local.get $t4))
+      (call $rset8 (i32.const 0) (local.get $t4))))
+`);
+
   h('xlat', 1, `
   ${ops(1)}
   (call $rset8 (i32.const 0)
@@ -5925,6 +5976,12 @@ const EXTRA_GLOBALS = `
 (global $attr_flip (mut i32) (i32.const 0))
 ;; 3DAh reads, for the run report (the host's clock.retrace).
 (global $vga_reads (mut i32) (i32.const 0))
+;; The general port-poll spin's arm (in_8_gspin): the site that last read 3DAh,
+;; the budget left when it did, and what it read. 0 is no site; run() clears it,
+;; because an interrupt is only ever delivered between slices.
+(global $gs_site (mut i32) (i32.const 0))
+(global $gs_steps (mut i32) (i32.const 0))
+(global $gs_status (mut i32) (i32.const 0))
 (global $fop (mut i32) (i32.const 0))
 (global $fa (mut i32) (i32.const 0))   ;; first operand
 (global $fb (mut i32) (i32.const 0))   ;; second operand
@@ -6401,6 +6458,7 @@ function runExport() {
   (global.set $ip (local.get $entry))
   (global.set $steps (local.get $budget))
   (global.set $slice_budget (local.get $budget))
+  (global.set $gs_site (i32.const 0))
   (global.set $left (i32.const -1))
   (global.set $halt (i32.const 0))
   (call $next))
