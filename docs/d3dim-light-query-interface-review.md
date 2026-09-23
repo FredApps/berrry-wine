@@ -3,7 +3,7 @@
 2026-09-22. P5 false-success/shared-COM follow-up.
 
 The light handler returned S_OK and AddRef for every IID, including a
-complete Material1 IID. `test/test-d3dim-light-query-interface.js` reproduced
+complete Material1 IID. `test/test-d3dim-child-query-interface.js` reproduced
 that failure before the change.
 
 The handler now delegates to the existing child QI core with a separate
@@ -43,3 +43,7 @@ passes family 0, which has no own-IID match in the routing core, while the
 vertex-buffer branch accepts everything. Device matches only the first
 GUID word; texture also has an unconditional current-vtable fallback and
 surface ABI/identity concerns. Those need behavior tests, not just aliases.
+
+Follow-up: the [execute-buffer QI regression and fix](d3dim-execute-buffer-query-interface-review.md)
+confirmed that own-IID rejection. The light regression was renamed to the
+shared child-interface test so both object types use one test harness.

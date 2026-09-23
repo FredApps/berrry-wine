@@ -1535,7 +1535,7 @@
   ;; ── IDirect3DExecuteBuffer — 10 methods ─────────────
   ;; IDirect3DExecuteBuffer_QueryInterface — 3 args (incl. this)
   (func $handle_IDirect3DExecuteBuffer_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $d3dim_qi (i32.const 0) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
+    (i32.store offset=0 (global.get $reg_base) (call $d3dim_child_qi (i32.const 8) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
   ;; IDirect3DExecuteBuffer_Release — 1 args (incl. this)

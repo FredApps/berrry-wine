@@ -562,15 +562,17 @@
     (call $zero_memory (local.get $entry) (i32.const 12)))
 
   ;; ── QueryInterface upgrade routing ────────────────────────────
-  ;; Recognizes versioned IIDs by their first DWORD and writes the matching
-  ;; vtable to *ppvObj. AddRef the same DX_OBJECTS slot.
+  ;; Return a matching interface wrapper and AddRef its DX_OBJECTS slot.
+  ;; Roots and child-core families validate complete IIDs; legacy device,
+  ;; texture and vertex-buffer routing below still needs the same audit.
   ;;
-  ;; family: 0=no upgrade (same vtable), 1=D3D, 2=Device, 3=Viewport,
+  ;; family: 1=D3D, 2=Device, 3=Viewport,
   ;;         4=Material, 5=Texture, 6=VertexBuffer
   ;;
   ;; Returns S_OK (0) on match (and writes ppvObj), E_NOINTERFACE (0x80004002)
   ;; on miss (and writes NULL to ppvObj).
-  ;; Microsoft d3d.h child identities: family 3=viewport, 4=material, 7=light.
+  ;; Microsoft d3d.h child identities: family 3=viewport, 4=material,
+  ;; 7=light, 8=execute buffer.
   ;; Share span/identity/refcount ownership, but never cross the family ABI.
   (func $d3dim_child_qi (param $family i32) (param $this i32) (param $riid i32) (param $out i32) (result i32)
     (local $iid i32) (local $unknown i32) (local $vtbl i32) (local $entry i32) (local $obj i32)
@@ -604,6 +606,10 @@
       (if (call $guid_words_equal (local.get $iid)
             (i32.const 0x4417C142) (i32.const 0x11CF33AD) (i32.const 0x00006F81) (i32.const 0x6E1520C0))
         (then (local.set $vtbl (global.get $DX_VTBL_D3DLIGHT))))))
+    (if (i32.eq (local.get $family) (i32.const 8)) (then
+      (if (call $guid_words_equal (local.get $iid)
+            (i32.const 0x4417C145) (i32.const 0x11CF33AD) (i32.const 0x00006F81) (i32.const 0x6E1520C0))
+        (then (local.set $vtbl (global.get $DX_VTBL_D3DEXEC))))))
     (call $guest_span_release (local.get $iid) (i32.const 16))
     (if (i32.and (i32.eqz (local.get $unknown)) (i32.eqz (local.get $vtbl)))
       (then (return (i32.const 0x80004002))))
