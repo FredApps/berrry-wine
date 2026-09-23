@@ -136,3 +136,15 @@ test with frame-aligned captures, not an established pixel-equivalence result.
 Uvis is present as original SDK source, but neither local SDK binary directory
 contains `uvis.exe`; its ForceUpdate route remains to be built or sourced and
 tested. Do not treat source inspection as an end-to-end Uvis pass.
+
+## Frame-aligned extent comparison (2026-09-22)
+
+Globe's camera callback is `0x4016ec`; its static animation time is the float
+at `0x40b104` (xref to the 0.08 constant identifies it). Comparing the old
+viewport substitution against the new extent implementation at completed
+callback counts 10, 50 and 100 yields **zero differing pixels** in all 640x480
+primary captures, with identical animation times. Thus the earlier fixed-budget
+image difference is absent at these aligned scene checkpoints. See the
+[Execute review](../d3dim-execute-data-sparse-review.md#frame-aligned-globe-ab-2026-09-22)
+for artifact hashes, control procedure and limitations. The texture defect is
+present in both arms; this comparison does not fix or validate it.

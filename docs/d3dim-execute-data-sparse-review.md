@@ -574,3 +574,45 @@ whitespace checks. This is not a new full shipping-artifact build. Concurrent
 ExecuteBuffer access, multi-device native status lifetime, polygon XY clipping,
 culling and textured/depth/alpha extent-oracle cases remain unverified; the
 new isolation test does not certify them.
+
+### Frame-aligned Globe A/B (2026-09-22)
+
+The first aligned captures are pixel-identical. The fixed-budget discrepancy
+above is not reproduced when the guest reaches the same camera callback count
+and animation time. This narrows the uncertainty; it does not certify every
+Render-menu transition or prove exact Win98 extent semantics.
+
+Method: original Microsoft SDK `globe.c` advances `moveCamera`'s static time by
+0.08 per callback. In the corpus `globe.exe`, the float constant at `0x40a040`
+has one xref, `fadd` at `0x401711`; the callback starts at `0x4016ec` and its
+time lives at `0x40b104`. Both arms run the same current CLI/JS with separate
+temporary artifacts built from one source snapshot (before `9bebacdb`). The
+control replaces only 09aa/09ab with their `c5f9758c^` versions. Main's shipping
+artifact is not overwritten. SHA-256:
+
+- Control: `7082d64d4dae9491fd3407f12596353ba6758ac5a7729cc1df004f53297ec243`
+- Candidate: `7b57afb0ea15733dfa994b636e986f4b5d4f07676ef399199d4124deb4e4cfbf`
+
+Launch each with `--app=dx_globe --no-build --wasm=ARTIFACT --quiet-api
+--control-stdin --frozen --count=0x4016ec --batch-size=100000 --max-seconds=180
+--png=OUTPUT`. Through control eval, set `exports.set_bp(0x4016ec)`, then step
+one batch at a time until `get_eip()` equals that address and `get_count(0)`
+equals the selected count. Read the time float through the guest translation,
+assert both arms match, and quit to capture the primary surface. The breakpoint
+precedes the next callback, so the count describes completed prior callbacks.
+Do **not** use CLI `--break` with this stdin driver: its interactive debug
+prompt consumes the control stream on the next step. The initial diagnostic
+hit that prompt and was terminated; it supplied no rendering comparison.
+
+| Completed callbacks | Animation time, both arms | Batch, both arms | Differing RGBA pixels |
+| --- | --- | --- | --- |
+| 10 | 0.7999998927116394 | 92 | 0 / 307200 |
+| 50 | 3.9999983310699463 | 132 | 0 / 307200 |
+| 100 | 7.99999475479126 | 182 | 0 / 307200 |
+
+Comparison uses `tools/png-diff.js` with zero tolerance. Temporary driver:
+`/private/tmp/wa-globe-frame-compare.js`; build driver:
+`/private/tmp/wa-extent-control.js`; capture/log prefix:
+`/private/tmp/wa-globe-frame-`. Both images at callback 10 visibly contain the
+sphere, including the same known texture defect. These are scene checkpoints,
+not blank-image equality or performance measurements (host load was above 20).
