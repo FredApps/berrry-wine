@@ -121,6 +121,32 @@
   (global $rast_fog_b (mut f32) (f32.const 0))
   (global $rast_fog_c (mut f32) (f32.const 1))
   (global $gl_sw_other_bound (mut i32) (i32.const 0))
+  ;; Texture unit 1 as the span rasterizer sees it, set by $gl_sw_t1_setup
+  ;; for the one triangle it draws: the texture, D3DTOP (4 MODULATE, 2 the
+  ;; texture), sampler, and u*q, v*q and q as screen-space planes so the span
+  ;; divides back per pixel. Unit 1 is combined after unit 0 and before fog,
+  ;; which is the order the WebGL frontend's fragment shader has.
+  (global $rast_t1_on (mut i32) (i32.const 0))
+  (global $rast_t1_entry (mut i32) (i32.const 0))
+  (global $rast_t1_op (mut i32) (i32.const 4))
+  (global $rast_t1_addr_u (mut i32) (i32.const 1))
+  (global $rast_t1_addr_v (mut i32) (i32.const 1))
+  (global $rast_t1_linear (mut i32) (i32.const 0))
+  (global $rast_t1_ua (mut f32) (f32.const 0))
+  (global $rast_t1_ub (mut f32) (f32.const 0))
+  (global $rast_t1_uc (mut f32) (f32.const 0))
+  (global $rast_t1_va (mut f32) (f32.const 0))
+  (global $rast_t1_vb (mut f32) (f32.const 0))
+  (global $rast_t1_vc (mut f32) (f32.const 0))
+  (global $rast_t1_qa (mut f32) (f32.const 0))
+  (global $rast_t1_qb (mut f32) (f32.const 0))
+  (global $rast_t1_qc (mut f32) (f32.const 1))
+  ;; $rast_plane's result: f(x, y) = a*x + b*y + c.
+  (global $rast_pa (mut f32) (f32.const 0))
+  (global $rast_pb (mut f32) (f32.const 0))
+  (global $rast_pc (mut f32) (f32.const 0))
+  ;; Unit 1's texture matrix (stack 3) for this draw, 0 when identity.
+  (global $gl_sw_texmtx1 (mut i32) (i32.const 0))
   (global $gl_sw_rt_obj (mut i32) (i32.const 0))
   (global $gl_sw_zbuf_obj (mut i32) (i32.const 0))
   ;; A 1x1 opaque white texture: an untextured triangle is drawn as this
@@ -153,7 +179,9 @@
   ;; at +64, sixteen 96-byte frames of { mask, copy of the block }.
   ;;   +0  caps: 1 TEXTURE_2D, 2 BLEND, 4 ALPHA_TEST, 8 DEPTH_TEST, 16 CULL_FACE,
   ;;       32 SCISSOR_TEST, 64 FOG, 128 LIGHTING, 0xFF00 LIGHT0..7,
-  ;;       0x10000 COLOR_MATERIAL, 0x20000/0x40000 TEXTURE_GEN_S/_T
+  ;;       0x10000 COLOR_MATERIAL, 0x20000/0x40000 TEXTURE_GEN_S/_T,
+  ;;       0x80000 TEXTURE_2D on unit 1, 0x100000 unit 1's env is REPLACE
+  ;;       (both kept here so glPushAttrib saves them with the rest)
   ;;   +4  source blend (D3DBLEND)        +8  destination blend (D3DBLEND)
   ;;   +12 alpha func (D3DCMP)            +16 alpha reference, 0..255
   ;;   +20 depth func (D3DCMP)            +24 depth mask, 0/1
@@ -275,7 +303,7 @@
         (call $gl_sw_attrib_sizes (global.get $gl_sw_attrib_depth))))))
     ;; GL_ENABLE_BIT: every enable this file tracks.
     (if (i32.and (local.get $mask) (i32.const 0x2000))
-      (then (call $gl_sw_restore_caps (local.get $saved) (i32.const 0x7FFFF))))
+      (then (call $gl_sw_restore_caps (local.get $saved) (i32.const 0xFFFFF))))
     ;; GL_LIGHTING_BIT: the lighting, light and colour-material enables. The
     ;; light parameters themselves are the matrix mirror's (09a8f).
     (if (i32.and (local.get $mask) (i32.const 0x40))
@@ -307,7 +335,7 @@
     ;; GL_TEXTURE_BIT: TEXTURE_2D enable, texture env, binding.
     (if (i32.and (local.get $mask) (i32.const 0x40000))
       (then
-        (call $gl_sw_restore_caps (local.get $saved) (i32.const 0x60001))
+        (call $gl_sw_restore_caps (local.get $saved) (i32.const 0x1E0001))
         (global.set $gl_sw_texgen_modes (i32.load
           (call $gl_sw_attrib_texgen (global.get $gl_sw_attrib_depth))))
         (call $memcpy (i32.add (local.get $s) (i32.const 36))
@@ -551,7 +579,8 @@
   ;; +0x300 the default viewport $gl_sw_consume substitutes when none is
   ;; set, +0x310 up to five far-clipped records (ends exactly at 0x400).
   ;; Clip record, 48 bytes: +0 x, +4 y, +8 z, +12 w, +16 u, +20 v, then
-  ;; r, g, b, a at +24..+36 -- all f32, so clipping lerps ten floats alike.
+  ;; r, g, b, a at +24..+36, unit 1's u, v at +40, +44 -- all f32, so
+  ;; clipping lerps twelve floats alike.
   (func $gl_sw_clip_at (param $k i32) (result i32)
     (i32.add (global.get $GL_SW_SCRATCH)
       (i32.add (i32.const 256) (i32.mul (local.get $k) (i32.const 48)))))
@@ -580,7 +609,7 @@
           (f32.mul (f32.sub (f32.load (i32.add (local.get $b) (local.get $i))) (local.get $x))
                    (local.get $t))))
       (local.set $i (i32.add (local.get $i) (i32.const 4)))
-      (br_if $lp (i32.lt_u (local.get $i) (i32.const 40)))))
+      (br_if $lp (i32.lt_u (local.get $i) (i32.const 48)))))
   ;; Per-vertex screen record, 32 bytes: +0 x, +4 y (i32), +8 z, +12 rhw,
   ;; +16 u, +20 v (f32), +24 colour (0xAARRGGBB).
   (func $gl_sw_screen_at (param $k i32) (result i32)
@@ -945,7 +974,34 @@
         (return)))
     (if (global.get $gl_sw_active_unit)
       (then
-        ;; Another unit is active: its texture state is not unit 0's.
+        ;; Another unit is active: its texture state is not unit 0's. Unit
+        ;; 1's TEXTURE_2D enable and env mode are its own cap bits; units
+        ;; above 1 are not rasterized at all.
+        (if (i32.and (i32.eq (global.get $gl_sw_active_unit) (i32.const 1))
+                     (i32.or (i32.eq (local.get $op) (i32.const 10)) (i32.eq (local.get $op) (i32.const 8))))
+          (then (if (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0DE1))
+            (then
+              (i32.store (local.get $s) (select
+                (i32.or (i32.load (local.get $s)) (i32.const 0x80000))
+                (i32.and (i32.load (local.get $s)) (i32.const 0xFFF7FFFF))
+                (i32.eq (local.get $op) (i32.const 10))))
+              (return)))))
+        (if (i32.and (i32.eq (global.get $gl_sw_active_unit) (i32.const 1))
+                     (i32.or (i32.eq (local.get $op) (i32.const 44)) (i32.eq (local.get $op) (i32.const 82))))
+          (then
+            (if (i32.and (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x2300))
+                         (i32.eq (i32.load offset=8 (local.get $stack)) (i32.const 0x2200)))
+              (then
+                (local.set $mask (select
+                  (i32.trunc_sat_f32_s (f32.load offset=12 (local.get $stack)))
+                  (i32.load offset=12 (local.get $stack))
+                  (i32.eq (local.get $op) (i32.const 44))))
+                (i32.store (local.get $s) (select
+                  (i32.or (i32.load (local.get $s)) (i32.const 0x100000))
+                  (i32.and (i32.load (local.get $s)) (i32.const 0xFFEFFFFF))
+                  (i32.or (i32.eq (local.get $mask) (i32.const 0x1E01))
+                          (i32.eq (local.get $mask) (i32.const 0x2101)))))))
+            (return)))
         (if (i32.or (i32.eq (local.get $op) (i32.const 10)) (i32.eq (local.get $op) (i32.const 8)))
           (then (if (i32.or (i32.eq (i32.load offset=4 (local.get $stack)) (i32.const 0x0DE1))
                             (i32.lt_u (i32.sub (i32.load offset=4 (local.get $stack)) (i32.const 0x0C60))
@@ -1465,21 +1521,21 @@
   ;; (s, t, 0, 1) through the column-major texture matrix, projected by q.
   ;; The divide is per vertex, so a projective texture matrix is only affine
   ;; across a triangle -- exact for the scale/translate/rotate apps load.
-  (func $gl_sw_tex_transform (param $clip i32)
-    (local $m i32) (local $s f32) (local $t f32) (local $q f32)
-    (local.set $m (global.get $gl_sw_texmtx))
-    (local.set $s (f32.load offset=16 (local.get $clip)))
-    (local.set $t (f32.load offset=20 (local.get $clip)))
+  ;; The (s, t) pair at $p through texture matrix $m, in place.
+  (func $gl_sw_tex_transform (param $m i32) (param $p i32)
+    (local $s f32) (local $t f32) (local $q f32)
+    (local.set $s (f32.load (local.get $p)))
+    (local.set $t (f32.load offset=4 (local.get $p)))
     (local.set $q (f32.add (f32.add
       (f32.mul (f32.load offset=12 (local.get $m)) (local.get $s))
       (f32.mul (f32.load offset=28 (local.get $m)) (local.get $t)))
       (f32.load offset=60 (local.get $m))))
     (if (f32.eq (local.get $q) (f32.const 0)) (then (local.set $q (f32.const 1))))
-    (f32.store offset=16 (local.get $clip) (f32.div (f32.add (f32.add
+    (f32.store (local.get $p) (f32.div (f32.add (f32.add
       (f32.mul (f32.load (local.get $m)) (local.get $s))
       (f32.mul (f32.load offset=16 (local.get $m)) (local.get $t)))
       (f32.load offset=48 (local.get $m))) (local.get $q)))
-    (f32.store offset=20 (local.get $clip) (f32.div (f32.add (f32.add
+    (f32.store offset=4 (local.get $p) (f32.div (f32.add (f32.add
       (f32.mul (f32.load offset=4 (local.get $m)) (local.get $s))
       (f32.mul (f32.load offset=20 (local.get $m)) (local.get $t)))
       (f32.load offset=52 (local.get $m))) (local.get $q))))
@@ -1502,7 +1558,15 @@
     (if (global.get $gl_sw_sphere)
       (then (call $gl_sw_sphere_map (local.get $src) (local.get $clip))))
     (if (global.get $gl_sw_texmtx)
-      (then (call $gl_sw_tex_transform (local.get $clip))))
+      (then (call $gl_sw_tex_transform (global.get $gl_sw_texmtx)
+        (i32.add (local.get $clip) (i32.const 16)))))
+    ;; Unit 1's coordinates (vertex +48) ride in the clip record's last two
+    ;; words, so clipping interpolates them with everything else.
+    (f32.store offset=40 (local.get $clip) (f32.load offset=48 (local.get $src)))
+    (f32.store offset=44 (local.get $clip) (f32.load offset=52 (local.get $src)))
+    (if (global.get $gl_sw_texmtx1)
+      (then (call $gl_sw_tex_transform (global.get $gl_sw_texmtx1)
+        (i32.add (local.get $clip) (i32.const 40)))))
     (if (global.get $gl_sw_lit)
       (then (call $gl_sw_light_vertex (local.get $src) (i32.add (local.get $clip) (i32.const 24))))
       (else (call $memcpy (i32.add (local.get $clip) (i32.const 24))
@@ -1668,6 +1732,21 @@
     (param $x0 i32) (param $y0 i32) (param $f0 f32)
     (param $x1 i32) (param $y1 i32) (param $f1 f32)
     (param $x2 i32) (param $y2 i32) (param $f2 f32) (param $color i32)
+    (call $rast_plane (local.get $x0) (local.get $y0) (local.get $f0)
+      (local.get $x1) (local.get $y1) (local.get $f1)
+      (local.get $x2) (local.get $y2) (local.get $f2))
+    (global.set $rast_fog_a (global.get $rast_pa))
+    (global.set $rast_fog_b (global.get $rast_pb))
+    (global.set $rast_fog_c (global.get $rast_pc))
+    (global.set $rast_fog_color (local.get $color))
+    (global.set $rast_fog_on (i32.const 1)))
+
+  ;; The plane f(x, y) = a*x + b*y + c through three screen points, into
+  ;; $rast_pa/$rast_pb/$rast_pc. A degenerate triangle gets f0 everywhere.
+  (func $rast_plane
+    (param $x0 i32) (param $y0 i32) (param $f0 f32)
+    (param $x1 i32) (param $y1 i32) (param $f1 f32)
+    (param $x2 i32) (param $y2 i32) (param $f2 f32)
     (local $dx1 f32) (local $dy1 f32) (local $dx2 f32) (local $dy2 f32)
     (local $df1 f32) (local $df2 f32) (local $det f32)
     (local.set $dx1 (f32.convert_i32_s (i32.sub (local.get $x1) (local.get $x0))))
@@ -1680,20 +1759,46 @@
                              (f32.mul (local.get $dx2) (local.get $dy1))))
     (if (f32.eq (local.get $det) (f32.const 0))
       (then
-        (global.set $rast_fog_a (f32.const 0))
-        (global.set $rast_fog_b (f32.const 0)))
+        (global.set $rast_pa (f32.const 0))
+        (global.set $rast_pb (f32.const 0)))
       (else
-        (global.set $rast_fog_a (f32.div
+        (global.set $rast_pa (f32.div
           (f32.sub (f32.mul (local.get $df1) (local.get $dy2)) (f32.mul (local.get $df2) (local.get $dy1)))
           (local.get $det)))
-        (global.set $rast_fog_b (f32.div
+        (global.set $rast_pb (f32.div
           (f32.sub (f32.mul (local.get $dx1) (local.get $df2)) (f32.mul (local.get $dx2) (local.get $df1)))
           (local.get $det)))))
-    (global.set $rast_fog_c (f32.sub (local.get $f0)
-      (f32.add (f32.mul (global.get $rast_fog_a) (f32.convert_i32_s (local.get $x0)))
-               (f32.mul (global.get $rast_fog_b) (f32.convert_i32_s (local.get $y0))))))
-    (global.set $rast_fog_color (local.get $color))
-    (global.set $rast_fog_on (i32.const 1)))
+    (global.set $rast_pc (f32.sub (local.get $f0)
+      (f32.add (f32.mul (global.get $rast_pa) (f32.convert_i32_s (local.get $x0)))
+               (f32.mul (global.get $rast_pb) (f32.convert_i32_s (local.get $y0)))))))
+
+  ;; The span rasterizer's texture unit 1 step at (x, y): sample unit 1 at
+  ;; its perspective-divided coordinates and combine with the fragment.
+  (func $rast_apply_t1 (param $color i32) (param $x i32) (param $y i32) (result i32)
+    (local $fx f32) (local $fy f32) (local $q f32) (local $e i32) (local $bpp i32)
+    (local.set $fx (f32.convert_i32_s (local.get $x)))
+    (local.set $fy (f32.convert_i32_s (local.get $y)))
+    (local.set $q (f32.add (global.get $rast_t1_qc)
+      (f32.add (f32.mul (global.get $rast_t1_qa) (local.get $fx))
+               (f32.mul (global.get $rast_t1_qb) (local.get $fy)))))
+    (if (f32.eq (local.get $q) (f32.const 0)) (then (return (local.get $color))))
+    (local.set $e (global.get $rast_t1_entry))
+    (local.set $bpp (i32.load16_u offset=16 (local.get $e)))
+    (call $d3dim_texture_stage_combine
+      (call $d3dim_texture_sample_prepared
+        (i32.load16_u offset=12 (local.get $e)) (i32.load16_u offset=14 (local.get $e))
+        (local.get $bpp) (i32.load16_u offset=18 (local.get $e))
+        (i32.load offset=20 (local.get $e)) (call $dx_surf_fmt_get (local.get $e))
+        (if (result i32) (i32.eq (local.get $bpp) (i32.const 8))
+          (then (call $dx_surf_pal_get (local.get $e))) (else (i32.const 0)))
+        (f32.div (f32.add (global.get $rast_t1_uc)
+          (f32.add (f32.mul (global.get $rast_t1_ua) (local.get $fx))
+                   (f32.mul (global.get $rast_t1_ub) (local.get $fy)))) (local.get $q))
+        (f32.div (f32.add (global.get $rast_t1_vc)
+          (f32.add (f32.mul (global.get $rast_t1_va) (local.get $fx))
+                   (f32.mul (global.get $rast_t1_vb) (local.get $fy)))) (local.get $q))
+        (global.get $rast_t1_addr_u) (global.get $rast_t1_addr_v) (global.get $rast_t1_linear))
+      (local.get $color) (global.get $rast_t1_op) (global.get $rast_t1_op)))
 
   ;; The fog plane through the three screen records' (x, y, factor at +28).
   (func $gl_sw_fog_plane (param $s0 i32) (param $s1 i32) (param $s2 i32)
@@ -1842,6 +1947,63 @@
 
   ;; One clip-space triangle, already in front of the near plane: project,
   ;; cull, pick the texture and rasterize with GL's state.
+  ;; Texture unit 1 for the triangle whose clip records are $c0..$c2 and
+  ;; whose screen records are 0..2, when TEXTURE_2D is on there and its
+  ;; binding has an image. Unit 1 with no image is skipped, as GL does.
+  (func $gl_sw_t1_setup (param $c0 i32) (param $c1 i32) (param $c2 i32)
+    (local $caps i32) (local $slot i32) (local $flags i32)
+    (local $s0 i32) (local $s1 i32) (local $s2 i32)
+    (local $q0 f32) (local $q1 f32) (local $q2 f32)
+    (local.set $caps (i32.load (global.get $GL_SW_STATE)))
+    (if (i32.eqz (i32.and (local.get $caps) (i32.const 0x80000))) (then (return)))
+    (local.set $slot (call $gl_sw_tex_slot (global.get $gl_sw_other_bound)))
+    (if (i32.eqz (local.get $slot)) (then (return)))
+    (if (i32.eqz (i32.load (local.get $slot))) (then (return)))
+    (global.set $rast_t1_entry (call $dx_from_this (i32.load (local.get $slot))))
+    (if (i32.eqz (global.get $rast_t1_entry)) (then (return)))
+    (local.set $flags (call $gl_sw_tex_flags (local.get $slot)))
+    (global.set $rast_t1_addr_u (select (i32.const 3) (i32.const 1)
+      (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))))
+    (global.set $rast_t1_addr_v (select (i32.const 3) (i32.const 1)
+      (i32.ne (i32.and (local.get $flags) (i32.const 4)) (i32.const 0))))
+    (global.set $rast_t1_linear (i32.and (local.get $flags) (i32.const 1)))
+    (global.set $rast_t1_op (select (i32.const 2) (i32.const 4)
+      (i32.ne (i32.and (local.get $caps) (i32.const 0x100000)) (i32.const 0))))
+    (local.set $s0 (call $gl_sw_screen_at (i32.const 0)))
+    (local.set $s1 (call $gl_sw_screen_at (i32.const 1)))
+    (local.set $s2 (call $gl_sw_screen_at (i32.const 2)))
+    (local.set $q0 (f32.load offset=12 (local.get $s0)))
+    (local.set $q1 (f32.load offset=12 (local.get $s1)))
+    (local.set $q2 (f32.load offset=12 (local.get $s2)))
+    (call $rast_plane
+      (i32.load (local.get $s0)) (i32.load offset=4 (local.get $s0)) (local.get $q0)
+      (i32.load (local.get $s1)) (i32.load offset=4 (local.get $s1)) (local.get $q1)
+      (i32.load (local.get $s2)) (i32.load offset=4 (local.get $s2)) (local.get $q2))
+    (global.set $rast_t1_qa (global.get $rast_pa))
+    (global.set $rast_t1_qb (global.get $rast_pb))
+    (global.set $rast_t1_qc (global.get $rast_pc))
+    (call $rast_plane
+      (i32.load (local.get $s0)) (i32.load offset=4 (local.get $s0))
+      (f32.mul (f32.load offset=40 (local.get $c0)) (local.get $q0))
+      (i32.load (local.get $s1)) (i32.load offset=4 (local.get $s1))
+      (f32.mul (f32.load offset=40 (local.get $c1)) (local.get $q1))
+      (i32.load (local.get $s2)) (i32.load offset=4 (local.get $s2))
+      (f32.mul (f32.load offset=40 (local.get $c2)) (local.get $q2)))
+    (global.set $rast_t1_ua (global.get $rast_pa))
+    (global.set $rast_t1_ub (global.get $rast_pb))
+    (global.set $rast_t1_uc (global.get $rast_pc))
+    (call $rast_plane
+      (i32.load (local.get $s0)) (i32.load offset=4 (local.get $s0))
+      (f32.mul (f32.load offset=44 (local.get $c0)) (local.get $q0))
+      (i32.load (local.get $s1)) (i32.load offset=4 (local.get $s1))
+      (f32.mul (f32.load offset=44 (local.get $c1)) (local.get $q1))
+      (i32.load (local.get $s2)) (i32.load offset=4 (local.get $s2))
+      (f32.mul (f32.load offset=44 (local.get $c2)) (local.get $q2)))
+    (global.set $rast_t1_va (global.get $rast_pa))
+    (global.set $rast_t1_vb (global.get $rast_pb))
+    (global.set $rast_t1_vc (global.get $rast_pc))
+    (global.set $rast_t1_on (i32.const 1)))
+
   (func $gl_sw_emit (param $vp i32) (param $c0 i32) (param $c1 i32) (param $c2 i32)
     (local $s i32) (local $caps i32) (local $area i32) (local $front i32) (local $cull i32)
     (local $s0 i32) (local $s1 i32) (local $s2 i32)
@@ -1889,6 +2051,7 @@
     (if (i32.and (local.get $caps) (i32.const 64))
       (then (call $gl_sw_fog_plane (local.get $s0)
         (call $gl_sw_screen_at (i32.const 1)) (call $gl_sw_screen_at (i32.const 2)))))
+    (call $gl_sw_t1_setup (local.get $c0) (local.get $c1) (local.get $c2))
     (call $rasterize_triangle_textured
       (global.get $gl_sw_r_rt) (global.get $gl_sw_r_tex)
       (i32.ne (i32.and (local.get $caps) (i32.const 2)) (i32.const 0))
@@ -1914,6 +2077,7 @@
       (global.get $gl_sw_r_zbuf)
       (i32.load offset=20 (local.get $s))
       (i32.load offset=24 (local.get $s)))
+    (global.set $rast_t1_on (i32.const 0))
     (global.set $rast_fog_on (i32.const 0)))
 
   ;; ---- lines and points ---------------------------------------------------
@@ -2209,6 +2373,9 @@
     (global.set $gl_sw_texmtx (call $gl_mtx_stack_top (local.get $b) (i32.const 2)))
     (if (call $gl_sw_mtx_is_identity (global.get $gl_sw_texmtx))
       (then (global.set $gl_sw_texmtx (i32.const 0))))
+    (global.set $gl_sw_texmtx1 (call $gl_mtx_stack_top (local.get $b) (i32.const 3)))
+    (if (call $gl_sw_mtx_is_identity (global.get $gl_sw_texmtx1))
+      (then (global.set $gl_sw_texmtx1 (i32.const 0))))
     (local.set $vp (call $gl_mtx_export_viewport_ptr))
     ;; No glViewport yet: GL's default is the whole drawable.
     (if (i32.or (i32.le_s (i32.load offset=8 (local.get $vp)) (i32.const 0))

@@ -4758,7 +4758,11 @@
         (local.set $color (call $d3dim_texture_stage_combine
           (local.get $sample)
           (local.get $diffuse) (local.get $colorop) (local.get $alphaop)))
-        ;; GL fog, after texturing and before blending (09a8g-gl-raster).
+        ;; GL texture unit 1, then GL fog, after unit 0 and before blending
+        ;; (09a8g-gl-raster).
+        (if (global.get $rast_t1_on)
+          (then (local.set $color (call $rast_apply_t1
+            (local.get $color) (local.get $x) (local.get $y)))))
         (if (global.get $rast_fog_on)
           (then (local.set $color (call $rast_apply_fog
             (local.get $color) (local.get $x) (local.get $y)))))
