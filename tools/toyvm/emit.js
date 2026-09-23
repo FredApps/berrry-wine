@@ -3418,9 +3418,21 @@ function genFusedBranches() {
         // for the traced one whose fall-through is the next word. Both the
         // read and the rewind have to agree with it -- one word over and the
         // loop compares against the next block's first word and never leaves.
+        //
+        // A turn's outcome depends on the status value alone -- AL is reloaded
+        // from the port, the flags come from AL and the immediate, and nothing
+        // is stored -- so turns that read the same status are identical but
+        // for their three steps. $vga_run says how many dispatches the current
+        // answer holds; every whole further turn that would still read it AND
+        // pass the budget test at its branch is charged at once ($t5 turns),
+        // leaving the next turn to read the first new answer or to exit on the
+        // budget exactly where the one-at-a-time loop would. $vga_reads counts
+        // the skipped reads too. $t5/$t6 are this loop's own: the fused bodies
+        // must not touch them (checked below).
         const turn = (fall, jn) => `
   (block $done
     (loop $spin
+      (local.set $t6 (call $vga_run))
       (call $rset8 (i32.const 0) (call $vga_status))
       (global.set $steps (i32.sub (global.get $steps) (i32.const 2)))
       ${a.body}
@@ -3431,9 +3443,19 @@ function genFusedBranches() {
           (if (i32.or (global.get $smc) (i32.lt_s (global.get $steps) (i32.const 0)))
             (then ${EXIT('edge')} (br $done)))
           (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
+          (if (i32.ge_s (global.get $steps) (i32.const 2))
+            (then
+              (local.set $t5 (i32.div_u (i32.sub (local.get $t6) (i32.const 1)) (i32.const 3)))
+              (local.set $t6 (i32.div_u (i32.sub (global.get $steps) (i32.const 2)) (i32.const 3)))
+              (if (i32.lt_u (local.get $t6) (local.get $t5)) (then (local.set $t5 (local.get $t6))))
+              (global.set $steps (i32.sub (global.get $steps) (i32.mul (local.get $t5) (i32.const 3))))
+              (global.set $vga_reads (i32.add (global.get $vga_reads) (local.get $t5)))))
           (global.set $ip (i32.sub (global.get $ip) (i32.const ${(a.args + jn) * 4})))
           (br $spin))
         (else ${fall}))))`;
+        for (const body of [a.body, j.body, half ? jccBody(half) : '', jccTraceBody(half || CONDS[cc])]) {
+          if (/\$t[56]\b/.test(body)) throw new Error(`pspin ${alu}_j${cc}: fused body uses $t5/$t6`);
+        }
         const other = (jb) => `
       (call $rset8 (i32.const 0) (call $port_in (local.get $t1) (i32.const 8)))
       (global.set $steps (i32.sub (global.get $steps) (i32.const 2)))
@@ -4263,6 +4285,22 @@ function helpers() {
   (if (i32.lt_u (local.get $now) (global.get $vga_vb))
     (then (return (i32.const 0x09))))
   (i32.lt_u (i32.rem_u (local.get $now) (global.get $vga_line)) (global.get $vga_hb)))\n`;
+  // How many dispatches from now $vga_status keeps giving the answer it gives
+  // now (>= 1): to the end of vertical blanking, else to the next edge of
+  // horizontal blanking or the frame wrap, whichever is first. The port-poll
+  // spin (in_*_pspin) uses it to charge a run of identical turns at once.
+  s += `(func $vga_run (result i32) (local $now i32) (local $r i32) (local $d i32)
+  (local.set $now (i32.rem_u
+    (i32.add (global.get $vga_phase0) (i32.sub (global.get $slice_budget) (global.get $steps)))
+    (global.get $vga_period)))
+  (if (i32.lt_u (local.get $now) (global.get $vga_vb))
+    (then (return (i32.sub (global.get $vga_vb) (local.get $now)))))
+  (local.set $r (i32.rem_u (local.get $now) (global.get $vga_line)))
+  (local.set $d (select (i32.sub (global.get $vga_hb) (local.get $r))
+                        (i32.sub (global.get $vga_line) (local.get $r))
+                        (i32.lt_u (local.get $r) (global.get $vga_hb))))
+  (local.set $r (i32.sub (global.get $vga_period) (local.get $now)))
+  (select (local.get $d) (local.get $r) (i32.lt_u (local.get $d) (local.get $r))))\n`;
   // The period and its derived spans, from the frame length in dispatches and
   // the line count of the mode: retrace is ~9% of the frame (2 of 449 lines
   // of vertical sync, but bit 3 reads set through the whole blanking interval

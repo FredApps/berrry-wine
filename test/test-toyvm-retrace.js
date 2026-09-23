@@ -164,6 +164,16 @@ async function rate(com) {
       + ` ${(r.dispatched / 1e6).toFixed(1)}M dispatches)`);
     check(ticks >= EXPECT * 0.88 && ticks <= EXPECT * 1.12,
       `${name}: ${FRAMES} retraces take ${ticks} BIOS ticks, want ~${EXPECT.toFixed(0)}`);
+    // 3. THE FOLD IS EXACT. The port-poll superop charges a run of turns that
+    // read the same status at once instead of turning through them; with the
+    // spin folds off every turn is dispatched. Same clock, same answer.
+    const u = await runDos({
+      exe: com, budget: BUDGET, log: () => {}, pitClock, stuckLimit: 0, spinLoops: false,
+    });
+    const uticks = u.vm.mem[at] | (u.vm.mem[at + 1] << 8);
+    check(u.dispatched === r.dispatched && uticks === ticks && u.machine.exitCode === r.machine.exitCode,
+      `${name}: folded and unfolded polls retire the same clock (${r.dispatched} vs ${u.dispatched}`
+      + ` dispatches, ${ticks} vs ${uticks} ticks)`);
   }
 }
 
