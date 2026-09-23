@@ -36,7 +36,8 @@ The fixture creates its own objects/state. Device-7 state is explicitly freed
 by fixture cleanup; material payloads now use public Release as described
 below. It does not validate create-method policy, material allocation failures,
 or native generation availability. The legacy setter's unchecked lazy
-allocation still needs a separate regression. Existing size clamps, null-input
+allocation was subsequently fixed and fault-tested in the
+[allocation follow-up](d3dim-material-allocation-review.md). Existing size clamps, null-input
 results and missing-state behavior are unchanged, not newly certified.
 
 No native Win98, browser gameplay, full-build or performance result is implied

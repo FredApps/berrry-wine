@@ -1885,6 +1885,9 @@
     (local.set $dst (load.field DxObject misc0 (local.get $entry)))
     (if (i32.eqz (local.get $dst)) (then
       (local.set $dst (call $heap_alloc (i32.const 80)))
+      (if (i32.eqz (local.get $dst)) (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E))
+        (return)))
       (store.field DxObject misc0 (local.get $entry) (local.get $dst))))
     (call $guest_memset (local.get $dst) (i32.const 0) (i32.const 80))
     (call $guest_memmove (local.get $dst) (local.get $lpMat) (local.get $sz))
