@@ -97,11 +97,11 @@ function makeSurface(wat, desc, out, width, height) {
   // edge, vertices 1 and 2 at x = 15. White texture, white diffuse.
   const f32 = new DataView(new ArrayBuffer(4));
   const float = (addr, v) => { f32.setFloat32(0, v, true); wat.guest_write32(addr, f32.getUint32(0, true)); };
-  const draw = fogAlphas => {
+  const draw = (fogAlphas, diffuse = [0xffffffff, 0xffffffff, 0xffffffff]) => {
     [[0, 0], [W - 1, 0], [W - 1, W - 1]].forEach(([x, y], i) => {
       const p = vertices + i * 32;
       float(p, x); float(p + 4, y); float(p + 8, 0.5); float(p + 12, 1);
-      wat.guest_write32(p + 16, 0xffffffff);
+      wat.guest_write32(p + 16, diffuse[i] >>> 0);
       wat.guest_write32(p + 20, (fogAlphas[i] << 24) >>> 0);
       float(p + 24, 0.25); float(p + 28, 0.25);
     });
@@ -157,7 +157,15 @@ function makeSurface(wat, desc, out, width, height) {
   draw([0, 0, 0]);
   assert.strictEqual(px(12, 2), WHITE, `untextured, fog off: diffuse, got ${hex(px(12, 2))}`);
 
-  console.log('PASS D3DIM vertex fog: specular-alpha factor, interpolated, table fog excluded, GPU describe, untextured');
+  // Untextured with no fog is Gouraud too, as on the GPU arm: a red left
+  // vertex and blue right ones blend along x instead of taking vertex 0's
+  // colour for the whole face.
+  draw([255, 255, 255], [0xffff0000, 0xff0000ff, 0xff0000ff]);
+  assert(red(2) > red(8) && red(8) > red(13),
+    `untextured Gouraud: red ${red(2)}, ${red(8)}, ${red(13)}`);
+  assert((px(13, 1) & 0x1f) > (px(2, 1) & 0x1f), 'untextured Gouraud: blue rises toward the right');
+
+  console.log('PASS D3DIM vertex fog: specular-alpha factor, interpolated, table fog excluded, GPU describe, untextured, untextured Gouraud');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

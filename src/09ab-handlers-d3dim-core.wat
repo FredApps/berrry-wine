@@ -5960,13 +5960,12 @@
     (param $this i32) (param $rt i32) (param $use_z i32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32)
     (local $white i32)
-    ;; A vertex-fogged face varies per pixel, which the flat single-colour
-    ;; path below cannot draw. Draw it as the shared white texel MODULATEd by
-    ;; the vertex colours instead: the same Gouraud, depth and fog the GPU arm
-    ;; gives an untextured TL triangle.
-    (if (call $d3dim_vertex_fog_on (local.get $this)) (then
-      (local.set $white (call $rast_white_texel))
-      (if (local.get $white) (then
+    ;; An untextured face is drawn as the shared white texel MODULATEd by the
+    ;; vertex colours: Gouraud colour, per-pixel depth, the device's blend
+    ;; factors and vertex fog, which is what the GPU arm gives it. The flat
+    ;; single-colour path below is only the fallback when no texel exists.
+    (local.set $white (call $rast_white_texel))
+    (if (local.get $white) (then
         (if (call $d3dim_cull_tri (local.get $this)
               (call $d3dim_coord_i (f32.load (local.get $v0)))
               (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
@@ -5978,7 +5977,7 @@
         (call $d3dim_draw_tl_triangle_textured
           (local.get $this) (local.get $rt) (local.get $white) (local.get $use_z)
           (local.get $v0) (local.get $v1) (local.get $v2))
-        (return)))))
+        (return)))
     (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z) (i32.const 1)
       (call $d3dim_coord_i (f32.load (local.get $v0)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
