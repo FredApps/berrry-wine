@@ -1975,10 +1975,19 @@
 
   ;; IDirect3DDevice9_SetFVF — 2 args (incl. this)
   (func $handle_IDirect3DDevice9_SetFVF (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $state i32)
-    (call $d3d9_recording_guard (local.get $arg0) (local.get $name_ptr))
+    (local $state i32) (local $block i32)
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x8876086C))
     (local.set $state (call $d3d9_program_state (local.get $arg0)))
+    ;; Recording: the block's declaration slot takes "no declaration, this
+    ;; FVF", which Apply restores as SetFVF does (MilkDrop's D3D8
+    ;; SetVertexShader inside BeginStateBlock).
+    (if (local.get $state) (then
+      (local.set $block (call $gl32 (i32.add (local.get $state) (i32.const 1740))))))
+    (if (local.get $block) (then
+      (call $d3d9_stateblock_declaration (call $g2w (local.get $block)) (i32.const 0) (local.get $arg1))
+      (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+      (return)))
     (if (local.get $state) (then
       (call $d3d9_declaration_bind (local.get $arg0) (i32.const 0))
       (call $gs32 (i32.add (local.get $state) (i32.const 12)) (local.get $arg1))

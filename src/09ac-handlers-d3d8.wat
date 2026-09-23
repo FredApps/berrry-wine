@@ -33,6 +33,32 @@
       (i32.load offset=16 (global.get $reg_base)) (global.get $eip) (i32.load offset=20 (global.get $reg_base)))
     (unreachable))
 
+  ;; D3D8 names a state block by a DWORD token where D3D9 hands out an
+  ;; IDirect3DStateBlock9; the token is that object's address, so Create/End
+  ;; share D3D9's handlers and these three take (device, token).
+  (func $handle_d3d8_ApplyStateBlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0x8876086c))
+    (if (local.get $arg1) (then (call $d3d9_stateblock_transfer (local.get $arg1) (i32.const 1))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+  (func $handle_d3d8_CaptureStateBlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0x8876086c))
+    (if (local.get $arg1) (then (call $d3d9_stateblock_transfer (local.get $arg1) (i32.const 0))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+  ;; The D3D9 release pops its own one-argument frame; the token is the
+  ;; second argument here, so pop one more and report D3D_OK, not a count.
+  (func $handle_d3d8_DeleteStateBlock (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.eqz (local.get $arg1)) (then
+      (i32.store offset=0 (global.get $reg_base) (i32.const 0x8876086c))
+      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+      (return)))
+    (call $handle_IDirect3DShader9_Release (local.get $arg1)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (local.get $name_ptr))
+    (if (global.get $d3d_render_token) (then (return)))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
   (func $handle_Direct3DCreate8 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $dx_create_com_obj (i32.const 37) (global.get $DX_VTBL_D3D8)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))

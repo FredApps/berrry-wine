@@ -29630,7 +29630,7 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 4274330284,
-    "handler": "d3d8_unimplemented"
+    "handler": "IDirect3DDevice9_EndStateBlock"
   },
   {
     "id": 3513,
@@ -29638,7 +29638,7 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2828484225,
-    "handler": "d3d8_unimplemented"
+    "handler": "d3d8_ApplyStateBlock"
   },
   {
     "id": 3514,
@@ -29646,7 +29646,7 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 1988280067,
-    "handler": "d3d8_unimplemented"
+    "handler": "d3d8_CaptureStateBlock"
   },
   {
     "id": 3515,
@@ -29654,7 +29654,7 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 318331532,
-    "handler": "d3d8_unimplemented"
+    "handler": "d3d8_DeleteStateBlock"
   },
   {
     "id": 3516,
@@ -29662,7 +29662,7 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 2605493951,
-    "handler": "d3d8_unimplemented"
+    "handler": "IDirect3DDevice9_CreateStateBlock"
   },
   {
     "id": 3517,

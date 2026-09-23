@@ -253,9 +253,15 @@ const {bootRenderHarness}=require('./render-helper');
     assert.strictEqual(e['Get'+stage+'Shader'](d,out),0);assert.strictEqual(read(out),0);
     assert.strictEqual(e.Release(sb),0);
   }
+  // SetFVF records as "no declaration, this FVF" (D3D8 SetVertexShader(FVF)
+  // inside BeginStateBlock is how MilkDrop builds its blocks).
+  assert.strictEqual(e.SetFVF(d,0x102),0);
   assert.strictEqual(e.BeginStateBlock(d),0);
-  assert.throws(()=>e.SetFVF(d,0x4002),WebAssembly.RuntimeError,
-    'uncaptured state categories fail explicitly rather than changing live device state');
-  assert.strictEqual(e.EndStateBlock(d,out),0);assert.strictEqual(e.Release(read(out)),0);
+  assert.strictEqual(e.SetFVF(d,0x4002),0,'SetFVF records while a block is open');
+  assert.strictEqual(e.GetFVF(d,out),0);assert.strictEqual(read(out),0x102,'recording SetFVF leaves live FVF');
+  assert.strictEqual(e.EndStateBlock(d,out),0);const fb=read(out);
+  assert.strictEqual(e.Apply(fb),0);
+  assert.strictEqual(e.GetFVF(d,out),0);assert.strictEqual(read(out),0x4002,'Apply restores the recorded FVF');
+  assert.strictEqual(e.Release(fb),0);
   console.log('PASS D3D9 selective state recording, last-write wins, Capture/Apply and lifetime');
 })().catch(error=>{console.error(error);process.exitCode=1;});
