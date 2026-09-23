@@ -145,7 +145,19 @@ function makeSurface(wat, desc, out, width, height) {
   assert.strictEqual(mem.getUint32(d2 + 31 * 4, true), 1, 'describe: vertex fog on');
   assert.strictEqual(mem.getUint32(d2 + 32 * 4, true), 0xff0000ff, 'describe: fog colour');
 
-  console.log('PASS D3DIM vertex fog: specular-alpha factor, interpolated, table fog excluded, GPU describe');
+  // Untextured: the flat single-colour path cannot vary per pixel, so a
+  // fogged face goes through the interpolating span on a white texel.
+  assert.strictEqual(wat.test_fog_bind_handle(device, 0) >>> 0, 0);
+  draw([0, 0, 0]);
+  assert.strictEqual(px(12, 2), BLUE, `untextured factor 0 is the fog colour, got ${hex(px(12, 2))}`);
+  draw([255, 0, 0]);
+  assert(red(2) > red(8) && red(8) > red(13),
+    `untextured factor is interpolated: red ${red(2)}, ${red(8)}, ${red(13)}`);
+  wat.test_fog_set_rs(device, 28, 0);
+  draw([0, 0, 0]);
+  assert.strictEqual(px(12, 2), WHITE, `untextured, fog off: diffuse, got ${hex(px(12, 2))}`);
+
+  console.log('PASS D3DIM vertex fog: specular-alpha factor, interpolated, table fog excluded, GPU describe, untextured');
 })().catch(error => {
   console.error(error.stack || error.message);
   process.exit(1);

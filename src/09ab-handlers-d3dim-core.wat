@@ -5959,6 +5959,26 @@
   (func $d3dim_draw_tl_triangle
     (param $this i32) (param $rt i32) (param $use_z i32)
     (param $v0 i32) (param $v1 i32) (param $v2 i32)
+    (local $white i32)
+    ;; A vertex-fogged face varies per pixel, which the flat single-colour
+    ;; path below cannot draw. Draw it as the shared white texel MODULATEd by
+    ;; the vertex colours instead: the same Gouraud, depth and fog the GPU arm
+    ;; gives an untextured TL triangle.
+    (if (call $d3dim_vertex_fog_on (local.get $this)) (then
+      (local.set $white (call $rast_white_texel))
+      (if (local.get $white) (then
+        (if (call $d3dim_cull_tri (local.get $this)
+              (call $d3dim_coord_i (f32.load (local.get $v0)))
+              (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
+              (call $d3dim_coord_i (f32.load (local.get $v1)))
+              (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
+              (call $d3dim_coord_i (f32.load (local.get $v2)))
+              (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4)))))
+          (then (return)))
+        (call $d3dim_draw_tl_triangle_textured
+          (local.get $this) (local.get $rt) (local.get $white) (local.get $use_z)
+          (local.get $v0) (local.get $v1) (local.get $v2))
+        (return)))))
     (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z) (i32.const 1)
       (call $d3dim_coord_i (f32.load (local.get $v0)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
@@ -6024,10 +6044,15 @@
       (local.set $shade (call $gl32 (i32.add (local.get $state) (i32.const 292))))
       ;; Vertex fog: FOGENABLE=28 (offset 368) with FOGTABLEMODE=35 (396)
       ;; NONE. A TL vertex carries its own factor in the specular alpha.
-      (local.set $fog (i32.and
-        (i32.ne (call $gl32 (i32.add (local.get $state) (i32.const 368))) (i32.const 0))
-        (i32.eqz (call $gl32 (i32.add (local.get $state) (i32.const 396))))))
+      (local.set $fog (call $d3dim_vertex_fog_on (local.get $this)))
       (if (i32.eq (local.get $filter) (i32.const 2)) (then (local.set $linear (i32.const 1))))))
+    ;; The white texel stands in for "no texture": the face is its diffuse
+    ;; colour and alpha, whatever stage 0 says about a texture it does not have.
+    (if (i32.eq (local.get $tex) (global.get $gl_sw_white)) (then
+      (local.set $colorop (i32.const 4))
+      (local.set $alphaop (i32.const 4))
+      (local.set $color_key_enable (i32.const 0))
+      (local.set $linear (i32.const 0))))
     (if (i32.eqz (local.get $address_u)) (then (local.set $address_u (i32.const 1))))
     (if (i32.eqz (local.get $address_v)) (then (local.set $address_v (i32.const 1))))
     (if (i32.eqz (local.get $src_blend)) (then (local.set $src_blend (i32.const 2))))
@@ -6093,6 +6118,15 @@
       (f32.load (i32.add (local.get $v2) (i32.const 8)))
       (local.get $zbuf) (local.get $zfunc) (local.get $zwrite))
     (global.set $rast_fog_on (i32.const 0)))
+
+  ;; Vertex fog: FOGENABLE=28 (offset 368) with FOGTABLEMODE=35 (396) NONE.
+  (func $d3dim_vertex_fog_on (param $this i32) (result i32)
+    (local $state i32)
+    (local.set $state (call $d3ddev_state (local.get $this)))
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (i32.and
+      (i32.ne (call $gl32 (i32.add (local.get $state) (i32.const 368))) (i32.const 0))
+      (i32.eqz (call $gl32 (i32.add (local.get $state) (i32.const 396))))))
 
   ;; A TL vertex's fog factor: its specular alpha, 255 = no fog.
   (func $d3dim_fog_factor (param $v i32) (result f32)
@@ -6270,17 +6304,8 @@
     (local.set $tex (call $d3dim_bound_texture_entry (local.get $this)))
     (if (i32.eqz (local.get $tex))
       (then
-        (call $d3dim_draw_tri_culled (local.get $this) (local.get $rt) (local.get $use_z) (i32.const 1)
-          (call $d3dim_coord_i (f32.load (local.get $v0)))
-          (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
-          (f32.load (i32.add (local.get $v0) (i32.const 8)))
-          (call $d3dim_coord_i (f32.load (local.get $v1)))
-          (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
-          (f32.load (i32.add (local.get $v1) (i32.const 8)))
-          (call $d3dim_coord_i (f32.load (local.get $v2)))
-          (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
-          (f32.load (i32.add (local.get $v2) (i32.const 8)))
-          (i32.load (i32.add (local.get $v0) (i32.const 16))))
+        (call $d3dim_draw_tl_triangle (local.get $this) (local.get $rt) (local.get $use_z)
+          (local.get $v0) (local.get $v1) (local.get $v2))
         (return)))
     (if (call $d3dim_cull_tri (local.get $this)
           (call $d3dim_coord_i (f32.load (local.get $v0)))

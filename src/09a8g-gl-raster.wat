@@ -758,6 +758,13 @@
         (global.set $gl_sw_zbuf_obj (local.get $obj))
         (global.set $gl_sw_zbuf (call $dx_from_this (local.get $obj)))
         (call $gl_sw_clear_depth)))
+    (drop (call $rast_white_texel)))
+
+  ;; The shared 1x1 opaque white texture, made on first use. GL draws an
+  ;; untextured triangle as it; D3DIM does too when a vertex-fogged
+  ;; untextured triangle needs the interpolating span. 0 if it cannot be made.
+  (func $rast_white_texel (result i32)
+    (local $obj i32)
     (if (i32.eqz (global.get $gl_sw_white))
       (then
         (local.set $obj (call $d3d9_create_surface (i32.const 1) (i32.const 1)
@@ -767,7 +774,8 @@
             (global.set $gl_sw_white (call $dx_from_this (local.get $obj)))
             (call $dx_surf_fmt_set (global.get $gl_sw_white) (i32.const 5))
             (i32.store (load.field DxObject misc1 (global.get $gl_sw_white))
-              (i32.const 0xFFFFFFFF)))))))
+              (i32.const 0xFFFFFFFF))))))
+    (global.get $gl_sw_white))
 
   ;; PFD_DRAW_TO_BITMAP: draw straight into the DIB selected into the memory
   ;; DC the context was created on. The DIB *is* the colour buffer there --
