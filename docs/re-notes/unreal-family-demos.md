@@ -187,8 +187,10 @@ args: '-d3d -window -nosound'
 routes it to the same D3D8 path UT2003 already uses, and the game reaches
 **gameplay**: DM-Rankin's lit brick-and-wood interior with a bot in frame.
 
-This change is **not applied** — `lib/apps.js` was held by another agent when
-it was found. It is a one-line edit to that one entry.
+Applied 2026-09-22. With the D3D9 software path's point/spot lights
+(`fab74ee8`), `--d3d9-renderer=software --d3d9-programmable` also draws the
+Epic/Digital Extremes/Atari splash with zero refused draws (1.42M batches in
+150s at `--batch-size=200000`); it had refused every lit draw before.
 
 ## UT2003 under the CLI software backend
 
