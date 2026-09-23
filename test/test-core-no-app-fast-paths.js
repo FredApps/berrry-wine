@@ -76,4 +76,39 @@ assert(handlersWat.includes('(call $gdi_polyline_try'),
 assert(!handlersWat.includes('(call $host_gdi_polyline'),
   'Polyline must not retain a Canvas geometry fallback');
 
-console.log('PASS  core has no app-specific run-loop fast paths');
+// Retired import-era adapters had no production references; two pixel-read
+// probes now call the identical native helper directly. Keep the obsolete
+// entry points absent across source moves, not only from 01-header.wat.
+const allWat = fs.readdirSync(path.join(ROOT, 'src'))
+  .filter(f => /\.watx?$/.test(f))
+  .map(f => fs.readFileSync(path.join(ROOT, 'src', f), 'utf8')).join('\n');
+const watSymbols = new Set(allWat.match(/\$\w+/g));
+for (const name of [
+  "create_pen",
+  "create_bitmap",
+  "create_dib_bitmap",
+  "get_object_bits",
+  "get_object_storage",
+  "get_object_bpp",
+  "rectangle",
+  "create_rect_rgn",
+  "set_rect_rgn",
+  "combine_rgn",
+  "offset_rgn",
+  "ext_select_clip_rgn",
+  "exclude_clip_rect",
+  "get_rgn_box",
+  "polygon",
+  "polyline",
+  "polyline_to",
+  "get_line_descriptor",
+  "get_clip_box",
+  "frame_rect",
+  "get_pixel",
+  "ext_flood_fill"
+]) {
+  assert(!watSymbols.has('$host_gdi_' + name),
+    `retired GDI adapter ${name} must not return`);
+}
+
+console.log('PASS  core has no app-specific run-loop fast paths or retired GDI adapters');

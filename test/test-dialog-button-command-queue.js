@@ -42,7 +42,7 @@ const extraWat = String.raw`
     (call $ctrl_set_check_state (local.get $hwnd) (local.get $value))
     (call $ctrl_get_check_state (local.get $hwnd)))
   (func (export "test_check_pixel") (param $hwnd i32) (param $x i32) (param $y i32) (result i32)
-    (call $host_gdi_get_pixel (i32.add (local.get $hwnd) (i32.const 0x40000))
+    (call $gdi_hdc_get_pixel (i32.add (local.get $hwnd) (i32.const 0x40000))
       (local.get $x) (local.get $y)))
   (func (export "test_capture_api") (param $next i32) (result i32)
     (local $sp i32)

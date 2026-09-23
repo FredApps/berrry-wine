@@ -211,9 +211,6 @@
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
   ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
   ;; GDI host imports
-  (func $host_gdi_create_pen (param i32 i32 i32) (result i32)
-    (call $gdi_object_alloc (i32.const 1) (local.get 0) (local.get 1) (local.get 2)
-      (i32.eq (local.get 0) (i32.const 5))))
   (func $host_gdi_create_solid_brush (param i32) (result i32)
     (call $gdi_object_alloc (i32.const 2) (i32.const 0) (i32.const 0)
       (local.get 0) (i32.const 0)))
@@ -223,22 +220,6 @@
   ;; gdi_create_compat_bitmap(hdc, width, height, backingWa) registers a DDB
   ;; whose private canonical pixels live at backingWa. The address is not
   ;; exposed through BITMAP.bmBits.
-  (func $host_gdi_create_bitmap (param i32 i32 i32 i32) (result i32)
-    (call $gdi_bitmap_create_bitmap (local.get 0) (local.get 1) (i32.const 1)
-      (local.get 2) (local.get 3)))
-  ;; gdi_create_bitmap(width, height, bitsPerPixel, lpBitsWasmAddr) → handle
-  (func $host_gdi_create_dib_bitmap (param i32 i32 i32) (result i32)
-    (call $gdi_bitmap_create_dibitmap (i32.const 0) (local.get 0) (local.get 1)
-      (i32.ne (i32.and (local.get 2) (i32.const 4)) (i32.const 0)) (i32.const 0)))
-  (func $host_gdi_get_object_bits (param i32) (result i32)
-    (call $gdi_bitmap_public_bits (local.get 0)))
-  ;; gdi_get_object_bits(hBitmap) → lpBits WASM address for DIB sections, or 0.
-  (func $host_gdi_get_object_storage (param i32) (result i32)
-    (call $gdi_bitmap_storage (local.get 0)))
-  ;; gdi_get_object_storage(hBitmap) → private WAT backing address, or 0.
-  (func $host_gdi_get_object_bpp (param i32) (result i32)
-    (call $gdi_bitmap_bpp (local.get 0)))
-  ;; gdi_get_object_bpp(hBitmap) → bitmap bits-per-pixel, or 0 if unknown.
   (func $host_gdi_select_object (param i32 i32) (result i32)
     (local $old i32)
     (local.set $old (call $gdi_dc_select_owned_object (local.get 0) (local.get 1)))
@@ -247,18 +228,6 @@
     (call $gdi_object_delete_full (local.get 0)))
   (func $host_gdi_delete_dc (param i32) (result i32)
     (call $gdi_dc_delete (local.get 0)))
-  (func $host_gdi_rectangle (param $hdc i32) (param $left i32) (param $top i32)
-        (param $right i32) (param $bottom i32) (result i32)
-    (local $desc i32)
-    (local.set $desc (global.get $GDI_LINE_DESC))
-    (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc)))
-      (then (return (i32.const 0))))
-    (call $gdi_rectangle_desc (local.get $hdc) (local.get $desc)
-      (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)
-      (call $gdi_dc_get_field (local.get $hdc) (i32.const 4) (i32.const 0x30017))
-      (call $gdi_dc_get_field (local.get $hdc) (i32.const 8) (i32.const 0x30010))
-      (call $gdi_dc_get_rop2 (local.get $hdc))))
-  ;; gdi_rectangle(hdc, left, top, right, bottom)
   (func $host_gdi_round_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)
     (local $desc i32)
     (local.set $desc (global.get $GDI_LINE_DESC))
@@ -328,22 +297,9 @@
       (call $gdi_dc_get_field (local.get $hdc) (i32.const 8) (i32.const 0x30010))
       (call $gdi_dc_get_rop2 (local.get $hdc))))
   ;; gdi_ellipse(hdc, left, top, right, bottom)
-  (func $host_gdi_create_rect_rgn (param i32 i32 i32 i32) (result i32)
-    (call $gdi_rgn_alloc_rect (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
-  ;; gdi_create_rect_rgn(l, t, r, b) -> hrgn
-  (func $host_gdi_set_rect_rgn (param i32 i32 i32 i32 i32) (result i32)
-    (call $gdi_rgn_set_rect
-      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
-  ;; gdi_set_rect_rgn(hrgn, l, t, r, b) -> bool
   (import "host" "gdi_set_region_bands" (func $host_gdi_set_region_bands (param i32 i32 i32) (result i32)))
   ;; gdi_set_region_bands(hrgn, rects_wa, count) rebuilds derived Canvas data;
   ;; count=-1 discards that presentation cache.
-  (func $host_gdi_combine_rgn (param i32 i32 i32 i32) (result i32)
-    (call $gdi_rgn_combine (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
-  ;; gdi_combine_rgn(dst, src1, src2, mode) -> complexity
-  (func $host_gdi_offset_rgn (param i32 i32 i32) (result i32)
-    (call $gdi_rgn_offset (local.get 0) (local.get 1) (local.get 2)))
-  ;; gdi_offset_rgn(hrgn, dx, dy) -> region complexity
   (func $host_gdi_fill_rgn (param i32 i32 i32) (result i32)
     (call $gdi_hdc_fill_rgn (local.get 0) (local.get 1) (local.get 2)))
   ;; gdi_fill_rgn(hdc, hrgn, hbrush) — hbrush=0 uses DC's current brush (for PaintRgn)
@@ -356,53 +312,13 @@
   (func $host_gdi_select_clip_rgn (param i32 i32) (result i32)
     (call $gdi_dc_clip_select (local.get 0) (local.get 1)))
   ;; gdi_select_clip_rgn(hdc, hrgn) -> complexity
-  (func $host_gdi_ext_select_clip_rgn (param i32 i32 i32) (result i32)
-    (call $gdi_dc_clip_ext_select (local.get 0) (local.get 1) (local.get 2)))
-  ;; gdi_ext_select_clip_rgn(hdc, hrgn, fnMode) -> complexity
-  (func $host_gdi_exclude_clip_rect (param i32 i32 i32 i32 i32) (result i32)
-    (call $gdi_dc_clip_exclude_rect
-      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
-  ;; gdi_exclude_clip_rect(hdc, l, t, r, b) -> complexity
   (func $host_gdi_intersect_clip_rect (param i32 i32 i32 i32 i32) (result i32)
     (call $gdi_dc_clip_intersect_rect
       (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
   ;; gdi_intersect_clip_rect(hdc, l, t, r, b) -> complexity
-  (func $host_gdi_get_rgn_box (param i32 i32) (result i32)
-    (call $gdi_rgn_get_box (local.get 0) (local.get 1)))
-  ;; gdi_get_rgn_box(hrgn, lprect_wa) -> complexity
-  (func $host_gdi_polygon (param $hdc i32) (param $points i32) (param $count i32) (result i32)
-    (local $desc i32)
-    (local.set $desc (global.get $GDI_LINE_DESC))
-    (if (i32.eqz (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc)))
-      (then (return (i32.const 0))))
-    (call $gdi_polygon_desc (local.get $hdc) (local.get $desc)
-      (local.get $points) (local.get $count)
-      (call $gdi_dc_get_field (local.get $hdc) (i32.const 4) (i32.const 0x30017))
-      (call $gdi_dc_get_field (local.get $hdc) (i32.const 8) (i32.const 0x30010))
-      (call $gdi_dc_get_rop2 (local.get $hdc))
-      (call $gdi_dc_get_field (local.get $hdc) (i32.const 76) (i32.const 1))))
-  ;; gdi_polygon(hdc, pointsWaPtr, nCount)
   (func $host_gdi_poly_bezier (param i32 i32 i32 i32) (result i32)
     (call $gdi_poly_bezier (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   ;; gdi_poly_bezier(hdc, pointsWaPtr, nCount, fromCurrent)
-  (func $host_gdi_polyline (param $hdc i32) (param $points i32) (param $count i32) (result i32)
-    (call $gdi_polyline_try
-      (local.get $hdc) (local.get $points) (local.get $count) (i32.const 0)))
-  ;; gdi_polyline(hdc, pointsWaPtr, nCount) preserves the current position.
-  (func $host_gdi_polyline_to (param $hdc i32) (param $points i32) (param $count i32) (result i32)
-    (local $ok i32) (local $last i32)
-    (local.set $ok (call $gdi_polyline_try
-      (local.get $hdc) (local.get $points) (local.get $count) (i32.const 1)))
-    (if (i32.and (local.get $ok) (i32.gt_u (local.get $count) (i32.const 0)))
-      (then
-        (local.set $last (i32.add (local.get $points)
-          (i32.shl (i32.sub (local.get $count) (i32.const 1)) (i32.const 3))))
-        (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 12)
-          (i32.load (local.get $last)) (i32.const 0)))
-        (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 16)
-          (i32.load offset=4 (local.get $last)) (i32.const 0)))))
-    (local.get $ok))
-  ;; gdi_polyline_to(hdc, pointsWaPtr, nCount)
   (func $host_gdi_move_to (param $hdc i32) (param $x i32) (param $y i32) (result i32)
     (if (i32.eqz (call $gdi_dc_state_entry (local.get $hdc) (i32.const 0)))
       (then (return (i32.const 0))))
@@ -422,10 +338,6 @@
         (drop (call $gdi_dc_set_field (local.get $hdc) (i32.const 16) (local.get $y) (i32.const 0)))))
     (local.get $ok))
   ;; gdi_line_to(hdc, x, y)
-  (func $host_gdi_get_line_descriptor (param $hdc i32) (param $desc i32) (result i32)
-    (i32.and (call $gdi_surface_descriptor (local.get $hdc) (local.get $desc))
-      (call $gdi_line_descriptor_supported (local.get $desc))))
-  ;; gdi_get_line_descriptor(hdc, desc_wa) -> 1 for a supported DIB/solid-pen target.
   (import "host" "gdi_surface_create" (func $host_gdi_surface_create
     (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (result i32)))
   (import "host" "gdi_surface_upload" (func $host_gdi_surface_upload
@@ -488,9 +400,6 @@
 
 
 
-  (func $host_gdi_get_clip_box (param i32) (result i32)
-    (call $gdi_dc_target_size (local.get 0)))
-  ;; gdi_get_clip_box(hdc) → packed w | (h << 16)
   (func $host_gdi_load_bitmap (param i32 i32) (result i32)
     (call $gdi_bitmap_load_resource (local.get 0) (local.get 1) (i32.const 0)))
   (func $host_gdi_get_object_w (param i32) (result i32)
@@ -546,21 +455,6 @@
   (func $host_gdi_set_pixel (param i32 i32 i32 i32) (result i32)
     (call $gdi_hdc_set_pixel (local.get 0) (local.get 1) (local.get 2) (local.get 3)))
   ;; gdi_set_pixel(hdc, x, y, color) → prev color
-  (func $host_gdi_frame_rect (param i32 i32 i32 i32 i32 i32 i32) (result i32)
-    (local $desc i32)
-    (local.set $desc (global.get $GDI_LINE_DESC))
-    (if (result i32) (call $gdi_surface_descriptor (local.get 0) (local.get $desc))
-      (then (call $gdi_frame_rect_desc (local.get 0) (local.get $desc)
-        (local.get 1) (local.get 2) (local.get 3) (local.get 4) (local.get 5)))
-      (else (i32.const 0))))
-  ;; gdi_frame_rect(hdc, left, top, right, bottom, hbrush, hwnd) → 1
-  (func $host_gdi_get_pixel (param i32 i32 i32) (result i32)
-    (call $gdi_hdc_get_pixel (local.get 0) (local.get 1) (local.get 2)))
-  ;; gdi_get_pixel(hdc, x, y) → COLORREF
-  (func $host_gdi_ext_flood_fill (param i32 i32 i32 i32 i32) (result i32)
-    (call $gdi_hdc_ext_flood_fill
-      (local.get 0) (local.get 1) (local.get 2) (local.get 3) (local.get 4)))
-  ;; gdi_ext_flood_fill(hdc, x, y, color, fillType) → BOOL
   (func $host_gdi_get_di_bits (param i32 i32 i32 i32 i32 i32 i32) (result i32)
     (call $gdi_get_dibits
       (local.get 0) (local.get 1) (local.get 2) (local.get 3)

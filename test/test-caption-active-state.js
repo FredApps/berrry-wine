@@ -53,7 +53,7 @@ const extraWat = String.raw`
     (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 1)))
     (if (i32.eqz (local.get $hdc)) (then (return (i32.const -1))))
     (local.set $color
-      (call $host_gdi_get_pixel (local.get $hdc) (local.get $x) (local.get $y)))
+      (call $gdi_hdc_get_pixel (local.get $hdc) (local.get $x) (local.get $y)))
     (drop (call $host_release_dc (local.get $hdc)))
     (local.get $color))
 
