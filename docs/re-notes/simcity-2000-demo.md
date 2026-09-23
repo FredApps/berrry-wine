@@ -288,3 +288,65 @@ Driving it headlessly, three traps:
 * **Placement rules seen this run:** "Marinas must be placed across
   shorelines" (the 3x3 must include a water tile). The 4x4 solar plant and
   4x4 zoo take the clicked tile −1 as their top corner, like the coal plant.
+
+## Fourth city (1900 start, 2026-09-22): an 18-year timelapse
+
+Played from 1900 to the demo's end (Apr 1919) in the frozen control VM
+(`run.js --control=PORT --frozen`, driven by `tools/ctl.js`) with
+`record on`. Three emulator bugs turned up and were fixed:
+
+* **Budget dialog fonts (0be89573).** A DS_SETFONT template's own font and
+  base units now size the dialog. Before, it was laid out in the system font.
+* **"New City?" in the budget header (db830507).** The header is a read-only
+  ES_MULTILINE|ES_AUTOHSCROLL edit holding CRLF text. The unwrapped paint
+  path drew each line's CR as a glyph. EM_LINELENGTH, End and Up/Down also
+  counted it. Test: `test/test-edit-crlf-lines.js`.
+* **The screen froze in the 7th January (866f4550).** Native controls paint
+  through their internal DC hwnd+0x40000, which nobody ReleaseDCs. The
+  DC-state table (512 slots) adopted a record on first paint and kept it
+  after DestroyWindow. The budget dialog opens every January with ~70
+  controls. After seven of them GetDC returned NULL and MFC threw
+  CResourceException on every repaint, so the map stayed grey while the sim
+  ran on. `$wnd_table_remove` now releases both internal DCs. Test:
+  `test/test-window-dc-release.js`.
+
+What looked like a sim bug and was not: by 1909 about 60% of zoned tiles
+were XBLD `0x8a`/`0x8b`. The building names are string-table entries starting
+at 612 for id `0x70`, so `0x88`/`0x89` are "Construction" and `0x8a`/`0x8b`
+are "Abandoned building". The causes were the game's own rules:
+
+* **No water.** The building's Query dialog said "Watered: No". XBIT bits:
+  `0x80` powerable, `0x40` powered, `0x20` piped (reached by the pipe
+  network), `0x10` watered (actually supplied). A piped-but-dry tile is
+  `0xe0`, a supplied one `0xf0`. Supply is the limit: each pump makes
+  ~32,400 gal/month, and adding two connected pumps took watered tiles from
+  33 to 111.
+* **Unpowered pumps and zones.** A pump next to *empty* zone tiles gets no
+  power (see the power rule above), so it reads `0xa0` and pumps nothing. A
+  whole industrial block zoned beside a road but not a line never developed,
+  which starved residential demand.
+
+Layers added to the list above: XUND `0x4b3dd0` (pipes `0x10..0x1e`; a pump
+tile reads `0x1e`, a surface pipe crossing `0x11`), altitude `0x4b3a10`
+(u16 per tile, 256-byte rows, low 5 bits = height).
+
+Driving notes:
+
+* **Query is on the right-click menu**, not the palette. The palette's "?"
+  opens WinHelp's Help Topics (with an empty Contents tab, because there is
+  no .cnt file). Right-click a tile, then pick "Query Tile" (32939). The
+  query box greys out the map behind it while it is up.
+* **The first map click after a tool pick is often dropped**, even after
+  2,500 batches of settle, and so was one pump placement. Re-issue it, and
+  verify placements against XBLD/XUND rather than the screen.
+* **A power-line drag across 15 tiles laid only its first tile.** Road drags
+  work. Place lines tile by tile.
+* **The underground view shifts clicks by (-1,-1) tiles** from the surface
+  mapping (it draws the grid at a different altitude). Aim at (x+1, y+1).
+* **Clock:** `{"action":"tick","ms":0.5}` before `record on` (tick changes
+  are refused while recording) gives ~12k batches per sim month. A ctl
+  `step` of more than ~4,000 batches outlives the client timeout.
+* **The timelapse:** record at 10 fps, every 200 steps. Then run
+  `mpdecimate`, drop frames with full-frame `signalstats` SATAVG < 10 (the
+  grey map of the frozen stretch and the Query boxes), and play at 2x. The
+  result is 68s for 1901-1919.
