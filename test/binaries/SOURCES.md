@@ -543,3 +543,28 @@ curl -fL -o /tmp/aardbei_ptct.zip \
   https://archive.scene.org/pub/demos/groups/aardbei/aardbei_ptct.zip
 unzip -j /tmp/aardbei_ptct.zip PTCT.exe -d binaries/demoscene/ptct
 ```
+
+## Free editions of Visual Basic and Delphi (32-bit)
+
+Vendor-sanctioned free editions, under `candidates/` (gitignored). Fetched 2026-09-22;
+SHA-1s match the Internet Archive metadata.
+
+| Dir | Edition | Source item / file | SHA-1 |
+|---|---|---|---|
+| `vb5-cce/` | VB 5.0 Control Creation Edition (free download, builds OCX only) | `vb5ccein` / `vb5ccein.exe` | `afaf3e9a0234f08e51fd234e10037c62c6b80f34` |
+| `vb6-working-model/cd/` | VB 6.0 Working Model (book CD, no EXE compile) | `visual-basic-6-working-model-edition` / `VB6_WME.zip` | `61cd4e43754ebb7137e287604644005ce611680d` |
+| `delphi6-personal/cd/` | Delphi 6 Personal, from Czech *Computer* 23/2001 cover CD | `computer200123cd` / `Computer_2001-23_cd.bin` | `94e0d3b6e236fdd3ebaa48221fb87668140b7c68` |
+| `delphi7-personal/cd/` | Delphi 7 Personal, from UK *PCW* Jan 2003 cover CD | `personal-computer-world-2003-01` / `PCWJAN03.iso` | `42ff4e29952141c77f6b827cdfc10237bd9d09e0` |
+
+Do **not** use `VB6_WME_TO_FULL.reg` from the same VB6 item — it converts the
+Working Model into the retail product. Both Delphi editions require a serial and
+authorization key from Borland's (defunct) free registration; neither disc prints one.
+
+The Delphi 6 disc is a raw MODE1/2352 image; convert and extract with:
+
+```bash
+node tools/cue-bin-to-iso.js downloads/Computer_2001-23_cd.cue
+7z x -o'test/binaries/candidates/delphi6-personal/cd' downloads/Computer_2001-23_cd.iso 'Delphi 6 Personal Edition'
+7z x -o'test/binaries/candidates/delphi7-personal/cd' downloads/PCWJAN03.iso software/delphi7personal
+unzip -d test/binaries/candidates/vb6-working-model/cd downloads/VB6_WME.zip
+```
