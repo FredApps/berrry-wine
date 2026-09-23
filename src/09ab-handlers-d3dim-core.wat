@@ -1864,6 +1864,15 @@
   ;; ── Material/background state ─────────────────────────────────
   ;; Material objects keep a private D3DMATERIAL copy at entry+8, with the
   ;; stored byte count at entry+12. Legacy material handles are DX slot ids.
+  (func $d3dim_material_release (param $this i32) (result i32)
+    (local $entry i32) (local $payload i32)
+    (local.set $entry (call $dx_from_this (local.get $this)))
+    (if (i32.eq (load.field DxObject refcount (local.get $entry)) (i32.const 1)) (then
+      (local.set $payload (load.field DxObject misc0 (local.get $entry)))
+      (store.field DxObject misc0 (local.get $entry) (i32.const 0))
+      (if (local.get $payload) (then (call $heap_free (local.get $payload))))))
+    (call $dx_com_release_basic (local.get $this)))
+
   (func $d3dim_material_set (param $this i32) (param $lpMat i32)
     (local $entry i32) (local $dst i32) (local $sz i32)
     (if (i32.eqz (local.get $lpMat)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))

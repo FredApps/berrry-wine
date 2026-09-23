@@ -10672,7 +10672,7 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 1932170706,
-    "handler": "dx_com_release_basic"
+    "handler": "IDirect3DMaterial_Release"
   },
   {
     "id": 1218,
@@ -12384,8 +12384,7 @@
     "name": "IDirect3DMaterial_Release",
     "nargs": 5,
     "convention": "stdcall",
-    "hash": 1420259853,
-    "handler": "dx_com_release_basic"
+    "hash": 1420259853
   },
   {
     "id": 1433,
@@ -12467,7 +12466,7 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 892185061,
-    "handler": "dx_com_release_basic"
+    "handler": "IDirect3DMaterial_Release"
   },
   {
     "id": 1442,
