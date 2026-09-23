@@ -49,9 +49,9 @@ along with test-tier membership and whitespace validation.
 - Existing queued source scheduling and waveOut completion deadlines were
   not redesigned. Changing frequency must eventually be checked against the
   actual samples and all pending sources, not just reported cursor position.
-- The frozen-recording tap still has its own fixed-rate ring accounting;
-  changes must flush the old-rate interval before retiming the tap. This is
-  an identified follow-up, not covered by these cursor assertions.
+- Frozen-recording boundary retiming is now implemented separately in
+  [directsound-recording-rate-review.md](directsound-recording-rate-review.md).
+  Reconstruction-level sub-frame timestamp precision remains unverified.
 - Dynamic increases of device latency after history pruning and backwards
   guest-clock jumps are not certified by this test.
 - Correct centibel pan attenuation, primary device-wide mixer controls and
