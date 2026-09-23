@@ -147,7 +147,97 @@ try {
   globalThis.AudioContext = oldAudioContext;
 }
 
-// 4. The WAT side: the write cursor is a different number from the play
+// 4. A rate change must not retroactively rescale already-played samples.
+for (const latency of [0, 0.1]) {
+  globalThis.AudioContext = audioContextClass(latency, 0);
+  try {
+    const {host, id, ac} = ringVoice();
+    const start = ac.currentTime;
+    ac.currentTime = start + 0.4;
+    const before = host.voice_get_pos(id);
+    host.voice_set_freq(id, RATE * 2);
+    assert.strictEqual(host.voice_get_pos(id), before, 'rate switch preserves audible cursor');
+    ac.currentTime = start + 0.6;
+    assert(Math.abs(host.voice_get_pos(id) - Math.floor((0.4 + (0.2-latency)*2)*RATE)) <= 1,
+      'only samples after the rate boundary use the new frequency');
+    host.voice_set_freq(id, RATE / 2);
+    ac.currentTime = start + 0.9;
+    assert(Math.abs(host.voice_get_pos(id) - Math.floor((0.8 + (0.3-latency)*0.5)*RATE)) <= 1,
+      'a second rate boundary preserves fractional position');
+  } finally { globalThis.AudioContext = oldAudioContext; }
+}
+
+// No AudioContext: cursor and one-shot completion use the same integral.
+{
+  globalThis.AudioContext = undefined;
+  let clockMs = 0;
+  const memory = new ArrayBuffer(128 * 1024);
+  const ctx = {getMemory: () => memory, audioClockMs: () => clockMs};
+  const {host} = createHostImports(ctx);
+  const id = host.voice_open(1000, 1, 8);
+  host.voice_play_ring(id, 0x1000, 1000, 0, 0);
+  clockMs = 400;
+  assert.strictEqual(host.voice_get_pos(id), 400);
+  host.voice_set_freq(id, 2000);
+  assert.strictEqual(host.voice_get_pos(id), 400);
+  clockMs = 699;
+  assert.strictEqual(host.voice_get_pos(id), 998);
+  assert.strictEqual(host.voice_is_playing(id), 1);
+  clockMs = 700;
+  assert.strictEqual(host.voice_get_pos(id), 1000);
+  assert.strictEqual(host.voice_is_playing(id), 0);
+  // Repeated Play at the same guest tick is a fresh timeline too.
+  host.voice_play_ring(id, 0x1000, 1000, 0, 1);
+  assert.strictEqual(host.voice_get_pos(id), 0);
+  host.voice_set_freq(id, 0);
+  assert.strictEqual(host.voice_get_pos(id), 0);
+  clockMs += 100;
+  assert.strictEqual(host.voice_get_pos(id), 100);
+  // Frozen-clock edits coalesce, and advancing edits retain only the needed
+  // latency window; history must not grow with the lifetime of a looping voice.
+  for (let i = 0; i < 1000; i++) host.voice_set_freq(id, i % 2 ? 1000 : 2000);
+  assert.strictEqual(ctx._voices._map[id].rateClocks.snapshotGuest.segments.length, 1);
+  for (let i = 0; i < 1000; i++) {
+    clockMs++;
+    host.voice_set_freq(id, i % 2 ? 1000 : 2000);
+  }
+  assert.strictEqual(ctx._voices._map[id].rateClocks.snapshotGuest.segments.length, 1);
+  globalThis.AudioContext = oldAudioContext;
+}
+
+// Two boundaries can both still be in flight behind the output latency.
+globalThis.AudioContext = audioContextClass(0.1, 0);
+try {
+  const {host, id, ac} = ringVoice();
+  const start = ac.currentTime;
+  ac.currentTime = start + 0.4; host.voice_set_freq(id, RATE*2);
+  ac.currentTime = start + 0.45; host.voice_set_freq(id, RATE);
+  ac.currentTime = start + 0.525;
+  assert(Math.abs(host.voice_get_pos(id) - Math.floor(0.45*RATE)) <= 1,
+    'audible query within an older segment retains its earlier rate');
+  ac.currentTime = start + 0.575;
+  assert(Math.abs(host.voice_get_pos(id) - Math.floor(0.525*RATE)) <= 1);
+} finally { globalThis.AudioContext = oldAudioContext; }
+
+// Stream clock shares the integral; reset starts again at zero.
+globalThis.AudioContext = undefined;
+try {
+  let clockMs = 0;
+  const memory = new ArrayBuffer(128*1024);
+  const ctx = {getMemory:()=>memory, audioClockMs:()=>clockMs};
+  const {host} = createHostImports(ctx);
+  const id = host.voice_open(1000,1,8);
+  host.voice_write_stream(id,0x1000,10000);
+  clockMs=400; host.voice_set_freq(id,2000);
+  assert.strictEqual(host.voice_get_pos(id),400);
+  clockMs=600; assert.strictEqual(host.voice_get_pos(id),800);
+  host.voice_stop(id);
+  host.voice_write_stream(id,0x1000,10000);
+  assert.strictEqual(host.voice_get_pos(id),0);
+  clockMs=700; assert.strictEqual(host.voice_get_pos(id),200);
+} finally { globalThis.AudioContext = oldAudioContext; }
+
+// 5. The WAT side: the write cursor is a different number from the play
 //    cursor, derived from the buffer's own format, and stays inside the ring.
 {
   const wat = fs.readFileSync(

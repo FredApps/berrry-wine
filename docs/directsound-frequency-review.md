@@ -28,10 +28,10 @@ values and failures, sparse cross-page output, output/stack sentinels,
 stop/restart and slot reuse.
 
 This is a state/ABI/host-boundary fix, not a full audio-conformance claim.
-In particular, the existing host cursor calculation derives elapsed playback
-from the current frequency and start time; continuity through a live frequency
-change needs its own measured regression. Queued browser audio also needs an
-audible/timing check. No native Win98 error-precedence capture was made here.
+The host cursor continuity follow-up is now implemented and documented in
+[directsound-rate-clock-review.md](directsound-rate-clock-review.md). Queued
+browser audio still needs an audible/timing check, and frozen recording has
+separate rate accounting. No native Win98 error-precedence capture was made here.
 The device GetCaps frequency fields and primary GetFrequency behavior deserve
 a separate native reference audit; this test does not establish every driver
 capability or error combination.
@@ -57,5 +57,5 @@ performed in this slice.
   rates above 100 kHz. The newer ceiling is not silently applied to this
   legacy interface.
 
-Next: live cursor continuity; actual pan attenuation law; primary device-wide
-mixer controls; shared PCM ownership for DuplicateSoundBuffer.
+Next: queued-source and frozen-recording rate timing; actual pan attenuation
+law; primary device-wide mixer controls; shared PCM ownership for duplicates.
