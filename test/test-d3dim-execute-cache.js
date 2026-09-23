@@ -15,7 +15,7 @@ const extraWat = String.raw`
    (local.get $p))
  (func (export "size") (param $p i32) (param $n i32)
    (i32.store offset=12 (call $dx_from_this (local.get $p)) (local.get $n)))
- (func (export "source") (param $buf i32) (result i32) (call $d3dim_execbuf_source_base (local.get $buf)))
+ (func (export "source") (param $buf i32) (result i32) (call $d3dim_execbuf_source_guest (local.get $buf)))
  (func (export "refresh") (param $p i32) (call $d3dim_execbuf_cache_refresh (local.get $p)))
  (func (export "cache") (param $p i32) (result i32)
    (i32.load (i32.add (global.get $D3DIM_EB_CACHE_PTRS)
@@ -33,7 +33,7 @@ const extraWat = String.raw`
   const wasm = compileSrcWasm((file, source) => {
     if (file === '09ab-handlers-d3dim-core.wat') {
       const start = source.indexOf('  (func $d3dim_execbuf_cache_ensure');
-      const end = source.indexOf('  (func $d3dim_execbuf_source_base', start);
+      const end = source.indexOf('  (func $d3dim_execbuf_source_guest', start);
       assert(start >= 0 && end > start);
       const body = source.slice(start, end);
       assert.strictEqual(body.split('(call $heap_alloc').length, 2);
@@ -54,7 +54,7 @@ const extraWat = String.raw`
   for (const buf of [direct, base + 4090]) for (const refresh of [false, true]) {
     const heap = e.live_heap(), p = e.make(buf);
     e.size(p, 64); e.fail(1);
-    if (refresh) e.refresh(p); else assert.strictEqual(e.source(buf), e.guest_to_wasm(buf));
+    if (refresh) e.refresh(p); else assert.strictEqual(e.source(buf), buf);
     assert.strictEqual(e.cache(p), 0); assert.strictEqual(e.live_heap(), heap);
     e.fail(0);
     for (let n = 0; n < 8; n++) {
@@ -80,7 +80,7 @@ const extraWat = String.raw`
     }
     const old = e.cache(p), snapshot = Array.from({ length: 160 }, (_, i) => e.guest_read8(old + i));
     e.size(p, 64); e.fail(1);
-    if (refresh) e.refresh(p); else assert.strictEqual(e.source(buf), e.guest_to_wasm(buf));
+    if (refresh) e.refresh(p); else assert.strictEqual(e.source(buf), buf);
     assert.strictEqual(e.cache(p), old, 'failed replacement retains old owner');
     assert.strictEqual(e.live_heap(), heap + 1);
     assert.deepStrictEqual(Array.from({ length: 160 }, (_, i) => e.guest_read8(old + i)), snapshot);

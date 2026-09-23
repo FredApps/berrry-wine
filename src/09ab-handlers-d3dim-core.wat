@@ -1098,7 +1098,7 @@
     (if (local.get $old) (then (call $heap_free (local.get $old))))
     (local.get $cache))
 
-  (func $d3dim_execbuf_source_base (param $buf_guest i32) (result i32)
+  (func $d3dim_execbuf_source_guest (param $buf_guest i32) (result i32)
     (local $i i32) (local $entry i32) (local $cache_g i32)
     (if (i32.eqz (local.get $buf_guest)) (then (return (i32.const 0))))
     (local.set $i (i32.const 0))
@@ -1113,12 +1113,11 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     (if (i32.ge_u (local.get $i) (global.get $D3DIM_EB_CACHE_MAX))
-      (then (return (call $g2w (local.get $buf_guest)))))
+      (then (return (local.get $buf_guest))))
     (local.set $cache_g (call $d3dim_execbuf_cache_ensure (local.get $entry) (i32.const 0)))
     (if (i32.eqz (local.get $cache_g))
-      (then (return (call $g2w (local.get $buf_guest)))))
-    ;; Legacy consumer still expects a WASM pointer; its sparse walk is separate.
-    (call $g2w (i32.add (local.get $cache_g) (global.get $D3DIM_EB_CACHE_HEADER))))
+      (then (return (local.get $buf_guest))))
+    (i32.add (local.get $cache_g) (global.get $D3DIM_EB_CACHE_HEADER)))
 
   ;; Return the guest cache header for one execute-buffer COM object. Unlock creates
   ;; this before SetExecuteData, which is the order used by the DX1 runtime.
@@ -6445,14 +6444,14 @@
     (local $state_g i32) (local $vbase i32) (local $srcbase i32)
     (local $i i32) (local $mode i32) (local $wStart i32) (local $wDest i32) (local $cnt i32)
     (local $j i32) (local $src i32) (local $dst i32) (local $color i32) (local $spec i32)
-    (local $tu i32) (local $tv i32) (local $src_stride i32)
+    (local $tu i32) (local $tv i32) (local $src_stride i32) (local $dst_g i32)
     (if (i32.or (i32.eqz (local.get $buf_guest)) (i32.eqz (local.get $wCount))) (then (return)))
     (local.set $state_g (call $d3ddev_state (local.get $dev_this)))
     (if (i32.eqz (local.get $state_g)) (then (return)))
     (call $d3ddev_composite_wvp (local.get $state_g))
     (call $d3dim_lights_refresh (local.get $state_g))
-    (local.set $vbase (call $g2w (local.get $buf_guest)))
-    (local.set $srcbase (call $d3dim_execbuf_source_base (local.get $buf_guest)))
+    (local.set $vbase (local.get $buf_guest))
+    (local.set $srcbase (call $d3dim_execbuf_source_guest (local.get $buf_guest)))
     (if (i32.eqz (local.get $srcbase)) (then (local.set $srcbase (local.get $vbase))))
     (local.set $i (i32.const 0))
     (block $done (loop $lp
@@ -6472,8 +6471,12 @@
         (if (i32.eq (local.get $mode) (i32.const 2))
           (then
             (if (i32.ne (local.get $src) (local.get $dst))
-              (then (call $memcpy (local.get $dst) (local.get $src) (i32.const 32)))))
+              (then (call $guest_memmove (local.get $dst) (local.get $src) (i32.const 32)))))
           (else
+            ;; Math helpers require contiguous vertices, not an affine buffer.
+            (local.set $dst_g (local.get $dst))
+            (local.set $src (call $guest_span_in (local.get $src) (i32.const 32)))
+            (local.set $dst (call $guest_span_in (local.get $dst_g) (i32.const 32)))
             ;; Buffer trailing LVERTEX fields before vertex_project writes dst.
             (if (i32.eq (local.get $mode) (i32.const 1))
               (then
@@ -6490,7 +6493,9 @@
             (i32.store (i32.add (local.get $dst) (i32.const 16)) (local.get $color))
             (i32.store (i32.add (local.get $dst) (i32.const 20)) (local.get $spec))
             (i32.store (i32.add (local.get $dst) (i32.const 24)) (local.get $tu))
-            (i32.store (i32.add (local.get $dst) (i32.const 28)) (local.get $tv))))
+            (i32.store (i32.add (local.get $dst) (i32.const 28)) (local.get $tv))
+            (call $guest_span_writeback (local.get $dst_g) (local.get $dst) (i32.const 32))
+            (call $guest_span_release (local.get $src) (i32.const 32))))
         (local.set $j (i32.add (local.get $j) (i32.const 1)))
         (br $vlp)))
       (local.set $rec_wa (i32.add (local.get $rec_wa) (i32.const 16)))

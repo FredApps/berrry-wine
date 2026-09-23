@@ -41,8 +41,8 @@ The audit found these additional dependencies:
 - Cache allocation/copy duplication and the mismatched-cache replacement leak
   are addressed by the shared-owner follow-up below. Source-base return values
   and downstream consumers still use raw WASM pointers.
-- PROCESSVERTICES receives a WASM source base and offsets it across vertices;
-  destination vertices also use a once-translated buffer base.
+- PROCESSVERTICES source/destination traversal is addressed in the bounded
+  vertex follow-up below; opcode records still arrive as WASM pointers.
 - Execute and Pick walk instruction records with WASM-pointer arithmetic,
   then hand those addresses to opcode handlers. Repairing the backing copy
   alone cannot repair those consumers.
@@ -85,7 +85,7 @@ ExecuteData layouts, eight lifetime cases and scoped static gates. Quiet and
 duplicate counts remain unchanged.
 
 This consolidates the writer/owner, not the entire execution engine. The
-source-base API still needs a guest-relative contract. Cache-header/status
+source-base API is migrated in the bounded vertex follow-up. Cache-header/status
 readers are migrated in the follow-up below. The owner test forces sparse
 source storage, not sparse allocator-returned cache storage or complete
 vertex/instruction execution.
@@ -117,3 +117,35 @@ device-state-dependent extent calculation are not certified by this fixture.
 All 32 ExecuteData layouts, 32 cache snapshots/replacements with eight forced
 allocation failures/retries, eight lifetime cycles and scoped static gates
 pass. Quiet remains 243 manual + 22 metadata and duplicates 117 / 471.
+
+## Bounded vertex follow-up
+
+The snapshot accessor is now d3dim_execbuf_source_guest: both cached and
+allocation-failure/no-owner paths return guest addresses. PROCESSVERTICES
+keeps source/destination indexing in that address space. COPY uses
+guest_memmove. The transform modes gather at most one 32-byte source vertex
+and one 32-byte destination vertex for the existing math helpers, then write
+back the destination and release the source in reverse acquisition order.
+No whole-buffer contiguous copy or extra persistent render surface is added.
+
+`test/test-d3dim-execute-vertices-sparse.js` reproduced untouched destination
+bytes in a crossing-source transform. Eighteen sparse/control comparisons now
+pass: three modes, absent/heap-owned/borrowed-sparse source caches, and source
+or destination page crossings. Every buffer byte matches the contiguous
+control; neighboring backing pages, buffer canaries and span cursor/overflow
+counters remain unchanged. Two vertices per record check advancing across
+the boundary rather than only transforming the first vertex. Fixtures attach
+borrowed storage directly and detach it for cleanup, so this proves the vertex
+helper's addressing, not native creation policy or full Execute dispatch.
+
+The cache regression's eight failure/retry cases now assert guest-address
+fallback results. Its 32 snapshots/replacements, the adjacent vertex-buffer
+ProcessVertices regression and scoped static gates also pass. Quiet and
+duplicate inventories are unchanged. Native transform/lighting semantics are
+not newly certified by comparing two layouts of the same implementation.
+
+Remaining: Execute/Pick instruction walking and record inputs, other primitive
+vertex readers, range/overflow validation, and full application rendering.
+The generic span arena still falls back to plain translation if exhausted;
+this path uses at most 64 additional bytes and the test observes no overflow,
+but arena-exhaustion safety remains a shared issue rather than a solved claim.
