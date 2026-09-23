@@ -19,6 +19,21 @@ const handlersWat = allHandlerWat;
 const gdiHandlersWat = allHandlerWat;
 const hostImports = fs.readFileSync(path.join(ROOT, 'lib', 'host-imports.js'), 'utf8');
 
+// Dispatch exceptions must name APIs, not duplicate api_table.json indexes.
+const dispatchWat = fs.readFileSync(path.join(ROOT, 'src', '09b-dispatch.wat'), 'utf8');
+assert(!/\(i32\.(?:eq|ne)\s+(?:\(local\.get \$api_id\)\s+\(i32\.const\b|\(i32\.const\s+[^)]+\)\s+\(local\.get \$api_id\))/.test(dispatchWat),
+  'dispatch API comparisons must use generated named IDs, not numeric literals');
+const generatedDispatch = fs.readFileSync(path.join(ROOT, 'src', '09b2-dispatch-table.generated.wat'), 'utf8');
+const apiTable = JSON.parse(fs.readFileSync(path.join(ROOT, 'src', 'api_table.json'), 'utf8'));
+for (const name of ['GetTickCount', 'timeGetTime', 'PeekMessageA', 'PeekMessageW', 'MsgWaitForMultipleObjects']) {
+  const matches = apiTable.filter(api => api.name === name);
+  assert.strictEqual(matches.length, 1, `${name} must have one API table entry`);
+  assert(generatedDispatch.includes(`(global $API_ID_${name} i32 (i32.const ${matches[0].id}))`),
+    `${name} dispatch constant must agree with the API table`);
+  assert(dispatchWat.includes(`(global.get $API_ID_${name})`),
+    `${name} dispatch special case must consume its named constant`);
+}
+
 assert(!/\$?is_winamp\b|winamp_/i.test(exportsWat),
   'main run loop should not contain Winamp-specific helpers');
 

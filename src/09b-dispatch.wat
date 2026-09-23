@@ -139,10 +139,10 @@
     ;; between reads. Preserve a second activity sequence that treats clock
     ;; reads as polling. PeekMessage starts as real activity too; only its
     ;; proven-empty return path rolls this one increment back.
-    ;; API ids are append-only positions in api_table.json.
+    ;; Named IDs are generated from api_table.json alongside the dispatcher.
     (if (i32.and
-          (i32.ne (local.get $api_id) (i32.const 338))  ;; GetTickCount
-          (i32.ne (local.get $api_id) (i32.const 826))) ;; timeGetTime
+          (i32.ne (local.get $api_id) (global.get $API_ID_GetTickCount))
+          (i32.ne (local.get $api_id) (global.get $API_ID_timeGetTime)))
       (then
         (global.set $spin_nonpoll_seq
           (i32.add (global.get $spin_nonpoll_seq) (i32.const 1)))))
