@@ -39,7 +39,7 @@ Quiet-handler count stays **247 manual + 22 metadata**.
 
 This is implementation sharing, not expanded native conformance. Existing
 null-callback success is preserved and not certified as Win98 behavior.
-Enumeration cores still have global callback state and allocate format
-buffers without cleanup in the viewed completion paths; nested enumeration
-and lifetime are separate correctness audit candidates. No full build,
+The global callback state and unreleased format-buffer finding is addressed
+by [the lifetime follow-up](d3dim-enumeration-lifetime-review.md), separately
+from this equivalence-only alias change. No full build,
 browser game capture or performance claim is made here.

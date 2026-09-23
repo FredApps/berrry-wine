@@ -570,19 +570,10 @@
   (global $enum_modes_ret (mut i32) (i32.const 0))       ;; saved caller return addr
   (global $enum_modes_thunk (mut i32) (i32.const 0))     ;; CACA0008 thunk guest addr
 
-  ;; IDirect3D3::EnumZBufferFormats continuation state
-  (global $d3d_enum_zbuf_callback (mut i32) (i32.const 0))
-  (global $d3d_enum_zbuf_context  (mut i32) (i32.const 0))
-  (global $d3d_enum_zbuf_format   (mut i32) (i32.const 0))
-  (global $d3d_enum_zbuf_ret      (mut i32) (i32.const 0))
+  ;; Only immutable callback entry addresses are global. Invocation state is
+  ;; owned by the hidden record pointer on each guest callback stack.
   (global $d3d_enum_zbuf_thunk    (mut i32) (i32.const 0)) ;; CACA000D thunk guest addr
-  (global $d3d_enum_tex_callback (mut i32) (i32.const 0))
-  (global $d3d_enum_tex_context  (mut i32) (i32.const 0))
-  (global $d3d_enum_tex_format   (mut i32) (i32.const 0))
-  (global $d3d_enum_tex_idx      (mut i32) (i32.const 0))
-  (global $d3d_enum_tex_ret      (mut i32) (i32.const 0))
   (global $d3d_enum_tex_thunk    (mut i32) (i32.const 0)) ;; CACA000F thunk guest addr
-  (global $d3d_enum_tex_desc_mode (mut i32) (i32.const 0))
 
   ;; ── Helper: allocate a DX object ─────────────────────────────
   ;; Returns WASM addr of entry, or 0 if full
@@ -2859,36 +2850,10 @@
   ;; ── IDirect3D3::EnumZBufferFormats — report a single 16-bit Z format ──
   ;; Callback signature: EnumZBufferFormatsCallback(lpDDPixelFormat, lpContext).
   (func $d3d_enum_zbuf_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
-    (local $wa i32)
-    (global.set $d3d_enum_zbuf_callback (local.get $cb))
-    (global.set $d3d_enum_zbuf_context  (local.get $ctx))
-    (global.set $d3d_enum_zbuf_ret      (local.get $ret_addr))
-    (global.set $d3d_enum_zbuf_format   (call $heap_alloc (i32.const 32)))
-    (local.set $wa (call $g2w (global.get $d3d_enum_zbuf_format)))
-    (call $zero_memory (local.get $wa) (i32.const 32))
-    (i32.store (local.get $wa)                         (i32.const 32))    ;; dwSize
-    (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x400)) ;; DDPF_ZBUFFER
-    (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 16))   ;; dwZBufferBitDepth
-    (i32.store (i32.add (local.get $wa) (i32.const 16)) (i32.const 0xFFFF)) ;; dwZBitMask
-    ;; Push saved caller return, then callback args right-to-left.
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret_addr))
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_zbuf_context))
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_zbuf_format))
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_zbuf_thunk))
-    (global.set $eip (global.get $d3d_enum_zbuf_callback))
-    (global.set $steps (i32.const 0)))
+    (call $d3d_enum_format_begin (local.get $cb) (local.get $ctx) (local.get $ret_addr) (i32.const 2)))
 
-  ;; CACA000D: z-buffer-format callback returned. One format is enough for
-  ;; DX5-era device setup, so finish enumeration regardless of callback EAX.
   (func $d3d_enum_zbuf_continue
-    (global.set $d3d_enum_zbuf_ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (global.set $eip (global.get $d3d_enum_zbuf_ret))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
+    (call $d3d_enum_format_continue))
 
   ;; ── IDirect3DDevice7::EnumTextureFormats — common RGB/ARGB formats ──
   ;; Callback signature: EnumTextureFormatsCallback(lpDDPixelFormat, lpContext).
@@ -2947,65 +2912,83 @@
     (call $d3d_fill_texture_format (i32.add (local.get $ddsd) (i32.const 72)) (local.get $idx))
     (i32.store (i32.add (local.get $wa) (i32.const 104)) (i32.const 0x1840))) ;; TEXTURE|SYSTEMMEMORY|OFFSCREENPLAIN
 
+  ;; One owned allocation per invocation, including its callback payload:
+  ;; +0 callback, +4 context, +8 caller return, +12 kind (0=pixel,1=desc,2=z),
+  ;; +16 index, +20..127 payload (108 bytes maximum). The private pointer is
+  ;; stacked behind callback arguments, so nested and interleaved callbacks
+  ;; never consult or overwrite another invocation's state.
+  (func $d3d_enum_format_begin (param $cb i32) (param $ctx i32) (param $ret i32) (param $kind i32)
+    (local $record i32) (local $wa i32)
+    (local.set $record (call $heap_alloc (i32.const 128)))
+    (if (i32.eqz (local.get $record)) (then
+      (i32.store (global.get $reg_base) (i32.const 0x8007000E))
+      (global.set $eip (local.get $ret))
+      (return)))
+    (local.set $wa (call $g2w (local.get $record)))
+    (i32.store (local.get $wa) (local.get $cb))
+    (i32.store offset=4 (local.get $wa) (local.get $ctx))
+    (i32.store offset=8 (local.get $wa) (local.get $ret))
+    (i32.store offset=12 (local.get $wa) (local.get $kind))
+    (i32.store offset=16 (local.get $wa) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $record))
+    (call $d3d_enum_format_dispatch (local.get $record)))
+
   (func $d3d_enum_tex_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
-    (global.set $d3d_enum_tex_callback (local.get $cb))
-    (global.set $d3d_enum_tex_context  (local.get $ctx))
-    (global.set $d3d_enum_tex_ret      (local.get $ret_addr))
-    (global.set $d3d_enum_tex_format   (call $heap_alloc (i32.const 32)))
-    (global.set $d3d_enum_tex_idx      (i32.const 0))
-    (global.set $d3d_enum_tex_desc_mode (i32.const 0))
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret_addr))
-    (call $d3d_enum_tex_dispatch))
+    (call $d3d_enum_format_begin (local.get $cb) (local.get $ctx) (local.get $ret_addr) (i32.const 0)))
 
   (func $d3d_enum_tex_desc_invoke (param $cb i32) (param $ctx i32) (param $ret_addr i32)
-    (global.set $d3d_enum_tex_callback (local.get $cb))
-    (global.set $d3d_enum_tex_context  (local.get $ctx))
-    (global.set $d3d_enum_tex_ret      (local.get $ret_addr))
-    (global.set $d3d_enum_tex_format   (call $heap_alloc (i32.const 108)))
-    (global.set $d3d_enum_tex_idx      (i32.const 0))
-    (global.set $d3d_enum_tex_desc_mode (i32.const 1))
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $ret_addr))
-    (call $d3d_enum_tex_dispatch))
+    (call $d3d_enum_format_begin (local.get $cb) (local.get $ctx) (local.get $ret_addr) (i32.const 1)))
 
-  (func $d3d_enum_tex_dispatch
-    (if (i32.ge_u (global.get $d3d_enum_tex_idx) (i32.const 4))
+  (func $d3d_enum_format_dispatch (param $record i32)
+    (local $wa i32) (local $format i32) (local $kind i32) (local $payload i32)
+    (local.set $wa (call $g2w (local.get $record)))
+    (local.set $format (i32.add (local.get $record) (i32.const 20)))
+    (local.set $kind (i32.load offset=12 (local.get $wa)))
+    (if (i32.eq (local.get $kind) (i32.const 2))
       (then
-        (global.set $d3d_enum_tex_ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (global.set $eip (global.get $d3d_enum_tex_ret))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (global.set $d3d_enum_tex_desc_mode (i32.const 0))
-        (return)))
-    (if (global.get $d3d_enum_tex_desc_mode)
-      (then
-        (call $d3d_fill_texture_desc (global.get $d3d_enum_tex_format) (global.get $d3d_enum_tex_idx)))
+        (local.set $payload (i32.add (local.get $wa) (i32.const 20)))
+        (call $zero_memory (local.get $payload) (i32.const 32))
+        (i32.store (local.get $payload) (i32.const 32))
+        (i32.store offset=4 (local.get $payload) (i32.const 0x400))
+        (i32.store offset=12 (local.get $payload) (i32.const 16))
+        (i32.store offset=16 (local.get $payload) (i32.const 0xFFFF)))
       (else
-        (call $d3d_fill_texture_format (global.get $d3d_enum_tex_format) (global.get $d3d_enum_tex_idx))))
-    ;; Push callback args right-to-left: ctx, lpDDPixelFormat or lpDDSurfaceDesc.
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_tex_context))
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_tex_format))
-    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $d3d_enum_tex_thunk))
-    (global.set $eip (global.get $d3d_enum_tex_callback))
+        (if (local.get $kind)
+          (then (call $d3d_fill_texture_desc (local.get $format) (i32.load offset=16 (local.get $wa))))
+          (else (call $d3d_fill_texture_format (local.get $format) (i32.load offset=16 (local.get $wa)))))))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base))
+      (select (global.get $d3d_enum_zbuf_thunk) (global.get $d3d_enum_tex_thunk)
+        (i32.eq (local.get $kind) (i32.const 2))))
+    (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)) (local.get $format))
+    (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)) (i32.load offset=4 (local.get $wa)))
+    (global.set $eip (i32.load (local.get $wa)))
     (global.set $steps (i32.const 0)))
 
-  ;; CACA000F: texture-format callback returned. DDENUMRET_CANCEL (0) stops;
-  ;; any non-zero result advances to the next format.
-  (func $d3d_enum_tex_continue
-    (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
+  (func $d3d_enum_format_continue
+    (local $record i32) (local $wa i32) (local $idx i32) (local $ret i32)
+    (local.set $record (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (local.set $wa (call $g2w (local.get $record)))
+    (local.set $idx (i32.add (i32.load offset=16 (local.get $wa)) (i32.const 1)))
+    (if (i32.or
+          (i32.eq (i32.load offset=12 (local.get $wa)) (i32.const 2))
+          (i32.or (i32.eqz (i32.load (global.get $reg_base))) (i32.ge_u (local.get $idx) (i32.const 4))))
       (then
-        (global.set $d3d_enum_tex_ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-        (global.set $eip (global.get $d3d_enum_tex_ret))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
-        (global.set $d3d_enum_tex_desc_mode (i32.const 0))
-        (return)))
-    (global.set $d3d_enum_tex_idx (i32.add (global.get $d3d_enum_tex_idx) (i32.const 1)))
-    (call $d3d_enum_tex_dispatch))
+        (local.set $ret (i32.load offset=8 (local.get $wa)))
+        (call $heap_free (local.get $record))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+        (global.set $eip (local.get $ret))
+        (i32.store (global.get $reg_base) (i32.const 0)))
+      (else
+        (i32.store offset=16 (local.get $wa) (local.get $idx))
+        (call $d3d_enum_format_dispatch (local.get $record)))))
+
+  (func $d3d_enum_tex_continue
+    (call $d3d_enum_format_continue))
 
   ;; Fill D3DDEVICEDESC (DX5-style 252-byte layout).
   ;; is_hal=1 sets HWRASTERIZATION + vidmem caps; is_hal=0 is HEL (software).

@@ -40,7 +40,8 @@ const extraWat = String.raw`
   assert(desc, 'callback should receive a texture-format descriptor');
   assert.strictEqual(wat.guest_read32(esp + 8) >>> 0, context,
     'callback context should be preserved');
-  assert.strictEqual(wat.guest_read32(esp + 12) >>> 0, returnAddress,
+  const invocation=wat.guest_read32(esp + 12) >>> 0;
+  assert.strictEqual(wat.guest_read32(invocation + 8) >>> 0, returnAddress,
     'callback continuation should preserve the API caller return address');
 
   assert.strictEqual(wat.guest_read32(desc) >>> 0, 108,
