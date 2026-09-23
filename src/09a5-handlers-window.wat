@@ -1781,8 +1781,32 @@
     (i32.or (i32.lt_s (call $wnd_table_find (local.get $h)) (i32.const 0))
       (i32.ne (call $mouse_answer_eats (local.get $answer)) (i32.const 0))))
 
+  ;; A SendMessage from another thread is delivered only inside the
+  ;; receiver's message calls (GetMessage, PeekMessage, WaitMessage,
+  ;; MsgWaitForMultipleObjects), never at an arbitrary instruction. The
+  ;; cooperative scheduler used to run it wherever the receiver's slice had
+  ;; stopped, and that is not merely early, it is reentrant: Blobby Volley's
+  ;; main thread was two instructions from the end of Delphi's
+  ;; TControlCanvas.FreeHandle -- ReleaseDC done, FDeviceContext not yet
+  ;; cleared -- when the game thread's per-frame TThread.Synchronize paint ran
+  ;; there, re-adopted the freed HDC, and every BitBlt after it drew nothing.
+  ;;
+  ;; So the scheduler only raises $incoming_send_pending, and each message
+  ;; call tests it first: park on the call's own thunk with the frame intact
+  ;; (the $cs_wait re-entry contract), let the host deliver, then the same
+  ;; call runs again.
+  (func $incoming_send_yield (result i32)
+    (if (i32.eqz (global.get $incoming_send_pending)) (then (return (i32.const 0))))
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $eip (global.get $current_thunk_eip))
+    (global.set $yield_reason (i32.const 17))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0))
+    (i32.const 1))
+
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
+    (if (call $incoming_send_yield) (then (return)))
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))
     (local.set $ret (call $gl32 (local.get $sp)))
     (loop $fetch
@@ -2087,6 +2111,7 @@
   ;; Returns 0 = no message available (non-blocking)
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
+    (if (call $incoming_send_yield) (then (return)))
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))
     (local.set $ret (call $gl32 (local.get $sp)))
     (loop $fetch

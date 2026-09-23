@@ -478,6 +478,29 @@ shipped file no longer has either property. Check
 `wine._vfsPersistence.restored` before reading anything into a repeat: a
 player's own persisted `c:\settings.dat` still carries the old values.
 
+## The host's picture froze mid-match: a cross-thread send at the wrong point
+
+Symptom (2026-09-22, live browser pair): a match played, then the **host's**
+screen stopped changing for good and ignored every key, while the guest ran on.
+It was not controls and not a hang. The game thread draws each frame by calling
+`0x442a5c` → VCL `Synchronize` (`0x411f50`), i.e.
+`SendMessage(ThreadWindow [0x44e648], 0x8FFF, 0, self)` to the main thread. The
+callback `0x4428a8` BitBlts dirty rects from the bitmap canvas onto the form
+canvas (form `[[0x44df48]]`, canvas `[F+0x220]`, hwnd `0x10002`).
+
+Our cooperative scheduler delivered that send wherever main's last slice had
+stopped. One landed inside `TControlCanvas.FreeHandle` (`0x41e9c4`) after its
+`ReleaseDC` (`0x4068a0`) and before `mov [ebx+0x5c],0`. The paint's
+`CreateHandle` (`0x41e918`) then adopted the still-cached, just-released
+FDeviceContext. From then on every BitBlt went to a dead HDC and returned 0,
+and the surface flush count stayed at 4824 forever.
+
+Win32 delivers a cross-thread send only while the receiver is inside
+GetMessage/PeekMessage/WaitMessage/MsgWait* or its own SendMessage. That is
+now enforced: the scheduler sets `incoming_send_pending` on a receiver that is
+not at a message call, and those calls then stop on their own thunk with
+yield 17 so the send is delivered there (`test/test-cross-thread-send-timing.js`).
+
 ## Ruled out
 
 - **Stale persisted settings** as the cause of the dead client. Both live pages
