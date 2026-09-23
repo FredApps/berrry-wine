@@ -572,11 +572,36 @@
   ;; on miss (and writes NULL to ppvObj).
   (func $d3dim_qi (param $family i32) (param $this i32) (param $riid i32) (param $ppvObj i32) (result i32)
     (local $iid0 i32) (local $entry i32) (local $vtbl i32) (local $obj_wa i32)
+    (local $iid_wa i32) (local $kind i32)
     (local $i i32) (local $ptr i32) (local $ddraw_guest i32)
     ;; Sanity: NULL ppvObj ⇒ E_POINTER
     (if (i32.eqz (local.get $ppvObj)) (then (return (i32.const 0x80004003))))
-    ;; Read first DWORD of the IID for fast classification.
-    (local.set $iid0 (call $gl32 (local.get $riid)))
+    ;; Root interfaces share the complete identity classifier with DirectDraw.
+    ;; Acquire once: a caller's GUID can straddle nonadjacent sparse pages.
+    ;; Release the temporary span before any return or ownership change.
+    (if (i32.eq (local.get $family) (i32.const 1))
+      (then
+        (call $gs32 (local.get $ppvObj) (i32.const 0))
+        (if (i32.eqz (local.get $riid)) (then (return (i32.const 0x80004003))))
+        (local.set $iid_wa (call $guest_span_in (local.get $riid) (i32.const 16)))
+        (local.set $kind (call $ddraw_iid_kind_wa (local.get $iid_wa)))
+        (local.set $iid0 (i32.load (local.get $iid_wa)))
+        (call $guest_span_release (local.get $iid_wa) (i32.const 16))
+        ;; Preserve the supported root set: IUnknown, DDraw1, D3D1/2/3/7.
+        (if (i32.or (i32.eqz (local.get $kind))
+              (i32.and (i32.ge_u (local.get $kind) (i32.const 3))
+                       (i32.le_u (local.get $kind) (i32.const 5))))
+          (then (return (i32.const 0x80004002))))
+        (if (i32.eq (local.get $kind) (i32.const 1))
+          (then
+            (local.set $entry (call $dx_from_this (local.get $this)))
+            (call $gs32 (local.get $ppvObj) (call $d3dim_primary_guest (local.get $entry)))
+            (store.field DxObject refcount (local.get $entry)
+              (i32.add (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+            (return (i32.const 0)))))
+      (else
+        ;; Other interface families still need their own complete-IID audit.
+        (local.set $iid0 (call $gl32 (local.get $riid)))))
     ;; Pick target vtable by family + IID-first-DWORD.
     (local.set $vtbl (i32.const 0))
     ;; Always honor IID_IUnknown (00000000-0000-0000-...) by returning the

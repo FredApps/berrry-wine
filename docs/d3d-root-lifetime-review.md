@@ -45,8 +45,8 @@ Exact duplicates: 123 groups unchanged, 491 -> 487 members.
 ## Still open
 
 This does not certify the whole DirectDraw/D3D ownership model. D3D root
-QueryInterface still recognizes partial GUIDs and its DirectDraw-parent
-lookup has a slot-zero ambiguity and a fallback scan. DirectDraw-created
+QueryInterface's DirectDraw-parent lookup has a slot-zero ambiguity and a
+fallback scan. DirectDraw-created
 D3D roots remain independent entries without a retained DirectDraw parent;
 cross-interface controlling-IUnknown identity and native Win98 generation
 rules need a dedicated review. Render-target/texture retention, thread-safe
@@ -57,3 +57,7 @@ No native Win98, browser/gameplay, full-build or performance claim is made.
 Follow-up: the shared device-creation allocation-failure path is now
 transactional; see [allocation review](d3d-device-creation-oom-review.md).
 This closes state/object allocation rollback, not the other limitations above.
+
+Root full-GUID validation and IUnknown identity across the root's versioned
+wrappers are now covered by [the QI review](d3d-root-query-interface-review.md).
+Identity across the independent DirectDraw and D3D entries remains open.
