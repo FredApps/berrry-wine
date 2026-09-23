@@ -97,9 +97,8 @@ SetViewport2 checks null `this` and pointer/size first, then requires a
 nonzero attached-device pointer at object+`0x14`. Without it, the result is
 `0x88760306`. For device field+4 >=2, the path beginning `0x5667777b` also
 checks clip dimensions, unequal minZ/maxZ, and the viewport rectangle against
-the render target. The precise meaning of the device field is not yet traced;
-do not label it a capability bit or assume these checks apply identically
-to every device generation.
+the render target. The creation-version provenance of this field is traced
+below; it is not a capability bit or the current interface's version.
 
 At `0x566777f8` it copies all eleven DWORDs to object+`0x30` and sets the flag.
 If this is the active viewport, it calls the application helper at
@@ -332,3 +331,63 @@ inspection, not a native Windows execution claim.
 Validation: updated viewport suite passes450 poisoned-EAX/stack-guard calls;
 tier membership1499 and diff checks pass. No runtime source or build artifact
 changed in this correction.
+
+## Validation gate: immutable creation version (2026-09-23)
+
+The device+4 field is assigned from the sixth constructor argument, not from
+the viewport interface used for the call. Trace through the same Microsoft
+runtime identified above:
+
+| Step | Original VA | Evidence |
+|---|---|---|
+| Device3 creation | `0x56670516` | Pushes3 at `0x566705c4`, calls shared factory at `0x566705d9` |
+| Device2 creation | `0x5667065e` | Pushes2 at `0x566706b3`, calls shared factory at `0x566706c5` |
+| Shared factory | `0x56664c1c` | Forwards sixth argument `[ebp+0x1c]` at `0x56664f29` to device vtable slot24 |
+| Base initializer | `0x56665336` | Loads sixth argument at `0x56665342`, stores device+4 at `0x56665364` |
+| Derived initializer | `0x5666bc17` | Forwards the same six arguments to the base initializer at `0x5666bc91` |
+
+The base implementation is slot24 of table `0x56661360`. The factories query
+the returned device using IID_IDirect3DDevice3 at `0x56662038`
+(`b0ab3b60-33d7-11d1-a981-00c04fd7b174`) and IID_IDirect3DDevice2 at
+`0x56662028` (`93281501-8cf8-11d0-89ab-00a0c9054129`), respectively. This
+corroborates the version labels independently of guessed function names.
+
+For creation version>=2, the setter's checks at `0x56677781..0x566777e0` are:
+
+- Clip width/height compare equal to zero **or unordered**: reject. `FCOMP`,
+  `FNSTSW`, `SAHF`, then `JZ` also rejects NaN; a plain wasm `f32.eq 0` does not.
+- minZ/maxZ compare equal or unordered: reject. It does not require minZ<maxZ
+  or constrain them to `[0,1]` here.
+- Unsigned x/y must not exceed target width/height. Unsigned **32-bit sums**
+  x+width and y+height must not exceed those dimensions. The inspected code
+  does not guard addition overflow; do not describe it as a checked sum.
+- Negative finite clip dimensions are not rejected by the zero comparison.
+  Screen width/height zero are not separately rejected here, although the
+  transform application helper leaves its cache unchanged for them.
+
+Failure returns `0x80070057` before canonical descriptor publication. These
+are setter checks, separate from initialized-current-viewport activation
+failure, which occurs after descriptor publication. Legacy SetViewport first
+converts to Viewport2, so its converted clip dimensions and normalized depth
+are the inputs to these checks.
+
+### Implementation consequence / remaining work
+
+Our `$d3dim_create_device` currently records target/parent/state but no creation
+version. Its shared4096-byte state has room for an immutable version field;
+surface-QI Device1 and CreateDevice2/3 paths must initialize it, and subsequent
+QueryInterface must preserve it. Do not infer this policy from a wrapper's
+vtable at setter time. D3D7/9 compatibility paths and reset also use this
+allocator and must not accidentally acquire an unproven legacy policy.
+
+Before enabling validation, repair the indexed-texture fixture: it creates a
+Device3 with an8x8 target, then intentionally selects640x480 and128x128
+viewports and tests degenerate setters. That currently depends on our missing
+validation. Split unrestricted legacy projection tests from version2/3 setter
+validation; do not weaken assertions or exempt production small targets.
+Required cases include immutable version across aliases, direct/sparse inputs,
+rejected-setter nonmutation, legacy conversion, reversed depth, negative clip
+dimensions, exact target edges and the documented native overflow behavior.
+
+This section resolves the evidence gap, not the implementation gap. No runtime
+behavior changed and no new native execution or performance claim is made.
