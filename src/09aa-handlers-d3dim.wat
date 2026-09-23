@@ -332,9 +332,7 @@
   ;;   +24 instrOff         +28 instrLen
   (func $handle_IDirect3DDevice_CreateExecuteBuffer (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $obj i32) (local $entry i32) (local $sz i32) (local $buf i32)
-    (local.set $obj (call $dx_create_com_obj (i32.const 21) (global.get $DX_VTBL_D3DEXEC)))
-    (if (i32.eqz (local.get $obj)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005))
-      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))) (return)))
+    (if (local.get $arg2) (then (call $gs32 (local.get $arg2) (i32.const 0))))
     ;; Read dwBufferSize from desc (offset +12)
     (local.set $sz (i32.const 0))
     (if (local.get $arg1) (then
@@ -342,7 +340,18 @@
     ;; Clamp to sane range (drop zero/huge to a reasonable default)
     (if (i32.or (i32.eqz (local.get $sz)) (i32.gt_u (local.get $sz) (i32.const 0x100000)))
       (then (local.set $sz (i32.const 0x4000))))
+    ;; Allocate fallible storage before consuming a permanent COM wrapper.
     (local.set $buf (call $heap_alloc (local.get $sz)))
+    (if (i32.eqz (local.get $buf)) (then
+      (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E))
+      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+      (return)))
+    (local.set $obj (call $dx_create_com_obj (i32.const 21) (global.get $DX_VTBL_D3DEXEC)))
+    (if (i32.eqz (local.get $obj)) (then
+      (call $heap_free (local.get $buf))
+      (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004005))
+      (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+      (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
     (store.field DxObject misc0 (local.get $entry) (local.get $buf))
     (i32.store (i32.add (local.get $entry) (i32.const 12)) (local.get $sz))
