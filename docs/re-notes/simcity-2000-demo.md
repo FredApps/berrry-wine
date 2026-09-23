@@ -309,6 +309,22 @@ Played from 1900 to the demo's end (Apr 1919) in the frozen control VM
   CResourceException on every repaint, so the map stayed grey while the sim
   ran on. `$wnd_table_remove` now releases both internal DCs. Test:
   `test/test-window-dc-release.js`.
+  The same leak is why the **Query box looked like it greyed the map** in
+  this session (driving note below). The VM was started on a pre-fix build.
+  Near the 512 limit, the extra DCs the open dialog took pushed the view's
+  paint over it. The view, scrollbars, status bar and even the dialog's
+  frame stayed grey until OK freed them. Re-checked 2026-09-22 on the fixed
+  build at 640x480 and 1024x768, maximized, zoomed in and out, in the CLI
+  and in the browser: the map stays drawn behind the box. Opening it does
+  one view WM_PAINT, a BitBlt from the offscreen map. The DC table stays at
+  6-8/512 after open and close. The same route on a build with 866f4550
+  reverted reaches 485/512 after seven budget dialogs, and the map is flat
+  grey.
+  The palette's greyed buttons are the game's own paint. Before the modal
+  it calls `InvalidateRect(palette)` and `UpdateWindow` (`0x41d503`) and
+  blits the disabled art, and only then calls EnableWindow(FALSE) on the
+  frame, the palette and the other tool windows. EnableWindow repaints
+  nothing, as on Win98.
 
 What looked like a sim bug and was not: by 1909 about 60% of zoned tiles
 were XBLD `0x8a`/`0x8b`. The building names are string-table entries starting
