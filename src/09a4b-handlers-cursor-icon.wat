@@ -171,10 +171,10 @@
       (then
         (local.set $ok (call $gdi_dc_alloc))
         (if (i32.eqz (local.get $ok)) (then (return (i32.const 0))))
-        (drop (call $host_gdi_select_object (local.get $ok)
+        (drop (call $gdi_native_select_object (local.get $ok)
                 (i32.and (i32.load offset=4 (local.get $p))
                   (i32.const 0x7FFFFFFF))))
-        (drop (call $host_gdi_bitblt (local.get $hdc) (local.get $x) (local.get $y)
+        (drop (call $gdi_native_bitblt (local.get $hdc) (local.get $x) (local.get $y)
                 (local.get $cx) (local.get $cy) (local.get $ok)
                 (i32.const 0) (i32.const 0) (i32.const 0x00CC0020)))
         (drop (call $gdi_dc_delete (local.get $ok)))

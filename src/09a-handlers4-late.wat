@@ -760,7 +760,7 @@ rushOrgEx(hdc, x, y, lppt) — canonical WAT-owned brush origin.
 
   ;; 386: DrawTextW
   (func $handle_DrawTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_draw_text
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_draw_text
       (local.get $arg0)
       (call $g2w (local.get $arg1))
       (local.get $arg2)

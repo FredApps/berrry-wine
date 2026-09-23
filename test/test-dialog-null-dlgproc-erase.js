@@ -37,7 +37,7 @@ const extraWat = String.raw`
   (func (export "test_defdlg") (param $h i32) (param $msg i32) (param $wp i32) (result i32)
     (call $dialog_default_proc (local.get $h) (local.get $msg) (local.get $wp) (i32.const 0)))
   (func (export "test_clip") (param $dc i32)
-    (drop (call $host_gdi_intersect_clip_rect (local.get $dc)
+    (drop (call $gdi_native_intersect_clip_rect (local.get $dc)
       (i32.const 5) (i32.const 6) (i32.const 12) (i32.const 14))))
 
   ;; Direct handler call: keep the harness stack around its stdcall cleanup.

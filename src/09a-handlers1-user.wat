@@ -1851,7 +1851,7 @@
 
   ;; 134: GetSysColorBrush(nIndex) — 1 arg stdcall
   (func $handle_GetSysColorBrush (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_create_solid_brush (call $win98_sys_color (local.get $arg0))))
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_create_solid_brush (call $win98_sys_color (local.get $arg0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
@@ -2133,7 +2133,7 @@
 
 ;; 142: DrawTextA(hdc, lpString, nCount, lpRect, uFormat)
   (func $handle_DrawTextA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_draw_text
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_draw_text
       (local.get $arg0)
       (call $g2w (local.get $arg1))
       (local.get $arg2)
@@ -2181,7 +2181,7 @@
         (if (i32.gt_s (local.get $tab_chars) (i32.const 255))
           (then (local.set $tab_chars (i32.const 255))))))
     (global.set $gdi_bitmap_draw_text_tab_chars (local.get $tab_chars))
-    (local.set $result (call $host_gdi_draw_text
+    (local.set $result (call $gdi_native_draw_text
       (local.get $hdc) (local.get $text) (local.get $count) (local.get $rect)
       (local.get $format) (local.get $wide)))
     (global.set $gdi_bitmap_draw_text_tab_chars (i32.const 0))

@@ -5667,7 +5667,7 @@
     ;; ySrc: SetDIBitsToDevice narrows the source descriptor's height to the
     ;; band it is given, so a non-zero ySrc would be clipped away against that
     ;; narrowed height. Rows are top-down here, so row $sy starts $sy pitches in.
-    (call $host_gdi_set_dib_to_device
+    (call $gdi_native_set_dib_to_device
       (local.get $hdc)
       (local.get $dx) (local.get $dy) ;; xDest, yDest
       (local.get $bw) (local.get $bh) ;; w, h

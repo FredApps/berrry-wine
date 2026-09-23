@@ -1562,8 +1562,8 @@
           (local.set $flags (i32.load offset=36 (local.get $run)))
           (if (i32.and (local.get $flags) (i32.const 0x0FFFFFFF))
             (then (local.set $color (i32.const 0xFF0000))))
-          (drop (call $host_gdi_set_text_color (local.get $hdc) (local.get $color)))
-          (drop (call $host_gdi_text_out
+          (drop (call $gdi_native_set_text_color (local.get $hdc) (local.get $color)))
+          (drop (call $gdi_native_text_out
             (local.get $hdc) (i32.load offset=4 (local.get $run)) (local.get $y)
             (i32.add (global.get $help_topic_wa) (i32.load offset=20 (local.get $run)))
             (i32.load offset=24 (local.get $run)) (i32.const 0)))
@@ -1576,7 +1576,7 @@
                 (br_if $underline_done (i32.ge_u (local.get $pixel_x)
                   (i32.add (i32.load offset=4 (local.get $run))
                     (i32.load offset=12 (local.get $run)))))
-                (drop (call $host_gdi_set_pixel
+                (drop (call $gdi_native_set_pixel
                   (local.get $hdc) (local.get $pixel_x) (local.get $line_y)
                   (local.get $color)))
                 (local.set $pixel_x (i32.add (local.get $pixel_x) (i32.const 1)))
@@ -1590,7 +1590,7 @@
                 (br_if $strike_done (i32.ge_u (local.get $pixel_x)
                   (i32.add (i32.load offset=4 (local.get $run))
                     (i32.load offset=12 (local.get $run)))))
-                (drop (call $host_gdi_set_pixel
+                (drop (call $gdi_native_set_pixel
                   (local.get $hdc) (local.get $pixel_x) (local.get $line_y)
                   (local.get $color)))
                 (local.set $pixel_x (i32.add (local.get $pixel_x) (i32.const 1)))
@@ -1611,7 +1611,7 @@
                 (then
                   (drop (call $gdi_dc_select_owned_object
                     (global.get $help_view_bitmap_dc) (local.get $handle)))
-                  (drop (call $host_gdi_bitblt
+                  (drop (call $gdi_native_bitblt
                     (local.get $hdc)
                     (i32.load offset=4 (local.get $run)) (local.get $y)
                     (i32.load offset=12 (local.get $run)) (local.get $height)

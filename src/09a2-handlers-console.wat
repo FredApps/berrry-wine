@@ -2764,12 +2764,12 @@
   (func $console_draw_run (param $hdc i32) (param $row i32) (param $col i32)
                           (param $len i32) (param $attr i32) (param $base i32)
     (if (i32.eqz (local.get $len)) (then (return)))
-    (drop (call $host_gdi_set_text_color (local.get $hdc)
+    (drop (call $gdi_native_set_text_color (local.get $hdc)
       (call $console_palette (local.get $attr))))
-    (drop (call $host_gdi_set_bk_color (local.get $hdc)
+    (drop (call $gdi_native_set_bk_color (local.get $hdc)
       (call $console_palette (i32.shr_u (local.get $attr) (i32.const 4)))))
-    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 2)))  ;; OPAQUE
-    (drop (call $host_gdi_text_out (local.get $hdc)
+    (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 2)))  ;; OPAQUE
+    (drop (call $gdi_native_text_out (local.get $hdc)
       (i32.mul (local.get $col) (global.get $CONSOLE_CELL_W))
       (i32.mul (local.get $row) (global.get $CONSOLE_CELL_H))
       (i32.add (global.get $console_text_base)
@@ -2790,13 +2790,13 @@
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
         ;; Ground the whole client in the current background attribute first,
         ;; so a buffer shorter than the window does not show through.
-        (local.set $brush (call $host_gdi_create_solid_brush
+        (local.set $brush (call $gdi_native_create_solid_brush
           (call $console_palette (i32.shr_u (global.get $console_attr) (i32.const 4)))))
-        (drop (call $host_gdi_fill_rect (local.get $hdc) (i32.const 0) (i32.const 0)
+        (drop (call $gdi_native_fill_rect (local.get $hdc) (i32.const 0) (i32.const 0)
           (i32.mul (local.get $window_width) (global.get $CONSOLE_CELL_W))
           (i32.mul (local.get $window_height) (global.get $CONSOLE_CELL_H))
           (local.get $brush)))
-        (drop (call $host_gdi_delete_object (local.get $brush)))
+        (drop (call $gdi_native_delete_object (local.get $brush)))
         ;; Field 88 is the DC's font (default SYSTEM_FONT 0x3001D); field 84
         ;; is its bitmap. OEM_FIXED_FONT is the 8x12 Terminal strike, which is
         ;; what makes the cell grid line up.

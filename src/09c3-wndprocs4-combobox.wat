@@ -1082,46 +1082,46 @@
             ;; Toolbar-hosted CBS_DROPDOWN inner EDIT children are not
             ;; independently composited, so paint the field here for both
             ;; editable and read-only dropdown variants.
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x30010)))  ;; WHITE_BRUSH
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x0A) (i32.const 0x0F)))  ;; EDGE_SUNKEN | BF_RECT
             (local.set $arrow_x (i32.sub (local.get $w) (i32.const 18)))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (local.get $arrow_x) (i32.const 2)
                     (i32.sub (local.get $w) (i32.const 2))
                     (i32.sub (local.get $h) (i32.const 2))
                     (i32.const 0x30011)))  ;; LTGRAY_BRUSH
             ;; Arrow box edge: pressed (sunken) when dropped, raised when closed.
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (local.get $arrow_x) (i32.const 2)
                     (i32.sub (local.get $w) (i32.const 2))
                     (i32.sub (local.get $h) (i32.const 2))
                     (select (i32.const 0x0A) (i32.const 0x05) (call $cb_is_dropped (local.get $state_w)))
                     (i32.const 0x0F)))
             ;; Triangle ▼
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.add (local.get $arrow_x) (i32.const 4)) (i32.const 9)
                     (i32.add (local.get $arrow_x) (i32.const 11)) (i32.const 10)
                     (i32.const 0x30014)))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.add (local.get $arrow_x) (i32.const 5)) (i32.const 10)
                     (i32.add (local.get $arrow_x) (i32.const 10)) (i32.const 11)
                     (i32.const 0x30014)))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.add (local.get $arrow_x) (i32.const 6)) (i32.const 11)
                     (i32.add (local.get $arrow_x) (i32.const 9)) (i32.const 12)
                     (i32.const 0x30014)))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.add (local.get $arrow_x) (i32.const 7)) (i32.const 12)
                     (i32.add (local.get $arrow_x) (i32.const 8)) (i32.const 13)
                     (i32.const 0x30014)))
-            (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-            (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+            (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+            (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
             ;; CBS_DROPDOWN delegates text ownership to its inner EDIT. Paint
             ;; from that same state so WM_PAINT agrees with WM_GETTEXT.
             (local.set $paint_state_w (cast ptr<ControlTextState> (local.get $state_w)))
@@ -1138,7 +1138,7 @@
                   (i32.ne (local.get $paint_state_w) (i32.const 0))
                   (i32.ne (load.field ControlTextState text_buf_ptr (local.get $paint_state_w)) (i32.const 0)))
               (then
-                (drop (call $host_gdi_draw_text (local.get $hdc)
+                (drop (call $gdi_native_draw_text (local.get $hdc)
                         (call $g2w (load.field ControlTextState text_buf_ptr (local.get $paint_state_w)))
                         (load.field.memarg ControlTextState text_len (local.get $paint_state_w))
                         (call $paint_rect (i32.const 4) (i32.const 2)

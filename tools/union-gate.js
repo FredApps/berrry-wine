@@ -99,8 +99,8 @@ const UNIONS = {
     // than one variant are listed in bySite below instead.
     byFunction: {
       // --- bitmap (type 3) ---
-      '$host_gdi_get_object_w':      'GdiBitmap',  // 01-header:471 `+4 == 3`
-      '$host_gdi_get_object_h':      'GdiBitmap',  // 01-header:478 `+4 == 3`
+      '$gdi_native_get_object_w':      'GdiBitmap',  // 01-header:471 `+4 == 3`
+      '$gdi_native_get_object_h':      'GdiBitmap',  // 01-header:478 `+4 == 3`
       '$cursor_scale_bitmap':        'GdiBitmap',  // 09a:4551 $gdi_bitmap_record_valid
       '$cursor_plane_row':           'GdiBitmap',  // 09a:4824 $hbm is a cursor plane
       '$copy_image_bitmap':          'GdiBitmap',  // 09a:18619 record_valid

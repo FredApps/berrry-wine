@@ -10,10 +10,10 @@ const extraWat = String.raw`
     (local $brush i32)
     (call $static_set_style (call $g2w (call $wnd_get_state_ptr (local.get $child)))
       (i32.or (i32.const 0x50000000) (local.get $style)))
-    (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00332211)))
-    (drop (call $host_gdi_fill_rect (i32.add (local.get $child) (i32.const 0x40000))
+    (local.set $brush (call $gdi_native_create_solid_brush (i32.const 0x00332211)))
+    (drop (call $gdi_native_fill_rect (i32.add (local.get $child) (i32.const 0x40000))
       (i32.const 0) (i32.const 0) (i32.const 16) (i32.const 16) (local.get $brush)))
-    (drop (call $host_gdi_delete_object (local.get $brush))))
+    (drop (call $gdi_native_delete_object (local.get $brush))))
 
   (func (export "test_create_bitmap_static")
       (param $style_bits i32) (param $w i32) (param $h i32) (result i32)

@@ -13,12 +13,12 @@
     (local.set $glyph_brush
       (select (i32.const 0x30012) (i32.const 0x30014) (local.get $disabled)))
     ;; Background fill + 3D edge (raised normally, sunken when pressed).
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
             (local.get $bx) (local.get $by)
             (i32.add (local.get $bx) (local.get $bw))
             (i32.add (local.get $by) (local.get $bh))
             (i32.const 0x30011))) ;; LTGRAY_BRUSH
-    (drop (call $host_gdi_draw_edge (local.get $hdc)
+    (drop (call $gdi_native_draw_edge (local.get $hdc)
             (local.get $bx) (local.get $by)
             (i32.add (local.get $bx) (local.get $bw))
             (i32.add (local.get $by) (local.get $bh))
@@ -40,13 +40,13 @@
         (then ;; horizontal: u→x, half→y
           (if (local.get $disabled)
             (then
-              (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (drop (call $gdi_native_fill_rect (local.get $hdc)
                 (i32.add (i32.add (local.get $cx) (local.get $u)) (i32.const 1))
                 (i32.add (i32.sub (local.get $cy) (local.get $half)) (i32.const 1))
                 (i32.add (i32.add (local.get $cx) (local.get $u)) (i32.const 2))
                 (i32.add (i32.add (local.get $cy) (local.get $half)) (i32.const 2))
                 (i32.const 0x30010))))) ;; WHITE_BRUSH highlight
-          (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (drop (call $gdi_native_fill_rect (local.get $hdc)
                   (i32.add (local.get $cx) (local.get $u))
                   (i32.sub (local.get $cy) (local.get $half))
                   (i32.add (i32.add (local.get $cx) (local.get $u)) (i32.const 1))
@@ -55,13 +55,13 @@
         (else ;; vertical: u→y, half→x
           (if (local.get $disabled)
             (then
-              (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (drop (call $gdi_native_fill_rect (local.get $hdc)
                 (i32.add (i32.sub (local.get $cx) (local.get $half)) (i32.const 1))
                 (i32.add (i32.add (local.get $cy) (local.get $u)) (i32.const 1))
                 (i32.add (i32.add (local.get $cx) (local.get $half)) (i32.const 2))
                 (i32.add (i32.add (local.get $cy) (local.get $u)) (i32.const 2))
                 (i32.const 0x30010))))) ;; WHITE_BRUSH highlight
-          (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (drop (call $gdi_native_fill_rect (local.get $hdc)
                   (i32.sub (local.get $cx) (local.get $half))
                   (i32.add (local.get $cy) (local.get $u))
                   (i32.add (i32.add (local.get $cx) (local.get $half)) (i32.const 1))
@@ -84,10 +84,10 @@
   ;; visible whenever both appear on screen. Win98 draws the thumb the full
   ;; width of the strip.
   (func $paint_sb_thumb (param $hdc i32) (param $l i32) (param $t i32) (param $r i32) (param $b i32)
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
             (local.get $l) (local.get $t) (local.get $r) (local.get $b)
             (i32.const 0x30011)))   ;; LTGRAY_BRUSH
-    (drop (call $host_gdi_draw_edge (local.get $hdc)
+    (drop (call $gdi_native_draw_edge (local.get $hdc)
             (local.get $l) (local.get $t) (local.get $r) (local.get $b)
             (i32.const 0x05) (i32.const 0x0F))))  ;; BDR_RAISED, BF_RECT
 
@@ -99,7 +99,7 @@
     (local $arrow i32) (local $track_y i32) (local $track_h i32)
     (local $thumb_size i32) (local $thumb_pos i32)
     ;; Track background + sunken edge.
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
             (local.get $bx) (local.get $by)
             (i32.add (local.get $bx) (local.get $bw))
             (i32.add (local.get $by) (local.get $bh))
@@ -595,11 +595,11 @@
           (i32.eq (global.get $sb_pressed_hwnd) (local.get $hwnd)))
 
         ;; Fill track with scrollbar background (COLOR_SCROLLBAR = light gray)
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (drop (call $gdi_native_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x30011))) ;; LTGRAY_BRUSH
         ;; Sunken edge around track
-        (drop (call $host_gdi_draw_edge (local.get $hdc)
+        (drop (call $gdi_native_draw_edge (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x0A) (i32.const 0x0F))) ;; BDR_SUNKEN, BF_RECT
 

@@ -172,18 +172,18 @@
         ;; monochrome mask, then OR in the color image.
         (if (local.get $mask_dc)
           (then
-            (drop (call $host_gdi_bitblt
+            (drop (call $gdi_native_bitblt
               (local.get $hdc) (local.get $x) (local.get $dst_y)
               (local.get $cx) (local.get $cy)
               (local.get $mask_dc) (local.get $src_x) (i32.const 0)
               (i32.const 0x008800C6))) ;; SRCAND
-            (local.set $ret (call $host_gdi_bitblt
+            (local.set $ret (call $gdi_native_bitblt
               (local.get $hdc) (local.get $x) (local.get $dst_y)
               (local.get $cx) (local.get $cy)
               (local.get $image_dc) (local.get $src_x) (i32.const 0)
               (i32.const 0x00EE0086)))) ;; SRCPAINT
           (else
-            (local.set $ret (call $host_gdi_bitblt
+            (local.set $ret (call $gdi_native_bitblt
               (local.get $hdc) (local.get $x) (local.get $dst_y)
               (local.get $cx) (local.get $cy)
               (local.get $image_dc) (local.get $src_x) (i32.const 0)
@@ -191,16 +191,16 @@
       (else
         (if (local.get $bmp)
           (then
-            (local.set $memdc (call $host_gdi_create_compat_dc (local.get $hdc)))
+            (local.set $memdc (call $gdi_native_create_compat_dc (local.get $hdc)))
             (if (local.get $memdc)
               (then
-                (drop (call $host_gdi_select_object (local.get $memdc) (local.get $bmp)))
-                (local.set $ret (call $host_gdi_transparent_blt
+                (drop (call $gdi_native_select_object (local.get $memdc) (local.get $bmp)))
+                (local.set $ret (call $gdi_native_transparent_blt
                   (local.get $hdc) (local.get $x) (local.get $dst_y)
                   (local.get $cx) (local.get $cy)
                   (local.get $memdc) (local.get $src_x) (i32.const 0)
                   (i32.load offset=20 (local.get $sw))))
-                (drop (call $host_gdi_delete_dc (local.get $memdc)))))))))
+                (drop (call $gdi_native_delete_dc (local.get $memdc)))))))))
     (local.get $ret))
 
   ;; An item handle carries its own slot in the low 10 bits, so finding the
@@ -1805,14 +1805,14 @@
     (if (i32.gt_s (local.get $max_scroll) (i32.const 0))
       (then (local.set $content_right (i32.sub (local.get $w) (i32.const 16)))))
 
-    (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
-    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_select_clip_rgn (local.get $hdc) (i32.const 0)))
+    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+    (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
+    (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
       (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
       (i32.const 0x30010)))
-    (drop (call $host_gdi_draw_edge (local.get $hdc)
+    (drop (call $gdi_native_draw_edge (local.get $hdc)
       (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
       (i32.const 0x0A) (i32.const 0x0F)))
     (local.set $i (i32.const 0))
@@ -1859,21 +1859,21 @@
 
 	              (if (call $tv_item_has_children (local.get $base))
                 (then
-                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (local.get $x) (i32.add (local.get $y) (i32.const 3))
                     (i32.add (local.get $x) (i32.const 9)) (i32.add (local.get $y) (i32.const 12))
                     (i32.const 0x30010)))
-                  (drop (call $host_gdi_draw_edge (local.get $hdc)
+                  (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (local.get $x) (i32.add (local.get $y) (i32.const 3))
                     (i32.add (local.get $x) (i32.const 9)) (i32.add (local.get $y) (i32.const 12))
                     (i32.const 0x0A) (i32.const 0x0F)))
-                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.add (local.get $x) (i32.const 2)) (i32.add (local.get $y) (i32.const 7))
                     (i32.add (local.get $x) (i32.const 7)) (i32.add (local.get $y) (i32.const 8))
                     (i32.const 0x30014)))
                   (if (i32.eqz (i32.and (local.get $state) (i32.const 0x20)))
                     (then
-                      (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.add (local.get $x) (i32.const 4)) (i32.add (local.get $y) (i32.const 5))
                         (i32.add (local.get $x) (i32.const 5)) (i32.add (local.get $y) (i32.const 10))
                         (i32.const 0x30014)))))
@@ -1885,25 +1885,25 @@
                   (local.set $check (i32.and (i32.shr_u (local.get $state) (i32.const 12)) (i32.const 0xF)))))
               (if (local.get $check)
                 (then
-                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (local.get $x) (i32.add (local.get $y) (i32.const 1))
                     (i32.add (local.get $x) (i32.const 12)) (i32.add (local.get $y) (i32.const 13))
                     (i32.const 0x30010)))
-                  (drop (call $host_gdi_draw_edge (local.get $hdc)
+                  (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (local.get $x) (i32.add (local.get $y) (i32.const 1))
                     (i32.add (local.get $x) (i32.const 12)) (i32.add (local.get $y) (i32.const 13))
                     (i32.const 0x0A) (i32.const 0x0F)))
                   (if (i32.ge_u (local.get $check) (i32.const 2))
                     (then
-                      (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.add (local.get $x) (i32.const 3)) (i32.add (local.get $y) (i32.const 7))
                         (i32.add (local.get $x) (i32.const 5)) (i32.add (local.get $y) (i32.const 9))
                         (i32.const 0x30014)))
-                      (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.add (local.get $x) (i32.const 5)) (i32.add (local.get $y) (i32.const 9))
                         (i32.add (local.get $x) (i32.const 7)) (i32.add (local.get $y) (i32.const 11))
                         (i32.const 0x30014)))
-                      (drop (call $host_gdi_fill_rect (local.get $hdc)
+                      (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.add (local.get $x) (i32.const 7)) (i32.add (local.get $y) (i32.const 5))
                         (i32.add (local.get $x) (i32.const 10)) (i32.add (local.get $y) (i32.const 7))
                         (i32.const 0x30014)))))
@@ -1942,25 +1942,25 @@
 	                              (i32.add (i32.mul (local.get $text_len) (i32.const 7)) (i32.const 4))))
 		                          (if (i32.gt_s (local.get $sel_right) (i32.sub (local.get $content_right) (i32.const 2)))
 		                            (then (local.set $sel_right (i32.sub (local.get $content_right) (i32.const 2)))))
-	                          (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00800000)))
-	                          (drop (call $host_gdi_fill_rect (local.get $hdc)
+	                          (local.set $brush (call $gdi_native_create_solid_brush (i32.const 0x00800000)))
+	                          (drop (call $gdi_native_fill_rect (local.get $hdc)
 	                            (local.get $x) (local.get $y)
 	                            (local.get $sel_right) (i32.add (local.get $y) (i32.const 15))
 	                            (local.get $brush)))
-	                          (drop (call $host_gdi_delete_object (local.get $brush)))
-	                          (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
-	                          (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0x00800000)))
-	                          (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 2)))))
-	                      (drop (call $host_gdi_text_out (local.get $hdc)
+	                          (drop (call $gdi_native_delete_object (local.get $brush)))
+	                          (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+	                          (drop (call $gdi_native_set_bk_color (local.get $hdc) (i32.const 0x00800000)))
+	                          (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 2)))))
+	                      (drop (call $gdi_native_text_out (local.get $hdc)
 	                        (local.get $x) (i32.add (local.get $y) (i32.const 1))
 	                        (local.get $text_w) (local.get $text_len) (i32.const 0)))
 	                      (global.set $tv_debug_paint_text
 	                        (i32.add (global.get $tv_debug_paint_text) (i32.const 1)))
 	                      (if (local.get $selected)
 	                        (then
-	                          (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-	                          (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0x00FFFFFF)))
-		                          (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000))))))))))))
+	                          (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
+	                          (drop (call $gdi_native_set_bk_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+		                          (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x00000000))))))))))))
         ))
       (global.set $tv_debug_paint_rows (local.get $row))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))

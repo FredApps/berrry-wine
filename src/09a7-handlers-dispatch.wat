@@ -160,12 +160,12 @@
             (i32.store offset=0 (global.get $reg_base) (local.get $tmp))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
             (return)))
-        (local.set $tmp (call $host_gdi_load_bitmap (local.get $arg0)
+        (local.set $tmp (call $gdi_native_load_bitmap (local.get $arg0)
           (if (result i32) (i32.gt_u (local.get $arg1) (i32.const 0xFFFF))
             (then (local.get $arg1))
             (else (i32.and (local.get $arg1) (i32.const 0xFFFF))))))
         (if (i32.eqz (local.get $tmp))
-          (then (local.set $tmp (call $host_gdi_create_compat_bitmap
+          (then (local.set $tmp (call $gdi_native_create_compat_bitmap
             (i32.const 0) (i32.const 32) (i32.const 32) (i32.const 0)))))
         (i32.store offset=0 (global.get $reg_base) (local.get $tmp))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))) (return)))
@@ -949,7 +949,7 @@
   (func $handle_PaintDesktop (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $screen i32)
     (local.set $screen (call $host_get_screen_size))
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_fill_rect
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_fill_rect
       (local.get $arg0)
       (i32.const 0) (i32.const 0)
       (i32.and (local.get $screen) (i32.const 0xFFFF))

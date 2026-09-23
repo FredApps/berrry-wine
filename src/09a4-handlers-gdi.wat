@@ -5,7 +5,7 @@
   ;; 856: GetCurrentObject(hdc, uObjectType) → HGDIOBJ
   ;; OBJ_PEN=1, OBJ_BRUSH=2, OBJ_PAL=5, OBJ_FONT=6, OBJ_BITMAP=7
   (func $handle_GetCurrentObject (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_get_current_object (local.get $arg0) (local.get $arg1)))
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_get_current_object (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; 145: SelectObject(hdc, hObject) — canonical selection is WAT-owned.
@@ -315,7 +315,7 @@
           (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36))) (i32.const 0)))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 40)))
         (return)))
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_arc
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_arc
     (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
     (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
     (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
@@ -449,7 +449,7 @@
 
   ;; 161: TextOutA — hdc(arg0), x(arg1), y(arg2), lpString(arg3), nCount(arg4)
   (func $handle_TextOutA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_text_out
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (call $g2w (local.get $arg3)) (local.get $arg4) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))) (return)
@@ -1069,7 +1069,7 @@
   (func $handle_SetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $gdi_dc_set_field (local.get $arg0) (i32.const 24)
       (i32.and (local.get $arg1) (i32.const 0xFFFFFF)) (i32.const 0xFFFFFF)))
-    (drop (call $host_gdi_set_bk_color (local.get $arg0) (local.get $arg1)))
+    (drop (call $gdi_native_set_bk_color (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
   )
 
@@ -1081,7 +1081,7 @@
       (then
         (i32.store offset=0 (global.get $reg_base) (call $gdi_dc_set_field
           (local.get $arg0) (i32.const 28) (local.get $arg1) (i32.const 2)))
-        (drop (call $host_gdi_set_bk_mode (local.get $arg0) (local.get $arg1))))
+        (drop (call $gdi_native_set_bk_mode (local.get $arg0) (local.get $arg1))))
       (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
   )
@@ -1090,7 +1090,7 @@
   (func $handle_SetTextColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (i32.store offset=0 (global.get $reg_base) (call $gdi_dc_set_field (local.get $arg0) (i32.const 20)
       (i32.and (local.get $arg1) (i32.const 0xFFFFFF)) (i32.const 0)))
-    (drop (call $host_gdi_set_text_color (local.get $arg0) (local.get $arg1)))
+    (drop (call $gdi_native_set_text_color (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
   )
 
@@ -2434,7 +2434,7 @@
 
   ;; SetTextAlign(hdc, fMode) — store alignment on the DC and return the previous value.
   (func $handle_SetTextAlign (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_set_text_align (local.get $arg0) (local.get $arg1)))
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_set_text_align (local.get $arg0) (local.get $arg1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
@@ -2460,7 +2460,7 @@
       (then
         (local.set $count (local.get $packed_ansi_len))
         (local.set $wide (i32.const 0))))
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_ext_text_out
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_ext_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $rect_wa)
       (local.get $text_wa) (local.get $count) (local.get $dx_wa) (local.get $wide)))
@@ -2509,7 +2509,7 @@
   ;; 368: StretchDIBits(hdc, xDst, yDst, wDst, hDst, xSrc, ySrc, wSrc, hSrc, lpBits, lpBmi, usage, rop)
   ;; 13 args stdcall
   (func $handle_StretchDIBits (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_stretch_dib_bits
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_stretch_dib_bits
       (local.get $arg0)                                              ;; hdc
       (local.get $arg1)                                              ;; xDst
       (local.get $arg2)                                              ;; yDst
@@ -2590,7 +2590,7 @@
 
   ;; 375: TextOutW(hdc, x, y, lpString, c) — 5 args stdcall, host reads UTF-16 LE.
   (func $handle_TextOutW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_text_out
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (call $g2w (local.get $arg3)) (local.get $arg4) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
@@ -2701,21 +2701,21 @@
 
   ;; 438: FillRgn(hdc, hrgn, hbrush) → BOOL
   (func $handle_FillRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_fill_rgn
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_fill_rgn
       (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (local.get $arg2)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
 
   ;; PaintRgn(hdc, hrgn) → BOOL — paint with DC's current brush
   (func $handle_PaintRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_fill_rgn
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_fill_rgn
       (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1)) (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
   ;; FrameRgn(hdc, hrgn, hbrush, nWidth, nHeight) -> BOOL
   (func $handle_FrameRgn (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_frame_rgn
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_frame_rgn
       (local.get $arg0) (call $gdi_rgn_host_handle (local.get $arg1))
       (local.get $arg2) (local.get $arg3) (local.get $arg4)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
@@ -2723,7 +2723,7 @@
 
   ;; 439: GetDIBColorTable(hdc, startIndex, numEntries, pColors) → count
   (func $handle_GetDIBColorTable (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_get_dib_color_table
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_get_dib_color_table
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
@@ -2777,7 +2777,7 @@
     (local.set $wa_esp (call $g2w (i32.load offset=16 (global.get $reg_base))))
     (local.set $lpBMI (i32.load (i32.add (local.get $wa_esp) (i32.const 24))))
     (local.set $fuColorUse (i32.load (i32.add (local.get $wa_esp) (i32.const 28))))
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_set_dib_bits
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_set_dib_bits
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)
       (call $g2w (local.get $arg4))
       (call $gdi_bitmap_info_wa (local.get $lpBMI))
@@ -2798,7 +2798,7 @@
     (local.set $lpBits (i32.load (i32.add (local.get $wa_esp) (i32.const 40))))
     (local.set $lpBMI (i32.load (i32.add (local.get $wa_esp) (i32.const 44))))
     (local.set $colorUse (i32.load (i32.add (local.get $wa_esp) (i32.const 48))))
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_set_dib_to_device
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_set_dib_to_device
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
       (local.get $xSrc) (local.get $ySrc) (local.get $startScan) (local.get $cLines)
       (call $g2w (local.get $lpBits)) (call $gdi_bitmap_info_wa (local.get $lpBMI))
@@ -2824,7 +2824,7 @@
   ;; 718: CreateICA(lpszDriver, lpszDevice, lpszOutput, lpdvmInit) → HDC
   (func $handle_CreateICA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     ;; Same as CreateICW — returns an information context handle
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_create_compat_dc (i32.const 0)))
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_create_compat_dc (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))  ;; stdcall, 4 args
   )
 
@@ -2856,7 +2856,7 @@
     ;; the caller's header. A straddling BITMAPINFO is read through a gathered
     ;; copy, so what the call wrote there has to be put back afterwards.
     (local.set $bmi_wa (call $gdi_bitmap_info_wa_out (local.get $lpbmi)))
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_get_di_bits
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_get_di_bits
       (local.get $arg0)              ;; hdc
       (local.get $arg1)              ;; hbmp
       (local.get $arg2)              ;; uStartScan
@@ -2965,7 +2965,7 @@
           (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
         (return)))
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_round_rect
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_round_rect
       (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
       (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
       (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))))
@@ -2986,7 +2986,7 @@
     (if (call $gdi_dc_path_is_open (local.get $arg0))
       (then (i32.store offset=0 (global.get $reg_base) (call $gdi_dc_path_record_bezier
         (local.get $arg0) (local.get $points_wa) (local.get $arg2) (i32.const 0))))
-      (else (i32.store offset=0 (global.get $reg_base) (call $host_gdi_poly_bezier
+      (else (i32.store offset=0 (global.get $reg_base) (call $gdi_native_poly_bezier
         (local.get $arg0) (local.get $points_wa) (local.get $arg2) (i32.const 0)))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
@@ -3267,7 +3267,7 @@
     (if (call $gdi_dc_path_is_open (local.get $arg0))
       (then (i32.store offset=0 (global.get $reg_base) (call $gdi_dc_path_record_bezier
         (local.get $arg0) (local.get $points_wa) (local.get $arg2) (i32.const 1))))
-      (else (i32.store offset=0 (global.get $reg_base) (call $host_gdi_poly_bezier
+      (else (i32.store offset=0 (global.get $reg_base) (call $gdi_native_poly_bezier
         (local.get $arg0) (local.get $points_wa) (local.get $arg2) (i32.const 1)))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
   )
@@ -3593,7 +3593,7 @@
 
   ;; GetTextAlign(hdc) — return current alignment flags.
   (func $handle_GetTextAlign (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_get_text_align (local.get $arg0)))
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_get_text_align (local.get $arg0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
@@ -3605,14 +3605,14 @@
 
   ;; 598: GetBkMode(hdc) — current OPAQUE/TRANSPARENT setting
   (func $handle_GetBkMode (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_get_bk_mode (local.get $arg0)))
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_get_bk_mode (local.get $arg0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
   ;; 599: GetTextColor — STUB: unimplemented
   ;; GetTextColor(hdc) → COLORREF — 1 arg stdcall
   (func $handle_GetTextColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_get_text_color (local.get $arg0)))
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_get_text_color (local.get $arg0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
@@ -3625,7 +3625,7 @@
   ;; 601: GetBkColor — STUB: unimplemented
   ;; GetBkColor(hdc) → COLORREF — 1 arg stdcall
   (func $handle_GetBkColor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_get_bk_color (local.get $arg0)))
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_get_bk_color (local.get $arg0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
@@ -3705,7 +3705,7 @@
     (local.set $lpDx (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32))))
     (if (local.get $lpDx)
       (then (local.set $dx_wa (call $g2w (local.get $lpDx)))))
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_ext_text_out
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_ext_text_out
       (local.get $arg0) (local.get $arg1) (local.get $arg2)
       (local.get $arg3) (local.get $rect_wa)
       (local.get $text_wa) (local.get $count) (local.get $dx_wa) (i32.const 0)))
@@ -3714,7 +3714,7 @@
 
   ;; 947: SetPixelV(hdc, x, y, color) — 4 args stdcall, like SetPixel but returns BOOL
   (func $handle_SetPixelV (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $host_gdi_set_pixel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+    (drop (call $gdi_native_set_pixel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
   )
@@ -4216,7 +4216,7 @@
     ;; rows mirrored about the middle of the picture.
     (local.set $y_src (i32.sub (i32.sub (local.get $height) (local.get $y_src))
                                (local.get $dy_src)))
-    (local.set $drawn (call $host_gdi_stretch_dib_bits
+    (local.set $drawn (call $gdi_native_stretch_dib_bits
       (local.get $arg1)                                             ;; hdc
       (local.get $arg2)                                             ;; xDst
       (local.get $arg3)                                             ;; yDst

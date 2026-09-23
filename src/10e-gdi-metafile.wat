@@ -942,7 +942,7 @@
                     (i32.shl (local.get $i) (i32.const 1))))))
               (local.set $i (i32.add (local.get $i) (i32.const 1)))
               (br $copy_dx)))))
-        (local.set $result (call $host_gdi_ext_text_out
+        (local.set $result (call $gdi_native_ext_text_out
           (local.get $hdc) (local.get $x) (local.get $y)
           (local.get $options) (local.get $rect) (local.get $text)
           (local.get $count) (local.get $dx_array) (i32.const 0)))
@@ -953,7 +953,7 @@
       (i32.add (local.get $record) (local.get $required))))
     (local.set $x (i32.load16_s
       (i32.add (local.get $record) (i32.add (local.get $required) (i32.const 2)))))
-    (call $host_gdi_text_out (local.get $hdc) (local.get $x) (local.get $y)
+    (call $gdi_native_text_out (local.get $hdc) (local.get $x) (local.get $y)
       (local.get $text) (local.get $count) (i32.const 0)))
 
   ;; Parse classic WMF state, object, vector, and bitmap records. Unknown
@@ -2640,7 +2640,7 @@
     ;; bit2 and would hand a run we never allocated to $dib_free_wasm.
     ;;
     ;; No caller reaches that today -- all six pass backing 0 (10e:531,
-    ;; 10f:908/953/1121, and both $host_gdi_create_compat_bitmap sites at
+    ;; 10f:908/953/1121, and both $gdi_native_create_compat_bitmap sites at
     ;; 09a7:139 and 09a9:387), and no JS calls the import -- so nothing has been
     ;; double-freed. It is fixed rather than left as a comment because the way
     ;; it would have surfaced is silence: $dib_free_wasm range-checks the arena

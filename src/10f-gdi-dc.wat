@@ -15,7 +15,7 @@
   ;; It is `size-of` == 96 == $GDI_DC_STATE_STRIDE that ties the two together.
   (layout GdiDcState
     (field handle           i32)   ;; +0   the HDC this slot is for; 0 == free
-    (field pen              i32)   ;; +4   OBJ_PEN, $host_gdi_get_current_object(1)
+    (field pen              i32)   ;; +4   OBJ_PEN, $gdi_native_get_current_object(1)
     (field brush            i32)   ;; +8   OBJ_BRUSH, ..._get_current_object(2)
     (field cur_pos_x        i32)   ;; +12  MoveToEx/LineTo current position
     (field cur_pos_y        i32)   ;; +16
@@ -1601,34 +1601,34 @@
     (call $gdi_dc_state_release (local.get $hdc))
     (i32.const 1))
 
-  (func $host_gdi_set_text_color (param $hdc i32) (param $color i32) (result i32)
+  (func $gdi_native_set_text_color (param $hdc i32) (param $color i32) (result i32)
     (call $gdi_dc_set_field (local.get $hdc) (i32.const 20)
       (local.get $color) (i32.const 0)))
-  (func $host_gdi_get_text_color (param $hdc i32) (result i32)
+  (func $gdi_native_get_text_color (param $hdc i32) (result i32)
     (call $gdi_dc_get_field (local.get $hdc) (i32.const 20) (i32.const 0)))
-  (func $host_gdi_set_bk_color (param $hdc i32) (param $color i32) (result i32)
+  (func $gdi_native_set_bk_color (param $hdc i32) (param $color i32) (result i32)
     (call $gdi_dc_set_field (local.get $hdc) (i32.const 24)
       (local.get $color) (i32.const 0xFFFFFF)))
-  (func $host_gdi_get_bk_color (param $hdc i32) (result i32)
+  (func $gdi_native_get_bk_color (param $hdc i32) (result i32)
     (call $gdi_dc_get_field (local.get $hdc) (i32.const 24) (i32.const 0xFFFFFF)))
-  (func $host_gdi_set_bk_mode (param $hdc i32) (param $mode i32) (result i32)
+  (func $gdi_native_set_bk_mode (param $hdc i32) (param $mode i32) (result i32)
     (if (i32.or (i32.eq (local.get $mode) (i32.const 1))
           (i32.eq (local.get $mode) (i32.const 2)))
       (then (return (call $gdi_dc_set_field (local.get $hdc) (i32.const 28)
         (local.get $mode) (i32.const 2)))))
     (i32.const 0))
-  (func $host_gdi_get_bk_mode (param $hdc i32) (result i32)
+  (func $gdi_native_get_bk_mode (param $hdc i32) (result i32)
     (call $gdi_dc_get_field (local.get $hdc) (i32.const 28) (i32.const 2)))
-  (func $host_gdi_set_text_align (param $hdc i32) (param $align i32) (result i32)
+  (func $gdi_native_set_text_align (param $hdc i32) (param $align i32) (result i32)
     (call $gdi_dc_set_field (local.get $hdc) (i32.const 32) (local.get $align) (i32.const 0)))
-  (func $host_gdi_get_text_align (param $hdc i32) (result i32)
+  (func $gdi_native_get_text_align (param $hdc i32) (result i32)
     (call $gdi_dc_get_field (local.get $hdc) (i32.const 32) (i32.const 0)))
 
   ;; Every text call now ends in the strike rasterizer. A negative result means
   ;; no strike could be selected at all — no DC, or the bundled MS Sans Serif
   ;; .FON failed to load — and with no host font path left underneath, the
   ;; honest answer to "draw this" is that nothing was drawn.
-  (func $host_gdi_text_out (param $hdc i32) (param $x i32) (param $y i32)
+  (func $gdi_native_text_out (param $hdc i32) (param $x i32) (param $y i32)
         (param $text i32) (param $count i32) (param $wide i32) (result i32)
     (local $bitmap_result i32)
     (local.set $bitmap_result (call $gdi_bitmap_text_out
@@ -1807,7 +1807,7 @@
                 (local.get $run_start) (local.get $wide)))
             (local.get $run_count) (local.get $wide)))
           (if (local.get $draw)
-            (then (drop (call $host_gdi_text_out
+            (then (drop (call $gdi_native_text_out
               (local.get $hdc) (local.get $cursor) (local.get $y)
               (i32.add (local.get $text)
                 (select (i32.shl (local.get $run_start) (i32.const 1))
@@ -1859,7 +1859,7 @@
           (local.get $y) (i32.const 0)))))
     (i32.or (i32.and (i32.sub (local.get $cursor) (local.get $x)) (i32.const 0xFFFF))
       (i32.shl (i32.and (local.get $height) (i32.const 0xFFFF)) (i32.const 16))))
-  (func $host_gdi_ext_text_out (param $hdc i32) (param $x i32) (param $y i32)
+  (func $gdi_native_ext_text_out (param $hdc i32) (param $x i32) (param $y i32)
         (param $options i32) (param $rect i32) (param $text i32) (param $count i32)
         (param $dx_array i32) (param $wide i32) (result i32)
     (local $bitmap_result i32)
@@ -1869,7 +1869,7 @@
       (local.get $count) (local.get $dx_array) (local.get $wide)))
     (select (local.get $bitmap_result) (i32.const 0)
       (i32.ge_s (local.get $bitmap_result) (i32.const 0))))
-  (func $host_gdi_draw_text (param $hdc i32) (param $text i32) (param $count i32)
+  (func $gdi_native_draw_text (param $hdc i32) (param $text i32) (param $count i32)
         (param $rect i32) (param $format i32) (param $wide i32) (result i32)
     (call $gdi_bitmap_draw_text
       (local.get $hdc) (local.get $text) (local.get $count)

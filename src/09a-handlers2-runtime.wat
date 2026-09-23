@@ -788,7 +788,7 @@
           (i32.or (global.get $code16) (local.get $win16_bridge))
           (local.get $partial))
       (then
-        (drop (call $host_gdi_intersect_clip_rect
+        (drop (call $gdi_native_intersect_clip_rect
           (local.get $hdc)
           (i32.load (local.get $wa))
           (i32.load offset=4 (local.get $wa))

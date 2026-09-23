@@ -1859,7 +1859,7 @@
         ;; owns both and may have translated them into a backing bitmap.
         (if (i32.eqz (local.get $wParam))
           (then
-            (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+            (drop (call $gdi_native_select_clip_rgn (local.get $hdc) (i32.const 0)))
             (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd))))
         ;; ctrl_get_wh_packed reads CONTROL_GEOM (works for WAT-only children
         ;; that have no JS-side window record).
@@ -1893,21 +1893,21 @@
         ;; Use the font installed with WM_SETFONT, falling back to the default
         ;; GUI font. Paint relies on this when committing its text object into
         ;; the picture memory DC.
-        (drop (call $host_gdi_select_object
+        (drop (call $gdi_native_select_object
           (local.get $hdc)
           (select
             (load.field.memarg EditState font (local.get $state_w))
             (i32.const 0x30021)
             (i32.ne (load.field.memarg EditState font (local.get $state_w)) (i32.const 0)))))
-        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
         ;; 1) White background (WHITE_BRUSH stock obj 0 = 0x30010)
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (drop (call $gdi_native_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x30010)))
         ;; 2) Sunken edge: BDR_SUNKENOUTER(0x02)|BDR_SUNKENINNER(0x08) = 0x0A; BF_RECT = 0x0F
         (if (i32.eqz (local.get $wParam))
           (then
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                     (i32.const 0x0A) (i32.const 0x0F)))))
         ;; 3) Text — draw line by line, splitting on \n. Each line is split
@@ -1974,26 +1974,26 @@
                     (local.get $pre_w)))
                   (if (i32.eqz (local.get $sel_w))
                     (then (local.set $sel_w (i32.mul (i32.sub (local.get $b) (local.get $a)) (i32.const 8)))))
-                  (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00800000)))
-                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (local.set $brush (call $gdi_native_create_solid_brush (i32.const 0x00800000)))
+                  (drop (call $gdi_native_fill_rect (local.get $hdc)
                           (i32.add (local.get $pre_w) (i32.const 4))
                           (i32.sub (local.get $line_y) (i32.const 2))
                           (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
                           (i32.add (local.get $line_y) (i32.const 13))
                           (local.get $brush)))
-                  (drop (call $host_gdi_delete_object (local.get $brush)))
+                  (drop (call $gdi_native_delete_object (local.get $brush)))
                   (if (local.get $a)
-                    (then (drop (call $host_gdi_text_out
+                    (then (drop (call $gdi_native_text_out
                       (local.get $hdc) (i32.const 4) (local.get $line_y)
                       (local.get $line_buf_w) (local.get $a) (i32.const 0)))))
-                  (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
-                  (drop (call $host_gdi_text_out
+                  (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+                  (drop (call $gdi_native_text_out
                     (local.get $hdc) (i32.add (local.get $pre_w) (i32.const 4)) (local.get $line_y)
                     (i32.add (local.get $line_buf_w) (local.get $a))
                     (i32.sub (local.get $b) (local.get $a)) (i32.const 0)))
-                  (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+                  (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x00000000)))
                   (if (i32.lt_u (local.get $b) (local.get $hi))
-                    (then (drop (call $host_gdi_text_out
+                    (then (drop (call $gdi_native_text_out
                       (local.get $hdc)
                       (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (i32.const 4))
                       (local.get $line_y)
@@ -2001,7 +2001,7 @@
                       (i32.sub (local.get $hi) (local.get $b)) (i32.const 0))))))
                 (else
                   (if (local.get $hi)
-                    (then (drop (call $host_gdi_text_out
+                    (then (drop (call $gdi_native_text_out
                       (local.get $hdc) (i32.const 4) (local.get $line_y)
                       (local.get $line_buf_w) (local.get $hi) (i32.const 0)))))))
               (local.set $lo (i32.add (local.get $lo) (i32.const 1)))
@@ -2034,7 +2034,7 @@
                       (i32.ge_s (local.get $a) (i32.const 0))
                       (i32.lt_s (local.get $hi) (local.get $h)))
                   (then
-                    (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (drop (call $gdi_native_fill_rect (local.get $hdc)
                             (i32.add (local.get $px) (i32.const 4))
                             (i32.add (local.get $hi) (i32.const 2))
                             (i32.add (local.get $px) (i32.const 6))
@@ -2114,36 +2114,36 @@
                   (if (i32.gt_u (local.get $sel_hi) (local.get $line_end))
                     (then (local.set $sel_w (i32.sub (local.get $w)
                             (i32.add (local.get $pre_w) (local.get $tx))))))
-                  (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00800000)))
-	                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (local.set $brush (call $gdi_native_create_solid_brush (i32.const 0x00800000)))
+	                  (drop (call $gdi_native_fill_rect (local.get $hdc)
 	                          (i32.add (local.get $pre_w) (local.get $tx))
 	                          (i32.sub (local.get $line_y) (i32.const 2))
 	                          (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (local.get $tx))
 	                          (i32.add (local.get $line_y) (i32.const 13))
 	                          (local.get $brush)))
-                  (drop (call $host_gdi_delete_object (local.get $brush)))
+                  (drop (call $gdi_native_delete_object (local.get $brush)))
                   ;; pre-sel text (black)
                   (if (local.get $a)
-                    (then (drop (call $host_gdi_text_out (local.get $hdc)
+                    (then (drop (call $gdi_native_text_out (local.get $hdc)
                                   (local.get $tx) (local.get $line_y)
                                   (local.get $line_buf_w) (local.get $a) (i32.const 0)))))
                   ;; selected text (white)
-                  (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
-                  (drop (call $host_gdi_text_out (local.get $hdc)
+                  (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x00FFFFFF)))
+                  (drop (call $gdi_native_text_out (local.get $hdc)
                           (i32.add (local.get $pre_w) (local.get $tx)) (local.get $line_y)
                           (i32.add (local.get $line_buf_w) (local.get $a))
                           (i32.sub (local.get $b) (local.get $a)) (i32.const 0)))
-                  (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+                  (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x00000000)))
                   ;; post-sel text (black)
                   (if (i32.lt_u (local.get $b) (local.get $hi))
-                    (then (drop (call $host_gdi_text_out (local.get $hdc)
+                    (then (drop (call $gdi_native_text_out (local.get $hdc)
                                   (i32.add (i32.add (local.get $pre_w) (local.get $sel_w)) (local.get $tx))
                                   (local.get $line_y)
                                   (i32.add (local.get $line_buf_w) (local.get $b))
                                   (i32.sub (local.get $hi) (local.get $b)) (i32.const 0))))))
                 (else
                   (if (local.get $hi)
-                    (then (drop (call $host_gdi_text_out (local.get $hdc)
+                    (then (drop (call $gdi_native_text_out (local.get $hdc)
                                   (local.get $tx) (local.get $line_y)
                                   (local.get $line_buf_w) (local.get $hi) (i32.const 0)))))))
               (local.set $lo (i32.add (local.get $line_end) (i32.const 1)))
@@ -2242,7 +2242,7 @@
             ;; The dead square where the two strips meet is scrollbar-grey,
             ;; not white: it belongs to neither track.
             (if (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x00200000))
-              (then (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (then (drop (call $gdi_native_fill_rect (local.get $hdc)
                 (i32.sub (local.get $full_w) (i32.const 16))
                 (i32.sub (local.get $full_h) (i32.const 16))
                 (local.get $full_w) (local.get $full_h)

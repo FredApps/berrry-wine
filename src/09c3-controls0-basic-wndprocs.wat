@@ -189,7 +189,7 @@
     (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
     (local.set $ctrl_id (i32.and (call $ctrl_table_get_id (local.get $hwnd)) (i32.const 0xFFFF)))
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-    (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+    (drop (call $gdi_native_select_clip_rgn (local.get $hdc) (i32.const 0)))
     (local.set $state_bits
       (i32.or
         (i32.or
@@ -221,7 +221,7 @@
     ;; from the previous offset remain visible.
     (if (call $ownerdraw_prefill_allowed (local.get $hwnd))
       (then
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (drop (call $gdi_native_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0)
                 (local.get $w) (local.get $h)
                 (i32.const 0x30011)))))
@@ -229,9 +229,9 @@
     ;; Monochrome BitBlt maps source 1 through TextColor and source 0 through
     ;; BkColor; ABOUT.DLL relies on this to emboss resource 999 instead of
     ;; painting a literal black-and-white logo.
-    (drop (call $host_gdi_set_text_color (local.get $hdc)
+    (drop (call $gdi_native_set_text_color (local.get $hdc)
       (call $win98_sys_color (i32.const 15))))
-    (drop (call $host_gdi_set_bk_color (local.get $hdc)
+    (drop (call $gdi_native_set_bk_color (local.get $hdc)
       (call $win98_sys_color (i32.const 20))))
     (global.set $btn_about_logo_hdc
       (select (local.get $hdc) (i32.const 0)
@@ -873,7 +873,7 @@
         ;; Native controls paint with a fresh BeginPaint DC. Our synthetic
         ;; hwnd+0x40000 DC can retain a clip region from a previous draw,
         ;; which clipped Spider's MessageBox "No" button top edge.
-        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (drop (call $gdi_native_select_clip_rgn (local.get $hdc) (i32.const 0)))
         ;; ctrl_get_wh_packed reads CONTROL_GEOM (works for WAT-only children
         ;; that have no JS-side window record).
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
@@ -883,12 +883,12 @@
 
         ;; Common DC setup: select DEFAULT_GUI_FONT and switch to TRANSPARENT
         ;; bk mode so text glyphs don't get an opaque white background box.
-        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+        (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
+        (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x00000000)))
         (if (call $ctrl_style_disabled (call $wnd_get_style (local.get $hwnd)))
           (then
-            (drop (call $host_gdi_set_text_color
+            (drop (call $gdi_native_set_text_color
               (local.get $hdc) (i32.const 0x00808080)))))
 
         ;; Resolve text pointer/length once (used by every kind that has a label).
@@ -906,12 +906,12 @@
             (local.set $img (call $btn_image_handle (local.get $state_w)))
             (if (local.get $img)
               (then
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (local.get $w) (local.get $h)
                         (i32.const 0x30011)))
-                (local.set $img_w (call $host_gdi_get_object_w (local.get $img)))
-                (local.set $img_h (call $host_gdi_get_object_h (local.get $img)))
+                (local.set $img_w (call $gdi_native_get_object_w (local.get $img)))
+                (local.set $img_h (call $gdi_native_get_object_h (local.get $img)))
                 (if (i32.gt_s (local.get $img_w) (i32.const 0))
                   (then
                     (if (i32.gt_s (local.get $img_h) (i32.const 0))
@@ -924,19 +924,19 @@
                           (then (local.set $img_x (i32.const 0))))
                         (if (i32.lt_s (local.get $img_y) (i32.const 0))
                           (then (local.set $img_y (i32.const 0))))
-                        (local.set $brush (call $host_gdi_create_compat_dc (local.get $hdc)))
-                        (drop (call $host_gdi_select_object (local.get $brush) (local.get $img)))
-                        (drop (call $host_gdi_bitblt
+                        (local.set $brush (call $gdi_native_create_compat_dc (local.get $hdc)))
+                        (drop (call $gdi_native_select_object (local.get $brush) (local.get $img)))
+                        (drop (call $gdi_native_bitblt
                                 (local.get $hdc)
                                 (local.get $img_x) (local.get $img_y)
                                 (local.get $img_w) (local.get $img_h)
                                 (local.get $brush)
                                 (i32.const 0) (i32.const 0)
                                 (i32.const 0x00CC0020))) ;; SRCCOPY
-                        (drop (call $host_gdi_delete_dc (local.get $brush)))))))
+                        (drop (call $gdi_native_delete_dc (local.get $brush)))))))
                 (if (i32.and (local.get $flags) (i32.const 0x08))
                   (then
-                    (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+                    (drop (call $gdi_native_draw_focus_rect (local.get $hdc)
                             (i32.const 2) (i32.const 2)
                             (i32.sub (local.get $w) (i32.const 2))
                             (i32.sub (local.get $h) (i32.const 2))))))
@@ -951,20 +951,20 @@
             (if (local.get $box_y)
               (then
                 ;; 1px black frame via 4 fill_rect strokes (BLACK_BRUSH=0x30014).
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (local.get $w) (i32.const 1) (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.sub (local.get $h) (i32.const 1))
                         (local.get $w) (local.get $h) (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (i32.const 1) (local.get $h) (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.sub (local.get $w) (i32.const 1)) (i32.const 0)
                         (local.get $w) (local.get $h) (i32.const 0x30014)))))
             ;; Fill face with LTGRAY_BRUSH (stock object 1 = 0x30011)
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (select (i32.const 1) (i32.const 0) (local.get $box_y))
                     (select (i32.const 1) (i32.const 0) (local.get $box_y))
                     (select (i32.sub (local.get $w) (i32.const 1)) (local.get $w) (local.get $box_y))
@@ -974,7 +974,7 @@
             ;;        or pressed: BDR_SUNKENOUTER(0x02)|BDR_SUNKENINNER(0x08) = 0x0A
             (local.set $edge_flags (select (i32.const 0x0A) (i32.const 0x05)
                                            (i32.and (local.get $flags) (i32.const 0x01))))
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (select (i32.const 1) (i32.const 0) (local.get $box_y))
                     (select (i32.const 1) (i32.const 0) (local.get $box_y))
                     (select (i32.sub (local.get $w) (i32.const 1)) (local.get $w) (local.get $box_y))
@@ -983,7 +983,7 @@
             (if (local.get $text_w)
               (then
                 ;; DT_CENTER(0x01)|DT_VCENTER(0x04)|DT_SINGLELINE(0x20) = 0x25
-                (drop (call $host_gdi_draw_text (local.get $hdc)
+                (drop (call $gdi_native_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
                         (call $paint_rect (i32.const 0) (i32.const 0)
                                           (local.get $w) (local.get $h))
@@ -991,7 +991,7 @@
             ;; Focus rect (bit3): inset 4px from outer edge.
             (if (i32.and (local.get $flags) (i32.const 0x08))
               (then
-                (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+                (drop (call $gdi_native_draw_focus_rect (local.get $hdc)
                         (i32.const 4) (i32.const 4)
                         (i32.sub (local.get $w) (i32.const 4))
                         (i32.sub (local.get $h) (i32.const 4))))))
@@ -1006,7 +1006,7 @@
                       (i32.eq (local.get $kind) (i32.const 6))))
           (then
             ;; Background — face color so a re-paint doesn't leave stale pixels
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                     (i32.const 0x30011)))
             ;; One 13x13 check box, shared with the list-view state images.
@@ -1017,7 +1017,7 @@
             (if (local.get $text_w)
               (then
                 ;; DT_VCENTER(0x04)|DT_SINGLELINE(0x20) = 0x24
-                (drop (call $host_gdi_draw_text (local.get $hdc)
+                (drop (call $gdi_native_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
                         (call $paint_rect (i32.const 16) (i32.const 0)
                                           (local.get $w) (local.get $h))
@@ -1025,7 +1025,7 @@
             ;; Focus rect (bit3) around the label.
             (if (i32.and (local.get $flags) (i32.const 0x08))
               (then
-                (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+                (drop (call $gdi_native_draw_focus_rect (local.get $hdc)
                         (i32.const 14) (i32.const 1)
                         (i32.sub (local.get $w) (i32.const 1))
                         (i32.sub (local.get $h) (i32.const 1))))))
@@ -1035,25 +1035,25 @@
         (if (i32.or (i32.eq (local.get $kind) (i32.const 4))
                     (i32.eq (local.get $kind) (i32.const 9)))
           (then
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                     (i32.const 0x30011)))
             (local.set $box_y (i32.sub (i32.div_u (local.get $h) (i32.const 2)) (i32.const 6)))
             ;; Outline circle: BLACK_PEN + WHITE_BRUSH
-            (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30017)))
-            (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30010)))
-            (drop (call $host_gdi_ellipse (local.get $hdc)
+            (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30017)))
+            (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30010)))
+            (drop (call $gdi_native_ellipse (local.get $hdc)
                     (i32.const 0) (local.get $box_y)
                     (i32.const 12) (i32.add (local.get $box_y) (i32.const 12))))
             (if (i32.and (local.get $flags) (i32.const 0x02))
               (then
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 4) (i32.add (local.get $box_y) (i32.const 4))
                         (i32.const 8) (i32.add (local.get $box_y) (i32.const 8))
                         (i32.const 0x30014)))))
             (if (local.get $text_w)
               (then
-                (drop (call $host_gdi_draw_text (local.get $hdc)
+                (drop (call $gdi_native_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
                         (call $paint_rect (i32.const 16) (i32.const 0)
                                           (local.get $w) (local.get $h))
@@ -1061,7 +1061,7 @@
             ;; Focus rect (bit3) around the label.
             (if (i32.and (local.get $flags) (i32.const 0x08))
               (then
-                (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+                (drop (call $gdi_native_draw_focus_rect (local.get $hdc)
                         (i32.const 14) (i32.const 1)
                         (i32.sub (local.get $w) (i32.const 1))
                         (i32.sub (local.get $h) (i32.const 1))))))
@@ -1079,7 +1079,7 @@
           (then
             ;; EDGE_ETCHED = 0x06 (BDR_SUNKENOUTER|BDR_RAISEDINNER), BF_RECT = 0x0F.
             ;; Top edge sits at y=6 so the label can overlap it.
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (i32.const 0) (i32.const 6) (local.get $w) (local.get $h)
                     (i32.const 0x06) (i32.const 0x0F)))
             (if (local.get $text_w)
@@ -1087,7 +1087,7 @@
                 ;; Measure with DT_CALCRECT(0x400) | DT_SINGLELINE(0x20) = 0x420
                 (local.set $calc (call $paint_rect (i32.const 12) (i32.const 0)
                                                    (local.get $w) (i32.const 13)))
-                (drop (call $host_gdi_draw_text (local.get $hdc)
+                (drop (call $gdi_native_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
                         (local.get $calc)
                         (i32.const 0x420) (i32.const 0)))
@@ -1095,12 +1095,12 @@
                                  (i32.load offset=8 (local.get $calc))
                                  (i32.const 12)))
                 ;; Clear the slot under the label so the etched stroke is hidden
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 8) (i32.const 0)
                         (i32.add (i32.const 16) (local.get $tw)) (i32.const 13)
                         (i32.const 0x30011)))
                 ;; Real draw at left=12, y=0..13
-                (drop (call $host_gdi_draw_text (local.get $hdc)
+                (drop (call $gdi_native_draw_text (local.get $hdc)
                         (local.get $text_w) (local.get $text_len)
                         (call $paint_rect (i32.const 12) (i32.const 0)
                                           (local.get $w) (i32.const 13))
@@ -1153,13 +1153,13 @@
             ;; COLOR_BTNFACE first punches a grey slab through the game.
             (if (call $ownerdraw_prefill_allowed (local.get $hwnd))
               (then
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (local.get $w) (local.get $h)
                         (i32.const 0x30011)))))
-            (drop (call $host_gdi_set_text_color (local.get $hdc)
+            (drop (call $gdi_native_set_text_color (local.get $hdc)
               (call $win98_sys_color (i32.const 15))))
-            (drop (call $host_gdi_set_bk_color (local.get $hdc)
+            (drop (call $gdi_native_set_bk_color (local.get $hdc)
               (call $win98_sys_color (i32.const 20))))
             ;; Keep the live owner-draw destination visible to the Win16
             ;; BitBlt compatibility path while the parent paints it.
@@ -1470,7 +1470,7 @@
         (if (i32.and (i32.ge_u (local.get $style) (i32.const 0x10))
                      (i32.le_u (local.get $style) (i32.const 0x12)))
           (then
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
               (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
               (i32.const 6) ;; EDGE_ETCHED, without BF_MIDDLE
               (if (result i32) (i32.eq (local.get $style) (i32.const 0x10))
@@ -1490,11 +1490,11 @@
         ;; leaves a few pixels of inner padding there.
         (if (i32.and (local.get $ex) (i32.const 0x200))
           (then
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x30010)))  ;; WHITE_BRUSH
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x0A) (i32.const 0x0F)))  ;; EDGE_SUNKEN | BF_RECT
@@ -1514,7 +1514,7 @@
               (then (local.set $brush (i32.const 0x30010)))) ;; WHITE_BRUSH
             (if (local.get $brush)
               (then
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (local.get $w) (local.get $h)
                         (local.get $brush)))
@@ -1530,19 +1530,19 @@
               (then (local.set $brush (i32.const 0x30010)))) ;; WHITE_BRUSH
             (if (local.get $brush)
               (then
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (local.get $w) (i32.const 1)
                         (local.get $brush)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.sub (local.get $h) (i32.const 1))
                         (local.get $w) (local.get $h)
                         (local.get $brush)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (i32.const 1) (local.get $h)
                         (local.get $brush)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.sub (local.get $w) (i32.const 1)) (i32.const 0)
                         (local.get $w) (local.get $h)
                         (local.get $brush)))
@@ -1560,7 +1560,7 @@
                   (select (i32.const 0x30010) (i32.const 0x30011)
                     (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
                       (i32.const 0x00800000)) (i32.const 0))))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 0) (i32.const 0)
                         (local.get $w) (local.get $h)
                         (local.get $brush)))))))
@@ -1568,10 +1568,10 @@
         ;; Win98 default GUI font for ordinary dialog labels.
         ;; TRANSPARENT bk mode so the label glyphs let the fill color show
         ;; through instead of painting an opaque white box behind every word.
-        (drop (call $host_gdi_select_object (local.get $hdc)
+        (drop (call $gdi_native_select_object (local.get $hdc)
           (select (call $static_font (local.get $state_w)) (i32.const 0x30021)
             (i32.ne (call $static_font (local.get $state_w)) (i32.const 0)))))
-        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
         ;; SS_BITMAP accepts either a dialog-template RT_BITMAP ordinal or an
         ;; HBITMAP installed with STM_SETIMAGE. Resource bitmaps are temporary
         ;; WAT GDI objects: release them after the blit so repainting a static
@@ -1589,8 +1589,8 @@
                 (else (local.get $image))))
             (if (local.get $bitmap)
               (then
-                (local.set $bitmap_w (call $host_gdi_get_object_w (local.get $bitmap)))
-                (local.set $bitmap_h (call $host_gdi_get_object_h (local.get $bitmap)))
+                (local.set $bitmap_w (call $gdi_native_get_object_w (local.get $bitmap)))
+                (local.set $bitmap_h (call $gdi_native_get_object_h (local.get $bitmap)))
                 (if (i32.and
                       (i32.and
                         (i32.gt_s (local.get $bitmap_w) (i32.const 0))
@@ -1634,10 +1634,10 @@
                         (local.set $bitmap_y
                           (i32.div_s (i32.sub (local.get $h) (local.get $bitmap_h))
                             (i32.const 2)))))
-                    (local.set $bitmap_dc (call $host_gdi_create_compat_dc (local.get $hdc)))
+                    (local.set $bitmap_dc (call $gdi_native_create_compat_dc (local.get $hdc)))
                     (if (local.get $bitmap_dc)
                       (then
-                        (drop (call $host_gdi_select_object
+                        (drop (call $gdi_native_select_object
                           (local.get $bitmap_dc) (local.get $bitmap)))
                         (if (i32.and
                               (i32.ne
@@ -1646,20 +1646,20 @@
                               (i32.eqz
                                 (i32.and (local.get $full_style) (i32.const 0x200))))
                           (then
-                            (drop (call $host_gdi_stretch_blt
+                            (drop (call $gdi_native_stretch_blt
                               (local.get $hdc) (i32.const 0) (i32.const 0)
                               (local.get $w) (local.get $h)
                               (local.get $bitmap_dc) (i32.const 0) (i32.const 0)
                               (local.get $bitmap_w) (local.get $bitmap_h)
                               (i32.const 0x00CC0020)))) ;; SRCCOPY
                           (else
-                            (drop (call $host_gdi_bitblt
+                            (drop (call $gdi_native_bitblt
                               (local.get $hdc)
                               (local.get $bitmap_x) (local.get $bitmap_y)
                               (local.get $bitmap_w) (local.get $bitmap_h)
                               (local.get $bitmap_dc) (i32.const 0) (i32.const 0)
                               (i32.const 0x00CC0020))))) ;; SRCCOPY
-                        (drop (call $host_gdi_delete_dc (local.get $bitmap_dc)))))))
+                        (drop (call $gdi_native_delete_dc (local.get $bitmap_dc)))))))
                 (if (local.get $bitmap_owned)
                   (then (drop (call $gdi_object_delete_full (local.get $bitmap)))))))
             (return (i32.const 0))))
@@ -1706,30 +1706,30 @@
             (if (i32.eq (call $static_image_ord (local.get $state_w)) (i32.const 301))
               (then
                 ;; Left-facing speaker.
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 1) (i32.const 5) (i32.const 4) (i32.const 10)
                         (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 4) (i32.const 3) (i32.const 6) (i32.const 12)
                         (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 6) (i32.const 2) (i32.const 7) (i32.const 13)
                         (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 9) (i32.const 5) (i32.const 10) (i32.const 10)
                         (i32.const 0x30014))))
               (else
                 ;; Mirrored right-facing speaker.
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 8) (i32.const 5) (i32.const 11) (i32.const 10)
                         (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 6) (i32.const 3) (i32.const 8) (i32.const 12)
                         (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 5) (i32.const 2) (i32.const 6) (i32.const 13)
                         (i32.const 0x30014)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                         (i32.const 2) (i32.const 5) (i32.const 3) (i32.const 10)
                         (i32.const 0x30014)))))
             (return (i32.const 0))))
@@ -1761,7 +1761,7 @@
                     (i32.eq (local.get $style) (i32.const 0x0C)))
                 (then (local.set $fmt
                   (i32.or (local.get $fmt) (i32.const 0x40))))) ;; DT_EXPANDTABS
-              (drop (call $host_gdi_draw_text (local.get $hdc)
+              (drop (call $gdi_native_draw_text (local.get $hdc)
                       (call $g2w (call $static_text_ptr (local.get $state_w)))
                       (call $static_text_len (local.get $state_w))
                       (call $paint_rect (local.get $tx_l) (local.get $tx_t)
@@ -1884,11 +1884,11 @@
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (drop (call $gdi_native_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
                 (i32.const 0x30011)))  ;; LTGRAY_BRUSH ≈ COLOR_3DFACE
-        (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+        (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+        (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
         (local.set $lh (i32.and (call $host_get_text_metrics (local.get $hdc)) (i32.const 0xFFFF)))
         (if (i32.eqz (local.get $lh)) (then (local.set $lh (i32.const 13))))
         (local.set $sp (call $host_measure_text (local.get $hdc) (region.addr $RESERVED_PAGE_STRINGS 0xC8) (i32.const 1) (i32.const 0)))
@@ -1948,26 +1948,26 @@
               (local.set $x (i32.const 0))
               (local.set $y (i32.add (local.get $y) (local.get $lh)))))
           (br_if $done (i32.gt_u (i32.add (local.get $y) (local.get $lh)) (local.get $h)))
-          (drop (call $host_gdi_set_text_color (local.get $hdc)
+          (drop (call $gdi_native_set_text_color (local.get $hdc)
                   (select (i32.const 0x00CC6600) (i32.const 0x00000000) (local.get $in_link))))
-          (drop (call $host_gdi_text_out (local.get $hdc)
+          (drop (call $gdi_native_text_out (local.get $hdc)
                   (local.get $x) (local.get $y)
                   (i32.add (local.get $tw) (local.get $i))
                   (i32.sub (local.get $j) (local.get $i))
                   (i32.const 0)))
           (if (local.get $in_link)
             (then
-              (local.set $brush (call $host_gdi_create_solid_brush (i32.const 0x00CC6600)))
-              (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (local.set $brush (call $gdi_native_create_solid_brush (i32.const 0x00CC6600)))
+              (drop (call $gdi_native_fill_rect (local.get $hdc)
                       (local.get $x) (i32.sub (i32.add (local.get $y) (local.get $lh)) (i32.const 2))
                       (i32.add (local.get $x) (local.get $ww))
                       (i32.sub (i32.add (local.get $y) (local.get $lh)) (i32.const 1))
                       (local.get $brush)))
-              (drop (call $host_gdi_delete_object (local.get $brush)))))
+              (drop (call $gdi_native_delete_object (local.get $brush)))))
           (local.set $x (i32.add (local.get $x) (local.get $ww)))
           (local.set $i (local.get $j))
           (br $word)))
-        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x00000000)))
+        (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x00000000)))
         (return (i32.const 0))))
 
     (i32.const 0)
@@ -2053,7 +2053,7 @@
                                        (local.get $dx)))
                 (local.set $y (i32.sub (i32.sub (local.get $h) (i32.const 1))
                                        (local.get $dy)))
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                   (local.get $x) (local.get $y)
                   (i32.add (local.get $x) (i32.const 1))
                   (i32.add (local.get $y) (i32.const 1))
@@ -2170,7 +2170,7 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (drop (call $gdi_native_select_clip_rgn (local.get $hdc) (i32.const 0)))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
         (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
@@ -2178,7 +2178,7 @@
         (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
                      (i32.gt_s (local.get $h) (i32.const 0)))
           (then
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
               (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
               (i32.const 0x30011))) ;; COLOR_3DFACE
             ;; Paint's MFC bar has a fixed 166px help pane and a coordinate
@@ -2195,7 +2195,7 @@
                     (else (i32.sub (local.get $w) (i32.const 2)))))))
             (if (i32.gt_s (local.get $right) (i32.const 3))
               (then
-                (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (drop (call $gdi_native_draw_edge (local.get $hdc)
                   (i32.const 1) (i32.const 2) (local.get $right) (i32.sub (local.get $h) (i32.const 2))
                   (i32.const 0x0A) (i32.const 0x0F))) ;; EDGE_SUNKEN | BF_RECT
                 (local.set $text_w (call $title_table_get_ptr (local.get $hwnd)))
@@ -2206,9 +2206,9 @@
                 (if (i32.and (i32.ne (local.get $text_w) (i32.const 0))
                              (i32.ne (local.get $text_len) (i32.const 0)))
                   (then
-                    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-                    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-                    (drop (call $host_gdi_draw_text
+                    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+                    (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
+                    (drop (call $gdi_native_draw_text
                       (local.get $hdc) (local.get $text_w) (local.get $text_len)
                       (call $paint_rect (i32.const 4) (i32.const 2)
                                         (i32.sub (local.get $right) (i32.const 3))
@@ -2216,7 +2216,7 @@
                       (i32.const 0x824) (i32.const 0)))))))
             (if (i32.and (local.get $is_paint) (i32.gt_s (local.get $w) (i32.const 171)))
               (then
-                (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (drop (call $gdi_native_draw_edge (local.get $hdc)
                   (i32.const 169) (i32.const 2) (i32.sub (local.get $w) (i32.const 2))
                   (i32.sub (local.get $h) (i32.const 2))
                   (i32.const 0x0A) (i32.const 0x0F)))
@@ -2283,9 +2283,9 @@
                       (call $statusbar_write_uint
                         (i32.add (local.get $coord_w) (local.get $coord_len)) (local.get $coord_y)))
                     (local.set $coord_len (i32.add (local.get $coord_len) (local.get $part_len)))
-                    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-                    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-                    (drop (call $host_gdi_text_out (local.get $hdc)
+                    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+                    (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
+                    (drop (call $gdi_native_text_out (local.get $hdc)
                       (i32.const 173) (i32.const 5)
                       (local.get $coord_w) (local.get $coord_len) (i32.const 0)))))
                 (call $statusbar_draw_size_grip (local.get $hdc) (local.get $w) (local.get $h)))
@@ -2409,7 +2409,7 @@
         (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
                      (i32.gt_s (local.get $h) (i32.const 0)))
           (then
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x30010))) ;; WHITE_BRUSH
@@ -2427,12 +2427,12 @@
                     (local.get $range)))
                 (if (i32.gt_s (local.get $fill_w) (i32.const 0))
                   (then
-                    (drop (call $host_gdi_fill_rect (local.get $hdc)
+                    (drop (call $gdi_native_fill_rect (local.get $hdc)
                       (i32.const 2) (i32.const 2)
                       (i32.add (i32.const 2) (local.get $fill_w))
                       (i32.sub (local.get $h) (i32.const 2))
                       (i32.const 14))))))) ;; COLOR_HIGHLIGHT
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x0A) (i32.const 0x0F))))) ;; EDGE_SUNKEN | BF_RECT

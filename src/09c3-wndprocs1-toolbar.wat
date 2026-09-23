@@ -629,12 +629,12 @@
                   (then
                     (local.set $cmd (i32.and (local.get $cmd) (i32.const 0xFFFF)))))
                 (local.set $bmp
-                  (call $host_gdi_load_bitmap
+                  (call $gdi_native_load_bitmap
                     (i32.load (local.get $src))
                     (local.get $cmd)))))))
         (if (local.get $bmp)
           (then
-            (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
+            (local.set $bmp_w (call $gdi_native_get_object_w (local.get $bmp)))
             (if (i32.gt_s (local.get $bmp_w) (i32.const 0))
               (then
                 ;; Bounded toolbar model: one strip per toolbar. Keep the
@@ -1089,7 +1089,7 @@
         ;; Native toolbar paints start with a fresh BeginPaint-style clip.
         ;; Synthetic hwnd+0x40000 DCs can retain an empty clip from prior MFC
         ;; control-bar drawing, erasing the row while clipping every button.
-        (drop (call $host_gdi_select_clip_rgn (local.get $hdc) (i32.const 0)))
+        (drop (call $gdi_native_select_clip_rgn (local.get $hdc) (i32.const 0)))
         (call $dc_apply_client_clip (local.get $hdc) (local.get $hwnd))
         (local.set $sz (call $ctrl_get_wh_packed (local.get $hwnd)))
         (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
@@ -1097,11 +1097,11 @@
         (if (i32.and (i32.gt_s (local.get $w) (i32.const 0))
                      (i32.gt_s (local.get $h) (i32.const 0)))
           (then
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x30011))) ;; COLOR_BTNFACE approximation.
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
                     (i32.const 0) (i32.const 0)
                     (local.get $w) (local.get $h)
                     (i32.const 0x04) (i32.const 0x08))) ;; BDR_RAISEDINNER | BF_BOTTOM
@@ -1146,7 +1146,7 @@
                 (then
                   (if (i32.gt_s (local.get $bw) (i32.const 8))
                     (then
-                      (drop (call $host_gdi_draw_edge (local.get $hdc)
+                      (drop (call $gdi_native_draw_edge (local.get $hdc)
                         (i32.add (local.get $left) (i32.const 3))
                         (i32.add (local.get $top) (i32.const 3))
                         (i32.add (local.get $left) (i32.const 5))
@@ -1162,7 +1162,7 @@
                     (i32.or (local.get $hit) (local.get $is_hot))
                     (i32.eqz (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0x0800))))
                 (then
-                  (drop (call $host_gdi_draw_edge (local.get $hdc)
+                  (drop (call $gdi_native_draw_edge (local.get $hdc)
                           (local.get $left) (local.get $top)
                           (i32.add (local.get $left) (local.get $bw))
                           (i32.add (local.get $top) (local.get $bh))
@@ -1210,8 +1210,8 @@
                       (i32.ge_s (i32.load (local.get $rec)) (i32.const 0))
                       (i32.ne (local.get $bmp) (i32.const 0))))
                 (then
-                  (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
-                  (local.set $bmp_h (call $host_gdi_get_object_h (local.get $bmp)))
+                  (local.set $bmp_w (call $gdi_native_get_object_w (local.get $bmp)))
+                  (local.set $bmp_h (call $gdi_native_get_object_h (local.get $bmp)))
                   (if (i32.le_s (local.get $bmp_draw_w) (i32.const 0))
                     (then (local.set $bmp_draw_w (i32.const 16))))
                   (if (i32.le_s (local.get $bmp_draw_h) (i32.const 0))
@@ -1242,15 +1242,15 @@
                               (i32.sub (local.get $bh) (local.get $bmp_draw_h))
                               (i32.const 2)))
                           (local.get $hit)))
-                      (local.set $memdc (call $host_gdi_create_compat_dc (local.get $hdc)))
+                      (local.set $memdc (call $gdi_native_create_compat_dc (local.get $hdc)))
                       (if (local.get $memdc)
                         (then
-                          (drop (call $host_gdi_select_object (local.get $memdc) (local.get $bmp)))
+                          (drop (call $gdi_native_select_object (local.get $memdc) (local.get $bmp)))
                           (local.set $drawn
                             (if (result i32)
                               (i32.eqz (local.get $use_disabled_effect))
                               (then
-                                (call $host_gdi_transparent_blt
+                                (call $gdi_native_transparent_blt
                                   (local.get $hdc)
                                   (local.get $bmp_dst_x) (local.get $bmp_dst_y)
                                   (local.get $bmp_draw_w) (local.get $bmp_draw_h)
@@ -1258,20 +1258,20 @@
                                   (local.get $bmp_src_x) (i32.const 0)
                                   (local.get $mask_color)))
                               (else
-                                (call $host_gdi_disabled_blt
+                                (call $gdi_native_disabled_blt
                                   (local.get $hdc)
                                   (local.get $bmp_dst_x) (local.get $bmp_dst_y)
                                   (local.get $bmp_draw_w) (local.get $bmp_draw_h)
                                   (local.get $memdc)
                                   (local.get $bmp_src_x) (i32.const 0)
                                   (local.get $mask_color)))))
-                          (drop (call $host_gdi_delete_dc (local.get $memdc)))))))))
+                          (drop (call $gdi_native_delete_dc (local.get $memdc)))))))))
               (if (i32.eqz (local.get $drawn))
                 (then
                   ;; Fallback glyph: a small dark mark inside each button, so
                   ;; screenshots still distinguish toolbar buttons from a plain
                   ;; gray band when no app bitmap strip is available.
-                  (drop (call $host_gdi_fill_rect (local.get $hdc)
+                  (drop (call $gdi_native_fill_rect (local.get $hdc)
                           (i32.add (i32.add (local.get $left) (i32.const 8)) (local.get $hit))
                           (i32.add (i32.add (local.get $top) (i32.const 7)) (local.get $hit))
                           (i32.add (i32.add (local.get $left) (i32.const 15)) (local.get $hit))

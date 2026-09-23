@@ -2714,7 +2714,7 @@
       (local.set $run_count (i32.sub (local.get $i) (local.get $run_start)))
       (if (i32.gt_u (local.get $run_count) (i32.const 0))
         (then
-          (if (i32.eqz (call $host_gdi_ext_text_out
+          (if (i32.eqz (call $gdi_native_ext_text_out
                 (local.get $hdc)
                 (call $gdi_shape_unmap_x (local.get $desc) (local.get $cursor))
                 (local.get $y) (local.get $options) (local.get $rect)

@@ -9,17 +9,17 @@ const RegionMap = require('../lib/region-map.generated.js');
 
 const extraWat = String.raw`
   (func (export "test_fill_desktop") (param $hdc i32) (param $w i32) (param $h i32)
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
       (i32.const 0) (i32.const 0) (local.get $w) (local.get $h) (i32.const 2))))
   (func (export "test_fill_color")
       (param $hdc i32) (param $x0 i32) (param $y0 i32)
       (param $x1 i32) (param $y1 i32) (param $color i32)
     (local $brush i32)
-    (local.set $brush (call $host_gdi_create_solid_brush (local.get $color)))
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (local.set $brush (call $gdi_native_create_solid_brush (local.get $color)))
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
       (local.get $x0) (local.get $y0) (local.get $x1) (local.get $y1)
       (local.get $brush)))
-    (drop (call $host_gdi_delete_object (local.get $brush))))
+    (drop (call $gdi_native_delete_object (local.get $brush))))
 `;
 
 (async () => {

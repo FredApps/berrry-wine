@@ -8,13 +8,13 @@ const RegionMap = require('../lib/region-map.generated.js');
 
 const colorApiWat = String.raw`
   (func (export "test_set_text_color") (param i32 i32) (result i32)
-    (call $host_gdi_set_text_color (local.get 0) (local.get 1)))
+    (call $gdi_native_set_text_color (local.get 0) (local.get 1)))
   (func (export "test_get_text_color") (param i32) (result i32)
-    (call $host_gdi_get_text_color (local.get 0)))
+    (call $gdi_native_get_text_color (local.get 0)))
   (func (export "test_set_bk_color") (param i32 i32) (result i32)
-    (call $host_gdi_set_bk_color (local.get 0) (local.get 1)))
+    (call $gdi_native_set_bk_color (local.get 0) (local.get 1)))
   (func (export "test_get_bk_color") (param i32) (result i32)
-    (call $host_gdi_get_bk_color (local.get 0)))
+    (call $gdi_native_get_bk_color (local.get 0)))
 `;
 
 (async () => {

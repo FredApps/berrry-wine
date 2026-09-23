@@ -1525,7 +1525,7 @@
                        (result i32)
     (local $rect i32)
     (local.set $rect (call $paint_rect (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))
-    (drop (call $host_gdi_draw_text (local.get $hdc)
+    (drop (call $gdi_native_draw_text (local.get $hdc)
             (local.get $text_wa) (local.get $len)
             (local.get $rect)
             (i32.const 0xC20) (i32.const 0)))
@@ -1543,7 +1543,7 @@
     (local $width i32) (local $sc_len i32) (local $old_font i32)
     (if (i32.eqz (local.get $hdr)) (then (return (i32.const 0))))
     (local.set $old_font
-      (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+      (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
     (local.set $count (i32.load (local.get $hdr)))
     (local.set $width (i32.const 180))
     (local.set $i (i32.const 0))
@@ -1575,7 +1575,7 @@
             (then (local.set $width (local.get $candidate))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (drop (call $host_gdi_select_object (local.get $hdc) (local.get $old_font)))
+    (drop (call $gdi_native_select_object (local.get $hdc) (local.get $old_font)))
     (local.get $width))
 
   ;; ----- bar item geometry walker -----
@@ -1662,14 +1662,14 @@
     (local.set $hdc (call $host_alloc_window_dc (local.get $hwnd) (i32.const 2)))
     (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
     ;; Background fill (menuBg = LTGRAY = 0xC0C0C0 = LTGRAY_BRUSH 0x30011).
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
             (local.get $x) (local.get $y)
             (i32.add (local.get $x) (local.get $w))
             (i32.add (local.get $y) (i32.const 18))
             (i32.const 0x30011)))
     ;; Font + transparent bk (so highlight or face shows through).
-    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+    (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
 
     (local.set $cur_x (i32.add (local.get $x) (i32.const 4)))
     (local.set $i (i32.const 0))
@@ -1685,17 +1685,17 @@
       ;; Highlight rectangle if this is the open menu.
       (if (i32.eq (local.get $i) (local.get $open_idx))
         (then
-          (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (drop (call $gdi_native_fill_rect (local.get $hdc)
                   (local.get $cur_x) (local.get $y)
                   (i32.add (local.get $cur_x) (local.get $iw))
                   (i32.add (local.get $y) (i32.const 18))
                   (i32.const 14))) ;; COLOR_HIGHLIGHT brush (navy)
-          (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFFFFFF))))
+          (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0xFFFFFF))))
         (else
-          (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))
+          (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x000000)))))
       ;; Draw label (gdi_draw_text handles & accelerator underline now).
       ;; DT_LEFT(0)|DT_VCENTER(4)|DT_SINGLELINE(0x20) = 0x24
-      (drop (call $host_gdi_draw_text (local.get $hdc)
+      (drop (call $gdi_native_draw_text (local.get $hdc)
               (local.get $text_wa) (local.get $text_len)
               (call $paint_rect (i32.add (local.get $cur_x) (i32.const 6))
                                 (local.get $y)
@@ -1706,7 +1706,7 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
     ;; Bottom 1px shadow line (btnShadow 0x808080).
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
             (local.get $x) (i32.add (local.get $y) (i32.const 17))
             (i32.add (local.get $x) (local.get $w))
             (i32.add (local.get $y) (i32.const 18))
@@ -1734,7 +1734,7 @@
       (then (return (i32.const -1))))
     (local.set $count (i32.load (local.get $blob)))
     (local.set $hdc (call $gdi_menu_overlay_ensure))
-    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
 
     (local.set $cur_x (i32.add (local.get $bar_x) (i32.const 4)))
     (local.set $i (i32.const 0))
@@ -1764,7 +1764,7 @@
     (local.set $blob (call $menu_blob_w (local.get $hwnd)))
     (if (i32.eqz (local.get $blob)) (then (return (i32.const 0))))
     (local.set $hdc (call $gdi_menu_overlay_ensure))
-    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
+    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
     (call $bar_item_x (local.get $blob) (local.get $hdc) (local.get $idx)))
 
   ;; ----- child group (dropdown) helpers -----
@@ -2491,12 +2491,12 @@
     ;; edge for a '>' character. The i32.store8 is what says so, and it is why
     ;; the codemod declines this site rather than converting it.
     (i32.store8 (local.get $glyph) (i32.const 0x3E))
-    (drop (call $host_gdi_set_text_color (local.get $hdc)
+    (drop (call $gdi_native_set_text_color (local.get $hdc)
             (if (result i32) (local.get $hover)
               (then (i32.const 0xFFFFFF))
               (else (i32.const 0x000000)))))
     ;; DT_CENTER|DT_VCENTER|DT_SINGLELINE = 0x25
-    (drop (call $host_gdi_draw_text (local.get $hdc)
+    (drop (call $gdi_native_draw_text (local.get $hdc)
             (local.get $glyph) (i32.const 1)
             (call $paint_rect (i32.add (local.get $dx)
                                 (i32.sub (local.get $dw) (i32.const 16)))
@@ -2508,29 +2508,29 @@
 
   (func $menu_draw_check_glyph (param $hdc i32) (param $dx i32)
                                (param $iy i32) (param $hover i32)
-    (drop (call $host_gdi_select_object (local.get $hdc)
+    (drop (call $gdi_native_select_object (local.get $hdc)
             (if (result i32) (local.get $hover)
               (then (i32.const 0x30016))   ;; WHITE_PEN on hover
               (else (i32.const 0x30017))))) ;; BLACK_PEN otherwise
-    (drop (call $host_gdi_move_to (local.get $hdc)
+    (drop (call $gdi_native_move_to (local.get $hdc)
             (i32.add (local.get $dx) (i32.const 5))
             (i32.add (local.get $iy) (i32.const 10))))
-    (drop (call $host_gdi_line_to (local.get $hdc)
+    (drop (call $gdi_native_line_to (local.get $hdc)
             (i32.add (local.get $dx) (i32.const 8))
             (i32.add (local.get $iy) (i32.const 14))))
-    (drop (call $host_gdi_line_to (local.get $hdc)
+    (drop (call $gdi_native_line_to (local.get $hdc)
             (i32.add (local.get $dx) (i32.const 14))
             (i32.add (local.get $iy) (i32.const 6))))
-    (drop (call $host_gdi_move_to (local.get $hdc)
+    (drop (call $gdi_native_move_to (local.get $hdc)
             (i32.add (local.get $dx) (i32.const 5))
             (i32.add (local.get $iy) (i32.const 11))))
-    (drop (call $host_gdi_line_to (local.get $hdc)
+    (drop (call $gdi_native_line_to (local.get $hdc)
             (i32.add (local.get $dx) (i32.const 8))
             (i32.add (local.get $iy) (i32.const 15))))
-    (drop (call $host_gdi_line_to (local.get $hdc)
+    (drop (call $gdi_native_line_to (local.get $hdc)
             (i32.add (local.get $dx) (i32.const 14))
             (i32.add (local.get $iy) (i32.const 7))))
-    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021))))
+    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021))))
 
   ;; WordPad's formatting toolbar supplies seventeen MF_OWNERDRAW entries with
   ;; command ids 0x800e..0x801e and no strings. Its menu is destroyed as soon as
@@ -2541,23 +2541,23 @@
         (param $iy i32) (param $id i32)
     (local $brush i32)
     ;; A black frame keeps white and silver visible against COLOR_MENU.
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
             (i32.add (local.get $dx) (i32.const 19))
             (i32.add (local.get $iy) (i32.const 2))
             (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 19)))
             (i32.add (local.get $iy) (i32.const 18))
             (i32.const 0x30014))) ;; BLACK_BRUSH
     (local.set $brush
-      (call $host_gdi_create_solid_brush
+      (call $gdi_native_create_solid_brush
         (call $wordpad_colorref_for_index
           (i32.sub (local.get $id) (i32.const 0x800e)))))
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
             (i32.add (local.get $dx) (i32.const 20))
             (i32.add (local.get $iy) (i32.const 3))
             (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 20)))
             (i32.add (local.get $iy) (i32.const 17))
             (local.get $brush)))
-    (drop (call $host_gdi_delete_object (local.get $brush))))
+    (drop (call $gdi_native_delete_object (local.get $brush))))
 
   ;; ============================================================
   ;; $menu_paint_dropdown — draw the dropdown for top-level item
@@ -2593,19 +2593,19 @@
       (call $menu_submenu_width (local.get $hwnd) (local.get $tidx) (local.get $cidx)))
     (local.set $dh
       (call $menu_submenu_height (local.get $hwnd) (local.get $tidx) (local.get $cidx)))
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
             (local.get $dx) (local.get $dy)
             (i32.add (local.get $dx) (local.get $dw))
             (i32.add (local.get $dy) (local.get $dh))
             (i32.const 0x30011)))
-    (drop (call $host_gdi_draw_edge (local.get $hdc)
+    (drop (call $gdi_native_draw_edge (local.get $hdc)
             (local.get $dx) (local.get $dy)
             (i32.add (local.get $dx) (local.get $dw))
             (i32.add (local.get $dy) (local.get $dh))
             (i32.const 0x05) (i32.const 0x0F)))
 
-    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+    (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
 
     (local.set $iy (i32.add (local.get $dy) (i32.const 2)))
     (local.set $i (i32.const 0))
@@ -2618,7 +2618,7 @@
         (local.get $parent_blob) (local.get $tidx) (local.get $cidx) (local.get $i)))
       (if (i32.and (local.get $flags) (i32.const 0x01))
         (then
-          (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (drop (call $gdi_native_fill_rect (local.get $hdc)
                   (i32.add (local.get $dx) (i32.const 4))
                   (i32.add (local.get $iy) (i32.const 9))
                   (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 4)))
@@ -2627,16 +2627,16 @@
         (else
           (if (i32.eq (local.get $i) (local.get $hover_sidx))
             (then
-              (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (drop (call $gdi_native_fill_rect (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 2)) (local.get $iy)
                       (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 2)))
                       (i32.add (local.get $iy) (local.get $ih))
                       (i32.const 14)))
-              (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFFFFFF))))
+              (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0xFFFFFF))))
             (else
               (if (i32.and (local.get $flags) (i32.const 0x02))
-                (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x808080))))
-                (else (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))))
+                (then (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x808080))))
+                (else (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x000000)))))))
           (local.set $label_wa (i32.add (local.get $blob) (i32.load (local.get $it))))
           (local.set $label_len (i32.load offset=4 (local.get $it)))
           (if (i32.and (local.get $flags) (i32.const 0x04))
@@ -2644,7 +2644,7 @@
               (call $menu_draw_check_glyph
                 (local.get $hdc) (local.get $dx) (local.get $iy)
                 (i32.eq (local.get $i) (local.get $hover_sidx)))))
-          (drop (call $host_gdi_draw_text (local.get $hdc)
+          (drop (call $gdi_native_draw_text (local.get $hdc)
                   (local.get $label_wa) (local.get $label_len)
                   (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
                                     (local.get $iy)
@@ -2656,7 +2656,7 @@
             (then
               (local.set $sc_wa (i32.add (local.get $blob)
                                   (i32.load offset=8 (local.get $it))))
-              (drop (call $host_gdi_draw_text (local.get $hdc)
+              (drop (call $gdi_native_draw_text (local.get $hdc)
                       (local.get $sc_wa) (local.get $sc_len)
                       (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
                                         (local.get $iy)
@@ -2701,19 +2701,19 @@
       (call $menu_header_width (local.get $blob) (local.get $hdr) (local.get $hdc)))
     (local.set $dh (i32.add (i32.mul (local.get $count) (i32.const 20)) (i32.const 4)))
     ;; Background + outset border.
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
             (local.get $dx) (local.get $dy)
             (i32.add (local.get $dx) (local.get $dw))
             (i32.add (local.get $dy) (local.get $dh))
             (i32.const 0x30011)))
-    (drop (call $host_gdi_draw_edge (local.get $hdc)
+    (drop (call $gdi_native_draw_edge (local.get $hdc)
             (local.get $dx) (local.get $dy)
             (i32.add (local.get $dx) (local.get $dw))
             (i32.add (local.get $dy) (local.get $dh))
             (i32.const 0x05) (i32.const 0x0F)))
 
-    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
+    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+    (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
 
     (local.set $iy (i32.add (local.get $dy) (i32.const 2)))
     (local.set $i (i32.const 0))
@@ -2725,7 +2725,7 @@
       (if (i32.and (local.get $flags) (i32.const 0x01))
         (then
           ;; Separator: 1px shadow line in the middle of the row.
-          (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (drop (call $gdi_native_fill_rect (local.get $hdc)
                   (i32.add (local.get $dx) (i32.const 4))
                   (i32.add (local.get $iy) (i32.const 9))
                   (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 4)))
@@ -2735,45 +2735,45 @@
           ;; Hover highlight.
           (if (i32.eq (local.get $i) (local.get $hover_cidx))
             (then
-              (drop (call $host_gdi_fill_rect (local.get $hdc)
+              (drop (call $gdi_native_fill_rect (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 2)) (local.get $iy)
                       (i32.add (local.get $dx) (i32.sub (local.get $dw) (i32.const 2)))
                       (i32.add (local.get $iy) (i32.const 20))
                       (i32.const 14))) ;; COLOR_HIGHLIGHT brush
-              (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFFFFFF))))
+              (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0xFFFFFF))))
             (else
               (if (i32.and (local.get $flags) (i32.const 0x02))
-                (then (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x808080))))
-                (else (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))))))
+                (then (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x808080))))
+                (else (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x000000)))))))
           ;; Check glyph — two-stroke V drawn with BLACK_PEN/WHITE_PEN in the
           ;; left margin when MF_CHECKED (bit2) is set. Second pass offset by
           ;; +1 row gives a 2-px thick check. Font is re-selected after so
           ;; DrawText below keeps working.
           (if (i32.and (local.get $flags) (i32.const 0x04))
             (then
-              (drop (call $host_gdi_select_object (local.get $hdc)
+              (drop (call $gdi_native_select_object (local.get $hdc)
                       (if (result i32) (i32.eq (local.get $i) (local.get $hover_cidx))
                         (then (i32.const 0x30016))   ;; WHITE_PEN on hover
                         (else (i32.const 0x30017))))) ;; BLACK_PEN otherwise
-              (drop (call $host_gdi_move_to (local.get $hdc)
+              (drop (call $gdi_native_move_to (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 5))
                       (i32.add (local.get $iy) (i32.const 10))))
-              (drop (call $host_gdi_line_to (local.get $hdc)
+              (drop (call $gdi_native_line_to (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 8))
                       (i32.add (local.get $iy) (i32.const 14))))
-              (drop (call $host_gdi_line_to (local.get $hdc)
+              (drop (call $gdi_native_line_to (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 14))
                       (i32.add (local.get $iy) (i32.const 6))))
-              (drop (call $host_gdi_move_to (local.get $hdc)
+              (drop (call $gdi_native_move_to (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 5))
                       (i32.add (local.get $iy) (i32.const 11))))
-              (drop (call $host_gdi_line_to (local.get $hdc)
+              (drop (call $gdi_native_line_to (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 8))
                       (i32.add (local.get $iy) (i32.const 15))))
-              (drop (call $host_gdi_line_to (local.get $hdc)
+              (drop (call $gdi_native_line_to (local.get $hdc)
                       (i32.add (local.get $dx) (i32.const 14))
                       (i32.add (local.get $iy) (i32.const 7))))
-              (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))))
+              (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))))
           (if (i32.and
                 (i32.ne (i32.and (local.get $flags) (i32.const 0x08)) (i32.const 0))
                 (i32.and
@@ -2788,7 +2788,7 @@
               (local.set $label_wa (i32.add (local.get $blob) (i32.load (local.get $it))))
               (local.set $label_len (i32.load offset=4 (local.get $it)))
               ;; DT_LEFT|DT_VCENTER|DT_SINGLELINE = 0x24
-              (drop (call $host_gdi_draw_text (local.get $hdc)
+              (drop (call $gdi_native_draw_text (local.get $hdc)
                       (local.get $label_wa) (local.get $label_len)
                       (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
                                         (local.get $iy)
@@ -2802,7 +2802,7 @@
               (local.set $sc_wa (i32.add (local.get $blob)
                                   (i32.load offset=8 (local.get $it))))
               ;; DT_RIGHT(2)|DT_VCENTER(4)|DT_SINGLELINE(0x20) = 0x26
-              (drop (call $host_gdi_draw_text (local.get $hdc)
+              (drop (call $gdi_native_draw_text (local.get $hdc)
                       (local.get $sc_wa) (local.get $sc_len)
                       (call $paint_rect (i32.add (local.get $dx) (i32.const 20))
                                         (local.get $iy)
@@ -5274,7 +5274,7 @@
             (local.set $blob (call $menu_blob_w (local.get $owner)))
             (local.set $hdc (call $gdi_menu_overlay_ensure))
             (if (i32.eqz (local.get $hdc)) (then (return (i32.const 0))))
-            (drop (call $host_gdi_select_object
+            (drop (call $gdi_native_select_object
               (local.get $hdc) (i32.const 0x30021)))
             (local.set $left
               (i32.add

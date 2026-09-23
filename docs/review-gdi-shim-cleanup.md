@@ -76,3 +76,39 @@ foreground caption and modal button regressions pass. Negative controls reject
 both a native GDI function restored in the header and an unsupported stub
 added outside it. Manifest/fragment110, duplicate117/467, tiers1499 and diff
 checks pass. Build log: `/private/tmp/wa-gdi-adapter-relocation-build.log`.
+
+## Native symbol rename
+
+All58 native definitions now use `$gdi_native_*`:47 in the adapter fragment
+and11 text/DC entry points already in `10f-gdi-dc.wat`. Their exact symbol
+references were updated in production WAT, injected test WAT, architecture
+assertions and the union checker. The seven real GDI host imports keep their
+`$host_gdi_*` names. No public import/export names or function signatures changed.
+
+The migration guard now forbids native `$host_gdi_*` definitions anywhere,
+forbids native adapters of either spelling in the import header, and inventories
+unsupported stubs under the new native prefix across all fragments.
+
+Three caller files had unrelated work: `10f-gdi-dc.wat`, `13-exports.wat`, and
+`tools/union-gate.js`. Their symbol edits were staged using a HEAD-based patch,
+not by staging the working files. A separate check proved every initially staged
+file equals its HEAD content with only the58 selected substitutions; unrelated
+working-tree edits remain unstaged. Documentation and guard changes are separate
+from that mechanical patch.
+
+Historical comments in the sealed compiler source/regression retain the former
+symbol spelling. A comment-only rename initially failed the compiler provenance
+gate; restoring those comments fixes the gate without modifying the compiler,
+its manifest or its seal. They are not live calls or definitions.
+
+Migration compilation/import checks, core architecture, caption and modal-button
+rendering regressions pass. Duplicate ratchet remains117/467. This closes the
+native GDI import-era naming/placement item, not the broader review or all GDI
+semantics. No performance measurement or browser-composition fix is claimed.
+
+Final full build passes; log `/private/tmp/wa-gdi-native-rename-build-final.log`.
+DIBINDEX text and supplied-HDC default-erase regressions also pass. Three
+negative controls cover header placement, misleading native names and relocated
+unsupported stubs. Final symbol census finds exactly58 native definitions and
+only the7 actual host-import symbols under `$host_gdi_*`. Tiers1500 and staged
+diff checks pass; no foreign changes were staged.

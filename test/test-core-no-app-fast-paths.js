@@ -69,7 +69,7 @@ for (const helper of [
 }
 assert(gdiHandlersWat.includes('(call $gdi_line_desc'),
   'LineTo must route its canonical surface descriptor through the WAT raster kernel');
-assert(!gdiHandlersWat.includes('(call $host_gdi_line_to'),
+assert(!gdiHandlersWat.includes('(call $gdi_native_line_to'),
   'LineTo must not retain a Canvas geometry fallback');
 assert(handlersWat.includes('(call $gdi_polyline_try'),
   'Polyline APIs must try the atomic WAT path raster kernel first');

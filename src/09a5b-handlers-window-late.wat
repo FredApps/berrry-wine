@@ -1155,7 +1155,7 @@ GetTopWindow(hWnd) — 1 arg stdcall
   ;; delta and fills exposed strips. lpRect/lpClipRect are client-relative and
   ;; are clipped/intersected host-side.
   (func $handle_ScrollWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_scroll_window
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_scroll_window
         (local.get $arg0) (local.get $arg1) (local.get $arg2)
         (local.get $arg3) (local.get $arg4)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
@@ -1992,7 +1992,7 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (local.set $top (load.field Rect top (local.get $wa)))
     (local.set $right (load.field Rect right (local.get $wa)))
     (local.set $bottom (load.field Rect bottom (local.get $wa)))
-    (i32.store offset=0 (global.get $reg_base) (call $host_gdi_bitblt
+    (i32.store offset=0 (global.get $reg_base) (call $gdi_native_bitblt
       (local.get $arg0) (local.get $left) (local.get $top)
       (i32.sub (local.get $right) (local.get $left))
       (i32.sub (local.get $bottom) (local.get $top))
@@ -2442,7 +2442,7 @@ GetTopWindow(hWnd) — 1 arg stdcall
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 36)))
         (return)))
     (drop
-      (call $host_gdi_scroll_window
+      (call $gdi_native_scroll_window
         (local.get $arg0) (local.get $arg1) (local.get $arg2)
         (local.get $arg3) (local.get $arg4)))
     (if (local.get $arg3)

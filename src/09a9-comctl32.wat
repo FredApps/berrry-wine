@@ -207,9 +207,9 @@
     (local.set $source_bitmap (i32.load offset=16 (local.get $sw)))
     (if (i32.or (i32.eqz (local.get $source_bitmap))
           (i32.or
-            (i32.lt_s (call $host_gdi_get_object_w (local.get $source_bitmap))
+            (i32.lt_s (call $gdi_native_get_object_w (local.get $source_bitmap))
               (i32.mul (i32.add (local.get $index) (i32.const 1)) (local.get $cx)))
-            (i32.lt_s (call $host_gdi_get_object_h (local.get $source_bitmap))
+            (i32.lt_s (call $gdi_native_get_object_h (local.get $source_bitmap))
               (local.get $cy))))
       (then (return (i32.const 0))))
     (call $image_list_cell_icon (local.get $source_bitmap) (i32.const 0)
@@ -497,8 +497,8 @@
     ;; bitmap. A fabricated empty HIMAGELIST hides missing resources and leaves
     ;; callers believing image index zero exists.
     (if (i32.eqz (local.get $bmp)) (then (return (i32.const 0))))
-    (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bmp)))
-    (local.set $bmp_h (call $host_gdi_get_object_h (local.get $bmp)))
+    (local.set $bmp_w (call $gdi_native_get_object_w (local.get $bmp)))
+    (local.set $bmp_h (call $gdi_native_get_object_h (local.get $bmp)))
     (if (i32.or
           (i32.le_s (local.get $bmp_w) (i32.const 0))
           (i32.or (i32.le_s (local.get $bmp_h) (i32.const 0))
@@ -569,8 +569,8 @@
     (local.set $count (i32.load offset=12 (local.get $sw)))
     (local.set $cx (i32.load (local.get $sw)))
     (local.set $cy (i32.load offset=4 (local.get $sw)))
-    (local.set $bmp_w (call $host_gdi_get_object_w (local.get $bitmap)))
-    (local.set $bmp_h (call $host_gdi_get_object_h (local.get $bitmap)))
+    (local.set $bmp_w (call $gdi_native_get_object_w (local.get $bitmap)))
+    (local.set $bmp_h (call $gdi_native_get_object_h (local.get $bitmap)))
     (if (i32.or
           (i32.or
             (i32.or (i32.le_s (local.get $cx) (i32.const 0))
@@ -727,13 +727,13 @@
           (i32.eqz (i32.and (local.get $style) (i32.const 0x11))) ;; neither ILD_TRANSPARENT nor ILD_MASK
           (i32.ne (local.get $bk) (i32.const -1)))
       (then
-        (local.set $brush (call $host_gdi_create_solid_brush (local.get $bk)))
+        (local.set $brush (call $gdi_native_create_solid_brush (local.get $bk)))
         (if (local.get $brush)
           (then
-            (drop (call $host_gdi_fill_rect (local.get $hdc) (local.get $x) (local.get $y)
+            (drop (call $gdi_native_fill_rect (local.get $hdc) (local.get $x) (local.get $y)
               (i32.add (local.get $x) (local.get $cx)) (i32.add (local.get $y) (local.get $cy))
               (local.get $brush)))
-            (drop (call $host_gdi_delete_object (local.get $brush)))))))
+            (drop (call $gdi_native_delete_object (local.get $brush)))))))
     (local.set $icon (call $image_list_icon_handle (local.get $list) (local.get $index)))
     (if (i32.eqz (local.get $icon)) (then (return (i32.const 0))))
     (local.set $ok (call $icon_draw_handle (local.get $icon) (local.get $hdc)
@@ -980,8 +980,8 @@
           (then
             (drop (call $gdi_object_delete_full (local.get $color)))
             (return (i32.const 0))))))
-    (local.set $cols (i32.div_u (call $host_gdi_get_object_w (local.get $color)) (local.get $cx)))
-    (local.set $rows (i32.div_u (call $host_gdi_get_object_h (local.get $color)) (local.get $cy)))
+    (local.set $cols (i32.div_u (call $gdi_native_get_object_w (local.get $color)) (local.get $cx)))
+    (local.set $rows (i32.div_u (call $gdi_native_get_object_h (local.get $color)) (local.get $cy)))
     (local.set $capacity (i32.const 4))
     (block $sized (loop $grow
       (br_if $sized (i32.ge_u (local.get $capacity) (local.get $count)))
@@ -1322,7 +1322,7 @@
     ;; TB_ADDBITMAP. Load it here so the copied iBitmap indices have pixels.
     (if (local.get $arg3)
       (then
-        (local.set $bmp (call $host_gdi_load_bitmap (local.get $arg4)
+        (local.set $bmp (call $gdi_native_load_bitmap (local.get $arg4)
           (i32.and (i32.load offset=24 (local.get $wa_esp)) (i32.const 0xFFFF))))
         (if (local.get $bmp)
           (then
@@ -1442,7 +1442,7 @@
     ;; renderer text path.
     (if (local.get $arg2)
       (then
-        (drop (call $host_gdi_draw_text
+        (drop (call $gdi_native_draw_text
           (local.get $arg0) ;; hDC
           (call $g2w (local.get $arg2)) ;; text
           (i32.const -1) ;; nCount=-1 (null terminated)
@@ -1458,7 +1458,7 @@
   (func $handle_DrawStatusTextW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (if (local.get $arg2)
       (then
-        (drop (call $host_gdi_draw_text
+        (drop (call $gdi_native_draw_text
           (local.get $arg0)                              ;; hDC
           (call $g2w (local.get $arg2))                  ;; text
           (i32.const -1)                                 ;; nCount=-1 (null terminated)
@@ -1826,7 +1826,7 @@
   (func $handle_CreateMappedBitmap (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $bitmap i32) (local $masked i32) (local $map i32) (local $map_count i32)
     (local.set $bitmap
-      (call $host_gdi_load_bitmap
+      (call $gdi_native_load_bitmap
         (local.get $arg0)
         ;; Win98's export reads idBitmap as a WORD resource id even though the
         ;; modern prototype spells the slot INT_PTR.

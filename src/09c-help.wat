@@ -519,7 +519,7 @@
         (if (i32.eq (local.get $msg) (i32.const 0x000F))
           (then
             (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
               (i32.const 0) (i32.const 0)
               (global.get $help_popup_width) (global.get $help_popup_height)
               (i32.const 0x30014)))))
@@ -539,11 +539,11 @@
         ;; Context popups retain the same deterministic system white surface;
         ;; their border, sizing, ownership, and shadow distinguish the native
         ;; popup presentation without introducing a private color renderer.
-        (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))  ;; OPAQUE
-        (drop (call $host_gdi_set_bk_color (local.get $hdc) (i32.const 0xFFFFFF)))
-        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))
+        (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))  ;; OPAQUE
+        (drop (call $gdi_native_set_bk_color (local.get $hdc) (i32.const 0xFFFFFF)))
+        (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x000000)))
         ;; Fill the exact retained popup or live resized primary client area.
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (drop (call $gdi_native_fill_rect (local.get $hdc)
           (i32.const 0) (i32.const 0)
           (select (global.get $help_popup_width) (global.get $help_client_width)
             (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd)))
@@ -556,13 +556,13 @@
           (then (call $help_paint_typed_view (local.get $hdc)))
           (else
             ;; No topic: draw placeholder
-            (drop (call $host_gdi_text_out (local.get $hdc)
+            (drop (call $gdi_native_text_out (local.get $hdc)
               (i32.const 8) (i32.const 8)
               (i32.const 0x108)  ;; "Help"
               (i32.const 4) (i32.const 0)))))
         (if (i32.eq (local.get $hwnd) (global.get $help_popup_hwnd))
           (then
-            (drop (call $host_gdi_draw_edge (local.get $hdc)
+            (drop (call $gdi_native_draw_edge (local.get $hdc)
               (i32.const 0) (i32.const 0)
               (global.get $help_popup_width) (global.get $help_popup_height)
               (i32.const 0x05) (i32.const 0x0F)))
@@ -570,20 +570,20 @@
         (local.set $viewport_bottom (call $help_primary_viewport_height))
         ;; Draw the navigation row at the live bottom edge.
         ;; Draw separator line
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (drop (call $gdi_native_fill_rect (local.get $hdc)
           (i32.const 0) (local.get $viewport_bottom)
           (global.get $help_client_width) (i32.add (local.get $viewport_bottom) (i32.const 1))
           (i32.const 0x30014))) ;; BLACK_BRUSH
         ;; "[Contents]" at 0x10D (10 chars)
-        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0xFF0000))) ;; blue (BGR)
-        (drop (call $host_gdi_text_out (local.get $hdc)
+        (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0xFF0000))) ;; blue (BGR)
+        (drop (call $gdi_native_text_out (local.get $hdc)
           (i32.const 8) (i32.add (local.get $viewport_bottom) (i32.const 6))
           (i32.const 0x10D) (i32.const 10) (i32.const 0)))
         ;; "[Back]" at 0x118 (6 chars)
-        (drop (call $host_gdi_text_out (local.get $hdc)
+        (drop (call $gdi_native_text_out (local.get $hdc)
           (i32.const 100) (i32.add (local.get $viewport_bottom) (i32.const 6))
           (i32.const 0x118) (i32.const 6) (i32.const 0)))
-        (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0x000000)))
+        (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0x000000)))
         (return (i32.const 0))))
 
     ;; WM_SIZE (0x0005): lParam is the new client width/height. Reflowing here

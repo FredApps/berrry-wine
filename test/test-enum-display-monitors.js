@@ -30,7 +30,7 @@ const extraWat = String.raw`
   (func (export "test_monitor_visible") (param $hdc i32) (param $x i32) (param $y i32) (result i32)
     (call $gdi_dc_clip_device_point_visible (local.get $hdc) (local.get $x) (local.get $y)))
   (func (export "test_monitor_color") (param $hdc i32) (param $color i32) (result i32)
-    (call $host_gdi_set_text_color (local.get $hdc) (local.get $color)))
+    (call $gdi_native_set_text_color (local.get $hdc) (local.get $color)))
   (func (export "test_monitor_window_dc") (result i32)
     (local $hwnd i32)
     (local.set $hwnd (global.get $next_hwnd))

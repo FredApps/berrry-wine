@@ -27,7 +27,7 @@ const extraWat = `
     (i32.store offset=16 (global.get $reg_base) (local.get $sp))
     (local.get $result))
   (func (export "test_clip") (param $dc i32)
-    (drop (call $host_gdi_intersect_clip_rect (local.get $dc)
+    (drop (call $gdi_native_intersect_clip_rect (local.get $dc)
       (i32.const 5) (i32.const 6) (i32.const 12) (i32.const 14))))
   (func (export "test_erase16") (param $h i32) (param $dc i32) (param $brush i32) (result i32)
     (call $win16_seg_set (i32.const 1) (i32.const 0x100000) (i32.const 65536) (i32.const 0) (i32.const 1))

@@ -276,9 +276,9 @@ from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. 
 | `10c1-truetype-hint.wat` | Runtime TrueType instruction engine: fpgm/prep/glyph programs over eight ppem contexts with scaled CVT, storage and twilight points |
 | `10d-gdi-region-path.wat` | GDI regions (allocator + polygon scan-converter), path engine (record/flatten/widen/stroke), DC clipping, object allocator |
 | `10e-gdi-metafile.wat` | GDI palettes, WMF/EMF recorder and player, bitmap objects |
-| `10f-gdi-dc.wat` | GDI device-context state: save/restore, selected objects, surface descriptors, text metrics, the `$host_gdi_*` entry points |
+| `10f-gdi-dc.wat` | GDI device-context state: save/restore, selected objects, surface descriptors, text metrics, native text entry points |
 | `10g-gdi-raster.wat` | GDI software rasterizer: span fill, clip bands, brush sampling, shape primitives, region combine |
-| `10h-gdi-adapters.wat` | Native GDI adapters moved out of the import header; retained import-era names are WAT functions, not JS calls |
+| `10h-gdi-adapters.wat` | Native `$gdi_native_*` adapters moved out of the import header; only real imports retain `$host_gdi_*` names |
 | `11-seh.wat` | Win32 Structured Exception Handling |
 | `12-wsprintf.wat` | wsprintf/sprintf implementation |
 | `13-exports.wat` | WASM exports (run, get_eip, register accessors, etc.) |

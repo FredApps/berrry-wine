@@ -771,7 +771,7 @@
                 (local.set $brush (call $wnd_get_bg_brush (local.get $parent)))
                 (if (i32.eqz (local.get $brush))
                   (then (local.set $brush (i32.const 0x30011)))) ;; COLOR_3DFACE
-                (drop (call $host_gdi_fill_rect (local.get $hdc)
+                (drop (call $gdi_native_fill_rect (local.get $hdc)
                   (local.get $ox) (local.get $oy)
                   (i32.add (local.get $ox) (local.get $ow))
                   (i32.add (local.get $oy) (local.get $oh))
@@ -1203,7 +1203,7 @@
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
     ;; Only clear the chrome strip. Child pages paint into this common backing
     ;; surface too, and a late tab repaint must not erase their topic tree.
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
       (i32.const 0) (i32.const 0) (local.get $w) (i32.const 21) (i32.const 0x30011)))
     ;; Clear only the page-frame band that no visible page dialog owns. This
     ;; is the strip WinRAR exposes after switching Settings pages.
@@ -1211,17 +1211,17 @@
       (call $tab_native_page_top (local.get $hwnd) (local.get $h)))
     (if (i32.gt_s (local.get $page_top) (i32.const 21))
       (then
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (drop (call $gdi_native_fill_rect (local.get $hdc)
           (i32.const 2) (i32.const 21) (i32.sub (local.get $w) (i32.const 2))
           (local.get $page_top) (i32.const 0x30011)))))
     ;; Native Win98 tabs use a 20px row and merge the selected tab into the
     ;; raised page frame beneath it.
-    (drop (call $host_gdi_draw_edge (local.get $hdc)
+    (drop (call $gdi_native_draw_edge (local.get $hdc)
       (i32.const 0) (i32.const 19) (local.get $w) (local.get $h)
       (i32.const 0x05) (i32.const 0x0F)))
-    (drop (call $host_gdi_select_object (local.get $hdc) (i32.const 0x30021)))
-    (drop (call $host_gdi_set_bk_mode (local.get $hdc) (i32.const 1)))
-    (drop (call $host_gdi_set_text_color (local.get $hdc) (i32.const 0)))
+    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+    (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
+    (drop (call $gdi_native_set_text_color (local.get $hdc) (i32.const 0)))
     (local.set $i (i32.const 0))
     (local.set $left (i32.const 0))
     (block $done (loop $tabs
@@ -1233,22 +1233,22 @@
         (i32.add (i32.mul (local.get $len) (i32.const 5)) (i32.const 16))))
       (local.set $top (select (i32.const 0) (i32.const 2)
         (i32.eq (local.get $i) (local.get $selected))))
-      (drop (call $host_gdi_fill_rect (local.get $hdc)
+      (drop (call $gdi_native_fill_rect (local.get $hdc)
         (local.get $left) (local.get $top) (local.get $right) (i32.const 20)
         (i32.const 0x30011)))
-      (drop (call $host_gdi_draw_edge (local.get $hdc)
+      (drop (call $gdi_native_draw_edge (local.get $hdc)
         (local.get $left) (local.get $top) (local.get $right) (i32.const 20)
         (i32.const 0x05) (i32.const 0x07))) ;; BF_LEFT|TOP|RIGHT
       (if (i32.eq (local.get $i) (local.get $selected))
         (then
           ;; Erase the page's top edge under the selected tab.
-          (drop (call $host_gdi_fill_rect (local.get $hdc)
+          (drop (call $gdi_native_fill_rect (local.get $hdc)
             (i32.add (local.get $left) (i32.const 2)) (i32.const 18)
             (i32.sub (local.get $right) (i32.const 2)) (i32.const 21)
             (i32.const 0x30011)))))
       (if (local.get $len)
         (then
-          (drop (call $host_gdi_text_out (local.get $hdc)
+          (drop (call $gdi_native_text_out (local.get $hdc)
             (i32.add (local.get $left) (i32.const 8))
             (i32.add (local.get $top) (i32.const 3))
             (i32.add (local.get $rec) (i32.const 1)) (local.get $len) (i32.const 0)))))

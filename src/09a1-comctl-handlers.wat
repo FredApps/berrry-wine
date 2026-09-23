@@ -538,20 +538,20 @@
     ;; use Win98's active/inactive caption colors and optional gradient.
     (if (i32.ne (i32.and (local.get $flags) (i32.const 0x10)) (i32.const 0))
       (then
-        (drop (call $host_gdi_fill_rect (local.get $arg1)
+        (drop (call $gdi_native_fill_rect (local.get $arg1)
           (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)
           (i32.const 0x30011)))
-        (drop (call $host_gdi_draw_edge (local.get $arg1)
+        (drop (call $gdi_native_draw_edge (local.get $arg1)
           (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)
           (i32.const 0x05) (i32.const 0x0F))))
       (else
         (if (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0))
           (then
-            (drop (call $host_gdi_gradient_fill_h (local.get $arg1)
+            (drop (call $gdi_native_gradient_fill_h (local.get $arg1)
               (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)
               (i32.const 0x800000) (i32.const 0xD08410))))
           (else
-            (drop (call $host_gdi_fill_rect (local.get $arg1)
+            (drop (call $gdi_native_fill_rect (local.get $arg1)
               (local.get $left) (local.get $top) (local.get $right) (local.get $bottom)
               (i32.const 0xC0C0C0)))))))
 
@@ -572,20 +572,20 @@
       (then
         (if (local.get $arg3)
           (then (local.set $old_font
-            (call $host_gdi_select_object (local.get $arg1) (local.get $arg3)))))
-        (local.set $old_bk (call $host_gdi_set_bk_mode (local.get $arg1) (i32.const 1)))
-        (local.set $old_color (call $host_gdi_set_text_color (local.get $arg1)
+            (call $gdi_native_select_object (local.get $arg1) (local.get $arg3)))))
+        (local.set $old_bk (call $gdi_native_set_bk_mode (local.get $arg1) (i32.const 1)))
+        (local.set $old_color (call $gdi_native_set_text_color (local.get $arg1)
           (select (i32.const 0x000000) (i32.const 0xFFFFFF)
             (i32.ne (i32.and (local.get $flags) (i32.const 0x10)) (i32.const 0)))))
-        (drop (call $host_gdi_draw_text (local.get $arg1)
+        (drop (call $gdi_native_draw_text (local.get $arg1)
           (call $g2w (local.get $text_g)) (call $lstr_len (local.get $text_g) (i32.const 0))
           (call $paint_rect (local.get $text_left) (local.get $top)
             (i32.sub (local.get $right) (i32.const 4)) (local.get $bottom))
           (i32.const 0x8824) (i32.const 0))) ;; VCENTER|SINGLELINE|NOPREFIX|END_ELLIPSIS
-        (drop (call $host_gdi_set_text_color (local.get $arg1) (local.get $old_color)))
-        (drop (call $host_gdi_set_bk_mode (local.get $arg1) (local.get $old_bk)))
+        (drop (call $gdi_native_set_text_color (local.get $arg1) (local.get $old_color)))
+        (drop (call $gdi_native_set_bk_mode (local.get $arg1) (local.get $old_bk)))
         (if (local.get $arg3)
-          (then (drop (call $host_gdi_select_object (local.get $arg1) (local.get $old_font)))))))
+          (then (drop (call $gdi_native_select_object (local.get $arg1) (local.get $old_font)))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 32)))
   )

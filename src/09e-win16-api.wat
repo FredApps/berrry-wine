@@ -11843,7 +11843,7 @@
   ;;
   ;; The RECT is four words in Win16 and four dwords in Win32, so it is widened
   ;; into scratch rather than passed through; the spacing array is words in
-  ;; both, and $host_gdi_ext_text_out reads it as words, so that one goes
+  ;; both, and $gdi_native_ext_text_out reads it as words, so that one goes
   ;; straight across.
   (func $win16_ExtTextOut
     (local $hdc i32) (local $x i32) (local $y i32) (local $opts i32)
@@ -11953,7 +11953,7 @@
             (i32.eq (i32.load offset=16 (global.get $GDI_BLIT_SRC_DESC))
                     (i32.const 1))))
       (then
-        (drop (call $host_gdi_fill_rect
+        (drop (call $gdi_native_fill_rect
           (local.get $dst) (local.get $x) (local.get $y)
           (i32.add (local.get $x) (local.get $w))
           (i32.add (local.get $y) (local.get $h))
@@ -11964,20 +11964,20 @@
           (local.get $src) (local.get $sx) (local.get $sy)))
         ;; Resource 999 includes a one-pixel frame. USER leaves that frame
         ;; solid black while embossing the artwork inside it.
-        (drop (call $host_gdi_fill_rect
+        (drop (call $gdi_native_fill_rect
           (local.get $dst) (local.get $x) (local.get $y)
           (i32.add (local.get $x) (local.get $w))
           (i32.add (local.get $y) (i32.const 2)) (i32.const 0x30014)))
-        (drop (call $host_gdi_fill_rect
+        (drop (call $gdi_native_fill_rect
           (local.get $dst) (local.get $x)
           (i32.sub (i32.add (local.get $y) (local.get $h)) (i32.const 2))
           (i32.add (local.get $x) (local.get $w))
           (i32.add (local.get $y) (local.get $h)) (i32.const 0x30014)))
-        (drop (call $host_gdi_fill_rect
+        (drop (call $gdi_native_fill_rect
           (local.get $dst) (local.get $x) (local.get $y)
           (i32.add (local.get $x) (i32.const 2))
           (i32.add (local.get $y) (local.get $h)) (i32.const 0x30014)))
-        (drop (call $host_gdi_fill_rect
+        (drop (call $gdi_native_fill_rect
           (local.get $dst)
           (i32.sub (i32.add (local.get $x) (local.get $w)) (i32.const 2))
           (local.get $y) (i32.add (local.get $x) (local.get $w))

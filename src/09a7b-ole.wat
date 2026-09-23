@@ -3281,7 +3281,7 @@
   (func $ole_font_invalidate (param $obj i32)
     (if (call $gl32 (i32.add (local.get $obj) (i32.const 44)))
       (then
-        (drop (call $host_gdi_delete_object (call $gl32 (i32.add (local.get $obj) (i32.const 44)))))
+        (drop (call $gdi_native_delete_object (call $gl32 (i32.add (local.get $obj) (i32.const 44)))))
         (call $gs32 (i32.add (local.get $obj) (i32.const 44)) (i32.const 0)))))
 
   ;; CY point size is the size in points scaled by 10000; LOGFONT height is
@@ -6042,7 +6042,7 @@
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 12))))
         (if (local.get $data) (then (call $heap_free (i32.sub (local.get $data) (i32.const 4)))))
         (local.set $data (call $gl32 (i32.add (local.get $obj) (i32.const 44))))
-        (if (local.get $data) (then (drop (call $host_gdi_delete_object (local.get $data)))))))
+        (if (local.get $data) (then (drop (call $gdi_native_delete_object (local.get $data)))))))
     (call $heap_free (local.get $obj))
     (i32.const 0))
 
@@ -11772,7 +11772,7 @@
                       (i32.load16_u offset=14 (local.get $data))))))
                   (local.set $bits (i32.add (local.get $data)
                     (i32.add (i32.load (local.get $data)) (i32.shl (local.get $colors) (i32.const 2)))))
-                  (local.set $ok (call $host_gdi_stretch_dib_bits (local.get $hdc)
+                  (local.set $ok (call $gdi_native_stretch_dib_bits (local.get $hdc)
                     (i32.load (local.get $bounds)) (i32.load offset=4 (local.get $bounds))
                     (i32.sub (i32.load offset=8 (local.get $bounds)) (i32.load (local.get $bounds)))
                     (i32.sub (i32.load offset=12 (local.get $bounds)) (i32.load offset=4 (local.get $bounds)))

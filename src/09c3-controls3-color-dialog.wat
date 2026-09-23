@@ -304,13 +304,13 @@
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then
         (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (drop (call $gdi_native_fill_rect (local.get $hdc)
           (i32.const 0) (i32.const 0) (i32.const 196) (i32.const 140)
           (i32.const 0x30011)))
-        (drop (call $host_gdi_draw_edge (local.get $hdc)
+        (drop (call $gdi_native_draw_edge (local.get $hdc)
           (i32.const 0) (i32.const 0) (i32.const 164) (i32.const 124)
           (i32.const 0x0A) (i32.const 0x0F)))
-        (drop (call $host_gdi_draw_edge (local.get $hdc)
+        (drop (call $gdi_native_draw_edge (local.get $hdc)
           (i32.const 174) (i32.const 0) (i32.const 194) (i32.const 124)
           (i32.const 0x0A) (i32.const 0x0F)))
         (local.set $row (i32.const 0))
@@ -330,7 +330,7 @@
             (local.set $c1 (call $colordlg_hsl_to_rgb
               (i32.mul (i32.add (local.get $seg) (i32.const 1)) (i32.const 40))
               (local.get $sat) (i32.const 120)))
-            (drop (call $host_gdi_gradient_fill_h (local.get $hdc)
+            (drop (call $gdi_native_gradient_fill_h (local.get $hdc)
               (local.get $x0) (i32.add (local.get $row) (i32.const 2))
               (local.get $x1) (i32.add (local.get $row) (i32.const 3))
               (local.get $c0) (local.get $c1)))
@@ -340,7 +340,7 @@
             (i32.div_u (i32.mul (local.get $row) (i32.const 240)) (i32.const 119))))
           (local.set $c0 (call $colordlg_hsl_to_rgb
             (load.field ColorSpectrumState hue (local.get $sw)) (load.field.memarg ColorSpectrumState sat (local.get $sw)) (local.get $lum)))
-          (drop (call $host_gdi_gradient_fill_h (local.get $hdc)
+          (drop (call $gdi_native_gradient_fill_h (local.get $hdc)
             (i32.const 176) (i32.add (local.get $row) (i32.const 2))
             (i32.const 192) (i32.add (local.get $row) (i32.const 3))
             (local.get $c0) (local.get $c0)))
@@ -352,7 +352,7 @@
           (i32.div_u
             (i32.mul (i32.sub (i32.const 240) (load.field.memarg ColorSpectrumState sat (local.get $sw))) (i32.const 119))
             (i32.const 240))))
-        (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+        (drop (call $gdi_native_draw_focus_rect (local.get $hdc)
           (i32.sub (local.get $mark_x) (i32.const 3))
           (i32.sub (local.get $mark_y) (i32.const 3))
           (i32.add (local.get $mark_x) (i32.const 4))
@@ -361,7 +361,7 @@
           (i32.div_u
             (i32.mul (i32.sub (i32.const 240) (load.field.memarg ColorSpectrumState lum (local.get $sw))) (i32.const 119))
             (i32.const 240))))
-        (drop (call $host_gdi_draw_focus_rect (local.get $hdc)
+        (drop (call $gdi_native_draw_focus_rect (local.get $hdc)
           (i32.const 174) (i32.sub (local.get $mark_y) (i32.const 2))
           (i32.const 195) (i32.add (local.get $mark_y) (i32.const 3))))
         (return (i32.const 0))))
@@ -417,19 +417,19 @@
     (local.set $w (i32.and (local.get $sz) (i32.const 0xFFFF)))
     (local.set $h (i32.shr_u (local.get $sz) (i32.const 16)))
     (local.set $hdc (i32.add (local.get $hwnd) (i32.const 0x40000)))
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
       (i32.const 0) (i32.const 0) (local.get $w) (local.get $h)
       (i32.const 0x30014))) ;; black frame
-    (local.set $brush (call $host_gdi_create_solid_brush (local.get $rgb)))
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (local.set $brush (call $gdi_native_create_solid_brush (local.get $rgb)))
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
       (i32.const 2) (i32.const 2)
       (i32.sub (local.get $w) (i32.const 2))
       (i32.sub (local.get $h) (i32.const 2))
       (local.get $brush)))
-    (drop (call $host_gdi_delete_object (local.get $brush)))
+    (drop (call $gdi_native_delete_object (local.get $brush)))
     ;; Preserve the visible Color/Solid split even when both true-color halves
     ;; resolve identically.
-    (drop (call $host_gdi_fill_rect (local.get $hdc)
+    (drop (call $gdi_native_fill_rect (local.get $hdc)
       (i32.sub (i32.div_u (local.get $w) (i32.const 2)) (i32.const 1))
       (i32.const 1)
       (i32.div_u (local.get $w) (i32.const 2))
@@ -758,7 +758,7 @@
         (local.set $row_count
           (select (i32.const 2) (i32.const 6)
             (i32.eq (local.get $ctrl_id) (i32.const 0x461))))
-        (drop (call $host_gdi_fill_rect (local.get $hdc)
+        (drop (call $gdi_native_fill_rect (local.get $hdc)
                 (i32.const 0) (i32.const 0) (i32.const 208)
                 (i32.mul (local.get $row_count) (i32.const 22))
                 (i32.const 0x30011)))  ;; LTGRAY_BRUSH / COLOR_BTNFACE
@@ -772,25 +772,25 @@
             (local.set $cx (i32.mul (local.get $col) (i32.const 26)))
             (local.set $cy (i32.mul (local.get $row) (i32.const 22)))
             ;; 1-px black border = full cell painted black, then color fill 1px in
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (local.get $cx) (local.get $cy)
                     (i32.add (local.get $cx) (i32.const 22))
                     (i32.add (local.get $cy) (i32.const 18))
                     (i32.const 0x30014)))  ;; BLACK_BRUSH
-            (local.set $brush (call $host_gdi_create_solid_brush
+            (local.set $brush (call $gdi_native_create_solid_brush
                                 (call $colorgrid_color_for_hwnd
                                   (local.get $hwnd) (local.get $idx))))
-            (drop (call $host_gdi_fill_rect (local.get $hdc)
+            (drop (call $gdi_native_fill_rect (local.get $hdc)
                     (i32.add (local.get $cx) (i32.const 1))
                     (i32.add (local.get $cy) (i32.const 1))
                     (i32.add (local.get $cx) (i32.const 21))
                     (i32.add (local.get $cy) (i32.const 17))
                     (local.get $brush)))
-            (drop (call $host_gdi_delete_object (local.get $brush)))
+            (drop (call $gdi_native_delete_object (local.get $brush)))
             ;; Selection: white ring 2 px in from the border
             (if (i32.eq (local.get $idx) (local.get $sel))
               (then
-                (drop (call $host_gdi_draw_edge (local.get $hdc)
+                (drop (call $gdi_native_draw_edge (local.get $hdc)
                         (i32.add (local.get $cx) (i32.const 2))
                         (i32.add (local.get $cy) (i32.const 2))
                         (i32.add (local.get $cx) (i32.const 20))
