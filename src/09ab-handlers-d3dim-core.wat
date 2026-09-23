@@ -1430,17 +1430,17 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $d3dim_vb_get_desc (param $this i32) (param $lpDesc i32)
-    (local $entry i32) (local $desc_g i32) (local $desc_wa i32) (local $copy_size i32)
+    (local $entry i32) (local $desc_g i32) (local $copy_size i32)
     (if (i32.eqz (local.get $lpDesc)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)) (return)))
     (local.set $entry (call $dx_from_this (local.get $this)))
-    (local.set $desc_g (i32.load (i32.add (local.get $entry) (i32.const 16)))) (local.set $desc_wa (call $g2w (local.get $lpDesc)))
+    (local.set $desc_g (i32.load (i32.add (local.get $entry) (i32.const 16))))
     (local.set $copy_size (call $gl32 (local.get $lpDesc)))
     (if (i32.lt_u (local.get $copy_size) (i32.const 16)) (then (local.set $copy_size (i32.const 16))))
     (if (i32.gt_u (local.get $copy_size) (i32.const 32)) (then (local.set $copy_size (i32.const 32))))
     (if (local.get $desc_g)
-      (then (call $memcpy (local.get $desc_wa) (call $g2w (local.get $desc_g)) (local.get $copy_size)))
-      (else (call $zero_memory (local.get $desc_wa) (local.get $copy_size))))
-    (i32.store (local.get $desc_wa) (local.get $copy_size))
+      (then (call $guest_memmove (local.get $lpDesc) (local.get $desc_g) (local.get $copy_size)))
+      (else (call $guest_memset (local.get $lpDesc) (i32.const 0) (local.get $copy_size))))
+    (call $gs32 (local.get $lpDesc) (local.get $copy_size))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   ;; Write one canonical 32-byte TLVERTEX back out in an arbitrary destination

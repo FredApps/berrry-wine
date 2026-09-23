@@ -29,9 +29,14 @@ const extraWat=String.raw`
   e.init_dx_com_thunks();
   const v=new DataView(memory.buffer), stack=e.guest_alloc(64),desc=e.guest_alloc(32),out=e.guest_alloc(40);
   [16,0,2,4].forEach((x,i)=>e.guest_write32(desc+i*4,x));
+  const base=0x36000000,sparse=base+4094,neighbor=base+0x10000;
+  for(const page of [base,neighbor,base+4096])e.test_virtual_map_commit(page,4096);
+  assert.notStrictEqual(e.guest_to_wasm(base+4096),e.guest_to_wasm(base)+4096);
+  for(let i=0;i<64;i++)e.guest_write8(neighbor+i,0xa7);
   for(const [version,prefix] of [[0,'IDirect3DVertexBuffer'],[1,'IDirect3DVertexBuffer7']]){
     e.vb_create(version,desc,out);
-    const obj=e.guest_read32(out), entry=e.vb_entry(obj);
+    let obj=e.guest_read32(out);
+    const entry=e.vb_entry(obj);
     assert(obj);assert.strictEqual(v.getUint32(entry,true),22);
     const call=(method,pop,a=0,b=0,c=0)=>{
       e.guest_write32(stack+pop,0xdeadbeef);
@@ -48,12 +53,28 @@ const extraWat=String.raw`
     assert.strictEqual(call('GetVertexBufferDesc',12,out),0);
     assert.deepStrictEqual([0,4,8,12].map(i=>e.guest_read32(out+i)),[16,0,2,4]);
     assert.strictEqual(e.guest_read32(out+16)>>>0,0xcafebabe);
+    const sparseDesc=(size,words)=>{
+      for(let i=-4;i<size+4;i++)e.guest_write8(sparse+i,0xcc);
+      e.guest_write32(sparse,size);
+      assert.strictEqual(call('GetVertexBufferDesc',12,sparse),0);
+      assert.deepStrictEqual(Array.from({length:size/4},(_,i)=>e.guest_read32(sparse+i*4)),words);
+      for(let i=1;i<=4;i++)assert.strictEqual(e.guest_read8(sparse-i),0xcc);
+      for(let i=0;i<4;i++)assert.strictEqual(e.guest_read8(sparse+size+i),0xcc);
+      for(let i=0;i<64;i++)assert.strictEqual(e.guest_read8(neighbor+i),0xa7,'adjacent backing belongs to another guest page');
+    };
+    sparseDesc(16,[16,0,2,4]);
+    sparseDesc(32,[32,0,2,4,0,0,0,0]);
     assert.strictEqual(call('AddRef',8),2);
     assert.strictEqual(call('Release',8),1);
     assert.strictEqual(v.getUint32(entry,true),22);
     assert.strictEqual(e.guest_read32(backing)>>>0,0x12345678);
     assert.strictEqual(call('Release',8),0);
     assert.strictEqual(v.getUint32(entry,true),0);
+    // Preserve the existing no-input-descriptor path while checking its fill.
+    e.vb_create(version,0,out);obj=e.guest_read32(out);assert(obj);
+    sparseDesc(16,[16,0,0,0]);
+    sparseDesc(32,[32,0,0,0,0,0,0,0]);
+    assert.strictEqual(call('Release',8),0);
   }
   console.log('PASS D3DIM VB/VB7 alias dispatch, lock/descriptor outputs, lifetime and stack guards');
 })().catch(error=>{console.error(error);process.exitCode=1;});
