@@ -384,6 +384,57 @@ const extraWat = String.raw`
       assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => e.guest_read32(out + 32 + i * 4)), [19, 20, 21, 22], 'later draw cannot alter retired Execute scope');
     }
   console.log(`PASS Execute transform extents: ${extentCases} flag/mode/count/sparse/rolling cases + ${extentCases / 2} reset/scope-lifetime cases`);
+  // Two real public allocations: interleaving, resetting and retiring one
+  // owner must not change the other buffer's accumulated drawing rectangle.
+  function extentBuffer() {
+    [20, 1, 0, 512, 0].forEach((v, i) => e.guest_write32(desc + i * 4, v));
+    call('IDirect3DDevice_CreateExecuteBuffer', 20, dev, desc, out);
+    const handle = e.guest_read32(out);
+    call('IDirect3DExecuteBuffer_Lock', 12, handle, desc);
+    const address = e.guest_read32(desc + 16);
+    [48, 0, 1, 64, 48, 0, 3, 0, 2048, 2048, 0, 0]
+      .forEach((v, i) => e.guest_write32(data + i * 4, v));
+    call('IDirect3DExecuteBuffer_SetExecuteData', 12, handle, data);
+    call('IDirect3DExecuteBuffer_Unlock', 8, handle);
+    return { handle, address };
+  }
+  function extentPoint(buffer, x, y, reset = false) {
+    call('IDirect3DExecuteBuffer_Lock', 12, buffer.handle, desc);
+    assert.strictEqual(e.guest_read32(desc + 16), buffer.address);
+    [bits(x), bits(y), bits(0.5), bits(1), 0xffff0000, 0, 0, 0]
+      .forEach((v, i) => e.guest_write32(buffer.address + i * 4, v));
+    const program = reset ? [14 | (24 << 8) | (1 << 16), 2, 0, 2048, 2048, 0, 0] : [];
+    program.push(1 | (4 << 8) | (1 << 16), 1, 11, 0);
+    for (let i = 0; i < 12; i++) e.guest_write32(buffer.address + 64 + i * 4, program[i] || 0);
+    call('IDirect3DExecuteBuffer_Unlock', 8, buffer.handle);
+    call('IDirect3DDevice_Execute', 20, dev, buffer.handle);
+    assert.strictEqual(e.extent_scope(), 0, 'interleaved scope retired');
+  }
+  function assertExtent(buffer, expected) {
+    e.guest_write32(out, 48);
+    call('IDirect3DExecuteBuffer_GetExecuteData', 12, buffer.handle, out);
+    assert.deepStrictEqual(Array.from({ length: 4 }, (_, i) => e.guest_read32(out + 32 + i * 4)), expected);
+  }
+  const ownerA = extentBuffer(), ownerB = extentBuffer();
+  extentPoint(ownerA, 2, 3);
+  assertExtent(ownerA, [2, 3, 4, 5]);
+  assertExtent(ownerB, [2048, 2048, 0, 0]);
+  extentPoint(ownerB, 20, 21);
+  assertExtent(ownerB, [20, 21, 22, 23]);
+  assertExtent(ownerA, [2, 3, 4, 5]);
+  extentPoint(ownerA, 8, 9);
+  assertExtent(ownerA, [2, 3, 10, 11]);
+  assertExtent(ownerB, [20, 21, 22, 23]);
+  extentPoint(ownerA, -10, -10); // Fully clipped XY draw contributes nothing.
+  assertExtent(ownerA, [2, 3, 10, 11]);
+  extentPoint(ownerA, 31, 31, true); // Reset then clip the 2x2 point to the RT.
+  assertExtent(ownerA, [31, 31, 32, 32]);
+  assertExtent(ownerB, [20, 21, 22, 23]);
+  call('IDirect3DExecuteBuffer_Release', 8, ownerA.handle);
+  extentPoint(ownerB, 10, 11);
+  assertExtent(ownerB, [10, 11, 22, 23]);
+  call('IDirect3DExecuteBuffer_Release', 8, ownerB.handle);
+  console.log('PASS Execute extent owners: interleaved draw/Unlock, reset, XY clipping and release isolation');
   for (let page = 0; page < 7; page++) for (let i = 0; i < 4096; i++)
     assert.strictEqual(e.guest_read8(base + 0x10000 + page * 4096 + i), 0xa7, 'neighbor backing');
   e.buffer(eb, ownedBuffer); // Borrowed test mappings are not heap owners.

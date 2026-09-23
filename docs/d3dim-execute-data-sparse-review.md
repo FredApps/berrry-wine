@@ -555,3 +555,22 @@ culling and textured/depth/alpha extent-oracle tests remain useful follow-ups.
 Uvis source is available but its executable is absent from the local corpus;
 its ForceUpdate interaction is not runtime-verified. No performance claim is
 made on this loaded shared machine.
+
+### Public extent-owner isolation follow-up (2026-09-22)
+
+The instruction regression now creates two separate ExecuteBuffers through
+the public API and uses their real Lock-returned allocations, rather than
+substituting borrowed fixture mappings. It interleaves point draws and Unlock
+refreshes, checks both retained rectangles after each relevant operation,
+resets one through SETSTATUS, releases it, and continues accumulating into
+the survivor. A fully XY-offscreen point leaves the prior rectangle unchanged;
+a point crossing the 32x32 target's bottom/right edge reports the clipped box.
+These cases pass without a runtime change, closing the basic sequential
+multi-buffer and point XY-clipping gaps listed above.
+
+The entire instruction regression also passes against freshly compiled current
+sources after the concurrent MMIO region addition, along with test-tier and
+whitespace checks. This is not a new full shipping-artifact build. Concurrent
+ExecuteBuffer access, multi-device native status lifetime, polygon XY clipping,
+culling and textured/depth/alpha extent-oracle cases remain unverified; the
+new isolation test does not certify them.
