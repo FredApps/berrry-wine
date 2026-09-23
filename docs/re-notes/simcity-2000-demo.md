@@ -333,8 +333,11 @@ tile reads `0x1e`, a surface pipe crossing `0x11`), altitude `0x4b3a10`
 Driving notes:
 
 * **Query is on the right-click menu**, not the palette. The palette's "?"
-  opens WinHelp's Help Topics (with an empty Contents tab, because there is
-  no .cnt file). Right-click a tile, then pick "Query Tile" (32939). The
+  goes through MFC `CWinApp::WinHelp` (call at `0x48cde2`), which issues
+  `WinHelpA(0x10004, "...sc2usa.hlp", HELP_FINDER=0xB, 0)`. There is no
+  .cnt, so Help Topics opens on its Index tab (150 keywords) with no
+  Contents tab, as Win98 does. It used to show an empty Contents tab (fixed
+  2026-09-22). Right-click a tile, then pick "Query Tile" (32939). The
   query box greys out the map behind it while it is up.
 * **The first map click after a tool pick is often dropped**, even after
   2,500 batches of settle, and so was one pump placement. Re-issue it, and

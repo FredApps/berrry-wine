@@ -3022,8 +3022,7 @@
     (if (i32.eqz (global.get $help_topics_tab_hwnd)) (then (return)))
     (drop (call $wnd_send_message (global.get $help_topics_tab_hwnd)
       (i32.const 0x130C)   ;; TCM_SETCURSEL
-      (select (i32.const 0) (i32.const 1)
-        (i32.eq (global.get $help_session_mode) (i32.const 3)))
+      (call $help_topics_current_tab)
       (i32.const 0))))
 
   (func $help_topics_apply_tab (param $tab i32)
@@ -3040,18 +3039,22 @@
   (func $help_topics_tab_wndproc
     (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32)
     (result i32)
-    (local $tab i32)
+    (local $tab i32) (local $state i32)
     (if (i32.eq (local.get $msg) (i32.const 0x000F))
       (then (return (call $tab_native_paint (local.get $hwnd)))))
+    ;; TCM_GETITEMCOUNT, answered from the same mirror the strip paints.
+    (if (i32.eq (local.get $msg) (i32.const 0x1304))
+      (then
+        (local.set $state (call $tab_native_state_get (local.get $hwnd) (i32.const 0)))
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (return (i32.load (call $g2w (local.get $state))))))
     (if (i32.or (i32.eq (local.get $msg) (i32.const 0x0201))
                 (i32.eq (local.get $msg) (i32.const 0x0203)))
       (then
         (local.set $tab (call $tab_native_cursel (local.get $hwnd)))
         (if (i32.ge_s (local.get $tab) (i32.const 0))
           (then
-            (if (i32.ne (local.get $tab)
-                  (select (i32.const 0) (i32.const 1)
-                    (i32.eq (global.get $help_session_mode) (i32.const 3))))
+            (if (i32.ne (local.get $tab) (call $help_topics_current_tab))
               (then
                 (drop (call $help_topics_set_tab (local.get $tab)))
                 (call $help_topics_fill_list)
@@ -3116,9 +3119,13 @@
         (i32.const 0x50000000) (i32.const 0)))
     (call $tab_native_mark_slot
       (call $wnd_table_find (global.get $help_topics_tab_hwnd)) (i32.const 1))
-    (call $help_topics_add_tab (global.get $help_topics_tab_hwnd) (i32.const 0)
-      (i32.add (global.get $help_topics_labels_ga) (i32.const 16)))
-    (call $help_topics_add_tab (global.get $help_topics_tab_hwnd) (i32.const 1)
+    ;; No .cnt, no Contents tab: the strip is just [Index].
+    (if (call $help_topics_has_contents)
+      (then
+        (call $help_topics_add_tab (global.get $help_topics_tab_hwnd) (i32.const 0)
+          (i32.add (global.get $help_topics_labels_ga) (i32.const 16)))))
+    (call $help_topics_add_tab (global.get $help_topics_tab_hwnd)
+      (call $help_topics_has_contents)
       (i32.add (global.get $help_topics_labels_ga) (i32.const 28)))
     ;; Row list - WS_VSCROLL so the listbox draws and drives its own scrollbar,
     ;; LBS_NOTIFY so selection and double-click reach this dialog as WM_COMMAND.
@@ -3224,8 +3231,8 @@
           (then (drop (call $help_topics_move_selection (i32.const 13)))))
         (if (i32.eq (local.get $wParam) (i32.const 0x09))
           (then (call $help_topics_apply_tab
-            (select (i32.const 0) (i32.const 1)
-              (i32.eq (global.get $help_session_mode) (i32.const 4))))))
+            (i32.rem_u (i32.add (call $help_topics_current_tab) (i32.const 1))
+              (call $help_topics_tab_count)))))
         (if (i32.eq (local.get $wParam) (i32.const 0x27))
           (then
             (if (i32.eq (global.get $help_session_mode) (i32.const 3))

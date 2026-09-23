@@ -1455,6 +1455,25 @@
 
     (if (i32.eq (local.get $command) (global.get $HELP_COMMAND_FINDER))
       (then
+        ;; Help Topics has a Contents tab only when a .cnt was found; without
+        ;; one Win98 opens the dialog on Index with the first keyword
+        ;; selected. Real WinHelp would still offer a Find tab to a file with
+        ;; neither, which we do not implement, so such a file opens its
+        ;; contents topic instead of an empty dialog.
+        (if (i32.eqz (call $help_topics_has_contents))
+          (then
+            (if (global.get $help_doc_keyword_count)
+              (then
+                (return (call $help_session_commit_dialog
+                  (local.get $caller) (local.get $command) (i32.const 4)
+                  (i32.const 0)))))
+            (return (call $help_session_commit_topic
+              (local.get $caller) (local.get $command)
+              (if (result i32)
+                (i32.ge_s (global.get $help_session_contents_override) (i32.const 0))
+                (then (global.get $help_session_contents_override))
+                (else (global.get $help_doc_contents_ref)))
+              (i32.const 1)))))
         (return (call $help_session_commit_dialog
           (local.get $caller) (local.get $command) (i32.const 3) (i32.const -1)))))
 

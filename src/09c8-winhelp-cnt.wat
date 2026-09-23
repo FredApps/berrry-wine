@@ -664,9 +664,31 @@
         (i32.sub (local.get $row) (i32.const 12)))))
     (i32.const 1))
 
+  ;; Win98 WinHelp builds the Contents tab from the .cnt companion and from
+  ;; nothing else: an .hlp with no .cnt (SimCity 2000's sc2usa.hlp) gets a
+  ;; Help Topics dialog with no Contents tab at all, opening on Index. So the
+  ;; tab strip is [Contents, Index] with a CNT and [Index] without one, and a
+  ;; tab *position* only means "Contents" when the CNT is there.
+  (func $help_topics_has_contents (result i32)
+    (i32.ne (global.get $help_doc_cnt_node_count) (i32.const 0)))
+
+  (func $help_topics_tab_count (result i32)
+    (i32.add (i32.const 1) (call $help_topics_has_contents)))
+
+  ;; Tab position of the current dialog mode on the visible strip.
+  (func $help_topics_current_tab (result i32)
+    (if (result i32) (call $help_topics_has_contents)
+      (then (select (i32.const 0) (i32.const 1)
+        (i32.eq (global.get $help_session_mode) (i32.const 3))))
+      (else (i32.const 0))))
+
+  ;; $tab is a position on the visible strip.
   (func $help_topics_set_tab (param $tab i32) (result i32)
-    (if (i32.gt_u (local.get $tab) (i32.const 1))
+    (if (i32.ge_u (local.get $tab) (call $help_topics_tab_count))
       (then (return (i32.const 0))))
+    ;; Without a Contents tab, position 0 is Index.
+    (if (i32.eqz (call $help_topics_has_contents))
+      (then (local.set $tab (i32.const 1))))
     (global.set $help_topics_first_visible (i32.const 0))
     (if (i32.eqz (local.get $tab))
       (then
@@ -749,6 +771,8 @@
     (global.get $help_doc_cnt_base_len))
   (func (export "test_help_topics_set_tab") (param $tab i32) (result i32)
     (call $help_topics_set_tab (local.get $tab)))
+  (func (export "get_help_topics_tab_count") (result i32)
+    (call $help_topics_tab_count))
   (func (export "test_help_topics_select_contents") (param $index i32) (result i32)
     (call $help_topics_select_contents (local.get $index)))
   (func (export "test_help_topics_expand_contents")

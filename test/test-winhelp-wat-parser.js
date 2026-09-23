@@ -1645,9 +1645,12 @@ async function main() {
   check('keyword navigation restores the dispatcher fixture topic',
     e.test_help_dispatch_loaded(dispatchOwner, 0x0101, nameWA) === 1 &&
     e.get_help_session_topic_ref() === 10);
+  // This fixture has keywords and no .cnt, so Topics opens on Index.
   check('HELP_FINDER opens the Topics dialog without changing topic state',
     e.test_help_dispatch_loaded(dispatchOwner, 0x000b, 0) === 1 &&
-    e.get_help_session_mode() === 3 && e.get_help_session_topic_ref() === 10);
+    e.get_help_cnt_node_count() === 0 &&
+    e.get_help_session_mode() === 4 && e.get_help_session_keyword_index() === 0 &&
+    e.get_help_session_topic_ref() === 10);
   check('a different owner cannot reuse the active document session',
     e.test_help_dispatch_loaded(0x2222, 0x0001, 8) === 0 &&
     e.get_help_session_owner() === dispatchOwner && e.get_help_session_topic_ref() === 10 &&
@@ -2882,6 +2885,82 @@ async function main() {
   check('WinHelpW matching HELP_QUIT releases converted session state',
     e.test_help_dispatch_w(0x7777, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
 
+  // HELP_FINDER on an .hlp with no .cnt companion. Win98 WinHelp builds the
+  // Contents tab from the .cnt alone, so such a file gets Help Topics with no
+  // Contents tab, opening on Index. SimCity 2000's palette "?" issues exactly
+  // this (WinHelpA(hwnd, "sc2usa.hlp", HELP_FINDER, 0), and it ships no .cnt);
+  // we used to open on an empty Contents list.
+  {
+    const listRow = (lb, index) => {
+      const dest = e.guest_alloc(160);
+      e.listbox_get_item_text(lb, index, dest, 128);
+      let row = '';
+      for (let i = 0; i < 128; i++) {
+        const ch = e.guest_read8(dest + i);
+        if (!ch) break;
+        row += String.fromCharCode(ch);
+      }
+      return row;
+    };
+    const tabItems = () => e.send_message(e.get_help_topics_control(0x502), 0x1304, 0, 0);
+    const keywordPathA = allocGuestAnsi('c:\\keyword.hlp');
+    check('no-CNT HELP_FINDER opens Help Topics on its Index tab',
+      e.test_call_WinHelpA(0x9191, keywordPathA, 0x000b, 0) === 1 &&
+      e.get_help_cnt_node_count() === 0 && e.get_help_topics_hwnd() !== 0 &&
+      e.get_help_session_mode() === 4 && e.get_help_session_keyword_index() === 0,
+      `mode=${e.get_help_session_mode()} kw=${e.get_help_session_keyword_index()}`);
+    check('no-CNT Help Topics has no Contents tab',
+      e.get_help_topics_tab_count() === 1 && tabItems() === 1,
+      `model=${e.get_help_topics_tab_count()} control=${tabItems()}`);
+    const lb = e.get_help_topics_list_hwnd();
+    check('no-CNT Help Topics lists every keyword, first one selected',
+      e.listbox_get_count(lb) === 4 && listRow(lb, 0) === syntheticKeywords[0][0] &&
+      e.send_message(lb, 0x0188, 0, 0) === 0,
+      `count=${e.listbox_get_count(lb)} row0=${JSON.stringify(listRow(lb, 0))}`);
+    check('no-CNT Help Topics cannot be switched to a Contents tab',
+      e.test_help_topics_set_tab(1) === 0 &&
+      e.test_help_topics_message(0x0100, 0x09, 0) === 0 &&
+      e.get_help_session_mode() === 4 && e.listbox_get_count(lb) === 4);
+    check('no-CNT Help Topics Display navigates the selected keyword',
+      e.test_help_topics_message(0x0100, 0x0d, 0) === 0 &&
+      e.get_help_topics_hwnd() === 0 && e.get_help_session_mode() === 1 &&
+      e.get_help_window() !== 0);
+    check('no-CNT keyword session releases on HELP_QUIT',
+      e.test_call_WinHelpA(0x9191, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
+
+    // With neither a .cnt nor keywords there is nothing Help Topics can list
+    // (WinHelp's Find tab is not implemented), so the contents topic opens.
+    ctx.vfs.files.set('c:\\solnocnt.hlp', {
+      data: new Uint8Array(fs.readFileSync(path.join(HELP, 'sol.hlp'))), attrs: 0x20,
+    });
+    check('no-CNT, no-keyword HELP_FINDER opens the contents topic',
+      e.test_call_WinHelpA(0x9191, allocGuestAnsi('c:\\solnocnt.hlp'), 0x000b, 0) === 1 &&
+      e.get_help_keyword_count() === 0 && e.get_help_topics_hwnd() === 0 &&
+      e.get_help_session_mode() === 1 && e.get_help_window() !== 0,
+      `mode=${e.get_help_session_mode()} topics=${e.get_help_topics_hwnd()}`);
+    check('no-CNT contents session releases on HELP_QUIT',
+      e.test_call_WinHelpA(0x9191, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
+
+    // The real file, when this checkout has the local-only demo installed.
+    const sc2 = path.join(ROOT, 'test', 'binaries', 'candidates', 'simcity-2000-demo',
+      'installed', 'sc2usa.hlp');
+    if (fs.existsSync(sc2)) {
+      ctx.vfs.files.set('c:\\sc2usa.hlp', { data: new Uint8Array(fs.readFileSync(sc2)), attrs: 0x20 });
+      check('SimCity 2000 sc2usa.hlp HELP_FINDER opens Index with its 150 keywords',
+        e.test_call_WinHelpA(0x9191, allocGuestAnsi('c:\\sc2usa.hlp'), 0x000b, 0) === 1 &&
+        e.get_help_session_mode() === 4 && tabItems() === 1 &&
+        e.listbox_get_count(e.get_help_topics_list_hwnd()) === 150 &&
+        listRow(e.get_help_topics_list_hwnd(), 0).length > 0,
+        `mode=${e.get_help_session_mode()} tabs=${tabItems()} ` +
+        `rows=${e.listbox_get_count(e.get_help_topics_list_hwnd())}`);
+      e.test_help_topics_message(0x0100, 0x1b, 0);
+      check('SimCity 2000 help session releases on HELP_QUIT',
+        e.test_call_WinHelpA(0x9191, 0, 0x0002, 0) === 1 && e.get_help_file_ptr() === 0);
+    } else {
+      console.log('SKIP  SimCity 2000 sc2usa.hlp not present in this checkout');
+    }
+  }
+
   const notepadMounted = fs.readFileSync(path.join(HELP, 'notepad.hlp'));
   const notepadMountedCnt = fs.readFileSync(path.join(HELP, 'notepad.cnt'));
   ctx.vfs.files.set('c:\\notepad.hlp', { data: new Uint8Array(notepadMounted), attrs: 0x20 });
@@ -2890,7 +2969,9 @@ async function main() {
   check('HELP_FINDER opens a separate WAT-native Topics window',
     e.test_call_WinHelpA(0x8888, notepadPathA, 0x000b, 0) === 1 &&
     e.get_help_topics_hwnd() !== 0 && e.get_help_window() === 0 &&
-    e.get_help_session_mode() === 3 && e.get_help_topics_contents_selection() === 0);
+    e.get_help_session_mode() === 3 && e.get_help_topics_contents_selection() === 0 &&
+    e.get_help_topics_tab_count() === 2 &&
+    e.send_message(e.get_help_topics_control(0x502), 0x1304, 0, 0) === 2);
   // $wnd_table_set zeroes the record's style, and $paint_select_next_dirty
   // discards the paint bit of any window without WS_VISIBLE. Without a style
   // the dialog painted once at creation and every later invalidate - tab
