@@ -114,8 +114,22 @@ is drawn entirely inside that `GetDC`, this one call gates the whole app on the
 software backend. Captures: `build/d3d-backend-coverage/pawn-{gpu,software}-canvas.png`;
 context in [docs/d3d-backend-coverage.md](../d3d-backend-coverage.md).
 
+**Fixed 2026-09-22 — the GetDC was never the cause.** One line earlier the log
+says `[sync] ABANDONED wndproc hwnd=0x00010002 msg=0x00000005 ... after 64
+rounds (yield_reason=16)`. Pawn's first `Present` is issued from the `WM_SIZE`
+that its own `SetWindowPos` sends, and `$wnd_send_message` runs that window
+procedure in a recursive `$run`. A software `Present` always parks (it waits on
+a 60 Hz display boundary even without the worker), and a recursive run has no
+way back to the JS event loop that completes it, so the procedure was abandoned
+mid-call. The GetDC failures and the NULL call are fallout from that.
+`lib/d3d9-host.js` now pipelines a software `Present` made inside a synchronous
+send without waiting (`_insideSyncSend`/`_detachPresent`). The next top-level
+`Present` publishes it. **Read the `[sync] ABANDONED` line before the first error.**
+
 ## Status
 
-Playable on the GPU (`--headless-gl`) D3D9 backend. Drags a pawn two ranks, the
-engine replies, and the board is now in the window rather than only in the
-surface. Crashes on `--d3d9-renderer=software` (above).
+Playable on both D3D9 backends: GPU (`--headless-gl`) and
+`--d3d9-renderer=software`. Drags a pawn two ranks, the engine replies, and the
+board is in the window. `test/test-pawn-directinput7-gameplay.js` runs both
+arms; `PAWN_BACKEND=software|webgl` picks one. The software arm needs 20000
+batches, because at 9000 the reply is still animating.
