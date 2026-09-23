@@ -53,11 +53,25 @@ generated dispatch, test tiers and whitespace checks pass. Quiet-stub and
 duplicate ratchets remain unchanged at 247 manual + 22 metadata and
 123 groups / 491 members respectively.
 
-The harness simulates callback RET and calls the production continuation;
-it does not execute guest x86 callback bodies. No native Win98 comparison,
-browser/gameplay claim, allocation-failure fault injection, nonlocal callback
-exit cleanup, or full-build certification is implied.
+The first group simulates callback RET and calls the production continuation.
+A second group now executes 32 real x86 nested cases: every outer/inner
+interface pair, each with full completion and immediate cancellation. Guest
+code calls the generated COM vtable thunk, each outer callback invokes the
+inner enumerator, and callbacks execute RET 24 or RET 16 into the production
+continuation thunk. Assertions cover both callback counts, HRESULT, final
+and nested ESP, a caller stack guard, and allocation balance. Each case uses
+unique code addresses so cached decoding cannot conceal changed instructions.
+
+The real-x86 setup loads the bundled Notepad PE to initialize CPU state and
+continuation thunks, but never runs its entry point. An initial harness-only
+attempt omitted the PE-loader continuation setup: the first inner callback
+returned to zero with an unbalanced stack. Loading through the production
+path fixed that test setup; no runtime workaround was added.
+
+No native Win98 comparison, browser/gameplay claim, allocation-failure fault
+injection, nonlocal callback exit cleanup, or full-build certification is
+implied.
 
 Next candidates: audit remaining callback enumerators for mutable invocation
-globals and unowned payloads; add real x86 callback and allocation-failure
-coverage across the repaired enumeration families.
+globals and unowned payloads; extend real x86 callback coverage to the mode
+and format families, and add allocation-failure coverage.
