@@ -562,12 +562,7 @@
   ;; Heroes II's temporary 447-pixel-wide scroll composition.
   (global $dx_scroll_hold_wa (mut i32) (i32.const 0))
 
-  ;; EnumDisplayModes continuation state
-  (global $enum_modes_idx (mut i32) (i32.const 0))       ;; current mode index
-  (global $enum_modes_callback (mut i32) (i32.const 0))  ;; callback guest addr
-  (global $enum_modes_context (mut i32) (i32.const 0))   ;; lpContext
-  (global $enum_modes_ddsd (mut i32) (i32.const 0))      ;; DDSURFACEDESC guest addr
-  (global $enum_modes_ret (mut i32) (i32.const 0))       ;; saved caller return addr
+  ;; EnumDisplayModes keeps invocation state on its callback stack.
   (global $enum_modes_thunk (mut i32) (i32.const 0))     ;; CACA0008 thunk guest addr
 
   ;; Only immutable callback entry addresses are global. Invocation state is
@@ -2431,19 +2426,25 @@
   ;; Uses continuation thunk CACA0008 to iterate through a table of modes.
   ;; Mode table: (w, h, bpp) tuples — common Win98 modes.
   (func $handle_IDirectDraw_EnumDisplayModes (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $ret_addr i32)
+    (local $ret_addr i32) (local $record i32) (local $wa i32)
     ;; Save state for continuation
     (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
     ;; Clean up stdcall args: 5 args + ret = 24 bytes
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
-    ;; Allocate a DDSURFACEDESC on the heap (reused for each callback)
-    (global.set $enum_modes_ddsd (call $heap_alloc (i32.const 108)))
-    (global.set $enum_modes_callback (local.get $arg4))
-    (global.set $enum_modes_context (local.get $arg3))
-    (global.set $enum_modes_ret (local.get $ret_addr))
-    (global.set $enum_modes_idx (i32.const 0))
+    ;; Owned record: callback/context/caller/index at +0/+4/+8/+12, followed
+    ;; by an inline 108-byte DDSURFACEDESC. No process-global iteration state.
+    (local.set $record (call $heap_alloc (i32.const 124)))
+    (if (i32.eqz (local.get $record)) (then
+      (global.set $eip (local.get $ret_addr))
+      (i32.store (global.get $reg_base) (i32.const 0x8007000E))
+      (return)))
+    (local.set $wa (call $g2w (local.get $record)))
+    (i32.store (local.get $wa) (local.get $arg4))
+    (i32.store offset=4 (local.get $wa) (local.get $arg3))
+    (i32.store offset=8 (local.get $wa) (local.get $ret_addr))
+    (i32.store offset=12 (local.get $wa) (i32.const 0))
     ;; Start enumeration — call $enum_modes_dispatch for the first mode
-    (call $enum_modes_dispatch))
+    (call $enum_modes_dispatch (local.get $record)))
 
   ;; Width/height of resolution slot $r in the enumerated mode table.
   ;; Games that offer a resolution menu (Roller Coaster Tycoon) validate the
@@ -2549,10 +2550,11 @@
   ;; that quietly fell back instead. A mode larger than the canvas is scaled to
   ;; fit when the primary surface is presented, so it costs sharpness, not
   ;; correctness.
-  (func $enum_modes_dispatch
+  (func $enum_modes_dispatch (param $record i32)
     (local $ddsd_wa i32) (local $w i32) (local $h i32) (local $bpp i32)
-    (local $pitch i32) (local $idx i32)
-    (local.set $idx (global.get $enum_modes_idx))
+    (local $pitch i32) (local $idx i32) (local $wa i32)
+    (local.set $wa (call $g2w (local.get $record)))
+    (local.set $idx (i32.load offset=12 (local.get $wa)))
     ;; Step over the raw holes (320x200 at 16/32bpp) before the end test, so a
     ;; hole can never be mistaken for the end of the table.
     (block $done
@@ -2560,11 +2562,12 @@
         (br_if $done (i32.eqz (call $enum_mode_raw_skipped (local.get $idx))))
         (local.set $idx (i32.add (local.get $idx) (i32.const 1)))
         (br $skip)))
-    (global.set $enum_modes_idx (local.get $idx))
+    (i32.store offset=12 (local.get $wa) (local.get $idx))
     ;; If past end of table, done — return DD_OK to caller
     (if (i32.ge_u (local.get $idx) (call $enum_mode_raw_count))
       (then
-        (global.set $eip (global.get $enum_modes_ret))
+        (global.set $eip (i32.load offset=8 (local.get $wa)))
+        (call $heap_free (local.get $record))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))  ;; DD_OK
         (return)))
     (local.set $w (call $enum_mode_res_w (i32.div_u (local.get $idx) (i32.const 3))))
@@ -2577,7 +2580,7 @@
         (then (local.set $pitch (i32.and (i32.add (i32.mul (local.get $w) (i32.const 2)) (i32.const 3)) (i32.const 0xFFFFFFFC))))
         (else (local.set $pitch (i32.mul (local.get $w) (i32.const 4)))))))
     ;; Fill DDSURFACEDESC
-    (local.set $ddsd_wa (call $g2w (global.get $enum_modes_ddsd)))
+    (local.set $ddsd_wa (i32.add (local.get $wa) (i32.const 16)))
     (call $zero_memory (local.get $ddsd_wa) (i32.const 108))
     (i32.store (local.get $ddsd_wa) (i32.const 108))  ;; dwSize
     ;; dwFlags = DDSD_WIDTH | DDSD_HEIGHT | DDSD_PIXELFORMAT | DDSD_PITCH
@@ -2607,41 +2610,44 @@
           (i32.store (i32.add (local.get $ddsd_wa) (i32.const 88)) (i32.const 0x00FF0000))
           (i32.store (i32.add (local.get $ddsd_wa) (i32.const 92)) (i32.const 0x0000FF00))
           (i32.store (i32.add (local.get $ddsd_wa) (i32.const 96)) (i32.const 0x000000FF))))))
-    ;; Push saved caller return addr (popped on enum complete)
+    ;; Carry the invocation record behind the callback's public arguments.
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $enum_modes_ret))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $record))
     ;; Push callback args: lpContext, lpDDSD (right to left, __stdcall)
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $enum_modes_context))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.load offset=4 (local.get $wa)))
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $enum_modes_ddsd))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.add (local.get $record) (i32.const 16)))
     ;; Push continuation thunk as callback's return address
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $enum_modes_thunk))
     ;; Jump to callback
-    (global.set $eip (global.get $enum_modes_callback))
+    (global.set $eip (i32.load (local.get $wa)))
     (global.set $steps (i32.const 0)))
 
   ;; CACA0008 continuation: callback returned, advance to next mode
   (func $enum_modes_continue
+    (local $record i32) (local $wa i32)
     ;; The callback is __stdcall(2 args), so it already popped lpDDSD + lpContext (8 bytes).
-    ;; Stack now has [saved_caller_ret] at ESP.
+    ;; Stack now has the invocation record pointer at ESP.
+    (local.set $record (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (local.set $wa (call $g2w (local.get $record)))
     (call $host_log_i32 (i32.or (i32.const 0xED00000)
-      (i32.or (i32.shl (global.get $enum_modes_idx) (i32.const 8))
+      (i32.or (i32.shl (i32.load offset=12 (local.get $wa)) (i32.const 8))
               (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFF)))))
-    ;; Pop the saved caller return addr
-    (global.set $enum_modes_ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    ;; Pop the private invocation pointer.
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     ;; If callback returned 0 (DDENUMRET_CANCEL), stop enumeration
     (if (i32.eqz (i32.load offset=0 (global.get $reg_base)))
       (then
-        (global.set $eip (global.get $enum_modes_ret))
+        (global.set $eip (i32.load offset=8 (local.get $wa)))
+        (call $heap_free (local.get $record))
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))  ;; DD_OK
         (return)))
     ;; Advance to next mode
-    (global.set $enum_modes_idx (i32.add (global.get $enum_modes_idx) (i32.const 1)))
+    (i32.store offset=12 (local.get $wa) (i32.add (i32.load offset=12 (local.get $wa)) (i32.const 1)))
     ;; Dispatch next mode (or finish if past end)
-    (call $enum_modes_dispatch))
+    (call $enum_modes_dispatch (local.get $record)))
 
   ;; ── IDirect3D{1,2,3}::EnumDevices ──
   ;; Win9x exposes Ramp/RGB/HAL to v1/v2 and RGB/HAL to v3.  The descriptor
