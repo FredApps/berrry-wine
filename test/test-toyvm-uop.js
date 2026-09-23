@@ -313,6 +313,104 @@ function divfault() {
   return { com: a.done(), head: a.addr('top') };
 }
 
+// Segment-register loads inside the hot loop: les/lds/lfs from a far-pointer
+// table, mov sreg from a register and from memory, push/pop of es/ds/fs/gs,
+// and mov r/m from a sreg -- every one followed by an access through the
+// segment it just changed, so a stale base in the program reads wrong bytes.
+// The far-pointer table at DS:2000 holds four (off, seg) pairs whose segments
+// are DS, DS+1000h, DS+10h, DS+1010h.
+function segloads(reps = 30) {
+  const a = asm();
+  prologue(a, 0x400);
+  a.w(0x8C, 0xD8);             // mov ax,ds
+  a.w(0xBB, 0x00, 0x20);       // mov bx,2000h
+  a.w(0xB2, 0x04);             // mov dl,4
+  a.label('tbl');
+  a.w(0x89, 0x5F, 0x00);       // mov [bx+0],bx  (offset: 2000h.. , read as data)
+  a.w(0x89, 0x47, 0x02);       // mov [bx+2],ax
+  a.w(0x05, 0x10, 0x04);       // add ax,0410h
+  a.w(0x83, 0xC3, 0x04);       // add bx,4
+  a.w(0xFE, 0xCA);             // dec dl
+  a.w(0x75); a.rel8('tbl');    // jnz tbl
+  a.w(0xC6, 0x06, 0x00, 0x24, reps); // mov byte [2400h],reps
+  a.label('outer');
+  a.w(0xBE, 0x00, 0x10);       // mov si,1000h
+  a.w(0xB9, 0x00, 0x01);       // mov cx,100h
+  a.label('top');
+  a.w(0x89, 0xCB);             // mov bx,cx
+  a.w(0x83, 0xE3, 0x03);       // and bx,3
+  a.w(0xC1, 0xE3, 0x02);       // shl bx,2
+  a.w(0xC4, 0xBF, 0x00, 0x20); // les di,[bx+2000h]
+  a.w(0x26, 0x02, 0x05);       // add al,es:[di]
+  a.w(0x26, 0x88, 0x45, 0x40); // mov es:[di+40h],al
+  a.w(0x0F, 0xB4, 0xAF, 0x00, 0x20); // lfs bp,[bx+2000h]
+  a.w(0x64, 0x02, 0x66, 0x41); // add ah,fs:[bp+41h]
+  a.w(0x0F, 0xA0);             // push fs
+  a.w(0x07);                   // pop es
+  a.w(0x26, 0x00, 0x65, 0x42); // add es:[di+42h],ah
+  a.w(0x1E);                   // push ds
+  a.w(0x0F, 0xA9);             // pop gs
+  a.w(0x65, 0x02, 0x04);       // add al,gs:[si]
+  a.w(0x8C, 0xC2);             // mov dx,es
+  a.w(0x01, 0xD7);             // add di,dx
+  a.w(0x81, 0xE7, 0xFF, 0x07); // and di,07FFh
+  a.w(0x81, 0xCF, 0x00, 0x10); // or di,1000h
+  a.w(0x8E, 0xE2);             // mov fs,dx
+  a.w(0x8E, 0x87, 0x02, 0x20); // mov es,[bx+2002h]
+  a.w(0x26, 0x30, 0x04);       // xor es:[si],al
+  a.w(0x8C, 0x06, 0x10, 0x24); // mov [2410h],es
+  a.w(0x06);                   // push es
+  a.w(0x1E);                   // push ds
+  a.w(0x1F);                   // pop ds
+  a.w(0x07);                   // pop es
+  a.w(0x66, 0x0F, 0xA8);       // push gs (o32)
+  a.w(0x66, 0x0F, 0xA1);       // pop fs (o32)
+  a.w(0x64, 0x00, 0x44, 0x01); // add fs:[si+1],al
+  a.w(0x46);                   // inc si
+  a.w(0xE2); a.rel8('top');    // loop top
+  a.w(0xFE, 0x0E, 0x00, 0x24); // dec byte [2400h]
+  a.w(0x75); a.rel8('outer');  // jnz outer
+  epilogue(a);
+  return { com: a.done(), head: a.addr('top') };
+}
+
+// SHLD/SHRD by constants, 16 and 32 bits, register and memory destinations,
+// with CF (adc), OF (jo), ZF/PF (setz/setp) of the funnel read back, and a
+// 16.16 fixed-point step (imul + shrd 16) whose flags are dead.
+function dshift(reps = 40) {
+  const a = asm();
+  prologue(a, 0x400);
+  a.w(0xC6, 0x06, 0x00, 0x24, reps); // mov byte [2400h],reps
+  a.w(0x66, 0xBB, 0x35, 0x71, 0x02, 0x00); // mov ebx,27135h
+  a.label('outer');
+  a.w(0xBE, 0x00, 0x10);       // mov si,1000h
+  a.w(0xB9, 0x00, 0x01);       // mov cx,100h
+  a.label('top');
+  a.w(0x66, 0x8B, 0x04);       // mov eax,[si]
+  a.w(0x66, 0xF7, 0xEB);       // imul ebx
+  a.w(0x66, 0x0F, 0xAC, 0xD0, 0x10); // shrd eax,edx,16
+  a.w(0x66, 0x01, 0xC5);       // add ebp,eax
+  a.w(0x66, 0x0F, 0xA4, 0xC7, 0x05); // shld edi,eax,5
+  a.w(0x83, 0xD5, 0x00);       // adc bp,0            (CF of the shld)
+  a.w(0x0F, 0xAC, 0xC2, 0x03); // shrd dx,ax,3
+  a.w(0x71); a.rel8('noov');   // jno noov            (OF of the shrd)
+  a.label('ovf');
+  a.w(0x66, 0x43);             // inc ebx
+  a.label('noov');
+  a.w(0x0F, 0x94, 0xC4);       // setz ah
+  a.w(0x0F, 0x9A, 0xC0);       // setp al
+  a.w(0x01, 0xC7);             // add di,ax
+  a.w(0x0F, 0xA4, 0x14, 0x07); // shld [si],dx,7
+  a.w(0x13, 0x3C);             // adc di,[si]         (CF of the memory shld)
+  a.w(0x66, 0x0F, 0xAC, 0x7C, 0x02, 0x0B); // shrd [si+2],edi,11
+  a.w(0x46);                   // inc si
+  a.w(0xE2); a.rel8('top');    // loop top
+  a.w(0xFE, 0x0E, 0x00, 0x24); // dec byte [2400h]
+  a.w(0x75); a.rel8('outer');  // jnz outer
+  epilogue(a);
+  return { com: a.done(), head: a.addr('top'), alt: [a.addr('ovf')] };
+}
+
 async function capture(com) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-uop-'));
   const exe = path.join(dir, 'UOP.COM');
@@ -351,11 +449,17 @@ async function main() {
   const only = process.argv[2] || null;
   let checked = 0;
   for (const [name, make] of [['sprite', sprite], ['checksum', checksum], ['mixed', mixed], ['flags', flags], ['carry', carry],
-    ['muldiv', muldiv], ['divfault', divfault]]) {
+    ['muldiv', muldiv], ['divfault', divfault], ['segloads', segloads], ['dshift', dshift]]) {
     if (only && only !== name) continue;
-    const c = await capture(make());
+    const made = make();
+    // A case may name further heads inside the same loop: a header whose
+    // first instruction is not the loop top is where deopt stubs get created
+    // late (a budget CHECK before a setz, say).
+    for (const head of [made.head, ...(made.alt || [])]) {
+    const tag = head === made.head ? name : `${name}@${head.toString(16)}`;
+    const c = await capture({ ...made, head });
     const reg = IR.discover((lin) => c.vm.mem[lin], c.env, c.snap.regs.gip >>> 0);
-    assert.ok(reg.cyclic, `${name}: the head is not on a loop`);
+    assert.ok(reg.cyclic, `${tag}: the head is not on a loop`);
     const l1 = budgets.map(B => l1Arm(c.vm, c.snap, B));
     const configs = OPT.ablationConfigs();
     const perIter = [];
@@ -364,18 +468,19 @@ async function main() {
       budgets.forEach((B, i) => {
         const u = uopArm(c.vm, c.snap, prog, B);
         const diff = H.diffStates(l1[i], u.state);
-        assert.deepStrictEqual(diff, [], `${name} [${cname}] budget ${B}: ${diff.join('; ')}`);
-        assert.ok(u.runs > 0, `${name} [${cname}] budget ${B}: the program never ran`);
+        assert.deepStrictEqual(diff, [], `${tag} [${cname}] budget ${B}: ${diff.join('; ')}`);
+        assert.ok(u.runs > 0, `${tag} [${cname}] budget ${B}: the program never ran`);
         if (B === 200000) perIter.push(`${cname} ${(u.n / Math.max(1, u.heads)).toFixed(1)}`);
         checked++;
       });
     }
-    console.log(`ok ${name}: ${configs.length} pass configurations x ${budgets.length} budgets agree`);
+    console.log(`ok ${tag}: ${configs.length} pass configurations x ${budgets.length} budgets agree`);
     console.log(`   µops/iteration: ${perIter.join(', ')}`);
+    }
   }
   console.log(`ok test-toyvm-uop: ${checked} differential runs agree`);
 }
 
-module.exports = { sprite, checksum, mixed, flags, carry, muldiv, divfault, capture, l1Arm, uopArm };
+module.exports = { sprite, checksum, mixed, flags, carry, muldiv, divfault, segloads, dshift, capture, l1Arm, uopArm };
 
 if (require.main === module) main().catch((e) => { console.error(e.stack || e); process.exit(1); });

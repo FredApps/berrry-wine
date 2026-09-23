@@ -197,7 +197,7 @@ class UopLive {
   build(h) {
     try {
       const vm = this.vm;
-      const reg = IR.discover((lin) => vm.mem[lin], h.env, h.ip);
+      const reg = IR.discover((lin) => vm.mem[lin], h.env, h.ip, { benign: this.cache.benign });
       if (!reg.body.size) { h.why = `head unsupported: ${reg.nodes.get(reg.headKey).unsupported}`; return false; }
       // A straight line is entered, runs a few instructions and hands back:
       // it costs a host round trip and saves nothing. Loops only.
@@ -214,6 +214,16 @@ class UopLive {
         covered.push([lin, lin + n.d.len]);
       }
       h.prog = { covered };
+      // A loop that patches ITSELF through a fixed address. In the program the
+      // store lands on bytes only the program's guard marks, so the run goes
+      // on to the next header; pure L1 has those bytes compiled, takes the
+      // self-modify break at its next transfer, and the two hand back at
+      // different instructions from then on (ZOKDTPLN.COM's `mov dword
+      // [0x551]` into the immediate of an `add` further down its own body).
+      // Left to L1, which is exact. Seen at build with the segment bases of
+      // the moment: a fixed-address store names one byte range per base.
+      const selfStore = this.patchesItself(reg, covered);
+      if (selfStore) { h.why = `patches its own code at ${selfStore}`; return false; }
       h.snap = this.snapshot(covered);
       h.shape = this.shapeOf(reg, h.st);
       // A BLOCK IN THE LOOP'S BODY THE ENGINE CANNOT RUN is a hand-off to the
@@ -477,6 +487,23 @@ class UopLive {
       }
       return out;
     };
+  }
+
+  // The first memory-destination instruction of the region whose address is a
+  // constant and lands in its own bytes, as "ip->lin", or null.
+  patchesItself(reg, covered) {
+    const dv = new DataView(this.vm.mem.buffer);
+    for (const k of reg.body) {
+      const d = reg.nodes.get(k).d;
+      const m = d.dst;
+      if (!m || m.t !== 'm' || m.base >= 0 || (m.index !== undefined && m.index >= 0)) continue;
+      const lin = (dv.getUint32(isa.REGFILE_SEGB + 4 * m.seg, true) + m.disp) >>> 0;
+      const w = (m.w || d.w || 32) >> 3;
+      for (const [from, to] of covered) {
+        if (lin < to && lin + w > from) return `${d.ip.toString(16)}->${lin.toString(16)}`;
+      }
+    }
+    return null;
   }
 
   // A program's bytes carry code bits only while it runs, so a store into

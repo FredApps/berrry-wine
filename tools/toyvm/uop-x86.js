@@ -39,7 +39,7 @@ const wmask = (v, w) => (w === 32 ? v >>> 0 : v & MASK[w]);
 
 // `rd(lin)` reads one byte of guest memory. `base`/`mask` locate CS the way the
 // interpreter's decoder does; `ip32` says whether EIP is a full 32-bit offset.
-function decodeInsn(rd, base, mask, ip, d32, ip32 = d32) {
+function decodeInsn(rd, base, mask, ip, d32, ip32 = d32, benign = null) {
   const wip = ip32 ? (v) => v >>> 0 : (v) => v & 0xFFFF;
   let n = 0;
   const at = (k) => rd((base + wip(ip + k)) & mask);
@@ -100,6 +100,58 @@ function decodeInsn(rd, base, mask, ip, d32, ip32 = d32) {
 
   const op = u8();
   const w0 = (op & 1) ? opsize : 8;
+
+  // L1's self-patch rule (decode.js isSelfPatch): a MOV into memory through
+  // an explicit CS override ends its block and hands back with $smc set,
+  // every time. Running it inside a program would carry on past the handback
+  // L1 takes there (BBUUMI.EXE, BLAND.EXE), so it is left to L1 -- unless the
+  // host has retired the site as `benign` (keyed like L1 keys it, by the
+  // linear address after the store), where L1 runs straight through it too
+  // (DOPE.EXE's fade table, COMPCODE.EXE). `benign` only ever grows, so a
+  // program built before a site retires is merely cautious, never wrong.
+  // (`benign === false` is the inner decode below, which skips this test.)
+  if (benign !== false && seg === 1 && (op === 0xA2 || op === 0xA3
+      || ((op === 0x88 || op === 0x89 || op === 0xC6 || op === 0xC7) && (at(n) >> 6) !== 3))) {
+    const d = decodeInsn(rd, base, mask, ip, d32, ip32, false);
+    if (d.kind === 'unsupported' || !benign || !benign.has(((base + d.next) & mask) >>> 0)) {
+      return bad('cs store (self-patch)');
+    }
+    return d;
+  }
+
+  // Segment register loads are real-mode (or V86) only: there the base is
+  // just selector << 4, and a program built with ip32 clear is only ever
+  // entered in one of those modes (it is keyed on ip32, which is PE && !VM86).
+  // A protected-mode load reads a descriptor, which is L1's job. SS is never
+  // loaded here -- the stack passes read its base as fixed -- and CS cannot be.
+  const segLoad = (s) => {
+    if (ip32) return `sreg load in protected mode`;
+    if (s === 1 || s === 2) return `load ${s === 1 ? 'cs' : 'ss'}`;
+    if (s > 5) return `sreg ${s}`;
+    return null;
+  };
+  // PUSH/POP ES/CS/SS/DS sit at 06/07 + 8*s.
+  if (op < 0x20 && (op & 0xE7) === 0x06) return done({ kind: 'pushseg', s: op >> 3, w: opsize });
+  if (op < 0x20 && (op & 0xE7) === 0x07 && op !== 0x0F) {
+    const why = segLoad(op >> 3);
+    return why ? bad(why) : done({ kind: 'popseg', s: op >> 3, w: opsize });
+  }
+  // MOV r/m16,Sreg and MOV Sreg,r/m16: 16 bits whatever the operand size, as
+  // L1's mov_r_sr / mov_sr_r (a register destination keeps its upper half).
+  if (op === 0x8C || op === 0x8E) {
+    const m = modrm(16);
+    if (m.reg > 5) return bad(`sreg ${m.reg}`);
+    if (op === 0x8C) return done({ kind: 'movfromseg', s: m.reg, dst: m.rm });
+    const why = segLoad(m.reg);
+    return why ? bad(why) : done({ kind: 'movseg', s: m.reg, src: m.rm });
+  }
+  // LES/LDS: offset at [m], selector at [m + opsize/8].
+  if (op === 0xC4 || op === 0xC5) {
+    const m = modrm(opsize);
+    if (m.rm.t !== 'm') return bad('les/lds reg');
+    const why = segLoad(op === 0xC4 ? 0 : 3);
+    return why ? bad(why) : done({ kind: 'lseg', s: op === 0xC4 ? 0 : 3, w: opsize, dst: R(m.reg, opsize), src: m.rm });
+  }
 
   // ALU block 00-3F, forms 0-5.
   if (op < 0x40 && (op & 7) < 6) {
@@ -246,6 +298,28 @@ function decodeInsn(rd, base, mask, ip, d32, ip32 = d32) {
       const m = modrm(sw);
       return done({ kind: op2 < 0xB8 ? 'movzx' : 'movsx', w: opsize, sw,
         dst: R(m.reg, opsize), src: m.rm });
+    }
+    if (op2 === 0xA0 || op2 === 0xA8) return done({ kind: 'pushseg', s: op2 === 0xA0 ? 4 : 5, w: opsize });
+    if (op2 === 0xA1 || op2 === 0xA9) {
+      const s = op2 === 0xA1 ? 4 : 5, why = segLoad(s);
+      return why ? bad(why) : done({ kind: 'popseg', s, w: opsize });
+    }
+    if (op2 === 0xB4 || op2 === 0xB5) {       // LFS/LGS (LSS, B2, loads SS)
+      const m = modrm(opsize);
+      if (m.rm.t !== 'm') return bad('lfs/lgs reg');
+      const s = op2 === 0xB4 ? 4 : 5, why = segLoad(s);
+      return why ? bad(why) : done({ kind: 'lseg', s, w: opsize, dst: R(m.reg, opsize), src: m.rm });
+    }
+    // SHLD/SHRD by an immediate. Only a count the result is a plain two-word
+    // funnel for: zero is a complete no-op in L1 (flags too) and a 16-bit count
+    // past 15 reaches into bits no real program means, so both stay with L1,
+    // as does the CL form, whose count is a run-time value.
+    if (op2 === 0xA4 || op2 === 0xAC) {
+      const m = modrm(opsize);
+      const n = u8() & 31;
+      if (n === 0 || n >= opsize) return bad(`${op2 === 0xA4 ? 'shld' : 'shrd'} count ${n}`);
+      return done({ kind: 'dshift', sh: op2 === 0xA4 ? 'shld' : 'shrd', w: opsize, dst: m.rm,
+        src: R(m.reg, opsize), n });
     }
     if (op2 === 0xAF) {
       const m = modrm(opsize);

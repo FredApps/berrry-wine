@@ -70,7 +70,7 @@ function discover(rd, env, headIp, opts = {}) {
     const k = key(ip, ctx);
     if (nodes.has(k)) return k;
     if (nodes.size >= maxNodes) return null;
-    const d = decodeInsn(rd, codeBase, mask, ip, d32, ip32);
+    const d = decodeInsn(rd, codeBase, mask, ip, d32, ip32, opts.benign || null);
     const n = { k, ip, ctx, d, succ: [], pred: [] };
     nodes.set(k, n);
     queue.push(n);
@@ -159,6 +159,7 @@ function flagEffect(d, shmask = 0x1F) {
       if (n) W.push('c', 'o', ...(d.sh === 'rol' || d.sh === 'ror' ? [] : ['p', 'z', 's']));
       break;
     }
+    case 'dshift': W.push('c', 'o', 'p', 'z', 's'); break;
     case 'jcc': case 'setcc': R.push(...CC_READS[d.cc]); break;
     case 'unsupported': R.push(...ALL6); break;
     default: break;
@@ -271,6 +272,23 @@ function lower(region, opts = {}) {
     return { t: goStub(ip, why), chk: -1 };
   };
 
+  // Where L1 has a block head, falling in is a transfer too: compile.js ends
+  // a straight line at a head it already emitted (jmp_syn) and at the µop
+  // head (a handback), and the budget is tested there like at any jump.
+  // The program's head is always one. So is a JMP target: the jmp ends its
+  // block and L1's LIFO worklist compiles the target next, before any line
+  // that falls into it (the rotated loop's `jmp test`). A conditional's taken
+  // target is NOT: L1 traces through the branch, and the inline not-taken
+  // path absorbs it before it is ever compiled (a `je skip` over one store).
+  // Treating these edges as free let the slow half run a whole block past
+  // the point where L1 stops the slice (bobs.com: `inc si` into its head).
+  const heads = new Set([headKey]);
+  for (const k of order) {
+    const n = nodes.get(k);
+    if (n.d.kind === 'jmp') for (const e of n.succ) heads.add(e.k);
+  }
+  p.l1Heads = heads;
+
   for (const k of order) {
     const n = nodes.get(k);
     const b = nb.get(k);
@@ -282,8 +300,14 @@ function lower(region, opts = {}) {
     const d = n.d;
     const s = successors(d);
     if (!s) {
-      // Straight line: no transfer, so no budget test.
+      // Straight line: no transfer, so no budget test -- unless it falls
+      // into an L1 block head.
       const e = n.succ[0];
+      if (e && body.has(e.k) && heads.has(e.k)) {
+        const to = edgeTo(e.k, e.ip, 'edge');
+        b.term = { o: 'br', t: to.t, tx: to.chk };
+        continue;
+      }
       b.term = e && body.has(e.k)
         ? { o: 'br', t: nb.get(e.k).id, tx: -1 }
         : { o: 'br', t: goStub(d.next, 'edge'), tx: -1 };
@@ -377,6 +401,18 @@ class Lowerer {
     else this.op({ o: 'putr', r, w, a: v });
   }
   seg(s) { const d = this.t(); this.op({ o: 'gets', d, s }); return d; }
+  // A segment register as a SELECTOR (the base is what memory ops read). The
+  // selector is always in memory: PUTSEL writes it there directly and is never
+  // promoted, so GETSEL reads the current value in either half.
+  getSel(s) { const d = this.t(); this.op({ o: 'getsel', d, s }); return d; }
+  // A real-mode segment load, as L1's $sset with $segbase's real/V86 arm:
+  // selector = v & 0xFFFF, base = selector << 4. The decoder only produces
+  // these where that is the mode (see segLoad in uop-x86.js).
+  setSeg(s, v) {
+    const sel = this.imm('andi', v, 0xFFFF);
+    this.op({ o: 'putsel', s, a: sel });
+    this.op({ o: 'puts', s, a: this.imm('shli', sel, 4) });
+  }
 
   // Effective address of a memory operand: { s: segment base vreg, off: vreg }.
   ea(m) {
@@ -529,6 +565,28 @@ class Lowerer {
         break;
       }
       case 'push': L.push(L.read(d.src), d.w); break;
+      // Segment registers (real mode; see uop-x86.js). The loads come first,
+      // so a memory deopt sees the instruction's starting state.
+      case 'pushseg': L.push(L.getSel(d.s), d.w); break;
+      case 'popseg': L.setSeg(d.s, L.pop(d.w)); break;
+      case 'movfromseg': {
+        const e = d.dst.t === 'm' ? L.ea(d.dst) : null;
+        L.write(d.dst, L.getSel(d.s), e);
+        break;
+      }
+      case 'movseg': L.setSeg(d.s, L.read(d.src)); break;
+      case 'lseg': {
+        const e = L.ea(d.src);
+        const off = L.load(d.w, e);
+        // The selector word follows the offset, wrapping as $off_add does:
+        // the low 16 bits of the offset wrap, bits 16-30 are kept.
+        const lo = L.imm('andi', L.imm('addi', L.imm('andi', e.off, 0xFFFF), d.w / 8), 0xFFFF);
+        const at = d.src.a32 ? L.bin('or', lo, L.imm('andi', e.off, 0x7FFF0000)) : lo;
+        const sel = L.load(16, { s: e.s, off: at });
+        L.putReg(d.dst.r, d.w, off);
+        L.setSeg(d.s, sel);
+        break;
+      }
       case 'pop': {
         const v = L.pop(d.w);
         L.write(d.dst, v);
@@ -642,6 +700,20 @@ class Lowerer {
         L.write(d.dst, r, e);
         break;
       }
+      // SHLD/SHRD by a constant 1..w-1: a funnel over the two operands, and a
+      // DSH record -- CF the last bit out of the destination, SZP off the
+      // result, OF the destination's sign changing, AF kept (L1's $shrd<w>).
+      case 'dshift': {
+        const e = d.dst.t === 'm' ? L.ea(d.dst) : null;
+        const v = L.read(d.dst, e);
+        const s = L.read(d.src);
+        const right = d.sh === 'shrd';
+        let r = L.bin('or', L.imm(right ? 'shri' : 'shli', v, d.n), L.imm(right ? 'shli' : 'shri', s, d.w - d.n));
+        if (d.w !== 32) r = L.imm('andi', r, MASK[d.w]);
+        L.write(d.dst, r, e);
+        L.rec('dsh', d.w, { a: v, r, sh: d.sh, i: d.n });
+        break;
+      }
       case 'movs': case 'stos': case 'lods': {
         const w = d.w, n = w / 8;
         const ar = d.a32 ? 32 : 16;
@@ -724,8 +796,8 @@ function uses(op) {
 // `s` is a segment-base vreg on memory ops and an unmasked sum elsewhere; `r`
 // is a register NUMBER on getr/putr. Say which fields are vregs per opcode.
 function isVregField(op, f) {
-  if (op.o === 'getr' || op.o === 'gets' || op.o === 'guard' || op.o === 'getf') return false;
-  if (op.o === 'putr') return f === 'a';
+  if (op.o === 'getr' || op.o === 'gets' || op.o === 'getsel' || op.o === 'guard' || op.o === 'getf') return false;
+  if (op.o === 'putr' || op.o === 'puts' || op.o === 'putsel') return f === 'a';
   return true;
 }
 function def(op) {
@@ -733,7 +805,7 @@ function def(op) {
 }
 // Ops with an effect beyond their destination.
 const SIDE = new Set(['st', 'putr', 'rec', 'guard', 'step', 'callh', 'wrec', 'wflags', 'ld',
-  'getcc', 'getf', 'fvset', 'check', 'dchk', 'divq', 'divr']);
+  'getcc', 'getf', 'fvset', 'check', 'dchk', 'divq', 'divr', 'puts', 'putsel', 'getsel']);
 function pure(op) { return !SIDE.has(op.o); }
 
 function dump(p, log = console.log) {

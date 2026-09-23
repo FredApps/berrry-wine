@@ -120,6 +120,18 @@ function shiftHelper(fl, kind, w, v, n, shmask) {
   return v | 0;
 }
 
+// $shld<w>/$shrd<w>'s flag write for a count n in 1..w-1: v the destination
+// before, r after. AF is left as it was.
+function dshFlags(fl, kind, w, v, r, n) {
+  const msb = w - 1;
+  v >>>= 0; r >>>= 0;
+  const cf = kind === 'shld' ? (v >>> (w - n)) & 1 : (v >>> (n - 1)) & 1;
+  const of = ((v >>> msb) ^ (r >>> msb)) & 1;
+  let f = fl.word() & ~((1 << 0) | (1 << 11) | (1 << 7) | (1 << 6) | (1 << 2)) & 0xFFFF;
+  f |= cf | (of << 11) | (((r >>> msb) & 1) << 7) | ((r === 0 ? 1 : 0) << 6) | (parity(r) << 2);
+  fl.put((f | fl.fres) >>> 0);
+}
+
 // Apply a flag record (a REC, or a WREC with `fcf` the carry an inc/dec
 // keeps) to a LazyFlags, reading its operands from the vreg file.
 function record(fl, op, v, fcf) {
@@ -149,6 +161,7 @@ function record(fl, op, v, fcf) {
     case 'mul': fl.mul(g('nz')); break;
     // A constant-count shift: the helper's own flag write, count premasked.
     case 'shift': shiftHelper(fl, op.sh, op.w, g('a'), op.i, 0xFFFFFFFF); break;
+    case 'dsh': dshFlags(fl, op.sh, op.w, g('a'), g('r'), op.i); break;
     default: throw new Error(`rec ${op.k}`);
   }
   if (fcf !== null && ['inc', 'dec', 'inc32', 'dec32'].includes(op.k)) fl.fcf = fcf;
@@ -207,7 +220,7 @@ function runRef(vm, p, opts = {}) {
   const shmask = ex.mget_shmask();
   const spm = ex.mget_spm();
   const vgaKey = dv.getInt32(isa.VGA_CTL_KEY, true);
-  const RF = isa.REGFILE_BASE, SB = isa.REGFILE_SEGB;
+  const RF = isa.REGFILE_BASE, SB = isa.REGFILE_SEGB, SL = isa.REGFILE_SEL;
   // A wasm engine hands a run over mid-program (opts.start, with its vreg
   // file, budget and materialized flags word) and takes it back at the first
   // block opts.stopAt accepts.
@@ -373,6 +386,9 @@ function runRef(vm, p, opts = {}) {
         case 'getr': v[op.d] = getr(op.r, op.w); break;
         case 'putr': putr(op.r, op.w, v[op.a]); break;
         case 'gets': v[op.d] = dv.getInt32(SB + 4 * op.s, true); break;
+        case 'puts': dv.setInt32(SB + 4 * op.s, v[op.a], true); break;
+        case 'getsel': v[op.d] = dv.getInt32(SL + 4 * op.s, true); break;
+        case 'putsel': dv.setInt32(SL + 4 * op.s, v[op.a], true); break;
         case 'getm':
           v[op.d] = op.g === 'spm' ? spm : op.g === 'df' ? (fl.flags >>> 10) & 1 : op.g === 'shmask' ? shmask : 0;
           break;

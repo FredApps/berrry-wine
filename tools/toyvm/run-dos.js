@@ -492,6 +492,7 @@ async function runDos(o) {
 
   const t0 = process.hrtime.bigint();
   let guestNs = 0n;
+  let uopBuildNs = 0n;
   let guestCpuUs = 0;
   let v86Was = 0;
   let shotN = 0;
@@ -716,7 +717,13 @@ async function runDos(o) {
         // sample map: its window is a stretch of THIS run rather than a
         // fraction of a finished one.
         if (jit) jit.sample({ left, dispatched });
-        if (uopLive) uopLive.sample({ left, dispatched });
+        if (uopLive) {
+          // Outside guestNs, so a slow optimizer never shows up in ns/dispatch:
+          // counted here instead, where a harness can see it.
+          const u0 = process.hrtime.bigint();
+          uopLive.sample({ left, dispatched });
+          uopBuildNs += process.hrtime.bigint() - u0;
+        }
         // `--slice-log=FILE`: the cumulative dispatch count at every handback,
         // one per line. A frame hash says two runs ended somewhere different;
         // this says WHERE THE CUT MOVED, which is the only way to tell "the
@@ -774,9 +781,11 @@ async function runDos(o) {
   // The µop tier installs into the session's code cache and step(), so it is
   // built after the session too. Its E1 module is compiled here, before the
   // first slice; nothing it does later generates wasm.
+  const uopInitT0 = process.hrtime.bigint();
   const uopLive = uop
     ? await new (require('./uop-live').UopLive)({ session, vm, log, ...(uop === true ? {} : uop) }).init()
     : null;
+  const uopInitNs = process.hrtime.bigint() - uopInitT0;
   let sliceT0 = 0n;
   let sliceCpu0 = null;
 
@@ -908,6 +917,12 @@ async function runDos(o) {
         isa.IPHIST_BASE, isa.IPHIST_SIZE >> 2)) : null,
     histTop: hist, histPairs,
     secs: Number(process.hrtime.bigint() - t0) / 1e9,
+    // Inside `secs`: the µop engine's one-per-process compile (paid even when
+    // nothing installs). A harness comparing runs subtracts it.
+    uopInitSecs: Number(uopInitNs) / 1e9,
+    // Also inside `secs` and outside `guestSecs`: profiling, region discovery,
+    // the optimizer and install, summed over the run.
+    uopBuildSecs: Number(uopBuildNs) / 1e9,
     guestSecs: Number(guestNs) / 1e9,
     // Not `guestSecs`, which is wall time spent inside wasm. This is time as
     // the GUEST saw it -- the unit the machine's real-time cadences are quoted
@@ -1457,7 +1472,9 @@ async function main() {
       + `${ex.get_vm86() ? ' -- virtual-8086' : ''}`);
   }
 
-  console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`);
+  console.log(`\n${path.basename(exe)}  variant=${r.variant}  ${r.secs.toFixed(2)}s`
+    + (r.uopInitSecs ? ` (uop engine init ${(1000 * r.uopInitSecs).toFixed(0)}ms,`
+      + ` build ${(1000 * r.uopBuildSecs).toFixed(0)}ms)` : ''));
   if (r.uop) {
     const u = r.uop;
     console.log(`  uop: ${u.phase} ${u.outcome} (windows=${u.windows} samples=${u.samples}`

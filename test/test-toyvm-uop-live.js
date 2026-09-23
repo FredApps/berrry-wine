@@ -5,7 +5,7 @@
 // from the new bytes, and -- the part that is easy to get wrong -- invisible on
 // the dispatch clock.
 //
-// Four programs, each checked against a closed-form answer computed here, so
+// Six programs -- four checked against a closed-form answer computed here, so
 // two arms that agree on a wrong number cannot pass:
 //
 //   PATCH     a hot loop whose immediate is rewritten between two runs of it.
@@ -21,6 +21,11 @@
 //             really read.
 //   MULDIV    mul/imul/div/idiv at 8, 16 and 32 bits on the wasm engine, with
 //             every CF/OF and remainder consumed.
+//   SEGLOADS  les/lfs, mov/push/pop of es/ds/fs/gs, each followed by an access
+//             through the segment it changed; compared against the
+//             interpreter (every register and all of RAM), not a closed form.
+//   DSHIFT    shld/shrd by constants at 16 and 32 bits, register and memory,
+//             with CF/OF/ZF/PF read back; compared the same way.
 //
 // And for every program the DISPATCH COUNT must be identical with the tier on:
 // every timer, retrace and audio deadline in this emulator is a function of it,
@@ -31,7 +36,10 @@ const assert = require('assert');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const crypto = require('crypto');
 const { runDos } = require('../tools/toyvm/run-dos');
+const isa = require('../tools/toyvm/isa');
+const { segloads, dshift } = require('./test-toyvm-uop');
 
 function asm() {
   const b = [], labels = new Map(), fixups = [];
@@ -394,16 +402,18 @@ function muldivExpected() {
   return { bx, bp, si };
 }
 
-async function run(com, uop) {
+async function run(com, uop, sched = { sampleAfter: 1e6, profileFor: 2e6, every: 4e6 }) {
   const r = await runDos({
     exe: com,
     budget: 200e6,
     slice: 5e4,
     log: () => {},
-    uop: uop ? { sampleAfter: 1e6, profileFor: 2e6, every: 4e6 } : null,
+    uop: uop ? sched : null,
   });
   const regs = r.vm.getAll();
-  return { bx: regs.bx, si: regs.si, bp: regs.bp, frame: r.frame, cells: r.text.cells,
+  const ram = crypto.createHash('sha256')
+    .update(Buffer.from(r.vm.mem.buffer, 0, isa.GUEST_RAM_SIZE)).digest('hex');
+  return { ...regs, ram, frame: r.frame, cells: r.text.cells,
     written: r.machine.con.written, dispatched: r.dispatched, uop: r.uop };
 }
 
@@ -432,6 +442,28 @@ async function check(name, bytes, want, keys) {
   return on;
 }
 
+// No closed form: the segment-load loop from test-toyvm-uop.js, run long
+// enough to install, must leave every register and all of guest RAM exactly
+// as the interpreter does. It is the only place the wasm engine runs the
+// segment micro-ops (getsel/putsel/puts).
+async function checkSame(name, bytes, sched) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-uop-live-'));
+  const com = path.join(dir, `${name}.COM`);
+  fs.writeFileSync(com, bytes);
+  const off = await run(com, false, sched);
+  const on = await run(com, true, sched);
+  const u = on.uop;
+  assert.ok(u && u.installs >= 1, `${name}: no µop program installed (${JSON.stringify(u && u.declined)})`);
+  assert.ok(u.steps > 0.3 * on.dispatched,
+    `${name}: the µop tier ran only ${u.steps} of ${on.dispatched} dispatches`);
+  for (const k of Object.keys(off)) {
+    if (k === 'uop') continue;
+    assert.strictEqual(on[k], off[k], `${name}: ${k} differs with the µop tier on`);
+  }
+  console.log(`${name}: ok  ${off.dispatched} dispatches, ${(100 * u.steps / on.dispatched).toFixed(1)}% in µop, `
+    + `installs ${u.installs} entries ${u.entries} rebuilds ${u.rebuilds} bails ${u.bails}`);
+}
+
 async function main() {
   const p = await check('PATCH', patchProgram(), patchExpected(), ['bx', 'si']);
   // The patch lands inside the program's own bytes: it must have been dropped
@@ -443,6 +475,8 @@ async function main() {
   void s;
   await check('FLAGS', flagsProgram(), flagsExpected(), ['bx', 'bp', 'si']);
   await check('MULDIV', muldivProgram(), muldivExpected(), ['bx', 'bp', 'si']);
+  await checkSame('SEGLOADS', segloads(255).com, { sampleAfter: 1e5, profileFor: 2e5, every: 4e5 });
+  await checkSame('DSHIFT', dshift(255).com, { sampleAfter: 1e5, profileFor: 2e5, every: 4e5 });
   console.log('test-toyvm-uop-live: ok');
 }
 

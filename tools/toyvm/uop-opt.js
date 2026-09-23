@@ -55,7 +55,11 @@ const { FIRST_TEMP, NREG, SEGV, CC_READS, ALL6, liveFlagsAt, flagEffect } = IR;
 
 const PASSES = ['promote', 'mergesink', 'constprop', 'addrfold', 'flagfwd', 'flaglive',
   'guards', 'rle', 'stack', 'licm', 'fuse', 'clock'];
-const GUEST = [0, 1, 2, 3, 4, 5, 6, 7];
+// Every guest vreg a FLUSH writes back: the eight registers AND the six
+// segment bases. Leaving the bases out once a segment load could write one
+// (PUTS) let a pass drop that write as dead, and the deopt stub stored the
+// stale base next to the new selector (B-STEEL's `pop es`).
+const GUEST = Array.from({ length: FIRST_TEMP }, (_, i) => i);
 
 function ablationConfigs(which = PASSES) {
   const all = Object.fromEntries(PASSES.map(p => [p, true]));
@@ -72,10 +76,10 @@ const FLAG_FIELDS = ['fc', 'fp', 'fa', 'fz', 'fs', 'fo'];
 // The fields of an op that READ a vreg.
 function useFields(op) {
   switch (op.o) {
-    case 'movi': case 'getr': case 'gets': case 'getm': case 'getf': case 'getfw':
+    case 'movi': case 'getr': case 'gets': case 'getsel': case 'getm': case 'getf': case 'getfw':
     case 'step': case 'reload': case 'guard': case 'check': case 'flush':
       return [];
-    case 'putr': return ['a'];
+    case 'putr': case 'puts': case 'putsel': return ['a'];
     case 'ld': return ['s', 'a', 'c'];
     case 'st': return ['s', 'a', 'c', 'b'];
     case 'rec': case 'wrec': case 'flagof': return ['a', 'b', 's', 'r', 'cin', 'nz', 'fcf'];
@@ -178,8 +182,8 @@ class Build {
       const f = p.blocks[this.fastOf.get(k)];
       for (const op of s.ops) {
         const c = clone(op);
-        const fields = ['getr', 'gets', 'getm', 'movi', 'getcc', 'getf'].includes(c.o) ? ['d']
-          : c.o === 'putr' ? ['a'] : ['d', 'a', 'b', 'c', 's', 'r', 'cin', 'nz'];
+        const fields = ['getr', 'gets', 'getsel', 'getm', 'movi', 'getcc', 'getf'].includes(c.o) ? ['d']
+          : ['putr', 'puts', 'putsel'].includes(c.o) ? ['a'] : ['d', 'a', 'b', 'c', 's', 'r', 'cin', 'nz'];
         for (const fld of fields) if (typeof c[fld] === 'number') c[fld] = t(c[fld]);
         c.node = k;
         if (c.o === 'ld' || c.o === 'st') { c.chk = 'guard'; c.dx = this.deopt(k); }
@@ -231,6 +235,17 @@ class Build {
     b.ip = this.reg.nodes.get(k).ip;
     b.ops.push({ o: 'flush', exitIp: b.ip, node: k });
     b.term = { o: 'br', t: this.slowOf.get(k), tx: -1, st: 0 };
+    // At an L1 block head the fast half only ever stands right after a
+    // transfer, and L1 tests the budget and self-modify there. So the stub
+    // tests too, after its refund: a header CHECK that fired because the
+    // budget is spent (or code was written) must leave AT the head, not run
+    // the head's block slowly first (ZOKDTPLN.COM, two steps past it).
+    if (this.p.l1Heads && this.p.l1Heads.has(k)) {
+      const g = this.block('exit');
+      g.ip = b.ip;
+      g.term = { o: 'exit', kind: 'go', ip: b.ip, why: 'edge' };
+      b.term.tx = g.id;
+    }
     this.deoptStub.set(k, b.id);
     return b.id;
   }
@@ -396,6 +411,10 @@ function promote(B) {
       n++;
     } else if (op.o === 'gets') {
       op.o = 'mov'; op.a = SEGV + op.s; delete op.s; n++;
+    } else if (op.o === 'puts') {
+      // A segment load's new base: a guest vreg like any other, written back
+      // by FLUSH (the selector went to memory already, through PUTSEL).
+      op.o = 'mov'; op.d = SEGV + op.s; delete op.s; n++;
     }
   }
   B.promoted = true;
@@ -834,6 +853,7 @@ const REC_DEFS = {
   inc: ['p', 'a', 'z', 's', 'o'], dec: ['p', 'a', 'z', 's', 'o'],
   inc32: ['p', 'a', 'z', 's', 'o'], dec32: ['p', 'a', 'z', 's', 'o'],
   mul: ['c', 'o'],
+  dsh: ['c', 'o', 'p', 'z', 's'],
 };
 // A constant-count shift writes CF and OF, and a shift proper SF/ZF/PF too;
 // AF is left alone, and a rotate leaves SF/ZF/PF alone as well.
@@ -1044,7 +1064,7 @@ function forwardFlags(B) {
     const d = B.temp();
     const op = { o: 'flagof', d, f, k: rec.k, w: rec.w, pin: true };
     for (const x of flagOperands(rec, f)) op[x] = rec[x];
-    if (rec.k === 'shift') { op.sh = rec.sh; op.i = rec.i; }
+    if (rec.k === 'shift' || rec.k === 'dsh') { op.sh = rec.sh; op.i = rec.i; }
     out.push(op);
     return d;
   };
@@ -1065,7 +1085,7 @@ function forwardFlags(B) {
     if (one && one.size === 1) {
       const [P] = one;
       const covered = recDefs(P);
-      if (P.k !== 'mul' && P.k !== 'shift' && own.every(f => covered.includes(f))) {
+      if (P.k !== 'mul' && P.k !== 'shift' && P.k !== 'dsh' && own.every(f => covered.includes(f))) {
         const w = { o: 'wrec', k: P.k, w: P.w, a: P.a, b: P.b, s: P.s, r: P.r, cin: P.cin, fcf: -2, pin: true };
         if (['inc', 'dec', 'inc32', 'dec32'].includes(P.k) && need.includes('c')) w.fcf = valueOf('c', pre, ops);
         ops.push(w);
@@ -1139,6 +1159,7 @@ function flagOperands(rec, f) {
     case 'inc': case 'dec': case 'inc32': case 'dec32': return pick('a', 's', 'r');
     case 'mul': return pick('nz');
     case 'shift': return pick('a');
+    case 'dsh': return f === 'c' ? pick('a') : f === 'o' ? pick('a', 'r') : pick('r');
     default: return pick('a', 'b', 's', 'r', 'cin', 'nz');
   }
 }
@@ -1176,6 +1197,11 @@ function fuseCC(P, cc) {
       if (name === 'g') return cmp('gt', P.r, -1, 0);
       if (name === 'b' || name === 'o') return { o: 'movi', i: 0 };
       if (name === 'ae' || name === 'no') return { o: 'movi', i: 1 };
+      break;
+    }
+    case 'dsh': {
+      const m = { e: 'z', ne: 'nz', s: 's', ns: 'ns', p: 'p', np: 'np' }[name];
+      if (m) return onR(m);
       break;
     }
     case 'shift': {
@@ -1297,6 +1323,8 @@ function clock(B) {
     if (!b.header) continue;
     memo.clear();
     const M = longest(b.id, true);
+    const c = b.ops.find(o => o.o === 'check');
+    if (c) { c.m = M - prepaid.get(b.id); c.M = M; continue; }
     b.ops.unshift({ o: 'check', m: M - prepaid.get(b.id), M, node: b.nodes[0], dx: B.deopt(b.nodes[0]) });
   }
   B.prepaid = prepaid;
@@ -1332,7 +1360,11 @@ function finalize(B) {
       b.ops.splice(b.ops.indexOf(op), 1, ...ops);
     } else if (op.o === 'flush') {
       const ops = [];
-      if (B.promoted) for (const r of [...written].sort((x, y) => x - y)) ops.push({ o: 'putr', r, w: width(r), a: r });
+      if (B.promoted) {
+        for (const r of [...written].sort((x, y) => x - y)) {
+          ops.push(r < NREG ? { o: 'putr', r, w: width(r), a: r } : { o: 'puts', s: r - SEGV, a: r });
+        }
+      }
       b.ops.splice(b.ops.indexOf(op), 1, ...ops);
     }
   }
@@ -1384,6 +1416,11 @@ const isCold = (b) => b.kind === 'deopt' || b.kind === 'fexit';
 function availableAlong(B, b0, i0, X) {
   const p = B.p;
   const operands = new Set(opUses(X));
+  // A read of the register file names its register by NUMBER, not as a vreg
+  // operand, so a write to that register is a kill the operand set misses.
+  const kills = X.o === 'getr' ? (op) => op.o === 'putr' && op.r === X.r
+    : X.o === 'gets' ? (op) => op.o === 'puts' && op.s === X.s
+      : X.o === 'getsel' ? (op) => op.o === 'putsel' && op.s === X.s : () => false;
   const inV = new Map();
   const work = [];
   const flow = (bid, val) => {
@@ -1397,7 +1434,7 @@ function availableAlong(B, b0, i0, X) {
       const op = b.ops[k];
       if (op.dx !== undefined && op.dx >= 0) flow(op.dx, val);
       if (b === b0 && k === i0) { val = true; continue; }
-      if (op.o === 'reload' || operands.has(opDef(op))) val = false;
+      if (op.o === 'reload' || operands.has(opDef(op)) || kills(op)) val = false;
     }
     const t = b.term;
     if (t && t.o === 'br') flow(t.t, val);
@@ -1662,6 +1699,19 @@ function build(reg, opts = {}) {
   B.mergeStraight();
   B.findHeaders();
   B.makeEntries();
+  // The clock pass's budget CHECK at each header deopts to the header's
+  // first instruction. Its edge has to exist from here on, not only from the
+  // clock pass: flag forwarding materializes forwarded flags on every deopt
+  // edge it can see, and a stub first created after it -- a header whose
+  // first instruction has no memory access, so no stub yet -- would hand the
+  // slow half L1's stale record (a setz at a header read the ZF of an older
+  // instruction). clock() fills in the counts.
+  if (B.on('clock')) {
+    for (const b of B.fastBlocks()) {
+      if (b.header && b.kind === 'body') b.ops.unshift({ o: 'check', m: 0, M: 0, node: b.nodes[0], dx: B.deopt(b.nodes[0]) });
+    }
+    B.cfg();
+  }
   if (B.on('guards')) machineGuards(B);
   if (B.on('promote')) promote(B);
   if (B.on('constprop')) constprop(B);

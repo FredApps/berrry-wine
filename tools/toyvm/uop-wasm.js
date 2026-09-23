@@ -319,6 +319,9 @@ function lowerProgram(p) {
         throw new Unsupported(`putr w${op.w}`);
       }
       case 'gets': return E('getr32', vr(op.d), im(isa.REGFILE_SEGB + 4 * op.s));
+      case 'puts': return E('putr32', im(isa.REGFILE_SEGB + 4 * op.s), vr(op.a));
+      case 'getsel': return E('getr32', vr(op.d), im(isa.REGFILE_SEL + 4 * op.s));
+      case 'putsel': return E('putr32', im(isa.REGFILE_SEL + 4 * op.s), vr(op.a));
       case 'getm':
         if (op.g === 'spm') return E('getm_spm', vr(op.d));
         if (op.g === 'df') return E('getm_df', vr(op.d));
@@ -377,7 +380,8 @@ function lowerProgram(p) {
     else if (k === 'shift') {
       const n = op.i >>> 0;
       set = n === 0 ? [] : (op.sh === 'rol' || op.sh === 'ror' ? ['c', 'o'] : ['c', 'p', 'z', 's', 'o']);
-    } else if (incdec && op.o === 'rec') set = ['p', 'a', 'z', 's', 'o'];
+    } else if (k === 'dsh') set = ['c', 'p', 'z', 's', 'o'];
+    else if (incdec && op.o === 'rec') set = ['p', 'a', 'z', 's', 'o'];
     else set = SIX;
     if (!set.length) return undefined;
     const args = [];
@@ -402,6 +406,19 @@ function lowerProgram(p) {
     const has = (f) => op[f] !== undefined && op[f] >= 0;
     if (k === 'mul') return E('fnz', d, vr(op.nz));
     if (k === 'shift') return lowerShiftFlag(op, E);
+    if (k === 'dsh') {
+      // SHLD/SHRD by n in 1..w-1 (uop-ref.js dshFlags): a the destination
+      // before, r after.
+      const w = op.w, n = op.i >>> 0, R = vr(op.r), A = vr(op.a);
+      switch (op.f) {
+        case 'c': return E('fbit', d, A, im(op.sh === 'shld' ? w - n : n - 1));
+        case 'z': return E('fz', d, R, im(0));
+        case 's': return E('fbit', d, R, im(w - 1));
+        case 'p': return E('fp', d, R);
+        case 'o': { const t = vr(scratch[0]); E('fbit', t, A, im(w - 1)); E('fbit', d, R, im(w - 1)); return E('xor', d, d, t); }
+        default: return E('movi', d, im(0));
+      }
+    }
     const incdec = ['inc', 'dec', 'inc32', 'dec32'].includes(k);
     const inc = k === 'inc' || k === 'inc32';
     const w = ['add32', 'sub32', 'inc32', 'dec32'].includes(k) ? 32 : op.w;

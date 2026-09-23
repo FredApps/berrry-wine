@@ -109,6 +109,13 @@ function guestState(vm, arm) {
     if (NOT_GUEST.has(g) || !vm.exports[`get_${g}`]) continue;
     o[g] = vm.raw(g) >>> 0;
   }
+  // The segment registers live in the register file, outside guest RAM, so
+  // memHash does not see them.
+  const dv = new DataView(vm.mem.buffer);
+  ['es', 'cs', 'ss', 'ds', 'fs', 'gs'].forEach((r, i) => {
+    o[`sel_${r}`] = dv.getUint32(isa.REGFILE_SEL + 4 * i, true);
+    o[`base_${r}`] = dv.getUint32(isa.REGFILE_SEGB + 4 * i, true);
+  });
   const env = envOf(vm);
   const live = liveFlagsAt((lin) => vm.mem[lin], env, vm.raw('gip') >>> 0);
   let m = ~0x8D5 >>> 0;   // everything but the six arithmetic bits

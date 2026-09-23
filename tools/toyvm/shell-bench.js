@@ -24,7 +24,10 @@
 // inside wasm), and the whole process's wall as `total`, so `total - secs` is
 // the start-up: bundle evaluation, the WATX compile of the VM, the engine's
 // compile of the module. ns/dispatch is guestSecs over the dispatch count, the
-// unit sweep-dos.js quotes. Every arm must retire the same dispatch count and
+// unit sweep-dos.js quotes. With --mode=uop the tier's own costs are outside
+// guestSecs and reported beside it: `uop init` (the engine module's compile,
+// once per process -- a browser pays it once per page) and `opt` (profiling,
+// the optimizer and installs, summed over the run). Every arm must retire the same dispatch count and
 // draw the same frame as the others -- and, with --from, as the sweep that
 // named the program -- or its row is marked, never averaged.
 //
@@ -130,6 +133,7 @@ var T1 = nowMs();
 runDos({ exe: ${JSON.stringify(path.basename(exe))}, variant: 'tailcall', budget: ${budget},
   cpu: 386, autoKey: true, log: function () {}${jit} }).then(function (r) {
   say('SHELLBENCH ' + JSON.stringify({ secs: r.secs, guestSecs: r.guestSecs,
+    uopInitSecs: r.uopInitSecs, uopBuildSecs: r.uopBuildSecs,
     dispatched: r.dispatched, frame: r.frame, startMs: T1 - T0, totalMs: nowMs() - T0,
     jit: r.jit ? { phase: r.jit.phase, installs: r.jit.installs, share: r.jit.share } : null,
     uop: r.uop ? { outcome: r.uop.outcome, windows: r.uop.windows, samples: r.uop.samples, bestShare: r.uop.bestShare,
@@ -168,6 +172,7 @@ function runArm(id, script, timeoutS) {
 const buildS = (r) => Math.max(0, r.totalMs / 1000 - r.secs);
 
 const geomean = (xs) => Math.exp(xs.reduce((s, x) => s + Math.log(x), 0) / xs.length);
+const median = (xs) => [...xs].sort((x, y) => x - y)[xs.length >> 1];
 
 async function main() {
   // A stale bundle benchmarks yesterday's VM. bundle-browser.js --check is the
@@ -229,7 +234,8 @@ async function main() {
     const cell = (a) => {
       const r = row.arms[a];
       if (!r.ok) return `${a} FAIL(${r.reason.slice(0, 40)})`;
-      return `${a} ${(r.guestSecs * 1e9 / r.dispatched).toFixed(1)}ns/d build ${buildS(r).toFixed(2)}s`;
+      return `${a} ${(r.guestSecs * 1e9 / r.dispatched).toFixed(1)}ns/d build ${buildS(r).toFixed(2)}s`
+        + (r.uopInitSecs ? ` uop init ${(1000 * r.uopInitSecs).toFixed(0)}ms opt ${(1000 * r.uopBuildSecs).toFixed(0)}ms` : '');
     };
     console.log(`[${pi + 1}/${progs.length}] ${row.name.padEnd(14)} ${arms.map(cell).join('  ')}`
       + (bad.length ? `  DISAGREE ${bad.join(',')}` : '') + `  load ${row.load.toFixed(2)}`);
@@ -258,7 +264,14 @@ async function main() {
     console.log(`  ${a.padEnd(12)} run vs ${base}: geomean x${geomean(ratios).toFixed(3)}`
       + `  p10 x${q(0.1).toFixed(2)}  p50 x${q(0.5).toFixed(2)}  p90 x${q(0.9).toFixed(2)}`
       + `  | median ns/d ${geomean(clean.map((r) => nsd(r, a))).toFixed(1)} (geo)`
-      + `  | bundle+build median ${start[start.length >> 1].toFixed(2)}s`);
+      + `  | bundle+build median ${start[start.length >> 1].toFixed(2)}s`
+      // ns/d is wasm time only; the µop tier's own costs sit outside it and
+      // are paid once per process (init) or per install (opt).
+      + (clean.some((r) => r.arms[a].uopInitSecs)
+        ? `  | uop init median ${(1000 * median(clean.map((r) => r.arms[a].uopInitSecs || 0))).toFixed(0)}ms`
+          + `, opt total ${clean.reduce((s, r) => s + (r.arms[a].uopBuildSecs || 0), 0).toFixed(2)}s`
+          + ` (max ${(1000 * Math.max(...clean.map((r) => r.arms[a].uopBuildSecs || 0))).toFixed(0)}ms)`
+        : ''));
   }
   for (const r of rows) {
     if (r.failed.length) console.log(`  FAIL ${r.name}: ${r.failed.map((a) => `${a}: ${r.arms[a].reason}`).join('; ')}`);
