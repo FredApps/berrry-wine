@@ -685,6 +685,11 @@
   (region.declare $GL_SW_TEXTURES (size 0x00008000) (align 0x00001000)
     (stride 0x8 (count 4096))
     (owner "09a8g-gl-raster.wat:$gl_sw_tex_slot"))
+  ;; Mip levels 1..12 of each of those names, one surface COM object per
+  ;; level (4096 needs twelve levels below level 0), 0 = not uploaded.
+  (region.declare $GL_SW_MIPS (size 0x00030000) (align 0x00001000)
+    (stride 0x30 (count 4096))
+    (owner "09a8g-gl-raster.wat:$gl_sw_mip_at"))
   (region.declare $CP1252_TO_CP437 (size 0x00000100) (align 0x00001000)
     (owner "09a-handlers4-late.wat:$CP1252_TO_CP437"))
   (region.declare $CP437_TO_CP1252 (size 0x00000100) (align 0x00000100)

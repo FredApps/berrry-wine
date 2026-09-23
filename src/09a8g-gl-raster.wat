@@ -61,6 +61,8 @@
   (global $GL_SW_STATE_SIZE i32 (region.size $GL_SW_STATE))
   (global $GL_SW_TEXTURES i32 (region.addr $GL_SW_TEXTURES 0))
   (global $GL_SW_TEXTURES_SIZE i32 (region.size $GL_SW_TEXTURES))
+  (global $GL_SW_MIPS i32 (region.addr $GL_SW_MIPS 0))
+  (global $GL_SW_MIPS_SIZE i32 (region.size $GL_SW_MIPS))
 
   ;; Off unless a host asks for it: with a JS GL backend present, both paths
   ;; drawing at once is two pictures, not one.
@@ -344,21 +346,47 @@
   ;; ---- textures ---------------------------------------------------------
   ;; $GL_SW_TEXTURES: one 8-byte slot per texture name below 4096,
   ;;   +0 the surface's COM object (guest pointer), 0 = no image yet
-  ;;   +4 flags: 1 linear, 2 clamp S, 4 clamp T, 8 flags initialised
-  ;; A name at or above 4096 has no slot and samples as white.
+  ;;   +4 flags: 1 linear (MAG_FILTER), 2 clamp S, 4 clamp T, 8 flags
+  ;;      initialised, 16 opaque, 32 MIN_FILTER uses mipmaps, 64 MIN_FILTER
+  ;;      samples linearly within a level
+  ;; A name at or above 4096 has no slot and samples as white. Levels 1..12
+  ;; live in $GL_SW_MIPS, 48 bytes per name.
   (func $gl_sw_tex_slot (param $name i32) (result i32)
     (if (i32.ge_u (local.get $name) (i32.const 4096)) (then (return (i32.const 0))))
     (i32.add (global.get $GL_SW_TEXTURES) (i32.mul (local.get $name) (i32.const 8))))
 
-  ;; GL's defaults are MAG_FILTER LINEAR and REPEAT in both directions.
+  ;; GL's defaults are MAG_FILTER LINEAR, MIN_FILTER NEAREST_MIPMAP_LINEAR
+  ;; and REPEAT in both directions.
   (func $gl_sw_tex_flags (param $slot i32) (result i32)
     (if (i32.eqz (i32.and (i32.load offset=4 (local.get $slot)) (i32.const 8)))
-      (then (i32.store offset=4 (local.get $slot) (i32.const 9))))
+      (then (i32.store offset=4 (local.get $slot) (i32.const 41))))
     (i32.load offset=4 (local.get $slot)))
 
-  ;; glTexParameter for TEXTURE_2D: MAG_FILTER picks linear sampling (the
-  ;; rasterizer has one filter, and magnification is what a close surface
-  ;; shows), WRAP_S/WRAP_T pick clamp for CLAMP and CLAMP_TO_EDGE.
+  ;; Address of level $level's object (1..12) for texture slot $slot.
+  (func $gl_sw_mip_at (param $slot i32) (param $level i32) (result i32)
+    (i32.add (global.get $GL_SW_MIPS)
+      (i32.add
+        (i32.mul (i32.shr_u (i32.sub (local.get $slot) (global.get $GL_SW_TEXTURES)) (i32.const 3))
+                 (i32.const 48))
+        (i32.shl (i32.sub (local.get $level) (i32.const 1)) (i32.const 2)))))
+
+  ;; Every level above 0 of $slot, released.
+  (func $gl_sw_mips_release (param $slot i32)
+    (local $level i32) (local $p i32)
+    (local.set $level (i32.const 1))
+    (loop $lp
+      (local.set $p (call $gl_sw_mip_at (local.get $slot) (local.get $level)))
+      (if (i32.load (local.get $p))
+        (then
+          (drop (call $dx_surface_release (i32.load (local.get $p))))
+          (i32.store (local.get $p) (i32.const 0))))
+      (local.set $level (i32.add (local.get $level) (i32.const 1)))
+      (br_if $lp (i32.le_u (local.get $level) (i32.const 12)))))
+
+  ;; glTexParameter for TEXTURE_2D: MAG_FILTER picks linear sampling for a
+  ;; magnified face, MIN_FILTER whether a minified one steps down the mip
+  ;; chain and how it samples there, WRAP_S/WRAP_T pick clamp for CLAMP and
+  ;; CLAMP_TO_EDGE.
   (func $gl_sw_tex_param (param $pname i32) (param $value i32)
     (local $slot i32) (local $flags i32) (local $bit i32)
     (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $GL_SW_STATE))))
@@ -369,6 +397,18 @@
         (local.set $flags (i32.and (local.get $flags) (i32.const -2)))
         (if (i32.eq (local.get $value) (i32.const 0x2601))
           (then (local.set $flags (i32.or (local.get $flags) (i32.const 1)))))))
+    ;; NEAREST 0x2600, LINEAR 0x2601, then the four *_MIPMAP_* at 0x2700..3:
+    ;; bit 0 of the low byte is the within-level filter.
+    (if (i32.eq (local.get $pname) (i32.const 0x2801))
+      (then
+        (local.set $flags (i32.and (local.get $flags) (i32.const -97)))
+        (if (i32.le_u (i32.sub (local.get $value) (i32.const 0x2700)) (i32.const 3))
+          (then (local.set $flags (i32.or (local.get $flags) (i32.const 32)))))
+        (if (i32.and (i32.or
+                       (i32.le_u (i32.sub (local.get $value) (i32.const 0x2700)) (i32.const 3))
+                       (i32.le_u (i32.sub (local.get $value) (i32.const 0x2600)) (i32.const 1)))
+                     (i32.and (local.get $value) (i32.const 1)))
+          (then (local.set $flags (i32.or (local.get $flags) (i32.const 64)))))))
     (if (i32.or (i32.eq (local.get $pname) (i32.const 0x2802))
                 (i32.eq (local.get $pname) (i32.const 0x2803)))
       (then
@@ -499,17 +539,21 @@
     (i32.store (local.get $slot) (i32.const 0))
     (drop (call $dx_surface_release (local.get $obj))))
 
-  ;; glTexImage2D / gluBuild2DMipmaps level 0 into the bound name. Mip levels
-  ;; above 0 are not stored: the rasterizer samples one level.
+  ;; glTexImage2D / gluBuild2DMipmaps into the bound name. Level 0 lives in
+  ;; the slot, levels 1..12 in $GL_SW_MIPS; each is its own ARGB surface.
   (func $gl_sw_tex_image (param $level i32) (param $internal i32)
       (param $w i32) (param $h i32) (param $format i32) (param $type i32)
       (param $pixels i32)
     (local $slot i32) (local $obj i32) (local $entry i32) (local $opaque i32)
-    (if (local.get $level) (then (return)))
+    (local $at i32)
+    (if (i32.gt_u (local.get $level) (i32.const 12)) (then (return)))
     (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $GL_SW_STATE))))
     (if (i32.eqz (local.get $slot)) (then (return)))
     (drop (call $gl_sw_tex_flags (local.get $slot)))
-    (call $gl_sw_tex_release (local.get $slot))
+    (local.set $at (local.get $slot))
+    (if (local.get $level)
+      (then (local.set $at (call $gl_sw_mip_at (local.get $slot) (local.get $level)))))
+    (call $gl_sw_tex_release (local.get $at))
     (if (i32.or (i32.ne (local.get $type) (i32.const 0x1401))           ;; UNSIGNED_BYTE
                 (i32.eqz (call $gl_sw_format_bytes (local.get $format))))
       (then
@@ -525,12 +569,14 @@
     (if (i32.eqz (local.get $obj)) (then (return)))
     (local.set $entry (call $dx_from_this (local.get $obj)))
     (call $dx_surf_fmt_set (local.get $entry) (i32.const 5))       ;; ARGB8888
-    (i32.store (local.get $slot) (local.get $obj))
+    (i32.store (local.get $at) (local.get $obj))
     (local.set $opaque (call $gl_sw_internal_opaque (local.get $internal)))
-    ;; The opaque decision is re-derived at sub-image time from this bit.
-    (i32.store offset=4 (local.get $slot) (i32.or
-      (i32.and (i32.load offset=4 (local.get $slot)) (i32.const 15))
-      (i32.shl (local.get $opaque) (i32.const 4))))
+    ;; The opaque decision is re-derived at sub-image time from this bit;
+    ;; level 0's internal format is the texture's.
+    (if (i32.eqz (local.get $level))
+      (then (i32.store offset=4 (local.get $slot) (i32.or
+        (i32.and (i32.load offset=4 (local.get $slot)) (i32.const -17))
+        (i32.shl (local.get $opaque) (i32.const 4))))))
     (call $gl_sw_tex_store (local.get $entry) (i32.const 0) (i32.const 0)
       (local.get $w) (local.get $h) (local.get $format) (local.get $pixels)
       (local.get $opaque))
@@ -540,10 +586,11 @@
       (param $w i32) (param $h i32) (param $format i32) (param $type i32)
       (param $pixels i32)
     (local $slot i32) (local $obj i32)
-    (if (local.get $level) (then (return)))
+    (if (i32.gt_u (local.get $level) (i32.const 12)) (then (return)))
     (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $GL_SW_STATE))))
     (if (i32.eqz (local.get $slot)) (then (return)))
-    (local.set $obj (i32.load (local.get $slot)))
+    (local.set $obj (i32.load (select (call $gl_sw_mip_at (local.get $slot) (local.get $level))
+      (local.get $slot) (local.get $level))))
     (if (i32.eqz (local.get $obj)) (then (return)))
     (if (i32.or (i32.ne (local.get $type) (i32.const 0x1401))
                 (i32.eqz (call $gl_sw_format_bytes (local.get $format))))
@@ -569,6 +616,7 @@
       (if (local.get $slot)
         (then
           (call $gl_sw_tex_release (local.get $slot))
+          (call $gl_sw_mips_release (local.get $slot))
           (i32.store offset=4 (local.get $slot) (i32.const 0))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $lp))))
@@ -2004,6 +2052,67 @@
     (global.set $rast_t1_vc (global.get $rast_pc))
     (global.set $rast_t1_on (i32.const 1)))
 
+  ;; Mip selection for the triangle in screen records 0..2, once per face:
+  ;; rho^2 is its area in level-0 texels over its area in pixels, and the
+  ;; level is round(log2(rho)) -- level L once rho^2 reaches 2^(2L-1). A
+  ;; missing level falls back to the deepest one uploaded below it, so a
+  ;; texture with only level 0 draws as it always did. A minified face takes
+  ;; MIN_FILTER's within-level filter, a magnified one MAG_FILTER's. The
+  ;; choice is per face, not per pixel: a long floor in perspective gets one
+  ;; level for its whole length.
+  (func $gl_sw_mip_select
+    (local $s i32) (local $slot i32) (local $flags i32) (local $entry i32)
+    (local $r0 i32) (local $r1 i32) (local $r2 i32)
+    (local $px f32) (local $tx f32) (local $ratio f32) (local $step f32)
+    (local $level i32) (local $want i32) (local $obj i32)
+    (if (i32.eq (global.get $gl_sw_r_tex) (global.get $gl_sw_white)) (then (return)))
+    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (local.get $s))))
+    (if (i32.eqz (local.get $slot)) (then (return)))
+    (local.set $flags (global.get $gl_sw_r_flags))
+    (local.set $entry (global.get $gl_sw_r_tex))
+    (local.set $r0 (call $gl_sw_screen_at (i32.const 0)))
+    (local.set $r1 (call $gl_sw_screen_at (i32.const 1)))
+    (local.set $r2 (call $gl_sw_screen_at (i32.const 2)))
+    (local.set $px (f32.abs (f32.convert_i32_s (i32.sub
+      (i32.mul (i32.sub (i32.load (local.get $r1)) (i32.load (local.get $r0)))
+               (i32.sub (i32.load offset=4 (local.get $r2)) (i32.load offset=4 (local.get $r0))))
+      (i32.mul (i32.sub (i32.load (local.get $r2)) (i32.load (local.get $r0)))
+               (i32.sub (i32.load offset=4 (local.get $r1)) (i32.load offset=4 (local.get $r0))))))))
+    (local.set $tx (f32.mul
+      (f32.abs (f32.sub
+        (f32.mul (f32.sub (f32.load offset=16 (local.get $r1)) (f32.load offset=16 (local.get $r0)))
+                 (f32.sub (f32.load offset=20 (local.get $r2)) (f32.load offset=20 (local.get $r0))))
+        (f32.mul (f32.sub (f32.load offset=16 (local.get $r2)) (f32.load offset=16 (local.get $r0)))
+                 (f32.sub (f32.load offset=20 (local.get $r1)) (f32.load offset=20 (local.get $r0))))))
+      (f32.convert_i32_u (i32.mul (load.field DxObject width (local.get $entry))
+                                  (load.field DxObject height (local.get $entry))))))
+    ;; A degenerate face has no pixels to minify into; leave it on level 0.
+    (if (f32.le (local.get $px) (f32.const 0)) (then (return)))
+    (local.set $ratio (f32.div (local.get $tx) (local.get $px)))
+    (if (f32.le (local.get $ratio) (f32.const 1)) (then (return)))
+    ;; Minified: MIN_FILTER's within-level filter replaces MAG_FILTER's.
+    (global.set $gl_sw_r_flags (i32.or (i32.and (local.get $flags) (i32.const -2))
+      (i32.ne (i32.and (local.get $flags) (i32.const 64)) (i32.const 0))))
+    (if (i32.eqz (i32.and (local.get $flags) (i32.const 32))) (then (return)))
+    (local.set $step (f32.const 2))
+    (block $sized (loop $up
+      (br_if $sized (f32.lt (local.get $ratio) (local.get $step)))
+      (br_if $sized (i32.ge_u (local.get $want) (i32.const 12)))
+      (local.set $want (i32.add (local.get $want) (i32.const 1)))
+      (local.set $step (f32.mul (local.get $step) (f32.const 4)))
+      (br $up)))
+    (local.set $level (local.get $want))
+    (block $found (loop $down
+      (br_if $found (i32.eqz (local.get $level)))
+      (local.set $obj (i32.load (call $gl_sw_mip_at (local.get $slot) (local.get $level))))
+      (if (local.get $obj)
+        (then
+          (global.set $gl_sw_r_tex (call $dx_from_this (local.get $obj)))
+          (br $found)))
+      (local.set $level (i32.sub (local.get $level) (i32.const 1)))
+      (br $down))))
+
   (func $gl_sw_emit (param $vp i32) (param $c0 i32) (param $c1 i32) (param $c2 i32)
     (local $s i32) (local $caps i32) (local $area i32) (local $front i32) (local $cull i32)
     (local $s0 i32) (local $s1 i32) (local $s2 i32)
@@ -2052,6 +2161,7 @@
       (then (call $gl_sw_fog_plane (local.get $s0)
         (call $gl_sw_screen_at (i32.const 1)) (call $gl_sw_screen_at (i32.const 2)))))
     (call $gl_sw_t1_setup (local.get $c0) (local.get $c1) (local.get $c2))
+    (call $gl_sw_mip_select)
     (call $rasterize_triangle_textured
       (global.get $gl_sw_r_rt) (global.get $gl_sw_r_tex)
       (i32.ne (i32.and (local.get $caps) (i32.const 2)) (i32.const 0))
