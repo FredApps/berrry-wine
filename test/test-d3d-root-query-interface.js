@@ -1,7 +1,15 @@
 'use strict';
 const assert=require('assert');
+const fs=require('fs'),path=require('path');
 const {bootRenderHarness}=require('./render-helper');
 const apis=require('../src/api_table.json');
+for(const v of [2,3,7]) {
+ const name=`IDirect3D${v}_QueryInterface`;
+ assert.strictEqual(apis.find(a=>a.name===name).handler,'IDirect3D_QueryInterface','shared root dispatch');
+ const source=fs.readFileSync(path.join(__dirname,'../src',
+   v===3?'09a8-handlers-directx.wat':'09aa-handlers-d3dim.wat'),'utf8');
+ assert(!source.includes('(func $handle_'+name+' '),'no duplicate root handler');
+}
 const extraWat=String.raw`
  (func (export "create") (param $v i32) (result i32)
    (if (i32.eq (local.get $v) (i32.const 1)) (then (return (call $dx_create_com_obj (i32.const 8) (global.get $DX_VTBL_D3D)))))

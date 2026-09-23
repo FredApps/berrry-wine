@@ -47,3 +47,18 @@ does not claim those families were audited. Invalid non-null pointers and
 guest-span arena exhaustion are not certified by this regression.
 
 No native Win98, browser/gameplay, full-build or performance claim is made.
+
+## Shared dispatch follow-up
+
+The four root QueryInterface handlers were compared before editing: their
+bodies were byte-identical after normalizing only the function name and
+whitespace. IDirect3D2/3/7 now alias IDirect3D_QueryInterface in the API table;
+the D3DIM interface spec retains the aliases for versions 2/7. Three redundant
+runtime handlers are removed, and generated dispatch is refreshed.
+
+The existing runtime regression now also asserts these aliases and the absence
+of duplicate wrappers. Its structural check failed before the change; all
+runtime cases and the 211-method interface-spec regression pass afterward.
+Scoped gates pass. Exact duplicates drop from 123 groups / 487 members to
+122 groups / 483 members; quiet counts remain 243 manual + 22 metadata.
+This changes dispatch ownership, not the supported interface set or ABI.

@@ -11111,12 +11111,8 @@
   ;; IDirect3D3 methods
   ;; ════════════════════════════════════════════════════════════
 
-  ;; IDirect3D3::QueryInterface — routes upgrades across D3D family (v1/v2/v3/v7).
-  (func $handle_IDirect3D3_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $d3dim_qi (i32.const 1) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
-
-  ;; AddRef/Release use the shared DX lifetime handlers via api_table aliases.
+  ;; QueryInterface aliases IDirect3D_QueryInterface; AddRef/Release alias
+  ;; the shared DX lifetime handlers in api_table.
 
   ;; IDirect3D3::EnumDevices(this, lpEnumDevicesCallback, lpUserArg) — 3 args
   (func $handle_IDirect3D3_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

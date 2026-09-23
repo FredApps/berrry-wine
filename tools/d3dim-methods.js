@@ -16,7 +16,7 @@
 const interfaces = [
   // ── IDirect3D2 ──────────────────────────────────────────────────────
   { prefix: 'IDirect3D2', methods: [
-    { name: 'QueryInterface', nargs: 3 },
+    { name: 'QueryInterface', nargs: 3, handler: 'IDirect3D_QueryInterface' },
     { name: 'AddRef',         nargs: 1, handler: 'dx_com_addref' },
     { name: 'Release',        nargs: 1, handler: 'dx_com_release_basic' },
     { name: 'EnumDevices',    nargs: 3 },
@@ -29,7 +29,7 @@ const interfaces = [
 
   // ── IDirect3D7 ──────────────────────────────────────────────────────
   { prefix: 'IDirect3D7', methods: [
-    { name: 'QueryInterface',           nargs: 3 },
+    { name: 'QueryInterface',           nargs: 3, handler: 'IDirect3D_QueryInterface' },
     { name: 'AddRef',                   nargs: 1, handler: 'dx_com_addref' },
     { name: 'Release',                  nargs: 1, handler: 'dx_com_release_basic' },
     { name: 'EnumDevices',              nargs: 3 },

@@ -211,10 +211,7 @@
     (call $lock_release (global.get $LOCK_DX)))
 
   ;; ── IDirect3D2 — 9 methods ─────────────
-  ;; IDirect3D2_QueryInterface — 3 args (incl. this)
-  (func $handle_IDirect3D2_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $d3dim_qi (i32.const 1) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+  ;; QueryInterface aliases IDirect3D_QueryInterface through the interface spec.
 
   ;; IDirect3D2_EnumDevices(this, lpEnumDevicesCallback, lpUserArg) — 3 args
   ;; Delegates to shared HAL-device enumerator (same callback contract as v1/v3).
@@ -265,10 +262,7 @@
 
 
   ;; ── IDirect3D7 — 8 methods ─────────────
-  ;; IDirect3D7_QueryInterface — 3 args (incl. this)
-  (func $handle_IDirect3D7_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $d3dim_qi (i32.const 1) (local.get $arg0) (local.get $arg1) (local.get $arg2)))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+  ;; QueryInterface aliases IDirect3D_QueryInterface through the interface spec.
 
   ;; IDirect3D7_EnumDevices — 3 args (incl. this)
   (func $handle_IDirect3D7_EnumDevices (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
