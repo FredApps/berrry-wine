@@ -1610,9 +1610,16 @@
   ;; IDirect3DExecuteBuffer_SetExecuteData — 2 args (incl. this)
   ;; arg1 = D3DEXECUTEDATA*. Capture vertex/instruction offsets + lengths.
   (func $handle_IDirect3DExecuteBuffer_SetExecuteData (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $entry i32) (local $header i32)
+    (local $entry i32) (local $header i32) (local $hr i32)
+    (block $done
     (if (local.get $arg1) (then
       (local.set $entry (call $dx_from_this (local.get $arg0)))
+      ;; Prepare storage before publishing any descriptor fields. Status must
+      ;; survive even when SetExecuteData precedes the first Unlock.
+      (local.set $header (call $d3dim_execbuf_cache_ensure (local.get $entry) (i32.const 0)))
+      (if (i32.eqz (local.get $header)) (then
+        (local.set $hr (i32.const 0x8007000E))
+        (br $done)))
       ;; dwVertexOffset @+4 → entry+16
       (i32.store (i32.add (local.get $entry) (i32.const 16))
         (call $gl32 (i32.add (local.get $arg1) (i32.const 4))))
@@ -1625,12 +1632,10 @@
       ;; D3DEXECUTEDATA.dsStatus @+24 is driver-owned after Execute. Keep it
       ;; alongside the cached source bytes so every execute buffer has its own
       ;; status without widening the shared 32-byte DX_OBJECTS entry.
-      (local.set $header (call $d3dim_execbuf_cache_header_guest (local.get $arg0)))
-      (if (local.get $header) (then
-        (call $guest_memmove (i32.add (local.get $header) (i32.const 8))
-          (i32.add (local.get $arg1) (i32.const 24))
-          (i32.const 24))))))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+      (call $guest_memmove (i32.add (local.get $header) (i32.const 8))
+        (i32.add (local.get $arg1) (i32.const 24))
+        (i32.const 24)))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; IDirect3DExecuteBuffer_GetExecuteData — 2 args (incl. this)

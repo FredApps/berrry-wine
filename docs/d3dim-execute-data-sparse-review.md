@@ -288,3 +288,39 @@ padded records are native-compatible. Branch offset origin/zero-offset policy
 are preserved and regression-tested, not newly native-verified. Status flags,
 cache-independent ownership, clip status, device lifetime, buffer/index bounds
 and browser/full-application verification remain open.
+
+## SetExecuteData status ownership transaction (2026-09-22)
+
+SetExecuteData now prepares its existing shared cache/status owner before
+publishing vertex/instruction fields. Previously it silently discarded the
+24-byte status when no Unlock/source snapshot had created that owner. It now
+reuses d3dim_execbuf_cache_ensure rather than adding another allocation path
+or status table. Matching storage is reused without refreshing the source
+snapshot; a subsequent Unlock retains its existing refresh behavior.
+
+If preparation fails, SetExecuteData returns E_OUTOFMEMORY with the prior
+descriptor, cache pointer, cache bytes and heap ownership unchanged. A retry
+can publish the complete descriptor/status. This error choice is a resource
+failure policy, not a native Win98 memory-pressure/error-precedence measurement.
+The existing 1MiB cache-capacity and null-input policies are unchanged.
+
+Two RED results were reproduced: the formerly uncached sparse-data case lost
+all status bytes, and the fault-injected setter returned success. The 32
+ExecuteData layouts now require full status retention even before any Unlock.
+The shared cache regression adds eight transactional failure/retry/reuse cases:
+direct/sparse buffer storage, absent/mismatched owner, and direct/page-crossing
+input. It checks every object-record byte on failure, old cache contents and
+pointer, input preservation, heap balance, full public GetExecuteData readback,
+and stdcall cleanup. Matching-owner updates succeed even with allocation faults
+armed, proving reuse rather than another allocation.
+
+All those cases, the prior 32 cache snapshots/replacements and eight owner
+allocation faults, and the complete public Execute sparse/branch/render suite
+pass. Scoped static gates also pass; quiet243+22 and dup117/471 are unchanged.
+No full-build/browser/performance/native-driver claim is made. Preparing an
+uncached descriptor now allocates the existing header-plus-source snapshot;
+its memory cost is intentional and not benchmarked here. Status flags/extents,
+native device-vs-buffer lifetime, invalid ranges/indices and browser application
+verification remain open. Direct internal SETSTATUS calls with no prepared
+owner still do nothing; normal public instruction setup now prepares the owner
+or reports failure instead of accepting a descriptor without status storage.

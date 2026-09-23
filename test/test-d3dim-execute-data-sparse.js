@@ -62,12 +62,11 @@ const extraWat = String.raw`
       call('IDirect3DExecuteBuffer_SetExecuteData', 12, p, input);
       call('IDirect3DExecuteBuffer_GetExecuteData', 12, p, output);
       const expected = before.slice();
-      if (!cached) expected.fill(0, 24);
       assert.deepStrictEqual(read(output), expected, `cached=${cached} offset=${offset} input=${sparseIn} output=${sparseOut}`);
       // Exercise the opcode status writer too, independently of SetExecuteData.
       e.status(p, status);
       call('IDirect3DExecuteBuffer_GetExecuteData', 12, p, output);
-      if (cached) for (let i = 0; i < 24; i++) expected[24 + i] = e.guest_read8(status + i);
+      for (let i = 0; i < 24; i++) expected[24 + i] = e.guest_read8(status + i);
       assert.deepStrictEqual(read(output), expected, 'opcode status readback');
       assert.deepStrictEqual(read(input), before, 'input untouched');
       for (let i = 1; i <= 4; i++) assert.strictEqual(e.guest_read8(output - i), 0xcc);

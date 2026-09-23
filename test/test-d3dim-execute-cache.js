@@ -2,6 +2,7 @@
 const assert = require('assert');
 const { compileSrcWasm } = require('./compile-src');
 const { createHostImports } = require('../lib/host-imports');
+const apis = require('../src/api_table.json');
 const extraWat = String.raw`
  (global $test_fail (mut i32) (i32.const 0))
  (func $test_cache_alloc (param $n i32) (result i32)
@@ -27,6 +28,12 @@ const extraWat = String.raw`
      (i32.const 0) (i32.const 0) (i32.const 0)))
  (func (export "live_heap") (result i32)
    (i32.sub (global.get $heap_stat_allocs) (global.get $heap_stat_frees)))
+ (func (export "entry") (param $p i32) (result i32) (call $dx_from_this (local.get $p)))
+ (func (export "invoke") (param $id i32) (param $sp i32) (param $p i32) (param $data i32) (result i32)
+   (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+   (call $dispatch_api_table (local.get $id) (local.get $p) (local.get $data)
+     (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+   (i32.load (global.get $reg_base)))
 `;
 (async () => {
   let patched = 0;
@@ -90,5 +97,50 @@ const extraWat = String.raw`
     assert.strictEqual(e.live_heap(), heap + 1, 'retry retires old owner');
     e.close(p); assert.strictEqual(e.live_heap(), heap, 'final cache released');
   }
-  console.log('PASS ExecuteBuffer cache: 32 direct/sparse snapshots/replacements, eight allocation failures/retries, ownership, reuse/status and guards');
+  const inputBase = 0x42000000, sp = e.guest_alloc(64), input = e.guest_alloc(48), output = e.guest_alloc(48);
+  for (const p of [inputBase, inputBase + 0x10000, inputBase + 4096]) e.test_virtual_map_commit(p, 4096);
+  assert.notStrictEqual(e.guest_to_wasm(inputBase + 4096), e.guest_to_wasm(inputBase) + 4096);
+  const callData = (name, p, data) => {
+    e.guest_write32(sp + 12, 0xdeadbeef);
+    const hr = e.invoke(apis.find(api => api.name === `IDirect3DExecuteBuffer_${name}`).id, sp, p, data) >>> 0;
+    assert.strictEqual(e.get_esp(), sp + 12);
+    assert.strictEqual(e.guest_read32(sp + 12) >>> 0, 0xdeadbeef);
+    return hr;
+  };
+  const read = (ptr, n) => Array.from({ length: n }, (_, i) => e.guest_read8(ptr + i));
+  let dataCases = 0;
+  for (const buf of [direct, base + 4090]) for (const existing of [false, true])
+    for (const data of [input, inputBase + 4094]) {
+      const heap = e.live_heap(), p = e.make(buf);
+      e.size(p, 64);
+      if (existing) { e.refresh(p); e.guest_write32(e.cache(p) + 12, 0xabcdef01); e.size(p, 128); }
+      const old = e.cache(p), oldBytes = old ? read(old, 96) : [];
+      const record = new Uint8Array(memory.buffer, e.entry(p), 32), oldRecord = Buffer.from(record);
+      [48, 4, 2, 32, 8, 0, 1, 0x12345678, 10, 20, 30, 40]
+        .forEach((v, i) => e.guest_write32(data + i * 4, v));
+      const before = read(data, 48);
+      e.fail(1);
+      assert.strictEqual(callData('SetExecuteData', p, data), 0x8007000e, 'status storage failure cannot succeed');
+      assert.deepStrictEqual(Buffer.from(record), oldRecord, 'failed SetExecuteData leaves all descriptor fields unchanged');
+      assert.strictEqual(e.cache(p), old);
+      if (old) assert.deepStrictEqual(read(old, 96), oldBytes);
+      assert.strictEqual(e.live_heap(), heap + Number(existing));
+      assert.deepStrictEqual(read(data, 48), before);
+      e.fail(0);
+      assert.strictEqual(callData('SetExecuteData', p, data), 0);
+      assert.strictEqual(callData('GetExecuteData', p, output), 0);
+      assert.deepStrictEqual(read(output, 48), before, 'retry retains complete descriptor/status');
+      assert.strictEqual(e.live_heap(), heap + 1, 'replacement has one owner');
+      const cache = e.cache(p);
+      e.fail(1); // Matching storage updates must not allocate.
+      e.guest_write32(data + 28, 0x87654321);
+      assert.strictEqual(callData('SetExecuteData', p, data), 0);
+      assert.strictEqual(e.cache(p), cache);
+      assert.strictEqual(callData('GetExecuteData', p, output), 0);
+      assert.strictEqual(e.guest_read32(output + 28) >>> 0, 0x87654321);
+      e.fail(0); e.close(p);
+      assert.strictEqual(e.live_heap(), heap);
+      dataCases++;
+    }
+  console.log(`PASS ExecuteBuffer cache: 32 snapshots/replacements + eight allocation failures/retries + ${dataCases} transactional SetExecuteData failures/retries/reuse, ownership/status/ABI`);
 })().catch(error => { console.error(error); process.exitCode = 1; });
