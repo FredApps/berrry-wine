@@ -2995,6 +2995,12 @@
   ;; InSendMessage is TRUE only for SendMessage from another thread; an
   ;; ordinary same-thread recursive SendMessage must still report FALSE.
   (global $cross_thread_send_depth (mut i32) (i32.const 0))
+  ;; Set by the scheduler when another thread has a SendMessage parked for a
+  ;; window this thread owns. Win32 delivers such a message only while its
+  ;; receiver is inside a message call, never between two arbitrary
+  ;; instructions; the message calls test this and yield (reason 17) so the
+  ;; host can deliver it there. See $incoming_send_yield.
+  (global $incoming_send_pending (mut i32) (i32.const 0))
   ;; ReplyMessage inside a cross-thread send: the depth it answered (0 = none)
   ;; and the LRESULT it supplied, which thread_send_end hands the sender in
   ;; place of the WndProc's own return value.
@@ -3429,7 +3435,7 @@
   ;; different bugs: what is actually wrong in that Winamp run is that a section
   ;; is orphaned by a thread that exits while owning it.
   (global $cs_steal_after (mut i32) (i32.const 0x3FFFFFFF))
-  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait, 10=cross-thread SendMessage, 11=self-suspend, 12=io_wait (lazy VFS chunk), 13=vblank_wait, 14=clock_spin (parked on the millisecond clock), 15=peek_spin (parked on an empty message queue)
+  (global $yield_reason (mut i32) (i32.const 0))  ;; 0=none, 1=waiting, 2=exited, 3=com_load_dll, 4=help_load, 5=load_library, 6=modal_dialog, 7=message_wait, 8=net_wait, 9=cs_wait, 10=cross-thread SendMessage, 11=self-suspend, 12=io_wait (lazy VFS chunk), 13=vblank_wait, 14=clock_spin (parked on the millisecond clock), 15=peek_spin (parked on an empty message queue), 17=incoming cross-thread send (parked on a message call's thunk)
   ;; ---- 60 Hz vertical-blank model (src/09a8-handlers-directx.wat) ----
   ;;
   ;; DirectDraw-era games use the display itself as their clock:

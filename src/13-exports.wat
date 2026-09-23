@@ -1977,6 +1977,12 @@
   (func (export "get_send_wparam") (result i32) (global.get $send_wparam))
   (func (export "get_send_lparam") (result i32) (global.get $send_lparam))
   (func (export "get_send_post_kind") (result i32) (global.get $send_post_kind))
+  ;; The scheduler raises this on a receiver that is not at a message call when
+  ;; a send for it parks; the receiver's next message call yields reason 17.
+  (func (export "set_incoming_send_pending") (param i32)
+    (global.set $incoming_send_pending (local.get 0)))
+  (func (export "get_incoming_send_pending") (result i32)
+    (global.get $incoming_send_pending))
 
   ;; Finish message-specific compatibility work on the HWND owner's instance,
   ;; after its native WndProc has returned but before the LRESULT is delivered
