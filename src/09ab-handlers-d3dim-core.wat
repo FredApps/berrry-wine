@@ -3279,42 +3279,46 @@
   ;; mat4_mul computes  out[i][j] = sum_k a[i][k] * b[k][j].
 
   (func $mat4_mul (param $out_wa i32) (param $a_wa i32) (param $b_wa i32)
-    (local $r i32) (local $c i32)
-    ;; Fully unrolled 4×4 multiply (16 dots × 4 mads).
-    (local.set $r (i32.const 0))
-    (block $rdone (loop $rlp
-      (br_if $rdone (i32.ge_u (local.get $r) (i32.const 4)))
-      (local.set $c (i32.const 0))
-      (block $cdone (loop $clp
-        (br_if $cdone (i32.ge_u (local.get $c) (i32.const 4)))
-        (f32.store
-          (i32.add (local.get $out_wa)
-            (i32.mul (i32.add (i32.mul (local.get $r) (i32.const 4)) (local.get $c)) (i32.const 4)))
-          (f32.add (f32.add (f32.add
-            (f32.mul
-              (f32.load (i32.add (local.get $a_wa)
-                (i32.mul (i32.add (i32.mul (local.get $r) (i32.const 4)) (i32.const 0)) (i32.const 4))))
-              (f32.load (i32.add (local.get $b_wa)
-                (i32.mul (i32.add (i32.const 0) (local.get $c)) (i32.const 4)))))
-            (f32.mul
-              (f32.load (i32.add (local.get $a_wa)
-                (i32.mul (i32.add (i32.mul (local.get $r) (i32.const 4)) (i32.const 1)) (i32.const 4))))
-              (f32.load (i32.add (local.get $b_wa)
-                (i32.mul (i32.add (i32.const 4) (local.get $c)) (i32.const 4))))))
-            (f32.mul
-              (f32.load (i32.add (local.get $a_wa)
-                (i32.mul (i32.add (i32.mul (local.get $r) (i32.const 4)) (i32.const 2)) (i32.const 4))))
-              (f32.load (i32.add (local.get $b_wa)
-                (i32.mul (i32.add (i32.const 8) (local.get $c)) (i32.const 4))))))
-            (f32.mul
-              (f32.load (i32.add (local.get $a_wa)
-                (i32.mul (i32.add (i32.mul (local.get $r) (i32.const 4)) (i32.const 3)) (i32.const 4))))
-              (f32.load (i32.add (local.get $b_wa)
-                (i32.mul (i32.add (i32.const 12) (local.get $c)) (i32.const 4)))))))
-        (local.set $c (i32.add (local.get $c) (i32.const 1)))
-        (br $clp)))
-      (local.set $r (i32.add (local.get $r) (i32.const 1)))
-      (br $rlp))))
+    (local $a0 v128) (local $a1 v128) (local $a2 v128) (local $a3 v128)
+    (local $b0 v128) (local $b1 v128) (local $b2 v128) (local $b3 v128)
+    ;; Read both operands whole before the first store: out may alias a or b.
+    ;; D3DOP_MATRIXMULTIPLY names handles, and an app that accumulates a
+    ;; rotation writes dest = dest * step (the DX SDK's Twist does). Storing
+    ;; element by element while still reading collapsed that matrix a little
+    ;; more every frame until the object was a one-pixel sliver.
+    ;; Lane-wise sums keep the old ((a0b0 + a1b1) + a2b2) + a3b3 order.
+    (local.set $a0 (v128.load offset=0 (local.get $a_wa)))
+    (local.set $a1 (v128.load offset=16 (local.get $a_wa)))
+    (local.set $a2 (v128.load offset=32 (local.get $a_wa)))
+    (local.set $a3 (v128.load offset=48 (local.get $a_wa)))
+    (local.set $b0 (v128.load offset=0 (local.get $b_wa)))
+    (local.set $b1 (v128.load offset=16 (local.get $b_wa)))
+    (local.set $b2 (v128.load offset=32 (local.get $b_wa)))
+    (local.set $b3 (v128.load offset=48 (local.get $b_wa)))
+    (v128.store offset=0 (local.get $out_wa)
+      (f32x4.add (f32x4.add (f32x4.add
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 0 (local.get $a0))) (local.get $b0))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 1 (local.get $a0))) (local.get $b1)))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 2 (local.get $a0))) (local.get $b2)))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 3 (local.get $a0))) (local.get $b3))))
+    (v128.store offset=16 (local.get $out_wa)
+      (f32x4.add (f32x4.add (f32x4.add
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 0 (local.get $a1))) (local.get $b0))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 1 (local.get $a1))) (local.get $b1)))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 2 (local.get $a1))) (local.get $b2)))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 3 (local.get $a1))) (local.get $b3))))
+    (v128.store offset=32 (local.get $out_wa)
+      (f32x4.add (f32x4.add (f32x4.add
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 0 (local.get $a2))) (local.get $b0))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 1 (local.get $a2))) (local.get $b1)))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 2 (local.get $a2))) (local.get $b2)))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 3 (local.get $a2))) (local.get $b3))))
+    (v128.store offset=48 (local.get $out_wa)
+      (f32x4.add (f32x4.add (f32x4.add
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 0 (local.get $a3))) (local.get $b0))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 1 (local.get $a3))) (local.get $b1)))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 2 (local.get $a3))) (local.get $b2)))
+        (f32x4.mul (f32x4.splat (f32x4.extract_lane 3 (local.get $a3))) (local.get $b3)))))
 
   ;; out[j] = sum_k v[k] * M[k][j]   (row-vector × matrix)
   (func $mat4_transform_vec4 (param $out_wa i32) (param $mat_wa i32) (param $vec_wa i32)

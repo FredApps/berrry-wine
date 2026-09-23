@@ -53,6 +53,34 @@ const imports = { host: hostProxy };
     if (Math.abs(rf32(VOUT + i*4) - expect2[i]) > 1e-5) { console.log('S*T*v FAIL @' + i + ': ' + rf32(VOUT + i*4) + ' want ' + expect2[i]); ok = false; }
   }
 
+  // Aliased output: D3DOP_MATRIXMULTIPLY names handles, so dest may be a
+  // source. DX SDK Twist accumulates dest = dest * step every frame; a
+  // store-while-reading multiply collapsed that rotation to a sliver.
+  const fill = (base, seed) => { for (let i = 0; i < 16; i++) f32(base + i*4, Math.sin(seed + i * 1.7) * 3); };
+  const snap = (base) => Array.from({ length: 16 }, (_, i) => rf32(base + i*4));
+  for (const alias of ['a', 'b', 'both']) {
+    fill(A, 1); fill(B, alias === 'both' ? 1 : 2);
+    e.test_mat4_mul(OUT, A, alias === 'both' ? A : B);
+    const want = snap(OUT);
+    if (alias === 'a') e.test_mat4_mul(A, A, B);
+    else if (alias === 'b') e.test_mat4_mul(B, A, B);
+    else e.test_mat4_mul(A, A, A);
+    const got = snap(alias === 'b' ? B : A);
+    for (let i = 0; i < 16; i++) {
+      if (got[i] !== want[i]) { console.log(`alias=${alias} FAIL @${i}: ${got[i]} want ${want[i]}`); ok = false; break; }
+    }
+  }
+
+  // 360 accumulated 1-degree steps must stay a rotation (rows unit length).
+  const t = Math.PI / 180;
+  for (let i = 0; i < 16; i++) { f32(A + i*4, i % 5 === 0 ? 1 : 0); f32(B + i*4, i % 5 === 0 ? 1 : 0); }
+  f32(B + 0, Math.cos(t)); f32(B + 4, Math.sin(t)); f32(B + 16, -Math.sin(t)); f32(B + 20, Math.cos(t));
+  for (let n = 0; n < 360; n++) e.test_mat4_mul(A, A, B);
+  for (let r = 0; r < 2; r++) {
+    const len = Math.hypot(rf32(A + r*16), rf32(A + r*16 + 4));
+    if (Math.abs(len - 1) > 1e-3) { console.log(`accumulated rotation row ${r} length ${len}`); ok = false; }
+  }
+
   console.log(ok ? 'PASS' : 'FAIL');
   process.exit(ok ? 0 : 1);
 })();
