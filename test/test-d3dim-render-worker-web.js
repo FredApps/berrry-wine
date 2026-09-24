@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 'use strict';
 
-// In browser Threads mode with ?d3d-worker the guest-main Worker hands every
-// D3DIM draw to the render Worker; without it rasterization stays on the guest
-// thread. Boids draws through Device2::DrawIndexedPrimitive, so a nonzero
+// In browser Threads mode the guest-main Worker hands every D3DIM draw to the
+// render Worker by default; with ?no-d3d-worker rasterization stays on the
+// guest thread. Boids draws through Device2::DrawIndexedPrimitive, so a nonzero
 // queue count proves the indexed path reaches the render Worker in a real page.
 
 const assert = require('assert');
@@ -57,7 +57,7 @@ async function runBoids(browser, base, query) {
       const worker = app && app.wine && app.wine.guestWorker;
       if (!worker || !worker.sliceStats || worker.sliceStats.slices < 50) return false;
       return expectWorker ? !!(worker.d3dStats && worker.d3dStats.queued > 200) : true;
-    }, { timeout: 120000, polling: 250 }, query.includes('d3d-worker'));
+    }, { timeout: 120000, polling: 250 }, !query.includes('no-d3d-worker'));
   } catch (error) {
     // Which Worker scopes exist, and whether the guest-main one built its encoder.
     const scopes = await Promise.all(page.workers().map(async worker => {
@@ -95,20 +95,20 @@ async function runBoids(browser, base, query) {
     args: ['--no-first-run', '--no-default-browser-check'] });
   const base = `http://127.0.0.1:${server.address().port}/index.html`;
   try {
-    const on = await runBoids(browser, base, '&d3d-worker');
+    const on = await runBoids(browser, base, '');
     assert.deepStrictEqual(on.problems, [], 'no page errors with the render Worker');
     assert.strictEqual(on.stats.threads, true, 'Threads mode is on');
-    assert.strictEqual(on.stats.renderWorker, true, '?d3d-worker opts in');
+    assert.strictEqual(on.stats.renderWorker, true, 'the render Worker is on by default in Threads mode');
     assert.ok(on.stats.d3d && on.stats.d3d.ready, `render Worker never became ready: ${JSON.stringify(on.stats.d3d)}`);
     assert.strictEqual(on.stats.d3d.fallbacks, 0, `draws fell back: ${JSON.stringify(on.stats.d3d)}`);
     assert.ok(on.stats.d3d.fences > 0, 'presents fence the render Worker');
 
-    const off = await runBoids(browser, base, '');
+    const off = await runBoids(browser, base, '&no-d3d-worker');
     assert.deepStrictEqual(off.problems, [], 'no page errors without the render Worker');
-    assert.strictEqual(off.stats.renderWorker, false, 'the render Worker is opt-in');
+    assert.strictEqual(off.stats.renderWorker, false, '?no-d3d-worker opts out');
     assert.strictEqual(off.stats.d3d, null, 'no encoder is created when opted out');
-    console.log(`PASS  ?d3d-worker routes D3DIM to the render Worker in Threads mode ` +
-      `(${on.stats.d3d.queued} draws, ${on.stats.d3d.fences} fences); off by default`);
+    console.log(`PASS  Threads mode routes D3DIM to the render Worker by default ` +
+      `(${on.stats.d3d.queued} draws, ${on.stats.d3d.fences} fences); ?no-d3d-worker opts out`);
   } finally {
     await browser.close();
     await closeServer(server);
