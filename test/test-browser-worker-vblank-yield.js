@@ -27,10 +27,18 @@ const threaded = source.slice(threadedStart, threadedEnd);
 const branch = threaded.match(
   /else if \(r\.yield === 13\) \{([\s\S]*?)\n        \} else if \(r\.yield === 14/);
 assert(branch, 'guest-main Worker loop handles vblank yield 13 explicitly');
-assert(branch[1].includes("guestWorker.callExport('vblank_tick')"),
-  'the display beat advances the owning Worker instance');
-assert(branch[1].includes("guestWorker.callExport('clear_yield')"),
-  'the owning Worker retries its parked DirectDraw thunk');
+// The display beat travels on the next slice message rather than as two
+// callExport round trips ahead of it: three rendezvous per frame cost DX-Ball
+// ~40% of its vblanks.
+assert(branch[1].includes('self._workerVblankDue = true'),
+  'the display beat is recorded for the owning Worker instance');
+assert(/if \(self\._workerVblankDue\) \{[\s\S]*?vblank: 1[\s\S]*?guestWorker\.slice\(steps, sliceSync\)/
+  .test(threaded), 'the next main slice carries the display beat');
+const workerSource = fs.readFileSync(
+  path.join(__dirname, '..', 'lib', 'guest-worker.js'), 'utf8');
+assert(/if \(msg\.sync\.vblank\) \{\s*if \(ex\.vblank_tick\) ex\.vblank_tick\(\);\s*if \(ex\.clear_yield\) ex\.clear_yield\(\);/
+  .test(workerSource),
+  'the owning Worker ticks, then clears the parked DirectDraw thunk, before running');
 assert(branch[1].includes('_awaitVblank('),
   'live mode waits for a compositor display beat');
 assert(branch[1].includes('if (self._frozen)'),

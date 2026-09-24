@@ -62,6 +62,9 @@ assert.deepStrictEqual(quiet.stats, { sync: 0, async: 0, local: 3 },
 
 const beforeDx = posted;
 quiet.imports.host.dx_trace(15, 7, 4, 0x1c4, 12);
+assert.strictEqual(posted, beforeDx,
+  'fire-and-forget calls are queued, not posted one message each');
+quiet.flushAsync();
 assert.strictEqual(posted, beforeDx + 1,
   'D3D trace values use ordered fire-and-forget Worker transport');
 assert.deepStrictEqual(quiet.stats, { sync: 0, async: 1, local: 3 },
@@ -75,10 +78,266 @@ const traced = RPC.createWorkerImports(memory, sigs, message => tracedMessages.p
 traced.imports.host.log(0, 0);
 traced.imports.host.log_i32(0xC0DE0001);
 traced.imports.host.log_api_exit();
-assert.strictEqual(tracedMessages.length, 3,
+traced.flushAsync();
+assert.strictEqual(tracedMessages.length, 1,
+  'queued fire-and-forget calls travel as one batch');
+assert.strictEqual(tracedMessages[0].t, 'calls');
+assert.strictEqual(tracedMessages[0].list.length, 6,
   'verbose/API-trace mode must preserve all three logging hooks');
-assert(tracedMessages.every(message => message.t === 'call'),
-  'enabled logging remains ordered fire-and-forget transport');
+assert.deepStrictEqual(tracedMessages[0].list.filter((_, i) => i % 2 === 0),
+  ['log', 'log_i32', 'log_api_exit'].map(n => traced.names.indexOf(n)),
+  'a batch keeps the order the guest made the calls in');
+
+// Anything else the Worker posts drains the queue first, so the page can
+// never see a blocking request (or a slice reply) ahead of earlier calls.
+const orderSigs = { ...sigs, get_window_rect: { params: ['i32', 'i32'], results: [] } };
+const orderMessages = [];
+const ordered = RPC.createWorkerImports(memory, orderSigs, message => {
+  orderMessages.push(message);
+  if (message.t === 'rpc') {
+    const w = RPC.views(memory, 0);
+    Atomics.store(w.i32, RPC.SLOT.STATUS, RPC.STATUS_RESP);
+  }
+}, { slot: 0, forwardGuestLogs: true });
+ordered.imports.host.log_i32(0xC0DE0002);
+assert.strictEqual(orderMessages.length, 0);
+ordered.imports.host.get_window_rect(1, 2);
+assert.deepStrictEqual(orderMessages.map(m => m.t), ['calls', 'rpc'],
+  'a blocking request is preceded by the queued batch');
+
+// get_window_rect: answered from the worker's cache until GEN moves or this
+// thread makes any other blocking call (the guest's only way to move a window).
+{
+  const rectSigs = {
+    get_window_rect: { params: ['i32', 'i32'], results: [] },
+    move_window: { params: ['i32', 'i32'], results: [] },
+  };
+  const rpcs = [];
+  const RECT = 0x100000;
+  const w = RPC.createWorkerImports(memory, rectSigs, message => {
+    if (message.t !== 'rpc') return;
+    const c = RPC.views(memory, 0);
+    const fn = c.i32[RPC.SLOT.FN];
+    rpcs.push(w.names[fn]);
+    if (w.names[fn] === 'get_window_rect') {
+      const dv = new DataView(memory.buffer);
+      [10, 20, 330, 260].forEach((n, i) => dv.setInt32(c.i32[RPC.SLOT.ARGS + 1] + i * 4, n + rpcs.length, true));
+    }
+    Atomics.store(c.i32, RPC.SLOT.STATUS, RPC.STATUS_RESP);
+  }, { slot: 0 });
+  const read = () => Array.from(new Int32Array(memory.buffer, RECT, 4));
+  const host = w.imports.host;
+  host.get_window_rect(0x10002, RECT);
+  const first = read();
+  new Int32Array(memory.buffer, RECT, 4).fill(0);
+  host.get_window_rect(0x10002, RECT);
+  assert.deepStrictEqual(read(), first, 'a repeat query is written back from the cache');
+  assert.deepStrictEqual(rpcs, ['get_window_rect'], 'without a round trip');
+  host.move_window(0x10002, 0);
+  host.get_window_rect(0x10002, RECT);
+  assert.deepStrictEqual(rpcs, ['get_window_rect', 'move_window', 'get_window_rect'],
+    'another blocking call drops the cache');
+  Atomics.add(RPC.views(memory, 0).pub, RPC.SLOT.GEN, 1);
+  host.get_window_rect(0x10002, RECT);
+  assert.strictEqual(rpcs.length, 4, 'a publish (GEN) drops the cache');
+}
+
+// Served in order on the main side, one served count per call.
+const servedOrder = [];
+const batchMain = RPC.createMainBroker(memory, {
+  log_i32: v => servedOrder.push(v >>> 0),
+  log: () => servedOrder.push('log'),
+  log_api_exit: () => servedOrder.push('exit'),
+  dx_trace: () => servedOrder.push('dx'),
+}, sigs, {});
+const ids = n => traced.names.indexOf(n);
+batchMain.serveCalls({ slot: 0, list: [ids('log_i32'), [7], ids('dx_trace'), [1, 2, 3, 4, 5], ids('log_api_exit'), []] });
+assert.deepStrictEqual(servedOrder, [7, 'dx', 'exit']);
+
+// A published key bitmap answers get_key_down_state with no round trip while
+// no input event is open; before anything is published it still asks.
+{
+  const keyMemory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  const keySigs = {
+    get_key_down_state: { params: ['i32'], results: ['i32'] },
+    check_input: { params: [], results: ['i32'] },
+  };
+  const keyMessages = [];
+  const keyMain = RPC.createMainBroker(keyMemory, {}, keySigs, {});
+  const keyWorker = RPC.createWorkerImports(keyMemory, keySigs, message => {
+    keyMessages.push(message);
+    if (message.t === 'rpc') {
+      const w = RPC.views(keyMemory, 0);
+      w.i32[RPC.SLOT.RESULT] = 0x1234;
+      Atomics.store(w.i32, RPC.SLOT.STATUS, RPC.STATUS_RESP);
+    }
+  }, { slot: 0 });
+  assert.strictEqual(keyWorker.imports.host.get_key_down_state(0x41), 0x1234,
+    'nothing published yet: the page answers');
+  assert.strictEqual(keyMessages.length, 1);
+  const keys = new Int32Array(8);
+  keys[0x41 >>> 5] |= 1 << (0x41 & 31);
+  keyMain.publish({ keys });
+  keyMessages.length = 0;
+  assert.strictEqual(keyWorker.imports.host.get_key_down_state(0x41), 0x8000);
+  assert.strictEqual(keyWorker.imports.host.get_key_down_state(0x42), 0);
+  assert.strictEqual(keyMessages.length, 0, 'the published bitmap answers locally');
+  // An open event (check_input returned one) routes back to the page, whose
+  // answer comes from that event's own key snapshot.
+  keyMain.publish({ inputPending: 1 });
+  assert.notStrictEqual(keyWorker.imports.host.check_input(), 0);
+  keyMessages.length = 0;
+  assert.strictEqual(keyWorker.imports.host.get_key_down_state(0x41), 0x1234);
+  assert.strictEqual(keyMessages.length, 1, 'an open event asks the page');
+}
+
+// get_mouse_position reads the published pointer while no event is open; a
+// set_mouse_position this thread sent asynchronously forces one round trip.
+{
+  const mMemory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  const mSigs = {
+    get_mouse_position: { params: [], results: ['i32'] },
+    set_mouse_position: { params: ['i32', 'i32'], results: [] },
+  };
+  const mMessages = [];
+  const mMain = RPC.createMainBroker(mMemory, {}, mSigs, {});
+  const mWorker = RPC.createWorkerImports(mMemory, mSigs, message => {
+    mMessages.push(message);
+    if (message.t === 'rpc') {
+      const w = RPC.views(mMemory, 0);
+      w.i32[RPC.SLOT.RESULT] = 0x00070009;
+      Atomics.store(w.i32, RPC.SLOT.STATUS, RPC.STATUS_RESP);
+    }
+  }, { slot: 0 });
+  const h = mWorker.imports.host;
+  assert.strictEqual(h.get_mouse_position(), 0x00070009, 'nothing published: the page answers');
+  mMain.publish({ mouseX: 300, mouseY: 200 });
+  mMessages.length = 0;
+  assert.strictEqual(h.get_mouse_position(), (200 << 16) | 300);
+  assert.strictEqual(mMessages.length, 0, 'the published pointer answers locally');
+  h.set_mouse_position(5, 6);
+  assert.strictEqual(h.get_mouse_position(), 0x00070009,
+    'the read after this thread moved the cursor asks the page');
+  assert.deepStrictEqual(mMessages.map(m => m.t), ['calls', 'rpc'],
+    'and flushes the queued set_mouse_position ahead of it');
+  mMessages.length = 0;
+  assert.strictEqual(h.get_mouse_position(), (200 << 16) | 300);
+  assert.strictEqual(mMessages.length, 0);
+}
+
+// dxTraceLocal: Lock/Unlock stay in the Worker as shared counters; presents,
+// surface lifetime and a slot's first sighting are still forwarded.
+{
+  const dMemory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
+  const dSigs = {
+    dx_trace: { params: ['i32', 'i32', 'i32', 'i32', 'i32'], results: [] },
+    gdi_surface_create: { params: Array(12).fill('i32'), results: ['i32'] },
+    gdi_surface_attach: { params: ['i32', 'i32'], results: ['i32'] },
+    gdi_surface_upload: { params: ['i32', 'i32', 'i32', 'i32', 'i32'], results: ['i32'] },
+    gdi_surface_delete: { params: ['i32'], results: ['i32'] },
+  };
+  const dMessages = [];
+  const dMain = RPC.createMainBroker(dMemory, {
+    gdi_surface_attach: () => 0,
+  }, dSigs, {});
+  let rpcAnswer = 1;
+  const dWorker = RPC.createWorkerImports(dMemory, dSigs, message => {
+    dMessages.push(message);
+    if (message.t === 'rpc') {
+      const w = RPC.views(dMemory, 0);
+      w.i32[RPC.SLOT.RESULT] = rpcAnswer;
+      Atomics.store(w.i32, RPC.SLOT.STATUS, RPC.STATUS_RESP);
+    }
+  }, { slot: 0, dxTraceLocal: true });
+  const h = dWorker.imports.host;
+  const forwarded = () => {
+    dWorker.flushAsync();
+    const out = [];
+    for (const m of dMessages.splice(0)) {
+      if (m.t === 'calls') for (let i = 0; i < m.list.length; i += 2) out.push([dWorker.names[m.list[i]], ...m.list[i + 1]]);
+      else out.push([m.t, dWorker.names[RPC.views(dMemory, 0).i32[RPC.SLOT.FN]]]);
+    }
+    return out;
+  };
+  h.dx_trace(1, 3, 0, 0, 0);
+  assert.deepStrictEqual(dMain.dxState(), { dirty: 0, locks: 1 });
+  h.dx_trace(1, 3, 0, 0, 0);
+  h.dx_trace(2, 3, 0, 0, 0);
+  assert.deepStrictEqual(dMain.dxState(), { dirty: 1, locks: 1 }, 'nested lock still held');
+  h.dx_trace(2, 3, 0, 0, 0);
+  h.dx_trace(2, 3, 0, 0, 0);
+  assert.deepStrictEqual(dMain.dxState(), { dirty: 3, locks: 0 }, 'an unpaired Unlock never goes negative');
+  h.dx_trace(3, 4, 3, 0, 0);
+  h.dx_trace(3, 4, 3, 0, 0);
+  h.dx_trace(5, 3, 0, 0, 0);
+  assert.deepStrictEqual(forwarded(), [
+    ['dx_trace', 13, 3, 0, 0, 0],
+    ['dx_trace', 3, 4, 3, 0, 0],
+    ['dx_trace', 5, 3, 0, 0, 0],
+  ], 'only first sightings (lock as kind 13) and the present travel');
+  h.dx_trace(22, 3, 0, 0, 0);
+  h.dx_trace(1, 3, 0, 0, 0);
+  assert.deepStrictEqual(forwarded(), [
+    ['dx_trace', 22, 3, 0, 0, 0],
+    ['dx_trace', 13, 3, 0, 0, 0],
+  ], 'a released slot is announced again');
+
+  const DX = 0x200003;
+  const create = bits => h.gdi_surface_create(DX, 640, 480, 8, bits, 640, 1, 0x5000, 256, 0, 0, 0);
+  assert.strictEqual(create(0x9000), 1);
+  assert.strictEqual(h.gdi_surface_attach(DX, 0x10002), 1);
+  assert.strictEqual(h.gdi_surface_upload(DX, 0, 0, 640, 480), 1);
+  assert.deepStrictEqual(forwarded().map(r => r[0]), ['rpc', 'rpc', 'gdi_surface_upload'],
+    'first present: create and attach ask, an upload never waits');
+  assert.strictEqual(create(0xA000), 1, 'Flip moved the bits: still the same surface');
+  assert.strictEqual(h.gdi_surface_attach(DX, 0x10002), 1);
+  assert.strictEqual(h.gdi_surface_upload(DX, 0, 0, 640, 480), 1);
+  assert.deepStrictEqual(forwarded(), [
+    ['gdi_surface_create', DX, 640, 480, 8, 0xA000, 640, 1, 0x5000, 256, 0, 0, 0],
+    ['gdi_surface_attach', DX, 0x10002],
+    ['gdi_surface_upload', DX, 0, 0, 640, 480],
+  ], 'a repeat present travels without waiting, arguments intact');
+  assert.strictEqual(h.gdi_surface_attach(DX, 0x10004), 1);
+  assert.deepStrictEqual(forwarded().map(r => r[0]), ['rpc'], 'a new target asks again');
+  assert.strictEqual(h.gdi_surface_upload(0x610001, 0, 0, 1, 1), 1);
+  assert.strictEqual(h.gdi_surface_upload(0x610001, 0, 0, 1, 1), 1);
+  assert.deepStrictEqual(forwarded(), [
+    ['gdi_surface_upload', 0x610001, 0, 0, 1, 1],
+    ['gdi_surface_upload', 0x610001, 0, 0, 1, 1],
+  ], 'every WAT caller drops the upload result, so a GDI upload travels without waiting too');
+  // That answer is a constant 1 in a Worker. It is only honest while no WAT
+  // caller looks at it.
+  const srcDir = path.join(__dirname, '..', 'src');
+  for (const file of fs.readdirSync(srcDir).filter(f => f.endsWith('.wat'))) {
+    const text = fs.readFileSync(path.join(srcDir, file), 'utf8');
+    const calls = text.match(/\(call \$host_gdi_surface_upload\b/g) || [];
+    const dropped = text.match(/\(drop \(call \$host_gdi_surface_upload\b/g) || [];
+    assert.strictEqual(dropped.length, calls.length,
+      `${file} uses gdi_surface_upload's result; the Worker answers it without asking`);
+  }
+  // The page reports a predicted call that failed; the Worker drops its memo.
+  dMain.serveCalls({ slot: 0, list: [dWorker.names.indexOf('gdi_surface_attach'), [DX, 0x10004]] });
+  assert.strictEqual(h.gdi_surface_attach(DX, 0x10004), 1);
+  assert.deepStrictEqual(forwarded().map(r => r[0]), ['rpc'], 'a failed prediction asks again');
+  rpcAnswer = 0;
+  assert.strictEqual(h.gdi_surface_attach(DX, 0x10006), 0);
+  assert.strictEqual(h.gdi_surface_attach(DX, 0x10006), 0, 'a failure is never memoized');
+  rpcAnswer = 1;
+  forwarded();
+  assert.strictEqual(h.gdi_surface_delete(DX), 1);
+  assert.strictEqual(h.gdi_surface_attach(DX, 0x10004), 1);
+  assert.deepStrictEqual(forwarded().map(r => r[0]), ['rpc', 'rpc'], 'delete drops the memo');
+}
+
+// Without dxTraceLocal every dx_trace travels (--trace-dx prints them all).
+{
+  const plain = [];
+  const w = RPC.createWorkerImports(memory, sigs, m => plain.push(m), { slot: 0 });
+  w.imports.host.dx_trace(1, 3, 0, 0, 0);
+  w.imports.host.dx_trace(2, 3, 0, 0, 0);
+  w.flushAsync();
+  assert.strictEqual(plain[0].list.length, 4);
+}
 
 const legacyMessages = [];
 const legacy = RPC.createWorkerImports(memory, sigs, message => legacyMessages.push(message), {
@@ -86,6 +345,7 @@ const legacy = RPC.createWorkerImports(memory, sigs, message => legacyMessages.p
   forwardGlLogs: true,
 });
 legacy.imports.host.log_i32(0xC0DE0001);
+legacy.flushAsync();
 assert.strictEqual(legacyMessages.length, 1,
   'cached callers using the old transport option remain compatible');
 

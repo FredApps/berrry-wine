@@ -101,7 +101,10 @@ function resolveShellLaunchPath(file, vfs, isWinExec) {
 // (free-running worker threads, worker mode only) measured level with w on
 // MH2's audio, HUD on and off (2026-09-22), and is on for throughput: a
 // thread no longer waits for the page's next step to get its next slice.
-const SCHED_ARMS_DEFAULT = 'b,e,g,w,f';
+// Arm p (worker mode only): a guest main thread parked in GetMessage parks the
+// host step until its next WM_TIMER, as the cooperative loop does, instead of
+// re-polling every step (~30K blocks/s on every idle app, 2026-09-23).
+const SCHED_ARMS_DEFAULT = 'b,e,g,w,f,p';
 // Arm w: a safety bound on how long a guest thread's Worker holds its slice
 // through local Sleeps — the step epoch normally ends it first, when the main
 // slice returns (measured on Moorhuhn 2: ~64ms per main slice) — and the
@@ -552,6 +555,46 @@ class WineAssembly {
   // damage when one of those deadlines is wrong or a wake source is missing,
   // turning a hang into 20Hz polling.
   static MAX_PARK_SLEEP_MS = 50;
+  // Wall clock for scheduling deadlines; the vm sandboxes the Worker tests
+  // run this file in have no `performance`.
+  static _wallNow() {
+    return typeof performance !== 'undefined' && performance.now ? performance.now() : Date.now();
+  }
+  // Worker mode: park the next host step until `park` ms after the slice
+  // ended (a deadline, not a delay — the present runs in between, and counting
+  // from after it made every WM_TIMER that much late). Runnable guest threads
+  // bound it, as in _parkedSleepMs; input cancels it through _wakeStep. The
+  // step tail consumes _workerMsgParkUntil. Arm p gates it for an A/B.
+  _workerParkMain(park, sliceDoneAt) {
+    const tm = this.threadManager;
+    if (tm && tm.hasActiveThreads && tm.hasActiveThreads()) {
+      // Free-running threads do not need the step unless one is idle or
+      // sleeping on a page-side deadline; anything else keeps the old bound
+      // (parkedThreadDelay is 0 in worker mode, i.e. no park).
+      park = Math.min(park, tm.freeRunParkBound
+        ? tm.freeRunParkBound(WineAssembly.MAX_PARK_SLEEP_MS)
+        : tm.parkedThreadDelay ? tm.parkedThreadDelay(WineAssembly.MAX_PARK_SLEEP_MS) : 0);
+      if (park > 0 && !tm.onRunnable) tm.onRunnable = () => this._wakeStep();
+    }
+    if (park > 0 && this._schedArm('p')) {
+      this._workerMsgParkUntil = sliceDoneAt +
+        Math.min(WineAssembly.MAX_PARK_SLEEP_MS, park);
+    }
+  }
+  // The live key-down table as 8 words, bit vKey — what host-window's
+  // _keyDownState answers when no event snapshot is open. Published to the
+  // guest-main Worker so a GetAsyncKeyState sweep reads it locally.
+  _workerKeyBitmap() {
+    const r = this.renderer;
+    const peek = r && (r.peekKeyDownState || r.peekAsyncKeyState);
+    const out = this._workerKeyWords || (this._workerKeyWords = new Int32Array(8));
+    out.fill(0);
+    if (!peek) return out;
+    for (let key = 0; key < 256; key++) {
+      if (peek.call(r, key) & 0x8000) out[key >>> 5] |= (1 << (key & 31));
+    }
+    return out;
+  }
   static CLOCK_SPIN_PARK_MS = 1;
   // Browser performance.now() is much more expensive than the integer-ms
   // result the guest receives. Reuse each within-slice sample for four calls;
@@ -1273,12 +1316,29 @@ class WineAssembly {
         self._dxDirty = true;   // a released write is a finished write
       } else if (kind === 5 || kind === 6) {
         self._dxDirty = true;
+        // Worker mode presents only at a step's end. A frame finished by a
+        // free-running guest thread while the main step is parked (GetMessage,
+        // spin or Sleep park) would otherwise wait out the park, up to
+        // MAX_PARK_SLEEP_MS. An early step just re-yields; frames are rare.
+        if (self.guestWorker && self._stepTimeoutId) self._wakeStep();
         if (typeof self.onGuestFrame === 'function') {
           self.onGuestFrame({ kind: 'directdraw' });
         }
       }
       return rawDxTrace ? rawDxTrace(kind, slot, a1, a2, a3) : undefined;
     };
+    // The GDI half of the wake above. A guest thread drawing through GDI
+    // (Blobby's SDL game thread) uploads its frame while the main thread is
+    // parked in GetMessage; left parked, measured on ascii.dev, that frame
+    // reached the screen at 35-38/s against 53-58 cooperative.
+    const rawSurfaceUpload = h.gdi_surface_upload;
+    if (rawSurfaceUpload) {
+      h.gdi_surface_upload = (...args) => {
+        const r = rawSurfaceUpload(...args);
+        if (self.guestWorker && self._stepTimeoutId) self._wakeStep();
+        return r;
+      };
+    }
 
     // Run slices are macrotasks and there are far more of them than there are
     // display frames, so a dirty flag alone would upload the surface hundreds
@@ -1315,6 +1375,14 @@ class WineAssembly {
     };
 
     self._presentDxIfDirty = () => {
+      // Under Worker dx_trace filtering (guest-rpc dxTraceLocal) Unlocks and
+      // lock depth arrive through shared memory instead of dx_trace.
+      const broker = self.guestWorker && self.guestWorker.broker;
+      const dxShared = broker && broker.dxState ? broker.dxState() : null;
+      if (dxShared && dxShared.dirty !== self._dxSharedDirtySeen) {
+        self._dxSharedDirtySeen = dxShared.dirty;
+        self._dxDirty = true;
+      }
       if (!self._dxDirty) return;
       const gdi = self.hostCtx && self.hostCtx.sharedGdi;
       if (!gdi || !gdi.presentBestDxOffscreen) return;
@@ -1334,7 +1402,7 @@ class WineAssembly {
       // waiting costs one frame at most. A lock still held several frames
       // later is a retained pointer into what the guest believes is video
       // memory -- present it anyway, which is what real DirectDraw does.
-      if (dxLockDepth.size) {
+      if (dxLockDepth.size || (dxShared && dxShared.locks > 0)) {
         self._dxLockHeld = (self._dxLockHeld || 0) + 1;
         if (self._dxLockHeld < 3) return;
       } else {
@@ -2558,8 +2626,17 @@ class WineAssembly {
         hostImports: this._mainImports.host,
         workerUrl: WineAssembly.versionedUrl('lib/guest-worker.js'),
         forwardGlLogs: !!this.verbose || !!(window.__waTraceApiNames && window.__waTraceApiNames.size),
+        // Keep DirectDraw lock/unlock bookkeeping in the Worker (guest-rpc
+        // dxTraceLocal) unless something on this page prints the dx trace.
+        dxTraceLocal: !(window.__waTraceCategories && window.__waTraceCategories.has &&
+          window.__waTraceCategories.has('dx')) &&
+          !(window.__waTraceHostNames && [...window.__waTraceHostNames].includes('dx_trace')),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         d3dimGpu: window.WINE_D3DIM_GPU === true,
+        // ?rpc-census: count every host import a guest thread hands back to
+        // this thread (broker.stats().calls) — the browser twin of run.js's
+        // --rpc-census, and the first question when Worker mode is slower.
+        countCalls: /[?&]rpc-census\b/.test(location.search),
         log: msg => { console.log(msg); self.logToUI(msg); },
         tickMs: () => self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
         advanceGuestTime: ms => {
@@ -3456,6 +3533,10 @@ class WineAssembly {
         this.renderer._inputPendingPublishers.delete(this._rendererInputPendingPublisher);
         this._rendererInputPendingPublisher = null;
       }
+      if (this._rendererMousePublisher && this.renderer._mousePointPublishers) {
+        this.renderer._mousePointPublishers.delete(this._rendererMousePublisher);
+        this._rendererMousePublisher = null;
+      }
       if (this._rendererFocusPublisher && this.renderer._guestWorkerFocusPublishers) {
         this.renderer._guestWorkerFocusPublishers.delete(this._rendererFocusPublisher);
         this._rendererFocusPublisher = null;
@@ -3743,12 +3824,24 @@ class WineAssembly {
         self.guestWorker.broker.publish({
           inputPending: depth | 0,
           inputWake: !!wake,
+          keys: self._workerKeyBitmap(),
         });
       };
       if (!self.renderer._inputPendingPublishers) {
         self.renderer._inputPendingPublishers = new Set();
       }
       self.renderer._inputPendingPublishers.add(self._rendererInputPendingPublisher);
+    }
+    if (self.renderer && self.guestWorker && self.guestWorker.broker &&
+        !self._rendererMousePublisher) {
+      self._rendererMousePublisher = (x, y) => {
+        self.guestWorker.broker.publish({ mouseX: x, mouseY: y });
+      };
+      if (!self.renderer._mousePointPublishers) {
+        self.renderer._mousePointPublishers = new Set();
+      }
+      self.renderer._mousePointPublishers.add(self._rendererMousePublisher);
+      self._rendererMousePublisher(self.renderer._mouseX || 0, self.renderer._mouseY || 0);
     }
     if (self.renderer && self.guestWorker && !self._rendererFocusPublisher) {
       self._rendererFocusPublisher = (wasm, hwnd) => {
@@ -3781,6 +3874,7 @@ class WineAssembly {
           self.guestWorker.broker.publish({
             tickMs: self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio),
             inputPending: q,
+            keys: self._workerKeyBitmap(),
           });
         }
         const configuredSteps = Math.max(1000, (self.stepsPerSlice | 0) || stepsPerSlice);
@@ -3850,7 +3944,14 @@ class WineAssembly {
             }
             self._workerMainSleepUntil = 0;
           }
-          const slice = await self.guestWorker.slice(steps, mainSync);
+          // A vblank the page delivered while the main thread sat in yield 13
+          // rides on this slice; the worker ticks and clears it before run.
+          let sliceSync = mainSync;
+          if (self._workerVblankDue) {
+            self._workerVblankDue = false;
+            sliceSync = Object.assign({}, mainSync || {}, { vblank: 1 });
+          }
+          const slice = await self.guestWorker.slice(steps, sliceSync);
           self._workerLastSlice = slice;
           // The worker reports a Sleep it yielded for; nothing else will make
           // the guest wait it out. Ignored, Sleep(1001) lasted one slice
@@ -3887,6 +3988,9 @@ class WineAssembly {
         // step's time — see the mark below for why it cannot be r.ms.
         const perfRendezvousStart = perf ? performance.now() : 0;
         let perfRendezvousMs = 0;
+        // When the slices came back — the reference a GetMessage park's
+        // timer deadline is measured from (see the yield 7 branch).
+        let perfSliceDoneAt = 0;
         try {
           if (typeof window !== 'undefined' && window.WINE_THREADS_SERIAL) {
             // Diagnostic only: the same slices, one at a time. A bug that appears
@@ -3898,6 +4002,7 @@ class WineAssembly {
             [r, threadsRun] = await Promise.all([runMainThenEnd(), runThreads()]);
           }
         } finally {
+          perfSliceDoneAt = WineAssembly._wallNow();
           endStep();
           if (self.threadManager) self.threadManager.workerLocalSleep = null;
           if (perf) perfRendezvousMs = performance.now() - perfRendezvousStart;
@@ -4019,6 +4124,15 @@ class WineAssembly {
           // The message-wait resume runs inside the worker at the top of each
           // slice, where the instance is. Nothing to do here — and specifically
           // not clear_yield, for the same reason as above.
+          //
+          // But do not re-poll straight away: that is the cooperative loop's
+          // _parkedSleepMs case, and without it an idle app in this mode ran
+          // a step (and ~30K blocks/s) forever where the cooperative one ran
+          // none. Park until the guest's next WM_TIMER, capped; input cancels
+          // the park through _wakeStep. Runnable guest threads bound it the
+          // same way they do there.
+          self._workerParkMain(Number.isFinite(r.timerDue) && r.timerDue >= 0
+            ? r.timerDue : WineAssembly.MAX_PARK_SLEEP_MS, perfSliceDoneAt);
         } else if (r.yield === 3) {
           await self._handleComDllLoadThreaded();
         } else if (r.yield === 5) {
@@ -4065,18 +4179,17 @@ class WineAssembly {
           await self.guestWorker.callExport('clear_yield');
         } else if (r.yield === 13) {
           // vblank_wait: the live instance is in the guest-main Worker, not
-          // self.instance. Route the display tick and yield clear to that
-          // owner, in order, then retry the parked thunk. Scheduling another
-          // slice before the rAF would just rediscover reason 13 in a hot loop.
-          const advanceVblank = async () => {
-            await self.guestWorker.callExport('vblank_tick');
-            await self.guestWorker.callExport('clear_yield');
-          };
+          // self.instance. The display tick and yield clear travel on the
+          // next slice message (see _workerVblankDue at the slice), so the
+          // owner applies them in order right before it retries the parked
+          // thunk. Scheduling another slice before the rAF would just
+          // rediscover reason 13 in a hot loop.
+          const advanceVblank = () => { self._workerVblankDue = true; };
           // Frozen stepping defines one step as one display beat; waiting for
           // a real compositor frame would make step:N cost N frames of wall
           // time and let a supposedly frozen game animate independently.
           if (self._frozen) {
-            await advanceVblank();
+            advanceVblank();
             if (self.running) self._scheduleStep(step, 0);
             return;
           }
@@ -4090,6 +4203,22 @@ class WineAssembly {
           // has to exist: the catch-all below stops the app outright, so a
           // busy-wait the detector caught would have ended the session.
           await self.guestWorker.callExport('clear_yield');
+          // And sleep it out as the cooperative loop does (_spinParkDelay),
+          // or the detector's whole point is lost: re-slicing at once had
+          // Heroes II's menu retiring ~30M blocks/s here against 0.07M there
+          // for the same frames.
+          let park;
+          if (r.yield === 14) {
+            const configured = Number.isFinite(self.spinParkClockMs)
+              ? Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS,
+                Math.round(self.spinParkClockMs))) : WineAssembly.CLOCK_SPIN_PARK_MS;
+            park = Math.max(configured, Math.max(1,
+              Math.min(WineAssembly.MAX_PARK_SLEEP_MS, r.spinOwedMs | 0)));
+          } else {
+            park = Number.isFinite(r.timerDue) && r.timerDue >= 0
+              ? Math.max(1, r.timerDue) : WineAssembly.MAX_PARK_SLEEP_MS;
+          }
+          self._workerParkMain(park, perfSliceDoneAt);
         } else if (r.yield === 6) {
           // modal_dialog: the single-threaded loop does nothing special here
           // either — the WAT side drives the dialog — so neither does this.
@@ -4121,6 +4250,17 @@ class WineAssembly {
         if (left > 0) {
           self._scheduleStep(step,
             Math.max(1, Math.min(WineAssembly.MAX_PARK_SLEEP_MS, Math.round(left))));
+          return;
+        }
+      }
+      // A main thread parked in GetMessage (yield 7, above): single-use, so a
+      // park can never outlive the step that decided it.
+      const msgParkUntil = self._workerMsgParkUntil || 0;
+      self._workerMsgParkUntil = 0;
+      if (self.running && msgParkUntil > 0) {
+        const left = Math.round(msgParkUntil - WineAssembly._wallNow());
+        if (left > 0) {
+          self._scheduleStep(step, left);
           return;
         }
       }
@@ -4702,6 +4842,9 @@ class WineAssembly {
   //   w  Worker mode: a guest thread's Worker waits out a short Sleep itself
   //      and keeps running until the host step's main slice is done, instead
   //      of waking at most once per host step (lib/guest-worker.js)
+  //   p  Worker mode: a main thread parked in GetMessage parks the host step
+  //      until its next WM_TIMER (capped, input wakes it), as the
+  //      cooperative loop's _parkedSleepMs does, instead of re-polling
   // `?sched-arm=LIST` replaces the default set for an A/B; `?sched-arm=none`
   // turns every arm off.
   _schedArm(name) {

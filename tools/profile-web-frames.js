@@ -146,6 +146,13 @@ const CPU_PROFILE = argv.includes('--cpu-profile');
 // as what the app feels like; headless stays the default for pass/fail checks
 // that only need the page to work.
 const HEADFUL = argv.includes('--headful');
+// --software-browser: Chrome's own compositing and canvas raster on the CPU
+// (--disable-gpu), with SwiftShader kept for WebGL so a GL guest still gets a
+// context. For a machine with no GPU: left to itself, headful Chrome there
+// drives its compositor through Mesa llvmpipe -- GL emulated on the CPU -- and
+// on ascii.dev that is a slower, burstier renderer than software compositing,
+// so its rAF cadence measures the emulated GL rather than the app.
+const SOFTWARE_BROWSER = argv.includes('--software-browser');
 // --threads runs the guest on the isolated Worker backend instead of the
 // cooperative scheduler — the browser twin of test/run.js's --threads. The
 // opt-in is a localStorage key read at launch, so it has to be written before
@@ -302,7 +309,8 @@ async function main() {
     // window would measure a browser nobody runs, which is the whole reason
     // --headful exists.
     args: ['--no-sandbox', '--no-first-run', '--no-default-browser-check']
-      .concat(HEADFUL ? [] : (SWIFTSHADER
+      .concat(SOFTWARE_BROWSER ? ['--disable-gpu', '--enable-unsafe-swiftshader'] : [])
+      .concat(HEADFUL || SOFTWARE_BROWSER ? [] : (SWIFTSHADER
         // Headless Chrome has no GPU and, since Chrome 120, refuses to fall
         // back to SwiftShader for WebGL unless asked. Without this an OpenGL
         // guest gets a NULL context from wglCreateContext and takes its
