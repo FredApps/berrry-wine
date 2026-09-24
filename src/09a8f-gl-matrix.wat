@@ -210,7 +210,14 @@
   ;; 09a8e-gl-state.wat keys its per-context state on, so all three tables
   ;; always agree about which context a call belongs to.
   (func $gl_mtx_block (result i32)
+    (if (global.get $gl_mtx_block_override)
+      (then (return (global.get $gl_mtx_block_override))))
     (call $gl_mtx_slot (global.get $gl_current_context) (i32.const 1)))
+  ;; Nonzero only in a D3D render Worker drawing a queued GL record: the
+  ;; private block the record's matrices and lights were copied into. That
+  ;; instance must never claim a context block of its own -- the claim
+  ;; counter is shared, and eight slots are all there are.
+  (global $gl_mtx_block_override (mut i32) (i32.const 0))
 
   ;; Which stack the mode and active texture unit select.
   (func $gl_mtx_sel (param $b i32) (result i32)

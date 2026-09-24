@@ -56,6 +56,12 @@
   ;; =========================================================================
 
   (global $GL_SW_SCRATCH i32 (region.addr $GL_SW_SCRATCH 0))
+  ;; Where this instance's scratch and state block live. The region is the
+  ;; guest instance's; a D3D render Worker drawing queued GL records points
+  ;; both at private memory of its own, because the region is shared memory
+  ;; and the guest keeps using it while the Worker rasterizes.
+  (global $gl_sw_scratch (mut i32) (region.addr $GL_SW_SCRATCH 0))
+  (global $gl_sw_st (mut i32) (region.addr $GL_SW_STATE 0))
   (global $GL_SW_SCRATCH_SIZE i32 (region.size $GL_SW_SCRATCH))
   (global $GL_SW_STATE i32 (region.addr $GL_SW_STATE 0))
   (global $GL_SW_STATE_SIZE i32 (region.size $GL_SW_STATE))
@@ -194,7 +200,7 @@
   ;;       never set, which GL defines as the whole drawable
   (func $gl_sw_state_defaults
     (local $s i32)
-    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $s (global.get $gl_sw_st))
     (i32.store offset=0 (local.get $s) (i32.const 0))
     (i32.store offset=4 (local.get $s) (i32.const 2))       ;; GL_ONE
     (i32.store offset=8 (local.get $s) (i32.const 1))       ;; GL_ZERO
@@ -255,10 +261,10 @@
     ;; Past GL's required depth the push is dropped; the matching pop is then
     ;; dropped too, by the depth test in $gl_sw_pop_attrib.
     (if (i32.ge_u (global.get $gl_sw_attrib_depth) (i32.const 16)) (then (return)))
-    (local.set $frame (i32.add (global.get $GL_SW_STATE)
+    (local.set $frame (i32.add (global.get $gl_sw_st)
       (i32.add (i32.const 64) (i32.mul (global.get $gl_sw_attrib_depth) (i32.const 96)))))
     (i32.store (local.get $frame) (local.get $mask))
-    (call $memcpy (i32.add (local.get $frame) (i32.const 4)) (global.get $GL_SW_STATE) (i32.const 64))
+    (call $memcpy (i32.add (local.get $frame) (i32.const 4)) (global.get $gl_sw_st) (i32.const 64))
     ;; Point size and line width sit outside the 64-byte block, at +1600.
     (local.set $frame (call $gl_sw_attrib_sizes (global.get $gl_sw_attrib_depth)))
     (f32.store (local.get $frame) (global.get $gl_sw_point_size))
@@ -270,19 +276,19 @@
 
   ;; Level $depth's saved point size (+0) and line width (+4).
   (func $gl_sw_attrib_sizes (param $depth i32) (result i32)
-    (i32.add (global.get $GL_SW_STATE)
+    (i32.add (global.get $gl_sw_st)
       (i32.add (i32.const 1600) (i32.shl (local.get $depth) (i32.const 3)))))
 
   ;; Level $depth's saved texgen modes, after the sizes: +1728 + 4 * depth,
   ;; which ends exactly at the region's 0x700.
   (func $gl_sw_attrib_texgen (param $depth i32) (result i32)
-    (i32.add (global.get $GL_SW_STATE)
+    (i32.add (global.get $gl_sw_st)
       (i32.add (i32.const 1728) (i32.shl (local.get $depth) (i32.const 2)))))
 
   ;; Restore one caps bit from a saved frame.
   (func $gl_sw_restore_caps (param $saved i32) (param $bits i32)
     (local $s i32)
-    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $s (global.get $gl_sw_st))
     (i32.store (local.get $s) (i32.or
       (i32.and (i32.load (local.get $s)) (i32.xor (local.get $bits) (i32.const -1)))
       (i32.and (i32.load (local.get $saved)) (local.get $bits)))))
@@ -291,11 +297,11 @@
     (local $frame i32) (local $mask i32) (local $saved i32) (local $s i32)
     (if (i32.eqz (global.get $gl_sw_attrib_depth)) (then (return)))
     (global.set $gl_sw_attrib_depth (i32.sub (global.get $gl_sw_attrib_depth) (i32.const 1)))
-    (local.set $frame (i32.add (global.get $GL_SW_STATE)
+    (local.set $frame (i32.add (global.get $gl_sw_st)
       (i32.add (i32.const 64) (i32.mul (global.get $gl_sw_attrib_depth) (i32.const 96)))))
     (local.set $mask (i32.load (local.get $frame)))
     (local.set $saved (i32.add (local.get $frame) (i32.const 4)))
-    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $s (global.get $gl_sw_st))
     ;; GL_POINT_BIT, GL_LINE_BIT.
     (if (i32.and (local.get $mask) (i32.const 0x2))
       (then (global.set $gl_sw_point_size (f32.load
@@ -389,7 +395,7 @@
   ;; CLAMP_TO_EDGE.
   (func $gl_sw_tex_param (param $pname i32) (param $value i32)
     (local $slot i32) (local $flags i32) (local $bit i32)
-    (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $GL_SW_STATE))))
+    (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $gl_sw_st))))
     (if (i32.eqz (local.get $slot)) (then (return)))
     (local.set $flags (call $gl_sw_tex_flags (local.get $slot)))
     (if (i32.eq (local.get $pname) (i32.const 0x2800))
@@ -485,21 +491,30 @@
   (func $gl_sw_tex_store (param $entry i32) (param $x i32) (param $y i32)
       (param $w i32) (param $h i32) (param $format i32) (param $pixels i32)
       (param $opaque i32)
+    (call $gl_sw_tex_store_to (load.field DxObject misc1 (local.get $entry))
+      (load.field DxObject pitch (local.get $entry))
+      (load.field DxObject width (local.get $entry))
+      (load.field DxObject height (local.get $entry))
+      (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+      (local.get $format) (local.get $pixels) (local.get $opaque)))
+
+  ;; The conversion itself, into any ARGB block: texel (x+col, y+row) lands
+  ;; at $dib + (y+row)*$pitch + (x+col)*4 when it is inside $tw x $th.
+  (func $gl_sw_tex_store_to (param $dib i32) (param $pitch i32) (param $tw i32) (param $th i32)
+      (param $x i32) (param $y i32)
+      (param $w i32) (param $h i32) (param $format i32) (param $pixels i32)
+      (param $opaque i32)
     (local $bpp i32) (local $align i32) (local $stride i32) (local $len i32)
-    (local $src i32) (local $row i32) (local $col i32) (local $tw i32) (local $th i32)
-    (local $pitch i32) (local $dib i32) (local $dst i32) (local $px i32)
+    (local $src i32) (local $row i32) (local $col i32)
+    (local $dst i32) (local $px i32)
     (local.set $bpp (call $gl_sw_format_bytes (local.get $format)))
-    (local.set $align (i32.load offset=44 (global.get $GL_SW_STATE)))
+    (local.set $align (i32.load offset=44 (global.get $gl_sw_st)))
     (if (i32.eqz (local.get $align)) (then (local.set $align (i32.const 4))))
     (local.set $stride (i32.and
       (i32.add (i32.mul (local.get $w) (local.get $bpp)) (i32.sub (local.get $align) (i32.const 1)))
       (i32.sub (i32.const 0) (local.get $align))))
     (local.set $len (i32.mul (local.get $stride) (local.get $h)))
     (if (i32.or (i32.eqz (local.get $len)) (i32.eqz (local.get $pixels))) (then (return)))
-    (local.set $tw (load.field DxObject width (local.get $entry)))
-    (local.set $th (load.field DxObject height (local.get $entry)))
-    (local.set $pitch (load.field DxObject pitch (local.get $entry)))
-    (local.set $dib (load.field DxObject misc1 (local.get $entry)))
     ;; One row at a time: a whole level need not be linear in wasm memory,
     ;; and at 32KB+ it does not fit the span scratch that would gather it
     ;; (Warcraft III's first 128x64 RGBA upload trapped there). A row of the
@@ -547,7 +562,7 @@
     (local $slot i32) (local $obj i32) (local $entry i32) (local $opaque i32)
     (local $at i32)
     (if (i32.gt_u (local.get $level) (i32.const 12)) (then (return)))
-    (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $GL_SW_STATE))))
+    (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $gl_sw_st))))
     (if (i32.eqz (local.get $slot)) (then (return)))
     (drop (call $gl_sw_tex_flags (local.get $slot)))
     (local.set $at (local.get $slot))
@@ -587,7 +602,7 @@
       (param $pixels i32)
     (local $slot i32) (local $obj i32)
     (if (i32.gt_u (local.get $level) (i32.const 12)) (then (return)))
-    (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $GL_SW_STATE))))
+    (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (global.get $gl_sw_st))))
     (if (i32.eqz (local.get $slot)) (then (return)))
     (local.set $obj (i32.load (select (call $gl_sw_mip_at (local.get $slot) (local.get $level))
       (local.get $slot) (local.get $level))))
@@ -600,6 +615,12 @@
         (return)))
     (if (i32.or (i32.lt_s (local.get $x) (i32.const 0)) (i32.lt_s (local.get $y) (i32.const 0)))
       (then (return)))
+    (if (call $gl_sw_worker_tex (call $dx_from_this (local.get $obj))
+          (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+          (local.get $format) (local.get $pixels)
+          (i32.ne (i32.and (i32.load offset=4 (local.get $slot)) (i32.const 16)) (i32.const 0)))
+      (then (return)))
+    (call $d3dim_worker_fence)
     (call $gl_sw_tex_store (call $dx_from_this (local.get $obj))
       (local.get $x) (local.get $y) (local.get $w) (local.get $h)
       (local.get $format) (local.get $pixels)
@@ -630,10 +651,10 @@
   ;; r, g, b, a at +24..+36, unit 1's u, v at +40, +44 -- all f32, so
   ;; clipping lerps twelve floats alike.
   (func $gl_sw_clip_at (param $k i32) (result i32)
-    (i32.add (global.get $GL_SW_SCRATCH)
+    (i32.add (global.get $gl_sw_scratch)
       (i32.add (i32.const 256) (i32.mul (local.get $k) (i32.const 48)))))
   (func $gl_sw_poly_at (param $k i32) (result i32)
-    (i32.add (global.get $GL_SW_SCRATCH)
+    (i32.add (global.get $gl_sw_scratch)
       (i32.add (i32.const 512) (i32.mul (local.get $k) (i32.const 48)))))
   ;; Signed distance to GL's near clip plane, z >= -w.
   (func $gl_sw_near_d (param $c i32) (result f32)
@@ -661,7 +682,7 @@
   ;; Per-vertex screen record, 32 bytes: +0 x, +4 y (i32), +8 z, +12 rhw,
   ;; +16 u, +20 v (f32), +24 colour (0xAARRGGBB).
   (func $gl_sw_screen_at (param $k i32) (result i32)
-    (i32.add (global.get $GL_SW_SCRATCH)
+    (i32.add (global.get $gl_sw_scratch)
       (i32.add (i32.const 128) (i32.mul (local.get $k) (i32.const 32)))))
 
   ;; A GL colour component (f32, nominally 0..1) as a byte.
@@ -781,6 +802,7 @@
               (then (return (global.get $gl_sw_rt))))
             (if (i32.lt_s (local.get $w) (local.get $cw)) (then (local.set $w (local.get $cw))))
             (if (i32.lt_s (local.get $h) (local.get $ch)) (then (local.set $h (local.get $ch))))))
+        (call $d3dim_worker_fence)
         (call $gl_sw_drop_surface (global.get $gl_sw_front_obj))
         (call $gl_sw_drop_surface (global.get $gl_sw_rt_obj))
         (global.set $gl_sw_front_obj (i32.const 0))
@@ -867,6 +889,7 @@
   (func $gl_sw_export_bind_bitmap (export "gl_sw_bind_bitmap") (param $hbmp i32) (result i32)
     (local $rec i32) (local $bpp i32) (local $obj i32) (local $entry i32)
     (local $w i32) (local $h i32) (local $stride i32)
+    (call $d3dim_worker_fence)
     (local.set $rec (call $gdi_object_record (local.get $hbmp)))
     (if (i32.eqz (local.get $rec)) (then (return (i32.const 0))))
     (if (i32.eqz (call $gdi_bitmap_record_valid (local.get $rec))) (then (return (i32.const 0))))
@@ -968,7 +991,7 @@
   (func $gl_sw_scissor_view (result i32)
     (local $s i32) (local $rt i32) (local $tw i32) (local $th i32)
     (local $x i32) (local $y i32) (local $w i32) (local $h i32) (local $x1 i32) (local $y1 i32)
-    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $s (global.get $gl_sw_st))
     (local.set $rt (global.get $gl_sw_rt))
     (if (i32.eqz (local.get $rt)) (then (return (i32.const 0))))
     (local.set $tw (load.field DxObject width (local.get $rt)))
@@ -1014,7 +1037,23 @@
   (func $gl_sw_observe (param $op i32) (param $stack i32)
     (local $s i32) (local $rt i32) (local $bit i32) (local $mask i32) (local $zv i32)
     (if (i32.eqz (global.get $gl_sw_enabled)) (then (return)))
-    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $s (global.get $gl_sw_st))
+    ;; A render Worker may still be drawing from the surfaces and texture
+    ;; slots these change: 2 glClear, 43 glDeleteTextures, 45 glTexImage2D,
+    ;; 55 SwapBuffers, 61 gluBuild2DMipmaps. glTexSubImage2D queues its texels
+    ;; behind the draws instead (below). Everything else, glTexParameter
+    ;; included, only changes state a queued draw carries its own copy of.
+    (if (global.get $d3dim_worker_pending)
+      (then (if (i32.or (i32.or (i32.eq (local.get $op) (i32.const 2))
+                                (i32.eq (local.get $op) (i32.const 55)))
+                  (i32.or (i32.or (i32.eq (local.get $op) (i32.const 43))
+                                  (i32.eq (local.get $op) (i32.const 45)))
+                          (i32.eq (local.get $op) (i32.const 61))))
+        (then (call $d3dim_worker_fence)))))
+    ;; A frame that found no Worker tries again on the next one.
+    (if (i32.eq (local.get $op) (i32.const 55))
+      (then (if (i32.eq (global.get $gl_sw_worker_ok) (i32.const 2))
+        (then (global.set $gl_sw_worker_ok (i32.const 0))))))
     ;; 105 glActiveTextureARB(GL_TEXTURE0_ARB + unit)
     (if (i32.eq (local.get $op) (i32.const 105))
       (then (global.set $gl_sw_active_unit
@@ -1335,7 +1374,7 @@
     (local $m i32) (local $n i32) (local $det f32)
     (global.set $gl_sw_light_block (local.get $b))
     (local.set $m (call $gl_mtx_stack_top (local.get $b) (i32.const 0)))
-    (local.set $n (region.addr $GL_SW_SCRATCH 0x400))
+    (local.set $n (i32.add (global.get $gl_sw_scratch) (i32.const 0x400)))
     (f32.store offset=0 (local.get $n) (f32.sub
       (f32.mul (call $gl_sw_m3 (local.get $m) (i32.const 1) (i32.const 1)) (call $gl_sw_m3 (local.get $m) (i32.const 2) (i32.const 2)))
       (f32.mul (call $gl_sw_m3 (local.get $m) (i32.const 1) (i32.const 2)) (call $gl_sw_m3 (local.get $m) (i32.const 2) (i32.const 1)))))
@@ -1399,8 +1438,8 @@
     (local $ndl f32) (local $ndh f32) (local $sp f32) (local $w f32) (local $k i32)
     (local $has_spec i32)
     (local.set $b (global.get $gl_sw_light_block))
-    (local.set $nm (region.addr $GL_SW_SCRATCH 0x400))
-    (local.set $t (region.addr $GL_SW_SCRATCH 0x430))
+    (local.set $nm (i32.add (global.get $gl_sw_scratch) (i32.const 0x400)))
+    (local.set $t (i32.add (global.get $gl_sw_scratch) (i32.const 0x430)))
     ;; Eye normal.
     (local.set $k (i32.const 0))
     (loop $rows
@@ -1419,7 +1458,7 @@
     ;; Material ambient and diffuse: the vertex colour under COLOR_MATERIAL.
     (local.set $amb (i32.add (local.get $b) (i32.const 8880)))
     (local.set $dif (i32.add (local.get $b) (i32.const 8896)))
-    (if (i32.and (i32.load (global.get $GL_SW_STATE)) (i32.const 0x10000))
+    (if (i32.and (i32.load (global.get $gl_sw_st)) (i32.const 0x10000))
       (then
         (local.set $amb (i32.add (local.get $v) (i32.const 12)))
         (local.set $dif (local.get $amb))))
@@ -1445,7 +1484,7 @@
                    (f32.load offset=8352 (i32.add (local.get $b) (local.get $c))))))
       (local.set $k (i32.add (local.get $k) (i32.const 1)))
       (br_if $init (i32.lt_u (local.get $k) (i32.const 3))))
-    (local.set $mask (i32.and (i32.shr_u (i32.load (global.get $GL_SW_STATE)) (i32.const 8))
+    (local.set $mask (i32.and (i32.shr_u (i32.load (global.get $gl_sw_st)) (i32.const 8))
       (i32.const 255)))
     (local.set $i (i32.const 0))
     (block $lights_done (loop $lights
@@ -1513,8 +1552,8 @@
   (func $gl_sw_sphere_map (param $v i32) (param $clip i32)
     (local $nm i32) (local $t i32) (local $k i32) (local $d f32)
     (local $rx f32) (local $ry f32) (local $rz f32) (local $m f32)
-    (local.set $nm (region.addr $GL_SW_SCRATCH 0x400))
-    (local.set $t (region.addr $GL_SW_SCRATCH 0x600))
+    (local.set $nm (i32.add (global.get $gl_sw_scratch) (i32.const 0x400)))
+    (local.set $t (i32.add (global.get $gl_sw_scratch) (i32.const 0x600)))
     (loop $rows
       (f32.store (i32.add (local.get $t) (i32.shl (local.get $k) (i32.const 2)))
         (f32.mul (f32.load offset=36 (local.get $nm))
@@ -1593,7 +1632,7 @@
   ;; inside of the near plane, | 2 when on the inside of the far one.
   (func $gl_sw_xform_vertex (param $mvp i32) (param $src i32) (param $k i32) (result i32)
     (local $clip i32) (local $tmp i32) (local $bits i32)
-    (local.set $tmp (region.addr $GL_SW_SCRATCH 64))
+    (local.set $tmp (i32.add (global.get $gl_sw_scratch) (i32.const 64)))
     (call $gl_mtx_set4 (local.get $tmp)
       (f32.load (local.get $src))
       (f32.load offset=4 (local.get $src))
@@ -1677,8 +1716,8 @@
     (if (i32.ne (local.get $far_in) (i32.const 7))
       (then
         (local.set $n (call $gl_sw_clip_pass (local.get $poly) (local.get $n)
-          (region.addr $GL_SW_SCRATCH 0x310) (i32.const 1)))
-        (local.set $poly (region.addr $GL_SW_SCRATCH 0x310))))
+          (i32.add (global.get $gl_sw_scratch) (i32.const 0x310)) (i32.const 1)))
+        (local.set $poly (i32.add (global.get $gl_sw_scratch) (i32.const 0x310)))))
     (local.set $k (i32.const 1))
     (block $done (loop $fan
       (br_if $done (i32.ge_s (i32.add (local.get $k) (i32.const 1)) (local.get $n)))
@@ -1875,7 +1914,7 @@
     ;; Fog distance: for a perspective projection clip w IS -z_eye, the eye
     ;; depth GL's fog coordinate is. (An orthographic draw has w = 1 and is
     ;; fogged as if at distance 1, which near-plane-0 fog barely touches.)
-    (if (i32.and (i32.load (global.get $GL_SW_STATE)) (i32.const 64))
+    (if (i32.and (i32.load (global.get $gl_sw_st)) (i32.const 64))
       (then (f32.store offset=28 (local.get $out)
         (call $gl_sw_fog_factor (f32.abs (f32.load offset=12 (local.get $c)))))))
     (i32.const 1))
@@ -1898,7 +1937,7 @@
   (func $gl_sw_raster_state (result i32)
     (local $s i32) (local $caps i32) (local $slot i32) (local $tex i32) (local $flags i32)
     (local $zbuf i32) (local $rt i32)
-    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $s (global.get $gl_sw_st))
     (local.set $caps (i32.load (local.get $s)))
     ;; Texture: the bound name's surface when TEXTURE_2D is on and it has an
     ;; image, otherwise the white texel, which MODULATE reduces to the
@@ -1912,7 +1951,7 @@
           (then (if (i32.load (local.get $slot))
             (then
               (local.set $tex (call $dx_from_this (i32.load (local.get $slot))))
-              (local.set $flags (call $gl_sw_tex_flags (local.get $slot)))))))))
+              (local.set $flags (call $gl_sw_draw_flags (local.get $slot) (i32.const 0)))))))))
     (if (i32.eqz (local.get $tex)) (then (return (i32.const 0))))
     (global.set $gl_sw_r_alpha (i32.const 0))
     (if (i32.and (i32.ne (i32.and (local.get $caps) (i32.const 4)) (i32.const 0))
@@ -1959,7 +1998,7 @@
   ;; The texture env as D3DTOP. An untextured draw modulates white by the
   ;; vertex colour whatever the env says; REPLACE on white would erase it.
   (func $gl_sw_r_env (result i32)
-    (select (i32.const 4) (i32.load offset=36 (global.get $GL_SW_STATE))
+    (select (i32.const 4) (i32.load offset=36 (global.get $gl_sw_st))
       (i32.eq (global.get $gl_sw_r_tex) (global.get $gl_sw_white))))
 
   ;; One span of a line or point on row $y: columns $xa up to but not
@@ -1967,7 +2006,7 @@
   ;; ends. Same state, same sampler, same depth and fog as a triangle's span.
   (func $gl_sw_span (param $y i32) (param $xa i32) (param $pa i32) (param $xb i32) (param $pb i32)
     (local $s i32) (local $caps i32) (local $qa f32) (local $qb f32)
-    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $s (global.get $gl_sw_st))
     (local.set $caps (i32.load (local.get $s)))
     (local.set $qa (f32.load offset=12 (local.get $pa)))
     (local.set $qb (f32.load offset=12 (local.get $pb)))
@@ -2002,14 +2041,14 @@
     (local $caps i32) (local $slot i32) (local $flags i32)
     (local $s0 i32) (local $s1 i32) (local $s2 i32)
     (local $q0 f32) (local $q1 f32) (local $q2 f32)
-    (local.set $caps (i32.load (global.get $GL_SW_STATE)))
+    (local.set $caps (i32.load (global.get $gl_sw_st)))
     (if (i32.eqz (i32.and (local.get $caps) (i32.const 0x80000))) (then (return)))
     (local.set $slot (call $gl_sw_tex_slot (global.get $gl_sw_other_bound)))
     (if (i32.eqz (local.get $slot)) (then (return)))
     (if (i32.eqz (i32.load (local.get $slot))) (then (return)))
     (global.set $rast_t1_entry (call $dx_from_this (i32.load (local.get $slot))))
     (if (i32.eqz (global.get $rast_t1_entry)) (then (return)))
-    (local.set $flags (call $gl_sw_tex_flags (local.get $slot)))
+    (local.set $flags (call $gl_sw_draw_flags (local.get $slot) (i32.const 1)))
     (global.set $rast_t1_addr_u (select (i32.const 3) (i32.const 1)
       (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))))
     (global.set $rast_t1_addr_v (select (i32.const 3) (i32.const 1)
@@ -2066,7 +2105,7 @@
     (local $px f32) (local $tx f32) (local $ratio f32) (local $step f32)
     (local $level i32) (local $want i32) (local $obj i32)
     (if (i32.eq (global.get $gl_sw_r_tex) (global.get $gl_sw_white)) (then (return)))
-    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $s (global.get $gl_sw_st))
     (local.set $slot (call $gl_sw_tex_slot (i32.load offset=40 (local.get $s))))
     (if (i32.eqz (local.get $slot)) (then (return)))
     (local.set $flags (global.get $gl_sw_r_flags))
@@ -2123,7 +2162,7 @@
       (then
         (global.set $gl_sw_clipped (i32.add (global.get $gl_sw_clipped) (i32.const 1)))
         (return)))
-    (local.set $s (global.get $GL_SW_STATE))
+    (local.set $s (global.get $gl_sw_st))
     (local.set $caps (i32.load (local.get $s)))
     (local.set $s0 (call $gl_sw_screen_at (i32.const 0)))
     (local.set $s1 (call $gl_sw_screen_at (i32.const 1)))
@@ -2324,7 +2363,7 @@
     (if (i32.or (global.get $gl_sw_r_dx) (global.get $gl_sw_r_dy))
       (then (call $gl_sw_shift_screen (i32.const 2))))
     (global.set $gl_sw_lines (i32.add (global.get $gl_sw_lines) (i32.const 1)))
-    (if (i32.and (i32.load (global.get $GL_SW_STATE)) (i32.const 64))
+    (if (i32.and (i32.load (global.get $gl_sw_st)) (i32.const 64))
       (then (call $gl_sw_fog_line)))
     (local.set $xa (i32.load (call $gl_sw_screen_at (i32.const 0))))
     (local.set $ya (i32.load offset=4 (call $gl_sw_screen_at (i32.const 0))))
@@ -2420,7 +2459,7 @@
       (then (call $gl_sw_shift_screen (i32.const 1))))
     (global.set $gl_sw_points (i32.add (global.get $gl_sw_points) (i32.const 1)))
     (local.set $r (call $gl_sw_screen_at (i32.const 0)))
-    (if (i32.and (i32.load (global.get $GL_SW_STATE)) (i32.const 64))
+    (if (i32.and (i32.load (global.get $gl_sw_st)) (i32.const 64))
       (then
         (global.set $rast_fog_a (f32.const 0))
         (global.set $rast_fog_b (f32.const 0))
@@ -2443,8 +2482,7 @@
   ;; through, and by the time it runs the topology has already been expanded
   ;; down to points, lines and triangles.
   (func $gl_sw_consume (param $start i32) (param $vertices i32)
-    (local $b i32) (local $mvp i32) (local $vp i32) (local $i i32) (local $base i32)
-    (local $mode i32) (local $step i32) (local $v i32)
+    (local $mode i32) (local $step i32)
     (if (i32.eqz (global.get $gl_sw_enabled)) (then (return)))
     ;; The encoder has already expanded strips, loops and fans: mode 0 is
     ;; single points, 1 separate lines, 4 separate triangles.
@@ -2462,18 +2500,32 @@
     ;; refusing is the same contract $gl_dfx1_transform holds to.
     (if (call $gl_mtx_export_untrusted) (then (return)))
     (if (i32.eqz (call $gl_sw_target)) (then (return)))
+    ;; With a render Worker attached the draw is queued there; otherwise
+    ;; anything already queued must land first, since this draws in place.
+    (if (call $gl_sw_worker_try (local.get $start) (local.get $vertices))
+      (then (return)))
+    (call $d3dim_worker_fence)
+    (call $gl_sw_draw (local.get $start) (local.get $vertices) (local.get $step)))
+
+  ;; The draw itself, from a complete packed record. Everything it reads is
+  ;; either shared and fenced before the guest changes it (surfaces, texture
+  ;; slots, mips) or reached through $gl_sw_st, $gl_sw_scratch and
+  ;; $gl_mtx_block, which a render Worker points at its own copy.
+  (func $gl_sw_draw (param $start i32) (param $vertices i32) (param $step i32)
+    (local $b i32) (local $mvp i32) (local $vp i32) (local $i i32) (local $base i32)
+    (local $v i32)
     (local.set $b (call $gl_mtx_block))
-    (local.set $mvp (global.get $GL_SW_SCRATCH))
+    (local.set $mvp (global.get $gl_sw_scratch))
     ;; Stacks BY NAME -- 0 modelview, 1 projection -- and not "the current
     ;; matrix", which is correct only for as long as an app happens to leave
     ;; GL_MODELVIEW selected.
     (call $gl_mtx_mul_into (local.get $mvp)
       (call $gl_mtx_stack_top (local.get $b) (i32.const 1))
       (call $gl_mtx_stack_top (local.get $b) (i32.const 0)))
-    (global.set $gl_sw_lit (i32.ne (i32.and (i32.load (global.get $GL_SW_STATE))
+    (global.set $gl_sw_lit (i32.ne (i32.and (i32.load (global.get $gl_sw_st))
       (i32.const 128)) (i32.const 0)))
     (global.set $gl_sw_sphere (i32.and
-      (i32.eq (i32.and (i32.load (global.get $GL_SW_STATE)) (i32.const 0x60000)) (i32.const 0x60000))
+      (i32.eq (i32.and (i32.load (global.get $gl_sw_st)) (i32.const 0x60000)) (i32.const 0x60000))
       (i32.eq (global.get $gl_sw_texgen_modes) (i32.const 0x24022402))))  ;; SPHERE_MAP x2
     ;; The normal matrix serves lighting and the sphere map alike.
     (if (i32.or (global.get $gl_sw_lit) (global.get $gl_sw_sphere))
@@ -2491,7 +2543,7 @@
     (if (i32.or (i32.le_s (i32.load offset=8 (local.get $vp)) (i32.const 0))
                 (i32.le_s (i32.load offset=12 (local.get $vp)) (i32.const 0)))
       (then
-        (local.set $vp (region.addr $GL_SW_SCRATCH 0x300))
+        (local.set $vp (i32.add (global.get $gl_sw_scratch) (i32.const 0x300)))
         (i32.store (local.get $vp) (i32.const 0))
         (i32.store offset=4 (local.get $vp) (i32.const 0))
         (i32.store offset=8 (local.get $vp) (global.get $gl_sw_default_w))
@@ -2509,8 +2561,251 @@
       (local.set $i (i32.add (local.get $i) (local.get $step)))
       (br $lp))))
 
+  ;; ---- render Worker -------------------------------------------------------
+  ;; With a D3D render Worker attached (--d3d-worker, and Threads mode in the
+  ;; browser) a draw is queued there instead of rasterized here, exactly as
+  ;; D3DIM's are: the guest runs on while the Worker draws. The record is a
+  ;; 1032-byte snapshot of everything $gl_sw_draw reads that the guest may
+  ;; change before the Worker gets to it, then the packed draw record itself:
+  ;;   +0    state block (+0..+63 of $gl_sw_st)
+  ;;   +64   top of each matrix stack, 0..3, 64 bytes each
+  ;;   +320  lights and material, block +8352..+8960
+  ;;   +928  viewport and depth range, block +9008..+9032
+  ;;   +952  rt, zbuf, flip_y, white, fog mode, density, start, end, colour,
+  ;;         point size, line width, texgen modes, shade model, default w, h,
+  ;;         scissor view, depth view, unit 1's bound name
+  ;;   +1024 the sampling flags of unit 0's and unit 1's bound textures, so
+  ;;         glTexParameter between draws needs no fence
+  ;; What it does not copy is shared and fenced before the guest changes it:
+  ;; surfaces (clear, swap, resize), texture slots and mips (every upload,
+  ;; parameter and delete). A DIB target is never queued: GDI reads those bits
+  ;; whenever it likes, with no fence to stop it.
+  (global $gl_sw_in_worker (mut i32) (i32.const 0))
+  ;; 0 not yet known, 1 a Worker took the last draw, 2 none took one this
+  ;; frame -- don't build another snapshot until the next SwapBuffers.
+  (global $gl_sw_worker_ok (mut i32) (i32.const 0))
+  (global $gl_sw_snap (mut i32) (i32.const 0))
+  ;; The Worker's own scissor views: it refills a view per draw, and must not
+  ;; refill the one a guest-side glClear is using.
+  (global $gl_sw_wk_view (mut i32) (i32.const 0))
+  (global $gl_sw_wk_zview (mut i32) (i32.const 0))
+  (global $gl_sw_wk_block (mut i32) (i32.const 0))
+  (global $gl_sw_wk_flags0 (mut i32) (i32.const 0))
+  (global $gl_sw_wk_flags1 (mut i32) (i32.const 0))
+
+  ;; The sampling flags a draw uses for texture unit $unit's slot: the live
+  ;; slot's on the guest thread, the queued draw's own copy in the Worker.
+  (func $gl_sw_draw_flags (param $slot i32) (param $unit i32) (result i32)
+    (if (global.get $gl_sw_in_worker)
+      (then (return (select (global.get $gl_sw_wk_flags1) (global.get $gl_sw_wk_flags0)
+        (local.get $unit)))))
+    (call $gl_sw_tex_flags (local.get $slot)))
+
+  ;; glTexSubImage2D while draws are in flight: those draws must still sample
+  ;; the old texels, so rather than wait for them, convert the rectangle here
+  ;; into a staging block and queue the copy into $entry behind them (0x20006,
+  ;; a descriptor of staging, bytes, entry, x, y, w, h). Result 1 when queued;
+  ;; 0 leaves the caller to fence and store synchronously.
+  (global $gl_sw_tex_stage (mut i32) (i32.const 0))
+  (func $gl_sw_worker_tex (param $entry i32) (param $x i32) (param $y i32)
+      (param $w i32) (param $h i32) (param $format i32) (param $pixels i32)
+      (param $opaque i32) (result i32)
+    (local $bytes i32) (local $d i32) (local $g i32)
+    (if (i32.eqz (global.get $d3dim_worker_pending)) (then (return (i32.const 0))))
+    (if (i32.ne (global.get $gl_sw_worker_ok) (i32.const 1)) (then (return (i32.const 0))))
+    (if (i32.or (i32.le_s (local.get $w) (i32.const 0)) (i32.le_s (local.get $h) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $w) (i32.const 1024)) (then (return (i32.const 0))))
+    (if (i32.gt_u (local.get $h) (i32.const 1024)) (then (return (i32.const 0))))
+    (local.set $bytes (i32.shl (i32.mul (local.get $w) (local.get $h)) (i32.const 2)))
+    ;; 1MB of texels: a 512x512 rectangle, far above any per-frame upload.
+    (if (i32.gt_u (local.get $bytes) (i32.const 0x100000)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $gl_sw_tex_stage)) (then
+      (local.set $g (call $gl_alloc_affine (i32.const 0x100020)))
+      (if (i32.eqz (local.get $g)) (then (return (i32.const 0))))
+      (global.set $gl_sw_tex_stage (call $g2w (local.get $g)))))
+    ;; Staging is the rectangle alone, pitch w*4, clipped as the texture is.
+    (call $gl_sw_tex_store_to
+      (i32.sub (global.get $gl_sw_tex_stage)
+        (i32.add (i32.mul (local.get $y) (i32.shl (local.get $w) (i32.const 2)))
+                 (i32.shl (local.get $x) (i32.const 2))))
+      (i32.shl (local.get $w) (i32.const 2))
+      (load.field DxObject width (local.get $entry))
+      (load.field DxObject height (local.get $entry))
+      (local.get $x) (local.get $y) (local.get $w) (local.get $h)
+      (local.get $format) (local.get $pixels) (local.get $opaque))
+    (local.set $d (i32.add (global.get $gl_sw_tex_stage) (i32.const 0x100000)))
+    (i32.store offset=0 (local.get $d) (global.get $gl_sw_tex_stage))
+    (i32.store offset=4 (local.get $d) (local.get $bytes))
+    (i32.store offset=8 (local.get $d) (local.get $entry))
+    (i32.store offset=12 (local.get $d) (local.get $x))
+    (i32.store offset=16 (local.get $d) (local.get $y))
+    (i32.store offset=20 (local.get $d) (local.get $w))
+    (i32.store offset=24 (local.get $d) (local.get $h))
+    (i32.ne (call $host_gpu_gl_call (i32.const 0x20006) (local.get $d) (i32.const 0))
+      (i32.const 0)))
+
+  ;; The render Worker's half of $gl_sw_worker_tex: copy the staged rectangle
+  ;; into the surface entry, clipped exactly as the conversion was.
+  (func (export "gl_sw_worker_tex_copy") (param $stage i32) (param $entry i32)
+      (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (local $tw i32) (local $th i32) (local $cw i32) (local $row i32) (local $pitch i32)
+    (local.set $tw (load.field DxObject width (local.get $entry)))
+    (local.set $th (load.field DxObject height (local.get $entry)))
+    (local.set $pitch (load.field DxObject pitch (local.get $entry)))
+    (if (i32.ge_u (local.get $x) (local.get $tw)) (then (return)))
+    (local.set $cw (i32.sub (local.get $tw) (local.get $x)))
+    (if (i32.gt_u (local.get $cw) (local.get $w)) (then (local.set $cw (local.get $w))))
+    (block $done (loop $rows
+      (br_if $done (i32.ge_u (local.get $row) (local.get $h)))
+      (br_if $done (i32.ge_u (i32.add (local.get $y) (local.get $row)) (local.get $th)))
+      (memory.copy
+        (i32.add (load.field DxObject misc1 (local.get $entry))
+          (i32.add (i32.mul (i32.add (local.get $y) (local.get $row)) (local.get $pitch))
+                   (i32.shl (local.get $x) (i32.const 2))))
+        (i32.add (local.get $stage)
+          (i32.mul (local.get $row) (i32.shl (local.get $w) (i32.const 2))))
+        (i32.shl (local.get $cw) (i32.const 2)))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rows))))
+
+  ;; Result 1 when the render Worker took the draw.
+  (func $gl_sw_worker_try (param $start i32) (param $vertices i32) (result i32)
+    (local $snap i32) (local $b i32) (local $d i32) (local $g i32)
+    (if (global.get $gl_sw_in_worker) (then (return (i32.const 0))))
+    (if (global.get $gl_sw_bitmap) (then (return (i32.const 0))))
+    (if (i32.eq (global.get $gl_sw_worker_ok) (i32.const 2)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $gl_sw_snap)) (then
+      (local.set $g (call $gl_alloc_affine (i32.const 1056)))
+      (if (i32.eqz (local.get $g)) (then
+        (global.set $gl_sw_worker_ok (i32.const 2))
+        (return (i32.const 0))))
+      (global.set $gl_sw_snap (call $g2w (local.get $g)))))
+    (if (i32.eqz (global.get $gl_sw_wk_view)) (then
+      (global.set $gl_sw_wk_view (call $gl_sw_view_entry))
+      (global.set $gl_sw_wk_zview (call $gl_sw_view_entry))))
+    (local.set $snap (global.get $gl_sw_snap))
+    (local.set $b (call $gl_mtx_block))
+    (memory.copy (local.get $snap) (global.get $gl_sw_st) (i32.const 64))
+    (memory.copy (i32.add (local.get $snap) (i32.const 64))
+      (call $gl_mtx_stack_top (local.get $b) (i32.const 0)) (i32.const 64))
+    (memory.copy (i32.add (local.get $snap) (i32.const 128))
+      (call $gl_mtx_stack_top (local.get $b) (i32.const 1)) (i32.const 64))
+    (memory.copy (i32.add (local.get $snap) (i32.const 192))
+      (call $gl_mtx_stack_top (local.get $b) (i32.const 2)) (i32.const 64))
+    (memory.copy (i32.add (local.get $snap) (i32.const 256))
+      (call $gl_mtx_stack_top (local.get $b) (i32.const 3)) (i32.const 64))
+    (memory.copy (i32.add (local.get $snap) (i32.const 320))
+      (i32.add (local.get $b) (i32.const 8352)) (i32.const 608))
+    (memory.copy (i32.add (local.get $snap) (i32.const 928))
+      (i32.add (local.get $b) (i32.const 9008)) (i32.const 24))
+    (i32.store offset=952 (local.get $snap) (global.get $gl_sw_rt))
+    (i32.store offset=956 (local.get $snap) (global.get $gl_sw_zbuf))
+    (i32.store offset=960 (local.get $snap) (global.get $gl_sw_flip_y))
+    (i32.store offset=964 (local.get $snap) (global.get $gl_sw_white))
+    (i32.store offset=968 (local.get $snap) (global.get $gl_sw_fog_mode))
+    (f32.store offset=972 (local.get $snap) (global.get $gl_sw_fog_density))
+    (f32.store offset=976 (local.get $snap) (global.get $gl_sw_fog_start))
+    (f32.store offset=980 (local.get $snap) (global.get $gl_sw_fog_end))
+    (i32.store offset=984 (local.get $snap) (global.get $gl_sw_fog_color))
+    (f32.store offset=988 (local.get $snap) (global.get $gl_sw_point_size))
+    (f32.store offset=992 (local.get $snap) (global.get $gl_sw_line_width))
+    (i32.store offset=996 (local.get $snap) (global.get $gl_sw_texgen_modes))
+    (i32.store offset=1000 (local.get $snap) (global.get $gl_shade_model))
+    (i32.store offset=1004 (local.get $snap) (global.get $gl_sw_default_w))
+    (i32.store offset=1008 (local.get $snap) (global.get $gl_sw_default_h))
+    (i32.store offset=1012 (local.get $snap) (global.get $gl_sw_wk_view))
+    (i32.store offset=1016 (local.get $snap) (global.get $gl_sw_wk_zview))
+    (i32.store offset=1020 (local.get $snap) (global.get $gl_sw_other_bound))
+    (local.set $g (call $gl_sw_tex_slot (i32.load offset=40 (global.get $gl_sw_st))))
+    (i32.store offset=1024 (local.get $snap)
+      (if (result i32) (local.get $g) (then (call $gl_sw_tex_flags (local.get $g))) (else (i32.const 0))))
+    (local.set $g (call $gl_sw_tex_slot (global.get $gl_sw_other_bound)))
+    (i32.store offset=1028 (local.get $snap)
+      (if (result i32) (local.get $g) (then (call $gl_sw_tex_flags (local.get $g))) (else (i32.const 0))))
+    ;; 0x20005's descriptor: snapshot, its length, packed record, its length.
+    (local.set $d (i32.add (local.get $snap) (i32.const 1040)))
+    (i32.store offset=0 (local.get $d) (local.get $snap))
+    (i32.store offset=4 (local.get $d) (i32.const 1032))
+    (i32.store offset=8 (local.get $d) (local.get $start))
+    (i32.store offset=12 (local.get $d)
+      (i32.add (i32.mul (local.get $vertices) (i32.const 56)) (i32.const 32)))
+    (if (i32.eqz (call $host_gpu_gl_call (i32.const 0x20005) (local.get $d) (i32.const 0)))
+      (then
+        (global.set $gl_sw_worker_ok (i32.const 2))
+        (return (i32.const 0))))
+    (global.set $gl_sw_worker_ok (i32.const 1))
+    (global.set $d3dim_worker_pending (i32.const 1))
+    (i32.const 1))
+
+  ;; The render Worker's half: install a snapshot $gl_sw_worker_try took and
+  ;; draw the packed record at $rec. Both are wasm addresses in memory this
+  ;; instance owns. The first call gives the instance private scratch, state
+  ;; and matrix block; the regions those normally live in are the guest's.
+  ;; Result 0 only if that private memory could not be had.
+  (func (export "gl_sw_worker_draw") (param $snap i32) (param $rec i32) (result i32)
+    (local $blk i32) (local $g i32) (local $mode i32) (local $step i32) (local $n i32)
+    (if (i32.eqz (global.get $gl_sw_wk_block)) (then
+      (local.set $g (call $gl_alloc_affine (i32.const 0x800)))
+      (if (i32.eqz (local.get $g)) (then (return (i32.const 0))))
+      (global.set $gl_sw_scratch (call $g2w (local.get $g)))
+      (local.set $g (call $gl_alloc_affine (i32.const 0x700)))
+      (if (i32.eqz (local.get $g)) (then (return (i32.const 0))))
+      (global.set $gl_sw_st (call $g2w (local.get $g)))
+      (local.set $g (call $gl_alloc_affine (i32.const 10832)))
+      (if (i32.eqz (local.get $g)) (then (return (i32.const 0))))
+      (local.set $blk (call $g2w (local.get $g)))
+      ;; Every stack is one deep, so each top is its stack's first entry.
+      (memory.fill (local.get $blk) (i32.const 0) (i32.const 10832))
+      (global.set $gl_sw_wk_block (local.get $blk))
+      (global.set $gl_mtx_block_override (local.get $blk))
+      (global.set $gl_sw_in_worker (i32.const 1))
+      (global.set $gl_sw_enabled (i32.const 1))))
+    (local.set $blk (global.get $gl_sw_wk_block))
+    (memory.copy (global.get $gl_sw_st) (local.get $snap) (i32.const 64))
+    (memory.copy (call $gl_mtx_base (local.get $blk) (i32.const 0))
+      (i32.add (local.get $snap) (i32.const 64)) (i32.const 64))
+    (memory.copy (call $gl_mtx_base (local.get $blk) (i32.const 1))
+      (i32.add (local.get $snap) (i32.const 128)) (i32.const 64))
+    (memory.copy (call $gl_mtx_base (local.get $blk) (i32.const 2))
+      (i32.add (local.get $snap) (i32.const 192)) (i32.const 64))
+    (memory.copy (call $gl_mtx_base (local.get $blk) (i32.const 3))
+      (i32.add (local.get $snap) (i32.const 256)) (i32.const 64))
+    (memory.copy (i32.add (local.get $blk) (i32.const 8352))
+      (i32.add (local.get $snap) (i32.const 320)) (i32.const 608))
+    (memory.copy (i32.add (local.get $blk) (i32.const 9008))
+      (i32.add (local.get $snap) (i32.const 928)) (i32.const 24))
+    (global.set $gl_sw_rt (i32.load offset=952 (local.get $snap)))
+    (global.set $gl_sw_zbuf (i32.load offset=956 (local.get $snap)))
+    (global.set $gl_sw_flip_y (i32.load offset=960 (local.get $snap)))
+    (global.set $gl_sw_white (i32.load offset=964 (local.get $snap)))
+    (global.set $gl_sw_fog_mode (i32.load offset=968 (local.get $snap)))
+    (global.set $gl_sw_fog_density (f32.load offset=972 (local.get $snap)))
+    (global.set $gl_sw_fog_start (f32.load offset=976 (local.get $snap)))
+    (global.set $gl_sw_fog_end (f32.load offset=980 (local.get $snap)))
+    (global.set $gl_sw_fog_color (i32.load offset=984 (local.get $snap)))
+    (global.set $gl_sw_point_size (f32.load offset=988 (local.get $snap)))
+    (global.set $gl_sw_line_width (f32.load offset=992 (local.get $snap)))
+    (global.set $gl_sw_texgen_modes (i32.load offset=996 (local.get $snap)))
+    (global.set $gl_shade_model (i32.load offset=1000 (local.get $snap)))
+    (global.set $gl_sw_default_w (i32.load offset=1004 (local.get $snap)))
+    (global.set $gl_sw_default_h (i32.load offset=1008 (local.get $snap)))
+    (global.set $gl_sw_sc_view (i32.load offset=1012 (local.get $snap)))
+    (global.set $gl_sw_sc_zview (i32.load offset=1016 (local.get $snap)))
+    (global.set $gl_sw_other_bound (i32.load offset=1020 (local.get $snap)))
+    (global.set $gl_sw_wk_flags0 (i32.load offset=1024 (local.get $snap)))
+    (global.set $gl_sw_wk_flags1 (i32.load offset=1028 (local.get $snap)))
+    (local.set $mode (i32.load offset=8 (local.get $rec)))
+    (local.set $step (select (i32.const 1)
+      (select (i32.const 2) (i32.const 3) (i32.eq (local.get $mode) (i32.const 1)))
+      (i32.eqz (local.get $mode))))
+    (local.set $n (i32.div_u (i32.load offset=20 (local.get $rec)) (i32.const 56)))
+    (call $gl_sw_draw (local.get $rec) (local.get $n) (local.get $step))
+    (i32.const 1))
+
   ;; ---- exports --------------------------------------------------------------
   (func $gl_sw_export_set_enabled (export "gl_sw_set_enabled") (param $on i32)
+    (call $d3dim_worker_fence)
     (if (i32.and (i32.ne (local.get $on) (i32.const 0)) (i32.eqz (global.get $gl_sw_enabled)))
       (then (call $gl_sw_state_defaults)))
     (global.set $gl_sw_enabled (i32.ne (local.get $on) (i32.const 0))))
@@ -2615,6 +2910,8 @@
         (global.set $gl_sw_default_h (local.get $h)))))
 
   (func $gl_sw_export_reset (export "gl_sw_reset")
+    (call $d3dim_worker_fence)
+    (global.set $gl_sw_worker_ok (i32.const 0))
     (global.set $gl_sw_drawable_known (i32.const 0))
     (global.set $gl_sw_active_unit (i32.const 0))
     (global.set $gl_sw_other_bound (i32.const 0))

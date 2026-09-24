@@ -671,11 +671,11 @@
   ;; +0x400 the lighting normal matrix and per-vertex vectors. 1152 bytes
   ;; used of 2048.
   (region.declare $GL_SW_SCRATCH (size 0x00000800) (align 0x00001000)
-    (owner "09a8g-gl-raster.wat:$gl_sw_consume"))
+    (owner "09a8g-gl-raster.wat:$gl_sw_scratch"))
   ;; The GL state the software rasterizer decides pixels by: a 64-byte block
   ;; at +0, then sixteen 96-byte glPushAttrib frames at +64 (1600 bytes).
   (region.declare $GL_SW_STATE (size 0x00000700) (align 0x00000100)
-    (owner "09a8g-gl-raster.wat:$gl_sw_observe"))
+    (owner "09a8g-gl-raster.wat:$gl_sw_st"))
   ;; GL matrix-mirror context records: an atomic claim counter at +0, then from
   ;; +0x40 a 16-byte list node plus the 10832-byte block (09a8f's header),
   ;; 0x2C00 apart, for the first eight contexts.

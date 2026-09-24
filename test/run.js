@@ -10638,8 +10638,12 @@ if (VERBOSE) {
     // reads as "never asked", "asked and dropped" or "drew" at a glance.
     const sw = instance.exports;
     if (sw.gl_sw_enabled && sw.gl_sw_enabled()) {
-      console.log(`[gl-census] software raster: triangles=${sw.gl_sw_triangles() >>> 0}` +
-        ` dropped-at-eye-plane=${sw.gl_sw_clipped() >>> 0} culled=${sw.gl_sw_culled() >>> 0}` +
+      // With --d3d-worker the draws were rasterized, and counted, there.
+      const wk = ctx.d3dCommands && ctx.d3dCommands.snapshot ? ctx.d3dCommands.snapshot() : {};
+      console.log(`[gl-census] software raster: triangles=${((sw.gl_sw_triangles() >>> 0) + (wk.glTriangles || 0))}` +
+        ` dropped-at-eye-plane=${(sw.gl_sw_clipped() >>> 0) + (wk.glClipped || 0)}` +
+        ` culled=${(sw.gl_sw_culled() >>> 0) + (wk.glCulled || 0)}` +
+        (wk.glQueued ? ` worker-draws=${wk.glQueued} worker-tex-uploads=${wk.glTexQueued || 0}` : '') +
         ` presents=${sw.gl_sw_presents() >>> 0} tex-uploads=${sw.gl_sw_tex_uploads() >>> 0}` +
         ` tex-unsupported=${sw.gl_sw_tex_unsupported() >>> 0} target-slot=${sw.gl_sw_slot() | 0}` +
         (() => {

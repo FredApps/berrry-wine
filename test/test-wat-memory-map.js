@@ -220,6 +220,9 @@ const highFixedAliases = new Map(Object.entries({
   TT_SUBST_TIMES_NEW_ROMAN: { owner: 'TT_FONT_STRING_STORAGE' },
   TT_FONT_DIR_PATTERN: { owner: 'TT_FONT_STRING_STORAGE' },
   TT_FONT_DIR_PREFIX: { owner: 'TT_FONT_STRING_STORAGE' },
+  // Mutable: the render Worker points its rasterizer at private scratch.
+  gl_sw_scratch: { owner: 'GL_SW_SCRATCH' },
+  gl_sw_st: { owner: 'GL_SW_STATE' },
 }));
 
 const regionByName = new Map(regions.map(region => [region.name, region]));
