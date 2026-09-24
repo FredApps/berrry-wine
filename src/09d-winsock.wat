@@ -89,7 +89,7 @@
     (field tx_inflight i32)      ;; +120  wire send window in use
     (field rx_credit   i32))     ;; +124  credit owed to the wire sender
 
-  (global $VSOCK_MAX i32 (i32.const 64))
+  (global $VSOCK_MAX i32 (i32.const 128))
   (global $VSOCK_REC_SIZE i32 (i32.const 128))
   (global $VSOCK_RX_CAP i32 (i32.const 16384))
   ;; A SOCK_DGRAM socket's ring is a queue of records, each
@@ -2701,7 +2701,7 @@
   ;; finds out.
   ;;
   ;; The registration lives beside the socket table rather than inside it:
-  ;; VSOCK_TABLE is 64 records of exactly 128 bytes in an 8KB region with no
+  ;; VSOCK_TABLE is 128 records of exactly 128 bytes in a 16KB region with no
   ;; room left, and widening the record would mean moving a memory-map
   ;; boundary for three fields.
   (global $vsock_async (mut i32) (i32.const 0))
@@ -2765,6 +2765,18 @@
     ;; Documented side effect: the socket becomes non-blocking, and stays that
     ;; way even if the registration is later cancelled with lEvent = 0.
     (store.field VSock mode (call $vsock_rec (local.get $idx)) (i32.const 1))
+    ;; Registering is level-triggered for what is already true: data waiting
+    ;; posts FD_READ, a connected socket posts FD_WRITE, a queued connection
+    ;; posts FD_ACCEPT. SimCity 2000 Network Edition's server accepts with the
+    ;; listener's FD_ACCEPT-only mask and only then asks for FD_READ; the
+    ;; client's login is already in the ring by then, and without this
+    ;; re-announcement the server never reads it and drops the player.
+    (if (call $vsock_read_ready (local.get $idx))
+      (then (call $vsock_async_post (local.get $idx) (i32.const 0x01) (i32.const 0))))
+    (if (i32.eq (load.field VSock state (call $vsock_rec (local.get $idx))) (i32.const 4))
+      (then (call $vsock_async_post (local.get $idx) (i32.const 0x02) (i32.const 0))))
+    (if (i32.gt_u (load.field VSock acc_count (call $vsock_rec (local.get $idx))) (i32.const 0))
+      (then (call $vsock_async_post (local.get $idx) (i32.const 0x08) (i32.const 0))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   ;; getprotobyname(name) → struct protoent* (NULL when unknown)
@@ -2833,13 +2845,15 @@
     ;; padding, and provider pointer before publishing the fields supported by
     ;; this virtual provider. MFC's AfxSocketInit reads iMaxSockets at +390;
     ;; leaving it zero makes Half-Life Uplink report an insufficient-sockets
-    ;; warning even though the actual table below has 64 slots.
+    ;; warning even though the actual table below has 128 slots. SimCity 2000
+    ;; Network Edition's server refuses to start below 65 (64 players plus
+    ;; its listener), which is why the table is not 64.
     (memory.fill (local.get $wa) (i32.const 0) (i32.const 400))
     ;; wVersion is the negotiated request; wHighVersion is the provider
     ;; ceiling. WinSock 1.1 clients reject a success that reports 2.2 here.
     (i32.store16 (local.get $wa) (i32.and (local.get $arg0) (i32.const 0xFFFF)))
     (i32.store16 (i32.add (local.get $wa) (i32.const 2)) (i32.const 0x0202))
-    ;; Stream and datagram sockets share the same 64-record table.
+    ;; Stream and datagram sockets share the same 128-record table.
     (i32.store16 (i32.add (local.get $wa) (i32.const 390))
       (global.get $VSOCK_MAX))                                  ;; iMaxSockets
     (i32.store16 (i32.add (local.get $wa) (i32.const 392))

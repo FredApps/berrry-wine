@@ -20172,6 +20172,7 @@
   {
     "id": 2405,
     "name": "WSAAsyncSelect",
+    "test_call": true,
     "nargs": 4,
     "convention": "stdcall",
     "hash": 445374758

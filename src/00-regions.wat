@@ -728,7 +728,7 @@
     (owner "09a8-handlers-directx.wat:$dx_get_wrapper_for_vtbl_locked"))
   (region.declare $DX_VTBL_REGISTRY (size 0x00000120)
     (owner "09a8-handlers-directx.wat:$dx_vtable_registry_reset"))
-  (region.declare $VSOCK_TABLE (size 0x00002000) (align 0x00001000)
+  (region.declare $VSOCK_TABLE (size 0x00004000) (align 0x00001000)
     (stride $VSOCK_REC_SIZE (count $VSOCK_MAX))
     (owner "09d-winsock.wat:$vsock_rec"))
   ;; Per-process shell image-list identity plus the short immutable strings

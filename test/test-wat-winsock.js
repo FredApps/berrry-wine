@@ -53,6 +53,13 @@ async function main() {
         (i32.const 0) (i32.const 0) (i32.const 0))
       (i64.or (i64.extend_i32_u (i32.load (global.get $reg_base)))
         (i64.shl (i64.extend_i32_u (i32.load offset=16 (global.get $reg_base))) (i64.const 32))))
+    ;; A live HWND, so WSAAsyncSelect's posts route to this thread's queue.
+    (func (export "test_make_window") (result i32)
+      (local $hwnd i32)
+      (local.set $hwnd (global.get $next_hwnd))
+      (global.set $next_hwnd (i32.add (local.get $hwnd) (i32.const 1)))
+      (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_CTRL_NATIVE))
+      (local.get $hwnd))
   ` : source);
   const memory = new WebAssembly.Memory({ initial: 8192, maximum: 8192, shared: true });
   const imports = createHostImports({ getMemory: () => memory.buffer, renderer: null, resourceJson: {} });
@@ -769,6 +776,39 @@ async function main() {
     assert.strictEqual(wat.test_call_WSAGetLastError() | 0, WSAECONNRESET);
   });
 
+  // SimCity 2000 Network Edition's server accepts under the listener's
+  // FD_ACCEPT-only mask and only then asks for FD_READ; the client's login is
+  // already buffered, so registering has to announce it.
+  check('WSAAsyncSelect announces conditions that already hold', () => {
+    wat.test_vsock_reset();
+    const { srv, cli, acc } = connectedPair();
+    const msg = Buffer.from('login');
+    assert.strictEqual(wat.test_call_send(cli, buf(msg), msg.length, 0) | 0, msg.length);
+    const posted = () => {
+      const out = [];
+      for (let i = 0; i < (wat.get_post_queue_count() | 0); i++) {
+        out.push({ msg: wat.post_queue_peek(i, 1) | 0, wParam: wat.post_queue_peek(i, 2) | 0,
+          lParam: wat.post_queue_peek(i, 3) | 0 });
+      }
+      return out;
+    };
+    const hwnd = wat.test_make_window() | 0;
+    wat.set_post_queue_count(0);
+    assert.strictEqual(wat.test_call_WSAAsyncSelect(acc, hwnd, 0x501, 0x23) | 0, 0);
+    const events = posted().filter(m => m.msg === 0x501 && m.wParam === acc).map(m => m.lParam);
+    assert(events.includes(0x01), `pending data posts FD_READ (got ${events})`);
+    assert(events.includes(0x02), `a connected socket posts FD_WRITE (got ${events})`);
+
+    const cli2 = wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0;
+    setNonblocking(cli2, true);
+    assert.strictEqual(wat.test_call_connect(cli2, sockaddr(ROOM_HOST, GAME_PORT), 16) | 0, 0);
+    wat.set_post_queue_count(0);
+    assert.strictEqual(wat.test_call_WSAAsyncSelect(srv, hwnd, 0x501, 0x08) | 0, 0);
+    assert(posted().some(m => m.msg === 0x501 && m.wParam === srv && m.lParam === 0x08),
+      'a queued connection posts FD_ACCEPT');
+    wat.set_post_queue_count(0);
+  });
+
   check('the socket table is bounded and recovers after close', () => {
     wat.test_vsock_reset();
     const open = [];
@@ -776,9 +816,9 @@ async function main() {
       const s = wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0;
       if (s === INVALID_SOCKET) break;
       open.push(s);
-      assert(open.length <= 64, 'socket table must be bounded');
+      assert(open.length <= 128, 'socket table must be bounded');
     }
-    assert.strictEqual(open.length, 64);
+    assert.strictEqual(open.length, 128);
     assert.strictEqual(wat.test_call_WSAGetLastError() | 0, 10024, 'WSAEMFILE');
     assert.strictEqual(wat.test_call_closesocket(open.pop()) | 0, 0);
     assert.notStrictEqual(wat.test_call_socket(AF_INET, SOCK_STREAM, 0) | 0, INVALID_SOCKET);
