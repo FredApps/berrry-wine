@@ -7166,14 +7166,20 @@
     ;; Web Audio ends non-looping sources asynchronously. Reflect that in the
     ;; guest-visible status so Miles can retire and reuse naturally-ended
     ;; samples instead of seeing DSBSTATUS_PLAYING forever.
-    (if (i32.and
-          (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0))
-          (i32.and (i32.ne (local.get $handle) (i32.const 0))
-            (i32.eqz (call $host_voice_is_playing (local.get $handle)))))
+    ;; Only a playing ONE-SHOT can end on its own: a looping buffer plays until
+    ;; Stop, which clears these flags itself, and the host answers "playing"
+    ;; for every looping snapshot. Nested ifs, not i32.and, so a stopped or
+    ;; looping buffer never pays the host call -- in Worker mode that call is
+    ;; a page round trip, and DX-Ball polls a looping ring once a frame.
+    (if (i32.eq (i32.and (local.get $flags) (i32.const 5)) (i32.const 1))
       (then
-        ;; DSBSTATUS_PLAYING=0x1, DSBSTATUS_LOOPING=0x4.
-        (local.set $flags (i32.and (local.get $flags) (i32.const 0xFFFFFFFA)))
-        (store.field DxObject flags (local.get $entry) (local.get $flags))))
+        (if (local.get $handle)
+          (then
+            (if (i32.eqz (call $host_voice_is_playing (local.get $handle)))
+              (then
+                ;; DSBSTATUS_PLAYING=0x1, DSBSTATUS_LOOPING=0x4.
+                (local.set $flags (i32.and (local.get $flags) (i32.const 0xFFFFFFFA)))
+                (store.field DxObject flags (local.get $entry) (local.get $flags))))))))
     (if (local.get $arg1) (then
       (call $gs32 (local.get $arg1)
         (i32.and (local.get $flags) (i32.const 0x7)))))
@@ -7245,6 +7251,20 @@
     ;; DSBPLAY_LOOPING = 1
     (local.set $loop (i32.and (local.get $arg3) (i32.const 1)))
     (local.set $start (i32.load offset=12 (local.get $state)))
+    ;; Play on a buffer that is already playing does not move its play cursor
+    ;; (DirectSound only takes the new flags). For a looping buffer asked to
+    ;; keep looping there is nothing to take, so the host is not told at all:
+    ;; a re-snapshot would restart the ring from $start and decode the whole
+    ;; buffer again. DX-Ball re-Plays its 132KB looping buffer every frame.
+    ;; Content changes still reach the host through Unlock's refresh.
+    (if (i32.and
+          (i32.eq (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 5))
+                  (i32.const 5))
+          (i32.ne (local.get $loop) (i32.const 0)))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+        (return)))
     ;; Bitwise i32.and on (ptr, size) silently drops the play call whenever
     ;; their bits don't happen to overlap. Coerce both to 0/1 for logical AND.
     (if (i32.and (i32.ne (local.get $dib_wa) (i32.const 0))
