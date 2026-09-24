@@ -231,11 +231,6 @@ const NOT_REDISTRIBUTABLE = new Set([
 const NEVER_PUBLISH_PREFIXES = [
   'test/binaries/candidates/morrowind/',
   'binaries/candidates/morrowind/',
-  // A promotional Maxis/EA demo off a third-party compilation CD. Its media
-  // carries no redistribution grant at all, so unlike the StarCraft and Diablo
-  // demos above it is local-only whatever the registry says (test/binaries/SOURCES.md).
-  'test/binaries/candidates/simcity-2000-demo/',
-  'binaries/candidates/simcity-2000-demo/',
   'downloads/',
 ];
 const neverPublish = p => {
@@ -270,6 +265,13 @@ const PUBLISHABLE_OUTSIDE_BINARIES = [
   // only the files the registry mounts ship, so the 3Dfx/PowerVR drivers and
   // the HTML manual stay behind.
   'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/',
+  // SimCity 2000 for Windows 95 Interactive Demo: Maxis's own standalone
+  // package (archive.org item sc295dmo, byte-identical setup files to our copy),
+  // crippled for promotion -- no Load/Save/Scenarios, disasters at 25 minutes,
+  // back to the menu at 30. Its media states no redistribution terms either
+  // way; publishing it as a promotional demo is the owner's decision
+  // (2026-09-24, test/binaries/SOURCES.md). Only its manifest's files ship.
+  'test/binaries/candidates/simcity-2000-demo/',
   'packages/freeware/dxball/',
   'packages/freeware/blobby-volley/',
 ];
@@ -337,6 +339,20 @@ function desktopAssetPaths() {
       }
     }
     for (const f of app.files || []) add(appFileUrl(f));
+    // A `localFileManifest` app lists its files (and its installer's registry)
+    // in a JSON the page fetches at launch, with URLs relative to it. Ship the
+    // manifest and exactly what it names; add() still refuses anything outside
+    // the publishable roots, so the local-only candidates stay local.
+    if (app.localFileManifest) {
+      const manifest = app.localFileManifest;
+      const full = path.join(ROOT, manifest);
+      if (publishable(manifest) && !neverPublish(manifest) && fs.existsSync(full)) {
+        add(manifest);
+        const dir = path.posix.dirname(manifest);
+        for (const f of JSON.parse(fs.readFileSync(full, 'utf8')).files || [])
+          add(path.posix.normalize(path.posix.join(dir, f.url)));
+      }
+    }
   }
   // Any app can LoadLibrary any of these at runtime, so they all ship.
   for (const p of Object.values(DLL_PATHS)) add(p);
