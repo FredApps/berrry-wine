@@ -4,7 +4,7 @@
 // Which apps does the present-rate cap ($present_pace) get WRONG?
 //
 //   node tools/present-rate-sweep.js [--apps=a,b] [--cap=60] [--seconds=8]
-//        [--warmup=25] [--list] [--limit=N] [--json=F] [--md=F]
+//        [--warmup=25] [--list] [--limit=N] [--json=F] [--md=F] [--headful] [--software-browser]
 //
 // THE FAILURE IT LOOKS FOR. The cap paces a present only when that present
 // ends a whole frame: a blit covering more than half the target, or the
@@ -23,6 +23,21 @@
 // PRESENT/s -- one count per Flip, per D3D Present, per full blit, per
 // Unlock-present -- read back from the page. Runs are serial: two browsers
 // on one box measure the box.
+//
+// PRESENT/s IS NOT THE FRAME RATE. It counts every paced-or-not present, and
+// measured 2026-09-23 on ascii.dev StarCraft makes ~97 of them a second while
+// the screen changes 18 times, Marbles 243 against 12. So each run also counts
+// DISTINCT DISPLAYED frames -- a 160x120 downsample of the screen hashed on
+// every rAF -- and how many ms a second the cap actually slept. The last
+// column is the limiter recommendation that follows from those two:
+//
+//   ON           the cap slept (the app outruns it) and the displayed frame
+//                rate held within 10% -- the paced presents are real frames
+//   OFF-NO-BIND  the cap never slept: it costs nothing and buys nothing
+//   OFF-HURTS    the cap slept and the displayed frame rate fell
+//
+// Displayed frames are bounded by the display refresh in both arms, so they
+// compare like with like; pass --headful for numbers worth quoting.
 //
 // WHAT IT CANNOT SEE. It drives no input, so an app is measured wherever it
 // parks itself on startup: a title screen, a menu, an attract loop. That is
@@ -48,6 +63,7 @@ const LIMIT = Number(opt('limit', 0));
 const JSON_OUT = opt('json', '');
 const MD_OUT = opt('md', '');
 const ONLY = (opt('apps', '') || '').split(',').filter(Boolean);
+const HEADFUL = argv.includes('--headful');
 
 // A present-capable app is one whose executable names a DLL that can reach a
 // paced path. A byte scan rather than an import walk on purpose: a game that
@@ -81,11 +97,42 @@ if (argv.includes('--list')) {
   process.exit(0);
 }
 
+// Starts the distinct-displayed-frame counter and marks the pacing counters
+// when the warmup ends, so both cover exactly the sample window.
+const AFTER_LAUNCH = `setTimeout(() => {
+  const a = runningApps.find(x => x && x.wine);
+  const ex = a && a.wine.instance && a.wine.instance.exports;
+  const screen = document.getElementById('screen');
+  const small = document.createElement('canvas');
+  small.width = 160; small.height = 120;
+  const sctx = small.getContext('2d', { willReadFrequently: true });
+  const D = window.__prsD = { t: performance.now(), n: 0, raf: 0, last: -1,
+    pacedMs: ex && ex.get_present_paced_ms ? ex.get_present_paced_ms() : null };
+  const tick = () => {
+    try {
+      sctx.drawImage(screen, 0, 0, 160, 120);
+      const px = new Uint32Array(sctx.getImageData(0, 0, 160, 120).data.buffer);
+      let h = 0x811c9dc5;
+      for (let i = 0; i < px.length; i++) h = Math.imul(h ^ px[i], 16777619);
+      if (h !== D.last) { D.n++; D.last = h; }
+      D.raf++;
+    } catch (_) {}
+    requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}, ${WARMUP * 1000}); 'armed'`;
+
 // PRESENT/s as the page itself counts it, plus a liveness hash so a frozen
 // app is not reported as a well-behaved slow one.
 const REPORT = `JSON.stringify((() => {
   const s = WinePerf.snapshot();
   const a = runningApps.find(x => x && x.wine);
+  const D = window.__prsD, ex = a && a.wine.instance && a.wine.instance.exports;
+  const sec = D ? (performance.now() - D.t) / 1000 : 0;
+  const distinct = D && sec > 0 ? D.n / sec : null;
+  const raf = D && sec > 0 ? D.raf / sec : null;
+  const pacedMs = D && sec > 0 && D.pacedMs !== null && ex
+    ? (ex.get_present_paced_ms() - D.pacedMs) / sec : null;
   const c = document.getElementById('screen');
   let hash = 0;
   try {
@@ -97,13 +144,15 @@ const REPORT = `JSON.stringify((() => {
     for (let i = 0; i < d.length; i += 4) { hash ^= d[i]; hash = Math.imul(hash, 16777619); }
     hash >>>= 0;
   } catch (e) {}
-  return { fps: s.guestFps, running: !!(a && a.wine.running), hash };
+  return { fps: s.guestFps, running: !!(a && a.wine.running), hash, distinct, raf, pacedMs };
 })())`;
 
 const runOnce = (id, cap) => {
   const args = ['tools/profile-web-frames.js', `--app=${id}`, `--seconds=${SECONDS}`,
     `--warmup=${WARMUP}`, `--query=?debug&perf&present-cap=${cap}`,
-    `--report-eval=${REPORT}`];
+    `--after-launch=${AFTER_LAUNCH}`, `--report-eval=${REPORT}`];
+  if (HEADFUL) args.push('--headful');
+  if (argv.includes('--software-browser')) args.push('--software-browser');
   let out = '';
   try {
     out = execFileSync('node', args, { cwd: ROOT, encoding: 'utf8',
@@ -112,6 +161,14 @@ const runOnce = (id, cap) => {
   const m = out.match(/report-eval:\s*(\{.*\})/);
   if (!m) return { fps: null, running: false, hash: 0, error: 'no report' };
   try { return JSON.parse(m[1]); } catch { return { fps: null, running: false, hash: 0, error: 'bad json' }; }
+};
+
+// The limiter recommendation (see the header): ON only where the cap binds
+// and the displayed frame rate survives it.
+const limiter = (un, cp) => {
+  if (!(cp.pacedMs >= 20)) return 'OFF-NO-BIND';
+  if (!(un.distinct > 0.5) || !(cp.distinct >= 0)) return 'OFF-NO-BIND';
+  return cp.distinct >= 0.9 * un.distinct ? 'ON' : 'OFF-HURTS';
 };
 
 const classify = (u, c) => {
@@ -138,20 +195,25 @@ const classify = (u, c) => {
     const p = typeof cp.fps === 'number' ? cp.fps : null;
     const res = classify(u, p);
     const row = { id: c.id, dlls: c.dlls, uncapped: u, capped: p, ...res,
-      frozen: un.hash !== 0 && un.hash === cp.hash };
+      frozen: un.hash !== 0 && un.hash === cp.hash,
+      distinctUncapped: un.distinct, distinctCapped: cp.distinct,
+      pacedMs: cp.pacedMs, limiter: limiter(un, cp) };
     rows.push(row);
-    console.log(`${(u === null ? 'n/a' : u.toFixed(1)).padStart(7)} -> ` +
-      `${(p === null ? 'n/a' : p.toFixed(1)).padStart(6)}  ${res.verdict}`);
+    const f1 = v => (typeof v === 'number' ? v.toFixed(1) : 'n/a');
+    console.log(`${f1(u).padStart(7)} -> ${f1(p).padStart(6)}  ${res.verdict}` +
+      `  distinct ${f1(un.distinct)} -> ${f1(cp.distinct)}  slept ${f1(cp.pacedMs)}ms/s  ${row.limiter}`);
     if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(rows, null, 2));
   }
 
   const order = ['SUBMULTIPLE', 'LOW', 'OK', 'UNDER_CAP', 'NOPRESENT', 'ERROR'];
   rows.sort((a, b) => order.findIndex(o => a.verdict.startsWith(o)) -
                       order.findIndex(o => b.verdict.startsWith(o)));
-  const lines = ['', '| app | dlls | uncapped/s | capped/s | verdict |', '|---|---|---|---|---|'];
+  const f1 = v => (typeof v === 'number' ? v.toFixed(1) : 'n/a');
+  const lines = ['', '| app | dlls | uncapped/s | capped/s | verdict | distinct/s unc -> cap | cap slept ms/s | limiter |',
+    '|---|---|---|---|---|---|---|---|'];
   for (const r of rows) {
-    lines.push(`| ${r.id} | ${r.dlls.join(' ')} | ${r.uncapped === null ? 'n/a' : r.uncapped.toFixed(1)} ` +
-      `| ${r.capped === null ? 'n/a' : r.capped.toFixed(1)} | ${r.verdict} |`);
+    lines.push(`| ${r.id} | ${r.dlls.join(' ')} | ${f1(r.uncapped)} | ${f1(r.capped)} | ${r.verdict} ` +
+      `| ${f1(r.distinctUncapped)} -> ${f1(r.distinctCapped)} | ${f1(r.pacedMs)} | ${r.limiter} |`);
   }
   console.log(lines.join('\n'));
   const bad = rows.filter(r => r.verdict.startsWith('SUBMULTIPLE') || r.verdict === 'LOW');
@@ -165,6 +227,8 @@ const classify = (u, c) => {
   } else {
     console.log('\nno app landed on a submultiple of the cap');
   }
+  const on = rows.filter(r => r.limiter === 'ON').map(r => r.id);
+  console.log(`\nlimiter ON (set presentCap: 60 in lib/apps.js): ${on.length ? on.join(', ') : 'none'}`);
   if (MD_OUT) fs.writeFileSync(MD_OUT, lines.join('\n') + '\n');
   if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(rows, null, 2));
 })();
