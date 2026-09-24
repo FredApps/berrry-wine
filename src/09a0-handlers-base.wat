@@ -2705,12 +2705,21 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; 2 args + ret
   )
 
-  ;; 20: _lopen — STUB: unimplemented
+  ;; 20: _lopen(lpPathName, iReadWrite) — 2 args stdcall. The low two bits of
+  ;; iReadWrite are OF_READ (0), OF_WRITE (1) or OF_READWRITE (2); the share
+  ;; bits above them do not change what this handle may do. Opening everything
+  ;; read-only made every write through it fail: DOS INT 21h AH=3Dh routes here,
+  ;; and InstallShield's 16-bit self-extractor reopens each file it creates
+  ;; that way before writing it.
   (func $handle__lopen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; _lopen(lpPathName, iReadWrite) — 2 args stdcall
+    (local $mode i32)
+    (local.set $mode (i32.and (local.get $arg1) (i32.const 3)))
     (i32.store offset=0 (global.get $reg_base) (call $host_fs_create_legacy_file
       (call $g2w (local.get $arg0))
-      (i32.const 0x80000000)  ;; GENERIC_READ
+      (select (i32.const 0x40000000)                  ;; OF_WRITE: GENERIC_WRITE
+        (select (i32.const 0xC0000000) (i32.const 0x80000000)
+          (i32.eq (local.get $mode) (i32.const 2)))    ;; OF_READWRITE / OF_READ
+        (i32.eq (local.get $mode) (i32.const 1)))
       (i32.const 3)           ;; OPEN_EXISTING
       (i32.const 0x80)        ;; FILE_ATTRIBUTE_NORMAL
       (i32.const 0)))         ;; isWide=0

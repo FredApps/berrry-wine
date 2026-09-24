@@ -226,6 +226,17 @@
   ;; procedure returning TRUE means "leave it where USER put it". Reached both
   ;; directly and from the filter's continuation, so the two cannot drift.
   (func $win16_dlg_init (param $proc i32) (param $hwnd16 i32) (param $init_param i32)
+    ;; A null lpDialogFunc is legal: DefDlgProc then has no procedure to hand
+    ;; WM_INITDIALOG to and answers FALSE itself. InstallShield's 16-bit
+    ;; self-extractor opens its "extracting" box as CreateDialog(..., NULL).
+    ;; Land on the continuation exactly as a procedure's RETF would.
+    (if (i32.eqz (local.get $proc))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (i32.store offset=8 (global.get $reg_base) (i32.const 0))
+        (call $win16_set_sreg (i32.const 1) (global.get $WIN16_THUNK_SEL))
+        (global.set $eip (i32.add (global.get $seg_base_cs) (global.get $WIN16_DLG_PUMP)))
+        (return)))
     (call $win16_enter_wndproc (local.get $proc) (local.get $hwnd16)
       (i32.const 0x0110) (i32.const 0) (local.get $init_param)
       (global.get $WIN16_THUNK_SEL) (global.get $WIN16_DLG_PUMP)))

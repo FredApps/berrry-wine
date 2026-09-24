@@ -6073,10 +6073,27 @@
   ;; string. Returns the integer id, or -1 for a name — the NE resource walker
   ;; addresses types and ids by number, and a name is a gap worth seeing rather
   ;; than a failure to swallow.
+  ;;
+  ;; A string of the form "#1024" is the documented third spelling: USER and
+  ;; KERNEL read the decimal after '#' as the integer id. InstallShield's 16-bit
+  ;; self-extractor finds its payload as FindResource(h, "MYRESOURCE", "#1024").
   (func $win16_res_arg (param $n i32) (result i32)
-    (if (call $win16_arg16 (i32.add (local.get $n) (i32.const 1)))
+    (local $p i32) (local $c i32) (local $v i32)
+    (if (i32.eqz (call $win16_arg16 (i32.add (local.get $n) (i32.const 1))))
+      (then (return (call $win16_arg16 (local.get $n)))))
+    (local.set $p (call $win16_far_to_guest
+      (call $win16_arg16 (i32.add (local.get $n) (i32.const 1)))
+      (call $win16_arg16 (local.get $n))))
+    (if (i32.ne (call $gl8 (local.get $p)) (i32.const 0x23))
       (then (return (i32.const -1))))
-    (call $win16_arg16 (local.get $n)))
+    (block $done (loop $digits
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (local.set $c (i32.sub (call $gl8 (local.get $p)) (i32.const 0x30)))
+      (br_if $done (i32.gt_u (local.get $c) (i32.const 9)))
+      (local.set $v (i32.and (i32.add (i32.mul (local.get $v) (i32.const 10))
+        (local.get $c)) (i32.const 0xFFFF)))
+      (br $digits)))
+    (local.get $v))
 
   ;; The same argument read the other way: a resource named by string rather
   ;; than by number arrives as a far pointer, and the selector is what tells
