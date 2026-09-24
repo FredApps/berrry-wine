@@ -386,18 +386,29 @@ resolves every asset directory through its `Paths` values rather than through
 its own directory. Registered as the local candidate `simcity2000_demo`; it
 reaches gameplay (`node test/run.js --app=simcity2000_demo`).
 
-**Not redistributable.** `README.TXT` and `NOD.TXT` on the media are marketing
-copy — product description, Maxis support phone number, BBS, "Run Setup.exe" —
-and carry no redistribution grant of any kind. The compilation's own
-`LICENSE.TXT` (Nodtronics Pty Ltd) grants only a single-system license and
-clause 2.2 forbids separating component parts; 2.4 allows a whole-product
-transfer only when no copy is retained. Nothing there can grant rights to
-somebody else's game anyway. This is a promotional
-interactive demo of Maxis/EA property obtained from a third-party compilation
-CD, which is not an authoritative license source, so it does **not** qualify as
-freely-copyable shareware the way the StarCraft and Diablo demos do. It stays a
-localhost-only candidate: the installed tree is ignored by git and must not be
-committed, deployed to the live site, or rehosted.
+**Standalone source.** The same package circulated on its own as Maxis's
+demo: `https://archive.org/details/sc295dmo` ("Sim City 2000 interactive
+demo", 1996), `sc295dmo.zip` MD5 `bc54d11e15498c3b470faa1f78d11fc7`. Its
+setup files are byte-identical to the CD's `STRATEGY/SCITY2K/` copy (checked
+2026-09-24): `DATA.Z` `ed88a4f7a24782b6bbfd2a278ef98e2a`, `SETUP.EXE`
+`530160ba607047f14f2eee3bb1b62b96`, `_INST32I.EX_`
+`1c156bc4e7906137528934576b5286c2`, `SETUP.INS`
+`394d5c10ff254a421008431d4ef039ac`. So the installed tree is Maxis's
+distribution, not something only the compilation carries.
+
+**Terms and the publishing decision.** Neither package states redistribution
+terms either way: `README.TXT` is marketing copy with Maxis's support number
+and BBS. (The compilation's `LICENSE.TXT` covers the compilation, not Maxis's
+game.) The demo itself is built to be handed around to sell the full game: its
+own notice (`data/text_usa.dat`) reads "This is a demonstration copy of
+SimCity 2000. Many features of the game have been disabled including Loading,
+Saving, Scenarios, and Disasters. In addition, after 25 minutes, your city will
+be consumed by disasters and after 30 minutes, you will be returned to the
+startup menu. The real version of SimCity 2000 ... is available at your local
+software store or directly from Maxis". On 2026-09-24 the project owner
+decided to publish it on that footing, as a promotional demo, unmodified. The
+deploy ships exactly the files its manifest mounts; the installed tree is still
+ignored by git.
 
 ## Candidate corpus (`candidates/`)
 
