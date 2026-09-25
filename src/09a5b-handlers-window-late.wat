@@ -1804,6 +1804,7 @@ GetTopWindow(hWnd) — 1 arg stdcall
   ;; MDI child, so an ordinary child costs one parent lookup.
   (func $mdi_child_maximize (param $child i32) (result i32)
     (local $client i32) (local $w i32) (local $h i32)
+    (local $l i32) (local $t i32) (local $r i32) (local $b i32) (local $wh i32)
     (local.set $client (call $wnd_get_parent (local.get $child)))
     (if (i32.eqz (call $mdi_client_state (local.get $client)))
       (then (return (i32.const 0))))
@@ -1814,13 +1815,35 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (if (i32.or (i32.le_s (local.get $w) (i32.const 0))
                 (i32.le_s (local.get $h) (i32.const 0)))
       (then (return (i32.const 0))))
+    ;; A maximized MDI child's CLIENT area is the MDICLIENT's client area:
+    ;; its caption and borders sit outside the MDICLIENT, clipped away, and
+    ;; the frame's menu bar carries its min/restore/close buttons instead
+    ;; ($mdi_frame_maximized_child). The non-client insets are read off the
+    ;; child as it stands, where its window and client rects agree.
+    (local.set $wh (call $ctrl_get_wh_packed (local.get $child)))
+    (local.set $l (call $client_rect_get_l (local.get $child)))
+    (local.set $t (call $client_rect_get_t (local.get $child)))
+    (local.set $r (i32.sub (i32.and (local.get $wh) (i32.const 0xFFFF))
+                           (call $client_rect_get_r (local.get $child))))
+    (local.set $b (i32.sub (i32.shr_u (local.get $wh) (i32.const 16))
+                           (call $client_rect_get_b (local.get $child))))
+    (if (i32.or (i32.or (i32.gt_u (local.get $l) (i32.const 64)) (i32.gt_u (local.get $t) (i32.const 64)))
+                (i32.or (i32.gt_u (local.get $r) (i32.const 64)) (i32.gt_u (local.get $b) (i32.const 64))))
+      (then
+        (local.set $l (i32.const 0)) (local.set $t (i32.const 0))
+        (local.set $r (i32.const 0)) (local.set $b (i32.const 0))))
+    (local.set $w (i32.add (local.get $w) (i32.add (local.get $l) (local.get $r))))
+    (local.set $h (i32.add (local.get $h) (i32.add (local.get $t) (local.get $b))))
     ;; SWP_NOZORDER | SWP_NOACTIVATE -- maximizing does not reorder the MDI
     ;; child list, and the frame owns activation.
-    (call $host_move_window (local.get $child) (i32.const 0) (i32.const 0)
+    (call $host_move_window (local.get $child)
+      (i32.sub (i32.const 0) (local.get $l)) (i32.sub (i32.const 0) (local.get $t))
       (local.get $w) (local.get $h) (i32.const 0x0014))
-    (call $ctrl_geom_sync (local.get $child) (i32.const 0) (i32.const 0)
+    (call $ctrl_geom_sync (local.get $child)
+      (i32.sub (i32.const 0) (local.get $l)) (i32.sub (i32.const 0) (local.get $t))
       (local.get $w) (local.get $h) (i32.const 0x0014))
     (call $defwndproc_do_nccalcsize (local.get $child))
+    (call $paint_flag_set_inv (call $wnd_get_parent (local.get $client)))
     (call $host_sync_window_client
       (local.get $child)
       (call $wnd_client_screen_x (local.get $child))
@@ -1875,7 +1898,34 @@ GetTopWindow(hWnd) — 1 arg stdcall
           (then
             (call $wnd_apply_show_state (local.get $child) (i32.const 3))
             (if (call $mdi_child_maximize (local.get $child))
-              (then (return (i32.const 1))))))))
+              (then (return (i32.const 1))))))
+        ;; Restore, minimize and close take the child's buttons off the
+        ;; frame's menu bar; DefWindowProc still does the work.
+        (if (call $wnd_max_get (local.get $child))
+          (then (call $paint_flag_set_inv (call $wnd_get_parent (local.get $client)))))))
+    (i32.const 0))
+
+  ;; The maximized, active MDI child whose buttons $frame's menu bar carries,
+  ;; or 0. Windows puts them there because the child's own caption is outside
+  ;; the MDICLIENT ($mdi_child_maximize).
+  (func $mdi_frame_maximized_child (param $frame i32) (result i32)
+    (local $client i32) (local $child i32) (local $guard i32)
+    (local.set $client (call $wnd_find_first_child (local.get $frame)))
+    (local.set $guard (i32.const 256))
+    (block $done
+      (loop $walk
+        (br_if $done (i32.eqz (local.get $client)))
+        (br_if $done (i32.eqz (local.get $guard)))
+        (local.set $guard (i32.sub (local.get $guard) (i32.const 1)))
+        (if (call $mdi_client_state (local.get $client))
+          (then
+            (local.set $child (call $mdi_client_active (local.get $client)))
+            (if (i32.and (i32.ne (local.get $child) (i32.const 0))
+                         (i32.ne (call $wnd_max_get (local.get $child)) (i32.const 0)))
+              (then (return (local.get $child))))
+            (return (i32.const 0))))
+        (local.set $client (call $wnd_find_next_sibling (local.get $client)))
+        (br $walk)))
     (i32.const 0))
 
   ;; Default MDI frame processing. The MDI-specific branches are filled in

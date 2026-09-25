@@ -1705,6 +1705,8 @@
       (local.set $cur_x (i32.add (local.get $cur_x) (local.get $iw)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
+    (call $menu_paint_mdi_buttons (local.get $hwnd) (local.get $hdc)
+      (i32.add (local.get $x) (local.get $w)) (local.get $y))
     ;; Bottom 1px shadow line (btnShadow 0x808080).
     (drop (call $gdi_native_fill_rect (local.get $hdc)
             (local.get $x) (i32.add (local.get $y) (i32.const 17))
@@ -1713,6 +1715,52 @@
             (i32.const 0x30012))) ;; GRAY_BRUSH
     (drop (call $host_release_dc (local.get $hdc)))
     (i32.const 18))
+
+  ;; A maximized MDI child has no caption of its own on screen, so the frame's
+  ;; menu bar carries its minimize / restore / close buttons at the right end,
+  ;; laid out like a caption's. $r is the bar's right edge, $y its top, both in
+  ;; the coordinates of whichever surface the caller is drawing or testing.
+  (func $menu_paint_mdi_buttons (param $hwnd i32) (param $hdc i32) (param $r i32) (param $y i32)
+    (local $child i32) (local $style i32)
+    (local.set $child (call $mdi_frame_maximized_child (local.get $hwnd)))
+    (if (i32.eqz (local.get $child)) (then (return)))
+    (local.set $style (call $wnd_get_style (local.get $child)))
+    (local.set $y (i32.add (local.get $y) (i32.const 2)))
+    (call $sysbtn_draw (local.get $hdc) (i32.sub (local.get $r) (i32.const 18)) (local.get $y)
+      (i32.const 0) (i32.const 0) (i32.const 0x30014))
+    (call $sysbtn_draw (local.get $hdc) (i32.sub (local.get $r) (i32.const 36)) (local.get $y)
+      (i32.const 2) (i32.const 0)
+      (select (i32.const 0x30014) (i32.const 0x30012)
+        (i32.ne (i32.and (local.get $style) (i32.const 0x00010000)) (i32.const 0))))
+    (call $sysbtn_draw (local.get $hdc) (i32.sub (local.get $r) (i32.const 52)) (local.get $y)
+      (i32.const 3) (i32.const 0)
+      (select (i32.const 0x30014) (i32.const 0x30012)
+        (i32.ne (i32.and (local.get $style) (i32.const 0x00020000)) (i32.const 0)))))
+
+  ;; The SC_* command for a click on one of those buttons (screen point), or 0.
+  (func $menu_hittest_mdi_buttons (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
+    (local $child i32) (local $r i32) (local $y i32) (local $style i32)
+    (local.set $child (call $mdi_frame_maximized_child (local.get $hwnd)))
+    (if (i32.eqz (local.get $child)) (then (return (i32.const 0))))
+    (local.set $y (i32.add (call $menu_bar_screen_y (local.get $hwnd)) (i32.const 2)))
+    (if (i32.or (i32.lt_s (local.get $sy) (local.get $y))
+                (i32.ge_s (local.get $sy) (i32.add (local.get $y) (i32.const 14))))
+      (then (return (i32.const 0))))
+    (call $host_get_window_rect (local.get $hwnd) (global.get $WINDOW_RECT_SCRATCH))
+    (local.set $r (i32.sub (i32.load offset=8 (global.get $WINDOW_RECT_SCRATCH)) (i32.const 3)))
+    (local.set $style (call $wnd_get_style (local.get $child)))
+    (if (i32.and (i32.ge_s (local.get $sx) (i32.sub (local.get $r) (i32.const 18)))
+                 (i32.lt_s (local.get $sx) (i32.sub (local.get $r) (i32.const 2))))
+      (then (return (i32.const 0xF060))))  ;; SC_CLOSE
+    (if (i32.and (i32.ge_s (local.get $sx) (i32.sub (local.get $r) (i32.const 36)))
+                 (i32.lt_s (local.get $sx) (i32.sub (local.get $r) (i32.const 20))))
+      (then (return (select (i32.const 0xF120) (i32.const -1)
+        (i32.ne (i32.and (local.get $style) (i32.const 0x00010000)) (i32.const 0))))))  ;; SC_RESTORE
+    (if (i32.and (i32.ge_s (local.get $sx) (i32.sub (local.get $r) (i32.const 52)))
+                 (i32.lt_s (local.get $sx) (i32.sub (local.get $r) (i32.const 36))))
+      (then (return (select (i32.const 0xF020) (i32.const -1)
+        (i32.ne (i32.and (local.get $style) (i32.const 0x00020000)) (i32.const 0))))))  ;; SC_MINIMIZE
+    (i32.const 0))
 
   ;; ============================================================
   ;; $menu_hittest_bar — given a screen-relative click point and the
@@ -4483,7 +4531,15 @@
   ;; browser event shell after it has already selected the top-level window.
   (func $menu_handle_bar_click (export "menu_handle_bar_click")
         (param $hwnd i32) (param $sx i32) (param $sy i32) (result i32)
-    (local $idx i32)
+    (local $idx i32) (local $cmd i32)
+    (local.set $cmd (call $menu_hittest_mdi_buttons (local.get $hwnd) (local.get $sx) (local.get $sy)))
+    ;; -1 is a disabled button: the click lands on it and does nothing.
+    (if (local.get $cmd)
+      (then
+        (if (i32.ne (local.get $cmd) (i32.const -1))
+          (then (call $menu_post (call $mdi_frame_maximized_child (local.get $hwnd))
+            (i32.const 0x0112) (local.get $cmd) (i32.const 0))))
+        (return (i32.const 1))))
     (local.set $idx (call $menu_hittest_bar
       (local.get $hwnd)
       (call $menu_bar_screen_x (local.get $hwnd))
