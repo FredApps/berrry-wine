@@ -2832,6 +2832,7 @@
     (local $path_open i32) (local $path_entry i32) (local $path_points i64)
     (local $path_origin_x i32) (local $path_origin_y i32)
     (local $indexed i32) (local $tt_face i32) (local $tt_ppem i32)
+    (local $sx_end i32)
     (call $gdi_clip_row_reset)
     (local.set $strike (call $gdi_bitmap_font_selected (local.get $hdc)))
     (if (i32.eqz (local.get $strike)) (then (return (i32.const -1))))
@@ -3086,14 +3087,38 @@
           (local.set $sx (i32.div_u
             (i32.mul (local.get $dx) (local.get $native_ink_width))
             (local.get $ink_width)))
-          (if (local.get $indexed) (then
-            (local.set $bit (call $tt_entry_pixel (local.get $glyph) (local.get $sx)
-              (i32.sub (local.get $sy) (i32.sub (i32.load offset=24 (local.get $strike)) (call $tt_entry_top (local.get $glyph)))))))
-          (else (local.set $bit (i32.and (i32.load8_u (i32.add
-            (i32.add (i32.load offset=8 (local.get $strike)) (local.get $glyph_offset))
-            (i32.add (i32.mul (i32.shr_u (local.get $sx) (i32.const 3)) (local.get $native_height))
-              (local.get $sy))))
-            (i32.shl (i32.const 1) (i32.sub (i32.const 7) (i32.and (local.get $sx) (i32.const 7))))))))
+          ;; A narrowing lfWidth compresses the strike horizontally. Sampling
+          ;; one source column per output column skips the columns in between,
+          ;; and at text sizes those are whole stems: SimCity 2000's 16x8
+          ;; Arial read 'u' as 'L' and '0' as 'C'. Take the ink of every source
+          ;; column this output column covers instead.
+          (local.set $sx_end (i32.add (local.get $sx) (i32.const 1)))
+          (if (i32.gt_u (local.get $native_ink_width) (local.get $ink_width))
+            (then
+              (local.set $sx_end (i32.div_u
+                (i32.add
+                  (i32.mul (i32.add (local.get $dx) (i32.const 1))
+                    (local.get $native_ink_width))
+                  (i32.sub (local.get $ink_width) (i32.const 1)))
+                (local.get $ink_width)))
+              (if (i32.gt_u (local.get $sx_end) (local.get $native_ink_width))
+                (then (local.set $sx_end (local.get $native_ink_width))))
+              (if (i32.le_u (local.get $sx_end) (local.get $sx))
+                (then (local.set $sx_end (i32.add (local.get $sx) (i32.const 1)))))))
+          (local.set $bit (i32.const 0))
+          (block $span_done (loop $span
+            (br_if $span_done (i32.ge_u (local.get $sx) (local.get $sx_end)))
+            (br_if $span_done (i32.ne (local.get $bit) (i32.const 0)))
+            (if (local.get $indexed) (then
+              (local.set $bit (call $tt_entry_pixel (local.get $glyph) (local.get $sx)
+                (i32.sub (local.get $sy) (i32.sub (i32.load offset=24 (local.get $strike)) (call $tt_entry_top (local.get $glyph)))))))
+            (else (local.set $bit (i32.and (i32.load8_u (i32.add
+              (i32.add (i32.load offset=8 (local.get $strike)) (local.get $glyph_offset))
+              (i32.add (i32.mul (i32.shr_u (local.get $sx) (i32.const 3)) (local.get $native_height))
+                (local.get $sy))))
+              (i32.shl (i32.const 1) (i32.sub (i32.const 7) (i32.and (local.get $sx) (i32.const 7))))))))
+            (local.set $sx (i32.add (local.get $sx) (i32.const 1)))
+            (br $span)))
           (if (i32.and (i32.ne (local.get $bit) (i32.const 0))
                 (i32.eqz (local.get $is_tab)))
             (then

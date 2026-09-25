@@ -3137,7 +3137,7 @@
               (call $g2w (i32.load offset=20 (local.get $record))))
           (then
             (local.set $score (i32.add (i32.mul (i32.const 2)
-              (i32.eq (i32.ge_s (local.get $weight) (i32.const 700))
+              (i32.eq (call $tt_weight_wants_bold (local.get $weight))
                 (i32.ge_s (i32.load offset=24 (local.get $record)) (i32.const 700))))
               (i32.eq (i32.ne (local.get $italic) (i32.const 0))
                 (i32.ne (i32.load offset=28 (local.get $record)) (i32.const 0)))))
@@ -3594,11 +3594,19 @@
       (br $scan)))
     (i32.add (local.get $p) (i32.const 1)))
 
+  ;; Does a LOGFONT weight select a family's Bold file over its Regular one?
+  ;; The Win9x mapper takes the installed weight nearest the request, so with
+  ;; the usual 400/700 pair FW_SEMIBOLD (600) is Bold and FW_MEDIUM (500) is
+  ;; not. SimCity 2000's city overlay asks for Arial at 600; answering with
+  ;; Regular gave it 1px stems that its narrow lfWidth then dropped entirely.
+  (func $tt_weight_wants_bold (param $weight i32) (result i32)
+    (i32.gt_s (local.get $weight) (i32.const 550)))
+
   (func $tt_subst_pick (param $regular i32) (param $bold i32)
         (param $slanted i32) (param $bold_slanted i32)
         (param $weight i32) (param $italic i32) (result i32)
     (local $want_bold i32)
-    (local.set $want_bold (i32.ge_s (local.get $weight) (i32.const 700)))
+    (local.set $want_bold (call $tt_weight_wants_bold (local.get $weight)))
     (local.set $italic (i32.ne (local.get $italic) (i32.const 0)))
     (if (i32.and (local.get $want_bold) (local.get $italic))
       (then (if (i32.load8_u (local.get $bold_slanted))
@@ -3957,7 +3965,7 @@
     (if (i32.eqz (global.get $tt_reg)) (then (return (i32.const 0))))
     (local.set $table (call $tt_reg_ensure))
     (if (i32.eqz (local.get $table)) (then (return (i32.const 0))))
-    (local.set $want_bold (i32.ge_s (local.get $weight) (i32.const 700)))
+    (local.set $want_bold (call $tt_weight_wants_bold (local.get $weight)))
     (local.set $italic (i32.ne (local.get $italic) (i32.const 0)))
     (local.set $best (i32.const -1))
     (block $done (loop $scan
