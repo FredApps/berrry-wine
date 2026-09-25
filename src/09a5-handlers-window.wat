@@ -3291,6 +3291,24 @@
           (local.get $arg2) (local.get $arg3)))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
         (return)))
+    ;; A registered status bar with no guest comctl32 behind it: MFC subclasses
+    ;; it, finds no previous wndproc, and CWnd::DefWindowProc then sends the
+    ;; class's own messages here. Answer them as the class would. SimCity 2000
+    ;; Network Edition's CalcFixedLayout read a garbage WM_GETFONT and a
+    ;; garbage SB_GETBORDERS, laid its bar out 267px tall, and sized the city
+    ;; view to the 163px above it for the rest of the session.
+    (if (i32.and
+          (call $statusbar_native_is (local.get $arg0))
+          (i32.or
+            (i32.or (i32.eq (local.get $arg1) (i32.const 0x0030))
+                    (i32.eq (local.get $arg1) (i32.const 0x0031)))
+            (i32.or (i32.eq (local.get $arg1) (i32.const 0x0404))
+                    (i32.eq (local.get $arg1) (i32.const 0x0407)))))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (call $statusbar_wndproc
+          (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3)))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+        (return)))
     ;; WM_NCCREATE (0x81): accepting non-client creation is the documented
     ;; default. Returning zero aborts CreateWindowEx before WM_CREATE. Storm's
     ;; shareware UI registers DefDlgProcA itself as a class procedure and

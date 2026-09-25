@@ -2063,6 +2063,18 @@
         (local.set $dy (i32.add (local.get $dy) (i32.const 1)))
         (br $rows))))
 
+  ;; The font a status bar reports and paints with: WM_SETFONT's, else
+  ;; DEFAULT_GUI_FONT standing in for comctl32's own status font.
+  (func $statusbar_hfont (param $hwnd i32) (result i32)
+    (local $state i32) (local $font i32)
+    (local.set $state (call $statusbar_state_get (local.get $hwnd) (i32.const 0)))
+    (if (local.get $state)
+      (then (local.set $font (call $statusbar_font
+        (cast ptr<StatusBarState> (call $g2w (local.get $state)))))))
+    (if (result i32) (local.get $font)
+      (then (local.get $font))
+      (else (i32.const 0x30021))))
+
   (func $statusbar_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
     (local $text_w i32) (local $text_len i32) (local $right i32)
@@ -2161,6 +2173,33 @@
               (local.get $sw) (i32.ne (local.get $wParam) (i32.const 0)))
             (call $statusbar_state_publish (local.get $hwnd) (local.get $sw))))
         (return (i32.const 1))))
+    ;; WM_SETFONT / WM_GETFONT. With no font set comctl32 answers with the
+    ;; status font it made at creation, never NULL; DEFAULT_GUI_FONT is the
+    ;; one the painter below draws with. MFC's CStatusBar::CalcFixedLayout
+    ;; selects this font and sizes the bar from its TEXTMETRIC.
+    (if (i32.eq (local.get $msg) (i32.const 0x0030))
+      (then
+        (local.set $state (call $statusbar_state_get (local.get $hwnd) (i32.const 1)))
+        (if (local.get $state)
+          (then
+            (call $statusbar_set_font
+              (cast ptr<StatusBarState> (call $g2w (local.get $state)))
+              (local.get $wParam))
+            (if (local.get $lParam) (then (call $invalidate_hwnd (local.get $hwnd))))))
+        (return (i32.const 0))))
+    (if (i32.eq (local.get $msg) (i32.const 0x0031))
+      (then (return (call $statusbar_hfont (local.get $hwnd)))))
+    ;; SB_GETBORDERS fills int[3] = {horizontal border, vertical border, gap
+    ;; between parts}; comctl32's defaults are 0, 2, 2. MFC's
+    ;; CStatusBar::CalcFixedLayout sizes the bar as font height + 2*[1].
+    (if (i32.eq (local.get $msg) (i32.const 0x0407))
+      (then
+        (if (i32.eqz (local.get $lParam))
+          (then (return (i32.const 0))))
+        (call $gs32 (local.get $lParam) (i32.const 0))
+        (call $gs32 (i32.add (local.get $lParam) (i32.const 4)) (i32.const 2))
+        (call $gs32 (i32.add (local.get $lParam) (i32.const 8)) (i32.const 2))
+        (return (i32.const 1))))
     ;; SB_SETPARTS: retain API success. The current painter presents one pane.
     (if (i32.eq (local.get $msg) (i32.const 0x0404))
       (then
@@ -2206,7 +2245,8 @@
                 (if (i32.and (i32.ne (local.get $text_w) (i32.const 0))
                              (i32.ne (local.get $text_len) (i32.const 0)))
                   (then
-                    (drop (call $gdi_native_select_object (local.get $hdc) (i32.const 0x30021)))
+                    (drop (call $gdi_native_select_object (local.get $hdc)
+                      (call $statusbar_hfont (local.get $hwnd))))
                     (drop (call $gdi_native_set_bk_mode (local.get $hdc) (i32.const 1)))
                     (drop (call $gdi_native_draw_text
                       (local.get $hdc) (local.get $text_w) (local.get $text_len)

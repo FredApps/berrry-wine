@@ -326,7 +326,8 @@
     (field normal_text_len i32)    ;; +4
     (field simple_text_ptr i32)    ;; +8  guest heap ptr, ANSI
     (field simple_text_len i32)    ;; +12
-    (field simple_mode     i32))   ;; +16 BOOL; ends at +20
+    (field simple_mode     i32)    ;; +16 BOOL
+    (field font            i32))   ;; +20 WM_SETFONT HFONT, 0 = status font; ends at +24
 
   ;; ---- ButtonState accessors ----
   ;;
@@ -838,6 +839,10 @@
     (load.field.memarg StatusBarState simple_mode (local.get $sw)))
   (func $statusbar_set_simple_mode (param $sw ptr<StatusBarState>) (param $v i32)
     (store.field.memarg StatusBarState simple_mode (local.get $sw) (local.get $v)))
+  (func $statusbar_font (param $sw ptr<StatusBarState>) (result i32)
+    (load.field.memarg StatusBarState font (local.get $sw)))
+  (func $statusbar_set_font (param $sw ptr<StatusBarState>) (param $v i32)
+    (store.field.memarg StatusBarState font (local.get $sw) (local.get $v)))
 
   ;; Copy one status-bar string from a WASM address into state-owned guest
   ;; storage. Allocate before retiring the old string so an OOM leaves the
@@ -904,10 +909,10 @@
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
     (if (local.get $state) (then (return (local.get $state))))
     (if (i32.eqz (local.get $create)) (then (return (i32.const 0))))
-    (local.set $state (call $heap_alloc (i32.const 20)))
+    (local.set $state (call $heap_alloc (size-of StatusBarState)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
     (local.set $sw (cast ptr<StatusBarState> (call $g2w (local.get $state))))
-    (memory.fill (local.get $sw) (i32.const 0) (i32.const 20))
+    (memory.fill (local.get $sw) (i32.const 0) (size-of StatusBarState))
     (call $wnd_set_state_ptr (local.get $hwnd) (local.get $state))
     (local.set $title_wa (call $title_table_get_ptr (local.get $hwnd)))
     (local.set $title_len (call $title_table_get_len (local.get $hwnd)))
