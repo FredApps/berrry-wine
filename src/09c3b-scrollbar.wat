@@ -445,6 +445,37 @@
           (then (call $invalidate_hwnd (local.get $hwnd))))
         (return (i32.const 1))))
 
+    ;; WM_CREATE: SBS_LEFTALIGN/SBS_RIGHTALIGN (SBS_VERT) and
+    ;; SBS_TOPALIGN/SBS_BOTTOMALIGN (SBS_HORZ) share bits 2 and 4. They ask
+    ;; USER for the standard thickness along one edge of the rectangle the
+    ;; caller gave, so an app may create one 0x0 (or any size) and never
+    ;; move it again -- SimCity 2000 Net's chat log does exactly that, and
+    ;; without this its scroll bar stays 0 wide beside a text box laid out
+    ;; from the bar's rect. Wine and ReactOS both size it SM_CXVSCROLL+1.
+    (if (i32.eq (local.get $msg) (i32.const 0x0001))
+      (then
+        (local.set $style (i32.load offset=32 (call $g2w (local.get $lParam))))
+        (if (i32.and (i32.eqz (i32.and (local.get $style) (i32.const 0x18)))
+                     (i32.ne (i32.and (local.get $style) (i32.const 6)) (i32.const 0)))
+          (then
+            (local.set $mx (call $gl32 (i32.add (local.get $lParam) (i32.const 28))))
+            (local.set $my (call $gl32 (i32.add (local.get $lParam) (i32.const 24))))
+            (local.set $w (call $gl32 (i32.add (local.get $lParam) (i32.const 20))))
+            (local.set $h (call $gl32 (i32.add (local.get $lParam) (i32.const 16))))
+            (if (i32.and (local.get $style) (i32.const 1))
+              (then
+                (if (i32.and (local.get $style) (i32.const 4))
+                  (then (local.set $mx (i32.sub (i32.add (local.get $mx) (local.get $w)) (i32.const 17)))))
+                (local.set $w (i32.const 17)))
+              (else
+                (if (i32.and (local.get $style) (i32.const 4))
+                  (then (local.set $my (i32.sub (i32.add (local.get $my) (local.get $h)) (i32.const 17)))))
+                (local.set $h (i32.const 17))))
+            (drop (call $move_window_core (local.get $hwnd) (i32.const 0)
+              (local.get $mx) (local.get $my) (local.get $w) (local.get $h)
+              (i32.const 0x1c) (i32.const 0)))))
+        (return (i32.const 0))))
+
     ;; --- Mouse input: arrows, page regions, and thumb drag ---
     ;; WM_LBUTTONDOWN
     (if (i32.eq (local.get $msg) (i32.const 0x0201))

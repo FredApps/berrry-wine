@@ -374,6 +374,40 @@
     (local.set $field_h (i32.const 21))
     (local.set $state (call $wnd_get_state_ptr (local.get $hwnd)))
 
+    ;; ---------- WM_WINDOWPOSCHANGING (0x0046) ----------
+    ;; A drop-down combo's window is only ever the closed field: the cy an app
+    ;; passes to MoveWindow/SetWindowPos is the *dropped* extent, exactly as
+    ;; at CreateWindowEx. Windows takes that height for the list and rewrites
+    ;; the WINDOWPOS to the field height here. Without this, a combo laid out
+    ;; after creation (SimCity 2000 Net's chat recipient list) grows to its
+    ;; dropped height, and every sibling the app placed below the field in
+    ;; the belief that the combo is 21 tall sits underneath it.
+    (if (i32.eq (local.get $msg) (i32.const 0x0046))
+      (then
+        (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+        (local.set $state_w (call $g2w (local.get $state)))
+        (if (i32.eq (call $cb_variant (local.get $state_w)) (i32.const 1))
+          (then (return (i32.const 0))))
+        (if (i32.and (call $gl32 (i32.add (local.get $lParam) (i32.const 24))) (i32.const 1))
+          (then (return (i32.const 0))))  ;; SWP_NOSIZE
+        (local.set $cy (call $gl32 (i32.add (local.get $lParam) (i32.const 20))))
+        (if (i32.le_s (local.get $cy) (local.get $field_h)) (then (return (i32.const 0))))
+        (local.set $lb (call $cb_lb_hwnd (local.get $state_w)))
+        (if (local.get $lb)
+          (then
+            (local.set $idx (call $wnd_table_find (local.get $lb)))
+            (if (i32.ge_s (local.get $idx) (i32.const 0))
+              (then
+                (local.set $sz (call $ctrl_get_xy_packed (local.get $lb)))
+                (call $ctrl_geom_set (local.get $idx)
+                  (i32.and (local.get $sz) (i32.const 0xFFFF))
+                  (i32.shr_u (local.get $sz) (i32.const 16))
+                  (call $gl32 (i32.add (local.get $lParam) (i32.const 16)))
+                  (select (i32.sub (local.get $cy) (local.get $field_h)) (i32.const 64)
+                    (i32.ge_s (i32.sub (local.get $cy) (local.get $field_h)) (i32.const 32))))))))
+        (call $gs32 (i32.add (local.get $lParam) (i32.const 20)) (local.get $field_h))
+        (return (i32.const 0))))
+
     ;; ---------- WM_CREATE ----------
     (if (i32.eq (local.get $msg) (i32.const 0x0001))
       (then
@@ -1150,4 +1184,3 @@
     ;; Default
     (i32.const 0)
   )
-
