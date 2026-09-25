@@ -478,6 +478,19 @@ async function main() {
       await page.evaluate(command => window.referenceVm.run(command), entry.launch);
       for (const action of entry.postLaunch || []) {
         await new Promise(resolve => setTimeout(resolve, action.waitMs || 0));
+        // A second program for a multi-process route (a server, then its
+        // client), launched through the same Start > Run path as `launch`.
+        if (action.run) {
+          await page.evaluate(command => window.referenceVm.run(command), action.run);
+        }
+        // An intermediate capture beside the final one: OUTPUT-NAME.png. A
+        // route with several stages cannot be judged from its last frame.
+        if (action.screenshot) {
+          const stagePath = output.replace(/\.png$/i, "") + `-${action.screenshot}.png`;
+          const stageCanvas = await page.$("#screen_container canvas");
+          await stageCanvas.screenshot({ path: stagePath });
+          console.log(`Stage:      ${stagePath}`);
+        }
         if (action.scancodes) {
           await page.evaluate(scancodes => window.emulator.keyboard_send_scancodes(scancodes, 20), action.scancodes);
         }
