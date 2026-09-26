@@ -351,7 +351,7 @@
     (if (i32.or (i32.eqz (local.get $rt)) (i32.eqz (local.get $state)))
       (then (return (i32.const 0))))
     (local.set $out (i32.add (call $d3dim_gpu_buffer) (i32.const 64)))
-    (call $zero_memory (local.get $out) (i32.const 132))
+    (call $zero_memory (local.get $out) (i32.const 136))
     (i32.store offset=0 (local.get $out) (local.get $rt))
     (i32.store offset=4 (local.get $out) (i32.load16_u offset=12 (local.get $rt)))
     (i32.store offset=8 (local.get $out) (i32.load16_u offset=14 (local.get $rt)))
@@ -425,6 +425,8 @@
       (i32.ne (call $gl32 (i32.add (local.get $state) (i32.const 368))) (i32.const 0))
       (i32.eqz (call $gl32 (i32.add (local.get $state) (i32.const 396))))))
     (i32.store offset=128 (local.get $out) (call $gl32 (i32.add (local.get $state) (i32.const 392))))
+    ;; Field 33: stage-0 WRAPU/WRAPV bits, as $d3dim_wrap_flags reads them.
+    (i32.store offset=132 (local.get $out) (call $d3dim_wrap_flags (local.get $state)))
     (local.get $out))
 
   ;; Texture $tex decoded to RGBA8 bytes in a reused scratch buffer (result is
@@ -1010,14 +1012,21 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
 
   (func $d3dim_set_render_state (param $this i32) (param $rs i32) (param $val i32)
-    (local $state i32)
+    (local $state i32) (local $slot i32)
     (local.set $state (call $d3ddev_state (local.get $this)))
     (if (i32.and (i32.ne (local.get $state) (i32.const 0))
                  (i32.lt_u (local.get $rs) (i32.const 512)))
-      (then (call $gs32
-              (i32.add (local.get $state)
-                (i32.add (i32.const 256) (i32.mul (local.get $rs) (i32.const 4))))
-              (local.get $val))
+      (then
+            (local.set $slot (i32.add (local.get $state)
+              (i32.add (i32.const 256) (i32.mul (local.get $rs) (i32.const 4)))))
+            ;; kind=29 RState: a render state whose value changes. Every
+            ;; interface revision and execute-buffer STATERENDER lands here,
+            ;; so this answers "does any app set WRAPU/WRAPV/WRAP0-7, table
+            ;; fog, ..." without a per-app guess.
+            (if (i32.ne (call $gl32 (local.get $slot)) (local.get $val))
+              (then (call $host_dx_trace (i32.const 29) (local.get $rs)
+                      (local.get $val) (i32.const 0) (i32.const 0))))
+            (call $gs32 (local.get $slot) (local.get $val))
             ;; D3DRENDERSTATE_TEXTUREHANDLE = 1 in the v1 execute-buffer API.
             (if (i32.eq (local.get $rs) (i32.const 1))
               (then
@@ -6025,12 +6034,29 @@
     (local $dither i32) (local $antialias i32)
     (local $c0 i32) (local $c1 i32) (local $c2 i32)
     (local $color_key_enable i32) (local $alpha_test i32) (local $fog i32)
+    (local $wrap i32)
+    (local $u0 f32) (local $u1 f32) (local $u2 f32)
+    (local $t0 f32) (local $t1 f32) (local $t2 f32)
     (if (i32.eqz (local.get $tex)) (then
       (call $d3dim_draw_tl_triangle
         (local.get $this) (local.get $rt) (local.get $use_z)
         (local.get $v0) (local.get $v1) (local.get $v2))
       (return)))
+    (local.set $u0 (f32.load (i32.add (local.get $v0) (i32.const 24))))
+    (local.set $t0 (f32.load (i32.add (local.get $v0) (i32.const 28))))
+    (local.set $u1 (f32.load (i32.add (local.get $v1) (i32.const 24))))
+    (local.set $t1 (f32.load (i32.add (local.get $v1) (i32.const 28))))
+    (local.set $u2 (f32.load (i32.add (local.get $v2) (i32.const 24))))
+    (local.set $t2 (f32.load (i32.add (local.get $v2) (i32.const 28))))
     (local.set $state (call $d3ddev_state (local.get $this)))
+    ;; Cylindrical wrapping: WRAPU/WRAPV take the short way across the seam.
+    (local.set $wrap (call $d3dim_wrap_flags (local.get $state)))
+    (if (i32.and (local.get $wrap) (i32.const 1)) (then
+      (local.set $u1 (call $d3dim_wrap_coord (local.get $u1) (local.get $u0)))
+      (local.set $u2 (call $d3dim_wrap_coord (local.get $u2) (local.get $u0)))))
+    (if (i32.and (local.get $wrap) (i32.const 2)) (then
+      (local.set $t1 (call $d3dim_wrap_coord (local.get $t1) (local.get $t0)))
+      (local.set $t2 (call $d3dim_wrap_coord (local.get $t2) (local.get $t0)))))
     (if (local.get $state) (then
       (local.set $blend (call $gl32 (i32.add (local.get $state) (i32.const 364))))
       (local.set $src_blend (call $gl32 (i32.add (local.get $state) (i32.const 332))))
@@ -6121,27 +6147,50 @@
       (local.get $dither) (local.get $antialias)
       (call $d3dim_coord_i (f32.load (local.get $v0)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v0) (i32.const 4))))
-      (f32.load (i32.add (local.get $v0) (i32.const 24)))
-      (f32.load (i32.add (local.get $v0) (i32.const 28)))
+      (local.get $u0)
+      (local.get $t0)
       (f32.load (i32.add (local.get $v0) (i32.const 12)))
       (local.get $c0)
       (f32.load (i32.add (local.get $v0) (i32.const 8)))
       (call $d3dim_coord_i (f32.load (local.get $v1)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v1) (i32.const 4))))
-      (f32.load (i32.add (local.get $v1) (i32.const 24)))
-      (f32.load (i32.add (local.get $v1) (i32.const 28)))
+      (local.get $u1)
+      (local.get $t1)
       (f32.load (i32.add (local.get $v1) (i32.const 12)))
       (local.get $c1)
       (f32.load (i32.add (local.get $v1) (i32.const 8)))
       (call $d3dim_coord_i (f32.load (local.get $v2)))
       (call $d3dim_coord_i (f32.load (i32.add (local.get $v2) (i32.const 4))))
-      (f32.load (i32.add (local.get $v2) (i32.const 24)))
-      (f32.load (i32.add (local.get $v2) (i32.const 28)))
+      (local.get $u2)
+      (local.get $t2)
       (f32.load (i32.add (local.get $v2) (i32.const 12)))
       (local.get $c2)
       (f32.load (i32.add (local.get $v2) (i32.const 8)))
       (local.get $zbuf) (local.get $zfunc) (local.get $zwrite))
     (global.set $rast_fog_on (i32.const 0)))
+
+  ;; D3D texture wrapping for stage 0: bit 0 = U, bit 1 = V. DX5 and earlier
+  ;; say it with D3DRENDERSTATE_WRAPU/WRAPV (5/6); DX6+ with WRAP0 (128),
+  ;; whose D3DWRAP_U/D3DWRAP_V bits are the same 1/2. Nine of thirteen small
+  ;; D3DIM apps set one (DX SDK Globe, Twist, Tunnel, Boids, five Plus!98
+  ;; savers) -- a sphere's texture seam otherwise interpolates backwards
+  ;; across the whole map in one strip of triangles.
+  (func $d3dim_wrap_flags (param $state i32) (result i32)
+    (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
+    (i32.or
+      (i32.or
+        (i32.ne (call $gl32 (i32.add (local.get $state) (i32.const 276))) (i32.const 0))
+        (i32.shl (i32.ne (call $gl32 (i32.add (local.get $state) (i32.const 280))) (i32.const 0))
+                 (i32.const 1)))
+      (i32.and (call $gl32 (i32.add (local.get $state) (i32.const 768))) (i32.const 3))))
+
+  ;; Move $c to whichever of c-1, c, c+1 lies within half a texture of $ref.
+  (func $d3dim_wrap_coord (param $c f32) (param $ref f32) (result f32)
+    (if (f32.gt (f32.sub (local.get $c) (local.get $ref)) (f32.const 0.5))
+      (then (return (f32.sub (local.get $c) (f32.const 1)))))
+    (if (f32.gt (f32.sub (local.get $ref) (local.get $c)) (f32.const 0.5))
+      (then (return (f32.add (local.get $c) (f32.const 1)))))
+    (local.get $c))
 
   ;; Vertex fog: FOGENABLE=28 (offset 368) with FOGTABLEMODE=35 (396) NONE.
   (func $d3dim_vertex_fog_on (param $this i32) (result i32)
