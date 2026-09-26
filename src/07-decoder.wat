@@ -2978,6 +2978,17 @@
   (func $mr_simple_base (result i32)
     (if (global.get $code16) (then (return (i32.const 0))))
     (i32.and (i32.ne (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
+  ;; Must a fold stop before the instruction that starts at $p? Yes when $p is
+  ;; already a compiled entry. $decode_block ends a block at a known entry, but
+  ;; it checks only at the top of each instruction, and an instruction a fold
+  ;; swallows never reaches that check. Publishing the fold's block would
+  ;; retire the entry at $p; the next branch there decodes it again and
+  ;; retires the fold's block, and the two re-decode each other for as long
+  ;; as the guest alternates between them, with no guest write anywhere.
+  ;; Heroes III lost half its gameplay batches to that (143K retirements, none
+  ;; from a write); test/test-fused-entry-overlap.js.
+  (func $fuse_stop (param $p i32) (result i32)
+    (call $page_probe (local.get $p)))
   ;; Helper: absolute address (no base, no index)?
   (func $mr_absolute (result i32)
     (i32.and (i32.eq (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
@@ -2995,7 +3006,9 @@
     (if (i32.and
           (i32.or (i32.eq (local.get $opcode) (i32.const 0x88))
                   (i32.eq (local.get $opcode) (i32.const 0x8A)))
-          (i32.eq (i32.and (local.get $modrm) (i32.const 0xC0)) (i32.const 0xC0)))
+          (i32.and
+            (i32.eq (i32.and (local.get $modrm) (i32.const 0xC0)) (i32.const 0xC0))
+            (i32.eqz (call $fuse_stop (global.get $d_pc)))))
       (then
         (local.set $reg (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7)))
         (local.set $rm (i32.and (local.get $modrm) (i32.const 7)))
@@ -3029,7 +3042,9 @@
     ;; inc rP
     (if (i32.ne (call $gl8 (local.get $p)) (i32.add (i32.const 0x40) (local.get $dst)))
       (then (return (i32.const 0))))
+    (if (call $fuse_stop (local.get $p)) (then (return (i32.const 0))))
     (local.set $p (i32.add (local.get $p) (i32.const 1)))
+    (if (call $fuse_stop (local.get $p)) (then (return (i32.const 0))))
     ;; mov [abs],rP -- A3 for EAX, else 89 with mod=00 rm=101.
     (local.set $b (call $gl8 (local.get $p)))
     (if (i32.and (i32.eq (local.get $b) (i32.const 0xA3)) (i32.eqz (local.get $dst)))
@@ -3051,8 +3066,10 @@
     ;; over -- and the NOP is only consumed if the byte load really follows.
     (block $no_tail
       (local.set $b (local.get $p))
+      (br_if $no_tail (call $fuse_stop (local.get $b)))
       (if (i32.eq (call $gl8 (local.get $b)) (i32.const 0x90))
         (then (local.set $b (i32.add (local.get $b) (i32.const 1)))))
+      (br_if $no_tail (call $fuse_stop (local.get $b)))
       (br_if $no_tail (i32.ne (call $gl8 (local.get $b)) (i32.const 0x8A)))
       (br_if $no_tail (i32.eq (local.get $dst) (i32.const 4)))  ;; rm=100 is a SIB, not ESP
       (local.set $modrm (call $gl8 (i32.add (local.get $b) (i32.const 1))))
@@ -3079,6 +3096,7 @@
   (func $try_emit_test_jcc (param $byteform i32) (result i32)
     (local $b i32) (local $b2 i32) (local $cc i32) (local $disp i32)
     (if (global.get $code16) (then (return (i32.const 0))))
+    (if (call $fuse_stop (global.get $d_pc)) (then (return (i32.const 0))))
     (local.set $b (call $gl8 (global.get $d_pc)))
     (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x70))
                  (i32.le_u (local.get $b) (i32.const 0x7F)))
@@ -3120,8 +3138,10 @@
       (then (return (i32.const 0))))
     (if (i32.ne (call $gl8 (i32.add (local.get $p) (i32.const 1))) (i32.const 0xC4))
       (then (return (i32.const 0))))
+    (if (call $fuse_stop (local.get $p)) (then (return (i32.const 0))))
     (local.set $imm (call $gl8 (i32.add (local.get $p) (i32.const 2))))
     (local.set $p (i32.add (local.get $p) (i32.const 3)))
+    (if (call $fuse_stop (local.get $p)) (then (return (i32.const 0))))
     (local.set $b (call $gl8 (local.get $p)))
     (if (i32.and
           (i32.ge_u (local.get $b) (i32.const 0x70))
@@ -3161,6 +3181,7 @@
     (local $b i32) (local $b2 i32) (local $cc i32) (local $disp i32)
     (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
     (if (i32.eqz (call $mr_simple_base)) (then (return (i32.const 0))))
+    (if (call $fuse_stop (global.get $d_pc)) (then (return (i32.const 0))))
     (local.set $b (call $gl8 (global.get $d_pc)))
     (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x70))
                  (i32.le_u (local.get $b) (i32.const 0x7F)))
@@ -3220,6 +3241,7 @@
     (local.set $n (i32.const 1))
     (block $stop (loop $l
       (br_if $stop (i32.ge_u (local.get $n) (i32.const 4)))
+      (br_if $stop (call $fuse_stop (local.get $p)))
       (local.set $m (call $abs_mov_at (local.get $p) (local.get $store)))
       (br_if $stop (i32.eqz (local.get $m)))
       (local.set $p (i32.add (local.get $p) (i32.shr_u (local.get $m) (i32.const 4))))
@@ -3376,6 +3398,7 @@
     (local.set $expected (i32.add (local.get $disp0) (i32.const 4)))
     (block $stop (loop $scan
       (br_if $stop (i32.ge_u (local.get $n) (i32.const 0xFFFFFF)))
+      (br_if $stop (call $fuse_stop (local.get $p)))
       (local.set $len
         (call $base_store_at (local.get $p) (local.get $base) (local.get $src)))
       (br_if $stop (i32.eqz (local.get $len)))
@@ -3417,6 +3440,7 @@
     (local.set $n (i32.const 1))
     (block $stop (loop $l
       (br_if $stop (i32.ge_u (local.get $n) (i32.const 4)))
+      (br_if $stop (call $fuse_stop (local.get $p)))
       (local.set $m (call $base_mov_at (local.get $p) (local.get $base)))
       (br_if $stop (i32.eqz (local.get $m)))
       (local.set $p (i32.add (local.get $p) (i32.shr_u (local.get $m) (i32.const 4))))
@@ -3515,6 +3539,7 @@
     (if (i32.or (global.get $code16) (global.get $d_addr16))
       (then (return (i32.const 0))))
     (if (global.get $d_seg) (then (return (i32.const 0))))
+    (if (call $fuse_stop (global.get $d_pc)) (then (return (i32.const 0))))
     (local.set $m (call $sib_store_at (global.get $d_pc) (local.get $dst)))
     (if (i32.eqz (local.get $m)) (then (return (i32.const 0))))
     (call $te (i32.const 421)
@@ -3563,6 +3588,7 @@
       ;; extend the row we are in
       (block $cdone (loop $cl
         (br_if $cdone (i32.ge_u (local.get $pairs) (i32.const 65536)))
+        (br_if $cdone (call $fuse_stop (local.get $p)))
         (local.set $m (call $base_mov_at (local.get $p) (local.get $src_base)))
         (br_if $cdone (i32.eqz (local.get $m)))
         (br_if $cdone (i32.ne (i32.and (local.get $m) (i32.const 0xF))
@@ -3571,6 +3597,7 @@
         (br_if $cdone (i32.ne (call $base_mov_disp (local.get $p) (local.get $len))
                               (local.get $srcnext)))
         (local.set $q (i32.add (local.get $p) (local.get $len)))
+        (br_if $cdone (call $fuse_stop (local.get $q)))
         (local.set $m (call $sib_store_at (local.get $q) (local.get $scratch)))
         (br_if $cdone (i32.eqz (local.get $m)))
         (br_if $cdone (i32.ne (global.get $fuse_info) (local.get $info)))
@@ -3591,6 +3618,8 @@
       ;; the row step -- register form, writing the index register, and
       ;; byte-identical at every row boundary
       (br_if $done (i32.ne (call $gl8 (local.get $p)) (i32.const 0x03)))
+      (br_if $done (call $fuse_stop (local.get $p)))
+      (br_if $done (call $fuse_stop (i32.add (local.get $p) (i32.const 2))))
       (local.set $b (call $gl8 (i32.add (local.get $p) (i32.const 1))))
       (if (i32.eq (local.get $sep) (i32.const -1))
         (then
@@ -3621,6 +3650,7 @@
         (call $base_mov_disp (i32.add (local.get $p) (i32.const 2)) (local.get $len))
         (local.get $srcnext)))
       (local.set $q (i32.add (i32.add (local.get $p) (i32.const 2)) (local.get $len)))
+      (br_if $done (call $fuse_stop (local.get $q)))
       (local.set $m (call $sib_store_at (local.get $q) (local.get $scratch)))
       (br_if $done (i32.eqz (local.get $m)))
       (br_if $done (i32.ne (global.get $fuse_info) (local.get $info)))
@@ -3655,6 +3685,7 @@
     ;; The first pair's store fixes the destination form every later store has
     ;; to repeat.
     (local.set $p (global.get $d_pc))
+    (if (call $fuse_stop (local.get $p)) (then (return (i32.const 0))))
     (local.set $m (call $sib_store_at (local.get $p) (local.get $scratch)))
     (if (i32.eqz (local.get $m)) (then (return (i32.const 0))))
     (local.set $info (global.get $fuse_info))
@@ -3735,7 +3766,9 @@
                   (i32.eq (local.get $dst) (i32.const 0))
                   (i32.and
                     (i32.eq (global.get $mr_base) (i32.const 2))
-                    (i32.eq (call $gl8 (global.get $d_pc)) (i32.const 0xA9))))))
+                    (i32.and
+                      (i32.eq (call $gl8 (global.get $d_pc)) (i32.const 0xA9))
+                      (i32.eqz (call $fuse_stop (global.get $d_pc))))))))
           (then
             (call $te (i32.const 391) (i32.const 0))
             (call $te_raw (global.get $mr_disp))
@@ -3895,7 +3928,9 @@
           (i32.and
             (i32.eq (local.get $opcode) (i32.const 0x8D))
             (i32.ne (local.get $mod) (i32.const 3)))
-          (i32.eq (i32.and (local.get $modrm) (i32.const 7)) (i32.const 4)))
+          (i32.and
+            (i32.eq (i32.and (local.get $modrm) (i32.const 7)) (i32.const 4))
+            (i32.eqz (call $fuse_stop (global.get $d_pc)))))
       (then
         (local.set $sib (call $gl8 (i32.add (global.get $d_pc) (i32.const 2))))
         (local.set $index (i32.and (i32.shr_u (local.get $sib) (i32.const 3)) (i32.const 7)))
@@ -4143,6 +4178,7 @@
     (local $rm i32) (local $disp i32) (local $imm i32)
     (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
     (local.set $p (global.get $d_pc))
+    (if (call $fuse_stop (local.get $p)) (then (return (i32.const 0))))
     (local.set $b (call $gl8 (local.get $p)))
     (if (i32.and (i32.ne (local.get $b) (i32.const 0x81))
                  (i32.ne (local.get $b) (i32.const 0x83)))
@@ -5074,7 +5110,11 @@
                                       (i32.eqz (global.get $mr_val))
                                       (i32.and
                                         (i32.eq (call $gl16 (global.get $d_pc)) (i32.const 0x028B))
-                                        (i32.eq (call $gl8 (i32.add (global.get $d_pc) (i32.const 2))) (i32.const 0xA9))))))))
+                                        (i32.and
+                                          (i32.eq (call $gl8 (i32.add (global.get $d_pc) (i32.const 2))) (i32.const 0xA9))
+                                          (i32.eqz (i32.or
+                                            (call $fuse_stop (global.get $d_pc))
+                                            (call $fuse_stop (i32.add (global.get $d_pc) (i32.const 2))))))))))))
                           (then
                             (call $te (i32.const 392) (i32.const 0))
                             (call $te_raw (call $gl32 (i32.add (global.get $d_pc) (i32.const 3))))
@@ -5567,8 +5607,11 @@
                            (i32.eqz (local.get $prefix_seg)))
                   (i32.and
                     (i32.eq (call $gl8 (global.get $d_pc)) (i32.const 0x0D))
-                    (i32.eq (call $gl8 (i32.add (global.get $d_pc) (i32.const 5)))
-                            (i32.const 0x75)))))
+                    (i32.and
+                      (i32.eq (call $gl8 (i32.add (global.get $d_pc) (i32.const 5)))
+                              (i32.const 0x75))
+                      (i32.eqz (call $fuse_stop
+                        (i32.add (global.get $d_pc) (i32.const 5))))))))
             (then
               (local.set $a (call $gl32 (i32.add (global.get $d_pc) (i32.const 1))))
               (local.set $disp
@@ -5740,8 +5783,11 @@
                       (i32.and
                         (i32.ge_u (call $gl8 (i32.add (global.get $d_pc) (i32.const 2)))
                                   (i32.const 0x72))
-                        (i32.le_u (call $gl8 (i32.add (global.get $d_pc) (i32.const 2)))
-                                  (i32.const 0x73)))))))
+                        (i32.and
+                          (i32.le_u (call $gl8 (i32.add (global.get $d_pc) (i32.const 2)))
+                                    (i32.const 0x73))
+                          (i32.eqz (call $fuse_stop
+                            (i32.add (global.get $d_pc) (i32.const 2))))))))))
             (then
               (local.set $imm
                 (call $gl8 (i32.add (global.get $d_pc) (i32.const 2))))
