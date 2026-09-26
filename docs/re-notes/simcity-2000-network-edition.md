@@ -50,7 +50,30 @@ status line at (7,123) names the selected tool — read it to confirm.
 | lower palette 140/165/190/213,193 | power / police / school / parks; up-arrows at y=176 open flyouts above (Oil/Hydro/Coal; Marina/Stadium/Zoo/Large/Small Park) |
 | top toolbar 262,56 | land-ownership **layer** toggle (wireframe map); 285/310/333/356 are further layer toggles |
 
-## Buy Land — NOT found yet
+## Buy Land — the Owner Tool palette button (static; route not yet run)
+
+The palette flyouts are built by `0x418f46(group)`: `group-1` indexes the
+byte table `0x41b664`, which selects a case in the jump table `0x41b5f8`.
+Each case names its group and adds `(bitmap key, label, tool number)` items
+via `0x430910` / `0x469460`:
+
+| group | case | name (VA) | items |
+|---|---|---|---|
+| 1 | `0x418f8f` | Network Tool (`0x4c8b68`) | |
+| 2 | `0x4191ad` | Dozer Tool (`0x4c8c4c`) | Demolish, Level, ... |
+| 3 | `0x4193f8` | Water Tool (`0x4c8a04`) | Water, Trees, ... |
+| 4 | `0x41950d` | **Owner Tool** (`0x4c8b3c`) | **Buy** (bmp 1013, tool 0x0d), **Sell** (1014, 0x0e), then 0x43 / 0x42 |
+| 5 | `0x41972f` | Zone Tool (`0x4c8bf8`) | |
+| … | `0x4199c3` / `0x419bec` / `0x419e15` | Police Fire / School / Parks | |
+
+On screen the left palette runs Dozer (18,175), Water (18,200), **Owner
+(18,223 — the red-and-white "for sale" sign)**, then Roads. Buy is the first
+item of the Owner group, so pressing that button should select Buy Land;
+its flyout (arrow at ~36,223) holds Buy / Sell. Earlier probes only tried
+the Dozer flyout's rows, which is why they bought nothing. Read the status
+line at (7,123) to confirm the tool, then click unowned land.
+
+Older leads, kept for reference:
 
 `"Buy Land (P)"` at `0x4c76cc` is a network protocol command name (the `(P)`
 / `(H)` table at `0x4c7c74`). `"Buy Land"`/`"Sell Land"` at `0x4c8dec`/`0x4c8de0`
@@ -62,9 +85,8 @@ control or command IDs (no dialog or message map uses 1013).
 Water on land the player does not own does nothing — no cost, no error. The
 `"You don't own this land"` text (`0x4cd430`, used at `0x4403c5` with caption
 "Place Error") never fired in any attempt. Drags to bulldozer-flyout rows
-123/147/171/292/316 and clicks in the ownership layer bought nothing, so
-where Buy Land lives is still open; the next thing to read is who dispatches
-tool 0x0c (the handler behind the `0x41c3e2` table), not more screen probing.
+123/147/171/292/316 and clicks in the ownership layer bought nothing. The
+`0x41c3e2` name→number map is a lookup by label, not the UI.
 
 ## Known render oddity
 
@@ -76,7 +98,15 @@ black and never repainted (so stale flyout pixels persist there).
 `msctls_statusbar32` with no guest comctl32 behind it answered WM_GETFONT /
 SB_GETBORDERS with garbage, laid the bar out 267px tall and left the view
 163px high. That was observed only in a scratch worktree **without the app's
-DLLs mounted**. It is not established as the cause of the black band above
-on the real `--app` route, so treat that band as still unexplained. The
-DefWindowProc answers themselves are correct for any MFC app with no
-comctl32.
+DLLs mounted**. The DefWindowProc answers themselves are correct for any MFC
+app with no comctl32.
+
+**Update (2026-09-25, same day):** the real route has no guest comctl32
+either — the manifest mounts only mfc40, Msvcrt40, DPLAY, OLEPRO32 and
+Webster — so it takes the same path. On main (after 69d6aa0b) a single
+client lays out its status bar as 628x18 at y=412 of the 640x480 frame
+(`--app=simcity2000_net ... --input=2950:dump-windows`, ~3000 batches, no
+server needed), so the view gets the full height. The black band's 161-row
+view matches the 163px symptom, so it was most likely this layout bug. A
+three-seat run into a live city is still needed to see the view repaint
+below row 205.
