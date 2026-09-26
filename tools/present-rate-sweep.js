@@ -5,6 +5,7 @@
 //
 //   node tools/present-rate-sweep.js [--apps=a,b] [--cap=60] [--seconds=8]
 //        [--warmup=25] [--list] [--limit=N] [--json=F] [--md=F] [--headful] [--software-browser]
+//        [--start-key=VK@SEC] [--start-click=X:Y@SEC] [--start-text=TEXT@SEC] [--shots=DIR]
 //
 // THE FAILURE IT LOOKS FOR. The cap paces a present only when that present
 // ends a whole frame: a blit covering more than half the target, or the
@@ -35,6 +36,12 @@
 //                rate held within 10% -- the paced presents are real frames
 //   OFF-NO-BIND  the cap never slept: it costs nothing and buys nothing
 //   OFF-HURTS    the cap slept and the displayed frame rate fell
+//   OFF-SLOW     the app's own game-step counter (lib/apps.js
+//                perf.logicalFrame) runs below the cap: the cap slept only
+//                on presents that are not frames. StarCraft in gameplay makes
+//                ~119 presents/s for ~18 game steps/s; the cap cuts presents
+//                to ~68 and changes neither game steps nor displayed frames,
+//                which is idle-CPU saving, not frame limiting.
 //
 // Displayed frames are bounded by the display refresh in both arms, so they
 // compare like with like; pass --headful for numbers worth quoting.
@@ -56,6 +63,11 @@ const opt = (name, dflt) => {
   const a = argv.find(x => x.startsWith(`--${name}=`));
   return a === undefined ? dflt : a.slice(name.length + 3);
 };
+// Every occurrence of a repeatable flag, comma lists included. Reading only
+// the first one silently dropped the second --start-click of a two-click
+// route (Half-Life's New game -> Easy never got its Easy).
+const optAll = name => argv.filter(x => x.startsWith(`--${name}=`))
+  .flatMap(a => a.slice(name.length + 3).split(',')).filter(Boolean);
 const CAP = Number(opt('cap', 60));
 const SECONDS = Number(opt('seconds', 8));
 const WARMUP = Number(opt('warmup', 25));
@@ -64,6 +76,36 @@ const JSON_OUT = opt('json', '');
 const MD_OUT = opt('md', '');
 const ONLY = (opt('apps', '') || '').split(',').filter(Boolean);
 const HEADFUL = argv.includes('--headful');
+// --start-key=VK@SEC[,...]: tap a guest key SEC seconds after launch, during
+// the warmup, so the sample measures the screen that key leads to. An app
+// that parks on a menu or briefing without input is otherwise measured THERE:
+// StarCraft's `ophelia terran1` route stops on the mission briefing, whose
+// animated portraits make ~160 presents/s while its game loop runs zero steps.
+// Pair with a --warmup long enough to cover the load after the key.
+const START_KEYS = optAll('start-key').map(spec => {
+  const [vk, at] = spec.split('@');
+  return { vk: Number(vk), at: Number(at || 0) };
+});
+// --start-click=X:Y@SEC[,...]: the same for a left click at GUEST pixel X,Y
+// (StarCraft's briefing Start button is 545:393 -- its hotkey does nothing
+// there). Mapped through the exclusive-presentation viewport the way
+// tools/web-input-probe.js toPage() maps it, then fed to the renderer.
+const START_CLICKS = optAll('start-click').map(spec => {
+  const [xy, at] = spec.split('@');
+  const [x, y] = xy.split(':').map(Number);
+  return { x, y, at: Number(at || 0) };
+});
+// --start-text=TEXT@SEC[,...]: type TEXT (no commas or @) as keydown +
+// keypress + keyup per character. keydown alone types nothing into a field
+// that reads only WM_CHAR -- the browser synthesizes WM_CHAR from keypress
+// (Motocross Madness's Enter Name box).
+const START_TEXTS = optAll('start-text').map(spec => {
+  const i = spec.lastIndexOf('@');
+  return { text: spec.slice(0, i), at: Number(spec.slice(i + 1) || 0) };
+});
+// --shots=DIR: screenshot each run at the end of its sample, so what was
+// measured can be looked at rather than assumed.
+const SHOTS = opt('shots', '');
 
 // A present-capable app is one whose executable names a DLL that can reach a
 // paced path. A byte scan rather than an import walk on purpose: a game that
@@ -99,7 +141,32 @@ if (argv.includes('--list')) {
 
 // Starts the distinct-displayed-frame counter and marks the pacing counters
 // when the warmup ends, so both cover exactly the sample window.
-const AFTER_LAUNCH = `setTimeout(() => {
+const AFTER_LAUNCH = `${START_KEYS.map(k => `setTimeout(() => {
+  sharedRenderer.handleKeyDown(${k.vk});
+  setTimeout(() => sharedRenderer.handleKeyUp(${k.vk}), 200);
+}, ${k.at * 1000});`).join('\n')}
+${START_TEXTS.map(k => `setTimeout(() => {
+  const text = ${JSON.stringify(k.text)};
+  [...text].forEach((ch, i) => setTimeout(() => {
+    const vk = ch.toUpperCase().charCodeAt(0);
+    sharedRenderer.handleKeyDown(vk);
+    sharedRenderer.handleKeyPress(ch.charCodeAt(0));
+    setTimeout(() => sharedRenderer.handleKeyUp(vk), 80);
+  }, i * 250));
+}, ${k.at * 1000});`).join('\n')}
+${START_CLICKS.map(k => `setTimeout(() => {
+  const c = document.getElementById('screen');
+  const v = sharedRenderer._exclusivePresentationViewport;
+  let cx = ${k.x} + 0.5, cy = ${k.y} + 0.5;
+  if (v && v.nativeW > 0 && v.nativeH > 0 && v.outputW > 0 && v.outputH > 0) {
+    cx = (v.dstX + (cx - v.nativeX) * v.dstW / v.nativeW) * c.width / v.outputW;
+    cy = (v.dstY + (cy - v.nativeY) * v.dstH / v.nativeH) * c.height / v.outputH;
+  }
+  sharedRenderer.handleMouseMove(cx, cy);
+  setTimeout(() => sharedRenderer.handleMouseDown(cx, cy, 0), 100);
+  setTimeout(() => sharedRenderer.handleMouseUp(cx, cy, 0), 250);
+}, ${k.at * 1000});`).join('\n')}
+setTimeout(() => {
   const a = runningApps.find(x => x && x.wine);
   const ex = a && a.wine.instance && a.wine.instance.exports;
   const screen = document.getElementById('screen');
@@ -108,6 +175,10 @@ const AFTER_LAUNCH = `setTimeout(() => {
   const sctx = small.getContext('2d', { willReadFrequently: true });
   const D = window.__prsD = { t: performance.now(), n: 0, raf: 0, last: -1,
     pacedMs: ex && ex.get_present_paced_ms ? ex.get_present_paced_ms() : null };
+  // An app with a proven game-step counter (lib/apps.js perf.logicalFrame)
+  // has its cumulative count polled into this ring every 500ms.
+  const L = WinePerf.logicalFrameCounts;
+  D.game0 = L && L.length ? L[L.length - 1] : null;
   const tick = () => {
     try {
       sctx.drawImage(screen, 0, 0, 160, 120);
@@ -133,6 +204,12 @@ const REPORT = `JSON.stringify((() => {
   const raf = D && sec > 0 ? D.raf / sec : null;
   const pacedMs = D && sec > 0 && D.pacedMs !== null && ex
     ? (ex.get_present_paced_ms() - D.pacedMs) / sec : null;
+  // Game steps/s over the sample, from the app's own counter (null if none).
+  const L = WinePerf.logicalFrameCounts, g1 = L && L.length ? L[L.length - 1] : null;
+  const gdt = D && D.game0 && g1 ? (g1.at - D.game0.at) / 1000 : 0;
+  const game = gdt > 0 ? (g1.count - D.game0.count) / gdt : null;
+  const gameVerifier = gdt > 0 && g1.verifier != null && D.game0.verifier != null
+    ? (g1.verifier - D.game0.verifier) / gdt : null;
   const c = document.getElementById('screen');
   let hash = 0;
   try {
@@ -144,7 +221,7 @@ const REPORT = `JSON.stringify((() => {
     for (let i = 0; i < d.length; i += 4) { hash ^= d[i]; hash = Math.imul(hash, 16777619); }
     hash >>>= 0;
   } catch (e) {}
-  return { fps: s.guestFps, running: !!(a && a.wine.running), hash, distinct, raf, pacedMs };
+  return { fps: s.guestFps, running: !!(a && a.wine.running), hash, distinct, raf, pacedMs, game, gameVerifier };
 })())`;
 
 const runOnce = (id, cap) => {
@@ -152,6 +229,10 @@ const runOnce = (id, cap) => {
     `--warmup=${WARMUP}`, `--query=?debug&perf&present-cap=${cap}`,
     `--after-launch=${AFTER_LAUNCH}`, `--report-eval=${REPORT}`];
   if (HEADFUL) args.push('--headful');
+  if (SHOTS) {
+    fs.mkdirSync(SHOTS, { recursive: true });
+    args.push(`--screenshot=${path.join(SHOTS, `${id}-cap${cap}.png`)}`);
+  }
   if (argv.includes('--software-browser')) args.push('--software-browser');
   let out = '';
   try {
@@ -164,9 +245,15 @@ const runOnce = (id, cap) => {
 };
 
 // The limiter recommendation (see the header): ON only where the cap binds
-// and the displayed frame rate survives it.
+// and the frame rate survives it. An app with its own game-step counter is
+// judged on game steps -- the frames the game logic actually ran -- rather
+// than on displayed frames, which rAF caps and a screen hash only proxies.
 const limiter = (un, cp) => {
   if (!(cp.pacedMs >= 20)) return 'OFF-NO-BIND';
+  if (un.game > 0.5 && cp.game >= 0) {
+    if (un.game < 0.9 * CAP) return 'OFF-SLOW';
+    return cp.game >= 0.9 * un.game ? 'ON' : 'OFF-HURTS';
+  }
   if (!(un.distinct > 0.5) || !(cp.distinct >= 0)) return 'OFF-NO-BIND';
   return cp.distinct >= 0.9 * un.distinct ? 'ON' : 'OFF-HURTS';
 };
@@ -197,11 +284,16 @@ const classify = (u, c) => {
     const row = { id: c.id, dlls: c.dlls, uncapped: u, capped: p, ...res,
       frozen: un.hash !== 0 && un.hash === cp.hash,
       distinctUncapped: un.distinct, distinctCapped: cp.distinct,
+      gameUncapped: un.game, gameCapped: cp.game,
+      gameVerifierUncapped: un.gameVerifier, gameVerifierCapped: cp.gameVerifier,
       pacedMs: cp.pacedMs, limiter: limiter(un, cp) };
     rows.push(row);
     const f1 = v => (typeof v === 'number' ? v.toFixed(1) : 'n/a');
     console.log(`${f1(u).padStart(7)} -> ${f1(p).padStart(6)}  ${res.verdict}` +
-      `  distinct ${f1(un.distinct)} -> ${f1(cp.distinct)}  slept ${f1(cp.pacedMs)}ms/s  ${row.limiter}`);
+      `  distinct ${f1(un.distinct)} -> ${f1(cp.distinct)}` +
+      (un.game != null || cp.game != null ? `  game ${f1(un.game)} -> ${f1(cp.game)}` +
+        ` (verifier ${f1(un.gameVerifier)} -> ${f1(cp.gameVerifier)})` : '') +
+      `  slept ${f1(cp.pacedMs)}ms/s  ${row.limiter}`);
     if (JSON_OUT) fs.writeFileSync(JSON_OUT, JSON.stringify(rows, null, 2));
   }
 

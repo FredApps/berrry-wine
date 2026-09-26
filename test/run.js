@@ -282,6 +282,16 @@ const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure inje
 // under a much larger, much flatter one. Pass the batch gameplay starts at.
 const FRAME_STATS_ARG = getArg('frame-stats', null);
 const FRAME_STATS = FRAME_STATS_ARG !== null || hasFlag('frame-stats');
+// --present-distinct[=FROM_BATCH]: per DirectDraw present, hash the presented
+// surface and report presents vs presents that changed the picture. The
+// question it answers is whether PRESENT/s is a frame rate for this app.
+const PRESENT_DISTINCT_ARG = getArg('present-distinct', null);
+const PRESENT_DISTINCT = {
+  on: PRESENT_DISTINCT_ARG !== null || hasFlag('present-distinct'),
+  from: Math.max(0, parseInt(PRESENT_DISTINCT_ARG || '0', 10) || 0),
+  presents: 0, counted: 0, changed: 0, unreadable: 0,
+  last: null, unique: new Set(), slots: new Map(),
+};
 // Present and composite after every batch, the way the browser does. Off by
 // default: nobody looks at a headless canvas between captures, and it is work a
 // real player never pays, charged to every benchmark. Measured 2026-09-19 on
@@ -2596,6 +2606,37 @@ async function main() {
         });
         latency.pending = null;
       }
+    };
+  }
+  // --present-distinct: is a present a FRAME? Hash the presented DirectDraw
+  // surface on every present and count how many differ from the one before.
+  // PRESENT/s alone cannot say: StarCraft presents ~100/s while its game steps
+  // 18/s, and the browser's distinct-displayed-frame count is capped by the
+  // display refresh, so a 434/s menu and a 60/s one read alike there.
+  if (PRESENT_DISTINCT.on) {
+    const prevHook = ctx.onGuestFrame;
+    ctx.onGuestFrame = (frame) => {
+      if (prevHook) prevHook(frame);
+      if (!frame || frame.kind !== 'directdraw') return;
+      const pd = PRESENT_DISTINCT;
+      pd.presents++;
+      if (tickStateRef.batch < pd.from) return;
+      pd.counted++;
+      const dv = new DataView(ctx.getMemory());
+      const entry = RegionMap.BASE.DX_OBJECTS + (frame.slot >>> 0) * 32;
+      const h = dv.getUint16(entry + 14, true);
+      const pitch = dv.getUint16(entry + 18, true);
+      const dib = dv.getUint32(entry + 20, true);
+      if (!h || !pitch || !dib) { pd.unreadable++; return; }
+      const words = new Uint32Array(ctx.getMemory(), dib & ~3, (pitch * h) >>> 2);
+      let hash = 0x811c9dc5;
+      for (let i = 0; i < words.length; i++) hash = Math.imul(hash ^ words[i], 16777619);
+      hash >>>= 0;
+      const key = `${frame.slot >>> 0}:${hash}`;
+      if (pd.last !== key) pd.changed++;
+      pd.last = key;
+      pd.unique.add(key);
+      pd.slots.set(frame.slot >>> 0, (pd.slots.get(frame.slot >>> 0) || 0) + 1);
     };
   }
   // The guest tells us when a DirectDraw frame is finished; nothing else can.
@@ -9979,6 +10020,15 @@ if (VERBOSE) {
   // the process tears down shared memory. Normal frames still flush at their
   // semantic barriers, so this adds no crossing to the run loop.
   base.flushGLCommands(instance.exports);
+
+  if (PRESENT_DISTINCT.on) {
+    const pd = PRESENT_DISTINCT;
+    const share = pd.counted ? (100 * pd.changed / pd.counted).toFixed(1) : '0.0';
+    console.log(`\n[present-distinct] from batch ${pd.from}: ${pd.counted} presents`
+      + ` (${pd.presents} total), ${pd.changed} changed the picture (${share}%),`
+      + ` ${pd.unique.size} unique frames, ${pd.unreadable} unreadable;`
+      + ` by slot ${[...pd.slots].map(([s, n]) => `${s}:${n}`).join(' ')}`);
+  }
 
   if (DX_LOCK_PAUSE.ms > 0) {
     console.log(`\n[dx-lock-pause] ${DX_LOCK_PAUSE.ms}ms per present:`

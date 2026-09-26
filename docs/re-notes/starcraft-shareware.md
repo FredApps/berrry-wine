@@ -730,6 +730,16 @@ generic DirectDraw path as `PRESENT/s`. The verifier is not a second FPS
 number; it is the post-call accumulator path that should stay 1:1 with the
 primary counter.
 
+**Corrected 2026-09-25: those two addresses are from the wrong exe.**
+`lib/apps.js` mounts `starcraft-demo-official/installed/starcraft.exe`, and in
+that file `0x004b2ed0` and `0x004411e7` are mid-instruction, so the browser
+HUD read `GAME 0.0/s` in live gameplay (checked on ascii.dev: both counters
+armed, EIP in the exe, counts 0). The same call site in the mounted exe is
+0x10 later: `0x004411eb call 0x004b29f0`, verifier landing `0x004411f7`.
+`lib/apps.js` now uses those. Any number above taken with `--app=` is from
+the demo-official exe; one taken with `--exe=.../starcraft-shareware/...`
+is from the other.
+
 DirectDraw Lock/Unlock coordinate answer for this build: `Lock(this,
 lpDestRect, lpDDSD, dwFlags, hEvent)` can carry a rectangle. The WAT handler
 uses `lpDestRect.left/top` to return an `lpSurface` pointer offset into the
