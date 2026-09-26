@@ -124,7 +124,28 @@ async function main() {
   glCall(CALL_INDEX.glActiveTextureARB, TEXTURE0);
   expect(PINK, PINK, 'unit 1 off again, unit 0 still textured');
 
-  console.log('PASS software GL texture unit 1: MODULATE, REPLACE, push/pop, independent of unit 0');
+  // Alpha test sees the fragment after unit 1. Unit 1 is RGBA: opaque white
+  // on the left, alpha 0 on the right; MODULATE carries that alpha through.
+  // Unit 0 alone is opaque, so testing its output would pass everywhere and
+  // paint the right half dark blue.
+  const rgba = e.guest_alloc(16) >>> 0;
+  new Uint8Array(memory.buffer, toWasm(rgba), 8).set([255, 255, 255, 255, 0, 0, 255, 0]);
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE1);
+  glCall(CALL_INDEX.glBindTexture, GL_TEXTURE_2D, 5);
+  glCall(CALL_INDEX.glTexImage2D, GL_TEXTURE_2D, 0, 0x1908, 2, 1, 0, 0x1908, 0x1401, rgba);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2800, 0x2600);
+  glCall(CALL_INDEX.glTexParameteri, GL_TEXTURE_2D, 0x2801, 0x2600);
+  glCall(CALL_INDEX.glTexEnvi, 0x2300, 0x2200, 0x2100);            // MODULATE
+  glCall(CALL_INDEX.glEnable, GL_TEXTURE_2D);
+  glCall(CALL_INDEX.glActiveTextureARB, TEXTURE0);
+  const half = new Int32Array(new Float32Array([0.5]).buffer)[0];
+  glCall(CALL_INDEX.glAlphaFunc, 0x0204, half);                     // GREATER 0.5
+  glCall(CALL_INDEX.glEnable, 0x0BC0);                              // ALPHA_TEST
+  expect(PINK, PINK, 'alpha test after unit 1 rejects the transparent half');
+  glCall(CALL_INDEX.glDisable, 0x0BC0);
+  expect(PINK, DARK_BLUE & 0x00FFFFFF, 'alpha test off: the right half draws with alpha 0');
+
+  console.log('PASS software GL texture unit 1: MODULATE, REPLACE, push/pop, independent of unit 0, alpha test after unit 1');
 }
 
 main().catch(error => {

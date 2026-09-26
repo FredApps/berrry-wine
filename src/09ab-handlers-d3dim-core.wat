@@ -4488,7 +4488,7 @@
     (local $den f32) (local $invden f32) (local $t f32)
     (local $color i32) (local $sample i32) (local $diffuse i32) (local $dst i32) (local $px16 i32) (local $row_wa i32) (local $ptr i32)
     (local $zbuf_wa i32) (local $zentry i32) (local $zdib i32) (local $zpitch i32) (local $zbpp i32)
-    (local $zptr i32) (local $zraw i32) (local $draw i32) (local $ztest f32)
+    (local $zptr i32) (local $zraw i32) (local $draw i32) (local $ztest f32) (local $combined i32)
     (local $tw i32) (local $th i32) (local $tbpp i32) (local $tpitch i32)
     (local $tdib i32) (local $tfmt i32) (local $tpal i32)
     (local $key_active i32) (local $key_rgb i32)
@@ -4725,13 +4725,20 @@
       ;; The alpha compared is the texture stage's output, not the raw texel,
       ;; so a MODULATE stage with a translucent diffuse is tested on the value
       ;; that would actually have been written.
+      ;; GL tests the fragment after every texture unit, so with unit 1 on
+      ;; the tested alpha is unit 1's output, not unit 0's.
+      (local.set $combined (i32.const 0))
       (if (i32.and (local.get $draw) (i32.ne (local.get $alpha_test) (i32.const 0)))
         (then
+          (local.set $color (call $d3dim_texture_stage_combine
+            (local.get $sample) (local.get $diffuse)
+            (local.get $colorop) (local.get $alphaop)))
+          (if (global.get $rast_t1_on)
+            (then (local.set $color (call $rast_apply_t1
+              (local.get $color) (local.get $x) (local.get $y)))))
+          (local.set $combined (i32.const 1))
           (if (i32.eqz (call $d3dim_alpha_pass
-                (i32.shr_u (call $d3dim_texture_stage_combine
-                              (local.get $sample) (local.get $diffuse)
-                              (local.get $colorop) (local.get $alphaop))
-                           (i32.const 24))
+                (i32.shr_u (local.get $color) (i32.const 24))
                 (i32.and (local.get $alpha_test) (i32.const 0xFF))
                 (i32.and (i32.shr_u (local.get $alpha_test) (i32.const 8)) (i32.const 0xFF))))
             (then (local.set $draw (i32.const 0))))))
@@ -4779,7 +4786,7 @@
                   (then (if (local.get $zwrite)
                     (then (f32.store (local.get $zptr) (local.get $tz)))))
                   (else (local.set $draw (i32.const 0))))))))))
-      (if (local.get $draw) (then
+      (if (i32.and (local.get $draw) (i32.eqz (local.get $combined))) (then
         (local.set $color (call $d3dim_texture_stage_combine
           (local.get $sample)
           (local.get $diffuse) (local.get $colorop) (local.get $alphaop)))
@@ -4787,7 +4794,8 @@
         ;; (09a8g-gl-raster).
         (if (global.get $rast_t1_on)
           (then (local.set $color (call $rast_apply_t1
-            (local.get $color) (local.get $x) (local.get $y)))))
+            (local.get $color) (local.get $x) (local.get $y)))))))
+      (if (local.get $draw) (then
         (if (global.get $rast_fog_on)
           (then (local.set $color (call $rast_apply_fog
             (local.get $color) (local.get $x) (local.get $y)))))
