@@ -70,3 +70,13 @@ tool 0x0c (the handler behind the `0x41c3e2` table), not more screen probing.
 
 The city view paints only rows ~44–205 of the MDI client; everything below is
 black and never repainted (so stale flyout pixels persist there).
+
+**Correction (2026-09-25):** 69d6aa0b's commit message and its comment in
+`$handle_DefWindowProcA` name this app as the case where a registered
+`msctls_statusbar32` with no guest comctl32 behind it answered WM_GETFONT /
+SB_GETBORDERS with garbage, laid the bar out 267px tall and left the view
+163px high. That was observed only in a scratch worktree **without the app's
+DLLs mounted**. It is not established as the cause of the black band above
+on the real `--app` route, so treat that band as still unexplained. The
+DefWindowProc answers themselves are correct for any MFC app with no
+comctl32.
