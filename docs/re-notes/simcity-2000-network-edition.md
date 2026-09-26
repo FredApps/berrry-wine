@@ -24,6 +24,19 @@ budget dialog then swallows the input that follows it). The city is live
 around batch ~290000; ~1950 batches/s on the dev box, so budget
 `--max-seconds` accordingly (150 s ends at ~290000, too early).
 
+**The server overflows its own stack if a login ack is slow.** While it
+waits, it appends one `.` per tick to "Awaiting Player's Ack of Login
+Packet" in a fixed stack buffer. On 2026-09-25, at load ~176, it then called
+a function pointer the dots had overwritten (`call [ebp-0x44]` at
+`0x4170dc` → EIP `0x2e2e`, ASCII `".."`). That was `unreachable` at server
+batch 3254, and both clients then said "Could Not Connect".
+
+- The server runs at the default 200 ms of guest time per batch, so a few
+  wall-clock seconds of client lag is a long wait in guest time.
+- This is the app's bug surfacing under load, not an emulator fault.
+- Run this route only on a quiet box.
+- Treat a server `CRASH` at EIP `0x2e2e` as "too slow", not as a regression.
+
 The first client is "Mayor", the second "Deputy". Chat (post-cmd 32789)
 propagates and paints on the other client since 294a49e2.
 
