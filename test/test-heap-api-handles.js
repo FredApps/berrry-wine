@@ -100,6 +100,19 @@ const extraWat = String.raw`
   assert(processAllocation, 'the process heap remains usable');
   assert.strictEqual(a.test_heap_free(processHeap, processAllocation), 1);
 
+  // HeapSize answers for any live block, not only ones below the asking
+  // instance's current bump pointer. msvcrt's _msize falls through to it and
+  // _onexit compares the answer unsigned: a -1 for a block from another chunk
+  // let Paint's atexit table grow over the next block's header.
+  const elsewhere = b.test_heap_alloc(processHeap, 0, 40) >>> 0;
+  assert(elsewhere, 'the second instance allocates from the process heap');
+  const elsewhereSize = a.test_heap_size(processHeap, elsewhere) >>> 0;
+  assert(elsewhereSize >= 40 && elsewhereSize < 0x1000,
+    `HeapSize sizes a live block another instance allocated (${elsewhereSize})`);
+  assert.strictEqual(a.test_heap_size(processHeap, elsewhere + 8) >>> 0, 0xffffffff,
+    'HeapSize refuses an interior pointer');
+  assert.strictEqual(b.test_heap_free(processHeap, elsewhere), 1);
+
   const first = a.test_heap_create() >>> 0;
   const second = a.test_heap_create() >>> 0;
   assert(first && second, 'HeapCreate allocates private heap records');

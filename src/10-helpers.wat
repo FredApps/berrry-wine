@@ -2049,6 +2049,26 @@
   (func $heap_payload_size_unchecked (param $guest_ptr i32) (result i32)
     (i32.sub (call $heap_block_size_unchecked (local.get $guest_ptr)) (i32.const 4)))
 
+  ;; Aligned block size (header included) of an allocator payload pointer, or
+  ;; zero when no arena covers it or its header is not a plausible extent in
+  ;; that arena. For HeapSize/_msize-style queries: the pointer is the
+  ;; guest's, so it is validated before anything reads through it, and the
+  ;; answer does not depend on which chunk this instance is bumping from now.
+  (func $heap_block_size_checked (param $guest_ptr i32) (result i32)
+    (local $block i32) (local $raw i32) (local $size i32)
+    (if (i32.ne (i32.and (local.get $guest_ptr) (i32.const 7)) (i32.const 4))
+      (then (return (i32.const 0))))
+    (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))
+    (if (i32.eqz (call $heap_arena_find (local.get $block)))
+      (then (return (i32.const 0))))
+    (local.set $raw (i32.atomic.load (call $g2w (local.get $block))))
+    ;; Bit zero is the GLOBAL_LIVE mark; bits 1..2 make the header malformed.
+    (if (i32.and (local.get $raw) (i32.const 6)) (then (return (i32.const 0))))
+    (local.set $size (i32.and (local.get $raw) (i32.const -8)))
+    (if (call $heap_block_bad (local.get $block) (local.get $size))
+      (then (return (i32.const 0))))
+    (local.get $size))
+
   ;; GlobalAlloc uses the otherwise spare low bit of its aligned size header
   ;; as process-wide provenance. The bit is not enough by itself: an aligned
   ;; pointer into an application's payload can have any four bytes planted in
@@ -2105,6 +2125,46 @@
         (br_if $invalid (i32.gt_u (local.get $next) (local.get $block)))
         (local.set $cur (local.get $next))
         (br $walk)))
+    (i32.const 0))
+
+  ;; Diagnostic twin of $heap_global_block_size's walk: why is this pointer
+  ;; not a live Global handle? 0 = it is one; 1 = misaligned; 2 = no arena
+  ;; covers it; 3 = reached its boundary but the GLOBAL_LIVE bit is clear;
+  ;; anything else is the guest address of the first header the walk refused
+  ;; (bad reserved bits, size under 16, or an extent past the arena), or of
+  ;; the block it stepped over the pointer from. $field 1 asks for the
+  ;; arena's base and 2 its allocated end instead. run.js: B:heap-walk:0xPTR.
+  (func (export "heap_walk_break") (param $guest_ptr i32) (param $field i32) (result i32)
+    (local $block i32) (local $rec i32) (local $cur i32) (local $end i32)
+    (local $raw i32) (local $size i32) (local $next i32)
+    (if (i32.or
+          (i32.lt_u (local.get $guest_ptr) (i32.const 4))
+          (i32.ne (i32.and (local.get $guest_ptr) (i32.const 7)) (i32.const 4)))
+      (then (return (i32.const 1))))
+    (local.set $block (i32.sub (local.get $guest_ptr) (i32.const 4)))
+    (local.set $rec (call $heap_arena_find (local.get $block)))
+    (if (i32.eqz (local.get $rec)) (then (return (i32.const 2))))
+    (local.set $cur (i32.atomic.load (local.get $rec)))
+    (local.set $end (i32.atomic.load offset=8 (local.get $rec)))
+    (if (i32.eq (local.get $field) (i32.const 1)) (then (return (local.get $cur))))
+    (if (i32.eq (local.get $field) (i32.const 2)) (then (return (local.get $end))))
+    (loop $walk
+      (if (i32.ge_u (local.get $cur) (local.get $end)) (then (return (local.get $cur))))
+      (local.set $raw (i32.atomic.load (call $g2w (local.get $cur))))
+      (local.set $size (i32.and (local.get $raw) (i32.const -8)))
+      (if (i32.or (i32.ne (i32.and (local.get $raw) (i32.const 6)) (i32.const 0))
+            (i32.lt_u (local.get $size) (i32.const 16)))
+        (then (return (local.get $cur))))
+      (local.set $next (i32.add (local.get $cur) (local.get $size)))
+      (if (i32.or (i32.le_u (local.get $next) (local.get $cur))
+            (i32.gt_u (local.get $next) (local.get $end)))
+        (then (return (local.get $cur))))
+      (if (i32.eq (local.get $cur) (local.get $block))
+        (then (return (select (i32.const 0) (i32.const 3)
+          (i32.and (local.get $raw) (i32.const 1))))))
+      (if (i32.gt_u (local.get $next) (local.get $block)) (then (return (local.get $cur))))
+      (local.set $cur (local.get $next))
+      (br $walk))
     (i32.const 0))
 
   ;; Mark a freshly allocated block before its pointer is published by a

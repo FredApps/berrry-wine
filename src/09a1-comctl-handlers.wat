@@ -357,7 +357,11 @@
     (call $modal_capture_nonvolatile)
     ;; Stable DEVMODEA/DEVNAMES handles. Global handles are direct guest heap
     ;; pointers in this runtime, so GlobalLock remains identity as MFC expects.
+    ;; Both are HGLOBALs the caller will GlobalLock and GlobalFree, so they
+    ;; carry the Global* provenance mark; unmarked, GlobalLock refuses them and
+    ;; MFC's AfxCreateDC gives up (Paint's Print Preview closed instantly).
     (local.set $devmode (call $heap_alloc (i32.const 156)))
+    (call $heap_global_mark (local.get $devmode))
     (memory.fill (call $g2w (local.get $devmode)) (i32.const 0) (i32.const 156))
     (call $gs16 (i32.add (local.get $devmode) (i32.const 36)) (i32.const 156)) ;; dmSize
     (call $gs32 (i32.add (local.get $devmode) (i32.const 40)) (i32.const 0x00000F03)) ;; orientation/paper/copies/quality
@@ -368,6 +372,7 @@
     (call $gs16 (i32.add (local.get $devmode) (i32.const 54)) (i32.const 1))   ;; copies
     (call $gs16 (i32.add (local.get $devmode) (i32.const 58)) (i32.const 300)) ;; print quality
     (local.set $devnames (call $heap_alloc (i32.const 32)))
+    (call $heap_global_mark (local.get $devnames))
     (local.set $devnames_wa (call $g2w (local.get $devnames))) (memory.fill (local.get $devnames_wa) (i32.const 0) (i32.const 32))
     (call $gs16 (local.get $devnames) (i32.const 8))
     (call $gs16 (i32.add (local.get $devnames) (i32.const 2)) (i32.const 16))
@@ -427,6 +432,7 @@
       (then (call $common_dialog_fail (i32.const 0x1003)) (return)))
     (call $modal_capture_nonvolatile)
     (local.set $devmode (call $heap_alloc (i32.const 220)))
+    (call $heap_global_mark (local.get $devmode))
     (memory.fill (call $g2w (local.get $devmode)) (i32.const 0) (i32.const 220))
     (call $gs16 (i32.add (local.get $devmode) (i32.const 68)) (i32.const 220)) ;; dmSize
     (call $gs32 (i32.add (local.get $devmode) (i32.const 72)) (i32.const 0x00000F03)) ;; dmFields
@@ -439,6 +445,7 @@
     ;; DEVNAMES: 8-byte header, then the strings. The offsets are in
     ;; characters, so byte 8 is character 4 here rather than character 8.
     (local.set $devnames (call $heap_alloc (i32.const 64)))
+    (call $heap_global_mark (local.get $devnames))
     (local.set $dn_w (call $g2w (local.get $devnames)))
     (memory.fill (local.get $dn_w) (i32.const 0) (i32.const 64))
     (call $gs16 (local.get $devnames) (i32.const 4))                              ;; wDriverOffset

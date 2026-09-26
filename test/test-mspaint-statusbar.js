@@ -33,7 +33,12 @@ try {
   output = execFileSync(process.execPath, [
     RUN,
     `--exe=${EXE}`,
-    `--input=20:dump-windows:status,21:mousemove:180:180,23:png:${SHOT},24:mousemove:39:146,26:png:${CLEAR_SHOT},28:0x111:57609,36:png:${PREVIEW_SHOT},37:stop`,
+    // 39,146 sits over the Tools bar, whose flyby help arms MFC's 0xE001
+    // check timer. Move off the window before Print Preview: otherwise that
+    // timer fires once the preview window is under the cursor and MFC pops the
+    // status back to the idle prompt over "Page 1", exactly as it does on
+    // Win98 (CControlBar::OnTimer -> SetStatusText(-1)).
+    `--input=20:dump-windows:status,21:mousemove:180:180,23:png:${SHOT},24:mousemove:39:146,26:png:${CLEAR_SHOT},27:mousemove:500:300,28:0x111:57609,36:png:${PREVIEW_SHOT},37:stop`,
     '--max-batches=45',
     '--batch-size=50000',
     '--no-close',
@@ -58,13 +63,12 @@ const statusLine = output.split('\n').find(line =>
   line.includes('window:status') && line.includes('class="msctls_statusbar32"')) || '';
 assert(statusLine.includes('ctrlClass=0'),
   `Paint status bar must retain its registered guest wndproc: ${statusLine}`);
-// Paint's frame is created with WS_EX_CLIENTEDGE (exStyle 0x300), so its
-// client area is inset 2px more per side than a plain frame, and the sizing
-// border is 4px rather than the 3 this test was written against. Both are
-// what Win98 does; between them the client went from 269x355 to 263x350 and
-// the bar with it. The pixel probes below follow: 3px right, 2px up, and the
-// grip/right-arrow ones 3px left of where they were.
-assert(statusLine.includes('pos=0,327 size=263x23'),
+// Paint's frame is created with WS_EX_CLIENTEDGE (exStyle 0x300), but MFC
+// then moves the edge onto the view: SetWindowLongA(frame, GWL_EXSTYLE,
+// 0x100) right after the view is created. So the frame keeps only its 4px
+// sizing border, its client is 275-8 = 267 wide, and the bar docks at the
+// bottom of that 267x354 client -- which is what Win98 lays out.
+assert(statusLine.includes('pos=0,331 size=267x23'),
   `Paint status bar did not retain its MFC docked geometry: ${statusLine}`);
 
 // The old stale scrollbar has mirrored black triangular arrows in both 16px
@@ -98,8 +102,9 @@ for (let y = 395; y <= 410; y++) {
 }
 
 let gripShadow = 0;
-for (let y = 405; y <= 412; y++) {
-  for (let x = 275; x <= 287; x++) {
+// The bar spans x 24..290, y 393..415, so the grip fills its last 12x12.
+for (let y = 404; y <= 415; y++) {
+  for (let x = 279; x <= 290; x++) {
     // The staircase is drawn in COLOR_3DSHADOW over the face, and on Win98
     // that is exactly 0x808080. This used to accept anything from 32 to 111,
     // which is a darker grey than the palette has ever had here.

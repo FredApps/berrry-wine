@@ -1565,6 +1565,9 @@ async function main() {
         // B:dump-mem:0xADDR[:LEN] — hexdump guest memory at that batch.
         scheduledInput.push({ batch, action: 'dump-mem',
           arg: parts[2], arg2: parts[3] });
+      } else if (kind === 'heap-walk') {
+        // B:heap-walk:0xPTR — why GlobalLock/GlobalFree accept or refuse PTR.
+        scheduledInput.push({ batch, action: 'heap-walk', arg: parts[2] });
       } else if (kind === 'tick-ms') {
         // B:tick-ms:N — from this batch on, one batch is worth N ms of guest
         // time (--tick-ms-per-batch, changed mid-run). For a run whose boot
@@ -6286,6 +6289,21 @@ async function main() {
         logs.push(`[input] dump-mem at batch ${batch}`);
         flushLogs();
         hexdump(at, len);
+      } else if (ev.action === 'heap-walk') {
+        // Replays the exact-boundary walk GlobalLock does from the arena base,
+        // and names the header it stopped at when it refuses the pointer.
+        const we = instance.exports;
+        const ptr = parseInt(ev.arg, 16) >>> 0;
+        const hex = v => '0x' + (v >>> 0).toString(16);
+        const r = we.heap_walk_break(ptr, 0) >>> 0;
+        const verdict = r === 0 ? 'live Global handle'
+          : r === 1 ? 'misaligned (not a heap payload)'
+          : r === 2 ? 'no heap arena covers it'
+          : r === 3 ? 'block boundary, but GLOBAL_LIVE is clear'
+          : `walk stopped at header ${hex(r)}`;
+        logs.push(`[input] heap-walk ${hex(ptr)} at batch ${batch}: ${verdict}` +
+          (r > 3 || r === 3 ? ` (arena ${hex(we.heap_walk_break(ptr, 1))}..${hex(we.heap_walk_break(ptr, 2))})` : ''));
+        if (r > 3) { flushLogs(); hexdump(Math.max(0, r - 32), 96); }
       } else if (ev.action === 'tick-ms') {
         batchClock.setTickMsPerBatch(ev.ms);
         logs.push(`[input] tick-ms ${batchClock.getTickMsPerBatch()} at batch ${batch} (guest ${batchClock.batchTicks()}ms)`);

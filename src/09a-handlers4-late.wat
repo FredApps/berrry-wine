@@ -2014,19 +2014,23 @@ SetColorAdjustment — validate and copy complete per-DC state.
     ;; HeapSize(hHeap, dwFlags, lpMem) → size
     ;; Our heap stores block size (including 4-byte header) at [ptr-4]
     ;; Only valid for pointers in our heap range; return -1 for unknown pointers
+    (local $size i32)
     (if (i32.eqz (call $heap_api_handle_valid (local.get $arg0)))
       (then
         (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
         (i32.store offset=0 (global.get $reg_base) (i32.const 0xFFFFFFFF))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
         (return)))
-    (if (i32.and
-          (i32.ge_u (local.get $arg2) (i32.add (global.get $image_base) (global.get $exe_size_of_image)))
-          (i32.lt_u (local.get $arg2) (global.get $heap_ptr)))
+    ;; This used to accept only pointers below this instance's current bump
+    ;; pointer. Once the allocator moved on to another chunk, every live block
+    ;; outside it answered -1 -- and msvcrt's _onexit compares _msize unsigned,
+    ;; so Paint's atexit table "had room" forever and its 38th entry landed on
+    ;; the next block's header. Every later GlobalLock that walked past that
+    ;; header then failed, Print Preview's DEVNAMES among them.
+    (local.set $size (call $heap_block_size_checked (local.get $arg2)))
+    (if (local.get $size)
       (then
-        (i32.store offset=0 (global.get $reg_base) (i32.sub
-          (call $heap_block_size_unchecked (local.get $arg2))
-          (i32.const 4))))
+        (i32.store offset=0 (global.get $reg_base) (i32.sub (local.get $size) (i32.const 4))))
       (else
         (i32.store offset=0 (global.get $reg_base) (i32.const 0xFFFFFFFF))))  ;; not our allocation
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))

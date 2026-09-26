@@ -53,6 +53,11 @@ const extraWat = String.raw`
     (call $handle_PrintDlgA (local.get $ptr) (i32.const 0)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_GlobalLock") (param $h i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const ${STACK}))
+    (call $handle_GlobalLock (local.get $h) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.load offset=0 (global.get $reg_base)))
   (func (export "test_ChooseColorW") (param $ptr i32) (result i32)
     (call $test_commdlg_begin)
     (call $handle_ChooseColorW (local.get $ptr) (i32.const 0)
@@ -175,6 +180,15 @@ function assertRejected(e, call, ptr, expectedError, label) {
   assert.strictEqual(e.get_esp() >>> 0, STACK + 8);
   assert.strictEqual(e.test_CommDlgExtendedError() >>> 0, 0,
     'a valid common-dialog entry clears the preceding failure');
+
+  // hDevMode and hDevNames are HGLOBALs: the caller locks them next. MFC's
+  // AfxCreateDC gives up on a NULL lock, which closed Paint's Print Preview
+  // the moment it opened.
+  const hDevMode = e.guest_read32(print + 8) >>> 0;
+  const hDevNames = e.guest_read32(print + 12) >>> 0;
+  assert.ok(hDevMode && hDevNames, 'PD_RETURNDEFAULT returns DEVMODE and DEVNAMES handles');
+  assert.strictEqual(e.test_GlobalLock(hDevMode) >>> 0, hDevMode, 'GlobalLock(hDevMode) succeeds');
+  assert.strictEqual(e.test_GlobalLock(hDevNames) >>> 0, hDevNames, 'GlobalLock(hDevNames) succeeds');
 
   console.log('PASS  CommDlgExtendedError distinguishes validation failures from Cancel');
 })().catch(error => {
