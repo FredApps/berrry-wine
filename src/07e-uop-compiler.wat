@@ -126,6 +126,8 @@
   ;; stats ($uop_cstat)
   (global $uc_compiled (mut i32) (i32.const 0))
   (global $uc_declined (mut i32) (i32.const 0))
+  ;; The reason of the most recent decline, for the --uop-census event.
+  (global $uc_last_why (mut i32) (i32.const 0))
   (global $uc_insns    (mut i32) (i32.const 0))
   (global $uc_uops     (mut i32) (i32.const 0))
   (global $uc_flushes  (mut i32) (i32.const 0))
@@ -2623,6 +2625,7 @@
 
   (func $uc_decline (param $why i32) (result i32)
     (local $p i32)
+    (global.set $uc_last_why (local.get $why))
     (global.set $uc_declined (i32.add (global.get $uc_declined) (i32.const 1)))
     (local.set $p (i32.add (i32.add (global.get $UC_MISC) (i32.const 0xC00))
                            (i32.shl (i32.and (local.get $why) (i32.const 63)) (i32.const 2))))

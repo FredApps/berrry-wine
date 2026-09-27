@@ -124,7 +124,7 @@
   (global $uop_code_bytes (mut i32) (i32.const 0x000E0000))
   (global $uop_temps_off  (mut i32) (i32.const 0x000E0000)) ;; 4096 x 4 bytes
   (global $uop_wins_off   (mut i32) (i32.const 0x000E4000)) ;; 1024 x 16 bytes
-  (global $uop_map_off    (mut i32) (i32.const 0x000E8000)) ;; 4096 x {eip, pc}
+  (global $uop_map_off    (mut i32) (i32.const 0x000E8000)) ;; 2048 sets x 2 ways x {eip, pc}
   (global $uop_ranges_off (mut i32) (i32.const 0x000F0000)) ;; 4096 x {lo, hi, pc}
   (global $UOP_RANGES_MAX i32 (i32.const 4096))
   (global $UOP_HDR        i32 (i32.const 32))
@@ -148,6 +148,46 @@
   (global $uop_blocks   (mut i64) (i64.const 0))
   (global $uop_head_exits (mut i32) (i32.const 0))
   (global $uop_retired_poor (mut i32) (i32.const 0))
+
+  ;; --uop-census: one record per verdict, through log_i32 (tools/uop-census.js
+  ;; reads them back). A record is 0xC5E50000|kind, then four fields:
+  ;;   1 compiled   head, decline reason (0 = installed, 0xFFFF busy), insns, 0
+  ;;   2 poor       head, enters, blocks, the EIP it left by
+  ;;   3 code write head, enters, blocks, the written address
+  ;;   4 flush      gen, bytes placed, ranges, 0
+  ;;   5 flush-all  (then a 4): every verdict is forgotten too
+  ;;   6 live       head, enters, blocks, 0      (uop_census_dump, at exit)
+  ;;   7 marker     head, 0, 0, 0                (declined or poor, at exit)
+  ;;   8 hot table  takeovers, warm takeovers (count >= 16), threshold probes, 0
+  ;;                (at exit; the 512-slot $bx_hot_bump table)
+  (global $uop_census (mut i32) (i32.const 0))
+  (func $uop_census_ev (param $k i32) (param $a i32) (param $b i32) (param $c i32) (param $d i32)
+    (call $host_log_i32 (i32.or (i32.const 0xC5E50000) (local.get $k)))
+    (call $host_log_i32 (local.get $a))
+    (call $host_log_i32 (local.get $b))
+    (call $host_log_i32 (local.get $c))
+    (call $host_log_i32 (local.get $d)))
+  (func (export "set_uop_census") (param $on i32)
+    (global.set $uop_census (i32.ne (local.get $on) (i32.const 0))))
+  (func (export "uop_census_dump")
+    (local $i i32) (local $s i32) (local $pc i32)
+    (call $uop_census_ev (i32.const 8) (global.get $bx_hot_evicts)
+      (global.get $bx_hot_evicts_warm) (global.get $bx_walk_hot_probes) (i32.const 0))
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (i32.const 4096)))
+      (local.set $s (i32.add (i32.add (global.get $uop_arena) (global.get $uop_map_off))
+                             (i32.shl (local.get $i) (i32.const 3))))
+      (local.set $pc (i32.load offset=4 (local.get $s)))
+      (if (i32.eq (local.get $pc) (i32.const 1))
+        (then (call $uop_census_ev (i32.const 7) (i32.load (local.get $s))
+                (i32.const 0) (i32.const 0) (i32.const 0))))
+      (if (i32.gt_u (local.get $pc) (i32.const 1))
+        (then (if (i32.eq (i32.load (local.get $pc)) (global.get $uop_gen))
+          (then (call $uop_census_ev (i32.const 6) (i32.load offset=4 (local.get $pc))
+                  (i32.load offset=16 (local.get $pc)) (i32.load offset=20 (local.get $pc))
+                  (i32.const 0))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l))))
 
   ;; Prove [lo, lo+len) is one affine mapping and, for a written window, that
   ;; no page in it holds decoded code. Fill the slot and answer 1, or leave it
@@ -676,18 +716,60 @@
   ;;   +24 exits back to the head          +28 reserved
   ;; ===================================================================
 
-  (func $uop_map_slot (param $eip i32) (result i32)
+  ;; The verdict map is 2048 sets of two {eip, pc} ways. It was direct-mapped
+  ;; once, and on Diablo II's gameplay 14290 of 14362 compiles were a head
+  ;; whose slot had stopped naming it: a declined head sharing a slot with a
+  ;; live program could never record its decline (a marker never evicts a
+  ;; live program), so it recompiled at every hot threshold -- 3046 times for
+  ;; one d2cmp head -- and two live heads on one slot took turns evicting and
+  ;; recompiling each other 219 times apiece.
+  (func $uop_map_set (param $eip i32) (result i32)
     (i32.add (i32.add (global.get $uop_arena) (global.get $uop_map_off))
       (i32.shl (i32.and (i32.xor (local.get $eip) (i32.shr_u (local.get $eip) (i32.const 12)))
-                        (i32.const 4095))
-               (i32.const 3))))
+                        (i32.const 2047))
+               (i32.const 4))))
+
+  ;; The way naming $eip, or 0.
+  (func $uop_map_slot (param $eip i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $uop_map_set (local.get $eip)))
+    (if (i32.eq (i32.load (local.get $s)) (local.get $eip)) (then (return (local.get $s))))
+    (if (i32.eq (i32.load offset=8 (local.get $s)) (local.get $eip))
+      (then (return (i32.add (local.get $s) (i32.const 8)))))
+    (i32.const 0))
+
+  ;; Does way $w hold a program of the current generation?
+  (func $uop_way_live (param $w i32) (result i32)
+    (local $pc i32)
+    (local.set $pc (i32.load offset=4 (local.get $w)))
+    (if (i32.le_u (local.get $pc) (i32.const 1)) (then (return (i32.const 0))))
+    (i32.eq (i32.load (local.get $pc)) (global.get $uop_gen)))
+
+  ;; The way to write $eip's verdict into without evicting a live program:
+  ;; its own way, else an empty or stale one, else a marker's; 0 when both
+  ;; ways hold live programs.
+  (func $uop_map_free_way (param $eip i32) (result i32)
+    (local $s i32)
+    (local.set $s (call $uop_map_slot (local.get $eip)))
+    (if (local.get $s) (then (return (local.get $s))))
+    (local.set $s (call $uop_map_set (local.get $eip)))
+    (if (i32.eqz (call $uop_way_live (local.get $s)))
+      (then (if (i32.ne (i32.load offset=4 (local.get $s)) (i32.const 1))
+        (then (return (local.get $s))))))
+    (if (i32.eqz (call $uop_way_live (i32.add (local.get $s) (i32.const 8))))
+      (then (if (i32.ne (i32.load offset=12 (local.get $s)) (i32.const 1))
+        (then (return (i32.add (local.get $s) (i32.const 8)))))))
+    (if (i32.eqz (call $uop_way_live (local.get $s))) (then (return (local.get $s))))
+    (if (i32.eqz (call $uop_way_live (i32.add (local.get $s) (i32.const 8))))
+      (then (return (i32.add (local.get $s) (i32.const 8)))))
+    (i32.const 0))
 
   ;; The program to enter at $eip, or 0. Asked once per decoded block by
   ;; $decode_block when the tier is on.
   (func $uop_map_get (param $eip i32) (result i32)
     (local $s i32) (local $pc i32)
     (local.set $s (call $uop_map_slot (local.get $eip)))
-    (if (i32.ne (i32.load (local.get $s)) (local.get $eip)) (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
     (local.set $pc (i32.load offset=4 (local.get $s)))
     ;; 0 = nothing here, 1 = retired as poor (see $uop_retire_poor).
     (if (i32.le_u (local.get $pc) (i32.const 1)) (then (return (i32.const 0))))
@@ -701,10 +783,15 @@
     (local $pc i32)
     (if (i32.ne (call $uop_map_get (local.get $eip)) (i32.const 0)) (then (return)))
     (local.set $pc (call $uop_map_slot (local.get $eip)))
-    (if (i32.and (i32.eq (i32.load (local.get $pc)) (local.get $eip))
-                 (i32.eq (i32.load offset=4 (local.get $pc)) (i32.const 1)))
-      (then (return)))
+    (if (i32.ne (local.get $pc) (i32.const 0))
+      (then (if (i32.eq (i32.load offset=4 (local.get $pc)) (i32.const 1)) (then (return)))))
     (local.set $pc (call $uop_compile (local.get $eip)))
+    (if (global.get $uop_census)
+      (then (call $uop_census_ev (i32.const 1) (local.get $eip)
+              (if (result i32) (i32.eqz (local.get $pc)) (then (global.get $uc_last_why))
+                (else (if (result i32) (i32.eq (local.get $pc) (i32.const 1))
+                        (then (i32.const 0xFFFF)) (else (i32.const 0)))))
+              (global.get $uc_nloop) (i32.const 0))))
     (if (i32.eqz (local.get $pc))
       (then (call $uop_mark_dead (local.get $eip)) (return)))
     ;; another thread is compiling: try again at the next hot bump
@@ -716,19 +803,27 @@
   ;; Never over a live program of another head that shares the slot.
   ;; $uop_flush_all (the code itself may have changed) forgets every marker.
   (func $uop_mark_dead (param $eip i32)
-    (local $s i32) (local $pc i32)
-    (local.set $s (call $uop_map_slot (local.get $eip)))
-    (local.set $pc (i32.load offset=4 (local.get $s)))
-    (if (i32.gt_u (local.get $pc) (i32.const 1))
-      (then (if (i32.eq (i32.load (local.get $pc)) (global.get $uop_gen)) (then (return)))))
+    (local $s i32)
+    (local.set $s (call $uop_map_free_way (local.get $eip)))
+    (if (i32.eqz (local.get $s)) (then (return)))
     (i32.store (local.get $s) (local.get $eip))
     (i32.store offset=4 (local.get $s) (i32.const 1)))
 
+  ;; With both ways live, the program entered less often gives up its way.
+  ;; It keeps running from the blocks already decoded with its enter op.
   (func $uop_install (param $eip i32) (param $pc i32)
+    (local $s i32)
     (i32.store (local.get $pc) (global.get $uop_gen))
     (i32.store offset=4 (local.get $pc) (local.get $eip))
-    (i32.store (call $uop_map_slot (local.get $eip)) (local.get $eip))
-    (i32.store offset=4 (call $uop_map_slot (local.get $eip)) (local.get $pc))
+    (local.set $s (call $uop_map_free_way (local.get $eip)))
+    (if (i32.eqz (local.get $s))
+      (then
+        (local.set $s (call $uop_map_set (local.get $eip)))
+        (if (i32.gt_u (i32.load offset=16 (i32.load offset=4 (local.get $s)))
+                      (i32.load offset=16 (i32.load offset=12 (local.get $s))))
+          (then (local.set $s (i32.add (local.get $s) (i32.const 8)))))))
+    (i32.store (local.get $s) (local.get $eip))
+    (i32.store offset=4 (local.get $s) (local.get $pc))
     (global.set $uop_installs (i32.add (global.get $uop_installs) (i32.const 1)))
     (call $page_retire_ga (local.get $eip)))
 
@@ -762,7 +857,7 @@
     (local.set $s (call $uop_map_slot (i32.load offset=4 (local.get $pc))))
     (call $uop_kill (local.get $pc))
     (call $uop_drop_ranges (local.get $pc))
-    (if (i32.eq (i32.load (local.get $s)) (i32.load offset=4 (local.get $pc)))
+    (if (i32.ne (local.get $s) (i32.const 0))
       (then (i32.store offset=4 (local.get $s) (i32.const 1)))))
 
   (func $uop_kill (param $pc i32)
@@ -770,8 +865,9 @@
     (if (i32.eqz (i32.load (local.get $pc))) (then (return)))
     (global.set $uop_kills (i32.add (global.get $uop_kills) (i32.const 1)))
     (local.set $s (call $uop_map_slot (i32.load offset=4 (local.get $pc))))
-    (if (i32.eq (i32.load offset=4 (local.get $s)) (local.get $pc))
-      (then (i32.store offset=4 (local.get $s) (i32.const 0))))
+    (if (i32.ne (local.get $s) (i32.const 0))
+      (then (if (i32.eq (i32.load offset=4 (local.get $s)) (local.get $pc))
+        (then (i32.store offset=4 (local.get $s) (i32.const 0))))))
     (i32.store (local.get $pc) (i32.const 0)))
 
   ;; Called from $invalidate_code_range for every guest write that reached
@@ -786,6 +882,12 @@
       (if (i32.and (i32.lt_u (local.get $ga) (i32.load offset=4 (local.get $e)))
                    (i32.gt_u (local.get $end) (i32.load (local.get $e))))
         (then
+          (if (global.get $uop_census)
+            (then (local.set $last (i32.load offset=8 (local.get $e)))
+                  (if (i32.load (local.get $last)) (then
+                  (call $uop_census_ev (i32.const 3) (i32.load offset=4 (local.get $last))
+                    (i32.load offset=16 (local.get $last)) (i32.load offset=20 (local.get $last))
+                    (local.get $ga))))))
           (call $uop_kill (i32.load offset=8 (local.get $e)))
           ;; swap-remove, and look at slot $i again
           (global.set $uop_nranges (i32.sub (global.get $uop_nranges) (i32.const 1)))
@@ -820,6 +922,9 @@
   ;; Throw every program away: the arena is full, or the decoded code
   ;; everything was lowered from can no longer be trusted.
   (func $uop_flush
+    (if (global.get $uop_census)
+      (then (call $uop_census_ev (i32.const 4) (global.get $uop_gen) (global.get $uop_alloc)
+              (global.get $uop_nranges) (i32.const 0))))
     (global.set $uop_gen (i32.add (global.get $uop_gen) (i32.const 1)))
     (if (i32.eqz (global.get $uop_gen)) (then (global.set $uop_gen (i32.const 1))))
     (global.set $uop_nranges (i32.const 0))
@@ -827,6 +932,8 @@
   ;; ... and when the code itself may have changed, the verdicts on it too:
   ;; forget every retired and declined marker ($uop_mark_dead).
   (func $uop_flush_all
+    (if (global.get $uop_census)
+      (then (call $uop_census_ev (i32.const 5) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))))
     (call $uop_flush)
     (memory.fill (i32.add (global.get $uop_arena) (global.get $uop_map_off))
                  (i32.const 0) (i32.const 0x8000)))
@@ -901,6 +1008,10 @@
                                    (i32.shl (i32.load offset=16 (local.get $op)) (i32.const 1))))
               (then
                 (global.set $uop_retired_poor (i32.add (global.get $uop_retired_poor) (i32.const 1)))
+                (if (global.get $uop_census)
+                  (then (call $uop_census_ev (i32.const 2) (i32.load offset=4 (local.get $op))
+                          (i32.load offset=16 (local.get $op)) (i32.load offset=20 (local.get $op))
+                          (global.get $eip))))
                 (call $uop_retire_poor (local.get $op))))
             (return_call $branch_end)))
         (global.set $uop_head_exits (i32.add (global.get $uop_head_exits) (i32.const 1)))

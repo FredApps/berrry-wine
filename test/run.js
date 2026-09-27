@@ -4233,6 +4233,11 @@ async function main() {
     });
     wh.log = workerApiLog.log;
     wh.log_i32 = workerApiLog.log_i32;
+    // The API logger drops every value no visible call owns, which is all of
+    // a thread's --uop-census records; tools/uop-census.js --thread=N reads these.
+    if (experiments.uopCensus) {
+      wh.log_i32 = (val) => { logs.push(`[i32 T${tid}] ${hex(val)}`); workerApiLog.log_i32(val); };
+    }
     if (TRACE_MOUSE_STATE) {
       const workerGetMousePosition = wh.get_mouse_position;
       const workerGetMouseButtons = wh.get_mouse_buttons;
@@ -9830,6 +9835,9 @@ if (VERBOSE) {
   }
 
   experiments.report(instance, threadManager, VERBOSE);
+  // A report may have called an export that logs (--uop-census's exit dump);
+  // nothing drains the buffer after the batch loop otherwise.
+  flushLogs();
 
   if (DUMP_VIRTUAL_MAPS) {
     const dv = new DataView(memory.buffer);

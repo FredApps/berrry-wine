@@ -110,6 +110,11 @@ const SCRIPT = (opt('guest-script', '') || '').split(',').filter(Boolean).map(sp
       frames: 0, at: 0,
     };
   }
+  // gate:PATH@timeoutSec -- hold the walk until PATH exists. This is the seam
+  // for driving the page by hand or with tools/ctl.js (frozen mode, png,
+  // click, step) through the dev-server hub: reach the screen you want, then
+  // `touch PATH` and the sample starts there.
+  if (kind === 'gate') return { kind, file: rest, timeout: Number(at) || 1800, frames: 0, at: 0 };
   throw new Error(`--guest-script: unknown action "${kind}" in ${spec}`);
 });
 const FRAME_WAIT_CAP = Number(opt('frame-wait-cap', 240));
@@ -139,6 +144,10 @@ const BEFORE_LOAD = opt('before-load', '');
 // functional runs of OpenGL/D3D guests, not for numbers about how an app feels.
 const SWIFTSHADER = argv.includes('--swiftshader');
 const CPU_PROFILE = argv.includes('--cpu-profile');
+// --cpu-profile-dir=DIR: also write each thread's raw .cpuprofile (loadable in
+// DevTools' Performance panel); --cpu-profile-top=N rows per thread.
+const CPU_PROFILE_DIR = opt('cpu-profile-dir', '');
+const CPU_PROFILE_TOP = Number(opt('cpu-profile-top', '12')) || 12;
 // --headful: run in a visible Chrome window instead of a headless one. Headless
 // Chrome is a different renderer -- no compositor surface, no display refresh
 // to pace rAF against -- so its frame intervals and long tasks describe a
@@ -782,6 +791,12 @@ async function main() {
       if (act.frames) await waitFrames(act.frames);
       else if (act.at) await wait(act.at * 1000);
       if (act.kind === 'wait') await waitPixel(act);
+      else if (act.kind === 'gate') {
+        console.log(`gate: waiting for ${act.file} (up to ${act.timeout}s)`);
+        const deadline = Date.now() + act.timeout * 1000;
+        while (!fs.existsSync(act.file) && Date.now() < deadline) await wait(500);
+        console.log(`gate: ${fs.existsSync(act.file) ? 'open' : `TIMED OUT after ${act.timeout}s`}`);
+      }
       else if (act.kind === 'click') await clickGuest(act.x, act.y, act.hold);
       else if (act.kind === 'fclick') await clickFilm(act.x, act.y, act.hold);
       else if (act.kind === 'type') await typeGuest(act.text, act.hold);
@@ -842,12 +857,27 @@ async function main() {
     // --cpu-profile: V8 sampling profiler over the same window, aggregated by
     // self time. Long tasks tell you a frame was blocked; this tells you by
     // what. Costs a little overhead, so it is opt-in.
+    // The page session sees only the page's own thread. With --threads every
+    // guest thread is a Worker, and the D3D rasterizer is a render Worker, so
+    // a page-only profile silently leaves out most of the CPU -- each worker
+    // is profiled through its own session and reported as its own thread.
     let cdp = null;
+    const profTargets = [];
+    const startProfiler = async (label, session) => {
+      try {
+        await session.send('Profiler.enable');
+        await session.send('Profiler.setSamplingInterval', { interval: 200 });
+        await session.send('Profiler.start');
+        profTargets.push({ label, session });
+      } catch (e) { console.log(`  cpu-profile: could not start on ${label}: ${e.message}`); }
+    };
+    const workerLabel = w => w.url().replace(/^https?:\/\/[^/]+\//, '').replace(/\?.*$/, '');
+    const onWorker = w => { if (w.client) startProfiler(`worker ${workerLabel(w)} (late)`, w.client); };
     if (CPU_PROFILE) {
       cdp = await page.target().createCDPSession();
-      await cdp.send('Profiler.enable');
-      await cdp.send('Profiler.setSamplingInterval', { interval: 200 });
-      await cdp.send('Profiler.start');
+      await startProfiler('page', cdp);
+      for (const w of page.workers()) if (w.client) await startProfiler(`worker ${workerLabel(w)}`, w.client);
+      page.on('workercreated', onWorker);
     }
 
     // MACHINE LOAD, printed either side of the sample. This is not a detail:
@@ -946,23 +976,47 @@ async function main() {
     }), SECONDS);
 
     if (cdp) {
-      const { profile } = await cdp.send('Profiler.stop');
-      const byId = new Map(profile.nodes.map(n => [n.id, n]));
-      const self = new Map();
-      // timeDeltas[i] is the time attributed to samples[i].
-      for (let i = 0; i < profile.samples.length; i++) {
-        const n = byId.get(profile.samples[i]);
-        if (!n) continue;
-        const f = n.callFrame;
-        const where = f.url ? `${f.url.replace(/^https?:\/\/[^/]+\//, '')}:${f.lineNumber + 1}` : '';
-        const key = `${f.functionName || '(anonymous)'}  ${where}`;
-        self.set(key, (self.get(key) || 0) + (profile.timeDeltas[i] || 0));
+      page.off('workercreated', onWorker);
+      const summary = [];
+      for (const t of profTargets) {
+        let profile;
+        try { ({ profile } = await t.session.send('Profiler.stop')); }
+        catch (e) { console.log(`  cpu-profile: ${t.label} ended before the sample did (${e.message})`); continue; }
+        if (CPU_PROFILE_DIR) {
+          fs.mkdirSync(CPU_PROFILE_DIR, { recursive: true });
+          const file = path.join(CPU_PROFILE_DIR, `${summary.length}-${t.label.replace(/[^\w.-]+/g, '_')}.cpuprofile`);
+          fs.writeFileSync(file, JSON.stringify(profile));
+        }
+        const byId = new Map(profile.nodes.map(n => [n.id, n]));
+        const self = new Map();
+        let idle = 0;
+        // timeDeltas[i] is the time attributed to samples[i].
+        for (let i = 0; i < profile.samples.length; i++) {
+          const n = byId.get(profile.samples[i]);
+          if (!n) continue;
+          const f = n.callFrame;
+          const dt = profile.timeDeltas[i] || 0;
+          if (f.functionName === '(idle)') { idle += dt; continue; }
+          const where = f.url ? `${f.url.replace(/^https?:\/\/[^/]+\//, '')}:${f.lineNumber + 1}` : '';
+          const key = `${f.functionName || '(anonymous)'}  ${where}`;
+          self.set(key, (self.get(key) || 0) + dt);
+        }
+        const busy = [...self.values()].reduce((a, b) => a + b, 0);
+        summary.push({ label: t.label, busy, idle, self });
       }
-      const total = [...self.values()].reduce((a, b) => a + b, 0) || 1;
+      const span = SECONDS * 1e6;
       console.log('');
-      console.log('CPU self time (top 12):');
-      for (const [k, us] of [...self.entries()].sort((a, b) => b[1] - a[1]).slice(0, 12)) {
-        console.log(`  ${(100 * us / total).toFixed(1).padStart(5)}%  ${(us / 1000).toFixed(0).padStart(6)}ms  ${k}`);
+      console.log(`CPU per thread over the ${SECONDS}s sample (busy = sampled non-idle time):`);
+      for (const s of summary) {
+        console.log(`  ${(100 * s.busy / span).toFixed(1).padStart(5)}% of wall  ${(s.busy / 1000).toFixed(0).padStart(6)}ms busy  ${s.label}`);
+      }
+      for (const s of summary) {
+        if (s.busy < span * 0.01) continue;
+        console.log('');
+        console.log(`CPU self time, ${s.label} (top ${CPU_PROFILE_TOP}, % of this thread's busy time):`);
+        for (const [k, us] of [...s.self.entries()].sort((a, b) => b[1] - a[1]).slice(0, CPU_PROFILE_TOP)) {
+          console.log(`  ${(100 * us / (s.busy || 1)).toFixed(1).padStart(5)}%  ${(us / 1000).toFixed(0).padStart(6)}ms  ${k}`);
+        }
       }
     }
 

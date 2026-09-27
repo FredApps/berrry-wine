@@ -772,6 +772,10 @@
   ;; over thousands of heads reset each other before the 16-install threshold
   ;; bites, which is why raising K works at all and is the next lever.
   (global $bx_walk_hot_k (mut i32) (i32.const 256))
+  ;; Hot-slot takeovers by another EIP, and those that threw away a count of
+  ;; 16 or more ($bx_hot_bump).
+  (global $bx_hot_evicts (mut i32) (i32.const 0))
+  (global $bx_hot_evicts_warm (mut i32) (i32.const 0))
   ;; Blocks one walk may visit. This is the discovery COST bound, and it is
   ;; counted in blocks rather than in uops because a block is what costs a
   ;; $decode_block.
@@ -2399,6 +2403,13 @@
     (local.set $s (call $bx_hot_slot (local.get $eip)))
     (if (i32.ne (i32.load (local.get $s)) (local.get $eip))
       (then
+        ;; The slot is taken over and its count lost: two heads sharing a
+        ;; slot reset each other and neither ever reaches the threshold.
+        ;; Counted so --uop-census can say how often a warm count is lost.
+        (global.set $bx_hot_evicts (i32.add (global.get $bx_hot_evicts) (i32.const 1)))
+        (if (i32.ge_u (i32.load offset=4 (local.get $s)) (i32.const 16))
+          (then (global.set $bx_hot_evicts_warm
+                  (i32.add (global.get $bx_hot_evicts_warm) (i32.const 1)))))
         (i32.store (local.get $s) (local.get $eip))
         (i32.store offset=4 (local.get $s) (i32.const 1))
         (return)))

@@ -56,6 +56,12 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // own arena, since a program names its instance's registers.
   // docs/uop-tier-design.md.
   const UOP = hasFlag('uop');
+  // --uop-census: log every head's verdict (installed / declined + reason),
+  // every poor retirement and code-write kill with the program's counts, every
+  // flush, and the live programs at exit. The records go through log_i32, so
+  // this turns DBG_INV on; read them with tools/uop-census.js.
+  const UOP_CENSUS = hasFlag('uop-census');
+  if (UOP_CENSUS) env.DBG_INV = '1';
   // --branch-clock: one guest-clock block per executed x86 branch, not per
   // threaded block cut ($branch_clock in 05-alu). Pass it to BOTH arms of any
   // A/B whose tier re-decodes code, or the arms run on different clocks.
@@ -255,6 +261,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (BRANCH_CLOCK) inheritWasm('set_branch_clock', 1);
     if (UOP) inheritWasm('set_uop', 1);
+    if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
     // The thresholds too: a guest thread decodes in its own instance, so a cap
@@ -268,6 +275,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   function applyMain(instance, { copySuperops: COPY_SUPEROPS, ctx = null }) {
     if (BRANCH_CLOCK && instance.exports.set_branch_clock) instance.exports.set_branch_clock(1);
     if (UOP && instance.exports.set_uop && ctx) {
+      if (UOP_CENSUS && instance.exports.set_uop_census) instance.exports.set_uop_census(1);
       instance.exports.set_uop(1);
       uopOn = true;
     }
@@ -405,6 +413,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   function report(instance, threadManager, verbose, log = console.log) {
     if (uopOn) {
       const x = instance.exports;
+      if (UOP_CENSUS && x.uop_census_dump) x.uop_census_dump();
       const st = (k) => x.uop_stats(k) >>> 0;
       const cs = (k) => x.uop_cstat(k) >>> 0;
       const why = UOP_REASONS.map((name, k) => [name, k && x.uop_decline_count(k) >>> 0])
@@ -420,6 +429,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
         const tx = thread.instance && thread.instance.exports;
         const c = tx && tx.uop_stats ? [2, 3, 4, 5].map(k => tx.uop_stats(k) >>> 0) : thread.uop;
         if (!c) continue;
+        // A cooperative thread's census goes out through its own log_i32,
+        // tagged with its thread id by run.js.
+        if (UOP_CENSUS && tx && tx.uop_census_dump) tx.uop_census_dump();
         const where = tx && tx.uop_arena ? `arena=0x${(tx.uop_arena() >>> 0).toString(16)}` : 'worker';
         log(`uop[thread 0x${(handle >>> 0).toString(16)}]: ${where} ` +
           `installs=${c[0]} kills=${c[1]} enters=${c[2]} blocks=${c[3]}`);
@@ -428,7 +440,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LOOPMATCH, LOOPMATCH_STATS, X87_FUSION, VERBOSE: verbose }, instance, threadManager, log);
   }
 
-  return { traceLoopmatch: TRACE_LOOPMATCH, copySuperopsRequested: COPY_SUPEROPS_ARG,
+  return { traceLoopmatch: TRACE_LOOPMATCH, uopCensus: UOP_CENSUS, copySuperopsRequested: COPY_SUPEROPS_ARG,
     noCopySuperops: NO_COPY_SUPEROPS, recordInherited, applyMain, report };
 }
 
