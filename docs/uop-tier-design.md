@@ -69,9 +69,17 @@ toyvm measured the full effect at ns per x86 instruction (V8/SM):
   - the five lazy-flag globals, when live;
   - EIP;
   - memory, including SMC retirement.
-- **Threads.** The program store and vreg scratch are per-thread partitions,
-  like `$THREAD_CACHE_BASE`. Guest registers are already per-thread (`$REGFILE`
-  stride).
+- **Threads.** Every guest thread is its own wasm instance, and a program bakes
+  its instance's `$reg_base`, temps and windows, so each instance has its own
+  arena: the main thread uses `$UOP_ARENA`, worker `tid` uses slot `tid-1` of
+  `$UOP_THREAD_ARENAS` (15 x 256 KB, paid for by shrinking each
+  `$THREAD_CACHE_BASE` partition from 1 MB to 768 KB). `init_thread` points the
+  instance at its slot with `$uop_set_arena`, which empties the map. The
+  compiler's scratch `$UOP_CSCRATCH` stays shared and is taken with an atomic
+  try-lock; a thread that finds it held skips the compile (answer 1, "busy")
+  and retries at the head's next hot bump rather than marking it dead.
+  `set_uop` and `set_branch_clock` are in `INHERITED_WASM_GLOBALS`, so both
+  `--threads` workers and cooperative threads inherit the switch.
 - **Fail-soft.** Anything the lowering does not model ends the program with an
   exit to the threaded interpreter at that instruction. That is never a crash
   and never an approximation.
@@ -190,10 +198,9 @@ deleted: every instruction address of every `test-uop-compiler.js` case under
 both clocks, and every head MW3, MCM, D2 and Heroes III compiled on their
 benchmark routes, produced identical programs (or the same decline reason).
 
-Exports: `uop_compile(eip)` (what `$uop_try` calls; answers the program or
-0), `uop_cstat(k)` (compiled, declined,
-instructions, uops, flushes, words), `uop_decline_count(reason)`,
-`set_uop_limit(n)` (`run.js --uop-limit=N`).
+Exports: `uop_compile(eip)` (what `$uop_try` calls; answers the program, 1
+when another thread holds the scratch, or 0), `uop_cstat(k)` (compiled,
+declined, instructions, uops, flushes, words), `uop_decline_count(reason)`.
 
 ## 5. Phases and the numbers that gate them
 

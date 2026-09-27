@@ -1293,7 +1293,7 @@
   ;; $THREAD_CACHE_STRIDE at MAIN_BYTES + (N-1)*STRIDE. See the declaration in
   ;; 00-regions.wat for why they differ, and $init_thread for the arithmetic.
   (global $THREAD_CACHE_MAIN_BYTES i32 (i32.const 0x00F00000))
-  (global $THREAD_CACHE_STRIDE i32 (i32.const 0x00100000))
+  (global $THREAD_CACHE_STRIDE i32 (i32.const 0x000C0000))
   ;; 0x07152000..0x07192000 held the direct-mapped block-cache index; pages
   ;; replaced it outright (docs/page-compile-design.md §§4/4.1), leaving it free.
   ;; Page compilation (docs/page-compile-design.md). Both regions live in the

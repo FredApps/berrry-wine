@@ -2110,6 +2110,11 @@ class WineAssembly {
     if (this.instance.exports.set_x87_affine_fusion) {
       this.instance.exports.set_x87_affine_fusion(x87Fusion);
     }
+    // The micro-op tier (07d/07e). Not decode-time: a hot head is compiled on
+    // its 256th entry whenever the tier is on, and turning it off flushes every
+    // program, so setUop() below can flip it on a running app too.
+    const uop = (window.WineSuperops && window.WineSuperops.uop === true) ? 1 : 0;
+    if (this.instance.exports.set_uop) this.instance.exports.set_uop(uop);
     // ?x87-fuse-debug=MASK[,LO,HI] -- the bisect knob for a fold divergence.
     // MASK picks families (1 pipeline4, 2 short, 4 tree4, 8 affine, 16 island)
     // and only blocks whose guest start is in [LO,HI) are offered to them.
@@ -2162,6 +2167,9 @@ class WineAssembly {
       }
       if (this.instance.exports.set_x87_affine_fusion) {
         await this.guestWorker.callExport('set_x87_affine_fusion', x87Fusion);
+      }
+      if (this.instance.exports.set_uop) {
+        await this.guestWorker.callExport('set_uop', uop);
       }
       if (x87FuseDebug && this.instance.exports.set_x87_fuse_debug) {
         await this.guestWorker.callExport('set_x87_fuse_debug',
@@ -2291,6 +2299,7 @@ class WineAssembly {
     // mutable WASM global is instance-local, including the meaningful OFF=0.
     this.threadManager.recordInheritedWasmGlobal('set_x87_pipeline4_fusion', x87Fusion);
     this.threadManager.recordInheritedWasmGlobal('set_x87_affine_fusion', x87Fusion);
+    this.threadManager.recordInheritedWasmGlobal('set_uop', uop);
     // The bisect mask has to reach every guest thread for the same reason the
     // fold flags do: a thread decodes in its own instance, so a mask set only
     // here leaves the threads folding under the default (every family on) and
@@ -4406,6 +4415,32 @@ class WineAssembly {
       running: !!this.running,
       eip: '0x' + eip.toString(16).padStart(8, '0'),
     }, extra || {});
+  }
+
+  // The debug toolbar's "uop tier" box, on a running app: every instance that
+  // executes guest code -- this one, the guest Worker that owns the main
+  // thread in real-thread mode, and each guest thread -- plus the setting
+  // future threads inherit. Off flushes the programs (set_uop in 07d).
+  setUop(on) {
+    const v = on ? 1 : 0;
+    const ex = this.instance && this.instance.exports;
+    if (!ex || !ex.set_uop) return false;
+    ex.set_uop(v);
+    if (this.guestWorker) {
+      Promise.resolve(this.guestWorker.callExport('set_uop', v)).catch(() => {});
+    }
+    if (this.threadManager) this.threadManager.setWasmGlobalAll('set_uop', v);
+    return true;
+  }
+
+  // Micro-op tier counters of the instance running the main thread: installs,
+  // kills, enters, blocks run inside programs. Null while the tier is off or
+  // when a guest Worker owns the main thread (its counters live there).
+  uopStats() {
+    const ex = this.instance && this.instance.exports;
+    if (this.guestWorker || !ex || !ex.get_uop || !ex.get_uop()) return null;
+    const [installs, kills, enters, blocks] = [2, 3, 4, 5].map(k => ex.uop_stats(k) >>> 0);
+    return { installs, kills, enters, blocks };
   }
 
   setFrozen(on) {

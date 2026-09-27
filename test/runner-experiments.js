@@ -51,16 +51,15 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   const BLOCK_EXEC = hasFlag('block-exec') || TREE_FOLD_ALIAS;
   // --uop: the micro-op tier (src/07d-uop-engine.wat + 07e-uop-compiler.wat).
   // A branch target entered 256 times is handed to the x86 -> micro-op
-  // lowering; a loop it accepts runs as a program until it leaves. Main
-  // instance only: the arena is one region and a program names its
-  // instance's registers. docs/uop-tier-design.md.
+  // lowering; a loop it accepts runs as a program until it leaves. Every guest
+  // thread's instance gets it too (recordInherited), each compiling into its
+  // own arena, since a program names its instance's registers.
+  // docs/uop-tier-design.md.
   const UOP = hasFlag('uop');
   // --branch-clock: one guest-clock block per executed x86 branch, not per
   // threaded block cut ($branch_clock in 05-alu). Pass it to BOTH arms of any
   // A/B whose tier re-decodes code, or the arms run on different clocks.
   const BRANCH_CLOCK = hasFlag('branch-clock');
-  // --uop-limit=N: install only the first N programs (bisecting a divergence).
-  const UOP_LIMIT = parseInt(getArg('uop-limit', '0'), 10) || 0;
   let uopOn = false;
   const BLOCK_EXEC_STATS = hasFlag('block-exec-stats');
   // --block-chain: patch a taken direct branch's own operand word with the
@@ -255,6 +254,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       inheritWasm('set_x87_fuse_debug', Number(mask) | 0, Number(lo) | 0, Number(hi) | 0);
     }
     if (BRANCH_CLOCK) inheritWasm('set_branch_clock', 1);
+    if (UOP) inheritWasm('set_uop', 1);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
     // The thresholds too: a guest thread decodes in its own instance, so a cap
@@ -268,7 +268,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   function applyMain(instance, { copySuperops: COPY_SUPEROPS, ctx = null }) {
     if (BRANCH_CLOCK && instance.exports.set_branch_clock) instance.exports.set_branch_clock(1);
     if (UOP && instance.exports.set_uop && ctx) {
-      if (UOP_LIMIT) instance.exports.set_uop_limit(UOP_LIMIT);
       instance.exports.set_uop(1);
       uopOn = true;
     }
@@ -413,6 +412,18 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       log(`uop: installs=${st(2)} kills=${st(3)} retired-poor=${st(7)} enters=${st(4)} ` +
         `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
         `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (why ? `\n  declines: ${why}` : ''));
+      // Each guest thread's instance has its own arena and counters, listed
+      // while the thread is alive: read directly from a cooperative thread's
+      // instance, or from the counters a --threads worker sends with each
+      // slice result (guest-worker.js).
+      for (const [handle, thread] of (threadManager && threadManager.threads) || []) {
+        const tx = thread.instance && thread.instance.exports;
+        const c = tx && tx.uop_stats ? [2, 3, 4, 5].map(k => tx.uop_stats(k) >>> 0) : thread.uop;
+        if (!c) continue;
+        const where = tx && tx.uop_arena ? `arena=0x${(tx.uop_arena() >>> 0).toString(16)}` : 'worker';
+        log(`uop[thread 0x${(handle >>> 0).toString(16)}]: ${where} ` +
+          `installs=${c[0]} kills=${c[1]} enters=${c[2]} blocks=${c[3]}`);
+      }
     }
     reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LOOPMATCH, LOOPMATCH_STATS, X87_FUSION, VERBOSE: verbose }, instance, threadManager, log);
   }

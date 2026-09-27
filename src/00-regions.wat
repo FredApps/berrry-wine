@@ -305,8 +305,10 @@
   ;; 1.9MB to buy workers a partition each they cannot begin to fill.
   ;;
   ;; So: main takes 0x00F00000 (15MB, nearly four times what it had) and each
-  ;; of fifteen workers takes $THREAD_CACHE_STRIDE = 0x00100000. That is
-  ;; 0xF00000 + 15 * 0x100000 = 0x1E00000, the same region size as before.
+  ;; of fifteen workers takes $THREAD_CACHE_STRIDE = 0x000C0000. That is
+  ;; 0xF00000 + 15 * 0xC0000 = 0x1A40000. Workers had 0x100000 each until the
+  ;; micro-op tier needed an arena per worker: the 0x40000 each gave up is
+  ;; $UOP_THREAD_ARENAS below, so the map as a whole did not grow.
   ;; $init_thread in 13-exports.wat is the one place that knows the shape.
   ;;
   ;; Why fifteen workers: Warcraft III keeps five threads alive and then asks
@@ -316,7 +318,7 @@
   ;; 0x413c10, its subsystem init rolled back, and the refcounted object the
   ;; campaign briefing calls through was freed while still in use.
   ;; docs/re-notes/warcraft3-demo.md has the whole measured chain.
-  (region.declare $THREAD_CACHE_BASE (size 0x01E00000) (align 0x00001000)
+  (region.declare $THREAD_CACHE_BASE (size 0x01A40000) (align 0x00001000)
     (owner "01-header.wat:$THREAD_CACHE_BASE"))
   ;; The eight x86 GPRs, per guest thread. Memory is SHARED between instances
   ;; while wasm globals are per-instance, so one fixed address would give every
@@ -328,12 +330,19 @@
   (region.declare $REGFILE (size 0x00000400) (align 0x00000040)
     (stride 0x40 (count $REGFILE_THREADS))
     (owner "01-header.wat:$REGFILE"))
-  ;; toyvm-style micro-op engine arena (src/07d-uop-engine.wat, phase 0 of
+  ;; toyvm-style micro-op engine arena (src/07d-uop-engine.wat, see
   ;; docs/uop-tier-design.md): program words, temp vregs and window slots.
-  ;; Single-thread for the prototype; per-thread partitions before any use
-  ;; outside the bench.
+  ;; The MAIN thread's. A program names its instance's $reg_base and temps,
+  ;; so each guest thread (its own instance over this shared memory) needs an
+  ;; arena of its own; workers take the tid-strided one below.
   (region.declare $UOP_ARENA (size 0x00100000) (align 0x00001000)
-    (owner "07d-uop-engine.wat:$uop_arena_addr"))
+    (owner "07d-uop-engine.wat:$UOP_ARENA"))
+  ;; Worker N (1..15) gets 0x40000 at (N-1)*0x40000 -- the same split as
+  ;; $THREAD_CACHE_BASE, and paid for by it (see there): a worker runs the one
+  ;; routine it was spawned for, so a quarter of the main arena is plenty.
+  (region.declare $UOP_THREAD_ARENAS (size 0x003C0000) (align 0x00001000)
+    (stride 0x40000 (count 15))
+    (owner "07d-uop-engine.wat:$UOP_THREAD_ARENAS"))
   ;; The x86 -> micro-op compiler's working memory (07e-uop-compiler.wat):
   ;; decoded instructions, blocks, flow states, the op stream and its maps.
   ;; Nothing in it outlives one compile.

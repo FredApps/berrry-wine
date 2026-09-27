@@ -79,6 +79,9 @@
   (global $UC_HM_WIN   i32 (region.addr $UOP_CSCRATCH 0x10E000)) ;; 2048
   (global $UC_HM_DEM   i32 (region.addr $UOP_CSCRATCH 0x117000)) ;; 4096
   (global $UC_HM_STUB  i32 (region.addr $UOP_CSCRATCH 0x128000)) ;; 4096
+  ;; One scratch serves every thread's instance, so a compile holds this word
+  ;; (0 free, 1 held); see $uop_compile.
+  (global $UC_LOCK     i32 (region.addr $UOP_CSCRATCH 0x139000))
   (global $UC_ITEMS_BYTES i32 (i32.const 0x40000))
   (global $UC_MAX_SCAN  i32 (i32.const 600))  ;; instructions decoded looking for the loop
   (global $UC_MAX_LOOP  i32 (i32.const 400))  ;; instructions kept
@@ -2568,8 +2571,8 @@
     (local $p i32) (local $end i32) (local $o i32) (local $j i32) (local $a i64) (local $ty i32)
     (local $v i32) (local $cb i32) (local $tb i32) (local $wb i32)
     (local.set $cb (i32.add (local.get $code) (i32.shl (global.get $uc_enc_n) (i32.const 2))))
-    (local.set $tb (i32.add (global.get $UOP_ARENA) (global.get $UOP_TEMPS_OFF)))
-    (local.set $wb (i32.add (global.get $UOP_ARENA) (global.get $UOP_WINS_OFF)))
+    (local.set $tb (i32.add (global.get $uop_arena) (global.get $uop_temps_off)))
+    (local.set $wb (i32.add (global.get $uop_arena) (global.get $uop_wins_off)))
     (local.set $o (local.get $code))
     (local.set $p (global.get $UC_ITEMS))
     (local.set $end (i32.add (global.get $UC_ITEMS) (global.get $uc_nitems)))
@@ -2626,9 +2629,21 @@
     (i32.store (local.get $p) (i32.add (i32.load (local.get $p)) (i32.const 1)))
     (i32.const 0))
 
-  ;; Lower the loop at eip and place it in the arena: the program address,
-  ;; or 0 when the head is declined. The caller installs it.
+  ;; Lower the loop at eip and place it in this instance's arena: the program
+  ;; address, 0 when the head is declined, or 1 when another thread holds the
+  ;; scratch (not a verdict: the head stays eligible). The caller installs it.
+  ;; Guest threads are instances over one memory, and in worker mode they run
+  ;; at once, so the shared scratch is taken with a try-lock -- a compile is
+  ;; rare enough that skipping one beats waiting for it.
   (func $uop_compile (param $eip i32) (result i32)
+    (local $pc i32)
+    (if (i32.atomic.rmw.cmpxchg (global.get $UC_LOCK) (i32.const 0) (i32.const 1))
+      (then (return (i32.const 1))))
+    (local.set $pc (call $uc_compile_locked (local.get $eip)))
+    (i32.atomic.store (global.get $UC_LOCK) (i32.const 0))
+    (local.get $pc))
+
+  (func $uc_compile_locked (param $eip i32) (result i32)
     (local $err i32) (local $bytes i32) (local $pc i32) (local $k i32) (local $R i32)
     (local $lo i32) (local $hi i32) (local $retried i32)
     (if (i32.and (i32.ne (global.get $uc_limit) (i32.const 0))
@@ -2637,15 +2652,15 @@
     (local.set $err (call $uc_lower_head (local.get $eip)))
     (if (local.get $err) (then (return (call $uc_decline (local.get $err)))))
     (local.set $bytes (i32.add (global.get $UOP_HDR) (i32.shl (call $uc_encode_words) (i32.const 2))))
-    (if (i32.gt_u (local.get $bytes) (i32.shr_u (global.get $UOP_CODE_BYTES) (i32.const 2)))
+    (if (i32.gt_u (local.get $bytes) (i32.shr_u (global.get $uop_code_bytes) (i32.const 2)))
       (then (return (call $uc_decline (i32.const 24)))))
     (block $placed (loop $retry
-      (if (i32.gt_u (i32.add (global.get $uop_alloc) (local.get $bytes)) (global.get $UOP_CODE_BYTES))
+      (if (i32.gt_u (i32.add (global.get $uop_alloc) (local.get $bytes)) (global.get $uop_code_bytes))
         (then (call $uop_flush) (global.set $uc_flushes (i32.add (global.get $uc_flushes) (i32.const 1)))))
-      (local.set $pc (i32.add (global.get $UOP_ARENA) (global.get $uop_alloc)))
+      (local.set $pc (i32.add (global.get $uop_arena) (global.get $uop_alloc)))
       (memory.fill (local.get $pc) (i32.const 0) (global.get $UOP_HDR))
       (i32.store offset=8 (local.get $pc) (global.get $uc_nwin))
-      (i32.store offset=12 (local.get $pc) (i32.add (global.get $UOP_ARENA) (global.get $UOP_WINS_OFF)))
+      (i32.store offset=12 (local.get $pc) (i32.add (global.get $uop_arena) (global.get $uop_wins_off)))
       (call $uc_encode_write (i32.add (local.get $pc) (global.get $UOP_HDR)))
       ;; the guest byte ranges it was lowered from: a write to any kills it
       (local.set $k (i32.const 0))

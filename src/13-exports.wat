@@ -1473,11 +1473,18 @@
             (i32.mul (i32.sub (local.get $tid) (i32.const 1))
                      (global.get $THREAD_CACHE_STRIDE)))))
         (global.set $THREAD_END (i32.add (global.get $THREAD_BASE)
-          (global.get $THREAD_CACHE_STRIDE))))
+          (global.get $THREAD_CACHE_STRIDE)))
+        ;; This worker's micro-op arena (07d), split the same way.
+        (call $uop_set_arena
+          (i32.add (global.get $UOP_THREAD_ARENAS)
+            (i32.mul (i32.sub (local.get $tid) (i32.const 1))
+                     (global.get $UOP_THREAD_ARENA_STRIDE)))
+          (global.get $UOP_THREAD_ARENA_STRIDE)))
       (else
         (global.set $THREAD_BASE (region.addr $THREAD_CACHE_BASE 0))
         (global.set $THREAD_END (i32.add (global.get $THREAD_BASE)
-          (global.get $THREAD_CACHE_MAIN_BYTES)))))
+          (global.get $THREAD_CACHE_MAIN_BYTES)))
+        (call $uop_set_arena (global.get $UOP_ARENA) (global.get $UOP_ARENA_SIZE))))
     (global.set $thread_alloc (global.get $THREAD_BASE))
     ;; The register file IS strided, unlike the three arenas above: every
     ;; thread needs exactly eight slots, so tid*64 with no special case for the

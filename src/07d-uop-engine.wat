@@ -106,16 +106,26 @@
   ;;   61 SLT d a b                           d = a <s b
   ;;   62 GOTO t                              jump without spending a block
 
+  ;; The main thread's arena. Each guest thread is its own instance over the
+  ;; shared memory and a program names its instance's $reg_base, so every
+  ;; instance owns an arena: the main thread $UOP_ARENA, worker N slot N-1 of
+  ;; $UOP_THREAD_ARENAS ($init_thread picks).
   (global $UOP_ARENA i32 (region.addr $UOP_ARENA 0))
   (global $UOP_ARENA_SIZE i32 (region.size $UOP_ARENA))
-  ;; Arena layout. Programs are bump-allocated from +0 by the lowering;
-  ;; everything a running program or the installer needs besides its code
-  ;; lives in the top eighth.
-  (global $UOP_CODE_BYTES i32 (i32.const 0x000E0000))
-  (global $UOP_TEMPS_OFF  i32 (i32.const 0x000E0000)) ;; 4096 x 4 bytes
-  (global $UOP_WINS_OFF   i32 (i32.const 0x000E4000)) ;; 1024 x 16 bytes
-  (global $UOP_MAP_OFF    i32 (i32.const 0x000E8000)) ;; 4096 x {eip, pc}
-  (global $UOP_RANGES_OFF i32 (i32.const 0x000F0000)) ;; 4096 x {lo, hi, pc}
+  (global $UOP_THREAD_ARENAS i32 (region.addr $UOP_THREAD_ARENAS 0))
+  (global $UOP_THREAD_ARENAS_SIZE i32 (region.size $UOP_THREAD_ARENAS))
+  (global $UOP_THREAD_ARENA_STRIDE i32 (i32.const 0x00040000))
+  ;; Arena layout, relative to $uop_arena. Programs are bump-allocated from +0
+  ;; by the lowering; everything a running program or the installer needs
+  ;; besides its code lives in the top $UOP_TAIL bytes. The defaults are the
+  ;; main arena's; $uop_set_arena recomputes them.
+  (global $UOP_TAIL i32 (i32.const 0x00020000))
+  (global $uop_arena      (mut i32) (region.addr $UOP_ARENA 0))
+  (global $uop_code_bytes (mut i32) (i32.const 0x000E0000))
+  (global $uop_temps_off  (mut i32) (i32.const 0x000E0000)) ;; 4096 x 4 bytes
+  (global $uop_wins_off   (mut i32) (i32.const 0x000E4000)) ;; 1024 x 16 bytes
+  (global $uop_map_off    (mut i32) (i32.const 0x000E8000)) ;; 4096 x {eip, pc}
+  (global $uop_ranges_off (mut i32) (i32.const 0x000F0000)) ;; 4096 x {lo, hi, pc}
   (global $UOP_RANGES_MAX i32 (i32.const 4096))
   (global $UOP_HDR        i32 (i32.const 32))
   (global $uop_guard_fails (mut i32) (i32.const 0))
@@ -667,7 +677,7 @@
   ;; ===================================================================
 
   (func $uop_map_slot (param $eip i32) (result i32)
-    (i32.add (i32.add (global.get $UOP_ARENA) (global.get $UOP_MAP_OFF))
+    (i32.add (i32.add (global.get $uop_arena) (global.get $uop_map_off))
       (i32.shl (i32.and (i32.xor (local.get $eip) (i32.shr_u (local.get $eip) (i32.const 12)))
                         (i32.const 4095))
                (i32.const 3))))
@@ -697,6 +707,8 @@
     (local.set $pc (call $uop_compile (local.get $eip)))
     (if (i32.eqz (local.get $pc))
       (then (call $uop_mark_dead (local.get $eip)) (return)))
+    ;; another thread is compiling: try again at the next hot bump
+    (if (i32.eq (local.get $pc) (i32.const 1)) (then (return)))
     (call $uop_install (local.get $eip) (local.get $pc)))
 
   ;; Remember a head the lowering declined: it is a function of the code
@@ -727,7 +739,7 @@
     (local $e i32) (local $p i32)
     (if (i32.ge_u (global.get $uop_nranges) (global.get $UOP_RANGES_MAX))
       (then (return (i32.const 0))))
-    (local.set $e (i32.add (i32.add (global.get $UOP_ARENA) (global.get $UOP_RANGES_OFF))
+    (local.set $e (i32.add (i32.add (global.get $uop_arena) (global.get $uop_ranges_off))
                            (i32.mul (global.get $uop_nranges) (i32.const 12))))
     (i32.store (local.get $e) (local.get $lo))
     (i32.store offset=4 (local.get $e) (local.get $hi))
@@ -769,7 +781,7 @@
     (local.set $end (i32.add (local.get $ga) (local.get $len)))
     (block $d (loop $l
       (br_if $d (i32.ge_u (local.get $i) (global.get $uop_nranges)))
-      (local.set $e (i32.add (i32.add (global.get $UOP_ARENA) (global.get $UOP_RANGES_OFF))
+      (local.set $e (i32.add (i32.add (global.get $uop_arena) (global.get $uop_ranges_off))
                              (i32.mul (local.get $i) (i32.const 12))))
       (if (i32.and (i32.lt_u (local.get $ga) (i32.load offset=4 (local.get $e)))
                    (i32.gt_u (local.get $end) (i32.load (local.get $e))))
@@ -777,7 +789,7 @@
           (call $uop_kill (i32.load offset=8 (local.get $e)))
           ;; swap-remove, and look at slot $i again
           (global.set $uop_nranges (i32.sub (global.get $uop_nranges) (i32.const 1)))
-          (local.set $last (i32.add (i32.add (global.get $UOP_ARENA) (global.get $UOP_RANGES_OFF))
+          (local.set $last (i32.add (i32.add (global.get $uop_arena) (global.get $uop_ranges_off))
                                     (i32.mul (global.get $uop_nranges) (i32.const 12))))
           (i32.store (local.get $e) (i32.load (local.get $last)))
           (i32.store offset=4 (local.get $e) (i32.load offset=4 (local.get $last)))
@@ -791,12 +803,12 @@
     (local $i i32) (local $e i32) (local $last i32)
     (block $d (loop $l
       (br_if $d (i32.ge_u (local.get $i) (global.get $uop_nranges)))
-      (local.set $e (i32.add (i32.add (global.get $UOP_ARENA) (global.get $UOP_RANGES_OFF))
+      (local.set $e (i32.add (i32.add (global.get $uop_arena) (global.get $uop_ranges_off))
                              (i32.mul (local.get $i) (i32.const 12))))
       (if (i32.eq (i32.load offset=8 (local.get $e)) (local.get $pc))
         (then
           (global.set $uop_nranges (i32.sub (global.get $uop_nranges) (i32.const 1)))
-          (local.set $last (i32.add (i32.add (global.get $UOP_ARENA) (global.get $UOP_RANGES_OFF))
+          (local.set $last (i32.add (i32.add (global.get $uop_arena) (global.get $uop_ranges_off))
                                     (i32.mul (global.get $uop_nranges) (i32.const 12))))
           (i32.store (local.get $e) (i32.load (local.get $last)))
           (i32.store offset=4 (local.get $e) (i32.load offset=4 (local.get $last)))
@@ -816,8 +828,19 @@
   ;; forget every retired and declined marker ($uop_mark_dead).
   (func $uop_flush_all
     (call $uop_flush)
-    (memory.fill (i32.add (global.get $UOP_ARENA) (global.get $UOP_MAP_OFF))
+    (memory.fill (i32.add (global.get $uop_arena) (global.get $uop_map_off))
                  (i32.const 0) (i32.const 0x8000)))
+  ;; Point this instance at its arena and start it empty. A worker's arena is
+  ;; carved out of memory that held another thread's threaded code, so the map
+  ;; is garbage until this clears it.
+  (func $uop_set_arena (param $base i32) (param $size i32)
+    (global.set $uop_arena (local.get $base))
+    (global.set $uop_code_bytes (i32.sub (local.get $size) (global.get $UOP_TAIL)))
+    (global.set $uop_temps_off (global.get $uop_code_bytes))
+    (global.set $uop_wins_off (i32.add (global.get $uop_code_bytes) (i32.const 0x4000)))
+    (global.set $uop_map_off (i32.add (global.get $uop_code_bytes) (i32.const 0x8000)))
+    (global.set $uop_ranges_off (i32.add (global.get $uop_code_bytes) (i32.const 0x10000)))
+    (call $uop_flush_all))
 
   ;; The enter op, first in the head block's threaded code. Its operand is
   ;; the program header. Anything it cannot vouch for falls through into the
@@ -885,7 +908,7 @@
           (i32.add (i32.load offset=24 (local.get $op)) (i32.const 1)))))
     (dispatch-next))
 
-  (func $uop_arena_addr (export "uop_arena") (result i32) (global.get $UOP_ARENA))
+  (func $uop_arena_addr (export "uop_arena") (result i32) (global.get $uop_arena))
   (func (export "uop_reg_base") (result i32) (global.get $reg_base))
   (func (export "uop_run") (param $pc i32) (param $budget i32) (result i32)
     (call $uop_run (local.get $pc) (local.get $budget)))
@@ -910,16 +933,21 @@
   ;; Where the lowering may write: 0 code base, 1 code bytes, 2 temps base,
   ;; 3 windows base.
   (func (export "uop_layout") (param $which i32) (result i32)
-    (if (i32.eq (local.get $which) (i32.const 0)) (then (return (global.get $UOP_ARENA))))
-    (if (i32.eq (local.get $which) (i32.const 1)) (then (return (global.get $UOP_CODE_BYTES))))
+    (if (i32.eq (local.get $which) (i32.const 0)) (then (return (global.get $uop_arena))))
+    (if (i32.eq (local.get $which) (i32.const 1)) (then (return (global.get $uop_code_bytes))))
     (if (i32.eq (local.get $which) (i32.const 2))
-      (then (return (i32.add (global.get $UOP_ARENA) (global.get $UOP_TEMPS_OFF)))))
+      (then (return (i32.add (global.get $uop_arena) (global.get $uop_temps_off)))))
     (if (i32.eq (local.get $which) (i32.const 3))
-      (then (return (i32.add (global.get $UOP_ARENA) (global.get $UOP_WINS_OFF)))))
+      (then (return (i32.add (global.get $uop_arena) (global.get $uop_wins_off)))))
     (i32.const 0))
+  ;; Off also retires every installed program: bumping the generation makes
+  ;; each enter op already in threaded code fall straight through, so the
+  ;; switch takes effect mid-run without a cache flush.
   (func (export "set_uop") (param $on i32)
     (global.set $uop_enabled (i32.ne (local.get $on) (i32.const 0)))
+    (if (i32.eqz (global.get $uop_enabled)) (then (call $uop_flush)))
     (call $bx_hot_gate_refresh))
+  (func (export "get_uop") (result i32) (global.get $uop_enabled))
   (func (export "uop_add_range") (param $lo i32) (param $hi i32) (param $pc i32) (result i32)
     (call $uop_add_range (local.get $lo) (local.get $hi) (local.get $pc)))
   (func (export "uop_flush") (call $uop_flush))
