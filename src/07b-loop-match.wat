@@ -4364,6 +4364,7 @@
         (i32.ne (local.get $count) (i32.const 0)))))
 
   (func $th_copy_run (param $op i32)
+    (local $bc_done i32)
      (local $nx_fn i32) (local $nx_op i32) (local $src_reg i32) (local $src_stride i32) (local $src_disp i32)
     (local $dst_reg i32) (local $dst_stride i32) (local $dst_disp i32)
     (local $byte_reg i32) (local $ctr_kind i32) (local $ctr_loc i32)
@@ -4555,6 +4556,8 @@
         (local.set $chunk
           (select (local.get $n) (local.get $chunk)
                   (i32.lt_u (local.get $n) (local.get $chunk))))
+        (if (i32.ne (local.get $ctr_kind) (i32.const 2))
+          (then (local.set $chunk (call $bc_fold_cap (local.get $chunk) (local.get $bc_done)))))
 
         (local.set $src_wa (call $g2w (local.get $src_ga)))
         (local.set $dst_wa (call $g2w (local.get $dst_ga)))
@@ -4619,6 +4622,7 @@
             (local.set $private_bytes
               (i32.add (local.get $private_bytes) (local.get $chunk))))
           (else
+            (local.set $bc_done (i32.add (local.get $bc_done) (local.get $chunk)))
             (global.set $steps
               (i32.sub (global.get $steps)
                 (i32.mul (local.get $chunk) (local.get $cost))))))
@@ -4628,6 +4632,7 @@
             (br_if $exit
               (i32.ge_u (local.get $private_bytes) (local.get $private_limit))))
           (else
+            (br_if $exit (i32.eqz (call $bc_fold_cap (i32.const 1) (local.get $bc_done))))
             (br_if $exit (i32.le_s (global.get $steps) (i32.const 0)))))
         (br $outer)))
 
@@ -4669,6 +4674,7 @@
     (if (i32.eq (local.get $ctr_step) (i32.const -1))
       (then (call $set_flags_dec (local.get $old) (local.get $ctr)))
       (else (call $set_flags_inc (local.get $old) (local.get $ctr))))
+    (call $bc_fold_charge (local.get $bc_done))
     (global.set $eip
       (select (local.get $back) (local.get $fall) (i32.ne (local.get $ctr) (i32.const 0)))))
 
@@ -5882,6 +5888,7 @@
     (local $n i32) (local $index i32) (local $cont i32)
     (local $acc_word i32) (local $res_field i32) (local $res_reg i32)
     (local $acc_hoist i32) (local $acc_hi i32)
+    (local $bc_done i32)
 
     (if (i32.and (local.get $op) (i32.const 0x10))
       (then (return_call $th_xlat_stosb_lut_run (local.get $op))))
@@ -6079,6 +6086,7 @@
         (local.set $chunk
           (select (local.get $n) (local.get $chunk)
                   (i32.lt_u (local.get $n) (local.get $chunk))))
+        (local.set $chunk (call $bc_fold_cap (local.get $chunk) (local.get $bc_done)))
         (if (i32.and (local.get $table_stack)
               (i32.or
                 (i32.or
@@ -6207,7 +6215,9 @@
           (select (i32.ne (local.get $term) (i32.const 0))
                   (i32.lt_u (local.get $cursor) (local.get $term))
                   (i32.eqz (local.get $term_kind))))
+        (local.set $bc_done (i32.add (local.get $bc_done) (local.get $chunk)))
         (br_if $exit (i32.eqz (local.get $cont)))
+        (br_if $exit (i32.eqz (call $bc_fold_cap (i32.const 1) (local.get $bc_done))))
         (br_if $exit (i32.le_s (global.get $steps) (i32.const 0)))
         (br $outer)))
 
@@ -6249,6 +6259,7 @@
     (if (local.get $m1_addr)
       (then (call $gs32 (local.get $m1_addr)
               (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $m1_reg) (i32.const 2)))) (local.get $m1_adj)))))
+    (call $bc_fold_charge (local.get $bc_done))
     (global.set $eip (select (local.get $back) (local.get $fall) (local.get $cont))))
 
   ;; ==================================================================

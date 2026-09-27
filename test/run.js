@@ -5292,7 +5292,7 @@ async function main() {
   if (TRACE_WIN16 && instance.exports.set_win16_trace) {
     instance.exports.set_win16_trace(1);
   }
-  experiments.applyMain(instance, { copySuperops: COPY_SUPEROPS });
+  experiments.applyMain(instance, { copySuperops: COPY_SUPEROPS, ctx });
   if (FLIP_VSYNC && instance.exports.set_flip_vsync) {
     instance.exports.set_flip_vsync(1);
   }

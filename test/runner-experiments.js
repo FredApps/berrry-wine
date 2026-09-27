@@ -4,6 +4,13 @@
 // Add a flag here with its application below; run.js only supplies the runtime.
 const { reportExperiments } = require('./runner-experiment-report');
 
+// 07e-uop-compiler.wat's decline reasons, by code ($uop_decline_count).
+const UOP_REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-backedge', 'loop-too-big',
+  'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
+  'dead-flags-consumed', 'dead-cf', 'cf-no-recipe', 'cf-kind', 'dead-flags-rec', 'rec-no-recipe', 'rec-kind',
+  'dead-flags-jcc', 'kind', 'too-many-windows', 'label', 'arg', 'too-many-temps', 'program-too-big',
+  'ranges-full', 'scratch-overflow'];
+
 function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = console.log }) {
   // --trace-loopmatch[=0xEIP]: at decode time, dump the emitted op sequence of
   // every self-loop block (or just the one at 0xEIP). Prints the block's entry,
@@ -42,6 +49,19 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       + 'Passing --block-exec instead does exactly this.');
   }
   const BLOCK_EXEC = hasFlag('block-exec') || TREE_FOLD_ALIAS;
+  // --uop: the micro-op tier (src/07d-uop-engine.wat + 07e-uop-compiler.wat).
+  // A branch target entered 256 times is handed to the x86 -> micro-op
+  // lowering; a loop it accepts runs as a program until it leaves. Main
+  // instance only: the arena is one region and a program names its
+  // instance's registers. docs/uop-tier-design.md.
+  const UOP = hasFlag('uop');
+  // --branch-clock: one guest-clock block per executed x86 branch, not per
+  // threaded block cut ($branch_clock in 05-alu). Pass it to BOTH arms of any
+  // A/B whose tier re-decodes code, or the arms run on different clocks.
+  const BRANCH_CLOCK = hasFlag('branch-clock');
+  // --uop-limit=N: install only the first N programs (bisecting a divergence).
+  const UOP_LIMIT = parseInt(getArg('uop-limit', '0'), 10) || 0;
+  let uopOn = false;
   const BLOCK_EXEC_STATS = hasFlag('block-exec-stats');
   // --block-chain: patch a taken direct branch's own operand word with the
   // resolved threaded-code address of its target, so every later transfer skips
@@ -234,6 +254,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       const [mask, lo = '0', hi = '0xFFFFFFFF'] = X87_FUSE_DEBUG.split(',');
       inheritWasm('set_x87_fuse_debug', Number(mask) | 0, Number(lo) | 0, Number(hi) | 0);
     }
+    if (BRANCH_CLOCK) inheritWasm('set_branch_clock', 1);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
     // The thresholds too: a guest thread decodes in its own instance, so a cap
@@ -244,7 +265,13 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
 
   }
 
-  function applyMain(instance, { copySuperops: COPY_SUPEROPS }) {
+  function applyMain(instance, { copySuperops: COPY_SUPEROPS, ctx = null }) {
+    if (BRANCH_CLOCK && instance.exports.set_branch_clock) instance.exports.set_branch_clock(1);
+    if (UOP && instance.exports.set_uop && ctx) {
+      if (UOP_LIMIT) instance.exports.set_uop_limit(UOP_LIMIT);
+      instance.exports.set_uop(1);
+      uopOn = true;
+    }
     if (TRACE_LOOPMATCH && instance.exports.set_loop_trace) {
       instance.exports.set_loop_trace(1, TRACE_LOOPMATCH_EIP);
     }
@@ -377,6 +404,16 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   }
 
   function report(instance, threadManager, verbose, log = console.log) {
+    if (uopOn) {
+      const x = instance.exports;
+      const st = (k) => x.uop_stats(k) >>> 0;
+      const cs = (k) => x.uop_cstat(k) >>> 0;
+      const why = UOP_REASONS.map((name, k) => [name, k && x.uop_decline_count(k) >>> 0])
+        .filter(([, n]) => n).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${k}=${n}`).join(' ');
+      log(`uop: installs=${st(2)} kills=${st(3)} retired-poor=${st(7)} enters=${st(4)} ` +
+        `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
+        `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (why ? `\n  declines: ${why}` : ''));
+    }
     reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LOOPMATCH, LOOPMATCH_STATS, X87_FUSION, VERBOSE: verbose }, instance, threadManager, log);
   }
 

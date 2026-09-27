@@ -2381,8 +2381,10 @@
   ;; global so the hot path never reads two. Both setters call this.
   (func $bx_hot_gate_refresh
     (global.set $bx_hot_on
-      (i32.and (i32.ne (global.get $block_exec_enabled) (i32.const 0))
-               (i32.ne (global.get $bx_region_enabled) (i32.const 0))))
+      (i32.or
+        (i32.and (i32.ne (global.get $block_exec_enabled) (i32.const 0))
+                 (i32.ne (global.get $bx_region_enabled) (i32.const 0)))
+        (global.get $uop_enabled)))
     (call $be_gate_refresh))
 
   (func $bx_hot_slot (param $eip i32) (result i32)
@@ -2408,6 +2410,9 @@
     (i32.store offset=4 (local.get $s) (i32.const 0))
     (global.set $bx_walk_hot_probes
       (i32.add (global.get $bx_walk_hot_probes) (i32.const 1)))
+    ;; The micro-op tier (07d) shares this hotness gate and replaces the walk.
+    (if (global.get $uop_enabled)
+      (then (call $uop_try (local.get $eip)) (return)))
     (call $bx_walk_try (local.get $eip)))
 
   ;; The per-head failure memo. 256 direct-mapped slots of {head EIP, fails}.

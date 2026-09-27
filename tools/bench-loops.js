@@ -2542,7 +2542,7 @@ async function newInstance(wasmPath = WASM_PATH) {
   // Use the module's translator so the same setup/verification code works for
   // both ordinary direct addresses and demand-backed sparse guest mappings.
   const g2w = ga => e.guest_to_wasm(ga >>> 0) >>> 0;
-  return { e, mem, g2w, imageBase };
+  return { e, mem, g2w, imageBase, ctx };
 }
 
 // Guest-address layout for a shape run. Everything sits inside the direct g2w
@@ -3056,7 +3056,10 @@ async function main() {
 // test/test-tree-fold.js builds its descriptors with it too: a bench and a
 // correctness test that disagree about the layout would each look right on its
 // own while proving nothing together.
-module.exports = { regionWords, uop, RG, TU, TK, CC, FN, REGION_BLOCK_WORDS };
+module.exports = { regionWords, uop, RG, TU, TK, CC, FN, REGION_BLOCK_WORDS,
+  // The instance/layout/run plumbing, for tools/uop-engine-bench.js, which
+  // times the same x86 on the threaded path next to a micro-op program.
+  newInstance, layout, runToCompletion, ensureBuilt, loopBack };
 
 if (require.main === module) {
   main().catch(err => { console.error(err.stack || String(err)); process.exit(1); });

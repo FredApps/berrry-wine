@@ -4582,6 +4582,7 @@
     (local $insn_start i32)  ;; d_pc before prefixes/opcode for interior matchers
     (local $mmxsub i32)        ;; MMX subop id, or -1 when this 0F op is not MMX
     (local $mmxpc i32)         ;; d_pc before an MMX ModRM, to rewind on a reject
+    (local $uop_pc i32)        ;; installed micro-op program at this head (07d)
 
     ;; Proactive overflow check BEFORE capturing $tstart. If $te triggers a
     ;; mid-decode reset of $thread_alloc, $tstart would still hold the pre-reset
@@ -4676,6 +4677,13 @@
         (call $host_log_i32 (global.get $dbg_prev2_eip))
         (unreachable)))
 
+    ;; The micro-op tier (07d): a head with an installed program gets the
+    ;; enter op in front of its ordinary threaded code, which stays the
+    ;; fallback for everything the program cannot vouch for.
+    (if (i32.and (global.get $uop_enabled) (i32.eqz (local.get $done)))
+      (then
+        (local.set $uop_pc (call $uop_map_get (local.get $start_eip)))
+        (if (local.get $uop_pc) (then (call $te (i32.const 470) (local.get $uop_pc))))))
     (block $exit (loop $decode
       (br_if $exit (local.get $done))
 

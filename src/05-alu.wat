@@ -950,8 +950,53 @@
       (else (global.set $eip (local.get $fall))
             (local.set $op (i32.or (local.get $op) (i32.const 2)))))
     (jcc-finish))
+  ;; --branch-clock: a block of the guest clock is one executed x86 branch.
+  ;; A $th_block_end is a CUT, not a branch -- a page seam, the 256-insn cap,
+  ;; or a split at an address that happens to be a known entry already -- so
+  ;; where cuts fall depends on decode history, and so does a clock that
+  ;; charges them: anything that re-decodes (a tier installing an entry op,
+  ;; a retirement) shifts every later timer. Off by default (the historical
+  ;; clock); an A/B that re-decodes turns it on in both arms.
+  (global $branch_clock (mut i32) (i32.const 0))
+  (func (export "set_branch_clock") (param $on i32)
+    (global.set $branch_clock (i32.ne (local.get $on) (i32.const 0))))
+  (func (export "get_branch_clock") (result i32) (global.get $branch_clock))
+  ;; A loop fold under the branch clock. Unfolded, a self-loop's k-th trip is
+  ;; one block entry, and a taken back-edge with no budget left stops the batch
+  ;; at the loop head. A fold is ONE entry and returns to the run loop, so it
+  ;; must charge the other trips itself and stop where the unfolded loop would.
+  ;; $bc_fold_cap bounds a chunk to the trips the budget still pays for, given
+  ;; $done already run in this call (the first was paid by the entry);
+  ;; $bc_fold_charge then charges `iters - 1`. Both are inert off the clock.
+  (func $bc_fold_cap (param $chunk i32) (param $done i32) (result i32)
+    (local $room i32)
+    (if (i32.eqz (global.get $branch_clock)) (then (return (local.get $chunk))))
+    (local.set $room
+      (i32.sub (i32.add (select (global.get $block_budget) (i32.const 0)
+                          (i32.gt_s (global.get $block_budget) (i32.const 0)))
+                        (i32.const 1))
+               (local.get $done)))
+    (select (local.get $room) (local.get $chunk)
+      (i32.lt_u (local.get $room) (local.get $chunk))))
+  (func $bc_fold_charge (param $iters i32)
+    (if (i32.and (global.get $branch_clock) (i32.gt_s (local.get $iters) (i32.const 1)))
+      (then (global.set $block_budget
+              (i32.sub (global.get $block_budget)
+                       (i32.sub (local.get $iters) (i32.const 1)))))))
   (func $th_block_end (param $op i32)
     (global.set $eip (local.get $op))
+    (global.set $block_budget (i32.add (global.get $block_budget) (global.get $branch_clock)))
+    (return_call $branch_end))
+  ;; What $page_retire_at writes over a retired block's header. Only a
+  ;; transfer that has ALREADY paid for its block lands here -- the not-taken
+  ;; side of an adjacent Jcc (jcc-finish charges, then falls into the chunk)
+  ;; or a stale chain delta -- so the block $branch_end spends is given back
+  ;; first. Without it every such fall-through cost two blocks for as long as
+  ;; the Jcc stayed pointed at the retired copy, and the guest clock (batches
+  ;; of blocks) depended on retirement history.
+  (func $th_block_retired (param $op i32)
+    (global.set $eip (local.get $op))
+    (global.set $block_budget (i32.add (global.get $block_budget) (i32.const 1)))
     (return_call $branch_end))
   (func $th_loop (param $op i32)
     ;; operand: low bits 0-1 = cc (0=LOOP, 1=LOOPE, 2=LOOPNE)

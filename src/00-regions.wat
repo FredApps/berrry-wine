@@ -328,6 +328,17 @@
   (region.declare $REGFILE (size 0x00000400) (align 0x00000040)
     (stride 0x40 (count $REGFILE_THREADS))
     (owner "01-header.wat:$REGFILE"))
+  ;; toyvm-style micro-op engine arena (src/07d-uop-engine.wat, phase 0 of
+  ;; docs/uop-tier-design.md): program words, temp vregs and window slots.
+  ;; Single-thread for the prototype; per-thread partitions before any use
+  ;; outside the bench.
+  (region.declare $UOP_ARENA (size 0x00100000) (align 0x00001000)
+    (owner "07d-uop-engine.wat:$uop_arena_addr"))
+  ;; The x86 -> micro-op compiler's working memory (07e-uop-compiler.wat):
+  ;; decoded instructions, blocks, flow states, the op stream and its maps.
+  ;; Nothing in it outlives one compile.
+  (region.declare $UOP_CSCRATCH (size 0x0013A000) (align 0x00001000)
+    (owner "07e-uop-compiler.wat:$UOP_CSCRATCH"))
   ;; The eight x87 physical registers, per guest thread, for the same reason:
   ;; +0..+63 the f64 values, +64..+127 the exact-integer i64 shadows (FILD
   ;; m64 / FISTP m64). Indexed by physical register, so ST(i) is one load at

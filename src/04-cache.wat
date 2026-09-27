@@ -111,7 +111,7 @@
     (if (i32.or
           (i32.eqz (local.get $ga))
           (i32.lt_u (i32.add (local.get $ga) (local.get $len)) (local.get $ga)))
-      (then (global.set $thread_flush_pending (i32.const 1)))
+      (then (global.set $thread_flush_pending (i32.const 1)) (call $uop_flush_all))
       (else (call $invalidate_code_range (local.get $ga) (local.get $len)))))
 
   ;; Throw away every scrap of decoded code for this thread. Compiled chunks
@@ -584,7 +584,9 @@
         (then (call $page_dchunk (local.get $slot)))
         (else (i32.load offset=8 (local.get $slot)))))
     (if (i32.eqz (local.get $chunk)) (then (return (i32.add (local.get $off) (i32.const 1)))))
-    (i32.store (i32.add (local.get $chunk) (local.get $coff)) (i32.const 45))
+    (i32.store (i32.add (local.get $chunk) (local.get $coff))
+      (select (i32.const 45) (i32.const 471)
+              (i32.and (local.get $owner) (global.get $PAGE_INDEX_DESC))))
     (i32.store offset=4 (i32.add (local.get $chunk) (local.get $coff))
       (i32.or (i32.load (local.get $slot)) (local.get $lo)))
     (block $cd (loop $cs
@@ -670,7 +672,9 @@
                 (local.set $off (call $page_retire_at (local.get $slot) (local.get $off)))
                 (br $os)))))))
       (local.set $page (i32.add (local.get $page) (i32.const 0x1000)))
-      (br $ps))))
+      (br $ps)))
+    (if (global.get $uop_nranges)
+      (then (call $uop_code_write (local.get $ga) (local.get $len)))))
 
   ;; ============================================================
   ;; PAGE COMPILATION -- see docs/page-compile-design.md
@@ -2118,7 +2122,7 @@
     ;; whole cache and restart at $eip. The fresh decode will produce
     ;; valid threaded code. This recovers from rare corruption rather
     ;; than trapping with wasm "table index out of bounds".
-    (if (i32.ge_u (local.get $nx_fn) (i32.const 470))
+    (if (i32.ge_u (local.get $nx_fn) (i32.const 472))
       (then
         (return_call $dispatch_bad (local.get $nx_fn))))
     (if (global.get $handler_hist_enabled)

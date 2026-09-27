@@ -1,0 +1,345 @@
+#!/usr/bin/env node
+'use strict';
+// The x86 -> micro-op lowering (src/07e-uop-compiler.wat) against the threaded
+// interpreter, on hand-assembled loops.
+//
+// Every case runs twice on one instance, at two fresh code addresses: once
+// with the tier off, once with it on (the loop gets hot after 256 entries and
+// the rest of it runs as a program). Registers, EIP, the five observable
+// flags and the whole working buffer must come out identical. A third arm
+// installs the program before the first iteration, so the lowering also runs
+// from the loop's very first entry (the entry flag state is whatever the setup
+// left). A case that declines or never enters is a failure too: a lowering
+// that bails on everything is trivially exact.
+
+const path = require('path');
+const ROOT = path.join(__dirname, '..');
+const bench = require(path.join(ROOT, 'tools', 'bench-loops.js'));
+
+// ---- a tiny assembler: bytes, {label}, {jcc, to}, {jmp, to} (rel8) ----
+function asm(items) {
+  const at = new Map();
+  for (let pass = 0; pass < 2; pass++) {
+    let pc = 0;
+    const out = [];
+    for (const it of items) {
+      if (typeof it === 'number') { out.push(it); pc++; continue; }
+      if (Array.isArray(it)) { out.push(...it); pc += it.length; continue; }
+      if (it.label) { at.set(it.label, pc); continue; }
+      const t = at.get(it.to) ?? pc;
+      const rel = t - (pc + 2);
+      out.push(it.jmp ? 0xEB : 0x70 | it.jcc, rel & 0xFF);
+      pc += 2;
+    }
+    if (pass === 1) return out;
+  }
+}
+const J = (cc, to) => ({ jcc: cc, to });
+const JMP = (to) => ({ jmp: true, to });
+const L = (label) => ({ label });
+const cc = { O: 0, NO: 1, B: 2, AE: 3, Z: 4, NZ: 5, BE: 6, A: 7, S: 8, NS: 9, L: 12, GE: 13, LE: 14, G: 15 };
+
+const N = 3000;
+const BATCH = +(process.env.UOP_BATCH || 37);
+const CASES = [
+  {
+    name: 'lut8', regs: { ecx: N },
+    code: [L('l'), [0x0F, 0xB6, 0x06], [0x8A, 0x04, 0x03], [0x88, 0x07], 0x46, 0x47, 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // poke: a key byte early, so both paths are taken (and threaded code has
+    // split its blocks at both) long before the batches are compared.
+    name: 'colorkey', regs: { ecx: N },
+    poke: (mem, src) => { mem[src + 3] = 0xFF; },
+    code: [L('l'), [0x8A, 0x06], [0x3C, 0xFF], J(cc.Z, 's'), [0x88, 0x07], L('s'), 0x46, 0x47, 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    name: 'sum16-cmp-jb', regs: { ecx: 0, ebp: N, eax: 5 },
+    code: [L('l'), [0x0F, 0xB7, 0x14, 0x4E], [0x01, 0xD0], 0x41, [0x39, 0xE9], J(cc.B, 'l'), 0xC3],
+  },
+  {
+    name: 'signed-diamond', regs: { ecx: N },
+    code: [L('l'), [0x8B, 0x16], [0x83, 0xEA, 0x64], J(cc.L, 'n'), [0x01, 0xD0], JMP('x'),
+           L('n'), [0x29, 0xD0], L('x'), [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    name: 'shift-imul-8bit', regs: { ecx: N, edx: 0x12345 },
+    code: [L('l'), [0x8B, 0x06], [0xC1, 0xE8, 0x03], [0x6B, 0xC0, 0x07], [0x30, 0xE0],
+           [0x25, 0xFF, 0xFF, 0x00, 0x00], [0x01, 0x07], [0xD1, 0xE2], [0x83, 0xC6, 0x04],
+           [0x83, 0xC7, 0x04], [0x83, 0xE9, 0x01], J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // dec leaves CF alone: the exit flags carry the add's carry.
+    name: 'incdec-keeps-cf', regs: { ecx: N, eax: 0xFFFF0000 },
+    code: [L('l'), [0x03, 0x06], 0x43, [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // add sets CF, inc keeps it, jb/jae reads it: the CF-through-inc path.
+    name: 'cf-across-inc', regs: { ecx: N, eax: 0x7FFFFFF0 },
+    code: [L('l'), [0x03, 0x06], 0x43, J(cc.AE, 'k'), 0x47, L('k'), [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // leaves the loop through a taken branch on a test.
+    name: 'test-exit', regs: { ecx: N }, find: true,
+    code: [L('l'), [0xF6, 0x06, 0x80], J(cc.NZ, 'f'), 0x46, 0x49, J(cc.NZ, 'l'), 0xC3, L('f'), 0xC3],
+  },
+  {
+    name: 'word-neg-not', regs: { edi: 'end16' },
+    code: [L('l'), [0x66, 0x8B, 0x06], [0x66, 0xF7, 0xD8], [0x66, 0xF7, 0xD2], [0x66, 0x01, 0xC2],
+           [0x83, 0xC6, 0x02], [0x39, 0xFE], J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    name: 'dec-jg', regs: { ecx: N },
+    code: [L('l'), [0x03, 0x06], [0x83, 0xC6, 0x04], 0x49, J(cc.G, 'l'), 0xC3],
+  },
+  {
+    name: 'abs-cdq-sar', regs: { edi: 'end32' },
+    code: [L('l'), [0x8B, 0x06], [0xC1, 0xF8, 0x02], 0x99, [0x31, 0xD0], [0x29, 0xD0], [0x01, 0xC3],
+           [0x83, 0xC6, 0x04], [0x39, 0xFE], J(cc.B, 'l'), 0xC3],
+  },
+  {
+    name: 'byte-rmw', regs: { ecx: N },
+    code: [L('l'), [0x8A, 0x06], [0x00, 0xD8], [0xFE, 0x07], [0x28, 0x07], 0x46, 0x47, 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // flags at exit come from a cmp whose operand register changes later.
+    name: 'cmp-then-clobber', regs: { ecx: N },
+    code: [L('l'), [0x8B, 0x06], [0x39, 0xD0], J(cc.A, 'k'), [0x89, 0xC2], L('k'), [0x83, 0xC6, 0x04],
+           [0x8D, 0x04, 0x49], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+];
+
+// Real code: Heroes III's clipped RLE sprite row blitter (h3demo.exe
+// 0x4708a6..0x4709a2, docs/re-notes), fed random sprites. It is the first
+// program whose lowering diverged in a real run, so it stays as a fuzz case.
+// Frame: [esp+10] sprite (its [+44] = data base), [+18] clip-left, [+20] width,
+// [+24] row-offset cursor, [+28] rows, [+2c] run colour, [+3c] pitch,
+// [+40] palette (16-bit entries at +1c), [+44] dest, [+48] "skip fills".
+// A run is (colour, count-1); colour == the key byte at [0x5fa1a0] means a
+// literal run whose indices follow it.
+const H3_EXE = path.join(ROOT, 'test/binaries/candidates/heroes-3-demo-installer/installed-extracted/Program_Files/h3demo.exe');
+function h3Cases() {
+  const fs = require('fs');
+  if (!fs.existsSync(H3_EXE)) return [];
+  const pe = require(path.join(ROOT, 'lib', 'pe.js')).readPE(H3_EXE);
+  const lo = 0x4708a6, hi = 0x4709a2;
+  const code = [...pe.buf.subarray(pe.va2off(lo), pe.va2off(hi))];
+  code.push(0x83, 0xC4, 0x60, 0xC3);                 // add esp,0x60 ; ret
+  const out = [];
+  // Its palette loop alone, which LUT_RUN folds: the fold must spend the
+  // guest clock the unfolded loop spends.
+  for (const cnt of [2, 5, 36, 37, 38, 100]) {
+    out.push({
+      name: `h3-lut-${cnt}`, regs: { esi: cnt, ecx: 0 }, bytes: [...pe.buf.subarray(pe.va2off(0x470925), pe.va2off(0x47093b)), 0xC3],
+      setup(mem, g2w, a) {
+        const dv = new DataView(mem.buffer);
+        for (let k = 0; k < 256; k++) dv.setUint16(g2w(a.buf + 0x8000 + 0x1c + 2 * k), k * 3, true);
+      },
+      init: (a) => ({ eax: a.buf, ebp: a.buf + 0x8000, edi: a.buf + 0x10000 }),
+      foldCheck: 'loop_lut',
+    });
+  }
+  // COPY_RUN's byte form, which MW3/MCM routes enable with --copy-superops.
+  for (const cnt of [1, 5, 37, 38, 300]) {
+    out.push({
+      name: `copy-run-${cnt}`, regs: { ecx: cnt }, foldCheck: 'loop_copy',
+      bytes: [0x8A, 0x06, 0x88, 0x07, 0x46, 0x47, 0x49, 0x75, 0xF7, 0xC3],
+    });
+  }
+  for (let n = 0; n < (+process.env.UOP_H3_N || 12); n++) {
+    let x = (n + 1) * 0x9E3779B1 >>> 0;
+    const rnd = (m) => { x = (Math.imul(x ^ (x >>> 15), 0x2C1B3C6D) + 0x6D2B79F5) >>> 0; return x % m; };
+    const key = 0xFF - rnd(2) * 0x7F, W = 8 + rnd(120), clip = rnd(40), rows = 4 + rnd(40);
+    const skipFill = rnd(3) === 0 ? 1 : 0;
+    const seed0 = x;
+    out.push({
+      name: `h3-rle-${n}`, regs: {}, frame: 0x60, bytes: code, mayStayCold: true, folds: true,
+      setup(mem, g2w, a) {
+        x = seed0;
+        const dv = new DataView(mem.buffer);
+        const w32 = (ga, v) => dv.setUint32(g2w(ga), v >>> 0, true);
+        const B = a.buf, sprite = B + 0x100, data = B + 0x1000, pal = B + 0x8000, dst = B + 0x10000;
+        mem[g2w(0x5fa1a0)] = key;
+        w32(sprite + 0x44, data);
+        let off = 0;
+        for (let r = 0; r < rows; r++) {
+          w32(B + 4 * r, off);
+          for (let len = 0; len < clip + W + 1;) {
+            const lit = rnd(3) === 0;
+            const cnt = 1 + rnd(lit ? 12 : 30);
+            let col = rnd(256); if (!lit && col === key) col ^= 1;
+            mem[g2w(data + off++)] = lit ? key : col;
+            mem[g2w(data + off++)] = cnt - 1;
+            if (lit) for (let k = 0; k < cnt; k++) mem[g2w(data + off++)] = rnd(256);
+            len += cnt;
+          }
+        }
+        for (let k = 0; k < 256; k++) dv.setUint16(g2w(pal + 0x1c + 2 * k), Math.imul(k, 0x9E37) & 0xFFFF, true);
+        const sp = a.stackTop - 0x60;
+        for (let k = 0; k < 0x60; k += 4) w32(sp + k, 0);
+        w32(sp + 0x10, sprite); w32(sp + 0x18, clip); w32(sp + 0x20, W); w32(sp + 0x24, B);
+        w32(sp + 0x28, rows); w32(sp + 0x3c, 2 * W + 6); w32(sp + 0x40, pal);
+        w32(sp + 0x44, dst); dv.setUint8(g2w(sp + 0x48), skipFill);
+      },
+    });
+  }
+  return out;
+}
+CASES.push(...h3Cases());
+
+const REGS = ['eax', 'ecx', 'edx', 'ebx', 'ebp', 'esi', 'edi'];
+
+function seed(mem, g2w, a) {
+  let x = 0x1234567;
+  const src = g2w(a.buf);
+  for (let k = 0; k < 0x10000; k++) {
+    x = (Math.imul(x, 1103515245) + 12345) | 0;
+    mem[src + k] = (x >>> 16) & 0xFF;
+  }
+  mem[src + 2000] = 0x80 | mem[src + 2000];
+  for (let k = 0; k < 1999; k++) mem[src + k] &= 0x7F;
+  mem.fill(0x11, g2w(a.buf + 0x10000), g2w(a.buf + 0x10000) + 0x10000);
+  const lut = g2w(a.lut);
+  for (let k = 0; k < 256; k++) mem[lut + k] = (k * 7 + 3) & 0xFF;
+}
+
+function hash(mem, g2w, a) {
+  let h = 0x811C9DC5;
+  const s = g2w(a.buf);
+  for (let k = 0; k < 0x20000; k++) h = Math.imul(h ^ mem[s + k], 16777619);
+  return h >>> 0;
+}
+
+function runCase(inst, c, a, codeAddr, mode) {
+  const { e, mem, g2w } = inst;
+  seed(mem, g2w, a);
+  if (c.poke) c.poke(mem, g2w(a.buf));
+  const bytes = c.bytes || asm(c.code);
+  mem.set(bytes, g2w(codeAddr));
+  if (c.setup) c.setup(mem, g2w, a);
+  const init = { eax: 0, ecx: 0, edx: 0, ebx: 0, ebp: 0, esi: a.buf, edi: a.buf + 0x10000 };
+  if (c.init) Object.assign(init, c.init(a));
+  for (const [k, v] of Object.entries(c.regs)) {
+    init[k] = v === 'end16' ? a.buf + 2 * N : v === 'end32' ? a.buf + 4 * N : v;
+  }
+  if (c.name === 'lut8') init.ebx = a.lut;
+  for (const r of REGS) e['set_' + r](init[r] >>> 0);
+  // A known flag state on entry: a sub that sets CF.
+  e.set_uop(mode === 'off' ? 0 : 1);
+  const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5) };
+  if (mode === 'pre') {
+    const declines = WAT_REASONS.map((_, k) => k && e.uop_decline_count(k));
+    const d0 = e.uop_cstat(1);
+    const pc = e.uop_compile(codeAddr);
+    if (!pc) {
+      const why = WAT_REASONS.findIndex((_, k) => k && e.uop_decline_count(k) !== declines[k]);
+      return { err: 'pre-compile declined: ' + (e.uop_cstat(1) > d0 ? WAT_REASONS[why] : 'limit') };
+    }
+    e.uop_install(codeAddr, pc);
+  }
+  // Small batches, recording where each one stops: the tier must end every
+  // batch on the same guest instruction as threaded code (the guest clock is
+  // batches), not merely reach the same final state.
+  e.set_esp(a.stackTop - (c.frame || 0));
+  new DataView(e.memory.buffer).setUint32(g2w(a.stackTop), 0, true);
+  e.set_eip(codeAddr);
+  const stops = [];
+  let ok = false;
+  for (let k = 0; k < 20000; k++) {
+    e.run(BATCH);
+    const eip = e.get_eip() >>> 0;
+    if (process.env.UOP_STOPS) console.log(mode, k, (eip - codeAddr).toString(16), 'blocks', e.get_last_run_blocks(), 'ecx', e.get_ecx());
+    if (eip === 0) { ok = true; break; }
+    stops.push(eip - codeAddr);
+  }
+  const st = {
+    ok, eip: e.get_eip() >>> 0, stops: stops.join(','), nstops: stops.length, flags: e.uop_flags(), mem: hash(mem, g2w, a),
+    regs: REGS.map((r) => e['get_' + r]() >>> 0),
+    installs: e.uop_stats(2) - before.installs, enters: e.uop_stats(4) - before.enters,
+    blocks: e.uop_stats(5) - before.blocks,
+  };
+  e.set_uop(0);
+  return st;
+}
+
+
+// 07e-uop-compiler.wat's decline reasons, by code ($uop_decline_count).
+const WAT_REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-backedge', 'loop-too-big',
+  'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
+  'dead-flags-consumed', 'dead-cf', 'cf-no-recipe', 'cf-kind', 'dead-flags-rec', 'rec-no-recipe', 'rec-kind',
+  'dead-flags-jcc', 'kind', 'too-many-windows', 'label', 'arg', 'too-many-temps', 'program-too-big',
+  'ranges-full', 'scratch-overflow'];
+
+async function main() {
+  bench.ensureBuilt();
+  const inst = await bench.newInstance();
+  const { e } = inst;
+  const a = bench.layout(inst.imageBase, 0x20000);
+  if (process.env.UOP_NOFOLD) for (const f of process.env.UOP_NOFOLD.split(",")) e["set_" + f + "_emit"](0);
+  let slot = 0;
+  let fails = 0;
+  const only = process.env.UOP_CASE;
+  const clocks = process.env.UOP_CLOCK ? [+process.env.UOP_CLOCK] : [0, 1];
+  for (const clock of clocks) {
+  e.set_branch_clock(clock);
+  console.log(clock ? '-- branch clock (a block = an executed x86 branch)' : '-- block clock (threaded cuts charge)');
+  for (const c of CASES) {
+    if (only && c.name !== only) continue;
+    const off = runCase(inst, c, a, a.code + 0x1000 * slot++, 'off');
+    if (c.foldCheck) {
+      // Threaded code with and without the loop fold: same state, same clock.
+      // `off` above ran with the family's default; run both explicitly.
+      const set = (v) => e[`set_${c.foldCheck}_emit`](v);
+      const dflt = c.foldCheck === 'loop_lut' ? 1 : 0;
+      set(1);
+      const m0 = e.get_loop_matched_blocks();
+      const fo = runCase(inst, c, a, a.code + 0x1000 * slot++, 'off');
+      set(0);
+      const nf = runCase(inst, c, a, a.code + 0x1000 * slot++, 'off');
+      set(dflt);
+      if (e.get_loop_matched_blocks() === m0) { fails++; console.log(`${c.name.padEnd(18)} FAIL: the loop was never folded`); continue; }
+      const bad = [...(clock ? ['stops'] : []), 'mem', 'eip', 'flags'].filter((k) => nf[k] !== fo[k]);
+      if (JSON.stringify(nf.regs) !== JSON.stringify(fo.regs)) bad.push('regs');
+      if (bad.length) fails++;
+      console.log(`${c.name.padEnd(18)} fold vs unfolded: ${bad.length ? 'FAIL ' + bad.join(',') + ` (${fo.stops} vs ${nf.stops})` : 'ok'}`);
+      continue;
+    }
+    const results = [];
+    for (const mode of ['hot', 'pre']) {
+      const st = runCase(inst, c, a, a.code + 0x1000 * slot++, mode);
+      if (st.err) { results.push(`${mode}: ${st.err}`); fails++; continue; }
+      const diffs = [];
+      if (!st.ok) diffs.push('did not return');
+      if (st.eip !== off.eip) diffs.push(`eip ${st.eip.toString(16)} vs ${off.eip.toString(16)}`);
+      if (st.flags !== off.flags) diffs.push(`flags ${st.flags.toString(2)} vs ${off.flags.toString(2)}`);
+      if (st.mem !== off.mem) diffs.push('memory differs');
+      // Batch stops. Under the block clock the program charges the cuts
+      // threaded code makes once it has split at every in-loop entry (steady
+      // state); "pre" installs before threaded code has taken every path, so
+      // during warmup threaded runs unsplit blocks and the stops legitimately
+      // differ there. A case with a loop threaded code FOLDS is one block per
+      // fold run on the block clock, which a program charging trips cannot
+      // match. The branch clock has no history, so both must match.
+      if (((mode === 'hot' && !c.folds) || clock) && st.stops !== off.stops) {
+        const x = st.stops.split(','), y = off.stops.split(',');
+        let k = 0; while (k < x.length && x[k] === y[k]) k++;
+        diffs.push(`batch ${k} stops at +0x${(+x[k]).toString(16)} vs +0x${(+y[k]).toString(16)} (${st.nstops} vs ${off.nstops} batches)`);
+      }
+      REGS.forEach((r, k) => { if (st.regs[k] !== off.regs[k]) diffs.push(`${r} ${st.regs[k].toString(16)} vs ${off.regs[k].toString(16)}`); });
+      if (!st.enters && !(c.mayStayCold && mode === 'hot')) diffs.push('never entered');
+      if (diffs.length) fails++;
+      results.push(`${mode}: ${diffs.length ? 'FAIL ' + diffs.join(', ') : 'ok'} (enters=${st.enters} blocks=${st.blocks})`);
+    }
+    console.log(`${c.name.padEnd(18)} ${results.join(' | ')}`);
+  }
+  }
+  e.set_branch_clock(0);
+  const cs = (k) => e.uop_cstat(k);
+  const why = WAT_REASONS.map((n, k) => [n, k && e.uop_decline_count(k)]).filter(([, n]) => n).map(([k, n]) => `${k}=${n}`).join(' ');
+  console.log(`uop compiler: compiled=${cs(0)} declined=${cs(1)} insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}${why ? '\n  declines: ' + why : ''}`);
+  console.log(`reguards=${e.uop_stats(1)} guard-fails=${e.uop_stats(0)} kills=${e.uop_stats(3)}`);
+  if (fails) { console.log(`FAIL: ${fails}`); process.exit(1); }
+  console.log('PASS');
+}
+
+main().catch((err) => { console.error(err.stack || String(err)); process.exit(1); });
