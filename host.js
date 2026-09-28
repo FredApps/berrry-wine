@@ -1378,7 +1378,16 @@ class WineAssembly {
       return Math.floor(now / 16.7);
     };
 
-    self._presentDxIfDirty = () => {
+    // Returns 1 when it uploaded a surface to the canvas, 0 otherwise.
+    //
+    // `paced` means the caller is already running once per display frame
+    // (the requestAnimationFrame present in _presentNow, or a frozen/stop
+    // flush that must show the newest frame whatever the clock says), so the
+    // wall-clock frame bucket below is skipped. It has to be: rAF callbacks
+    // arrive every ~16.67ms and the bucket is 16.7ms wide, so two consecutive
+    // display frames can land in the same bucket and the second one would
+    // silently skip its upload -- a dropped frame manufactured by the throttle.
+    self._presentDxIfDirty = (paced) => {
       // Under Worker dx_trace filtering (guest-rpc dxTraceLocal) Unlocks and
       // lock depth arrive through shared memory instead of dx_trace.
       const broker = self.guestWorker && self.guestWorker.broker;
@@ -1387,17 +1396,18 @@ class WineAssembly {
         self._dxSharedDirtySeen = dxShared.dirty;
         self._dxDirty = true;
       }
-      if (!self._dxDirty) return;
+      if (!self._dxDirty) return 0;
       const gdi = self.hostCtx && self.hostCtx.sharedGdi;
-      if (!gdi || !gdi.presentBestDxOffscreen) return;
+      if (!gdi || !gdi.presentBestDxOffscreen) return 0;
       // One upload per display frame. A null sequence means "do not present
       // at all" (hidden tab); on a non-DOM host with no clock at all the
       // counter is undefined and every dirty slice presents, which is the old
-      // unthrottled behaviour rather than none.
-      const frameSeq = self._dxFrameSeqNow ? self._dxFrameSeqNow() : undefined;
-      if (frameSeq === null) return;
+      // unthrottled behaviour rather than none. Only the unpaced path (a host
+      // with no requestAnimationFrame) still needs this.
+      const frameSeq = (!paced && self._dxFrameSeqNow) ? self._dxFrameSeqNow() : undefined;
+      if (frameSeq === null) return 0;
       if (frameSeq !== undefined) {
-        if (frameSeq === self._dxPresentedSeq) return;
+        if (frameSeq === self._dxPresentedSeq) return 0;
         self._dxPresentedSeq = frameSeq;
       }
       // Don't upload a surface the guest is part-way through writing. Every
@@ -1408,12 +1418,18 @@ class WineAssembly {
       // memory -- present it anyway, which is what real DirectDraw does.
       if (dxLockDepth.size || (dxShared && dxShared.locks > 0)) {
         self._dxLockHeld = (self._dxLockHeld || 0) + 1;
-        if (self._dxLockHeld < 3) return;
+        if (self._dxLockHeld < 3) {
+          // Still dirty; the paced presenter re-arms for the next frame on
+          // this flag rather than on _dxDirty alone, which can stay set for
+          // good on a host with no DirectDraw surfaces to present.
+          self._dxLockDeferred = true;
+          return 0;
+        }
       } else {
         self._dxLockHeld = 0;
       }
       self._dxDirty = false;
-      gdi.presentBestDxOffscreen(true);
+      return gdi.presentBestDxOffscreen(true) ? 1 : 0;
     };
 
     const traceApiNames = (typeof window !== 'undefined' && window.__waTraceApiNames)
@@ -3517,6 +3533,13 @@ class WineAssembly {
   // repaint had the opposite fault: a crash left the dead app's last frame on
   // screen. Repainting last, once, fixes both.
   stop(options = {}) {
+    // Put the final frame on the canvas before stepping ends, then drop the
+    // pending rAF: a scheduled frame holds this host alive, and nothing will
+    // present for a stopped host again.
+    if (this._presentRaf || this._presentFrameDue) {
+      try { this._presentNow(); } catch (_) {}
+    }
+    this._cancelPresentFrame();
     this.running = false;
     // A pending parked-sleep timeout and the visibilitychange listener both
     // close over this WineHost, and a WineHost owns a 512MB shared memory.
@@ -4096,17 +4119,15 @@ class WineAssembly {
           self.stop({ repaint: false });
           return;
         }
-        const presentStart = perf ? performance.now() : 0;
         // Worker-hosted DirectDraw calls mark the same browser-side dirty flag
-        // as cooperative execution. Flush that frame at the slice boundary
-        // before compositing it; otherwise the Worker loop keeps repainting
-        // the last uploaded layer forever even while the guest updates the
-        // shared primary surface (AoE II's New Player screen is the visible
-        // case). Both cooperative scheduler paths do this at their matching
-        // boundaries below.
-        if (self._presentDxIfDirty) self._presentDxIfDirty();
-        if (self.renderer && self.renderer.flushRepaint) self.renderer.flushRepaint(true);
-        if (perf) perf.mark('present', performance.now() - presentStart);
+        // as cooperative execution. This slice boundary is where that frame
+        // becomes publishable; without it the Worker loop keeps showing the
+        // last uploaded layer forever even while the guest updates the shared
+        // primary surface (AoE II's New Player screen is the visible case).
+        // The upload itself waits for the display frame (see _presentNow),
+        // unless one already came due while this slice held publication.
+        // Both cooperative scheduler paths do the same at their boundaries.
+        self._presentAtBoundary(perf);
 
         if (!r.eip && !r.yield) {
           self.logToUI(`--- Program exited (worker) --- ${self._exitSiteText()}`);
@@ -4494,8 +4515,9 @@ class WineAssembly {
     // step, tagged with the guest time that produced it — the recorder's
     // whole timeline, and the reason a clip has no agent think-time in it.
     if (frozenRecorder.active && (this._frozenSteps % frozenRecorder.everyNSteps) === 0) {
-      try { if (this._presentDxIfDirty) this._presentDxIfDirty(); } catch (_) {}
-      try { if (this.renderer && this.renderer.flushRepaint) this.renderer.flushRepaint(true); } catch (_) {}
+      // Not paced by the display: a recording samples every k-th step, and
+      // each sample must carry that step's pixels, not wait for a rAF.
+      try { this._presentNow(); } catch (_) {}
       try { if (this.renderer && this.renderer.repaint) this.renderer.repaint(); } catch (_) {}
       frozenRecorder.pumpAudio();
       frozenRecorder.capture(this._frozenSteps | 0, this.frozenGuestMs(), this._frozenTickMs);
@@ -4506,14 +4528,16 @@ class WineAssembly {
   }
 
   // At rest: flush whatever the last step drew before anyone screenshots it.
-  // The run loop presents inside a step, but a repaint the renderer deferred
-  // would otherwise land on the next step — which, frozen, may never come.
+  // The run loop leaves the upload to the next display frame, and a repaint
+  // the renderer deferred would otherwise land on the next step — which,
+  // frozen, may never come.
   _frozenIdle() {
     const waiters = this._frozenWaiters;
     if (!waiters || !waiters.length) return;
     this._frozenWaiters = [];
-    try { if (this._presentDxIfDirty) this._presentDxIfDirty(); } catch (_) {}
-    try { if (this.renderer && this.renderer.flushRepaint) this.renderer.flushRepaint(true); } catch (_) {}
+    // Synchronously, not at the next rAF: "step, then screenshot" reads the
+    // canvas as soon as this resolves.
+    try { this._presentNow(); } catch (_) {}
     try { if (this.renderer && this.renderer.repaint) this.renderer.repaint(); } catch (_) {}
     for (const waiter of waiters) { try { waiter(); } catch (_) {} }
   }
@@ -4565,6 +4589,112 @@ class WineAssembly {
     const fn = this._delayedStep;
     this._delayedStep = null;
     if (fn) this._scheduleStep(fn, 0);
+  }
+
+  // ---- presentation ---------------------------------------------------
+  //
+  // A step used to end by uploading the DirectDraw surface and compositing
+  // the desktop. Steps are macrotasks and there are more of them than display
+  // frames: Moorhuhn 3 presents ~90 times a second on a 60 Hz display, and
+  // any upload beyond one per frame is overwritten before the screen shows
+  // it. A wall-clock bucket capped the count near 60, but it was not the
+  // display's beat -- two uploads could land in one vsync interval and none
+  // in the next, which is a stutter with nothing to blame it on.
+  //
+  // So a step now only notes that a frame is waiting, and the upload runs
+  // once per display frame from requestAnimationFrame, always taking the
+  // newest pixels. That adds no latency beyond the next rAF: the old upload
+  // could not reach the screen before that frame either.
+  //
+  // Worker mode has one complication. The guest's main thread runs in a
+  // Worker, and publishing while its slice is in flight would expose a
+  // half-drawn WM_PAINT (renderer._workerPublicationHeld). A rAF that fires
+  // then marks the frame due and the step publishes it at its own slice
+  // boundary, which is exactly where it used to publish -- just once per
+  // frame instead of once per step.
+  //
+  // With no requestAnimationFrame at all (the vm-context tests, a non-DOM
+  // host) the boundary presents synchronously, as it always did.
+
+  // Is there anything a present would put on screen? Cheap by design: it runs
+  // every step, and an idle app must not keep a rAF armed (every scheduled
+  // frame holds this host -- and its 512MB memory -- alive).
+  _presentWanted() {
+    if (this._dxDirty || this._dxLockDeferred) return true;
+    const broker = this.guestWorker && this.guestWorker.broker;
+    const dxShared = broker && broker.dxState ? broker.dxState() : null;
+    if (dxShared && dxShared.dirty !== this._dxSharedDirtySeen) return true;
+    const r = this.renderer;
+    return !!(r && (r._repaintScheduled || r._repaintPending || r._workerRepaintDeferred));
+  }
+
+  // Where every run loop used to present: the end of a completed slice.
+  _presentAtBoundary(perf) {
+    if (typeof requestAnimationFrame !== 'function') {
+      const t0 = perf ? performance.now() : 0;
+      if (this._presentDxIfDirty) this._presentDxIfDirty();
+      if (this.renderer && this.renderer.flushRepaint) this.renderer.flushRepaint(true);
+      if (perf) perf.mark('present', performance.now() - t0);
+      return;
+    }
+    // A display frame came and went while the Worker slice held publication.
+    // This boundary is the first safe moment to show it.
+    if (this._presentFrameDue) { this._presentNow(); return; }
+    if (this._presentWanted()) this._queuePresentFrame();
+  }
+
+  _queuePresentFrame() {
+    if (this._presentRaf || this._stopped) return;
+    this._presentRaf = requestAnimationFrame(() => {
+      this._presentRaf = 0;
+      if (this._stopped) return;
+      const r = this.renderer;
+      if (r && r._workerPublicationHeld && r._workerPublicationHeld()) {
+        this._presentFrameDue = true;
+        return;
+      }
+      this._presentNow();
+      // A surface still locked mid-write was held back; try the next frame.
+      if (this._dxLockDeferred) this._queuePresentFrame();
+    });
+  }
+
+  _cancelPresentFrame() {
+    if (this._presentRaf && typeof cancelAnimationFrame === 'function') {
+      cancelAnimationFrame(this._presentRaf);
+    }
+    this._presentRaf = 0;
+    this._presentFrameDue = false;
+  }
+
+  // Upload the newest guest frame and composite, now. Called from the rAF,
+  // from a step boundary when a frame fell due mid-slice, and wherever
+  // stepping comes to rest (frozen park, recording tap, stop) so the last
+  // frame is on the canvas before anyone looks at it. Returns 1 when pixels
+  // moved to the screen.
+  _presentNow() {
+    this._cancelPresentFrame();
+    this._dxLockDeferred = false;
+    const perf = (typeof window !== 'undefined' && window.WinePerf && window.WinePerf.enabled)
+      ? window.WinePerf : null;
+    const t0 = perf ? performance.now() : 0;
+    const dx = this._presentDxIfDirty ? this._presentDxIfDirty(true) : 0;
+    const r = this.renderer;
+    let composited = 0;
+    if (r && r.flushRepaint) {
+      const held = r._workerPublicationHeld && r._workerPublicationHeld();
+      if (!held && typeof requestAnimationFrame === 'function' && !r._isNode) {
+        // Paced already, so no 16ms guard: composite whatever is scheduled.
+        composited = r._repaintScheduled ? 1 : 0;
+        r.flushRepaint(false);
+        r._workerRepaintDeferred = false;
+      } else {
+        r.flushRepaint(true);
+      }
+    }
+    const uploaded = (dx || composited) ? 1 : 0;
+    if (perf && perf.frameUpload) perf.frameUpload(performance.now() - t0, uploaded);
+    return uploaded;
   }
 
   // ---- vertical blank -------------------------------------------------
@@ -5067,12 +5197,7 @@ class WineAssembly {
               ms: self.renderer._profileNow() - runStart,
             });
           }
-          const perfPresentStart = perf ? performance.now() : 0;
-          if (self._presentDxIfDirty) self._presentDxIfDirty();
-          if (self.renderer && self.renderer.flushRepaint) {
-            self.renderer.flushRepaint(true);
-          }
-          if (perf) perf.mark('present', performance.now() - perfPresentStart);
+          self._presentAtBoundary(perf);
           self._runSliceCount = (self._runSliceCount || 0) + 1;
           if (self.instance && self.instance.exports) {
             const ex = self.instance.exports;
@@ -5284,12 +5409,7 @@ class WineAssembly {
             }
             if (perf) perf.mark('workers', performance.now() - perfThreadStart);
             await self.handleCooperativeThreadLoadLibraries();
-            const perfPresentStart2 = perf ? performance.now() : 0;
-            if (self._presentDxIfDirty) self._presentDxIfDirty();
-            if (self.renderer && self.renderer.flushRepaint) {
-              self.renderer.flushRepaint(true);
-            }
-            if (perf) perf.mark('present', performance.now() - perfPresentStart2);
+            self._presentAtBoundary(perf);
           }
         }
       } catch (e) {

@@ -6,11 +6,12 @@ const fs = require('fs');
 const path = require('path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'host.js'), 'utf8');
-const runCall = source.indexOf('self.instance.exports.run(activeStepsPerSlice);');
+const RUN_CALL = 'self._runCooperativeSlice(activeStepsPerSlice);';
+const runCall = source.indexOf(RUN_CALL);
 const completionPump = source.indexOf(
   'self.hostCtx.pumpAudioCompletions();', runCall);
 const timerPump = source.indexOf('self._pumpMultimediaTimer();', runCall);
-const present = source.indexOf('self._presentDxIfDirty()', runCall);
+const present = source.indexOf('self._presentAtBoundary(perf)', runCall);
 
 assert(runCall >= 0, 'browser run loop should execute one cooperative guest slice');
 assert(completionPump > runCall,
@@ -21,7 +22,7 @@ assert(present > completionPump,
   'waveOut callbacks must be available before the next DirectDraw present');
 
 const between = source.slice(
-  runCall + 'self.instance.exports.run(activeStepsPerSlice);'.length,
+  runCall + RUN_CALL.length,
   completionPump);
 assert(!between.includes('instance.exports.run('),
   'waveOut completion pumping must happen at the first safe slice boundary');
