@@ -715,7 +715,7 @@
           (br $items)))
       (local.set $v
         (if (result i32) (i32.eq (local.get $code) (i32.const 8))
-          (then (call $read_thread_word))
+          (then (read-thread-word))
           (else (if (result i32) (i32.eq (local.get $code) (i32.const 4))
             ;; PUSH ESP pushes ESP as it was before this push.
             (then (local.get $cur))
@@ -772,8 +772,8 @@
   (func $th_push_run_call (param $op i32)
     (local $ret i32) (local $target i32) (local $cur i32)
     (if (call $stack_run_push (local.get $op) (i32.const 1)) (then (return)))
-    (local.set $ret (call $read_thread_word))
-    (local.set $target (call $read_thread_word))
+    (local.set $ret (read-thread-word))
+    (local.set $target (read-thread-word))
     (local.set $cur (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
     (i32.store offset=16 (global.get $reg_base) (local.get $cur))
     (if (global.get $sr_fast)
@@ -785,7 +785,7 @@
   ;; ... POP items, then RET / RET imm16 (the next word, 0 for C3).
   (func $th_pop_run_ret (param $op i32)
     (local $imm i32) (local $cur i32)
-    (local.set $imm (call $read_thread_word))
+    (local.set $imm (read-thread-word))
     (if (call $stack_run_pop (local.get $op) (i32.const 1)) (then (return)))
     (call $th_ret_guard16)
     (local.set $cur (i32.load offset=16 (global.get $reg_base)))
