@@ -3580,16 +3580,131 @@
   (global $present_paced_count (mut i32) (i32.const 0)) ;; frames that slept
   (global $present_lock_whole (mut i32) (i32.const 0))  ;; primary entry under a NULL-rect Lock
 
+  ;; Which rule decides the wait: 1 = smooth (the default), 0 = deadline.
+  (global $present_pace_mode (mut i32) (i32.const 1))
+  ;; Smooth-mode state. The delay is a controller output in microseconds; the
+  ;; previous frame end is in guest ms (0 = unarmed); the dither carries the
+  ;; sub-millisecond remainder so the ms-granular Sleep averages to it.
+  (global $present_smooth_delay_us (mut i32) (i32.const 0))
+  (global $present_smooth_prev_ms (mut i32) (i32.const 0))
+  (global $present_smooth_armed (mut i32) (i32.const 0))
+  (global $present_smooth_dither_us (mut i32) (i32.const 0))
+  ;; Schedule error in us, sum of (period - interval), held to +-one period:
+  ;; > 0 ahead of the cap's schedule, < 0 behind it.
+  (global $present_smooth_debt_us (mut i32) (i32.const 0))
+
   (func $present_set_cap (param $cap i32)
     (global.set $present_cap
       (select (i32.const 0) (local.get $cap) (i32.lt_s (local.get $cap) (i32.const 0))))
-    (global.set $present_deadline_u (i64.const 0)))
+    (global.set $present_deadline_u (i64.const 0))
+    (global.set $present_smooth_delay_us (i32.const 0))
+    (global.set $present_smooth_armed (i32.const 0))
+    (global.set $present_smooth_dither_us (i32.const 0))
+    (global.set $present_smooth_debt_us (i32.const 0)))
+
+  (func $present_set_pace_mode (param $mode i32)
+    (global.set $present_pace_mode (i32.ne (local.get $mode) (i32.const 0)))
+    (call $present_set_cap (global.get $present_cap)))
+
+  ;; Hand the host the paced frame end (dx_trace kind 30): the wait asked
+  ;; for, the guest ms it was decided at, the mode, and the smooth delay. One
+  ;; JS call per frame, only while a cap is on, for the interval tools
+  ;; (run.js --frame-stats, WinePerf.pacedFrames) -- a present count cannot
+  ;; stand in for it, since some apps present twice per frame.
+  (func $present_pace_note (param $wait i32) (param $now i32)
+    (call $host_dx_trace (i32.const 30) (local.get $wait) (local.get $now)
+      (global.get $present_pace_mode) (global.get $present_smooth_delay_us)))
+
+  ;; Ask the host for a slice-yielding Sleep of $wait ms after this present.
+  (func $present_pace_sleep (param $wait i32)
+    (global.set $yield_flag (i32.const 1))
+    (global.set $sleep_yielded (i32.const 1))
+    (global.set $sleep_timeout (local.get $wait))
+    (global.set $present_paced_ms
+      (i32.add (global.get $present_paced_ms) (local.get $wait)))
+    (global.set $present_paced_count
+      (i32.add (global.get $present_paced_count) (i32.const 1))))
 
   (func $present_pace
-    (local $cap i64) (local $now_u i64) (local $ahead_u i64) (local $wait i32)
     (if (i32.eqz (global.get $present_cap)) (then (return)))
+    (if (global.get $present_pace_mode)
+      (then (call $present_pace_smooth))
+      (else (call $present_pace_deadline))))
+
+  ;; ---- smooth mode ----------------------------------------------------------
+  ;; The deadline rule is bang-bang: a frame that arrives early sleeps out the
+  ;; WHOLE remainder, one that arrives late sleeps nothing, and the frame after
+  ;; a late one (or after a frame whose work swung short) can sleep most of a
+  ;; period in one go -- one visibly long frame between short ones.
+  ;;
+  ;; Smooth mode instead keeps ONE delay, slept after every frame, and nudges
+  ;; it toward whatever keeps the frames on the cap's schedule:
+  ;;
+  ;;   err   = period - interval                    (this frame's rate error)
+  ;;   debt  = clamp(debt + err, -2 periods, +2 periods)  (schedule error)
+  ;;   delay += clamp(err/8 + debt/16, -STEP, +STEP), delay kept in [0, period]
+  ;;
+  ;; A PI controller on the rate: the err term follows the work, the debt term
+  ;; is what makes the long-run average land ON the cap. Without it the STEP
+  ;; clamp is asymmetric in effect -- a 50 ms overrun is -33 ms of error but
+  ;; moves the delay by only -STEP -- and the rate settles under the cap
+  ;; (dx_tunnel, whose D3D frames spike 6 -> 53 ms: 49.6/s at cap 60).
+  ;; The clamp is what the user asked for: no frame's wait differs from the one
+  ;; before it by more than STEP (1.5 ms), so a work spike or an overrun changes
+  ;; the cadence by a little on each of several frames instead of a lot on one.
+  ;; Debt is held to two periods: an overrun is repaid by at most that much in
+  ;; all, spread over several slightly short frames (each wait still moves by
+  ;; <= STEP), so there is no catch-up burst -- the deadline rule instead
+  ;; repays its one-period carry with back-to-back unslept frames. With one
+  ;; period the slower repayment left smooth mode ~3% under deadline's rate on
+  ;; spiky work; gains 1/8, 1/16 are the fastest pair that does not overshoot
+  ;; on the scenarios in test/test-present-pace-modes.js. A stall (a
+  ;; gap over a second, or a clock that ran backwards) re-arms without touching
+  ;; the delay or the debt. The sub-ms part of the delay is dithered across
+  ;; frames, because a guest Sleep is whole milliseconds.
+  (func $present_pace_smooth
+    (local $now i32) (local $iv_us i32) (local $period_us i32) (local $err i32)
+    (local $d i32) (local $wait i32) (local $debt i32) (local $bound i32)
+    (local.set $now (call $host_get_ticks))
+    (local.set $period_us (i32.div_u (i32.const 1000000) (global.get $present_cap)))
+    (local.set $d (global.get $present_smooth_delay_us))
+    (if (i32.and (i32.ne (global.get $present_smooth_armed) (i32.const 0))
+                 (i32.le_u (i32.sub (local.get $now) (global.get $present_smooth_prev_ms))
+                           (i32.const 1000)))
+      (then
+        (local.set $iv_us (i32.mul (i32.sub (local.get $now)
+          (global.get $present_smooth_prev_ms)) (i32.const 1000)))
+        (local.set $err (i32.sub (local.get $period_us) (local.get $iv_us)))
+        (local.set $debt (i32.add (global.get $present_smooth_debt_us) (local.get $err)))
+        (local.set $bound (i32.shl (local.get $period_us) (i32.const 1)))
+        (if (i32.gt_s (local.get $debt) (local.get $bound)) (then (local.set $debt (local.get $bound))))
+        (if (i32.lt_s (local.get $debt) (i32.sub (i32.const 0) (local.get $bound)))
+          (then (local.set $debt (i32.sub (i32.const 0) (local.get $bound)))))
+        (global.set $present_smooth_debt_us (local.get $debt))
+        (local.set $err (i32.add (i32.shr_s (local.get $err) (i32.const 3))
+          (i32.shr_s (local.get $debt) (i32.const 4))))
+        (if (i32.gt_s (local.get $err) (i32.const 1500)) (then (local.set $err (i32.const 1500))))
+        (if (i32.lt_s (local.get $err) (i32.const -1500)) (then (local.set $err (i32.const -1500))))
+        (local.set $d (i32.add (local.get $d) (local.get $err)))
+        (if (i32.lt_s (local.get $d) (i32.const 0)) (then (local.set $d (i32.const 0))))
+        (if (i32.gt_s (local.get $d) (local.get $period_us)) (then (local.set $d (local.get $period_us))))
+        (global.set $present_smooth_delay_us (local.get $d))))
+    (global.set $present_smooth_armed (i32.const 1))
+    (global.set $present_smooth_dither_us
+      (i32.add (global.get $present_smooth_dither_us) (local.get $d)))
+    (local.set $wait (i32.div_u (global.get $present_smooth_dither_us) (i32.const 1000)))
+    (global.set $present_smooth_dither_us
+      (i32.sub (global.get $present_smooth_dither_us) (i32.mul (local.get $wait) (i32.const 1000))))
+    ;; The next interval is measured from here, and it includes the sleep.
+    (global.set $present_smooth_prev_ms (local.get $now))
+    (call $present_pace_note (local.get $wait) (local.get $now))
+    (if (local.get $wait) (then (call $present_pace_sleep (local.get $wait)))))
+
+  (func $present_pace_deadline
+    (local $cap i64) (local $now_u i64) (local $ahead_u i64) (local $wait i32) (local $now i32)
     (local.set $cap (i64.extend_i32_u (global.get $present_cap)))
-    (local.set $now_u (i64.mul (i64.extend_i32_u (call $host_get_ticks)) (local.get $cap)))
+    (local.set $now (call $host_get_ticks))
+    (local.set $now_u (i64.mul (i64.extend_i32_u (local.get $now)) (local.get $cap)))
     (local.set $ahead_u (i64.sub (global.get $present_deadline_u) (local.get $now_u)))
     ;; First frame, or a deadline more than two periods out (a clock that
     ;; stepped backwards, a cap just lowered): re-arm from now, never sleep
@@ -3598,6 +3713,7 @@
                 (i64.gt_s (local.get $ahead_u) (i64.const 2000)))
       (then
         (global.set $present_deadline_u (i64.add (local.get $now_u) (i64.const 1000)))
+        (call $present_pace_note (i32.const 0) (local.get $now))
         (return)))
     (if (i64.gt_s (local.get $ahead_u) (i64.const 0))
       (then
@@ -3606,16 +3722,12 @@
         (local.set $wait (i32.wrap_i64 (i64.div_u
           (i64.add (local.get $ahead_u) (i64.sub (local.get $cap) (i64.const 1)))
           (local.get $cap))))
-        (global.set $yield_flag (i32.const 1))
-        (global.set $sleep_yielded (i32.const 1))
-        (global.set $sleep_timeout (local.get $wait))
-        (global.set $present_paced_ms
-          (i32.add (global.get $present_paced_ms) (local.get $wait)))
-        (global.set $present_paced_count
-          (i32.add (global.get $present_paced_count) (i32.const 1)))
+        (call $present_pace_note (local.get $wait) (local.get $now))
+        (call $present_pace_sleep (local.get $wait))
         (global.set $present_deadline_u
           (i64.add (global.get $present_deadline_u) (i64.const 1000))))
       (else
+        (call $present_pace_note (i32.const 0) (local.get $now))
         ;; Late: no wait. Carry at most one period of the lateness forward.
         (global.set $present_deadline_u (i64.add (i64.const 1000)
           (select (global.get $present_deadline_u)

@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const { createHostImports } = require('../lib/host-imports');
+const frameIntervals = require('../lib/frame-intervals');
 const { loadDlls, callDllMain, detectRequiredDlls, shouldReportNtForDlls, loadWin16Dlls } = require('../lib/dll-loader');
 const { inputEventHwnd } = require('../lib/host-window');
 const { SYSTEM_DATA_FILES, resolveDllGraph, mountLoadedDllFiles, mountSystemDataFiles,
@@ -547,6 +548,16 @@ const FLIP_VSYNC = hasFlag('flip-vsync');
 // browser's per-app presentCap, here on the batch clock. Off by default so a
 // headless run's pacing stays the app's own. See $present_pace.
 const PRESENT_CAP = Math.max(0, parseInt(getArg('present-cap', '0'), 10) || 0);
+// --present-pace=smooth|deadline: how $present_pace spends the cap. smooth
+// (the default) sleeps one per-frame delay that moves at most 1.5ms a frame;
+// deadline sleeps each early frame to a deadline one period on. An app's
+// registry `presentPace` overrides the default; the flag wins.
+const PRESENT_PACE = (() => {
+  const v = getArg('present-pace', null);
+  if (v === null) return null;
+  if (v !== 'smooth' && v !== 'deadline') throw new Error(`--present-pace must be smooth or deadline, got ${v}`);
+  return v;
+})();
 // --- spin parking --------------------------------------------------------
 // Eight of the games in docs/frame-pacing-census.md busy-wait on the
 // millisecond clock and four more on an empty PeekMessage. Both detectors are
@@ -943,6 +954,9 @@ const APP_ENTRY = (() => {
 // --wall-clock-ms does; the flag wins.
 const CALENDAR_ORIGIN_MS = WALL_CLOCK_MS ||
   (APP_ENTRY && APP_ENTRY.wallClock ? Date.parse(APP_ENTRY.wallClock) : 0);
+// 1 = smooth pacing (also the WAT default), 0 = deadline. Always pushed, to
+// the main instance and every guest-thread instance.
+const PRESENT_PACE_MODE = (PRESENT_PACE || (APP_ENTRY && APP_ENTRY.presentPace) || 'smooth') === 'deadline' ? 0 : 1;
 // Match the browser: an app registry opt-in is launch behavior, not a UI-only
 // hint. Keep explicit CLI flags as the A/B override, with `--no-…` strongest.
 const COPY_SUPEROPS = resolveCopySuperops(
@@ -2608,8 +2622,12 @@ async function main() {
   // which matters, because a repaint of a live 640x480 surface costs ~6ms and
   // repainting often enough to resolve a frame is slower than the run budget.
   const frameStats = {
-    present: { iv: [], lastBatch: -1, lastAt: 0n },
-    flush: { iv: [], lastBatch: -1, lastAt: 0n },
+    present: { iv: [], t: [], lastBatch: -1, lastAt: 0n },
+    // dx_trace kind 30: one per $present_pace call, i.e. one per frame the
+    // cap governs -- the series to read when an app presents twice a frame.
+    paced: { iv: [], t: [], lastBatch: -1, lastAt: 0n },
+    pacedGuest: [],
+    flush: { iv: [], t: [], lastBatch: -1, lastAt: 0n },
   };
   // One entry per executed batch, for --decode-stats.
   const decodeStatsDecodes = [];
@@ -2628,6 +2646,7 @@ async function main() {
       series.lastAt = at;
       return at;
     }
+    series.t.push(Number(at) / 1e6);
     if (series.lastBatch >= 0) {
       series.iv.push({
         batches: tickStateRef.batch - series.lastBatch,
@@ -2743,6 +2762,14 @@ async function main() {
       if (gameplayBench) gameplayBench.present(kind, ...a);
       if (kind === 2 || kind === 5 || kind === 6) dxPresent.dirty = true;
       if (FRAME_STATS && (kind === 5 || kind === 6)) recordFrame(frameStats.present);
+      if (FRAME_STATS && kind === 30) {
+        recordFrame(frameStats.paced);
+        // a[1] is the guest ms the pacer decided at. Headless, a main-thread
+        // Sleep with no other guest thread moves the guest clock instead of
+        // waiting (tickState.pausedMs), so the wall series above holds only
+        // the work between frames; this is the cadence the guest saw.
+        if (tickStateRef.batch >= FRAME_STATS_FROM) frameStats.pacedGuest.push(a[1] >>> 0);
+      }
       // --dx-lock-pause-ms: presentation back-pressure, charged at kind 5.
       //
       // Kind 5 is $dx_present, and it is the ONE event every presentation path
@@ -4464,6 +4491,7 @@ async function main() {
   experiments.recordInherited(inheritWasm, { copySuperops: COPY_SUPEROPS, verbose: VERBOSE });
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
   if (PRESENT_CAP) inheritWasm('set_present_cap', PRESENT_CAP);
+  inheritWasm('set_present_pace_mode', PRESENT_PACE_MODE);
   // Guest threads run their own module instance over the shared memory, so the
   // spin state is per-thread by construction — but the THRESHOLD is a setting
   // and has to be propagated like every other one.
@@ -4483,8 +4511,14 @@ async function main() {
     countAddrs: countAddrs,
     faultUnmapped: FAULT_NULL,
     inheritedWasmGlobals,
-    now: () => batchClock.batchTicks(),
-    sleepNow: () => Math.max(batchClock.batchTicks(), batchClock.state.lastTick),
+    // Deadlines (Sleep, timed waits) must be kept on the clock the guest
+    // reads. Under --real-ticks that is the wall clock: on the batch clock a
+    // main-thread Sleep(16) ends at the next batch, however little wall time
+    // that is -- measured on dx_tunnel at --present-cap=60, every paced
+    // Sleep lasted ~3ms and the capped app ran at 66.8 frames/s.
+    now: REAL_TICKS ? () => guestClock.ticks() : () => batchClock.batchTicks(),
+    sleepNow: REAL_TICKS ? () => guestClock.ticks()
+      : () => Math.max(batchClock.batchTicks(), batchClock.state.lastTick),
     clockParkSleep: !NO_CLOCK_PARK_SLEEP,
     // For a spawned thread's io_wait park (yield 12). CLI providers usually
     // read synchronously, so this mostly matters to tests that mount an
@@ -5364,6 +5398,9 @@ async function main() {
   if (PRESENT_CAP && instance.exports.set_present_cap) {
     instance.exports.set_present_cap(PRESENT_CAP);
   }
+  if (instance.exports.set_present_pace_mode) {
+    instance.exports.set_present_pace_mode(PRESENT_PACE_MODE);
+  }
   if (instance.exports.set_spin_park_k) {
     if (NO_SPIN_PARK) instance.exports.set_spin_park_k(0);
     else if (Number.isFinite(SPIN_PARK_K)) instance.exports.set_spin_park_k(SPIN_PARK_K);
@@ -5573,7 +5610,10 @@ async function main() {
     // the clock to the deadline itself, so Sleep(1001) reads as 1001ms rather
     // than rounding up to the next 200ms batch (a 240MHz TSC, still tripping
     // the watchdog).
-    if (threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
+    // Under --real-ticks the guest clock is the wall clock and pausedMs does
+    // not move it; the batch loop waits the remainder out in wall time
+    // instead (see mainSleepWallWait).
+    if (!REAL_TICKS && threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
       tickState.pausedMs += threadManager.mainSleepRemaining();
     }
     if (threadManager.isMainSleeping()) return true;
@@ -8952,6 +8992,13 @@ async function main() {
       ? instance.exports.get_cache_stores() >>> 0 : 0;
     const sliceT0 = DECODE_STATS ? process.hrtime.bigint() : 0n;
     try {
+      if (REAL_TICKS && threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
+        // --real-ticks: a main-thread Sleep lasts real time. Without this the
+        // loop spins through empty batches until the wall clock catches up,
+        // which is the same thing at 100% CPU plus a STUCK verdict.
+        const ms = Math.max(0, Math.ceil(threadManager.mainSleepRemaining()));
+        if (ms > 0) await new Promise(r => setTimeout(r, ms));
+      }
       if (!mainExecutionSuspended()) instance.exports.run(BATCH_SIZE);
     } catch (e) {
       flushLogs();
@@ -9646,6 +9693,10 @@ if (VERBOSE) {
         // until the next scheduled click/capture. Do not let that idle time
         // accumulate and instantly trip after the last event is consumed.
         stuckCount = 0;
+      } else if (REAL_TICKS && threadManager.isMainSleeping()) {
+        // --real-ticks: a main thread inside a finite Sleep() has an unchanged
+        // EIP by definition while the wall clock runs the wait out.
+        stuckCount = 0;
       } else if (control) {
         // A controlled session idles by design between agent commands; the
         // stuck detector would end it the moment the message pump goes quiet.
@@ -9999,7 +10050,7 @@ if (VERBOSE) {
   console.log(`\nStats: ${apiCount} API calls, ${batchesRun} batches`
     + ` in ${executionElapsedSeconds.toFixed(3)}s (${(batchesRun / Math.max(executionElapsedSeconds,0.001)).toFixed(0)} batches/s)`);
   if (PRESENT_CAP && instance.exports.get_present_paced_count) {
-    console.log(`present pacing (main instance): cap ${PRESENT_CAP}/s, `
+    console.log(`present pacing (main instance): cap ${PRESENT_CAP}/s ${PRESENT_PACE_MODE ? 'smooth' : 'deadline'}, `
       + `${instance.exports.get_present_paced_count()} frames slept `
       + `${instance.exports.get_present_paced_ms()} guest ms`);
   }
@@ -10200,10 +10251,13 @@ if (VERBOSE) {
       const window = MAX_BATCHES - FRAME_STATS_FROM;
       console.log(`  ${label}: ${f.length + 1} over ${window} batches`
         + ` (one per ${(window / (f.length + 1)).toFixed(2)} batches ≈ ${stepsPer >= 1000 ? (stepsPer / 1000).toFixed(0) + 'k' : stepsPer} steps)`);
-        + (ex && ex.get_spin_work_max ? ` workMax=${ex.get_spin_work_max()}` : '')
       console.log(`      interval batches p50 ${med}, p90 ${q('batches', 0.9)}, p99 ${q('batches', 0.99)}, max ${q('batches', 1)}`
         + `   long (>=1.75x median) ${long} of ${f.length} (${(100 * long / f.length).toFixed(1)}%)`);
       console.log(`      interval ms      p50 ${q('ms', 0.5).toFixed(1)}, p90 ${q('ms', 0.9).toFixed(1)}, p99 ${q('ms', 0.99).toFixed(1)}   (wall clock — load-sensitive, never diff across runs)`);
+      // Evenness in wall ms: spread, frame-to-frame change and the census
+      // against a 60 Hz grid (lib/frame-intervals.js). Only meaningful with
+      // --real-ticks, where the guest clock and this one are the same clock.
+      console.log(frameIntervals.format(frameIntervals.summarize(series.t), '      wall '));
       if (note) console.log(`      ${note}`);
       if (med <= 1) {
         console.log('      NOT RESOLVED: the interval is at or under one batch, so this series is'
@@ -10220,6 +10274,12 @@ if (VERBOSE) {
       + ' straight onto the primary instead of flipping a back buffer trips it several times'
       + ' per frame. Compare the count against --trace-api IDirectDrawSurface_Blt/Flip before'
       + ' reading it as a frame rate');
+    if (PRESENT_CAP) {
+      report('paced frame   ($present_pace) ', frameStats.paced,
+        'one per frame end the cap governs, stamped when the pacer ran (before its sleep)');
+      console.log(frameIntervals.format(frameIntervals.summarize(frameStats.pacedGuest),
+        '      guest ms '));
+    }
     report('host flush    (surface upload)', frameStats.flush,
       `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), so treat it as the harness's cadence unless it agrees with the present count above`);
   }

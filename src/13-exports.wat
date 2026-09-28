@@ -1697,6 +1697,12 @@
   (func (export "set_present_cap") (param $cap i32) (call $present_set_cap (local.get $cap)))
   (func (export "get_present_paced_ms") (result i32) (global.get $present_paced_ms))
   (func (export "get_present_paced_count") (result i32) (global.get $present_paced_count))
+  ;; 0 = deadline (sleep to a deadline one period on), 1 = smooth (one
+  ;; per-frame delay nudged by at most 1.5 ms a frame). Resets pacing state.
+  (func (export "set_present_pace_mode") (param $mode i32)
+    (call $present_set_pace_mode (local.get $mode)))
+  (func (export "get_present_smooth_delay_us") (result i32)
+    (global.get $present_smooth_delay_us))
   (func (export "set_flip_vsync") (param $on i32)
     (global.set $dx_flip_vsync (i32.ne (local.get $on) (i32.const 0))))
   ;; Unit-test seams for the model itself: both are pure functions of a guest
