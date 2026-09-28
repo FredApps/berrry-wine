@@ -63,7 +63,7 @@ status line at (7,123) names the selected tool — read it to confirm.
 | lower palette 140/165/190/213,193 | power / police / school / parks; up-arrows at y=176 open flyouts above (Oil/Hydro/Coal; Marina/Stadium/Zoo/Large/Small Park) |
 | top toolbar 262,56 | land-ownership **layer** toggle (wireframe map); 285/310/333/356 are further layer toggles |
 
-## Buy Land — the Owner Tool palette button (group found statically; button not yet confirmed)
+## Buy Land — the Owner Tool palette button (red arrow, 18,319; confirmed)
 
 The palette flyouts are built by `0x418f46(group)`: `group-1` indexes the
 byte table `0x41b664`, which selects a case in the jump table `0x41b5f8`.
@@ -95,11 +95,16 @@ Enlarged, the left palette reads:
 Clicking 18,223 set the status line to "Water Tower: $250", and funds stayed
 $30,000.
 
-- **Candidate:** the red arrow at 18,319 is the only button left that no other
-  group explains, so it is the likely Owner Tool.
-- **Not yet verified:** the run that clicked it failed to join (below).
-- **How to confirm:** read the status line at (7,123), then click land and
-  watch Funds.
+**Confirmed (2026-09-28, same day): the red arrow at 18,319 is the Owner
+Tool, and a click selects Buy Land.**
+
+- The status line at (7,123) reads "Buy Land: $20".
+- Clicks on land at 420,330 and 300,380 then took Funds from $30,000 to
+  $29,960 ($20 each), and each clicked tile gets a small marker.
+- Route: the client captures below with
+  `301000:click:18:319,303000:click:420:330,307000:click:300:380`, plus png
+  captures between the clicks.
+- The Owner flyout (arrow at ~36,319) should hold Sell; not yet tried.
 
 Older leads, kept for reference:
 
