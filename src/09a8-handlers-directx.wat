@@ -4427,7 +4427,16 @@
         (local.set $sh (local.get $dh))
         (if (local.get $src_keyed)
           (then
-            (local.set $row (i32.const 0))
+            ;; Without a region list every pixel is inside the clip; the
+            ;; vectorized copy is the scalar loop below, pixel for pixel.
+            (if (i32.eqz (local.get $clip_entry))
+              (then
+                (call $dx_ckey_copy_rect
+                  (local.get $dst_dib) (local.get $dst_pitch) (local.get $dx) (local.get $dy)
+                  (local.get $src_dib) (local.get $src_pitch) (local.get $sx) (local.get $sy)
+                  (local.get $dw) (local.get $dh) (local.get $bps) (local.get $ckey))
+                (local.set $row (local.get $dh)))
+              (else (local.set $row (i32.const 0))))
             (block $ckblit_done (loop $ckblit_row
               (br_if $ckblit_done (i32.ge_u (local.get $row) (local.get $dh)))
               (local.set $src_w (i32.const 0))
@@ -4661,6 +4670,173 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0x80004001))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
+  ;; Source-colour-keyed rectangle copy between two surface DIBs: every source
+  ;; pixel that is not $ckey is stored to the destination, keyed pixels leave
+  ;; the destination alone. $dst_dib/$src_dib are the WASM address of each
+  ;; surface base; surface DIBs come from $dib_alloc and are linear in WASM
+  ;; memory, which every caller already assumed of misc1.
+  ;;
+  ;; This was a scalar loop that re-tested bytes-per-pixel on every pixel
+  ;; (60% of Moorhuhn 3's gameplay CPU). The width is now dispatched once per
+  ;; call, and each row runs 16 bytes at a time: an eq mask against the splat
+  ;; key, then a straight store (no keyed lane), no store (all keyed) or a
+  ;; bitselect against the destination. The scalar tail and the result are
+  ;; the old loop's, pixel for pixel (coordinates are pixels, not bytes):
+  ;;   * the key is compared against the zero-extended pixel, so an 8/16-bit
+  ;;     surface whose key does not fit its width keys nothing;
+  ;;   * a row whose source and destination bytes overlap (a surface blitting
+  ;;     onto itself) runs the old forward scalar loop, because the order in
+  ;;     which one pixel's store feeds a later pixel's load is observable there;
+  ;;   * any width other than 1, 2 or 3 bytes is treated as 4, as before.
+  ;; 24bpp used to fall into the 4-byte loop too (4-byte stride, past the
+  ;; rectangle); it now steps 3 bytes and compares the low 24 bits of the key.
+  (func $dx_ckey_copy_rect
+      (param $dst_dib i32) (param $dst_pitch i32) (param $dx i32) (param $dy i32)
+      (param $src_dib i32) (param $src_pitch i32) (param $sx i32) (param $sy i32)
+      (param $w i32) (param $h i32) (param $bps i32) (param $ckey i32)
+    (local $dst i32) (local $src i32)
+    (local $row i32) (local $x i32) (local $bytes i32) (local $vbytes i32)
+    (local $d i32) (local $s i32) (local $col i32) (local $m i32) (local $nokey i32)
+    (local $kv v128) (local $v v128) (local $mask v128)
+    (if (i32.or (i32.eqz (local.get $w)) (i32.eqz (local.get $h))) (then (return)))
+    (if (i32.ne (local.get $bps) (i32.const 3))
+      (then
+        (if (i32.and (i32.ne (local.get $bps) (i32.const 1))
+                     (i32.ne (local.get $bps) (i32.const 2)))
+          (then (local.set $bps (i32.const 4))))))
+    (local.set $dst (i32.add (local.get $dst_dib)
+      (i32.add (i32.mul (local.get $dy) (local.get $dst_pitch))
+               (i32.mul (local.get $dx) (local.get $bps)))))
+    (local.set $src (i32.add (local.get $src_dib)
+      (i32.add (i32.mul (local.get $sy) (local.get $src_pitch))
+               (i32.mul (local.get $sx) (local.get $bps)))))
+    (local.set $bytes (i32.mul (local.get $w) (local.get $bps)))
+    (local.set $vbytes (i32.and (local.get $bytes) (i32.const -16)))
+    ;; A key wider than the pixel can never match the zero-extended pixel.
+    (if (i32.or
+          (i32.and (i32.eq (local.get $bps) (i32.const 1))
+                   (i32.gt_u (local.get $ckey) (i32.const 0xFF)))
+          (i32.and (i32.eq (local.get $bps) (i32.const 2))
+                   (i32.gt_u (local.get $ckey) (i32.const 0xFFFF))))
+      (then (local.set $nokey (i32.const 1))))
+    (if (i32.eq (local.get $bps) (i32.const 1))
+      (then (local.set $kv (i8x16.splat (local.get $ckey)))))
+    (if (i32.eq (local.get $bps) (i32.const 2))
+      (then (local.set $kv (i16x8.splat (local.get $ckey)))))
+    (if (i32.eq (local.get $bps) (i32.const 3))
+      (then (local.set $ckey (i32.and (local.get $ckey) (i32.const 0xFFFFFF)))))
+    (if (i32.eq (local.get $bps) (i32.const 4))
+      (then (local.set $kv (i32x4.splat (local.get $ckey)))))
+    (block $rows_done (loop $rows
+      (br_if $rows_done (i32.ge_u (local.get $row) (local.get $h)))
+      (local.set $d (i32.add (local.get $dst)
+        (i32.mul (local.get $row) (local.get $dst_pitch))))
+      (local.set $s (i32.add (local.get $src)
+        (i32.mul (local.get $row) (local.get $src_pitch))))
+      (block $row_done
+        ;; Overlapping row: the old per-pixel forward order, verbatim.
+        (if (i32.and (i32.lt_u (local.get $d) (i32.add (local.get $s) (local.get $bytes)))
+                     (i32.lt_u (local.get $s) (i32.add (local.get $d) (local.get $bytes))))
+          (then
+            (local.set $x (i32.const 0))
+            (block $ov_done (loop $ov
+              (br_if $ov_done (i32.ge_u (local.get $x) (local.get $bytes)))
+              (if (i32.eq (local.get $bps) (i32.const 1))
+                (then
+                  (local.set $col (i32.load8_u (i32.add (local.get $s) (local.get $x))))
+                  (if (i32.ne (local.get $col) (local.get $ckey))
+                    (then (i32.store8 (i32.add (local.get $d) (local.get $x)) (local.get $col))))
+                  (local.set $x (i32.add (local.get $x) (i32.const 1))))
+                (else (if (i32.eq (local.get $bps) (i32.const 2))
+                (then
+                  (local.set $col (i32.load16_u (i32.add (local.get $s) (local.get $x))))
+                  (if (i32.ne (local.get $col) (local.get $ckey))
+                    (then (i32.store16 (i32.add (local.get $d) (local.get $x)) (local.get $col))))
+                  (local.set $x (i32.add (local.get $x) (i32.const 2))))
+                (else (if (i32.eq (local.get $bps) (i32.const 3))
+                (then
+                  (local.set $col (i32.or
+                    (i32.load16_u (i32.add (local.get $s) (local.get $x)))
+                    (i32.shl (i32.load8_u offset=2 (i32.add (local.get $s) (local.get $x)))
+                             (i32.const 16))))
+                  (if (i32.ne (local.get $col) (local.get $ckey))
+                    (then
+                      (i32.store16 (i32.add (local.get $d) (local.get $x)) (local.get $col))
+                      (i32.store8 offset=2 (i32.add (local.get $d) (local.get $x))
+                        (i32.shr_u (local.get $col) (i32.const 16)))))
+                  (local.set $x (i32.add (local.get $x) (i32.const 3))))
+                (else
+                  (local.set $col (i32.load (i32.add (local.get $s) (local.get $x))))
+                  (if (i32.ne (local.get $col) (local.get $ckey))
+                    (then (i32.store (i32.add (local.get $d) (local.get $x)) (local.get $col))))
+                  (local.set $x (i32.add (local.get $x) (i32.const 4)))))))))
+              (br $ov)))
+            (br $row_done)))
+        (if (local.get $nokey)
+          (then
+            (memory.copy (local.get $d) (local.get $s) (local.get $bytes))
+            (br $row_done)))
+        (if (i32.eq (local.get $bps) (i32.const 3))
+          (then
+            (local.set $x (i32.const 0))
+            (block $p3_done (loop $p3
+              (br_if $p3_done (i32.ge_u (local.get $x) (local.get $bytes)))
+              (local.set $col (i32.or
+                (i32.load16_u (i32.add (local.get $s) (local.get $x)))
+                (i32.shl (i32.load8_u offset=2 (i32.add (local.get $s) (local.get $x)))
+                         (i32.const 16))))
+              (if (i32.ne (local.get $col) (local.get $ckey))
+                (then
+                  (i32.store16 (i32.add (local.get $d) (local.get $x)) (local.get $col))
+                  (i32.store8 offset=2 (i32.add (local.get $d) (local.get $x))
+                    (i32.shr_u (local.get $col) (i32.const 16)))))
+              (local.set $x (i32.add (local.get $x) (i32.const 3)))
+              (br $p3)))
+            (br $row_done)))
+        ;; 1/2/4 bytes: 16-byte vectors, then the scalar tail.
+        (local.set $x (i32.const 0))
+        (block $v_done (loop $vl
+          (br_if $v_done (i32.ge_u (local.get $x) (local.get $vbytes)))
+          (local.set $v (v128.load (i32.add (local.get $s) (local.get $x))))
+          (local.set $mask
+            (if (result v128) (i32.eq (local.get $bps) (i32.const 1))
+              (then (i8x16.eq (local.get $v) (local.get $kv)))
+              (else (if (result v128) (i32.eq (local.get $bps) (i32.const 2))
+                (then (i16x8.eq (local.get $v) (local.get $kv)))
+                (else (i32x4.eq (local.get $v) (local.get $kv)))))))
+          (local.set $m (i8x16.bitmask (local.get $mask)))
+          (if (i32.eqz (local.get $m))
+            (then (v128.store (i32.add (local.get $d) (local.get $x)) (local.get $v)))
+            (else (if (i32.ne (local.get $m) (i32.const 0xFFFF))
+              (then
+                (v128.store (i32.add (local.get $d) (local.get $x))
+                  (v128.bitselect
+                    (v128.load (i32.add (local.get $d) (local.get $x)))
+                    (local.get $v)
+                    (local.get $mask)))))))
+          (local.set $x (i32.add (local.get $x) (i32.const 16)))
+          (br $vl)))
+        (block $t_done (loop $tl
+          (br_if $t_done (i32.ge_u (local.get $x) (local.get $bytes)))
+          (if (i32.eq (local.get $bps) (i32.const 1))
+            (then
+              (local.set $col (i32.load8_u (i32.add (local.get $s) (local.get $x))))
+              (if (i32.ne (local.get $col) (local.get $ckey))
+                (then (i32.store8 (i32.add (local.get $d) (local.get $x)) (local.get $col)))))
+            (else (if (i32.eq (local.get $bps) (i32.const 2))
+              (then
+                (local.set $col (i32.load16_u (i32.add (local.get $s) (local.get $x))))
+                (if (i32.ne (local.get $col) (local.get $ckey))
+                  (then (i32.store16 (i32.add (local.get $d) (local.get $x)) (local.get $col)))))
+              (else
+                (local.set $col (i32.load (i32.add (local.get $s) (local.get $x))))
+                (if (i32.ne (local.get $col) (local.get $ckey))
+                  (then (i32.store (i32.add (local.get $d) (local.get $x)) (local.get $col))))))))
+          (local.set $x (i32.add (local.get $x) (local.get $bps)))
+          (br $tl))))
+      (local.set $row (i32.add (local.get $row) (i32.const 1)))
+      (br $rows))))
+
   ;; BltFast(this, dwX, dwY, lpDDSrcSurface, lpSrcRect, dwTrans)
   (func $handle_IDirectDrawSurface_BltFast (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst_entry i32) (local $src_entry i32)
@@ -4669,7 +4845,6 @@
     (local $dst_pitch i32) (local $src_pitch i32)
     (local $sx i32) (local $sy i32) (local $sw i32) (local $sh i32)
     (local $bps i32) (local $row i32) (local $trans i32)
-    (local $ckey i32) (local $col i32) (local $x i32)
     (call $d3dim_worker_fence)
     (local.set $dst_entry (call $dx_from_this (local.get $arg0)))
     ;; Microsoft explicitly excludes clipping from BltFast. The receiver is
@@ -4744,50 +4919,12 @@
     ;; DDBLTFAST_SRCCOLORKEY = 0x1, DDBLTFAST_DESTCOLORKEY = 0x2
     (if (i32.and (local.get $trans) (i32.const 0x01))
       (then
-        ;; Source color key blit — per-pixel compare
-        (local.set $ckey (load.field DxObject misc2 (local.get $src_entry)))
-        (local.set $row (i32.const 0))
-        (block $ck_done (loop $ck_row
-          (br_if $ck_done (i32.ge_u (local.get $row) (local.get $sh)))
-          (local.set $x (i32.const 0))
-          (block $ck_col_done (loop $ck_col
-            (br_if $ck_col_done (i32.ge_u (local.get $x) (local.get $sw)))
-            (if (i32.eq (local.get $bps) (i32.const 1))
-              (then
-                (local.set $col (i32.load8_u (i32.add (local.get $src_dib)
-                  (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
-                           (i32.add (local.get $sx) (local.get $x))))))
-                (if (i32.ne (local.get $col) (local.get $ckey))
-                  (then
-                    (i32.store8 (i32.add (local.get $dst_dib)
-                      (i32.add (i32.mul (i32.add (local.get $arg2) (local.get $row)) (local.get $dst_pitch))
-                               (i32.add (local.get $arg1) (local.get $x))))
-                      (local.get $col)))))
-              (else (if (i32.eq (local.get $bps) (i32.const 2))
-              (then
-                (local.set $col (i32.load16_u (i32.add (local.get $src_dib)
-                  (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
-                           (i32.mul (i32.add (local.get $sx) (local.get $x)) (i32.const 2))))))
-                (if (i32.ne (local.get $col) (local.get $ckey))
-                  (then
-                    (i32.store16 (i32.add (local.get $dst_dib)
-                      (i32.add (i32.mul (i32.add (local.get $arg2) (local.get $row)) (local.get $dst_pitch))
-                               (i32.mul (i32.add (local.get $arg1) (local.get $x)) (i32.const 2))))
-                      (local.get $col)))))
-              (else
-                (local.set $col (i32.load (i32.add (local.get $src_dib)
-                  (i32.add (i32.mul (i32.add (local.get $sy) (local.get $row)) (local.get $src_pitch))
-                           (i32.mul (i32.add (local.get $sx) (local.get $x)) (i32.const 4))))))
-                (if (i32.ne (local.get $col) (local.get $ckey))
-                  (then
-                    (i32.store (i32.add (local.get $dst_dib)
-                      (i32.add (i32.mul (i32.add (local.get $arg2) (local.get $row)) (local.get $dst_pitch))
-                               (i32.mul (i32.add (local.get $arg1) (local.get $x)) (i32.const 4))))
-                      (local.get $col))))))))
-            (local.set $x (i32.add (local.get $x) (i32.const 1)))
-            (br $ck_col)))
-          (local.set $row (i32.add (local.get $row) (i32.const 1)))
-          (br $ck_row))))
+        ;; Source color key blit
+        (call $dx_ckey_copy_rect
+          (local.get $dst_dib) (local.get $dst_pitch) (local.get $arg1) (local.get $arg2)
+          (local.get $src_dib) (local.get $src_pitch) (local.get $sx) (local.get $sy)
+          (local.get $sw) (local.get $sh) (local.get $bps)
+          (load.field DxObject misc2 (local.get $src_entry))))
       (else
         ;; No color key — fast row copies
         (local.set $row (i32.const 0))
