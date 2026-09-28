@@ -758,6 +758,9 @@ class WineAssembly {
     // The micro-op tier is on by default too; `uop: false` on an app, the
     // debug toolbar box or ?no-uop turns it off.
     this.uop = true;
+    // The tier's aggressive stack elision is opt-in: `aggressiveStack: true`
+    // on an app or ?aggressive-stack (docs/uop-tier-design.md).
+    this.aggressiveStack = false;
     // CPUID SSE advertisement is opt-in until each app's reachable SIMD path
     // has passed an authentic run against the decoder.
     this.cpuSSE = false;
@@ -2120,6 +2123,9 @@ class WineAssembly {
     const uop = (this.uop !== false &&
       !(window.WineSuperops && window.WineSuperops.uop === false)) ? 1 : 0;
     if (this.instance.exports.set_uop) this.instance.exports.set_uop(uop);
+    const aggressiveStack = (uop && (this.aggressiveStack === true ||
+      (window.WineSuperops && window.WineSuperops.aggressiveStack === true))) ? 1 : 0;
+    if (this.instance.exports.set_aggressive_stack) this.instance.exports.set_aggressive_stack(aggressiveStack);
     // ?x87-fuse-debug=MASK[,LO,HI] -- the bisect knob for a fold divergence.
     // MASK picks families (1 pipeline4, 2 short, 4 tree4, 8 affine, 16 island)
     // and only blocks whose guest start is in [LO,HI) are offered to them.
@@ -2175,6 +2181,9 @@ class WineAssembly {
       }
       if (this.instance.exports.set_uop) {
         await this.guestWorker.callExport('set_uop', uop);
+      }
+      if (this.instance.exports.set_aggressive_stack) {
+        await this.guestWorker.callExport('set_aggressive_stack', aggressiveStack);
       }
       if (x87FuseDebug && this.instance.exports.set_x87_fuse_debug) {
         await this.guestWorker.callExport('set_x87_fuse_debug',
@@ -2305,6 +2314,7 @@ class WineAssembly {
     this.threadManager.recordInheritedWasmGlobal('set_x87_pipeline4_fusion', x87Fusion);
     this.threadManager.recordInheritedWasmGlobal('set_x87_affine_fusion', x87Fusion);
     this.threadManager.recordInheritedWasmGlobal('set_uop', uop);
+    this.threadManager.recordInheritedWasmGlobal('set_aggressive_stack', aggressiveStack);
     // The bisect mask has to reach every guest thread for the same reason the
     // fold flags do: a thread decodes in its own instance, so a mask set only
     // here leaves the threads folding under the default (every family on) and

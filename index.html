@@ -2336,6 +2336,9 @@ Resource-aware Win98 emulator
       const live = runningApps.filter(app => app && app.wine && app.wine.setUop && app.wine.setUop(!!on)).length;
       appendDebugLog(`[superop] uop tier ${on ? 'on' : 'off'} — ${live} running app(s) switched, later launches follow`);
     }
+    // ?aggressive-stack: the uop tier also elides push/pop pairs nothing can
+    // observe (opt-in, compile-time; read at launch, host.js).
+    if (new URLSearchParams(location.search).has('aggressive-stack')) window.WineSuperops.aggressiveStack = true;
     if (new URLSearchParams(location.search).has('no-uop')) {
       window.WineSuperops.uop = false;
       window.addEventListener('load', () => {

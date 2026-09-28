@@ -125,6 +125,7 @@
   ;;   64 BNZL a t                            branch if a != 0, no block spent
   ;;   65 SETSS i                             flag_sign_shift = i
   ;;   66 GETCC d cc                          d = $eval_cc(cc) of the globals
+  ;;   67 SPILL s base disp                   [base + disp] = s via $gs32 (a stub op)
 
   ;; The main thread's arena. Each guest thread is its own instance over the
   ;; shared memory and a program names its instance's $reg_base, so every
@@ -375,6 +376,13 @@
         (then
           (i32.store (i32.load offset=4 (local.get $pc)) (call $eval_cc (i32.load offset=8 (local.get $pc))))
           (local.set $pc (i32.add (local.get $pc) (i32.const 12))) (br $L)))
+      ;; 67 SPILL s base disp: an elided push's slot, back to memory in a
+      ;; stub before leaving (07e $uc_spill_at); the threaded path's store
+      (if (i32.eq (local.get $op) (i32.const 67))
+        (then
+          (call $gs32 (i32.add (i32.load (i32.load offset=8 (local.get $pc))) (i32.load offset=12 (local.get $pc)))
+                      (i32.load (i32.load offset=4 (local.get $pc))))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 16))) (br $L)))
       ;; 57 BCC cc t
       (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))
       (local.set $pc
@@ -388,7 +396,7 @@
     (loop $L
       (block $svc
       (block $miss
-      (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
+      (block $c67 (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
       (block $c55 (block $c54 (block $c53 (block $c52 (block $c51 (block $c50
       (block $c49 (block $c48 (block $c47 (block $c46 (block $c45 (block $c44
       (block $c43 (block $c42 (block $c41 (block $c40 (block $c39 (block $c38
@@ -403,7 +411,7 @@
                   $c26 $c27 $c28 $c29 $c30 $c31 $c32 $c33 $c34 $c35 $c36 $c37
                   $c38 $c39 $c40 $c41 $c42 $c43 $c44 $c45 $c46 $c47 $c48 $c49
                   $c50 $c51 $c52 $c53 $c54 $c55 $c56 $c57 $c58 $c59 $c60 $c61 $c62 $c63
-                  $c64 $c65 $c66
+                  $c64 $c65 $c66 $c67
                   $c0
                   (i32.load (local.get $pc))))
         ;; 0 EXIT eip
@@ -848,6 +856,8 @@
         (local.set $pc (i32.add (local.get $pc) (i32.const 8)))
         (br $L))
         ;; 66 GETCC d cc -- calls $eval_cc: $uop_run does it
+        (br $svc))
+        ;; 67 SPILL s base disp -- calls $gs32: $uop_run does it
         (br $svc))
       ;; A memory access left its window: $uop_run re-guards (a call).
       (global.set $uop_io_ga (local.get $ga))

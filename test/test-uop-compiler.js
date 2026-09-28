@@ -247,6 +247,86 @@ const CASES = [
   },
 ];
 
+// ---- --aggressive-stack (07e $uc_sp_block) ----
+// Each runs with the tier's aggressive stack elision on (hot and pre arms)
+// against plain threaded code, and `sp` pins what the one pre-arm compile
+// must count ($uop_cstat 6+i, SP_NAMES): the elision has to happen where it
+// may and must not where it may not, or exactness proves nothing.
+const SP_NAMES = ['pushes', 'matched', 'elided', 'plain', 'rescued', 'resc-other', 'resc-fwd-ld', 'resc-fwd-st',
+  'fwd-ld', 'fwd-st', '-', 'k-unknown', 'k-ebp', 'k-partial', 'k-esp', 'k-release', 'k-callret', 'k-full',
+  'unmatched', 'spills'];
+const PAD = (n) => new Array(n).fill(0x90);
+const AGGR_CASES = [
+  {
+    // rule 1, exact: reads of both open slots are forwarded from the temps
+    name: 'sp-fwd-load', regs: { ecx: N }, aggr: { elided: 2, 'fwd-ld': 2, 'resc-fwd-ld': 2, 'k-unknown': 0 },
+    code: [L('l'), [0x8B, 0x06], 0x50, 0x53, [0x8B, 0x54, 0x24, 0x04], [0x03, 0x14, 0x24], 0x5B, 0x58,
+           [0x01, 0xD3], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // rule 1/3, no overlap: a read and a write of locals beside the slot
+    name: 'sp-nonoverlap', regs: { ecx: N }, head: 18, aggr: { elided: 1, 'resc-other': 1, 'fwd-ld': 0 },
+    code: [[0x83, 0xEC, 0x08], [0xC7, 0x04, 0x24, ...d32(5)], [0xC7, 0x44, 0x24, 0x04, ...d32(7)],
+           L('l'), 0x56, [0x8B, 0x54, 0x24, 0x04], [0x01, 0xCA], [0x89, 0x54, 0x24, 0x08], 0x5F, [0x03, 0x1F],
+           [0x01, 0xD3], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), [0x83, 0xC4, 0x08], 0xC3],
+  },
+  {
+    // rule 3, exact: mov [esp], edx overwrites the pushed value in the temp,
+    // the read after it and the pop both see the new value
+    name: 'sp-fwd-store', regs: { ecx: N }, aggr: { elided: 1, 'fwd-st': 1, 'fwd-ld': 1 },
+    code: [L('l'), [0x8B, 0x06], [0x89, 0xCA], 0x50, [0x89, 0x14, 0x24], [0x03, 0x04, 0x24], 0x5A,
+           [0x31, 0xC3], [0x01, 0xD3], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // partial overlap (movzx a byte of the slot) and a read-modify-write
+    // (add [esp], ecx): both pushes materialize
+    name: 'sp-partial-rmw', regs: { ecx: N }, aggr: { matched: 2, elided: 0, 'k-partial': 2 },
+    code: [L('l'), [0x8B, 0x06], 0x50, [0x0F, 0xB6, 0x54, 0x24, 0x01], 0x58, [0x01, 0xD3],
+           0x52, [0x01, 0x0C, 0x24], 0x5A, [0x01, 0xD3], [0x01, 0xC3],
+           [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // rule 2: a load and a store through registers that could point
+    // anywhere materialize the open push, and so does an escaped address
+    // written through (lea edx,[esp]; mov [edx],ecx: the pop must see ecx)
+    name: 'sp-unknown-escape', regs: { ecx: N }, aggr: { matched: 3, elided: 0, 'k-unknown': 3 },
+    code: [L('l'), [0x8B, 0x06], 0x50, [0x03, 0x1E], 0x58, 0x50, [0x89, 0x1F], 0x5A, [0x01, 0xD3],
+           0x50, [0x8D, 0x14, 0x24], [0x89, 0x0A], 0x58, [0x01, 0xC3],
+           [0x83, 0xC6, 0x04], [0x83, 0xC7, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // add esp releases the top slot (no pop can take it), the one under it
+    // still pairs; `mov esp, edx` (ESP written, same value) materializes the
+    // open push, and its pop then has nothing to match
+    name: 'sp-release-espw', regs: { ecx: N }, aggr: { elided: 1, unmatched: 1, 'k-esp': 0 },
+    code: [L('l'), [0x8B, 0x06], 0x50, 0x52, [0x83, 0xC4, 0x04], 0x5A, [0x01, 0xD3],
+           0x50, [0x89, 0xE2], [0x89, 0xD4], 0x58, [0x01, 0xC3],
+           [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // EBP from `mov ebp, esp` in the same block: [ebp+8] (the argument) is
+    // another slot, [ebp-4] is exactly `push edi`'s -- forwarded store, then
+    // a forwarded read through [esp]; push ebp / pop ebp pair around it all
+    name: 'sp-ebp-frame', regs: { ecx: N }, aggr: { elided: 2, 'fwd-st': 1, 'fwd-ld': 1, 'k-ebp': 0 },
+    code: [L('l'), 0x56, CALL('f'), [0x83, 0xC4, 0x04], [0x01, 0xC3], [0x01, 0xFB], [0x83, 0xC6, 0x04], 0x49,
+           J(cc.NZ, 'l'), 0xC3,
+           L('f'), 0x55, [0x89, 0xE5], 0x57, [0x8B, 0x7D, 0x08], [0x8D, 0x04, 0x7F], [0x89, 0x45, 0xFC],
+           [0x8B, 0x04, 0x24], 0x5F, 0x5D, 0xC3],
+  },
+  {
+    // a page seam between push and pop: with the budget gone the seam's
+    // stub leaves to threaded code there, which reads both slots from
+    // memory -- so the stub must spill the temps first
+    name: 'sp-seam-spill', regs: { ecx: N }, pages: 2, aggr: { elided: 2, 'spills@0': 4, 'spills@1': 0 },
+    code: [PAD(0xFF8), L('l'), [0x8B, 0x06], 0x50, 0x53, [0x8B, 0x54, 0x24, 0x04], [0x03, 0x14, 0x24], 0x5B, 0x58,
+           [0x01, 0xD3], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+    head: 0xFF8,
+  },
+];
+// the exact tier's stack cases again, with the aggressive tier on
+for (const c of CASES.filter((x) => /^(push-pop|call-|ret-)/.test(x.name))) AGGR_CASES.push({ ...c, name: c.name + '+A', aggr: {} });
+CASES.push(...AGGR_CASES);
+
 // Real code: Heroes III's clipped RLE sprite row blitter (h3demo.exe
 // 0x4708a6..0x4709a2, docs/re-notes), fed random sprites. It is the first
 // program whose lowering diverged in a real run, so it stays as a fuzz case.
@@ -364,16 +444,23 @@ function runCase(inst, c, a, codeAddr, mode) {
   for (const r of REGS) e['set_' + r](init[r] >>> 0);
   // A known flag state on entry: a sub that sets CF.
   e.set_uop(mode === 'off' ? 0 : 1);
+  if (c.aggr) e.set_aggressive_stack(mode === 'off' ? 0 : 1);
   const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5) };
+  let sp = null;
   if (mode === 'pre') {
+    const head = codeAddr + (c.head || 0);
     const declines = WAT_REASONS.map((_, k) => k && e.uop_decline_count(k));
     const d0 = e.uop_cstat(1);
-    const pc = e.uop_compile(codeAddr);
+    const s0 = SP_NAMES.map((_, k) => e.uop_cstat(6 + k));
+    const pc = e.uop_compile(head);
     if (!pc) {
+      if (c.aggr) e.set_aggressive_stack(0);
       const why = WAT_REASONS.findIndex((_, k) => k && e.uop_decline_count(k) !== declines[k]);
       return { err: 'pre-compile declined: ' + (e.uop_cstat(1) > d0 ? WAT_REASONS[why] : 'limit') };
     }
-    e.uop_install(codeAddr, pc);
+    sp = {};
+    SP_NAMES.forEach((n, k) => { sp[n] = e.uop_cstat(6 + k) - s0[k]; });
+    e.uop_install(head, pc);
   }
   // Small batches, recording where each one stops: the tier must end every
   // batch on the same guest instruction as threaded code (the guest clock is
@@ -394,9 +481,10 @@ function runCase(inst, c, a, codeAddr, mode) {
     ok, eip: e.get_eip() >>> 0, stops: stops.join(','), nstops: stops.length, flags: e.uop_flags(), mem: hash(mem, g2w, a),
     regs: REGS.map((r) => e['get_' + r]() >>> 0),
     installs: e.uop_stats(2) - before.installs, enters: e.uop_stats(4) - before.enters,
-    blocks: e.uop_stats(5) - before.blocks,
+    blocks: e.uop_stats(5) - before.blocks, sp,
   };
   e.set_uop(0);
+  if (c.aggr) e.set_aggressive_stack(0);
   return st;
 }
 
@@ -582,7 +670,8 @@ async function main() {
   console.log(clock ? '-- branch clock (a block = an executed x86 branch)' : '-- block clock (threaded cuts charge)');
   for (const c of CASES) {
     if (only && c.name !== only) continue;
-    const off = runCase(inst, c, a, a.code + 0x1000 * slot++, 'off');
+    const at = () => { const x = a.code + 0x1000 * slot; slot += c.pages || 1; return x; };
+    const off = runCase(inst, c, a, at(), 'off');
     if (c.foldCheck) {
       // Threaded code with and without the loop fold: same state, same clock.
       // `off` above ran with the family's default; run both explicitly.
@@ -603,9 +692,13 @@ async function main() {
     }
     const results = [];
     for (const mode of ['hot', 'pre']) {
-      const st = runCase(inst, c, a, a.code + 0x1000 * slot++, mode);
+      const st = runCase(inst, c, a, at(), mode);
       if (st.err) { results.push(`${mode}: ${st.err}`); fails++; continue; }
       const diffs = [];
+      if (st.sp && c.aggr) {
+        for (const [kk, v] of Object.entries(c.aggr)) { const [k, ck] = kk.split('@'); if (ck !== undefined && +ck !== clock) continue; if (st.sp[k] !== v) diffs.push(`${k}=${st.sp[k]} want ${v}`); }
+        if (process.env.UOP_SP) console.log(c.name, JSON.stringify(st.sp));
+      }
       if (!st.ok) diffs.push('did not return');
       if (st.eip !== off.eip) diffs.push(`eip ${st.eip.toString(16)} vs ${off.eip.toString(16)}`);
       if (st.flags !== off.flags) diffs.push(`flags ${st.flags.toString(2)} vs ${off.flags.toString(2)}`);
