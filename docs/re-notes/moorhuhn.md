@@ -45,6 +45,43 @@ the browser (2026-09-21).
   node that is ~5.3s of `$uop_fast`, and ~3x that with `--no-uop`. A
   faster boot means a faster uop engine on these two loops, not wider
   coverage.
+- **Stuck on the title with the frame cap on** (`?present-cap=60` /
+  `--present-cap=60`), 2026-09-28. Space was never seen, but uncapped it
+  worked. The cause was keyboard routing, not the pacer:
+  - **The WinSock thread polls input too.** T1 (the WinSock thread, start
+    `0x418ac0`) owns a hidden "WinSock Window" (hwnd `0x18001`) and pumps
+    `GetMessageA` at `0x418b12`, with its dispatch at `0x418b18`. The
+    host input FIFO is shared, so whichever guest thread polls first takes
+    the event.
+  - **The cap made T1 win.** Under the cap, main sleeps ~15 of every 16ms.
+    T1 in msgwait is resumed as soon as input is queued, so it won the
+    race.
+  - **T1 kept the key.** T1 has no focus, so the key's hwnd was 0.
+    `$input_route_to_owner` then fell back to `$main_hwnd`, a per-instance
+    global that in T1 is the socket window. T1 kept the key and dispatched
+    it to the socket window. The hook `0x40cb70` never ran and `[0x45a220]`
+    stayed 0.
+  - **Real Windows does not get stuck.** It queues keys to the foreground
+    thread, so a held key is seen at 60fps with vsync.
+  - **The fix.** A focusless poller now routes keyboard input to the
+    thread that owns the host's foreground window (`$host_foreground_window`).
+    It is covered by `test/test-input-route-foreground-thread.js`.
+  - **Why the CLI missed it.** `run.js` used to hand every poller the
+    *main* instance's focus, which hid the bug. It now passes the polling
+    thread's own focus, as `host.js` does.
+  - **Repro:** `--present-cap=60 --tick-ms-per-batch=2 --batch-size=100000
+    --input=6000:keydown:32,6100:keyup:32,7000:png:X --count=0x40cb70,0x418b18
+    --stuck-after=1000000 --no-close --max-batches=7001` (title by ~5000).
+    Broken: hook 0 / T1 dispatch 1. Fixed: hook 2 / T1 0 and ENTER YOUR NAME.
+  - **Same route for the other two apps.** `gallinelle` reaches its name
+    screen ("Inserisci il tuo nome"). `moorhuhn_winter` (a click at
+    320,250) reaches the round.
+  - **Ruled out:** a frame-count timeout, the pacer's own sleep arithmetic
+    and a stuck hook key.
+  - **A caveat that holds on real hardware too.** The pump at
+    `0x40e89c..0x40e8d6` drains the whole queue per frame, so a down and up
+    both inside one frame cancel. A tap shorter than a frame (~17ms capped)
+    is lost on real Windows as well.
 
 ## Moorhuhn 2 (v1.1)
 
