@@ -876,3 +876,7 @@
   ;; Process-shared CRT stream ownership: recursive lock at +0/+4, list at +8.
   (region.declare $CRT_STREAM_STATE (size 0x00000010) (align 0x00000010)
     (owner "09a6-handlers-crt.wat:$CRT_STREAM_STATE"))
+  ;; Video for Windows decompressors: HIC table, ICINFO names and one
+  ;; output row; per-stream workspaces come from $dib_alloc (09a7g-video-icm.wat header).
+  (region.declare $VIDEO_ARENA (size 0x00005000) (align 0x00000010)
+    (owner "09a7g-video-icm.wat:$VIDEO_ARENA"))

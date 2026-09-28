@@ -31657,5 +31657,51 @@
     "convention": "stdcall",
     "hash": 1563692465,
     "ret": "HRESULT"
+  },
+  {
+    "id": 3723,
+    "name": "ICSendMessage",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1305944430,
+    "args": [
+      {
+        "name": "hic",
+        "type": "HANDLE"
+      },
+      {
+        "name": "msg",
+        "type": "DWORD"
+      },
+      {
+        "name": "dw1",
+        "type": "DWORD"
+      },
+      {
+        "name": "dw2",
+        "type": "DWORD"
+      }
+    ]
+  },
+  {
+    "id": 3724,
+    "name": "ICLocate",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 2844074431
+  },
+  {
+    "id": 3725,
+    "name": "ICDecompress",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 715061218
+  },
+  {
+    "id": 3726,
+    "name": "ICGetInfo",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 75557971
   }
 ]

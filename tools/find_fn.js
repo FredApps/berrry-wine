@@ -28,7 +28,9 @@ const { imageBase, sections } = pe;
 
 function va2off(va) {
   for (const s of sections) {
-    const size = Math.min(s.rawSize, s.vsize);
+    // Watcom links every section with VirtualSize 0; the loader then maps
+    // SizeOfRawData, so only a nonzero vsize may trim the raw bytes.
+    const size = s.vsize ? Math.min(s.rawSize, s.vsize) : s.rawSize;
     if (va >= s.va && va < s.va + size) {
       return { off: va - s.va + s.rawOff, sect: s };
     }
