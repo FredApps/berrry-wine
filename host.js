@@ -4641,7 +4641,16 @@ class WineAssembly {
     }
     // A display frame came and went while the Worker slice held publication.
     // This boundary is the first safe moment to show it.
-    if (this._presentFrameDue) { this._presentNow(); return; }
+    if (this._presentFrameDue) {
+      // Re-arm straight away when pixels moved. The next slice starts as soon
+      // as this returns and the next display frame will land inside it; a
+      // rAF armed only at the NEXT boundary fires one slice later, so a guest
+      // whose slices are longer than a display frame got an upload at every
+      // other boundary (dx_donuts, Worker: 26.7 -> 13.8 uploads/s). An idle
+      // guest stops the chain: its due frame moves nothing.
+      if (this._presentNow()) this._queuePresentFrame();
+      return;
+    }
     if (this._presentWanted()) this._queuePresentFrame();
   }
 
