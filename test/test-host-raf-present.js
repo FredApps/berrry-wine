@@ -36,6 +36,7 @@ function makeHost({ withRaf }) {
   }
   vm.runInNewContext(hostSource + '\n;globalThis.WineAssembly = WineAssembly;', context);
   const wine = new context.WineAssembly();
+  if (withRaf) wine.__rafForTest = context.requestAnimationFrame;
   const log = { uploads: [], composites: 0, pacedCalls: 0, unpacedCalls: 0 };
   // The guest's frame counter: each slice "presents" a new frame by bumping
   // it and marking the surface dirty, exactly what dx_trace kind 5 does.
@@ -171,6 +172,46 @@ function driveWorkerLoop(h) {
     h.wine.renderer.endWorkerGuestSlice();
     h.fireRaf();
     assert.strictEqual(h.log.composites, 1, 'one composite per display frame');
+    h.wine.running = false;
+  }
+
+  // ---- the renderer's own rAF does not composite the frame a second time ---
+  // Its scheduleRepaint() arms a rAF during the step, i.e. before the present
+  // rAF, so left alone it composites first (without the new DX frame) and the
+  // present composites again: two composites per display frame.
+  {
+    const h = makeHost({ withRaf: true });
+    const loop = driveWorkerLoop(h);
+    const r = h.wine.renderer;
+    r._repaintRaf = null;
+    r.scheduleRepaint = function () {
+      if (this._repaintScheduled) return;
+      this._repaintScheduled = true;
+      if (this._repaintRaf !== null) return;
+      this._repaintRaf = h.wine.__rafForTest(() => {
+        this._repaintRaf = null;
+        if (this._repaintScheduled) { this._repaintScheduled = false; h.log.composites++; }
+      });
+    };
+    // Like host-imports' _presentDxSurfaceToMainWindow: an upload schedules
+    // the composite that will show it.
+    const upload = h.wine._presentDxIfDirty;
+    h.wine._presentDxIfDirty = paced => {
+      const n = upload(paced);
+      if (n) r.scheduleRepaint();
+      return n;
+    };
+    for (let frame = 1; frame <= 3; frame++) {
+      h.present(); r.scheduleRepaint();          // guest draws inside the slice
+      await loop.finishSlice();
+      h.present(); r.scheduleRepaint();
+      await loop.finishSlice();
+      r.endWorkerGuestSlice();
+      h.fireRaf();
+      r.beginWorkerGuestSlice();
+      assert.strictEqual(h.log.composites, frame, `one composite per display frame (frame ${frame})`);
+      assert.strictEqual(h.log.uploads.length, frame, `one upload per display frame (frame ${frame})`);
+    }
     h.wine.running = false;
   }
 
