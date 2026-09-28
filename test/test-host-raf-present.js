@@ -130,9 +130,23 @@ function driveWorkerLoop(h) {
     await loop.finishSlice({ presents: 1 });
     assert.deepStrictEqual(h.log.uploads, [6, 8],
       'the due frame is published at the very next slice boundary, newest pixels');
-    assert.strictEqual(h.rafQueue.size, 0, 'publishing at the boundary consumes the frame');
+    assert.strictEqual(h.rafQueue.size, 1,
+      'a boundary that published re-arms at once: the next frame lands inside the next slice');
 
-    // ---- idle: no rAF armed -----------------------------------------------
+    // ---- slices longer than a display frame: an upload at EVERY boundary ---
+    // Each rAF fires mid-slice. Re-arming only at the following boundary
+    // would publish every other slice (measured: dx_donuts 26.7 -> 13.8/s).
+    for (let i = 0; i < 4; i++) {
+      h.fireRaf();                                     // mid-slice: marks due
+      await loop.finishSlice({ presents: 1 });
+    }
+    assert.deepStrictEqual(h.log.uploads, [6, 8, 9, 10, 11, 12],
+      'one upload per slice when every slice spans a display frame');
+
+    // ---- idle: the chain stops -----------------------------------------------
+    h.fireRaf();
+    await loop.finishSlice({ presents: 0 });
+    assert.strictEqual(h.rafQueue.size, 0, 'a due frame that moved nothing does not re-arm');
     await loop.finishSlice({ presents: 0 });
     assert.strictEqual(h.rafQueue.size, 0, 'an idle boundary must not arm a rAF');
 
@@ -141,7 +155,7 @@ function driveWorkerLoop(h) {
     assert.strictEqual(h.rafQueue.size, 1, 'a dirty boundary armed a rAF');
     h.wine.renderer.endWorkerGuestSlice();
     try { h.wine.stop({ repaint: false }); } catch (_) {}
-    assert.deepStrictEqual(h.log.uploads, [6, 8, 9], 'stop() puts the final frame on the canvas');
+    assert.deepStrictEqual(h.log.uploads, [6, 8, 9, 10, 11, 12, 13], 'stop() puts the final frame on the canvas');
     assert.strictEqual(h.rafQueue.size, 0, 'stop() drops the pending rAF (it would hold the host alive)');
   }
 
