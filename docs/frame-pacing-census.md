@@ -661,6 +661,19 @@ false positive:
   poll.
 * **Return address and ESP** make it one call site at one stack depth, not a
   pump that happens to be called from two places.
+* **At most `$spin_work_max` blocks (default 64) since the previous read at
+  that site** (clock detector only). The other rules cannot see guest work that
+  makes no API call: Diablo II's gameplay reads `GetTickCount` once per object
+  (`exe+0x4293c0`, ~160 reads a frame, no other API between them), and in the
+  browser, where a Worker's clock only moves every 4 ms, all eight rules held and
+  it parked mid-frame 720 times a second — 4 fps against 41 fps with the detector
+  off. Measured 2026-09-27 at 800 batches, `--tick-ms-per-batch=1
+  --batch-size=100000`: abedemo parks 662 times and halflife_uplink 794 times,
+  identically at 64 and with the check off (`--spin-work-max=0`); abedemo still
+  parks at a limit of 4 blocks, Uplink at 2, so a real spin is a few blocks per
+  read and 64 is a wide margin. captain_claw_demo (500 batches): 456 parks,
+  157 presents, 33,440 API calls in both arms. `--spin-work-max=N` moves it;
+  `set_spin_work_max` is the live export.
 
 There is also a progress guarantee: a clock read is parked on **at most once per
 distinct millisecond**. If the host hands the guest back with the clock still

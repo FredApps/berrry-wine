@@ -9,7 +9,7 @@
     (local $thread i32)
     (local $hc_i i32) (local $hc_slot i32) (local $hc_fp i32)
     (local $prev_eip i32) (local $prev_esp i32)
-    (local $saved_budget i32) (local $shared_cache_generation i32)
+    (local $saved_budget i32) (local $saved_start i32) (local $shared_cache_generation i32)
     ;; A global rather than a local because $branch_end spends it too — see the
     ;; comment on $block_budget in 01-header.wat. Saved and restored because
     ;; run() is re-entrant: a COM class-factory callback is driven by calling
@@ -17,7 +17,9 @@
     ;; (lib/storage.js _runComCallback). A plain global would hand the outer
     ;; loop whatever the nested one left behind, and it would halt early.
     (local.set $saved_budget (global.get $block_budget))
+    (local.set $saved_start (global.get $run_budget_start))
     (global.set $block_budget (local.get $max_blocks))
+    (global.set $run_budget_start (local.get $max_blocks))
     ;; FlushInstructionCache broadcasts through shared memory because decoded
     ;; blocks are instance-local. Check once per host/Worker slice, not once per
     ;; x86 block; the API is rare and a slice boundary is the first point at
@@ -309,7 +311,18 @@
     ;; slightly above the budget it was given; that is honest, not a wrap.
     (global.set $last_run_blocks
       (i32.sub (local.get $max_blocks) (global.get $block_budget)))
+    ;; Bank this call's blocks and give an outer (re-entrant) call its own
+    ;; start back, so $blocks_now stays monotonic across nesting.
+    (global.set $blocks_retired_base
+      (i32.add (global.get $blocks_retired_base) (global.get $last_run_blocks)))
+    (global.set $run_budget_start (local.get $saved_start))
     (global.set $block_budget (local.get $saved_budget)))
+
+  ;; Blocks retired since the instance started, including the running call's
+  ;; progress so far. Wraps; only ever used as a difference.
+  (func $blocks_now (result i32)
+    (i32.add (global.get $blocks_retired_base)
+      (i32.sub (global.get $run_budget_start) (global.get $block_budget))))
 
   ;; Blocks the last run() call retired, and the halt reason behind it (see the
   ;; $last_run_halt comment in 01-header.wat for the codes).
@@ -1727,6 +1740,13 @@
   (func (export "set_spin_park_k") (param $k i32)
     (global.set $spin_park_k (local.get $k)))
   (func (export "get_spin_park_k") (result i32) (global.get $spin_park_k))
+  ;; The most blocks that may run between two clock reads of one context for
+  ;; them to still count as a spin (see $spin_work_max in 01-header.wat).
+  ;; 0 turns the work check off, restoring the four-condition detector.
+  (func (export "set_spin_work_max") (param $n i32)
+    (global.set $spin_work_max (local.get $n)))
+  (func (export "get_spin_work_max") (result i32) (global.get $spin_work_max))
+  (func (export "get_blocks_now") (result i32) (call $blocks_now))
   ;; The guest millisecond a clock park is due at. The CLI compares it against
   ;; the batch clock; the browser turns it into a setTimeout.
   (func (export "get_spin_deadline_ms") (result i32) (global.get $spin_deadline_ms))
@@ -1759,6 +1779,10 @@
     (global.set $clock_spin_count0 (i32.const 0))
     (global.set $clock_spin_count1 (i32.const 0))
     (global.set $clock_spin_count2 (i32.const 0))
+    (global.set $clock_spin_blk (i32.const 0))
+    (global.set $clock_spin_blk0 (i32.const 0))
+    (global.set $clock_spin_blk1 (i32.const 0))
+    (global.set $clock_spin_blk2 (i32.const 0))
     (global.set $clock_spin_parked_value (i32.const 0))
     (global.set $clock_spin_parked_valid (i32.const 0))
     (global.set $clock_spin_qualified_valid (i32.const 0))
@@ -1806,6 +1830,11 @@
     (global.set $yield_flag (i32.const 0))
     (global.set $handler_set_eip (i32.const 0))
     (local.get $bits))
+  ;; Guest work with no API call in it: retire N blocks as far as $blocks_now
+  ;; can tell, which is what separates D2's per-object GetTickCount from a spin.
+  (func (export "test_spin_retire_blocks") (param $n i32)
+    (global.set $blocks_retired_base
+      (i32.add (global.get $blocks_retired_base) (local.get $n))))
   ;; A Win32 call that is NOT the clock, to interleave between two reads. Any
   ;; API would do; GetDoubleClickTime is picked because it has no side effects
   ;; and no arguments. This is how the "no other call in between" reset is

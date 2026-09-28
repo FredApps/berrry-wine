@@ -154,6 +154,39 @@ async function main() {
   check('no trips when the guest is doing other work',
     (e.get_clock_spin_parks() >>> 0) === 0);
 
+  // Real work between two identical reads with NO API call in it -- Diablo II
+  // reads GetTickCount once per object it updates. Above the block threshold
+  // that is not a spin; at or below it, it still is.
+  const WORK_MAX = e.get_spin_work_max() >>> 0;
+  check('the work threshold is on by default', WORK_MAX > 0, `workMax=${WORK_MAX}`);
+  e.test_spin_reset();
+  let parkedWithBlocks = false;
+  for (let i = 0; i < K * 5; i++) {
+    if ((e.test_clock_spin_once() >>> 0) & PARKED) parkedWithBlocks = true;
+    e.test_spin_retire_blocks(WORK_MAX + 1);
+  }
+  check('guest work above the threshold between reads never parks', !parkedWithBlocks);
+  check('no trips when the guest retires blocks between reads',
+    (e.get_clock_spin_parks() >>> 0) === 0);
+  e.test_spin_reset();
+  let parkedAtSmallWork = -1;
+  for (let i = 1; i <= K; i++) {
+    if ((e.test_clock_spin_once() >>> 0) & PARKED) { parkedAtSmallWork = i; break; }
+    e.test_spin_retire_blocks(WORK_MAX);
+  }
+  check(`a spin body of ${WORK_MAX} blocks still parks at the ${K}th read`,
+    parkedAtSmallWork === K, `parked at ${parkedAtSmallWork}`);
+  e.test_spin_reset();
+  e.set_spin_work_max(0);
+  let parkedWithCheckOff = -1;
+  for (let i = 1; i <= K; i++) {
+    if ((e.test_clock_spin_once() >>> 0) & PARKED) { parkedWithCheckOff = i; break; }
+    e.test_spin_retire_blocks(100000);
+  }
+  check('--spin-work-max=0 removes the work check', parkedWithCheckOff === K,
+    `parked at ${parkedWithCheckOff}`);
+  e.set_spin_work_max(WORK_MAX);
+
   // ---- 5. one park per millisecond ------------------------------------
   // Progress guarantee. If the host hands the guest back with the clock still
   // reading the same thing, parking again would be an infinite ping-pong; the

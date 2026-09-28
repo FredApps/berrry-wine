@@ -3168,6 +3168,24 @@
   (global $clock_spin_count0 (mut i32) (i32.const 0))
   (global $clock_spin_count1 (mut i32) (i32.const 0))
   (global $clock_spin_count2 (mut i32) (i32.const 0))
+  ;; GUEST WORK between two reads, the fifth condition. The four above cannot
+  ;; see it: a function that reads the clock once per object and makes no other
+  ;; API call looks exactly like a spin to them. Diablo II's 0x4293c0 does
+  ;; that ~160 times a frame, and in Worker mode -- where the clock only moves
+  ;; when the page republishes it -- every other read parked: 4 fps, against 41
+  ;; with the detector off. A real spin runs a handful of blocks between reads,
+  ;; so a read only counts when at most $spin_work_max blocks (the $block_budget
+  ;; clock, see $blocks_now) ran since the same context's previous read. 0
+  ;; disables the check. Each MRU context carries its own mark, like its count.
+  (global $spin_work_max (mut i32) (i32.const 64))
+  (global $clock_spin_blk (mut i32) (i32.const 0))
+  (global $clock_spin_blk0 (mut i32) (i32.const 0))
+  (global $clock_spin_blk1 (mut i32) (i32.const 0))
+  (global $clock_spin_blk2 (mut i32) (i32.const 0))
+  ;; Monotonic block clock: blocks retired by finished run() calls, and the
+  ;; budget the running call started with. $blocks_now reads both.
+  (global $blocks_retired_base (mut i32) (i32.const 0))
+  (global $run_budget_start (mut i32) (i32.const 0))
   ;; The value a park was already taken for. One park per distinct millisecond,
   ;; ever: if the host hands the guest back with the clock still reading the
   ;; same thing, spinning is the honest answer until it moves. Without this the

@@ -542,6 +542,9 @@ const SPIN_PARK = { clockWaits: 0, peekWaits: 0, guestMsAdded: 0 };
 // `--trace-sched=500` silently does nothing.
 const TRACE_SCHED = hasFlag('trace-sched') || getArg('trace-sched', null) !== null;
 const TRACE_SCHED_EVERY = parseInt(getArg('trace-sched', '5000'), 10) || 5000;
+// --spin-work-max=N: a clock read only counts toward a park when at most N
+// blocks retired since the previous read at that site (0 = no work check).
+const SPIN_WORK_MAX = parseInt(getArg('spin-work-max', ''), 10);
 const TRACE_HOST = getArg('trace-host', null); // --trace-host=fn1,fn2: wrap arbitrary host fns to log args+return
 // --host-census[=N]: count every host import, print a histogram every N calls
 // straight to stdout. For batches that never return, where buffered logs never
@@ -4463,6 +4466,7 @@ async function main() {
   if (CS_STEAL_AFTER && instance.exports.set_cs_steal_after) {
     instance.exports.set_cs_steal_after(CS_STEAL_AFTER);
   }
+  if (Number.isFinite(SPIN_WORK_MAX)) inheritWasm('set_spin_work_max', SPIN_WORK_MAX);
   applyExeCompatibilityPatches(path.basename(EXE_PATH), instance.exports, memory.buffer);
   // Screen-size-driven defaults from the same table (lib/app-profiles.js
   // LAUNCH_PREFS) — the CLI's screen is whatever --screen= asked for, so a
@@ -5360,6 +5364,7 @@ async function main() {
           console.log(`\n*** WATCHPOINT hit at batch ${batch}: [${hex(a)}] changed`);
           console.log(`  Old: ${hex(extraWatchPrev[i])}  New: ${hex(v)}  EIP: ${hex(instance.exports.get_eip())}  prev_eip: ${hex(instance.exports.get_dbg_prev_eip())}`);
           hit = true;
+  if (instance.exports.set_spin_work_max && Number.isFinite(SPIN_WORK_MAX)) instance.exports.set_spin_work_max(SPIN_WORK_MAX);
         }
         extraWatchPrev[i] = v;
       }
@@ -10098,6 +10103,7 @@ if (VERBOSE) {
       const window = MAX_BATCHES - FRAME_STATS_FROM;
       console.log(`  ${label}: ${f.length + 1} over ${window} batches`
         + ` (one per ${(window / (f.length + 1)).toFixed(2)} batches ≈ ${stepsPer >= 1000 ? (stepsPer / 1000).toFixed(0) + 'k' : stepsPer} steps)`);
+        + (ex && ex.get_spin_work_max ? ` workMax=${ex.get_spin_work_max()}` : '')
       console.log(`      interval batches p50 ${med}, p90 ${q('batches', 0.9)}, p99 ${q('batches', 0.99)}, max ${q('batches', 1)}`
         + `   long (>=1.75x median) ${long} of ${f.length} (${(100 * long / f.length).toFixed(1)}%)`);
       console.log(`      interval ms      p50 ${q('ms', 0.5).toFixed(1)}, p90 ${q('ms', 0.9).toFixed(1)}, p99 ${q('ms', 0.99).toFixed(1)}   (wall clock — load-sensitive, never diff across runs)`);

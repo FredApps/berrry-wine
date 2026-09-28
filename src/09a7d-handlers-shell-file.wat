@@ -357,7 +357,7 @@
   ;; when clock_spin_step compares its tags. Eviction only loses evidence.
   (func $clock_spin_select_context (param $ret i32)
     (local $key i64) (local $old_key i64)
-    (local $old i64) (local $chosen i64) (local $chosen_count i32)
+    (local $old i64) (local $chosen i64) (local $chosen_count i32) (local $chosen_blk i32)
     (if (i32.and
           (i32.eq (local.get $ret) (global.get $clock_spin_ret))
           (i32.eq (i32.load offset=16 (global.get $reg_base)) (global.get $clock_spin_esp)))
@@ -374,41 +374,57 @@
     (if (i64.eq (local.get $key) (global.get $clock_spin_key0))
       (then
         (local.set $chosen (global.get $clock_spin_history0))
-        (local.set $chosen_count (global.get $clock_spin_count0)))
+        (local.set $chosen_count (global.get $clock_spin_count0))
+        (local.set $chosen_blk (global.get $clock_spin_blk0)))
       (else
         (if (i64.eq (local.get $key) (global.get $clock_spin_key1))
           (then
             (local.set $chosen (global.get $clock_spin_history1))
-            (local.set $chosen_count (global.get $clock_spin_count1)))
+            (local.set $chosen_count (global.get $clock_spin_count1))
+            (local.set $chosen_blk (global.get $clock_spin_blk1)))
           (else
             (if (i64.eq (local.get $key) (global.get $clock_spin_key2))
               (then
                 (local.set $chosen (global.get $clock_spin_history2))
-                (local.set $chosen_count (global.get $clock_spin_count2))))
+                (local.set $chosen_count (global.get $clock_spin_count2))
+                (local.set $chosen_blk (global.get $clock_spin_blk2))))
             (global.set $clock_spin_key2 (global.get $clock_spin_key1))
             (global.set $clock_spin_count2 (global.get $clock_spin_count1))
-            (global.set $clock_spin_history2 (global.get $clock_spin_history1))))
+            (global.set $clock_spin_history2 (global.get $clock_spin_history1))
+            (global.set $clock_spin_blk2 (global.get $clock_spin_blk1))))
         (global.set $clock_spin_key1 (global.get $clock_spin_key0))
         (global.set $clock_spin_count1 (global.get $clock_spin_count0))
-        (global.set $clock_spin_history1 (global.get $clock_spin_history0))))
+        (global.set $clock_spin_history1 (global.get $clock_spin_history0))
+        (global.set $clock_spin_blk1 (global.get $clock_spin_blk0))))
     (global.set $clock_spin_key0 (local.get $old_key))
     (global.set $clock_spin_count0 (global.get $clock_spin_count))
     (global.set $clock_spin_history0 (local.get $old))
+    (global.set $clock_spin_blk0 (global.get $clock_spin_blk))
     (global.set $clock_spin_value (i32.wrap_i64 (local.get $chosen)))
     (global.set $clock_spin_seq (i32.wrap_i64 (i64.shr_u (local.get $chosen) (i64.const 32))))
     (global.set $clock_spin_count (local.get $chosen_count))
+    (global.set $clock_spin_blk (local.get $chosen_blk))
     (global.set $clock_spin_ret (local.get $ret))
     (global.set $clock_spin_esp (i32.load offset=16 (global.get $reg_base))))
 
   (func $clock_spin_step (param $value i32) (result i32)
-    (local $ret i32) (local $threshold i32)
+    (local $ret i32) (local $threshold i32) (local $blk i32) (local $idle i32)
     (local.set $ret (call $spin_call_site))
     (call $clock_spin_select_context (local.get $ret))
+    ;; Little enough guest work since this context's last read? (0 = no check.)
+    (local.set $blk (call $blocks_now))
+    (local.set $idle
+      (i32.or (i32.eqz (global.get $spin_work_max))
+        (i32.le_u (i32.sub (local.get $blk) (global.get $clock_spin_blk))
+                  (global.get $spin_work_max))))
+    (global.set $clock_spin_blk (local.get $blk))
     (if (i32.and
           (i32.and
-            (i32.eq (local.get $value) (global.get $clock_spin_value))
-            (i32.eq (global.get $spin_nonpoll_seq)
-                    (global.get $clock_spin_seq)))
+            (i32.and
+              (i32.eq (local.get $value) (global.get $clock_spin_value))
+              (i32.eq (global.get $spin_nonpoll_seq)
+                      (global.get $clock_spin_seq)))
+            (local.get $idle))
           (i32.and
             (i32.eq (local.get $ret) (global.get $clock_spin_ret))
             (i32.eq (i32.load offset=16 (global.get $reg_base)) (global.get $clock_spin_esp))))
