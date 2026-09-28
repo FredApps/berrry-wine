@@ -33,6 +33,9 @@
   ;; Generic straight-line repeated-store span fold.  Decode-time switch is
   ;; only for same-process A/B measurements; changing it clears decoded code.
   (global $store_span_enabled (mut i32) (i32.const 1))
+  ;; PUSH/POP runs and their CALL/RET ($try_emit_stack_run). Exact, on by
+  ;; default; --no-stack-fusion is the same-build A/B switch.
+  (global $stack_fusion_enabled (mut i32) (i32.const 1))
   ;; Where $sib_store_at leaves the operands of the store it just matched. Not
   ;; return values because there are three of them and one is the length.
   (global $fuse_info (mut i32) (i32.const 0))
@@ -3419,6 +3422,131 @@
     (global.set $d_pc (local.get $p))
     (i32.const 1))
 
+  ;; Fold back-to-back stack instructions into one of 05-alu.wat's stack-run
+  ;; handlers (the encoding is described there):
+  ;;   PUSH r32 / PUSH imm32 / PUSH imm8 / `mov ebp,esp`  -> 472
+  ;;     ... followed by CALL rel32                      -> 474 (ends the block)
+  ;;   POP r32 (not ESP)                                  -> 473
+  ;;     ... followed by RET / RET imm16                  -> 475 (ends the block)
+  ;; Called with the first instruction consumed: $first is its code (0-7 PUSH
+  ;; reg, 8 PUSH imm with the value in $imm0, 16+r POP reg). Returns 0 when
+  ;; nothing folded (emit the first instruction normally), 1 for a folded run,
+  ;; 2 when the fold ended the block. Only unprefixed opcodes join, the scan
+  ;; stays inside the first instruction's code page, and it stops before any
+  ;; address that is already a compiled entry ($fuse_stop).
+  ;;
+  ;; These are Diablo's and StarCraft's call sequences: 77% of Diablo's
+  ;; threaded PUSHes are in runs of two or more, 90% of its POPs, and 114M of
+  ;; its 2035M gameplay ops are a push run ending in a call
+  ;; (tools/stack-shape-census.js).
+  (func $stack_run_item (param $p i32) (param $pop i32) (result i32)
+    ;; Code << 8 | length of the stack instruction at $p, or 0.
+    (local $b i32) (local $b1 i32)
+    (local.set $b (call $gl8 (local.get $p)))
+    (if (local.get $pop)
+      (then
+        (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x58))
+                     (i32.and (i32.le_u (local.get $b) (i32.const 0x5F))
+                              (i32.ne (local.get $b) (i32.const 0x5C))))
+          (then (return (i32.or (i32.shl (i32.sub (local.get $b) (i32.const 0x58)) (i32.const 8))
+                                (i32.const 1)))))
+        (return (i32.const 0))))
+    (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x50)) (i32.le_u (local.get $b) (i32.const 0x57)))
+      (then (return (i32.or (i32.shl (i32.sub (local.get $b) (i32.const 0x50)) (i32.const 8))
+                            (i32.const 1)))))
+    (if (i32.eq (local.get $b) (i32.const 0x68)) (then (return (i32.const 0x805))))
+    (if (i32.eq (local.get $b) (i32.const 0x6A)) (then (return (i32.const 0x802))))
+    (local.set $b1 (call $gl8 (i32.add (local.get $p) (i32.const 1))))
+    (if (i32.or (i32.and (i32.eq (local.get $b) (i32.const 0x8B)) (i32.eq (local.get $b1) (i32.const 0xEC)))
+                (i32.and (i32.eq (local.get $b) (i32.const 0x89)) (i32.eq (local.get $b1) (i32.const 0xE5))))
+      (then (return (i32.const 0x902))))
+    (i32.const 0))
+  (func $try_emit_stack_run (param $first i32) (param $imm0 i32) (param $insn_start i32) (result i32)
+    (local $pop i32) (local $p i32) (local $page_end i32) (local $it i32) (local $len i32)
+    (local $code i32) (local $n i32) (local $np i32) (local $ops i32) (local $tail i32)
+    (local $k i32) (local $q i32) (local $disp i32)
+    (if (i32.eqz (global.get $stack_fusion_enabled)) (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (global.get $d_addr16)) (then (return (i32.const 0))))
+    (local.set $pop (i32.ge_u (local.get $first) (i32.const 16)))
+    (local.set $code (i32.and (local.get $first) (i32.const 15)))
+    ;; POP ESP overwrites the ESP the rest of a run would index.
+    (if (i32.and (local.get $pop) (i32.eq (local.get $code) (i32.const 4))) (then (return (i32.const 0))))
+    (local.set $page_end
+      (i32.add (i32.and (local.get $insn_start) (i32.const 0xFFFFF000)) (i32.const 4096)))
+    (local.set $p (global.get $d_pc))
+    (if (i32.gt_u (local.get $p) (local.get $page_end)) (then (return (i32.const 0))))
+    (local.set $n (i32.const 1)) (local.set $np (i32.const 1))
+    (local.set $ops (i32.shl (local.get $code) (i32.const 4)))
+    (block $stop (loop $scan
+      (br_if $stop (i32.ge_u (local.get $n) (i32.const 6)))
+      (br_if $stop (call $fuse_stop (local.get $p)))
+      (local.set $it (call $stack_run_item (local.get $p) (local.get $pop)))
+      (br_if $stop (i32.eqz (local.get $it)))
+      (local.set $len (i32.and (local.get $it) (i32.const 0xFF)))
+      (br_if $stop (i32.gt_u (i32.add (local.get $p) (local.get $len)) (local.get $page_end)))
+      (local.set $code (i32.shr_u (local.get $it) (i32.const 8)))
+      (local.set $ops (i32.or (local.get $ops)
+        (i32.shl (local.get $code) (i32.add (i32.const 4) (i32.shl (local.get $n) (i32.const 2))))))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (if (i32.ne (local.get $code) (i32.const 9))
+        (then (local.set $np (i32.add (local.get $np) (i32.const 1)))))
+      (local.set $p (i32.add (local.get $p) (local.get $len)))
+      (br $scan)))
+    ;; The terminator this run may absorb: CALL rel32 after pushes, RET after pops.
+    (if (i32.eqz (call $fuse_stop (local.get $p)))
+      (then
+        (local.set $it (call $gl8 (local.get $p)))
+        (if (local.get $pop)
+          (then
+            (if (i32.and (i32.eq (local.get $it) (i32.const 0xC3))
+                         (i32.le_u (i32.add (local.get $p) (i32.const 1)) (local.get $page_end)))
+              (then (local.set $tail (i32.const 1))))
+            (if (i32.and (i32.eq (local.get $it) (i32.const 0xC2))
+                         (i32.le_u (i32.add (local.get $p) (i32.const 3)) (local.get $page_end)))
+              (then (local.set $tail (i32.const 3)))))
+          (else
+            (if (i32.and (i32.eq (local.get $it) (i32.const 0xE8))
+                         (i32.le_u (i32.add (local.get $p) (i32.const 5)) (local.get $page_end)))
+              (then (local.set $tail (i32.const 5))))))))
+    (if (i32.and (i32.lt_u (local.get $n) (i32.const 2)) (i32.eqz (local.get $tail)))
+      (then (return (i32.const 0))))
+    (local.set $ops (i32.or (local.get $ops)
+      (i32.or (local.get $n) (i32.shl (local.get $np) (i32.const 28)))))
+    (if (local.get $pop)
+      (then
+        (call $te (select (i32.const 475) (i32.const 473) (local.get $tail)) (local.get $ops))
+        (if (local.get $tail)
+          (then (call $te_raw
+            (if (result i32) (i32.eq (local.get $tail) (i32.const 3))
+              (then (call $gl16 (i32.add (local.get $p) (i32.const 1))))
+              (else (i32.const 0)))))))
+      (else
+        (call $te (select (i32.const 474) (i32.const 472) (local.get $tail)) (local.get $ops))
+        ;; The immediates, in item order: the first from the caller, the rest
+        ;; re-read from the bytes the scan already walked.
+        (if (i32.eq (local.get $first) (i32.const 8)) (then (call $te_raw (local.get $imm0))))
+        (local.set $q (global.get $d_pc))
+        (local.set $k (i32.const 1))
+        (block $done (loop $imms
+          (br_if $done (i32.ge_u (local.get $k) (local.get $n)))
+          (local.set $it (call $stack_run_item (local.get $q) (i32.const 0)))
+          (if (i32.eq (call $gl8 (local.get $q)) (i32.const 0x68))
+            (then (call $te_raw (call $gl32 (i32.add (local.get $q) (i32.const 1))))))
+          (if (i32.eq (call $gl8 (local.get $q)) (i32.const 0x6A))
+            (then (call $te_raw (call $sign_ext8 (call $gl8 (i32.add (local.get $q) (i32.const 1)))))))
+          (local.set $q (i32.add (local.get $q) (i32.and (local.get $it) (i32.const 0xFF))))
+          (local.set $k (i32.add (local.get $k) (i32.const 1)))
+          (br $imms)))
+        (if (local.get $tail)
+          (then
+            (local.set $disp (call $gl32 (i32.add (local.get $p) (i32.const 1))))
+            (global.set $d_pc (i32.add (local.get $p) (i32.const 5)))
+            (call $te_raw (global.get $d_pc))
+            (call $te_raw (call $branch_target (local.get $disp)))
+            (return (i32.const 2))))))
+    (global.set $d_pc (i32.add (local.get $p) (local.get $tail)))
+    (i32.add (i32.const 1) (i32.ne (local.get $tail) (i32.const 0))))
+
   ;; Fold a run of up to four `mov r32,[base+disp]` over one base register into
   ;; handler 408. Called with the first one already decoded (its destination in
   ;; $dst, its already-segment-adjusted displacement in $disp0); returns 1 once
@@ -4957,14 +5085,24 @@
           ;; indexes $reg_base by the operand, where the global spelling would
           ;; have needed $get_reg's br_table. Same shape the 0x66 path above
           ;; already uses. Trades 8 dispatch targets for one shl+add.
-          (else (call $te (global.get $TH_PUSH_R) (i32.sub (local.get $op) (i32.const 0x50)))))
+          (else
+            (local.set $imm (call $try_emit_stack_run (i32.sub (local.get $op) (i32.const 0x50))
+                              (i32.const 0) (local.get $insn_start)))
+            (if (i32.eq (local.get $imm) (i32.const 2)) (then (local.set $done (i32.const 1))))
+            (if (i32.eqz (local.get $imm))
+              (then (call $te (global.get $TH_PUSH_R) (i32.sub (local.get $op) (i32.const 0x50)))))))
           (br $decode)))
       ;; ---- POP reg (0x58-0x5F) ----
       (if (i32.and (i32.ge_u (local.get $op) (i32.const 0x58)) (i32.le_u (local.get $op) (i32.const 0x5F)))
         (then (if (local.get $prefix_66)
           (then (call $te (i32.const 182) (i32.sub (local.get $op) (i32.const 0x58))))
           ;; Same collapse for POP: generic $th_pop_r (33), register in operand.
-          (else (call $te (global.get $TH_POP_R) (i32.sub (local.get $op) (i32.const 0x58)))))
+          (else
+            (local.set $imm (call $try_emit_stack_run (i32.sub (local.get $op) (i32.const 0x48))
+                              (i32.const 0) (local.get $insn_start)))
+            (if (i32.eq (local.get $imm) (i32.const 2)) (then (local.set $done (i32.const 1))))
+            (if (i32.eqz (local.get $imm))
+              (then (call $te (global.get $TH_POP_R) (i32.sub (local.get $op) (i32.const 0x58)))))))
           (br $decode)))
       ;; ---- PUSH/POP segment register (ES/CS/SS/DS) ----
       ;; Win32 uses a flat address space, but generated bitmap code still saves
@@ -5834,14 +5972,23 @@
         (then
           (if (local.get $prefix_66)
             (then (call $te (i32.const 385) (call $d_fetch16)))
-            (else (call $te (i32.const 34) (i32.const 0)) (call $te_raw (call $d_fetch32))))
+            (else
+              (local.set $imm (call $d_fetch32))
+              (local.set $disp (call $try_emit_stack_run (i32.const 8) (local.get $imm) (local.get $insn_start)))
+              (if (i32.eq (local.get $disp) (i32.const 2)) (then (local.set $done (i32.const 1))))
+              (if (i32.eqz (local.get $disp))
+                (then (call $te (i32.const 34) (i32.const 0)) (call $te_raw (local.get $imm))))))
           (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0x6A))
         (then
           (local.set $imm (call $sign_ext8 (call $d_fetch8)))
           (if (local.get $prefix_66)
             (then (call $te (i32.const 385) (i32.and (local.get $imm) (i32.const 0xFFFF))))
-            (else (call $te (i32.const 34) (i32.const 0)) (call $te_raw (local.get $imm))))
+            (else
+              (local.set $disp (call $try_emit_stack_run (i32.const 8) (local.get $imm) (local.get $insn_start)))
+              (if (i32.eq (local.get $disp) (i32.const 2)) (then (local.set $done (i32.const 1))))
+              (if (i32.eqz (local.get $disp))
+                (then (call $te (i32.const 34) (i32.const 0)) (call $te_raw (local.get $imm))))))
           (br $decode)))
 
       ;; ---- IMUL r32, r/m32, imm (0x69/0x6B) / IMUL r16, r/m16, imm with 66h ----

@@ -152,6 +152,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // measured on one build. See docs/interpreter-dispatch-perf.md -- fewer
   // dispatches has measured ZERO more than once, so the flag is not optional.
   const NO_SIB_FUSION = hasFlag('no-sib-fusion');
+  // --no-stack-fusion: PUSH/POP runs and their CALL/RET decoded one op per
+  // instruction again (07-decoder.wat $try_emit_stack_run), the same-build A/B.
+  const NO_STACK_FUSION = hasFlag('no-stack-fusion');
   const NO_RECT_RUN = hasFlag('no-rect-run');
   const NO_CASE_CHAIN = hasFlag('no-case-chain');
   const NO_RLE_RUN = hasFlag('no-rle-run');
@@ -243,6 +246,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
     if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
     if (NO_SIB_FUSION) inheritWasm('set_sib_fusion', 0);
+    if (NO_STACK_FUSION) inheritWasm('set_stack_fusion', 0);
     if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
     if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
     if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
@@ -369,6 +373,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     // every worker decoding with the other setting and makes the A/B meaningless.
     if (NO_SIB_FUSION && instance.exports.set_sib_fusion) {
       instance.exports.set_sib_fusion(0);
+    }
+    if (NO_STACK_FUSION && instance.exports.set_stack_fusion) {
+      instance.exports.set_stack_fusion(0);
     }
     if (NO_RECT_RUN && instance.exports.set_rect_run) {
       instance.exports.set_rect_run(0);

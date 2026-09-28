@@ -654,6 +654,149 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.add (i32.const 4) (local.get $op))))
     (call $cs_pop)
     (return_call $branch_end))
+
+  ;; --- Stack runs (07-decoder.wat $try_emit_stack_run) ---
+  ;; Back-to-back PUSH r32 / PUSH imm (with a prologue's `mov ebp,esp` allowed
+  ;; among them) or back-to-back POP r32, as ONE threaded op, optionally with
+  ;; the CALL rel32 / RET that ends them. Exact: the same bytes land at the same
+  ;; addresses with the same final ESP/EBP and registers. What it saves is the
+  ;; dispatch per instruction and, when every slot is in one page of the direct
+  ;; window, the per-slot $g2w + code-page test: one translation, one
+  ;; $invalidate_code_write over the whole range, then plain stores.
+  ;;
+  ;; Operand: bits 0-3 the item count n (1..6), item k's code at bits 4+4k,
+  ;; bits 28-31 the number of those items that move ESP. Codes: 0-7 PUSH/POP
+  ;; that register, 8 PUSH imm32 (the value is the next thread word, in item
+  ;; order), 9 `mov ebp,esp` (push runs only). POP ESP never joins a run.
+  ;;
+  ;; Anything outside that fast case -- a range crossing a page, a stack in a
+  ;; sparse VirtualAlloc mapping -- runs the ordinary per-slot sequence, ESP
+  ;; written before each store exactly as $th_push_r does, so a fault raised by
+  ;; slot k (--fault-null=raise) sees the architectural state after k-1 pushes
+  ;; and the run stops there as the dispatcher would have.
+  (global $sr_fast (mut i32) (i32.const 0))
+  (global $sr_delta (mut i32) (i32.const 0))
+  (func $stack_run_setup (param $lo i32) (param $bytes i32)
+    (local $wa i32)
+    (local.set $wa (i32.add (i32.sub (local.get $lo) (global.get $image_base)) (global.get $GUEST_BASE)))
+    (global.set $sr_delta (i32.sub (local.get $wa) (local.get $lo)))
+    (global.set $sr_fast
+      (i32.and
+        (i32.lt_u (local.get $wa) (i32.sub (region.end $DIRECT_WINDOW) (i32.const 64)))
+        (i32.le_u (i32.add (i32.and (local.get $lo) (i32.const 0xFFF)) (local.get $bytes))
+                  (i32.const 4096)))))
+  ;; A slow-path slot raised a fault: the block is abandoned (see $g2w_miss).
+  (func $stack_run_faulted (result i32)
+    (i32.and (i32.ne (global.get $eip_redirected) (i32.const 0))
+             (i32.le_s (global.get $steps) (i32.const 0))))
+  ;; Runs the push items; $extra more slots below them belong to the caller
+  ;; (the CALL's return address) and are covered by the same range test.
+  ;; Returns 1 when a fault abandoned the block.
+  (func $stack_run_push (param $op i32) (param $extra i32) (result i32)
+    (local $n i32) (local $k i32) (local $code i32) (local $cur i32)
+    (local $lo i32) (local $bytes i32) (local $v i32)
+    (local.set $n (i32.and (local.get $op) (i32.const 15)))
+    (local.set $cur (i32.load offset=16 (global.get $reg_base)))
+    (local.set $bytes
+      (i32.shl (i32.add (i32.shr_u (local.get $op) (i32.const 28)) (local.get $extra)) (i32.const 2)))
+    (local.set $lo (i32.sub (local.get $cur) (local.get $bytes)))
+    (call $stack_run_setup (local.get $lo) (local.get $bytes))
+    (if (global.get $sr_fast)
+      (then (call $invalidate_code_write (local.get $lo) (local.get $bytes))))
+    (block $done (loop $items
+      (br_if $done (i32.ge_u (local.get $k) (local.get $n)))
+      (local.set $code
+        (i32.and (i32.shr_u (local.get $op) (i32.add (i32.const 4) (i32.shl (local.get $k) (i32.const 2))))
+                 (i32.const 15)))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (if (i32.eq (local.get $code) (i32.const 9))
+        (then
+          (i32.store offset=20 (global.get $reg_base) (local.get $cur))
+          (br $items)))
+      (local.set $v
+        (if (result i32) (i32.eq (local.get $code) (i32.const 8))
+          (then (call $read_thread_word))
+          (else (if (result i32) (i32.eq (local.get $code) (i32.const 4))
+            ;; PUSH ESP pushes ESP as it was before this push.
+            (then (local.get $cur))
+            (else (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $code) (i32.const 2)))))))))
+      (local.set $cur (i32.sub (local.get $cur) (i32.const 4)))
+      (if (global.get $sr_fast)
+        (then (i32.store (i32.add (local.get $cur) (global.get $sr_delta)) (local.get $v)))
+        (else
+          (i32.store offset=16 (global.get $reg_base) (local.get $cur))
+          (call $gs32 (local.get $cur) (local.get $v))
+          (if (call $stack_run_faulted) (then (return (i32.const 1))))))
+      (br $items)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $cur))
+    (i32.const 0))
+  ;; Runs the pop items; $extra more slots above them (a RET's return
+  ;; address) are covered by the range test. Returns 1 on a fault.
+  (func $stack_run_pop (param $op i32) (param $extra i32) (result i32)
+    (local $n i32) (local $k i32) (local $code i32) (local $cur i32)
+    (local $bytes i32) (local $v i32)
+    (local.set $n (i32.and (local.get $op) (i32.const 15)))
+    (local.set $cur (i32.load offset=16 (global.get $reg_base)))
+    (local.set $bytes (i32.shl (i32.add (local.get $n) (local.get $extra)) (i32.const 2)))
+    (call $stack_run_setup (local.get $cur) (local.get $bytes))
+    (block $done (loop $items
+      (br_if $done (i32.ge_u (local.get $k) (local.get $n)))
+      (local.set $code
+        (i32.and (i32.shr_u (local.get $op) (i32.add (i32.const 4) (i32.shl (local.get $k) (i32.const 2))))
+                 (i32.const 7)))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (if (global.get $sr_fast)
+        (then
+          (local.set $v (i32.load (i32.add (local.get $cur) (global.get $sr_delta))))
+          (local.set $cur (i32.add (local.get $cur) (i32.const 4))))
+        (else
+          (local.set $v (call $gl32 (local.get $cur)))
+          (local.set $cur (i32.add (local.get $cur) (i32.const 4)))
+          (i32.store offset=16 (global.get $reg_base) (local.get $cur))))
+      (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $code) (i32.const 2))) (local.get $v))
+      (if (i32.eqz (global.get $sr_fast))
+        (then (if (call $stack_run_faulted) (then (return (i32.const 1))))))
+      (br $items)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $cur))
+    (i32.const 0))
+  (func $th_push_run (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32)
+    (if (call $stack_run_push (local.get $op) (i32.const 0)) (then (return)))
+    (dispatch-next))
+  (func $th_pop_run (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32)
+    (if (call $stack_run_pop (local.get $op) (i32.const 0)) (then (return)))
+    (dispatch-next))
+  ;; ... PUSH items, then CALL rel32: next words are the return address and
+  ;; the target, after the items' immediates.
+  (func $th_push_run_call (param $op i32)
+    (local $ret i32) (local $target i32) (local $cur i32)
+    (if (call $stack_run_push (local.get $op) (i32.const 1)) (then (return)))
+    (local.set $ret (call $read_thread_word))
+    (local.set $target (call $read_thread_word))
+    (local.set $cur (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (i32.store offset=16 (global.get $reg_base) (local.get $cur))
+    (if (global.get $sr_fast)
+      (then (i32.store (i32.add (local.get $cur) (global.get $sr_delta)) (local.get $ret)))
+      (else (call $gs32 (local.get $cur) (local.get $ret))))
+    (call $cs_push (local.get $ret))
+    (global.set $eip (local.get $target))
+    (return_call $branch_end))
+  ;; ... POP items, then RET / RET imm16 (the next word, 0 for C3).
+  (func $th_pop_run_ret (param $op i32)
+    (local $imm i32) (local $cur i32)
+    (local.set $imm (call $read_thread_word))
+    (if (call $stack_run_pop (local.get $op) (i32.const 1)) (then (return)))
+    (call $th_ret_guard16)
+    (local.set $cur (i32.load offset=16 (global.get $reg_base)))
+    (global.set $eip
+      (if (result i32) (global.get $sr_fast)
+        (then (i32.load (i32.add (local.get $cur) (global.get $sr_delta))))
+        (else (call $gl32 (local.get $cur)))))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.add (local.get $cur) (i32.add (i32.const 4) (local.get $imm))))
+    (call $cs_pop)
+    (return_call $branch_end))
   ;; H43's operand word is emitted as 0 at all three decoder sites and read by
   ;; nothing, so it is the whole 32 bits of chain slot: epoch in the high half,
   ;; signed delta in the low one. After $read_thread_word, $ip stands 12 bytes
