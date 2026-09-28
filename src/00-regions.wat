@@ -286,14 +286,25 @@
   ;; compiled instead of decoding it again -- see docs/block-executor-design.md
   ;; section 22. Slot count is unchanged (MAIN_BYTES / PAGE_INDEX_BYTES), so
   ;; this buys nothing and costs nothing beyond the 0x5C000 of extra map.
-  (region.declare $PAGE_INDEX_ARENA (size 0x0033C000) (align 0x00001000)
+  ;;
+  ;; WIDENED 0x33C000 -> 0x69C000 (2026-09-28): the main thread's slots went
+  ;; 128 -> 512 (0x120000 -> 0x480000; 0x480000 + 15 * 0x24000 = 0x69C000).
+  ;; Warcraft III gameplay executes ~450 distinct code pages, so 128 slots made
+  ;; $page_index_alloc evict a live page on nearly every page miss and the
+  ;; game re-decoded ~470 blocks a batch. docs/re-notes/warcraft3-demo.md,
+  ;; "Decode storms".
+  (region.declare $PAGE_INDEX_ARENA (size 0x0069C000) (align 0x00001000)
     (owner "01-header.wat:$PAGE_INDEX_ARENA"))
-  ;; Same split: main 1024 directory entries, each worker 256. A slot is 32
+  ;; Same split: main 4096 directory entries, each worker 256. A slot is 32
   ;; bytes since block-executor round 14 (docs/block-executor-design.md section
   ;; 23) -- a page now owns TWO chunks, the threaded one and a second one for
   ;; executor descriptors, and each needs a base and a used|class word. So
-  ;; main is 0x8000, a worker 0x2000, and 0x8000 + 15 * 0x2000 = 0x26000.
-  (region.declare $PAGE_DIR_BASE (size 0x00026000) (align 0x00001000)
+  ;; main is 0x20000, a worker 0x2000, and 0x20000 + 15 * 0x2000 = 0x3E000.
+  ;; Main was 1024 entries until 2026-09-28: direct-mapped on page number, so
+  ;; pages 4MB apart shared a slot, and W3's Game.dll/Storm/msvcrt code aliased
+  ;; into 585K evictions over its route. 4096 entries (16MB of page numbers)
+  ;; took that to 80.
+  (region.declare $PAGE_DIR_BASE (size 0x0003E000) (align 0x00001000)
     (owner "01-header.wat:$PAGE_DIR_BASE"))
   (region.declare $WIN16_APP_DLL_STAGING (size 0x00600000) (align 0x00001000)
     (stride $WIN16_APP_DLL_STRIDE (count 6))

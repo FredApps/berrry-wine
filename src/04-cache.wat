@@ -85,8 +85,14 @@
   (global $cache_clears (mut i32) (i32.const 0))
   ;; Decoded blocks. Named for the export that has always reported it.
   (global $cache_stores (mut i32) (i32.const 0))
-  ;; Compiled pages evicted by another page landing in their directory slot.
+  ;; Compiled pages evicted: another page landing in their directory slot, or
+  ;; the index arena running out ($page_index_alloc's clock walk).
   (global $cache_evicts (mut i32) (i32.const 0))
+  ;; The second cause alone. cache_evicts minus this is directory aliasing
+  ;; (PAGE_DIR is direct-mapped on page number), this is index-arena capacity
+  ;; (PAGE_INDEX_SLOTS). The two need opposite fixes, so they are told apart.
+  (global $page_index_evicts (mut i32) (i32.const 0))
+  (func (export "get_page_index_evicts") (result i32) (global.get $page_index_evicts))
 
   ;; Every WASM instance has its own decoded-code directory and arena, while
   ;; all instances execute bytes from the same guest memory. A Win32
@@ -258,9 +264,28 @@
         (i32.or (i32.ne (global.get $bx_hot_on) (i32.const 0))
                 (i32.ne (global.get $be_stats_on) (i32.const 0))))))
 
+  ;; Set by $chain_patch the first time it writes a slot, cleared only by the
+  ;; arena flush that rewinds every decoded stream. While it is 0 no threaded
+  ;; word anywhere holds an epoch, so there is nothing a wrapped epoch could
+  ;; falsely match and the wrap may simply restart at 1.
+  ;;
+  ;; Without this the wrap requested a FULL arena flush every 8192 bumps even
+  ;; with chaining off (the default -- $chain_patch is only reached under
+  ;; --block-chain), and every retire, page drop and chunk free bumps. Warcraft
+  ;; III gameplay retires/drops ~500 blocks a batch, so it flushed the whole
+  ;; cache every ~15 batches and spent ~1M decodes per 2360 batches rebuilding
+  ;; its working set (docs/re-notes/warcraft3-demo.md, "Decode storms").
+  (global $chain_slots_live (mut i32) (i32.const 0))
+
   (func $chain_bump
     (global.set $chain_bumps (i32.add (global.get $chain_bumps) (i32.const 1)))
     (global.set $chain_epoch (i32.add (global.get $chain_epoch) (i32.const 1)))
+    (if (i32.and
+          (i32.gt_u (global.get $chain_epoch) (global.get $CHAIN_EPOCH_MAX))
+          (i32.eqz (global.get $chain_slots_live)))
+      (then
+        (global.set $chain_epoch (i32.const 1))
+        (return)))
     (if (i32.gt_u (global.get $chain_epoch) (global.get $CHAIN_EPOCH_MAX))
       (then
         (global.set $chain_epoch (i32.const 0x2000))
@@ -753,7 +778,13 @@
         ;; non-current directory entry with a clock walk, then consume the
         ;; index $page_dir_drop put on the free list.
         (block $found (loop $scan
-          (br_if $found (i32.ge_u (local.get $n) (global.get $PAGE_DIR_ENTRIES)))
+          ;; Second chance: PAGE_DIR +24 is a referenced bit, set when the page
+          ;; is created or entered and cleared as the hand passes. A plain
+          ;; clock evicted whatever the hand reached, so with the working set
+          ;; larger than the arena it threw out hot pages as readily as cold
+          ;; ones. Two sweeps bound the walk: the first may only clear bits.
+          (br_if $found (i32.ge_u (local.get $n)
+                          (i32.shl (global.get $PAGE_DIR_ENTRIES) (i32.const 1))))
           (local.set $slot
             (i32.add (global.get $PAGE_DIR)
               (i32.mul (global.get $page_index_evict_cursor)
@@ -764,11 +795,21 @@
               (global.get $PAGE_DIR_MASK)))
           (local.set $page (i32.load (local.get $slot)))
           (if (i32.and
+                (i32.and
+                  (i32.ne (local.get $page) (i32.const 0))
+                  (i32.ne (local.get $page) (global.get $cur_page_base)))
+                (i32.ne (i32.load offset=24 (local.get $slot)) (i32.const 0)))
+            (then
+              (i32.store offset=24 (local.get $slot) (i32.const 0))
+              (local.set $page (i32.const 0))))
+          (if (i32.and
                 (i32.ne (local.get $page) (i32.const 0))
                 (i32.ne (local.get $page) (global.get $cur_page_base)))
             (then
               (global.set $cache_evicts
                 (i32.add (global.get $cache_evicts) (i32.const 1)))
+              (global.set $page_index_evicts
+                (i32.add (global.get $page_index_evicts) (i32.const 1)))
               (call $page_dir_drop (local.get $page))
               (br $found)))
           (local.set $n (i32.add (local.get $n) (i32.const 1)))
@@ -1316,6 +1357,7 @@
       (i32.shl (local.get $class) (i32.const 16)))
     (i32.store offset=16 (local.get $slot) (i32.const 0))
     (i32.store offset=20 (local.get $slot) (i32.const 0))
+    (i32.store offset=24 (local.get $slot) (i32.const 1))  ;; referenced
     (global.set $page_compiles (i32.add (global.get $page_compiles) (i32.const 1)))
     (global.set $cur_page_base (local.get $page_base))
     (global.set $cur_page_index (local.get $idx))
@@ -1594,6 +1636,9 @@
     (local.set $slot (call $page_dir_slot (local.get $page_base)))
     (if (i32.ne (i32.load (local.get $slot)) (local.get $page_base))
       (then (return (i32.const 0))))
+    ;; Referenced bit for $page_index_alloc's second-chance clock. Only a
+    ;; page-crossing transfer reaches here, so it costs one store per crossing.
+    (i32.store offset=24 (local.get $slot) (i32.const 1))
     (global.set $cur_page_base (local.get $page_base))
     (global.set $cur_page_index (i32.load offset=4 (local.get $slot)))
     (global.set $cur_page_chunk (i32.load offset=8 (local.get $slot)))
@@ -1760,6 +1805,7 @@
                          (i32.const 1))
                 (local.get $tag))))
           (local.get $shift))))
+    (global.set $chain_slots_live (i32.const 1))
     (global.set $chain_patches (i32.add (global.get $chain_patches) (i32.const 1)))
     (if (local.get $asel)
       (then (global.set $chain_patches_pool
@@ -2009,6 +2055,7 @@
     ;; $run's loop head -- so no stream holding a stale chain word can be
     ;; reached again without being re-emitted first (which zeroes it).
     (global.set $chain_epoch (i32.const 1))
+    (global.set $chain_slots_live (i32.const 0))
     (i32.const 1))
 
   ;; Thread emit helpers

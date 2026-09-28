@@ -408,6 +408,39 @@ async function main() {
     const afterFlush = runAt();
     check('epoch wrap: the answer is unchanged after the restart',
       want === afterFlush, `${want} vs ${afterFlush}`);
+
+    // With no slot patched since the last flush, a wrap has nothing to
+    // protect, so it must NOT cost a full cache flush. Chaining is off by
+    // default, and every retire/page drop/chunk free bumps: Warcraft III's
+    // gameplay wrapped every ~15 batches and re-decoded its whole working set
+    // each time (docs/re-notes/warcraft3-demo.md, "Decode storms").
+    // First empty the arena of patched slots: park the epoch (runAt left
+    // live slots) and let an unchained run take the flush.
+    while (e.get_chain_epoch() <= 0x1FFF) e.test_chain_bump();
+    const runOff = () => {
+      seedData(); normalizeFlags();
+      setRegs();
+      e.set_eip(addr);
+      e.run(200000);
+      return (e.get_eax() >>> 0).toString(16);
+    };
+    runOff();
+    check('unchained wrap: the parked epoch was restarted by a flush',
+      e.get_chain_epoch() <= 0x1FFF, `epoch=${e.get_chain_epoch()}`);
+    const offWant = runOff();
+    const clears0 = e.get_cache_clears();
+    for (let i = 0; i < 0x2100; i++) e.test_chain_bump();
+    check('unchained wrap: the epoch restarts instead of parking',
+      e.get_chain_epoch() <= 0x1FFF, `epoch=${e.get_chain_epoch()}`);
+    const offAfter = runOff();
+    check('unchained wrap: no full cache flush', e.get_cache_clears() === clears0,
+      `cache_clears ${clears0} -> ${e.get_cache_clears()}`);
+    check('unchained wrap: the answer is unchanged', offWant === offAfter,
+      `${offWant} vs ${offAfter}`);
+    // And a chained run afterwards still works: slots written from here on
+    // carry the restarted epoch.
+    check('unchained wrap: chaining still answers correctly after it',
+      runAt() === want, 'chained run after an unchained wrap');
   }
 
   console.log('\n-- chaining and the block executor, both armed --');

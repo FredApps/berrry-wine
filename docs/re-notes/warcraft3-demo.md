@@ -2062,6 +2062,66 @@ About 500 block decodes per batch run during gameplay (1.2M across 19170..21530)
 in both uop arms, with 97% of all decode work in storms. That is worth a
 `--trace-code-writes` look on its own.
 
+## Decode storms were the emulator's code cache, not guest SMC (2026-09-28)
+
+The ~500 decodes/batch in gameplay had **no guest cause**. `--trace-code-writes`
+over the whole route: **0** retiring guest writes. What it did show — 818K
+blocks retired "by an overlapping publish", top pairs Storm `0x00cad89b <-
+0x00cad8a0` (Storm+0x3389b, a `nop; lea esp,[esp]` alignment pad falling into
+a loop head) and Game.dll `0x005e7353 <- 0x005e735b` — is the ordinary cost of
+re-decoding pages that had been thrown away: the outer entry and the loop head
+share bytes, so rebuilding one retires the other. The pages were being thrown
+away by three emulator mechanisms, found in this order:
+
+1. **Chain-epoch wrap flushed the whole cache.** `$chain_bump` (04-cache.wat)
+   runs on every retire, page drop and chunk free; its 13-bit epoch wrapped
+   every 8192 bumps and requested a full `$thread_arena_flush_if_safe` — even
+   though block chaining is OFF by default and no slot held an epoch. 736 full
+   clears over the route, 154 of them in the 2360 gameplay batches (one every
+   ~15). Fix: `$chain_slots_live`, set by `$chain_patch`, cleared by the flush;
+   with it 0 the wrap just restarts at 1. Clears 736 -> 30. Decodes barely moved
+   (1.113M -> 1.117M in gameplay), because the clears were a symptom of (2)/(3).
+2. **Page-index arena too small.** 128 index slots on the main thread; gameplay
+   executes ~450 distinct code pages. `$page_index_alloc`'s clock walk evicted
+   a live page on almost every page miss: 549K "index arena full" evictions.
+3. **Page directory aliasing.** PAGE_DIR is direct-mapped on page number with
+   1024 entries, so pages 4MB apart share a slot (Game.dll at 0x561000,
+   Storm 0xc7a000, msvcrt 0x1213000...): 585K collision evictions.
+
+`test/run.js` now prints `cache: page evictions by cause: index arena full N |
+directory slot collision M` — that split is what made (2)/(3) visible, since
+`cache_evicts` had lumped them together.
+
+Fix for (2)/(3): main-thread index slots 128 -> 512 (`PAGE_INDEX_ARENA`
+0x33C000 -> 0x69C000), directory 1024 -> 4096 entries (`PAGE_DIR_BASE` 0x26000
+-> 0x3E000), and a **second-chance** bit at PAGE_DIR +24 (set on create and on
+`$page_enter`, cleared as the clock passes) so eviction skips recently entered
+pages. Worker sizes unchanged. Measured arms, same route, uop off:
+
+| build | gameplay decodes (19170..21530) | whole-route decodes | full clears | guest ms/batch gameplay |
+|---|---|---|---|---|
+| before | 1,113,408 | 6,262,093 | 736 | 5.86 |
+| epoch fix only | 1,116,801 | 6,177,622 | 30 | (noise) |
+| + 384 slots / 4096 dir | 247,127 | 652,761 | 0 | 4.39 |
+| + 384 / 4096 / second chance | 192,847 | 503,666 | 0 | 3.53 |
+| + 512 / 4096 (plain clock) | 60,572 | 185,846 | 0 | 3.77 |
+| **shipped: 512 / 4096 / second chance** | **35,512** | **125,618** | **0** | **2.43** |
+
+Gameplay decodes -97% (472/batch -> 15/batch); gameplay guest-slice time
+5.86 -> 2.43 ms/batch and the whole route's guest time 175.8s -> 102.7s
+(wall-clock, loaded box, same order of runs — read the decode column as the
+durable number). The final frame is the same scene (HUD, Thrall selected,
+500/500) but not pixel-identical: cache layout changes which fall-throughs are
+free, which moves the block-budget clock, so animation phase differs — the same
+8.6% difference appears between the baseline and the epoch-only build.
+
+Still open: 11.6K index-full evictions remain over the route (mostly the map
+load); Storm+0x3389b/0x338a0's pad-into-loop-head pair still re-decodes each
+other when either is rebuilt (a `$fuse_stop`-like "stop at an existing entry"
+already exists for the forward direction in `$decode_block`; the backward
+direction — a head published INTO an existing outer block — retires the outer
+one by design, see `$page_publish`).
+
 ## x87 fold under `--threads`: FPU_UNIMPL in the Miles MP3 thread (2026-09-28)
 
 `?debug&uop&x87-fold` with Worker threads trapped within a minute:

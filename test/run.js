@@ -9705,6 +9705,13 @@ if (VERBOSE) {
       if (instance.exports.get_cache_stores) {
         console.log('cache: block decodes', instance.exports.get_cache_stores(),
           'of which evicted a live block', instance.exports.get_cache_evicts());
+        // Page evictions by cause: the index arena running out (capacity) vs
+        // two pages sharing a direct-mapped PAGE_DIR slot (aliasing).
+        if (instance.exports.get_page_index_evicts) {
+          const cap = instance.exports.get_page_index_evicts();
+          console.log('cache: page evictions by cause: index arena full', cap,
+            '| directory slot collision', instance.exports.get_cache_evicts() - cap);
+        }
       }
       if (instance.exports.get_page_fast) {
         const hits = instance.exports.get_page_hits();

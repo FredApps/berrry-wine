@@ -1315,13 +1315,13 @@
   ;; space because a chunk is capped at PAGE_CHUNK_BYTES (0x4000), so a real
   ;; offset never needs bit 14 and the marker is free.
   ;;
-  ;; 8KB each. The main thread keeps 128 slots (1MB); each of the fifteen
+  ;; 9KB each. The main thread keeps 512 slots (4.5MB; 128 until 2026-09-28); each of the fifteen
   ;; workers gets 16 (128KB), because a worker compiles the one routine it was
   ;; spawned for. $PAGE_INDEX_SLOTS is therefore per-instance, set alongside
   ;; $PAGE_INDEX in $init_thread, and the defaults here are the main thread's.
   (global $PAGE_INDEX_ARENA i32 (region.addr $PAGE_INDEX_ARENA 0))
   (global $PAGE_INDEX_ARENA_SIZE i32 (region.size $PAGE_INDEX_ARENA))
-  (global $PAGE_INDEX_MAIN_BYTES i32 (i32.const 0x00120000))
+  (global $PAGE_INDEX_MAIN_BYTES i32 (i32.const 0x00480000))
   (global $PAGE_INDEX_STRIDE i32 (i32.const 0x00024000))
   (global $PAGE_INDEX_BYTES  i32 (i32.const 0x2400))
   ;; Block-executor round 13 (docs/block-executor-design.md section 22). The
@@ -1345,7 +1345,7 @@
   (global $PAGE_OPBITS_START i32 (i32.const 0x2000))
   (global $PAGE_OPBITS_END   i32 (i32.const 0x2200))
   (global $PAGE_OPBITS_BYTES i32 (i32.const 0x200))
-  (global $PAGE_INDEX_SLOTS  (mut i32) (i32.const 128))
+  (global $PAGE_INDEX_SLOTS  (mut i32) (i32.const 512))
   (global $PAGE_INDEX_WORKER_SLOTS i32 (i32.const 16))
   (global $PAGE_INDEX_NONE   i32 (i32.const 0xFFFF))
   ;; Bit 14 marks an interior byte. "Is this offset an entry point" is therefore
@@ -1373,7 +1373,7 @@
   ;; PAGE_DIR: per-thread direct-mapped table keyed on the guest page number.
   ;; 32 bytes per entry: +0 page base (0 = empty), +4 index ptr, +8 threaded
   ;; chunk base, +12 threaded chunk used|class|flags, +16 descriptor chunk base
-  ;; (0 = none yet), +20 descriptor chunk used|class, +24/+28 reserved.
+  ;; (0 = none yet), +20 descriptor chunk used|class, +24 referenced bit (second-chance eviction), +28 reserved.
   ;; Split like the other two per-thread arenas: the main thread keeps 1024
   ;; entries (32KB) and each of the fifteen workers gets 256 (8KB). Entries and
   ;; mask are per-instance, set in $init_thread; the values here are the main
@@ -1382,10 +1382,10 @@
   (global $PAGE_DIR_BASE i32 (region.addr $PAGE_DIR_BASE 0))
   (global $PAGE_DIR_BASE_SIZE i32 (region.size $PAGE_DIR_BASE))
   (global $PAGE_DIR_SLOT_BYTES i32 (i32.const 32))
-  (global $PAGE_DIR_MAIN_BYTES i32 (i32.const 0x8000))
+  (global $PAGE_DIR_MAIN_BYTES i32 (i32.const 0x20000))
   (global $PAGE_DIR_STRIDE i32 (i32.const 0x2000))
-  (global $PAGE_DIR_ENTRIES (mut i32) (i32.const 1024))
-  (global $PAGE_DIR_MASK (mut i32) (i32.const 1023))
+  (global $PAGE_DIR_ENTRIES (mut i32) (i32.const 4096))
+  (global $PAGE_DIR_MASK (mut i32) (i32.const 4095))
   (global $PAGE_DIR_WORKER_ENTRIES i32 (i32.const 256))
   ;; One contiguous chunk per compiled page, carved from the existing per-thread
   ;; decoded-code arena so the established flush machinery already covers it.

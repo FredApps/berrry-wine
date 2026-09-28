@@ -94,7 +94,7 @@ const extraWat = String.raw`
 (async () => {
   const { exports: e } = await bootRenderHarness({ extraWat, width: 64, height: 48 });
   const pageA = 0x00400000;
-  const pageB = pageA + 0x00400000; // same 1024-entry PAGE_DIR slot
+  const pageB = pageA + 0x01000000; // same 4096-entry PAGE_DIR slot (16MB of page numbers)
 
   e.test_page_storage_reset();
   assert.strictEqual(e.test_page_publish_sized(pageA, 3000, 0x11), 0);
@@ -152,24 +152,26 @@ const extraWat = String.raw`
   e.test_page_storage_reset();
   const stressBase = 0x01000000;
   const stressReuses = e.get_page_chunk_reuses();
-  for (let i = 0; i < 300; i++) {
-    const page = stressBase + i * 0x00400000;
+  for (let i = 0; i < 200; i++) {
+    // 16MB apart: the main PAGE_DIR has 4096 entries, so these share a slot.
+    // 200 keeps the last one below 4GB.
+    const page = stressBase + i * 0x01000000;
     assert.strictEqual(e.test_page_publish_sized(page, 64, i), 0,
       `page ${i} should publish under index pressure`);
     assert.strictEqual(e.test_page_capacity(page), 4096);
   }
   assert.ok(e.test_page_thread_used() < 8192,
     `colliding pages should not fill the arena (${e.test_page_thread_used()} bytes used)`);
-  assert.ok(e.get_page_chunk_reuses() - stressReuses >= 299,
+  assert.ok(e.get_page_chunk_reuses() - stressReuses >= 199,
     'all colliding pages after the first should reuse one 4KB chunk');
 
   // Compact chunks also mean the arena no longer overflows often enough to
-  // reset the 128-entry index as an accidental replacement policy. Touch more
-  // than 128 non-colliding pages and require the clock eviction path to keep
+  // reset the 512-entry index as an accidental replacement policy. Touch more
+  // than 512 non-colliding pages and require the clock eviction path to keep
   // publishing rather than falling back to decode-on-every-entry.
   e.test_page_storage_reset();
   const unpublishedBefore = e.get_page_unpublished();
-  for (let i = 0; i < 300; i++) {
+  for (let i = 0; i < 700; i++) {
     const page = 0x10000000 + i * 0x1000;
     const published = e.test_page_publish_sized(page, 64, i);
     assert.strictEqual(published, 0,
