@@ -2156,8 +2156,10 @@
     ;; The same set minus the histogram. Benchmark mode exempts the breakpoint
     ;; here exactly as it does above, so the tier's behaviour under
     ;; --benchmark-chain-bp is unchanged.
+    ;; ...plus the shadow call stack: a uop program's CALL/RET (07e kinds 23,
+    ;; 24) do not maintain it.
     (global.set $dbg_tier_guard
-      (i32.or (i32.ne (global.get $watch_addr) (i32.const 0))
+      (i32.or (i32.or (i32.ne (global.get $watch_addr) (i32.const 0)) (i32.ne (global.get $cs_enabled) (i32.const 0)))
         (i32.or (i32.and (i32.ne (global.get $bp_addr) (i32.const 0))
                          (i32.eqz (global.get $benchmark_chain_bp)))
           (i32.or (i32.ne (global.get $hit_count_n) (i32.const 0))
@@ -2978,7 +2980,7 @@
   (func (export "get_watch_size") (result i32) (global.get $watch_size))
 
   ;; --- Shadow call-stack (--trace-callstack) ---
-  (func (export "set_callstack_enabled") (param $on i32) (global.set $cs_enabled (local.get $on)))
+  (func (export "set_callstack_enabled") (param $on i32) (global.set $cs_enabled (local.get $on)) (call $dbg_recompute))
   (func (export "get_callstack_depth") (result i32) (global.get $cs_depth))
   ;; entry i=0 → most recent ret_addr, i=1 → caller's, etc. up to 64 entries.
   (func (export "get_callstack_entry") (param $i i32) (result i32)

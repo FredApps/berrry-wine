@@ -27,6 +27,12 @@ function asm(items) {
       if (Array.isArray(it)) { out.push(...it); pc += it.length; continue; }
       if (it.label) { at.set(it.label, pc); continue; }
       const t = at.get(it.to) ?? pc;
+      if (it.call) {
+        const r = t - (pc + 5);
+        out.push(0xE8, r & 0xFF, (r >>> 8) & 0xFF, (r >>> 16) & 0xFF, (r >>> 24) & 0xFF);
+        pc += 5;
+        continue;
+      }
       const rel = t - (pc + 2);
       out.push(it.jmp ? 0xEB : 0x70 | it.jcc, rel & 0xFF);
       pc += 2;
@@ -37,6 +43,7 @@ function asm(items) {
 const J = (cc, to) => ({ jcc: cc, to });
 const JMP = (to) => ({ jmp: true, to });
 const L = (label) => ({ label });
+const CALL = (to) => ({ call: true, to });
 const d32 = (v) => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
 const cc = { O: 0, NO: 1, B: 2, AE: 3, Z: 4, NZ: 5, BE: 6, A: 7, S: 8, NS: 9, L: 12, GE: 13, LE: 14, G: 15 };
 
@@ -175,6 +182,59 @@ const CASES = [
            [0x83, 0xDD, 0x05], [0x1B, 0x56, 0x08], [0x19, 0x07], [0x81, 0x1F, ...d32(0x12345678)],
            [0x1D, ...d32(0x7FFFFFFF)], J(cc.B, 'k'), 0x43, L('k'), [0x83, 0xDB, 0xFF], J(cc.L, 'm'), 0x45, L('m'),
            [0x01, 0xC5], [0x83, 0xC6, 0x04], [0x83, 0xC7, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  // ---- the stack (07e kinds 21-24) ----
+  {
+    // push r / imm32 / imm8 / esp, read back through [esp+N], popped into
+    // other registers: every value and the final ESP must agree.
+    name: 'push-pop-forms', regs: { ecx: N },
+    code: [L('l'), 0x56, [0x68, ...d32(0x12345678)], [0x6A, 0xFD], 0x54, [0x8B, 0x44, 0x24, 0x08],
+           [0x01, 0xC3], 0x58, [0x29, 0xC3], 0x5A, [0x01, 0xD3], 0x58, [0x31, 0xC3], 0x5D, [0x01, 0xEB],
+           [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // a leaf call with an argument: the callee's ret goes back into the loop.
+    name: 'call-leaf', regs: { ecx: N },
+    code: [L('l'), 0x51, CALL('f'), [0x83, 0xC4, 0x04], [0x01, 0xC3], [0x83, 0xC6, 0x04], 0x49,
+           J(cc.NZ, 'l'), 0xC3,
+           L('f'), [0x8B, 0x44, 0x24, 0x04], [0x03, 0x06], 0xC3],
+  },
+  {
+    // stdcall (ret 8), a prologue/epilogue, and flags set in the callee and
+    // read after it returns.
+    name: 'call-stdcall', regs: { ecx: N },
+    code: [L('l'), 0x56, 0x51, CALL('f'), J(cc.S, 'k'), 0x43, L('k'), [0x01, 0xC3], [0x83, 0xC6, 0x04], 0x49,
+           J(cc.NZ, 'l'), 0xC3,
+           // eax = [arg1] ^ (arg2 << 31): the sign alternates with ecx, so
+           // threaded code takes both sides of the js before the install.
+           L('f'), 0x55, [0x89, 0xE5], [0x8B, 0x45, 0x0C], [0x8B, 0x00], [0x8B, 0x55, 0x08], [0xC1, 0xE2, 0x1F],
+           [0x31, 0xD0], 0x5D, [0xC2, 0x08, 0x00]],
+  },
+  {
+    // one helper called from two sites: its ret has two candidates.
+    name: 'call-two-sites', regs: { ecx: N },
+    code: [L('l'), [0x8B, 0x06], CALL('f'), [0x01, 0xC3], [0x8B, 0x46, 0x04], CALL('f'), [0x31, 0xC3],
+           [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3,
+           L('f'), [0xC1, 0xE0, 0x03], [0x83, 0xC0, 0x07], 0xC3],
+  },
+  {
+    // a nested call, the inner callee reached from inside the outer one.
+    name: 'call-nested', regs: { ecx: N },
+    code: [L('l'), [0x8B, 0x06], CALL('f'), [0x01, 0xC3], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3,
+           L('f'), 0x50, CALL('g'), 0x5A, [0x01, 0xD0], 0xC3,
+           L('g'), [0xD1, 0xE0], 0x40, 0xC3],
+  },
+  {
+    // the callee returns 2 bytes past its return address (skipping an inc)
+    // every other iteration: that ret's pop never matches its candidate, so
+    // it must deopt to the threaded ret each time it differs.
+    // The bumped return lands on ret+2, an entry threaded code splits at and
+    // the compiler cannot know statically (the ret's check misses and exits
+    // there), so the block-clock charge is history-dependent like a fold's;
+    // state and the branch clock must still match.
+    name: 'ret-mismatch', regs: { ecx: N }, dynamicEntry: true,
+    code: [L('l'), [0x8B, 0x06], CALL('f'), [0x43, 0x43], 0x47, [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3,
+           L('f'), [0xA8, 0x01], J(cc.Z, 'r'), [0x83, 0x04, 0x24, 0x02], L('r'), 0xC3],
   },
 ];
 
@@ -548,7 +608,7 @@ async function main() {
       // differ there. A case with a loop threaded code FOLDS is one block per
       // fold run on the block clock, which a program charging trips cannot
       // match. The branch clock has no history, so both must match.
-      if (((mode === 'hot' && !c.folds) || clock) && st.stops !== off.stops) {
+      if (((mode === 'hot' && !c.folds && !c.dynamicEntry) || clock) && st.stops !== off.stops) {
         const x = st.stops.split(','), y = off.stops.split(',');
         let k = 0; while (k < x.length && x[k] === y[k]) k++;
         diffs.push(`batch ${k} stops at +0x${(+x[k]).toString(16)} vs +0x${(+y[k]).toString(16)} (${st.nstops} vs ${off.nstops} batches)`);
