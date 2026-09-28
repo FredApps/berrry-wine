@@ -277,3 +277,47 @@ How to read it:
   the exit path, one CLOCK per iteration.
 
 Phase 1 is the question now.
+
+## 8. Games, and the call-free engine (2026-09-27)
+
+**Games** (`node tools/uop-game-ab.js`, each game's own gameplay route, both
+arms `--branch-clock`, laptop at load ~2-4). Frames first: every game's final
+frame matches off vs uop, or differs by no more than off vs off.
+
+| game | frames | whole-run user CPU | gameplay phase |
+|---|---|---|---|
+| Heroes III | identical | -7.7% | **-41%** |
+| Diablo (shareware) | identical | -6.2% | **-34%** |
+| StarCraft | 1.48%, null band 1.43-1.51% | ~-5.5% | -- |
+| Warcraft III (menu, software GL) | identical | -3.4% | flat (GL-bound) |
+| Warcraft III **gameplay** (`wc3g`, headless GL) | identical | -8.8% | **-20%** (4.4 -> 3.5s); map load -7% |
+| Warcraft III gameplay, software GL | identical | -5.7 to -7.5% | 0% and +13% in two concurrent pairs (noise; GL-bound) |
+| Heroes II, Diablo demo menu | identical | flat | flat |
+| Diablo II | nondeterministic off vs off too | -3.5% | -- |
+
+**The call-free split.** With any call inside the dispatch loop, Ion kept
+`$pc` and `$budget` in stack slots: 110 `[x20,#28]` references in the old
+`$uop_run`, a store after every op and a reload on the pc chain every op
+depends on. The loop called `$uop_reguard` from 16 memory ops plus
+`$uop_window_set`, `$get_cf` (x2) and `$eval_cc`. Now `$uop_fast` makes no
+call at all and hands any op that needs one back to `$uop_run` (a window
+miss, GUARD, SAVECF, GETCF, BCC). A missed op is re-run from scratch after
+the re-guard; nothing in it changed before its window check. Result: pc lives
+in `w0` with **zero** stack references in the loop, and a register MOV is 7
+instructions plus an 8-instruction dispatch.
+
+What it bought is small, and the reason is the finding:
+- Microbench: h3shadow -6%, lut -3%, ckey +1%.
+- Heroes III, Diablo and StarCraft gameplay: flat against the pre-split
+  engine (`--ref-wasm=`), with identical frames.
+- A `--cpu-prof` of the Heroes III uop arm shows why. `$uop_fast` is 6.8% of
+  self time. The whole enter/re-guard path (`$th_uop_enter`, with
+  `$uop_run`/`$uop_reguard`/`$uop_window_set` inlined into it) is 0.6%.
+  `$g2w_affine_span` is 0.0%. The x87 handlers (`$th_fpu_mem_ro`,
+  `$fpu_exec_mem`, `$th_fpu_reg`, `$fpu_exec_reg`) are ~18%.
+
+So windows that survive across entries (an epoch bumped on every mapping
+change and code-page mark, shared across Worker instances) would buy under 1%
+of Heroes III. That is not worth a stale-window SMC hole. The remaining lever
+is **coverage**: the declines are `no-backedge` and `head-unsupported`, and
+Heroes III's hot threaded time is FPU code the tier does not lower.

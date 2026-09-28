@@ -231,10 +231,87 @@
   ;; Run from $pc until an EXIT. $budget is block transfers, spent by every
   ;; branch op; answers what is left. $eip is the only global an EXIT writes:
   ;; the registers were never anywhere but $REGFILE.
+  ;;
+  ;; Two functions, so the dispatch loop makes NO calls. With a call anywhere
+  ;; in it, Ion keeps $pc and $budget in stack slots across the whole loop
+  ;; (tools/wasm-native.js --func='$uop_run': a store after every op and a
+  ;; reload at the top of the next, on the pc chain every op depends on). So
+  ;; $uop_fast runs until an op needs a call -- a window miss, GUARD, SAVECF,
+  ;; GETCF, BCC -- and hands it back here with the op still at $pc; this loop
+  ;; does the call and re-enters. A miss that re-guards re-runs its op, which
+  ;; changed nothing before it looked at its window.
+  (global $uop_io_kind   (mut i32) (i32.const 0)) ;; 0 exited, 1 service op at pc, 2 window miss
+  (global $uop_io_budget (mut i32) (i32.const 0))
+  (global $uop_io_ga     (mut i32) (i32.const 0))
+  (global $uop_io_w      (mut i32) (i32.const 0))
   (func $uop_run (param $pc i32) (param $budget i32) (result i32)
+    (local $op i32)
+    (loop $L
+      (local.set $pc (call $uop_fast (local.get $pc) (local.get $budget)))
+      (local.set $budget (global.get $uop_io_budget))
+      (if (i32.eqz (global.get $uop_io_kind)) (then (return (local.get $budget))))
+      (local.set $op (i32.load (local.get $pc)))
+      (if (i32.eq (global.get $uop_io_kind) (i32.const 2))
+        (then
+          (if (call $uop_reguard (global.get $uop_io_w) (global.get $uop_io_ga)
+                ;; access size: 32-bit forms 4, 16-bit 2, byte 1
+                (if (result i32) (i32.or (i32.or (i32.eq (local.get $op) (i32.const 13))
+                                                 (i32.eq (local.get $op) (i32.const 17)))
+                                         (i32.or (i32.eq (local.get $op) (i32.const 33))
+                                                 (i32.eq (local.get $op) (i32.const 38))))
+                  (then (i32.const 4))
+                  (else (if (result i32)
+                          (i32.or (i32.or (i32.eq (local.get $op) (i32.const 16))
+                                          (i32.or (i32.eq (local.get $op) (i32.const 19))
+                                                  (i32.eq (local.get $op) (i32.const 29))))
+                                  (i32.or (i32.eq (local.get $op) (i32.const 34))
+                                          (i32.or (i32.eq (local.get $op) (i32.const 35))
+                                                  (i32.eq (local.get $op) (i32.const 39)))))
+                          (then (i32.const 2)) (else (i32.const 1))))))
+            (then (br $L)))
+          ;; Its deopt stub: x is the last operand -- offset 20 in the
+          ;; 5-operand forms, 24 in LD8UX/LD16UX2, 28 in LDX*/STX*.
+          (local.set $pc (i32.load (i32.add (local.get $pc)
+            (if (result i32) (i32.ge_u (local.get $op) (i32.const 33))
+              (then (i32.const 28))
+              (else (if (result i32) (i32.or (i32.eq (local.get $op) (i32.const 15))
+                                             (i32.eq (local.get $op) (i32.const 16)))
+                      (then (i32.const 24)) (else (i32.const 20))))))))
+          (br $L)))
+      ;; 26 GUARD w base disp len rw x
+      (if (i32.eq (local.get $op) (i32.const 26))
+        (then
+          (if (call $uop_window_set (i32.load offset=4 (local.get $pc))
+                (i32.add (i32.load (i32.load offset=8 (local.get $pc)))
+                         (i32.load offset=12 (local.get $pc)))
+                (i32.load offset=16 (local.get $pc))
+                (i32.load offset=20 (local.get $pc)))
+            (then (local.set $pc (i32.add (local.get $pc) (i32.const 28))) (br $L)))
+          (global.set $uop_guard_fails (i32.add (global.get $uop_guard_fails) (i32.const 1)))
+          (local.set $pc (i32.load offset=24 (local.get $pc)))
+          (br $L)))
+      ;; 31 SAVECF
+      (if (i32.eq (local.get $op) (i32.const 31))
+        (then
+          (global.set $saved_cf (call $get_cf))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 4))) (br $L)))
+      ;; 55 GETCF d
+      (if (i32.eq (local.get $op) (i32.const 55))
+        (then
+          (i32.store (i32.load offset=4 (local.get $pc)) (call $get_cf))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 8))) (br $L)))
+      ;; 57 BCC cc t
+      (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))
+      (local.set $pc
+        (select (i32.load offset=8 (local.get $pc)) (i32.add (local.get $pc) (i32.const 12))
+                (call $eval_cc (i32.load offset=4 (local.get $pc)))))
+      (br $L))
+    (unreachable))
+
+  (func $uop_fast (param $pc i32) (param $budget i32) (result i32)
     (local $ga i32) (local $w i32) (local $v i32)
     (loop $L
-      (block $missx
+      (block $svc
       (block $miss
       (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
       (block $c55 (block $c54 (block $c53 (block $c52 (block $c51 (block $c50
@@ -255,7 +332,9 @@
                   (i32.load (local.get $pc))))
         ;; 0 EXIT eip
         (global.set $eip (i32.load offset=4 (local.get $pc)))
-        (return (local.get $budget)))
+        (global.set $uop_io_kind (i32.const 0))
+        (global.set $uop_io_budget (local.get $budget))
+        (return (local.get $pc)))
         ;; 1 MOVI d i
         (i32.store (i32.load offset=4 (local.get $pc)) (i32.load offset=8 (local.get $pc)))
         (local.set $pc (i32.add (local.get $pc) (i32.const 12))) (br $L))
@@ -319,7 +398,7 @@
         (local.set $w (i32.load offset=16 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 4)))
-          (then (br_if $miss (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 4))))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 24))) (br $L))
@@ -329,7 +408,7 @@
         (local.set $w (i32.load offset=16 (local.get $pc)))
         (if (i32.ge_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.load offset=4 (local.get $w)))
-          (then (br_if $miss (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 1))))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load8_u (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 24))) (br $L))
@@ -340,9 +419,7 @@
         (local.set $w (i32.load offset=20 (local.get $pc)))
         (if (i32.ge_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.load offset=4 (local.get $w)))
-          (then (local.set $pc (i32.add (local.get $pc) (i32.const 4)))
-                (br_if $miss (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 1))))
-                (local.set $pc (i32.sub (local.get $pc) (i32.const 4)))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load8_u (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 28))) (br $L))
@@ -354,9 +431,7 @@
         (local.set $w (i32.load offset=20 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 2)))
-          (then (local.set $pc (i32.add (local.get $pc) (i32.const 4)))
-                (br_if $miss (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 2))))
-                (local.set $pc (i32.sub (local.get $pc) (i32.const 4)))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load16_u (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 28))) (br $L))
@@ -366,7 +441,7 @@
         (local.set $w (i32.load offset=16 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 4)))
-          (then (br_if $miss (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 4))))))
+          (then (br $miss)))
         (i32.store (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))
           (i32.load (i32.load offset=4 (local.get $pc))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 24))) (br $L))
@@ -376,7 +451,7 @@
         (local.set $w (i32.load offset=16 (local.get $pc)))
         (if (i32.ge_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.load offset=4 (local.get $w)))
-          (then (br_if $miss (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 1))))))
+          (then (br $miss)))
         (i32.store8 (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))
           (i32.load (i32.load offset=4 (local.get $pc))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 24))) (br $L))
@@ -386,7 +461,7 @@
         (local.set $w (i32.load offset=16 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 2)))
-          (then (br_if $miss (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 2))))))
+          (then (br $miss)))
         (i32.store16 (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))
           (i32.load (i32.load offset=4 (local.get $pc))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 24))) (br $L))
@@ -425,16 +500,8 @@
         (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))
         (local.set $pc (i32.load offset=4 (local.get $pc)))
         (br $L))
-        ;; 26 GUARD w base disp len rw x
-        (if (call $uop_window_set (i32.load offset=4 (local.get $pc))
-              (i32.add (i32.load (i32.load offset=8 (local.get $pc)))
-                       (i32.load offset=12 (local.get $pc)))
-              (i32.load offset=16 (local.get $pc))
-              (i32.load offset=20 (local.get $pc)))
-          (then (local.set $pc (i32.add (local.get $pc) (i32.const 28))) (br $L)))
-        (global.set $uop_guard_fails (i32.add (global.get $uop_guard_fails) (i32.const 1)))
-        (local.set $pc (i32.load offset=24 (local.get $pc)))
-        (br $L))
+        ;; 26 GUARD -- calls $uop_window_set: $uop_run does it
+        (br $svc))
         ;; 27 CLOCK n x
         (local.set $budget (i32.sub (local.get $budget) (i32.load offset=4 (local.get $pc))))
         (local.set $pc
@@ -454,7 +521,7 @@
         (local.set $w (i32.load offset=16 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 2)))
-          (then (br_if $miss (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 2))))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load16_u (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 24))) (br $L))
@@ -465,9 +532,8 @@
                   (i32.ge_u (i32.load (i32.load offset=4 (local.get $pc)))
                             (i32.load (i32.load offset=8 (local.get $pc))))))
         (br $L))
-        ;; 31 SAVECF
-        (global.set $saved_cf (call $get_cf))
-        (local.set $pc (i32.add (local.get $pc) (i32.const 4))) (br $L))
+        ;; 31 SAVECF -- calls $get_cf: $uop_run does it
+        (br $svc))
         ;; 32 LEA d base idx sc disp
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.add (i32.add (i32.load (i32.load offset=8 (local.get $pc)))
@@ -483,7 +549,7 @@
         (local.set $w (i32.load offset=24 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 4)))
-          (then (br_if $missx (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 4))))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
@@ -495,7 +561,7 @@
         (local.set $w (i32.load offset=24 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 2)))
-          (then (br_if $missx (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 2))))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load16_u (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
@@ -507,7 +573,7 @@
         (local.set $w (i32.load offset=24 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 2)))
-          (then (br_if $missx (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 2))))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load16_s (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
@@ -519,7 +585,7 @@
         (local.set $w (i32.load offset=24 (local.get $pc)))
         (if (i32.ge_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.load offset=4 (local.get $w)))
-          (then (br_if $missx (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 1))))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load8_u (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
@@ -531,7 +597,7 @@
         (local.set $w (i32.load offset=24 (local.get $pc)))
         (if (i32.ge_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.load offset=4 (local.get $w)))
-          (then (br_if $missx (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 1))))))
+          (then (br $miss)))
         (i32.store (i32.load offset=4 (local.get $pc))
           (i32.load8_s (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
@@ -543,7 +609,7 @@
         (local.set $w (i32.load offset=24 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 4)))
-          (then (br_if $missx (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 4))))))
+          (then (br $miss)))
         (i32.store (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))
           (i32.load (i32.load offset=4 (local.get $pc))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
@@ -555,7 +621,7 @@
         (local.set $w (i32.load offset=24 (local.get $pc)))
         (if (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.sub (i32.load offset=4 (local.get $w)) (i32.const 2)))
-          (then (br_if $missx (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 2))))))
+          (then (br $miss)))
         (i32.store16 (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))
           (i32.load (i32.load offset=4 (local.get $pc))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
@@ -567,7 +633,7 @@
         (local.set $w (i32.load offset=24 (local.get $pc)))
         (if (i32.ge_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
                       (i32.load offset=4 (local.get $w)))
-          (then (br_if $missx (i32.eqz (call $uop_reguard (local.get $w) (local.get $ga) (i32.const 1))))))
+          (then (br $miss)))
         (i32.store8 (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))
           (i32.load (i32.load offset=4 (local.get $pc))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
@@ -646,9 +712,8 @@
           (i32.lt_u (i32.load (i32.load offset=8 (local.get $pc)))
                     (i32.load (i32.load offset=12 (local.get $pc)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 16))) (br $L))
-        ;; 55 GETCF d
-        (i32.store (i32.load offset=4 (local.get $pc)) (call $get_cf))
-        (local.set $pc (i32.add (local.get $pc) (i32.const 8))) (br $L))
+        ;; 55 GETCF d -- calls $get_cf: $uop_run does it
+        (br $svc))
         ;; 56 RECF op a b res shift scf
         (global.set $flag_op (i32.load offset=4 (local.get $pc)))
         (global.set $flag_a (i32.load (i32.load offset=8 (local.get $pc))))
@@ -657,12 +722,8 @@
         (global.set $flag_sign_shift (i32.load offset=20 (local.get $pc)))
         (global.set $saved_cf (i32.load (i32.load offset=24 (local.get $pc))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 28))) (br $L))
-        ;; 57 BCC cc t
-        (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))
-        (local.set $pc
-          (select (i32.load offset=8 (local.get $pc)) (i32.add (local.get $pc) (i32.const 12))
-                  (call $eval_cc (i32.load offset=4 (local.get $pc)))))
-        (br $L))
+        ;; 57 BCC cc t -- calls $eval_cc: $uop_run does it
+        (br $svc))
         ;; 58 CHK x -- just before a charged transfer: with no budget left
         ;; threaded code stops at that transfer, so exit to it (x re-runs the
         ;; branch in threaded code, whose $branch_end then ends the batch).
@@ -696,15 +757,19 @@
         ;; the stub has already taken the branch and names where it went.
         (global.set $eip (i32.load offset=4 (local.get $pc)))
         (global.set $uop_bexit (i32.const 1))
-        (return (i32.const 0)))
-      ;; A memory op whose re-guard failed: its deopt stub. Every memory op
-      ;; keeps x at offset 20 (5-operand forms) -- the 6-operand LD*X forms
-      ;; step $pc by one word before branching here so the same load reads it.
-      (local.set $pc (i32.load offset=20 (local.get $pc)))
-      (br $L))
-      ;; The 7-operand LDX/STX forms keep x at offset 28.
-      (local.set $pc (i32.load offset=28 (local.get $pc)))
-      (br $L))
+        (global.set $uop_io_kind (i32.const 0))
+        (global.set $uop_io_budget (i32.const 0))
+        (return (local.get $pc)))
+      ;; A memory access left its window: $uop_run re-guards (a call).
+      (global.set $uop_io_ga (local.get $ga))
+      (global.set $uop_io_w (local.get $w))
+      (global.set $uop_io_kind (i32.const 2))
+      (global.set $uop_io_budget (local.get $budget))
+      (return (local.get $pc)))
+      ;; An op that needs a call, still at $pc.
+      (global.set $uop_io_kind (i32.const 1))
+      (global.set $uop_io_budget (local.get $budget))
+      (return (local.get $pc)))
     (unreachable))
 
   ;; ===================================================================

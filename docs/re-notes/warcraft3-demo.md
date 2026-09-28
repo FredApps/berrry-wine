@@ -1988,3 +1988,47 @@ comparable window to window, which is why they are the unit here — but they
 are not time. `ops/block` falls steadily across the series (10.29 → 4.87), so
 later windows retire cheaper blocks, and a share of entries is not a share of
 wall clock. Nothing above should be quoted as a speedup.
+
+## GAMEPLAY REACHED (2026-09-28), and a replayable route into it
+
+The Prologue now plays: HUD, Thrall selectable (Level 1 Far Seer, 500/500),
+move orders obeyed. Recorded by stepping a frozen CLI session with
+`tools/ctl.js` and logging each action at the batch it was sent. The whole walk
+is the `wc3g` game in `tools/uop-game-ab.js`, which replays it as `--input`:
+
+```sh
+node test/run.js --app=warcraft3_demo --no-threads --headless-gl   # or --gl-renderer=software
+  --batch-size=20000 --max-batches=21530 --no-close --input=<wc3g's list>
+```
+
+| batch | state |
+|---|---|
+| 2000 | main menu (640x480 layout: Single Player 546,113) |
+| 2300-2820 | profile `ABC`: keypress 65/66/67, Create 203,173, row 130,225, Select 203,314 |
+| 3050 | Campaign 546,149 -> campaign screen by ~3550 |
+| 3650 | Prologue **bullet** 433,156 -> map load |
+| ~15950 | Chapter One card, PRESS ANY KEY |
+| 16530 | `keydown:32` (a click on the bar does NOT dismiss it) -> in-engine cinematic |
+| 18350 | `keydown:27` skips the cinematic -> gameplay HUD by 19170 |
+| 19170+ | select Thrall 230,300; `rclick` 385,125 / 520,260 / 150,230 |
+
+The map load that took ~40 minutes on 2026-09-14 now takes about 12,000 batches
+at `--batch-size=20000`, 2-3 minutes of wall clock. The replay reproduces the
+interactive recording's final frame to 0 pixels (same renderer), and it is
+deterministic across renderers in guest terms: the micro-op tier's counters
+are identical under software GL and `--headless-gl`.
+
+**Headless GL needs an AWAKE display, not just a kept-awake one.**
+`caffeinate -d` stops the display from sleeping but does not wake one that
+already has. `caffeinate -u -t 3` (a simulated user-activity assertion) wakes
+it, and `caffeinate -dimu` holds it for the run. Check for `1 display(s)` in the
+`[gl]` line. With zero displays both arms reach the "unable to initialize
+DirectX" modal, run at spin speed and compare as IDENTICAL, which reads as a
+pass.
+
+Software GL draws a large grey wedge across the left of the opening cinematic
+(filmed at batch 18350). It does not block anything and was not investigated.
+
+About 500 block decodes per batch run during gameplay (1.2M across 19170..21530)
+in both uop arms, with 97% of all decode work in storms. That is worth a
+`--trace-code-writes` look on its own.
