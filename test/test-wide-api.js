@@ -178,10 +178,17 @@ async function main() {
     (e.test_call_GetModuleHandleA(writeAscii('USER32.DLL')) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE + 1);
   check('GetModuleHandleA recognizes statically dispatched COMCTL32',
     (e.test_call_GetModuleHandleA(writeAscii('comctl32.dll')) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE + 2);
+  // Win9x maps GDI32 into every process. InstallShield 3 registers GDI32,
+  // KERNEL32 and USER32 by extensionless GetModuleHandle and gives up on the
+  // rest at the first NULL (War Wind II's setup then spins in SdAskOptions).
+  check('GetModuleHandleA recognizes extensionless GDI32',
+    (e.test_call_GetModuleHandleA(writeAscii('GDI32')) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE + 3);
+  check('GetModuleHandleA recognizes extensionless USER32',
+    (e.test_call_GetModuleHandleA(writeAscii('USER32')) >>> 0) === STATIC_SYS_DLL_HANDLE_BASE + 1);
   const dsound = writeAscii('C:\\WINDOWS\\SYSTEM\\DSOUND.DLL');
   const dsoundHandle = e.test_call_LoadLibraryA(dsound) >>> 0;
   check('LoadLibraryA preserves statically dispatched DSOUND identity',
-    dsoundHandle === STATIC_SYS_DLL_HANDLE_BASE + 5,
+    dsoundHandle === STATIC_SYS_DLL_HANDLE_BASE + 6,
     `handle=0x${dsoundHandle.toString(16)}`);
   const directSoundCreate = e.test_call_GetProcAddress(dsoundHandle, 1) >>> 0;
   const directSoundCreateWa = wa(directSoundCreate);

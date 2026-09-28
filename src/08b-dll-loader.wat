@@ -483,15 +483,17 @@
     ;; Authentic Win98 DPLAYX exports (ordinals read off the retail DX6
     ;; dplayx.dll with tools/pe-exports.js, not guessed). RollerCoaster Tycoon
     ;; imports 1 and 2 by ordinal only. $guest_name_is_static_system_dll
-    ;; answers a *1-based* list position, and the list is
-    ;; ole32/user32/comctl32/dplayx/ddraw/dsound/d3drm — so dplayx is 4 and
-    ;; dsound is 6. The DSOUND rule below used to say 4 and therefore claimed
+    ;; answers a *1-based* list position, and the DirectX tail of the list is
+    ;; dplayx/ddraw/dsound/d3drm starting at 0-based $STATIC_SYS_DLL_FIRST_DX —
+    ;; so dplayx is FIRST_DX+1 and dsound FIRST_DX+3, derived rather than
+    ;; spelled so a new non-DirectX name cannot skew them. The DSOUND rule below
+    ;; once said dplayx's number and therefore claimed
     ;; every dplayx ordinal: RCT's ordinal 2 came back as DirectSoundEnumerateA,
     ;; whose handler pushes four callback arguments where DirectPlayEnumerateA's
     ;; callback pops five (`ret 0x14`), and the resulting stack skew returned the
     ;; guest to EIP 0 before it ever created a window.
     (if (i32.eq (call $guest_name_is_static_system_dll (local.get $dll_name_ga))
-                (i32.const 4))
+                (i32.add (global.get $STATIC_SYS_DLL_FIRST_DX) (i32.const 1)))
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 1)) (then (return (i32.const 1232)))) ;; DirectPlayCreate
         (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (i32.const 1234)))) ;; DirectPlayEnumerateA
@@ -500,11 +502,11 @@
       ))
     ;; Authentic Win98 DSOUND exports. Diablo II's D2Sound imports both by
     ;; ordinal: 2 enumerates the default driver, then 1 creates it. DSOUND is
-    ;; entry 6 in STATIC_SYS_DLL_NAMES' 1-based numbering; those API ids are
+    ;; entry FIRST_DX+3 in STATIC_SYS_DLL_NAMES' 1-based numbering; those API ids are
     ;; append-only table positions and therefore as stable as the generated
     ;; dispatch itself.
     (if (i32.eq (call $guest_name_is_static_system_dll (local.get $dll_name_ga))
-                (i32.const 6))
+                (i32.add (global.get $STATIC_SYS_DLL_FIRST_DX) (i32.const 3)))
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 1)) (then (return (i32.const 976))))  ;; DirectSoundCreate
         (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (i32.const 1236)))) ;; DirectSoundEnumerateA

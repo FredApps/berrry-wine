@@ -57,7 +57,14 @@ async function main() {
   assert.strictEqual(context.vfs.files.get('c:\\windows\\temp\\_ins0566._mp').data.length, 0,
     'OF_CREATE truncates an existing destination');
 
-  const missing = e.test_call_OpenFile(ansi('C:\\missing.bin'), 0) >>> 0;
+  // War Wind's Win16 SETUP.EXE opens its stage files with style 0x1000 alone
+  // (access bits OF_READ=0) and then _lwrites into them: OF_CREATE implies write.
+  const bare = e.test_call_OpenFile(ansi('C:\\WINDOWS\\TEMP\\WWSTAGE.TMP'), 0x1000) >>> 0;
+  assert.notStrictEqual(bare, 0xffffffff, 'bare OF_CREATE creates the file');
+  assert.strictEqual(context.vfs.handles.get(bare).access >>> 0, 0xc0000000,
+    'bare OF_CREATE opens read/write, not read-only');
+
+  const missing =e.test_call_OpenFile(ansi('C:\\missing.bin'), 0) >>> 0;
   assert.strictEqual(missing, 0xffffffff, 'ordinary OF_READ remains OPEN_EXISTING');
 
   console.log('PASS  OpenFile honors OF_CREATE and ANSI read/write access modes');

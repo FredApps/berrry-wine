@@ -296,14 +296,20 @@
     (local $access i32) (local $creation i32)
     ;; OF_READ=0, OF_WRITE=1, OF_READWRITE=2. OF_CREATE=0x1000 creates or
     ;; truncates the destination; InstallShield combines it with READWRITE
-    ;; while creating its temporary stage files.
+    ;; while creating its temporary stage files. OF_CREATE alone (access bits
+    ;; OF_READ=0) is DOS create, INT 21h AH=3Ch, which always opens the new
+    ;; file read/write: InstallShield 3's Win16 SETUP.EXE creates its engine
+    ;; stage file with style 0x1000 and then _lwrites into it.
     (local.set $access
+      (if (result i32) (i32.ne (i32.and (local.get $arg2) (i32.const 0x1000)) (i32.const 0))
+        (then (i32.const 0xC0000000)) ;; GENERIC_READ | GENERIC_WRITE
+        (else
       (if (result i32) (i32.eq (i32.and (local.get $arg2) (i32.const 3)) (i32.const 1))
         (then (i32.const 0x40000000)) ;; GENERIC_WRITE
         (else
           (if (result i32) (i32.eq (i32.and (local.get $arg2) (i32.const 3)) (i32.const 2))
             (then (i32.const 0xC0000000)) ;; GENERIC_READ | GENERIC_WRITE
-            (else (i32.const 0x80000000)))))) ;; GENERIC_READ
+            (else (i32.const 0x80000000)))))))) ;; GENERIC_READ
     (local.set $creation
       (select (i32.const 2) (i32.const 3)
         (i32.ne (i32.and (local.get $arg2) (i32.const 0x1000)) (i32.const 0))))

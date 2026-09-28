@@ -247,7 +247,7 @@
     (owner "01-header.wat:$RICHEDIT_FORMAT_TABLE"))
   (region.declare $RICHEDIT_PARA_TABLE (size 0x00000400) (align 0x00000010)
     (owner "01-header.wat:$RICHEDIT_PARA_TABLE"))
-  (region.declare $RESERVED_PAGE_STRINGS (size 0x00000280) (align 0x00000080)
+  (region.declare $RESERVED_PAGE_STRINGS (size 0x00000300) (align 0x00000080)
     (owner "01-header.wat:$RESERVED_PAGE_STRINGS"))
   ;; The texts on the shutting-down / safe-to-turn-off screens.
   (region.declare $POWER_SCREEN_STRINGS (size 0x000000C0) (align 0x00000010)

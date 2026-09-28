@@ -545,7 +545,9 @@ if (require.main === module) {
   if (baseFileOff < 0) { console.error('VA not in any section'); process.exit(1); }
 
   const displayVA = loadBase !== null ? startVA - imageBase + loadBase : startVA;
-  const lines = disasmAt(buf, baseFileOff, displayVA, maxInsns, importNames, { bits });
+  // An explicit end address asks for the whole range, so sweep linearly past
+  // every ret/jmp instead of stopping where the first function ends.
+  const lines = disasmAt(buf, baseFileOff, displayVA, maxInsns, importNames, { bits, linear: !!endVA });
 
   // If endVA specified, filter to range
   if (endVA) {

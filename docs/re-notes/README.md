@@ -68,6 +68,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | NetHack 3.4.3 for Windows | [nethack-win32.md](nethack-win32.md) |
 | Liquid War 5.6.2 | [liquid-war.md](liquid-war.md) |
 | Little Fighter 2 v1.9 | [little-fighter-2.md](little-fighter-2.md) |
+| War Wind (USA) and War Wind II (Europe) CD installs | [war-wind.md](war-wind.md) |
 | Over 1000 Games for Windows (Nodtronics CD) | [over1000games-shareware.md](over1000games-shareware.md) |
 | Pawn 3 | [pawn.md](pawn.md) |
 | Pocket Tanks shareware | [pocket-tanks.md](pocket-tanks.md) |
