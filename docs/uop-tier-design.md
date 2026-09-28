@@ -321,3 +321,52 @@ change and code-page mark, shared across Worker instances) would buy under 1%
 of Heroes III. That is not worth a stale-window SMC hole. The remaining lever
 is **coverage**: the declines are `no-backedge` and `head-unsupported`, and
 Heroes III's hot threaded time is FPU code the tier does not lower.
+
+## 9. Coverage: what declined scans actually stop on (2026-09-28)
+
+`--uop-census` now also records the instructions that end each declined scan:
+kind-9 records, keyed by an opcode signature. `tools/uop-census.js` prints them
+as "unsupported instructions in declined scans, by form", weighted by the
+threaded block entries at the declined head in the histogram window. Before
+this change, the top non-FPU forms were:
+
+| game | top unsupported forms (weight = block entries at head) |
+|---|---|
+| StarCraft | `mov eax,moffs` 14.5M, `sbb` 8.6M, `push imm8` 7.5M, `call` 6.1M, `setcc` 5.3M, `shr r,cl` 4.3M |
+| Diablo | `mov eax,moffs` 67M, `mov al,moffs` 32M, `setcc` 16M, `mov moffs,eax` 12M |
+
+New lowerings in `07e`, all without any call on the fast path:
+
+- **`A0-A3` moffs.** A kind-5 move with a disp32-only memory operand.
+- **`rol`/`ror r/m, imm`.** Kind 11, ops 3 and 4.
+- **Shift by CL (kind 18).** The flag effect depends on the runtime count, and
+  a zero count leaves the flags untouched. The lowering therefore leaves the
+  record in the globals (state G): `BNZL` (64, free) skips the flag write on a
+  zero count, and `SETSS` (65, free) stores the sign shift. Exits need nothing
+  extra.
+- **`setcc` (kind 19, cc at R+20).** `$uc_setv` forwards cmp/sub, logic/test
+  and inc/dec/add recipes into SLTU/SLT/EQ forms. Every other case
+  materializes the record and runs `GETCC` (66), a service op that calls
+  `$eval_cc`, so the result is bit-exact with the threaded path.
+- **32-bit `sbb` (kind 20).** Covers the ALU `18-1D` forms and group
+  `80/81/83 /3`, and writes flag_a/flag_b exactly as the threaded
+  `$set_flags_sub(a, b+CF, r)` does. `adc` and the 8/16-bit forms are still
+  declined.
+
+Results. hu = `head-unsupported`, nb = `no-backedge`. Each census is one run of
+the game's route. The hot-window share is the share of threaded entries the
+tier did not take, by verdict.
+
+| game | installs before → after | declines before → after | hot-window verdicts after |
+|---|---|---|---|
+| StarCraft | 578 → 711 | nb 1111 → 899, hu 248 → 205 | nb 15.4% → 3.9%, hu 6.2% → 1.2%, poor 4.3% → 0.2% |
+| Heroes III | 290 → 432 | nb 1370 → 1205, hu 418 → 364 | unchanged (its hot code is x87) |
+| Diablo | 249 → 254 | nb 835 → 804, hu 1663 → 1535 | hu 26.1% → 22.1% |
+
+Every targeted form is gone from all three censuses. What still stops a scan
+is almost entirely stack and control transfer: `push r`, `call`, `push imm`,
+`pop r`, `ret`, `ret imm`, `loop`, `jmp` (as a head). After those come `div`,
+`rep movsd`/`rep cmpsb` and `lodsb`. Push, pop and call cover the most
+weight, well ahead of everything else. That is the next coverage step:
+straight-line stack traffic, and possibly inlining a callee that returns.
+The FPU is a separate step.
