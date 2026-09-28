@@ -62,6 +62,22 @@
     (i32.store offset=28 (global.get $reg_base) (local.get $saved_edi))
     (i32.store offset=20 (global.get $reg_base) (local.get $saved_ebp)))
 
+  ;; The clock reads that do not count as Win32 work for the clock-spin
+  ;; detector ($spin_nonpoll_seq). QueryPerformanceFrequency belongs here with
+  ;; the three reads: it answers a constant and has no side effect, and a QPC
+  ;; limiter re-asks it on every pass. Diablo II's d2win.dll menu loop is
+  ;; PeekMessage(PM_NOREMOVE) / QPC / QPF / compare (docs/re-notes/
+  ;; diablo2-demo.md) and was invisible to both detectors while the latter two
+  ;; counted as work between every pair of reads.
+  (func $spin_is_clock_read (param $api_id i32) (result i32)
+    (i32.or
+      (i32.or
+        (i32.eq (local.get $api_id) (global.get $API_ID_GetTickCount))
+        (i32.eq (local.get $api_id) (global.get $API_ID_timeGetTime)))
+      (i32.or
+        (i32.eq (local.get $api_id) (global.get $API_ID_QueryPerformanceCounter))
+        (i32.eq (local.get $api_id) (global.get $API_ID_QueryPerformanceFrequency)))))
+
   (func $win32_dispatch (param $thunk_idx i32)
     (local $api_id i32) (local $name_rva i32) (local $name_ptr i32)
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
@@ -140,9 +156,7 @@
     ;; reads as polling. PeekMessage starts as real activity too; only its
     ;; proven-empty return path rolls this one increment back.
     ;; Named IDs are generated from api_table.json alongside the dispatcher.
-    (if (i32.and
-          (i32.ne (local.get $api_id) (global.get $API_ID_GetTickCount))
-          (i32.ne (local.get $api_id) (global.get $API_ID_timeGetTime)))
+    (if (i32.eqz (call $spin_is_clock_read (local.get $api_id)))
       (then
         (global.set $spin_nonpoll_seq
           (i32.add (global.get $spin_nonpoll_seq) (i32.const 1)))))

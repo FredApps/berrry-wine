@@ -2,6 +2,8 @@
   ;; Generated from api_table.json; never replace these with array indexes.
   (global $API_ID_GetTickCount i32 (i32.const 338))
   (global $API_ID_timeGetTime i32 (i32.const 826))
+  (global $API_ID_QueryPerformanceCounter i32 (i32.const 507))
+  (global $API_ID_QueryPerformanceFrequency i32 (i32.const 508))
   (global $API_ID_MsgWaitForMultipleObjects i32 (i32.const 470))
   (global $API_ID_PeekMessageA i32 (i32.const 490))
   (global $API_ID_PeekMessageW i32 (i32.const 491))
