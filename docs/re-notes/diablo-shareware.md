@@ -3063,3 +3063,14 @@ Hidden scans now retain erase requests until exposure. The same trace changes
 0x10004's first BeginPaint from flags=0 to flags=2; later polling still clears
 that bit. This fixes one observed loss, not the entire candidate. See the
 latest section of `docs/review-win16-windowpos.md` for commands and logs.
+
+## 2026-09-28: display mode is fixed at 640x480x8
+
+`diablo_s.exe` (FileVersion 1.0.1.0) has one `IDirectDraw::SetDisplayMode`
+call, at `0x004172f7`: `push 8 / push 0x1e0 / push 0x280`, i.e.
+640x480x8. The only other `call [reg+0x54]` (`0x417451`) is on a surface,
+not the DirectDraw object. The 0x320 immediates in `.text` are `sub edi,
+0x320` pitch arithmetic in the blitters, not a mode, and `diablo.ini` holds
+only the `[NetMsg]` hot-key texts. There is no resolution setting to honour:
+640x480 is the whole answer, and the emulator fit-scales that exclusive
+primary to whatever canvas the host has.

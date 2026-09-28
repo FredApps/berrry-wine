@@ -909,3 +909,86 @@ silent-success `DrawIndexedPrimitiveVB` stub, whose black floor scores
 `> 20000`: 10x over that failure, 1.7x under the tightest frame that is
 genuinely gameplay. The life orb, mana orb and colour assertions are unchanged
 (measured 2,974 / 2,902 / 961 against 2,500 / 2,000 / 100).
+
+## 2026-09-28: resolutions, and the 1024x768 "blow-up" that wasn't
+
+### What the binaries support: 640x480 and 800x600, nothing else
+
+`diablo ii.exe` is FileVersion 1.0.4.0 (the menu's "Shareware v 1.04"); the
+renderer DLLs carry no version resource. Every layer has exactly two
+resolutions, selected by an index of 0 or 1:
+
+| module | site | what it does |
+|---|---|---|
+| `d2gfx.dll` | `0x10004455` / `0x10004a07` | index 0 -> 640x480, 1 -> 800x600, anything else -> `"Unknown resolution %d"` (`0x1000d5c4`, `Window.cpp`); then AdjustWindowRectEx + SetWindowPos |
+| `d2direct3d.dll` | `0x1000207b` | same 0/1 choice, logs `"Opening Direct3D window at 800x600..."` / `640x480`, then `SetCooperativeLevel(hwnd, 0x411)` (FULLSCREEN\|EXCLUSIVE\|MULTITHREADED) and `SetDisplayMode(w, h, 16)` |
+| `d2ddraw.dll`, `d2gdi.dll`, `d2glide.dll` | `{640,800}` / `{480,600}` width/height tables (`d2ddraw` `0x1000d310`, `d2gdi` `0x10008290`, `d2direct3d` `0x100134e0`) | same pair |
+
+There is no 1024x768 constant in any of them, no `Resolution` value under
+`VideoConfig` (the exe's only VideoConfig value names are `Render`, plus the
+`Gamma`/`Perspective` preferences), and no resolution command-line switch:
+the switch table at `0x005a60e0` is 3DFX, OPENGL, D3D, RAVE, PERSPECTIVE,
+QUALITY, GAMMA, VSYNC, FRAMERATE, the network and character switches, and
+`-w`. The pre-LoD game does not let the player choose: **menus are 800x600,
+gameplay and cutscenes are 640x480**, fixed. LoD's in-game 800x600 option
+does not exist here.
+
+Measured per backend (probe3 on box 3, `--trace-api` on the mode calls, full
+route to the Rogue Encampment; all three reach it):
+
+| backend | selected by | cutscenes | menus | gameplay |
+|---|---|---|---|---|
+| Direct3D (`Render=1` or `-d3d`) | runtime `LoadLibrary d2direct3d.dll` | exclusive `SetDisplayMode(640,480,16)` | exclusive `800,600,16` | exclusive `640,480,16` |
+| DirectDraw (default, `Render` 0/2, `-opengl`) | static `d2ddraw.dll` | `640,480,8` then `640,480,16` for Bink | exclusive `800,600,8` | exclusive `640,480,8` |
+| GDI (`Render=4`, `-w`) | `d2gdi.dll` | window 648x508 (640x480 client) | `SetWindowPos` 808x628 (800x600 client) | back to 648x508 |
+| Glide (`Render=3`, `-3dfx`) | `d2glide.dll` | -- crashes on `_grGet@12` (no glide3x) -- | | |
+
+The emulator honours all of these: `SetDisplayMode` records the mode and
+resizes the cooperative window to it, and an exclusive primary is fit-scaled
+onto whatever canvas the host has. The GDI path is windowed, so its 808x628
+menu window needs a canvas at least that big — that, and not anything in the
+DX paths, is why GDI runs are made with `--screen=1024x768`.
+
+### The 1024x768 Direct3D "blow-up" is a harness coordinate bug, not the emulator
+
+Reported: `Render=1` + `-d3d` + `--screen=1024x768` through the benchmark
+driver (`~/d2-backends-out/d2-arm.js`) took 374s of user CPU over 3024
+batches, made 14,445 presents and "never reached a recognisable menu".
+
+The guest does not know the canvas size exists. Same command line at both
+sizes (`--branch-clock --batch-size=50000 --max-batches=3024`, run.js
+directly, no driver):
+
+| canvas | API calls | `Flip` | `EndScene` | user CPU |
+|---|---:|---:|---:|---:|
+| 640x480 | 102,014,423 | 14,445 | 14,440 | 346.8s |
+| 1024x768 | 102,014,423 | 14,445 | 14,440 | 348.0s |
+
+and the 600-batch version without `--branch-clock` also matches exactly
+(12,402,964 calls, identical block counts, 47.0s vs 46.5s). D2 asks for the
+same modes (above) either way.
+
+The driver's own last capture of the failed run (`01-main-menu.png`) **is**
+the main menu — 800x600 fit-scaled to 1024x768. Its stage signatures are
+written in 640x480-canvas coordinates (SINGLE PLAYER at `(200,145)-(440,185)`),
+and with `SCALE=1` they sample the sky above the scaled button, so the menu
+check never passed and the driver spent its whole `300 x 10`-batch attempt
+budget sitting in the menu. With `SCALE=1.6` (1024/640) the identical run
+reaches the menu at **batch 264 in 10.4s**, the same as the 640x480 canvas
+(9.4s).
+
+The two numbers that looked like a blow-up are just 2,760 batches of menu:
+
+- **Presents**: the menu flips ~5.2 times per batch — 25 fps at the headless
+  clock's 200 ms/batch — so 14,445 flips over 3,024 batches is its normal
+  rate, identical at both canvas sizes.
+- **CPU**: ~115-125 ms of user CPU per menu batch. 220s of the 347s is the
+  guest slice, and 99% of the guest's API calls are the frame limiter's
+  `PeekMessageA`/`QueryPerformanceCounter` spin (33.1M of each), as in *the
+  route's cost is a frame-limiter spin* above. The remaining ~127s is host
+  present work, ~8.8 ms per flip.
+
+So: nothing to fix in the D3D/DDraw emulation for this. A driver that runs
+with a non-default `--screen` must scale its sample points by
+`canvas width / 640` for the exclusive (fullscreen) backends, and use the
+window origin plus 1.25 (800/640) for the windowed GDI menus.
