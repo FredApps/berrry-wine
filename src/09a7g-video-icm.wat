@@ -410,14 +410,17 @@
   ;; writer that left it 0, the Cinepak frame header's own length.
   (func $icm_input_len (param $rec i32) (param $bi i32) (param $data i32) (result i32)
     (local $n i32)
-    (local.set $n (call $gl32 (i32.add (local.get $bi) (i32.const 20))))
-    (if (local.get $n) (then (return (local.get $n))))
     (if (i32.eqz (local.get $data)) (then (return (i32.const 0))))
+    ;; A Cinepak frame states its own length, and that is what the driver
+    ;; trusts: callers pass one format for a whole movie (Dark Colony's
+    ;; biSizeImage is a fixed 0x6018), so biSizeImage says nothing per frame.
     (if (i32.eq (i32.load offset=4 (local.get $rec)) (global.get $ICM_CODEC_CVID))
       (then (return (i32.or (i32.or
         (i32.shl (call $gl8 (i32.add (local.get $data) (i32.const 1))) (i32.const 16))
         (i32.shl (call $gl8 (i32.add (local.get $data) (i32.const 2))) (i32.const 8)))
         (call $gl8 (i32.add (local.get $data) (i32.const 3)))))))
+    (local.set $n (call $gl32 (i32.add (local.get $bi) (i32.const 20))))
+    (if (local.get $n) (then (return (local.get $n))))
     (i32.mul (call $icm_stride (i32.load offset=24 (local.get $rec)) (i32.load offset=32 (local.get $rec)))
              (i32.load offset=28 (local.get $rec))))
 
@@ -770,7 +773,7 @@
         (local.get $arg4)
         (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))))))
     (i32.store offset=0 (global.get $reg_base) (local.get $r))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
 
   ;; ICLocate(fccType, fccHandler, lpbiIn, lpbiOut, wFlags) -> HIC: the named
   ;; handler if it accepts the formats, else whichever codec decodes lpbiIn.

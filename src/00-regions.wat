@@ -880,3 +880,7 @@
   ;; output row; per-stream workspaces come from $dib_alloc (09a7g-video-icm.wat header).
   (region.declare $VIDEO_ARENA (size 0x00005000) (align 0x00000010)
     (owner "09a7g-video-icm.wat:$VIDEO_ARENA"))
+  ;; AVIFile reader: open files and streams, hdrl parse scratch
+  ;; (09a7f-video-avi.wat header); chunk tables come from $dib_alloc.
+  (region.declare $AVI_TABLE (size 0x00000680) (align 0x00000010)
+    (owner "09a7f-video-avi.wat:$AVI_TABLE"))

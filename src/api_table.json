@@ -31694,7 +31694,7 @@
     "id": 3725,
     "name": "ICDecompress",
     "nargs": 6,
-    "convention": "stdcall",
+    "convention": "cdecl",
     "hash": 715061218
   },
   {
@@ -31703,5 +31703,96 @@
     "nargs": 3,
     "convention": "stdcall",
     "hash": 75557971
+  },
+  {
+    "id": 3727,
+    "name": "AVIFileOpenA",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2523938666
+  },
+  {
+    "id": 3728,
+    "name": "AVIFileGetStream",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 2013954429
+  },
+  {
+    "id": 3729,
+    "name": "AVIFileRelease",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 3706851568
+  },
+  {
+    "id": 3730,
+    "name": "AVIStreamOpenFromFileA",
+    "nargs": 6,
+    "convention": "stdcall",
+    "hash": 3991198386
+  },
+  {
+    "id": 3731,
+    "name": "AVIStreamRelease",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 575964030
+  },
+  {
+    "id": 3732,
+    "name": "AVIStreamInfoA",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 21626124
+  },
+  {
+    "id": 3733,
+    "name": "AVIStreamStart",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1779274207
+  },
+  {
+    "id": 3734,
+    "name": "AVIStreamLength",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 880028949
+  },
+  {
+    "id": 3735,
+    "name": "AVIStreamReadFormat",
+    "nargs": 4,
+    "convention": "stdcall",
+    "hash": 1406680178
+  },
+  {
+    "id": 3736,
+    "name": "AVIStreamRead",
+    "nargs": 7,
+    "convention": "stdcall",
+    "hash": 3716088517
+  },
+  {
+    "id": 3737,
+    "name": "AVIStreamFindSample",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 3326681424
+  },
+  {
+    "id": 3738,
+    "name": "AVIStreamSampleToTime",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 3231607027
+  },
+  {
+    "id": 3739,
+    "name": "AVIStreamTimeToSample",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2022757007
   }
 ]

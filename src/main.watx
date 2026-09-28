@@ -70,6 +70,7 @@
 (include "09a7c-mixer.wat")
 (include "09a7d-handlers-shell-file.wat")
 (include "09a7e-video-codecs.wat")
+(include "09a7f-video-avi.wat")
 (include "09a7g-video-icm.wat")
 (include "09a8-handlers-directx.wat")
 (include "09a8b-handlers-opengl.wat")
