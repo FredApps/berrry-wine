@@ -2199,12 +2199,29 @@
     (local $nx_fn i32) (local $nx_op i32)
     (dispatch-next))
 
-  ;; Read next thread i32 and advance $ip
+  ;; Read next thread i32 and advance $ip.
+  ;;
+  ;; A macro, like (dispatch-next), and for the same reason: as a function it
+  ;; was 237 call sites V8 never inlined -- each paid a call, a frame, a stack
+  ;; check and a spill of whatever the handler held live across it, and it was
+  ;; 3.5-7% self CPU on every game profiled (docs/uop-tier-design.md 11). The
+  ;; body is ONE expression form, so it expands anywhere a value is wanted,
+  ;; including inside another call's argument list, and needs no local (so no
+  ;; expanding function has to declare one): it advances $ip first and loads
+  ;; the word just stepped over. Same result and same side effect as the old
+  ;; load-then-advance; nothing else can observe $ip between the two. (The
+  ;; load-first spelling, leaving the value on the stack beneath the
+  ;; global.set, is valid wasm but the WATX compiler drops the stacked value
+  ;; -- "expected 1 elements on the stack for fallthru" -- so it is not used.)
+  (defmacro (read-thread-word)
+    (block (result i32)
+      (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
+      (i32.load (i32.sub (global.get $ip) (i32.const 4)))))
+
+  ;; The same step under a name, for tools that attribute by function name
+  ;; (tools/dispatch-attribution.js) and any non-hot caller that wants a call.
   (func $read_thread_word (result i32)
-    (local $v i32)
-    (local.set $v (i32.load (global.get $ip)))
-    (global.set $ip (i32.add (global.get $ip) (i32.const 4)))
-    (local.get $v))
+    (read-thread-word))
 
   (func $handler_hist_record (param $fn i32)
     (local $addr i32) (local $prev i32)

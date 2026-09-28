@@ -21,10 +21,14 @@ function stripComments(s) {
   return s.replace(/\(;[\s\S]*?;\)/g, '').replace(/;;[^\n]*/g, '');
 }
 
+// The operand-word read is the (read-thread-word) macro for the same reason:
+// as a call it was never inlined by V8 and cost 3.5-7% self CPU per game.
+let rtwCalls = [];
 let oldSites = [], macroSites = 0, funcsMissingLocals = [], macroDefs = 0, nextDefs = 0;
 for (const f of WAT_FILES) {
   const text = stripComments(fs.readFileSync(path.join(SRC, f), 'utf8'));
   text.split('\n').forEach((line, i) => { if (line.includes('(return_call $next)')) oldSites.push(`${f}:${i + 1}`); });
+  text.split('\n').forEach((line, i) => { if (line.includes('(call $read_thread_word)')) rtwCalls.push(`${f}:${i + 1}`); });
   macroDefs += (text.match(/\(defmacro \(dispatch-next\)/g) || []).length;
   nextDefs += (text.match(/\(func \$next\b/g) || []).length;
   // Function extents: split on top-level "(func " / "(defmacro " and look
@@ -48,6 +52,7 @@ for (const f of WAT_FILES) {
   }
 }
 ok(oldSites.length === 0, `no (return_call $next) in src/ outside comments${oldSites.length ? ': ' + oldSites.slice(0, 5).join(', ') : ''}`);
+ok(rtwCalls.length === 0, `no (call $read_thread_word) in src/ outside comments -- use (read-thread-word)${rtwCalls.length ? ': ' + rtwCalls.slice(0, 5).join(', ') : ''}`);
 ok(macroDefs === 1, `exactly one (defmacro (dispatch-next)) (got ${macroDefs})`);
 ok(nextDefs === 1, `exactly one $next (got ${nextDefs})`);
 ok(macroSites >= 400, `${macroSites} (dispatch-next) sites, at least the 420 that landed`);
