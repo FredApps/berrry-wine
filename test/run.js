@@ -558,6 +558,13 @@ const PRESENT_PACE = (() => {
   if (v !== 'smooth' && v !== 'deadline') throw new Error(`--present-pace must be smooth or deadline, got ${v}`);
   return v;
 })();
+// --real-ticks + --present-cap: the pacer's main-thread Sleep is measured and
+// waited out on the wall clock, so a capped real-ticks run paces in real time.
+// Scoped to capped runs: an uncapped --real-ticks run (the two-process vlan
+// tests, the Win16 gameplay tests) keeps sleeps on the batch clock, because a
+// wall-clock thread Sleep there leaves the main thread spinning on a live
+// thread and trips the stuck detector (test-blobby-host-probe).
+const REAL_TICK_SLEEPS = REAL_TICKS && PRESENT_CAP > 0;
 // --- spin parking --------------------------------------------------------
 // Eight of the games in docs/frame-pacing-census.md busy-wait on the
 // millisecond clock and four more on an empty PeekMessage. Both detectors are
@@ -4512,12 +4519,12 @@ async function main() {
     faultUnmapped: FAULT_NULL,
     inheritedWasmGlobals,
     // Deadlines (Sleep, timed waits) must be kept on the clock the guest
-    // reads. Under --real-ticks that is the wall clock: on the batch clock a
+    // reads. Under a capped --real-ticks run (REAL_TICK_SLEEPS) that is the wall clock: on the batch clock a
     // main-thread Sleep(16) ends at the next batch, however little wall time
     // that is -- measured on dx_tunnel at --present-cap=60, every paced
     // Sleep lasted ~3ms and the capped app ran at 66.8 frames/s.
-    now: REAL_TICKS ? () => guestClock.ticks() : () => batchClock.batchTicks(),
-    sleepNow: REAL_TICKS ? () => guestClock.ticks()
+    now: REAL_TICK_SLEEPS ? () => guestClock.ticks() : () => batchClock.batchTicks(),
+    sleepNow: REAL_TICK_SLEEPS ? () => guestClock.ticks()
       : () => Math.max(batchClock.batchTicks(), batchClock.state.lastTick),
     clockParkSleep: !NO_CLOCK_PARK_SLEEP,
     // For a spawned thread's io_wait park (yield 12). CLI providers usually
@@ -5613,7 +5620,7 @@ async function main() {
     // Under --real-ticks the guest clock is the wall clock and pausedMs does
     // not move it; the batch loop waits the remainder out in wall time
     // instead (see mainSleepWallWait).
-    if (!REAL_TICKS && threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
+    if (!REAL_TICK_SLEEPS && threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
       tickState.pausedMs += threadManager.mainSleepRemaining();
     }
     if (threadManager.isMainSleeping()) return true;
@@ -8992,8 +8999,8 @@ async function main() {
       ? instance.exports.get_cache_stores() >>> 0 : 0;
     const sliceT0 = DECODE_STATS ? process.hrtime.bigint() : 0n;
     try {
-      if (REAL_TICKS && threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
-        // --real-ticks: a main-thread Sleep lasts real time. Without this the
+      if (REAL_TICK_SLEEPS && threadManager.isMainSleeping() && !threadManager.hasLiveThreads()) {
+        // --real-ticks --present-cap: a main-thread Sleep lasts real time. Without this the
         // loop spins through empty batches until the wall clock catches up,
         // which is the same thing at 100% CPU plus a STUCK verdict.
         const ms = Math.max(0, Math.ceil(threadManager.mainSleepRemaining()));
@@ -9693,7 +9700,7 @@ if (VERBOSE) {
         // until the next scheduled click/capture. Do not let that idle time
         // accumulate and instantly trip after the last event is consumed.
         stuckCount = 0;
-      } else if (REAL_TICKS && threadManager.isMainSleeping()) {
+      } else if (REAL_TICK_SLEEPS && threadManager.isMainSleeping()) {
         // --real-ticks: a main thread inside a finite Sleep() has an unchanged
         // EIP by definition while the wall clock runs the wait out.
         stuckCount = 0;
