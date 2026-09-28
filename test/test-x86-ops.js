@@ -1195,6 +1195,128 @@ async function main() {
   test('push bx / pop bx round-trips the value', e.get_ebx() & 0xFFFF, 0xABCD);
 
   // ================================================================
+  // Stack runs: 07-decoder.wat $try_emit_stack_run -> 05-alu.wat 472-475.
+  // Every case runs twice at ONE code address -- fused, then with
+  // set_stack_fusion(0) (which clears decoded code) -- and must leave
+  // identical registers and stack bytes. The handler histogram proves the
+  // fused arm really ran the fused handler and the other arm never did.
+  // ================================================================
+  {
+    const REGS = ['eax', 'ecx', 'edx', 'ebx', 'esp', 'ebp', 'esi', 'edi'];
+    const HB = e.get_handler_hist_base();
+    const hits = (fn) => dv.getUint32(HB + fn * 4, true);
+    const FUSED = [472, 473, 474, 475];
+    const stackTop = imageBase + 0xD00000;
+    const snap = (lo, len) => {
+      const regs = REGS.map(r => e['get_' + r]() >>> 0);
+      return { regs, stack: bytesAt(lo, len), fused: FUSED.map(hits), eip: e.get_eip() >>> 0 };
+    };
+    // opts: { expect: [handler idx...], esp: start ESP, lo/len: bytes to compare }
+    function stackCase(name, bytes, opts = {}) {
+      const esp0 = opts.esp || stackTop;
+      const lo = opts.lo || (esp0 - 0x80), len = opts.len || 0x88;
+      const setup = () => {
+        for (let i = 0; i < len; i += 4) setMem(lo + i, (0xA5A50000 | i) >>> 0);
+        e.set_esp(esp0); setMem(esp0, 0);
+        e.set_eax(0x11111111); e.set_ecx(0x22222222); e.set_edx(0x33333333); e.set_ebx(0x44444444);
+        e.set_ebp(0x55555555); e.set_esi(0x66666666); e.set_edi(0x77777777);
+        if (opts.setup) opts.setup();
+      };
+      e.set_stack_fusion(1);
+      e.reset_handler_hist(); e.set_handler_hist_enabled(1);
+      const addr = runCode(bytes, setup);
+      e.set_handler_hist_enabled(0);
+      const a = snap(lo, len);
+      e.set_stack_fusion(0);
+      e.reset_handler_hist(); e.set_handler_hist_enabled(1);
+      rerunCachedCode(addr, setup);
+      e.set_handler_hist_enabled(0);
+      const b = snap(lo, len);
+      e.set_stack_fusion(1);
+      REGS.forEach((r, i) => test(`${name}: ${r} fused == unfused`, a.regs[i], b.regs[i]));
+      testBytes(`${name}: stack bytes fused == unfused`, a.stack, b.stack);
+      test(`${name}: returned`, a.eip, 0);
+      for (const fn of opts.expect || []) {
+        const got = a.fused[FUSED.indexOf(fn)];
+        if (got > 0) pass++; else { console.log(`  FAIL ${name}: handler ${fn} never ran fused`); fail++; }
+      }
+      if (b.fused.some(n => n > 0)) { console.log(`  FAIL ${name}: unfused arm ran a stack-run handler ${b.fused}`); fail++; } else pass++;
+      return { a, b, addr };
+    }
+
+    // push run, pop run into different registers, pop run + ret
+    let r = stackCase('push x4 / pop x4 + ret', [
+      0x50, 0x51, 0x52, 0x53,       // push eax..ebx
+      0x5E, 0x5F, 0x5D, 0x5B,       // pop esi; pop edi; pop ebp; pop ebx  (+ appended ret)
+    ], { expect: [472, 475] });
+    test('push x4 / pop x4: esi got ebx', r.a.regs[6], 0x44444444);
+    test('push x4 / pop x4: ebx got eax', r.a.regs[3], 0x11111111);
+
+    // prologue: push ebp; mov ebp,esp; push imm32; push imm8; push esi -- then
+    // read the slots back through EBP, and the epilogue mov esp,ebp; pop ebp; ret
+    r = stackCase('prologue run with mov ebp,esp and immediates', [
+      0x55, 0x8B, 0xEC,             // push ebp; mov ebp,esp
+      0x68, ...le32(0x12345678),    // push 0x12345678
+      0x6A, 0xFB,                   // push -5
+      0x56,                         // push esi
+      0x8B, 0x45, 0xFC,             // mov eax,[ebp-4]
+      0x8B, 0x4D, 0xF8,             // mov ecx,[ebp-8]
+      0x8B, 0x55, 0xF4,             // mov edx,[ebp-12]
+      0x8B, 0xE5, 0x5D,             // mov esp,ebp; pop ebp  (+ ret)
+    ], { expect: [472, 475] });
+    test('prologue run: imm32 slot', r.a.regs[0], 0x12345678);
+    test('prologue run: imm8 sign-extended', r.a.regs[1], 0xFFFFFFFB);
+    test('prologue run: esi slot', r.a.regs[2], 0x66666666);
+    test('prologue run: ebp restored', r.a.regs[5], 0x55555555);
+
+    // PUSH ESP inside a run pushes ESP from before that push
+    r = stackCase('push esp inside a run', [
+      0x50, 0x54, 0x51,             // push eax; push esp; push ecx
+      0x5A, 0x5B, 0x59,             // pop edx; pop ebx; pop ecx
+    ], { expect: [472, 475] });
+    test('push esp inside a run: value', r.a.regs[3], stackTop - 4);
+
+    // push run + call rel32 into a callee that ends in pop + ret imm16
+    r = stackCase('push run + call, pop run + ret imm', [
+      0x6A, 0x07,                   // 0:  push 7
+      0x68, ...le32(0x100),         // 2:  push 0x100
+      0xE8, ...le32(4),             // 7:  call +4 -> 16
+      0x89, 0xC7,                   // 12: mov edi,eax
+      0xEB, 0x11,                   // 14: jmp short 33 (the appended ret)
+      0x56, 0x53,                   // 16: push esi; push ebx
+      0x8B, 0x74, 0x24, 0x0C,       // 18: mov esi,[esp+12]
+      0x03, 0x74, 0x24, 0x10,       // 22: add esi,[esp+16]
+      0x89, 0xF0,                   // 26: mov eax,esi
+      0x5B, 0x5E,                   // 28: pop ebx; pop esi
+      0xC2, 0x08, 0x00,             // 30: ret 8   (ends at 33)
+    ], { expect: [472, 474, 475] });
+    test('push run + call: callee summed its two args', r.a.regs[7], 0x107);
+    test('push run + call: ret 8 popped the args', r.a.regs[4], stackTop + 4);
+
+    // A run whose slots cross a page boundary takes the per-slot path.
+    const pageEdge = imageBase + 0xCFF000;
+    r = stackCase('push/pop run across a page boundary', [
+      0x50, 0x51, 0x52, 0x53, 0x56,
+      0x5F, 0x5D, 0x5B, 0x5A, 0x59,
+    ], { esp: pageEdge + 8, expect: [472, 475] });
+    test('page-crossing run: edi got esi', r.a.regs[7], 0x66666666);
+
+    // SMC: a push run that rewrites decoded code must retire it. Decode
+    // `mov eax,1; ret` at X, then push `mov eax,2; ret` over it and run X again.
+    const smcAddr = runCode([0xB8, ...le32(1)]);
+    test('stack-run SMC: original code', e.get_eax(), 1);
+    runCode([
+      0x89, 0xE3,                               // mov ebx,esp
+      0xBC, ...le32(smcAddr + 8),               // mov esp,X+8
+      0x68, ...le32(0x9090C300),                // push: X+4 = 00 C3 90 90
+      0x68, ...le32(0x000002B8),                // push: X+0 = B8 02 00 00
+      0x89, 0xDC,                               // mov esp,ebx
+    ]);
+    rerunCachedCode(smcAddr);
+    test('stack-run SMC: rewritten code runs', e.get_eax(), 2);
+  }
+
+  // ================================================================
   // Summary
   // ================================================================
   console.log(`\n${pass} passed, ${fail} failed`);

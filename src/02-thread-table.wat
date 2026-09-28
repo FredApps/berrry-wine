@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 472 funcref)
+  (table $handlers 476 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -541,4 +541,8 @@
     $th_zero_entry            ;; 469: a block entered at zero bytes (operand = EIP)
     $th_uop_enter             ;; 470: enter a compiled micro-op program (07d)
     $th_block_retired         ;; 471: a retired block's header (operand = EIP)
+    $th_push_run              ;; 472: 2-6 PUSH r32/imm (+ mov ebp,esp) as one op
+    $th_pop_run               ;; 473: 2-6 POP r32 as one op
+    $th_push_run_call         ;; 474: PUSH run + CALL rel32 (ret, target words)
+    $th_pop_run_ret           ;; 475: POP run + RET / RET imm16 (imm word)
   )

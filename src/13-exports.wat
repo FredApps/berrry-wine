@@ -2379,6 +2379,12 @@
     (global.set $store_span_enabled (local.get $flag))
     (call $clear_cache))
 
+  ;; --no-stack-fusion: decode PUSH/POP/CALL/RET one instruction per op again
+  ;; (07-decoder.wat $try_emit_stack_run). Clears decoded code.
+  (func (export "set_stack_fusion") (param $flag i32)
+    (global.set $stack_fusion_enabled (local.get $flag))
+    (call $clear_cache))
+
   (func (export "set_x87_pipeline4_fusion") (param $flag i32)
     (global.set $x87_pipeline4_emit_enabled (local.get $flag))
     (call $clear_cache))
