@@ -61,6 +61,12 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // (recordInherited), each compiling into its own arena, since a program
   // names its instance's registers. docs/uop-tier-design.md.
   const uopWanted = () => !hasFlag('no-uop') && (appPolicy() || {}).uop !== false;
+  // --aggressive-stack (or `aggressiveStack: true` on the app): the tier also
+  // elides a push and the pop that takes it back when nothing between can
+  // observe the slot, forwarding exact ESP/EBP-relative accesses to the
+  // push's temp (07e $uc_sp_block). Opt-in: an elided slot is not in guest
+  // memory while the pair is open. docs/uop-tier-design.md.
+  const aggrWanted = () => uopWanted() && (hasFlag('aggressive-stack') || (appPolicy() || {}).aggressiveStack === true);
   // --uop-census: log every head's verdict (installed / declined + reason),
   // every poor retirement and code-write kill with the program's counts, every
   // flush, and the live programs at exit. The records go through log_i32, so
@@ -270,6 +276,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (BRANCH_CLOCK) inheritWasm('set_branch_clock', 1);
     if (uopWanted()) inheritWasm('set_uop', 1);
+    if (aggrWanted()) inheritWasm('set_aggressive_stack', 1);
     if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
@@ -286,6 +293,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (uopWanted() && instance.exports.set_uop && ctx) {
       if (UOP_CENSUS && instance.exports.set_uop_census) instance.exports.set_uop_census(1);
       instance.exports.set_uop(1);
+      if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
       uopOn = true;
     }
     if (TRACE_LOOPMATCH && instance.exports.set_loop_trace) {
@@ -433,6 +441,16 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       log(`uop: installs=${st(2)} kills=${st(3)} retired-poor=${st(7)} enters=${st(4)} ` +
         `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} win-kept=${st(9)} win-reset=${st(10)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
         `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (why ? `\n  declines: ${why}` : ''));
+      if (aggrWanted()) {
+        // $uop_cstat 6..25: the aggressive-stack counters of every program
+        // kept (07e $uc_sp_block). plain = pairs the conservative "nothing
+        // between" rule would also elide; rescued = the rest of the elided.
+        const sp = (k) => cs(6 + k);
+        log(`uop stack: pushes=${sp(0)} matched=${sp(1)} elided=${sp(2)} plain=${sp(3)} rescued=${sp(4)} ` +
+          `(other-slot=${sp(5)} fwd-read=${sp(6)} fwd-write=${sp(7)}) fwd-loads=${sp(8)} fwd-stores=${sp(9)} | ` +
+          `materialized: unknown-addr=${sp(11)} ebp-unknown=${sp(12)} partial/rmw=${sp(13)} esp-write=${sp(14)} ` +
+          `released=${sp(15)} call/ret=${sp(16)} list-full=${sp(17)} | unmatched-pops=${sp(18)} spills=${sp(19)}`);
+      }
       // Each guest thread's instance has its own arena and counters, listed
       // while the thread is alive: read directly from a cooperative thread's
       // instance, or from the counters a --threads worker sends with each

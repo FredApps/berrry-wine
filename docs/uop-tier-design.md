@@ -891,3 +891,112 @@ Not recommended:
 3. Then idea 5.
 4. Idea 7 is the large project, and the only one that moves Diablo's
    remaining two thirds.
+
+## 12. Aggressive stack tier: `--aggressive-stack` (opt-in, 2026-09-28)
+
+The exact tier lowers `push`/`pop`/`call`/`ret` to real stores and loads
+(`$uc_insn` kinds 21-24). The aggressive tier drops the memory traffic of a
+push when its value never needs to be in memory. It is **off by default**.
+You turn it on with `--aggressive-stack` (run.js, via
+`test/runner-experiments.js`), `aggressiveStack: true` on an app in
+`lib/apps.js`, `?aggressive-stack` in the page, or the `aggr` arm of
+`tools/uop-game-ab.js`. Worker and cooperative thread instances inherit it
+(`set_aggressive_stack` in `lib/worker-imports.js`). The setter flushes
+every program, because the choice is made at compile time.
+
+**Mechanism.** `$uc_sp_analyze` runs once per compile, just before
+emission. It calls `$uc_sp_block`, which walks each block twice.
+
+- **Pass 1** tracks ESP as an offset from the block's entry. It keeps an
+  open list of pushes and matches each pop against the top entry (LIFO,
+  with the same slot).
+- **Pass 2** marks the pairs that are still elidable. It also marks the
+  accesses that are forwarded.
+
+An elided push becomes `MOV temp(20, push address), value`, and its pop
+becomes `MOV reg, temp`. ESP still moves by 4 each time, so registers and
+flags are exact.
+
+The rules for what happens between an elided push and its pop:
+
+| Access | Result |
+|---|---|
+| `[esp+d]`, or `[ebp+d]` where EBP comes from a tracked `mov ebp, esp` in the same block, not overlapping the slot | the pair stays elided |
+| same address kinds, an exact 32-bit read (`mov`/`alu`/`test`/`cmp`/`imul`/`sbb` source, or a `cmp`/`test` destination) | forwarded: reads the temp |
+| same address kinds, a pure 32-bit write (`mov` destination) | forwarded: writes the temp |
+| partial overlap, narrower access, or read-modify-write (`add [esp], r`) | that push materializes (it is a real store) |
+| any other address (register base other than ESP, EBP unknown, absolute address, index register) | every open push materializes |
+| ESP written other than by `add`/`sub esp, imm` | every open push materializes, and tracking restarts |
+| `call`/`ret` | every open push materializes, so return addresses are never elided |
+| `add esp, imm` released a slot | that push stays materialized (its pop never comes) |
+
+- **Rule 2 (unknown addresses).** The runtime guard, a range check of the
+  address against the open slots, is **not built**. An unknown address
+  always materializes. The report counts how often it did, so the guard's
+  value can be read off: `unknown-addr` below.
+- **Escapes.** An escaping `lea r, [esp+d]` needs no rule of its own. The
+  only way to reach the slot through `r` is to dereference `r`, and that is
+  an unknown address.
+- **Exits.** A stub that leaves the program between an elided push and its
+  pop first spills the temps to their slots, using the new `SPILL s base
+  disp` op (op 67, a service op calling `$gs32`). `$uc_flush_stubs` calls
+  `$uc_spill_at` for every exit or deopt stub (kind 0 or 1). The page-seam
+  CHK stub is the one that matters in practice.
+  `test/test-uop-compiler.js` `sp-seam-spill` has a pair straddling a
+  page; with the spill disabled that case fails with wrong `edx`/`ebx`.
+
+**Observable differences from the exact tier.** This is why it is opt-in.
+
+1. **Memory below ESP after a pop.** On real hardware the popped value is
+   still at `[esp-4]`. With the pair elided, that slot holds whatever was
+   there before. Code that reads below ESP after a pop sees a different
+   value. That is legal but rare, and the tracker does not model it,
+   because a closed pair leaves the open list.
+2. **Other observers during the pair.** While a pair is open, its slot is
+   not in guest memory. Nothing inside the block can see this: every
+   access is either proven disjoint, forwarded or materialized. What can
+   see it:
+   - another guest thread reading this thread's stack;
+   - a host-side `--watch` or `dump-mem` on the stack;
+   - a `--threads` worker sampling it.
+3. **Stack faults.** An elided push does not touch its page. A push into
+   a guard page, which on Windows grows the stack, does not happen, so
+   the fault or the growth happens at the next real access instead.
+   Guest stacks here are preallocated, so no app is known to depend on
+   this.
+4. **Where a spill writes.** The spill happens at the stub, at the exit
+   EIP, not at the push's EIP. A memory fault it raises would name the
+   wrong instruction. The stack is always mapped, so this is not expected.
+5. **What does not change.** Registers, flags, EIP, batch stops (under
+   both clocks, checked per batch), and every memory byte the block itself
+   can observe. Return addresses are never elided.
+
+**Tests** (`test/test-uop-compiler.js`, the `sp-*` cases). Each case runs
+threaded against hot and pre-installed tier runs with the aggressive tier
+on, and pins the compile counters.
+
+| Case | Covers | Pinned counters |
+|---|---|---|
+| `sp-fwd-load` | rule 1, exact read | 2 elided, 2 forwarded reads |
+| `sp-nonoverlap` | rule 1 / 3, disjoint locals | 1 elided, rescued past another slot |
+| `sp-fwd-store` | rule 3, exact write, then read | 1 forwarded write, 1 forwarded read |
+| `sp-partial-rmw` | movzx of a byte of the slot; `add [esp], ecx` | 2 materialized, partial |
+| `sp-unknown-escape` | `add ebx,[esi]`; `mov [edi],ebx`; `lea edx,[esp]` + `mov [edx],ecx` | 3 materialized, unknown address |
+| `sp-release-espw` | `add esp, 4` releases a slot; `mov esp, edx` | 1 elided, 1 unmatched pop |
+| `sp-ebp-frame` | `push ebp; mov ebp, esp; push edi; mov [ebp-4], eax; mov eax, [esp]` in a called function | 2 elided, 1 forwarded write, 1 forwarded read |
+| `sp-seam-spill` | a pair across a page seam | 4 spills under the block clock |
+
+All of the exact tier's `push-pop`, `call-*` and `ret-*` cases are also
+re-run with the aggressive tier on (`+A`).
+
+**Counters.** `$uop_cstat 6..25` hold the totals over kept programs. The
+run.js report prints them as the `uop stack:` line.
+
+| Counter | Meaning |
+|---|---|
+| `pushes` | pushes seen |
+| `matched` | push/pop pairs matched |
+| `elided` | pairs elided |
+| `plain` | elided pairs with no memory access between; the conservative "any stack access blocks" rule would have elided these |
+| `rescued` | elided pairs with some access between (= elided - plain); broken down as `other-slot`, `fwd-read`, `fwd-write` |
+| `unknown-addr` … `list-full` | matched pairs that were materialized, by reason |
