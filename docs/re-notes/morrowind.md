@@ -689,3 +689,44 @@ how the DI-key teardown was spotted at all.
 
 Runs are deterministic (see `project_headless_determinism`), so a batch
 number learned from one capture series is reusable in the next run.
+
+## Bink video hang: every thread owned mutexes as thread 1 (2026-09-28, FIXED 82b4c4a5)
+
+Symptom: on the software D3D9 arm a Bink video froze mid-play: run 1 on the
+Bethesda logo, run 2 on `mw_intro.bik` frame 224 (the stopping point moves
+with the schedule). Main sat in `BinkDoFrame` (exe `call [0x738408]` at
+`0x424b75`, return `0x424b7b`), with the MMX count frozen, looping in Bink's
+audio decoder (`binkw32+0x30005df4` calling `0x3000cb50`) over a 907 MB
+"packet length" read from the frame buffer.
+
+binkw32.dll 1.5a (origBase `0x30000000`) IO layer, `io = bink+0x110`:
+
+| io+ | meaning |
+|---|---|
+| `0x3c` | ring size (`0x8a000` intro, `0x83000` logo) |
+| `0x48` | bytes available to the consumer |
+| `0x50` | file read position |
+| `0x54` | consumer file position |
+| `0x58` | consumer ring pointer |
+| `0x5c` | free bytes |
+| `0x64`/`0x68` | ring start / end |
+| `0x6c` | producer ring pointer |
+| `0xcc`/`0xd0`/`0xd4` | lock (WFSO INFINITE) / try-lock (WFSO 0) / unlock (ReleaseMutex); mutex handle at `io+0xdc+4` |
+
+The reader thread (`0x3000a157`) try-locks the mutex, checks
+`free >= 0x1000` **unsigned**, reads 0x1000 bytes and `lock add`s the
+counters. The consumer (`0x30009d38`) takes the same mutex. Invariant:
+`avail + free == ring size`.
+
+Cause: `test/run.js` and `host.js` computed the caller's Win32 thread id from
+`ctx.threadId`. Nothing sets it, and every worker import table adopts the
+main thread's sync imports, so every thread was thread 1. The reader's
+try-lock therefore "re-entered" a mutex main held, and the two sides raced on
+the counters. Once `free` went negative, the unsigned check let the reader
+fill forever (avail 22 MB in a 0x8a000 ring), overwriting data main had not
+read yet. Fix: `ThreadManager.currentWin32ThreadId()` returns the running
+slice/RPC thread's id, else 1.
+
+Check it live: find BINK by `[640, 480, frames]` in the first three dwords,
+then read dwords `0x53` (size), `0x56` (avail) and `0x5b` (free) of the
+struct.
