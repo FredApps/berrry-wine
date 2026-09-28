@@ -55,3 +55,42 @@ Run explicitly with:
 ```bash
 node test/test-dungeon-keeper-gameplay.js
 ```
+
+## Activation gate: black screen after the Bullfrog logo (fixed 2026-09-28)
+
+The game runs its window on its own thread (T1, entry `0x4d6c10`) and creates
+the main window `WS_VISIBLE`, so USER's implicit-show chain (the CACA0001
+continuation in `src/09b-dispatch.wat`) delivers the first
+`WM_ACTIVATEAPP`, not the later explicit `ShowWindow` calls. The wndproc's
+`WM_ACTIVATEAPP` case at `0x4d6a01` does:
+
+```
+cmp [esp+0x1c], 0          ; wParam: being activated?
+jz  skip
+call GetForegroundWindow   ; 0x4d6a08
+cmp eax, [esp+0x14]        ; == our hwnd?
+jnz skip
+mov [edi+0x1c], 1          ; app-active flag
+```
+
+If the answer is not its own HWND the app never marks itself active. It then
+shows the legal/logo screens and the Bullfrog vortex, but never reaches the
+menu. The main thread stays in the palette-fade and `timeGetTime` pacing loops
+around `0x4433a0`/`0x4d1910` and at `0x47ac51`/`0x4bbb88`. Every probe after
+batch ~150 is a flat black 3.8 KB PNG, and `--no-uop`/`--no-x87-fusion` change
+nothing.
+
+First bad commit (bisected on box 3 with the gameplay test's menu gate):
+`aba07804 fix(user): track accepted foreground independently of z-order`. Before it,
+the host's `foreground_window` answered the topmost visible top-level window.
+Since then it returns only a window passed to `host_activate_window`. The
+explicit first-`ShowWindow` chain (`09a5-handlers-window.wat`) makes that call,
+but the `WS_VISIBLE` implicit-show chain set `$active_hwnd` without it. So
+`GetForegroundWindow` fell back to the desktop (`0x10000`). Fix: the
+implicit-show chain now calls `$host_activate_window(main_hwnd)` right where it
+sets `$active_hwnd`. `test/test-created-dialog-main-promotion.js` checks the call.
+
+Debug recipe for this class of bug:
+`--trace-host=activate_window,foreground_window` (no `activate_window` line at
+all while `foreground_window() => 0` repeats is the symptom), and
+`--trace-at=0x4d6a01` (ESI = 0x1c confirms the message).

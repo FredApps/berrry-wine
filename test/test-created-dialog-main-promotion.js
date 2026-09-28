@@ -61,7 +61,17 @@ const extraWat = String.raw`
 `;
 
 (async () => {
-  const { exports: e } = await bootRenderHarness({ extraWat, fonts: 'none' });
+  // The desktop's foreground is the accepted activation, not the top of the
+  // z-order, so the implicit-show chain must publish it to the host as the
+  // explicit first ShowWindow does. Dungeon Keeper is created WS_VISIBLE and
+  // compares GetForegroundWindow() with its HWND in WM_ACTIVATEAPP.
+  const activated = [];
+  const { exports: e } = await bootRenderHarness({
+    extraWat, fonts: 'none',
+    extraHostOverrides: {
+      activate_window: hwnd => { activated.push(hwnd >>> 0); return 1; },
+    },
+  });
   const packed = BigInt.asUintN(64, e.test_created_dialog_promotion());
   const main = Number(packed & 0xffffffffn) >>> 0;
   const armed = Number(packed >> 32n) >>> 0;
@@ -72,6 +82,8 @@ const extraWat = String.raw`
     'created dialog arms activation immediately after WM_INITDIALOG');
   assert.strictEqual(e.test_finish_implicit_show(0x074ff000) >>> 0, main,
     'the WM_CREATE continuation makes the visible dialog active');
+  assert.deepStrictEqual(activated, [main],
+    'the implicit-show chain publishes the activation to the desktop foreground');
   assert.strictEqual(e.test_created_owned_dialog_not_promoted(), 1,
     'owned dialogs do not replace the application main window');
 
