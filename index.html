@@ -1575,8 +1575,8 @@
         <label title="Write emulator runtime messages to the browser console and debug log pane"><input id="runtime-log-toggle" type="checkbox" onchange="setRuntimeLogging(this.checked)">Runtime log</label>
         <label><input id="perf-hud-toggle" type="checkbox" onchange="setPerfHud(this.checked)">FPS graph</label>
         <label title="Fold Caesar III's run-length sprite blit into one dispatch (handler 424). Decode-time, so it steers blocks decoded after the toggle — relaunch for a clean A/B."><input id="rle-run-toggle" type="checkbox" checked onchange="setRleRun(this.checked)">RLE fold</label>
-        <label title="Experimental: compile proven x87 expression regions and fold contiguous x87 islands. Decode-time, so relaunch for a clean A/B."><input id="x87-fold-toggle" type="checkbox" onchange="setX87Fusion(this.checked)">x87 fold</label>
-        <label title="Experimental micro-op tier: a hot loop head is compiled from x86 into a micro-op program and run in one br_table loop (src/07d, 07e). Applies to running apps immediately, every guest thread included; turning it off drops every program."><input id="uop-toggle" type="checkbox" onchange="setUop(this.checked)">uop tier</label>
+        <label title="Compile proven x87 expression regions and fold contiguous x87 islands. On by default; ?no-x87-fold starts it off. Decode-time, so relaunch for a clean A/B."><input id="x87-fold-toggle" type="checkbox" checked onchange="setX87Fusion(this.checked)">x87 fold</label>
+        <label title="Micro-op tier, on by default (?no-uop starts it off): a hot loop head is compiled from x86 into a micro-op program and run in one br_table loop (src/07d, 07e). Applies to running apps immediately, every guest thread included; turning it off drops every program."><input id="uop-toggle" type="checkbox" checked onchange="setUop(this.checked)">uop tier</label>
         <label title="Which renderer both Direct3D generations use. WebGL: D3D8/9 on the WebGL backend, DX2-7 (immediate mode) on the WAT software rasterizer. +DX7 puts immediate mode on WebGL too — post-transform, so the guest keeps its own T&amp;L and each fence reads the frame back into the guest surface. Software: D3D8/9 on the software backend on a render Worker, DX2-7 on the WAT rasterizer. Both are read at launch, so relaunch after changing this.">D3D: <select id="d3d-renderer-select" onchange="setD3DRenderer(this.value)"><option value="webgl">WebGL</option><option value="webgl-all">WebGL +DX7</option><option value="software">Software</option></select></label>
         <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
         <label title="Experimental: opt into real guest threads. Needs cross-origin isolation; the worker backend is still phase 1."><input id="threads-toggle" type="checkbox" onchange="setThreads(this.checked)">Threads</label>
@@ -2286,10 +2286,11 @@ Resource-aware Win98 emulator
     // created (host.js), so the honest A/B is toggle-then-relaunch; toggling
     // mid-run only steers blocks decoded from here on, which is why the
     // checkbox says so. ?no-rle-run starts it off, for a scripted comparison;
-    // ?x87-fold opts into the still-experimental x87 catalog/island compiler.
+    // The x87 catalog/island fold is on by default; ?no-x87-fold starts it off
+    // (?x87-fold is still accepted and changes nothing).
     window.WineSuperops = window.WineSuperops || {};
     if (typeof window.WineSuperops.rleRun !== 'boolean') window.WineSuperops.rleRun = true;
-    if (typeof window.WineSuperops.x87Fusion !== 'boolean') window.WineSuperops.x87Fusion = false;
+    if (typeof window.WineSuperops.x87Fusion !== 'boolean') window.WineSuperops.x87Fusion = true;
     function setRleRun(on) {
       window.WineSuperops.rleRun = !!on;
       const box = document.getElementById('rle-run-toggle');
@@ -2309,16 +2310,17 @@ Resource-aware Win98 emulator
       if (box) box.checked = !!on;
       appendDebugLog(`[superop] x87 fold ${on ? 'on' : 'off'} — takes effect on the next launch`);
     }
-    if (new URLSearchParams(location.search).has('x87-fold')) {
-      window.WineSuperops.x87Fusion = true;
+    if (new URLSearchParams(location.search).has('no-x87-fold')) {
+      window.WineSuperops.x87Fusion = false;
       window.addEventListener('load', () => {
         const box = document.getElementById('x87-fold-toggle');
-        if (box) box.checked = true;
+        if (box) box.checked = false;
       });
     }
     // The micro-op tier is a run-time switch, not a decode-time one, so this
-    // also flips every running app (host.js setUop). ?uop starts it on.
-    if (typeof window.WineSuperops.uop !== 'boolean') window.WineSuperops.uop = false;
+    // also flips every running app (host.js setUop). On by default; ?no-uop
+    // starts it off (?uop is still accepted and changes nothing).
+    if (typeof window.WineSuperops.uop !== 'boolean') window.WineSuperops.uop = true;
     // Per running app: {installs, kills, enters, blocks}, or null (tier off, or
     // a guest Worker owns the main thread). For probes and the log line below.
     window.WineSuperops.uopStats = () => runningApps
@@ -2334,11 +2336,11 @@ Resource-aware Win98 emulator
       const live = runningApps.filter(app => app && app.wine && app.wine.setUop && app.wine.setUop(!!on)).length;
       appendDebugLog(`[superop] uop tier ${on ? 'on' : 'off'} — ${live} running app(s) switched, later launches follow`);
     }
-    if (new URLSearchParams(location.search).has('uop')) {
-      window.WineSuperops.uop = true;
+    if (new URLSearchParams(location.search).has('no-uop')) {
+      window.WineSuperops.uop = false;
       window.addEventListener('load', () => {
         const box = document.getElementById('uop-toggle');
-        if (box) box.checked = true;
+        if (box) box.checked = false;
       });
     }
     // ?x87-fuse-debug=MASK[,LO,HI] bisects a fold divergence WITHOUT giving up

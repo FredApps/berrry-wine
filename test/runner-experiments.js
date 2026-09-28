@@ -11,7 +11,11 @@ const UOP_REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-back
   'dead-flags-jcc', 'kind', 'too-many-windows', 'label', 'arg', 'too-many-temps', 'program-too-big',
   'ranges-full', 'scratch-overflow'];
 
-function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = console.log }) {
+function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = console.log,
+  appPolicy = () => null }) {
+  // appPolicy() is the --app registry entry (or null), read lazily because
+  // run.js resolves it after building this object. An app opts out of a
+  // default-on tier with `uop: false` / `x87Fusion: false` in lib/apps.js.
   // --trace-loopmatch[=0xEIP]: at decode time, dump the emitted op sequence of
   // every self-loop block (or just the one at 0xEIP). Prints the block's entry,
   // op count and each (handler index, operand) -- the input the Design A matcher
@@ -49,13 +53,14 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       + 'Passing --block-exec instead does exactly this.');
   }
   const BLOCK_EXEC = hasFlag('block-exec') || TREE_FOLD_ALIAS;
-  // --uop: the micro-op tier (src/07d-uop-engine.wat + 07e-uop-compiler.wat).
-  // A branch target entered 256 times is handed to the x86 -> micro-op
-  // lowering; a loop it accepts runs as a program until it leaves. Every guest
-  // thread's instance gets it too (recordInherited), each compiling into its
-  // own arena, since a program names its instance's registers.
-  // docs/uop-tier-design.md.
-  const UOP = hasFlag('uop');
+  // The micro-op tier (src/07d-uop-engine.wat + 07e-uop-compiler.wat), ON by
+  // default since 2026-09-28; --no-uop (or `uop: false` on the app) turns it
+  // off, and --uop is accepted and a no-op. A branch target entered 256 times
+  // is handed to the x86 -> micro-op lowering; a loop it accepts runs as a
+  // program until it leaves. Every guest thread's instance gets it too
+  // (recordInherited), each compiling into its own arena, since a program
+  // names its instance's registers. docs/uop-tier-design.md.
+  const uopWanted = () => !hasFlag('no-uop') && (appPolicy() || {}).uop !== false;
   // --uop-census: log every head's verdict (installed / declined + reason),
   // every poor retirement and code-write kill with the program's counts, every
   // flush, and the live programs at exit. The records go through log_i32, so
@@ -159,16 +164,16 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // Prototype folds under measurement, both off unless asked for.
   const ALU8_SIB = hasFlag('alu8-sib');
   const IMPLODE_CMP_RUN = hasFlag('implode-cmp-run');
-  // --x87-fusion: arm the semantic x87 families (H449 pipeline4/short, H450
-  // balanced tree, H451 island, H452/453 affine prefix+suffix). Default OFF in
-  // the module, and until now the browser's window.WineSuperops.x87Fusion was
-  // the ONLY way to turn them on -- so every headless measurement of "how much
-  // x87 does the fold catch" was silently measuring the fold switched off.
+  // The semantic x87 families (H449 pipeline4/short, H450 balanced tree, H451
+  // island, H452/453 affine prefix+suffix) are ON by default since 2026-09-28:
+  // pixel-exact on MCM and Heroes III, -4.3% user CPU on Heroes III gameplay,
+  // and the Worker-mode crash (shared $OP_INDEX) is fixed. The module global
+  // still defaults to 0, so the runner sets it explicitly on every instance.
+  // --no-x87-fusion is the A/B partner; --x87-fusion is accepted and a no-op.
   // The match COUNTERS increment either way (the emit gate is checked after the
-  // predicate), so `--loopmatch-stats` alone answers "how many blocks would
-  // match"; this flag is what makes those matches actually run, which is the
-  // only way to get an entry-weighted share out of --handler-hist.
-  const X87_FUSION = hasFlag('x87-fusion');
+  // predicate), so `--loopmatch-stats` answers "how many blocks would match"
+  // even with the fold off.
+  const x87Wanted = () => !hasFlag('no-x87-fusion') && (appPolicy() || {}).x87Fusion !== false;
   // --x87-fuse-debug=MASK,LO,HI: with --x87-fusion, offer only the families in
   // MASK (1 pipeline4, 2 short, 4 tree4, 8 affine, 16 island) and only blocks
   // whose guest start is in [LO,HI). The bisect knob for a fold divergence.
@@ -245,7 +250,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_PCX_RUN) inheritWasm('set_pcx_run', 0);
     if (ALU8_SIB) inheritWasm('set_alu8_sib', 1);
     if (IMPLODE_CMP_RUN) inheritWasm('set_implode_cmp_run', 1);
-    if (X87_FUSION) {
+    if (x87Wanted()) {
       inheritWasm('set_x87_pipeline4_fusion', 1);
       inheritWasm('set_x87_affine_fusion', 1);
     }
@@ -260,7 +265,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       inheritWasm('set_x87_fuse_debug', Number(mask) | 0, Number(lo) | 0, Number(hi) | 0);
     }
     if (BRANCH_CLOCK) inheritWasm('set_branch_clock', 1);
-    if (UOP) inheritWasm('set_uop', 1);
+    if (uopWanted()) inheritWasm('set_uop', 1);
     if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
@@ -274,7 +279,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
 
   function applyMain(instance, { copySuperops: COPY_SUPEROPS, ctx = null }) {
     if (BRANCH_CLOCK && instance.exports.set_branch_clock) instance.exports.set_branch_clock(1);
-    if (UOP && instance.exports.set_uop && ctx) {
+    if (uopWanted() && instance.exports.set_uop && ctx) {
       if (UOP_CENSUS && instance.exports.set_uop_census) instance.exports.set_uop_census(1);
       instance.exports.set_uop(1);
       uopOn = true;
@@ -385,7 +390,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     // Per-instance, like every other decode-time setting: a guest thread decodes
     // in its own instance, so arming only the main one would leave the workers
     // running the scalar x87 handlers and make the share unreadable.
-    if (X87_FUSION && instance.exports.set_x87_pipeline4_fusion) {
+    if (x87Wanted() && instance.exports.set_x87_pipeline4_fusion) {
       instance.exports.set_x87_pipeline4_fusion(1);
       instance.exports.set_x87_affine_fusion(1);
     }
@@ -437,7 +442,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
           `installs=${c[0]} kills=${c[1]} enters=${c[2]} blocks=${c[3]}`);
       }
     }
-    reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LOOPMATCH, LOOPMATCH_STATS, X87_FUSION, VERBOSE: verbose }, instance, threadManager, log);
+    reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LOOPMATCH, LOOPMATCH_STATS, X87_FUSION: x87Wanted(), VERBOSE: verbose }, instance, threadManager, log);
   }
 
   return { traceLoopmatch: TRACE_LOOPMATCH, uopCensus: UOP_CENSUS, copySuperopsRequested: COPY_SUPEROPS_ARG,

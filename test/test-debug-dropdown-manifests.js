@@ -66,14 +66,14 @@ assert.strictEqual(ut2003.x87Fusion, true,
   'UT2003 opts into the measured startup x87 fusion policy');
 assert.strictEqual(ut2003.cpuSSE, true,
   'UT2003 opts into its exercised SSE CPU path');
-assert(browserShell.includes('wine.x87Fusion = app.x87Fusion === true;'),
-  'the browser launcher passes per-app x87 policy to WineAssembly');
+assert(browserShell.includes('wine.x87Fusion = app.x87Fusion !== false;'),
+  'the browser launcher passes per-app x87 policy (default on, opt-out) to WineAssembly');
 assert(browserShell.includes('wine.cpuSSE = app.cpuSSE === true;'),
   'the browser launcher passes per-app SSE policy to WineAssembly');
 const hostSource = fs.readFileSync(path.join(ROOT, 'host.js'), 'utf8');
-assert(hostSource.includes('this.x87Fusion === true ||'),
-  'the host combines per-app and explicit debug x87 opt-ins');
-assert(browserShell.includes('x87Fusion: !!(callerWine && callerWine.x87Fusion),'),
+assert(hostSource.includes('this.x87Fusion !== false &&'),
+  'the host combines per-app and explicit debug x87 opt-outs');
+assert(browserShell.includes('x87Fusion: callerWine ? callerWine.x87Fusion !== false : true,'),
   'a child process inherits its workload x87 policy');
 assert(browserShell.includes('cpuSSE: !!(callerWine && callerWine.cpuSSE),'),
   'a child process inherits its workload SSE policy');

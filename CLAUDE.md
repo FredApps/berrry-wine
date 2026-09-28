@@ -191,7 +191,7 @@ from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. 
 | `07-decoder.wat` | x86 instruction decoder → threaded code emitter |
 | `07b-loop-match.wat` | Loop-idiom matcher (Design A): classifies the ops a self-loop block just emitted and, when a pattern holds, replaces the whole body with one super-op |
 | `07c-block-exec.wat` | Experimental per-basic-block executor and region machinery, gated off by default |
-| `07d-uop-engine.wat` | Micro-op tier engine (`--uop`, off by default): `$uop_run`, one `br_table` loop over RISC-style programs stored as data in a per-instance arena (`$UOP_ARENA` for the main thread, a `$UOP_THREAD_ARENAS` slot per guest thread), entered from an installed hot loop head. Browser: `?debug` toolbar "uop tier" box or `?uop`, live on running apps |
+| `07d-uop-engine.wat` | Micro-op tier engine (on by default since 2026-09-28; `--no-uop`, `?no-uop` or `uop: false` in `lib/apps.js` turns it off, as `--no-x87-fusion`/`?no-x87-fold`/`x87Fusion: false` do the x87 fold): `$uop_run`, one `br_table` loop over RISC-style programs stored as data in a per-instance arena (`$UOP_ARENA` for the main thread, a `$UOP_THREAD_ARENAS` slot per guest thread), entered from an installed hot loop head. Browser: `?debug` toolbar "uop tier" box, live on running apps |
 | `07e-uop-compiler.wat` | The x86 → micro-op compiler for 07d: decodes a hot head's loop, forwards flags into compare-branches, materializes the lazy flag record only at exits and live merges, and encodes the program. Scratch in `$UOP_CSCRATCH`; see [docs/uop-tier-design.md](docs/uop-tier-design.md) |
 | `08-pe-loader.wat` | PE executable loader, import table processing |
 | `08b-dll-loader.wat` | DLL loader with relocations, export resolution |

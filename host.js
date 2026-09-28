@@ -751,9 +751,13 @@ class WineAssembly {
     // they are not pumping messages. This remains opt-in per app: the normal
     // path still delivers the callback through the guest message loop.
     this.asyncMultimediaTimer = false;
-    // Decode-time x87 fusion is still opt-in. Browser-shell may enable it for
-    // a measured app without changing the CPU path of every other program.
-    this.x87Fusion = false;
+    // Decode-time x87 fusion is on by default. An app opts out with
+    // `x87Fusion: false` in lib/apps.js (browser-shell copies it here), and the
+    // page opts out with ?no-x87-fold or the debug toolbar box.
+    this.x87Fusion = true;
+    // The micro-op tier is on by default too; `uop: false` on an app, the
+    // debug toolbar box or ?no-uop turns it off.
+    this.uop = true;
     // CPUID SSE advertisement is opt-in until each app's reachable SIMD path
     // has passed an authentic run against the decoder.
     this.cpuSSE = false;
@@ -2102,8 +2106,8 @@ class WineAssembly {
     if (window.WineSuperops && this.instance.exports.set_rle_run) {
       this.instance.exports.set_rle_run(window.WineSuperops.rleRun === false ? 0 : 1);
     }
-    const x87Fusion = (this.x87Fusion === true ||
-      (window.WineSuperops && window.WineSuperops.x87Fusion === true)) ? 1 : 0;
+    const x87Fusion = (this.x87Fusion !== false &&
+      !(window.WineSuperops && window.WineSuperops.x87Fusion === false)) ? 1 : 0;
     if (this.instance.exports.set_x87_pipeline4_fusion) {
       this.instance.exports.set_x87_pipeline4_fusion(x87Fusion);
     }
@@ -2113,7 +2117,8 @@ class WineAssembly {
     // The micro-op tier (07d/07e). Not decode-time: a hot head is compiled on
     // its 256th entry whenever the tier is on, and turning it off flushes every
     // program, so setUop() below can flip it on a running app too.
-    const uop = (window.WineSuperops && window.WineSuperops.uop === true) ? 1 : 0;
+    const uop = (this.uop !== false &&
+      !(window.WineSuperops && window.WineSuperops.uop === false)) ? 1 : 0;
     if (this.instance.exports.set_uop) this.instance.exports.set_uop(uop);
     // ?x87-fuse-debug=MASK[,LO,HI] -- the bisect knob for a fold divergence.
     // MASK picks families (1 pipeline4, 2 short, 4 tree4, 8 affine, 16 island)

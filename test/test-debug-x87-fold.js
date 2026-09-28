@@ -13,10 +13,10 @@ const exportsWat = fs.readFileSync(path.join(root, 'src', '13-exports.wat'), 'ut
 
 const toggle = html.match(/<input id="x87-fold-toggle"[^>]*>/);
 assert(toggle, 'debug toolbar exposes the x87 fold toggle');
-assert(!/(?:^|\s)checked(?:\s|>)/.test(toggle[0]), 'x87 fold remains default off');
+assert(/(?:^|\s)checked(?:\s|>)/.test(toggle[0]), 'x87 fold is default on');
 assert(toggle[0].includes('onchange="setX87Fusion(this.checked)"'),
   'the toolbar updates the launch-time x87 setting');
-assert(html.includes("has('x87-fold')"), 'the x87-fold URL opt-in is available to browser probes');
+assert(html.includes("has('no-x87-fold')"), 'the no-x87-fold URL opt-out is available to browser probes');
 
 for (const setter of ['set_x87_pipeline4_fusion', 'set_x87_affine_fusion']) {
   assert(exportsWat.includes(`(export "${setter}")`), `${setter} is exported by the guest`);
@@ -68,4 +68,4 @@ const workerImports = fs.readFileSync(
 assert(workerImports.includes("setter: 'set_x87_fuse_debug'"),
   'the Worker backends replay the mask like every other decode-time setter');
 
-console.log('PASS  debug x87 fold is explicit, default-off, process-wide, and bisectable');
+console.log('PASS  debug x87 fold is explicit, default-on, process-wide, and bisectable');

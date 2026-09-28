@@ -271,7 +271,8 @@ const TRACE_EIP_FROM = parseInt(getArg('trace-eip-from', '0'), 10) || 0; // --tr
 const TRACE_EIP_DETAIL = hasFlag('trace-eip-detail'); // --trace-eip-detail: include regs/flags/memory with --trace-eip-range
 const TRACE_EIP_STREAM = hasFlag('trace-eip-stream'); // --trace-eip-stream: write EIP lines immediately instead of buffering to the next batch boundary
 const TRACE_EIP_DUMP = getArg('trace-eip-dump', null); // --trace-eip-dump=0xADDR:LEN[,..]: compact dump on each detailed EIP hit
-const experiments = require('./runner-experiments').createRunnerExperiments({ hasFlag, getArg });
+const experiments = require('./runner-experiments').createRunnerExperiments({ hasFlag, getArg,
+  appPolicy: () => APP_ENTRY });
 const TRACE_GDI = hasFlag('trace-gdi');   // --trace-gdi: log GDI calls (CreateBitmap, BitBlt, etc.)
 const GDI_STATS = hasFlag('gdi-stats');   // --gdi-stats: print software-raster span/pixel totals at exit
 const LATENCY_STATS = hasFlag('latency-stats'); // --latency-stats: measure injected input -> next surface blit

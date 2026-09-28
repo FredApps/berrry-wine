@@ -246,12 +246,17 @@ async function main() {
   }
   const games = (arg('games', Object.keys(GAMES).join(','))).split(',').filter(Boolean);
   for (const g of games) if (!GAMES[g]) throw new Error(`unknown game ${g}; --list`);
-  const ARMS = { off: ['--branch-clock'], uop: ['--branch-clock', '--uop'], base: [] };
-  // fold / uopfold: the same two arms with the semantic x87 folds armed. The
-  // uop tier does not lower x87, and Heroes III keeps its x87 on a guest
-  // thread the tier barely touches, so the fold is the x87 lever to A/B there.
-  // (Arm names lose trailing digits to the off2/uop2 null-band convention, so
-  // not "x87".)
+  // The tier is on by default since 2026-09-28, so "off" has to say so.
+  const ARMS = { off: ['--branch-clock', '--no-uop'], uop: ['--branch-clock', '--uop'], base: ['--no-uop'] };
+  // nofold / uopnofold: the same two arms with the semantic x87 folds off.
+  // The folds are on by default, so off/uop already carry them; these are the
+  // x87 A/B partners. The uop tier does not lower x87, and Heroes III keeps
+  // its x87 on a guest thread the tier barely touches, so the fold is the x87
+  // lever to A/B there. (Arm names lose trailing digits to the off2/uop2
+  // null-band convention, so not "x87".) fold / uopfold are kept as explicit
+  // aliases of off / uop for old command lines.
+  ARMS.nofold = [...ARMS.off, '--no-x87-fusion'];
+  ARMS.uopnofold = [...ARMS.uop, '--no-x87-fusion'];
   ARMS.fold = [...ARMS.off, '--x87-fusion'];
   ARMS.uopfold = [...ARMS.uop, '--x87-fusion'];
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another

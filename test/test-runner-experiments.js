@@ -24,9 +24,13 @@ function settings(experiments, copySuperops = false) {
   return { calls, inherited };
 }
 
+// The x87 folds are the one default-on setting the runner writes explicitly
+// (the module global defaults to 0); --no-x87-fusion leaves them untouched.
 const defaults = config([]);
-assert.deepStrictEqual(settings(defaults.experiments).calls, []);
+assert.deepStrictEqual(settings(defaults.experiments).calls,
+  [['set_x87_pipeline4_fusion', 1], ['set_x87_affine_fusion', 1]]);
 assert.deepStrictEqual(defaults.env, {});
+assert.deepStrictEqual(settings(config(['--no-x87-fusion']).experiments).calls, []);
 const flags = config(['--loop-superops', '--no-loop-superops', '--lut-superops', '--no-lut-superops',
   '--copy-superops', '--no-copy-superops', '--tree-fold', '--trace-tree-fold', '--trace-loopmatch=0x1234',
   '--block-exec-region-max=8', '--no-block-exec-regions', '--tree-fold-min-ops=0',
