@@ -992,3 +992,131 @@ So: nothing to fix in the D3D/DDraw emulation for this. A driver that runs
 with a non-default `--screen` must scale its sample points by
 `canvas width / 640` for the exclusive (fullscreen) backends, and use the
 window origin plus 1.25 (800/640) for the windowed GDI menus.
+
+## 2026-09-28: the menu's frame limiter is a QPC clock spin, and now parks
+
+### The loop
+
+`d2win.dll` loads at `0xc97000` (origBase `0x10000000`, so runtime = orig
+`- 0x0f369000`). The limiter is the function at orig **`0x1000b670`**, and
+every menu and loading screen runs it on the **main thread** (ESP
+`0x074ff1c0`, the main guest stack):
+
+```
+0x1000b690: PeekMessageA(&msg, 0, 0, 0, PM_NOREMOVE)   ; ret 0x1000b6a3
+            if TRUE: GetMessageA / TranslateMessage / DispatchMessageA -> 0x1000b74e
+0x1000b6e4: QueryPerformanceCounter(&now)                 ; ret 0x1000b6ef
+            QueryPerformanceFrequency(&freq)              ; ret 0x1000b6fa
+            _allmul(now - last, 25)  (0x10010fe0)
+            if (result > freq) { last = now; frame callback; 0x1000bda0 }
+0x1000b742: [0x1005bd08] = [0x1005bd04]
+            loop while [0x1001cb68] != 0
+```
+
+A 25 fps cap: a frame when `(now - last) * 25 > freq`, i.e. every 40ms of QPC
+time. `--trace-api=QueryPerformanceCounter,PeekMessageA` shows the API numbers
+stepping by three (Peek, QPC, QPF) with nothing else in between, the peek
+returning FALSE every time.
+
+### Why neither detector saw it
+
+* `QueryPerformanceCounter` was not a clock read: only GetTickCount and
+  timeGetTime called `$clock_spin_step`.
+* QPC and QPF both bumped `$spin_nonpoll_seq`, so to the clock detector every
+  pair of reads had "Win32 work" between them.
+* The empty-PeekMessage detector requires two peeks with **no** dispatch at all
+  in between (`$spin_dispatch_seq` adjacency), and QPC + QPF are two.
+
+`[spin-park]` over the 1,001-batch menu dwell below: no line at all on the old
+build (zero trips on any thread).
+
+Where the time went in the headless run, and why the saving is not bigger:
+the batch clock steps 1ms per `get_ticks` call and stops at the next batch
+boundary minus one (`lib/batch-clock.js`). So each batch the limiter renders a
+frame every ~40 loop passes until the clock reaches `base+199`, and then spins
+on a frozen millisecond for whatever budget is left. Only that tail is spin --
+about 12,000 passes, ~15ms of CPU a batch. The rest of a menu batch is five
+real frames of rendering plus the host present.
+
+### The fix
+
+QPC is now a clock read, keyed on the millisecond its count is built from
+(`$handle_QueryPerformanceCounter`, `src/09a7-handlers-dispatch.wat`): the
+count itself never repeats because `$perf_counter_lo` moves on every call, but
+the clock under it does, and that is what the guest is waiting on. The park is
+taken before the counter bump and the store, so a woken call is the whole call
+again. QPC and QPF are also clock reads for the activity sequence
+(`$spin_is_clock_read`, `src/09b-dispatch.wat`). Every existing guard applies
+unchanged: same return address and ESP per context, no non-clock Win32 call in
+between (an empty peek is neutral; a peek that finds a message is work), at
+most `$spin_work_max` blocks of guest work between reads, K=8 to qualify a site,
+one park per millisecond, deadline = next millisecond. `--no-spin-park` is the
+old arm, which is exact for D2: the old build took zero parks here.
+`test/test-qpc-spin-park.js` pins the shape and each of those resets.
+
+The peek detector was deliberately not widened. The loop is waiting on time,
+not on the queue, and the clock park is the one that carries the deadline the
+schedulers sleep to (`get_spin_deadline_ms` / `get_tick_count`, which QPC now
+updates).
+
+### Measured (box 3, `--batch-size=50000 --branch-clock`, user CPU)
+
+Menu dwell: Esc through the intros, then sit in the main menu to batch 1,001
+(menu up at batch 264 in both):
+
+| arm | API calls | QPC calls | clock parks | Flips | user CPU |
+|---|---:|---:|---:|---:|---:|
+| old build | 28,571,479 | 9,258,416 | 0 | 4,035 | 89.9s |
+| QPC park | 908,475 | 50,483 | 766 | 3,809 | **79.1s** |
+| old build, `--batch-size=60000` | 37,990,087 | 12,385,277 | 0 | 4,256 | 100.2s |
+| QPC park, `--batch-size=60000` | 935,956 | 52,232 | -- | 3,938 | **85.2s** |
+
+-12% and -15%. The earlier "220s of 347s was the loop" was the whole guest
+slice; the spin tail is ~15ms of a ~110ms menu batch.
+
+Full route through `~/d2-backends-out/d2-arm.js` (three runs each):
+
+| phase | old build | QPC park |
+|---|---|---|
+| main menu reached | batch 264 (x3) | batch 264 (x3) |
+| start -> menu | 8.79 / 8.75 / 8.77s | 8.08 / 8.07 / 8.10s |
+| menu -> Act I portal (355 batches) | 6.59 / 6.53 / 6.57s | 6.55 / 6.53 / 6.55s |
+| world -> end (630 gameplay batches) | 8.77 / 8.00 / 9.03s, 122 / 113 / 124 flips | 9.10 / 9.10 / 8.95s, 124 / 121 / 126 flips |
+| main-thread clock parks, world -> end (run 3) | 249 (all GetTickCount) | 251 |
+| main-thread clock parks, start -> menu (run 3) | 0 | 39 |
+
+The menu, hero-class, name, named and Act I loading captures are byte-identical
+between the arms. The encampment and final captures differ, but they also differ
+between two runs of the old build: the Act I load is nondeterministic (world
+reached at batch 3099-3259 across the six runs). The QPC park does not fire in
+gameplay (251 against 249 parks), and gameplay CPU per flip is the same (71-75ms
+in both arms).
+
+**The fewer Flips are the one guest-visible change, and they are the old
+build's artifact.** In the old build the frozen-millisecond tail was not
+entirely dead: QPC adds 1us per call, so ~11,000 spin passes could move the
+count the 11ms still missing from a 40ms frame and render one more before the
+batch ended. That extra frame is bought with surplus budget: the old build
+renders 4,035 menu flips at 50,000 blocks and 4,256 at 60,000. The QPC park
+ends the tail instead, leaving the menu at 25 fps of guest time as the
+limiter intends. In the menu-dwell captures, six of the eight sampled frames
+(batches 300-1000) are byte-identical between the arms. The other two differ
+only in the phase of the burning DIABLO II logo, since the extra frames shift
+the flame animation.
+
+Browser (not measured here, BROWSER-LOCK was held): there the clock is real
+and the limiter spins the whole 40ms between frames, so this is where the
+saving is large. A qualified site parks after two reads of one millisecond and
+sleeps to the next (`CLOCK_SPIN_PARK_MS`, `_spinParkDelay`).
+
+One tooling note: `--slice-split`, `--decode-stats` and `--batch-stats` time
+and count only the **first** main-thread `run()` of each batch. D2 has guest
+threads, so `test/run.js` also runs main between worker slices within the batch
+(the cooperative branch after the spin-park handler), and those runs are
+invisible to all three. With the QPC park, the park is taken in one of those
+interleaved runs. The next batch's first `run()` then returns immediately on
+the pending yield ("blocking wait", 1 block), and the menu's real work happens
+in the interleaved runs after the handler clears it. The old build spent the
+whole budget in its first run. So on this route those flags read 77ms/batch
+against 0.00ms for identical menu frames, which says nothing about cost. Use
+user CPU at fixed batches for spin A/Bs.

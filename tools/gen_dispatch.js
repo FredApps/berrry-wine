@@ -62,6 +62,8 @@ function watI32(value) {
 const namedApiIds = [
   ['GetTickCount', 'API_ID_GetTickCount'],
   ['timeGetTime', 'API_ID_timeGetTime'],
+  ['QueryPerformanceCounter', 'API_ID_QueryPerformanceCounter'],
+  ['QueryPerformanceFrequency', 'API_ID_QueryPerformanceFrequency'],
   ['MsgWaitForMultipleObjects', 'API_ID_MsgWaitForMultipleObjects'],
   ['PeekMessageA', 'API_ID_PeekMessageA'],
   ['PeekMessageW', 'API_ID_PeekMessageW'],

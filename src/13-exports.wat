@@ -1844,6 +1844,48 @@
     (global.set $yield_flag (i32.const 0))
     (global.set $handler_set_eip (i32.const 0))
     (local.get $bits))
+  ;; The same for QueryPerformanceCounter(lpCount), with the dispatcher's
+  ;; activity classification applied through $spin_is_clock_read rather than
+  ;; restated here. Bits 1/2/4 as above; 8 = popped the 1-arg frame; 16 = the
+  ;; stored count is built on the millisecond the detector saw.
+  (func (export "test_qpc_spin_once") (param $buf i32) (result i32)
+    (local $saved_esp i32) (local $saved_eip i32) (local $bits i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $saved_eip (global.get $eip))
+    (call $test_spin_mark_api (global.get $API_ID_QueryPerformanceCounter))
+    (call $gs32 (local.get $buf) (i32.const 0))
+    (call $gs32 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0))
+    (call $handle_QueryPerformanceCounter
+      (local.get $buf) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (if (i32.eq (global.get $yield_reason) (i32.const 14))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 1)))))
+    (if (i32.eq (i32.load offset=16 (global.get $reg_base)) (local.get $saved_esp))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 2)))))
+    (if (global.get $handler_set_eip)
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 4)))))
+    (if (i32.eq (i32.load offset=16 (global.get $reg_base)) (i32.add (local.get $saved_esp) (i32.const 8)))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 8)))))
+    (if (i64.eq
+          (i64.div_u (i64.load (call $g2w (local.get $buf))) (i64.const 1000))
+          (i64.extend_i32_u (global.get $tick_count)))
+      (then (local.set $bits (i32.or (local.get $bits) (i32.const 16)))))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (global.set $eip (local.get $saved_eip))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $handler_set_eip (i32.const 0))
+    (local.get $bits))
+  ;; Account one dispatched API the way $win32_dispatch does, without running
+  ;; its handler: the two sequence numbers are all the detectors read.
+  (func $test_spin_mark_api (param $api_id i32)
+    (global.set $spin_dispatch_seq (i32.add (global.get $spin_dispatch_seq) (i32.const 1)))
+    (if (i32.eqz (call $spin_is_clock_read (local.get $api_id)))
+      (then (global.set $spin_nonpoll_seq
+              (i32.add (global.get $spin_nonpoll_seq) (i32.const 1))))))
+  ;; QueryPerformanceFrequency between two QPC reads, as the dispatcher counts it.
+  (func (export "test_spin_qpf_call")
+    (call $test_spin_mark_api (global.get $API_ID_QueryPerformanceFrequency)))
   ;; Guest work with no API call in it: retire N blocks as far as $blocks_now
   ;; can tell, which is what separates D2's per-object GetTickCount from a spin.
   (func (export "test_spin_retire_blocks") (param $n i32)
