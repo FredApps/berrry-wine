@@ -63,7 +63,7 @@ status line at (7,123) names the selected tool — read it to confirm.
 | lower palette 140/165/190/213,193 | power / police / school / parks; up-arrows at y=176 open flyouts above (Oil/Hydro/Coal; Marina/Stadium/Zoo/Large/Small Park) |
 | top toolbar 262,56 | land-ownership **layer** toggle (wireframe map); 285/310/333/356 are further layer toggles |
 
-## Buy Land — the Owner Tool palette button (static; route not yet run)
+## Buy Land — the Owner Tool palette button (group found statically; button not yet confirmed)
 
 The palette flyouts are built by `0x418f46(group)`: `group-1` indexes the
 byte table `0x41b664`, which selects a case in the jump table `0x41b5f8`.
@@ -79,12 +79,27 @@ via `0x430910` / `0x469460`:
 | 5 | `0x41972f` | Zone Tool (`0x4c8bf8`) | |
 | … | `0x4199c3` / `0x419bec` / `0x419e15` | Police Fire / School / Parks | |
 
-On screen the left palette runs Dozer (18,175), Water (18,200), **Owner
-(18,223 — the red-and-white "for sale" sign)**, then Roads. Buy is the first
-item of the Owner group, so pressing that button should select Buy Land;
-its flyout (arrow at ~36,223) holds Buy / Sell. Earlier probes only tried
-the Dozer flyout's rows, which is why they bought nothing. Read the status
-line at (7,123) to confirm the tool, then click unowned land.
+**Correction (2026-09-28, live city):** 18,223 is **not** the Owner button.
+Enlarged, the left palette reads:
+
+| y | button |
+|---|---|
+| 175 | bulldozer |
+| 200 | water drop |
+| 223 | water tower (red-checkered tank on a stand) |
+| 247 | road |
+| 271 | tunnel |
+| 295 | zone house |
+| 319 | red arrow |
+
+Clicking 18,223 set the status line to "Water Tower: $250", and funds stayed
+$30,000.
+
+- **Candidate:** the red arrow at 18,319 is the only button left that no other
+  group explains, so it is the likely Owner Tool.
+- **Not yet verified:** the run that clicked it failed to join (below).
+- **How to confirm:** read the status line at (7,123), then click land and
+  watch Funds.
 
 Older leads, kept for reference:
 
@@ -120,6 +135,26 @@ Webster — so it takes the same path. On main (after 69d6aa0b) a single
 client lays out its status bar as 628x18 at y=412 of the 640x480 frame
 (`--app=simcity2000_net ... --input=2950:dump-windows`, ~3000 batches, no
 server needed), so the view gets the full height. The black band's 161-row
-view matches the 163px symptom, so it was most likely this layout bug. A
-three-seat run into a live city is still needed to see the view repaint
-below row 205.
+view matches the 163px symptom, so it was most likely this layout bug.
+
+**Confirmed (2026-09-28):** in a three-seat run on main (6723deb6), both
+clients' city views fill the MDI client down to the status bar at y≈458.
+There is no black band. It was the status-bar layout.
+
+That run:
+
+- Clients ran with `--no-uop --no-x87-fusion` and `--max-seconds=420`.
+- Captures at batch 300000; the Mayor reached 540k batches, the Deputy 480k.
+
+Route notes from these runs:
+
+- **The join is flaky at load ~20–30.** One of three runs ended with the
+  Deputy on "Could Not Connect".
+- **The clients are slow once joined.** Live network threads (T2 parks
+  ~130k times on a critical section T1 holds) and tens of millions of API
+  calls take them to ~1000–1300 batches/s.
+- **Batch budget:** the city is live near batch 290000, so give the clients
+  at least 400 s.
+- **A dead-server run is not a baseline.** If the server crashed early, its
+  clients never joined and their threads exit. Don't compare thread state
+  against such a run.
