@@ -104,9 +104,21 @@ function sigName(sig) {
 // exactly four more values; anything else is skipped.
 // --thread=N reads cooperative guest thread N's records instead of the main
 // thread's (run.js tags those `[i32 TN]`); each thread has its own arena and map.
-const THREAD = flag('thread', null);
+// It also takes the thread HANDLE run.js's `uop[thread 0x…]: tid=N` summary
+// names (0xe1006), which is not the tid; that summary maps one to the other.
+const LOG_TEXT = fs.readFileSync(files[0], 'utf8');
+const THREAD = (() => {
+  const t = flag('thread', null);
+  if (t === null || !/^0x/i.test(t)) return t;
+  const handle = parseInt(t, 16) >>> 0;
+  for (const m of LOG_TEXT.matchAll(/^uop\[thread 0x([0-9a-f]+)\]: tid=(\d+)/mg)) {
+    if ((parseInt(m[1], 16) >>> 0) === handle) return m[2];
+  }
+  console.error(`--thread=${t}: no \`uop[thread ${t}]: tid=N\` summary line in the log; pass the tid`);
+  process.exit(1);
+})();
 const vals = [];
-for (const line of fs.readFileSync(files[0], 'utf8').split('\n')) {
+for (const line of LOG_TEXT.split('\n')) {
   // run.js prints them as `[i32] 0x…`; the shared host import as `[LOG_I32]`.
   const m = line.match(/^\[(?:i32|LOG_I32)(?: T(\d+))?\] 0x([0-9a-f]+)/);
   if (!m || (m[1] || null) !== THREAD) continue;

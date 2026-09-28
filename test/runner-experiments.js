@@ -438,7 +438,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
         // tagged with its thread id by run.js.
         if (UOP_CENSUS && tx && tx.uop_census_dump) tx.uop_census_dump();
         const where = tx && tx.uop_arena ? `arena=0x${(tx.uop_arena() >>> 0).toString(16)}` : 'worker';
-        log(`uop[thread 0x${(handle >>> 0).toString(16)}]: ${where} ` +
+        // tid= is what the census records are tagged with (`[i32 TN]`), and
+        // tools/uop-census.js --thread takes either it or this handle.
+        log(`uop[thread 0x${(handle >>> 0).toString(16)}]: tid=${thread.tid | 0} ${where} ` +
           `installs=${c[0]} kills=${c[1]} enters=${c[2]} blocks=${c[3]}`);
       }
     }

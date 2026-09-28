@@ -147,6 +147,20 @@
   (global $uop_map_off    (mut i32) (i32.const 0x000E8000)) ;; 2048 sets x 2 ways x {eip, pc}
   (global $uop_ranges_off (mut i32) (i32.const 0x000F0000)) ;; 4096 x {lo, hi, pc}
   (global $UOP_RANGES_MAX i32 (i32.const 4096))
+  ;; The code-write filter, in the last 16KB of the tail (after the ranges'
+  ;; 4096 x 12 bytes): 2048 i64 words, one per hashed guest page, bit L set
+  ;; when some range recorded since the last rebuild covers 64-byte line L of
+  ;; a page hashing to that word. See $uop_code_write.
+  (global $uop_cwmap_off  (mut i32) (i32.const 0x000FC000))
+  (global $UOP_CWMAP_BYTES i32 (i32.const 0x4000))
+  ;; A range was removed since the filter was last rebuilt, so it may hold
+  ;; bits no live range owns (a conservative, not a wrong, answer).
+  (global $uop_cw_stale (mut i32) (i32.const 0))
+  ;; Code-page writes the filter proved miss every program / that it had to
+  ;; hand to the scan / filter rebuilds.
+  (global $uop_cw_skipped (mut i32) (i32.const 0))
+  (global $uop_cw_scans   (mut i32) (i32.const 0))
+  (global $uop_cw_rebuilds (mut i32) (i32.const 0))
   (global $UOP_HDR        i32 (i32.const 32))
   (global $uop_guard_fails (mut i32) (i32.const 0))
   (global $uop_reguards    (mut i32) (i32.const 0))
@@ -981,6 +995,7 @@
     (i32.store offset=4 (local.get $e) (local.get $hi))
     (i32.store offset=8 (local.get $e) (local.get $pc))
     (global.set $uop_nranges (i32.add (global.get $uop_nranges) (i32.const 1)))
+    (call $uop_cw_add (local.get $lo) (local.get $hi))
     (local.set $p (i32.and (local.get $lo) (i32.const 0xFFFFF000)))
     (block $d (loop $l
       (br_if $d (i32.ge_u (local.get $p) (local.get $hi)))
@@ -1011,11 +1026,113 @@
         (then (i32.store offset=4 (local.get $s) (i32.const 0))))))
     (i32.store (local.get $pc) (i32.const 0)))
 
+  ;; ---- the code-write filter --------------------------------------------
+  ;; Every guest store to a page whose CODE_PAGE_BITMAP bit is set reaches
+  ;; $uop_code_write, and that bit is set by any decode and never cleared, so
+  ;; a game that keeps data on a page it also executes (StarCraft: 6.95M such
+  ;; writes in a gameplay window, 18K of which dropped a block) paid a linear
+  ;; scan of every live range per store -- 14.5% of its CPU. The filter
+  ;; answers "can this write touch any range at all" in one or two loads.
+  ;;
+  ;; Exactness: a bit is set for every line of every range at $uop_add_range
+  ;; and only ever cleared by a flush (which also empties the ranges) or a
+  ;; rebuild (which re-sets every live range's lines before anything reads
+  ;; it). Two pages that hash to one word share bits, and a removed range
+  ;; leaves its bits behind, so the filter can only say "maybe" too often;
+  ;; "no" is always true, and a "maybe" is decided by the same exact scan as
+  ;; before.
+  ;;
+  ;; Threads: the ranges, the programs and this filter all live in the
+  ;; instance's own arena, and $invalidate_code_range only ever scanned the
+  ;; WRITING instance's ranges, so the filter is per instance for the same
+  ;; reason the range table is. A program another thread installs goes into
+  ;; that thread's filter; nothing here reads another instance's state.
+  (func $uop_cw_word (param $page i32) (result i32)
+    (local $pn i32)
+    (local.set $pn (i32.shr_u (local.get $page) (i32.const 12)))
+    (i32.add (i32.add (global.get $uop_arena) (global.get $uop_cwmap_off))
+      (i32.shl (i32.and (i32.xor (local.get $pn) (i32.shr_u (local.get $pn) (i32.const 11)))
+                        (i32.const 2047))
+               (i32.const 3))))
+  ;; The 64-byte lines of [a, b) that fall inside the page at $page, as a mask.
+  ;; Callers guarantee a < b and that the page intersects [a, b).
+  (func $uop_cw_lines (param $page i32) (param $a i32) (param $b i32) (result i64)
+    (local $off i32) (local $stop i32)
+    (local.set $off (select (i32.sub (local.get $a) (local.get $page)) (i32.const 0)
+                            (i32.gt_u (local.get $a) (local.get $page))))
+    (local.set $stop (i32.sub (local.get $b) (local.get $page)))
+    (if (i32.gt_u (local.get $stop) (i32.const 4096)) (then (local.set $stop (i32.const 4096))))
+    (i64.and
+      (i64.shl (i64.const -1) (i64.extend_i32_u (i32.shr_u (local.get $off) (i32.const 6))))
+      (i64.shr_u (i64.const -1)
+        (i64.extend_i32_u (i32.sub (i32.const 63)
+          (i32.shr_u (i32.sub (local.get $stop) (i32.const 1)) (i32.const 6)))))))
+  ;; Mark the lines of [lo, hi).
+  (func $uop_cw_add (param $lo i32) (param $hi i32)
+    (local $p i32) (local $w i32)
+    (if (i32.ge_u (local.get $lo) (local.get $hi)) (then (return)))
+    (local.set $p (i32.and (local.get $lo) (i32.const 0xFFFFF000)))
+    (block $d (loop $l
+      (local.set $w (call $uop_cw_word (local.get $p)))
+      (i64.store (local.get $w)
+        (i64.or (i64.load (local.get $w))
+                (call $uop_cw_lines (local.get $p) (local.get $lo) (local.get $hi))))
+      (local.set $p (i32.add (local.get $p) (i32.const 0x1000)))
+      ;; $p wraps to 0 past the top page; stop there rather than loop forever.
+      (br_if $d (i32.eqz (local.get $p)))
+      (br_if $l (i32.lt_u (local.get $p) (local.get $hi))))))
+  ;; Can a write of [ga, end) touch any line the filter holds?
+  (func $uop_cw_maybe (param $ga i32) (param $end i32) (result i32)
+    (local $p i32)
+    (if (i32.le_u (local.get $end) (local.get $ga)) (then (return (i32.const 1))))
+    (local.set $p (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    (block $d (loop $l
+      (if (i64.ne (i64.and (i64.load (call $uop_cw_word (local.get $p)))
+                           (call $uop_cw_lines (local.get $p) (local.get $ga) (local.get $end)))
+                  (i64.const 0))
+        (then (return (i32.const 1))))
+      (local.set $p (i32.add (local.get $p) (i32.const 0x1000)))
+      (br_if $d (i32.eqz (local.get $p)))
+      (br_if $l (i32.lt_u (local.get $p) (local.get $end)))))
+    (i32.const 0))
+  ;; Clear the filter and re-mark every live range.
+  (func $uop_cw_rebuild
+    (local $i i32) (local $e i32)
+    (memory.fill (i32.add (global.get $uop_arena) (global.get $uop_cwmap_off))
+                 (i32.const 0) (global.get $UOP_CWMAP_BYTES))
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $i) (global.get $uop_nranges)))
+      (local.set $e (i32.add (i32.add (global.get $uop_arena) (global.get $uop_ranges_off))
+                             (i32.mul (local.get $i) (i32.const 12))))
+      (call $uop_cw_add (i32.load (local.get $e)) (i32.load offset=4 (local.get $e)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $l)))
+    (global.set $uop_cw_stale (i32.const 0))
+    (global.set $uop_cw_rebuilds (i32.add (global.get $uop_cw_rebuilds) (i32.const 1))))
+
   ;; Called from $invalidate_code_range for every guest write that reached
   ;; code: kill every program lowered from a byte in [ga, ga+len).
   (func $uop_code_write (param $ga i32) (param $len i32)
-    (local $i i32) (local $e i32) (local $end i32) (local $last i32)
+    (local $end i32) (local $n0 i32)
     (local.set $end (i32.add (local.get $ga) (local.get $len)))
+    (if (i32.eqz (call $uop_cw_maybe (local.get $ga) (local.get $end)))
+      (then
+        (global.set $uop_cw_skipped (i32.add (global.get $uop_cw_skipped) (i32.const 1)))
+        (return)))
+    (global.set $uop_cw_scans (i32.add (global.get $uop_cw_scans) (i32.const 1)))
+    (local.set $n0 (global.get $uop_nranges))
+    (call $uop_code_write_scan (local.get $ga) (local.get $end))
+    (if (i32.ne (global.get $uop_nranges) (local.get $n0))
+      ;; A kill: its ranges' bits are now stale.
+      (then (global.set $uop_cw_stale (i32.const 1)))
+      ;; A false "maybe". If ranges have gone since the last rebuild, their
+      ;; leftover bits may be the reason, and a rebuild (one pass, the cost of
+      ;; one scan) stops the same write paying for them again. Otherwise it
+      ;; is two pages sharing a word, and rebuilding would change nothing.
+      (else (if (global.get $uop_cw_stale) (then (call $uop_cw_rebuild))))))
+
+  (func $uop_code_write_scan (param $ga i32) (param $end i32)
+    (local $i i32) (local $e i32) (local $last i32)
     (block $d (loop $l
       (br_if $d (i32.ge_u (local.get $i) (global.get $uop_nranges)))
       (local.set $e (i32.add (i32.add (global.get $uop_arena) (global.get $uop_ranges_off))
@@ -1056,6 +1173,7 @@
           (i32.store (local.get $e) (i32.load (local.get $last)))
           (i32.store offset=4 (local.get $e) (i32.load offset=4 (local.get $last)))
           (i32.store offset=8 (local.get $e) (i32.load offset=8 (local.get $last)))
+          (global.set $uop_cw_stale (i32.const 1))
           (br $l)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l))))
@@ -1069,6 +1187,10 @@
     (global.set $uop_gen (i32.add (global.get $uop_gen) (i32.const 1)))
     (if (i32.eqz (global.get $uop_gen)) (then (global.set $uop_gen (i32.const 1))))
     (global.set $uop_nranges (i32.const 0))
+    ;; No ranges, so no filter bits: an empty filter is the exact answer.
+    (memory.fill (i32.add (global.get $uop_arena) (global.get $uop_cwmap_off))
+                 (i32.const 0) (global.get $UOP_CWMAP_BYTES))
+    (global.set $uop_cw_stale (i32.const 0))
     (global.set $uop_alloc (i32.const 0)))
   ;; ... and when the code itself may have changed, the verdicts on it too:
   ;; forget every retired and declined marker ($uop_mark_dead).
@@ -1088,6 +1210,7 @@
     (global.set $uop_wins_off (i32.add (global.get $uop_code_bytes) (i32.const 0x4000)))
     (global.set $uop_map_off (i32.add (global.get $uop_code_bytes) (i32.const 0x8000)))
     (global.set $uop_ranges_off (i32.add (global.get $uop_code_bytes) (i32.const 0x10000)))
+    (global.set $uop_cwmap_off (i32.add (global.get $uop_code_bytes) (i32.const 0x1C000)))
     (call $uop_flush_all))
 
   ;; The enter op, first in the head block's threaded code. Its operand is
@@ -1100,7 +1223,9 @@
     (if (i32.and
           (i32.and (i32.eq (i32.load (local.get $op)) (global.get $uop_gen))
                    (i32.eq (i32.load offset=4 (local.get $op)) (global.get $eip)))
-          (i32.eqz (i32.or (global.get $dbg_chain_guard) (global.get $code16))))
+          ;; $dbg_tier_guard, not $dbg_chain_guard: the handler histogram
+          ;; must see the tier running (13-exports.wat $dbg_recompute).
+          (i32.eqz (i32.or (global.get $dbg_tier_guard) (global.get $code16))))
       (then
         ;; Keep the windows the last run proved unless something they depend
         ;; on changed since; else poison them, so the first access through
@@ -1186,6 +1311,10 @@
     (if (i32.eq (local.get $which) (i32.const 8)) (then (return (global.get $uop_gen))))
     (if (i32.eq (local.get $which) (i32.const 9)) (then (return (global.get $uop_win_kept))))
     (if (i32.eq (local.get $which) (i32.const 10)) (then (return (global.get $uop_win_reset))))
+    ;; The code-write filter: writes it skipped, writes it scanned, rebuilds.
+    (if (i32.eq (local.get $which) (i32.const 11)) (then (return (global.get $uop_cw_skipped))))
+    (if (i32.eq (local.get $which) (i32.const 12)) (then (return (global.get $uop_cw_scans))))
+    (if (i32.eq (local.get $which) (i32.const 13)) (then (return (global.get $uop_cw_rebuilds))))
     (i32.const 0))
   ;; Where the lowering may write: 0 code base, 1 code bytes, 2 temps base,
   ;; 3 windows base.

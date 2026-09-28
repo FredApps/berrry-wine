@@ -399,6 +399,98 @@ function windowCase(inst, a, nextCode) {
   return errs;
 }
 
+// The code-write filter in front of $uop_code_write (07d). A store to a page
+// that has held code reaches the uop tier; the filter must let through every
+// store that overlaps a live program's bytes (kill) and may skip the rest.
+// uop_stats: 3 kills, 11 filter skips, 12 scans, 13 rebuilds.
+function codeWriteCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst;
+  const C = nextCode(), W = nextCode(), Lc = nextCode(), Lk = nextCode();
+  mem.set([0xC3], g2w(C));                                                  // ret: makes C a code page
+  mem.set([0x88, 0x07, 0xC3], g2w(W));                                      // mov [edi],al ; ret
+  const loop = asm([L('l'), [0x88, 0x07], 0x47, 0x49, J(cc.NZ, 'l'), 0xC3]);
+  mem.set(loop, g2w(Lc));
+  mem.set(loop, g2w(Lk));
+  const errs = [];
+  const st = (k) => e.uop_stats(k) >>> 0;
+  const store = (addr) => {
+    // Store the byte already there, so program bytes never actually change.
+    if (!callAt(inst, a, W, { edi: addr, eax: mem[g2w(addr)] })) errs.push(`store to ${addr.toString(16)} did not return`);
+  };
+  e.set_uop(1);
+  try {
+    callAt(inst, a, C, {});
+    const pc = e.uop_compile(Lc);
+    if (!pc) return ['store loop declined'];
+    e.uop_install(Lc, pc);
+    // A second program that stays live throughout: with no ranges at all the
+    // tier is not consulted, and steps 4-5 need it consulted.
+    const pk = e.uop_compile(Lk);
+    if (!pk) return ['second store loop declined'];
+    e.uop_install(Lk, pk);
+    // 1. A code page no program was lowered from: skipped, no scan.
+    let s0 = st(11), n0 = st(12), k0 = st(3);
+    store(C + 0x800);
+    if (st(11) === s0) errs.push('store to a program-free code page was not skipped');
+    if (st(12) !== n0) errs.push('store to a program-free code page was scanned');
+    // 2. The program's own page, a line it does not cover: skipped too.
+    s0 = st(11); n0 = st(12);
+    store(Lc + 0x800);
+    if (st(11) === s0 || st(12) !== n0) errs.push('store to an uncovered line of the program page was not skipped');
+    if (st(3) !== k0) errs.push('an uncovered store killed the program');
+    // 3. A byte of the program: scanned, and the program dies.
+    n0 = st(12);
+    store(Lc + 1);
+    if (st(12) === n0) errs.push('store into the program was not scanned');
+    if (st(3) !== k0 + 1) errs.push(`store into the program did not kill it (kills ${st(3) - k0})`);
+    // 4. Its bits are stale now: the next store there scans, finds nothing,
+    //    rebuilds; the one after that is skipped.
+    const r0 = st(13);
+    store(Lc + 2);
+    if (st(13) !== r0 + 1) errs.push('stale filter was not rebuilt after a false hit');
+    s0 = st(11);
+    store(Lc + 2);
+    if (st(11) === s0) errs.push('rebuilt filter still holds the dead program');
+    // 5. A reinstall is caught again.
+    const pc2 = e.uop_compile(Lc);
+    if (!pc2) errs.push('recompile declined');
+    else {
+      e.uop_install(Lc, pc2);
+      k0 = st(3);
+      store(Lc + 3);
+      if (st(3) !== k0 + 1) errs.push('reinstalled program not killed by a store into it');
+    }
+    if (!errs.length) console.log(`code-write-gate    ok (skipped=${st(11)} scans=${st(12)} rebuilds=${st(13)})`);
+  } finally {
+    e.set_uop(0);
+  }
+  return errs;
+}
+
+// --handler-hist must measure the program with the tier running; --trace-eip
+// (and --break/--watch/--count) must still hold it off, since they observe
+// every block. 13-exports.wat $dbg_recompute: $dbg_tier_guard.
+function histCase(inst, a, nextCode) {
+  const c = CASES.find((x) => x.name === 'lut8');
+  const errs = [];
+  const off = runCase(inst, c, a, nextCode(), 'off');
+  inst.e.set_handler_hist_enabled(1);
+  try {
+    const on = runCase(inst, c, a, nextCode(), 'hot');
+    if (!on.enters) errs.push('handler histogram held the tier off');
+    if (on.mem !== off.mem || JSON.stringify(on.regs) !== JSON.stringify(off.regs)) errs.push('tier under histogram diverged');
+    inst.e.set_trace_eip_range(1, 0xFFFFFFF0, 0xFFFFFFFF);
+    const tr = runCase(inst, c, a, nextCode(), 'hot');
+    if (tr.enters) errs.push(`tier entered with --trace-eip armed (enters=${tr.enters})`);
+    inst.e.set_trace_eip_range(0, 0, 0);
+    if (!errs.length) console.log(`hist-keeps-tier    ok (enters=${on.enters} under --handler-hist, 0 under --trace-eip)`);
+  } finally {
+    inst.e.set_trace_eip_range(0, 0, 0);
+    inst.e.set_handler_hist_enabled(0);
+  }
+  return errs;
+}
+
 // 07e-uop-compiler.wat's decline reasons, by code ($uop_decline_count).
 const WAT_REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-backedge', 'loop-too-big',
   'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
@@ -473,6 +565,14 @@ async function main() {
   if (!only || only === 'window-keep') {
     const errs = windowCase(inst, a, () => a.code + 0x1000 * slot++);
     if (errs.length) { fails++; console.log(`window-keep        FAIL ${errs.join(', ')}`); }
+  }
+  if (!only || only === 'code-write-gate') {
+    const errs = codeWriteCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`code-write-gate    FAIL ${errs.join(', ')}`); }
+  }
+  if (!only || only === 'hist-keeps-tier') {
+    const errs = histCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`hist-keeps-tier    FAIL ${errs.join(', ')}`); }
   }
   const cs = (k) => e.uop_cstat(k);
   const why = WAT_REASONS.map((n, k) => [n, k && e.uop_decline_count(k)]).filter(([, n]) => n).map(([k, n]) => `${k}=${n}`).join(' ');

@@ -2108,6 +2108,25 @@
   ;; every other debugging facility retains its ordinary no-chaining guard.
   (global $benchmark_chain_bp (mut i32) (i32.const 0))
   (global $dbg_chain_guard (mut i32) (i32.const 0))
+  ;; Two guards, because the debug facilities want two different things.
+  ;;
+  ;; $dbg_chain_guard: every block ENTRY must pass $run's desk. The handler
+  ;; histogram is in it because its per-block half, $hot_block_hist_record,
+  ;; is recorded there; letting the transfer fast paths skip the desk would
+  ;; silently drop block entries from the hot-block dump. It costs a desk trip
+  ;; per transfer and changes no guest-visible result.
+  ;;
+  ;; $dbg_tier_guard: every x86 block must EXECUTE as its own threaded block,
+  ;; so the micro-op tier ($th_uop_enter) may not run a loop inside one wasm
+  ;; call. --break/--watch/--count/--trace-esp/--trace-eip test EIP or memory
+  ;; at each block and would see nothing for the blocks a uop program retires,
+  ;; so they keep it. The handler histogram does NOT: it measures the program
+  ;; that runs, and with the tier on that program is "uop enters plus a
+  ;; threaded remainder" -- the enter op is itself a dispatched handler and
+  ;; $uop_blocks counts what the tier retired. Holding the tier off under the
+  ;; histogram made every --handler-hist window describe a tier-off run
+  ;; (docs/uop-tier-design.md 11.1).
+  (global $dbg_tier_guard (mut i32) (i32.const 0))
   (func $dbg_recompute
     (global.set $dbg_any
       (i32.or (i32.ne (global.get $watch_addr) (i32.const 0))
@@ -2123,7 +2142,18 @@
           (i32.or (i32.ne (global.get $hit_count_n) (i32.const 0))
             (i32.or (i32.ne (global.get $trace_esp_flag) (i32.const 0))
               (i32.or (i32.ne (global.get $trace_eip_flag) (i32.const 0))
-                      (i32.ne (global.get $handler_hist_enabled) (i32.const 0))))))))))
+                      (i32.ne (global.get $handler_hist_enabled) (i32.const 0)))))))))
+    ;; The same set minus the histogram. Benchmark mode exempts the breakpoint
+    ;; here exactly as it does above, so the tier's behaviour under
+    ;; --benchmark-chain-bp is unchanged.
+    (global.set $dbg_tier_guard
+      (i32.or (i32.ne (global.get $watch_addr) (i32.const 0))
+        (i32.or (i32.and (i32.ne (global.get $bp_addr) (i32.const 0))
+                         (i32.eqz (global.get $benchmark_chain_bp)))
+          (i32.or (i32.ne (global.get $hit_count_n) (i32.const 0))
+            (i32.or (i32.ne (global.get $trace_esp_flag) (i32.const 0))
+                    (i32.ne (global.get $trace_eip_flag) (i32.const 0))))))))
+  (func (export "get_dbg_tier_guard") (result i32) (global.get $dbg_tier_guard))
   (func (export "set_benchmark_chain_bp") (param $on i32)
     (global.set $benchmark_chain_bp (local.get $on)) (call $dbg_recompute))
 

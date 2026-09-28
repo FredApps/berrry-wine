@@ -588,10 +588,22 @@ the whole run.
   `(i32.and $dbg_chain_guard (i32.eqz $handler_hist_enabled))`. **This belongs
   in main.** Until it lands, a histogram taken with `--uop` silently describes
   a different program.
+  **Fixed since:** `$th_uop_enter` now tests `$dbg_tier_guard`, which is
+  `$dbg_chain_guard` without the histogram (13-exports.wat
+  `$dbg_recompute`). The transfer fast paths still take the desk under
+  `--handler-hist`, because `$hot_block_hist_record` runs there; that costs
+  time, not coverage. `--break`/`--watch`/`--count`/`--trace-*` still hold
+  the tier off. test-uop-compiler `hist-keeps-tier` checks both halves.
 - **Uncovered: guest-thread verdicts.** `--uop-census` records from guest
   threads are not in the log. `uop-census.js --thread=N` finds no `[i32 TN]`
   records, so the verdicts for WC3's audio thread below are inferred from its
   disassembly, not observed.
+  **Cause, since fixed:** cooperative threads' records were in the log all
+  along, tagged `[i32 T<tid>]`; the `uop[thread 0x…]` summary names the
+  thread HANDLE, and `--thread=` wants the tid. The summary now prints
+  `tid=N`, and `uop-census.js --thread=0xHANDLE` maps through it. `--threads`
+  workers now forward their log under `--uop-census` too (they have no exit
+  dump, so only live events appear).
 
 ### 11.2 Where the time goes, per game
 
