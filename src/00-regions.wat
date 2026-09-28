@@ -508,6 +508,15 @@
   ;; the attempted-drawing left/top/right/bottom in locked-client coordinates.
   (region.declare $WINDOW_UPDATE_LOCK (size 0x00000020) (align 0x00000010)
     (owner "10-helpers.wat:$window_update_lock_covers"))
+  ;; Running counts of pending paint / non-client work, so an empty
+  ;; PeekMessage answers "anything to paint?" without walking 256 slots.
+  ;; +0 is the number of PAINT_FLAGS bytes that are non-zero; +4/+8/+12/+16
+  ;; are the number of NC_FLAGS words with bit 0/1/2/3 set. Shared memory,
+  ;; not globals: every guest thread is its own instance and writes the same
+  ;; tables. Only $paint_flag_store and $nc_flags_xchg write the tables, and
+  ;; they keep these exact; $paint_work_audit recomputes them by scan.
+  (region.declare $PAINT_WORK_COUNTS (size 0x00000020) (align 0x00000010)
+    (owner "10-helpers.wat:$paint_flag_store"))
   (region.declare $TAB_NATIVE_STATE_TABLE (size 0x00000100) (align 0x00000100)
     (owner "09c3-controls.wat:$tab_native_state_get"))
   (region.declare $ICON_TABLE (size 0x00000100) (align 0x00000100)
