@@ -263,6 +263,73 @@ function runCase(inst, c, a, codeAddr, mode) {
 }
 
 
+function callAt(inst, a, addr, regs) {
+  const { e, g2w } = inst;
+  for (const r of REGS) e['set_' + r]((regs[r] ?? 0) >>> 0);
+  e.set_esp(a.stackTop);
+  new DataView(e.memory.buffer).setUint32(g2w(a.stackTop), 0, true);
+  e.set_eip(addr);
+  for (let k = 0; k < 20000; k++) {
+    e.run(BATCH);
+    if ((e.get_eip() >>> 0) === 0) return true;
+  }
+  return false;
+}
+
+// Windows outlive a run (07d): a program re-entered with nothing changed keeps
+// the windows its last run proved, and anything that could make one wrong in
+// between re-poisons them. Here a page turns into code under a store window
+// the program already proved: its next store there must leave the program and
+// go through threaded code, which retires the decoded block it overwrote. A
+// kept window would let the store straight through and R would still answer
+// its old immediate -- as would a store window that never checked for code.
+function windowCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst;
+  const P = nextCode(), Lc = nextCode();
+  mem.set([0xB8, 0x11, 0x11, 0x11, 0x11, 0xC3], g2w(P));                 // mov eax,0x11111111 ; ret
+  mem.set(asm([L('l'), [0x88, 0x07], 0x47, 0x49, J(cc.NZ, 'l'), 0xC3]), g2w(Lc)); // mov [edi],al; inc edi; dec ecx; jnz; ret
+  e.set_uop(1);
+  const errs = [];
+  try {
+    const pc = e.uop_compile(Lc);
+    if (!pc) return ['store loop declined'];
+    e.uop_install(Lc, pc);
+    const kept0 = e.uop_stats(9), reset0 = e.uop_stats(10), enters0 = e.uop_stats(4);
+    for (let i = 0; i < 8; i++) {
+      if (!callAt(inst, a, Lc, { ecx: 64, edi: P + 0x800, eax: 0x40 + i })) errs.push('store loop did not return');
+    }
+    const kept = e.uop_stats(9) - kept0, enters = e.uop_stats(4) - enters0;
+    if (!enters) errs.push('never entered');
+    if (!kept) errs.push(`no entry kept its windows (enters=${enters} resets=${e.uop_stats(10) - reset0})`);
+    if (mem[g2w(P + 0x800 + 63)] !== 0x47) errs.push('store loop wrote the wrong bytes');
+    callAt(inst, a, P, {});
+    if ((e.get_eax() >>> 0) !== 0x11111111) errs.push(`R before: eax ${(e.get_eax() >>> 0).toString(16)}`);
+    const reset1 = e.uop_stats(10), enters1 = e.uop_stats(4);
+    callAt(inst, a, Lc, { ecx: 4, edi: P + 1, eax: 0x22 });
+    if (e.uop_stats(4) === enters1) errs.push('rewrite never entered the program');
+    if (e.uop_stats(10) === reset1) errs.push('page turned to code but the windows were kept');
+    callAt(inst, a, P, {});
+    if ((e.get_eax() >>> 0) !== 0x22222222) errs.push(`R after rewrite: eax ${(e.get_eax() >>> 0).toString(16)} (stale decoded block)`);
+    // Keep storing into that code page: every entry now exits at the head
+    // having spent no block, which is pure overhead, so the program must be
+    // retired as poor rather than entered forever (StarCraft's 0x4b4417).
+    const poor0 = e.uop_stats(7);
+    let calls = 0;
+    for (; calls < 600 && e.uop_stats(7) === poor0; calls++) {
+      callAt(inst, a, Lc, { ecx: 1, edi: P + 1, eax: 0x30 + (calls & 7) });
+    }
+    if (e.uop_stats(7) === poor0) errs.push('a program that never gets past its head was never retired');
+    const enters2 = e.uop_stats(4);
+    callAt(inst, a, Lc, { ecx: 1, edi: P + 1, eax: 0x33 });
+    if (e.uop_stats(4) !== enters2) errs.push('retired program still entered');
+    if (mem[g2w(P + 1)] !== 0x33) errs.push('threaded store after retirement lost');
+    if (!errs.length) console.log(`window-keep        ok (enters=${enters} kept=${kept}, retired after ${calls} head exits)`);
+  } finally {
+    e.set_uop(0);
+  }
+  return errs;
+}
+
 // 07e-uop-compiler.wat's decline reasons, by code ($uop_decline_count).
 const WAT_REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-backedge', 'loop-too-big',
   'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
@@ -334,6 +401,10 @@ async function main() {
   }
   }
   e.set_branch_clock(0);
+  if (!only || only === 'window-keep') {
+    const errs = windowCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`window-keep        FAIL ${errs.join(', ')}`); }
+  }
   const cs = (k) => e.uop_cstat(k);
   const why = WAT_REASONS.map((n, k) => [n, k && e.uop_decline_count(k)]).filter(([, n]) => n).map(([k, n]) => `${k}=${n}`).join(' ');
   console.log(`uop compiler: compiled=${cs(0)} declined=${cs(1)} insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}${why ? '\n  declines: ' + why : ''}`);

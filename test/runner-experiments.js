@@ -424,7 +424,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       const why = UOP_REASONS.map((name, k) => [name, k && x.uop_decline_count(k) >>> 0])
         .filter(([, n]) => n).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${k}=${n}`).join(' ');
       log(`uop: installs=${st(2)} kills=${st(3)} retired-poor=${st(7)} enters=${st(4)} ` +
-        `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
+        `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} win-kept=${st(9)} win-reset=${st(10)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
         `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (why ? `\n  declines: ${why}` : ''));
       // Each guest thread's instance has its own arena and counters, listed
       // while the thread is alive: read directly from a cooperative thread's

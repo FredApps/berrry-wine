@@ -82,6 +82,12 @@
   ;; One scratch serves every thread's instance, so a compile holds this word
   ;; (0 free, 1 held); see $uop_compile.
   (global $UC_LOCK     i32 (region.addr $UOP_CSCRATCH 0x139000))
+  ;; Not compiler scratch either: the epoch every program's windows are
+  ;; stamped with (07d $uop_win_bump). Shared, like the lock, because a
+  ;; mapping or a decoded code page is shared by every thread's instance.
+  (global $UOP_WIN_EPOCH i32 (region.addr $UOP_CSCRATCH 0x139004))
+  ;; Where $uc_encode_write resolves window ids: the program's own slots.
+  (global $uc_wb (mut i32) (i32.const 0))
   (global $UC_ITEMS_BYTES i32 (i32.const 0x40000))
   (global $UC_MAX_SCAN  i32 (i32.const 600))  ;; instructions decoded looking for the loop
   (global $UC_MAX_LOOP  i32 (i32.const 400))  ;; instructions kept
@@ -2569,12 +2575,16 @@
   (func $uc_encode_words (result i32)
     (i32.add (global.get $uc_enc_n) (global.get $uc_nconst)))
 
+  (func $uc_is_store (param $op i32) (result i32)
+    (i32.or (i32.lt_u (i32.sub (local.get $op) (i32.const 17)) (i32.const 3))
+            (i32.lt_u (i32.sub (local.get $op) (i32.const 38)) (i32.const 3))))
+
   (func $uc_encode_write (param $code i32)
     (local $p i32) (local $end i32) (local $o i32) (local $j i32) (local $a i64) (local $ty i32)
     (local $v i32) (local $cb i32) (local $tb i32) (local $wb i32)
     (local.set $cb (i32.add (local.get $code) (i32.shl (global.get $uc_enc_n) (i32.const 2))))
     (local.set $tb (i32.add (global.get $uop_arena) (global.get $uop_temps_off)))
-    (local.set $wb (i32.add (global.get $uop_arena) (global.get $uop_wins_off)))
+    (local.set $wb (global.get $uc_wb))
     (local.set $o (local.get $code))
     (local.set $p (global.get $UC_ITEMS))
     (local.set $end (i32.add (global.get $UC_ITEMS) (global.get $uc_nitems)))
@@ -2602,7 +2612,13 @@
             (if (i32.eq (local.get $ty) (i32.const 5))
               (then (local.set $v (i32.add (local.get $code) (call $uc_hm_get (global.get $UC_HM_LABEL) (local.get $a))))))
             (if (i32.eq (local.get $ty) (i32.const 6))
-              (then (local.set $v (i32.add (local.get $wb) (i32.shl (local.get $v) (i32.const 4))))))
+              (then (local.set $v (i32.add (local.get $wb) (i32.shl (local.get $v) (i32.const 4))))
+                    ;; A store's window is a written window: re-guarding it
+                    ;; refuses a page that holds decoded code, so the store
+                    ;; exits to threaded code, which invalidates what it hits.
+                    ;; ($uc_win keys loads and stores apart: never both.)
+                    (if (call $uc_is_store (i32.load (local.get $p)))
+                      (then (i32.store offset=12 (local.get $v) (i32.const 1))))))
             (i32.store (local.get $o) (local.get $v))
             (local.set $o (i32.add (local.get $o) (i32.const 4)))
             (local.set $j (i32.add (local.get $j) (i32.const 1)))
@@ -2648,13 +2664,19 @@
 
   (func $uc_compile_locked (param $eip i32) (result i32)
     (local $err i32) (local $bytes i32) (local $pc i32) (local $k i32) (local $R i32)
-    (local $lo i32) (local $hi i32) (local $retried i32)
+    (local $lo i32) (local $hi i32) (local $retried i32) (local $wofs i32)
     (if (i32.and (i32.ne (global.get $uc_limit) (i32.const 0))
                  (i32.ge_u (global.get $uc_compiled) (global.get $uc_limit)))
       (then (return (i32.const 0))))
     (local.set $err (call $uc_lower_head (local.get $eip)))
     (if (local.get $err) (then (return (call $uc_decline (local.get $err)))))
-    (local.set $bytes (i32.add (global.get $UOP_HDR) (i32.shl (call $uc_encode_words) (i32.const 2))))
+    ;; header, code, then (16-aligned) the program's own window slots, so its
+    ;; windows survive other programs' runs (07d, top of file)
+    (local.set $wofs (i32.and (i32.add (i32.add (global.get $UOP_HDR)
+                                                (i32.shl (call $uc_encode_words) (i32.const 2)))
+                                       (i32.const 15))
+                              (i32.const -16)))
+    (local.set $bytes (i32.add (local.get $wofs) (i32.shl (global.get $uc_nwin) (i32.const 4))))
     (if (i32.gt_u (local.get $bytes) (i32.shr_u (global.get $uop_code_bytes) (i32.const 2)))
       (then (return (call $uc_decline (i32.const 24)))))
     (block $placed (loop $retry
@@ -2663,7 +2685,19 @@
       (local.set $pc (i32.add (global.get $uop_arena) (global.get $uop_alloc)))
       (memory.fill (local.get $pc) (i32.const 0) (global.get $UOP_HDR))
       (i32.store offset=8 (local.get $pc) (global.get $uc_nwin))
-      (i32.store offset=12 (local.get $pc) (i32.add (global.get $uop_arena) (global.get $uop_wins_off)))
+      (global.set $uc_wb (i32.add (local.get $pc) (local.get $wofs)))
+      (i32.store offset=12 (local.get $pc) (global.get $uc_wb))
+      ;; every slot starts poisoned and a load window (the encoding marks the
+      ;; store windows), stamped with the current epoch: poisoned is valid
+      ;; under any epoch, so the first entry need not poison again
+      (local.set $k (i32.const 0))
+      (block $wd (loop $wl
+        (br_if $wd (i32.ge_u (local.get $k) (global.get $uc_nwin)))
+        (call $uop_window_poison (i32.add (global.get $uc_wb) (i32.shl (local.get $k) (i32.const 4))))
+        (i32.store offset=12 (i32.add (global.get $uc_wb) (i32.shl (local.get $k) (i32.const 4))) (i32.const 0))
+        (local.set $k (i32.add (local.get $k) (i32.const 1)))
+        (br $wl)))
+      (i32.store offset=28 (local.get $pc) (i32.atomic.load (global.get $UOP_WIN_EPOCH)))
       (call $uc_encode_write (i32.add (local.get $pc) (global.get $UOP_HDR)))
       ;; the guest byte ranges it was lowered from: a write to any kills it
       (local.set $k (i32.const 0))
