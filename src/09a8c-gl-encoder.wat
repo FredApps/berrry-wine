@@ -95,6 +95,21 @@
     (global.set $gl_stream_command_count (i32.const 0))
     (local.get $result))
 
+  ;; $len bytes of guest memory at $ga into wasm $dst. One $g2w is good for
+  ;; one guest page only; a matrix or light vector that crosses into a sparse
+  ;; page backed elsewhere is gathered byte by byte instead.
+  (func $gl_copy_from_guest (param $dst i32) (param $ga i32) (param $len i32)
+    (local $wa i32) (local $i i32)
+    (local.set $wa (call $g2w_affine_span (local.get $ga) (local.get $len)))
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then (memory.copy (local.get $dst) (local.get $wa) (local.get $len)) (return)))
+    (block $done (loop $bytes
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (i32.store8 (i32.add (local.get $dst) (local.get $i))
+        (call $gl8 (i32.add (local.get $ga) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $bytes))))
+
   (func $gl_emit_record (param $op i32) (param $stack i32) (param $aux i32)
       (param $ptr_guest i32) (param $ptr_len i32) (param $borrow i32) (result i32)
     (local $words i32) (local $stack_bytes i32) (local $copy_bytes i32)
@@ -125,8 +140,9 @@
     (if (i32.eqz (local.get $ptr_len)) (then (i32.store offset=28 (local.get $start) (i32.const 0))))
     (memory.copy (i32.add (local.get $start) (i32.const 32)) (local.get $stack) (local.get $stack_bytes))
     (if (local.get $copy_bytes) (then
-      (memory.copy (i32.add (local.get $start) (i32.add (i32.const 32) (local.get $stack_bytes)))
-        (call $g2w (local.get $ptr_guest)) (local.get $copy_bytes))))
+      (call $gl_copy_from_guest
+        (i32.add (local.get $start) (i32.add (i32.const 32) (local.get $stack_bytes)))
+        (local.get $ptr_guest) (local.get $copy_bytes))))
     (global.set $gl_stream_used_bytes (i32.add (global.get $gl_stream_used_bytes) (local.get $record_bytes)))
     (global.set $gl_stream_command_count (i32.add (global.get $gl_stream_command_count) (i32.const 1)))
     (i32.const 1))

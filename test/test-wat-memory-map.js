@@ -223,6 +223,8 @@ const highFixedAliases = new Map(Object.entries({
   // Mutable: the render Worker points its rasterizer at private scratch.
   gl_sw_scratch: { owner: 'GL_SW_SCRATCH' },
   gl_sw_st: { owner: 'GL_SW_STATE' },
+  // Mutable: $init_thread points each instance at its own tid slice.
+  OP_INDEX: { owner: 'OP_INDEX_REGION' },
 }));
 
 const regionByName = new Map(regions.map(region => [region.name, region]));

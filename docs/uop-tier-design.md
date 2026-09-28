@@ -321,3 +321,62 @@ change and code-page mark, shared across Worker instances) would buy under 1%
 of Heroes III. That is not worth a stale-window SMC hole. The remaining lever
 is **coverage**: the declines are `no-backedge` and `head-unsupported`, and
 Heroes III's hot threaded time is FPU code the tier does not lower.
+
+**Where that FPU time is, measured (2026-09-28).** It is not on the thread the
+tier works on. `--handler-hist` per guest thread over gameplay batches
+4100-4300 (`--handler-hist-thread=1,3,2`; the main thread over 4100-5101):
+
+| thread | x87 dispatches | share of that thread's dispatches |
+|---|---|---|
+| T0 (game) | 585 of 1.19G | 0.00% |
+| T1 (start `0x8414a0`) | 66.6M of 141M | **47%** |
+| T2, T3 | 0 | 0% |
+
+So the ~18% x87 CPU in the profile is all T1, and "x87 in uops" would be
+aimed at the wrong thread. The existing semantic x87 folds (`--x87-fusion`:
+pipeline4, island, affine) already reach it. On T1 they cut unfused x87
+dispatches from 66.6M to 14.1M (plus 4.2M fused: H449 pipeline4 3.08M and
+H451 1.13M). That is **79% of x87 dispatches absorbed**, and T1's total
+dispatches fall from 141M to 93M. With `--uop` as well, T1 reads 15.3M raw
+and 4.6M fused, so the fold and the tier compose: the tier is on T0, the fold
+on T1. The remainder is mostly `$th_fpu_mem_ro` (8.4M).
+
+The fold is **off** for Heroes III: `x87Fusion: true` is set only for
+`ut2003_demo` in `lib/apps.js`. Fewer dispatches is not a time win by itself
+(on MCM the fold was flat until the x87 file moved to memory; see
+`project_x87_fusion_mcm`), so the time A/B is the `fold` / `uopfold` arms of
+`tools/uop-game-ab.js`.
+
+**Bench box, 2026-09-28** (x86_64 V8, node 20, Ryzen 9 9950X, 4 vCPU, idle,
+serial arms, HEAD 84e79bb4). `gameplay` is the `--slice-split` main-thread
+guest slice, so guest-thread (T1) work shows only in user CPU.
+
+| game | frames | uop vs off: gameplay | uop vs off: user CPU | null band (user / gameplay) |
+|---|---|---|---|---|
+| Heroes III | identical | -52.9% | -5.2% | 1.8% / 3.3% |
+| Diablo shareware | identical | -43.2% | -4.1% | 0.2% / 0% |
+| Warcraft III, software GL (wc3g)* | identical | -13.0% | -6.0% | 0.3% / 0% |
+| StarCraft | nondeterministic (off~off2 differ too) | -5.9% (0.1 s resolution) | -2.3% | 0.9% / 0% |
+
+\*wc3g needs the then-uncommitted Game.dll ordinal-import linking from the
+working tree; on bare HEAD, Game.dll's DllMain stops at `KERNEL32.#00001`.
+
+Heroes III x87 fold, same box, frames identical in every pair:
+`uopfold` vs `uop` user CPU **-4.3%** (86.58/86.53 s vs 90.46/90.49 s, null
+band 0.03%), gameplay slice 0.0%. `fold` vs `off` is -5.3% (null 0.9%). All
+of the saving is guest-thread time, as the dispatch counts predicted.
+
+Moorhuhn, same box. These ran on the working tree as of 2026-09-28 morning;
+routes are `mh1`/`mh2`/`mhw`/`mh3` in `tools/uop-game-ab.js`, and every final
+frame was looked at and shows a live round:
+
+| game | frames | uop vs off: gameplay | uop vs off: user CPU | null band (user) |
+|---|---|---|---|---|
+| Moorhuhn | nondeterministic (off~off2 1.4%) | -14.3% | -30.0% | 1.2% |
+| Moorhuhn 2 | identical | -4.5% (0.1 s resolution) | -14.0% | 0.5% |
+| Moorhuhn Winter | nondeterministic (off~off2 17.6%) | -13.2% | -13.9% | 1.1% |
+| Moorhuhn 3 | nondeterministic (off~off2 67%) | -25.3% | -32.4% | 0.2-2.5% |
+
+On Moorhuhn 3 the x87 fold (`uopfold` vs `uop`) is inside its 3.5% null band,
+so it has no measurable effect, even though an FPU MP3 filter is its hottest
+gameplay block.

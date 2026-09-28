@@ -302,3 +302,25 @@ copies the complete game payload, and reaches the final shortcut/readme page.
 The installer-produced tree contains `h3demo.exe`, the four middleware files,
 the map, all 14 MP3s, and the complete SND/LOD/VID data set. No runtime crash or
 unimplemented API occurs along that path.
+
+## Where gameplay's x87 runs (2026-09-28)
+
+On the adventure map (the `h3` route in `tools/uop-game-ab.js`, batches
+4100-5101), the game thread T0 retires no x87: 585 of 1.19G dispatches. All of
+it is on guest thread T1, the first thread created (start `0x8414a0`,
+presumably the Miles mixer worker; not yet confirmed from its module). There
+it is 47% of dispatches: 66.6M of 141M over batches 4100-4300 (`$th_fpu_mem_ro`
+31.8%, `$th_fpu_reg` 10.8%, `$th_fpu_mem` 4.5%). T2 and T3 do nothing there.
+Read it per thread: `--handler-hist --handler-hist-thread=1,3,2
+--handler-hist-start=4100 --handler-hist-stop=4700` splits that window three
+ways, one thread each.
+
+`--x87-fusion` absorbs 79% of T1's x87 dispatches (66.6M raw down to 14.1M
+raw plus 4.2M fused) and is off for this app by default. Numbers and the time
+A/B are in docs/uop-tier-design.md §8.
+
+Time, measured on the idle bench box (x86_64 V8, 2026-09-28): turning on
+`--x87-fusion` with `--uop` already on cuts whole-run user CPU by 4.3%
+(86.6 s vs 90.5 s; repeats agree to 0.03%), and the frames are identical.
+The main-thread gameplay slice does not change, as expected, since the saving
+is all on T1.

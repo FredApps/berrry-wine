@@ -630,9 +630,17 @@
   (region.declare $DX_SURF_META (size 0x00020000) (align 0x00001000)
     (stride 0x10 (count $DX_MAX))
     (owner "09a8-handlers-directx.wat:$dx_surf_meta_ptr"))
-  (region.declare $OP_INDEX (size 0x00002000) (align 0x00001000)
-    (stride 0x4 (count $OP_INDEX_MAX))
-    (owner "01-header.wat:$OP_INDEX"))
+  ;; The decoder's op-start list, PER GUEST THREAD: 8KB (2048 words) for each
+  ;; of the 16 tids. Every loop matcher and x87 fuser reads it straight after
+  ;; $te fills it, and guest threads are separate instances over this shared
+  ;; memory that decode in parallel in worker mode -- one fixed list let
+  ;; thread B's decode rewrite thread A's between A's $te and A's fuser, and
+  ;; A's fuser then rewrote B's thread-cache records (Warcraft III, Miles MP3
+  ;; thread, ?x87-fold --threads: an H451 island spanning non-x87 records ->
+  ;; FPU_UNIMPL). $init_thread points $OP_INDEX at tid * 0x2000.
+  (region.declare $OP_INDEX_REGION (size 0x00020000) (align 0x00001000)
+    (stride 0x2000 (count $REGFILE_THREADS))
+    (owner "01-header.wat:$OP_INDEX_REGION"))
   ;; Where the multi-block region MATCHER assembles a descriptor. It cannot
   ;; share OP_INDEX's far half the way the one-block matcher does: a region is
   ;; built across several consecutive $decode_block calls, and each of those

@@ -1929,8 +1929,13 @@
   ;; the counter. Pure scratch -- reused by every block, never read at runtime,
   ;; so it costs no per-block memory. Overflow sets $op_index_poison and the
   ;; block is simply not matched.
-  (global $OP_INDEX i32 (region.addr $OP_INDEX 0))
-  (global $OP_INDEX_SIZE i32 (region.size $OP_INDEX))
+  ;; Per instance: the region is tid-strided (see 00-regions.wat) and
+  ;; $init_thread moves this to the thread's own slice. $OP_INDEX_SLICE is ONE
+  ;; slice, which is all any reader may touch (07c uses its far half).
+  (global $OP_INDEX (mut i32) (region.addr $OP_INDEX_REGION 0))
+  (global $OP_INDEX_REGION i32 (region.addr $OP_INDEX_REGION 0))
+  (global $OP_INDEX_REGION_SIZE i32 (region.size $OP_INDEX_REGION))
+  (global $OP_INDEX_SLICE i32 (i32.const 0x2000))
   (global $OP_INDEX_MAX i32 (i32.const 2048))
   (global $op_index_n (mut i32) (i32.const 0))
   (global $op_index_poison (mut i32) (i32.const 0))

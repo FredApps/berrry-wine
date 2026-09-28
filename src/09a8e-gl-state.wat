@@ -188,8 +188,15 @@
     (if (i32.eq (local.get $type) (i32.const 0x140A)) (then (return (i32.const 8))))
     (i32.const 0))
 
-  (func $gl_array_read (param $p i32) (param $type i32) (param $normalize i32) (result f32)
-    (local $v f32)
+  ;; Client arrays are read by GUEST address, translated one component at a
+  ;; time. A $g2w result is good for one guest page only, and a guest array
+  ;; need not be contiguous in wasm memory past it: Warcraft III's index and
+  ;; vertex buffers live in sparse VirtualAlloc pages, and walking one wasm
+  ;; pointer across a page end read unrelated memory as indices -- vertices
+  ;; at 1.7e38 and a cliff mesh smeared across the Prologue cinematic.
+  (func $gl_array_read (param $ga i32) (param $type i32) (param $normalize i32) (result f32)
+    (local $v f32) (local $p i32)
+    (local.set $p (call $g2w (local.get $ga)))
     (if (i32.eq (local.get $type) (i32.const 0x1400)) (then
       (local.set $v (f32.convert_i32_s (i32.load8_s (local.get $p))))
       (if (local.get $normalize) (then (local.set $v (f32.demote_f64 (f64.max (f64.const -1)
@@ -221,25 +228,26 @@
   ;; JavaScript's `value || 0` is observable for NaN and signed zero. For a
   ;; double, test truthiness before demotion so a tiny nonzero value may still
   ;; round to -0 in the packed f32 stream, exactly like the oracle.
-  (func $gl_array_read_or_zero (param $p i32) (param $type i32) (result f32)
+  (func $gl_array_read_or_zero (param $ga i32) (param $type i32) (result f32)
     (local $d f64) (local $v f32)
     (if (i32.eq (local.get $type) (i32.const 0x140A)) (then
-      (local.set $d (f64.load (local.get $p)))
+      (local.set $d (f64.load (call $g2w (local.get $ga))))
       (if (i32.or (f64.eq (local.get $d) (f64.const 0))
           (f64.ne (local.get $d) (local.get $d))) (then (return (f32.const 0))))
       (return (f32.demote_f64 (local.get $d)))))
-    (local.set $v (call $gl_array_read (local.get $p) (local.get $type) (i32.const 0)))
+    (local.set $v (call $gl_array_read (local.get $ga) (local.get $type) (i32.const 0)))
     (if (i32.or (f32.eq (local.get $v) (f32.const 0))
         (f32.ne (local.get $v) (local.get $v))) (then (return (f32.const 0))))
     (local.get $v))
 
+  ;; The GUEST address of element $index; $gl_array_read translates it.
   (func $gl_array_addr (param $guest i32) (param $size i32) (param $type i32)
       (param $stride i32) (param $index i32) (result i32)
     (local $bytes i32)
     (local.set $bytes (call $gl_array_type_bytes (local.get $type)))
     (if (i32.eqz (local.get $stride))
       (then (local.set $stride (i32.mul (local.get $size) (local.get $bytes)))))
-    (call $g2w (i32.add (local.get $guest) (i32.mul (local.get $index) (local.get $stride)))))
+    (i32.add (local.get $guest) (i32.mul (local.get $index) (local.get $stride))))
 
   (func $gl_state_array_element (param $index i32)
     (local $p i32) (local $b i32) (local $x f32) (local $y f32) (local $z f32)
@@ -305,7 +313,7 @@
 
   (func $gl_state_intercept (param $op i32) (param $stack i32) (result i32)
     (local $a i32) (local $unit i32) (local $i i32) (local $count i32) (local $p i32) (local $b i32)
-    (local $z f32)
+    (local $w i32) (local $z f32)
     (if (i32.eq (local.get $op) (i32.const 23)) (then
       (global.set $gl_color_r (f32.load offset=4 (local.get $stack))) (global.set $gl_color_g (f32.load offset=8 (local.get $stack)))
       (global.set $gl_color_b (f32.load offset=12 (local.get $stack))) (global.set $gl_color_a (f32.const 1)) (return (i32.const 1))))
@@ -442,7 +450,7 @@
     (if (i32.eq (local.get $op) (i32.const 102)) (then
       (local.set $count (i32.load offset=8 (local.get $stack)))
       (local.set $a (i32.load offset=12 (local.get $stack)))
-      (local.set $p (call $g2w (i32.load offset=16 (local.get $stack))))
+      (local.set $p (i32.load offset=16 (local.get $stack)))
       (local.set $b (call $gl_array_type_bytes (local.get $a)))
       (if (i32.eqz (local.get $b)) (then (return (i32.const 1))))
       (if (i32.or (i32.eqz (i32.and (global.get $gl_client_bits) (i32.const 1)))
@@ -454,17 +462,21 @@
       (drop (call $gl_state_intercept (i32.const 76) (local.get $stack)))
       (global.set $gl_immediate_mode (i32.load offset=4 (local.get $stack)))
       (global.set $gl_immediate_floats (i32.const 0))
+      ;; $p stays a guest address and each index is translated on its own:
+      ;; the index array may run past the end of a guest page (see
+      ;; $gl_array_read).
       (loop $indices (if (i32.lt_u (local.get $i) (local.get $count)) (then
-        (if (i32.eq (local.get $a) (i32.const 0x1400)) (then (local.set $unit (i32.load8_s (local.get $p)))))
-        (if (i32.eq (local.get $a) (i32.const 0x1401)) (then (local.set $unit (i32.load8_u (local.get $p)))))
-        (if (i32.eq (local.get $a) (i32.const 0x1402)) (then (local.set $unit (i32.load16_s (local.get $p)))))
-        (if (i32.eq (local.get $a) (i32.const 0x1403)) (then (local.set $unit (i32.load16_u (local.get $p)))))
+        (local.set $w (call $g2w (local.get $p)))
+        (if (i32.eq (local.get $a) (i32.const 0x1400)) (then (local.set $unit (i32.load8_s (local.get $w)))))
+        (if (i32.eq (local.get $a) (i32.const 0x1401)) (then (local.set $unit (i32.load8_u (local.get $w)))))
+        (if (i32.eq (local.get $a) (i32.const 0x1402)) (then (local.set $unit (i32.load16_s (local.get $w)))))
+        (if (i32.eq (local.get $a) (i32.const 0x1403)) (then (local.set $unit (i32.load16_u (local.get $w)))))
         (if (i32.or (i32.eq (local.get $a) (i32.const 0x1404))
-            (i32.eq (local.get $a) (i32.const 0x1405))) (then (local.set $unit (i32.load (local.get $p)))))
+            (i32.eq (local.get $a) (i32.const 0x1405))) (then (local.set $unit (i32.load (local.get $w)))))
         (if (i32.eq (local.get $a) (i32.const 0x1406))
-          (then (local.set $unit (i32.trunc_sat_f32_s (f32.load (local.get $p))))))
+          (then (local.set $unit (i32.trunc_sat_f32_s (f32.load (local.get $w))))))
         (if (i32.eq (local.get $a) (i32.const 0x140A))
-          (then (local.set $unit (i32.trunc_sat_f64_s (f64.load (local.get $p))))))
+          (then (local.set $unit (i32.trunc_sat_f64_s (f64.load (local.get $w))))))
         (call $gl_state_array_element (local.get $unit))
         (local.set $p (i32.add (local.get $p) (local.get $b))) (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $indices))))
       (drop (call $gl_finish_immediate))

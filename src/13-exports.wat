@@ -1507,6 +1507,10 @@
       (i32.mul (local.get $tid) (global.get $REGFILE_STRIDE))))
     (global.set $fpu_base (i32.add (global.get $FPU_FILE)
       (i32.mul (local.get $tid) (global.get $FPU_FILE_STRIDE))))
+    ;; Decode scratch too: worker instances decode in parallel, and a shared
+    ;; op-start list lets one thread's fuser rewrite another's code.
+    (global.set $OP_INDEX (i32.add (global.get $OP_INDEX_REGION)
+      (i32.mul (i32.and (local.get $tid) (i32.const 15)) (global.get $OP_INDEX_SLICE))))
     ;; Page-compilation state is per-instance for the same reason THREAD_BASE
     ;; is: a worker is a separate instance over the same memory, and chunk
     ;; pointers name that thread's own arena partition.
@@ -3422,7 +3426,7 @@
   (func (export "get_guest_base") (result i32) (global.get $GUEST_BASE))
   (func (export "get_dll_table") (result i32) (global.get $DLL_TABLE))
   (func (export "set_dll_path") (param $idx i32) (param $path_g i32)
-    (if (i32.lt_u (local.get $idx) (i32.const 16))
+    (if (i32.lt_u (local.get $idx) (global.get $DLL_TABLE_CAPACITY))
       (then
         (i32.store
           (i32.add (global.get $DLL_PATH_TABLE)

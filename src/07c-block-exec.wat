@@ -530,9 +530,9 @@
   ;; pool forward from the middle. Two cursors rather than one because the pool
   ;; is variable-length and the micro-op array must not be.
   (func $bx_scratch (result i32)
-    (i32.add (global.get $OP_INDEX) (i32.shr_u (global.get $OP_INDEX_SIZE) (i32.const 1))))
+    (i32.add (global.get $OP_INDEX) (i32.shr_u (global.get $OP_INDEX_SLICE) (i32.const 1))))
   (func $bx_scratch_words (result i32)
-    (i32.shr_u (global.get $OP_INDEX_SIZE) (i32.const 3)))
+    (i32.shr_u (global.get $OP_INDEX_SLICE) (i32.const 3)))
 
   ;; "Is this thread word the first word of a block-executor descriptor?"
   ;; There are two such words since round 16 -- the general executor's and the

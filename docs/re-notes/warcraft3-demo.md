@@ -2029,6 +2029,65 @@ pass.
 Software GL draws a large grey wedge across the left of the opening cinematic
 (filmed at batch 18350). It does not block anything and was not investigated.
 
+**SOLVED (2026-09-28): the wedge was our glDrawElements reading indices past a
+guest page end.** Not the software rasterizer: `--headless-gl` drew the same
+wedge at the same place (dark and bark-streaked there, flat grey under
+software -- the texture coordinates were garbage too). `--trace-gl
+--trace-gl-verts` (new: every vertex of each packed draw) over batches
+18000..18120 found one draw per frame, a 612-vertex cliff mesh (`tex=0x3ce`,
+and its second pass `0x471`), whose vertices are sane up to v367 and garbage
+from v368 on: `(-1.70141e+38, -1.70141e+38, -1.74145e+38)`, `(6.5e-43,
+7.3e28, 0.79)`, normals read as positions. Index 368 is byte 736 of a u16 index
+array -- the page end. `$gl_state_intercept` op 102 did `$g2w` on the index
+pointer once and walked that wasm pointer through all `count` indices, and
+`$gl_array_addr` translated only each vertex's first byte; Game.dll's buffers
+live in sparse VirtualAlloc pages that are not adjacent in wasm memory, so
+everything past the boundary was read out of unrelated memory. Both GL
+backends consume the same packed stream, which is why both showed it.
+
+Fixed in `src/09a8e-gl-state.wat`: indices and every array component are
+translated per element (`$gl_array_read`/`_or_zero` take guest addresses now),
+and `src/09a8c-gl-encoder.wat` `$gl_copy_from_guest` gathers copied pointer
+arguments (matrices, light/fog vectors, `glCallLists`) that cross a page.
+Regression: `test/test-opengl-sparse-page-arrays.js` (fails on the old code
+with `-3.7e28` for a straddling vertex). After the fix the cinematic frame is
+clean in both renderers and no traced vertex exceeds 1e10.
+
+Same bug class, not fixed: borrowed texture uploads (`glTexImage2D`/
+`glTexSubImage2D`) are still read as one contiguous span from one translation
+in `lib/gl-compat.js` `_pointerBytes`, and the small `glColor*v`/`glNormal3fv`
+/`glVertex*v` readers in `09a8e` read up to 16 bytes off one `$g2w`.
+
 About 500 block decodes per batch run during gameplay (1.2M across 19170..21530)
 in both uop arms, with 97% of all decode work in storms. That is worth a
 `--trace-code-writes` look on its own.
+
+## x87 fold under `--threads`: FPU_UNIMPL in the Miles MP3 thread (2026-09-28)
+
+`?debug&uop&x87-fold` with Worker threads trapped within a minute:
+`UNIMPLEMENTED API: FPU_UNIMPL` at `Mp3dec.asi+0x68ca` (orig VA `0x26f068ca`,
+straight-line IMDCT butterfly `fld/fchs/fmul/fadd/fxch/fstp`), ESP in tid 4's
+stack (Mss32 thread entry `0xecc590`). Fold off: clean. Cooperative CLI with
+the fold: clean. So the trigger was parallel decoding, not the x87 code.
+
+Cause: `$OP_INDEX` -- the decoder's op-start list for the block just emitted,
+which every loop matcher and x87 fuser reads right after `$te` fills it -- was
+one fixed region shared by every instance. Two Workers decoding at once
+overwrite each other's list between `$te` and the fuser, so thread A's island
+fuser (`$x87_island_fuse_block`) walks thread B's record pointers, rewrites a
+handler word in B's thread-cache partition, and packs a run count that spans
+records from two unrelated blocks. H451 then feeds a non-x87 record to
+`$fpu_exec_reg`, which traps. The island is simply the fuser most willing to
+match garbage (any 3+ H188/189/190 in a row); every other matcher had the same
+race and mostly declined.
+
+Fix: `$OP_INDEX_REGION` is tid-strided (16 x 8KB); `$OP_INDEX` is a
+per-instance global that `$init_thread` points at `tid * $OP_INDEX_SLICE`.
+Regression: `test/test-op-index-per-thread.js` (two instances on one memory;
+fails on the old layout with "thread B's decode must not rewrite thread A's
+OP_INDEX"). After the fix the browser repro ran 120 s, screen live in 112/121
+probes, no FPU_UNIMPL.
+
+Still shared and still racy in worker mode, not fixed: `$BX_RG_BASE` (block
+executor region builder, only with `--block-exec`) and `$PAGE_OVFL_MEMO`
+(a heuristic memo; a lost update costs a decision, not correctness).

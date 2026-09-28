@@ -327,6 +327,7 @@ const GL_CENSUS = hasFlag('gl-census'); // --gl-census: at exit, which GL entry 
 // (GL passes GLfloat and GLenum through the same stack slots), and for a
 // packed draw its vertex count and first vertex. Honours --trace-from/-to.
 const TRACE_GL_RAW = args.find(a => a === '--trace-gl' || a.startsWith('--trace-gl='));
+const TRACE_GL_VERTS = hasFlag('trace-gl-verts'); // with --trace-gl: print every vertex of each packed draw
 if (TRACE_GL_RAW) {
   const GLCompatTrace = require('../lib/gl-compat');
   const only = TRACE_GL_RAW.includes('=')
@@ -364,6 +365,17 @@ if (TRACE_GL_RAW) {
         const v = new Float32Array(capture.buffer, capture.pointerOffset, 14);
         tail += ` verts=${capture.pointerLength / 56} v0=(${Array.from(v.slice(0, 3), x => +x.toPrecision(4))})`
           + ` rgba=(${Array.from(v.slice(3, 7), x => +x.toPrecision(3))})`;
+        if (TRACE_GL_VERTS) {
+          // --trace-gl-verts: every vertex of the packed draw, object-space
+          // x,y,z and unit-0 u,v, for finding the one triangle that is wrong.
+          const all = new Float32Array(capture.buffer, capture.pointerOffset, capture.pointerLength / 4);
+          const rows = [];
+          for (let i = 0; i + 14 <= all.length; i += 14) {
+            rows.push(`  [gl]   v${i / 14} xyz=(${Array.from(all.slice(i, i + 3), x => +x.toPrecision(6))})`
+              + ` uv=(${+all[i + 7].toPrecision(4)},${+all[i + 8].toPrecision(4)})`);
+          }
+          tail += '\n' + rows.join('\n');
+        }
       } else if (capture.pointerLength <= 64 && capture.pointerLength % 4 === 0) {
         // A small array argument (glFogfv, glLightfv, glLoadMatrixf): its
         // values, since the guest pointer is gone by the time anyone asks.

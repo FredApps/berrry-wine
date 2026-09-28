@@ -33,6 +33,16 @@ const arg = (name, dflt) => {
 const flag = name => process.argv.includes(`--${name}`);
 
 const click = (x, y, at) => [`${at}:mousemove:${x}:${y}`, `${at + 40}:mousedown:${x}:${y}`, `${at + 80}:mouseup:${x}:${y}`];
+// A shot every 20 batches over [from, to), cycling across the field; a shot is
+// a short press, not click()'s 80-batch one.
+const shots = (from, to) => {
+  const out = [];
+  for (let at = from, i = 0; at + 4 < to; at += 20, i++) {
+    const x = 80 + (i * 137) % 480, y = 80 + (i * 89) % 300;
+    out.push(`${at}:mousemove:${x}:${y}`, `${at + 2}:mousedown:${x}:${y}`, `${at + 4}:mouseup:${x}:${y}`);
+  }
+  return out;
+};
 const key = (vk, ch, at) => [`${at}:keydown:${vk}`, `${at + 10}:keypress:${ch}`];
 
 // split = the batch gameplay starts at; the phase after it is the number that
@@ -116,6 +126,36 @@ const GAMES = {
       '20350:mousemove:520:260', '20390:rclick:520:260',
       '20890:mousemove:150:230', '20930:rclick:150:230',
     ],
+  },
+  // Moorhuhn: routes from docs/re-notes/moorhuhn.md, then a spread of shots
+  // across the field so the round does work (the round is mouse-only).
+  mh1: {
+    app: 'moorhuhn', split: 550,
+    args: ['--batch-size=100000', '--max-batches=900'],
+    input: ['330:keydown:32', '340:keyup:32', '420:keypress:65', '425:keypress:66', '430:keypress:67',
+      '450:keydown:13', '452:keypress:13', '455:keyup:13', ...shots(560, 880)],
+  },
+  mh2: {
+    // ~500 batches of load; a click held ~10 batches starts the round. Its
+    // timer reads 0:01 at 1020 and HIGHSCORE is up by 1030 (checked by PNG).
+    app: 'moorhuhn_2', split: 600,
+    args: ['--batch-size=100000', '--max-batches=1015'],
+    input: ['540:mousemove:320:250', '550:mousedown:320:250', '560:mouseup:320:250', ...shots(610, 1010)],
+  },
+  mhw: {
+    // Load ~1100 batches; a click starts the round, which runs ~1850-2400.
+    app: 'moorhuhn_winter', split: 1850,
+    args: ['--batch-size=100000', '--max-batches=2350'],
+    input: ['1790:mousemove:320:240', '1800:mousedown:320:240', '1810:mouseup:320:240', ...shots(1860, 2330)],
+  },
+  mh3: {
+    // DirectDraw 16bpp; its FPU MP3 synthesis filter (0x43030b) is the hottest
+    // gameplay block, so this is also an x87 case (see the fold arms). Play
+    // runs 1740 to 0:01 at 2260; the highscore banner slides in at 2280.
+    app: 'moorhuhn_3', split: 1740,
+    args: ['--batch-size=200000', '--max-batches=2270'],
+    input: ['1450:mousedown:320:240', '1453:mouseup:320:240', '1700:mousedown:320:240', '1703:mouseup:320:240',
+      '1900:keydown:32', '1903:keyup:32', ...shots(1750, 2265)],
   },
   d2: {
     // Driven by pixel waits over --control-stdin, so it runs its own test.
@@ -207,6 +247,13 @@ async function main() {
   const games = (arg('games', Object.keys(GAMES).join(','))).split(',').filter(Boolean);
   for (const g of games) if (!GAMES[g]) throw new Error(`unknown game ${g}; --list`);
   const ARMS = { off: ['--branch-clock'], uop: ['--branch-clock', '--uop'], base: [] };
+  // fold / uopfold: the same two arms with the semantic x87 folds armed. The
+  // uop tier does not lower x87, and Heroes III keeps its x87 on a guest
+  // thread the tier barely touches, so the fold is the x87 lever to A/B there.
+  // (Arm names lose trailing digits to the off2/uop2 null-band convention, so
+  // not "x87".)
+  ARMS.fold = [...ARMS.off, '--x87-fusion'];
+  ARMS.uopfold = [...ARMS.uop, '--x87-fusion'];
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another
   // prebuilt module, so an engine change is measured against its predecessor
   // in one sweep on one box.

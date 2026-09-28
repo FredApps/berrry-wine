@@ -32,6 +32,10 @@
     (local.set $tls_rva (i32.load (i32.add (local.get $pe_off) (i32.const 192))))
     ;; Resource directory RVA = data directory entry 2 (offset 136 in optional header)
     (global.set $rsrc_rva (i32.load (i32.add (local.get $pe_off) (i32.const 136))))
+    ;; Export directory = data directory entry 0 (offset 120). Usually zero; a
+    ;; game whose engine lives in the EXE and whose DLLs import back out of it
+    ;; needs this to resolve those imports.
+    (global.set $exe_export_rva (i32.load (i32.add (local.get $pe_off) (i32.const 120))))
 
     ;; Store SizeOfImage for DLL loader
     (global.set $exe_size_of_image (i32.load (i32.add (local.get $pe_off) (i32.const 80))))

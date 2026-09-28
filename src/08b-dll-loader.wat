@@ -794,6 +794,105 @@
       (local.set $desc_ptr (i32.add (local.get $desc_ptr) (i32.const 20)))
       (br $dl))))
 
+  ;; Resolve an export straight out of a mapped image's export directory,
+  ;; without a DLL_TABLE entry behind it. The running EXE is the case this
+  ;; exists for: an EXE can export, and a DLL that ships with it can import
+  ;; from it. Warcraft III's Game.dll does exactly that — 460 of its imports
+  ;; are ordinals into War3Demo.exe, which exports 695 functions — and the EXE
+  ;; is not in DLL_TABLE, so $resolve_ordinal cannot see it.
+  ;;
+  ;; Pass $name_wa = 0 for an ordinal import; otherwise $ordinal is ignored.
+  ;; Returns the guest address, or 0 when the export is absent.
+  (func $resolve_image_export
+    (param $base i32) (param $exp_rva i32) (param $ordinal i32) (param $name_wa i32)
+    (result i32)
+    (local $exp_wa i32) (local $idx i32) (local $aof_rva i32) (local $aon_rva i32)
+    (local $ano_rva i32) (local $num_names i32) (local $i i32) (local $name_rva i32)
+    (local $func_rva i32) (local $found i32)
+    (if (i32.eqz (local.get $exp_rva)) (then (return (i32.const 0))))
+    (local.set $exp_wa (call $g2w (i32.add (local.get $base) (local.get $exp_rva))))
+    (local.set $aof_rva (i32.load (i32.add (local.get $exp_wa) (i32.const 28))))
+    (if (local.get $name_wa)
+      (then
+        (local.set $aon_rva (i32.load (i32.add (local.get $exp_wa) (i32.const 32))))
+        (local.set $ano_rva (i32.load (i32.add (local.get $exp_wa) (i32.const 36))))
+        (local.set $num_names (i32.load (i32.add (local.get $exp_wa) (i32.const 24))))
+        (block $done (loop $search
+          (br_if $done (i32.ge_u (local.get $i) (local.get $num_names)))
+          (local.set $name_rva (i32.load (call $g2w (i32.add (local.get $base)
+            (i32.add (local.get $aon_rva) (i32.shl (local.get $i) (i32.const 2)))))))
+          (if (call $str_eq (local.get $name_wa)
+                (call $g2w (i32.add (local.get $base) (local.get $name_rva))))
+            (then
+              (local.set $idx (i32.load16_u (call $g2w (i32.add (local.get $base)
+                (i32.add (local.get $ano_rva) (i32.shl (local.get $i) (i32.const 1)))))))
+              (local.set $found (i32.const 1))
+              (br $done)))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $search)))
+        (if (i32.eqz (local.get $found)) (then (return (i32.const 0)))))
+      (else
+        (local.set $idx (i32.sub (local.get $ordinal)
+          (i32.load (i32.add (local.get $exp_wa) (i32.const 16)))))
+        (if (i32.or (i32.lt_s (local.get $idx) (i32.const 0))
+                    (i32.ge_u (local.get $idx)
+                              (i32.load (i32.add (local.get $exp_wa) (i32.const 20)))))
+          (then (return (i32.const 0))))))
+    (local.set $func_rva (i32.load (call $g2w (i32.add (local.get $base)
+      (i32.add (local.get $aof_rva) (i32.shl (local.get $idx) (i32.const 2)))))))
+    (if (result i32) (i32.eqz (local.get $func_rva))
+      (then (i32.const 0))
+      (else (i32.add (local.get $base) (local.get $func_rva)))))
+
+  ;; Patch one import descriptor of $caller_base against a mapped image that is
+  ;; not a loaded DLL — the EXE. Same walk as $patch_caller_iat, but every
+  ;; entry resolves through the provider's own export directory: an unresolved
+  ;; entry is left alone so it keeps whatever the API-thunk pass put there and
+  ;; still fails loudly if it is called.
+  (func $patch_caller_iat_image (export "patch_caller_iat_image")
+    (param $caller_base i32) (param $caller_import_rva i32)
+    (param $target_dll_name_ptr i32)
+    (param $provider_base i32) (param $provider_export_rva i32)
+    (result i32)
+    (local $desc_ptr i32) (local $ilt_rva i32) (local $iat_rva i32)
+    (local $dll_name_rva i32) (local $ilt_ptr i32) (local $iat_ptr i32)
+    (local $entry i32) (local $resolved i32) (local $patched i32)
+    (local.set $desc_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $caller_import_rva))))
+    (block $id (loop $dl
+      (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
+      (br_if $id (i32.eqz (local.get $ilt_rva)))
+      (local.set $dll_name_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 12))))
+      (if (call $dll_name_match
+            (i32.add (local.get $caller_base) (local.get $dll_name_rva))
+            (call $g2w (local.get $target_dll_name_ptr)))
+        (then
+          (local.set $ilt_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $ilt_rva))))
+          (local.set $iat_rva (i32.load (i32.add (local.get $desc_ptr) (i32.const 16))))
+          (local.set $iat_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $iat_rva))))
+          (block $fd (loop $fl
+            (local.set $entry (i32.load (local.get $ilt_ptr)))
+            (br_if $fd (i32.eqz (local.get $entry)))
+            (if (i32.and (local.get $entry) (i32.const 0x80000000))
+              (then
+                (local.set $resolved (call $resolve_image_export
+                  (local.get $provider_base) (local.get $provider_export_rva)
+                  (i32.and (local.get $entry) (i32.const 0xFFFF)) (i32.const 0))))
+              (else
+                (local.set $resolved (call $resolve_image_export
+                  (local.get $provider_base) (local.get $provider_export_rva) (i32.const 0)
+                  (call $g2w (i32.add (local.get $caller_base)
+                                      (i32.add (local.get $entry) (i32.const 2))))))))
+            (if (local.get $resolved)
+              (then
+                (i32.store (local.get $iat_ptr) (local.get $resolved))
+                (local.set $patched (i32.add (local.get $patched) (i32.const 1)))))
+            (local.set $ilt_ptr (i32.add (local.get $ilt_ptr) (i32.const 4)))
+            (local.set $iat_ptr (i32.add (local.get $iat_ptr) (i32.const 4)))
+            (br $fl)))))
+      (local.set $desc_ptr (i32.add (local.get $desc_ptr) (i32.const 20)))
+      (br $dl)))
+    (local.get $patched))
+
   ;; Get next available DLL load address (page-aligned after last DLL AND after heap)
   ;; Named as well as exported: WAT-side callers load DLLs too. The WinHelp
   ;; engine loads a help file's own DLL when a registered macro is called,
@@ -822,5 +921,6 @@
       (else (local.get $after_dll))))
 
   (func (export "get_exe_size_of_image") (result i32) (global.get $exe_size_of_image))
+  (func (export "get_exe_export_rva") (result i32) (global.get $exe_export_rva))
   (func (export "get_dll_count") (result i32) (global.get $dll_count))
   (func (export "get_dll_capacity") (result i32) (global.get $DLL_TABLE_CAPACITY))
