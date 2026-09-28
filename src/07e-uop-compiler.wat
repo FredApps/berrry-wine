@@ -1098,6 +1098,8 @@
 
   ;; Decode everything reachable from the head within SPAN, and keep what can
   ;; reach the head again, in address order rotated so the head is first.
+  ;; 1 while $uc_lower_head retries a head with calls as the region's edge.
+  (global $uc_nocall (mut i32) (i32.const 0))
   (func $uc_form_loop (param $head i32) (result i32)
     (local $sp i32) (local $a i32) (local $R i32) (local $k i32) (local $j i32)
     (local $s i32) (local $n i32) (local $x i32) (local $changed i32) (local $S i32)
@@ -1117,6 +1119,8 @@
       (call $uc_decode (local.get $a) (local.get $R))
       (call $uc_hm_put (global.get $UC_HM_INSN) (i64.extend_i32_u (local.get $a)) (local.get $R))
       (global.set $uc_ninsn (i32.add (global.get $uc_ninsn) (i32.const 1)))
+      (if (i32.and (global.get $uc_nocall) (i32.eq (call $uc_kind (local.get $R)) (i32.const 23)))
+        (then (call $uc_unsup (local.get $R))))
       (br_if $l (i32.eqz (call $uc_kind (local.get $R))))
       ;; a call: its callee is near code too, and the return address is
       ;; where the callee's ret goes ($uc_ret_targets)
@@ -3206,9 +3210,22 @@
     (local $err i32)
     (if (i32.eqz (global.get $uc_ready)) (then (call $uc_init)))
     (global.set $uc_err (i32.const 0))
+    (global.set $uc_nocall (i32.const 0))
     (local.set $err (call $uc_form_loop (local.get $eip)))
     (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_lower))))
     (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_encode_prepare))))
+    ;; Following calls grows the region by every callee's body, which can
+    ;; cost a loop that compiled without them (scan limit, loop size, a
+    ;; callee the lowering declines). Once more with calls as the region's
+    ;; edge, so following them never loses a head.
+    (if (i32.and (i32.ne (local.get $err) (i32.const 0))
+                 (i32.ne (i32.load (global.get $UC_CALLT)) (i32.const 0)))
+      (then
+        (global.set $uc_nocall (i32.const 1))
+        (global.set $uc_err (i32.const 0))
+        (local.set $err (call $uc_form_loop (local.get $eip)))
+        (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_lower))))
+        (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_encode_prepare))))))
     (local.get $err))
 
   (func $uc_decline (param $why i32) (result i32)
