@@ -143,6 +143,20 @@ function driveWorkerLoop(h) {
     assert.deepStrictEqual(h.log.uploads, [6, 8, 9, 10, 11, 12],
       'one upload per slice when every slice spans a display frame');
 
+    // ---- a due frame held back by a locked surface keeps the chain ----------
+    {
+      const upload = h.wine._presentDxIfDirty;
+      h.wine._presentDxIfDirty = paced => { h.wine._dxLockDeferred = true; return 0; };
+      h.present();
+      h.fireRaf();
+      await loop.finishSlice({ presents: 0 });
+      assert.strictEqual(h.rafQueue.size, 1, 'a lock-deferred due frame re-arms for the next slice');
+      h.wine._presentDxIfDirty = upload;
+      h.fireRaf();
+      await loop.finishSlice({ presents: 0 });
+      assert.deepStrictEqual(h.log.uploads.slice(-1), [13], 'and is published one slice later');
+    }
+
     // ---- idle: the chain stops -----------------------------------------------
     h.fireRaf();
     await loop.finishSlice({ presents: 0 });
@@ -155,7 +169,7 @@ function driveWorkerLoop(h) {
     assert.strictEqual(h.rafQueue.size, 1, 'a dirty boundary armed a rAF');
     h.wine.renderer.endWorkerGuestSlice();
     try { h.wine.stop({ repaint: false }); } catch (_) {}
-    assert.deepStrictEqual(h.log.uploads, [6, 8, 9, 10, 11, 12, 13], 'stop() puts the final frame on the canvas');
+    assert.deepStrictEqual(h.log.uploads, [6, 8, 9, 10, 11, 12, 13, 14], 'stop() puts the final frame on the canvas');
     assert.strictEqual(h.rafQueue.size, 0, 'stop() drops the pending rAF (it would hold the host alive)');
   }
 

@@ -4647,8 +4647,10 @@ class WineAssembly {
       // rAF armed only at the NEXT boundary fires one slice later, so a guest
       // whose slices are longer than a display frame got an upload at every
       // other boundary (dx_donuts, Worker: 26.7 -> 13.8 uploads/s). An idle
-      // guest stops the chain: its due frame moves nothing.
-      if (this._presentNow()) this._queuePresentFrame();
+      // guest stops the chain: its due frame moves nothing. A surface still
+      // locked mid-write keeps it going, as the rAF path does, so the retry
+      // lands in the next slice rather than the one after.
+      if (this._presentNow() || this._dxLockDeferred) this._queuePresentFrame();
       return;
     }
     if (this._presentWanted()) this._queuePresentFrame();
