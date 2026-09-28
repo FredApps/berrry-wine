@@ -223,6 +223,14 @@
             (global.set $createwnd_implicit_show (i32.const 0))
             (global.set $show_window_activated (i32.const 1))
             (global.set $active_hwnd (global.get $main_hwnd))
+            ;; Publish the desktop activation too, exactly as the explicit
+            ;; first ShowWindow does. The host's foreground is the accepted
+            ;; activation, not the top of the z-order, so without this an app
+            ;; created WS_VISIBLE has no foreground window at all: Dungeon
+            ;; Keeper's WM_ACTIVATEAPP compares GetForegroundWindow() against
+            ;; its own HWND, never marks itself active, and parks on a black
+            ;; screen after the Bullfrog logo.
+            (drop (call $host_activate_window (global.get $main_hwnd)))
             (local.set $arg0 (call $wnd_table_get (global.get $main_hwnd)))
             ;; A CreateDialogParamA top-level can retain USER's dialog marker
             ;; when no framework CBT hook subclasses it.  Run the same safe
