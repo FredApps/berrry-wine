@@ -121,6 +121,10 @@
   ;;   60 EXTH d a                            d = (a >> 8) & 0xFF
   ;;   61 SLT d a b                           d = a <s b
   ;;   62 GOTO t                              jump without spending a block
+  ;;   63 EXITB eip                           end the batch at eip
+  ;;   64 BNZL a t                            branch if a != 0, no block spent
+  ;;   65 SETSS i                             flag_sign_shift = i
+  ;;   66 GETCC d cc                          d = $eval_cc(cc) of the globals
 
   ;; The main thread's arena. Each guest thread is its own instance over the
   ;; shared memory and a program names its instance's $reg_base, so every
@@ -179,6 +183,9 @@
   ;;   7 marker     head, 0, 0, 0                (declined or poor, at exit)
   ;;   8 hot table  takeovers, warm takeovers (count >= 16), threshold probes, 0
   ;;                (at exit; the 512-slot $bx_hot_bump table)
+  ;;   9 unsup      head, opcode signature (07e $uc_sig), its address, reason
+  ;;                (before the kind-1 record of a scan-limit, head-unsupported
+  ;;                or no-backedge decline: each unsupported insn the scan hit)
   (global $uop_census (mut i32) (i32.const 0))
   (func $uop_census_ev (param $k i32) (param $a i32) (param $b i32) (param $c i32) (param $d i32)
     (call $host_log_i32 (i32.or (i32.const 0xC5E50000) (local.get $k)))
@@ -349,6 +356,11 @@
         (then
           (i32.store (i32.load offset=4 (local.get $pc)) (call $get_cf))
           (local.set $pc (i32.add (local.get $pc) (i32.const 8))) (br $L)))
+      ;; 66 GETCC d cc
+      (if (i32.eq (local.get $op) (i32.const 66))
+        (then
+          (i32.store (i32.load offset=4 (local.get $pc)) (call $eval_cc (i32.load offset=8 (local.get $pc))))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 12))) (br $L)))
       ;; 57 BCC cc t
       (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))
       (local.set $pc
@@ -362,7 +374,7 @@
     (loop $L
       (block $svc
       (block $miss
-      (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
+      (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
       (block $c55 (block $c54 (block $c53 (block $c52 (block $c51 (block $c50
       (block $c49 (block $c48 (block $c47 (block $c46 (block $c45 (block $c44
       (block $c43 (block $c42 (block $c41 (block $c40 (block $c39 (block $c38
@@ -377,6 +389,7 @@
                   $c26 $c27 $c28 $c29 $c30 $c31 $c32 $c33 $c34 $c35 $c36 $c37
                   $c38 $c39 $c40 $c41 $c42 $c43 $c44 $c45 $c46 $c47 $c48 $c49
                   $c50 $c51 $c52 $c53 $c54 $c55 $c56 $c57 $c58 $c59 $c60 $c61 $c62 $c63
+                  $c64 $c65 $c66
                   $c0
                   (i32.load (local.get $pc))))
         ;; 0 EXIT eip
@@ -809,6 +822,19 @@
         (global.set $uop_io_kind (i32.const 0))
         (global.set $uop_io_budget (i32.const 0))
         (return (local.get $pc)))
+        ;; 64 BNZL a t -- a layout branch inside one instruction: no x86
+        ;; transfer, no block spent
+        (local.set $pc
+          (select (i32.load offset=8 (local.get $pc)) (i32.add (local.get $pc) (i32.const 12))
+                  (i32.load (i32.load offset=4 (local.get $pc)))))
+        (br $L))
+        ;; 65 SETSS i -- flag_sign_shift = i (the 8/16-bit shift handlers set it
+        ;; even when a count of 0 leaves the rest of the record alone)
+        (global.set $flag_sign_shift (i32.load offset=4 (local.get $pc)))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 8)))
+        (br $L))
+        ;; 66 GETCC d cc -- calls $eval_cc: $uop_run does it
+        (br $svc))
       ;; A memory access left its window: $uop_run re-guards (a call).
       (global.set $uop_io_ga (local.get $ga))
       (global.set $uop_io_w (local.get $w))

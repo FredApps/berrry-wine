@@ -56,6 +56,49 @@ const REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-backedge
 const why = r => r === 0 ? 'installed' : r === 0xFFFF ? 'busy' : (REASONS[r] || `reason${r}`);
 const hex = v => '0x' + (v >>> 0).toString(16);
 
+// 07e $uc_sig: op | 0F-byte<<8 | ModRM.reg<<16 | prefix<<20 | o16<<28.
+const GRP = {
+  0x80: ['add', 'or', 'adc', 'sbb', 'and', 'sub', 'xor', 'cmp'], 0xC0: ['rol', 'ror', 'rcl', 'rcr', 'shl', 'shr', 'sal', 'sar'],
+  0xF6: ['test', 'test', 'not', 'neg', 'mul', 'imul', 'div', 'idiv'], 0xFE: ['inc', 'dec', 'call', 'callf', 'jmp', 'jmpf', 'push', '?'],
+};
+const GRPOF = { 0x80: 0x80, 0x81: 0x80, 0x83: 0x80, 0xC0: 0xC0, 0xC1: 0xC0, 0xD0: 0xC0, 0xD1: 0xC0, 0xD2: 0xC0, 0xD3: 0xC0,
+  0xF6: 0xF6, 0xF7: 0xF6, 0xFE: 0xFE, 0xFF: 0xFE };
+const ONE = {
+  0x10: 'adc', 0x11: 'adc', 0x12: 'adc', 0x13: 'adc', 0x14: 'adc', 0x15: 'adc', 0x18: 'sbb', 0x19: 'sbb', 0x1A: 'sbb',
+  0x1B: 'sbb', 0x1C: 'sbb', 0x1D: 'sbb', 0x68: 'push imm', 0x6A: 'push imm8', 0x8F: 'pop r/m', 0xA4: 'movsb', 0xA5: 'movsd',
+  0xA6: 'cmpsb', 0xA7: 'cmpsd', 0xAA: 'stosb', 0xAB: 'stosd', 0xAC: 'lodsb', 0xAD: 'lodsd', 0xAE: 'scasb', 0xAF: 'scasd',
+  0xC2: 'ret imm', 0xC3: 'ret', 0xE8: 'call', 0xC9: 'leave', 0xCC: 'int3', 0x9C: 'pushf', 0x9D: 'popf', 0xA0: 'mov al,moffs',
+  0xA1: 'mov eax,moffs', 0xA2: 'mov moffs,al', 0xA3: 'mov moffs,eax', 0xE3: 'jecxz', 0xE2: 'loop', 0xE0: 'loopne', 0xE1: 'loope',
+  0x86: 'xchg r/m8', 0x87: 'xchg r/m', 0x6B: 'imul r,imm8', 0x69: 'imul r,imm', 0xC6: 'mov r/m8,imm', 0xC7: 'mov r/m,imm',
+  0x8A: 'mov r8,r/m8', 0x8B: 'mov r,r/m', 0x88: 'mov r/m8,r8', 0x89: 'mov r/m,r', 0x8D: 'lea', 0xE9: 'jmp rel32', 0xEB: 'jmp rel8',
+  0x98: 'cwde', 0x99: 'cdq', 0xF5: 'cmc', 0xF8: 'clc', 0xF9: 'stc', 0xFC: 'cld', 0xFD: 'std', 0xD7: 'xlat', 0x9E: 'sahf', 0x9F: 'lahf',
+  0x0F: '0f', 0x27: 'daa', 0x2F: 'das', 0x37: 'aaa', 0x3F: 'aas',
+};
+function sigName(sig) {
+  const op = sig & 0xFF, b2 = (sig >>> 8) & 0xFF, reg = (sig >>> 16) & 7, pfx = (sig >>> 20) & 0xFF, o16 = (sig >>> 28) & 1;
+  let n;
+  if (op === 0x0F) {
+    if (b2 >= 0x90 && b2 <= 0x9F) n = 'setcc';
+    else if (b2 >= 0x40 && b2 <= 0x4F) n = 'cmovcc';
+    else if (b2 >= 0x80 && b2 <= 0x8F) n = 'jcc rel32';
+    else n = ({ 0xA3: 'bt', 0xAB: 'bts', 0xB3: 'btr', 0xBB: 'btc', 0xBA: `bt* imm /${reg}`, 0xA4: 'shld imm', 0xA5: 'shld cl',
+      0xAC: 'shrd imm', 0xAD: 'shrd cl', 0xAF: 'imul r,r/m', 0xB6: 'movzx8', 0xB7: 'movzx16', 0xBE: 'movsx8', 0xBF: 'movsx16',
+      0xC8: 'bswap', 0xC9: 'bswap', 0xCA: 'bswap', 0xCB: 'bswap', 0xCC: 'bswap', 0xCD: 'bswap', 0xCE: 'bswap', 0xCF: 'bswap',
+      0xBC: 'bsf', 0xBD: 'bsr', 0xB1: 'cmpxchg', 0xC1: 'xadd', 0x31: 'rdtsc', 0xA2: 'cpuid' })[b2] || `0f ${b2.toString(16)}`;
+    if (b2 >= 0x60 && b2 <= 0x7F || b2 >= 0xD0) n = `mmx/sse 0f ${b2.toString(16)}`;
+  } else if (GRPOF[op] !== undefined) {
+    const g = GRPOF[op];
+    n = GRP[g][reg] + (op === 0xD2 || op === 0xD3 ? ' cl' : op === 0xD0 || op === 0xD1 ? ' 1' : '');
+    n += (op & 1) || op === 0x83 ? '' : '8';
+  } else if (op >= 0xD8 && op <= 0xDF) n = `x87 ${op.toString(16)}/${reg}`;
+  else if (op >= 0x50 && op <= 0x57) n = 'push r';
+  else if (op >= 0x58 && op <= 0x5F) n = 'pop r';
+  else if (op >= 0x70 && op <= 0x7F) n = 'jcc rel8';
+  else n = ONE[op] || `op ${op.toString(16)}`;
+  const p = pfx === 0xF3 ? 'rep ' : pfx === 0xF2 ? 'repne ' : pfx === 0xF0 ? 'lock ' : pfx ? `pfx${pfx.toString(16)} ` : '';
+  return p + n + (o16 ? ' (o16)' : '');
+}
+
 // ---- read the records ------------------------------------------------------
 // Other LOG_I32 users share the channel, so a record is a marker followed by
 // exactly four more values; anything else is skipped.
@@ -73,7 +116,7 @@ const recs = [];
 for (let i = 0; i + 4 < vals.length; i++) {
   if ((vals[i] & 0xFFFF0000) >>> 0 !== 0xC5E50000) continue;
   const k = vals[i] & 0xFFFF;
-  if (k < 1 || k > 8) continue;
+  if (k < 1 || k > 9) continue;
   recs.push({ k, a: vals[i + 1], b: vals[i + 2], c: vals[i + 3], d: vals[i + 4] });
   i += 4;
 }
@@ -87,7 +130,7 @@ const heads = new Map();
 const head = eip => {
   let h = heads.get(eip);
   if (!h) heads.set(eip, h = { eip, compiles: 0, installs: 0, declines: {}, busy: 0,
-    poor: [], writes: 0, live: null, marker: false, last: null, insns: 0 });
+    poor: [], writes: 0, live: null, marker: false, last: null, insns: 0, unsup: new Map() });
   return h;
 };
 let flushes = 0, flushAll = 0;
@@ -114,6 +157,9 @@ for (const r of recs) {
     head(r.a).marker = true;
   } else if (r.k === 8) {
     hotTable = { takeovers: r.a, warm: r.b, probes: r.c };
+  } else if (r.k === 9) {
+    // an unsupported instruction the scan hit before declining (07e $uc_census_unsup)
+    head(r.a).unsup.set(r.c, { sig: r.b, why: r.d });
   }
 }
 const all = [...heads.values()];
@@ -189,6 +235,46 @@ for (const h of all) for (const [w, n] of Object.entries(h.declines)) {
 say('declines (distinct heads / events):');
 for (const [w, v] of Object.entries(byWhy).sort((a, b) => b[1].heads - a[1].heads)) {
   say(`  ${w.padEnd(20)} ${String(v.heads).padStart(7)} / ${v.events}`);
+}
+// What cut the scan: each unsupported instruction a declined head's scan hit,
+// by opcode form. With --hist a head weighs its threaded block entries in the
+// window (hotness), else 1. Head-unsupported names the head's own instruction.
+{
+  const byForm = new Map();
+  const add = (form, why, w, h, a) => {
+    let e = byForm.get(form);
+    if (!e) byForm.set(form, e = { heads: 0, w3: 0, w4: 0, w1: 0, hw: 0, ex: [] });
+    e.heads++; e.hw += w;
+    if (why === 3) e.w3 += w; else if (why === 4) e.w4 += w; else e.w1 += w;
+    if (e.ex.length < 3) e.ex.push(a);
+  };
+  let hitsOf = () => 1;
+  if (flag('hist', null)) {
+    const hm = new Map(readHist(flag('hist', null)).blocks.map(([hx, n]) => [parseInt(hx, 16) >>> 0, n]));
+    hitsOf = e => hm.get(e) || 0;
+  }
+  let any = false;
+  for (const h of all) {
+    if (!h.unsup.size) continue;
+    any = true;
+    // a head counts once per form, however many instances its scan hit
+    const seen = new Set();
+    for (const [a, u] of h.unsup) {
+      const f = sigName(u.sig);
+      if (seen.has(f)) continue;
+      seen.add(f);
+      add(f, u.why, hitsOf(h.eip), h, a);
+    }
+  }
+  if (any) {
+    const W = flag('hist', null) ? 'block entries at the head' : 'heads';
+    say(`unsupported instructions in declined scans, by form (weight = ${W}; hu = head-unsupported, nb = no-backedge):`);
+    const rowsU = [...byForm.entries()].sort((a, b) => b[1].hw - a[1].hw || b[1].heads - a[1].heads);
+    for (const [f, e] of rowsU.slice(0, TOP)) {
+      say(`  ${f.padEnd(24)} heads=${String(e.heads).padStart(5)}  w=${String(e.hw).padStart(10)}  ` +
+        `hu=${e.w3} nb=${e.w4} scan=${e.w1}  e.g. ${e.ex.map(where).join(' ')}`);
+    }
+  }
 }
 const recompile = {};
 for (const h of all) if (h.compiles) recompile[Math.min(h.compiles, 10)] = (recompile[Math.min(h.compiles, 10)] || 0) + 1;

@@ -40,9 +40,10 @@
   ;; Operand: +0 t (0 none, 1 reg, 2 mem, 3 imm)  +4 r | base  +8 part | idx
   ;;   +12 sc  +16 imm | disp  +20 w.  part: 0 d, 1 w, 2 l, 3 h.
   ;; Kinds: 0 unsup 1 alu 2 inc 3 dec 4 test 5 mov 6 lea 7 nop 8 xchg 9 cwde
-  ;;   10 cdq 11 shift 12 not 13 neg 14 imul 15 jcc 16 jmp 17 movx.
+  ;;   10 cdq 11 shift 12 not 13 neg 14 imul 15 jcc 16 jmp 17 movx
+  ;;   18 shift-by-cl 19 setcc (+20 cc) 20 sbb (32-bit only).
   ;; ALU op: 0 add 1 or 2 adc 3 sbb 4 and 5 sub 6 xor 7 cmp; shift op:
-  ;;   0 shl 1 shr 2 sar.
+  ;;   0 shl 1 shr 2 sar 3 rol 4 ror (rol/ror only by immediate, kind 11).
   ;; flags: 1 in loop, 2 leader, 4 seam, 8 flags live in, 16 cut, 32 back.
   ;;
   ;; A flag state is (m, md, c, cd): m = where the full lazy flag record
@@ -125,6 +126,8 @@
   ;; the deopt context of the instruction being lowered: its accesses exit to
   ;; a stub that re-executes it in this state
   (global $uc_x_eip (mut i32) (i32.const 0))
+  ;; label kind 7: a forward label inside one instruction's lowering
+  (global $uc_nlocal (mut i32) (i32.const 0))
   (global $uc_x_m   (mut i32) (i32.const 0))
   (global $uc_x_md  (mut i32) (i32.const 0))
   (global $uc_x_c   (mut i32) (i32.const 0))
@@ -364,27 +367,34 @@
                  (i32.lt_u (i32.and (local.get $b) (i32.const 7)) (i32.const 6)))
       (then
         (local.set $op (i32.shr_u (local.get $b) (i32.const 3)))
-        (if (i32.or (i32.eq (local.get $op) (i32.const 2)) (i32.eq (local.get $op) (i32.const 3)))
+        (if (i32.eq (local.get $op) (i32.const 2))
           (then (call $uc_unsup (local.get $R)) (return)))
         (i32.store offset=12 (local.get $R) (local.get $op))
         (local.set $form (i32.and (local.get $b) (i32.const 7)))
         (if (i32.lt_u (local.get $form) (i32.const 4))
           (then
             (local.set $w (select (local.get $v) (i32.const 8) (i32.and (local.get $form) (i32.const 1))))
+            ;; sbb: 32-bit only (kind 20)
+            (if (i32.and (i32.eq (local.get $op) (i32.const 3)) (i32.ne (local.get $w) (i32.const 32)))
+              (then (call $uc_unsup (local.get $R)) (return)))
             (if (i32.lt_u (local.get $form) (i32.const 2))
               (then (local.set $e (call $uc_modrm (local.get $p) (local.get $w) (local.get $O0)))
                     (call $uc_opr (local.get $O1) (global.get $uc_mr_reg) (local.get $w)))
               (else (local.set $e (call $uc_modrm (local.get $p) (local.get $w) (local.get $O1)))
                     (call $uc_opr (local.get $O0) (global.get $uc_mr_reg) (local.get $w))))
             (i32.store offset=16 (local.get $R) (local.get $w))
-            (call $uc_fin (local.get $R) (i32.const 1) (local.get $e))
+            (call $uc_fin (local.get $R) (select (i32.const 20) (i32.const 1) (i32.eq (local.get $op) (i32.const 3)))
+                          (local.get $e))
             (return)))
         (local.set $w (select (i32.const 8) (local.get $v) (i32.eq (local.get $form) (i32.const 4))))
+        (if (i32.and (i32.eq (local.get $op) (i32.const 3)) (i32.ne (local.get $w) (i32.const 32)))
+          (then (call $uc_unsup (local.get $R)) (return)))
         (local.set $n (call $uc_imm (local.get $p) (local.get $w)))
         (call $uc_opr (local.get $O0) (i32.const 0) (local.get $w))
         (call $uc_opi (local.get $O1) (global.get $uc_imm_v))
         (i32.store offset=16 (local.get $R) (local.get $w))
-        (call $uc_fin (local.get $R) (i32.const 1) (i32.add (local.get $p) (local.get $n)))
+        (call $uc_fin (local.get $R) (select (i32.const 20) (i32.const 1) (i32.eq (local.get $op) (i32.const 3)))
+                      (i32.add (local.get $p) (local.get $n)))
         (return)))
     ;; inc/dec r
     (if (i32.and (i32.ge_u (local.get $b) (i32.const 0x40)) (i32.le_u (local.get $b) (i32.const 0x4F)))
@@ -401,14 +411,16 @@
         (local.set $w (select (i32.const 8) (local.get $v) (i32.eq (local.get $b) (i32.const 0x80))))
         (local.set $e (call $uc_modrm (local.get $p) (local.get $w) (local.get $O0)))
         (local.set $op (global.get $uc_mr_reg))
-        (if (i32.or (i32.eq (local.get $op) (i32.const 2)) (i32.eq (local.get $op) (i32.const 3)))
+        (if (i32.or (i32.eq (local.get $op) (i32.const 2))
+                    (i32.and (i32.eq (local.get $op) (i32.const 3)) (i32.ne (local.get $w) (i32.const 32))))
           (then (call $uc_unsup (local.get $R)) (return)))
         (local.set $n (call $uc_imm (local.get $e)
           (select (local.get $v) (i32.const 8) (i32.eq (local.get $b) (i32.const 0x81)))))
         (call $uc_opi (local.get $O1) (global.get $uc_imm_v))
         (i32.store offset=12 (local.get $R) (local.get $op))
         (i32.store offset=16 (local.get $R) (local.get $w))
-        (call $uc_fin (local.get $R) (i32.const 1) (i32.add (local.get $e) (local.get $n)))
+        (call $uc_fin (local.get $R) (select (i32.const 20) (i32.const 1) (i32.eq (local.get $op) (i32.const 3)))
+                      (i32.add (local.get $e) (local.get $n)))
         (return)))
     ;; test r/m, r
     (if (i32.or (i32.eq (local.get $b) (i32.const 0x84)) (i32.eq (local.get $b) (i32.const 0x85)))
@@ -476,6 +488,21 @@
     (if (i32.eq (local.get $b) (i32.const 0x99))
       (then (if (i32.ne (local.get $v) (i32.const 32)) (then (call $uc_unsup (local.get $R)) (return)))
             (call $uc_fin (local.get $R) (i32.const 10) (local.get $p)) (return)))
+    ;; mov al/eax, [moffs] / mov [moffs], al/eax: an absolute disp32 operand
+    (if (i32.and (i32.ge_u (local.get $b) (i32.const 0xA0)) (i32.le_u (local.get $b) (i32.const 0xA3)))
+      (then
+        (local.set $w (select (local.get $v) (i32.const 8) (i32.and (local.get $b) (i32.const 1))))
+        (local.set $e (select (local.get $O1) (local.get $O0) (i32.lt_u (local.get $b) (i32.const 0xA2))))
+        (i32.store (local.get $e) (i32.const 2))
+        (i32.store offset=4 (local.get $e) (i32.const -1))
+        (i32.store offset=8 (local.get $e) (i32.const -1))
+        (i32.store offset=16 (local.get $e) (call $uc_rd32 (local.get $p)))
+        (i32.store offset=20 (local.get $e) (local.get $w))
+        (call $uc_opr (select (local.get $O0) (local.get $O1) (i32.lt_u (local.get $b) (i32.const 0xA2)))
+                      (i32.const 0) (local.get $w))
+        (i32.store offset=16 (local.get $R) (local.get $w))
+        (call $uc_fin (local.get $R) (i32.const 5) (i32.add (local.get $p) (i32.const 4)))
+        (return)))
     ;; mov r8, imm8
     (if (i32.and (i32.ge_u (local.get $b) (i32.const 0xB0)) (i32.le_u (local.get $b) (i32.const 0xB7)))
       (then
@@ -504,9 +531,10 @@
         (i32.store offset=16 (local.get $R) (local.get $w))
         (call $uc_fin (local.get $R) (i32.const 5) (i32.add (local.get $e) (local.get $n)))
         (return)))
-    ;; shifts by an immediate / by one
-    (if (i32.or (i32.or (i32.eq (local.get $b) (i32.const 0xC0)) (i32.eq (local.get $b) (i32.const 0xC1)))
-                (i32.or (i32.eq (local.get $b) (i32.const 0xD0)) (i32.eq (local.get $b) (i32.const 0xD1))))
+    ;; shifts and rotates by an immediate / by one; shifts by CL (kind 18)
+    (if (i32.or (i32.or (i32.or (i32.eq (local.get $b) (i32.const 0xC0)) (i32.eq (local.get $b) (i32.const 0xC1)))
+                        (i32.or (i32.eq (local.get $b) (i32.const 0xD0)) (i32.eq (local.get $b) (i32.const 0xD1))))
+                (i32.or (i32.eq (local.get $b) (i32.const 0xD2)) (i32.eq (local.get $b) (i32.const 0xD3))))
       (then
         (local.set $w (select (local.get $v) (i32.const 8) (i32.and (local.get $b) (i32.const 1))))
         (local.set $e (call $uc_modrm (local.get $p) (local.get $w) (local.get $O0)))
@@ -516,11 +544,27 @@
           (then (local.set $op (i32.const 0))))
         (if (i32.eq (local.get $reg) (i32.const 5)) (then (local.set $op (i32.const 1))))
         (if (i32.eq (local.get $reg) (i32.const 7)) (then (local.set $op (i32.const 2))))
+        ;; rol / ror (3 / 4): by an immediate only
+        (if (i32.le_u (local.get $b) (i32.const 0xD1))
+          (then
+            (if (i32.eqz (local.get $reg)) (then (local.set $op (i32.const 3))))
+            (if (i32.eq (local.get $reg) (i32.const 1)) (then (local.set $op (i32.const 4))))))
         (if (i32.lt_s (local.get $op) (i32.const 0)) (then (call $uc_unsup (local.get $R)) (return)))
+        (if (i32.ge_u (local.get $b) (i32.const 0xD2))
+          (then
+            ;; The count is CL: the program deopts on a count of 0 (flags
+            ;; untouched) or, below 32 bits, one of w or more.
+            (i32.store offset=12 (local.get $R) (local.get $op))
+            (i32.store offset=16 (local.get $R) (local.get $w))
+            (call $uc_fin (local.get $R) (i32.const 18) (local.get $e))
+            (return)))
         (local.set $n (i32.const 1))
         (if (i32.le_u (local.get $b) (i32.const 0xC1))
           (then (local.set $n (i32.and (call $uc_rd8 (local.get $e)) (i32.const 31)))
                 (local.set $e (i32.add (local.get $e) (i32.const 1)))))
+        ;; A rotate's count is taken modulo the width ($do_shift).
+        (if (i32.ge_u (local.get $op) (i32.const 3))
+          (then (local.set $n (i32.rem_u (local.get $n) (local.get $w)))))
         (if (i32.or (i32.ge_u (local.get $n) (local.get $w)) (i32.eqz (local.get $n)))
           (then (call $uc_unsup (local.get $R)) (return)))
         (i32.store offset=12 (local.get $R) (local.get $op))
@@ -613,6 +657,14 @@
             (i32.store offset=36 (local.get $R) (i32.ge_u (local.get $b2) (i32.const 0xBE)))
             (call $uc_fin (local.get $R) (i32.const 17) (local.get $e))
             (return)))
+        ;; setcc r/m8
+        (if (i32.and (i32.ge_u (local.get $b2) (i32.const 0x90)) (i32.le_u (local.get $b2) (i32.const 0x9F)))
+          (then
+            (local.set $e (call $uc_modrm (local.get $p) (i32.const 8) (local.get $O0)))
+            (i32.store offset=20 (local.get $R) (i32.and (local.get $b2) (i32.const 15)))
+            (i32.store offset=16 (local.get $R) (i32.const 8))
+            (call $uc_fin (local.get $R) (i32.const 19) (local.get $e))
+            (return)))
         (if (i32.eq (local.get $b2) (i32.const 0xAF))
           (then
             (if (i32.ne (local.get $v) (i32.const 32)) (then (call $uc_unsup (local.get $R)) (return)))
@@ -664,7 +716,10 @@
                         (i32.or (i32.eq (local.get $k) (i32.const 6)) (i32.eq (local.get $k) (i32.const 2))))
                 (i32.or (i32.or (i32.eq (local.get $k) (i32.const 3)) (i32.eq (local.get $k) (i32.const 13)))
                         (i32.or (i32.eq (local.get $k) (i32.const 12))
-                                (i32.or (i32.eq (local.get $k) (i32.const 11)) (i32.eq (local.get $k) (i32.const 14))))))
+                                (i32.or (i32.or (i32.eq (local.get $k) (i32.const 11)) (i32.eq (local.get $k) (i32.const 18)))
+                                        (i32.or (i32.eq (local.get $k) (i32.const 14))
+                                                (i32.or (i32.eq (local.get $k) (i32.const 19))
+                                                        (i32.eq (local.get $k) (i32.const 20))))))))
       (then (return (call $uc_regbit (i32.add (local.get $R) (i32.const 56))))))
     (if (i32.eq (local.get $k) (i32.const 8))
       (then (return (i32.or (call $uc_regbit (i32.add (local.get $R) (i32.const 56)))
@@ -688,15 +743,26 @@
                         (i32.or (i32.eq (local.get $k) (i32.const 12)) (i32.eq (local.get $k) (i32.const 11)))))
       (then (return (local.get $a))))
     (if (i32.eq (local.get $k) (i32.const 14)) (then (return (i32.or (local.get $b) (local.get $c)))))
+    ;; a shift by CL reads the flags it may keep (count 0), setcc and sbb read
+    ;; them outright: for $uc_liveness each is a consumer, like an exit
+    (if (i32.or (i32.eq (local.get $k) (i32.const 18))
+                (i32.or (i32.eq (local.get $k) (i32.const 19)) (i32.eq (local.get $k) (i32.const 20))))
+      (then (return (i32.const 1))))
     (i32.const 0))
 
-  ;; 2 sets every flag, 1 all but CF (inc/dec), 0 none.
+  ;; 2 sets every flag, 1 all but CF (inc/dec), 0 none, 3 leaves the flags
+  ;; in the globals (a shift by CL: a count of 0 keeps the ones it had, so
+  ;; its lowering writes the record either way and the state becomes 'G';
+  ;; sbb likewise, whose record's CF fix-up has no recipe).
   (func $uc_flag_class (param $R i32) (result i32)
     (local $k i32)
     (local.set $k (call $uc_kind (local.get $R)))
+    (if (i32.or (i32.eq (local.get $k) (i32.const 18)) (i32.eq (local.get $k) (i32.const 20)))
+      (then (return (i32.const 3))))
     (if (i32.or (i32.or (i32.eq (local.get $k) (i32.const 1)) (i32.eq (local.get $k) (i32.const 4)))
                 (i32.or (i32.eq (local.get $k) (i32.const 13))
-                        (i32.or (i32.eq (local.get $k) (i32.const 11)) (i32.eq (local.get $k) (i32.const 14)))))
+                        (i32.or (i32.eq (local.get $k) (i32.const 11))
+                                (i32.eq (local.get $k) (i32.const 14)))))
       (then (return (i32.const 2))))
     (if (i32.or (i32.eq (local.get $k) (i32.const 2)) (i32.eq (local.get $k) (i32.const 3)))
       (then (return (i32.const 1))))
@@ -707,6 +773,11 @@
     (local $fc i32) (local $w i32)
     (local.set $fc (call $uc_flag_class (local.get $R)))
     (local.set $w (call $uc_writes (local.get $R)))
+    (if (i32.eq (local.get $fc) (i32.const 3))
+      (then
+        (global.set $uc_sm (global.get $UC_G)) (global.set $uc_smd (i32.const 0))
+        (global.set $uc_sc (global.get $UC_G)) (global.set $uc_scd (i32.const 0))
+        (return)))
     (if (i32.eq (local.get $fc) (i32.const 2))
       (then
         (global.set $uc_sm (i32.load (local.get $R))) (global.set $uc_smd (i32.const 0))
@@ -1222,6 +1293,18 @@
       (br $pl)))
     (i32.const 0))
 
+  ;; Are the flags live after R? (Any exit counts; see $uc_liveness.)
+  (func $uc_live_out (param $R i32) (result i32)
+    (local $j i32) (local $S i32)
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $j) (call $uc_nsucc (local.get $R))))
+      (local.set $S (call $uc_in_loop (call $uc_succ (local.get $R) (local.get $j))))
+      (if (i32.eqz (local.get $S)) (then (return (i32.const 1))))
+      (if (call $uc_flag (local.get $S) (i32.const 8)) (then (return (i32.const 1))))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $l)))
+    (i32.const 0))
+
   ;; ---- flag liveness (per instruction, backward) ----
   ;; Consumers: a Jcc; anything that can exit (a memory access that may
   ;; deopt, a budget check before a charged transfer, seam or cut).
@@ -1467,7 +1550,8 @@
   ;; type (1 number, 2 guest register, 3 temp, 4 pooled constant, 5 code
   ;; label, 6 window slot), bits 32-39 a temp tag or label kind, bits 0-31 the
   ;; value. Label kinds: 1 block of the peeled copy, 2 block of the steady
-  ;; copy, 3/4 their seams, 5 stub, 6 a stub's taken arm.
+  ;; copy, 3/4 their seams, 5 stub, 6 a stub's taken arm, 7 a forward label
+  ;; inside one instruction ($uc_nlocal).
   ;; Item stream: [code, nargs, args (8 bytes each)]; a label is code -1 with
   ;; its key as the one argument.
 
@@ -1689,7 +1773,8 @@
   (func $uc_insn (param $R i32) (result i32)
     (local $k i32) (local $O0 i32) (local $O1 i32) (local $O2 i32) (local $a i32)
     (local $A i32) (local $B i32) (local $v i64) (local $t i64) (local $r32 i32)
-    (local $src i64) (local $w i32) (local $op i32) (local $vx i64) (local $vy i64)
+    (local $src i64) (local $w i32) (local $op i32) (local $vx i64) (local $vy i64) (local $n i32)
+    (local $vl1 i64) (local $vl2 i64)
     (local.set $k (call $uc_kind (local.get $R)))
     (local.set $a (i32.load (local.get $R)))
     (local.set $O0 (i32.add (local.get $R) (i32.const 56)))
@@ -1796,6 +1881,29 @@
         (local.set $w (i32.load offset=16 (local.get $R)))
         (local.set $op (i32.load offset=12 (local.get $R)))
         (local.set $src (call $uc_valof (local.get $A) (local.get $w) (i32.eq (local.get $op) (i32.const 2))))
+        ;; rol (3) / ror (4) by n, 0 < n < w: two shifts and an or. CF is
+        ;; bit 0 of the result for rol and its top bit for ror ($do_shift).
+        (if (i32.ge_u (local.get $op) (i32.const 3))
+          (then
+            (local.set $n (i32.load offset=28 (local.get $R)))
+            (local.set $vx (call $uc_scratch))
+            (local.set $vy (call $uc_scratch))
+            (call $uc_o3 (select (i32.const 10) (i32.const 11) (i32.eq (local.get $op) (i32.const 3)))
+                         (local.get $vx) (local.get $src) (call $uc_aN (local.get $n)))
+            (call $uc_o3 (select (i32.const 11) (i32.const 10) (i32.eq (local.get $op) (i32.const 3)))
+                         (local.get $vy) (local.get $src) (call $uc_aN (i32.sub (local.get $w) (local.get $n))))
+            (local.set $t (call $uc_aT (i32.const 6) (local.get $a)))
+            (call $uc_o3 (i32.const 6) (local.get $t) (local.get $vx) (local.get $vy))
+            (if (call $uc_demand_has (i32.const 2) (i32.const 0) (local.get $a))
+              (then
+                (local.set $v (call $uc_aT (i32.const 8) (local.get $a)))
+                (if (i32.eq (local.get $op) (i32.const 3))
+                  (then (call $uc_o3 (i32.const 9) (local.get $v) (local.get $t) (call $uc_aN (i32.const 1))))
+                  (else
+                    (call $uc_o3 (i32.const 11) (local.get $v) (local.get $t) (call $uc_aN (i32.sub (local.get $w) (i32.const 1))))
+                    (call $uc_o3 (i32.const 9) (local.get $v) (local.get $v) (call $uc_aN (i32.const 1)))))))
+            (call $uc_write (local.get $O0) (local.get $t))
+            (return (i32.const 0))))
         (if (call $uc_demand_has (i32.const 2) (i32.const 0) (local.get $a))
           (then
             (local.set $t (call $uc_aT (i32.const 8) (local.get $a)))
@@ -1811,6 +1919,96 @@
         (call $uc_o3 (select (i32.const 10) (select (i32.const 11) (i32.const 12) (i32.eq (local.get $op) (i32.const 1)))
                              (i32.eqz (local.get $op)))
                      (local.get $t) (local.get $src) (call $uc_aN (i32.load offset=28 (local.get $R))))
+        (call $uc_write (local.get $O0) (local.get $t))
+        (return (i32.const 0))))
+    ;; shl/shr/sar r/m, cl, as $do_shift computes it for every masked count:
+    ;; the engine's shifts mask their count like wasm's, which is what the
+    ;; threaded handler's own i32 shifts do, so a count >= w below 32 bits
+    ;; needs no case of its own. A count of 0 leaves the flags alone: the
+    ;; record is written here either way, the incoming one on that path, and
+    ;; the state after is 'G' ($uc_flag_class 3). Below 32 bits the threaded
+    ;; handler also sets flag_sign_shift to w-1 at count 0 (SETSS). The
+    ;; branches here are layout (BNZL/GOTO): no x86 transfer, no block.
+    (if (i32.eq (local.get $k) (i32.const 18))
+      (then
+        (local.set $w (i32.load offset=16 (local.get $R)))
+        (local.set $op (i32.load offset=12 (local.get $R)))
+        (local.set $vx (call $uc_scratch))
+        (call $uc_o3 (i32.const 9) (local.get $vx) (call $uc_aR (i32.const 1)) (call $uc_aN (i32.const 31)))
+        (local.set $A (call $uc_read (local.get $O0) (local.get $R) (i32.const 1)))
+        (local.set $src (call $uc_valof (local.get $A) (local.get $w) (i32.eq (local.get $op) (i32.const 2))))
+        (local.set $t (call $uc_aT (i32.const 6) (local.get $a)))
+        (call $uc_o3 (i32.add (i32.const 43) (local.get $op)) (local.get $t) (local.get $src) (local.get $vx))
+        (if (call $uc_live_out (local.get $R))
+          (then
+            (local.set $vl1 (call $uc_aL (i32.const 7) (global.get $uc_nlocal)))
+            (local.set $vl2 (call $uc_aL (i32.const 7) (i32.add (global.get $uc_nlocal) (i32.const 1))))
+            (global.set $uc_nlocal (i32.add (global.get $uc_nlocal) (i32.const 2)))
+            (call $uc_o2 (i32.const 64) (local.get $vx) (local.get $vl1))
+            (local.set $n (call $uc_rec (global.get $uc_x_m) (global.get $uc_x_md)
+                                        (global.get $uc_x_c) (global.get $uc_x_cd)))
+            (if (local.get $n) (then (return (local.get $n))))
+            (if (i32.lt_u (local.get $w) (i32.const 32))
+              (then (call $uc_o1 (i32.const 65) (call $uc_aN (i32.sub (local.get $w) (i32.const 1))))))
+            (call $uc_o1 (i32.const 62) (local.get $vl2))
+            (call $uc_label (local.get $vl1))
+            ;; CF: shl bit (w - n) of the operand, shr/sar bit (n - 1) of
+            ;; it -- sign-extended for sar, as $do_shift has it by then.
+            (local.set $vy (call $uc_scratch))
+            (if (i32.eqz (local.get $op))
+              (then (call $uc_o3 (i32.const 4) (local.get $vy) (call $uc_aC (local.get $w)) (local.get $vx)))
+              (else (call $uc_o3 (i32.const 8) (local.get $vy) (local.get $vx) (call $uc_aN (i32.const -1)))))
+            (local.set $v (call $uc_scratch))
+            (call $uc_o3 (i32.const 44) (local.get $v) (local.get $src) (local.get $vy))
+            (call $uc_o3 (i32.const 9) (local.get $v) (local.get $v) (call $uc_aN (i32.const 1)))
+            (local.set $vx (local.get $t))
+            (if (i32.lt_u (local.get $w) (i32.const 32))
+              (then (local.set $vx (call $uc_scratch))
+                    (call $uc_o3 (i32.const 9) (local.get $vx) (local.get $t) (call $uc_aN (call $uc_mask (local.get $w))))))
+            (call $uc_o5 (i32.const 28) (call $uc_aN (i32.const 7)) (call $uc_aC (i32.const 0)) (local.get $v)
+                         (local.get $vx) (call $uc_aN (i32.sub (local.get $w) (i32.const 1))))
+            (call $uc_label (local.get $vl2))))
+        (call $uc_write (local.get $O0) (local.get $t))
+        (return (i32.const 0))))
+    ;; setcc r/m8: the condition as a 0/1 value, forwarded from the producer
+    ;; where $uc_setv knows how, else from the record ($eval_cc, a service op).
+    (if (i32.eq (local.get $k) (i32.const 19))
+      (then
+        (local.set $v (call $uc_scratch))
+        (local.set $n (call $uc_setv (global.get $uc_x_m) (global.get $uc_x_md) (global.get $uc_x_c)
+                                     (global.get $uc_x_cd) (i32.load offset=20 (local.get $R)) (local.get $v)))
+        (if (local.get $n) (then (return (local.get $n))))
+        (call $uc_write (local.get $O0) (local.get $v))
+        (return (i32.const 0))))
+    ;; sbb (32-bit): r = a - (b + CF), recorded as $set_flags_sub(a, b+CF, r)
+    ;; with the threaded handlers' fix-up when b+CF wraps (flag_a 0, flag_b 1,
+    ;; so CF reads 1). The record is written every time: the state after is
+    ;; 'G' ($uc_flag_class 3).
+    (if (i32.eq (local.get $k) (i32.const 20))
+      (then
+        (local.set $vx (call $uc_scratch))
+        (local.set $n (call $uc_cf_into (global.get $uc_x_c) (global.get $uc_x_cd) (local.get $vx)))
+        (if (local.get $n) (then (return (local.get $n))))
+        (local.set $A (call $uc_read (local.get $O0) (local.get $R) (i32.const 1)))
+        (local.set $B (call $uc_read (local.get $O1) (local.get $R) (i32.const 2)))
+        (local.set $src (call $uc_rawof (local.get $A)))
+        (local.set $vy (call $uc_rawof (local.get $B)))
+        (local.set $vl1 (call $uc_scratch))
+        (call $uc_o3 (i32.const 3) (local.get $vl1) (local.get $vy) (local.get $vx))
+        (local.set $t (call $uc_aT (i32.const 6) (local.get $a)))
+        (call $uc_o3 (i32.const 4) (local.get $t) (local.get $src) (local.get $vl1))
+        ;; wrapped = (b+CF) <u b; keep = wrapped - 1 (all ones unless wrapped)
+        (local.set $vl2 (call $uc_scratch))
+        (call $uc_o3 (i32.const 54) (local.get $vl2) (local.get $vl1) (local.get $vy))
+        (local.set $v (call $uc_scratch))
+        (call $uc_o3 (i32.const 8) (local.get $v) (local.get $vl2) (call $uc_aN (i32.const -1)))
+        (local.set $vx (call $uc_scratch))
+        (call $uc_o3 (i32.const 5) (local.get $vx) (local.get $src) (local.get $v))
+        (local.set $vy (call $uc_scratch))
+        (call $uc_o3 (i32.const 5) (local.get $vy) (local.get $vl1) (local.get $v))
+        (call $uc_o3 (i32.const 6) (local.get $vy) (local.get $vy) (local.get $vl2))
+        (call $uc_o5 (i32.const 28) (call $uc_aN (i32.const 2)) (local.get $vx) (local.get $vy)
+                     (local.get $t) (call $uc_aN (i32.const 31)))
         (call $uc_write (local.get $O0) (local.get $t))
         (return (i32.const 0))))
     (if (i32.eq (local.get $k) (i32.const 14))
@@ -2216,6 +2414,123 @@
     (local $t i64)
     (local.set $t (call $uc_sext (local.get $w) (local.get $v)))
     (call $uc_o3 (select (i32.const 53) (i32.const 52) (local.get $neg)) (local.get $t) (local.get $Z) (local.get $target)))
+
+  ;; setcc: condition cc of state (m, md, c, cd) as 0/1 into vreg d. The
+  ;; forwarded forms mirror $uc_cond's, with SLTU/SLT for its compare-branches
+  ;; (a setcc is no x86 transfer, so it must not spend a block the way a
+  ;; branch op does); anything else writes the record and reads it back.
+  (func $uc_setv (param $m i32) (param $md i32) (param $c i32) (param $cd i32)
+      (param $cc i32) (param $d i64) (result i32)
+    (local $rk i32) (local $w i32) (local $Z i64) (local $One i64) (local $Bu i64) (local $Au i64)
+    (local $hasA i32) (local $As i64) (local $Bs i64) (local $Rv i64) (local $t i64) (local $inv i32)
+    (local $err i32)
+    (if (i32.eq (local.get $m) (global.get $UC_D)) (then (return (i32.const 18))))
+    (local.set $Z (call $uc_aC (i32.const 0)))
+    (local.set $One (call $uc_aC (i32.const 1)))
+    ;; odd cc is the negation of the even one below it
+    (local.set $inv (i32.and (local.get $cc) (i32.const 1)))
+    (block $generic
+      (br_if $generic (i32.eq (local.get $m) (global.get $UC_G)))
+      (local.set $rk (call $uc_rkind (local.get $m)))
+      (local.set $w (call $uc_rw (local.get $m)))
+      (if (i32.or (i32.eq (local.get $rk) (i32.const 2)) (i32.eq (local.get $rk) (i32.const 4)))
+        (then
+          (local.set $Bu (call $uc_valof (call $uc_pref (local.get $m) (i32.const 2) (local.get $md)) (local.get $w) (i32.const 0)))
+          (if (i32.eq (local.get $rk) (i32.const 2))
+            (then (local.set $Au (call $uc_valof (call $uc_pref (local.get $m) (i32.const 1) (local.get $md)) (local.get $w) (i32.const 0)))
+                  (local.set $hasA (i32.const 1))))
+          (block $done
+            ;; z / nz: the difference is zero
+            (if (i32.or (i32.eq (local.get $cc) (i32.const 4)) (i32.eq (local.get $cc) (i32.const 5)))
+              (then
+                (if (i32.eq (local.get $rk) (i32.const 4))
+                  (then (local.set $t (call $uc_valof (call $uc_pref (local.get $m) (i32.const 3) (local.get $md)) (local.get $w) (i32.const 0))))
+                  (else (local.set $t (call $uc_scratch))
+                        (call $uc_o3 (i32.const 7) (local.get $t) (local.get $Au) (local.get $Bu))))
+                (call $uc_o3 (i32.const 54) (local.get $d) (local.get $t) (local.get $One))
+                (br $done)))
+            ;; b / ae: A <u B;  be / a: B <u A negated / not
+            (if (i32.or (i32.or (i32.eq (local.get $cc) (i32.const 2)) (i32.eq (local.get $cc) (i32.const 3)))
+                        (i32.or (i32.eq (local.get $cc) (i32.const 6)) (i32.eq (local.get $cc) (i32.const 7))))
+              (then
+                (if (i32.eqz (local.get $hasA))
+                  (then (local.set $Au (call $uc_aofsub (local.get $m) (local.get $md) (local.get $w) (local.get $Bu)))))
+                (if (i32.lt_u (local.get $cc) (i32.const 4))
+                  (then (call $uc_o3 (i32.const 54) (local.get $d) (local.get $Au) (local.get $Bu)))
+                  (else (call $uc_o3 (i32.const 54) (local.get $d) (local.get $Bu) (local.get $Au))
+                        (local.set $inv (i32.eqz (local.get $inv)))))
+                (br $done)))
+            ;; l / ge: A <s B;  le / g: B <s A negated / not
+            (if (i32.ge_u (local.get $cc) (i32.const 12))
+              (then
+                (if (i32.eq (local.get $w) (i32.const 32))
+                  (then
+                    (local.set $Bs (local.get $Bu))
+                    (local.set $As (if (result i64) (local.get $hasA) (then (local.get $Au))
+                                     (else (call $uc_aofsub (local.get $m) (local.get $md) (local.get $w) (local.get $Bu))))))
+                  (else
+                    (local.set $Bs (call $uc_valof (call $uc_pref (local.get $m) (i32.const 2) (local.get $md)) (local.get $w) (i32.const 1)))
+                    (if (i32.eq (local.get $rk) (i32.const 2))
+                      (then (local.set $As (call $uc_valof (call $uc_pref (local.get $m) (i32.const 1) (local.get $md)) (local.get $w) (i32.const 1))))
+                      (else
+                        (local.set $t (call $uc_aofsub (local.get $m) (local.get $md) (local.get $w) (local.get $Bu)))
+                        (local.set $As (call $uc_sext (local.get $w) (local.get $t)))))))
+                (if (i32.lt_u (local.get $cc) (i32.const 14))
+                  (then (call $uc_o3 (i32.const 61) (local.get $d) (local.get $As) (local.get $Bs)))
+                  (else (call $uc_o3 (i32.const 61) (local.get $d) (local.get $Bs) (local.get $As))
+                        (local.set $inv (i32.eqz (local.get $inv)))))
+                (br $done)))
+            ;; s / ns: the sign of the difference
+            (if (i32.or (i32.eq (local.get $cc) (i32.const 8)) (i32.eq (local.get $cc) (i32.const 9)))
+              (then
+                (if (i32.eq (local.get $rk) (i32.const 4))
+                  (then (local.set $Rv (call $uc_valof (call $uc_pref (local.get $m) (i32.const 3) (local.get $md)) (local.get $w) (i32.const 0))))
+                  (else (local.set $Rv (call $uc_scratch))
+                        (call $uc_o3 (i32.const 4) (local.get $Rv) (local.get $Au) (local.get $Bu))))
+                (call $uc_o3 (i32.const 61) (local.get $d) (call $uc_sext (local.get $w) (local.get $Rv)) (local.get $Z))
+                (br $done)))
+            (br $generic))
+          (if (local.get $inv) (then (call $uc_o3 (i32.const 42) (local.get $d) (local.get $d) (call $uc_aN (i32.const 1)))))
+          (return (i32.const 0))))
+      ;; logic / test (CF = OF = 0), inc / dec / add (ZF, SF from the result)
+      (if (i32.or (i32.or (i32.eq (local.get $rk) (i32.const 5)) (i32.eq (local.get $rk) (i32.const 1)))
+                  (i32.or (i32.or (i32.eq (local.get $rk) (i32.const 6)) (i32.eq (local.get $rk) (i32.const 7)))
+                          (i32.eq (local.get $rk) (i32.const 3))))
+        (then
+          (local.set $Rv
+            (if (result i64) (i32.eq (local.get $rk) (i32.const 1))
+              (then (call $uc_test_res (local.get $m) (local.get $md) (local.get $w)))
+              (else (call $uc_valof (call $uc_pref (local.get $m) (i32.const 3) (local.get $md)) (local.get $w) (i32.const 0)))))
+          (block $done2
+            (if (i32.or (i32.eq (local.get $cc) (i32.const 4)) (i32.eq (local.get $cc) (i32.const 5)))
+              (then (call $uc_o3 (i32.const 54) (local.get $d) (local.get $Rv) (local.get $One)) (br $done2)))
+            (if (i32.or (i32.eq (local.get $cc) (i32.const 8)) (i32.eq (local.get $cc) (i32.const 9)))
+              (then (call $uc_o3 (i32.const 61) (local.get $d) (call $uc_sext (local.get $w) (local.get $Rv)) (local.get $Z))
+                    (br $done2)))
+            ;; the rest need CF = OF = 0: logic and test only
+            (br_if $generic (i32.eqz (i32.or (i32.eq (local.get $rk) (i32.const 5)) (i32.eq (local.get $rk) (i32.const 1)))))
+            ;; be == z, a == nz
+            (if (i32.or (i32.eq (local.get $cc) (i32.const 6)) (i32.eq (local.get $cc) (i32.const 7)))
+              (then (call $uc_o3 (i32.const 54) (local.get $d) (local.get $Rv) (local.get $One)) (br $done2)))
+            ;; l == s, ge == ns
+            (if (i32.or (i32.eq (local.get $cc) (i32.const 12)) (i32.eq (local.get $cc) (i32.const 13)))
+              (then (call $uc_o3 (i32.const 61) (local.get $d) (call $uc_sext (local.get $w) (local.get $Rv)) (local.get $Z))
+                    (br $done2)))
+            ;; le == (r <=s 0), g its negation
+            (if (i32.or (i32.eq (local.get $cc) (i32.const 14)) (i32.eq (local.get $cc) (i32.const 15)))
+              (then (call $uc_o3 (i32.const 61) (local.get $d) (call $uc_sext (local.get $w) (local.get $Rv)) (local.get $One))
+                    (br $done2)))
+            ;; o / no, b / ae: CF and OF are 0
+            (if (i32.lt_u (local.get $cc) (i32.const 4))
+              (then (call $uc_o2 (i32.const 1) (local.get $d) (call $uc_aN (i32.const 0))) (br $done2)))
+            (br $generic))
+          (if (local.get $inv) (then (call $uc_o3 (i32.const 42) (local.get $d) (local.get $d) (call $uc_aN (i32.const 1)))))
+          (return (i32.const 0)))))
+    ;; generic: the record, then $eval_cc on it
+    (local.set $err (call $uc_rec (local.get $m) (local.get $md) (local.get $c) (local.get $cd)))
+    (if (local.get $err) (then (return (local.get $err))))
+    (call $uc_o2 (i32.const 66) (local.get $d) (call $uc_aN (local.get $cc)))
+    (i32.const 0))
 
   ;; ---- stubs ----
   ;; Stub record (32 bytes): +0 kind (0 deopt to eip, 1 budget 'to' eip,
@@ -2659,8 +2974,64 @@
     (if (i32.atomic.rmw.cmpxchg (global.get $UC_LOCK) (i32.const 0) (i32.const 1))
       (then (return (i32.const 1))))
     (local.set $pc (call $uc_compile_locked (local.get $eip)))
+    (if (i32.and (global.get $uop_census) (i32.eqz (local.get $pc)))
+      (then (call $uc_census_unsup (local.get $eip))))
     (i32.atomic.store (global.get $UC_LOCK) (i32.const 0))
     (local.get $pc))
+
+  ;; What stopped the scan: an opcode signature of the instruction at a, as
+  ;; op | 0F-second-byte<<8 | ModRM.reg<<16 | first non-66 prefix<<20 | o16<<28.
+  ;; (ModRM.reg is recorded whether or not the opcode has one; the census
+  ;; tool shows it only for the group opcodes.)
+  (func $uc_sig (param $a i32) (result i32)
+    (local $b i32) (local $pfx i32) (local $o16 i32) (local $n i32) (local $s i32)
+    (local.set $b (call $uc_rd8 (local.get $a)))
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $n) (i32.const 4)))
+      (if (i32.eq (local.get $b) (i32.const 0x66))
+        (then (local.set $o16 (i32.const 1)))
+        (else
+          (br_if $d (i32.eqz (i32.or (i32.or (i32.or (i32.eq (local.get $b) (i32.const 0x26)) (i32.eq (local.get $b) (i32.const 0x2E)))
+                                             (i32.or (i32.eq (local.get $b) (i32.const 0x36)) (i32.eq (local.get $b) (i32.const 0x3E))))
+                                     (i32.or (i32.or (i32.or (i32.eq (local.get $b) (i32.const 0x64)) (i32.eq (local.get $b) (i32.const 0x65)))
+                                                     (i32.eq (local.get $b) (i32.const 0x67)))
+                                             (i32.or (i32.eq (local.get $b) (i32.const 0xF0))
+                                                     (i32.or (i32.eq (local.get $b) (i32.const 0xF2)) (i32.eq (local.get $b) (i32.const 0xF3))))))))
+          (if (i32.eqz (local.get $pfx)) (then (local.set $pfx (local.get $b))))))
+      (local.set $a (i32.add (local.get $a) (i32.const 1)))
+      (local.set $b (call $uc_rd8 (local.get $a)))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $l)))
+    (local.set $s (local.get $b))
+    (local.set $a (i32.add (local.get $a) (i32.const 1)))
+    (if (i32.eq (local.get $b) (i32.const 0x0F))
+      (then (local.set $s (i32.or (local.get $s) (i32.shl (call $uc_rd8 (local.get $a)) (i32.const 8))))
+            (local.set $a (i32.add (local.get $a) (i32.const 1)))))
+    (local.set $s (i32.or (local.get $s)
+      (i32.shl (i32.and (i32.shr_u (call $uc_rd8 (local.get $a)) (i32.const 3)) (i32.const 7)) (i32.const 16))))
+    (i32.or (i32.or (local.get $s) (i32.shl (local.get $pfx) (i32.const 20)))
+            (i32.shl (local.get $o16) (i32.const 28))))
+
+  ;; Census kind 9, after a decline: every unsupported instruction the scan
+  ;; decoded (the head's own for head-unsupported; the ones that cut the loop
+  ;; for no-backedge), at most 8 per head: head, signature, address, reason.
+  (func $uc_census_unsup (param $eip i32)
+    (local $k i32) (local $R i32) (local $n i32)
+    (if (i32.eqz (i32.or (i32.eq (global.get $uc_last_why) (i32.const 3))
+                         (i32.or (i32.eq (global.get $uc_last_why) (i32.const 4))
+                                 (i32.eq (global.get $uc_last_why) (i32.const 1)))))
+      (then (return)))
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $k) (global.get $uc_ninsn)))
+      (br_if $d (i32.ge_u (local.get $n) (i32.const 8)))
+      (local.set $R (i32.add (global.get $UC_INSN) (i32.shl (local.get $k) (i32.const 8))))
+      (if (i32.eqz (call $uc_kind (local.get $R)))
+        (then
+          (call $uop_census_ev (i32.const 9) (local.get $eip) (call $uc_sig (i32.load (local.get $R)))
+                (i32.load (local.get $R)) (global.get $uc_last_why))
+          (local.set $n (i32.add (local.get $n) (i32.const 1)))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $l))))
 
   (func $uc_compile_locked (param $eip i32) (result i32)
     (local $err i32) (local $bytes i32) (local $pc i32) (local $k i32) (local $R i32)
