@@ -225,6 +225,15 @@ const CASES = [
            L('g'), [0xD1, 0xE0], 0x40, 0xC3],
   },
   {
+    // A rare call into a callee too big to scan (620 nops): following the
+    // call hits the scan limit, so the head is compiled again with the call
+    // as the region's edge -- the loop that compiled before calls were
+    // followed must still compile.
+    name: 'call-big-callee', regs: { ecx: N },
+    code: [L('l'), [0x03, 0x06], [0x83, 0xC6, 0x04], [0xF6, 0xC1, 0x3F], J(cc.NZ, 's'), CALL('f'), L('s'), 0x49,
+           J(cc.NZ, 'l'), 0xC3, L('f'), new Array(620).fill(0x90), 0xC3],
+  },
+  {
     // the callee returns 2 bytes past its return address (skipping an inc)
     // every other iteration: that ret's pop never matches its candidate, so
     // it must deopt to the threaded ret each time it differs.
