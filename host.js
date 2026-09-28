@@ -1801,7 +1801,7 @@ class WineAssembly {
       ? self.threadManager.terminateThread(handle, exitCode) : 0;
     const readSyncName = (nameWa, flags) =>
       HostMemUtils ? HostMemUtils.readSyncObjectName(self.memory, nameWa, flags) : '';
-    const win32ThreadId = () => ((ctx.threadId | 0) + 1) | 0;
+    const win32ThreadId = () => self.threadManager.currentWin32ThreadId();
     h.create_event = (m, i, nameWa, wide) => {
       if (!self.threadManager) return 0;
       const name = readSyncName(nameWa, wide);

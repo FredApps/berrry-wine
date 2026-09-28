@@ -800,6 +800,39 @@ for (const appBase of [0x10001, 0x20001, 0x70001]) {
 assert.strictEqual(makeThreadManager().workerHwndBase(1), 0x10001 + 0x8000,
   'with no app base the manager still lands inside the first app slice');
 
+// Mutex ownership belongs to the thread whose code called the host. Both hosts
+// hand every thread the main thread's sync imports, so the id has to come from
+// the manager's running thread, not from a closure over the main host ctx --
+// that closure said 1 for everyone, and a worker's WaitForSingleObject(mutex, 0)
+// then "re-entered" a mutex main held (Bink's IO ring under Morrowind).
+{
+  const mtm = makeThreadManager();
+  const worker = 0xe1040;
+  mtm.threads.set(worker, { tid: 3, state: 'active' });
+  assert.strictEqual(mtm.currentWin32ThreadId(), 1, 'outside any slice the caller is the main thread');
+  const mutex = mtm.createMutex(false, '', mtm.currentWin32ThreadId());
+  assert.strictEqual(mtm.waitSingle(mutex, 0xFFFFFFFF, mtm.currentWin32ThreadId()), 0, 'main takes the mutex');
+  mtm._runningThreadHandle = worker;
+  assert.strictEqual(mtm.currentWin32ThreadId(), 4, 'inside a worker slice the caller is that worker (tid + 1)');
+  assert.strictEqual(mtm.waitSingle(mutex, 0, mtm.currentWin32ThreadId()), 0x102,
+    'a worker try-lock of a mutex main holds times out instead of re-entering it');
+  assert.strictEqual(mtm.releaseMutex(mutex, mtm.currentWin32ThreadId()), 0,
+    'a worker cannot release a mutex main owns');
+  mtm._runningThreadHandle = 0;
+  assert.strictEqual(mtm.releaseMutex(mutex, mtm.currentWin32ThreadId()), 1, 'main releases it');
+  mtm._runningThreadHandle = worker;
+  assert.strictEqual(mtm.waitSingle(mutex, 0, mtm.currentWin32ThreadId()), 0, 'now the worker gets it');
+  mtm._runningThreadHandle = 0;
+  assert.strictEqual(mtm.waitSingle(mutex, 0, mtm.currentWin32ThreadId()), 0x102,
+    'and main is refused while the worker holds it');
+  for (const file of ['test/run.js', 'host.js']) {
+    const src = fs.readFileSync(path.join(__dirname, '..', file), 'utf8');
+    assert(/const win32ThreadId = \(\) => (self\.)?threadManager\.currentWin32ThreadId\(\);/.test(src),
+      `${file} must charge sync-object ownership to the running guest thread`);
+  }
+}
+
+console.log('PASS  ThreadManager charges mutex ownership to the running guest thread');
 console.log('PASS  ThreadManager reuses exited worker cache slots');
 console.log('PASS  ThreadManager schedules, suspends and resumes worker slices');
 console.log('PASS  ThreadManager supports wall-budgeted worker slices');

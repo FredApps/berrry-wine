@@ -3810,7 +3810,7 @@ async function main() {
   h.exit_thread = (exitCode) => threadManager.exitThread(exitCode);
   h.get_exit_code_thread = (handle) => threadManager.getExitCodeThread(handle);
   h.terminate_thread = (handle, exitCode) => threadManager.terminateThread(handle, exitCode);
-  const win32ThreadId = () => ((ctx.threadId | 0) + 1) | 0;
+  const win32ThreadId = () => threadManager.currentWin32ThreadId();
   h.create_event = (manualReset, initialState, nameWa, wide) => {
     const name = readSyncObjectName(memory, nameWa, wide);
     return (wide & 2)
