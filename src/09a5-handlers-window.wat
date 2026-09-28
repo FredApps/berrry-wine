@@ -1719,10 +1719,33 @@
   ;; 73: GetMessageA
   ;; The host input FIFO is shared, but a window's messages belong to its
   ;; creating thread. A loader's GetMessage must not steal keyboard input.
+  ;;
+  ;; A key with no explicit hwnd resolves through the POLLING thread's focus,
+  ;; and a thread with no focus used to fall back to its own $main_hwnd, which
+  ;; is per instance: a helper thread whose first window is a hidden one owns
+  ;; that. Moorhuhn's WinSock thread (GetMessage loop at 0x418b12 over its
+  ;; "WinSock Window") therefore kept every key it won the FIFO race for and
+  ;; dispatched it to the socket window; the main thread's WH_KEYBOARD hook
+  ;; (0x40cb70, the key array the title reads) never saw Space. The race is
+  ;; only lost while the main thread sleeps, so it showed with the present
+  ;; cap on and not without it. USER posts hardware keys to the foreground
+  ;; thread, never to a thread that has no focus, so a focusless poller
+  ;; routes keyboard input to the foreground window's owner instead.
   (func $input_route_to_owner (param $packed i32) (result i32)
-    (local $hwnd i32) (local $owner i32)
+    (local $hwnd i32) (local $owner i32) (local $msg i32) (local $fg i32)
     (if (i32.eqz (local.get $packed)) (then (return (i32.const 0))))
     (local.set $hwnd (global.get $pending_input_hwnd))
+    (local.set $msg (i32.and (local.get $packed) (i32.const 0xFFFF)))
+    (if (i32.and (i32.eqz (local.get $hwnd))
+          (i32.and (i32.ge_u (local.get $msg) (i32.const 0x0100))
+                   (i32.le_u (local.get $msg) (i32.const 0x0108))))
+      (then
+        (local.set $fg (call $host_foreground_window))
+        (if (i32.and (i32.ne (local.get $fg) (i32.const 0))
+              (i32.ge_s (call $wnd_table_find (local.get $fg)) (i32.const 0)))
+          (then
+            (if (i32.ne (call $wnd_get_thread (local.get $fg)) (global.get $current_thread_id))
+              (then (local.set $hwnd (local.get $fg))))))))
     (if (i32.eqz (local.get $hwnd))
       (then (local.set $hwnd (global.get $main_hwnd))))
     (local.set $owner (call $wnd_get_thread (local.get $hwnd)))

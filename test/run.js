@@ -3693,10 +3693,17 @@ async function main() {
     return packed;
   };
   // Default hwnd routing: keyboard messages (WM_KEYDOWN..WM_SYSCHAR, 0x100-0x108)
-  // need to land in the edit child (0x10002) since we don't track focus from
-  // outside WAT. Anything else (menu commands, mouse, etc.) returns 0 so the
-  // WAT side defaults to main_hwnd.
-  h.check_input_hwnd = () => inputEventHwnd(lastInputEvent, instance && instance.exports,
+  // land on the focus window. Anything else (menu commands, mouse, etc.)
+  // returns 0 so the WAT side defaults to main_hwnd.
+  //
+  // The focus is the POLLING guest's own $focus_hwnd, passed in by the import,
+  // exactly as host.js resolves it. Reading the main instance's focus here for
+  // every thread hid a browser-only bug: a helper thread with no focus that
+  // won the input FIFO (Moorhuhn's WinSock thread, whenever the main thread
+  // sat in a present-cap sleep) was told the key was the main window's and
+  // routed it, while the browser told it 0 and it kept the key.
+  h.check_input_hwnd = (focusHwnd) => inputEventHwnd(lastInputEvent,
+    { get_focus_hwnd: () => focusHwnd | 0 },
     (why) => logs.push(`[check_input_hwnd] ${why}`));
   h.check_input_lparam = () => (lastInputEvent ? (lastInputEvent.lParam || 0) : 0);
   h.check_input_wparam = () => (lastInputEvent ? (lastInputEvent.wParam || 0) : 0);
