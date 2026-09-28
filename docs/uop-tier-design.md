@@ -535,3 +535,347 @@ is almost entirely stack and control transfer: `push r`, `call`, `push imm`,
 weight, well ahead of everything else. That is the next coverage step:
 straight-line stack traffic, and possibly inlining a callee that returns.
 The FPU is a separate step.
+
+**Speed (bench box, 2026-09-28).** Candidate = 38144a80 + this section's
+lowerings; reference = 38144a80. `uop-game-ab.js --arms=uop,refuop,uop2,refuop2
+--ref-wasm`, serial, idle box (load 0.0), mean of two repeats per arm.
+
+| game | frames | user CPU, candidate vs main | gameplay slice | null band (user) |
+|---|---|---|---|---|
+| StarCraft | nondeterministic (repeats of one build differ 1.2-1.5%) | 19.66 vs 31.46 s, **-37.5%** | 1.2 vs 1.75 s | 0.1% / 0.8% |
+| Diablo shareware | identical | 195.5 vs 198.2 s, **-1.35%** | 5.15 vs 5.3 s | 0.4% / 0.5% |
+| Heroes III | identical | 80.2 vs 85.0 s, **-5.6%** | 5.65 vs 5.7 s | 1.3% / 0.4% |
+| Warcraft III, software GL | identical | 114.1 vs 137.7 s, **-17.2%** | 1.8 vs 2.0 s | 0.1% / 0.1% |
+
+Most of the win is guest-thread time, which the main-thread gameplay slice
+does not see: StarCraft's thread 1 runs 340M blocks in the tier against 84M,
+and Warcraft III's Miles audio thread 432M against 90M (the moffs forms were
+what kept its mixer loop out). Installs rise on every game (StarCraft 344 ->
+425, Warcraft III 743 -> 791); StarCraft's `head-unsupported` declines fall
+from 841 to 206.
+
+## 11. Remaining bottlenecks (2026-09-28)
+
+§8 and §9 asked whether the tier pays. This section asks the next question:
+with the tier and the x87 fold both on by default (89c6890c), where does
+gameplay CPU go now, and what should be built next? Every number is from the
+gameplay window of a `tools/uop-game-ab.js` route (batches `split..max-1`), not
+the whole run.
+
+### 11.1 Method, and a tooling bug that invalidated earlier histograms
+
+- **Box.** The quiet bench box (4 vCPU, load 0-1 throughout), worktree
+  `~/prof` at 60a24244, which has the same tree as main 38144a80. Runs were
+  serial, one at a time.
+- **CPU.** `--cpu-prof-window=SPLIT:END` with `--cpu-window` user CPU. It
+  covers the main instance and every cooperative guest-thread instance.
+  wasm-function indices were named with `tools/wasm-func-name.js --dump` and
+  bucketed by subsystem. **`--slice-split`'s "guest slice" is not the right
+  denominator for a threaded game.** On WC3g the main slice is 2.6s of a 26.4s
+  window, and the rest is guest threads.
+- **Coverage and loads.** `--uop --uop-census --handler-hist-thread=N
+  --hist-json --hot-block-dump --batch-stats --decode-stats`. A local
+  measurement-only `--input=B:uop-stats` action snapshots the `uop_stats`
+  counters of every instance at SPLIT and END. The tier's share of block
+  entries is (uop blocks) / (uop blocks + threaded block hits) over the same
+  window. None of these patches are committed.
+- **The bug: `--handler-hist` turns the tier off on the thread it profiles.**
+  `$handler_hist_enabled` raises `$dbg_any`, which raises `$dbg_chain_guard`.
+  `$th_uop_enter` (07d) and the `$branch_end_at` fast path both bail on
+  `$dbg_chain_guard`. So every histogram window measured the tier-off state,
+  including §8's per-thread histograms and any `uop-census.js --hist` coverage
+  figure. The box runs here patch the `$th_uop_enter` guard to
+  `(i32.and $dbg_chain_guard (i32.eqz $handler_hist_enabled))`. **This belongs
+  in main.** Until it lands, a histogram taken with `--uop` silently describes
+  a different program.
+- **Uncovered: guest-thread verdicts.** `--uop-census` records from guest
+  threads are not in the log. `uop-census.js --thread=N` finds no `[i32 TN]`
+  records, so the verdicts for WC3's audio thread below are inferred from its
+  disassembly, not observed.
+
+### 11.2 Where the time goes, per game
+
+Share of window user CPU, by self time, grouped by subsystem:
+
+| group | H3 | Diablo | SC | MH3 | WC3g |
+|---|---|---|---|---|---|
+| window user CPU | 12.6s | 45.8s | 14.7s | 6.9s | 26.4s |
+| threaded dispatch/handlers | 30.9% | 34.7% | 49.9% | 16.5% | 43.4% |
+| uop tier (`$uop_fast`…) | 19.3% | 6.1% | 20.4%¹ | 8.4% | 4.1% |
+| x87 (fold + handlers) | 21.3% | ~0 | ~0 | 0.3% | 13.3% |
+| wasm other (`$read_thread_word`, `$bx_hot_bump`, paint scans…) | 10% | 26% | 15.1% | — | 16.6% |
+| memory translation (`$g2w`/`$gl32`/`$gs32`) | 8.4% | 8.1% | 7.3% | — | 12.4% |
+| decode/cache (`$page_*`, `$code_page_test`, decode) | 5.2% | 13.9% | 6.1% | — | 8.3% |
+| DirectDraw handler | — | — | — | **60.1%** | — |
+| JS (harness canvas + `h.log`) | 4.7% | 7.1% | — | — | — |
+
+¹ SC's uop group is dominated by `$uop_code_write` (14.5%). `$uop_fast`
+itself is 5.0%.
+
+Named hot spots (self time unless marked incl):
+
+- **H3.**
+  - `$uop_fast` 18.3%.
+  - `$th_x87_island` 14.0% incl, pipeline4 3.4% incl, `$th_fpu_mem_ro` 3.7% incl.
+  - `$branch_end_at` 7.1% incl.
+  - `$read_thread_word` 4.3%, `$g2w` 4.0%.
+  - `$decode_block` 3.4% incl, `$invalidate_code_write` 2.0% incl, `$bx_hot_bump` 1.3%.
+- **Diablo.**
+  - `$win32_dispatch` 27.3% incl, of which `$handle_PeekMessageA` 16.1% incl.
+    The paint and non-client scans under `PeekMessageA_fetch` cost:
+    `$paint_flag_mine` 6.4% + `$nc_flags_scan` 3.1% +
+    `$paint_select_next_dirty` 2.2% + `$paint_drain_native_control_paints` 2.1%
+    = **13.8% self**.
+  - Block transfer: `$branch_end_at` 6.3% (19.9% incl), `$page_resolve` 3.4%,
+    `$page_enter` 3.2%.
+  - Stack handlers: `$th_push_r` 3.8%. `$gs32` is 8.0% incl, of which the SMC
+    check `$invalidate_code_write` is 5.3% incl, mostly from push/call.
+  - `$code_page_test` 3.1%, `$gl32` 2.9%, `$bx_hot_bump` 2.6%.
+  - The run makes 424M API calls.
+- **SC.**
+  - **`$uop_code_write` 14.5%**, reached through `$invalidate_code_range` ←
+    `$gs8` ← `$th_store8_ro`. `$invalidate_code_write` is 16.2% incl.
+  - The cache counted 6.95M page invalidations in the window, and only 18,301
+    of them dropped a block.
+  - `$read_thread_word` 7.0%, `$branch_end_at` 6.7% (17.2% incl),
+    `$uop_fast` 5.0%, `$bx_hot_bump` 3.0%.
+- **MH3.** **`$handle_IDirectDrawSurface_BltFast` 60.1% self** (61.4% incl via
+  `$win32_dispatch`). Its SRCCOLORKEY path is a scalar per-pixel loop. It
+  branches on bytes-per-pixel inside the loop and recomputes `row*pitch` per
+  pixel.
+- **WC3g.**
+  - `$th_x87_island` 10.1% incl.
+  - `$g2w` 4.6%, `$gl32` 3.7%, `$guest_page_translate` 1.2%.
+  - `$read_thread_word` 4.8%, `$branch_end_at` 10.5% incl, `$bx_hot_bump` 2.8%.
+  - GL is 0.2%.
+  - The time is on the Miles audio thread. See the next table.
+
+Tier coverage and the threaded remainder (load-immune counts, window only):
+
+| | tier share of block entries | threaded ops/block | threaded remainder by handler class |
+|---|---|---|---|
+| H3 main | **77.1%** (81M uop vs 24.1M) | 9.74 | alu/mov 40.9%, mem 39.7%, branch 6.9%, stack/call 5.3% |
+| H3 T1 (audio) | 35.2% | — | mem 31.8%, alu 26%, **x87 24.7%** |
+| Diablo main | 28.4% (732M threaded entries) | 2.86 | **stack/call/ret 43.4%** (push_r 14.1, pop_r 9.3, call_rel 5.9, call_ind 4.3, ret 4.0, push_i32 3.9, ret_imm 2.0), alu 17.9%, mem 16.9%, branch 16.8% |
+| SC main | 36.3% (T0xe1001 adds 37.8M uop blocks) | — | alu 39.3%, mem 27.1%, branch 13.3%, stack 6.6% |
+| MH3 main | 66.5% | — | mem 30.5%, stack/call 25.4%, alu 21.9% |
+| WC3g main | 47.0% (79.5M vs 89.7M) | 7.46 | alu 40.2%, mem 25.7%, stack/call 16.2% |
+| WC3g audio thread (h=0xe1006) | **~5%** (≈3.1M uop vs 60.4M per ⅓ window) | 7.11 | alu 46.3%, mem 31.1%, branch 13.8%, x87 4.1% |
+
+The WC3g audio thread runs **~1.29G threaded dispatches** over the window,
+about twice the main thread's 669M. Two blocks make up **54% of its block
+entries**: Mss32.dll `0x2113c300`/`0x2113c334`, the Miles resampling mixer
+(`mov eax,[moffs]; … imul; add [edi],eax; …; add edx,[moffs]; jnb head`). The
+MP3 decoder in mp3dec.dll (`+0x38f6` and neighbours) is most of the rest.
+
+Why the untaken entries were not taken (share of threaded entries, by the
+block's verdict as a head):
+
+| | no-backedge | head-unsupported | no-verdict (of which in a shared hot slot) | poor | live |
+|---|---|---|---|---|---|
+| H3 T0 | 41.5% | 14.2% | 15% | 15% | 10.9% |
+| H3 T1 | 74% | — | — | — | — |
+| Diablo | 37.6% | 36.0% | 22.1% (13.7%) | 0.1% | 3.9% |
+| SC | 25.9% | 9.5% | 31.9% (18%) | 14.7% | — |
+| MH3 | 44.4% | — | 39.8% (30.4%) | — | — |
+| WC3g main | 31.4% | 10.6% | 12.9% (7.3%) | 0.8% | 0.7% |
+
+Notes on the verdicts:
+
+- **H3's biggest head-unsupported case** is one switch loop,
+  `jmp [0x472a9c+ecx*4]` at exe+0x47227c. Its case blocks 0x472266, 0x472283,
+  0x47229d and 0x472320 are each 6.17% of threaded entries, about 31% of
+  T0's remainder.
+- **SC's poor heads.** storm.dll+0x1502508b is poor (5.7%). exe+0x4b43ea and
+  0x4b43f6 (4.1% each) are poor only because their stores land on a code page.
+- **Diablo's remainder** is short storm.dll functions whose heads are
+  `mov eax,[esp+4]`, `push eax` and `ret` (2.2% each). That is call-heavy
+  straight-line code with no back edge for the tier to key on.
+- **Hot-table churn.** The 512-slot table saw 51.9M (H3), 73.0M (Diablo),
+  11.2M (SC), 25.7M (MH3) and 120.6M (WC3g) slot takeovers in the run.
+
+Decode is not a lever any more. Gameplay decodes in the window were:
+
+| game | decodes |
+|---|---|
+| H3 | 5,033 (93.9% of batches decode-free) |
+| Diablo | 858 |
+| SC | 1,851 |
+| MH3 | 306 |
+| WC3g | 34,572 (`$decode_block` 1.3%) |
+
+Batches overwhelmingly stop on "budget spent".
+
+Machine-code sizes (SpiderMonkey Ion, arm64, `tools/wasm-native.js`) that
+bear on the ideas below:
+
+| function | instructions | notes |
+|---|---|---|
+| `$uop_fast` | 1146 | |
+| `$th_uop_enter` | 280 | 2 indirect tail calls |
+| `$fpu_exec_reg` | 1415 | 10 indirect calls |
+| `$fpu_exec_mem` | 594 | |
+| `$x87_island_body` | 111 | a compare chain into the two above, per op |
+| `$branch_end_at` | 226 | |
+| `$bx_hot_bump` | 82 | |
+| `$read_thread_word` | 12 | not inlined, 237 call sites |
+| `$uop_code_write` | 111 | a linear scan over `$uop_nranges` |
+| `$handle_IDirectDrawSurface_BltFast` | 487 | |
+
+### 11.3 Ranked ideas
+
+Saving = measured share × plausible speedup of that share, per game. Shares
+are self time unless marked incl.
+
+1. **BltFast colour-key blit: specialise and vectorise.**
+   - What: hoist the bytes-per-pixel switch out of the pixel loop, keep row
+     pointers, and do the key compare and select with v128 (`i8x16.eq` /
+     `v128.bitselect` on 8bpp, `i16x8` on 16bpp).
+   - Games: MH3, plus every DirectDraw sprite game that blits with a colour
+     key (unmeasured).
+   - Share: 60.1% of MH3.
+   - Saving: **−45-50% MH3 CPU** (at 4-6x on the blit).
+   - Cost/risk: low. One handler, and its output is checkable
+     pixel-for-pixel against the scalar path.
+   - Evidence: MH3 cpu-prof, `$handle_IDirectDrawSurface_BltFast` 60.1% self.
+2. **Stop `$uop_code_write` scanning every uop range on every code-page
+   store.**
+   - What: gate it on a per-page "has uop range" bit, set at install and
+     cleared at flush, or at least on a hull test over all ranges.
+   - Games: SC, and any game that writes data on pages it also executes.
+   - Share: 14.5% of SC.
+   - Saving: **−13-14% SC**.
+   - Cost/risk: low. The check must stay conservative, and
+     test-uop-compiler's SMC cases cover it.
+   - Evidence: SC cpu-prof, `$uop_code_write` ← `$invalidate_code_range` ←
+     `$gs8` ← `$th_store8_ro`.
+3. **Make PeekMessage's empty-queue path O(1).**
+   - What: keep dirty/non-client counts, or a summary bit, so
+     `$paint_flag_first`/`any`/`select_next_dirty` and `$nc_flags_scan` do
+     not walk MAX_WINDOWS per poll when nothing is pending.
+   - Games: Diablo, and every PeekMessage-polling game loop.
+   - Share: 13.8% self in Diablo (16.1% incl under `$handle_PeekMessageA`).
+   - Saving: **−12% Diablo**.
+   - Cost/risk: low-medium. The counters must stay exact, and the paint-order
+     tests guard it.
+   - Evidence: Diablo cpu-prof.
+4. **uop compiler: accept `mov eax,[moffs32]` / `mov [moffs32],eax` (A1/A3).**
+   - What: 07e decodes the 88-8B forms but not the moffs encodings, so any
+     loop whose body uses them is declined.
+   - Games: WC3g. Miles is also used by H3 and others, but not verified
+     there.
+   - Share: WC3's Miles mixer head `0x2113c300` has one in its second
+     instruction and another in its tail. Its two blocks are 54% of the audio
+     thread's block entries. The audio thread is ~⅔ of WC3g's threaded
+     dispatches, and threaded is 43% of WC3g CPU, so the loop is **≈15% of
+     WC3g CPU**.
+   - Saving: **−7-10% WC3g** at the tier's 2-3x.
+   - Cost/risk: trivial. It is a disp32 memory operand with no base.
+   - Evidence: WC3g guest-thread hist (`e07300`/`e07334` = 27.1% each) plus
+     disassembly. The verdict itself was not observed (§11.1).
+5. **Cheaper x87 island body.**
+   - What: `$x87_island_body` dispatches each op through a compare chain into
+     `$fpu_exec_mem` (594) or `$fpu_exec_reg` (1415 instructions, 10
+     indirect calls). Pre-decode each island op to a direct small handler
+     index at fold time, and keep ST(0)/ST(1) in locals across the island.
+     Alternatively, give the uop tier an f64 register class for pure x87
+     islands inside loops.
+   - Games: H3, WC3g, and H3's MP3 thread.
+   - Share: H3 `$th_x87_island` 14.0% incl; WC3g 10.1% incl.
+   - Saving: **−6-7% H3, −4-5% WC3g** at 2x.
+   - Cost/risk: medium. The fold's results must stay bit-exact, which
+     test-x86-ops' x87 cases check.
+   - Evidence: H3 and WC3g cpu-prof, plus Ion sizes.
+6. **Inline `$read_thread_word`.**
+   - What: make it a `defmacro`, as dispatch-next is. It is 12 instructions,
+     called from 237 sites, and V8 does not inline it.
+   - Games: all.
+   - Share: H3 4.3%, Diablo 3.5%, SC 7.0%, WC3g 4.8%.
+   - Saving: **−2-3.5%** everywhere, taking call overhead as about half of it.
+   - Cost/risk: trivial. The body grows, measured at the §8 dispatch-macro
+     scale.
+   - Evidence: all five cpu-profs.
+7. **push/pop/call/ret in the tier, with shallow callee inlining.**
+   - What: the lowering §7-§8 deferred. The tier still keys on back edges,
+     so on its own this converts loops that call leaves, not Diablo's loopless
+     call chains. The Diablo win needs call-inlined traces (a trace head at
+     a hot call target).
+   - Games: Diablo; also MH3 (stack/call 25% of remainder) and WC3g main
+     (16%).
+   - Share: Diablo stack/call/ret is 43.4% of threaded dispatches, the
+     threaded group is 34.7% of CPU, and 72% of Diablo's entries are untaken.
+   - Saving: **−10-20% Diablo** if half the call chains convert; −3-5% MH3
+     and WC3g.
+   - Cost/risk: high. It needs ESP-relative guest stores under the SMC
+     guard, and exact exceptions at every push.
+   - Evidence: Diablo census (no-backedge 37.6% + head-unsupported 36.0%,
+     storm.dll leaf functions).
+8. **Sub-page code-write granularity.**
+   - What: split `$code_page_test` into 64-256 B code bits, or a
+     per-page "code range" hull, so a data store beside code is not an
+     invalidation.
+   - Games: SC, Diablo.
+   - Share: SC's 6.95M invalidations dropped a block 0.26% of the time, and
+     two heads (8.1% of untaken entries) are "poor" only because of
+     same-page stores. Diablo's `$invalidate_code_write` is 5.3% incl from
+     stack pushes, and `$code_page_test` is 3.1%.
+   - Saving: **−2-4% SC** (beyond idea 2, plus un-poored heads); **−3-4%
+     Diablo**.
+   - Cost/risk: medium. Correctness is central (a missed SMC is silent), and
+     `--trace-code-writes` is the check.
+   - Evidence: SC and Diablo cpu-prof, SC cache counters, SC census.
+9. **Multiway branch in the tier (`jmp [tbl+r*4]`).**
+   - What: lower an in-image jump table as a guarded br_table over its
+     in-loop targets, and exit on any other target.
+   - Games: H3 (other switch loops unmeasured).
+   - Share: about 31% of H3 T0's untaken entries, with H3 main already at
+     77% coverage, is ≈6% of H3 CPU.
+   - Saving: **−3% H3**.
+   - Cost/risk: medium. Table bounds are read from guest memory, so there
+     is SMC and table-write exposure.
+   - Evidence: H3 census, switch loop at exe+0x47227c.
+10. **A bigger, or 2-way, hot table.**
+    - What: grow the 512-slot table so hot heads stop evicting each other.
+    - Games: SC, MH3, Diablo.
+    - Share: no-verdict entries in a shared slot are 18% (SC), 30.4% (MH3)
+      and 13.7% (Diablo) of untaken entries.
+    - Saving: **−1-3%**. Many of those blocks are bodies, not heads, so this
+      is an upper bound.
+    - Cost/risk: trivial (a region size). Try it first, because it is
+      cheapest to price.
+    - Evidence: census hot-table lines, with takeovers in the tens of
+      millions.
+11. **Skip `$bx_hot_bump` for blocks that already have a verdict or an
+    installed program.**
+    - Games: all five.
+    - Share: 1.3-3.0% self.
+    - Saving: −1-2%.
+    - Cost/risk: trivial.
+12. **Headless only: the per-API `log` + `log_api_exit` host calls.**
+    - What: two host calls per Win32 call even under `--quiet-api` (88M of
+      each in one H3 run). The browser no-ops them, so this is benchmark
+      hygiene rather than product speed. `--quiet-api-fast` exists and should
+      become what `--quiet-api` does.
+    - Share: Diablo `h.log` is 2.3%.
+
+Not recommended:
+
+- **Exit chaining of uop windows.** It takes <0.4% of entries (§9), and
+  block chaining priced +1.4% *slower* on the box
+  (docs/block-chaining-design.md §11.1). Block transfer
+  (`$branch_end_at` + `$page_resolve` + `$page_enter`) is 13% of Diablo self
+  time, but that time is paid on call/ret transfers, which idea 7 removes
+  and chaining would not.
+- **Decode or cache work.** Decode rates are low on every game (the table
+  above).
+- **String ops, adc, setcc in the tier.** None shows as a measurable share
+  of any threaded remainder in these windows.
+
+**Order of work:**
+
+1. Build ideas 1, 2, 3, 4 and 6. Each is a day or less, with a large,
+   single-game-proven share.
+2. Fix the handler-hist guard (§11.1).
+3. Then idea 5.
+4. Idea 7 is the large project, and the only one that moves Diablo's
+   remaining two thirds.
