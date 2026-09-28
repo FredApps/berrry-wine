@@ -3535,8 +3535,10 @@ class WineAssembly {
   stop(options = {}) {
     // Put the final frame on the canvas before stepping ends, then drop the
     // pending rAF: a scheduled frame holds this host alive, and nothing will
-    // present for a stopped host again.
-    if (this._presentRaf || this._presentFrameDue) {
+    // present for a stopped host again. A dirty DirectDraw surface counts even
+    // with no rAF armed: a slice that ends in a trap or an exit calls stop()
+    // before it reaches its boundary, so nothing has queued that last frame.
+    if (this._presentRaf || this._presentFrameDue || this._dxDirty || this._dxLockDeferred) {
       try { this._presentNow(); } catch (_) {}
     }
     this._cancelPresentFrame();

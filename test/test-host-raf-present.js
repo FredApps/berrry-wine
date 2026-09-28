@@ -144,6 +144,21 @@ function driveWorkerLoop(h) {
     assert.strictEqual(h.rafQueue.size, 0, 'stop() drops the pending rAF (it would hold the host alive)');
   }
 
+  // ---- a trap stops the loop before its boundary: stop still flushes -------
+  {
+    const h = makeHost({ withRaf: true });
+    const loop = driveWorkerLoop(h);
+    h.wine.logToUI = () => {};
+    h.present();
+    h.wine.renderer.endWorkerGuestSlice();
+    loop.resolvers.shift()({ eip: 1, yield: 0, focusHwnd: 0, blocks: 1000, ms: 1,
+      trapped: 'unreachable', regs: {} });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(h.rafQueue.size, 0, 'a trapped slice never reached its boundary');
+    assert.deepStrictEqual(h.log.uploads, [1],
+      'stop() uploads a dirty frame even when no rAF was armed for it');
+  }
+
   // ---- GDI-only composite is paced the same way ---------------------------
   {
     const h = makeHost({ withRaf: true });
