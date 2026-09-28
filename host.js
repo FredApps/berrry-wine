@@ -765,6 +765,8 @@ class WineAssembly {
     // primary) are paced to at most this many per second; 0 = unpaced. A rate
     // cap, not vsync: see $present_pace. lib/browser-shell.js sets it.
     this.presentCap = 0;
+    // How $present_pace spends the cap: 'smooth' (default) or 'deadline'.
+    this.presentPace = 'smooth';
   }
 
   _normalizePerfLogicalFrame(perf) {
@@ -2157,6 +2159,10 @@ class WineAssembly {
     if (this.instance.exports.set_cpu_sse) this.instance.exports.set_cpu_sse(cpuSSE);
     const presentCap = Math.max(0, this.presentCap | 0);
     if (this.instance.exports.set_present_cap) this.instance.exports.set_present_cap(presentCap);
+    const presentPaceMode = this.presentPace === 'deadline' ? 0 : 1;
+    if (this.instance.exports.set_present_pace_mode) {
+      this.instance.exports.set_present_pace_mode(presentPaceMode);
+    }
     this._wasmModule = wasmModule;
     // Kept so an experimental guest worker can be handed the SAME host import
     // table this instance uses — the point of the broker is that there is one
@@ -2203,6 +2209,9 @@ class WineAssembly {
       }
       if (this.instance.exports.set_present_cap) {
         await this.guestWorker.callExport('set_present_cap', presentCap);
+      }
+      if (this.instance.exports.set_present_pace_mode) {
+        await this.guestWorker.callExport('set_present_pace_mode', presentPaceMode);
       }
     }
     if (this.renderer) {
@@ -2333,6 +2342,8 @@ class WineAssembly {
     }
     this.threadManager.recordInheritedWasmGlobal('set_cpu_sse', cpuSSE);
     this.threadManager.recordInheritedWasmGlobal('set_present_cap', presentCap);
+    this.threadManager.recordInheritedWasmGlobal('set_present_pace_mode',
+      this.presentPace === 'deadline' ? 0 : 1);
 
     // A room address is a property of this whole process, and the guest reads
     // it the moment it opens a socket, so it has to be in place before the
