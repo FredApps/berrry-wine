@@ -72,7 +72,15 @@ function scanApp(id, app) {
   let scanned = 0, missing = 0;
   for (const rel of files) {
     let buffer;
-    try { buffer = fs.readFileSync(path.join(__dirname, '..', rel)); }
+    // The registry writes two path conventions: repo-rooted
+    // ('test/binaries/candidates/...', 'packages/...') and 'binaries/...',
+    // which resolves only through an untracked top-level `binaries ->
+    // test/binaries` symlink. A fresh worktree or bench-box copy has no such
+    // link, and there every 'binaries/' app silently dropped out of the
+    // census as "no 3D" (46 apps found instead of 86).
+    const abs = rel.startsWith('binaries/')
+      ? path.join(__dirname, '..', 'test', rel) : path.join(__dirname, '..', rel);
+    try { buffer = fs.readFileSync(abs); }
     catch { missing++; continue; }
     if (buffer.length < 64 || buffer.readUInt16LE(0) !== 0x5a4d) continue;
     scanned++;

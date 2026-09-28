@@ -292,6 +292,19 @@ const PRESENT_DISTINCT = {
   from: Math.max(0, parseInt(PRESENT_DISTINCT_ARG || '0', 10) || 0),
   presents: 0, counted: 0, changed: 0, unreadable: 0,
   last: null, unique: new Set(), slots: new Map(),
+  // Guest ms at the first and last counted present, so the report can state
+  // a RATE per guest second -- the only unit a present cap is written in. A
+  // count per batch is not one: a batch is a budget of blocks, and the guest
+  // time it stands for is --tick-ms-per-batch (or the wall clock under
+  // --real-ticks) plus whatever Sleep/pacing charged on top.
+  // Per counted present: its guest ms and whether it changed the picture
+  // (null for an unhashed GPU present). The second half of the span, by guest
+  // time, is reported on its own as the steady state -- the first half holds
+  // whatever loading screen or fade the app started in.
+  firstMs: null, lastMs: null, times: [], changedTimes: [],
+  // GPU presents (D3D Present, SwapBuffers) are counted but not hashed: their
+  // pixels live in a backend surface, not in a DirectDraw DIB.
+  gpu: 0,
 };
 // Present and composite after every batch, the way the browser does. Off by
 // default: nobody looks at a headless canvas between captures, and it is work a
@@ -2651,11 +2664,16 @@ async function main() {
     const prevHook = ctx.onGuestFrame;
     ctx.onGuestFrame = (frame) => {
       if (prevHook) prevHook(frame);
-      if (!frame || frame.kind !== 'directdraw') return;
+      if (!frame || (frame.kind !== 'directdraw' && frame.kind !== 'gpu')) return;
       const pd = PRESENT_DISTINCT;
       pd.presents++;
       if (tickStateRef.batch < pd.from) return;
       pd.counted++;
+      const nowMs = ctx.guestPeekMs ? Number(ctx.guestPeekMs()) : null;
+      if (pd.firstMs === null) pd.firstMs = nowMs;
+      pd.lastMs = nowMs;
+      pd.times.push(nowMs);
+      if (frame.kind === 'gpu') { pd.gpu++; pd.changedTimes.push(null); return; }
       const dv = new DataView(ctx.getMemory());
       const entry = RegionMap.BASE.DX_OBJECTS + (frame.slot >>> 0) * 32;
       const h = dv.getUint16(entry + 14, true);
@@ -2668,6 +2686,7 @@ async function main() {
       hash >>>= 0;
       const key = `${frame.slot >>> 0}:${hash}`;
       if (pd.last !== key) pd.changed++;
+      pd.changedTimes.push(pd.last !== key);
       pd.last = key;
       pd.unique.add(key);
       pd.slots.set(frame.slot >>> 0, (pd.slots.get(frame.slot >>> 0) || 0) + 1);
@@ -3649,6 +3668,10 @@ async function main() {
   // (T2) after ~156 batches, which moved every later VirtualAlloc base and
   // made the written save file differ byte-for-byte between runs.
   ctx.guestNowMs = () => h.get_ticks();
+  // The same clock read WITHOUT spending a per-call step: for the harness's
+  // own bookkeeping (--present-distinct rates, png guest-ms), which must not
+  // move the time the guest itself sees.
+  ctx.guestPeekMs = () => guestClock.publish();
   // A queued DirectInput edge carries the moment it was queued, and the guest
   // reads that against its own clock -- so the renderer has to stamp it with
   // the clock chosen right above, not with the wall clock. Otherwise a run
@@ -8531,7 +8554,12 @@ async function main() {
           if (typeof renderer.repaint === 'function') renderer.repaint();
           const buf = canvasToPng(renderer.canvas);
           fs.writeFileSync(ev.path, buf);
-          logs.push(`[input] png ${ev.path} (${buf.length} bytes) at batch ${batch}`);
+          // guest-ms: a batch is not a time, and anything that charges guest
+          // time outside the batch schedule (a Sleep, --present-cap pacing)
+          // moves it -- so two arms compared "at batch N" can be seconds of
+          // game time apart. Match captures on this instead.
+          logs.push(`[input] png ${ev.path} (${buf.length} bytes) at batch ${batch}`
+            + (ctx.guestPeekMs ? ` guest-ms=${Number(ctx.guestPeekMs())}` : ''));
           if (DUMP_BACKCANVAS) {
             for (const [hwndStr, win] of Object.entries(renderer.windows)) {
               if (!win) continue;
@@ -10081,11 +10109,35 @@ if (VERBOSE) {
 
   if (PRESENT_DISTINCT.on) {
     const pd = PRESENT_DISTINCT;
-    const share = pd.counted ? (100 * pd.changed / pd.counted).toFixed(1) : '0.0';
+    const hashedCount = pd.counted - pd.gpu;
+    const share = hashedCount ? (100 * pd.changed / hashedCount).toFixed(1) : '0.0';
     console.log(`\n[present-distinct] from batch ${pd.from}: ${pd.counted} presents`
       + ` (${pd.presents} total), ${pd.changed} changed the picture (${share}%),`
-      + ` ${pd.unique.size} unique frames, ${pd.unreadable} unreadable;`
-      + ` by slot ${[...pd.slots].map(([s, n]) => `${s}:${n}`).join(' ')}`);
+      + ` ${pd.unique.size} unique frames, ${pd.unreadable} unreadable`
+      + (pd.gpu ? `, ${pd.gpu} gpu (not hashed)` : '')
+      + `; by slot ${[...pd.slots].map(([s, n]) => `${s}:${n}`).join(' ')}`);
+    // Rates between the first and last counted present, in GUEST seconds.
+    const spanMs = pd.firstMs !== null ? pd.lastMs - pd.firstMs : 0;
+    if (spanMs > 0 && pd.counted > 1) {
+      const gs = spanMs / 1000;
+      const hashed = pd.counted - pd.gpu;
+      console.log(`[present-distinct] over ${gs.toFixed(2)} guest-s:`
+        + ` ${((pd.counted - 1) / gs).toFixed(1)} presents/guest-s`
+        + (hashed > 0 ? `, ${(pd.changed / gs).toFixed(1)} changed/guest-s` : ''));
+      const midMs = pd.firstMs + spanMs / 2;
+      let n2 = 0, c2 = 0, h2 = 0;
+      for (let i = 0; i < pd.times.length; i++) {
+        if (pd.times[i] < midMs) continue;
+        n2++;
+        if (pd.changedTimes[i] !== null) { h2++; if (pd.changedTimes[i]) c2++; }
+      }
+      const gs2 = (pd.lastMs - midMs) / 1000;
+      if (gs2 > 0) {
+        console.log(`[present-distinct] second half (${gs2.toFixed(2)} guest-s):`
+          + ` ${(n2 / gs2).toFixed(1)} presents/guest-s`
+          + (h2 > 0 ? `, ${(c2 / gs2).toFixed(1)} changed/guest-s (${(100 * c2 / h2).toFixed(1)}%)` : ''));
+      }
+    }
   }
 
   if (DX_LOCK_PAUSE.ms > 0) {
