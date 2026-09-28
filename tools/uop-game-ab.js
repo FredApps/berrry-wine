@@ -265,6 +265,11 @@ async function main() {
   ARMS.uopnofold = [...ARMS.uop, '--no-x87-fusion'];
   ARMS.fold = [...ARMS.off, '--x87-fusion'];
   ARMS.uopfold = [...ARMS.uop, '--x87-fusion'];
+  // nostk: the uop arm with the exact stack-run fusion (472-475) off -- its
+  // A/B partner is uop. aggr: the uop arm plus the opt-in --aggressive-stack
+  // elision tier.
+  ARMS.nostk = [...ARMS.uop, '--no-stack-fusion'];
+  ARMS.aggr = [...ARMS.uop, '--aggressive-stack'];
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another
   // prebuilt module, so an engine change is measured against its predecessor
   // in one sweep on one box.
