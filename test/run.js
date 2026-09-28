@@ -546,6 +546,10 @@ const PRESENT_CAP = Math.max(0, parseInt(getArg('present-cap', '0'), 10) || 0);
 // waiting for on its first read. Spin numbers need
 // `--tick-ms-per-batch=1 --batch-size=100000`.
 const NO_SPIN_PARK = hasFlag('no-spin-park');
+// A cooperative guest THREAD caught spinning on the clock is slept to the
+// park's deadline (lib/thread-manager.js, postYield 14). This is the A/B arm
+// that puts back "give up one turn, then re-slice it".
+const NO_CLOCK_PARK_SLEEP = hasFlag('no-clock-park-sleep');
 const SPIN_PARK_K = parseInt(getArg('spin-park-k', ''), 10);
 const SPIN_PARK = { clockWaits: 0, peekWaits: 0, guestMsAdded: 0 };
 // --trace-sched[=N]: one compact line whenever what the threads are doing
@@ -4458,6 +4462,7 @@ async function main() {
     inheritedWasmGlobals,
     now: () => batchClock.batchTicks(),
     sleepNow: () => Math.max(batchClock.batchTicks(), batchClock.state.lastTick),
+    clockParkSleep: !NO_CLOCK_PARK_SLEEP,
     // For a spawned thread's io_wait park (yield 12). CLI providers usually
     // read synchronously, so this mostly matters to tests that mount an
     // async provider to mimic the browser's File-backed ISO reads.
@@ -10051,7 +10056,10 @@ if (VERBOSE) {
         if (!te || !te.get_clock_spin_parks) continue;
         const c = te.get_clock_spin_parks() >>> 0;
         const p = te.get_peek_spin_parks() >>> 0;
-        if (c || p) perThread.push(`T${t.tid} clock=${c} peek=${p}`);
+        // slept = clock parks the cooperative scheduler turned into a sleep
+        // to the park's deadline (lib/thread-manager.js, postYield 14).
+        if (c || p) perThread.push(`T${t.tid} clock=${c} peek=${p}`
+          + (t.clockParkSleeps ? ` slept=${t.clockParkSleeps}` : ''));
         clockTrips += c;
         peekTrips += p;
       }

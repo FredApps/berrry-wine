@@ -501,6 +501,40 @@ now enforced: the scheduler sets `incoming_send_pending` on a receiver that is
 not at a message call, and those calls then stop on their own thunk with
 yield 17 so the send is delivered there (`test/test-cross-thread-send-timing.js`).
 
+## The frame-limiter spin on the game thread
+
+The game runs on spawned thread T1 (start `0x403a00`); main sits in
+MsgWait at `0x4069c0`. In a match T1's frame limiter is a pure clock spin at
+**`0x445242`**:
+
+```
+0x445242  call GetTickCount          ; thunk 0x406228, IAT 0x44f608
+          mov edx,[ebp+8] / mov edx,[edx-0x24]
+          mov ecx,[ebp+8] / mov ecx,[ecx-4]
+          add edx,[ecx+0x978230]
+          cmp eax,edx
+          jb  0x445242                ; return landing 0x445247
+```
+
+No other API and no stores in the loop, so `$clock_spin_step` qualifies it
+(same caller, same ESP, same value, <=64 blocks between reads) and parks with
+yield 14. The menu loop (`0x4476fc..0x447864`) and the other limiter at
+`0x44c287` Sleep instead and never trip it.
+
+The park used to do nothing for a *cooperative thread*: the scheduler cleared
+yield 14 one turn later and re-ran T1, which re-read the same millisecond, hit
+the one-park-per-millisecond latch and spun out its slice; and a pending yield
+14 made `parkedThreadDelay` report "not idle", so the host never slept.
+`--count=0x445247` saw 25,063 hits over a 700-batch match. Now `runSlice`
+sleeps the thread to the park's own deadline (`get_spin_deadline_ms`, clamped
+to 1..50ms) via `sleepUntil`; `--no-clock-park-sleep` is the old arm
+(`test/test-thread-clock-park-sleep.js`).
+
+Measured on box 3, 700-batch match route (boot, SPIEL STARTEN, play), user CPU:
+**4.5s / 4.46s new vs 117.9s / 120.3s old**, identical guest API counts. The
+match frame varies run to run in *both* arms (menu frames are identical); that
+jitter predates this change and survives `--wall-clock-ms`.
+
 ## Ruled out
 
 - **Stale persisted settings** as the cause of the dead client. Both live pages
