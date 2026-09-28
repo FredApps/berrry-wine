@@ -4684,8 +4684,25 @@ class WineAssembly {
     if (this._presentWanted()) this._queuePresentFrame();
   }
 
+  // The renderer arms a rAF of its own on every scheduleRepaint(). While a
+  // present rAF is pending that one is redundant -- _presentNow composites
+  // whatever is scheduled -- and harmful: it was usually armed earlier in the
+  // step, so it runs FIRST in the frame, composites the desktop without the
+  // new DirectDraw frame, and then the present composites again. Measured on
+  // Moorhuhn 3 (cooperative): 120 composites/s against 60 uploads/s. Dropping
+  // it leaves _repaintScheduled set, so the present still composites, and a
+  // later scheduleRepaint() in the same frame coalesces into that flag.
+  _dropRendererFrame() {
+    const r = this.renderer;
+    if (!r || r._repaintRaf === null || r._repaintRaf === undefined) return;
+    if (typeof cancelAnimationFrame === 'function') cancelAnimationFrame(r._repaintRaf);
+    r._repaintRaf = null;
+  }
+
   _queuePresentFrame() {
-    if (this._presentRaf || this._stopped) return;
+    if (this._stopped) return;
+    if (this._presentRaf) { this._dropRendererFrame(); return; }
+    this._dropRendererFrame();
     this._presentRaf = requestAnimationFrame(() => {
       this._presentRaf = 0;
       if (this._stopped) return;
@@ -4729,6 +4746,9 @@ class WineAssembly {
         composited = r._repaintScheduled ? 1 : 0;
         r.flushRepaint(false);
         r._workerRepaintDeferred = false;
+        // The upload above re-armed the renderer's rAF for a composite that
+        // has just happened.
+        if (!r._repaintScheduled) this._dropRendererFrame();
       } else {
         r.flushRepaint(true);
       }
