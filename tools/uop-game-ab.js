@@ -4,7 +4,7 @@
 // hold up on the real games, and what does it buy there?
 //
 //   node tools/uop-game-ab.js [--games=h3,sc,...] [--arms=off,uop] [--jobs=N]
-//        [--out=DIR] [--extra='--flag ...'] [--ref-wasm=FILE] [--gl=headless] [--cpu-prof] [--no-build] [--list]
+//        [--out=DIR] [--extra='--flag ...'] [--ref-wasm=FILE [--ref-region-map=FILE]] [--gl=headless] [--cpu-prof] [--no-build] [--list]
 //
 // Runs each game's own gameplay route (the one its test/test-*-gameplay.js or
 // its re-notes use) in two arms and prints, per game: whether the final frames
@@ -170,6 +170,12 @@ function runArm(game, name, armArgs, outDir, extra) {
   const log = path.join(outDir, `${tag}.log`);
   const png = path.join(outDir, `${tag}.png`);
   let argv, env = Object.assign({}, process.env);
+  // --ref-region-map=FILE: the ref arms' module was built from a different
+  // memory map (a region added or resized), so run.js must read that build's
+  // own lib/region-map.generated.js, not the tree's. Save it with
+  // `git show REF:lib/region-map.generated.js > FILE`.
+  const refMap = arg('ref-region-map', '');
+  if (refMap && name.startsWith('ref')) env.WINE_REGION_MAP = path.resolve(refMap);
   if (g.test) {
     argv = [g.test];
     Object.assign(env, g.env || {}, {

@@ -1175,6 +1175,16 @@
 
   (func (export "nc_flags_test") (param $hwnd i32) (result i32)
     (call $nc_flags_test (local.get $hwnd)))
+  ;; PAINT_WORK_COUNTS diagnostics: 0 when the shared paint/NC counts agree
+  ;; with a full walk of PAINT_FLAGS/NC_FLAGS, else the mismatch mask
+  ;; ($paint_work_audit). paint_work_count(k): k=0 dirty paint slots,
+  ;; k=1..4 NC bit 0..3 holders.
+  (func (export "paint_work_audit") (result i32)
+    (call $paint_work_audit))
+  (func (export "paint_work_count") (param $k i32) (result i32)
+    (if (i32.gt_u (local.get $k) (i32.const 4)) (then (return (i32.const -1))))
+    (i32.atomic.load (i32.add (global.get $PAINT_WORK_COUNTS)
+      (i32.shl (local.get $k) (i32.const 2)))))
   ;; Is this window still owed a WM_PAINT? Pairs with nc_flags_test above: those
   ;; two flags are what decides whether a native child is allowed to draw yet,
   ;; and a control that never appears is nearly always one of them stuck.

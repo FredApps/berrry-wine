@@ -619,6 +619,20 @@ function traceWindowOpen() {
 const BATCH_STATS_ARG = getArg('batch-stats', null);
 const BATCH_STATS = BATCH_STATS_ARG !== null || hasFlag('batch-stats');
 const BATCH_STATS_FROM = Math.max(0, parseInt(BATCH_STATS_ARG, 10) || 0);
+// --paint-audit: after every batch, recompute the shared paint/NC work counts
+// (PAINT_WORK_COUNTS) by walking the flag tables and stop on the first
+// disagreement. The same check always runs once at exit.
+const PAINT_AUDIT = hasFlag('paint-audit');
+let paintAuditFailures = 0;
+function paintAuditCheck(ex, where) {
+  if (!ex || !ex.paint_work_audit) return true;
+  const bad = ex.paint_work_audit() | 0;
+  if (!bad) return true;
+  paintAuditFailures++;
+  const counts = [0, 1, 2, 3, 4].map(k => ex.paint_work_count(k)).join(',');
+  console.log(`[paint-audit] MISMATCH at ${where}: mask=0x${bad.toString(16)} counts(paint,nc0..nc3)=${counts}`);
+  return false;
+}
 // --slice-split=B1[,B2,...]: cut the run into phases at those batch numbers and
 // report each phase's total guest-slice wall time, printed at exit.
 //
@@ -8950,6 +8964,8 @@ async function main() {
       }
     }
 
+    if (PAINT_AUDIT && !paintAuditCheck(instance.exports, `batch ${batch}`)) break;
+
     if (BATCH_STATS && batch >= BATCH_STATS_FROM && instance.exports.get_last_run_blocks) {
       batchStatsBlocks.push(instance.exports.get_last_run_blocks() | 0);
       const why = instance.exports.get_last_run_halt() | 0;
@@ -10146,6 +10162,11 @@ if (VERBOSE) {
       + ' reading it as a frame rate');
     report('host flush    (surface upload)', frameStats.flush,
       `what the browser HUD counts as fps; in the CLI it is gated by the repaint loop (--repaint-every=${REPAINT_EVERY}), so treat it as the harness's cadence unless it agrees with the present count above`);
+  }
+
+  if (paintAuditCheck(instance.exports, 'exit') && PAINT_AUDIT) {
+    const ex = instance.exports;
+    console.log(`[paint-audit] ok: counts(paint,nc0..nc3)=${[0, 1, 2, 3, 4].map(k => ex.paint_work_count(k)).join(',')}`);
   }
 
   if (BATCH_STATS) {

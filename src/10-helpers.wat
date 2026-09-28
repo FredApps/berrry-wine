@@ -3912,12 +3912,32 @@
   ;; central queue. No fixed capacity to overflow; CreateDialogParamA can
   ;; mark hundreds of children dirty without losing any.
 
+  ;; $paint_flag_store(slot, v): THE writer of a PAINT_FLAGS byte. Keeps the
+  ;; shared dirty-slot count at PAINT_WORK_COUNTS+0 exact, so the message pump
+  ;; can skip its 256-slot selection walks when nothing anywhere is dirty.
+  ;; The exchange is atomic because guest threads are separate instances over
+  ;; one memory; the old value it returns is the transition that is counted.
+  (func $paint_flag_store (param $slot i32) (param $v i32)
+    (local $old i32)
+    (local.set $old (i32.atomic.rmw8.xchg_u
+      (i32.add (global.get $PAINT_FLAGS) (local.get $slot))
+      (local.get $v)))
+    (if (i32.and (i32.eqz (local.get $old)) (i32.ne (local.get $v) (i32.const 0)))
+      (then (drop (i32.atomic.rmw.add (global.get $PAINT_WORK_COUNTS) (i32.const 1)))))
+    (if (i32.and (i32.ne (local.get $old) (i32.const 0)) (i32.eqz (local.get $v)))
+      (then (drop (i32.atomic.rmw.sub (global.get $PAINT_WORK_COUNTS) (i32.const 1))))))
+
+  ;; Number of window slots whose PAINT_FLAGS byte is set, on any thread.
+  ;; Zero means every paint-selection scan below would find nothing.
+  (func $paint_dirty_count (result i32)
+    (i32.atomic.load (global.get $PAINT_WORK_COUNTS)))
+
   ;; $paint_flag_set(hwnd): mark slot dirty.
   (func $paint_flag_set (param $hwnd i32)
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
-    (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $idx)) (i32.const 1)))
+    (call $paint_flag_store (local.get $idx) (i32.const 1)))
 
   ;; $paint_flag_set_inv(hwnd): mark slot dirty AND seed update rgn so the
   ;; WAT-owned region-driven WM_PAINT pump sees this hwnd. Use
@@ -3965,7 +3985,7 @@
     (local $idx i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
-    (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $idx)) (i32.const 0)))
+    (call $paint_flag_store (local.get $idx) (i32.const 0)))
 
   ;; A Win32 child is effectively visible only when it and every ancestor
   ;; carry WS_VISIBLE. Hidden dialog pages keep child WS_VISIBLE bits, but
@@ -4068,6 +4088,7 @@
   ;; $paint_flag_first() → hwnd of first dirty slot (0 if none), no clear.
   (func $paint_flag_first (result i32)
     (local $i i32)
+    (if (i32.eqz (call $paint_dirty_count)) (then (return (i32.const 0))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (if (call $paint_flag_mine (local.get $i))
@@ -4079,11 +4100,12 @@
   ;; $paint_flag_take() → hwnd of first dirty slot (0 if none), clears it.
   (func $paint_flag_take (result i32)
     (local $i i32) (local $hwnd i32)
+    (if (i32.eqz (call $paint_dirty_count)) (then (return (i32.const 0))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (if (call $paint_flag_mine (local.get $i))
         (then
-          (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $i)) (i32.const 0))
+          (call $paint_flag_store (local.get $i) (i32.const 0))
           (local.set $hwnd (i32.load (call $wnd_record_addr (local.get $i))))
           (return (local.get $hwnd))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -4093,6 +4115,7 @@
   ;; $paint_flag_any() → 1 if any slot dirty, else 0.
   (func $paint_flag_any (result i32)
     (local $i i32)
+    (if (i32.eqz (call $paint_dirty_count)) (then (return (i32.const 0))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (if (call $paint_flag_mine (local.get $i))
@@ -4114,6 +4137,9 @@
           (i32.ne (global.get $paint_pending) (i32.const 0))
           (i32.ne (global.get $main_hwnd) (i32.const 0)))
       (then (call $paint_flag_set (global.get $main_hwnd))))
+    ;; Nothing dirty on any thread: the walk below cannot select or clear
+    ;; anything. This is the common answer for a game polling PeekMessage.
+    (if (i32.eqz (call $paint_dirty_count)) (then (return (i32.const 0))))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
       (if (call $paint_flag_mine (local.get $i))
@@ -4227,6 +4253,7 @@
   (func $paint_drain_native_control_paints (result i32)
     (local $i i32) (local $hwnd i32) (local $n i32) (local $guard i32) (local $progress i32)
     (local $native_status i32)
+    (if (i32.eqz (call $paint_dirty_count)) (then (return (i32.const 0))))
     (block $done (loop $again
       (br_if $done (i32.ge_u (local.get $guard) (global.get $MAX_WINDOWS)))
       (local.set $progress (i32.const 0))
@@ -4404,7 +4431,7 @@
 
   ;; Called from $wnd_table_remove and slot-recycle paths.
   (func $paint_flag_reset_slot (param $slot i32)
-    (i32.store8 (i32.add (global.get $PAINT_FLAGS) (local.get $slot)) (i32.const 0))
+    (call $paint_flag_store (local.get $slot) (i32.const 0))
     (i64.store (call $update_rect_addr_for_slot (local.get $slot)) (i64.const 0))
     (i64.store offset=8 (call $update_rect_addr_for_slot (local.get $slot)) (i64.const 0))
     (i32.store8 (call $update_flag_addr_for_slot (local.get $slot)) (i32.const 0)))
@@ -4709,13 +4736,91 @@
 
   ;; $nc_flags_set(hwnd, bits): OR $bits into the slot's flag word.
   ;; Bumps $nc_flags_count if the slot transitions from 0 → non-zero.
+  ;; One counted bit transition of an NC_FLAGS word: +1 when $bit went 0->1,
+  ;; -1 when it went 1->0, into PAINT_WORK_COUNTS+$cell.
+  (func $nc_flags_note_bit (param $old i32) (param $new i32) (param $bit i32) (param $cell i32)
+    (local $was i32) (local $now i32)
+    (local.set $was (i32.ne (i32.and (local.get $old) (local.get $bit)) (i32.const 0)))
+    (local.set $now (i32.ne (i32.and (local.get $new) (local.get $bit)) (i32.const 0)))
+    (if (i32.eq (local.get $was) (local.get $now)) (then (return)))
+    (if (local.get $now)
+      (then (drop (i32.atomic.rmw.add
+        (i32.add (global.get $PAINT_WORK_COUNTS) (local.get $cell)) (i32.const 1))))
+      (else (drop (i32.atomic.rmw.sub
+        (i32.add (global.get $PAINT_WORK_COUNTS) (local.get $cell)) (i32.const 1))))))
+
+  ;; $nc_flags_xchg(addr, new) -> old: THE writer of an NC_FLAGS word. Stores
+  ;; $new exactly as the plain store it replaces did, and counts every bit
+  ;; 0..3 transition into the shared per-bit counts ($nc_flags_bits_pending).
+  ;; $nc_flags_count keeps its historical per-instance meaning; callers still
+  ;; maintain it themselves from the returned old value.
+  (func $nc_flags_xchg (param $addr i32) (param $new i32) (result i32)
+    (local $old i32)
+    (local.set $old (i32.atomic.rmw.xchg (local.get $addr) (local.get $new)))
+    (if (i32.ne (i32.and (i32.xor (local.get $old) (local.get $new)) (i32.const 0xF)) (i32.const 0))
+      (then
+        (call $nc_flags_note_bit (local.get $old) (local.get $new) (i32.const 1) (i32.const 4))
+        (call $nc_flags_note_bit (local.get $old) (local.get $new) (i32.const 2) (i32.const 8))
+        (call $nc_flags_note_bit (local.get $old) (local.get $new) (i32.const 4) (i32.const 12))
+        (call $nc_flags_note_bit (local.get $old) (local.get $new) (i32.const 8) (i32.const 16))))
+    (local.get $old))
+
+  ;; Does any window, on any thread, hold an NC_FLAGS bit in $mask? Exact for
+  ;; bits 0..3; a mask reaching past them answers 1 so the caller scans.
+  (func $nc_flags_bits_pending (param $mask i32) (result i32)
+    (if (i32.and (local.get $mask) (i32.const -16)) (then (return (i32.const 1))))
+    (if (i32.and (i32.ne (i32.and (local.get $mask) (i32.const 1)) (i32.const 0))
+                 (i32.ne (i32.atomic.load offset=4 (global.get $PAINT_WORK_COUNTS)) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (if (i32.and (i32.ne (i32.and (local.get $mask) (i32.const 2)) (i32.const 0))
+                 (i32.ne (i32.atomic.load offset=8 (global.get $PAINT_WORK_COUNTS)) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (if (i32.and (i32.ne (i32.and (local.get $mask) (i32.const 4)) (i32.const 0))
+                 (i32.ne (i32.atomic.load offset=12 (global.get $PAINT_WORK_COUNTS)) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (if (i32.and (i32.ne (i32.and (local.get $mask) (i32.const 8)) (i32.const 0))
+                 (i32.ne (i32.atomic.load offset=16 (global.get $PAINT_WORK_COUNTS)) (i32.const 0)))
+      (then (return (i32.const 1))))
+    (i32.const 0))
+
+  ;; Debug consistency check for PAINT_WORK_COUNTS: recompute every count by
+  ;; walking PAINT_FLAGS and NC_FLAGS and compare. Returns 0 when all agree,
+  ;; else a mask: bit 0 = paint dirty count, bits 1..4 = NC bit 0..3 counts.
+  ;; Exported as paint_work_audit; run.js checks it at exit and, under
+  ;; --paint-audit, after every batch.
+  (func $paint_work_audit (result i32)
+    (local $i i32) (local $flags i32) (local $bad i32)
+    (local $p i32) (local $b0 i32) (local $b1 i32) (local $b2 i32) (local $b3 i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (if (i32.load8_u (i32.add (global.get $PAINT_FLAGS) (local.get $i)))
+        (then (local.set $p (i32.add (local.get $p) (i32.const 1)))))
+      (local.set $flags (i32.load (i32.add (global.get $NC_FLAGS) (i32.shl (local.get $i) (i32.const 2)))))
+      (local.set $b0 (i32.add (local.get $b0) (i32.and (local.get $flags) (i32.const 1))))
+      (local.set $b1 (i32.add (local.get $b1) (i32.and (i32.shr_u (local.get $flags) (i32.const 1)) (i32.const 1))))
+      (local.set $b2 (i32.add (local.get $b2) (i32.and (i32.shr_u (local.get $flags) (i32.const 2)) (i32.const 1))))
+      (local.set $b3 (i32.add (local.get $b3) (i32.and (i32.shr_u (local.get $flags) (i32.const 3)) (i32.const 1))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (if (i32.ne (local.get $p) (i32.atomic.load (global.get $PAINT_WORK_COUNTS)))
+      (then (local.set $bad (i32.or (local.get $bad) (i32.const 1)))))
+    (if (i32.ne (local.get $b0) (i32.atomic.load offset=4 (global.get $PAINT_WORK_COUNTS)))
+      (then (local.set $bad (i32.or (local.get $bad) (i32.const 2)))))
+    (if (i32.ne (local.get $b1) (i32.atomic.load offset=8 (global.get $PAINT_WORK_COUNTS)))
+      (then (local.set $bad (i32.or (local.get $bad) (i32.const 4)))))
+    (if (i32.ne (local.get $b2) (i32.atomic.load offset=12 (global.get $PAINT_WORK_COUNTS)))
+      (then (local.set $bad (i32.or (local.get $bad) (i32.const 8)))))
+    (if (i32.ne (local.get $b3) (i32.atomic.load offset=16 (global.get $PAINT_WORK_COUNTS)))
+      (then (local.set $bad (i32.or (local.get $bad) (i32.const 16)))))
+    (local.get $bad))
+
   (func $nc_flags_set (param $hwnd i32) (param $bits i32)
     (local $idx i32) (local $addr i32) (local $old i32)
     (local.set $idx (call $wnd_table_find (local.get $hwnd)))
     (if (i32.eq (local.get $idx) (i32.const -1)) (then (return)))
     (local.set $addr (i32.add (global.get $NC_FLAGS) (i32.mul (local.get $idx) (i32.const 4))))
     (local.set $old (i32.load (local.get $addr)))
-    (i32.store (local.get $addr) (i32.or (local.get $old) (local.get $bits)))
+    (local.set $old (call $nc_flags_xchg (local.get $addr) (i32.or (local.get $old) (local.get $bits))))
     (if (i32.and (i32.eqz (local.get $old))
                  (i32.ne (i32.load (local.get $addr)) (i32.const 0)))
       (then (global.set $nc_flags_count (i32.add (global.get $nc_flags_count) (i32.const 1))))))
@@ -4728,7 +4833,7 @@
     (local.set $addr (i32.add (global.get $NC_FLAGS) (i32.mul (local.get $idx) (i32.const 4))))
     (local.set $old (i32.load (local.get $addr)))
     (local.set $new (i32.and (local.get $old) (i32.xor (local.get $bits) (i32.const -1))))
-    (i32.store (local.get $addr) (local.get $new))
+    (drop (call $nc_flags_xchg (local.get $addr) (local.get $new)))
     (if (i32.and (i32.ne (local.get $old) (i32.const 0))
                  (i32.eqz (local.get $new)))
       (then (global.set $nc_flags_count (i32.sub (global.get $nc_flags_count) (i32.const 1))))))
@@ -4744,6 +4849,13 @@
   (func $nc_flags_scan (param $mask i32) (result i32)
     (local $i i32) (local $ptr i32) (local $flags i32) (local $hwnd i32) (local $new i32)
     (if (i32.eqz (global.get $nc_flags_count)) (then (return (i32.const 0))))
+    ;; $nc_flags_count is per instance and routinely stays non-zero while no
+    ;; window holds a $mask bit (a retained erase bit, or a flag set on one
+    ;; thread and cleared on another). The shared per-bit counts are exact:
+    ;; when none of $mask is held anywhere, the walk below would find nothing
+    ;; and change nothing.
+    (if (i32.eqz (call $nc_flags_bits_pending (local.get $mask)))
+      (then (return (i32.const 0))))
     (local.set $i (i32.const 0))
     (block $done (loop $scan
       (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
@@ -4771,12 +4883,12 @@
               (local.set $new (i32.or
                 (i32.and (local.get $flags) (i32.const 2))
                 (i32.and (local.get $flags) (i32.xor (local.get $mask) (i32.const -1)))))
-              (i32.store (local.get $ptr) (local.get $new))
+              (drop (call $nc_flags_xchg (local.get $ptr) (local.get $new)))
               (if (i32.and (i32.eqz (local.get $new))
                            (i32.gt_u (global.get $nc_flags_count) (i32.const 0)))
                 (then (global.set $nc_flags_count (i32.sub (global.get $nc_flags_count) (i32.const 1))))))
             (else
-              (i32.store (local.get $ptr) (i32.const 0))
+              (drop (call $nc_flags_xchg (local.get $ptr) (i32.const 0)))
               (if (i32.gt_u (global.get $nc_flags_count) (i32.const 0))
                 (then (global.set $nc_flags_count (i32.sub (global.get $nc_flags_count) (i32.const 1)))))))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
@@ -4789,7 +4901,7 @@
     (local.set $addr (i32.add (global.get $NC_FLAGS) (i32.mul (local.get $slot) (i32.const 4))))
     (if (i32.load (local.get $addr))
       (then
-        (i32.store (local.get $addr) (i32.const 0))
+        (drop (call $nc_flags_xchg (local.get $addr) (i32.const 0)))
         (global.set $nc_flags_count (i32.sub (global.get $nc_flags_count) (i32.const 1))))))
 
   ;; $title_table_set(hwnd, wa_ptr, len): copy title bytes into a heap buffer
