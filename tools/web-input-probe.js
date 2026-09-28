@@ -23,6 +23,8 @@
 //   down:X,Y      / up:X,Y   — the halves of a drag
 //   key:Name      keyboard press (puppeteer key name, e.g. Enter, KeyA); a
 //                 combo holds its modifiers: key:Alt+KeyS, key:Shift+F2
+//   keydown:Name  / keyup:Name — hold a key across wait: steps (a frame-polled
+//                 game misses a key: press, which releases in the same tick)
 //   type:TEXT     type literal text through browser key events
 //   wait:MS       idle, letting the guest run
 //   eval:EXPR     evaluate EXPR in the page and print its result
@@ -481,6 +483,11 @@ async function main() {
         for (const k of keys) await page.keyboard.down(k);
         await page.keyboard.press(last);
         for (const k of keys.reverse()) await page.keyboard.up(k);
+      } else if (kind === 'keydown' || kind === 'keyup') {
+        // The halves of a held key. `key:` releases in the same tick it
+        // presses, which a game polling a key table once a frame never sees
+        // at all (Moorhuhn's title): hold with keydown, wait, keyup.
+        await page.keyboard[kind === 'keydown' ? 'down' : 'up'](rest);
       } else if (kind === 'type') {
         await page.keyboard.type(rest);
       } else if (kind === 'tap') {

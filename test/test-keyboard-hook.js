@@ -84,6 +84,22 @@ const extraWat = String.raw`
       (local.get $remove) (i32.const 0))
     (global.get $eip))
 
+  (func (export "test_begin_keyboard_get") (param $msg_ptr i32) (result i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 64)))
+    (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.const 0))
+    (call $handle_GetMessageA
+      (local.get $msg_ptr) (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0))
+    (global.get $eip))
+
+  ;; Queue a key into this thread's shared posted queue, flagged as hardware
+  ;; input (what $input_route_to_owner does when another thread's pump took
+  ;; it) or as an ordinary PostMessage.
+  (func (export "test_queue_key") (param $msg i32) (param $wparam i32)
+      (param $lparam i32) (param $flags i32) (result i32)
+    (call $post_queue_push_flags (i32.const 0) (local.get $msg)
+      (local.get $wparam) (local.get $lparam) (local.get $flags)))
+
   (func (export "test_keyboard_hook_thunk") (result i32)
     (global.get $font_enum_ret_thunk))
 
@@ -298,6 +314,64 @@ function u32(value) {
     'a null legacy hook procedure fails instead of returning a fake handle');
   assert.strictEqual(e.test_install_wide_hook(3, olderHook), 0,
     'an unsupported legacy hook class fails instead of returning a fake handle');
+
+  // A hardware key that reached this thread through the shared posted queue
+  // (a sibling thread's pump took it from the host and routed it here) still
+  // runs this thread's WH_KEYBOARD. Moorhuhn's hook is the game's only key
+  // source: with the main thread in a Worker the keyup was routed by its
+  // WinSock thread and skipped the hook, so Space stayed down forever.
+  const WM_KEYUP = 0x0101;
+  const WM_KEYDOWN_POSTED_LPARAM = 0x00390001;
+  const KEYUP_LPARAM = 0xc0390001; // transition + previous state, Space scan
+  const routedHandle = e.test_install_ex_hook(2, olderHook) >>> 0;
+  assert.notStrictEqual(routedHandle, 0, 'a fresh keyboard hook installs');
+  const resetObserved = () => {
+    for (let i = 0; i < 3; i++) view.setUint32(toWasm(observed + i * 4), 0xffffffff, true);
+  };
+  const observedTuple = () => [0, 4, 8].map(off => view.getUint32(toWasm(observed + off), true));
+
+  pending = false;
+  resetObserved();
+  assert.strictEqual(e.test_queue_key(WM_KEYUP, 0x20, KEYUP_LPARAM, 1), 1,
+    'a routed hardware keyup enters the shared queue');
+  assert.strictEqual(e.test_begin_keyboard_peek(msg, 1) >>> 0, olderHook,
+    'PeekMessage(PM_REMOVE) of a routed hardware key enters KeyboardProc');
+  for (let i = 0; i < 20 && e.get_eip(); i++) e.run(5000);
+  assert.strictEqual(e.get_eip() >>> 0, 0, 'the routed-key hook returns to the caller');
+  assert.strictEqual(e.get_eax() >>> 0, 1, 'PeekMessage still returns TRUE');
+  assert.deepStrictEqual(observedTuple(), [0, 0x20, KEYUP_LPARAM],
+    'the hook sees HC_ACTION and the routed keyup\'s own lParam (transition bit set)');
+  assert.strictEqual(view.getUint32(toWasm(msg + 4), true), WM_KEYUP,
+    'PeekMessage returns the routed WM_KEYUP');
+
+  resetObserved();
+  e.test_queue_key(WM_KEYUP, 0x20, KEYUP_LPARAM, 1);
+  assert.strictEqual(e.test_begin_keyboard_peek(msg, 0) >>> 0, olderHook,
+    'PM_NOREMOVE also enters KeyboardProc');
+  for (let i = 0; i < 20 && e.get_eip(); i++) e.run(5000);
+  assert.deepStrictEqual(observedTuple(), [3, 0x20, KEYUP_LPARAM],
+    'a peek that leaves the key queued reports HC_NOREMOVE');
+
+  resetObserved();
+  assert.strictEqual(e.test_begin_keyboard_get(msg) >>> 0, olderHook,
+    'GetMessage of the still-queued routed key enters KeyboardProc');
+  for (let i = 0; i < 20 && e.get_eip(); i++) e.run(5000);
+  assert.strictEqual(e.get_eip() >>> 0, 0, 'the GetMessage hook returns to the caller');
+  assert.strictEqual(e.get_eax() >>> 0, 1, 'GetMessage returns TRUE for a key');
+  assert.deepStrictEqual(observedTuple(), [0, 0x20, KEYUP_LPARAM],
+    'GetMessage runs the hook with HC_ACTION');
+
+  // PostMessage(WM_KEYDOWN) is not hardware input: USER does not run
+  // WH_KEYBOARD for it.
+  resetObserved();
+  e.test_queue_key(WM_KEYDOWN, 0x20, WM_KEYDOWN_POSTED_LPARAM, 0);
+  e.test_begin_keyboard_peek(msg, 1);
+  assert.strictEqual(e.get_eip() >>> 0, 0, 'a posted key does not redirect into the hook');
+  assert.deepStrictEqual(observedTuple(), [0xffffffff, 0xffffffff, 0xffffffff],
+    'a posted WM_KEYDOWN does not reach KeyboardProc');
+  assert.strictEqual(view.getUint32(toWasm(msg + 4), true), WM_KEYDOWN,
+    'the posted WM_KEYDOWN is still retrieved');
+  assert.strictEqual(e.test_uninstall_ex_hook(routedHandle), 1, 'routed-key hook removes');
 
   console.log('PASS  legacy and Ex keyboard/CBT hook chains install, delegate, and unhook');
 })().catch(error => {

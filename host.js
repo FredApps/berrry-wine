@@ -1735,6 +1735,24 @@ class WineAssembly {
     h.check_input_wparam = () => {
       return self._lastInputEvent ? (self._lastInputEvent.wParam | 0) : 0;
     };
+    // One `_lastInputEvent` serves every guest thread, but a Worker thread
+    // reads an event's lParam/wParam/hwnd with RPCs that follow its
+    // check_input, and another thread's empty poll in between clears it. The
+    // broker (lib/guest-rpc.js) saves each slot's event when its check_input
+    // takes one and swaps it back in around that slot's follow-up reads.
+    // Moorhuhn with its main thread in a Worker got lParam 0 for every
+    // keyup -- a press to its WH_KEYBOARD hook -- so Space never came up.
+    Object.defineProperty(h, 'inputEventScope', {
+      enumerable: false,
+      value: {
+        save: () => [self._lastInputEvent || null,
+          self.renderer ? self.renderer._activeInputEvent || null : null],
+        restore: (saved) => {
+          self._lastInputEvent = saved[0];
+          if (self.renderer) self.renderer._activeInputEvent = saved[1];
+        },
+      },
+    });
     h.check_input_hwnd = (focusHwnd) => {
       const evt = self._lastInputEvent;
       if (!evt) return 0;

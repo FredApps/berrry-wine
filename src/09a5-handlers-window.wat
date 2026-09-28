@@ -1685,6 +1685,37 @@
     (global.set $eip (call $hook_dispatch_enter (i32.const 2)))
     (global.set $steps (i32.const 0)))
 
+  ;; A hardware key can reach this thread through the shared posted queue
+  ;; instead of straight from the host: another guest thread's pump took it
+  ;; and $input_route_to_owner forwarded it here, or a PeekMessage filter
+  ;; parked it. USER runs WH_KEYBOARD in the thread that retrieves the key,
+  ;; so it runs here as well, with the retrieved MSG's wParam/lParam. Without
+  ;; this a Worker main thread lost every key a sibling thread's pump won the
+  ;; race for; Moorhuhn saw Space go down and never come up. Returns 1 when
+  ;; the hook owns the continuation (the caller must return at once).
+  (func $keyboard_hook_from_queue
+      (param $msg_ptr i32) (param $ncode i32) (param $arg_bytes i32) (result i32)
+    (local $msg i32) (local $ret i32)
+    (if (i32.or (i32.eqz (global.get $user_queue_input_flags))
+                (i32.eqz (global.get $keyboard_hook_proc)))
+      (then (return (i32.const 0))))
+    (local.set $msg (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 4))))
+    (if (i32.eqz
+          (i32.or
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0100))
+                    (i32.eq (local.get $msg) (i32.const 0x0101)))
+            (i32.or (i32.eq (local.get $msg) (i32.const 0x0104))
+                    (i32.eq (local.get $msg) (i32.const 0x0105)))))
+      (then (return (i32.const 0))))
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $arg_bytes)))
+    (call $keyboard_hook_begin
+      (local.get $ret) (local.get $ncode)
+      (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 8)))
+      (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 12))))
+    (i32.const 1))
+
   ;; 73: GetMessageA
   ;; The host input FIFO is shared, but a window's messages belong to its
   ;; creating thread. A loader's GetMessage must not steal keyboard input.
@@ -1985,6 +2016,8 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))) (return)))
     (if (call $shared_post_queue_read (local.get $msg_ptr) (i32.const 1))
     (then
+    (if (call $keyboard_hook_from_queue (local.get $msg_ptr) (i32.const 0) (i32.const 20))
+      (then (return)))
     (i32.store offset=0 (global.get $reg_base) (i32.ne
       (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 4)))
       (i32.const 0x0012)))
@@ -2093,6 +2126,8 @@
     ;; A producer may have posted after the earlier queue check in this handler.
     (if (call $shared_post_queue_read (local.get $msg_ptr) (i32.const 1))
     (then
+      (if (call $keyboard_hook_from_queue (local.get $msg_ptr) (i32.const 0) (i32.const 20))
+        (then (return)))
       (i32.store offset=0 (global.get $reg_base) (i32.ne
         (call $gl32 (i32.add (local.get $msg_ptr) (i32.const 4)))
         (i32.const 0x0012)))
@@ -2416,6 +2451,11 @@
           (local.get $arg2) (local.get $arg3)
           (i32.and (local.get $arg4) (i32.const 1)))
       (then
+        (if (call $keyboard_hook_from_queue (local.get $arg0)
+              (select (i32.const 0) (i32.const 3)
+                (i32.ne (i32.and (local.get $arg4) (i32.const 1)) (i32.const 0)))
+              (i32.const 24))
+          (then (return)))
         (i32.store offset=0 (global.get $reg_base) (i32.const 1))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (return)))

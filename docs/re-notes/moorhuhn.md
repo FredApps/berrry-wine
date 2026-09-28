@@ -17,6 +17,21 @@ the browser (2026-09-21).
   mouse-only.
 - Route: `330:keydown:32,340:keyup:32,420..445:keypress:<letters>,450:keydown:13,452:keypress:13,455:keyup:13`.
   Gameplay is ~550-900 and the round-end wipe follows.
+- The hook (`0x40cb70`) decides press vs release from **lParam bit 31**
+  only, and every event also lands in a ring at `0x436bd8` (count
+  `[0x436ff8]`; `0x8000|vk` = release). Space *down* clears the title
+  text and Space *up* brings up the name band, so "title text gone, no
+  band" means the game saw no release. That was the browser with Threads on
+  (main thread in a Worker), 2026-09-28: the WinSock thread's empty
+  `check_input` poll cleared the page's single `_lastInputEvent` between
+  the main thread's `check_input` and its `check_input_lparam` RPC. Every
+  keyup then arrived with lParam 0. Fixed per slot in the broker
+  (`lib/guest-rpc.js`, `test/test-worker-input-event-slots.js`). The CLI's
+  `--threads` keeps the main thread in-process and cannot reproduce it:
+  use `tools/web-input-probe.js --threads` against `dev-server.js --isolate`,
+  with `keydown:`/`keyup:` held ~300ms (a `key:` tap is released before
+  the title loop polls). Reading the ring with an `evalfile:` through
+  `window.wine.hostCtx.getMemory()` separates "no keyup" from "bad lParam".
 
 ## Moorhuhn 2 (v1.1)
 
