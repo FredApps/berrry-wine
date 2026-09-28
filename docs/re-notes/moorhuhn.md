@@ -32,6 +32,19 @@ the browser (2026-09-21).
   with `keydown:`/`keyup:` held ~300ms (a `key:` tap is released before
   the title loop polls). Reading the ring with an `evalfile:` through
   `window.wine.hostCtx.getMemory()` separates "no keyup" from "bad lParam".
+- The black screen before the title is **CPU work, not a timed wait**
+  (2026-09-28). The title lands at batch ~260 at both 200 and 50
+  ms/batch, `--trace-sched` shows T1 idle in `msgwait` throughout, and
+  there are only ~3K API calls to the title. The main thread is loading
+  assets through `0x4094f0`, and two loops take ~100M blocks. One is an
+  LZ-style decoder `0x4200fa`: bit reader `shr edx,cl`, `jmp
+  [0x420a7c+ecx*4]` at `0x41febc`, and the byte copy at `0x42018f`. The
+  other is a per-pixel sprite RLE encoder `0x409170`, with its head at
+  `0x409227` `cmp byte [edi],0x12`. The uop tier covers ~99% of it
+  (`--uop-census`: 0.7M threaded vs ~99M uop blocks). On an M1 under
+  node that is ~5.3s of `$uop_fast`, and ~3x that with `--no-uop`. A
+  faster boot means a faster uop engine on these two loops, not wider
+  coverage.
 
 ## Moorhuhn 2 (v1.1)
 
@@ -84,14 +97,15 @@ The exe is packed, and the packer is hostile. Four things had to be real:
 It also writes `C:\WINDOWS\TEMP\gsm3sys32.exe` one byte at a time and
 ShellExecutes it, and probes `highscores.txt` ~26 times.
 
-Route (batch size 200000): the title is up by ~1400 batches. A click leaves
-it, another click at ~1700 and Space at ~1900 start the round. The first
+Route (batch size 200000): the title is up by ~2400 batches as of
+2026-09-28 (it was ~1400 when first written). A click at ~2600 leaves it,
+another click at ~2850 and Space at ~3050 start the round. The first
 gameplay frames are a venetian-blind wipe (4px vertical stripes). That is the
-game's transition, not a blit bug. By ~2300 the round is clean.
+game's transition, not a blit bug. By ~4300 the round is clean.
 
 ```
-node test/run.js --app=moorhuhn_3 --quiet-api --no-close --batch-size=200000 --max-batches=2700 \
-  --input=1450:mousedown:320:240,1453:mouseup:320:240,1700:mousedown:320:240,1703:mouseup:320:240,1900:keydown:32,1903:keyup:32 \
+node test/run.js --app=moorhuhn_3 --quiet-api --no-close --batch-size=200000 --max-batches=4301 \
+  --input=2600:mousedown:320:240,2603:mouseup:320:240,2850:mousedown:320:240,2853:mouseup:320:240,3050:keydown:32,3053:keyup:32 \
   --png=/tmp/mh3.png
 ```
 
