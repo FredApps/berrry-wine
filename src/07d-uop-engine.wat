@@ -26,12 +26,28 @@
   ;;     compare and the access. A miss re-guards on the page of the address
   ;;     (the stream walked off its window) and only exits if that fails too.
   ;;
-  ;; Windows are valid for one $uop_run call only: nothing inside a program
-  ;; can change a mapping (any API call is an exit), and every entry starts
-  ;; with its windows poisoned again.
+  ;; Windows outlive a $uop_run call. Nothing inside a program can change a
+  ;; mapping (any API call is an exit), so a window can only go stale between
+  ;; entries, and everything it depends on bumps the shared $UOP_WIN_EPOCH
+  ;; ($uop_win_bump): the sparse page table ($guest_page_publish_range,
+  ;; $guest_page_clear_range) and, for a written window, the code-page
+  ;; bitmap gaining a page and the sparse generated-code span widening
+  ;; ($code_page_mark, $code_note_decode). The direct and DIB windows are
+  ;; fixed affine maps. The enter op re-poisons a program's windows only
+  ;; when the epoch moved since it last did (header +28), so a program
+  ;; re-entered with nothing changed keeps the windows its last run proved:
+  ;; measured 2026-09-28, 66-90% of all re-guards were first touches after
+  ;; poisoning (docs/uop-tier-design.md section 9).
+  ;;
+  ;; Each program owns its window slots (after its code, see $uc_compile_locked),
+  ;; so interleaved programs keep theirs too, and a slot's rw is fixed at
+  ;; compile time: poisoning leaves it alone.
   ;;
   ;; Window slot, 16 bytes: +0 lo (guest), +4 span (bytes), +8 delta
-  ;; (wasm - guest), +12 rw (1 = stores allowed: no code page inside).
+  ;; (wasm - guest), +12 rw (1 = a store window: no code page may be inside).
+  ;; An empty slot is POISONED -- lo 0xFFFFFFF0, span 4, delta aimed at the
+  ;; sentinel $g2w answers for unmapped memory -- never span 0, which the
+  ;; 4-byte compare `(ga - lo) >u span - 4` would read as "hit everything".
   ;;
   ;; Operand kinds below: d/a/b/s/base/idx = vreg address, i/disp/n/sc = imm,
   ;; w = window slot address, t/x = code address (x = deopt stub).
@@ -123,7 +139,7 @@
   (global $uop_arena      (mut i32) (region.addr $UOP_ARENA 0))
   (global $uop_code_bytes (mut i32) (i32.const 0x000E0000))
   (global $uop_temps_off  (mut i32) (i32.const 0x000E0000)) ;; 4096 x 4 bytes
-  (global $uop_wins_off   (mut i32) (i32.const 0x000E4000)) ;; 1024 x 16 bytes
+  (global $uop_wins_off   (mut i32) (i32.const 0x000E4000)) ;; 1024 x 16 bytes, unused by compiled programs (each owns its slots)
   (global $uop_map_off    (mut i32) (i32.const 0x000E8000)) ;; 2048 sets x 2 ways x {eip, pc}
   (global $uop_ranges_off (mut i32) (i32.const 0x000F0000)) ;; 4096 x {lo, hi, pc}
   (global $UOP_RANGES_MAX i32 (i32.const 4096))
@@ -148,6 +164,9 @@
   (global $uop_blocks   (mut i64) (i64.const 0))
   (global $uop_head_exits (mut i32) (i32.const 0))
   (global $uop_retired_poor (mut i32) (i32.const 0))
+  ;; Entries that kept their windows / that had to poison them again.
+  (global $uop_win_kept  (mut i32) (i32.const 0))
+  (global $uop_win_reset (mut i32) (i32.const 0))
 
   ;; --uop-census: one record per verdict, through log_i32 (tools/uop-census.js
   ;; reads them back). A record is 0xC5E50000|kind, then four fields:
@@ -189,12 +208,26 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l))))
 
+  ;; Anything that can make a proved window wrong calls this (see the top of
+  ;; the file). Shared by every instance: a mapping is process-wide, and so
+  ;; is the code-page bitmap.
+  (func $uop_win_bump
+    (drop (i32.atomic.rmw.add (global.get $UOP_WIN_EPOCH) (i32.const 1))))
+
+  ;; Empty a slot: every access through it misses (lo/span/delta), rw kept.
+  (func $uop_window_poison (param $w i32)
+    (i32.store (local.get $w) (i32.const 0xFFFFFFF0))
+    (i32.store offset=4 (local.get $w) (i32.const 4))
+    (i32.store offset=8 (local.get $w)
+      (i32.sub (global.get $NULL_SENTINEL) (i32.const 0xFFFFFFF0))))
+
   ;; Prove [lo, lo+len) is one affine mapping and, for a written window, that
   ;; no page in it holds decoded code. Fill the slot and answer 1, or leave it
-  ;; empty (span 0 -- every access then misses) and answer 0.
+  ;; poisoned (every access then misses) and answer 0. The slot outlives this
+  ;; run, so a failure must not leave half of a window behind.
   (func $uop_window_set (param $w i32) (param $lo i32) (param $len i32) (param $rw i32) (result i32)
     (local $wa i32) (local $p i32) (local $end i32)
-    (i32.store offset=4 (local.get $w) (i32.const 0))
+    (call $uop_window_poison (local.get $w))
     (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
     (local.set $wa (call $g2w_affine_span (local.get $lo) (local.get $len)))
     (if (i32.eq (local.get $wa) (global.get $NULL_SENTINEL))
@@ -214,6 +247,22 @@
     (i32.store offset=12 (local.get $w) (local.get $rw))
     (i32.store offset=4 (local.get $w) (local.get $len))
     (i32.const 1))
+
+  ;; Poison a program's windows and stamp them with the epoch they will be
+  ;; proved under. $ep is read BEFORE the slots are emptied: a bump racing
+  ;; this (another thread) leaves the older stamp, so the next entry poisons
+  ;; again -- the error only ever runs toward re-guarding.
+  (func $uop_windows_reset (param $op i32) (param $ep i32)
+    (local $w i32) (local $n i32)
+    (local.set $n (i32.load offset=8 (local.get $op)))
+    (local.set $w (i32.load offset=12 (local.get $op)))
+    (block $d (loop $l
+      (br_if $d (i32.eqz (local.get $n)))
+      (call $uop_window_poison (local.get $w))
+      (local.set $w (i32.add (local.get $w) (i32.const 16)))
+      (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+      (br $l)))
+    (i32.store offset=28 (local.get $op) (local.get $ep)))
 
   ;; The slow half of every access: the address left its window. Re-guard on
   ;; the page it is in now (keeping the slot's rw); an access that straddles
@@ -776,9 +825,10 @@
   ;; Installation. A program header, 32 bytes, precedes its code:
   ;;   +0 gen   ($uop_gen at install; a killed program holds 0)
   ;;   +4 head  (the guest EIP it is entered at)
-  ;;   +8 nwin  +12 first window slot address
+  ;;   +8 nwin  +12 first window slot address (its own, after its code)
   ;;   +16 entries  +20 blocks spent in it  (stats, and the retire policy)
-  ;;   +24 exits back to the head          +28 reserved
+  ;;   +24 exits back to the head
+  ;;   +28 the $UOP_WIN_EPOCH its windows were last poisoned under
   ;; ===================================================================
 
   ;; The verdict map is 2048 sets of two {eip, pc} ways. It was direct-mapped
@@ -1020,27 +1070,21 @@
   ;; correctness.
   (func $th_uop_enter (param $op i32)
     (local $nx_fn i32) (local $nx_op i32)
-    (local $w i32) (local $n i32) (local $b0 i32) (local $b1 i32)
+    (local $ep i32) (local $b0 i32) (local $b1 i32)
     (if (i32.and
           (i32.and (i32.eq (i32.load (local.get $op)) (global.get $uop_gen))
                    (i32.eq (i32.load offset=4 (local.get $op)) (global.get $eip)))
           (i32.eqz (i32.or (global.get $dbg_chain_guard) (global.get $code16))))
       (then
-        ;; Poison every window: an address no guest touches, aimed at the
-        ;; same sentinel $g2w answers for unmapped memory, so the first access
-        ;; through each misses and guards its own page.
-        (local.set $n (i32.load offset=8 (local.get $op)))
-        (local.set $w (i32.load offset=12 (local.get $op)))
-        (block $d (loop $l
-          (br_if $d (i32.eqz (local.get $n)))
-          (i32.store (local.get $w) (i32.const 0xFFFFFFF0))
-          (i32.store offset=4 (local.get $w) (i32.const 4))
-          (i32.store offset=8 (local.get $w)
-            (i32.sub (global.get $NULL_SENTINEL) (i32.const 0xFFFFFFF0)))
-          (i32.store offset=12 (local.get $w) (i32.const 0))
-          (local.set $w (i32.add (local.get $w) (i32.const 16)))
-          (local.set $n (i32.sub (local.get $n) (i32.const 1)))
-          (br $l)))
+        ;; Keep the windows the last run proved unless something they depend
+        ;; on changed since; else poison them, so the first access through
+        ;; each misses and guards its own page.
+        (local.set $ep (i32.atomic.load (global.get $UOP_WIN_EPOCH)))
+        (if (i32.eq (i32.load offset=28 (local.get $op)) (local.get $ep))
+          (then (global.set $uop_win_kept (i32.add (global.get $uop_win_kept) (i32.const 1))))
+          (else
+            (global.set $uop_win_reset (i32.add (global.get $uop_win_reset) (i32.const 1)))
+            (call $uop_windows_reset (local.get $op) (local.get $ep))))
         (local.set $b0 (global.get $block_budget))
         (local.set $b1 (call $uop_run (i32.add (local.get $op) (global.get $UOP_HDR))
                                       (local.get $b0)))
@@ -1066,23 +1110,32 @@
                     (i32.lt_s (local.get $b1) (i32.const 0)))
           (then
             (global.set $block_budget (i32.add (local.get $b1) (i32.const 1)))
-            ;; Retire a program that is entered often and does almost
-            ;; nothing per entry: the enter/exit is then pure overhead.
-            (if (i32.and (i32.ge_u (i32.load offset=16 (local.get $op)) (i32.const 256))
-                         (i32.lt_u (i32.load offset=20 (local.get $op))
-                                   (i32.shl (i32.load offset=16 (local.get $op)) (i32.const 1))))
-              (then
-                (global.set $uop_retired_poor (i32.add (global.get $uop_retired_poor) (i32.const 1)))
-                (if (global.get $uop_census)
-                  (then (call $uop_census_ev (i32.const 2) (i32.load offset=4 (local.get $op))
-                          (i32.load offset=16 (local.get $op)) (i32.load offset=20 (local.get $op))
-                          (global.get $eip))))
-                (call $uop_retire_poor (local.get $op))))
+            (call $uop_poor_check (local.get $op))
             (return_call $branch_end)))
         (global.set $uop_head_exits (i32.add (global.get $uop_head_exits) (i32.const 1)))
         (i32.store offset=24 (local.get $op)
-          (i32.add (i32.load offset=24 (local.get $op)) (i32.const 1)))))
+          (i32.add (i32.load offset=24 (local.get $op)) (i32.const 1)))
+        ;; An exit at the head that spent no block did nothing at all: the
+        ;; first access failed its guard (a store into a page holding decoded
+        ;; code, say), and it will fail the same way next time. Such an entry
+        ;; is exactly as poor as a short trip out of a side exit.
+        (if (i32.eq (local.get $b0) (local.get $b1))
+          (then (call $uop_poor_check (local.get $op))))))
     (dispatch-next))
+
+  ;; Retire a program that is entered often and does almost nothing per
+  ;; entry: the enter/exit is then pure overhead.
+  (func $uop_poor_check (param $op i32)
+    (if (i32.and (i32.ge_u (i32.load offset=16 (local.get $op)) (i32.const 256))
+                 (i32.lt_u (i32.load offset=20 (local.get $op))
+                           (i32.shl (i32.load offset=16 (local.get $op)) (i32.const 1))))
+      (then
+        (global.set $uop_retired_poor (i32.add (global.get $uop_retired_poor) (i32.const 1)))
+        (if (global.get $uop_census)
+          (then (call $uop_census_ev (i32.const 2) (i32.load offset=4 (local.get $op))
+                  (i32.load offset=16 (local.get $op)) (i32.load offset=20 (local.get $op))
+                  (global.get $eip))))
+        (call $uop_retire_poor (local.get $op)))))
 
   (func $uop_arena_addr (export "uop_arena") (result i32) (global.get $uop_arena))
   (func (export "uop_reg_base") (result i32) (global.get $reg_base))
@@ -1105,6 +1158,8 @@
     (if (i32.eq (local.get $which) (i32.const 6)) (then (return (global.get $uop_head_exits))))
     (if (i32.eq (local.get $which) (i32.const 7)) (then (return (global.get $uop_retired_poor))))
     (if (i32.eq (local.get $which) (i32.const 8)) (then (return (global.get $uop_gen))))
+    (if (i32.eq (local.get $which) (i32.const 9)) (then (return (global.get $uop_win_kept))))
+    (if (i32.eq (local.get $which) (i32.const 10)) (then (return (global.get $uop_win_reset))))
     (i32.const 0))
   ;; Where the lowering may write: 0 code base, 1 code bytes, 2 temps base,
   ;; 3 windows base.

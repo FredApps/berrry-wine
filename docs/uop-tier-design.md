@@ -321,3 +321,110 @@ change and code-page mark, shared across Worker instances) would buy under 1%
 of Heroes III. That is not worth a stale-window SMC hole. The remaining lever
 is **coverage**: the declines are `no-backedge` and `head-unsupported`, and
 Heroes III's hot threaded time is FPU code the tier does not lower.
+
+(Section 9 built those windows anyway. The epoch closes the stale-window hole
+within a thread. Building them also found a real SMC hole in store windows.)
+
+## 9. Entry cost: chaining measured, windows kept (2026-09-28)
+
+**Chaining** would let a program exit that lands on another installed
+program's head jump straight into that program. It was measured before
+anything was built, with `uop-game-ab.js --arms=uop` on the gameplay routes
+under `--branch-clock`:
+
+| game | enters | exit lands on a live head | same program as the last entry |
+|---|---|---|---|
+| Heroes III | 7.81M | 2,188 (0.03%) | 83% |
+| Diablo | 115.4M | 3,779 (0.003%) | 70% |
+| StarCraft | 3.52M | 12,295 (0.36%) | 68% |
+
+Programs exit into threaded code that is not another loop head, so chaining
+would remove at most 0.36% of entries. It was not built.
+
+**Where an entry's cost went.** Every entry poisoned all of its windows,
+2.1 to 3.7 per entry on average. The first access through each window then
+missed and paid `$uop_run` → `$uop_reguard` → `$uop_window_set` →
+`$g2w_affine_span`, plus the code-page walk for a written window. These
+first touches after poisoning, rather than streams walking off a page, were:
+
+| game | first-touch re-guards | share of all re-guards | per entry |
+|---|---|---|---|
+| Heroes III | 20.5M | 90% | 2.6 |
+| Diablo | 168.8M of 256.6M | 66% | 1.5 |
+| StarCraft | 7.9M | 86% | 2.3 |
+
+**Windows now outlive a run.** Header +28 holds the `$UOP_WIN_EPOCH` under
+which the windows were last poisoned. The enter op poisons only when the
+shared epoch has moved since then. The epoch is bumped atomically, after the
+change, in four places:
+
+- `$guest_page_publish_range` or `$guest_page_clear_range`, when a present
+  PTE is replaced or removed;
+- `$code_page_mark`, when a page first becomes code;
+- `$code_note_decode`, when it widens the sparse generated-code span.
+
+Each program now owns its window slots, placed after its code, instead of
+all programs sharing one set. Interleaved programs therefore keep their
+windows too.
+
+**The SMC hole this closed.** It predates this change:
+
+- The poison loop wrote `rw = 0` into every slot, and nothing ever set it
+  back to 1.
+- So a re-guard of a *store* window never asked `$code_write_is_code`.
+- A program's store into a page holding decoded code therefore went straight
+  to memory. It did not retire the blocks it overwrote, and it did not kill
+  a program lowered from those bytes.
+
+The fix:
+
+- Slots carry `rw` from compile time. `$uc_encode_write` marks the windows of
+  store ops, and poisoning leaves `rw` alone.
+- A failed `$uop_window_set` now leaves the slot poisoned instead of at
+  span 0. For a 4-byte access, span 0 reads as "hit everything", which
+  mattered only while a slot could outlive its run.
+
+**What the fix cost, and the retirement that pays for it.** With `rw`
+honoured, StarCraft's head exits went from 283 to about 770K. Four programs
+(`0x4b4417`, `0x4c789f`, `0x4b57a1`, `0x4b43f6`) store into pages that hold
+decoded code on their first access. Each entry therefore exited at its own
+head with zero blocks run: 720K entries that did no work at all. The
+poor-retirement check only ran on non-head exits, so these programs were
+never retired. It now also runs on a head exit that spent no block. Such an
+exit made no progress, so the same `enters >= 256 && blocks < 2*enters`
+rule applies to it unchanged. After the change, StarCraft has 2,891 head
+exits and 35 programs retired as poor (15 before).
+
+`test-uop-compiler.js` `window-keep` covers all three parts:
+
+- A program proves a store window on a page.
+- The page then gets decoded code. The program's next store there must exit,
+  so that threaded code invalidates the block. A build without the
+  `$code_page_mark` bump fails here with the stale immediate.
+- Further stores into that page must get the program retired. It retires
+  after 236 head exits, is not entered again, and the threaded store it
+  leaves behind still lands.
+
+**Measured** with `uop-game-ab.js --arms=off,off2,uop,refuop`, where `refuop`
+is the base build. Load was 9-19, so timings are noisy.
+
+| game | frames off~uop | re-guards base → new | windows kept | gameplay phase uop vs refuop | null band (off2/off) |
+|---|---|---|---|---|---|
+| Heroes III | IDENTICAL | 22.76M → 5.51M (-76%) | 7,807,899 of 7,808,452 | 15.2s vs 15.4s | 1.2% |
+| Diablo | IDENTICAL | 256.6M → 147.3M (-43%) | 115,365,124 of 115,365,490 | 6.3s vs 6.4s | 0.0% |
+| StarCraft | 0.94% (off~off2 1.41%) | 8.87M → 2.08M (-77%) | 3,609,198 of 3,689,426 | 1.7s vs 1.6s | 5.6% |
+
+For Heroes III, enters, blocks and installs are identical between the two
+builds. Diablo differs by a few installs, and the base build alone varies
+by that much from run to run (179, then 177). StarCraft has 7.7% more
+enters. Those are programs whose stores now correctly exit partway through
+a trip on a code page.
+
+The re-guard counters fall a great deal, but the time saved is inside the
+noise: -1.3% on Heroes III gameplay against a 1.2% band, and -0.9% on
+Diablo's whole-run user CPU. The per-entry saving is real but small next to
+what an entry already costs. It needs the quiet box to price.
+
+**What remains unguarded** is the cross-thread case §3 already documents:
+another instance decoding or remapping *during* this instance's run. Between
+runs the epoch catches that case too, because the epoch is shared.

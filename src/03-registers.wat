@@ -98,7 +98,7 @@
   (func $guest_page_publish_range
     (param $guest i32) (param $size i32) (param $backing i32)
       (param $protect i32) (result i32)
-    (local $cur i32) (local $end i32) (local $back i32)
+    (local $cur i32) (local $end i32) (local $back i32) (local $old i32)
     (if (i32.or
           (i32.or
             (i32.ne (i32.and (local.get $guest) (i32.const 0xFFF)) (i32.const 0))
@@ -113,33 +113,42 @@
     (local.set $back (local.get $backing))
     (block $done (loop $pages
       (br_if $done (i32.ge_u (local.get $cur) (local.get $end)))
-      (i32.atomic.store
+      (local.set $old (i32.or (local.get $old) (i32.atomic.rmw.xchg
         (i32.add (global.get $GUEST_PAGE_TABLE)
           (i32.and (i32.shr_u (local.get $cur) (i32.const 10))
             (i32.const 0x003FFFFC)))
         (i32.or (i32.and (local.get $back) (i32.const 0xFFFFF000))
           (i32.or
             (i32.and (local.get $protect) (global.get $GUEST_PTE_PROTECT_MASK))
-            (global.get $GUEST_PTE_PRESENT))))
+            (global.get $GUEST_PTE_PRESENT))))))
       (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
       (local.set $back (i32.add (local.get $back) (i32.const 0x1000)))
       (br $pages)))
+    ;; A uop window (07d) proved over a page that was already present may now
+    ;; name the wrong backing; one over pages that were absent cannot exist.
+    ;; After the stores, so no window can be proved against the old entries
+    ;; under the new epoch.
+    (if (i32.and (local.get $old) (global.get $GUEST_PTE_PRESENT))
+      (then (call $uop_win_bump)))
     (i32.const 1))
 
   (func $guest_page_clear_range (param $guest i32) (param $size i32)
-    (local $cur i32) (local $end i32)
+    (local $cur i32) (local $end i32) (local $old i32)
     (local.set $end (i32.add (local.get $guest) (local.get $size)))
     (if (i32.lt_u (local.get $end) (local.get $guest)) (then (return)))
     (local.set $cur (local.get $guest))
     (block $done (loop $pages
       (br_if $done (i32.ge_u (local.get $cur) (local.get $end)))
-      (i32.atomic.store
+      (local.set $old (i32.or (local.get $old) (i32.atomic.rmw.xchg
         (i32.add (global.get $GUEST_PAGE_TABLE)
           (i32.and (i32.shr_u (local.get $cur) (i32.const 10))
             (i32.const 0x003FFFFC)))
-        (i32.const 0))
+        (i32.const 0))))
       (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
-      (br $pages))))
+      (br $pages)))
+    ;; as above: a uop window over a page that just went away is stale
+    (if (i32.and (local.get $old) (global.get $GUEST_PTE_PRESENT))
+      (then (call $uop_win_bump))))
 
   ;; Change PAGE_* on a page-rounded committed range. The caller holds
   ;; LOCK_VIRTUAL_MAP, so the validation pass and update pass are atomic with

@@ -15,13 +15,17 @@
   ;; put a full cache scan on every pixel write. A bitmap costs one byte load
   ;; per store and is exact.
   (func $code_page_mark (param $ga i32)
-    (local $pi i32) (local $ba i32)
+    (local $pi i32) (local $ba i32) (local $old i32) (local $bit i32)
     (local.set $pi (i32.shr_u (local.get $ga) (i32.const 12)))
     (if (i32.ge_u (local.get $pi) (global.get $CODE_PAGE_BITMAP_PAGES)) (then (return)))
     (local.set $ba (i32.add (global.get $CODE_PAGE_BITMAP) (i32.shr_u (local.get $pi) (i32.const 3))))
-    (i32.store8 (local.get $ba)
-      (i32.or (i32.load8_u (local.get $ba))
-              (i32.shl (i32.const 1) (i32.and (local.get $pi) (i32.const 7))))))
+    (local.set $old (i32.load8_u (local.get $ba)))
+    (local.set $bit (i32.shl (i32.const 1) (i32.and (local.get $pi) (i32.const 7))))
+    (if (i32.and (local.get $old) (local.get $bit)) (then (return)))
+    (i32.store8 (local.get $ba) (i32.or (local.get $old) (local.get $bit)))
+    ;; A page just became code: a uop store window over it (07d) must stop
+    ;; letting stores through without invalidation.
+    (call $uop_win_bump))
 
   (func $code_page_test (param $ga i32) (result i32)
     (local $pi i32)
@@ -72,11 +76,15 @@
       (then
         (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
         (local.set $page_end (i32.add (local.get $page) (i32.const 0x1000)))
+        ;; widening the span is $code_write_is_code answering 1 for more
+        ;; pages, like a new bitmap bit ($code_page_mark): stale uop windows
         (if (i32.or (i32.eqz (global.get $generated_sparse_code_start))
                     (i32.lt_u (local.get $page) (global.get $generated_sparse_code_start)))
-          (then (global.set $generated_sparse_code_start (local.get $page))))
+          (then (global.set $generated_sparse_code_start (local.get $page))
+                (call $uop_win_bump)))
         (if (i32.gt_u (local.get $page_end) (global.get $generated_sparse_code_end))
-          (then (global.set $generated_sparse_code_end (local.get $page_end)))))))
+          (then (global.set $generated_sparse_code_end (local.get $page_end))
+                (call $uop_win_bump))))))
   ;; Every full cache wipe throws away all decoded code and forces the whole
   ;; working set to be re-decoded. One at startup is normal; thousands mean the
   ;; arena is too small for the app's hot set and the interpreter is spending
