@@ -457,7 +457,8 @@ Three items, and only the first is confirmed:
 ### A harness trap the sweep exposed
 
 `run.js --stuck-after=N` (default 10) ends a run after N batches at the same
-EIP. It is a *harness* behaviour, and it does not fire equally in both arms: an
+EIP; `--stuck-after=0` turns it off (since 2026-09-29 — before that, 0 ended
+the run after one batch). It is a *harness* behaviour, and it does not fire equally in both arms: an
 app parked in `GetMessage` is waiting for a timer that, at 1 ms of guest time
 per batch, is 200x further away, so the low-tick arm trips it and the high-tick
 arm does not. Solitaire ended at **39 batches against 3000** that way, which
