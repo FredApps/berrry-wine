@@ -1179,3 +1179,158 @@ The feature stays **opt-in** for now, for three reasons:
 
 The recommended next step is to flip the default once one browser
 spot-check agrees.
+
+### Default-on decision (post-g2w-fast, 2026-09-28)
+
+This round re-ran the A/B on main 754d307e, which includes the `$g2w`
+fast-path inline. It weighted each run toward gameplay, and it added a
+correctness sweep and a browser check.
+
+**Method.**
+
+- Tool: `tools/uop-game-ab.js`. Arms `uop` (tier on, trace heads off) and
+  `trace` (`--uop-trace-heads`), 3 reps each, interleaved. Each game ran on
+  one quiet bench box, one job at a time.
+- The **band** is an arm's own (max−min)/mean over its 3 reps; that is the
+  same-build null band.
+- `--extend=GAME:N` (new) runs N more batches past the route's end and adds
+  a `--slice-split` at that end. The route's own `--slice-split` stays, so
+  the phases are:
+  - phase 0: boot through the route's split;
+  - phase 1: the rest of the route;
+  - phase 2: the extension (SC, H3 and Diablo have a separate extension
+    phase).
+
+  "Gameplay" is the guest-slice seconds of every phase after phase 0.
+  Guest seconds are printed to 0.1 s, so a 1.3 s phase cannot resolve
+  anything under 8%.
+- **user** is the whole run's user CPU.
+- **Frames** compare every arm's final PNG against the `uop` arm's.
+
+| game (box, extension) | user uop (band) | user trace (band) | Δ user | gameplay uop (band) | gameplay trace (band) | Δ gameplay | frames |
+|---|---|---|---|---|---|---|---|
+| sc (box9, +20000) | 50.46 (0.9%) | 50.59 (2.7%) | +0.3% | 5.57 (1.8%) | 5.77 (3.5%) | **+3.6%** | nondeterministic (uop~uop2 1.8%) |
+| h3 (box9, +6000) | 109.91 (2.2%) | 101.49 (1.0%) | **−7.7%** | 29.77 (3.4%) | 28.73 (1.4%) | −3.5% | IDENTICAL |
+| diablo (box8, +8000) | 274.52 (1.8%) | 268.58 (7.3%) | −2.2% | 34.93 (2.3%) | 32.90 (9.4%) | −5.8% | IDENTICAL |
+| diablo (box9, +8000, 2nd set) | 271.28 (1.7%) | 257.95 (1.5%) | **−4.9%** | 34.57 (3.8%) | 31.90 (6.0%) | −7.7% | IDENTICAL |
+| wc3g (box8, +40000) | 170.04 (0.4%) | 161.91 (2.8%) | **−4.8%** | 4.50 (0.0%) | 4.37 (4.6%) | −3.0% | IDENTICAL |
+| wc3 menu (box9) | | | −3.2% (bands 0.8/0.5%) | 1.97 | 1.90 | −3.6% | IDENTICAL |
+| mh3 (box9) | | | −4.6% (bands 0.6/1.2%) | 2.63 | 2.20 | −16.5% | nondeterministic (uop~uop2 ~68%) |
+| mh1 (box1) | 10.71 (0.6%) | 10.17 (0.4%) | **−5.1%** | 1.30 (0.0%) | 1.20 (0.0%) | −7.7% | nondeterministic (uop~uop2 0.9%) |
+| mh2 (box1) | 30.68 (0.7%) | 30.79 (6.9%) | +0.4% | 3.53 (2.8%) | 3.60 (8.3%) | +1.9% | IDENTICAL |
+| mhw (box1) | 9.87 (0.4%) | 9.38 (1.2%) | **−5.0%** | 1.37 (7.3%) | 1.10 (0.0%) | −19.5% | nondeterministic (uop~uop2 18%) |
+| h2 (box1) | 2.15 (0.9%) | 2.02 (2.0%) | **−5.7%** | 0.70 | 0.60 | (too short) | IDENTICAL |
+| diablo_demo (box1) | 17.34 (7.4%) | 16.34 (1.3%) | −5.7% | 0.77 (boot) | 0.50 (boot) | (no gameplay phase) | IDENTICAL |
+| d2 (box1) | 30.56 (4.6%) | 30.59 (0.9%) | +0.1% | — | — | — | 06-rogue-encampment differs in every arm, uop~uop2 included |
+
+The bold Δ user values are outside both arms' bands. Diablo has two sets
+on two boxes. The box8 set has a wide trace band because trace3 was an
+outlier at 279.67 s; the box9 set is tight. Its numbers are never compared
+across boxes.
+
+**What the table says.**
+
+- Trace heads cost whole-run CPU on no game. Ten of thirteen rows are
+  faster, and eight of those by more than both bands. The three that are
+  not faster are
+  sc (+0.3%), mh2 (+0.4%) and d2 (+0.1%), all inside their bands.
+- **SC gameplay is the one out-of-band loss** (+3.6%): uop 5.5–5.6 s,
+  trace 5.7–5.9 s. SC frames are nondeterministic headless, even uop vs
+  uop2, so it has no frame check. Its census shows 70 code-write kills in
+  the trace arm (`0x7c6000de` ×36, `0x7ef60858`/`898` ×13), 3 flushes and
+  389 traces.
+
+**Churn (Diablo).** Only the trace arm churns.
+
+| arm | compiles | kills | flushes |
+|---|---|---|---|
+| trace | 3353 | 2415 | 13 |
+| uop | 212 | 14 | 0 |
+
+The `--uop-census` kind-3 records (code-write kills) show why:
+
+- 2364 of the kills fall on 19 heads at `0xc374ec..0xc3764c` (`0xc374ec`
+  ×957, `0xc375fc` ×536, `0xc3763c` ×211) and `0x7ec687e8` ×297.
+- Every one of those writes lands on the same byte, `0xc376ed`. That is a
+  blitter which patches an operand in its own code before each call.
+- Each killed trace ran about 60 times before the next write killed it, so
+  71.5% of all compiles are recompiles of a head that was just killed.
+- This is **boot/menu only**. The unextended run already has 2491 kills,
+  and the gameplay extension has 2 decodes in total, so the churn stops
+  before gameplay.
+- The loop-only tier never compiles those heads at all (no back edge), and
+  so it never churns.
+
+**Knob tried: `--uop-cw-dead=N` (not committed).**
+
+- What it does: when a code write kills a program that had run fewer than
+  N times, the head also gets a dead mark in the verdict map, so it is not
+  compiled again.
+- Result on box9 at N=256, 3 reps interleaved with the arms above:
+  - It set 14 marks and cut Diablo's churn to 574 compiles, 73 kills and
+    1 flush.
+  - CPU did not move: user 257.66 s (band 1.0%) vs trace 257.95 s (−0.1%);
+    gameplay 31.33 s vs 31.90 s (−1.8%, inside trace's 6.0% band).
+  - Frames were identical.
+- So the churn is cheap. The recompiles cost less than the noise, and the
+  trace arm still wins over uop. The knob was not committed.
+
+**Correctness sweep.**
+
+- Setup: `tools/block-exec-sweep.js --flag=uop-trace-heads
+  --stats-flag=branch-clock --budgets=1000,2000 --batch-size=50000
+  --control` over 59 apps, on box1.
+  - The apps: aoe1, atomic_bomberman_june_demo, blobby_volley, bricks,
+    caesar3_demo, calc, captain_claw_demo, cave_story, civ2_mge, cruel,
+    darkstone_demo, dx_boids, dx_ddex3, dx_donut, dx_globe, dx_stretch,
+    dxball, elasto_mania, fallout_demo, far_manager_170, fourstones,
+    freecell, funtris, golf, gta2_demo, heroes2_demo, icewind_dale_demo,
+    icy_tower, jardinains, jazz2_demo, little_fighter_2, mirc59, moorhuhn,
+    moorhuhn_2, mspaint, nethack_win32, notepad, peaks, pegged,
+    pocket_tanks, rct, reversi, scr_architec, scr_geometry, scr_scifi,
+    simgolf_demo, ski32, snake, sol, sol16, taipei, tetravex, tictac,
+    wep16_chess, winamp, winamp_mod, winmine, winrar_310, worms2_demo.
+  - The tier is on in both arms. The only difference between them is
+    trace heads.
+- Result: **57 IDENTICAL, 1 DIFFERENT, 1 NOPIC, 0 CRASH, 0 NONDET.**
+  Many rows formed hundreds of traces: darkstone 483, jardinains 454,
+  fallout 316, captain_claw 315.
+- **The sweep needs `--branch-clock`.** An earlier pass without it (budgets
+  400/800) reported dx_boids, dx_globe, fallout, heroes2 and scr_geometry
+  as DIFFERENT. All five were clock artifacts: a tier config changes block
+  counts, and the block count is the clock.
+- **captain_claw_demo (DIFFERENT)** is not caused by trace heads.
+  - Its off-vs-off control is identical, and trace vs trace2 is identical.
+  - With the uop tier off (`--no-uop`), the frame also differs from the
+    tier-on frame: 1305 px at 100 batches and 4973 px at 1000.
+  - The API call count at batch 100 differs between the three
+    configurations: 128173 no-uop, 128061 uop, 126866 trace.
+  - So the app takes a different path under any change to how its blocks
+    are grouped. The difference was there before trace heads, and each
+    configuration is deterministic on its own.
+  - Repro: `node test/run.js --app=captain_claw_demo --batch-size=50000
+    --max-batches=1000 --branch-clock --wall-clock-ms=1789000000000
+    --quiet-api --no-close --png=a.png [--no-uop | --uop-trace-heads]`.
+- civ2_mge's NOPIC happens in both arms: it has no picture on this box.
+
+**Browser.** On box3, with headless Chrome 152,
+`WA_QUERY='?uop-trace-heads' node test/test-diablo-shareware-browser-web.js`
+reached all six stages: intro, title, menu, character select, loading and
+gameplay. The HUD orbs were present (`red:1641, blue:228`), and the test
+printed PASS. The test's new `WA_QUERY` variable appends a query string to
+the page URL.
+
+**Verdict: flip the default on.**
+
+- Trace heads lower whole-run CPU on ten of thirteen rows, and on no route
+  do they raise it outside the band.
+- Every frame that reproduces is identical.
+- The 59-app sweep found no trace-specific difference.
+- Diablo's churn is real but is limited to boot, and the gameplay phase
+  still gains.
+- The one cost is SC's gameplay phase, +3.6% just outside its band. That is
+  a lead for the next round (its 70 code-write kills and 3 flushes), not a
+  reason to hold back gains of 3–8% elsewhere.
+
+The off switches are `--no-uop-trace-heads` and `?no-uop-trace-heads`.
+`uop-game-ab.js`'s new `notrace` arm uses the CLI switch.
