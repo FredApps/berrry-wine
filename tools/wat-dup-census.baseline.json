@@ -89,6 +89,7 @@
     "09a6-handlers-crt.wat:$handle__endthreadex",
     "09a6-handlers-crt.wat:$handle__lock",
     "09a6-handlers-crt.wat:$handle__unlock",
+    "09a6-handlers-crt.wat:$handle_clearerr",
     "09a6-handlers-crt.wat:$handle_fclose",
     "09a6-handlers-crt.wat:$handle_strtol",
     "09a6-handlers-crt.wat:$handle_strtoul",

@@ -1450,6 +1450,13 @@ const extra = [
   { name: 'IPersistFile_Save', nargs: 3 },
   { name: 'IPersistFile_SaveCompleted', nargs: 2 },
   { name: 'IPersistFile_GetCurFile', nargs: 2 },
+  // ScummVM (SDL1) FOTAQ: USER32 message extra info and three CRT stdio/string
+  // exports. strncat had a handler body but no row, so it trapped as 0xFFFF.
+  { name: 'GetMessageExtraInfo', nargs: 0, ret: 'LPARAM' },
+  { name: 'SetMessageExtraInfo', nargs: 1, args: [{ name: 'lParam', type: 'LPARAM' }], ret: 'LPARAM' },
+  { name: 'clearerr', nargs: 1, convention: 'cdecl' },
+  { name: 'strncat', nargs: 3, convention: 'cdecl' },
+  { name: 'fputc', nargs: 2, convention: 'cdecl' },
 ];
 for (const api of extra) {
   const ownsHandler = Object.prototype.hasOwnProperty.call(api, 'handler');
