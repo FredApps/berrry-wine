@@ -1884,7 +1884,10 @@ Resource-aware Win98 emulator
     const DEBUG_ONLY_APPS = window.wineApps.DEBUG_ONLY_APPS;
     const appFileUrl = window.wineApps.appFileUrl;
 
-    const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
+    // ?prod shows a local server exactly the desktop the deployed site shows,
+    // so a release can be tried on localhost without the local-only candidates.
+    const LOCAL_DESKTOP = !new URLSearchParams(location.search).has('prod') &&
+      /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
 
     // Single-app mode: a phone. One app at a time, no taskbar, no icons while
