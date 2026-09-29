@@ -836,6 +836,25 @@ are self time unless marked incl.
    - Cost/risk: medium. Correctness is central (a missed SMC is silent), and
      `--trace-code-writes` is the check.
    - Evidence: SC and Diablo cpu-prof, SC cache counters, SC census.
+   - **Status 2026-09-28 (built, page-granular, not sub-page):** SC's
+     storm was not same-page stores at all. The old filter OR'd the page
+     bitmap with a *min..max span* over sparse generated code
+     (0x7c6d0000..0x7ef81000 on SC), so every store to the data pages
+     inside that span (0x7e07x000, writer exe+0x4b43f6) walked. The
+     bitmap is now indexed by `(ga>>12 ^ ga>>28) & 0xFFFF` (identity
+     below 0x10000000, conservative aliasing above), the span is no
+     longer a filter, and `$gs8/16/32/64` test the bit inline and call
+     `$code_write_hit` only on a flagged page (so stack stores make no
+     call). `--code-write-legacy` restores the span filter for A/B.
+     box3, uop arms vs ae31f419, two reps each, user CPU:
+     SC −7.0% (null 1.4%; frames differ 1.36% vs the app's own 1.46%),
+     walks 7.41M→22-32K with blocks dropped unchanged (~18.2K), misses
+     7,546,085→17,822, uop kills 35→15; Diablo −4.8% (null 0.3%,
+     frames IDENTICAL), walks 536K→496K; H3 −3.1% (null 0.8%, IDENTICAL),
+     walks unchanged, so its win is the inline test alone. Same build
+     with `--code-write-legacy` on SC: +8.8% and 7.8M walks again.
+     Remaining: Diablo's 473K misses are real same-page stores into code
+     page 0x00e60000 — the sub-page case, not built.
 9. **Multiway branch in the tier (`jmp [tbl+r*4]`).**
    - What: lower an in-image jump table as a guarded br_table over its
      in-loop targets, and exit on any other target.
