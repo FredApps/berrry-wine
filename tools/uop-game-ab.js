@@ -174,6 +174,56 @@ const GAMES = {
     app: 'diablo2_demo', test: 'test/test-diablo2-demo-gameplay.js',
     env: { DIABLO2_FULL_ROUTE: '1', DIABLO2_AFTER_WORLD: '1500' },
   },
+  mw3: {
+    // MechWarrior 3 demo into a mission (the MW3 fold A/B route: menus by
+    // relative mouse moves, then a pixel wait for the cockpit). --copy-superops
+    // is the app's own registry setting (copySuperops: true), spelled out so
+    // an arm cannot lose it.
+    app: 'mw3', split: 860,
+    args: ['--copy-superops', '--batch-size=200000', '--max-batches=1150', '--dx-slot=5', '--no-threads'],
+    input: ['200:relmousemove:-199:0', '203:relmousemove:0:-23', '210:mousedown:65:210', '225:mouseup:65:210',
+      '270:keydown:65', '280:keyup:65', '300:keydown:67', '310:keyup:67', '330:keydown:69', '340:keyup:69',
+      '370:relmousemove:282:0', '373:relmousemove:0:84', '385:mousedown:423:320', '405:mouseup:423:320',
+      '450:relmousemove:-282:0', '453:relmousemove:0:-84', '465:mousedown:65:210', '485:mouseup:65:210',
+      '550:relmousemove:67:0', '553:relmousemove:0:-58', '565:mousedown:150:135', '585:mouseup:150:135',
+      '620:relmousemove:215:0', '623:relmousemove:0:145', '635:mousedown:423:320', '655:mouseup:423:320',
+      '700:wait-canvas-dark-pixels:5000:30000:900', '770:relmousemove:115:0', '773:relmousemove:0:88',
+      '790:mousedown:576:432', '820:mouseup:576:432', '830:wait-canvas-dark-pixels:30000:70000:900'],
+  },
+  q2: {
+    // Quake II demo, software renderer, straight into demo1: the level load
+    // is where ref_soft's PCX/WAL run expander (H462) runs, then the map.
+    app: 'quake2_demo', split: 900,
+    args: ['--args=+set vid_ref soft +map demo1', '--batch-size=100000', '--max-batches=1400',
+      '--stuck-after=1000000'],
+    input: [],
+  },
+  jazz2: {
+    // Jazz Jackrabbit 2 shareware, left alone: title, then its animated
+    // Darn Ratz attraction (docs/re-notes/jazz2-demo.md) -- the lighting
+    // kernel (H431 mode 2) and the masked MMX row copy (H419) draw it.
+    app: 'jazz2_demo', split: 400,
+    args: ['--screen=800x600', '--batch-size=100000', '--max-batches=900', '--stuck-after=1000000'],
+    input: [],
+  },
+  aoe1: {
+    // Age of Empires trial: test-aoe-menu.js's startup into a random-map
+    // game, a unit selected, then the AI playing -- its pathfinding-grid row
+    // fill (H437) and span prefix (H438) run there.
+    app: 'aoe1', split: 23000,
+    args: ['--batch-size=10000', '--tick-ms-per-batch=2000', '--max-batches=27000', '--repaint-every=10'],
+    input: ['150:click:320:200', '260:click:320:190', '330:keypress:65', '331:keypress:79', '332:keypress:69',
+      '380:click:240:305', '520:click:190:455', '1200:click:320:190', '3000:keypress:65', '3001:keypress:79',
+      '3002:keypress:69', '5000:keydown:13', '5002:keyup:13', '8200:click:190:455', '23000:click:560:465',
+      '25700:click:105:150'],
+  },
+  c3: {
+    // Caesar III demo: test-caesar3-gameplay.js's retry-driven route to the
+    // city, then 2000 batches of it simulating -- the RLE sprite blit (H429)
+    // and its sixteen-case ladder (H428) are what draws the city.
+    app: 'caesar3_demo', test: 'test/test-caesar3-gameplay.js', envPrefix: 'CAESAR3',
+    env: { CAESAR3_CITY_BATCHES: '2000', CAESAR3_MAX_SECONDS: '1500' },
+  },
 };
 
 function runArm(game, name, armArgs, outDir, extra) {
@@ -190,10 +240,11 @@ function runArm(game, name, armArgs, outDir, extra) {
   if (refMap && name.startsWith('ref')) env.WINE_REGION_MAP = path.resolve(refMap);
   if (g.test) {
     argv = [g.test];
+    const pre = g.envPrefix || 'DIABLO2';
     Object.assign(env, g.env || {}, {
-      DIABLO2_EXTRA_ARGS: ['--quiet-api', ...armArgs, ...extra].join(' '),
-      DIABLO2_SCREENSHOT_DIR: path.join(outDir, tag),
-      DIABLO2_LOG: `${log}.run`,
+      [`${pre}_EXTRA_ARGS`]: ['--quiet-api', ...armArgs, ...extra].join(' '),
+      [`${pre}_SCREENSHOT_DIR`]: path.join(outDir, tag),
+      [`${pre}_LOG`]: `${log}.run`,
     });
   } else {
     const input = g.input;
@@ -344,6 +395,13 @@ async function main() {
     const spec = a.slice(6), eq = spec.indexOf('=');
     if (eq <= 0) throw new Error(`bad ${a}`);
     ARMS[spec.slice(0, eq)] = [...ARMS.uop, ...spec.slice(eq + 1).split(/\s+/).filter(Boolean)];
+  }
+  // --arm-off=NAME=FLAGS: the same on the off (--no-uop) arm, e.g. the
+  // fold-off control of a fold A/B: --arm-off='nosmkoff=--no-fold=smk-tree'.
+  for (const a of process.argv.filter(s => s.startsWith('--arm-off='))) {
+    const spec = a.slice(10), eq = spec.indexOf('=');
+    if (eq <= 0) throw new Error(`bad ${a}`);
+    ARMS[spec.slice(0, eq)] = [...ARMS.off, ...spec.slice(eq + 1).split(/\s+/).filter(Boolean)];
   }
   const arms = arg('arms', 'off,uop').split(',');
   const jobs = Math.max(1, +arg('jobs', '1'));

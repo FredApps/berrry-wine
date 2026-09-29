@@ -239,6 +239,8 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     'aoe-fill': 'set_loop_aoe_fill_emit', 'aoe-span': 'set_loop_aoe_span_emit',
     'mmx-fill': 'set_loop_mmx_fill_emit', 'mmx-copy64': 'set_mmx_copy64',
     'mmx-mask-copy': 'set_mmx_mask_copy', 'lut16-stack': 'set_loop_lut16_stack_emit',
+    // Diablo's app profile turns this one on; applyMain runs after it.
+    'copy32-counted': 'set_loop_copy32_counted_emit',
   };
   const FOLD_BITS = {
     'storm-bitreader': 0x01, 'smack-huff': 0x02, 'lut-span': 0x04,

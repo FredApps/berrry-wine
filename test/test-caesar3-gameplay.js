@@ -62,12 +62,22 @@ async function main() {
   }
 
   const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'wa-caesar3-gameplay-'));
-  const namePath = process.env.CAESAR3_NAME_SCREENSHOT || path.join(temp, 'name.png');
-  const cityPath = process.env.CAESAR3_SCREENSHOT || path.join(temp, 'city.png');
+  // Hooks for tools/uop-game-ab.js (game `c3`): every capture into one
+  // directory, extra run.js flags per arm, CAESAR3_CITY_BATCHES more batches
+  // of the city simulating after the check (its RLE sprite blit and ladder are
+  // what the A/B is about), and the run.js output kept in CAESAR3_LOG.
+  const shotDir = process.env.CAESAR3_SCREENSHOT_DIR || '';
+  if (shotDir) fs.mkdirSync(shotDir, { recursive: true });
+  const namePath = process.env.CAESAR3_NAME_SCREENSHOT || path.join(shotDir || temp, 'name.png');
+  const cityPath = process.env.CAESAR3_SCREENSHOT || path.join(shotDir || temp, 'city.png');
+  const cityBatches = parseInt(process.env.CAESAR3_CITY_BATCHES || '0', 10) || 0;
+  const extraArgs = (process.env.CAESAR3_EXTRA_ARGS || '').split(/\s+/).filter(Boolean);
+  const maxSeconds = process.env.CAESAR3_MAX_SECONDS || '90';
   const args = [
     'test/run.js', '--app=caesar3_demo', '--screen=800x600', '--batch-size=50000',
-    '--control-stdin', '--frozen', '--max-seconds=90', '--max-batches=1000000',
+    '--control-stdin', '--frozen', `--max-seconds=${maxSeconds}`, '--max-batches=1000000',
     '--quiet-api', '--quiet-blocks', '--no-close', '--repaint-every=1000000',
+    ...extraArgs,
   ];
   if (fs.existsSync(path.join(ROOT, 'build/wine-assembly.wasm'))) args.push('--no-build');
   const session = startControlSession(args, { cwd: ROOT, idPrefix: 'c3-' });
@@ -140,7 +150,12 @@ async function main() {
     assert(!/UNIMPLEMENTED API:|\*\*\* CRASH|RuntimeError|LinkError/i.test(session.output()),
       `Caesar III hit a compatibility failure\n${session.output().slice(-5000)}`);
 
+    if (cityBatches > 0) {
+      await step(cityBatches);
+      await send(`png:${path.join(shotDir || temp, 'city-later.png')}`);
+    }
     const code = await session.quit();
+    if (process.env.CAESAR3_LOG) fs.writeFileSync(process.env.CAESAR3_LOG, session.output());
     assert.strictEqual(code, 0,
       `Caesar III CLI exited ${code}\n${session.output().slice(-5000)}`);
     console.log(`PASS  Caesar III typed-name screenshot: ${namePath}`);
