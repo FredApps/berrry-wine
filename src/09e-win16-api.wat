@@ -14984,6 +14984,103 @@
     (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
 
+  ;; COMMDLG.1 GetOpenFileName / .2 GetSaveFileName(lpofn) -> BOOL.
+  ;;
+  ;; The dialog is the 32-bit one ($create_open_dialog), driven over a 32-bit
+  ;; OPENFILENAME built from the task's 16-bit one. The layouts differ: every
+  ;; string is a far pointer, hwndOwner and hInstance are words, and UINT
+  ;; nFileOffset/nFileExtension sit four bytes lower (72 bytes against 76).
+  ;; The strings are not copied — a far pointer names the same guest bytes a
+  ;; 32-bit one does, so the dialog writes the chosen name straight into the
+  ;; task's buffer. What the 32-bit struct holds by value comes back when the
+  ;; Win16 modal pump resumes ($win16_ofn_writeback). A hook or a template
+  ;; would be 16-bit code the dialog cannot call, so those flags are dropped
+  ;; for the dialog and kept in the task's copy. Civilization II's Game > Save
+  ;; Game trapped here.
+  (global $win16_ofn16 (mut i32) (i32.const 0))
+  (global $win16_ofn32 (mut i32) (i32.const 0))
+
+  ;; A far-pointer field of a 16-bit struct as a guest address; NULL stays 0.
+  (func $win16_far_field (param $p i32) (result i32)
+    (local $v i32)
+    (local.set $v (call $gl32 (local.get $p)))
+    (if (i32.eqz (i32.shr_u (local.get $v) (i32.const 16))) (then (return (i32.const 0))))
+    (call $win16_far_to_guest (i32.shr_u (local.get $v) (i32.const 16))
+      (i32.and (local.get $v) (i32.const 0xFFFF))))
+
+  (func $win16_GetOpenSaveFileName (param $save i32)
+    (local $o16 i32) (local $o i32) (local $owner i32) (local $dlg i32)
+    (local.set $o16 (call $win16_far_to_guest
+      (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))
+    (if (i32.or (i32.eqz (call $win16_arg16 (i32.const 1)))
+                (i32.lt_u (call $gl32 (local.get $o16)) (i32.const 72)))
+      (then
+        (global.set $common_dialog_error (i32.const 1)) ;; CDERR_STRUCTSIZE
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+        (call $win16_api_return (i32.const 4))
+        (return)))
+    (local.set $o (call $heap_alloc (i32.const 76)))
+    (call $zero_memory (call $g2w (local.get $o)) (i32.const 76))
+    (local.set $owner (call $win16_h32 (call $gl16 (i32.add (local.get $o16) (i32.const 4)))))
+    (call $gs32 (local.get $o) (i32.const 76))
+    (call $gs32 (i32.add (local.get $o) (i32.const 4)) (local.get $owner))
+    (call $gs32 (i32.add (local.get $o) (i32.const 8)) (call $gl16 (i32.add (local.get $o16) (i32.const 6))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 12)) (call $win16_far_field (i32.add (local.get $o16) (i32.const 8))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 16)) (call $win16_far_field (i32.add (local.get $o16) (i32.const 12))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 20)) (call $gl32 (i32.add (local.get $o16) (i32.const 16))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 24)) (call $gl32 (i32.add (local.get $o16) (i32.const 20))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 28)) (call $win16_far_field (i32.add (local.get $o16) (i32.const 24))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 32)) (call $gl32 (i32.add (local.get $o16) (i32.const 28))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 36)) (call $win16_far_field (i32.add (local.get $o16) (i32.const 32))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 40)) (call $gl32 (i32.add (local.get $o16) (i32.const 36))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 44)) (call $win16_far_field (i32.add (local.get $o16) (i32.const 40))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 48)) (call $win16_far_field (i32.add (local.get $o16) (i32.const 44))))
+    ;; OFN_ENABLEHOOK | OFN_ENABLETEMPLATE | OFN_ENABLETEMPLATEHANDLE
+    (call $gs32 (i32.add (local.get $o) (i32.const 52))
+      (i32.and (call $gl32 (i32.add (local.get $o16) (i32.const 48))) (i32.const 0xFFFFFF1F)))
+    (call $gs16 (i32.add (local.get $o) (i32.const 56)) (call $gl16 (i32.add (local.get $o16) (i32.const 52))))
+    (call $gs16 (i32.add (local.get $o) (i32.const 58)) (call $gl16 (i32.add (local.get $o16) (i32.const 54))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 60)) (call $win16_far_field (i32.add (local.get $o16) (i32.const 56))))
+    (call $gs32 (i32.add (local.get $o) (i32.const 64)) (call $gl32 (i32.add (local.get $o16) (i32.const 60))))
+    (global.set $win16_ofn16 (local.get $o16))
+    (global.set $win16_ofn32 (local.get $o))
+    (global.set $win16_modal_ret (call $win16_take_return (i32.const 4)))
+    (global.set $common_dialog_error (i32.const 0))
+    (global.set $opendlg_wide (i32.const 0))
+    (local.set $dlg (global.get $next_hwnd))
+    (global.set $next_hwnd (i32.add (global.get $next_hwnd) (i32.const 1)))
+    (call $create_open_dialog (local.get $dlg) (local.get $owner) (local.get $save) (local.get $o))
+    (global.set $modal_dlg_hwnd (local.get $dlg))
+    (global.set $modal_result (i32.const 0))
+    (i32.atomic.store (global.get $SHARED_MODAL_DLG_HWND) (local.get $dlg))
+    (i32.atomic.store (global.get $SHARED_MODAL_RESULT) (i32.const 0))
+    (i32.atomic.store (global.get $SHARED_MODAL_DONE) (i32.const 0))
+    (call $win16_modal_park))
+
+  ;; The by-value half of a finished Open/Save dialog, back into the task's
+  ;; 16-bit OPENFILENAME. Flags keeps the hook/template bits the dialog never saw.
+  (func $win16_ofn_writeback
+    (local $o16 i32) (local $o i32)
+    (local.set $o16 (global.get $win16_ofn16))
+    (local.set $o (global.get $win16_ofn32))
+    (if (i32.eqz (local.get $o)) (then (return)))
+    (global.set $win16_ofn16 (i32.const 0))
+    (global.set $win16_ofn32 (i32.const 0))
+    (call $gs32 (i32.add (local.get $o16) (i32.const 20)) (call $gl32 (i32.add (local.get $o) (i32.const 24))))
+    (call $gs32 (i32.add (local.get $o16) (i32.const 48))
+      (i32.or (i32.and (call $gl32 (i32.add (local.get $o) (i32.const 52))) (i32.const 0xFFFFFF1F))
+              (i32.and (call $gl32 (i32.add (local.get $o16) (i32.const 48))) (i32.const 0xE0))))
+    (call $gs16 (i32.add (local.get $o16) (i32.const 52)) (call $gl16 (i32.add (local.get $o) (i32.const 56))))
+    (call $gs16 (i32.add (local.get $o16) (i32.const 54)) (call $gl16 (i32.add (local.get $o) (i32.const 58))))
+    (call $heap_free (local.get $o)))
+
+  ;; COMMDLG.26 CommDlgExtendedError() -> DWORD, the same code the 32-bit
+  ;; dialogs leave behind.
+  (func $win16_CommDlgExtendedError
+    (i32.store offset=0 (global.get $reg_base) (i32.and (global.get $common_dialog_error) (i32.const 0xFFFF)))
+    (i32.store offset=8 (global.get $reg_base) (i32.shr_u (global.get $common_dialog_error) (i32.const 16)))
+    (call $win16_api_return (i32.const 0)))
+
   ;; ---- MMSYSTEM ----
 
   ;; MMSYSTEM.401 waveOutGetNumDevs() -> UINT, and MMSYSTEM.2 sndPlaySound(
@@ -16020,6 +16117,12 @@
   (func $win16_commdlg (param $ordinal i32) (result i32)
     (if (i32.eq (local.get $ordinal) (i32.const 27))
       (then (call $win16_GetFileTitle) (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $ordinal) (i32.const 1))
+                (i32.eq (local.get $ordinal) (i32.const 2)))
+      (then (call $win16_GetOpenSaveFileName
+              (i32.eq (local.get $ordinal) (i32.const 2))) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 26))
+      (then (call $win16_CommDlgExtendedError) (return (i32.const 1))))
     (i32.const 0))
 
   ;; The dispatcher. $thunk_off is the offset within WIN16_THUNK_SEL that the
@@ -16318,6 +16421,7 @@
         (if (call $modal_pump_step
               (i32.add (global.get $seg_base_cs) (global.get $WIN16_MODAL_PUMP)))
           (then (return)))
+        (call $win16_ofn_writeback)
         (i32.store offset=0 (global.get $reg_base) (i32.and (global.get $modal_result) (i32.const 0xFFFF)))
         (i32.store offset=8 (global.get $reg_base) (i32.const 0))
         (global.set $yield_reason (i32.const 0))
