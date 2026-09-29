@@ -18,11 +18,17 @@
 //   node tools/func-index.js 3849
 //   node tools/func-index.js 3849 --body     # print the whole function
 //   node tools/func-index.js --name=$tt_fnt_build   # the other direction
+//   node tools/func-index.js 433,949,1225 --combined=/path/combined.wat
+//
+// --combined names indices against a combined.wat you saved beside a profile.
+// build/ is shared, and a rebuild between profiling and reading renumbers
+// every function, so an index read against the current build names the wrong
+// function with nothing to say so. Several indices may be given, comma-separated.
 
 const fs = require('fs');
 const path = require('path');
 
-const COMBINED = path.join(__dirname, '..', 'build', 'combined.wat');
+const DEFAULT_COMBINED = path.join(__dirname, '..', 'build', 'combined.wat');
 
 function scan(source) {
   const imports = [];
@@ -79,9 +85,11 @@ function scan(source) {
 function main() {
   const args = process.argv.slice(2);
   if (!args.length) {
-    console.error('usage: node tools/func-index.js <index> [--body] | --name=$fn');
+    console.error('usage: node tools/func-index.js <index>[,<index>...] [--body] [--combined=PATH] | --name=$fn');
     process.exit(2);
   }
+  const combinedArg = args.find(a => a.startsWith('--combined='));
+  const COMBINED = combinedArg ? combinedArg.slice('--combined='.length) : DEFAULT_COMBINED;
   if (!fs.existsSync(COMBINED)) {
     console.error(`${COMBINED} not found - run bash tools/build.sh first`);
     process.exit(2);
@@ -105,39 +113,45 @@ function main() {
     return;
   }
 
-  const index = Number(args[0]);
-  if (!Number.isInteger(index) || index < 0) {
-    console.error(`not a function index: ${args[0]}`);
+  const indexArg = args.find(a => !a.startsWith('--'));
+  const indices = String(indexArg).split(',').map(Number);
+  if (!indices.every(n => Number.isInteger(n) && n >= 0)) {
+    console.error(`not a function index: ${indexArg}`);
     process.exit(2);
   }
 
   console.log(`${imports.length} imported functions, ${defined.length} defined ` +
     `(indices ${imports.length}..${imports.length + defined.length - 1})`);
 
-  if (index < imports.length) {
-    const found = imports[index];
-    console.log(`#${index} is the import ${found.name} ("${found.host}"), ` +
-      `combined.wat:${found.line}`);
-    return;
-  }
+  let bad = false;
+  for (const index of indices) {
+    if (index < imports.length) {
+      const found = imports[index];
+      console.log(`#${index} is the import ${found.name} ("${found.host}"), ` +
+        `combined.wat:${found.line}`);
+      continue;
+    }
 
-  const at = index - imports.length;
-  if (at >= defined.length) {
-    console.error(`#${index} is past the last function`);
-    process.exit(1);
-  }
+    const at = index - imports.length;
+    if (at >= defined.length) {
+      console.error(`#${index} is past the last function`);
+      bad = true;
+      continue;
+    }
 
-  const found = defined[at];
-  const next = defined[at + 1];
-  console.log(`#${index} is ${found.name} at combined.wat:${found.line}` +
-    (next ? ` (next function starts at line ${next.line})` : ''));
+    const found = defined[at];
+    const next = defined[at + 1];
+    console.log(`#${index} is ${found.name} at combined.wat:${found.line}` +
+      (next ? ` (next function starts at line ${next.line})` : ''));
 
-  if (wantBody) {
-    const end = next ? next.line - 1 : lines.length;
-    for (let i = found.line - 1; i < end; i += 1) {
-      console.log(`${i + 1}\t${lines[i]}`);
+    if (wantBody) {
+      const end = next ? next.line - 1 : lines.length;
+      for (let i = found.line - 1; i < end; i += 1) {
+        console.log(`${i + 1}\t${lines[i]}`);
+      }
     }
   }
+  if (bad) process.exit(1);
 }
 
 // The index walk is the one place that knows how a WAT function name maps to a

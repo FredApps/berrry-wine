@@ -44,65 +44,22 @@
   ;; ============================================================
   ;; SSE base used by SDL2
   ;; ============================================================
-  ;; XMM state is kept as native v128 values. Guest memory still moves through
-  ;; four $gl32/$gs32 accesses so page-edge, sparse-allocation, and DIB-backed
-  ;; operands obey the same translation rules as scalar code.
-  (func $xmm_lo_get (param $i i32) (result i64)
-    (if (i32.eq (local.get $i) (i32.const 0)) (then (return (global.get $xmm0l))))
-    (if (i32.eq (local.get $i) (i32.const 1)) (then (return (global.get $xmm1l))))
-    (if (i32.eq (local.get $i) (i32.const 2)) (then (return (global.get $xmm2l))))
-    (if (i32.eq (local.get $i) (i32.const 3)) (then (return (global.get $xmm3l))))
-    (if (i32.eq (local.get $i) (i32.const 4)) (then (return (global.get $xmm4l))))
-    (if (i32.eq (local.get $i) (i32.const 5)) (then (return (global.get $xmm5l))))
-    (if (i32.eq (local.get $i) (i32.const 6)) (then (return (global.get $xmm6l))))
-    (global.get $xmm7l))
-
-  (func $xmm_hi_get (param $i i32) (result i64)
-    (if (i32.eq (local.get $i) (i32.const 0)) (then (return (global.get $xmm0h))))
-    (if (i32.eq (local.get $i) (i32.const 1)) (then (return (global.get $xmm1h))))
-    (if (i32.eq (local.get $i) (i32.const 2)) (then (return (global.get $xmm2h))))
-    (if (i32.eq (local.get $i) (i32.const 3)) (then (return (global.get $xmm3h))))
-    (if (i32.eq (local.get $i) (i32.const 4)) (then (return (global.get $xmm4h))))
-    (if (i32.eq (local.get $i) (i32.const 5)) (then (return (global.get $xmm5h))))
-    (if (i32.eq (local.get $i) (i32.const 6)) (then (return (global.get $xmm6h))))
-    (global.get $xmm7h))
+  ;; XMM state lives in this thread's slice of $XMM_FILE (01-header.wat):
+  ;; XMMn is the v128 at $xmm_base + n*16. Guest memory goes through
+  ;; $gl128/$gs128 (one translation and one v128 op for a same-page operand)
+  ;; or $gl32/$gs32 for the narrower forms, so page-edge, sparse-allocation
+  ;; and DIB-backed operands obey the same translation rules as scalar code.
+  ;; Only eight registers exist in 32-bit mode; the &7 keeps a stray index
+  ;; inside this thread's own 128-byte slice.
+  (func $xmm_addr (param $i i32) (result i32)
+    (i32.add (global.get $xmm_base)
+      (i32.shl (i32.and (local.get $i) (i32.const 7)) (i32.const 4))))
 
   (func $xmm_get (param $i i32) (result v128)
-    (i64x2.replace_lane 1
-      (i64x2.splat (call $xmm_lo_get (local.get $i)))
-      (call $xmm_hi_get (local.get $i))))
+    (v128.load (call $xmm_addr (local.get $i))))
 
   (func $xmm_set (param $i i32) (param $v v128)
-    (local $lo i64) (local $hi i64)
-    (local.set $lo (i64x2.extract_lane 0 (local.get $v)))
-    (local.set $hi (i64x2.extract_lane 1 (local.get $v)))
-    (if (i32.eq (local.get $i) (i32.const 0)) (then (global.set $xmm0l (local.get $lo)) (global.set $xmm0h (local.get $hi)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 1)) (then (global.set $xmm1l (local.get $lo)) (global.set $xmm1h (local.get $hi)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 2)) (then (global.set $xmm2l (local.get $lo)) (global.set $xmm2h (local.get $hi)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 3)) (then (global.set $xmm3l (local.get $lo)) (global.set $xmm3h (local.get $hi)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 4)) (then (global.set $xmm4l (local.get $lo)) (global.set $xmm4h (local.get $hi)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 5)) (then (global.set $xmm5l (local.get $lo)) (global.set $xmm5h (local.get $hi)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 6)) (then (global.set $xmm6l (local.get $lo)) (global.set $xmm6h (local.get $hi)) (return)))
-    (global.set $xmm7l (local.get $lo)) (global.set $xmm7h (local.get $hi)))
-
-  (func $xmm_load128 (param $ga i32) (result v128)
-    (i32x4.replace_lane 3
-      (i32x4.replace_lane 2
-        (i32x4.replace_lane 1
-          (i32x4.replace_lane 0 (i32x4.splat (i32.const 0))
-            (call $gl32 (local.get $ga)))
-          (call $gl32 (i32.add (local.get $ga) (i32.const 4))))
-        (call $gl32 (i32.add (local.get $ga) (i32.const 8))))
-      (call $gl32 (i32.add (local.get $ga) (i32.const 12)))))
-
-  (func $xmm_store128 (param $ga i32) (param $v v128)
-    (call $gs32 (local.get $ga) (i32x4.extract_lane 0 (local.get $v)))
-    (call $gs32 (i32.add (local.get $ga) (i32.const 4))
-      (i32x4.extract_lane 1 (local.get $v)))
-    (call $gs32 (i32.add (local.get $ga) (i32.const 8))
-      (i32x4.extract_lane 2 (local.get $v)))
-    (call $gs32 (i32.add (local.get $ga) (i32.const 12))
-      (i32x4.extract_lane 3 (local.get $v))))
+    (v128.store (call $xmm_addr (local.get $i)) (local.get $v)))
 
   (func $xmm_lane_get (param $v v128) (param $lane i32) (result i32)
     (if (i32.eq (local.get $lane) (i32.const 0))
@@ -202,283 +159,369 @@
       (call $sse_cmp_lane (f32x4.extract_lane 3 (local.get $a))
         (f32x4.extract_lane 3 (local.get $b)) (local.get $pred))))
 
-  (func $sse_scalar_arithmetic (param $sub i32) (param $d v128) (param $s f32) (result v128)
-    (local $a f32) (local $r f32)
-    (local.set $a (f32x4.extract_lane 0 (local.get $d)))
-    (if (i32.eq (local.get $sub) (i32.const 10))
-      (then (local.set $r (f32.add (local.get $a) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 11))
-      (then (local.set $r (f32.mul (local.get $a) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 13))
-      (then (local.set $r (f32.div (local.get $a) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 14))
-      (then (local.set $r (f32.sub (local.get $a) (local.get $s)))))
-    ;; 27/28/29 are SQRTSS/RSQRTSS/RCPSS -- unary on the source lane, with the
-    ;; destination's upper three lanes preserved like every other scalar form.
-    (if (i32.eq (local.get $sub) (i32.const 27))
-      (then (local.set $r (f32.sqrt (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 28))
-      (then (local.set $r (f32.div (f32.const 1) (f32.sqrt (local.get $s))))))
-    (if (i32.eq (local.get $sub) (i32.const 29))
-      (then (local.set $r (f32.div (f32.const 1) (local.get $s)))))
-    (f32x4.replace_lane 0 (local.get $d) (local.get $r)))
-
-  (func $sse_is_scalar_arithmetic (param $sub i32) (result i32)
-    (i32.or
-      (i32.or
-        (i32.or (i32.eq (local.get $sub) (i32.const 10)) (i32.eq (local.get $sub) (i32.const 11)))
-        (i32.or (i32.eq (local.get $sub) (i32.const 13)) (i32.eq (local.get $sub) (i32.const 14))))
-      (i32.or
-        (i32.or (i32.eq (local.get $sub) (i32.const 27)) (i32.eq (local.get $sub) (i32.const 28)))
-        (i32.eq (local.get $sub) (i32.const 29)))))
-
-  ;; The rest of SSE1's packed arithmetic: the square-root group at 0F 51/52/53
-  ;; and the bitwise/limit group at 0F 54/55/56/5D/5F. All are pure functions of
-  ;; (dst, src) with the same encoding in both operand shapes, so the register
-  ;; and memory handlers share them here rather than each spelling them out.
+  ;; One threaded handler per operand shape, one br_table over the subop.
+  ;; Subops (op bits 8..15), shared by all three shapes:
+  ;;   0 move (MOVAPS/MOVUPS)  1 XORPS  2 MOVSS  3 UNPCKLPS  4 MOVLHPS/MOVHPS
+  ;;   5 CVTTPS2PI  6 CVTTSS2SI  7 SHUFPS (imm8 in op bits 16..23)
+  ;;   8/9 ADDPS/MULPS  10/11 ADDSS/MULSS  12 UCOMISS/COMISS  13/14 DIVSS/SUBSS
+  ;;   15/16 DIVPS/SUBPS  17 CVTSI2SS  18 CVTSS2SI  19..26 SQRTPS RSQRTPS RCPPS
+  ;;   ANDPS ANDNPS ORPS MAXPS MINPS  27..29 SQRTSS RSQRTSS RCPSS  30 MOVLPS
+  ;;   31 CMPPS (predicate in op bits 16..23)  32 MOVMSKPS
+  ;; Scalar forms preserve the destination's upper 96 bits. RSQRT*/RCP* are
+  ;; exact here where silicon gives ~12 bits -- the safe direction, and callers
+  ;; that care refine with Newton-Raphson (B&W2's normalizer at 0x00962cb6).
+  ;; MINPS/MAXPS return the SOURCE when unordered or equal: wasm pmin/pmax with
+  ;; the operands swapped, not f32x4.min/max, which propagate NaN.
   ;;
-  ;; RSQRTPS and RCPPS are ~12-bit approximations on real silicon and exact
-  ;; here. That is the safe direction to be wrong in, and the callers that care
-  ;; about the last bits refine with Newton-Raphson either way -- Black & White
-  ;; 2's vertex normalizer at 0x00962cb6 does exactly that, two steps of it.
-  ;;
-  ;; MINPS/MAXPS return the *source* operand when the pair is unordered or
-  ;; equal. That is wasm's pmin/pmax with the operands swapped -- f32x4.min and
-  ;; f32x4.max propagate NaN instead and would be a different instruction.
-  (func $sse_is_packed_extra (param $sub i32) (result i32)
-    (i32.and (i32.ge_u (local.get $sub) (i32.const 19))
-             (i32.le_u (local.get $sub) (i32.const 26))))
-
-  (func $sse_packed_extra (param $sub i32) (param $d v128) (param $s v128) (result v128)
-    (if (i32.eq (local.get $sub) (i32.const 19))        ;; SQRTPS
-      (then (return (f32x4.sqrt (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 20))        ;; RSQRTPS
-      (then (return (f32x4.div (f32x4.splat (f32.const 1)) (f32x4.sqrt (local.get $s))))))
-    (if (i32.eq (local.get $sub) (i32.const 21))        ;; RCPPS
-      (then (return (f32x4.div (f32x4.splat (f32.const 1)) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 22))        ;; ANDPS
-      (then (return (v128.and (local.get $d) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 23))        ;; ANDNPS: ~dst & src
-      (then (return (v128.andnot (local.get $s) (local.get $d)))))
-    (if (i32.eq (local.get $sub) (i32.const 24))        ;; ORPS
-      (then (return (v128.or (local.get $d) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 25))        ;; MAXPS
-      (then (return (f32x4.pmax (local.get $s) (local.get $d)))))
-    (f32x4.pmin (local.get $s) (local.get $d)))         ;; 26: MINPS
-
-  ;; sub=0 is a 128-bit move; sub=1 is XORPS; sub=2 is MOVSS; sub=3 is
-  ;; UNPCKLPS; sub=4 is MOVLHPS (register source); sub=7 is SHUFPS, with its
-  ;; imm8 in operand bits 16..23; sub=8/9 are ADDPS/MULPS;
-  ;; sub=10/11 are ADDSS/MULSS (preserve destination upper 96 bits);
-  ;; sub=12 is UCOMISS/COMISS (no destination write); sub=13/14 DIVSS/SUBSS;
-  ;; sub=15/16 DIVPS/SUBPS; sub=17 CVTSI2SS (default nearest-even rounding);
-  ;; sub=19..26 are the packed group in $sse_packed_extra and sub=27..29 the
-  ;; scalar SQRTSS/RSQRTSS/RCPSS in $sse_scalar_arithmetic.
+  ;; This used to be an if-chain over ~20 subops plus two helper calls, with
+  ;; the registers in i64 globals behind eight-way branches -- on Black & White
+  ;; 2 these three handlers are ~19% of all threaded ops.
   (func $th_sse_rr (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $sub i32) (local $dst i32) (local $src i32)
-    (local $d v128) (local $s v128) (local $v v128)
-    (local.set $sub
-      (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xFF)))
+    (local $nx_fn i32) (local $nx_op i32) (local $sub i32) (local $dst i32) (local $src i32)
+    (local $dp i32) (local $d v128) (local $s v128) (local $v v128)
+    (local.set $sub (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xFF)))
     (local.set $dst (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $src (i32.and (local.get $op) (i32.const 0xF)))
-    (local.set $d (call $xmm_get (local.get $dst)))
+    (local.set $dp (call $xmm_addr (local.get $dst)))
+    (local.set $d (v128.load (local.get $dp)))
     (local.set $s (call $xmm_get (local.get $src)))
-    (if (i32.eq (local.get $sub) (i32.const 32)) (then
-      (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (i32x4.bitmask (local.get $s)))
-      (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 31)) (then
-      (call $xmm_set (local.get $dst) (call $sse_cmpps
-        (local.get $d) (local.get $s)
-        (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))
-      (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 18)) (then
-      (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (call $sse_cvtt_f32_i32 (f32.nearest (f32x4.extract_lane 0 (local.get $s)))))
-      (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 17)) (then
-      (call $xmm_set (local.get $dst) (f32x4.replace_lane 0 (local.get $d)
-        (f32.convert_i32_s (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $src) (i32.const 2)))))))
-      (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 12))
-      (then
-        (call $sse_compare_flags (f32x4.extract_lane 0 (local.get $d))
-                          (f32x4.extract_lane 0 (local.get $s)))
-        (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 5))
-      (then
-        (call $mmx_set (local.get $dst)
-          (i64.or
-            (i64.extend_i32_u
-              (call $sse_cvtt_f32_i32 (f32x4.extract_lane 0 (local.get $s))))
-            (i64.shl
-              (i64.extend_i32_u
-                (call $sse_cvtt_f32_i32 (f32x4.extract_lane 1 (local.get $s))))
-              (i64.const 32))))
-        (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 6))
-      (then
-        (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (call $sse_cvtt_f32_i32 (f32x4.extract_lane 0 (local.get $s))))
-        (dispatch-next)))
-    (local.set $v (local.get $s))
-    (if (i32.eq (local.get $sub) (i32.const 1))
-      (then (local.set $v (v128.xor (local.get $d) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 8))
-      (then (local.set $v (f32x4.add (local.get $d) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 9))
-      (then (local.set $v (f32x4.mul (local.get $d) (local.get $s)))))
-    (if (call $sse_is_scalar_arithmetic (local.get $sub))
-      (then (local.set $v (call $sse_scalar_arithmetic (local.get $sub)
-        (local.get $d) (f32x4.extract_lane 0 (local.get $s))))))
-    (if (i32.eq (local.get $sub) (i32.const 15))
-      (then (local.set $v (f32x4.div (local.get $d) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 16))
-      (then (local.set $v (f32x4.sub (local.get $d) (local.get $s)))))
-    (if (call $sse_is_packed_extra (local.get $sub))
-      (then (local.set $v (call $sse_packed_extra
-        (local.get $sub) (local.get $d) (local.get $s)))))
-    (if (i32.eq (local.get $sub) (i32.const 2))
-      (then (local.set $v (i32x4.replace_lane 0
-        (local.get $d) (i32x4.extract_lane 0 (local.get $s))))))
-    (if (i32.eq (local.get $sub) (i32.const 7))
-      (then (local.set $v (call $sse_shufps
-        (local.get $d) (local.get $s)
-        (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))))
-    (if (i32.eq (local.get $sub) (i32.const 3))
-      (then (local.set $v
-        (i32x4.replace_lane 3
-          (i32x4.replace_lane 2
-            (i32x4.replace_lane 1 (local.get $d)
-              (i32x4.extract_lane 0 (local.get $s)))
-            (i32x4.extract_lane 1 (local.get $d)))
-          (i32x4.extract_lane 1 (local.get $s))))))
-    (if (i32.eq (local.get $sub) (i32.const 4))
-      (then (local.set $v
-        (i32x4.replace_lane 3
-          (i32x4.replace_lane 2 (local.get $d)
+    (block $wr
+      (block $movmsk
+      (block $cmpps
+      (block $rcpss
+      (block $rsqrtss
+      (block $sqrtss
+      (block $minps
+      (block $maxps
+      (block $orps
+      (block $andnps
+      (block $andps
+      (block $rcpps
+      (block $rsqrtps
+      (block $sqrtps
+      (block $cvtss2si
+      (block $cvtsi2ss
+      (block $subps
+      (block $divps
+      (block $subss
+      (block $divss
+      (block $comiss
+      (block $mulss
+      (block $addss
+      (block $mulps
+      (block $addps
+      (block $shufps
+      (block $cvttss2si
+      (block $cvttps2pi
+      (block $movlh
+      (block $unpck
+      (block $movss
+      (block $xor
+      (block $mov
+        (br_table $mov $xor $movss $unpck $movlh $cvttps2pi $cvttss2si $shufps $addps $mulps $addss $mulss $comiss $divss $subss $divps $subps $cvtsi2ss $cvtss2si $sqrtps $rsqrtps $rcpps $andps $andnps $orps $maxps $minps $sqrtss $rsqrtss $rcpss $mov $cmpps $movmsk $mov (local.get $sub)))
+      ;; mov
+      (local.set $v (local.get $s))
+      (br $wr))
+      ;; xor
+      (local.set $v (v128.xor (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; movss
+      (local.set $v (i32x4.replace_lane 0 (local.get $d) (i32x4.extract_lane 0 (local.get $s))))
+      (br $wr))
+      ;; unpck
+      (local.set $v (i32x4.replace_lane 3
+        (i32x4.replace_lane 2
+          (i32x4.replace_lane 1 (local.get $d)
             (i32x4.extract_lane 0 (local.get $s)))
-          (i32x4.extract_lane 1 (local.get $s))))))
-    (call $xmm_set (local.get $dst) (local.get $v))
+          (i32x4.extract_lane 1 (local.get $d)))
+        (i32x4.extract_lane 1 (local.get $s))))
+      (br $wr))
+      ;; movlh
+      (local.set $v (i32x4.replace_lane 3
+        (i32x4.replace_lane 2 (local.get $d)
+          (i32x4.extract_lane 0 (local.get $s)))
+        (i32x4.extract_lane 1 (local.get $s))))
+      (br $wr))
+      ;; cvttps2pi
+      (call $mmx_set (local.get $dst)
+        (i64.or
+          (i64.extend_i32_u (call $sse_cvtt_f32_i32 (f32x4.extract_lane 0 (local.get $s))))
+          (i64.shl (i64.extend_i32_u (call $sse_cvtt_f32_i32 (f32x4.extract_lane 1 (local.get $s))))
+                   (i64.const 32))))
+      (dispatch-next))
+      ;; cvttss2si
+      (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (call $sse_cvtt_f32_i32 (f32x4.extract_lane 0 (local.get $s))))
+      (dispatch-next))
+      ;; shufps
+      (local.set $v (call $sse_shufps (local.get $d) (local.get $s) (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))
+      (br $wr))
+      ;; addps
+      (local.set $v (f32x4.add (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; mulps
+      (local.set $v (f32x4.mul (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; addss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.add (f32x4.extract_lane 0 (local.get $d)) (f32x4.extract_lane 0 (local.get $s)))))
+      (br $wr))
+      ;; mulss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.mul (f32x4.extract_lane 0 (local.get $d)) (f32x4.extract_lane 0 (local.get $s)))))
+      (br $wr))
+      ;; comiss
+      (call $sse_compare_flags (f32x4.extract_lane 0 (local.get $d)) (f32x4.extract_lane 0 (local.get $s)))
+      (dispatch-next))
+      ;; divss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.div (f32x4.extract_lane 0 (local.get $d)) (f32x4.extract_lane 0 (local.get $s)))))
+      (br $wr))
+      ;; subss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.sub (f32x4.extract_lane 0 (local.get $d)) (f32x4.extract_lane 0 (local.get $s)))))
+      (br $wr))
+      ;; divps
+      (local.set $v (f32x4.div (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; subps
+      (local.set $v (f32x4.sub (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; cvtsi2ss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.convert_i32_s (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $src) (i32.const 2)))))))
+      (br $wr))
+      ;; cvtss2si
+      (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (call $sse_cvtt_f32_i32 (f32.nearest (f32x4.extract_lane 0 (local.get $s)))))
+      (dispatch-next))
+      ;; sqrtps
+      (local.set $v (f32x4.sqrt (local.get $s)))
+      (br $wr))
+      ;; rsqrtps
+      (local.set $v (f32x4.div (f32x4.splat (f32.const 1)) (f32x4.sqrt (local.get $s))))
+      (br $wr))
+      ;; rcpps
+      (local.set $v (f32x4.div (f32x4.splat (f32.const 1)) (local.get $s)))
+      (br $wr))
+      ;; andps
+      (local.set $v (v128.and (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; andnps
+      (local.set $v (v128.andnot (local.get $s) (local.get $d)))
+      (br $wr))
+      ;; orps
+      (local.set $v (v128.or (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; maxps
+      (local.set $v (f32x4.pmax (local.get $s) (local.get $d)))
+      (br $wr))
+      ;; minps
+      (local.set $v (f32x4.pmin (local.get $s) (local.get $d)))
+      (br $wr))
+      ;; sqrtss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.sqrt (f32x4.extract_lane 0 (local.get $s)))))
+      (br $wr))
+      ;; rsqrtss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.div (f32.const 1) (f32.sqrt (f32x4.extract_lane 0 (local.get $s))))))
+      (br $wr))
+      ;; rcpss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.div (f32.const 1) (f32x4.extract_lane 0 (local.get $s)))))
+      (br $wr))
+      ;; cmpps
+      (local.set $v (call $sse_cmpps (local.get $d) (local.get $s) (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))
+      (br $wr))
+      ;; movmsk
+      (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (i32x4.bitmask (local.get $s)))
+      (dispatch-next))
+    (v128.store (local.get $dp) (local.get $v))
     (dispatch-next))
 
+  ;; Memory source. Scalar and 64-bit forms read exactly the bytes x86 reads
+  ;; (four or eight), because the rest of the 16 may sit on an unmapped page.
+  ;; MOVSS from memory zeroes the destination's upper 96 bits; only the
+  ;; register-to-register MOVSS preserves them.
   (func $th_sse_rm (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $sub i32) (local $dst i32) (local $addr i32)
-    (local $d v128) (local $s v128) (local $v v128)
-    (local.set $sub
-      (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xFF)))
+    (local $nx_fn i32) (local $nx_op i32) (local $sub i32) (local $dst i32) (local $addr i32)
+    (local $dp i32) (local $d v128) (local $s v128) (local $v v128)
+    (local.set $sub (i32.and (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 0xFF)))
     (local.set $dst (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
     (local.set $addr (call $read_addr))
-    (local.set $d (call $xmm_get (local.get $dst)))
-    (if (i32.eq (local.get $sub) (i32.const 31)) (then
-      (call $xmm_set (local.get $dst) (call $sse_cmpps
-        (local.get $d) (call $xmm_load128 (local.get $addr))
-        (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))
-      (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 30)) (then
-      (call $xmm_set (local.get $dst)
-        (i32x4.replace_lane 1
-          (i32x4.replace_lane 0 (local.get $d) (call $gl32 (local.get $addr)))
-          (call $gl32 (i32.add (local.get $addr) (i32.const 4)))))
-      (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 18)) (then
-      (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (call $sse_cvtt_f32_i32
-        (f32.nearest (f32.reinterpret_i32 (call $gl32 (local.get $addr))))))
-      (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 17)) (then
-      (call $xmm_set (local.get $dst) (f32x4.replace_lane 0 (local.get $d)
-        (f32.convert_i32_s (call $gl32 (local.get $addr)))))
-      (dispatch-next)))
-    ;; Scalar memory arithmetic must read only four bytes. In particular the
-    ;; neighboring twelve bytes may live on an unmapped page.
-    (if (i32.eq (local.get $sub) (i32.const 12))
-      (then
-        (call $sse_compare_flags (f32x4.extract_lane 0 (local.get $d))
-          (f32.reinterpret_i32 (call $gl32 (local.get $addr))))
-        (dispatch-next)))
-    (if (call $sse_is_scalar_arithmetic (local.get $sub))
-      (then
-        (local.set $v (call $sse_scalar_arithmetic (local.get $sub) (local.get $d)
-          (f32.reinterpret_i32 (call $gl32 (local.get $addr)))))
-        (call $xmm_set (local.get $dst) (local.get $v))
-        (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 5))
-      (then
-        (call $mmx_set (local.get $dst)
-          (i64.or
-            (i64.extend_i32_u
-              (call $sse_cvtt_f32_i32
-                (f32.reinterpret_i32 (call $gl32 (local.get $addr)))))
-            (i64.shl
-              (i64.extend_i32_u
-                (call $sse_cvtt_f32_i32
-                  (f32.reinterpret_i32
-                    (call $gl32 (i32.add (local.get $addr) (i32.const 4))))))
-              (i64.const 32))))
-        (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 6))
-      (then
-        (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (call $sse_cvtt_f32_i32
-            (f32.reinterpret_i32 (call $gl32 (local.get $addr)))))
-        (dispatch-next)))
-    (if (i32.eq (local.get $sub) (i32.const 2))
-      (then (local.set $v (i32x4.replace_lane 0
-        (local.get $d) (call $gl32 (local.get $addr)))))
-      (else
-        (local.set $s (call $xmm_load128 (local.get $addr)))
-        (local.set $v (local.get $s))
-        (if (i32.eq (local.get $sub) (i32.const 7))
-          (then (local.set $v (call $sse_shufps
-            (local.get $d) (local.get $s)
-            (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))))
-        (if (i32.eq (local.get $sub) (i32.const 1))
-          (then (local.set $v
-            (v128.xor (local.get $d) (local.get $s)))))
-        (if (i32.eq (local.get $sub) (i32.const 8))
-          (then (local.set $v (f32x4.add (local.get $d) (local.get $s)))))
-        (if (i32.eq (local.get $sub) (i32.const 9))
-          (then (local.set $v (f32x4.mul (local.get $d) (local.get $s)))))
-        (if (i32.eq (local.get $sub) (i32.const 15))
-          (then (local.set $v (f32x4.div (local.get $d) (local.get $s)))))
-        (if (i32.eq (local.get $sub) (i32.const 16))
-          (then (local.set $v (f32x4.sub (local.get $d) (local.get $s)))))
-        (if (call $sse_is_packed_extra (local.get $sub))
-          (then (local.set $v (call $sse_packed_extra
-            (local.get $sub) (local.get $d) (local.get $s)))))
-        (if (i32.eq (local.get $sub) (i32.const 3))
-          (then (local.set $v
-            (i32x4.replace_lane 3
-              (i32x4.replace_lane 2
-                (i32x4.replace_lane 1 (local.get $d)
-                  (i32x4.extract_lane 0 (local.get $s)))
-                (i32x4.extract_lane 1 (local.get $d)))
-              (i32x4.extract_lane 1 (local.get $s))))))
-        (if (i32.eq (local.get $sub) (i32.const 4))
-          (then (local.set $v
-            (i32x4.replace_lane 3
-              (i32x4.replace_lane 2 (local.get $d)
-                (i32x4.extract_lane 0 (local.get $s)))
-              (i32x4.extract_lane 1 (local.get $s))))))))
-    (call $xmm_set (local.get $dst) (local.get $v))
+    (local.set $dp (call $xmm_addr (local.get $dst)))
+    (local.set $d (v128.load (local.get $dp)))
+    (block $wr
+      (block $cmpps
+      (block $movlps
+      (block $rcpss
+      (block $rsqrtss
+      (block $sqrtss
+      (block $minps
+      (block $maxps
+      (block $orps
+      (block $andnps
+      (block $andps
+      (block $rcpps
+      (block $rsqrtps
+      (block $sqrtps
+      (block $cvtss2si
+      (block $cvtsi2ss
+      (block $subps
+      (block $divps
+      (block $subss
+      (block $divss
+      (block $comiss
+      (block $mulss
+      (block $addss
+      (block $mulps
+      (block $addps
+      (block $shufps
+      (block $cvttss2si
+      (block $cvttps2pi
+      (block $movlh
+      (block $unpck
+      (block $movss
+      (block $xor
+      (block $mov
+        (br_table $mov $xor $movss $unpck $movlh $cvttps2pi $cvttss2si $shufps $addps $mulps $addss $mulss $comiss $divss $subss $divps $subps $cvtsi2ss $cvtss2si $sqrtps $rsqrtps $rcpps $andps $andnps $orps $maxps $minps $sqrtss $rsqrtss $rcpss $movlps $cmpps $mov $mov (local.get $sub)))
+      ;; mov
+      (local.set $v (call $gl128 (local.get $addr)))
+      (br $wr))
+      ;; xor
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (v128.xor (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; movss
+      (local.set $v (i32x4.replace_lane 0 (v128.const i32x4 0 0 0 0) (call $gl32 (local.get $addr))))
+      (br $wr))
+      ;; unpck
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (i32x4.replace_lane 3
+        (i32x4.replace_lane 2
+          (i32x4.replace_lane 1 (local.get $d)
+            (i32x4.extract_lane 0 (local.get $s)))
+          (i32x4.extract_lane 1 (local.get $d)))
+        (i32x4.extract_lane 1 (local.get $s))))
+      (br $wr))
+      ;; movlh
+      (local.set $v (i32x4.replace_lane 3
+        (i32x4.replace_lane 2 (local.get $d) (call $gl32 (local.get $addr)))
+        (call $gl32 (i32.add (local.get $addr) (i32.const 4)))))
+      (br $wr))
+      ;; cvttps2pi
+      (call $mmx_set (local.get $dst)
+        (i64.or
+          (i64.extend_i32_u (call $sse_cvtt_f32_i32 (f32.reinterpret_i32 (call $gl32 (local.get $addr)))))
+          (i64.shl (i64.extend_i32_u (call $sse_cvtt_f32_i32
+                     (f32.reinterpret_i32 (call $gl32 (i32.add (local.get $addr) (i32.const 4))))))
+                   (i64.const 32))))
+      (dispatch-next))
+      ;; cvttss2si
+      (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (call $sse_cvtt_f32_i32 (f32.reinterpret_i32 (call $gl32 (local.get $addr)))))
+      (dispatch-next))
+      ;; shufps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (call $sse_shufps (local.get $d) (local.get $s) (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))
+      (br $wr))
+      ;; addps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (f32x4.add (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; mulps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (f32x4.mul (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; addss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.add (f32x4.extract_lane 0 (local.get $d)) (f32.reinterpret_i32 (call $gl32 (local.get $addr))))))
+      (br $wr))
+      ;; mulss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.mul (f32x4.extract_lane 0 (local.get $d)) (f32.reinterpret_i32 (call $gl32 (local.get $addr))))))
+      (br $wr))
+      ;; comiss
+      (call $sse_compare_flags (f32x4.extract_lane 0 (local.get $d)) (f32.reinterpret_i32 (call $gl32 (local.get $addr))))
+      (dispatch-next))
+      ;; divss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.div (f32x4.extract_lane 0 (local.get $d)) (f32.reinterpret_i32 (call $gl32 (local.get $addr))))))
+      (br $wr))
+      ;; subss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.sub (f32x4.extract_lane 0 (local.get $d)) (f32.reinterpret_i32 (call $gl32 (local.get $addr))))))
+      (br $wr))
+      ;; divps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (f32x4.div (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; subps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (f32x4.sub (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; cvtsi2ss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.convert_i32_s (call $gl32 (local.get $addr)))))
+      (br $wr))
+      ;; cvtss2si
+      (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $dst) (i32.const 2))) (call $sse_cvtt_f32_i32 (f32.nearest (f32.reinterpret_i32 (call $gl32 (local.get $addr))))))
+      (dispatch-next))
+      ;; sqrtps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (f32x4.sqrt (local.get $s)))
+      (br $wr))
+      ;; rsqrtps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (f32x4.div (f32x4.splat (f32.const 1)) (f32x4.sqrt (local.get $s))))
+      (br $wr))
+      ;; rcpps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (f32x4.div (f32x4.splat (f32.const 1)) (local.get $s)))
+      (br $wr))
+      ;; andps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (v128.and (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; andnps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (v128.andnot (local.get $s) (local.get $d)))
+      (br $wr))
+      ;; orps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (v128.or (local.get $d) (local.get $s)))
+      (br $wr))
+      ;; maxps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (f32x4.pmax (local.get $s) (local.get $d)))
+      (br $wr))
+      ;; minps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (f32x4.pmin (local.get $s) (local.get $d)))
+      (br $wr))
+      ;; sqrtss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.sqrt (f32.reinterpret_i32 (call $gl32 (local.get $addr))))))
+      (br $wr))
+      ;; rsqrtss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.div (f32.const 1) (f32.sqrt (f32.reinterpret_i32 (call $gl32 (local.get $addr)))))))
+      (br $wr))
+      ;; rcpss
+      (local.set $v (f32x4.replace_lane 0 (local.get $d) (f32.div (f32.const 1) (f32.reinterpret_i32 (call $gl32 (local.get $addr))))))
+      (br $wr))
+      ;; movlps
+      (local.set $v (i32x4.replace_lane 1
+        (i32x4.replace_lane 0 (local.get $d) (call $gl32 (local.get $addr)))
+        (call $gl32 (i32.add (local.get $addr) (i32.const 4)))))
+      (br $wr))
+      ;; cmpps
+      (local.set $s (call $gl128 (local.get $addr)))
+      (local.set $v (call $sse_cmpps (local.get $d) (local.get $s) (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xFF))))
+      (br $wr))
+    (v128.store (local.get $dp) (local.get $v))
     (dispatch-next))
 
+  ;; Memory destination: MOVSS (2), MOVHPS (4), MOVLPS (30), else a 128-bit
+  ;; MOVAPS/MOVUPS store.
   (func $th_sse_mr (param $op i32)
-     (local $nx_fn i32) (local $nx_op i32) (local $sub i32) (local $src i32) (local $addr i32) (local $v v128)
+    (local $nx_fn i32) (local $nx_op i32) (local $sub i32) (local $addr i32) (local $v v128)
     (local.set $sub (i32.shr_u (local.get $op) (i32.const 8)))
-    (local.set $src (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
-    (local.set $v (call $xmm_get (local.get $src)))
+    (local.set $v (call $xmm_get (i32.shr_u (local.get $op) (i32.const 4))))
     (local.set $addr (call $read_addr))
+    (if (i32.eq (local.get $sub) (i32.const 2))
+      (then (call $gs32 (local.get $addr) (i32x4.extract_lane 0 (local.get $v)))
+            (dispatch-next)))
     (if (i32.eq (local.get $sub) (i32.const 30))
-      (then
-        (call $gs32 (local.get $addr) (i32x4.extract_lane 0 (local.get $v)))
-        (call $gs32 (i32.add (local.get $addr) (i32.const 4))
-          (i32x4.extract_lane 1 (local.get $v))))
-      (else (if (i32.eq (local.get $sub) (i32.const 2))
-      (then (call $gs32 (local.get $addr) (i32x4.extract_lane 0 (local.get $v))))
-      (else
-        (if (i32.eq (local.get $sub) (i32.const 4))
-          (then
-            (call $gs32 (local.get $addr) (i32x4.extract_lane 2 (local.get $v)))
-            (call $gs32 (i32.add (local.get $addr) (i32.const 4))
-              (i32x4.extract_lane 3 (local.get $v))))
-          (else (call $xmm_store128 (local.get $addr) (local.get $v))))))))
+      (then (call $gs64 (local.get $addr) (i64x2.extract_lane 0 (local.get $v)))
+            (dispatch-next)))
+    (if (i32.eq (local.get $sub) (i32.const 4))
+      (then (call $gs64 (local.get $addr) (i64x2.extract_lane 1 (local.get $v)))
+            (dispatch-next)))
+    (call $gs128 (local.get $addr) (local.get $v))
     (dispatch-next))
 
   ;; ---- Guest 64-bit access ----

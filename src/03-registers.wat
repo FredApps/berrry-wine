@@ -624,6 +624,52 @@
     (call $gs32 (local.get $ga) (i32.wrap_i64 (local.get $v)))
     (call $gs32 (i32.add (local.get $ga) (i32.const 4))
       (i32.wrap_i64 (i64.shr_u (local.get $v) (i64.const 32)))))
+  ;; 128-bit guest access for SSE (MOVAPS/MOVUPS and every packed memory
+  ;; operand). A same-page access is one translation and one v128 op; a
+  ;; page-crossing operand goes lane by lane through $gl32/$gs32, since
+  ;; adjacent sparse guest pages need not be adjacent in WASM memory.
+  (func $gl128 (param $ga i32) (result v128)
+    (local $wa i32) (local $g2w_wa i32)
+    (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFF0))
+      (then
+        (local.set $wa (g2w-fast (local.get $ga)))
+        ;; A miss has already been reported once by $g2w; every lane of an
+        ;; unmapped page reads as the sentinel's zero, as four $gl32s would.
+        ;; The sentinel is only four bytes, so it must not take a v128.load.
+        (if (i32.eq (local.get $wa) (global.get $NULL_SENTINEL))
+          (then (return (v128.const i32x4 0 0 0 0))))
+        (return (v128.load (local.get $wa)))))
+    (i32x4.replace_lane 3
+      (i32x4.replace_lane 2
+        (i32x4.replace_lane 1
+          (i32x4.replace_lane 0 (i32x4.splat (i32.const 0))
+            (call $gl32 (local.get $ga)))
+          (call $gl32 (i32.add (local.get $ga) (i32.const 4))))
+        (call $gl32 (i32.add (local.get $ga) (i32.const 8))))
+      (call $gl32 (i32.add (local.get $ga) (i32.const 12)))))
+  (func $gs128 (param $ga i32) (param $v v128)
+    (local $wa i32) (local $g2w_wa i32)
+    (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFF0))
+      (then
+        (local.set $wa (g2w-fast (local.get $ga)))
+        ;; Unmapped: the miss is reported, and the write goes nowhere.
+        (if (i32.eq (local.get $wa) (global.get $NULL_SENTINEL)) (then (return)))
+        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+              (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                         (i32.const 0x1FFF))))
+              (i32.shl (i32.const 1)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
+                                  (i32.shr_u (local.get $ga) (i32.const 28)))
+                         (i32.const 7))))
+          (then (call $code_write_hit (local.get $ga) (i32.const 16))))
+        (v128.store (local.get $wa) (local.get $v))
+        (call $page_watch_write_one (local.get $wa)) (return)))
+    (call $gs32 (local.get $ga) (i32x4.extract_lane 0 (local.get $v)))
+    (call $gs32 (i32.add (local.get $ga) (i32.const 4)) (i32x4.extract_lane 1 (local.get $v)))
+    (call $gs32 (i32.add (local.get $ga) (i32.const 8)) (i32x4.extract_lane 2 (local.get $v)))
+    (call $gs32 (i32.add (local.get $ga) (i32.const 12)) (i32x4.extract_lane 3 (local.get $v))))
   (func $gs16 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32) (local $g2w_wa i32)
     (local.set $wa (g2w-fast (local.get $ga)))
