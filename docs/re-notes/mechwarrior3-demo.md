@@ -1273,3 +1273,41 @@ passes **1,233,496 byte-backed dirty-page audit checks with zero misses**, zero
 GPU errors and no browser errors. Its screenshot shows advancing terrain and
 45 speed. Audit instrumentation performs comparisons intentionally, so its
 13.8 FPS is not an ordinary-performance measurement.
+
+### Remaining color-buffer Lock callers
+
+Remote `mw3-lock-access2` uses the same pinned surface-fence WASM and GPU
+source with `--frame-times --trace-locks --warmup-ms=15000 --seconds=10
+--windows=1`. It records 555 readbacks / 185 presents (three per frame), zero
+GPU errors and zero fallbacks. The diagnostic run measured 18.43 FPS; snapshot
+copies and byte comparisons make this unsuitable for an optimization A/B.
+
+Every recurring color Lock is slot 6, null rectangle (whole 640x480 surface),
+flags 1 (`DDLOCK_WAIT`), without read-only, write-only or discard permission.
+`0x541820` calls the backend Lock through `[0x7c546c]`, then installs the
+returned pixel pointer/pitch in software-drawing state. The backend chain is
+`0x5420a0 -> 0x542140 -> surface.Lock`; the API return is `0x542165`.
+MW3 omits frame pointers here. Raw stack offsets +36, +168 and +172 recover
+`0x5420d8`, `0x54182b` and the distinct caller below; an EBP walk alone
+does not identify the three sites.
+
+| Caller return | Code around the lock | First three sampled intervals |
+|---|---|---|
+| `0x46a513` | CPU drawing after the game object's render call | 10,114 / 10,113 / 10,114 changed bytes; bounding rectangle `[5,5,639,333)` |
+| `0x46a425` | Lock, call `0x570850`, Unlock (`0x541880`) | No changed bytes |
+| `0x56facb` | Conditional re-lock at a rendering helper's exit | No changed bytes |
+
+The first site's sparse changes span most of the screen horizontally. These
+are **changed-byte bounds**, not access bounds: unchanged bytes can have been
+read or written with the same value. The latter two sites are candidates for
+deferred synchronization, but this capture does not prove they never read
+pixels. Texture locks (slots 1400/1402) still occur without recurring color
+readbacks, as intended by the committed fix.
+
+No additional renderer optimization is justified by Lock rectangles or flags
+in this trace. A safe next mechanism is lazy synchronization on the first
+actual CPU access to a GPU-newer surface, covering reads and partial writes
+before memory is consumed or modified, including native/folded memory paths.
+Locks that never access pixels could then avoid readback. Existing write-dirty
+flags alone cannot detect a CPU read or preserve untouched pixels before a
+partial write. Do not skip a fence based on the previous frame's zero changes.

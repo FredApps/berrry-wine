@@ -6,6 +6,9 @@
 // Example: node tools/bench-d3dim-gameplay.js --app=nfs3_demo --label=before
 // MW3 cockpit: --app=mw3 --route=gameplay --warmup-ms=15000
 // Add --guest-key=53 for 50% throttle (the demo's top-row 5 binding).
+// --frame-times --trace-locks records Lock arguments/stacks and up to nine
+// readback-to-Unlock byte-difference samples per group. These are write-change
+// bounds, NOT CPU-read bounds; diagnostic copies/scans affect timing.
 // Repeat with --label=after once a candidate exists. FPS counts guest Flip
 // calls (MW3: DirectDraw presents), not rAF callbacks. CPU profiles are optional to separate sampling
 // overhead from the primary measurements. Captures require visual review.
@@ -49,13 +52,14 @@ const frameTimes = process.argv.includes('--frame-times');
 const traceYields = process.argv.includes('--trace-yields');
 const traceCache = process.argv.includes('--trace-cache');
 const traceFences = process.argv.includes('--trace-fences');
+const traceLocks = process.argv.includes('--trace-locks');
 const guestKey = Number(opt('guest-key', '0'));
 const output = path.resolve(opt('out', path.join(ROOT, 'build/d3dim-gameplay-perf', `${app}-${label}`)));
 assert(['nfs3_demo', 'gta2_demo', 'mw3'].includes(app), 'only established game routes are supported');
 assert(['menu', 'gameplay'].includes(route) && (app === 'mw3' || route === 'gameplay'));
 assert(seconds > 0 && windows > 0 && Number.isInteger(windows));
 assert(Number.isInteger(guestKey) && guestKey >= 0 && guestKey <= 255);
-assert(!(traceYields || traceCache || traceFences) || frameTimes, 'diagnostic traces require --frame-times');
+assert(!(traceYields || traceCache || traceFences || traceLocks) || frameTimes, 'diagnostic traces require --frame-times');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function replaceOnce(source, from, to) {
@@ -63,6 +67,10 @@ function replaceOnce(source, from, to) {
   return source.replace(from, to);
 }
 function instrumentGpu(source) {
+  if (traceLocks) source = replaceOnce(source, '        this.stats.syncs++;', `
+        const lock = globalThis.__benchFrameClock?.openLocks?.findLast(l => l.dib === t.dib && !l.before);
+        if (lock) { lock.before = t.shadow.slice(); lock.pitch = t.pitch; lock.width = t.width; lock.height = t.height; lock.bpp = t.bpp; }
+        this.stats.syncs++;`);
   if (traceFences) source = replaceOnce(source, '        const start = now();\n        const { width, height, pitch } = t,', `        const cause = globalThis.__benchSurfaceOp || [];
         const key = JSON.stringify({ cause, rt: t.rt, dib: t.dib, width: t.width, height: t.height });
         const counts = globalThis.__benchFenceCounts || (globalThis.__benchFenceCounts = {});
@@ -168,6 +176,41 @@ function instrumentWorker(source) {
         return originalLogI32(value);
       };` : ''}
       built.imports.host.dx_trace = (...args) => {
+        ${traceLocks ? `const clock = globalThis.__benchFrameClock;
+        if (clock.enabled && args[0] === 1) {
+          const ex = globalThis.__benchExports, esp = ex.get_esp() >>> 0;
+          const read = a => ex.guest_read32(a) >>> 0;
+          const stackArgs = Array.from({length: 6}, (_, i) => read(esp + 4 * i));
+          const rect = stackArgs[2] ? Array.from({length: 4}, (_, i) => read(stackArgs[2] + i * 4) | 0) : null;
+          const stack = [stackArgs[0]];
+          let bp = ex.get_ebp() >>> 0;
+          for (let n = 0; n < 8 && bp >= 0x10000 && bp < 0x80000000; n++) {
+            stack.push(read(bp + 4)); const next = read(bp);
+            if (next <= bp || next - bp > 0x100000) break; bp = next;
+          }
+          const key = JSON.stringify({slot: args[1], flags: stackArgs[4], rect, stack});
+          const group = clock.locks[key] || (clock.locks[key] = {count: 0, samples: []});
+          group.count++;
+          if (group.samples.length < 9) clock.openLocks.push({key, slot: args[1], dib: args[3], stackArgs,
+            stackWords: Array.from({length: 64}, (_, i) => read(esp + i * 4))});
+        }
+        if (clock.enabled && args[0] === 2) {
+          const index = clock.openLocks.findIndex(l => l.slot === args[1]);
+          if (index >= 0) {
+            const l = clock.openLocks.splice(index, 1)[0];
+            if (l.before) {
+              const current = new Uint8Array(memory.buffer, l.dib, l.before.length);
+              let changed = 0, minX = l.width, minY = l.height, maxX = -1, maxY = -1;
+              for (let i = 0; i < current.length; i++) if (current[i] !== l.before[i]) {
+                changed++; const x = Math.floor(i % l.pitch / (l.bpp / 8)), y = Math.floor(i / l.pitch);
+                minX = Math.min(minX,x); maxX = Math.max(maxX,x); minY = Math.min(minY,y); maxY = Math.max(maxY,y);
+              }
+              clock.locks[l.key].samples.push({dib:l.dib, width:l.width, height:l.height, pitch:l.pitch,
+                stackWords:l.stackWords,
+                changedBytes:changed, changedRect:changed ? [minX,minY,maxX+1,maxY+1] : null});
+            }
+          }
+        }` : ''}
         ${traceFences ? `if (args[0] === 1 || args[0] === 3) globalThis.__benchSurfaceOp = args;` : ''}
         if (args[0] === 6) globalThis.__benchGuestFlips = (globalThis.__benchGuestFlips || 0) + 1;
         if (args[0] === 5) {
@@ -219,7 +262,7 @@ function instrumentWorker(source) {
     platform: os.platform(), arch: os.arch(), cpu: os.cpus()[0].model,
     loadBefore: os.loadavg(), headless: process.argv.includes('--headless'),
     profiled: process.argv.includes('--profile'), wasmSha256: hash(wasm), gpuSha256: hash(gpuSource),
-    regionSha256: hash(regionSource), audit, frameTimes, traceYields, traceCache, traceFences,
+    regionSha256: hash(regionSource), audit, frameTimes, traceYields, traceCache, traceFences, traceLocks,
     note: 'MW3 counts DirectDraw presents; other games count flips. --route=gameplay deploys MW3 into a verified cockpit. Verify screenshots. --audit checks page versions against pixels.' };
   fs.writeFileSync(path.join(output, 'runtime.wasm'), wasm);
   fs.writeFileSync(path.join(output, 'd3dim-gpu.js'), gpuSource);
@@ -311,6 +354,7 @@ function instrumentWorker(source) {
         const c = globalThis.__benchFrameClock;
         c.count = 0; c.overflow = false; c.yields = []; c.yieldOverflow = false;
         c.samples = []; c.lastSample = 0; c.cacheTrace = [];
+        c.locks = {}; c.openLocks = [];
         c.cacheBefore = globalThis.__benchCacheSnapshot();
         c.start = performance.now(); c.enabled = true;
         globalThis.__benchFenceCounts = {};
@@ -329,6 +373,7 @@ function instrumentWorker(source) {
             cacheTrace: c.cacheTrace,
             fenceCounts: globalThis.__benchFenceCounts,
             fenceStacks: globalThis.__benchFenceStacks,
+            locks: c.locks,
             cacheBefore: c.cacheBefore, cacheAfter: globalThis.__benchCacheSnapshot(),
             timestamps: Array.from(c.times.subarray(0, c.count)) };
         });
