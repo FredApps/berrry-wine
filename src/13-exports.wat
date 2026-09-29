@@ -2600,8 +2600,6 @@
   (func (export "get_fold_off_mask") (result i32) (global.get $fold_off_mask))
   (func (export "set_mmx_copy64") (param $flag i32)
     (global.set $mmx_copy64_enabled (i32.ne (local.get $flag) (i32.const 0))))
-  (func (export "set_mmx_mask_copy") (param $flag i32)
-    (global.set $mmx_mask_copy_enabled (i32.ne (local.get $flag) (i32.const 0))))
 
   ;; TREE_FOLD ($th_tree_fold, src/07b-loop-match.wat). The general integer
   ;; expression fold; OFF by default. Decode-time, so the same rule as the

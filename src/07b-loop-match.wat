@@ -184,19 +184,6 @@
   ;; same-process semantic and timing A/Bs; the production default is on.
   (global $loop_aoe_fill_emit_enabled (mut i32) (i32.const 1))
   (global $loop_aoe_span_emit_enabled (mut i32) (i32.const 1))
-  ;; Jazz 2 has three copies of one exact two-block masked MMX row loop. Keep
-  ;; its gate and the two semantically identical store strategies separate
-  ;; from the older scalar COPY_RUN gate: the benchmark can switch the latter
-  ;; at runtime after one decoded H419 stream has been cached.
-  (global $mmx_mask_copy_enabled (mut i32) (i32.const 1))
-  ;; In larger same-process alternating runs, two v128 stores beat the bulk arm
-  ;; by 22-32% for this exact 32-byte row: memory.copy rereads bytes already
-  ;; loaded to preserve MMX state. Keep the measured winner as the default.
-  (global $mmx_mask_copy_use_bulk (mut i32) (i32.const 0))
-  (global $mmx_mask_copy_matches (mut i32) (i32.const 0))
-  (global $mmx_mask_copy_runs (mut i32) (i32.const 0))
-  (global $mmx_mask_copy_rows (mut i64) (i64.const 0))
-  (global $mmx_mask_copy_bytes (mut i64) (i64.const 0))
   ;; MSVC's Pentium/MMX memcpy copies 64-byte cache lines with eight MOVQ
   ;; loads/stores.  On an interpreter that loop is sixteen dispatches per
   ;; line; retain the exact CPU/MMX state while using Wasm bulk memory for the
@@ -234,48 +221,6 @@
         (local.set $p (i32.add (local.get $p) (i32.const 1)))
         (br $bytes)))
     (local.get $hash))
-
-  ;; Recognize the exact Jazz row-mask loop at 0x468892/0x468a04/0x468b7e.
-  ;; This is deliberately a raw-byte proof rather than an extension of the
-  ;; self-loop matcher: JAE splits the idiom into a mask head and a copy/tail
-  ;; block, while Design A only sees one self-loop block at a time. A near miss
-  ;; falls through to the ordinary decoder without consuming a byte.
-  (func $try_emit_mmx_mask_copy32 (param $start_eip i32) (result i32)
-    (if (i32.or (i32.eqz (global.get $mmx_mask_copy_enabled))
-                (global.get $code16))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (local.get $start_eip)) (i32.const 0x1E73DB03))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 4)))
-                (i32.const 0x0F066F0F)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 8)))
-                (i32.const 0x0F084E6F)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 12)))
-                (i32.const 0x0F10566F)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 16)))
-                (i32.const 0x0F185E6F)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 20)))
-                (i32.const 0x7F0F077F)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 24)))
-                (i32.const 0x7F0F084F)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 28)))
-                (i32.const 0x7F0F1057)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 32)))
-                (i32.const 0xF803185F)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 36)))
-                (i32.const 0x4A20C683)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl16 (i32.add (local.get $start_eip) (i32.const 40)))
-                (i32.const 0xD675)) (then (return (i32.const 0))))
-
-    (global.set $mmx_mask_copy_matches
-      (i32.add (global.get $mmx_mask_copy_matches) (i32.const 1)))
-    ;; Reuse H419's otherwise-zero operand namespace. The high bit selects the
-    ;; fixed masked-MMX descriptor; the normal scalar COPY_RUN remains op=0.
-    (call $te (global.get $LOOP_SUPEROP_COPY) (i32.const 0x80000000))
-    (call $te_raw (i32.add (local.get $start_eip) (i32.const 42)))
-    (call $te_raw (local.get $start_eip))
-    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 42)))
-    (i32.const 1))
 
   ;; Exact, address-independent proof of the MSVC 64-byte MMX memcpy body:
   ;;
@@ -4148,139 +4093,6 @@
       (i32.div_u (local.get $off) (i32.sub (i32.const 0) (local.get $stride)))
       (i32.const 1)))
 
-  ;; Fixed descriptor selected by H419 operand bit 31:
-  ;;
-  ;;   add ebx,ebx / jae tail
-  ;;   movq mm0..3,[esi+0/8/16/24]
-  ;;   movq [edi+0/8/16/24],mm0..3
-  ;; tail: add edi,eax / add esi,32 / dec edx / jnz back
-  ;;
-  ;; Both fast store strategies preload the complete source row into two v128
-  ;; values. That is required for overlap-safe x86 semantics and because the
-  ;; routine returns without EMMS: the final mm0..mm3 values are architecturally
-  ;; observable. The bulk arm then deliberately rereads those bytes through
-  ;; memory.copy; the benchmark decides whether its optimized memmove beats two
-  ;; v128 stores despite that extra read.
-  (func $th_mmx_mask_copy32 (param $op i32)
-    (local $tp i32) (local $fall i32) (local $back i32)
-    (local $mask i32) (local $pitch i32) (local $src i32) (local $dst i32)
-    (local $count i32) (local $old_src i32) (local $old_count i32)
-    (local $src_wa i32) (local $dst_wa i32)
-    (local $v0 v128) (local $v1 v128)
-    (local $q0 i64) (local $q1 i64) (local $q2 i64) (local $q3 i64)
-    (local $charge i32) (local $cost i32) (local $copied i32)
-    (local $iterations i32) (local $copy_count i32)
-
-    (local.set $tp (global.get $ip))
-    (global.set $ip (i32.add (local.get $tp) (i32.const 8)))
-    (local.set $fall (i32.load (local.get $tp)))
-    (local.set $back (i32.load offset=4 (local.get $tp)))
-    (local.set $mask (i32.load offset=12 (global.get $reg_base)))
-    (local.set $pitch (i32.load offset=0 (global.get $reg_base)))
-    (local.set $src (i32.load offset=24 (global.get $reg_base)))
-    (local.set $dst (i32.load offset=28 (global.get $reg_base)))
-    (local.set $count (i32.load offset=8 (global.get $reg_base)))
-    (global.set $mmx_mask_copy_runs
-      (i32.add (global.get $mmx_mask_copy_runs) (i32.const 1)))
-
-    (block $done
-      (loop $rows
-        (local.set $old_src (local.get $src))
-        (local.set $old_count (local.get $count))
-        ;; ADD EBX,EBX; JAE selects the copy from the bit shifted into CF.
-        (local.set $copied (i32.lt_s (local.get $mask) (i32.const 0)))
-        (local.set $mask (i32.shl (local.get $mask) (i32.const 1)))
-        (local.set $cost (select (i32.const 22) (i32.const 6) (local.get $copied)))
-
-        (if (local.get $copied)
-          (then
-            (local.set $copy_count (i32.add (local.get $copy_count) (i32.const 1)))
-            ;; A page-local translation is affine for the whole row. Sparse
-            ;; commits and DIB backing are page-granular; anything crossing a
-            ;; page or resolving to NULL uses the exact four MMX helpers below.
-            (if (i32.and
-                  (i32.le_u (i32.and (local.get $src) (i32.const 0xFFF)) (i32.const 0xFE0))
-                  (i32.le_u (i32.and (local.get $dst) (i32.const 0xFFF)) (i32.const 0xFE0)))
-              (then
-                (local.set $src_wa (call $g2w (local.get $src)))
-                (local.set $dst_wa (call $g2w (local.get $dst))))
-              (else
-                (local.set $src_wa (global.get $NULL_SENTINEL))
-                (local.set $dst_wa (global.get $NULL_SENTINEL))))
-            (if (i32.and
-                  (i32.ne (local.get $src_wa) (global.get $NULL_SENTINEL))
-                  (i32.ne (local.get $dst_wa) (global.get $NULL_SENTINEL)))
-              (then
-                ;; Preload before either store: this is also the MMX result.
-                (local.set $v0 (v128.load (local.get $src_wa)))
-                (local.set $v1 (v128.load offset=16 (local.get $src_wa)))
-                (local.set $q0 (i64x2.extract_lane 0 (local.get $v0)))
-                (local.set $q1 (i64x2.extract_lane 1 (local.get $v0)))
-                (local.set $q2 (i64x2.extract_lane 0 (local.get $v1)))
-                (local.set $q3 (i64x2.extract_lane 1 (local.get $v1)))
-                (call $invalidate_code_write (local.get $dst) (i32.const 32))
-                (if (global.get $mmx_mask_copy_use_bulk)
-                  (then
-                    (memory.copy (local.get $dst_wa) (local.get $src_wa) (i32.const 32)))
-                  (else
-                    (v128.store (local.get $dst_wa) (local.get $v0))
-                    (v128.store offset=16 (local.get $dst_wa) (local.get $v1)))))
-              (else
-                ;; Load all four values before storing any, matching the eight
-                ;; original MOVQs even for overlapping or split mappings.
-                (local.set $q0 (call $mmx_load64 (local.get $src)))
-                (local.set $q1 (call $mmx_load64
-                  (i32.add (local.get $src) (i32.const 8))))
-                (local.set $q2 (call $mmx_load64
-                  (i32.add (local.get $src) (i32.const 16))))
-                (local.set $q3 (call $mmx_load64
-                  (i32.add (local.get $src) (i32.const 24))))
-                (call $mmx_store64 (local.get $dst) (local.get $q0))
-                (call $mmx_store64 (i32.add (local.get $dst) (i32.const 8)) (local.get $q1))
-                (call $mmx_store64 (i32.add (local.get $dst) (i32.const 16)) (local.get $q2))
-                (call $mmx_store64 (i32.add (local.get $dst) (i32.const 24)) (local.get $q3))))))
-
-        ;; The tail executes for selected and transparent rows alike.
-        (local.set $dst (i32.add (local.get $dst) (local.get $pitch)))
-        (local.set $src (i32.add (local.get $src) (i32.const 32)))
-        (local.set $count (i32.sub (local.get $count) (i32.const 1)))
-        (local.set $iterations (i32.add (local.get $iterations) (i32.const 1)))
-        (local.set $charge (i32.add (local.get $charge) (local.get $cost)))
-        (br_if $done (i32.eqz (local.get $count)))
-        ;; $next already charged one dispatch before entering H419. Stop after
-        ;; the same iteration that would spend the remaining threaded budget.
-        (br_if $done
-          (i32.ge_u (i32.sub (local.get $charge) (i32.const 1))
-                    (global.get $steps)))
-        (br $rows)))
-
-    (i32.store offset=12 (global.get $reg_base) (local.get $mask))
-    (i32.store offset=24 (global.get $reg_base) (local.get $src))
-    (i32.store offset=28 (global.get $reg_base) (local.get $dst))
-    (i32.store offset=8 (global.get $reg_base) (local.get $count))
-    ;; DEC preserves the carry produced by the preceding ADD ESI,32.
-    (call $set_flags_add (local.get $old_src) (i32.const 32) (local.get $src))
-    (call $set_flags_dec (local.get $old_count) (local.get $count))
-    (if (local.get $copy_count)
-      (then
-        (call $mmx_set (i32.const 0) (local.get $q0))
-        (call $mmx_set (i32.const 1) (local.get $q1))
-        (call $mmx_set (i32.const 2) (local.get $q2))
-        (call $mmx_set (i32.const 3) (local.get $q3))))
-    (global.set $mmx_exec_count
-      (i32.add (global.get $mmx_exec_count)
-        (i32.mul (local.get $copy_count) (i32.const 8))))
-    (global.set $mmx_mask_copy_rows
-      (i64.add (global.get $mmx_mask_copy_rows) (i64.extend_i32_u (local.get $iterations))))
-    (global.set $mmx_mask_copy_bytes
-      (i64.add (global.get $mmx_mask_copy_bytes)
-        (i64.extend_i32_u
-          (i32.mul (local.get $copy_count) (i32.const 32)))))
-    (global.set $steps
-      (i32.sub (global.get $steps) (i32.sub (local.get $charge) (i32.const 1))))
-    (global.set $eip
-      (select (local.get $back) (local.get $fall) (i32.ne (local.get $count) (i32.const 0)))))
-
   ;; Exact execution of the MSVC 64-byte MMX memcpy recognized above.  The
   ;; ordinary loop is a forward copy, not memmove: only use memory.copy when
   ;; the complete guest ranges are proved disjoint and this cache line has an
@@ -4888,7 +4700,9 @@
           (then (return_call $th_mmx_pipelined_copy64 (local.get $op))))
         (if (i32.eq (local.get $op) (i32.const 0x80000005))
           (then (return_call $th_mmx_fill64 (local.get $op))))
-        (return_call $th_mmx_mask_copy32 (local.get $op))))
+        ;; 0x80000000 was Jazz 2's masked MMX row copy, retired to the uop
+        ;; tier (docs/uop-tier-design.md section 18); nothing emits it now.
+        (unreachable)))
 
     ;; Fourteen $read_thread_word calls would be fourteen calls and fourteen
     ;; global round trips on every entry, and this loop's measured average trip

@@ -115,7 +115,8 @@
   ;; 0x10 mw3-blit (H436/H440/H441), 0x80 xlat-stosb (H418); 0x01 was
   ;; storm-bitreader (H396), 0x02 smack-huff (H395) and 0x20 lut16-counted
   ;; (H418's Heroes III u16 forms), all retired. The MMX exact copies already
-  ;; had globals and now have setters (set_mmx_copy64, set_mmx_mask_copy).
+  ;; had globals and now have setters (set_mmx_copy64; Jazz 2's masked row
+  ;; copy and its set_mmx_mask_copy are retired).
   (global $fold_off_mask (mut i32) (i32.const 0))
   (func $fold_off (param $bit i32) (result i32)
     (i32.ne (i32.and (global.get $fold_off_mask) (local.get $bit)) (i32.const 0)))
@@ -3922,32 +3923,8 @@
               (call $host_log_i32 (global.get $d_pc))
               (unreachable)))))
 
-      ;; Jazz enters each masked 32-byte MMX row copy through setup code in the
-      ;; same x86 basic block (`mov ebx,[ebp+disp]` immediately precedes the
-      ;; loop head). Checking only start_eip made the focused head-entry test
-      ;; pass while authentic execution decoded the ordinary MMX body first.
-      ;; The signature starts with unprefixed `add ebx,ebx` (03 DB), so ask the
-      ;; exact raw matcher only for that opcode. A hit terminates this enclosing
-      ;; block because H419 owns both successors; a near miss consumes/emits
-      ;; nothing and falls through to ordinary ADD decoding.
-      (if (i32.and
-            (i32.eq (local.get $op) (i32.const 0x03))
-            (i32.and
-              (i32.eqz (local.get $prefix_rep))
-              (i32.and
-                (i32.eqz (local.get $prefix_66))
-                (i32.and
-                  (i32.eqz (local.get $prefix_67))
-                  (i32.eqz (local.get $prefix_seg))))))
-        (then
-          (if (call $try_emit_mmx_mask_copy32 (local.get $insn_start))
-            (then
-              (local.set $done (i32.const 1))
-              (br $decode)))))
-
       ;; MSVC's 64-byte MMX memcpy body starts with unprefixed PREFETCHNTA.
-      ;; As with the Jazz exact loop above, recognize it at any instruction
-      ;; boundary in an enclosing decoded block.  The byte-proof matcher owns
+      ;; Recognize it at any instruction boundary in an enclosing decoded block.  The byte-proof matcher owns
       ;; the loop's fall-through and back edge on success.
       (if (i32.and
             (i32.eq (local.get $op) (i32.const 0x0F))
