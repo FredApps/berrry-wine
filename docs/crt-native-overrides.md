@@ -270,9 +270,19 @@ the phase.
 - App progress per unit of main-thread CPU at a fixed batch count: +17%.
 - Main-thread CPU for a fixed render count: -8%. This is **not resolved**
   against a 10% null band, so do not quote it as a win.
-- UT2004 was not measured after the change. In its 600..1100 window the
-  overridden set is about 4.7% of block entries (`_wcsicmp` with its `_getptd`
-  is 2.77%), so that is roughly the most that window can lose. Its later
-  windows are `_woutput` (`_vsnwprintf`), which is not overridden.
+- UT2004, measured 2026-09-29 on box2 over batches 600..1100 (block entries,
+  `--handler-hist`, same flags as the UT2003 run). The two arms are
+  `fd79d3a5^` (before) and 95b1b8c9 (after):
+
+  | | msvcr71 share | msvcr71 entries | all entries | core.dll entries |
+  |---|---|---|---|---|
+  | before | 16.1% | 6.15M | 38.16M | 21.0M |
+  | after | 6.9% | 2.66M | 38.63M | 25.0M |
+
+  msvcr71 lost 3.5M entries in the window, and core.dll did 19% more work in
+  the same batches. That is more than the ~4.7% the earlier census predicted,
+  because this window's overridden calls are heavier than that census saw.
+  What is left is `_woutput`/`swprintf` → `write_char` (`0x7c36c942`) →
+  `_fputwc_lk` (`0x7c36b790`) → `wctomb`, none of which is overridden.
 - Morrowind and Unreal SE spend their CRT time in `sprintf`, `qsort` and
   `fread`, none of which is overridden, so no change is expected there.

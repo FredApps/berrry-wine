@@ -216,12 +216,50 @@ Three things cost a session each and are worth writing down:
   only; the viewport itself is a game-config property, set in
   `System/UT2003.ini` under `[WinDrv.WindowsClient]`
   (`WindowedViewportX/Y`, `FullscreenViewportX/Y`, `MenuViewportX/Y`).
-- **Open:** the `Instant Action | Select Map` dialog's bottom button row
-  (BACK / SPECTATE / PLAY) takes no input, so the match cannot be started from
-  the CLI yet. The click that opens the dialog — INSTANT ACTION on the main
-  menu at (536,578) — works every time, so the input path reaches the engine.
-  Inside the dialog nothing does. Measured, each in its own bounded run with a
-  hover pair before the press:
+- **Resolved 2026-09-29: PLAY works, and UT2003 reaches a DeathMatch.** The
+  "dead button row" below was a measurement artifact, not an input bug. PLAY
+  starts the map load at once. The load runs for about **1000 batches with no
+  Present**, so every capture in that time shows the last menu frame, PLAY
+  still highlighted. Two things made it look dead. The bounded runs below
+  ended inside that window. And before the render-park fix (next section),
+  parked batches were counted without running the guest, so a run could end
+  with the guest having done almost nothing after the click. BACK was not
+  retested; the same artifact is the likely explanation.
+
+  Route (box2, current main plus the render-park fix):
+
+  ```
+  node test/run.js --app=ut2003_demo --control --frozen --max-seconds=7200 \
+    --max-batches=100000000 --stuck-after=100000000 \
+    --d3d9-renderer=software --d3d9-programmable --batch-size=200000 \
+    --quiet-api --screen=1100x840 --trace-input --no-close
+  ```
+
+  1. Step to the main menu.
+  2. Hover pair, then click INSTANT ACTION at (536,578).
+  3. The window is at (20,20) with a 1032x796 frame and client origin (24,44).
+     Select `dm-asbestos` by clicking (290,281).
+  4. Hover (981,775) then (985,778). Then mousedown/mouseup at **PLAY
+     (985,778)**, 3 batches apart. That click was batch 964/967.
+  5. By batch 1007 the main thread is in the exe's buffered `FArchive` reader.
+     `exe+0x5550` is the precache path (`call [eax+0x48]` with `0x7fffffff`).
+     `exe+0x39c0` is its memcpy tail. The box's load average falls to ~0.1
+     because there are no software-render waits. **Use that as the oracle,
+     not the picture.** Check whether the snapshot EIP is in
+     `0x109055xx`/`0x109039xx` and whether `ctx.renderParkStats.waits` is
+     flat.
+  6. At batch ~2025: DM-Asbestos with "The match is about to begin...3" and
+     "Press [Fire] to join the match!".
+  7. Left click in the viewport (540,400). By batch 2113: "The match has
+     begun!", HUD at 100 health / 150 ammo, and the assault rifle in first
+     person.
+
+  The earlier reports, kept for the record:
+
+  The `Instant Action | Select Map` dialog's bottom button row
+  (BACK / SPECTATE / PLAY) seemed to take no input. The click that opens the
+  dialog — INSTANT ACTION on the main menu at (536,578) — works every time.
+  Measured, each in its own bounded run with a hover pair before the press:
   - BACK at screen y = **743, 760, 778, 790** and PLAY at y = **770, 778**:
     all leave the dialog exactly where it was. Five rows spanning 47px, so
     this is **not** a coordinate offset, and BACK failing rules out anything
@@ -236,7 +274,9 @@ Three things cost a session each and are worth writing down:
   hash whether or not any input landed** — `md5` cannot be the oracle here,
   only the dialog's identity can. And the row is drawn at client y ~743 of a
   1024x768 client whose window origin is (20,35); `--trace-input` confirms
-  run.js injected each event, so whatever drops it is below that.
+  run.js injected each event. The 2026-09-29 run routes both down and up to
+  the game window (`-> child 0x10005 ... dispatched=1`, `up ... matching its
+  DOWN`). Nothing was dropping them.
 
 - **Do not quote batches/s across phases.** One UT2003 run on the box moved
   13.8k -> 61k -> 65k batches/s between its intro, menu and idle phases. A
@@ -425,3 +465,69 @@ backend at 200000 blocks per batch:
 
 - The baseline reaches its 170th software render request at batch 520.
 - The candidate reaches it at batch 491, and by batch 520 it is at request 199.
+
+UT2004 over batches 600..1100: msvcr71 drops from 16.1% to 6.9% of block
+entries (docs/crt-native-overrides.md, Verdict).
+
+## UT2004 reaches a DeathMatch (2026-09-29)
+
+UT2004 now gets into a match: DM-Rankin, HUD at 100/100, and the clock
+counting down from 20:00. It took three emulator fixes.
+
+1. **95b1b8c9: DestroyWindow no longer quits.** UT2004's splash dialog is the
+   first top-level window, so it became `$main_hwnd`. Destroying it set
+   `$quit_flag` while the game kept running. Now `$main_hwnd` passes to the
+   next top-level window, and WM_QUIT comes only from PostQuitMessage.
+2. **906cfe27: a real `RtlUnwind`.** The old handler unlinked frames without
+   calling their handlers with `EXCEPTION_UNWINDING`, so msvcr71's C++ EH
+   never ran its unwind funclets. The first `.PAG <- .PAX` throw after PLAY
+   left a stale FRAMEINFO chain, and `__CxxFrameHandler` looped. The
+   replacement follows NT x86 semantics:
+   - each frame below the target gets its handler called with
+     `EXCEPTION_UNWINDING` (plus `EXIT_UNWIND` when the target is NULL), then
+     is unlinked;
+   - a collided unwind (disposition 3) resumes from the dispatcher context;
+   - EAX returns ReturnValue.
+3. **4eb870e1: a dispatcher registration node.** msvcr71's
+   `_UnwindNestedFrames` (orig `0x7c359b25`) runs the code below.
+
+   ```
+   saved = FS:[0]
+   RtlUnwind(pRN)
+   saved->next = FS:[0]
+   FS:[0] = saved
+   ```
+
+   It relies on NT's `RtlpExecuteHandlerForException` having linked its own
+   node on top of FS:[0] for the duration of the handler call. Without the
+   node, `saved` is the catching frame itself, and the relink made it point
+   to itself: the SEH chain read `0x179fb6d8 next=0x179fb6d8` and the next
+   throw walked it forever. The emulator now links a node
+   `{next, handler=0xCACA003A thunk, establisher}` around each handler call:
+   - the node's handler returns ExceptionCollidedUnwind and fills the
+     dispatcher context on an unwind, and ContinueSearch otherwise;
+   - `$seh_walk_from` and `$rtl_unwind_step` skip the node.
+
+   `test/test-rtl-unwind-handlers.js` covers the whole relink. The dump
+   helper `sehchain.js` (a `ctl.js eval` that walks FS:[0] and flags a cycle)
+   is what found it.
+
+Route (box2; flags as for UT2003 above):
+
+1. Step the frozen run to batch 3500 for the main menu, 640x480, at client
+   origin (24,44).
+2. **The mouse is DirectInput-relative, so every click needs a sync.** Move
+   to (24,44), step 3 batches, move to (300,300), step 3, move to the
+   target, step 3, then click. The hover highlight can lag behind; the
+   clicks still land.
+3. Click INSTANT ACTION at (400,362). The Gametype page is up by batch 4400.
+4. Click DeathMatch at (195,221). Select Map (DM-RANKIN) is up by 4550.
+5. Click PLAY at (448,514) (batch ~4565). The load shows no Present:
+   - captures keep the typewriter menu frame;
+   - EIP samples sit in msvcr71 `_woutput` and friends at
+     `0x115a..-0x115c..` (runtime base `0x11591000`);
+   - eight `[C++ throw] .PAG <- .PAX` lines are logged and are harmless now.
+   - Check progress with the snapshot EIP and the SEH chain, not the picture.
+6. By batch 8200: DM-Rankin with "Press [Fire] to join the match!".
+7. Click in the viewport (340,300). By 8600 the player has spawned, with the
+   HUD, the weapon bar and the assault rifle.
