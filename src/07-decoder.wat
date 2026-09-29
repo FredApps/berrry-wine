@@ -1299,15 +1299,23 @@
   ;; executor needs and reading them out is also what makes the fold
   ;; address-independent across all five copies in a DLL.
   (func $try_emit_smk_tree_walk (param $start_eip i32) (result i32)
-    (local $head i32) (local $pc i32) (local $m i32)
+    (if (i32.or (global.get $code16) (global.get $d_addr16))
+      (then (return (i32.const 0))))
+    (if (global.get $d_seg) (then (return (i32.const 0))))
+    (call $smk_tree_walk_at (global.get $d_pc) (i32.const 1)))
+
+  ;; Would a threaded block starting at $head be this fold? With $emit 0 it
+  ;; only answers, which is what the uop compiler asks ($uc_decode): the fold
+  ;; charges the clock per tree LEVEL, not per x86 branch, so a uop program
+  ;; that runs the same descent instruction by instruction stops on different
+  ;; instructions and hands the guest a different clock (StarCraft's Smacker
+  ;; frames, 2026-09-29). The compiler leaves the head to threaded code.
+  (func $smk_tree_walk_at (param $head i32) (param $emit i32) (result i32)
+    (local $pc i32) (local $m i32)
     (local $N i32) (local $P i32) (local $SCR i32) (local $B8 i32)
     (local $K i32) (local $M i32) (local $sh i32) (local $mask i32)
     (local $alt i32) (local $arm i32) (local $descend i32)
     (if (i32.eqz (global.get $smk_tree_enabled)) (then (return (i32.const 0))))
-    (if (i32.or (global.get $code16) (global.get $d_addr16))
-      (then (return (i32.const 0))))
-    (if (global.get $d_seg) (then (return (i32.const 0))))
-    (local.set $head (global.get $d_pc))
     (local.set $pc (local.get $head))
 
     ;; shr N, imm8 -- C1 /5 ib
@@ -1460,6 +1468,7 @@
                   (i32.eq (local.get $K) (i32.const 4))))
       (then (return (i32.const 0))))
 
+    (if (i32.eqz (local.get $emit)) (then (return (i32.const 1))))
     (global.set $smk_tree_matches
       (i32.add (global.get $smk_tree_matches) (i32.const 1)))
     (call $te (i32.const 461) (i32.or

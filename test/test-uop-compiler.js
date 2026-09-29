@@ -657,6 +657,50 @@ CASES.push({
     MM.rr(0x7E, 0, 0), [0x01, 0xC1], [0x83, 0xC6, 0x08], [0x83, 0xC7, 0x08], [0x39, 0xE6], J(cc.B, 'l'),
     [0x8B, 0x25, ...d32(MMX_SAVE(a))], 0xC3],
 });
+// The whole smackw32 Huffman symbol reader (StarCraft, 0x1000ee40), as the
+// trace head it is there: refill the bit buffer mm0 from [esi] or not
+// (cmp al,0x20 / ja), look the low 12 bits up, shift the buffer by the code
+// length, then walk the tree one bit at a time (movd ebp,mm0 / psrlq mm0,1 /
+// shr ebp,1 / jb). The tables are built so every walk stays in the buffer.
+const SMK = (a) => ({ v: a.buf + 0x1F000, tbl: a.buf + 0x14000, base: a.buf + 0x18000 });
+const smkSetup = (mem, g2w, a) => {
+  const s = SMK(a);
+  const dv = new DataView(mem.buffer);
+  let x = 0x2468ACE;
+  const rnd = (n) => { x = (Math.imul(x, 1103515245) + 12345) | 0; return ((x >>> 8) & 0xFFFFFF) % n; };
+  for (let k = 0; k < 4096; k++) dv.setUint32(g2w(s.tbl + 4 * k), ((rnd(0x3000 / 4) * 4) << 8) | (1 + rnd(12)), true);
+  for (let k = 0; k < 0x7000 / 4; k++) {
+    const eq = k < 0x6800 / 4 && rnd(2);
+    dv.setUint32(g2w(s.base + 4 * k), (rnd(16) << 16) | (eq ? 0x7777 : (0x7778 + rnd(0x8000))), true);
+  }
+  dv.setUint32(g2w(s.v), 0x15, true);            // bits left (al)
+  dv.setUint32(g2w(s.v + 4), 0x7777, true);      // the tree's "internal node" word (bx)
+  dv.setUint32(g2w(s.v + 8), s.tbl, true);
+  dv.setUint32(g2w(s.v + 12), s.base, true);
+};
+const smkReader = (a) => {
+  const s = SMK(a);
+  const lookup = [[0x81, 0xE2, 0xFF, 0x0F, 0x00, 0x00], [0x8B, 0x0C, 0x91], [0x0F, 0x6E, 0xC9], [0x2A, 0xC1],
+    [0x0F, 0xDB, 0xCD], [0xC1, 0xE9, 0x08], [0x0F, 0xD3, 0xC1], [0x03, 0x0D, ...d32(s.v + 12)], [0x8B, 0x11],
+    [0x66, 0x3B, 0xDA], JFAR(cc.NZ, 'E')];
+  return [[0xB8, 0x1F, 0, 0, 0], [0x0F, 0x6E, 0xE8],
+    L('main'), CALL('f'), [0x0F, 0xBD, 0xD3], 0x4F, J(cc.NZ, 'main'), 0xC3,
+    L('f'), [0xA0, ...d32(s.v)], [0x8B, 0x1D, ...d32(s.v + 4)], [0x3C, 0x20], J(cc.A, 'B'),
+    [0x8A, 0xC8], [0x0F, 0x6F, 0x16], [0xFE, 0xC9], [0x83, 0xC6, 0x04], [0x0F, 0x6E, 0xC9], [0x0F, 0xDB, 0xCD],
+    [0x0F, 0xF3, 0xD1], [0x8B, 0x0D, ...d32(s.v + 8)], [0x0F, 0xEB, 0xD0], [0x0F, 0x6F, 0xC2], [0x0F, 0x7E, 0xD2],
+    [0x81, 0xE2, 0xFF, 0x0F, 0x00, 0x00], [0x04, 0x20], ...lookup.slice(1), JMP('C'),
+    L('B'), [0x0F, 0x7E, 0xC2], [0x8B, 0x0D, ...d32(s.v + 8)], ...lookup,
+    L('C'), [0xC1, 0xEA, 0x0D], [0xFE, 0xC8], [0x81, 0xE2, 0xF8, 0xFF, 0x0F, 0x00], [0x0F, 0x7E, 0xC5],
+    [0x0F, 0x73, 0xD0, 0x01], [0xC1, 0xED, 0x01], J(cc.B, 'S'), [0xBA, 0x04, 0, 0, 0],
+    L('S'), [0x03, 0xCA], [0x8B, 0x11], [0x66, 0x3B, 0xDA], J(cc.Z, 'C'),
+    L('E'), [0xA2, ...d32(s.v)], [0x8B, 0xC2], [0x31, 0x05, ...d32(s.v + 16)], 0xC3];
+};
+// Label C is also exactly the shape threaded code folds into one
+// $th_smk_tree_walk, which charges the clock per tree level rather than per
+// branch. A program that compiled the descent stopped on other instructions
+// than threaded code under --branch-clock (StarCraft's Smacker frames); the
+// compiler must end the trace in front of C.
+CASES.push({ name: 'mmx-smk-trace', regs: { edi: N }, trace: true, head: 'f', setup: smkSetup, code: smkReader });
 // pmovmskb is not lowered: the loop must decline and still be exact. And
 // the whole family off (--no-uop-mmx) declines the ordinary ALU loop.
 CASES.push({ name: 'mmx-pmovmskb', regs: { ecx: N }, declines: true,
