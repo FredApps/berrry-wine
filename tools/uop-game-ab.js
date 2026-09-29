@@ -297,6 +297,11 @@ async function main() {
   // elision tier.
   ARMS.nostk = [...ARMS.uop, '--no-stack-fusion'];
   ARMS.aggr = [...ARMS.uop, '--aggressive-stack'];
+  // nojt: the uop arm with the switch jump-table primitive (threaded handler
+  // 498, uop kind 28 / engine op 81) off -- its partner is uop. nojtoff is the
+  // same flag on the off arm, the threaded-tier-only half of the A/B.
+  ARMS.nojt = [...ARMS.uop, '--no-jump-table'];
+  ARMS.nojtoff = [...ARMS.off, '--no-jump-table'];
   // nopre: the uop arm with the H451 x87 island run by the old per-op walk
   // ($x87_island_generic) instead of the predecoded body -- its partner is uop.
   ARMS.nopre = [...ARMS.uop, '--no-x87-island-predecode'];
