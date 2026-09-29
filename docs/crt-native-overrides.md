@@ -46,7 +46,7 @@ statically, so there is no DLL export to bind and they are out of scope.
 | class | exports | verdict |
 |---|---|---|
 | PURE | `wcslen`, `wcscpy`, `wcscat`, `wcsstr`, `floor` | overridden |
-| PURE, but locale-dependent | `_wcsicmp`, `_wcsnicmp` | overridden, deferring to the real export once the locale leaves "C" |
+| PURE, but locale-dependent | `_wcsicmp`, `_wcsnicmp`, `_stricmp` | overridden, deferring to the real export once the locale leaves "C" |
 | ERRNO/TLS | `rand` (per-thread `holdrand` in the ptd), `isdigit`/`mbtowc` (locale tables) | not done: needs a ptd layout per CRT build, and each is under 0.6% |
 | STATEFUL | `malloc`/`free`/`new`, `fread` and all `FILE*` I/O, `strtok`, `qsort` (guest callback), `setlocale` | not done; they own CRT state the guest also reads |
 | printf family | `sprintf`, `_vsnwprintf` (`_output`/`_woutput`) | the biggest single lever (UT2004 14.5%), but a byte-exact formatter is a project of its own. It is a candidate for the same fallback shape: native for the common conversions, the real export for anything else. |
@@ -133,9 +133,15 @@ one that does not.
   `_wcsicmp` and `_wcsnicmp` always defer. The flag is never cleared: going
   back to `"C"` is rare and deferring is always correct.
 
-The older `_stricmp` override (Morrowind) does **not** check the locale.
-It is correct only while the app stays in the C locale. That was left as it
-was; the same flag would fix it.
+The older `_stricmp` override (Morrowind) is bound through
+`$native_override_export_api_id`, not the list above, but when the import
+comes from a real MSVCRT/MSVCR7x its authentic export is now recorded in the
+same table (`$crt_native_override_defers`), and the handler defers while the
+locale flag is set, exactly as `_wcsicmp` does. Bound over anything else (no
+real CRT loaded) it has nothing to defer to and stays on the C-locale path.
+It returns -1/0/1, which is what the C-locale path of all three builds
+returns (`sbb eax,eax` / `sbb eax,-1`); until 2026-09-29 it returned the
+folded byte difference, which matched only in sign.
 
 ## Tests
 

@@ -349,6 +349,8 @@
     ;; calls _stricmp once per entry; the authentic byte-at-a-time loop was
     ;; ~30% of all blocks retired during its startup load. The native handler
     ;; compares with the same C-locale ASCII folding and keeps no CRT state.
+    ;; From a real MSVCRT/MSVCR7x it also defers to the authentic export once
+    ;; the locale leaves "C" ($crt_native_override_defers).
     (if (call $str_eq (local.get $name_wa) "_stricmp")
       (then (return (call $lookup_api_id "_stricmp"))))
     (if (call $str_eq (local.get $name_wa) "ceil")
@@ -773,6 +775,18 @@
                 ;; authentic code (09a6-handlers-crt.wat): only for the real
                 ;; MSVCRT/MSVCR7x, and only when the export exists to defer to.
                 (local.set $crt_real (i32.const 0))
+                ;; An older override that is locale-sensitive (_stricmp) still
+                ;; gets its authentic export recorded when it comes from a real
+                ;; MSVCRT/MSVCR7x, so it can defer once setlocale leaves "C".
+                ;; Without the export it stays native, as it always was.
+                (if (i32.and
+                      (i32.ne (local.get $api_id) (i32.const -1))
+                      (call $crt_dll_is_msvcr (local.get $target_dll_name_ptr)))
+                  (then
+                    (if (call $crt_native_override_defers (local.get $name_wa))
+                      (then
+                        (local.set $crt_real
+                          (call $resolve_name_export (local.get $dll_idx) (local.get $name_wa)))))))
                 (if (i32.and
                       (i32.eq (local.get $api_id) (i32.const -1))
                       (call $crt_dll_is_msvcr (local.get $target_dll_name_ptr)))
