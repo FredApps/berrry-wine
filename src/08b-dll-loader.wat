@@ -742,6 +742,7 @@
     (local $dll_name_rva i32) (local $dll_name_ga i32)
     (local $ilt_ptr i32) (local $iat_ptr i32) (local $entry i32)
     (local $resolved i32) (local $name_wa i32) (local $api_id i32) (local $thunk_addr i32)
+    (local $crt_real i32)
     (local.set $desc_ptr (call $g2w (i32.add (local.get $caller_base) (local.get $caller_import_rva))))
     (block $id (loop $dl
       (local.set $ilt_rva (i32.load (local.get $desc_ptr)))
@@ -768,11 +769,36 @@
                 (local.set $name_wa
                   (call $g2w (i32.add (local.get $caller_base) (i32.add (local.get $entry) (i32.const 2)))))
                 (local.set $api_id (call $native_override_export_api_id (local.get $name_wa)))
+                ;; CRT exports with a native handler that can defer to the
+                ;; authentic code (09a6-handlers-crt.wat): only for the real
+                ;; MSVCRT/MSVCR7x, and only when the export exists to defer to.
+                (local.set $crt_real (i32.const 0))
+                (if (i32.and
+                      (i32.eq (local.get $api_id) (i32.const -1))
+                      (call $crt_dll_is_msvcr (local.get $target_dll_name_ptr)))
+                  (then
+                    (local.set $api_id (call $crt_override_api_id (local.get $name_wa)))
+                    (if (i32.ne (local.get $api_id) (i32.const -1))
+                      (then
+                        (local.set $crt_real
+                          (call $resolve_name_export (local.get $dll_idx) (local.get $name_wa)))
+                        (if (i32.eqz (local.get $crt_real))
+                          (then (local.set $api_id (i32.const -1))))))))
                 (if (i32.ne (local.get $api_id) (i32.const -1))
                   (then
                     ;; Same reservation as above: this patching path runs
                     ;; whenever a DLL loads, on whichever thread loaded it.
                     (global.set $num_thunks (call $thunk_reserve))
+                    ;; A full fallback table binds this import to the real
+                    ;; export after all (the reserved thunk just goes unused).
+                    (if (local.get $crt_real)
+                      (then
+                        (if (i32.eqz (call $crt_override_record
+                              (global.get $num_thunks) (local.get $crt_real)))
+                          (then
+                            (local.set $api_id (i32.const -1))))))))
+                (if (i32.ne (local.get $api_id) (i32.const -1))
+                  (then
                     (local.set $thunk_addr (i32.add
                       (i32.sub (i32.add (global.get $THUNK_BASE) (i32.mul (global.get $num_thunks) (i32.const 8)))
                                (global.get $GUEST_BASE))

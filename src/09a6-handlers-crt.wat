@@ -820,8 +820,34 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; floor(x) — cdecl, result in ST(0). For a finite x the authentic VC6-VC7.1
+  ;; x87 path sets RC=down, FRNDINTs, compares the result with x (FCOMP), and
+  ;; restores the caller's control word, so what it leaves behind is the
+  ;; result pushed once and C0/C3 of that compare in the status word (C1 and
+  ;; C2 clear). That is reproduced here. Two cases go to the authentic export
+  ;; when one is behind this thunk: a NaN or infinity (its _handle_qnan1 /
+  ;; _except1 paths), and an inexact result under an unmasked precision
+  ;; exception, which the real code turns into a matherr report.
   (func $handle_floor (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $fpu_push (f64.floor (f64.load (call $g2w (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))))
+    (local $x f64) (local $r f64) (local $esp i32)
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $x (f64.reinterpret_i64 (i64.or
+      (i64.extend_i32_u (call $gl32 (i32.add (local.get $esp) (i32.const 4))))
+      (i64.shl (i64.extend_i32_u (call $gl32 (i32.add (local.get $esp) (i32.const 8))))
+               (i64.const 32)))))
+    (local.set $r (f64.floor (local.get $x)))
+    (if (i32.eq (i32.and (call $gl32 (i32.add (local.get $esp) (i32.const 8))) (i32.const 0x7FF00000))
+                (i32.const 0x7FF00000))
+      (then (if (call $crt_fallback) (then (return))))
+      (else
+        (if (i32.and (f64.ne (local.get $r) (local.get $x))
+                     (i32.eqz (i32.and (global.get $fpu_cw) (i32.const 0x20))))
+          (then (if (call $crt_fallback) (then (return)))))
+        (global.set $fpu_sw (i32.or
+          (i32.and (global.get $fpu_sw) (i32.const 0xB8FF))
+          (select (i32.const 0x0100) (i32.const 0x4000)
+            (f64.lt (local.get $r) (local.get $x)))))))
+    (call $fpu_push (local.get $r))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -2835,6 +2861,252 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
+
+  ;; ── CRT exports answered natively, with the authentic export behind them ──
+  ;;
+  ;; When a real MSVCRT/MSVCR70/MSVCR71 is loaded, its callers' imports of the
+  ;; names in $crt_override_api_id are bound to API thunks instead of to the
+  ;; DLL's code (08b-dll-loader.wat, $patch_caller_iat), and the authentic
+  ;; export's address is recorded here against the thunk's index. A handler
+  ;; answers natively only when it can be exact, and otherwise calls
+  ;; $crt_fallback, which sends the guest into the authentic export with the
+  ;; caller's frame untouched (return address still at [ESP], cdecl arguments
+  ;; still above it) -- so the real code runs as though the thunk never
+  ;; existed. See docs/crt-native-overrides.md for the census that chose the
+  ;; names and for what each handler must match.
+  ;;
+  ;; The locale is the reason a fallback exists at all. VC6-VC7.1 case-folding
+  ;; and ctype routines take an ASCII-only path while LC_CTYPE is "C" and go
+  ;; through the locale tables otherwise; the native handlers implement only
+  ;; the first. Every import of setlocale/_wsetlocale from the same DLLs is
+  ;; bound here too, and any call that can move the locale away from "C" sets
+  ;; the sticky flag at +4 before running the real setlocale, after which the
+  ;; locale-sensitive handlers always defer. (A setlocale reached through
+  ;; GetProcAddress bypasses the hook; none of the measured apps do that.)
+  (global $CRT_OVERRIDE_TABLE i32 (region.addr $CRT_OVERRIDE_TABLE 0))
+  (global $CRT_OVERRIDE_TABLE_SIZE i32 (region.size $CRT_OVERRIDE_TABLE))
+
+  (func $crt_override_capacity (result i32)
+    (i32.shr_u (i32.sub (global.get $CRT_OVERRIDE_TABLE_SIZE) (i32.const 8)) (i32.const 3)))
+
+  (func $crt_dll_is_msvcr (param $dll_name_ga i32) (result i32)
+    (i32.or
+      (call $dll_name_match (local.get $dll_name_ga) "msvcrt.dll")
+      (i32.or
+        (call $dll_name_match (local.get $dll_name_ga) "msvcr70.dll")
+        (call $dll_name_match (local.get $dll_name_ga) "msvcr71.dll"))))
+
+  ;; The CRT-only overrides: an api id when $name_wa is one, else -1.
+  (func $crt_override_api_id (param $name_wa i32) (result i32)
+    (if (i32.or
+          (i32.or
+            (i32.or (call $str_eq (local.get $name_wa) "wcslen")
+                    (call $str_eq (local.get $name_wa) "wcscpy"))
+            (i32.or (call $str_eq (local.get $name_wa) "wcscat")
+                    (call $str_eq (local.get $name_wa) "wcsstr")))
+          (i32.or
+            (i32.or (call $str_eq (local.get $name_wa) "_wcsicmp")
+                    (call $str_eq (local.get $name_wa) "_wcsnicmp"))
+            (i32.or (call $str_eq (local.get $name_wa) "floor")
+                    (i32.or (call $str_eq (local.get $name_wa) "setlocale")
+                            (call $str_eq (local.get $name_wa) "_wsetlocale")))))
+      (then (return (call $lookup_api_id (local.get $name_wa)))))
+    (i32.const -1))
+
+  ;; Record the authentic export behind a CRT override thunk. Returns 0 when
+  ;; the table is full, in which case the caller must bind the import to the
+  ;; authentic export instead.
+  (func $crt_override_record (param $thunk_idx i32) (param $real i32) (result i32)
+    (local $n i32) (local $slot i32)
+    (local.set $n (i32.atomic.rmw.add (global.get $CRT_OVERRIDE_TABLE) (i32.const 1)))
+    (if (i32.ge_u (local.get $n) (call $crt_override_capacity))
+      (then
+        (drop (i32.atomic.rmw.sub (global.get $CRT_OVERRIDE_TABLE) (i32.const 1)))
+        (return (i32.const 0))))
+    (local.set $slot (i32.add (global.get $CRT_OVERRIDE_TABLE)
+      (i32.add (i32.const 8) (i32.shl (local.get $n) (i32.const 3)))))
+    (i32.store offset=4 (local.get $slot) (local.get $real))
+    (i32.atomic.store (local.get $slot) (local.get $thunk_idx))
+    (i32.const 1))
+
+  ;; The authentic export behind the thunk now being dispatched, or 0.
+  (func $crt_override_real (result i32)
+    (local $idx i32) (local $i i32) (local $slot i32)
+    (local.set $idx (i32.shr_u
+      (i32.sub (global.get $current_thunk_eip) (global.get $thunk_guest_base))
+      (i32.const 3)))
+    (local.set $i (i32.atomic.load (global.get $CRT_OVERRIDE_TABLE)))
+    (if (i32.gt_u (local.get $i) (call $crt_override_capacity))
+      (then (local.set $i (call $crt_override_capacity))))
+    (block $done (loop $scan
+      (br_if $done (i32.eqz (local.get $i)))
+      (local.set $i (i32.sub (local.get $i) (i32.const 1)))
+      (local.set $slot (i32.add (global.get $CRT_OVERRIDE_TABLE)
+        (i32.add (i32.const 8) (i32.shl (local.get $i) (i32.const 3)))))
+      (if (i32.eq (i32.atomic.load (local.get $slot)) (local.get $idx))
+        (then (return (i32.load offset=4 (local.get $slot)))))
+      (br $scan)))
+    (i32.const 0))
+
+  ;; Hand the current call to the authentic export. Leaves ESP and every
+  ;; register as the caller set them; returns 0 (nothing done) when this
+  ;; thunk has no authentic export behind it.
+  (func $crt_fallback (result i32)
+    (local $real i32)
+    (local.set $real (call $crt_override_real))
+    (if (i32.eqz (local.get $real)) (then (return (i32.const 0))))
+    (global.set $crt_fallback_count (i32.add (global.get $crt_fallback_count) (i32.const 1)))
+    (global.set $eip (local.get $real))
+    ;; Tells the decoded call handlers and $run's thunk branch that EIP was
+    ;; redirected, as a callback-driven handler (qsort) does.
+    (global.set $steps (i32.const 0))
+    (global.set $handler_set_eip (i32.const 1))
+    (i32.const 1))
+
+  (global $crt_fallback_count (mut i32) (i32.const 0))
+  (func (export "get_crt_fallback_count") (result i32) (global.get $crt_fallback_count))
+
+  (func $crt_locale_changed (result i32)
+    (i32.atomic.load offset=4 (global.get $CRT_OVERRIDE_TABLE)))
+
+  ;; setlocale(category, locale) / _wsetlocale — cdecl. A NULL locale is a
+  ;; query and "C" keeps the C locale; anything else may leave it, so mark the
+  ;; process before the authentic setlocale runs.
+  (func $handle_setlocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.ne (local.get $arg1) (i32.const 0))
+      (then
+        (if (i32.eqz (i32.and
+              (i32.eq (call $gl8 (local.get $arg1)) (i32.const 0x43))
+              (i32.eqz (call $gl8 (i32.add (local.get $arg1) (i32.const 1))))))
+          (then (i32.atomic.store offset=4 (global.get $CRT_OVERRIDE_TABLE) (i32.const 1))))))
+    (if (call $crt_fallback) (then (return)))
+    (call $crash_unimplemented (local.get $name_ptr)))
+
+  (func $handle__wsetlocale (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.ne (local.get $arg1) (i32.const 0))
+      (then
+        (if (i32.eqz (i32.and
+              (i32.eq (call $gl16 (local.get $arg1)) (i32.const 0x43))
+              (i32.eqz (call $gl16 (i32.add (local.get $arg1) (i32.const 2))))))
+          (then (i32.atomic.store offset=4 (global.get $CRT_OVERRIDE_TABLE) (i32.const 1))))))
+    (if (call $crt_fallback) (then (return)))
+    (call $crash_unimplemented (local.get $name_ptr)))
+
+  ;; __ascii_towlower: the C-locale fold every VC6-VC7.1 wide compare uses.
+  (func $crt_ascii_towlower (param $c i32) (result i32)
+    (select
+      (i32.add (local.get $c) (i32.const 0x20))
+      (local.get $c)
+      (i32.lt_u (i32.sub (local.get $c) (i32.const 0x41)) (i32.const 26))))
+
+  ;; _wcsicmp(a, b) — cdecl. C locale: fold A-Z, stop at the first difference
+  ;; or at a NUL in a, return the difference of the folded code units.
+  (func $handle__wcsicmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $f i32) (local $l i32)
+    (if (call $crt_locale_changed)
+      (then (if (call $crt_fallback) (then (return)))))
+    (block $d (loop $l
+      (local.set $f (call $crt_ascii_towlower (call $gl16 (local.get $arg0))))
+      (local.set $l (call $crt_ascii_towlower (call $gl16 (local.get $arg1))))
+      (local.set $arg0 (i32.add (local.get $arg0) (i32.const 2)))
+      (local.set $arg1 (i32.add (local.get $arg1) (i32.const 2)))
+      (br_if $d (i32.eqz (local.get $f)))
+      (br_if $l (i32.eq (local.get $f) (local.get $l)))))
+    (i32.store offset=0 (global.get $reg_base) (i32.sub (local.get $f) (local.get $l)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  ;; _wcsnicmp(a, b, count) — cdecl. As _wcsicmp, at most count units; a zero
+  ;; count compares equal without reading either string.
+  (func $handle__wcsnicmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $f i32) (local $l i32)
+    (if (call $crt_locale_changed)
+      (then (if (call $crt_fallback) (then (return)))))
+    (if (local.get $arg2)
+      (then
+        (block $d (loop $l
+          (local.set $f (call $crt_ascii_towlower (call $gl16 (local.get $arg0))))
+          (local.set $l (call $crt_ascii_towlower (call $gl16 (local.get $arg1))))
+          (local.set $arg0 (i32.add (local.get $arg0) (i32.const 2)))
+          (local.set $arg1 (i32.add (local.get $arg1) (i32.const 2)))
+          (local.set $arg2 (i32.sub (local.get $arg2) (i32.const 1)))
+          (br_if $d (i32.eqz (local.get $arg2)))
+          (br_if $d (i32.eqz (local.get $f)))
+          (br_if $l (i32.eq (local.get $f) (local.get $l)))))))
+    (i32.store offset=0 (global.get $reg_base) (i32.sub (local.get $f) (local.get $l)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  ;; wcslen(s) — cdecl. No cap: the authentic loop has none either.
+  (func $handle_wcslen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32)
+    (local.set $p (local.get $arg0))
+    (block $d (loop $l
+      (br_if $d (i32.eqz (call $gl16 (local.get $p))))
+      (local.set $p (i32.add (local.get $p) (i32.const 2)))
+      (br $l)))
+    (i32.store offset=0 (global.get $reg_base)
+      (i32.shr_s (i32.sub (local.get $p) (local.get $arg0)) (i32.const 1)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  ;; One forward code-unit copy through the terminator, as the authentic loop
+  ;; does -- so an overlapping destination ends up exactly as it would there.
+  (func $crt_wcs_copy (param $dst i32) (param $src i32)
+    (local $c i32)
+    (block $d (loop $l
+      (local.set $c (call $gl16 (local.get $src)))
+      (call $gs16 (local.get $dst) (local.get $c))
+      (local.set $dst (i32.add (local.get $dst) (i32.const 2)))
+      (local.set $src (i32.add (local.get $src) (i32.const 2)))
+      (br_if $l (local.get $c)))))
+
+  ;; wcscpy(dst, src) — cdecl, returns dst.
+  (func $handle_wcscpy (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (call $crt_wcs_copy (local.get $arg0) (local.get $arg1))
+    (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  ;; wcscat(dst, src) — cdecl, returns dst.
+  (func $handle_wcscat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $p i32)
+    (local.set $p (local.get $arg0))
+    (block $d (loop $l
+      (br_if $d (i32.eqz (call $gl16 (local.get $p))))
+      (local.set $p (i32.add (local.get $p) (i32.const 2)))
+      (br $l)))
+    (call $crt_wcs_copy (local.get $p) (local.get $arg1))
+    (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  ;; wcsstr(hay, needle) — cdecl. An empty needle returns hay; otherwise the
+  ;; first position whose units match the whole needle, or NULL. The builds
+  ;; disagree on exactly one input: VC6 has no empty-needle test, so its scan
+  ;; loop never runs on an empty haystack and wcsstr(L"", L"") is NULL there,
+  ;; while VC7's returns the haystack. That case goes to the authentic export.
+  (func $handle_wcsstr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $cp i32) (local $s1 i32) (local $s2 i32) (local $c2 i32) (local $r i32)
+    (if (i32.eqz (i32.or (call $gl16 (local.get $arg0)) (call $gl16 (local.get $arg1))))
+      (then (if (call $crt_fallback) (then (return)))))
+    (local.set $r (local.get $arg0))
+    (if (call $gl16 (local.get $arg1))
+      (then
+        (local.set $r (i32.const 0))
+        (local.set $cp (local.get $arg0))
+        (block $found (loop $cand
+          (br_if $found (i32.eqz (call $gl16 (local.get $cp))))
+          (local.set $s1 (local.get $cp))
+          (local.set $s2 (local.get $arg1))
+          (block $cmp_done (loop $cmp
+            (local.set $c2 (call $gl16 (local.get $s2)))
+            (br_if $cmp_done (i32.eqz (local.get $c2)))
+            (br_if $cmp_done (i32.ne (call $gl16 (local.get $s1)) (local.get $c2)))
+            (local.set $s1 (i32.add (local.get $s1) (i32.const 2)))
+            (local.set $s2 (i32.add (local.get $s2) (i32.const 2)))
+            (br $cmp)))
+          (if (i32.eqz (local.get $c2))
+            (then (local.set $r (local.get $cp)) (br $found)))
+          (local.set $cp (i32.add (local.get $cp) (i32.const 2)))
+          (br $cand)))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $r))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
 
   ;; fallback: unknown API — crash with full details
   (func $handle_fallback (param $name_ptr i32) (param $api_id i32)

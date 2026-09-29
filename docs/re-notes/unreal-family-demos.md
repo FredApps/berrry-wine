@@ -384,3 +384,38 @@ The flyby's MMX share is compute. SoftDrv loads at a runtime base of
 - `+0x10923210` / `+0x109236d0`: 8-texel span bodies.
 
 That is a uop-tier MMX coverage problem, not a fold.
+## CRT exports and the native overrides (2026-09-29, docs/crt-native-overrides.md)
+
+UT2003 imports `msvcr70.dll` and UT2004 imports `msvcr71.dll`, both through
+thin wrappers in `core.dll` at `core+0x101139xx..0x10113cxx`. Which CRT export
+is hot depends on the phase:
+
+- **UT2003, batches 420..520 of the software-D3D load** (`--batch-size=200000`):
+  - `floor` is 7.9-13.5% of all block entries, 30-50K calls per 50 batches.
+    The callers are `core+0x101139b0` and `core+0x10113970`. Each call runs
+    `_ctrlfp` and the `_fpclass` helpers `sub_7c0363b7`, `sub_7c034d89` and
+    `sub_7c0366a8`.
+  - `_vsnwprintf` (`_woutput`) is 0.6-1.9%.
+- **UT2003, other windows:** `rand` (`core+0x10113940`) is 3.2%, of which
+  `_getptd` (`msvcr70 0x7c00137f`) is 2.3%. The wide-string compares and
+  copies (`_wcsicmp` at `core+0x10113b50`, `wcslen` at `+0x10113b00`,
+  `wcscpy` at `+0x10113b60`, `wcsstr` at `+0x10113b10`, `_wcsnicmp` at
+  `+0x10113c00`) run at 10^4-10^5 calls in the heavier windows.
+- **UT2004, 600..1100:**
+  - `_wcsicmp` is 2.77%, of which `_getptd` (`msvcr71 sub_7c349636`) is 2.08%.
+  - The other wide-string functions add about 2%.
+  - From 1100 on, `_woutput` takes over at 2.8-14.5%, with `mbtowc` at 5.47%
+    inside it.
+
+`floor`, `wcslen`, `wcscpy`, `wcscat`, `wcsstr`, `_wcsicmp` and `_wcsnicmp` are
+now native when imported from these DLLs. With them, msvcr70 falls from
+11.8-14.7% to 1.4% of UT2003's block entries in 420..520. What is left is
+`_vsnwprintf`, `mbtowc` and `memmove`. `rand` and `_vsnwprintf` are the
+remaining candidates, and neither is done: `rand` keeps its seed in the ptd,
+and `_vsnwprintf` needs a byte-exact formatter.
+
+A run of the same build is deterministic. For UT2003 with the software
+backend at 200000 blocks per batch:
+
+- The baseline reaches its 170th software render request at batch 520.
+- The candidate reaches it at batch 491, and by batch 520 it is at request 199.
