@@ -236,6 +236,161 @@
         (return)))
     (call $host_exit (i32.or (i32.const 0xDE00) (call $gl32 (local.get $rec)))))
 
+  ;; ============================================================
+  ;; RtlUnwind(TargetFrame, TargetIp, ExceptionRecord, ReturnValue)
+  ;; ============================================================
+  ;; The x86 NT semantics: every registration from FS:[0] up to but NOT
+  ;; including TargetFrame has its handler called with EXCEPTION_UNWINDING
+  ;; (plus EXCEPTION_EXIT_UNWIND when TargetFrame is NULL) set in the record,
+  ;; and is unlinked after its handler returns. Then RtlUnwind returns to its
+  ;; caller with EAX = ReturnValue; TargetIp is ignored on x86.
+  ;;
+  ;; Those handler calls are what run __finally blocks (_except_handler3's
+  ;; _local_unwind2) and C++ destructors/cleanup (__CxxFrameHandler's
+  ;; unwind path) in the frames being torn down. Without them msvcr71's
+  ;; CallCatchBlock never runs its __finally (_FindAndUnlinkFrame) when a catch
+  ;; block rethrows, so a stack FRAMEINFO stays linked in the per-thread chain,
+  ;; later forms a cycle, and _IsExceptionObjectToBeDestroyed spins on it for
+  ;; good -- UT2004's map load.
+  ;;
+  ;; Each handler is a real guest call, so the walk is a state machine driven
+  ;; by the 0xCACA0039 continuation. Its state lives on the guest stack below
+  ;; the caller's frame, which makes nested unwinds (an unwind handler that
+  ;; itself unwinds) independent of each other. S = state base:
+  ;;   S+0   DispatcherContext dword (handler's 4th arg points here)
+  ;;   S+4   TargetFrame        S+8   ReturnValue
+  ;;   S+12  return EIP         S+16  return ESP (caller's, args popped)
+  ;;   S+20  current frame      S+24  EXCEPTION_RECORD*   S+28  CONTEXT*
+  ;;   S+32  magic 'UNWD'       S+36  EBX, ESI, EDI, EBP of the caller
+  ;;   S+52  CONTEXT (0x2cc)    S+0x320  built EXCEPTION_RECORD (0x50)
+  ;; The handler call frame (thunk, rec, frame, ctx, &dispatcher) sits at S-20,
+  ;; so the handler's cdecl argument slots never overlap state it may clobber.
+  (global $rtl_unwind_thunk (mut i32) (i32.const 0))
+
+  (func $rtl_unwind_begin (param $target i32) (param $rec_in i32) (param $retval i32) (param $ret i32)
+    (local $esp i32) (local $s i32) (local $i i32) (local $rec i32) (local $ctx i32)
+    (local $flags i32)
+    (if (i32.eqz (global.get $rtl_unwind_thunk))
+      (then (global.set $rtl_unwind_thunk (call $com_cont_thunk (i32.const 0xCACA0039)))))
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $s (i32.and (i32.sub (local.get $esp) (i32.const 0x3a0)) (i32.const 0xFFFFFFF0)))
+    (block $z (loop $zl
+      (br_if $z (i32.ge_u (local.get $i) (i32.const 0x370)))
+      (call $gs32 (i32.add (local.get $s) (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br $zl)))
+    (local.set $ctx (i32.add (local.get $s) (i32.const 52)))
+    (local.set $rec (local.get $rec_in))
+    (if (i32.eqz (local.get $rec))
+      (then
+        ;; No record supplied: STATUS_UNWIND raised at the caller's return address.
+        (local.set $rec (i32.add (local.get $s) (i32.const 0x320)))
+        (call $gs32 (local.get $rec) (i32.const 0xC0000027))
+        (call $gs32 (i32.add (local.get $rec) (i32.const 12)) (local.get $ret))))
+    (local.set $flags (i32.or (call $gl32 (i32.add (local.get $rec) (i32.const 4))) (i32.const 2)))
+    (if (i32.eqz (local.get $target))
+      (then (local.set $flags (i32.or (local.get $flags) (i32.const 4)))))
+    (call $gs32 (i32.add (local.get $rec) (i32.const 4)) (local.get $flags))
+    (call $gs32 (i32.add (local.get $s) (i32.const 4)) (local.get $target))
+    (call $gs32 (i32.add (local.get $s) (i32.const 8)) (local.get $retval))
+    (call $gs32 (i32.add (local.get $s) (i32.const 12)) (local.get $ret))
+    (call $gs32 (i32.add (local.get $s) (i32.const 16)) (local.get $esp))
+    (call $gs32 (i32.add (local.get $s) (i32.const 20)) (call $gl32 (global.get $fs_base)))
+    (call $gs32 (i32.add (local.get $s) (i32.const 24)) (local.get $rec))
+    (call $gs32 (i32.add (local.get $s) (i32.const 28)) (local.get $ctx))
+    (call $gs32 (i32.add (local.get $s) (i32.const 32)) (i32.const 0x444E5755))   ;; 'UWND'
+    (call $gs32 (i32.add (local.get $s) (i32.const 36)) (i32.load offset=12 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $s) (i32.const 40)) (i32.load offset=24 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $s) (i32.const 44)) (i32.load offset=28 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $s) (i32.const 48)) (i32.load offset=20 (global.get $reg_base)))
+    ;; CONTEXT as the caller will see it once RtlUnwind returns.
+    (call $gs32 (local.get $ctx) (i32.const 0x10007))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x90)) (i32.const 0x3b))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x94)) (i32.const 0x23))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x98)) (i32.const 0x23))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0x9c)) (i32.load offset=28 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xa0)) (i32.load offset=24 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xa4)) (i32.load offset=12 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xa8)) (i32.load offset=8 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xac)) (i32.load offset=4 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xb0)) (local.get $retval))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xb4)) (i32.load offset=20 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xb8)) (local.get $ret))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xbc)) (i32.const 0x1b))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xc0)) (call $build_eflags))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xc4)) (local.get $esp))
+    (call $gs32 (i32.add (local.get $ctx) (i32.const 0xc8)) (i32.const 0x23))
+    (call $rtl_unwind_step (local.get $s)))
+
+  ;; Call the current frame's handler, or finish when the walk has reached the
+  ;; target (or the end of the chain, or has passed an invalid target).
+  (func $rtl_unwind_step (param $s i32)
+    (local $cur i32) (local $target i32) (local $handler i32) (local $sp i32)
+    (local.set $target (call $gl32 (i32.add (local.get $s) (i32.const 4))))
+    (block $finish (loop $walk
+      (local.set $cur (call $gl32 (i32.add (local.get $s) (i32.const 20))))
+      (br_if $finish (i32.eq (local.get $cur) (local.get $target)))
+      (br_if $finish (i32.eq (local.get $cur) (i32.const 0xFFFFFFFF)))
+      (br_if $finish (i32.eqz (local.get $cur)))
+      ;; Frames are pushed downward: a frame above the target means the target
+      ;; is not on the chain. NT raises STATUS_INVALID_UNWIND_TARGET there;
+      ;; name it and stop rather than tear down the caller's own frames.
+      (if (i32.and (i32.ne (local.get $target) (i32.const 0))
+                   (i32.gt_u (local.get $cur) (local.get $target)))
+        (then
+          (call $host_log_i32 (i32.const 0xCAE8C029))
+          (call $host_log_i32 (local.get $target))
+          (call $host_log_i32 (local.get $cur))
+          (br $finish)))
+      (local.set $handler (call $gl32 (i32.add (local.get $cur) (i32.const 4))))
+      (if (i32.eqz (local.get $handler))
+        (then
+          (call $gs32 (global.get $fs_base) (call $gl32 (local.get $cur)))
+          (call $gs32 (i32.add (local.get $s) (i32.const 20)) (call $gl32 (local.get $cur)))
+          (br $walk)))
+      (call $gs32 (local.get $s) (i32.const 0))
+      (local.set $sp (i32.sub (local.get $s) (i32.const 20)))
+      (call $gs32 (local.get $sp) (global.get $rtl_unwind_thunk))
+      (call $gs32 (i32.add (local.get $sp) (i32.const 4)) (call $gl32 (i32.add (local.get $s) (i32.const 24))))
+      (call $gs32 (i32.add (local.get $sp) (i32.const 8)) (local.get $cur))
+      (call $gs32 (i32.add (local.get $sp) (i32.const 12)) (call $gl32 (i32.add (local.get $s) (i32.const 28))))
+      (call $gs32 (i32.add (local.get $sp) (i32.const 16)) (local.get $s))
+      (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+      (global.set $eip (local.get $handler))
+      (global.set $steps (i32.const 0))
+      (return)))
+    ;; Done: back to RtlUnwind's caller with its registers and stdcall frame popped.
+    (i32.store offset=12 (global.get $reg_base) (call $gl32 (i32.add (local.get $s) (i32.const 36))))
+    (i32.store offset=24 (global.get $reg_base) (call $gl32 (i32.add (local.get $s) (i32.const 40))))
+    (i32.store offset=28 (global.get $reg_base) (call $gl32 (i32.add (local.get $s) (i32.const 44))))
+    (i32.store offset=20 (global.get $reg_base) (call $gl32 (i32.add (local.get $s) (i32.const 48))))
+    (i32.store offset=0 (global.get $reg_base) (call $gl32 (i32.add (local.get $s) (i32.const 8))))
+    (i32.store offset=16 (global.get $reg_base) (call $gl32 (i32.add (local.get $s) (i32.const 16))))
+    (global.set $eip (call $gl32 (i32.add (local.get $s) (i32.const 12))))
+    (global.set $steps (i32.const 0)))
+
+  ;; 0xCACA0039: an unwind handler returned (cdecl, so ESP is at its four
+  ;; arguments and the state block is 16 bytes up). ExceptionCollidedUnwind (3)
+  ;; means the handler found a nested unwind already past this point and
+  ;; left the frame to resume from in the dispatcher context; any other
+  ;; disposition just continues. Either way that frame is unlinked next.
+  (func $rtl_unwind_continue
+    (local $s i32) (local $cur i32)
+    (local.set $s (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+    (if (i32.ne (call $gl32 (i32.add (local.get $s) (i32.const 32))) (i32.const 0x444E5755))
+      (then
+        (call $host_log_i32 (i32.const 0xCAE8C039))
+        (call $host_log_i32 (local.get $s))
+        (call $host_exit (i32.const 0xDE39))
+        (return)))
+    (local.set $cur (call $gl32 (i32.add (local.get $s) (i32.const 20))))
+    (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const 3))
+      (then (if (call $gl32 (local.get $s))
+        (then (local.set $cur (call $gl32 (local.get $s)))))))
+    (call $gs32 (global.get $fs_base) (call $gl32 (local.get $cur)))
+    (call $gs32 (i32.add (local.get $s) (i32.const 20)) (call $gl32 (local.get $cur)))
+    (call $rtl_unwind_step (local.get $s)))
+
   (func $seh_walk_from (param $code i32) (param $start i32)
     (local $seh_rec i32) (local $handler i32) (local $frame_ebp i32)
     (local $trylevel i32) (local $scopetable i32) (local $entry i32)

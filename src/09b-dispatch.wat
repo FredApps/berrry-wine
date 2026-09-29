@@ -1233,6 +1233,10 @@
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0037))
       (then (call $seh_raw_continue) (return)))
 
+    ;; An RtlUnwind frame handler returned (see $rtl_unwind_continue).
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0039))
+      (then (call $rtl_unwind_continue) (return)))
+
     ;; EnumChildWindows continuation — callback returned, try the next child
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA002B))
       (then

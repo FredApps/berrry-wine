@@ -1377,6 +1377,8 @@
         (then (global.set $delphi_seh_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0037))
         (then (global.set $seh_raw_thunk (local.get $guest))))
+      (if (i32.eq (local.get $marker) (i32.const 0xCACA0039))
+        (then (global.set $rtl_unwind_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0001))
         (then (global.set $createwnd_ret_thunk (local.get $guest))))
       (if (i32.eq (local.get $marker) (i32.const 0xCACA0002))
