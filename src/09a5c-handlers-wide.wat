@@ -204,8 +204,8 @@
           (i32.store offset=0 (global.get $reg_base) (i32.const 0))
           (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
           (return)))
-      (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
-        (then (global.set $quit_flag (i32.const 1))))
+      ;; Same main-window lifecycle as DestroyWindow; see DefWindowProcA.
+      (call $destroy_main_window_lifecycle (local.get $arg0))
       (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
         (then (global.set $focus_hwnd (i32.const 0))))
       (call $wnd_destroy_recursive (local.get $arg0))
