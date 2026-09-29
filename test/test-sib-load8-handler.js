@@ -217,6 +217,9 @@ async function main() {
   assert.strictEqual(e.get_edx() & 0xff, 1,
     'fused SIB LEAs must preserve flags');
 
+  // Smacker's Huffman walk. Its whole-walk fold (H395) is retired -- the uop
+  // tier runs it (docs/uop-tier-design.md section 18) -- so these cases now
+  // hold the ordinary decode of the walk, and its FE/75 prefix fold, exact.
   const huffCode = imageBase + 0x1400;
   const huffCounter = scratch + 0x70;
   const huffTree = scratch + 0x100;

@@ -1465,43 +1465,6 @@
       (else (global.set $eip (local.get $fall))))
     (return_call $branch_end))
 
-  ;; 395: Exact Smacker Huffman node walk. op is the absolute byte-counter
-  ;; address; words are the original loop EIP and the fall-through EIP. Each
-  ;; iteration has no externally visible call boundary, and every arithmetic
-  ;; flag before the final TEST is overwritten by that TEST. Bound the native
-  ;; loop so even corrupt input returns control with an exact guest resume EIP.
-  (func $th_smack_huff_walk (param $op i32)
-    (local $loop_eip i32) (local $fall i32) (local $counter i32)
-    (local $old_ebp i32) (local $r i32) (local $n i32)
-    (local.set $loop_eip (read-thread-word))
-    (local.set $fall (read-thread-word))
-    (block $done
-      (loop $walk
-        (local.set $counter
-          (i32.and
-            (i32.sub (call $gl8 (local.get $op)) (i32.const 1))
-            (i32.const 0xFF)))
-        (call $gs8 (local.get $op) (local.get $counter))
-        (if (i32.eqz (local.get $counter))
-          (then
-            (i32.store offset=20 (global.get $reg_base) (call $gl32 (i32.load offset=24 (global.get $reg_base))))
-            (i32.store offset=24 (global.get $reg_base) (i32.add (i32.load offset=24 (global.get $reg_base)) (i32.const 4)))
-            (call $gs8 (local.get $op) (i32.const 32))))
-        (local.set $old_ebp (i32.load offset=20 (global.get $reg_base)))
-        (i32.store offset=20 (global.get $reg_base) (i32.shr_u (local.get $old_ebp) (i32.const 1)))
-        (if (i32.eqz (i32.and (local.get $old_ebp) (i32.const 1)))
-          (then (i32.store offset=0 (global.get $reg_base) (i32.const 4))))
-        (i32.store offset=8 (global.get $reg_base) (i32.add (i32.load offset=8 (global.get $reg_base)) (i32.load offset=0 (global.get $reg_base))))
-        (i32.store offset=0 (global.get $reg_base) (call $gl32 (i32.load offset=8 (global.get $reg_base))))
-        (local.set $r (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0x80000000)))
-        (call $set_flags_logic (local.get $r))
-        (if (local.get $r)
-          (then (global.set $eip (local.get $fall)) (br $done)))
-        (local.set $n (i32.add (local.get $n) (i32.const 1)))
-        (if (i32.ge_u (local.get $n) (i32.const 64))
-          (then (global.set $eip (local.get $loop_eip)) (br $done)))
-        (br $walk))))
-
   ;; 396: Exact common paths through Storm.dll's PKWARE bit-reservoir helper.
   ;; The helper is called for almost every decoded symbol. Its usual paths do
   ;; nothing but a cdecl prologue/epilogue around two reservoir dwords, so the

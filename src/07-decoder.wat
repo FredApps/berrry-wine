@@ -147,9 +147,10 @@
   ;; (docs/uop-tier-design.md section 18). One bit per fold, all clear by
   ;; default; `--no-fold=NAME` in test/runner-experiments.js sets them, and the
   ;; mask is inherited by every guest-thread instance. Decode-time, like every
-  ;; other fold switch. Bits: 0x01 storm-bitreader (H396), 0x02 smack-huff
-  ;; (H395), 0x04 lut-span (H431), 0x08 colorkey8 (H443), 0x10 mw3-blit
-  ;; (H436/H440/H441), 0x80 xlat-stosb (H418). The MMX exact copies already
+  ;; other fold switch. Bits: 0x01 storm-bitreader (H396), 0x04 lut-span
+  ;; (H431), 0x08 colorkey8 (H443), 0x10 mw3-blit (H436/H440/H441), 0x20
+  ;; lut16-counted (H418), 0x80 xlat-stosb (H418); 0x02 was smack-huff (H395,
+  ;; retired). The MMX exact copies already
   ;; had globals and now have setters (set_mmx_copy64, set_mmx_mask_copy).
   (global $fold_off_mask (mut i32) (i32.const 0))
   (func $fold_off (param $bit i32) (result i32)
@@ -4439,48 +4440,6 @@
     (call $te (i32.const 267) (i32.const 0))
     (call $te_raw (local.get $a)))
 
-  ;; Match the exact 40 bytes following Smacker's leading FE opcode. Keeping
-  ;; the signature in one helper makes the hot decoder branch readable and
-  ;; ensures a near-match always falls back to ordinary i486 decoding.
-  (func $match_smack_huff_walk (result i32)
-    (local $counter_addr i32)
-    (if (call $fold_off (i32.const 0x02)) (then (return (i32.const 0))))
-    (if (i32.ne (call $gl8 (global.get $d_pc)) (i32.const 0x0D))
-      (then (return (i32.const 0))))
-    (local.set $counter_addr
-      (call $gl32 (i32.add (global.get $d_pc) (i32.const 1))))
-    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 5))) (i32.const 0x75))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 6))) (i32.const 0x0C))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl16 (i32.add (global.get $d_pc) (i32.const 7))) (i32.const 0x2E8B))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 9))) (i32.const 0xC604C683))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 13))) (i32.const 0x05))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 14))) (local.get $counter_addr))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 18))) (i32.const 0x20))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 19))) (i32.const 0x7201EDC1))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 23))) (i32.const 0x05))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 24))) (i32.const 0xB8))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 25))) (i32.const 4))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 29))) (i32.const 0x028BD003))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl8 (i32.add (global.get $d_pc) (i32.const 33))) (i32.const 0xA9))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (global.get $d_pc) (i32.const 34))) (i32.const 0x80000000))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl16 (i32.add (global.get $d_pc) (i32.const 38))) (i32.const 0xD774))
-      (then (return (i32.const 0))))
-    (i32.const 1))
-
   ;; Match Storm.dll's 144-byte PKWARE bit-reservoir helper. The signature has
   ;; no relocated addresses: check its complete prologue/fast path and the
   ;; entire common slow-path tail. This is deliberately an exact compiler-code
@@ -5597,28 +5556,8 @@
       ;; ---- 0xFE: Group 4 (INC/DEC r/m8) ----
       (if (i32.eq (local.get $op) (i32.const 0xFE))
         (then
-          ;; Four Smacker decode paths contain the same complete Huffman walk.
-          ;; It starts at this FE and ends 40 following bytes later. Execute
-          ;; it through the bounded handler before considering the shorter
-          ;; DEC/JNZ pair below.
-          (if (i32.and
-                (i32.and
-                  (i32.eqz (global.get $code16))
-                  (i32.and (i32.eqz (local.get $prefix_66))
-                           (i32.eqz (local.get $prefix_67))))
-                (i32.and
-                  (i32.and (i32.eqz (local.get $prefix_rep))
-                           (i32.eqz (local.get $prefix_seg)))
-                  (call $match_smack_huff_walk)))
-            (then
-              (local.set $a (call $gl32 (i32.add (global.get $d_pc) (i32.const 1))))
-              (local.set $imm (i32.sub (global.get $d_pc) (i32.const 1)))
-              (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 40)))
-              (call $te (i32.const 395) (local.get $a))
-              (call $te_raw (local.get $imm))
-              (call $te_raw (global.get $d_pc))
-              (local.set $done (i32.const 1))
-              (br $decode)))
+          ;; (The whole-walk Smacker fold, H395, is retired: the uop tier runs
+          ;; that loop at least as fast, docs/uop-tier-design.md section 18.)
           ;; Exact unprefixed `FE 0D abs32 / 75 rel8`: Smacker's bit-count
           ;; refill loop. DEC defines the ZF consumed by JNZ, so this pair can
           ;; end the block in one handler while retaining every DEC flag.
