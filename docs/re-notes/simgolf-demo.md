@@ -1175,3 +1175,69 @@ At 2350 that shows the course, the clubhouse and the welcome dialog.
 GL context: `CreateCompatibleDC` → `0x310009`, bitmap `0x410008`; the
 `SelectObject(0x310009, 0x41000a/b/c)` pairs returning `0x3001d` are font
 swaps for text drawn into the GL DC, not a change of render target.
+
+## 2026-09-29: call forms by runtime weight, and the uop tier's one gap
+
+Headless gameplay route, counts only (load-immune), taken on a bench box:
+
+```
+node test/run.js --app=simgolf_demo --no-build --quiet-api --quiet-blocks --no-close \
+  --gl-renderer=software --batch-size=100000 --max-batches=4000 --tick-ms-per-batch=37 \
+  --stuck-after=100000000 \
+  --input=100:mousemove:400:300,1500:mousemove:400:300,1900:mousemove:401:300,2400:keydown:13,2405:keyup:13 \
+  --handler-hist-thread=0,0,0 --handler-hist-start=2500 --handler-hist-stop=4000 \
+  --edge-hist --hist-json=sg2.json --hist-json-blocks=0 --uop-census > sg2.log
+node tools/call-form-weighted.js sg2.json.T0.2500 sg2.json.T0.3000 sg2.json.T0.3500 \
+  --exe=$D/golf.exe --pe-dir=$D --log=sg2.log      # D = .../simgolf-demo-installer/installed
+```
+
+The Enter at 2400 dismisses the "Welcome to Dolphin Coast" box. From then on
+golfers walk the course and the frame keeps changing. The route runs 4000
+batches in about 26s. By batch 1800 the course is up.
+
+**Where the block entries go.** The windows agree to within 0.2pp:
+
+- 74% of all block entries run inside uop programs.
+- Terminators of the rest:
+
+  | terminator | share of all entries |
+  |---|---|
+  | jcc | 19.2% |
+  | jmp rel | 2.6% |
+  | fallthrough | 1.6% |
+  | call rel32 | 0.9% |
+  | ret | 0.9% |
+  | guest-target indirect | **0.21%** (137-148 sites, all monomorphic) |
+
+jgl.dll is 48% vtable calls statically (`tools/call-form-census.js`), but at
+runtime a vtable call ends only 0.19% of block entries. The hot sprite loops
+make no calls. A vtable inline cache has nothing to buy here; see
+uop-tier-design.md §15.
+
+**The one loop the tier cannot take.** One loop is 79.5% of the *threaded*
+entries, which is about 20% of all of them: `jgl.dll+0x100180df..0x1001811a`.
+It is a scaled blit with a colour key and a `0xf8+` shadow case, and a 16.16
+source step:
+
+```
+100180df  cmp byte [esi],0xff / jnb 0x10018108      ; transparent
+100180e4  cmp byte [esi],0xf8 / jnb 0x100180f6      ; shadow via [ebp+eax*2]
+100180eb  mov al,[esi] / mov ax,[ecx+eax*2] / mov [edi],ax
+10018108  add dx,bx / adc esi,[0x10062e58] / add edi,2 / sub ebx,0x10000 / jns 0x100180df
+```
+
+uop-census names the cause:
+
+- `adc r32, r/m32` (opcode 0x13) is unsupported.
+- The scan from `0x10018108` stops there and declines `no-backedge`, weight
+  28.5M entries per 500 batches.
+- The head `0x100180df` installs a program that exits at `0x10018108` every
+  pixel (1.5 blocks per entry), which is then retired `poor`.
+
+The other big blitters are live programs: `0x10017b69` (5324 blocks per
+entry), `0x1001546b` and `0x10016e88`. That includes the colour-key LUT loop
+the 2026-09 browser profile blamed.
+
+So the next SimGolf lever is `adc r32,m32` taking the carry from a 16-bit
+`add` in the uop compiler. In this window it is the only `adc` in any
+declined scan (4 heads).
