@@ -204,3 +204,25 @@ Headless recipe: `node test/run.js --app=civ2_win16 --quiet-api --no-close
 710:mousedown:322:327,730:mouseup:322:327,950:png:a.png,1200:png:b.png`.
 The intro's starfield, title and galaxy burst decode frame by frame.
 `test/test-win16-use32-stack.js` pins the ESP semantics.
+
+## Gameplay (city screen, naming)
+
+Route to the first city, controlled: `node test/run.js --app=civ2_win16
+--no-close --control=PORT --frozen --batch-size=100000 --tick-ms-per-batch=20`,
+then drive it with `tools/ctl.js` (Enter through setup, then `cmd keypress:98`
+for `b` on the tutorial's "good site for a city"). `ctl key` sends
+keydown/keyup only, so letter commands need `cmd keypress:<ascii>`.
+
+- USER `ShowScrollBar` (267), when the city screen opens (its two SB_CTL
+  bars).
+- The city screen is a child covering the main window, opened *after* the
+  map screen's World (454,0) and Status (454,135 178x299) panels. The
+  renderer's deep hit test took the first child in creation order, so every
+  city-screen button click went to the Status panel. The game answers that
+  with "You must close the City Window before the game can proceed". It now
+  takes the topmost sibling by z rank (`test-child-from-point-deep-zorder.js`).
+- City and rename names are read by subclassing an edit and calling
+  `CallWindowProc(WM_GETTEXT)` with a far buffer (after `WM_GETTEXTLENGTH`).
+  The packed lParam went to the native edit unconverted, so every city kept
+  the terrain name the buffer already held ("Hills", "Grassland")
+  (`test-win16-gettext-lparam.js`).

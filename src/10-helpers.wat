@@ -5351,6 +5351,7 @@
   (func $wnd_child_from_point_deep (param $parent i32) (param $sx i32) (param $sy i32) (result i32)
     (local $slot i32) (local $ch i32) (local $cls i32) (local $style i32)
     (local $x i32) (local $y i32) (local $w i32) (local $h i32) (local $deep i32)
+    (local $best i32) (local $best_rank i32) (local $rank i32)
     (local.set $slot (i32.const 0))
     (block $done (loop $scan
       (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
@@ -5390,18 +5391,28 @@
                      (i32.lt_s (local.get $sx) (i32.add (local.get $x) (local.get $w))))
             (i32.and (i32.ge_s (local.get $sy) (local.get $y))
                      (i32.lt_s (local.get $sy) (i32.add (local.get $y) (local.get $h)))))
+        ;; Overlapping siblings: the topmost one takes the point, as in
+        ;; USER. Slot order is creation order, not z-order -- Civilization
+        ;; II's city window covers the map screen's panels, which were
+        ;; created first, and a first-hit scan sent its button clicks to them.
         (then
-          ;; A combobox owns its own edit field, button and list. The click
-          ;; belongs to the combobox itself -- it is what drops the list down --
-          ;; so stop here rather than descending into a part of it.
-          (if (i32.eq (local.get $cls) (i32.const 5))
-            (then (return (local.get $ch))))
-          (local.set $deep (call $wnd_child_from_point_deep
-            (local.get $ch) (local.get $sx) (local.get $sy)))
-          (return (select (local.get $deep) (local.get $ch) (local.get $deep)))))
+          (local.set $rank (call $wnd_z_get (local.get $ch)))
+          (if (i32.or (i32.eqz (local.get $best))
+                      (i32.gt_s (local.get $rank) (local.get $best_rank)))
+            (then
+              (local.set $best (local.get $ch))
+              (local.set $best_rank (local.get $rank))))))
       (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
       (br $scan)))
-    (i32.const 0))
+    (if (i32.eqz (local.get $best)) (then (return (i32.const 0))))
+    ;; A combobox owns its own edit field, button and list. The click
+    ;; belongs to the combobox itself -- it is what drops the list down --
+    ;; so stop here rather than descending into a part of it.
+    (if (i32.eq (call $ctrl_table_get_class (local.get $best)) (i32.const 5))
+      (then (return (local.get $best))))
+    (local.set $deep (call $wnd_child_from_point_deep
+      (local.get $best) (local.get $sx) (local.get $sy)))
+    (select (local.get $deep) (local.get $best) (local.get $deep)))
 
   ;; Screen-coordinate wrapper around dialog_route_mouse. JS should not know
   ;; whether the dialog/page origin is its window origin or client origin.

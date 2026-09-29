@@ -6612,6 +6612,17 @@
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $win16_api_return (i32.const 10)))
 
+  ;; USER.267 ShowScrollBar(hWnd, wBar, bShow), void in Win16. Same scroll
+  ;; state and non-client repaint as the 32-bit call; nothing in it calls back
+  ;; into the guest, so no bridge. Civilization II's city screen shows its
+  ;; two SB_CTL scroll bars this way as it opens.
+  (func $win16_ShowScrollBar
+    (drop (call $show_scroll_bar_core
+      (call $win16_h32 (call $win16_arg16 (i32.const 2)))
+      (call $win16_arg16 (i32.const 1))
+      (call $win16_arg16 (i32.const 0))))
+    (call $win16_api_return (i32.const 6)))
+
   ;; USER.65 GetScrollRange(hWnd, nBar, lpMinPos, lpMaxPos). The two answers
   ;; are ints, which are words here — the 32-bit handler writes dwords, so it
   ;; writes into scratch and the words are stored from there.
@@ -7614,6 +7625,8 @@
       (then (call $win16_SetScrollRange) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 65))
       (then (call $win16_GetScrollRange) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 267))
+      (then (call $win16_ShowScrollBar) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 5))
       (then (call $win16_InitApp) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 15))
@@ -8133,17 +8146,24 @@
     ;; the valid caption SetWindowText had just installed (Rodent's Revenge).
     (if (i32.eq (local.get $message) (i32.const 0x000C))
       (then (local.set $convert (i32.const 1))))
+    ;; WM_GETTEXT is the same pointer in the other direction. Civilization II
+    ;; names a city by subclassing an edit and CallWindowProc'ing WM_GETTEXT
+    ;; into a far buffer; left packed, the text went to a linear address no
+    ;; one reads and every city kept the terrain name the buffer already held.
+    (if (i32.and (i32.eq (local.get $message) (i32.const 0x000D))
+                 (i32.ne (local.get $lparam) (i32.const 0)))
+      (then (local.set $convert (i32.const 1))))
     (if (i32.eq (local.get $class) (i32.const 4))
       (then
-        (local.set $convert
+        (local.set $convert (i32.or (local.get $convert)
           (i32.or
             (i32.eq (local.get $message) (i32.const 0x0401)) ;; LB_ADDSTRING
             (i32.or
               (i32.eq (local.get $message) (i32.const 0x0402)) ;; LB_INSERTSTRING
-              (i32.eq (local.get $message) (i32.const 0x040A))))))) ;; LB_GETTEXT
+              (i32.eq (local.get $message) (i32.const 0x040A)))))))) ;; LB_GETTEXT
     (if (i32.eq (local.get $class) (i32.const 5))
       (then
-        (local.set $convert
+        (local.set $convert (i32.or (local.get $convert)
           (i32.or
             (i32.or
               (i32.eq (local.get $message) (i32.const 0x0403)) ;; CB_ADDSTRING
@@ -8156,7 +8176,7 @@
                 (i32.or
                   (i32.eq (local.get $message) (i32.const 0x040C)) ;; CB_FINDSTRING
                   (i32.eq (local.get $message) (i32.const 0x040D))) ;; CB_SELECTSTRING
-                (i32.eq (local.get $message) (i32.const 0x0418)))))))) ;; CB_FINDSTRINGEXACT
+                (i32.eq (local.get $message) (i32.const 0x0418))))))))) ;; CB_FINDSTRINGEXACT
     (if (local.get $convert)
       (then
         (return (call $win16_far_to_guest
