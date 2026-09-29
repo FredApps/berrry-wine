@@ -781,3 +781,36 @@ levels=1 lod=0 format=26` on every menu draw: D3DFMT_A4R4G4B4. The WAT create
 gate had admitted 26 since B&W2 needed it, but `lib/d3d9-host.js` never
 learned to sample it, so the whole draw was dropped. It now decodes 26
 (nibble × 17); `test-d3d9-pipeline-web.js` draws one through the GPU path.
+
+### Past the menu on software: intro, world, and `--sse` (2026-09-28, box 1)
+
+Same frozen `--control` run shape as above (`--d3d9-renderer=software
+--memory-mb=1024 --tick-ms-per-batch=2 --quiet-api --quiet-blocks`, six
+ESC press/release pairs 100K batches apart to get through the logos).
+
+- **Menu → New**: a DI click (`di-mousedown:1`, 60 batches, `di-mouseup:1`)
+  on New at ~4.2M batches starts "Loading Interior", then `mw_intro.bik`.
+- **mw_intro plays past frame 224** (the frame the Bink mutex bug froze on,
+  82b4c4a5). Its BINK struct is `[640, 480, 1678 frames, FrameNum, ...]`;
+  it advances ~50 frames per 200K batches and is wall-paced (400K batches
+  took 17 s), so an ESC at ~5.69M skips it.
+- **The world renders on the software D3D9 backend** by ~5.77M: the
+  prison-ship hold, with the character-name box over it.
+- **Open: the name box takes no input.** DI moves and clicks on its OK,
+  `type`, and a raw `keypress` all left the frame byte-identical. That was
+  measured while rendering had dropped to ~11 requests per 9K batches, so it
+  may be the same "not polling while busy" B&W2 shows in its land picker
+  (black-white-2.md), not a dead input path. Unverified.
+- **A render-wait "stall" is unconfirmed.** Once, main sat on yield 16 with
+  its request marked `done` across many steps, and a manual `clear_yield`
+  released it. B&W2 later showed the same snapshot (one `done` request,
+  yield 16), but wrapping `ctx.waitD3DRender` showed tokens advancing, about
+  one per 17 batches, i.e. just slow. `test/run.js` now logs `[render] main
+  parked on completed request` after 1000 checks (666c3e4e); trust that line,
+  not a snapshot.
+
+**`--sse` is neutral on boot.** Two fresh runs per arm, identical ESC
+schedule, boot to batch 1,492,001 on a quiet box (load < 1): process CPU
+**43 s in all four runs**, wall 82/45 s without and 58/39 s with. The wall
+spread is present pacing (the headless Present gate is wall-clock 60 Hz),
+not work. Gameplay, where SSE code paths would actually run, is unmeasured.

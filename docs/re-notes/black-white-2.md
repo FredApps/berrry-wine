@@ -8283,3 +8283,33 @@ subtracted before any of this is read as what the browser feels.
   decode measured separately, so the harness share is known.
 - Levers still queued: strip-wide shader VM + four-component sampler for the
   software path; GL vertex-declaration element types for gameplay.
+
+## Software backend after the A4R4G4B4 host decode (box 1, 2026-09-28)
+
+`lib/d3d9-host.js` now samples D3DFMT_A4R4G4B4 (004a20fa). Before that, only
+the WAT create gate admitted format 26, and the JS draw path dropped any draw
+binding it. Driven over `ctl.js` on a quiet box with
+`--d3d9-renderer=software --memory-mb=2048 --batch-size=200000
+--tick-ms-per-batch=20 --trace-eip-range=0x00526d93-0x00526d97
+--trace-eip-detail --trace-eip-stream`:
+
+- **Every screen renders, with 0 `invalid texture` lines** in the whole run:
+  the GDI splash, the Lionhead intro, the profile dialog over the menu art,
+  the main menu, and the land picker with its fire preview.
+- **Intro skip from a control session.** The first `[EIP] 0x526d93` line
+  names the intro object in ESI (`0x074d6bdc` in both runs). Then
+  `ctl.js eval` writes `[o+36] = [o+32]-1` while a step is still running.
+  After that the recipe above works unchanged: home the DI cursor, move
+  `250,277`, `di-mousedown/up`, then Enter for New Game.
+- **The picker does not take the land click, again.** At 200 and at 20
+  ms/batch, neither spaced nor back-to-back `di-mousedown/up` pairs changed
+  anything. Counters on the poll entry `0x9b0880` and the DrawPrimitive
+  return `0xa4da46` read **0 polls against 1,430 draws over 300K batches**
+  (~6.5 draws/s of wall). The game cursor stayed at `+0xc4/+0xc8 = 311,345`,
+  where the profile click left it. So the input manager has not polled since
+  the picker came up. That is the not-polling state described in "The land
+  picker does not ignore the mouse", this time *before* any land click, and
+  it did not resume within ~3 min of wall.
+- A snapshot showing yield 16 with its one bridge request `done:true` is not
+  a stall. Wrapping `ctx.waitD3DRender` showed tokens advancing, about one
+  per 17 batches.
