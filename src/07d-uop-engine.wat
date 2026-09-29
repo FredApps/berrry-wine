@@ -958,7 +958,7 @@
               (if (result i32) (i32.eqz (local.get $pc)) (then (global.get $uc_last_why))
                 (else (if (result i32) (i32.eq (local.get $pc) (i32.const 1))
                         (then (i32.const 0xFFFF)) (else (i32.const 0)))))
-              (global.get $uc_nloop) (i32.const 0))))
+              (global.get $uc_nloop) (global.get $uc_is_trace))))
     (if (i32.eqz (local.get $pc))
       (then (call $uop_mark_dead (local.get $eip)) (return (i32.const 1))))
     ;; another thread is compiling: try again at the next hot bump
@@ -1232,7 +1232,7 @@
   ;; correctness.
   (func $th_uop_enter (param $op i32)
     (local $nx_fn i32) (local $nx_op i32)
-    (local $ep i32) (local $b0 i32) (local $b1 i32)
+    (local $ep i32) (local $b0 i32) (local $b1 i32) (local $n i32) (local $spent i32)
     (if (i32.and
           (i32.and (i32.eq (i32.load (local.get $op)) (global.get $uop_gen))
                    (i32.eq (i32.load offset=4 (local.get $op)) (global.get $eip)))
@@ -1243,7 +1243,12 @@
         ;; Keep the windows the last run proved unless something they depend
         ;; on changed since; else poison them, so the first access through
         ;; each misses and guards its own page.
-        (local.set $ep (i32.atomic.load (global.get $UOP_WIN_EPOCH)))
+        ;; A plain load: an atomic one is a full barrier on arm64 (dmb ish
+        ;; either side) on every entry, and orders nothing this needs -- the
+        ;; epoch can move the instant after either load, and a program that
+        ;; then runs on proven windows is exactly as covered by the per-access
+        ;; guards as one that read it a moment earlier.
+        (local.set $ep (i32.load (global.get $UOP_WIN_EPOCH)))
         (if (i32.eq (i32.load offset=28 (local.get $op)) (local.get $ep))
           (then (global.set $uop_win_kept (i32.add (global.get $uop_win_kept) (i32.const 1))))
           (else
@@ -1254,12 +1259,15 @@
                                       (local.get $b0)))
         (global.set $block_budget (local.get $b1))
         (global.set $uop_enters (i32.add (global.get $uop_enters) (i32.const 1)))
+        (local.set $spent (i32.sub (local.get $b0) (local.get $b1)))
         (global.set $uop_blocks (i64.add (global.get $uop_blocks)
-          (i64.extend_i32_s (i32.sub (local.get $b0) (local.get $b1)))))
-        (i32.store offset=16 (local.get $op)
-          (i32.add (i32.load offset=16 (local.get $op)) (i32.const 1)))
-        (i32.store offset=20 (local.get $op)
-          (i32.add (i32.load offset=20 (local.get $op)) (i32.sub (local.get $b0) (local.get $b1))))
+          (i64.extend_i32_s (local.get $spent))))
+        ;; Per-program enters/blocks, kept in locals for the poor test below:
+        ;; $spent becomes the running block total.
+        (local.set $n (i32.add (i32.load offset=16 (local.get $op)) (i32.const 1)))
+        (i32.store offset=16 (local.get $op) (local.get $n))
+        (local.set $spent (i32.add (i32.load offset=20 (local.get $op)) (local.get $spent)))
+        (i32.store offset=20 (local.get $op) (local.get $spent))
         ;; EXITB: the batch is over, at the transfer target, as in threaded.
         (if (global.get $uop_bexit)
           (then
@@ -1274,7 +1282,10 @@
                     (i32.lt_s (local.get $b1) (i32.const 0)))
           (then
             (global.set $block_budget (i32.add (local.get $b1) (i32.const 1)))
-            (call $uop_poor_check (local.get $op))
+            ;; $uop_poor_check's test, inline: the call is only made to retire
+            (if (i32.and (i32.ge_u (local.get $n) (i32.const 256))
+                         (i32.lt_u (local.get $spent) (i32.shl (local.get $n) (i32.const 1))))
+              (then (call $uop_poor_check (local.get $op))))
             (return_call $branch_end)))
         (global.set $uop_head_exits (i32.add (global.get $uop_head_exits) (i32.const 1)))
         (i32.store offset=24 (local.get $op)

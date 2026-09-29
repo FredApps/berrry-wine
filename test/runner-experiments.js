@@ -67,6 +67,18 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // push's temp (07e $uc_sp_block). Opt-in: an elided slot is not in guest
   // memory while the pair is open. docs/uop-tier-design.md.
   const aggrWanted = () => uopWanted() && (hasFlag('aggressive-stack') || (appPolicy() || {}).aggressiveStack === true);
+  // --uop-trace-heads[=MIN,MAX] (or `uopTraceHeads: true` on the app): a hot
+  // head with no back edge is lowered as a forward trace -- straight-line
+  // code, both arms of a branch, calls and rets to an in-region call -- of
+  // MIN..MAX instructions (default 8..160) instead of declined as no-backedge
+  // (07e $uc_form_trace). The hotness gate is still --block-exec-walk-k.
+  const UOP_TRACE_ARG = getArg('uop-trace-heads', null);
+  const traceWanted = () => uopWanted() && (hasFlag('uop-trace-heads') || UOP_TRACE_ARG !== null ||
+    (appPolicy() || {}).uopTraceHeads === true);
+  const TRACE_LIMITS = (() => {
+    const [mn = '0', mx = '0'] = (UOP_TRACE_ARG && UOP_TRACE_ARG !== 'true' ? UOP_TRACE_ARG : '').split(',');
+    return [parseInt(mn, 10) || 0, parseInt(mx, 10) || 0];
+  })();
   // --uop-census: log every head's verdict (installed / declined + reason),
   // every poor retirement and code-write kill with the program's counts, every
   // flush, and the live programs at exit. The records go through log_i32, so
@@ -292,6 +304,10 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (uopWanted()) inheritWasm('set_uop', 1);
     if (NO_UOP_NOBUMP) inheritWasm('set_uop_nobump', 0);
     if (aggrWanted()) inheritWasm('set_aggressive_stack', 1);
+    if (traceWanted()) {
+      inheritWasm('set_uop_trace_heads', 1);
+      if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) inheritWasm('set_uop_trace_limits', TRACE_LIMITS[0], TRACE_LIMITS[1]);
+    }
     if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
@@ -311,6 +327,10 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       if (UOP_CENSUS && instance.exports.set_uop_census) instance.exports.set_uop_census(1);
       instance.exports.set_uop(1);
       if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
+      if (traceWanted() && instance.exports.set_uop_trace_heads) {
+        instance.exports.set_uop_trace_heads(1);
+        if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) instance.exports.set_uop_trace_limits(TRACE_LIMITS[0], TRACE_LIMITS[1]);
+      }
       uopOn = true;
     }
     if (TRACE_LOOPMATCH && instance.exports.set_loop_trace) {
@@ -460,7 +480,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
         .filter(([, n]) => n).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${k}=${n}`).join(' ');
       log(`uop: installs=${st(2)} kills=${st(3)} retired-poor=${st(7)} enters=${st(4)} ` +
         `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} win-kept=${st(9)} win-reset=${st(10)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
-        `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (why ? `\n  declines: ${why}` : ''));
+        `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (traceWanted() ? ` traces=${cs(26)}` : '') + (why ? `\n  declines: ${why}` : ''));
       if (x.get_uop_nobump_skips) log(`uop nobump: skips=${x.get_uop_nobump_skips() >>> 0}`);
       if (aggrWanted()) {
         // $uop_cstat 6..25: the aggressive-stack counters of every program

@@ -37,7 +37,7 @@ function asm(items) {
       out.push(it.jmp ? 0xEB : 0x70 | it.jcc, rel & 0xFF);
       pc += 2;
     }
-    if (pass === 1) return out;
+    if (pass === 1) { out.labels = at; return out; }
   }
 }
 const J = (cc, to) => ({ jcc: cc, to });
@@ -247,6 +247,35 @@ const CASES = [
   },
 ];
 
+// ---- --uop-trace-heads (07e $uc_form_trace) ----
+// A head with no back edge: the loop around it runs an instruction the tier
+// does not lower (bsr), so no head in it has a loop to compile, and without
+// traces every one declines no-backedge. Each case runs with trace heads on in
+// the hot and pre arms; `head` names the label the pre arm compiles at. `lf`
+// marks a label as the logical-frame step ($th_logical_frame): the marker
+// block must run threaded every time, so its count must match threaded code's.
+const TRACE_F = [L('f'), [0x8B, 0x16], [0x01, 0xD3], [0x89, 0xD0], [0xC1, 0xE8, 0x05], [0x31, 0xC3],
+  [0x81, 0xFA, ...d32(0x40000000)], J(cc.L, 'n'), [0x83, 0xF3, 0x55], JMP('x'), L('n'), [0x83, 0xEB, 0x03],
+  L('x'), [0x83, 0xC6, 0x04], 0xC3];
+const TRACE_MAIN = [L('main'), CALL('f'), [0x0F, 0xBD, 0xD3], 0x49, J(cc.NZ, 'main'), 0xC3];
+CASES.push(
+  { name: 'trace-callee', regs: { ecx: N }, trace: true, head: 'f', code: [JMP('main'), ...TRACE_F, ...TRACE_MAIN] },
+  { name: 'trace-main', regs: { ecx: N }, trace: true, head: 'main', code: [JMP('main'), ...TRACE_F, ...TRACE_MAIN] },
+  {
+    // a call and its ret inside the trace (g's ret has f's call as candidate)
+    name: 'trace-callchain', regs: { ecx: N }, trace: true, head: 'f',
+    code: [JMP('main'), L('f'), 0x53, [0x8B, 0x1E], CALL('g'), [0x01, 0xD8], 0x5B, [0x83, 0xC6, 0x04], [0x01, 0xC3], 0xC3,
+           L('g'), [0x89, 0xDA], [0xC1, 0xE2, 0x03], [0x31, 0xD0], [0x03, 0x46, 0x08], 0xC3, ...TRACE_MAIN],
+  },
+  { name: 'trace-logical', regs: { ecx: N }, trace: true, head: 'f', lf: 'x', lfEvery: true, code: [JMP('main'), ...TRACE_F, ...TRACE_MAIN] },
+  {
+    // control: a LOOP whose exit falls through into the marker block
+    name: 'loop-logical', regs: { ecx: N }, head: 'top', lf: 'x',
+    code: [L('top'), [0x8B, 0x16], [0x01, 0xD3], [0x83, 0xC6, 0x04], [0x81, 0xFA, ...d32(0x40000000)], J(cc.L, 'n'),
+           0x49, J(cc.NZ, 'top'), 0xC3, L('n'), [0x83, 0xEB, 0x03], L('x'), [0x83, 0xF3, 0x55], 0x49, J(cc.NZ, 'top'), 0xC3],
+  },
+);
+
 // ---- --aggressive-stack (07e $uc_sp_block) ----
 // Each runs with the tier's aggressive stack elision on (hot and pre arms)
 // against plain threaded code, and `sp` pins what the one pre-arm compile
@@ -434,6 +463,10 @@ function runCase(inst, c, a, codeAddr, mode) {
   if (c.poke) c.poke(mem, g2w(a.buf));
   const bytes = c.bytes || asm(typeof c.code === 'function' ? c.code(a) : c.code);
   mem.set(bytes, g2w(codeAddr));
+  const labelAt = (x) => (typeof x === 'string' ? bytes.labels.get(x) : x || 0);
+  if (c.trace) e.set_uop_trace_heads(mode === 'off' ? 0 : 1);
+  if (c.lf) e.set_logical_frame(codeAddr + labelAt(c.lf), 0);
+  const lf0 = e.get_logical_frame_count();
   if (c.setup) c.setup(mem, g2w, a);
   const init = { eax: 0, ecx: 0, edx: 0, ebx: 0, ebp: 0, esi: a.buf, edi: a.buf + 0x10000 };
   if (c.init) Object.assign(init, c.init(a));
@@ -445,16 +478,18 @@ function runCase(inst, c, a, codeAddr, mode) {
   // A known flag state on entry: a sub that sets CF.
   e.set_uop(mode === 'off' ? 0 : 1);
   if (c.aggr) e.set_aggressive_stack(mode === 'off' ? 0 : 1);
-  const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5) };
+  const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5), traces: e.uop_cstat(26) };
   let sp = null;
   if (mode === 'pre') {
-    const head = codeAddr + (c.head || 0);
+    const head = codeAddr + labelAt(c.head);
     const declines = WAT_REASONS.map((_, k) => k && e.uop_decline_count(k));
     const d0 = e.uop_cstat(1);
     const s0 = SP_NAMES.map((_, k) => e.uop_cstat(6 + k));
     const pc = e.uop_compile(head);
     if (!pc) {
       if (c.aggr) e.set_aggressive_stack(0);
+      if (c.trace) e.set_uop_trace_heads(0);
+      if (c.lf) e.set_logical_frame(0, 0);
       const why = WAT_REASONS.findIndex((_, k) => k && e.uop_decline_count(k) !== declines[k]);
       return { err: 'pre-compile declined: ' + (e.uop_cstat(1) > d0 ? WAT_REASONS[why] : 'limit') };
     }
@@ -481,10 +516,13 @@ function runCase(inst, c, a, codeAddr, mode) {
     ok, eip: e.get_eip() >>> 0, stops: stops.join(','), nstops: stops.length, flags: e.uop_flags(), mem: hash(mem, g2w, a),
     regs: REGS.map((r) => e['get_' + r]() >>> 0),
     installs: e.uop_stats(2) - before.installs, enters: e.uop_stats(4) - before.enters,
-    blocks: e.uop_stats(5) - before.blocks, sp,
+    blocks: e.uop_stats(5) - before.blocks, sp, lf: e.get_logical_frame_count() - lf0,
+    traces: e.uop_cstat(26) - before.traces,
   };
   e.set_uop(0);
   if (c.aggr) e.set_aggressive_stack(0);
+  if (c.trace) e.set_uop_trace_heads(0);
+  if (c.lf) e.set_logical_frame(0, 0);
   return st;
 }
 
@@ -731,6 +769,8 @@ async function main() {
         if (process.env.UOP_SP) console.log(c.name, JSON.stringify(st.sp));
       }
       if (!st.ok) diffs.push('did not return');
+      if (c.trace && !st.traces) diffs.push('no trace was formed');
+      if (c.lf && (st.lf !== off.lf || !off.lf || (c.lfEvery && off.lf !== N))) diffs.push(`logical frames ${st.lf} vs ${off.lf}`);
       if (st.eip !== off.eip) diffs.push(`eip ${st.eip.toString(16)} vs ${off.eip.toString(16)}`);
       if (st.flags !== off.flags) diffs.push(`flags ${st.flags.toString(2)} vs ${off.flags.toString(2)}`);
       if (st.mem !== off.mem) diffs.push('memory differs');
