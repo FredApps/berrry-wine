@@ -476,7 +476,8 @@ const REAL_TICKS = hasFlag('real-ticks'); // --real-ticks: GetTickCount from the
 // reproducible, but the calendar one is deliberately real, so a guest that
 // seeds itself from the time of day makes an otherwise identical A/B pair
 // diverge. Pin it and the two arms see the same calendar, which is what an A/B
-// needs; leave it off and nothing changes.
+// needs. Left off, the calendar is still pinned, to a fixed default date (see
+// CALENDAR_ORIGIN_MS); --real-calendar is the way back to today's date.
 //
 // The pin sets where the calendar STARTS, not that it stops: from there it
 // advances by guest time (batchTicks(), guest milliseconds since the run
@@ -998,9 +999,17 @@ const APP_ENTRY = (() => {
   process.exit(1);
 })();
 // An app's registry `wallClock` date pins the calendar origin like
-// --wall-clock-ms does; the flag wins.
+// --wall-clock-ms does; the flag wins. With neither, the CLI pins it to
+// DEFAULT_CALENDAR_MS, so two runs of one command see the same calendar: a
+// guest that seeds from the time of day (Deus Ex diverged per wall-clock
+// second) is otherwise a different run every second. --real-calendar hands the
+// guest today's date instead, and --real-ticks, which is real time by design,
+// keeps the real calendar too. The browser never pins.
+const DEFAULT_CALENDAR_MS = Date.parse('1999-06-01T12:00:00Z');
+const REAL_CALENDAR = hasFlag('real-calendar');
 const CALENDAR_ORIGIN_MS = WALL_CLOCK_MS ||
-  (APP_ENTRY && APP_ENTRY.wallClock ? Date.parse(APP_ENTRY.wallClock) : 0);
+  (APP_ENTRY && APP_ENTRY.wallClock ? Date.parse(APP_ENTRY.wallClock) : 0) ||
+  (REAL_CALENDAR || REAL_TICKS ? 0 : DEFAULT_CALENDAR_MS);
 // 1 = smooth pacing (also the WAT default), 0 = deadline. Always pushed, to
 // the main instance and every guest-thread instance.
 const PRESENT_PACE_MODE = (PRESENT_PACE || (APP_ENTRY && APP_ENTRY.presentPace) || 'smooth') === 'deadline' ? 0 : 1;
