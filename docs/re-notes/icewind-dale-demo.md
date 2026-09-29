@@ -623,3 +623,15 @@ An exact browser run with cross-origin isolation and Threads enabled reached
 Party Formation with four secondary guest workers. The manifest-driven CLI
 acceptance reaches the first-area HUD and native default session save with the
 same dropdown asset list.
+
+## Call-form census (2026-09-29, box 1, uop-tier-design §15.1)
+
+Window: batches 6000-6600, walking in the tavern. Measured with
+`--handler-hist --edge-hist --uop-census` and analysed with
+`tools/call-form-weighted.js`. As % of all block entries:
+
+- The uop tier covers 76-77%.
+- Guest indirect transfers are 0.69%.
+- Loops declined for `call-indirect` have bodies of 1.3-1.4%.
+
+Nothing call-shaped is worth a mechanism here.

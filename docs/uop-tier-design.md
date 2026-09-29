@@ -1489,3 +1489,185 @@ advance. The scan stops at `adc` (form 0x13, `adc r32, r/m32`):
 
 Supporting `adc r32,m32` with the carry from an o16 add is the next SimGolf
 lever. It lives in the uop compiler, not the call path.
+
+### 15.1 The rest of the C++ and runtime-heavy corpus (2026-09-29)
+
+The same measurement was run on the Unreal family, GoldSrc, Arcanum, the
+Infinity engine, Morrowind, ScummVM, Delphi and VB6. It asked whether any app
+class has hot indirect calls. Boxes 1 and 2 ran the heavy apps and the laptop
+ran the small ones. Every row is three windows of
+`--handler-hist-thread=0,0,0 --edge-hist --hist-json-blocks=0 --uop-census`,
+read with the fixed `tools/call-form-weighted.js` (below). All shares are of
+**all** block entries.
+
+| app (window, what it shows) | in uop programs | guest-target indirect | vtable/reg calls | monomorphic | declined for call-indirect: head / loop body |
+|---|---|---|---|---|---|
+| Unreal SE (900..1800, Nyleve flyby, SoftDrv) | 43-50% | 0.79-0.96% | 0.18-0.26% | 0.54-0.73% | 0.38-0.64% / 2.2-4.7% |
+| Deus Ex demo (450..800, in-engine 3D logo, SoftDrv) | 22-26% | 2.50-3.02% | 0.71-0.76% | 1.8-2.5% | 2.3-2.8% / 4.9-6.0% |
+| UT2003 demo (70..520, **package load**, stalls at the first D3D8 draw) | 42-55% | 5.2-8.3% | 2.0-5.2% | 4.0-5.0% | 1.1-7.3% / 2.4-16.6% |
+| UT2004 demo (600..2100, **package load**, same stall) | 54-68% | 4.5-8.4% | 3.7-6.6% | 3.1-4.7% | 3.4-10.4% / 3.4-9.7% |
+| Half-Life Uplink (100k..160k, corridor, walking and turning) | 71-87% | 0.09-0.26% | 0.01-0.04% | 0.02-0.06% | 0.4-1.1% / 2.3-5.6% |
+| Arcanum demo (45k..54k, crash site, HUD, idle NPCs) | 58-59% | 0.23-0.28% | 0.23-0.28% | 0.11-0.16% | 0.07-0.09% / 0.3-0.5% |
+| Morrowind (13.0M..13.6M, prison-ship hold under the chargen Name box, software D3D9) | 40.5-40.7% | **5.5-5.6%** | 5.0-5.1% | 4.5-4.6% | 6.6-6.7% / **11.0-11.3%** |
+| Icewind Dale demo (6000..6600, Easthaven tavern, walking) | 76-77% | 0.68-0.70% | 0.68-0.70% | 0.63-0.65% | 0.7% / 1.3-1.4% |
+| ScummVM 2.0 FOTAQ (12200..16000, room, idle) | 94% | 0.57% | 0.17% | 0.55% | 0.15% / 0.16% |
+| Blobby Volley, Delphi (700..900, live rally) | 38% | **7.2%** | **7.2%** | **7.2%** | 7.1% / 0 (not loops) |
+| Rodent2000, VB6 native (3000..4400, level 1 played) | 20-24% | 3.7% | 3.2-3.3% | 3.1% | 2.1-2.2% / 1.1% |
+
+Not measured:
+
+- **Baldur's Gate.** Its assets are on no machine.
+- **UT2003 and UT2004 gameplay.** With `--d3d9-renderer=software`, the first
+  `IDirect3DDevice8_DrawIndexedPrimitive` never returns on this tree. The
+  window stays grey. `--headless-gl` needs a display, and box1 has none. So
+  their rows describe loading scripts and packages.
+- **JigSawedME (VB6).** It spins inside one batch on a repeated access
+  violation that returns to `msvbvm60+0x66006554`.
+- **FOTAQ with the mouse.** Any click crashes on the unimplemented
+  `GetMessageExtraInfo`, which SDL2 calls on mouse messages. So the Queen
+  script VM was never measured hot.
+- **Tetravex.** It goes idle once it has drawn.
+
+**No megamorphic dispatch site anywhere.** The sites with most targets are all
+tiny:
+
+- Unreal `engine+0x1037a430 jmp [0x1037f4ec]`: 36-47 targets, 0.02-0.03%.
+- Unreal `render+0x1081cf80 jmp [0x1081e228]`: 16 targets.
+- Unreal `core+0x10115aa0 call [tbl+eax*4]`: 14-15 targets.
+- Deus Ex `core+0x1013fa40 call [0x101f4088+eax*4]`, the UnrealScript native
+  table: 18 targets, 0.16%.
+- UT2003 `core+0x1011679a jmp [tbl+edx*4]`: 26-28 targets.
+- UE2's bytecode loader `UStruct::SerializeExpr` (`core+0x1011d330`): a 24-28
+  way `jmp [0x1011d9f4+edx*4]` token switch, plus a monomorphic self-recursive
+  `call [edx+0x98]`.
+
+None of these is above 0.4% of entries. The script interpreters are either not
+hot in the reachable windows (UnrealScript during a flyby, FOTAQ idle), or they
+spend their entries in their bodies, not at the dispatch.
+
+**Where the indirect share is highest, it is monomorphic.**
+
+- **Blobby (7.2%)** is VCL:
+  - `exe+0x4158b3 call [edx+0x10]` (4.7%, 1 target) is `TCanvas.GetHandle`
+    calling its virtual `Changing`, twice per BitBlt in the sprite loop.
+  - `exe+0x415a03 call [ebx+0x30]` (2.4%, 1 target) is the `TNotifyEvent`
+    `FOnChanging(Self)` method-pointer call.
+  - They are function entries, not loop heads, so the tier loses no loop to
+    them.
+- **UE2 load (4-8%)** is `FArchive::Serialize` through `call [eax+4]`, with
+  1-3 targets per site.
+- **VB6 (3.7%)** is COM `call [r+8]` Release/AddRef in msvbvm60, 3 targets at
+  most.
+
+A monomorphic inline cache (`--uop-icall`) is the right shape for all of
+these. The ceiling is small, though:
+
+- Blobby is a 38%-uop app that spends 20% of its entries at `call rel32` and
+  18% at `ret`. The two virtual calls only matter if the tier ever runs the
+  sprite loop around them.
+- UE2's is a load phase.
+
+**Morrowind is the one frame loop where a call-indirect ceiling reaches the
+3% bar.** Its guest indirect transfers are spread thin, but they lose it
+loops:
+
+- About 115 sites, the top one at 0.68%: `exe+0x6f38d0 call [esp+0x2c]`, a
+  float interval-overlap callback with one target.
+- `exe+0x69a097 call [edx+0x8]`, 0.51%, one target.
+
+The loops declined for call-indirect hold 11.0-11.3% of all entries. The
+largest is msvcrt `qsort` (`0x7801ed9a..0x7801ee6f`, 42 blocks, 3.9-4.0%). Its
+comparator call `call [ebp+0x14]` (three sites) splits exactly 1/3 each over
+three per-axis float comparators, `exe+0x6e9710/0x6e9750/0x6e9790`, which looks
+like a sweep-and-prune sort.
+
+That comparator site is polymorphic per site, but **each qsort invocation is
+monomorphic**: the comparator is a qsort argument, fixed for the whole sort. So
+the right mechanism is a guard hoisted to loop entry (or a program specialised
+on the comparator), then a call-out into the comparator. A per-site
+polymorphic cache is not what it needs. The ceiling is ~4% of entries for
+qsort and ~11% for all such loops.
+
+Two caveats: the window is one frame under a modal box, not free roam, and the
+chargen Name box takes no input on software D3D9. The load-phase windows
+(`morrowind.esm`, 5.0-6.2M) had 2.4-3.3% guest indirect, mostly
+`exe+0x4d11c7 call [edx+0xe8]` (1.6%, monomorphic).
+
+**Unreal-1 IAT traffic into core.dll is real but small.**
+
+- **Deus Ex:** `call [abs] -> guest` is 1.4-1.9%. Five hot `call [IAT]` calls
+  in one `render.dll+0x10b0baff` loop go to core.dll FVector operators, at
+  0.22-0.30% each, all monomorphic. Every one lands on an incremental-link
+  `jmp rel32` thunk in core.dll, so each costs an indirect hop *and* a
+  `jmp rel` block. That loop (1.4-2.1% of entries) is the biggest gameplay
+  loop in the table lost to a *guest* indirect call.
+- **Unreal SE:** `call [abs] -> guest` is 0.25-0.30%.
+
+IAT-direct (resolve the slot at decode time and follow the thunk) would be
+worth at most ~2% of Deus Ex entries.
+
+**Half-Life's 2-6% declined loop bodies are host calls, not guest ones.** The
+heads are `hw.dll+0x1000a8f1/a85d/a869`. They are GoldSrc's per-vertex
+immediate-mode loop: three `call [qgl slot]` per vertex into
+GetProcAddress-filled GL pointers, and the tool counts those as api. The lever
+there is the tier calling a host API from inside a program. A guest inline
+cache would not help.
+
+**What the threaded remainder is instead.**
+
+- **Unreal-1 on SoftDrv:** `head-unsupported` is 24-28% of all entries on
+  Unreal SE, and 60% of the entries the tier did not take on Deus Ex. The
+  refused ops are MMX: `movq [edi],mm0` fill loops (`softdrv+0x10d3ed70` alone
+  is 24.6% of Deus Ex entries), `pxor`, `pmulhw mm0,[edx+eax*8]` and `psraw`.
+  MMX in the uop compiler is the Unreal-1 lever, the way `adc` is SimGolf's.
+- **Arcanum:** `declined:no-backedge` is 16.4-16.7% and no-verdict is 9%.
+  jcc/call/ret-heavy straight-line code, plus five small CRT and game switch
+  tables at 0.1-0.4% each, among them the CRT `_output` state machine at
+  `exe+0x5789a2`.
+
+**Verdict for the corpus.** No app class makes indirect calls both hot and
+polymorphic:
+
+- **(a) Inline cache.** Its ceiling is Blobby's 7.2% of entries, which is
+  function-entry calls in a mostly threaded app, Morrowind's 5.5%, and UE2's
+  loading phase at 4-8%.
+- **(c) Polymorphic cache.** It adds under 0.5% anywhere over a monomorphic
+  guard. Morrowind's 3-way qsort comparator (~0.7% of entries at the call) is
+  monomorphic per invocation, so a guard hoisted to loop entry covers it.
+- **(b) Call-out.** This is the only mechanism with a gameplay ceiling over
+  3%, and only on **Morrowind**: 11% of entries in loops declined for
+  call-indirect, ~4% of them in msvcrt `qsort`. Everywhere else it is 0.2-6%
+  in gameplay. Its largest body overall is UT2003 load, at 13-17%. That
+  number is dominated by msvcr70's `_getptd` (`0x7c00137f/0x7c00139f`:
+  GetLastError, TlsGetValue and SetLastError through the kernel32 IAT), which
+  is reached from every CRT call the loader loops make. So even there the
+  declined calls are host APIs; the lever would be calling APIs from inside a
+  program, as in Half-Life. In gameplay it is 2-6%.
+- **Jump-table op.** It has no window above 1.3%, Arcanum included.
+- **IAT-direct.** At most ~2% (Deus Ex).
+
+Only one of these is a gameplay lever on this corpus: call-out with an
+entry-hoisted guard, for Morrowind. It is worth measuring there first with
+`--uop-icall` on the qsort loop. Otherwise the measured gameplay levers are
+opcode coverage in the uop compiler: MMX for Unreal-1/SoftDrv, and `adc` for
+SimGolf (§15).
+
+Tool fixes made for this round (`tools/call-form-weighted.js`):
+
+- An indirect target outside every module now counts as guest `anon:` code
+  when it ran as a block. This covers VB6's per-object heap thunks behind
+  msvbvm60's `jmp [eax+edx]`, and Galaxy's generated mixer called through
+  `galaxy+0x105085d2 call [0x1054c260]`. Both used to read as api.
+- `call/jmp [abs]` through a slot that is not in an IAT is now labelled
+  `[global]`. It is a code pointer in a writable global, which is not an
+  import stub.
+- The declined-loop body total is taken over the **union** of the heads'
+  SCCs. UT2003 had read 120%.
+- A one-block SCC with no self edge no longer counts as a loop.
+- A slot into a loaded DLL whose export the emulator overrides natively is
+  now api. The edges show control never entered the DLL (msvcrt `_ftol`
+  through `jmp [0x738264]` had read as guest with 24-27 "targets", which were
+  the callers' return sites).
+
+Artifacts: box1 `~/cf2-out/<app>/` and box2 `~/cf2-out/<app>/`, each holding
+run logs, windows and PNGs. Box2 `~/cf2` is a tree at e4dddd7d.

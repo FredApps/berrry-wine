@@ -42,3 +42,23 @@ Compatibility work required for this route:
 - root-clamped VFS `..` normalization for UE1 sibling asset wildcards;
 - extensionless absolute DLL lookup (`C:\Core` matching `Core.dll`);
 - `GetProcessWorkingSetSize` and `IsProcessorFeaturePresent` startup behavior.
+
+## Call-form census (2026-09-29)
+
+**Route.** Box1 ran `--app=deus_ex_demo --batch-size=200000
+--tick-ms-per-batch=25 --repaint-every=10`.
+
+- It renders the in-engine 3D Eidos logo at batches ~450-800 and the ION
+  Storm logo at 1050.
+- **At batch 1174 it crashes on a guest call through NULL**
+  (`dbg_prev_eip=0x1212c2b7`). It never reaches the cinematic.
+
+**Census over 450..800** (docs/uop-tier-design.md §15.1):
+
+- **Guest indirect:** 2.5-3.0% of block entries, vtable/reg calls 0.7%.
+- **`call [IAT]` into core.dll:** 1.4-1.9%. The largest part is five
+  monomorphic FVector-operator calls in the `render.dll+0x10b0baff` loop.
+  Each lands on a core.dll incremental-link `jmp rel32` thunk.
+- **Where the entries go:** 60% of the entries the tier did not take are
+  SoftDrv MMX blocks refused as `head-unsupported`. `softdrv+0x10d3ed70`, a
+  `movq [edi],mm0` fill loop, alone is 24.6% of all entries.
