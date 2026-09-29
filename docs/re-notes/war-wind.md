@@ -112,3 +112,42 @@ send `mousemove`, step ~60, `mousedown`, step ~60, `mouseup`.
   AVIs are Cinepak 320x240 15 fps + 22 kHz PCM, and they are listed in
   `tools/avi-player/` from `test/binaries/cd-movies/War Wind/`.
 - WW1's "Begin the scenario" button draws as a black box.
+
+## Multiplayer Wizard (WW1) -- 2026-09-28
+
+Clicking the centre icon of the race screen (320,240 at `--screen=800x600`)
+runs `FlipToGDISurface` and then `PropertySheetA`: the DreamForge
+"Multiplayer Wizard", a one-page-at-a-time wizard over the exclusive 640x480
+DirectDraw display. Its Welcome page has two labels, an `SS_OWNERDRAW` static
+(id 101) that the dialog proc fills with a 120x225 `BitBlt` of the character
+artwork on `WM_DRAWITEM`, and the Back/Next/Cancel buttons.
+
+Two bugs made it look like "no text and wrong fullscreen":
+
+- `$create_property_sheet` always set `$main_hwnd` to the sheet frame, since
+  it was written for Jazz2's demo installer, where the wizard is the whole UI.
+  `get_dx_present_hwnd` returns `$main_hwnd`, so the game's primary was
+  uploaded as a dxLayer **onto the wizard**, clipped to its client area
+  (`[dx] Upload slot=2 640x480 target=dxLayer hwnd=0x10002 ...
+  clip=43,63 434x283`). Every label and button was covered by the game frame,
+  and the canvas composite zoomed onto the wizard rect with black around it.
+  The sheet now becomes main only when there is no visible main window, and
+  the primary stays on hwnd 0x10001 (`test/test-property-sheet-main-hwnd.js`).
+- An `SS_OWNERDRAW` static painted itself as an empty label and never sent
+  `WM_DRAWITEM`, so the artwork panel was blank. It now sends
+  `WM_DRAWITEM`/`ODT_STATIC` to its parent
+  (`test/test-static-ownerdraw-drawitem.js`).
+
+WW1 runs straight off the disc, with no install needed for this route:
+
+```sh
+node test/run.js --exe=<host>/ww.exe --exe-guest-path='d:\warwind\ww.exe' \
+  --media-mount="<War Wind (USA).cue>" --media-exe=SETUP.EXE --cwd='D:\WARWIND' \
+  --screen=800x600 --no-build --quiet-api --no-close --png-canvas --png=ww1.png \
+  --input=1500:mousedown:320:240,1560:mouseup:320:240,3000:mousedown:320:240,3060:mouseup:320:240 \
+  --max-batches=4500 --max-seconds=100
+```
+
+The first click skips the intro; the second opens the wizard. The caption
+really is "test wizard"; that is the game's own string. WW2's tutorial text
+rendered correctly headless, and its failure was not reproduced.
