@@ -1265,6 +1265,40 @@
   ;; Paint-only control. No input handling. Same dormancy caveat as
   ;; $button_wndproc — runs when STEP 5 wires WAT dialog creation.
 
+  ;; WM_DRAWITEM for an SS_OWNERDRAW static. $wnd_send_message runs an x86
+  ;; owner on a recursive interpreter frame, so the heap DRAWITEMSTRUCT is live
+  ;; for the whole call. Layout as $btn_send_drawitem, with CtlType ODT_STATIC
+  ;; (5) and ODS_DISABLED the only item state a static can carry.
+  (func $static_send_drawitem
+      (param $hwnd i32) (param $hdc i32) (param $ctrl_id i32)
+      (param $w i32) (param $h i32)
+    (local $dis i32) (local $disw i32)
+    (local.set $dis (call $heap_alloc (i32.const 48)))
+    (if (i32.eqz (local.get $dis)) (then (return)))
+    (local.set $disw (call $g2w (local.get $dis)))
+    (i32.store           (local.get $disw) (i32.const 5))
+    (i32.store offset=4  (local.get $disw)
+      (i32.and (local.get $ctrl_id) (i32.const 0xFFFF)))
+    (i32.store offset=8  (local.get $disw) (i32.const 0))
+    (i32.store offset=12 (local.get $disw) (i32.const 1))   ;; ODA_DRAWENTIRE
+    (i32.store offset=16 (local.get $disw)
+      (select (i32.const 4) (i32.const 0)                   ;; ODS_DISABLED
+        (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd))
+          (i32.const 134217728)) (i32.const 0))))            ;; WS_DISABLED
+    (i32.store offset=20 (local.get $disw) (local.get $hwnd))
+    (i32.store offset=24 (local.get $disw) (local.get $hdc))
+    (i32.store offset=28 (local.get $disw) (i32.const 0))
+    (i32.store offset=32 (local.get $disw) (i32.const 0))
+    (i32.store offset=36 (local.get $disw) (local.get $w))
+    (i32.store offset=40 (local.get $disw) (local.get $h))
+    (i32.store offset=44 (local.get $disw) (i32.const 0))
+    (drop (call $wnd_send_message
+            (call $wnd_get_parent (local.get $hwnd))
+            (i32.const 0x002B)
+            (i32.and (local.get $ctrl_id) (i32.const 0xFFFF))
+            (local.get $dis)))
+    (call $heap_free (local.get $dis)))
+
   (func $static_wndproc (param $hwnd i32) (param $msg i32) (param $wParam i32) (param $lParam i32) (result i32)
     (local $state i32) (local $state_w i32) (local $cs_w i32)
     (local $hdc i32) (local $sz i32) (local $w i32) (local $h i32)
@@ -1477,6 +1511,14 @@
                 (then (i32.const 0x0A)) ;; BF_TOP | BF_BOTTOM
                 (else (select (i32.const 0x05) (i32.const 0x0F)
                   (i32.eq (local.get $style) (i32.const 0x11)))))))
+            (return (i32.const 0))))
+        ;; SS_OWNERDRAW (0x0D): USER paints nothing itself and hands the
+        ;; whole client to the parent as WM_DRAWITEM/ODT_STATIC. War Wind's
+        ;; Multiplayer Wizard draws its page artwork this way.
+        (if (i32.eq (local.get $style) (i32.const 0x0D))
+          (then
+            (call $static_send_drawitem (local.get $hwnd) (local.get $hdc)
+              (local.get $ctrl_id) (local.get $w) (local.get $h))
             (return (i32.const 0))))
         ;; Default text rect = full client.
         (local.set $tx_l (i32.const 0))

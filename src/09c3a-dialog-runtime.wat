@@ -1261,7 +1261,19 @@
         (call $propsheet_page_hwnds_release)
         (call $propsheet_release_pages)
         (return (i32.const 0))))
-    (global.set $main_hwnd (local.get $dlg))
+    ;; The sheet becomes the app's main window only when there is no visible
+    ;; one to keep -- an installer whose whole UI is the wizard (Jazz2's demo
+    ;; setup). A game that opens a wizard over its own window must keep that
+    ;; window as main: $main_hwnd is also where a DirectDraw primary is
+    ;; presented (get_dx_present_hwnd), so handing it to War Wind's
+    ;; Multiplayer Wizard, opened over its exclusive 640x480 display, put the
+    ;; primary into a frame layer over the wizard's client area. Every page
+    ;; control and label was buried under the game frame, and the page read as
+    ;; a captioned hole in the screen.
+    (if (i32.or
+          (i32.eqz (global.get $main_hwnd))
+          (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd))))
+      (then (global.set $main_hwnd (local.get $dlg))))
     (local.get $dlg))
 
   ;; Allocate a new control hwnd, register it as WNDPROC_CTRL_NATIVE,
