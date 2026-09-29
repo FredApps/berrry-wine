@@ -1156,8 +1156,13 @@
               (then (local.set $abs (i32.ge_u (local.get $off) (local.get $movi)))))
             (if (i32.eqz (local.get $abs))
               (then (local.set $off (i32.add (local.get $off) (local.get $movi)))))
+            ;; Bit 8 carries idx1's AVIIF_KEYFRAME for AVIStreamFindSample;
+            ;; everything else reads the stream as the low byte.
             (call $gs32 (i32.add (local.get $ibase) (i32.mul (local.get $n) (i32.const 12)))
-              (i32.add (i32.mul (local.get $d0) (i32.const 10)) (local.get $d1)))
+              (i32.or (i32.add (i32.mul (local.get $d0) (i32.const 10)) (local.get $d1))
+                      (i32.shl (i32.and (call $gl32 (i32.add (local.get $e) (i32.const 4)))
+                                        (i32.const 0x10))
+                               (i32.const 4))))
             (call $gs32 (i32.add (local.get $ibase)
                           (i32.add (i32.mul (local.get $n) (i32.const 12)) (i32.const 4)))
               (i32.add (local.get $off) (i32.const 8)))
@@ -1572,6 +1577,81 @@
       (call $win16_hresult (i32.wrap_i64 (local.get $r))))
     (call $win16_api_return (i32.const 8)))
 
+  ;; AVIFILE.163 AVIStreamFindSample(pavi, LONG lPos, LONG lFlags) -> the
+  ;; sample position, or -1. Direction FIND_NEXT (1, the default), FIND_PREV
+  ;; (4) or FIND_FROM_START (8); what counts is FIND_KEY (0x10, idx1's
+  ;; AVIIF_KEYFRAME, bit 8 of our index's stream word) or FIND_ANY (0x20, a
+  ;; chunk with data). Fixed-size (audio) samples are all key and all present.
+  ;; Civilization II's Win16 movie player asks FIND_NEXT|FIND_KEY for the
+  ;; frame to resume from. Other FIND_ types and FIND_RET forms stop here.
+  (func $win16_AVIStreamFindSample
+    (local $flags i32) (local $lpos i32) (local $far i32) (local $st i32)
+    (local $base i32) (local $s i32) (local $first i32) (local $len i32)
+    (local $pos i32) (local $dir i32) (local $type i32) (local $hit i32)
+    (local $ibase i32) (local $count i32) (local $i i32) (local $k i32) (local $w i32)
+    (local.set $flags (call $win16_arg32 (i32.const 0)))
+    (local.set $lpos (call $win16_arg32 (i32.const 2)))
+    (local.set $far (call $win16_arg32 (i32.const 4)))
+    (local.set $hit (i32.const -1))
+    (local.set $st (call $win16_avi_stream (local.get $far)))
+    (block $out
+      (br_if $out (i32.eqz (local.get $st)))
+      (local.set $type (i32.and (local.get $flags) (i32.const 0xF0)))
+      (if (i32.or (i32.ne (i32.and (local.get $flags) (i32.const 0xF000)) (i32.const 0))
+                  (i32.and (i32.ne (local.get $type) (i32.const 0x10))
+                           (i32.ne (local.get $type) (i32.const 0x20))))
+        (then
+          (call $host_log_i32 (i32.const 0xCA16AF5A))   ;; unsupported FindSample flags
+          (call $host_log_i32 (local.get $flags))
+          (unreachable)))
+      (local.set $first (call $gl32 (i32.add (local.get $st) (i32.const 36))))
+      (local.set $len (call $gl32 (i32.add (local.get $st) (i32.const 40))))
+      (local.set $dir (i32.and (local.get $flags) (i32.const 0x0F)))
+      (local.set $pos (i32.sub (local.get $lpos) (local.get $first)))
+      (if (i32.and (local.get $dir) (i32.const 8))
+        (then (local.set $pos (i32.const 0)) (local.set $dir (i32.const 1))))
+      (if (i32.eqz (local.get $dir)) (then (local.set $dir (i32.const 1))))
+      (if (call $gl32 (i32.add (local.get $st) (i32.const 52)))   ;; dwSampleSize
+        (then
+          (if (i32.and (i32.ge_s (local.get $pos) (i32.const 0))
+                       (i32.lt_s (local.get $pos) (local.get $len)))
+            (then (local.set $hit (local.get $pos))))
+          (br $out)))
+      (local.set $base (call $win16_avi_block (local.get $far)))
+      (br_if $out (i32.eqz (call $gl32 (i32.add (local.get $base) (i32.const 0x54)))))
+      (local.set $ibase (call $win16_far_to_guest
+        (call $gl32 (i32.add (local.get $base) (i32.const 0x54))) (i32.const 0)))
+      (local.set $count (call $gl32 (i32.add (local.get $base) (i32.const 0x58))))
+      (local.set $s (i32.shr_u (i32.sub (i32.sub (local.get $st) (local.get $base))
+                                        (i32.const 0x100)) (i32.const 9)))
+      ;; Walk this stream's chunks in order; sample k is its kth chunk.
+      (block $walked (loop $walk
+        (br_if $walked (i32.ge_u (local.get $i) (local.get $count)))
+        (local.set $w (call $gl32 (i32.add (local.get $ibase)
+                                           (i32.mul (local.get $i) (i32.const 12)))))
+        (if (i32.eq (i32.and (local.get $w) (i32.const 0xFF)) (local.get $s))
+          (then
+            (if (select
+                  (i32.ne (i32.and (local.get $w) (i32.const 0x100)) (i32.const 0))
+                  (i32.ne (call $gl32 (i32.add (local.get $ibase)
+                            (i32.add (i32.mul (local.get $i) (i32.const 12)) (i32.const 8))))
+                          (i32.const 0))
+                  (i32.eq (local.get $type) (i32.const 0x10)))
+              (then
+                (if (i32.eq (local.get $dir) (i32.const 4))
+                  (then
+                    (br_if $walked (i32.gt_s (local.get $k) (local.get $pos)))
+                    (local.set $hit (local.get $k)))
+                  (else
+                    (if (i32.ge_s (local.get $k) (local.get $pos))
+                      (then (local.set $hit (local.get $k)) (br $walked)))))))
+            (local.set $k (i32.add (local.get $k) (i32.const 1)))))
+        (local.set $i (i32.add (local.get $i) (i32.const 1)))
+        (br $walk))))
+    (call $win16_hresult (select (i32.const -1) (i32.add (local.get $hit) (local.get $first))
+                                 (i32.lt_s (local.get $hit) (i32.const 0))))
+    (call $win16_api_return (i32.const 12)))
+
   ;; AVIFILE.161 AVIStreamRelease / .141 AVIFileRelease -> the new count.
   (func $win16_AVIRelease (param $stream i32)
     (local $far i32) (local $base i32) (local $st i32) (local $refs i32)
@@ -1606,6 +1686,8 @@
       (then (call $win16_AVIFileGetStream) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 162))
       (then (call $win16_AVIStreamInfo) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 163))
+      (then (call $win16_AVIStreamFindSample) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 164))
       (then (call $win16_AVIStreamReadFormat) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 161))
@@ -14954,17 +15036,14 @@
             (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
         (call $win16_api_return (i32.const 6))
         (return (i32.const 1))))
-    ;; 607 timeGetTime() uses the same host-backed guest clock as Win32.
+    ;; 607 timeGetTime() is the same clock as USER.13 GetTickCount, in DX:AX.
+    ;; It must not go through $handle_timeGetTime: once a caller polls it hard
+    ;; enough, that handler's clock-spin park moves EIP to a 32-bit park thunk,
+    ;; which the Win16 bridge cannot resume. Civilization II's Win16 build
+    ;; polls it in a delay loop after its language dialog, and pressing Enter
+    ;; there trapped in $win16_call32_end.
     (if (i32.eq (local.get $ordinal) (i32.const 607))
-      (then
-        (call $win16_call32_begin (i32.const 0))
-        (call $handle_timeGetTime (i32.const 0) (i32.const 0) (i32.const 0)
-          (i32.const 0) (i32.const 0) (i32.const 0))
-        (call $win16_call32_end)
-        (i32.store offset=8 (global.get $reg_base) (i32.shr_u (i32.load offset=0 (global.get $reg_base)) (i32.const 16)))
-        (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
-        (call $win16_api_return (i32.const 0))
-        (return (i32.const 1))))
+      (then (call $win16_GetCurrentTime) (return (i32.const 1))))
     ;; 201 midiOutGetNumDevs() — how many MIDI output devices there are. Chip's
     ;; Challenge asks before it decides whether to play its music.
     (if (i32.eq (local.get $ordinal) (i32.const 201))

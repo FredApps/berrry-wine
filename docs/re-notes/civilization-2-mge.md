@@ -183,6 +183,15 @@ What the driver needs from the emulator, in the order it hit them:
 - KERNEL `LocalHandle` (11), at seg10:0x2618, when the movie stops. Only a
   skipped or finished intro reaches it; without it, clicking through the
   intro trapped in the codec.
+- AVIFILE `AVIStreamFindSample` (163), from the game itself (seg66:0x562a),
+  FIND_NEXT|FIND_KEY. It runs only once decoding falls behind the clock.
+  That happens in a browser, and headless at `--tick-ms-per-batch=200`, but
+  never at the 20 ms recipe above. The Win16 index keeps idx1's
+  AVIIF_KEYFRAME as bit 8 of each record's stream word for it.
+- MMSYSTEM `timeGetTime` (607) must not go through the Win32 handler. The
+  game polls it in a delay loop after the language dialog, the clock-spin
+  park armed, and the Win16 bridge trapped (`0xCA16A9F7`) when Enter was
+  pressed there.
 
 Where to look when a frame fails: seg10:0x969a maps the codec's internal
 status (0..0x16) to an ICERR. The 32-bit decode is seg10:0x16a0 → 0x17f2.
