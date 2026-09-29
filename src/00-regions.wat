@@ -100,7 +100,7 @@
   ;; exactly the bytes its segment emits, so growing one is a compile error.
   (region.declare $WIN16_FONT_FACES (size 0x00000030) (align 0x00000100)
     (owner "09e-win16-api.wat:$WIN16_FONT_FACES"))
-  (region.declare $WIN16_MMSYSTEM_NAMES (size 0x0000005D) (align 0x00000010)
+  (region.declare $WIN16_MMSYSTEM_NAMES (size 0x000000F5) (align 0x00000010)
     (owner "09e-win16-api.wat:$WIN16_MMSYSTEM_NAMES"))
   (region.declare $DIALOG_STATE_TABLE (size 0x00001000) (align 0x00001000)
     (owner "09c0-window-table.wat:$dialog_state_addr"))

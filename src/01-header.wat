@@ -818,8 +818,9 @@
   ;; MMSYSTEM entry points asked for by name rather than imported. A module
   ;; this emulator answers for has no export table to read, so GetProcAddress
   ;; needs the name-to-ordinal mapping written down — see
-  ;; $win16_mmsystem_ordinal. Chip's Challenge asks for exactly these five
-  ;; before it will start.
+  ;; $win16_mmsystem_ordinal. Chip's Challenge asks for the first five before
+  ;; it will start; Authorware (Civilization II's Civilopedia) looks up the
+  ;; waveOut set that follows.
   ;;
   ;; Each entry is a length byte, the name, and the ordinal as a word; a zero
   ;; length ends the list. Upper case, because $win16_cstr_to_pstr folds the
@@ -831,6 +832,14 @@
     "\11MCIGETERRORSTRING\c2\02"
     "\11MIDIOUTGETNUMDEVS\c9\00"
     "\11WAVEOUTGETNUMDEVS\91\01"
+    "\11WAVEOUTGETDEVCAPS\92\01"
+    "\0bWAVEOUTOPEN\94\01"
+    "\0cWAVEOUTCLOSE\95\01"
+    "\14WAVEOUTPREPAREHEADER\96\01"
+    "\16WAVEOUTUNPREPAREHEADER\97\01"
+    "\0cWAVEOUTWRITE\98\01"
+    "\0cWAVEOUTRESET\9b\01"
+    "\16WAVEOUTSETPLAYBACKRATE\a2\01"
     "\00")
   ;; The same shape for the entry points apps look up in KERNEL, GDI and USER
   ;; by name rather than importing. A module this emulator answers for has no
@@ -3705,6 +3714,8 @@
   (global $win16_env_seg (mut i32) (i32.const 0))
   ;; The DOS disk transfer area as a far pointer, zero until first asked for.
   (global $win16_dta (mut i32) (i32.const 0))
+  ;; Last DOS error code an INT 21h service returned with CF set (AH=59h).
+  (global $win16_dos_last_error (mut i32) (i32.const 0))
   ;; ESP as the dispatcher found it, so --trace-win16 can report how much each
   ;; API actually popped.
   (global $win16_entry_esp (mut i32) (i32.const 0))
