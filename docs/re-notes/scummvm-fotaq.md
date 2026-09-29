@@ -42,15 +42,21 @@ node test/run.js --exe=test/binaries/candidates/scummvm-fotaq/scummvm.exe \
 With these the intro, cutscenes, autosave, credits and the first gameplay room (hotel room,
 Joe, verb panel, inventory) are reached at about batch 8700 with no crash or unimplemented API.
 
-## Open: mouse input starved in the room (headless)
+## Fixed: mouse input starved in the room (headless)
 
-pollEvent runs about twice per 200 batches, so posted WM_MOUSEMOVE never becomes an
-SDL MOUSEMOTION that ScummVM reads. The main thread spins in `DX5_CheckInput`: every
-`$host_get_ticks` call advances the headless batch clock by 1 ms, so the timer-due checks
-inside MsgWait and PeekMessage themselves make the next MM timer (internal msg `0x7FF0`)
-or SDL's 100 ms WM_TIMER id 2 due, and the loop always has one more message. Candidate
-fixes: a non-stepping tick read for internal due checks, or bounding DX5_CheckInput's
-drain per call. Likely headless-only (the browser uses real ticks) — unverified in a browser.
+pollEvent ran about twice per 200 batches (once in 11,100 batches from boot), so posted
+WM_MOUSEMOVE never became an SDL MOUSEMOTION that ScummVM reads. The earlier theory —
+that `$host_get_ticks` stepping the headless clock kept a timer always due — was **refuted**.
+The real cause was `MsgWaitForMultipleObjects` answering "message waiting" forever: both
+its handler and the `$win32_dispatch` fast path tested `$nc_flags_count`, which stays
+nonzero while any window holds an erase bit (2) or the persistent default-erase bit (8),
+neither of which `PeekMessage` ever returns. SDL 1.2's `DX5_CheckInput` (sdl+0x10015090)
+keeps pumping while MsgWait says yes, so `DX5_PumpEvents` never returned. Fixed in
+1279f024 (`$msgwait_queue_ready`, counting only NC paint/calcsize bits via
+`nc_flags_scan(5)`, the same test `$has_pending_message` uses; covered by
+`test/test-nc-flags-message-wake.js`). After it: 1,836 pollEvents in 3,000 batches, the
+intro and credits play, the hotel room is up by batch 8,000, hovering the chest shows
+"look at chest", and mousedown, gap, mouseup walks Joe to it.
 
 ## GOG SDL2 build
 
