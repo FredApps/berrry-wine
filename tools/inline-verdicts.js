@@ -51,10 +51,15 @@ if (funcArg) {
 }
 
 const LINE = /considering candidate \{@\d+, index=(\d+), count=(\d+), size=(\d+),[^}]*\}[^:]*: (.*?)\]?$/;
+// Node 24's V8 prints the same decision differently:
+//   considering call #0, case #0, to function 9006 (count=168, size=58,
+//   score=162)... budget=min(351, 6765), size 72->130 decided to inline! ...
+// with "not called often enough" / "not enough inlining budget" as denials.
+const LINE24 = /considering call #\d+, case #\d+, to function (\d+) \(count=(\d+), size=(\d+)[^)]*\)\.\.\. (?:budget=[^,]*, [^,]*, size \d+->\d+ )?(decided to inline|not called often enough|not enough inlining budget|imported function|[^\]\[]*)/;
 const size = new Map();
 const byIdx = new Map(); // idx -> {verdict -> {sites, calls}}
 for (const line of fs.readFileSync(log, 'utf8').split('\n')) {
-  const m = LINE.exec(line);
+  const m = LINE.exec(line) || LINE24.exec(line);
   if (!m) continue;
   const idx = Number(m[1]);
   if (want.size && !want.has(idx)) continue;
