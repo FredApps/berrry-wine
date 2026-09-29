@@ -848,3 +848,23 @@ Results for mw3, as % of all block entries:
 The load window mw2 had 2.4-3.3% guest indirect, mostly
 `exe+0x4d11c7 call [edx+0xe8]` (1.6%, monomorphic), and a declined loop at
 `exe+0x4d11c3` with a 5.3% body.
+
+## CRT exports (2026-09-29, docs/crt-native-overrides.md)
+
+Morrowind imports the VC6 `msvcrt.dll`. `tools/crt-hot-exports.js` over the
+census windows charges its CRT time as follows:
+
+- **Load:** `sprintf` -> `_output` about 4.4%, `free` 0.78%, `strtok` 0.33%,
+  `_strnicmp` 0.15%.
+- **Frame:** `qsort` about 4%, almost all of it in the guest comparator
+  callback, and `sprintf` -> `$I10_OUTPUT` about 1%.
+
+None of that is a PURE export. `sprintf` needs a byte-exact `_output`, `qsort`
+calls back into the guest, and `free`/`strtok` own CRT state. So the
+wide-string and `floor` overrides added for UT do not move Morrowind.
+
+The older `_stricmp` override that Morrowind does use does not check the
+locale. It is exact only while the app stays in the "C" locale. That holds
+for `Morrowind.exe`: its msvcrt imports include `_stricmp` but no `setlocale`
+(`tools/pe-imports.js --all --dll=msvcrt.dll`). A DLL it loads could still
+change the locale, and that path was not checked.

@@ -898,3 +898,11 @@
     (owner "09a7h-video-mciavi.wat:$MCIAVI_TABLE"))
   (region.declare $MCIWND_TABLE (size 0x00000800) (align 0x00000010)
     (owner "09a7i-video-mciwnd.wat:$MCIWND_TABLE"))
+  ;; Native CRT export overrides that can hand a call back to the authentic
+  ;; export: +0 entry count, +4 "setlocale changed the locale" flag, then
+  ;; 127 [thunk index, authentic export VA] pairs -- UT2003 needs 11, because
+  ;; Unreal funnels its CRT use through core.dll wrappers. Process-shared
+  ;; because a DLL can load on any guest thread (09a6-handlers-crt.wat
+  ;; header). Kept small: the map below 0x08000000 has almost no room left.
+  (region.declare $CRT_OVERRIDE_TABLE (size 0x00000400) (align 0x00000010)
+    (owner "09a6-handlers-crt.wat:$CRT_OVERRIDE_TABLE"))

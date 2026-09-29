@@ -31834,5 +31834,47 @@
     "hash": 4103303870,
     "args": [{"name": "pMem", "type": "LPVOID"}],
     "ret": "HANDLE"
+  },
+  {
+    "id": 3745,
+    "name": "wcscpy",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 761796242
+  },
+  {
+    "id": 3746,
+    "name": "wcscat",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 747431384
+  },
+  {
+    "id": 3747,
+    "name": "wcsstr",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1323298499
+  },
+  {
+    "id": 3748,
+    "name": "_wcsnicmp",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 2611291440
+  },
+  {
+    "id": 3749,
+    "name": "setlocale",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 3602379541
+  },
+  {
+    "id": 3750,
+    "name": "_wsetlocale",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 846584795
   }
 ]
