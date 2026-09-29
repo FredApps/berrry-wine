@@ -4,6 +4,10 @@
 //   node tools/ne-disasm.js <file.exe> <seg>:<off>[,<seg>:<off>...] [count=24]
 //   node tools/ne-disasm.js <file.exe> 0x109b5f [count]      (runtime arena address)
 //   node tools/ne-disasm.js <file.exe> --arena=0x100000 ...  (default 0x100000)
+//   --bits=32  decode as USE32 code: a 16-bit program can set the D bit on
+//              its own segments through DPMI (Intel's ir41.dll runs its whole
+//              Indeo codec that way, ClockWerx its blitters), and read as
+//              16-bit such a segment is nonsense
 //
 // Every other disassembly tool here assumes a 32-bit image, so a Win16 trace
 // hit used to be read through a 32-bit decoder — which turns `c4 1f`
@@ -60,7 +64,9 @@ function main() {
   const argv = process.argv.slice(2);
   let arena = 0x100000;
   let all = false;
+  let bits = 16;
   const rest = argv.filter((a) => {
+    if (a === '--bits=32' || a === '--bits=16') { bits = +a.slice(7); return false; }
     const m = /^--arena=(?:0x)?([0-9a-fA-F]+)$/.exec(a);
     if (m) { arena = parseInt(m[1], 16); return false; }
     if (a === '--all') { all = true; return false; }
@@ -74,6 +80,7 @@ function main() {
     console.error('       node tools/ne-disasm.js <file.exe> 0xLINEAR [count]   (arena address)');
     console.error('       --all   sweep each named segment to its end instead of');
     console.error('               following one function (for grepping a whole module)');
+    console.error('       --bits=32  decode a USE32 segment (D bit set through DPMI)');
     process.exit(1);
   }
 
@@ -111,7 +118,7 @@ function main() {
       + `  (arena 0x${(arena + (segIndex - 1) * 0x10000 + off).toString(16)})`
       + `${seg.flags & 0x0001 ? '  DATA' : ''}`);
     const lines = disasmAt(b, seg.filePos + off, off,
-      all ? seg.length - off : count, null, { bits: 16, linear: all });
+      all ? seg.length - off : count, null, { bits, linear: all });
     for (const line of lines) {
       const at = parseInt(line.trim().split(/\s/)[0], 16);
       if (all && at >= seg.length) break;

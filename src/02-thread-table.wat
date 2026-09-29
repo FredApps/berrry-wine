@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 477 funcref)
+  (table $handlers 478 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -546,4 +546,5 @@
     $th_push_run_call         ;; 474: PUSH run + CALL rel32 (ret, target words)
     $th_pop_run_ret           ;; 475: POP run + RET / RET imm16 (imm word)
     $th_logical_frame         ;; 476: the app's game step entered (operand = EIP); 09a8
+    $th_xfer32                ;; 477: 32-bit CALL/RET/JMP/ENTER/LEAVE in a 16-bit task (05c)
   )

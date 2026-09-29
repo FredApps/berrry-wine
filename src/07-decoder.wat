@@ -2662,19 +2662,37 @@
         (i32.and (i32.add (global.get $d_pc) (local.get $disp)) (i32.const 0xFFFF))))))
     (i32.add (global.get $d_pc) (local.get $disp)))
 
-  ;; Control transfers whose 32-bit operand-size form in a 32-bit segment of a
-  ;; 16-bit task is not modelled: they would push or pop a doubleword EIP (or
-  ;; a 32-bit far pointer) where every handler here moves a word. ClockWerx's
-  ;; 32-bit blitters use none of them — they are entered by a 16-bit far call
-  ;; and leave by an o16 RETF — so this names the first program that does,
-  ;; instead of letting it return to half an address.
-  (func $use32_gap (param $op i32) (param $p66 i32)
-    (if (i32.and (global.get $cs_big) (i32.eqz (local.get $p66)))
+  ;; MOV r32, r32. In a 16-bit task a copy out of or into ESP crosses between
+  ;; the linear value the register file keeps and the stack offset the guest
+  ;; sees ($esp_arch in 05c), so those two go through $th_xfer32.
+  (func $emit_mov_r32_r32 (param $dst i32) (param $src i32)
+    (if (i32.and (global.get $code16)
+                 (i32.ne (i32.eq (local.get $dst) (i32.const 4))
+                         (i32.eq (local.get $src) (i32.const 4))))
       (then
-        (call $host_log_i32 (i32.const 0xCA163200)) ;; 32-bit transfer in a USE32 Win16 segment
-        (call $host_log_i32 (local.get $op))
-        (call $host_log_i32 (global.get $d_pc))
-        (unreachable))))
+        (if (i32.eq (local.get $src) (i32.const 4))
+          (then (call $te (i32.const 477)
+                  (i32.or (i32.const 13) (i32.shl (local.get $dst) (i32.const 8)))))
+          (else (call $te (i32.const 477)
+                  (i32.or (i32.const 14) (i32.shl (local.get $src) (i32.const 8))))))
+        (return)))
+    (call $te (i32.const 11) (i32.or (i32.shl (local.get $dst) (i32.const 4)) (local.get $src))))
+
+  ;; ALU r32, r32 (handler 12 + alu). In a 16-bit task an operation between
+  ;; ESP and another register is computed on the stack offset the guest sees:
+  ;; the op runs between xfer32 kinds 17 and 18, which move ESP into and back
+  ;; out of that space. Indeo's codec checks `lea eax,[esp+N] / sub eax,esp`
+  ;; is N before decoding a frame, on a flat SS whose base is not zero.
+  (func $emit_alu_r32_r32 (param $alu i32) (param $dst i32) (param $src i32)
+    (local $wrap i32)
+    (local.set $wrap
+      (i32.and (global.get $code16)
+               (i32.ne (i32.eq (local.get $dst) (i32.const 4))
+                       (i32.eq (local.get $src) (i32.const 4)))))
+    (if (local.get $wrap) (then (call $te (i32.const 477) (i32.const 17))))
+    (call $te (i32.add (i32.const 12) (local.get $alu))
+      (i32.or (i32.shl (local.get $dst) (i32.const 4)) (local.get $src)))
+    (if (local.get $wrap) (then (call $te (i32.const 477) (i32.const 18)))))
 
   ;; Opcodes that only mean anything in a segmented task. Reaching one from
   ;; flat 32-bit code means the decoder has lost the instruction stream, and
@@ -5101,6 +5119,9 @@
           ;; have needed $get_reg's br_table. Same shape the 0x66 path above
           ;; already uses. Trades 8 dispatch targets for one shl+add.
           (else
+            ;; PUSH ESP in a 16-bit task pushes the architectural offset.
+            (if (i32.and (global.get $code16) (i32.eq (local.get $op) (i32.const 0x54)))
+              (then (call $te (i32.const 477) (i32.const 15)) (br $decode)))
             (local.set $imm (call $try_emit_stack_run (i32.sub (local.get $op) (i32.const 0x50))
                               (i32.const 0) (local.get $insn_start)))
             (if (i32.eq (local.get $imm) (i32.const 2)) (then (local.set $done (i32.const 1))))
@@ -5113,6 +5134,8 @@
           (then (call $te (i32.const 182) (i32.sub (local.get $op) (i32.const 0x58))))
           ;; Same collapse for POP: generic $th_pop_r (33), register in operand.
           (else
+            (if (i32.and (global.get $code16) (i32.eq (local.get $op) (i32.const 0x5C)))
+              (then (call $te (i32.const 477) (i32.const 16)) (br $decode)))
             (local.set $imm (call $try_emit_stack_run (i32.sub (local.get $op) (i32.const 0x48))
                               (i32.const 0) (local.get $insn_start)))
             (if (i32.eq (local.get $imm) (i32.const 2)) (then (local.set $done (i32.const 1))))
@@ -5193,7 +5216,16 @@
       ;; in flat memory just round-trips CS=0x1B, so the selector word is dead.
       (if (i32.eq (local.get $op) (i32.const 0x9A))
         (then
-          (call $use32_gap (local.get $op) (local.get $prefix_66))
+          ;; ptr16:32 in a 16-bit task: 32-bit operand size (see $th_xfer32).
+          (if (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66)))
+            (then
+              (local.set $disp (call $d_fetch32))  ;; offset
+              (local.set $imm (call $d_fetch16))   ;; selector
+              (call $te (i32.const 477) (i32.const 11))
+              (call $te_raw (global.get $d_pc))
+              (call $te_raw (local.get $disp))
+              (call $te_raw (local.get $imm))
+              (local.set $done (i32.const 1)) (br $decode)))
           ;; In a 16-bit task this is ptr16:16 and the selector is the whole
           ;; point: it says which segment, and a selector equal to the import
           ;; thunk segment says this is an API call.
@@ -5281,10 +5313,10 @@
                             (call $te_raw (call $gl32 (i32.add (global.get $d_pc) (i32.const 3))))
                             (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 7))))
                           (else
-                            (call $te (i32.add (i32.const 12) (local.get $imm))
-                              (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))))
-                      (else (call $te (i32.add (i32.const 12) (local.get $imm))
-                        (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))))
+                            (call $emit_alu_r32_r32 (local.get $imm)
+                              (global.get $mr_reg) (global.get $mr_val)))))
+                      (else (call $emit_alu_r32_r32 (local.get $imm)
+                        (global.get $mr_val) (global.get $mr_reg)))))))
                 (else ;; byte (even opcode) — use r8 handler 153
                   (if (i32.and (local.get $op) (i32.const 2))
                     (then (call $te (i32.const 153)
@@ -5386,7 +5418,7 @@
                 (then (call $emit_mov_r8_r8 (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
                 (else (if (local.get $prefix_66)
                   (then (call $te (i32.const 210) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))
-                  (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_val) (i32.const 4)) (global.get $mr_reg))))))))
+                  (else (call $emit_mov_r32_r32 (global.get $mr_val) (global.get $mr_reg)))))))
             (else
               (if (i32.eq (local.get $op) (i32.const 0x89))
                 (then (if (local.get $prefix_66)
@@ -5422,7 +5454,7 @@
                 (then (call $emit_mov_r8_r8 (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
                 (else (if (local.get $prefix_66)
                   (then (call $te (i32.const 210) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))
-                  (else (call $te (i32.const 11) (i32.or (i32.shl (global.get $mr_reg) (i32.const 4)) (global.get $mr_val))))))))
+                  (else (call $emit_mov_r32_r32 (global.get $mr_reg) (global.get $mr_val)))))))
             (else
               (if (i32.eq (local.get $op) (i32.const 0x8B))
                 (then (if (local.get $prefix_66)
@@ -5467,7 +5499,10 @@
       (if (i32.eq (local.get $op) (i32.const 0x8D))
         (then
           (call $decode_modrm)
-          (call $emit_lea (global.get $mr_reg))
+          ;; 0x10 asks $th_lea16 for a doubleword result in a 16-bit task.
+          (call $emit_lea (i32.or (global.get $mr_reg)
+            (select (i32.const 0x10) (i32.const 0)
+              (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66))))))
           (br $decode)))
 
       ;; ---- 0x8E: MOV Sreg, r/m16 ----
@@ -5802,10 +5837,35 @@
       (if (i32.eq (local.get $op) (i32.const 0xFF))
         (then
           (call $decode_modrm)
-          (if (i32.and (i32.ge_u (global.get $mr_reg) (i32.const 2))
-                       (i32.le_u (global.get $mr_reg) (i32.const 5)))
-            (then (call $use32_gap (i32.or (i32.const 0xFF00) (global.get $mr_reg))
-                    (local.get $prefix_66))))
+          ;; CALL/JMP near and far with a 32-bit operand in a 16-bit task: the
+          ;; target is a doubleword offset, a far pointer is 16:32, and a call
+          ;; pushes doublewords (see $th_xfer32).
+          (if (i32.and (i32.and (i32.ge_u (global.get $mr_reg) (i32.const 2))
+                                (i32.le_u (global.get $mr_reg) (i32.const 5)))
+                       (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66))))
+            (then
+              (if (i32.and (i32.eq (global.get $mr_mod) (i32.const 3))
+                           (i32.eqz (i32.and (global.get $mr_reg) (i32.const 1))))
+                (then
+                  ;; register forms of CALL (/2) and JMP (/4)
+                  (if (i32.eq (global.get $mr_reg) (i32.const 2))
+                    (then (call $te (i32.const 477) (i32.const 5))
+                          (call $te_raw (global.get $d_pc)))
+                    (else (call $te (i32.const 477) (i32.const 7))))
+                  (call $te_raw (global.get $mr_val)))
+                (else
+                  (local.set $a (call $emit_sib_or_abs))
+                  ;; /2 -> 6, /3 -> 0, /4 -> 8, /5 -> 1
+                  (local.set $imm
+                    (if (result i32) (i32.eq (global.get $mr_reg) (i32.const 2)) (then (i32.const 6))
+                      (else (if (result i32) (i32.eq (global.get $mr_reg) (i32.const 3)) (then (i32.const 0))
+                        (else (if (result i32) (i32.eq (global.get $mr_reg) (i32.const 4)) (then (i32.const 8))
+                          (else (i32.const 1))))))))
+                  (call $te (i32.const 477) (local.get $imm))
+                  (if (i32.le_u (global.get $mr_reg) (i32.const 3))
+                    (then (call $te_raw (global.get $d_pc))))
+                  (call $te_raw (local.get $a))))
+              (local.set $done (i32.const 1)) (br $decode)))
           ;; 0=INC, 1=DEC, 2=CALL, 3=CALL far, 4=JMP, 5=JMP far, 6=PUSH
           (if (i32.eq (global.get $mr_reg) (i32.const 0)) ;; INC r/m32 (or r/m16 with 66h)
             (then
@@ -6035,7 +6095,13 @@
       ;; ---- CALL rel32 (0xE8) / CALL rel16 with 66h ----
       (if (i32.eq (local.get $op) (i32.const 0xE8))
         (then
-          (call $use32_gap (local.get $op) (local.get $prefix_66))
+          (if (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66)))
+            (then
+              (local.set $disp (call $d_fetch32))
+              (call $te (i32.const 477) (i32.const 4))
+              (call $te_raw (global.get $d_pc))
+              (call $te_raw (call $branch_target (local.get $disp)))
+              (local.set $done (i32.const 1)) (br $decode)))
           (if (local.get $prefix_66)
             (then
               (local.set $disp (call $d_fetch16))
@@ -6058,22 +6124,35 @@
       ;; ---- RET (0xC3) / RET imm16 (0xC2) ----
       ;; A near return in a 16-bit segment pops IP, not a linear address, so
       ;; the address has to be rebuilt from the CS base.
+      (if (i32.and (i32.eq (local.get $op) (i32.const 0xC3)) (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66))))
+        (then (call $te (i32.const 477) (i32.const 3))
+              (local.set $done (i32.const 1)) (br $decode)))
+      (if (i32.and (i32.eq (local.get $op) (i32.const 0xC2)) (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66))))
+        (then (call $te (i32.const 477)
+                (i32.or (i32.const 3) (i32.shl (call $d_fetch16) (i32.const 8))))
+              (local.set $done (i32.const 1)) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xC3))
-        (then (call $use32_gap (local.get $op) (local.get $prefix_66))
+        (then
               (call $te (if (result i32) (global.get $code16) (then (i32.const 365)) (else (i32.const 41))) (i32.const 0))
               (local.set $done (i32.const 1)) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xC2))
-        (then (call $use32_gap (local.get $op) (local.get $prefix_66))
+        (then
               (call $te (if (result i32) (global.get $code16) (then (i32.const 366)) (else (i32.const 42))) (call $d_fetch16))
               (local.set $done (i32.const 1)) (br $decode)))
       ;; ---- RETF (0xCB) / RETF imm16 (0xCA) ----
+      (if (i32.and (i32.or (i32.eq (local.get $op) (i32.const 0xCB))
+                           (i32.eq (local.get $op) (i32.const 0xCA))) (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66))))
+        (then (call $te (i32.const 477)
+                (i32.or (i32.const 2)
+                  (if (result i32) (i32.eq (local.get $op) (i32.const 0xCA))
+                    (then (i32.shl (call $d_fetch16) (i32.const 8)))
+                    (else (i32.const 0)))))
+              (local.set $done (i32.const 1)) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xCB))
         (then (call $win16_only (local.get $op))
-              (call $use32_gap (local.get $op) (local.get $prefix_66))
               (call $te (i32.const 371) (i32.const 0)) (local.set $done (i32.const 1)) (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xCA))
         (then (call $win16_only (local.get $op))
-              (call $use32_gap (local.get $op) (local.get $prefix_66))
               (call $te (i32.const 371) (call $d_fetch16)) (local.set $done (i32.const 1)) (br $decode)))
 
       ;; ---- JMP rel8 (0xEB) / JMP rel32 (0xE9) ----
@@ -6097,7 +6176,14 @@
       ;; Flat-mode emulation: ignore the selector, treat as near JMP to offset.
       (if (i32.eq (local.get $op) (i32.const 0xEA))
         (then
-          (call $use32_gap (local.get $op) (local.get $prefix_66))
+          (if (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66)))
+            (then
+              (local.set $disp (call $d_fetch32))  ;; offset
+              (local.set $imm (call $d_fetch16))   ;; selector
+              (call $te (i32.const 477) (i32.const 12))
+              (call $te_raw (local.get $disp))
+              (call $te_raw (local.get $imm))
+              (local.set $done (i32.const 1)) (br $decode)))
           (if (global.get $code16)
             (then
               (local.set $disp (call $d_fetch16))  ;; offset
@@ -6293,7 +6379,6 @@
       ;; which is better refused than approximated.
       (if (i32.eq (local.get $op) (i32.const 0xC8))
         (then
-          (call $use32_gap (local.get $op) (local.get $prefix_66))
           (local.set $imm (call $d_fetch16))
           (local.set $disp (call $d_fetch8))
           (if (local.get $disp)
@@ -6301,6 +6386,10 @@
               (call $host_log_i32 (i32.const 0xCA165E0C)) ;; ENTER with nesting level
               (call $host_log_i32 (global.get $d_pc))
               (unreachable)))
+          (if (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66)))
+            (then (call $te (i32.const 477)
+                    (i32.or (i32.const 9) (i32.shl (local.get $imm) (i32.const 8))))
+                  (br $decode)))
           (call $te
             (if (result i32) (global.get $code16)
               (then (i32.const 383))
@@ -6308,7 +6397,8 @@
             (local.get $imm))
           (br $decode)))
       (if (i32.eq (local.get $op) (i32.const 0xC9))
-        (then (call $use32_gap (local.get $op) (local.get $prefix_66))
+        (then (if (i32.and (global.get $code16) (i32.eqz (local.get $prefix_66)))
+                (then (call $te (i32.const 477) (i32.const 10)) (br $decode)))
               (call $te (if (result i32) (global.get $code16) (then (i32.const 384)) (else (i32.const 113)))
                 (i32.const 0))
               (br $decode))) ;; LEAVE

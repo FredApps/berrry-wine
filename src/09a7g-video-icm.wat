@@ -8,6 +8,7 @@
   ;;   +0x0000  HIC table, $ICM_SLOTS records of 64 bytes
   ;;   +0x0400  ICINFO name strings
   ;;   +0x0600  installable-driver table, then its lookup strings at +0x0700
+  ;;   +0x0800  Win16 MSVIDEO driver instances (09e-win16-api.wat)
   ;;   +0x1000  one output row being converted (16 KB)
   ;;
   ;; HIC record:

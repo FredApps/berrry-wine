@@ -69,7 +69,7 @@
   ;; offset across to the new base. Guest code writes SS and SP as a pair and
   ;; expects SP to survive the SS write.
   (func $win16_set_sreg (export "win16_set_sreg") (param $id i32) (param $sel i32)
-    (local $base i32)
+    (local $base i32) (local $off i32)
     (local.set $sel (i32.and (local.get $sel) (i32.const 0xFFFF)))
     (local.set $base (call $win16_seg_base (call $win16_sel_to_index (local.get $sel))))
     ;; A null selector in ES or DS is not an error: a NULL far pointer is
@@ -138,9 +138,14 @@
         (return)))
     (if (i32.eq (local.get $id) (i32.const 2))
       (then
+        ;; The stack offset carries across; it is a word unless the new stack
+        ;; segment is a 32-bit one (its B bit, which is the D bit here).
+        (local.set $off (call $esp_arch))
+        (if (i32.eqz (call $win16_seg_is_big (local.get $sel)))
+          (then (local.set $off (i32.and (local.get $off) (i32.const 0xFFFF)))))
         (global.set $sreg_ss (local.get $sel))
         (global.set $seg_base_ss (local.get $base))
-        (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $base) (i32.and (i32.load offset=16 (global.get $reg_base)) (i32.const 0xFFFF))))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $base) (local.get $off)))
         (return)))
     (if (i32.eq (local.get $id) (i32.const 3))
       (then (global.set $sreg_ds (local.get $sel)) (global.set $seg_base_ds (local.get $base)) (return)))
@@ -168,11 +173,26 @@
         (then (local.get $disp))
         (else (i32.and (local.get $disp) (i32.const 0xFFFF))))))
 
+  ;; ESP as a register value. The register file keeps ESP *linear* — the SS
+  ;; base plus the stack offset — because every push, pop, call and return
+  ;; handler addresses memory through it directly. What the guest sees as ESP
+  ;; is the offset. For a 16-bit stack that is simply the low word (every
+  ;; segment base is 64KB aligned), which is why 16-bit code can read SP
+  ;; straight out of it; a 32-bit stack, such as the 4GB flat alias Intel's
+  ;; Indeo driver moves SS to, needs the subtraction.
+  (func $esp_arch (result i32)
+    (i32.sub (i32.load offset=16 (global.get $reg_base)) (global.get $seg_base_ss)))
+
   ;; base + index<<scale, the register half of an info word.
+  ;; Only a SIB base can name ESP (16-bit addressing has no SP form), and it
+  ;; contributes the stack offset, not the linear address ($esp_arch).
   (func $ea16_regs (param $info i32) (result i32)
     (local $off i32)
     (if (i32.ne (i32.and (local.get $info) (i32.const 0xF)) (i32.const 0xF))
-      (then (local.set $off (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $info) (i32.const 0xF)) (i32.const 2)))))))
+      (then (local.set $off
+        (if (result i32) (i32.eq (i32.and (local.get $info) (i32.const 0xF)) (i32.const 4))
+          (then (call $esp_arch))
+          (else (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.and (local.get $info) (i32.const 0xF)) (i32.const 2)))))))))
     (if (i32.ne (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF)) (i32.const 0xF))
       (then (local.set $off (i32.add (local.get $off)
         (i32.shl
@@ -190,12 +210,21 @@
 
   ;; 364: LEA r16, m — the offset only, with no segment base and wrapped to
   ;; the segment, because that is the number the guest is about to use as one.
+  ;; op bit 4 marks a 32-bit operand size (USE32 code, or 0x66): the whole
+  ;; doubleword is written.
   (func $th_lea16 (param $op i32)
      (local $nx_fn i32) (local $nx_op i32) (local $info i32) (local $off i32)
     (local.set $info (read-thread-word))
-    (local.set $off (call $ea16_regs (local.get $info)))
-    (call $set_reg16 (local.get $op)
-      (i32.and (i32.add (local.get $off) (read-thread-word)) (i32.const 0xFFFF)))
+    (local.set $off (i32.add (call $ea16_regs (local.get $info)) (read-thread-word)))
+    (if (i32.and (local.get $op) (i32.const 0x10))
+      (then
+        (if (i32.eqz (i32.and (local.get $info) (i32.const 0x800)))
+          (then (local.set $off (i32.and (local.get $off) (i32.const 0xFFFF)))))
+        (i32.store (i32.add (global.get $reg_base)
+                            (i32.shl (i32.and (local.get $op) (i32.const 7)) (i32.const 2)))
+                   (local.get $off))
+        (dispatch-next)))
+    (call $set_reg16 (local.get $op) (i32.and (local.get $off) (i32.const 0xFFFF)))
     (dispatch-next))
 
   ;; 442: LAR r16/32, r/m16. The NE loader's selector table is the protected-
@@ -502,6 +531,192 @@
   (func $th_jmp_near16_m (param $op i32)
     (global.set $eip (i32.add (global.get $seg_base_cs) (call $gl16 (call $read_addr)))))
 
+  ;; ---- 32-bit operand-size transfers in a 16-bit task ----
+  ;;
+  ;; 477: every CALL/RET/JMP/ENTER/LEAVE whose operand size is 32 bits in a
+  ;; 16-bit task: code in a segment whose D bit is set, or a 0x66 prefix in a
+  ;; 16-bit one. They push and pop doubleword offsets (and a doubleword slot
+  ;; for CS), and a far pointer is 16:32. Intel's Indeo 4 driver (ir41.dll)
+  ;; runs its codec in USE32 segments of a 16-bit DLL: its 16-bit side enters
+  ;; with `66 FF 5E xx` (CALL FAR m16:32) and the 32-bit side calls, enters
+  ;; frames and returns with the 32-bit forms throughout.
+  ;;
+  ;; op = kind | imm16<<8. Offsets are relative to the CS base, never
+  ;; masked to 16 bits. Kinds and the thread words that follow:
+  ;;   0 CALL FAR m16:32    ret, addr        1 JMP FAR m16:32   addr
+  ;;   2 RETF imm           -                3 RET imm          -
+  ;;   4 CALL rel32         ret, target      5 CALL r32         ret, reg
+  ;;   6 CALL m32           ret, addr        7 JMP r32          reg
+  ;;   8 JMP m32            addr             9 ENTER imm, 0     -
+  ;;  10 LEAVE              -               11 CALL FAR ptr16:32 ret, off, sel
+  ;;  12 JMP FAR ptr16:32   off, sel      13 MOV r32, ESP     r in imm
+  ;;  14 MOV ESP, r32       r in imm      15 PUSH ESP          -
+  ;;  16 POP ESP            -             17 ESP -> offset     -
+  ;;  18 ESP -> linear      -
+  ;; 13-18 are the other places the guest sees ESP's value, which is the offset
+  ;; into SS while the register file keeps the linear address; 17 and 18
+  ;; bracket an ALU op between ESP and another register.
+  ;; ret and target are linear, as every other threaded transfer carries them.
+  ;; Pushes go through $io_apc_push (09a7d), which is a plain doubleword push
+  ;; onto the linear ESP.
+  (func $x32_pop (result i32)
+    (local $v i32)
+    (local.set $v (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (local.get $v))
+
+  (func $x32_far (param $sel i32) (param $off i32) (param $ret i32) (param $is_call i32)
+    (if (i32.eq (local.get $sel) (global.get $WIN16_THUNK_SEL))
+      (then
+        (call $host_log_i32 (i32.const 0xCA163201)) ;; 16:32 far transfer into the API thunks
+        (call $host_log_i32 (local.get $off))
+        (call $host_log_i32 (global.get $eip))
+        (unreachable)))
+    (if (local.get $is_call)
+      (then
+        (call $io_apc_push (global.get $sreg_cs))
+        (call $io_apc_push (i32.sub (local.get $ret) (global.get $seg_base_cs)))
+        (call $cs_push (local.get $ret))))
+    (call $win16_set_sreg (i32.const 1) (local.get $sel))
+    (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $off)))
+    (call $win16_assert_eip (i32.const 0x32)))
+
+  (func $x32_call_near (param $ret i32) (param $off i32)
+    (call $io_apc_push (i32.sub (local.get $ret) (global.get $seg_base_cs)))
+    (call $cs_push (local.get $ret))
+    (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $off))))
+
+  (func $th_xfer32 (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32)
+    (local $kind i32) (local $imm i32) (local $ret i32) (local $addr i32)
+    (local $off i32) (local $sel i32) (local $frame i32)
+    (local.set $kind (i32.and (local.get $op) (i32.const 0xFF)))
+    (local.set $imm (i32.shr_u (local.get $op) (i32.const 8)))
+    (if (i32.le_u (local.get $kind) (i32.const 1))
+      (then
+        (if (i32.eqz (local.get $kind)) (then (local.set $ret (read-thread-word))))
+        (local.set $addr (call $read_addr))
+        (call $x32_far (call $gl16 (i32.add (local.get $addr) (i32.const 4)))
+          (call $gl32 (local.get $addr)) (local.get $ret) (i32.eqz (local.get $kind)))
+        (return)))
+    (if (i32.eq (local.get $kind) (i32.const 2))
+      (then
+        (local.set $off (call $x32_pop))
+        (local.set $sel (i32.and (call $x32_pop) (i32.const 0xFFFF)))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $imm)))
+        (if (i32.eq (local.get $sel) (global.get $WIN16_THUNK_SEL))
+          (then (call $win16_dispatch (local.get $off) (i32.const 0)) (return)))
+        (call $win16_set_sreg (i32.const 1) (local.get $sel))
+        (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $off)))
+        (call $cs_pop)
+        (return)))
+    (if (i32.eq (local.get $kind) (i32.const 3))
+      (then
+        (local.set $off (call $x32_pop))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $imm)))
+        (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $off)))
+        (call $cs_pop)
+        (return)))
+    (if (i32.eq (local.get $kind) (i32.const 4))
+      (then
+        (local.set $ret (read-thread-word))
+        (call $x32_call_near (local.get $ret)
+          (i32.sub (read-thread-word) (global.get $seg_base_cs)))
+        (return)))
+    (if (i32.eq (local.get $kind) (i32.const 5))
+      (then
+        (local.set $ret (read-thread-word))
+        (call $x32_call_near (local.get $ret)
+          (i32.load (i32.add (global.get $reg_base) (i32.shl (read-thread-word) (i32.const 2)))))
+        (return)))
+    (if (i32.eq (local.get $kind) (i32.const 6))
+      (then
+        (local.set $ret (read-thread-word))
+        (call $x32_call_near (local.get $ret) (call $gl32 (call $read_addr)))
+        (return)))
+    (if (i32.eq (local.get $kind) (i32.const 7))
+      (then
+        (global.set $eip (i32.add (global.get $seg_base_cs)
+          (i32.load (i32.add (global.get $reg_base) (i32.shl (read-thread-word) (i32.const 2))))))
+        (return)))
+    (if (i32.eq (local.get $kind) (i32.const 8))
+      (then
+        (global.set $eip (i32.add (global.get $seg_base_cs) (call $gl32 (call $read_addr))))
+        (return)))
+    ;; ENTER imm, 0 and LEAVE. EBP holds a stack *offset*, ESP a linear
+    ;; address (see $win16_set_sreg), so the frame pointer is ESP less the SS
+    ;; base, and LEAVE adds it back.
+    (if (i32.eq (local.get $kind) (i32.const 9))
+      (then
+        (call $io_apc_push (i32.load offset=20 (global.get $reg_base)))
+        (i32.store offset=20 (global.get $reg_base)
+          (i32.sub (i32.load offset=16 (global.get $reg_base)) (global.get $seg_base_ss)))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.sub (i32.load offset=16 (global.get $reg_base)) (local.get $imm)))
+        (dispatch-next)))
+    (if (i32.eq (local.get $kind) (i32.const 10))
+      (then
+        (local.set $off (i32.load offset=20 (global.get $reg_base)))
+        (if (i32.eqz (call $win16_seg_is_big (global.get $sreg_ss)))
+          (then (local.set $off (i32.and (local.get $off) (i32.const 0xFFFF)))))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (global.get $seg_base_ss) (local.get $off)))
+        (i32.store offset=20 (global.get $reg_base) (call $x32_pop))
+        (dispatch-next)))
+    ;; MOV r32, ESP and MOV ESP, r32 (see $esp_arch): imm is the other register.
+    (if (i32.eq (local.get $kind) (i32.const 13))
+      (then
+        (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $imm) (i32.const 2)))
+                   (call $esp_arch))
+        (dispatch-next)))
+    (if (i32.eq (local.get $kind) (i32.const 14))
+      (then
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (global.get $seg_base_ss)
+            (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $imm) (i32.const 2))))))
+        (dispatch-next)))
+    ;; PUSH ESP pushes the offset it had before the push; POP ESP loads the
+    ;; popped offset and discards the increment. ir41's 32->16 thunk saves
+    ;; its stack with PUSH ESP and later reloads that slot with MOV ESP, r32.
+    (if (i32.eq (local.get $kind) (i32.const 15))
+      (then
+        (call $io_apc_push (call $esp_arch))
+        (dispatch-next)))
+    (if (i32.eq (local.get $kind) (i32.const 16))
+      (then
+        (local.set $off (call $x32_pop))
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (global.get $seg_base_ss) (local.get $off)))
+        (dispatch-next)))
+    ;; Bracket an ALU op between ESP and another register ($emit_alu_r32_r32):
+    ;; 17 moves ESP to the guest's offset, 18 back to the linear address.
+    (if (i32.eq (local.get $kind) (i32.const 17))
+      (then
+        (i32.store offset=16 (global.get $reg_base) (call $esp_arch))
+        (dispatch-next)))
+    (if (i32.eq (local.get $kind) (i32.const 18))
+      (then
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (global.get $seg_base_ss)))
+        (dispatch-next)))
+    (if (i32.eq (local.get $kind) (i32.const 11))
+      (then
+        (local.set $ret (read-thread-word))
+        (local.set $off (read-thread-word))
+        (call $x32_far (read-thread-word) (local.get $off) (local.get $ret) (i32.const 1))
+        (return)))
+    (if (i32.eq (local.get $kind) (i32.const 12))
+      (then
+        (local.set $off (read-thread-word))
+        (call $x32_far (read-thread-word) (local.get $off) (i32.const 0) (i32.const 0))
+        (return)))
+    (call $host_log_i32 (i32.const 0xCA163202)) ;; unknown xfer32 kind
+    (call $host_log_i32 (local.get $op))
+    (unreachable))
+
   ;; ---- Inspection exports (used by test/test-win16-exec.js) ----
   (func (export "win16_sreg") (param $id i32) (result i32) (call $seg16_value (local.get $id)))
   (func (export "win16_seg_base_of") (param $id i32) (result i32) (call $seg16_base (local.get $id)))
@@ -511,8 +726,7 @@
   ;;
   ;; ENTER and LEAVE are 286 instructions and the standard prologue and
   ;; epilogue of 16-bit compiled code, so a Win16 task reaches them almost
-  ;; immediately. The 32-bit forms are still undecoded and still trap; adding
-  ;; them is a separate change with its own blast radius.
+  ;; immediately. The 32-bit forms are kind 9 and 10 of $th_xfer32.
 
   ;; 383: ENTER imm16, 0 — push BP, BP = SP, SP -= imm16. The nesting level is
   ;; checked at decode time, so this only ever sees level 0.

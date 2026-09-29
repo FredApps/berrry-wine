@@ -138,4 +138,57 @@ comes the main menu with its animated IV41 map.
 
 - Advisor and wonder movies have not been driven. They use the same AVIFIL32 +
   `ICLocate` path as `opening.avi`.
-- The Win16 build's `IR41.DL_` driver (Win16 MSVIDEO) is out of scope.
+- The Win16 intro's "black" space renders as dark grey (index value 0x1c).
+  That may be the movie's own palette or the 8-bit output palette; it is
+  unchecked.
+
+## The Win16 build plays its movies through the disc's 16-bit Indeo (2026-09-28)
+
+The Win16 disc (`civ2_win16`) ships Video for Windows 1.1 setup media in
+`VFW_INST\`. Its `IR41.DL_` is Intel's **16-bit** Indeo 4 driver, KWAJ
+method 3 compressed and with no stored length. `SETUP.INF` gives the size:
+
+```
+node tools/kwaj.js "…/cd/VFW_INST/IR41.DL_" …/civilization-2-win16/vfw/ir41.dll --size=774960
+```
+
+(sha256 `88f156f5…d99721`; `test/test-kwaj-expand.js` checks it.) `lib/apps.js`
+mounts it as `c:\windows\system\ir41.dll` and writes `VIDC.IV41=ir41.dll` into
+`system.ini [drivers]`. The game calls Win16 MSVIDEO `ICLocate`/`ICSendMessage`/
+`ICMessage` in `src/09e-win16-api.wat`. Those load the NE driver and run its
+`DriverProc` as a far call.
+
+What the driver needs from the emulator, in the order it hit them:
+
+- **LocalInit(sel, 0, cb)**: its heap goes after the segment's data, and the
+  segment grows. DGROUP is 0x4EEE bytes with a 0xB102 heap. A heap at offset 0
+  overwrote the data, and DRV_LOAD failed on its own check of `[0xa2]`.
+- **DPMI int 31h 06h/0Ah/0Bh/0Ch with the G bit.** It aliases data segments
+  11-14 (0Ah) and sets them to limit FFFFFh with G+D, i.e. 4 GB flat. It sets
+  D on code segments 2-9 and B on the stack segment, and reads bases back
+  with 06h.
+- **USE32 code inside a 16-bit task.** The codec lives in segments 2-9 and is
+  entered from seg10:0x17f2 with `66 FF 5E xx` (CALL FAR m16:32). The
+  32-bit CALL/RET/RETF/JMP/ENTER/LEAVE forms are `$th_xfer32` (handler 477,
+  05c).
+- **ESP as the guest sees it.** The register file keeps ESP linear. The seg3:0
+  thunk switches SS to a flat alias (base 0x02260000 in the run above). From
+  then on, every instruction that exposes ESP's value must use the offset
+  into SS: `mov r,esp`, `push esp`, `pop esp`, `lea r,[esp+N]` and ALU ops
+  between ESP and another register (xfer32 kinds 13-18). The codec refuses
+  every frame unless `lea eax,[esp+838h] / sub eax,esp` gives 838h
+  (seg6:0x0ef0). Before that fix ICM_DECOMPRESSEX returned -100 on every frame.
+- KERNEL `GlobalFix`/`GlobalUnfix` (197/198) and `IsBadReadPtr`/
+  `IsBadWritePtr` (334/335, plus the Huge forms 346/347).
+
+Where to look when a frame fails: seg10:0x969a maps the codec's internal
+status (0..0x16) to an ICERR. The 32-bit decode is seg10:0x16a0 → 0x17f2.
+Segment bases in these runs: seg2 0x021a0000 … seg10 0x02220000, DGROUP
+(seg19) 0x022b0000.
+
+Headless recipe: `node test/run.js --app=civ2_win16 --quiet-api --no-close
+--batch-size=100000 --tick-ms-per-batch=20 --input=400:mousemove:209:280,
+410:mousedown:209:280,430:mouseup:209:280,700:mousemove:322:327,
+710:mousedown:322:327,730:mouseup:322:327,950:png:a.png,1200:png:b.png`.
+The intro's starfield, title and galaxy burst decode frame by frame.
+`test/test-win16-use32-stack.js` pins the ESP semantics.
