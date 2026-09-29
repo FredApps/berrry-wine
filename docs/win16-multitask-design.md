@@ -172,3 +172,44 @@ Win32 threads.
 
 The browser keeps launching Win32 children as separate apps. Only NE-from-NE
 WinExec takes the in-process path.
+
+## Status (2026-09-29)
+
+Phases 1-4 are in (2abe8c25, c8bd3a64). Civ2's Civilopedia opens GET_INFO,
+shows the Civilization Advances list and a topic page, and EXIT hands the
+screen back to Civ2 with its menus working. How section 6 was built, and three
+things it found on the way:
+
+- **Where a send comes from.** Civ2 never sends to Get_Info explicitly.
+  DefWindowProc's WM_ACTIVATE → SetFocus delivers WM_SETFOCUS to whichever
+  window gets focus. That ran Get_Info's procedure on Civ2's stack with Civ2's
+  DGROUP. So the owner check sits in `$win16_enter_wndproc`, which every
+  Win16 delivery goes through, not in `$win16_SendMessage`.
+- **Sender side.** The far return goes on the sender's stack. Then
+  `$win16_thread_send_park` (thunk offset 0xFFDC) yields 10. It re-parks there
+  until the host calls `complete_thread_send`, which, for a Win16 instance,
+  loads DX:AX and RETFs.
+- **Owner side.** `thread_send_begin` calls `$win16_thread_send_begin`. That
+  pushes ES/DS/CS and enters the procedure with far return 0xFFE0
+  (`$win16_thread_send_return`), which packs DX:AX into EAX, restores the
+  segment registers and ends the nested run with eip 0. The owner takes a
+  send only at a message point: GetMessage/PeekMessage check
+  `$incoming_send_pending` at the dispatch site and park on their own thunk
+  with yield 17. WaitMessage already parks at 15.
+- **GlobalReAlloc must keep the handle.** Growing a pooled block used to
+  return a new selector and free the old one, and the next GlobalAlloc reused
+  the old one. Authorware keeps selectors in its event-list nodes, and its walk
+  (`seg 9:0xbd35 call far es:[si+6]`) called a pointer read out of a string.
+  The pooled path now swaps table entries. A block that grows into arena slots
+  still moves, because slots are tied to their index.
+- **A worker-side host hook.** `win16StageModule` was not in
+  `PROCESS_SHARED_KEYS`, so the second task's LoadLibrary("C:\\pedia\\civjump.dll")
+  always failed and Authorware reported "Unable to locate a component".
+- **Quit.** `$quit_flag` 1 is the 32-bit handler's guess when `$main_hwnd` is
+  destroyed. Get_Info shows and destroys a probe window before its real one,
+  and that window had been promoted to main. Win16 DestroyWindow now never
+  sets it; USER.6 PostQuitMessage sets 2, a real quit.
+
+Still open: phase 5 (a task's windows are not destroyed at thread exit, and a
+"window cleanup failed: unreachable" was seen once), and the worker backend's
+`$GUEST_STACK` scratch.

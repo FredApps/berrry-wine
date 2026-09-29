@@ -226,3 +226,19 @@ keydown/keyup only, so letter commands need `cmd keypress:<ascii>`.
   The packed lParam went to the native edit unconverted, so every city kept
   the terrain name the buffer already held ("Hills", "Grassland")
   (`test-win16-gettext-lparam.js`).
+
+## Civilopedia (Win16, 2026-09-29)
+
+The Civilopedia menu does not show a dialog. Civ2 `WinExec`s
+`PEDIA\GET_INFO.EXE`, an 11 MB Authorware 2 runtime (its image is ~750 KB; the
+rest is an overlay it reads from its own file). The two talk through
+`FindWindow("Get_Info")` and `ShowWindow`, plus a `get_info.txt` Civ2 writes
+with the topic. GET_INFO loads `PEDIA\CIVJUMP.DLL`, a small NE, by full path.
+It runs as a second Win16 task: see docs/win16-multitask-design.md.
+
+Controlled route: from the setup screens, Enter ×16 (with `step 250` between)
+reaches the map. `cmd post-cmd:386` then opens the Civilopedia's
+Civilization Advances list; the menu item ids are the WM_COMMAND the bar
+sends. After about 240 batches the list is up. A click on a name (for
+example 102,117 for Alphabet) opens its page. EXIT on a topic page is at
+497,461, and on the list at 425,432.
