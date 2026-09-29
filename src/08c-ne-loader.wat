@@ -938,17 +938,29 @@
   ;; SS:SP in the header names the initial stack. An SP of zero means "the top
   ;; of the segment", which after the growth above is the whole DGROUP.
   (func $win16_start_task (param $ne_off i32)
+    ;; The 16-bit handle map belongs to the process, not to the image: a fresh
+    ;; load in the same instance must not inherit the last run's indices. A
+    ;; second task started by WinExec shares them, so it enters below instead.
+    (call $win16_handle_reset)
+    (call $win16_task_setup (local.get $ne_off) (i32.const 0)))
+
+  ;; Everything about starting a task that belongs to that task: DGROUP growth,
+  ;; the instance header, the stack, and the entry registers. `seg_base` is the
+  ;; arena index the image's segment 1 sits one past -- 0 for the first task,
+  ;; its module record's seg_index_base for one loaded beside it -- and applies
+  ;; to the header's SS segment number. The other inputs are the per-instance
+  ;; globals the loader fills in: $win16_auto_data (already absolute), entry
+  ;; CS:IP, stack and heap sizes.
+  (func $win16_task_setup (param $ne_off i32) (param $seg_base i32)
     (local $ss_index i32) (local $sp i32) (local $ds_index i32) (local $limit i32)
     (local $reserved_start i32)
-
-    ;; The 16-bit handle map belongs to the task, not to the image: a second
-    ;; load in the same instance must not inherit the first task's indices.
-    (call $win16_handle_reset)
     (global.set $win16_scratch_seg (i32.const 0))
 
     (local.set $ds_index (global.get $win16_auto_data))
     (local.set $ss_index (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x1A))))
     (local.set $sp       (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x18))))
+    (if (local.get $ss_index)
+      (then (local.set $ss_index (i32.add (local.get $ss_index) (local.get $seg_base)))))
     (if (i32.eqz (local.get $ss_index)) (then (local.set $ss_index (local.get $ds_index))))
 
     ;; Grow DGROUP for heap + stack. A 64KB segment is the ceiling; asking for
@@ -1064,6 +1076,69 @@
     (global.set $df (i32.const 0))
     (global.set $code16 (i32.const 1)))
 
+  ;; Become the Win16 task WinExec loaded as module `id` (09e
+  ;; $win16_winexec_task). Runs on the new thread's own instance, whose
+  ;; globals are all fresh: nothing of the parent task is here except what the
+  ;; start record carries. The image itself was loaded by the parent through
+  ;; the DLL path, so its segments already sit in the shared arena and its
+  ;; module record says where; this only derives the per-task globals $load_ne
+  ;; would have set, builds the PSP, and enters through $win16_task_setup.
+  ;; The thread parameter -- the start slot -- is at [ESP+4] of the 32-bit
+  ;; stack the scheduler gave the thread, which the task never returns to.
+  (func $win16_task_boot
+    (local $slot i32) (local $start i32) (local $id i32) (local $rec i32)
+    (local $ne i32) (local $base i32) (local $auto i32)
+    (local $psp i32) (local $len i32)
+    (local.set $slot (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base))
+                                          (i32.const 4))))
+    (if (i32.ge_u (local.get $slot) (global.get $WIN16_TASK_SLOTS))
+      (then (call $host_log_i32 (i32.const 0xB0071600)) (unreachable)))
+    (local.set $start (call $win16_task_start_slot (local.get $slot)))
+    (local.set $id (i32.load (local.get $start)))
+    (if (i32.eqz (call $win16_dll_loaded (local.get $id)))
+      (then (call $host_log_i32 (i32.const 0xB0071601)) (unreachable)))
+    (global.set $win16_task_module (local.get $id))
+    (global.set $win16_task_slot (local.get $slot))
+    (global.set $win16_cmd_show (i32.load offset=4 (local.get $start)))
+    (global.set $win16_trace (i32.load offset=16 (local.get $start)))
+    (global.set $WIN16_THUNK_SEL (i32.load offset=8 (local.get $start)))
+    (global.set $win16_thunk_index (i32.load offset=12 (local.get $start)))
+    (global.set $image_base (i32.const 0))
+    (global.set $is_win16 (i32.const 1))
+
+    (local.set $rec (call $win16_dll_rec (local.get $id)))
+    (local.set $ne (i32.load (local.get $rec)))
+    (local.set $base (i32.load offset=4 (local.get $rec)))
+    (global.set $win16_ne_off (local.get $ne))
+    (global.set $win16_file_size (i32.load (call $win16_dll_image_size_ptr (local.get $id))))
+    (global.set $win16_seg_count (i32.load offset=12 (local.get $rec)))
+    (local.set $auto (i32.load16_u (i32.add (local.get $ne) (i32.const 0x0E))))
+    (if (local.get $auto)
+      (then (local.set $auto (i32.add (local.get $auto) (local.get $base)))))
+    (global.set $win16_auto_data (local.get $auto))
+    (global.set $win16_entry_cs (call $win16_index_to_sel
+      (i32.add (local.get $base) (i32.load16_u (i32.add (local.get $ne) (i32.const 0x16))))))
+    (global.set $win16_entry_ip (i32.load16_u (i32.add (local.get $ne) (i32.const 0x14))))
+    (global.set $win16_stack_size (i32.load16_u (i32.add (local.get $ne) (i32.const 0x12))))
+    (global.set $win16_heap_size (i32.load16_u (i32.add (local.get $ne) (i32.const 0x10))))
+    (global.set $win16_env_seg (i32.const 0))
+    (global.set $win16_dta (i32.const 0))
+
+    ;; The PSP, with this task's own command tail, so InitTask finds it built.
+    (local.set $psp (call $win16_alloc_segment))
+    (global.set $win16_psp_sel (call $win16_index_to_sel (local.get $psp)))
+    (local.set $psp (call $g2w (call $win16_seg_base (local.get $psp))))
+    (local.set $len (i32.load offset=20 (local.get $start)))
+    (if (i32.gt_u (local.get $len) (i32.const 126)) (then (local.set $len (i32.const 126))))
+    (i32.store8 offset=0x80 (local.get $psp) (local.get $len))
+    (memory.copy (i32.add (local.get $psp) (i32.const 0x81))
+      (i32.add (local.get $start) (i32.const 0x18)) (local.get $len))
+    ;; NUL then CR, as $win16_InitTask writes it for the first task.
+    (i32.store8 (i32.add (i32.add (local.get $psp) (i32.const 0x81)) (local.get $len)) (i32.const 0))
+    (i32.store8 (i32.add (i32.add (local.get $psp) (i32.const 0x82)) (local.get $len)) (i32.const 0x0D))
+
+    (call $win16_task_setup (local.get $ne) (local.get $base)))
+
   ;; ---- NE DLLs ----
   ;;
   ;; A Win16 DLL is the same file format as the task, so it loads the same way:
@@ -1121,9 +1196,14 @@
     (if (i32.eq (i32.and (local.get $hinst) (i32.const 0xFFFF)) (i32.const 0xFFFF))
       (then (return (i32.const 0))))
     ;; The task's own instance handle is its DGROUP selector.
+    ;; A task started by WinExec was loaded as a module, so its own image is
+    ;; that module's record rather than the PE staging buffer.
     (if (i32.eq (i32.and (local.get $hinst) (i32.const 0xFFFF))
                 (call $win16_index_to_sel (global.get $win16_auto_data)))
-      (then (return (i32.const 1))))
+      (then (return (select
+        (i32.or (global.get $win16_task_module) (i32.const 0x10000))
+        (i32.const 1)
+        (global.get $win16_task_module)))))
     ;; A module handle from LoadLibrary or GetModuleHandle.
     (local.set $h (call $win16_h32 (i32.and (local.get $hinst) (i32.const 0xFFFF))))
     (if (i32.eq (i32.and (local.get $h) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))

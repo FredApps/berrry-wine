@@ -20,6 +20,10 @@
     (local.set $saved_start (global.get $run_budget_start))
     (global.set $block_budget (local.get $max_blocks))
     (global.set $run_budget_start (local.get $max_blocks))
+    ;; A Win16 task started by WinExec: its first slice turns the fresh thread
+    ;; instance into that task (08c $win16_task_boot).
+    (if (i32.eq (global.get $eip) (global.get $WIN16_TASK_ENTRY))
+      (then (call $win16_task_boot)))
     ;; Animate controls playing on comctl32's "thread" (09c3-wndprocs6).
     (call $anim_service)
     ;; FlushInstructionCache broadcasts through shared memory because decoded

@@ -5088,9 +5088,20 @@
   ;; 650: DrawMenuBar. Menu chrome is WAT-owned, so redraw it synchronously and
   ;; tell the renderer that the non-client surface changed.
   (func $handle_DrawMenuBar (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $src i32)
     (if (i32.eq (call $wnd_table_find (local.get $arg0)) (i32.const -1))
       (then (i32.store offset=0 (global.get $reg_base) (i32.const 0)))
       (else
+        ;; A bar built from CreateMenu/AppendMenu is a snapshot taken at
+        ;; SetMenu. Apps edit the live menus afterwards and call DrawMenuBar
+        ;; to publish the change -- Civ2 rebuilds every popup with new command
+        ;; ids, so a stale snapshot sends WM_COMMAND ids its handler no longer
+        ;; knows. Re-serialize from the live tree before repainting.
+        (local.set $src (call $menu_source_get (local.get $arg0)))
+        (if (i32.ne (local.get $src) (i32.const 0))
+          (then (if (call $dynamic_menu_state_w (local.get $src))
+            (then (drop (call $menu_set_bar_from_dynamic
+              (local.get $arg0) (local.get $src)))))))
         (call $defwndproc_do_ncpaint (local.get $arg0))
         (call $host_invalidate_frame (local.get $arg0))
         (i32.store offset=0 (global.get $reg_base) (i32.const 1))))

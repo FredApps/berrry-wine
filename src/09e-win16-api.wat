@@ -419,7 +419,8 @@
 
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=4 (global.get $reg_base) (global.get $win16_stack_size))
-    (i32.store offset=8 (global.get $reg_base) (i32.const 1))   ;; SW_SHOWNORMAL
+    ;; nCmdShow: SW_SHOWNORMAL for the first task, WinExec's for a later one.
+    (i32.store offset=8 (global.get $reg_base) (global.get $win16_cmd_show))
     (i32.store offset=12 (global.get $reg_base) (i32.const 0x81))
     (i32.store offset=24 (global.get $reg_base) (i32.const 0))   ;; no previous instance
     (i32.store offset=28 (global.get $reg_base) (global.get $sreg_ds))
@@ -2469,6 +2470,13 @@
     (local.set $id (i32.and (local.get $module) (i32.const 0xFFFF)))
     (if (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
       (then (return (i32.const 0))))
+    ;; A task WinExec started is an EXE, not NAME.DLL, and was started from
+    ;; wherever its command line said (Civ2's PEDIA\GET_INFO.EXE).
+    (if (i32.and (i32.ne (global.get $win16_task_module) (i32.const 0))
+                 (i32.eq (local.get $id) (global.get $win16_task_module)))
+      (then
+        (drop (call $win16_task_module_path (local.get $path) (i32.const 128)))
+        (return (i32.const 1))))
     (local.set $slot (call $win16_dynamic_module_slot
       (i32.sub (local.get $id) (global.get $WIN16_DYNAMIC_BASE))))
     (local.set $n (i32.load8_u (local.get $slot)))
@@ -2685,6 +2693,24 @@
     (call $gs8 (i32.add (local.get $p) (i32.const 4)) (i32.const 0))
     (i32.add (i32.add (local.get $at) (local.get $n)) (i32.const 4)))
 
+;; GetModuleFileName for a task WinExec started: the full path it was
+  ;; started from, kept in its start record. Answers the length written, cut
+  ;; to $size - 1 and terminated as GetModuleFileName's own copy is.
+  (func $win16_task_module_path (param $buf i32) (param $size i32) (result i32)
+    (local $src i32) (local $i i32) (local $c i32)
+    (if (i32.eqz (local.get $size)) (then (return (i32.const 0))))
+    (local.set $src (i32.add (call $win16_task_start_slot (global.get $win16_task_slot))
+      (i32.const 0x98)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (i32.add (local.get $i) (i32.const 1)) (local.get $size)))
+      (local.set $c (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (br_if $done (i32.eqz (local.get $c)))
+      (call $gs8 (i32.add (local.get $buf) (local.get $i)) (local.get $c))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $gs8 (i32.add (local.get $buf) (local.get $i)) (i32.const 0))
+    (local.get $i))
+
   (func $win16_GetModuleFileName
     (local $buf i32) (local $size i32) (local $raw_mod i32) (local $mod i32) (local $id i32)
     (local $slot i32) (local $n i32) (local $i i32)
@@ -2742,6 +2768,13 @@
     (if (i32.eq (i32.and (local.get $mod) (i32.const 0xFFFF0000)) (i32.const 0x00D10000))
       (then
         (local.set $id (i32.and (local.get $mod) (i32.const 0xFFFF)))
+        (if (i32.and (i32.ne (global.get $win16_task_module) (i32.const 0))
+                     (i32.eq (local.get $id) (global.get $win16_task_module)))
+          (then
+            (i32.store offset=0 (global.get $reg_base)
+              (call $win16_task_module_path (local.get $buf) (local.get $size)))
+            (call $win16_api_return (i32.const 8))
+            (return)))
         (if (i32.ge_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
           (then
             (local.set $slot (call $win16_dynamic_module_slot
@@ -2788,6 +2821,14 @@
                 (i32.store offset=0 (global.get $reg_base) (local.get $i))
                 (call $win16_api_return (i32.const 8))
                 (return)))))))
+    ;; Everything left means the task's own image, which for a started task
+    ;; is not the process's EXE.
+    (if (global.get $win16_task_module)
+      (then
+        (i32.store offset=0 (global.get $reg_base)
+          (call $win16_task_module_path (local.get $buf) (local.get $size)))
+        (call $win16_api_return (i32.const 8))
+        (return)))
     (call $win16_call32_begin (i32.const 3))
     (call $handle_GetModuleFileNameA (i32.const 0) (local.get $buf) (local.get $size)
       (i32.const 0) (i32.const 0) (i32.const 0))
@@ -3565,6 +3606,22 @@
       (then (call $dos_set_ax (i32.const 2)) (call $dos_cf (i32.const 0)) (return)))
 
     ;; 4Ch terminate, AL = exit code.
+    ;; A task WinExec started ends only itself: its thread, its module id and
+    ;; its start slot, so the same program can be started again. Its segments
+    ;; stay where they were placed -- nothing reclaims arena slots yet.
+    (if (i32.and (i32.eq (local.get $ah) (i32.const 0x4C))
+                 (i32.ne (global.get $win16_task_module) (i32.const 0)))
+      (then
+        (call $win16_dll_unload (global.get $win16_task_module))
+        (call $win16_dynamic_module_release (global.get $win16_task_module))
+        (i32.store (call $win16_task_start_slot (global.get $win16_task_slot)) (i32.const 0))
+        (global.set $win16_task_module (i32.const 0))
+        (global.set $code16 (i32.const 0))
+        (call $host_exit_thread (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFF)))
+        (global.set $yield_reason (i32.const 2))
+        (global.set $eip (i32.const 0))
+        (global.set $steps (i32.const 0))
+        (return)))
     (if (i32.eq (local.get $ah) (i32.const 0x4C))
       (then
         (call $host_exit (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFF)))
@@ -5108,12 +5165,168 @@
       (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 8)))
 
+  ;; WinExec of a 16-bit program runs it as a second task in this emulator
+  ;; (docs/win16-multitask-design.md) rather than handing it to the host, so
+  ;; the two tasks share one window table: Civilization II starts its
+  ;; Civilopedia runtime, CIV2\PEDIA\GET_INFO.EXE, this way and then waits for
+  ;; FindWindow to see the "Get_Info" window it creates. The image is loaded
+  ;; through the DLL path, so its segments take arena slots after everything
+  ;; already loaded and its module record says where; a new guest thread then
+  ;; boots into it ($win16_task_boot). Answers the new task's instance handle,
+  ;; or 0 for "not an NE task this can start", which leaves the old host path
+  ;; to deal with it -- a 32-bit program, or a file that is not there.
+  (func $win16_winexec_task (param $cmd i32) (param $show i32) (result i32)
+    (local $path i32) (local $pstr i32) (local $n i32) (local $c i32)
+    (local $dot i32) (local $tail i32) (local $id i32) (local $size i32)
+    (local $stage i32) (local $ne i32) (local $slot i32) (local $start i32)
+    (local $i i32) (local $rec i32) (local $auto i32)
+    (local.set $path (region.addr $GUEST_STACK 0xC00))
+    (local.set $pstr (region.addr $GUEST_STACK 0xD00))
+    (block $skipped (loop $skip
+      (br_if $skipped (i32.ne (call $gl8 (local.get $cmd)) (i32.const 0x20)))
+      (local.set $cmd (i32.add (local.get $cmd) (i32.const 1)))
+      (br $skip)))
+    ;; The program is the first blank-delimited word. Without an extension it
+    ;; means .EXE; a dot in a directory name is not one.
+    (block $word (loop $copy
+      (local.set $c (call $gl8 (i32.add (local.get $cmd) (local.get $n))))
+      (br_if $word (i32.le_u (local.get $c) (i32.const 0x20)))
+      (br_if $word (i32.ge_u (local.get $n) (i32.const 0xF0)))
+      (if (i32.eq (local.get $c) (i32.const 0x2E)) (then (local.set $dot (i32.const 1))))
+      (if (i32.or (i32.eq (local.get $c) (i32.const 0x5C)) (i32.eq (local.get $c) (i32.const 0x2F)))
+        (then (local.set $dot (i32.const 0))))
+      (call $gs8 (i32.add (local.get $path) (local.get $n)) (local.get $c))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $copy)))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+    (local.set $tail (i32.add (local.get $cmd) (local.get $n)))
+    (if (i32.eqz (local.get $dot))
+      (then
+        (call $gs32 (i32.add (local.get $path) (local.get $n)) (i32.const 0x4558452E)) ;; ".EXE"
+        (local.set $n (i32.add (local.get $n) (i32.const 4)))))
+    (call $gs8 (i32.add (local.get $path) (local.get $n)) (i32.const 0))
+    (call $win16_call32_begin (i32.const 1))
+    (call $handle_GetFileAttributesA (local.get $path) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (call $win16_call32_end)
+    (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const -1))
+      (then (call $host_log_i32 (i32.const 0xB0071610)) (return (i32.const 0))))
+
+    ;; Its module name is the base name, and it gets an app-local module id.
+    ;; A second copy of an image already running would share its code and
+    ;; take a new DGROUP, which nothing here does yet.
+    (call $win16_cstr_to_pstr (local.get $path) (call $win16_name_scratch) (i32.const 1))
+    (local.set $id (call $win16_module_id (call $g2w (call $win16_name_scratch))))
+    (if (i32.lt_u (local.get $id) (global.get $WIN16_DYNAMIC_BASE))
+      (then (call $host_log_i32 (i32.const 0xB0071611)) (return (i32.const 0))))
+    (if (call $win16_dll_loaded (local.get $id))
+      (then (call $host_log_i32 (i32.const 0xB0071603)) (return (i32.const 0))))
+    ;; The host stages from the full path (lib/host-imports.js), which it is
+    ;; handed as a Pascal string like a module name.
+    (call $gs8 (local.get $pstr) (local.get $n))
+    (local.set $i (i32.const 0))
+    (block $pdone (loop $pcopy
+      (br_if $pdone (i32.ge_u (local.get $i) (local.get $n)))
+      (call $gs8 (i32.add (i32.add (local.get $pstr) (i32.const 1)) (local.get $i))
+        (call $gl8 (i32.add (local.get $path) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $pcopy)))
+    (local.set $size (call $host_win16_stage_module (call $g2w (local.get $pstr)) (local.get $id)))
+    (if (i32.le_s (local.get $size) (i32.const 0))
+      (then (call $host_log_i32 (i32.const 0xB0071612)) (call $win16_dynamic_module_release (local.get $id)) (return (i32.const 0))))
+    ;; Only an NE program: a PE is the host's to launch, and a library is not
+    ;; something WinExec starts.
+    (local.set $stage (call $win16_dll_staging (local.get $id)))
+    (local.set $ne (i32.load (i32.add (local.get $stage) (i32.const 0x3C))))
+    (if (i32.or (i32.ne (i32.load16_u (local.get $stage)) (i32.const 0x5A4D))
+                (i32.ge_u (i32.add (local.get $ne) (i32.const 0x40)) (local.get $size)))
+      (then (call $host_log_i32 (i32.const 0xB0071613)) (call $win16_dynamic_module_release (local.get $id)) (return (i32.const 0))))
+    (local.set $ne (i32.add (local.get $stage) (local.get $ne)))
+    (if (i32.or (i32.ne (i32.load16_u (local.get $ne)) (i32.const 0x454E))
+                (i32.ne (i32.and (i32.load16_u (i32.add (local.get $ne) (i32.const 0x0C)))
+                                 (i32.const 0x8000)) (i32.const 0)))
+      (then (call $host_log_i32 (i32.const 0xB0071614)) (call $win16_dynamic_module_release (local.get $id)) (return (i32.const 0))))
+    (if (i32.eqz (call $load_ne_dll_sized (local.get $id) (local.get $size)))
+      (then (call $host_log_i32 (i32.const 0xB0071615)) (call $win16_dynamic_module_release (local.get $id)) (return (i32.const 0))))
+
+    (block $found (loop $find
+      (br_if $found (i32.eqz (i32.load (call $win16_task_start_slot (local.get $slot)))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (if (i32.ge_u (local.get $slot) (global.get $WIN16_TASK_SLOTS))
+        (then (call $host_log_i32 (i32.const 0xB0071602)) (unreachable)))
+      (br $find)))
+    (local.set $start (call $win16_task_start_slot (local.get $slot)))
+    (call $zero_memory (local.get $start) (i32.const 0x180))
+    (i32.store (local.get $start) (local.get $id))
+    (i32.store offset=4 (local.get $start) (local.get $show))
+    (i32.store offset=16 (local.get $start) (global.get $win16_trace))
+    (i32.store offset=8 (local.get $start) (global.get $WIN16_THUNK_SEL))
+    (i32.store offset=12 (local.get $start) (global.get $win16_thunk_index))
+    ;; The command tail without its leading blanks, as the first task's is.
+    (block $tskipped (loop $tskip
+      (br_if $tskipped (i32.ne (call $gl8 (local.get $tail)) (i32.const 0x20)))
+      (local.set $tail (i32.add (local.get $tail) (i32.const 1)))
+      (br $tskip)))
+    (local.set $i (i32.const 0))
+    (block $tdone (loop $tcopy
+      (br_if $tdone (i32.ge_u (local.get $i) (i32.const 126)))
+      (local.set $c (call $gl8 (i32.add (local.get $tail) (local.get $i))))
+      (br_if $tdone (i32.eqz (local.get $c)))
+      (i32.store8 (i32.add (i32.add (local.get $start) (i32.const 0x18)) (local.get $i)) (local.get $c))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $tcopy)))
+    (i32.store offset=20 (local.get $start) (local.get $i))
+    ;; The path GetModuleFileName answers for this task, made absolute: the
+    ;; program finds its own overlay data through it, and Civ2 names it as
+    ;; ".\pedia\get_info.exe". The start record was zeroed, so a copy cut at
+    ;; 127 bytes is still terminated.
+    (local.set $c (call $host_fs_get_full_path_name (call $g2w (local.get $path))
+      (i32.const 0xF0) (local.get $pstr) (i32.const 0) (i32.const 0)))
+    (if (i32.and (i32.ne (local.get $c) (i32.const 0)) (i32.lt_u (local.get $c) (i32.const 0xF0)))
+      (then
+        (local.set $n (local.get $c))
+        (local.set $i (i32.const 0))
+        (block $fdone (loop $fcopy
+          (br_if $fdone (i32.gt_u (local.get $i) (local.get $n)))
+          (call $gs8 (i32.add (local.get $path) (local.get $i))
+            (call $gl8 (i32.add (local.get $pstr) (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $fcopy)))))
+    (local.set $i (i32.const 0))
+    (block $ndone (loop $ncopy
+      (br_if $ndone (i32.ge_u (local.get $i) (select (local.get $n) (i32.const 127)
+                                               (i32.lt_u (local.get $n) (i32.const 127)))))
+      (i32.store8 (i32.add (i32.add (local.get $start) (i32.const 0x98)) (local.get $i))
+        (call $gl8 (i32.add (local.get $path) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $ncopy)))
+    (drop (call $host_create_thread (global.get $WIN16_TASK_ENTRY) (local.get $slot)
+      (i32.const 0x1000) (i32.const 0) (i32.const 0) (global.get $current_thread_id)))
+
+    ;; hInstance is the new task's DGROUP selector, which is also what its
+    ;; own InitTask will report.
+    (local.set $rec (call $win16_dll_rec (local.get $id)))
+    (local.set $auto (i32.load16_u (i32.add (i32.load (local.get $rec)) (i32.const 0x0E))))
+    (if (i32.eqz (local.get $auto)) (then (local.set $auto (i32.const 1))))
+    (call $win16_index_to_sel (i32.add (i32.load offset=4 (local.get $rec)) (local.get $auto))))
+
   (func $win16_WinExec
-    (local $command i32) (local $show i32)
+    (local $command i32) (local $show i32) (local $guest i32) (local $hinst i32)
     (local.set $show (call $win16_arg16 (i32.const 0)))
     (if (call $win16_arg16 (i32.const 2))
-      (then (local.set $command (call $g2w (call $win16_far_to_guest
-        (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1)))))))
+      (then
+        (local.set $guest (call $win16_far_to_guest
+          (call $win16_arg16 (i32.const 2)) (call $win16_arg16 (i32.const 1))))
+        (local.set $command (call $g2w (local.get $guest)))))
+    (if (local.get $guest)
+      (then
+        (local.set $hinst (call $win16_winexec_task (local.get $guest) (local.get $show)))
+        (if (local.get $hinst)
+          (then
+            (i32.store offset=0 (global.get $reg_base) (local.get $hinst))
+            (i32.store offset=8 (global.get $reg_base) (i32.const 0))
+            (call $win16_api_return (i32.const 6))
+            (return)))))
     (i64.store (global.get $TEXT_SCRATCH) (i64.const 0x00636578456E6957)) ;; "WinExec\0"
     (i32.store offset=0 (global.get $reg_base) (call $host_shell_execute
       (i32.const 0) (global.get $TEXT_SCRATCH) (local.get $command)
@@ -7347,8 +7560,11 @@
     ;; USER.152 DestroyMenu(hMenu) -> BOOL.
     (if (i32.eq (local.get $ordinal) (i32.const 152))
       (then
+        ;; The handle is read before the bridge opens: once it has, ESP is
+        ;; the 32-bit scratch stack ($win16_arg16).
+        (local.set $arg (call $win16_h32 (call $win16_arg16 (i32.const 0))))
         (call $win16_call32_begin (i32.const 1))
-        (call $handle_DestroyMenu (call $win16_h32 (call $win16_arg16 (i32.const 0)))
+        (call $handle_DestroyMenu (local.get $arg)
           (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
         (call $win16_call32_end)
         (i32.store offset=0 (global.get $reg_base)
@@ -7358,6 +7574,10 @@
     (if (i32.eq (local.get $ordinal) (i32.const 407))
       (then (call $win16_CreateIcon) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 457))
+      (then (call $win16_DestroyIcon) (return (i32.const 1))))
+    ;; USER.458 DestroyCursor: the same release as DestroyIcon, which already
+    ;; takes cursor handles (Authorware's GET_INFO frees its busy cursor).
+    (if (i32.eq (local.get $ordinal) (i32.const 458))
       (then (call $win16_DestroyIcon) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 131))
       (then (call $win16_class_long (i32.const 0)) (return (i32.const 1))))

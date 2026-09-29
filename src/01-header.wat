@@ -3687,6 +3687,30 @@
   (func $win16_res_handle_next_set (param $v i32) (i32.store (call $win16_task_shared (i32.const 24)) (local.get $v)))
   (func $win16_mm_timer_next_get (result i32) (i32.load (call $win16_task_shared (i32.const 28))))
   (func $win16_mm_timer_next_set (param $v i32) (i32.store (call $win16_task_shared (i32.const 28)) (local.get $v)))
+
+  ;; A second Win16 task (WinExec of an NE, docs/win16-multitask-design.md)
+  ;; is a guest thread whose instance starts at this sentinel EIP; run() sees
+  ;; it and calls $win16_task_boot, which reads the start record the parent
+  ;; wrote. The thread parameter is the record's slot number.
+  ;;
+  ;; Start records live in the hidden page after the shared cursors, eight of
+  ;; 0x180 bytes from +0x100. A slot is held for the life of its task, since
+  ;; GetModuleFileName answers from the path in it.
+  ;;   +0x00 module id (0 = free)   +0x04 nCmdShow
+  ;;   +0x08 thunk selector         +0x0C thunk segment index
+  ;;   +0x10 parent's $win16_trace   +0x14 command-tail length
+  ;;   +0x18 command tail (128)     +0x98 full path, NUL-terminated (128)
+  (global $WIN16_TASK_ENTRY i32 (i32.const 0xFFFE1600))
+  (global $WIN16_TASK_SLOTS i32 (i32.const 8))
+  (func $win16_task_start_slot (param $slot i32) (result i32)
+    (call $win16_task_shared
+      (i32.add (i32.const 0x100) (i32.mul (local.get $slot) (i32.const 0x180)))))
+  ;; The dynamic module id of this instance's task image, or 0 for the task
+  ;; the process was started with (whose image is the PE staging buffer).
+  (global $win16_task_module (mut i32) (i32.const 0))
+  (global $win16_task_slot (mut i32) (i32.const 0))
+  ;; What InitTask hands WinMain as nCmdShow.
+  (global $win16_cmd_show (mut i32) (i32.const 1))
   ;; One entry per distinct (module, ordinal) the task and its DLLs import.
   ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
   ;; the table has room for 2048 — still only 8KB of thunk segment used out of
