@@ -105,7 +105,7 @@ if (fs.existsSync(chrome)) {
     `the browser dropdown launch did not remain alive\n${browserOutput}\n${browserConsole.slice(-6000)}`);
   assert(browserOutput.includes('"GTA2 Demo"'),
     `the browser lost GTA2's visible window\n${browserOutput}`);
-  assert(browserConsole.includes('[threads] guest main thread is running in a Worker (experimental)'),
+  assert(browserConsole.includes('[threads] guest main thread is running in a Worker'),
     `the browser did not exercise the Worker launch path\n${browserConsole.slice(-6000)}`);
   assert(!browserConsole.includes('[ExitProcess]'),
     `the browser re-entered GTA2's corrupt calibration exit path\n${browserConsole.slice(-6000)}`);

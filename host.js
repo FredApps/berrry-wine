@@ -758,6 +758,9 @@ class WineAssembly {
     // The micro-op tier is on by default too; `uop: false` on an app, the
     // debug toolbar box or ?no-uop turns it off.
     this.uop = true;
+    // Worker threads follow the page (window.WINE_THREADS, on by default);
+    // `threads: false` on an app keeps that app cooperative.
+    this.threads = true;
     // CPUID SSE advertisement is opt-in until each app's reachable SIMD path
     // has passed an authentic run against the decoder.
     this.cpuSSE = false;
@@ -2638,6 +2641,10 @@ class WineAssembly {
   async _maybeStartGuestWorker(wasmModule) {
     if (typeof window === 'undefined') return;
     if (!window.WINE_THREADS) return;
+    if (this.threads === false) {
+      this.logToUI('[threads] this app opts out (threads: false) — running single-threaded');
+      return;
+    }
     if (!(typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated)) {
       this.logToUI('[threads] not cross-origin isolated — running single-threaded');
       return;
@@ -2687,7 +2694,7 @@ class WineAssembly {
       // a DirectSound ring is kept full on its own and the AudioWorklet may
       // play it straight out of shared memory (lib/host-audio.js playRing).
       if (this.hostCtx) this.hostCtx.liveAudioRing = true;
-      this.logToUI('[threads] guest main thread is running in a Worker (experimental)');
+      this.logToUI('[threads] guest main thread is running in a Worker');
     } catch (err) {
       this.guestWorker = null;
       this.logToUI(`[threads] worker start failed (${err.message}) — running single-threaded`);

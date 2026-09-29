@@ -91,7 +91,7 @@ async function runCase(browser, baseUrl, spec) {
   });
   await page.setViewport({ width: 1100, height: 820, deviceScaleFactor: 1 });
   await page.evaluateOnNewDocument(({ diagnostic, traceApi }) => {
-    localStorage.removeItem('wine-assembly.threads');
+    localStorage.setItem('wine-assembly.threads', '0');  // cooperative route
     if (diagnostic) globalThis.__waTraceCategories = new Set(['fs', 'win16']);
     if (traceApi.length) globalThis.__waTraceApiNames = new Set(traceApi);
   }, { diagnostic: DIAGNOSTIC, traceApi: TRACE_API });

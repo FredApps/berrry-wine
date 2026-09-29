@@ -305,7 +305,7 @@ async function runCase(browser, baseUrl, spec, threaded) {
     }
   });
   await page.setViewport({ width: 1100, height: 820, deviceScaleFactor: 1 });
-  await page.evaluateOnNewDocument(() => localStorage.removeItem('wine-assembly.threads'));
+  await page.evaluateOnNewDocument(() => localStorage.setItem('wine-assembly.threads', '0'));  // cooperative route
   await page.goto(`${baseUrl}/index.html?debug&no-log&installer-matrix=${Date.now()}`,
     { waitUntil: 'load', timeout: 60000 });
   await page.waitForFunction(id => typeof launchApp === 'function' &&

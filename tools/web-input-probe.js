@@ -301,9 +301,10 @@ async function main() {
         }
       });
     }
-    if (THREADS || PRESENTATION_SCALE) {
+    {
+      // Threads are the page default now, so a cooperative probe says so.
       await page.evaluateOnNewDocument((threads, scale) => {
-        if (threads) localStorage.setItem('wine-assembly.threads', '1');
+        localStorage.setItem('wine-assembly.threads', threads ? '1' : '0');
         if (scale) localStorage.setItem('wine-assembly:2d-scale', scale);
       }, THREADS, PRESENTATION_SCALE);
     }
