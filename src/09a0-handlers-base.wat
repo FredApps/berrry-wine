@@ -360,9 +360,24 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))  ;; stdcall, 0 args
   )
 
+  ;; Write one host wall-clock record (kind 0/1: 16-byte SYSTEMTIME, kind 2:
+  ;; 8-byte FILETIME) to the guest's own buffer at $ga. The host writes $len
+  ;; contiguous bytes, and one $g2w translation is only good for one guest
+  ;; page -- a SYSTEMTIME straddling two sparse pages would spill its tail
+  ;; into unrelated memory. So the host fills a span that is linear by
+  ;; construction (the guest's bytes when they already are, else a gathered
+  ;; copy) and $guest_span_writeback scatters it back page by page. A NULL
+  ;; buffer gets no span and the host writes nothing.
+  (func $wall_clock_to_guest (param $ga i32) (param $kind i32) (param $len i32)
+    (local $wa i32)
+    (local.set $wa (call $guest_span_in (local.get $ga) (local.get $len)))
+    (if (i32.eqz (local.get $wa)) (then (return)))
+    (drop (call $host_wall_clock (local.get $wa) (local.get $kind)))
+    (call $guest_span_writeback (local.get $ga) (local.get $wa) (local.get $len)))
+
   ;; 6: GetLocalTime(lpSystemTime) — host wall clock in the local time zone.
   (func $handle_GetLocalTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (drop (call $host_wall_clock (call $g2w (local.get $arg0)) (i32.const 1)))
+    (call $wall_clock_to_guest (local.get $arg0) (i32.const 1) (i32.const 16))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
