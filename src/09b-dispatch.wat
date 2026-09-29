@@ -193,6 +193,9 @@
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA000E))
       (then
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+        ;; Then the dispatcher node $dispatch_delphi_exception_handler linked.
+        (call $seh_pop_dispatch_node (i32.load offset=16 (global.get $reg_base)))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
         (if (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const 1))
           (then
             (call $delphi_seh_continue_search)
@@ -1232,6 +1235,10 @@
     ;; A frame handler called for a CPU fault returned (see $seh_raw_continue).
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0037))
       (then (call $seh_raw_continue) (return)))
+
+    ;; Guest code called a dispatcher node's handler (see $seh_dispatch_node_handler).
+    (if (i32.eq (local.get $name_rva) (i32.const 0xCACA003A))
+      (then (call $seh_dispatch_node_handler) (return)))
 
     ;; An RtlUnwind frame handler returned (see $rtl_unwind_continue).
     (if (i32.eq (local.get $name_rva) (i32.const 0xCACA0039))
