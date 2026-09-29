@@ -2466,6 +2466,12 @@
     (global.get $x87_island_matches))
   (func (export "get_x87_island_runs") (result i32)
     (global.get $x87_island_runs))
+  ;; --no-x87-island-predecode: run H451 islands through the original
+  ;; per-op $fpu_exec_* walk. Run-time only, so no cache clear.
+  (func (export "set_x87_island_predecode") (param $flag i32)
+    (global.set $x87_island_predecode (local.get $flag)))
+  (func (export "get_x87_island_predecode") (result i32)
+    (global.get $x87_island_predecode))
   (func (export "set_x87_affine_fusion") (param $flag i32)
     (global.set $x87_affine_emit_enabled (local.get $flag))
     (call $clear_cache))

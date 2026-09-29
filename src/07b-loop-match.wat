@@ -86,6 +86,12 @@
   (global $x87_tree4_runs (mut i32) (i32.const 0))
   (global $x87_island_matches (mut i32) (i32.const 0))
   (global $x87_island_runs (mut i32) (i32.const 0))
+  ;; H451 run-time body selector. 1 (default): $x87_island_fast, the
+  ;; call-free direct-dispatch body. 0: $x87_island_generic, the original
+  ;; per-op $fpu_exec_mem/$fpu_exec_reg walk (--no-x87-island-predecode).
+  ;; A run-time choice only -- both bodies read the same records -- so
+  ;; flipping it needs no cache flush.
+  (global $x87_island_predecode (mut i32) (i32.const 1))
   (global $x87_affine_emit_enabled (mut i32) (i32.const 0))
   (global $x87_affine_prepare_matches (mut i32) (i32.const 0))
   (global $x87_affine_prepare_runs (mut i32) (i32.const 0))
@@ -1407,9 +1413,16 @@
   ;; Generic x87 micro-op inner loop. This eliminates threaded dispatch and
   ;; keeps the canonical stack/tag/status semantics in $fpu_exec_mem/reg.
   (func $th_x87_island (param $packed i32)
-     (local $nx_fn i32) (local $nx_op i32) (call $x87_island_body (local.get $packed))
+     (local $nx_fn i32) (local $nx_op i32)
+    (if (global.get $x87_island_predecode)
+      (then (call $x87_island_fast (local.get $packed)))
+      (else (call $x87_island_generic (local.get $packed))))
     (dispatch-next))
   (func $x87_island_body (param $packed i32)
+    (if (global.get $x87_island_predecode)
+      (then (call $x87_island_fast (local.get $packed)))
+      (else (call $x87_island_generic (local.get $packed)))))
+  (func $x87_island_generic (param $packed i32)
     (local $cursor i32) (local $fn i32) (local $op i32)
     (local $count i32) (local $i i32) (local $addr i32)
     (local.set $cursor (global.get $ip))
@@ -1449,6 +1462,482 @@
       (local.set $op (i32.load offset=4 (local.get $cursor)))
       (local.set $cursor (i32.add (local.get $cursor) (i32.const 8)))
       (br $each)))
+    (global.set $ip (local.get $cursor))
+    (global.set $x87_island_runs
+      (i32.add (global.get $x87_island_runs) (i32.const 1))))
+
+  ;; ----------------------------------------------------------------------
+  ;; $x87_island_fast: the same H451 island, without a call per op.
+  ;;
+  ;; $x87_island_generic hands every op to $fpu_exec_mem / $fpu_exec_reg,
+  ;; which re-decode (group, reg, rm) through compare chains and reach the
+  ;; register file through $fpu_get/$fpu_set/$fpu_push/$fpu_pop -- none of
+  ;; which V8 or Ion inlines there (Ion: 148 direct calls in $fpu_exec_reg,
+  ;; 76 in $fpu_exec_mem). This body keeps the island's x87 state in locals
+  ;; for the whole run and dispatches each op through one br_table on
+  ;; (reg-form, group) plus a short test on the reg field:
+  ;;
+  ;;   $top $tag $raw  TOP, the valid-tag byte and the exact-integer-shadow
+  ;;                   tag byte ($fpu_top/$fpu_tag/$fpu_raw_tag). Written
+  ;;                   back once at the end.
+  ;;   $st0            ST(0)'s value. AUTHORITATIVE: the FPU_FILE slot of
+  ;;                   the current TOP may be stale while it is live, and it
+  ;;                   is stored back whenever TOP moves (push, pop,
+  ;;                   FINCSTP/FDECSTP) and at the end. Every other physical
+  ;;                   slot, and every exact-integer shadow value, stays in
+  ;;                   FPU_FILE memory ($base = $fpu_base) and is read and
+  ;;                   written there directly.
+  ;;
+  ;; Everything the island does not model inline -- FLDENV/FNSTENV,
+  ;; FRSTOR/FNSAVE, m80 and BCD, FXAM, transcendentals, FPREM, FSCALE,
+  ;; FCMOV, FNCLEX/FNINIT, every reserved encoding that must reach
+  ;; $fpu_crash_op -- takes the GENERIC arm: publish the locals to the
+  ;; globals, call the canonical $fpu_exec_mem/$fpu_exec_reg exactly as the
+  ;; old body does, and reload. So an op whose stack effect or status
+  ;; visibility this body does not know is still executed by the one
+  ;; implementation, against exactly the state it would have seen.
+  ;;
+  ;; Bit-exactness against $x87_island_generic is the contract
+  ;; (test/test-x87-island-predecode.js fuzzes the two against each other):
+  ;; the same f64 operations in the same order; the same guest accessors for
+  ;; each form ($g2w + load, $gl32, $gs16/$gs32/$gs64), so page-straddle and
+  ;; SMC behaviour is unchanged; $fpu_set_exc raised at the same points and
+  ;; in the same order, so --trace-fpu prints the same lines; $fpu_sw and
+  ;; $fpu_cw stay globals, touched only where the old code touches them;
+  ;; $fpu_round/$fpu_to_i*/$fpu_compare* are the shared helpers themselves.
+  ;; The D8 register and memory arithmetic go through $fpu_arith's ZE checks;
+  ;; the DC/DE register forms do not raise ZE, exactly as $fpu_exec_reg.
+  ;;
+  ;; The macros below are this function's register-file primitives; they
+  ;; name its locals, so they are only meaningful inside it.
+  (defmacro (x87i-slot $X)          ;; FPU_FILE address of physical slot X
+    (i32.add (local.get $base) (i32.shl $X (i32.const 3))))
+  (defmacro (x87i-phys $X)          ;; physical slot of ST(X)
+    (i32.and (i32.add (local.get $top) $X) (i32.const 7)))
+  ;; ST(rm). The memory load is harmless when rm = 0 (it reads a slot the
+  ;; select then ignores), and keeps this branch-free.
+  (defmacro (x87i-get-rm)
+    (select (local.get $st0)
+      (f64.load (x87i-slot (x87i-phys (local.get $rm))))
+      (i32.eqz (local.get $rm))))
+  ;; $fpu_set 0: value, drop the exact shadow, tag valid.
+  (defmacro (x87i-set0 $V)
+    (local.set $st0 $V)
+    (local.set $raw (i32.and (local.get $raw)
+      (i32.xor (i32.const 0xFF) (i32.shl (i32.const 1) (local.get $top)))))
+    (local.set $tag (i32.or (local.get $tag)
+      (i32.shl (i32.const 1) (local.get $top)))))
+  ;; $fpu_set rm. V is evaluated once, before anything is written.
+  (defmacro (x87i-set-rm $V)
+    (local.set $w $V)
+    (local.set $p (x87i-phys (local.get $rm)))
+    (f64.store (x87i-slot (local.get $p)) (local.get $w))
+    (local.set $raw (i32.and (local.get $raw)
+      (i32.xor (i32.const 0xFF) (i32.shl (i32.const 1) (local.get $p)))))
+    (local.set $tag (i32.or (local.get $tag)
+      (i32.shl (i32.const 1) (local.get $p))))
+    (if (i32.eqz (local.get $rm)) (then (local.set $st0 (local.get $w)))))
+  ;; $fpu_push. V is evaluated first, as the argument is in the old code.
+  (defmacro (x87i-push $V)
+    (local.set $w $V)
+    (f64.store (x87i-slot (local.get $top)) (local.get $st0))
+    (local.set $top (i32.and (i32.sub (local.get $top) (i32.const 1)) (i32.const 7)))
+    (if (i32.and (i32.shr_u (local.get $tag) (local.get $top)) (i32.const 1))
+      (then (call $fpu_set_exc (i32.const 0x41))))
+    (local.set $raw (i32.and (local.get $raw)
+      (i32.xor (i32.const 0xFF) (i32.shl (i32.const 1) (local.get $top)))))
+    (local.set $tag (i32.or (local.get $tag)
+      (i32.shl (i32.const 1) (local.get $top))))
+    (local.set $st0 (local.get $w)))
+  ;; $fpu_pop, as an expression. The popped slot keeps its value in memory,
+  ;; as the physical register does.
+  (defmacro (x87i-pop)
+    (block (result f64)
+      (if (i32.eqz (i32.and (i32.shr_u (local.get $tag) (local.get $top)) (i32.const 1)))
+        (then (call $fpu_set_exc (i32.const 0x41))))
+      (local.set $m (i32.xor (i32.const 0xFF) (i32.shl (i32.const 1) (local.get $top))))
+      (local.set $raw (i32.and (local.get $raw) (local.get $m)))
+      (local.set $tag (i32.and (local.get $tag) (local.get $m)))
+      (f64.store (x87i-slot (local.get $top)) (local.get $st0))
+      (local.set $w2 (local.get $st0))
+      (local.set $top (i32.and (i32.add (local.get $top) (i32.const 1)) (i32.const 7)))
+      (local.set $st0 (f64.load (x87i-slot (local.get $top))))
+      (local.get $w2)))
+  (defmacro (x87i-publish)
+    (f64.store (x87i-slot (local.get $top)) (local.get $st0))
+    (global.set $fpu_top (local.get $top))
+    (global.set $fpu_tag (local.get $tag))
+    (global.set $fpu_raw_tag (local.get $raw)))
+  (defmacro (x87i-reload)
+    (local.set $top (global.get $fpu_top))
+    (local.set $tag (global.get $fpu_tag))
+    (local.set $raw (global.get $fpu_raw_tag))
+    (local.set $st0 (f64.load (x87i-slot (local.get $top)))))
+
+  (func $x87_island_fast (param $packed i32)
+    (local $cursor i32) (local $fn i32) (local $op i32)
+    (local $count i32) (local $i i32) (local $addr i32)
+    (local $g i32) (local $r i32) (local $rm i32)
+    (local $base i32) (local $top i32) (local $tag i32) (local $raw i32)
+    (local $p i32) (local $m i32) (local $q i32)
+    (local $st0 f64) (local $v f64) (local $w f64) (local $w2 f64)
+    (local $r0 i64) (local $ri i64)
+    (local.set $cursor (global.get $ip))
+    (local.set $fn (i32.and (i32.shr_u (local.get $packed) (i32.const 12)) (i32.const 0xFF)))
+    (local.set $op (i32.and (local.get $packed) (i32.const 0xFFF)))
+    (local.set $count (i32.and (i32.shr_u (local.get $packed) (i32.const 20)) (i32.const 0xFF)))
+    (local.set $base (global.get $fpu_base))
+    (local.set $top (global.get $fpu_top))
+    (local.set $tag (global.get $fpu_tag))
+    (local.set $raw (global.get $fpu_raw_tag))
+    (local.set $st0 (f64.load (x87i-slot (local.get $top))))
+    (block $done (loop $each
+      ;; ---- decode: (g, r) and either rm (189) or the effective address.
+      ;; The three record shapes and their address arithmetic are exactly
+      ;; $x87_island_generic's.
+      (if (i32.eq (local.get $fn) (i32.const 189))
+        (then
+          (local.set $rm (i32.and (local.get $op) (i32.const 0xF)))
+          (local.set $r (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+          (local.set $g (i32.or (i32.shr_u (local.get $op) (i32.const 8)) (i32.const 8))))
+        (else
+          (if (i32.eq (local.get $fn) (i32.const 188))
+            (then
+              (local.set $addr (i32.load (local.get $cursor)))
+              (if (i32.eq (local.get $addr) (global.get $SIB_SENTINEL))
+                (then (local.set $addr (global.get $ea_temp))))
+              (local.set $r (i32.and (local.get $op) (i32.const 0xF)))
+              (local.set $g (i32.shr_u (local.get $op) (i32.const 4))))
+            (else
+              (local.set $addr
+                (i32.add
+                  (i32.load (i32.add (global.get $reg_base)
+                    (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2))))
+                  (i32.load (local.get $cursor))))
+              (local.set $r (i32.and (i32.shr_u (local.get $op) (i32.const 4)) (i32.const 0xF)))
+              (local.set $g (i32.shr_u (local.get $op) (i32.const 8)))))
+          (local.set $cursor (i32.add (local.get $cursor) (i32.const 4)))))
+      ;; $g now holds group | (8 if register form): 0..7 memory D8..DF,
+      ;; 8..15 register D8..DF.
+      (block $next_op
+      (block $generic
+      (block $arith                 ;; ST(0) = ST(0) <r> $v, D8 semantics
+      (block $k15 (block $k14 (block $k13 (block $k12
+      (block $k11 (block $k10 (block $k9 (block $k8
+      (block $k7 (block $k6 (block $k5 (block $k4
+      (block $k3 (block $k2 (block $k1 (block $k0
+        (br_table $k0 $k1 $k2 $k3 $k4 $k5 $k6 $k7
+                  $k8 $k9 $k10 $k11 $k12 $k13 $k14 $k15 $generic
+                  (local.get $g)))
+        ;; k0: D8 mem, float32 operand
+        (local.set $v (f64.promote_f32 (f32.load (call $g2w (local.get $addr)))))
+        (br $arith))
+        ;; k1: D9 mem -- FLD/FST/FSTP m32, FLDCW, FNSTCW
+        (if (i32.eqz (local.get $r))
+          (then
+            (x87i-push (f64.promote_f32 (f32.load (call $g2w (local.get $addr)))))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 3))
+          (then
+            (call $gs32 (local.get $addr)
+              (i32.reinterpret_f32 (f32.demote_f64 (x87i-pop))))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 2))
+          (then
+            (call $gs32 (local.get $addr)
+              (i32.reinterpret_f32 (f32.demote_f64 (local.get $st0))))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 5))
+          (then
+            (global.set $fpu_cw (i32.load16_u (call $g2w (local.get $addr))))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 7))
+          (then (call $gs16 (local.get $addr) (global.get $fpu_cw)) (br $next_op)))
+        (br $generic))
+        ;; k2: DA mem, int32 operand
+        (local.set $v (f64.convert_i32_s (i32.load (call $g2w (local.get $addr)))))
+        (br $arith))
+        ;; k3: DB mem -- FILD/FIST/FISTP m32 (m80 forms are generic)
+        (if (i32.eqz (local.get $r))
+          (then
+            (x87i-push (f64.convert_i32_s (call $gl32 (local.get $addr))))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 3))
+          (then
+            (call $gs32 (local.get $addr) (call $fpu_to_i32 (x87i-pop)))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 2))
+          (then
+            (call $gs32 (local.get $addr) (call $fpu_to_i32 (local.get $st0)))
+            (br $next_op)))
+        (br $generic))
+        ;; k4: DC mem, float64 operand
+        (local.set $v (f64.load (call $g2w (local.get $addr))))
+        (br $arith))
+        ;; k5: DD mem -- FLD/FST/FSTP m64, FNSTSW m16
+        (if (i32.eqz (local.get $r))
+          (then
+            (x87i-push (f64.load (call $g2w (local.get $addr))))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 3))
+          (then
+            (call $gs64 (local.get $addr) (i64.reinterpret_f64 (x87i-pop)))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 2))
+          (then
+            (call $gs64 (local.get $addr) (i64.reinterpret_f64 (local.get $st0)))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 7))
+          (then
+            (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
+              (i32.shl (local.get $top) (i32.const 11))))
+            (call $gs16 (local.get $addr) (global.get $fpu_sw))
+            (br $next_op)))
+        (br $generic))
+        ;; k6: DE mem, int16 operand
+        (local.set $v (f64.convert_i32_s (i32.load16_s (call $g2w (local.get $addr)))))
+        (br $arith))
+        ;; k7: DF mem -- FILD/FIST/FISTP m16, FILD/FISTP m64 (BCD is generic)
+        (if (i32.eqz (local.get $r))
+          (then
+            (x87i-push (f64.convert_i32_s (i32.load16_s (call $g2w (local.get $addr)))))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 5))
+          (then
+            (local.set $r0 (i64.load (call $g2w (local.get $addr))))
+            (x87i-push (f64.convert_i64_s (local.get $r0)))
+            ;; $fpu_raw_set 0
+            (i64.store offset=64 (x87i-slot (local.get $top)) (local.get $r0))
+            (local.set $raw (i32.or (local.get $raw)
+              (i32.shl (i32.const 1) (local.get $top))))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 7))
+          (then
+            (if (i32.and (i32.shr_u (local.get $raw) (local.get $top)) (i32.const 1))
+              (then
+                (call $gs64 (local.get $addr)
+                  (i64.load offset=64 (x87i-slot (local.get $top))))
+                (drop (x87i-pop))
+                (br $next_op)))
+            (call $gs64 (local.get $addr) (call $fpu_to_i64 (x87i-pop)))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 3))
+          (then
+            (call $gs16 (local.get $addr) (call $fpu_to_i16 (x87i-pop)))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 2))
+          (then
+            (call $gs16 (local.get $addr) (call $fpu_to_i16 (local.get $st0)))
+            (br $next_op)))
+        (br $generic))
+        ;; k8: D8 reg -- ST(0) <r> ST(rm)
+        (local.set $v (x87i-get-rm))
+        (br $arith))
+        ;; k9: D9 reg
+        (if (i32.eqz (local.get $r))            ;; FLD ST(i)
+          (then (x87i-push (x87i-get-rm)) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 1))  ;; FXCH ST(i), shadows move too
+          (then
+            (local.set $v (x87i-get-rm))
+            (local.set $p (x87i-phys (local.get $rm)))
+            (local.set $m (i32.and (i32.shr_u (local.get $raw) (local.get $top)) (i32.const 1)))
+            (local.set $q (i32.and (i32.shr_u (local.get $raw) (local.get $p)) (i32.const 1)))
+            (if (local.get $m)
+              (then (local.set $r0 (i64.load offset=64 (x87i-slot (local.get $top))))))
+            (if (local.get $q)
+              (then (local.set $ri (i64.load offset=64 (x87i-slot (local.get $p))))))
+            (x87i-set-rm (local.get $st0))
+            (x87i-set0 (local.get $v))
+            (if (local.get $m)
+              (then
+                (i64.store offset=64 (x87i-slot (local.get $p)) (local.get $r0))
+                (local.set $raw (i32.or (local.get $raw)
+                  (i32.shl (i32.const 1) (local.get $p))))))
+            (if (local.get $q)
+              (then
+                (i64.store offset=64 (x87i-slot (local.get $top)) (local.get $ri))
+                (local.set $raw (i32.or (local.get $raw)
+                  (i32.shl (i32.const 1) (local.get $top))))))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 5))  ;; constants; D9 EF is reserved
+          (then
+            (br_if $generic (i32.eq (local.get $rm) (i32.const 7)))
+            (local.set $v (f64.const 0.0))
+            (if (i32.eqz (local.get $rm)) (then (local.set $v (f64.const 1.0))))
+            (if (i32.eq (local.get $rm) (i32.const 1)) (then (local.set $v (f64.const 3.321928094887362))))
+            (if (i32.eq (local.get $rm) (i32.const 2)) (then (local.set $v (f64.const 1.4426950408889634))))
+            (if (i32.eq (local.get $rm) (i32.const 3)) (then (local.set $v (f64.const 3.141592653589793))))
+            (if (i32.eq (local.get $rm) (i32.const 4)) (then (local.set $v (f64.const 0.3010299957316877))))
+            (if (i32.eq (local.get $rm) (i32.const 5)) (then (local.set $v (f64.const 0.6931471805599453))))
+            (x87i-push (local.get $v))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 4))
+          (then
+            (if (i32.eqz (local.get $rm))            ;; FCHS
+              (then (x87i-set0 (f64.neg (local.get $st0))) (br $next_op)))
+            (if (i32.eq (local.get $rm) (i32.const 1))  ;; FABS
+              (then (x87i-set0 (f64.abs (local.get $st0))) (br $next_op)))
+            (if (i32.eq (local.get $rm) (i32.const 4))  ;; FTST
+              (then (call $fpu_compare (local.get $st0) (f64.const 0)) (br $next_op)))
+            (br $generic)))
+        (if (i32.eq (local.get $r) (i32.const 7))
+          (then
+            (if (i32.eq (local.get $rm) (i32.const 2))  ;; FSQRT
+              (then
+                (if (f64.lt (local.get $st0) (f64.const 0))
+                  (then (call $fpu_set_exc (i32.const 0x01))))
+                (x87i-set0 (f64.sqrt (local.get $st0)))
+                (br $next_op)))
+            (if (i32.eq (local.get $rm) (i32.const 4))  ;; FRNDINT
+              (then
+                (local.set $v (call $fpu_round (local.get $st0)))
+                (if (f64.gt (local.get $v) (local.get $st0))
+                  (then (global.set $fpu_sw (i32.or (global.get $fpu_sw) (i32.const 0x0200))))
+                  (else (global.set $fpu_sw (i32.and (global.get $fpu_sw) (i32.const 0xFDFF)))))
+                (x87i-set0 (local.get $v))
+                (br $next_op)))
+            (br $generic)))
+        (if (i32.eq (local.get $r) (i32.const 6))
+          (then
+            (if (i32.eq (local.get $rm) (i32.const 6))  ;; FDECSTP
+              (then
+                (f64.store (x87i-slot (local.get $top)) (local.get $st0))
+                (local.set $top (i32.and (i32.sub (local.get $top) (i32.const 1)) (i32.const 7)))
+                (local.set $st0 (f64.load (x87i-slot (local.get $top))))
+                (br $next_op)))
+            (if (i32.eq (local.get $rm) (i32.const 7))  ;; FINCSTP
+              (then
+                (f64.store (x87i-slot (local.get $top)) (local.get $st0))
+                (local.set $top (i32.and (i32.add (local.get $top) (i32.const 1)) (i32.const 7)))
+                (local.set $st0 (f64.load (x87i-slot (local.get $top))))
+                (br $next_op)))
+            (br $generic)))
+        (if (i32.and (i32.eq (local.get $r) (i32.const 2)) (i32.eqz (local.get $rm)))
+          (then (br $next_op)))                  ;; FNOP
+        (br $generic))
+        ;; k10: DA reg -- FCMOVcc read EFLAGS, FUCOMPP is rare: generic
+        (br $generic))
+        ;; k11: DB reg -- FUCOMI / FCOMI
+        (if (i32.eq (local.get $r) (i32.const 5))
+          (then
+            (call $fpu_compare_eflags_unord (local.get $st0) (x87i-get-rm))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 6))
+          (then
+            (call $fpu_compare_eflags (local.get $st0) (x87i-get-rm))
+            (br $next_op)))
+        (br $generic))
+        ;; k12: DC reg -- ST(rm) = ST(rm) <r> ST(0), no ZE check (as $fpu_exec_reg)
+        (local.set $v (x87i-get-rm))
+        (if (i32.eqz (local.get $r))
+          (then (x87i-set-rm (f64.add (local.get $v) (local.get $st0))) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 1))
+          (then (x87i-set-rm (f64.mul (local.get $v) (local.get $st0))) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 4))
+          (then (x87i-set-rm (f64.sub (local.get $st0) (local.get $v))) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 5))
+          (then (x87i-set-rm (f64.sub (local.get $v) (local.get $st0))) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 6))
+          (then (x87i-set-rm (f64.div (local.get $st0) (local.get $v))) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 7))
+          (then (x87i-set-rm (f64.div (local.get $v) (local.get $st0))) (br $next_op)))
+        (br $generic))
+        ;; k13: DD reg -- FFREE, FST/FSTP ST(i), FUCOM/FUCOMP
+        (if (i32.eq (local.get $r) (i32.const 3))
+          (then (x87i-set-rm (local.get $st0)) (drop (x87i-pop)) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 2))
+          (then (x87i-set-rm (local.get $st0)) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 4))
+          (then (call $fpu_compare (local.get $st0) (x87i-get-rm)) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 5))
+          (then (call $fpu_compare (local.get $st0) (x87i-get-rm)) (drop (x87i-pop)) (br $next_op)))
+        (if (i32.eqz (local.get $r))
+          (then
+            (local.set $m (i32.xor (i32.const 0xFF)
+              (i32.shl (i32.const 1) (x87i-phys (local.get $rm)))))
+            (local.set $raw (i32.and (local.get $raw) (local.get $m)))
+            (local.set $tag (i32.and (local.get $tag) (local.get $m)))
+            (br $next_op)))
+        (br $generic))
+        ;; k14: DE reg -- ST(rm) = ST(rm) <r> ST(0), pop; FCOMPP
+        (local.set $v (x87i-get-rm))
+        (if (i32.eqz (local.get $r))
+          (then (x87i-set-rm (f64.add (local.get $v) (local.get $st0))) (drop (x87i-pop)) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 1))
+          (then (x87i-set-rm (f64.mul (local.get $v) (local.get $st0))) (drop (x87i-pop)) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 4))
+          (then (x87i-set-rm (f64.sub (local.get $st0) (local.get $v))) (drop (x87i-pop)) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 5))
+          (then (x87i-set-rm (f64.sub (local.get $v) (local.get $st0))) (drop (x87i-pop)) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 6))
+          (then (x87i-set-rm (f64.div (local.get $st0) (local.get $v))) (drop (x87i-pop)) (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 7))
+          (then (x87i-set-rm (f64.div (local.get $v) (local.get $st0))) (drop (x87i-pop)) (br $next_op)))
+        (if (i32.and (i32.eq (local.get $r) (i32.const 3)) (i32.eq (local.get $rm) (i32.const 1)))
+          (then
+            (call $fpu_compare (local.get $st0)
+              (f64.load (x87i-slot (x87i-phys (i32.const 1)))))
+            (drop (x87i-pop)) (drop (x87i-pop))
+            (br $next_op)))
+        (br $generic))
+        ;; k15: DF reg -- FNSTSW AX, FUCOMIP, FCOMIP
+        (if (i32.eq (local.get $r) (i32.const 5))
+          (then
+            (call $fpu_compare_eflags_unord (local.get $st0) (x87i-get-rm))
+            (drop (x87i-pop))
+            (br $next_op)))
+        (if (i32.eq (local.get $r) (i32.const 6))
+          (then
+            (call $fpu_compare_eflags (local.get $st0) (x87i-get-rm))
+            (drop (x87i-pop))
+            (br $next_op)))
+        (if (i32.and (i32.eq (local.get $r) (i32.const 4)) (i32.eqz (local.get $rm)))
+          (then
+            (global.set $fpu_sw (i32.or (i32.and (global.get $fpu_sw) (i32.const 0xC7FF))
+              (i32.shl (local.get $top) (i32.const 11))))
+            (i32.store16 (global.get $reg_base) (global.get $fpu_sw))
+            (br $next_op)))
+        (br $generic))
+      ;; $arith: the D8/DA/DC/DE memory forms and the D8 register form.
+      ;; $fpu_exec_mem / $fpu_exec_reg group 0: compare, compare-and-pop, or
+      ;; ST(0) = $fpu_arith(ST(0), $v, r) -- inlined here with $fpu_arith's
+      ;; own ZE tests.
+      (if (i32.eq (local.get $r) (i32.const 2))
+        (then (call $fpu_compare (local.get $st0) (local.get $v)) (br $next_op)))
+      (if (i32.eq (local.get $r) (i32.const 3))
+        (then (call $fpu_compare (local.get $st0) (local.get $v)) (drop (x87i-pop)) (br $next_op)))
+      (if (i32.eqz (local.get $r))
+        (then (x87i-set0 (f64.add (local.get $st0) (local.get $v))) (br $next_op)))
+      (if (i32.eq (local.get $r) (i32.const 1))
+        (then (x87i-set0 (f64.mul (local.get $st0) (local.get $v))) (br $next_op)))
+      (if (i32.eq (local.get $r) (i32.const 4))
+        (then (x87i-set0 (f64.sub (local.get $st0) (local.get $v))) (br $next_op)))
+      (if (i32.eq (local.get $r) (i32.const 5))
+        (then (x87i-set0 (f64.sub (local.get $v) (local.get $st0))) (br $next_op)))
+      (if (i32.eq (local.get $r) (i32.const 6))
+        (then
+          (if (f64.eq (local.get $v) (f64.const 0)) (then (call $fpu_set_exc (i32.const 0x04))))
+          (x87i-set0 (f64.div (local.get $st0) (local.get $v)))
+          (br $next_op)))
+      ;; r = 7, FDIVR
+      (if (f64.eq (local.get $st0) (f64.const 0)) (then (call $fpu_set_exc (i32.const 0x04))))
+      (x87i-set0 (f64.div (local.get $v) (local.get $st0)))
+      (br $next_op))
+      ;; $generic: the canonical implementation, on published state.
+      (x87i-publish)
+      (if (i32.ge_u (local.get $g) (i32.const 8))
+        (then (call $fpu_exec_reg (i32.and (local.get $g) (i32.const 7))
+                (local.get $r) (local.get $rm)))
+        (else (call $fpu_exec_mem (local.get $g) (local.get $r) (local.get $addr))))
+      (x87i-reload))
+      ;; $next_op
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $done (i32.ge_u (local.get $i) (local.get $count)))
+      (local.set $fn (i32.load (local.get $cursor)))
+      (local.set $op (i32.load offset=4 (local.get $cursor)))
+      (local.set $cursor (i32.add (local.get $cursor) (i32.const 8)))
+      (br $each)))
+    (x87i-publish)
     (global.set $ip (local.get $cursor))
     (global.set $x87_island_runs
       (i32.add (global.get $x87_island_runs) (i32.const 1))))

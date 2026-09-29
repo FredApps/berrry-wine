@@ -270,6 +270,9 @@ async function main() {
   // elision tier.
   ARMS.nostk = [...ARMS.uop, '--no-stack-fusion'];
   ARMS.aggr = [...ARMS.uop, '--aggressive-stack'];
+  // nopre: the uop arm with the H451 x87 island run by the old per-op walk
+  // ($x87_island_generic) instead of the predecoded body -- its partner is uop.
+  ARMS.nopre = [...ARMS.uop, '--no-x87-island-predecode'];
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another
   // prebuilt module, so an engine change is measured against its predecessor
   // in one sweep on one box.

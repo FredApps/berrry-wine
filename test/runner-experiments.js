@@ -161,6 +161,10 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // --no-stack-fusion: PUSH/POP runs and their CALL/RET decoded one op per
   // instruction again (07-decoder.wat $try_emit_stack_run), the same-build A/B.
   const NO_STACK_FUSION = hasFlag('no-stack-fusion');
+  // --no-x87-island-predecode: H451 islands run the original per-op
+  // $fpu_exec_* walk instead of $x87_island_fast (07b-loop-match.wat). A
+  // run-time switch, so both arms decode identically.
+  const NO_X87_ISLAND_PREDECODE = hasFlag('no-x87-island-predecode');
   const NO_RECT_RUN = hasFlag('no-rect-run');
   const NO_CASE_CHAIN = hasFlag('no-case-chain');
   const NO_RLE_RUN = hasFlag('no-rle-run');
@@ -253,6 +257,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
     if (NO_SIB_FUSION) inheritWasm('set_sib_fusion', 0);
     if (NO_STACK_FUSION) inheritWasm('set_stack_fusion', 0);
+    if (NO_X87_ISLAND_PREDECODE) inheritWasm('set_x87_island_predecode', 0);
     if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
     if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
     if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
@@ -384,6 +389,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (NO_STACK_FUSION && instance.exports.set_stack_fusion) {
       instance.exports.set_stack_fusion(0);
+    }
+    if (NO_X87_ISLAND_PREDECODE && instance.exports.set_x87_island_predecode) {
+      instance.exports.set_x87_island_predecode(0);
     }
     if (NO_RECT_RUN && instance.exports.set_rect_run) {
       instance.exports.set_rect_run(0);
