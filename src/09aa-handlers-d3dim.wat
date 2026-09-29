@@ -1839,13 +1839,13 @@
   ;; count, and on another type those are a different pair of things entirely.
   (func $d3dim_texture_view_release (param $this i32)
     (local $entry i32) (local $rc i32)
-    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $this)))
     (if (i32.eq (load.field DxObject type (local.get $entry)) (i32.const 2))
       (then
         (i32.store offset=0 (global.get $reg_base)
           (call $dx_surface_release (local.get $this)))
         (return)))
+    (call $d3dim_worker_fence)
     (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
     (if (i32.le_s (local.get $rc) (i32.const 0))
       (then (call $dx_free (local.get $entry)) (i32.store offset=0 (global.get $reg_base) (i32.const 0)))

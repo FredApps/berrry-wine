@@ -4,6 +4,8 @@
 // Real browser gameplay baseline for selective dirty tracking. Server-only
 // instrumentation: never skips a comparison or changes the shipped renderer.
 // Example: node tools/bench-d3dim-gameplay.js --app=nfs3_demo --label=before
+// MW3 cockpit: --app=mw3 --route=gameplay --warmup-ms=15000
+// Add --guest-key=53 for 50% throttle (the demo's top-row 5 binding).
 // Repeat with --label=after once a candidate exists. FPS counts guest Flip
 // calls (MW3: DirectDraw presents), not rAF callbacks. CPU profiles are optional to separate sampling
 // overhead from the primary measurements. Captures require visual review.
@@ -38,6 +40,7 @@ if (process.argv.includes('--watch-cost-matrix')) {
   process.exit(0);
 }
 const app = opt('app', 'nfs3_demo');
+const route = opt('route', app === 'mw3' ? 'menu' : 'gameplay');
 const seconds = Number(opt('seconds', '20'));
 const windows = Number(opt('windows', '3'));
 const label = opt('label', 'baseline');
@@ -45,10 +48,14 @@ const audit = process.argv.includes('--audit');
 const frameTimes = process.argv.includes('--frame-times');
 const traceYields = process.argv.includes('--trace-yields');
 const traceCache = process.argv.includes('--trace-cache');
+const traceFences = process.argv.includes('--trace-fences');
+const guestKey = Number(opt('guest-key', '0'));
 const output = path.resolve(opt('out', path.join(ROOT, 'build/d3dim-gameplay-perf', `${app}-${label}`)));
 assert(['nfs3_demo', 'gta2_demo', 'mw3'].includes(app), 'only established game routes are supported');
+assert(['menu', 'gameplay'].includes(route) && (app === 'mw3' || route === 'gameplay'));
 assert(seconds > 0 && windows > 0 && Number.isInteger(windows));
-assert(!(traceYields || traceCache) || frameTimes, 'diagnostic traces require --frame-times');
+assert(Number.isInteger(guestKey) && guestKey >= 0 && guestKey <= 255);
+assert(!(traceYields || traceCache || traceFences) || frameTimes, 'diagnostic traces require --frame-times');
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hash = bytes => crypto.createHash('sha256').update(bytes).digest('hex');
 function replaceOnce(source, from, to) {
@@ -56,6 +63,14 @@ function replaceOnce(source, from, to) {
   return source.replace(from, to);
 }
 function instrumentGpu(source) {
+  if (traceFences) source = replaceOnce(source, '        const start = now();\n        const { width, height, pitch } = t,', `        const cause = globalThis.__benchSurfaceOp || [];
+        const key = JSON.stringify({ cause, rt: t.rt, dib: t.dib, width: t.width, height: t.height });
+        const counts = globalThis.__benchFenceCounts || (globalThis.__benchFenceCounts = {});
+        const stacks = globalThis.__benchFenceStacks || (globalThis.__benchFenceStacks = {});
+        if (!stacks[key]) stacks[key] = new Error().stack;
+        counts[key] = (counts[key] || 0) + 1;
+        const start = now();
+        const { width, height, pitch } = t,`);
   source = replaceOnce(source, '      this.textureSerial = 0;', `      this.textureSerial = 0;
       this.benchWatches = new Set();`);
   source = replaceOnce(source, '    _texture(t, d) {', `    _texture(t, d) {
@@ -153,6 +168,7 @@ function instrumentWorker(source) {
         return originalLogI32(value);
       };` : ''}
       built.imports.host.dx_trace = (...args) => {
+        ${traceFences ? `if (args[0] === 1 || args[0] === 3) globalThis.__benchSurfaceOp = args;` : ''}
         if (args[0] === 6) globalThis.__benchGuestFlips = (globalThis.__benchGuestFlips || 0) + 1;
         if (args[0] === 5) {
           globalThis.__benchGuestPresents = (globalThis.__benchGuestPresents || 0) + 1;
@@ -199,12 +215,12 @@ function instrumentWorker(source) {
   });
   let browser;
   const logs = [], errors = [], results = [];
-  const manifest = { app, label, seconds, windows, started: new Date().toISOString(),
+  const manifest = { app, route, guestKey, label, seconds, windows, started: new Date().toISOString(),
     platform: os.platform(), arch: os.arch(), cpu: os.cpus()[0].model,
     loadBefore: os.loadavg(), headless: process.argv.includes('--headless'),
     profiled: process.argv.includes('--profile'), wasmSha256: hash(wasm), gpuSha256: hash(gpuSource),
-    regionSha256: hash(regionSource), audit, frameTimes, traceYields, traceCache,
-    note: 'MW3 measures the main menu with DirectDraw presents; other routes count flips. Verify screenshots. --audit checks page versions against pixels.' };
+    regionSha256: hash(regionSource), audit, frameTimes, traceYields, traceCache, traceFences,
+    note: 'MW3 counts DirectDraw presents; other games count flips. --route=gameplay deploys MW3 into a verified cockpit. Verify screenshots. --audit checks page versions against pixels.' };
   fs.writeFileSync(path.join(output, 'runtime.wasm'), wasm);
   fs.writeFileSync(path.join(output, 'd3dim-gpu.js'), gpuSource);
   try {
@@ -230,6 +246,7 @@ function instrumentWorker(source) {
       await launchApp();
     }, app);
     console.log('launched', app);
+    await page.evaluate(() => setRuntimeLogging(false));
     await page.screenshot({ path: path.join(output, 'launched.png') });
     assert(await page.evaluate(() => runningApps[0]?.wine.threadManager?.backend === 'worker'),
       'Worker startup failed; refuse a cooperative fallback measurement');
@@ -244,6 +261,10 @@ function instrumentWorker(source) {
     }, { timeout: 150000, polling: 500 }, app);
     // MW3's startup fade also presents frames; let it reach the settled menu.
     await pause(Number(opt('warmup-ms', app === 'mw3' ? '60000' : '10000')));
+    if (app === 'mw3' && route === 'gameplay') {
+      await require('./mw3-gameplay-route')(page, output);
+      await pause(5000);
+    }
     let frameWorker;
     if (frameTimes) {
       for (const worker of page.workers()) {
@@ -253,12 +274,23 @@ function instrumentWorker(source) {
         }
       }
       assert(frameWorker, 'present recorder worker missing');
+      manifest.cursor = {
+        page: await page.evaluate(() => ({
+          count: sharedRenderer.wasm.exports.get_cursor_display_count?.(),
+          handle: sharedRenderer.wasm.exports.get_cursor?.(),
+        })),
+        worker: await frameWorker.evaluate(() => ({
+          count: globalThis.__benchExports.get_cursor_display_count?.(),
+          handle: globalThis.__benchExports.get_cursor?.(),
+        })),
+      };
     }
     const observe = () => page.evaluate(() => {
       const wine = runningApps[0]?.wine;
       return { isolated: crossOriginIsolated, backend: wine?.threadManager?.backend,
         running: wine?.running, d3d: wine?.guestWorker?.d3dStats };
     });
+    if (guestKey) await page.evaluate(key => sharedRenderer.handleKeyDown(key), guestKey);
     for (let i = 0; i < windows; i++) {
       const profiles = [];
       if (manifest.profiled) for (const w of page.workers()) {
@@ -281,6 +313,8 @@ function instrumentWorker(source) {
         c.samples = []; c.lastSample = 0; c.cacheTrace = [];
         c.cacheBefore = globalThis.__benchCacheSnapshot();
         c.start = performance.now(); c.enabled = true;
+        globalThis.__benchFenceCounts = {};
+        globalThis.__benchFenceStacks = {};
         if (traceCache) globalThis.__benchExports.set_code_write_trace(1);
       }, traceCache);
       await pause(seconds * 1000);
@@ -293,6 +327,8 @@ function instrumentWorker(source) {
           return { start: c.start, end: performance.now(), overflow: c.overflow,
             yields: c.yields, yieldOverflow: c.yieldOverflow, guestSamples: c.samples,
             cacheTrace: c.cacheTrace,
+            fenceCounts: globalThis.__benchFenceCounts,
+            fenceStacks: globalThis.__benchFenceStacks,
             cacheBefore: c.cacheBefore, cacheAfter: globalThis.__benchCacheSnapshot(),
             timestamps: Array.from(c.times.subarray(0, c.count)) };
         });
@@ -336,6 +372,7 @@ function instrumentWorker(source) {
         fs.writeFileSync(path.join(output, `window-${i}-worker-${n++}.cpuprofile`), JSON.stringify(profile));
       }
     }
+    if (guestKey) await page.evaluate(key => sharedRenderer.handleKeyUp(key), guestKey);
     assert(results.every(r => app === 'mw3' ? r.delta.guestPresents > 0 : r.delta.guestFlips > 0 && r.delta.triangles > 0),
       'must measure advancing presents in the intended route');
   } finally {

@@ -91,6 +91,27 @@
       (global.set $d3dim_present_pending (i32.const 0))
       (call $dx_present (local.get $front)))))
 
+  ;; CPU access to one surface: WebGL executes draws synchronously, so only
+  ;; overlapping GPU-owned backing bytes need readback. Result 2 keeps pending
+  ;; set for other dirty targets; result 1 says all targets are synchronized.
+  ;; The software render Worker and deferred presentation retain global ordering.
+  (func $d3dim_surface_fence (param $entry i32)
+    (local $dib i32) (local $length i32)
+    (if (i32.and (global.get $d3dim_gpu_on)
+                (i32.eqz (global.get $d3dim_present_pending))) (then
+      (if (i32.eqz (global.get $d3dim_worker_pending)) (then (return)))
+      (if (local.get $entry) (then
+        (local.set $dib (load.field DxObject misc1 (local.get $entry)))
+        (local.set $length (i32.mul (load.field DxObject pitch (local.get $entry))
+                                  (load.field DxObject height (local.get $entry))))
+        (if (i32.and (i32.ne (local.get $dib) (i32.const 0))
+                     (i32.ne (local.get $length) (i32.const 0))) (then
+          (if (i32.eq (call $host_gpu_gl_call (i32.const 0x20001)
+                (local.get $dib) (local.get $length)) (i32.const 1))
+            (then (global.set $d3dim_worker_pending (i32.const 0))))
+          (return)))))))
+    (call $d3dim_worker_fence))
+
   ;; Queue a flip-chain DIB swap behind the draws still on the render Worker,
   ;; so the frame keeps rasterizing into the buffer it started in while the
   ;; guest runs on. Only worth it with draws outstanding: with none, the
@@ -2626,7 +2647,8 @@
           (i32.load (local.get $dst)) (i32.load (local.get $src))
           (i32.const 0) (i32.const 0))
         (return)))
-    (call $d3dim_worker_fence)
+    (call $d3dim_surface_fence (local.get $src))
+    (call $d3dim_surface_fence (local.get $dst))
     (local.set $dw (i32.and (i32.load (i32.add (local.get $dst) (i32.const 12))) (i32.const 0xFFFF)))
     (local.set $dh (i32.shr_u (i32.load (i32.add (local.get $dst) (i32.const 12))) (i32.const 16)))
     (local.set $dbpp (i32.and (i32.load (i32.add (local.get $dst) (i32.const 16))) (i32.const 0xFFFF)))

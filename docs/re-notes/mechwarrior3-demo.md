@@ -1122,3 +1122,154 @@ The alpha-only profile already spends 47.25% of sampled worker wall time in
 `uop_fast`, with 15.74% idle; decoding is no longer the dominant sampled
 cost. Thus retirement reduction alone is not evidence of another large FPS
 gain. Trace/profile artifacts: `build/mw3-watch-ab-results/mw3-fixed-retirement-trace`.
+
+## Remote WebGL cockpit profile after cache fixes (2026-09-29)
+
+The browser now reaches verified Instant Action gameplay via
+`tools/bench-d3dim-gameplay.js --app=mw3 --route=gameplay --warmup-ms=15000`.
+`tools/mw3-gameplay-route.js` creates pilot ACE in a fresh context, accepts
+Instant Action, checks the operation-map image, waits ten seconds for its
+deployment button to become active, and verifies orange sky plus advancing
+3D geometry after deployment. The first automated attempt clicked too early
+and remained on the operation map; its timeout is not a gameplay measurement.
+Stage screenshots remain part of acceptance. Runtime logging is disabled.
+
+Box8, headful Chrome 151, Threads enabled, actual renderer
+`ANGLE (Intel, Mesa Intel(R) UHD Graphics 620 (KBL GT2), OpenGL 4.6 Mesa 23.2.1)`.
+This deliberately reuses the menu experiment's pinned ff6dc0f4 closure plus
+the final alpha/color-key overlap fixes, rather than the concurrently changing
+main worktree. WASM SHA-256:
+`d3919ebcb7c1351a6539c620a504532bfe1a30f035e737e3b792d1f16e515d86`.
+The run manifests pin GPU JS and region-map hashes too. These are baseline
+measurements of the fixed build, not a gameplay A/B or Safari performance claim.
+
+Three unprofiled, stationary-cockpit windows (`mw3-cockpit-unprofiled2`):
+
+| 20-second window | Presents/s | Median ms | p95 ms | Worst ms |
+|---|---:|---:|---:|---:|
+| 0 | 18.24 | 53.70 | 64.36 | 79.36 |
+| 1 | 17.97 | 54.58 | 66.70 | 79.71 |
+| 2 | 16.68 | 59.34 | 71.35 | 83.98 |
+
+No intervals exceeded 100 ms. The mission continues simulating while the mech
+stands still, so the scene/draw count is not constant. Load before/after was
+2.12/2.57. Per frame: 1,073–1,134 GPU draws, 1,843–1,970 triangles, about five
+readback synchronizations, one target upload, and 2.1–2.9 texture uploads.
+GPU sync/readback including pixel conversion costs 13.6–14.7 ms/frame;
+draw submission costs 10.0–10.4 ms/frame; target upload costs 1.7–2.1 ms/frame.
+These timers are not GPU hardware timing counters or a complete partition.
+
+Texture byte checks remain **zero**, with about 5,200 page checks/frame.
+Render-target comparison still examines about 1.23 MB of equal bytes/frame
+but costs only 0.67–0.68 ms/frame here. Cache retirements are 207, 18, 14
+per window, unlike the millions observed in the old menu overlap failure.
+
+Separate three-window CPU sampling (`mw3-cockpit-live1`, 16.4–17.8 presents/s)
+attributes 48.0% of guest-worker wall samples to WASM. Largest self costs:
+`readPixels` 19.0%, `x87_island_fast` 6.5%, `branch_end_at` 5.2%, JS `fence`
+3.5%, `th_load32_rop` 3.0%, `getError` 2.5%, `uop_fast` 2.4%.
+The page thread is 95.2–95.4% idle. In window 0, 88.6% of `readPixels` sample
+time comes through `IDirectDrawSurface::Lock`, and 11.4% through `Blt`.
+Thus the next renderer investigation is which surface each Lock/Blt actually
+needs: the current fence reads back every dirty target, including pixel
+conversion and a shadow copy. Removing a required guest readback would be
+incorrect; surface-specific dependency tracking needs separate validation.
+
+Artifacts live under `build/mw3-watch-ab-results/` and on box8 under
+`~/mw3-watch-ab/build/d3dim-gameplay-perf/`. Function indices were resolved with
+a named rebuild whose noncustom WASM sections exactly match the measured
+binary. The interactive profile's original manifest has a stale menu note;
+`mw3-cockpit-live1/scene.json` records the corrected cockpit attribution.
+
+A second unprofiled run, `mw3-cockpit-moving1`, holds top-row 5
+(`--guest-key=53`), the included demo readme's 50%-throttle binding. Screenshots
+confirm changing terrain and a 45-speed HUD reading. Three 20-second windows:
+
+| Moving window | Presents/s | Median ms | p95 ms | Worst ms |
+|---|---:|---:|---:|---:|
+| 0 | 16.04 | 61.35 | 77.07 | 102.73 |
+| 1 | 20.29 | 49.09 | 57.36 | 68.01 |
+| 2 | 18.99 | 51.67 | 63.27 | 102.46 |
+
+Two intervals exceed 100 ms, none exceed 250 ms. Per-second counts range
+14–22, so moving gameplay is scene-dependent rather than a locked frame rate.
+Load before/after is 1.69/2.79. Draws/frame vary 578–1,140, but about five
+readbacks/frame remain, costing 15.0–17.4 ms/frame. Texture byte checks remain
+zero. There are 44/32/0 renderer fallbacks across the windows and zero GPU
+errors; this is predominantly WebGL with occasional software fallback, not
+evidence that every draw is hardware-rendered. A future profile should identify
+those fallbacks separately. This run captures pacing, not a moving CPU profile.
+
+The same run confirms the Threads cursor-visibility bug: the page WASM reports
+display count **0**, while the executing guest Worker reports **-1**. Both
+report cursor handle 425728. `ShowCursor` changes an instance-local global,
+but `renderer.wantsHiddenMouse` reads the page instance. MW3 also lacks the
+explicit `relativeMouse` opt-in and Moorhuhn's `hideHostCursor` manifest override.
+Moorhuhn's override is not evidence that its desktop input already uses relative
+motion. No cursor behavior was changed in this profiling task.
+
+## Surface-specific WebGL fences (2026-09-29)
+
+`--trace-fences --frame-times` on the browser benchmark records each actual
+readback's target/DIB, preceding DirectDraw surface event, count, and one stack
+per combination. The preceding event is context, not necessarily the caller:
+after narrowing Lock, the same texture event remains current when Texture2
+Load and Release issue later global fences. The recorded stacks identify those
+callers. The diagnostic capture `mw3-surface-trace1` reports exactly five
+640x480 color readbacks/frame: three color-buffer Locks, one unrelated texture
+Lock (slot 1400), and one depth-surface Blt/COLORFILL (slot 10).
+
+The WebGL FENCE opcode now accepts a WASM backing address and length; zero
+length retains the global barrier. It flushes every dirty target whose byte
+range overlaps the access, including aliases. It returns 1 when no target is
+dirty and 2 when unrelated targets remain pending. WAT preserves that pending
+state so a later global fence cannot miss deferred work. Software render-worker
+execution and deferred presentation retain global ordering.
+
+DirectDraw Lock and Blt use the scoped barrier, as does Texture::Load for both
+source and destination. Partial writes conservatively synchronize the entire
+surface; no overwrite/discard assumption was added. Nonfinal WebGL surface
+reference drops no longer synchronize pixels. Texture interface Release
+delegates to that surface path instead of fencing a second time. Final
+destruction still globally fences before freeing backing memory.
+
+The intermediate experiments matter: Lock/Blt alone reduced five readbacks to
+four, but the texture-related readback moved to Texture::Load. Narrowing Load
+moved it again, to the following Texture2::Release. Skipping only the nonfinal
+reference barrier addresses that sequence without removing lifetime safety.
+
+`test/test-d3dim-surface-fence.js` checks unrelated/overlapping ranges, exact
+RGB565 readback bytes, pending-state propagation, software/global barriers,
+a real WAT Texture::Load consuming fresh GPU source pixels, and nonfinal versus
+final Release. The indexed-texture conversion/color-key regression and texture
+release/arena regression also pass. An isolated full build passes; the shared
+main build encounters the pre-existing union-gate failure for
+`10a-gdi-bitmap.wat:1014`, unrelated to these changes.
+
+Final remote run `mw3-surface-final4` reduces actual readbacks from **5 to 3 per
+frame (40%)**, apart from three incidental fallback/lifetime synchronizations
+in the first window. The remaining recurring stacks are color-buffer Locks.
+Each avoided readback is 640x480 RGBA (1,228,800 bytes), followed by RGB565
+conversion and a shadow copy, so two avoided calls save 2.46 MB/frame of GPU
+readback alone. No render-target Lock was skipped.
+
+| Run / 20s windows | FPS | Readbacks/frame | Sync ms/frame |
+|---|---|---|---|
+| Control `surface-control2` | 17.39 / 17.23 / 16.84 | 5.01 / 5.01 / 5.00 | 13.44 / 13.50 / 13.42 |
+| Final `surface-final4` | 18.79 / 18.79 / 16.89 | 3.01 / 2.99 / 3.00 | 11.49 / 10.53 / 12.68 |
+
+Do **not** attribute the entire 17.15→18.16 mean-FPS difference to this change:
+the browser mission differs between launches (about 1,248 draws/frame in this
+control versus 1,072 in the final run). The earlier control with ~1,073 draws
+also reached 18.24/17.97 FPS in its first two windows. A repeatable FPS gain is
+not established; the 40% reduction in recurring readbacks is. The final run
+has zero GPU errors, two software fallbacks, p95 62.7–71.8 ms, and one 100.5 ms
+interval. Screenshots retain the cockpit, sky, terrain and HUD. Load before/
+after is 0.01/2.33. Final pinned WASM SHA-256:
+`ad5e74dd3f58f0cf9bfc26f4fa205e71ebaf687bb6d5d27c76d039493e724962`.
+
+The final moving validation (`surface-final-audit`, 50% throttle, 20 seconds)
+passes **1,233,496 byte-backed dirty-page audit checks with zero misses**, zero
+GPU errors and no browser errors. Its screenshot shows advancing terrain and
+45 speed. Audit instrumentation performs comparisons intentionally, so its
+13.8 FPS is not an ordinary-performance measurement.

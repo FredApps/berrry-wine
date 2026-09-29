@@ -4328,8 +4328,12 @@
   (func $dx_surface_release (param $this i32) (result i32)
     (local $entry i32) (local $rc i32) (local $surf_bytes i32) (local $dib_wa i32)
     (local $clipper i32)
-    (call $d3dim_worker_fence)
     (local.set $entry (call $dx_from_this (local.get $this)))
+    ;; A nonfinal WebGL reference drop touches no pixels or resource lifetime.
+    ;; Final teardown and queued software rendering retain their global fence.
+    (if (i32.or (i32.eqz (global.get $d3dim_gpu_on))
+                (i32.le_s (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
+      (then (call $d3dim_worker_fence)))
     (local.set $rc (i32.sub (load.field DxObject refcount (local.get $entry)) (i32.const 1)))
     (store.field DxObject refcount (local.get $entry) (local.get $rc))
     (if (i32.le_s (local.get $rc) (i32.const 0))
@@ -4411,7 +4415,9 @@
         (else (i32.const -1)))
       (load.field DxObject misc1 (local.get $dst_entry))
       (local.get $arg4))
-    (call $d3dim_worker_fence)
+    (call $d3dim_surface_fence (local.get $dst_entry))
+    (if (local.get $arg2) (then
+      (call $d3dim_surface_fence (call $dx_from_this (local.get $arg2)))))
     (local.set $dst_dib (load.field DxObject misc1 (local.get $dst_entry)))
     (local.set $dst_w (load.field DxObject width (local.get $dst_entry)))
     (local.set $dst_h (load.field DxObject height (local.get $dst_entry)))
@@ -5780,7 +5786,7 @@
       (load.field DxObject flags (local.get $entry))
       (load.field DxObject misc1 (local.get $entry))
       (i32.const 0))
-    (call $d3dim_worker_fence)
+    (call $d3dim_surface_fence (local.get $entry))
     (local.set $wa (call $g2w (local.get $arg2)))
     ;; Fill DDSURFACEDESC
     (call $zero_memory (local.get $wa) (i32.const 108))
