@@ -34,7 +34,7 @@
   .screen { position: relative; background: #000; border-radius: 8px; overflow: hidden;
     aspect-ratio: 4 / 3; display: grid; place-items: center; }
   .screen.drag { outline: 3px dashed var(--accent); outline-offset: -6px; }
-  canvas { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
+  canvas { width: 100%; height: 100%; object-fit: contain; image-rendering: pixelated; }
   .hint { position: absolute; color: #bbb; text-align: center; padding: 16px; pointer-events: none; }
   .controls { display: flex; gap: 10px; align-items: center; margin-top: 10px; }
   input[type=range] { flex: 1; accent-color: var(--accent); }
@@ -54,29 +54,7 @@
 
   <div class="bar">
     <select id="pick">
-      <option value="">— corpus movies —</option>
-      <optgroup label="Dark Colony demo (Cinepak, AVIFile + ICDecompress)">
-        <option>test/binaries/win98-games-a-d/DarkColony-MagDemo-SW/AVI/intro.avi</option>
-        <option>test/binaries/win98-games-a-d/DarkColony-MagDemo-SW/AVI/ahead.avi</option>
-        <option>test/binaries/win98-games-a-d/DarkColony-MagDemo-SW/AVI/hhead.avi</option>
-        <option>test/binaries/win98-games-a-d/DarkColony-MagDemo-SW/AVI/avhd.avi</option>
-        <option>test/binaries/win98-games-a-d/DarkColony-MagDemo-SW/AVI/hvad.avi</option>
-      </optgroup>
-      <optgroup label="Half-Life Uplink (RLE8, MCI avivideo)">
-        <option>test/binaries/candidates/half-life-uplink-installer/installed/media/intro.avi</option>
-        <option>test/binaries/candidates/half-life-uplink-installer/installed/media/uplink.avi</option>
-      </optgroup>
-      <optgroup label="VB6 sample animations (Animate control)">
-        <option>test/binaries/candidates/vb6-working-model/cd/COMMON/GRAPHICS/AVIS/FILECOPY.AVI</option>
-        <option>test/binaries/candidates/vb6-working-model/cd/COMMON/GRAPHICS/AVIS/FILEMOVE.AVI</option>
-        <option>test/binaries/candidates/vb6-working-model/cd/COMMON/GRAPHICS/AVIS/FINDFILE.AVI</option>
-        <option>test/binaries/candidates/vb6-working-model/cd/COMMON/GRAPHICS/AVIS/CINEAPK.AVI</option>
-        <option>test/binaries/candidates/vb6-working-model/cd/COMMON/GRAPHICS/AVIS/DRILLRLE.AVI</option>
-        <option>test/binaries/candidates/vb6-working-model/cd/COMMON/GRAPHICS/AVIS/COUNT24.AVI</option>
-      </optgroup>
-      <optgroup label="Civilization II (Indeo 4 — shows the missing-codec path)">
-        <option>test/binaries/candidates/civilization-2-mge-win32/installed/LOSER.AVI</option>
-      </optgroup>
+      <option value="">— loading catalog.json —</option>
     </select>
     <button id="open">Open file…</button>
     <input id="file" type="file" accept=".avi,video/x-msvideo" hidden>
@@ -237,6 +215,38 @@
   $('file').onchange = async (e) => {
     const f = e.target.files[0]; if (f) load(f.name, new Uint8Array(await f.arrayBuffer()));
   };
+  // Every corpus movie, from gen-catalog.js. A movie no decoder here handles
+  // is listed but disabled, with the reason, so the gaps stay visible.
+  fetch('catalog.json').then(r => {
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return r.json();
+  }).then(cat => {
+    const pick = $('pick');
+    let total = 0, ok = 0;
+    pick.innerHTML = '';
+    const head = document.createElement('option');
+    head.value = ''; pick.appendChild(head);
+    for (const g of cat.games) {
+      const grp = document.createElement('optgroup');
+      const codecs = [...new Set(g.movies.map(m => m.codec || '?'))].join(', ');
+      grp.label = `${g.game} — ${codecs}`;
+      for (const m of g.movies) {
+        const o = document.createElement('option');
+        o.value = m.path;
+        const base = m.path.split('/').pop();
+        o.textContent = m.error ? `${base} — ${m.error}`
+          : `${base} · ${m.width}×${m.height} · ${m.frames} fr` + (m.playable ? '' : ` — ${m.reason}`);
+        o.disabled = !m.playable;
+        grp.appendChild(o);
+        total++; if (m.playable) ok++;
+      }
+      pick.appendChild(grp);
+    }
+    head.textContent = `— ${ok} of ${total} corpus movies playable —`;
+  }).catch(err => {
+    $('pick').innerHTML = `<option value="">catalog.json: ${err.message} — run node tools/avi-player/gen-catalog.js</option>`;
+  });
+
   $('pick').onchange = async (e) => {
     const url = e.target.value; if (!url) return;
     info([['file', url], ['status', 'loading…']]);

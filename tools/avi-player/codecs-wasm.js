@@ -111,16 +111,14 @@
   };
 
   // Which decoder a stream needs. Mirrors ICLocate: a format nothing here
-  // claims gets null plus a reason, never a guess.
-  function Codecs(module) { this.module = module; }
-  Codecs.prototype.createDecoder = async function (bi) {
+  // claims gets kind null plus a reason, never a guess. Synchronous, so the
+  // catalog generator can classify a file without compiling anything.
+  function decoderKind(bi) {
     const c = bi.compression, f = (bi.compressionFcc || '').toLowerCase();
-    const make = async (kind, name) =>
-      ({ decoder: new Decoder(await WebAssembly.instantiate(this.module, {}), kind, bi), name });
-    if (c === 0 && [8, 16, 24, 32].includes(bi.bitCount)) return make('raw', `uncompressed ${bi.bitCount}bpp`);
-    if (c === 1 && bi.bitCount === 8) return make('rle8', 'RLE8');
-    if (f === 'cvid' && bi.bitCount !== 8) return make('cvid', 'Cinepak');
-    return { decoder: null, name: c < 16 ? `BI ${c}` : bi.compressionFcc,
+    if (c === 0 && [8, 16, 24, 32].includes(bi.bitCount)) return { kind: 'raw', name: `uncompressed ${bi.bitCount}bpp` };
+    if (c === 1 && bi.bitCount === 8) return { kind: 'rle8', name: 'RLE8' };
+    if (f === 'cvid' && bi.bitCount !== 8) return { kind: 'cvid', name: 'Cinepak' };
+    return { kind: null, name: c < 16 ? `BI ${c}` : bi.compressionFcc,
       reason: {
         iv41: 'Indeo 4 — no decoder yet',
         iv32: 'Indeo 3 — no decoder yet',
@@ -128,6 +126,13 @@
         cram: 'MS Video 1 — no decoder yet',
         msvc: 'MS Video 1 — no decoder yet',
       }[f] || 'no decoder for this format' };
+  }
+
+  function Codecs(module) { this.module = module; }
+  Codecs.prototype.createDecoder = async function (bi) {
+    const { kind, name, reason } = decoderKind(bi);
+    if (!kind) return { decoder: null, name, reason };
+    return { decoder: new Decoder(await WebAssembly.instantiate(this.module, {}), kind, bi), name };
   };
 
   function loadNode() {
@@ -145,7 +150,7 @@
     return new Codecs(await compileWith(root.compile, await res.text()));
   }
 
-  const api = { wrapSource, loadNode, loadBrowser, FRAGMENT };
+  const api = { wrapSource, loadNode, loadBrowser, decoderKind, FRAGMENT };
   if (typeof module === 'object' && module.exports) module.exports = api;
   else root.VideoCodecs = api;
 })(typeof self !== 'undefined' ? self : this);
