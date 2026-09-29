@@ -416,3 +416,121 @@
                   (i32.load8_u offset=2 (local.get $s))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $entry))))
+
+  ;; ---- Microsoft Video 1 ('CRAM' / 'MSVC' / 'WHAM') ----
+  ;;
+  ;; 4x4 blocks, block rows bottom-up, left to right. Each block opens with a
+  ;; little-endian flags word, bytes a then b:
+  ;;   b & 0xFC == 0x84  skip ((b - 0x84) << 8 | a) blocks, this one included
+  ;;                     (a count of 0 skips the rest of the frame)
+  ;;   b < 0x80          two colours C0 C1 follow; flag bit k set = C0.
+  ;;                     16 bpp: bit 15 of C0 set means eight colours follow,
+  ;;                     one pair per 2x2 quadrant (bottom-left, bottom-right,
+  ;;                     top-left, top-right)
+  ;;   otherwise         16 bpp: the flags word is the one colour;
+  ;;                     8 bpp: 0x90 and up = eight index bytes as above,
+  ;;                     else index a fills the block
+  ;; Flag bits run from the block's bottom row up, left to right in each row.
+  ;; 16 bpp colours are RGB555 (bit 15 ignored) and go straight to $dst as
+  ;; frame pixels; 8 bpp writes palette indices into $dst, a w*h top-down
+  ;; plane, which $vid_index_to_bgrx then paints (as RLE8 does). Both are
+  ;; retained: a skipped block keeps the previous frame's pixels.
+  (func $vid_rgb555_bgrx (param $v i32) (result i32)
+    (local $r i32) (local $g i32) (local $b i32)
+    (local.set $r (i32.and (i32.shr_u (local.get $v) (i32.const 10)) (i32.const 31)))
+    (local.set $g (i32.and (i32.shr_u (local.get $v) (i32.const 5)) (i32.const 31)))
+    (local.set $b (i32.and (local.get $v) (i32.const 31)))
+    (i32.or (i32.or
+      (i32.shl (i32.or (i32.shl (local.get $r) (i32.const 3)) (i32.shr_u (local.get $r) (i32.const 2))) (i32.const 16))
+      (i32.shl (i32.or (i32.shl (local.get $g) (i32.const 3)) (i32.shr_u (local.get $g) (i32.const 2))) (i32.const 8)))
+      (i32.or (i32.shl (local.get $b) (i32.const 3)) (i32.shr_u (local.get $b) (i32.const 2)))))
+
+  ;; $bpp is 8 or 16. A short chunk stops the frame where the data runs out.
+  (func $vid_cram_decode (param $dst i32) (param $src i32) (param $len i32)
+                         (param $w i32) (param $h i32) (param $bpp i32)
+    (local $p i32) (local $end i32) (local $wide i32) (local $bx i32) (local $by i32)
+    (local $x0 i32) (local $y0 i32) (local $skip i32) (local $a i32) (local $b i32)
+    (local $flags i32) (local $mode i32) (local $colors i32) (local $wide16 i32)
+    (local $k i32) (local $px i32) (local $py i32) (local $idx i32) (local $v i32) (local $o i32)
+    (local.set $wide16 (i32.eq (local.get $bpp) (i32.const 16)))
+    (local.set $wide (i32.shr_u (local.get $w) (i32.const 2)))
+    (local.set $p (local.get $src))
+    (local.set $end (i32.add (local.get $src) (local.get $len)))
+    (block $done
+      (loop $rows
+        (br_if $done (i32.ge_u (local.get $by) (i32.shr_u (local.get $h) (i32.const 2))))
+        ;; top row of this block row in the top-down picture
+        (local.set $y0 (i32.sub (i32.sub (local.get $h) (i32.const 4))
+                                (i32.shl (local.get $by) (i32.const 2))))
+        (local.set $bx (i32.const 0))
+        (block $row_done
+          (loop $cols
+            (br_if $row_done (i32.ge_u (local.get $bx) (local.get $wide)))
+            (block $next
+              (if (local.get $skip)
+                (then (local.set $skip (i32.sub (local.get $skip) (i32.const 1)))
+                      (br $next)))
+              (br_if $done (i32.gt_u (i32.add (local.get $p) (i32.const 2)) (local.get $end)))
+              (local.set $a (i32.load8_u (local.get $p)))
+              (local.set $b (i32.load8_u offset=1 (local.get $p)))
+              (local.set $p (i32.add (local.get $p) (i32.const 2)))
+              (local.set $flags (i32.or (i32.shl (local.get $b) (i32.const 8)) (local.get $a)))
+              (if (i32.eq (i32.and (local.get $b) (i32.const 0xFC)) (i32.const 0x84))
+                (then
+                  (local.set $skip (i32.sub (i32.add (i32.shl (i32.sub (local.get $b) (i32.const 0x84)) (i32.const 8))
+                                                     (local.get $a))
+                                            (i32.const 1)))
+                  (br $next)))
+              ;; mode 0 = one colour ($v), 1 = two colours, 2 = eight, at $colors
+              (local.set $mode (i32.const 0))
+              (local.set $v (select (local.get $flags) (local.get $a) (local.get $wide16)))
+              (local.set $colors (local.get $p))
+              (if (i32.lt_u (local.get $b) (i32.const 0x80))
+                (then
+                  (local.set $mode (i32.const 1))
+                  (if (local.get $wide16)
+                    (then
+                      (br_if $done (i32.gt_u (i32.add (local.get $p) (i32.const 4)) (local.get $end)))
+                      (if (i32.ne (i32.and (i32.load8_u offset=1 (local.get $p)) (i32.const 0x80)) (i32.const 0))
+                        (then (local.set $mode (i32.const 2)))))))
+                (else
+                  (if (i32.and (i32.eqz (local.get $wide16)) (i32.ge_u (local.get $b) (i32.const 0x90)))
+                    (then (local.set $mode (i32.const 2))))))
+              (if (i32.eq (local.get $mode) (i32.const 1))
+                (then (local.set $o (i32.shl (i32.const 2) (local.get $wide16)))))
+              (if (i32.eq (local.get $mode) (i32.const 2))
+                (then (local.set $o (i32.shl (i32.const 8) (local.get $wide16)))))
+              (if (local.get $mode)
+                (then
+                  (br_if $done (i32.gt_u (i32.add (local.get $p) (local.get $o)) (local.get $end)))
+                  (local.set $p (i32.add (local.get $p) (local.get $o)))))
+              (local.set $x0 (i32.shl (local.get $bx) (i32.const 2)))
+              (local.set $k (i32.const 0))
+              (loop $pix
+                (local.set $px (i32.and (local.get $k) (i32.const 3)))
+                (local.set $py (i32.shr_u (local.get $k) (i32.const 2)))   ;; 0 = bottom row
+                (if (local.get $mode)
+                  (then
+                    (local.set $idx (i32.xor (i32.and (i32.shr_u (local.get $flags) (local.get $k)) (i32.const 1))
+                                             (i32.const 1)))
+                    (if (i32.eq (local.get $mode) (i32.const 2))
+                      (then (local.set $idx (i32.add (local.get $idx)
+                              (i32.add (i32.shl (i32.and (local.get $py) (i32.const 2)) (i32.const 1))
+                                       (i32.and (local.get $px) (i32.const 2)))))))
+                    (local.set $v
+                      (if (result i32) (local.get $wide16)
+                        (then (i32.load16_u (i32.add (local.get $colors) (i32.shl (local.get $idx) (i32.const 1)))))
+                        (else (i32.load8_u (i32.add (local.get $colors) (local.get $idx))))))))
+                (local.set $o (i32.add
+                  (i32.mul (i32.sub (i32.add (local.get $y0) (i32.const 3)) (local.get $py)) (local.get $w))
+                  (i32.add (local.get $x0) (local.get $px))))
+                (if (local.get $wide16)
+                  (then (i32.store (i32.add (local.get $dst) (i32.shl (local.get $o) (i32.const 2)))
+                          (call $vid_rgb555_bgrx (local.get $v))))
+                  (else (i32.store8 (i32.add (local.get $dst) (local.get $o)) (local.get $v))))
+                (local.set $k (i32.add (local.get $k) (i32.const 1)))
+                (br_if $pix (i32.lt_u (local.get $k) (i32.const 16)))))
+            (local.set $bx (i32.add (local.get $bx) (i32.const 1)))
+            (br $cols)))
+        (local.set $by (i32.add (local.get $by) (i32.const 1)))
+        (br $rows))))

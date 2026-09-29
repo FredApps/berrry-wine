@@ -36,7 +36,7 @@ ICM, AVI core, MCI and Animate layers above it are not written yet.
  │  BI_RGB  copy / flip / 555                     done (09a7e)    │
  │  BI_RLE8 runs + delta, retained plane          done (09a7e)    │
  │  cvid    Cinepak: strips, V1/V4 2x2 codebooks  done (09a7e)    │
- │  CRAM    MS Video 1: 4x4 blocks, 1/2/8 colours ~250            │
+ │  CRAM    MS Video 1: 4x4 blocks, 1/2/8 colours done (09a7e)    │
  │  IV41    Indeo 4: wavelet bands, VLC, MC       large, phase 5  │
  └──────┬─────────────────────────────────────────────────────────┘
         ▼
@@ -282,6 +282,20 @@ exist but are rare; decline them with ICERR_BADFORMAT until one turns up.
 (palette indices) and 16 bpp (RGB555) variants. Not in the corpus AVIs, but
 it is the other codec Win98 shipped, and it is small.
 
+**Done:** `$vid_cram_decode` (8 bpp into the retained index plane, then
+`$vid_index_to_bgrx`; 16 bpp straight into the BGRX frame), registered in the
+ICM layer for 'CRAM'/'MSVC'/'WHAM' in any case, and in the standalone player.
+Bit order, measured against ffmpeg's `msvideo1.c`: flag bit k paints row
+k>>2 counted up from the block's bottom, column k&3, set = the first colour of
+the pair; eight-colour pairs are bottom-left, bottom-right, top-left,
+top-right; a skip counts this block, and a skip count of 0 skips the rest of
+the frame. 8 bpp takes eight colours for flag high byte 0x90 and up, 16 bpp
+when bit 15 of the first colour is set. `test/test-video-cram.js` checks
+hand-built 8 and 16 bpp streams with every block kind against the generator's
+own model, against ffmpeg through `verify.js` (bit-exact, including an
+ffmpeg-encoded 16 bpp movie), and through ICLocate + ICM_DECOMPRESS. ffmpeg
+has no 8 bpp encoder, which is why the 8 bpp fixture is hand-built.
+
 ### Indeo 4 ('IV41', Intel ir41_32.ax)
 
 Civ2's 119 movies. YVU 4:1:0: three planes, the luma plane optionally split
@@ -308,7 +322,7 @@ stream. Add those two converters only when a real AVI needs them.
 
 | Fragment | Contents |
 |---|---|
-| `src/09a7e-video-codecs.wat` (**exists**) | The decoders, as pure functions: every parameter is a WASM address, and they use no globals and no imports. `$vid_cvid_decode` keeps a per-strip codebook state block. `$vid_rle8_decode` + `$vid_index_to_bgrx` keep an index plane between frames. Also `$vid_raw_decode` and `$vid_palette_change`. Output is a top-down 32-bit BGRX frame kept between frames; the ICM layer converts it to the DIB the app asked for. MS Video 1 and Indeo 4 come later as `$vid_cram_*` and `$vid_iv41_*`. |
+| `src/09a7e-video-codecs.wat` (**exists**) | The decoders, as pure functions: every parameter is a WASM address, and they use no globals and no imports. `$vid_cvid_decode` keeps a per-strip codebook state block. `$vid_rle8_decode` + `$vid_index_to_bgrx` keep an index plane between frames. `$vid_cram_decode` (MS Video 1) writes that plane at 8 bpp and the frame at 16 bpp. Also `$vid_raw_decode` and `$vid_palette_change`. Output is a top-down 32-bit BGRX frame kept between frames; the ICM layer converts it to the DIB the app asked for. Indeo 4 comes later as `$vid_iv41_*`. |
 | `src/09a7f-video-avi.wat` | AVI core: RIFF walk, stream table, sample index, keyframes, palette changes; used by Win32 AVIFIL32, Win16 AVIFILE (moved out of `09e`), MCIAVI and the Animate control |
 | `src/09a7g-video-icm.wat` | HIC table, `ICOpen/ICLocate/ICInfo/ICGetInfo/ICSendMessage/ICDecompress/ICClose`, the message switch, output-format conversion (→ 8 dither / 16 / 24 / 32, rectangles for DECOMPRESSEX), and the codec state blocks translated from guest pointers; Win16 MSVIDEO ordinals call into it |
 | `src/09a7h-video-mciavi.wat` | the avivideo device, MCIWnd class, `play wait` parking |

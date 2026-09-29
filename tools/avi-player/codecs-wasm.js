@@ -20,7 +20,7 @@
 
   const FRAGMENT = 'src/09a7e-video-codecs.wat';
   const EXPORTS = ['vid_cvid_decode', 'vid_rle8_decode', 'vid_index_to_bgrx',
-    'vid_raw_decode', 'vid_palette_change'];
+    'vid_raw_decode', 'vid_palette_change', 'vid_cram_decode'];
   const CVID_STATE_SIZE = 64 + 32 * 8192;   // $VID_CVID_STATE_SIZE
 
   // WATX emits inline exports only, so each entry point gets one spliced into
@@ -88,6 +88,14 @@
     } else if (this.kind === 'rle8') {
       x.vid_rle8_decode(this.plane, this.src, d.length, w, h);
       this.paint();
+    } else if (this.kind === 'cram') {
+      // 8 bpp decodes indices into the plane; 16 bpp paints the frame.
+      if (this.bi.bitCount === 8) {
+        x.vid_cram_decode(this.plane, this.src, d.length, w, h, 8);
+        this.paint();
+      } else {
+        x.vid_cram_decode(this.frameAt, this.src, d.length, w, h, 16);
+      }
     } else {
       x.vid_raw_decode(this.src, d.length, this.pal, this.bi.bitCount, w, h,
         this.bi.height < 0 ? 1 : 0, this.frameAt);
@@ -100,7 +108,7 @@
   Decoder.prototype.paletteChange = function (d) {
     this.load(d);
     this.x.vid_palette_change(this.pal, this.src, d.length);
-    if (this.kind === 'rle8') this.paint();
+    if (this.kind === 'rle8' || (this.kind === 'cram' && this.bi.bitCount === 8)) this.paint();
   };
   Decoder.prototype.toRgba = function (out) {
     const f = this.frame;
@@ -118,13 +126,17 @@
     if (c === 0 && [8, 16, 24, 32].includes(bi.bitCount)) return { kind: 'raw', name: `uncompressed ${bi.bitCount}bpp` };
     if (c === 1 && bi.bitCount === 8) return { kind: 'rle8', name: 'RLE8' };
     if (f === 'cvid' && bi.bitCount !== 8) return { kind: 'cvid', name: 'Cinepak' };
+    if (['cram', 'msvc', 'wham'].includes(f) && (bi.bitCount === 8 || bi.bitCount === 16)) {
+      return { kind: 'cram', name: `MS Video 1 ${bi.bitCount}bpp` };
+    }
     return { kind: null, name: c < 16 ? `BI ${c}` : bi.compressionFcc,
       reason: {
         iv41: 'Indeo 4 — no decoder yet',
         iv32: 'Indeo 3 — no decoder yet',
         iv50: 'Indeo 5 — no decoder yet',
-        cram: 'MS Video 1 — no decoder yet',
-        msvc: 'MS Video 1 — no decoder yet',
+        cram: 'MS Video 1 at this depth — only 8 and 16 bpp exist',
+        msvc: 'MS Video 1 at this depth — only 8 and 16 bpp exist',
+        wham: 'MS Video 1 at this depth — only 8 and 16 bpp exist',
       }[f] || 'no decoder for this format' };
   }
 
