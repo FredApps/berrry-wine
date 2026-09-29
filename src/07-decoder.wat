@@ -2990,8 +2990,12 @@
   ;; as the guest alternates between them, with no guest write anywhere.
   ;; Heroes III lost half its gameplay batches to that (143K retirements, none
   ;; from a write); test/test-fused-entry-overlap.js.
+  ;; The logical-frame address is treated the same way even before it has been
+  ;; compiled: it must stay a block entry so its marker runs (09a8
+  ;; $th_logical_frame). 0 when off, and no instruction is at address 0.
   (func $fuse_stop (param $p i32) (result i32)
-    (call $page_probe (local.get $p)))
+    (i32.or (call $page_probe (local.get $p))
+            (i32.eq (local.get $p) (global.get $logical_frame_addr))))
   ;; Helper: absolute address (no base, no index)?
   (func $mr_absolute (result i32)
     (i32.and (i32.eq (global.get $mr_base) (i32.const -1)) (i32.eq (global.get $mr_index) (i32.const -1))))
@@ -4805,6 +4809,16 @@
         (call $host_log_i32 (global.get $dbg_prev2_eip))
         (unreachable)))
 
+    ;; The app's game step (09a8 $th_logical_frame): its marker is the first
+    ;; op, ahead of everything below, so every entry runs it. Poisoning the op
+    ;; index keeps every whole-block matcher and run extension off this block
+    ;; -- they would rewrite the stream from $tstart and take the marker with
+    ;; it, or fold a loop that re-enters it internally.
+    (if (i32.and (i32.eq (local.get $start_eip) (global.get $logical_frame_addr))
+                 (i32.eqz (i32.or (local.get $done) (global.get $code16))))
+      (then
+        (call $te (i32.const 476) (local.get $start_eip))
+        (global.set $op_index_poison (i32.const 1))))
     ;; The micro-op tier (07d): a head with an installed program gets the
     ;; enter op in front of its ordinary threaded code, which stays the
     ;; fallback for everything the program cannot vouch for.
@@ -4820,7 +4834,8 @@
       ;; other even when no guest code bytes have changed.
       (if (i32.ne (global.get $d_pc) (local.get $start_eip))
         (then
-          (if (call $page_probe (global.get $d_pc))
+          ;; The game step's address is always its own block's entry (09a8).
+          (if (call $fuse_stop (global.get $d_pc))
             (then
               (call $te (i32.const 45) (global.get $d_pc))
               (br $exit)))))

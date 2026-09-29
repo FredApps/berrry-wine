@@ -1128,6 +1128,11 @@
       (global.set $uc_ninsn (i32.add (global.get $uc_ninsn) (i32.const 1)))
       (if (i32.and (global.get $uc_nocall) (i32.eq (call $uc_kind (local.get $R)) (i32.const 23)))
         (then (call $uc_unsup (local.get $R))))
+      ;; The app's game step must be entered as threaded code every time, so
+      ;; its marker paces it (09a8 $th_logical_frame): never inside a program.
+      ;; A head there is declined; a loop reaching it exits to it.
+      (if (i32.eq (local.get $a) (global.get $logical_frame_addr))
+        (then (call $uc_unsup (local.get $R))))
       (br_if $l (i32.eqz (call $uc_kind (local.get $R))))
       ;; a call: its callee is near code too, and the return address is
       ;; where the callee's ret goes ($uc_ret_targets)

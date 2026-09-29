@@ -49,6 +49,9 @@ for (const setter of [
   'set_case_chain', 'set_rle_run', 'set_tree_fold', 'set_region_fold',
   'set_block_exec', 'set_block_exec_min_uops', 'set_block_exec_regions',
   'set_block_exec_walk_k', 'set_block_exec_walk_budget', 'set_block_exec_split',
+  // host.js and run.js record these three; before they were in the table the
+  // record call returned false and spawned threads ran uncapped.
+  'set_present_cap', 'set_present_pace_mode', 'set_logical_frame',
 ]) {
   assert(setters.includes(setter), `${setter} is missing from inherited WASM globals`);
 }
