@@ -238,11 +238,16 @@ const interfaces = [
     { name: 'AddDirtyRect', nargs: 3 },
   ]},
 
+  // AddRef/GetDevice dispatch straight to the shared resource handlers
+  // (docs/d3d9-resource-alias-review.md). Release is deliberately NOT aliased:
+  // it retires an outstanding GPU query first. gen_api_table.js treats this
+  // spec as authoritative for handler aliases, so an alias kept only in
+  // api_table.json is deleted on the next regeneration.
   { prefix: 'IDirect3DQuery9', methods: [
     { name: 'QueryInterface', nargs: 3 },
-    { name: 'AddRef', nargs: 1 },
+    { name: 'AddRef', nargs: 1, handler: 'IDirect3DShader9_AddRef' },
     { name: 'Release', nargs: 1 },
-    { name: 'GetDevice', nargs: 2 },
+    { name: 'GetDevice', nargs: 2, handler: 'IDirect3DShader9_GetDevice' },
     { name: 'GetType', nargs: 1 },
     { name: 'GetDataSize', nargs: 1 },
     { name: 'Issue', nargs: 2 },
