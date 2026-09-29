@@ -229,7 +229,13 @@ function analyse(file) {
       // is the point. Keep them apart.
       if (t.slot !== undefined && !dll) t.f = t.f.replace('[abs]', '[global]');
       let kind;
-      if (dll) kind = loaded.has(dll) || loaded.has(dll.replace(/\.dll$/, '')) ? 'guest' : 'api';
+      // A loaded DLL can still have exports the emulator overrides natively
+      // (msvcrt `_ftol`, `_stricmp` in Morrowind): with edges, the slot is
+      // guest only if control actually entered that DLL.
+      const dllName = dll && dll.replace(/\.dll$/, '');
+      const inDll = targets.some(x => { const tm = modOf(x.to); return tm && tm.name.toLowerCase().replace(/\.dll$/, '') === dllName; });
+      if (dll && (loaded.has(dll) || loaded.has(dllName))) kind = s && s.size && !inDll ? 'api' : 'guest';
+      else if (dll) kind = 'api';
       else if (api + guest > 0) kind = guest >= api ? 'guest' : 'api';
       else kind = haveEdges ? 'no-edge' : 'guest?';
       key = `${t.f} -> ${kind}`;

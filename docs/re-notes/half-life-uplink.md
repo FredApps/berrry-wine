@@ -1183,3 +1183,30 @@ The Direct3D leg also plays on the GPU executor. It uses the same route as above
 ```
 
 That was 741,285 batches in 280s, with zero fallbacks to the software rasterizer. The capture shows the corridor with its floor tiles, the ceiling, the wall panels and signage, and the HUD (`100`/`0`). That is the same picture as the software reference. It is the top-left quadrant of the `--png` DIB, which is the half-size copy described under "look at the canvas, not the DIB". So all four legs now reach a rendered world: software, OpenGL on WebGL, OpenGL on WAT software GL, and Direct3D on both the software D3DIM rasterizer and WebGL.
+
+## Call-form census (2026-09-29)
+
+**Route.** Box2 ran `--gl-renderer=software --tick-ms-per-batch=16`, driven
+over `--control --frozen` with `tools/ctl.js`:
+
+| step | batch |
+|---|---|
+| menu | 6000 |
+| New Game, Easy | 7530 |
+| loading | 27560 |
+| title card | 57560 |
+| corridor | 87560 |
+
+A batch-scheduled `--input` click route is fragile: the clicks land before the
+menu exists.
+
+**Census over 100k..160k**, holding W with mouse turns
+(docs/uop-tier-design.md §15.1):
+
+- **uop share:** 71-87%.
+- **Guest indirect:** 0.09-0.26%.
+- **Declined for call-indirect:** 2.3-5.6% of entries sit in loops the tier
+  declined for this reason. They are the per-vertex immediate-mode loops at
+  `hw.dll+0x1000a8f1/a85d/a869`, which make three `call [qgl slot]` calls per
+  vertex into GetProcAddress-filled GL pointers. These are host API calls, not
+  guest ones.

@@ -277,3 +277,33 @@ appear in the static import table:
 Only `MsiQueryProductStateW` currently exists in the API table. `UuidCreate` is
 already implemented through `CoCreateGuid`. This is an analysis inventory only;
 none of the UT3 gaps were implemented.
+
+## Call-form census and the software-D3D8 draw stall (2026-09-29)
+
+Measured with `test/run.js --edge-hist` and `tools/call-form-weighted.js`
+(docs/uop-tier-design.md §15.1). Box1 ran `--d3d9-renderer=software
+--d3d9-programmable --batch-size=200000 --screen=1100x840`. On that tree
+(2a632d73), neither UT2003 nor UT2004 gets past the first 3D draw: the main
+thread never returns from `IDirect3DDevice8_DrawIndexedPrimitive`.
+
+- The last EAX is `0x8876086c` (D3DERR_INVALIDCALL).
+- Only T1's Sleep/CriticalSection polling continues.
+- The window stays grey, and `--dx-surfaces` slot 5 shows `nonZero=0`.
+- UT2004 reaches this at about batch 2100-2250.
+- `ut2003_demo_server` stalls the same way, after a `.PAG <- .PAX` C++ throw.
+
+That run did not use `--headless-gl`, and box1 has no display for it. So the
+earlier gameplay verification stands for its own path only.
+
+The load phase itself is the most indirect-call-heavy code measured in the
+corpus. Guest indirect transfers are 4.5-8.4% of block entries, and
+vtable/reg calls are 2-6.6%. The sites are low-polymorphic:
+
+- `core+0x10128138` and `+0x1011ae20`, both `call [eax+4]` (FArchive::Serialize), 1-3 targets.
+- `UStruct::SerializeExpr` at `core+0x1011d330`: a monomorphic self-recursive
+  `call [edx+0x98]`, plus the `jmp [0x1011d9f4+edx*4]` token switch (24-28 arms).
+
+Unreal SE's Nyleve flyby on SoftDrv: under 1% guest indirect. The threaded
+remainder there is SoftDrv MMX (`pxor`/`movq`/`pmulhw`/`psraw`) refused as
+`head-unsupported`. `galaxy+0x105085d2 call [0x1054c260]` calls a runtime-built
+mixer in heap memory (`0xc49394`).

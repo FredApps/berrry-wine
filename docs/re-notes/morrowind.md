@@ -814,3 +814,37 @@ schedule, boot to batch 1,492,001 on a quiet box (load < 1): process CPU
 **43 s in all four runs**, wall 82/45 s without and 58/39 s with. The wall
 spread is present pacing (the headless Present gate is wall-clock 60 Hz),
 not work. Gameplay, where SSE code paths would actually run, is unmeasured.
+
+## Call-form census (2026-09-29, box 1, uop-tier-design §15.1)
+
+`--handler-hist --handler-hist-thread=0,0,0 --edge-hist --uop-census`, analysed with
+`tools/call-form-weighted.js`. We measured three windows:
+
+- **mw1**: batches 6.1-6.3M.
+- **mw2**: 5.0-5.8M, loading `morrowind.esm`.
+- **mw3**: 13.0-13.4M. The chargen Name box is up over the software-D3D9
+  world. That box takes no typed input on this path, so a free-roam window
+  was not reached.
+
+Box 1 needed symlinks `Morrowind.cue` and `Morrowind.iso` in
+`~/tdef/test/binaries/candidates/morrowind/cd/` for the CD check.
+
+Results for mw3, as % of all block entries:
+
+- The uop tier covers 40.5-40.7%.
+- Guest indirect transfers are 5.5%, spread over about 115 sites; 4.5% of the
+  5.5% is at monomorphic sites.
+- The top site is `exe+0x6f38d0 call [esp+0x2c]` at 0.67%. It has one target, a
+  float interval-overlap callback.
+- msvcrt `qsort` (`0x7801ed9a..0x7801ee6f`, 42 blocks) holds 3.9-4.0%. Its three
+  `call [ebp+0x14]` sites split 1/3 each across the per-axis comparators
+  `exe+0x6e9710`, `exe+0x6e9750` and `exe+0x6e9790`, which looks like
+  sweep-and-prune. The comparator is fixed for each `qsort` call.
+- Loops declined for `call-indirect`: the heads are 6.6% and the bodies (union
+  of SCCs) 11.0-11.3%.
+- `_ftol` and `_stricmp` are native overrides of the loaded msvcrt. The fixed
+  tool now counts them as api. `jmp [abs] -> guest` is 0.00%.
+
+The load window mw2 had 2.4-3.3% guest indirect, mostly
+`exe+0x4d11c7 call [edx+0xe8]` (1.6%, monomorphic), and a declined loop at
+`exe+0x4d11c3` with a 5.3% body.

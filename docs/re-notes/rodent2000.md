@@ -59,3 +59,20 @@ the rendered board rather than accepting key logs alone. The verified run
 changed 893 pixels and retained the complete `Rodent's Revenge 2000 - Level 1`
 frame: caption/menu, lives and score strip, cyan border, olive floor, green
 blocks, mouse and cats were all visually inspected.
+
+## Call-form census (2026-09-29)
+
+**What ran.** Local run of `--batch-size=2000`, level 1 played, windows
+3000..4400. The app is mostly idle:
+
+- About 300 threaded blocks per batch.
+- 83% of them are in msvbvm60, and the top block is msvbvm60's `TlsGetValue`
+  wrapper at `msvbvm60+0x66005887`.
+
+**Census** (docs/uop-tier-design.md §15.1):
+
+- **Guest indirect:** 3.7% of entries, 3.1% monomorphic. It is mostly COM
+  `call [r+8]` Release/AddRef.
+- **msvbvm60's `jmp [eax+edx]` delegator** (`+0x66105dfa`) jumps to
+  per-object heap thunks, which `tools/call-form-weighted.js` now labels
+  `anon:`.

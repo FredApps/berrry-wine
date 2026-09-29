@@ -18,3 +18,27 @@ node test/run.js --app=arcanum_demo --quiet-api --batch-size=50000 \
 Both arms give a **pixel-identical** main menu (`tools/png-diff.js`: 0 of 307200 differ). The WebGL arm reports `draws=260 triangles=520 fallbacks=0 errors=0`.
 
 The gameplay route (crash site, gnome dialogue, HUD) needs about 41k batches of clicks driven over `--frozen --control-stdin`. See memory `project-arcanum-gameplay`. It was not re-run on the WebGL arm here, because at ~75 batches/s it is a long run.
+
+## Call-form census (2026-09-29)
+
+**Route.** Box2 ran `--batch-size=50000`, driven over `--control --frozen`
+with `relmousemove` and `di-mousedown`/`di-mouseup` for clicks, and
+`di-keydown:27` for Esc:
+
+| step | batch |
+|---|---|
+| menu | 16100 |
+| Next arrow | 18514 |
+| Esc skips the quest movie | 20022 |
+| Continue | 23627 |
+| gnome dialogue | 25135 |
+| free roam at the crash site | 28152 |
+
+**Census over 45k..54k** (idle NPCs, fire; docs/uop-tier-design.md §15.1):
+
+- **uop share:** 58-59%.
+- **Guest indirect:** 0.23-0.28%, all low-polymorphic.
+- **`jmp [tbl+r*4]` switches:** 1.3% of entries. The largest is the CRT
+  `_output` state machine at `exe+0x5789a2`, at 0.37%.
+- **The remainder:** `declined:no-backedge` is 16.5%. It is call/ret-heavy
+  straight-line code.
