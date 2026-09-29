@@ -31801,5 +31801,14 @@
     "nargs": 5,
     "convention": "stdcall",
     "hash": 2129291060
+  },
+  {
+    "id": 3741,
+    "name": "MCIWndCreateA",
+    "nargs": 4,
+    "convention": "cdecl",
+    "hash": 4268366522,
+    "args": [{"name": "hwndParent", "type": "HWND"}, {"name": "hInstance", "type": "HANDLE"}, {"name": "dwStyle", "type": "DWORD"}, {"name": "szFile", "type": "LPCSTR"}],
+    "ret": "HWND"
   }
 ]

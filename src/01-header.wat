@@ -2452,6 +2452,7 @@
   ;; below that line gets called as guest code and jumps into the void.
   (global $WNDPROC_DIALOG     i32 (i32.const 0xFFFF0004))  ;; USER DefDlgProc wrapper
   (global $WNDPROC_DISPDIB    i32 (i32.const 0xFFFF0005))  ;; DISPDIB "DisplayDibWindow"
+  (global $WNDPROC_MCIWND     i32 (i32.const 0xFFFF0006))  ;; MSVFW32 "MCIWndClass"
   (global $DISPDIB_STATE i32 (region.addr $DISPDIB_STATE 0))
   (global $DISPDIB_STATE_SIZE i32 (region.size $DISPDIB_STATE))
   (global $DISPDIB_STRINGS i32 (region.addr $DISPDIB_STRINGS 0))

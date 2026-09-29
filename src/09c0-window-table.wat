@@ -1844,6 +1844,9 @@
     ;; non-client handling and only owns its own private message range.
     (if (i32.eq (local.get $wp) (global.get $WNDPROC_DISPDIB))
       (then (return (call $dispdib_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
+    ;; 0xFFFF0006 = MCIWnd (09a7i-video-mciwnd.wat), a child with no chrome.
+    (if (i32.eq (local.get $wp) (global.get $WNDPROC_MCIWND))
+      (then (return (call $mciwnd_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam)))))
     ;; 0xFFFF0001 = help wndproc
     (call $help_wndproc (local.get $hwnd) (local.get $msg) (local.get $wParam) (local.get $lParam))
   )

@@ -887,3 +887,5 @@
   ;; MCI avivideo devices, command tokens, return staging and keywords.
   (region.declare $MCIAVI_TABLE (size 0x00001000) (align 0x00000010)
     (owner "09a7h-video-mciavi.wat:$MCIAVI_TABLE"))
+  (region.declare $MCIWND_TABLE (size 0x00000800) (align 0x00000010)
+    (owner "09a7i-video-mciwnd.wat:$MCIWND_TABLE"))
