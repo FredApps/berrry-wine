@@ -31,6 +31,7 @@ imports.host.move_window = (hwnd, x, y, w, h) => {
   windowRects.set(hwnd, [x, y, x + w, y + h]);
 };
 imports.host.get_ticks = () => ticks;
+imports.host.math_pow2 = x => 2 ** x;
 imports.host.glide_submit = (op, ptr, len) => {
   const packet = new Uint8Array(memory.buffer, ptr, len);
   submissions.push({op, bytes: Buffer.from(packet)});
@@ -82,12 +83,39 @@ function call(name, args = [], instance = a) {
     name + ' consumes exactly the decorated stdcall frame');
   return instance.get_eax() >>> 0;
 }
-for (const name of ['_grGlideInit@0', '_grSstWinOpen@28', '_grLfbLock@24', '_grTexCombine@28']) {
+for (const name of ['_grGlideInit@0', '_grSstWinOpen@28', '_grLfbLock@24', '_grTexCombine@28', '_grTexCombineFunction@8', '_guFogGenerateExp@8']) {
   const p = wa(0x410000);
   new Uint8Array(memory.buffer, p, name.length + 1).set(Buffer.from(name + '\0'));
   assert.strictEqual(a.glide_test_lookup(p), table.find(x => x.name === name).id);
 }
 call('_grGlideInit@0');
+// SDK legacy enum mapping, including the inversion used for constant one.
+for (const [mode, fn, factor, invert] of [
+  [0, 0, 0, 0], [1, 1, 0, 0], [2, 3, 8, 0], [3, 4, 8, 0],
+  [4, 3, 1, 0], [5, 6, 8, 0], [6, 7, 12, 0], [7, 7, 4, 0],
+  [8, 7, 13, 0], [9, 7, 5, 0], [10, 0, 0, 1],
+]) {
+  call('_grTexCombineFunction@8', [0, mode]);
+  assert.deepStrictEqual(Array.from({length: 6}, (_, i) =>
+    view.getUint32(regions.BASE.GLIDE_STATE + 256 + 184 + i * 4, true)),
+    [fn, factor, fn, factor, invert, invert], 'legacy texture combine mode ' + mode);
+}
+// Cross a noncontiguous guest page and compare all 64 bytes to the SDK's
+// normalized exponential equation, with its float intermediate rounding.
+const fogPtr = sparseBase + 4072;
+for (const density of [0.00001, 0.001, 0.1]) {
+  fillGuest(fogPtr - 4, 72, 0xcc);
+  const f = Math.fround;
+  const bits = Buffer.alloc(4); bits.writeFloatLE(density);
+  call('_guFogGenerateExp@8', [fogPtr, bits.readUInt32LE()]);
+  const value = i => f(1 - f(Math.exp(-f(f(density) * f(2 ** (3 + (i >> 2)) / (8 - (i & 3)))))));
+  const scale = f(1 / value(63));
+  const expected = Buffer.from(Array.from({length: 64}, (_, i) =>
+    Math.trunc(f(Math.max(0, Math.min(1, f(value(i) * scale))) * 255))));
+  assert.deepStrictEqual(readGuest(fogPtr, 64), expected, 'SDK exponential fog table');
+  assert.strictEqual(expected[63], 255, 'last fog entry normalized');
+  sparseGuards(fogPtr, 64);
+}
 call('_grSstQueryHardware@4', [0x410ffc]);
 assert.strictEqual(view.getUint32(wa(0x410ffc), true), 1, 'one board');
 assert.strictEqual(view.getUint32(wa(0x41100c), true), 1, 'one advertised TMU');

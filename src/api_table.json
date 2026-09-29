@@ -32924,5 +32924,37 @@
     "convention": "stdcall",
     "hash": 2652078501,
     "handler": "grLfbWriteRegion"
+  },
+  {
+    "id": 3882,
+    "name": "grTexCombineFunction",
+    "nargs": 2,
+    "test_call": true,
+    "convention": "stdcall",
+    "hash": 3161202934
+  },
+  {
+    "id": 3883,
+    "name": "_grTexCombineFunction@8",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2019337885,
+    "handler": "grTexCombineFunction"
+  },
+  {
+    "id": 3884,
+    "name": "guFogGenerateExp",
+    "nargs": 2,
+    "test_call": true,
+    "convention": "stdcall",
+    "hash": 2603656571
+  },
+  {
+    "id": 3885,
+    "name": "_guFogGenerateExp@8",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 2725758928,
+    "handler": "guFogGenerateExp"
   }
 ]
