@@ -151,6 +151,15 @@
     (global.set $current_thunk_eip
       (i32.add (global.get $thunk_guest_base) (i32.mul (local.get $thunk_idx) (i32.const 8))))
 
+    ;; --edge-hist: record (calling block -> thunk) so a window names the API
+    ;; every call site reached, whatever form the call took (IAT slot, a
+    ;; GetProcAddress-filled pointer, a COM vtable). No thunk is ever a block
+    ;; entry, so $edge_hist_prev stays the caller and the return edge after
+    ;; it is recorded as before. tools/call-form-weighted.js --apis reads it.
+    (if (i32.and (i32.ne (global.get $handler_hist_enabled) (i32.const 0))
+                 (i32.ne (global.get $edge_hist_enabled) (i32.const 0)))
+      (then (call $edge_hist_record (global.get $edge_hist_prev) (global.get $current_thunk_eip))))
+
     ;; Read thunk data
     (local.set $name_rva (i32.load (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8)))))
     (local.set $api_id (i32.load (i32.add (i32.add (global.get $THUNK_BASE) (i32.mul (local.get $thunk_idx) (i32.const 8))) (i32.const 4))))

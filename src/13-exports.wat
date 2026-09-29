@@ -593,6 +593,16 @@
   (func (export "get_wndproc") (result i32) (global.get $wndproc_addr))
   (func (export "get_thunk_base") (result i32) (global.get $thunk_guest_base))
   (func (export "get_thunk_end") (result i32) (global.get $thunk_guest_end))
+  ;; The thunk record at a thunk-zone guest address: word 0 is the import's
+  ;; name RVA (or a 0xCACA____ continuation marker), word 1 the api_table id.
+  ;; -1 outside the zone. For naming --edge-hist thunk edges in run.js.
+  (func (export "thunk_word") (param $addr i32) (param $w i32) (result i32)
+    (if (i32.or (i32.lt_u (local.get $addr) (global.get $thunk_guest_base))
+                (i32.ge_u (local.get $addr) (global.get $thunk_guest_end)))
+      (then (return (i32.const -1))))
+    (i32.load (i32.add (i32.add (global.get $THUNK_BASE)
+                                (i32.and (i32.sub (local.get $addr) (global.get $thunk_guest_base)) (i32.const -8)))
+                       (i32.shl (i32.and (local.get $w) (i32.const 1)) (i32.const 2)))))
   (func (export "get_num_thunks") (result i32) (global.get $num_thunks))
   ;; Update thunk end to match current allocation count
   ;; Raise the process-wide thunk cursor to at least this instance's count.

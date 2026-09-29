@@ -6005,6 +6005,20 @@ async function main() {
           }
           edges.sort((a, b) => b[2] - a[2]);
           console.log(`  edges: ${edges.length} distinct, ${e.get_edge_hist_collisions() >>> 0} dropped (table full)`);
+          // $win32_dispatch records (caller block -> thunk) edges; name each
+          // thunk from its record so the window says which API a site called.
+          if (e.thunk_word) {
+            const thunks = {};
+            for (const [, to] of edges) {
+              if (thunks[to]) continue;
+              const a = parseInt(to, 16) >>> 0;
+              const w0 = e.thunk_word(a, 0) >>> 0, id = e.thunk_word(a, 1) | 0;
+              if (w0 === 0xFFFFFFFF && id === -1) continue;
+              thunks[to] = (w0 >>> 16) === 0xCACA ? `cont:${w0.toString(16)}`
+                : (apiTable[id] && apiTable[id].name) || `api#${id}`;
+            }
+            edges.thunks = thunks;
+          }
         }
         fs.writeFileSync(jsonPath, JSON.stringify({
           source: 'run.js', thread: handlerHistThread,
@@ -6012,7 +6026,7 @@ async function main() {
           ops: total, handlers: handlers.slice(0, 30).map(r => [r.id, r.hits]),
           blockHits: blockTotal, distinct: blocks.length,
           blocks: (HIST_JSON_BLOCKS ? blocks.slice(0, HIST_JSON_BLOCKS) : blocks).map(r => [r.addr.toString(16), r.hits]),
-          mods, ...(uop ? { uop } : {}), ...(edges ? { edges, edgeDrops: e.get_edge_hist_collisions() >>> 0 } : {}),
+          mods, ...(uop ? { uop } : {}), ...(edges ? { edges, edgeDrops: e.get_edge_hist_collisions() >>> 0, ...(edges.thunks ? { thunks: edges.thunks } : {}) } : {}),
         }));
         console.log(`  wrote histogram JSON to ${jsonPath}`);
       }
