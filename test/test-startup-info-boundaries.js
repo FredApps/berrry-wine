@@ -18,7 +18,9 @@ const { bootRenderHarness } = require('./render-helper');
   const page = 0x30000000, unrelated = 0x28000000;
   for (const ga of [page, unrelated, page + 4096]) assert.strictEqual(e.map_startup_page(ga) >>> 0, ga);
   assert.notStrictEqual(e.guest_to_wasm(page + 4096), e.guest_to_wasm(page) + 4096);
-  const expected = [68, ...new Array(67).fill(0)];
+  // cb=68; dwFlags=STARTF_USESHOWWINDOW; wShowWindow=SW_SHOWNORMAL (an Explorer launch).
+  const expected = new Array(68).fill(0);
+  expected[0] = 68; expected[44] = 1; expected[48] = 1;
   const read = (ga, n) => Array.from({ length: n }, (_, i) => e.guest_read8(ga + i));
   for (let i = 0; i < 4096; i++) e.guest_write8(unrelated + i, 0xa5);
   for (const wide of [0, 1]) for (let split = 1; split < 68; split++) {

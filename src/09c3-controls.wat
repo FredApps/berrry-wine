@@ -1578,6 +1578,14 @@
         ;; A supplied DC is a drawing request, not a BeginPaint transaction.
         (if (i32.eqz (local.get $wParam))
           (then
+            ;; MDICLIENT has no painter of its own: USER's procedure hands
+            ;; WM_PAINT to DefWindowProc, whose BeginPaint sends WM_ERASEBKGND
+            ;; back through the window's current procedure. Applications that
+            ;; subclass the client draw their backdrop from that erase --
+            ;; SimCity 2000's MFC frame paints its title artwork there, and
+            ;; clearing the erase bit unsent left its launcher on bare grey.
+            (if (i32.eq (local.get $class) (i32.const 33))
+              (then (call $defwndproc_paint_erase (local.get $hwnd))))
             (drop (call $paint_seed_child_paints (local.get $hwnd)))
             (call $paint_flag_clear_hwnd (local.get $hwnd))
             (call $update_clear_hwnd (local.get $hwnd))

@@ -1344,7 +1344,10 @@
     ;; Win16 used to discard TRUE to avoid the old queued-erase shortcut;
     ;; that shortcut is gone and its BeginPaint now owns the far callback.
     (if (local.get $arg2)
-      (then (call $nc_flags_set (local.get $arg0) (i32.const 2))))
+      (then
+        (call $nc_flags_set (local.get $arg0) (i32.const 2))
+        (call $invalidate_erase_children (local.get $arg0)
+          (local.get $l) (local.get $t) (local.get $r) (local.get $b))))
     (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
       (then (global.set $paint_pending (i32.const 1)))
       (else (call $paint_flag_set (local.get $arg0))))

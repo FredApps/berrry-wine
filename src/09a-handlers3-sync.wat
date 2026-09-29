@@ -42,9 +42,17 @@
 
   ;; Both startup-info encodings currently expose no strings or inherited
   ;; handles. Keep their identical structure initialization guest-addressed.
+  ;; A program launched from Explorer or Start > Run gets
+  ;; dwFlags = STARTF_USESHOWWINDOW and wShowWindow = SW_SHOWNORMAL, and the
+  ;; CRT hands that to WinMain as nCmdShow. With the flag clear it falls back
+  ;; to SW_SHOWDEFAULT (10) instead, which apps that build a show command from
+  ;; it get wrong: SimCity 2000 shows its frame with nCmdShow|3, meant to be
+  ;; SW_SHOWMAXIMIZED, and 10|3 is 11.
   (func $startup_info_init (param $out i32)
     (call $guest_memset (local.get $out) (i32.const 0) (i32.const 68))
-    (call $gs32 (local.get $out) (i32.const 68)))
+    (call $gs32 (local.get $out) (i32.const 68))
+    (call $gs32 (i32.add (local.get $out) (i32.const 44)) (i32.const 1)) ;; dwFlags = STARTF_USESHOWWINDOW
+    (call $gs16 (i32.add (local.get $out) (i32.const 48)) (i32.const 1))) ;; wShowWindow = SW_SHOWNORMAL
 
   ;; 301: GetStartupInfoW — zero-fill the struct
   (func $handle_GetStartupInfoW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

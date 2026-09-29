@@ -4187,6 +4187,47 @@
       (br $scan)))
     (local.get $status_fallback))
 
+  ;; InvalidateRect(parent, rc, TRUE) on a window without WS_CLIPCHILDREN also
+  ;; invalidates, with erase, every visible child the rectangle covers, and
+  ;; recurses into each such child that lacks WS_CLIPCHILDREN itself. The
+  ;; update region reaches children later through $paint_seed_child_paints;
+  ;; this carries the erase request that seeding cannot see, because the
+  ;; parent's own erase bit is consumed by its BeginPaint first. SimCity 2000
+  ;; invalidates its frame (no WS_CLIPCHILDREN) and draws the title artwork
+  ;; from the subclassed MDI client's WM_ERASEBKGND.
+  (func $invalidate_erase_children (param $parent i32)
+      (param $l i32) (param $t i32) (param $r i32) (param $b i32)
+    (local $slot i32) (local $ch i32) (local $wh i32) (local $cx i32) (local $cy i32)
+    (if (i32.ne (i32.and (call $wnd_get_style (local.get $parent)) (i32.const 0x02000000))
+                (i32.const 0))
+      (then (return)))
+    (local.set $slot (i32.const 0))
+    (block $done (loop $scan
+      (local.set $slot (call $wnd_next_child_slot (local.get $parent) (local.get $slot)))
+      (br_if $done (i32.lt_s (local.get $slot) (i32.const 0)))
+      (local.set $ch (call $wnd_slot_hwnd (local.get $slot)))
+      (if (call $wnd_is_effectively_visible (local.get $ch))
+        (then
+          (local.set $wh (call $ctrl_get_wh_packed (local.get $ch)))
+          (local.set $cx (call $ctrl_get_x_s (local.get $ch)))
+          (local.set $cy (call $ctrl_get_y_s (local.get $ch)))
+          (if (i32.and
+                (i32.and
+                  (i32.lt_s (local.get $l)
+                    (i32.add (local.get $cx) (i32.and (local.get $wh) (i32.const 0xFFFF))))
+                  (i32.gt_s (local.get $r) (local.get $cx)))
+                (i32.and
+                  (i32.lt_s (local.get $t)
+                    (i32.add (local.get $cy) (i32.shr_u (local.get $wh) (i32.const 16))))
+                  (i32.gt_s (local.get $b) (local.get $cy))))
+            (then
+              (call $nc_flags_set (local.get $ch) (i32.const 2))
+              (call $invalidate_erase_children (local.get $ch)
+                (i32.sub (local.get $l) (local.get $cx)) (i32.sub (local.get $t) (local.get $cy))
+                (i32.sub (local.get $r) (local.get $cx)) (i32.sub (local.get $b) (local.get $cy)))))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan))))
+
   ;; $paint_seed_child_paints(parent): WAT-owned propagation of a parent's
   ;; update region into descendant children. This replaces host JS child-paint
   ;; policy; JS only stores region geometry and receives primitive draw calls.

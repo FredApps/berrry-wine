@@ -361,7 +361,10 @@
             ;; do not leave the creation erase queued for the pump to deliver
             ;; afterward over the child's pixels on our shared top-level
             ;; surface. Half-Life's bitmap buttons follow exactly this path.
-            (if (i32.eq (local.get $arg2) (i32.const 0x000F))
+            ;; MDICLIENT is the exception: it has no face, and its native
+            ;; WM_PAINT exists to deliver that erase ($control_wndproc_dispatch).
+            (if (i32.and (i32.eq (local.get $arg2) (i32.const 0x000F))
+                         (i32.ne (call $ctrl_table_get_class (local.get $arg1)) (i32.const 33)))
               (then (call $nc_flags_clear (local.get $arg1) (i32.const 2))))
             (i32.store offset=0 (global.get $reg_base) (call $control_wndproc_dispatch
               (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)))
