@@ -9,6 +9,8 @@
 // --frame-times --trace-locks records Lock arguments/stacks and up to nine
 // readback-to-Unlock byte-difference samples per group. These are write-change
 // bounds, NOT CPU-read bounds; diagnostic copies/scans affect timing.
+// --renderer=software switches to in-worker WAT rasterization after routing.
+// --trace-access adds MW3-specific DIB probes; build with bench-d3dim-access-build.js.
 // Repeat with --label=after once a candidate exists. FPS counts guest Flip
 // calls (MW3: DirectDraw presents), not rAF callbacks. CPU profiles are optional to separate sampling
 // overhead from the primary measurements. Captures require visual review.
@@ -53,9 +55,19 @@ const traceYields = process.argv.includes('--trace-yields');
 const traceCache = process.argv.includes('--trace-cache');
 const traceFences = process.argv.includes('--trace-fences');
 const traceLocks = process.argv.includes('--trace-locks');
+const traceAccess = process.argv.includes('--trace-access');
+assert(!traceAccess || traceLocks, '--trace-access requires --trace-locks and an instrumented WASM');
+const renderer = opt('renderer', 'webgl');
+const lazySync = process.argv.includes('--lazy-sync');
+const lazyStartup = process.argv.includes('--lazy-sync-startup');
+assert(!lazyStartup || lazySync, '--lazy-sync-startup requires --lazy-sync');
+assert(!lazySync || (renderer === 'webgl' && frameTimes), '--lazy-sync requires WebGL and --frame-times');
+assert(['webgl', 'software'].includes(renderer), 'renderer must be webgl or software');
+assert(renderer === 'webgl' || frameTimes, 'software measurement requires --frame-times');
+assert(!traceAccess || (app === 'mw3' && renderer === 'webgl'), '--trace-access is an MW3 WebGL diagnostic');
 const guestKey = Number(opt('guest-key', '0'));
 const output = path.resolve(opt('out', path.join(ROOT, 'build/d3dim-gameplay-perf', `${app}-${label}`)));
-assert(['nfs3_demo', 'gta2_demo', 'mw3'].includes(app), 'only established game routes are supported');
+assert(['nfs3_demo', 'gta2_demo', 'mw3', 'dx_boids', 'dx_flip3dtl'].includes(app), 'only established game/SDK routes are supported');
 assert(['menu', 'gameplay'].includes(route) && (app === 'mw3' || route === 'gameplay'));
 assert(seconds > 0 && windows > 0 && Number.isInteger(windows));
 assert(Number.isInteger(guestKey) && guestKey >= 0 && guestKey <= 255);
@@ -122,6 +134,9 @@ function instrumentGpu(source) {
       guestFlips: globalThis.__benchGuestFlips || 0,
       guestPresents: globalThis.__benchGuestPresents || 0,
       experimentalWatchRanges: this.benchWatches.size,
+      lazyArmed: this.getExports().get_d3dim_lazy_armed?.() || 0,
+      lazyTouched: this.getExports().get_d3dim_lazy_touched?.() || 0,
+      lazyUntouched: this.getExports().get_d3dim_lazy_untouched?.() || 0,
       gpuRenderer: this.benchRendererName || null,
       measuredAt: performance.now(),
     });
@@ -176,6 +191,15 @@ function instrumentWorker(source) {
         return originalLogI32(value);
       };` : ''}
       built.imports.host.dx_trace = (...args) => {
+        ${traceAccess ? `if (args[0] >= 90 && args[0] <= 92) {
+          const c = globalThis.__benchFrameClock, l = c.accessLock;
+          if (l) {
+            const key = JSON.stringify(args.slice(0, 1).concat(args.slice(2, 4)));
+            const a = l.access[key] || (l.access[key] = {count:0, min:args[4], max:args[4], stack:new Error().stack});
+            a.count++; a.min = Math.min(a.min,args[4]); a.max = Math.max(a.max,args[4]);
+          }
+          return;
+        }` : ''}
         ${traceLocks ? `const clock = globalThis.__benchFrameClock;
         if (clock.enabled && args[0] === 1) {
           const ex = globalThis.__benchExports, esp = ex.get_esp() >>> 0;
@@ -193,8 +217,14 @@ function instrumentWorker(source) {
           group.count++;
           if (group.samples.length < 9) clock.openLocks.push({key, slot: args[1], dib: args[3], stackArgs,
             stackWords: Array.from({length: 64}, (_, i) => read(esp + i * 4))});
+          ${traceAccess ? `if (args[1] === 6 && clock.accessSamples.length < 9) {
+            const l = {caller:read(esp+172),dib:args[3],access:{}};
+            clock.accessSamples.push(l); clock.accessLock = l;
+            ex.bench_access_range(args[3], 640*480*2);
+          }` : ''}
         }
         if (clock.enabled && args[0] === 2) {
+          ${traceAccess ? `if (args[1] === 6) { globalThis.__benchExports.bench_access_range(0,0); clock.accessLock=null; }` : ''}
           const index = clock.openLocks.findIndex(l => l.slot === args[1]);
           if (index >= 0) {
             const l = clock.openLocks.splice(index, 1)[0];
@@ -225,6 +255,14 @@ function instrumentWorker(source) {
       };
       const result = await WebAssembly.instantiate(msg.module, built.imports);
       globalThis.__benchExports = (result.exports ? result : result.instance).exports;
+      ${lazyStartup ? 'globalThis.__benchExports.d3dim_lazy_enable(1);' : ''}
+      globalThis.__benchUseSoftware = () => {
+        d3dCommands.fence();
+        // The legacy worker-draw seam probes the host even with GPU off.
+        // Decline that seam too, so it falls through to WAT rasterization.
+        d3dCommands.call = () => 0;
+        globalThis.__benchExports.d3dim_gpu_enable(0);
+      };
       globalThis.__benchCacheSnapshot = () => Object.fromEntries(
         Object.entries(globalThis.__benchExports)
           .filter(([name, fn]) => /^get_(cache_|page_)/.test(name) && fn.length === 0)
@@ -258,11 +296,11 @@ function instrumentWorker(source) {
   });
   let browser;
   const logs = [], errors = [], results = [];
-  const manifest = { app, route, guestKey, label, seconds, windows, started: new Date().toISOString(),
+  const manifest = { app, route, renderer, lazySync, lazyStartup, guestKey, label, seconds, windows, started: new Date().toISOString(),
     platform: os.platform(), arch: os.arch(), cpu: os.cpus()[0].model,
     loadBefore: os.loadavg(), headless: process.argv.includes('--headless'),
     profiled: process.argv.includes('--profile'), wasmSha256: hash(wasm), gpuSha256: hash(gpuSource),
-    regionSha256: hash(regionSource), audit, frameTimes, traceYields, traceCache, traceFences, traceLocks,
+    regionSha256: hash(regionSource), audit, frameTimes, traceYields, traceCache, traceFences, traceLocks, traceAccess,
     note: 'MW3 counts DirectDraw presents; other games count flips. --route=gameplay deploys MW3 into a verified cockpit. Verify screenshots. --audit checks page versions against pixels.' };
   fs.writeFileSync(path.join(output, 'runtime.wasm'), wasm);
   fs.writeFileSync(path.join(output, 'd3dim-gpu.js'), gpuSource);
@@ -300,7 +338,7 @@ function instrumentWorker(source) {
     }
     await page.waitForFunction(app => {
       const d = runningApps[0]?.wine.guestWorker?.d3dStats;
-      return app === 'mw3' ? d?.guestPresents > 120 : d?.triangles > 100000;
+      return app === 'mw3' ? d?.guestPresents > 120 : d?.triangles > (app.startsWith('dx_') ? 20000 : 100000);
     }, { timeout: 150000, polling: 500 }, app);
     // MW3's startup fade also presents frames; let it reach the settled menu.
     await pause(Number(opt('warmup-ms', app === 'mw3' ? '60000' : '10000')));
@@ -317,6 +355,8 @@ function instrumentWorker(source) {
         }
       }
       assert(frameWorker, 'present recorder worker missing');
+      if (traceAccess) assert(await frameWorker.evaluate(() => typeof globalThis.__benchExports.bench_access_range === 'function'),
+        '--trace-access requires the diagnostic WASM from bench-d3dim-access-build.js');
       manifest.cursor = {
         page: await page.evaluate(() => ({
           count: sharedRenderer.wasm.exports.get_cursor_display_count?.(),
@@ -327,6 +367,18 @@ function instrumentWorker(source) {
           handle: globalThis.__benchExports.get_cursor?.(),
         })),
       };
+    }
+    if (renderer === 'software') {
+      // Route with WebGL, then measure the same cockpit with WAT rasterization.
+      // Keep the GPU object alive solely for the existing present/stat channel.
+      await frameWorker.evaluate(() => globalThis.__benchUseSoftware());
+      await pause(5000);
+    }
+    if (lazySync) {
+      assert(frameWorker, '--lazy-sync requires --frame-times');
+      assert(await page.evaluate(() => [...runningApps[0].wine.threadManager.threads.values()]
+        .every(t => t.state === 'exited')), 'lazy-sync prototype requires only the main guest thread');
+      if (!lazyStartup) await frameWorker.evaluate(() => globalThis.__benchExports.d3dim_lazy_enable(1));
     }
     const observe = () => page.evaluate(() => {
       const wine = runningApps[0]?.wine;
@@ -355,6 +407,7 @@ function instrumentWorker(source) {
         c.count = 0; c.overflow = false; c.yields = []; c.yieldOverflow = false;
         c.samples = []; c.lastSample = 0; c.cacheTrace = [];
         c.locks = {}; c.openLocks = [];
+        c.accessSamples = []; c.accessLock = null;
         c.cacheBefore = globalThis.__benchCacheSnapshot();
         c.start = performance.now(); c.enabled = true;
         globalThis.__benchFenceCounts = {};
@@ -367,6 +420,7 @@ function instrumentWorker(source) {
         const capture = await frameWorker.evaluate(() => {
           const c = globalThis.__benchFrameClock;
           c.enabled = false;
+          globalThis.__benchExports.bench_access_range?.(0, 0);
           globalThis.__benchExports.set_code_write_trace?.(0);
           return { start: c.start, end: performance.now(), overflow: c.overflow,
             yields: c.yields, yieldOverflow: c.yieldOverflow, guestSamples: c.samples,
@@ -374,6 +428,7 @@ function instrumentWorker(source) {
             fenceCounts: globalThis.__benchFenceCounts,
             fenceStacks: globalThis.__benchFenceStacks,
             locks: c.locks,
+            accessSamples: c.accessSamples,
             cacheBefore: c.cacheBefore, cacheAfter: globalThis.__benchCacheSnapshot(),
             timestamps: Array.from(c.times.subarray(0, c.count)) };
         });
@@ -399,12 +454,15 @@ function instrumentWorker(source) {
           JSON.stringify({ ...capture, intervals, summary: timing }, null, 2));
       }
       const after = await observe();
+      if (lazySync) assert(await page.evaluate(() => [...runningApps[0].wine.threadManager.threads.values()]
+        .every(t => t.state === 'exited')), 'guest spawned threads during the lazy-sync experiment');
       assert(after.running && after.d3d.errors === 0, 'gameplay failed');
       assert.equal(after.d3d.dirtyAuditMisses || 0, 0, 'dirty-page audit missed a write');
       const delta = Object.fromEntries(Object.keys(after.d3d).filter(k => typeof after.d3d[k] === 'number')
         .map(k => [k, after.d3d[k] - (before.d3d[k] || 0)]));
+      if (renderer === 'software') assert.equal(delta.draws, 0, 'software run issued GPU draws');
       const elapsed = delta.measuredAt / 1000;
-      const frames = app === 'mw3' ? delta.guestPresents : delta.guestFlips;
+      const frames = app === 'mw3' || app.startsWith('dx_') ? delta.guestPresents : delta.guestFlips;
       const result = { window: i, elapsed, fps: frames / elapsed, timing,
         textureCheckMsPerFrame: delta.textureCheckMs / frames,
         targetCheckMsPerFrame: delta.targetCheckMs / frames, delta, before, after };
@@ -418,7 +476,7 @@ function instrumentWorker(source) {
       }
     }
     if (guestKey) await page.evaluate(key => sharedRenderer.handleKeyUp(key), guestKey);
-    assert(results.every(r => app === 'mw3' ? r.delta.guestPresents > 0 : r.delta.guestFlips > 0 && r.delta.triangles > 0),
+    assert(results.every(r => app === 'mw3' || app.startsWith('dx_') ? r.delta.guestPresents > 0 : r.delta.guestFlips > 0 && r.delta.triangles > 0),
       'must measure advancing presents in the intended route');
   } finally {
     manifest.loadAfter = os.loadavg();

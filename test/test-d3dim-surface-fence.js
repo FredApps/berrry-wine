@@ -43,6 +43,32 @@ async function main() {
       calls.push(args); return executor ? executor.call(...args) : reply;
     } },
     extraWat: `
+      (func (export "test_lazy_surface") (param $this i32) (result i32)
+        (local $entry i32) (local $dib i32)
+        (local.set $entry (call $dx_from_this (local.get $this)))
+        (local.set $dib (i32.add (global.get $DIB_BACKING_BASE) (i32.const 4096)))
+        (store.field DxObject misc1 (local.get $entry) (local.get $dib))
+        (store.field DxObject flags (local.get $entry) (i32.const 0))
+        (local.get $dib))
+      (func (export "test_lazy_arm") (param $this i32) (param $on i32)
+        (global.set $d3dim_lazy_on (local.get $on))
+        (global.set $d3dim_gpu_on (i32.const 1))
+        (global.set $d3dim_worker_pending (i32.const 1))
+        (call $d3dim_lock_fence (call $dx_from_this (local.get $this))))
+      (func (export "test_lazy_offset") (param $this i32) (param $offset i32)
+        (store.field DxObject misc1 (call $dx_from_this (local.get $this))
+          (i32.add (i32.add (global.get $DIB_BACKING_BASE) (i32.const 4096)) (local.get $offset))))
+      (func (export "test_lazy_unlock") (param $this i32) (result i32)
+        (call $d3dim_lazy_unlock (call $dx_from_this (local.get $this))))
+      (func (export "test_lazy_access") (param $wa i32) (param $kind i32) (result i32)
+        (local $ga i32)
+        (local.set $ga (call $w2g (local.get $wa)))
+        (if (i32.eq (local.get $kind) (i32.const 1)) (then
+          (call $gs16 (local.get $ga) (i32.const 0x1234)) (return (i32.const 0))))
+        (if (i32.eq (local.get $kind) (i32.const 2)) (then
+          (return (i32.load16_u (call $g2w_affine_span (local.get $ga) (i32.const 4))))))
+        (call $gl16 (local.get $ga)))
+      (func (export "test_lazy_epoch") (result i32) (i32.atomic.load (global.get $UOP_WIN_EPOCH)))
       (func (export "test_surface_fence") (param $gpu i32) (param $pending i32) (result i32)
         (global.set $d3dim_gpu_on (local.get $gpu))
         (global.set $d3dim_worker_pending (local.get $pending))
@@ -112,6 +138,50 @@ async function main() {
   assert.deepStrictEqual(calls.splice(0), [[OPCODES.FENCE, 0, 0]], 'software release still drains queued work');
   assert.strictEqual(ex.test_fence_release(src, 1, 1), 0);
   assert.deepStrictEqual(calls, [[OPCODES.FENCE, 0, 0]], 'final release retains global lifetime barrier');
+  calls.length = 0;
+  const lazy = ex.test_fence_surface(), lazyDib = ex.test_lazy_surface(lazy);
+  const pixels = new Uint8Array(wasmMemory.buffer, lazyDib, 4);
+  executor = new D3DIMGpu({ getMemory: () => wasmMemory.buffer,
+    getExports: () => ({}), createCanvas: () => null });
+  const lazyTarget = { ...a, dib: lazyDib, dirty: true };
+  executor.targets.set(3, lazyTarget);
+  const epoch = ex.test_lazy_epoch();
+  ex.test_lazy_arm(lazy, 1);
+  assert.notStrictEqual(ex.test_lazy_epoch(), epoch, 'arm invalidates cached native read windows');
+  assert.deepStrictEqual(calls, [], 'Lock defers readback');
+  assert.equal(ex.test_lazy_unlock(lazy), 1, 'untouched Unlock drops only the access barrier');
+  assert(lazyTarget.dirty, 'GPU contents remain authoritative');
+  assert.deepStrictEqual(calls, [], 'untouched lock cycle has no readback');
+  ex.test_lazy_arm(lazy, 1);
+  ex.test_lazy_access(lazyDib + 4096, 0);
+  assert.deepStrictEqual(calls, [], 'unrelated DIB read does not synchronize');
+  assert.equal(ex.test_lazy_access(lazyDib, 0), 0xf800, 'first read sees fresh GPU pixels');
+  assert.equal(calls.length, 1);
+  ex.test_lazy_access(lazyDib + 2, 0);
+  assert.equal(calls.length, 1, 'subsequent accesses need no barrier');
+  assert.equal(ex.test_lazy_unlock(lazy), 0);
+  calls.length = 0; lazyTarget.dirty = true; pixels.fill(0);
+  ex.test_lazy_arm(lazy, 1);
+  ex.test_lazy_access(lazyDib, 1);
+  assert.deepStrictEqual(Array.from(pixels), [0x34, 0x12, 0xe0, 7],
+    'partial write happens AFTER readback and preserves untouched GPU pixels');
+  assert.equal(calls.length, 1);
+  calls.length = 0; lazyTarget.dirty = true; pixels.fill(0);
+  ex.test_lazy_arm(lazy, 1);
+  assert.equal(ex.test_lazy_access(lazyDib, 2), 0xf800, 'native span proof synchronizes too');
+  assert.equal(calls.length, 1);
+  calls.length = 0; lazyTarget.dirty = true;
+  ex.test_lazy_arm(lazy, 0);
+  assert.equal(calls.length, 1, 'option off preserves eager Lock');
+  calls.length = 0; lazyTarget.dirty = true;
+  ex.test_lazy_arm(lazy, 1);
+  ex.test_global_fence();
+  assert.equal(calls.length, 1, 'global barrier flushes deferred target');
+  assert.equal(ex.test_lazy_unlock(lazy), 0, 'global barrier disarms stale range');
+  calls.length = 0; lazyTarget.dirty = true; lazyTarget.dib = lazyDib + 1;
+  ex.test_lazy_offset(lazy, 1);
+  ex.test_lazy_arm(lazy, 1);
+  assert.equal(calls.length, 1, 'unaligned backing remains eager for boundary-straddling scalar accesses');
   console.log('PASS surface fences: aliases, pixels, dirty state, global/software ordering');
 }
 main().catch(e => { console.error(e); process.exitCode = 1; });

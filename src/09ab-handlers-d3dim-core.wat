@@ -83,6 +83,8 @@
 
   (func $d3dim_worker_fence
     (local $front i32)
+    (global.set $d3dim_lazy_length (i32.const 0))
+    (global.set $d3dim_lazy_entry (i32.const 0))
     (if (global.get $d3dim_worker_pending) (then
       (global.set $d3dim_worker_pending (i32.const 0))
       (drop (call $host_gpu_gl_call (i32.const 0x20001) (i32.const 0) (i32.const 0)))))
@@ -97,6 +99,9 @@
   ;; The software render Worker and deferred presentation retain global ordering.
   (func $d3dim_surface_fence (param $entry i32)
     (local $dib i32) (local $length i32)
+    (if (i32.eq (local.get $entry) (global.get $d3dim_lazy_entry)) (then
+      (global.set $d3dim_lazy_length (i32.const 0))
+      (global.set $d3dim_lazy_entry (i32.const 0))))
     (if (i32.and (global.get $d3dim_gpu_on)
                 (i32.eqz (global.get $d3dim_present_pending))) (then
       (if (i32.eqz (global.get $d3dim_worker_pending)) (then (return)))
@@ -279,6 +284,72 @@
   ;; applies the same state interpretation the software rasterizer uses, so
   ;; the two backends differ in how they draw and never in what they draw.
   (global $d3dim_gpu_on (mut i32) (i32.const 0))
+  ;; Opt-in experiment for a single guest rendering thread. Only DIB-backed,
+  ;; nonprimary Locks qualify; host/other-surface barriers remain eager.
+  ;; Translation is conservative: an address proof may synchronize early.
+  (global $d3dim_lazy_on (mut i32) (i32.const 0))
+  (global $d3dim_lazy_entry (mut i32) (i32.const 0))
+  (global $d3dim_lazy_start (mut i32) (i32.const 0))
+  (global $d3dim_lazy_length (mut i32) (i32.const 0))
+  (global $d3dim_lazy_armed (mut i32) (i32.const 0))
+  (global $d3dim_lazy_touched (mut i32) (i32.const 0))
+  (global $d3dim_lazy_untouched (mut i32) (i32.const 0))
+  (func (export "d3dim_lazy_enable") (param $on i32)
+    (call $d3dim_worker_fence)
+    (global.set $d3dim_lazy_on (i32.ne (local.get $on) (i32.const 0))))
+  (func (export "get_d3dim_lazy_armed") (result i32) (global.get $d3dim_lazy_armed))
+  (func (export "get_d3dim_lazy_touched") (result i32) (global.get $d3dim_lazy_touched))
+  (func (export "get_d3dim_lazy_untouched") (result i32) (global.get $d3dim_lazy_untouched))
+  (func $d3dim_lazy_access (param $wa i32) (param $len i32)
+    (local $entry i32)
+    (if (i32.and (i32.ne (local.get $len) (i32.const 0))
+          (i32.and
+            (i32.lt_u (local.get $wa) (i32.add (global.get $d3dim_lazy_start) (global.get $d3dim_lazy_length)))
+            (i64.gt_u (i64.add (i64.extend_i32_u (local.get $wa)) (i64.extend_i32_u (local.get $len)))
+              (i64.extend_i32_u (global.get $d3dim_lazy_start))))) (then
+      (local.set $entry (global.get $d3dim_lazy_entry))
+      ;; Disarm before calling JS: readback marks page versions and may reenter.
+      (global.set $d3dim_lazy_length (i32.const 0))
+      (global.set $d3dim_lazy_entry (i32.const 0))
+      (global.set $d3dim_lazy_touched (i32.add (global.get $d3dim_lazy_touched) (i32.const 1)))
+      (call $d3dim_surface_fence (local.get $entry)))))
+  (func $d3dim_lock_fence (param $entry i32)
+    (local $dib i32) (local $len i32)
+    ;; Nested locks take the conservative barrier before replacing the range.
+    (if (global.get $d3dim_lazy_length) (then (call $d3dim_worker_fence)))
+    (if (i32.and (global.get $d3dim_lazy_on)
+          (i32.and (global.get $d3dim_gpu_on)
+            (i32.and (global.get $d3dim_worker_pending)
+              (i32.eqz (global.get $d3dim_present_pending))))) (then
+      (local.set $dib (load.field DxObject misc1 (local.get $entry)))
+      (local.set $len (i32.mul (load.field DxObject pitch (local.get $entry))
+                              (load.field DxObject height (local.get $entry))))
+      ;; Scalar helpers may translate only the first byte unless crossing a
+      ;; page. Keep unaligned surface starts eager so straddling reads/writes
+      ;; cannot enter the range without triggering a second translation.
+      (if (i32.and (local.get $dib) (i32.const 4095)) (then
+        (call $d3dim_surface_fence (local.get $entry)) (return)))
+      (if (i32.and (i32.eqz (i32.and (load.field DxObject flags (local.get $entry)) (i32.const 1)))
+            (i32.and (i32.ne (local.get $len) (i32.const 0))
+              (i32.and (i32.lt_u (i32.sub (local.get $dib) (global.get $DIB_BACKING_BASE)) (global.get $DIB_GUEST_CAPACITY))
+                (i32.le_u (local.get $len) (i32.sub (global.get $DIB_GUEST_CAPACITY)
+                  (i32.sub (local.get $dib) (global.get $DIB_BACKING_BASE))))))) (then
+        (global.set $d3dim_lazy_entry (local.get $entry))
+        (global.set $d3dim_lazy_start (local.get $dib))
+        (global.set $d3dim_lazy_length (local.get $len))
+        (global.set $d3dim_lazy_armed (i32.add (global.get $d3dim_lazy_armed) (i32.const 1)))
+        ;; Cached read windows must re-prove their DIB span before use.
+        (call $uop_win_bump)
+        (return)))))
+    (call $d3dim_surface_fence (local.get $entry)))
+  (func $d3dim_lazy_unlock (param $entry i32) (result i32)
+    (if (i32.and (i32.ne (global.get $d3dim_lazy_length) (i32.const 0))
+          (i32.eq (local.get $entry) (global.get $d3dim_lazy_entry))) (then
+      (global.set $d3dim_lazy_length (i32.const 0))
+      (global.set $d3dim_lazy_entry (i32.const 0))
+      (global.set $d3dim_lazy_untouched (i32.add (global.get $d3dim_lazy_untouched) (i32.const 1)))
+      (return (i32.const 1))))
+    (i32.const 0))
   (global $d3dim_gpu_desc (mut i32) (i32.const 0))
   (global $d3dim_gpu_scratch (mut i32) (i32.const 0))
   (global $d3dim_gpu_scratch_cap (mut i32) (i32.const 0))

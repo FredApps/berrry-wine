@@ -5786,7 +5786,7 @@
       (load.field DxObject flags (local.get $entry))
       (load.field DxObject misc1 (local.get $entry))
       (i32.const 0))
-    (call $d3dim_surface_fence (local.get $entry))
+    (call $d3dim_lock_fence (local.get $entry))
     (local.set $wa (call $g2w (local.get $arg2)))
     ;; Fill DDSURFACEDESC
     (call $zero_memory (local.get $wa) (i32.const 108))
@@ -5946,7 +5946,8 @@
       (load.field DxObject flags (local.get $entry))
       (load.field DxObject misc1 (local.get $entry))
       (i32.const 0))
-    (call $dx_surf_note_cpu_write (local.get $entry))
+    (if (i32.eqz (call $d3dim_lazy_unlock (local.get $entry)))
+      (then (call $dx_surf_note_cpu_write (local.get $entry))))
     ;; If primary, present on unlock. Pace only the unlock that closes a
     ;; whole-surface Lock: that is a frame drawn straight into the primary
     ;; (Diablo, Elasto Mania's menus); a rect lock is one sprite of many.

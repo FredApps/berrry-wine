@@ -325,6 +325,10 @@
           (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
           (global.get $DIB_GUEST_CAPACITY))
       (then
+        (if (global.get $d3dim_lazy_length) (then
+          (call $d3dim_lazy_access
+            (i32.add (global.get $DIB_BACKING_BASE)
+              (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))) (i32.const 1))))
         (return (i32.add
           (global.get $DIB_BACKING_BASE)
           (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))))))
@@ -408,6 +412,9 @@
           (i32.le_u (local.get $len)
             (i32.sub (global.get $DIB_GUEST_CAPACITY) (local.get $off))))
       (then
+        (if (global.get $d3dim_lazy_length) (then
+          (call $d3dim_lazy_access
+            (i32.add (global.get $DIB_BACKING_BASE) (local.get $off)) (local.get $len))))
         (return (i32.add (global.get $DIB_BACKING_BASE) (local.get $off)))))
 
     ;; The page-boundary walk is amortized by the bulk operation that requested
