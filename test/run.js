@@ -974,7 +974,15 @@ const MEDIA_EXE = getArg('media-exe', null);
 // discovers at runtime -- every Winamp visualizer past the one in the registry
 // -- returns a junk handle unless it was seeded here first.
 const DLL_SEED = getArgs('dll-seed');
-const STUCK_AFTER = parseInt(getArg('stuck-after', '10'));  // --stuck-after=N: stuck detection after N same-EIP batches
+// --stuck-after=N: end the run as STUCK once the main thread has sat at one EIP
+// (no API call, no register change) for more than N batches; default 10.
+// --stuck-after=0 disables the detector outright -- the spelling a long route
+// wants, instead of the --stuck-after=100000000 workaround older docs use.
+const STUCK_AFTER = parseInt(getArg('stuck-after', '10'), 10);
+if (!Number.isInteger(STUCK_AFTER) || STUCK_AFTER < 0) {
+  console.error(`error: --stuck-after expects a non-negative integer (0 disables), got ${JSON.stringify(getArg('stuck-after', ''))}`);
+  process.exit(2);
+}
 const WINVER = getArg('winver', null); // --winver=nt4|win2k|win98 or hex like 0x05650004
 // --env=NAME=VALUE (repeatable): set a compatibility variable in this guest
 // process only. The value may itself contain '='; an empty value is retained.
@@ -10006,7 +10014,7 @@ if (VERBOSE) {
         stuckCount = 0;
       } else {
         stuckCount++;
-        if (stuckCount > STUCK_AFTER) {
+        if (STUCK_AFTER > 0 && stuckCount > STUCK_AFTER) {
           console.log(`STUCK at EIP=${hex(eip)} after ${stuckCount} batches`);
           if (instance.exports.get_dbg_prev_eip) console.log(`  dbg_prev_eip=${hex(instance.exports.get_dbg_prev_eip())}`);
           // A NULL indirect-call target is usually a missing COM vtable slot.
