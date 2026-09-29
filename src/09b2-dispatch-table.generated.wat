@@ -2455,6 +2455,489 @@
       (i32.const 0) (i32.const 0) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
     (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grGlideInit") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grGlideInit
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grGlideShutdown") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grGlideShutdown
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstWinClose") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstWinClose
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstQueryHardware") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstQueryHardware
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grGlideGetVersion") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grGlideGetVersion
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstSelect") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstSelect
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstScreenWidth") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstScreenWidth
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstScreenHeight") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstScreenHeight
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstIdle") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstIdle
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstStatus") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstStatus
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstVRetraceOn") (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstVRetraceOn
+      (i32.const 0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grErrorSetCallback") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grErrorSetCallback
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstControl") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstControl
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstWinOpen") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $arg5 i32) (param $arg6 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 4)) (local.get $arg0))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 8)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 12)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 16)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 20)) (local.get $arg4))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get $arg5))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 28)) (local.get $arg6))
+    (call $handle_grSstWinOpen
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grColorCombine") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grColorCombine
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grAlphaCombine") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grAlphaCombine
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grConstantColorValue") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grConstantColorValue
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grDepthBufferMode") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grDepthBufferMode
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grDepthBufferFunction") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grDepthBufferFunction
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grDepthMask") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grDepthMask
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grAlphaBlendFunction") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grAlphaBlendFunction
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grAlphaTestFunction") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grAlphaTestFunction
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grAlphaTestReferenceValue") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grAlphaTestReferenceValue
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grChromakeyMode") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grChromakeyMode
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grChromakeyValue") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grChromakeyValue
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grFogMode") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grFogMode
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grFogColorValue") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grFogColorValue
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grCullMode") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grCullMode
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grSstOrigin") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grSstOrigin
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grClipWindow") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grClipWindow
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grColorMask") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grColorMask
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grRenderBuffer") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grRenderBuffer
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grDepthBiasLevel") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grDepthBiasLevel
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grDitherMode") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grDitherMode
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grGammaCorrectionValue") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grGammaCorrectionValue
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grHints") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grHints
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexClampMode") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexClampMode
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexFilterMode") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexFilterMode
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexLodBiasValue") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexLodBiasValue
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexCombine") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $arg5 i32) (param $arg6 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 4)) (local.get $arg0))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 8)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 12)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 16)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 20)) (local.get $arg4))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get $arg5))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 28)) (local.get $arg6))
+    (call $handle_grTexCombine
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexMipMapMode") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexMipMapMode
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexMinAddress") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexMinAddress
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexMaxAddress") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexMaxAddress
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexCalcMemRequired") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexCalcMemRequired
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexTextureMemRequired") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexTextureMemRequired
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexSource") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexSource
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexDownloadMipMap") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexDownloadMipMap
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grTexDownloadTable") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grTexDownloadTable
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grFogTable") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grFogTable
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grDrawTriangle") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grDrawTriangle
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grBufferClear") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grBufferClear
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grBufferSwap") (param $arg0 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grBufferSwap
+      (local.get $arg0) (i32.const 0) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grLfbLock") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $arg5 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 4)) (local.get $arg0))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 8)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 12)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 16)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 20)) (local.get $arg4))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get $arg5))
+    (call $handle_grLfbLock
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grLfbUnlock") (param $arg0 i32) (param $arg1 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_grLfbUnlock
+      (local.get $arg0) (local.get $arg1) (i32.const 0)
+      (i32.const 0) (i32.const 0) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grLfbReadRegion") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $arg5 i32) (param $arg6 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 4)) (local.get $arg0))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 8)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 12)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 16)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 20)) (local.get $arg4))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get $arg5))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 28)) (local.get $arg6))
+    (call $handle_grLfbReadRegion
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
+  (func (export "test_call_grLfbWriteRegion") (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $arg5 i32) (param $arg6 i32) (param $arg7 i32) (result i32)
+    (local $saved_esp i32)
+    (local.set $saved_esp (i32.load offset=16 (global.get $reg_base)))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 4)) (local.get $arg0))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 8)) (local.get $arg1))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 12)) (local.get $arg2))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 16)) (local.get $arg3))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 20)) (local.get $arg4))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 24)) (local.get $arg5))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 28)) (local.get $arg6))
+    (call $gs32 (i32.add (local.get $saved_esp) (i32.const 32)) (local.get $arg7))
+    (call $handle_grLfbWriteRegion
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (local.get $saved_esp))
+    (i32.load offset=0 (global.get $reg_base)))
 
   ;; ============================================================
   ;; API BR_TABLE DISPATCH — GENERATED, do not edit
@@ -2520,9 +3003,13 @@
       (then
         (call $dispatch_api_table_page_13 (i32.sub (local.get $api_id) (i32.const 3328)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
-    (if (i32.lt_u (local.get $api_id) (i32.const 3756))
+    (if (i32.lt_u (local.get $api_id) (i32.const 3840))
       (then
         (call $dispatch_api_table_page_14 (i32.sub (local.get $api_id) (i32.const 3584)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+        (return)))
+    (if (i32.lt_u (local.get $api_id) (i32.const 3882))
+      (then
+        (call $dispatch_api_table_page_15 (i32.sub (local.get $api_id) (i32.const 3840)) (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
         (return)))
     (call $handle_fallback (local.get $name_ptr) (local.get $api_id))
   )
@@ -16976,8 +17463,92 @@
   )
 
   (func $dispatch_api_table_page_14 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; api ids 3584..3755
+    ;; api ids 3584..3839
     (block $fallback
+    (block $api_255
+    (block $api_254
+    (block $api_253
+    (block $api_252
+    (block $api_251
+    (block $api_250
+    (block $api_249
+    (block $api_248
+    (block $api_247
+    (block $api_246
+    (block $api_245
+    (block $api_244
+    (block $api_243
+    (block $api_242
+    (block $api_241
+    (block $api_240
+    (block $api_239
+    (block $api_238
+    (block $api_237
+    (block $api_236
+    (block $api_235
+    (block $api_234
+    (block $api_233
+    (block $api_232
+    (block $api_231
+    (block $api_230
+    (block $api_229
+    (block $api_228
+    (block $api_227
+    (block $api_226
+    (block $api_225
+    (block $api_224
+    (block $api_223
+    (block $api_222
+    (block $api_221
+    (block $api_220
+    (block $api_219
+    (block $api_218
+    (block $api_217
+    (block $api_216
+    (block $api_215
+    (block $api_214
+    (block $api_213
+    (block $api_212
+    (block $api_211
+    (block $api_210
+    (block $api_209
+    (block $api_208
+    (block $api_207
+    (block $api_206
+    (block $api_205
+    (block $api_204
+    (block $api_203
+    (block $api_202
+    (block $api_201
+    (block $api_200
+    (block $api_199
+    (block $api_198
+    (block $api_197
+    (block $api_196
+    (block $api_195
+    (block $api_194
+    (block $api_193
+    (block $api_192
+    (block $api_191
+    (block $api_190
+    (block $api_189
+    (block $api_188
+    (block $api_187
+    (block $api_186
+    (block $api_185
+    (block $api_184
+    (block $api_183
+    (block $api_182
+    (block $api_181
+    (block $api_180
+    (block $api_179
+    (block $api_178
+    (block $api_177
+    (block $api_176
+    (block $api_175
+    (block $api_174
+    (block $api_173
+    (block $api_172
     (block $api_171
     (block $api_170
     (block $api_169
@@ -17150,7 +17721,7 @@
     (block $api_2
     (block $api_1
     (block $api_0
-      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $fallback (local.get $api_id))
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $api_42 $api_43 $api_44 $api_45 $api_46 $api_47 $api_48 $api_49 $api_50 $api_51 $api_52 $api_53 $api_54 $api_55 $api_56 $api_57 $api_58 $api_59 $api_60 $api_61 $api_62 $api_63 $api_64 $api_65 $api_66 $api_67 $api_68 $api_69 $api_70 $api_71 $api_72 $api_73 $api_74 $api_75 $api_76 $api_77 $api_78 $api_79 $api_80 $api_81 $api_82 $api_83 $api_84 $api_85 $api_86 $api_87 $api_88 $api_89 $api_90 $api_91 $api_92 $api_93 $api_94 $api_95 $api_96 $api_97 $api_98 $api_99 $api_100 $api_101 $api_102 $api_103 $api_104 $api_105 $api_106 $api_107 $api_108 $api_109 $api_110 $api_111 $api_112 $api_113 $api_114 $api_115 $api_116 $api_117 $api_118 $api_119 $api_120 $api_121 $api_122 $api_123 $api_124 $api_125 $api_126 $api_127 $api_128 $api_129 $api_130 $api_131 $api_132 $api_133 $api_134 $api_135 $api_136 $api_137 $api_138 $api_139 $api_140 $api_141 $api_142 $api_143 $api_144 $api_145 $api_146 $api_147 $api_148 $api_149 $api_150 $api_151 $api_152 $api_153 $api_154 $api_155 $api_156 $api_157 $api_158 $api_159 $api_160 $api_161 $api_162 $api_163 $api_164 $api_165 $api_166 $api_167 $api_168 $api_169 $api_170 $api_171 $api_172 $api_173 $api_174 $api_175 $api_176 $api_177 $api_178 $api_179 $api_180 $api_181 $api_182 $api_183 $api_184 $api_185 $api_186 $api_187 $api_188 $api_189 $api_190 $api_191 $api_192 $api_193 $api_194 $api_195 $api_196 $api_197 $api_198 $api_199 $api_200 $api_201 $api_202 $api_203 $api_204 $api_205 $api_206 $api_207 $api_208 $api_209 $api_210 $api_211 $api_212 $api_213 $api_214 $api_215 $api_216 $api_217 $api_218 $api_219 $api_220 $api_221 $api_222 $api_223 $api_224 $api_225 $api_226 $api_227 $api_228 $api_229 $api_230 $api_231 $api_232 $api_233 $api_234 $api_235 $api_236 $api_237 $api_238 $api_239 $api_240 $api_241 $api_242 $api_243 $api_244 $api_245 $api_246 $api_247 $api_248 $api_249 $api_250 $api_251 $api_252 $api_253 $api_254 $api_255 $fallback (local.get $api_id))
     ) ;; 3584: SetConsoleCP
       (call $handle_SetConsoleCP (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
@@ -17667,8 +18238,436 @@
     ) ;; 3755: fputc
       (call $handle_fputc (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
       (return)
+    ) ;; 3756: grGlideInit
+      (call $handle_grGlideInit (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3757: _grGlideInit@0
+      (call $handle_grGlideInit (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3758: grGlideShutdown
+      (call $handle_grGlideShutdown (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3759: _grGlideShutdown@0
+      (call $handle_grGlideShutdown (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3760: grSstWinClose
+      (call $handle_grSstWinClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3761: _grSstWinClose@0
+      (call $handle_grSstWinClose (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3762: grSstQueryHardware
+      (call $handle_grSstQueryHardware (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3763: _grSstQueryHardware@4
+      (call $handle_grSstQueryHardware (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3764: grSstQueryBoards
+      (call $handle_grSstQueryHardware (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3765: _grSstQueryBoards@4
+      (call $handle_grSstQueryHardware (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3766: grGlideGetVersion
+      (call $handle_grGlideGetVersion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3767: _grGlideGetVersion@4
+      (call $handle_grGlideGetVersion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3768: grSstSelect
+      (call $handle_grSstSelect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3769: _grSstSelect@4
+      (call $handle_grSstSelect (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3770: grSstScreenWidth
+      (call $handle_grSstScreenWidth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3771: _grSstScreenWidth@0
+      (call $handle_grSstScreenWidth (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3772: grSstScreenHeight
+      (call $handle_grSstScreenHeight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3773: _grSstScreenHeight@0
+      (call $handle_grSstScreenHeight (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3774: grSstIdle
+      (call $handle_grSstIdle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3775: _grSstIdle@0
+      (call $handle_grSstIdle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3776: grSstIsBusy
+      (call $handle_grSstIdle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3777: _grSstIsBusy@0
+      (call $handle_grSstIdle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3778: grBufferNumPending
+      (call $handle_grSstIdle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3779: _grBufferNumPending@0
+      (call $handle_grSstIdle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3780: grSstStatus
+      (call $handle_grSstStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3781: _grSstStatus@0
+      (call $handle_grSstStatus (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3782: grSstVRetraceOn
+      (call $handle_grSstVRetraceOn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3783: _grSstVRetraceOn@0
+      (call $handle_grSstVRetraceOn (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3784: grErrorSetCallback
+      (call $handle_grErrorSetCallback (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3785: _grErrorSetCallback@4
+      (call $handle_grErrorSetCallback (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3786: grSstControl
+      (call $handle_grSstControl (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3787: _grSstControl@4
+      (call $handle_grSstControl (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3788: grSstWinOpen
+      (call $handle_grSstWinOpen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3789: _grSstWinOpen@28
+      (call $handle_grSstWinOpen (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3790: grColorCombine
+      (call $handle_grColorCombine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3791: _grColorCombine@20
+      (call $handle_grColorCombine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3792: grAlphaCombine
+      (call $handle_grAlphaCombine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3793: _grAlphaCombine@20
+      (call $handle_grAlphaCombine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3794: grConstantColorValue
+      (call $handle_grConstantColorValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3795: _grConstantColorValue@4
+      (call $handle_grConstantColorValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3796: grDepthBufferMode
+      (call $handle_grDepthBufferMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3797: _grDepthBufferMode@4
+      (call $handle_grDepthBufferMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3798: grDepthBufferFunction
+      (call $handle_grDepthBufferFunction (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3799: _grDepthBufferFunction@4
+      (call $handle_grDepthBufferFunction (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3800: grDepthMask
+      (call $handle_grDepthMask (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3801: _grDepthMask@4
+      (call $handle_grDepthMask (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3802: grAlphaBlendFunction
+      (call $handle_grAlphaBlendFunction (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3803: _grAlphaBlendFunction@16
+      (call $handle_grAlphaBlendFunction (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3804: grAlphaTestFunction
+      (call $handle_grAlphaTestFunction (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3805: _grAlphaTestFunction@4
+      (call $handle_grAlphaTestFunction (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3806: grAlphaTestReferenceValue
+      (call $handle_grAlphaTestReferenceValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3807: _grAlphaTestReferenceValue@4
+      (call $handle_grAlphaTestReferenceValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3808: grChromakeyMode
+      (call $handle_grChromakeyMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3809: _grChromakeyMode@4
+      (call $handle_grChromakeyMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3810: grChromakeyValue
+      (call $handle_grChromakeyValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3811: _grChromakeyValue@4
+      (call $handle_grChromakeyValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3812: grFogMode
+      (call $handle_grFogMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3813: _grFogMode@4
+      (call $handle_grFogMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3814: grFogColorValue
+      (call $handle_grFogColorValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3815: _grFogColorValue@4
+      (call $handle_grFogColorValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3816: grCullMode
+      (call $handle_grCullMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3817: _grCullMode@4
+      (call $handle_grCullMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3818: grSstOrigin
+      (call $handle_grSstOrigin (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3819: _grSstOrigin@4
+      (call $handle_grSstOrigin (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3820: grClipWindow
+      (call $handle_grClipWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3821: _grClipWindow@16
+      (call $handle_grClipWindow (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3822: grColorMask
+      (call $handle_grColorMask (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3823: _grColorMask@8
+      (call $handle_grColorMask (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3824: grRenderBuffer
+      (call $handle_grRenderBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3825: _grRenderBuffer@4
+      (call $handle_grRenderBuffer (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3826: grDepthBiasLevel
+      (call $handle_grDepthBiasLevel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3827: _grDepthBiasLevel@4
+      (call $handle_grDepthBiasLevel (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3828: grDitherMode
+      (call $handle_grDitherMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3829: _grDitherMode@4
+      (call $handle_grDitherMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3830: grGammaCorrectionValue
+      (call $handle_grGammaCorrectionValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3831: _grGammaCorrectionValue@4
+      (call $handle_grGammaCorrectionValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3832: grHints
+      (call $handle_grHints (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3833: _grHints@8
+      (call $handle_grHints (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3834: grTexClampMode
+      (call $handle_grTexClampMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3835: _grTexClampMode@12
+      (call $handle_grTexClampMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3836: grTexFilterMode
+      (call $handle_grTexFilterMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3837: _grTexFilterMode@12
+      (call $handle_grTexFilterMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3838: grTexLodBiasValue
+      (call $handle_grTexLodBiasValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3839: _grTexLodBiasValue@8
+      (call $handle_grTexLodBiasValue (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
     ) ;; fallback
     (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 3584)))
+  )
+
+  (func $dispatch_api_table_page_15 (param $api_id i32) (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    ;; api ids 3840..3881
+    (block $fallback
+    (block $api_41
+    (block $api_40
+    (block $api_39
+    (block $api_38
+    (block $api_37
+    (block $api_36
+    (block $api_35
+    (block $api_34
+    (block $api_33
+    (block $api_32
+    (block $api_31
+    (block $api_30
+    (block $api_29
+    (block $api_28
+    (block $api_27
+    (block $api_26
+    (block $api_25
+    (block $api_24
+    (block $api_23
+    (block $api_22
+    (block $api_21
+    (block $api_20
+    (block $api_19
+    (block $api_18
+    (block $api_17
+    (block $api_16
+    (block $api_15
+    (block $api_14
+    (block $api_13
+    (block $api_12
+    (block $api_11
+    (block $api_10
+    (block $api_9
+    (block $api_8
+    (block $api_7
+    (block $api_6
+    (block $api_5
+    (block $api_4
+    (block $api_3
+    (block $api_2
+    (block $api_1
+    (block $api_0
+      (br_table $api_0 $api_1 $api_2 $api_3 $api_4 $api_5 $api_6 $api_7 $api_8 $api_9 $api_10 $api_11 $api_12 $api_13 $api_14 $api_15 $api_16 $api_17 $api_18 $api_19 $api_20 $api_21 $api_22 $api_23 $api_24 $api_25 $api_26 $api_27 $api_28 $api_29 $api_30 $api_31 $api_32 $api_33 $api_34 $api_35 $api_36 $api_37 $api_38 $api_39 $api_40 $api_41 $fallback (local.get $api_id))
+    ) ;; 3840: grTexCombine
+      (call $handle_grTexCombine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3841: _grTexCombine@28
+      (call $handle_grTexCombine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3842: grTexMipMapMode
+      (call $handle_grTexMipMapMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3843: _grTexMipMapMode@12
+      (call $handle_grTexMipMapMode (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3844: grTexMinAddress
+      (call $handle_grTexMinAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3845: _grTexMinAddress@4
+      (call $handle_grTexMinAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3846: grTexMaxAddress
+      (call $handle_grTexMaxAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3847: _grTexMaxAddress@4
+      (call $handle_grTexMaxAddress (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3848: grTexCalcMemRequired
+      (call $handle_grTexCalcMemRequired (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3849: _grTexCalcMemRequired@16
+      (call $handle_grTexCalcMemRequired (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3850: grTexTextureMemRequired
+      (call $handle_grTexTextureMemRequired (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3851: _grTexTextureMemRequired@8
+      (call $handle_grTexTextureMemRequired (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3852: grTexSource
+      (call $handle_grTexSource (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3853: _grTexSource@16
+      (call $handle_grTexSource (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3854: grTexDownloadMipMap
+      (call $handle_grTexDownloadMipMap (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3855: _grTexDownloadMipMap@16
+      (call $handle_grTexDownloadMipMap (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3856: grTexDownloadTable
+      (call $handle_grTexDownloadTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3857: _grTexDownloadTable@12
+      (call $handle_grTexDownloadTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3858: grFogTable
+      (call $handle_grFogTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3859: _grFogTable@4
+      (call $handle_grFogTable (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3860: grDrawTriangle
+      (call $handle_grDrawTriangle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3861: _grDrawTriangle@12
+      (call $handle_grDrawTriangle (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3862: grBufferClear
+      (call $handle_grBufferClear (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3863: _grBufferClear@12
+      (call $handle_grBufferClear (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3864: grBufferSwap
+      (call $handle_grBufferSwap (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3865: _grBufferSwap@4
+      (call $handle_grBufferSwap (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3866: grAADrawLine
+      (call $handle_grAADrawLine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3867: _grAADrawLine@8
+      (call $handle_grAADrawLine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3868: grAADrawTriangle
+      (call $handle_grAADrawLine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3869: _grAADrawTriangle@24
+      (call $handle_grAADrawLine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3870: grDrawLine
+      (call $handle_grDrawLine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3871: _grDrawLine@8
+      (call $handle_grDrawLine (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3872: grDrawPoint
+      (call $handle_grDrawPoint (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3873: _grDrawPoint@4
+      (call $handle_grDrawPoint (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3874: grLfbLock
+      (call $handle_grLfbLock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3875: _grLfbLock@24
+      (call $handle_grLfbLock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3876: grLfbUnlock
+      (call $handle_grLfbUnlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3877: _grLfbUnlock@8
+      (call $handle_grLfbUnlock (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3878: grLfbReadRegion
+      (call $handle_grLfbReadRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3879: _grLfbReadRegion@28
+      (call $handle_grLfbReadRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3880: grLfbWriteRegion
+      (call $handle_grLfbWriteRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; 3881: _grLfbWriteRegion@32
+      (call $handle_grLfbWriteRegion (local.get $arg0) (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+      (return)
+    ) ;; fallback
+    (call $handle_fallback (local.get $name_ptr) (i32.add (local.get $api_id) (i32.const 3840)))
   )
 
   ;; ============================================================

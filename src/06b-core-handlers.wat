@@ -175,8 +175,7 @@
     (local.set $reg (read-thread-word))
     (local.set $target (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $reg) (i32.const 2)))))
     ;; Check thunk zone (guest-space bounds)
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $target))
       (then
         (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
         (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $op))
@@ -190,8 +189,7 @@
     (local $target i32) (local $ret_addr i32)
     (local.set $target (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $op) (i32.const 2)))))
     ;; Check thunk zone — JMP reg, return addr already on stack from prior CALL
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $target))
       (then
         (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
         (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
@@ -232,8 +230,7 @@
     (local.set $mem_addr (call $read_addr))
     (local.set $target (call $gl32 (local.get $mem_addr)))
     ;; Check thunk zone (guest-space bounds) — JMP, not CALL. Return addr already on stack.
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $target))
       (then
         (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
         (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
@@ -1841,8 +1838,7 @@
     (local.set $disp (read-thread-word))
     (local.set $mem_addr (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $base) (i32.const 2)))) (local.get $disp)))
     (local.set $target (call $gl32 (local.get $mem_addr)))
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $target))
       (then
         (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
         (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $op))
@@ -1861,8 +1857,7 @@
     (local.set $disp (read-thread-word))
     (local.set $mem_addr (i32.add (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $base) (i32.const 2)))) (local.get $disp)))
     (local.set $target (call $gl32 (local.get $mem_addr)))
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $target))
       (then
         ;; JMP to thunk (e.g. JMP [IAT] trampoline). The return address is at [ESP]
         ;; (pushed by the preceding CALL). Save it before the handler pops it.
@@ -1880,8 +1875,7 @@
       (call $gl32
         (i32.add (local.get $disp)
           (i32.shl (i32.load offset=0 (global.get $reg_base)) (i32.const 2)))))
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $target))
       (then
         (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
         (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))

@@ -424,8 +424,7 @@
     ;; DefWindowProc import thunks are common saved "previous wndprocs" for
     ;; MFC subclasses. Dispatch them directly instead of recursively entering
     ;; the generic thunk path from inside CallWindowProc*.
-    (if (i32.and (i32.ge_u (local.get $arg0) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $arg0) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $arg0))
       (then
         (local.set $thunk_idx
           (i32.div_u (i32.sub (local.get $arg0) (global.get $thunk_guest_base)) (i32.const 8)))
@@ -451,8 +450,7 @@
                   (i32.const 0) (local.get $name_ptr))))
             (return)))))
     ;; If prevWndFunc is in thunk zone, dispatch inline (thunks can't be jumped to via EIP)
-    (if (i32.and (i32.ge_u (local.get $arg0) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $arg0) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $arg0))
       (then
         ;; Current stack: [ret][prevFunc][hWnd][Msg][wParam][lParam]
         ;; WndProc thunk expects: [ret][hWnd][Msg][wParam][lParam]

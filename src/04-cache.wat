@@ -1,3 +1,13 @@
+  ;; Existing thunks stay on the local fast path. A different instance may
+  ;; publish a new callback during this instance's current run() slice.
+  (defmacro (thunk-contains $target)
+    (if (result i32) (i32.ge_u $target (global.get $thunk_guest_base))
+      (then
+        (if (result i32) (i32.lt_u $target (global.get $thunk_guest_end))
+          (then (i32.const 1))
+          (else (call $thunk_contains_new $target))))
+      (else (i32.const 0))))
+
   ;; ============================================================
   ;; BLOCK CACHE
   ;; ============================================================

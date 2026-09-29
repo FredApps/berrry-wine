@@ -629,8 +629,7 @@
     (local.set $mem_addr (call $read_addr))
     (local.set $target (call $gl32 (local.get $mem_addr)))
     ;; Check thunk zone (guest-space bounds)
-    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
-                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+    (if (thunk-contains (local.get $target))
       (then
         (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
         (call $gs32 (i32.load offset=16 (global.get $reg_base)) (local.get $op))

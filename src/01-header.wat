@@ -208,6 +208,9 @@
   ;; opcode, stdcall stack WA, auxiliary target HWND -> integer/API result.
   (import "host" "gpu_gl_call"
     (func $host_gpu_gl_call (param i32 i32 i32) (result i32)))
+  ;; Glide normalized batch/barrier: opcode, packet WA, packet byte length.
+  (import "host" "glide_submit"
+    (func $host_glide_submit (param i32 i32 i32) (result i32)))
   (import "host" "note_richedit_charformat_size" (func $host_note_richedit_charformat_size (param i32 i32 i32)))
   ;; note_richedit_charformat_size(yHeightTwips, selectionLo, selectionHi)
   ;; GDI host imports

@@ -867,9 +867,7 @@
             (local.set $dialog_marked
               (i32.load offset=8 (call $dialog_state_addr (local.get $slot))))))
         (local.set $thunk_api (i32.const -1))
-        (if (i32.and
-              (i32.ge_u (local.get $wndproc) (global.get $thunk_guest_base))
-              (i32.lt_u (local.get $wndproc) (global.get $thunk_guest_end)))
+        (if (thunk-contains (local.get $wndproc))
           (then
             (local.set $thunk_idx
               (i32.div_u

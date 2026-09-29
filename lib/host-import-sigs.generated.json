@@ -1,6 +1,6 @@
 {
   "generated_from": "src/01-header.wat",
-  "count": 257,
+  "count": 258,
   "sigs": {
     "log": {
       "params": [
@@ -608,6 +608,16 @@
       ]
     },
     "gpu_gl_call": {
+      "params": [
+        "i32",
+        "i32",
+        "i32"
+      ],
+      "results": [
+        "i32"
+      ]
+    },
+    "glide_submit": {
       "params": [
         "i32",
         "i32",

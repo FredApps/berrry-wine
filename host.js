@@ -1177,6 +1177,7 @@ class WineAssembly {
     const ctx = {
       getMemory: () => self.memory.buffer,
       d3d9Bridge: opts.d3d9Bridge,
+      glideBridge: opts.glideBridge,
       // The ?debug toolbar's shared GPU select; unset falls through to the
       // ?d3d9-renderer query and then WebGL inside host-imports.js.
       d3d9Backend: self.d3d9Backend ||
@@ -3752,6 +3753,10 @@ class WineAssembly {
   // they still point at us: a later app has already overwritten them with its
   // own and must not be unwired by a straggling stop().
   _releaseGuestMemory() {
+    if (this.hostCtx && this.hostCtx.closeGlide) {
+      try { this.hostCtx.closeGlide(); }
+      catch (error) { this.logToUI(`[Glide] teardown failed: ${error && error.message}`); }
+    }
     // The final non-barrier GL calls still own bytes in their encoder range.
     // Drain while the instance and shared memory are both reachable; replay is
     // synchronous, so return also closes the range's host-side lifetime.

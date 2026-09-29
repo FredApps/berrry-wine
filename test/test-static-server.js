@@ -70,6 +70,15 @@ function javascriptFiles(dir) {
       fs.symlinkSync(path.join(parent, 'outside.txt'), path.join(root, 'outside-link'));
       assert.strictEqual((await resolveStaticPath(root, '/outside-link')).status, 403,
         'a symlink must not escape the served root');
+      const assets = path.join(parent, 'assets');
+      fs.mkdirSync(assets);
+      fs.writeFileSync(path.join(assets, 'game.dat'), 'fixture');
+      fs.symlinkSync(path.join(assets, 'game.dat'), path.join(root, 'game-link'));
+      assert.strictEqual((await resolveStaticPath(root, '/game-link', { allowedRealRoots: [assets] })).status, 200);
+      assert.strictEqual((await resolveStaticPath(root, '/outside-link', { allowedRealRoots: [assets] })).status, 403,
+        'allowing a shared corpus must not expose sibling files');
+      assert.strictEqual((await resolveStaticPath(root, '/..%2Fassets/game.dat', { allowedRealRoots: [assets] })).status, 403,
+        'an allowed real root does not permit URL traversal');
     } catch (error) {
       if (!error || !['EPERM', 'EACCES'].includes(error.code)) throw error;
     }

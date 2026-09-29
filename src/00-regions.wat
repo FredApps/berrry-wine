@@ -906,3 +906,7 @@
   ;; header). Kept small: the map below 0x08000000 has almost no room left.
   (region.declare $CRT_OVERRIDE_TABLE (size 0x00000400) (align 0x00000010)
     (owner "09a6-handlers-crt.wat:$CRT_OVERRIDE_TABLE"))
+  ;; Glide 2 process-shared board, lock, immutable stream and packet staging.
+  ;; Fixed state uses 532 bytes; streams, texture payloads and LFB live on heap.
+  (region.declare $GLIDE_STATE (size 0x00000220) (align 0x00000010)
+    (owner "09a8h-glide.wat:$GLIDE_STATE"))

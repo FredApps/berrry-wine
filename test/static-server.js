@@ -65,7 +65,12 @@ async function resolveStaticPath(root, rawUrl, options = {}) {
   let stat;
   try {
     real = await fs.promises.realpath(candidate);
-    if (!insideRoot(rootReal, real)) return { status: 403, message: 'forbidden' };
+    // Worktree fixtures can be linked to a shared corpus. Only a test's
+    // explicit filesystem allowlist may extend the realpath boundary; URL
+    // traversal must still resolve inside the served checkout above.
+    const allowed = options.allowedRealRoots || [];
+    if (!insideRoot(rootReal, real) && !allowed.some(base => insideRoot(fs.realpathSync(base), real)))
+      return { status: 403, message: 'forbidden' };
     stat = await fs.promises.stat(real);
   } catch (error) {
     const missing = error && (error.code === 'ENOENT' || error.code === 'ENOTDIR');

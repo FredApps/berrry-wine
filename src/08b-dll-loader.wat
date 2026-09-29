@@ -16,7 +16,7 @@
   (func $load_dll (export "load_dll") (param $size i32) (param $load_addr i32) (result i32)
     (local $pe_off i32) (local $num_sections i32) (local $opt_hdr_size i32)
     (local $section_off i32) (local $i i32) (local $vaddr i32) (local $vsize i32)
-    (local $raw_off i32) (local $raw_size i32)
+    (local $raw_off i32) (local $raw_size i32) (local $mapped_size i32)
     (local $preferred_base i32) (local $delta i32)
     (local $import_rva i32) (local $export_rva i32) (local $export_size i32)
     (local $reloc_rva i32) (local $reloc_size i32)
@@ -109,17 +109,23 @@
       (local.set $raw_off (i32.load (i32.add (local.get $section_off) (i32.const 20))))
       (local.set $characteristics (i32.load (i32.add (local.get $section_off) (i32.const 36))))
       (local.set $vsize (i32.load (i32.add (local.get $section_off) (i32.const 8))))
+      ;; Watcom DLLs use VirtualSize=0 and SizeOfRawData for the BSS
+      ;; extent. PointerToRawData=0 means no file bytes, just as in load_pe.
+      (local.set $mapped_size (select (local.get $vsize) (local.get $raw_size)
+        (i32.gt_u (local.get $vsize) (local.get $raw_size))))
+      (if (i32.eqz (local.get $raw_off))
+        (then (local.set $raw_size (i32.const 0))))
       (local.set $dst (call $g2w (i32.add (local.get $load_addr) (local.get $vaddr))))
       (if (i32.and (i32.gt_u (local.get $raw_size) (i32.const 0))
                    (i32.le_u (i32.add (local.get $raw_off) (local.get $raw_size)) (local.get $size)))
         (then
           (local.set $src (i32.add (global.get $PE_STAGING) (local.get $raw_off)))
           (call $memcpy (local.get $dst) (local.get $src) (local.get $raw_size))))
-      ;; Zero BSS portion: if VirtualSize > RawSize, zero the remainder
-      (if (i32.gt_u (local.get $vsize) (local.get $raw_size))
+      ;; Zero the complete uninitialized mapped extent.
+      (if (i32.gt_u (local.get $mapped_size) (local.get $raw_size))
         (then (call $zero_memory
           (i32.add (local.get $dst) (local.get $raw_size))
-          (i32.sub (local.get $vsize) (local.get $raw_size)))))
+          (i32.sub (local.get $mapped_size) (local.get $raw_size)))))
       (local.set $section_off (i32.add (local.get $section_off) (i32.const 40)))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $sl)))

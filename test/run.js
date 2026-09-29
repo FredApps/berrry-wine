@@ -132,6 +132,9 @@ const D3D9_PROGRAMMABLE = hasFlag('d3d9-programmable');
 // only way a GL app gets a context on a box without a display; --png captures
 // the surface like any DX primary. The browser twin is ?gl-renderer=software.
 const GL_RENDERER = getArg('gl-renderer', null);
+const GLIDE_RENDERER = getArg('glide-renderer', 'webgl');
+if (!['software', 'webgl'].includes(GLIDE_RENDERER))
+  throw new Error('--glide-renderer must be software or webgl');
 if (GL_RENDERER !== null && GL_RENDERER !== 'software' && GL_RENDERER !== 'webgl') {
   throw new Error('--gl-renderer must be software or webgl');
 }
@@ -2459,6 +2462,7 @@ async function main() {
     getMemory: () => ctx._memory ? ctx._memory.buffer : null,
     d3d9Backend: D3D9_RENDERER || 'webgl',
     glBackend: GL_RENDERER || 'webgl',
+    glideBackend: GLIDE_RENDERER,
     d3d9Programmable: D3D9_PROGRAMMABLE || APP_ENTRY?.d3d9Programmable === true,
     createD3DRenderWorker: () => {
       const {Worker} = require('worker_threads');
@@ -2474,7 +2478,7 @@ async function main() {
     // their documented no-3D-hardware path and a large amount of existing headless
     // behaviour is pinned to that; turning it on silently would change what many
     // runs mean. See lib/headless-gl.js.
-    createCanvas: HEADLESS_GL ? createCanvas : null,
+    createCanvas: HEADLESS_GL || GLIDE_RENDERER === 'software' ? createCanvas : null,
     processId: 1000,
     apiTable,
     log: VERBOSE ? console.log.bind(console) : null,
@@ -2557,7 +2561,10 @@ async function main() {
     },
   };
   const base = createHostImports(ctx);
-  closeD3DRender = () => ctx.closeD3DRender();
+  closeD3DRender = () => {
+    ctx.closeGlide();
+    return ctx.closeD3DRender();
+  };
   if (ctx.vfs) {
     ctx.vfs.dirs.add('c:\\windows');
     ctx.vfs.dirs.add('c:\\windows\\system');
