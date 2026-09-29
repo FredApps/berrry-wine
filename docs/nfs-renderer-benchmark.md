@@ -62,16 +62,60 @@ CPU milliseconds per frame sum browser-process CPU deltas from CDP, including
 renderer and GPU processes; this metric is also affected by the workload and
 does not make a contended run equivalent to a quiet-machine benchmark.
 
-### Why this NFS III D3D path is slower
+### Updated-base rerun (2026-09-29)
 
-Follow-up on 2026-09-29: the isolated Glide branch is missing main's
+Merged main `3344817a` into Glide as `ed50bc08`, including `ff6dc0f4` texture
+generation tracking. Resolved API registrations by preserving main's IDs and
+appending Glide's entries, regenerated the tables, and reduced the Glide state
+reservation from 4096 to 544 bytes (532 bytes used) so all five shuffled
+memory layouts fit. Full build, Glide ABI and page-watch tests passed.
+
+All three paths were remeasured with the same rebuilt WASM,
+Chrome 154.0.8037.58, seed 12345, two 30-second samples, and no CPU profiler.
+
+| Rendering route | FPS, sample 1 / 2 | Combined FPS | CPU ms/frame |
+| --- | ---: | ---: | ---: |
+| Original Glide → WebGL | 14.52 / 13.45 | 13.98 | 124.7 |
+| Original D3D → WebGL with fallbacks | 10.79 / 10.27 | 10.53 | 189.4 |
+| Original x86 software | 3.22 / 3.13 | 3.18 | 567.3 |
+
+Glide's observed advantage is now **1.33×**, versus 2.45× in the old run.
+This is not a controlled before/after measurement of the texture optimization:
+main contains other changes, Chrome changed, and load differs. Sample-boundary
+one-minute loads for these accelerated cases ranged from 22.4 to 33.2, so the
+new ratio is also provisional.
+
+The software samples had load 31.7–35.4; its selected, active raster and
+backbuffer dimensions were again confirmed as 640×480 with 1280-byte pitch.
+Its screenshots show the race underway but at an earlier timer value than
+the accelerated arms, so these are not synchronized simulation frames.
+
+The useful mechanism check is definitive: D3D recorded **zero texture byte
+comparisons** across 633 measured frames. It still averaged 387.53 GPU
+draws/frame versus Glide's 229.20, with similar triangle counts (1487.06 versus
+1484.50). D3D had 24.55 software fallbacks/frame, exactly 2 readbacks/frame,
+and 7.91 ms/frame in readback/synchronization. Draw time, including preparation,
+was 20.63 ms/frame. Glide had no LFB reads or writes; both had zero renderer
+errors. Screenshots show the same cockpit and track, but fog appearance
+differs; this remains a workload comparison, not pixel equivalence.
+
+WASM SHA-256:
+`ce8952abbd2f2881096e7133e84f3a6b5ce4b24dca649b151f790684790db2b3`.
+Artifacts: `build/nfs3-benchmark-updated/`.
+
+```sh
+node tools/nfs-renderer-bench.js --cases=glide,d3d,software --seconds=30 --samples=2 --out=build/nfs3-benchmark-updated
+```
+
+### Why the original NFS III D3D path was slower
+
+Initial follow-up on 2026-09-29: the isolated Glide branch was missing main's
 `ff6dc0f4` (selective backing-page generations). Consequently the table above
 does **not** compare Glide against the latest optimized D3DIM implementation.
 That commit's `docs/d3dim-dirty-tracking-perf.md` records 17.7–18.4 ms/frame
 checking unchanged NFS III texture bytes on the old path, and zero texture
 byte checks over 357 frames on the new path. Its FPS observations were not a
-controlled A/B. Re-run both renderers on the same updated base before quoting
-a current speed ratio.
+controlled A/B. The updated-base rerun below includes the fix in both arms.
 
 The original two samples nevertheless expose specific costs in this branch:
 
@@ -112,6 +156,34 @@ support attribution and primitive counts, not a new stable FPS comparison.
 Profiles start/stop sequentially around the timed window and include a small
 amount of work outside it. Raw profiles and fallback counts are in
 `build/nfs3-renderer-profile/`.
+
+### What triggers D3D readbacks
+
+GPU draws mark the render target dirty and set the WAT pending-work flag.
+`d3dim_worker_fence` sends opcode `0x20001` only when work is pending;
+`D3DIMGpu.fence()` reads each dirty target with `gl.readPixels`, flips rows,
+packs pixels into the guest surface format (RGB565 for NFS III), and writes
+the guest DIB. It also updates the shadow copy and page generations.
+
+Consumers that request this synchronization include:
+
+- A rejected GPU primitive: the software rasterizer needs the existing image
+  in RAM before adding pixels. Subsequent GPU work uploads changed DIB rows.
+- DirectDraw `Lock`, `Blt`, `BltFast` and `GetDC`: these expose or operate on
+  CPU-visible pixels.
+- DirectDraw `Flip`: this backend declines the GPU flip command and follows
+  the DIB swap/presentation path, which needs current pixels in guest RAM.
+- `EndScene` when rendering directly to a primary surface; it is not an
+  unconditional readback for every scene.
+
+After a fence the dirty/pending flags clear, so a cluster of software lines
+shares one readback until another GPU draw occurs. The fence currently
+flushes all dirty targets, even if the CPU access concerns another surface.
+Two readbacks/frame are measured in NFS III, but the aggregate counter does
+not identify which individual calls triggered them. Rain fallback and DIB
+presentation explain the need; assigning each measured readback to an API
+requires a caller census. Texture generation tracking does not remove this
+GPU-to-CPU image transfer.
 
 ### Local dropdown testing
 
