@@ -116,9 +116,9 @@
   ;; default; `--no-fold=NAME` in test/runner-experiments.js sets them, and the
   ;; mask is inherited by every guest-thread instance. Decode-time, like every
   ;; other fold switch. Bits: 0x04 lut-span (H431), 0x08 colorkey8 (H443),
-  ;; 0x10 mw3-blit (H436/H440/H441), 0x20 lut16-counted (H418), 0x80
-  ;; xlat-stosb (H418); 0x01 was storm-bitreader (H396) and 0x02 smack-huff
-  ;; (H395), both retired. The MMX exact copies already
+  ;; 0x10 mw3-blit (H436/H440/H441), 0x80 xlat-stosb (H418); 0x01 was
+  ;; storm-bitreader (H396), 0x02 smack-huff (H395) and 0x20 lut16-counted
+  ;; (H418's Heroes III u16 forms), all retired. The MMX exact copies already
   ;; had globals and now have setters (set_mmx_copy64, set_mmx_mask_copy).
   (global $fold_off_mask (mut i32) (i32.const 0))
   (func $fold_off (param $bit i32) (result i32)

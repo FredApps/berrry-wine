@@ -457,8 +457,9 @@ function alignPageEnd(p, room) {
   }
 
   // Heroes III's exact RGB565 form has an 8-bit source and a 16-bit table and
-  // destination. Exercise both destination directions across page boundaries;
-  // the table itself also straddles a page so the affine-span proof is used.
+  // destination. H418's wide16/stack-table forms for it were retired to the
+  // uop tier (docs/uop-tier-design.md section 18); these stay as exactness
+  // checks of whatever runs the loop now, across page boundaries both ways.
   const h3Forward = Uint8Array.from([
     0x31, 0xc9,                         // xor ecx,ecx
     0x8a, 0x0a,                         // mov cl,[edx]
@@ -493,9 +494,6 @@ function alignPageEnd(p, room) {
   for (let i = 0; i < 256; i++) dv.setUint16(wa(h3TableBase + 0x1c) + i * 2, h3Color(i), true);
   const readWords = (ga, n) => Array.from({ length: n }, (_, i) => dv.getUint16(wa(ga) + i * 2, true));
   const h3Expected = h3Input.map(h3Color);
-  const h3Matches = e.get_loop_lut16_matches();
-  const h3Runs = e.get_loop_lut16_runs();
-  const h3Pixels = e.get_loop_lut16_bytes();
   runAt(h3Forward, () => {
     e.set_eax(h3Dst); e.set_ecx(0xcccccccc); e.set_edx(h3Src);
     e.set_ebp(h3Input.length); e.set_edi(h3TableBase);
@@ -509,12 +507,6 @@ function alignPageEnd(p, room) {
   assert.strictEqual(e.get_ebp() >>> 0, 0, 'Heroes III counter');
   assert.strictEqual(e.get_ecx() & 0xffff, h3Expected.at(-1),
     'Heroes III final 16-bit accumulator');
-  assert.strictEqual(e.get_loop_lut16_matches(), h3Matches + 1,
-    'Heroes III wide recognizer matched');
-  assert(e.get_loop_lut16_runs() >= h3Runs + 3,
-    'Heroes III H418 resumes across step quanta');
-  assert.strictEqual(Number(e.get_loop_lut16_bytes() - h3Pixels), h3Input.length,
-    'Heroes III H418 charges every pixel');
 
   runAt(h3Backward, () => {
     e.set_eax(h3BackDst + h3Input.length * 2); e.set_ecx(0); e.set_edx(h3Src);
@@ -524,22 +516,9 @@ function alignPageEnd(p, room) {
     'Heroes III backward RGB565 output');
   assert.strictEqual(e.get_eax() >>> 0, h3BackDst, 'Heroes III backward destination cursor');
 
-  const h3Baseline = (h3BackDst + 0x800) >>> 0;
-  e.set_loop_lut_emit(0);
-  const h3BaselineRuns = e.get_loop_lut16_runs();
-  runAt(h3Forward, () => {
-    e.set_eax(h3Baseline); e.set_ecx(0); e.set_edx(h3Src);
-    e.set_ebp(h3Input.length); e.set_edi(h3TableBase);
-  });
-  assert.deepStrictEqual(readWords(h3Baseline, h3Input.length), h3Expected,
-    'lowered and ordinary Heroes III loops agree');
-  assert.strictEqual(e.get_loop_lut16_runs(), h3BaselineRuns,
-    'LUT-only gate suppresses wide H418');
-  e.set_loop_lut_emit(1);
-
   // The dominant H3 map loop prefixes the same RGB565 body with an invariant
-  // `mov table,[esp+0x40]`. H418 loads that slot once per page/budget chunk
-  // and publishes the architectural table register at exit.
+  // `mov table,[esp+0x40]`; the architectural table register must hold it at
+  // exit.
   const h3StackTable = Uint8Array.from([
     0x8b, 0x4c, 0x24, 0x40,             // mov ecx,[esp+0x40]
     0x31, 0xc0,                         // xor eax,eax
@@ -553,8 +532,6 @@ function alignPageEnd(p, room) {
     0xc3,
   ]);
   const h3StackDst = (h3BackDst + 0x1000) >>> 0;
-  const h3StackMatches = e.get_loop_lut16_matches();
-  const h3StackRuns = e.get_loop_lut16_runs();
   runAt(h3StackTable, () => {
     dv.setUint32(wa(stack + 0x40), h3TableBase, true);
     e.set_eax(0xaaaaaaaa); e.set_ecx(0xcccccccc); e.set_edx(h3Src);
@@ -564,24 +541,6 @@ function alignPageEnd(p, room) {
     'Heroes III stack-table RGB565 output');
   assert.strictEqual(e.get_ecx() >>> 0, h3TableBase,
     'Heroes III stack-loaded table register published');
-  assert.strictEqual(e.get_loop_lut16_matches(), h3StackMatches + 1,
-    'Heroes III stack-table recognizer matched');
-  assert(e.get_loop_lut16_runs() >= h3StackRuns + 3,
-    'Heroes III stack-table H418 resumes across step quanta');
-
-  e.set_loop_lut16_stack_emit(0);
-  const h3StackBaseline = (h3StackDst + 0x800) >>> 0;
-  const h3StackBaselineRuns = e.get_loop_lut16_runs();
-  runAt(h3StackTable, () => {
-    dv.setUint32(wa(stack + 0x40), h3TableBase, true);
-    e.set_eax(0); e.set_ecx(0); e.set_edx(h3Src);
-    e.set_ebp(h3StackBaseline); e.set_esi(h3Input.length);
-  });
-  assert.deepStrictEqual(readWords(h3StackBaseline, h3Input.length), h3Expected,
-    'lowered and ordinary Heroes III stack-table loops agree');
-  assert.strictEqual(e.get_loop_lut16_runs(), h3StackBaselineRuns,
-    'stack-only gate suppresses stack-table H418');
-  e.set_loop_lut16_stack_emit(1);
 
   // d2gfx two-moving-source blend form. The table is absolute in the guest
   // instruction, source2 is also the bounded cursor, and all three streams

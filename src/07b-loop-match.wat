@@ -47,9 +47,6 @@
   (global $loop_xlat_stosb_candidates (mut i32) (i32.const 0))
   (global $loop_xlat_stosb_runs (mut i32) (i32.const 0))
   (global $loop_xlat_stosb_bytes (mut i64) (i64.const 0))
-  (global $loop_lut16_matches (mut i32) (i32.const 0))
-  (global $loop_lut16_runs (mut i32) (i32.const 0))
-  (global $loop_lut16_bytes (mut i64) (i64.const 0))
   (global $loop_copy32_matches (mut i32) (i32.const 0))
   (global $loop_copy32_runs (mut i32) (i32.const 0))
   (global $loop_copy32_bytes (mut i64) (i64.const 0))
@@ -108,8 +105,6 @@
   ;; is on by default; COPY remains off while its historical Storm divergence
   ;; is investigated. set_loop_emit still controls both for compatibility.
   (global $loop_lut_emit_enabled (mut i32) (i32.const 1))
-  ;; Benchmark/rollback gate for the Heroes III stack-table extension only.
-  (global $loop_lut16_stack_emit_enabled (mut i32) (i32.const 1))
   ;; Exact MW3 folds are app-opted-in on the main instance, but guest threads
   ;; execute in separate WebAssembly instances. Keep both their process gate
   ;; (bit 0) and the historically divergent generic COPY/AVG experiment gate
@@ -2217,199 +2212,11 @@
   ;; tbl_reg may be -1 for an absolute table rooted at table_disp. Bit 3 is the
   ;; counted one-source absolute-table form: word 6 holds the table's guest
   ;; address instead of a register index, and the descriptor stays 22 words.
-  ;; Bit 1 selects the
-  ;; Heroes III wide-pixel form: its one extra word is table_disp, the source
-  ;; and index remain bytes, and the table load/destination store are u16.
-  ;; Bit 2 on the wide form adds a stack displacement: tbl_reg is initialized
-  ;; from `[esp + stack_disp]` once per H418 entry and published at exit.
+  ;; Bits 1 and 2 were Heroes III's u16 wide-pixel and stack-table forms
+  ;; (the counted RGB565 recognizer); both retired to the uop tier,
+  ;; docs/uop-tier-design.md section 18.
   (global $LOOP_SUPEROP_LUT i32 (i32.const 418))
   (global $LOOP_LUT_PARAMS i32 (i32.const 22))
-
-  ;; Heroes III's unlit RGB565 blitters all use this nine-op counted body:
-  ;;
-  ;;   xor acc,acc / mov acc8,[src] / add|sub dst,2 / inc src / dec count
-  ;;   mov acc16,[table+acc*2+disp] / mov [dst+disp],acc16 / jnz ^
-  ;;
-  ;; The generic role matcher intentionally knows only byte consumers. Keep
-  ;; this proof local and exact rather than teaching every matcher that the
-  ;; H149 effective-address op plus H164 is one semantic word load.
-  (func $loop_try_lut16_counted
-    (param $start_eip i32) (param $tstart i32) (result i32)
-    (local $p i32) (local $op i32) (local $info i32) (local $sib_tbl i32)
-    (local $acc i32) (local $src i32) (local $dst i32)
-    (local $ctr i32) (local $tbl i32) (local $dst_stride i32)
-    (local $src_disp i32) (local $dst_disp i32) (local $table_disp i32)
-    (local $fall i32) (local $n i32) (local $first i32)
-    (local $table_stack i32) (local $stack_disp i32)
-
-    ;; --no-fold=lut16-counted: both forms, for the uop-tier A/B (section 18).
-    (if (call $fold_off (i32.const 0x20)) (then (return (i32.const 0))))
-    (local.set $n (global.get $op_index_n))
-    (if (i32.eq (local.get $n) (i32.const 10))
-      (then
-        ;; The dominant H3 form reloads its invariant table pointer from a
-        ;; stack local at the top of every pixel iteration.
-        (local.set $p (call $loop_op_at (i32.const 0)))
-        (if (i32.ne (call $lm_load32_base (load.field LoopOp handler (local.get $p)) (load.field.memarg LoopOp operand (local.get $p)))
-                    (i32.const 4))
-          (then (return (i32.const 0))))
-        (local.set $tbl (call $lm_load32_data (load.field LoopOp handler (local.get $p)) (load.field.memarg LoopOp operand (local.get $p))))
-        (local.set $stack_disp (call $lm_load32_disp (load.field LoopOp handler (local.get $p)) (load.field.memarg LoopOp operand (local.get $p)) (local.get $p)))
-        (local.set $table_stack (i32.const 1))
-        (local.set $first (i32.const 1)))
-      (else
-        (if (i32.ne (local.get $n) (i32.const 9))
-          (then (return (i32.const 0))))))
-
-    ;; xor acc,acc
-    (local.set $p (call $loop_op_at (local.get $first)))
-    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 18))
-      (then (return (i32.const 0))))
-    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
-    (local.set $acc (i32.and (local.get $op) (i32.const 0xF)))
-    (if (i32.or
-          (i32.gt_u (local.get $acc) (i32.const 3))
-          (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (local.get $acc)))
-      (then (return (i32.const 0))))
-
-    ;; mov acc8,[src+disp]
-    (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 1))))
-    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 28))
-      (then (return (i32.const 0))))
-    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
-    (if (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (local.get $acc))
-      (then (return (i32.const 0))))
-    (local.set $src (i32.and (local.get $op) (i32.const 0xF)))
-    (local.set $src_disp (i32.load offset=8 (local.get $p)))
-
-    ;; add/sub dst,2. The store is after this instruction, so fold the bump
-    ;; into its descriptor displacement below.
-    (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 2))))
-    (if (i32.and
-          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 3))
-          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 8)))
-      (then (return (i32.const 0))))
-    (if (i32.ne (i32.load offset=8 (local.get $p)) (i32.const 2))
-      (then (return (i32.const 0))))
-    (local.set $dst (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF)))
-    (local.set $dst_stride
-      (select (i32.const 2) (i32.const -2)
-        (i32.eq (load.field LoopOp handler (local.get $p)) (i32.const 3))))
-
-    ;; inc src / dec count
-    (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 3))))
-    (if (i32.or
-          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 64))
-          (i32.ne (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF))
-                  (local.get $src)))
-      (then (return (i32.const 0))))
-    (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 4))))
-    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 65))
-      (then (return (i32.const 0))))
-    (local.set $ctr (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF)))
-
-    ;; H149 computes table+acc*2+disp, and H164 consumes its SIB_SENTINEL as
-    ;; a word load into acc.
-    (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 5))))
-    (if (i32.or
-          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 149))
-          (i32.ne (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0)))
-      (then (return (i32.const 0))))
-    (local.set $info (i32.load offset=8 (local.get $p)))
-    (local.set $sib_tbl (i32.and (local.get $info) (i32.const 0xF)))
-    (if (i32.or
-          (i32.eq (local.get $sib_tbl) (i32.const 0xF))
-          (i32.or
-            (i32.ne
-              (i32.and (i32.shr_u (local.get $info) (i32.const 4)) (i32.const 0xF))
-              (local.get $acc))
-            (i32.ne
-              (i32.and (i32.shr_u (local.get $info) (i32.const 8)) (i32.const 3))
-              (i32.const 1))))
-      (then (return (i32.const 0))))
-    (if (i32.and (local.get $table_stack)
-          (i32.ne (local.get $tbl) (local.get $sib_tbl)))
-      (then (return (i32.const 0))))
-    (local.set $tbl (local.get $sib_tbl))
-    (local.set $table_disp (i32.load offset=12 (local.get $p)))
-    (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 6))))
-    (if (i32.or
-          (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 164))
-          (i32.or
-            (i32.ne (i32.and (load.field.memarg LoopOp operand (local.get $p)) (i32.const 0xF))
-                    (local.get $acc))
-            (i32.ne (i32.load offset=8 (local.get $p)) (global.get $SIB_SENTINEL))))
-      (then (return (i32.const 0))))
-
-    ;; mov [dst+disp],acc16 / jnz ^
-    (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 7))))
-    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 165))
-      (then (return (i32.const 0))))
-    (local.set $op (load.field.memarg LoopOp operand (local.get $p)))
-    (if (i32.or
-          (i32.ne (i32.shr_u (local.get $op) (i32.const 4)) (local.get $acc))
-          (i32.ne (i32.and (local.get $op) (i32.const 0xF)) (local.get $dst)))
-      (then (return (i32.const 0))))
-    (local.set $dst_disp
-      (i32.add (i32.load offset=8 (local.get $p)) (local.get $dst_stride)))
-    (local.set $p (call $loop_op_at (i32.add (local.get $first) (i32.const 8))))
-    (if (i32.ne (load.field LoopOp handler (local.get $p)) (i32.const 312))
-      (then (return (i32.const 0))))
-
-    ;; All architectural roles are distinct in the observed family. Requiring
-    ;; that property makes publishing registers once at exit order-equivalent.
-    (if (i32.eq (local.get $acc) (local.get $src)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $acc) (local.get $dst)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $acc) (local.get $ctr)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $acc) (local.get $tbl)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $src) (local.get $dst)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $src) (local.get $ctr)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $src) (local.get $tbl)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $dst) (local.get $ctr)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $dst) (local.get $tbl)) (then (return (i32.const 0))))
-    (if (i32.eq (local.get $ctr) (local.get $tbl)) (then (return (i32.const 0))))
-
-    (global.set $loop_matched_blocks
-      (i32.add (global.get $loop_matched_blocks) (i32.const 1)))
-    (global.set $loop_lut16_matches
-      (i32.add (global.get $loop_lut16_matches) (i32.const 1)))
-    (if (global.get $loop_trace)
-      (then
-        (call $host_log_i32 (i32.const 0x100B0001))
-        (call $host_log_i32 (local.get $start_eip))))
-    (if (i32.eqz (global.get $loop_lut_emit_enabled))
-      (then (return (i32.const 0))))
-    (if (i32.and (local.get $table_stack)
-          (i32.eqz (global.get $loop_lut16_stack_emit_enabled)))
-      (then (return (i32.const 0))))
-
-    (local.set $fall (i32.load offset=8 (local.get $p)))
-    (global.set $thread_alloc (local.get $tstart))
-    (global.set $op_index_n (i32.const 0))
-    (call $te (global.get $LOOP_SUPEROP_LUT)
-      (select (i32.const 6) (i32.const 2) (local.get $table_stack)))
-    (call $te_raw (local.get $src))
-    (call $te_raw (i32.const 1))
-    (call $te_raw (local.get $src_disp))
-    (call $te_raw (local.get $dst))
-    (call $te_raw (local.get $dst_stride))
-    (call $te_raw (local.get $dst_disp))
-    (call $te_raw (local.get $tbl))
-    (call $te_raw (local.get $acc))
-    (call $te_raw (i32.const 1))
-    (call $te_raw (i32.const -1))
-    (call $te_raw (i32.const 0))
-    (call $te_raw (local.get $ctr))
-    (call $te_raw (i32.const -1))
-    (call $te_raw (i32.const 0)) (call $te_raw (i32.const 0)) (call $te_raw (i32.const 0))
-    (call $te_raw (i32.const 0)) (call $te_raw (i32.const 0)) (call $te_raw (i32.const 0))
-    (call $te_raw (local.get $fall))
-    (call $te_raw (local.get $start_eip))
-    (call $te_raw (local.get $n))
-    (call $te_raw (local.get $table_disp))
-    (if (local.get $table_stack)
-      (then (call $te_raw (local.get $stack_disp))))
-    (i32.const 1))
 
   ;; Is this register one of the block's cursors -- an inc/dec target that is
   ;; not the trip counter? Roles are assigned by evidence in pass 2, and this
@@ -6023,8 +5830,6 @@
     ;; the order is a cost choice, not a precedence one.
     (if (call $loop_try_aoe_grid_fill (local.get $start_eip) (local.get $tstart))
       (then (return)))
-    (if (call $loop_try_lut16_counted (local.get $start_eip) (local.get $tstart))
-      (then (return)))
     (if (call $loop_try_lut (local.get $start_eip) (local.get $tstart)) (then (return)))
     (if (call $loop_try_lut_bounded (local.get $start_eip) (local.get $tstart)) (then (return)))
     (if (call $loop_try_lut_blend_bounded (local.get $start_eip) (local.get $tstart))
@@ -6553,12 +6358,12 @@
   ;; after each access; match time folds any original pre-access increment into
   ;; the displacement. term_kind selects count-to-zero or unsigned source-bound
   ;; termination. The optional shift/add pair covers 64K row lookup tables;
-  ;; bit 0 adds a second moving byte source for blend tables, bit 1 selects a
-  ;; u16 lookup/store, bit 2 loads the table register from the stack, and bit 3
-  ;; makes word 6 an absolute byte-table address.
+  ;; bit 0 adds a second moving byte source for blend tables, and bit 3 makes
+  ;; word 6 an absolute byte-table address. (Bits 1 and 2 were Heroes III's
+  ;; u16 and stack-table forms, retired to the uop tier: docs/uop-tier-design.md
+  ;; section 18.)
   (func $th_lut_run (param $op i32)
-    (local $blend i32) (local $wide16 i32)
-    (local $table_stack i32) (local $absolute8 i32)
+    (local $blend i32) (local $absolute8 i32)
     (local $src_reg i32) (local $src_stride i32) (local $src_disp i32)
     (local $dst_reg i32) (local $dst_stride i32) (local $dst_disp i32)
     (local $tbl_reg i32) (local $acc_reg i32) (local $index_shift i32)
@@ -6566,14 +6371,12 @@
     (local $term_step i32)
     (local $src2_reg i32) (local $src2_stride i32) (local $src2_disp i32)
     (local $aux_reg i32) (local $table_disp i32) (local $term_stream i32)
-    (local $stack_disp i32)
     (local $m0_addr i32) (local $m0_reg i32) (local $m0_adj i32)
     (local $m1_addr i32) (local $m1_reg i32) (local $m1_adj i32)
     (local $fall i32) (local $back i32) (local $cost i32)
     (local $tp i32) (local $src i32) (local $src2 i32) (local $dst i32)
     (local $term i32) (local $cursor i32)
-    (local $tbl i32) (local $tbl_base i32) (local $stack_ga i32)
-    (local $stack_page0 i32) (local $stack_page1 i32)
+    (local $tbl i32) (local $tbl_base i32)
     (local $add i32) (local $old i32)
     (local $b i32) (local $src_b i32) (local $aux i32)
     (local $src_ga i32) (local $dst_ga i32) (local $src_wa i32) (local $dst_wa i32)
@@ -6592,19 +6395,11 @@
     ;; avoiding 22/28 helper calls matters to the cost this optimization is
     ;; meant to remove.
     (local.set $blend (i32.and (local.get $op) (i32.const 1)))
-    (local.set $wide16
-      (i32.and (i32.shr_u (local.get $op) (i32.const 1)) (i32.const 1)))
-    (local.set $table_stack
-      (i32.and (i32.shr_u (local.get $op) (i32.const 2)) (i32.const 1)))
     (local.set $absolute8
       (i32.and (i32.shr_u (local.get $op) (i32.const 3)) (i32.const 1)))
     (local.set $tp (global.get $ip))
     (global.set $ip (i32.add (local.get $tp)
-      (select (i32.const 112)
-        (select
-          (select (i32.const 96) (i32.const 92) (local.get $table_stack))
-          (i32.const 88) (local.get $wide16))
-        (local.get $blend))))
+      (select (i32.const 112) (i32.const 88) (local.get $blend))))
     (local.set $src_reg     (i32.load           (local.get $tp)))
     (local.set $src_stride  (i32.load offset=4  (local.get $tp)))
     (local.set $src_disp    (i32.load offset=8  (local.get $tp)))
@@ -6643,42 +6438,25 @@
         (local.set $aux_reg     (i32.load offset=100 (local.get $tp)))
         (local.set $table_disp  (i32.load offset=104 (local.get $tp)))
         (local.set $term_stream (i32.load offset=108 (local.get $tp)))))
-    (if (local.get $wide16)
-      (then (local.set $table_disp (i32.load offset=88 (local.get $tp)))))
-    (if (local.get $table_stack)
-      (then (local.set $stack_disp (i32.load offset=92 (local.get $tp)))))
 
     (local.set $src (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $src_reg) (i32.const 2)))))
     (local.set $dst (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $dst_reg) (i32.const 2)))))
     (local.set $term (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $term_reg) (i32.const 2)))))
     (if (local.get $blend)
       (then (local.set $src2 (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $src2_reg) (i32.const 2)))))))
-    (if (local.get $table_stack)
-      (then
-        (local.set $stack_ga (i32.add (i32.load offset=16 (global.get $reg_base)) (local.get $stack_disp)))
-        (local.set $stack_page0
-          (i32.and (local.get $stack_ga) (i32.const 0xFFFFF000)))
-        (local.set $stack_page1
-          (i32.and (i32.add (local.get $stack_ga) (i32.const 3))
-                   (i32.const 0xFFFFF000)))
-        (local.set $tbl_base
-          (call $gl32 (local.get $stack_ga)))
-        (local.set $tbl (i32.add (local.get $tbl_base) (local.get $table_disp))))
+    (if (local.get $absolute8)
+      (then (local.set $tbl (local.get $tbl_reg)))
       (else
-        (if (local.get $absolute8)
-          (then (local.set $tbl (local.get $tbl_reg)))
-          (else
-            (if (i32.ge_s (local.get $tbl_reg) (i32.const 0))
-              (then
-                (local.set $tbl_base (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $tbl_reg) (i32.const 2)))))
-                (local.set $tbl (i32.add (local.get $tbl_base) (local.get $table_disp))))
-              (else (local.set $tbl (local.get $table_disp))))))))
+        (if (i32.ge_s (local.get $tbl_reg) (i32.const 0))
+          (then
+            (local.set $tbl_base (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $tbl_reg) (i32.const 2)))))
+            (local.set $tbl (i32.add (local.get $tbl_base) (local.get $table_disp))))
+          (else (local.set $tbl (local.get $table_disp))))))
     ;; A zero hoisted out of the loop leaves the accumulator's high bits
     ;; loop-invariant: inside the body only the streamed byte load writes that
     ;; register, and it writes the low byte. Fold them into the table base once,
     ;; here, so the per-iteration index stays in 0..255 and the 256-byte table
-    ;; page guard below still holds. Never set together with $table_stack, whose
-    ;; table base is re-read per chunk.
+    ;; page guard below still holds.
     (if (local.get $acc_hoist)
       (then
         (local.set $acc_hi
@@ -6694,7 +6472,7 @@
     ;; sparse mappings on gl8.
     (local.set $tbl_wa (i32.const 0))
     (if (i32.and
-          (i32.and (i32.eqz (local.get $blend)) (i32.eqz (local.get $wide16)))
+          (i32.eqz (local.get $blend))
           (i32.and (i32.eqz (local.get $index_shift))
                  (i32.lt_s (local.get $add_reg) (i32.const 0))))
       (then
@@ -6703,40 +6481,12 @@
             (local.set $n (call $g2w (local.get $tbl)))
             (if (i32.ne (local.get $n) (global.get $NULL_SENTINEL))
               (then (local.set $tbl_wa (local.get $n))))))))
-    ;; A wide table contains 256 u16 entries. Prove its complete 512-byte
-    ;; extent once, retaining gl16 for non-affine sparse boundaries.
-    (if (i32.and (local.get $wide16) (i32.eqz (local.get $table_stack)))
-      (then
-        (if (i32.le_u (i32.and (local.get $tbl) (i32.const 0xFFF)) (i32.const 0xE00))
-          (then (local.set $tbl_wa (call $g2w (local.get $tbl))))
-          (else (local.set $tbl_wa
-            (call $g2w_affine_span (local.get $tbl) (i32.const 0x200)))))
-        (if (i32.eq (local.get $tbl_wa) (global.get $NULL_SENTINEL))
-          (then (local.set $tbl_wa (i32.const 0))))))
     (global.set $loop_lut_runs
       (i32.add (global.get $loop_lut_runs) (i32.const 1)))
-    (if (local.get $wide16)
-      (then (global.set $loop_lut16_runs
-        (i32.add (global.get $loop_lut16_runs) (i32.const 1)))))
     (block $exit
       (loop $outer
         (local.set $src_ga (i32.add (local.get $src) (local.get $src_disp)))
         (local.set $dst_ga (i32.add (local.get $dst) (local.get $dst_disp)))
-        ;; The stack-prefixed form semantically reloads the table register at
-        ;; the start of every original iteration. A destination page distinct
-        ;; from the stack slot proves that load invariant for this page chunk.
-        ;; When they can alias below, chunk=1 makes this outer reload happen
-        ;; before every store, preserving even self-modifying stack data.
-        (if (local.get $table_stack)
-          (then
-            (local.set $tbl_base (call $gl32 (local.get $stack_ga)))
-            (local.set $tbl (i32.add (local.get $tbl_base) (local.get $table_disp)))
-            (if (i32.le_u (i32.and (local.get $tbl) (i32.const 0xFFF)) (i32.const 0xE00))
-              (then (local.set $tbl_wa (call $g2w (local.get $tbl))))
-              (else (local.set $tbl_wa
-                (call $g2w_affine_span (local.get $tbl) (i32.const 0x200)))))
-            (if (i32.eq (local.get $tbl_wa) (global.get $NULL_SENTINEL))
-              (then (local.set $tbl_wa (i32.const 0))))))
         (if (local.get $blend)
           (then (local.set $src2_ga
             (i32.add (local.get $src2) (local.get $src2_disp)))))
@@ -6782,25 +6532,6 @@
           (select (local.get $n) (local.get $chunk)
                   (i32.lt_u (local.get $n) (local.get $chunk))))
         (local.set $chunk (call $bc_fold_cap (local.get $chunk) (local.get $bc_done)))
-        (if (i32.and (local.get $table_stack)
-              (i32.or
-                (i32.or
-                  (i32.eq
-                    (i32.and (local.get $dst_ga) (i32.const 0xFFFFF000))
-                    (local.get $stack_page0))
-                  (i32.eq
-                    (i32.and (local.get $dst_ga) (i32.const 0xFFFFF000))
-                    (local.get $stack_page1)))
-                (i32.or
-                  (i32.eq
-                    (i32.and (i32.add (local.get $dst_ga) (i32.const 1))
-                             (i32.const 0xFFFFF000))
-                    (local.get $stack_page0))
-                  (i32.eq
-                    (i32.and (i32.add (local.get $dst_ga) (i32.const 1))
-                             (i32.const 0xFFFFF000))
-                    (local.get $stack_page1)))))
-          (then (local.set $chunk (i32.const 1))))
         (if (local.get $blend)
           (then
             (local.set $n
@@ -6811,13 +6542,6 @@
 
         (local.set $src_wa (call $g2w (local.get $src_ga)))
         (local.set $dst_wa (call $g2w (local.get $dst_ga)))
-        ;; A word beginning at the final byte of a page may cross into a
-        ;; different mapping. Route that one element through gs16.
-        (if (i32.and (local.get $wide16)
-              (i32.eq (i32.and (local.get $dst_ga) (i32.const 0xFFF)) (i32.const 0xFFF)))
-          (then
-            (local.set $dst_wa (global.get $NULL_SENTINEL))
-            (local.set $chunk (i32.const 1))))
         (if (local.get $blend)
           (then (local.set $src2_wa (call $g2w (local.get $src2_ga)))))
         (if (i32.or
@@ -6845,25 +6569,14 @@
             (then (local.set $index (i32.add (local.get $index) (local.get $aux))))
             (else (if (i32.ge_s (local.get $add_reg) (i32.const 0))
               (then (local.set $index (i32.add (local.get $index) (local.get $add)))))))
-          (if (local.get $wide16)
-            (then
-              (if (local.get $tbl_wa)
-                (then (local.set $b
-                  (i32.load16_u (i32.add (local.get $tbl_wa) (local.get $index)))))
-                (else (local.set $b
-                  (call $gl16 (i32.add (local.get $tbl) (local.get $index))))))
-              (if (i32.eq (local.get $dst_wa) (global.get $NULL_SENTINEL))
-                (then (call $gs16 (local.get $dst_ga) (local.get $b)))
-                (else (i32.store16 (local.get $dst_wa) (local.get $b)))))
-            (else
-              (if (local.get $tbl_wa)
-                (then (local.set $b
-                  (i32.load8_u (i32.add (local.get $tbl_wa) (local.get $index)))))
-                (else (local.set $b
-                  (call $gl8 (i32.add (local.get $tbl) (local.get $index))))))
-              (if (i32.eq (local.get $dst_wa) (global.get $NULL_SENTINEL))
-                (then (call $gs8 (local.get $dst_ga) (local.get $b)))
-                (else (i32.store8 (local.get $dst_wa) (local.get $b))))))
+          (if (local.get $tbl_wa)
+            (then (local.set $b
+              (i32.load8_u (i32.add (local.get $tbl_wa) (local.get $index)))))
+            (else (local.set $b
+              (call $gl8 (i32.add (local.get $tbl) (local.get $index))))))
+          (if (i32.eq (local.get $dst_wa) (global.get $NULL_SENTINEL))
+            (then (call $gs8 (local.get $dst_ga) (local.get $b)))
+            (else (i32.store8 (local.get $dst_wa) (local.get $b))))
           (local.set $src_ga (i32.add (local.get $src_ga) (local.get $src_stride)))
           (local.set $dst_ga (i32.add (local.get $dst_ga) (local.get $dst_stride)))
           (if (i32.ne (local.get $src_wa) (global.get $NULL_SENTINEL))
@@ -6897,10 +6610,6 @@
             (local.set $old (i32.sub (local.get $term) (local.get $term_step)))))
         (global.set $loop_lut_bytes
           (i64.add (global.get $loop_lut_bytes) (i64.extend_i32_u (local.get $chunk))))
-        (if (local.get $wide16)
-          (then (global.set $loop_lut16_bytes
-            (i64.add (global.get $loop_lut16_bytes)
-              (i64.extend_i32_u (local.get $chunk))))))
         (global.set $steps
           (i32.sub (global.get $steps) (i32.mul (local.get $chunk) (local.get $cost))))
         (local.set $cursor
@@ -6930,8 +6639,6 @@
               (i32.or (i32.shl (local.get $src_b) (local.get $index_shift)) (local.get $b))
               (local.get $b)
               (local.get $blend))))))
-    (if (local.get $table_stack)
-      (then (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $tbl_reg) (i32.const 2))) (local.get $tbl_base))))
     (if (local.get $blend)
       (then
         (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $aux_reg) (i32.const 2))) (local.get $aux))

@@ -236,13 +236,13 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     'pcx-run': 'set_pcx_run',
     'aoe-fill': 'set_loop_aoe_fill_emit', 'aoe-span': 'set_loop_aoe_span_emit',
     'mmx-fill': 'set_loop_mmx_fill_emit', 'mmx-copy64': 'set_mmx_copy64',
-    'mmx-mask-copy': 'set_mmx_mask_copy', 'lut16-stack': 'set_loop_lut16_stack_emit',
+    'mmx-mask-copy': 'set_mmx_mask_copy',
     // Diablo's app profile turns this one on; applyMain runs after it.
     'copy32-counted': 'set_loop_copy32_counted_emit',
   };
   const FOLD_BITS = {
     'lut-span': 0x04,
-    'colorkey8': 0x08, 'mw3-blit': 0x10, 'lut16-counted': 0x20, 'xlat-stosb': 0x80,
+    'colorkey8': 0x08, 'mw3-blit': 0x10, 'xlat-stosb': 0x80,
   };
   const NO_FOLDS = (getArg('no-fold', '') || '').split(',').filter(Boolean);
   for (const n of NO_FOLDS) {

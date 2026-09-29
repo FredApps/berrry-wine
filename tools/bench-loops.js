@@ -2332,7 +2332,6 @@ const TOGGLES = {
   tree_fold: 'set_tree_fold',
   lut_superops: 'set_loop_lut_emit',
   mmx_fill: 'set_loop_mmx_fill_emit',
-  lut16_stack: 'set_loop_lut16_stack_emit',
   case_chain: 'set_case_chain',
   rle_run: 'set_rle_run',
   rect_run: 'set_rect_run',

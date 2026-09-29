@@ -560,17 +560,19 @@ function h3Cases() {
   const code = [...pe.buf.subarray(pe.va2off(lo), pe.va2off(hi))];
   code.push(0x83, 0xC4, 0x60, 0xC3);                 // add esp,0x60 ; ret
   const out = [];
-  // Its palette loop alone, which LUT_RUN folds: the fold must spend the
-  // guest clock the unfolded loop spends.
-  for (const cnt of [2, 5, 36, 37, 38, 100]) {
+  // Its palette loop alone (head at +2, after `mov ecx,esi`). LUT_RUN's u16
+  // form used to fold it, and short counts here checked that fold's clock
+  // against the unfolded loop; the fold is retired to the uop tier
+  // (docs/uop-tier-design.md section 18), so now the tier must match the
+  // threaded run on it like any other case, at a count long enough to get hot.
+  for (const cnt of [3000]) {
     out.push({
-      name: `h3-lut-${cnt}`, regs: { esi: cnt, ecx: 0 }, bytes: [...pe.buf.subarray(pe.va2off(0x470925), pe.va2off(0x47093b)), 0xC3],
+      name: `h3-lut-${cnt}`, regs: { esi: cnt, ecx: 0 }, head: 2, bytes: [...pe.buf.subarray(pe.va2off(0x470925), pe.va2off(0x47093b)), 0xC3],
       setup(mem, g2w, a) {
         const dv = new DataView(mem.buffer);
         for (let k = 0; k < 256; k++) dv.setUint16(g2w(a.buf + 0x8000 + 0x1c + 2 * k), k * 3, true);
       },
       init: (a) => ({ eax: a.buf, ebp: a.buf + 0x8000, edi: a.buf + 0x10000 }),
-      foldCheck: 'loop_lut',
     });
   }
   // COPY_RUN's byte form, which MW3/MCM routes enable with --copy-superops.

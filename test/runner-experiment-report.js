@@ -344,11 +344,6 @@ function reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LO
           e.get_loop_lut_bounded_matches(), 'runs', e.get_loop_lut_runs(),
           'bytes', String(e.get_loop_lut_bytes()));
       }
-      if (e.get_loop_lut16_runs) {
-        log(`loopmatch: ${label} RGB565 LUT matches`,
-          e.get_loop_lut16_matches(), 'runs', e.get_loop_lut16_runs(),
-          'pixels', String(e.get_loop_lut16_bytes()));
-      }
       if (e.get_tree_fold_runs) {
         // `matches` is blocks the predicate accepted, counted even with the
         // gate off; `runs` is entries into the super-op; `iters` is guest
