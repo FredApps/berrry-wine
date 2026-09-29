@@ -575,6 +575,44 @@ const SHAPES = {
     emit: a => blockEntryShape(a, true),
   },
 
+  mmx_fill: {
+    describe: 'movq [edi],mm0 / add edi,8 / dec ecx / jnz (UE1 SoftDrv surface clear)',
+    real: 'Deus Ex demo softdrv+0x10d3ed70 (24.6% of block entries), Unreal SE softdrv+0x10931ed0; --toggle=mmx_fill',
+    emit(a) {
+      const n = Math.floor(a.bufBytes / 8);
+      const dst = a.buf;
+      return {
+        iters: n,
+        bytesTouched: n * 8,
+        code: [
+          0x0F, 0x6E, 0xC0,             // movd mm0, eax
+          0x0F, 0x62, 0xC0,             // punpckldq mm0, mm0
+          0x0F, 0x7F, 0x07,             // loop: movq [edi], mm0
+          0x83, 0xC7, 0x08,             //       add edi, 8
+          0x49,                         //       dec ecx
+          0x75, 0xF7,                   //       jnz loop
+          0x0F, 0x77,                   // emms
+        ],
+        setup(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          dv.setUint32(g2w(dst), 0, true);
+          dv.setUint32(g2w(dst) + n * 8 - 4, 0, true);
+          e.set_edi(dst); e.set_ecx(n); e.set_eax(0xC3A5965A | 0);
+        },
+        verify(e, mem, g2w) {
+          const dv = new DataView(mem.buffer);
+          for (const off of [0, 4, (n * 8) >> 1, n * 8 - 4]) {
+            const got = dv.getUint32(g2w(dst) + off, true);
+            if (got !== 0xC3A5965A) return `[buf+0x${off.toString(16)}]=0x${got.toString(16)} want 0xc3a5965a`;
+          }
+          if ((e.get_edi() >>> 0) !== ((dst + n * 8) >>> 0)) return `edi=0x${(e.get_edi() >>> 0).toString(16)}`;
+          if (e.get_ecx() !== 0) return `ecx=${e.get_ecx()}, expected 0`;
+          return null;
+        },
+      };
+    },
+  },
+
   rep_movsd: {
     describe: 'rep movsd — already lowered to memory.copy; the FLOOR for a bulk copy',
     real: 'every blitter; shows what the store path costs when it is absent entirely',
@@ -2293,6 +2331,7 @@ const TOGGLES = {
   region: 'set_region_fold',
   tree_fold: 'set_tree_fold',
   lut_superops: 'set_loop_lut_emit',
+  mmx_fill: 'set_loop_mmx_fill_emit',
   lut16_stack: 'set_loop_lut16_stack_emit',
   case_chain: 'set_case_chain',
   rle_run: 'set_rle_run',

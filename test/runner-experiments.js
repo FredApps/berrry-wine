@@ -193,6 +193,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   })();
   const NO_AOE_FILL = hasFlag('no-aoe-fill');
   const NO_AOE_SPAN = hasFlag('no-aoe-span');
+  // --no-mmx-fill-superops: decode UE1 SoftDrv's `movq [r],mmN / add r,8 /
+  // dec c / jnz` clear as ordinary MMX blocks again (07b $try_emit_mmx_fill64).
+  const NO_MMX_FILL = hasFlag('no-mmx-fill-superops');
   // --no-sib-fusion: decode indexed SIB memory operands as the unfused
   // compute_ea_sib + consumer pair. On by default in the module; this is the
   // A/B partner, so a fusion's op-count delta and its wall-clock effect can be
@@ -296,6 +299,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (NO_AOE_FILL) inheritWasm('set_loop_aoe_fill_emit', 0);
     if (NO_AOE_SPAN) inheritWasm('set_loop_aoe_span_emit', 0);
+    if (NO_MMX_FILL) inheritWasm('set_loop_mmx_fill_emit', 0);
     if (NO_SIB_FUSION) inheritWasm('set_sib_fusion', 0);
     if (NO_STACK_FUSION) inheritWasm('set_stack_fusion', 0);
     if (NO_X87_ISLAND_PREDECODE) inheritWasm('set_x87_island_predecode', 0);
@@ -438,6 +442,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (NO_AOE_SPAN && instance.exports.set_loop_aoe_span_emit) {
       instance.exports.set_loop_aoe_span_emit(0);
+    }
+    if (NO_MMX_FILL && instance.exports.set_loop_mmx_fill_emit) {
+      instance.exports.set_loop_mmx_fill_emit(0);
     }
     // Per-instance, not once: worker threads are separate WASM instances over
     // one shared memory, so a mut global set only on the main instance leaves

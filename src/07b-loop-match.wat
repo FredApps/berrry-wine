@@ -211,6 +211,15 @@
   (global $mmx_copy64_runs (mut i32) (i32.const 0))
   (global $mmx_copy64_lines (mut i64) (i64.const 0))
   (global $mmx_copy64_bytes (mut i64) (i64.const 0))
+  ;; UE1 SoftDrv's `movq [r],mmN / add r,8 / dec c / jnz` surface clear
+  ;; ($try_emit_mmx_fill64, executed by H419 op 0x80000005). The guest loop
+  ;; is one self-loop block per qword; the lowering writes page-local runs of
+  ;; the 8-byte pattern with v128 stores.
+  (global $mmx_fill64_enabled (mut i32) (i32.const 1))
+  (global $mmx_fill64_matches (mut i32) (i32.const 0))
+  (global $mmx_fill64_runs (mut i32) (i32.const 0))
+  (global $mmx_fill64_qwords (mut i64) (i64.const 0))
+  (global $mmx_fill64_bulk_qwords (mut i64) (i64.const 0))
 
   ;; Decode-time FNV-1a over guest bytes. Exact binary-specific folds use this
   ;; after cheap anchor checks so accepting a fold proves the complete body,
@@ -349,6 +358,58 @@
     (call $te_raw (i32.add (local.get $start_eip) (i32.const 79)))
     (call $te_raw (local.get $start_eip))
     (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 79)))
+    (i32.const 1))
+
+  ;; UE1 SoftDrv's MMX clear (Deus Ex demo softdrv+0x10d3ed70 and +0x10d3eec0,
+  ;; Unreal SE softdrv+0x10931ed0 and +0x10931ff0):
+  ;;
+  ;;   movq [r],mmN / add r,8 / dec c / jnz body        0F 7F /N  83 C0+r 08  48+c  75 F7
+  ;;
+  ;; Every byte is proved; only the three register fields vary. The base may
+  ;; not be ESP/EBP (their ModRM mod=00 encodings are SIB/disp32, a different
+  ;; instruction), and the counter may not be the base or ESP. A near miss --
+  ;; another displacement, stride, counter op or branch -- decodes normally.
+  ;; Operands after H419's 0x80000005 tag: fall, back, r | c<<4 | N<<8.
+  (func $try_emit_mmx_fill64 (param $start_eip i32) (result i32)
+    (local $modrm i32) (local $r i32) (local $c i32) (local $mm i32)
+    (if (i32.or (i32.eqz (global.get $mmx_fill64_enabled))
+                (global.get $code16))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl16 (local.get $start_eip)) (i32.const 0x7F0F))
+      (then (return (i32.const 0))))
+    (local.set $modrm (call $gl8 (i32.add (local.get $start_eip) (i32.const 2))))
+    (if (i32.ne (i32.and (local.get $modrm) (i32.const 0xC0)) (i32.const 0))
+      (then (return (i32.const 0))))
+    (local.set $r (i32.and (local.get $modrm) (i32.const 7)))
+    (local.set $mm (i32.and (i32.shr_u (local.get $modrm) (i32.const 3)) (i32.const 7)))
+    (if (i32.ge_u (local.get $r) (i32.const 4))
+      (then (if (i32.le_u (local.get $r) (i32.const 5)) (then (return (i32.const 0))))))
+    ;; add r,8 (83 /0 ib, register form)
+    (if (i32.ne (call $gl8 (i32.add (local.get $start_eip) (i32.const 3))) (i32.const 0x83))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (local.get $start_eip) (i32.const 4)))
+                (i32.or (i32.const 0xC0) (local.get $r)))
+      (then (return (i32.const 0))))
+    (if (i32.ne (call $gl8 (i32.add (local.get $start_eip) (i32.const 5))) (i32.const 0x08))
+      (then (return (i32.const 0))))
+    ;; dec c (48+c)
+    (local.set $c (i32.sub (call $gl8 (i32.add (local.get $start_eip) (i32.const 6))) (i32.const 0x48)))
+    (if (i32.ge_u (local.get $c) (i32.const 8)) (then (return (i32.const 0))))
+    (if (i32.or (i32.eq (local.get $c) (local.get $r)) (i32.eq (local.get $c) (i32.const 4)))
+      (then (return (i32.const 0))))
+    ;; jnz back to the movq (rel8 -9)
+    (if (i32.ne (call $gl16 (i32.add (local.get $start_eip) (i32.const 7))) (i32.const 0xF775))
+      (then (return (i32.const 0))))
+    (global.set $mmx_fill64_matches
+      (i32.add (global.get $mmx_fill64_matches) (i32.const 1)))
+    (call $te (global.get $LOOP_SUPEROP_COPY) (i32.const 0x80000005))
+    (call $te_raw (i32.add (local.get $start_eip) (i32.const 9)))
+    (call $te_raw (local.get $start_eip))
+    (call $te_raw
+      (i32.or (local.get $r)
+        (i32.or (i32.shl (local.get $c) (i32.const 4))
+                (i32.shl (local.get $mm) (i32.const 8)))))
+    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 9)))
     (i32.const 1))
 
   ;; AoE I and II use the same span-list data structure and clipping algorithm,
@@ -4535,6 +4596,141 @@
     (global.set $eip
       (select (local.get $back) (local.get $fall) (i32.ne (local.get $count) (i32.const 0)))))
 
+  ;; Does the guest byte range [ga, ga+len) touch the loop's own code bytes
+  ;; [back, fall)? Unsigned, so a range ending exactly at 2^32 still works.
+  (func $mmx_fill64_hits_code (param $ga i32) (param $len i32)
+                              (param $back i32) (param $fall i32) (result i32)
+    (if (i32.ge_u (local.get $ga) (local.get $fall)) (then (return (i32.const 0))))
+    (if (i32.le_u (local.get $back) (local.get $ga)) (then (return (i32.const 1))))
+    (i32.lt_u (i32.sub (local.get $back) (local.get $ga)) (local.get $len)))
+
+  ;; Exact execution of $try_emit_mmx_fill64's loop. Iteration i stores the
+  ;; pattern at dst+8i, so the fill is always qword-phased from the original
+  ;; EDI and a page-local run of whole qwords is one translation, one code-write
+  ;; notification and a v128 store loop. Everything else takes the ordinary
+  ;; helper one qword at a time, which is bit-for-bit the MOVQ handler:
+  ;;
+  ;;   * a qword straddling a page edge ($gs64 splits it itself);
+  ;;   * a page with no mapping ($mmx_store64 writes the sentinel, or raises
+  ;;     under --fault-null=raise, and then the fold stops with the faulting
+  ;;     iteration's ADD/DEC unexecuted, exactly as an abandoned block would).
+  ;;
+  ;; A run that would write the loop's own nine bytes stops after the first
+  ;; qword that does: $invalidate_code_write has retired this block, and the
+  ;; next iteration must come from the re-decoded bytes, not from this op.
+  ;;
+  ;; Final state is the last iteration's: EDI/ECX (any register assignment),
+  ;; the ADD's carry under the DEC's other flags, mmN untouched. A zero counter
+  ;; is the do-while wrap; each entry does at most 64K qwords (512 KB) and
+  ;; resumes through the back edge, and --branch-clock caps it to the block
+  ;; budget so a fixed batch lands on the same guest instruction either way.
+  (func $th_mmx_fill64 (param $op i32)
+    (local $tp i32) (local $fall i32) (local $back i32) (local $packed i32)
+    (local $r i32) (local $c i32) (local $pat i64) (local $v v128)
+    (local $dst i32) (local $count i32) (local $new_dst i32) (local $new_count i32)
+    (local $want i32) (local $done i32) (local $ga i32) (local $q i32)
+    (local $room i32) (local $stop i32) (local $slow i32) (local $wa i32)
+    (local $p i32) (local $end i32) (local $abandon i32)
+    (local.set $tp (global.get $ip))
+    (global.set $ip (i32.add (local.get $tp) (i32.const 12)))
+    (local.set $fall (i32.load (local.get $tp)))
+    (local.set $back (i32.load offset=4 (local.get $tp)))
+    (local.set $packed (i32.load offset=8 (local.get $tp)))
+    (local.set $r (i32.and (local.get $packed) (i32.const 0xF)))
+    (local.set $c (i32.and (i32.shr_u (local.get $packed) (i32.const 4)) (i32.const 0xF)))
+    (local.set $dst (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $r) (i32.const 2)))))
+    (local.set $count (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $c) (i32.const 2)))))
+    (local.set $pat (call $mmx_get (i32.and (i32.shr_u (local.get $packed) (i32.const 8)) (i32.const 7))))
+    (local.set $v (i64x2.splat (local.get $pat)))
+    (global.set $mmx_fill64_runs (i32.add (global.get $mmx_fill64_runs) (i32.const 1)))
+
+    (local.set $want (local.get $count))
+    (if (i32.or (i32.eqz (local.get $want)) (i32.gt_u (local.get $want) (i32.const 0x10000)))
+      (then (local.set $want (i32.const 0x10000))))
+    (local.set $want (call $bc_fold_cap (local.get $want) (i32.const 0)))
+
+    (block $out
+      (loop $chunks
+        (br_if $out (i32.ge_u (local.get $done) (local.get $want)))
+        (local.set $ga (i32.add (local.get $dst) (i32.shl (local.get $done) (i32.const 3))))
+        (local.set $room
+          (i32.shr_u (i32.sub (i32.const 0x1000) (i32.and (local.get $ga) (i32.const 0xFFF)))
+                     (i32.const 3)))
+        (local.set $q (i32.sub (local.get $want) (local.get $done)))
+        (if (i32.lt_u (local.get $room) (local.get $q)) (then (local.set $q (local.get $room))))
+        (local.set $stop (i32.const 0))
+        (if (i32.ne (local.get $q) (i32.const 0))
+          (then
+            (if (call $mmx_fill64_hits_code (local.get $ga) (i32.shl (local.get $q) (i32.const 3))
+                                            (local.get $back) (local.get $fall))
+              (then
+                ;; Stop after the first qword that lands on the loop's bytes.
+                (local.set $q
+                  (i32.add (i32.const 1)
+                    (select (i32.shr_u (i32.sub (local.get $back) (local.get $ga)) (i32.const 3))
+                            (i32.const 0)
+                            (i32.gt_u (local.get $back) (local.get $ga)))))
+                (local.set $stop (i32.const 1))))))
+        (local.set $slow (i32.eqz (local.get $q)))
+        (if (i32.eqz (local.get $slow))
+          (then
+            (local.set $wa (call $g2w (local.get $ga)))
+            (if (global.get $eip_redirected)
+              (then (local.set $abandon (i32.const 1)) (br $out)))
+            (local.set $slow (i32.eq (local.get $wa) (global.get $NULL_SENTINEL)))))
+        (if (local.get $slow)
+          (then
+            (call $mmx_store64 (local.get $ga) (local.get $pat))
+            (if (global.get $eip_redirected)
+              (then (local.set $abandon (i32.const 1)) (br $out)))
+            (local.set $done (i32.add (local.get $done) (i32.const 1)))
+            (local.set $stop
+              (call $mmx_fill64_hits_code (local.get $ga) (i32.const 8)
+                                          (local.get $back) (local.get $fall))))
+          (else
+            (call $invalidate_code_write (local.get $ga) (i32.shl (local.get $q) (i32.const 3)))
+            (local.set $p (local.get $wa))
+            (local.set $end (i32.add (local.get $wa) (i32.shl (local.get $q) (i32.const 3))))
+            (block $b64 (loop $l64
+              (br_if $b64 (i32.gt_u (i32.add (local.get $p) (i32.const 64)) (local.get $end)))
+              (v128.store (local.get $p) (local.get $v))
+              (v128.store offset=16 (local.get $p) (local.get $v))
+              (v128.store offset=32 (local.get $p) (local.get $v))
+              (v128.store offset=48 (local.get $p) (local.get $v))
+              (local.set $p (i32.add (local.get $p) (i32.const 64)))
+              (br $l64)))
+            (block $b16 (loop $l16
+              (br_if $b16 (i32.gt_u (i32.add (local.get $p) (i32.const 16)) (local.get $end)))
+              (v128.store (local.get $p) (local.get $v))
+              (local.set $p (i32.add (local.get $p) (i32.const 16)))
+              (br $l16)))
+            (if (i32.lt_u (local.get $p) (local.get $end))
+              (then (i64.store (local.get $p) (local.get $pat))))
+            (global.set $mmx_fill64_bulk_qwords
+              (i64.add (global.get $mmx_fill64_bulk_qwords) (i64.extend_i32_u (local.get $q))))
+            (local.set $done (i32.add (local.get $done) (local.get $q)))))
+        (br_if $out (local.get $stop))
+        (br $chunks)))
+
+    (if (local.get $done)
+      (then
+        (local.set $new_dst (i32.add (local.get $dst) (i32.shl (local.get $done) (i32.const 3))))
+        (local.set $new_count (i32.sub (local.get $count) (local.get $done)))
+        (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $r) (i32.const 2))) (local.get $new_dst))
+        (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $c) (i32.const 2))) (local.get $new_count))
+        ;; DEC keeps the carry from the ADD before it; every other flag is DEC's.
+        (call $set_flags_add (i32.sub (local.get $new_dst) (i32.const 8)) (i32.const 8) (local.get $new_dst))
+        (call $set_flags_dec (i32.add (local.get $new_count) (i32.const 1)) (local.get $new_count))
+        (global.set $mmx_exec_count (i32.add (global.get $mmx_exec_count) (local.get $done)))
+        (global.set $mmx_fill64_qwords
+          (i64.add (global.get $mmx_fill64_qwords) (i64.extend_i32_u (local.get $done))))
+        (call $bc_fold_charge (local.get $done))))
+    ;; A raised fault already owns $eip (the handler); the faulting iteration's
+    ;; ADD/DEC never ran, which is what the registers above say.
+    (if (local.get $abandon) (then (return)))
+    (global.set $eip
+      (select (local.get $back) (local.get $fall) (i32.ne (local.get $new_count) (i32.const 0)))))
+
   (func $th_mmx_stream_copy64 (param $op i32)
     (local $tp i32) (local $fall i32) (local $back i32)
     (local $src i32) (local $dst i32) (local $count i32)
@@ -4879,6 +5075,8 @@
           (then (return_call $th_mmx_stream_copy64 (local.get $op))))
         (if (i32.eq (local.get $op) (i32.const 0x80000003))
           (then (return_call $th_mmx_pipelined_copy64 (local.get $op))))
+        (if (i32.eq (local.get $op) (i32.const 0x80000005))
+          (then (return_call $th_mmx_fill64 (local.get $op))))
         (return_call $th_mmx_mask_copy32 (local.get $op))))
 
     ;; Fourteen $read_thread_word calls would be fourteen calls and fourteen

@@ -410,6 +410,12 @@ function reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LO
           e.get_loop_aoe_fill_matches(), 'runs', e.get_loop_aoe_fill_runs(),
           'bytes', String(e.get_loop_aoe_fill_bytes()));
       }
+      if (e.get_mmx_fill64_runs) {
+        log(`loopmatch: ${label} MMX qword fills`,
+          e.get_mmx_fill64_matches(), 'runs', e.get_mmx_fill64_runs(),
+          'qwords', String(e.get_mmx_fill64_qwords()),
+          'bulk', String(e.get_mmx_fill64_bulk_qwords()));
+      }
       if (e.get_loop_aoe_span_runs) {
         log(`loopmatch: ${label} AoE span prefixes`,
           e.get_loop_aoe_span_matches(), 'runs', e.get_loop_aoe_span_runs());
