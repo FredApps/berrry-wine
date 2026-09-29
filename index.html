@@ -1581,7 +1581,7 @@
         <label title="Micro-op tier, on by default (?no-uop starts it off): a hot loop head is compiled from x86 into a micro-op program and run in one br_table loop (src/07d, 07e). Applies to running apps immediately, every guest thread included; turning it off drops every program."><input id="uop-toggle" type="checkbox" checked onchange="setUop(this.checked)">uop tier</label>
         <label title="Which renderer both Direct3D generations use. WebGL: D3D8/9 on the WebGL backend, DX2-7 (immediate mode) on the WAT software rasterizer. +DX7 puts immediate mode on WebGL too — post-transform, so the guest keeps its own T&amp;L and each fence reads the frame back into the guest surface. Software: D3D8/9 on the software backend on a render Worker, DX2-7 on the WAT rasterizer. Both are read at launch, so relaunch after changing this.">D3D: <select id="d3d-renderer-select" onchange="setD3DRenderer(this.value)"><option value="webgl">WebGL</option><option value="webgl-all">WebGL +DX7</option><option value="software">Software</option></select></label>
         <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
-        <label title="Experimental: opt into real guest threads. Needs cross-origin isolation; the worker backend is still phase 1."><input id="threads-toggle" type="checkbox" onchange="setThreads(this.checked)">Threads</label>
+        <label title="Real guest threads, on by default (?no-threads starts this page without them): the guest main thread and every CreateThread target run in Workers. Needs cross-origin isolation, which the page installs once (sw-coi.js) and reloads for. An app with `threads: false` in lib/apps.js always runs cooperatively."><input id="threads-toggle" type="checkbox" checked onchange="setThreads(this.checked)">Threads</label>
         <span id="threads-status" style="color:#606060"></span>
       </span>
       <span class="debug-profile">
@@ -1886,7 +1886,10 @@ Resource-aware Win98 emulator
     const DEBUG_ONLY_APPS = window.wineApps.DEBUG_ONLY_APPS;
     const appFileUrl = window.wineApps.appFileUrl;
 
-    const LOCAL_DESKTOP = /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
+    // ?prod shows a local server exactly the desktop the deployed site shows,
+    // so a release can be tried on localhost without the local-only candidates.
+    const LOCAL_DESKTOP = !new URLSearchParams(location.search).has('prod') &&
+      /^(localhost|127\.|0\.0\.0\.0|::1$|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(location.hostname);
     const DEBUG_MODE = new URLSearchParams(location.search).has('debug');
 
     // Single-app mode: a phone. One app at a time, no taskbar, no icons while
@@ -2460,7 +2463,18 @@ Resource-aware Win98 emulator
     //
     // The label reports the true per-launch state rather than inferring it from
     // isolation: worker startup may still fail and fall back cooperatively.
+    //
+    // On by default since the 2026-09-28 release: localStorage '0' is an
+    // explicit opt-out, ?threads / ?no-threads override both for one page
+    // load, and an app entry with `threads: false` in lib/apps.js always runs
+    // cooperatively (host.js _maybeStartGuestWorker).
     const THREADS_KEY = 'wine-assembly.threads';
+    function threadsWanted() {
+      const q = new URLSearchParams(location.search);
+      if (q.has('no-threads')) return false;
+      if (q.has('threads')) return true;
+      try { return localStorage.getItem(THREADS_KEY) !== '0'; } catch (_) { return true; }
+    }
     window.WINE_THREADS = false;
     // D3DIM (DX2-7) software raster Worker: every draw path queues to it and
     // each surface read/write, clear and present fences first. It needs a guest
@@ -2495,7 +2509,7 @@ Resource-aware Win98 emulator
       const el = document.getElementById('threads-status');
       const box = document.getElementById('threads-toggle');
       if (!el || !box) return;
-      const wanted = localStorage.getItem(THREADS_KEY) === '1';
+      const wanted = threadsWanted();
       box.checked = wanted;
       if (!wanted) { el.textContent = ''; return; }
       if (!window.__threadsStatusTimer && runningApps.length) {
@@ -2567,10 +2581,19 @@ Resource-aware Win98 emulator
       }
     }
 
-    // Restore the opt-in across the reload the service worker needs.
-    if (localStorage.getItem(THREADS_KEY) === '1') {
+    // Default on. The first visit has no isolation yet, so it runs
+    // cooperatively and quietly installs sw-coi.js; the next load comes back
+    // cross-origin isolated and gets Worker threads. No reload is forced on the
+    // visitor. An automated browser (navigator.webdriver) does not install it,
+    // so a harness page stays exactly as isolated as its server makes it.
+    if (threadsWanted()) {
       window.WINE_THREADS = true;
       window.addEventListener('load', updateThreadsStatus);
+      if (!threadsIsolated() && navigator.serviceWorker && window.isSecureContext &&
+          !navigator.webdriver) {
+        navigator.serviceWorker.register('sw-coi.js', { scope: './' }).catch(err =>
+          appendDebugLog('[threads] isolation service worker failed: ' + (err && err.message || err)));
+      }
     }
 
     // An app in exclusive fullscreen hides the toolbar, so the checkbox is

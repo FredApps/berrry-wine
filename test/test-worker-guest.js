@@ -78,7 +78,7 @@ async function launch(browser, port, app, { threaded }) {
   });
   // Every page starts without a persisted preference. Exercise the actual UI
   // switch instead of smuggling the mode in through localStorage: real threads
-  // must remain off until the checkbox is checked.
+  // are on by default (2026-09-28 release) and the checkbox turns them off.
   await page.evaluateOnNewDocument(() => {
     localStorage.removeItem('wine-assembly.threads');
   });
@@ -431,8 +431,8 @@ async function comLoadDllProbe(browser, port) {
       const worker = await launch(browser, port, app, { threaded: true });
       const single = await launch(browser, port, app, { threaded: false });
 
-      check(!worker.controls.initial.checked && !worker.controls.initial.enabled,
-        `${app}: threads are disabled before the checkbox is selected`);
+      check(worker.controls.initial.checked && worker.controls.initial.enabled,
+        `${app}: threads are on by default`);
       check(worker.controls.checked && worker.controls.enabled && worker.controls.stored === '1',
         `${app}: checking Threads enables and persists worker mode`);
       check(!single.controls.checked && !single.controls.enabled && single.controls.stored === '0',
