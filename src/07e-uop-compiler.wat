@@ -1042,8 +1042,9 @@
     (local.set $w (call $uc_writes (local.get $R)))
     (if (i32.eq (local.get $fc) (i32.const 3))
       (then
-        (global.set $uc_sm (global.get $UC_G)) (global.set $uc_smd (i32.const 0))
-        (global.set $uc_sc (global.get $UC_G)) (global.set $uc_scd (i32.const 0))
+        (global.set $uc_sm (select (global.get $UC_D) (global.get $UC_G) (call $uc_rec_skip (local.get $R))))
+        (global.set $uc_smd (i32.const 0))
+        (global.set $uc_sc (global.get $uc_sm)) (global.set $uc_scd (i32.const 0))
         (return)))
     (if (i32.eq (local.get $fc) (i32.const 2))
       (then
@@ -1788,6 +1789,19 @@
       (br $l)))
     (i32.const 0))
 
+  ;; Does R (flag class 3) skip writing its flag record? Shift-by-CL (18)
+  ;; and mul (25) drop the record when no consumer reads the flags after
+  ;; them (their lowerings test the same $uc_live_out). $uc_step then marks
+  ;; the state D, not G, so a consumer the liveness pass missed declines
+  ;; instead of reading an older record out of the globals. adc/sbb (20)
+  ;; always writes its record (docs/uop-tier-design.md §15.2).
+  (func $uc_rec_skip (param $R i32) (result i32)
+    (local $k i32)
+    (local.set $k (call $uc_kind (local.get $R)))
+    (if (i32.eqz (i32.or (i32.eq (local.get $k) (i32.const 18)) (i32.eq (local.get $k) (i32.const 25))))
+      (then (return (i32.const 0))))
+    (i32.eqz (call $uc_live_out (local.get $R))))
+
   ;; ---- flag liveness (per instruction, backward) ----
   ;; Consumers: a Jcc; anything that can exit (a memory access that may
   ;; deopt, a budget check before a charged transfer, seam or cut).
@@ -2504,12 +2518,12 @@
     ;;        8, flag_a 1 (CF), flag_b 0 (OF), flag_res still r -- a different
     ;;        op, so two RECs behind a layout branch (BNZL/GOTO, no block).
     ;; The state after is 'G' ($uc_flag_class 3), and the record is written
-    ;; EVERY time. Skipping it when $uc_live_out said the flags were dead --
-    ;; or even only when the next instruction is a register alu/test/neg
-    ;; that overwrites them -- broke Heroes III (a NULL call at batch 3651,
-    ;; uop frames 99.97% off the reference; always writing it is identical),
-    ;; so something observes the globals that $uc_liveness does not count.
-    ;; Not found; kinds 18 and 25 still skip on $uc_live_out and may share it.
+    ;; EVERY time. Skipping it when $uc_live_out said the flags were dead
+    ;; once broke Heroes III (a NULL call at batch 3651), but the skip was
+    ;; not the bug: it only moved program sizes so the arena reuse that
+    ;; 553db124 fixed (entering a freed program) forged a live header. With
+    ;; that fix the skip is frame-identical on H3; it stays off because no
+    ;; CPU gain was measured for it (docs/uop-tier-design.md §15.2).
     ;; A memory destination is stored BEFORE the record: a
     ;; store that deopts re-executes this instruction in threaded code from
     ;; the entry state, and with CF coming from the globals ('G') a record
