@@ -20,6 +20,8 @@ if (process.argv.includes('--help')) {
   --stage=menu|race|measure  --continue-file=/tmp/menu-reviewed
   --seconds=30 --samples=2 --accelerate (default: stationary)
   --trace-api=LoadLibraryA,GetProcAddress (diagnostics only, not timing)
+  --capture-frame [--capture-min-blue=N] (up to 30 frames/60 seconds; blue pixels below y=200)
+  --glide-source=path/to/glide-backend.js (diagnostic page override only)
   --menu-click=130,310 --menu-wait=35 --race-wait=25 --out=build/nfs2-renderer-bench
 
 Prepare the original public SE 3Dfx demo (no full-game assets required):
@@ -37,6 +39,10 @@ const seconds = Number(arg('seconds', '30'));
 const samples = Number(arg('samples', '2'));
 // Default measurement leaves the car stationary; --accelerate opts into driving.
 const accelerate = process.argv.includes('--accelerate');
+const captureFrame = process.argv.includes('--capture-frame');
+const captureMinBlue = Number(arg('capture-min-blue', '0'));
+const glideSource = arg('glide-source', '');
+const glideOverride = glideSource ? fs.readFileSync(path.resolve(ROOT, glideSource), 'utf8') : null;
 const stage = arg('stage', 'measure');
 assert(['menu', 'race', 'measure'].includes(stage));
 const continueFile = arg('continue-file', '');
@@ -158,6 +164,88 @@ if (traceApiNames.length) {
     + ',()=>instance,memory);\n' + anchor);
 }
 
+// Installed only in the benchmark page, before the original guest launches.
+function installFrameCapture() {
+  const original = GlideBackend.Device.prototype.execute;
+  const encode = bytes => {
+    let text = '';
+    for (let i = 0; i < bytes.length; i += 8192)
+      text += String.fromCharCode(...bytes.subarray(i, i + 8192));
+    return btoa(text);
+  };
+  const range = () => ({ finite: 0, nonfinite: 0, min: null, max: null });
+  const add = (r, n) => {
+    if (!Number.isFinite(n)) { r.nonfinite++; return; }
+    r.finite++;
+    r.min = r.min === null ? n : Math.min(r.min, n);
+    r.max = r.max === null ? n : Math.max(r.max, n);
+  };
+  let active = null, device = null;
+  window.__nfs2CaptureArm = false;
+  window.__nfs2CapturedFrame = null;
+  GlideBackend.Device.prototype.execute = function(op, bytes) {
+    if (active && device === this && op !== 0) {
+      try {
+        active.byteLength += bytes.length;
+        if (active.byteLength > 32 * 1024 * 1024 || active.commands.length >= 100000)
+          throw new Error('frame capture exceeded 32 MiB/100000-command bound');
+        active.commands.push([op, encode(bytes)]);
+        if ([5, 11, 12].includes(op)) {
+          const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+          const state = Array.from({length:64}, (_, i) => v.getUint32(i * 4, true));
+          const key = state.join(',');
+          let item = active.drawStates.find(item => item.key === key);
+          if (!item) active.drawStates.push(item = {key, state, draws:0, vertices:0, ooz:range(), oow:range()});
+          const modeKey = state[11] + ':' + state[22];
+          const mode = active.vertexSummary[modeKey] ||= {depthMode:state[11], fogMode:state[22], ooz:range(), oow:range()};
+          item.draws++;
+          for (let offset = 256; offset + 60 <= bytes.length; offset += 60) {
+            const ooz = v.getFloat32(offset + 24, true), oow = v.getFloat32(offset + 32, true);
+            item.vertices++;
+            add(item.ooz, ooz); add(item.oow, oow); add(mode.ooz, ooz); add(mode.oow, oow);
+          }
+        }
+      } catch (error) {
+        window.__nfs2CaptureError = String(error);
+        active = null; window.__nfs2CaptureArm = false;
+      }
+    }
+    const result = original.call(this, op, bytes);
+    if (op === 4 && active && device === this) {
+      active.endSwap = this.stats.swaps;
+      active.completedAt = performance.now();
+      try {
+        const surface = this.backend.getPresentationSurface();
+        active.drawablePng = surface.toDataURL('image/png');
+        const context = surface.getContext('2d');
+        if (context) {
+          const y = Math.min(200, this.height), pixels = context.getImageData(0, y, this.width, this.height - y).data;
+          let blue = 0;
+          for (let p = 0; p < pixels.length; p += 4)
+            if (Math.abs(pixels[p] - 74) <= 12 && Math.abs(pixels[p+1] - 164) <= 12 && Math.abs(pixels[p+2] - 207) <= 12) blue++;
+          active.clearBluePixels = blue;
+          active.bluePixelSelection = {rgb:[74,164,207], tolerance:12, minY:y};
+        }
+      }
+      catch (error) { active.drawableError = String(error); }
+      for (const item of active.drawStates) delete item.key;
+      window.__nfs2CapturedFrame = active;
+      active = null;
+      window.__nfs2CaptureArm = false;
+    } else if (op === 4 && window.__nfs2CaptureArm && !active) {
+      device = this;
+      active = { schemaVersion:1, startSwap:this.stats.swaps, startedAt:performance.now(),
+        width:this.width, height:this.height, colorFormat:this.colorFormat, origin:this.origin,
+        ram:encode(this.ram), ranges:this.ranges.map(r => r.slice()),
+        palette:encode(new Uint8Array(this.palette.buffer, this.palette.byteOffset, this.palette.byteLength)),
+        fogTable:this.fogTable ? encode(this.fogTable) : null,
+        commands:[], byteLength:0, drawStates:[], vertexSummary:{},
+        note:'Resources captured after start swap; commands end with next swap. Prior color/depth buffer contents are not serialized.' };
+    }
+    return result;
+  };
+}
+
 async function observe(page) {
   return page.evaluate(() => {
     const wine = runningApps.find(app => app.name === window.__nfs2App)?.wine;
@@ -215,6 +303,10 @@ async function runCase(server, name) {
     await page.goto(`http://127.0.0.1:${server.address().port}/?threads&perf&glide-renderer=${config.glide}`,
       { waitUntil: 'networkidle2', timeout: 90000 });
     await page.bringToFront();
+    if (captureFrame) {
+      assert(config.accelerated && config.glide === 'webgl', '--capture-frame requires seglide WebGL');
+      await page.evaluate(installFrameCapture);
+    }
     await page.evaluate(async config => {
       if (config.traceApiNames.length) window.__waTraceApiNames = new Set(config.traceApiNames);
       window.__nfsBenchFlips = 0;
@@ -305,6 +397,42 @@ async function runCase(server, name) {
     }
     await page.screenshot({ path: path.join(dir, 'ready.png') });
     console.log(name, 'race checkpoint', path.join(dir, 'ready.png'));
+    if (captureFrame) {
+      const started = Date.now();
+      let frame = null, tried = 0;
+      const maximum = captureMinBlue > 0 ? 30 : 1;
+      while (tried < maximum && Date.now() - started < 60000) {
+        await page.evaluate(() => { window.__nfs2CapturedFrame = null; window.__nfs2CaptureArm = true; });
+        let complete = false;
+        while (Date.now() - started < 60000) {
+          const status = await page.evaluate(() => ({done:!!window.__nfs2CapturedFrame, error:window.__nfs2CaptureError}));
+          if (status.error) throw new Error(status.error);
+          if (status.done) { complete = true; break; }
+          if (errors.length) throw new Error(errors[0]);
+          await sleep(100);
+        }
+        if (!complete) break;
+        const candidate = await page.evaluate(() => window.__nfs2CapturedFrame);
+        tried++;
+        if (!frame || (candidate.clearBluePixels || 0) > (frame.clearBluePixels || 0)) frame = candidate;
+        console.log(name, 'capture candidate', tried, 'blue pixels', candidate.clearBluePixels);
+        if ((frame.clearBluePixels || 0) >= captureMinBlue) break;
+      }
+      await page.evaluate(() => { window.__nfs2CaptureArm = false; });
+      assert(frame, 'single-frame capture timed out after 60 seconds');
+      frame.selection = {tried, minimumBluePixels:captureMinBlue,
+        satisfied:(frame.clearBluePixels || 0) >= captureMinBlue, boundedSeconds:60, maximumFrames:maximum};
+      if (frame.drawablePng) {
+        fs.writeFileSync(path.join(dir, 'capture-drawable.png'), Buffer.from(frame.drawablePng.split(',')[1], 'base64'));
+        delete frame.drawablePng;
+      }
+      fs.writeFileSync(path.join(dir, 'capture-frame.json'), JSON.stringify(frame));
+      await page.screenshot({path:path.join(dir, 'capture-page.png')});
+      report.capture = {path:'capture-frame.json', commands:frame.commands.length,
+        byteLength:frame.byteLength, vertexSummary:frame.vertexSummary, clearBluePixels:frame.clearBluePixels, selection:frame.selection};
+      console.log(name, 'frame capture', JSON.stringify(report.capture));
+      assert(frame.selection.satisfied, 'blue threshold not reached within 30 frames/60 seconds; highest-blue frame retained');
+    }
     if (stage === 'race') { report.checkpoint = 'race'; return report; }
     // Visual review of ready.png is required when reporting a race benchmark:
     // counters alone cannot distinguish a rendered menu from active gameplay.
@@ -366,6 +494,11 @@ async function runCase(server, name) {
     allowedRealRoots: [fixtureRoot, seRoot, fs.realpathSync(path.join(ROOT, 'fonts'))].filter(Boolean),
     handleRequest(req, res) {
       const pathname = new URL(req.url, 'http://localhost').pathname;
+      if (glideOverride && pathname === '/lib/glide-backend.js') {
+        res.writeHead(200, {'Content-Type':'application/javascript', 'Cache-Control':'no-store',
+          'Cross-Origin-Resource-Policy':'same-origin'});
+        res.end(glideOverride); return true;
+      }
       if (tracedWorker && pathname === '/lib/guest-worker.js') {
         res.writeHead(200, {'Content-Type':'application/javascript', 'Cache-Control':'no-store',
           'Cross-Origin-Resource-Policy':'same-origin', 'Cross-Origin-Embedder-Policy':'require-corp'});
@@ -380,7 +513,7 @@ async function runCase(server, name) {
       return true;
     } });
   const meta = { startedAt: new Date().toISOString(), commit: execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim(),
-    wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, stage, seconds, samples, accelerate, traceApiNames,
+    wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, stage, seconds, samples, accelerate, traceApiNames, captureFrame, captureMinBlue, glideSource,
     comparisonCaveat: "Original software versus SE Glide uses different editions and supplied tracks (TR03 versus TR04); this is not a renderer-only or same-scene A/B.",
     machine: { platform:os.platform(), arch:os.arch(), cpus:os.cpus().length, model:os.cpus()[0].model },
     fixtureSha256: { original: hash(path.join(ROOT,'test/binaries/candidates/need-for-speed-2-demo/game/nfsw.exe')),

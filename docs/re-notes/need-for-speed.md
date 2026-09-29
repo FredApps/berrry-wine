@@ -38,6 +38,37 @@ demo reaches the tropical coastal race directly, without the original demo's
 menu walk. Benchmark screenshots and timings are in
 [the renderer benchmark report](../nfs-renderer-benchmark.md).
 
+### SE W-buffer geometry corruption (2026-09-29)
+
+Driving the Glide demo exposed blue holes through road/beach geometry and
+missing pieces of cars. NFS II SE uses W buffering and table fog (`state[11]
+= 2`, `state[22] = 2`); `GrVertex.oow` is valid, while unused `ooz` contains
+arbitrary bytes, including NaNs. Our WebGL vertex conversion incorrectly fed
+`ooz` into clip-space Z before the fragment shader calculated W depth.
+
+A captured bad frame has 9,708 vertices, 4,765 non-finite `ooz` values and
+zero non-finite `oow` values. The frame begins with a full color/depth clear.
+Replaying identical resources and 1,427 commands with the old and corrected
+backends changes 118,588 pixels and restores road, terrain and car geometry.
+The first captured frame happened to look normal and replayed identically
+despite some invalid unused Z values; it was not sufficient evidence alone.
+
+W-buffer clip coordinates now use neutral finite Z. Explicit Z fog/combiner
+inputs retain their separate varying; the software adapter also avoids
+consuming unused Z. Regression tests cover finite, NaN, infinite and huge
+unused Z values on WebGL1/2, plus preservation of explicit Z fog. WebGL,
+native backend and WAT software tests pass. A further acceleration run
+reaches about 90 on the HUD and the previously affected beach section without
+the holes. Artifacts: `build/nfs2-glide-driving{,-fixed}/`,
+`build/nfs2-badframe/`, `build/nfs2-bad-replay-{before,after}/`.
+
+The SE harness supports `--capture-frame`, bounded `--capture-min-blue=N`
+selection for this symptom, and `--glide-source=PATH` for diagnostic replay
+of an older backend without replacing production files. Captures include
+texture RAM, palettes, fog table, frame commands and vertex ranges. The
+existing NFS II performance measurements predate this correctness fix and
+must not be treated as timings of fully rendered geometry.
+
 ```sh
 node tools/profile-web-frames.js --app=nfs2_demo --warmup=2 --seconds=25 '--guest-script=click:130:310@35:0.3,key:13@5:0.3,key:38@15:3' --film=/tmp/nfs2-race:10
 ```

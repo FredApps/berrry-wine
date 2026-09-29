@@ -55,7 +55,32 @@ const puppeteer = require('puppeteer');
           const occluded=Array.from(pixels);
           device.submit(4,new Uint8Array());
           const published=Array.from(backend.getPresentationSurface().getContext('2d').getImageData(4,4,1,1).data);
-          results.push({version,clamped,occluded,published,error:gl.getError()});
+          // W depth plus table fog must never consume the unused ooz field.
+          // NFS II SE supplies NaNs here; test an independent expected color
+          // as well as identical output for finite/nonfinite guest bytes.
+          state[22]=2;state[23]=0xff0000ff;
+          device.submit(8,new Uint8Array(64).fill(64));
+          for(let i=0;i<3;i++) view.setFloat32(256+i*60+8*4,0.5,true);
+          const unusedZ=[];
+          for(const z of [12345,NaN,Infinity,-Infinity,2.1e36]) {
+            device.submit(3,packet([0,255,65535]));
+            for(let i=0;i<3;i++) view.setFloat32(256+i*60+6*4,z,true);
+            device.submit(5,draw);
+            backend.readPixels(4,27,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+            unusedZ.push(Array.from(pixels));
+          }
+          // Explicit Z fog remains meaningful with W buffering: its raw Z
+          // varying must survive even though geometry uses neutral clip Z.
+          state[22]=3;
+          const zFog=[];
+          for(const z of [0,65535]) {
+            device.submit(3,packet([0,255,65535]));
+            for(let i=0;i<3;i++) view.setFloat32(256+i*60+6*4,z,true);
+            device.submit(5,draw);
+            backend.readPixels(4,27,1,1,gl.RGBA,gl.UNSIGNED_BYTE,pixels);
+            zFog.push(Array.from(pixels));
+          }
+          results.push({version,clamped,occluded,published,unusedZ,zFog,error:gl.getError()});
         } finally { device.destroy();backend.destroy(); }
       }
       return results;
@@ -64,6 +89,9 @@ const puppeteer = require('puppeteer');
       assert.deepStrictEqual(result.clamped,[255,255,255,255],`WebGL${result.version} truncated mip`);
       assert.deepStrictEqual(result.occluded,[255,255,255,255],`WebGL${result.version} W depth`);
       assert.deepStrictEqual(result.published,[255,255,255,255],`WebGL${result.version} published surface`);
+      for(const pixels of result.unusedZ)
+        assert.deepStrictEqual(pixels,[191,0,64,255],`WebGL${result.version} W mode ignores unused ooz`);
+      assert.deepStrictEqual(result.zFog,[[255,0,0,255],[0,0,255,255]],`WebGL${result.version} W mode preserves Z fog`);
       assert.strictEqual(result.error,0);
     }
     const composed = await page.evaluate(async () => {
