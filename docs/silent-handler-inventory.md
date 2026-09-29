@@ -713,3 +713,14 @@ creation now uses the shared version-2/7 core. Public-dispatch reference counts,
 nonfinal/final retirement, both parent/device release orders and heap balance
 are covered in test/test-d3d-root-lifetime.js. See
 docs/d3d-root-lifetime-review.md for remaining identity/ownership limitations.
+
+2026-09-29: 243 -> 246 manual, GetMessageExtraInfo / SetMessageExtraInfo and
+clearerr added. clearerr(FILE*) is straight-line because this CRT keeps no
+sticky EOF/error indicators on a FILE (feof probes the position, ferror is
+always 0), so there is nothing to reset; ScummVM 0.8 calls it at startup.
+GetMessageExtraInfo is what the GOG (SDL2) ScummVM imports and crashed on. Both
+are straight-line by nature: they read/swap the per-thread $msg_extra_info
+global, exactly as GetMessageTime reads $last_msg_time. The behavior lives
+in $handle_GetMessageA / $handle_PeekMessageA, which clear it whenever a
+message is retrieved (every message source here attaches extra info 0).
+Covered by test/test-message-extra-info.js.

@@ -479,8 +479,34 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; strncat(dest, src, count) — cdecl. Appends at most `count` characters of
+  ;; src (stopping early at its NUL) at dest's terminator, then ALWAYS writes a
+  ;; terminator — unlike strncpy it never pads. Returns dest. Byte-wise through
+  ;; $gl8/$gs8 on guest addresses, so a string straddling two sparse guest
+  ;; pages stays correct. A handler body existed (Liquid War) but had no
+  ;; api_table entry, so the import resolved to "unimplemented" — ScummVM's
+  ;; Queen engine crashed on it at its first gameplay room.
+  (func $handle_strncat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $d i32) (local $i i32) (local $ch i32)
+    (local.set $d (local.get $arg0))
+    (block $end (loop $scan
+      (br_if $end (i32.eqz (call $gl8 (local.get $d))))
+      (local.set $d (i32.add (local.get $d) (i32.const 1)))
+      (br $scan)))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $arg2)))
+      (local.set $ch (call $gl8 (i32.add (local.get $arg1) (local.get $i))))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (call $gs8 (i32.add (local.get $d) (local.get $i)) (local.get $ch))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (call $gs8 (i32.add (local.get $d) (local.get $i)) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
   ;; 729: strcat(dest, src) — cdecl
-  (func $handle_strcat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+  (func $handle_strcat(param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $dst i32) (local $src i32) (local $ch i32) (local $i i32)
     (local.set $dst (call $g2w (local.get $arg0)))
     ;; find end of dest
@@ -503,35 +529,6 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $l2)))
     (i32.store8 (local.get $dst) (i32.const 0))
-    (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
-  )
-
-  ;; strncat(dest, src, count) — cdecl
-  (func $handle_strncat (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $dst i32) (local $src i32) (local $ch i32) (local $i i32)
-    (local.set $dst (call $g2w (local.get $arg0)))
-    (block $d (loop $l
-      (br_if $d (i32.ge_u (local.get $i) (i32.const 65536)))
-      (br_if $d (i32.eqz (i32.load8_u (local.get $dst))))
-      (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $l)))
-    (local.set $src (call $g2w (local.get $arg1)))
-    (local.set $i (i32.const 0))
-    (if (local.get $arg2)
-      (then
-        (block $d2 (loop $l2
-          (br_if $d2 (i32.ge_u (local.get $i) (local.get $arg2)))
-          (br_if $d2 (i32.ge_u (local.get $i) (i32.const 65536)))
-          (local.set $ch (i32.load8_u (local.get $src)))
-          (br_if $d2 (i32.eqz (local.get $ch)))
-          (i32.store8 (local.get $dst) (local.get $ch))
-          (local.set $dst (i32.add (local.get $dst) (i32.const 1)))
-          (local.set $src (i32.add (local.get $src) (i32.const 1)))
-          (local.set $i (i32.add (local.get $i) (i32.const 1)))
-          (br $l2)))
-        (i32.store8 (local.get $dst) (i32.const 0))))
     (i32.store offset=0 (global.get $reg_base) (local.get $arg0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
@@ -1120,6 +1117,16 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; clearerr(FILE*) -> void (cdecl). Resets a stream's error and end-of-file
+  ;; indicators. This CRT keeps neither as sticky state: FILE* is the raw VFS
+  ;; handle, feof above probes the handle's position against its size on every
+  ;; call, and ferror has no failure latch to report. So after clearerr the
+  ;; stream already reads exactly as it did before -- there is nothing to reset.
+  ;; If sticky indicators are ever added to the stream node, clear them here.
+  (func $handle_clearerr (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
   (func $handle_fgets (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $count i32) (local $bytes_ga i32) (local $bytes_wa i32) (local $ch i32)
     (if (i32.or
@@ -1324,6 +1331,22 @@
     (local.set $written (call $crt_stream_write
       (local.get $arg1) (local.get $arg0) (local.get $len)))
     (i32.store offset=0 (global.get $reg_base) (select (i32.const 0) (i32.const -1) (i32.ge_s (local.get $written) (i32.const 0))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
+  ;; fputc(c, FILE*) -> (unsigned char)c, or EOF (-1) when the byte was not
+  ;; written. The byte goes to the stream straight from the caller's own
+  ;; argument slot ([esp+4], low byte first), which is guest memory and needs
+  ;; no scratch. ScummVM's Queen engine writes the tail of its autosave
+  ;; (queen.asd) with it at the end of the intro.
+  (func $handle_fputc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $written i32)
+    (local.set $written (call $crt_stream_write (local.get $arg1)
+      (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))
+      (i32.const 1)))
+    (i32.store offset=0 (global.get $reg_base)
+      (select (i32.and (local.get $arg0) (i32.const 0xff)) (i32.const -1)
+        (i32.eq (local.get $written) (i32.const 1))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 

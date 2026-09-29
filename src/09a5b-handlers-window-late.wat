@@ -177,6 +177,21 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))) (return)
   )
 
+  ;; GetMessageExtraInfo() -> LPARAM: the extra-info value of the last message
+  ;; this thread retrieved with GetMessage/PeekMessage, or whatever
+  ;; SetMessageExtraInfo stored since. Mouse/keyboard input carries 0 here
+  ;; (no device driver attaches a signature).
+  (func $handle_GetMessageExtraInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (global.get $msg_extra_info))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
+
+  ;; SetMessageExtraInfo(lParam) -> LPARAM: replace the calling thread's extra
+  ;; info, returning the previous value.
+  (func $handle_SetMessageExtraInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (global.get $msg_extra_info))
+    (global.set $msg_extra_info (local.get $arg0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
+
   ;; 613: RemovePropW(hwnd, lpString) -> HANDLE.
   ;; Share the lightweight USER32 property table with the A variant; atom names
   ;; already pass through unchanged, and app-local string properties only need a

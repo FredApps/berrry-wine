@@ -31657,5 +31657,48 @@
     "convention": "stdcall",
     "hash": 1563692465,
     "ret": "HRESULT"
+  },
+  {
+    "id": 3723,
+    "name": "GetMessageExtraInfo",
+    "nargs": 0,
+    "convention": "stdcall",
+    "hash": 766010320,
+    "ret": "LPARAM"
+  },
+  {
+    "id": 3724,
+    "name": "SetMessageExtraInfo",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 1584462164,
+    "args": [
+      {
+        "name": "lParam",
+        "type": "LPARAM"
+      }
+    ],
+    "ret": "LPARAM"
+  },
+  {
+    "id": 3725,
+    "name": "clearerr",
+    "nargs": 1,
+    "convention": "cdecl",
+    "hash": 3870215973
+  },
+  {
+    "id": 3726,
+    "name": "strncat",
+    "nargs": 3,
+    "convention": "cdecl",
+    "hash": 2985193262
+  },
+  {
+    "id": 3727,
+    "name": "fputc",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 600194539
   }
 ]

@@ -3031,6 +3031,13 @@
   (global $last_msg_pos_x (mut i32) (i32.const 0))
   (global $last_msg_pos_y (mut i32) (i32.const 0))
   (global $last_msg_time  (mut i32) (i32.const 0))
+  ;; GetMessageExtraInfo/SetMessageExtraInfo: the calling thread's extra-info
+  ;; word for the last message it retrieved. Per-instance on purpose (one
+  ;; instance per guest thread), and deliberately NOT propagated at spawn: a
+  ;; new thread has retrieved nothing yet, so it starts at 0. Every message
+  ;; source here (host input, posted, timers, synthesized) attaches 0, so
+  ;; each GetMessage/PeekMessage that retrieves a message clears it.
+  (global $msg_extra_info (mut i32) (i32.const 0))
   ;; ClipCursor confinement rectangle, in screen coordinates. Real USER clips
   ;; hardware cursor movement; JS reads this and clamps generated mouse input.
   (global $clip_cursor_active (mut i32) (i32.const 0))

@@ -1804,7 +1804,19 @@
     (global.set $steps (i32.const 0))
     (i32.const 1))
 
+  ;; A GetMessage that retrieved a message (it did not park on its thunk to
+  ;; wait, and it consumed its stack frame) replaces the thread's extra info
+  ;; with that message's, and every source here attaches 0.
   (func $handle_GetMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $sp i32)
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_GetMessageA_pump (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (if (i32.and (i32.eqz (global.get $yield_flag))
+                 (i32.ne (i32.load offset=16 (global.get $reg_base)) (local.get $sp)))
+      (then (global.set $msg_extra_info (i32.const 0)))))
+
+  (func $handle_GetMessageA_pump (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
     (if (call $incoming_send_yield) (then (return)))
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))
@@ -2109,7 +2121,20 @@
 
   ;; 74: PeekMessageA(lpMsg, hWnd, wMsgFilterMin, wMsgFilterMax, wRemoveMsg)
   ;; Returns 0 = no message available (non-blocking)
+  ;; A PeekMessage that returned a message (removed or not, as in USER)
+  ;; replaces the thread's extra info with that message's: always 0 here.
   (func $handle_PeekMessageA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $sp i32)
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (call $handle_PeekMessageA_pump (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (local.get $arg4) (local.get $name_ptr))
+    (if (i32.and
+          (i32.and (i32.eqz (global.get $yield_flag))
+                   (i32.ne (i32.load offset=16 (global.get $reg_base)) (local.get $sp)))
+          (i32.ne (i32.load (global.get $reg_base)) (i32.const 0)))
+      (then (global.set $msg_extra_info (i32.const 0)))))
+
+  (func $handle_PeekMessageA_pump (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $sp i32) (local $ret i32) (local $eat i32)
     (if (call $incoming_send_yield) (then (return)))
     (local.set $sp (i32.load offset=16 (global.get $reg_base)))

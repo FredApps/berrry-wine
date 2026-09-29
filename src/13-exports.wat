@@ -3063,11 +3063,14 @@
     (local $cb i32) (local $instance i32)
     (if (global.get $yield_reason) (then (return (i32.const 0))))
     (if (global.get $mm_timer_in_cb) (then (return (i32.const 0))))
-    (if (i32.ne (i32.load (i32.const 0xD16C)) (i32.const 3))
+    ;; $WAVE_OUT_SHARED is allocator-placed: {+0 handle, +4 callback,
+    ;; +8 instance, +12 cbType}, written by $handle_waveOutOpen. This read
+    ;; 0xD160.. (the region's pre-allocator base) and so never fired.
+    (if (i32.ne (i32.load (region.addr $WAVE_OUT_SHARED 12)) (i32.const 3))
       (then (return (i32.const 0))))
-    (local.set $cb (i32.load (i32.const 0xD164)))
+    (local.set $cb (i32.load (region.addr $WAVE_OUT_SHARED 4)))
     (if (i32.eqz (local.get $cb)) (then (return (i32.const 0))))
-    (local.set $instance (i32.load (i32.const 0xD168)))
+    (local.set $instance (i32.load (region.addr $WAVE_OUT_SHARED 8)))
     (global.set $mm_timer_in_cb (i32.const 1))
     (call $save_caller_regs)
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
