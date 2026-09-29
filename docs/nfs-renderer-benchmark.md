@@ -179,11 +179,40 @@ Consumers that request this synchronization include:
 After a fence the dirty/pending flags clear, so a cluster of software lines
 shares one readback until another GPU draw occurs. The fence currently
 flushes all dirty targets, even if the CPU access concerns another surface.
-Two readbacks/frame are measured in NFS III, but the aggregate counter does
-not identify which individual calls triggered them. Rain fallback and DIB
-presentation explain the need; assigning each measured readback to an API
-requires a caller census. Texture generation tracking does not remove this
+An actual caller census now identifies both readbacks in every one of 334
+measured NFS III frames:
+
+| Trigger | Guest call site in loaded `d3da.dll` |
+| --- | --- |
+| First rejected line-strip draw of the frame | RVA `0x4ce9`: `DrawPrimitive(LINESTRIP, TLVERTEX, count=2, flags=12)` |
+| Presentation | RVA `0x4fd4`: `Flip(NULL, DDFLIP_WAIT)` |
+
+Captured WASM stacks independently identify `d3dim_worker_route` beneath
+`handle_IDirect3DDevice2_DrawPrimitive`, and `handle_IDirectDrawSurface_Flip`.
+The guest argument stack confirms the primitive/type/count and Flip flags.
+There were **no Lock-triggered readbacks** in either measured window. Rain
+is consistent with these short lines, but the proven trigger is the rejected
+two-vertex line strip. Texture generation tracking does not remove either
 GPU-to-CPU image transfer.
+
+The updated unprofiled comparison was 94.978 ms/frame for D3D and 71.525 for
+Glide: a 23.453 ms gap. D3D's 7.907 ms/frame synchronization time accounts for
+33.7% of that gap. Subtracting all of it leaves 87.072 ms/frame (11.485 FPS),
+still 15.547 ms/frame behind Glide. This is accounting, **not a causal speedup
+prediction**: readback timing includes GPU waiting, conversion and copying,
+and waits may expose work submitted earlier. It does not explain the entire
+measured difference. D3D also performs 69% more GPU draws and 12.4% more guest
+blocks per frame in the updated run; renderer-process CPU was 160.74 versus
+105.70 ms/frame, including multiple threads.
+
+The separate caller census used `--readback-census --cases=d3d --seconds=20
+--samples=2 --out=build/nfs3-readback-callers`. It records guest return
+addresses, a first-seen WASM stack per caller, and a timer around `readPixels`.
+Its 334 frames spent 10.15 ms/frame synchronizing, split into 5.30 ms inside
+`readPixels` and 4.85 ms converting/copying/bookkeeping. Its load was 64–84,
+so this timing must not be substituted into the earlier A/B gap. The stable
+result is the caller count: one line-strip readback and one Flip readback
+per frame in both samples. These probes modify served scripts only.
 
 ### Local dropdown testing
 

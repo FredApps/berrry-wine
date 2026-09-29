@@ -147,6 +147,16 @@ access and DIB-based Flip presentation; pending/dirty flags coalesce repeated
 CPU operations until another GPU draw. Aggregate counters do not identify the
 specific two triggering calls per frame. See the benchmark report for details.
 
+Follow-up caller census identifies both triggers in all 334 measured frames:
+`d3da.dll` RVA `0x4ce9` invokes Device2 DrawPrimitive with LINESTRIP=3,
+TLVERTEX=3, count=2, flags=12; first fallback fences pending GPU work. RVA
+`0x4fd4` invokes Surface Flip(NULL, DDFLIP_WAIT=1), causing the second fence.
+No Lock-triggered readbacks occur during these samples. Guest stack arguments
+and captured WASM call stacks independently confirm both. Artifacts:
+`build/nfs3-readback-callers/`; reproduce with `--readback-census` in the NFS III
+harness. Prior uninstrumented synchronization time accounts for about one
+third of the measured wall-time gap, not all of it.
+
 The optional `tools/nfs-renderer-bench.js --profile` census identified every
 sampled software fallback as primitive 3 (line strip), vertex type 3 (TL),
 count 2: 2,496 calls over 104 frames. Rain is the likely source. Two full-DIB

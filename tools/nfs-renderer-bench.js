@@ -2,7 +2,8 @@
 'use strict';
 
 // Local original-demo comparison. The benchmark server overrides only the
-// NFS III RNG-seeding GetTickCount call; shipped code and guest files stay intact.
+// NFS III RNG-seeding GetTickCount call; optional diagnostic flags also wrap
+// served renderer scripts. Shipped code and guest files stay intact.
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -13,6 +14,7 @@ const puppeteer = require('puppeteer');
 const { startStaticServer, closeServer } = require('../test/static-server');
 const ROOT = path.resolve(__dirname, '..');
 if (process.argv.includes('--help')) {
+  console.log('Diagnostics: --profile saves page/worker CPU profiles; --readback-census records D3D fence callers and readPixels timing. Do not treat diagnostic timings as the uninstrumented baseline.');
   console.log('Usage: node tools/nfs-renderer-bench.js [--cases=glide,d3d,software,glide-software] [--seconds=30] [--samples=2] [--seed=12345] [--out=build/nfs-renderer-bench]\nRequires the original nfs3_demo fixture and a current build. Runs headful Chrome serially. Saves screenshots, hardware-renderer evidence, frame counters, CPU time, and machine load. Seed instrumentation is specific to this demo.');
   process.exit(0);
 }
@@ -22,6 +24,7 @@ const seconds = Number(arg('seconds', '30'));
 const samples = Number(arg('samples', '2'));
 const seed = Number(arg('seed', '12345')) >>> 0;
 const profileEnabled = process.argv.includes('--profile');
+const readbackCensus = process.argv.includes('--readback-census');
 assert(Number.isFinite(seconds) && seconds > 0, 'seconds must be positive');
 assert(Number.isInteger(samples) && samples >= 0, 'samples must be a nonnegative integer');
 const output = path.resolve(ROOT, arg('out', 'build/nfs-renderer-bench'));
@@ -55,6 +58,25 @@ if (globalThis.D3DIMGpu) {
       const census = this.stats.fallbackKinds || (this.stats.fallbackKinds = {});
       census[key] = (census[key] || 0) + 1;
     }
+    return result;
+  };
+}
+`;
+const readbackProbe = `
+if (globalThis.D3DIMGpu) {
+  const prototype = globalThis.D3DIMGpu.D3DIMGpu.prototype, fence = prototype.fence;
+  prototype.fence = function() {
+    const ex = this.getExports(), sp = ex.get_esp() >>> 0;
+    const key = JSON.stringify({eip:ex.get_eip() >>> 0, ret:ex.guest_read32(sp) >>> 0});
+    const census = this.stats.readbackCallers || (this.stats.readbackCallers = {});
+    const row = census[key] || (census[key] = {calls:0, syncs:0, syncMs:0, readPixelsMs:0,
+      stack:new Error().stack, guestStack:Array.from({length:12}, (_,i)=>ex.guest_read32(sp+i*4)>>>0)});
+    const before = {syncs:this.stats.syncs, syncMs:this.stats.syncMs, readPixelsMs:this.stats.readPixelsMs || 0};
+    const result = fence.call(this);
+    row.calls++;
+    row.syncs += this.stats.syncs - before.syncs;
+    row.syncMs += this.stats.syncMs - before.syncMs;
+    row.readPixelsMs += (this.stats.readPixelsMs || 0) - before.readPixelsMs;
     return result;
   };
 }
@@ -280,10 +302,17 @@ async function runCase(server, name) {
     allowedRealRoots: [fixtureRoot, fs.realpathSync(path.join(ROOT, 'fonts'))],
     handleRequest(req, res) {
       const pathname = new URL(req.url, 'http://localhost').pathname;
-      if (profileEnabled && pathname === '/lib/d3dim-gpu.js') {
+      if ((profileEnabled || readbackCensus) && pathname === '/lib/d3dim-gpu.js') {
         res.writeHead(200, {'Content-Type':'application/javascript','Cache-Control':'no-store',
           'Cross-Origin-Resource-Policy':'same-origin','Cross-Origin-Embedder-Policy':'require-corp'});
-        res.end(fs.readFileSync(path.join(ROOT,'lib/d3dim-gpu.js'),'utf8') + d3dCensus);
+        let source = fs.readFileSync(path.join(ROOT,'lib/d3dim-gpu.js'),'utf8');
+        if (readbackCensus) {
+          const read = 'gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, t.readBuf);';
+          assert.equal(source.split(read).length, 2, 'readPixels timing anchor must be unique');
+          source = source.replace(read, 'const readStart = now(); ' + read +
+            ' this.stats.readPixelsMs = (this.stats.readPixelsMs || 0) + now() - readStart;');
+        }
+        res.end(source + d3dCensus + (readbackCensus ? readbackProbe : ''));
         return true;
       }
       if (pathname !== '/lib/guest-worker.js') return false;
@@ -293,7 +322,7 @@ async function runCase(server, name) {
       res.end(seededWorker + rendererProbe); return true;
     } });
   const meta = { startedAt: new Date().toISOString(), commit: execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim(),
-    wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, seed, seconds, samples, profileEnabled,
+    wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, seed, seconds, samples, profileEnabled, readbackCensus,
     machine: { platform:os.platform(), arch:os.arch(), cpus:os.cpus().length, model:os.cpus()[0].model },
     fixtureSha256,
     results: [] };
