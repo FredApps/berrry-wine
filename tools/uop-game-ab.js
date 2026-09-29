@@ -128,6 +128,17 @@ const GAMES = {
       '20890:mousemove:150:230', '20930:rclick:150:230',
     ],
   },
+  sg: {
+    // SimGolf demo gameplay, the window docs/uop-tier-design.md section 15's
+    // call-form census used: welcome box dismissed with Enter at 2400, the
+    // course then runs its own camera; jgl.dll's scaled blitter is ~20% of
+    // block entries from 2500 on.
+    app: 'simgolf_demo', split: 2500,
+    args: ['--gl-renderer=software', '--batch-size=100000', '--max-batches=4000', '--tick-ms-per-batch=37',
+      '--stuck-after=100000000'],
+    input: ['100:mousemove:400:300', '1500:mousemove:400:300', '1900:mousemove:401:300',
+      '2400:keydown:13', '2405:keyup:13'],
+  },
   // Moorhuhn: routes from docs/re-notes/moorhuhn.md, then a spread of shots
   // across the field so the round does work (the round is mouse-only).
   mh1: {
