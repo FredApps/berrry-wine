@@ -102,18 +102,23 @@
   ;; Scalar unordered comparison sets independent ZF/PF/CF values. Do not
   ;; synthesize an integer subtraction: its parity/sign flags are different.
   ;; MXCSR exception reporting is not yet modeled by this SSE subset.
+  ;; COMISS/UCOMISS write ZF/PF/CF from the compare and clear OF/SF/AF, so
+  ;; every flag the lazy record models is known here and nothing needs to be
+  ;; read back from it: write the exact-raw record (mode 9, the shape
+  ;; $load_eflags produces) directly. DF and $eflags_extra are untouched.
+  ;;   greater 000, less CF, equal ZF, unordered ZF|PF|CF
   (func $sse_compare_flags (param $a f32) (param $b f32)
-    (local $flags i32)
-    (local.set $flags (i32.const 0x45))
-    (if (f32.gt (local.get $a) (local.get $b))
-      (then (local.set $flags (i32.const 0))))
-    (if (f32.lt (local.get $a) (local.get $b))
-      (then (local.set $flags (i32.const 1))))
-    (if (f32.eq (local.get $a) (local.get $b))
-      (then (local.set $flags (i32.const 0x40))))
-    (call $load_eflags
-      (i32.or (i32.and (call $build_eflags) (i32.const 0xFFFFF72A))
-              (local.get $flags))))
+    (local $un i32)
+    (local.set $un (i32.or (f32.ne (local.get $a) (local.get $a))
+                           (f32.ne (local.get $b) (local.get $b))))
+    (global.set $flag_op (i32.const 9))
+    (global.set $flag_sign_shift (i32.const 31))
+    (global.set $flag_a (i32.or
+      (i32.or (f32.lt (local.get $a) (local.get $b)) (local.get $un))
+      (i32.shl (local.get $un) (i32.const 1))))
+    (global.set $flag_b (i32.const 0))
+    (global.set $flag_res (i32.eqz (i32.or (f32.eq (local.get $a) (local.get $b))
+                                           (local.get $un)))))
 
   ;; CMPPS predicates 0..7: EQ, LT, LE, UNORD, NEQ, NLT, NLE, ORD. A true
   ;; lane is all ones. The negated predicates are true for unordered inputs,
