@@ -1495,14 +1495,7 @@
             (i32.store offset=0 (global.get $reg_base) (select
                 (local.get $arg0)
                 (i32.const 0x102)
-                (i32.or
-                  (i32.or (global.get $quit_flag)
-                    (i32.or
-                      (i32.gt_u (call $post_queue_total_count) (i32.const 0))
-                      (i32.gt_u (call $shared_post_queue_total_count) (i32.const 0))))
-                  (i32.or
-                    (i32.or (global.get $paint_pending) (global.get $nc_flags_count))
-                    (call $paint_flag_any)))))))
+                (call $msgwait_queue_ready)))))
         (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
         (global.set $yield_flag (i32.const 1))
         (global.set $steps (i32.const 0))

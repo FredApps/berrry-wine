@@ -37,6 +37,41 @@ through the animated Deus Ex title. It was still in that title sequence around
 after a scripted viewport click, so the interactive acceptance remains the
 cooperative backend; leave Threads off for the responsive demo path.
 
+## Headless route to Training, uop tier on (2026-09-29)
+
+With the uop tier on (the default) and 553db124 (never enter a freed uop
+program), the demo runs from boot through the main menu into the Training map
+and walks. Nothing else needed fixing. Driven frozen, one step at a time:
+
+```sh
+node test/run.js --app=deus_ex_demo --quiet-api --quiet-blocks --no-close \
+  --control --frozen --max-seconds=3000 --max-batches=100000 \
+  --batch-size=200000 --tick-ms-per-batch=25
+# then with tools/ctl.js (screen coordinates; the window's client centre is 345,284):
+step 3000                     # rotating 3D logo (the menu's background level)
+key VK_ESCAPE; step 200       # "Welcome to DEUS EX" main menu
+cmd mousemove:502:396; step 30     # cursor onto Training (see mouse notes)
+cmd mousedown:345:284; step 40; cmd mouseup:345:284; step 100   # LOADING
+step 400                      # UNATCO Training Facilities, HUD, Jaime Reyes transmission
+cmd keydown:38; step 150; cmd keyup:38   # JC walks to the first door
+```
+
+About 7 minutes of wall clock to the logo on an idle bench box (cooperative
+threads). Every capture above was checked by eye.
+
+**The mouse is relative, not absolute.** Once the viewport captures the mouse,
+WinDrv's WM_MOUSEMOVE handler (`windrv+0x1110ad8f`) takes `lParam` minus the
+client centre as a delta, feeds `MouseDelta`/`IK_MouseX/Y` and recentres the
+cursor with `SetCursorPos` (`windrv+0x1110af82`). So an absolute `mousemove:X:Y`
+moves the game's own cursor by about **2 x (X,Y - 345,284)**, and a move up or
+left of centre from the start position (top-left corner) is clamped and looks
+like nothing happened. `click` alone does not press a menu button: the button
+only takes focus from a *move* event over it, and the press must span game
+frames — mousemove onto the button, then `mousedown`, `step 40`, `mouseup`.
+WinDrv's button handlers (`0x1110b4a4` down, `0x1110b302` up) were confirmed
+to fire with `--count`; the earlier "click does nothing" was only the missing
+hover move, not an input bug.
+
 Compatibility work required for this route:
 
 - root-clamped VFS `..` normalization for UE1 sibling asset wildcards;
