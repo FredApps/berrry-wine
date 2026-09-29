@@ -195,6 +195,7 @@ function analyse(file) {
   const add = (k, n) => byForm.set(k, (byForm.get(k) || 0) + n);
   const sites = [];
   const noPe = new Map();
+  const callRet = new Map();   // call-ending block -> its return address (runtime)
   for (const [addr, hits] of blocks) {
     const m = modOf(addr);
     const pe = m && peFor(m.name);
@@ -202,6 +203,7 @@ function analyse(file) {
     const delta = (m.origBase - m.base) | 0;
     const t = terminator(pe, toVa(m, addr), va => entries.has((va - delta) >>> 0));
     let key = t.f;
+    if (t.f.startsWith('call') && t.next !== undefined) callRet.set(addr, (t.next - delta) >>> 0);
     if (t.ind && !t.table) {
       // where did it go?
       const ret = t.next !== undefined ? (t.next - delta) >>> 0 : null;
@@ -231,13 +233,54 @@ function analyse(file) {
       const targets = s ? [...s].map(([to, n]) => ({ to, n })) : [];
       sites.push({ addr, hits, form: t.f, kind: 'table', where: `${m.name}+${hex(toVa(m, addr))}`,
         site: `${m.name}+${hex(t.at)}`, text: t.text, distinct: targets.length,
-        targets: targets.sort((a, b) => b.n - a.n).map(x => ({ ...x, where: hex(x.to) })) });
+        targets: targets.sort((a, b) => b.n - a.n).map(x => {
+          const tm = modOf(x.to);
+          return { ...x, where: tm ? `${tm.name}+${hex(toVa(tm, x.to))}` : hex(x.to) };
+        }) });
     }
     add(key, hits);
   }
   sites.sort((a, b) => b.hits - a.hits);
+  const uv = LOG ? uopVerdicts(file) : null;
+  // A head declined for `call-indirect` loses its whole loop, not just the
+  // head block: the loop body is the head's strongly connected component in
+  // the edge graph, kept to +-4KB of the head so a callee's blocks (which a
+  // call-out would still run threaded) are not counted as the loop.
+  let cutLoops = null;
+  if (uv && haveEdges) {
+    // A call's callee usually lies outside the window, which would cut the
+    // loop at every call; the call -> return-address pseudo-edge rejoins it.
+    const fwd = new Map();
+    for (const [a, m] of succ) fwd.set(a, new Set(m.keys()));
+    for (const [a, r] of callRet) { if (!fwd.has(a)) fwd.set(a, new Set()); fwd.get(a).add(r); }
+    const pred = new Map();
+    for (const [a, m] of fwd) for (const b of m) {
+      if (!pred.has(b)) pred.set(b, new Set());
+      pred.get(b).add(a);
+    }
+    const hitsOf = new Map(blocks);
+    const reach = (h, next) => {
+      const seen = new Set([h]), st = [h];
+      while (st.length) {
+        const x = st.pop();
+        for (const y of next(x)) if (!seen.has(y) && Math.abs(y - h) <= 4096) { seen.add(y); st.push(y); }
+      }
+      return seen;
+    };
+    cutLoops = [];
+    for (const r of uv.rows) {
+      if (r.v !== 'declined:call-indirect') continue;
+      const fw = reach(r.eip, x => fwd.get(x) || []);
+      const bw = reach(r.eip, x => pred.get(x) || []);
+      let w = 0, n = 0;
+      for (const x of fw) if (bw.has(x)) { w += hitsOf.get(x) || 0; n++; }
+      const m = modOf(r.eip);
+      cutLoops.push({ eip: r.eip, where: m ? `${m.name}+${hex(toVa(m, r.eip))}` : hex(r.eip), head: r.hits, body: w, blocks: n });
+    }
+    cutLoops.sort((a, b) => b.body - a.body);
+  }
   return { file, hist, window: hist.window, threaded, listed, uopBlocks, total, byForm, sites, noPe,
-    edgeDrops: hist.edgeDrops || 0, haveEdges, uopVerdicts: LOG ? uopVerdicts(file) : null };
+    edgeDrops: hist.edgeDrops || 0, haveEdges, uopVerdicts: uv && uv.by, cutLoops };
 }
 
 // Weighted uop verdicts for this window, from uop-census.js.
@@ -248,7 +291,7 @@ function uopVerdicts(histFile) {
   const j = JSON.parse(out);
   const by = {};
   for (const r of j.rows) by[r.v] = (by[r.v] || 0) + r.hits;
-  return by;
+  return { by, rows: j.rows };
 }
 
 // ---- report --------------------------------------------------------------------
@@ -305,6 +348,15 @@ if (wins.some(w => w.uopVerdicts)) {
     wins.reduce((s, w) => s + ((w.uopVerdicts || {})[a] || 0) / w.total, 0));
   for (const k of vs) {
     say('  ' + k.padEnd(34) + wins.map(w => pct((w.uopVerdicts || {})[k] || 0, w.total).padStart(10)).join(''));
+  }
+}
+if (wins.some(w => w.cutLoops)) {
+  say('\nloops the tier declined for call-indirect: head entries / whole loop body (SCC within +-4KB), % of all block entries:');
+  for (const w of wins) {
+    if (!w.cutLoops) continue;
+    const H = w.cutLoops.reduce((a, c) => a + c.head, 0), B = w.cutLoops.reduce((a, c) => a + c.body, 0);
+    say(`  ${wlabel(w)}: ${w.cutLoops.length} heads, head ${pct(H, w.total)}%  body ${pct(B, w.total)}%   top: ` +
+      w.cutLoops.slice(0, 5).map(c => `${c.where} ${pct(c.body, w.total)}% (${c.blocks} blk)`).join(', '));
   }
 }
 for (const w of wins) {

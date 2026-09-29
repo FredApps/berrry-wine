@@ -1408,3 +1408,84 @@ render worker and every guest thread's Worker running concurrently on the
 shared memory (no stop-the-world protocol exists, so a main-thread safe
 point does not cover them); and in-flight host calls/thread RPCs carrying a
 wasm pointer. None of those has a relocation hook today.
+
+## 15. Call forms by runtime weight: no inline-cache ceiling (2026-09-29)
+
+The static census (`tools/call-form-census.js`) said jgl.dll is 48% vtable
+calls, Game.dll 11%, H3 3.7%. That is reach. The question for a better
+vtable inline cache (vptr guard hoisted out of the loop, call out into
+threaded code on a miss instead of exiting, 2-4 entry polymorphic cache) is
+how much *execution* sits at those sites, so it was measured by weight:
+`test/run.js --handler-hist --handler-hist-thread=0,0,0 --edge-hist
+--hist-json=F --hist-json-blocks=0 --uop-census`, read with
+`tools/call-form-weighted.js <windows> --exe= --pe-dir= --log=`.
+`--edge-hist` (new) records every (previous block, next block) transfer in the
+window into the borrowed 1MB handler-pair matrix, which is what counts an
+indirect site's distinct targets. The tool decodes each hot block's exit
+instruction, splits indirect exits into host API and guest targets (IAT import
+DLL, else the edge successor), and weights uop-census verdicts by block entries.
+All percentages below are of **all** block entries, threaded plus inside uop
+programs. There are three windows per app, and they agree to within 0.1pp
+unless a range is shown.
+
+| app (window) | in uop programs | guest-target indirect | of which vtable/reg calls | sites with 2-4 targets | loops declined for call-indirect: head / whole loop body |
+|---|---|---|---|---|---|
+| SimGolf gameplay (2500..4000, golfers walking) | 74.2% | 0.21% | 0.19% | 0 | 0.04% / 0.41-0.51% |
+| WC3 Prologue HUD (19170..21530, wc3g route) | 58.3-60.2% | 0.95-0.98% | 0.61-0.64% | 0.21-0.24% | 0.42-0.49% / 2.9-3.6% |
+| Heroes III adventure map (4100..5101, h3 route) | 87.2-89.7% | 0.00-0.01% | 0.00-0.01% | ~0.005% (0x58cd32, 6 targets) | 0.03% / 0.05-0.07% |
+
+Every indirect guest site hot enough to list is monomorphic, apart from a few
+exceptions:
+
+- WC3 `game.dll+0x6f203b33 call eax`, 0.06%, 4 targets split 46/23/23/8.
+- WC3 `game.dll+0x6f082159 call [edx+0x20]`, 0.03%, 90% one target.
+- WC3 `game.dll+0x6f4278fc jmp [abs]`, 0.04%. It hit 61-72 targets because it
+  is an import stub, a tail call.
+- H3's known `0x58cd32`, 0.01%, 6 targets.
+
+The largest single WC3 guest vtable call is 0.05% of entries.
+
+SimGolf's jgl.dll is 48% vtable calls statically, but only 0.19% of block
+entries end at one at runtime. Its hot code is per-pixel loops with no calls
+in them.
+
+**Verdict.** None of the three reaches the 3% bar:
+
+- **(a) Guard and hoist.** At most 0.64% of entries (WC3) end at a guest
+  vtable or register call. Hoisting helps only the fraction of those that sit
+  inside a uop loop.
+- **(b) Call-out on a miss.** The loops a call-out would let the tier keep
+  are 2.9-3.6% of WC3's entries, measured as the head's SCC in the edge
+  graph within +-4KB, which is an upper bound. That is the only
+  near-threshold number, and `--uop-icall` already ran WC3g's 40 guarded
+  sites (2.64M passes) with a neutral A/B. SimGolf's figure is 0.5% and H3's
+  is 0.07%.
+- **(c) Polymorphic cache.** It could add at most 0.24% of entries over a
+  monomorphic guard.
+
+So indirect calls are not where the threaded remainder lives. By verdict
+share of all entries it lives in:
+
+- WC3: blocks that never became a head (no-verdict, 24-26%: call-return
+  landings and fallthroughs inside called functions) and `no-backedge`
+  (5.5-6.5%).
+- SimGolf: one loop the tier cannot enter (below).
+- H3: `poor` programs (2.9-3.6%) and `head-unsupported` (1.4-1.7%).
+
+H3's biggest threaded exit is a switch, not a call:
+`exe+0x47227c jmp [0x472a9c+ecx*4]` is 1.3% of all entries and always takes
+the same arm.
+
+**SimGolf: the gap is `adc r32,[m32]`, not calls.** 79.5% of SimGolf's
+*threaded* block entries, which is 20% of all its entries, are one loop:
+jgl.dll's scaled colour-key/shadow blitter at `0x100180df..0x1001811a`. Its
+step is `add dx,bx` / `adc esi,[0x10062e58]`, a 16.16 fixed-point source
+advance. The scan stops at `adc` (form 0x13, `adc r32, r/m32`):
+
+- `0x10018108` declines `no-backedge` behind it, weight 28.5M entries in one
+  500-batch window.
+- The head `0x100180df` installs a program that exits at `0x10018108` every
+  pixel, 1.5 blocks per entry, and is retired `poor`.
+
+Supporting `adc r32,m32` with the carry from an o16 add is the next SimGolf
+lever. It lives in the uop compiler, not the call path.

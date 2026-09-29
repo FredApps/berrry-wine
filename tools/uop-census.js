@@ -393,7 +393,9 @@ for (const h of live.slice(0, TOP)) {
 }
 
 if (argv.includes('--json')) {
-  console.log(JSON.stringify({ heads: all, flushes, flushAll, rows }));
+  // slotMates points heads at each other (a cycle) and unsup is a Map: flatten both.
+  console.log(JSON.stringify({ heads: all, flushes, flushAll, rows }, (k, v) =>
+    k === 'slotMates' ? v.map(o => o.eip) : v instanceof Map ? [...v] : v));
 } else {
   console.log(out.join('\n'));
 }
