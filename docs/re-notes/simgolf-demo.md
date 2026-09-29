@@ -1241,3 +1241,32 @@ the 2026-09 browser profile blamed.
 So the next SimGolf lever is `adc r32,m32` taking the carry from a 16-bit
 `add` in the uop compiler. In this window it is the only `adc` in any
 declined scan (4 heads).
+
+## 2026-09-29: the blitter is a live uop program (adc lowered)
+
+The uop compiler now lowers 32-bit adc/sbb in every form, memory operands
+included (commits aeb999d8 and 856774d5; see uop-tier-design.md §15.1).
+Here is the same census command as above, on box 3, base e4dddd7d against
+the adc build:
+
+| | base | adc |
+|---|---|---|
+| block entries inside uop programs | 77.05 / 74.23 / 74.32% | **94.30 / 94.60 / 94.65%** |
+| threaded entries per 500 batches | 46.7M / 52.5M / 52.4M | 11.6M / 11.0M / 10.9M |
+| `jgl+0x100180df` (blitter head) | retired poor (exit at `0x10018108` every pixel) | live, 31 insns, 4710 blocks/entry |
+| `jgl+0x10018108` (`add dx,bx` step) | declined no-backedge | live, 3117 blocks/entry |
+
+What stays threaded (about 5.5% of all entries):
+
+- exe call/ret chains, with no verdict or declined `no-backedge`, about 1.6%
+  each;
+- live-program exits, 1.8%;
+- `mul8` at `jgl+0x100153ed` (0.3M entries), the largest single decline left.
+
+A/B timing (box 3, `tools/uop-game-ab.js --games=sg --branch-clock`):
+- Frames are identical on all four arms.
+- Whole-run user CPU: 20.85/21.53s against the pre-change reference's
+  23.10/23.56s. That is **−10.8%**, with a null band of about 2–3%.
+- Gameplay phase 2500..4000: 1.3/1.4s against 1.9/2.0s.
+
+The full table, with H3 and WC3g (both neutral), is in uop-tier-design.md §15.1.
