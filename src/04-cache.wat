@@ -3,40 +3,87 @@
   ;; ============================================================
   ;; Executed sparse VirtualAlloc pages are a second self-modifying-code
   ;; domain. StarCraft builds and rewrites its palette blitters immediately
-  ;; below 0x50000000; the older generated_code_* range only covers pages
-  ;; inside the PE image and therefore left those decoded blocks stale.
+  ;; below 0x50000000. The min..max page span of such code is still kept
+  ;; (tests and diagnostics read it), but it is NO LONGER a store filter: see
+  ;; $code_page_test below for why.
   (global $generated_sparse_code_start (mut i32) (i32.const 0))
   (global $generated_sparse_code_end   (mut i32) (i32.const 0))
 
-  ;; Page-granular record of where code has actually been decoded from. The
-  ;; two ranges above are min/max spans, so they cannot describe generated code
-  ;; that lands in the middle of the ordinary heap without also covering every
-  ;; framebuffer and data allocation between the ends of the span — which would
-  ;; put a full cache scan on every pixel write. A bitmap costs one byte load
-  ;; per store and is exact.
+  ;; Page-granular record of where code has actually been decoded from, over
+  ;; the WHOLE 4GB guest space, in 8KB: one bit per slot, slot =
+  ;; ((ga >> 12) ^ (ga >> 28)) & 0xFFFF. Below 0x10000000 that is the page
+  ;; number (exact, one bit per page, as it always was); above, the top four
+  ;; address bits fold into the low ones, so pages alias only across 256MB
+  ;; segments and never within one. $CODE_PAGE_BITMAP_PAGES is the slot count.
+  ;;
+  ;; It used to cover only guest pages below 0x10000000, with everything above
+  ;; falling back to the sparse min..max span -- the coarse filter the bitmap
+  ;; exists to replace. Measured on StarCraft's 3500-batch uop-game-ab route:
+  ;; the span grew to 0x7c6d0000..0x7ef81000, 7,560,358 guest stores landed in
+  ;; it, and 7,546,085 of them (99.8%) retired nothing -- data pages
+  ;; 0x7e07x000..0x7e095000 between two generated-code islands, written by
+  ;; exe+0x4b43f6 (4.47M) and the generated blitters themselves. Each paid a
+  ;; PAGE_DIR walk plus $uop_code_write, and every uop store window over those
+  ;; pages declared its head "poor". A 128KB one-bit-per-page map would drop
+  ;; the aliasing too, but the direct window has no 128KB left (every shake
+  ;; mode must still place).
+  ;;
+  ;; A set bit only says "some instance decoded a block from a page with this
+  ;; slot"; the exact answer (which bytes) is each instance's own page index,
+  ;; which $invalidate_code_range consults. So the bitmap is a conservative
+  ;; shared filter and is never cleared (see the NOTE near
+  ;; $invalidate_code_range): a stale or aliased bit costs a wasted slow path,
+  ;; a missing bit would be a missed SMC. Bits only go 0->1, from any
+  ;; instance. The mark is an atomic OR rather than load/or/store because two
+  ;; Worker instances marking different slots of one byte at once would
+  ;; otherwise lose a bit. The $gsN store helpers (03-registers) inline
+  ;; $code_page_test; keep the two in step.
+  (func $code_page_slot (param $ga i32) (result i32)
+    (i32.and
+      (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
+               (i32.shr_u (local.get $ga) (i32.const 28)))
+      (i32.const 0xFFFF)))
+
   (func $code_page_mark (param $ga i32)
-    (local $pi i32) (local $ba i32) (local $old i32) (local $bit i32)
-    (local.set $pi (i32.shr_u (local.get $ga) (i32.const 12)))
-    (if (i32.ge_u (local.get $pi) (global.get $CODE_PAGE_BITMAP_PAGES)) (then (return)))
-    (local.set $ba (i32.add (global.get $CODE_PAGE_BITMAP) (i32.shr_u (local.get $pi) (i32.const 3))))
-    (local.set $old (i32.load8_u (local.get $ba)))
-    (local.set $bit (i32.shl (i32.const 1) (i32.and (local.get $pi) (i32.const 7))))
-    (if (i32.and (local.get $old) (local.get $bit)) (then (return)))
-    (i32.store8 (local.get $ba) (i32.or (local.get $old) (local.get $bit)))
+    (local $slot i32) (local $ba i32) (local $bit i32)
+    (local.set $slot (call $code_page_slot (local.get $ga)))
+    (local.set $ba (i32.add (global.get $CODE_PAGE_BITMAP) (i32.shr_u (local.get $slot) (i32.const 3))))
+    (local.set $bit (i32.shl (i32.const 1) (i32.and (local.get $slot) (i32.const 7))))
+    (if (i32.and (i32.load8_u (local.get $ba)) (local.get $bit)) (then (return)))
+    (drop (i32.atomic.rmw8.or_u (local.get $ba) (local.get $bit)))
     ;; A page just became code: a uop store window over it (07d) must stop
     ;; letting stores through without invalidation.
     (call $uop_win_bump))
 
   (func $code_page_test (param $ga i32) (result i32)
-    (local $pi i32)
-    (local.set $pi (i32.shr_u (local.get $ga) (i32.const 12)))
-    (if (i32.ge_u (local.get $pi) (global.get $CODE_PAGE_BITMAP_PAGES))
-      (then (return (i32.const 0))))
+    (local $slot i32)
+    (local.set $slot (call $code_page_slot (local.get $ga)))
     (i32.and
       (i32.shr_u
-        (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP) (i32.shr_u (local.get $pi) (i32.const 3))))
-        (i32.and (local.get $pi) (i32.const 7)))
+        (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP) (i32.shr_u (local.get $slot) (i32.const 3))))
+        (i32.and (local.get $slot) (i32.const 7)))
       (i32.const 1)))
+
+  ;; --code-write-legacy: the A/B arm for the old filter. The old store test
+  ;; was "bitmap bit OR inside the sparse span"; marking every page of the
+  ;; span into the bitmap as the span widens reproduces that answer with the
+  ;; new, span-free hot path, so the arms differ only in which pages are
+  ;; flagged. Per instance (inherited by guest threads, lib/worker-imports.js).
+  (global $code_write_legacy (mut i32) (i32.const 0))
+  (func (export "set_code_write_legacy") (param $on i32)
+    (global.set $code_write_legacy (local.get $on))
+    (if (i32.and (i32.ne (local.get $on) (i32.const 0))
+                 (i32.ne (global.get $generated_sparse_code_start) (i32.const 0)))
+      (then (call $code_page_mark_span
+              (global.get $generated_sparse_code_start)
+              (global.get $generated_sparse_code_end)))))
+  (func $code_page_mark_span (param $lo i32) (param $hi i32)
+    (block $done
+      (loop $pages
+        (br_if $done (i32.ge_u (local.get $lo) (local.get $hi)))
+        (call $code_page_mark (local.get $lo))
+        (local.set $lo (i32.add (local.get $lo) (i32.const 0x1000)))
+        (br $pages))))
 
   ;; Bookkeeping that used to live inside $cache_store, kept when the hash it
   ;; belonged to was deleted (docs/page-compile-design.md section 4). None of it
@@ -76,15 +123,23 @@
       (then
         (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
         (local.set $page_end (i32.add (local.get $page) (i32.const 0x1000)))
-        ;; widening the span is $code_write_is_code answering 1 for more
-        ;; pages, like a new bitmap bit ($code_page_mark): stale uop windows
+        ;; The span is bookkeeping only now; the store filter is the bitmap.
+        ;; Under --code-write-legacy the widened part is marked into the
+        ;; bitmap, which is the old "bit OR in span" answer ($code_page_mark
+        ;; bumps the uop window epoch for every page that turns on).
         (if (i32.or (i32.eqz (global.get $generated_sparse_code_start))
                     (i32.lt_u (local.get $page) (global.get $generated_sparse_code_start)))
-          (then (global.set $generated_sparse_code_start (local.get $page))
-                (call $uop_win_bump)))
+          (then
+            (if (i32.and (i32.ne (global.get $code_write_legacy) (i32.const 0))
+                         (i32.ne (global.get $generated_sparse_code_start) (i32.const 0)))
+              (then (call $code_page_mark_span (local.get $page) (global.get $generated_sparse_code_start))))
+            (global.set $generated_sparse_code_start (local.get $page))))
         (if (i32.gt_u (local.get $page_end) (global.get $generated_sparse_code_end))
-          (then (global.set $generated_sparse_code_end (local.get $page_end))
-                (call $uop_win_bump))))))
+          (then
+            (if (i32.and (i32.ne (global.get $code_write_legacy) (i32.const 0))
+                         (i32.ne (global.get $generated_sparse_code_end) (i32.const 0)))
+              (then (call $code_page_mark_span (global.get $generated_sparse_code_end) (local.get $page_end))))
+            (global.set $generated_sparse_code_end (local.get $page_end)))))))
   ;; Every full cache wipe throws away all decoded code and forces the whole
   ;; working set to be re-decoded. One at startup is normal; thousands mean the
   ;; arena is too small for the app's hot set and the interpreter is spending
@@ -136,15 +191,6 @@
   (func $clear_cache
     (global.set $cache_clears (i32.add (global.get $cache_clears) (i32.const 1)))
     (call $page_dir_reset))
-  (func $code_page_clear (param $ga i32)
-    (local $pi i32) (local $ba i32)
-    (local.set $pi (i32.shr_u (local.get $ga) (i32.const 12)))
-    (if (i32.ge_u (local.get $pi) (global.get $CODE_PAGE_BITMAP_PAGES)) (then (return)))
-    (local.set $ba (i32.add (global.get $CODE_PAGE_BITMAP) (i32.shr_u (local.get $pi) (i32.const 3))))
-    (i32.store8 (local.get $ba)
-      (i32.and (i32.load8_u (local.get $ba))
-               (i32.xor (i32.shl (i32.const 1) (i32.and (local.get $pi) (i32.const 7)))
-                        (i32.const 0xFF)))))
 
   ;; Companion to $cache_clears: a page invalidation is cheap on its own, but a
   ;; data variable that happens to share a 4KB page with hot code turns every
@@ -622,6 +668,17 @@
               (i32.and (local.get $owner) (global.get $PAGE_INDEX_DESC))))
     (i32.store offset=4 (i32.add (local.get $chunk) (local.get $coff))
       (i32.or (i32.load (local.get $slot)) (local.get $lo)))
+    ;; --trace-code-writes also names every retirement that no guest write
+    ;; caused: a newly published block overlapping an old one retires it here
+    ;; too. Retired entry, its extent, the EIP being published or executed,
+    ;; and whether $invalidate_code_range (a write) is the caller.
+    (if (global.get $code_write_trace)
+      (then
+        (call $host_log_i32 (i32.const 0xCAC0DE02))
+        (call $host_log_i32 (i32.or (i32.load (local.get $slot)) (local.get $lo)))
+        (call $host_log_i32 (i32.sub (local.get $hi) (local.get $lo)))
+        (call $host_log_i32 (global.get $eip))
+        (call $host_log_i32 (global.get $in_code_write))))
     (block $cd (loop $cs
       (br_if $cd (i32.ge_u (local.get $lo) (local.get $hi)))
       (i32.store16 (i32.add (local.get $idx) (i32.shl (local.get $lo) (i32.const 1)))
@@ -657,7 +714,10 @@
   ;; so that is a real case.
   (func $invalidate_code_range (param $ga i32) (param $len i32)
     (local $end i32) (local $page i32) (local $slot i32)
-    (local $off i32) (local $stop i32)
+    (local $off i32) (local $stop i32) (local $hits0 i32) (local $kills0 i32)
+    (local.set $hits0 (global.get $cache_inval_hits))
+    (local.set $kills0 (global.get $uop_kills))
+    (global.set $in_code_write (i32.const 1))
     (global.set $cache_invals (i32.add (global.get $cache_invals) (i32.const 1)))
     (local.set $end (i32.add (local.get $ga) (local.get $len)))
     (local.set $page (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
@@ -706,8 +766,37 @@
                 (br $os)))))))
       (local.set $page (i32.add (local.get $page) (i32.const 0x1000)))
       (br $ps)))
+    (global.set $in_code_write (i32.const 0))
     (if (global.get $uop_nranges)
-      (then (call $uop_code_write (local.get $ga) (local.get $len)))))
+      (then (call $uop_code_write (local.get $ga) (local.get $len))))
+    ;; --trace-code-writes: every write that actually retired decoded code,
+    ;; with the guest address, width, the EIP of the block that wrote it and
+    ;; how many blocks it cost. `cache: page invalidations` counts these but
+    ;; cannot say who, and a count with no code bytes changed underneath it is
+    ;; a false invalidation to hunt, not self-modifying code.
+    (if (global.get $code_write_trace)
+      (then
+        (if (i32.ne (global.get $cache_inval_hits) (local.get $hits0))
+          (then
+            (call $host_log_i32 (i32.const 0xCAC0DE01))
+            (call $host_log_i32 (local.get $ga))
+            (call $host_log_i32 (local.get $len))
+            (call $host_log_i32 (global.get $eip))
+            (call $host_log_i32 (i32.sub (global.get $cache_inval_hits) (local.get $hits0))))
+          ;; =all: a write the shared code map let through that retired no
+          ;; block and killed no uop program -- a false invalidation.
+          (else (if (i32.and (i32.eq (global.get $code_write_trace) (i32.const 2))
+                             (i32.eq (global.get $uop_kills) (local.get $kills0)))
+            (then
+              (call $host_log_i32 (i32.const 0xCAC0DE03))
+              (call $host_log_i32 (local.get $ga))
+              (call $host_log_i32 (local.get $len))
+              (call $host_log_i32 (global.get $eip)))))))))
+
+  (global $code_write_trace (mut i32) (i32.const 0))
+  (global $in_code_write (mut i32) (i32.const 0))
+  (func (export "set_code_write_trace") (param $on i32)
+    (global.set $code_write_trace (local.get $on)))
 
   ;; ============================================================
   ;; PAGE COMPILATION -- see docs/page-compile-design.md
