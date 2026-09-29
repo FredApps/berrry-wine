@@ -44,6 +44,7 @@
   ;;   18 shift-by-cl 19 setcc (+20 cc) 20 adc/sbb (32-bit only, +12 2/3)
   ;;   28 table jump (jmp [disp + r*4], $uc_jt_targets: +140 table length,
   ;;   +160 distinct targets, +224 their count).
+  ;;   29 movsd (unprefixed): O0=[EDI], O1=[ESI], runtime DF step.
   ;; ALU op: 0 add 1 or 2 adc 3 sbb 4 and 5 sub 6 xor 7 cmp; shift op:
   ;;   0 shl 1 shr 2 sar 3 rol 4 ror (rol/ror only by immediate, kind 11).
   ;; flags: 1 in loop, 2 leader, 4 seam, 8 flags live in, 16 cut, 32 back.
@@ -419,6 +420,15 @@
                                 (i32.or (i32.eq (local.get $b) (i32.const 0xF2)) (i32.eq (local.get $b) (i32.const 0xF3))))))
       (then (call $uc_unsup (local.get $R)) (return)))
     (local.set $p (i32.add (local.get $p) (i32.const 1)))
+    ;; String dword copy, one element only. Prefix variants keep their
+    ;; threaded semantics; never turn this into a bulk/memmove operation.
+    (if (i32.and (i32.eq (local.get $b) (i32.const 0xA5)) (i32.eqz (local.get $n)))
+      (then
+        (call $uc_stack_slot (local.get $O0) (i32.const 0))
+        (i32.store offset=4 (local.get $O0) (i32.const 7))
+        (call $uc_stack_slot (local.get $O1) (i32.const 0))
+        (i32.store offset=4 (local.get $O1) (i32.const 6))
+        (call $uc_fin (local.get $R) (i32.const 29) (local.get $p)) (return)))
     ;; ALU 00-3F
     (if (i32.and (i32.lt_u (local.get $b) (i32.const 0x40))
                  (i32.lt_u (i32.and (local.get $b) (i32.const 7)) (i32.const 6)))
@@ -981,6 +991,7 @@
   (func $uc_writes (param $R i32) (result i32)
     (local $k i32)
     (local.set $k (call $uc_kind (local.get $R)))
+    (if (i32.eq (local.get $k) (i32.const 29)) (then (return (i32.const 192))))
     (if (i32.eq (local.get $k) (i32.const 1))
       (then (return (select (i32.const 0) (call $uc_regbit (i32.add (local.get $R) (i32.const 56)))
                             (i32.eq (i32.load offset=12 (local.get $R)) (i32.const 7))))))
@@ -1014,6 +1025,7 @@
   (func $uc_touches_mem (param $R i32) (result i32)
     (local $k i32) (local $a i32) (local $b i32) (local $c i32)
     (local.set $k (call $uc_kind (local.get $R)))
+    (if (i32.eq (local.get $k) (i32.const 29)) (then (return (i32.const 1))))
     (local.set $a (call $uc_is_mem (i32.add (local.get $R) (i32.const 56))))
     (local.set $b (call $uc_is_mem (i32.add (local.get $R) (i32.const 80))))
     (local.set $c (call $uc_is_mem (i32.add (local.get $R) (i32.const 104))))
@@ -2464,6 +2476,15 @@
     (local.set $O1 (i32.add (local.get $R) (i32.const 80)))
     (local.set $O2 (i32.add (local.get $R) (i32.const 104)))
     (if (i32.eq (local.get $k) (i32.const 7)) (then (return (i32.const 0))))
+    (if (i32.eq (local.get $k) (i32.const 29))
+      (then
+        ;; Both accesses can deopt at the original instruction. Do not move
+        ;; either pointer until the guarded store has completed successfully.
+        (local.set $v (call $uc_scratch))
+        (call $uc_load (local.get $O1) (i32.const 32) (i32.const 0) (local.get $v))
+        (call $uc_store (local.get $O0) (i32.const 32) (local.get $v))
+        (call $uc_o2 (i32.const 78) (call $uc_aR (i32.const 6)) (call $uc_aR (i32.const 7)))
+        (return (i32.const 0))))
     ;; push: the store first, so a deopt re-executes the whole push
     (if (i32.eq (local.get $k) (i32.const 21))
       (then

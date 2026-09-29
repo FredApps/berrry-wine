@@ -1,15 +1,16 @@
 # NFS III emulation profile — 2026-09-29
 
-The strongest next emulator target is general unprefixed `MOVSD` lowering in
-the micro-op compiler. Two such instructions prevent an otherwise supported
-integer loop from running wholly in the tier. The three hottest residual
-blocks of that loop account for 11–14% of recorded threaded block entries in
-every sampled window, on both Glide and D3D. This is coverage evidence, not a
-prediction of CPU savings or FPS gain. No emulator behavior was changed.
+General unprefixed `MOVSD` now lowers into the micro-op tier. The initial
+profile below identified two such instructions blocking an otherwise supported
+integer loop. Remote validation subsequently removed over 99.97% of its three
+hot residual block entries per frame. A fixed-work reproduction reduced CPU
+time by 47–56%; whole-game measurements did **not** establish an FPS gain.
+The initial investigation and subsequent implementation results are separated
+below because their machines, instrumentation and rendering costs differ.
 
 ## Capture
 
-Current Glide worktree at `32ef6f09`, original NFS III demo, seed 12345,
+Initial Glide worktree at `32ef6f09`, original NFS III demo, seed 12345,
 640×480, AI off, rain on, idle cockpit at the race start. Three 20-second
 windows per renderer, serial headful Chrome on Apple M1. Artifacts are in
 `build/nfs3-guest-profile/{glide,d3d}/`: per-window handler/block JSON,
@@ -58,12 +59,12 @@ heads retire as poor; D3D retains one partial program, but still returns to
 the same threaded copy branch. The useful fix is covering the full loop,
 not disabling poor-program retirement globally.
 
-Implement MOVSD as a load from ESI, store to EDI, then pointer adjustments
-by the direction flag without changing arithmetic flags. Preserve sequential
-overlap across the two copies; an eight-byte bulk copy is not equivalent.
-Keep existing prefix exclusions initially. Validation should cover both DF
-directions, overlap, flags, sparse page crossings, writable code invalidation,
-and actual region entry/exit behavior.
+The implementation uses the existing guarded load from ESI and store to EDI,
+then adjusts both pointers using runtime DF without changing arithmetic flags.
+Each copy completes separately, preserving sequential overlap. Prefixed forms
+retain their existing threaded paths. Remote tests cover both DF directions,
+overlap, flags, noncontiguous sparse page crossings, writable-code invalidation,
+and the actual relocated record-loop shape.
 
 The second loop performs four `FST m64` stores of ST0, advances the destination
 32 bytes, and repeats. It is rejected as `head-unsupported` at `0x4dec44`.
@@ -125,3 +126,94 @@ waiting/descheduling; they are not OS CPU accounting. System load was about
 27–52. These runs identify repeated targets; they provide neither clean FPS
 comparisons nor a predicted speedup. Rebenchmark any implementation with
 histograms and CPU profiling disabled.
+
+## Remote MOVSD implementation results
+
+Reserved Linux box, four vCPUs on AMD Ryzen 9 9950X, Node 24.15.0,
+Chrome 152. Browser runs used **SwiftShader**, with no hardware WebGL.
+Baseline WASM SHA-256 is `ce8952abbd2f2881096e7133e84f3a6b5ce4b24dca649b151f790684790db2b3`;
+candidate is `dd0ffaeacddf4f05753b4babf97132eface2824238a933c10647a786a2587473`.
+Collected artifacts are under `build/nfs-movsd-box/`; profile function indices
+were resolved against its `build/baseline.wat` and `build/combined.wat` respectively.
+
+The complete compiler differential suite passed remotely, including forward
+and backward copies, sequential overlap, flag preservation, unaligned seams,
+noncontiguous backing pages, warmed store-window invalidation and the NFS
+record scan. See `build/movsd-compiler-test.log` within that artifact directory:
+288 programs compiled, 97 declined, zero guard failures and 22 invalidations.
+The initial code-write fixture was corrected to enter its installed loop head;
+the final pass verifies actual compiled entry before the guarded code write.
+
+### Fixed-work CPU measurement
+
+`movsd-loop.json` records seven alternating AB/BA pairs per shape after two
+warmups per artifact. Every sample processes 500 scans of 2,000 records.
+Resetting inputs and checking results occur outside timing. Registers, flags,
+EIP and the complete 128 KB working buffer match between artifacts on every
+run. Load average was zero at the start and end of this short measurement.
+
+| Record shape | Baseline median CPU | Candidate median CPU | Median paired CPU reduction | Median paired wall reduction |
+|---|---:|---:|---:|---:|
+| All zero | 41.229 ms | 18.203 ms | 56.07% | 55.43% |
+| Mixed zero/nonzero | 35.965 ms | 18.986 ms | 47.20% | 47.21% |
+
+This isolates the periodic guest loop and excludes rendering. Process CPU
+accounting includes any process background activity; warmup and alternating
+order reduce that concern. The result is a loop improvement, not an FPS forecast.
+
+### Game profile coverage
+
+Two 20-second diagnostic windows per renderer/artifact are saved in
+`build/box-profile-{before,after}/{glide,d3d}/`. The targeted addresses are
+`0x4c5f28`, `0x4c5f34` and `0x4c5f3a`.
+
+| Counter, aggregated per frame | Glide before → after | D3D before → after |
+|---|---:|---:|
+| Targeted residual block entries | 24,488.37 → 6.93 | 24,466.45 → 7.03 |
+| All residual block entries | 176,976 → 146,023 | 165,191 → 131,900 |
+| Recorded handler invocations | 1,155,711 → 1,041,310 | 1,124,771 → 994,202 |
+
+The targeted blocks fall from 13.66–14.02% to 0.00472–0.00477% of Glide's
+recorded entries, and from 14.62–15.00% to 0.00532–0.00535% of D3D's.
+These counters exclude work moved inside the tier; they demonstrate coverage,
+not equivalent reductions in total guest instructions.
+
+Worker profiles remain dominated by renderer waits: Glide's synchronous RPC
+wrapper accounts for 65.19% → 66.28% of weighted intervals; D3D's `readPixels`
+accounts for 55.03% → 56.72%. Excluding explicit histogram helpers, weighted
+WASM intervals per frame decrease from 16.46 to 15.45 ms for Glide and 15.25
+to 14.25 ms for D3D. These are sampled intervals, **not OS CPU measurements**.
+Histogram overhead, scene differences and SwiftShader waits limit attribution.
+The common `$run`, x87, micro-op and load/store hotspots remain.
+
+### Whole-game measurement limits
+
+Uninstrumented ABBA sessions are in `build/box-{before,after}-{1,2}/`.
+Aggregate results do not establish an improvement or a regression:
+
+| Renderer | Baseline FPS | Candidate FPS | Change | Baseline CPU ms/frame | Candidate CPU ms/frame |
+|---|---:|---:|---:|---:|---:|
+| Glide | 16.7066 | 16.6749 | −0.19% | 202.048 | 203.298 |
+| D3D | 17.8151 | 17.6136 | −1.13% | 199.995 | 201.641 |
+
+CPU figures sum the browser process tree, including SwiftShader's GPU process;
+they do not isolate the guest interpreter. Session FPS ranges overlap:
+Glide baseline 15.528–17.886 versus candidate 15.760–17.590, and D3D
+17.632–17.998 versus 16.948–18.280. Paired FPS changes reverse sign
+(Glide +13.28%, −11.89%; D3D −3.88%, +1.56%). Fourteen of sixteen windows
+trigger the four-vCPU contention flag. Rendering phase and software-GPU load
+dominate this comparison. The supported conclusion is improved loop execution
+and demonstrated tier coverage, with no proven whole-game speedup.
+
+Reproduction on the reserved box, with its existing fixture and Chrome path:
+
+```sh
+STACK_BENCH_WASM=build/wine-assembly.wasm node test/test-uop-compiler.js
+node tools/nfs-movsd-loop-bench.js --baseline=build/baseline.wasm --candidate=build/wine-assembly.wasm --iterations=500 --pairs=7 --warmup=2 --out=movsd-loop.json
+node tools/nfs-renderer-bench.js --wasm=build/baseline.wasm --cases=glide,d3d --seconds=20 --samples=2 --swiftshader --no-sandbox --guest-profile --profile --out=build/box-profile-before
+node tools/nfs-renderer-bench.js --wasm=build/wine-assembly.wasm --cases=glide,d3d --seconds=20 --samples=2 --swiftshader --no-sandbox --guest-profile --profile --out=build/box-profile-after
+```
+
+Use the same browser commands without `--guest-profile --profile` for
+uninstrumented game measurements. A display/Xvfb and `CHROME` pointing to the
+remote executable are required. No laptop benchmark was used for this change.
