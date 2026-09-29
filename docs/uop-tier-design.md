@@ -1489,3 +1489,121 @@ advance. The scan stops at `adc` (form 0x13, `adc r32, r/m32`):
 
 Supporting `adc r32,m32` with the carry from an o16 add is the next SimGolf
 lever. It lives in the uop compiler, not the call path.
+
+### 15.1 adc/sbb lowered, with memory operands (2026-09-29)
+
+**What lowers now.** Kind 20 used to be sbb only. It is now adc and sbb,
+32-bit, in every form the decoder has:
+
+- `11/13/19/1B` r/m forms, with memory on either side;
+- `15/1D` eAX,imm;
+- `81/83 /2 /3` with a register or memory destination.
+
+8- and 16-bit adc/sbb still decline. The 16-bit `add dx,bx` before the
+blitter's adc was already supported, and `$uc_cf_into` has a recipe for its
+carry.
+
+**Flags.** The record matches `$do_alu32` and the `th_adc_*`/`th_sbb_*`
+handlers bit for bit:
+
+- adc records `set_flags_add(a, b+CF, r)`. When `b+CF` wraps, it uses raw
+  mode instead: `flag_op` 8, `flag_a` 1, `flag_b` 0, `flag_res` r. That is a
+  different op, so it takes two RECs behind a BNZL/GOTO layout branch.
+- sbb records `set_flags_sub` with the `flag_a` 0 / `flag_b` 1 fix-up, done
+  arithmetically.
+
+**Store before the record.** A memory destination is now stored *before*
+the REC. A store that deopts re-executes the instruction threaded from its
+entry state. With CF coming from the globals ('G'), a record that was already
+written would hand that re-execution the wrong carry. The old sbb code wrote
+the record first, so this was a latent bug.
+
+**Tests.** New `test/test-uop-compiler.js` cases, each checked against the
+threaded path:
+
+- `adc-forms`: carry-in 0 and 1, carry-out and OF via jb/jl.
+- `adc-sbb-chain`: 64-bit style chains through a memory destination.
+- `adc-scale-blit`: SimGolf's `add dx,bx / adc esi,[abs]` step.
+- `adc-guard-fail`: an `adc [edi],eax` sweep whose written window runs onto
+  the code page. The re-guard refuses it, and the deopt path must leave
+  memory, registers and flags identical to the threaded run.
+
+**The record skip, and a Heroes III regression it caused.** The first cut
+skipped the kind-20 REC whenever `$uc_live_out` said the flags were dead,
+as kinds 18 and 25 already do. That broke Heroes III under `--branch-clock`:
+
+- the uop frame came out 99.97% off the reference;
+- the game made a NULL call at batch 3651 (`dbg_prev_eip=0x0059a7b2`) and
+  ran only 3652 of 5101 batches.
+
+It was deterministic across uop/uop2. Bisected on box 3:
+
+| variant | H3 frame vs reference |
+|---|---|
+| adc rejected, sbb still skipping | DIFF, same crash |
+| adc accepted, record always written | IDENTICAL, uop counters equal to the reference to the unit |
+
+So the culprit is the *sbb* skip. H3 compiles no program containing an adc:
+its counters with adc accepted equal the reference exactly. Some
+observer of the globals is not a consumer in `$uc_liveness`, and a 'G'
+producer is the only kind whose skipped record nothing re-materializes. It
+was not found.
+
+A narrower skip was tried next (ab66e8b3): skip only when the single
+successor is an in-loop register alu/test/neg with no branch, seam or cut.
+It broke H3 identically, with the same counters to the unit. So even "the
+next instruction overwrites every flag and cannot exit first" is observable
+somewhere. The kind-20 record is now written **every** time (856774d5). This
+is the configuration shown identical to the reference.
+
+**Open:**
+
+- Whatever reads those globals. It is not an exit that `$uc_liveness`
+  counts, and not a flag consumer between the sbb and its successor.
+- Kinds 18 (shift by CL) and 25 (mul) still skip on `$uc_live_out` and may
+  share the gap.
+
+**SimGolf.** Census window 2500..4000, box 3. Counts are load-immune.
+
+| | base e4dddd7d | adc (856774d5) |
+|---|---|---|
+| uop share of all block entries | 77.05 / 74.23 / 74.32% | **94.30 / 94.60 / 94.65%** |
+| threaded block entries per 500 batches | 46.7M / 52.5M / 52.4M | 11.6M / 11.0M / 10.9M |
+
+- The blitter head `jgl+0x100180df` is now a live 31-insn program: 4710 blocks
+  per entry, 158.9M blocks in the window.
+- `jgl+0x10018108` is live too, at 3117 blocks per entry.
+- Before the change, the head was retired poor with an exit at `0x10018108`
+  every pixel, and `0x10018108` itself declined no-backedge.
+- The largest decline left is `mul8` at `jgl+0x100153ed`: 0.3M entries, or
+  0.15%.
+- Otherwise the remaining threaded entries are exe call/ret chains, with no
+  verdict or declined `no-backedge`.
+
+#### A/B timing (box 3, load ~1, build 856774d5, `tools/uop-game-ab.js --branch-clock --jobs=1`)
+
+Reference arms run the e4dddd7d wasm (`--ref-wasm`), which has no adc
+lowering. Each build is run twice (uop/uop2, refuop/refuop2), and that
+repeat is the null band.
+
+| game | frames | uop / uop2 user | refuop / refuop2 user | gameplay phase (uop vs ref) |
+|---|---|---|---|---|
+| sg (SimGolf, split 2500) | IDENTICAL x4 | 20.85 / 21.53s | 23.10 / 23.56s | 1.3 / 1.4s vs 1.9 / 2.0s |
+| h3 | IDENTICAL x4 | 54.93 / 54.59s | 55.74 / 55.85s | 4.8 / 4.8s vs 4.9 / 5.0s |
+| wc3g, run 1 | IDENTICAL x4 | 100.68 / 96.11s | 93.62 / 93.01s | 1.9 / 1.7s vs 1.7 / 1.6s |
+| wc3g, run 2 (arm order reversed) | IDENTICAL x4 | 92.98 / 93.63s | 92.46 / 93.52s | 1.7 / 1.6s vs 1.7 / 1.7s |
+
+- **SimGolf wins.** Whole-run user CPU is **−10.8%**, against a null band of
+  about 3% (uop vs uop2) and 2% (ref vs ref2). The 2500..4000 gameplay phase
+  goes from about 1.95s to 1.35s. This is the same window where the uop
+  share rose from 74–77% to 94.3–94.65%.
+- **H3 is neutral.** It moves −1.5%, within the band, and its counters match
+  the reference exactly.
+- **WC3g is neutral.** Run 1 showed uop +5% slower, but its uop/uop2 pair
+  spread 4.6% on its own. The repeat with the arm order reversed came out
+  +0.6% whole-run and 0.0% in the gameplay phase. So run 1 was noise. WC3g
+  never executes the new lowering in its hot loops; its install counters
+  differ by 3 heads (4154 vs 4157).
+
+The lowering is pure coverage and has no flag. It is on whenever the uop tier
+is on (`--no-uop` still turns off the whole tier).
