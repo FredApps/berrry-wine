@@ -312,11 +312,31 @@
   ;; reads one zero and skips the whole $branch_end_diag call.
   (global $be_gate_on (mut i32) (i32.const 0))
   (global $be_stats_on (mut i32) (i32.const 0))
+  ;; $uop_fast: the micro-op tier is the ONLY reason to bump -- no executor,
+  ;; no statistics, no chaining. Then the hot bump moves out of
+  ;; $branch_end_diag to after $page_resolve in $branch_end_at, where the
+  ;; target's no-bump mark (01-header PAGE_INDEX_NOBUMP) can skip it, and the
+  ;; taken-Jcc inline fast path in 05-alu stays open for marked targets.
+  ;; $uop_nobump_on (default 1, set_uop_nobump) is the A/B switch; off, every
+  ;; configuration is what it was before the mark existed.
+  (global $uop_fast (mut i32) (i32.const 0))
+  (global $uop_nobump_on (mut i32) (i32.const 1))
+  (global $bx_hot_skips (mut i32) (i32.const 0))
   (func $be_gate_refresh
+    (global.set $uop_fast
+      (i32.and (i32.ne (global.get $uop_nobump_on) (i32.const 0))
+      (i32.and (i32.ne (global.get $uop_enabled) (i32.const 0))
+        (i32.eqz (i32.or (global.get $block_exec_enabled)
+                 (i32.or (global.get $be_stats_on) (global.get $block_chain_on)))))))
     (global.set $be_gate_on
       (i32.or (i32.ne (global.get $block_exec_enabled) (i32.const 0))
-        (i32.or (i32.ne (global.get $bx_hot_on) (i32.const 0))
+        (i32.or (i32.and (i32.ne (global.get $bx_hot_on) (i32.const 0))
+                         (i32.eqz (global.get $uop_fast)))
                 (i32.ne (global.get $be_stats_on) (i32.const 0))))))
+  (func (export "set_uop_nobump") (param $on i32)
+    (global.set $uop_nobump_on (i32.ne (local.get $on) (i32.const 0)))
+    (call $be_gate_refresh))
+  (func (export "get_uop_nobump_skips") (result i32) (global.get $bx_hot_skips))
 
   ;; Set by $chain_patch the first time it writes a slot, cleared only by the
   ;; arena flush that rewinds every decoded stream. While it is 0 no threaded
@@ -1223,6 +1243,19 @@
   ;; Retire the compiled block entered at $ga, by guest address. Same machinery
   ;; a code write uses; the region walker needs it to take back a one-block
   ;; descriptor it wants the raw op stream of.
+  ;; Set the no-bump mark (01-header PAGE_INDEX_NOBUMP) on the entry compiled
+  ;; at $ga, if there is one. Moves no page registers.
+  (func $page_nobump_mark (param $ga i32)
+    (local $slot i32) (local $base i32) (local $p i32) (local $e i32)
+    (local.set $base (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    (local.set $slot (call $page_dir_slot (local.get $base)))
+    (if (i32.ne (i32.load (local.get $slot)) (local.get $base)) (then (return)))
+    (local.set $p (i32.add (i32.load offset=4 (local.get $slot))
+      (i32.shl (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 1))))
+    (local.set $e (i32.load16_u (local.get $p)))
+    (if (i32.and (local.get $e) (global.get $PAGE_INDEX_COVER)) (then (return)))
+    (i32.store16 (local.get $p) (i32.or (local.get $e) (global.get $PAGE_INDEX_NOBUMP))))
+
   (func $page_retire_ga (param $ga i32)
     (local $slot i32) (local $base i32)
     (local.set $base (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
@@ -1785,10 +1818,14 @@
     ;; Bit 15 picks the chunk. Branchless on purpose: this is the hot path and
     ;; a descriptor entry is rare, so a predicted-taken branch would be worse
     ;; than the select.
+    ;; Bit 0 of the result is the entry's no-bump mark (01-header,
+    ;; PAGE_INDEX_NOBUMP); a chunk base is word-aligned, so every caller gets
+    ;; the pointer back with `& -2`.
     (i32.add
       (select (global.get $cur_page_desc) (global.get $cur_page_chunk)
               (i32.and (local.get $off) (global.get $PAGE_INDEX_DESC)))
-      (i32.and (local.get $off) (global.get $PAGE_INDEX_OFFMASK))))
+      (i32.and (local.get $off)
+        (i32.or (global.get $PAGE_INDEX_OFFMASK) (global.get $PAGE_INDEX_NOBUMP)))))
 
   ;; "Is there already compiled code entered at this address?" -- the question
   ;; $decode_run asks before extending a run into the next block. Unlike
@@ -2069,6 +2106,14 @@
           (then (global.set $chain_hot_bumped (i32.const 0)))
           (else (call $bx_hot_bump (global.get $eip)))))))
 
+  ;; $uop_fast: the bump for a transfer that leaves $branch_end_at before it
+  ;; could read the target's no-bump mark -- debug/yield guards, budget, SBH,
+  ;; nothing compiled yet -- so every taken transfer still counts once, as it
+  ;; did from $branch_end_diag (a run under --handler-hist or --break still
+  ;; finds the same heads).
+  (func $uop_fast_bump
+    (if (global.get $uop_fast) (then (call $bx_hot_bump (global.get $eip)))))
+
   (func $branch_end_at (param $patch_at i32) (param $shift i32) (param $tag i32)
      (local $nx_fn i32) (local $nx_op i32) (local $t i32)
     (if (global.get $be_gate_on) (then (call $branch_end_diag)))
@@ -2095,16 +2140,33 @@
                        (i32.eq (global.get $eip) (global.get $bp_addr)))
         (i32.or (global.get $code16)
         (i32.or (global.get $yield_flag) (global.get $yield_reason))))
-      (then (return)))
-    (if (i32.le_s (global.get $block_budget) (i32.const 0)) (then (return)))
+      (then (call $uop_fast_bump) (return)))
+    (if (i32.le_s (global.get $block_budget) (i32.const 0))
+      (then (call $uop_fast_bump) (return)))
     ;; No test on $steps here. Running out is now a resume, not a restart:
     ;; $next parks $ip in $resume_ip and $run picks the block up where it left
     ;; off, without spending a second block from the budget for it.
     (if (i32.or (i32.eq (global.get $eip) (global.get $sbh_eip_a))
                 (i32.eq (global.get $eip) (global.get $sbh_eip_b)))
-      (then (return)))
+      (then (call $uop_fast_bump) (return)))
     (local.set $t (call $page_resolve (global.get $eip)))
-    (if (i32.eqz (local.get $t)) (then (return)))
+    (if (i32.eqz (local.get $t)) (then (call $uop_fast_bump) (return)))
+    ;; $uop_fast: the tier's hot bump, here rather than in $branch_end_diag,
+    ;; unless the target is marked no-bump. A bump that reached $uop_try may
+    ;; have installed a program and retired this very block, so the target is
+    ;; resolved again whenever the probe counter moved.
+    (if (global.get $uop_fast)
+      (then
+        (if (i32.and (local.get $t) (i32.const 1))
+          (then (global.set $bx_hot_skips (i32.add (global.get $bx_hot_skips) (i32.const 1))))
+          (else
+            (local.set $nx_op (global.get $bx_walk_hot_probes))
+            (call $bx_hot_bump (global.get $eip))
+            (if (i32.ne (local.get $nx_op) (global.get $bx_walk_hot_probes))
+              (then
+                (local.set $t (call $page_resolve (global.get $eip)))
+                (if (i32.eqz (local.get $t)) (then (return)))))))))
+    (local.set $t (i32.and (local.get $t) (i32.const -2)))
     ;; The resolve that just succeeded is the one answer worth remembering.
     ;; $patch_at is non-zero only when the caller was a chainable terminator
     ;; AND $block_chain_on was set, so an off run never reaches this.

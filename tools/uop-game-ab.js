@@ -217,11 +217,13 @@ function parse(r) {
   const phases = [...text.matchAll(/batches (\d+)\.\.(\d+)\s+\d+ batches\s+guest ([\d.]+)s/g)]
     .map(m => ({ lo: +m[1], hi: +m[2], s: +m[3] }));
   const uop = (text.match(/^uop: .*$/m) || [''])[0];
+  // Secondary tier lines (`uop hot:`, `uop nobump:`), printed as they came.
+  const hot = [...text.matchAll(/^uop (?:hot|nobump): .*$/mg)].map(m => m[0]).join('\n       ');
   const declines = (text.match(/^\s+declines: (.*)$/m) || [, ''])[1];
   const threads = [...text.matchAll(/^uop\[thread [^\]]+\]: .*$/mg)].map(m => m[0]);
   const crash = (text.match(/(RuntimeError|unreachable|CRASH|crash_unimplemented)[^\n]*/) || [''])[0];
   const stats = (text.match(/^Stats: .*$/m) || [''])[0];
-  return Object.assign(r, { user, phases, uop, declines, threads, crash, stats });
+  return Object.assign(r, { user, phases, uop, hot, declines, threads, crash, stats });
 }
 
 function frameVerdict(a, b) {
@@ -281,6 +283,15 @@ async function main() {
     ARMS.refoff = [...ARMS.off, `--wasm=${path.resolve(refWasm)}`, '--no-build'];
     ARMS.refuop = [...ARMS.uop, `--wasm=${path.resolve(refWasm)}`, '--no-build'];
   }
+  // --arm=NAME=FLAGS (repeatable): a custom arm, the uop arm plus FLAGS
+  // (space-separated), e.g. --arm='ht2k=--uop-hot-table=2048,1'. A NAME
+  // that is itself an arm is looked up whole before a trailing repeat digit
+  // is stripped, so ht2k2 is a repeat of ht2k.
+  for (const a of process.argv.filter(s => s.startsWith('--arm='))) {
+    const spec = a.slice(6), eq = spec.indexOf('=');
+    if (eq <= 0) throw new Error(`bad ${a}`);
+    ARMS[spec.slice(0, eq)] = [...ARMS.uop, ...spec.slice(eq + 1).split(/\s+/).filter(Boolean)];
+  }
   const arms = arg('arms', 'off,uop').split(',');
   const jobs = Math.max(1, +arg('jobs', '1'));
   const outDir = path.resolve(arg('out', path.join(ROOT, 'build', 'uop-game-ab')));
@@ -298,7 +309,7 @@ async function main() {
       const [g, a] = queue.shift();
       // off2 / uop2: a repeat of that arm, so a frame difference can be told
       // apart from an app that does not reproduce itself (the control).
-      const armArgs = ARMS[a.replace(/\d+$/, '')];
+      const armArgs = ARMS[a] || ARMS[a.replace(/\d+$/, '')];
       if (!armArgs) throw new Error(`unknown arm ${a}`);
       const r = parse(await runArm(g, a, armArgs, outDir, extra));
       console.log(`  done ${g}/${a} rc=${r.code} user=${r.user}s wall=${r.wall.toFixed(0)}s`);
@@ -321,6 +332,7 @@ async function main() {
         + (r.phases.length ? `  phases ${r.phases.map(p => `${p.lo}..${p.hi}=${p.s}s`).join(' ')}` : '')
         + (r.crash ? `  CRASH: ${r.crash.slice(0, 120)}` : ''));
       if (r.uop) console.log(`       ${r.uop}`);
+      if (r.hot) console.log(`       ${r.hot}`);
       if (r.declines) console.log(`       declines: ${r.declines}`);
       for (const t of r.threads) console.log(`       ${t}`);
     }

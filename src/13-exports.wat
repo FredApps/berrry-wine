@@ -294,7 +294,7 @@
       ;; here really does mean nothing is compiled at this address. The hash
       ;; cache that used to sit between these two rungs is gone --
       ;; docs/page-compile-design.md section 4.
-      (local.set $thread (call $page_resolve (global.get $eip)))
+      (local.set $thread (i32.and (call $page_resolve (global.get $eip)) (i32.const -2)))
       (if (i32.eqz (local.get $thread))
         (then (local.set $thread (call $decode_run (global.get $eip)))))
       (global.set $ip (local.get $thread))
@@ -2659,7 +2659,8 @@
   ;; what section 8 of the design doc measures. The setter order no longer
   ;; decides anything, which is what the inherited-setter replay needed.
   (func (export "set_block_chain") (param $flag i32)
-    (global.set $block_chain_on (i32.ne (local.get $flag) (i32.const 0))))
+    (global.set $block_chain_on (i32.ne (local.get $flag) (i32.const 0)))
+    (call $be_gate_refresh))
   (func (export "get_block_chain") (result i32) (global.get $block_chain_on))
   (func (export "get_chain_hits") (result i64) (global.get $chain_hits))
   ;; Arms the $branch_end_calls / $branch_end_pool counters. Off, the block

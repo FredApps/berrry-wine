@@ -2422,8 +2422,13 @@
     (global.set $bx_walk_hot_probes
       (i32.add (global.get $bx_walk_hot_probes) (i32.const 1)))
     ;; The micro-op tier (07d) shares this hotness gate and replaces the walk.
+    ;; A settled "never" (declined, or retired as poor) is marked in the page
+    ;; index under $uop_fast, and transfers into the head stop counting.
     (if (global.get $uop_enabled)
-      (then (call $uop_try (local.get $eip)) (return)))
+      (then
+        (if (i32.and (call $uop_try (local.get $eip)) (global.get $uop_fast))
+          (then (call $page_nobump_mark (local.get $eip))))
+        (return)))
     (call $bx_walk_try (local.get $eip)))
 
   ;; The per-head failure memo. 256 direct-mapped slots of {head EIP, fails}.
