@@ -286,9 +286,14 @@
       (local.get $arg1) (local.get $arg2) (local.get $arg3) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
-  ;; 480: GetTimeZoneInformation(lpTZI) — zero-fill 172-byte struct, return TIME_ZONE_ID_UNKNOWN (0)
+  ;; 480: GetTimeZoneInformation(lpTZI). Bias is the zone GetLocalTime
+  ;; answers in (UTC = local + Bias), read from the host at the moment of the
+  ;; call; no daylight transition is modeled, so both SYSTEMTIME rules stay
+  ;; zero and the result is TIME_ZONE_ID_UNKNOWN (0). FileTimeToLocalFileTime
+  ;; and LocalFileTimeToFileTime apply the same Bias.
   (func $handle_GetTimeZoneInformation (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (call $guest_memset (local.get $arg0) (i32.const 0) (i32.const 172))
+    (call $gs32 (local.get $arg0) (call $tz_bias_minutes))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))  ;; TIME_ZONE_ID_UNKNOWN
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))  ;; stdcall, 1 arg
   )

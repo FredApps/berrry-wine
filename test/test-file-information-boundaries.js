@@ -67,7 +67,17 @@ const extraWat = String.raw`
   (func (export "test_info_error") (result i32) (global.get $last_error))
 `;
 (async () => {
-  const { exports: e, hostCtx } = await bootRenderHarness({ extraWat, fonts: 'none' });
+  // A fixed, nonzero zone Bias (UTC = local + Bias) so the FILETIME shift is
+  // exercised across the page splits; the host's own zone may well be UTC.
+  const BIAS = 420;
+  let clockCtx = null;
+  const { exports: e, hostCtx } = await bootRenderHarness({ extraWat, fonts: 'none',
+    extraHostOverrides: { wall_clock: (out, kind) => {
+      if (kind !== 3) return 0;
+      new DataView(clockCtx.getMemory()).setInt32(out, BIAS, true);
+      return 1;
+    } } });
+  clockCtx = hostCtx;
   const page = 0x30000000;
   for (const ga of [page, 0x28000000, page + 4096]) {
     assert.strictEqual(e.test_info_map(ga) >>> 0, ga);
@@ -83,7 +93,11 @@ const extraWat = String.raw`
   const read = (ga, n) => Array.from({ length: n }, (_, i) => e.guest_read8(ga + i));
   const aligned = page + 0x100;
   const fileTimeBytes = [0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0x01];
-  for (const convert of [e.test_local_to_file, e.test_file_to_local]) for (let split = 1; split < 8; split++) {
+  const fileTime = fileTimeBytes.reduce((v, b, i) => v | (BigInt(b) << BigInt(i * 8)), 0n);
+  const bytesOf = v => Array.from({ length: 8 }, (_, i) => Number((v >> BigInt(i * 8)) & 255n));
+  const shift = BigInt(BIAS) * 600000000n;
+  for (const [convert, want] of [[e.test_local_to_file, bytesOf(fileTime + shift)],
+    [e.test_file_to_local, bytesOf(fileTime - shift)]]) for (let split = 1; split < 8; split++) {
     const edge = page + 4096 - split;
     for (const [src, dst] of [[aligned, edge], [edge, aligned], [edge, edge],
       [edge, edge + 1], [edge + 1, edge]]) {
@@ -91,7 +105,7 @@ const extraWat = String.raw`
       fileTimeBytes.forEach((b, i) => e.guest_write8(src + i, b));
       const before = e.guest_read8(dst - 1), after = e.guest_read8(dst + 8);
       assert.strictEqual(convert(src, dst), 1);
-      assert.deepStrictEqual(read(dst - 1, 10), [before, ...fileTimeBytes, after], `local FILETIME split ${split}`);
+      assert.deepStrictEqual(read(dst - 1, 10), [before, ...want, after], `local FILETIME split ${split}`);
       assert.strictEqual(e.get_esp(), 0x0030000c);
     }
   }

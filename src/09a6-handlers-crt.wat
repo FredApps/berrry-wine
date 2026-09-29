@@ -1743,23 +1743,51 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; localtime(const time_t *timer) -> struct tm * in the zone GetLocalTime
+  ;; uses (local = UTC - Bias). One static struct tm, as msvcrt has per
+  ;; thread: sec, min, hour, mday, mon, year-1900, wday, yday, isdst. A NULL
+  ;; or negative time_t, or one that lands before 1970 locally, is NULL.
   (func $handle_localtime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Return a stable static struct tm:
-    ;; sec, min, hour, mday, mon, year-since-1900, wday, yday, isdst.
-    (if (i32.eqz (global.get $msvcrt_tm_ptr))
-      (then
-        (global.set $msvcrt_tm_ptr (call $heap_alloc (i32.const 36)))
-        (call $gs32 (global.get $msvcrt_tm_ptr) (i32.const 0))
-        (call $gs32 (i32.add (global.get $msvcrt_tm_ptr) (i32.const 4)) (i32.const 0))
-        (call $gs32 (i32.add (global.get $msvcrt_tm_ptr) (i32.const 8)) (i32.const 0))
-        (call $gs32 (i32.add (global.get $msvcrt_tm_ptr) (i32.const 12)) (i32.const 1))
-        (call $gs32 (i32.add (global.get $msvcrt_tm_ptr) (i32.const 16)) (i32.const 0))
-        (call $gs32 (i32.add (global.get $msvcrt_tm_ptr) (i32.const 20)) (i32.const 100))
-        (call $gs32 (i32.add (global.get $msvcrt_tm_ptr) (i32.const 24)) (i32.const 6))
-        (call $gs32 (i32.add (global.get $msvcrt_tm_ptr) (i32.const 28)) (i32.const 0))
-        (call $gs32 (i32.add (global.get $msvcrt_tm_ptr) (i32.const 32)) (i32.const 0))))
-    (i32.store offset=0 (global.get $reg_base) (global.get $msvcrt_tm_ptr))
+    (local $t i64) (local $days i32) (local $secs i32) (local $ymd i32)
+    (local $y i32) (local $m i32) (local $yday i32) (local $i i32) (local $tm i32)
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (if (i32.eqz (local.get $arg0)) (then (return)))
+    (local.set $t (i64.sub
+      (i64.extend_i32_s (call $gl32 (local.get $arg0)))
+      (i64.mul (i64.extend_i32_s (call $tz_bias_minutes)) (i64.const 60))))
+    (if (i32.or (i32.lt_s (call $gl32 (local.get $arg0)) (i32.const 0))
+          (i64.lt_s (local.get $t) (i64.const 0)))
+      (then (return)))
+    (if (i32.eqz (global.get $msvcrt_tm_ptr))
+      (then (global.set $msvcrt_tm_ptr (call $heap_alloc (i32.const 36)))))
+    (local.set $tm (global.get $msvcrt_tm_ptr))
+    (if (i32.eqz (local.get $tm)) (then (return)))
+    (local.set $days (i32.wrap_i64 (i64.div_u (local.get $t) (i64.const 86400))))
+    (local.set $secs (i32.wrap_i64 (i64.rem_u (local.get $t) (i64.const 86400))))
+    (local.set $ymd (call $cal_civil_from_days (local.get $days)))
+    (local.set $y (i32.shr_u (local.get $ymd) (i32.const 9)))
+    (local.set $m (i32.and (i32.shr_u (local.get $ymd) (i32.const 5)) (i32.const 15)))
+    (local.set $yday (i32.sub (i32.and (local.get $ymd) (i32.const 31)) (i32.const 1)))
+    (local.set $i (i32.const 1))
+    (block $counted (loop $months
+      (br_if $counted (i32.ge_u (local.get $i) (local.get $m)))
+      (local.set $yday (i32.add (local.get $yday)
+        (call $cal_days_in_month (local.get $y) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $months)))
+    (call $gs32 (local.get $tm) (i32.rem_u (local.get $secs) (i32.const 60)))
+    (call $gs32 (i32.add (local.get $tm) (i32.const 4))
+      (i32.rem_u (i32.div_u (local.get $secs) (i32.const 60)) (i32.const 60)))
+    (call $gs32 (i32.add (local.get $tm) (i32.const 8)) (i32.div_u (local.get $secs) (i32.const 3600)))
+    (call $gs32 (i32.add (local.get $tm) (i32.const 12)) (i32.and (local.get $ymd) (i32.const 31)))
+    (call $gs32 (i32.add (local.get $tm) (i32.const 16)) (i32.sub (local.get $m) (i32.const 1)))
+    (call $gs32 (i32.add (local.get $tm) (i32.const 20)) (i32.sub (local.get $y) (i32.const 1900)))
+    (call $gs32 (i32.add (local.get $tm) (i32.const 24))
+      (i32.rem_u (i32.add (local.get $days) (i32.const 4)) (i32.const 7))) ;; 1970-01-01 was a Thursday
+    (call $gs32 (i32.add (local.get $tm) (i32.const 28)) (local.get $yday))
+    (call $gs32 (i32.add (local.get $tm) (i32.const 32)) (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base) (local.get $tm))
   )
 
   (func $crt_copy_finddata_a (param $dst i32) (param $src i32)

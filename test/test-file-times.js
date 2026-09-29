@@ -52,6 +52,9 @@ function readSystemTime(at) {
     BigInt(dv.getUint32(0x640, true));
   assert.strictEqual(actualFileTime, expectedFileTime,
     'FILETIME must retain the high-word carry for the full wall-clock epoch');
+  assert.strictEqual(clockHost.wall_clock(0x660, 3), 1);
+  assert.strictEqual(dv.getInt32(0x660, true), local.getTimezoneOffset(),
+    'kind 3 is the Win32 Bias of the zone the local SYSTEMTIME was read in');
 
   const h = ctx.vfs.createFile('C:\\archive.bin', 0x40000100, 2);
   assert(h, 'writable archive fixture opens');

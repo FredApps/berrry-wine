@@ -497,13 +497,14 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))  ;; stdcall, 2 args
   )
 
-  ;; 745: time(timer) — return seconds since epoch
+  ;; 745: time(timer) — UTC seconds since 1970, from the same calendar clock
+  ;; GetSystemTime reads (not the guest tick counter, which starts near zero).
   (func $handle_time (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $t i32)
-    (local.set $t (i32.add (i32.const 946684800) (i32.div_u (call $host_get_ticks) (i32.const 1000))))
+    (local.set $t (call $wall_clock_time_t))
     (i32.store offset=0 (global.get $reg_base) (local.get $t))
     (if (local.get $arg0)
-      (then (i32.store (call $g2w (local.get $arg0)) (local.get $t))))
+      (then (call $gs32 (local.get $arg0) (local.get $t))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
