@@ -1115,6 +1115,7 @@
     (local $h i32) (local $pos i32) (local $d i64)
     (call $uc_hm_clear (global.get $UC_HM_INSN))
     (global.set $uc_ninsn (i32.const 0))
+    (global.set $uc_is_trace (i32.const 0))
     (i32.store (global.get $UC_CALLT) (i32.const 0))
     (i32.store (global.get $UC_WORK) (local.get $head))
     (local.set $sp (i32.const 1))
@@ -1239,7 +1240,10 @@
             (then (local.set $changed (i32.const 1))))))
       (local.set $k (i32.add (local.get $k) (i32.const 1)))
       (br $l7)))
-    (if (i32.eqz (local.get $changed)) (then (return (i32.const 4))))
+    (if (i32.eqz (local.get $changed))
+      (then
+        (if (global.get $uc_trace) (then (return (call $uc_form_trace (local.get $head)))))
+        (return (i32.const 4))))
     (if (i32.gt_u (local.get $n) (global.get $UC_MAX_LOOP)) (then (return (i32.const 5))))
     ;; Rotate: from the head to the end of the address order, then the rest.
     (local.set $pos (i32.const 0))
@@ -1262,6 +1266,108 @@
       (br $l8)))
     (global.set $uc_nloop (local.get $pos))
     (global.set $uc_head (local.get $head))
+    (i32.const 0))
+
+  ;; ------------------------------------------------------ trace heads --
+  ;; --uop-trace-heads (docs/uop-tier-design.md §11.3 "coverage"): a hot
+  ;; head with no back edge in its scan is not declined; the region is what
+  ;; the head reaches forward instead -- straight-line code, both arms of a
+  ;; branch, calls into their callees and rets back to an in-region call's
+  ;; return address ($uc_ret_targets, checked at run time as for a loop).
+  ;; Breadth-first from the head over supported instructions, at most
+  ;; $uc_trace_max of them; every successor left out is an exit, as a loop's
+  ;; are. No path comes back to the head (else the scan had a back edge), so
+  ;; the lowering sees block 0 with no predecessors and never peels. The
+  ;; logical-frame marker is unsupported in the scan, so a trace always
+  ;; stops in front of it. Fewer than $uc_trace_min instructions stays a
+  ;; no-backedge decline: the enter/exit would cost more than the trip saves.
+  (global $uc_trace (mut i32) (i32.const 0))
+  (global $uc_trace_min (mut i32) (i32.const 8))
+  (global $uc_trace_max (mut i32) (i32.const 160))
+  (global $uc_ntraces (mut i32) (i32.const 0))
+  (global $uc_is_trace (mut i32) (i32.const 0))
+  (func $uc_form_trace (param $head i32) (result i32)
+    (local $k i32) (local $R i32) (local $S i32) (local $j i32) (local $n i32)
+    (local $qh i32) (local $qt i32) (local $pos i32) (local $h i32)
+    ;; the loop pass flagged what reaches the head; start again
+    (block $cd (loop $cl
+      (br_if $cd (i32.ge_u (local.get $k) (global.get $uc_ninsn)))
+      (local.set $R (i32.add (global.get $UC_INSN) (i32.shl (local.get $k) (i32.const 8))))
+      (i32.store offset=40 (local.get $R) (i32.and (i32.load offset=40 (local.get $R)) (i32.const -2)))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $cl)))
+    (local.set $h (call $uc_insn_at (local.get $head)))
+    (call $uc_set_flag (local.get $h) (i32.const 1))
+    (i32.store (global.get $UC_WORK) (local.get $h))
+    (local.set $qt (i32.const 1))
+    (local.set $n (i32.const 1))
+    (block $qd (loop $ql
+      (br_if $qd (i32.ge_u (local.get $qh) (local.get $qt)))
+      (local.set $R (i32.load (i32.add (global.get $UC_WORK) (i32.shl (local.get $qh) (i32.const 2)))))
+      (local.set $qh (i32.add (local.get $qh) (i32.const 1)))
+      (local.set $j (i32.const 0))
+      (block $sd (loop $sl
+        (br_if $sd (i32.ge_u (local.get $j) (call $uc_nsucc (local.get $R))))
+        (local.set $S (call $uc_insn_at (call $uc_succ (local.get $R) (local.get $j))))
+        (local.set $j (i32.add (local.get $j) (i32.const 1)))
+        (br_if $sl (i32.lt_s (local.get $S) (i32.const 0)))
+        (br_if $sl (i32.eqz (call $uc_kind (local.get $S))))
+        (br_if $sl (call $uc_flag (local.get $S) (i32.const 1)))
+        (br_if $sd (i32.ge_u (local.get $n) (global.get $uc_trace_max)))
+        (call $uc_set_flag (local.get $S) (i32.const 1))
+        (i32.store (i32.add (global.get $UC_WORK) (i32.shl (local.get $qt) (i32.const 2))) (local.get $S))
+        (local.set $qt (i32.add (local.get $qt) (i32.const 1)))
+        (local.set $n (i32.add (local.get $n) (i32.const 1)))
+        (br $sl)))
+      (br $ql)))
+    ;; A trace leaves only by a branch, as a loop does. An instruction that
+    ;; runs straight on into code outside (unsupported, the logical-frame
+    ;; marker, past $uc_trace_max) would exit where threaded code continues
+    ;; its block -- or, at the marker, cuts it -- and the program would charge
+    ;; that exit a block threaded code does not. Drop such tails back to the
+    ;; branch in front of them, whose arm then becomes the exit.
+    (local.set $qt (i32.const 1))
+    (block $td (loop $tl
+      (br_if $td (i32.eqz (local.get $qt)))
+      (local.set $qt (i32.const 0))
+      (local.set $k (i32.const 0))
+      (block $kd (loop $kl
+        (br_if $kd (i32.ge_u (local.get $k) (global.get $uc_ninsn)))
+        (local.set $R (i32.add (global.get $UC_INSN) (i32.shl (local.get $k) (i32.const 8))))
+        (local.set $k (i32.add (local.get $k) (i32.const 1)))
+        (br_if $kl (i32.eqz (call $uc_flag (local.get $R) (i32.const 1))))
+        (br_if $kl (call $uc_is_branch (local.get $R)))
+        (local.set $S (call $uc_insn_at (call $uc_succ (local.get $R) (i32.const 0))))
+        (if (i32.ge_s (local.get $S) (i32.const 0))
+          (then (br_if $kl (call $uc_flag (local.get $S) (i32.const 1)))))
+        (i32.store offset=40 (local.get $R) (i32.and (i32.load offset=40 (local.get $R)) (i32.const -2)))
+        (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+        (local.set $qt (i32.const 1))
+        (br $kl)))
+      (br $tl)))
+    (if (i32.eqz (call $uc_flag (local.get $h) (i32.const 1))) (then (return (i32.const 4))))
+    (if (i32.lt_u (local.get $n) (global.get $uc_trace_min)) (then (return (i32.const 4))))
+    ;; Head first, then address order from the head on, then the rest.
+    (local.set $j (i32.const 0))
+    (block $d8 (loop $l8
+      (br_if $d8 (i32.ge_u (local.get $j) (i32.const 2)))
+      (local.set $k (i32.const 0))
+      (block $d9 (loop $l9
+        (br_if $d9 (i32.ge_u (local.get $k) (global.get $uc_ninsn)))
+        (local.set $R (i32.load (i32.add (global.get $UC_SORT) (i32.shl (local.get $k) (i32.const 2)))))
+        (if (i32.and (call $uc_flag (local.get $R) (i32.const 1))
+                     (i32.eq (i32.ge_u (i32.load (local.get $R)) (local.get $head)) (i32.eqz (local.get $j))))
+          (then
+            (i32.store offset=48 (local.get $R) (local.get $pos))
+            (i32.store (i32.add (global.get $UC_LOOP) (i32.shl (local.get $pos) (i32.const 2))) (local.get $R))
+            (local.set $pos (i32.add (local.get $pos) (i32.const 1)))))
+        (local.set $k (i32.add (local.get $k) (i32.const 1)))
+        (br $l9)))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $l8)))
+    (global.set $uc_nloop (local.get $pos))
+    (global.set $uc_head (local.get $head))
+    (global.set $uc_is_trace (i32.const 1))
     (i32.const 0))
 
   ;; ------------------------------------------------------------ blocks --
@@ -3723,6 +3829,7 @@
     (global.set $uop_alloc (i32.and (i32.add (i32.add (global.get $uop_alloc) (local.get $bytes)) (i32.const 15))
                                     (i32.const -16)))
     (global.set $uc_compiled (i32.add (global.get $uc_compiled) (i32.const 1)))
+    (global.set $uc_ntraces (i32.add (global.get $uc_ntraces) (global.get $uc_is_trace)))
     (global.set $uc_insns (i32.add (global.get $uc_insns) (global.get $uc_nloop)))
     (global.set $uc_uops (i32.add (global.get $uc_uops) (global.get $uc_nops)))
     (global.set $uc_words (i32.add (global.get $uc_words) (call $uc_encode_words)))
@@ -3750,7 +3857,20 @@
     (if (i32.eq (local.get $which) (i32.const 3)) (then (return (global.get $uc_uops))))
     (if (i32.eq (local.get $which) (i32.const 4)) (then (return (global.get $uc_flushes))))
     (if (i32.eq (local.get $which) (i32.const 5)) (then (return (global.get $uc_words))))
+    (if (i32.eq (local.get $which) (i32.const 26)) (then (return (global.get $uc_ntraces))))
     (i32.const 0))
+  ;; --uop-trace-heads / ?uop-trace-heads: a hot head with no back edge is
+  ;; lowered as a forward trace ($uc_form_trace) instead of declined. min/max
+  ;; bound the trace in instructions (0 keeps the current value).
+  (func (export "set_uop_trace_heads") (param $on i32)
+    (global.set $uc_trace (i32.ne (local.get $on) (i32.const 0))))
+  (func (export "get_uop_trace_heads") (result i32) (global.get $uc_trace))
+  (func (export "set_uop_trace_limits") (param $min i32) (param $max i32)
+    (if (local.get $min) (then (global.set $uc_trace_min (local.get $min))))
+    (if (local.get $max)
+      (then (global.set $uc_trace_max
+              (select (global.get $UC_MAX_LOOP) (local.get $max)
+                      (i32.gt_u (local.get $max) (global.get $UC_MAX_LOOP)))))))
   ;; --aggressive-stack / ?aggressive-stack / aggressiveStack: elide
   ;; push/pop pairs in the programs compiled from now on (drops the rest).
   (func (export "set_aggressive_stack") (param $flag i32)
