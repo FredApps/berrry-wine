@@ -16,6 +16,21 @@ const extraWat = String.raw`
     (call $destroy_main_window_lifecycle (local.get $hwnd))
     (global.get $main_hwnd))
 
+  (func (export "test_seed_window")
+    (param $hwnd i32) (param $style i32) (param $parent i32) (param $owner i32)
+    (call $wnd_table_set (local.get $hwnd) (global.get $WNDPROC_BUILTIN))
+    (drop (call $wnd_set_style (local.get $hwnd) (local.get $style)))
+    (call $wnd_set_parent (local.get $hwnd) (local.get $parent))
+    (call $wnd_set_owner (local.get $hwnd) (local.get $owner)))
+  (func (export "test_remove_window") (param $hwnd i32)
+    (call $wnd_table_remove (local.get $hwnd)))
+  (func (export "test_set_main") (param $hwnd i32)
+    (global.set $main_hwnd (local.get $hwnd)))
+  (func (export "test_adopt_main") (param $hwnd i32)
+    (call $main_hwnd_adopt (local.get $hwnd)))
+  (func (export "test_set_quit") (param $v i32)
+    (global.set $quit_flag (local.get $v)))
+
   (func (export "test_seed_focused_destroy")
     (param $root i32) (param $child i32) (param $main i32) (param $main_proc i32)
     (call $wnd_table_set (local.get $root) (global.get $WNDPROC_CTRL_NATIVE))
@@ -49,6 +64,59 @@ const extraWat = String.raw`
   assert.strictEqual(wat.get_main_hwnd() >>> 0, 0x10001);
   assert.strictEqual(wat.test_retire_main_window(0x10001) >>> 0, 0,
     'destroying the only top-level clears main_hwnd for its replacement');
+
+  // DestroyWindow never posts WM_QUIT. UT2004's splash is the first top-level
+  // (so main); the game viewport outlives it at a non-adjacent HWND. The old
+  // hwnd+1 promotion missed it and left quit_flag=1 for the whole run.
+  const WS_VISIBLE = 0x10000000, WS_CHILD = 0x40000000;
+  const retireAll = () => {
+    for (const h of [0x10001, 0x10020, 0x10021, 0x10022, 0x10030, 0x10031, 0x10040])
+      wat.test_remove_window(h);
+  };
+  retireAll();
+  wat.test_set_quit(0);
+  wat.test_seed_window(0x10020, WS_VISIBLE, 0, 0);            // splash (main)
+  wat.test_seed_window(0x10021, WS_VISIBLE | WS_CHILD, 0x10020, 0); // its child
+  wat.test_seed_window(0x10022, WS_VISIBLE, 0, 0x10020);      // owned by splash
+  wat.test_seed_window(0x10030, WS_VISIBLE, 0, 0);            // game viewport
+  wat.test_seed_window(0x10031, 0, 0, 0);                     // hidden helper
+  wat.test_set_main(0x10020);
+  assert.strictEqual(wat.test_retire_main_window(0x10020) >>> 0, 0x10030,
+    'a surviving visible top-level becomes main; children, owned windows and hidden helpers do not');
+  assert.strictEqual(wat.get_quit_flag(), 0,
+    'destroying main while another top-level survives posts no quit');
+  assert.strictEqual(wat.has_pending_message(), 0,
+    'no stale quit marker keeps every message wait returning at once');
+
+  // The last visible window dying keeps the synthetic launcher loop-exit
+  // marker, and adopting a replacement main window retires it at once --
+  // not only when a GetMessage happens to run (a PeekMessage pump never does).
+  retireAll();
+  wat.test_seed_window(0x10040, WS_VISIBLE, 0, 0);
+  wat.test_seed_window(0x10031, 0, 0, 0);                     // hidden only
+  wat.test_set_main(0x10040);
+  assert.strictEqual(wat.test_retire_main_window(0x10040) >>> 0, 0,
+    'no visible top-level survives: main_hwnd is cleared');
+  assert.strictEqual(wat.get_quit_flag(), 1,
+    'the last visible main window leaves the synthetic loop-exit marker');
+  wat.test_adopt_main(0x10031);
+  assert.strictEqual(wat.get_quit_flag(), 0,
+    'adopting a replacement main window retires the synthetic marker');
+  assert.strictEqual(wat.get_main_hwnd() >>> 0, 0x10031);
+
+  // An explicit PostQuitMessage is never downgraded or retired.
+  retireAll();
+  wat.test_seed_window(0x10040, WS_VISIBLE, 0, 0);
+  wat.test_set_main(0x10040);
+  wat.test_set_quit(2);
+  wat.test_retire_main_window(0x10040);
+  assert.strictEqual(wat.get_quit_flag(), 2,
+    'PostQuitMessage survives the last window being destroyed');
+  wat.test_adopt_main(0x10031);
+  assert.strictEqual(wat.get_quit_flag(), 2,
+    'adopting a new main window does not cancel a real quit');
+  wat.test_set_quit(0);
+  retireAll();
 
   const fixture = fs.readFileSync(path.join(ROOT, 'test', 'binaries', 'calc.exe'));
   new Uint8Array(memory.buffer).set(fixture, wat.get_staging());

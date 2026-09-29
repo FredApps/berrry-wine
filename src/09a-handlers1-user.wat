@@ -34,21 +34,85 @@
   ;; Retire or promote the process-wide main window before its table record is
   ;; removed. Kept separate so lifecycle tests can exercise this decision
   ;; without invoking the host-facing recursive destruction path.
+  ;;
+  ;; Real USER posts nothing when a window dies: WM_QUIT only ever comes from
+  ;; PostQuitMessage (usually the app's own WM_DESTROY/WM_NCDESTROY handler,
+  ;; which $wnd_destroy_recursive delivers). So a surviving top-level window
+  ;; simply inherits the emulator's convenience $main_hwnd and nothing quits.
+  ;; UT2004 is why this matters: its startup splash is the first top-level,
+  ;; so it is main, and destroying it while the game viewport lives on used
+  ;; to leave $quit_flag=1 for the rest of the run. The game pumps with
+  ;; PeekMessage, which ignores that marker, but has_pending_message and
+  ;; MsgWaitForMultipleObjects count it, so every idle wait returned at once.
+  ;;
+  ;; Only when no top-level survives at all does the old synthetic marker
+  ;; (flag 1) remain -- the loop-exit shape GetMessageA gives a launcher whose
+  ;; last window just died -- and $main_hwnd_adopt retires it the moment a
+  ;; replacement main window appears. An explicit PostQuitMessage (flag 2)
+  ;; is never downgraded.
   (func $destroy_main_window_lifecycle (param $hwnd i32)
+    (local $repl i32)
     (if (i32.eq (local.get $hwnd) (global.get $main_hwnd))
       (then
         (if (i32.and
               (i32.ne (call $wnd_table_get (i32.add (global.get $main_hwnd) (i32.const 1))) (i32.const 0))
               (i32.ne (call $wnd_get_parent (i32.add (global.get $main_hwnd) (i32.const 1)))
                       (global.get $main_hwnd)))
-          (then (global.set $main_hwnd (i32.add (global.get $main_hwnd) (i32.const 1))))
+          (then (local.set $repl (i32.add (global.get $main_hwnd) (i32.const 1))))
+          (else (local.set $repl (call $main_hwnd_successor (local.get $hwnd)))))
+        (if (local.get $repl)
+          (then (call $main_hwnd_adopt (local.get $repl)))
           (else
-            (if (call $wnd_is_effectively_visible (local.get $hwnd))
+            (if (i32.and
+                  (i32.eqz (global.get $quit_flag))
+                  (call $wnd_is_effectively_visible (local.get $hwnd)))
               (then (global.set $quit_flag (i32.const 1))))
             ;; The slot is removed next. Leave no stale main handle behind so
             ;; a replacement top-level created during an SDL video-mode reset
             ;; becomes the new input/paint target.
             (global.set $main_hwnd (i32.const 0)))))))
+
+  ;; The visible top-level window that takes over as $main_hwnd when $dying
+  ;; goes away, or 0. Top-level means no parent; a window $dying owns is
+  ;; excluded because USER destroys owned windows with their owner, and so
+  ;; are WAT-native control records. The newest (highest HWND) candidate wins:
+  ;; a replacement is normally created just before its predecessor is torn
+  ;; down, which is exactly UT2004's splash -> viewport hand-off.
+  (func $main_hwnd_successor (param $dying i32) (result i32)
+    (local $i i32) (local $ptr i32) (local $h i32) (local $best i32)
+    (block $done (loop $scan
+      (br_if $done (i32.ge_u (local.get $i) (global.get $MAX_WINDOWS)))
+      (local.set $ptr (call $wnd_record_addr (local.get $i)))
+      (local.set $h (i32.atomic.load (local.get $ptr)))
+      (if (i32.and
+            (i32.and
+              (i32.ne (local.get $h) (i32.const 0))
+              (i32.ne (local.get $h) (local.get $dying)))
+            (i32.and
+              (i32.eqz (load.field.memarg WndRecord parent (local.get $ptr)))
+              (i32.ne (load.field.memarg WndRecord wndproc (local.get $ptr))
+                      (global.get $WNDPROC_CTRL_NATIVE))))
+        (then
+          (if (i32.and
+                (i32.and
+                  (i32.ne (call $wnd_get_owner (local.get $h)) (local.get $dying))
+                  (i32.gt_u (local.get $h) (local.get $best)))
+                (call $wnd_is_effectively_visible (local.get $h)))
+            (then (local.set $best (local.get $h))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.get $best))
+
+  ;; Make $hwnd the emulator's main window. A synthetic teardown marker
+  ;; (flag 1) is stale from this moment: it stood for "the app has no main
+  ;; window left", and now it has one. GetMessageA used to be the only place
+  ;; that noticed, so an app pumping with PeekMessage kept the marker forever.
+  (func $main_hwnd_adopt (param $hwnd i32)
+    (global.set $main_hwnd (local.get $hwnd))
+    (if (i32.and
+          (i32.ne (local.get $hwnd) (i32.const 0))
+          (i32.eq (global.get $quit_flag) (i32.const 1)))
+      (then (global.set $quit_flag (i32.const 0)))))
 
   ;; 83: DestroyWindow
   (func $handle_DestroyWindow (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

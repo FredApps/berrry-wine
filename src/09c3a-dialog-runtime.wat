@@ -1273,7 +1273,7 @@
     (if (i32.or
           (i32.eqz (global.get $main_hwnd))
           (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd))))
-      (then (global.set $main_hwnd (local.get $dlg))))
+      (then (call $main_hwnd_adopt (local.get $dlg))))
     (local.get $dlg))
 
   ;; Allocate a new control hwnd, register it as WNDPROC_CTRL_NATIVE,

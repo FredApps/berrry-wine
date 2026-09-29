@@ -159,7 +159,7 @@
     (br $scan2)))))))
     ;; Allocate HWND; first top-level window becomes main_hwnd
     (if (i32.eqz (global.get $main_hwnd))
-    (then (global.set $main_hwnd (local.get $hwnd))))
+    (then (call $main_hwnd_adopt (local.get $hwnd))))
     ;; Resolve menu: explicit hMenu arg wins; if 0, fall back to the class's
     ;; lpszMenuName (WNDCLASSA+32) when it's a MAKEINTRESOURCE integer
     ;; (high 16 bits zero). Real Win32 does the same fallback. Without it,
@@ -855,7 +855,7 @@
             (i32.eqz (global.get $main_hwnd))
             (i32.eqz (call $wnd_is_effectively_visible (global.get $main_hwnd)))))
       (then
-        (global.set $main_hwnd (local.get $hwnd))
+        (call $main_hwnd_adopt (local.get $hwnd))
         (global.set $createwnd_implicit_show (i32.const 1)))))
 
   ;; 68: CreateDialogParamA
@@ -1352,7 +1352,7 @@
                        (i32.ne (local.get $app_wndproc) (global.get $WNDPROC_BUILTIN)))
               (i32.lt_u (local.get $app_wndproc) (i32.const 0xFFFF0000)))
           (then
-            (if (call $show_window_replaces_utility_main (local.get $arg0)) (then (global.set $show_window_activated (i32.const 0)))) (global.set $main_hwnd (local.get $arg0))
+            (if (call $show_window_replaces_utility_main (local.get $arg0)) (then (global.set $show_window_activated (i32.const 0)))) (call $main_hwnd_adopt (local.get $arg0))
             (if (local.get $client_size)
               (then (global.set $pending_wm_size (local.get $client_size))))))))
     ;; Showing a window should trigger WM_PAINT. Region-driven dispatch only
@@ -3439,14 +3439,12 @@
           (i32.store offset=0 (global.get $reg_base) (i32.const 0))
           (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
           (return)))
-      (if (i32.eq (local.get $arg0) (global.get $main_hwnd))
-        (then
-          ;; Real DestroyWindow sends WM_DESTROY before the top-level goes
-          ;; away. MFC apps commonly flush profile/registry state from this
-          ;; teardown path; removing the slot directly skips that cleanup.
-          (drop (call $wnd_send_message (local.get $arg0)
-                  (i32.const 0x0002) (i32.const 0) (i32.const 0)))
-          (global.set $quit_flag (i32.const 1))))
+      ;; Default WM_CLOSE is DestroyWindow, and DestroyWindow posts no quit:
+      ;; the app's own WM_DESTROY handler does that. $wnd_destroy_recursive
+      ;; delivers WM_DESTROY/WM_NCDESTROY (MFC flushes profile state and
+      ;; posts its quit from there), so the main-window bookkeeping is the
+      ;; same promotion DestroyWindow does -- not an unconditional marker.
+      (call $destroy_main_window_lifecycle (local.get $arg0))
       (if (i32.eq (local.get $arg0) (global.get $focus_hwnd))
         (then (global.set $focus_hwnd (i32.const 0))))
       (call $wnd_destroy_recursive (local.get $arg0))
