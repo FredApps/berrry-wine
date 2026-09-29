@@ -217,11 +217,11 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   const NO_CASE_CHAIN = hasFlag('no-case-chain');
   const NO_JUMP_TABLE = hasFlag('no-jump-table');
   const NO_RLE_RUN = hasFlag('no-rle-run');
-  // The two stream-idiom folds (docs/loop-idiom-superops-design.md §20). Both
-  // are on by default and both off switches exist for the same reason the ones
-  // above do: a same-binary A/B of the fold against the threaded blocks it
-  // replaced. They are decode-time, so the two arms have to be separate runs.
-  const NO_SMK_TREE = hasFlag('no-smk-tree');
+  // The stream-idiom fold (docs/loop-idiom-superops-design.md §20; its
+  // SMK_TREE sibling is retired, docs/uop-tier-design.md section 18). On by
+  // default; the off switch exists for the same reason the ones above do: a
+  // same-binary A/B of the fold against the threaded blocks it replaced. It
+  // is decode-time, so the two arms have to be separate runs.
   const NO_PCX_RUN = hasFlag('no-pcx-run');
   // Prototype folds under measurement, both off unless asked for.
   const ALU8_SIB = hasFlag('alu8-sib');
@@ -233,7 +233,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // a typo would otherwise be an A/B of a build against itself.
   const FOLD_SETTERS = {
     'case-chain': 'set_case_chain', 'rle-run': 'set_rle_run', 'rect-run': 'set_rect_run',
-    'smk-tree': 'set_smk_tree', 'pcx-run': 'set_pcx_run',
+    'pcx-run': 'set_pcx_run',
     'ck-lut16': 'set_ck_lut16', 'ck-copy8': 'set_ck_copy8',
     'ck-blend16': 'set_ck_blend16', 'ck-shadow16': 'set_ck_shadow16',
     'aoe-fill': 'set_loop_aoe_fill_emit', 'aoe-span': 'set_loop_aoe_span_emit',
@@ -340,7 +340,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
     if (NO_JUMP_TABLE) inheritWasm('set_jump_table', 0);
     if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
-    if (NO_SMK_TREE) inheritWasm('set_smk_tree', 0);
     if (NO_PCX_RUN) inheritWasm('set_pcx_run', 0);
     if (ALU8_SIB) inheritWasm('set_alu8_sib', 1);
     if (IMPLODE_CMP_RUN) inheritWasm('set_implode_cmp_run', 1);
@@ -507,9 +506,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (NO_RLE_RUN && instance.exports.set_rle_run) {
       instance.exports.set_rle_run(0);
-    }
-    if (NO_SMK_TREE && instance.exports.set_smk_tree) {
-      instance.exports.set_smk_tree(0);
     }
     if (NO_PCX_RUN && instance.exports.set_pcx_run) {
       instance.exports.set_pcx_run(0);

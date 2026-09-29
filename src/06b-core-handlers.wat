@@ -2681,121 +2681,12 @@
         (global.set $eip (local.get $exit_eip))))
     (return_call $branch_end))
 
-  ;; 461: the Smacker one-bit Huffman descent, matched from raw x86 by
-  ;; $try_emit_smk_tree_walk, which documents the three-block diamond this
-  ;; replaces and why it is matched there rather than by the self-loop
-  ;; matcher. Per tree level the interpreter pays two or three block transfers
-  ;; and eleven or twelve dispatches; here a level is one $gl32 and a 64-bit
-  ;; shift.
-  ;;
-  ;; The bit accumulator is an MMX register and is read and written through
-  ;; $mmx_get/$mmx_set, so the MMX state this leaves behind is exactly what
-  ;; the scalar $th_mmx_rr and shift handlers would have left -- the guest's
-  ;; refill path reads it again the moment the descent ends.
-  ;;
-  ;; Bounded at $SMK_TREE_MAX_LEVELS: an accumulator holds 64 bits and a walk
-  ;; consumes one a level, so a longer descent is reading bits that are not
-  ;; there. A run that reaches the cap parks at the HEAD, which is safe only
-  ;; because it has made real progress first; an immediate bail to the head
-  ;; would re-enter this handler in the same state and spin.
-  (func $th_smk_tree_walk (param $op i32)
-    (local $tp i32) (local $head_eip i32) (local $exit_eip i32)
-    (local $sh i32) (local $mask i32) (local $alt i32)
-    (local $N i32) (local $P i32) (local $SCR i32) (local $B8 i32)
-    (local $K i32) (local $M i32)
-    (local $n i32) (local $p i32) (local $scr i32) (local $b i32) (local $k i32)
-    (local $acc i64) (local $cf i32)
-    (local $levels i32) (local $cost i32) (local $blocks i32) (local $capped i32)
-    (local.set $tp (global.get $ip))
-    (local.set $head_eip (i32.load           (local.get $tp)))
-    (local.set $exit_eip (i32.load offset=4  (local.get $tp)))
-    (local.set $sh       (i32.load offset=8  (local.get $tp)))
-    (local.set $mask     (i32.load offset=12 (local.get $tp)))
-    (local.set $alt      (i32.load offset=16 (local.get $tp)))
-    (global.set $ip (i32.add (local.get $tp) (i32.const 20)))
-
-    (local.set $N   (i32.and                 (local.get $op)                   (i32.const 0xF)))
-    (local.set $P   (i32.and (i32.shr_u (local.get $op) (i32.const 4))  (i32.const 0xF)))
-    (local.set $SCR (i32.and (i32.shr_u (local.get $op) (i32.const 8))  (i32.const 0xF)))
-    (local.set $B8  (i32.and (i32.shr_u (local.get $op) (i32.const 12)) (i32.const 0xF)))
-    (local.set $K   (i32.and (i32.shr_u (local.get $op) (i32.const 16)) (i32.const 0xF)))
-    (local.set $M   (i32.and (i32.shr_u (local.get $op) (i32.const 20)) (i32.const 0xF)))
-
-    (local.set $n   (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $N) (i32.const 2)))))
-    (local.set $p   (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $P) (i32.const 2)))))
-    (local.set $b   (call $get_reg8  (local.get $B8)))
-    (local.set $k   (call $get_reg16 (local.get $K)))
-    (local.set $acc (call $mmx_get   (local.get $M)))
-
-    (block $done (loop $level
-      ;; shr N,sh / and N,mask -- the bit==1 child offset, computed before the
-      ;; bit is known and discarded by the bit==0 arm exactly as the x86 does.
-      (local.set $n (i32.and (i32.shr_u (local.get $n) (local.get $sh))
-                             (local.get $mask)))
-      ;; dec B8 -- an 8-bit decrement, so it wraps at 0 and never touches the
-      ;; other three bytes of its 32-bit register.
-      (local.set $b (i32.and (i32.sub (local.get $b) (i32.const 1))
-                             (i32.const 0xFF)))
-      ;; movd SCR,mm / psrlq mm,1 / shr SCR,1 -- GETBITS(1). CF comes from the
-      ;; SCALAR shift, which is why the accumulator's low bit is read out of
-      ;; the copy rather than out of the MMX register after the shift.
-      (local.set $scr (i32.wrap_i64 (local.get $acc)))
-      (local.set $acc (i64.shr_u (local.get $acc) (i64.const 1)))
-      (local.set $cf (i32.and (local.get $scr) (i32.const 1)))
-      (local.set $scr (i32.shr_u (local.get $scr) (i32.const 1)))
-      (if (i32.eqz (local.get $cf))
-        (then
-          (local.set $n (local.get $alt))
-          ;; head (7 ops) + the bit==0 arm's extra dispatch and block
-          (local.set $cost (i32.add (local.get $cost) (i32.const 12)))
-          (local.set $blocks (i32.add (local.get $blocks) (i32.const 3))))
-        (else
-          (local.set $cost (i32.add (local.get $cost) (i32.const 11)))
-          (local.set $blocks (i32.add (local.get $blocks) (i32.const 2)))))
-      ;; add P,N / mov N,[P] -- one level down the tree
-      (local.set $p (i32.add (local.get $p) (local.get $n)))
-      (local.set $n (call $gl32 (local.get $p)))
-      (local.set $levels (i32.add (local.get $levels) (i32.const 1)))
-      ;; cmp K16,N16 / jz head -- a leaf ends the descent
-      (br_if $done (i32.ne (i32.and (local.get $k) (i32.const 0xFFFF))
-                           (i32.and (local.get $n) (i32.const 0xFFFF))))
-      (if (i32.ge_u (local.get $levels) (global.get $SMK_TREE_MAX_LEVELS))
-        (then (local.set $capped (i32.const 1)) (br $done)))
-      (br $level)))
-
-    (global.set $block_budget
-      (i32.sub (global.get $block_budget) (local.get $blocks)))
-    (global.set $steps (i32.sub (global.get $steps)
-      (i32.add (local.get $cost) (i32.const 1))))
-    ;; Two MMX instructions a level, so the MMX execution census keeps meaning
-    ;; what it meant before the fold existed.
-    (global.set $mmx_exec_count (i32.add (global.get $mmx_exec_count)
-      (i32.shl (local.get $levels) (i32.const 1))))
-    (global.set $smk_tree_runs (i32.add (global.get $smk_tree_runs) (i32.const 1)))
-    (global.set $smk_tree_levels
-      (i64.add (global.get $smk_tree_levels) (i64.extend_i32_u (local.get $levels))))
-
-    (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $N) (i32.const 2))) (local.get $n))
-    (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $P) (i32.const 2))) (local.get $p))
-    (i32.store (i32.add (global.get $reg_base) (i32.shl (local.get $SCR) (i32.const 2))) (local.get $scr))
-    (call $set_reg8 (local.get $B8)  (local.get $b))
-    (call $mmx_set  (local.get $M)   (local.get $acc))
-    ;; K is the marker and is never written.
-    (if (local.get $capped)
-      (then
-        ;; No flags: the head's own `shr` and the descent's `cmp` overwrite
-        ;; whatever this level left, exactly as the x86 does.
-        (global.set $eip (local.get $head_eip)))
-      (else
-        ;; The descent fell out of `cmp K16,N16`, a SIXTEEN-bit compare -- the
-        ;; guest's leaf handling reads ZF and SF from it.
-        (call $set_flags_sub
-          (i32.and (local.get $k) (i32.const 0xFFFF))
-          (i32.and (local.get $n) (i32.const 0xFFFF))
-          (i32.and (i32.sub (local.get $k) (local.get $n)) (i32.const 0xFFFF)))
-        (global.set $flag_sign_shift (i32.const 15))
-        (global.set $eip (local.get $exit_eip))))
-    (return_call $branch_end))
+  ;; A handler slot whose game-specific fold was retired because the uop tier
+  ;; runs the same loop at least as fast (docs/uop-tier-design.md section 18).
+  ;; The decoder never emits it; the slot stays so every later handler index
+  ;; keeps its number.
+  (func $th_retired_fold (param $op i32)
+    (unreachable))
 
   ;; 462: Quake II's PCX/WAL run expander, matched from raw x86 by
   ;; $try_emit_pcx_run, which documents the five-block diamond this replaces

@@ -730,11 +730,10 @@ const smkReader = (a) => {
     L('S'), [0x03, 0xCA], [0x8B, 0x11], [0x66, 0x3B, 0xDA], J(cc.Z, 'C'),
     L('E'), [0xA2, ...d32(s.v)], [0x8B, 0xC2], [0x31, 0x05, ...d32(s.v + 16)], 0xC3];
 };
-// Label C is also exactly the shape threaded code folds into one
-// $th_smk_tree_walk, which charges the clock per tree level rather than per
-// branch. A program that compiled the descent stopped on other instructions
-// than threaded code under --branch-clock (StarCraft's Smacker frames); the
-// compiler must end the trace in front of C.
+// Label C is the Smacker one-bit Huffman descent that threaded code used to
+// fold into one $th_smk_tree_walk (retired, docs/uop-tier-design.md section
+// 18). The trace now compiles the descent; it must stay exact against the
+// threaded tier running it instruction by instruction.
 CASES.push({ name: 'mmx-smk-trace', regs: { edi: N }, trace: true, head: 'f', setup: smkSetup, code: smkReader });
 // pmovmskb is not lowered: the loop must decline and still be exact. And
 // the whole family off (--no-uop-mmx) declines the ordinary ALU loop.

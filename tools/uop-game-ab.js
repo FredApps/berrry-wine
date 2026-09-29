@@ -397,7 +397,7 @@ async function main() {
     ARMS[spec.slice(0, eq)] = [...ARMS.uop, ...spec.slice(eq + 1).split(/\s+/).filter(Boolean)];
   }
   // --arm-off=NAME=FLAGS: the same on the off (--no-uop) arm, e.g. the
-  // fold-off control of a fold A/B: --arm-off='nosmkoff=--no-fold=smk-tree'.
+  // fold-off control of a fold A/B: --arm-off='nopcxoff=--no-fold=pcx-run'.
   for (const a of process.argv.filter(s => s.startsWith('--arm-off='))) {
     const spec = a.slice(10), eq = spec.indexOf('=');
     if (eq <= 0) throw new Error(`bad ${a}`);

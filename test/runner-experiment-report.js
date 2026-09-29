@@ -420,15 +420,9 @@ function reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LO
         log(`loopmatch: ${label} AoE span prefixes`,
           e.get_loop_aoe_span_matches(), 'runs', e.get_loop_aoe_span_runs());
       }
-      // The two stream-idiom folds. `levels`/`tokens` are guest iterations,
-      // so multiplying them by the per-iteration op cost in §20 of the design
-      // note gives the ops a --handler-hist no longer sees.
-      if (e.get_smk_tree_runs) {
-        log(`loopmatch: ${label} SMK_TREE blocks`,
-          e.get_smk_tree_matches(), 'armed', e.get_smk_tree() ? 'yes' : 'no',
-          'runs', e.get_smk_tree_runs(),
-          'levels', String(e.get_smk_tree_levels()));
-      }
+      // The stream-idiom fold. `tokens` are guest iterations, so multiplying
+      // them by the per-iteration op cost in §20 of the design note gives the
+      // ops a --handler-hist no longer sees.
       if (e.get_pcx_run_runs) {
         log(`loopmatch: ${label} PCX_RUN blocks`,
           e.get_pcx_run_matches(), 'armed', e.get_pcx_run() ? 'yes' : 'no',

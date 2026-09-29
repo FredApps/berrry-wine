@@ -1,17 +1,15 @@
 #!/usr/bin/env node
 'use strict';
 
-// The two stream-idiom folds of docs/loop-idiom-superops-design.md §20:
-//
-//   461  $th_smk_tree_walk -- the Smacker one-bit Huffman descent, copied
-//        verbatim out of StarCraft's smackw32.dll at 0x1000efad. That body is
-//        byte-identical five times in that DLL and appears in seven different
-//        SMACKW32.DLLs in test/binaries; with its two arms the pair at
-//        0x1000efad/0x1000eecd is 16.9% of the starcraft-loading window.
+// The stream-idiom fold of docs/loop-idiom-superops-design.md §20:
 //
 //   462  $th_pcx_run -- Quake II's PCX/WAL run expander, copied verbatim out
 //        of ref_soft.dll at 0x1000580c. Its five blocks are 24.6% of the
 //        quake2-loading window.
+//
+// (Its sibling, 461 SMK_TREE, the Smacker one-bit Huffman descent, is retired:
+// the uop tier runs that loop at least as fast, docs/uop-tier-design.md
+// section 18. test-uop-compiler.js's mmx-smk-trace case keeps the descent.)
 //
 // The interpreter is the oracle throughout: every case runs twice over
 // identical inputs, folded and unfolded, and the two must agree on memory and
@@ -19,12 +17,6 @@
 // with a wrong hand-written expectation. The cases that matter are the ones a
 // closed-form executor is most likely to get wrong:
 //
-//   * bit-buffer state at EVERY exit -- MM0 after N single-bit shifts, the
-//     8-bit counter that wraps rather than borrowing into its high bytes, and
-//     the SIXTEEN-bit compare the guest's leaf handling reads flags from;
-//   * a descent long enough to hit the iteration cap, and to run on past it
-//     with the accumulator already empty (the arm that is never taken in a
-//     healthy Smacker stream and is exactly where a cap bug would hide);
 //   * run lengths 0, 1, a non-multiple of four and the 63-byte maximum, since
 //     the fill is a `rep stosd` plus a `rep stosb` tail and only a length
 //     with a remainder exercises both;
@@ -41,28 +33,8 @@ const { bootRenderHarness } = require('./render-helper');
 const EXTRA_WAT = `
   (func (export "test_sf_zf") (result i32)
     (i32.or (call $get_zf) (i32.shl (call $get_sf) (i32.const 1))))
-  (func (export "test_set_mm0") (param $v i64) (call $mmx_set (i32.const 0) (local.get $v)))
-  (func (export "test_get_mm0") (result i64) (call $mmx_get (i32.const 0)))
   (func (export "test_set_df") (param $v i32) (global.set $df (local.get $v)))
 `;
-
-// smackw32.dll+0x1000efad, 37 bytes. Both branches are rel8 inside the body,
-// and the only immediates are the shift count, the mask and the sibling
-// offset, so it may be planted at any address.
-const SMK = Uint8Array.from([
-  0xc1, 0xea, 0x0d,                    // head:    shr   edx, 0xd
-  0xfe, 0xc8,                          //          dec   al
-  0x81, 0xe2, 0xf8, 0xff, 0x0f, 0x00,  //          and   edx, 0xffff8
-  0x0f, 0x7e, 0xc5,                    //          movd  ebp, mm0
-  0x0f, 0x73, 0xd0, 0x01,              //          psrlq mm0, 1
-  0xc1, 0xed, 0x01,                    //          shr   ebp, 1
-  0x72, 0x05,                          //          jb    descend
-  0xba, 0x04, 0x00, 0x00, 0x00,        //          mov   edx, 4
-  0x03, 0xca,                          // descend: add   ecx, edx
-  0x8b, 0x11,                          //          mov   edx, [ecx]
-  0x66, 0x3b, 0xda,                    //          cmp   bx, dx
-  0x74, 0xdb,                          //          jz    head
-]);
 
 // ref_soft.dll+0x1000580c, 108 bytes, matched by FNV-1a body hash.
 const PCX = Uint8Array.from(Buffer.from(
@@ -70,14 +42,6 @@ const PCX = Uint8Array.from(Buffer.from(
   '89542410eb05b9010000008bf14985f67e2c8d3c2b8ad88d71018afb8bce8bc3' +
   '8bd1c1e010668bc38b5c2418c1e902f3ab8bca83e10303eef3aa8b5424108b4c' +
   '241433c0668b41083be87e94', 'hex'));
-
-// Internal nodes carry the marker in their low half and the bit==1 child
-// offset in bits 13 and up: (off << 13) | marker, with `and 0xffff8` keeping
-// the offset a multiple of eight. A leaf is anything whose low half is not
-// the marker.
-const MARKER = 0x1234;
-const INTERNAL = ((8 << 13) | MARKER) >>> 0;   // >> 13 & 0xffff8 == 8
-const LEAF = 0x99990042 >>> 0;
 
 (async () => {
   const { exports: e, memory } = await bootRenderHarness({ extraWat: EXTRA_WAT, fonts: 'none' });
@@ -90,7 +54,6 @@ const LEAF = 0x99990042 >>> 0;
   const wa = ga => (ga - imageBase + guestBase) >>> 0;
 
   const arena = e.guest_alloc(0x8000) >>> 0;
-  const nodes = arena;             // 0x2000 bytes of Huffman tree
   const stack = arena + 0x2000;    // the PCX frame
   const srcBuf = arena + 0x3000;
   const dstBuf = arena + 0x4000;
@@ -115,121 +78,6 @@ const LEAF = 0x99990042 >>> 0;
     for (let i = 0; i < limit && (e.get_eip() >>> 0) !== (exitEip >>> 0); i++) e.run(1);
     assert.strictEqual(e.get_eip() >>> 0, exitEip >>> 0, 'the loop reached its exit');
   };
-
-  // ---------------------------------------------------------------- 461 ----
-  assert.strictEqual(e.get_smk_tree(), 1, 'the tree fold is on by default');
-
-  // leafAt is a byte offset from `nodes`; every other dword is internal, so a
-  // walk terminates exactly when its cursor lands on that one.
-  const plantTree = leafAt => {
-    const dv = new DataView(memory.buffer);
-    for (let off = 0; off < 0x2000; off += 4) dv.setUint32(wa(nodes + off), INTERNAL, true);
-    dv.setUint32(wa(nodes + leafAt), LEAF, true);
-  };
-
-  const EAX_SMK = 0xdead5540;   // AL = 0x40, and the other three bytes must not move
-  const EBX_SMK = (0x55550000 | MARKER) >>> 0;
-
-  const runWalk = (at, leafAt, mm0) => {
-    plantTree(leafAt);
-    plant(at, SMK);
-    e.set_eip(at);
-    e.set_ecx(nodes);
-    e.set_edx(INTERNAL);
-    e.set_ebx(EBX_SMK);
-    e.set_eax(EAX_SMK);
-    e.set_ebp(0xbeef0000);
-    e.test_set_mm0(mm0);
-    driveTo((at + SMK.length) >>> 0);
-    return {
-      ecx: e.get_ecx() >>> 0, edx: e.get_edx() >>> 0, ebp: e.get_ebp() >>> 0,
-      eax: e.get_eax() >>> 0, ebx: e.get_ebx() >>> 0,
-      mm0: e.test_get_mm0(), fl: e.test_sf_zf(),
-    };
-  };
-
-  const walkCase = (name, leafAt, mm0, checks) => {
-    const m0 = e.get_smk_tree_matches();
-    const lv0 = e.get_smk_tree_levels();
-    const folded = runWalk(nextCode(), leafAt, mm0);
-    assert.strictEqual(e.get_smk_tree_matches(), m0 + 1, `${name}: the grammar matched`);
-    const levels = Number(e.get_smk_tree_levels() - lv0);
-
-    e.set_smk_tree(0);
-    const plain = runWalk(nextCode(), leafAt, mm0);
-    assert.strictEqual(e.get_smk_tree_matches(), m0 + 1, `${name}: the switch really is off`);
-    e.set_smk_tree(1);
-
-    for (const k of ['ecx', 'edx', 'ebp', 'eax', 'ebx', 'fl']) {
-      assert.strictEqual(folded[k], plain[k], `${name}: ${k} matches the interpreter`);
-    }
-    assert.strictEqual(folded.mm0, plain.mm0,
-      `${name}: MM0 matches the interpreter -- the bit buffer is the state`);
-    checks(folded, levels);
-  };
-
-  // Three levels: bits 1,0,1 out of 0b101 walk +8, +4, +8 and land on 20.
-  walkCase('a three-level descent', 20, 0x5n, (r, levels) => {
-    assert.strictEqual(levels, 3, 'exactly three levels were walked');
-    assert.strictEqual(r.ecx, (nodes + 20) >>> 0, 'the cursor stopped on the leaf');
-    assert.strictEqual(r.edx, LEAF, 'the leaf value is what the walk carried out');
-    assert.strictEqual(r.eax & 0xff, 0x40 - 3, 'AL lost exactly one bit a level');
-    assert.strictEqual(r.eax >>> 8, EAX_SMK >>> 8,
-      'the other three bytes of EAX never moved -- this is an 8-bit dec');
-    assert.strictEqual(r.mm0, 0x5n >> 3n, 'MM0 was shifted once a level');
-    assert.strictEqual(r.fl & 1, 0, 'the 16-bit compare cleared ZF at the leaf');
-  });
-
-  // One level. The body is a do-while, so even an immediate leaf costs a bit.
-  walkCase('an immediate leaf', 8, 0x1n, (r, levels) => {
-    assert.strictEqual(levels, 1, 'one level');
-    assert.strictEqual(r.ecx, (nodes + 8) >>> 0, 'one bit==1 step of eight');
-    assert.strictEqual(r.eax & 0xff, 0x3f, 'AL decremented once');
-  });
-
-  // The bit==0 arm on its own: the fixed sibling offset of four.
-  walkCase('the bit==0 arm', 4, 0x0n, (r, levels) => {
-    assert.strictEqual(levels, 1, 'one level');
-    assert.strictEqual(r.ecx, (nodes + 4) >>> 0,
-      'a zero bit takes the fixed offset, not the one the node encodes');
-  });
-
-  // Past the iteration cap, and past the end of the accumulator with it: 64
-  // bits of ones walk 64 steps of eight, the cap fires, the fold re-enters at
-  // the head, and every later level reads a zero bit out of an empty buffer
-  // and takes the four-byte arm. 512 + 22*4 == 600.
-  walkCase('a descent that outruns the cap and the accumulator', 600,
-    0xffffffffffffffffn, (r, levels) => {
-      assert.strictEqual(levels, 86,
-        '64 eight-byte levels, then 22 four-byte ones on an empty accumulator');
-      assert.strictEqual(r.ecx, (nodes + 600) >>> 0, 'the cursor reached the leaf');
-      assert.strictEqual(r.mm0, 0n, 'the accumulator was shifted dry');
-      assert.strictEqual(r.eax & 0xff, (0x40 - 86) & 0xff,
-        'AL wrapped through zero rather than borrowing into AH');
-      assert(e.get_smk_tree_runs() >= 2,
-        'a capped descent re-entered the super-op rather than spinning');
-    });
-
-  // ---- 461 near misses ---------------------------------------------------
-  const nearMiss = (name, bytes) => {
-    const at = nextCode();
-    plantTree(20);
-    plant(at, bytes);
-    e.set_eip(at);
-    e.set_ecx(nodes); e.set_edx(INTERNAL); e.set_ebx(EBX_SMK); e.set_eax(EAX_SMK);
-    e.test_set_mm0(0x5n);
-    const before = e.get_smk_tree_matches();
-    e.run(1);
-    assert.strictEqual(e.get_smk_tree_matches(), before, name);
-  };
-  const patched = (i, ...v) => { const b = Uint8Array.from(SMK); b.set(v, i); return b; };
-  // A psrlq of two is not GETBITS(1): the scalar copy would see a bit the MMX
-  // register no longer holds.
-  nearMiss('a two-bit psrlq remains ordinary x86', patched(17, 0x02));
-  // The bit==0 arm loading a different register than the one the walk adds.
-  nearMiss('a mismatched sibling-offset register remains ordinary x86', patched(23, 0xb9));
-  // A back edge that does not return to the head is a different loop.
-  nearMiss('a broken back edge remains ordinary x86', patched(36, 0xdc));
 
   // ---------------------------------------------------------------- 462 ----
   assert.strictEqual(e.get_pcx_run(), 1, 'the PCX fold is on by default');
@@ -365,7 +213,7 @@ const LEAF = 0x99990042 >>> 0;
   pcxMiss('a body that differs only in the middle remains ordinary x86',
     pcxPatched(0x40, 0x90));
 
-  console.log('PASS stream-idiom superinstructions (461 SMK_TREE, 462 PCX_RUN)');
+  console.log('PASS stream-idiom superinstruction (462 PCX_RUN)');
 })().catch(error => {
   console.error(error.stack || error);
   process.exit(1);
