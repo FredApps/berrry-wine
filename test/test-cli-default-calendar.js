@@ -1,12 +1,14 @@
 #!/usr/bin/env node
 'use strict';
 
-// The CLI pins the guest calendar to 1999-06-01T12:00:00Z unless told
-// otherwise, so a guest that seeds from the time of day is the same run every
-// time. Notepad's F5 (Time/Date) calls GetLocalTime into a stack SYSTEMTIME;
-// the harness dumps it and we read wYear/wMonth/wDay.
-//   default              -> 1999-06-01
+// The CLI pins the guest calendar to 1999-06-01T12:00:00Z and the zone to
+// UTC unless told otherwise, so a guest that seeds from the time of day is the
+// same run every time on every machine. Notepad's F5 (Time/Date) calls
+// GetLocalTime into a stack SYSTEMTIME; the harness dumps it and we read
+// wYear/wMonth/wDay/wHour.
+//   default              -> 1999-06-01 12:xx
 //   --wall-clock-ms=N    -> the date N names
+//   --tz=Asia/Tokyo      -> 21:xx, the same instant in that zone
 //   --real-calendar      -> today's year
 
 const assert = require('assert');
@@ -25,15 +27,18 @@ function localDate(extra) {
   assert.strictEqual(r.status, 0, `run.js ${extra.join(' ')} exited ${r.status}\n${r.stderr}`);
   const line = r.stdout.split('\n').find((l) => l.trim().toLowerCase().startsWith(SYSTEMTIME));
   assert(line, `no SYSTEMTIME dump in output for ${extra.join(' ')}`);
-  const b = line.trim().split(/\s+/).slice(1, 9).map((h) => parseInt(h, 16));
-  return { year: b[0] | (b[1] << 8), month: b[2] | (b[3] << 8), day: b[6] | (b[7] << 8) };
+  const b = line.trim().split(/\s+/).slice(1, 11).map((h) => parseInt(h, 16));
+  return { year: b[0] | (b[1] << 8), month: b[2] | (b[3] << 8), day: b[6] | (b[7] << 8), hour: b[8] | (b[9] << 8) };
 }
 
 const def = localDate([]);
-assert.deepStrictEqual(def, { year: 1999, month: 6, day: 1 }, 'default calendar is pinned to 1999-06-01');
+assert.deepStrictEqual(def, { year: 1999, month: 6, day: 1, hour: 12 }, 'default calendar is pinned to 1999-06-01 12:00 UTC');
+
+const tokyo = localDate(['--tz=Asia/Tokyo']);
+assert.deepStrictEqual(tokyo, { year: 1999, month: 6, day: 1, hour: 21 }, '--tz moves local time, not the instant');
 
 const pinned = localDate(['--wall-clock-ms=' + Date.parse('2003-02-10T12:00:00Z')]);
-assert.deepStrictEqual(pinned, { year: 2003, month: 2, day: 10 }, '--wall-clock-ms wins over the default');
+assert.deepStrictEqual(pinned, { year: 2003, month: 2, day: 10, hour: 12 }, '--wall-clock-ms wins over the default');
 
 const real = localDate(['--real-calendar']);
 assert.strictEqual(real.year, new Date().getFullYear(), '--real-calendar gives today\'s year');

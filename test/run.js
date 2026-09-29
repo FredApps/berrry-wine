@@ -1010,6 +1010,15 @@ const REAL_CALENDAR = hasFlag('real-calendar');
 const CALENDAR_ORIGIN_MS = WALL_CLOCK_MS ||
   (APP_ENTRY && APP_ENTRY.wallClock ? Date.parse(APP_ENTRY.wallClock) : 0) ||
   (REAL_CALENDAR || REAL_TICKS ? 0 : DEFAULT_CALENDAR_MS);
+// The guest's local time is this process's Date local time, so a pinned
+// calendar still read 05:00 on a PDT laptop and 12:00 on a UTC box. Pin the
+// zone too: UTC by default, which also agrees with GetTimeZoneInformation's
+// zero bias. --tz=NAME picks an IANA zone; --real-timezone (or --real-calendar
+// / --real-ticks) keeps the host's. Node re-reads TZ on assignment, and guest
+// thread workers share this process's zone.
+const TZ_ARG = getArg('tz', '');
+if (TZ_ARG) process.env.TZ = TZ_ARG;
+else if (!(hasFlag('real-timezone') || REAL_CALENDAR || REAL_TICKS)) process.env.TZ = 'UTC';
 // 1 = smooth pacing (also the WAT default), 0 = deadline. Always pushed, to
 // the main instance and every guest-thread instance.
 const PRESENT_PACE_MODE = (PRESENT_PACE || (APP_ENTRY && APP_ENTRY.presentPace) || 'smooth') === 'deadline' ? 0 : 1;
