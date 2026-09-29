@@ -27,6 +27,7 @@ const extraWat = String.raw`
     (call $virtual_map_commit (local.get $guest) (local.get $size)))
   (func (export "test_page_probe") (param $guest i32) (result i32)
     (call $page_probe (local.get $guest)))
+  (func (export "test_alpha_runs") (result i32) (global.get $loop_rgb565_alpha_runs))
 `;
 
 const le32 = value => [value, value >>> 8, value >>> 16, value >>> 24].map(v => v & 0xff);
@@ -100,7 +101,49 @@ async function main() {
     assert.strictEqual((e.get_page_retires() >>> 0) - retires0, 0,
       `${shape.name}: alternating entries must not retire each other`);
   }
-  console.log('PASS  a fused load run stops at an already-compiled entry instead of retiring it');
+  // Authentic MW3 RGB565 loop (0x528064): micro-op side exits can enter its
+  // opaque or blended store independently of the native whole-loop fold.
+  const alphaLoop = Buffer.from(
+    '8b4d0c8a0980f9030f868500000080f9fc7209668b0c38668908eb77' +
+    '0fbf300fbf14388bf98bca8bc681e100f800002500f800008bde2bc88bc2' +
+    '25e007000081e3e007000081e7ff0000002bc30fafc70fafcfc1f808c1f908' +
+    '24e081e100f8ffffa90000008074040c20eb0224df03f183e21f8bce8b5df4' +
+    '83e11f2bd10fafd78b7de4c1fa0803d08b45e003f28b55ec668930' +
+    '8b750c8b4de883c00246498945e089750c894de80f8553ffffff', 'hex');
+  assert.strictEqual(alphaLoop.length, 0xad);
+  e.set_loop_copy_emit(1);
+  for (const offset of [0x17, 0x90]) {
+    const code = page;
+    page += 0x1000;
+    assert.strictEqual(e.test_sparse_map_for_code(code, 0x1000) >>> 0, code);
+    [...alphaLoop, 0xc3].forEach((byte, i) => e.guest_write8(code + i, byte));
+    const bp = stack + 0x100, dst = stack + 0x200, src = stack + 0x220, alpha = stack + 0x240;
+    const execute = entry => {
+      e.set_esp(stack); e.guest_write32(stack, 0); e.set_ebp(bp);
+      e.set_eax(dst); e.set_ecx(0x5aa5); e.set_esi(0x5aa5); e.set_edi(src - dst);
+      e.guest_write32(bp - 0x20, dst); e.guest_write32(bp + 12, alpha);
+      e.guest_write32(bp - 0x18, 1); e.guest_write32(bp - 0x1c, src - dst);
+      e.guest_write32(src, 0x5aa5); e.guest_write32(dst, 0); e.guest_write8(alpha, 255);
+      e.set_eip(entry); e.run(1000);
+      assert.strictEqual(e.get_eip() >>> 0, 0, 'alpha row returns');
+      assert.strictEqual(new DataView(memory.buffer).getUint16(e.guest_to_wasm(dst), true), 0x5aa5,
+        'whole-loop and interior-store entries produce the same pixel');
+    };
+    const runs = e.test_alpha_runs();
+    execute(code);
+    assert(e.test_alpha_runs() > runs, 'cold row still uses the native alpha fold');
+    execute(code + offset);
+    execute(code);
+    for (let n = 0; n < 16; n++) { execute(code + offset); execute(code); }
+    const retires = e.get_page_retires();
+    const stores = e.get_cache_stores();
+    for (let n = 0; n < 12; n++) { execute(code + offset); execute(code); }
+    assert.strictEqual(e.test_page_probe(code), 1, 'alpha head stays compiled');
+    assert.strictEqual(e.test_page_probe(code + offset), 1, 'alpha interior stays compiled');
+    assert.strictEqual(e.get_page_retires() - retires, 0, 'alpha entries must not repeatedly retire each other');
+    assert.strictEqual(e.get_cache_stores() - stores, 0, 'warmed alpha entries must not be re-decoded');
+  }
+  console.log('PASS  load and alpha folds preserve independently compiled interior entries');
 }
 
 main().catch(error => {

@@ -1009,3 +1009,72 @@ alpha, e.g. `0xd4`).
 dark terrain counted as near-black, and 85k-140k matched a transitional frame
 at batch ~882. Loading frames are ~183k near-black and the corrected cockpit
 ~42k on both arms (GPU 43.3k), so the window is now 30k-70k. Both modes pass.
+
+### 2026-09-28: selective page tracking, remote menu A/B
+
+Compared `ff6dc0f4` with its parent on quiet remote box 8, headful Chrome and
+real Workers, in A/A/B/B/A order. Two 15-second windows after 60 seconds of
+settling showed 23.92/42.72, 23.98/43.07, 23.24/32.46, 24.26/42.06 and
+24.20/32.33 guest presents per second. Captures show the animated menu;
+the slow second window occurs with and without tracking. Mean difference
+(-3.8%) is smaller than the baseline repeat spread (15.7%): no causal
+dirty-tracking regression established, and no claim of zero overhead.
+Zero texture uploads/comparisons in these windows; framebuffer byte checks
+total only about 4-5 ms per second window. Do not attribute menu slowness to
+gigabytes of texture checks. Full method, limitations, artifacts and commands:
+[dirty tracking measurements](../d3dim-dirty-tracking-perf.md#mechwarrior-iii-menu-remote-regression-check-2026-09-28).
+
+The browser harness needs `?debug` to retain MW3 in this snapshot's picker.
+Waiting for present counts alone is not a menu gate: the startup fade also
+presents. Earlier failed-launch/startup probes were excluded.
+
+Follow-up 2026-09-29: four 60-second per-present captures in A/B/B/A order
+show pooled 23.00/s before vs 21.99/s after, median 43.0/45.3 ms and p95
+79.6/80.5 ms. Each run has one ~1.01s and one ~5.00s presentation gap, then
+a burst of presents; the last 30 seconds run near 13/s in both arms. Pacing
+is not stable. The longer samples suggest modest tracking overhead (-4.4%
+average), but the large gaps predate it. Intentional guest wait vs emulator
+stall remains untraced. Raw timestamps and full table are in the linked report.
+
+### 2026-09-29: gaps are scripted WAIT; active menu has a decode storm
+
+The uncertainty above is resolved. The `ATTRACT` script in `reader.zbd`
+(offset `0x3487a`) explicitly runs `WAIT 1.0` and `WAIT 5.0`, around a splash
+image. Parser `0x562dd0` matches the `WAIT` string at `0x5bc2c4`, constructs
+vtable `0x599cd8`, and its method `0x563c60` polls elapsed time without drawing.
+Guest samples during the gap hit `0x563c73`, the dispatcher `0x5633f0`, input
+polling and the timer/message loop. Zero sleep/wait yields. These long gaps
+are guest animation pacing; the unattended menu benchmark entered attract
+mode. They must not be described as emulator freezes.
+
+The slow active menu is different: whole-loop alpha fold `0x528064..0x528111`
+and internal entries `0x5280f4` / `0x52807b` repeatedly retire one another.
+A bounded trace captures 1,000 such retirements, all with `in_code_write=0`.
+The interior entries can be entered by micro-op fallback. The whole-loop
+matcher lacks the interior-entry protection that smaller folds use.
+29 seconds of slow animation rebuilt 47.6M blocks and retired 47.0M.
+Worker profile: 22.84% publishing, 12.74% decoding, 11.82% alpha recognition.
+This is cache churn, not megabytes of texture checking. The alpha matcher now
+uses `$fuse_stop` to preserve independently compiled interior entries, while
+retaining the native fold for cold loops. The authentic-loop overlap test
+fails before the fix and passes afterwards (both stores, correct pixels,
+zero warmed recompiles/retirements). Full isolated build and code-write
+regression pass.
+
+Unprofiled remote ABBA on pinned `ff6dc0f4` versus only this guard improves
+30-second throughput from 29.06/31.39 to 76.82/73.55 guest presents/s (2.49x
+mean), reducing retirements from ~36.3M to ~3.8M per window. These windows
+still include scripted waits; small periodic mouse movements did not stop
+attract mode. See the linked report for frame-time percentiles and phase
+limitations. This fixes the alpha-fold conflict, not every remaining retirement.
+
+The benchmark also had a repeated GPU-name query costing 7.6% sampled worker
+time. Fixed in the bench tool by caching once per GL context; prior rates
+include that artificial overhead. See the full linked report for artifacts,
+named-build verification, and corrected profiling limitations.
+
+The separate active-animation pair (`--warmup-ms=95000`, 30-second capture)
+contains no scripted gaps: 14.59 → 78.74 presents/s; median 70.49 → 13.42 ms;
+p95 74.96 → 18.04 ms; worst 80.00 → 31.53 ms. All 437 control intervals
+exceed 50 ms, versus none of 2,362 fixed intervals. Per-second fixed counts
+still vary 60–151 with the animation. Retirements fall 47.69M → 2.18M.

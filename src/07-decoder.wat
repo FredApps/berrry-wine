@@ -2002,6 +2002,12 @@
     (local.set $end (i32.add (local.get $start_eip) (i32.const 0xAD)))
     (local.set $hash (i32.const 0x811c9dc5))
     (loop $hash_bytes
+      ;; A micro-op side exit may have compiled an interior store separately.
+      ;; Preserve that entry instead of publishing a whole-row fold over it:
+      ;; the two otherwise retire and re-decode each other on every pixel.
+      (if (i32.and (i32.ne (local.get $p) (local.get $start_eip))
+                    (call $fuse_stop (local.get $p)))
+        (then (return (i32.const 0))))
       (local.set $hash
         (i32.mul
           (i32.xor (local.get $hash) (call $gl8 (local.get $p)))

@@ -84,6 +84,236 @@ node tools/bench-d3dim-gameplay.js --app=nfs3_demo --audit --label=audit --secon
 node tools/bench-d3dim-gameplay.js --app=gta2_demo --label=tracked --seconds=15 --windows=2
 ```
 
+## MechWarrior III menu: remote regression check (2026-09-28)
+
+Compared the complete tracker commit `ff6dc0f4` against its parent `76c548ed`
+on reserved box 8, in isolated `~/mw3-watch-ab`. Each arm used its own compiled
+WASM, GPU executor and generated region map; common host files came from the
+tracker snapshot. Later main-branch optimizations were excluded from both arms.
+Headful Chrome 151, real guest Workers, 1024x768 viewport, four remote vCPUs
+(Ryzen 9950X reported), no concurrent benchmark. The renderer reported ANGLE /
+Intel UHD 620 / Mesa in every measured window. Although `--swiftshader` was
+requested, that is **not** what the runtime reported; do not describe this as
+a verified SwiftShader run or extrapolate these rates to Safari.
+
+Route: `?debug&threads&d3dim-gpu`, launch `mw3`, wait for 120 DirectDraw presents,
+settle for 60 seconds, then two 15-second windows. Captures confirm the animated
+main menu. `dx_trace` kind 5 counts guest presents, not unique displayed frames.
+All five runs completed both windows with no page errors or GPU errors.
+
+| Run order | Tracker | Window 1 presents/s | Window 2 presents/s |
+|---|---|---:|---:|
+| before-a | off | 23.92 | 42.72 |
+| before-b | off | 23.98 | 43.07 |
+| after-a | on | 23.24 | 32.46 |
+| after-b | on | 24.26 | 42.06 |
+| before-c | off | 24.20 | 32.33 |
+
+The two-window run means average 31.70 without tracking and 30.50 with it
+(-3.8%), but the baseline's own repeated-run spread is 15.7%. The slow second
+window occurs in both arms. **This does not establish a regression, nor prove
+zero overhead.** Fixed wall windows cover a variable amount of the animated
+menu: second-window GPU draws range from 340 to 506. A tighter attribution
+needs a matched animation phase or longer route plus CPU profiling.
+
+There were zero texture uploads and zero texture-byte comparisons in every
+measured window. GPU framebuffer comparisons cost only 4.08-5.14 ms across
+each entire second window (zero in the first), so removing texture scans
+cannot substantially speed up this menu route. Watched-page store barriers
+remain a possible CPU cost, not a demonstrated cause from this experiment.
+
+Artifacts: `build/mw3-watch-ab-results/mw3-{before-a,before-b,after-a,after-b,before-c}/`
+contains manifests, checksums, counters and start/end captures. The remote
+directory also retains pinned runtime artifacts and both build inputs.
+Earlier `before-probe` / `before-1` failed launch, and `before-2` overlapped
+startup; none are included in the table.
+
+Example baseline command, from the isolated remote directory:
+
+```sh
+DISPLAY=:0 CHROME=/usr/bin/google-chrome node tools/bench-d3dim-gameplay.js \
+  --app=mw3 --label=before-a --wasm=build/watch-ab/before.wasm \
+  --gpu-source=before/lib/d3dim-gpu.js --region-map=before/lib/region-map.generated.js \
+  --swiftshader --seconds=15 --windows=2
+```
+
+### Individual present intervals (2026-09-29)
+
+**Interpretation corrected by the investigation below:** the long gaps are
+scripted ATTRACT waits, not rendering stalls. The idle route crossed animation
+phases, and the original benchmark also queried the GPU renderer name on every
+stats snapshot. Preserve these raw measurements as historical evidence, not
+as clean shipping-runtime FPS or a precise dirty-tracking cost estimate.
+
+Repeated the pinned comparison with `--frame-times --seconds=60 --windows=1`
+in A/B/B/A order. Each launch again settled for 60 seconds. The worker records
+`performance.now()` at each kind-5 present into a preallocated 120,000-entry
+Float64Array; it is read only after measurement. Screenshots and CPU profiles
+are outside the timed interval (profiles disabled). No overflow, page errors
+or GPU errors. These are guest-present intervals, not unique browser scanouts.
+
+| Run order | Tracker | Presents/s | Median ms | p95 ms | p99 ms | Longest gap ms |
+|---|---|---:|---:|---:|---:|---:|
+| before-interval1 | off | 22.88 | 42.92 | 80.02 | 83.80 | 5000.15 |
+| after-interval1 | on | 21.61 | 46.04 | 81.16 | 84.54 | 5002.52 |
+| after-interval2 | on | 22.36 | 44.26 | 80.16 | 84.81 | 4999.97 |
+| before-interval2 | off | 23.11 | 43.07 | 78.96 | 83.04 | 4999.42 |
+
+Pooled: **23.00 presents/s before, 21.99 after (-4.38%)**, median 43.00/45.30 ms,
+p95 79.57/80.54 ms, p99 83.50/84.75 ms. The control repeat spread is about 1%,
+the candidate spread about 3.4%. Both candidate averages are lower in this
+small repeated sample, suggesting modest overhead; do not treat -4.38% as a
+precise universal cost. The final 30 seconds average **13.17/13.08 presents/s**.
+
+Every run contains exactly two gaps over 100 ms: one approximately 1.01 seconds
+and one approximately 5.00 seconds, followed by a brief burst of presents.
+The 5-second gap accounts for four complete zero-present one-second bins in
+each capture. Intervals over 50 ms: 1187/2758 before and 1200/2637 after.
+The menu pacing is therefore **not stable**. The large pauses occur without
+tracking too; whether these are intentional game waits or emulator stalls
+requires tracing and is not established by timestamps alone. Burst present
+counts also explain why earlier short-window rates overstated sustained pace.
+
+Raw captures: `build/mw3-watch-ab-results/mw3-{before,after}-interval{1,2}/`
+(`window-0-frame-times.json`, `results.json`, start/end PNGs, console).
+Aggregated results: `build/mw3-watch-ab-results/frame-time-summary.json`.
+Interval differences were independently checked against the stored timestamps.
+
+### Gap and low-FPS diagnosis (2026-09-29)
+
+Two separate causes were found on the pinned `ff6dc0f4` snapshot:
+
+**The ~1s and ~5s gaps are guest-script waits.** `reader.zbd` at file offset
+`0x3487a` contains the `ATTRACT` script: `PLAYAVI intro.avi`, `WAIT 1.0`,
+`LOADIMAGE mech3splash`, `WAIT 5.0`, then `FADEOUT`. The floats are stored as
+`0x3f800000` and `0x40a00000` following their WAIT tokens. The EXE parser at
+`0x562dd0` compares the command against the `WAIT` string at `0x5bc2c4` and
+constructs the object with vtable `0x599cd8`. Its update method `0x563c60`
+compares elapsed time against start time plus duration; it does not draw.
+Samples inside the gap hit that method (`0x563c73`), its animation dispatcher
+`0x5633f0`, input polling and the main message/timer loop. No Sleep or blocking
+wait yields were recorded. The host page was ~98% idle during the gap.
+The benchmark's unattended warm-up allowed this attract sequence, so calling
+the two gaps emulator stalls was incorrect.
+
+**Slow active animation is a code-cache retirement storm.** The RGB565 alpha
+loop fold publishes `0x528064..0x528111` (173 bytes). Execution also resumes at
+its internal stores `0x5280f4` and `0x52807b`. Publishing the full fold retires
+those entries; recompiling an interior entry retires the fold. The existing
+`--trace-code-writes` instrumentation, captured in a bounded local buffer,
+recorded 1,000 retirements: 442 fold-to-`0x5280f4`, 440 reverse, and 118 involving
+`0x52807b` / `0x5280f7`. **Every record has `in_code_write=0`.** This is overlapping
+compiled entry ownership, not changing guest code or texture byte comparisons.
+The micro-op tier can resume at internal instructions; the native whole-loop
+matcher does not apply the `fuse_stop` protection used by smaller folds.
+
+Over a 29-second tail sample: 47,595,892 decoded blocks, 46,995,406 retirements,
+zero directory/index evictions, and one full cache clear. With the benchmark
+driver-query issue fixed, sampled worker self time in the last 30 seconds was
+22.84% `page_publish`, 12.74% `decode_block`, 11.82% alpha-loop recognition,
+and 11.47% `uop_fast`. Main-thread canvas conversion/upload was small. The
+function names were verified against a compiler-emitted name section whose
+non-custom WASM sections exactly match the measured runtime; no current-main
+function-index guesses were used.
+
+**Benchmark correction:** `instrumentGpu().snapshot()` previously repeated
+`getParameter(UNMASKED_RENDERER_WEBGL)` on every stats snapshot. It accounted
+for 7.6% of sampled worker wall time in the first profile. The tool now caches
+the name once per GL context. That overhead was in the benchmark, not the
+shipping renderer. Corrected profiled runs still show the retirement storm;
+their throughput is not an unprofiled A/B replacement for the earlier tables.
+
+Artifacts under `build/mw3-watch-ab-results/`:
+`mw3-after-gap-debug1` (initial CPU profile), `mw3-after-gap-debug2` (cached
+driver query, periodic guest PCs/cache counters and CPU profiles),
+`mw3-after-cache-trace` (bounded retirement records), and
+`mw3-after-gap-callers` (targeted 9-second gap sample). In the diagnostic
+profiles, worker-0 is the guest and worker-1 is the browser page.
+### Alpha-fold fix and controlled A/B (2026-09-29)
+
+`$try_emit_rgb565_alpha_run` now checks the existing `$fuse_stop` predicate
+while validating its 173-byte candidate. An independently compiled interior
+entry declines the whole-loop fold; ordinary decoding preserves that suffix.
+A cold loop still receives the native fold. No guest address special case,
+thread-mode change, or global optimization disable is involved.
+
+`test/test-fused-entry-overlap.js` embeds the real loop and alternates its
+head with both internal store entries (offsets `0x17` and `0x90`). It checks
+pixel output, cold native-fold execution, and zero steady-state retirements
+or recompiles. The test fails on the old matcher and passes with the guard.
+The isolated current-main build and code-write granularity regression also pass.
+
+The performance comparison pins `ff6dc0f4` against that exact snapshot plus
+only this guard (1,603,908 vs 1,603,925 WASM bytes), using matching GPU JS and
+region map. Thus unrelated current-main changes cannot explain the result.
+Same quiet box 8, Chrome 151, headful real Workers, no CPU profiler; cached
+GPU-name query in both arms. The renderer reports ANGLE / Intel UHD 620 /
+Mesa 23.2.1 despite the requested SwiftShader launch flags. These are guest
+DirectDraw presents, not monitor refreshes or measured combat FPS.
+
+| ABBA run | Presents/s | Median interval | p95 interval | Block decodes | Retirements |
+|---|---:|---:|---:|---:|---:|
+| Control 1 | 29.06 | 27.23 ms | 72.31 ms | 36,895,507 | 36,395,126 |
+| Fixed 1 | 76.82 | 11.04 ms | 18.18 ms | 4,000,314 | 3,796,783 |
+| Fixed 2 | 73.55 | 11.54 ms | 18.20 ms | 3,974,221 | 3,771,630 |
+| Control 2 | 31.39 | 25.84 ms | 70.61 ms | 36,667,625 | 36,167,231 |
+
+Each window lasts 30 seconds after a 60-second warmup. Mean throughput rises
+from 30.22 to 75.19 presents/s (2.49x); retirements fall 89.6% despite more
+frames. The control repeat spread is 7.7%, versus a 148.8% improvement.
+Remaining retirements are not zero and are not explained by this experiment.
+All four captures still contain the scripted one/five-second waits. Small
+mouse movements every two seconds did **not** prevent them; the experimental
+keepalive option was removed. Do not describe the whole window as stable FPS.
+Start/end screenshots show the same animated menu, with no rendering errors.
+
+A separate control/fixed pair with `--warmup-ms=95000` captures 30 seconds
+of the later active animation with **no scripted gaps** in either arm:
+
+| Active-animation run | Presents/s | Median | p95 | Worst | Intervals >50 ms | Retirements |
+|---|---:|---:|---:|---:|---:|---:|
+| Control | 14.59 | 70.49 ms | 74.96 ms | 80.00 ms | 437/437 | 47,686,768 |
+| Fixed | 78.74 | 13.42 ms | 18.04 ms | 31.53 ms | 0/2,362 | 2,182,344 |
+
+That is 5.40x throughput and 95.4% fewer retirements in this phase. Per-second
+counts span 13–19 before and 60–151 after: animation work still varies, so
+this is not constant FPS. This phase-specific pair is one repeat per arm;
+the preceding ABBA establishes the repeated improvement across the mixed
+sequence. Screenshots still show the animated menu, and both runs report no
+browser/rendering errors. Artifacts: `mw3-after-active`, `mw3-fixed-active`.
+
+Artifacts: `build/mw3-watch-ab-results/mw3-after-fixcontrol{1,2}` and
+`mw3-fixed-fix{1,2}` hold screenshots, manifests, raw frame timestamps and
+start/end cache counters. Use `--frame-times --seconds=30 --windows=1` with
+`tools/bench-d3dim-gameplay.js --app=mw3`, pinning `--wasm`, `--gpu-source`
+and `--region-map` for each arm. `--trace-yields` adds guest PCs/cache samples;
+`--trace-cache` adds bounded retirement records. Both require `--frame-times`.
+Use unprofiled captures for throughput and `--profile` for attribution.
+
+## Further GDI / DirectDraw consumers (not implemented)
+
+1. `lib/host-imports.js` `_flushGdiSurfacePresentation`: combine the existing
+   dirty rectangle with backing-page generations before `rgbaRect` and
+   `putImageData`. Skip unchanged uploads; convert only changed row spans.
+   DirectDraw rebinding currently marks the full surface dirty even when its
+   backing is unchanged. Writes without Lock can be observed through the
+   same CPU/native writer notifications, provided presentation is scheduled.
+2. `_refreshGdiSurfacePalette` currently rebuilds RGB tuples and clears the
+   nearest-colour cache on every flush. Watch palette storage separately and
+   preserve the decoded palette and `GdiSurface.rgbaRect` lookup table until
+   its generation changes. Palette changes must invalidate indexed pixels
+   even when no pixel page changed.
+3. Repeated source conversion for blits can use source versions as a cache
+   key. Skipping the actual destination write requires additional proof:
+   destination versions, clipping, ROP, palette, colour key and geometry.
+
+Start with displayed surface and palette pages only. Each consumer must own
+its observed generations, and rebind/release must handle Flip's backing swaps,
+layout changes and memory reuse. Preserve existing synchronization and a
+fallback when tracking is unavailable. The present CPU implementation refuses
+fast uop store windows for watched pages, so broader registrations need their
+own A/B before enabling them by default.
+
 ## Method
 
 The sections below record the **pre-implementation** measurements. The
