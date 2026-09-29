@@ -31810,5 +31810,12 @@
     "hash": 4268366522,
     "args": [{"name": "hwndParent", "type": "HWND"}, {"name": "hInstance", "type": "HANDLE"}, {"name": "dwStyle", "type": "DWORD"}, {"name": "szFile", "type": "LPCSTR"}],
     "ret": "HWND"
+  },
+  {
+    "id": 3742,
+    "name": "strtok",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1020058646
   }
 ]
