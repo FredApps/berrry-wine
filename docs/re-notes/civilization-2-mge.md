@@ -101,12 +101,41 @@ Getting there took two emulator fixes (details in the design doc):
 
 ir41_32 also calls `LocalHandle` as the stream ends.
 
+## The game's own movies (2026-09-28)
+
+`--app=civ2_mge` plays `opening.avi` with nothing extra: no overlay and no
+`--media-mount`. `test/test-civ2-mge-movie.js` pins this. The same route works
+in the browser with the guest in a Worker. It took three fixes:
+
+- **The CD's data track.** The registered CUE is mixed-mode, and the movies
+  live on its data track (`D:\civ2\video`). Registry `cdAudio` mounts used to
+  mount only the audio tracks. Now both hosts mount a data track as the ISO it
+  is: test/run.js through `openParts`, and lib/browser-shell.js through
+  `HttpRangeProvider`s sized from the manifest's `trackSizes`. Both then go
+  through `mediaImport.analyzeCueBundle`, the same plan a dropped CUE gets. The
+  disc's label is its own (`Civ2:MGE v1.0`; the Win16 disc's label is blank),
+  not the registry's `volumeLabel`. test/static-server.js now serves byte
+  ranges for the browser tests.
+- **Indeo.** The registry entry mounts `indeo/ir41_32.dll` (the file the
+  install recipe above produces) at `c:\windows\system`, marked
+  `optional: true`: without it the game still launches, it just has no codec.
+  It also sets `HKLM\...\Windows NT\CurrentVersion\Drivers32` `vidc.iv41`,
+  which `$icm_drv_lookup` reads when SYSTEM.INI has no `[drivers32]` line.
+- **Audio clock.** Civ2 paces video off `waveOutGetPosition` and refills audio
+  only on `MM_WOM_DONE` to its `CALLBACK_WINDOW`. The host read the callback
+  record from stale pre-allocator literals (`0xD164`/`0xD16C`) instead of
+  `$WAVE_OUT_SHARED`, so `WOM_DONE` was never posted and the movie froze after
+  its first 8 buffers (1.49s). Fixed in 4e5bd041, which also keeps a lazily
+  backed `AVIFileOpen` handle parked, so that closing it no longer cancels the
+  read it is waiting on.
+
+Headless recipe: `--batch-size=100000 --tick-ms-per-batch=20`. The Diplomatic
+Heralds prompt (first launch) appears around batch 500. Its OK button is at
+403,387 (mousedown at batch 1210, mouseup at 1230). The movie follows; after it
+comes the main menu with its animated IV41 map.
+
 ## Not yet done
 
-- Civ2 MGE's own movie route (an advisor or a wonder) has not been driven
-  headless. The AVIFIL32 + `ICLocate` + MCIWnd paths it uses all run on the
-  same driver backend.
+- Advisor and wonder movies have not been driven. They use the same AVIFIL32 +
+  `ICLocate` path as `opening.avi`.
 - The Win16 build's `IR41.DL_` driver (Win16 MSVIDEO) is out of scope.
-- In the browser, installing Indeo into the page's VFS and loading the DLL from
-  `c:\windows\system` has not been tried. `_findDllBytes` may not search the
-  system directory.

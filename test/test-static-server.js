@@ -14,9 +14,9 @@ const {
   startStaticServer,
 } = require('./static-server');
 
-function request(port, pathname, method = 'GET') {
+function request(port, pathname, method = 'GET', headers = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.request({ host: '127.0.0.1', port, path: pathname, method }, response => {
+    const req = http.request({ host: '127.0.0.1', port, path: pathname, method, headers }, response => {
       const chunks = [];
       response.on('data', chunk => chunks.push(chunk));
       response.on('end', () => resolve({
@@ -88,6 +88,19 @@ function javascriptFiles(dir) {
       assert.strictEqual(head.status, 200);
       assert.strictEqual(head.body, '');
       assert.strictEqual(Number(head.headers['content-length']), 5);
+      assert.strictEqual(head.headers['accept-ranges'], 'bytes');
+      // Byte ranges, for HttpRangeProvider reads of a registered CD image.
+      const index2 = '<h1>index</h1>';
+      const part = await request(port, '/', 'GET', { Range: 'bytes=1-2' });
+      assert.strictEqual(part.status, 206);
+      assert.strictEqual(part.body, index2.slice(1, 3));
+      assert.strictEqual(part.headers['content-range'], `bytes 1-2/${index2.length}`);
+      const tail = await request(port, '/', 'GET', { Range: 'bytes=-3' });
+      assert.strictEqual(tail.status, 206);
+      assert.strictEqual(tail.body, index2.slice(-3));
+      const open = await request(port, '/', 'GET', { Range: 'bytes=10-' });
+      assert.strictEqual(open.body, index2.slice(10));
+      assert.strictEqual((await request(port, '/', 'GET', { Range: 'bytes=99-' })).status, 416);
       assert.strictEqual((await request(port, '/..%2Foutside.txt')).status, 403);
     } finally {
       await closeServer(server);

@@ -3130,8 +3130,15 @@ class WineAssembly {
         }
         loaded++;
       } catch (error) {
-        failed++;
-        failures.push({ url, reason: String(error && error.message || error) });
+        // {optional: true}: a component a real install may or may not have
+        // put there (Civ2's Indeo codec). Its absence is the app's to handle,
+        // so it neither fails a requiredFiles launch nor counts as a failure.
+        if (typeof item === 'object' && item && item.optional) {
+          console.log(`[files] optional ${url} not loaded: ${error && error.message || error}`);
+        } else {
+          failed++;
+          failures.push({ url, reason: String(error && error.message || error) });
+        }
       } finally {
         if (options.onProgress) options.onProgress({ loaded, failed, total, url });
       }

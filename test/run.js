@@ -4943,7 +4943,12 @@ async function main() {
         try {
           size = fs.statSync(hostPath).size;
         } catch (_) {
-          missing.push(url);
+          // {optional: true} mirrors host.js loadFiles: absent is allowed.
+          if (typeof item === 'object' && item.optional) {
+            console.log(`[app] optional file not present: ${url}`);
+          } else {
+            missing.push(url);
+          }
           continue;
         }
         const paths = (typeof item === 'object' && Array.isArray(item.vfsPaths))
@@ -5042,19 +5047,35 @@ async function main() {
     } else if (ASSET_ENTRY && ASSET_ENTRY.cdAudio) {
       // A registered app's CD is mounted by the page (lib/browser-shell.js)
       // at its own letter and label; do the same so --app sees the same drive.
-      const { mountCue } = require('../lib/cdrom');
+      const { mountCue, parseCue } = require('../lib/cdrom');
       const config = ASSET_ENTRY.cdAudio;
       const absoluteCue = appAsset(config.cue);
       const directory = path.dirname(absoluteCue);
       const resolveTrack = name => path.resolve(directory, ...String(name).split('/'));
-      const result = mountCue(ctx.vfs, fs.readFileSync(absoluteCue, 'utf8'), {
-        drive: config.drive || 'D',
-        volumeLabel: config.volumeLabel,
-        trackSize: name => fs.statSync(resolveTrack(name)).size,
-        loadTrack: name => fs.promises.readFile(resolveTrack(name)),
-      });
-      console.log(`[cue] mounted ${config.cue} -> ${result.root} ` +
-        `tracks=${result.firstTrack}-${result.lastTrack} (${result.audioTracks.length} audio, lazy)`);
+      const cueText = fs.readFileSync(absoluteCue, 'utf8');
+      const parsedCue = parseCue(cueText);
+      if (parsedCue.tracks.some(track => !track.isAudio)) {
+        // A mixed-mode disc: its data track is the CD the game reads movies
+        // and data from (Civ2 MGE's D:\civ2\video), so mount it as the ISO it
+        // is -- lazily, through the same plan --media-mount and the page's
+        // media import use -- under the disc's own volume label.
+        const { openParts } = require('../lib/media-cli');
+        const { analyzeCueBundle } = require('../lib/media-import');
+        const parts = openParts([absoluteCue, ...parsedCue.files.map(file => resolveTrack(file.name))]);
+        const plan = await analyzeCueBundle(parts, { drive: config.drive || 'D' });
+        const mounted = await plan.mount(ctx.vfs);
+        console.log(`[cue] mounted ${config.cue} -> ${mounted.root} label="${plan.volumeLabel}" ` +
+          `(${plan.entryCount} data entries, ${mounted.disc.audioTracks.length} audio tracks, lazy)`);
+      } else {
+        const result = mountCue(ctx.vfs, cueText, {
+          drive: config.drive || 'D',
+          volumeLabel: config.volumeLabel,
+          trackSize: name => fs.statSync(resolveTrack(name)).size,
+          loadTrack: name => fs.promises.readFile(resolveTrack(name)),
+        });
+        console.log(`[cue] mounted ${config.cue} -> ${result.root} ` +
+          `tracks=${result.firstTrack}-${result.lastTrack} (${result.audioTracks.length} audio, lazy)`);
+      }
     }
 
     if (MEDIA_MOUNTS.length) {
