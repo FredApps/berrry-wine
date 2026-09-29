@@ -11,11 +11,13 @@ const assert = require('assert');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const puppeteer = require('puppeteer');
+const { readPE } = require('../lib/pe');
 const { startStaticServer, closeServer } = require('../test/static-server');
 const ROOT = path.resolve(__dirname, '..');
 if (process.argv.includes('--help')) {
   console.log('Diagnostics: --profile saves page/worker CPU profiles; --readback-census records D3D fence callers and readPixels timing. Do not treat diagnostic timings as the uninstrumented baseline.');
   console.log('A/B controls: --no-d3d-batching and --no-fixed-cache disable those optimizations in served scripts only; reports record the switches and source hashes.');
+  console.log('Emulation diagnostics: --guest-profile saves guest-main handler/block histograms and startup-to-window uop census logs. Adds overhead; histogram counts are dispatches, not CPU time.');
   console.log('Usage: node tools/nfs-renderer-bench.js [--cases=glide,d3d,software,glide-software] [--seconds=30] [--samples=2] [--seed=12345] [--out=build/nfs-renderer-bench]\nRequires the original nfs3_demo fixture and a current build. Runs headful Chrome serially. Saves screenshots, hardware-renderer evidence, frame counters, CPU time, and machine load. Seed instrumentation is specific to this demo.');
   process.exit(0);
 }
@@ -28,6 +30,7 @@ const profileEnabled = process.argv.includes('--profile');
 const readbackCensus = process.argv.includes('--readback-census');
 const noD3DBatching = process.argv.includes('--no-d3d-batching');
 const noFixedCache = process.argv.includes('--no-fixed-cache');
+const guestProfile = process.argv.includes('--guest-profile');
 assert(Number.isFinite(seconds) && seconds > 0, 'seconds must be positive');
 assert(Number.isInteger(samples) && samples >= 0, 'samples must be a nonnegative integer');
 const output = path.resolve(ROOT, arg('out', 'build/nfs-renderer-bench'));
@@ -43,6 +46,15 @@ fs.mkdirSync(output, { recursive: true });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const fixtureSha256 = hash(path.join(ROOT, 'test/binaries/candidates/need-for-speed-3-demo/game/nfs3demo.exe'));
+function completeModuleMap(mods, log) {
+  const dir=path.join(ROOT,'test/binaries/candidates/need-for-speed-3-demo/game');
+  const files=fs.readdirSync(dir);
+  for (const match of log.matchAll(/\[LoadLibrary\] (\S+\.dll) loaded at 0x([0-9a-f]+)/gi)) {
+    const file=files.find(f=>f.toLowerCase()===match[1].toLowerCase());
+    if (file) mods[match[1].toLowerCase()]=[parseInt(match[2],16),readPE(path.join(dir,file)).imageBase];
+  }
+  return mods;
+}
 assert.equal(fixtureSha256, '0defab3eeb22ee4b6e0007a4d5b26a99d868008ba77e2b9bd3ef770e924548ad',
   'seed instrumentation requires the inspected original NFS III demo');
 
@@ -99,6 +111,23 @@ if (typeof OffscreenCanvas === 'function') {
 `;
 assert.equal(originalWorker.split(needle).length, 2, 'worker injection anchor must be unique');
 const seededWorker = originalWorker.replace(needle, `
+      ${guestProfile ? `
+      globalThis.__nfsProfileSlot = msg.slot || 0;
+      globalThis.__nfsUopRecords = [];
+      if (globalThis.__nfsProfileSlot === 0) {
+        const originalLog = built.imports.host.log_i32;
+        let remaining = 0;
+        built.imports.host.log_i32 = value => {
+          const v = value >>> 0;
+          if (!remaining && (v >>> 16) === 0xc5e5 && (v & 65535) >= 1 && (v & 65535) <= 9) remaining = 5;
+          if (remaining) {
+            if (globalThis.__nfsUopRecords.length < 1000000) globalThis.__nfsUopRecords.push(v);
+            else globalThis.__nfsUopTruncated = true;
+            remaining--; return;
+          }
+          return originalLog(value);
+        };
+      }` : ''}
       if ((msg.slot || 0) === 0) {
         const originalTicks = built.imports.host.get_ticks;
         let armed = true, matched = false;
@@ -116,7 +145,8 @@ const seededWorker = originalWorker.replace(needle, `
           return originalTicks();
         };
       }
-${needle}`);
+${needle}
+      ${guestProfile ? 'if ((msg.slot || 0) === 0) (result.exports || result.instance.exports).set_uop_census(1);' : ''}`);
 
 async function observe(page) {
   return page.evaluate(() => {
@@ -237,6 +267,13 @@ async function runCase(server, name) {
     await page.screenshot({ path: path.join(dir, 'ready.png') });
     console.log(name, 'race ready', JSON.stringify(report.ready.scene), 'warming 10s');
     await sleep(10000);
+    let profileWorker;
+    if (guestProfile) {
+      for (const worker of page.workers()) {
+        if (await worker.evaluate(() => globalThis.__nfsGuestProfile?.('identify'))) { profileWorker=worker; break; }
+      }
+      assert(profileWorker, 'guest-main profiling worker required');
+    }
     for (let i = 0; i < samples; i++) {
       await page.bringToFront();
       await page.screenshot({ path: path.join(dir, `sample-${i + 1}-before.png`) });
@@ -253,7 +290,21 @@ async function runCase(server, name) {
         }
       }
       const loadBefore = os.loadavg(), cpuBefore = await cpu(), before = await observe(page);
+      const guestBefore = guestProfile ? await profileWorker.evaluate(() => globalThis.__nfsGuestProfile('arm')) : null;
       await sleep(seconds * 1000);
+      if (guestProfile) {
+        const hist=await profileWorker.evaluate(() => globalThis.__nfsGuestProfile('read'));
+        assert(hist.ops > 0 && hist.blockHits > 0, 'guest-main histogram must contain executed work');
+        const mods=await page.evaluate(() => {
+          const bases=runningApps.find(app=>app.name==='nfs3_demo').wine.moduleBases||{};
+          return Object.fromEntries(Object.entries(bases).map(([k,v])=>[k,[v.base||v.loadAddr||0,v.origBase||0]]));
+        });
+        assert(!hist.censusTruncated, 'uop census buffer overflow');
+        fs.writeFileSync(path.join(dir,`sample-${i+1}-uop.log`),hist.census.map(v=>'[i32] 0x'+v.toString(16)).join('\n')+'\n');
+        delete hist.census;
+        completeModuleMap(mods,fs.readFileSync(path.join(dir,'console.log'),'utf8'));
+        fs.writeFileSync(path.join(dir,`sample-${i+1}-hist.json`),JSON.stringify({...hist,mods,guestBefore},null,2));
+      }
       const after = await observe(page), cpuAfter = await cpu(), loadAfter = os.loadavg();
       for (const target of profilers) {
         const { profile } = await target.client.send('Profiler.stop');
@@ -335,13 +386,14 @@ async function runCase(server, name) {
       res.writeHead(200, {'Content-Type':'application/javascript','Cache-Control':'no-store',
         'Cross-Origin-Resource-Policy':'same-origin',
         'Cross-Origin-Embedder-Policy':'require-corp'});
-      res.end(seededWorker + rendererProbe); return true;
+      res.end(seededWorker + rendererProbe + (guestProfile ? fs.readFileSync(path.join(ROOT,'tools/page-probes/nfs-guest-profile.js'),'utf8') : '')); return true;
     } });
   const meta = { startedAt: new Date().toISOString(), commit: execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim(),
     wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, seed, seconds, samples, profileEnabled, readbackCensus,
     machine: { platform:os.platform(), arch:os.arch(), cpus:os.cpus().length, model:os.cpus()[0].model },
-    fixtureSha256, noD3DBatching, noFixedCache,
-    sourceSha256: Object.fromEntries(['lib/d3dim-gpu.js','lib/d3d9-backend.js','lib/d3d9-fixed.js'].map(file => [file,hash(path.join(ROOT,file))])),
+    fixtureSha256, noD3DBatching, noFixedCache, guestProfile,
+    sourceSha256: Object.fromEntries(['lib/d3dim-gpu.js','lib/d3d9-backend.js','lib/d3d9-fixed.js',
+      'lib/guest-worker.js','tools/page-probes/nfs-guest-profile.js'].map(file => [file,hash(path.join(ROOT,file))])),
     results: [] };
   try {
     for (const name of cases) {
