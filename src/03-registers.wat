@@ -265,12 +265,48 @@
     (i32.store (global.get $NULL_SENTINEL) (i32.const 0))
     (global.get $NULL_SENTINEL))
 
+  ;; $g2w's direct-window fast path, expanded in place at a hot call site so
+  ;; the common translation is an add, a subtract and one compare instead of a
+  ;; call. SpiderMonkey Ion inlines no wasm call at all, so every `call $g2w`
+  ;; is a real `bl` with a frame and a stack check there; V8 inlines $g2w at
+  ;; some sites and not others (docs/accessor-fastpath-split.md).
+  ;;
+  ;; The caller declares `(local $g2w_wa i32)`; the compiler refuses an
+  ;; undeclared local, so a site that forgets it does not build. $GA appears
+  ;; exactly once and is evaluated before anything else, so an argument with
+  ;; side effects, or one that itself expands this macro, is safe.
+  ;;
+  ;; One unsigned compare is exactly the old two-compare test. The old test
+  ;; accepted wa iff (wa >=s 0) and (wa <u END), END = region.end
+  ;; $DIRECT_WINDOW = 0x08000000. Any wa with wa <u END has bit 31 clear
+  ;; (END <= 0x80000000), so it is also >=s 0: the signed test is implied and
+  ;; the conjunction is just wa <u END. Both forms compute wa with the same
+  ;; mod-2^32 arithmetic, so wraparound in (ga - image_base + GUEST_BASE)
+  ;; lands on the same bit pattern either way. test/test-g2w-fast-macro.js
+  ;; pins the bound and checks the two against each other at the edges.
+  ;;
+  ;; The miss hands $g2w_slow the guest address rebuilt from wa, the exact
+  ;; mod-2^32 inverse, so $GA is not evaluated a second time and no second
+  ;; local is needed.
+  (defmacro (g2w-fast $GA)
+    (block (result i32)
+      (local.set $g2w_wa
+        (i32.add (i32.sub $GA (global.get $image_base)) (global.get $GUEST_BASE)))
+      (if (result i32) (i32.lt_u (local.get $g2w_wa) (region.end $DIRECT_WINDOW))
+        (then (local.get $g2w_wa))
+        (else (call $g2w_slow
+          (i32.add (i32.sub (local.get $g2w_wa) (global.get $GUEST_BASE))
+                   (global.get $image_base)))))))
+
   (func $g2w (param $ga i32) (result i32)
+    (local $g2w_wa i32)
+    (g2w-fast (local.get $ga)))
+
+  ;; Everything $g2w does once the direct window has missed. Only the
+  ;; g2w-fast macro calls it; a direct-window address passed here would be
+  ;; mistranslated, since this never tests that window.
+  (func $g2w_slow (param $ga i32) (result i32)
     (local $wa i32)
-    (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
-    (if (i32.eqz (i32.or (i32.lt_s (local.get $wa) (i32.const 0))
-                (i32.ge_u (local.get $wa) (region.end $DIRECT_WINDOW))))
-      (then (return (local.get $wa))))
     ;; CreateDIBSection pointers live in a dedicated high guest range backed by
     ;; the final 64MB of linear memory. Test it only after the normal direct
     ;; window misses so ordinary loads retain their original hot path.
@@ -418,8 +454,8 @@
   ;; normal aligned/page-local path to one translation; only gather/scatter the
   ;; few x86 word/dword accesses that actually cross a non-contiguous boundary.
   (func $gl32 (param $ga i32) (result i32)
-    (local $wa i32) (local $end_wa i32)
-    (local.set $wa (call $g2w (local.get $ga)))
+    (local $wa i32) (local $end_wa i32) (local $g2w_wa i32)
+    (local.set $wa (g2w-fast (local.get $ga)))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
       (then (return (i32.load (local.get $wa)))))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 3))))
@@ -439,8 +475,8 @@
           (i32.load8_u (local.get $end_wa))
           (i32.const 24)))))
   (func $gl16 (param $ga i32) (result i32)
-    (local $wa i32) (local $end_wa i32)
-    (local.set $wa (call $g2w (local.get $ga)))
+    (local $wa i32) (local $end_wa i32) (local $g2w_wa i32)
+    (local.set $wa (g2w-fast (local.get $ga)))
     (if (i32.ne (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFF))
       (then (return (i32.load16_u (local.get $wa)))))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 1))))
@@ -450,7 +486,8 @@
       (i32.load8_u (local.get $wa))
       (i32.shl (i32.load8_u (local.get $end_wa)) (i32.const 8))))
   (func $gl8 (param $ga i32) (result i32)
-    (i32.load8_u (call $g2w (local.get $ga))))
+    (local $g2w_wa i32)
+    (i32.load8_u (g2w-fast (local.get $ga))))
   ;; Cheap "could a write here be touching code?" test, for one guest address.
   ;; Page-granular over the whole guest space ($code_page_test, 04-cache; exact
   ;; below 0x10000000, hashed across 256MB segments above): the old
@@ -506,8 +543,8 @@
     (call $invalidate_code_range (local.get $ga) (local.get $len)))
 
   (func $gs32 (param $ga i32) (param $v i32)
-    (local $wa i32) (local $end_wa i32)
-    (local.set $wa (call $g2w (local.get $ga)))
+    (local $wa i32) (local $end_wa i32) (local $g2w_wa i32)
+    (local.set $wa (g2w-fast (local.get $ga)))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
       (then
         (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
@@ -536,8 +573,8 @@
   ;; Common 64-bit guest store for x87/MMX. Translate once for the ordinary
   ;; same-page case; sparse guest neighbors need not be WASM neighbors.
   (func $gs64 (param $ga i32) (param $v i64)
-    (local $wa i32) (local $end_wa i32)
-    (local.set $wa (call $g2w (local.get $ga)))
+    (local $wa i32) (local $end_wa i32) (local $g2w_wa i32)
+    (local.set $wa (g2w-fast (local.get $ga)))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFF8))
       (then
         (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
@@ -559,8 +596,8 @@
     (call $gs32 (i32.add (local.get $ga) (i32.const 4))
       (i32.wrap_i64 (i64.shr_u (local.get $v) (i64.const 32)))))
   (func $gs16 (param $ga i32) (param $v i32)
-    (local $wa i32) (local $end_wa i32)
-    (local.set $wa (call $g2w (local.get $ga)))
+    (local $wa i32) (local $end_wa i32) (local $g2w_wa i32)
+    (local.set $wa (g2w-fast (local.get $ga)))
     (if (i32.ne (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFF))
       (then
         (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
@@ -581,8 +618,8 @@
     (i32.store8 (local.get $wa) (local.get $v))
     (i32.store8 (local.get $end_wa) (i32.shr_u (local.get $v) (i32.const 8))))
   (func $gs8 (param $ga i32) (param $v i32)
-    (local $wa i32)
-    (local.set $wa (call $g2w (local.get $ga)))
+    (local $wa i32) (local $g2w_wa i32)
+    (local.set $wa (g2w-fast (local.get $ga)))
     (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
               (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
                 (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))

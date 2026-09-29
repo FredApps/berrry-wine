@@ -573,6 +573,11 @@
   ;; VirtualAlloc and the high CreateDIBSection arena.
   (func (export "guest_to_wasm") (param $guest i32) (result i32)
     (call $g2w (local.get $guest)))
+  ;; The g2w-fast macro's miss path on its own, so test/test-g2w-fast-macro.js
+  ;; can check that the macro hands every non-direct address to the same
+  ;; DIB -> page table -> miss chain the old single $g2w ran.
+  (func (export "test_g2w_slow") (param $guest i32) (result i32)
+    (call $g2w_slow (local.get $guest)))
   (func (export "get_rsrc_rva") (result i32) (global.get $rsrc_rva))
   (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))
   (func (export "get_cache_clears") (result i32) (global.get $cache_clears))
