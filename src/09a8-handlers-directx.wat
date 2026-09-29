@@ -3623,6 +3623,62 @@
                   (i64.gt_s (global.get $present_deadline_u)
                             (i64.sub (local.get $now_u) (i64.const 1000)))))))))
 
+  ;; ---- which events are frame ends ----------------------------------------
+  ;; Every present site calls $present_frame_end, never $present_pace. A
+  ;; detected frame end is not always a logical frame. Fallout draws straight
+  ;; into its only surface, the primary. Each dirty rect it copies is a
+  ;; NULL-rect Lock, a memcpy and an Unlock (Falldemo.exe 0x489668), and one
+  ;; turn of its main loop copies five of them between two PeekMessage calls.
+  ;; Pacing every Unlock sleeps five periods per game frame, and the walk
+  ;; took 1.6x longer at cap 60 (docs/re-notes/fallout-demo.md).
+  ;;
+  ;; A Win32 game loop pumps its message queue once per turn, so a frame is
+  ;; bounded by the pump: the frame ends between two PeekMessage/GetMessage
+  ;; calls are one frame. After a thread has been seen to pump between frame
+  ;; ends, a frame end only marks the frame pending, and the pump that follows
+  ;; paces it once ($present_pump). Until then, or on a thread that presents
+  ;; and never pumps (a render thread, a loading screen), each frame end paces
+  ;; at once, as before. For a loop that presents once per pump the cadence is
+  ;; the same either way. Per instance, so per guest thread.
+  ;;
+  ;; The counters feed run.js --present-frames, which reports detected frame
+  ;; ends against pump-bounded frames and flags a ratio above 1.
+  (global $present_frame_pending (mut i32) (i32.const 0)) ;; a frame end since the last pump
+  (global $present_pump_bounded (mut i32) (i32.const 0))  ;; 1 once this thread pumps between frames
+  (global $present_frame_ends (mut i32) (i32.const 0))    ;; detected frame ends, capped or not
+  (global $present_pump_frames (mut i32) (i32.const 0))   ;; pumps that closed >= 1 frame end
+
+  (func $present_frame_end
+    (global.set $present_frame_ends (i32.add (global.get $present_frame_ends) (i32.const 1)))
+    (global.set $present_frame_pending (i32.const 1))
+    (if (global.get $present_pump_bounded) (then (return)))
+    (call $present_pace))
+
+  ;; Called at the top of PeekMessage/GetMessage. Returns 1 when it parked the
+  ;; call for the pace's sleep: the stdcall frame is untouched and EIP is back
+  ;; on the thunk ($vblank_block's contract), so the same call runs again after
+  ;; the sleep. Its message is read after the sleep, not before it. The frame
+  ;; is no longer pending then, so the second run does not pace again.
+  (func $present_pump (result i32)
+    (local $slept i32)
+    (if (i32.eqz (global.get $present_frame_pending)) (then (return (i32.const 0))))
+    (global.set $present_frame_pending (i32.const 0))
+    (global.set $present_pump_frames (i32.add (global.get $present_pump_frames) (i32.const 1)))
+    ;; The first pump after a frame end is when this thread's loop shape is
+    ;; learned. That frame was already paced at its end.
+    (if (i32.eqz (global.get $present_pump_bounded))
+      (then
+        (global.set $present_pump_bounded (i32.const 1))
+        (return (i32.const 0))))
+    (local.set $slept (global.get $sleep_yielded))
+    (call $present_pace)
+    (if (i32.or (local.get $slept) (i32.eqz (global.get $sleep_yielded)))
+      (then (return (i32.const 0))))
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $eip (global.get $current_thunk_eip))
+    (global.set $steps (i32.const 0))
+    (i32.const 1))
+
   ;; Pace a blit to the primary only when it covers most of the surface: that
   ;; is a back buffer being shown. A sprite drawn straight onto the primary is
   ;; one of many per frame, and pacing each of them would divide the frame
@@ -3657,7 +3713,7 @@
           (i64.shr_u
             (i64.mul (i64.extend_i32_u (local.get $need_w)) (i64.extend_i32_u (local.get $need_h)))
             (i64.const 1)))
-      (then (call $present_pace))))
+      (then (call $present_frame_end))))
 
   ;; Initialize — no-op
   (func $handle_IDirectDraw_Initialize (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -5127,7 +5183,7 @@
               (call $dx_slot_of (local.get $back_entry))
               (load.field DxObject misc1 (local.get $back_entry))
               (load.field DxObject misc1 (local.get $entry)))
-            (call $present_pace)
+            (call $present_frame_end)
             (i32.store offset=0 (global.get $reg_base) (i32.const 0))
             (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
             (return)))))
@@ -5145,7 +5201,7 @@
           (local.get $tmp_dib))
         ;; Present front buffer
         (call $dx_present (local.get $entry))
-        (call $present_pace)))
+        (call $present_frame_end)))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
@@ -5653,7 +5709,7 @@
         (if (i32.eq (global.get $present_lock_whole) (local.get $entry))
           (then
             (global.set $present_lock_whole (i32.const 0))
-            (call $present_pace)))))
+            (call $present_frame_end)))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
