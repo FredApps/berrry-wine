@@ -31817,5 +31817,22 @@
     "nargs": 2,
     "convention": "cdecl",
     "hash": 1020058646
+  },
+  {
+    "id": 3743,
+    "name": "DefDriverProc",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1129332926,
+    "args": [{"name": "dwDriverId", "type": "DWORD"}, {"name": "hDriver", "type": "HANDLE"}, {"name": "uMsg", "type": "DWORD"}, {"name": "lParam1", "type": "DWORD"}, {"name": "lParam2", "type": "DWORD"}]
+  },
+  {
+    "id": 3744,
+    "name": "LocalHandle",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4103303870,
+    "args": [{"name": "pMem", "type": "LPVOID"}],
+    "ret": "HANDLE"
   }
 ]

@@ -47,6 +47,8 @@
   ;;   +0x74 time format (0 ms, 3 frames)  +0x78 audio buffer (guest)
   ;;   +0x7C its capacity  +0x80 alias, lower case (64)  +0xC0 last painted
   ;;   +0xC4 hidden  +0xC8 parent hwnd  +0xCC width  +0xD0 height
+  ;;   +0xD4 1 = an installed codec's DLL was loading at open; open it at
+  ;;   the first frame (HIC 0 until then)
   (global $MCIAVI_TABLE i32 (region.addr $MCIAVI_TABLE 0))
   (global $MCIAVI_TABLE_SIZE i32 (region.size $MCIAVI_TABLE))
   (global $MCIAVI_SLOTS i32 (i32.const 4))
@@ -378,9 +380,34 @@
     (local $r i32)
     (local.set $r (call $icm_rec_of (local.get $hic)))
     (if (i32.eqz (local.get $r)) (then (return (i32.const 0))))
-    (call $icm_ws_release (local.get $r))
-    (i32.store (local.get $r) (i32.const 0))
+    (call $icm_close_rec (local.get $r))
     (i32.const 1))
+
+  ;; DECOMPRESS_BEGIN into the 32-bit output DIB. An installed codec may
+  ;; not write 32 bpp (Indeo writes 24 and 16), so the output header steps
+  ;; down until one is accepted; the painter reads whatever the header says.
+  ;; 1 on success.
+  (func $mciavi_codec_begin (param $rec i32) (result i32)
+    (local $hrec i32) (local $k i32) (local $bpp i32) (local $w i32) (local $h i32)
+    (local.set $hrec (call $icm_rec_of (i32.load offset=0x14 (local.get $rec))))
+    (if (i32.eqz (local.get $hrec)) (then (return (i32.const 0))))
+    (local.set $k (call $avi_dib_wa (i32.load offset=0x24 (local.get $rec))))
+    (local.set $w (i32.load offset=4 (local.get $k)))
+    (local.set $h (i32.load offset=8 (local.get $k)))
+    (local.set $bpp (i32.const 32))
+    (block $done (loop $try
+      (i32.store16 offset=14 (local.get $k) (local.get $bpp))
+      (i32.store offset=20 (local.get $k) (i32.mul (local.get $h) (i32.shr_u
+        (i32.and (i32.add (i32.mul (local.get $w) (local.get $bpp)) (i32.const 31)) (i32.const -32))
+        (i32.const 3))))
+      (if (i32.eqz (call $icm_begin (local.get $hrec) (i32.load offset=0x18 (local.get $rec))
+            (i32.load offset=0x24 (local.get $rec))))
+        (then (return (i32.const 1))))
+      (br_if $done (i32.ne (i32.load offset=4 (local.get $hrec)) (global.get $ICM_CODEC_GUEST)))
+      (local.set $bpp (i32.sub (local.get $bpp) (i32.const 8)))
+      (br_if $done (i32.lt_u (local.get $bpp) (i32.const 16)))
+      (br $try)))
+    (i32.const 0))
 
   (func $mciavi_close (param $rec i32)
     (if (i32.eq (i32.load offset=0x48 (local.get $rec)) (i32.const 1))
@@ -453,9 +480,19 @@
       (local.set $w (i32.load offset=0x84 (local.get $vsb)))
       (local.set $h (call $tt_abs (i32.load offset=0x88 (local.get $vsb))))
       (local.set $codec (call $icm_codec_for_format (local.get $bi)))
-      (br_if $fail (i32.eqz (local.get $codec)))
-      (local.set $hic (call $icm_open_codec (local.get $codec) (i32.load offset=4 (local.get $vsb)) (i32.const 3)))
-      (br_if $fail (i32.eqz (local.get $hic)))
+      (if (local.get $codec)
+        (then
+          (local.set $hic (call $icm_open_codec (local.get $codec) (i32.load offset=4 (local.get $vsb)) (i32.const 3)))
+          (br_if $fail (i32.eqz (local.get $hic))))
+        (else
+          ;; No built-in decoder: an installed driver (09a7g). One whose DLL
+          ;; is not mapped yet is asked for now and opened at the first frame.
+          (local.set $hic (call $icm_locate_guest (i32.load offset=4 (local.get $vsb))
+            (local.get $bi) (i32.const 0) (i32.const 3)))
+          (if (i32.eq (local.get $hic) (global.get $ICM_PARK))
+            (then (call $icm_request_load) (local.set $hic (i32.const 0))
+                  (i32.store offset=0xD4 (local.get $rec) (i32.const 1)))
+            (else (br_if $fail (i32.eqz (local.get $hic)))))))
       (i32.store offset=0x14 (local.get $rec) (local.get $hic))
       ;; Output: a bottom-up 32-bit BI_RGB DIB, header then bits.
       (local.set $out (call $dib_alloc (i32.add (i32.const 64)
@@ -469,8 +506,8 @@
       (i32.store16 offset=12 (local.get $k) (i32.const 1))
       (i32.store16 offset=14 (local.get $k) (i32.const 32))
       (i32.store offset=20 (local.get $k) (i32.shl (i32.mul (local.get $w) (local.get $h)) (i32.const 2)))
-      (local.set $hrec (call $icm_rec_of (local.get $hic)))
-      (br_if $fail (i32.ne (call $icm_begin (local.get $hrec) (local.get $bi) (local.get $out)) (i32.const 0)))
+      (if (local.get $hic)
+        (then (br_if $fail (i32.eqz (call $mciavi_codec_begin (local.get $rec))))))
       ;; One chunk buffer as large as the largest chunk.
       (local.set $len (i32.add (i32.load offset=0x60 (local.get $vsb)) (i32.const 16)))
       (i32.store offset=0x1C (local.get $rec) (call $dib_alloc (local.get $len)))
@@ -543,7 +580,7 @@
 
   ;; Decode frame $f (the next one in order). 1 done, 0 not resident yet.
   (func $mciavi_decode (param $rec i32) (param $f i32) (param $show i32) (result i32)
-    (local $vsb i32) (local $ent i32) (local $size i32) (local $r i32) (local $data i32)
+    (local $vsb i32) (local $ent i32) (local $size i32) (local $r i32) (local $data i32) (local $hic i32)
     (local.set $vsb (i32.load offset=0x0C (local.get $rec)))
     (local.set $ent (i32.add (i32.load offset=0x44 (local.get $vsb)) (i32.shl (local.get $f) (i32.const 4))))
     (local.set $size (i32.load offset=4 (local.get $ent)))
@@ -559,12 +596,31 @@
         (if (i32.lt_s (local.get $r) (i32.const 0)) (then (local.set $size (i32.const 0)) (local.set $data (i32.const 0))))))
     ;; biSizeImage of the private format copy is this chunk's length.
     (i32.store offset=20 (call $avi_dib_wa (i32.load offset=0x18 (local.get $rec))) (local.get $size))
+    ;; An installed codec whose DLL was still loading at open.
+    (if (i32.and (i32.eqz (i32.load offset=0x14 (local.get $rec)))
+                 (i32.ne (i32.load offset=0xD4 (local.get $rec)) (i32.const 0)))
+      (then
+        (local.set $hic (call $icm_locate_guest (i32.load offset=4 (local.get $vsb))
+          (i32.load offset=0x18 (local.get $rec)) (i32.const 0) (i32.const 3)))
+        (if (i32.eq (local.get $hic) (global.get $ICM_PARK))
+          (then (call $icm_request_load) (return (i32.const 0))))
+        (i32.store offset=0xD4 (local.get $rec) (i32.const 0))
+        (i32.store offset=0x14 (local.get $rec) (local.get $hic))
+        (if (local.get $hic)
+          (then
+            (if (i32.eqz (call $mciavi_codec_begin (local.get $rec)))
+              (then
+                (drop (call $mciavi_icm_close (local.get $hic)))
+                (i32.store offset=0x14 (local.get $rec) (i32.const 0))))))))
+    ;; No decoder at all: the frame counts, the picture stays as it was.
+    (if (i32.load offset=0x14 (local.get $rec))
+      (then
     (drop (call $icm_decompress (call $icm_rec_of (i32.load offset=0x14 (local.get $rec)))
       (select (i32.const 0) (i32.const 0x80000000) (local.get $show))
       (i32.load offset=0x18 (local.get $rec))
       (select (local.get $data) (i32.const 0) (i32.ne (local.get $size) (i32.const 0)))
       (i32.load offset=0x24 (local.get $rec))
-      (i32.add (i32.load offset=0x24 (local.get $rec)) (i32.const 64))))
+      (i32.add (i32.load offset=0x24 (local.get $rec)) (i32.const 64))))))
     (i32.store offset=0x3C (local.get $rec) (i32.add (local.get $f) (i32.const 1)))
     (i32.const 1))
 

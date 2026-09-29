@@ -646,6 +646,29 @@
   (func $set_flags_shift (param $r i32) (param $cf i32)
     (global.set $flag_op (i32.const 7)) (global.set $flag_sign_shift (i32.const 31)) (global.set $flag_res (local.get $r))
     (global.set $flag_b (local.get $cf)))
+  ;; ROL/ROR/RCL/RCR write only CF and OF (count != 0); ZF, SF and PF keep
+  ;; whatever the previous instruction left. Code that tests a compare across
+  ;; a rotate depends on it: Indeo 4's generated VLC reader in ir41_32.dll does
+  ;; `cmp al,0x10 / ror eax,0x10 / jz`, and with the rotate's result written
+  ;; as the ZF source it never took the branch and decoded forever. So the
+  ;; record goes to exact raw mode (9), the one that stores each flag
+  ;; independently -- the same shape SAHF and POPF produce. The SF source has
+  ;; bits 7, 15 and 31 all set because the 8- and 16-bit shift handlers
+  ;; rewrite $flag_sign_shift to 7 / 15 after $do_shift returns.
+  (func $set_flags_rotate (param $cf i32) (param $of i32)
+    (local $zf i32) (local $sf i32) (local $pf i32)
+    (local.set $zf (call $get_zf))
+    (local.set $sf (call $get_sf))
+    (local.set $pf (call $get_pf))
+    (global.set $flag_op (i32.const 9))
+    (global.set $flag_sign_shift (i32.const 31))
+    (global.set $flag_a (i32.or (i32.and (local.get $cf) (i32.const 1))
+                                (i32.shl (local.get $pf) (i32.const 1))))
+    (global.set $flag_b (i32.and (local.get $of) (i32.const 1)))
+    (global.set $flag_res
+      (if (result i32) (local.get $zf) (then (i32.const 0))
+        (else (if (result i32) (local.get $sf) (then (i32.const 0x80008081))
+          (else (i32.const 1)))))))
   (func $set_flags_inc (param $a i32) (param $r i32)
     (global.set $saved_cf (call $get_cf))  ;; INC preserves CF
     (global.set $flag_op (i32.const 4)) (global.set $flag_sign_shift (i32.const 31))

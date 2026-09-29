@@ -17,6 +17,13 @@
 //     so SF is bit 31 of the result, not bit 7 or 15.
 // If either of those is ever corrected, this model is where the expectation
 // lives, and it should be corrected here in the same commit.
+//
+// Rotates (ROL/ROR/RCL/RCR) follow the manual: they write CF and OF only and
+// leave ZF/SF as the previous instruction set them. Each case seeds that
+// previous state from three different result words, so a rotate that
+// recomputes ZF/SF from its own result is caught. Indeo 4's generated VLC
+// reader (`cmp al,0x10 / ror eax,0x10 / jz`) decoded forever when they were
+// recomputed. OF is checked for rotates only.
 
 const fs = require('fs');
 
@@ -52,13 +59,14 @@ function model(bits, type, val, count, cfIn) {
       const c = count % bits;
       if (c === 0) return { value: val, cf: null };
       const r = m((val << c) | (val >>> ((bits - c) & 31)));
-      return { value: r, cf: r & 1 };
+      return { value: r, cf: r & 1, rot: true, of: ((r >>> (bits - 1)) & 1) ^ (r & 1) };
     }
     case ROR: {
       const c = count % bits;
       if (c === 0) return { value: val, cf: null };
       const r = m((val >>> c) | (val << ((bits - c) & 31)));
-      return { value: r, cf: (r >>> (bits - 1)) & 1 };
+      return { value: r, cf: (r >>> (bits - 1)) & 1, rot: true,
+               of: ((r >>> (bits - 1)) ^ (r >>> (bits - 2))) & 1 };
     }
     case RCL: {
       let v = val, cf = cfIn, c = count % (bits + 1);
@@ -67,7 +75,8 @@ function model(bits, type, val, count, cfIn) {
         cf = (v >>> (bits - 1)) & 1;
         v = r;
       }
-      return { value: v, cf };
+      if (count % (bits + 1) === 0) return { value: v, cf: cfIn, rot: true, of: null };
+      return { value: v, cf, rot: true, of: ((v >>> (bits - 1)) & 1) ^ cf };
     }
     case RCR: {
       let v = val, cf = cfIn, c = count % (bits + 1);
@@ -76,7 +85,8 @@ function model(bits, type, val, count, cfIn) {
         cf = v & 1;
         v = r;
       }
-      return { value: v, cf };
+      if (count % (bits + 1) === 0) return { value: v, cf: cfIn, rot: true, of: null };
+      return { value: v, cf, rot: true, of: ((v >>> (bits - 1)) ^ (v >>> (bits - 2))) & 1 };
     }
     default:
       return { value: val, cf: null };
@@ -115,7 +125,8 @@ async function main() {
       for (const val of VALUES) {
         for (let count = 0; count <= 33; count++) {
           for (const cfIn of [0, 1]) {
-            const got = test_shift(bits, type, val | 0, count, cfIn) >>> 0;
+           for (const resIn of [0, 0x80000001, 1]) {
+            const got = test_shift(bits, type, val | 0, count, cfIn, resIn | 0) >>> 0;
             const flags = test_shift_flags() >>> 0;
             const want = model(bits, type, val >>> 0, count, cfIn);
             cases++;
@@ -130,9 +141,18 @@ async function main() {
               const zf = (flags >> 1) & 1;
               const sf = (flags >> 2) & 1;
               if (cf !== want.cf) failures.push(`${where}: CF ${cf} != ${want.cf}`);
+              else if (want.rot) {
+                const of = (flags >> 3) & 1;
+                const wantZf = resIn === 0 ? 1 : 0;
+                const wantSf = (resIn >>> 31) & 1;
+                if (zf !== wantZf) failures.push(`${where} res=0x${resIn.toString(16)}: ZF ${zf} not preserved`);
+                else if (sf !== wantSf) failures.push(`${where} res=0x${resIn.toString(16)}: SF ${sf} not preserved`);
+                else if (want.of !== null && of !== want.of) failures.push(`${where}: OF ${of} != ${want.of}`);
+              }
               else if (zf !== (want.value === 0 ? 1 : 0)) failures.push(`${where}: ZF ${zf}`);
               else if (sf !== ((want.value >>> 31) & 1)) failures.push(`${where}: SF ${sf}`);
             }
+           }
           }
         }
       }

@@ -1,8 +1,7 @@
 # Video for Windows support — design
 
-Status: design, 2026-09-28. The decoders exist: `src/09a7e-video-codecs.wat`
-(BI_RGB, RLE8, Cinepak) is in the build and bit-exact against ffmpeg. The
-ICM, AVI core, MCI and Animate layers above it are not written yet.
+Status: implemented, 2026-09-28. See "What exists today". This file began as
+the design, written before any of the layers existed.
 
 ## tl;dr
 
@@ -37,7 +36,9 @@ ICM, AVI core, MCI and Animate layers above it are not written yet.
  │  BI_RLE8 runs + delta, retained plane          done (09a7e)    │
  │  cvid    Cinepak: strips, V1/V4 2x2 codebooks  done (09a7e)    │
  │  CRAM    MS Video 1: 4x4 blocks, 1/2/8 colours done (09a7e)    │
- │  IV41    Indeo 4: wavelet bands, VLC, MC       large, phase 5  │
+ │  anything else: an INSTALLED DRIVER, as on Windows (done 09a7g)│
+ │    SYSTEM.INI [drivers32] VIDC.XXXX → LoadLibrary → DriverProc │
+ │    run as guest x86 — Civ2's IV41 through Intel's ir41_32.dll  │
  └──────┬─────────────────────────────────────────────────────────┘
         ▼
   DrawDib / StretchDIBits (exist) → window surface
@@ -47,7 +48,7 @@ ICM, AVI core, MCI and Animate layers above it are not written yet.
  game and already run as x86. Deferred: DirectShow/quartz, QuickTime.
 
  ORDER: ICM + BI_RGB/RLE8/Cinepak → AVIFIL32 → MCI avivideo
-        → Animate control → MS Video 1 → Indeo 4
+        → Animate control → MS Video 1 → installable drivers (Indeo 4)
 ```
 
 ## What the apps actually do
@@ -62,7 +63,7 @@ The CD-only titles came from their ISOs.
 | War Wind | 63 on CD: `OPEN\LOGOS`, `OPEN\WWOPEN`, 15 briefings per race | Cinepak 320×240 @15, PCM 22 kHz mono | parses the AVI itself; `ICOpen('vidc','cvid',ICMODE_DECOMPRESS)` then `ICSendMessage` `0x400C` BEGIN, `0x401E` GET_PALETTE, `0x403C` DECOMPRESSEX_BEGIN, `0x403E` DECOMPRESSEX; asks for **8 bpp BI_RGB, 256 colours** | `ICOpen` → 0, movies skipped |
 | Dark Colony demo | `AVI\intro` (2233 frames) + 4 scenes | Cinepak 320×180 @15, PCM 11 kHz | AVIFIL32 `AVIStreamOpenFromFileA/InfoA/Length/ReadFormat/Read/Release`, then `ICLocate('vidc', …)` + `ICDecompress`, asks for **24 bpp BI_RGB** | **crashes**: `UNIMPLEMENTED API: AVIStreamOpenFromFileA` |
 | Half-Life Uplink | `media\intro.avi` (54 s), `uplink.avi` | RLE8 320×240 @25 + PCM stereo; RLE8 640×100 | `mciSendString("open media\intro.avi type AVIVideo alias sierravideo parent H style child")`, `window … handle H`, `put … destination at 0 0 320 240`, `break … on 27`, `play … wait`, `close` | open returns 0 and `play wait` returns at once — **silently skipped** (see below) |
-| Civilization II (Win16 + MGE) | 119 advisor / wonder movies | Indeo 4 (IV41) | Win16: AVIFILE + MSVIDEO ordinals; MGE: AVIFIL32 + `ICLocate/ICDecompress` + `MCIWndCreateA` | Win16 AVIFILE parses; `ICLocate` finds no codec, movie skipped (correct Windows behaviour for a machine without Indeo) |
+| Civilization II (Win16 + MGE) | 119 advisor / wonder movies | Indeo 4 (IV41) | Win16: AVIFILE + MSVIDEO ordinals; MGE: AVIFIL32 + `ICLocate/ICDecompress` + `MCIWndCreateA` | Without Indeo installed, `ICLocate` finds no codec and the movie is skipped (correct Windows behaviour). After the Indeo installer on its CD has run, Win32 `ir41_32.dll` decodes through the installable-driver path. |
 | MechWarrior 3 demo | probes `video\intro.avi` | — | AVIFIL32 + ICM | file is not in the demo; nothing to play |
 | VB6 working model | 26 sample AVIs | RLE8, BI_RGB 8/16/24, one Cinepak | Animate control / MCI | not exercised |
 | War Wind II | `WW2\DATA\VIDS\CINE\*.SMK` | Smacker | `smackw32.dll` (guest code) | not this design |
@@ -74,13 +75,14 @@ APIs are imported but not reached in that window.
 
 ## What exists today
 
-Updated 2026-09-28. Phases 0-4 and MCIWnd have landed; Indeo 4 remains.
+Updated 2026-09-28. Phases 0-5 have landed. Indeo 4 plays through the real
+Intel driver, with no WAT Indeo decoder (see "Installable codec drivers").
 
 | Piece | Where | State |
 |---|---|---|
 | Decoders: BI_RGB, RLE8, Cinepak, MS Video 1 (8/16 bpp) | `src/09a7e-video-codecs.wat` | bit-exact against ffmpeg (`tools/avi-player/`, `test/test-video-cram.js`) |
 | AVI reader | `src/09a7f-video-avi.wat` | RIFF/idx1/indx, VFS file or guest memory (`$avi_open_memory`) |
-| ICM (`ICOpen`/`ICDecompress`/`ICGetInfo`/…) | `src/09a7g-video-icm.wat` | built-in codecs by fourcc; IV41 is not one of them |
+| ICM (`ICOpen`/`ICDecompress`/`ICGetInfo`/…) | `src/09a7g-video-icm.wat` | built-in codecs by fourcc; any other fourcc goes to an installed driver's DriverProc, run as guest x86 (`test/test-icm-installable-driver.js`, `test/test-icm-indeo4-candidate.js`) |
 | MCI `avivideo` | `src/09a7h-video-mciavi.wat` | string interface, `wait` parks the thunk, `notify`, PCM audio; Half-Life Uplink (`test/test-mciavi-uplink-candidate.js`) |
 | MCIWnd (`MCIWndCreateA`) | `src/09a7i-video-mciwnd.wat` | message layer over the MCI device, wndproc `0xFFFF0006` (`test/test-mciwnd.js`) |
 | SysAnimate32 | `src/09c3-wndprocs6-animate.wat` | RLE8/raw, resource or file, WM_TIMER or host-clock playback; HyperTerminal's globe (`test/test-animate-control.js`) |
@@ -89,9 +91,13 @@ Updated 2026-09-28. Phases 0-4 and MCIWnd have landed; Indeo 4 remains.
 | Standalone player | `tools/avi-player/` | every corpus movie, the same WAT decoders compiled on their own |
 
 Still missing:
-- **Indeo 4 (IV41).** This is every Civ2 MGE movie (59 files). The route
-  being built loads the real `ir41_32.dll`, from the game's own disc or
-  install, as guest x86 behind the ICM driver protocol. We do not ship it.
+- **Civ2 MGE in its own movie route.** Its 59 IV41 movies decode once the
+  Indeo installer from its disc has run (`docs/re-notes/civilization-2-mge.md`).
+  Only Uplink's MCI player has been driven through them headless. We do not
+  ship Intel's DLL.
+- Indeo 3/5 (`ir32_32.dll`, `ir50_32.dll`) use the same path and are untested.
+- The Win16 `IR41.DL_` driver: Win16 MSVIDEO `ICLocate` still returns 0.
+- `ICInfo` enumeration (a numeric `fccHandler`) lists only the built-in codecs.
 - The `mciSendCommand` binary interface to the avivideo device.
 - Palette-change chunks in MCI playback, `play repeat`, and the MCIWnd
   playbar and menu.
@@ -142,6 +148,68 @@ HIC record (emulator-private table, generation-tagged handle like the
 SetupDi sets): `{codec id, mode, state ptr, in format copy, out format copy,
 palette[256]}`. Codec state lives in an emulator arena: a Cinepak context is
 32 strips × (2 × 256 × 12 bytes of codebook) plus the retained RGB frame.
+
+#### Installable codec drivers (the guest DriverProc backend)
+
+A fourcc that no built-in decoder claims is handled as Windows handles it: by
+the installed driver DLL, running as ordinary guest x86. There is no emulator
+copy of the codec, which is how Civ2 MGE's Indeo 4 movies play through
+Intel's own `ir41_32.dll`. All of it is in `src/09a7g-video-icm.wat`, from
+"installable drivers" onwards.
+
+- **Lookup** (`$icm_drv_lookup`): SYSTEM.INI `[drivers32] VIDC.XXXX=file.dll`,
+  and if that is empty, `HKLM\Software\Microsoft\Windows NT\CurrentVersion\Drivers32`.
+  A bare file name is searched for as-is and then in the system directory.
+  SYSTEM.INI is what counts on Win9x. The Indeo installer's own script writes
+  its ICM registry keys under **HKCR**\System\CurrentControlSet\… (the guest
+  really passes `0x80000000`), so no Windows would find them there either.
+- **Load** (`$icm_drv_get`): if the module is not mapped yet, the handler asks
+  the host for it through the existing LoadLibrary yield (reason 5). It then
+  either parks the calling API on its import thunk (`$icm_park_load`, used by
+  `ICOpen`/`ICLocate`, which run again after the load), or rides on the current
+  call without parking (`$icm_request_load`, used by the MCI device, which
+  opens its codec at the first frame). In both cases `take_loadlib_keep_regs`
+  tells `lib/process-boot.js` and `lib/guest-worker.js` to keep the guest's
+  EAX/ECX/EDX rather than store a module handle. Three failed tries mean the
+  driver is not there. Once mapped, the loader sends `DRV_LOAD` (which must
+  return nonzero) and then `DRV_ENABLE`.
+- **Open**: `DRV_OPEN` with a real 36-byte ICOPEN {size, 'vidc', fccHandler,
+  version, mode}. The driver's return value becomes the instance id carried
+  by every later message. 0 means the driver refused.
+- **Messages** (`$icm_guest_send`): every ICM message on that HIC is forwarded
+  as-is. The guest's own buffers stay guest pointers, so no translation is
+  needed.
+- **Close** (`$icm_close_rec`): `DRV_CLOSE`, then `DRV_DISABLE` + `DRV_FREE`
+  when the last HIC on that driver closes. The module stays mapped.
+- **`ICInfo`** for an installed fourcc is answered from the registration
+  alone, without loading the DLL, as Windows does (`$icm_guest_info`).
+- **`DefDriverProc`** (winmm, api 3743) handles the messages a driver passes
+  through. **`LocalHandle`** (api 3744) was added because ir41_32 calls it on
+  the way out.
+
+**The nested call** (`$icm_drv_call`) is the `$edit_stream_call` pattern. It
+saves the interrupted x86 context, pushes the five stdcall arguments and
+`$sync_msg_ret_thunk`, and runs `$run(1000000)` until EIP reaches 0, for at
+most 64 rounds (log marker `0xCA1CD000`). It must also save and restore
+`$current_thunk_eip`: every API the driver calls re-points it, and a parked
+`play wait` that then parks on the *driver's* last import runs the guest into
+address 0.
+
+**The MCI device** (`src/09a7h-video-mciavi.wat`): `$mciavi_open` falls back to
+`$icm_locate_guest` when no built-in codec matches. `$mciavi_codec_begin` asks
+for 32 bpp first and steps down to 24 and 16, because Indeo refuses 32. The
+painter reads whatever depth was accepted. MCIWnd plays through this device,
+so it is covered too.
+
+**Two emulator bugs the real codec exposed** (both fixed):
+- **Rotate flags.** ROL/ROR/RCL/RCR set ZF/SF from their own result. On x86
+  they write only CF and OF (`$set_flags_rotate` in `src/03-registers.wat`,
+  `src/05-alu.wat`). Indeo's runtime-generated VLC reader does
+  `cmp al,0x10 / ror eax,0x10 / jz`, so the wrong ZF looped it forever.
+  `test/test-shift-equivalence.js` now checks preserved ZF/SF and the OF
+  formulas. The uop compiler (`src/07e`) declines rotates, because its flag
+  record cannot express "unchanged".
+- `$current_thunk_eip` across the nested call, above.
 
 ### 2. AVIFile (AVIFIL32.DLL; Win16 AVIFILE.DLL)
 
@@ -300,7 +368,14 @@ own model, against ffmpeg through `verify.js` (bit-exact, including an
 ffmpeg-encoded 16 bpp movie), and through ICLocate + ICM_DECOMPRESS. ffmpeg
 has no 8 bpp encoder, which is why the 8 bpp fixture is hand-built.
 
-### Indeo 4 ('IV41', Intel ir41_32.ax)
+### Indeo 4 ('IV41', Intel ir41_32.dll)
+
+**Not implemented in WAT, and it doesn't need to be.** The game's own Indeo
+install supplies `ir41_32.dll`, and it runs behind the installable-driver path
+above. Checked against ffmpeg `indeo4` on Civ2's ANARCHY0.AVI: 99.98% of
+pixels within 24, max delta 27, which is YUV→RGB rounding
+(`test/test-icm-indeo4-candidate.js`). What follows describes the format, for
+reference.
 
 Civ2's 119 movies. YVU 4:1:0: three planes, the luma plane optionally split
 into 4 wavelet bands (Haar or 5/3), each band divided into tiles →
@@ -354,7 +429,8 @@ are WAT, and audio reuses the waveOut mixer.
    - every frame of Uplink's intro (1344) and of uplink.avi
    - all 19 VB6 samples (Cinepak, RLE8, 8/16/24 bpp)
 
-   Civ2's IV41 is reported as SKIP.
+   Civ2's IV41 is reported as SKIP, since the player has no Indeo decoder.
+   Inside the emulator IV41 goes through the guest driver (item 6).
 2. **ICM unit test** (`test/test-video-codecs.js`): drive `ICSendMessage`
    inside the full emulator with real frames from those files. Compare the
    guest output buffer with the standalone module's frame: 24 bpp must match
@@ -372,6 +448,18 @@ are WAT, and audio reuses the waveOut mixer.
    the per-frame key/delta, size and decode time. It compiles the same WAT
    fragment in the page. The only JS is the demux, PCM unpacking and the
    BGRX→RGBA copy into the canvas.
+6. **Installable drivers.**
+   - `test/test-icm-installable-driver.js` builds a tiny driver DLL
+     (`xtst32.dll`) and an EXE in JS, and registers the driver in SYSTEM.INI
+     through an overlay. It checks `ICInfo`, `ICOpen`, `ICGetInfo`, a private
+     message, `DefDriverProc` pass-through and `ICClose`. It also checks the
+     exact DriverProc order: LOAD, ENABLE, OPEN, GETINFO, 0x7001, CONFIGURE,
+     CLOSE, DISABLE, FREE.
+   - `test/test-icm-indeo4-candidate.js` plays ANARCHY0.AVI through Uplink's MCI
+     player with the real `ir41_32.dll` and compares the frame with ffmpeg. It
+     SKIPs without the DLL. Intel's DLL is never committed: point
+     `INDEO_IR41_DLL` at it, or put it in the gitignored
+     `test/binaries/candidates/civilization-2-mge-win32/indeo/`.
 
 ## Phases
 
@@ -382,7 +470,7 @@ are WAT, and audio reuses the waveOut mixer.
 | 2 | AVIFIL32 (Win32) on the shared AVI core; Win16 AVIFILE moved onto it | Dark Colony (crash fixed, intro plays) |
 | 3 | MCIAVI device: string + command interface, `wait`/`notify`, audio clock | Half-Life Uplink |
 | 4 | Animate control; DrawDib over ICM; MS Video 1 | VB6 samples, shell progress animations |
-| 5 | MCIWnd (done); Indeo 4 via the real codec DLL | Civ2 advisor/wonder movies |
+| 5 | MCIWnd (done); installable drivers, Indeo 4 via the real `ir41_32.dll` (done) | Civ2 advisor/wonder movies |
 
 ## Out of scope
 
