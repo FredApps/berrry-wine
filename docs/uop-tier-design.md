@@ -2093,3 +2093,131 @@ Gameplay is the last `--slice-split` phase.
   - After the rebase, the difference is 5100 px in a 509x260 box. The cause is
     02abe273's MMX lowering: with `--no-uop-mmx`, the uop frame matches the
     pre-rebase frame exactly and differs from off by the same 35 px cursor.
+
+## 18. Game-specific threaded folds against the uop tier (2026-09-29)
+
+The threaded tier had grown exact-byte folds for single games: Smacker and
+Storm helpers, SimGolf's colour-keyed blits, MW3's RGB565 rows, Jazz 2's
+lighting and masked copy, and others. The uop tier's enter op (470) is emitted
+**before** any block-start fold. So wherever uop compiles a head, it runs that
+head, and the fold only runs in the threaded fallback.
+
+This section asks, fold by fold, whether the uop tier alone is as fast. Each
+fold stays only where it still pays for itself.
+
+### 18.1 Method
+
+- **Switch.** Every fold has an off switch, `--no-fold=NAME`
+  (`test/runner-experiments.js`), inherited by every guest-thread instance.
+  - Folds that already had a setter map to it.
+  - The rest share `$fold_off_mask` in `07-decoder.wat`.
+- **Arms.** `tools/uop-game-ab.js` runs `uop` (fold on) against `--arm=` (uop
+  plus the fold off). `--arm-off=` adds the same pair on the threaded tier, as
+  a control: it shows what the fold does when uop is not in front of it.
+- **Setup.**
+  - Box2, one run.js at a time, `--branch-clock`, fixed work (the route's
+    `--max-batches`).
+  - User CPU, arms alternating, at least two runs per arm.
+  - The null band is the uop arm's own run-to-run spread.
+- **Frames.** Every arm's last frame is md5-compared. When the app disagrees
+  with itself, the arms are compared against the fold-off threaded frame.
+- **Census.** A handler histogram (`--handler-hist-thread=0`) with the fold on,
+  threaded against uop:
+  - a fold handler that drops to a few hundred dispatches under uop marks a
+    loop uop compiles;
+  - **zero in both arms means the route never runs the fold, and the A/B says
+    nothing about it.**
+- **Rule.** Retire when the fold-off uop arm is not slower than the band and
+  frames match. Keep otherwise, or when no route in the corpus reaches the fold.
+
+### 18.2 Census and decisions
+
+Dispatch counts are the fold's handler, fold on, threaded → uop, on the A/B
+route unless noted.
+
+| fold (handler) | switch | app | threaded → uop | decision |
+|---|---|---|---|---|
+| SMK_TREE (461) | `smk-tree` | StarCraft, Heroes III (Smacker) | H3 835K → 275K | retired, 99aab153 |
+| SMACK_HUFF (395) | `smack-huff` | Smacker | H3 1.74M → 1.3K | retired, 4a481444 |
+| STORM_BITREADER (396) | `storm-bitreader` | StarCraft, Diablo (Storm PKWARE) | fires on SC | retired, 605eeaba |
+| SimGolf CK_LUT16/BLEND16/SHADOW16/COPY8 (455-457, 460) | `ck-*` setters | SimGolf `jgl.dll` | 11.4M → 4.2K | retired, 97781af9 |
+| LUT_RUN u16 counted (418 forms) | `lut16-counted` | Heroes III 0x470927 | 3.75M → 12K | retired, 11e746cd |
+| CASE_CHAIN (428) | `case-chain` | Caesar III, StarCraft | SC 10,759 → 6,876; C3 1 → 1,008 (RLE_RUN takes the ladder) | retired, bddcd57a |
+| MMX masked row copy (419 `0x80000000`) | `mmx-mask-copy` | Jazz 2 | jazz2g 54,857 → 2,108 (all H419) | retired, b1a7ab29 |
+| MW3 RGB565 alpha / colour-key / grid filter (436/440/441) | `mw3-blit` | MechWarrior 3 | 440: 293K → 293K; 441: 68K → 255; **436: 0 / 0** | retired, 50ff31cb |
+| LUT_SPAN (431), incl. Jazz 2 lighting mode 2 | `lut-span` | Diablo II `d2gfx`, Jazz 2 | jazz2g 641,572 → 765 | retired, 0cc038f1 |
+| COPY32 counted (419 `0x80000004`) | `copy32-counted` | Diablo (app profile) | H419 22.0M → 111K | retired, cb514459 |
+| RLE_RUN (429) | `rle-run` | Caesar III | 4.76M → 1,074 | **kept** |
+| RECT_RUN (427) | `rect-run` | Caesar III | 577K → 482K (uop does not take it) | **kept** |
+| PCX_RUN (462) | `pcx-run` | Quake II | 9,918 → 1,318 | **kept** |
+| AoE span prefix (438) | `aoe-span` | Age of Empires I/II | 2.17M → 1,020 | **kept** |
+| AoE grid fill (437) | `aoe-fill` | Age of Empires I/II | 0 / 0 on aoe1 | **kept** (not reached) |
+| XLAT/STOSB (418 form) | `xlat-stosb` | Diablo | not reached on the route | **kept** (not reached) |
+| COLORKEY8 (443) | `colorkey8` | Alpha Centauri | no assets on the boxes | **kept** (not measured) |
+| MMX copy64 / fill64 (419 `0x80000001-3`, `0x80000005`) | `mmx-copy64`, `mmx-fill` | Deus Ex / UE1 SoftDrv | no assets on the boxes | **kept** (not measured) |
+| IMPLODE_CMP_RUN (466) | `--implode-cmp-run` | prototype | off by default | untouched |
+| packed average (435) | — | generic recognizer | not game-specific | untouched |
+| generic COPY_RUN | `--copy-superops` | MW3 opts in (`copySuperops`) | neutral on MW3: 320.57 / 322.90 s off vs 322.31 / 323.33 s on | untouched (generic, off by default) |
+
+Each retired slot becomes `$th_retired_fold`, so the handler table, elem list
+and cache guard stay at 499 and no later index moves. None of the retirements
+needed a uop compiler extension: in every case uop already compiled the loop,
+or (MW3 440) ran the surrounding code at least as fast.
+
+### 18.3 A/B results
+
+User CPU in seconds. Whole run unless a gameplay phase (the last
+`--slice-split` phase) is given.
+
+| app, fold | fold on (uop) | fold off + uop | threaded control | frames | decision |
+|---|---|---|---|---|---|
+| StarCraft, SMK_TREE / SMACK_HUFF / STORM | 16.86, 16.45 | 16.59, 16.09 / 16.82, 16.05 / 16.46, 16.30 | all off 29.32 vs on 28.85 | fold-off uop = fold-off threaded | retired (band 0.41) |
+| Heroes III, SMK_TREE / SMACK_HUFF | 52.29, 52.05 | 52.32, 52.67 / 51.83, 50.91 | — | identical | retired |
+| Heroes III, LUT_RUN u16 | 52.29, 52.05, 52.64, 51.96 | 52.14, 52.84 | off 73.18 | identical | retired |
+| SimGolf, four CK folds | 20.09-20.66 (7 runs) | 20.14-20.49 (7 runs) | — | identical, also to fold-off threaded | retired |
+| Caesar III, CASE_CHAIN | 4.79, 4.77 | 4.77, 4.78 | — | identical | retired |
+| Caesar III, RLE_RUN | 4.79, 4.77 | 4.83, 4.89 (+1.3%) | — | — | kept |
+| Caesar III, RECT_RUN | 4.79, 4.77 | 6.40, 6.42 (+34%) | — | — | kept |
+| Quake II, PCX_RUN | 6.78, 6.88 | 6.96, 7.17 (+3%) | off 8.31, fold off 8.47 | identical | kept |
+| MW3, all three blits | 322.31, 323.33 | 308.22, 319.71 (−4.4%; gameplay −1.8%) | off 326.85 | identical | retired |
+| Jazz 2 level (jazz2g), mask copy | 14.25, 14.08, 14.12 | 14.02, 13.99, 14.69 | off 28.54, fold off 28.43 | see below | retired |
+| Jazz 2 level (jazz2g), LUT_SPAN | 14.25, 14.08, 14.12 | 14.30, 14.16, 14.06 | fold off 28.39 | identical | retired |
+| Diablo II, LUT_SPAN | 30.80, 32.05 | 30.93, 32.92 (+1.6%, band 1.25) | off 32.65, fold off 33.43 | 6 shots identical | retired |
+| Diablo, COPY32 counted | 91.70, 93.42, 92.01, 92.85, 92.75 (mean 92.55) | 94.48, 96.67, 91.19, 91.25, 93.33 (mean 93.38, +0.9%) | — | identical | retired (band 1.72) |
+| AoE I, both AoE folds | 11.01, 11.09, 10.99, 11.10, 11.02, 11.12; gameplay 4.75 mean | 11.06, 11.35, 11.23, 11.18, 11.16, 11.05; gameplay 4.90 mean (+1.1% / +3.2%) | off 12.75-13.10, fold off 12.93-13.00 | see below | kept |
+| AoE I, span only | 11.07, 11.00, 11.04 | 11.06, 11.16, 11.09 (gameplay +1.4%) | fold off 12.98 | see below | kept |
+| AoE I, fill only | 11.07, 11.00, 11.04 | 11.02, 11.01, 11.11 | fold off 12.72 | identical | kept (H437 never runs) |
+
+### 18.4 Findings
+
+- **Two game folds change the program's result on the threaded tier.**
+  - *Jazz 2's masked MMX row copy.* On jazz2g, with the fold off, uop and
+    threaded produce one md5-identical frame. With it on, the two tiers produce
+    two *different* frames, and both differ from the fold-off frame.
+  - *AoE's span prefix.* Fold-on threaded differs from fold-off threaded by
+    6,660 px (1.39%). Every uop arm equals the fold-off threaded frame, because
+    under uop the fold barely runs (1,020 dispatches).
+  - Both routes are demo/AI playback on `--branch-clock`. A fold that charges
+    `$steps` or advances the branch clock differently from the x86 it replaces
+    moves guest time. That alone is enough to change such a replay, so this is
+    a clock-accounting divergence at least, not necessarily wrong pixels.
+  - The mask copy is retired. The span prefix is kept for its gameplay margin,
+    and it is the first thing to look at if AoE threaded runs ever disagree
+    with uop.
+- **The first Jazz 2 route measured nothing.** The title-only `jazz2` route
+  never reaches the level renderer: 0 dispatches of H419 and of H431 with the
+  folds on. The first two Jazz 2 A/Bs (fold off 3.73-3.78 s against 3.83 s)
+  were noise over code that never ran.
+  - `jazz2g` presses Escape through the title and loading screen and runs the
+    DEMO level.
+  - Any fold A/B should check the census first: a fold that never runs is
+    "not slower" by construction.
+- **MW3's alpha row (436) was not exercised** by the MW3 route (0 dispatches in
+  both arms). It was retired with 440/441 on the strength of the combined arm.
+  If a later MW3 scene shows an alpha-heavy blit regressing, that is the one
+  retirement here without a direct measurement.
+- **What is left is either measured or unreachable.**
+  - RECT_RUN (+34%), PCX_RUN (+3%) and RLE_RUN (+1.3%) still pay. RECT_RUN is
+    straight-line unrolled rows, not a loop, so uop does not take it.
+  - The AoE folds, XLAT/STOSB, COLORKEY8 and the UE1 MMX folds stay until a
+    route that reaches them exists.
