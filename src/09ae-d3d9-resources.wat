@@ -1808,6 +1808,10 @@
     (if (i32.eqz (local.get $obj)) (then (i32.store offset=0 (global.get $reg_base) (i32.const 0x8007000E)) (return)))
     (local.set $wa (call $g2w (local.get $obj)))
     (call $zero_memory (local.get $wa) (local.get $bytes))
+    ;; This allocation may reuse a released texture's mip records: move the
+    ;; device's texture generation so the host re-checks its snapshots.
+    (local.set $state (i32.add (call $d3d9_program_state (local.get $device)) (i32.const 25596)))
+    (call $gs32 (local.get $state) (i32.add (call $gl32 (local.get $state)) (i32.const 1)))
     (local.set $vtbl (global.get $DX_VTBL_D3DTEX9))
     (if (i32.eq (local.get $kind) (i32.const 5)) (then
       (local.set $state (call $d3d9_program_state (local.get $device)))

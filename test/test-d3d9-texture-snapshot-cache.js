@@ -217,10 +217,19 @@ const drawnPixels = command => drawnLevel(command).pixels;
     assert.strictEqual(f.bridge._textureSnapshots.get(f.mip).pixels, kept,
       'an unsampled write with no lock behind it is NOT noticed -- the dirty sequence is the contract');
 
-    // What the sample does cover: the same address, the same sequence, a
-    // different texture. A new allocation reusing a freed mip record cannot
-    // pass unless its bytes match everywhere sampled.
+    // Between texture creations the device's generation word (+25596) and
+    // the dirty sequence are the whole proof: even a sampled rewrite with no
+    // lock and no new texture is not re-walked.
     new Uint8Array(f.memory, f.texels, f.bytes).fill(0x1f);
+    f.bridge.call(0x30001, f.desc, 0); await f.flush();
+    assert.strictEqual(f.bridge._textureSnapshots.get(f.mip).pixels, kept,
+      'no texture was created, so the snapshot is trusted without sampling');
+
+    // What the sample does cover: the same address, the same sequence, a
+    // different texture. Creating it bumps the generation
+    // ($d3d9_texture_create_kind), and then a new allocation reusing a freed
+    // mip record cannot pass unless its bytes match everywhere sampled.
+    f.set(f.program + 25596, 1);
     f.bridge.call(0x30001, f.desc, 0); await f.flush();
     assert.notStrictEqual(f.bridge._textureSnapshots.get(f.mip).pixels, kept,
       'replacement content at the same address and sequence is caught by the sample');

@@ -69,9 +69,12 @@
     ;; that span is not free: $d3d9_sampler_offset computes 1808 + stage*64 for
     ;; stages 0..3 and owns every byte of it. A computed offset is invisible to
     ;; a grep for the literal, so check that helper before claiming a gap.
-    (local.set $state (call $heap_alloc (i32.const 25596)))
+    ;; +25596 texture generation: $d3d9_texture_create_kind bumps it for every
+    ;; texture this device creates, so lib/d3d9-host.js can tell a mip record
+    ;; address that may now name a new texture from one that cannot.
+    (local.set $state (call $heap_alloc (i32.const 25600)))
     (if (i32.eqz (local.get $state)) (then (return (i32.const 0))))
-    (call $zero_memory (call $g2w (local.get $state)) (i32.const 25596))
+    (call $zero_memory (call $g2w (local.get $state)) (i32.const 25600))
     (call $gs32 (i32.add (local.get $state) (i32.const 21780)) (global.get $current_thread_id))
     (loop $texture_stages
       (local.set $sampler (i32.add (call $g2w (local.get $state))
