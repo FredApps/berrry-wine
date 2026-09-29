@@ -434,6 +434,18 @@ const TRACE_WIN16_DDE = (getArg('trace-win16', '') || '').split(',').includes('d
 // left in it -- Visual Basic says "Division by zero" from a status read, which
 // can be an arbitrary distance from the divide that set ZE.
 const TRACE_FPU = hasFlag('trace-fpu');
+// --trace-code-writes: every guest write that retired decoded code -- address,
+// width, writer EIP, blocks dropped -- and every block retired by an
+// overlapping publish, as `retired entry <- publishing entry` pairs. The first
+// 40 of each print as they happen; the exit summary ranks them. Reach for it
+// when block decodes are high: a pair that recurs thousands of times is two
+// entries re-decoding each other with no guest write (Heroes III's fold bug),
+// and pair it with tools/code-drift.js to tell real SMC from that.
+// --trace-code-writes=all also counts the writes the shared code map let
+// through that retired NOTHING (false invalidations: a data store beside
+// code), ranked by page and writer EIP. Slow: one host call per such write.
+const TRACE_CODE_WRITES = hasFlag('trace-code-writes') || getArg('trace-code-writes', null) !== null;
+const TRACE_CODE_WRITES_ALL = getArg('trace-code-writes', null) === 'all';
 const TRACE_NET = hasFlag('trace-net');   // --trace-net: log every vln/1 frame on the virtual LAN wire
 // --vlan-ip=10.0.0.2: this process's room address (host of the room keeps
 // 10.0.0.1, which a guest can reach by typing "10.1"). --vlan-wire joins the
@@ -1503,6 +1515,12 @@ async function main() {
   let pendingComApiId = -1; // COM api_id from 0xC0DE0000 marker emitted just BEFORE the '<ord>' name log
   let pendingWin16 = null;  // words following the 0xCA16A9F1 Win16 dispatch marker
   let pendingFpu = null;    // words following the 0xCAF00001 --trace-fpu marker
+  let pendingCodeWrite = null; // words following the 0xCAC0DE01 --trace-code-writes marker
+  let pendingCodeRetire = null; // words following the 0xCAC0DE02 retire marker
+  let pendingCodeMiss = null; // words following the 0xCAC0DE03 false-invalidation marker
+  const codeWriteStats = { events: 0, dropped: 0, byEip: new Map(), byPage: new Map(),
+    retires: {}, overlapPairs: new Map(), overlapLogged: 0,
+    misses: 0, missByEip: new Map(), missByPage: new Map() };
   let pendingSyncBail = null; // words following the 0xCADE5000 abandoned-wndproc marker
   let dedupLast = null;    // {line, count} for --trace-api-dedup
   const flushDedup = () => {
@@ -3256,6 +3274,54 @@ async function main() {
       logs.push(`[sync] ABANDONED wndproc hwnd=${hex(hwnd)} msg=${hex(msg)} ` +
         `wParam=${hex(wParam)} lParam=${hex(lParam)} at ${hex(eip)} ` +
         `after 64 rounds (yield_reason=${yr})`);
+      return;
+    }
+    if ((val >>> 0) === 0xCAC0DE02) { pendingCodeRetire = []; return; }
+    if (pendingCodeRetire) {
+      pendingCodeRetire.push(val >>> 0);
+      if (pendingCodeRetire.length < 4) return;
+      const [entry, extent, eip, byWrite] = pendingCodeRetire;
+      pendingCodeRetire = null;
+      const kind = byWrite ? 'write' : 'overlap';
+      codeWriteStats.retires[kind] = (codeWriteStats.retires[kind] || 0) + 1;
+      if (!byWrite) {
+        const key = `${hex(entry)} <- ${hex(eip)}`;
+        codeWriteStats.overlapPairs.set(key, (codeWriteStats.overlapPairs.get(key) || 0) + 1);
+        if (++codeWriteStats.overlapLogged <= 40) {
+          logs.push(`[code-retire] ${hex(entry)} (+${extent}) retired by overlapping publish at ${hex(eip)}`);
+        }
+      }
+      return;
+    }
+    if ((val >>> 0) === 0xCAC0DE01) { pendingCodeWrite = []; return; }
+    if (pendingCodeWrite) {
+      pendingCodeWrite.push(val >>> 0);
+      if (pendingCodeWrite.length < 4) return;
+      const [ga, len, eip, dropped] = pendingCodeWrite;
+      pendingCodeWrite = null;
+      codeWriteStats.events++;
+      codeWriteStats.dropped += dropped;
+      const bump = (m, k) => {
+        const e = m.get(k) || { n: 0, dropped: 0 };
+        e.n++; e.dropped += dropped; m.set(k, e);
+      };
+      bump(codeWriteStats.byEip, eip);
+      bump(codeWriteStats.byPage, ga & ~0xFFF);
+      if (codeWriteStats.events <= 40) {
+        logs.push(`[code-write] ${hex(ga)} len=${len} by ${hex(eip)} dropped ${dropped} block(s)`);
+      }
+      return;
+    }
+    if ((val >>> 0) === 0xCAC0DE03) { pendingCodeMiss = []; return; }
+    if (pendingCodeMiss) {
+      pendingCodeMiss.push(val >>> 0);
+      if (pendingCodeMiss.length < 3) return;
+      const [ga, , eip] = pendingCodeMiss;
+      pendingCodeMiss = null;
+      codeWriteStats.misses++;
+      const bump = (m, k) => m.set(k, (m.get(k) || 0) + 1);
+      bump(codeWriteStats.missByEip, eip);
+      bump(codeWriteStats.missByPage, ga & ~0xFFF);
       return;
     }
     if ((val >>> 0) === 0xCAF00001) { pendingFpu = { words: [] }; return; }
@@ -5467,6 +5533,9 @@ async function main() {
   }
   if (TRACE_FPU && instance.exports.set_fpu_trace) {
     instance.exports.set_fpu_trace(1);
+  }
+  if (TRACE_CODE_WRITES && instance.exports.set_code_write_trace) {
+    instance.exports.set_code_write_trace(TRACE_CODE_WRITES_ALL ? 2 : 1);
   }
   const dumpCallstack = (label, e) => {
     if (!TRACE_CALLSTACK || !e || !e.get_callstack_depth) return;
@@ -9916,6 +9985,32 @@ if (VERBOSE) {
         console.log('cache: page invalidations', instance.exports.get_cache_invals(),
           'that dropped a block', instance.exports.get_cache_inval_hits(),
           'last', hex(instance.exports.get_cache_inval_page()));
+        if (TRACE_CODE_WRITES) {
+          const top = (m, label) => {
+            const rows = [...m].sort((a, b) => b[1].dropped - a[1].dropped).slice(0, 20);
+            console.log(`  code writes by ${label} (${m.size} distinct):`);
+            for (const [k, e] of rows) {
+              console.log(`    ${hex(k)}  writes ${e.n}  blocks dropped ${e.dropped}`);
+            }
+          };
+          console.log(`[code-write] ${codeWriteStats.events} retiring writes on the main ` +
+            `instance, ${codeWriteStats.dropped} blocks dropped`);
+          top(codeWriteStats.byEip, 'writer EIP');
+          top(codeWriteStats.byPage, 'target page');
+          const r = codeWriteStats.retires;
+          console.log(`[code-retire] blocks retired: by guest write ${r.write || 0}, ` +
+            `by an overlapping publish ${r.overlap || 0}`);
+          const pairs = [...codeWriteStats.overlapPairs].sort((a, b) => b[1] - a[1]);
+          console.log(`  overlap retirements, retired entry <- publishing EIP (${pairs.length} distinct):`);
+          for (const [k, n] of pairs.slice(0, 25)) console.log(`    ${k}  x${n}`);
+          if (TRACE_CODE_WRITES_ALL) {
+            console.log(`[code-miss] ${codeWriteStats.misses} writes reached the range walk and retired nothing`);
+            for (const [m, label] of [[codeWriteStats.missByEip, 'writer EIP'], [codeWriteStats.missByPage, 'target page']]) {
+              console.log(`  by ${label} (${m.size} distinct):`);
+              for (const [k, n] of [...m].sort((a, b) => b[1] - a[1]).slice(0, 20)) console.log(`    ${hex(k)}  x${n}`);
+            }
+          }
+        }
         // Section 5's own scoreboard. A retire is one block taken out by a
         // write to a byte it covers; a range drop is a write too wide to walk,
         // where the whole page went instead. The ratio is the thesis: per-offset

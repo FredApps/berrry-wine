@@ -452,18 +452,14 @@
   (func $gl8 (param $ga i32) (result i32)
     (i32.load8_u (call $g2w (local.get $ga))))
   ;; Cheap "could a write here be touching code?" test, for one guest address.
-  ;; Split out of $invalidate_code_write so the range form can skip it when the
-  ;; write spans pages and the per-page walk will ask the question anyway.
+  ;; Page-granular over the whole guest space ($code_page_test, 04-cache; exact
+  ;; below 0x10000000, hashed across 256MB segments above): the old
+  ;; OR with the sparse generated-code min..max span is gone, because that span
+  ;; flagged every data page between two generated-code islands (StarCraft:
+  ;; 7.5M no-op invalidations per 3500 batches). Kept as a name because the uop
+  ;; store-window test (07d $uop_window_set) asks the same question.
   (func $code_write_is_code (param $ga i32) (result i32)
-    (local $in_sparse_generated i32)
-    (local.set $in_sparse_generated
-      (i32.and
-        (i32.ne (global.get $generated_sparse_code_start) (i32.const 0))
-        (i32.and (i32.ge_u (local.get $ga) (global.get $generated_sparse_code_start))
-                 (i32.lt_u (local.get $ga) (global.get $generated_sparse_code_end)))))
-    (i32.or
-      (local.get $in_sparse_generated)
-      (call $code_page_test (local.get $ga))))
+    (call $code_page_test (local.get $ga)))
 
   ;; A write of $len bytes starting at $ga. The length is not decoration: with
   ;; per-offset invalidation (docs/page-compile-design.md section 5) the retire
@@ -478,14 +474,12 @@
     ;; treating every image write as self-modifying code makes each byte/word
     ;; update scan the whole block-cache index.
     ;;
-    ;; $code_page_test answers that exactly for every guest page below
-    ;; $VIRTUAL_ALLOC_MIN: its bit is set by $cache_store, so it is on iff a
-    ;; block was decoded out of that page. It replaces the old code_start..end
-    ;; and generated_code_start..end span tests, which were both coarser (a
-    ;; span covers every data page between its ends — RCT executes and writes
-    ;; inside one CodeSeg section) and blind to code generated into ordinary
-    ;; heap memory, which lies in neither span. Storm's runtime blitters are
-    ;; exactly that case.
+    ;; $code_page_test answers that per page for every guest page: its bit is
+    ;; set by $code_note_decode, so it is on if a block was decoded out of
+    ;; that page (by any instance) -- or out of a page it aliases with across
+    ;; a 256MB segment, which only costs a slow path. It replaces the old code_start..end,
+    ;; generated_code_start..end and generated_sparse_code_* span tests, which
+    ;; were all coarser -- a span covers every data page between its ends.
     (if (i32.eqz (global.get $exe_size_of_image)) (then (return)))
     ;; The hot case is a 1/2/4-byte write inside one page: answer it with the
     ;; bitmap and decline without a call. A write that spans pages goes straight
@@ -495,18 +489,39 @@
     (if (i32.le_u (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (local.get $len))
                   (i32.const 4096))
       (then
-        (if (i32.eqz (call $code_write_is_code (local.get $ga))) (then (return)))))
+        (if (i32.eqz (call $code_page_test (local.get $ga))) (then (return)))))
     ;; Multi-page spans need every page in between retired, not just the two
     ;; ends -- main fixed that with its own $invalidate_code_range, and the
     ;; page-compile one below already walks page by page, so that fix arrives
     ;; here as a property of the range walk rather than a second function.
     (call $invalidate_code_range (local.get $ga) (local.get $len)))
+
+  ;; The slow half of a single-page $gsN store, reached only when the page's
+  ;; CODE_PAGE_BITMAP bit is set: the $gsN helpers test the bit inline (one
+  ;; byte load and a few shifts/masks) so the ~every-store common case -- a data
+  ;; page, including every push/call to the stack -- never makes a call. The
+  ;; per-thread page index then decides, byte-exactly, whether anything dies.
+  (func $code_write_hit (param $ga i32) (param $len i32)
+    (if (i32.eqz (global.get $exe_size_of_image)) (then (return)))
+    (call $invalidate_code_range (local.get $ga) (local.get $len)))
+
   (func $gs32 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga) (i32.const 4))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFC))
-      (then (i32.store (local.get $wa) (local.get $v)) (return)))
+      (then
+        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+              (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                         (i32.const 0x1FFF))))
+              (i32.shl (i32.const 1)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
+                                  (i32.shr_u (local.get $ga) (i32.const 28)))
+                         (i32.const 7))))
+          (then (call $code_write_hit (local.get $ga) (i32.const 4))))
+        (i32.store (local.get $wa) (local.get $v)) (return)))
+    (call $invalidate_code_write (local.get $ga) (i32.const 4))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 3))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 3)))
       (then (i32.store (local.get $wa) (local.get $v)) (return)))
@@ -523,9 +538,20 @@
   (func $gs64 (param $ga i32) (param $v i64)
     (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga) (i32.const 8))
     (if (i32.le_u (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFF8))
-      (then (i64.store (local.get $wa) (local.get $v)) (return)))
+      (then
+        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+              (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                         (i32.const 0x1FFF))))
+              (i32.shl (i32.const 1)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
+                                  (i32.shr_u (local.get $ga) (i32.const 28)))
+                         (i32.const 7))))
+          (then (call $code_write_hit (local.get $ga) (i32.const 8))))
+        (i64.store (local.get $wa) (local.get $v)) (return)))
+    (call $invalidate_code_write (local.get $ga) (i32.const 8))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 7))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 7)))
       (then (i64.store (local.get $wa) (local.get $v)) (return)))
@@ -535,9 +561,20 @@
   (func $gs16 (param $ga i32) (param $v i32)
     (local $wa i32) (local $end_wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga) (i32.const 2))
     (if (i32.ne (i32.and (local.get $ga) (i32.const 0xFFF)) (i32.const 0xFFF))
-      (then (i32.store16 (local.get $wa) (local.get $v)) (return)))
+      (then
+        (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+              (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                         (i32.const 0x1FFF))))
+              (i32.shl (i32.const 1)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
+                                  (i32.shr_u (local.get $ga) (i32.const 28)))
+                         (i32.const 7))))
+          (then (call $code_write_hit (local.get $ga) (i32.const 2))))
+        (i32.store16 (local.get $wa) (local.get $v)) (return)))
+    (call $invalidate_code_write (local.get $ga) (i32.const 2))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 1))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 1)))
       (then (i32.store16 (local.get $wa) (local.get $v)) (return)))
@@ -546,7 +583,16 @@
   (func $gs8 (param $ga i32) (param $v i32)
     (local $wa i32)
     (local.set $wa (call $g2w (local.get $ga)))
-    (call $invalidate_code_write (local.get $ga) (i32.const 1))
+    (if (i32.and ;; inline $code_page_test: slot = (ga>>12 ^ ga>>28) & 0xFFFF
+              (i32.load8_u (i32.add (global.get $CODE_PAGE_BITMAP)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 15))
+                                  (i32.shr_u (local.get $ga) (i32.const 31)))
+                         (i32.const 0x1FFF))))
+              (i32.shl (i32.const 1)
+                (i32.and (i32.xor (i32.shr_u (local.get $ga) (i32.const 12))
+                                  (i32.shr_u (local.get $ga) (i32.const 28)))
+                         (i32.const 7))))
+      (then (call $code_write_hit (local.get $ga) (i32.const 1))))
     (i32.store8 (local.get $wa) (local.get $v)))
 
   ;; ============================================================

@@ -77,6 +77,10 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // threaded block cut ($branch_clock in 05-alu). Pass it to BOTH arms of any
   // A/B whose tier re-decodes code, or the arms run on different clocks.
   const BRANCH_CLOCK = hasFlag('branch-clock');
+  // --code-write-legacy: the A/B arm for the store filter's old answer, "code
+  // page bit OR inside the sparse generated-code min..max span" (04-cache
+  // $code_write_legacy). Default is page-exact over the whole guest space.
+  const CODE_WRITE_LEGACY = hasFlag('code-write-legacy');
   let uopOn = false;
   const BLOCK_EXEC_STATS = hasFlag('block-exec-stats');
   // --block-chain: patch a taken direct branch's own operand word with the
@@ -275,6 +279,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       inheritWasm('set_x87_fuse_debug', Number(mask) | 0, Number(lo) | 0, Number(hi) | 0);
     }
     if (BRANCH_CLOCK) inheritWasm('set_branch_clock', 1);
+    if (CODE_WRITE_LEGACY) inheritWasm('set_code_write_legacy', 1);
     if (uopWanted()) inheritWasm('set_uop', 1);
     if (aggrWanted()) inheritWasm('set_aggressive_stack', 1);
     if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
@@ -290,6 +295,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
 
   function applyMain(instance, { copySuperops: COPY_SUPEROPS, ctx = null }) {
     if (BRANCH_CLOCK && instance.exports.set_branch_clock) instance.exports.set_branch_clock(1);
+    if (CODE_WRITE_LEGACY && instance.exports.set_code_write_legacy) instance.exports.set_code_write_legacy(1);
     if (uopWanted() && instance.exports.set_uop && ctx) {
       if (UOP_CENSUS && instance.exports.set_uop_census) instance.exports.set_uop_census(1);
       instance.exports.set_uop(1);

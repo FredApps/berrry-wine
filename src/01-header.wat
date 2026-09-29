@@ -1943,12 +1943,18 @@
   (global $OP_INDEX_MAX i32 (i32.const 2048))
   (global $op_index_n (mut i32) (i32.const 0))
   (global $op_index_poison (mut i32) (i32.const 0))
-  ;; One bit per 4KB guest page below $VIRTUAL_ALLOC_MIN, set when a block is
-  ;; decoded out of that page. A store into a marked page invalidates the
-  ;; cached blocks there. The two $generated_code_* / $generated_sparse_code_*
-  ;; ranges only cover code inside the PE image or in the sparse VirtualAlloc
-  ;; reserve; Storm generates its blitters into ordinary HeapAlloc memory,
-  ;; which falls in neither. 0x10000000 >> 12 = 65536 pages = 8KB of bitmap.
+  ;; 65536 bits (8KB), one per slot; a guest page's slot is
+  ;; ((ga >> 12) ^ (ga >> 28)) & 0xFFFF ($code_page_slot, 04-cache). That is
+  ;; the page number itself below 0x10000000 -- one bit per page, exact, as
+  ;; before -- and above it a fold of the top four address bits into the low
+  ;; ones, so every page of the 4GB space has a bit and pages alias only
+  ;; across 256MB segments. A set bit means "a block may have been decoded
+  ;; from a page with this slot"; the per-thread page index then answers
+  ;; exactly, so aliasing costs a wasted slow path, never a missed write.
+  ;; This replaced "bitmap below 0x10000000, sparse min..max SPAN above": on
+  ;; StarCraft that span grew to 0x7c6d0000..0x7ef81000 and sent 7.55M data
+  ;; stores per 3500 batches down the retire walk for nothing. The obvious
+  ;; fix, a 128KB bitmap over all 1M pages, does not fit the direct window.
   (global $CODE_PAGE_BITMAP i32 (region.addr $CODE_PAGE_BITMAP 0))
   (global $CODE_PAGE_BITMAP_SIZE i32 (region.size $CODE_PAGE_BITMAP))
   (global $CODE_PAGE_BITMAP_PAGES i32 (i32.const 65536))
