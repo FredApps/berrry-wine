@@ -7,7 +7,7 @@ const { bootRenderHarness } = require('./render-helper');
 (async () => {
   const { exports: e, memory } = await bootRenderHarness({ fonts: 'bitmap', extraWat: `
     (func (export "scratch_setup") (result i32)
-      (global.set $win16_next_seg (i32.const 1))
+      (call $win16_next_seg_set (i32.const 1))
       (global.set $win16_auto_data (call $win16_alloc_segment))
       (drop (call $win16_alloc_segment))
       (global.set $win16_msg_slot (i32.const 0))

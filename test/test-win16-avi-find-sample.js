@@ -24,7 +24,7 @@ const extraWat = String.raw`
   ;; File block in one segment, index in another; returns the stream's far ptr.
   (func (export "tfs_setup") (param $start i32) (param $samplesize i32) (result i32)
     (local $fsel i32) (local $isel i32) (local $b i32) (local $ib i32) (local $n i32)
-    (global.set $win16_next_seg (i32.const 1))
+    (call $win16_next_seg_set (i32.const 1))
     (local.set $fsel (call $win16_index_to_sel (call $win16_alloc_segment)))
     (local.set $isel (call $win16_index_to_sel (call $win16_alloc_segment)))
     (local.set $b (call $win16_far_to_guest (local.get $fsel) (i32.const 0)))

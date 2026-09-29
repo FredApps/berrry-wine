@@ -10,8 +10,8 @@ const extraWat = `
     (local $sel i32) (local $p i32)
     ;; Reserve the three synthetic code/stack/thunk segments before using the
     ;; real global allocator for an empty Win16 DLGTEMPLATE.
-    (if (i32.lt_u (global.get $win16_next_seg) (i32.const 4))
-      (then (global.set $win16_next_seg (i32.const 4))))
+    (if (i32.lt_u (call $win16_next_seg_get) (i32.const 4))
+      (then (call $win16_next_seg_set (i32.const 4))))
     (local.set $sel (call $win16_global_alloc (i32.const 32)))
     (local.set $p (call $win16_far_to_guest (local.get $sel) (i32.const 0)))
     (call $zero_memory (call $g2w (local.get $p)) (i32.const 32))

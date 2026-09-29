@@ -106,10 +106,10 @@
   (func $win16_res_handle_alloc (param $key i32) (param $module i32)
         (param $rid i32) (result i32)
     (local $index i32) (local $p i32)
-    (if (i32.ge_u (global.get $win16_res_handle_next) (global.get $WIN16_RES_HANDLE_MAX))
+    (if (i32.ge_u (call $win16_res_handle_next_get) (global.get $WIN16_RES_HANDLE_MAX))
       (then (return (i32.const 0))))
-    (local.set $index (i32.add (global.get $win16_res_handle_next) (i32.const 1)))
-    (global.set $win16_res_handle_next (local.get $index))
+    (local.set $index (i32.add (call $win16_res_handle_next_get) (i32.const 1)))
+    (call $win16_res_handle_next_set (local.get $index))
     (local.set $p (call $win16_res_desc (local.get $index)))
     (i32.store (local.get $p) (local.get $key))
     (i32.store offset=4 (local.get $p) (local.get $module))
@@ -142,13 +142,13 @@
       (then (return (i32.const 0))))
     (local.set $index (i32.and (local.get $h) (i32.const 0xFFFF)))
     (if (i32.or (i32.eqz (local.get $index))
-                (i32.gt_u (local.get $index) (global.get $win16_res_handle_next)))
+                (i32.gt_u (local.get $index) (call $win16_res_handle_next_get)))
       (then (return (i32.const 0))))
     (call $win16_res_desc (local.get $index)))
 
   (func $win16_handle_reset
-    (global.set $win16_handle_next (i32.const 0))
-    (global.set $win16_res_handle_next (i32.const 0))
+    (call $win16_handle_next_set (i32.const 0))
+    (call $win16_res_handle_next_set (i32.const 0))
     (call $zero_memory (call $win16_handle_table)
       (i32.shl (global.get $WIN16_HANDLE_MAX) (i32.const 2)))
     (call $zero_memory (call $win16_res_handle_table)
@@ -189,11 +189,11 @@
     (if (i32.lt_u (local.get $h16) (global.get $WIN16_HANDLE_BASE))
       (then (return (local.get $h16))))
     (if (i32.gt_u (i32.sub (local.get $h16) (global.get $WIN16_HANDLE_BASE))
-                  (global.get $win16_handle_next))
+                  (call $win16_handle_next_get))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F3))
         (call $host_log_i32 (local.get $h16))
-        (call $host_log_i32 (global.get $win16_handle_next))
+        (call $host_log_i32 (call $win16_handle_next_get))
         (unreachable)))
     (i32.load (i32.add (call $win16_handle_table)
                        (i32.shl (i32.sub (local.get $h16) (global.get $WIN16_HANDLE_BASE))
@@ -216,7 +216,7 @@
     (local.set $t (call $win16_handle_table))
     (local.set $i (i32.const 1))
     (block $done (loop $scan
-      (br_if $done (i32.gt_u (local.get $i) (global.get $win16_handle_next)))
+      (br_if $done (i32.gt_u (local.get $i) (call $win16_handle_next_get)))
       (if (i32.eq (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2))))
                   (local.get $h32))
         (then (return (i32.add (local.get $i) (global.get $WIN16_HANDLE_BASE)))))
@@ -228,7 +228,7 @@
     ;; runs out — Pipe Dream exhausted it in seven batches of idling.
     (local.set $i (i32.const 1))
     (block $reused (loop $free
-      (br_if $reused (i32.gt_u (local.get $i) (global.get $win16_handle_next)))
+      (br_if $reused (i32.gt_u (local.get $i) (call $win16_handle_next_get)))
       (if (i32.eqz (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))))
         (then
           (i32.store (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2)))
@@ -236,25 +236,25 @@
           (return (i32.add (local.get $i) (global.get $WIN16_HANDLE_BASE)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $free)))
-    (if (i32.ge_u (global.get $win16_handle_next) (global.get $WIN16_HANDLE_MAX))
+    (if (i32.ge_u (call $win16_handle_next_get) (global.get $WIN16_HANDLE_MAX))
       (then
         (call $host_log_i32 (i32.const 0xCA16A9F4))
         (call $host_log_i32 (local.get $h32))
         ;; The last few entries name what filled it, which is the only thing
         ;; that tells a leak from a table that is simply too small.
-        (call $host_log_i32 (global.get $win16_handle_next))
+        (call $host_log_i32 (call $win16_handle_next_get))
         (call $host_log_i32 (i32.load (i32.add (local.get $t)
-          (i32.shl (i32.sub (global.get $win16_handle_next) (i32.const 1)) (i32.const 2)))))
+          (i32.shl (i32.sub (call $win16_handle_next_get) (i32.const 1)) (i32.const 2)))))
         (call $host_log_i32 (i32.load (i32.add (local.get $t)
-          (i32.shl (i32.sub (global.get $win16_handle_next) (i32.const 2)) (i32.const 2)))))
+          (i32.shl (i32.sub (call $win16_handle_next_get) (i32.const 2)) (i32.const 2)))))
         (call $host_log_i32 (i32.load (i32.add (local.get $t)
-          (i32.shl (i32.sub (global.get $win16_handle_next) (i32.const 3)) (i32.const 2)))))
+          (i32.shl (i32.sub (call $win16_handle_next_get) (i32.const 3)) (i32.const 2)))))
         (unreachable)))
-    (global.set $win16_handle_next (i32.add (global.get $win16_handle_next) (i32.const 1)))
+    (call $win16_handle_next_set (i32.add (call $win16_handle_next_get) (i32.const 1)))
     (i32.store (i32.add (local.get $t)
-                        (i32.shl (global.get $win16_handle_next) (i32.const 2)))
+                        (i32.shl (call $win16_handle_next_get) (i32.const 2)))
                (local.get $h32))
-    (i32.add (global.get $win16_handle_next) (global.get $WIN16_HANDLE_BASE)))
+    (i32.add (call $win16_handle_next_get) (global.get $WIN16_HANDLE_BASE)))
 
   ;; Drop a mapping. The 32-bit handle has been released and may be handed out
   ;; again for something else, so keeping the entry would make a stale 16-bit
@@ -265,7 +265,7 @@
     (local.set $t (call $win16_handle_table))
     (local.set $i (i32.const 1))
     (block $done (loop $scan
-      (br_if $done (i32.gt_u (local.get $i) (global.get $win16_handle_next)))
+      (br_if $done (i32.gt_u (local.get $i) (call $win16_handle_next_get)))
       (if (i32.eq (i32.load (i32.add (local.get $t) (i32.shl (local.get $i) (i32.const 2))))
                   (local.get $h32))
         (then
@@ -2639,7 +2639,7 @@
     (local.set $index (i32.const 1))
     (block $done (loop $scan
       (br_if $done (i32.eqz (local.get $sel)))
-      (br_if $done (i32.gt_u (local.get $index) (global.get $win16_res_handle_next)))
+      (br_if $done (i32.gt_u (local.get $index) (call $win16_res_handle_next_get)))
       (local.set $desc (call $win16_res_desc (local.get $index)))
       (if (i32.eq (i32.load offset=8 (local.get $desc)) (local.get $sel))
         (then
@@ -2704,7 +2704,7 @@
     (if (i32.and
           (i32.ge_u (local.get $raw_mod) (global.get $WIN16_HANDLE_BASE))
           (i32.le_u (i32.sub (local.get $raw_mod) (global.get $WIN16_HANDLE_BASE))
-                    (global.get $win16_handle_next)))
+                    (call $win16_handle_next_get)))
       (then
         (local.set $mod (call $win16_h32 (local.get $raw_mod)))
         (if (i32.ne (i32.and (local.get $mod) (i32.const 0xFFFF0000))
@@ -3654,7 +3654,6 @@
   ;; extra local heaps: id (0 = free), period, far TimeProc, dwUser, the tick
   ;; the current period started on, and a one-shot flag.
   (global $WIN16_MM_TIMERS i32 (i32.const 8))
-  (global $win16_mm_timer_next (mut i32) (i32.const 0))
   ;; Thunk offset of the Win16 call being dispatched, which a due TimeProc
   ;; returns into to make that call again.
   (global $win16_cur_thunk_off (mut i32) (i32.const 0))
@@ -3697,13 +3696,13 @@
             (then
               ;; Ids are 16-bit and never 0; skip any still held by a live timer.
               (loop $pick
-                (global.set $win16_mm_timer_next
-                  (i32.and (i32.add (global.get $win16_mm_timer_next) (i32.const 1))
+                (call $win16_mm_timer_next_set
+                  (i32.and (i32.add (call $win16_mm_timer_next_get) (i32.const 1))
                            (i32.const 0xFFFF)))
-                (br_if $pick (i32.eqz (global.get $win16_mm_timer_next)))
+                (br_if $pick (i32.eqz (call $win16_mm_timer_next_get)))
                 (br_if $pick (i32.ne (call $win16_mm_timer_find
-                  (global.get $win16_mm_timer_next)) (i32.const 0))))
-              (local.set $id (global.get $win16_mm_timer_next))
+                  (call $win16_mm_timer_next_get)) (i32.const 0))))
+              (local.set $id (call $win16_mm_timer_next_get))
               (i32.store (local.get $slot) (local.get $id))
               (i32.store offset=4 (local.get $slot) (local.get $delay))
               (i32.store offset=8 (local.get $slot) (local.get $proc))
@@ -4396,7 +4395,7 @@
     ;; small, and a later free leaves the run whole for the next one.
     (local.set $i (global.get $WIN16_SUB_FIRST))
     (block $scanned (loop $scan
-      (br_if $scanned (i32.ge_u (local.get $i) (global.get $win16_sub_next)))
+      (br_if $scanned (i32.ge_u (local.get $i) (call $win16_sub_next_get)))
       (if (i32.and
             (i32.eq (call $win16_gseg_field (local.get $i) (i32.const 8))
                     (i32.or (global.get $WIN16_SEG_POOLED)
@@ -4411,22 +4410,22 @@
           (return (call $win16_index_to_sel (local.get $i)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (if (i32.ge_u (global.get $win16_sub_next) (global.get $WIN16_SEL_MAX))
+    (if (i32.ge_u (call $win16_sub_next_get) (global.get $WIN16_SEL_MAX))
       (then (return (i32.const 0))))
-    (if (i32.or (i32.eqz (global.get $win16_pool_base))
-                (i32.gt_u (i32.add (global.get $win16_pool_used) (local.get $cap))
+    (if (i32.or (i32.eqz (call $win16_pool_base_get))
+                (i32.gt_u (i32.add (call $win16_pool_used_get) (local.get $cap))
                           (i32.const 0x10000)))
       (then
-        (if (i32.ge_u (global.get $win16_next_seg) (global.get $WIN16_SEG_MAX))
+        (if (i32.ge_u (call $win16_next_seg_get) (global.get $WIN16_SEG_MAX))
           (then (return (i32.const 0))))
         ;; $win16_alloc_segment zeroes the slot, so fresh runs need no clearing.
-        (global.set $win16_pool_base
+        (call $win16_pool_base_set
           (call $win16_seg_base (call $win16_alloc_segment)))
-        (global.set $win16_pool_used (i32.const 0))))
-    (local.set $base (i32.add (global.get $win16_pool_base) (global.get $win16_pool_used)))
-    (global.set $win16_pool_used (i32.add (global.get $win16_pool_used) (local.get $cap)))
-    (local.set $i (global.get $win16_sub_next))
-    (global.set $win16_sub_next (i32.add (local.get $i) (i32.const 1)))
+        (call $win16_pool_used_set (i32.const 0))))
+    (local.set $base (i32.add (call $win16_pool_base_get) (call $win16_pool_used_get)))
+    (call $win16_pool_used_set (i32.add (call $win16_pool_used_get) (local.get $cap)))
+    (local.set $i (call $win16_sub_next_get))
+    (call $win16_sub_next_set (i32.add (local.get $i) (i32.const 1)))
     (call $win16_seg_set (local.get $i) (local.get $base) (local.get $cap)
       (i32.or (global.get $WIN16_SEG_POOLED) (global.get $WIN16_SEG_GLOBAL))
       (local.get $bytes))
@@ -4450,7 +4449,7 @@
           (then (return (local.get $i))))))
     (local.set $i (global.get $WIN16_SUB_FIRST))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $win16_sub_next)))
+      (br_if $done (i32.ge_u (local.get $i) (call $win16_sub_next_get)))
       (if (i32.and
             (i32.eq (call $win16_gseg_field (local.get $i) (i32.const 0)) (local.get $ga))
             (i32.eq (call $win16_gseg_field (local.get $i) (i32.const 8))
@@ -4498,7 +4497,7 @@
     (local.set $bytes (call $win16_gsize (local.get $bytes)))
     (local.set $need (call $win16_gseg_count (local.get $bytes)))
     (if (i32.and (i32.le_u (local.get $bytes) (i32.const 0x1000))
-                 (i32.ge_u (global.get $win16_next_seg)
+                 (i32.ge_u (call $win16_next_seg_get)
                            (i32.shr_u (global.get $WIN16_SEG_MAX) (i32.const 1))))
       (then (return (call $win16_pool_alloc (local.get $bytes)))))
 
@@ -4509,7 +4508,7 @@
     ;; WinG bitmaps, ran the 959-slot arena dry that way.
     (local.set $i (i32.const 1))
     (block $scanned (loop $scan
-      (br_if $scanned (i32.ge_u (local.get $i) (global.get $win16_next_seg)))
+      (br_if $scanned (i32.ge_u (local.get $i) (call $win16_next_seg_get)))
       (if (i32.eq (i32.and (call $win16_gseg_field (local.get $i) (i32.const 8))
                            (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))
                   (i32.or (global.get $WIN16_SEG_GLOBAL) (global.get $WIN16_SEG_GFREE)))
@@ -4536,7 +4535,7 @@
     ;; Fresh slots. $win16_alloc_segment traps when the arena runs out, and a
     ;; trap is the wrong answer here — an app that asks for more than fits is
     ;; entitled to a NULL and its own out-of-memory path.
-    (if (i32.gt_u (i32.add (global.get $win16_next_seg) (local.get $need))
+    (if (i32.gt_u (i32.add (call $win16_next_seg_get) (local.get $need))
                   (global.get $WIN16_SEG_MAX))
       (then (return (i32.const 0))))
     (local.set $head (call $win16_alloc_segment))
@@ -4709,7 +4708,7 @@
   (func $win16_GlobalCompact
     (local $free i32)
     (local.set $free (i32.mul
-      (i32.sub (global.get $WIN16_SEG_MAX) (global.get $win16_next_seg))
+      (i32.sub (global.get $WIN16_SEG_MAX) (call $win16_next_seg_get))
       (i32.const 0x10000)))
     (i32.store offset=8 (global.get $reg_base) (i32.shr_u (local.get $free) (i32.const 16)))
     (i32.store offset=0 (global.get $reg_base) (i32.and (local.get $free) (i32.const 0xFFFF)))
@@ -4747,12 +4746,12 @@
     (local $si i32) (local $di i32)
     (local.set $si (call $win16_sel_to_index (local.get $src)))
     (if (i32.eqz (call $win16_seg_base (local.get $si))) (then (return (i32.const 0))))
-    (if (i32.ge_u (global.get $win16_next_seg) (global.get $WIN16_SEG_MAX))
+    (if (i32.ge_u (call $win16_next_seg_get) (global.get $WIN16_SEG_MAX))
       (then (return (i32.const 0))))
     ;; The alias slot names the source's memory, so it must not be given the
     ;; arena page $win16_alloc_segment would zero. Take the index by hand.
-    (local.set $di (global.get $win16_next_seg))
-    (global.set $win16_next_seg (i32.add (local.get $di) (i32.const 1)))
+    (local.set $di (call $win16_next_seg_get))
+    (call $win16_next_seg_set (i32.add (local.get $di) (i32.const 1)))
     (call $win16_seg_set (local.get $di)
       (call $win16_seg_base (local.get $si)) (call $win16_seg_limit (local.get $si))
       (i32.const 0) (i32.const 0))
@@ -4784,7 +4783,7 @@
   (func $win16_GetFreeSpace
     (local $free i32)
     (local.set $free (i32.mul
-      (i32.sub (global.get $WIN16_SEG_MAX) (global.get $win16_next_seg))
+      (i32.sub (global.get $WIN16_SEG_MAX) (call $win16_next_seg_get))
       (i32.const 0x10000)))
     (i32.store offset=8 (global.get $reg_base) (i32.shr_u (local.get $free) (i32.const 16)))
     (i32.store offset=0 (global.get $reg_base) (i32.and (local.get $free) (i32.const 0xFFFF)))
@@ -12626,7 +12625,7 @@
       (then (local.set $dst (call $win16_far_to_guest
         (call $win16_arg16 (i32.const 1)) (call $win16_arg16 (i32.const 0))))))
     (local.set $tmp (global.get $GUEST_STACK))
-    (local.set $out (i32.add (global.get $GUEST_STACK) (i32.const 0x400)))
+    (local.set $out (region.addr $GUEST_STACK 0x400))
     (local.set $need (call $gdi_outline_text_metrics (local.get $hdc)
       (i32.const 0) (i32.const 0) (i32.const 0)))
     (if (i32.or (i32.lt_u (local.get $need) (i32.const 212))

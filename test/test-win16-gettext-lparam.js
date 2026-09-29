@@ -21,7 +21,7 @@ const { bootRenderHarness } = require('./render-helper');
 (async () => {
   const { exports: e } = await bootRenderHarness({ fonts: 'none', extraWat: `
     (func (export "tgl_sel") (result i32)
-      (global.set $win16_next_seg (i32.const 1))
+      (call $win16_next_seg_set (i32.const 1))
       (call $win16_index_to_sel (call $win16_alloc_segment)))
     (func (export "tgl_far") (param $sel i32) (param $off i32) (result i32)
       (call $win16_far_to_guest (local.get $sel) (local.get $off)))

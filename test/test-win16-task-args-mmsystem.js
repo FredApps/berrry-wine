@@ -35,7 +35,7 @@ const MMSYSERR_INVALPARAM = 11;
 
 const extraWat = String.raw`
   (func (export "twa_selector") (result i32)
-    (global.set $win16_next_seg (i32.const 1))
+    (call $win16_next_seg_set (i32.const 1))
     (call $win16_index_to_sel (call $win16_alloc_segment)))
 
   (func (export "twa_seg_base") (param $sel i32) (result i32)

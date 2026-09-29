@@ -23,7 +23,7 @@ const extraWat = String.raw`
   ;; One arena segment as the task's DGROUP, stack and return CS.
   (func (export "tlh_setup") (result i32)
     (local $index i32) (local $sel i32)
-    (global.set $win16_next_seg (i32.const 1))
+    (call $win16_next_seg_set (i32.const 1))
     (local.set $index (call $win16_alloc_segment))
     (local.set $sel (call $win16_index_to_sel (local.get $index)))
     (global.set $win16_auto_data (local.get $index))

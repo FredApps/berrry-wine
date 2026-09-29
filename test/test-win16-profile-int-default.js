@@ -28,7 +28,7 @@ const extraWat = String.raw`
   ;; Index 0 is the null selector and is never allocated, so start at 1 the way
   ;; the NE loader does.
   (func (export "twpi_selector") (result i32)
-    (global.set $win16_next_seg (i32.const 1))
+    (call $win16_next_seg_set (i32.const 1))
     (call $win16_index_to_sel (call $win16_alloc_segment)))
 
   (func (export "twpi_seg_base") (param $sel i32) (result i32)

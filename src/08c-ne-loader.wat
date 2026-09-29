@@ -254,21 +254,21 @@
               (i32.and (local.get $value) (i32.const 0xFFFF)))
       (i32.shl (i32.ne (local.get $is_name) (i32.const 0)) (i32.const 31))))
     (block $done (loop $scan
-      (br_if $done (i32.ge_u (local.get $i) (global.get $win16_thunk_count)))
+      (br_if $done (i32.ge_u (local.get $i) (call $win16_thunk_count_get)))
       (if (i32.eq (i32.load (i32.add (global.get $WIN16_THUNK_TABLE)
                                      (i32.shl (local.get $i) (i32.const 2))))
                   (local.get $key))
         (then (return (i32.mul (local.get $i) (i32.const 4)))))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $scan)))
-    (if (i32.ge_u (global.get $win16_thunk_count) (global.get $WIN16_THUNK_MAX))
+    (if (i32.ge_u (call $win16_thunk_count_get) (global.get $WIN16_THUNK_MAX))
       (then
         (call $host_log_i32 (i32.const 0xCA16F017))  ;; thunk table full
         (unreachable)))
-    (local.set $i (global.get $win16_thunk_count))
+    (local.set $i (call $win16_thunk_count_get))
     (i32.store (i32.add (global.get $WIN16_THUNK_TABLE) (i32.shl (local.get $i) (i32.const 2)))
                (local.get $key))
-    (global.set $win16_thunk_count (i32.add (local.get $i) (i32.const 1)))
+    (call $win16_thunk_count_set (i32.add (local.get $i) (i32.const 1)))
     (i32.mul (local.get $i) (i32.const 4)))
 
   ;; Module id, ordinal and import kind behind a thunk offset, for the
@@ -517,11 +517,11 @@
     ;; A 16-bit image has no base to relocate to, so guest linear addresses
     ;; start at zero and every segment lives in its own 64KB arena slot.
     (global.set $image_base (i32.const 0))
-    (global.set $win16_thunk_count (i32.const 0))
+    (call $win16_thunk_count_set (i32.const 0))
     (call $zero_memory (global.get $WIN16_SEG_TABLE) (global.get $WIN16_SEG_TABLE_SIZE))
-    (global.set $win16_sub_next (global.get $WIN16_SUB_FIRST))
-    (global.set $win16_pool_base (i32.const 0))
-    (global.set $win16_pool_used (i32.const 0))
+    (call $win16_sub_next_set (global.get $WIN16_SUB_FIRST))
+    (call $win16_pool_base_set (i32.const 0))
+    (call $win16_pool_used_set (i32.const 0))
     (call $zero_memory (global.get $WIN16_THUNK_TABLE)
       (i32.mul (global.get $WIN16_THUNK_MAX) (i32.const 4)))
 
@@ -563,7 +563,7 @@
       (i32.add (global.get $WIN16_ARENA) (i32.mul (local.get $seg_count) (i32.const 0x10000)))
       (i32.const 0x10000) (i32.const 0) (i32.const 0))
     ;; Anything allocated from here on takes the slot after the thunks.
-    (global.set $win16_next_seg (i32.add (global.get $win16_thunk_index) (i32.const 1)))
+    (call $win16_next_seg_set (i32.add (global.get $win16_thunk_index) (i32.const 1)))
     (global.set $win16_psp_sel (i32.const 0))
     (global.set $win16_env_seg (i32.const 0))
     (global.set $win16_dta (i32.const 0))
@@ -914,13 +914,13 @@
   ;; aligned" invariant the whole 16-bit execution core rests on.
   (func $win16_alloc_segment (result i32)
     (local $index i32) (local $base i32)
-    (local.set $index (global.get $win16_next_seg))
+    (local.set $index (call $win16_next_seg_get))
     (if (i32.ge_u (local.get $index) (global.get $WIN16_SEG_MAX))
       (then
         (call $host_log_i32 (i32.const 0xCA165E5A))  ;; selector arena exhausted
         (call $host_log_i32 (local.get $index))
         (unreachable)))
-    (global.set $win16_next_seg (i32.add (local.get $index) (i32.const 1)))
+    (call $win16_next_seg_set (i32.add (local.get $index) (i32.const 1)))
     (local.set $base (i32.add (global.get $WIN16_ARENA)
                               (i32.mul (i32.sub (local.get $index) (i32.const 1)) (i32.const 0x10000))))
     (call $win16_seg_set (local.get $index) (local.get $base) (i32.const 0x10000)
@@ -1284,7 +1284,7 @@
       (i32.load16_u (i32.add (local.get $ne_off) (i32.const 0x22)))))
 
     ;; Segment 1 lands at the next free index, so the base is one less.
-    (local.set $seg_index_base (i32.sub (global.get $win16_next_seg) (i32.const 1)))
+    (local.set $seg_index_base (i32.sub (call $win16_next_seg_get) (i32.const 1)))
 
     (local.set $i (i32.const 0))
     (block $place_done (loop $place
@@ -1356,7 +1356,7 @@
           (then (return (i32.const 0))))
         (local.set $meta_pages (i32.shr_u
           (i32.add (local.get $meta_size) (i32.const 0xFFFF)) (i32.const 16)))
-        (if (i32.ge_u (i32.add (global.get $win16_next_seg) (local.get $meta_pages))
+        (if (i32.ge_u (i32.add (call $win16_next_seg_get) (local.get $meta_pages))
                        (global.get $WIN16_SEG_MAX))
           (then (return (i32.const 0))))
         (local.set $ne_delta (i32.sub (local.get $ne_off) (local.get $stage)))
@@ -1630,6 +1630,6 @@
   (func (export "win16_entry_cs") (result i32) (global.get $win16_entry_cs))
   (func (export "win16_entry_ip") (result i32) (global.get $win16_entry_ip))
   (func (export "win16_auto_data") (result i32) (global.get $win16_auto_data))
-  (func (export "win16_thunk_count") (result i32) (global.get $win16_thunk_count))
+  (func (export "win16_thunk_count") (result i32) (call $win16_thunk_count_get))
   (func (export "win16_thunk_sel") (result i32) (global.get $WIN16_THUNK_SEL))
   (func (export "is_win16") (result i32) (global.get $is_win16))

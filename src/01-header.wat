@@ -3654,9 +3654,39 @@
   ;; selector can carry — and the last is left alone so no handle is 0xFFFF.
   (global $WIN16_SUB_FIRST i32 (i32.const 1024))
   (global $WIN16_SEL_MAX   i32 (i32.const 8191))
-  (global $win16_sub_next  (mut i32) (i32.const 1024))
-  (global $win16_pool_base (mut i32) (i32.const 0))
-  (global $win16_pool_used (mut i32) (i32.const 0))
+  ;; The Win16 allocator cursors live in shared memory, not in globals: a
+  ;; second Win16 task runs as its own guest-thread instance (see
+  ;; docs/win16-multitask-design.md), every instance has its own copy of each
+  ;; mutable global, and the tables these index -- selectors, sub-selectors,
+  ;; the thunk table, the handle map, MM timers -- are shared. Per-instance
+  ;; cursors would hand the same selector to both tasks.
+  ;; They sit at 0xF000 of the arena's hidden page (slot WIN16_SEG_MAX, beside
+  ;; the handle map, DLL records and MM timers) rather than in a region of
+  ;; their own: the region map is at its ceiling. Every cursor reads correctly
+  ;; from zeroed memory -- sub_next starts at WIN16_SUB_FIRST, so it is stored
+  ;; biased by it -- and $win16_handle_reset does not reach this far.
+  (func $win16_task_shared (param $off i32) (result i32)
+    (i32.add (call $g2w (i32.add (global.get $WIN16_ARENA)
+                                 (i32.mul (global.get $WIN16_SEG_MAX) (i32.const 0x10000))))
+             (i32.add (i32.const 0xF000) (local.get $off))))
+  (func $win16_next_seg_get (result i32) (i32.load (call $win16_task_shared (i32.const 0))))
+  (func $win16_next_seg_set (param $v i32) (i32.store (call $win16_task_shared (i32.const 0)) (local.get $v)))
+  (func $win16_sub_next_get (result i32)
+    (i32.add (i32.load (call $win16_task_shared (i32.const 4))) (global.get $WIN16_SUB_FIRST)))
+  (func $win16_sub_next_set (param $v i32)
+    (i32.store (call $win16_task_shared (i32.const 4)) (i32.sub (local.get $v) (global.get $WIN16_SUB_FIRST))))
+  (func $win16_pool_base_get (result i32) (i32.load (call $win16_task_shared (i32.const 8))))
+  (func $win16_pool_base_set (param $v i32) (i32.store (call $win16_task_shared (i32.const 8)) (local.get $v)))
+  (func $win16_pool_used_get (result i32) (i32.load (call $win16_task_shared (i32.const 12))))
+  (func $win16_pool_used_set (param $v i32) (i32.store (call $win16_task_shared (i32.const 12)) (local.get $v)))
+  (func $win16_thunk_count_get (result i32) (i32.load (call $win16_task_shared (i32.const 16))))
+  (func $win16_thunk_count_set (param $v i32) (i32.store (call $win16_task_shared (i32.const 16)) (local.get $v)))
+  (func $win16_handle_next_get (result i32) (i32.load (call $win16_task_shared (i32.const 20))))
+  (func $win16_handle_next_set (param $v i32) (i32.store (call $win16_task_shared (i32.const 20)) (local.get $v)))
+  (func $win16_res_handle_next_get (result i32) (i32.load (call $win16_task_shared (i32.const 24))))
+  (func $win16_res_handle_next_set (param $v i32) (i32.store (call $win16_task_shared (i32.const 24)) (local.get $v)))
+  (func $win16_mm_timer_next_get (result i32) (i32.load (call $win16_task_shared (i32.const 28))))
+  (func $win16_mm_timer_next_set (param $v i32) (i32.store (call $win16_task_shared (i32.const 28)) (local.get $v)))
   ;; One entry per distinct (module, ordinal) the task and its DLLs import.
   ;; 256 was not enough once a DLL as large as VBRUN100 was in the picture, and
   ;; the table has room for 2048 — still only 8KB of thunk segment used out of
@@ -3675,7 +3705,6 @@
   (global $WIN16_ARENA     i32 (i32.const 0x00100000))
   (global $WIN16_THUNK_SEL (mut i32) (i32.const 0))
   (global $win16_thunk_index (mut i32) (i32.const 0))
-  (global $win16_thunk_count (mut i32) (i32.const 0))
   (global $win16_seg_count (mut i32) (i32.const 0))
   (global $win16_auto_data (mut i32) (i32.const 0))
   (global $win16_entry_cs  (mut i32) (i32.const 0))
@@ -3705,7 +3734,6 @@
   (global $win16_last_ordinal (mut i32) (i32.const 0))
   (global $win16_last_is_name (mut i32) (i32.const 0))
   ;; Next free selector index for $win16_alloc_segment, and the task's PSP.
-  (global $win16_next_seg (mut i32) (i32.const 0))
   (global $win16_psp_sel (mut i32) (i32.const 0))
   ;; Selector index holding the task's DOS environment block, filled in the
   ;; first time GetDOSEnvironment is called and zero until then. It has to be a
@@ -3741,10 +3769,8 @@
   ;; src/09e-win16-api.wat). Indices are 1-based so that 0 stays NULL in both
   ;; handle spaces. The table itself is the one arena slot no selector can
   ;; name — index WIN16_SEG_MAX — which is why it needs no address here.
-  (global $win16_handle_next (mut i32) (i32.const 0))
   ;; Resource handles need the module as well as the NE type/id key. The
   ;; descriptor table is reset with the ordinary Win16 handle table.
-  (global $win16_res_handle_next (mut i32) (i32.const 0))
   (global $WIN16_RES_HANDLE_MAX i32 (i32.const 1024))
   (global $WIN16_HANDLE_MAX i32 (i32.const 4096))
   ;; Indices start here so a small integer an app writes where a handle goes --
