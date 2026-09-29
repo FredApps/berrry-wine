@@ -1032,3 +1032,150 @@ run.js report prints them as the `uop stack:` line.
 | `plain` | elided pairs with no memory access between; the conservative "any stack access blocks" rule would have elided these |
 | `rescued` | elided pairs with some access between (= elided - plain); broken down as `other-slot`, `fwd-read`, `fwd-write` |
 | `unknown-addr` … `list-full` | matched pairs that were materialized, by reason |
+
+## 13. Trace heads: `--uop-trace-heads` (opt-in, 2026-09-28)
+
+**What it is.** This is §11.3 idea A. A hot head with no back edge used to
+decline as `no-backedge`. With `--uop-trace-heads` (or `?uop-trace-heads`,
+or `set_uop_trace_heads(1)`), `$uc_form_loop` instead calls
+`$uc_form_trace` (07e). That function works in three steps.
+
+1. **BFS.** It walks the supported successors from the head, up to
+   `$uc_trace_max` (160) instructions.
+2. **Trim.** It drops every non-branch member whose successor is outside
+   the trace, repeating until nothing changes. A trace therefore leaves
+   only through a branch, exactly like a loop.
+3. **Minimum size.** It keeps the trace only if at least `$uc_trace_min` (8)
+   instructions remain.
+
+The trim step is what keeps a trace off `$logical_frame_addr`.
+
+- A fall-through into the marker block ends a threaded block, because
+  `$fuse_stop` cuts it there.
+- A trace that ran through that seam put the block clock out of step (the
+  `trace-logical` case). The same case also showed that the marker is
+  always reached threaded.
+
+The remaining pieces:
+
+- `$uc_is_trace` is recorded in the census event, and `tools/uop-census.js`
+  prints `(traces: N)`.
+- `uop_cstat 26` counts the traces formed.
+- `set_uop_trace_limits(min,max)` tunes both limits.
+
+**Enter path.** `$th_uop_enter` also got cheaper.
+
+- The window epoch is read with a plain load instead of an atomic. Only the
+  owning thread bumps it.
+- The poor check now runs on side exits only once a program has 256 enters
+  with fewer than 2 blocks per enter.
+
+SpiderMonkey Ion, before and after:
+
+| | bytes | instructions | `dmb` | `bl` |
+|---|---|---|---|---|
+| before | 1120 | 280 | 1 | 3 |
+| after | 1144 | 286 | 0 | 2 |
+
+`$uop_run`, `$uop_fast` and `$uop_poor_check` did not change.
+
+**Tests.** `test/test-uop-compiler.js` adds five cases:
+
+- `trace-callee`, `trace-main` and `trace-callchain`: call/ret regions with
+  a diamond and a `bsr`.
+- `trace-logical`: a marker inside the traced path. It checks that every
+  iteration counts one logical frame.
+- `loop-logical`: a control loop whose exit falls into the marker.
+
+### A/B
+
+Box8, `tools/uop-game-ab.js`, `--jobs=2`, user CPU, interleaved.
+Each figure is the mean of two runs.
+
+**Base 40c1c484** (before G/H/code-write/x87-predecode):
+
+| game | off / off2 | uop / uop2 | trace / trace2 | trace vs uop | K=16 trace | frames |
+|---|---|---|---|---|---|---|
+| sc | 28.10 / 27.97 | 16.75 / 16.98 | 16.36 / 16.59 | **−2.3%** (uop band 1.4%) | 17.83 (+8%) | not assessable: off~off2 differ 1.14% |
+| diablo | 129.72 / 129.65 | 119.45 / 118.76 | 112.99 / 113.07 | **−5.1%** (band 0.6%) | 114.95 | identical |
+| h3 | 83.16 / 82.34 | 73.36 / 73.06 | 63.53 / 63.80 | **−13.0%** (band 0.4%) | 64.49 | identical |
+| wc3g | 148.01 / 148.57 | 108.41 / 109.06 | 101.96 / 100.80 | **−6.8%** (band 1.1%) | 113.54 (+12%) | identical |
+
+**Gameplay phase** (uop → trace):
+
+| game | uop | trace |
+|---|---|---|
+| sc | 0.9 s | 0.9 s |
+| diablo | 4.6 s | 4.3 s |
+| h3 | 5.05 s | 3.95 s |
+| wc3g | 1.65 s | 1.5 s |
+
+`refuop` (the base wasm) matched `uop` to within 1% everywhere, so the
+cheaper enter op on its own is neutral.
+
+**Rebased on eca2b53a** (after G no-bump and H quiet-api):
+
+| game | off / off2 | uop / uop2 | trace / trace2 | trace vs uop | gameplay uop → trace | frames |
+|---|---|---|---|---|---|---|
+| h3 | 73.80 / 73.16 | 61.93 / 61.58 | 55.75 / 55.00 | **−10.3%** (band 1.4%) | 4.7 → 4.55 s | identical |
+| diablo | 117.47 / 117.40 | 102.52 / 101.24 | 98.51 / 98.24 | **−3.4%** (band 1.3%) | 4.1 → 3.9 s | identical |
+
+Most of the whole-run win now lands in boot and loading. After G, H3's
+gameplay gain dropped from −22% to −3%.
+
+### Counters
+
+**Declines, uop → trace (base run):**
+
+| game | no-backedge | head-unsupported |
+|---|---|---|
+| diablo | 892 → 480 | – |
+| h3 | 1210 → 595 | – |
+| wc3g | 8375 → 1978 | 685 → 1398 |
+
+In WC3g, trace heads now reach more heads that open on a call or ret.
+
+**Installs, kills and flushes, uop → trace:**
+
+| game | installs | kills | flushes |
+|---|---|---|---|
+| sc | 406 → 867 | 36 → 143 | 1 → 3 |
+| diablo | 184 → 3371 | 10 → 2491 | 0 → 13 |
+| h3 | 236 → 661 | 29 → 60 | 0 → 2 |
+| wc3g | 1126 → 3857 | 67 → 255 | 3 → 14 |
+
+Diablo's kills are mostly arena flushes. Its traces are many and short.
+
+**Game-thread instances**, uop → trace:
+
+| game | installs | enters | blocks |
+|---|---|---|---|
+| sc | 177 → 1205 | 2.44M → 19.5M | 342M → 410M |
+| h3 main | 26 → 927 | 9.8M → 33M | 131M → 190M |
+
+**K sweep.** `--block-exec-walk-k=16` (the `tracek16` arm) is worse than
+the default everywhere.
+
+- WC3g: 152,400 installs and 590 flushes. Its gameplay phase is back to the
+  off arm's 2.3 s.
+- SC: 70 flushes.
+
+A lower threshold compiles cold traces, which thrash the arena. K=4 and K=8
+would only be worse, and K=64 was not run.
+
+### Verdict
+
+Trace heads win on every game where frames reproduce, and frames are
+identical there. SC is the one exception: its −2.3% sits just above its
+1.4% band, and its frames do not reproduce even off vs off2.
+
+The feature stays **opt-in** for now, for three reasons:
+
+- The post-G gameplay gain is small.
+- Diablo's arena churn (13 flushes) is a cost the next arena-size change
+  could turn around.
+- Flipping the default is a one-line change (`$uc_trace` initial value) for
+  whoever merges.
+
+The recommended next step is to flip the default once one browser
+spot-check agrees.
