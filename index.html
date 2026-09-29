@@ -1581,7 +1581,7 @@
         <label title="Fold Caesar III's run-length sprite blit into one dispatch (handler 424). Decode-time, so it steers blocks decoded after the toggle — relaunch for a clean A/B."><input id="rle-run-toggle" type="checkbox" checked onchange="setRleRun(this.checked)">RLE fold</label>
         <label title="Compile proven x87 expression regions and fold contiguous x87 islands. On by default; ?no-x87-fold starts it off. Decode-time, so relaunch for a clean A/B."><input id="x87-fold-toggle" type="checkbox" checked onchange="setX87Fusion(this.checked)">x87 fold</label>
         <label title="Micro-op tier, on by default (?no-uop starts it off): a hot loop head is compiled from x86 into a micro-op program and run in one br_table loop (src/07d, 07e). Applies to running apps immediately, every guest thread included; turning it off drops every program."><input id="uop-toggle" type="checkbox" checked onchange="setUop(this.checked)">uop tier</label>
-        <label title="Which renderer Glide and both Direct3D generations use. WebGL: D3D8/9 on the WebGL backend, DX2-7 (immediate mode) on the WAT software rasterizer. +DX7 puts immediate mode on WebGL too — post-transform, so the guest keeps its own T&amp;L and each fence reads the frame back into the guest surface. Software: D3D8/9 on the software backend on a render Worker, DX2-7 on the WAT rasterizer. Both are read at launch, so relaunch after changing this.">GPU: <select id="d3d-renderer-select" onchange="setD3DRenderer(this.value)"><option value="webgl">WebGL</option><option value="webgl-all">WebGL +DX7</option><option value="software">Software</option></select></label>
+        <label title="WebGL accelerates Direct3D and Glide when available, with software fallback. Choose Software to use CPU rendering. Relaunch the app after changing this.">GPU: <select id="d3d-renderer-select" onchange="setD3DRenderer(this.value)"><option value="webgl">WebGL</option><option value="software">Software</option></select></label>
         <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
         <label title="Real guest threads, on by default (?no-threads starts this page without them): the guest main thread and every CreateThread target run in Workers. Needs cross-origin isolation, which the page installs once (sw-coi.js) and reloads for. An app with `threads: false` in lib/apps.js always runs cooperatively."><input id="threads-toggle" type="checkbox" checked onchange="setThreads(this.checked)">Threads</label>
         <span id="threads-status" style="color:#606060"></span>
@@ -2392,44 +2392,32 @@ Resource-aware Win98 emulator
     // renderer do I want" is one question to whoever is looking at the
     // toolbar, and a dropdown next to a checkbox made it look like two.
     //
-    // DX2-7 on WebGL keeps its own option instead of riding in on the D3D8/9
-    // default. docs/d3dim-gl-sweep-2026-09-19.md found the executor agreeing
-    // with software everywhere it actually ran — and more correct than it on
-    // GTA2 — but eleven of sixteen apps never drew a triangle in that sweep,
-    // which is missing coverage, not evidence.
-    //
     // Both flags are read once per launch (host.js passes
     // window.WineD3D.renderer as ctx.d3d9Backend), so this steers the NEXT
-    // launch. ?d3d9-renderer=software|webgl and ?d3dim-gpu still set each half
-    // independently; a combination this dropdown cannot express gets an extra
-    // option rather than being misreported as one it can.
+    // launch. WebGL is preferred for both generations; their executors retain
+    // software fallback when a context or operation is unavailable.
     window.WineD3D = window.WineD3D || {};
     const D3D_MODES = {
-      'webgl':     { renderer: 'webgl',    d3dim: false },
-      'webgl-all': { renderer: 'webgl',    d3dim: true },
+      'webgl':     { renderer: 'webgl',    d3dim: true },
       'software':  { renderer: 'software', d3dim: false },
     };
     function d3dModeName() {
-      const name = Object.keys(D3D_MODES).find(key =>
-        D3D_MODES[key].renderer === window.WineD3D.renderer &&
-        D3D_MODES[key].d3dim === (window.WINE_D3DIM_GPU === true));
-      return name || 'mixed';
+      return window.WineD3D.renderer === 'software' ? 'software' : 'webgl';
     }
     function syncD3DSelect() {
       const select = document.getElementById('d3d-renderer-select');
       if (!select) return;
       const name = d3dModeName();
-      if (name === 'mixed' && !select.querySelector('option[value="mixed"]')) {
-        const option = document.createElement('option');
-        option.value = 'mixed';
-        option.textContent = 'Mixed (from URL)';
-        select.appendChild(option);
-      }
       select.value = name;
     }
     (() => {
-      const wanted = new URLSearchParams(location.search).get('d3d9-renderer');
+      const q = new URLSearchParams(location.search);
+      // Keep old URLs usable, but every selector now controls both versions.
+      // The unified parameter takes precedence over the old D3D9 spelling.
+      const wanted = q.get('d3d-renderer') ?? q.get('d3d9-renderer') ??
+        (q.has('d3dim-gpu') && /^(0|false|off)$/i.test(q.get('d3dim-gpu')) ? 'software' : 'webgl');
       window.WineD3D.renderer = wanted === 'software' ? 'software' : 'webgl';
+      window.WINE_D3DIM_GPU = window.WineD3D.renderer === 'webgl';
       window.addEventListener('load', syncD3DSelect);
     })();
     function setD3DRenderer(value) {
@@ -2491,12 +2479,6 @@ Resource-aware Win98 emulator
     // Glide, for software and WebGL. The former ?no-d3d-worker / ?d3d-worker=0
     // A/B switches no longer bypass rendering isolation.
     window.WINE_D3D_RENDER_WORKER = true;
-    // D3DIM (DX2-7) triangles on WebGL instead of the WAT software rasterizer.
-    // Read once per launch by whichever thread owns the guest instance, so it
-    // steers the NEXT launch like the other renderer switches. The toolbar
-    // drives this half through the D3D select ("WebGL +DX7"); this parameter
-    // is the independent override and is what the select reads at load.
-    window.WINE_D3DIM_GPU = new URLSearchParams(location.search).has('d3dim-gpu');
     // Diagnostic: serialize Worker slices to distinguish shared-state races
     // from incorrect per-thread state.
     window.WINE_THREADS_SERIAL = /[?&]threads-serial\b/.test(location.search);

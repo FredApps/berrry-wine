@@ -101,5 +101,30 @@ function legacyWorkerCleanup(){
   const adapter=context.D3DIMRenderWorker.create({instance:{exports:{}},memory:{buffer:new SharedArrayBuffer(128)},backend:'webgl'});
   adapter.destroy();assert.strictEqual(stops,1,'legacy GPU teardown flushes and releases resources through stop()');
 }
-(async()=>{await hostProtocol();await brokerProtocol();bitmapWorkerCoherence();await legacyProxy();legacyWorkerCleanup();
+function legacyUnavailableFallback(){
+  const RealGPU=require('../lib/d3dim-gpu').D3DIMGpu;
+  let gpu,attempts=0;const warnings=[],draws=[],overrides=[];
+  class ObservedGPU extends RealGPU {constructor(options){super(options);gpu=this;}}
+  class MissingCanvas {constructor(){attempts++;throw new Error('no WebGL context');}}
+  const context={D3DIMGpu:{D3DIMGpu:ObservedGPU},OffscreenCanvas:MissingCanvas,
+    console:{warn:message=>warnings.push(message)}};
+  vm.runInNewContext(fs.readFileSync(require.resolve('../lib/d3dim-render-worker'),'utf8'),context);
+  const memory={buffer:new SharedArrayBuffer(16384)},d=new DataView(memory.buffer);
+  [1,4,3,1024,3,4096].forEach((value,i)=>d.setUint32(64+i*4,value,true));
+  [512,4,4,32,16,2048,1].forEach((value,i)=>d.setUint32(256+i*4,value,true));
+  const e={d3dim_gpu_describe:()=>256,d3dim_gpu_state_override:p=>overrides.push(p),
+    d3dim_worker_draw:(...args)=>draws.push(args)};
+  const adapter=context.D3DIMRenderWorker.create({instance:{exports:e},memory,backend:'webgl'});
+  assert.strictEqual(adapter.execute({opcode:0x20000,wa:64,stateGuest:4096}),1);
+  assert.deepStrictEqual(draws,[[1,4,3,1024,3,4096]],'unavailable GPU draw reaches native fallback');
+  assert.deepStrictEqual(overrides,[4096,0],'snapshot scope is reset before native fallback');
+  assert.strictEqual(warnings.length,1,'unavailable renderer remains diagnosed');
+  assert.strictEqual(adapter.execute({opcode:0x20000,wa:64,stateGuest:4096}),1);
+  assert.strictEqual(attempts,1,'unavailable context is not retried per triangle');
+  assert.strictEqual(draws.length,2);
+  assert.throws(()=>gpu._fail(new Error('shader execution failed')),/shader execution failed/,
+    'a real GPU failure remains fatal even after unavailable fallback');
+  adapter.destroy();
+}
+(async()=>{await hostProtocol();await brokerProtocol();bitmapWorkerCoherence();await legacyProxy();legacyWorkerCleanup();legacyUnavailableFallback();
   console.log('GL shared render worker protocol PASS');})().catch(error=>{console.error(error);process.exitCode=1;});

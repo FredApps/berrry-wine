@@ -89,5 +89,20 @@ for (const count of [0, 1]) {
   assert.strictEqual(result.accepted, 0, 'incomplete strip stays on fallback path');
   assert.strictEqual(result.draws.length, 0);
 }
+// No WebGL context must decline a real draw, not throw out of guest execution.
+run(0, 0, [0, 0, 0]); // Reset the incomplete-strip descriptor to a valid triangle.
+let canvasAttempts = 0;
+const unavailableMessages = [];
+const unavailable = new D3DIMGpu({
+  getExports: () => ({ d3dim_gpu_describe: () => DESC, guest_to_wasm: a => a }),
+  getMemory: () => memory,
+  createCanvas: () => { canvasAttempts++; return { getContext: () => null }; },
+  onError: message => unavailableMessages.push(message),
+});
+assert.strictEqual(unavailable.call(OPCODES.DRAW, CALL), 0, 'missing WebGL falls back to software');
+assert.strictEqual(unavailable.call(OPCODES.DRAW, CALL), 0, 'subsequent draws still fall back');
+assert.strictEqual(canvasAttempts, 1, 'do not retry unavailable context per draw');
+assert.strictEqual(unavailableMessages.length, 1);
+assert.strictEqual(unavailable.call(OPCODES.FENCE, 0), 1, 'empty GPU fence remains safe');
 
 console.log('test-d3dim-gpu-depthless-z: OK');
