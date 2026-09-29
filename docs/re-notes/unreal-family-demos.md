@@ -285,6 +285,15 @@ parked request at 1024x768. The wall-clock ceiling is now the software
 rasterizer's throughput; batch accounting no longer hides it. Use
 `--max-seconds` rather than `--max-batches` for UT routes on this backend.
 
+UT2004 with the same flags makes **no** D3D8 call in its first 1500 batches,
+because it is still streaming packages in 1KB `ReadFile`s (`humanmalea.ukx` and
+others) before it opens the device. Given `--max-seconds=600
+--max-batches=100000000 --stuck-after=100000000`, it reaches the **UT2004 main
+menu** (dx slot 5, 640x480, 845 Presents, 5195 batches). 562s of the 600 were
+2518 render waits. Note that `--stuck-after=0` does **not** disable the stuck
+detector: the test is `stuckCount > STUCK_AFTER`, so 0 fires on the first repeat.
+Pass a huge value instead.
+
 The browser never had this bug: `host.js` yields to the event loop rather than
 spending a counted unit per check.
 
