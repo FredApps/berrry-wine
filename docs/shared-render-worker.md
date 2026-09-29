@@ -158,3 +158,9 @@ was independently reproduced from unchanged main `01b1f0b9`. A temporary
 remote validation driver omitted only that gate: all remaining gates, WATX
 compilation of both WASM artifacts and compiled data-overlap checks passed.
 The shipping build script is unchanged.
+
+The subsequent rebase onto `f3ec3a2f` includes main's shared GPU dropdown and
+opt-in lazy surface synchronization. The remaining build gates and both WASM
+compiles passed again, as did the expanded surface-fence test and the browser
+GPU-selector test, including Glide's software backend. The selector harness
+now mounts `/binaries/` from the corpus and explicitly enables thread isolation.

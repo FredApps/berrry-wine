@@ -23,7 +23,9 @@ const root = path.join(__dirname, '..');
 
 (async () => {
   const wasm = compileSrcWasm();
-  const server = await startStaticServer({ root, cacheControl: 'no-cache',
+  const server = await startStaticServer({ root, cacheControl: 'no-cache', crossOriginIsolated: true,
+    allowedRealRoots: ['test/binaries', 'fonts'].map(dir => path.join(root, dir)),
+    rewritePath: pathname => pathname.startsWith('/binaries/') ? '/test' + pathname : pathname,
     handleRequest(request, response) {
       if (!request.url.startsWith('/build/wine-assembly.wasm')) return false;
       response.writeHead(200, { 'Content-Type': 'application/wasm', 'Content-Length': wasm.length });
@@ -73,10 +75,10 @@ const root = path.join(__dirname, '..');
     assert.strictEqual((await bothHalves(plain.page)).d3dim, false,
       'going back to WebGL turns the D3DIM executor off again');
 
-    await plain.page.evaluate(() => {
+    await plain.page.evaluate(async () => {
       setD3DRenderer('software');
       document.getElementById('app-select').value = 'calc';
-      launchApp();
+      await launchApp();
     });
     await plain.page.waitForFunction(() => typeof runningApps !== 'undefined' &&
       runningApps[0] && runningApps[0].wine.running && runningApps[0].wine.hostCtx &&
