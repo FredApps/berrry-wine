@@ -180,6 +180,9 @@ What the driver needs from the emulator, in the order it hit them:
   (seg6:0x0ef0). Before that fix ICM_DECOMPRESSEX returned -100 on every frame.
 - KERNEL `GlobalFix`/`GlobalUnfix` (197/198) and `IsBadReadPtr`/
   `IsBadWritePtr` (334/335, plus the Huge forms 346/347).
+- KERNEL `LocalHandle` (11), at seg10:0x2618, when the movie stops. Only a
+  skipped or finished intro reaches it; without it, clicking through the
+  intro trapped in the codec.
 
 Where to look when a frame fails: seg10:0x969a maps the codec's internal
 status (0..0x16) to an ICERR. The 32-bit decode is seg10:0x16a0 → 0x17f2.

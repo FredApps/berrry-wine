@@ -4128,6 +4128,46 @@
     (i32.store offset=0 (global.get $reg_base) (call $win16_lhandle_size (call $win16_arg16 (i32.const 0))))
     (call $win16_api_return (i32.const 2)))
 
+  ;; KERNEL.11 LocalHandle(wMem) -> the handle LocalLock turned into wMem.
+  ;; The inverse of $win16_lhandle_data over the same three shapes: a
+  ;; moveable block's handle is the word just before its data, a moved one's
+  ;; is the four-byte stub somewhere in the heap that points at it, and a
+  ;; fixed block is its own handle. Intel's 16-bit Indeo driver frees its
+  ;; buffers this way when a movie stops (Civilization II, Win16).
+  (func $win16_LocalHandle
+    (local $d i32) (local $p i32) (local $h i32)
+    (local.set $d (call $win16_arg16 (i32.const 0)))
+    (local.set $h (local.get $d))
+    (if (i32.ge_u (local.get $d) (i32.add (call $win16_lheap_get (i32.const 0)) (i32.const 4)))
+      (then
+        (if (i32.eq (call $win16_lhandle_kind (i32.sub (local.get $d) (i32.const 2)))
+                    (i32.const 1))
+          (then (local.set $h (i32.sub (local.get $d) (i32.const 2))))
+          (else
+            (local.set $p (call $win16_lheap_get (i32.const 0)))
+            (block $done
+              (loop $walk
+                (br_if $done (i32.ge_u (local.get $p) (call $win16_lheap_get (i32.const 1))))
+                (if (i32.eqz (call $win16_lblock_free (local.get $p)))
+                  (then
+                    (if (i32.and
+                          (i32.eq (call $win16_lblock_size (local.get $p)) (i32.const 4))
+                          (i32.eq (call $gl16 (i32.add (global.get $seg_base_ds)
+                                                       (i32.add (local.get $p) (i32.const 2))))
+                                  (local.get $d)))
+                      (then
+                        (if (i32.eq (call $win16_lhandle_kind
+                                      (i32.add (local.get $p) (i32.const 2)))
+                                    (i32.const 2))
+                          (then
+                            (local.set $h (i32.add (local.get $p) (i32.const 2)))
+                            (br $done)))))))
+                (local.set $p (i32.add (i32.add (local.get $p) (i32.const 2))
+                                       (call $win16_lblock_size (local.get $p))))
+                (br $walk)))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $h))
+    (call $win16_api_return (i32.const 2)))
+
   ;; LocalLock, LocalUnlock and LocalCompact on a fixed block: the handle is
   ;; already the pointer and nothing moves.
   (func $win16_local_identity (param $argbytes i32) (param $result i32)
@@ -5168,6 +5208,8 @@
       (then (call $win16_local_identity (i32.const 2) (i32.const 0)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 10))
       (then (call $win16_LocalSize) (return (i32.const 1))))
+    (if (i32.eq (local.get $ordinal) (i32.const 11))
+      (then (call $win16_LocalHandle) (return (i32.const 1))))
     ;; IsDBCSLeadByte(ch). The runtime exposes the US ANSI code page, which has
     ;; no double-byte lead characters; Win95 InstallShield still probes every
     ;; path component through this before it starts its 32-bit engine.
