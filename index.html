@@ -2576,32 +2576,18 @@ Resource-aware Win98 emulator
       }
     }
 
-    // Default on. The first visit has no isolation yet, so install sw-coi.js
-    // and reload once; a session flag stops a reload loop on a browser where
-    // the worker registers but never yields isolation (the page then just
-    // runs cooperatively, which is a supported mode). An automated browser
-    // (navigator.webdriver) never gets the surprise reload: a harness page is
-    // isolated by its server or it runs cooperatively, and a reload under a
-    // test's evaluate() calls would only make it flaky.
+    // Default on. The first visit has no isolation yet, so it runs
+    // cooperatively and quietly installs sw-coi.js; the next load comes back
+    // cross-origin isolated and gets Worker threads. No reload is forced on the
+    // visitor. An automated browser (navigator.webdriver) does not install it,
+    // so a harness page stays exactly as isolated as its server makes it.
     if (threadsWanted()) {
       window.WINE_THREADS = true;
       window.addEventListener('load', updateThreadsStatus);
-      let tried = false;
-      try { tried = sessionStorage.getItem('wine-assembly.coi-reload') === '1'; } catch (_) {}
-      if (!threadsIsolated() && navigator.serviceWorker && window.isSecureContext && !tried &&
+      if (!threadsIsolated() && navigator.serviceWorker && window.isSecureContext &&
           !navigator.webdriver) {
-        (async () => {
-          try {
-            sessionStorage.setItem('wine-assembly.coi-reload', '1');
-            await navigator.serviceWorker.register('sw-coi.js', { scope: './' });
-            await navigator.serviceWorker.ready;
-            // Only reload before anything is running; a launch already in
-            // progress keeps going cooperatively.
-            if (!runningApps.length && !shell.launchInFlight) location.reload();
-          } catch (err) {
-            appendDebugLog('[threads] isolation service worker failed: ' + (err && err.message || err));
-          }
-        })();
+        navigator.serviceWorker.register('sw-coi.js', { scope: './' }).catch(err =>
+          appendDebugLog('[threads] isolation service worker failed: ' + (err && err.message || err)));
       }
     }
 
