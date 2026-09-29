@@ -1738,12 +1738,40 @@ next instruction overwrites every flag and cannot exit first" is observable
 somewhere. The kind-20 record is now written **every** time (856774d5). This
 is the configuration shown identical to the reference.
 
-**Open:**
+**Resolved: the skip was never the bug.** Nothing reads those globals. The
+skip only changed program sizes, and that was enough to hit the arena-reuse
+bug that 553db124 fixed ("never enter a freed program"). Bisected on box 1
+with the original 17d31c31 skip compiler dropped into each tree (H3,
+`--branch-clock`, uop arm):
 
-- Whatever reads those globals. It is not an exit that `$uc_liveness`
-  counts, and not a flag consumer between the sbb and its successor.
-- Kinds 18 (shift by CL) and 25 (mul) still skip on `$uc_live_out` and may
-  share the gap.
+| tree | 07e | H3 result |
+|---|---|---|
+| 8e534d4f | skip | NULL call at 3651, 3652 batches |
+| 1b5655cf | skip | NULL call at 3651, 3652 batches |
+| 1b5655cf | its own (always writes) | 5101 batches |
+| 553db124 (only 07d changed) | skip | 5101 batches |
+
+On the 2026-09-29 main, the kind-20 skip re-enabled gives an H3 frame
+identical to off, and so does the pre-553db124 07d with the same main. The
+second result is consistent too: a different layout does not forge the
+header.
+
+Two checks came back clean for kinds 18 and 25:
+
+- **Reading the code.** No liveness hole turned up. CL=0 keeps the old
+  flags, but the skip is taken only when nothing after the shift reads them,
+  so no hole there. mul's record is only CF/OF. The overwriting instruction's
+  own exits count as consumers of the state *before* it.
+- **Instrumented run.** `$uc_step` marks a skipped class-3 record **D**
+  (dead) instead of G (`$uc_rec_skip`). Any consumer the liveness pass
+  missed would then decline rather than read an older record. On H3 and SC,
+  with and without `--uop-muldiv`, the uop counters are equal to the unit
+  with G marking. The unit suite is unchanged too (274 compiled / 97
+  declined).
+
+The D marking stays as hardening. Kind 20 still writes its record every
+time: re-enabling the skip is frame-safe, but has not been measured to save
+anything.
 
 **SimGolf.** Census window 2500..4000, box 3. Counts are load-immune.
 
