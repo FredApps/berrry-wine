@@ -232,7 +232,7 @@ function parse(r) {
     .map(m => ({ lo: +m[1], hi: +m[2], s: +m[3] }));
   const uop = (text.match(/^uop: .*$/m) || [''])[0];
   // Secondary tier lines (`uop hot:`, `uop nobump:`), printed as they came.
-  const hot = [...text.matchAll(/^uop (?:hot|nobump): .*$/mg)].map(m => m[0]).join('\n       ');
+  const hot = [...text.matchAll(/^(?:uop (?:hot|nobump|widen): .*|  guard-fail sites: .*)$/mg)].map(m => m[0].trim()).join('\n       ');
   const declines = (text.match(/^\s+declines: (.*)$/m) || [, ''])[1];
   const threads = [...text.matchAll(/^uop\[thread [^\]]+\]: .*$/mg)].map(m => m[0]);
   const crash = (text.match(/(RuntimeError|unreachable|CRASH|crash_unimplemented)[^\n]*/) || [''])[0];
@@ -305,6 +305,13 @@ async function main() {
   // narrow: the uop arm with re-guards proving one page again instead of
   // widening to the 64KB-aligned affine block -- its partner is uop.
   ARMS.narrow = [...ARMS.uop, '--uop-reguard-span=4096'];
+  // muldiv / icall / iat: the uop arm plus one opt-in widening each (07e
+  // kinds 25/26, FF /2 inline cache, IAT call [abs]); widen is all three.
+  // Their partner is uop.
+  ARMS.muldiv = [...ARMS.uop, '--uop-muldiv'];
+  ARMS.icall = [...ARMS.uop, '--uop-icall'];
+  ARMS.iat = [...ARMS.uop, '--uop-iat'];
+  ARMS.widen = [...ARMS.uop, '--uop-muldiv', '--uop-icall', '--uop-iat'];
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another
   // prebuilt module, so an engine change is measured against its predecessor
   // in one sweep on one box.
