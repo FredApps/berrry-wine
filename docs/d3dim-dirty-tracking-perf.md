@@ -290,6 +290,73 @@ and `--region-map` for each arm. `--trace-yields` adds guest PCs/cache samples;
 `--trace-cache` adds bounded retirement records. Both require `--frame-times`.
 Use unprofiled captures for throughput and `--profile` for attribution.
 
+### Follow-up: color-key fold overlap
+
+The alpha-only retirement trace identifies another conflicting pair:
+the 19-byte color-key row `0x528268..0x52827b` and store entry `0x528271`.
+Of 995 captured retirements, 988 alternate between this pair; all have
+`in_code_write=0`. The candidate applies `$fuse_stop` to interior bytes after
+the exact-body match, preserving cold native folding and existing entries.
+
+Remote box 8, same pinned runtime/JS/map and 95-second warmup, 30-second
+unprofiled captures in ABBA order:
+
+| Run | Presents/s | p95 interval | Worst interval | Retirements | Decodes |
+|---|---:|---:|---:|---:|---:|
+| Alpha-only 1 | 82.74 | 17.82 ms | 34.70 ms | 2,379,486 | 2,510,921 |
+| Both guards 1 | 74.54 | 18.77 ms | 33.89 ms | 0 | 0 |
+| Both guards 2 | 84.08 | 17.97 ms | 28.09 ms | 0 | 0 |
+| Alpha-only 2 | 83.41 | 17.88 ms | 29.59 ms | 1,818,723 | 1,919,686 |
+
+The candidate eliminates steady-state cache churn in both captures. FPS is
+not an established win: arm means are 83.08 versus 79.31 (-4.5%), with a
+12.0% candidate repeat spread. The short windows cover different animation
+phases; the repeated control spread alone is only 0.8%. This does not prove
+performance neutrality. All four samples have no intervals over 50 ms and no reported
+browser/rendering errors. Artifacts under `build/mw3-watch-ab-results/`:
+`mw3-fixed-keycontrol{1,2}` and `mw3-keyfixed-key{1,2}`.
+
+The longer pair (`--seconds=120`, same 95-second warmup) resolves the initial
+tradeoff against the guard-only candidate: 82.98 versus 79.42 presents/s
+(-4.3%). Their scripted gaps occur at nearly identical offsets (~47.6/52.6
+and ~114.7/119.7 seconds), so this is not explained by one capture omitting
+the waits. Retirements fall 7,556,801 → 4, but p95 rises 17.43 → 18.30 ms.
+Artifacts: `mw3-fixed-long`, `mw3-keyfixed-long`. The guard-only version was
+not accepted as a performance fix.
+
+The revised implementation keeps the native row useful: a pure exact-body
+matcher establishes a block boundary before it even on the first encounter,
+and the micro-op compiler treats that row as an exit to threaded/native code.
+This prevents the predecessor or a micro-op program from compiling its
+interior store first. The overlap guard still handles genuine interior
+entries. The expanded regression verifies predecessor entry reaches the
+native fold and that micro-op compilation does not replace it.
+
+With that revision, the 120-second capture (`mw3-keynative-long`) measures
+81.78 presents/s against the alpha-only control's 82.98 (-1.45%), with four
+retirements and five decodes versus 7,556,801 and 7,972,493. p95 is 18.42 ms
+(control 17.43 ms); the four intervals above 50 ms are the scripted one/five
+second pauses. Captures remain visually coherent and browser/rendering errors
+are zero. This establishes removal of sustained cache churn, **not an FPS
+improvement or proof of identical performance**. This final revision has one
+long run; the guard-only ABBA must not be presented as repeats of it.
+
+A fresh 30-second active-menu confirmation (`mw3-keynative-confirm`) measures
+85.40 presents/s, p95 17.76 ms, maximum 39.27 ms, with **zero retirements and
+zero decodes**. No interval exceeds 50 ms. This confirms the final version
+also retains the stable cache in a fresh launch; it does not turn the mixed
+short/long windows into a claimed FPS improvement.
+
+Validation: isolated build, expanded entry-overlap regression, H440
+pixel/register/flag/overlap equivalence and the micro-op compiler suite pass.
+Code-write granularity passed with the overlap guard before adding native-row
+priority; that revision did not alter the write/invalidation implementation.
+The additional local menu-to-cockpit acceptance did not finish its first
+cooperative run within its 300-second timeout; its child needed to be stopped.
+It produced no cockpit capture, so neither combat correctness nor combat
+performance is established by this follow-up. No causal attribution of that
+timeout to the candidate has been made.
+
 ## Further GDI / DirectDraw consumers (not implemented)
 
 1. `lib/host-imports.js` `_flushGdiSurfacePresentation`: combine the existing

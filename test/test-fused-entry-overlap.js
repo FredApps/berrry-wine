@@ -28,6 +28,14 @@ const extraWat = String.raw`
   (func (export "test_page_probe") (param $guest i32) (result i32)
     (call $page_probe (local.get $guest)))
   (func (export "test_alpha_runs") (result i32) (global.get $loop_rgb565_alpha_runs))
+  (func (export "test_colorkey_runs") (result i32) (global.get $loop_rgb565_colorkey_runs))
+  (func (export "test_seed_zf") (param $zero i32)
+    (call $set_flags_sub (i32.const 1) (local.get $zero)
+      (i32.sub (i32.const 1) (local.get $zero))))
+  (func (export "test_uop_try") (param $head i32) (result i32)
+    (call $uop_try (local.get $head)))
+  (func (export "test_uop_program") (param $head i32) (result i32)
+    (call $uop_map_get (local.get $head)))
 `;
 
 const le32 = value => [value, value >>> 8, value >>> 16, value >>> 24].map(v => v & 0xff);
@@ -143,7 +151,46 @@ async function main() {
     assert.strictEqual(e.get_page_retires() - retires, 0, 'alpha entries must not repeatedly retire each other');
     assert.strictEqual(e.get_cache_stores() - stores, 0, 'warmed alpha entries must not be re-decoded');
   }
-  console.log('PASS  load and alpha folds preserve independently compiled interior entries');
+  // MW3's color-key row has the same conflict at its conditional store and
+  // induction tail. Cover every interior instruction boundary, relocated.
+  const keyLoop = Buffer.from('668b08663b4d0c740466890c1883c0024e75ed', 'hex');
+  for (const offset of [3, 7, 9, 13, 16, 17]) {
+    const code = page + 2;
+    assert.strictEqual(e.test_sparse_map_for_code(page, 0x1000) >>> 0, page);
+    page += 0x1000;
+    e.guest_write8(code - 2, 0x90); e.guest_write8(code - 1, 0x90);
+    [...keyLoop, 0xc3].forEach((byte, i) => e.guest_write8(code + i, byte));
+    const bp = stack + 0x100, dst = stack + 0x200, src = stack + 0x220;
+    const execute = entry => {
+      e.set_esp(stack); e.guest_write32(stack, 0); e.set_ebp(bp);
+      e.set_eax(src); e.set_ebx(dst - src); e.set_ecx(0x5aa5); e.set_esi(1);
+      e.guest_write32(bp + 12, 0x7bef);
+      e.guest_write32(src, 0x5aa5); e.guest_write32(dst, 0);
+      // Entering past the store represents a pixel already copied. The DEC
+      // and JNZ entries additionally need the preceding instruction's state.
+      const interior = entry > code;
+      if (interior && offset >= 13) e.guest_write32(dst, 0x5aa5);
+      if (interior && offset >= 16) e.set_eax(src + 2);
+      if (interior && offset === 17) e.set_esi(0);
+      e.test_seed_zf(interior && offset === 17 ? 1 : 0);
+      e.set_eip(entry); e.run(1000);
+      assert.strictEqual(e.get_eip() >>> 0, 0, 'color-key row returns');
+      assert.strictEqual(new DataView(memory.buffer).getUint16(e.guest_to_wasm(dst), true),
+        0x5aa5, 'color-key head and interior preserve copied pixel');
+    };
+    const runs = e.test_colorkey_runs();
+    execute(code - 2);
+    assert(e.test_colorkey_runs() > runs, 'predecessor falls into a separate native color-key row');
+    e.test_uop_try(code);
+    assert.strictEqual(e.test_uop_program(code), 0, 'native row is not replaced by a micro-op program');
+    for (let n = 0; n < 16; n++) { execute(code + offset); execute(code); }
+    const retires = e.get_page_retires(), stores = e.get_cache_stores();
+    for (let n = 0; n < 12; n++) { execute(code + offset); execute(code); }
+    assert.strictEqual(e.test_page_probe(code + offset), 1, 'color-key interior stays compiled');
+    assert.strictEqual(e.get_page_retires() - retires, 0, 'color-key entries must not retire each other');
+    assert.strictEqual(e.get_cache_stores() - stores, 0, 'color-key entries must not be re-decoded');
+  }
+  console.log('PASS  load, alpha and color-key folds preserve independently compiled interior entries');
 }
 
 main().catch(error => {

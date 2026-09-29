@@ -1233,6 +1233,10 @@
       ;; A head there is declined; a loop reaching it exits to it.
       (if (i32.eq (local.get $a) (global.get $logical_frame_addr))
         (then (call $uc_unsup (local.get $R))))
+      ;; Keep an exact native color-key row as a threaded entry. Lowering its
+      ;; x86 body can side-exit at the store and displace the faster native row.
+      (if (call $match_rgb565_colorkey_run (local.get $a))
+        (then (call $uc_unsup (local.get $R))))
       (br_if $l (i32.eqz (call $uc_kind (local.get $R))))
       ;; a call: its callee is near code too, and the return address is
       ;; where the callee's ret goes ($uc_ret_targets)

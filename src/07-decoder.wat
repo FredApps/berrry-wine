@@ -2030,7 +2030,7 @@
   ;; verified encoding and keep it under MW3's process-wide COPY_RUN opt-in.
   ;; The back/fall addresses are derived from the matched location so another
   ;; game build can use the same exact loop at a different VA.
-  (func $try_emit_rgb565_colorkey_run (param $start_eip i32) (result i32)
+  (func $match_rgb565_colorkey_run (param $start_eip i32) (result i32)
     (if (i32.or (i32.eqz (call $loop_copy_emit_get)) (global.get $code16))
       (then (return (i32.const 0))))
     (if (i32.or
@@ -2056,6 +2056,20 @@
             (i32.add (local.get $start_eip) (i32.const 18)))
             (i32.const 0xed)))
       (then (return (i32.const 0))))
+    (i32.const 1))
+
+  (func $try_emit_rgb565_colorkey_run (param $start_eip i32) (result i32)
+    (local $p i32)
+    (if (i32.eqz (call $match_rgb565_colorkey_run (local.get $start_eip)))
+      (then (return (i32.const 0))))
+    ;; Preserve interior entries created by side exits, as for the alpha row.
+    ;; Otherwise the whole-row fold and its conditional store retire each other.
+    (local.set $p (i32.add (local.get $start_eip) (i32.const 1)))
+    (loop $entries
+      (if (call $fuse_stop (local.get $p)) (then (return (i32.const 0))))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (br_if $entries
+        (i32.lt_u (local.get $p) (i32.add (local.get $start_eip) (i32.const 19)))))
     (global.set $loop_rgb565_colorkey_matches
       (i32.add (global.get $loop_rgb565_colorkey_matches) (i32.const 1)))
     (call $te (i32.const 440) (i32.const 0))
@@ -4859,7 +4873,10 @@
       (if (i32.ne (global.get $d_pc) (local.get $start_eip))
         (then
           ;; The game step's address is always its own block's entry (09a8).
-          (if (call $fuse_stop (global.get $d_pc))
+          ;; Split before a native color-key row even on its first encounter;
+          ;; otherwise this prefix can compile its store before the row head.
+          (if (i32.or (call $fuse_stop (global.get $d_pc))
+                      (call $match_rgb565_colorkey_run (global.get $d_pc)))
             (then
               (call $te (i32.const 45) (global.get $d_pc))
               (br $exit)))))

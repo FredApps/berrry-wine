@@ -1078,3 +1078,47 @@ contains no scripted gaps: 14.59 → 78.74 presents/s; median 70.49 → 13.42 ms
 p95 74.96 → 18.04 ms; worst 80.00 → 31.53 ms. All 437 control intervals
 exceed 50 ms, versus none of 2,362 fixed intervals. Per-second fixed counts
 still vary 60–151 with the animation. Retirements fall 47.69M → 2.18M.
+
+### Remaining color-key overlap (2026-09-29)
+
+With the alpha guard enabled, a fresh bounded retirement trace at 95 seconds
+finds the same conflict in the color-key row: `0x528268..0x52827b` versus
+its interior store at `0x528271`. Of 995 retirement records, 494 are the
+whole row evicting the store and 494 are the reverse; all are outside code
+writes. The other seven records are initial splits. Parse `0xCAC0DE02`
+markers rather than assuming every five logged words form a record: other
+diagnostic messages can occur between them.
+
+`$try_emit_rgb565_colorkey_run` now declines a candidate containing an
+existing interior entry, using `$fuse_stop` after the exact-byte check.
+The overlap regression covers all six interior instruction boundaries,
+correct output and zero warmed retirements/recompiles; the cold native fold
+remains enabled. The test fails before this guard and passes after it.
+The standalone H440 test also passes its ordinary/fused pixel, register,
+flag, relocation and source/destination-overlap comparisons.
+
+The guard alone removed churn but cost 4.3% throughput in a longer matched
+capture. The implementation therefore also splits a predecessor before the
+exact native row and makes micro-op compilation exit at that row, preserving
+native execution instead of repeatedly creating an interior-store fallback.
+The exact-byte matcher is shared by the decoder and compiler; there is no
+guest-address special case. Tests verify native execution through a preceding
+block and refusal to install a micro-op program over the native row.
+
+The revised two-minute menu capture reduces retirements 7,556,801 → 4 and
+decodes 7,972,493 → 5. Throughput is 82.98 → 81.78 presents/s (-1.45%):
+the sustained churn is removed, but this is not an established FPS win.
+The final isolated build, overlap test, H440 equivalence and micro-op compiler
+suite pass. The extra local cockpit acceptance timed out without a capture;
+combat remains unvalidated by this follow-up. Full results and artifacts are
+in the linked dirty-tracking report.
+
+A fresh 30-second active-menu confirmation of the final version reaches
+85.40 presents/s with zero retirements/decodes, p95 17.76 ms and worst
+39.27 ms. No >50 ms intervals. This verifies the cache result across a fresh
+launch; no repeatable FPS gain is claimed.
+
+The alpha-only profile already spends 47.25% of sampled worker wall time in
+`uop_fast`, with 15.74% idle; decoding is no longer the dominant sampled
+cost. Thus retirement reduction alone is not evidence of another large FPS
+gain. Trace/profile artifacts: `build/mw3-watch-ab-results/mw3-fixed-retirement-trace`.
