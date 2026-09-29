@@ -101,6 +101,12 @@ bash tools/check-test-manifest.sh
 # mid-array insert still renumbers the broader ABI; these gates catch both
 # forms of drift before they become a runtime mystery.
 node tools/check-api-table.js
+# The table is regenerated from specs (gen_api_table.js's extra list and the
+# d3d9/d3d8/d3dim method specs), and rows are also appended by hand. A row
+# whose metadata lives only in the table -- a handler alias the spec does not
+# know -- is silently reverted by the next regeneration, and the build then
+# fails far away as an unknown $handle_* function. Refuse that drift here.
+node tools/gen_api_table.js --check
 node tools/gen_dispatch.js --check
 node tools/check-hash-table.js > /dev/null || { node tools/check-hash-table.js; exit 1; }
 # Hardcoded data-segment offsets in the ordinal-import tables vs. what those
