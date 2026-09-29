@@ -173,7 +173,7 @@ toolbars as they move, so a `dvh`-sized spacer grows mid-gesture and the scroll 
 from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. Size overflow in
 `svh`; test "are the bars down?" as `innerHeight >= 100lvh - 8`.
 
-## Source Parts (`src/main.watx` include order — 92 files)
+## Source Parts (`src/main.watx` include order — 119 files; not every part has a row)
 
 | File | Purpose |
 |------|---------|
@@ -221,6 +221,10 @@ from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. 
 | `09a7c-mixer.wat` | WINMM mixer handlers (mixerOpen/GetLineInfo/GetControlDetails and A/W pairs) |
 | `09a7d-handlers-shell-file.wat` | Later file, registry, shell and desktop handlers |
 | `09a7e-video-codecs.wat` | Video for Windows decoders (BI_RGB, RLE8, Cinepak, MS Video 1 8/16 bpp) as pure functions over WASM addresses; `tools/avi-player/` compiles this fragment standalone to verify it against ffmpeg and play corpus movies ([docs/video-support-design.md](docs/video-support-design.md)) |
+| `09a7f-video-avi.wat` | AVI (RIFF) reader: header/stream parse, idx1/indx chunk tables, chunk reads from a VFS file or guest memory (`$avi_open_memory`, for "AVI" resources); backs AVIFile* |
+| `09a7g-video-icm.wat` | Installable Compression Manager (ICOpen/ICDecompress/ICGetInfo…) over the built-in 09a7e decoders, by fourcc |
+| `09a7h-video-mciavi.wat` | MCI `avivideo` device for `mciSendString`: open/play [wait]/stop/seek/put/window/status, decode on the guest clock, PCM audio via waveOut, MM_MCINOTIFY; a parked `play wait` re-enters its thunk once per turn |
+| `09a7i-video-mciwnd.wat` | MCIWnd (`MCIWndCreateA`, WAT-native wndproc `0xFFFF0006`): MCIWNDM_*/MCI_* messages turned into command strings for the 09a7h device, NOTIFYMODE to the parent |
 | `09a8-handlers-directx.wat` | DirectX handlers — DirectDraw, DirectSound, DirectInput; COM vtable dispatch through the thunk zone, and the `DxObject` record declaration |
 | `09a8b-handlers-opengl.wat` | OpenGL 1.x / WGL frontend: one ABI bridge lowering the measured Quake II GL/WGL set to the generic GPU backend |
 | `09a8c-gl-encoder.wat` | Native GL command records, immediate primitive normalization, buffer growth, and synchronous barriers |
@@ -257,6 +261,7 @@ from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. 
 | `09c3-wndprocs3-listbox.wat` | ListBox storage, selection, scrolling and painting |
 | `09c3-wndprocs4-combobox.wat` | ComboBox and its dropdown popup shell |
 | `09c3-wndprocs5-edit.wat` | Edit wndproc and multiline helpers |
+| `09c3-wndprocs6-animate.wat` | COMCTL32 SysAnimate32 Animate control: RLE8/raw AVI from a resource or file, WM_TIMER or host-clock (`$anim_service`) playback, ACN_START/STOP |
 | `09c3a-dialog-runtime.wat` | Native dialog runtime and find/replace helpers |
 | `09c3b-scrollbar.wat` | Shared Win98 scrollbar rendering and interaction helpers |
 | `09c4-defwndproc.wat` | DefWindowProc non-client paint: 3D outset frame, caption gradient and text, sysmenu buttons, as a callable entry point |

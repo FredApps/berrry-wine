@@ -74,24 +74,28 @@ APIs are imported but not reached in that window.
 
 ## What exists today
 
+Updated 2026-09-28. Phases 0-4 and MCIWnd have landed; Indeo 4 remains.
+
 | Piece | Where | State |
 |---|---|---|
-| `ICOpen` / `ICInfo` / `ICClose` (Win32) | `src/09a8-handlers-directx.wat:12526` | "no compressors installed": ICOpen → 0 |
-| `ICLocate`, `ICSendMessage`, `ICDecompress`, `ICGetInfo`, `MCIWndCreateA`, all AVIFIL32 | — | not in `api_table.json`; a call is `UNIMPLEMENTED API` |
-| Win16 AVIFILE (ordinals 100–167) | `src/09e-win16-api.wat:883` | real RIFF header parse, reads the first 60 KiB, streams, read/format/time |
-| Win16 MSVIDEO | `src/09e-win16-api.wat:1627` | `ICLocate` → 0, `ICClose` → ICERR_BADHANDLE |
-| DrawDib* | `src/09a4-handlers-gdi.wat:4081` | uncompressed only; goes straight to StretchDIBits |
-| BI_RLE8/RLE4 decode | `src/10a-gdi-bitmap.wat:508` | for bitmaps: decodes into a fresh plane |
-| MCI string + command | `lib/host-audio.js:3033` (JS host) | `waveaudio`, `sequencer`, `cdaudio` |
-| ACM | `src/09a3-handlers-audio.wat:352` | no codecs; any non-PCM stream is ACMERR_NOTPOSSIBLE |
+| Decoders: BI_RGB, RLE8, Cinepak, MS Video 1 (8/16 bpp) | `src/09a7e-video-codecs.wat` | bit-exact against ffmpeg (`tools/avi-player/`, `test/test-video-cram.js`) |
+| AVI reader | `src/09a7f-video-avi.wat` | RIFF/idx1/indx, VFS file or guest memory (`$avi_open_memory`) |
+| ICM (`ICOpen`/`ICDecompress`/`ICGetInfo`/…) | `src/09a7g-video-icm.wat` | built-in codecs by fourcc; IV41 is not one of them |
+| MCI `avivideo` | `src/09a7h-video-mciavi.wat` | string interface, `wait` parks the thunk, `notify`, PCM audio; Half-Life Uplink (`test/test-mciavi-uplink-candidate.js`) |
+| MCIWnd (`MCIWndCreateA`) | `src/09a7i-video-mciwnd.wat` | message layer over the MCI device, wndproc `0xFFFF0006` (`test/test-mciwnd.js`) |
+| SysAnimate32 | `src/09c3-wndprocs6-animate.wat` | RLE8/raw, resource or file, WM_TIMER or host-clock playback; HyperTerminal's globe (`test/test-animate-control.js`) |
+| Win16 AVIFILE / MSVIDEO | `src/09e-win16-api.wat` | unchanged: own header parse; `ICLocate` → 0 |
+| DrawDib* | `src/09a4-handlers-gdi.wat` | still uncompressed only |
+| Standalone player | `tools/avi-player/` | every corpus movie, the same WAT decoders compiled on their own |
 
-**One bug to fix on the way:** the MCI string parser opens *any* unknown
-`type` as a do-nothing device and answers 0 to every later verb. Uplink
-therefore believes its movie played. Until the avivideo device exists, an
-`open … type avivideo` must fail with `MCIERR_DEVICE_NOT_INSTALLED`
-(take the value from `mmsystem.h` when writing it). That is the truthful
-answer for a machine without MCIAVI, and every app we traced handles a
-failed open by skipping the movie.
+Still missing:
+- **Indeo 4 (IV41).** This is every Civ2 MGE movie (59 files). The route
+  being built loads the real `ir41_32.dll`, from the game's own disc or
+  install, as guest x86 behind the ICM driver protocol. We do not ship it.
+- The `mciSendCommand` binary interface to the avivideo device.
+- Palette-change chunks in MCI playback, `play repeat`, and the MCIWnd
+  playbar and menu.
+- DrawDib with compressed input.
 
 ## API surfaces
 
@@ -378,7 +382,7 @@ are WAT, and audio reuses the waveOut mixer.
 | 2 | AVIFIL32 (Win32) on the shared AVI core; Win16 AVIFILE moved onto it | Dark Colony (crash fixed, intro plays) |
 | 3 | MCIAVI device: string + command interface, `wait`/`notify`, audio clock | Half-Life Uplink |
 | 4 | Animate control; DrawDib over ICM; MS Video 1 | VB6 samples, shell progress animations |
-| 5 | MCIWnd; Indeo 4 | Civ2 advisor/wonder movies, AoE via MCIWnd |
+| 5 | MCIWnd (done); Indeo 4 via the real codec DLL | Civ2 advisor/wonder movies |
 
 ## Out of scope
 
