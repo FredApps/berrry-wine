@@ -944,12 +944,14 @@
   ;; The hot-head hook: $bx_hot_bump calls this instead of the block
   ;; executor's walk when the tier is armed. The lowering (07e) answers the
   ;; program address or 0; everything it wrote is data in $UOP_ARENA.
-  (func $uop_try (param $eip i32)
+  ;; Answers 1 when the head's verdict is a settled "never" (a dead or poor
+  ;; marker), which 07c turns into the page index's no-bump mark.
+  (func $uop_try (param $eip i32) (result i32)
     (local $pc i32)
-    (if (i32.ne (call $uop_map_get (local.get $eip)) (i32.const 0)) (then (return)))
+    (if (i32.ne (call $uop_map_get (local.get $eip)) (i32.const 0)) (then (return (i32.const 0))))
     (local.set $pc (call $uop_map_slot (local.get $eip)))
     (if (i32.ne (local.get $pc) (i32.const 0))
-      (then (if (i32.eq (i32.load offset=4 (local.get $pc)) (i32.const 1)) (then (return)))))
+      (then (if (i32.eq (i32.load offset=4 (local.get $pc)) (i32.const 1)) (then (return (i32.const 1))))))
     (local.set $pc (call $uop_compile (local.get $eip)))
     (if (global.get $uop_census)
       (then (call $uop_census_ev (i32.const 1) (local.get $eip)
@@ -958,10 +960,11 @@
                         (then (i32.const 0xFFFF)) (else (i32.const 0)))))
               (global.get $uc_nloop) (i32.const 0))))
     (if (i32.eqz (local.get $pc))
-      (then (call $uop_mark_dead (local.get $eip)) (return)))
+      (then (call $uop_mark_dead (local.get $eip)) (return (i32.const 1))))
     ;; another thread is compiling: try again at the next hot bump
-    (if (i32.eq (local.get $pc) (i32.const 1)) (then (return)))
-    (call $uop_install (local.get $eip) (local.get $pc)))
+    (if (i32.eq (local.get $pc) (i32.const 1)) (then (return (i32.const 0))))
+    (call $uop_install (local.get $eip) (local.get $pc))
+    (i32.const 0))
 
   ;; Remember a head the lowering declined: it is a function of the code
   ;; bytes, so asking again at every hot bump only buys another decline.

@@ -902,8 +902,15 @@
                                          (i32.eq (global.get $eip) (global.get $sbh_eip_b))))
                       (then
                         (local.set $nx_t (call $page_resolve (global.get $eip)))
-                        (if (local.get $nx_t)
+                        ;; Under $uop_fast only a no-bump target (bit 0) may
+                        ;; skip $branch_end_at, which owns the hot bump.
+                        (if (i32.and (i32.ne (local.get $nx_t) (i32.const 0))
+                              (i32.or (i32.and (local.get $nx_t) (i32.const 1))
+                                      (i32.eqz (global.get $uop_fast))))
                           (then
+                            (global.set $bx_hot_skips (i32.add (global.get $bx_hot_skips)
+                              (i32.and (local.get $nx_t) (i32.const 1))))
+                            (local.set $nx_t (i32.and (local.get $nx_t) (i32.const -2)))
                             (global.set $block_budget (i32.sub (global.get $block_budget) (i32.const 1)))
                             (global.set $steps (i32.sub (global.get $steps) (i32.const 1)))
                             (global.set $page_fast (i32.add (global.get $page_fast) (i32.const 1)))

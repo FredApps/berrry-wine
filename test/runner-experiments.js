@@ -77,6 +77,10 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // threaded block cut ($branch_clock in 05-alu). Pass it to BOTH arms of any
   // A/B whose tier re-decodes code, or the arms run on different clocks.
   const BRANCH_CLOCK = hasFlag('branch-clock');
+  // --no-uop-nobump: turn off the page index's no-bump mark (01-header
+  // PAGE_INDEX_NOBUMP) -- heads with a settled uop verdict stop counting
+  // toward hotness and taken Jccs into them keep the inline fast path.
+  const NO_UOP_NOBUMP = hasFlag('no-uop-nobump');
   let uopOn = false;
   const BLOCK_EXEC_STATS = hasFlag('block-exec-stats');
   // --block-chain: patch a taken direct branch's own operand word with the
@@ -276,6 +280,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (BRANCH_CLOCK) inheritWasm('set_branch_clock', 1);
     if (uopWanted()) inheritWasm('set_uop', 1);
+    if (NO_UOP_NOBUMP) inheritWasm('set_uop_nobump', 0);
     if (aggrWanted()) inheritWasm('set_aggressive_stack', 1);
     if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
@@ -290,6 +295,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
 
   function applyMain(instance, { copySuperops: COPY_SUPEROPS, ctx = null }) {
     if (BRANCH_CLOCK && instance.exports.set_branch_clock) instance.exports.set_branch_clock(1);
+    if (NO_UOP_NOBUMP && instance.exports.set_uop_nobump) instance.exports.set_uop_nobump(0);
     if (uopWanted() && instance.exports.set_uop && ctx) {
       if (UOP_CENSUS && instance.exports.set_uop_census) instance.exports.set_uop_census(1);
       instance.exports.set_uop(1);
@@ -441,6 +447,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       log(`uop: installs=${st(2)} kills=${st(3)} retired-poor=${st(7)} enters=${st(4)} ` +
         `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} win-kept=${st(9)} win-reset=${st(10)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
         `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (why ? `\n  declines: ${why}` : ''));
+      if (x.get_uop_nobump_skips) log(`uop nobump: skips=${x.get_uop_nobump_skips() >>> 0}`);
       if (aggrWanted()) {
         // $uop_cstat 6..25: the aggressive-stack counters of every program
         // kept (07e $uc_sp_block). plain = pairs the conservative "nothing

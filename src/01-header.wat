@@ -1355,7 +1355,7 @@
   ;; Bit 14 marks an interior byte. "Is this offset an entry point" is therefore
   ;; the single test `(entry & PAGE_INDEX_COVER) == 0`, which catches 0xFFFF too.
   (global $PAGE_INDEX_COVER  i32 (i32.const 0x4000))
-  (global $PAGE_INDEX_OFFMASK i32 (i32.const 0x3FFF))
+  (global $PAGE_INDEX_OFFMASK i32 (i32.const 0x3FFC))
   ;; Round 14 (docs/block-executor-design.md section 23). Bit 15 says WHICH of
   ;; the page's two chunks the offset names: clear = the threaded-code chunk,
   ;; set = the block-executor DESCRIPTOR chunk. So the u16 entry space is
@@ -1372,8 +1372,17 @@
   ;; reaches 0xFFFF. "Which chunk does this entry name" is one AND, and the
   ;; owner key a retirement walk compares is `e & PAGE_INDEX_OWNER`, which
   ;; keeps the chunk bit and drops the cover bit.
+  ;;
+  ;; Bit 0 of an ENTRY is the micro-op tier's "no bump" mark (07c
+  ;; $bx_hot_bump, $page_nobump_mark): the head has a settled verdict, so a
+  ;; transfer into it need not count toward hotness. Every chunk offset is a
+  ;; whole word, so bits 0-1 of a real offset are always clear and OFFMASK and
+  ;; OWNER drop them; $page_resolve alone keeps bit 0, in the low bit of the
+  ;; pointer it returns, for its three callers to read and mask. A retire or a
+  ;; re-publish rewrites the entry, which is what clears the mark.
   (global $PAGE_INDEX_DESC   i32 (i32.const 0x8000))
-  (global $PAGE_INDEX_OWNER  i32 (i32.const 0xBFFF))
+  (global $PAGE_INDEX_OWNER  i32 (i32.const 0xBFFC))
+  (global $PAGE_INDEX_NOBUMP i32 (i32.const 1))
   ;; PAGE_DIR: per-thread direct-mapped table keyed on the guest page number.
   ;; 32 bytes per entry: +0 page base (0 = empty), +4 index ptr, +8 threaded
   ;; chunk base, +12 threaded chunk used|class|flags, +16 descriptor chunk base

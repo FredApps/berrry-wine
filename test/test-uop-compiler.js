@@ -648,6 +648,37 @@ function histCase(inst, a, nextCode) {
   return errs;
 }
 
+// A loop whose head the tier declines (rdtsc is not lowered): the verdict
+// settles, the page index marks the head no-bump (01-header PAGE_INDEX_NOBUMP),
+// and later transfers into it skip the hot bump -- counted by
+// get_uop_nobump_skips. With set_uop_nobump(0) nothing is marked, and both
+// runs end in the same state as the tier off.
+function nobumpCase(inst, a, nextCode) {
+  const { e } = inst;
+  const c = { name: 'nobump', regs: { ecx: 4096 },
+    code: [L('l'), [0x0F, 0x31], 0x49, J(cc.NZ, 'l'), 0xC3] };
+  const errs = [];
+  const off = runCase(inst, c, a, nextCode(), 'off');
+  const d0 = e.uop_cstat(1), s0 = e.get_uop_nobump_skips() >>> 0;
+  const on = runCase(inst, c, a, nextCode(), 'hot');
+  const skips = (e.get_uop_nobump_skips() >>> 0) - s0;
+  if (e.uop_cstat(1) === d0) errs.push('head was not declined');
+  if (skips < 1000) errs.push(`only ${skips} transfers skipped the bump`);
+  e.set_uop_nobump(0);
+  try {
+    const s1 = e.get_uop_nobump_skips() >>> 0;
+    const plain = runCase(inst, c, a, nextCode(), 'hot');
+    if ((e.get_uop_nobump_skips() >>> 0) !== s1) errs.push('skips counted with the mark off');
+    for (const [name, st] of [['on', on], ['mark off', plain]]) {
+      if (!st.ok || st.regs[1] !== off.regs[1] || st.mem !== off.mem) errs.push(`${name} diverged from threaded`);
+    }
+  } finally {
+    e.set_uop_nobump(1);
+  }
+  if (!errs.length) console.log(`nobump-mark        ok (${skips} of 4096 back edges skipped the bump)`);
+  return errs;
+}
+
 // 07e-uop-compiler.wat's decline reasons, by code ($uop_decline_count).
 const WAT_REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-backedge', 'loop-too-big',
   'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
@@ -735,6 +766,10 @@ async function main() {
   if (!only || only === 'hist-keeps-tier') {
     const errs = histCase(inst, a, () => a.code + 0x1000 * slot++);
     if (errs.length) { fails++; console.log(`hist-keeps-tier    FAIL ${errs.join(', ')}`); }
+  }
+  if (!only || only === 'nobump-mark') {
+    const errs = nobumpCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`nobump-mark        FAIL ${errs.join(', ')}`); }
   }
   const cs = (k) => e.uop_cstat(k);
   const why = WAT_REASONS.map((n, k) => [n, k && e.uop_decline_count(k)]).filter(([, n]) => n).map(([k, n]) => `${k}=${n}`).join(' ');
