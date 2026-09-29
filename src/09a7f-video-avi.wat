@@ -62,9 +62,43 @@
   (func $avi_dib_wa (param $ga i32) (result i32)
     (i32.add (global.get $DIB_BACKING_BASE) (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))))
 
+  ;; A memory-backed source (an "AVI" resource already mapped in the guest
+  ;; image, for the Animate control) has handle $AVI_MEM_TAG|slot in place of
+  ;; a host file handle; its bytes are the guest range at file record +20
+  ;; (address) / +24 (length).
+  (global $AVI_MEM_TAG i32 (i32.const 0x4D454D00))
+  (func $avi_is_mem_handle (param $h i32) (result i32)
+    (i32.eq (i32.and (local.get $h) (i32.const 0xFFFFFF00)) (global.get $AVI_MEM_TAG)))
+
+  ;; Guest-to-guest copy that re-translates at every 4KB page boundary on
+  ;; either side, since adjacent guest pages need not be adjacent in WASM.
+  (func $avi_mem_copy (param $dst i32) (param $src i32) (param $n i32)
+    (local $k i32) (local $t i32)
+    (block $done (loop $chunk
+      (br_if $done (i32.le_s (local.get $n) (i32.const 0)))
+      (local.set $k (i32.sub (i32.const 0x1000) (i32.and (local.get $src) (i32.const 0xFFF))))
+      (local.set $t (i32.sub (i32.const 0x1000) (i32.and (local.get $dst) (i32.const 0xFFF))))
+      (if (i32.lt_u (local.get $t) (local.get $k)) (then (local.set $k (local.get $t))))
+      (if (i32.lt_u (local.get $n) (local.get $k)) (then (local.set $k (local.get $n))))
+      (memory.copy (call $g2w (local.get $dst)) (call $g2w (local.get $src)) (local.get $k))
+      (local.set $dst (i32.add (local.get $dst) (local.get $k)))
+      (local.set $src (i32.add (local.get $src) (local.get $k)))
+      (local.set $n (i32.sub (local.get $n) (local.get $k)))
+      (br $chunk))))
+
   ;; Positional read into a guest buffer: bytes read, $AVI_PENDING, or -1.
   (func $avi_read (param $h i32) (param $pos i32) (param $ga i32) (param $n i32) (result i32)
     (local $nr i32) (local $err i32)
+    (if (call $avi_is_mem_handle (local.get $h))
+      (then
+        (local.set $nr (call $avi_file_rec (i32.and (local.get $h) (i32.const 0xFF))))
+        (local.set $err (i32.load offset=24 (local.get $nr)))
+        (if (i32.ge_u (local.get $pos) (local.get $err)) (then (return (i32.const 0))))
+        (local.set $err (i32.sub (local.get $err) (local.get $pos)))
+        (if (i32.lt_u (local.get $err) (local.get $n)) (then (local.set $n (local.get $err))))
+        (call $avi_mem_copy (local.get $ga)
+          (i32.add (i32.load offset=20 (local.get $nr)) (local.get $pos)) (local.get $n))
+        (return (local.get $n))))
     (local.set $nr (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
     (local.set $err (call $host_fs_read_file_at (local.get $h) (local.get $ga) (local.get $n)
       (local.get $nr) (local.get $pos) (i32.const 0)))
@@ -403,7 +437,8 @@
     (i32.store (local.get $rec) (local.get $refs))
     (if (i32.eqz (local.get $refs))
       (then
-        (drop (call $host_fs_close_handle (i32.load offset=4 (local.get $rec))))
+        (if (i32.eqz (call $avi_is_mem_handle (i32.load offset=4 (local.get $rec))))
+          (then (drop (call $host_fs_close_handle (i32.load offset=4 (local.get $rec))))))
         (call $dib_free_wasm (i32.load offset=12 (local.get $rec)))
         (call $heap_free (i32.load offset=16 (local.get $rec)))
         (i32.store offset=16 (local.get $rec) (i32.const 0))))
@@ -434,6 +469,36 @@
     (if (local.get $r)
       (then
         (drop (call $host_fs_close_handle (local.get $h)))
+        (global.set $avi_open_status (local.get $r))
+        (return (i32.const 0))))
+    (i32.store offset=4 (local.get $rec) (local.get $h))
+    (i32.store offset=16 (local.get $rec) (local.get $obj))
+    (i32.store (local.get $rec) (i32.const 1))
+    (global.set $avi_open_status (i32.const 0))
+    (local.get $rec))
+
+  ;; Open an AVI held in guest memory (a resource): same record, workspace
+  ;; and status contract as $avi_open, read through $avi_read's memory branch.
+  (func $avi_open_memory (param $ga i32) (param $len i32) (result i32)
+    (local $slot i32) (local $rec i32) (local $h i32) (local $r i32) (local $obj i32)
+    (global.set $avi_open_status (global.get $AVIERR_MEMORY))
+    (block $found (loop $scan
+      (if (i32.ge_u (local.get $slot) (global.get $AVI_FILES)) (then (return (i32.const 0))))
+      (local.set $rec (call $avi_file_rec (local.get $slot)))
+      (br_if $found (i32.eqz (i32.load (local.get $rec))))
+      (local.set $slot (i32.add (local.get $slot) (i32.const 1)))
+      (br $scan)))
+    (local.set $h (i32.or (global.get $AVI_MEM_TAG) (local.get $slot)))
+    (i32.store offset=20 (local.get $rec) (local.get $ga))
+    (i32.store offset=24 (local.get $rec) (local.get $len))
+    (local.set $r (call $avi_load (local.get $rec) (local.get $h)))
+    (if (i32.eqz (local.get $r))
+      (then (local.set $obj (call $avi_new_object (global.get $AVI_MAGIC_FILE) (local.get $slot)))
+            (if (i32.eqz (local.get $obj))
+              (then (call $dib_free_wasm (i32.load offset=12 (local.get $rec)))
+                    (local.set $r (global.get $AVIERR_MEMORY))))))
+    (if (local.get $r)
+      (then
         (global.set $avi_open_status (local.get $r))
         (return (i32.const 0))))
     (i32.store offset=4 (local.get $rec) (local.get $h))
