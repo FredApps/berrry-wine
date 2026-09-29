@@ -9671,6 +9671,25 @@
   ;; code, and lParam is zero in both worlds.
   (func $win16_msg_lparam16_cmd (param $message i32) (param $wparam i32)
         (param $lparam i32) (result i32)
+    ;; WM_HSCROLL/WM_VSCROLL move the thumb position the same way:
+    ;;
+    ;;   Win32   wParam = MAKEWPARAM(code, pos)   lParam = hwndCtl
+    ;;   Win16   wParam = code                    lParam = MAKELPARAM(pos, hwndCtl)
+    ;;
+    ;; Civ2's Tax Rate dialog finds which of its three bars moved from the
+    ;; high word, and a 32-bit HWND there matched none of them, so every
+    ;; arrow click was dropped. A window's own WS_HSCROLL bar has no control
+    ;; and its high word stays zero.
+    (if (i32.or (i32.eq (local.get $message) (i32.const 0x0114))
+                (i32.eq (local.get $message) (i32.const 0x0115)))
+      (then
+        (return (i32.or
+          (i32.shr_u (local.get $wparam) (i32.const 16))
+          (i32.shl
+            (if (result i32) (local.get $lparam)
+              (then (call $win16_h16 (local.get $lparam)))
+              (else (i32.const 0)))
+            (i32.const 16))))))
     (if (i32.ne (local.get $message) (i32.const 0x0111))
       (then (return (local.get $lparam))))
     (if (i32.eqz (local.get $lparam)) (then (return (i32.const 0))))

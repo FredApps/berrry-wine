@@ -909,6 +909,18 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))  ;; stdcall, 1 arg
   )
 
+  ;; Which of a window's two bar records nBar names. SB_HORZ (0) and SB_VERT
+  ;; (1) say so; SB_CTL (2) is the scrollbar control's own bar, horizontal or
+  ;; vertical by its SBS_VERT style bit -- the record its wndproc paints from.
+  ;; Treating SB_CTL as "not SB_HORZ" put every horizontal control's range and
+  ;; position in the vertical record, so it drew no thumb and ignored the
+  ;; app's SetScrollPos (Civilization II's tax-rate sliders).
+  (func $scroll_bar_is_vert (param $hwnd i32) (param $bar i32) (result i32)
+    (if (i32.eq (local.get $bar) (i32.const 2))
+      (then (return (i32.ne (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 1))
+                            (i32.const 0)))))
+    (i32.ne (local.get $bar) (i32.const 0)))
+
   ;; 623: SetScrollPos(hwnd, nBar, nPos, bRedraw) → old pos
   (func $handle_SetScrollPos (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $slot i32) (local $base i32) (local $old i32)
@@ -916,9 +928,14 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
         (local.set $base (call $scroll_bar_addr (local.get $slot)
-          (i32.ne (local.get $arg1) (i32.const 0))))
+          (call $scroll_bar_is_vert (local.get $arg0) (local.get $arg1))))
         (local.set $old (i32.load (local.get $base)))
         (i32.store (local.get $base) (local.get $arg2))
+        ;; A control bar repaints itself when asked to (bRedraw), as
+        ;; SetScrollInfo does; the thumb would otherwise stay where it was.
+        (if (i32.and (i32.eq (local.get $arg1) (i32.const 2))
+                     (i32.ne (local.get $arg3) (i32.const 0)))
+          (then (call $invalidate_hwnd (local.get $arg0))))
         (i32.store offset=0 (global.get $reg_base) (local.get $old)))
       (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
@@ -930,7 +947,7 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
         (local.set $base (call $scroll_bar_addr (local.get $slot)
-          (i32.ne (local.get $arg1) (i32.const 0))))
+          (call $scroll_bar_is_vert (local.get $arg0) (local.get $arg1))))
         (i32.store offset=0 (global.get $reg_base) (i32.load (local.get $base))))
       (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
@@ -942,9 +959,12 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
         (local.set $base (call $scroll_bar_addr (local.get $slot)
-          (i32.ne (local.get $arg1) (i32.const 0))))
+          (call $scroll_bar_is_vert (local.get $arg0) (local.get $arg1))))
         (i32.store offset=4 (local.get $base) (local.get $arg2))
-        (i32.store offset=8 (local.get $base) (local.get $arg3))))
+        (i32.store offset=8 (local.get $base) (local.get $arg3))
+        (if (i32.and (i32.eq (local.get $arg1) (i32.const 2))
+                     (i32.ne (local.get $arg4) (i32.const 0)))
+          (then (call $invalidate_hwnd (local.get $arg0))))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
 
@@ -955,7 +975,7 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
         (local.set $base (call $scroll_bar_addr (local.get $slot)
-          (i32.ne (local.get $arg1) (i32.const 0))))
+          (call $scroll_bar_is_vert (local.get $arg0) (local.get $arg1))))
         (local.set $wmin (i32.load offset=4 (local.get $base)))
         (local.set $wmax (i32.load offset=8 (local.get $base)))))
     (if (local.get $arg2)
@@ -1166,7 +1186,7 @@ GetTopWindow(hWnd) — 1 arg stdcall
     (if (i32.ge_s (local.get $slot) (i32.const 0))
       (then
         (local.set $base (call $scroll_bar_addr (local.get $slot)
-          (i32.ne (local.get $arg1) (i32.const 0))))
+          (call $scroll_bar_is_vert (local.get $arg0) (local.get $arg1))))
         (local.set $aux (call $scroll_aux_bar_addr (local.get $slot)
           (i32.ne (local.get $arg1) (i32.const 0))))
         ;; SIF_RANGE = 0x01
