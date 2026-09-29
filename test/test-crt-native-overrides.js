@@ -15,7 +15,8 @@
 //
 // The fallback path is exercised too: floor of a NaN/infinity and floor under
 // an unmasked precision exception, and every locale-sensitive handler after a
-// setlocale away from "C", must hand the call to the authentic export
+// setlocale away from "C" (_wcsicmp, _wcsnicmp and the older _stricmp),
+// must hand the call to the authentic export
 // (counted by get_crt_fallback_count) instead of answering natively.
 //
 // The DLLs are corpus binaries (gitignored). CRT_BINARIES=<dir> points at a
@@ -37,7 +38,7 @@ const CRTS = [
 const EXE = 'calc.exe';
 
 const OVERRIDES = ['wcslen', 'wcscpy', 'wcscat', 'wcsstr', '_wcsicmp', '_wcsnicmp',
-  'floor', 'setlocale', '_wsetlocale'];
+  'floor', 'setlocale', '_wsetlocale', '_stricmp'];
 
 const EXTRA_WAT = `
   (func (export "t_fpu_pop") (result f64) (call $fpu_pop))
@@ -188,6 +189,12 @@ async function checkCrt(crt, exeBytes) {
       compare(`_wcsnicmp("${x}","${y}",${n})`, '_wcsnicmp', () => { putW(A, x); putW(B, y); }, () => [A, B, n]);
     }
   }
+  // _stricmp (the older Morrowind override) in the C locale.
+  const putA = (g, s) => put8(g, Buffer.from(s + '\0', 'latin1'));
+  for (const [x, y] of [...pairs, ['\xe9', '\xc9'], ['\xff', 'a'], ['a\x80', 'A\x7f']]) {
+    compare(`_stricmp("${x}","${y}")`, '_stricmp', () => { putA(A, x); putA(B, y); }, () => [A, B]);
+  }
+
   // Straddling a 4KB guest page boundary: the handlers read unit by unit
   // through $gl16, so a string crossing pages reads the same as one that
   // does not.
@@ -245,15 +252,19 @@ async function checkCrt(crt, exeBytes) {
   compare('setlocale(LC_ALL,"C")', 'setlocale', () => {}, () => [0, loc]);
   let fb = e.get_crt_fallback_count();
   compare('_wcsicmp after setlocale C', '_wcsicmp', () => { putW(A, 'abc'); putW(B, 'ABD'); }, () => [A, B]);
-  assert.strictEqual(e.get_crt_fallback_count(), fb, '"C" locale keeps _wcsicmp native');
+  compare('_stricmp after setlocale C', '_stricmp', () => { putA(A, 'abc'); putA(B, 'ABD'); }, () => [A, B]);
+  assert.strictEqual(e.get_crt_fallback_count(), fb, '"C" locale keeps _wcsicmp and _stricmp native');
   putAscii(loc, 'English');
   call(thunk.setlocale, [0, loc]);
   fb = e.get_crt_fallback_count();
   compare('_wcsicmp after setlocale English', '_wcsicmp', () => { putW(A, 'abc'); putW(B, 'ABD'); }, () => [A, B]);
   compare('_wcsnicmp after setlocale English', '_wcsnicmp', () => { putW(A, 'abc'); putW(B, 'ABD'); }, () => [A, B, 3]);
-  assert.strictEqual(e.get_crt_fallback_count(), fb + 2, 'a non-C locale sends case-folding to the authentic export');
+  // Whatever the authentic locale-aware path makes of a high byte, the thunk
+  // must hand it the call (the fallback count below), not answer natively.
+  compare('_stricmp after setlocale English', '_stricmp', () => { putA(A, 'caf\xe9'); putA(B, 'CAF\xc9'); }, () => [A, B]);
+  assert.strictEqual(e.get_crt_fallback_count(), fb + 3, 'a non-C locale sends case-folding to the authentic export');
   compare('wcslen after setlocale English', 'wcslen', () => putW(A, 'still native'), () => [A]);
-  assert.strictEqual(e.get_crt_fallback_count(), fb + 2, 'locale-free handlers stay native');
+  assert.strictEqual(e.get_crt_fallback_count(), fb + 3, 'locale-free handlers stay native');
 
   console.log(`PASS  ${crt.name}: ${cases} cases identical to the authentic export, fallbacks exact`);
 }

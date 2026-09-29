@@ -77,15 +77,17 @@ const EXTRA_WAT = `
     bytes.fill(0, w, w + 64);
     bytes.set(Buffer.from(s, 'latin1'), w);
   };
-  // MSVCRT C locale (__ascii_stricmp): fold A-Z only, compare as unsigned
-  // bytes, return the difference of the folded bytes.
+  // MSVCRT C locale: fold A-Z only, compare as unsigned bytes, return
+  // -1/0/1. VC6 msvcrt, msvcr70 and msvcr71 all end in sbb eax,eax /
+  // sbb eax,-1 (measured against each in test-crt-native-overrides.js); the
+  // byte difference is VC8's C rewrite, not what these builds return.
   const stricmp = (x, y) => { put(a, x); put(b, y); return e.test_stricmp(a, b); };
   assert.strictEqual(stricmp('Jiub', 'JIUB'), 0, 'case folds');
   assert.strictEqual(stricmp('', ''), 0, 'empty strings are equal');
-  assert.strictEqual(stricmp('abc', 'ABD'), -1, 'difference of folded bytes');
-  assert.strictEqual(stricmp('ab', 'a'), 0x62, 'longer string compares above its prefix');
-  assert.strictEqual(stricmp('[', 'a'), 0x5b - 0x61, 'punctuation is not folded');
-  assert.strictEqual(stricmp('\xe9', 'A'), 0xe9 - 0x61, 'high bytes compare unsigned and unfolded');
+  assert.strictEqual(stricmp('abc', 'ABD'), -1, 'first difference decides');
+  assert.strictEqual(stricmp('ab', 'a'), 1, 'longer string compares above its prefix');
+  assert.strictEqual(stricmp('[', 'a'), -1, 'punctuation is not folded');
+  assert.strictEqual(stricmp('\xe9', 'A'), 1, 'high bytes compare unsigned and unfolded');
   assert.strictEqual(e.test_ftol_esp() >>> 0, 0x07600004,
     'cdecl _stricmp removes only its return address');
 

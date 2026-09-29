@@ -183,9 +183,13 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
-  ;; 723: _stricmp(s1, s2) — cdecl, case-insensitive compare
+  ;; 723: _stricmp(s1, s2) — cdecl, case-insensitive compare. The native
+  ;; loop is the C-locale fold; bound over a real MSVCRT/MSVCR7x it defers to
+  ;; the authentic export once setlocale has left "C", like _wcsicmp.
   (func $handle__stricmp (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa1 i32) (local $wa2 i32) (local $c1 i32) (local $c2 i32)
+    (if (call $crt_locale_changed)
+      (then (if (call $crt_fallback) (then (return)))))
     (local.set $wa1 (call $g2w (local.get $arg0)))
     (local.set $wa2 (call $g2w (local.get $arg1)))
     (block $d (loop $l
@@ -201,7 +205,12 @@
       (local.set $wa1 (i32.add (local.get $wa1) (i32.const 1)))
       (local.set $wa2 (i32.add (local.get $wa2) (i32.const 1)))
       (br $l)))
-    (i32.store offset=0 (global.get $reg_base) (i32.sub (local.get $c1) (local.get $c2)))
+    ;; -1/0/1, not the byte difference: the C-locale path of VC6 msvcrt,
+    ;; msvcr70 and msvcr71 alike ends in sbb eax,eax / sbb eax,-1
+    ;; (test-crt-native-overrides.js compares EAX against all three).
+    (i32.store offset=0 (global.get $reg_base)
+      (i32.sub (i32.gt_u (local.get $c1) (local.get $c2))
+               (i32.lt_u (local.get $c1) (local.get $c2))))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
@@ -2935,6 +2944,12 @@
                             (call $str_eq (local.get $name_wa) "_wsetlocale")))))
       (then (return (call $lookup_api_id (local.get $name_wa)))))
     (i32.const -1))
+
+  ;; Names on the older $native_override_export_api_id list whose handler is
+  ;; locale-sensitive: over a real MSVCRT/MSVCR7x their authentic export is
+  ;; recorded too, so the handler can defer once the locale leaves "C".
+  (func $crt_native_override_defers (param $name_wa i32) (result i32)
+    (call $str_eq (local.get $name_wa) "_stricmp"))
 
   ;; Record the authentic export behind a CRT override thunk. Returns 0 when
   ;; the table is full, in which case the caller must bind the import to the
