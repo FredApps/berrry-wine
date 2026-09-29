@@ -32,10 +32,13 @@
 // CALIBRATION
 // -----------
 // Before believing anything new, the harness must reproduce a KNOWN sign. Two
-// runtime fold toggles exist for exactly this (13-exports.wat):
+// runtime fold toggles existed for exactly this (13-exports.wat):
 //   --toggle=case_chain   handler 423, measured at ~0 on the real app
 //   --toggle=rle_run      handler 424, measured at +7% batches on the real app
-// A harness that cannot separate those two is measuring itself.
+// A harness that cannot separate those two is measuring itself. The
+// case_chain toggle is gone with its fold (retired to the uop tier,
+// docs/uop-tier-design.md section 18); the record below is history, and
+// rle_run on its own shapes is the calibration toggle that remains.
 //
 // CALIBRATION RESULT, 2026-08-24, box at load 3.5:
 //   --shapes=cmp_ladder --toggle=case_chain   +57.4%, +57.8%  (two runs)
@@ -59,7 +62,6 @@
 //   node tools/bench-loops.js                          # all shapes, 4MB set
 //   node tools/bench-loops.js --shapes=lut,store_stream --bytes=16m
 //   node tools/bench-loops.js --shapes=lut,store_stream --mapping=sparse
-//   node tools/bench-loops.js --shapes=cmp_ladder --toggle=case_chain
 //   node tools/bench-loops.js --shapes=blk_rld8,blk_memalu8 --toggle=block_exec_split
 //   node tools/bench-loops.js --json
 //
@@ -2332,7 +2334,6 @@ const TOGGLES = {
   tree_fold: 'set_tree_fold',
   lut_superops: 'set_loop_lut_emit',
   mmx_fill: 'set_loop_mmx_fill_emit',
-  case_chain: 'set_case_chain',
   rle_run: 'set_rle_run',
   rect_run: 'set_rect_run',
   // ck_lut16/ck_blend16/ck_shadow16 were the SimGolf keyed-blit folds, retired
@@ -2961,7 +2962,7 @@ async function main() {
           blockCollisions: ops.blockCollisions,
           // Handlers 420-424 deliberately re-record the ops they replaced into
           // the histogram so totals stay comparable with a fold-off build (see
-          // $th_case_chain in 06b-core-handlers.wat). When one of them is live,
+          // $th_rle_run in 06b-core-handlers.wat). When one of them is live,
           // opsTotal is NOT the dispatch count — it is the unfolded-equivalent
           // count plus the fold's own dispatch. Read blocksPerIter instead.
           // 454 (TREE_FOLD) re-records the handler indices it replaced too, so

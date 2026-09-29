@@ -2562,9 +2562,6 @@
   (func (export "set_rect_run") (param $flag i32)
     (global.set $rect_run_enabled (local.get $flag)))
 
-  (func (export "set_case_chain") (param $flag i32)
-    (global.set $case_chain_enabled (local.get $flag)))
-
   ;; The run-length blit fold ($th_rle_run). Decode-time, so this only steers
   ;; blocks decoded after it is called -- set it before the first decode for a
   ;; clean A/B, and on every per-thread instance.

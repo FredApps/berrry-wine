@@ -7,7 +7,7 @@
 //
 //   head:  cmp counter, 0 / jle exit
 //          mov al, [src]
-//          cmp al, imm8 / jz caseA          <- the ladder $th_case_chain folds
+//          cmp al, imm8 / jz caseA          <- the ladder $th_rle_run consumes
 //          cmp al, imm8 / jz caseB
 //          ...
 //   caseK: mov r32,[src+d] / mov [dst+d],r32   (k times, branch-free)

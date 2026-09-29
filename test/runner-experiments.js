@@ -214,7 +214,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // run-time switch, so both arms decode identically.
   const NO_X87_ISLAND_PREDECODE = hasFlag('no-x87-island-predecode');
   const NO_RECT_RUN = hasFlag('no-rect-run');
-  const NO_CASE_CHAIN = hasFlag('no-case-chain');
   const NO_JUMP_TABLE = hasFlag('no-jump-table');
   const NO_RLE_RUN = hasFlag('no-rle-run');
   // The stream-idiom fold (docs/loop-idiom-superops-design.md §20; its
@@ -232,7 +231,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // (07-decoder.wat $fold_off_mask). An unknown name is an error, not a no-op:
   // a typo would otherwise be an A/B of a build against itself.
   const FOLD_SETTERS = {
-    'case-chain': 'set_case_chain', 'rle-run': 'set_rle_run', 'rect-run': 'set_rect_run',
+    'rle-run': 'set_rle_run', 'rect-run': 'set_rect_run',
     'pcx-run': 'set_pcx_run',
     'aoe-fill': 'set_loop_aoe_fill_emit', 'aoe-span': 'set_loop_aoe_span_emit',
     'mmx-fill': 'set_loop_mmx_fill_emit', 'mmx-copy64': 'set_mmx_copy64',
@@ -335,7 +334,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_STACK_FUSION) inheritWasm('set_stack_fusion', 0);
     if (NO_X87_ISLAND_PREDECODE) inheritWasm('set_x87_island_predecode', 0);
     if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
-    if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
     if (NO_JUMP_TABLE) inheritWasm('set_jump_table', 0);
     if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
     if (NO_PCX_RUN) inheritWasm('set_pcx_run', 0);
@@ -495,9 +493,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (NO_RECT_RUN && instance.exports.set_rect_run) {
       instance.exports.set_rect_run(0);
-    }
-    if (NO_CASE_CHAIN && instance.exports.set_case_chain) {
-      instance.exports.set_case_chain(0);
     }
     if (NO_JUMP_TABLE && instance.exports.set_jump_table) {
       instance.exports.set_jump_table(0);

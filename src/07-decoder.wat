@@ -43,14 +43,10 @@
   ;; The unrolled-rectangle fold, on its own switch so it can be A/B'd against
   ;; the per-pair fold it sits on top of without a rebuild.
   (global $rect_run_enabled (mut i32) (i32.const 1))
-  ;; $th_case_chain's switch-ladder fold. Off switch is for A/B only -- the
-  ;; fold is exact, not a heuristic, so there is no correctness reason to run
-  ;; without it.
-  (global $case_chain_enabled (mut i32) (i32.const 1))
-  ;; Below four cases the descriptor costs more than the block ends it saves.
-  ;; Caesar's ladder is sixteen.
-  (global $CASE_CHAIN_MIN i32 (i32.const 4))
-  ;; Bounded so one descriptor cannot eat the decoder's 16KB emit headroom.
+  ;; Longest `cmp al,imm8 / jz` ladder $case_chain_count will count. The
+  ;; standalone switch-ladder fold (H428, CASE_CHAIN) is retired to the uop
+  ;; tier (docs/uop-tier-design.md section 18); the counter survives because
+  ;; the RLE_RUN matcher reads the same ladder grammar.
   (global $CASE_CHAIN_MAX i32 (i32.const 64))
 
   ;; $th_rle_run's run-length blit fold. Off switch for A/B; see
@@ -166,43 +162,6 @@
       (br $l)))
     (local.get $n))
 
-  ;; Emit the fold for the $n pairs at $d_pc and leave $d_pc one past the
-  ;; ladder, which is also the default target.
-  (func $emit_case_chain (param $n i32)
-    (local $i i32) (local $imm i32) (local $b i32) (local $tgt i32) (local $end i32)
-    ;; Pass one: where the ladder ends. The header word has to be written
-    ;; before the pairs, and it names the default, so the end is needed first.
-    (local.set $end (global.get $d_pc))
-    (block $d (loop $l
-      (br_if $d (i32.ge_u (local.get $i) (local.get $n)))
-      (local.set $end (i32.add (local.get $end)
-        (if (result i32)
-          (i32.eq (call $gl8 (i32.add (local.get $end) (i32.const 2)))
-                  (i32.const 0x74))
-          (then (i32.const 4)) (else (i32.const 8)))))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $l)))
-    (call $te (i32.const 428) (local.get $n))
-    (call $te_raw (local.get $end))
-    ;; Pass two: the (imm, target) pairs, consuming $d_pc as it goes.
-    (local.set $i (i32.const 0))
-    (block $d2 (loop $l2
-      (br_if $d2 (i32.ge_u (local.get $i) (local.get $n)))
-      (local.set $imm (call $gl8 (i32.add (global.get $d_pc) (i32.const 1))))
-      (local.set $b (call $gl8 (i32.add (global.get $d_pc) (i32.const 2))))
-      (if (i32.eq (local.get $b) (i32.const 0x74))
-        (then
-          (local.set $tgt (i32.add (i32.add (global.get $d_pc) (i32.const 4))
-            (call $sign_ext8 (call $gl8 (i32.add (global.get $d_pc) (i32.const 3))))))
-          (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 4))))
-        (else
-          (local.set $tgt (i32.add (i32.add (global.get $d_pc) (i32.const 8))
-            (call $gl32 (i32.add (global.get $d_pc) (i32.const 4)))))
-          (global.set $d_pc (i32.add (global.get $d_pc) (i32.const 8)))))
-      (call $te_raw (local.get $imm))
-      (call $te_raw (local.get $tgt))
-      (local.set $i (i32.add (local.get $i) (i32.const 1)))
-      (br $l2))))
   ;; ---- the run-length blit fold ($th_rle_run) --------------------------
   ;; One `cmp T8,imm8 / jz case` of the ladder at $pc: its length, or 0. Both
   ;; jz encodings, same grammar $case_chain_count counts.
@@ -3676,7 +3635,6 @@
     (local $tstart i32)
     (local $op i32)
     (local $done i32) (local $icount i32)
-    (local $cc_n i32)          ;; matched length of a cmp/jz switch ladder
     (local $prefix_rep i32)    ;; 0=none, 1=REP/REPE, 2=REPNE
     (local $prefix_66 i32)     ;; operand-size override
     (local $prefix_67 i32)     ;; address-size override
@@ -3861,24 +3819,6 @@
               (br $decode)))
           (if (call $try_emit_implode_cmp_run (local.get $start_eip))
             (then
-              (local.set $done (i32.const 1))
-              (br $decode)))))
-
-      ;; A `switch` a compiler declined to build a jump table for comes out as
-      ;; a run of `cmp al,imm8 / jz case`, and every jz ends a block, so
-      ;; reaching case k costs k dispatches, k eip stores and k cache lookups.
-      ;; Caesar III's RLE sprite decoder opens with a sixteen-wide one at
-      ;; 0x40f725 that is 24.0% of all block entries in a gameplay window.
-      ;; Unlike the Storm helper above this is not gated on icount==0: Caesar's
-      ;; ladder starts after a `mov al,[esi]`, mid-block.
-      (if (i32.and (global.get $case_chain_enabled)
-                   (i32.eqz (global.get $code16)))
-        (then
-          (local.set $cc_n (call $case_chain_count (global.get $d_pc)
-            (i32.and (local.get $start_eip) (i32.const 0xFFFFF000))))
-          (if (i32.ge_u (local.get $cc_n) (global.get $CASE_CHAIN_MIN))
-            (then
-              (call $emit_case_chain (local.get $cc_n))
               (local.set $done (i32.const 1))
               (br $decode)))))
 
