@@ -58,6 +58,11 @@
   ;;   15 dead-flags-rec 16 rec-no-recipe 17 rec-kind 18 dead-flags-jcc
   ;;   19 kind 20 too-many-windows 21 label 22 arg 23 too-many-temps
   ;;   24 program-too-big 25 ranges-full 26 scratch-overflow
+  ;;   27 call-indirect (a 1/3/4 whose scan met an unlowered FF /2)
+  ;; Kinds 25 mul/imul (+12 0 mul 1 imul) and 26 div/idiv (+12 0/1), 32-bit
+  ;; one-operand F7 forms, O0 the r/m ($uc_muldiv). A kind-23 call with
+  ;; +12 != 0 is FF /2: +12 1 icall, 2 IAT, O2 the r/m, +24 the guarded
+  ;; target ($uc_icall / $uc_iat).
 
   (global $UOP_CSCRATCH i32 (region.addr $UOP_CSCRATCH 0))
   (global $UOP_CSCRATCH_SIZE i32 (region.size $UOP_CSCRATCH))
@@ -149,6 +154,20 @@
   ;; address) between them. $uc_fwd_kind/$uc_fwd_a: the instruction being
   ;; lowered reads (1) or writes (2) that temp instead of memory.
   (global $uc_aggr     (mut i32) (i32.const 0))
+  ;; --uop-muldiv: F7 /4-/7 (32-bit mul/imul/div/idiv) as kinds 25/26.
+  ;; --uop-icall: FF /2 through a register or [base+idx*sc+disp] as a call
+  ;; whose target is guarded (07d ICG) against the one the slot held when
+  ;; the head was compiled. --uop-iat: the same for FF /2 [abs] (an import
+  ;; slot) whose target is guest code in a loaded image, not the thunk zone.
+  (global $uc_muldiv   (mut i32) (i32.const 0))
+  (global $uc_icall    (mut i32) (i32.const 0))
+  (global $uc_iat      (mut i32) (i32.const 0))
+  ;; sites in installed programs (uop_cstat 27 muldiv, 28 icall, 29 iat) and
+  ;; FF /2 decodes refused for a target outside every image (30)
+  (global $uc_n_muldiv (mut i32) (i32.const 0))
+  (global $uc_n_icall  (mut i32) (i32.const 0))
+  (global $uc_n_iat    (mut i32) (i32.const 0))
+  (global $uc_n_icrej  (mut i32) (i32.const 0))
   (global $uc_fwd_kind (mut i32) (i32.const 0))
   (global $uc_fwd_a    (mut i32) (i32.const 0))
 
@@ -552,11 +571,13 @@
           (then (local.set $op (i32.const 0))))
         (if (i32.eq (local.get $reg) (i32.const 5)) (then (local.set $op (i32.const 1))))
         (if (i32.eq (local.get $reg) (i32.const 7)) (then (local.set $op (i32.const 2))))
-        ;; rol / ror (3 / 4): by an immediate only
-        (if (i32.le_u (local.get $b) (i32.const 0xD1))
-          (then
-            (if (i32.eqz (local.get $reg)) (then (local.set $op (i32.const 3))))
-            (if (i32.eq (local.get $reg) (i32.const 1)) (then (local.set $op (i32.const 4))))))
+        ;; rol / ror (3 / 4) are declined: a rotate writes only CF and OF and
+        ;; leaves ZF/SF/PF from the instruction before it ($set_flags_rotate),
+        ;; which this compiler's one-result flag record cannot express. It
+        ;; used to model them as a result-producing op, so a `cmp / ror / jz`
+        ;; tested the rotate's result -- Indeo 4's VLC reader loops on that.
+        ;; The kind-11 lowering for op 3/4 below is kept for when the record
+        ;; can carry preserved flags.
         (if (i32.lt_s (local.get $op) (i32.const 0)) (then (call $uc_unsup (local.get $R)) (return)))
         (if (i32.ge_u (local.get $b) (i32.const 0xD2))
           (then
@@ -597,6 +618,14 @@
           (then (call $uc_fin (local.get $R) (i32.const 12) (local.get $e)) (return)))
         (if (i32.eq (local.get $reg) (i32.const 3))
           (then (call $uc_fin (local.get $R) (i32.const 13) (local.get $e)) (return)))
+        ;; mul/imul/div/idiv r/m32: EDX:EAX (kinds 25/26)
+        (if (i32.and (global.get $uc_muldiv) (i32.eq (local.get $w) (i32.const 32)))
+          (then
+            (i32.store offset=12 (local.get $R) (i32.and (local.get $reg) (i32.const 1)))
+            (call $uc_fin (local.get $R)
+                  (select (i32.const 25) (i32.const 26) (i32.lt_u (local.get $reg) (i32.const 6)))
+                  (local.get $e))
+            (return)))
         (call $uc_unsup (local.get $R)) (return)))
     ;; group 4/5: FE FF
     (if (i32.or (i32.eq (local.get $b) (i32.const 0xFE)) (i32.eq (local.get $b) (i32.const 0xFF)))
@@ -608,6 +637,28 @@
           (then (call $uc_fin (local.get $R) (i32.const 2) (local.get $e)) (return)))
         (if (i32.eq (global.get $uc_mr_reg) (i32.const 1))
           (then (call $uc_fin (local.get $R) (i32.const 3) (local.get $e)) (return)))
+        ;; CALL r/m32 (FF /2) behind an inline cache (--uop-icall for call
+        ;; reg / call [reg...], --uop-iat for call [abs]): a kind-23 call to
+        ;; the target the slot holds now, which the program guards (ICG) and
+        ;; leaves at the call when the slot holds anything else. O2 the r/m.
+        (if (i32.and (i32.eq (global.get $uc_mr_reg) (i32.const 2))
+                     (i32.and (i32.eq (local.get $b) (i32.const 0xFF)) (i32.eq (local.get $v) (i32.const 32))))
+          (then
+            (memory.copy (i32.add (local.get $R) (i32.const 104)) (local.get $O0) (i32.const 24))
+            (local.set $n (call $uc_icall_class (local.get $O0)))
+            (if (local.get $n)
+              (then
+                (local.set $w (call $uc_icall_target (local.get $O0)))
+                (if (i32.eqz (local.get $w))
+                  (then (global.set $uc_n_icrej (i32.add (global.get $uc_n_icrej) (i32.const 1)))
+                        (call $uc_unsup (local.get $R)) (return)))
+                (i32.store offset=12 (local.get $R) (local.get $n))
+                (i32.store offset=24 (local.get $R) (local.get $w))
+                (call $uc_opi (local.get $O0) (local.get $e))
+                (call $uc_stack_slot (local.get $O1) (i32.const -4))
+                (i32.store offset=16 (local.get $R) (i32.const 32))
+                (call $uc_fin (local.get $R) (i32.const 23) (local.get $e))
+                (return)))))
         (call $uc_unsup (local.get $R)) (return)))
     ;; imul r, r/m, imm
     (if (i32.or (i32.eq (local.get $b) (i32.const 0x69)) (i32.eq (local.get $b) (i32.const 0x6B)))
@@ -751,6 +802,48 @@
     (i32.store offset=16 (local.get $o) (local.get $disp))
     (i32.store offset=20 (local.get $o) (i32.const 32)))
 
+  ;; An FF /2 r/m's inline-cache class: 1 call reg / call [reg...] (with
+  ;; --uop-icall), 2 call [abs] through an import slot (with --uop-iat), 0 left
+  ;; to the threaded code (the flag is off, or ESP is involved: the push moves
+  ;; it, and a call through a stack slot is not a vtable).
+  (func $uc_icall_class (param $o i32) (result i32)
+    (if (i32.eq (i32.load (local.get $o)) (i32.const 1))
+      (then (return (select (global.get $uc_icall) (i32.const 0)
+                            (i32.ne (i32.load offset=4 (local.get $o)) (i32.const 4))))))
+    (if (i32.or (i32.eq (i32.load offset=4 (local.get $o)) (i32.const 4))
+                (i32.eq (i32.load offset=8 (local.get $o)) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.lt_s (i32.load offset=4 (local.get $o)) (i32.const 0))
+                 (i32.lt_s (i32.load offset=8 (local.get $o)) (i32.const 0)))
+      (then (return (select (i32.const 2) (i32.const 0) (global.get $uc_iat)))))
+    (global.get $uc_icall))
+
+  ;; The target an FF /2 would call now: the register, or the dword its slot
+  ;; holds, from the registers the compile is running with. 0 when that is not
+  ;; guest code the tier may follow -- an unmapped slot or target, or an
+  ;; API/COM thunk (the thunk zone stays an exit, as for E8).
+  (func $uc_icall_target (param $o i32) (result i32)
+    (local $a i32) (local $t i32)
+    (if (i32.eq (i32.load (local.get $o)) (i32.const 1))
+      (then (local.set $t (i32.load (i32.add (global.get $reg_base)
+                                             (i32.shl (i32.load offset=4 (local.get $o)) (i32.const 2))))))
+      (else
+        (local.set $a (i32.load offset=16 (local.get $o)))
+        (if (i32.ge_s (i32.load offset=4 (local.get $o)) (i32.const 0))
+          (then (local.set $a (i32.add (local.get $a)
+                  (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.load offset=4 (local.get $o)) (i32.const 2))))))))
+        (if (i32.ge_s (i32.load offset=8 (local.get $o)) (i32.const 0))
+          (then (local.set $a (i32.add (local.get $a)
+                  (i32.shl (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.load offset=8 (local.get $o)) (i32.const 2))))
+                           (i32.load offset=12 (local.get $o)))))))
+        (if (i32.eqz (call $guest_addr_mapped (local.get $a))) (then (return (i32.const 0))))
+        (local.set $t (call $gl32 (local.get $a)))))
+    (if (i32.and (i32.ge_u (local.get $t) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $t) (global.get $thunk_guest_end)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $guest_addr_mapped (local.get $t))) (then (return (i32.const 0))))
+    (local.get $t))
+
   ;; ---- per-instruction properties ----
 
   (func $uc_kind (param $R i32) (result i32) (i32.load offset=8 (local.get $R)))
@@ -806,6 +899,8 @@
                             (call $uc_regbit (i32.add (local.get $R) (i32.const 80)))))))
     (if (i32.eq (local.get $k) (i32.const 10)) (then (return (i32.const 4))))
     (if (i32.eq (local.get $k) (i32.const 9)) (then (return (i32.const 1))))
+    (if (i32.or (i32.eq (local.get $k) (i32.const 25)) (i32.eq (local.get $k) (i32.const 26)))
+      (then (return (i32.const 5))))
     ;; push, call, ret move ESP; pop also writes its register
     (if (i32.eq (local.get $k) (i32.const 22))
       (then (return (i32.or (i32.const 16) (call $uc_regbit (i32.add (local.get $R) (i32.const 56)))))))
@@ -836,6 +931,9 @@
       (then (return (i32.const 1))))
     (if (i32.and (i32.ge_u (local.get $k) (i32.const 21)) (i32.le_u (local.get $k) (i32.const 24)))
       (then (return (i32.const 1))))
+    ;; mul/div: a memory operand, and (div) an exit -- a consumer either way
+    (if (i32.or (i32.eq (local.get $k) (i32.const 25)) (i32.eq (local.get $k) (i32.const 26)))
+      (then (return (i32.const 1))))
     (i32.const 0))
 
   ;; 2 sets every flag, 1 all but CF (inc/dec), 0 none, 3 leaves the flags
@@ -845,7 +943,8 @@
   (func $uc_flag_class (param $R i32) (result i32)
     (local $k i32)
     (local.set $k (call $uc_kind (local.get $R)))
-    (if (i32.or (i32.eq (local.get $k) (i32.const 18)) (i32.eq (local.get $k) (i32.const 20)))
+    (if (i32.or (i32.or (i32.eq (local.get $k) (i32.const 18)) (i32.eq (local.get $k) (i32.const 20)))
+                (i32.eq (local.get $k) (i32.const 25)))
       (then (return (i32.const 3))))
     (if (i32.or (i32.or (i32.eq (local.get $k) (i32.const 1)) (i32.eq (local.get $k) (i32.const 4)))
                 (i32.or (i32.eq (local.get $k) (i32.const 13))
@@ -1113,6 +1212,7 @@
     (local $h i32) (local $pos i32) (local $d i64)
     (call $uc_hm_clear (global.get $UC_HM_INSN))
     (global.set $uc_ninsn (i32.const 0))
+    (global.set $uc_is_trace (i32.const 0))
     (i32.store (global.get $UC_CALLT) (i32.const 0))
     (i32.store (global.get $UC_WORK) (local.get $head))
     (local.set $sp (i32.const 1))
@@ -1237,7 +1337,10 @@
             (then (local.set $changed (i32.const 1))))))
       (local.set $k (i32.add (local.get $k) (i32.const 1)))
       (br $l7)))
-    (if (i32.eqz (local.get $changed)) (then (return (i32.const 4))))
+    (if (i32.eqz (local.get $changed))
+      (then
+        (if (global.get $uc_trace) (then (return (call $uc_form_trace (local.get $head)))))
+        (return (i32.const 4))))
     (if (i32.gt_u (local.get $n) (global.get $UC_MAX_LOOP)) (then (return (i32.const 5))))
     ;; Rotate: from the head to the end of the address order, then the rest.
     (local.set $pos (i32.const 0))
@@ -1260,6 +1363,110 @@
       (br $l8)))
     (global.set $uc_nloop (local.get $pos))
     (global.set $uc_head (local.get $head))
+    (i32.const 0))
+
+  ;; ------------------------------------------------------ trace heads --
+  ;; --uop-trace-heads (docs/uop-tier-design.md §11.3 "coverage"): a hot
+  ;; head with no back edge in its scan is not declined; the region is what
+  ;; the head reaches forward instead -- straight-line code, both arms of a
+  ;; branch, calls into their callees and rets back to an in-region call's
+  ;; return address ($uc_ret_targets, checked at run time as for a loop).
+  ;; Breadth-first from the head over supported instructions, at most
+  ;; $uc_trace_max of them; every successor left out is an exit, as a loop's
+  ;; are. No path comes back to the head (else the scan had a back edge), so
+  ;; the lowering sees block 0 with no predecessors and never peels. The
+  ;; logical-frame marker is unsupported in the scan, so a trace always
+  ;; stops in front of it. Fewer than $uc_trace_min instructions stays a
+  ;; no-backedge decline: the enter/exit would cost more than the trip saves.
+  ;; On by default since 2026-09-28 (docs/uop-tier-design.md §13, default-on
+  ;; decision); --no-uop-trace-heads / ?no-uop-trace-heads turn it off.
+  (global $uc_trace (mut i32) (i32.const 1))
+  (global $uc_trace_min (mut i32) (i32.const 8))
+  (global $uc_trace_max (mut i32) (i32.const 160))
+  (global $uc_ntraces (mut i32) (i32.const 0))
+  (global $uc_is_trace (mut i32) (i32.const 0))
+  (func $uc_form_trace (param $head i32) (result i32)
+    (local $k i32) (local $R i32) (local $S i32) (local $j i32) (local $n i32)
+    (local $qh i32) (local $qt i32) (local $pos i32) (local $h i32)
+    ;; the loop pass flagged what reaches the head; start again
+    (block $cd (loop $cl
+      (br_if $cd (i32.ge_u (local.get $k) (global.get $uc_ninsn)))
+      (local.set $R (i32.add (global.get $UC_INSN) (i32.shl (local.get $k) (i32.const 8))))
+      (i32.store offset=40 (local.get $R) (i32.and (i32.load offset=40 (local.get $R)) (i32.const -2)))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $cl)))
+    (local.set $h (call $uc_insn_at (local.get $head)))
+    (call $uc_set_flag (local.get $h) (i32.const 1))
+    (i32.store (global.get $UC_WORK) (local.get $h))
+    (local.set $qt (i32.const 1))
+    (local.set $n (i32.const 1))
+    (block $qd (loop $ql
+      (br_if $qd (i32.ge_u (local.get $qh) (local.get $qt)))
+      (local.set $R (i32.load (i32.add (global.get $UC_WORK) (i32.shl (local.get $qh) (i32.const 2)))))
+      (local.set $qh (i32.add (local.get $qh) (i32.const 1)))
+      (local.set $j (i32.const 0))
+      (block $sd (loop $sl
+        (br_if $sd (i32.ge_u (local.get $j) (call $uc_nsucc (local.get $R))))
+        (local.set $S (call $uc_insn_at (call $uc_succ (local.get $R) (local.get $j))))
+        (local.set $j (i32.add (local.get $j) (i32.const 1)))
+        (br_if $sl (i32.lt_s (local.get $S) (i32.const 0)))
+        (br_if $sl (i32.eqz (call $uc_kind (local.get $S))))
+        (br_if $sl (call $uc_flag (local.get $S) (i32.const 1)))
+        (br_if $sd (i32.ge_u (local.get $n) (global.get $uc_trace_max)))
+        (call $uc_set_flag (local.get $S) (i32.const 1))
+        (i32.store (i32.add (global.get $UC_WORK) (i32.shl (local.get $qt) (i32.const 2))) (local.get $S))
+        (local.set $qt (i32.add (local.get $qt) (i32.const 1)))
+        (local.set $n (i32.add (local.get $n) (i32.const 1)))
+        (br $sl)))
+      (br $ql)))
+    ;; A trace leaves only by a branch, as a loop does. An instruction that
+    ;; runs straight on into code outside (unsupported, the logical-frame
+    ;; marker, past $uc_trace_max) would exit where threaded code continues
+    ;; its block -- or, at the marker, cuts it -- and the program would charge
+    ;; that exit a block threaded code does not. Drop such tails back to the
+    ;; branch in front of them, whose arm then becomes the exit.
+    (local.set $qt (i32.const 1))
+    (block $td (loop $tl
+      (br_if $td (i32.eqz (local.get $qt)))
+      (local.set $qt (i32.const 0))
+      (local.set $k (i32.const 0))
+      (block $kd (loop $kl
+        (br_if $kd (i32.ge_u (local.get $k) (global.get $uc_ninsn)))
+        (local.set $R (i32.add (global.get $UC_INSN) (i32.shl (local.get $k) (i32.const 8))))
+        (local.set $k (i32.add (local.get $k) (i32.const 1)))
+        (br_if $kl (i32.eqz (call $uc_flag (local.get $R) (i32.const 1))))
+        (br_if $kl (call $uc_is_branch (local.get $R)))
+        (local.set $S (call $uc_insn_at (call $uc_succ (local.get $R) (i32.const 0))))
+        (if (i32.ge_s (local.get $S) (i32.const 0))
+          (then (br_if $kl (call $uc_flag (local.get $S) (i32.const 1)))))
+        (i32.store offset=40 (local.get $R) (i32.and (i32.load offset=40 (local.get $R)) (i32.const -2)))
+        (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+        (local.set $qt (i32.const 1))
+        (br $kl)))
+      (br $tl)))
+    (if (i32.eqz (call $uc_flag (local.get $h) (i32.const 1))) (then (return (i32.const 4))))
+    (if (i32.lt_u (local.get $n) (global.get $uc_trace_min)) (then (return (i32.const 4))))
+    ;; Head first, then address order from the head on, then the rest.
+    (local.set $j (i32.const 0))
+    (block $d8 (loop $l8
+      (br_if $d8 (i32.ge_u (local.get $j) (i32.const 2)))
+      (local.set $k (i32.const 0))
+      (block $d9 (loop $l9
+        (br_if $d9 (i32.ge_u (local.get $k) (global.get $uc_ninsn)))
+        (local.set $R (i32.load (i32.add (global.get $UC_SORT) (i32.shl (local.get $k) (i32.const 2)))))
+        (if (i32.and (call $uc_flag (local.get $R) (i32.const 1))
+                     (i32.eq (i32.ge_u (i32.load (local.get $R)) (local.get $head)) (i32.eqz (local.get $j))))
+          (then
+            (i32.store offset=48 (local.get $R) (local.get $pos))
+            (i32.store (i32.add (global.get $UC_LOOP) (i32.shl (local.get $pos) (i32.const 2))) (local.get $R))
+            (local.set $pos (i32.add (local.get $pos) (i32.const 1)))))
+        (local.set $k (i32.add (local.get $k) (i32.const 1)))
+        (br $l9)))
+      (local.set $j (i32.add (local.get $j) (i32.const 1)))
+      (br $l8)))
+    (global.set $uc_nloop (local.get $pos))
+    (global.set $uc_head (local.get $head))
+    (global.set $uc_is_trace (i32.const 1))
     (i32.const 0))
 
   ;; ------------------------------------------------------------ blocks --
@@ -2245,6 +2452,41 @@
         (call $uc_snap_after (local.get $R) (i32.const 3)
           (call $uc_ref_new (i32.const 0) (i32.load offset=4 (local.get $O0)) (i32.const 0) (i32.const 0) (i32.const 0)))
         (return (i32.const 0))))
+    ;; mul/imul r/m32 (--uop-muldiv): EDX:EAX = EAX * src. $set_flags_mul
+    ;; writes op, b and res but keeps flag_a and the sign shift, so when the
+    ;; flags are live the incoming record goes to the globals first (before
+    ;; EAX changes under it) and SETMULF finishes it: the state after is 'G'
+    ;; ($uc_flag_class 3), as for shift-by-CL.
+    (if (i32.eq (local.get $k) (i32.const 25))
+      (then
+        (local.set $op (i32.load offset=12 (local.get $R)))
+        (local.set $A (call $uc_read (local.get $O0) (local.get $R) (i32.const 1)))
+        (local.set $src (call $uc_rawof (local.get $A)))
+        (local.set $n (call $uc_live_out (local.get $R)))
+        (if (local.get $n)
+          (then
+            (local.set $w (call $uc_rec (global.get $uc_x_m) (global.get $uc_x_md)
+                                        (global.get $uc_x_c) (global.get $uc_x_cd)))
+            (if (local.get $w) (then (return (local.get $w))))))
+        (call $uc_o5 (i32.const 68) (call $uc_aR (i32.const 0)) (call $uc_aR (i32.const 2))
+                     (call $uc_aR (i32.const 0)) (local.get $src) (call $uc_aN (local.get $op)))
+        (if (local.get $n)
+          (then (call $uc_o3 (i32.const 69) (call $uc_aN (local.get $op))
+                             (call $uc_aR (i32.const 0)) (call $uc_aR (i32.const 2)))))
+        (return (i32.const 0))))
+    ;; div/idiv r/m32: DIVW leaves to this instruction's deopt stub on every
+    ;; case the threaded handler raises #DE in, so the exception is raised
+    ;; there, at the right eip, with the entry flags. No flags written.
+    (if (i32.eq (local.get $k) (i32.const 26))
+      (then
+        (local.set $A (call $uc_read (local.get $O0) (local.get $R) (i32.const 1)))
+        (local.set $src (call $uc_rawof (local.get $A)))
+        (call $uc_emit (i32.const 70) (i32.const 7)
+              (call $uc_aR (i32.const 0)) (call $uc_aR (i32.const 2))
+              (call $uc_aR (i32.const 0)) (call $uc_aR (i32.const 2))
+              (local.get $src) (call $uc_aN (i32.load offset=12 (local.get $R)))
+              (call $uc_xstub))
+        (return (i32.const 0))))
     (i32.const 19))
 
   (func $uc_alu (param $R i32) (result i32)
@@ -2976,6 +3218,17 @@
               ;; written
               (if (i32.eq (call $uc_kind (local.get $R)) (i32.const 23))
                 (then
+                  ;; FF /2: the slot must still hold the target followed at
+                  ;; compile time; anything else leaves at the call, with the
+                  ;; entry flags, before the push
+                  (if (i32.load offset=12 (local.get $R))
+                    (then
+                      (call $uc_emit (i32.const 71) (i32.const 5)
+                            (call $uc_rawof (call $uc_read (i32.add (local.get $R) (i32.const 104)) (local.get $R) (i32.const 1)))
+                            (call $uc_aN (local.get $tgt))
+                            (call $uc_aN (i32.sub (i32.load offset=12 (local.get $R)) (i32.const 1)))
+                            (call $uc_aN (i32.load (local.get $R)))
+                            (call $uc_xstub) (i64.const 0) (i64.const 0))))
                   (call $uc_store (i32.add (local.get $R) (i32.const 80)) (i32.const 32) (call $uc_aC (local.get $nx)))
                   (call $uc_o3 (i32.const 8) (call $uc_aR (i32.const 4)) (call $uc_aR (i32.const 4)) (call $uc_aN (i32.const -4)))
                   (local.set $md (i32.or (local.get $md) (i32.const 16)))
@@ -3575,7 +3828,24 @@
     (local.get $err))
 
   (func $uc_decline (param $why i32) (result i32)
-    (local $p i32)
+    (local $p i32) (local $k i32) (local $R i32) (local $s i32)
+    ;; 27 call-indirect: a scan-limit / head-unsupported / no-backedge whose
+    ;; scan met an FF /2 it left unlowered (the head's own, for 3)
+    (if (i32.or (i32.eq (local.get $why) (i32.const 3))
+                (i32.or (i32.eq (local.get $why) (i32.const 4)) (i32.eq (local.get $why) (i32.const 1))))
+      (then
+        (block $d (loop $l
+          (br_if $d (i32.ge_u (local.get $k) (global.get $uc_ninsn)))
+          (local.set $R (i32.add (global.get $UC_INSN) (i32.shl (local.get $k) (i32.const 8))))
+          (if (i32.eqz (call $uc_kind (local.get $R)))
+            (then
+              (local.set $s (call $uc_sig (i32.load (local.get $R))))
+              (if (i32.and (i32.eq (i32.and (local.get $s) (i32.const 0xFFFF)) (i32.const 0xFF))
+                           (i32.eq (i32.and (i32.shr_u (local.get $s) (i32.const 16)) (i32.const 7)) (i32.const 2)))
+                (then (local.set $why (i32.const 27)) (br $d)))))
+          (br_if $d (i32.eq (local.get $why) (i32.const 3)))
+          (local.set $k (i32.add (local.get $k) (i32.const 1)))
+          (br $l)))))
     (global.set $uc_last_why (local.get $why))
     (global.set $uc_declined (i32.add (global.get $uc_declined) (i32.const 1)))
     (local.set $p (i32.add (i32.add (global.get $UC_MISC) (i32.const 0xC00))
@@ -3637,7 +3907,8 @@
   ;; for no-backedge), at most 8 per head: head, signature, address, reason.
   (func $uc_census_unsup (param $eip i32)
     (local $k i32) (local $R i32) (local $n i32)
-    (if (i32.eqz (i32.or (i32.eq (global.get $uc_last_why) (i32.const 3))
+    (if (i32.eqz (i32.or (i32.or (i32.eq (global.get $uc_last_why) (i32.const 3))
+                                 (i32.eq (global.get $uc_last_why) (i32.const 27)))
                          (i32.or (i32.eq (global.get $uc_last_why) (i32.const 4))
                                  (i32.eq (global.get $uc_last_why) (i32.const 1)))))
       (then (return)))
@@ -3721,9 +3992,26 @@
     (global.set $uop_alloc (i32.and (i32.add (i32.add (global.get $uop_alloc) (local.get $bytes)) (i32.const 15))
                                     (i32.const -16)))
     (global.set $uc_compiled (i32.add (global.get $uc_compiled) (i32.const 1)))
+    (global.set $uc_ntraces (i32.add (global.get $uc_ntraces) (global.get $uc_is_trace)))
     (global.set $uc_insns (i32.add (global.get $uc_insns) (global.get $uc_nloop)))
     (global.set $uc_uops (i32.add (global.get $uc_uops) (global.get $uc_nops)))
     (global.set $uc_words (i32.add (global.get $uc_words) (call $uc_encode_words)))
+    ;; the muldiv / icall / IAT sites the program kept
+    (local.set $k (i32.const 0))
+    (block $nd (loop $nl
+      (br_if $nd (i32.ge_u (local.get $k) (global.get $uc_nloop)))
+      (local.set $R (call $uc_loop_insn (local.get $k)))
+      (if (i32.or (i32.eq (call $uc_kind (local.get $R)) (i32.const 25))
+                  (i32.eq (call $uc_kind (local.get $R)) (i32.const 26)))
+        (then (global.set $uc_n_muldiv (i32.add (global.get $uc_n_muldiv) (i32.const 1)))))
+      (if (i32.eq (call $uc_kind (local.get $R)) (i32.const 23))
+        (then
+          (if (i32.eq (i32.load offset=12 (local.get $R)) (i32.const 1))
+            (then (global.set $uc_n_icall (i32.add (global.get $uc_n_icall) (i32.const 1)))))
+          (if (i32.eq (i32.load offset=12 (local.get $R)) (i32.const 2))
+            (then (global.set $uc_n_iat (i32.add (global.get $uc_n_iat) (i32.const 1)))))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br $nl)))
     ;; the aggressive-stack census of the program kept
     (local.set $k (i32.const 0))
     (block $sd (loop $sl
@@ -3748,13 +4036,45 @@
     (if (i32.eq (local.get $which) (i32.const 3)) (then (return (global.get $uc_uops))))
     (if (i32.eq (local.get $which) (i32.const 4)) (then (return (global.get $uc_flushes))))
     (if (i32.eq (local.get $which) (i32.const 5)) (then (return (global.get $uc_words))))
+    (if (i32.eq (local.get $which) (i32.const 26)) (then (return (global.get $uc_ntraces))))
+    (if (i32.eq (local.get $which) (i32.const 27)) (then (return (global.get $uc_n_muldiv))))
+    (if (i32.eq (local.get $which) (i32.const 28)) (then (return (global.get $uc_n_icall))))
+    (if (i32.eq (local.get $which) (i32.const 29)) (then (return (global.get $uc_n_iat))))
+    (if (i32.eq (local.get $which) (i32.const 30)) (then (return (global.get $uc_n_icrej))))
     (i32.const 0))
+  ;; Trace heads (on by default; --no-uop-trace-heads / ?no-uop-trace-heads):
+  ;; a hot head with no back edge is
+  ;; lowered as a forward trace ($uc_form_trace) instead of declined. min/max
+  ;; bound the trace in instructions (0 keeps the current value).
+  (func (export "set_uop_trace_heads") (param $on i32)
+    (global.set $uc_trace (i32.ne (local.get $on) (i32.const 0))))
+  (func (export "get_uop_trace_heads") (result i32) (global.get $uc_trace))
+  (func (export "set_uop_trace_limits") (param $min i32) (param $max i32)
+    (if (local.get $min) (then (global.set $uc_trace_min (local.get $min))))
+    (if (local.get $max)
+      (then (global.set $uc_trace_max
+              (select (global.get $UC_MAX_LOOP) (local.get $max)
+                      (i32.gt_u (local.get $max) (global.get $UC_MAX_LOOP)))))))
   ;; --aggressive-stack / ?aggressive-stack / aggressiveStack: elide
   ;; push/pop pairs in the programs compiled from now on (drops the rest).
   (func (export "set_aggressive_stack") (param $flag i32)
     (global.set $uc_aggr (i32.ne (local.get $flag) (i32.const 0)))
     (call $uop_flush))
   (func (export "get_aggressive_stack") (result i32) (global.get $uc_aggr))
+  ;; --uop-muldiv / --uop-icall / --uop-iat ($uc_muldiv and friends): each
+  ;; takes effect for programs compiled from now on (drops the rest).
+  (func (export "set_uop_muldiv") (param $flag i32)
+    (global.set $uc_muldiv (i32.ne (local.get $flag) (i32.const 0)))
+    (call $uop_flush))
+  (func (export "get_uop_muldiv") (result i32) (global.get $uc_muldiv))
+  (func (export "set_uop_icall") (param $flag i32)
+    (global.set $uc_icall (i32.ne (local.get $flag) (i32.const 0)))
+    (call $uop_flush))
+  (func (export "get_uop_icall") (result i32) (global.get $uc_icall))
+  (func (export "set_uop_iat") (param $flag i32)
+    (global.set $uc_iat (i32.ne (local.get $flag) (i32.const 0)))
+    (call $uop_flush))
+  (func (export "get_uop_iat") (result i32) (global.get $uc_iat))
   (func (export "uop_decline_count") (param $why i32) (result i32)
     (i32.load (i32.add (i32.add (global.get $UC_MISC) (i32.const 0xC00))
                        (i32.shl (i32.and (local.get $why) (i32.const 63)) (i32.const 2)))))

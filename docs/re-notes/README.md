@@ -54,6 +54,7 @@ room have to share a wall clock: [blobby-volley.md](blobby-volley.md).
 | Age of Empires (1997 shareware demo) | [age-of-empires.md](age-of-empires.md) |
 | Arcanum demo | [arcanum-demo.md](arcanum-demo.md) |
 | Bricks I | [bricks.md](bricks.md) |
+| Civilization II: Multiplayer Gold Edition (Indeo 4 movies, headless Indeo install) | [civilization-2-mge.md](civilization-2-mge.md) |
 | DX-Ball | [dxball.md](dxball.md) |
 | Diablo II Shareware demo | [diablo2-demo.md](diablo2-demo.md) |
 | Diablo Shareware | [diablo-shareware.md](diablo-shareware.md) |

@@ -1000,12 +1000,20 @@
         (call $dx_surf_fmt_set (local.get $entry_wa) (i32.const 0))
         (i32.store (call $dx_surf_owner_ptr (local.get $entry_wa)) (i32.const 0)))))
 
+  ;; Notify backing-page observers without changing the cursor restore epoch.
+  (func $dx_surf_note_write (param $entry_wa i32)
+    (if (i32.eqz (local.get $entry_wa)) (then (return)))
+    (call $page_watch_write (load.field DxObject misc1 (local.get $entry_wa))
+      (i32.mul (load.field DxObject pitch (local.get $entry_wa))
+        (load.field DxObject height (local.get $entry_wa)))))
+
   ;; A successful Unlock publishes whatever the caller wrote through Lock's
   ;; lpSurface. Advance only this CPU epoch: sprite Blts after a background
   ;; save are precisely the writes that the later restore is meant to undo.
   (func $dx_surf_note_cpu_write (param $entry_wa i32)
     (local $state i32)
     (if (i32.eqz (local.get $entry_wa)) (then (return)))
+    (call $dx_surf_note_write (local.get $entry_wa))
     (local.set $state (call $dx_surf_state_ptr (local.get $entry_wa)))
     (i32.store (local.get $state)
       (i32.add (i32.load (local.get $state)) (i32.const 1)))
@@ -1187,6 +1195,8 @@
     (if (i32.eq (global.get $dx_scroll_hold_wa) (local.get $entry_wa))
       (then (global.set $dx_scroll_hold_wa (i32.const 0))))
     (local.set $type (i32.load (local.get $entry_wa)))
+    (if (i32.eq (local.get $type) (i32.const 2))
+      (then (call $dx_surf_note_write (local.get $entry_wa))))
     ;; Zero the DX_OBJECTS entry type (marks it logically freed; wrapper stays).
     (i32.store (local.get $entry_wa) (i32.const 0))
     (i32.store (call $dx_surf_owner_ptr (local.get $entry_wa)) (i32.const 0))
@@ -4407,6 +4417,7 @@
     (local.set $dst_h (load.field DxObject height (local.get $dst_entry)))
     (local.set $dst_pitch (load.field DxObject pitch (local.get $dst_entry)))
     (local.set $bpp (load.field DxObject bpp (local.get $dst_entry)))
+    (call $dx_surf_note_write (local.get $dst_entry))
     (local.set $bps (i32.div_u (local.get $bpp) (i32.const 8)))
     (local.set $drblt_flags (local.get $arg4))
     ;; HWND-backed clipping is enforced by the window compositor and stays on
@@ -5145,6 +5156,7 @@
     (local.set $dst_h (load.field DxObject height (local.get $dst_entry)))
     (local.set $dst_pitch (load.field DxObject pitch (local.get $dst_entry)))
     (local.set $bps (i32.div_u (load.field DxObject bpp (local.get $dst_entry)) (i32.const 8)))
+    (call $dx_surf_note_write (local.get $dst_entry))
     (if (i32.eqz (local.get $arg3))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))

@@ -216,7 +216,7 @@
         (local.set $swap (i32.add (local.get $top) (i32.const 1)))
         (local.set $top (i32.add (local.get $bottom) (i32.const 1)))
         (local.set $bottom (local.get $swap))))
-    (drop (call $host_gdi_surface_upload
+    (drop (call $gdi_write_surface_upload
       (i32.load offset=68 (local.get $desc)) (local.get $left) (local.get $top)
       (local.get $right) (local.get $bottom))))
 
@@ -3523,7 +3523,7 @@
           (local.set $y0 (i32.add (local.get $y0) (local.get $sy)))))
       (br $pixels)))
     (if (local.get $wrote)
-      (then (drop (call $host_gdi_surface_upload (i32.load offset=68 (local.get $desc))
+      (then (drop (call $gdi_write_surface_upload (i32.load offset=68 (local.get $desc))
         (local.get $min_x) (local.get $min_y)
         (i32.add (local.get $max_x) (i32.const 1))
         (i32.add (local.get $max_y) (i32.const 1))))))
@@ -6800,7 +6800,7 @@
         (br $cols)))
       (local.set $y (i32.add (local.get $y) (i32.const 1)))
       (br $rows)))
-    (drop (call $host_gdi_surface_upload (i32.load offset=68 (local.get $dst))
+    (drop (call $gdi_write_surface_upload (i32.load offset=68 (local.get $dst))
       (i32.const 0) (local.get $dst_top)
       (local.get $width) (local.get $dst_bottom)))
     (local.get $lines))
@@ -6855,7 +6855,7 @@
       (local.get $colors) (i32.shl (local.get $count) (i32.const 2)))
     ;; Palette changes recolor every indexed pixel, even though the pixel bytes
     ;; themselves are unchanged.
-    (drop (call $host_gdi_surface_upload (i32.load offset=40 (local.get $record))
+    (drop (call $gdi_write_surface_upload (i32.load offset=40 (local.get $record))
       (i32.const 0) (i32.const 0)
       (i32.load offset=8 (local.get $record))
       (i32.load offset=12 (local.get $record))))
@@ -7427,3 +7427,22 @@
     (i32.store offset=24 (local.get $record) (i32.const 0))
     (i32.store offset=28 (local.get $record) (i32.const 0))
     (i32.const 1))
+
+  ;; Native writers notify before the asynchronous presentation import. Doing
+  ;; this only on the host would publish too late for the next Worker draw.
+  ;; DirectDraw's presentation-only uploads do not call this wrapper.
+  (func $gdi_write_surface_upload (param $id i32) (param $left i32) (param $top i32)
+      (param $right i32) (param $bottom i32) (result i32)
+    (local $record i32) (local $slot i32)
+    (local.set $slot (i32.sub (local.get $id) (i32.const 0x200000)))
+    (if (i32.lt_u (local.get $slot) (global.get $DX_MAX))
+      (then (call $dx_surf_note_write
+        (i32.add (global.get $DX_OBJECTS) (i32.shl (local.get $slot) (i32.const 5)))))
+      (else
+        (local.set $record (call $gdi_object_record (local.get $id)))
+        (if (call $gdi_bitmap_record_valid (local.get $record)) (then
+          (call $page_watch_write (load.field.memarg GdiBitmap bits (local.get $record))
+            (i32.mul (load.field.memarg GdiBitmap stride (local.get $record))
+              (load.field.memarg GdiBitmap height (local.get $record))))))))
+    (call $host_gdi_surface_upload (local.get $id) (local.get $left) (local.get $top)
+      (local.get $right) (local.get $bottom)))

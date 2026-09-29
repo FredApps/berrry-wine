@@ -534,6 +534,20 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
+  ;; LocalHandle(pMem): LocalAlloc hands out fixed blocks whose handle is the
+  ;; pointer itself (LocalLock is the identity), so the handle of a live heap
+  ;; block is its own address. Anything the allocator does not recognise as a
+  ;; block boundary is ERROR_INVALID_HANDLE. Intel's ir41_32.dll calls it when
+  ;; a decompression stream ends.
+  (func $handle_LocalHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (call $heap_block_size_checked (local.get $arg0))
+      (then (i32.store offset=0 (global.get $reg_base) (local.get $arg0)))
+      (else
+        (global.set $last_error (i32.const 6)) ;; ERROR_INVALID_HANDLE
+        (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+  )
+
   ;; 232-237: the Global* family, formerly routed through $dispatch_global,
   ;; which picked the operation from name[6]. That byte aliased
   ;; GlobalAddAtomA with GlobalAlloc and GlobalFindAtomA/GlobalFlags with

@@ -37,7 +37,7 @@ function asm(items) {
       out.push(it.jmp ? 0xEB : 0x70 | it.jcc, rel & 0xFF);
       pc += 2;
     }
-    if (pass === 1) return out;
+    if (pass === 1) { out.labels = at; return out; }
   }
 }
 const J = (cc, to) => ({ jcc: cc, to });
@@ -130,10 +130,16 @@ const CASES = [
   {
     // rol/ror by an immediate and by 1, at 32, 16 and 8 bits, with CF read
     // by jb after ror and SF after an 8-bit rol (both taken about half the
-    // time, so threaded code has split its blocks at both targets early).
-    name: 'rotate-imm', regs: { ecx: N },
+    // time, so threaded code has split its blocks at both targets early),
+    // and `cmp al,0x10 / ror eax,0x10 / jz` -- Indeo 4's VLC reader, where
+    // the jz tests the cmp because a rotate leaves ZF/SF/PF alone. The
+    // compiler declines rotates (its flag record cannot carry preserved
+    // flags), so this pins that it declines and that the tier-on run still
+    // matches threaded code.
+    name: 'rotate-imm', regs: { ecx: N }, declines: true,
     code: [L('l'), [0x8B, 0x06], [0xC1, 0xC0, 0x05], [0x01, 0xC3], [0xC0, 0xCA, 0x03], [0xD1, 0xC8],
            J(cc.B, 'k'), 0x45, L('k'), [0x66, 0xC1, 0xC2, 0x07], [0xC0, 0xC7, 0x03], J(cc.S, 'm'), 0x47, L('m'),
+           [0x3C, 0x10], [0xC1, 0xC8, 0x10], J(cc.Z, 'n'), 0x43, L('n'),
            [0x01, 0xC2], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
   },
   {
@@ -246,6 +252,146 @@ const CASES = [
            L('f'), [0xA8, 0x01], J(cc.Z, 'r'), [0x83, 0x04, 0x24, 0x02], L('r'), 0xC3],
   },
 ];
+
+// ---- --uop-muldiv (07e kinds 25/26, 07d MULW/SETMULF/DIVW) ----
+// The flags a mul leaves are $set_flags_mul's record: CF=OF from the upper
+// half, ZF/SF from EAX through whatever sign shift the previous producer left
+// (an 8-bit add here, so SF reads bit 7 exactly as threaded code does).
+// A raw SEH frame (no scope table, so 11-seh calls the handler for real)
+// catches #DE and skips the 2-byte div: every divide that faults must leave
+// the program at that div, and threaded code raises it there.
+const SEH_ON = [[0x64, 0x8B, 0x1D, 0, 0, 0, 0], [0x6A, 0xFF], [0x6A, 0x00], CALL('seh_after'),
+  // handler(rec, frame, ctx, disp): ctx->Eip += 2; ExceptionContinueExecution
+  [0x8B, 0x44, 0x24, 0x0C], [0x83, 0x80, 0xB8, 0x00, 0x00, 0x00, 0x02], [0x31, 0xC0], 0xC3,
+  L('seh_after'), 0x53, [0x64, 0x89, 0x25, 0, 0, 0, 0]];
+const SEH_OFF = [[0x8B, 0x04, 0x24], [0x64, 0xA3, 0, 0, 0, 0], [0x83, 0xC4, 0x10]];
+CASES.push(
+  {
+    // mul r/m32 with mixed upper halves (a byte times a dword), CF read by
+    // jb and setb (inc preserves CF), OF by seto; imul reg and imul eax (the operand is EAX
+    // itself); SF/ZF after an 8-bit shift sign; a mul whose flags are dead.
+    name: 'muldiv-mul', regs: { ecx: N }, muldiv: true,
+    code: [L('l'), [0x0F, 0xB6, 0x06], [0x00, 0xD3], [0xF7, 0x66, 0x04], J(cc.B, 'k'), 0x47, L('k'),
+           [0x0F, 0x92, 0xC2], [0x01, 0xD5], [0x01, 0xC3], [0x0F, 0xBE, 0x46, 0x08], [0xF7, 0x6E, 0x0C], [0x0F, 0x90, 0xC2],
+           [0x0F, 0x98, 0xC6], [0x01, 0xD5], [0x8B, 0x46, 0x10], [0xF7, 0xEB], [0x0F, 0x94, 0xC2],
+           [0x01, 0xD3], [0x31, 0xC5], [0x8B, 0x46, 0x14], [0xF7, 0xE8], [0x8B, 0x46, 0x18], [0xF7, 0xE5],
+           [0x01, 0xC3], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // div/idiv that never fault: unsigned by a register and by memory,
+    // signed after cdq (negative quotients and remainders), and a cmp whose
+    // flags cross all four divides to the jb (div leaves the flags alone);
+    // the results accumulate through lea, which keeps them too.
+    name: 'muldiv-div', regs: { ecx: N }, muldiv: true,
+    code: [L('l'), [0x8B, 0x5E, 0x04], [0x83, 0xCB, 0x01], [0x39, 0xCD], [0x8B, 0x06], [0xBA, 0, 0, 0, 0],
+           [0xF7, 0xF3], [0x8D, 0x2C, 0x28], [0x8D, 0x2C, 0x2A], [0xBA, 0, 0, 0, 0], [0xF7, 0x76, 0x08],
+           [0x8D, 0x3C, 0x38], [0x8B, 0x46, 0x0C], 0x99, [0xF7, 0xFB], [0x8D, 0x2C, 0x2A], [0x8D, 0x3C, 0x38],
+           [0x8B, 0x46, 0x14], 0x99, [0xF7, 0x7E, 0x10], [0x8D, 0x2C, 0x2A], [0x8D, 0x3C, 0x38],
+           J(cc.B, 'k'), 0x45, L('k'), [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // Every #DE a divide can raise, inside the loop: div by zero (a byte
+    // masked to 0-7), div overflow (EDX >= divisor), idiv of the 32-bit
+    // INT_MIN by -1, 0, 1 or 2, and idiv of EDX:EAX = 0x80000000:0 (the
+    // 64-bit INT_MIN, which i64.div_s would trap on) by the same.
+    // The handler resumes at div+2, an entry threaded code splits a block at
+    // and the program does not charge (dynamicEntry, like ret-mismatch).
+    name: 'muldiv-div-exits', regs: { ecx: 600 }, muldiv: true, head: 'l', dynamicEntry: true, want: { divExits: '>0' },
+    // Threaded code reports a fault at the start of the block it is in
+    // ($eip is the block entry), so each divide that can fault is made to
+    // begin a block (a jo to the next instruction) for the handler's Eip += 2
+    // to land after it in both tiers.
+    code: [...SEH_ON, L('l'), [0x8B, 0x06], [0x31, 0xD2], [0x0F, 0xB6, 0x5E, 0x04], [0x83, 0xE3, 0x07], J(cc.O, 'd0'), L('d0'), [0xF7, 0xF3],
+           [0x01, 0xC5], [0x01, 0xD5], [0x8B, 0x06], [0x8B, 0x56, 0x08], [0x83, 0xE2, 0x0F], [0x8B, 0x5E, 0x0C],
+           [0x83, 0xE3, 0x1F], J(cc.O, 'd1'), L('d1'), [0xF7, 0xF3], [0x31, 0xC5], [0x31, 0xD5], [0xB8, 0x00, 0x00, 0x00, 0x80], 0x99,
+           [0x0F, 0xB6, 0x5E, 0x05], [0x83, 0xE3, 0x03], 0x4B, J(cc.O, 'd2'), L('d2'), [0xF7, 0xFB], [0x01, 0xC5], [0x01, 0xD5],
+           [0x31, 0xC0], [0xBA, 0x00, 0x00, 0x00, 0x80], J(cc.O, 'd3'), L('d3'), [0xF7, 0xFB], [0x01, 0xC5], [0x01, 0xD5],
+           [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), ...SEH_OFF, 0xC3],
+  },
+);
+
+// ---- --uop-icall / --uop-iat (07e FF /2 as kind 23, 07d ICG) ----
+// A callee's address is only known once the code is placed, so each is put
+// right after a CALL, which pushes it; the pop takes it. The "vtable" is a
+// stack slot addressed through EBP (ESP-based r/m is refused), the IAT slot
+// is in the scratch page, out of the hashed buffer. Code addresses differ per
+// run, so every register that held one is cleared before the ret.
+const CALLEE1 = [[0x03, 0x1E], [0x8D, 0x1C, 0x9B], 0xC3];            // add ebx,[esi]; lea ebx,[ebx*4+ebx]
+const CALLEE2 = [[0x2B, 0x1E], [0x8D, 0x1C, 0x5B], 0xC3];            // sub ebx,[esi]; lea ebx,[ebx*2+ebx]
+const ICALL_VT = [CALL('s1'), ...CALLEE1, L('s1'), [0x89, 0xE5],       // mov ebp,esp: [ebp] = &callee1
+  L('l'), [0xFF, 0x55, 0x00], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),   // call [ebp+0]
+  0x58, [0x31, 0xC0], [0x31, 0xED], 0xC3];
+const IAT_SLOT = (a) => a.spec + 0x800;
+CASES.push(
+  { name: 'icall-vtable', regs: { ecx: N }, icall: true, hotOnly: true, head: 'l', want: { icPass: '>0', icFail: 0 }, code: ICALL_VT },
+  // the same loop with the flag off: FF /2 cuts it, and says so
+  { name: 'icall-off', regs: { ecx: N }, head: 'l', declines: true, code: ICALL_VT },
+  {
+    // call reg, the register loaded once outside the loop (the add first:
+    // the hot-count slot is eip>>2, and the head and the return landing
+    // must not share one)
+    name: 'icall-reg', regs: { ecx: N }, icall: true, hotOnly: true, head: 'l', want: { icPass: '>0', icFail: 0 },
+    code: [CALL('s1'), ...CALLEE1, L('s1'), 0x58,
+           L('l'), [0x83, 0xC6, 0x04], [0xFF, 0xD0], 0x49, J(cc.NZ, 'l'), [0x31, 0xC0], 0xC3],
+  },
+  {
+    // the slot alternates between two callees: the guard fails every other
+    // trip and the call runs threaded, to whichever callee the slot holds
+    name: 'icall-mismatch', regs: { ecx: N }, icall: true, hotOnly: true, head: 'l', dynamicEntry: true, want: { icFail: '>0' },
+    code: [CALL('s1'), ...CALLEE1, L('s1'), 0x58, CALL('s2'), ...CALLEE2, L('s2'), 0x5A, 0x50, [0x89, 0xE5],
+           L('l'), 0x92, [0x89, 0x45, 0x00], [0xFF, 0x55, 0x00], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),
+           0x58, [0x31, 0xC0], [0x31, 0xD2], [0x31, 0xED], 0xC3],
+  },
+);
+// --uop-iat: call [abs], the import-table form
+CASES.push(
+  {
+    // call [abs] through an import slot holding a guest function
+    name: 'iat-call', regs: { ecx: N }, iat: true, hotOnly: true, head: 'l', want: { iatPass: '>0', iatFail: 0 },
+    code: (a) => [CALL('s1'), ...CALLEE1, L('s1'), 0x58, [0xA3, ...d32(IAT_SLOT(a))],
+           L('l'), [0xFF, 0x15, ...d32(IAT_SLOT(a))], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),
+           [0x31, 0xC0], [0xA3, ...d32(IAT_SLOT(a))], 0xC3],
+  },
+  {
+    // an import slot holding an API thunk, on a path never taken: the call
+    // is refused (the thunk zone stays with the threaded code) and the loop
+    // around it still compiles, with that path an exit
+    name: 'iat-thunk', regs: { ecx: N }, iat: true, hotOnly: true, head: 'l', want: { icRej: '>0', iatSites: 0 },
+    code: (a) => [[0xC7, 0x05, ...d32(IAT_SLOT(a)), ...d32(a.thunk)],
+           L('l'), [0x83, 0xC6, 0x04], [0x03, 0x1E], [0x83, 0xF9, 0xFF], J(cc.Z, 'bad'), 0x49, J(cc.NZ, 'l'),
+           [0xC7, 0x05, ...d32(IAT_SLOT(a)), 0, 0, 0, 0], 0xC3,
+           L('bad'), [0xFF, 0x15, ...d32(IAT_SLOT(a))], 0xC3],
+  },
+);
+
+// ---- --uop-trace-heads (07e $uc_form_trace) ----
+// A head with no back edge: the loop around it runs an instruction the tier
+// does not lower (bsr), so no head in it has a loop to compile, and without
+// traces every one declines no-backedge. Each case runs with trace heads on in
+// the hot and pre arms; `head` names the label the pre arm compiles at. `lf`
+// marks a label as the logical-frame step ($th_logical_frame): the marker
+// block must run threaded every time, so its count must match threaded code's.
+const TRACE_F = [L('f'), [0x8B, 0x16], [0x01, 0xD3], [0x89, 0xD0], [0xC1, 0xE8, 0x05], [0x31, 0xC3],
+  [0x81, 0xFA, ...d32(0x40000000)], J(cc.L, 'n'), [0x83, 0xF3, 0x55], JMP('x'), L('n'), [0x83, 0xEB, 0x03],
+  L('x'), [0x83, 0xC6, 0x04], 0xC3];
+const TRACE_MAIN = [L('main'), CALL('f'), [0x0F, 0xBD, 0xD3], 0x49, J(cc.NZ, 'main'), 0xC3];
+CASES.push(
+  { name: 'trace-callee', regs: { ecx: N }, trace: true, head: 'f', code: [JMP('main'), ...TRACE_F, ...TRACE_MAIN] },
+  { name: 'trace-main', regs: { ecx: N }, trace: true, head: 'main', code: [JMP('main'), ...TRACE_F, ...TRACE_MAIN] },
+  {
+    // a call and its ret inside the trace (g's ret has f's call as candidate)
+    name: 'trace-callchain', regs: { ecx: N }, trace: true, head: 'f',
+    code: [JMP('main'), L('f'), 0x53, [0x8B, 0x1E], CALL('g'), [0x01, 0xD8], 0x5B, [0x83, 0xC6, 0x04], [0x01, 0xC3], 0xC3,
+           L('g'), [0x89, 0xDA], [0xC1, 0xE2, 0x03], [0x31, 0xD0], [0x03, 0x46, 0x08], 0xC3, ...TRACE_MAIN],
+  },
+  { name: 'trace-logical', regs: { ecx: N }, trace: true, head: 'f', lf: 'x', lfEvery: true, code: [JMP('main'), ...TRACE_F, ...TRACE_MAIN] },
+  {
+    // control: a LOOP whose exit falls through into the marker block
+    name: 'loop-logical', regs: { ecx: N }, head: 'top', lf: 'x',
+    code: [L('top'), [0x8B, 0x16], [0x01, 0xD3], [0x83, 0xC6, 0x04], [0x81, 0xFA, ...d32(0x40000000)], J(cc.L, 'n'),
+           0x49, J(cc.NZ, 'top'), 0xC3, L('n'), [0x83, 0xEB, 0x03], L('x'), [0x83, 0xF3, 0x55], 0x49, J(cc.NZ, 'top'), 0xC3],
+  },
+);
 
 // ---- --aggressive-stack (07e $uc_sp_block) ----
 // Each runs with the tier's aggressive stack elision on (hot and pre arms)
@@ -434,6 +580,12 @@ function runCase(inst, c, a, codeAddr, mode) {
   if (c.poke) c.poke(mem, g2w(a.buf));
   const bytes = c.bytes || asm(typeof c.code === 'function' ? c.code(a) : c.code);
   mem.set(bytes, g2w(codeAddr));
+  const labelAt = (x) => (typeof x === 'string' ? bytes.labels.get(x) : x || 0);
+  // Explicit either way: trace heads are the instance default now, and a
+  // loop case must keep testing the loop tier alone.
+  e.set_uop_trace_heads(c.trace && mode !== 'off' ? 1 : 0);
+  if (c.lf) e.set_logical_frame(codeAddr + labelAt(c.lf), 0);
+  const lf0 = e.get_logical_frame_count();
   if (c.setup) c.setup(mem, g2w, a);
   const init = { eax: 0, ecx: 0, edx: 0, ebx: 0, ebp: 0, esi: a.buf, edi: a.buf + 0x10000 };
   if (c.init) Object.assign(init, c.init(a));
@@ -445,16 +597,26 @@ function runCase(inst, c, a, codeAddr, mode) {
   // A known flag state on entry: a sub that sets CF.
   e.set_uop(mode === 'off' ? 0 : 1);
   if (c.aggr) e.set_aggressive_stack(mode === 'off' ? 0 : 1);
-  const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5) };
+  const feats = ['muldiv', 'icall', 'iat'].filter((f) => c[f]);
+  for (const f of feats) e['set_uop_' + f](mode === 'off' ? 0 : 1);
+  const unfeat = () => { for (const f of feats) e['set_uop_' + f](0); };
+  const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5), traces: e.uop_cstat(26) };
+  // uop_stats counters, then (negative) uop_cstat ones: sites kept, FF /2 refused
+  const CTR = { divExits: 16, icPass: 17, icFail: 18, iatPass: 19, iatFail: 20, icSites: -28, iatSites: -29, icRej: -30 };
+  const ctrOf = (i) => (i < 0 ? e.uop_cstat(-i) : e.uop_stats(i));
+  const ctr0 = Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, ctrOf(i)]));
   let sp = null;
   if (mode === 'pre') {
-    const head = codeAddr + (c.head || 0);
+    const head = codeAddr + labelAt(c.head);
     const declines = WAT_REASONS.map((_, k) => k && e.uop_decline_count(k));
     const d0 = e.uop_cstat(1);
     const s0 = SP_NAMES.map((_, k) => e.uop_cstat(6 + k));
     const pc = e.uop_compile(head);
     if (!pc) {
       if (c.aggr) e.set_aggressive_stack(0);
+      unfeat();
+      if (c.trace) e.set_uop_trace_heads(0);
+      if (c.lf) e.set_logical_frame(0, 0);
       const why = WAT_REASONS.findIndex((_, k) => k && e.uop_decline_count(k) !== declines[k]);
       return { err: 'pre-compile declined: ' + (e.uop_cstat(1) > d0 ? WAT_REASONS[why] : 'limit') };
     }
@@ -475,16 +637,24 @@ function runCase(inst, c, a, codeAddr, mode) {
     const eip = e.get_eip() >>> 0;
     if (process.env.UOP_STOPS) console.log(mode, k, (eip - codeAddr).toString(16), 'blocks', e.get_last_run_blocks(), 'ecx', e.get_ecx());
     if (eip === 0) { ok = true; break; }
-    stops.push(eip - codeAddr);
+    // A stop outside this case's code (a continuation thunk, e.g. the SEH
+    // handler's return) is absolute: each run's code lives in its own slot.
+    const rel = eip - codeAddr;
+    stops.push(rel >= 0 && rel < 0x10000 ? '+0x' + rel.toString(16) : '@0x' + eip.toString(16));
   }
   const st = {
     ok, eip: e.get_eip() >>> 0, stops: stops.join(','), nstops: stops.length, flags: e.uop_flags(), mem: hash(mem, g2w, a),
     regs: REGS.map((r) => e['get_' + r]() >>> 0),
     installs: e.uop_stats(2) - before.installs, enters: e.uop_stats(4) - before.enters,
-    blocks: e.uop_stats(5) - before.blocks, sp,
+    blocks: e.uop_stats(5) - before.blocks, sp, lf: e.get_logical_frame_count() - lf0,
+    traces: e.uop_cstat(26) - before.traces,
+    ctr: Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, ctrOf(i) - ctr0[k]])),
   };
   e.set_uop(0);
   if (c.aggr) e.set_aggressive_stack(0);
+  unfeat();
+  if (c.trace) e.set_uop_trace_heads(0);
+  if (c.lf) e.set_logical_frame(0, 0);
   return st;
 }
 
@@ -624,6 +794,74 @@ function codeWriteCase(inst, a, nextCode) {
   return errs;
 }
 
+// A re-guard widens its window to the 64KB-aligned block around the missing
+// page ($uop_reguard_wide, 07d) while the backing stays affine and, for a
+// store window, no page holds code. Two properties: a store sweep that walks
+// from a data page into an adjacent code page of the same block must still
+// leave the program at that page and retire the decoded block it overwrote
+// (the widened window must stop short of the code page), and a pure data
+// sweep must prove far fewer windows than the one-page re-guard
+// (--uop-reguard-span=4096) while ending in the same state.
+// uop_stats: 1 reguards, 4 enters, 14 pages the widening added.
+function reguardWidenCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst;
+  const loop = asm([L('l'), [0x88, 0x07], 0x47, 0x49, J(cc.NZ, 'l'), 0xC3]); // mov [edi],al; inc edi; dec ecx; jnz; ret
+  const errs = [];
+  const st = (k) => e.uop_stats(k) >>> 0;
+  const install = (Lc) => {
+    const pc = e.uop_compile(Lc);
+    if (!pc) { errs.push('store loop declined'); return false; }
+    e.uop_install(Lc, pc);
+    return true;
+  };
+  const arm = (span) => {
+    // Fresh pages per arm: the previous arm left its code page rewritten.
+    let D = nextCode(), P = nextCode();
+    while ((D >>> 16) !== (P >>> 16)) { D = P; P = nextCode(); }
+    const Lc = nextCode();
+    mem.set(loop, g2w(Lc));
+    e.set_uop_reguard_span(span);
+    e.set_uop(1);
+    if (!install(Lc)) return null;
+    // 1. A pure data sweep over 16 pages of the buffer, four times.
+    mem.fill(0, g2w(a.buf), g2w(a.buf) + 0x10000);
+    const rg0 = st(1), wp0 = st(14), en1 = st(4);
+    for (let i = 0; i < 4; i++) {
+      if (!callAt(inst, a, Lc, { ecx: 0x10000, edi: a.buf, eax: 0x40 + i })) errs.push(`span ${span}: data sweep did not return`);
+    }
+    if (st(4) === en1) errs.push(`span ${span}: data sweep never entered`);
+    let h = 0x811C9DC5;
+    for (let k = 0; k < 0x10000; k++) h = Math.imul(h ^ mem[g2w(a.buf) + k], 16777619);
+    const out = { reguards: st(1) - rg0, widened: st(14) - wp0, hash: h >>> 0 };
+    // 2. From a data page into the code page after it, same 64KB block.
+    mem.set([0xB8, 0x11, 0x11, 0x11, 0x11, 0xC3], g2w(P + 0x800));           // mov eax,0x11111111 ; ret
+    callAt(inst, a, P + 0x800, {});
+    if ((e.get_eax() >>> 0) !== 0x11111111) errs.push(`span ${span}: R before: eax ${(e.get_eax() >>> 0).toString(16)}`);
+    const en0 = st(4);
+    if (!callAt(inst, a, Lc, { ecx: 0x1005, edi: D + 0x800, eax: 0xB8 })) errs.push(`span ${span}: sweep into code did not return`);
+    if (st(4) === en0) errs.push(`span ${span}: sweep into code never entered`);
+    callAt(inst, a, P + 0x800, {});
+    if ((e.get_eax() >>> 0) !== 0xB8B8B8B8) errs.push(`span ${span}: R after sweep: eax ${(e.get_eax() >>> 0).toString(16)} (stale decoded block)`);
+    e.set_uop(0);
+    return out;
+  };
+  try {
+    const narrow = arm(0x1000);
+    const wide = arm(0x10000);
+    if (narrow && wide) {
+      if (narrow.hash !== wide.hash) errs.push('data sweep: wide and narrow re-guards left different memory');
+      if (narrow.widened) errs.push(`one-page re-guard widened ${narrow.widened} pages`);
+      if (!wide.widened) errs.push('wide re-guard never widened');
+      if (!(wide.reguards * 4 <= narrow.reguards)) errs.push(`wide re-guards ${wide.reguards} not well under narrow ${narrow.reguards}`);
+      if (!errs.length) console.log(`reguard-widen      ok (data sweep re-guards: ${narrow.reguards} one-page, ${wide.reguards} widened, +${wide.widened} pages; code page still exits)`);
+    }
+  } finally {
+    e.set_uop(0);
+    e.set_uop_reguard_span(0x10000);
+  }
+  return errs;
+}
+
 // --handler-hist must measure the program with the tier running; --trace-eip
 // (and --break/--watch/--count) must still hold it off, since they observe
 // every block. 13-exports.wat $dbg_recompute: $dbg_tier_guard.
@@ -684,13 +922,14 @@ const WAT_REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-back
   'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
   'dead-flags-consumed', 'dead-cf', 'cf-no-recipe', 'cf-kind', 'dead-flags-rec', 'rec-no-recipe', 'rec-kind',
   'dead-flags-jcc', 'kind', 'too-many-windows', 'label', 'arg', 'too-many-temps', 'program-too-big',
-  'ranges-full', 'scratch-overflow'];
+  'ranges-full', 'scratch-overflow', 'call-indirect'];
 
 async function main() {
   bench.ensureBuilt();
   const inst = await bench.newInstance();
   const { e } = inst;
   const a = bench.layout(inst.imageBase, 0x20000);
+  a.thunk = e.get_thunk_base() >>> 0;   // an API thunk, for the thunk-zone refusal
   if (process.env.UOP_NOFOLD) for (const f of process.env.UOP_NOFOLD.split(",")) e["set_" + f + "_emit"](0);
   let slot = 0;
   let fails = 0;
@@ -722,15 +961,21 @@ async function main() {
       continue;
     }
     const results = [];
-    for (const mode of ['hot', 'pre']) {
+    // hotOnly: an inline cache records what the slot holds when the head is
+    // compiled, which a pre-compile (before the prologue has run) cannot see.
+    for (const mode of c.hotOnly ? ['hot'] : ['hot', 'pre']) {
       const st = runCase(inst, c, a, at(), mode);
+      if (st.err && c.declines) { results.push(`${mode}: ok (${st.err})`); continue; }
       if (st.err) { results.push(`${mode}: ${st.err}`); fails++; continue; }
+      if (c.declines && st.enters) { results.push(`${mode}: FAIL entered a case that must decline`); fails++; continue; }
       const diffs = [];
       if (st.sp && c.aggr) {
         for (const [kk, v] of Object.entries(c.aggr)) { const [k, ck] = kk.split('@'); if (ck !== undefined && +ck !== clock) continue; if (st.sp[k] !== v) diffs.push(`${k}=${st.sp[k]} want ${v}`); }
         if (process.env.UOP_SP) console.log(c.name, JSON.stringify(st.sp));
       }
       if (!st.ok) diffs.push('did not return');
+      if (c.trace && !st.traces) diffs.push('no trace was formed');
+      if (c.lf && (st.lf !== off.lf || !off.lf || (c.lfEvery && off.lf !== N))) diffs.push(`logical frames ${st.lf} vs ${off.lf}`);
       if (st.eip !== off.eip) diffs.push(`eip ${st.eip.toString(16)} vs ${off.eip.toString(16)}`);
       if (st.flags !== off.flags) diffs.push(`flags ${st.flags.toString(2)} vs ${off.flags.toString(2)}`);
       if (st.mem !== off.mem) diffs.push('memory differs');
@@ -744,12 +989,17 @@ async function main() {
       if (((mode === 'hot' && !c.folds && !c.dynamicEntry) || clock) && st.stops !== off.stops) {
         const x = st.stops.split(','), y = off.stops.split(',');
         let k = 0; while (k < x.length && x[k] === y[k]) k++;
-        diffs.push(`batch ${k} stops at +0x${(+x[k]).toString(16)} vs +0x${(+y[k]).toString(16)} (${st.nstops} vs ${off.nstops} batches)`);
+        diffs.push(`batch ${k} stops at ${x[k]} vs ${y[k]} (${st.nstops} vs ${off.nstops} batches)`);
       }
       REGS.forEach((r, k) => { if (st.regs[k] !== off.regs[k]) diffs.push(`${r} ${st.regs[k].toString(16)} vs ${off.regs[k].toString(16)}`); });
-      if (!st.enters && !(c.mayStayCold && mode === 'hot')) diffs.push('never entered');
+      if (!st.enters && !c.declines && !(c.mayStayCold && mode === 'hot')) diffs.push('never entered');
+      // counters the feature must move: '>0', or an exact count
+      for (const [k, v] of Object.entries(c.want || {})) {
+        if (v === '>0' ? !(st.ctr[k] > 0) : st.ctr[k] !== v) diffs.push(`${k}=${st.ctr[k]} want ${v}`);
+      }
       if (diffs.length) fails++;
-      results.push(`${mode}: ${diffs.length ? 'FAIL ' + diffs.join(', ') : 'ok'} (enters=${st.enters} blocks=${st.blocks})`);
+      const ctrs = Object.entries(st.ctr).filter(([, v]) => v).map(([k, v]) => ` ${k}=${v}`).join('');
+      results.push(`${mode}: ${diffs.length ? 'FAIL ' + diffs.join(', ') : 'ok'} (enters=${st.enters} blocks=${st.blocks}${ctrs})`);
     }
     console.log(`${c.name.padEnd(18)} ${results.join(' | ')}`);
   }
@@ -762,6 +1012,10 @@ async function main() {
   if (!only || only === 'code-write-gate') {
     const errs = codeWriteCase(inst, a, () => a.code + 0x1000 * slot++);
     if (errs.length) { fails++; console.log(`code-write-gate    FAIL ${errs.join(', ')}`); }
+  }
+  if (!only || only === 'reguard-widen') {
+    const errs = reguardWidenCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`reguard-widen      FAIL ${errs.join(', ')}`); }
   }
   if (!only || only === 'hist-keeps-tier') {
     const errs = histCase(inst, a, () => a.code + 0x1000 * slot++);

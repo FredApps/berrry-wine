@@ -1299,7 +1299,7 @@
   ;; $THREAD_CACHE_MAIN_BYTES at offset 0 and worker N (1..15) gets
   ;; $THREAD_CACHE_STRIDE at MAIN_BYTES + (N-1)*STRIDE. See the declaration in
   ;; 00-regions.wat for why they differ, and $init_thread for the arithmetic.
-  (global $THREAD_CACHE_MAIN_BYTES i32 (i32.const 0x00F00000))
+  (global $THREAD_CACHE_MAIN_BYTES i32 (i32.const 0x00EFE000))
   (global $THREAD_CACHE_STRIDE i32 (i32.const 0x000C0000))
   ;; 0x07152000..0x07192000 held the direct-mapped block-cache index; pages
   ;; replaced it outright (docs/page-compile-design.md §§4/4.1), leaving it free.
@@ -1437,7 +1437,7 @@
   ;; THREAD_END = THREAD_BASE + THREAD_CACHE_STRIDE. Per-thread partition limit; overflow
   ;; checks use this so main (tid=0) doesn't trample T1's thread cache region.
   ;; Updated in $init_thread per tid.
-  (global $THREAD_END   (mut i32) (region.addr $THREAD_CACHE_BASE 0x00F00000))
+  (global $THREAD_END   (mut i32) (region.addr $THREAD_CACHE_BASE 0x00EFE000))
   ;; Per-thread page-compilation state. Worker threads are separate WASM
   ;; instances over the same memory, so every one of these is per-instance and
   ;; must be re-armed in $init_thread -- see the per-instance-globals rule that
@@ -3969,20 +3969,16 @@
   (global $mm5 (mut i64) (i64.const 0))
   (global $mm6 (mut i64) (i64.const 0))
   (global $mm7 (mut i64) (i64.const 0))
-  ;; Per-instance XMM state is naturally per guest thread: both cooperative
-  ;; and Worker-backed threads execute in distinct WASM instances. Only the
-  ;; SSE remains separately advertised per application: the default CPU stays
-  ;; conservative, while measured guests can opt into the implemented path.
-  ;; Store each v128 as two i64s: WebAssembly's constant-expression subset
-  ;; does not permit a SIMD initializer on every engine we support.
-  (global $xmm0l (mut i64) (i64.const 0)) (global $xmm0h (mut i64) (i64.const 0))
-  (global $xmm1l (mut i64) (i64.const 0)) (global $xmm1h (mut i64) (i64.const 0))
-  (global $xmm2l (mut i64) (i64.const 0)) (global $xmm2h (mut i64) (i64.const 0))
-  (global $xmm3l (mut i64) (i64.const 0)) (global $xmm3h (mut i64) (i64.const 0))
-  (global $xmm4l (mut i64) (i64.const 0)) (global $xmm4h (mut i64) (i64.const 0))
-  (global $xmm5l (mut i64) (i64.const 0)) (global $xmm5h (mut i64) (i64.const 0))
-  (global $xmm6l (mut i64) (i64.const 0)) (global $xmm6h (mut i64) (i64.const 0))
-  (global $xmm7l (mut i64) (i64.const 0)) (global $xmm7h (mut i64) (i64.const 0))
+  ;; This thread's XMM register file (see $XMM_FILE in 00-regions.wat): XMMn
+  ;; is the v128 at $xmm_base + n*16. It used to be sixteen i64 globals behind
+  ;; eight-way branches, which made every SSE register read two calls and up
+  ;; to fourteen compares -- measured on Black & White 2, where SSE handlers
+  ;; are ~19% of all threaded ops. Memory is shared between instances, so the
+  ;; file is tid-strided exactly like $REGFILE and $FPU_FILE.
+  (global $XMM_FILE i32 (region.addr $XMM_FILE 0))
+  (global $XMM_FILE_SIZE i32 (region.size $XMM_FILE))
+  (global $XMM_FILE_STRIDE i32 (i32.const 128))
+  (global $xmm_base (mut i32) (region.addr $XMM_FILE 0))
   ;; CPUID feature advertisement. Zero = the 486DX we have always reported, so
   ;; every guest takes its scalar fallback; 1 = set EDX bit 23 (MMX) and let the
   ;; MMX paths run. Exported so a benchmark can A/B the same build.

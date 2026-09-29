@@ -1,6 +1,10 @@
 #!/usr/bin/env node
 const assert = require('assert');
 const { createHostImports } = require('../lib/host-imports');
+// waveOutOpen's {handle, callback, instance, cbType} record: an allocated
+// region, so its base comes from the mirror (a literal here once agreed with a
+// stale host-audio.js copy and hid Civ2's lost MM_WOM_DONE).
+const WAVE_OUT_SHARED = require('../lib/region-map.generated').BASE.WAVE_OUT_SHARED;
 
 const MM_WOM_DONE = 0x03BD;
 const WHDR_DONE = 0x01;
@@ -190,8 +194,8 @@ try {
   const pacedHwnd = 0x10002;
   const pacedWaveHdrWA = 0x22000;
   const pacedWaveHdrGA = 0x403000;
-  pacedDv.setUint32(0xD164, pacedHwnd, true);
-  pacedDv.setUint32(0xD16C, 1, true);
+  pacedDv.setUint32(WAVE_OUT_SHARED + 4, pacedHwnd, true);
+  pacedDv.setUint32(WAVE_OUT_SHARED + 12, 1, true);
   pacedDv.setUint32(pacedWaveHdrWA + 16, WHDR_PREPARED | WHDR_INQUEUE, true);
   pacedImports.host.wave_out_write(pacedHandle, pcmPtr, oneSecond);
   pacedImports.host.wave_out_schedule_done(pacedHandle, pacedWaveHdrWA, pacedWaveHdrGA, oneSecond);
@@ -222,9 +226,9 @@ try {
   const functionHandle = pacedImports.host.wave_out_open(rate, channels, bits, 3);
   const functionHdrWA = 0x24000;
   const functionHdrGA = 0x405000;
-  pacedDv.setUint32(0xD164, 0x651300, true);
-  pacedDv.setUint32(0xD168, 0x12345678, true);
-  pacedDv.setUint32(0xD16C, 3, true);
+  pacedDv.setUint32(WAVE_OUT_SHARED + 4, 0x651300, true);
+  pacedDv.setUint32(WAVE_OUT_SHARED + 8, 0x12345678, true);
+  pacedDv.setUint32(WAVE_OUT_SHARED + 12, 3, true);
   pacedDv.setUint32(functionHdrWA + 16, WHDR_PREPARED | WHDR_INQUEUE, true);
   pacedImports.host.wave_out_write(functionHandle, pcmPtr, oneSecond);
   pacedImports.host.wave_out_schedule_done(
@@ -267,8 +271,8 @@ try {
   const browserHandle = browserImports.host.wave_out_open(rate, channels, bits, 5);
   const browserAc = browserCtx._voices._ac;
   const browserDv = new DataView(browserMem);
-  browserDv.setUint32(0xD164, 0xE0001, true);
-  browserDv.setUint32(0xD16C, 5, true);
+  browserDv.setUint32(WAVE_OUT_SHARED + 4, 0xE0001, true);
+  browserDv.setUint32(WAVE_OUT_SHARED + 12, 5, true);
   const waveHdrWA = 0x20000;
   const waveHdrGA = 0x401000;
   browserDv.setUint32(waveHdrWA + 16, WHDR_PREPARED | WHDR_INQUEUE, true);
@@ -319,8 +323,8 @@ try {
   const hwnd = 0x10001;
   const waveHdrWA2 = 0x21000;
   const waveHdrGA2 = 0x402000;
-  windowDv.setUint32(0xD164, hwnd, true);
-  windowDv.setUint32(0xD16C, 1, true);
+  windowDv.setUint32(WAVE_OUT_SHARED + 4, hwnd, true);
+  windowDv.setUint32(WAVE_OUT_SHARED + 12, 1, true);
   windowDv.setUint32(waveHdrWA2 + 16, WHDR_PREPARED | WHDR_INQUEUE, true);
   windowImports.host.wave_out_write(windowHandle, pcmPtr, oneSecond);
   windowImports.host.wave_out_schedule_done(windowHandle, waveHdrWA2, waveHdrGA2, oneSecond);
@@ -356,8 +360,8 @@ try {
   const resetHdrWA2 = 0x23100;
   const resetHdrGA1 = 0x403000;
   const resetHdrGA2 = 0x404000;
-  resetDv.setUint32(0xD164, resetHwnd, true);
-  resetDv.setUint32(0xD16C, 1, true);
+  resetDv.setUint32(WAVE_OUT_SHARED + 4, resetHwnd, true);
+  resetDv.setUint32(WAVE_OUT_SHARED + 12, 1, true);
   resetDv.setUint32(resetHdrWA1 + 16, WHDR_PREPARED | WHDR_INQUEUE, true);
   resetDv.setUint32(resetHdrWA2 + 16, WHDR_PREPARED | WHDR_INQUEUE, true);
   resetImports.host.wave_out_write(resetHandle, pcmPtr, oneSecond);

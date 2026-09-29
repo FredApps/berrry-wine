@@ -7,6 +7,8 @@
   ;; $VIDEO_ARENA layout:
   ;;   +0x0000  HIC table, $ICM_SLOTS records of 64 bytes
   ;;   +0x0400  ICINFO name strings
+  ;;   +0x0600  installable-driver table, then its lookup strings at +0x0700
+  ;;   +0x0800  Win16 MSVIDEO driver instances (09e-win16-api.wat)
   ;;   +0x1000  one output row being converted (16 KB)
   ;;
   ;; HIC record:
@@ -42,6 +44,40 @@
   (global $ICM_CODEC_RLE8 i32 (i32.const 2))
   (global $ICM_CODEC_CVID i32 (i32.const 3))
   (global $ICM_CODEC_CRAM i32 (i32.const 4))   ;; MS Video 1, 8 or 16 bpp
+  (global $ICM_CODEC_GUEST i32 (i32.const 5))  ;; an installed x86 driver's DriverProc
+
+  ;; ---- installable drivers --------------------------------------------
+  ;; A fourcc no native codec claims is looked up the way Windows 9x does:
+  ;; SYSTEM.INI [drivers32] "vidc.XXXX=file.dll", then the NT registry key.
+  ;; The DLL is loaded as guest x86 (the LoadLibrary yield, retried from the
+  ;; caller's thunk), and every message goes to its exported DriverProc
+  ;; (dwDriverId, hDriver, uMsg, lParam1, lParam2), stdcall, run as a nested
+  ;; synchronous guest call.
+  ;;
+  ;; Driver table, $ICM_DRV_SLOTS records of 32 bytes at +0x600:
+  ;;   +0 fccHandler (lower-cased; 0 = free)  +4 DLL index  +8 DriverProc
+  ;;   +12 open HICs  +16 hDriver
+  ;; A guest-driver HIC record reuses +40 dwDriverId, +44 driver slot and
+  ;; +48 a 64-byte guest scratch (ICOPEN, then ICDECOMPRESS); its workspace
+  ;; fields stay zero.
+  (global $ICM_DRV_SLOTS i32 (i32.const 8))
+  (global $ICM_DRV_HANDLE_BASE i32 (i32.const 0x44520001))   ;; "DR" + slot + 1
+  (global $ICM_PARK i32 (i32.const -2))   ;; "the caller parks on its thunk while the DLL loads"
+  (data (region.addr $VIDEO_ARENA 0x700) "vidc.XXXX\00")
+  (data (region.addr $VIDEO_ARENA 0x710) "drivers32\00")
+  (data (region.addr $VIDEO_ARENA 0x720) "system.ini\00")
+  (data (region.addr $VIDEO_ARENA 0x730) "\00")
+  (data (region.addr $VIDEO_ARENA 0x740) "DriverProc\00")
+  (data (region.addr $VIDEO_ARENA 0x750) "Software\5cMicrosoft\5cWindows NT\5cCurrentVersion\5cDrivers32\00")
+  (data (region.addr $VIDEO_ARENA 0x790) "C:\5cWINDOWS\5cSYSTEM\5c")
+  ;; Guest scratch for the driver file name: +0 "C:\WINDOWS\SYSTEM\" +18 the
+  ;; name from SYSTEM.INI (so both spellings are one buffer), +288 cb, +292 type.
+  (global $icm_name_g (mut i32) (i32.const 0))
+  ;; The fourcc whose DLL load is in flight: a retry that still finds no
+  ;; module means the load failed, and the open fails instead of re-yielding.
+  (global $icm_load_fcc (mut i32) (i32.const 0))
+  (global $icm_load_tries (mut i32) (i32.const 0))
+  (global $loadlib_keep_regs (mut i32) (i32.const 0))
 
   ;; fourccs, lower-cased with | 0x20202020.
   (global $FCC_VIDC i32 (i32.const 0x63646976))
@@ -295,6 +331,8 @@
     (local $codec i32) (local $w i32) (local $h i32) (local $px i32)
     (local $len i32) (local $ga i32) (local $base i32) (local $p i32)
     (local.set $codec (i32.load offset=4 (local.get $rec)))
+    (if (i32.eq (local.get $codec) (global.get $ICM_CODEC_GUEST))
+      (then (return (call $icm_guest_send (local.get $rec) (i32.const 0x400C) (local.get $bi) (local.get $bo)))))
     (if (i32.ne (call $icm_query (local.get $codec) (local.get $bi) (local.get $bo)) (i32.const 0))
       (then (return (global.get $ICERR_BADFORMAT))))
     (local.set $w (call $gl32 (i32.add (local.get $bi) (i32.const 4))))
@@ -569,7 +607,18 @@
   ;; One frame, full picture to full output: ICM_DECOMPRESS / ICDecompress.
   (func $icm_decompress (param $rec i32) (param $flags i32) (param $bi i32) (param $data i32)
                         (param $bo i32) (param $out i32) (result i32)
-    (local $r i32)
+    (local $r i32) (local $s i32)
+    (if (i32.eq (i32.load offset=4 (local.get $rec)) (global.get $ICM_CODEC_GUEST))
+      (then
+        ;; ICDECOMPRESS {dwFlags, lpbiInput, lpInput, lpbiOutput, lpOutput, ckid}
+        (local.set $s (i32.load offset=48 (local.get $rec)))
+        (call $gs32 (local.get $s) (local.get $flags))
+        (call $gs32 (i32.add (local.get $s) (i32.const 4)) (local.get $bi))
+        (call $gs32 (i32.add (local.get $s) (i32.const 8)) (local.get $data))
+        (call $gs32 (i32.add (local.get $s) (i32.const 12)) (local.get $bo))
+        (call $gs32 (i32.add (local.get $s) (i32.const 16)) (local.get $out))
+        (call $gs32 (i32.add (local.get $s) (i32.const 20)) (i32.const 0))
+        (return (call $icm_guest_send (local.get $rec) (i32.const 0x400D) (local.get $s) (i32.const 24)))))
     (if (i32.or (i32.eqz (local.get $bi)) (i32.eqz (local.get $bo)))
       (then (return (global.get $ICERR_BADPARAM))))
     ;; Lenient about a missing BEGIN, as the Cinepak driver is.
@@ -703,10 +752,353 @@
     (i32.or (i32.eqz (local.get $fcc))
             (i32.eq (call $icm_fcc_lower (local.get $fcc)) (global.get $FCC_VIDC))))
 
+  ;; ---- installable drivers: the guest DriverProc backend ---------------
+
+  ;; DriverProc(dwDriverId, hDriver, uMsg, lParam1, lParam2), run to its
+  ;; return as a nested synchronous guest call; the interrupted x86 context
+  ;; is saved and restored around it as $edit_stream_call does.
+  (func $icm_drv_call (param $proc i32) (param $id i32) (param $hdrv i32)
+                      (param $msg i32) (param $p1 i32) (param $p2 i32) (result i32)
+    (local $old_eip i32) (local $old_esp i32) (local $old_eax i32)
+    (local $old_ecx i32) (local $old_edx i32) (local $old_ebx i32)
+    (local $old_esi i32) (local $old_edi i32) (local $old_ebp i32)
+    (local $old_handler_set_eip i32) (local $old_steps i32)
+    (local $old_yield_reason i32) (local $old_yield_flag i32) (local $old_thunk_eip i32)
+    (local $result i32) (local $rounds i32) (local $sp i32)
+    (if (i32.eqz (local.get $proc)) (then (return (global.get $ICERR_UNSUPPORTED))))
+    ;; Every API the driver calls re-points $current_thunk_eip at its own
+    ;; thunk. The caller may park on its thunk after this returns (a parked
+    ;; "play wait" decodes a frame and then parks again), and parking on the
+    ;; driver's last import instead ran the guest into address 0.
+    (local.set $old_thunk_eip (global.get $current_thunk_eip))
+    (local.set $old_eip (global.get $eip))
+    (local.set $old_esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $old_eax (i32.load offset=0 (global.get $reg_base)))
+    (local.set $old_ecx (i32.load offset=4 (global.get $reg_base)))
+    (local.set $old_edx (i32.load offset=8 (global.get $reg_base)))
+    (local.set $old_ebx (i32.load offset=12 (global.get $reg_base)))
+    (local.set $old_esi (i32.load offset=24 (global.get $reg_base)))
+    (local.set $old_edi (i32.load offset=28 (global.get $reg_base)))
+    (local.set $old_ebp (i32.load offset=20 (global.get $reg_base)))
+    (local.set $old_handler_set_eip (global.get $handler_set_eip))
+    (local.set $old_steps (global.get $steps))
+    (local.set $old_yield_reason (global.get $yield_reason))
+    (local.set $old_yield_flag (global.get $yield_flag))
+    ;; Push right to left, then the return thunk.
+    (local.set $sp (i32.sub (local.get $old_esp) (i32.const 24)))
+    (call $gs32 (local.get $sp) (global.get $sync_msg_ret_thunk))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 4)) (local.get $id))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 8)) (local.get $hdrv))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 12)) (local.get $msg))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 16)) (local.get $p1))
+    (call $gs32 (i32.add (local.get $sp) (i32.const 20)) (local.get $p2))
+    (i32.store offset=16 (global.get $reg_base) (local.get $sp))
+    (global.set $eip (local.get $proc))
+    (global.set $steps (i32.const 0))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0))
+    (global.set $sync_msg_depth (i32.add (global.get $sync_msg_depth) (i32.const 1)))
+    (block $done (loop $run_proc
+      (call $run (i32.const 1000000))
+      (br_if $done (i32.eqz (global.get $eip)))
+      (local.set $rounds (i32.add (local.get $rounds) (i32.const 1)))
+      (if (i32.ge_u (local.get $rounds) (i32.const 64))
+        (then
+          ;; The driver never came back: say where it was and why.
+          (call $host_log_i32 (i32.const 0xCA1CD000))
+          (call $host_log_i32 (global.get $eip))
+          (call $host_log_i32 (global.get $yield_reason))
+          (call $host_log_i32 (local.get $msg))
+          (br $done)))
+      (br $run_proc)))
+    (global.set $sync_msg_depth (i32.sub (global.get $sync_msg_depth) (i32.const 1)))
+    ;; A driver that never came back answers "unsupported", not garbage.
+    (local.set $result
+      (select (i32.load offset=0 (global.get $reg_base)) (global.get $ICERR_UNSUPPORTED)
+        (i32.eqz (global.get $eip))))
+    (global.set $eip (local.get $old_eip))
+    (i32.store offset=16 (global.get $reg_base) (local.get $old_esp))
+    (i32.store offset=0 (global.get $reg_base) (local.get $old_eax))
+    (i32.store offset=4 (global.get $reg_base) (local.get $old_ecx))
+    (i32.store offset=8 (global.get $reg_base) (local.get $old_edx))
+    (i32.store offset=12 (global.get $reg_base) (local.get $old_ebx))
+    (i32.store offset=24 (global.get $reg_base) (local.get $old_esi))
+    (i32.store offset=28 (global.get $reg_base) (local.get $old_edi))
+    (i32.store offset=20 (global.get $reg_base) (local.get $old_ebp))
+    (global.set $handler_set_eip (local.get $old_handler_set_eip))
+    (global.set $steps (local.get $old_steps))
+    (global.set $yield_reason (local.get $old_yield_reason))
+    (global.set $yield_flag (local.get $old_yield_flag))
+    (global.set $current_thunk_eip (local.get $old_thunk_eip))
+    (local.get $result))
+
+  (func $icm_drv_rec (param $slot i32) (result i32)
+    (i32.add (region.addr $VIDEO_ARENA 0x600) (i32.shl (local.get $slot) (i32.const 5))))
+
+  ;; The driver file for fccHandler: SYSTEM.INI [drivers32] vidc.XXXX, else
+  ;; HKLM\Software\Microsoft\Windows NT\CurrentVersion\Drivers32. Returns the
+  ;; guest address of the file's base name in $icm_name_g, or 0. When the
+  ;; entry is a bare name, $icm_name_g itself spells it in the system
+  ;; directory.
+  (func $icm_drv_lookup (param $fcc i32) (result i32)
+    (local $g i32) (local $n i32) (local $h i32) (local $p i32) (local $c i32) (local $base i32)
+    (if (i32.lt_u (local.get $fcc) (i32.const 0x01000000)) (then (return (i32.const 0))))
+    (if (i32.eqz (global.get $icm_name_g))
+      (then (global.set $icm_name_g (call $heap_alloc (i32.const 320)))))
+    (local.set $g (global.get $icm_name_g))
+    (if (i32.eqz (local.get $g)) (then (return (i32.const 0))))
+    (i32.store (region.addr $VIDEO_ARENA 0x705) (local.get $fcc))
+    (memory.copy (call $g2w (local.get $g)) (region.addr $VIDEO_ARENA 0x790) (i32.const 18))
+    (call $gs8 (i32.add (local.get $g) (i32.const 18)) (i32.const 0))
+    (local.set $n (call $host_ini_get_string
+      (region.addr $VIDEO_ARENA 0x710) (region.addr $VIDEO_ARENA 0x700) (region.addr $VIDEO_ARENA 0x730)
+      (i32.add (local.get $g) (i32.const 18)) (i32.const 240)
+      (region.addr $VIDEO_ARENA 0x720) (i32.const 0)))
+    (if (i32.eqz (local.get $n))
+      (then
+        (local.set $h (call $host_reg_open_key (i32.const 0x80000002) (region.addr $VIDEO_ARENA 0x750) (i32.const 0)))
+        (if (local.get $h)
+          (then
+            (call $gs32 (i32.add (local.get $g) (i32.const 288)) (i32.const 240))
+            (if (i32.eqz (call $host_reg_query_value (local.get $h) (region.addr $VIDEO_ARENA 0x700)
+                  (i32.add (local.get $g) (i32.const 292)) (i32.add (local.get $g) (i32.const 18))
+                  (i32.add (local.get $g) (i32.const 288)) (i32.const 0)))
+              (then (local.set $n (call $guest_strlen (i32.add (local.get $g) (i32.const 18))))))
+            (drop (call $host_reg_close_key (local.get $h)))))))
+    (if (i32.eqz (local.get $n)) (then (return (i32.const 0))))
+    (local.set $p (i32.add (local.get $g) (i32.const 18)))
+    (local.set $base (local.get $p))
+    (block $end (loop $scan
+      (local.set $c (call $gl8 (local.get $p)))
+      (br_if $end (i32.eqz (local.get $c)))
+      (local.set $p (i32.add (local.get $p) (i32.const 1)))
+      (if (i32.or (i32.eq (local.get $c) (i32.const 92))
+            (i32.or (i32.eq (local.get $c) (i32.const 47)) (i32.eq (local.get $c) (i32.const 58))))
+        (then (local.set $base (local.get $p))))
+      (br $scan)))
+    (local.get $base))
+
+  ;; Ask the host to load the DLL named by $loadlib_name_ptr at the end of
+  ;; this slice (the LoadLibraryA yield, reason 5). The guest's EAX/ECX/EDX
+  ;; are kept across it, so this can ride on any handler's normal return:
+  ;; the MCI device opens a movie this way and opens its codec at the first
+  ;; frame. $steps is left alone on purpose: a call-through-register
+  ;; handler ($th_call_r) reads $steps == 0 as "the handler parked and
+  ;; set EIP itself" and would then skip the return; $run halts on
+  ;; yield_reason 5 at its next turn either way.
+  (func $icm_request_load
+    (global.set $loadlib_keep_regs (i32.const 1))
+    (global.set $yield_reason (i32.const 5))
+    (global.set $yield_flag (i32.const 1)))
+
+  ;; The same, parking the calling API on its import thunk with its frame
+  ;; intact, so the handler runs again once the module is mapped.
+  (func $icm_park_load
+    (call $icm_request_load)
+    (if (global.get $current_thunk_eip)
+      (then (global.set $eip (global.get $current_thunk_eip))))
+    (global.set $handler_set_eip (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
+  ;; Read by the host's LoadLibrary-yield handler: 1 = restore EAX/ECX/EDX
+  ;; afterwards instead of returning the module handle in EAX.
+  (func (export "take_loadlib_keep_regs") (result i32)
+    (local $v i32)
+    (local.set $v (global.get $loadlib_keep_regs))
+    (global.set $loadlib_keep_regs (i32.const 0))
+    (local.get $v))
+
+  ;; The loaded driver for fccHandler: its slot, -1, or $ICM_PARK when its
+  ;; DLL has to be loaded first ($icm_park_load, then retry).
+  (func $icm_drv_get (param $fcc i32) (result i32)
+    (local $f i32) (local $i i32) (local $d i32) (local $base i32) (local $full i32)
+    (local $idx i32) (local $proc i32)
+    (local.set $f (call $icm_fcc_lower (local.get $fcc)))
+    (block $found (loop $scan
+      (br_if $found (i32.ge_u (local.get $i) (global.get $ICM_DRV_SLOTS)))
+      (if (i32.eq (i32.load (call $icm_drv_rec (local.get $i))) (local.get $f))
+        (then (return (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan)))
+    (local.set $base (call $icm_drv_lookup (local.get $fcc)))
+    (if (i32.eqz (local.get $base)) (then (return (i32.const -1))))
+    (local.set $idx (call $find_loaded_dll (local.get $base)))
+    (if (i32.lt_s (local.get $idx) (i32.const 0))
+      (then
+        ;; Asked three times and still no module: the load failed.
+        (if (i32.eq (global.get $icm_load_fcc) (local.get $f))
+          (then
+            (global.set $icm_load_tries (i32.add (global.get $icm_load_tries) (i32.const 1)))
+            (if (i32.ge_u (global.get $icm_load_tries) (i32.const 3))
+              (then (global.set $icm_load_fcc (i32.const 0)) (return (i32.const -1)))))
+          (else (global.set $icm_load_tries (i32.const 0))))
+        (local.set $full (select (global.get $icm_name_g) (i32.add (global.get $icm_name_g) (i32.const 18))
+          (i32.eq (local.get $base) (i32.add (global.get $icm_name_g) (i32.const 18)))))
+        (if (call $host_has_dll_file (call $g2w (local.get $base)))
+          (then (global.set $loadlib_name_ptr (call $g2w (local.get $base))))
+          (else
+            (if (i32.eqz (call $host_has_dll_file (call $g2w (local.get $full))))
+              (then (return (i32.const -1))))
+            (global.set $loadlib_name_ptr (call $g2w (local.get $full)))))
+        (global.set $icm_load_fcc (local.get $f))
+        (return (global.get $ICM_PARK))))
+    (global.set $icm_load_fcc (i32.const 0))
+    (local.set $proc (call $resolve_name_export (local.get $idx) (region.addr $VIDEO_ARENA 0x740)))
+    (if (i32.eqz (local.get $proc)) (then (return (i32.const -1))))
+    (local.set $i (i32.const 0))
+    (block $free (loop $scan2
+      (if (i32.ge_u (local.get $i) (global.get $ICM_DRV_SLOTS)) (then (return (i32.const -1))))
+      (br_if $free (i32.eqz (i32.load (call $icm_drv_rec (local.get $i)))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $scan2)))
+    (local.set $d (call $icm_drv_rec (local.get $i)))
+    (i32.store offset=4 (local.get $d) (local.get $idx))
+    (i32.store offset=8 (local.get $d) (local.get $proc))
+    (i32.store offset=12 (local.get $d) (i32.const 0))
+    (i32.store offset=16 (local.get $d) (i32.add (global.get $ICM_DRV_HANDLE_BASE) (local.get $i)))
+    ;; DRV_LOAD must answer nonzero; DRV_ENABLE's answer is ignored.
+    (if (i32.eqz (call $icm_drv_call (local.get $proc) (i32.const 0) (i32.load offset=16 (local.get $d))
+          (i32.const 1) (i32.const 0) (i32.const 0)))
+      (then (i32.store offset=16 (local.get $d) (i32.const 0)) (return (i32.const -1))))
+    (drop (call $icm_drv_call (local.get $proc) (i32.const 0) (i32.load offset=16 (local.get $d))
+      (i32.const 2) (i32.const 0) (i32.const 0)))
+    (i32.store (local.get $d) (local.get $f))
+    (local.get $i))
+
+  ;; The last HIC on a driver is gone: DRV_DISABLE, DRV_FREE, forget it.
+  ;; The module stays mapped, as FreeLibrary would leave it for a reopen.
+  (func $icm_drv_release (param $slot i32)
+    (local $d i32)
+    (local.set $d (call $icm_drv_rec (local.get $slot)))
+    (drop (call $icm_drv_call (i32.load offset=8 (local.get $d)) (i32.const 0) (i32.load offset=16 (local.get $d))
+      (i32.const 5) (i32.const 0) (i32.const 0)))
+    (drop (call $icm_drv_call (i32.load offset=8 (local.get $d)) (i32.const 0) (i32.load offset=16 (local.get $d))
+      (i32.const 6) (i32.const 0) (i32.const 0)))
+    (memory.fill (local.get $d) (i32.const 0) (i32.const 32)))
+
+  ;; ICOpen through an installed driver: HIC, 0, or $ICM_PARK.
+  (func $icm_open_guest (param $fcc i32) (param $mode i32) (result i32)
+    (local $slot i32) (local $d i32) (local $s i32) (local $hic i32) (local $rec i32) (local $id i32)
+    (local.set $slot (call $icm_drv_get (local.get $fcc)))
+    (if (i32.eq (local.get $slot) (global.get $ICM_PARK)) (then (return (global.get $ICM_PARK))))
+    (if (i32.lt_s (local.get $slot) (i32.const 0)) (then (return (i32.const 0))))
+    (local.set $d (call $icm_drv_rec (local.get $slot)))
+    (local.set $s (call $heap_alloc (i32.const 64)))
+    (if (i32.eqz (local.get $s)) (then (return (i32.const 0))))
+    (local.set $hic (call $icm_open_codec (global.get $ICM_CODEC_GUEST) (local.get $fcc) (local.get $mode)))
+    (if (i32.eqz (local.get $hic))
+      (then (call $heap_free (local.get $s)) (return (i32.const 0))))
+    (local.set $rec (call $icm_rec_of (local.get $hic)))
+    ;; ICOPEN {dwSize, fccType, fccHandler, dwVersion, dwFlags, dwError, pV1, pV2, dnDevNode}
+    (call $gs32 (local.get $s) (i32.const 36))
+    (call $gs32 (i32.add (local.get $s) (i32.const 4)) (global.get $FCC_VIDC))
+    (call $gs32 (i32.add (local.get $s) (i32.const 8)) (local.get $fcc))
+    (call $gs32 (i32.add (local.get $s) (i32.const 12)) (i32.const 0x104))
+    (call $gs32 (i32.add (local.get $s) (i32.const 16)) (local.get $mode))
+    (call $gs32 (i32.add (local.get $s) (i32.const 20)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $s) (i32.const 24)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $s) (i32.const 28)) (i32.const 0))
+    (call $gs32 (i32.add (local.get $s) (i32.const 32)) (i32.const 0))
+    (local.set $id (call $icm_drv_call (i32.load offset=8 (local.get $d)) (i32.const 0)
+      (i32.load offset=16 (local.get $d)) (i32.const 3) (i32.const 0) (local.get $s)))
+    (if (i32.or (i32.eqz (local.get $id)) (i32.eq (local.get $id) (global.get $ICERR_UNSUPPORTED)))
+      (then
+        (i32.store (local.get $rec) (i32.const 0))
+        (call $heap_free (local.get $s))
+        (if (i32.eqz (i32.load offset=12 (local.get $d))) (then (call $icm_drv_release (local.get $slot))))
+        (return (i32.const 0))))
+    (i32.store offset=40 (local.get $rec) (local.get $id))
+    (i32.store offset=44 (local.get $rec) (local.get $slot))
+    (i32.store offset=48 (local.get $rec) (local.get $s))
+    (i32.store offset=12 (local.get $d) (i32.add (i32.load offset=12 (local.get $d)) (i32.const 1)))
+    (local.get $hic))
+
+  ;; One ICM message to a guest-driver HIC.
+  (func $icm_guest_send (param $rec i32) (param $msg i32) (param $p1 i32) (param $p2 i32) (result i32)
+    (local $d i32)
+    (local.set $d (call $icm_drv_rec (i32.load offset=44 (local.get $rec))))
+    (call $icm_drv_call (i32.load offset=8 (local.get $d)) (i32.load offset=40 (local.get $rec))
+      (i32.load offset=16 (local.get $d)) (local.get $msg) (local.get $p1) (local.get $p2)))
+
+  ;; Close any HIC record: DRV_CLOSE to a guest driver (and DRV_DISABLE +
+  ;; DRV_FREE on its last instance), or release a native codec's workspace.
+  (func $icm_close_rec (param $rec i32)
+    (local $slot i32) (local $d i32)
+    (if (i32.eq (i32.load offset=4 (local.get $rec)) (global.get $ICM_CODEC_GUEST))
+      (then
+        (local.set $slot (i32.load offset=44 (local.get $rec)))
+        (local.set $d (call $icm_drv_rec (local.get $slot)))
+        (drop (call $icm_guest_send (local.get $rec) (i32.const 4) (i32.const 0) (i32.const 0)))
+        (if (i32.load offset=48 (local.get $rec))
+          (then (call $heap_free (i32.load offset=48 (local.get $rec)))))
+        (i32.store offset=12 (local.get $d) (i32.sub (i32.load offset=12 (local.get $d)) (i32.const 1)))
+        (if (i32.eqz (i32.load offset=12 (local.get $d)))
+          (then (call $icm_drv_release (local.get $slot)))))
+      (else (call $icm_ws_release (local.get $rec))))
+    (i32.store (local.get $rec) (i32.const 0)))
+
+  ;; ICLocate's installed-driver half: the named handler, else the input's
+  ;; own fourcc, each kept only if it accepts the formats. HIC, 0 or $ICM_PARK.
+  (func $icm_locate_guest (param $fcc i32) (param $bi i32) (param $bo i32) (param $mode i32) (result i32)
+    (local $hic i32) (local $k i32) (local $f i32)
+    (block $done (loop $try
+      (br_if $done (i32.ge_u (local.get $k) (i32.const 2)))
+      (local.set $f (select (local.get $fcc)
+        (select (call $gl32 (i32.add (local.get $bi) (i32.const 16))) (i32.const 0) (i32.ne (local.get $bi) (i32.const 0)))
+        (i32.eqz (local.get $k))))
+      (local.set $k (i32.add (local.get $k) (i32.const 1)))
+      (br_if $try (i32.lt_u (local.get $f) (i32.const 0x01000000)))
+      (br_if $try (i32.ne (call $icm_codec_for_handler (local.get $f)) (i32.const 0)))
+      (local.set $hic (call $icm_open_guest (local.get $f) (local.get $mode)))
+      (if (i32.eq (local.get $hic) (global.get $ICM_PARK)) (then (return (global.get $ICM_PARK))))
+      (if (local.get $hic)
+        (then
+          (if (i32.eqz (call $icm_guest_send (call $icm_rec_of (local.get $hic)) (i32.const 0x400B)
+                (local.get $bi) (local.get $bo)))
+            (then (return (local.get $hic))))
+          (call $icm_close_rec (call $icm_rec_of (local.get $hic)))))
+      (br $try)))
+    (i32.const 0))
+
+  ;; ICInfo for an installed driver, from its registration alone (Windows
+  ;; does not load the DLL for this either).
+  (func $icm_guest_info (param $fcc i32) (param $ga i32) (result i32)
+    (local $base i32) (local $i i32)
+    (if (i32.eqz (local.get $ga)) (then (return (i32.const 0))))
+    (local.set $base (call $icm_drv_lookup (local.get $fcc)))
+    (if (i32.eqz (local.get $base)) (then (return (i32.const 0))))
+    (block $z (loop $clear
+      (br_if $z (i32.ge_u (local.get $i) (i32.const 568)))
+      (call $gs32 (i32.add (local.get $ga) (local.get $i)) (i32.const 0))
+      (local.set $i (i32.add (local.get $i) (i32.const 4)))
+      (br $clear)))
+    (call $gs32 (local.get $ga) (i32.const 568))
+    (call $gs32 (i32.add (local.get $ga) (i32.const 4)) (global.get $FCC_VIDC))
+    (call $gs32 (i32.add (local.get $ga) (i32.const 8)) (local.get $fcc))
+    (call $gs32 (i32.add (local.get $ga) (i32.const 20)) (i32.const 0x104))
+    (call $icm_put_wstr (i32.add (local.get $ga) (i32.const 312)) (call $g2w (local.get $base)) (i32.const 128))
+    (i32.const 1))
+
+  ;; DefDriverProc(dwDriverId, hDriver, uMsg, lParam1, lParam2): what an
+  ;; installable driver hands the messages it does not handle.
+  (func $handle_DefDriverProc (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $r i32)
+    ;; DRV_LOAD, DRV_ENABLE, DRV_OPEN, DRV_CLOSE, DRV_DISABLE, DRV_FREE
+    (if (i32.and (i32.ge_u (local.get $arg2) (i32.const 1)) (i32.le_u (local.get $arg2) (i32.const 6)))
+      (then (local.set $r (i32.const 1))))
+    (if (i32.eq (local.get $arg2) (i32.const 7)) (then (local.set $r (i32.const 1))))    ;; DRV_CONFIGURE: DRVCNF_OK
+    (if (i32.or (i32.eq (local.get $arg2) (i32.const 9)) (i32.eq (local.get $arg2) (i32.const 10)))
+      (then (local.set $r (i32.const 2))))   ;; DRV_INSTALL / DRV_REMOVE: DRVCNF_RESTART
+    (i32.store offset=0 (global.get $reg_base) (local.get $r))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
+
   ;; ICSendMessage's message switch.
   (func $icm_message (param $rec i32) (param $msg i32) (param $p1 i32) (param $p2 i32) (result i32)
     (local $codec i32)
     (local.set $codec (i32.load offset=4 (local.get $rec)))
+    ;; An installed driver answers every message itself.
+    (if (i32.eq (local.get $codec) (global.get $ICM_CODEC_GUEST))
+      (then (return (call $icm_guest_send (local.get $rec) (local.get $msg) (local.get $p1) (local.get $p2)))))
     (if (i32.eq (local.get $msg) (i32.const 0x400B))   ;; DECOMPRESS_QUERY
       (then (return (call $icm_query (local.get $codec) (local.get $p1) (local.get $p2)))))
     (if (i32.eq (local.get $msg) (i32.const 0x400A))   ;; DECOMPRESS_GET_FORMAT
@@ -758,9 +1150,15 @@
   (func $handle_ICOpen (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $codec i32) (local $hic i32)
     (local.set $codec (call $icm_codec_for_handler (local.get $arg1)))
-    (if (i32.and (i32.ne (local.get $codec) (i32.const 0))
-          (i32.and (call $icm_type_ok (local.get $arg0)) (call $icm_mode_ok (local.get $arg2))))
-      (then (local.set $hic (call $icm_open_codec (local.get $codec) (local.get $arg1) (local.get $arg2)))))
+    (if (i32.and (call $icm_type_ok (local.get $arg0)) (call $icm_mode_ok (local.get $arg2)))
+      (then
+        (if (local.get $codec)
+          (then (local.set $hic (call $icm_open_codec (local.get $codec) (local.get $arg1) (local.get $arg2))))
+          (else
+            ;; Not built in: an installed driver, as Windows would find it.
+            (local.set $hic (call $icm_open_guest (local.get $arg1) (local.get $arg2)))
+            (if (i32.eq (local.get $hic) (global.get $ICM_PARK))
+              (then (call $icm_park_load) (return)))))))
     (i32.store offset=0 (global.get $reg_base) (local.get $hic))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
@@ -771,8 +1169,7 @@
     (local.set $r (global.get $ICERR_BADHANDLE))
     (if (local.get $rec)
       (then
-        (call $icm_ws_release (local.get $rec))
-        (i32.store (local.get $rec) (i32.const 0))
+        (call $icm_close_rec (local.get $rec))
         (local.set $r (global.get $ICERR_OK))))
     (i32.store offset=0 (global.get $reg_base) (local.get $r))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
@@ -790,8 +1187,10 @@
             (if (i32.eq (local.get $arg1) (i32.const 2)) (then (local.set $codec (global.get $ICM_CODEC_CRAM)))))
           (else
             (local.set $codec (call $icm_codec_for_handler (local.get $arg1)))
-            (if (i32.eq (local.get $codec) (global.get $ICM_CODEC_RAW)) (then (local.set $codec (i32.const 0))))))
-        (if (local.get $codec)
+            (if (i32.eq (local.get $codec) (global.get $ICM_CODEC_RAW)) (then (local.set $codec (i32.const -1))))
+            (if (i32.eqz (local.get $codec))
+              (then (local.set $ok (call $icm_guest_info (local.get $arg1) (local.get $arg2)))))))
+        (if (i32.gt_s (local.get $codec) (i32.const 0))
           (then (local.set $ok (i32.ne (call $icm_fill_info (local.get $codec) (local.get $arg2) (i32.const 568)) (i32.const 0)))))))
     (i32.store offset=0 (global.get $reg_base) (local.get $ok))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
@@ -801,7 +1200,10 @@
     (local $rec i32) (local $r i32)
     (local.set $rec (call $icm_rec_of (local.get $arg0)))
     (if (local.get $rec)
-      (then (local.set $r (call $icm_fill_info (i32.load offset=4 (local.get $rec)) (local.get $arg1) (local.get $arg2)))))
+      (then
+        (if (i32.eq (i32.load offset=4 (local.get $rec)) (global.get $ICM_CODEC_GUEST))
+          (then (local.set $r (call $icm_guest_send (local.get $rec) (i32.const 0x5002) (local.get $arg1) (local.get $arg2))))
+          (else (local.set $r (call $icm_fill_info (i32.load offset=4 (local.get $rec)) (local.get $arg1) (local.get $arg2)))))))
     (i32.store offset=0 (global.get $reg_base) (local.get $r))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
 
@@ -842,6 +1244,11 @@
         (if (i32.and (i32.ne (local.get $codec) (i32.const 0))
               (i32.eqz (call $icm_query (local.get $codec) (local.get $arg2) (local.get $arg3))))
           (then (local.set $hic (call $icm_open_codec (local.get $codec)
-            (call $gl32 (i32.add (local.get $arg2) (i32.const 16))) (local.get $mode)))))))
+            (call $gl32 (i32.add (local.get $arg2) (i32.const 16))) (local.get $mode)))))
+        (if (i32.and (i32.eqz (local.get $hic)) (i32.ne (local.get $arg2) (i32.const 0)))
+          (then
+            (local.set $hic (call $icm_locate_guest (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $mode)))
+            (if (i32.eq (local.get $hic) (global.get $ICM_PARK))
+              (then (call $icm_park_load) (return)))))))
     (i32.store offset=0 (global.get $reg_base) (local.get $hic))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))

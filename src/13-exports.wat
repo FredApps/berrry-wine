@@ -352,18 +352,22 @@
   ;; (width, op, count) and a spread of values. Runs one shift with a chosen
   ;; carry-in and leaves CF/ZF/SF readable.
   (func (export "test_shift") (param $bits i32) (param $type i32)
-        (param $val i32) (param $count i32) (param $cf_in i32) (result i32)
+        (param $val i32) (param $count i32) (param $cf_in i32) (param $res_in i32) (result i32)
     ;; flag_op 8 with a/b is the raw-carry form, which is how a carry-in is
-    ;; seeded without disturbing the result flags.
+    ;; seeded without disturbing the result flags. $res_in seeds the ZF/SF
+    ;; source, which a rotate must leave alone.
     (global.set $flag_op (i32.const 8))
+    (global.set $flag_sign_shift (i32.const 31))
     (global.set $flag_a (local.get $cf_in))
     (global.set $flag_b (i32.const 0))
+    (global.set $flag_res (local.get $res_in))
     (call $do_shift (local.get $bits) (local.get $type) (local.get $val) (local.get $count)))
 
   (func (export "test_shift_flags") (result i32)
     (i32.or (call $get_cf)
       (i32.or (i32.shl (call $get_zf) (i32.const 1))
-              (i32.shl (call $get_sf) (i32.const 2)))))
+              (i32.or (i32.shl (call $get_sf) (i32.const 2))
+                      (i32.shl (call $get_of) (i32.const 3))))))
 
   ;; ============================================================
   ;; DEBUG EXPORTS
@@ -572,6 +576,11 @@
   ;; VirtualAlloc and the high CreateDIBSection arena.
   (func (export "guest_to_wasm") (param $guest i32) (result i32)
     (call $g2w (local.get $guest)))
+  ;; The g2w-fast macro's miss path on its own, so test/test-g2w-fast-macro.js
+  ;; can check that the macro hands every non-direct address to the same
+  ;; DIB -> page table -> miss chain the old single $g2w ran.
+  (func (export "test_g2w_slow") (param $guest i32) (result i32)
+    (call $g2w_slow (local.get $guest)))
   (func (export "get_rsrc_rva") (result i32) (global.get $rsrc_rva))
   (func (export "get_thread_alloc") (result i32) (global.get $thread_alloc))
   (func (export "get_cache_clears") (result i32) (global.get $cache_clears))
@@ -1532,6 +1541,10 @@
       (i32.mul (local.get $tid) (global.get $REGFILE_STRIDE))))
     (global.set $fpu_base (i32.add (global.get $FPU_FILE)
       (i32.mul (local.get $tid) (global.get $FPU_FILE_STRIDE))))
+    ;; A reused tid slot must not hand a new thread its predecessor's XMM.
+    (global.set $xmm_base (i32.add (global.get $XMM_FILE)
+      (i32.mul (local.get $tid) (global.get $XMM_FILE_STRIDE))))
+    (memory.fill (global.get $xmm_base) (i32.const 0) (global.get $XMM_FILE_STRIDE))
     ;; Decode scratch too: worker instances decode in parallel, and a shared
     ;; op-start list lets one thread's fuser rewrite another's code.
     (global.set $OP_INDEX (i32.add (global.get $OP_INDEX_REGION)
@@ -3170,11 +3183,11 @@
     (local $cb i32) (local $instance i32)
     (if (global.get $yield_reason) (then (return (i32.const 0))))
     (if (global.get $mm_timer_in_cb) (then (return (i32.const 0))))
-    (if (i32.ne (i32.load (i32.const 0xD16C)) (i32.const 3))
+    (if (i32.ne (i32.load (region.addr $WAVE_OUT_SHARED 12)) (i32.const 3))
       (then (return (i32.const 0))))
-    (local.set $cb (i32.load (i32.const 0xD164)))
+    (local.set $cb (i32.load (region.addr $WAVE_OUT_SHARED 4)))
     (if (i32.eqz (local.get $cb)) (then (return (i32.const 0))))
-    (local.set $instance (i32.load (i32.const 0xD168)))
+    (local.set $instance (i32.load (region.addr $WAVE_OUT_SHARED 8)))
     (global.set $mm_timer_in_cb (i32.const 1))
     (call $save_caller_regs)
     (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
@@ -3198,6 +3211,7 @@
   ;; Storm keeps its generated code and its file buffers in the same heap
   ;; region, so that is a real collision, not a theoretical one.
   (func (export "invalidate_code_range") (param $ga i32) (param $len i32)
+    (call $page_watch_write_guest (local.get $ga) (local.get $len))
     (call $invalidate_code_range (local.get $ga) (local.get $len)))
 
   ;; Write guest memory (guest addr)

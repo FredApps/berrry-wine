@@ -143,7 +143,7 @@ async function runMode(browser, baseUrl, threaded) {
     }
   });
   await page.setViewport({ width: 1100, height: 820, deviceScaleFactor: 1 });
-  await page.evaluateOnNewDocument(() => localStorage.removeItem('wine-assembly.threads'));
+  await page.evaluateOnNewDocument(() => localStorage.setItem('wine-assembly.threads', '0'));  // cooperative route
 
   const separator = baseUrl.includes('?') ? '&' : '?';
   await page.goto(`${baseUrl}${separator}debug&no-log&viewer-open=${Date.now()}`,

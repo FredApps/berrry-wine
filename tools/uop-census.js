@@ -52,7 +52,7 @@ const REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-backedge
   'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
   'dead-flags-consumed', 'dead-cf', 'cf-no-recipe', 'cf-kind', 'dead-flags-rec', 'rec-no-recipe', 'rec-kind',
   'dead-flags-jcc', 'kind', 'too-many-windows', 'label', 'arg', 'too-many-temps', 'program-too-big',
-  'ranges-full', 'scratch-overflow'];
+  'ranges-full', 'scratch-overflow', 'call-indirect'];
 const why = r => r === 0 ? 'installed' : r === 0xFFFF ? 'busy' : (REASONS[r] || `reason${r}`);
 const hex = v => '0x' + (v >>> 0).toString(16);
 
@@ -152,7 +152,8 @@ for (const r of recs) {
     const h = head(r.a);
     if (r.b === 0xFFFF) { h.busy++; continue; }
     h.compiles++;
-    if (r.b === 0) { h.installs++; h.insns = r.c; } else h.declines[why(r.b)] = (h.declines[why(r.b)] || 0) + 1;
+    // d = 1: the install is a --uop-trace-heads region, not a loop
+    if (r.b === 0) { h.installs++; h.insns = r.c; if (r.d === 1) h.traces = (h.traces || 0) + 1; } else h.declines[why(r.b)] = (h.declines[why(r.b)] || 0) + 1;
     h.last = why(r.b);
   } else if (r.k === 2) {
     head(r.a).poor.push({ enters: r.b, blocks: r.c, exit: r.d });
@@ -232,7 +233,8 @@ say(`records: ${recs.length}   heads seen: ${all.length}`);
 say(`compiles: ${compiles} over ${distinct} distinct heads  (repeat compiles: ${compiles - distinct}, ` +
   `${compiles ? (100 * (compiles - distinct) / compiles).toFixed(1) : 0}%)`);
 say(`flushes: ${flushes} (of them flush-all, verdicts forgotten: ${flushAll})   busy (lock held): ${sum(all, h => h.busy)}`);
-say(`installs: ${sum(all, h => h.installs)} over ${installed.length} heads   ` +
+say(`installs: ${sum(all, h => h.installs)} over ${installed.length} heads ` +
+  `(traces: ${sum(all, h => h.traces || 0)})   ` +
   `retired poor: ${sum(all, h => h.poor.length)} over ${poorHeads.length} heads   ` +
   `code-write kills: ${sum(all, h => h.writes)}`);
 if (hotTable) {

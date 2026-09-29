@@ -104,7 +104,7 @@ function resolveShellLaunchPath(file, vfs, isWinExec) {
 // Arm p (worker mode only): a guest main thread parked in GetMessage parks the
 // host step until its next WM_TIMER, as the cooperative loop does, instead of
 // re-polling every step (~30K blocks/s on every idle app, 2026-09-23).
-const SCHED_ARMS_DEFAULT = 'b,e,g,w,f,p';
+const SCHED_ARMS_DEFAULT = 'b,e,g,w,f,p,m';
 // Arm w: a safety bound on how long a guest thread's Worker holds its slice
 // through local Sleeps — the step epoch normally ends it first, when the main
 // slice returns (measured on Moorhuhn 2: ~64ms per main slice) — and the
@@ -761,6 +761,9 @@ class WineAssembly {
     // The tier's aggressive stack elision is opt-in: `aggressiveStack: true`
     // on an app or ?aggressive-stack (docs/uop-tier-design.md).
     this.aggressiveStack = false;
+    // Worker threads follow the page (window.WINE_THREADS, on by default);
+    // `threads: false` on an app keeps that app cooperative.
+    this.threads = true;
     // CPUID SSE advertisement is opt-in until each app's reachable SIMD path
     // has passed an authentic run against the decoder.
     this.cpuSSE = false;
@@ -2201,6 +2204,11 @@ class WineAssembly {
     const aggressiveStack = (uop && (this.aggressiveStack === true ||
       (window.WineSuperops && window.WineSuperops.aggressiveStack === true))) ? 1 : 0;
     if (this.instance.exports.set_aggressive_stack) this.instance.exports.set_aggressive_stack(aggressiveStack);
+    // Trace heads: hot heads with no back edge become forward traces
+    // (07e $uc_form_trace) instead of no-backedge declines. On by default;
+    // ?no-uop-trace-heads turns them off.
+    const uopTraceHeads = (uop && !(window.WineSuperops && window.WineSuperops.uopTraceHeads === false)) ? 1 : 0;
+    if (this.instance.exports.set_uop_trace_heads) this.instance.exports.set_uop_trace_heads(uopTraceHeads);
     // ?x87-fuse-debug=MASK[,LO,HI] -- the bisect knob for a fold divergence.
     // MASK picks families (1 pipeline4, 2 short, 4 tree4, 8 affine, 16 island)
     // and only blocks whose guest start is in [LO,HI) are offered to them.
@@ -2263,6 +2271,9 @@ class WineAssembly {
       }
       if (this.instance.exports.set_aggressive_stack) {
         await this.guestWorker.callExport('set_aggressive_stack', aggressiveStack);
+      }
+      if (this.instance.exports.set_uop_trace_heads) {
+        await this.guestWorker.callExport('set_uop_trace_heads', uopTraceHeads);
       }
       if (x87FuseDebug && this.instance.exports.set_x87_fuse_debug) {
         await this.guestWorker.callExport('set_x87_fuse_debug',
@@ -2397,6 +2408,7 @@ class WineAssembly {
     this.threadManager.recordInheritedWasmGlobal('set_x87_affine_fusion', x87Fusion);
     this.threadManager.recordInheritedWasmGlobal('set_uop', uop);
     this.threadManager.recordInheritedWasmGlobal('set_aggressive_stack', aggressiveStack);
+    this.threadManager.recordInheritedWasmGlobal('set_uop_trace_heads', uopTraceHeads);
     // The bisect mask has to reach every guest thread for the same reason the
     // fold flags do: a thread decodes in its own instance, so a mask set only
     // here leaves the threads folding under the default (every family on) and
@@ -2714,6 +2726,10 @@ class WineAssembly {
   async _maybeStartGuestWorker(wasmModule) {
     if (typeof window === 'undefined') return;
     if (!window.WINE_THREADS) return;
+    if (this.threads === false) {
+      this.logToUI('[threads] this app opts out (threads: false) — running single-threaded');
+      return;
+    }
     if (!(typeof crossOriginIsolated !== 'undefined' && crossOriginIsolated)) {
       this.logToUI('[threads] not cross-origin isolated — running single-threaded');
       return;
@@ -2763,7 +2779,7 @@ class WineAssembly {
       // a DirectSound ring is kept full on its own and the AudioWorklet may
       // play it straight out of shared memory (lib/host-audio.js playRing).
       if (this.hostCtx) this.hostCtx.liveAudioRing = true;
-      this.logToUI('[threads] guest main thread is running in a Worker (experimental)');
+      this.logToUI('[threads] guest main thread is running in a Worker');
     } catch (err) {
       this.guestWorker = null;
       this.logToUI(`[threads] worker start failed (${err.message}) — running single-threaded`);
@@ -3116,8 +3132,15 @@ class WineAssembly {
         }
         loaded++;
       } catch (error) {
-        failed++;
-        failures.push({ url, reason: String(error && error.message || error) });
+        // {optional: true}: a component a real install may or may not have
+        // put there (Civ2's Indeo codec). Its absence is the app's to handle,
+        // so it neither fails a requiredFiles launch nor counts as a failure.
+        if (typeof item === 'object' && item && item.optional) {
+          console.log(`[files] optional ${url} not loaded: ${error && error.message || error}`);
+        } else {
+          failed++;
+          failures.push({ url, reason: String(error && error.message || error) });
+        }
       } finally {
         if (options.onProgress) options.onProgress({ loaded, failed, total, url });
       }
@@ -4040,6 +4063,7 @@ class WineAssembly {
         const localSleep = !!(Rpc && Rpc.endStepEpoch && self.memory && !serial && !self._frozen
           && self.threadManager && self.threadManager.backend === 'worker' && self._schedArm('w'));
         const freeRun = localSleep && self._schedArm('f');
+        const mainWaitArm = freeRun && self._schedArm('m');
         if (self.threadManager) {
           self.threadManager.workerFreeRun = freeRun;
           self.threadManager.workerLocalSleep = localSleep
@@ -4072,6 +4096,20 @@ class WineAssembly {
             }
             self._workerMainSleepUntil = 0;
           }
+          // A main thread parked on an unsatisfied WaitFor* (yield 1) has
+          // nothing to run: its slice would return at once with the same
+          // yield. Poll the wait here, as sibling waits are polled
+          // (thread-manager _pollParkedWait), and post a slice only once it is
+          // satisfied. StarCraft's every file read is such a wait on Storm's
+          // read thread, and re-slicing it cost ~1700 empty round trips a
+          // second.
+          const parked = self._workerMainParkedWait;
+          if (parked && mainWaitArm) {
+            const done = self.threadManager ? self.threadManager.resolveMainWorkerWait(parked, { parked: true }) : null;
+            if (!done) return Object.assign({}, parked, { blocks: 0, ms: 0, waitPolled: true });
+            self._workerMainParkedWait = null;
+            await self.guestWorker.link.completeWait(done.result, done.waitStackBytes);
+          }
           // A vblank the page delivered while the main thread sat in yield 13
           // rides on this slice; the worker ticks and clears it before run.
           let sliceSync = mainSync;
@@ -4097,6 +4135,13 @@ class WineAssembly {
         const runMainThenEnd = async () => {
           try {
             const slice = await runMain();
+            // This slice may have set what a parked sibling waits on (a job
+            // queued for a helper thread): start that thread now, not at the
+            // next step's scan.
+            if (mainWaitArm && slice && slice.yield === 1 && !slice.waitPolled && self.threadManager &&
+                self.threadManager.offerSatisfiedWaiters) {
+              self.threadManager.offerSatisfiedWaiters();
+            }
             const until = self._workerMainSleepUntil;
             if (!stepEnded && slice && !(slice.blocks | 0) && until) {
               const left = until - self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio);
@@ -4242,10 +4287,22 @@ class WineAssembly {
           // wait drops them. Clearing instead leaked 12 bytes of guest stack per
           // wait, and Winamp died minutes later at EIP=0xffffffff — which is why
           // nothing caught it before guest threads ran in this mode.
-          const done = self.threadManager ? self.threadManager.resolveMainWorkerWait(r) : null;
-          if (done) await self.guestWorker.link.completeWait(done.result, done.waitStackBytes);
-          // Unsatisfied: leave the yield set. The next slice re-polls, and the
-          // worker's run() returns immediately while parked.
+          // runMain already polled a wait it found parked (waitPolled).
+          const done = r.waitPolled ? null
+            : self.threadManager ? self.threadManager.resolveMainWorkerWait(r) : null;
+          if (done) {
+            await self.guestWorker.link.completeWait(done.result, done.waitStackBytes);
+          } else {
+            // Unsatisfied: leave the yield set, and let runMain poll it on
+            // this thread from now on. Free-running, whatever satisfies it is
+            // most likely a sibling's slice (SetEvent), so park the step until
+            // one completes -- a short bound covers timeouts and page-side
+            // signals.
+            if (mainWaitArm) {
+              self._workerMainParkedWait = r;
+              self._workerIdleMs = Math.max(self._workerIdleMs, 2);
+            }
+          }
         } else if (r.yield === 7) {
           // The message-wait resume runs inside the worker at the top of each
           // slice, where the instance is. Nothing to do here — and specifically
@@ -5137,6 +5194,9 @@ class WineAssembly {
   //   p  Worker mode: a main thread parked in GetMessage parks the host step
   //      until its next WM_TIMER (capped, input wakes it), as the
   //      cooperative loop's _parkedSleepMs does, instead of re-polling
+  //   m  Worker mode, with f: a main thread parked in WaitFor* is polled here
+  //      instead of re-sliced every step, the threads its slice woke are
+  //      started at once, and the step parks until a sibling slice returns
   // `?sched-arm=LIST` replaces the default set for an A/B; `?sched-arm=none`
   // turns every arm off.
   _schedArm(name) {

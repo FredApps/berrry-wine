@@ -271,6 +271,10 @@
     (global.get $d3dim_gpu_desc))
   (func (export "d3dim_gpu_surface_fmt") (param $entry i32) (result i32)
     (call $dx_surf_fmt_get (local.get $entry)))
+  (func (export "d3dim_gpu_surface_live") (param $entry i32) (result i32)
+    (if (i32.ge_u (i32.sub (local.get $entry) (global.get $DX_OBJECTS))
+          (global.get $DX_OBJECTS_SIZE)) (then (return (i32.const 0))))
+    (i32.eq (load.field DxObject type (local.get $entry)) (i32.const 2)))
 
   ;; Result 1: the executor took the clear, and it now owes a fence.
   ;; $tex nonzero is a viewport background image: the colour half becomes that
@@ -1213,6 +1217,10 @@
   ;; coverage, before per-fragment alpha/depth rejection, not a pixel diff.
   (func $d3dim_exec_extent_draw (param $rt i32)
     (param $x i32) (param $y i32) (param $w i32) (param $h i32)
+    (call $page_watch_write
+      (i32.add (load.field DxObject misc1 (local.get $rt))
+        (i32.mul (local.get $y) (load.field DxObject pitch (local.get $rt))))
+      (i32.mul (local.get $h) (load.field DxObject pitch (local.get $rt))))
     (if (i32.eqz (global.get $d3dim_exec_extent_guest)) (then (return)))
     (if (i32.ne (local.get $rt) (global.get $d3dim_exec_extent_rt)) (then (return)))
     (call $d3dim_extent_add (global.get $d3dim_exec_extent_guest)
@@ -3628,6 +3636,7 @@
     (if (i32.eqz (local.get $dib_wa)) (then (return)))
     (local.set $fw (f32.convert_i32_s (local.get $w)))
     (local.set $fh (f32.convert_i32_s (local.get $h)))
+    (call $dx_surf_note_write (local.get $rt_entry))
     ;; Clip against the surface; the u/v mapping stays tied to the unclipped
     ;; rect so a partially offscreen viewport still shows the right part.
     (local.set $row (i32.const 0))

@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 477 funcref)
+  (table $handlers 491 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -546,4 +546,18 @@
     $th_push_run_call         ;; 474: PUSH run + CALL rel32 (ret, target words)
     $th_pop_run_ret           ;; 475: POP run + RET / RET imm16 (imm word)
     $th_logical_frame         ;; 476: the app's game step entered (operand = EIP); 09a8
+    $th_xfer32                ;; 477: 32-bit CALL/RET/JMP/ENTER/LEAVE in a 16-bit task (05c)
+    $th_addss_rr               ;; 478: dedicated scalar SSE (06c)
+    $th_addss_rm               ;; 479: dedicated scalar SSE (06c)
+    $th_subss_rr               ;; 480: dedicated scalar SSE (06c)
+    $th_subss_rm               ;; 481: dedicated scalar SSE (06c)
+    $th_mulss_rr               ;; 482: dedicated scalar SSE (06c)
+    $th_mulss_rm               ;; 483: dedicated scalar SSE (06c)
+    $th_divss_rr               ;; 484: dedicated scalar SSE (06c)
+    $th_divss_rm               ;; 485: dedicated scalar SSE (06c)
+    $th_movss_rr               ;; 486: dedicated scalar SSE (06c)
+    $th_movss_load             ;; 487: dedicated scalar SSE (06c)
+    $th_movss_store            ;; 488: dedicated scalar SSE (06c)
+    $th_comiss_rr              ;; 489: dedicated scalar SSE (06c)
+    $th_comiss_rm              ;; 490: dedicated scalar SSE (06c)
   )

@@ -315,9 +315,11 @@
   ;; Sixteen equal shares of this region would have cut main from 3.9MB to
   ;; 1.9MB to buy workers a partition each they cannot begin to fill.
   ;;
-  ;; So: main takes 0x00F00000 (15MB, nearly four times what it had) and each
+  ;; So: main takes 0x00EFE000 (15MB, nearly four times what it had) and each
   ;; of fifteen workers takes $THREAD_CACHE_STRIDE = 0x000C0000. That is
-  ;; 0xF00000 + 15 * 0xC0000 = 0x1A40000. Workers had 0x100000 each until the
+  ;; 0xEFE000 + 15 * 0xC0000 = 0x1A3E000. Main gave up two pages on 2026-09-28
+  ;; to pay for $XMM_FILE: the map was at its ceiling (a shake could not
+  ;; place it), and 8KB of a 15MB block cache is not measurable. Workers had 0x100000 each until the
   ;; micro-op tier needed an arena per worker: the 0x40000 each gave up is
   ;; $UOP_THREAD_ARENAS below, so the map as a whole did not grow.
   ;; $init_thread in 13-exports.wat is the one place that knows the shape.
@@ -329,7 +331,7 @@
   ;; 0x413c10, its subsystem init rolled back, and the refcounted object the
   ;; campaign briefing calls through was freed while still in use.
   ;; docs/re-notes/warcraft3-demo.md has the whole measured chain.
-  (region.declare $THREAD_CACHE_BASE (size 0x01A40000) (align 0x00001000)
+  (region.declare $THREAD_CACHE_BASE (size 0x01A3E000) (align 0x00001000)
     (owner "01-header.wat:$THREAD_CACHE_BASE"))
   ;; The eight x86 GPRs, per guest thread. Memory is SHARED between instances
   ;; while wasm globals are per-instance, so one fixed address would give every
@@ -366,6 +368,11 @@
   (region.declare $FPU_FILE (size 0x00000800) (align 0x00000040)
     (stride 0x80 (count $REGFILE_THREADS))
     (owner "01-header.wat:$FPU_FILE"))
+  ;; The eight SSE registers, per guest thread: XMMn at +n*16, so reading one
+  ;; is a single v128.load instead of an eight-way branch over i64 globals.
+  (region.declare $XMM_FILE (size 0x00000800) (align 0x00000040)
+    (stride 0x80 (count $REGFILE_THREADS))
+    (owner "01-header.wat:$XMM_FILE"))
   (region.declare-derived $GUEST_STACK (base (g2w 0x07400000)) (size 0x00100000) (align 0x00001000)
     (owner "01-header.wat:$GUEST_STACK"))
   (region.declare-derived $THUNK_BASE (base (g2w 0x07500000)) (size 0x00040000) (align 0x00001000)
@@ -430,6 +437,8 @@
     (owner "09a2-handlers-console.wat:$console_buffers_init"))
   (region.declare $CONSOLE_INPUT (size 0x00001000) (align 0x00001000)
     (owner "09a2-handlers-console.wat:$console_input_count"))
+  (region.declare $PAGE_WATCH_ROOT (size 0x00001000) (align 0x00001000)
+    (owner "03a-page-watch.wat:$page_watch_acquire"))
   (region.declare $DIB_PAGE_USED (size 0x00004000) (align 0x00001000)
     (owner "10-helpers.wat:$dib_alloc"))
   (region.declare $DIB_PAGE_RUNS (size 0x00008000) (align 0x00001000)
@@ -890,5 +899,7 @@
   (region.declare $MCIWND_TABLE (size 0x00000800) (align 0x00000010)
     (owner "09a7i-video-mciwnd.wat:$MCIWND_TABLE"))
   ;; Glide 2 process-shared board, lock, immutable stream and packet staging.
-  (region.declare $GLIDE_STATE (size 0x00001000) (align 0x00000010)
+  ;; 256 control bytes + 256 pipeline bytes + 20 scratch bytes, rounded to 16.
+  ;; Command streams and LFB storage are allocated separately on the heap.
+  (region.declare $GLIDE_STATE (size 0x00000220) (align 0x00000010)
     (owner "09a8h-glide.wat:$GLIDE_STATE"))

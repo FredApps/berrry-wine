@@ -126,6 +126,12 @@
   ;;   65 SETSS i                             flag_sign_shift = i
   ;;   66 GETCC d cc                          d = $eval_cc(cc) of the globals
   ;;   67 SPILL s base disp                   [base + disp] = s via $gs32 (a stub op)
+  ;; Appended by the uop-calls work (--uop-muldiv, --uop-icall, --uop-iat):
+  ;;   68 MULW lo hi a b s                    lo:hi = a * b, 64-bit (s: 1 signed)
+  ;;   69 SETMULF s lo hi                     the record $set_flags_mul writes
+  ;;   70 DIVW q r lo hi d s x                q, r = hi:lo / d; exit to x on #DE
+  ;;   71 ICG v t cls eip x                   exit to x unless v == t (a call's
+  ;;                                          target guard; cls 0 icall, 1 iat)
 
   ;; The main thread's arena. Each guest thread is its own instance over the
   ;; shared memory and a program names its instance's $reg_base, so every
@@ -165,6 +171,54 @@
   (global $UOP_HDR        i32 (i32.const 32))
   (global $uop_guard_fails (mut i32) (i32.const 0))
   (global $uop_reguards    (mut i32) (i32.const 0))
+  ;; DIVW exits (the threaded div then raises #DE, or finds it does not);
+  ;; ICG passes and fails by class (0 call r/m, 1 call [IAT slot]); the four
+  ;; call sites that failed their guard most, {eip, fails}, a failing site
+  ;; not yet listed replacing the one with fewest fails.
+  (global $uop_div_exits   (mut i32) (i32.const 0))
+  (global $uop_icg_pass0   (mut i32) (i32.const 0))
+  (global $uop_icg_fail0   (mut i32) (i32.const 0))
+  (global $uop_icg_pass1   (mut i32) (i32.const 0))
+  (global $uop_icg_fail1   (mut i32) (i32.const 0))
+  (global $uop_icf_e0 (mut i32) (i32.const 0)) (global $uop_icf_n0 (mut i32) (i32.const 0))
+  (global $uop_icf_e1 (mut i32) (i32.const 0)) (global $uop_icf_n1 (mut i32) (i32.const 0))
+  (global $uop_icf_e2 (mut i32) (i32.const 0)) (global $uop_icf_n2 (mut i32) (i32.const 0))
+  (global $uop_icf_e3 (mut i32) (i32.const 0)) (global $uop_icf_n3 (mut i32) (i32.const 0))
+  (func $uop_icg_note (param $eip i32)
+    (local $m i32)
+    (if (i32.eq (global.get $uop_icf_e0) (local.get $eip))
+      (then (global.set $uop_icf_n0 (i32.add (global.get $uop_icf_n0) (i32.const 1))) (return)))
+    (if (i32.eq (global.get $uop_icf_e1) (local.get $eip))
+      (then (global.set $uop_icf_n1 (i32.add (global.get $uop_icf_n1) (i32.const 1))) (return)))
+    (if (i32.eq (global.get $uop_icf_e2) (local.get $eip))
+      (then (global.set $uop_icf_n2 (i32.add (global.get $uop_icf_n2) (i32.const 1))) (return)))
+    (if (i32.eq (global.get $uop_icf_e3) (local.get $eip))
+      (then (global.set $uop_icf_n3 (i32.add (global.get $uop_icf_n3) (i32.const 1))) (return)))
+    ;; the slot with the fewest fails
+    (if (i32.lt_u (global.get $uop_icf_n1) (global.get $uop_icf_n0)) (then (local.set $m (i32.const 1))))
+    (if (i32.lt_u (global.get $uop_icf_n2)
+                  (select (global.get $uop_icf_n1) (global.get $uop_icf_n0) (local.get $m)))
+      (then (local.set $m (i32.const 2))))
+    (if (i32.lt_u (global.get $uop_icf_n3)
+                  (select (global.get $uop_icf_n2)
+                          (select (global.get $uop_icf_n1) (global.get $uop_icf_n0) (local.get $m))
+                          (i32.eq (local.get $m) (i32.const 2))))
+      (then (local.set $m (i32.const 3))))
+    (if (i32.eqz (local.get $m)) (then (global.set $uop_icf_e0 (local.get $eip)) (global.set $uop_icf_n0 (i32.const 1)) (return)))
+    (if (i32.eq (local.get $m) (i32.const 1)) (then (global.set $uop_icf_e1 (local.get $eip)) (global.set $uop_icf_n1 (i32.const 1)) (return)))
+    (if (i32.eq (local.get $m) (i32.const 2)) (then (global.set $uop_icf_e2 (local.get $eip)) (global.set $uop_icf_n2 (i32.const 1)) (return)))
+    (global.set $uop_icf_e3 (local.get $eip)) (global.set $uop_icf_n3 (i32.const 1)))
+  ;; uop_icg_site(i): the i-th worst-failing site (0-3, unsorted), i+4 its fails
+  (func (export "uop_icg_site") (param $i i32) (result i32)
+    (if (i32.eqz (local.get $i)) (then (return (global.get $uop_icf_e0))))
+    (if (i32.eq (local.get $i) (i32.const 1)) (then (return (global.get $uop_icf_e1))))
+    (if (i32.eq (local.get $i) (i32.const 2)) (then (return (global.get $uop_icf_e2))))
+    (if (i32.eq (local.get $i) (i32.const 3)) (then (return (global.get $uop_icf_e3))))
+    (if (i32.eq (local.get $i) (i32.const 4)) (then (return (global.get $uop_icf_n0))))
+    (if (i32.eq (local.get $i) (i32.const 5)) (then (return (global.get $uop_icf_n1))))
+    (if (i32.eq (local.get $i) (i32.const 6)) (then (return (global.get $uop_icf_n2))))
+    (if (i32.eq (local.get $i) (i32.const 7)) (then (return (global.get $uop_icf_n3))))
+    (i32.const 0))
 
   ;; Tier state. Off by default and per instance: only the instance that
   ;; armed it (run.js --uop, main thread) ever installs, because the arena is
@@ -248,6 +302,11 @@
   ;; poisoned (every access then misses) and answer 0. The slot outlives this
   ;; run, so a failure must not leave half of a window behind.
   (func $uop_window_set (param $w i32) (param $lo i32) (param $len i32) (param $rw i32) (result i32)
+    (if (global.get $uwc_on)
+      (then (return (call $uwc_set (local.get $w) (local.get $lo) (local.get $len)
+                      (local.get $rw) (i32.const 0)))))
+    (return_call $uop_window_set_raw (local.get $w) (local.get $lo) (local.get $len) (local.get $rw)))
+  (func $uop_window_set_raw (param $w i32) (param $lo i32) (param $len i32) (param $rw i32) (result i32)
     (local $wa i32) (local $p i32) (local $end i32)
     (call $uop_window_poison (local.get $w))
     (if (i32.eqz (local.get $len)) (then (return (i32.const 0))))
@@ -259,7 +318,7 @@
         (local.set $end (i32.add (local.get $lo) (i32.sub (local.get $len) (i32.const 1))))
         (local.set $p (local.get $lo))
         (block $ok (loop $pages
-          (if (call $code_write_is_code (local.get $p)) (then (return (i32.const 0))))
+          (if (call $store_page_needs_barrier (local.get $p)) (then (return (i32.const 0))))
           (br_if $ok (i32.eq (i32.and (local.get $p) (i32.const 0xFFFFF000))
                              (i32.and (local.get $end) (i32.const 0xFFFFF000))))
           (local.set $p (i32.add (i32.and (local.get $p) (i32.const 0xFFFFF000)) (i32.const 0x1000)))
@@ -280,6 +339,7 @@
     (local.set $w (i32.load offset=12 (local.get $op)))
     (block $d (loop $l
       (br_if $d (i32.eqz (local.get $n)))
+      (if (global.get $uwc_on) (then (call $uwc_shadow_drop (local.get $w))))
       (call $uop_window_poison (local.get $w))
       (local.set $w (i32.add (local.get $w) (i32.const 16)))
       (local.set $n (i32.sub (local.get $n) (i32.const 1)))
@@ -292,12 +352,338 @@
   (func $uop_reguard (param $w i32) (param $ga i32) (param $size i32) (result i32)
     (local $pg i32)
     (global.set $uop_reguards (i32.add (global.get $uop_reguards) (i32.const 1)))
+    (if (global.get $uwc_on)
+      (then (return (call $uwc_reguard (local.get $w) (local.get $ga) (local.get $size)))))
     (local.set $pg (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
     (if (i32.gt_u (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (local.get $size))
                   (i32.const 0x1000))
       (then (return (i32.const 0))))
+    (if (i32.ne (global.get $uop_rg_mask) (i32.const 0xFFFFF000))
+      (then (return_call $uop_reguard_wide (local.get $w) (local.get $pg))))
     (call $uop_window_set (local.get $w) (local.get $pg) (i32.const 0x1000)
       (i32.load offset=12 (local.get $w))))
+
+  ;; A re-guard proves more than the page it missed on. --uop-win-census
+  ;; measured it (docs/uop-tier-design.md section 14): with one-page
+  ;; windows a stream re-guards at every page it walks onto -- Diablo 1.46
+  ;; re-guards per entry, Moorhuhn 3 4.9 -- and 65-99.9% of them land inside
+  ;; the affine run the slot's previous window was already in. So grow the
+  ;; window from the missed page, a page at a time in both directions, while
+  ;; the next page has the same guest->wasm delta and (for a written window)
+  ;; holds no decoded code, up to the $uop_rg_mask-aligned block containing
+  ;; it (64KB by default; --uop-reguard-span=4096 restores one page). Every
+  ;; page it covers is proved exactly as $uop_window_set proves one, so the
+  ;; epoch rules are unchanged: nothing it relied on can change without a
+  ;; $uop_win_bump.
+  (global $uop_rg_mask (mut i32) (i32.const 0xFFFF0000))
+  (global $uop_rg_pages (mut i32) (i32.const 0))   ;; pages proved by wide re-guards
+  (global $uop_rg_nonadj (mut i32) (i32.const 0))  ;; growth stopped at a non-adjacent backing page
+  (func $uop_reguard_wide (param $w i32) (param $pg i32) (result i32)
+    (local $rw i32) (local $wa i32) (local $lo i32) (local $hi i32)
+    (local $blo i32) (local $bhi i32)
+    (local.set $rw (i32.load offset=12 (local.get $w)))
+    (if (i32.eqz (call $uop_window_set (local.get $w) (local.get $pg) (i32.const 0x1000)
+                   (local.get $rw)))
+      (then (return (i32.const 0))))
+    ;; the page is proved and the slot holds it; delta = wa - guest
+    (local.set $wa (i32.add (local.get $pg) (i32.load offset=8 (local.get $w))))
+    (local.set $blo (i32.and (local.get $pg) (global.get $uop_rg_mask)))
+    (local.set $bhi (i32.add (local.get $blo)
+      (i32.add (i32.xor (global.get $uop_rg_mask) (i32.const -1)) (i32.const 1))))
+    ;; The common case first: the whole block is one affine run with no code
+    ;; page in it -- one span proof and one 16-bit bitmap load per 64KB,
+    ;; instead of a proof and a bitmap test per page.
+    (if (call $uop_rg_block_ok (local.get $blo) (local.get $bhi)
+          (i32.sub (local.get $wa) (i32.sub (local.get $pg) (local.get $blo)))
+          (local.get $rw))
+      (then
+        (local.set $lo (local.get $blo))
+        (local.set $hi (local.get $bhi)))
+      (else (call $uop_rg_grow (local.get $pg) (local.get $wa) (local.get $blo)
+                (local.get $bhi) (local.get $rw))
+        (local.set $lo (global.get $uop_rg_lo))
+        (local.set $hi (global.get $uop_rg_hi))))
+    (global.set $uop_rg_pages (i32.add (global.get $uop_rg_pages)
+      (i32.shr_u (i32.sub (local.get $hi) (local.get $lo)) (i32.const 12))))
+    ;; delta unchanged; lo first, then span (a 4-byte access compares
+    ;; ga - lo against span - 4, and both only ever grow the covered range)
+    (i32.store (local.get $w) (local.get $lo))
+    (i32.store offset=4 (local.get $w) (i32.sub (local.get $hi) (local.get $lo)))
+    (i32.const 1))
+
+  ;; Is [blo, bhi) one affine run starting at wasm $wlo, and -- for a written
+  ;; window -- free of code pages? Within a 64KB-aligned block the code-page
+  ;; bitmap's slot hash (04-cache $code_page_slot: (ga>>12 ^ ga>>28) & 0xFFFF)
+  ;; only permutes the low four slot bits, so the block's sixteen pages are
+  ;; exactly one aligned 16-bit group: one load answers "any code here". A
+  ;; span narrower than 64KB tests its whole enclosing group, which can only
+  ;; refuse more, never less.
+  (func $uop_rg_block_ok (param $blo i32) (param $bhi i32) (param $wlo i32) (param $rw i32) (result i32)
+    (local $g i32)
+    (if (i32.ne (call $g2w_affine_span (local.get $blo) (i32.sub (local.get $bhi) (local.get $blo)))
+                (local.get $wlo))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $rw)) (then (return (i32.const 1))))
+    (if (call $page_watch_any (local.get $wlo) (i32.sub (local.get $bhi) (local.get $blo)))
+      (then (return (i32.const 0))))
+    (local.set $g (local.get $blo))
+    (loop $l
+      (if (i32.load16_u (i32.add (global.get $CODE_PAGE_BITMAP)
+            (i32.and (i32.shr_u (local.get $g) (i32.const 15)) (i32.const 0x1FFE))))
+        (then (return (i32.const 0))))
+      (local.set $g (i32.add (local.get $g) (i32.const 0x10000)))
+      (br_if $l (i32.lt_u (local.get $g) (local.get $bhi))))
+    (i32.const 1))
+
+  ;; The block is not wholly usable: grow from the proved page one page at a
+  ;; time in both directions, stopping at a non-adjacent or unmapped page or
+  ;; (written window) a code page. Answers in $uop_rg_lo / $uop_rg_hi.
+  (global $uop_rg_lo (mut i32) (i32.const 0))
+  (global $uop_rg_hi (mut i32) (i32.const 0))
+  (func $uop_rg_grow (param $pg i32) (param $wa i32) (param $blo i32) (param $bhi i32) (param $rw i32)
+    (local $lo i32) (local $hi i32) (local $nw i32)
+    (local.set $lo (local.get $pg))
+    (local.set $hi (i32.add (local.get $pg) (i32.const 0x1000)))
+    (block $up (loop $grow_up
+      (br_if $up (i32.ge_u (local.get $hi) (local.get $bhi)))
+      (local.set $nw (call $g2w_affine_span (local.get $hi) (i32.const 0x1000)))
+      (if (i32.ne (local.get $nw)
+            (i32.add (local.get $wa) (i32.sub (local.get $hi) (local.get $pg))))
+        (then
+          (if (i32.ne (local.get $nw) (global.get $NULL_SENTINEL))
+            (then (global.set $uop_rg_nonadj (i32.add (global.get $uop_rg_nonadj) (i32.const 1)))))
+          (br $up)))
+      (br_if $up (i32.and (i32.ne (local.get $rw) (i32.const 0))
+                          (call $store_page_needs_barrier (local.get $hi))))
+      (local.set $hi (i32.add (local.get $hi) (i32.const 0x1000)))
+      (br $grow_up)))
+    (block $down (loop $grow_down
+      (br_if $down (i32.le_u (local.get $lo) (local.get $blo)))
+      (local.set $nw (call $g2w_affine_span (i32.sub (local.get $lo) (i32.const 0x1000)) (i32.const 0x1000)))
+      (if (i32.ne (local.get $nw)
+            (i32.sub (i32.add (local.get $wa) (i32.sub (local.get $lo) (local.get $pg))) (i32.const 0x1000)))
+        (then
+          (if (i32.ne (local.get $nw) (global.get $NULL_SENTINEL))
+            (then (global.set $uop_rg_nonadj (i32.add (global.get $uop_rg_nonadj) (i32.const 1)))))
+          (br $down)))
+      (br_if $down (i32.and (i32.ne (local.get $rw) (i32.const 0))
+                            (call $store_page_needs_barrier (i32.sub (local.get $lo) (i32.const 0x1000)))))
+      (local.set $lo (i32.sub (local.get $lo) (i32.const 0x1000)))
+      (br $grow_down)))
+    (global.set $uop_rg_lo (local.get $lo))
+    (global.set $uop_rg_hi (local.get $hi)))
+  (func (export "set_uop_reguard_span") (param $bytes i32)
+    (global.set $uop_rg_mask
+      (i32.xor (i32.sub (select (local.get $bytes) (i32.const 0x1000)
+                          (i32.gt_u (local.get $bytes) (i32.const 0x1000)))
+                        (i32.const 1))
+               (i32.const -1))))
+
+  ;; --uop-win-census: what kind of memory every window proof lands on, why
+  ;; the failures fail, and -- for each re-guard -- whether a window WIDER
+  ;; than the one page $uop_reguard proves would already have covered it
+  ;; (docs/uop-tier-design.md, contiguity census). Off unless
+  ;; set_uop_win_census(1); when off every hook is one global test on a path
+  ;; that is already a call. Main instance only: the counters and the shadow
+  ;; table live in this arena's $uop_wins_off area, which compiled programs
+  ;; never use (each owns its slots).
+  ;;
+  ;; i64 counters at +0 (index k, 8 bytes each):
+  ;;   ctx 0 = GUARD op / window_set from anywhere else, ctx 1 = re-guard;
+  ;;   base = ctx*16: +0 calls, +1 direct ok, +2 DIB ok, +3 sparse ok one page,
+  ;;   +4 sparse ok multi-page, +5 sparse fail first page unmapped, +6 wrap,
+  ;;   +7 sparse fail later page unmapped, +8 sparse fail NON-ADJACENT backing,
+  ;;   +9 fail: written window holds a code page, +10 straddles its page
+  ;;   (re-guard), +11 len 0, +12 direct/DIB span running off its window.
+  ;;   32 + (kind-1)*8, per re-guard whose slot's previous window is known,
+  ;;   by that window's kind (1 direct, 2 DIB, 3 sparse): +0 count, +1 the
+  ;;   page next to the previous window (a stream walking on), +2 inside the
+  ;;   previous window's affine run (backing already adjacent: widening the
+  ;;   re-guard alone would cover it), +3 inside its committed guest run and
+  ;;   the same allocation but past a backing break (contiguous backing would
+  ;;   cover it), +4 committed-run but another allocation, +5 none of these.
+  ;;   56 re-guards with no known previous window (first touch after
+  ;;   poisoning, or evicted), 57 shadow evictions, 58/59 summed affine /
+  ;;   committed run pages over sparse successes, 60 their count.
+  ;;   64.. bulk $g2w_affine_span sparse fallbacks outside the uop tier:
+  ;;   64 calls, 65 ok, 66 first page unmapped, 67 wrap, 68 later page
+  ;;   unmapped, 69 NON-ADJACENT, 70 non-adjacent bytes asked, 71 ok bytes.
+  ;; Shadow at +1024: 256 entries x 32 bytes {w, kind, first page, last page,
+  ;; affine lo, affine hi, committed lo, committed hi}, keyed by slot address.
+  (global $uwc_on (mut i32) (i32.const 0))
+  (global $uwc_in_uop (mut i32) (i32.const 0))
+  (global $UWC_RUN_CAP i32 (i32.const 256))
+  (func $uwc_base (result i32)
+    (i32.add (global.get $uop_arena) (global.get $uop_wins_off)))
+  (func $uwc_add (param $k i32) (param $v i32)
+    (local $a i32)
+    (local.set $a (i32.add (call $uwc_base) (i32.shl (local.get $k) (i32.const 3))))
+    (i64.store (local.get $a)
+      (i64.add (i64.load (local.get $a)) (i64.extend_i32_u (local.get $v)))))
+  (func $uwc_inc (param $k i32) (call $uwc_add (local.get $k) (i32.const 1)))
+  (func $uwc_shadow (param $w i32) (result i32)
+    (i32.add (i32.add (call $uwc_base) (i32.const 1024))
+      (i32.shl (i32.and (i32.shr_u (local.get $w) (i32.const 4)) (i32.const 255))
+        (i32.const 5))))
+  (func $uwc_kind (param $ga i32) (result i32)
+    (if (i32.lt_u
+          (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE))
+          (region.end $DIRECT_WINDOW))
+      (then (return (i32.const 1))))
+    (if (i32.lt_u (i32.sub (local.get $ga) (global.get $DIB_GUEST_BASE))
+          (global.get $DIB_GUEST_CAPACITY))
+      (then (return (i32.const 2))))
+    (i32.const 3))
+  (func $uwc_shadow_drop (param $w i32)
+    (local $e i32)
+    (local.set $e (call $uwc_shadow (local.get $w)))
+    (if (i32.eq (i32.load (local.get $e)) (local.get $w))
+      (then (i32.store (local.get $e) (i32.const 0)))))
+  ;; Walk page PTEs from $p by $step (+-0x1000) while the next page is present
+  ;; and, when $adj, backed right next to the current one. Answers the last
+  ;; page reached (capped at $UWC_RUN_CAP steps).
+  (func $uwc_walk (param $p i32) (param $step i32) (param $adj i32) (result i32)
+    (local $n i32) (local $q i32) (local $wq i32)
+    (block $d (loop $l
+      (br_if $d (i32.ge_u (local.get $n) (global.get $UWC_RUN_CAP)))
+      (local.set $q (i32.add (local.get $p) (local.get $step)))
+      (local.set $wq (call $guest_page_translate (local.get $q)))
+      (br_if $d (i32.eq (local.get $wq) (global.get $NULL_SENTINEL)))
+      (br_if $d (i32.and (i32.ne (local.get $adj) (i32.const 0))
+        (i32.ne (local.get $wq)
+          (i32.add (call $guest_page_translate (local.get $p)) (local.get $step)))))
+      (local.set $p (local.get $q))
+      (local.set $n (i32.add (local.get $n) (i32.const 1)))
+      (br $l)))
+    (local.get $p))
+  (func $uwc_shadow_put (param $w i32) (param $lo i32) (param $len i32) (param $k i32)
+    (local $e i32) (local $first i32) (local $last i32)
+    (local $alo i32) (local $ahi i32) (local $clo i32) (local $chi i32)
+    (local.set $e (call $uwc_shadow (local.get $w)))
+    (if (i32.and (i32.ne (i32.load (local.get $e)) (i32.const 0))
+                 (i32.ne (i32.load (local.get $e)) (local.get $w)))
+      (then (call $uwc_inc (i32.const 57))))
+    (local.set $first (i32.and (local.get $lo) (i32.const 0xFFFFF000)))
+    (local.set $last (i32.and (i32.add (local.get $lo) (i32.sub (local.get $len) (i32.const 1)))
+                              (i32.const 0xFFFFF000)))
+    (if (i32.eq (local.get $k) (i32.const 1))
+      (then
+        (local.set $alo (i32.sub (global.get $image_base) (global.get $GUEST_BASE)))
+        (local.set $ahi (i32.add (local.get $alo) (region.end $DIRECT_WINDOW)))))
+    (if (i32.eq (local.get $k) (i32.const 2))
+      (then
+        (local.set $alo (global.get $DIB_GUEST_BASE))
+        (local.set $ahi (i32.add (local.get $alo) (global.get $DIB_GUEST_CAPACITY)))))
+    (if (i32.eq (local.get $k) (i32.const 3))
+      (then
+        (local.set $alo (call $uwc_walk (local.get $first) (i32.const -4096) (i32.const 1)))
+        (local.set $ahi (i32.add (call $uwc_walk (local.get $last) (i32.const 0x1000) (i32.const 1))
+                                 (i32.const 0x1000)))
+        (local.set $clo (call $uwc_walk (local.get $first) (i32.const -4096) (i32.const 0)))
+        (local.set $chi (i32.add (call $uwc_walk (local.get $last) (i32.const 0x1000) (i32.const 0))
+                                 (i32.const 0x1000)))
+        (call $uwc_add (i32.const 58) (i32.shr_u (i32.sub (local.get $ahi) (local.get $alo)) (i32.const 12)))
+        (call $uwc_add (i32.const 59) (i32.shr_u (i32.sub (local.get $chi) (local.get $clo)) (i32.const 12)))
+        (call $uwc_inc (i32.const 60)))
+      (else
+        (local.set $clo (local.get $alo))
+        (local.set $chi (local.get $ahi))))
+    (i32.store (local.get $e) (local.get $w))
+    (i32.store offset=4 (local.get $e) (local.get $k))
+    (i32.store offset=8 (local.get $e) (local.get $first))
+    (i32.store offset=12 (local.get $e) (local.get $last))
+    (i32.store offset=16 (local.get $e) (local.get $alo))
+    (i32.store offset=20 (local.get $e) (local.get $ahi))
+    (i32.store offset=24 (local.get $e) (local.get $clo))
+    (i32.store offset=28 (local.get $e) (local.get $chi)))
+  ;; $uop_window_set with the census on: same answer, classified.
+  (func $uwc_set (param $w i32) (param $lo i32) (param $len i32) (param $rw i32)
+      (param $ctx i32) (result i32)
+    (local $c i32) (local $r i32) (local $k i32)
+    (local.set $c (i32.shl (local.get $ctx) (i32.const 4)))
+    (call $uwc_inc (local.get $c))
+    (global.set $uwc_in_uop (i32.const 1))
+    (local.set $r (call $uop_window_set_raw (local.get $w) (local.get $lo)
+                    (local.get $len) (local.get $rw)))
+    (local.set $k (call $uwc_kind (local.get $lo)))
+    (if (local.get $r)
+      (then
+        (if (i32.lt_u (local.get $k) (i32.const 3))
+          (then (call $uwc_inc (i32.add (local.get $c) (local.get $k))))
+          (else (call $uwc_inc (i32.add (local.get $c)
+            (select (i32.const 3) (i32.const 4)
+              (i32.eq (i32.and (local.get $lo) (i32.const 0xFFFFF000))
+                (i32.and (i32.add (local.get $lo) (i32.sub (local.get $len) (i32.const 1)))
+                  (i32.const 0xFFFFF000))))))))
+        (call $uwc_shadow_put (local.get $w) (local.get $lo) (local.get $len) (local.get $k)))
+      (else
+        (call $uwc_shadow_drop (local.get $w))
+        (if (i32.eqz (local.get $len))
+          (then (call $uwc_inc (i32.add (local.get $c) (i32.const 11))))
+          (else
+            (if (i32.ne (call $g2w_affine_span (local.get $lo) (local.get $len))
+                        (global.get $NULL_SENTINEL))
+              (then (call $uwc_inc (i32.add (local.get $c) (i32.const 9))))
+              (else
+                (if (i32.eq (local.get $k) (i32.const 3))
+                  (then (call $uwc_inc (i32.add (local.get $c)
+                    (i32.add (i32.const 4) (global.get $gpas_why)))))
+                  (else (call $uwc_inc (i32.add (local.get $c) (i32.const 12)))))))))))
+    (global.set $uwc_in_uop (i32.const 0))
+    (local.get $r))
+  ;; $uop_reguard with the census on: classify against the slot's previous
+  ;; window, then prove the page exactly as $uop_reguard does.
+  (func $uwc_reguard (param $w i32) (param $ga i32) (param $size i32) (result i32)
+    (local $e i32) (local $k i32) (local $b i32) (local $pg i32)
+    (local.set $pg (i32.and (local.get $ga) (i32.const 0xFFFFF000)))
+    (local.set $e (call $uwc_shadow (local.get $w)))
+    (if (i32.eq (i32.load (local.get $e)) (local.get $w))
+      (then
+        (local.set $k (i32.load offset=4 (local.get $e)))
+        (local.set $b (i32.add (i32.const 32) (i32.shl (i32.sub (local.get $k) (i32.const 1)) (i32.const 3))))
+        (call $uwc_inc (local.get $b))
+        (if (i32.or (i32.eq (local.get $pg) (i32.add (i32.load offset=12 (local.get $e)) (i32.const 0x1000)))
+                    (i32.eq (local.get $pg) (i32.sub (i32.load offset=8 (local.get $e)) (i32.const 0x1000))))
+          (then (call $uwc_inc (i32.add (local.get $b) (i32.const 1)))))
+        (if (i32.lt_u (i32.sub (local.get $ga) (i32.load offset=16 (local.get $e)))
+                      (i32.sub (i32.load offset=20 (local.get $e)) (i32.load offset=16 (local.get $e))))
+          (then (call $uwc_inc (i32.add (local.get $b) (i32.const 2))))
+          (else
+            (if (i32.lt_u (i32.sub (local.get $ga) (i32.load offset=24 (local.get $e)))
+                          (i32.sub (i32.load offset=28 (local.get $e)) (i32.load offset=24 (local.get $e))))
+              (then
+                (if (i32.and
+                      (i32.ne (call $virtual_query_sparse_base (local.get $pg)) (i32.const 0))
+                      (i32.eq (call $virtual_query_sparse_base (local.get $pg))
+                              (call $virtual_query_sparse_base (i32.load offset=8 (local.get $e)))))
+                  (then (call $uwc_inc (i32.add (local.get $b) (i32.const 3))))
+                  (else (call $uwc_inc (i32.add (local.get $b) (i32.const 4))))))
+              (else (call $uwc_inc (i32.add (local.get $b) (i32.const 5))))))))
+      (else (call $uwc_inc (i32.const 56))))
+    (if (i32.gt_u (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (local.get $size))
+                  (i32.const 0x1000))
+      (then
+        (call $uwc_inc (i32.const 16))
+        (call $uwc_inc (i32.const 26))
+        (return (i32.const 0))))
+    (call $uwc_set (local.get $w) (local.get $pg) (i32.const 0x1000)
+      (i32.load offset=12 (local.get $w)) (i32.const 1)))
+  ;; $g2w_affine_span's sparse fallback, from anything but a window proof.
+  (func $uwc_bulk_note (param $len i32) (param $wa i32)
+    (if (global.get $uwc_in_uop) (then (return)))
+    (call $uwc_inc (i32.const 64))
+    (if (i32.ne (local.get $wa) (global.get $NULL_SENTINEL))
+      (then (call $uwc_inc (i32.const 65)) (call $uwc_add (i32.const 71) (local.get $len)) (return)))
+    (call $uwc_inc (i32.add (i32.const 65) (global.get $gpas_why)))
+    (if (i32.eq (global.get $gpas_why) (i32.const 4))
+      (then (call $uwc_add (i32.const 70) (local.get $len)))))
+  (func (export "set_uop_win_census") (param $on i32)
+    (if (local.get $on)
+      (then (memory.fill (call $uwc_base) (i32.const 0) (i32.const 0x2400))))
+    (global.set $uwc_on (i32.ne (local.get $on) (i32.const 0))))
+  (func (export "uop_win_census") (param $k i32) (result f64)
+    (f64.convert_i64_u (i64.load (i32.add (call $uwc_base)
+      (i32.shl (i32.and (local.get $k) (i32.const 127)) (i32.const 3))))))
 
   ;; Run from $pc until an EXIT. $budget is block transfers, spent by every
   ;; branch op; answers what is left. $eip is the only global an EXIT writes:
@@ -383,6 +769,14 @@
           (call $gs32 (i32.add (i32.load (i32.load offset=8 (local.get $pc))) (i32.load offset=12 (local.get $pc)))
                       (i32.load (i32.load offset=4 (local.get $pc))))
           (local.set $pc (i32.add (local.get $pc) (i32.const 16))) (br $L)))
+      ;; 71 ICG v t cls eip x: $uop_fast hands over only a failing guard
+      (if (i32.eq (local.get $op) (i32.const 71))
+        (then
+          (if (i32.load offset=12 (local.get $pc))
+            (then (global.set $uop_icg_fail1 (i32.add (global.get $uop_icg_fail1) (i32.const 1))))
+            (else (global.set $uop_icg_fail0 (i32.add (global.get $uop_icg_fail0) (i32.const 1)))))
+          (call $uop_icg_note (i32.load offset=16 (local.get $pc)))
+          (local.set $pc (i32.load offset=20 (local.get $pc))) (br $L)))
       ;; 57 BCC cc t
       (local.set $budget (i32.sub (local.get $budget) (i32.const 1)))
       (local.set $pc
@@ -392,10 +786,11 @@
     (unreachable))
 
   (func $uop_fast (param $pc i32) (param $budget i32) (result i32)
-    (local $ga i32) (local $w i32) (local $v i32)
+    (local $ga i32) (local $w i32) (local $v i32) (local $x i64) (local $y i64) (local $q i64)
     (loop $L
       (block $svc
       (block $miss
+      (block $c71 (block $c70 (block $c69 (block $c68
       (block $c67 (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
       (block $c55 (block $c54 (block $c53 (block $c52 (block $c51 (block $c50
       (block $c49 (block $c48 (block $c47 (block $c46 (block $c45 (block $c44
@@ -411,7 +806,7 @@
                   $c26 $c27 $c28 $c29 $c30 $c31 $c32 $c33 $c34 $c35 $c36 $c37
                   $c38 $c39 $c40 $c41 $c42 $c43 $c44 $c45 $c46 $c47 $c48 $c49
                   $c50 $c51 $c52 $c53 $c54 $c55 $c56 $c57 $c58 $c59 $c60 $c61 $c62 $c63
-                  $c64 $c65 $c66 $c67
+                  $c64 $c65 $c66 $c67 $c68 $c69 $c70 $c71
                   $c0
                   (i32.load (local.get $pc))))
         ;; 0 EXIT eip
@@ -859,6 +1254,61 @@
         (br $svc))
         ;; 67 SPILL s base disp -- calls $gs32: $uop_run does it
         (br $svc))
+        ;; 68 MULW lo hi a b s -- $th_mul32 / $th_imul32's product
+        (local.set $x (i64.extend_i32_u (i32.load (i32.load offset=12 (local.get $pc)))))
+        (local.set $y (i64.extend_i32_u (i32.load (i32.load offset=16 (local.get $pc)))))
+        (if (i32.load offset=20 (local.get $pc))
+          (then (local.set $x (i64.extend_i32_s (i32.wrap_i64 (local.get $x))))
+                (local.set $y (i64.extend_i32_s (i32.wrap_i64 (local.get $y))))))
+        (local.set $q (i64.mul (local.get $x) (local.get $y)))
+        (i32.store (i32.load offset=4 (local.get $pc)) (i32.wrap_i64 (local.get $q)))
+        (i32.store (i32.load offset=8 (local.get $pc)) (i32.wrap_i64 (i64.shr_u (local.get $q) (i64.const 32))))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 24))) (br $L))
+        ;; 69 SETMULF s lo hi -- $set_flags_mul: CF=OF is the upper half not
+        ;; being the extension of the lower; flag_a and the sign shift stay
+        (local.set $v (i32.load (i32.load offset=8 (local.get $pc))))
+        (global.set $flag_op (i32.const 6))
+        (global.set $flag_b
+          (i32.ne (i32.load (i32.load offset=12 (local.get $pc)))
+                  (select (i32.shr_s (local.get $v) (i32.const 31)) (i32.const 0)
+                          (i32.load offset=4 (local.get $pc)))))
+        (global.set $flag_res (local.get $v))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 16))) (br $L))
+        ;; 70 DIVW q r lo hi d s x -- $th_div32 / $th_idiv32; every case they
+        ;; raise #DE in (and INT64_MIN / -1, which would trap i64.div_s)
+        ;; leaves to x, the threaded div, flags untouched either way
+        (local.set $x (i64.or (i64.extend_i32_u (i32.load (i32.load offset=12 (local.get $pc))))
+                              (i64.shl (i64.extend_i32_u (i32.load (i32.load offset=16 (local.get $pc))))
+                                       (i64.const 32))))
+        (local.set $v (i32.load (i32.load offset=20 (local.get $pc))))
+        (block $de
+          (br_if $de (i32.eqz (local.get $v)))
+          (if (i32.load offset=24 (local.get $pc))
+            (then
+              (local.set $y (i64.extend_i32_s (local.get $v)))
+              (br_if $de (i32.and (i32.eq (local.get $v) (i32.const -1))
+                                  (i64.eq (local.get $x) (i64.const 0x8000000000000000))))
+              (local.set $q (i64.div_s (local.get $x) (local.get $y)))
+              (br_if $de (i64.gt_u (i64.add (local.get $q) (i64.const 0x80000000)) (i64.const 0xFFFFFFFF)))
+              (local.set $y (i64.rem_s (local.get $x) (local.get $y))))
+            (else
+              (local.set $y (i64.extend_i32_u (local.get $v)))
+              (br_if $de (i64.ge_u (i64.shr_u (local.get $x) (i64.const 32)) (local.get $y)))
+              (local.set $q (i64.div_u (local.get $x) (local.get $y)))
+              (local.set $y (i64.rem_u (local.get $x) (local.get $y)))))
+          (i32.store (i32.load offset=4 (local.get $pc)) (i32.wrap_i64 (local.get $q)))
+          (i32.store (i32.load offset=8 (local.get $pc)) (i32.wrap_i64 (local.get $y)))
+          (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
+        (global.set $uop_div_exits (i32.add (global.get $uop_div_exits) (i32.const 1)))
+        (local.set $pc (i32.load offset=28 (local.get $pc)))
+        (br $L))
+        ;; 71 ICG v t cls eip x -- a pass is counted here, a fail by $uop_run
+        (br_if $svc (i32.ne (i32.load (i32.load offset=4 (local.get $pc))) (i32.load offset=8 (local.get $pc))))
+        (if (i32.load offset=12 (local.get $pc))
+          (then (global.set $uop_icg_pass1 (i32.add (global.get $uop_icg_pass1) (i32.const 1))))
+          (else (global.set $uop_icg_pass0 (i32.add (global.get $uop_icg_pass0) (i32.const 1)))))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 24)))
+        (br $L))
       ;; A memory access left its window: $uop_run re-guards (a call).
       (global.set $uop_io_ga (local.get $ga))
       (global.set $uop_io_w (local.get $w))
@@ -958,7 +1408,7 @@
               (if (result i32) (i32.eqz (local.get $pc)) (then (global.get $uc_last_why))
                 (else (if (result i32) (i32.eq (local.get $pc) (i32.const 1))
                         (then (i32.const 0xFFFF)) (else (i32.const 0)))))
-              (global.get $uc_nloop) (i32.const 0))))
+              (global.get $uc_nloop) (global.get $uc_is_trace))))
     (if (i32.eqz (local.get $pc))
       (then (call $uop_mark_dead (local.get $eip)) (return (i32.const 1))))
     ;; another thread is compiling: try again at the next hot bump
@@ -1232,7 +1682,7 @@
   ;; correctness.
   (func $th_uop_enter (param $op i32)
     (local $nx_fn i32) (local $nx_op i32)
-    (local $ep i32) (local $b0 i32) (local $b1 i32)
+    (local $ep i32) (local $b0 i32) (local $b1 i32) (local $n i32) (local $spent i32)
     (if (i32.and
           (i32.and (i32.eq (i32.load (local.get $op)) (global.get $uop_gen))
                    (i32.eq (i32.load offset=4 (local.get $op)) (global.get $eip)))
@@ -1243,7 +1693,12 @@
         ;; Keep the windows the last run proved unless something they depend
         ;; on changed since; else poison them, so the first access through
         ;; each misses and guards its own page.
-        (local.set $ep (i32.atomic.load (global.get $UOP_WIN_EPOCH)))
+        ;; A plain load: an atomic one is a full barrier on arm64 (dmb ish
+        ;; either side) on every entry, and orders nothing this needs -- the
+        ;; epoch can move the instant after either load, and a program that
+        ;; then runs on proven windows is exactly as covered by the per-access
+        ;; guards as one that read it a moment earlier.
+        (local.set $ep (i32.load (global.get $UOP_WIN_EPOCH)))
         (if (i32.eq (i32.load offset=28 (local.get $op)) (local.get $ep))
           (then (global.set $uop_win_kept (i32.add (global.get $uop_win_kept) (i32.const 1))))
           (else
@@ -1254,12 +1709,15 @@
                                       (local.get $b0)))
         (global.set $block_budget (local.get $b1))
         (global.set $uop_enters (i32.add (global.get $uop_enters) (i32.const 1)))
+        (local.set $spent (i32.sub (local.get $b0) (local.get $b1)))
         (global.set $uop_blocks (i64.add (global.get $uop_blocks)
-          (i64.extend_i32_s (i32.sub (local.get $b0) (local.get $b1)))))
-        (i32.store offset=16 (local.get $op)
-          (i32.add (i32.load offset=16 (local.get $op)) (i32.const 1)))
-        (i32.store offset=20 (local.get $op)
-          (i32.add (i32.load offset=20 (local.get $op)) (i32.sub (local.get $b0) (local.get $b1))))
+          (i64.extend_i32_s (local.get $spent))))
+        ;; Per-program enters/blocks, kept in locals for the poor test below:
+        ;; $spent becomes the running block total.
+        (local.set $n (i32.add (i32.load offset=16 (local.get $op)) (i32.const 1)))
+        (i32.store offset=16 (local.get $op) (local.get $n))
+        (local.set $spent (i32.add (i32.load offset=20 (local.get $op)) (local.get $spent)))
+        (i32.store offset=20 (local.get $op) (local.get $spent))
         ;; EXITB: the batch is over, at the transfer target, as in threaded.
         (if (global.get $uop_bexit)
           (then
@@ -1274,7 +1732,10 @@
                     (i32.lt_s (local.get $b1) (i32.const 0)))
           (then
             (global.set $block_budget (i32.add (local.get $b1) (i32.const 1)))
-            (call $uop_poor_check (local.get $op))
+            ;; $uop_poor_check's test, inline: the call is only made to retire
+            (if (i32.and (i32.ge_u (local.get $n) (i32.const 256))
+                         (i32.lt_u (local.get $spent) (i32.shl (local.get $n) (i32.const 1))))
+              (then (call $uop_poor_check (local.get $op))))
             (return_call $branch_end)))
         (global.set $uop_head_exits (i32.add (global.get $uop_head_exits) (i32.const 1)))
         (i32.store offset=24 (local.get $op)
@@ -1328,6 +1789,15 @@
     (if (i32.eq (local.get $which) (i32.const 11)) (then (return (global.get $uop_cw_skipped))))
     (if (i32.eq (local.get $which) (i32.const 12)) (then (return (global.get $uop_cw_scans))))
     (if (i32.eq (local.get $which) (i32.const 13)) (then (return (global.get $uop_cw_rebuilds))))
+    ;; Wide re-guards: pages proved, growth stopped by a non-adjacent backing page.
+    (if (i32.eq (local.get $which) (i32.const 14)) (then (return (global.get $uop_rg_pages))))
+    (if (i32.eq (local.get $which) (i32.const 15)) (then (return (global.get $uop_rg_nonadj))))
+    ;; 16 DIVW exits; ICG 17/18 call r/m pass/fail, 19/20 IAT pass/fail
+    (if (i32.eq (local.get $which) (i32.const 16)) (then (return (global.get $uop_div_exits))))
+    (if (i32.eq (local.get $which) (i32.const 17)) (then (return (global.get $uop_icg_pass0))))
+    (if (i32.eq (local.get $which) (i32.const 18)) (then (return (global.get $uop_icg_fail0))))
+    (if (i32.eq (local.get $which) (i32.const 19)) (then (return (global.get $uop_icg_pass1))))
+    (if (i32.eq (local.get $which) (i32.const 20)) (then (return (global.get $uop_icg_fail1))))
     (i32.const 0))
   ;; Where the lowering may write: 0 code base, 1 code bytes, 2 temps base,
   ;; 3 windows base.

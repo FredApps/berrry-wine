@@ -5,6 +5,7 @@
 //
 //   node tools/uop-game-ab.js [--games=h3,sc,...] [--arms=off,uop] [--jobs=N]
 //        [--out=DIR] [--extra='--flag ...'] [--ref-wasm=FILE [--ref-region-map=FILE]] [--gl=headless] [--cpu-prof] [--no-build] [--list]
+//        [--extend=GAME:N,...]   (N more gameplay batches past the route's end, split there)
 //
 // Runs each game's own gameplay route (the one its test/test-*-gameplay.js or
 // its re-notes use) in two arms and prints, per game: whether the final frames
@@ -187,10 +188,23 @@ function runArm(game, name, armArgs, outDir, extra) {
     const input = g.input;
     // --gl=headless: the GL games on @node-3d/webgl instead of the software
     // rasterizer (needs an awake display; run.js prints the display count).
-    const gargs = arg('gl', '') === 'headless'
+    let gargs = arg('gl', '') === 'headless'
       ? g.args.map(a => a === '--gl-renderer=software' ? '--headless-gl' : a) : g.args;
+    // --extend=GAME:N[,GAME:N]: run N batches of gameplay past the route's
+    // own end, and split there too, so the gameplay phase is most of the run
+    // and the route's original window is still reported on its own. The
+    // input list is unchanged: the extra batches are the game idling in the
+    // state the route left it in (a town, an adventure map, a HUD).
+    const ext = +((arg('extend', '').split(',').find(s => s.startsWith(`${game}:`)) || ':0').split(':')[1]);
+    let splits = g.split ? [g.split] : [];
+    if (ext > 0) {
+      const mb = gargs.find(a => a.startsWith('--max-batches='));
+      const end = +mb.split('=')[1];
+      gargs = gargs.map(a => a === mb ? `--max-batches=${end + ext}` : a);
+      splits = [...splits, end];
+    }
     argv = ['test/run.js', `--app=${g.app}`, '--no-build', '--quiet-api', '--quiet-blocks', '--no-close',
-      ...gargs, ...(g.split ? [`--slice-split=${g.split}`] : []), ...armArgs, ...extra,
+      ...gargs, ...(splits.length ? [`--slice-split=${splits.join(',')}`] : []), ...armArgs, ...extra,
       `--png=${png}`, ...(input.length ? [`--input=${input.join(',')}`] : [])];
   }
   return new Promise(resolve => {
@@ -218,7 +232,7 @@ function parse(r) {
     .map(m => ({ lo: +m[1], hi: +m[2], s: +m[3] }));
   const uop = (text.match(/^uop: .*$/m) || [''])[0];
   // Secondary tier lines (`uop hot:`, `uop nobump:`), printed as they came.
-  const hot = [...text.matchAll(/^uop (?:hot|nobump): .*$/mg)].map(m => m[0]).join('\n       ');
+  const hot = [...text.matchAll(/^(?:uop (?:hot|nobump|widen): .*|  guard-fail sites: .*)$/mg)].map(m => m[0].trim()).join('\n       ');
   const declines = (text.match(/^\s+declines: (.*)$/m) || [, ''])[1];
   const threads = [...text.matchAll(/^uop\[thread [^\]]+\]: .*$/mg)].map(m => m[0]);
   const crash = (text.match(/(RuntimeError|unreachable|CRASH|crash_unimplemented)[^\n]*/) || [''])[0];
@@ -275,6 +289,29 @@ async function main() {
   // nopre: the uop arm with the H451 x87 island run by the old per-op walk
   // ($x87_island_generic) instead of the predecoded body -- its partner is uop.
   ARMS.nopre = [...ARMS.uop, '--no-x87-island-predecode'];
+  // trace: the uop arm plus --uop-trace-heads (07e $uc_form_trace). The hot
+  // threshold is an arm too, so a K sweep runs in one interleaved sweep:
+  // uopkN / tracekN add --block-exec-walk-k=N (a name, not trailing digits,
+  // so they are not read as repeats; tracek16x2 is a repeat of tracek16).
+  // Trace heads are the default since 2026-09-28, so uop and trace are now
+  // the same configuration; notrace is the arm without them.
+  ARMS.trace = [...ARMS.uop, '--uop-trace-heads'];
+  ARMS.notrace = [...ARMS.uop, '--no-uop-trace-heads'];
+  const armFor = (a) => {
+    const k = /^(uop|trace|off)k(\d+)(?:x\d+)?$/.exec(a);
+    if (k) return [...ARMS[k[1]], `--block-exec-walk-k=${k[2]}`];
+    return ARMS[a] || ARMS[a.replace(/\d+$/, '')];
+  };
+  // narrow: the uop arm with re-guards proving one page again instead of
+  // widening to the 64KB-aligned affine block -- its partner is uop.
+  ARMS.narrow = [...ARMS.uop, '--uop-reguard-span=4096'];
+  // muldiv / icall / iat: the uop arm plus one opt-in widening each (07e
+  // kinds 25/26, FF /2 inline cache, IAT call [abs]); widen is all three.
+  // Their partner is uop.
+  ARMS.muldiv = [...ARMS.uop, '--uop-muldiv'];
+  ARMS.icall = [...ARMS.uop, '--uop-icall'];
+  ARMS.iat = [...ARMS.uop, '--uop-iat'];
+  ARMS.widen = [...ARMS.uop, '--uop-muldiv', '--uop-icall', '--uop-iat'];
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another
   // prebuilt module, so an engine change is measured against its predecessor
   // in one sweep on one box.
@@ -309,7 +346,7 @@ async function main() {
       const [g, a] = queue.shift();
       // off2 / uop2: a repeat of that arm, so a frame difference can be told
       // apart from an app that does not reproduce itself (the control).
-      const armArgs = ARMS[a] || ARMS[a.replace(/\d+$/, '')];
+      const armArgs = armFor(a);
       if (!armArgs) throw new Error(`unknown arm ${a}`);
       const r = parse(await runArm(g, a, armArgs, outDir, extra));
       console.log(`  done ${g}/${a} rc=${r.code} user=${r.user}s wall=${r.wall.toFixed(0)}s`);

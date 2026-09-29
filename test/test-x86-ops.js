@@ -954,8 +954,34 @@ async function main() {
   ]);
   testBytes('MOVSS absolute load/store changes only the low lane',
     bytesAt(sseOut, 4), sseBytesB.slice(0, 4));
-  testBytes('MOVSS preserves the destination upper 96 bits',
-    bytesAt(sseOut + 20, 12), sseBytesA.slice(4));
+  // The LOAD form zeroes bits 127:32 (Intel SDM, MOVSS: "DEST[127:32] <- 0"
+  // when the source is m32); only register-to-register MOVSS preserves them.
+  testBytes('MOVSS from memory zeroes the destination upper 96 bits',
+    bytesAt(sseOut + 20, 12), new Array(12).fill(0));
+
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
+    0x0f, 0x10, 0x0d, ...le32(sseB),       // movups xmm1,[sseB]
+    0xf3, 0x0f, 0x10, 0xc1,                // movss xmm0,xmm1
+    0x0f, 0x11, 0x05, ...le32(sseOut),     // movups [sseOut],xmm0
+  ]);
+  testBytes('register MOVSS preserves the destination upper 96 bits',
+    bytesAt(sseOut, 16), [...sseBytesB.slice(0, 4), ...sseBytesA.slice(4)]);
+
+  // A 16-byte operand straddling a page boundary takes the lane-by-lane path
+  // in $gl128/$gs128; a same-page one takes the single v128 access.
+  const sseEdge = imageBase + 0x400FF8; // clear of the code area and the stack
+  setBytes(sseEdge, sseBytesA);
+  setBytes(sseEdge + 0x20, new Array(16).fill(0));
+  runCode([
+    0x0f, 0x10, 0x05, ...le32(sseEdge),    // movups xmm0,[sseEdge]   (crosses 0x..B000)
+    0x0f, 0x11, 0x05, ...le32(sseEdge + 0x20), // movups [sseEdge+0x20],xmm0
+    0x0f, 0x11, 0x05, ...le32(sseOut),     // movups [sseOut],xmm0
+  ]);
+  testBytes('page-crossing MOVUPS load reads all 16 bytes',
+    bytesAt(sseOut, 16), sseBytesA);
+  testBytes('MOVUPS store after a page-crossing load writes all 16 bytes',
+    bytesAt(sseEdge + 0x20, 16), sseBytesA);
 
   runCode([
     0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]

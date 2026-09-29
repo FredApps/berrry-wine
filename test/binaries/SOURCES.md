@@ -427,6 +427,27 @@ decided to publish it on that footing, as a promotional demo, unmodified. The
 deploy ships exactly the files its manifest mounts; the installed tree is still
 ignored by git.
 
+## Moorhuhn (`candidates/moorhuhn/`)
+
+Source: `https://archive.org/details/moorhuhn_1__2_with_addins`, packages
+`MH1_Retail.7z` (SHA-1 `fa7c7fd33cbdfb1d91fb34fb5e0210b16ee308e5`) and
+`MH1_exe.7z` (SHA-1 `9e772e0d57210ca6c1744b4ce77dd8732f984976`), recorded in
+`test/candidate-corpus/manifest.json` and the directory's
+`.candidate-source.json`. The published copy is exactly two files, both dated
+2000-05-02: `Moorhuhn.exe` (282,624 bytes, MD5
+`fd2fc430dda49dac7b8a4a027cdd2f33`) and `MOORHUHN.DAT` (2,405,699 bytes, MD5
+`331b638f478917a3b766758ff18f2565`), the pair the registry's
+`.wine-assembly-browser.json` mounts.
+
+**Terms and the publishing decision.** Die Original Moorhuhn Jagd was made by
+Art Department/Phenomedia in 1999 as a Johnnie Walker promotion and given away
+free; it spread by being copied, which was the point of it. Its files state no
+redistribution terms either way. On 2026-09-28 the project owner decided to
+publish it on the desktop on that footing, unmodified. Only these two files
+ship; Moorhuhn 2, Winter-Edition, 3, Tennis, the puzzles, the Best Of extras and
+Gallinelle remain local-only candidates, and the files are still ignored by
+git.
+
 ## Candidate corpus (`candidates/`)
 
 The optional CLI-only candidate pool is described by

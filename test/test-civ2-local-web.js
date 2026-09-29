@@ -19,6 +19,9 @@ const DIAGNOSTIC = process.env.CIV2_WEB_DIAGNOSTIC === '1';
 const WAIT_MS = Number(process.env.CIV2_WEB_WAIT_MS || 45000);
 const THREADED = process.env.CIV2_WEB_THREADS !== '0';
 const SCREENSHOT = String(process.env.CIV2_WEB_SCREENSHOT || '').trim();
+// Extra time to keep running before the final snapshot/screenshot, e.g. to
+// photograph MGE's opening movie playing off the mounted CD's data track.
+const SETTLE_MS = Number(process.env.CIV2_WEB_SETTLE_MS || 1500);
 const TRACE_API = String(process.env.CIV2_WEB_TRACE_API || '')
   .split(',').map(name => name.trim()).filter(Boolean);
 const CASES = [
@@ -91,7 +94,7 @@ async function runCase(browser, baseUrl, spec) {
   });
   await page.setViewport({ width: 1100, height: 820, deviceScaleFactor: 1 });
   await page.evaluateOnNewDocument(({ diagnostic, traceApi }) => {
-    localStorage.removeItem('wine-assembly.threads');
+    localStorage.setItem('wine-assembly.threads', '0');  // cooperative route
     if (diagnostic) globalThis.__waTraceCategories = new Set(['fs', 'win16']);
     if (traceApi.length) globalThis.__waTraceApiNames = new Set(traceApi);
   }, { diagnostic: DIAGNOSTIC, traceApi: TRACE_API });
@@ -158,7 +161,7 @@ async function runCase(browser, baseUrl, spec) {
   // Window creation precedes its first paint/message work. Give that work a
   // full Worker slice so a trap immediately after the title cannot pass as a
   // successful launch.
-  await new Promise(resolve => setTimeout(resolve, 1500));
+  await new Promise(resolve => setTimeout(resolve, SETTLE_MS));
   const state = await snapshot(page, spec.id);
   if (SCREENSHOT) await page.screenshot({ path: SCREENSHOT, fullPage: true });
   if (DIAGNOSTIC || SCREENSHOT) {

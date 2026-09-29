@@ -16,6 +16,8 @@ const MPQ = path.join(ROOT, 'test/binaries/candidates/diablo-shareware/installed
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const OUT = process.env.WA_DIABLO_BROWSER_OUT || path.join(ROOT, 'build/diablo-shareware-browser');
 const BASE_URL = process.env.BASE_URL || '';
+// WA_QUERY='?uop-trace-heads': the same route with page switches on.
+const QUERY = process.env.WA_QUERY || '';
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 if (!fs.existsSync(CHROME) || !fs.existsSync(MPQ)) {
@@ -162,7 +164,7 @@ async function main() {
     await page.setViewport({ width: 1280, height: 900, deviceScaleFactor: 1 });
     const errors = [];
     page.on('pageerror', e => errors.push(e.stack || String(e)));
-    await page.goto(`${base}/index.html`, { waitUntil: 'load', timeout: 60000 });
+    await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
     await page.waitForFunction(() => typeof launchApp === 'function' &&
       document.querySelector('.desktop-icon[data-app="diablo_shareware"]'), { timeout: 60000 });
     await page.evaluate(() => {

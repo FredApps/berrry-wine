@@ -1034,7 +1034,7 @@
     ;; Headless printer DCs have no renderer to attach to; canonical storage is
     ;; still valid and text can use its presentation cache.
     (drop (call $host_gdi_surface_attach (local.get $bitmap) (i32.const -1)))
-    (drop (call $host_gdi_surface_upload (local.get $bitmap)
+    (drop (call $gdi_write_surface_upload (local.get $bitmap)
       (i32.const 0) (i32.const 0) (local.get $width) (local.get $height)))
     (i32.const 1))
 
@@ -1096,7 +1096,7 @@
         (br $cols)))
       (local.set $py (i32.add (local.get $py) (i32.const 1)))
       (br $rows)))
-    (drop (call $host_gdi_surface_upload (local.get $bitmap)
+    (drop (call $gdi_write_surface_upload (local.get $bitmap)
       (local.get $l) (local.get $t)
       (local.get $r) (local.get $b))))
 
@@ -1145,7 +1145,7 @@
     (if (i32.or (i32.eqz (local.get $bits)) (i32.eqz (local.get $bytes)))
       (then (return (i32.const 0))))
     (memory.fill (local.get $bits) (i32.const 0xFF) (local.get $bytes))
-    (drop (call $host_gdi_surface_upload (global.get $printer_bitmap)
+    (drop (call $gdi_write_surface_upload (global.get $printer_bitmap)
       (i32.const 0) (i32.const 0) (i32.const 2400) (i32.const 3150)))
     (i32.const 1))
 

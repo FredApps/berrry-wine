@@ -10920,10 +10920,7 @@
     "name": "SetMessageQueue",
     "nargs": 1,
     "test_call": true,
-    "stub": {
-      "pop": 8,
-      "ret": 1
-    },
+    "stub": { "pop": 8, "ret": 1 },
     "convention": "stdcall",
     "hash": 156967389
   },
@@ -17055,10 +17052,7 @@
     "id": 2052,
     "name": "StgIsStorageFile",
     "nargs": 1,
-    "stub": {
-      "pop": 8,
-      "ret": 2147680507
-    },
+    "stub": { "pop": 8, "ret": 2147680507 },
     "convention": "stdcall",
     "hash": 2828024486
   },
@@ -17431,10 +17425,7 @@
     "id": 2097,
     "name": "ILockBytes_Flush",
     "nargs": 1,
-    "stub": {
-      "pop": 8,
-      "ret": 0
-    },
+    "stub": { "pop": 8, "ret": 0 },
     "convention": "stdcall",
     "hash": 1871531943
   },
@@ -17449,10 +17440,7 @@
     "id": 2099,
     "name": "ILockBytes_LockRegion",
     "nargs": 6,
-    "stub": {
-      "pop": 28,
-      "ret": 0
-    },
+    "stub": { "pop": 28, "ret": 0 },
     "convention": "stdcall",
     "hash": 3251546320
   },
@@ -17460,10 +17448,7 @@
     "id": 2100,
     "name": "ILockBytes_UnlockRegion",
     "nargs": 6,
-    "stub": {
-      "pop": 28,
-      "ret": 0
-    },
+    "stub": { "pop": 28, "ret": 0 },
     "convention": "stdcall",
     "hash": 3278977363
   },
@@ -17710,10 +17695,7 @@
     "id": 2130,
     "name": "IStorage_SetElementTimes",
     "nargs": 5,
-    "stub": {
-      "pop": 24,
-      "ret": 0
-    },
+    "stub": { "pop": 24, "ret": 0 },
     "convention": "stdcall",
     "hash": 1490303668
   },
@@ -17915,10 +17897,7 @@
     "id": 2148,
     "name": "IDataObject_DUnadvise",
     "nargs": 2,
-    "stub": {
-      "pop": 12,
-      "ret": 2147745796
-    },
+    "stub": { "pop": 12, "ret": 2147745796 },
     "convention": "stdcall",
     "hash": 3856140751
   },
@@ -18102,10 +18081,7 @@
     "id": 2169,
     "name": "IOleObject_SetMoniker",
     "nargs": 3,
-    "stub": {
-      "pop": 16,
-      "ret": 2147500033
-    },
+    "stub": { "pop": 16, "ret": 2147500033 },
     "convention": "stdcall",
     "hash": 2367689803
   },
@@ -18134,10 +18110,7 @@
     "id": 2173,
     "name": "IOleObject_DoVerb",
     "nargs": 7,
-    "stub": {
-      "pop": 32,
-      "ret": 2147746048
-    },
+    "stub": { "pop": 32, "ret": 2147746048 },
     "convention": "stdcall",
     "hash": 241602258
   },
@@ -18152,10 +18125,7 @@
     "id": 2175,
     "name": "IOleObject_Update",
     "nargs": 1,
-    "stub": {
-      "pop": 8,
-      "ret": 0
-    },
+    "stub": { "pop": 8, "ret": 0 },
     "convention": "stdcall",
     "hash": 691549207
   },
@@ -18163,10 +18133,7 @@
     "id": 2176,
     "name": "IOleObject_IsUpToDate",
     "nargs": 1,
-    "stub": {
-      "pop": 8,
-      "ret": 0
-    },
+    "stub": { "pop": 8, "ret": 0 },
     "convention": "stdcall",
     "hash": 2757278334
   },
@@ -18230,10 +18197,7 @@
     "id": 2185,
     "name": "IOleObject_SetColorScheme",
     "nargs": 2,
-    "stub": {
-      "pop": 12,
-      "ret": 0
-    },
+    "stub": { "pop": 12, "ret": 0 },
     "convention": "stdcall",
     "hash": 83796750
   },
@@ -18414,10 +18378,7 @@
     "id": 2204,
     "name": "IOleCache_InitCache",
     "nargs": 2,
-    "stub": {
-      "pop": 12,
-      "ret": 0
-    },
+    "stub": { "pop": 12, "ret": 0 },
     "convention": "stdcall",
     "hash": 3920739603
   },
@@ -18492,10 +18453,7 @@
     "id": 2212,
     "name": "IViewObject_Unfreeze",
     "nargs": 2,
-    "stub": {
-      "pop": 12,
-      "ret": 0
-    },
+    "stub": { "pop": 12, "ret": 0 },
     "convention": "stdcall",
     "hash": 756718563
   },
@@ -18503,10 +18461,7 @@
     "id": 2213,
     "name": "IViewObject_SetAdvise",
     "nargs": 4,
-    "stub": {
-      "pop": 20,
-      "ret": 0
-    },
+    "stub": { "pop": 20, "ret": 0 },
     "convention": "stdcall",
     "hash": 3367103449
   },
@@ -18528,10 +18483,7 @@
     "id": 2216,
     "name": "OleUIUpdateLinksA",
     "nargs": 4,
-    "stub": {
-      "pop": 20,
-      "ret": 1
-    },
+    "stub": { "pop": 20, "ret": 1 },
     "convention": "stdcall",
     "hash": 754592658
   },
@@ -19066,10 +19018,7 @@
     "id": 2281,
     "name": "IMoniker_IsDirty",
     "nargs": 1,
-    "stub": {
-      "pop": 8,
-      "ret": 1
-    },
+    "stub": { "pop": 8, "ret": 1 },
     "convention": "stdcall",
     "hash": 602413002
   },
@@ -20610,10 +20559,7 @@
     "id": 2444,
     "name": "IFont_SetRatio",
     "nargs": 3,
-    "stub": {
-      "pop": 16,
-      "ret": 0
-    },
+    "stub": { "pop": 16, "ret": 0 },
     "convention": "stdcall",
     "hash": 2216503609
   },
@@ -20628,10 +20574,7 @@
     "id": 2446,
     "name": "IFont_AddRefHfont",
     "nargs": 2,
-    "stub": {
-      "pop": 12,
-      "ret": 0
-    },
+    "stub": { "pop": 12, "ret": 0 },
     "convention": "stdcall",
     "hash": 2169197931
   },
@@ -20639,10 +20582,7 @@
     "id": 2447,
     "name": "IFont_ReleaseHfont",
     "nargs": 2,
-    "stub": {
-      "pop": 12,
-      "ret": 0
-    },
+    "stub": { "pop": 12, "ret": 0 },
     "convention": "stdcall",
     "hash": 2639763140
   },
@@ -20650,10 +20590,7 @@
     "id": 2448,
     "name": "IFont_SetHdc",
     "nargs": 2,
-    "stub": {
-      "pop": 12,
-      "ret": 0
-    },
+    "stub": { "pop": 12, "ret": 0 },
     "convention": "stdcall",
     "hash": 1026454271
   },
@@ -31513,10 +31450,7 @@
     "id": 3706,
     "name": "waveOutSetPlaybackRate",
     "nargs": 2,
-    "stub": {
-      "pop": 12,
-      "ret": 8
-    },
+    "stub": { "pop": 12, "ret": 8 },
     "convention": "stdcall",
     "hash": 4174287963,
     "args": [
@@ -31874,24 +31808,7 @@
     "nargs": 4,
     "convention": "cdecl",
     "hash": 4268366522,
-    "args": [
-      {
-        "name": "hwndParent",
-        "type": "HWND"
-      },
-      {
-        "name": "hInstance",
-        "type": "HANDLE"
-      },
-      {
-        "name": "dwStyle",
-        "type": "DWORD"
-      },
-      {
-        "name": "szFile",
-        "type": "LPCSTR"
-      }
-    ],
+    "args": [{"name": "hwndParent", "type": "HWND"}, {"name": "hInstance", "type": "HANDLE"}, {"name": "dwStyle", "type": "DWORD"}, {"name": "szFile", "type": "LPCSTR"}],
     "ret": "HWND"
   },
   {
@@ -31903,6 +31820,23 @@
   },
   {
     "id": 3743,
+    "name": "DefDriverProc",
+    "nargs": 5,
+    "convention": "stdcall",
+    "hash": 1129332926,
+    "args": [{"name": "dwDriverId", "type": "DWORD"}, {"name": "hDriver", "type": "HANDLE"}, {"name": "uMsg", "type": "DWORD"}, {"name": "lParam1", "type": "DWORD"}, {"name": "lParam2", "type": "DWORD"}]
+  },
+  {
+    "id": 3744,
+    "name": "LocalHandle",
+    "nargs": 1,
+    "convention": "stdcall",
+    "hash": 4103303870,
+    "args": [{"name": "pMem", "type": "LPVOID"}],
+    "ret": "HANDLE"
+  },
+  {
+    "id": 3745,
     "name": "grGlideInit",
     "nargs": 0,
     "test_call": true,
@@ -31910,7 +31844,7 @@
     "hash": 461211915
   },
   {
-    "id": 3744,
+    "id": 3746,
     "name": "_grGlideInit@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -31918,7 +31852,7 @@
     "handler": "grGlideInit"
   },
   {
-    "id": 3745,
+    "id": 3747,
     "name": "grGlideShutdown",
     "nargs": 0,
     "test_call": true,
@@ -31926,7 +31860,7 @@
     "hash": 2689351459
   },
   {
-    "id": 3746,
+    "id": 3748,
     "name": "_grGlideShutdown@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -31934,7 +31868,7 @@
     "handler": "grGlideShutdown"
   },
   {
-    "id": 3747,
+    "id": 3749,
     "name": "grSstWinClose",
     "nargs": 0,
     "test_call": true,
@@ -31942,7 +31876,7 @@
     "hash": 2939979584
   },
   {
-    "id": 3748,
+    "id": 3750,
     "name": "_grSstWinClose@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -31950,7 +31884,7 @@
     "handler": "grSstWinClose"
   },
   {
-    "id": 3749,
+    "id": 3751,
     "name": "grSstQueryHardware",
     "nargs": 1,
     "test_call": true,
@@ -31958,7 +31892,7 @@
     "hash": 4083667090
   },
   {
-    "id": 3750,
+    "id": 3752,
     "name": "_grSstQueryHardware@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -31966,7 +31900,7 @@
     "handler": "grSstQueryHardware"
   },
   {
-    "id": 3751,
+    "id": 3753,
     "name": "grSstQueryBoards",
     "nargs": 1,
     "convention": "stdcall",
@@ -31974,7 +31908,7 @@
     "handler": "grSstQueryHardware"
   },
   {
-    "id": 3752,
+    "id": 3754,
     "name": "_grSstQueryBoards@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -31982,7 +31916,7 @@
     "handler": "grSstQueryHardware"
   },
   {
-    "id": 3753,
+    "id": 3755,
     "name": "grGlideGetVersion",
     "nargs": 1,
     "test_call": true,
@@ -31990,7 +31924,7 @@
     "hash": 2505792305
   },
   {
-    "id": 3754,
+    "id": 3756,
     "name": "_grGlideGetVersion@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -31998,7 +31932,7 @@
     "handler": "grGlideGetVersion"
   },
   {
-    "id": 3755,
+    "id": 3757,
     "name": "grSstSelect",
     "nargs": 1,
     "test_call": true,
@@ -32006,7 +31940,7 @@
     "hash": 1465475618
   },
   {
-    "id": 3756,
+    "id": 3758,
     "name": "_grSstSelect@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32014,7 +31948,7 @@
     "handler": "grSstSelect"
   },
   {
-    "id": 3757,
+    "id": 3759,
     "name": "grSstScreenWidth",
     "nargs": 0,
     "test_call": true,
@@ -32022,7 +31956,7 @@
     "hash": 411244018
   },
   {
-    "id": 3758,
+    "id": 3760,
     "name": "_grSstScreenWidth@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -32030,7 +31964,7 @@
     "handler": "grSstScreenWidth"
   },
   {
-    "id": 3759,
+    "id": 3761,
     "name": "grSstScreenHeight",
     "nargs": 0,
     "test_call": true,
@@ -32038,7 +31972,7 @@
     "hash": 1399653709
   },
   {
-    "id": 3760,
+    "id": 3762,
     "name": "_grSstScreenHeight@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -32046,7 +31980,7 @@
     "handler": "grSstScreenHeight"
   },
   {
-    "id": 3761,
+    "id": 3763,
     "name": "grSstIdle",
     "nargs": 0,
     "test_call": true,
@@ -32054,7 +31988,7 @@
     "hash": 3813265036
   },
   {
-    "id": 3762,
+    "id": 3764,
     "name": "_grSstIdle@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -32062,7 +31996,7 @@
     "handler": "grSstIdle"
   },
   {
-    "id": 3763,
+    "id": 3765,
     "name": "grSstIsBusy",
     "nargs": 0,
     "convention": "stdcall",
@@ -32070,7 +32004,7 @@
     "handler": "grSstIdle"
   },
   {
-    "id": 3764,
+    "id": 3766,
     "name": "_grSstIsBusy@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -32078,7 +32012,7 @@
     "handler": "grSstIdle"
   },
   {
-    "id": 3765,
+    "id": 3767,
     "name": "grBufferNumPending",
     "nargs": 0,
     "convention": "stdcall",
@@ -32086,7 +32020,7 @@
     "handler": "grSstIdle"
   },
   {
-    "id": 3766,
+    "id": 3768,
     "name": "_grBufferNumPending@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -32094,7 +32028,7 @@
     "handler": "grSstIdle"
   },
   {
-    "id": 3767,
+    "id": 3769,
     "name": "grSstStatus",
     "nargs": 0,
     "test_call": true,
@@ -32102,7 +32036,7 @@
     "hash": 2322017860
   },
   {
-    "id": 3768,
+    "id": 3770,
     "name": "_grSstStatus@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -32110,7 +32044,7 @@
     "handler": "grSstStatus"
   },
   {
-    "id": 3769,
+    "id": 3771,
     "name": "grSstVRetraceOn",
     "nargs": 0,
     "test_call": true,
@@ -32118,7 +32052,7 @@
     "hash": 1727684903
   },
   {
-    "id": 3770,
+    "id": 3772,
     "name": "_grSstVRetraceOn@0",
     "nargs": 0,
     "convention": "stdcall",
@@ -32126,7 +32060,7 @@
     "handler": "grSstVRetraceOn"
   },
   {
-    "id": 3771,
+    "id": 3773,
     "name": "grErrorSetCallback",
     "nargs": 1,
     "test_call": true,
@@ -32134,7 +32068,7 @@
     "hash": 290734669
   },
   {
-    "id": 3772,
+    "id": 3774,
     "name": "_grErrorSetCallback@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32142,7 +32076,7 @@
     "handler": "grErrorSetCallback"
   },
   {
-    "id": 3773,
+    "id": 3775,
     "name": "grSstControl",
     "nargs": 1,
     "test_call": true,
@@ -32150,7 +32084,7 @@
     "hash": 33290623
   },
   {
-    "id": 3774,
+    "id": 3776,
     "name": "_grSstControl@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32158,7 +32092,7 @@
     "handler": "grSstControl"
   },
   {
-    "id": 3775,
+    "id": 3777,
     "name": "grSstWinOpen",
     "nargs": 7,
     "test_call": true,
@@ -32166,7 +32100,7 @@
     "hash": 3785260828
   },
   {
-    "id": 3776,
+    "id": 3778,
     "name": "_grSstWinOpen@28",
     "nargs": 7,
     "convention": "stdcall",
@@ -32174,7 +32108,7 @@
     "handler": "grSstWinOpen"
   },
   {
-    "id": 3777,
+    "id": 3779,
     "name": "grColorCombine",
     "nargs": 5,
     "test_call": true,
@@ -32182,7 +32116,7 @@
     "hash": 921923860
   },
   {
-    "id": 3778,
+    "id": 3780,
     "name": "_grColorCombine@20",
     "nargs": 5,
     "convention": "stdcall",
@@ -32190,7 +32124,7 @@
     "handler": "grColorCombine"
   },
   {
-    "id": 3779,
+    "id": 3781,
     "name": "grAlphaCombine",
     "nargs": 5,
     "test_call": true,
@@ -32198,7 +32132,7 @@
     "hash": 1646072441
   },
   {
-    "id": 3780,
+    "id": 3782,
     "name": "_grAlphaCombine@20",
     "nargs": 5,
     "convention": "stdcall",
@@ -32206,7 +32140,7 @@
     "handler": "grAlphaCombine"
   },
   {
-    "id": 3781,
+    "id": 3783,
     "name": "grConstantColorValue",
     "nargs": 1,
     "test_call": true,
@@ -32214,7 +32148,7 @@
     "hash": 4017435396
   },
   {
-    "id": 3782,
+    "id": 3784,
     "name": "_grConstantColorValue@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32222,7 +32156,7 @@
     "handler": "grConstantColorValue"
   },
   {
-    "id": 3783,
+    "id": 3785,
     "name": "grDepthBufferMode",
     "nargs": 1,
     "test_call": true,
@@ -32230,7 +32164,7 @@
     "hash": 1601858080
   },
   {
-    "id": 3784,
+    "id": 3786,
     "name": "_grDepthBufferMode@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32238,7 +32172,7 @@
     "handler": "grDepthBufferMode"
   },
   {
-    "id": 3785,
+    "id": 3787,
     "name": "grDepthBufferFunction",
     "nargs": 1,
     "test_call": true,
@@ -32246,7 +32180,7 @@
     "hash": 1598835015
   },
   {
-    "id": 3786,
+    "id": 3788,
     "name": "_grDepthBufferFunction@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32254,7 +32188,7 @@
     "handler": "grDepthBufferFunction"
   },
   {
-    "id": 3787,
+    "id": 3789,
     "name": "grDepthMask",
     "nargs": 1,
     "test_call": true,
@@ -32262,7 +32196,7 @@
     "hash": 2673872013
   },
   {
-    "id": 3788,
+    "id": 3790,
     "name": "_grDepthMask@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32270,7 +32204,7 @@
     "handler": "grDepthMask"
   },
   {
-    "id": 3789,
+    "id": 3791,
     "name": "grAlphaBlendFunction",
     "nargs": 4,
     "test_call": true,
@@ -32278,7 +32212,7 @@
     "hash": 3265932411
   },
   {
-    "id": 3790,
+    "id": 3792,
     "name": "_grAlphaBlendFunction@16",
     "nargs": 4,
     "convention": "stdcall",
@@ -32286,7 +32220,7 @@
     "handler": "grAlphaBlendFunction"
   },
   {
-    "id": 3791,
+    "id": 3793,
     "name": "grAlphaTestFunction",
     "nargs": 1,
     "test_call": true,
@@ -32294,7 +32228,7 @@
     "hash": 753377836
   },
   {
-    "id": 3792,
+    "id": 3794,
     "name": "_grAlphaTestFunction@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32302,7 +32236,7 @@
     "handler": "grAlphaTestFunction"
   },
   {
-    "id": 3793,
+    "id": 3795,
     "name": "grAlphaTestReferenceValue",
     "nargs": 1,
     "test_call": true,
@@ -32310,7 +32244,7 @@
     "hash": 32855046
   },
   {
-    "id": 3794,
+    "id": 3796,
     "name": "_grAlphaTestReferenceValue@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32318,7 +32252,7 @@
     "handler": "grAlphaTestReferenceValue"
   },
   {
-    "id": 3795,
+    "id": 3797,
     "name": "grChromakeyMode",
     "nargs": 1,
     "test_call": true,
@@ -32326,7 +32260,7 @@
     "hash": 861750190
   },
   {
-    "id": 3796,
+    "id": 3798,
     "name": "_grChromakeyMode@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32334,7 +32268,7 @@
     "handler": "grChromakeyMode"
   },
   {
-    "id": 3797,
+    "id": 3799,
     "name": "grChromakeyValue",
     "nargs": 1,
     "test_call": true,
@@ -32342,7 +32276,7 @@
     "hash": 2028295326
   },
   {
-    "id": 3798,
+    "id": 3800,
     "name": "_grChromakeyValue@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32350,7 +32284,7 @@
     "handler": "grChromakeyValue"
   },
   {
-    "id": 3799,
+    "id": 3801,
     "name": "grFogMode",
     "nargs": 1,
     "test_call": true,
@@ -32358,7 +32292,7 @@
     "hash": 1569448159
   },
   {
-    "id": 3800,
+    "id": 3802,
     "name": "_grFogMode@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32366,7 +32300,7 @@
     "handler": "grFogMode"
   },
   {
-    "id": 3801,
+    "id": 3803,
     "name": "grFogColorValue",
     "nargs": 1,
     "test_call": true,
@@ -32374,7 +32308,7 @@
     "hash": 3943382816
   },
   {
-    "id": 3802,
+    "id": 3804,
     "name": "_grFogColorValue@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32382,7 +32316,7 @@
     "handler": "grFogColorValue"
   },
   {
-    "id": 3803,
+    "id": 3805,
     "name": "grCullMode",
     "nargs": 1,
     "test_call": true,
@@ -32390,7 +32324,7 @@
     "hash": 3949800915
   },
   {
-    "id": 3804,
+    "id": 3806,
     "name": "_grCullMode@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32398,7 +32332,7 @@
     "handler": "grCullMode"
   },
   {
-    "id": 3805,
+    "id": 3807,
     "name": "grSstOrigin",
     "nargs": 1,
     "test_call": true,
@@ -32406,7 +32340,7 @@
     "hash": 2318435292
   },
   {
-    "id": 3806,
+    "id": 3808,
     "name": "_grSstOrigin@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32414,7 +32348,7 @@
     "handler": "grSstOrigin"
   },
   {
-    "id": 3807,
+    "id": 3809,
     "name": "grClipWindow",
     "nargs": 4,
     "test_call": true,
@@ -32422,7 +32356,7 @@
     "hash": 1000557302
   },
   {
-    "id": 3808,
+    "id": 3810,
     "name": "_grClipWindow@16",
     "nargs": 4,
     "convention": "stdcall",
@@ -32430,7 +32364,7 @@
     "handler": "grClipWindow"
   },
   {
-    "id": 3809,
+    "id": 3811,
     "name": "grColorMask",
     "nargs": 2,
     "test_call": true,
@@ -32438,7 +32372,7 @@
     "hash": 951585335
   },
   {
-    "id": 3810,
+    "id": 3812,
     "name": "_grColorMask@8",
     "nargs": 2,
     "convention": "stdcall",
@@ -32446,7 +32380,7 @@
     "handler": "grColorMask"
   },
   {
-    "id": 3811,
+    "id": 3813,
     "name": "grRenderBuffer",
     "nargs": 1,
     "test_call": true,
@@ -32454,7 +32388,7 @@
     "hash": 752093862
   },
   {
-    "id": 3812,
+    "id": 3814,
     "name": "_grRenderBuffer@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32462,7 +32396,7 @@
     "handler": "grRenderBuffer"
   },
   {
-    "id": 3813,
+    "id": 3815,
     "name": "grDepthBiasLevel",
     "nargs": 1,
     "test_call": true,
@@ -32470,7 +32404,7 @@
     "hash": 2060886982
   },
   {
-    "id": 3814,
+    "id": 3816,
     "name": "_grDepthBiasLevel@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32478,7 +32412,7 @@
     "handler": "grDepthBiasLevel"
   },
   {
-    "id": 3815,
+    "id": 3817,
     "name": "grDitherMode",
     "nargs": 1,
     "test_call": true,
@@ -32486,7 +32420,7 @@
     "hash": 1861732559
   },
   {
-    "id": 3816,
+    "id": 3818,
     "name": "_grDitherMode@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32494,7 +32428,7 @@
     "handler": "grDitherMode"
   },
   {
-    "id": 3817,
+    "id": 3819,
     "name": "grGammaCorrectionValue",
     "nargs": 1,
     "test_call": true,
@@ -32502,7 +32436,7 @@
     "hash": 3008968950
   },
   {
-    "id": 3818,
+    "id": 3820,
     "name": "_grGammaCorrectionValue@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32510,7 +32444,7 @@
     "handler": "grGammaCorrectionValue"
   },
   {
-    "id": 3819,
+    "id": 3821,
     "name": "grHints",
     "nargs": 2,
     "test_call": true,
@@ -32518,7 +32452,7 @@
     "hash": 4007265346
   },
   {
-    "id": 3820,
+    "id": 3822,
     "name": "_grHints@8",
     "nargs": 2,
     "convention": "stdcall",
@@ -32526,7 +32460,7 @@
     "handler": "grHints"
   },
   {
-    "id": 3821,
+    "id": 3823,
     "name": "grTexClampMode",
     "nargs": 3,
     "test_call": true,
@@ -32534,7 +32468,7 @@
     "hash": 4161209879
   },
   {
-    "id": 3822,
+    "id": 3824,
     "name": "_grTexClampMode@12",
     "nargs": 3,
     "convention": "stdcall",
@@ -32542,7 +32476,7 @@
     "handler": "grTexClampMode"
   },
   {
-    "id": 3823,
+    "id": 3825,
     "name": "grTexFilterMode",
     "nargs": 3,
     "test_call": true,
@@ -32550,7 +32484,7 @@
     "hash": 1143458648
   },
   {
-    "id": 3824,
+    "id": 3826,
     "name": "_grTexFilterMode@12",
     "nargs": 3,
     "convention": "stdcall",
@@ -32558,7 +32492,7 @@
     "handler": "grTexFilterMode"
   },
   {
-    "id": 3825,
+    "id": 3827,
     "name": "grTexLodBiasValue",
     "nargs": 2,
     "test_call": true,
@@ -32566,7 +32500,7 @@
     "hash": 1324355962
   },
   {
-    "id": 3826,
+    "id": 3828,
     "name": "_grTexLodBiasValue@8",
     "nargs": 2,
     "convention": "stdcall",
@@ -32574,7 +32508,7 @@
     "handler": "grTexLodBiasValue"
   },
   {
-    "id": 3827,
+    "id": 3829,
     "name": "grTexCombine",
     "nargs": 7,
     "test_call": true,
@@ -32582,7 +32516,7 @@
     "hash": 239985058
   },
   {
-    "id": 3828,
+    "id": 3830,
     "name": "_grTexCombine@28",
     "nargs": 7,
     "convention": "stdcall",
@@ -32590,7 +32524,7 @@
     "handler": "grTexCombine"
   },
   {
-    "id": 3829,
+    "id": 3831,
     "name": "grTexMipMapMode",
     "nargs": 3,
     "test_call": true,
@@ -32598,7 +32532,7 @@
     "hash": 1167799370
   },
   {
-    "id": 3830,
+    "id": 3832,
     "name": "_grTexMipMapMode@12",
     "nargs": 3,
     "convention": "stdcall",
@@ -32606,7 +32540,7 @@
     "handler": "grTexMipMapMode"
   },
   {
-    "id": 3831,
+    "id": 3833,
     "name": "grTexMinAddress",
     "nargs": 1,
     "test_call": true,
@@ -32614,7 +32548,7 @@
     "hash": 3308305405
   },
   {
-    "id": 3832,
+    "id": 3834,
     "name": "_grTexMinAddress@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32622,7 +32556,7 @@
     "handler": "grTexMinAddress"
   },
   {
-    "id": 3833,
+    "id": 3835,
     "name": "grTexMaxAddress",
     "nargs": 1,
     "test_call": true,
@@ -32630,7 +32564,7 @@
     "hash": 2023443503
   },
   {
-    "id": 3834,
+    "id": 3836,
     "name": "_grTexMaxAddress@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32638,7 +32572,7 @@
     "handler": "grTexMaxAddress"
   },
   {
-    "id": 3835,
+    "id": 3837,
     "name": "grTexCalcMemRequired",
     "nargs": 4,
     "test_call": true,
@@ -32646,7 +32580,7 @@
     "hash": 1136332520
   },
   {
-    "id": 3836,
+    "id": 3838,
     "name": "_grTexCalcMemRequired@16",
     "nargs": 4,
     "convention": "stdcall",
@@ -32654,7 +32588,7 @@
     "handler": "grTexCalcMemRequired"
   },
   {
-    "id": 3837,
+    "id": 3839,
     "name": "grTexTextureMemRequired",
     "nargs": 2,
     "test_call": true,
@@ -32662,7 +32596,7 @@
     "hash": 3804776216
   },
   {
-    "id": 3838,
+    "id": 3840,
     "name": "_grTexTextureMemRequired@8",
     "nargs": 2,
     "convention": "stdcall",
@@ -32670,7 +32604,7 @@
     "handler": "grTexTextureMemRequired"
   },
   {
-    "id": 3839,
+    "id": 3841,
     "name": "grTexSource",
     "nargs": 4,
     "test_call": true,
@@ -32678,7 +32612,7 @@
     "hash": 650108752
   },
   {
-    "id": 3840,
+    "id": 3842,
     "name": "_grTexSource@16",
     "nargs": 4,
     "convention": "stdcall",
@@ -32686,7 +32620,7 @@
     "handler": "grTexSource"
   },
   {
-    "id": 3841,
+    "id": 3843,
     "name": "grTexDownloadMipMap",
     "nargs": 4,
     "test_call": true,
@@ -32694,7 +32628,7 @@
     "hash": 3552077521
   },
   {
-    "id": 3842,
+    "id": 3844,
     "name": "_grTexDownloadMipMap@16",
     "nargs": 4,
     "convention": "stdcall",
@@ -32702,7 +32636,7 @@
     "handler": "grTexDownloadMipMap"
   },
   {
-    "id": 3843,
+    "id": 3845,
     "name": "grTexDownloadTable",
     "nargs": 3,
     "test_call": true,
@@ -32710,7 +32644,7 @@
     "hash": 405297915
   },
   {
-    "id": 3844,
+    "id": 3846,
     "name": "_grTexDownloadTable@12",
     "nargs": 3,
     "convention": "stdcall",
@@ -32718,7 +32652,7 @@
     "handler": "grTexDownloadTable"
   },
   {
-    "id": 3845,
+    "id": 3847,
     "name": "grFogTable",
     "nargs": 1,
     "test_call": true,
@@ -32726,7 +32660,7 @@
     "hash": 2226682064
   },
   {
-    "id": 3846,
+    "id": 3848,
     "name": "_grFogTable@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32734,7 +32668,7 @@
     "handler": "grFogTable"
   },
   {
-    "id": 3847,
+    "id": 3849,
     "name": "grDrawTriangle",
     "nargs": 3,
     "test_call": true,
@@ -32742,7 +32676,7 @@
     "hash": 2648990206
   },
   {
-    "id": 3848,
+    "id": 3850,
     "name": "_grDrawTriangle@12",
     "nargs": 3,
     "convention": "stdcall",
@@ -32750,7 +32684,7 @@
     "handler": "grDrawTriangle"
   },
   {
-    "id": 3849,
+    "id": 3851,
     "name": "grBufferClear",
     "nargs": 3,
     "test_call": true,
@@ -32758,7 +32692,7 @@
     "hash": 3843631815
   },
   {
-    "id": 3850,
+    "id": 3852,
     "name": "_grBufferClear@12",
     "nargs": 3,
     "convention": "stdcall",
@@ -32766,7 +32700,7 @@
     "handler": "grBufferClear"
   },
   {
-    "id": 3851,
+    "id": 3853,
     "name": "grBufferSwap",
     "nargs": 1,
     "test_call": true,
@@ -32774,7 +32708,7 @@
     "hash": 3795006001
   },
   {
-    "id": 3852,
+    "id": 3854,
     "name": "_grBufferSwap@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32782,14 +32716,14 @@
     "handler": "grBufferSwap"
   },
   {
-    "id": 3853,
+    "id": 3855,
     "name": "grAADrawLine",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2542708606
   },
   {
-    "id": 3854,
+    "id": 3856,
     "name": "_grAADrawLine@8",
     "nargs": 2,
     "convention": "stdcall",
@@ -32797,7 +32731,7 @@
     "handler": "grAADrawLine"
   },
   {
-    "id": 3855,
+    "id": 3857,
     "name": "grAADrawTriangle",
     "nargs": 6,
     "convention": "stdcall",
@@ -32805,7 +32739,7 @@
     "handler": "grAADrawLine"
   },
   {
-    "id": 3856,
+    "id": 3858,
     "name": "_grAADrawTriangle@24",
     "nargs": 6,
     "convention": "stdcall",
@@ -32813,14 +32747,14 @@
     "handler": "grAADrawLine"
   },
   {
-    "id": 3857,
+    "id": 3859,
     "name": "grDrawLine",
     "nargs": 2,
     "convention": "stdcall",
     "hash": 3297492340
   },
   {
-    "id": 3858,
+    "id": 3860,
     "name": "_grDrawLine@8",
     "nargs": 2,
     "convention": "stdcall",
@@ -32828,14 +32762,14 @@
     "handler": "grDrawLine"
   },
   {
-    "id": 3859,
+    "id": 3861,
     "name": "grDrawPoint",
     "nargs": 1,
     "convention": "stdcall",
     "hash": 2343528528
   },
   {
-    "id": 3860,
+    "id": 3862,
     "name": "_grDrawPoint@4",
     "nargs": 1,
     "convention": "stdcall",
@@ -32843,7 +32777,7 @@
     "handler": "grDrawPoint"
   },
   {
-    "id": 3861,
+    "id": 3863,
     "name": "grLfbLock",
     "nargs": 6,
     "test_call": true,
@@ -32851,7 +32785,7 @@
     "hash": 4093928807
   },
   {
-    "id": 3862,
+    "id": 3864,
     "name": "_grLfbLock@24",
     "nargs": 6,
     "convention": "stdcall",
@@ -32859,7 +32793,7 @@
     "handler": "grLfbLock"
   },
   {
-    "id": 3863,
+    "id": 3865,
     "name": "grLfbUnlock",
     "nargs": 2,
     "test_call": true,
@@ -32867,7 +32801,7 @@
     "hash": 1288331068
   },
   {
-    "id": 3864,
+    "id": 3866,
     "name": "_grLfbUnlock@8",
     "nargs": 2,
     "convention": "stdcall",
@@ -32875,7 +32809,7 @@
     "handler": "grLfbUnlock"
   },
   {
-    "id": 3865,
+    "id": 3867,
     "name": "grLfbReadRegion",
     "nargs": 7,
     "test_call": true,
@@ -32883,7 +32817,7 @@
     "hash": 3535445784
   },
   {
-    "id": 3866,
+    "id": 3868,
     "name": "_grLfbReadRegion@28",
     "nargs": 7,
     "convention": "stdcall",
@@ -32891,7 +32825,7 @@
     "handler": "grLfbReadRegion"
   },
   {
-    "id": 3867,
+    "id": 3869,
     "name": "grLfbWriteRegion",
     "nargs": 8,
     "test_call": true,
@@ -32899,7 +32833,7 @@
     "hash": 3142490887
   },
   {
-    "id": 3868,
+    "id": 3870,
     "name": "_grLfbWriteRegion@32",
     "nargs": 8,
     "convention": "stdcall",
@@ -32907,7 +32841,7 @@
     "handler": "grLfbWriteRegion"
   },
   {
-    "id": 3869,
+    "id": 3871,
     "name": "grTexCombineFunction",
     "nargs": 2,
     "test_call": true,
@@ -32915,7 +32849,7 @@
     "hash": 3161202934
   },
   {
-    "id": 3870,
+    "id": 3872,
     "name": "_grTexCombineFunction@8",
     "nargs": 2,
     "convention": "stdcall",
@@ -32923,7 +32857,7 @@
     "handler": "grTexCombineFunction"
   },
   {
-    "id": 3871,
+    "id": 3873,
     "name": "guFogGenerateExp",
     "nargs": 2,
     "test_call": true,
@@ -32931,7 +32865,7 @@
     "hash": 2603656571
   },
   {
-    "id": 3872,
+    "id": 3874,
     "name": "_guFogGenerateExp@8",
     "nargs": 2,
     "convention": "stdcall",

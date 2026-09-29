@@ -1032,3 +1032,379 @@ run.js report prints them as the `uop stack:` line.
 | `plain` | elided pairs with no memory access between; the conservative "any stack access blocks" rule would have elided these |
 | `rescued` | elided pairs with some access between (= elided - plain); broken down as `other-slot`, `fwd-read`, `fwd-write` |
 | `unknown-addr` … `list-full` | matched pairs that were materialized, by reason |
+
+## 13. Trace heads: `--uop-trace-heads` (opt-in, 2026-09-28)
+
+**What it is.** This is §11.3 idea A. A hot head with no back edge used to
+decline as `no-backedge`. With `--uop-trace-heads` (or `?uop-trace-heads`,
+or `set_uop_trace_heads(1)`), `$uc_form_loop` instead calls
+`$uc_form_trace` (07e). That function works in three steps.
+
+1. **BFS.** It walks the supported successors from the head, up to
+   `$uc_trace_max` (160) instructions.
+2. **Trim.** It drops every non-branch member whose successor is outside
+   the trace, repeating until nothing changes. A trace therefore leaves
+   only through a branch, exactly like a loop.
+3. **Minimum size.** It keeps the trace only if at least `$uc_trace_min` (8)
+   instructions remain.
+
+The trim step is what keeps a trace off `$logical_frame_addr`.
+
+- A fall-through into the marker block ends a threaded block, because
+  `$fuse_stop` cuts it there.
+- A trace that ran through that seam put the block clock out of step (the
+  `trace-logical` case). The same case also showed that the marker is
+  always reached threaded.
+
+The remaining pieces:
+
+- `$uc_is_trace` is recorded in the census event, and `tools/uop-census.js`
+  prints `(traces: N)`.
+- `uop_cstat 26` counts the traces formed.
+- `set_uop_trace_limits(min,max)` tunes both limits.
+
+**Enter path.** `$th_uop_enter` also got cheaper.
+
+- The window epoch is read with a plain load instead of an atomic. Only the
+  owning thread bumps it.
+- The poor check now runs on side exits only once a program has 256 enters
+  with fewer than 2 blocks per enter.
+
+SpiderMonkey Ion, before and after:
+
+| | bytes | instructions | `dmb` | `bl` |
+|---|---|---|---|---|
+| before | 1120 | 280 | 1 | 3 |
+| after | 1144 | 286 | 0 | 2 |
+
+`$uop_run`, `$uop_fast` and `$uop_poor_check` did not change.
+
+**Tests.** `test/test-uop-compiler.js` adds five cases:
+
+- `trace-callee`, `trace-main` and `trace-callchain`: call/ret regions with
+  a diamond and a `bsr`.
+- `trace-logical`: a marker inside the traced path. It checks that every
+  iteration counts one logical frame.
+- `loop-logical`: a control loop whose exit falls into the marker.
+
+### A/B
+
+Box8, `tools/uop-game-ab.js`, `--jobs=2`, user CPU, interleaved.
+Each figure is the mean of two runs.
+
+**Base 40c1c484** (before G/H/code-write/x87-predecode):
+
+| game | off / off2 | uop / uop2 | trace / trace2 | trace vs uop | K=16 trace | frames |
+|---|---|---|---|---|---|---|
+| sc | 28.10 / 27.97 | 16.75 / 16.98 | 16.36 / 16.59 | **−2.3%** (uop band 1.4%) | 17.83 (+8%) | not assessable: off~off2 differ 1.14% |
+| diablo | 129.72 / 129.65 | 119.45 / 118.76 | 112.99 / 113.07 | **−5.1%** (band 0.6%) | 114.95 | identical |
+| h3 | 83.16 / 82.34 | 73.36 / 73.06 | 63.53 / 63.80 | **−13.0%** (band 0.4%) | 64.49 | identical |
+| wc3g | 148.01 / 148.57 | 108.41 / 109.06 | 101.96 / 100.80 | **−6.8%** (band 1.1%) | 113.54 (+12%) | identical |
+
+**Gameplay phase** (uop → trace):
+
+| game | uop | trace |
+|---|---|---|
+| sc | 0.9 s | 0.9 s |
+| diablo | 4.6 s | 4.3 s |
+| h3 | 5.05 s | 3.95 s |
+| wc3g | 1.65 s | 1.5 s |
+
+`refuop` (the base wasm) matched `uop` to within 1% everywhere, so the
+cheaper enter op on its own is neutral.
+
+**Rebased on eca2b53a** (after G no-bump and H quiet-api):
+
+| game | off / off2 | uop / uop2 | trace / trace2 | trace vs uop | gameplay uop → trace | frames |
+|---|---|---|---|---|---|---|
+| h3 | 73.80 / 73.16 | 61.93 / 61.58 | 55.75 / 55.00 | **−10.3%** (band 1.4%) | 4.7 → 4.55 s | identical |
+| diablo | 117.47 / 117.40 | 102.52 / 101.24 | 98.51 / 98.24 | **−3.4%** (band 1.3%) | 4.1 → 3.9 s | identical |
+
+Most of the whole-run win now lands in boot and loading. After G, H3's
+gameplay gain dropped from −22% to −3%.
+
+### Counters
+
+**Declines, uop → trace (base run):**
+
+| game | no-backedge | head-unsupported |
+|---|---|---|
+| diablo | 892 → 480 | – |
+| h3 | 1210 → 595 | – |
+| wc3g | 8375 → 1978 | 685 → 1398 |
+
+In WC3g, trace heads now reach more heads that open on a call or ret.
+
+**Installs, kills and flushes, uop → trace:**
+
+| game | installs | kills | flushes |
+|---|---|---|---|
+| sc | 406 → 867 | 36 → 143 | 1 → 3 |
+| diablo | 184 → 3371 | 10 → 2491 | 0 → 13 |
+| h3 | 236 → 661 | 29 → 60 | 0 → 2 |
+| wc3g | 1126 → 3857 | 67 → 255 | 3 → 14 |
+
+Diablo's kills are mostly arena flushes. Its traces are many and short.
+
+**Game-thread instances**, uop → trace:
+
+| game | installs | enters | blocks |
+|---|---|---|---|
+| sc | 177 → 1205 | 2.44M → 19.5M | 342M → 410M |
+| h3 main | 26 → 927 | 9.8M → 33M | 131M → 190M |
+
+**K sweep.** `--block-exec-walk-k=16` (the `tracek16` arm) is worse than
+the default everywhere.
+
+- WC3g: 152,400 installs and 590 flushes. Its gameplay phase is back to the
+  off arm's 2.3 s.
+- SC: 70 flushes.
+
+A lower threshold compiles cold traces, which thrash the arena. K=4 and K=8
+would only be worse, and K=64 was not run.
+
+### Verdict
+
+Trace heads win on every game where frames reproduce, and frames are
+identical there. SC is the one exception: its −2.3% sits just above its
+1.4% band, and its frames do not reproduce even off vs off2.
+
+The feature stays **opt-in** for now, for three reasons:
+
+- The post-G gameplay gain is small.
+- Diablo's arena churn (13 flushes) is a cost the next arena-size change
+  could turn around.
+- Flipping the default is a one-line change (`$uc_trace` initial value) for
+  whoever merges.
+
+The recommended next step is to flip the default once one browser
+spot-check agrees.
+
+### Default-on decision (post-g2w-fast, 2026-09-28)
+
+This round re-ran the A/B on main 754d307e, which includes the `$g2w`
+fast-path inline. It weighted each run toward gameplay, and it added a
+correctness sweep and a browser check.
+
+**Method.**
+
+- Tool: `tools/uop-game-ab.js`. Arms `uop` (tier on, trace heads off) and
+  `trace` (`--uop-trace-heads`), 3 reps each, interleaved. Each game ran on
+  one quiet bench box, one job at a time.
+- The **band** is an arm's own (max−min)/mean over its 3 reps; that is the
+  same-build null band.
+- `--extend=GAME:N` (new) runs N more batches past the route's end and adds
+  a `--slice-split` at that end. The route's own `--slice-split` stays, so
+  the phases are:
+  - phase 0: boot through the route's split;
+  - phase 1: the rest of the route;
+  - phase 2: the extension (SC, H3 and Diablo have a separate extension
+    phase).
+
+  "Gameplay" is the guest-slice seconds of every phase after phase 0.
+  Guest seconds are printed to 0.1 s, so a 1.3 s phase cannot resolve
+  anything under 8%.
+- **user** is the whole run's user CPU.
+- **Frames** compare every arm's final PNG against the `uop` arm's.
+
+| game (box, extension) | user uop (band) | user trace (band) | Δ user | gameplay uop (band) | gameplay trace (band) | Δ gameplay | frames |
+|---|---|---|---|---|---|---|---|
+| sc (box9, +20000) | 50.46 (0.9%) | 50.59 (2.7%) | +0.3% | 5.57 (1.8%) | 5.77 (3.5%) | **+3.6%** | nondeterministic (uop~uop2 1.8%) |
+| h3 (box9, +6000) | 109.91 (2.2%) | 101.49 (1.0%) | **−7.7%** | 29.77 (3.4%) | 28.73 (1.4%) | −3.5% | IDENTICAL |
+| diablo (box8, +8000) | 274.52 (1.8%) | 268.58 (7.3%) | −2.2% | 34.93 (2.3%) | 32.90 (9.4%) | −5.8% | IDENTICAL |
+| diablo (box9, +8000, 2nd set) | 271.28 (1.7%) | 257.95 (1.5%) | **−4.9%** | 34.57 (3.8%) | 31.90 (6.0%) | −7.7% | IDENTICAL |
+| wc3g (box8, +40000) | 170.04 (0.4%) | 161.91 (2.8%) | **−4.8%** | 4.50 (0.0%) | 4.37 (4.6%) | −3.0% | IDENTICAL |
+| wc3 menu (box9) | | | −3.2% (bands 0.8/0.5%) | 1.97 | 1.90 | −3.6% | IDENTICAL |
+| mh3 (box9) | | | −4.6% (bands 0.6/1.2%) | 2.63 | 2.20 | −16.5% | nondeterministic (uop~uop2 ~68%) |
+| mh1 (box1) | 10.71 (0.6%) | 10.17 (0.4%) | **−5.1%** | 1.30 (0.0%) | 1.20 (0.0%) | −7.7% | nondeterministic (uop~uop2 0.9%) |
+| mh2 (box1) | 30.68 (0.7%) | 30.79 (6.9%) | +0.4% | 3.53 (2.8%) | 3.60 (8.3%) | +1.9% | IDENTICAL |
+| mhw (box1) | 9.87 (0.4%) | 9.38 (1.2%) | **−5.0%** | 1.37 (7.3%) | 1.10 (0.0%) | −19.5% | nondeterministic (uop~uop2 18%) |
+| h2 (box1) | 2.15 (0.9%) | 2.02 (2.0%) | **−5.7%** | 0.70 | 0.60 | (too short) | IDENTICAL |
+| diablo_demo (box1) | 17.34 (7.4%) | 16.34 (1.3%) | −5.7% | 0.77 (boot) | 0.50 (boot) | (no gameplay phase) | IDENTICAL |
+| d2 (box1) | 30.56 (4.6%) | 30.59 (0.9%) | +0.1% | — | — | — | 06-rogue-encampment differs in every arm, uop~uop2 included |
+
+The bold Δ user values are outside both arms' bands. Diablo has two sets
+on two boxes. The box8 set has a wide trace band because trace3 was an
+outlier at 279.67 s; the box9 set is tight. Its numbers are never compared
+across boxes.
+
+**What the table says.**
+
+- Trace heads cost whole-run CPU on no game. Ten of thirteen rows are
+  faster, and eight of those by more than both bands. The three that are
+  not faster are
+  sc (+0.3%), mh2 (+0.4%) and d2 (+0.1%), all inside their bands.
+- **SC gameplay is the one out-of-band loss** (+3.6%): uop 5.5–5.6 s,
+  trace 5.7–5.9 s. SC frames are nondeterministic headless, even uop vs
+  uop2, so it has no frame check. Its census shows 70 code-write kills in
+  the trace arm (`0x7c6000de` ×36, `0x7ef60858`/`898` ×13), 3 flushes and
+  389 traces.
+
+**Churn (Diablo).** Only the trace arm churns.
+
+| arm | compiles | kills | flushes |
+|---|---|---|---|
+| trace | 3353 | 2415 | 13 |
+| uop | 212 | 14 | 0 |
+
+The `--uop-census` kind-3 records (code-write kills) show why:
+
+- 2364 of the kills fall on 19 heads at `0xc374ec..0xc3764c` (`0xc374ec`
+  ×957, `0xc375fc` ×536, `0xc3763c` ×211) and `0x7ec687e8` ×297.
+- Every one of those writes lands on the same byte, `0xc376ed`. That is a
+  blitter which patches an operand in its own code before each call.
+- Each killed trace ran about 60 times before the next write killed it, so
+  71.5% of all compiles are recompiles of a head that was just killed.
+- This is **boot/menu only**. The unextended run already has 2491 kills,
+  and the gameplay extension has 2 decodes in total, so the churn stops
+  before gameplay.
+- The loop-only tier never compiles those heads at all (no back edge), and
+  so it never churns.
+
+**Knob tried: `--uop-cw-dead=N` (not committed).**
+
+- What it does: when a code write kills a program that had run fewer than
+  N times, the head also gets a dead mark in the verdict map, so it is not
+  compiled again.
+- Result on box9 at N=256, 3 reps interleaved with the arms above:
+  - It set 14 marks and cut Diablo's churn to 574 compiles, 73 kills and
+    1 flush.
+  - CPU did not move: user 257.66 s (band 1.0%) vs trace 257.95 s (−0.1%);
+    gameplay 31.33 s vs 31.90 s (−1.8%, inside trace's 6.0% band).
+  - Frames were identical.
+- So the churn is cheap. The recompiles cost less than the noise, and the
+  trace arm still wins over uop. The knob was not committed.
+
+**Correctness sweep.**
+
+- Setup: `tools/block-exec-sweep.js --flag=uop-trace-heads
+  --stats-flag=branch-clock --budgets=1000,2000 --batch-size=50000
+  --control` over 59 apps, on box1.
+  - The apps: aoe1, atomic_bomberman_june_demo, blobby_volley, bricks,
+    caesar3_demo, calc, captain_claw_demo, cave_story, civ2_mge, cruel,
+    darkstone_demo, dx_boids, dx_ddex3, dx_donut, dx_globe, dx_stretch,
+    dxball, elasto_mania, fallout_demo, far_manager_170, fourstones,
+    freecell, funtris, golf, gta2_demo, heroes2_demo, icewind_dale_demo,
+    icy_tower, jardinains, jazz2_demo, little_fighter_2, mirc59, moorhuhn,
+    moorhuhn_2, mspaint, nethack_win32, notepad, peaks, pegged,
+    pocket_tanks, rct, reversi, scr_architec, scr_geometry, scr_scifi,
+    simgolf_demo, ski32, snake, sol, sol16, taipei, tetravex, tictac,
+    wep16_chess, winamp, winamp_mod, winmine, winrar_310, worms2_demo.
+  - The tier is on in both arms. The only difference between them is
+    trace heads.
+- Result: **57 IDENTICAL, 1 DIFFERENT, 1 NOPIC, 0 CRASH, 0 NONDET.**
+  Many rows formed hundreds of traces: darkstone 483, jardinains 454,
+  fallout 316, captain_claw 315.
+- **The sweep needs `--branch-clock`.** An earlier pass without it (budgets
+  400/800) reported dx_boids, dx_globe, fallout, heroes2 and scr_geometry
+  as DIFFERENT. All five were clock artifacts: a tier config changes block
+  counts, and the block count is the clock.
+- **captain_claw_demo (DIFFERENT)** is not caused by trace heads.
+  - Its off-vs-off control is identical, and trace vs trace2 is identical.
+  - With the uop tier off (`--no-uop`), the frame also differs from the
+    tier-on frame: 1305 px at 100 batches and 4973 px at 1000.
+  - The API call count at batch 100 differs between the three
+    configurations: 128173 no-uop, 128061 uop, 126866 trace.
+  - So the app takes a different path under any change to how its blocks
+    are grouped. The difference was there before trace heads, and each
+    configuration is deterministic on its own.
+  - Repro: `node test/run.js --app=captain_claw_demo --batch-size=50000
+    --max-batches=1000 --branch-clock --wall-clock-ms=1789000000000
+    --quiet-api --no-close --png=a.png [--no-uop | --uop-trace-heads]`.
+- civ2_mge's NOPIC happens in both arms: it has no picture on this box.
+
+**Browser.** On box3, with headless Chrome 152,
+`WA_QUERY='?uop-trace-heads' node test/test-diablo-shareware-browser-web.js`
+reached all six stages: intro, title, menu, character select, loading and
+gameplay. The HUD orbs were present (`red:1641, blue:228`), and the test
+printed PASS. The test's new `WA_QUERY` variable appends a query string to
+the page URL.
+
+**Verdict: flip the default on.**
+
+- Trace heads lower whole-run CPU on ten of thirteen rows, and on no route
+  do they raise it outside the band.
+- Every frame that reproduces is identical.
+- The 59-app sweep found no trace-specific difference.
+- Diablo's churn is real but is limited to boot, and the gameplay phase
+  still gains.
+- The one cost is SC's gameplay phase, +3.6% just outside its band. That is
+  a lead for the next round (its 70 code-write kills and 3 flushes), not a
+  reason to hold back gains of 3–8% elsewhere.
+
+The off switches are `--no-uop-trace-heads` and `?no-uop-trace-heads`.
+`uop-game-ab.js`'s new `notrace` arm uses the CLI switch.
+
+## 14. Windows and VirtualAlloc contiguity: measured, then widened (2026-09-28)
+
+The question was whether guaranteeing each VirtualAlloc reservation's backing
+as one contiguous wasm run (or compacting the pool now and then) would speed
+the tier up. `--uop-win-census` (test/runner-win-census.js) counts every
+window proof by memory class and failure reason, classifies each re-guard
+against its slot's previous window, counts sparse `$g2w_affine_span`
+fallbacks, and reads VIRTUAL_MAP_TABLE / VIRTUAL_RESERVE_TABLE at exit. One
+run per game on the bench box, `tools/uop-game-ab.js` routes, main instance.
+
+**What it found.** The GUARD op never fires in these games; every window is a
+one-page `$uop_reguard`, so non-adjacent backing causes *zero* window
+failures or exits. Bulk-path non-adjacent fallbacks: StarCraft 105 of 2.24M,
+Warcraft III 5,006 of 5.17M, none elsewhere.
+
+| game | re-guards | per enter | direct / DIB / sparse | in previous window's affine run | only if backing were contiguous |
+|---|---|---|---|---|---|
+| StarCraft | 3.36M | 1.8 | 55% / 0.03% / 44.5% | direct 87%, sparse 54.7% | 221K (6.6% of all) |
+| Heroes III | 13.5M | 2.4 | 56% / 22.5% / 21% | DIB 100%, direct 70%, sparse 16.7% | 0.3% of sparse |
+| Moorhuhn 3 | 23.8M | 4.9 | 98.9% / - / 1% | direct 99% | - |
+| Diablo | 147M | 1.46 | 5% / - / 95% | sparse 99.98% | 0.007% |
+| Warcraft III | 32.4M | 2.0 | 35% / - / 63% | direct 94.6%, sparse 24% | 2.45M (7.6% of all) |
+
+The allocator is not fragmented: every commit is one contiguous extent
+(best-fit hole, else bump, else gap scan, then the extension window, then
+64KB-granule splits); non-adjacency inside a reservation comes only from
+separate commits interleaved with other allocations (StarCraft commits 4KB
+~13,700 times; Warcraft III has 64KB reservations committed as sixteen 4KB
+records). At exit 61-62% of committed reservations are one affine run, but
+the pool is nearly all wilderness: StarCraft 24MB used, 291.8MB largest free
+run, no holes; Warcraft III 88.7MB used, 227.2 of 227.3MB free in one run.
+
+So the lever is window width, not contiguity. `$uop_reguard` now widens a
+re-guard to the 64KB-aligned block around the missed page
+(`$uop_reguard_wide`; `--uop-reguard-span=N` sets the block, 4096 restores
+one page): the whole block in one `$g2w_affine_span` plus one 16-bit load of
+the code-page bitmap (the block's sixteen slots are one aligned group), else
+page-by-page growth that stops at a non-adjacent/unmapped page or, for a
+store window, a code page. Every page it covers is proved as
+`$uop_window_set` proves one, so the epoch rules are unchanged.
+`uop_stats` 14/15 are pages the widening proved and growth stops at a
+non-adjacent page.
+
+| game | re-guards one-page -> widened | user CPU widened vs one-page (2 x 2 interleaved, box2) |
+|---|---|---|
+| Diablo | 147.2M -> 1.46M | -2.1% (null 0.45%); rerun -3.4% (null 2-4%) |
+| Moorhuhn 3 | 23.8M -> 5.6M | -1.3% (null 0.9%) |
+| Heroes III | 13.5M -> 5.9M | -0.6% (null 1.3%) |
+| StarCraft | 3.36M -> 1.36M | +0.3% (null 1.4%) |
+| Warcraft III | 32.4M -> 21.5M | 0.0% (null 1.8%) |
+
+Frames identical on Diablo, Heroes III and Warcraft III; StarCraft and
+Moorhuhn 3 differ between two runs of the same arm by as much as between
+arms. A first version that grew page by page for every re-guard was +1.1%
+on Warcraft III and +2.2% on Moorhuhn 3 (87.7M page proofs replacing 23.8M
+re-guards); the block fast path is what made it neutral there.
+
+**Verdict on contiguity.** Only after widening does contiguity reach
+anything, and then only Warcraft III's growth stops at non-adjacent pages
+(8.97M) and StarCraft's (138K). Warcraft III's 34% re-guard cut from
+widening moved its CPU by 0.0%, so the smaller cut contiguity could add is
+below the null band. A contiguous-commit guarantee is not worth building,
+and a compacting defragmenter less so: moving backing at a safe point would
+have to cover every holder of a raw wasm address into sparse backing --
+uop windows (covered: the move rewrites PTEs, which bumps
+`$UOP_WIN_EPOCH`); native shader allocations and the software D3D raster,
+which retain wasm pointers (`$w2g_sparse` exists to map them back); GL/DX
+client arrays and locked buffers and the audio mixer reading guest PCM
+between batches; JS-side typed-array views and cached offsets; the D3DIM
+render worker and every guest thread's Worker running concurrently on the
+shared memory (no stop-the-world protocol exists, so a main-thread safe
+point does not cover them); and in-flight host calls/thread RPCs carrying a
+wasm pointer. None of those has a relocation hook today.

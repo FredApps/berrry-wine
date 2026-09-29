@@ -370,6 +370,15 @@ async function main() {
         globalThis.__waTraceApiNames = new Set(names);
       }, TRACE_APIS);
     }
+    // Threads are the page default now, so the cooperative arm must say so
+    // before the page's first script runs: otherwise a non-isolated page
+    // installs sw-coi.js and reloads itself under our evaluate() calls.
+    // On every document, so it survives the clear-and-reload below.
+    if (!THREADS) {
+      await page.evaluateOnNewDocument(() => {
+        try { localStorage.setItem('wine-assembly.threads', '0'); } catch (_) {}
+      });
+    }
     await page.goto(`${base}/index.html${QUERY}`, { waitUntil: 'load', timeout: 60000 });
     // Start with empty persisted state, then reload so startup gets a chance to
     // recreate its one-shot defaults. Clearing after startup deletes seeded

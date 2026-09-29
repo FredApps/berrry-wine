@@ -447,8 +447,15 @@
   ;; Open and parse a file into a free slot: the file record, or a status
   ;; (<= 0 as i32: $AVI_PENDING, or an AVIERR) in $avi_open_status.
   (global $avi_open_status (mut i32) (i32.const 0))
+  ;; The handle whose read parked the last open. Closing a handle cancels its
+  ;; pending read (lib/filesystem.js closeHandle), so it stays open until the
+  ;; host has filled the chunk and the call comes round again.
+  (global $avi_parked_handle (mut i32) (i32.const 0))
   (func $avi_open (param $path i32) (result i32)
     (local $slot i32) (local $rec i32) (local $h i32) (local $r i32) (local $obj i32)
+    (if (global.get $avi_parked_handle)
+      (then (drop (call $host_fs_close_handle (global.get $avi_parked_handle)))
+            (global.set $avi_parked_handle (i32.const 0))))
     (global.set $avi_open_status (global.get $AVIERR_MEMORY))
     (block $found (loop $scan
       (if (i32.ge_u (local.get $slot) (global.get $AVI_FILES)) (then (return (i32.const 0))))
@@ -468,7 +475,9 @@
                     (local.set $r (global.get $AVIERR_MEMORY))))))
     (if (local.get $r)
       (then
-        (drop (call $host_fs_close_handle (local.get $h)))
+        (if (i32.eq (local.get $r) (global.get $AVI_PENDING))
+          (then (global.set $avi_parked_handle (local.get $h)))
+          (else (drop (call $host_fs_close_handle (local.get $h)))))
         (global.set $avi_open_status (local.get $r))
         (return (i32.const 0))))
     (i32.store offset=4 (local.get $rec) (local.get $h))

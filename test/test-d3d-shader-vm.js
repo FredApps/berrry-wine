@@ -17,13 +17,13 @@ const { bootRenderHarness } = require('./render-helper');
     (func (export "shader_test_seed_cpu")
       (i32.store offset=0 (global.get $reg_base) (i32.const 1234567)) (i32.store offset=16 (global.get $reg_base) (i32.const 7654321))
       (global.set $eip (i32.const 112233)) (global.set $flag_op (i32.const 3))
-      (global.set $xmm0l (i64.const 0x1234567812345678)))
+      (i64.store (global.get $xmm_base) (i64.const 0x1234567812345678)))
     (func (export "shader_test_cpu_unchanged") (result i32)
       (i32.and (i32.eq (i32.load offset=0 (global.get $reg_base)) (i32.const 1234567))
         (i32.and (i32.eq (i32.load offset=16 (global.get $reg_base)) (i32.const 7654321))
           (i32.and (i32.eq (global.get $eip) (i32.const 112233))
             (i32.and (i32.eq (global.get $flag_op) (i32.const 3))
-              (i64.eq (global.get $xmm0l) (i64.const 0x1234567812345678)))))))
+              (i64.eq (i64.load (global.get $xmm_base)) (i64.const 0x1234567812345678)))))))
   ` });
   const mem = memory || e.memory;
   assert.ok(mem, 'harness exposes shared memory');
