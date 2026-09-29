@@ -243,6 +243,51 @@ Three things cost a session each and are worth writing down:
   batch is a budget of blocks, so the unit changes meaning with the guest's
   code shape.
 
+## "Stuck forever in the first software DrawIndexedPrimitive" (2026-09-29)
+
+Reported for both demos: a bounded run
+(`--d3d9-renderer=software --d3d9-programmable --max-batches=1500
+--batch-size=200000 --trace-api=IDirect3DDevice8_DrawIndexedPrimitive,IDirect3DDevice8_Present`)
+ends with EIP parked on the D3D thunk after 30 DIPs and 2 Presents, and looks
+like a rasterizer that never returns. **It is not a guest or rasterizer hang.**
+Ruled out by reading and by probing: the D3D8 DIP frontend (`09ac`, SetIndices
+base at `state+1692`), `$d3d9_draw_buffer`'s validation (`09ae`), and the
+software prepare/step tile loop (`09ah`, bbox clamped to the viewport,
+non-finite vertices marked bad) all terminate.
+
+What happens: every software draw/Present returns a negative render token,
+`$d3d_render_park` sets yield 16, and the CLI main thread waits on the render
+worker (`lib/d3d9-host.js`; Node has no `crossOriginIsolated`, so the CLI always
+takes the async worker path). `test/run.js` checked "still parked?" once per
+**batch**: `run()` was skipped, the batch was counted and the batch clock
+advanced, so a `--max-batches` budget drained one event-loop turn at a time
+while the guest executed nothing. A `ctl.js eval` on the parked run showed the
+request `{"t":-6,"done":true,"yr":16}` completing and moving on to `-8`, and
+frozen stepping walked UT2004 into its NVIDIA intro with a software-rendered 3D
+character — slowly, not stuck.
+
+Fix (`test/run.js`, `awaitMainRenderPark`): before each batch, if main is parked
+on yield 16, await that request in wall time (bounded by `--max-seconds` and
+stop), then run the batch. `--no-render-park-wait` restores the old loop for an
+A/B. The exit summary prints `render park: main waited on N software D3D
+requests (Nms wall), N batches skipped while parked`, and `ctx.renderParkStats`
+exposes the same to `--control` evals. `test/test-d3d-render-park-batches.js`
+drives the shape through real COM thunks (512x512 software device,
+DrawPrimitiveUP + Present in one 40-batch step): 0 batches skipped with the
+fix, 39 of 40 skipped with `--no-render-park-wait`.
+
+Same UT2003 command line, same box, after the fix: **866 DIPs and 722 Presents
+in 712 batches**, and the capture is the **UT2003 main menu** (dx slot 5,
+1024x768). Before it was 30 DIPs and 2 Presents in 1500 batches. The run hit its
+`--max-seconds=600` guard rather than its batch budget, and `render park` says
+why: 362 waits, 588s of the 600 on the software worker, so about 1.6s per
+parked request at 1024x768. The wall-clock ceiling is now the software
+rasterizer's throughput; batch accounting no longer hides it. Use
+`--max-seconds` rather than `--max-batches` for UT routes on this backend.
+
+The browser never had this bug: `host.js` yields to the event loop rather than
+spending a counted unit per check.
+
 
 
 The fixed UT3 installer was executed directly in Wine Assembly. Its verified
