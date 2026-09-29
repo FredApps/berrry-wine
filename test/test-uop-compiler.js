@@ -33,6 +33,12 @@ function asm(items) {
         pc += 5;
         continue;
       }
+      if (it.far) {
+        const r = t - (pc + 6);
+        out.push(0x0F, 0x80 | it.jcc, r & 0xFF, (r >>> 8) & 0xFF, (r >>> 16) & 0xFF, (r >>> 24) & 0xFF);
+        pc += 6;
+        continue;
+      }
       const rel = t - (pc + 2);
       out.push(it.jmp ? 0xEB : 0x70 | it.jcc, rel & 0xFF);
       pc += 2;
@@ -42,6 +48,7 @@ function asm(items) {
 }
 const J = (cc, to) => ({ jcc: cc, to });
 const JMP = (to) => ({ jmp: true, to });
+const JFAR = (cc, to) => ({ jcc: cc, to, far: true });
 const L = (label) => ({ label });
 const CALL = (to) => ({ call: true, to });
 const d32 = (v) => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
@@ -579,6 +586,91 @@ function h3Cases() {
 }
 CASES.push(...h3Cases());
 
+// ---- MMX (07e kind 27) ----
+// Every MMX form 07-decoder lowers to 06c, compiled by the tier and compared
+// with threaded code: registers, flags, memory and all eight MMn (runCase
+// seeds the MMX file and main() compares it). esi walks the random source,
+// edi the destination; results leave through a store and a movd into a GPR.
+const MM = {
+  rr: (op, d, s) => [0x0F, op, 0xC0 | (d << 3) | s],
+  esi: (op, r, disp) => [0x0F, op, 0x40 | (r << 3) | 6, disp & 0xFF],           // [esi+disp8]
+  edi: (op, r, disp) => [0x0F, op, 0x80 | (r << 3) | 7, ...d32(disp)],          // [edi+disp32]
+  grp: (op, ext, r, imm) => [0x0F, op, 0xC0 | (ext << 3) | r, imm & 0xFF],      // 71-73 /ext ib
+};
+const MMX_TAIL = [MM.edi(0x7F, 0, 0), MM.rr(0x7E, 1, 0), [0x01, 0xC3],            // movq [edi],mm0; movd eax,mm1; add ebx,eax
+  [0x83, 0xC6, 0x08], [0x83, 0xC7, 0x08], 0x49, J(cc.NZ, 'l'), 0xC3];
+// Each op twice: mm0 op= mm1 (register form), mm1 op= [esi+16] (memory form).
+const mmxOps = (ops) => [L('l'), MM.esi(0x6F, 0, 0), MM.esi(0x6F, 1, 8),
+  ...ops.flatMap((op) => [MM.rr(op, 0, 1), MM.esi(op, 1, 16)]), ...MMX_TAIL];
+const MMX_GROUPS = {
+  'mmx-addsub': [0xFC, 0xFD, 0xFE, 0xD4, 0xF8, 0xF9, 0xFA, 0xFB],
+  'mmx-sat': [0xEC, 0xED, 0xE8, 0xE9, 0xDC, 0xDD, 0xD8, 0xD9],
+  'mmx-logic-cmp': [0xDB, 0xDF, 0xEB, 0xEF, 0x74, 0x75, 0x76, 0x64, 0x65, 0x66],
+  'mmx-unpack-pack': [0x60, 0x61, 0x62, 0x68, 0x69, 0x6A, 0x63, 0x67, 0x6B],
+  'mmx-mul-minmax': [0xD5, 0xE5, 0xE4, 0xF5, 0xDA, 0xDE, 0xEA, 0xEE, 0xE0, 0xE3],
+};
+for (const [name, ops] of Object.entries(MMX_GROUPS)) CASES.push({ name, regs: { ecx: N }, code: mmxOps(ops) });
+// Shift by a register count (edx & 63, so in and out of every lane width's
+// range) and by a memory count the loop itself stored with movq.
+const MMX_SHIFT_REG = [0xD1, 0xD2, 0xD3, 0xE1, 0xE2, 0xF1, 0xF2, 0xF3];
+// (A case body stays under the rel8 back edge, so the lists are split.)
+for (const [k, ops] of [MMX_SHIFT_REG.slice(0, 4), MMX_SHIFT_REG.slice(4)].entries()) {
+  CASES.push({
+    name: `mmx-shift-count${k}`, regs: { ecx: N },
+    code: [L('l'), MM.esi(0x6F, 1, 8), [0x89, 0xCA], [0x83, 0xE2, 0x3F], MM.rr(0x6E, 2, 2),
+      MM.edi(0x7F, 2, 0x4000), MM.edi(ops[0], 1, 0x4000), MM.esi(ops[1], 1, 24),
+      ...ops.flatMap((op) => [MM.esi(0x6F, 0, 0), MM.rr(op, 0, 2), MM.rr(0xEB, 1, 0)]),
+      ...MMX_TAIL],
+  });
+}
+// 71/72/73 immediates: psrl /2, psra /4, psll /6, counts in range, at the
+// lane width, and far past it (psra saturates to the sign).
+const MMX_SHIFT_IMM = [[0x71, 2, 3], [0x71, 4, 5], [0x71, 6, 15], [0x71, 2, 16], [0x71, 4, 200],
+  [0x72, 2, 7], [0x72, 4, 31], [0x72, 6, 32], [0x72, 4, 33], [0x73, 2, 12], [0x73, 6, 40], [0x73, 2, 64], [0x73, 6, 255]];
+for (const [k, list] of [MMX_SHIFT_IMM.slice(0, 7), MMX_SHIFT_IMM.slice(7)].entries()) {
+  CASES.push({
+    name: `mmx-shift-imm${k}`, regs: { ecx: N },
+    code: [L('l'), MM.esi(0x6F, 0, 0), MM.esi(0x6F, 1, 8),
+      ...list.flatMap(([op, ext, n]) => [MM.grp(op, ext, 0, n), MM.rr(0xFC, 1, 0), MM.esi(0x6F, 0, 0)]),
+      ...MMX_TAIL],
+  });
+}
+// The moves: movd both ways with a register and memory, movq mm,mm (6F and
+// the 7F register form), movq stores, movntq, and misaligned 8-byte loads
+// and stores that cross a page every 512 iterations (a straddling access
+// deopts to threaded code for that instruction).
+CASES.push({
+  name: 'mmx-moves', regs: { ecx: N },
+  code: [L('l'), MM.esi(0x6F, 0, 3), MM.esi(0x6E, 3, 4), MM.rr(0x6E, 2, 1), MM.rr(0x6F, 4, 0), MM.rr(0x7F, 5, 3),
+    MM.rr(0xFE, 4, 2), MM.rr(0xFD, 5, 4), MM.edi(0x7E, 5, 0x8000), MM.edi(0xE7, 4, 0xA000), MM.edi(0x7F, 5, 5),
+    MM.rr(0x7E, 4, 2), [0x31, 0xD5], MM.rr(0x6F, 1, 5), ...MMX_TAIL],
+});
+// ESP as a general register, the SoftDrv span-loop shape: ESP saved to an
+// absolute cell, reloaded inside the loop as the end bound, compared against
+// esi, and restored before ret.
+const MMX_SAVE = (a) => a.buf + 0x1F000;
+CASES.push({
+  name: 'mmx-esp-bound', regs: { ecx: 0 }, head: 'l',
+  setup: (mem, g2w, a) => new DataView(mem.buffer).setUint32(g2w(MMX_SAVE(a) + 4), a.buf + 8 * N, true),
+  code: (a) => [[0x89, 0x25, ...d32(MMX_SAVE(a))],
+    L('l'), [0x8B, 0x25, ...d32(MMX_SAVE(a) + 4)], MM.esi(0x6F, 0, 0), MM.esi(0xFC, 0, 8), MM.edi(0x7F, 0, 0),
+    MM.rr(0x7E, 0, 0), [0x01, 0xC1], [0x83, 0xC6, 0x08], [0x83, 0xC7, 0x08], [0x39, 0xE6], J(cc.B, 'l'),
+    [0x8B, 0x25, ...d32(MMX_SAVE(a))], 0xC3],
+});
+// pmovmskb is not lowered: the loop must decline and still be exact. And
+// the whole family off (--no-uop-mmx) declines the ordinary ALU loop.
+CASES.push({ name: 'mmx-pmovmskb', regs: { ecx: N }, declines: true,
+  code: [L('l'), MM.esi(0x6F, 0, 0), MM.rr(0xD7, 0, 0), [0x01, 0xC3], [0x83, 0xC6, 0x08], 0x49, J(cc.NZ, 'l'), 0xC3] });
+CASES.push({ name: 'mmx-gate-off', regs: { ecx: N }, declines: true, nommx: true, code: mmxOps(MMX_GROUPS['mmx-addsub']) });
+
+// Scan limit: the loop is small, but a never-taken exit leads 4KB away into
+// 700 supported instructions, so the flood from the head overflows MAX_SCAN
+// at the full span. The compiler must halve the span and keep the loop, the
+// far code becoming a side exit (SoftDrv's unrolled rasterizer shape).
+CASES.push({ name: 'span-shrink', regs: { ecx: N },
+  code: [L('l'), [0x8B, 0x06], [0x01, 0xC3], [0x83, 0xC6, 0x04], [0x81, 0xF9, ...d32(0x7FFFFFFF)], JFAR(cc.Z, 'far'),
+         0x49, J(cc.NZ, 'l'), 0xC3, new Array(0x1000).fill(0xCC), L('far'), new Array(700).fill(0x42), 0xC3] });
+
 const REGS = ['eax', 'ecx', 'edx', 'ebx', 'ebp', 'esi', 'edi'];
 
 function seed(mem, g2w, a) {
@@ -622,6 +714,9 @@ function runCase(inst, c, a, codeAddr, mode) {
   }
   if (c.name === 'lut8') init.ebx = a.lut;
   for (const r of REGS) e['set_' + r](init[r] >>> 0);
+  // A known MMX file on entry, the same for every mode.
+  if (e.set_mmx) for (let k = 0; k < 8; k++) e.set_mmx(k, BigInt.asIntN(64, 0x0123456789ABCDEFn * BigInt(k + 1)));
+  if (c.nommx) e.set_uop_mmx(0);
   // A known flag state on entry: a sub that sets CF.
   e.set_uop(mode === 'off' ? 0 : 1);
   if (c.aggr) e.set_aggressive_stack(mode === 'off' ? 0 : 1);
@@ -642,6 +737,7 @@ function runCase(inst, c, a, codeAddr, mode) {
     const pc = e.uop_compile(head);
     if (!pc) {
       if (c.aggr) e.set_aggressive_stack(0);
+      if (c.nommx) e.set_uop_mmx(1);
       unfeat();
       if (c.trace) e.set_uop_trace_heads(0);
       if (c.lf) e.set_logical_frame(0, 0);
@@ -673,6 +769,7 @@ function runCase(inst, c, a, codeAddr, mode) {
   const st = {
     ok, eip: e.get_eip() >>> 0, stops: stops.join(','), nstops: stops.length, flags: e.uop_flags(), mem: hash(mem, g2w, a),
     regs: REGS.map((r) => e['get_' + r]() >>> 0),
+    mmx: e.get_mmx ? [0, 1, 2, 3, 4, 5, 6, 7].map((k) => BigInt.asUintN(64, e.get_mmx(k)).toString(16)).join(',') : '',
     installs: e.uop_stats(2) - before.installs, enters: e.uop_stats(4) - before.enters,
     blocks: e.uop_stats(5) - before.blocks, sp, lf: e.get_logical_frame_count() - lf0,
     traces: e.uop_cstat(26) - before.traces,
@@ -680,6 +777,7 @@ function runCase(inst, c, a, codeAddr, mode) {
   };
   e.set_uop(0);
   if (c.aggr) e.set_aggressive_stack(0);
+  if (c.nommx) e.set_uop_mmx(1);
   unfeat();
   if (c.trace) e.set_uop_trace_heads(0);
   if (c.lf) e.set_logical_frame(0, 0);
@@ -1130,6 +1228,7 @@ async function main() {
       if (st.eip !== off.eip) diffs.push(`eip ${st.eip.toString(16)} vs ${off.eip.toString(16)}`);
       if (st.flags !== off.flags) diffs.push(`flags ${st.flags.toString(2)} vs ${off.flags.toString(2)}`);
       if (st.mem !== off.mem) diffs.push('memory differs');
+      if (st.mmx !== off.mmx) diffs.push(`mmx ${st.mmx} vs ${off.mmx}`);
       // Batch stops. Under the block clock the program charges the cuts
       // threaded code makes once it has split at every in-loop entry (steady
       // state); "pre" installs before threaded code has taken every path, so

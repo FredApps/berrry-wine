@@ -384,6 +384,12 @@ The flyby's MMX share is compute. SoftDrv loads at a runtime base of
 - `+0x10923210` / `+0x109236d0`: 8-texel span bodies.
 
 That is a uop-tier MMX coverage problem, not a fold.
+
+**Covered (2026-09-29, docs/uop-tier-design.md §16).** Every head above is now
+`installed` or `live` in the uop tier. Threaded block entries over batches
+900..1800 went from 116.1M to 68.8M. User CPU for 1800 batches went from
+28.42/28.93 s to **18.45/19.01 s (−35.1%)**, with frames md5-identical at
+900/1200/1500/1790/end.
 ## CRT exports and the native overrides (2026-09-29, docs/crt-native-overrides.md)
 
 UT2003 imports `msvcr70.dll` and UT2004 imports `msvcr71.dll`, both through

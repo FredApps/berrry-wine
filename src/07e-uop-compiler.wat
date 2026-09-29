@@ -63,6 +63,12 @@
   ;; one-operand F7 forms, O0 the r/m ($uc_muldiv). A kind-23 call with
   ;; +12 != 0 is FF /2: +12 1 icall, 2 IAT, O2 the r/m, +24 the guarded
   ;; target ($uc_icall / $uc_iat).
+  ;; Kind 27 MMX ($uc_mmx, --no-uop-mmx): +12 the 06c subop
+  ;; ($mmx_opcode_subop / $mmx_group_subop), +28 the form: 0 mm,mm (or a
+  ;; movd between an MMX and a general register) 1 mm,mem 2 mem,mm
+  ;; 3 mm,imm8 (the 71-73 shift group). O0 the destination, O1 the source;
+  ;; an MMX register operand is t 4 with r at +4. Lowered over the 07d MX*
+  ;; ops, with MMX registers as cells of $MMX_FILE (arg type 7, aM).
 
   (global $UOP_CSCRATCH i32 (region.addr $UOP_CSCRATCH 0))
   (global $UOP_CSCRATCH_SIZE i32 (region.size $UOP_CSCRATCH))
@@ -93,12 +99,18 @@
   ;; stamped with (07d $uop_win_bump). Shared, like the lock, because a
   ;; mapping or a decoded code page is shared by every thread's instance.
   (global $UOP_WIN_EPOCH i32 (region.addr $UOP_CSCRATCH 0x139004))
+  ;; +0x139800..+0x13A000 is not compiler scratch either: it is $MMX_FILE, the
+  ;; per-thread MMX registers (01-header.wat). Never clear this page wholesale.
   ;; Where $uc_encode_write resolves window ids: the program's own slots.
   (global $uc_wb (mut i32) (i32.const 0))
   (global $UC_ITEMS_BYTES i32 (i32.const 0x40000))
   (global $UC_MAX_SCAN  i32 (i32.const 600))  ;; instructions decoded looking for the loop
   (global $UC_MAX_LOOP  i32 (i32.const 400))  ;; instructions kept
   (global $UC_SPAN      i32 (i32.const 0x4000)) ;; how far from the head a branch may go
+  ;; The span this compile is using: UC_SPAN, halved by $uc_lower_head after
+  ;; a scan-limit decline down to UC_SPAN_MIN.
+  (global $UC_SPAN_MIN  i32 (i32.const 0x200))
+  (global $uc_span (mut i32) (i32.const 0x4000))
   (global $UC_MAX_TEMPS i32 (i32.const 4000))
   (global $UC_MAX_WIN   i32 (i32.const 64))
   (global $UC_MAX_STUBS i32 (i32.const 2048))
@@ -162,6 +174,8 @@
   (global $uc_muldiv   (mut i32) (i32.const 0))
   (global $uc_icall    (mut i32) (i32.const 0))
   (global $uc_iat      (mut i32) (i32.const 0))
+  ;; --no-uop-mmx turns kind 27 (MMX) off: on by default.
+  (global $uc_mmx      (mut i32) (i32.const 1))
   ;; sites in installed programs (uop_cstat 27 muldiv, 28 icall, 29 iat) and
   ;; FF /2 decodes refused for a target outside every image (30)
   (global $uc_n_muldiv (mut i32) (i32.const 0))
@@ -288,6 +302,15 @@
     (i32.store offset=12 (local.get $o) (i32.const 0))
     (i32.store offset=16 (local.get $o) (local.get $v))
     (i32.store offset=20 (local.get $o) (i32.const 0)))
+
+  ;; An MMX register operand (kind 27): t 4, the register at +4.
+  (func $uc_opm (param $o i32) (param $r i32)
+    (i32.store (local.get $o) (i32.const 4))
+    (i32.store offset=4 (local.get $o) (local.get $r))
+    (i32.store offset=8 (local.get $o) (i32.const 0))
+    (i32.store offset=12 (local.get $o) (i32.const 0))
+    (i32.store offset=16 (local.get $o) (i32.const 0))
+    (i32.store offset=20 (local.get $o) (i32.const 64)))
 
   ;; ModRM (+SIB, disp) at q into operand o; the reg field goes to
   ;; $uc_mr_reg. Answers the address after it.
@@ -739,6 +762,59 @@
             (memory.fill (local.get $O2) (i32.const 0) (i32.const 24))
             (call $uc_fin (local.get $R) (i32.const 7) (local.get $e))
             (return)))
+        ;; MMX (kind 27): what 07-decoder lowers to 06c's handlers, minus
+        ;; pmovmskb. A 66/F2/F3 prefix makes these the xmm forms: v is 16
+        ;; under 66, and F2/F3 never reach here.
+        (if (i32.and (global.get $uc_mmx) (i32.eq (local.get $v) (i32.const 32)))
+          (then
+            (if (i32.and (i32.ge_u (local.get $b2) (i32.const 0x71)) (i32.le_u (local.get $b2) (i32.const 0x73)))
+              (then
+                (local.set $e (call $uc_modrm (local.get $p) (i32.const 64) (local.get $O0)))
+                (local.set $n (call $mmx_group_subop (local.get $b2) (global.get $uc_mr_reg)))
+                (if (i32.and (i32.ne (local.get $n) (i32.const -1)) (i32.eq (i32.load (local.get $O0)) (i32.const 1)))
+                  (then
+                    (call $uc_opm (local.get $O0) (i32.load offset=4 (local.get $O0)))
+                    (call $uc_opi (local.get $O1) (call $uc_rd8 (local.get $e)))
+                    (i32.store offset=12 (local.get $R) (local.get $n))
+                    (i32.store offset=16 (local.get $R) (i32.const 64))
+                    (i32.store offset=28 (local.get $R) (i32.const 3))
+                    (call $uc_fin (local.get $R) (i32.const 27) (i32.add (local.get $e) (i32.const 1)))
+                    (return)))
+                (call $uc_unsup (local.get $R)) (return)))
+            (local.set $n (if (result i32) (i32.eq (local.get $b2) (i32.const 0xE7))
+                            (then (i32.const 0)) (else (call $mmx_opcode_subop (local.get $b2)))))
+            (if (i32.and (i32.ne (local.get $n) (i32.const -1)) (i32.ne (local.get $b2) (i32.const 0xD7)))
+              (then
+                (local.set $w (select (i32.const 32) (i32.const 64)
+                  (i32.or (i32.eq (local.get $b2) (i32.const 0x6E)) (i32.eq (local.get $b2) (i32.const 0x7E)))))
+                (if (i32.or (i32.or (i32.eq (local.get $b2) (i32.const 0x7E)) (i32.eq (local.get $b2) (i32.const 0x7F)))
+                            (i32.eq (local.get $b2) (i32.const 0xE7)))
+                  (then
+                    ;; the r/m is written: movd r/m32,mm  movq mm/m64,mm  movntq m64,mm
+                    (local.set $e (call $uc_modrm (local.get $p) (local.get $w) (local.get $O0)))
+                    (call $uc_opm (local.get $O1) (global.get $uc_mr_reg))
+                    (if (i32.eq (i32.load (local.get $O0)) (i32.const 1))
+                      (then
+                        (if (i32.eq (local.get $b2) (i32.const 0xE7))
+                          (then (call $uc_unsup (local.get $R)) (return)))
+                        (if (i32.eq (local.get $b2) (i32.const 0x7F))
+                          (then (call $uc_opm (local.get $O0) (i32.load offset=4 (local.get $O0)))))
+                        (local.set $form (i32.const 0)))
+                      (else (local.set $form (i32.const 2)))))
+                  (else
+                    (local.set $e (call $uc_modrm (local.get $p) (local.get $w) (local.get $O1)))
+                    (call $uc_opm (local.get $O0) (global.get $uc_mr_reg))
+                    (if (i32.eq (i32.load (local.get $O1)) (i32.const 1))
+                      (then
+                        (if (i32.ne (local.get $b2) (i32.const 0x6E))
+                          (then (call $uc_opm (local.get $O1) (i32.load offset=4 (local.get $O1)))))
+                        (local.set $form (i32.const 0)))
+                      (else (local.set $form (i32.const 1))))))
+                (i32.store offset=12 (local.get $R) (local.get $n))
+                (i32.store offset=16 (local.get $R) (i32.const 64))
+                (i32.store offset=28 (local.get $R) (local.get $form))
+                (call $uc_fin (local.get $R) (i32.const 27) (local.get $e))
+                (return)))))
         (call $uc_unsup (local.get $R)) (return)))
     ;; The stack (kinds 21-24), 32-bit forms only. O1 is the slot touched:
     ;; [esp-4] for push/call, [esp] for pop/ret.
@@ -899,6 +975,9 @@
                             (call $uc_regbit (i32.add (local.get $R) (i32.const 80)))))))
     (if (i32.eq (local.get $k) (i32.const 10)) (then (return (i32.const 4))))
     (if (i32.eq (local.get $k) (i32.const 9)) (then (return (i32.const 1))))
+    ;; MMX: only movd r32,mm names a general register as its destination
+    (if (i32.eq (local.get $k) (i32.const 27))
+      (then (return (call $uc_regbit (i32.add (local.get $R) (i32.const 56))))))
     (if (i32.or (i32.eq (local.get $k) (i32.const 25)) (i32.eq (local.get $k) (i32.const 26)))
       (then (return (i32.const 5))))
     ;; push, call, ret move ESP; pop also writes its register
@@ -919,6 +998,7 @@
       (then (return (i32.or (local.get $a) (local.get $b)))))
     (if (i32.eq (local.get $k) (i32.const 4)) (then (return (local.get $a))))
     (if (i32.eq (local.get $k) (i32.const 17)) (then (return (local.get $b))))
+    (if (i32.eq (local.get $k) (i32.const 27)) (then (return (i32.or (local.get $a) (local.get $b)))))
     (if (i32.or (i32.or (i32.eq (local.get $k) (i32.const 2)) (i32.eq (local.get $k) (i32.const 3)))
                 (i32.or (i32.eq (local.get $k) (i32.const 13))
                         (i32.or (i32.eq (local.get $k) (i32.const 12)) (i32.eq (local.get $k) (i32.const 11)))))
@@ -1122,7 +1202,7 @@
     (local $d i64)
     (local.set $d (i64.sub (i64.extend_i32_u (local.get $a)) (i64.extend_i32_u (local.get $b))))
     (i64.lt_s (select (local.get $d) (i64.sub (i64.const 0) (local.get $d)) (i64.ge_s (local.get $d) (i64.const 0)))
-              (i64.extend_i32_u (global.get $UC_SPAN))))
+              (i64.extend_i32_u (global.get $uc_span))))
   ;; Within SPAN of the head, or of a callee the scan has met ($UC_CALLT:
   ;; count, then up to 16 call targets).
   (func $uc_near (param $head i32) (param $s i32) (result i32)
@@ -1972,6 +2052,9 @@
             (i64.extend_i32_u (local.get $v))))
   (func $uc_aW (param $v i32) (result i64)
     (i64.or (i64.const 0x0600000000000000) (i64.extend_i32_u (local.get $v))))
+  ;; aM: an MMX cell of $MMX_FILE (0-7 MMn, 8 the staging cell).
+  (func $uc_aM (param $v i32) (result i64)
+    (i64.or (i64.const 0x0700000000000000) (i64.extend_i32_u (local.get $v))))
   (func $uc_atype (param $a i64) (result i32)
     (i32.wrap_i64 (i64.shr_u (local.get $a) (i64.const 56))))
 
@@ -2525,7 +2608,88 @@
               (local.get $src) (call $uc_aN (i32.load offset=12 (local.get $R)))
               (call $uc_xstub))
         (return (i32.const 0))))
+    (if (i32.eq (local.get $k) (i32.const 27))
+      (then (return (call $uc_mmx_insn (local.get $R)))))
     (i32.const 19))
+
+  ;; Kind 27. Each form makes at most one guest memory access, and makes it
+  ;; first, so its deopt stub re-runs the whole instruction in threaded code
+  ;; with nothing yet changed. A memory source is staged in cell 8 so the
+  ;; destination is written only after the load succeeded.
+  (func $uc_mmx_insn (param $R i32) (result i32)
+    (local $O0 i32) (local $O1 i32) (local $sub i32) (local $form i32) (local $t i64)
+    (local.set $O0 (i32.add (local.get $R) (i32.const 56)))
+    (local.set $O1 (i32.add (local.get $R) (i32.const 80)))
+    (local.set $sub (i32.load offset=12 (local.get $R)))
+    (local.set $form (i32.load offset=28 (local.get $R)))
+    ;; a stack slot forwarded to an elided push's temp: the MMX forms do not
+    ;; take one ($uc_sp_role gives kind 27 no role, so this does not happen)
+    (if (global.get $uc_fwd_kind) (then (return (i32.const 22))))
+    ;; mm, imm8: the 71-73 shifts
+    (if (i32.eq (local.get $form) (i32.const 3))
+      (then
+        (call $uc_emit (i32.const 75) (i32.const 4) (call $uc_aN (local.get $sub))
+              (call $uc_aM (i32.load offset=4 (local.get $O0))) (call $uc_aM (i32.load offset=4 (local.get $O0)))
+              (call $uc_aN (i32.and (i32.load offset=16 (local.get $O1)) (i32.const 0xFF)))
+              (i64.const 0) (i64.const 0) (i64.const 0))
+        (return (i32.const 0))))
+    ;; register forms
+    (if (i32.eqz (local.get $form))
+      (then
+        ;; movd mm, r32
+        (if (i32.eq (local.get $sub) (i32.const 1))
+          (then (call $uc_o2 (i32.const 76) (call $uc_aM (i32.load offset=4 (local.get $O0)))
+                             (call $uc_aR (i32.load offset=4 (local.get $O1))))
+                (return (i32.const 0))))
+        ;; movd r32, mm
+        (if (i32.eq (local.get $sub) (i32.const 2))
+          (then (call $uc_o2 (i32.const 77) (call $uc_aR (i32.load offset=4 (local.get $O0)))
+                             (call $uc_aM (i32.load offset=4 (local.get $O1))))
+                (return (i32.const 0))))
+        (call $uc_mx_op (local.get $sub) (i32.load offset=4 (local.get $O0))
+                        (call $uc_aM (i32.load offset=4 (local.get $O1))))
+        (return (i32.const 0))))
+    ;; mm, mem
+    (if (i32.eq (local.get $form) (i32.const 1))
+      (then
+        (if (i32.eq (local.get $sub) (i32.const 1))
+          (then ;; movd mm, m32: 4 bytes, zero-extended
+            (local.set $t (call $uc_scratch))
+            (call $uc_load (local.get $O1) (i32.const 32) (i32.const 0) (local.get $t))
+            (call $uc_o2 (i32.const 76) (call $uc_aM (i32.load offset=4 (local.get $O0))) (local.get $t))
+            (return (i32.const 0))))
+        ;; every other memory source is 8 bytes, as 06c's $mmx_load64 reads it
+        ;; (punpckl* included); movq loads straight into its destination
+        (call $uc_ldx64 (local.get $O1)
+          (call $uc_aM (select (i32.load offset=4 (local.get $O0)) (i32.const 8) (i32.eqz (local.get $sub)))))
+        (if (local.get $sub)
+          (then (call $uc_mx_op (local.get $sub) (i32.load offset=4 (local.get $O0)) (call $uc_aM (i32.const 8)))))
+        (return (i32.const 0))))
+    ;; mem, mm: movd m32 / movq m64 / movntq m64
+    (if (i32.eq (local.get $sub) (i32.const 2))
+      (then
+        (local.set $t (call $uc_scratch))
+        (call $uc_o2 (i32.const 77) (local.get $t) (call $uc_aM (i32.load offset=4 (local.get $O1))))
+        (call $uc_store (local.get $O0) (i32.const 32) (local.get $t))
+        (return (i32.const 0))))
+    (call $uc_emit (i32.const 73) (i32.const 7) (call $uc_aM (i32.load offset=4 (local.get $O1)))
+      (call $uc_mbase (local.get $O0)) (call $uc_midx (local.get $O0))
+      (call $uc_aN (i32.load offset=12 (local.get $O0))) (call $uc_aN (i32.load offset=16 (local.get $O0)))
+      (call $uc_win (local.get $O0) (i32.const 1)) (call $uc_xstub))
+    (i32.const 0))
+
+  ;; MXOP sub: cell d = op(cell d, src)
+  (func $uc_mx_op (param $sub i32) (param $d i32) (param $src i64)
+    (call $uc_emit (i32.const 74) (i32.const 4) (call $uc_aN (local.get $sub))
+          (call $uc_aM (local.get $d)) (call $uc_aM (local.get $d)) (local.get $src)
+          (i64.const 0) (i64.const 0) (i64.const 0)))
+
+  ;; LDX64: the 8 bytes at memory operand o into cell dst
+  (func $uc_ldx64 (param $o i32) (param $dst i64)
+    (call $uc_emit (i32.const 72) (i32.const 7) (local.get $dst)
+      (call $uc_mbase (local.get $o)) (call $uc_midx (local.get $o))
+      (call $uc_aN (i32.load offset=12 (local.get $o))) (call $uc_aN (i32.load offset=16 (local.get $o)))
+      (call $uc_win (local.get $o) (i32.const 0)) (call $uc_xstub)))
 
   (func $uc_alu (param $R i32) (result i32)
     (local $O0 i32) (local $A i32) (local $B i32) (local $op i32) (local $w i32)
@@ -3789,8 +3953,9 @@
     (i32.add (global.get $uc_enc_n) (global.get $uc_nconst)))
 
   (func $uc_is_store (param $op i32) (result i32)
-    (i32.or (i32.lt_u (i32.sub (local.get $op) (i32.const 17)) (i32.const 3))
-            (i32.lt_u (i32.sub (local.get $op) (i32.const 38)) (i32.const 3))))
+    (i32.or (i32.or (i32.lt_u (i32.sub (local.get $op) (i32.const 17)) (i32.const 3))
+                    (i32.lt_u (i32.sub (local.get $op) (i32.const 38)) (i32.const 3)))
+            (i32.eq (local.get $op) (i32.const 73))))
 
   (func $uc_encode_write (param $code i32)
     (local $p i32) (local $end i32) (local $o i32) (local $j i32) (local $a i64) (local $ty i32)
@@ -3815,6 +3980,8 @@
             (local.set $v (i32.wrap_i64 (local.get $a)))
             (if (i32.eq (local.get $ty) (i32.const 2))
               (then (local.set $v (i32.add (global.get $reg_base) (i32.shl (local.get $v) (i32.const 2))))))
+            (if (i32.eq (local.get $ty) (i32.const 7))
+              (then (local.set $v (i32.add (global.get $mmx_base) (i32.shl (local.get $v) (i32.const 3))))))
             (if (i32.eq (local.get $ty) (i32.const 3))
               (then (local.set $v (i32.add (local.get $tb)
                                            (i32.shl (call $uc_hm_get (global.get $UC_HM_TEMP) (local.get $a)) (i32.const 2))))))
@@ -3846,23 +4013,34 @@
   (func $uc_lower_head (param $eip i32) (result i32)
     (local $err i32)
     (if (i32.eqz (global.get $uc_ready)) (then (call $uc_init)))
-    (global.set $uc_err (i32.const 0))
-    (global.set $uc_nocall (i32.const 0))
-    (local.set $err (call $uc_form_loop (local.get $eip)))
-    (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_lower))))
-    (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_encode_prepare))))
-    ;; Following calls grows the region by every callee's body, which can
-    ;; cost a loop that compiled without them (scan limit, loop size, a
-    ;; callee the lowering declines). Once more with calls as the region's
-    ;; edge, so following them never loses a head.
-    (if (i32.and (i32.ne (local.get $err) (i32.const 0))
-                 (i32.ne (i32.load (global.get $UC_CALLT)) (i32.const 0)))
-      (then
-        (global.set $uc_nocall (i32.const 1))
-        (global.set $uc_err (i32.const 0))
-        (local.set $err (call $uc_form_loop (local.get $eip)))
-        (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_lower))))
-        (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_encode_prepare))))))
+    (global.set $uc_span (global.get $UC_SPAN))
+    (block $done (loop $again
+      (global.set $uc_err (i32.const 0))
+      (global.set $uc_nocall (i32.const 0))
+      (local.set $err (call $uc_form_loop (local.get $eip)))
+      (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_lower))))
+      (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_encode_prepare))))
+      ;; Following calls grows the region by every callee's body, which can
+      ;; cost a loop that compiled without them (scan limit, loop size, a
+      ;; callee the lowering declines). Once more with calls as the region's
+      ;; edge, so following them never loses a head.
+      (if (i32.and (i32.ne (local.get $err) (i32.const 0))
+                   (i32.ne (i32.load (global.get $UC_CALLT)) (i32.const 0)))
+        (then
+          (global.set $uc_nocall (i32.const 1))
+          (global.set $uc_err (i32.const 0))
+          (local.set $err (call $uc_form_loop (local.get $eip)))
+          (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_lower))))
+          (if (i32.eqz (local.get $err)) (then (local.set $err (call $uc_encode_prepare))))))
+      ;; Scan limit: the flood from the head met more code than MAX_SCAN
+      ;; before it closed -- an unrolled rasterizer (Unreal SoftDrv) whose
+      ;; neighbours are all within SPAN. The loop itself is usually small;
+      ;; halve the span and try again, so the far code becomes side exits.
+      (br_if $done (i32.ne (local.get $err) (i32.const 1)))
+      (br_if $done (i32.le_u (global.get $uc_span) (global.get $UC_SPAN_MIN)))
+      (global.set $uc_span (i32.shr_u (global.get $uc_span) (i32.const 1)))
+      (br $again)))
+    (global.set $uc_span (global.get $UC_SPAN))
     (local.get $err))
 
   (func $uc_decline (param $why i32) (result i32)
@@ -4113,6 +4291,14 @@
     (global.set $uc_iat (i32.ne (local.get $flag) (i32.const 0)))
     (call $uop_flush))
   (func (export "get_uop_iat") (result i32) (global.get $uc_iat))
+  ;; --no-uop-mmx: kind 27 off for programs compiled from now on.
+  (func (export "set_uop_mmx") (param $flag i32)
+    (global.set $uc_mmx (i32.ne (local.get $flag) (i32.const 0)))
+    (call $uop_flush))
+  (func (export "get_uop_mmx") (result i32) (global.get $uc_mmx))
+  ;; MMn of this instance's file, for tests.
+  (func (export "get_mmx") (param $i i32) (result i64) (call $mmx_get (local.get $i)))
+  (func (export "set_mmx") (param $i i32) (param $v i64) (call $mmx_set (local.get $i) (local.get $v)))
   (func (export "uop_decline_count") (param $why i32) (result i32)
     (i32.load (i32.add (i32.add (global.get $UC_MISC) (i32.const 0xC00))
                        (i32.shl (i32.and (local.get $why) (i32.const 63)) (i32.const 2)))))

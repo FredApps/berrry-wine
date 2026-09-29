@@ -1546,6 +1546,9 @@
     (global.set $xmm_base (i32.add (global.get $XMM_FILE)
       (i32.mul (local.get $tid) (global.get $XMM_FILE_STRIDE))))
     (memory.fill (global.get $xmm_base) (i32.const 0) (global.get $XMM_FILE_STRIDE))
+    (global.set $mmx_base (i32.add (global.get $MMX_FILE)
+      (i32.mul (local.get $tid) (global.get $MMX_FILE_STRIDE))))
+    (memory.fill (global.get $mmx_base) (i32.const 0) (global.get $MMX_FILE_STRIDE))
     ;; Decode scratch too: worker instances decode in parallel, and a shared
     ;; op-start list lets one thread's fuser rewrite another's code.
     (global.set $OP_INDEX (i32.add (global.get $OP_INDEX_REGION)

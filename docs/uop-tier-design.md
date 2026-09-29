@@ -1935,3 +1935,80 @@ node tools/call-form-weighted.js --merge *.apis.json
 
 A run with `--edge-hist` from this build also names every
 GetProcAddress/COM target through its thunk, so no `--assume-tier` is needed.
+
+## 16. MMX lowered, and scan-limit retried at a narrower span (2026-09-29)
+
+SoftDrv (Deus Ex, Unreal SE) spends its frame in MMX texture-mapping loops,
+and the tier refused all of them as `head-unsupported`.
+
+### 16.1 MMX: compiler kind 27, engine ops 72-77
+
+- **Compiler.** `$uc_decode` gives 32-bit MMX a kind 27 record. +12 holds the
+  06c subop, from the same `$mmx_opcode_subop`/`$mmx_group_subop` tables the
+  threaded handlers use. +28 holds the form: rr/movd-reg, load, store, or the
+  71-73 imm shift group.
+- **Registers.** An MMX register is a cell of the per-thread `$MMX_FILE`. Arg
+  type 7 (`aM`) resolves to `$mmx_base + 8n` at encode time, and cell 8 is
+  staging for a memory source.
+- **Where the file lives.** `$MMX_FILE` is 16 × 0x80 bytes in the top half of
+  `$UOP_CSCRATCH`'s last page, not a region of its own. The map is at its
+  ceiling: a new 0x800-byte region failed `region-alloc --shake-all`, and so
+  did paying for it with one or two pages of `$UOP_ARENA`.
+- **Engine ops.**
+  - `LDX64`/`STX64` are 8-byte guest loads and stores through the ordinary
+    window and reguard, with size 8.
+  - `MXOP sub d a b` and `MXSHI sub d a n` share one core with the threaded
+    handlers.
+  - `MXFROM32`/`MXTO32` implement movd.
+- **Not lowered.** `pmovmskb` (D7), the register form of `movntq`, and `emms`
+  are not lowered. A loop containing one of them declines.
+- **Gate.** `--no-uop-mmx` / `set_uop_mmx(0)` turns the family off (the app
+  key is `uopMmx:false`). Programs compiled before the switch are flushed.
+- **ESP.** `mov esp,[abs]` inside a loop needs nothing special: ESP is an
+  ordinary register to the tier.
+
+### 16.2 Scan limit: halve the span and retry
+
+With MMX lowered, SoftDrv's span heads (`+0x10d2b0be` and its neighbours)
+moved from `head-unsupported` to `scan-limit`. `$uc_form_loop` floods
+everything reachable within `UC_SPAN` (16 KB) of the head. The unrolled
+rasterizer around the loop is more than `UC_MAX_SCAN` (600) instructions,
+although the loop itself is 202-276. On a scan-limit decline,
+`$uc_lower_head` now halves `$uc_span` and tries again, down to `UC_SPAN_MIN`
+(0x200). Code outside the narrower span becomes side exits.
+
+`test/test-uop-compiler.js` `span-shrink` covers this: a never-taken exit
+leads 4 KB away into 700 supported instructions. With the retry disabled the
+case declines `scan-limit`.
+
+### 16.3 Exactness
+
+`test/test-uop-compiler.js` has cases `mmx-*` for every lowered op, in
+register and memory form. They cover shift counts from a register, from memory
+and as immediates in and out of range, movd/movq in both directions, a
+page-straddling movq, and the ESP-as-bound loop. Each case compares registers,
+the MMX file, memory and per-batch stop EIPs against the threaded tier. A
+mutation (paddb computed as i16x8, and a movd-out shifted by one) fails these
+cases.
+
+### 16.4 A/B
+
+Box5, load ~1. Flags: `--batch-size=200000 --tick-ms-per-batch=25
+--repaint-every=10 --branch-clock --wall-clock-ms=1790673326000 --quiet-api`.
+Two runs per arm, alternating. User CPU covers the whole route (800 or 1800
+batches).
+
+| app, window | threaded entries base -> cand | user CPU base | user CPU cand | change |
+|---|---|---|---|---|
+| Deus Ex, 450..800 | 177.5M -> 100.4M | 55.83 / 55.94 s | 27.69 / 27.75 s | **−50.4%** (null band 0.2%) |
+| Unreal SE, 900..1800 | 116.1M -> 68.8M | 28.42 / 28.93 s | 18.45 / 19.01 s | **−35.1%** (null band 1.8-3.0%) |
+
+- **Frames.** All frames are md5-identical in every run: Deus Ex at
+  450/560/680/790/end, Unreal at 900/1200/1500/1790/end.
+- **MMX only.** Without the span retry, the Deus Ex window was at 154.9M
+  threaded entries: the span heads were still at `scan-limit`.
+- **Control.** The candidate with `--no-uop-mmx` runs 56.45 s (Deus Ex) and
+  28.74 s (Unreal), the same as base. The span retry alone does not change
+  these apps.
+- **Next.** On Deus Ex, what remains hot in SoftDrv is x87 triangle setup:
+  `+0x10d2759d`/`+0x10d27656`, `fld` heads at 4% each.

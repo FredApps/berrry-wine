@@ -21,25 +21,15 @@
   ;; EMMS), and $th_emms already clears the tag word.
 
   ;; ---- Register file ----
+  ;; MMn is the i64 at $mmx_base + n*8 in this thread's $MMX_FILE slice. The
+  ;; &7 keeps a stray index inside the slice.
   (func $mmx_get (param $i i32) (result i64)
-    (if (i32.eq (local.get $i) (i32.const 0)) (then (return (global.get $mm0))))
-    (if (i32.eq (local.get $i) (i32.const 1)) (then (return (global.get $mm1))))
-    (if (i32.eq (local.get $i) (i32.const 2)) (then (return (global.get $mm2))))
-    (if (i32.eq (local.get $i) (i32.const 3)) (then (return (global.get $mm3))))
-    (if (i32.eq (local.get $i) (i32.const 4)) (then (return (global.get $mm4))))
-    (if (i32.eq (local.get $i) (i32.const 5)) (then (return (global.get $mm5))))
-    (if (i32.eq (local.get $i) (i32.const 6)) (then (return (global.get $mm6))))
-    (global.get $mm7))
+    (i64.load (i32.add (global.get $mmx_base)
+      (i32.shl (i32.and (local.get $i) (i32.const 7)) (i32.const 3)))))
 
   (func $mmx_set (param $i i32) (param $v i64)
-    (if (i32.eq (local.get $i) (i32.const 0)) (then (global.set $mm0 (local.get $v)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 1)) (then (global.set $mm1 (local.get $v)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 2)) (then (global.set $mm2 (local.get $v)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 3)) (then (global.set $mm3 (local.get $v)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 4)) (then (global.set $mm4 (local.get $v)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 5)) (then (global.set $mm5 (local.get $v)) (return)))
-    (if (i32.eq (local.get $i) (i32.const 6)) (then (global.set $mm6 (local.get $v)) (return)))
-    (global.set $mm7 (local.get $v)))
+    (i64.store (i32.add (global.get $mmx_base)
+      (i32.shl (i32.and (local.get $i) (i32.const 7)) (i32.const 3))) (local.get $v)))
 
   ;; ============================================================
   ;; SSE base used by SDL2

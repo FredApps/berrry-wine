@@ -4034,14 +4034,17 @@
   ;; between, and an independent file costs nothing. i64 rather than v128: the
   ;; MMX code we run is overwhelmingly whole-register moves, boolean ops and
   ;; 64-bit shifts, which are one exact i64 instruction each. See src/06c-mmx.wat.
-  (global $mm0 (mut i64) (i64.const 0))
-  (global $mm1 (mut i64) (i64.const 0))
-  (global $mm2 (mut i64) (i64.const 0))
-  (global $mm3 (mut i64) (i64.const 0))
-  (global $mm4 (mut i64) (i64.const 0))
-  (global $mm5 (mut i64) (i64.const 0))
-  (global $mm6 (mut i64) (i64.const 0))
-  (global $mm7 (mut i64) (i64.const 0))
+  ;; They live in this thread's slice of $MMX_FILE (below): MMn is
+  ;; the i64 at $mmx_base + n*8, +64 is uop-tier scratch. They were eight
+  ;; globals behind an eight-way branch; a file makes a register one load and
+  ;; lets the uop tier (07d/07e) name it as a memory cell.
+  ;; The file is 16 x 0x80 bytes in the top half of $UOP_CSCRATCH's last page,
+  ;; which otherwise holds only $UC_LOCK and $UOP_WIN_EPOCH (07e). It is not a
+  ;; region of its own because the map is at its ceiling: a new 0x800-byte
+  ;; region fails region-alloc --shake-all.
+  (global $MMX_FILE i32 (region.addr $UOP_CSCRATCH 0x139800))
+  (global $MMX_FILE_STRIDE i32 (i32.const 128))
+  (global $mmx_base (mut i32) (region.addr $UOP_CSCRATCH 0x139800))
   ;; This thread's XMM register file (see $XMM_FILE in 00-regions.wat): XMMn
   ;; is the v128 at $xmm_base + n*16. It used to be sixteen i64 globals behind
   ;; eight-way branches, which made every SSE register read two calls and up

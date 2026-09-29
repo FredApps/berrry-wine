@@ -126,6 +126,15 @@ tier:
   `[0x10d7d39c]`.
 - `+0x10d2b180` / `+0x10d2b640`, 8-texel palette-lookup span bodies.
 - `+0x10d05dbb`, a `jb` self-loop texel.
+
+**Covered (2026-09-29, docs/uop-tier-design.md §16).** The uop tier now lowers
+MMX, and it retries a scan-limit head with a halved span. Every head above is
+`live`. `+0x10d2b180`/`+0x10d2b640` run 86 blocks per entry, at 276
+instructions each. `+0x10d05dbb` is reached inside another program. Threaded
+block entries over batches 450..800 went from 177.5M to 100.4M. User CPU for
+800 batches went from 55.83/55.94 s to **27.69/27.75 s (−50.4%)**, and all five
+frames are md5-identical. What remains hot is x87 triangle setup:
+`+0x10d2759d`/`+0x10d27656` are `fld` heads, 4% each.
 ## 2026-09-29: the uop tier ran a freed program (call through NULL in the 3D intro)
 
 **Symptom.** With the uop tier on (the default since 2026-09-28), the 3D logo

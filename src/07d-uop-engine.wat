@@ -132,6 +132,18 @@
   ;;   70 DIVW q r lo hi d s x                q, r = hi:lo / d; exit to x on #DE
   ;;   71 ICG v t cls eip x                   exit to x unless v == t (a call's
   ;;                                          target guard; cls 0 icall, 1 iat)
+  ;; Appended by the MMX lowering (07e kind 27, --no-uop-mmx). An MMX cell
+  ;; is an 8-byte slot of this thread's $MMX_FILE (MMn at +n*8, +64 the
+  ;; staging cell a memory source is loaded into); d/a/b below are cell
+  ;; addresses, s/d of 72/73 a cell, base/idx GPR slots as in LDX32:
+  ;;   72 LDX64 d base idx sc disp w x        cell d = the 8 bytes at the address
+  ;;   73 STX64 s base idx sc disp w x        the 8 bytes at the address = cell s
+  ;;   74 MXOP sub d a b                      cell d = op(cell a, cell b)
+  ;;   75 MXSHI sub d a n                     cell d = op(cell a, n)   (n imm)
+  ;;   76 MXFROM32 d a                        cell d = zero-extended i32 slot a
+  ;;   77 MXTO32 d a                          i32 slot d = low half of cell a
+  ;; sub is 06c's $mmx_opcode_subop numbering and every arm is $mmx_binop /
+  ;; $mmx_shift inlined, so the two tiers compute the same bits.
 
   ;; The main thread's arena. Each guest thread is its own instance over the
   ;; shared memory and a program names its instance's $reg_base, so every
@@ -722,12 +734,15 @@
       (if (i32.eq (global.get $uop_io_kind) (i32.const 2))
         (then
           (if (call $uop_reguard (global.get $uop_io_w) (global.get $uop_io_ga)
-                ;; access size: 32-bit forms 4, 16-bit 2, byte 1
+                ;; access size: 32-bit forms 4, LDX64/STX64 8, 16-bit 2, byte 1
                 (if (result i32) (i32.or (i32.or (i32.eq (local.get $op) (i32.const 13))
                                                  (i32.eq (local.get $op) (i32.const 17)))
                                          (i32.or (i32.eq (local.get $op) (i32.const 33))
                                                  (i32.eq (local.get $op) (i32.const 38))))
                   (then (i32.const 4))
+                  (else (if (result i32) (i32.or (i32.eq (local.get $op) (i32.const 72))
+                                                 (i32.eq (local.get $op) (i32.const 73)))
+                  (then (i32.const 8))
                   (else (if (result i32)
                           (i32.or (i32.or (i32.eq (local.get $op) (i32.const 16))
                                           (i32.or (i32.eq (local.get $op) (i32.const 19))
@@ -735,7 +750,7 @@
                                   (i32.or (i32.eq (local.get $op) (i32.const 34))
                                           (i32.or (i32.eq (local.get $op) (i32.const 35))
                                                   (i32.eq (local.get $op) (i32.const 39)))))
-                          (then (i32.const 2)) (else (i32.const 1))))))
+                          (then (i32.const 2)) (else (i32.const 1))))))))
             (then (br $L)))
           ;; Its deopt stub: x is the last operand -- offset 20 in the
           ;; 5-operand forms, 24 in LD8UX/LD16UX2, 28 in LDX*/STX*.
@@ -801,6 +816,7 @@
     (loop $L
       (block $svc
       (block $miss
+      (block $c77 (block $c76 (block $mxcore (block $c75 (block $c74 (block $c73 (block $c72
       (block $c71 (block $c70 (block $c69 (block $c68
       (block $c67 (block $c66 (block $c65 (block $c64 (block $c63 (block $c62 (block $c61 (block $c60 (block $c59 (block $c58 (block $c57 (block $c56
       (block $c55 (block $c54 (block $c53 (block $c52 (block $c51 (block $c50
@@ -818,6 +834,7 @@
                   $c38 $c39 $c40 $c41 $c42 $c43 $c44 $c45 $c46 $c47 $c48 $c49
                   $c50 $c51 $c52 $c53 $c54 $c55 $c56 $c57 $c58 $c59 $c60 $c61 $c62 $c63
                   $c64 $c65 $c66 $c67 $c68 $c69 $c70 $c71
+                  $c72 $c73 $c74 $c75 $c76 $c77
                   $c0
                   (i32.load (local.get $pc))))
         ;; 0 EXIT eip
@@ -1320,6 +1337,257 @@
           (else (global.set $uop_icg_pass0 (i32.add (global.get $uop_icg_pass0) (i32.const 1)))))
         (local.set $pc (i32.add (local.get $pc) (i32.const 24)))
         (br $L))
+        ;; 72 LDX64 d base idx sc disp w x
+        (local.set $ga (i32.add (i32.add (i32.load (i32.load offset=8 (local.get $pc)))
+                                         (i32.shl (i32.load (i32.load offset=12 (local.get $pc)))
+                                                  (i32.load offset=16 (local.get $pc))))
+                                (i32.load offset=20 (local.get $pc))))
+        (local.set $w (i32.load offset=24 (local.get $pc)))
+        ;; eight bytes: a span under 8 (a poisoned slot has 4) always misses
+        (local.set $v (i32.load offset=4 (local.get $w)))
+        (if (i32.or (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
+                              (i32.sub (local.get $v) (i32.const 8)))
+                    (i32.lt_u (local.get $v) (i32.const 8)))
+          (then (br $miss)))
+        (i64.store (i32.load offset=4 (local.get $pc))
+          (i64.load (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
+        ;; 73 STX64 s base idx sc disp w x
+        (local.set $ga (i32.add (i32.add (i32.load (i32.load offset=8 (local.get $pc)))
+                                         (i32.shl (i32.load (i32.load offset=12 (local.get $pc)))
+                                                  (i32.load offset=16 (local.get $pc))))
+                                (i32.load offset=20 (local.get $pc))))
+        (local.set $w (i32.load offset=24 (local.get $pc)))
+        ;; eight bytes: a span under 8 (a poisoned slot has 4) always misses
+        (local.set $v (i32.load offset=4 (local.get $w)))
+        (if (i32.or (i32.gt_u (i32.sub (local.get $ga) (i32.load (local.get $w)))
+                              (i32.sub (local.get $v) (i32.const 8)))
+                    (i32.lt_u (local.get $v) (i32.const 8)))
+          (then (br $miss)))
+        (i64.store (i32.add (local.get $ga) (i32.load offset=8 (local.get $w)))
+          (i64.load (i32.load offset=4 (local.get $pc))))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 32))) (br $L))
+        ;; 74 MXOP sub d a b
+        (local.set $x (i64.load (i32.load offset=12 (local.get $pc))))
+        (local.set $y (i64.load (i32.load offset=16 (local.get $pc))))
+        (br $mxcore))
+        ;; 75 MXSHI sub d a n
+        (local.set $x (i64.load (i32.load offset=12 (local.get $pc))))
+        (local.set $y (i64.extend_i32_u (i32.load offset=16 (local.get $pc)))))
+        ;; MXOP and MXSHI meet here with x, y the operands; a br_table on the
+        ;; 06c subop picks the arm ($mmx_binop / $mmx_shift inlined).
+        (block $mxd
+        (block $mbad
+        (block $m53 (block $m52 (block $m51 (block $m50 (block $m49 (block $m48 (block $m47 (block $m46
+        (block $m45 (block $m44 (block $m43 (block $m42 (block $m41 (block $m40 (block $m39 (block $m38
+        (block $m37 (block $m36 (block $m35 (block $m34 (block $m33 (block $m32 (block $m31 (block $m30
+        (block $m29 (block $m28 (block $m27 (block $m26 (block $m25 (block $m24 (block $m23 (block $m22
+        (block $m21 (block $m20 (block $m19 (block $m18 (block $m17 (block $m16 (block $m15 (block $m14
+        (block $m13 (block $m12 (block $m11 (block $m10 (block $m9 (block $m8 (block $m7 (block $m6
+        (block $m5 (block $m4 (block $m3 (block $m2 (block $m1 (block $m0
+          (br_table
+            $m0 $mbad $mbad $m1 $m2 $m3 $m4 $m5 $m6 $m7 $m8 $m9
+            $m10 $m11 $m12 $m13 $m14 $m15 $m16 $m17 $mbad $mbad $mbad $mbad
+            $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $m18 $m19 $m20 $m44
+            $m21 $m22 $m23 $m45 $m24 $m25 $mbad $mbad $m26 $m27 $mbad $mbad
+            $m28 $m29 $mbad $mbad $m30 $m31 $mbad $mbad $m32 $m33 $m34 $mbad
+            $m35 $m36 $m37 $mbad $m38 $mbad $mbad $mbad $m39 $mbad $mbad $mbad
+            $mbad $m40 $mbad $mbad $mbad $m41 $mbad $mbad $m42 $m43 $mbad $mbad
+            $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad
+            $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad
+            $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad
+            $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $mbad $m46 $m47 $m48
+            $mbad $m49 $m50 $m51 $mbad $m52 $m53
+            $mbad (i32.load offset=4 (local.get $pc))))
+          ;; 0 movq
+          (local.set $q (local.get $y))
+          (br $mxd))
+          ;; 3 pand
+          (local.set $q (i64.and (local.get $x) (local.get $y)))
+          (br $mxd))
+          ;; 4 pandn
+          (local.set $q (i64.and (i64.xor (local.get $x) (i64.const -1)) (local.get $y)))
+          (br $mxd))
+          ;; 5 por
+          (local.set $q (i64.or (local.get $x) (local.get $y)))
+          (br $mxd))
+          ;; 6 pxor
+          (local.set $q (i64.xor (local.get $x) (local.get $y)))
+          (br $mxd))
+          ;; 7 punpckldq
+          (local.set $q (i64.or (i64.and (local.get $x) (i64.const 0xFFFFFFFF)) (i64.shl (local.get $y) (i64.const 32))))
+          (br $mxd))
+          ;; 8 punpckhdq
+          (local.set $q (i64.or (i64.shr_u (local.get $x) (i64.const 32)) (i64.and (local.get $y) (i64.const -4294967296))))
+          (br $mxd))
+          ;; 9 punpcklbw
+          (local.set $q (i64x2.extract_lane 0 (i8x16.shuffle 0 16 1 17 2 18 3 19 0 0 0 0 0 0 0 0 (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 10 punpckhbw
+          (local.set $q (i64x2.extract_lane 0 (i8x16.shuffle 4 20 5 21 6 22 7 23 0 0 0 0 0 0 0 0 (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 11 punpcklwd
+          (local.set $q (i64x2.extract_lane 0 (i8x16.shuffle 0 1 16 17 2 3 18 19 0 0 0 0 0 0 0 0 (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 12 punpckhwd
+          (local.set $q (i64x2.extract_lane 0 (i8x16.shuffle 4 5 20 21 6 7 22 23 0 0 0 0 0 0 0 0 (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 13 packsswb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.shuffle 0 1 2 3 8 9 10 11 0 0 0 0 0 0 0 0 (i8x16.narrow_i16x8_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))) (i8x16.narrow_i16x8_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))))))
+          (br $mxd))
+          ;; 14 packssdw
+          (local.set $q (i64x2.extract_lane 0 (i8x16.shuffle 0 1 2 3 8 9 10 11 0 0 0 0 0 0 0 0 (i16x8.narrow_i32x4_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))) (i16x8.narrow_i32x4_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))))))
+          (br $mxd))
+          ;; 15 packuswb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.shuffle 0 1 2 3 8 9 10 11 0 0 0 0 0 0 0 0 (i8x16.narrow_i16x8_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))) (i8x16.narrow_i16x8_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))))))
+          (br $mxd))
+          ;; 16 pmaddwd
+          (local.set $q (i64x2.extract_lane 0 (i32x4.dot_i16x8_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 17 pmulhw
+          (local.set $q (i64x2.extract_lane 0 (i8x16.shuffle 2 3 6 7 10 11 14 15 0 0 0 0 0 0 0 0 (i32x4.extmul_low_i16x8_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))) (i32x4.extmul_low_i16x8_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))))))
+          (br $mxd))
+          ;; 18 pmulhuw
+          (local.set $q (i64x2.extract_lane 0 (i8x16.shuffle 2 3 6 7 10 11 14 15 0 0 0 0 0 0 0 0 (i32x4.extmul_low_i16x8_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))) (i32x4.extmul_low_i16x8_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y))))))
+          (br $mxd))
+          ;; 19 pmullw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.mul (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 32 paddb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.add (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 33 paddw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.add (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 34 paddd
+          (local.set $q (i64x2.extract_lane 0 (i32x4.add (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 36 psubb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.sub (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 37 psubw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.sub (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 38 psubd
+          (local.set $q (i64x2.extract_lane 0 (i32x4.sub (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 40 paddsb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.add_sat_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 41 paddsw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.add_sat_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 44 psubsb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.sub_sat_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 45 psubsw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.sub_sat_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 48 paddusb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.add_sat_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 49 paddusw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.add_sat_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 52 psubusb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.sub_sat_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 53 psubusw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.sub_sat_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 56 pcmpeqb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.eq (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 57 pcmpeqw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.eq (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 58 pcmpeqd
+          (local.set $q (i64x2.extract_lane 0 (i32x4.eq (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 60 pcmpgtb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.gt_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 61 pcmpgtw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.gt_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 62 pcmpgtd
+          (local.set $q (i64x2.extract_lane 0 (i32x4.gt_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 64 pminub
+          (local.set $q (i64x2.extract_lane 0 (i8x16.min_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 68 pmaxub
+          (local.set $q (i64x2.extract_lane 0 (i8x16.max_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 73 pminsw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.min_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 77 pmaxsw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.max_s (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 80 pavgb
+          (local.set $q (i64x2.extract_lane 0 (i8x16.avgr_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 81 pavgw
+          (local.set $q (i64x2.extract_lane 0 (i16x8.avgr_u (i64x2.splat (local.get $x)) (i64x2.splat (local.get $y)))))
+          (br $mxd))
+          ;; 35 paddq
+          (local.set $q (i64.add (local.get $x) (local.get $y)))
+          (br $mxd))
+          ;; 39 psubq
+          (local.set $q (i64.sub (local.get $x) (local.get $y)))
+          (br $mxd))
+          ;; 129 psllw
+          (local.set $ga (select (i32.const 255) (i32.wrap_i64 (local.get $y)) (i64.gt_u (local.get $y) (i64.const 255))))
+          (local.set $q (i64.const 0))
+          (if (i32.lt_u (local.get $ga) (i32.const 16)) (then (local.set $q (i64x2.extract_lane 0 (i16x8.shl (i64x2.splat (local.get $x)) (local.get $ga))))))
+          (br $mxd))
+          ;; 130 pslld
+          (local.set $ga (select (i32.const 255) (i32.wrap_i64 (local.get $y)) (i64.gt_u (local.get $y) (i64.const 255))))
+          (local.set $q (i64.const 0))
+          (if (i32.lt_u (local.get $ga) (i32.const 32)) (then (local.set $q (i64x2.extract_lane 0 (i32x4.shl (i64x2.splat (local.get $x)) (local.get $ga))))))
+          (br $mxd))
+          ;; 131 psllq
+          (local.set $ga (select (i32.const 255) (i32.wrap_i64 (local.get $y)) (i64.gt_u (local.get $y) (i64.const 255))))
+          (local.set $q (i64.const 0))
+          (if (i32.lt_u (local.get $ga) (i32.const 64)) (then (local.set $q (i64.shl (local.get $x) (i64.extend_i32_u (local.get $ga))))))
+          (br $mxd))
+          ;; 133 psrlw
+          (local.set $ga (select (i32.const 255) (i32.wrap_i64 (local.get $y)) (i64.gt_u (local.get $y) (i64.const 255))))
+          (local.set $q (i64.const 0))
+          (if (i32.lt_u (local.get $ga) (i32.const 16)) (then (local.set $q (i64x2.extract_lane 0 (i16x8.shr_u (i64x2.splat (local.get $x)) (local.get $ga))))))
+          (br $mxd))
+          ;; 134 psrld
+          (local.set $ga (select (i32.const 255) (i32.wrap_i64 (local.get $y)) (i64.gt_u (local.get $y) (i64.const 255))))
+          (local.set $q (i64.const 0))
+          (if (i32.lt_u (local.get $ga) (i32.const 32)) (then (local.set $q (i64x2.extract_lane 0 (i32x4.shr_u (i64x2.splat (local.get $x)) (local.get $ga))))))
+          (br $mxd))
+          ;; 135 psrlq
+          (local.set $ga (select (i32.const 255) (i32.wrap_i64 (local.get $y)) (i64.gt_u (local.get $y) (i64.const 255))))
+          (local.set $q (i64.const 0))
+          (if (i32.lt_u (local.get $ga) (i32.const 64)) (then (local.set $q (i64.shr_u (local.get $x) (i64.extend_i32_u (local.get $ga))))))
+          (br $mxd))
+          ;; 137 psraw
+          (local.set $ga (select (i32.const 255) (i32.wrap_i64 (local.get $y)) (i64.gt_u (local.get $y) (i64.const 255))))
+          (if (i32.ge_u (local.get $ga) (i32.const 16)) (then (local.set $ga (i32.const 15))))
+          (local.set $q (i64x2.extract_lane 0 (i16x8.shr_s (i64x2.splat (local.get $x)) (local.get $ga))))
+          (br $mxd))
+          ;; 138 psrad
+          (local.set $ga (select (i32.const 255) (i32.wrap_i64 (local.get $y)) (i64.gt_u (local.get $y) (i64.const 255))))
+          (if (i32.ge_u (local.get $ga) (i32.const 32)) (then (local.set $ga (i32.const 31))))
+          (local.set $q (i64x2.extract_lane 0 (i32x4.shr_s (i64x2.splat (local.get $x)) (local.get $ga))))
+          (br $mxd))
+        (unreachable))
+        (i64.store (i32.load offset=8 (local.get $pc)) (local.get $q))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 20))) (br $L))
+        ;; 76 MXFROM32 d a
+        (i64.store (i32.load offset=4 (local.get $pc))
+          (i64.extend_i32_u (i32.load (i32.load offset=8 (local.get $pc)))))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 12))) (br $L))
+        ;; 77 MXTO32 d a
+        (i32.store (i32.load offset=4 (local.get $pc))
+          (i32.wrap_i64 (i64.load (i32.load offset=8 (local.get $pc)))))
+        (local.set $pc (i32.add (local.get $pc) (i32.const 12))) (br $L))
       ;; A memory access left its window: $uop_run re-guards (a call).
       (global.set $uop_io_ga (local.get $ga))
       (global.set $uop_io_w (local.get $w))

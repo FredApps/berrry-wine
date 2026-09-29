@@ -79,6 +79,10 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   const icallWanted = () => uopWanted() && (hasFlag('uop-icall') || (appPolicy() || {}).uopIcall === true);
   const iatWanted = () => uopWanted() && (hasFlag('uop-iat') || (appPolicy() || {}).uopIat === true);
   const WIDEN = [['set_uop_muldiv', muldivWanted], ['set_uop_icall', icallWanted], ['set_uop_iat', iatWanted]];
+  // MMX (07e kind 27, on by default; --no-uop-mmx or `uopMmx: false` on the
+  // app turns it off): MMX instructions lowered into the program over the
+  // per-thread $MMX_FILE instead of declining the head.
+  const mmxWanted = () => uopWanted() && !hasFlag('no-uop-mmx') && (appPolicy() || {}).uopMmx !== false;
   // Trace heads (on by default; --no-uop-trace-heads or `uopTraceHeads: false`
   // on the app turns them off; --uop-trace-heads=MIN,MAX sets the limits): a hot
   // head with no back edge is lowered as a forward trace -- straight-line
@@ -330,6 +334,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_UOP_NOBUMP) inheritWasm('set_uop_nobump', 0);
     if (aggrWanted()) inheritWasm('set_aggressive_stack', 1);
     inheritWasm('set_uop_trace_heads', traceWanted() ? 1 : 0);
+    inheritWasm('set_uop_mmx', mmxWanted() ? 1 : 0);
     for (const [setter, wanted] of WIDEN) if (wanted()) inheritWasm(setter, 1);
     if (traceWanted()) {
       if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) inheritWasm('set_uop_trace_limits', TRACE_LIMITS[0], TRACE_LIMITS[1]);
@@ -358,6 +363,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
       for (const [setter, wanted] of WIDEN) if (wanted() && instance.exports[setter]) instance.exports[setter](1);
       if (instance.exports.set_uop_trace_heads) instance.exports.set_uop_trace_heads(traceWanted() ? 1 : 0);
+      if (instance.exports.set_uop_mmx) instance.exports.set_uop_mmx(mmxWanted() ? 1 : 0);
       if (traceWanted() && instance.exports.set_uop_trace_limits) {
         if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) instance.exports.set_uop_trace_limits(TRACE_LIMITS[0], TRACE_LIMITS[1]);
       }

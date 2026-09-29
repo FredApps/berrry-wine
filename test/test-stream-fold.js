@@ -41,8 +41,8 @@ const { bootRenderHarness } = require('./render-helper');
 const EXTRA_WAT = `
   (func (export "test_sf_zf") (result i32)
     (i32.or (call $get_zf) (i32.shl (call $get_sf) (i32.const 1))))
-  (func (export "test_set_mm0") (param $v i64) (global.set $mm0 (local.get $v)))
-  (func (export "test_get_mm0") (result i64) (global.get $mm0))
+  (func (export "test_set_mm0") (param $v i64) (call $mmx_set (i32.const 0) (local.get $v)))
+  (func (export "test_get_mm0") (result i64) (call $mmx_get (i32.const 0)))
   (func (export "test_set_df") (param $v i32) (global.set $df (local.get $v)))
 `;
 
