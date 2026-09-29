@@ -499,12 +499,12 @@
     $th_sse_rm                ;; 433: xmm,m128 (address word follows)
     $th_sse_mr                ;; 434: m128,xmm (address word follows)
     $th_packed_avg_run        ;; 435: packed two-source average loop
-    $th_rgb565_alpha_run      ;; 436: MW3 bound-derived RGB565 alpha row
+    $th_retired_fold          ;; 436: retired (was MW3 RGB565 alpha row; uop runs it)
     $th_aoe_grid_fill         ;; 437: AoE byte-grid row fill loop
     $th_aoe_span_prefix       ;; 438: parameterized AoE I/II span prefix
     $th_fnstsw_test_ah_jcc    ;; 439: FNSTSW AX + TEST AH,imm8 + Jcc
-    $th_rgb565_colorkey_run   ;; 440: MW3 counted RGB565 color-key row
-    $th_mw3_grid_filter_run   ;; 441: MW3 in-place 16-bit terrain/grid filter row
+    $th_retired_fold          ;; 440: retired (was MW3 RGB565 color-key row; uop runs it)
+    $th_retired_fold          ;; 441: retired (was MW3 16-bit terrain/grid filter row; uop runs it)
     $th_lar                   ;; 442: LAR r16/32,r/m16 (selector access rights)
     $th_colorkey8_run         ;; 443: byte color-key replacement row
     $th_add_edx_eax2_disp     ;; 444: ADD EDX,[EAX*2+disp32]

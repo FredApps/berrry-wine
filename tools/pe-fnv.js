@@ -6,7 +6,8 @@
 //
 // WHY THIS EXISTS: a fold that replaces a long straight-line body with
 // hardcoded arithmetic has to prove every byte of that body, and the way this
-// codebase does it ($try_emit_rgb565_alpha_run) is a few sampled structural
+// codebase does it ($try_emit_aoe_span_prefix; the retired MW3 alpha row did
+// the same) is a few sampled structural
 // checks plus an FNV-1a over the whole range. That hash is a magic constant
 // which has to come from somewhere, and until now it came from nowhere -- so
 // it was either copied by hand or the check was skipped. This prints it.

@@ -112,9 +112,9 @@
   ;; default; `--no-fold=NAME` in test/runner-experiments.js sets them, and the
   ;; mask is inherited by every guest-thread instance. Decode-time, like every
   ;; other fold switch. Bits: 0x04 lut-span (H431), 0x08 colorkey8 (H443),
-  ;; 0x10 mw3-blit (H436/H440/H441), 0x80 xlat-stosb (H418); 0x01 was
-  ;; storm-bitreader (H396), 0x02 smack-huff (H395) and 0x20 lut16-counted
-  ;; (H418's Heroes III u16 forms), all retired. The MMX exact copies already
+  ;; 0x80 xlat-stosb (H418); 0x01 was storm-bitreader (H396), 0x02
+  ;; smack-huff (H395), 0x10 mw3-blit (H436/H440/H441) and 0x20
+  ;; lut16-counted (H418's Heroes III u16 forms), all retired. The MMX exact copies already
   ;; had globals and now have setters (set_mmx_copy64; Jazz 2's masked row
   ;; copy and its set_mmx_mask_copy are retired).
   (global $fold_off_mask (mut i32) (i32.const 0))
@@ -944,161 +944,6 @@
       (then (return (i32.const 0))))
     (i32.eq (i32.and (i32.shr_u (local.get $m) (i32.const 3)) (i32.const 7))
             (local.get $reg)))
-
-  ;; MechWarrior 3's menu compositor is one branchy RGB565 alpha row. Its
-  ;; three alpha arms split the back-edge across four basic blocks, so the
-  ;; self-loop matcher cannot see the loop as a unit. Keep this exact and
-  ;; opt-in under COPY_RUN's existing rollback gate.
-  ;;
-  ;; The executor takes the trip count from [EBP-0x18] on every entry. That
-  ;; bound is the game's clipped row width; no screen-size guess is involved.
-  (func $try_emit_rgb565_alpha_run (param $start_eip i32) (result i32)
-    (local $p i32) (local $end i32) (local $hash i32)
-    (if (i32.or
-          (i32.eqz (call $loop_copy_emit_get))
-          (i32.or (global.get $code16) (call $fold_off (i32.const 0x10))))
-      (then (return (i32.const 0))))
-    ;; Exact head and exact induction/back-edge tail. Checking both ends keeps
-    ;; a partially patched binary on the ordinary decoder path.
-    (if (i32.or
-          (i32.ne (call $gl32 (local.get $start_eip)) (i32.const 0x8A0C4D8B))
-          (i32.or
-            (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 4)))
-              (i32.const 0x03F98009))
-            (i32.or
-              (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 0x93)))
-                (i32.const 0x8B0C758B))
-              (i32.ne (call $gl32 (i32.add (local.get $start_eip) (i32.const 0xA7)))
-                (i32.const 0xFF53850F)))))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl16 (i32.add (local.get $start_eip) (i32.const 0xAB)))
-                (i32.const 0xFFFF))
-      (then (return (i32.const 0))))
-    ;; The old matcher sampled only the head and induction tail because the
-    ;; original VA was also part of the predicate. Once relocation is allowed,
-    ;; prove every byte of the 173-byte branch-split body. FNV is a decode-time
-    ;; rejection filter layered on the sampled structural checks above.
-    (local.set $p (local.get $start_eip))
-    (local.set $end (i32.add (local.get $start_eip) (i32.const 0xAD)))
-    (local.set $hash (i32.const 0x811c9dc5))
-    (loop $hash_bytes
-      ;; A micro-op side exit may have compiled an interior store separately.
-      ;; Preserve that entry instead of publishing a whole-row fold over it:
-      ;; the two otherwise retire and re-decode each other on every pixel.
-      (if (i32.and (i32.ne (local.get $p) (local.get $start_eip))
-                    (call $fuse_stop (local.get $p)))
-        (then (return (i32.const 0))))
-      (local.set $hash
-        (i32.mul
-          (i32.xor (local.get $hash) (call $gl8 (local.get $p)))
-          (i32.const 0x01000193)))
-      (local.set $p (i32.add (local.get $p) (i32.const 1)))
-      (br_if $hash_bytes (i32.lt_u (local.get $p) (local.get $end))))
-    (if (i32.ne (local.get $hash) (i32.const 0xe93ce905))
-      (then (return (i32.const 0))))
-    (global.set $loop_rgb565_alpha_matches
-      (i32.add (global.get $loop_rgb565_alpha_matches) (i32.const 1)))
-    (call $te (i32.const 436) (i32.const 0))
-    (call $te_raw (i32.add (local.get $start_eip) (i32.const 0xAD))) ;; fall
-    (call $te_raw (local.get $start_eip))                            ;; back
-    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 0xAD)))
-    (i32.const 1))
-
-  ;; MW3's transparent RGB565 row has a conditional store between its compare
-  ;; and induction back edge, so no single emitted self-loop block contains the
-  ;; whole operation. Match the complete authentic 19-byte sequence at its one
-  ;; verified encoding and keep it under MW3's process-wide COPY_RUN opt-in.
-  ;; The back/fall addresses are derived from the matched location so another
-  ;; game build can use the same exact loop at a different VA.
-  (func $match_rgb565_colorkey_run (param $start_eip i32) (result i32)
-    (if (i32.or (i32.eqz (call $loop_copy_emit_get))
-                (i32.or (global.get $code16) (call $fold_off (i32.const 0x10))))
-      (then (return (i32.const 0))))
-    (if (i32.or
-          (i32.ne (call $gl32 (local.get $start_eip))
-            (i32.const 0x66088b66))
-          (i32.or
-            (i32.ne (call $gl32
-              (i32.add (local.get $start_eip) (i32.const 4)))
-              (i32.const 0x740c4d3b))
-            (i32.or
-              (i32.ne (call $gl32
-                (i32.add (local.get $start_eip) (i32.const 8)))
-                (i32.const 0x0c896604))
-              (i32.ne (call $gl32
-                (i32.add (local.get $start_eip) (i32.const 12)))
-                (i32.const 0x02c08318)))))
-      (then (return (i32.const 0))))
-    (if (i32.or
-          (i32.ne (call $gl16
-            (i32.add (local.get $start_eip) (i32.const 16)))
-            (i32.const 0x754e))
-          (i32.ne (call $gl8
-            (i32.add (local.get $start_eip) (i32.const 18)))
-            (i32.const 0xed)))
-      (then (return (i32.const 0))))
-    (i32.const 1))
-
-  (func $try_emit_rgb565_colorkey_run (param $start_eip i32) (result i32)
-    (local $p i32)
-    (if (i32.eqz (call $match_rgb565_colorkey_run (local.get $start_eip)))
-      (then (return (i32.const 0))))
-    ;; Preserve interior entries created by side exits, as for the alpha row.
-    ;; Otherwise the whole-row fold and its conditional store retire each other.
-    (local.set $p (i32.add (local.get $start_eip) (i32.const 1)))
-    (loop $entries
-      (if (call $fuse_stop (local.get $p)) (then (return (i32.const 0))))
-      (local.set $p (i32.add (local.get $p) (i32.const 1)))
-      (br_if $entries
-        (i32.lt_u (local.get $p) (i32.add (local.get $start_eip) (i32.const 19)))))
-    (global.set $loop_rgb565_colorkey_matches
-      (i32.add (global.get $loop_rgb565_colorkey_matches) (i32.const 1)))
-    (call $te (i32.const 440) (i32.const 0))
-    (call $te_raw (i32.add (local.get $start_eip) (i32.const 19))) ;; fall
-    (call $te_raw (local.get $start_eip))                          ;; back
-    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 19)))
-    (i32.const 1))
-
-  ;; MW3's in-place 16-bit terrain/grid filter. This single basic block is a
-  ;; 101-byte, 37-instruction counted loop, so ordinary execution pays a
-  ;; changing indirect threaded dispatch for every scalar load/add/store.
-  ;; Prove the complete authentic body and derive its control-flow addresses
-  ;; from the match so differently linked copies remain eligible.
-  (func $try_emit_mw3_grid_filter_run (param $start_eip i32) (result i32)
-    (local $p i32) (local $end i32) (local $hash i32)
-    (if (i32.or (i32.eqz (call $loop_copy_emit_get))
-                (i32.or (global.get $code16) (call $fold_off (i32.const 0x10))))
-      (then (return (i32.const 0))))
-    (if (i32.or
-          (i32.ne (call $gl32 (local.get $start_eip))
-            (i32.const 0x2024548b))
-          (i32.or
-            (i32.ne (call $gl32
-              (i32.add (local.get $start_eip) (i32.const 95)))
-              (i32.const 0x14244c8b))
-            (i32.ne (call $gl16
-              (i32.add (local.get $start_eip) (i32.const 99)))
-              (i32.const 0x9b75))))
-      (then (return (i32.const 0))))
-    (local.set $p (local.get $start_eip))
-    (local.set $end (i32.add (local.get $start_eip) (i32.const 101)))
-    (local.set $hash (i32.const 0x811c9dc5))
-    (loop $hash_bytes
-      (local.set $hash
-        (i32.mul
-          (i32.xor (local.get $hash) (call $gl8 (local.get $p)))
-          (i32.const 0x01000193)))
-      (local.set $p (i32.add (local.get $p) (i32.const 1)))
-      (br_if $hash_bytes (i32.lt_u (local.get $p) (local.get $end))))
-    (if (i32.ne (local.get $hash) (i32.const 0x11ad09b2))
-      (then (return (i32.const 0))))
-    (global.set $loop_mw3_grid_filter_matches
-      (i32.add (global.get $loop_mw3_grid_filter_matches) (i32.const 1)))
-    (call $te (i32.const 441) (i32.const 0))
-    (call $te_raw (i32.add (local.get $start_eip) (i32.const 101))) ;; fall
-    (call $te_raw (local.get $start_eip))                           ;; back
-    (global.set $d_pc (i32.add (local.get $start_eip) (i32.const 101)))
-    (i32.const 1))
 
   ;; The seven words after a case record's token byte.
   (func $rle_emit_body
@@ -3767,10 +3612,7 @@
       (if (i32.ne (global.get $d_pc) (local.get $start_eip))
         (then
           ;; The game step's address is always its own block's entry (09a8).
-          ;; Split before a native color-key row even on its first encounter;
-          ;; otherwise this prefix can compile its store before the row head.
-          (if (i32.or (call $fuse_stop (global.get $d_pc))
-                      (call $match_rgb565_colorkey_run (global.get $d_pc)))
+          (if (call $fuse_stop (global.get $d_pc))
             (then
               (call $te (i32.const 45) (global.get $d_pc))
               (br $exit)))))
@@ -3783,18 +3625,6 @@
                    (i32.eqz (global.get $code16)))
         (then
           (if (call $try_emit_aoe_span_prefix (local.get $start_eip))
-            (then
-              (local.set $done (i32.const 1))
-              (br $decode)))
-          (if (call $try_emit_rgb565_alpha_run (local.get $start_eip))
-            (then
-              (local.set $done (i32.const 1))
-              (br $decode)))
-          (if (call $try_emit_rgb565_colorkey_run (local.get $start_eip))
-            (then
-              (local.set $done (i32.const 1))
-              (br $decode)))
-          (if (call $try_emit_mw3_grid_filter_run (local.get $start_eip))
             (then
               (local.set $done (i32.const 1))
               (br $decode)))
