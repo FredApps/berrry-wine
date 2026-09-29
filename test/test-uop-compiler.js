@@ -51,6 +51,41 @@ const N = 3000;
 const BATCH = +(process.env.UOP_BATCH || 37);
 const CASES = [
   {
+    // NFSIII demo 0x4c5f17..0x4c5f41, with data/local addresses supplied by
+    // registers. Preserve the 2000-record limit and both original branches.
+    name:'movsd-nfs-record-loop',regs:{},head:'scan',
+    init:a=>({edx:a.buf+1999*8,ebp:a.buf+0x18010}),
+    setup:(mem,g2w,a)=>{
+      const v=new DataView(mem.buffer);
+      mem.fill(0,g2w(a.buf),g2w(a.buf)+16000);
+      mem.fill(0,g2w(a.buf+0x18000),g2w(a.buf+0x18020));
+      for(let i=0;i<2000;i++){
+        v.setUint32(g2w(a.buf+i*8),i<500?a.buf+0x19000+i*4:0,true);
+        v.setUint32(g2w(a.buf+i*8+4),a.buf+0x19000+i*4,true);
+      }
+    },
+    code:[0xFC,JMP('scan'),L('link'),[0x8B,0x3A],[0x85,0xFF],J(cc.Z,'next'),
+      [0x8B,0x45,0xFC],[0x89,0x38],[0x8B,0x42,0x04],[0x89,0x45,0xFC],
+      L('next'),[0x83,0xEA,0x08],0x43,[0x81,0xFB,...d32(2000)],J(cc.GE,'exit'),
+      L('scan'),[0x83,0x7D,0xF8,0],J(cc.NZ,'link'),[0x8D,0x7D,0xF8],[0x89,0xD6],
+      0xA5,0xA5,JMP('next'),L('exit'),0xC3],
+  },
+  ...[
+    {name:'movsd-forward',direction:0,source:0,dest:0x10000},
+    {name:'movsd-backward',direction:1,source:4*N,dest:0x10000+4*N},
+    {name:'movsd-overlap-forward',direction:0,source:0,dest:1},
+    {name:'movsd-overlap-backward',direction:1,source:4*N+1,dest:4*N},
+    // Unaligned dwords repeatedly cross page boundaries and leave windows.
+    {name:'movsd-page-seams',direction:0,source:4094,dest:0x10000+4093},
+  ].map(({name,direction,source,dest})=>({
+    name,regs:{ecx:N},head:'l',
+    init:a=>({esi:a.buf+source,edi:a.buf+dest}),
+    // CMP's operand registers are overwritten by MOVSD before SETB observes
+    // its flags. DEC preserves that CF. STD runs after precompilation, proving
+    // the compiled program does not freeze DF from compilation time.
+    code:[direction?0xFD:0xFC,L('l'),[0x39,0xFE],0xA5,[0x0F,0x92,0xC0],0x49,J(cc.NZ,'l'),0xFC,0xC3],
+  })),
+  {
     name: 'lut8', regs: { ecx: N },
     code: [L('l'), [0x0F, 0xB6, 0x06], [0x8A, 0x04, 0x03], [0x88, 0x07], 0x46, 0x47, 0x49, J(cc.NZ, 'l'), 0xC3],
   },
@@ -679,6 +714,69 @@ function callAt(inst, a, addr, regs) {
 // go through threaded code, which retires the decoded block it overwrote. A
 // kept window would let the store straight through and R would still answer
 // its old immediate -- as would a store window that never checked for code.
+function movsdSparseCase(inst,a,nextCode){
+  const {e,g2w}=inst,errs=[];
+  const source=0x26000000,dest=0x26200000;
+  for(const [i,address] of [source,source+4096,dest,dest+4096].entries()){
+    if((e.test_virtual_map_commit(address,4096)>>>0)!==address)return ['sparse commit failed'];
+    // Force physically separated backing for adjacent guest pages.
+    if((e.test_virtual_map_commit(0x28000000+i*0x100000,4096)>>>0)!==(0x28000000+i*0x100000))
+      return ['filler commit failed'];
+  }
+  if(g2w(source+4096)===g2w(source)+4096||g2w(dest+4096)===g2w(dest)+4096)
+    return ['fixture did not create noncontiguous backing'];
+  const mem=new Uint8Array(e.memory.buffer);
+  const seed=()=>{for(let i=0;i<8192;i++){mem[g2w(source+i)]=(i*17+3)&255;mem[g2w(dest+i)]=0xCC;}};
+  const bytes=()=>Uint8Array.from({length:8192},(_,i)=>mem[g2w(dest+i)]);
+  for(const backward of [false,true]){
+    const code=nextCode();mem.set(asm([backward?0xFD:0xFC,L('l'),0xA5,0x49,J(cc.NZ,'l'),0xFC,0xC3]),g2w(code));
+    const offset=backward?4105:4093,regs={esi:source+offset,edi:dest+offset,ecx:4};
+    e.set_uop(0);seed();if(!callAt(inst,a,code,regs))errs.push('threaded sparse copy did not return');
+    const expected=bytes(),expectedFlags=e.uop_flags();
+    e.set_uop(1);seed();const pc=e.uop_compile(code+1);
+    if(!pc){errs.push('sparse MOVSD loop declined');continue;}
+    e.uop_install(code+1,pc);const enters=e.uop_stats(4);
+    if(!callAt(inst,a,code,regs))errs.push('compiled sparse copy did not return');
+    if(e.uop_stats(4)===enters)errs.push('sparse program never entered');
+    if(!bytes().every((v,i)=>v===expected[i]))errs.push('sparse page seam bytes differ');
+    const delta=backward?-16:16;
+    if((e.get_esi()>>>0)!==source+offset+delta||(e.get_edi()>>>0)!==dest+offset+delta)
+      errs.push('sparse pointer advancement differs');
+    if(e.uop_flags()!==expectedFlags)errs.push('sparse flags differ');
+  }
+  e.set_uop(0);return errs;
+}
+
+function movsdCodeCase(inst,a,nextCode){
+  const {e,mem,g2w}=inst,errs=[],copy=nextCode(),target=nextCode();
+  mem.set(asm([0xFC,L('l'),0xA5,0x49,J(cc.NZ,'l'),0xC3]),g2w(copy));
+  mem.set(asm([L('l'),[0xB8,...d32(0x11111111)],0x49,J(cc.NZ,'l'),0xC3]),g2w(target));
+  new DataView(mem.buffer).setUint32(g2w(a.buf),0x22222222,true);
+  e.set_uop(1);
+  try{
+    const pc=e.uop_compile(copy+1);if(!pc)return ['MOVSD writer declined'];e.uop_install(copy+1,pc);
+    // CLD and the first MOVSD decode as one threaded block. Take the back
+    // edge to enter the installed head and establish its write window.
+    const warmEnters=e.uop_stats(4);
+    callAt(inst,a,copy,{esi:a.buf,edi:target+0x800,ecx:2});
+    if(e.uop_stats(4)===warmEnters)errs.push('writer warmup did not enter compiled path');
+    callAt(inst,a,target,{ecx:2});
+    if((e.get_eax()>>>0)!==0x11111111)errs.push('initial target result');
+    const targetPC=e.uop_compile(target);if(!targetPC)return ['rewrite target declined'];e.uop_install(target,targetPC);
+    const kills=e.uop_stats(3),enters=e.uop_stats(4);
+    // DF is already clear. Enter the compiled head directly: starting at
+    // CLD with one iteration would never take a branch to that head.
+    callAt(inst,a,copy+1,{esi:a.buf,edi:target+1,ecx:1});
+    if(e.uop_stats(4)===enters)errs.push('writer did not enter compiled path');
+    if(e.uop_stats(3)<=kills)errs.push('MOVSD did not invalidate target program');
+    if((e.get_esi()>>>0)!==a.buf+4||(e.get_edi()>>>0)!==target+5)
+      errs.push('code-write fallback advanced pointers incorrectly');
+    callAt(inst,a,target,{ecx:2});
+    if((e.get_eax()>>>0)!==0x22222222)errs.push('stale decoded target after MOVSD');
+  }finally{e.set_uop(0);}
+  return errs;
+}
+
 function windowCase(inst, a, nextCode) {
   const { e, mem, g2w } = inst;
   const P = nextCode(), Lc = nextCode();
@@ -1005,6 +1103,13 @@ async function main() {
   }
   }
   e.set_branch_clock(0);
+  for(const [name,run] of [['movsd-sparse',movsdSparseCase],['movsd-code-write',movsdCodeCase]]){
+    if(!only||only===name){
+      const errs=run(inst,a,()=>a.code+0x1000*slot++);
+      if(errs.length)fails++;
+      console.log(`${name.padEnd(18)} ${errs.length?'FAIL '+errs.join(', '):'ok'}`);
+    }
+  }
   if (!only || only === 'window-keep') {
     const errs = windowCase(inst, a, () => a.code + 0x1000 * slot++);
     if (errs.length) { fails++; console.log(`window-keep        FAIL ${errs.join(', ')}`); }

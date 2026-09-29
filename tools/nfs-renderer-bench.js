@@ -18,6 +18,7 @@ if (process.argv.includes('--help')) {
   console.log('Diagnostics: --profile saves page/worker CPU profiles; --readback-census records D3D fence callers and readPixels timing. Do not treat diagnostic timings as the uninstrumented baseline.');
   console.log('A/B controls: --no-d3d-batching and --no-fixed-cache disable those optimizations in served scripts only; reports record the switches and source hashes.');
   console.log('Emulation diagnostics: --guest-profile saves guest-main handler/block histograms and startup-to-window uop census logs. Adds overhead; histogram counts are dispatches, not CPU time.');
+  console.log('Remote A/B: --wasm=FILE selects an artifact; --source-commit=REV records archive provenance; --swiftshader explicitly permits software WebGL; --no-sandbox is for an isolated Chrome test box.');
   console.log('Usage: node tools/nfs-renderer-bench.js [--cases=glide,d3d,software,glide-software] [--seconds=30] [--samples=2] [--seed=12345] [--out=build/nfs-renderer-bench]\nRequires the original nfs3_demo fixture and a current build. Runs headful Chrome serially. Saves screenshots, hardware-renderer evidence, frame counters, CPU time, and machine load. Seed instrumentation is specific to this demo.');
   process.exit(0);
 }
@@ -31,6 +32,8 @@ const readbackCensus = process.argv.includes('--readback-census');
 const noD3DBatching = process.argv.includes('--no-d3d-batching');
 const noFixedCache = process.argv.includes('--no-fixed-cache');
 const guestProfile = process.argv.includes('--guest-profile');
+const softwareGpu = process.argv.includes('--swiftshader');
+const wasmFile = path.resolve(ROOT,arg('wasm','build/wine-assembly.wasm'));
 assert(Number.isFinite(seconds) && seconds > 0, 'seconds must be positive');
 assert(Number.isInteger(samples) && samples >= 0, 'samples must be a nonnegative integer');
 const output = path.resolve(ROOT, arg('out', 'build/nfs-renderer-bench'));
@@ -186,7 +189,9 @@ async function runCase(server, name) {
   try {
     browser = await puppeteer.launch({ executablePath: chrome, headless: false,
       protocolTimeout: 600000, args: ['--no-first-run', '--no-default-browser-check',
-        '--window-size=900,700', '--autoplay-policy=no-user-gesture-required'] });
+        '--window-size=900,700', '--autoplay-policy=no-user-gesture-required',
+        ...(process.argv.includes('--no-sandbox') ? ['--no-sandbox'] : []),
+        ...(softwareGpu ? ['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader'] : [])] });
     report.browser = await browser.version();
     report.launchArgs = browser.process().spawnargs;
     const system = await browser.target().createCDPSession();
@@ -262,7 +267,7 @@ async function runCase(server, name) {
     assert.equal(report.ready.backend, 'worker');
     if (config.gpu || (config.driver === 'voodoo' && config.glide === 'webgl')) {
       const gpu = report.ready.glRenderer || report.activeGpuRenderer;
-      assert(gpu && !/swiftshader|llvmpipe|software|unknown/i.test(gpu), 'hardware WebGL renderer required');
+      assert(gpu && (softwareGpu || !/swiftshader|llvmpipe|software|unknown/i.test(gpu)), 'hardware WebGL renderer required unless --swiftshader is explicit');
     }
     await page.screenshot({ path: path.join(dir, 'ready.png') });
     console.log(name, 'race ready', JSON.stringify(report.ready.scene), 'warming 10s');
@@ -356,6 +361,10 @@ async function runCase(server, name) {
     allowedRealRoots: [fixtureRoot, fs.realpathSync(path.join(ROOT, 'fonts'))],
     handleRequest(req, res) {
       const pathname = new URL(req.url, 'http://localhost').pathname;
+      if (pathname === '/build/wine-assembly.wasm') {
+        res.writeHead(200, {'Content-Type':'application/wasm','Cache-Control':'no-store'});
+        res.end(fs.readFileSync(wasmFile)); return true;
+      }
       if (noFixedCache && pathname === '/lib/d3d9-backend.js') {
         const source = fs.readFileSync(path.join(ROOT,'lib/d3d9-backend.js'),'utf8');
         const anchor = 'this.fixedPlans.compile(draw, vp, guestPS)';
@@ -388,8 +397,8 @@ async function runCase(server, name) {
         'Cross-Origin-Embedder-Policy':'require-corp'});
       res.end(seededWorker + rendererProbe + (guestProfile ? fs.readFileSync(path.join(ROOT,'tools/page-probes/nfs-guest-profile.js'),'utf8') : '')); return true;
     } });
-  const meta = { startedAt: new Date().toISOString(), commit: execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim(),
-    wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, seed, seconds, samples, profileEnabled, readbackCensus,
+  const meta = { startedAt: new Date().toISOString(), commit: arg('source-commit',null) || execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim(),
+    wasmSha256: hash(wasmFile), wasmFile, softwareGpu, headful:true, seed, seconds, samples, profileEnabled, readbackCensus,
     machine: { platform:os.platform(), arch:os.arch(), cpus:os.cpus().length, model:os.cpus()[0].model },
     fixtureSha256, noD3DBatching, noFixedCache, guestProfile,
     sourceSha256: Object.fromEntries(['lib/d3dim-gpu.js','lib/d3d9-backend.js','lib/d3d9-fixed.js',

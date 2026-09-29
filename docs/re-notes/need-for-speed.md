@@ -232,7 +232,14 @@ Follow-up guest-PC/census profiling is complete in
 [nfs3-emulation-profile.md](../nfs3-emulation-profile.md): three windows each
 on Glide/D3D consistently identify the integer loop at `0x4c5f28..0x4c5f41`
 (11–14% of residual block entries), interrupted by unsupported MOVSD pairs.
-General MOVSD micro-op lowering is the first candidate. The repeated four-FST
+General MOVSD micro-op lowering was subsequently implemented and measured
+on box3: the isolated record loop uses 47–56% less CPU, and the targeted
+residual block entries fall by over 99.97%. Whole-game FPS is unchanged
+within noise on the four-vCPU SwiftShader box; this is not a demonstrated
+hardware-GPU gameplay speedup. The full compiler regression suite passes,
+including direction, overlap, sparse-page seams and code invalidation.
+See the linked report for the remote A/B and profile limitations.
+The repeated four-FST
 store loop at `0x4dec44` contributes another 2.5–2.9%; memory guard failures
 were zero. These are entry shares, not predicted time savings.
 
