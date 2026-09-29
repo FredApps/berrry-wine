@@ -2248,19 +2248,6 @@ class WineAssembly {
     // Worker builds its own (lib/guest-worker.js) and this is the cooperative
     // case only — with a guest Worker running, this.instance executes nothing.
     if (window.WINE_D3DIM_GPU === true && !this.guestWorker) this._startD3DIMGpu();
-    // Opt-in A/B for the counted dword-copy superinstruction. Configure both
-    // decoders before any PE bytes are loaded or translated; ordinary runs
-    // retain the conservative off default.
-    const copy32Params = typeof location !== 'undefined'
-      ? new URLSearchParams(location.search) : null;
-    const copy32Counted = copy32Params && copy32Params.has('copy32-counted') &&
-      !copy32Params.has('no-copy32-counted') ? 1 : 0;
-    if (copy32Counted && this.instance.exports.set_loop_copy32_counted_emit) {
-      this.instance.exports.set_loop_copy32_counted_emit(1);
-      if (this.guestWorker) {
-        await this.guestWorker.callExport('set_loop_copy32_counted_emit', 1);
-      }
-    }
     // In real-thread mode slot 0 owns a second WASM instance in a Worker.
     // Configure that live decoder too; the browser-thread instance above is
     // then only an ownership token and host-call mirror.
@@ -2668,10 +2655,7 @@ class WineAssembly {
       (typeof appProfiles !== 'undefined' ? appProfiles : null);
     if (!profiles || !this.instance) return;
     const buffer = this.memory && this.memory.buffer;
-    const disableCopy32Counted = typeof location !== 'undefined' &&
-      new URLSearchParams(location.search).has('no-copy32-counted');
-    profiles.applyExeCompatibilityPatches(exeName, this.instance.exports, buffer,
-      { disableCopy32Counted });
+    profiles.applyExeCompatibilityPatches(exeName, this.instance.exports, buffer);
     // Screen-size-driven defaults (an app's own resolution setting, say) come
     // from the same table. The canvas is already sized to the viewport by the
     // time an exe loads, so this is the real screen the guest will see.

@@ -2461,14 +2461,6 @@
   ;; set_loop_copy_emit for exact byte-proved folds and never enables this.
   (func (export "set_loop_generic_copy_emit") (param $flag i32)
     (call $loop_generic_copy_emit_set (local.get $flag)))
-  (func (export "set_loop_copy32_counted_emit") (param $flag i32)
-    (call $loop_copy32_counted_emit_set (local.get $flag)))
-  (func (export "get_loop_copy32_counted_matches") (result i32)
-    (global.get $loop_copy32_counted_matches))
-  (func (export "get_loop_copy32_counted_runs") (result i32)
-    (global.get $loop_copy32_counted_runs))
-  (func (export "get_loop_copy32_counted_bulk_bytes") (result i64)
-    (global.get $loop_copy32_counted_bulk_bytes))
   ;; UE1 SoftDrv MMX qword fill (07b $try_emit_mmx_fill64). On by default;
   ;; decode-time, so the cache is dropped and both A/B arms decode from scratch.
   (func (export "set_loop_mmx_fill_emit") (param $flag i32)
