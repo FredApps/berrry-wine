@@ -690,6 +690,61 @@
     (call $lock_release (global.get $GLIDE_STATE))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
+  ;; Legacy utility mapping from pinned Glide2 sst1/glide/src/digutex.c.
+  ;; Detail/trilinear factors retain the same explicit backend limitations as
+  ;; grTexCombine; this entry point must not silently replace those factors.
+  (func $handle_grTexCombineFunction
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $function i32) (local $factor i32) (local $invert i32)
+    (call $glide_tmu (local.get $arg0))
+    (if (i32.gt_u (local.get $arg1) (i32.const 10)) (then (call $glide_fail)))
+    (if (i32.eq (local.get $arg1) (i32.const 1)) (then (local.set $function (i32.const 1))))
+    (if (i32.eq (local.get $arg1) (i32.const 2)) (then (local.set $function (i32.const 3)) (local.set $factor (i32.const 8))))
+    (if (i32.eq (local.get $arg1) (i32.const 3)) (then (local.set $function (i32.const 4)) (local.set $factor (i32.const 8))))
+    (if (i32.eq (local.get $arg1) (i32.const 4)) (then (local.set $function (i32.const 3)) (local.set $factor (i32.const 1))))
+    (if (i32.eq (local.get $arg1) (i32.const 5)) (then (local.set $function (i32.const 6)) (local.set $factor (i32.const 8))))
+    (if (i32.eq (local.get $arg1) (i32.const 6)) (then (local.set $function (i32.const 7)) (local.set $factor (i32.const 12))))
+    (if (i32.eq (local.get $arg1) (i32.const 7)) (then (local.set $function (i32.const 7)) (local.set $factor (i32.const 4))))
+    (if (i32.eq (local.get $arg1) (i32.const 8)) (then (local.set $function (i32.const 7)) (local.set $factor (i32.const 13))))
+    (if (i32.eq (local.get $arg1) (i32.const 9)) (then (local.set $function (i32.const 7)) (local.set $factor (i32.const 5))))
+    (local.set $invert (i32.eq (local.get $arg1) (i32.const 10)))
+    (call $lock_acquire (global.get $GLIDE_STATE))
+    (i32.store offset=184 (call $glide_state) (local.get $function))
+    (i32.store offset=188 (call $glide_state) (local.get $factor))
+    (i32.store offset=192 (call $glide_state) (local.get $function))
+    (i32.store offset=196 (call $glide_state) (local.get $factor))
+    (i32.store offset=200 (call $glide_state) (local.get $invert))
+    (i32.store offset=204 (call $glide_state) (local.get $invert))
+    (call $lock_release (global.get $GLIDE_STATE))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
+  ;; Glide2 gu.c uses float intermediates and normalizes the last entry to 255.
+  (func $glide_fog_exp (param $density f32) (param $i i32) (result f32)
+    (local $dp f32)
+    (local.set $dp (f32.mul (local.get $density)
+      (f32.div (f32.convert_i32_u (i32.shl (i32.const 8) (i32.shr_u (local.get $i) (i32.const 2))))
+        (f32.convert_i32_u (i32.sub (i32.const 8) (i32.and (local.get $i) (i32.const 3)))))))
+    (f32.sub (f32.const 1) (f32.demote_f64 (call $host_math_pow2
+      (f64.mul (f64.promote_f32 (f32.neg (local.get $dp))) (f64.const 1.4426950408889634))))))
+
+  (func $handle_guFogGenerateExp
+    (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
+    (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $i i32) (local $density f32) (local $scale f32) (local $f f32)
+    (call $glide_check_guest (local.get $arg0) (i32.const 64))
+    (local.set $density (f32.reinterpret_i32 (local.get $arg1)))
+    (local.set $scale (f32.div (f32.const 1) (call $glide_fog_exp (local.get $density) (i32.const 63))))
+    (loop $entries
+      (local.set $f (f32.mul (call $glide_fog_exp (local.get $density) (local.get $i)) (local.get $scale)))
+      (call $gs8 (i32.add (local.get $arg0) (local.get $i))
+        (i32.trunc_sat_f32_u (f32.mul (f32.const 255) (f32.max (f32.const 0) (f32.min (f32.const 1) (local.get $f))))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $entries (i32.lt_u (local.get $i) (i32.const 64))))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
+
   (func $handle_grTexCombine
     (param $arg0 i32) (param $arg1 i32) (param $arg2 i32)
     (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)

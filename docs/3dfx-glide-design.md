@@ -2,7 +2,7 @@
 
 Status: first Glide 2 implementation, 2026-09-28. The architecture below
 includes future work; it is not a claim of complete Glide compatibility.
-The implementation exposes one TMU with 4 MiB texture memory, 63 canonical
+The implementation exposes one TMU with 4 MiB texture memory, 65 canonical
 Glide 2 entry points and their decorated aliases, immutable command batches,
 WebGL rendering and native WAT software rendering. Glide 3 and two TMUs remain
 future milestones. See [NFS III integration evidence](re-notes/need-for-speed-glide.md)
