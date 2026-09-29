@@ -3764,6 +3764,7 @@
     (global.set $present_frame_ends (i32.add (global.get $present_frame_ends) (i32.const 1)))
     (global.set $present_frame_pending (i32.const 1))
     (if (global.get $present_pump_bounded) (then (return)))
+    (if (call $logical_frame_owns) (then (return)))
     (call $present_pace))
 
   ;; Called at the top of PeekMessage/GetMessage. Returns 1 when it parked the
@@ -3782,6 +3783,8 @@
       (then
         (global.set $present_pump_bounded (i32.const 1))
         (return (i32.const 0))))
+    ;; The game step paces this thread's frames instead ($th_logical_frame).
+    (if (call $logical_frame_owns) (then (return (i32.const 0))))
     (local.set $slept (global.get $sleep_yielded))
     (call $present_pace)
     (if (i32.or (local.get $slept) (i32.eqz (global.get $sleep_yielded)))
@@ -3790,6 +3793,115 @@
     (global.set $eip (global.get $current_thunk_eip))
     (global.set $steps (i32.const 0))
     (i32.const 1))
+
+  ;; ---- pacing on the app's own game step ------------------------------------
+  ;; A present and a pump are both only proxies for a frame. StarCraft makes
+  ;; ~97 presents/s for ~17 displayed frames, and its loop pumps several times
+  ;; per game step, so either proxy paces the wrong event. When RE has found
+  ;; the function that advances the game one step (lib/apps.js
+  ;; perf.logicalFrame.address), the host hands it to this instance and the
+  ;; limiter paces exactly once per call of it.
+  ;;
+  ;; How the step is seen, at no cost to any other block: $decode_block plants
+  ;; handler 476 ($th_logical_frame, operand = the address) as the FIRST op of
+  ;; the block whose entry EIP is $logical_frame_addr, and nowhere else. Every
+  ;; way into a block lands on its first op -- $run's lookup, the $branch_end /
+  ;; $jcc_end / $chain_end fast paths, a patched chain slot, an adjacent
+  ;; fall-through in an address-ordered run -- so the marker runs on every
+  ;; entry whether or not chaining is on. The --count hit counters were the
+  ;; old way to see it, and they arm $dbg_any, which turns off chaining AND
+  ;; the micro-op tier for the whole run. Three decoder rules keep the address
+  ;; a block entry rather than an instruction some other block runs through:
+  ;;   - a block being decoded ends just before the address (like a page seam),
+  ;;   - $fuse_stop refuses to let a fold swallow it,
+  ;;   - the marked block's op index is poisoned, so no whole-block matcher
+  ;;     (loop folds, the region/block executors, run extension) rewrites the
+  ;;     stream the marker heads.
+  ;; The micro-op tier (07d/07e) would otherwise iterate a loop inside
+  ;; $uop_run without re-entering threaded code: $uc_form_loop marks the
+  ;; address unsupported, so a program never contains it. A head AT the
+  ;; address is declined outright; a loop that reaches it (say, calling the
+  ;; step) exits there, and the exit resolves the marked block like any other
+  ;; transfer. The marker is emitted before the tier's enter op in any case.
+  ;;
+  ;; Parking. The marker runs before any of the block's instructions, so the
+  ;; architectural state is exactly "about to execute the step": $eip is the
+  ;; address and nothing of the block has happened. When the pace asks for a
+  ;; sleep ($present_pace -> $present_pace_sleep: $yield_flag, $sleep_yielded,
+  ;; $sleep_timeout -- the same Sleep every host already honours after a
+  ;; present), the handler sets $eip to the address and returns WITHOUT
+  ;; dispatching. Every dispatch is a tail call, so that return lands in
+  ;; $run's loop with $resume_ip untouched; $run sees $yield_flag and halts,
+  ;; the host sleeps the thread, and the next run() looks the block up again.
+  ;; $logical_frame_resume holds the address across that gap, so the marker's
+  ;; second run lets the step through without counting or pacing it twice.
+  ;; (Setting $steps to 0 and dispatching instead would park $ip in
+  ;; $resume_ip, and $run consumes that BEFORE it tests $yield_flag: the step
+  ;; would run on and the sleep would land somewhere inside it.)
+  ;;
+  ;; Which thread. The marker is per instance, so each guest thread counts
+  ;; its own steps. Once a thread has run the step within the last second of
+  ;; guest time, its frame ends and pumps stop pacing ($logical_frame_owns);
+  ;; before the first step (menus, loading screens) and after the game stops
+  ;; stepping (back at a menu) the pump-bounded rule above applies as before.
+  ;; An app without a logical frame never sets the address and nothing here
+  ;; runs. $logical_frame_pace = 0 keeps the marker as a free counter
+  ;; (run.js --present-frames, the perf HUD) without pacing on it -- the
+  ;; `--present-at=pump` A/B arm.
+  (global $logical_frame_addr (mut i32) (i32.const 0))    ;; guest EIP of the game step, 0 = off
+  (global $logical_frame_pace (mut i32) (i32.const 0))    ;; 1 = the cap paces here
+  (global $logical_frame_count (mut i32) (i32.const 0))   ;; steps entered on this thread
+  (global $logical_frame_paced (mut i32) (i32.const 0))   ;; steps that slept
+  (global $logical_frame_last_ms (mut i32) (i32.const 0)) ;; guest ms of the last step
+  (global $logical_frame_seen (mut i32) (i32.const 0))    ;; 1 once this thread stepped
+  (global $logical_frame_resume (mut i32) (i32.const 0))  ;; address parked on, 0 = none
+
+  ;; Does the game step own this thread's pacing right now?
+  (func $logical_frame_owns (result i32)
+    (if (i32.or (i32.eqz (global.get $logical_frame_pace))
+                (i32.eqz (global.get $logical_frame_seen)))
+      (then (return (i32.const 0))))
+    (i32.le_u (i32.sub (call $host_get_ticks) (global.get $logical_frame_last_ms))
+              (i32.const 1000)))
+
+  (func $logical_frame_set (param $addr i32) (param $pace i32)
+    (global.set $logical_frame_pace (i32.ne (local.get $pace) (i32.const 0)))
+    (if (i32.ne (local.get $addr) (global.get $logical_frame_addr))
+      (then
+        (global.set $logical_frame_addr (local.get $addr))
+        (global.set $logical_frame_resume (i32.const 0))
+        ;; Already-decoded code has no marker (or a stale one): recycle the
+        ;; arena at the next block boundary, which re-decodes everything.
+        (global.set $thread_flush_pending (i32.const 1)))))
+
+  (func $th_logical_frame (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $slept i32)
+    ;; The second run after a park: the step goes ahead, already paced.
+    (if (i32.eq (global.get $logical_frame_resume) (local.get $op))
+      (then
+        (global.set $logical_frame_resume (i32.const 0))
+        (dispatch-next)))
+    ;; A stale marker (the address moved, or was switched off, after this
+    ;; block was decoded) counts nothing.
+    (if (i32.ne (local.get $op) (global.get $logical_frame_addr))
+      (then (dispatch-next)))
+    (global.set $logical_frame_count
+      (i32.add (global.get $logical_frame_count) (i32.const 1)))
+    (global.set $logical_frame_seen (i32.const 1))
+    (global.set $logical_frame_last_ms (call $host_get_ticks))
+    (if (i32.eqz (i32.and (i32.ne (global.get $logical_frame_pace) (i32.const 0))
+                          (i32.ne (global.get $present_cap) (i32.const 0))))
+      (then (dispatch-next)))
+    (local.set $slept (global.get $sleep_yielded))
+    (call $present_pace)
+    ;; No wait due, or a sleep already requested by something else: run on.
+    (if (i32.or (local.get $slept) (i32.eqz (global.get $sleep_yielded)))
+      (then (dispatch-next)))
+    (global.set $logical_frame_paced
+      (i32.add (global.get $logical_frame_paced) (i32.const 1)))
+    (global.set $logical_frame_resume (local.get $op))
+    (global.set $eip (local.get $op))
+    (global.set $steps (i32.const 0)))
 
   ;; Pace a blit to the primary only when it covers most of the surface: that
   ;; is a back buffer being shown. A sprite drawn straight onto the primary is

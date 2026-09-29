@@ -770,6 +770,10 @@ class WineAssembly {
     this.presentCap = 0;
     // How $present_pace spends the cap: 'smooth' (default) or 'deadline'.
     this.presentPace = 'smooth';
+    // What the cap paces when the app names its game step (lib/apps.js
+    // perf.logicalFrame): 'logical' (default) paces once per step; 'pump'
+    // keeps the pump-bounded rule, for the A/B. ?present-at= sets it.
+    this.presentAt = 'logical';
   }
 
   _normalizePerfLogicalFrame(perf) {
@@ -797,9 +801,20 @@ class WineAssembly {
     }
 
     const metric = this._perfLogicalFrame;
+    // The verifier is a second address that should fire at the same rate: a
+    // check on the RE, armed through the --count hit counters, so only worth
+    // their debug-mode cost with the HUD open.
+    if (!(hud && hud.enabled)) metric.verifier = 0;
     if (hud && hud.setLogicalFrameMetric) hud.setLogicalFrameMetric(metric);
     try {
-      await this._armPerfCounter(0, metric.address);
+      // The step is counted by the decoder's marker ($th_logical_frame), which
+      // costs one op on that one block. The --count hit counters this used to
+      // arm switch on $dbg_any, which turns off block chaining and the
+      // micro-op tier for the whole session -- and this ran for every
+      // StarCraft launch, HUD or not. The same marker paces the cap when one
+      // is set, unless ?present-at=pump asks for the pump-bounded rule.
+      const pace = (this.presentCap | 0) > 0 && this.presentAt !== 'pump' ? 1 : 0;
+      await this._setLogicalFrame(metric.address, pace);
       if (metric.verifier) await this._armPerfCounter(1, metric.verifier);
     } catch (err) {
       console.warn('[perf] logical frame counter disabled:', err && err.message || err);
@@ -822,6 +837,29 @@ class WineAssembly {
     if (ex && typeof ex.set_count === 'function') ex.set_count(slot, address);
   }
 
+  // Hand the game step to every instance: this one, the guest Worker that owns
+  // the main thread in threads mode, and every guest thread spawned later.
+  async _setLogicalFrame(address, pace) {
+    address >>>= 0;
+    pace = pace ? 1 : 0;
+    const ex = this.instance && this.instance.exports;
+    if (!ex || typeof ex.set_logical_frame !== 'function') throw new Error('set_logical_frame not exported');
+    ex.set_logical_frame(address, pace);
+    if (this.guestWorker) await this.guestWorker.callExport('set_logical_frame', address, pace);
+    if (this.threadManager && this.threadManager.setWasmGlobalAll) {
+      this.threadManager.setWasmGlobalAll('set_logical_frame', address, pace);
+    }
+  }
+
+  async _readLogicalFrameCount() {
+    if (this.guestWorker) {
+      return (await this.guestWorker.callExport('get_logical_frame_count')) >>> 0;
+    }
+    const ex = this.instance && this.instance.exports;
+    return ex && typeof ex.get_logical_frame_count === 'function'
+      ? ex.get_logical_frame_count() >>> 0 : 0;
+  }
+
   async _readPerfCounter(slot) {
     slot |= 0;
     if (this.guestWorker) {
@@ -839,7 +877,7 @@ class WineAssembly {
       if (!hud || !hud.logicalFrameCount) return;
       this._perfCounterPollBusy = true;
       try {
-        const primary = await this._readPerfCounter(0);
+        const primary = await this._readLogicalFrameCount();
         const verifier = this._perfLogicalFrame.verifier ? await this._readPerfCounter(1) : null;
         hud.logicalFrameCount(primary, verifier);
       } catch (_) {

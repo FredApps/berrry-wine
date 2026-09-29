@@ -573,6 +573,17 @@ const REAL_TICK_SLEEPS = REAL_TICKS && PRESENT_CAP > 0;
 const PRESENT_FRAMES_ARG = getArg('present-frames', null);
 const PRESENT_FRAMES = hasFlag('present-frames') || PRESENT_FRAMES_ARG !== null;
 const PRESENT_FRAMES_FROM = Math.max(0, parseInt(PRESENT_FRAMES_ARG || '0', 10) || 0);
+// --present-at=logical|pump: for an app whose registry entry names its game
+// step (perf.logicalFrame), what a --present-cap paces. `logical` (default)
+// paces once per call of the step, via the decoder's marker
+// ($th_logical_frame, src/09a8); `pump` keeps the pump-bounded rule and only
+// counts steps -- the A/B arm. Apps without a step are unaffected.
+const PRESENT_AT = (() => {
+  const v = getArg('present-at', null);
+  if (v === null) return 'logical';
+  if (v !== 'logical' && v !== 'pump') throw new Error(`--present-at must be logical or pump, got ${v}`);
+  return v;
+})();
 // --- spin parking --------------------------------------------------------
 // Eight of the games in docs/frame-pacing-census.md busy-wait on the
 // millisecond clock and four more on an empty PeekMessage. Both detectors are
@@ -972,6 +983,21 @@ const CALENDAR_ORIGIN_MS = WALL_CLOCK_MS ||
 // 1 = smooth pacing (also the WAT default), 0 = deadline. Always pushed, to
 // the main instance and every guest-thread instance.
 const PRESENT_PACE_MODE = (PRESENT_PACE || (APP_ENTRY && APP_ENTRY.presentPace) || 'smooth') === 'deadline' ? 0 : 1;
+// The app's game step (lib/apps.js perf.logicalFrame), handed to every
+// instance's decoder when a cap or --present-frames wants it: a marker op on
+// that one block counts each step, and paces it when the cap is on and
+// --present-at is `logical`. Not armed otherwise, so an ordinary run decodes
+// exactly as before.
+const LOGICAL_FRAME = (() => {
+  const m = APP_ENTRY && APP_ENTRY.perf && APP_ENTRY.perf.logicalFrame;
+  if (!m || !(Number(m.address) > 0)) return null;
+  if (!PRESENT_CAP && !PRESENT_FRAMES) return null;
+  return {
+    address: Number(m.address) >>> 0,
+    label: m.label || 'logical',
+    pace: PRESENT_CAP > 0 && PRESENT_AT === 'logical' ? 1 : 0,
+  };
+})();
 // Match the browser: an app registry opt-in is launch behavior, not a UI-only
 // hint. Keep explicit CLI flags as the A/B override, with `--no-…` strongest.
 const COPY_SUPEROPS = resolveCopySuperops(
@@ -4174,15 +4200,12 @@ async function main() {
     }
   };
   // --present-frames: snapshot the frame-end counters at FROM_BATCH, report at
-  // exit. The app's perf.logicalFrame counter (lib/apps.js) takes the hit
-  // counter slot after the --count ones.
+  // exit. The app's perf.logicalFrame steps are counted by the decoder's
+  // marker in every instance (LOGICAL_FRAME), summed over threads. This used
+  // to arm a --count slot, which switches on $dbg_any and so ran the audit
+  // with block chaining and the micro-op tier off.
   const presentAudit = require('../lib/present-frame-audit');
-  const presentLogical = (() => {
-    const m = APP_ENTRY && APP_ENTRY.perf && APP_ENTRY.perf.logicalFrame;
-    if (!PRESENT_FRAMES || !m || !(Number(m.address) > 0)) return null;
-    if (countAddrs.length >= 16) return null;
-    return { slot: countAddrs.length, address: Number(m.address) >>> 0, label: m.label || 'logical' };
-  })();
+  const presentLogical = PRESENT_FRAMES && LOGICAL_FRAME ? LOGICAL_FRAME : null;
   let presentFramesFrom = null;
   const presentFramesSnapshot = () => {
     const insts = [{ name: 'main', exports: instance.exports }];
@@ -4191,22 +4214,22 @@ async function main() {
         if (t.instance) insts.push({ name: `T${t.tid}`, exports: t.instance.exports });
       }
     }
-    const logical = presentLogical && instance.exports.get_count
-      ? instance.exports.get_count(presentLogical.slot) >>> 0 : null;
+    const logical = presentLogical
+      ? insts.reduce((n, { exports: ex }) => n +
+        (ex.get_logical_frame_count ? ex.get_logical_frame_count() >>> 0 : 0), 0)
+      : null;
     // The batch clock read directly: a guest-clock read from the host would
     // count toward the clock-spin detector.
     return presentAudit.snapshot(insts, batchClock.batchTicks(), logical);
   };
   const presentFramesTick = (batch) => {
-    if (batch === 0 && presentLogical && instance.exports.set_count) {
-      instance.exports.set_count(presentLogical.slot, presentLogical.address);
-    }
     if (batch === PRESENT_FRAMES_FROM) presentFramesFrom = presentFramesSnapshot();
   };
   var reportPresentFrames = () => {
     if (!PRESENT_FRAMES || !instance.exports.get_present_frame_ends) return;
     const r = presentAudit.audit(presentFramesFrom, presentFramesSnapshot(),
-      { cap: PRESENT_CAP, logicalLabel: presentLogical && presentLogical.label });
+      { cap: PRESENT_CAP, logicalLabel: presentLogical && presentLogical.label,
+        mode: presentLogical && PRESENT_CAP ? PRESENT_AT : null });
     console.log(`[present-frames] from batch ${presentFramesFrom ? PRESENT_FRAMES_FROM : 0}`
       + (PRESENT_CAP ? `, cap ${PRESENT_CAP}/s` : ', uncapped'));
     for (const line of r.lines) console.log(line);
@@ -4552,6 +4575,7 @@ async function main() {
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
   if (PRESENT_CAP) inheritWasm('set_present_cap', PRESENT_CAP);
   inheritWasm('set_present_pace_mode', PRESENT_PACE_MODE);
+  if (LOGICAL_FRAME) inheritWasm('set_logical_frame', LOGICAL_FRAME.address, LOGICAL_FRAME.pace);
   // Guest threads run their own module instance over the shared memory, so the
   // spin state is per-thread by construction — but the THRESHOLD is a setting
   // and has to be propagated like every other one.
@@ -5460,6 +5484,11 @@ async function main() {
   }
   if (instance.exports.set_present_pace_mode) {
     instance.exports.set_present_pace_mode(PRESENT_PACE_MODE);
+  }
+  if (LOGICAL_FRAME && instance.exports.set_logical_frame) {
+    instance.exports.set_logical_frame(LOGICAL_FRAME.address, LOGICAL_FRAME.pace);
+    console.log(`[present] ${LOGICAL_FRAME.label} step 0x${LOGICAL_FRAME.address.toString(16)} marked`
+      + (LOGICAL_FRAME.pace ? `, cap ${PRESENT_CAP}/s paces once per step` : ', counted only'));
   }
   if (instance.exports.set_spin_park_k) {
     if (NO_SPIN_PARK) instance.exports.set_spin_park_k(0);
@@ -10113,7 +10142,11 @@ if (VERBOSE) {
   if (PRESENT_CAP && instance.exports.get_present_paced_count) {
     console.log(`present pacing (main instance): cap ${PRESENT_CAP}/s ${PRESENT_PACE_MODE ? 'smooth' : 'deadline'}, `
       + `${instance.exports.get_present_paced_count()} frames slept `
-      + `${instance.exports.get_present_paced_ms()} guest ms`);
+      + `${instance.exports.get_present_paced_ms()} guest ms`
+      + (LOGICAL_FRAME && instance.exports.get_logical_frame_count
+        ? `, at=${LOGICAL_FRAME.pace ? 'logical' : 'pump'}: ${instance.exports.get_logical_frame_count()} `
+          + `${LOGICAL_FRAME.label} steps, ${instance.exports.get_logical_frame_paced()} paced at the step`
+        : ''));
   }
   reportPresentFrames();
   reportMmx();

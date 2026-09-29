@@ -1734,6 +1734,18 @@
     (global.set $present_pump_bounded (i32.const 0))
     (global.set $present_frame_ends (i32.const 0))
     (global.set $present_pump_frames (i32.const 0)))
+  ;; The app's game step (09a8 $th_logical_frame): the guest EIP the decoder
+  ;; plants a marker at (0 = off; changing it recycles decoded code), and
+  ;; whether a present cap paces there instead of at pumps/frame ends (1) or
+  ;; the marker only counts (0). Per instance, so a host sets it on every
+  ;; thread instance, before the first run() for a zero-cost switch-on.
+  (func (export "set_logical_frame") (param $addr i32) (param $pace i32)
+    (call $logical_frame_set (local.get $addr) (local.get $pace)))
+  (func (export "get_logical_frame_addr") (result i32) (global.get $logical_frame_addr))
+  (func (export "get_logical_frame_pace") (result i32) (global.get $logical_frame_pace))
+  (func (export "get_logical_frame_count") (result i32) (global.get $logical_frame_count))
+  (func (export "get_logical_frame_paced") (result i32) (global.get $logical_frame_paced))
+  (func (export "get_logical_frame_owns") (result i32) (call $logical_frame_owns))
   ;; Drive WaitForVerticalBlank once and report what it did, the way
   ;; test_cs_enter does for EnterCriticalSection. Bits:
   ;;   1  parked with yield_reason 13
