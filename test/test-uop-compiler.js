@@ -130,10 +130,16 @@ const CASES = [
   {
     // rol/ror by an immediate and by 1, at 32, 16 and 8 bits, with CF read
     // by jb after ror and SF after an 8-bit rol (both taken about half the
-    // time, so threaded code has split its blocks at both targets early).
-    name: 'rotate-imm', regs: { ecx: N },
+    // time, so threaded code has split its blocks at both targets early),
+    // and `cmp al,0x10 / ror eax,0x10 / jz` -- Indeo 4's VLC reader, where
+    // the jz tests the cmp because a rotate leaves ZF/SF/PF alone. The
+    // compiler declines rotates (its flag record cannot carry preserved
+    // flags), so this pins that it declines and that the tier-on run still
+    // matches threaded code.
+    name: 'rotate-imm', regs: { ecx: N }, declines: true,
     code: [L('l'), [0x8B, 0x06], [0xC1, 0xC0, 0x05], [0x01, 0xC3], [0xC0, 0xCA, 0x03], [0xD1, 0xC8],
            J(cc.B, 'k'), 0x45, L('k'), [0x66, 0xC1, 0xC2, 0x07], [0xC0, 0xC7, 0x03], J(cc.S, 'm'), 0x47, L('m'),
+           [0x3C, 0x10], [0xC1, 0xC8, 0x10], J(cc.Z, 'n'), 0x43, L('n'),
            [0x01, 0xC2], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
   },
   {
@@ -693,7 +699,9 @@ async function main() {
     const results = [];
     for (const mode of ['hot', 'pre']) {
       const st = runCase(inst, c, a, at(), mode);
+      if (st.err && c.declines) { results.push(`${mode}: ok (${st.err})`); continue; }
       if (st.err) { results.push(`${mode}: ${st.err}`); fails++; continue; }
+      if (c.declines && st.enters) { results.push(`${mode}: FAIL entered a case that must decline`); fails++; continue; }
       const diffs = [];
       if (st.sp && c.aggr) {
         for (const [kk, v] of Object.entries(c.aggr)) { const [k, ck] = kk.split('@'); if (ck !== undefined && +ck !== clock) continue; if (st.sp[k] !== v) diffs.push(`${k}=${st.sp[k]} want ${v}`); }
@@ -716,7 +724,7 @@ async function main() {
         diffs.push(`batch ${k} stops at +0x${(+x[k]).toString(16)} vs +0x${(+y[k]).toString(16)} (${st.nstops} vs ${off.nstops} batches)`);
       }
       REGS.forEach((r, k) => { if (st.regs[k] !== off.regs[k]) diffs.push(`${r} ${st.regs[k].toString(16)} vs ${off.regs[k].toString(16)}`); });
-      if (!st.enters && !(c.mayStayCold && mode === 'hot')) diffs.push('never entered');
+      if (!st.enters && !c.declines && !(c.mayStayCold && mode === 'hot')) diffs.push('never entered');
       if (diffs.length) fails++;
       results.push(`${mode}: ${diffs.length ? 'FAIL ' + diffs.join(', ') : 'ok'} (enters=${st.enters} blocks=${st.blocks})`);
     }

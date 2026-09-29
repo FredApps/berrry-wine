@@ -552,11 +552,13 @@
           (then (local.set $op (i32.const 0))))
         (if (i32.eq (local.get $reg) (i32.const 5)) (then (local.set $op (i32.const 1))))
         (if (i32.eq (local.get $reg) (i32.const 7)) (then (local.set $op (i32.const 2))))
-        ;; rol / ror (3 / 4): by an immediate only
-        (if (i32.le_u (local.get $b) (i32.const 0xD1))
-          (then
-            (if (i32.eqz (local.get $reg)) (then (local.set $op (i32.const 3))))
-            (if (i32.eq (local.get $reg) (i32.const 1)) (then (local.set $op (i32.const 4))))))
+        ;; rol / ror (3 / 4) are declined: a rotate writes only CF and OF and
+        ;; leaves ZF/SF/PF from the instruction before it ($set_flags_rotate),
+        ;; which this compiler's one-result flag record cannot express. It
+        ;; used to model them as a result-producing op, so a `cmp / ror / jz`
+        ;; tested the rotate's result -- Indeo 4's VLC reader loops on that.
+        ;; The kind-11 lowering for op 3/4 below is kept for when the record
+        ;; can carry preserved flags.
         (if (i32.lt_s (local.get $op) (i32.const 0)) (then (call $uc_unsup (local.get $R)) (return)))
         (if (i32.ge_u (local.get $b) (i32.const 0xD2))
           (then

@@ -133,6 +133,13 @@
   ;;           flag is the extra bit). Both are no-ops at 32 because the count
   ;;           has already been masked to 0..31, which is why the 32-bit
   ;;           version could omit them and still be correct.
+  ;; OF for ROR/RCR: bit (bits-1) XOR bit (bits-2) of the result.
+  (func $rot_of_top2 (param $bits i32) (param $r i32) (result i32)
+    (i32.and
+      (i32.xor (i32.shr_u (local.get $r) (i32.sub (local.get $bits) (i32.const 1)))
+               (i32.shr_u (local.get $r) (i32.sub (local.get $bits) (i32.const 2))))
+      (i32.const 1)))
+
   (func $do_shift (param $bits i32) (param $type i32) (param $val i32) (param $count i32) (result i32)
     (local $r i32) (local $cf i32) (local $mask i32) (local $sign i32)
     (local.set $mask
@@ -183,7 +190,10 @@
           (i32.or (i32.shl (local.get $val) (local.get $count))
                   (i32.shr_u (local.get $val) (i32.sub (local.get $bits) (local.get $count))))
           (local.get $mask)))
-        (call $set_flags_shift (local.get $r) (i32.and (local.get $r) (i32.const 1)))
+        ;; OF = MSB(result) ^ CF. ZF/SF/PF are the previous instruction's.
+        (call $set_flags_rotate (i32.and (local.get $r) (i32.const 1))
+          (i32.xor (i32.and (i32.shr_u (local.get $r) (i32.sub (local.get $bits) (i32.const 1))) (i32.const 1))
+                   (i32.and (local.get $r) (i32.const 1))))
         (return (local.get $r))))
 
     (if (i32.eq (local.get $type) (i32.const 1)) ;; ROR — CF = top bit of result
@@ -194,8 +204,10 @@
           (i32.or (i32.shr_u (local.get $val) (local.get $count))
                   (i32.shl (local.get $val) (i32.sub (local.get $bits) (local.get $count))))
           (local.get $mask)))
-        (call $set_flags_shift (local.get $r)
-          (i32.shr_u (local.get $r) (i32.sub (local.get $bits) (i32.const 1))))
+        ;; OF = the two top bits of the result XORed.
+        (call $set_flags_rotate
+          (i32.shr_u (local.get $r) (i32.sub (local.get $bits) (i32.const 1)))
+          (call $rot_of_top2 (local.get $bits) (local.get $r)))
         (return (local.get $r))))
 
     ;; RCL / RCR rotate through the carry flag, so the cycle is bits+1 long.
@@ -212,7 +224,10 @@
           (local.set $val (local.get $r))
           (local.set $count (i32.sub (local.get $count) (i32.const 1)))
           (br $lp)))
-        (call $set_flags_shift (local.get $val) (local.get $cf))
+        ;; OF = MSB(result) ^ CF (the new carry).
+        (call $set_flags_rotate (local.get $cf)
+          (i32.xor (i32.and (i32.shr_u (local.get $val) (i32.sub (local.get $bits) (i32.const 1))) (i32.const 1))
+                   (local.get $cf)))
         (return (local.get $val))))
 
     (if (i32.eq (local.get $type) (i32.const 3)) ;; RCR
@@ -227,7 +242,8 @@
           (local.set $val (local.get $r))
           (local.set $count (i32.sub (local.get $count) (i32.const 1)))
           (br $lp)))
-        (call $set_flags_shift (local.get $val) (local.get $cf))
+        ;; OF = the two top bits of the result XORed (MSB(src) ^ old CF).
+        (call $set_flags_rotate (local.get $cf) (call $rot_of_top2 (local.get $bits) (local.get $val)))
         (return (local.get $val))))
 
     ;; Unknown type: leave the value alone, as all three copies did.
