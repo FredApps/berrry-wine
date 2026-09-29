@@ -62,6 +62,69 @@ CPU milliseconds per frame sum browser-process CPU deltas from CDP, including
 renderer and GPU processes; this metric is also affected by the workload and
 does not make a contended run equivalent to a quiet-machine benchmark.
 
+### Why this NFS III D3D path is slower
+
+Follow-up on 2026-09-29: the isolated Glide branch is missing main's
+`ff6dc0f4` (selective backing-page generations). Consequently the table above
+does **not** compare Glide against the latest optimized D3DIM implementation.
+That commit's `docs/d3dim-dirty-tracking-perf.md` records 17.7–18.4 ms/frame
+checking unchanged NFS III texture bytes on the old path, and zero texture
+byte checks over 357 frames on the new path. Its FPS observations were not a
+controlled A/B. Re-run both renderers on the same updated base before quoting
+a current speed ratio.
+
+The original two samples nevertheless expose specific costs in this branch:
+
+| Work per frame | Glide | D3D |
+| --- | ---: | ---: |
+| Triangles | 1,483.20 | 1,483.40 |
+| GPU draws (including lines) | 229.14 | 386.28 |
+| Software fallback draws | 0 | 24.54 |
+| Full-target GPU readbacks | 0 | 2.00 |
+| Emulated guest blocks | 283,667 | 398,084 |
+
+Matching triangle counts argue against omitted bulk geometry, but are not
+pixel-parity evidence. D3D submits smaller batches and executes about 40%
+more guest blocks. Its worker-local WebGL backend reads the framebuffer back,
+converts it to RGB565 and writes a guest DIB for presentation. Readback/sync
+timing averaged 7.95 ms/frame; that alone cannot explain the entire gap.
+These are host elapsed timers, not GPU timer queries, and draw timing includes
+texture preparation, so the timing fields must not simply be added together.
+
+An optional `--profile` run confirms the remaining details:
+
+```sh
+node tools/nfs-renderer-bench.js --cases=d3d,glide --seconds=20 --samples=1 --profile --out=build/nfs3-renderer-profile
+```
+
+All 2,496 fallback draws in the D3D sample were primitive 3 (line strip),
+vertex type 3 (transformed/lit), count 2: 24 per frame. This is consistent
+with the rain lines; Glide draws its lines on the GPU. They are clustered:
+there were two readbacks per frame, not one per fallback. The D3D guest
+worker's largest sampled JS self-time was `bytesEqual` (2.69 seconds),
+confirming repeated unchanged-texture scans as a real hot path in this build.
+Main's generation-tracking fix removes that scan but does not remove the
+line-strip fallback, readback/presentation path, or per-draw processing.
+
+Profiling used Chrome 154.0.8037.58 and the `99992ba2` WASM. Load averages
+were 74–104 during the samples, with profiling enabled, so these profiles
+support attribution and primitive counts, not a new stable FPS comparison.
+Profiles start/stop sequentially around the timed window and include a small
+amount of work outside it. Raw profiles and fallback counts are in
+`build/nfs3-renderer-profile/`.
+
+### Local dropdown testing
+
+The debug dropdown includes `nfs3_glide_demo` and `nfs2se_glide_demo`. The
+former uses the existing NFS III candidate manifest and selects `voodoo` in
+the startup registry. The latter selects `THRASH_DRIVER=1` and requires the
+local SE fixture at `build/nfs2se-demo` plus `build/nfs2se-browser.json`.
+For an existing `build/nfs2se-config.json` produced by the SE benchmark,
+the browser manifest uses its `files` array with the leading `build/` removed
+from each URL (URLs resolve relative to the manifest), wrapped in
+`{schemaVersion:1,files:[...]}`. Both entries were launched through the real
+dropdown and rendered with zero renderer errors.
+
 ## NFS II
 
 | Demo / rendering route | Output | FPS, sample 1 / 2 | Combined FPS | CPU ms/frame |

@@ -127,3 +127,19 @@ Validation: full build, `test-file-version-info.js`, `test-read-file-ex.js`,
 `test-static-dx-version.js`, and `test-win16-version.js` pass. The broad app
 registry check has unrelated missing Baldur's Gate/Snood fixtures in this
 shared checkout.
+
+### NFS III D3D versus Glide profiling (2026-09-29)
+
+The isolated Glide branch benchmark predates main's `ff6dc0f4` texture
+generation tracking. Its D3DIM `_texture` checks unchanged bytes on every
+textured draw; a worker CPU profile confirms `bytesEqual` is hot. Main already
+eliminates those scans, so the old 18.45 versus 7.53 FPS comparison must not
+be presented as a comparison against current main D3D.
+
+The optional `tools/nfs-renderer-bench.js --profile` census identified every
+sampled software fallback as primitive 3 (line strip), vertex type 3 (TL),
+count 2: 2,496 calls over 104 frames. Rain is the likely source. Two full-DIB
+readbacks per frame remain, not one per line. Earlier counters show virtually
+identical triangle totals for D3D/Glide but 386 versus 229 GPU draws/frame and
+40% more guest blocks for D3D. See `docs/nfs-renderer-benchmark.md` for evidence,
+profiling limitations, artifacts and reproduction.
