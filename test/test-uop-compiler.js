@@ -310,6 +310,40 @@ CASES.push(
   },
 );
 
+// ---- --uop-icall / --uop-iat (07e FF /2 as kind 23, 07d ICG) ----
+// A callee's address is only known once the code is placed, so each is put
+// right after a CALL, which pushes it; the pop takes it. The "vtable" is a
+// stack slot addressed through EBP (ESP-based r/m is refused), the IAT slot
+// is in the scratch page, out of the hashed buffer. Code addresses differ per
+// run, so every register that held one is cleared before the ret.
+const CALLEE1 = [[0x03, 0x1E], [0x8D, 0x1C, 0x9B], 0xC3];            // add ebx,[esi]; lea ebx,[ebx*4+ebx]
+const CALLEE2 = [[0x2B, 0x1E], [0x8D, 0x1C, 0x5B], 0xC3];            // sub ebx,[esi]; lea ebx,[ebx*2+ebx]
+const ICALL_VT = [CALL('s1'), ...CALLEE1, L('s1'), [0x89, 0xE5],       // mov ebp,esp: [ebp] = &callee1
+  L('l'), [0xFF, 0x55, 0x00], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),   // call [ebp+0]
+  0x58, [0x31, 0xC0], [0x31, 0xED], 0xC3];
+const IAT_SLOT = (a) => a.spec + 0x800;
+CASES.push(
+  { name: 'icall-vtable', regs: { ecx: N }, icall: true, hotOnly: true, head: 'l', want: { icPass: '>0', icFail: 0 }, code: ICALL_VT },
+  // the same loop with the flag off: FF /2 cuts it, and says so
+  { name: 'icall-off', regs: { ecx: N }, head: 'l', declines: true, code: ICALL_VT },
+  {
+    // call reg, the register loaded once outside the loop (the add first:
+    // the hot-count slot is eip>>2, and the head and the return landing
+    // must not share one)
+    name: 'icall-reg', regs: { ecx: N }, icall: true, hotOnly: true, head: 'l', want: { icPass: '>0', icFail: 0 },
+    code: [CALL('s1'), ...CALLEE1, L('s1'), 0x58,
+           L('l'), [0x83, 0xC6, 0x04], [0xFF, 0xD0], 0x49, J(cc.NZ, 'l'), [0x31, 0xC0], 0xC3],
+  },
+  {
+    // the slot alternates between two callees: the guard fails every other
+    // trip and the call runs threaded, to whichever callee the slot holds
+    name: 'icall-mismatch', regs: { ecx: N }, icall: true, hotOnly: true, head: 'l', dynamicEntry: true, want: { icFail: '>0' },
+    code: [CALL('s1'), ...CALLEE1, L('s1'), 0x58, CALL('s2'), ...CALLEE2, L('s2'), 0x5A, 0x50, [0x89, 0xE5],
+           L('l'), 0x92, [0x89, 0x45, 0x00], [0xFF, 0x55, 0x00], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),
+           0x58, [0x31, 0xC0], [0x31, 0xD2], [0x31, 0xED], 0xC3],
+  },
+);
+
 // ---- --uop-trace-heads (07e $uc_form_trace) ----
 // A head with no back edge: the loop around it runs an instruction the tier
 // does not lower (bsr), so no head in it has a loop to compile, and without
@@ -547,8 +581,10 @@ function runCase(inst, c, a, codeAddr, mode) {
   for (const f of feats) e['set_uop_' + f](mode === 'off' ? 0 : 1);
   const unfeat = () => { for (const f of feats) e['set_uop_' + f](0); };
   const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5), traces: e.uop_cstat(26) };
-  const CTR = { divExits: 16, icPass: 17, icFail: 18, iatPass: 19, iatFail: 20 };
-  const ctr0 = Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, e.uop_stats(i)]));
+  // uop_stats counters, then (negative) uop_cstat ones: sites kept, FF /2 refused
+  const CTR = { divExits: 16, icPass: 17, icFail: 18, iatPass: 19, iatFail: 20, icSites: -28, iatSites: -29, icRej: -30 };
+  const ctrOf = (i) => (i < 0 ? e.uop_cstat(-i) : e.uop_stats(i));
+  const ctr0 = Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, ctrOf(i)]));
   let sp = null;
   if (mode === 'pre') {
     const head = codeAddr + labelAt(c.head);
@@ -592,7 +628,7 @@ function runCase(inst, c, a, codeAddr, mode) {
     installs: e.uop_stats(2) - before.installs, enters: e.uop_stats(4) - before.enters,
     blocks: e.uop_stats(5) - before.blocks, sp, lf: e.get_logical_frame_count() - lf0,
     traces: e.uop_cstat(26) - before.traces,
-    ctr: Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, e.uop_stats(i) - ctr0[k]])),
+    ctr: Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, ctrOf(i) - ctr0[k]])),
   };
   e.set_uop(0);
   if (c.aggr) e.set_aggressive_stack(0);
@@ -873,6 +909,7 @@ async function main() {
   const inst = await bench.newInstance();
   const { e } = inst;
   const a = bench.layout(inst.imageBase, 0x20000);
+  a.thunk = e.get_thunk_base() >>> 0;   // an API thunk, for the thunk-zone refusal
   if (process.env.UOP_NOFOLD) for (const f of process.env.UOP_NOFOLD.split(",")) e["set_" + f + "_emit"](0);
   let slot = 0;
   let fails = 0;
@@ -904,7 +941,9 @@ async function main() {
       continue;
     }
     const results = [];
-    for (const mode of ['hot', 'pre']) {
+    // hotOnly: an inline cache records what the slot holds when the head is
+    // compiled, which a pre-compile (before the prologue has run) cannot see.
+    for (const mode of c.hotOnly ? ['hot'] : ['hot', 'pre']) {
       const st = runCase(inst, c, a, at(), mode);
       if (st.err && c.declines) { results.push(`${mode}: ok (${st.err})`); continue; }
       if (st.err) { results.push(`${mode}: ${st.err}`); fails++; continue; }
