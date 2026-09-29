@@ -133,3 +133,28 @@ and `~/nfs-movsd/build/quake2-shared-{webgl,software}`. The NFS report's Git fie
 names the remote checkout base; source files were overlaid from this feature
 worktree, so use its recorded source hashes rather than that base commit as
 implementation provenance.
+
+### Rebase onto main `01b1f0b9`
+
+The rebase preserves main's API IDs 0–3755 and appends Glide at 3756–3885.
+MOVSD uses compiler kind 29 and micro-op 78, leaving main's MMX and switch-table
+assignments intact. Scoped D3DIM fences carry their address and length through
+both the guest command queue and the main-thread bridge. The completion result
+remains 2 when other GPU targets still need materialization; global fences
+continue to complete all outstanding work.
+
+Remote validation on 2026-09-29 passed all 23 focused compiler, Glide ABI,
+renderer protocol, native parity, lifecycle and texture-cache tests. Chrome
+also passed mixed GL/D3D9 software/WebGL rendering and all three D3DIM worker
+cases (software, legacy opt-out, WebGL), each using one worker and retiring
+cleanly. Logs are in `~/nfs-movsd/build/rebase-tests/`.
+NFS3 also reached racing on D3DIM WebGL, Glide WebGL and Glide software;
+captures and counters are in `~/nfs-movsd/build/rebase-nfs-smoke/`. These were
+functional smoke checks, not controlled performance measurements.
+
+The normal build stops at `union-gate.js` for
+`$gdi_bitmap_create_system` at `src/10a-gdi-bitmap.wat:1014`. This same failure
+was independently reproduced from unchanged main `01b1f0b9`. A temporary
+remote validation driver omitted only that gate: all remaining gates, WATX
+compilation of both WASM artifacts and compiled data-overlap checks passed.
+The shipping build script is unchanged.

@@ -40,8 +40,8 @@ function fixture(legacy=false){
   if(legacy){
     class FakeGPU {
       constructor(){this.targets=new Map();}
-      call(opcode,wa){
-        if(opcode===0x20001)return this.fence();
+      call(opcode,wa,length=0){
+        if(opcode===0x20001)return this.fence(wa,length);
         const d=new DataView(sharedMemory.buffer);
         if(opcode===0x20000){
           assert(override,'GPU draw receives packet state override');
@@ -52,7 +52,7 @@ function fixture(legacy=false){
         assert.strictEqual(override,0,'state override reset before clear');
         events.push(['gpu-clear',wa]);return 7;
       }
-      fence(){assert.strictEqual(override,0);events.push(['gpu-fence']);return 1;}
+      fence(address=0,length=0){assert.strictEqual(override,0);events.push(['gpu-fence',address,length]);return length?2:1;}
       snapshot(){return {draws:events.filter(e=>e[0]==='gpu-draw').length};}
       stop(){events.push(['gpu-stop']);}
     }
@@ -77,6 +77,34 @@ function fixture(legacy=false){
     sigs:{},imageBase:0x400000,maxQueuedCommands:2,maxQueuedBytes:legacy?65536:4096,reclaimHeap:p=>{adopted.push(p);return 1;}});
   return {manager,events,pending,adopted,sharedMemory,importOrder,failedImports,counts:()=>({init,retire,terminated})};
 }
+function encoderScopedFence(){
+  let control;const messages=[];
+  const memory={buffer:new SharedArrayBuffer(4096)},descriptor=new DataView(memory.buffer);
+  [64,1032,1200,200].forEach((v,i)=>descriptor.setUint32(i*4,v,true));
+  const worker={postMessage(message){
+    messages.push(message);
+    if(message.t==='init'){control=new Int32Array(message.control);Atomics.store(control,0,1);}
+    // Deliberately leave batches in flight. The second draw remains buffered
+    // until the scoped fence submits it. The synchronous reply avoids waits.
+    if(message.t==='legacy-fence'){
+      Atomics.store(control,11,message.length?2:1);Atomics.store(control,1,message.seq);
+    }
+  },terminate(){}};
+  const encoder=new Stream.Encoder({workerFactory:()=>worker,memory,module:{},
+    getImageBase:()=>0x400000,guestToWasm:p=>p,explicitFence:true});
+  assert.strictEqual(encoder.call(0x20005,0),1);
+  assert.strictEqual(encoder.call(0x20005,0),1);
+  assert.strictEqual(messages.filter(m=>m.t==='batch').length,1,'second draw is pending before barrier');
+  assert.strictEqual(encoder.call(0x20001,8194,3),2,'producer preserves partially synchronized result');
+  assert.deepStrictEqual(messages.map(m=>m.t),['init','batch','batch','legacy-fence'],'pending snapshots precede scoped barrier');
+  assert.deepStrictEqual([messages.at(-1).address,messages.at(-1).length],[8194,3]);
+  const scopedSequence=messages.at(-1).seq;
+  assert.strictEqual(encoder.call(0x20001,0,0),1,'empty global barrier still reaches consumer');
+  assert(messages.at(-1).seq>scopedSequence);
+  assert.deepStrictEqual([messages.at(-1).address,messages.at(-1).length],[0,0]);
+  encoder.stop();
+}
+encoderScopedFence();
 (async()=>{
   const f=fixture(),a=f.manager.createEndpoint({api:'glide',name:'a'}),b=f.manager.createEndpoint({api:'gl',name:'b'});
   await Promise.all([a.ready,b.ready]);
@@ -141,15 +169,19 @@ function fixture(legacy=false){
   assert.strictEqual(l.events.filter(e=>e[0]==='gpu-fence').length,0,'no readback per batch');
   let gpuStats;
   port.onmessage=event=>{if(event.data.t==='stats')gpuStats=event.data.stats;};
-  port.postMessage({t:'legacy-fence',seq:2});await tick();
+  port.postMessage({t:'legacy-fence',seq:2,address:8194,length:3});await tick();
   assert.strictEqual(Atomics.load(control,1),2);assert.strictEqual(gpuStats.draws,2);
   assert.strictEqual(l.events.filter(e=>e[0]==='gpu-fence').length,1,'explicit fence materializes GPU contents');
-  port.postMessage({t:'legacy-call',seq:3,opcode:0x20004,wa:80});await tick();
+  assert.deepStrictEqual(l.events.at(-1),['gpu-fence',8194,3],'range reaches GPU executor unchanged');
+  assert.strictEqual(Atomics.load(control,11),2,'scoped fence retains other dirty targets');
+  port.postMessage({t:'legacy-fence',seq:3});await tick();
+  assert.strictEqual(Atomics.load(control,11),1,'global fence finishes remaining targets');
+  port.postMessage({t:'legacy-call',seq:4,opcode:0x20004,wa:80});await tick();
   assert.strictEqual(Atomics.load(control,11),7,'clear returns result through shared control');
-  assert.strictEqual(Atomics.load(control,1),3);
+  assert.strictEqual(Atomics.load(control,1),4);
   offset=0;drawRecord(13,23,1);
   [32,123,456,0,0,0,0,1].forEach((v,i)=>d.setUint32(offset+i*4,v,true));offset+=32;
-  port.postMessage({t:'batch',index:0,seq:4,bytes:offset,commands:2,imageBase:0x400000});await tick();
+  port.postMessage({t:'batch',index:0,seq:5,bytes:offset,commands:2,imageBase:0x400000});await tick();
   const softwareIndex=l.events.findIndex(e=>e[0]==='software-draw');
   assert.strictEqual(l.events[softwareIndex-1][0],'gpu-fence','fallback materializes prior GPU writes');
   const flipIndex=l.events.findIndex(e=>e[0]==='flip');

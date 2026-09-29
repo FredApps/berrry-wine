@@ -87,9 +87,10 @@ function bitmapWorkerCoherence(){
   assert.deepStrictEqual(Array.from(result.surfaces[0].pixels),[10,20,30,40]);adapter.destroy();
 }
 async function legacyProxy(){
-  let calls=0;const gate=deferred();const port={ready:gate.promise,request:async msg=>{calls++;assert.strictEqual(msg.wa,128);return 1;},terminate(){this.stopped=true;}};
+  let calls=0;const gate=deferred();const port={ready:gate.promise,request:async msg=>{calls++;assert.strictEqual(msg.wa,128);return msg.opcode===0x20001?(assert.strictEqual(msg.length,37),{value:2,stats:{syncs:1}}):1;},terminate(){this.stopped=true;}};
   const bridge=new D3DIMBridge({createRenderEndpoint:()=>port,backend:'software'});
   const done=bridge.call(0x20000,128);await tick();assert.strictEqual(calls,0);gate.resolve();assert.strictEqual(await done,1);
+  assert.strictEqual(await bridge.call(0x20001,128,37),2,'main proxy preserves fence range and pending result');
   await bridge.close();assert(port.stopped);assert.throws(()=>bridge.call(0x20000,128),/closed/);
 }
 function legacyWorkerCleanup(){

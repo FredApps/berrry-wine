@@ -61,6 +61,18 @@ assert.equal(f.gpu.stats.drawCalls, 3);
 assert.equal(f.gpu.stats.draws, 2);
 assert.equal(f.gpu.stats.mergedDraws, 1);
 
+// A scoped CPU access issues buffered GPU work, but reads back only targets
+// whose backing bytes overlap. The remaining dirty target keeps WAT pending.
+const scoped = fixture();
+scoped.draw(1); scoped.draw(2);
+assert(scoped.gpu.pendingDraw);
+assert.equal(scoped.gpu.call(OPCODES.FENCE, 0x9000, 1), 2);
+assert.equal(scoped.gpu.pendingDraw, null, 'scoped fence submits queued draws');
+assert.deepEqual(scoped.events, ['draw', 'draw'], 'unrelated range triggers no readback');
+assert.equal(scoped.gpu.call(OPCODES.FENCE, 0, 0), 1);
+assert.deepEqual(scoped.events, ['draw', 'draw', 'read'], 'global fence materializes remaining target');
+
+
 // A state change flushes the old batch before validating/submitting the new.
 f.draw(30);
 f.dv.setUint32(f.desc + 19 * 4, 0, true);
