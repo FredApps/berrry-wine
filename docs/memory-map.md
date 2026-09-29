@@ -73,7 +73,9 @@ classes in order:
 ```
 1. direct: guest_addr - image_base + GUEST_BASE, when result < 0x08000000
 2. DIB:    0x50000000..0x53FFFFFF -> 0x1C000000..0x1FFFFFFF
-3. sparse: scan VIRTUAL_MAP_TABLE for VirtualAlloc guest reservations
+3. sparse: one packed PTE load from GUEST_PAGE_TABLE ($guest_page_translate);
+           a missing entry is authoritative (VIRTUAL_MAP_TABLE is allocation
+           and VirtualQuery metadata, never consulted to translate)
 ```
 
 An address that matches none of these returns the `NULL_SENTINEL` sink. The
