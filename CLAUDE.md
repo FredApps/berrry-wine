@@ -220,7 +220,7 @@ from the finger. `svh` (bars visible) and `lvh` (bars retracted) are constants. 
 | `09a7b-ole.wat` | OLE/COM: ROT, monikers, bind contexts, IFont, structured storage, IDataObject/clipboard, IOleObject/IOleCache/IViewObject |
 | `09a7c-mixer.wat` | WINMM mixer handlers (mixerOpen/GetLineInfo/GetControlDetails and A/W pairs) |
 | `09a7d-handlers-shell-file.wat` | Later file, registry, shell and desktop handlers |
-| `09a7e-video-codecs.wat` | Video for Windows decoders (BI_RGB, RLE8, Cinepak) as pure functions over WASM addresses; `tools/avi-player/` compiles this fragment standalone to verify it against ffmpeg and play corpus movies ([docs/video-support-design.md](docs/video-support-design.md)) |
+| `09a7e-video-codecs.wat` | Video for Windows decoders (BI_RGB, RLE8, Cinepak, MS Video 1 8/16 bpp) as pure functions over WASM addresses; `tools/avi-player/` compiles this fragment standalone to verify it against ffmpeg and play corpus movies ([docs/video-support-design.md](docs/video-support-design.md)) |
 | `09a8-handlers-directx.wat` | DirectX handlers — DirectDraw, DirectSound, DirectInput; COM vtable dispatch through the thunk zone, and the `DxObject` record declaration |
 | `09a8b-handlers-opengl.wat` | OpenGL 1.x / WGL frontend: one ABI bridge lowering the measured Quake II GL/WGL set to the generic GPU backend |
 | `09a8c-gl-encoder.wat` | Native GL command records, immediate primitive normalization, buffer growth, and synchronous barriers |

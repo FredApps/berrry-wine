@@ -29,6 +29,9 @@
   (data (region.addr $VIDEO_ARENA 0x450) "MS-RLE\00")
   (data (region.addr $VIDEO_ARENA 0x460) "Microsoft RLE\00")
   (data (region.addr $VIDEO_ARENA 0x470) "msrle32.dll\00")
+  (data (region.addr $VIDEO_ARENA 0x480) "MS-CRAM\00")
+  (data (region.addr $VIDEO_ARENA 0x490) "Microsoft Video 1\00")
+  (data (region.addr $VIDEO_ARENA 0x4B0) "msvidc32.dll\00")
   (global $ICM_SLOTS i32 (i32.const 8))
   (global $ICM_HANDLE_BASE i32 (i32.const 0x49430001))   ;; "IC" + slot + 1
   (global $ICM_ROW i32 (i32.const 0x1000))
@@ -38,6 +41,7 @@
   (global $ICM_CODEC_RAW i32 (i32.const 1))
   (global $ICM_CODEC_RLE8 i32 (i32.const 2))
   (global $ICM_CODEC_CVID i32 (i32.const 3))
+  (global $ICM_CODEC_CRAM i32 (i32.const 4))   ;; MS Video 1, 8 or 16 bpp
 
   ;; fourccs, lower-cased with | 0x20202020.
   (global $FCC_VIDC i32 (i32.const 0x63646976))
@@ -46,6 +50,17 @@
   (global $FCC_RLE i32 (i32.const 0x20656c72))    ;; 'RLE '
   (global $FCC_RLE8 i32 (i32.const 0x38656c72))   ;; 'RLE8'
   (global $FCC_DIB i32 (i32.const 0x20626964))    ;; 'DIB '
+  (global $FCC_CRAM i32 (i32.const 0x6d617263))   ;; 'CRAM'
+  (global $FCC_MSVC i32 (i32.const 0x6376736d))   ;; 'MSVC'
+  (global $FCC_WHAM i32 (i32.const 0x6d616877))   ;; 'WHAM'
+
+  ;; MS Video 1 answers to three fourccs, in any case.
+  (func $icm_fcc_is_cram (param $fcc i32) (result i32)
+    (local $f i32)
+    (local.set $f (call $icm_fcc_lower (local.get $fcc)))
+    (i32.or (i32.eq (local.get $f) (global.get $FCC_CRAM))
+      (i32.or (i32.eq (local.get $f) (global.get $FCC_MSVC))
+              (i32.eq (local.get $f) (global.get $FCC_WHAM)))))
 
   (global $ICERR_OK i32 (i32.const 0))
   (global $ICERR_UNSUPPORTED i32 (i32.const -1))
@@ -80,6 +95,7 @@
                   (i32.eq (local.get $f) (global.get $FCC_RLE8))))
       (then (return (global.get $ICM_CODEC_RLE8))))
     (if (i32.eq (local.get $f) (global.get $FCC_DIB)) (then (return (global.get $ICM_CODEC_RAW))))
+    (if (call $icm_fcc_is_cram (local.get $fcc)) (then (return (global.get $ICM_CODEC_CRAM))))
     (i32.const 0))
 
   ;; Which codec decodes this input format (0 = none).
@@ -93,6 +109,8 @@
       (then (return (global.get $ICM_CODEC_RLE8))))
     (if (i32.eq (call $icm_fcc_lower (local.get $c)) (global.get $FCC_CVID))
       (then (return (global.get $ICM_CODEC_CVID))))
+    ;; BI_RLE8 (1) was taken above; a fourcc is never that small.
+    (if (call $icm_fcc_is_cram (local.get $c)) (then (return (global.get $ICM_CODEC_CRAM))))
     (i32.const 0))
 
   ;; Output layouts this layer writes: BI_RGB 8/16/24/32, or BI_BITFIELDS
@@ -132,6 +150,10 @@
         (if (i32.eqz (i32.or (i32.or (i32.eq (local.get $bpp) (i32.const 8)) (i32.eq (local.get $bpp) (i32.const 16)))
                              (i32.or (i32.eq (local.get $bpp) (i32.const 24)) (i32.eq (local.get $bpp) (i32.const 32)))))
           (then (return (global.get $ICERR_BADFORMAT))))))
+    ;; MS Video 1 exists only as 8 bpp (indices) and 16 bpp (RGB555).
+    (if (i32.and (i32.eq (local.get $codec) (global.get $ICM_CODEC_CRAM))
+                 (i32.and (i32.ne (local.get $bpp) (i32.const 8)) (i32.ne (local.get $bpp) (i32.const 16))))
+      (then (return (global.get $ICERR_BADFORMAT))))
     ;; Cinepak's palettized grey variant is not decoded.
     (if (i32.and (i32.eq (local.get $codec) (global.get $ICM_CODEC_CVID))
                  (i32.eq (local.get $bpp) (i32.const 8)))
@@ -383,6 +405,19 @@
         (call $vid_index_to_bgrx (local.get $plane) (local.get $pal) (local.get $frame)
           (i32.mul (local.get $w) (local.get $h)))
         (return (global.get $ICERR_OK))))
+    ;; MS Video 1: 8 bpp keeps an index plane like RLE8, 16 bpp paints the frame.
+    (if (i32.eq (local.get $codec) (global.get $ICM_CODEC_CRAM))
+      (then
+        (if (i32.eq (local.get $bpp) (i32.const 8))
+          (then
+            (call $vid_cram_decode (local.get $plane) (local.get $src) (local.get $len)
+              (local.get $w) (local.get $h) (i32.const 8))
+            (call $vid_index_to_bgrx (local.get $plane) (local.get $pal) (local.get $frame)
+              (i32.mul (local.get $w) (local.get $h))))
+          (else
+            (call $vid_cram_decode (local.get $frame) (local.get $src) (local.get $len)
+              (local.get $w) (local.get $h) (i32.const 16))))
+        (return (global.get $ICERR_OK))))
     ;; Raw 8-bit keeps its indices too, so 8-bit output stays exact.
     (if (i32.eq (local.get $bpp) (i32.const 8))
       (then
@@ -421,6 +456,14 @@
         (call $gl8 (i32.add (local.get $data) (i32.const 3)))))))
     (local.set $n (call $gl32 (i32.add (local.get $bi) (i32.const 20))))
     (if (local.get $n) (then (return (local.get $n))))
+    ;; MS Video 1 with no biSizeImage: its largest possible frame, every
+    ;; 4x4 block eight-colour (2 + 8 bytes at 8 bpp, 2 + 16 at 16 bpp). The
+    ;; decoder stops once every block is placed.
+    (if (i32.eq (i32.load offset=4 (local.get $rec)) (global.get $ICM_CODEC_CRAM))
+      (then (return (i32.mul
+        (i32.mul (i32.shr_u (i32.load offset=24 (local.get $rec)) (i32.const 2))
+                 (i32.shr_u (i32.load offset=28 (local.get $rec)) (i32.const 2)))
+        (select (i32.const 18) (i32.const 10) (i32.eq (i32.load offset=32 (local.get $rec)) (i32.const 16)))))))
     (i32.mul (call $icm_stride (i32.load offset=24 (local.get $rec)) (i32.load offset=32 (local.get $rec)))
              (i32.load offset=28 (local.get $rec))))
 
@@ -616,6 +659,14 @@
         (call $icm_put_wstr (i32.add (local.get $ga) (i32.const 24)) (region.addr $VIDEO_ARENA 0x450) (i32.const 16))
         (call $icm_put_wstr (i32.add (local.get $ga) (i32.const 56)) (region.addr $VIDEO_ARENA 0x460) (i32.const 128))
         (call $icm_put_wstr (i32.add (local.get $ga) (i32.const 312)) (region.addr $VIDEO_ARENA 0x470) (i32.const 128))))
+    (if (i32.eq (local.get $codec) (global.get $ICM_CODEC_CRAM))
+      (then
+        (call $gs32 (i32.add (local.get $ga) (i32.const 8)) (i32.const 0x4D415243))   ;; 'CRAM', as msvidc32 spells it
+        (call $gs32 (i32.add (local.get $ga) (i32.const 12)) (i32.const 0x0A))   ;; VIDCF_QUALITY | VIDCF_TEMPORAL
+        (call $gs32 (i32.add (local.get $ga) (i32.const 16)) (i32.const 0x00010000))
+        (call $icm_put_wstr (i32.add (local.get $ga) (i32.const 24)) (region.addr $VIDEO_ARENA 0x480) (i32.const 16))
+        (call $icm_put_wstr (i32.add (local.get $ga) (i32.const 56)) (region.addr $VIDEO_ARENA 0x490) (i32.const 128))
+        (call $icm_put_wstr (i32.add (local.get $ga) (i32.const 312)) (region.addr $VIDEO_ARENA 0x4B0) (i32.const 128))))
     (i32.const 568))
 
   ;; ---- open / close ---------------------------------------------------
@@ -727,7 +778,7 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
   ;; ICInfo(fccType, fccHandler, lpicinfo) -> BOOL. A handler below 256 is
-  ;; an index into the installed decompressors: Cinepak, then MS-RLE.
+  ;; an index into the installed decompressors: Cinepak, MS-RLE, MS Video 1.
   (func $handle_ICInfo (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $codec i32) (local $ok i32)
     (if (call $icm_type_ok (local.get $arg0))
@@ -735,7 +786,8 @@
         (if (i32.lt_u (local.get $arg1) (i32.const 256))
           (then
             (if (i32.eqz (local.get $arg1)) (then (local.set $codec (global.get $ICM_CODEC_CVID))))
-            (if (i32.eq (local.get $arg1) (i32.const 1)) (then (local.set $codec (global.get $ICM_CODEC_RLE8)))))
+            (if (i32.eq (local.get $arg1) (i32.const 1)) (then (local.set $codec (global.get $ICM_CODEC_RLE8))))
+            (if (i32.eq (local.get $arg1) (i32.const 2)) (then (local.set $codec (global.get $ICM_CODEC_CRAM)))))
           (else
             (local.set $codec (call $icm_codec_for_handler (local.get $arg1)))
             (if (i32.eq (local.get $codec) (global.get $ICM_CODEC_RAW)) (then (local.set $codec (i32.const 0))))))
