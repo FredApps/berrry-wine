@@ -1311,3 +1311,106 @@ before memory is consumed or modified, including native/folded memory paths.
 Locks that never access pixels could then avoid readback. Existing write-dirty
 flags alone cannot detect a CPU read or preserve untouched pixels before a
 partial write. Do not skip a fence based on the previous frame's zero changes.
+
+### Software timing, current CPU profile, and pixel access (2026-09-29)
+
+Box8, headful Chrome 151, same pinned surface-fence executable sections as above.
+`software-time2` routes into the cockpit with WebGL, fences outstanding work,
+then turns off GPU execution and declines the legacy host worker-draw seam.
+The latter is necessary: changing `d3dim_gpu_enable(0)` alone still allows
+`d3dim_worker_try_draw` to submit to the GPU executor. `software-time1` was
+rejected by the zero-GPU-draw assertion and is not a software measurement.
+This measures in-guest-worker WAT rasterization, not the separate experimental
+software render worker. The retained GPU object only publishes benchmark
+counters. Its draw/readback/upload counters stay flat throughout measurement.
+
+Three 20-second windows, no CPU profiler or pixel-access instrumentation:
+
+| Backend / run | FPS | Mean ms/frame | p95 ms |
+|---|---|---|---|
+| Software `software-time2` | 21.99 / 21.09 / 20.52 | 45.48 / 47.41 / 48.74 | 48.72 / 51.73 / 52.74 |
+| WebGL `webgl-time3` | 16.52 / 17.02 / 16.83 | 60.54 / 58.77 / 59.43 | 71.39 / 69.25 / 71.81 |
+
+Aggregate software: **21.20 FPS, 47.17 ms/frame**; WebGL: **16.79 FPS,
+59.57 ms/frame**. Software was faster in these runs, but these are independent
+live missions, not deterministic frame replay: WebGL draws vary from 1,391 to
+1,120/frame, while the earlier `surface-final4` run averaged 1,072 and 18.16 FPS.
+Do not turn the observed difference into a fixed renderer speedup claim.
+Screenshots show cockpit, sky, terrain and HUD in both. Both runs have no
+browser/GPU errors. Software has no >100 ms intervals in these windows.
+
+Separate 20-second named CPU profiles (`webgl-profile3`, `software-profile3`):
+the named build's noncustom sections exactly match the pinned WASM SHA above.
+Percentages below are **self samples / guest-worker sampled wall time**, not
+hardware CPI counters or mutually exclusive subdivisions of the GPU timers.
+
+| Function/work | WebGL | Software |
+|---|---:|---:|
+| All WASM self samples | 46.96% | 93.48% |
+| `viewport_draw_textured_span` | not a leading cost | 37.41% |
+| `readPixels` | 17.64% | absent |
+| `x87_island_fast` | 6.57% | 7.75% |
+| `branch_end_at` | 4.89% | 5.72% |
+| `th_load32_rop` | 3.48% | 3.47% |
+| `uop_fast` | 2.34% | 2.95% |
+| `th_test_jcc` | 2.20% | 2.48% |
+| `th_store32_rop` | 1.88% | 2.15% |
+| `fpu_exec_mem` | 1.46% | 1.89% |
+
+Software's span loop alone is roughly 19 ms of its 50.66 ms profiled frame.
+WebGL also spends 2.83% in `getError`, 2.55% in backend `draw`, 2.30% in
+`setUniform`, 2.15% in fixed-function `compile` (not necessarily a shader-cache
+miss), 2.15% in `_draw`, 2.12% in JS `fence`, 2.05% in fixed-function `source`,
+and 1.85% in `bufferData`. The page thread is 94.27% / 94.84% idle; the guest
+worker itself is only 4.25% / 4.52% idle. Floating-point execution, control flow
+and operand movement are substantial remaining guest CPU costs.
+
+`tools/bench-d3dim-access-build.js` builds a diagnostic WASM with DIB range
+probes at `g2w_slow` and scalar `gl8/16/32`, `gs8/16/32`. Use
+`--frame-times --trace-locks --trace-access` with that build. The recorder arms
+only the slot-6 640x480 RGB565 backing between Lock/Unlock and captures nine
+intervals. Event 90 is translation (not necessarily an actual access), 91 is
+a scalar read, 92 a scalar write. Native loops/cached pointers/direct WASM
+loads can bypass scalar hooks; these probes identify callers, not a universal
+proof of no reads. The persisted builder reproduces the measured diagnostic
+binary byte-for-byte on the pinned source closure.
+
+`pixel-access3` observed three repetitions of:
+
+* Return `0x46a425`: no DIB translation or scalar access.
+* Return `0x56facb`: no DIB translation or scalar access.
+* Return `0x46a513`: 5,304 scalar stores, 7,911 translations (including the
+  stores and write barriers), zero scalar reads. `pixel-moving4`, with top-row
+  5 held, observes 5,370 / 5,374 / 5,376 stores in this interval, again zero
+  scalar reads and no events in the other two intervals. Samples are from
+  the beginning of the throttle run, not exhaustive coverage of the mission.
+
+The observed write mechanisms are concrete:
+
+* `0x528268`: color-key copy reads the **source image** and conditionally
+  writes RGB565 destination pixels; native `th_rgb565_colorkey_run` calls gs16.
+  No destination read is needed by this loop.
+* `0x52807b`, `0x5280f4`, `0x5309bf`, `0x530a04`, `0x52fe39`: word stores.
+* `0x530e60`: sets **ESP to a framebuffer address**, then uses `push ax/eax`
+  to fill a span; captured through `th_push_r16` and native `stack_run_push`.
+* `0x528301` loop / `0x52830a rep movsd`: row copies. Sixteen destination
+  write-span translations are captured through `page_watch_write_guest` /
+  `invalidate_code_write` / `rep_movsd_do`; direct copies bypass scalar stores.
+
+Two implementation paths follow, neither implemented by this investigation:
+
+1. Defer synchronization until the first real CPU access, covering reads,
+   writes, stack writes, native loops and host access paths. This can eliminate
+   untouched Lock intervals while keeping one conservative readback before
+   the first partial CPU write. Translation alone is not an access barrier.
+2. Preserve GPU ownership through write-only intervals using exact written
+   spans/masks, and upload only those pixels. This could avoid the drawing
+   interval's readback too. Page dirty bits alone are insufficient: uploading
+   a whole page/row would overwrite untouched GPU pixels with stale CPU bytes;
+   comparing to a stale shadow also misses writes equal to old CPU values.
+   Any true CPU read must first resolve GPU contents plus pending CPU writes.
+
+Artifacts: `build/mw3-watch-ab-results/mw3-{software-time2,webgl-time3,
+software-profile3,webgl-profile3,pixel-access3,pixel-moving4}/`, plus
+`mw3-current-profile-summary.json`. These runs change benchmark diagnostics
+only; shipping renderer behavior is unchanged.
