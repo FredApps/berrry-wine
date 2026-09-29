@@ -275,6 +275,16 @@ async function main() {
   // nopre: the uop arm with the H451 x87 island run by the old per-op walk
   // ($x87_island_generic) instead of the predecoded body -- its partner is uop.
   ARMS.nopre = [...ARMS.uop, '--no-x87-island-predecode'];
+  // trace: the uop arm plus --uop-trace-heads (07e $uc_form_trace). The hot
+  // threshold is an arm too, so a K sweep runs in one interleaved sweep:
+  // uopkN / tracekN add --block-exec-walk-k=N (a name, not trailing digits,
+  // so they are not read as repeats; tracek16x2 is a repeat of tracek16).
+  ARMS.trace = [...ARMS.uop, '--uop-trace-heads'];
+  const armFor = (a) => {
+    const k = /^(uop|trace|off)k(\d+)(?:x\d+)?$/.exec(a);
+    if (k) return [...ARMS[k[1]], `--block-exec-walk-k=${k[2]}`];
+    return ARMS[a] || ARMS[a.replace(/\d+$/, '')];
+  };
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another
   // prebuilt module, so an engine change is measured against its predecessor
   // in one sweep on one box.
@@ -309,7 +319,7 @@ async function main() {
       const [g, a] = queue.shift();
       // off2 / uop2: a repeat of that arm, so a frame difference can be told
       // apart from an app that does not reproduce itself (the control).
-      const armArgs = ARMS[a] || ARMS[a.replace(/\d+$/, '')];
+      const armArgs = armFor(a);
       if (!armArgs) throw new Error(`unknown arm ${a}`);
       const r = parse(await runArm(g, a, armArgs, outDir, extra));
       console.log(`  done ${g}/${a} rc=${r.code} user=${r.user}s wall=${r.wall.toFixed(0)}s`);
