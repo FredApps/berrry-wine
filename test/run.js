@@ -5850,6 +5850,37 @@ async function main() {
     return !(ex.is_mm_timer_callback_active && (ex.is_mm_timer_callback_active() | 0));
   };
 
+  // A main thread parked on a software D3D request (yield 16) used to cost a
+  // whole batch per check: mainExecutionSuspended() said "parked", run() was
+  // skipped, and the loop counted the batch -- tickState.batch advances the
+  // guest clock by TICK_MS_PER_BATCH while the render worker is still
+  // rasterizing. UT2003/UT2004 read as "stuck forever in the first
+  // DrawIndexedPrimitive" this way: 1500 batches spent ~1490 of them parked,
+  // one per event-loop turn, and a --max-batches budget ran out with the
+  // guest 30 draws in. The browser has no such unit (host.js just yields to
+  // the event loop), so wait here, in wall time, for the one request the
+  // guest is actually blocked on. --no-render-park-wait restores the old
+  // batch-per-check behaviour for an A/B.
+  const RENDER_PARK_WAIT = !hasFlag('no-render-park-wait');
+  // skippedBatches: batches whose run() was skipped because main was still
+  // parked on a render request -- the number the fix drives to zero, and
+  // what test/test-d3d-render-park-batches.js reads through ctx.
+  const renderParkStats = ctx.renderParkStats = { waits: 0, wallMs: 0, skippedBatches: 0 };
+  const awaitMainRenderPark = async () => {
+    if (!RENDER_PARK_WAIT) return;
+    const ex = instance.exports;
+    if (ex.get_yield_reason() !== 16) return;
+    mainExecutionSuspended();
+    const wait = mainRenderWait;
+    if (!wait || wait.done) return;
+    const started = Date.now();
+    while (!wait.done && !stopped) {
+      await Promise.race([wait.promise, new Promise(r => setTimeout(r, 100))]);
+      if (deadlineMs && Date.now() > deadlineMs) break;
+    }
+    renderParkStats.waits++; renderParkStats.wallMs += Date.now() - started;
+  };
+
   let lastSchedSig = null;
   let lastSchedAt = 0;
   const handlerNames = HANDLER_HIST_THREADS.length ? buildHandlerNameList() : [];
@@ -9254,7 +9285,9 @@ async function main() {
         const ms = Math.max(0, Math.ceil(threadManager.mainSleepRemaining()));
         if (ms > 0) await new Promise(r => setTimeout(r, ms));
       }
+      await awaitMainRenderPark();
       if (!mainExecutionSuspended()) instance.exports.run(BATCH_SIZE);
+      else if (instance.exports.get_yield_reason() === 16) renderParkStats.skippedBatches++;
     } catch (e) {
       flushLogs();
       console.log(`\n*** CRASH at batch ${batch}: ${e.message}`);
@@ -10331,6 +10364,9 @@ if (VERBOSE) {
 
   console.log(`\nStats: ${apiTotal()} API calls, ${batchesRun} batches`
     + ` in ${executionElapsedSeconds.toFixed(3)}s (${(batchesRun / Math.max(executionElapsedSeconds,0.001)).toFixed(0)} batches/s)`);
+  if (renderParkStats.waits || renderParkStats.skippedBatches)
+    console.log(`render park: main waited on ${renderParkStats.waits} software D3D requests `
+      + `(${renderParkStats.wallMs}ms wall), ${renderParkStats.skippedBatches} batches skipped while parked`);
   if (PRESENT_CAP && instance.exports.get_present_paced_count) {
     console.log(`present pacing (main instance): cap ${PRESENT_CAP}/s ${PRESENT_PACE_MODE ? 'smooth' : 'deadline'}, `
       + `${instance.exports.get_present_paced_count()} frames slept `
