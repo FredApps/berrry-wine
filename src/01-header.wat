@@ -1980,6 +1980,14 @@
   (global $HOT_BLOCK_HIST_SIZE i32 (region.size $HOT_BLOCK_HIST))
   (global $HOT_BLOCK_HIST_COUNT i32 (i32.const 32768))
   (global $hot_block_hist_collisions (mut i32) (i32.const 0))
+  ;; --edge-hist: (previous block entry, this block entry) pairs, so a tool can
+  ;; say how many distinct targets an indirect call/jmp/ret site reached. The
+  ;; map is at capacity (every shake mode must still place), so the edges
+  ;; BORROW the 1MB handler-pair matrix: 65536 {from,to,count,pad} records,
+  ;; and $handler_hist_record stops filling pairs while edges are on.
+  (global $edge_hist_enabled (mut i32) (i32.const 0))
+  (global $edge_hist_prev (mut i32) (i32.const 0))
+  (global $edge_hist_collisions (mut i32) (i32.const 0))
   (global $SIB_CONSUMER_HIST i32 (region.addr $SIB_CONSUMER_HIST 0))
   (global $SIB_CONSUMER_HIST_SIZE i32 (region.size $SIB_CONSUMER_HIST))
   (global $SIB_CONSUMER_HIST_COUNT i32 (i32.const 8192))

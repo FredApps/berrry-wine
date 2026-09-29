@@ -2387,9 +2387,12 @@
     ;; handlers, but never alias their pairs into another matrix row.
     (if (i32.and
           (i32.and
-            (i32.ge_s (local.get $prev) (i32.const 0))
-            (i32.lt_u (local.get $prev) (global.get $HANDLER_HIST_COUNT)))
-          (i32.lt_u (local.get $fn) (global.get $HANDLER_HIST_COUNT)))
+            (i32.and
+              (i32.ge_s (local.get $prev) (i32.const 0))
+              (i32.lt_u (local.get $prev) (global.get $HANDLER_HIST_COUNT)))
+            (i32.lt_u (local.get $fn) (global.get $HANDLER_HIST_COUNT)))
+          ;; --edge-hist has borrowed the pair matrix ($edge_hist_record).
+          (i32.eqz (global.get $edge_hist_enabled)))
       (then
         (local.set $addr
           (i32.add (global.get $HANDLER_PAIR_HIST_COUNTS)
@@ -2408,8 +2411,46 @@
       (then (global.set $branch_hist_kind (i32.const 0))))
     (global.set $handler_hist_last (local.get $fn)))
 
+  ;; One {from, to, count} record per block-to-block transfer seen in the
+  ;; window, eight-way probed. `from` is the previous block entry this
+  ;; instance recorded, so an edge out of a uop program reads as head -> exit.
+  ;; The 65536 records live in the handler-pair matrix, which is 1MB and
+  ;; idle while --edge-hist is on: the memory map has no room for a region.
+  (func $edge_hist_record (param $from i32) (param $to i32)
+    (local $slot i32) (local $ptr i32) (local $i i32) (local $cur i32)
+    (local.set $slot
+      (i32.and
+        (i32.xor (i32.mul (local.get $from) (i32.const 0x9E3779B1))
+                 (i32.shr_u (local.get $to) (i32.const 2)))
+        (i32.const 0xFFF8)))
+    (local.set $ptr
+      (i32.add (global.get $HANDLER_PAIR_HIST_COUNTS) (i32.shl (local.get $slot) (i32.const 4))))
+    (block $done (loop $probe
+      (local.set $cur (i32.load offset=8 (local.get $ptr)))
+      (if (i32.eqz (local.get $cur))
+        (then
+          (i32.store (local.get $ptr) (local.get $from))
+          (i32.store offset=4 (local.get $ptr) (local.get $to))
+          (i32.store offset=8 (local.get $ptr) (i32.const 1))
+          (return)))
+      (if (i32.and (i32.eq (i32.load (local.get $ptr)) (local.get $from))
+                   (i32.eq (i32.load offset=4 (local.get $ptr)) (local.get $to)))
+        (then
+          (i32.store offset=8 (local.get $ptr) (i32.add (local.get $cur) (i32.const 1)))
+          (return)))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))
+      (local.set $ptr (i32.add (local.get $ptr) (i32.const 16)))
+      (br $probe)))
+    (global.set $edge_hist_collisions
+      (i32.add (global.get $edge_hist_collisions) (i32.const 1))))
+
   (func $hot_block_hist_record (param $addr i32)
     (local $slot i32) (local $ptr i32) (local $i i32) (local $cur i32)
+    (if (global.get $edge_hist_enabled)
+      (then
+        (call $edge_hist_record (global.get $edge_hist_prev) (local.get $addr))
+        (global.set $edge_hist_prev (local.get $addr))))
     ;; Four-way direct bucket keyed by block-entry EIP.
     (local.set $slot
       (i32.and

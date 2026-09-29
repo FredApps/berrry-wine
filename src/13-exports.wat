@@ -3031,6 +3031,9 @@
       (global.get $SIB_CONSUMER_HIST_SIZE))
     (global.set $branch_hist_kind (i32.const 0))
     (global.set $hot_block_hist_collisions (i32.const 0))
+    ;; (the edge records live in the pair matrix, zeroed above)
+    (global.set $edge_hist_prev (i32.const 0))
+    (global.set $edge_hist_collisions (i32.const 0))
     (global.set $sib_consumer_hist_collisions (i32.const 0))
     (global.set $sib_consumer_hist_total (i32.const 0))
     (global.set $handler_hist_last (i32.const -1)))
@@ -3051,6 +3054,13 @@
   (func (export "get_hot_block_hist_base") (result i32) (global.get $HOT_BLOCK_HIST))
   (func (export "get_hot_block_hist_count") (result i32) (global.get $HOT_BLOCK_HIST_COUNT))
   (func (export "get_hot_block_hist_collisions") (result i32) (global.get $hot_block_hist_collisions))
+  ;; --edge-hist: 65536 {from,to,count,pad} records in the borrowed pair
+  ;; matrix (see $edge_hist_record). Arm it before reset_handler_hist.
+  (func (export "set_edge_hist") (param $on i32) (global.set $edge_hist_enabled (local.get $on)))
+  (func (export "get_edge_hist_base") (result i32) (global.get $HANDLER_PAIR_HIST_COUNTS))
+  (func (export "get_edge_hist_count") (result i32)
+    (i32.shr_u (global.get $HANDLER_PAIR_HIST_COUNTS_SIZE) (i32.const 4)))
+  (func (export "get_edge_hist_collisions") (result i32) (global.get $edge_hist_collisions))
   (func (export "get_sib_consumer_hist_base") (result i32) (global.get $SIB_CONSUMER_HIST))
   (func (export "get_sib_consumer_hist_count") (result i32) (global.get $SIB_CONSUMER_HIST_COUNT))
   (func (export "get_sib_consumer_hist_collisions") (result i32) (global.get $sib_consumer_hist_collisions))
