@@ -3981,6 +3981,13 @@ class WineAssembly {
         ? window.WinePerf : null;
       if (perf) perf.stepBegin();
       try {
+        // A CreateThread from the preceding slice may still need its WASM
+        // instance. Finish that setup before resuming the creating thread:
+        // otherwise its timer/readiness deadline runs during worker startup.
+        if (self.threadManager && self.threadManager._pendingThreads?.length) {
+          await self.threadManager.spawnPending();
+          if (!self.running) return;
+        }
         self._beginGuestTickBatch();
         if (self.guestWorker.broker) {
           // The guest's message-wait resume runs inside the worker and needs to

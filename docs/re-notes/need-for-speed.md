@@ -43,19 +43,38 @@ The original installer sequence is root `setup.exe` (PE bootstrap),
 Welcome, destination, program folder, and shortcut dialogs lead to the
 installed tree under `C:\Program Files\Electronic Arts\Need for Speed III Demo`.
 
-NFS III loads its original `softtria.dll` at `0x00b30000` by default. A
-40-second cooperative probe stalled around `EnterCriticalSection`, with
-`0x09011fa0` held by T1. Real worker threads progress to the loading artwork.
-The loading image remains unchanged at 100 seconds (6.39M API calls; worker
-T3 parked in a wait). NFS III is experimental; menu/race startup is not yet
-verified. Raise the CLI stuck threshold: a startup polling loop at `0x004e5ad0`
+NFS III loads its original software renderer `softtria.dll` at `0x00b30000`.
+With worker threads and real-time clocks, the CLI renders the car and track.
+The browser also reaches race startup: the Corvette loading screen at 10s,
+the starting-grid camera at 21s, and cockpit/race HUD at 31s after launch.
+These are sampled observations, not minimum loading times. Safari itself has
+not been verified. The earlier 100-second CLI loading stall used the default
+batch-driven clock and was not a reliable browser reproduction.
+Raise the CLI stuck threshold: a startup polling loop at `0x004e5ad0`
 otherwise triggers the default same-EIP detector after only 11 batches.
 
 ```sh
-node test/run.js --app=nfs3_demo --threads --no-build --quiet-api --quiet-blocks --stuck-after=100000 --max-batches=100000 --max-seconds=100 --batch-size=100000 --png=/tmp/nfs3.png
+node test/run.js --app=nfs3_demo --threads --real-ticks --no-build --quiet-api --quiet-blocks --stuck-after=100000 --max-batches=100000 --max-seconds=40 --batch-size=10000 --png=/tmp/nfs3.png
 ```
 
 ## Compatibility fixes
+
+The browser worker loop must finish pending thread instantiation before
+starting its next main-thread slice and publishing that slice's clock.
+Previously main resumed concurrently with asynchronous worker initialization.
+NFS II could start its timer-readiness deadline before the timer worker existed,
+then abort with `getcpuspeed - INITTIMER REQUIRED TO DETERMINE CLOCK RATE`.
+The check at `0x00483232` waits for the counter at `0x0051e11c` to advance,
+then tears the timer down at `0x0048325b` if the deadline expires.
+The startup barrier keeps actual execution concurrent once workers exist;
+neither demo disables threads. A deferred-start regression in
+`test-host-raf-present.js` fails without the barrier and passes with it.
+Browser worker runs then reach NFS II's main menu (first sampled at 10s in
+one run). `test-worker-thread-scheduler.js` passes all 50 checks, and the
+browser DirectDraw presentation/vblank tests pass.
+
+Use `--real-ticks` for these timing investigations: the CLI's default 200ms
+per batch can expire the timer initialization check before a worker runs.
 
 NFS II needs `WaitForMultipleObjectsEx`. It now delegates the non-alertable
 wait to the existing multiple-object handler while preserving its 24-byte

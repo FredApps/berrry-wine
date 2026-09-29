@@ -254,6 +254,40 @@ function driveWorkerLoop(h) {
     h.wine.running = false;
   }
 
+  // A thread created by the preceding slice must exist before main resumes.
+  // Otherwise main can start a timer deadline while its worker is still
+  // instantiating (NFS II's timer-readiness check fails in that interval).
+  for (const stopBeforeReady of [false, true]) {
+    const h = makeHost({ withRaf: false });
+    let ready;
+    let starts = 0;
+    h.wine.threadManager = {
+      _pendingThreads: [{}],
+      async spawnPending() {
+        starts++;
+        await new Promise(resolve => { ready = resolve; });
+        this._pendingThreads = [];
+      },
+      workerSyncState: () => null,
+    };
+    const loop = driveWorkerLoop(h);
+    let ticks = 0;
+    h.wine._beginGuestTickBatch = () => { ticks++; };
+    assert.strictEqual(starts, 1);
+    assert.strictEqual(loop.resolvers.length, 0,
+      'main must not start its next slice during worker initialization');
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(ticks, 0, 'guest clock batch waits for worker initialization');
+    assert.strictEqual(loop.resolvers.length, 0);
+    if (stopBeforeReady) h.wine.running = false;
+    ready();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.strictEqual(ticks, stopBeforeReady ? 0 : 1);
+    assert.strictEqual(loop.resolvers.length, stopBeforeReady ? 0 : 1,
+      'main resumes once the new worker is ready, unless the app was stopped');
+    h.wine.running = false;
+  }
+
   // ---- perf HUD: uploads counted apart from guest presents ----------------
   {
     let time = 1000;
