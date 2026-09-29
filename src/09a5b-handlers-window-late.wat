@@ -2,6 +2,30 @@
   ;; LATE USER/GDI WINDOW HANDLERS\nMessage, placement, scrolling, dialogs, clipboard, cursor and window-enumeration APIs.
   ;; ============================================================
 
+  ;; Is there queued work a following PeekMessage could hand back? This is the
+  ;; message half of $win32_dispatch's MsgWaitForMultipleObjects fast path.
+  ;;
+  ;; NC work counts only for the two bits PeekMessage/GetMessage turn into a
+  ;; MSG: 1 (WM_NCPAINT) and 4 (WM_NCCALCSIZE). It used to test
+  ;; $nc_flags_count, which is nonzero whenever any window holds ANY NC bit --
+  ;; including a pending erase (2), which only BeginPaint consumes, and the
+  ;; persistent default-erase ownership bit (8), which never goes away. So the
+  ;; wait reported "a message" forever while the peek that followed found none
+  ;; of it. SDL 1.2's DX5_CheckInput (ScummVM) loops while MsgWait says
+  ;; message; each of its one-per-batch waits let a 10ms timeSetEvent come due,
+  ;; the peek then found THAT, the pump never returned 0, and ScummVM's
+  ;; pollEvent ran once in 11,000 batches: black screen, then no mouse.
+  ;; $has_pending_message fixed the same test for GetMessage's wake.
+  (func $msgwait_queue_ready (result i32)
+    (if (global.get $quit_flag) (then (return (i32.const 1))))
+    (if (i32.gt_u (call $post_queue_total_count) (i32.const 0))
+      (then (return (i32.const 1))))
+    (if (i32.gt_u (call $shared_post_queue_total_count) (i32.const 0))
+      (then (return (i32.const 1))))
+    (if (global.get $paint_pending) (then (return (i32.const 1))))
+    (if (call $nc_flags_scan (i32.const 5)) (then (return (i32.const 1))))
+    (call $paint_flag_any))
+
   ;; 607: MsgWaitForMultipleObjects(nCount, pHandles, fWaitAll, dwMilliseconds, dwWakeMask) → DWORD
   ;; 5 args stdcall = 24 bytes. Returns WAIT_OBJECT_0+i for signaled handle, or nCount for messages.
   (func $handle_MsgWaitForMultipleObjects (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -27,7 +51,7 @@
                     (global.get $pending_input_packed)))
           (i32.or
             (i32.or (global.get $paint_pending)
-                    (global.get $nc_flags_count))
+                    (call $nc_flags_scan (i32.const 5)))
             (i32.or (call $paint_flag_any)
                     (call $timer_check_due (call $paint_scratch_take) (i32.const 0)))))
       (then

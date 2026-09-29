@@ -16,6 +16,8 @@ const extraWat = String.raw`
     (call $nc_flags_set (i32.const 0x10001) (local.get $bits)))
   (func (export "test_nc_wake_clear") (param $bits i32)
     (call $nc_flags_clear (i32.const 0x10001) (local.get $bits)))
+  (func (export "test_msgwait_ready") (result i32)
+    (call $msgwait_queue_ready))
   (func (export "test_nc_erase_pending") (result i32)
     (i32.and (call $nc_flags_test (i32.const 0x10001)) (i32.const 2)))
   (func (export "test_nc_message") (param $get i32) (param $remove i32) (result i32)
@@ -50,11 +52,17 @@ const extraWat = String.raw`
   wat.test_nc_wake_setup();
   assert.strictEqual(wat.has_pending_message(), 0,
     'persistent background-erase ownership must not wake GetMessage');
+  // MsgWaitForMultipleObjects' "a message is queued" answer. ScummVM's SDL
+  // pump loops while it says yes; bit 8 alone used to say yes forever.
+  assert.strictEqual(wat.test_msgwait_ready(), 0,
+    'persistent background-erase ownership must not satisfy MsgWait');
 
   for (const bit of [1, 4]) {
     wat.test_nc_wake_set(bit);
     assert.strictEqual(wat.has_pending_message(), 1,
       `transient NC flag ${bit} must wake GetMessage`);
+    assert.strictEqual(wat.test_msgwait_ready(), 1,
+      `transient NC flag ${bit} must satisfy MsgWait`);
     wat.test_nc_wake_clear(bit);
     assert.strictEqual(wat.has_pending_message(), 0,
       `clearing transient NC flag ${bit} must leave persistent bit 8 idle`);
@@ -74,11 +82,15 @@ const extraWat = String.raw`
   assert.strictEqual(wat.test_nc_erase_pending(), 2);
   assert.strictEqual(wat.has_pending_message(), 0,
     'pending erase without paint damage must not spin the message waiter');
+  assert.strictEqual(wat.test_msgwait_ready(), 0,
+    'pending erase without paint damage must not satisfy MsgWait');
 
   for (const get of [0, 1]) {
     assert.strictEqual(wat.post_message_q(0x10001, 0x14, 0x1234, 0x5678), 1);
     assert.strictEqual(wat.has_pending_message(), 1,
       'an explicitly posted erase still wakes the waiter');
+    assert.strictEqual(wat.test_msgwait_ready(), 1,
+      'a posted message satisfies MsgWait');
     assert.strictEqual(wat.test_nc_message(0, 0), 1);
     assert.strictEqual(wat.post_queue_depth(), 1, 'PM_NOREMOVE retains a posted erase');
     assert.strictEqual(wat.test_nc_message(get, 1), 1);
