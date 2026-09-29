@@ -188,6 +188,14 @@ and captured WASM call stacks independently confirm both. Artifacts:
 harness. Prior uninstrumented synchronization time accounts for about one
 third of the measured wall-time gap, not all of it.
 
+GPU LINESTRIP support added afterward: adjacent segments now use the existing
+GPU line-list path, with each segment's first-vertex flat color. The NFS III
+validation run (`build/nfs3-linestrip-gpu/`) measured 433 frames with zero
+fallbacks, about 24 GPU lines/frame, one readback/frame exclusively from Flip,
+and zero framebuffer re-uploads. The line fallback's readback is eliminated.
+Rain remains visible and renderer error counts remain zero. This leaves the
+DIB-based presentation readback as the remaining transfer in this workload.
+
 The optional `tools/nfs-renderer-bench.js --profile` census identified every
 sampled software fallback as primitive 3 (line strip), vertex type 3 (TL),
 count 2: 2,496 calls over 104 frames. Rain is the likely source. Two full-DIB
