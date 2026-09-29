@@ -199,7 +199,7 @@ function analyse(file) {
   for (const [addr, hits] of blocks) {
     const m = modOf(addr);
     const pe = m && peFor(m.name);
-    if (!pe) { add('no-pe', hits); const k = m ? m.name : '?'; noPe.set(k, (noPe.get(k) || 0) + hits); continue; }
+    if (!pe) { add('no-pe', hits); const k = m ? m.name : 'anon (no module: runtime-generated code)'; noPe.set(k, (noPe.get(k) || 0) + hits); continue; }
     const delta = (m.origBase - m.base) | 0;
     const t = terminator(pe, toVa(m, addr), va => entries.has((va - delta) >>> 0));
     let key = t.f;
@@ -211,14 +211,23 @@ function analyse(file) {
       let api = 0, guest = 0, targets = [];
       if (s) for (const [to, n] of s) {
         const tm = modOf(to);
-        const isApi = (t.f.startsWith('call') && to === ret) || !tm;
+        // Outside every module is a host API only when nothing ran there: an
+        // address that is itself an executed block is guest code the guest
+        // generated at runtime (VB6's per-object heap thunks behind
+        // msvbvm60's `jmp [eax+edx]` delegator), labelled `anon:`.
+        const isApi = (t.f.startsWith('call') && to === ret) || (!tm && !entries.has(to));
         if (isApi) api += n; else guest += n;
-        targets.push({ to, n, api: isApi, where: tm ? `${tm.name}+${hex(toVa(tm, to))}` : hex(to) });
+        targets.push({ to, n, api: isApi, where: tm ? `${tm.name}+${hex(toVa(tm, to))}` : (isApi ? hex(to) : `anon:${hex(to)}`) });
       }
       // An IAT slot names its DLL outright: a DLL the guest loaded is guest
       // code, any other is a host API -- even when the edge shows guest code
       // next (DispatchMessage calling back into a wndproc).
       const dll = t.slot !== undefined ? iatMap(pe).get(t.slot) : undefined;
+      // `jmp/call [abs]` is two different things: an IAT slot (import stub,
+      // fixed per process) or a code pointer in a writable global (Unreal's
+      // `engine+0x1037a430 jmp [0x1037f4ec]`, 47 targets) where polymorphism
+      // is the point. Keep them apart.
+      if (t.slot !== undefined && !dll) t.f = t.f.replace('[abs]', '[global]');
       let kind;
       if (dll) kind = loaded.has(dll) || loaded.has(dll.replace(/\.dll$/, '')) ? 'guest' : 'api';
       else if (api + guest > 0) kind = guest >= api ? 'guest' : 'api';
@@ -268,12 +277,23 @@ function analyse(file) {
       return seen;
     };
     cutLoops = [];
+    // Nested/adjacent heads share body blocks; the total is over the union,
+    // so it can never pass 100% (per-head `body` still counts its own SCC).
+    const union = new Set();
+    cutLoops.union = 0;
     for (const r of uv.rows) {
       if (r.v !== 'declined:call-indirect') continue;
       const fw = reach(r.eip, x => fwd.get(x) || []);
       const bw = reach(r.eip, x => pred.get(x) || []);
       let w = 0, n = 0;
-      for (const x of fw) if (bw.has(x)) { w += hitsOf.get(x) || 0; n++; }
+      // A one-block SCC with no self edge is not a loop (Blobby's VCL
+      // `TCanvas.GetHandle` entry is a declined head and nothing else).
+      const scc = [...fw].filter(x => bw.has(x));
+      if (scc.length === 1 && !(fwd.get(r.eip) || new Set()).has(r.eip)) scc.length = 0;
+      for (const x of scc) {
+        w += hitsOf.get(x) || 0; n++;
+        if (!union.has(x)) { union.add(x); cutLoops.union += hitsOf.get(x) || 0; }
+      }
       const m = modOf(r.eip);
       cutLoops.push({ eip: r.eip, where: m ? `${m.name}+${hex(toVa(m, r.eip))}` : hex(r.eip), head: r.hits, body: w, blocks: n });
     }
@@ -354,7 +374,7 @@ if (wins.some(w => w.cutLoops)) {
   say('\nloops the tier declined for call-indirect: head entries / whole loop body (SCC within +-4KB), % of all block entries:');
   for (const w of wins) {
     if (!w.cutLoops) continue;
-    const H = w.cutLoops.reduce((a, c) => a + c.head, 0), B = w.cutLoops.reduce((a, c) => a + c.body, 0);
+    const H = w.cutLoops.reduce((a, c) => a + c.head, 0), B = w.cutLoops.union;
     say(`  ${wlabel(w)}: ${w.cutLoops.length} heads, head ${pct(H, w.total)}%  body ${pct(B, w.total)}%   top: ` +
       w.cutLoops.slice(0, 5).map(c => `${c.where} ${pct(c.body, w.total)}% (${c.blocks} blk)`).join(', '));
   }
