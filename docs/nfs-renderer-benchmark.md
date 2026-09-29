@@ -214,6 +214,29 @@ so this timing must not be substituted into the earlier A/B gap. The stable
 result is the caller count: one line-strip readback and one Flip readback
 per frame in both samples. These probes modify served scripts only.
 
+### GPU line-strip support follow-up (2026-09-29)
+
+`lib/d3dim-gpu.js` now accepts transformed/lit LINESTRIP primitives and
+expands adjacent vertex pairs onto the existing GPU line-list path. Each
+segment retains its first vertex's flat color and the software path's
+untextured, depthless, unblended line semantics. Focused tests cover two-vertex
+strips, longer strips with distinct segment colors, odd-sized line lists,
+incomplete strips, and non-finite unused line depth.
+
+A headful NFS III caller-census run covered 433 frames in two 20-second
+samples: **zero fallbacks**, 24.35 GPU lines/frame, exactly **one readback/frame**
+and zero framebuffer uploads. Every measured readback is now from `Flip`;
+the DrawPrimitive readback disappeared. Rain is visible in the screenshot,
+and there were no renderer errors. Readback/sync averaged 4.97 ms/frame.
+
+The run observed 10.80 FPS, but used diagnostic instrumentation, load 24–30,
+and a different elapsed scene position/triangle count from the earlier run;
+it is not a controlled before/after speedup measurement. The confirmed
+improvement is elimination of the software-line transition, its readback,
+and the subsequent framebuffer re-upload. GPU endpoint coverage inherits
+the existing line-list path and can differ by a pixel from software Bresenham.
+Artifacts: `build/nfs3-linestrip-gpu/`.
+
 ### Local dropdown testing
 
 The debug dropdown includes `nfs3_glide_demo` and `nfs2se_glide_demo`. The
