@@ -2163,6 +2163,14 @@
     (local $wp i32)
     (global.set $cross_thread_send_depth
       (i32.add (global.get $cross_thread_send_depth) (i32.const 1)))
+    (if (call $win16_thread_send_begin (local.get $hwnd) (local.get $msg)
+          (local.get $wparam) (local.get $lparam))
+      (then
+        (global.set $steps (i32.const 0))
+        (global.set $yield_reason (i32.const 0))
+        (global.set $yield_flag (i32.const 0))
+        (global.set $sync_msg_depth (i32.add (global.get $sync_msg_depth) (i32.const 1)))
+        (return (i32.const 1))))
     (local.set $wp (call $wnd_table_get (local.get $hwnd)))
     (if (i32.or (i32.eqz (local.get $wp))
                 (i32.ge_u (local.get $wp) (i32.const 0xFFFF0000)))
@@ -2201,6 +2209,8 @@
   (func (export "complete_thread_send") (param $result i32)
     (local $ret i32)
     (if (i32.ne (global.get $yield_reason) (i32.const 10)) (then (return)))
+    (if (global.get $is_win16)
+      (then (call $win16_thread_send_complete (local.get $result)) (return)))
     (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
     (i32.store offset=0 (global.get $reg_base) (local.get $result))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))

@@ -4521,6 +4521,17 @@
                                 (i32.mul (local.get $index) (i32.const 16)))
                        (local.get $off))))
 
+  ;; Exchange two selector-table entries whole: base, limit, flags, size.
+  (func $win16_gseg_swap (param $a i32) (param $b i32)
+    (local $off i32) (local $t i32)
+    (loop $field
+      (local.set $t (call $win16_gseg_field (local.get $a) (local.get $off)))
+      (call $win16_gseg_store (local.get $a) (local.get $off)
+        (call $win16_gseg_field (local.get $b) (local.get $off)))
+      (call $win16_gseg_store (local.get $b) (local.get $off) (local.get $t))
+      (local.set $off (i32.add (local.get $off) (i32.const 4)))
+      (br_if $field (i32.lt_u (local.get $off) (i32.const 16)))))
+
   (func $win16_gseg_store (param $index i32) (param $off i32) (param $v i32)
     (i32.store (i32.add (i32.add (global.get $WIN16_SEG_TABLE)
                                  (i32.mul (local.get $index) (i32.const 16)))
@@ -4718,7 +4729,28 @@
               (call $g2w (call $win16_far_to_guest (local.get $new) (i32.const 0)))
               (call $g2w (call $win16_far_to_guest (local.get $h) (i32.const 0)))
               (local.get $old))
-            (call $win16_global_free (local.get $h))))
+            ;; Windows moves the block and keeps its handle: the selector stays
+            ;; and only its descriptor base changes. Authorware (Civilization
+            ;; II's PEDIA\GET_INFO.EXE) grows the blocks of an event list and
+            ;; keeps using the selectors it stored in them; handing back a new
+            ;; one and freeing the old let the next GlobalAlloc reuse the old
+            ;; one, and the walk called a far pointer read out of a string.
+            ;; A new pooled run swaps table entries with the old one, so $h
+            ;; names the new memory and the other index takes the old to free.
+            ;; A run that became an arena slot is tied to its index, so that
+            ;; case still moves.
+            (if (i32.and (call $win16_gseg_field (call $win16_sel_to_index (local.get $new)) (i32.const 8))
+                         (global.get $WIN16_SEG_POOLED))
+              (then
+                (local.set $i (call $win16_sel_to_index (local.get $new)))
+                (call $win16_gseg_swap (local.get $index) (local.get $i))
+                (call $win16_global_free (local.get $new))
+                (local.set $new (local.get $h))
+                (if (i32.eq (global.get $sreg_es) (local.get $h))
+                  (then (call $win16_set_sreg (i32.const 0) (local.get $h))))
+                (if (i32.eq (global.get $sreg_ds) (local.get $h))
+                  (then (call $win16_set_sreg (i32.const 3) (local.get $h)))))
+              (else (call $win16_global_free (local.get $h))))))
         (i32.store offset=0 (global.get $reg_base) (local.get $new))
         (call $win16_api_return (i32.const 8))
         (return)))
@@ -7644,7 +7676,9 @@
     (if (i32.eq (local.get $ordinal) (i32.const 249))
       (then (call $win16_word_query (i32.const 2)) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 109))
-      (then (call $win16_PeekMessage) (return (i32.const 1))))
+      (then
+        (if (i32.eqz (call $win16_incoming_send_yield)) (then (call $win16_PeekMessage)))
+        (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 137))
       (then (call $win16_OpenClipboard) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 138))
@@ -7821,7 +7855,9 @@
     (if (i32.eq (local.get $ordinal) (i32.const 308))
       (then (call $win16_DefWindowProc) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 108))
-      (then (call $win16_GetMessage) (return (i32.const 1))))
+      (then
+        (if (i32.eqz (call $win16_incoming_send_yield)) (then (call $win16_GetMessage)))
+        (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 113))
       (then (call $win16_TranslateMessage) (return (i32.const 1))))
     (if (i32.eq (local.get $ordinal) (i32.const 114))
@@ -8062,6 +8098,26 @@
         (call $win16_set_sreg (i32.const 1) (local.get $ret_sel))
         (global.set $eip (i32.add (global.get $seg_base_cs) (local.get $ret_ip)))
         (return)))
+    ;; A window of another task. Its procedure expects that task's stack and
+    ;; its per-instance state, so it cannot run here: Civ2's DefWindowProc
+    ;; WM_ACTIVATE set focus to Get_Info's window and ran Get_Info's WM_SETFOCUS
+    ;; on Civ2's stack with Civ2's DGROUP, which read a garbage handle. Park
+    ;; this task on the owner-thread send the 32-bit side uses, with the far
+    ;; return on the stack for complete_thread_send to resume through.
+    (local.set $data_sel (call $wnd_get_thread (call $win16_h32 (local.get $hwnd))))
+    (if (i32.and (i32.ne (local.get $data_sel) (i32.const 0))
+                 (i32.ne (local.get $data_sel) (global.get $current_thread_id)))
+      (then
+        (call $win16_push16 (local.get $ret_sel))
+        (call $win16_push16 (local.get $ret_ip))
+        (global.set $send_target_tid (local.get $data_sel))
+        (global.set $send_hwnd (call $win16_h32 (local.get $hwnd)))
+        (global.set $send_msg (local.get $msg))
+        (global.set $send_wparam (local.get $wparam))
+        (global.set $send_lparam (local.get $lparam))
+        (global.set $send_post_kind (i32.const 0))
+        (call $win16_thread_send_park)
+        (return)))
     (local.set $lparam (call $win16_msg_lparam16 (local.get $msg) (local.get $lparam)))
     (call $win16_push16 (local.get $hwnd))
     (call $win16_push16 (local.get $msg))
@@ -8093,6 +8149,81 @@
       (then (local.set $entry (i32.add (local.get $entry) (i32.const 3)))))
     (global.set $eip (local.get $entry))
     (global.set $steps (i32.const 0)))
+
+  ;; ---- Sends between Win16 tasks ----
+  ;;
+  ;; The sender parks on $WIN16_THREAD_SEND_PARK with yield 10 until the
+  ;; scheduler has run the call on the owner's instance; complete_thread_send
+  ;; then pops the far return and resumes there (a continuation offset if the
+  ;; send came from inside an API). The owner enters the procedure from
+  ;; thread_send_begin with $WIN16_THREAD_SEND_RET as its far return, above a
+  ;; record of the segment registers the interrupted message call had.
+  (global $WIN16_THREAD_SEND_PARK i32 (i32.const 0xFFDC))
+  (global $WIN16_THREAD_SEND_RET i32 (i32.const 0xFFE0))
+
+  (func $win16_thread_send_park
+    (call $win16_set_sreg (i32.const 1) (global.get $WIN16_THUNK_SEL))
+    (global.set $eip (i32.add (global.get $seg_base_cs) (global.get $WIN16_THREAD_SEND_PARK)))
+    (global.set $yield_reason (i32.const 10))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0)))
+
+  ;; Owner side: enter the procedure for a send from another task. Returns 0
+  ;; when the window is not a 16-bit procedure of this task.
+  (func $win16_thread_send_begin (param $hwnd i32) (param $msg i32)
+        (param $wparam i32) (param $lparam i32) (result i32)
+    (local $proc i32)
+    (if (i32.eqz (global.get $is_win16)) (then (return (i32.const 0))))
+    (local.set $proc (call $wnd_table_get (local.get $hwnd)))
+    (if (i32.or (i32.eqz (i32.shr_u (local.get $proc) (i32.const 16)))
+                (i32.ge_u (local.get $proc) (i32.const 0xFFFE0000)))
+      (then (return (i32.const 0))))
+    (call $win16_push16 (global.get $sreg_es))
+    (call $win16_push16 (global.get $sreg_ds))
+    (call $win16_push16 (global.get $sreg_cs))
+    (call $win16_enter_wndproc (local.get $proc) (call $win16_h16 (local.get $hwnd))
+      (local.get $msg) (local.get $wparam) (local.get $lparam)
+      (global.get $WIN16_THUNK_SEL) (global.get $WIN16_THREAD_SEND_RET))
+    (i32.const 1))
+
+  ;; The procedure returned DX:AX. Give the scheduler the LRESULT and the
+  ;; message call its segment registers back, and stop the nested run.
+  (func $win16_thread_send_return
+    (local $sp i32)
+    (i32.store offset=0 (global.get $reg_base)
+      (i32.or (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF))
+              (i32.shl (i32.load offset=8 (global.get $reg_base)) (i32.const 16))))
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (call $win16_set_sreg (i32.const 1) (call $gl16 (local.get $sp)))
+    (call $win16_set_sreg (i32.const 3) (call $gl16 (i32.add (local.get $sp) (i32.const 2))))
+    (call $win16_set_sreg (i32.const 0) (call $gl16 (i32.add (local.get $sp) (i32.const 4))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $sp) (i32.const 6)))
+    (global.set $eip (i32.const 0)))
+
+  ;; Sender side: the owner has answered. Resume at the far return the send
+  ;; parked with.
+  (func $win16_thread_send_complete (param $result i32)
+    (local $sp i32)
+    (local.set $sp (i32.load offset=16 (global.get $reg_base)))
+    (i32.store offset=0 (global.get $reg_base) (i32.and (local.get $result) (i32.const 0xFFFF)))
+    (i32.store offset=8 (global.get $reg_base) (i32.shr_u (local.get $result) (i32.const 16)))
+    (call $win16_set_sreg (i32.const 1) (call $gl16 (i32.add (local.get $sp) (i32.const 2))))
+    (global.set $eip (i32.add (global.get $seg_base_cs) (call $gl16 (local.get $sp))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $sp) (i32.const 4)))
+    (global.set $yield_reason (i32.const 0))
+    (global.set $yield_flag (i32.const 0)))
+
+  ;; Win16 message calls are where a send from another task is delivered:
+  ;; park on the call's own thunk with its frame intact, let the scheduler run
+  ;; the send, and the same call runs again.
+  (func $win16_incoming_send_yield (result i32)
+    (if (i32.eqz (global.get $incoming_send_pending)) (then (return (i32.const 0))))
+    (call $win16_set_sreg (i32.const 1) (global.get $WIN16_THUNK_SEL))
+    (global.set $eip (i32.add (global.get $seg_base_cs) (global.get $win16_cur_thunk_off)))
+    (global.set $yield_reason (i32.const 17))
+    (global.set $yield_flag (i32.const 1))
+    (global.set $steps (i32.const 0))
+    (i32.const 1))
 
   ;; ---- Continuation records ----
   ;;
@@ -8294,6 +8425,11 @@
         (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 1))))))
     ;; The index is a signed word on the wire and a signed dword to the handler.
     (local.set $index (i32.shr_s (i32.shl (local.get $index) (i32.const 16)) (i32.const 16)))
+    ;; GWW_HWNDPARENT is a window handle, which has a width of its own: the
+    ;; low word of a 32-bit HWND names no 16-bit window (Authorware's
+    ;; ScreenToClient on its dialog's parent got 0x8003 for 0x18003).
+    (if (i32.and (local.get $set) (i32.eq (local.get $index) (i32.const -8)))
+      (then (local.set $value (call $win16_h32 (local.get $value)))))
     (call $win16_call32_begin (i32.const 3))
     (if (local.get $set)
       (then (call $handle_SetWindowLongA (local.get $hwnd) (local.get $index)
@@ -8306,6 +8442,9 @@
     (if (i32.and (i32.eq (local.get $index) (i32.const -4))
                  (i32.eqz (call $win16_is_far_proc (i32.load offset=0 (global.get $reg_base)))))
       (then (i32.store offset=0 (global.get $reg_base) (call $win16_builtin_wndproc_for (local.get $hwnd)))))
+    (if (i32.eq (local.get $index) (i32.const -8))
+      (then (i32.store offset=0 (global.get $reg_base)
+        (call $win16_h16 (i32.load offset=0 (global.get $reg_base))))))
     ;; A word answer is a word; a long one comes back in DX:AX like any other.
     (if (local.get $word)
       (then (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF))))
@@ -9864,9 +10003,10 @@
     (i32.store offset=0 (global.get $reg_base) (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))
     (call $win16_api_return (i32.const 10)))
 
-  ;; USER.6 PostQuitMessage(nExitCode).
+  ;; USER.6 PostQuitMessage(nExitCode). Flag 2 is a real posted quit, which
+  ;; GetMessage and PeekMessage both honour (see $handle_PostQuitMessage).
   (func $win16_PostQuitMessage
-    (global.set $quit_flag (i32.const 1))
+    (global.set $quit_flag (i32.const 2))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0))
     (call $win16_api_return (i32.const 2)))
 
@@ -11204,13 +11344,22 @@
     (call $win16_api_return (i32.const 4)))
 
   ;; USER.53 DestroyWindow(hWnd).
+  ;;
+  ;; Destroying a window never quits a Win16 task: its WM_DESTROY handler posts
+  ;; the quit itself (flag 2, below). The 32-bit handler guesses a quit (flag 1)
+  ;; when the window is $main_hwnd, and a task whose real main window is still
+  ;; hidden has had a throwaway top-level promoted to that -- Civ2's Get_Info
+  ;; (Authorware) shows and destroys a probe window at startup and got WM_QUIT.
   (func $win16_DestroyWindow
-    (local $hwnd i32)
+    (local $hwnd i32) (local $quit i32)
     (local.set $hwnd (call $win16_h32 (call $win16_arg16 (i32.const 0))))
+    (local.set $quit (global.get $quit_flag))
     (call $win16_call32_begin (i32.const 1))
     (call $handle_DestroyWindow (local.get $hwnd)
       (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
     (call $win16_call32_end)
+    (if (i32.eq (global.get $quit_flag) (i32.const 1))
+      (then (global.set $quit_flag (local.get $quit))))
     (i32.store offset=0 (global.get $reg_base) (i32.const 1))
     (call $win16_api_return (i32.const 2)))
 
@@ -16030,6 +16179,11 @@
     ;; table, so no import can ever be assigned it.
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_OFFSET))
       (then (call $win16_cont_resume) (return)))
+    ;; A send to another task's window: stay parked until it is answered.
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_THREAD_SEND_PARK))
+      (then (call $win16_thread_send_park) (return)))
+    (if (i32.eq (local.get $thunk_off) (global.get $WIN16_THREAD_SEND_RET))
+      (then (call $win16_thread_send_return) (return)))
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_DEFER))
       (then (call $win16_defer_continue) (return)))
     (if (i32.eq (local.get $thunk_off) (global.get $WIN16_CONT_DEFPOS))
