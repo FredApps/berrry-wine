@@ -343,6 +343,26 @@ CASES.push(
            0x58, [0x31, 0xC0], [0x31, 0xD2], [0x31, 0xED], 0xC3],
   },
 );
+// --uop-iat: call [abs], the import-table form
+CASES.push(
+  {
+    // call [abs] through an import slot holding a guest function
+    name: 'iat-call', regs: { ecx: N }, iat: true, hotOnly: true, head: 'l', want: { iatPass: '>0', iatFail: 0 },
+    code: (a) => [CALL('s1'), ...CALLEE1, L('s1'), 0x58, [0xA3, ...d32(IAT_SLOT(a))],
+           L('l'), [0xFF, 0x15, ...d32(IAT_SLOT(a))], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'),
+           [0x31, 0xC0], [0xA3, ...d32(IAT_SLOT(a))], 0xC3],
+  },
+  {
+    // an import slot holding an API thunk, on a path never taken: the call
+    // is refused (the thunk zone stays with the threaded code) and the loop
+    // around it still compiles, with that path an exit
+    name: 'iat-thunk', regs: { ecx: N }, iat: true, hotOnly: true, head: 'l', want: { icRej: '>0', iatSites: 0 },
+    code: (a) => [[0xC7, 0x05, ...d32(IAT_SLOT(a)), ...d32(a.thunk)],
+           L('l'), [0x83, 0xC6, 0x04], [0x03, 0x1E], [0x83, 0xF9, 0xFF], J(cc.Z, 'bad'), 0x49, J(cc.NZ, 'l'),
+           [0xC7, 0x05, ...d32(IAT_SLOT(a)), 0, 0, 0, 0], 0xC3,
+           L('bad'), [0xFF, 0x15, ...d32(IAT_SLOT(a))], 0xC3],
+  },
+);
 
 // ---- --uop-trace-heads (07e $uc_form_trace) ----
 // A head with no back edge: the loop around it runs an instruction the tier
