@@ -3,6 +3,9 @@
 Status: original-renderer race/input acceptance verified in Chrome with both
 WebGL and native WAT software rendering.
 
+Comparative measurements and reproducible runners are documented in
+[the renderer benchmark report](../nfs-renderer-benchmark.md).
+
 Use the existing `nfs3_demo` fixture and keep its renderer DLLs unmodified.
 Set `HKLM\Software\Electronic Arts\Need For Speed III Demo` values:
 

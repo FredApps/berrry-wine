@@ -18,6 +18,26 @@ Glide-only Special Edition. CLI and cooperative browser runs render its
 input: subsequent frames show the race clock advancing, cockpit view, and
 changed car position. This verifies race entry and input, not a full race.
 
+The separately acquired public NFS II SE 3Dfx demo contains `NFS2SEA.EXE`
+(SHA-256 `7e357542a3f7a3a67f6fac06c299e6bdc23529f0b9a16d9e7639079e56c039d9`).
+Use `tools/nfs2-renderer-bench.js --help` for its source/preparation command.
+It includes TR04 assets rather than the original demo's TR03/Pacific Spirit,
+so these demos do not provide an isolated software-versus-Glide comparison.
+
+Set the supported guest environment variable `THRASH_DRIVER=1` to select
+Glide. The selector at `0x4b5b50` parses the value as a decimal driver index;
+1 is Glide, 2 is PowerVR. Automatic probing currently picks PowerVR because
+the missing `sgl.dll` receives the loader's synthetic success handle; its
+subsequent missing exports cause startup to exit. Explicit selection avoids
+that unrelated route without modifying the executable.
+
+All 50 decorated Glide exports resolve after adding `grTexCombineFunction`
+and `guFogGenerateExp`. Driver index `0x4d4fc8` is 1, init pointer `0x5553f8`
+is `0x48dd34`, and `0x4d4978` marks completed video initialization. The public
+demo reaches the tropical coastal race directly, without the original demo's
+menu walk. Benchmark screenshots and timings are in
+[the renderer benchmark report](../nfs-renderer-benchmark.md).
+
 ```sh
 node tools/profile-web-frames.js --app=nfs2_demo --warmup=2 --seconds=25 '--guest-script=click:130:310@35:0.3,key:13@5:0.3,key:38@15:3' --film=/tmp/nfs2-race:10
 ```
