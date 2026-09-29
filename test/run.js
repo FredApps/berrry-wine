@@ -784,6 +784,15 @@ const HOT_BLOCK_DUMP = getArg('hot-block-dump', null);
 // --hist-json=FILE: the histogram window as the JSON tools/hot-loop-census.js
 // reads (the browser probe's shape), so a headless run feeds the same census.
 const HIST_JSON = getArg('hist-json', null);
+// --hist-json-blocks=N: how many blocks --hist-json keeps (default 400, 0 =
+// every block the window saw). tools/call-form-weighted.js wants all of them:
+// the tail is where a polymorphic call site's many small targets live.
+const HIST_JSON_BLOCKS = parseInt(getArg('hist-json-blocks', '400'), 10) || 0;
+// --edge-hist: also record every (previous block, this block) transfer in the
+// histogram window ($edge_hist_record, 04-cache.wat) and write them to
+// --hist-json as `edges`. That is what says how many distinct targets an
+// indirect call / jmp / ret site actually reached (tools/call-form-weighted.js).
+const EDGE_HIST = hasFlag('edge-hist');
 // --handler-hist-pairs=N: rows in the "top pairs" list (default 12). Raise it when summing
 // an idiom family (every cmp->jcc pair) across apps; the top 12 stops mid-family.
 const HANDLER_HIST_PAIRS = parseInt(getArg('handler-hist-pairs', '12'));
@@ -5833,6 +5842,7 @@ async function main() {
   let handlerHistExports = null;
   let handlerHistArmed = false;
   let handlerHistDone = false;
+  let handlerHistUopAtArm = null;
   const selectHandlerHistWindow = () => {
     if (handlerHistThreadIndex >= HANDLER_HIST_THREADS.length) {
       handlerHistDone = true;
@@ -5859,7 +5869,13 @@ async function main() {
     handlerHistExports = findHandlerHistExports();
     if (!handlerHistExports || !handlerHistExports.reset_handler_hist ||
         !handlerHistExports.set_handler_hist_enabled) return;
+    if (EDGE_HIST && handlerHistExports.set_edge_hist) handlerHistExports.set_edge_hist(1);
     handlerHistExports.reset_handler_hist();
+    // The uop tier's block counter at the window's start: blocks run INSIDE
+    // uop programs never reach the hot-block histogram, so the tier's share of
+    // the window is (uop blocks) / (uop blocks + threaded block entries).
+    handlerHistUopAtArm = handlerHistExports.uop_stats
+      ? { blocks: handlerHistExports.uop_stats(5) >>> 0, enters: handlerHistExports.uop_stats(4) >>> 0 } : null;
     handlerHistExports.set_handler_hist_enabled(1);
     handlerHistArmed = true;
     console.log(`[handler-hist] armed T${handlerHistThread} at batch ${batch}`);
@@ -5874,7 +5890,8 @@ async function main() {
     // counter array or the total drops every time a fusion lands.
     const slots = e.get_handler_hist_slots ? (e.get_handler_hist_slots() | 0) : count;
     const base = (e.get_handler_hist_base() >>> 2) >>> 0;
-    const pairBase = e.get_handler_pair_hist_base
+    // --edge-hist borrows the pair matrix's memory, so there are no pairs.
+    const pairBase = e.get_handler_pair_hist_base && !EDGE_HIST
       ? ((e.get_handler_pair_hist_base() >>> 2) >>> 0) : 0;
     const handlers = [];
     let total = 0;
@@ -5972,13 +5989,30 @@ async function main() {
           const ext = (m.loadAddr >>> 0) === exeLoad ? '.exe' : '.dll';
           mods[name + ext] = [m.loadAddr >>> 0, m.origBase >>> 0];
         }
+        let uop = null;
+        if (handlerHistUopAtArm && e.uop_stats) {
+          uop = { blocks: ((e.uop_stats(5) >>> 0) - handlerHistUopAtArm.blocks) >>> 0,
+            enters: ((e.uop_stats(4) >>> 0) - handlerHistUopAtArm.enters) >>> 0 };
+        }
+        let edges;
+        if (EDGE_HIST && e.get_edge_hist_base) {
+          const eb = (e.get_edge_hist_base() >>> 2) >>> 0;
+          const en = e.get_edge_hist_count() | 0;
+          edges = [];
+          for (let i = 0; i < en; i++) {
+            const n = u32[eb + i * 4 + 2] >>> 0;
+            if (n) edges.push([(u32[eb + i * 4] >>> 0).toString(16), (u32[eb + i * 4 + 1] >>> 0).toString(16), n]);
+          }
+          edges.sort((a, b) => b[2] - a[2]);
+          console.log(`  edges: ${edges.length} distinct, ${e.get_edge_hist_collisions() >>> 0} dropped (table full)`);
+        }
         fs.writeFileSync(jsonPath, JSON.stringify({
           source: 'run.js', thread: handlerHistThread,
           window: { start: handlerHistWindowStart, stop: batch },
           ops: total, handlers: handlers.slice(0, 30).map(r => [r.id, r.hits]),
           blockHits: blockTotal, distinct: blocks.length,
-          blocks: blocks.slice(0, 400).map(r => [r.addr.toString(16), r.hits]),
-          mods,
+          blocks: (HIST_JSON_BLOCKS ? blocks.slice(0, HIST_JSON_BLOCKS) : blocks).map(r => [r.addr.toString(16), r.hits]),
+          mods, ...(uop ? { uop } : {}), ...(edges ? { edges, edgeDrops: e.get_edge_hist_collisions() >>> 0 } : {}),
         }));
         console.log(`  wrote histogram JSON to ${jsonPath}`);
       }
