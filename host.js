@@ -1194,6 +1194,9 @@ class WineAssembly {
           Math.floor((Date.now() - self.wallClockMs) / 86400000) * 86400000)
         : undefined,
       createD3DRenderWorker: () => self._createD3DRenderWorker(),
+      createRenderEndpoint: options => self._createRenderWorkerEndpoint(options),
+      createRenderWorker: options => self._createRenderWorkerConsumer(options),
+      get sharedRenderWorkerEnabled() { return !!self.guestWorker; },
       apiTable: self.apiTable,
       get renderer() { return self.renderer; },
       get resourceJson() { return self.resourceJson; },
@@ -2757,6 +2760,8 @@ class WineAssembly {
           !(window.__waTraceHostNames && [...window.__waTraceHostNames].includes('dx_trace')),
         d3dRenderWorker: window.WINE_D3D_RENDER_WORKER === true,
         d3dimGpu: window.WINE_D3DIM_GPU === true,
+        sharedRenderWorker: true,
+        createRenderEndpoint: options => self._createRenderWorkerEndpoint(options),
         // ?rpc-census: count every host import a guest thread hands back to
         // this thread (broker.stats().calls) — the browser twin of run.js's
         // --rpc-census, and the first question when Worker mode is slower.
@@ -3751,6 +3756,59 @@ class WineAssembly {
   // they still point at us: a later app has already overwritten them with its
   // own and must not be unwired by a straggling stop().
   _releaseGuestMemory() {
+    if (this._renderWorkerManagerReady && !this._renderWorkerRetired) {
+      if (!this._renderWorkerRetirement) {
+        // Keep the module, guest memory and allocator owner alive until every
+        // API endpoint is closed and the ONE process render heap is returned.
+        this._renderWorkerRetirement = Promise.resolve().then(async () => {
+          const errors = [];
+          let manager = this._renderWorkerManager;
+          const preparation = (async () => {
+            if (this.hostCtx && this.hostCtx.flushGLCommands && !this._glCommandsRetired) {
+              try { await this.hostCtx.flushGLCommands(this.instance && this.instance.exports); }
+              catch (error) { errors.push(error); }
+              finally { this._glCommandsRetired = true; }
+            }
+            const ctx = this.hostCtx;
+            // Defer invocation as well as awaiting: one synchronous close error
+            // must not prevent the remaining API endpoints from retiring.
+            const retirements = ['closeGlide', 'closeD3DRender', 'closeGLRender', 'closeD3DIMRender']
+              .filter(name => ctx && typeof ctx[name] === 'function')
+              .map(name => Promise.resolve().then(() => ctx[name]()));
+            const results = await Promise.allSettled(retirements);
+            for (const result of results) if (result.status === 'rejected') errors.push(result.reason);
+            try { manager = await this._renderWorkerManagerReady; }
+            catch (error) { errors.push(error); }
+          })();
+          let preparationTimer;
+          try {
+            await Promise.race([preparation, new Promise((_, reject) => {
+              preparationTimer = setTimeout(() => reject(new Error('Render endpoint drain timed out')),
+                this._renderWorkerPreparationTimeoutMs ?? 10000);
+            })]);
+          } catch (error) {
+            errors.push(error);
+            manager ||= this._renderWorkerManager;
+            // No returned manager means initialization may still create one.
+            // Retain its allocator owner instead of freeing live memory.
+            if (!manager) throw error;
+          } finally { clearTimeout(preparationTimer); }
+          // A rejected factory has no worker/native heap to retire. Once a
+          // manager exists, failed retirement must retain the allocator owner.
+          for (const error of errors) this.logToUI(`[render] cleanup reported: ${error && error.message}`);
+          if (manager) await manager.stop();
+          this._renderWorkerRetired = true;
+          this._d3dRenderRetired = true;
+          this._renderWorkerManager = null;
+          this._renderWorkerManagerReady = null;
+          if (this._stopped) this._releaseGuestMemory();
+        }).catch(error => {
+          this._renderWorkerRetirementError = error;
+          this.logToUI(`[render] shared worker retirement failed: ${error && error.message}`);
+        });
+      }
+      return;
+    }
     if (this.hostCtx && this.hostCtx.closeGlide) {
       try { this.hostCtx.closeGlide(); }
       catch (error) { this.logToUI(`[Glide] teardown failed: ${error && error.message}`); }
@@ -3833,16 +3891,38 @@ class WineAssembly {
   }
 
   async _createD3DRenderWorker() {
+    return this._createRenderWorkerConsumer({ api: 'neutral', backend: 'software' });
+  }
+
+  _getRenderWorkerManager() {
+    if (this._renderWorkerRetired || this._stopped) return Promise.reject(new Error('Render process is stopped'));
+    if (this._renderWorkerManagerReady) return this._renderWorkerManagerReady;
     const memory = this.memory, module = this._wasmModule, e = this.instance && this.instance.exports;
-    if (!memory || !module || !e || typeof D3DCommandStream === 'undefined')
-      throw new Error('D3D9 software worker runtime is unavailable');
-    const response = await fetch(WineAssembly.versionedUrl('lib/host-import-sigs.generated.json'));
-    if (!response.ok) throw new Error(`render worker signatures HTTP ${response.status}`);
-    const sigs = (await response.json()).sigs;
-    const worker = new Worker(WineAssembly.versionedUrl('lib/d3d-render-worker.js'));
-    return new D3DCommandStream.WorkerConsumer(worker, {module,memory,sigs,
-      imageBase:e.get_image_base() >>> 0, sourceVersion:globalThis.WINE_SOURCE_VERSION,
-      reclaimHeap: head => e.d3d_render_adopt_free_list(head)});
+    this._renderWorkerManagerReady = Promise.resolve().then(async () => {
+      if (!memory || !module || !e || typeof RenderWorker === 'undefined')
+        throw new Error('Shared render Worker runtime is unavailable');
+      const response = await fetch(WineAssembly.versionedUrl('lib/host-import-sigs.generated.json'));
+      if (!response.ok) throw new Error(`render worker signatures HTTP ${response.status}`);
+      const sigs = (await response.json()).sigs;
+      if (this._stopped || this._renderWorkerRetired) throw new Error('Render process stopped during initialization');
+      return this._renderWorkerManager = new RenderWorker.Manager({ module, memory, sigs,
+        workerUrl: WineAssembly.versionedUrl('lib/d3d-render-worker.js'),
+        imageBase: e.get_image_base() >>> 0, sourceVersion: globalThis.WINE_SOURCE_VERSION,
+        reclaimHeap: head => e.d3d_render_adopt_free_list(head) });
+    });
+    return this._renderWorkerManagerReady;
+  }
+
+  async _createRenderWorkerEndpoint(options) {
+    const manager = await this._getRenderWorkerManager();
+    const endpoint = manager.createEndpoint(options);
+    await endpoint.ready;
+    return endpoint;
+  }
+
+  async _createRenderWorkerConsumer(options) {
+    if (typeof D3DCommandStream === 'undefined') throw new Error('Render command stream is unavailable');
+    return new D3DCommandStream.WorkerConsumer(await this._createRenderWorkerEndpoint(options));
   }
 
   _beginD3DRenderWait(token) {

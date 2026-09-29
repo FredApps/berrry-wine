@@ -15,8 +15,12 @@ const { PNG } = require('pngjs');
 const ROOT = path.join(__dirname, '..');
 const CHROME = process.env.CHROME || '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 const EXE = path.join(ROOT, 'test/binaries/candidates/quake-2-demo-installer/installed-extracted/Install/Data/quake2.exe');
-const OUT = path.join(ROOT, 'scratch', 'quake2-gl-web');
+const OUT = process.env.QUAKE2_WEB_OUT || path.join(ROOT, 'scratch', 'quake2-gl-web');
 const THREADED = process.env.QUAKE2_WEB_THREADS === '1';
+const GL_RENDERER = process.env.QUAKE2_WEB_GL_RENDERER || 'webgl';
+assert(['webgl', 'software'].includes(GL_RENDERER), 'QUAKE2_WEB_GL_RENDERER must be webgl or software');
+assert(GL_RENDERER !== 'software' || THREADED,
+  'software presentation capture currently requires QUAKE2_WEB_THREADS=1');
 
 if (!fs.existsSync(CHROME) || !fs.existsSync(EXE)) {
   console.log('SKIP Chrome or local Quake II payload is absent');
@@ -24,20 +28,15 @@ if (!fs.existsSync(CHROME) || !fs.existsSync(EXE)) {
 }
 
 function server() {
-  return startSharedStaticServer({ root: ROOT, crossOriginIsolated: THREADED });
+  return startSharedStaticServer({ root: ROOT, crossOriginIsolated: THREADED,
+    allowedRealRoots: ['test/binaries', 'fonts'].map(dir => path.join(ROOT, dir))
+      .filter(dir => fs.existsSync(dir)) });
 }
 
 async function frame(page) {
   return page.evaluate(() => {
-    const win = Object.values(sharedRenderer.windows || {}).find(value =>
-      value && value.visible && /Quake 2/i.test(value.title || '') &&
-      value._gpuFrameLayer && value._gpuFrameLayer.backend);
-    if (!win) return null;
-    const layer = win._gpuFrameLayer, gl = layer.backend.gl;
-    const width = layer.canvas.width, height = layer.canvas.height;
-    const pixels = new Uint8Array(width * height * 4);
-    gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-    return { width, height, pixels: Array.from(pixels), writeSeq: layer.writeSeq | 0 };
+    const value = window.__q2ReadFrame();
+    return value && { ...value, pixels: Array.from(value.pixels) };
   });
 }
 
@@ -55,6 +54,8 @@ function metrics(value) {
 }
 
 function changed(a, b) {
+  assert(a && b && a.width === b.width && a.height === b.height,
+    'motion comparison requires two frames of the same dimensions');
   let result = 0;
   for (let i = 0; i < a.pixels.length; i += 4) {
     const d = Math.abs(a.pixels[i] - b.pixels[i]) +
@@ -98,13 +99,39 @@ function save(value, file) {
       if (/UNIMPLEMENTED API:|RuntimeError|LinkError|Thread \d+ crashed|FATAL:/i.test(text)) errors.push(text);
       if (process.env.VERBOSE_GL && /gl|wgl|Quake/i.test(text)) console.log(text);
     });
-    await page.goto(`http://127.0.0.1:${web.address().port}/index.html?debug&no-log`,
+    await page.goto(`http://127.0.0.1:${web.address().port}/index.html?debug&no-log&gl-renderer=${GL_RENDERER}`,
       { waitUntil: 'domcontentloaded', timeout: 120000 });
     await page.waitForFunction(() => typeof launchApp === 'function' && apps.quake2_demo,
       { timeout: 30000 });
     assert.strictEqual(await page.evaluate(() => typeof GLCommandStream.Encoder), 'undefined',
       'production browser must not load the test-only JavaScript encoder');
     await page.evaluate(() => {
+      // Keep the existing bottom-up capture contract, including lower-half
+      // coverage and PNG orientation. Shared workers publish top-down 2D
+      // snapshots; cooperative WebGL exposes its bottom-up framebuffer.
+      window.__q2ReadFrame = () => {
+        const win = Object.values(sharedRenderer.windows || {}).find(value =>
+          value && value.visible && /Quake 2/i.test(value.title || '') &&
+          value._gpuFrameLayer?.canvas);
+        if (!win) return null;
+        const layer = win._gpuFrameLayer;
+        const { width, height } = layer.canvas;
+        if (!width || !height) return null;
+        const pixels = new Uint8Array(width * height * 4);
+        const gl = layer.backend?.gl;
+        if (gl) gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+        else {
+          const ctx = layer.canvas.getContext('2d');
+          if (!ctx) throw new Error('Quake presentation has neither WebGL nor a 2D snapshot');
+          const topDown = ctx.getImageData(0, 0, width, height).data;
+          const stride = width * 4;
+          for (let y = 0; y < height; y++) {
+            pixels.set(topDown.subarray(y * stride, (y + 1) * stride), (height - 1 - y) * stride);
+          }
+        }
+        return { width, height, pixels, writeSeq: layer.writeSeq | 0,
+          capture: gl ? 'webgl-readback' : 'worker-snapshot' };
+      };
       window.__q2GlFault = null;
       const original = OpenGLCompat.OpenGLHostBridge.prototype.call;
       OpenGLCompat.OpenGLHostBridge.prototype.call = function(opcode, stack, aux) {
@@ -162,14 +189,9 @@ function save(value, file) {
     // large neutral-grey metal buttons occupy thousands of pixels in the
     // centre; console glyphs on a brown/black field cannot match this.
     await page.waitForFunction(() => {
-      const win = Object.values(sharedRenderer.windows || {}).find(value =>
-        value && /Quake 2/i.test(value.title || '') && value._gpuFrameLayer &&
-        value._gpuFrameLayer.backend);
-      if (!win) return false;
-      const layer = win._gpuFrameLayer, gl = layer.backend.gl;
-      const width = layer.canvas.width, height = layer.canvas.height;
-      const pixels = new Uint8Array(width * height * 4);
-      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      const value = window.__q2ReadFrame();
+      if (!value) return false;
+      const { width, height, pixels } = value;
       let neutral = 0;
       for (let y = Math.floor(height * 0.18); y < Math.floor(height * 0.72); y++) {
         for (let x = Math.floor(width * 0.2); x < Math.floor(width * 0.8); x++) {
@@ -181,16 +203,11 @@ function save(value, file) {
       return neutral > width * height * 0.025;
     }, { timeout: 180000, polling: 1000 });
     const menu = await frame(page);
+    assert.strictEqual(menu.capture, THREADED ? 'worker-snapshot' : 'webgl-readback',
+      'requested execution mode must use its actual presentation route');
     save(menu, path.join(OUT, 'main-menu.png'));
     await page.evaluate(() => {
-      const win = Object.values(sharedRenderer.windows || {}).find(value =>
-        value && /Quake 2/i.test(value.title || '') && value._gpuFrameLayer &&
-        value._gpuFrameLayer.backend);
-      const layer = win._gpuFrameLayer, gl = layer.backend.gl;
-      const pixels = new Uint8Array(layer.canvas.width * layer.canvas.height * 4);
-      gl.readPixels(0, 0, layer.canvas.width, layer.canvas.height,
-        gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-      window.__q2GlMainMenu = pixels;
+      window.__q2GlMainMenu = window.__q2ReadFrame().pixels;
     });
     // GAME is selected on the main menu and the first game-menu item starts a
     // new Easy game. Both keys travel through the normal browser input path.
@@ -198,21 +215,17 @@ function save(value, file) {
     await new Promise(resolve => setTimeout(resolve, 750));
     await page.keyboard.up('Enter');
     await page.waitForFunction(() => {
-      const win = Object.values(sharedRenderer.windows || {}).find(value =>
-        value && /Quake 2/i.test(value.title || '') && value._gpuFrameLayer &&
-        value._gpuFrameLayer.backend);
-      if (!win || !window.__q2GlMainMenu) return false;
-      const layer = win._gpuFrameLayer, gl = layer.backend.gl;
-      const pixels = new Uint8Array(layer.canvas.width * layer.canvas.height * 4);
-      gl.readPixels(0, 0, layer.canvas.width, layer.canvas.height,
-        gl.RGBA, gl.UNSIGNED_BYTE, pixels);
+      const value = window.__q2ReadFrame();
+      if (!value || !window.__q2GlMainMenu) return false;
+      const { width, height, pixels } = value;
+      if (pixels.length !== window.__q2GlMainMenu.length) return false;
       let changed = 0;
       for (let i = 0; i < pixels.length; i += 4) {
         if (Math.abs(pixels[i] - window.__q2GlMainMenu[i]) +
             Math.abs(pixels[i + 1] - window.__q2GlMainMenu[i + 1]) +
             Math.abs(pixels[i + 2] - window.__q2GlMainMenu[i + 2]) > 24) changed++;
       }
-      return changed > layer.canvas.width * layer.canvas.height * 0.02;
+      return changed > width * height * 0.02;
     }, { timeout: 30000, polling: 250 });
     const gameMenu = await frame(page);
     save(gameMenu, path.join(OUT, 'game-menu.png'));
@@ -226,20 +239,15 @@ function save(value, file) {
     while (Date.now() < gameplayDeadline) {
       gameplayState = await page.evaluate(() => {
         if (window.__q2GlFault) return { fault: window.__q2GlFault, ready: false };
-      const win = Object.values(sharedRenderer.windows || {}).find(value =>
-        value && /Quake 2/i.test(value.title || '') && value._gpuFrameLayer &&
-        value._gpuFrameLayer.backend);
-      if (!win) return { ready: false };
-      const layer = win._gpuFrameLayer, gl = layer.backend.gl;
-      const width = layer.canvas.width, height = layer.canvas.height;
-      const pixels = new Uint8Array(width * height * 4);
-      gl.readPixels(0, 0, width, height, gl.RGBA, gl.UNSIGNED_BYTE, pixels);
-      let lowerLit = 0;
-      const lowerBytes = width * Math.floor(height / 2) * 4;
-      for (let i = 0; i < lowerBytes; i += 4) {
-        if (pixels[i] >= 8 || pixels[i + 1] >= 8 || pixels[i + 2] >= 8) lowerLit++;
-      }
-      return { ready: lowerLit > width * height * 0.08 };
+        const value = window.__q2ReadFrame();
+        if (!value) return { ready: false };
+        const { width, height, pixels } = value;
+        let lowerLit = 0;
+        const lowerBytes = width * Math.floor(height / 2) * 4;
+        for (let i = 0; i < lowerBytes; i += 4) {
+          if (pixels[i] >= 8 || pixels[i + 1] >= 8 || pixels[i + 2] >= 8) lowerLit++;
+        }
+        return { ready: lowerLit > width * height * 0.08 };
       });
       if (gameplayState.fault || gameplayState.ready) break;
       await new Promise(resolve => setTimeout(resolve, 1000));
@@ -264,6 +272,7 @@ function save(value, file) {
     await page.keyboard.up('w');
     await new Promise(resolve => setTimeout(resolve, 800));
     const after = await frame(page);
+    assert(after && after.writeSeq > before.writeSeq, 'normal input must produce a newer presented frame');
     save(after, path.join(OUT, 'gameplay-after.png'));
     const motion = changed(before, after);
     // A short forward step changes the world edges and weapon animation even
@@ -275,7 +284,30 @@ function save(value, file) {
     assert(perf.guestFps > 0,
       `GPU presents did not reach guest FPS accounting: ${JSON.stringify(perf)}`);
     assert.strictEqual(errors.length, 0, errors.join('\n'));
-    console.log(`PASS Quake II native GL ${backend} gameplay ${before.width}x${before.height}, ` +
+    const renderState = await page.evaluate(() => {
+      const wine = runningApps.find(value => value && value.name === 'quake2_demo')?.wine;
+      const manager = wine?._renderWorkerManager;
+      return {
+        endpoints: manager ? Array.from(manager.ports.values(), port => ({
+          api: port.options.api, backend: port.options.backend, closed: port.closed
+        })) : [],
+        d3dimStats: wine?.guestWorker?.d3dStats || wine?.hostCtx?.sharedD3DIM?.stats || null
+      };
+    });
+    if (THREADED) assert(renderState.endpoints.some(port =>
+      port.api === 'gl' && port.backend === GL_RENDERER && !port.closed),
+      `requested GL backend must own a live shared-worker endpoint: ${JSON.stringify(renderState)}`);
+    if (THREADED && GL_RENDERER === 'software') {
+      assert(renderState.d3dimStats?.glQueued > 0 && renderState.d3dimStats?.glTriangles > 0,
+        `software GL must rasterize on the shared worker: ${JSON.stringify(renderState)}`);
+      assert.strictEqual(renderState.d3dimStats.fallbacks, 0, 'software GL must not fall back to guest-local rasterization');
+    }
+    fs.writeFileSync(path.join(OUT, 'result.json'), JSON.stringify({
+      renderer: GL_RENDERER, backend, capture: before.capture,
+      width: before.width, height: before.height, metrics: first, motion,
+      beforeWriteSeq: before.writeSeq, afterWriteSeq: after.writeSeq, perf, renderState
+    }, null, 2));
+    console.log(`PASS Quake II native GL ${GL_RENDERER} ${backend} ${before.capture} gameplay ${before.width}x${before.height}, ` +
       `${first.colors} colors, ${motion} moved pixels, ${perf.guestFps.toFixed(1)} guest fps`);
   } finally {
     await browser.close(); web.close();

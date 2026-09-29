@@ -77,8 +77,10 @@ if (!isMainThread) {
     const broker = RPC.createMainBroker(memory, {
       gpu_gl_batch(batch, owner) {
         assert.strictEqual(owner, 0);
-        assert.deepStrictEqual(Object.keys(batch).sort(), ['bytes', 'memoryOffset'],
-          'native worker hands off only shared offset and byte length');
+        assert.deepStrictEqual(Object.keys(batch).sort(), ['bytes', 'memoryOffset', 'softwareFront'],
+          'native worker hands off shared stream and software presentation descriptors');
+        assert.strictEqual(batch.softwareFront, 0,
+          'a GL stream without a software drawable has no software front surface');
         const snapshot = Buffer.from(new Uint8Array(
           memory.buffer, batch.memoryOffset, batch.bytes));
         const opcodes = [];

@@ -158,7 +158,7 @@ async function observe(page) {
     const glide = wine?.hostCtx?.glideBridge?.device;
     const gl = glide?.backend?.gl;
     const ext = gl?.getExtension('WEBGL_debug_renderer_info');
-    const draw = wine?.guestWorker?.d3dStats;
+    const draw = wine?.hostCtx?.sharedD3DIM?.stats || wine?.guestWorker?.d3dStats;
     const renderer = wine?.renderer;
     const wins = Object.values(renderer?.windows || {}).filter(w => w.visible && !w.isChild);
     const win = wins[wins.length - 1];
@@ -168,7 +168,11 @@ async function observe(page) {
       backend: wine?.threadManager?.backend, hidden: document.hidden,
       flips: window.__nfsBenchFlips, presents: window.__nfsBenchPresents, swaps: glide?.stats.swaps,
       glide: glide?.stats, d3d: draw,
-      glRenderer: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : null,
+      glRenderer: ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : glide?.glRenderer || draw?.glRenderer || wine?.hostCtx?.sharedD3DIM?.glRenderer || null,
+      renderWorker: wine?._renderWorkerManager ? {
+        endpoints: [...wine._renderWorkerManager.ports.values()].map(port => port.options),
+        queuedBytes: wine._renderWorkerManager.queuedBytes,
+      } : null,
       scene: { mode: read(0x6fb3b8), ai: read(0x6fb4f0),
         weather: read(0x6fb4cc), night: read(0x6fb4c8) },
       surface: surface ? { width: surface.width, height: surface.height } : null,
