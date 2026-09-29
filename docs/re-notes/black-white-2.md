@@ -8313,3 +8313,37 @@ binding it. Driven over `ctl.js` on a quiet box with
 - A snapshot showing yield 16 with its one bridge request `done:true` is not
   a stall. Wrapping `ctx.waitD3DRender` showed tokens advancing, about one
   per 17 batches.
+
+### CORRECTION: the picker was the land build, and the flyover renders (same run)
+
+The "does not take the land click" bullet above is wrong. In that state the
+game was **building the land**, not ignoring input. Enter on New Game
+starts the build. Then:
+
+- Polls at `0x9b0880` resume at about batch 1.24M, ~750K batches (~9 min of
+  wall) after the picker appeared.
+- The intro flyover of the demo island renders correctly on the software
+  backend: terrain, trees, the ocean, buildings, the light shafts, and the
+  landing glow.
+- The bright ellipse in the flyover frames is the landing-spot glow. It is
+  not missing water.
+- The flyover is not skipped by `keydown:27` or `di-keydown:27` (held for
+  20K batches). It advances at ~12 input polls per 100K batches, roughly one
+  game frame per 10 s of wall. It was still playing at batch 1.9M, so
+  gameplay was not reached in this session.
+
+**Where the time goes** (box 1; main-thread V8 CPU profiles through
+`ctl.js eval` + inspector; `top -H` per thread):
+
+| phase | main thread | render worker | top of main profile |
+|---|---|---|---|
+| land build (batches ~0.5M) | 100% | ~72% | guest code: memory translation ~16% (`$guest_page_translate` + `$g2w` + `$gl32/$gs32` + `$page_resolve`; the 2 GB sparse heap lives outside the direct window), `$th_uop_enter` 5.8% + `$bx_hot_bump` 3.5%, `$run` 8.9% |
+| flyover (batch ~1.9M) | 100% CPU, but **52% idle** in the V8 profile | ~51% | the same guest mix in the other half |
+
+In the flyover, main and the raster worker each run about half the time,
+and the idle half is main waiting on the worker. So the software device
+serializes: main blocks on the frame the worker is rasterizing, instead of
+overlapping guest work with it. That makes the flyover gap a pipelining
+question before it is a raster-speed question. During the land build the
+worker is also still rasterizing every picker/loading frame at full cost
+(~6.5 draws/s of wall) while main is CPU-bound.
