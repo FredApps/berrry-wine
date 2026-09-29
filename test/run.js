@@ -5679,12 +5679,22 @@ async function main() {
     if (ex.get_yield_reason() === 16) {
       const token = ex.get_d3d_render_token() | 0;
       if (!mainRenderWait || mainRenderWait.token !== token) {
-        const wait = {token,done:false}; mainRenderWait = wait;
+        const wait = {token,done:false,polls:0,since:tickState.batch|0}; mainRenderWait = wait;
         wait.promise = Promise.resolve().then(() => ctx.waitD3DRender(token))
           .catch(error => console.error('[render]',error))
           .then(() => { wait.done = true; });
       }
-      if (!mainRenderWait.done) return true;
+      if (!mainRenderWait.done) {
+        // A request the bridge already calls done should release main within
+        // a few event-loop turns. Morrowind once sat on one for 150k+ batches
+        // until its yield was cleared by hand; say so the first time it
+        // happens rather than letting it read as a slow scene.
+        const record = ctx.d3d9Bridge && ctx.d3d9Bridge.requests.get(token);
+        if (++mainRenderWait.polls === 1000 && record && record.done)
+          console.log(`[render] main parked on completed request ${token} for 1000 checks ` +
+            `(since batch ${mainRenderWait.since}); the wait never observed it`);
+        return true;
+      }
       mainRenderWait = null; ex.clear_yield();
     }
     if (threadManager._renderSendTargets.has(ex)) return true;
