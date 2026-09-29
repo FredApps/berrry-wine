@@ -366,64 +366,428 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
   )
 
-  ;; 7: GetTimeFormatA(Locale, dwFlags, lpTime, lpFormat, lpTimeStr, cchTime) — 6 args stdcall
-  (func $handle_GetTimeFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $cch i32)
-    (local.set $cch (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
-    (local.set $buf (call $g2w (local.get $arg4)))
-    (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 12)))
+  ;; ---- Calendar and date/time picture formatting --------------------------
+  ;;
+  ;; GetDateFormatA / GetTimeFormatA, GetLocaleInfo's calendar LCTypes,
+  ;; EnumDateFormatsA / EnumTimeFormatsA, the time-zone APIs and the CRT's
+  ;; time()/localtime() all answer from here, so the en-US picture strings,
+  ;; day and month names and the local-time bias cannot disagree between them.
+
+  ;; One host wall-clock read through a heap scratch: kind 2 is the UTC
+  ;; FILETIME, kind 3 the current Win32 Bias in minutes (low dword, signed).
+  ;; A heap allocation rather than a fixed scratch because guest threads each
+  ;; run their own instance over one memory.
+  (func $wall_clock_read64 (param $kind i32) (result i64)
+    (local $scratch i32) (local $value i64)
+    (local.set $scratch (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $scratch)) (then (return (i64.const 0))))
+    (call $gs64 (local.get $scratch) (i64.const 0))
+    (drop (call $host_wall_clock (call $g2w (local.get $scratch)) (local.get $kind)))
+    (local.set $value (i64.or
+      (i64.extend_i32_u (call $gl32 (local.get $scratch)))
+      (i64.shl (i64.extend_i32_u (call $gl32 (i32.add (local.get $scratch) (i32.const 4))))
+        (i64.const 32))))
+    (call $heap_free (local.get $scratch))
+    (local.get $value))
+
+  ;; Win32 Bias of the zone GetLocalTime reports in: UTC = local + Bias.
+  (func $tz_bias_minutes (result i32)
+    (i32.wrap_i64 (call $wall_clock_read64 (i32.const 3))))
+
+  ;; Current UTC time as a CRT time_t (seconds since 1970-01-01).
+  (func $wall_clock_time_t (result i32)
+    (i32.wrap_i64 (i64.div_u
+      (i64.sub (call $wall_clock_read64 (i32.const 2)) (i64.const 116444736000000000))
+      (i64.const 10000000))))
+
+  (func $cal_is_leap (param $y i32) (result i32)
+    (i32.or
+      (i32.eqz (i32.rem_u (local.get $y) (i32.const 400)))
+      (i32.and
+        (i32.eqz (i32.rem_u (local.get $y) (i32.const 4)))
+        (i32.ne (i32.rem_u (local.get $y) (i32.const 100)) (i32.const 0)))))
+
+  (func $cal_days_in_month (param $y i32) (param $m i32) (result i32)
+    (if (i32.eq (local.get $m) (i32.const 2))
+      (then (return (i32.add (i32.const 28) (call $cal_is_leap (local.get $y))))))
+    (if (i32.or (i32.or (i32.eq (local.get $m) (i32.const 4)) (i32.eq (local.get $m) (i32.const 6)))
+          (i32.or (i32.eq (local.get $m) (i32.const 9)) (i32.eq (local.get $m) (i32.const 11))))
+      (then (return (i32.const 30))))
+    (i32.const 31))
+
+  ;; Day of week, 0 = Sunday (Sakamoto). The month offsets 0,3,2,5,0,3,5,1,
+  ;; 4,6,2,4 are packed one per nibble, January lowest.
+  (func $cal_day_of_week (param $y i32) (param $m i32) (param $d i32) (result i32)
+    (if (i32.lt_u (local.get $m) (i32.const 3))
+      (then (local.set $y (i32.sub (local.get $y) (i32.const 1)))))
+    (i32.rem_u
+      (i32.add
+        (i32.add
+          (i32.sub
+            (i32.add (local.get $y) (i32.div_u (local.get $y) (i32.const 4)))
+            (i32.div_u (local.get $y) (i32.const 100)))
+          (i32.div_u (local.get $y) (i32.const 400)))
+        (i32.add (local.get $d)
+          (i32.wrap_i64 (i64.and
+            (i64.shr_u (i64.const 0x426415305230)
+              (i64.extend_i32_u (i32.shl (i32.sub (local.get $m) (i32.const 1)) (i32.const 2))))
+            (i64.const 0xF)))))
+      (i32.const 7)))
+
+  ;; Days since 1970-01-01 (non-negative) to a civil date, packed as
+  ;; year<<9 | month<<5 | day (Hinnant's civil_from_days).
+  (func $cal_civil_from_days (param $z i32) (result i32)
+    (local $era i32) (local $doe i32) (local $yoe i32) (local $doy i32)
+    (local $mp i32) (local $y i32) (local $m i32) (local $d i32)
+    (local.set $z (i32.add (local.get $z) (i32.const 719468)))
+    (local.set $era (i32.div_u (local.get $z) (i32.const 146097)))
+    (local.set $doe (i32.sub (local.get $z) (i32.mul (local.get $era) (i32.const 146097))))
+    (local.set $yoe (i32.div_u
+      (i32.sub
+        (i32.add (i32.sub (local.get $doe) (i32.div_u (local.get $doe) (i32.const 1460)))
+          (i32.div_u (local.get $doe) (i32.const 36524)))
+        (i32.div_u (local.get $doe) (i32.const 146096)))
+      (i32.const 365)))
+    (local.set $y (i32.add (local.get $yoe) (i32.mul (local.get $era) (i32.const 400))))
+    (local.set $doy (i32.sub (local.get $doe)
+      (i32.sub
+        (i32.add (i32.mul (local.get $yoe) (i32.const 365)) (i32.div_u (local.get $yoe) (i32.const 4)))
+        (i32.div_u (local.get $yoe) (i32.const 100)))))
+    (local.set $mp (i32.div_u (i32.add (i32.mul (local.get $doy) (i32.const 5)) (i32.const 2))
+      (i32.const 153)))
+    (local.set $d (i32.add
+      (i32.sub (local.get $doy)
+        (i32.div_u (i32.add (i32.mul (local.get $mp) (i32.const 153)) (i32.const 2)) (i32.const 5)))
+      (i32.const 1)))
+    (local.set $m (if (result i32) (i32.lt_u (local.get $mp) (i32.const 10))
+      (then (i32.add (local.get $mp) (i32.const 3)))
+      (else (i32.sub (local.get $mp) (i32.const 9)))))
+    (if (i32.le_u (local.get $m) (i32.const 2))
+      (then (local.set $y (i32.add (local.get $y) (i32.const 1)))))
+    (i32.or (i32.shl (local.get $y) (i32.const 9))
+      (i32.or (i32.shl (local.get $m) (i32.const 5)) (local.get $d))))
+
+  ;; The $n-th NUL-separated entry of a packed name list (a WAT literal).
+  (func $cal_nth_name (param $list i32) (param $n i32) (result i32)
+    (block $found (loop $skip
+      (br_if $found (i32.eqz (local.get $n)))
+      (block $end (loop $walk
+        (local.set $list (i32.add (local.get $list) (i32.const 1)))
+        (br_if $end (i32.eqz (i32.load8_u (i32.sub (local.get $list) (i32.const 1)))))
+        (br $walk)))
+      (local.set $n (i32.sub (local.get $n) (i32.const 1)))
+      (br $skip)))
+    (local.get $list))
+
+  ;; en-US names. $dow is 0 = Sunday, $month is 0 = January.
+  (func $cal_day_name (param $dow i32) (param $abbrev i32) (result i32)
+    (call $cal_nth_name
+      (select "Sun\0Mon\0Tue\0Wed\0Thu\0Fri\0Sat"
+        "Sunday\0Monday\0Tuesday\0Wednesday\0Thursday\0Friday\0Saturday"
+        (local.get $abbrev))
+      (i32.rem_u (local.get $dow) (i32.const 7))))
+
+  (func $cal_month_name (param $month i32) (param $abbrev i32) (result i32)
+    (call $cal_nth_name
+      (select "Jan\0Feb\0Mar\0Apr\0May\0Jun\0Jul\0Aug\0Sep\0Oct\0Nov\0Dec"
+        "January\0February\0March\0April\0May\0June\0July\0August\0September\0October\0November\0December"
+        (local.get $abbrev))
+      (i32.rem_u (local.get $month) (i32.const 12))))
+
+  ;; en-US picture strings: 0 LOCALE_SSHORTDATE, 1 LOCALE_SLONGDATE,
+  ;; 2 LOCALE_STIMEFORMAT, 3 the DATE_YEARMONTH form.
+  (func $dtf_default_picture (param $which i32) (result i32)
+    (if (i32.eq (local.get $which) (i32.const 1)) (then (return "dddd, MMMM d, yyyy")))
+    (if (i32.eq (local.get $which) (i32.const 2)) (then (return "h:mm:ss tt")))
+    (if (i32.eq (local.get $which) (i32.const 3)) (then (return "MMMM, yyyy")))
+    "M/d/yy")
+
+  ;; Output primitives. Nothing is written at or past $cap, so a $cap of 0
+  ;; only counts; every one returns the advanced position.
+  (func $dtf_put (param $out_g i32) (param $cap i32) (param $pos i32) (param $ch i32) (result i32)
+    (if (i32.lt_u (local.get $pos) (local.get $cap))
+      (then (call $gs8 (i32.add (local.get $out_g) (local.get $pos)) (local.get $ch))))
+    (i32.add (local.get $pos) (i32.const 1)))
+
+  (func $dtf_put_str (param $out_g i32) (param $cap i32) (param $pos i32) (param $wa i32) (result i32)
+    (local $ch i32)
+    (block $done (loop $copy
+      (local.set $ch (i32.load8_u (local.get $wa)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (local.set $pos (call $dtf_put (local.get $out_g) (local.get $cap) (local.get $pos) (local.get $ch)))
+      (local.set $wa (i32.add (local.get $wa) (i32.const 1)))
+      (br $copy)))
+    (local.get $pos))
+
+  ;; Decimal $n, zero-padded to at least $width digits.
+  (func $dtf_put_num (param $out_g i32) (param $cap i32) (param $pos i32) (param $n i32) (param $width i32) (result i32)
+    (local $digits i32) (local $scale i32) (local $k i32)
+    (local.set $digits (i32.const 1))
+    (local.set $scale (i32.const 1))
+    (block $sized (loop $size
+      (br_if $sized (i32.and
+        (i32.lt_u (i32.div_u (local.get $n) (local.get $scale)) (i32.const 10))
+        (i32.ge_u (local.get $digits) (local.get $width))))
+      (local.set $digits (i32.add (local.get $digits) (i32.const 1)))
+      (local.set $scale (i32.mul (local.get $scale) (i32.const 10)))
+      (br $size)))
+    (block $done (loop $emit
+      (local.set $pos (call $dtf_put (local.get $out_g) (local.get $cap) (local.get $pos)
+        (i32.add (i32.const 0x30)
+          (i32.rem_u (i32.div_u (local.get $n) (local.get $scale)) (i32.const 10)))))
+      (br_if $done (i32.le_u (local.get $scale) (i32.const 1)))
+      (local.set $scale (i32.div_u (local.get $scale) (i32.const 10)))
+      (br $emit)))
+    (local.get $pos))
+
+  (func $dtf_pic_char (param $pic i32) (param $guest i32) (param $i i32) (result i32)
+    ;; A picture string longer than any real one is treated as ended, so an
+    ;; unterminated guest buffer cannot run the formatter away.
+    (if (i32.ge_u (local.get $i) (i32.const 1024)) (then (return (i32.const 0))))
+    (if (result i32) (local.get $guest)
+      (then (call $gl8 (i32.add (local.get $pic) (local.get $i))))
+      (else (i32.load8_u (i32.add (local.get $pic) (local.get $i))))))
+
+  ;; Expand a GetDateFormat ($time = 0: d M y g) or GetTimeFormat ($time = 1:
+  ;; h H m s t) picture over the SYSTEMTIME at wasm address $st. Characters
+  ;; of the other family, and anything else outside quotes, are literal;
+  ;; 'text' is literal and '' inside it is one quote. TIME_NOSECONDS,
+  ;; TIME_NOMINUTESORSECONDS and TIME_NOTIMEMARKER drop their element together
+  ;; with the separator in front of it (or, leading, the one after it), so
+  ;; "h:mm:ss tt" becomes "h:mm tt" / "h tt" / "h:mm:ss". Returns the length
+  ;; without the NUL; writes only below $cap.
+  (func $dtf_format (param $st i32) (param $pic i32) (param $pic_guest i32)
+      (param $time i32) (param $flags i32) (param $out_g i32) (param $cap i32) (result i32)
+    (local $i i32) (local $ch i32) (local $n i32) (local $pos i32) (local $v i32)
+    (local $field_end i32) (local $drop i32) (local $is_field i32) (local $skip i32)
+    (block $done (loop $scan
+      (local.set $ch (call $dtf_pic_char (local.get $pic) (local.get $pic_guest) (local.get $i)))
+      (br_if $done (i32.eqz (local.get $ch)))
+      (if (i32.eq (local.get $ch) (i32.const 0x27)) ;; quoted literal
+        (then
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (block $qend (loop $q
+            (local.set $ch (call $dtf_pic_char (local.get $pic) (local.get $pic_guest) (local.get $i)))
+            (br_if $qend (i32.eqz (local.get $ch)))
+            (if (i32.eq (local.get $ch) (i32.const 0x27))
+              (then
+                (local.set $i (i32.add (local.get $i) (i32.const 1)))
+                (br_if $qend (i32.ne
+                  (call $dtf_pic_char (local.get $pic) (local.get $pic_guest) (local.get $i))
+                  (i32.const 0x27)))))
+            (if (i32.eqz (local.get $drop))
+              (then (local.set $pos (call $dtf_put (local.get $out_g) (local.get $cap)
+                (local.get $pos) (local.get $ch)))))
+            (local.set $i (i32.add (local.get $i) (i32.const 1)))
+            (br $q)))
+          (br $scan)))
+      (local.set $is_field
+        (if (result i32) (local.get $time)
+          (then (i32.or
+            (i32.or (i32.eq (local.get $ch) (i32.const 0x68)) (i32.eq (local.get $ch) (i32.const 0x48))) ;; h H
+            (i32.or (i32.eq (local.get $ch) (i32.const 0x6D))                                          ;; m
+              (i32.or (i32.eq (local.get $ch) (i32.const 0x73)) (i32.eq (local.get $ch) (i32.const 0x74)))))) ;; s t
+          (else (i32.or
+            (i32.or (i32.eq (local.get $ch) (i32.const 0x64)) (i32.eq (local.get $ch) (i32.const 0x4D))) ;; d M
+            (i32.or (i32.eq (local.get $ch) (i32.const 0x79)) (i32.eq (local.get $ch) (i32.const 0x67))))))) ;; y g
+      (if (i32.eqz (local.get $is_field))
+        (then
+          (if (i32.eqz (local.get $drop))
+            (then (local.set $pos (call $dtf_put (local.get $out_g) (local.get $cap)
+              (local.get $pos) (local.get $ch)))))
+          (local.set $i (i32.add (local.get $i) (i32.const 1)))
+          (br $scan)))
+      ;; A run of one element character: its length picks the form.
+      (local.set $n (i32.const 1))
+      (block $run_end (loop $run
+        (br_if $run_end (i32.ne
+          (call $dtf_pic_char (local.get $pic) (local.get $pic_guest)
+            (i32.add (local.get $i) (local.get $n)))
+          (local.get $ch)))
+        (local.set $n (i32.add (local.get $n) (i32.const 1)))
+        (br $run)))
+      (local.set $i (i32.add (local.get $i) (local.get $n)))
+      (local.set $skip (i32.and (local.get $time)
+        (i32.or
+          (i32.and (i32.eq (local.get $ch) (i32.const 0x73))                       ;; s
+            (i32.ne (i32.and (local.get $flags) (i32.const 3)) (i32.const 0)))
+          (i32.or
+            (i32.and (i32.eq (local.get $ch) (i32.const 0x6D))                     ;; m
+              (i32.ne (i32.and (local.get $flags) (i32.const 1)) (i32.const 0)))
+            (i32.and (i32.eq (local.get $ch) (i32.const 0x74))                     ;; t
+              (i32.ne (i32.and (local.get $flags) (i32.const 4)) (i32.const 0)))))))
+      (if (local.get $skip)
+        (then
+          (local.set $pos (local.get $field_end))
+          (local.set $drop (i32.eqz (local.get $field_end)))
+          (br $scan)))
+      (local.set $drop (i32.const 0))
+      (if (i32.eq (local.get $ch) (i32.const 0x64)) ;; d
+        (then
+          (if (i32.le_u (local.get $n) (i32.const 2))
+            (then (local.set $pos (call $dtf_put_num (local.get $out_g) (local.get $cap) (local.get $pos)
+              (i32.load16_u offset=6 (local.get $st)) (local.get $n))))
+            (else (local.set $pos (call $dtf_put_str (local.get $out_g) (local.get $cap) (local.get $pos)
+              (call $cal_day_name (i32.load16_u offset=4 (local.get $st))
+                (i32.eq (local.get $n) (i32.const 3)))))))))
+      (if (i32.eq (local.get $ch) (i32.const 0x4D)) ;; M
+        (then
+          (if (i32.le_u (local.get $n) (i32.const 2))
+            (then (local.set $pos (call $dtf_put_num (local.get $out_g) (local.get $cap) (local.get $pos)
+              (i32.load16_u offset=2 (local.get $st)) (local.get $n))))
+            (else (local.set $pos (call $dtf_put_str (local.get $out_g) (local.get $cap) (local.get $pos)
+              (call $cal_month_name (i32.sub (i32.load16_u offset=2 (local.get $st)) (i32.const 1))
+                (i32.eq (local.get $n) (i32.const 3)))))))))
+      (if (i32.eq (local.get $ch) (i32.const 0x79)) ;; y
+        (then
+          (local.set $v (i32.load16_u offset=0 (local.get $st)))
+          (local.set $pos (call $dtf_put_num (local.get $out_g) (local.get $cap) (local.get $pos)
+            (select (i32.rem_u (local.get $v) (i32.const 100)) (local.get $v)
+              (i32.le_u (local.get $n) (i32.const 2)))
+            (select (local.get $n) (i32.const 1) (i32.le_u (local.get $n) (i32.const 2)))))))
+      ;; g/gg (era): the Gregorian calendar of this locale has no era text.
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 0x68)) (i32.eq (local.get $ch) (i32.const 0x48))) ;; h H
+        (then
+          (local.set $v (i32.load16_u offset=8 (local.get $st)))
+          (if (i32.and (i32.eq (local.get $ch) (i32.const 0x68))
+                (i32.eqz (i32.and (local.get $flags) (i32.const 8)))) ;; not TIME_FORCE24HOURFORMAT
+            (then
+              (local.set $v (i32.rem_u (local.get $v) (i32.const 12)))
+              (if (i32.eqz (local.get $v)) (then (local.set $v (i32.const 12))))))
+          (local.set $pos (call $dtf_put_num (local.get $out_g) (local.get $cap) (local.get $pos)
+            (local.get $v) (select (i32.const 2) (i32.const 1) (i32.ge_u (local.get $n) (i32.const 2)))))))
+      (if (i32.or (i32.eq (local.get $ch) (i32.const 0x6D)) (i32.eq (local.get $ch) (i32.const 0x73))) ;; m s
+        (then
+          (local.set $pos (call $dtf_put_num (local.get $out_g) (local.get $cap) (local.get $pos)
+            (select (i32.load16_u offset=10 (local.get $st)) (i32.load16_u offset=12 (local.get $st))
+              (i32.eq (local.get $ch) (i32.const 0x6D)))
+            (select (i32.const 2) (i32.const 1) (i32.ge_u (local.get $n) (i32.const 2)))))))
+      (if (i32.eq (local.get $ch) (i32.const 0x74)) ;; t
+        (then
+          (local.set $v (select "AM" "PM"
+            (i32.lt_u (i32.load16_u offset=8 (local.get $st)) (i32.const 12))))
+          (if (i32.eq (local.get $n) (i32.const 1))
+            (then (local.set $pos (call $dtf_put (local.get $out_g) (local.get $cap) (local.get $pos)
+              (i32.load8_u (local.get $v)))))
+            (else (local.set $pos (call $dtf_put_str (local.get $out_g) (local.get $cap) (local.get $pos)
+              (local.get $v)))))))
+      (local.set $field_end (local.get $pos))
+      (br $scan)))
+    (local.get $pos))
+
+  ;; Fill the 16-byte SYSTEMTIME at guest $st from the caller's $src, or with
+  ;; the current local time when $src is NULL, and validate the members the
+  ;; call uses: the date for GetDateFormat (whose wDayOfWeek Windows ignores
+  ;; and recomputes), the time for GetTimeFormat. 0 = ERROR_INVALID_PARAMETER.
+  (func $dtf_load_time (param $src i32) (param $st i32) (param $time i32) (result i32)
+    (local $i i32) (local $wa i32) (local $y i32) (local $m i32) (local $d i32)
+    (local.set $wa (call $g2w (local.get $st)))
+    (if (local.get $src)
       (then
-        ;; Write "12:00:00 AM\0".
-        (i32.store (local.get $buf) (i32.const 0x303a3231))
-        (i32.store (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x30303a30))
-        (i32.store (i32.add (local.get $buf) (i32.const 8)) (i32.const 0x004d4120))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 12))
-      )
-      (else
-        (i32.store offset=0 (global.get $reg_base) (i32.const 12))
-      ))
+        (block $copied (loop $copy
+          (br_if $copied (i32.ge_u (local.get $i) (i32.const 16)))
+          (i32.store16 (i32.add (local.get $wa) (local.get $i))
+            (call $gl16 (i32.add (local.get $src) (local.get $i))))
+          (local.set $i (i32.add (local.get $i) (i32.const 2)))
+          (br $copy))))
+      (else (drop (call $host_wall_clock (local.get $wa) (i32.const 1)))))
+    (if (local.get $time)
+      (then
+        (return (i32.and
+          (i32.and (i32.lt_u (i32.load16_u offset=8 (local.get $wa)) (i32.const 24))
+            (i32.lt_u (i32.load16_u offset=10 (local.get $wa)) (i32.const 60)))
+          (i32.and (i32.lt_u (i32.load16_u offset=12 (local.get $wa)) (i32.const 60))
+            (i32.lt_u (i32.load16_u offset=14 (local.get $wa)) (i32.const 1000)))))))
+    (local.set $y (i32.load16_u offset=0 (local.get $wa)))
+    (local.set $m (i32.load16_u offset=2 (local.get $wa)))
+    (local.set $d (i32.load16_u offset=6 (local.get $wa)))
+    (if (i32.or
+          (i32.or (i32.lt_u (local.get $y) (i32.const 1601)) (i32.gt_u (local.get $y) (i32.const 30827)))
+          (i32.or
+            (i32.or (i32.eqz (local.get $m)) (i32.gt_u (local.get $m) (i32.const 12)))
+            (i32.or (i32.eqz (local.get $d))
+              (i32.gt_u (local.get $d) (call $cal_days_in_month (local.get $y) (local.get $m))))))
+      (then (return (i32.const 0))))
+    (i32.store16 offset=4 (local.get $wa)
+      (call $cal_day_of_week (local.get $y) (local.get $m) (local.get $d)))
+    (i32.const 1))
+
+  ;; The body of GetDateFormatA ($time = 0) and GetTimeFormatA ($time = 1).
+  ;; Returns the API result and sets the last error on failure. $cch == 0 is
+  ;; the size query (characters including the NUL; $out is not touched); a
+  ;; buffer that is too small is left untouched too.
+  (func $dtf_api (param $flags i32) (param $src i32) (param $pic i32)
+      (param $out i32) (param $cch i32) (param $time i32) (result i32)
+    (local $valid i32) (local $pic_guest i32) (local $st i32) (local $len i32)
+    (if (i32.or (i32.lt_s (local.get $cch) (i32.const 0))
+          (i32.and (i32.ne (local.get $cch) (i32.const 0)) (i32.eqz (local.get $out))))
+      (then
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (return (i32.const 0))))
+    ;; LOCALE_NOUSEROVERRIDE and LOCALE_USE_CP_ACP, plus TIME_* (1|2|4|8) or
+    ;; DATE_SHORTDATE, DATE_LONGDATE, DATE_USE_ALT_CALENDAR, DATE_YEARMONTH,
+    ;; DATE_LTRREADING, DATE_RTLREADING (1..0x20). Short and long together are
+    ;; contradictory.
+    (local.set $valid (select (i32.const 0xC000000F) (i32.const 0xC000003F) (local.get $time)))
+    (if (i32.or
+          (i32.ne (i32.and (local.get $flags) (i32.xor (local.get $valid) (i32.const -1))) (i32.const 0))
+          (i32.and (i32.eqz (local.get $time))
+            (i32.eq (i32.and (local.get $flags) (i32.const 3)) (i32.const 3))))
+      (then
+        (global.set $last_error (i32.const 1004)) ;; ERROR_INVALID_FLAGS
+        (return (i32.const 0))))
+    (local.set $pic_guest (i32.ne (local.get $pic) (i32.const 0)))
+    (if (i32.eqz (local.get $pic))
+      (then (local.set $pic (call $dtf_default_picture
+        (if (result i32) (local.get $time)
+          (then (i32.const 2))
+          (else (if (result i32) (i32.and (local.get $flags) (i32.const 2))  ;; DATE_LONGDATE
+            (then (i32.const 1))
+            (else (select (i32.const 3) (i32.const 0)
+              (i32.ne (i32.and (local.get $flags) (i32.const 8)) (i32.const 0)))))))))))  ;; DATE_YEARMONTH
+    (local.set $st (call $heap_alloc (i32.const 16)))
+    (if (i32.eqz (local.get $st))
+      (then
+        (global.set $last_error (i32.const 8)) ;; ERROR_NOT_ENOUGH_MEMORY
+        (return (i32.const 0))))
+    (if (i32.eqz (call $dtf_load_time (local.get $src) (local.get $st) (local.get $time)))
+      (then
+        (call $heap_free (local.get $st))
+        (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
+        (return (i32.const 0))))
+    (local.set $len (call $dtf_format (call $g2w (local.get $st)) (local.get $pic) (local.get $pic_guest)
+      (local.get $time) (local.get $flags) (i32.const 0) (i32.const 0)))
+    (if (i32.eqz (local.get $cch))
+      (then
+        (call $heap_free (local.get $st))
+        (return (i32.add (local.get $len) (i32.const 1)))))
+    (if (i32.lt_u (local.get $cch) (i32.add (local.get $len) (i32.const 1)))
+      (then
+        (call $heap_free (local.get $st))
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (return (i32.const 0))))
+    (drop (call $dtf_format (call $g2w (local.get $st)) (local.get $pic) (local.get $pic_guest)
+      (local.get $time) (local.get $flags) (local.get $out) (local.get $cch)))
+    (call $gs8 (i32.add (local.get $out) (local.get $len)) (i32.const 0))
+    (call $heap_free (local.get $st))
+    (i32.add (local.get $len) (i32.const 1)))
+
+  ;; 7: GetTimeFormatA(Locale, dwFlags, lpTime, lpFormat, lpTimeStr, cchTime) — 6 args stdcall.
+  ;; Every locale formats as en-US, the only one this Win98 installs.
+  (func $handle_GetTimeFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (i32.store offset=0 (global.get $reg_base) (call $dtf_api
+      (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+      (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))  ;; stdcall, 6 args + ret
   )
 
-  ;; 8: GetDateFormatA(Locale, dwFlags, lpDate, lpFormat, lpDateStr, cchDateStr) — 6 args stdcall
+  ;; 8: GetDateFormatA(Locale, dwFlags, lpDate, lpFormat, lpDateStr, cchDate) — 6 args stdcall
   (func $handle_GetDateFormatA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (local $buf i32) (local $cch i32) (local $long i32)
-    ;; Read cchDateStr from stack (6th arg at esp+24)
-    (local.set $cch (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
-    (local.set $long (i32.ne
-      (i32.and (local.get $arg1) (i32.const 2)) (i32.const 0))) ;; DATE_LONGDATE
-    ;; EnumDateFormats callers pass the format explicitly. The stable long
-    ;; pattern starts with 'd'; the stable short pattern starts with 'M'.
-    (if (local.get $arg3)
-      (then
-        (if (i32.eq (i32.load8_u (call $g2w (local.get $arg3))) (i32.const 0x64))
-          (then (local.set $long (i32.const 1))))))
-    (local.set $buf (call $g2w (local.get $arg4)))
-    (if (i32.and (local.get $long)
-          (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 24))))
-      (then
-        ;; "Monday, January 1, 2001\0"
-        (i32.store (local.get $buf) (i32.const 0x646e6f4d))
-        (i32.store (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x202c7961))
-        (i32.store (i32.add (local.get $buf) (i32.const 8)) (i32.const 0x756e614a))
-        (i32.store (i32.add (local.get $buf) (i32.const 12)) (i32.const 0x20797261))
-        (i32.store (i32.add (local.get $buf) (i32.const 16)) (i32.const 0x32202c31))
-        (i32.store (i32.add (local.get $buf) (i32.const 20)) (i32.const 0x00313030))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 24))
-      )
-      (else
-        (if (i32.and (i32.ne (local.get $arg4) (i32.const 0)) (i32.ge_u (local.get $cch) (i32.const 7)))
-          (then
-            ;; "1/1/01\0"
-            (i32.store (local.get $buf) (i32.const 0x2f312f31))
-            (i32.store16 (i32.add (local.get $buf) (i32.const 4)) (i32.const 0x3130))  ;; ASCII "01", not an address
-            (i32.store8 (i32.add (local.get $buf) (i32.const 6)) (i32.const 0)))
-          (else
-            (i32.store offset=0 (global.get $reg_base) (select (i32.const 24) (i32.const 7) (local.get $long)))
-            (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))
-            (return)))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 7))
-      ))
+    (i32.store offset=0 (global.get $reg_base) (call $dtf_api
+      (local.get $arg1) (local.get $arg2) (local.get $arg3) (local.get $arg4)
+      (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 24)))
+      (i32.const 0)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 28)))  ;; stdcall, 6 args + ret
   )
 
@@ -431,9 +795,11 @@
   ;; callback per call. Callers such as Win98 WordPad request short and long
   ;; date formats separately, so one representative for each flag is enough
   ;; to populate their Date and Time dialog without inventing locale state.
+  ;; The picture is the one GetDateFormatA/GetTimeFormatA and GetLocaleInfo
+  ;; use as the default, so the three can never disagree.
   (func $locale_format_enum_a (param $callback i32) (param $flags i32)
         (param $ret_addr i32) (param $is_time i32)
-    (local $text i32) (local $wa i32)
+    (local $text i32) (local $wa i32) (local $src i32) (local $i i32)
     (if (i32.eqz (local.get $callback))
       (then
         (i32.store offset=0 (global.get $reg_base) (i32.const 0))
@@ -442,25 +808,18 @@
     (local.set $text (call $heap_alloc (i32.const 32)))
     (local.set $wa (call $g2w (local.get $text)))
     (call $zero_memory (local.get $wa) (i32.const 32))
-    (if (local.get $is_time)
-      (then
-        ;; "h:mm:ss tt"
-        (i32.store (local.get $wa) (i32.const 0x3a6d3a68))
-        (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x74207373))
-        (i32.store16 (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x0074)))
-      (else
-        (if (i32.and (local.get $flags) (i32.const 2)) ;; DATE_LONGDATE
-          (then
-            ;; "dddd, MMMM d, yyyy"
-            (i32.store (local.get $wa) (i32.const 0x64646464))
-            (i32.store (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x4d4d202c))
-            (i32.store (i32.add (local.get $wa) (i32.const 8)) (i32.const 0x64204d4d))
-            (i32.store (i32.add (local.get $wa) (i32.const 12)) (i32.const 0x7979202c))
-            (i32.store16 (i32.add (local.get $wa) (i32.const 16)) (i32.const 0x7979)))
-          (else
-            ;; "M/d/yy"
-            (i32.store (local.get $wa) (i32.const 0x2f642f4d))
-            (i32.store16 (i32.add (local.get $wa) (i32.const 4)) (i32.const 0x7979))))))
+    (local.set $src (call $dtf_default_picture
+      (if (result i32) (local.get $is_time)
+        (then (i32.const 2))
+        (else (select (i32.const 1) (i32.const 0)
+          (i32.ne (i32.and (local.get $flags) (i32.const 2)) (i32.const 0))))))) ;; DATE_LONGDATE
+    (block $copied (loop $copy
+      (br_if $copied (i32.eqz (i32.load8_u (i32.add (local.get $src) (local.get $i)))))
+      (br_if $copied (i32.ge_u (local.get $i) (i32.const 31)))
+      (i32.store8 (i32.add (local.get $wa) (local.get $i))
+        (i32.load8_u (i32.add (local.get $src) (local.get $i))))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
     ;; Preserve the API caller return address above the callback's stdcall
     ;; frame. CACA0011 is a generic one-callback continuation: it restores this
     ;; address after the callback has popped its LPSTR argument.
@@ -800,11 +1159,96 @@
     (call $locale_put_ascii (local.get $out_g) (i32.const 13) (i32.const 0) (local.get $wide))
     (i32.const 14))
 
+  ;; The calendar half of the en-US locale: separators, the three picture
+  ;; strings GetDateFormatA/GetTimeFormatA default to, their I* flag digits,
+  ;; the AM/PM designators and the day and month names the formatter prints.
+  ;; A WAT literal, or 0 for an LCType that is not one of these.
+  (func $locale_calendar_text (param $base i32) (result i32)
+    (if (i32.eq (local.get $base) (i32.const 0x1D)) (then (return "/")))   ;; LOCALE_SDATE
+    (if (i32.eq (local.get $base) (i32.const 0x1E)) (then (return ":")))   ;; LOCALE_STIME
+    (if (i32.eq (local.get $base) (i32.const 0x1F))                        ;; LOCALE_SSHORTDATE
+      (then (return (call $dtf_default_picture (i32.const 0)))))
+    (if (i32.eq (local.get $base) (i32.const 0x20))                        ;; LOCALE_SLONGDATE
+      (then (return (call $dtf_default_picture (i32.const 1)))))
+    (if (i32.eq (local.get $base) (i32.const 0x1003))                      ;; LOCALE_STIMEFORMAT
+      (then (return (call $dtf_default_picture (i32.const 2)))))
+    (if (i32.eq (local.get $base) (i32.const 0x28)) (then (return "AM")))  ;; LOCALE_S1159
+    (if (i32.eq (local.get $base) (i32.const 0x29)) (then (return "PM")))  ;; LOCALE_S2359
+    ;; IDATE/ILDATE (M-D-Y), ITIME (12-hour), ICENTURY, ITLZERO, IDAYLZERO,
+    ;; IMONLZERO: all "0" for M/d/yy and h:mm:ss tt.
+    (if (i32.and (i32.ge_u (local.get $base) (i32.const 0x21))
+          (i32.le_u (local.get $base) (i32.const 0x27)))
+      (then (return "0")))
+    (if (i32.or (i32.eq (local.get $base) (i32.const 0x1005))              ;; ITIMEMARKPOSN: suffix
+          (i32.or (i32.eq (local.get $base) (i32.const 0x100B))            ;; IOPTIONALCALENDAR
+            (i32.eq (local.get $base) (i32.const 0x100D))))                ;; IFIRSTWEEKOFYEAR
+      (then (return "0")))
+    (if (i32.eq (local.get $base) (i32.const 0x1009)) (then (return "1"))) ;; ICALENDARTYPE: Gregorian
+    (if (i32.eq (local.get $base) (i32.const 0x100C)) (then (return "6"))) ;; IFIRSTDAYOFWEEK: Sunday
+    ;; SDAYNAME1..7 and SABBREVDAYNAME1..7 start the week on Monday.
+    (if (i32.and (i32.ge_u (local.get $base) (i32.const 0x2A))
+          (i32.le_u (local.get $base) (i32.const 0x30)))
+      (then (return (call $cal_day_name (i32.sub (local.get $base) (i32.const 0x29)) (i32.const 0)))))
+    (if (i32.and (i32.ge_u (local.get $base) (i32.const 0x31))
+          (i32.le_u (local.get $base) (i32.const 0x37)))
+      (then (return (call $cal_day_name (i32.sub (local.get $base) (i32.const 0x30)) (i32.const 1)))))
+    (if (i32.and (i32.ge_u (local.get $base) (i32.const 0x38))
+          (i32.le_u (local.get $base) (i32.const 0x43)))
+      (then (return (call $cal_month_name (i32.sub (local.get $base) (i32.const 0x38)) (i32.const 0)))))
+    (if (i32.and (i32.ge_u (local.get $base) (i32.const 0x44))
+          (i32.le_u (local.get $base) (i32.const 0x4F)))
+      (then (return (call $cal_month_name (i32.sub (local.get $base) (i32.const 0x44)) (i32.const 1)))))
+    (i32.const 0))
+
+  ;; Write one $locale_calendar_text value with GetLocaleInfo's contract.
+  ;; LOCALE_RETURN_NUMBER is honoured for the numeric (single-digit) values
+  ;; and returns a DWORD, whose size in characters is 4 (A) or 2 (W).
+  (func $locale_write_text (param $text i32) (param $flags i32) (param $out_g i32)
+      (param $cch i32) (param $wide i32) (result i32)
+    (local $len i32) (local $i i32) (local $numeric i32) (local $need i32)
+    (local $as_number i32)
+    (local.set $as_number                                   ;; LOCALE_RETURN_NUMBER, bit 29
+      (i32.and (i32.shr_u (local.get $flags) (i32.const 29)) (i32.const 1)))
+    (local.set $numeric (i32.and
+      (i32.lt_u (i32.sub (i32.load8_u (local.get $text)) (i32.const 0x30)) (i32.const 10))
+      (i32.eqz (i32.load8_u offset=1 (local.get $text)))))
+    (if (i32.or
+          (i32.ne (i32.and (local.get $flags) (i32.const 0x1FFFFFFF)) (i32.const 0))
+          (i32.and (local.get $as_number) (i32.eqz (local.get $numeric))))
+      (then
+        (global.set $last_error (i32.const 1004)) ;; ERROR_INVALID_FLAGS
+        (return (i32.const 0))))
+    (if (local.get $as_number)
+      (then
+        (local.set $need (select (i32.const 2) (i32.const 4) (local.get $wide)))
+        (if (i32.eqz (local.get $cch)) (then (return (local.get $need))))
+        (if (i32.lt_u (local.get $cch) (local.get $need))
+          (then
+            (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+            (return (i32.const 0))))
+        (call $gs32 (local.get $out_g)
+          (i32.sub (i32.load8_u (local.get $text)) (i32.const 0x30)))
+        (return (local.get $need))))
+    (local.set $len (i32.add (call $strlen_a (local.get $text)) (i32.const 1)))
+    (if (i32.eqz (local.get $cch)) (then (return (local.get $len))))
+    (if (i32.lt_u (local.get $cch) (local.get $len))
+      (then
+        (global.set $last_error (i32.const 122)) ;; ERROR_INSUFFICIENT_BUFFER
+        (return (i32.const 0))))
+    (block $done (loop $copy
+      (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
+      (call $locale_put_ascii (local.get $out_g) (local.get $i)
+        (i32.load8_u (i32.add (local.get $text) (local.get $i))) (local.get $wide))
+      (local.set $i (i32.add (local.get $i) (i32.const 1)))
+      (br $copy)))
+    (local.get $len))
+
   ;; Return a small, internally consistent en-US locale surface. The A/W
   ;; spellings share character counts, including the terminating NUL.
   (func $locale_info (param $lctype i32) (param $out_g i32) (param $cch i32)
       (param $wide i32) (result i32)
     (local $ch i32) (local $base i32) (local $flags i32) (local $override i32)
+    (local $text i32)
     (if (i32.lt_s (local.get $cch) (i32.const 0))
       (then
         (global.set $last_error (i32.const 87)) ;; ERROR_INVALID_PARAMETER
@@ -843,6 +1287,10 @@
           (local.get $base) (local.get $out_g) (local.get $cch) (local.get $wide)))
         (if (i32.ne (local.get $override) (i32.const -1))
           (then (return (local.get $override))))))
+    (local.set $text (call $locale_calendar_text (local.get $base)))
+    (if (local.get $text)
+      (then (return (call $locale_write_text (local.get $text) (local.get $flags)
+        (local.get $out_g) (local.get $cch) (local.get $wide)))))
     (local.set $ch (i32.const 0x30))                                   ;; "0"
     (if (i32.eq (local.get $base) (i32.const 0x0E))                    ;; LOCALE_SDECIMAL
       (then (local.set $ch (i32.const 0x2E))))                         ;; "."

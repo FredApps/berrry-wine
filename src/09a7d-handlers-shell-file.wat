@@ -151,10 +151,11 @@
   )
 
   ;; 415: FileTimeToLocalFileTime(const FILETIME *src, LPFILETIME dst) → BOOL.
-  ;; 2-arg stdcall. We don't model timezones — just copy the 8 bytes.
+  ;; 2-arg stdcall. local = UTC - Bias, with the Bias GetTimeZoneInformation
+  ;; reports (the current one, as Win32 uses, not the one at that date).
   (func $handle_FileTimeToLocalFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (call $filetime_copy_bits (local.get $arg0) (local.get $arg1))
-    (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $filetime_shift_bias (local.get $arg0) (local.get $arg1) (i32.const -1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
@@ -692,22 +693,29 @@
   )
 
   ;; Snapshot before writing, so both identity conversions also handle overlap.
-  (func $filetime_copy_bits (param $src i32) (param $dst i32)
+  ;; dst = src + $sign * Bias minutes, as 100ns ticks. The source is read
+  ;; whole before the destination is written, so src == dst is fine, and
+  ;; both go through the page-safe accessors. 0 for a NULL pointer.
+  (func $filetime_shift_bias (param $src i32) (param $dst i32) (param $sign i32) (result i32)
+    (if (i32.or (i32.eqz (local.get $src)) (i32.eqz (local.get $dst)))
+      (then (return (i32.const 0))))
     (call $gs64 (local.get $dst)
-      (i64.or
-        (i64.extend_i32_u (call $gl32 (local.get $src)))
-        (i64.shl
-          (i64.extend_i32_u (call $gl32 (i32.add (local.get $src) (i32.const 4))))
-          (i64.const 32)))))
+      (i64.add
+        (i64.or
+          (i64.extend_i32_u (call $gl32 (local.get $src)))
+          (i64.shl
+            (i64.extend_i32_u (call $gl32 (i32.add (local.get $src) (i32.const 4))))
+            (i64.const 32)))
+        (i64.mul
+          (i64.extend_i32_s (i32.mul (local.get $sign) (call $tz_bias_minutes)))
+          (i64.const 600000000))))
+    (i32.const 1))
 
-  ;; 428: LocalFileTimeToFileTime. The emulator does not model a timezone, so
-  ;; local and UTC FILETIMEs have the same bit representation.
+  ;; 428: LocalFileTimeToFileTime. UTC = local + Bias — the inverse of
+  ;; FileTimeToLocalFileTime above.
   (func $handle_LocalFileTimeToFileTime (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (if (i32.and (i32.ne (local.get $arg0) (i32.const 0)) (i32.ne (local.get $arg1) (i32.const 0)))
-      (then
-        (call $filetime_copy_bits (local.get $arg0) (local.get $arg1))
-        (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
-      (else (i32.store offset=0 (global.get $reg_base) (i32.const 0))))
+    (i32.store offset=0 (global.get $reg_base)
+      (call $filetime_shift_bias (local.get $arg0) (local.get $arg1) (i32.const 1)))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
   )
 
