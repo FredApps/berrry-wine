@@ -12,8 +12,10 @@
 // player then refuses. Only the header lists are read: an AVI's 'hdrl' sits
 // at the front, so the first 512 KB is enough and a 30 MB movie costs nothing.
 //
-// Movies that only exist inside a CD image (War Wind) are not files here;
-// the page takes those by drag and drop.
+// Movies that only exist inside a CD image are pulled out into
+// test/binaries/cd-movies/<Game>/ (tools/cue-bin-to-iso.js, then
+// tools/iso-dir.js --extract), so War Wind's are listed like any other; the
+// page still takes anything else by drag and drop.
 //
 // --check exits 1 when catalog.json is stale, for a test to call.
 'use strict';
