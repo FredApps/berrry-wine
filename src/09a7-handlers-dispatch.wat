@@ -4987,8 +4987,11 @@
   ;; Both entry points share one host MCI parser. cchReturn is a character
   ;; count, so W uses an equally-sized ANSI staging buffer and widens the
   ;; bounded result at the API boundary.
+  ;; The MCIAVI device (09a7h) sees each command first; it answers
+  ;; $MCIAVI_PARKED for a "play ... wait" still running, and the caller then
+  ;; parks on its thunk without popping the frame.
   (func $mci_send_string (param $cmd_g i32) (param $ret_g i32)
-        (param $ret_chars i32) (param $wide i32) (result i32)
+        (param $ret_chars i32) (param $wide i32) (param $cb_hwnd i32) (result i32)
     (local $cmd_work_g i32) (local $cmd_wa i32) (local $cmd_len i32)
     (local $ret_work_g i32) (local $ret_wa i32) (local $err i32)
     (if (local.get $cmd_g)
@@ -5017,9 +5020,13 @@
           (else (local.set $ret_work_g (local.get $ret_g))))
         (local.set $ret_wa (call $g2w (local.get $ret_work_g)))
         (i32.store8 (local.get $ret_wa) (i32.const 0))))
-    (local.set $err
-      (call $host_mci_string (local.get $cmd_wa) (local.get $ret_wa)
-        (local.get $ret_chars)))
+    (local.set $err (call $mciavi_string (local.get $cmd_wa) (local.get $ret_wa)
+      (local.get $ret_chars) (local.get $cb_hwnd)))
+    (if (i32.eq (local.get $err) (global.get $MCIAVI_NOT_MINE))
+      (then
+        (local.set $err
+          (call $host_mci_string (local.get $cmd_wa) (local.get $ret_wa)
+            (local.get $ret_chars)))))
     (if (i32.and (i32.ne (local.get $wide) (i32.const 0))
                  (i32.ne (local.get $ret_work_g) (i32.const 0)))
       (then
@@ -5033,14 +5040,24 @@
 
   ;; mciSendStringA(cmd, retbuf, retlen, hCallback) → MCIERR (0 = no error)
   (func $handle_mciSendStringA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $mci_send_string (local.get $arg0) (local.get $arg1)
-        (local.get $arg2) (i32.const 0)))
+    (local $err i32)
+    (local.set $err (call $mci_send_string (local.get $arg0) (local.get $arg1)
+        (local.get $arg2) (i32.const 0) (local.get $arg3)))
+    (if (i32.eq (local.get $err) (global.get $MCIAVI_PARKED))
+      (then (call $mciavi_park) (return)))
+    (global.set $handler_set_eip (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base) (local.get $err))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
   ;; mciSendStringW(cmd, retbuf, retlen, hCallback) → MCIERR
   (func $handle_mciSendStringW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (call $mci_send_string (local.get $arg0) (local.get $arg1)
-        (local.get $arg2) (i32.const 1)))
+    (local $err i32)
+    (local.set $err (call $mci_send_string (local.get $arg0) (local.get $arg1)
+        (local.get $arg2) (i32.const 1) (local.get $arg3)))
+    (if (i32.eq (local.get $err) (global.get $MCIAVI_PARKED))
+      (then (call $mciavi_park) (return)))
+    (global.set $handler_set_eip (i32.const 0))
+    (i32.store offset=0 (global.get $reg_base) (local.get $err))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))))
 
   ;; 862: GlobalMemoryStatus(lpBuffer) — fill MEMORYSTATUS struct

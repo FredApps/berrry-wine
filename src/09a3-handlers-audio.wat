@@ -1306,9 +1306,14 @@
   ;; mciSendStringA "open ... alias ..." command. String-command aliases live
   ;; in the host MCI backend, so resolve them at that same boundary.
   (func $handle_mciGetDeviceIDA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    (i32.store offset=0 (global.get $reg_base) (if (result i32) (local.get $arg0)
-        (then (call $host_mci_get_device_id (call $g2w (local.get $arg0))))
-        (else (i32.const 0))))
+    (local $id i32)
+    (if (local.get $arg0)
+      (then
+        ;; MCIAVI devices (09a7h) are opened in WAT, not by the host backend.
+        (local.set $id (call $mciavi_device_id (call $g2w (local.get $arg0))))
+        (if (i32.eqz (local.get $id))
+          (then (local.set $id (call $host_mci_get_device_id (call $g2w (local.get $arg0))))))))
+    (i32.store offset=0 (global.get $reg_base) (local.get $id))
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
 
   ;; 809: mciSendCommandA(mciId, uMsg, fdwCommand, dwParam)

@@ -76,18 +76,21 @@ const run = spawnSync(process.execPath, [
   '--vfs-include=**/*',
   `--dll-seed=${dlls}`,
   '--max-batches=1000000',
-  '--max-seconds=12',
+  // The launcher plays media\intro.avi (1344 frames) through MCI avivideo
+  // with "play wait" before it builds the menu; that call blocks, so a click
+  // sent during it is only delivered afterwards, to a different launcher state.
+  '--max-seconds=40',
   '--batch-size=1000',
   '--repaint-every=1000',
   `--png=${screenshot}`,
   '--quiet-api',
   '--quiet-blocks',
-  '--input=1:wait-dlg-control:1:10000,2:dlg-click:1',
+  '--input=1:wait-dlg-control:1:10000,1600:dlg-click:1',
   '--trace-api=mciSendStringA,mciGetDeviceIDA,DirectDrawCreate,SetWindowTextA,LockWindowUpdate,MoveWindow,RedrawWindow',
 ], {
   cwd: root,
   encoding: 'utf8',
-  timeout: 30000,
+  timeout: 70000,
   maxBuffer: 16 * 1024 * 1024,
 });
 const output = `${run.stdout || ''}\n${run.stderr || ''}`;

@@ -72,6 +72,7 @@
 (include "09a7e-video-codecs.wat")
 (include "09a7f-video-avi.wat")
 (include "09a7g-video-icm.wat")
+(include "09a7h-video-mciavi.wat")
 (include "09a8-handlers-directx.wat")
 (include "09a8b-handlers-opengl.wat")
 (include "09a8c-gl-encoder.wat")

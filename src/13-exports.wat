@@ -2068,7 +2068,8 @@
               (then (local.set $best (local.get $remain))))))
         (local.set $i (i32.add (local.get $i) (i32.const 1)))
         (br $mm_loop)))
-    (local.get $best))
+    ;; A playing MCI avivideo device wants its next frame.
+    (call $mciavi_due_ms (local.get $best)))
 
   (func (export "get_com_dll_name") (result i32) (global.get $com_dll_name))
   (func (export "get_loadlib_name") (result i32) (global.get $loadlib_name_ptr))
