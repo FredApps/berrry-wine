@@ -815,7 +815,7 @@
       (then (return (i32.const 0))))
     (if (i32.and (i32.lt_s (i32.load offset=4 (local.get $o)) (i32.const 0))
                  (i32.lt_s (i32.load offset=8 (local.get $o)) (i32.const 0)))
-      (then (return (i32.const 0))))
+      (then (return (select (i32.const 2) (i32.const 0) (global.get $uc_iat)))))
     (global.get $uc_icall))
 
   ;; The target an FF /2 would call now: the register, or the dword its slot
