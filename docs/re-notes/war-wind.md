@@ -35,6 +35,44 @@ The CLI resolves import DLLs beside the host exe, so for War Wind II copy
 `smackw32.dll` out of the install overlay next to a host copy of
 `warwind2.exe` (otherwise: `UNIMPLEMENTED API: <ord>`).
 
+**War Wind II also runs straight off the disc, no install needed**:
+`WW2\WARWIND2.EXE` and `WW2\SMACKW32.DLL` are stored uncompressed on the
+CD. Extract both beside each other and point the guest path at `D:`:
+
+```sh
+node tools/cue-bin-to-iso.js "<disc>.cue" ww2.iso
+node tools/iso-dir.js ww2.iso --extract='WW2\WARWIND2.EXE' --out=host/warwind2.exe
+node tools/iso-dir.js ww2.iso --extract='WW2\SMACKW32.DLL' --out=host/smackw32.dll
+node test/run.js --exe=host/warwind2.exe --exe-guest-path='d:\ww2\warwind2.exe' \
+  --media-mount="<disc>.cue" --media-exe=SETUP.EXE --cwd='D:\WW2' \
+  --screen=800x600 --no-build --quiet-api --count=0xa205c0
+```
+
+### Intro movie (Smacker, through the game's own `smackw32.dll`)
+
+`WW2OPEN.SMK` is 2169 frames, 640x160 at 15 fps (144.6 s), shown
+letterboxed in a 640x480 DDraw surface. It plays in full with no WAT
+Smacker code: smackw32.dll runs as ordinary guest x86. The DLL loads at
+`0xa1c000` (origBase `0x400000`), so `_SmackDoFrame@4` (`+0x4045c0`) is
+`0xa205c0`, `_SmackWait@4` `0xa1f170`, `_SmackOpen@12` `0xa20ef0`.
+`--trace-at` on DoFrame prints nothing (it is not called on the main
+thread's batch boundary); `--count` works.
+
+Decode throughput, measured 2026-09-28 by running to fixed `--max-batches`
+(deterministic) and reading the DoFrame count, on the M1 at load 5-8:
+
+| batch | frames | wall |
+|---|---|---|
+| 10,000 | 334 | 8.2 s |
+| 20,000 | 617 | 16.1 s |
+| 40,000 | 1,199 | 26.4 s |
+| 80,000 | 2,169 | 72.0 s |
+
+That is ~36-56 decoded fps against the 15 fps the movie needs, 2.5-3.5x
+real time headless. The headless clock runs ahead, so the decoder never
+waits and this is its ceiling; browser paint is not included.
+On the 10,000-batch runs, ~30 batches go by per frame.
+
 ```sh
 # install (drive with tools/ctl.js on the control port)
 node test/run.js --media-mount="<disc>.cue" --media-exe=SETUP.EXE \
@@ -68,6 +106,9 @@ send `mousemove`, step ~60, `mousedown`, step ~60, `mouseup`.
 
 ## Open questions
 
-- `$handle_ICOpen` returns 0 (no codecs), so WW1's Cinepak intro AVIs
-  (`LOGOS.AVI`, `WWOPEN.AVI`) are skipped. Real Win98 ships Cinepak.
+- ~~`$handle_ICOpen` returns 0, so WW1's Cinepak AVIs are skipped.~~ Fixed:
+  `09a7g-video-icm.wat` opens Cinepak and `09a7f-video-avi.wat` reads the
+  files, so `LOGOS.AVI` and `WWOPEN.AVI` play in-game (dd4437aa). All 63 disc
+  AVIs are Cinepak 320x240 15 fps + 22 kHz PCM, and they are listed in
+  `tools/avi-player/` from `test/binaries/cd-movies/War Wind/`.
 - WW1's "Begin the scenario" button draws as a black box.
