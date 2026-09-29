@@ -2040,3 +2040,56 @@ batches).
   these apps.
 - **Next.** On Deus Ex, what remains hot in SoftDrv is x87 triangle setup:
   `+0x10d2759d`/`+0x10d27656`, `fld` heads at 4% each.
+
+## 17. Switch jump tables as a primitive in both tiers (2026-09-29)
+
+`jmp dword [disp + r*4]` (FF /4, no base, scale 4) is the compiled `switch`.
+Before this change, both tiers treated it as an unknown indirect jump. The
+threaded tier ended the block and did a cache lookup on the loaded target.
+The uop tier declined any loop that contained one (`call-indirect`).
+
+- **Threaded tier.** The decoder emits handler 498 (`$th_jmp_tbl`, table size
+  499) for the base-less, scale-4 form. The handler loads the entry and jumps
+  to it.
+- **Compiler: kind 28.** `$uc_jt_targets` reads the table out of the image. The
+  record holds the table length at +140, up to 16 distinct targets at +160, and
+  the target count at +224. `$uc_nsucc`/`$uc_succ` return every target, so the
+  loop flood, the back-edge walk and the predecessor lists all see the switch
+  arms as ordinary successors.
+- **Engine: op 81 (`JTBL i n x`).** An index below `n` takes the index-th of
+  the `n` GOTOs that follow. Each arm re-checks the entry it loaded against the
+  compiled target with XORI/BNZL, so a table rewritten at runtime side-exits.
+  Any other index goes to `x`, a side exit. Ops 78-80 are unused `$c0` slots.
+- **Switch.** `--no-jump-table` or `set_jump_table(0)` turns off both tiers at
+  once. `uop-game-ab` has the arms `nojt` (uop plus the flag) and `nojtoff`
+  (off plus the flag).
+- **Tests.** `test/test-jump-table.js` runs six cases under the block clock
+  and the branch clock: in range, out of range, a rewritten table, and a
+  host-rewritten table. It checks exactness against the flag-off threaded
+  tier, and it checks that the uop program is entered. `tools/find-jump-tables.js`
+  is the static census.
+
+### 17.1 A/B
+
+Box1, load 1-2.5, `--jobs=1`, branch clock. User CPU covers the whole run.
+Gameplay is the last `--slice-split` phase.
+
+| game | uop | nojt | change |
+|---|---|---|---|
+| H3, before rebase | 52.62 / 54.93 s, gameplay 3.5 / 3.6 s | 54.12 / 57.46 s, gameplay 4.7 / 4.9 s | −3.6% whole run (inside the ~4-6% null band); **−25% gameplay** |
+| H3, after rebase onto 02abe273 | 53.36 / 53.09 s, gameplay 3.5 / 3.5 s | 54.23 / 53.87 s, gameplay 4.7 / 4.7 s | −1.3% whole run (null band ~0.5%); **−26% gameplay** |
+| SC, before rebase | 17.54 / 16.53 s | 16.67 / 16.60 s | flat; gameplay 0.8 s in all runs |
+| SC, after rebase | 16.20 / 16.62 s | 16.18 / 16.25 s | flat; gameplay 0.7-0.8 s |
+
+- **H3 uop counts.** The table jump raises uop enters from 44.3M to 53.3M and
+  installs from 664 to 749.
+- **Threaded tier alone.** Off against nojtoff was −2.5% on H3 in single runs.
+- **H3 frames.** Identical in every arm.
+- **SC frames.** Uop and nojt are identical to each other (0 px after the
+  rebase). Both differ from off:
+  - Before the rebase, the difference was 30-35 px, all inside StarCraft's
+    animated cursor. That class came from main's uop tier, not from this
+    change.
+  - After the rebase, the difference is 5100 px in a 509x260 box. The cause is
+    02abe273's MMX lowering: with `--no-uop-mmx`, the uop frame matches the
+    pre-rebase frame exactly and differs from off by the same 35 px cursor.
