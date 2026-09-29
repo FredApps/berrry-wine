@@ -656,6 +656,8 @@
     (local $wa_esp_w i32) (local $creation_w i32) (local $flags_w i32) (local $device i32) (local $path_wa i32)
     (local.set $path_wa (call $g2w (local.get $arg0)))
     (local.set $device (call $console_device_name (local.get $path_wa) (i32.const 1)))
+    (if (call $quartz_vxd_name (local.get $path_wa) (i32.const 1))
+      (then (local.set $device (global.get $QUARTZ_VXD_HANDLE))))
     (if (local.get $device)
       (then
         (i32.store offset=0 (global.get $reg_base) (local.get $device))

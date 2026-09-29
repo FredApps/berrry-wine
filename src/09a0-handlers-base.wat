@@ -2556,6 +2556,8 @@
     (local $wa_esp i32) (local $creation i32) (local $flags i32) (local $device i32) (local $path_wa i32)
     (local.set $path_wa (call $g2w (local.get $arg0)))
     (local.set $device (call $console_device_name (local.get $path_wa) (i32.const 0)))
+    (if (call $quartz_vxd_name (local.get $path_wa) (i32.const 0))
+      (then (local.set $device (global.get $QUARTZ_VXD_HANDLE))))
     (if (local.get $device)
       (then
         (i32.store offset=0 (global.get $reg_base) (local.get $device))
@@ -3034,6 +3036,11 @@
   ;; 26: CloseHandle(hObject) — 1 arg stdcall
   (func $handle_CloseHandle (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $console_result i32)
+    (if (i32.eq (local.get $arg0) (global.get $QUARTZ_VXD_HANDLE))
+      (then
+        (i32.store offset=0 (global.get $reg_base) (i32.const 1))
+        (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8)))
+        (return)))
     (local.set $console_result (call $token_close_handle (local.get $arg0)))
     (if (i32.ge_s (local.get $console_result) (i32.const 0))
       (then
