@@ -3892,10 +3892,15 @@
     (if (i32.eqz (i32.and (i32.ne (global.get $logical_frame_pace) (i32.const 0))
                           (i32.ne (global.get $present_cap) (i32.const 0))))
       (then (dispatch-next)))
-    (local.set $slept (global.get $sleep_yielded))
+    ;; Did THIS pace ask for a sleep? Read it off the pacer's own counter, not
+    ;; off $sleep_yielded: the host clears that flag only when it next checks
+    ;; the main thread, so it can still be 1 from the previous park here. On
+    ;; StarCraft at cap 15 a flag test missed 124 of 269 step sleeps, which
+    ;; then landed at the next $run halt somewhere inside the step instead.
+    (local.set $slept (global.get $present_paced_count))
     (call $present_pace)
-    ;; No wait due, or a sleep already requested by something else: run on.
-    (if (i32.or (local.get $slept) (i32.eqz (global.get $sleep_yielded)))
+    ;; No wait due: run on.
+    (if (i32.eq (local.get $slept) (global.get $present_paced_count))
       (then (dispatch-next)))
     (global.set $logical_frame_paced
       (i32.add (global.get $logical_frame_paced) (i32.const 1)))
