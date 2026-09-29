@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Rank functions by self time in a V8 .cpuprofile (node --cpu-prof output).
 // Usage: node tools/cpuprof-top.js <file.cpuprofile> [top=30] [--callers=NAME]
+//        [--names] [--wasm-only] [--incl=NAME[,NAME...]]
 const fs = require('fs');
 
 const file = process.argv[2];
@@ -86,6 +87,27 @@ if (process.argv.includes('--wasm-only')) {
   const wasmAgg = [...agg].filter(([k]) => wasmLabels.has(k) || k.startsWith('wasm-function['));
   for (const [k, ms] of wasmAgg.sort((a, b) => b[1] - a[1]).slice(0, top)) {
     console.log(`${ms.toFixed(1).padStart(9)} ms  ${(100 * ms / wasmMs).toFixed(1).padStart(5)}% of wasm  ${k}`);
+  }
+}
+
+// --incl=NAME[,NAME...]: inclusive time -- every sample with a frame whose
+// label contains NAME anywhere on its stack, each sample counted once. This
+// is the "x% incl" figure: a handler plus every helper it calls (an
+// x87 island body and its $g2w/$fpu_set_exc calls, say), which self time
+// scatters across the callees.
+const inclNames = (process.argv.find(a => a.startsWith('--incl=')) || '').slice(7).split(',').filter(Boolean);
+if (inclNames.length) {
+  console.log('--- inclusive time ---');
+  for (const name of inclNames) {
+    let ms = 0;
+    for (const [id, t] of self) {
+      for (let cur = id; cur !== undefined; cur = parent.get(cur)) {
+        const n = byId.get(cur);
+        if (n && label(n).includes(name)) { ms += t; break; }
+      }
+    }
+    console.log(`${ms.toFixed(1).padStart(9)} ms  ${(100 * ms / total).toFixed(1).padStart(5)}%` +
+      `  ${(100 * ms / (wasmMs || 1)).toFixed(1).padStart(5)}% of wasm  ${name}`);
   }
 }
 
