@@ -2649,6 +2649,17 @@
   (func (export "get_ck_shadow16_runs") (result i32) (global.get $ck_shadow16_runs))
   (func (export "get_ck_shadow16_px") (result i64) (global.get $ck_shadow16_px))
 
+  ;; Off switches for the exact folds that had none (07-decoder.wat
+  ;; $fold_off_mask; docs/uop-tier-design.md section 18). Decode-time, per
+  ;; instance, inherited by guest threads (lib/worker-imports.js).
+  (func (export "set_fold_off_mask") (param $mask i32)
+    (global.set $fold_off_mask (local.get $mask)))
+  (func (export "get_fold_off_mask") (result i32) (global.get $fold_off_mask))
+  (func (export "set_mmx_copy64") (param $flag i32)
+    (global.set $mmx_copy64_enabled (i32.ne (local.get $flag) (i32.const 0))))
+  (func (export "set_mmx_mask_copy") (param $flag i32)
+    (global.set $mmx_mask_copy_enabled (i32.ne (local.get $flag) (i32.const 0))))
+
   ;; TREE_FOLD ($th_tree_fold, src/07b-loop-match.wat). The general integer
   ;; expression fold; OFF by default. Decode-time, so the same rule as the
   ;; three above: set it before the first decode, and on every per-thread

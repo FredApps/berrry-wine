@@ -226,6 +226,32 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // Prototype folds under measurement, both off unless asked for.
   const ALU8_SIB = hasFlag('alu8-sib');
   const IMPLODE_CMP_RUN = hasFlag('implode-cmp-run');
+  // --no-fold=NAME[,NAME...]: turn off any exact threaded fold by name, for the
+  // fold-vs-uop-tier A/B of docs/uop-tier-design.md section 18. Folds with a
+  // setter of their own map to it; the ones that had no switch share one mask
+  // (07-decoder.wat $fold_off_mask). An unknown name is an error, not a no-op:
+  // a typo would otherwise be an A/B of a build against itself.
+  const FOLD_SETTERS = {
+    'case-chain': 'set_case_chain', 'rle-run': 'set_rle_run', 'rect-run': 'set_rect_run',
+    'smk-tree': 'set_smk_tree', 'pcx-run': 'set_pcx_run',
+    'ck-lut16': 'set_ck_lut16', 'ck-copy8': 'set_ck_copy8',
+    'ck-blend16': 'set_ck_blend16', 'ck-shadow16': 'set_ck_shadow16',
+    'aoe-fill': 'set_loop_aoe_fill_emit', 'aoe-span': 'set_loop_aoe_span_emit',
+    'mmx-fill': 'set_loop_mmx_fill_emit', 'mmx-copy64': 'set_mmx_copy64',
+    'mmx-mask-copy': 'set_mmx_mask_copy', 'lut16-stack': 'set_loop_lut16_stack_emit',
+  };
+  const FOLD_BITS = {
+    'storm-bitreader': 0x01, 'smack-huff': 0x02, 'lut-span': 0x04,
+    'colorkey8': 0x08, 'mw3-blit': 0x10, 'xlat-stosb': 0x80,
+  };
+  const NO_FOLDS = (getArg('no-fold', '') || '').split(',').filter(Boolean);
+  for (const n of NO_FOLDS) {
+    if (!FOLD_SETTERS[n] && !FOLD_BITS[n]) {
+      throw new Error(`--no-fold=${n}: unknown fold; known: ${[...Object.keys(FOLD_SETTERS), ...Object.keys(FOLD_BITS)].join(',')}`);
+    }
+  }
+  const FOLD_OFF_MASK = NO_FOLDS.reduce((m, n) => m | (FOLD_BITS[n] || 0), 0);
+  const FOLD_OFF_SETTERS = NO_FOLDS.map(n => FOLD_SETTERS[n]).filter(Boolean);
   // The semantic x87 families (H449 pipeline4/short, H450 balanced tree, H451
   // island, H452/453 affine prefix+suffix) are ON by default since 2026-09-28:
   // pixel-exact on MCM and Heroes III, -4.3% user CPU on Heroes III gameplay,
@@ -316,6 +342,8 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_PCX_RUN) inheritWasm('set_pcx_run', 0);
     if (ALU8_SIB) inheritWasm('set_alu8_sib', 1);
     if (IMPLODE_CMP_RUN) inheritWasm('set_implode_cmp_run', 1);
+    for (const s of FOLD_OFF_SETTERS) inheritWasm(s, 0);
+    if (FOLD_OFF_MASK) inheritWasm('set_fold_off_mask', FOLD_OFF_MASK);
     if (x87Wanted()) {
       inheritWasm('set_x87_pipeline4_fusion', 1);
       inheritWasm('set_x87_affine_fusion', 1);
@@ -486,6 +514,11 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (ALU8_SIB && instance.exports.set_alu8_sib) instance.exports.set_alu8_sib(1);
     if (IMPLODE_CMP_RUN && instance.exports.set_implode_cmp_run) instance.exports.set_implode_cmp_run(1);
+    for (const s of FOLD_OFF_SETTERS) {
+      if (!instance.exports[s]) throw new Error(`--no-fold: this module has no ${s}`);
+      instance.exports[s](0);
+    }
+    if (FOLD_OFF_MASK) instance.exports.set_fold_off_mask(FOLD_OFF_MASK);
     // Per-instance, like every other decode-time setting: a guest thread decodes
     // in its own instance, so arming only the main one would leave the workers
     // running the scalar x87 handlers and make the share unreadable.

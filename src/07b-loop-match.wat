@@ -489,7 +489,8 @@
   ;; Match the complete encoding, but derive both continuations from the block
   ;; address. Another binary emitting these ten bytes gets the same semantics.
   (func $try_emit_colorkey8_run (param $start_eip i32) (result i32)
-    (if (global.get $code16) (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (call $fold_off (i32.const 0x08)))
+      (then (return (i32.const 0))))
     (if (i32.or
           (i32.ne (call $gl32 (local.get $start_eip)) (i32.const 0x02752738))
           (i32.or
@@ -2958,7 +2959,8 @@
   (func $loop_try_xlat_stosb
     (param $start_eip i32) (param $tstart i32) (result i32)
     (local $fall i32) (local $back i32) (local $preset i32) (local $prefixed i32)
-    (if (global.get $code16) (then (return (i32.const 0))))
+    (if (i32.or (global.get $code16) (call $fold_off (i32.const 0x80)))
+      (then (return (i32.const 0))))
     (if (i32.and
           (i32.eq (call $gl32 (local.get $start_eip)) (i32.const 0xAAD7078A))
           (i32.eq (call $gl16 (i32.add (local.get $start_eip) (i32.const 4)))

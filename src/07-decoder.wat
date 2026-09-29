@@ -156,6 +156,18 @@
   ;; every spilled temporary in the state the x86 would have left.
   (global $PCX_RUN_MAX_TOKENS i32 (i32.const 4096))
 
+  ;; A/B off switches for the exact-byte folds that had none of their own
+  ;; (docs/uop-tier-design.md section 18). One bit per fold, all clear by
+  ;; default; `--no-fold=NAME` in test/runner-experiments.js sets them, and the
+  ;; mask is inherited by every guest-thread instance. Decode-time, like every
+  ;; other fold switch. Bits: 0x01 storm-bitreader (H396), 0x02 smack-huff
+  ;; (H395), 0x04 lut-span (H431), 0x08 colorkey8 (H443), 0x10 mw3-blit
+  ;; (H436/H440/H441), 0x80 xlat-stosb (H418). The MMX exact copies already
+  ;; had globals and now have setters (set_mmx_copy64, set_mmx_mask_copy).
+  (global $fold_off_mask (mut i32) (i32.const 0))
+  (func $fold_off (param $bit i32) (result i32)
+    (i32.ne (i32.and (global.get $fold_off_mask) (local.get $bit)) (i32.const 0)))
+
   ;; Decoder-time, nonterminal LUT spans. Unlike H418 these are not loops:
   ;; an indirect jump has already selected one suffix of a fully unrolled
   ;; renderer, and execution continues into the ordinary row tail afterwards.
@@ -1985,7 +1997,7 @@
     (local $p i32) (local $end i32) (local $hash i32)
     (if (i32.or
           (i32.eqz (call $loop_copy_emit_get))
-          (global.get $code16))
+          (i32.or (global.get $code16) (call $fold_off (i32.const 0x10))))
       (then (return (i32.const 0))))
     ;; Exact head and exact induction/back-edge tail. Checking both ends keeps
     ;; a partially patched binary on the ordinary decoder path.
@@ -2040,7 +2052,8 @@
   ;; The back/fall addresses are derived from the matched location so another
   ;; game build can use the same exact loop at a different VA.
   (func $match_rgb565_colorkey_run (param $start_eip i32) (result i32)
-    (if (i32.or (i32.eqz (call $loop_copy_emit_get)) (global.get $code16))
+    (if (i32.or (i32.eqz (call $loop_copy_emit_get))
+                (i32.or (global.get $code16) (call $fold_off (i32.const 0x10))))
       (then (return (i32.const 0))))
     (if (i32.or
           (i32.ne (call $gl32 (local.get $start_eip))
@@ -2094,7 +2107,8 @@
   ;; from the match so differently linked copies remain eligible.
   (func $try_emit_mw3_grid_filter_run (param $start_eip i32) (result i32)
     (local $p i32) (local $end i32) (local $hash i32)
-    (if (i32.or (i32.eqz (call $loop_copy_emit_get)) (global.get $code16))
+    (if (i32.or (i32.eqz (call $loop_copy_emit_get))
+                (i32.or (global.get $code16) (call $fold_off (i32.const 0x10))))
       (then (return (i32.const 0))))
     (if (i32.or
           (i32.ne (call $gl32 (local.get $start_eip))
@@ -2645,7 +2659,7 @@
 
   (func $try_emit_lut_span (result i32)
     (if (i32.or (i32.eqz (global.get $loop_lut_emit_enabled))
-                (global.get $code16))
+                (i32.or (global.get $code16) (call $fold_off (i32.const 0x04))))
       (then (return (i32.const 0))))
     (if (call $try_emit_lut_span8_rows) (then (return (i32.const 1))))
     (if (call $try_emit_lut_span1) (then (return (i32.const 1))))
@@ -4661,6 +4675,7 @@
   ;; ensures a near-match always falls back to ordinary i486 decoding.
   (func $match_smack_huff_walk (result i32)
     (local $counter_addr i32)
+    (if (call $fold_off (i32.const 0x02)) (then (return (i32.const 0))))
     (if (i32.ne (call $gl8 (global.get $d_pc)) (i32.const 0x0D))
       (then (return (i32.const 0))))
     (local.set $counter_addr
@@ -4703,6 +4718,7 @@
   ;; superinstruction, not a general CALL peephole.
   (func $match_storm_bitreader (result i32)
     (local $p i32)
+    (if (call $fold_off (i32.const 0x01)) (then (return (i32.const 0))))
     (local.set $p (global.get $d_pc))
     (if (i32.ne (call $gl32 (local.get $p)) (i32.const 0x748B5653))
       (then (return (i32.const 0))))
