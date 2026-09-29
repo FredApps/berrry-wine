@@ -5,6 +5,7 @@
 //
 //   node tools/uop-game-ab.js [--games=h3,sc,...] [--arms=off,uop] [--jobs=N]
 //        [--out=DIR] [--extra='--flag ...'] [--ref-wasm=FILE [--ref-region-map=FILE]] [--gl=headless] [--cpu-prof] [--no-build] [--list]
+//        [--extend=GAME:N,...]   (N more gameplay batches past the route's end, split there)
 //
 // Runs each game's own gameplay route (the one its test/test-*-gameplay.js or
 // its re-notes use) in two arms and prints, per game: whether the final frames
@@ -187,10 +188,23 @@ function runArm(game, name, armArgs, outDir, extra) {
     const input = g.input;
     // --gl=headless: the GL games on @node-3d/webgl instead of the software
     // rasterizer (needs an awake display; run.js prints the display count).
-    const gargs = arg('gl', '') === 'headless'
+    let gargs = arg('gl', '') === 'headless'
       ? g.args.map(a => a === '--gl-renderer=software' ? '--headless-gl' : a) : g.args;
+    // --extend=GAME:N[,GAME:N]: run N batches of gameplay past the route's
+    // own end, and split there too, so the gameplay phase is most of the run
+    // and the route's original window is still reported on its own. The
+    // input list is unchanged: the extra batches are the game idling in the
+    // state the route left it in (a town, an adventure map, a HUD).
+    const ext = +((arg('extend', '').split(',').find(s => s.startsWith(`${game}:`)) || ':0').split(':')[1]);
+    let splits = g.split ? [g.split] : [];
+    if (ext > 0) {
+      const mb = gargs.find(a => a.startsWith('--max-batches='));
+      const end = +mb.split('=')[1];
+      gargs = gargs.map(a => a === mb ? `--max-batches=${end + ext}` : a);
+      splits = [...splits, end];
+    }
     argv = ['test/run.js', `--app=${g.app}`, '--no-build', '--quiet-api', '--quiet-blocks', '--no-close',
-      ...gargs, ...(g.split ? [`--slice-split=${g.split}`] : []), ...armArgs, ...extra,
+      ...gargs, ...(splits.length ? [`--slice-split=${splits.join(',')}`] : []), ...armArgs, ...extra,
       `--png=${png}`, ...(input.length ? [`--input=${input.join(',')}`] : [])];
   }
   return new Promise(resolve => {
