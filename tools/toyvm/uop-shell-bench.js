@@ -7,6 +7,11 @@
 //        [--arms=node,v8,sm] [--engines=l1,e1,straight] [--configs=all]
 //        [--steps=2m] [--reps=5] [--budget=20m] [--out=DIR] [--timeout=600]
 //
+// Name a config twice (--configs=all,all,baseline) to time a second copy of
+// it, reported as `e1/all#2`: that pair's spread is this run's null band, on
+// this box at this load, which is what any other arm's difference has to beat.
+// A row that bailed lists its top bail blocks and why each has no native form.
+//
 // Same method as uop-speed.js (which is what runs): snapshot the program at
 // the loop head, time L1 in the loop's steady state and each µop program from
 // the head, best of --reps. The shells run a PRIVATE bundle of uop-speed.js
@@ -74,11 +79,17 @@ ToyVM.require('tools/toyvm/uop-speed.js').bench(${JSON.stringify({ ...o, exe: pa
 
 function runShell(id, script, timeoutS) {
   return new Promise((resolve) => {
-    const p = spawn(binOf(id), [script], { stdio: ['ignore', 'pipe', 'pipe'] });
+    // Its own process group, and the timeout kills the group: a jsvu engine is
+    // a wrapper script around the real binary, and killing only the wrapper
+    // orphaned the engine, which kept the pipes open so 'close' never came and
+    // the whole bench hung behind one program.
+    const p = spawn(binOf(id), [script], { stdio: ['ignore', 'pipe', 'pipe'], detached: true });
     let out = '', err = '';
     p.stdout.on('data', (d) => { out += d; });
     p.stderr.on('data', (d) => { err += d; });
-    const kill = setTimeout(() => p.kill('SIGKILL'), timeoutS * 1000);
+    const kill = setTimeout(() => {
+      try { process.kill(-p.pid, 'SIGKILL'); } catch (e) { p.kill('SIGKILL'); }
+    }, timeoutS * 1000);
     p.on('close', (code, sig) => {
       clearTimeout(kill);
       const m = /^SHELLUOP (.*)$/m.exec(out);
@@ -124,6 +135,7 @@ async function main() {
       for (const row of r.rows) {
         console.log(`  ${path.basename(p.exe).padEnd(13)} ${r.head.padEnd(11)} ${sh.padEnd(5)} ${row.name.padEnd(18)}`
           + ` ${row.ns.toFixed(2).padStart(7)} ns/insn  x${row.x.toFixed(2)}  steps=${row.steps} ${row.why} bails=${row.bails}`);
+        for (const b of row.bailAt || []) console.log(`      bail ${b}`);
       }
     }
   }

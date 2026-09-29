@@ -209,6 +209,9 @@ function cond(cc, a, b, w) {
 
 class UopDeoptVga extends Error {}
 
+let scribble = 0;
+const scribbles = () => scribble;
+
 // Run program `p` from its entry against `vm`. Returns
 //   { exit: 'go', ip, steps, n: µops executed, blocks, why }.
 // `opts.maxOps` bounds a runaway program.
@@ -227,7 +230,13 @@ function runRef(vm, p, opts = {}) {
   const fl = new LazyFlags(opts.flags !== undefined ? opts.flags >>> 0 : ex.get_flags() >>> 0, ex.mget_f_res());
   let steps = opts.steps !== undefined ? opts.steps | 0 : ex.get_steps() | 0;
   let smc = ex.get_smc() | 0, smclo = ex.get_smclo() >>> 0, smchi = ex.get_smchi() >>> 0;
-  const v = opts.v || new Int32Array(Math.max(p.nv, 64));
+  // A resident program's guest vregs are L1's registers (uop-opt.js
+  // finalize): its vreg file is memory from REGFILE_BASE, which also holds
+  // the E1 engine's copy of the constants past p.nv -- so an engine that
+  // installed a program there has to install again (scribbles()).
+  let v = opts.v;
+  if (!v && p.resident) { v = new Int32Array(vm.memory.buffer, isa.REGFILE_BASE, p.nv); scribble++; }
+  if (!v) v = new Int32Array(Math.max(p.nv, 64));
   const stopAt = opts.stopAt || null;
   const counts = opts.counts || null;       // per-op-kind census
   let nops = 0;
@@ -345,6 +354,8 @@ function runRef(vm, p, opts = {}) {
       const op = ops[k];
       nops++;
       if (counts) counts[op.o] = (counts[op.o] || 0) + 1;
+      // A narrow write to a resident register keeps its upper bits.
+      const old = op.dw ? v[op.d] : 0;
       switch (op.o) {
         case 'movi': v[op.d] = op.i; break;
         case 'mov': v[op.d] = v[op.a]; break;
@@ -462,6 +473,10 @@ function runRef(vm, p, opts = {}) {
         }
         default: throw new Error(`ref: op ${op.o}`);
       }
+      if (op.dw) {
+        const m = op.dw === 16 ? 0xFFFF : 0xFF;
+        v[op.d] = (old & ~m) | (v[op.d] & m);
+      }
     }
     if (nops > maxOps) throw new Error('ref: op limit');
     if (next >= 0) { bid = next; continue; }
@@ -488,4 +503,4 @@ function runRef(vm, p, opts = {}) {
   }
 }
 
-module.exports = { runRef, LazyFlags, shiftHelper, cond, UopDeoptVga, parity };
+module.exports = { runRef, LazyFlags, shiftHelper, cond, UopDeoptVga, parity, scribbles };

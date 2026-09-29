@@ -411,6 +411,131 @@ function dshift(reps = 40) {
   return { com: a.done(), head: a.addr('top'), alt: [a.addr('ovf')] };
 }
 
+// Every shift and rotate kind at 8, 16 and 32 bits by CL (narrow rotates by
+// immediates), where CL runs over 0..63 -- zero (value and every flag left alone), counts up to the width,
+// past it, and past 31 (masked). After each one all five flags it can write
+// are read back with setcc (CF, OF into DL/DH; ZF, SF, PF into memory) before
+// anything else touches them, and the result is folded into EBP, which also
+// feeds the next iteration's operand. A rotate leaves SF/ZF/PF to the op before
+// it, so those reads check that nothing else was written. On E1 this is the
+// native variable-count shift (uop-wasm.js shv_*), not a reference-interpreter
+// bail.
+function shifts(reps = 4) {
+  const a = asm();
+  prologue(a, 0x400);
+  a.w(0xC6, 0x06, 0x00, 0x24, reps); // mov byte [2400h],reps
+  a.w(0x66, 0xBD, 0x3B, 0x9A, 0x1C, 0x87); // mov ebp,871C9A3Bh
+  a.label('outer');
+  a.w(0xBE, 0x00, 0x10);       // mov si,1000h
+  a.w(0xBF, 0x00, 0x01);       // mov di,100h
+  a.label('top');
+  a.w(0x66, 0xAD);             // lodsd
+  a.w(0x66, 0x31, 0xE8);       // xor eax,ebp
+  a.w(0x88, 0xC1);             // mov cl,al
+  a.w(0x32, 0xCC);             // xor cl,ah
+  a.w(0x80, 0xE1, 0x3F);       // and cl,3Fh
+  for (const k of [0, 1, 4, 5, 7]) {          // rol ror shl shr sar
+    for (const w of [8, 16, 32]) {
+      a.w(0x66, 0x89, 0xC3);                  // mov ebx,eax
+      const m = 0xC0 | (k << 3) | 3;          // bl / bx / ebx
+      // A narrow rotate by CL is outside the µop set (uop-ir.js supported), so
+      // those go by immediates instead: 0, past the width, and past 31.
+      if (k < 2 && w < 32) a.w(w === 8 ? 0xC0 : 0xC1, m, [0, 9, 19, 35][(k * 2 + (w >> 4)) & 3]);
+      else if (w === 8) a.w(0xD2, m); else if (w === 16) a.w(0xD3, m); else a.w(0x66, 0xD3, m);
+      a.w(0x0F, 0x92, 0xC2);                  // setc dl
+      a.w(0x0F, 0x90, 0xC6);                  // seto dh
+      a.w(0x0F, 0x94, 0x06, 0x00, 0x23);      // setz [2300h]
+      a.w(0x0F, 0x98, 0x06, 0x01, 0x23);      // sets [2301h]
+      a.w(0x0F, 0x9A, 0x06, 0x02, 0x23);      // setp [2302h]
+      a.w(0x66, 0x01, 0xD5);                  // add ebp,edx
+      a.w(0x66, 0x03, 0x2E, 0x00, 0x23);      // add ebp,[2300h]
+      a.w(0x66, 0x31, 0xDD);                  // xor ebp,ebx
+      a.w(0x66, 0xD1, 0xC5);                  // rol ebp,1
+    }
+  }
+  a.w(0x4F);                   // dec di
+  a.w(0x0F, 0x85); a.rel16('top');   // jnz top
+  a.w(0x66, 0x01, 0x2E, 0x04, 0x23); // add [2304h],ebp
+  a.w(0xFE, 0x0E, 0x00, 0x24); // dec byte [2400h]
+  a.w(0x0F, 0x85); a.rel16('outer'); // jnz outer
+  epilogue(a);
+  return { com: a.done(), head: a.addr('top') };
+}
+
+// Shifts by CL on a MEMORY operand. The shift's flags are written before its
+// store, so a slow-half store that hands its block back to the reference
+// interpreter re-runs a shift whose flags are already out; that is exact only
+// because the shift sets every bit it owns from its operands alone (uop-wasm.js
+// EFFECT). Every kind at 32 bits, and one narrow of each width.
+function memShifts(reps = 4) {
+  const a = asm();
+  prologue(a, 0x400);
+  a.w(0xC6, 0x06, 0x00, 0x24, reps); // mov byte [2400h],reps
+  a.w(0x66, 0xBD, 0x3B, 0x9A, 0x1C, 0x87); // mov ebp,871C9A3Bh
+  a.label('outer');
+  a.w(0xBE, 0x00, 0x10);       // mov si,1000h
+  a.w(0xBF, 0x00, 0x01);       // mov di,100h
+  a.label('top');
+  a.w(0x66, 0xAD);             // lodsd
+  a.w(0x66, 0x31, 0xE8);       // xor eax,ebp
+  a.w(0x88, 0xC1);             // mov cl,al
+  a.w(0x32, 0xCC);             // xor cl,ah
+  a.w(0x80, 0xE1, 0x3F);       // and cl,3Fh
+  for (const [k, w] of [[0, 32], [1, 32], [4, 32], [5, 32], [7, 32], [4, 16], [7, 8]]) {
+    a.w(0x66, 0xA3, 0x08, 0x23);            // mov [2308h],eax
+    const mm = 0x06 | (k << 3);
+    if (w === 8) a.w(0xD2, mm, 0x08, 0x23); else if (w === 16) a.w(0xD3, mm, 0x08, 0x23);
+    else a.w(0x66, 0xD3, mm, 0x08, 0x23);   // <sh> [2308h],cl
+    a.w(0x0F, 0x92, 0xC2);                  // setc dl
+    a.w(0x0F, 0x90, 0xC6);                  // seto dh
+    a.w(0x0F, 0x94, 0x06, 0x00, 0x23);      // setz [2300h]
+    a.w(0x66, 0x01, 0xD5);                  // add ebp,edx
+    a.w(0x66, 0x03, 0x2E, 0x08, 0x23);      // add ebp,[2308h]
+    a.w(0x66, 0x03, 0x2E, 0x00, 0x23);      // add ebp,[2300h]
+    a.w(0x66, 0xD1, 0xC5);                  // rol ebp,1
+  }
+  a.w(0x4F);                   // dec di
+  a.w(0x0F, 0x85); a.rel16('top');   // jnz top
+  a.w(0x66, 0x01, 0x2E, 0x04, 0x23); // add [2304h],ebp
+  a.w(0xFE, 0x0E, 0x00, 0x24); // dec byte [2400h]
+  a.w(0x0F, 0x85); a.rel16('outer'); // jnz outer
+  epilogue(a);
+  return { com: a.done(), head: a.addr('top') };
+}
+
+// Word and dword accesses through ES:BX with BX stepping by 1111h, so every
+// sixteenth iteration lands on FFFFh and the access wraps the 64K segment:
+// the fast half's guard deopts, and the slow half's full-semantics access
+// (uop-wasm.js ldf/stf) is not plain and has to hand its block to the
+// reference interpreter -- a load, and a read-modify-write whose store comes
+// after a load that was already done.
+function wraps(reps = 20) {
+  const a = asm();
+  prologue(a, 0x400);
+  a.w(0xC6, 0x06, 0x00, 0x24, reps); // mov byte [2400h],reps
+  a.w(0x31, 0xDB);             // xor bx,bx
+  a.label('outer');
+  a.w(0xB9, 0x00, 0x04);       // mov cx,400h
+  a.label('top');
+  a.w(0x26, 0x8B, 0x07);       // mov ax,es:[bx]
+  a.w(0x01, 0xC2);             // add dx,ax
+  a.w(0x26, 0x01, 0x17);       // add es:[bx],dx
+  a.w(0x66, 0x26, 0x01, 0x17); // add es:[bx],edx
+  // Shifts by CL whose store wraps too: their flags are out before the store
+  // hands the block back, so the re-run starts from the shifted flags.
+  a.w(0x26, 0xD3, 0x27);       // shl word es:[bx],cl
+  a.w(0x83, 0xD2, 0x00);       // adc dx,0
+  a.w(0x66, 0x26, 0xD3, 0x07); // rol dword es:[bx],cl
+  a.w(0x83, 0xD2, 0x00);       // adc dx,0
+  a.w(0x81, 0xC3, 0x11, 0x11); // add bx,1111h
+  a.w(0xE2); a.rel8('top');    // loop top
+  a.w(0x01, 0x16, 0x04, 0x24); // add [2404h],dx
+  a.w(0xFE, 0x0E, 0x00, 0x24); // dec byte [2400h]
+  a.w(0x75); a.rel8('outer');  // jnz outer
+  epilogue(a);
+  return { com: a.done(), head: a.addr('top') };
+}
+
 // [bp+k] locals re-read across a byte store through ES. ES alternates each
 // outer pass between DS+1000h (windows apart: the store keeps the locals
 // under an sdisj guard) and DS itself with DI walking over the locals, so the
@@ -486,7 +611,8 @@ async function main() {
   const only = process.argv[2] || null;
   let checked = 0;
   for (const [name, make] of [['sprite', sprite], ['checksum', checksum], ['mixed', mixed], ['flags', flags], ['carry', carry],
-    ['muldiv', muldiv], ['divfault', divfault], ['segloads', segloads], ['dshift', dshift], ['segfwd', segfwd]]) {
+    ['muldiv', muldiv], ['divfault', divfault], ['segloads', segloads], ['dshift', dshift], ['segfwd', segfwd],
+    ['shifts', shifts], ['memshifts', memShifts], ['wraps', wraps]]) {
     if (only && only !== name) continue;
     const made = make();
     // A case may name further heads inside the same loop: a header whose
@@ -528,6 +654,6 @@ async function main() {
   console.log(`ok test-toyvm-uop: ${checked} differential runs agree`);
 }
 
-module.exports = { sprite, checksum, mixed, flags, carry, muldiv, divfault, segloads, dshift, segfwd, capture, l1Arm, uopArm };
+module.exports = { sprite, checksum, mixed, flags, carry, muldiv, divfault, segloads, dshift, segfwd, shifts, memShifts, wraps, capture, l1Arm, uopArm };
 
 if (require.main === module) main().catch((e) => { console.error(e.stack || e); process.exit(1); });

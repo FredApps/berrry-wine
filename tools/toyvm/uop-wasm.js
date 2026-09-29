@@ -31,20 +31,30 @@
 // Memory: the vm's memory is imported, and the engine's own data -- vreg file,
 // out slots, code -- goes in the tail page past isa.DEC_END, which nothing
 // else uses.
+//
+// Two vreg files. A RESIDENT program's (uop-opt.js finalize) starts at
+// isa.REGFILE_BASE, so its guest vregs 0..13 are L1's registers and segment
+// bases themselves and its temps run on past DEC_END; every other program's
+// sits after that, clear of the registers.
 
 const path = require('path');
 const isa = require('./isa');
 const { FBIT } = require('./uop-ir');
-const { runRef } = require('./uop-ref');
+const { runRef, scribbles } = require('./uop-ref');
+const { NREG, SEGV, FIRST_TEMP } = require('./uop-ir');
 const { compileWat } = require(path.join(__dirname, '..', '..', 'lib', 'compile-wat.js'));
 
 const TOP = isa.MEM_PAGES << 16;
-const OUT = (isa.DEC_END + 15) & ~15;       // steps, flags, ip / block id
+const MAXV = 2048;
+const VFILE = isa.REGFILE_BASE;              // resident vreg file
+if (isa.REGFILE_SEGB !== VFILE + 4 * SEGV || SEGV !== NREG || FIRST_TEMP !== SEGV + 6) {
+  throw new Error('uop-wasm: register file is not the guest-vreg prefix');
+}
+const VBASE = (VFILE + 4 * MAXV + 15) & ~15; // everyone else's
+const OUT = VBASE + 4 * MAXV;                // steps, flags, ip / block id
 const KMAX = 16;
 const SLOTHOME = OUT + 16;                   // per local slot: the vreg address it stands for
-const VBASE = SLOTHOME + 4 * KMAX;
-const MAXV = 2048;
-const CODE = VBASE + 4 * MAXV;
+const CODE = SLOTHOME + 4 * KMAX;
 const CODE_END = TOP;
 
 const CCS = ['nz', 'z', 'eq', 'ne', 'ltu', 'leu', 'gtu', 'geu', 'lt', 'le', 'gt', 'ge', 's', 'ns', 'p', 'np'];
@@ -140,6 +150,65 @@ def('sarw', 'vviii', ({ V, I, SET }) => SET(0,
 // rotate left by k within a w-bit field: operands k, w-k, mask
 def('rolw', 'vviii', ({ V, I, SET }) => `(local.set $x (i32.and ${V(1)} ${I(4)}))`
   + SET(0, `(i32.and (i32.or (i32.shl (local.get $x) ${I(2)}) (i32.shr_u (local.get $x) ${I(3)})) ${I(4)})`));
+// A shift by a count only known at run time (x86 SHL/SHR/SAR/ROL/ROR r/m, CL
+// or an immediate without the guards pass): CALLH, uop-ref.js shiftHelper in
+// closed form. The count is masked by the machine's $shm here, so no guard is
+// needed; a masked count of 0 leaves the value and every flag alone.
+// Otherwise CF and OF are written, and SF/ZF/PF too unless it rotates.
+// $x the w-bit operand, $l the count, $y the result, $z CF.
+for (const sh of ['shl', 'shr', 'sar', 'rol', 'ror']) {
+  for (const w of [8, 16, 32]) {
+    const m = w === 32 ? -1 : (1 << w) - 1;
+    const c = (k) => `(i32.const ${k})`;
+    const X = '(local.get $x)', L = '(local.get $l)', Y = '(local.get $y)', Z = '(local.get $z)';
+    const bitOf = (v, k) => `(i32.and (i32.shr_u ${v} ${k}) ${c(1)})`;
+    const msb = (v) => bitOf(v, c(w - 1));
+    const sx = `(i32.shr_s (i32.shl ${X} ${c(32 - w)}) ${c(32 - w)})`;
+    const min31 = (e) => `(select ${c(31)} ${e} (i32.gt_u ${e} ${c(31)}))`;
+    const r = `(i32.and ${L} ${c(w - 1)})`;
+    let val, cf, of;
+    switch (sh) {
+      case 'shl':
+        val = `(select ${c(0)} (i32.and (i32.shl ${X} ${L}) ${c(m)}) (i32.ge_u ${L} ${c(w)}))`;
+        cf = `(select ${c(0)} ${bitOf(X, `(i32.sub ${c(w)} ${L})`)} (i32.gt_u ${L} ${c(w)}))`;
+        of = `(i32.xor ${Z} ${msb(Y)})`;
+        break;
+      case 'shr':
+        val = `(select ${c(0)} (i32.shr_u ${X} ${L}) (i32.ge_u ${L} ${c(w)}))`;
+        cf = `(select ${c(0)} ${bitOf(X, `(i32.sub ${L} ${c(1)})`)} (i32.gt_u ${L} ${c(w)}))`;
+        of = msb(X);
+        break;
+      case 'sar':
+        val = `(i32.and (i32.shr_s ${sx} ${min31(L)}) ${c(m)})`;
+        cf = `(i32.and (i32.shr_s ${sx} ${min31(`(i32.sub ${L} ${c(1)})`)}) ${c(1)})`;
+        of = c(0);
+        break;
+      case 'rol':
+        val = `(i32.and (i32.or (i32.shl ${X} ${r}) (i32.shr_u ${X} (i32.sub ${c(w)} ${r}))) ${c(m)})`;
+        if (w < 32) val = `(select ${X} ${val} (i32.eqz ${r}))`;
+        cf = `(i32.and ${Y} ${c(1)})`;
+        of = `(i32.xor ${Z} ${msb(Y)})`;
+        break;
+      case 'ror':
+        val = `(i32.and (i32.or (i32.shr_u ${X} ${r}) (i32.shl ${X} (i32.sub ${c(w)} ${r}))) ${c(m)})`;
+        if (w < 32) val = `(select ${X} ${val} (i32.eqz ${r}))`;
+        cf = msb(Y);
+        of = `(i32.xor ${msb(Y)} ${bitOf(Y, c(w - 2))})`;
+        break;
+    }
+    const rotate = sh === 'rol' || sh === 'ror';
+    const clear = (1 << FBIT.c) | (1 << FBIT.o) | (rotate ? 0 : (1 << FBIT.s) | (1 << FBIT.z) | (1 << FBIT.p));
+    const szp = rotate ? c(0) : `(i32.or (i32.or (i32.shl ${msb(Y)} ${c(FBIT.s)}) (i32.shl (i32.eqz ${Y}) ${c(FBIT.z)}))`
+      + ` (i32.shl (i32.eqz (i32.and (i32.popcnt (i32.and ${Y} ${c(255)})) ${c(1)})) ${c(FBIT.p)}))`;
+    def(`shv_${sh}${w}`, 'vvv', ({ V, SET }) => `(local.set $x (i32.and ${V(1)} ${c(m)}))`
+      + `(local.set $l (i32.and ${V(2)} (local.get $shm)))`
+      + `(if (i32.eqz ${L}) (then (local.set $y ${V(1)})) (else`
+      + ` (local.set $y ${val}) (local.set $z ${cf})`
+      + ` (local.set $F (i32.or (i32.and (local.get $F) ${c(~clear)})`
+      + ` (i32.or (i32.or ${Z} (i32.shl ${of} ${c(FBIT.o)})) ${szp})))))`
+      + SET(0, Y));
+  }
+}
 
 // Registers and segment bases: operand 1 is the byte address.
 def('getr32', 'vi', ({ I, SET }) => SET(0, `(i32.load ${I(1)})`));
@@ -182,6 +251,18 @@ for (const w of [8, 16, 32]) {
       + `(if ${bad(false)} (then ${GOTO(dxk)}))` + SET(0, `(${LDW[w]} (local.get $l))`));
     def(`st${w}${form}`, `${kinds}t`, ({ V, I, GOTO }) => addr(V, I)
       + `(if ${bad(true)} (then ${GOTO(dxk)}))` + `(${STW[w]} (local.get $l) ${V(0)})`);
+    // Full L1 semantics (chk 'full', the slow half): the plain case inline;
+    // anything else -- VGA, a 64K wrap, a store onto code -- hands this whole
+    // block to the reference interpreter from its start (the last operand is
+    // the block id). Only lowered where nothing before it in the block had an
+    // effect, so running the block again from the top is exact.
+    const bailTo = (I) => `(i32.store (i32.const ${OUT + 8}) ${I(dxk)})`
+      + '(i32.store (i32.const ' + OUT + ') (local.get $steps)) (i32.store (i32.const ' + (OUT + 4) + ') (local.get $F))'
+      + '(return (i32.const 1))';
+    def(`ldf${w}${form}`, `${kinds}i`, ({ V, I, SET }) => addr(V, I)
+      + `(if ${bad(false)} (then ${bailTo(I)}))` + SET(0, `(${LDW[w]} (local.get $l))`));
+    def(`stf${w}${form}`, `${kinds}i`, ({ V, I }) => addr(V, I)
+      + `(if ${bad(true)} (then ${bailTo(I)}))` + `(${STW[w]} (local.get $l) ${V(0)})`);
     def(`ldn${w}${form}`, kinds, ({ V, I, SET }) => addr(V, I) + SET(0, `(${LDW[w]} (local.get $l))`));
     def(`stn${w}${form}`, kinds, ({ V, I }) => addr(V, I) + `(${STW[w]} (local.get $l) ${V(0)})`);
   }
@@ -260,8 +341,44 @@ def('bail', 'i', ({ I }) => `(i32.store (i32.const ${OUT + 8}) ${I(0)})`
   + `(i32.store (i32.const ${OUT}) (local.get $steps)) (i32.store (i32.const ${OUT + 4}) (local.get $F))`
   + '(return (i32.const 1))');
 
+// Narrow-destination forms, for a resident program's writes to a register it
+// keeps at 16 or 8 bits: the op's result stored as its low half or low byte,
+// leaving the register's upper bits where they are. `mov.hi` is AH/CH/DH/BH.
+// A resident register's partial write needs no merge at all this way -- the
+// store IS the merge, the way L1's own rset16/rset8 do it.
+for (const e of [...EOPS]) {
+  let sets = false;
+  const spy = { V: () => '', I: () => '', GOTO: () => '', SET: (k) => { if (k === 0) sets = true; return ''; } };
+  e.body(spy);
+  if (!sets || e.ops[0] !== 'v') continue;
+  EOPS.push({ ...e, name: `${e.name}.h`, dw: 16 }, { ...e, name: `${e.name}.b`, dw: 8 },
+    { ...e, name: `${e.name}.hf`, dw: 16, full: true }, { ...e, name: `${e.name}.bf`, dw: 8, full: true });
+}
+{
+  const mov = EOPS.find(e => e.name === 'mov');
+  EOPS.push({ ...mov, name: 'mov.hi', dw: 9 }, { ...mov, name: 'mov.hif', dw: 9, full: true });
+}
+// The store a narrow write makes. `full` (resident: 'full', the ...RF configs)
+// is the same merge done as a 32-bit load-merge-store, so the register's next
+// full-width load never meets a narrower store it cannot forward from.
+const DWST = { 16: 'i32.store16', 8: 'i32.store8', 9: 'i32.store8 offset=1' };
+const DWKEEP = { 16: -65536, 8: -256, 9: -65281 };
+const dwPut = (dw, x) => (dw === 9 ? `(i32.shl (i32.and ${x} (i32.const 255)) (i32.const 8))`
+  : `(i32.and ${x} (i32.const ${dw === 16 ? 65535 : 255}))`);
+const dwStore = (e, at, x) => (!e.full ? `(${DWST[e.dw]} ${at} ${x})`
+  : `(local.set $y ${x}) (local.set $z ${at})`
+    + ` (i32.store (local.get $z) (i32.or (i32.and (i32.load (local.get $z)) (i32.const ${DWKEEP[e.dw]})) ${dwPut(e.dw, '(local.get $y)')}))`);
+
 const EOP = new Map(EOPS.map((e, i) => [e.name, { ...e, id: i }]));
 const isTerm = (name) => /^(jmp|jmpc|jmpx|bcc_|bccx_|exit|bail)/.test(name);
+// Ops whose effect outlives the vreg they define: after one of these, a block
+// can no longer be handed to the reference interpreter from its start (ldf/stf).
+// A shift (callh) is not one, although it writes flags: every flag bit it
+// touches is set from its operands alone (shv_*, a count of 0 touches none),
+// so running it twice from the same operands leaves the flags it left once.
+// That is what lets `shl [mem],cl` store after its flags are out.
+const EFFECT = new Set(['st', 'putr', 'puts', 'putsel', 'rec', 'wrec', 'wflags', 'step',
+  'fvset', 'check', 'dchk', 'guard']);
 
 // ---------------------------------------------------------------------------
 // Lowering: µop program -> per block, a list of { name, args } where an arg is
@@ -271,6 +388,8 @@ class Unsupported extends Error {}
 
 function lowerProgram(p) {
   const nv = p.nv;
+  const resident = !!p.resident;
+  const F = p.resident === 'full' ? 'f' : '';
   let next = nv;
   const ZERO = next++;
   const consts = new Map([[0, ZERO]]);
@@ -286,8 +405,31 @@ function lowerProgram(p) {
   const opt = (x) => (x !== undefined && x >= 0 ? vr(x) : K(0));
   const mask = (w) => (w === 32 ? -1 : (1 << w) - 1);
 
+  const dwTemp = next++;
+  const DWS = { 16: `.h${F}`, 8: `.b${F}` };
+  // A resident register written narrow: the op aimed at a temp, then retargeted
+  // at the register as its store-narrow form when it lowered to one op that
+  // has one, else a narrow mov from the temp.
+  const lowerNarrow = (op, out) => {
+    const tmp = [];
+    lowerOp({ ...op, d: dwTemp, dw: undefined }, tmp);
+    const suf = DWS[op.dw];
+    const last = tmp[tmp.length - 1];
+    if (tmp.length === 1 && last.args[0].v === dwTemp && EOP.has(last.name + suf)) {
+      out.push({ name: last.name + suf, args: [vr(op.d), ...last.args.slice(1)] });
+    } else {
+      out.push(...tmp);
+      out.push({ name: `mov${suf}`, args: [vr(op.d), vr(dwTemp)] });
+    }
+  };
   const lowerOp = (op, out) => {
     const E = (name, ...args) => out.push({ name, args });
+    if (resident) {
+      // A partial-register merge into the register itself is a narrow store.
+      const MS = { merge16: `mov.h${F}`, merge8l: `mov.b${F}`, merge8h: `mov.hi${F}` };
+      if (MS[op.o] && op.d === op.a && op.d < NREG) return E(MS[op.o], vr(op.d), vr(op.b));
+      if (op.dw) return lowerNarrow(op, out);
+    }
     switch (op.o) {
       case 'movi': return E('movi', vr(op.d), im(op.i));
       case 'mov': return E('mov', vr(op.d), vr(op.a));
@@ -332,15 +474,19 @@ function lowerProgram(p) {
         if (op.g === 'shmask') return E('getm_shm', vr(op.d));
         return E('movi', vr(op.d), im(0));
       case 'ld': case 'st': {
-        if (op.chk === 'full') throw new Unsupported('full memory');
+        const full = op.chk === 'full';
+        if (full && effected) throw new Unsupported('full memory after an effect');
         const guard = op.chk === 'guard';
         const general = op.c !== undefined && op.c >= 0;
         const am = op.am ? op.am | 0 : -1;
         const first = op.o === 'ld' ? vr(op.d) : vr(op.b);
         const addrArgs = general ? [opt(op.a), vr(op.c), im(op.sc | 0), im(op.i | 0), im(am)] : [opt(op.a), im(op.i | 0), im(am)];
-        const name = `${op.o}${guard ? '' : 'n'}${op.w}${general ? 'g' : 'a'}`;
-        return E(name, first, vr(op.s), ...addrArgs, ...(guard ? [tg(op.dx)] : []));
+        const name = `${op.o}${full ? 'f' : guard ? '' : 'n'}${op.w}${general ? 'g' : 'a'}`;
+        return E(name, first, vr(op.s), ...addrArgs, ...(guard ? [tg(op.dx)] : full ? [im(curBlock)] : []));
       }
+      case 'callh':
+        if (!op.sh || !EOP.has(`shv_${op.sh}${op.w}`)) throw new Unsupported(`callh ${op.fn}`);
+        return E(`shv_${op.sh}${op.w}`, vr(op.d), vr(op.a), vr(op.b));
       case 'flagof': return lowerFlagof(op, E);
       case 'rec': case 'wrec': return lowerRec(op, E);
       case 'getf': return E('getf', vr(op.d), im(FBIT[op.f]));
@@ -550,12 +696,17 @@ function lowerProgram(p) {
 
   const blocks = new Map();
   const why = new Map();
+  let curBlock = -1, effected = false;
   for (const b of p.blocks) {
     if (!b || b.kind === 'dead' || !b.term) continue;
     const out = [];
     const E = (name, ...args) => out.push({ name, args });
     try {
-      for (const op of b.ops) lowerOp(op, out);
+      curBlock = b.id; effected = false;
+      for (const op of b.ops) {
+        lowerOp(op, out);
+        if (EFFECT.has(op.o)) effected = true;
+      }
       lowerTerm(b.term, E);
       blocks.set(b.id, { native: true, ops: out });
     } catch (e) {
@@ -564,7 +715,7 @@ function lowerProgram(p) {
       blocks.set(b.id, { native: false, why: e.message, ops: [{ name: 'bail', args: [im(b.id)] }] });
     }
   }
-  return { blocks, nvTotal: next, consts, why, entry: p.entry };
+  return { blocks, nvTotal: next, consts, why, entry: p.entry, resident, vbase: resident ? VFILE : VBASE };
 }
 
 // ---------------------------------------------------------------------------
@@ -633,7 +784,7 @@ function encode(low, idOf) {
     for (const o of b.ops) {
       words[k++] = idOf(o);
       for (const a of o.args) {
-        if (a.v !== undefined) words[k++] = VBASE + 4 * a.v;
+        if (a.v !== undefined) words[k++] = low.vbase + 4 * a.v;
         else if (a.t !== undefined) {
           if (!addr.has(a.t)) throw new Error(`uop-wasm: target B${a.t} not lowered`);
           words[k++] = addr.get(a.t);
@@ -668,9 +819,11 @@ function variantBody(key, K, mode) {
   const A = {
     V: (k) => (slot(k) >= 0 ? `(local.get $r${slot(k)})` : `(i32.load ${opnd(k)})`),
     I: (k) => opnd(k),
-    SET: (k, x) => (slot(k) >= 0 ? `(local.set $r${slot(k)} ${x})` : `(i32.store ${opnd(k)} ${x})`),
+    SET: (k, x) => (slot(k) >= 0 ? `(local.set $r${slot(k)} ${x})`
+      : k === 0 && e.dw ? dwStore(e, opnd(k), x) : `(i32.store ${opnd(k)} ${x})`),
     GOTO: (k) => next(opnd(k)),
   };
+  if (e.dw && slot(0) >= 0) throw new Error(`uop-wasm: narrow ${name} into a slot`);
   let body = e.body(A);
   if (!isTerm(name)) body += ` ${next(`(i32.add (local.get $pc) (i32.const ${len}))`)}`;
   if (K) body = body.split('(return (i32.const').join(`${flushSlots(K)} (return (i32.const`);
@@ -687,7 +840,7 @@ function loopWat(keys, K) {
   const slotLocals = slotRange(K).map(j => `(local $r${j} i32)`).join(' ');
   return `(module
 (import "host" "memory" (memory ${isa.MEM_PAGES} ${isa.MEM_PAGES}))
-(func $run (export "run") ${PARAMS} (local $x i32) (local $l i32) (local $q i64) ${slotLocals}
+(func $run (export "run") ${PARAMS} (local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32) ${slotLocals}
 ${loadSlots(K)}
 ${text}
 )
@@ -705,7 +858,7 @@ ${MACHINE.map(g => `(global $${g} (mut i32) (i32.const 0))`).join('\n')}
 (elem (i32.const 0) ${keys.map((_, i) => `$h${i}`).join(' ')})
 `;
   keys.forEach((k, i) => {
-    s += `;; ${k}\n(func $h${i} (type $h) ${hParams} (result i32) (local $x i32) (local $l i32) (local $q i64)\n${variantBody(k, K, 'thread')}\n(unreachable))\n`;
+    s += `;; ${k}\n(func $h${i} (type $h) ${hParams} (result i32) (local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32)\n${variantBody(k, K, 'thread')}\n(unreachable))\n`;
   });
   s += `(func $run (export "run") ${PARAMS} ${sp.map(j => `(local $r${j} i32)`).join(' ')}
 ${MACHINE.map(g => `(global.set $${g} (local.get $${g}))`).join('\n')}
@@ -734,7 +887,11 @@ function straightWat(low) {
       const A = {
         V: (k) => V(o.args[k]),
         I: (k) => `(i32.const ${o.args[k].i})`,
-        SET: (k, x) => `(local.set $v${o.args[k].v} ${x})`,
+        SET: (k, x) => {
+          const L = `$v${o.args[k].v}`;
+          if (k !== 0 || !e.dw) return `(local.set ${L} ${x})`;
+          return `(local.set ${L} (i32.or (i32.and (local.get ${L}) (i32.const ${DWKEEP[e.dw]})) ${dwPut(e.dw, x)}))`;
+        },
         GOTO: (k) => `(local.set $pc (i32.const ${idx.get(o.args[k].t)})) (br $L)`,
       };
       text += e.body(A) + '\n';
@@ -745,9 +902,9 @@ function straightWat(low) {
   for (let v = 0; v < low.nvTotal; v++) if (!constOf.has(v)) locals.push(`(local $v${v} i32)`);
   // vregs start from the memory file (the E1 layout) so both arms share entry state
   const init = [];
-  for (let v = 0; v < low.nvTotal; v++) if (!constOf.has(v)) init.push(`(local.set $v${v} (i32.load (i32.const ${VBASE + 4 * v})))`);
+  for (let v = 0; v < low.nvTotal; v++) if (!constOf.has(v)) init.push(`(local.set $v${v} (i32.load (i32.const ${low.vbase + 4 * v})))`);
   const flush = [];
-  for (let v = 0; v < low.nvTotal; v++) if (!constOf.has(v)) flush.push(`(i32.store (i32.const ${VBASE + 4 * v}) (local.get $v${v}))`);
+  for (let v = 0; v < low.nvTotal; v++) if (!constOf.has(v)) flush.push(`(i32.store (i32.const ${low.vbase + 4 * v}) (local.get $v${v}))`);
   // bail/exit must leave the vreg file in memory for the reference interpreter
   text = text.replace(/\(return \(i32\.const ([01])\)\)/g, `(block ${flush.join(' ')}) (return (i32.const $1))`);
   return { wat: `(module
@@ -759,7 +916,7 @@ ${text}
 )`, index: idx };
 }
 
-const LOCALS = '(local $x i32) (local $l i32) (local $q i64)';
+const LOCALS = '(local $x i32) (local $l i32) (local $q i64) (local $y i32) (local $z i32)';
 
 async function compile(name, wat) {
   const file = `${name}.wat`;
@@ -786,6 +943,7 @@ function encodeE1(low) { return encode(low, (o) => EOP.get(o.name).id); }
 async function interpEngine(vm, low, p, kind, K) {
   if (kind === 'e1') K = 0;
   if (K > KMAX) throw new Error(`uop-wasm: K ${K} > ${KMAX}`);
+  if (K && low.resident) throw new Error('uop-wasm: slots over a resident vreg file are not implemented');
   const slots = K ? assignSlots(low, p, K) : new Map();
   const keys = baseVariants();
   const index = new Map(keys.map((k, i) => [k, i]));
@@ -803,11 +961,11 @@ async function interpEngine(vm, low, p, kind, K) {
   const inst = await WebAssembly.instantiate(mod, { host: { memory: vm.memory } });
   const { words, addr } = encode(low, (o) => index.get(variantKey(o, slots)));
   const homes = new Int32Array(KMAX).fill(OUT + 12);
-  for (const [v, j] of slots) homes[j] = VBASE + 4 * v;
+  for (const [v, j] of slots) homes[j] = low.vbase + 4 * v;
   const install = () => {
     new Int32Array(vm.memory.buffer, CODE, words.length).set(words);
     new Int32Array(vm.memory.buffer, SLOTHOME, KMAX).set(homes);
-    const vf = new Int32Array(vm.memory.buffer, VBASE, low.nvTotal);
+    const vf = new Int32Array(vm.memory.buffer, low.vbase, low.nvTotal);
     for (const [x, v] of low.consts) vf[v] = x;
   };
   return { run: inst.exports.run, target: (bid) => addr.get(bid), install,
@@ -836,7 +994,7 @@ async function makeEnter(vm, p, kind = 'e1', stats = null, o = {}) {
     const { wat, index } = straightWat(low);
     const inst = await WebAssembly.instantiate(await engineModule('uop-straight', wat), { host: { memory: vm.memory } });
     install = () => {
-      const vf = new Int32Array(vm.memory.buffer, VBASE, low.nvTotal);
+      const vf = new Int32Array(vm.memory.buffer, low.vbase, low.nvTotal);
       for (const [x, v] of low.consts) vf[v] = x;
     };
     run = inst.exports.run;
@@ -858,7 +1016,7 @@ function e1Enter(vm, p, run, stats = null) {
   const { words, addr } = encodeE1(low);
   const install = () => {
     new Int32Array(vm.memory.buffer, CODE, words.length).set(words);
-    const vf = new Int32Array(vm.memory.buffer, VBASE, low.nvTotal);
+    const vf = new Int32Array(vm.memory.buffer, low.vbase, low.nvTotal);
     for (const [x, v] of low.consts) vf[v] = x;
   };
   return enterOver(vm, p, low, { run, target: (bid) => addr.get(bid), install }, stats);
@@ -867,10 +1025,11 @@ function e1Enter(vm, p, run, stats = null) {
 function enterOver(vm, p, low, { run, target, install }, stats) {
   const native = new Set([...low.blocks].filter(([, b]) => b.native).map(([id]) => id));
   const token = {};
-  const put = () => { install(); resident.set(vm.memory, token); };
+  let seen = scribbles();
+  const put = () => { install(); resident.set(vm.memory, token); seen = scribbles(); };
   put();
   if (stats) { stats.install = put; stats.low = low; stats.prog = p; stats.native = native; stats.bails = 0; stats.bailAt = new Map(); }
-  const vfile = new Int32Array(vm.memory.buffer, VBASE, low.nvTotal);
+  const vfile = new Int32Array(vm.memory.buffer, low.vbase, low.nvTotal);
   const outv = new Int32Array(vm.memory.buffer, OUT, 4);
   // Made once, like the two views above. The memory never grows (dos-loop
   // creates it with initial === maximum), so the buffer this is bound to is
@@ -880,7 +1039,7 @@ function enterOver(vm, p, low, { run, target, install }, stats) {
   const dv = new DataView(vm.memory.buffer);
   const ex = vm.exports;
   return (vm2, left) => {
-    if (resident.get(vm.memory) !== token) put();
+    if (resident.get(vm.memory) !== token || (low.resident && scribbles() !== seen)) put();
     ex.set_steps(left);
     let steps = left | 0;
     let F = ex.get_flags() >>> 0;

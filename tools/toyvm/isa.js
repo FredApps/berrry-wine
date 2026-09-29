@@ -287,11 +287,17 @@ const IPHIST_SIZE = THREAD_SIZE;
 // Outside the guest's reach on purpose: $lin masks every guest address to at
 // most GUEST_RAM_SIZE - 1, so no guest store can alias a register, which is
 // what lets the region JIT keep one in a wasm local across a loop.
-const REGFILE_BASE = IPHIST_BASE + IPHIST_SIZE;
-const REGFILE_SEL = REGFILE_BASE + 32;
-const REGFILE_SEGB = REGFILE_BASE + 64;
-const REGFILE_SIZE = 128;
-const DEC_END = REGFILE_BASE + REGFILE_SIZE;
+//
+// Order: selectors first, then the eight registers and the six bases as ONE
+// run of fourteen dwords. That run is the µop tier's guest vregs 0..13
+// (uop-ir.js NREG / SEGV) in the same order, so a resident µop program's vreg
+// file starts at REGFILE_BASE and its guest vregs ARE these registers
+// (uop-wasm.js VFILE) -- no reload on entry, no write-back at an exit.
+const REGFILE_SEL = IPHIST_BASE + IPHIST_SIZE;
+const REGFILE_BASE = REGFILE_SEL + 32;
+const REGFILE_SEGB = REGFILE_BASE + 32;
+const REGFILE_SIZE = 128;                  // from REGFILE_SEL
+const DEC_END = REGFILE_SEL + REGFILE_SIZE;
 
 const MEM_PAGES = ((DEC_END + 0xFFFF) & ~0xFFFF) >> 16;
 

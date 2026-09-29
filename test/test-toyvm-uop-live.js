@@ -5,7 +5,7 @@
 // from the new bytes, and -- the part that is easy to get wrong -- invisible on
 // the dispatch clock.
 //
-// Six programs -- four checked against a closed-form answer computed here, so
+// Eight programs -- four checked against a closed-form answer computed here, so
 // two arms that agree on a wrong number cannot pass:
 //
 //   PATCH     a hot loop whose immediate is rewritten between two runs of it.
@@ -26,6 +26,11 @@
 //             interpreter (every register and all of RAM), not a closed form.
 //   DSHIFT    shld/shrd by constants at 16 and 32 bits, register and memory,
 //             with CF/OF/ZF/PF read back; compared the same way.
+//   SHIFTS    rol/ror/shl/shr/sar by CL (0..63) at 8, 16 and 32 bits, every
+//             flag read back; compared the same way, with no bails allowed.
+//   WRAPS     word/dword accesses that wrap ES's 64K segment, so the slow
+//             half's full-semantics access hands its block to the reference
+//             interpreter mid-block; compared the same way, and it must.
 //
 // And for every program the DISPATCH COUNT must be identical with the tier on:
 // every timer, retrace and audio deadline in this emulator is a function of it,
@@ -39,7 +44,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { runDos } = require('../tools/toyvm/run-dos');
 const isa = require('../tools/toyvm/isa');
-const { segloads, dshift } = require('./test-toyvm-uop');
+const { segloads, dshift, shifts, memShifts, wraps } = require('./test-toyvm-uop');
 
 function asm() {
   const b = [], labels = new Map(), fixups = [];
@@ -402,13 +407,22 @@ function muldivExpected() {
   return { bx, bp, si };
 }
 
+// The pass set every µop run builds with: null is uop-live.js's default
+// ('all'); main() runs the whole suite again with 'allR', 'allRF' and 'allRP', the
+// guest vregs resident in L1's register file (uop-opt.js finalize), narrow
+// writes as narrow stores and as full-width merges, because that is the
+// only place the wasm engine's narrow stores and its missing reload/flush
+// meet a real program.
+let PASSES = null;
+const OPT = require('../tools/toyvm/uop-opt');
+
 async function run(com, uop, sched = { sampleAfter: 1e6, profileFor: 2e6, every: 4e6 }) {
   const r = await runDos({
     exe: com,
     budget: 200e6,
     slice: 5e4,
     log: () => {},
-    uop: uop ? sched : null,
+    uop: uop ? { ...sched, passes: PASSES } : null,
   });
   const regs = r.vm.getAll();
   const ram = crypto.createHash('sha256')
@@ -446,7 +460,7 @@ async function check(name, bytes, want, keys) {
 // enough to install, must leave every register and all of guest RAM exactly
 // as the interpreter does. It is the only place the wasm engine runs the
 // segment micro-ops (getsel/putsel/puts).
-async function checkSame(name, bytes, sched) {
+async function checkSame(name, bytes, sched, { noBails = false, bails = false } = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'toyvm-uop-live-'));
   const com = path.join(dir, `${name}.COM`);
   fs.writeFileSync(com, bytes);
@@ -456,15 +470,26 @@ async function checkSame(name, bytes, sched) {
   assert.ok(u && u.installs >= 1, `${name}: no µop program installed (${JSON.stringify(u && u.declined)})`);
   assert.ok(u.steps > 0.3 * on.dispatched,
     `${name}: the µop tier ran only ${u.steps} of ${on.dispatched} dispatches`);
+  // A bail runs the block on the reference interpreter: still exact, but then
+  // this case is not testing the wasm engine at all.
+  if (noBails) assert.strictEqual(u.bails, 0, `${name}: ${u.bails} bails to the reference interpreter: `
+    + JSON.stringify((u.heads || []).map((h) => h.bailAt)));
+  // ...and a case written to reach the hand-over has to actually reach it.
+  if (bails) assert.ok(u.bails > 0, `${name}: never handed a block to the reference interpreter`);
+  // ...from a NATIVE block (ldf/stf's own hand-over), not one that failed to lower.
+  if (bails) for (const h of u.heads || []) for (const s of h.bailAt || []) {
+    assert.ok(/ native$/.test(s), `${name}: a block with no native form bailed: ${s}`);
+  }
   for (const k of Object.keys(off)) {
     if (k === 'uop') continue;
     assert.strictEqual(on[k], off[k], `${name}: ${k} differs with the µop tier on`);
   }
   console.log(`${name}: ok  ${off.dispatched} dispatches, ${(100 * u.steps / on.dispatched).toFixed(1)}% in µop, `
-    + `installs ${u.installs} entries ${u.entries} rebuilds ${u.rebuilds} bails ${u.bails}`);
+    + `installs ${u.installs} entries ${u.entries} rebuilds ${u.rebuilds} bails ${u.bails}`
+    + (bails ? ` ${JSON.stringify((u.heads || []).map((h) => h.bailAt))}` : ''));
 }
 
-async function main() {
+async function suite() {
   const p = await check('PATCH', patchProgram(), patchExpected(), ['bx', 'si']);
   // The patch lands inside the program's own bytes: it must have been dropped
   // and rebuilt from the rewritten loop (or given up), never kept.
@@ -477,6 +502,18 @@ async function main() {
   await check('MULDIV', muldivProgram(), muldivExpected(), ['bx', 'bp', 'si']);
   await checkSame('SEGLOADS', segloads(255).com, { sampleAfter: 1e5, profileFor: 2e5, every: 4e5 });
   await checkSame('DSHIFT', dshift(255).com, { sampleAfter: 1e5, profileFor: 2e5, every: 4e5 });
+  await checkSame('SHIFTS', shifts(40).com, { sampleAfter: 1e5, profileFor: 2e5, every: 4e5 }, { noBails: true });
+  await checkSame('MEMSHIFTS', memShifts(60).com, { sampleAfter: 1e5, profileFor: 2e5, every: 4e5 }, { noBails: true });
+  await checkSame('WRAPS', wraps(250).com, { sampleAfter: 1e5, profileFor: 2e5, every: 4e5 }, { bails: true });
+}
+
+async function main() {
+  await suite();
+  for (const name of ['allR', 'allRF', 'allRP']) {
+    PASSES = OPT.ablationConfigs().find(([n]) => n === name)[1];
+    console.log(`-- resident (${name}):`);
+    await suite();
+  }
   console.log('test-toyvm-uop-live: ok');
 }
 

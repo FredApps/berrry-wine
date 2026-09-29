@@ -62,9 +62,25 @@ const PASSES = ['promote', 'mergesink', 'constprop', 'addrfold', 'flagfwd', 'fla
 // stale base next to the new selector (B-STEEL's `pop es`).
 const GUEST = Array.from({ length: FIRST_TEMP }, (_, i) => i);
 
+// The passes a block-local baseline tier could run (docs/uop-baseline-tier-
+// design.md): nothing that needs a loop -- no guards hoisted to a preheader,
+// no LICM, no memory forwarding, no flag liveness across blocks.
+const BASELINE = ['promote', 'mergesink', 'constprop', 'addrfold', 'flagfwd', 'clock'];
+
 function ablationConfigs(which = PASSES) {
   const all = Object.fromEntries(PASSES.map(p => [p, true]));
-  const out = [['naive', null], ['none', Object.fromEntries(PASSES.map(p => [p, false]))], ['all', all]];
+  const base = Object.fromEntries(PASSES.map(p => [p, BASELINE.includes(p)]));
+  // ...R: the same passes with the guest vregs resident in L1's register file
+  // (finalize). Not a PASS: it changes where vregs live, not what runs.
+  const out = [['naive', null], ['none', Object.fromEntries(PASSES.map(p => [p, false]))], ['all', all],
+    ['baseline', base], ['allR', { ...all, resident: true }], ['baselineR', { ...base, resident: true }],
+    ['allRF', { ...all, resident: 'full' }], ['baselineRF', { ...base, resident: 'full' }],
+    ['allRP', { ...all, resident: 'promote' }],
+    // baselineBF: the baseline passes with a reload/flush at every block
+    // boundary (finalize, blockflush) -- the register traffic of a chained
+    // per-block tier without resident registers; baselineRF is the same tier
+    // with them. The pair prices what resident removes.
+    ['baselineBF', { ...base, blockflush: true }]];
   for (const p of which) out.push([`-${p}`, { ...all, [p]: false }]);
   return out;
 }
@@ -1349,8 +1365,68 @@ function finalize(B) {
   for (const b of B.fastBlocks()) for (const u of termUses(b.term)) if (u < FIRST_TEMP) used.add(u);
   for (const r of written) used.add(r);
   const width = (r) => (B.narrow && B.narrow.get(r)) || 32;
+  // Resident: guest vreg r IS register r's slot in memory (isa.js REGFILE_*,
+  // uop-wasm.js VFILE), so a RELOAD and a FLUSH are copies of a location onto
+  // itself and vanish. What does not vanish is narrowness: a register
+  // mergesink keeps at 16 (or 8) bits holds garbage above them in the
+  // promoted model, and here its upper bits are the architectural ones -- so
+  // every write to it stores only its low bits (DW).
+  const resident = B.promoted && B.on('resident');
+  // resident: 'promote' -- the register file stays the home of every register,
+  // but one the region writes narrow is renamed to a temp for the region's
+  // lifetime: copied in at FASTENTER, merged back at exits and deopts. Its
+  // writes inside the loop are then full-width writes to a temp (no merge, no
+  // narrow store), and the one narrow store happens where the region leaves.
+  const hold = new Map();        // reg -> temp
+  if (resident && B.passes.resident === 'promote') {
+    for (const r of [...written].sort((x, y) => x - y)) if (r < NREG && width(r) !== 32) hold.set(r, B.temp());
+    const ren = (v) => (hold.has(v) ? hold.get(v) : v);
+    for (const [, , op] of B.allOps()) {
+      if (op.o === 'flush' || op.o === 'reload') continue;
+      mapUses(op, ren);
+      if (hold.has(opDef(op))) op.d = hold.get(op.d);
+    }
+    for (const b of B.fastBlocks()) mapTermUses(b.term, ren);
+    B.stats.held = hold.size;
+  }
+  if (resident) {
+    for (const [, , op] of B.allOps()) {
+      const d = opDef(op);
+      if (d >= 0 && d < NREG && width(d) !== 32) op.dw = width(d);
+    }
+    B.p.resident = B.passes.resident === true ? true : 'full';
+  }
+  // blockflush (the baselineBF proxy): what a chained per-block tier pays when
+  // registers are NOT resident -- every body block reloads the guest vregs it
+  // touches on entry and writes back the ones it wrote before its terminator,
+  // as if each block were its own program. Correct anywhere (the values are
+  // current at every boundary); only its cost is the point.
+  if (B.promoted && !resident && B.on('blockflush')) {
+    for (const b of B.fastBlocks()) {
+      if (b.kind !== 'body') continue;
+      const bu = new Set(), bw = new Set();
+      for (const op of b.ops) {
+        const d = opDef(op);
+        if (d >= 0 && d < FIRST_TEMP) bw.add(d);
+        for (const u of opUses(op)) if (u < FIRST_TEMP) bu.add(u);
+      }
+      for (const u of termUses(b.term)) if (u < FIRST_TEMP) bu.add(u);
+      const load = [...bu].sort((x, y) => x - y).map((r) => (r < NREG ? { o: 'getr', d: r, r, w: width(r) } : { o: 'gets', d: r, s: r - SEGV }));
+      const store = [...bw].sort((x, y) => x - y).map((r) => (r < NREG ? { o: 'putr', r, w: width(r), a: r } : { o: 'puts', s: r - SEGV, a: r }));
+      b.ops.unshift(...load);
+      b.ops.push(...store);
+    }
+    B.stats.blockflush = true;
+  }
+  const MERGE = { 16: 'merge16', 8: 'merge8l' };
   for (const [b, , op] of [...B.allOps()]) {
-    if (op.o === 'reload') {
+    if (resident && op.o === 'reload') {
+      const ops = [...hold].map(([r, t]) => ({ o: 'mov', d: t, a: r }));
+      b.ops.splice(b.ops.indexOf(op), 1, ...ops);
+    } else if (resident && op.o === 'flush') {
+      const ops = [...hold].map(([r, t]) => ({ o: MERGE[width(r)], d: r, a: r, b: t }));
+      b.ops.splice(b.ops.indexOf(op), 1, ...ops);
+    } else if (op.o === 'reload') {
       const ops = [];
       if (B.promoted) {
         for (const r of [...used].sort((x, y) => x - y)) {
@@ -1917,4 +1993,4 @@ function machineGuards(B) {
   B.machineGuards = [...want].map(([g, v]) => ({ g, v }));
 }
 
-module.exports = { build, ablationConfigs, PASSES, fuseCC, composeCC };
+module.exports = { build, ablationConfigs, PASSES, BASELINE, fuseCC, composeCC };

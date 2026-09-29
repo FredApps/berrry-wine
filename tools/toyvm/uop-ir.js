@@ -109,7 +109,9 @@ function discover(rd, env, headIp, opts = {}) {
   const head = nodes.get(headKey);
   const cyclic = head.succ.length > 0 && [...reach].some(k => nodes.get(k).succ.some(e => e.k === headKey));
   let body;
-  if (cyclic) body = new Set([...reach].filter(k => !nodes.get(k).unsupported));
+  // `straight` asks for the straight line even from a loop head: one
+  // block-local program, which is what a baseline tier would compile.
+  if (cyclic && !opts.straight) body = new Set([...reach].filter(k => !nodes.get(k).unsupported));
   else {
     // No loop through the head: take the straight line from it.
     body = new Set();
@@ -120,7 +122,7 @@ function discover(rd, env, headIp, opts = {}) {
       n = nodes.get(n.succ[0].k);
     }
   }
-  return { nodes, headKey, body, cyclic, env };
+  return { nodes, headKey, body, cyclic: cyclic && !opts.straight, env };
 }
 
 // What the lowering handles. Everything else ends the program at that
