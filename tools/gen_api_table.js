@@ -1457,6 +1457,8 @@ const extra = [
   { name: 'clearerr', nargs: 1, convention: 'cdecl' },
   { name: 'strncat', nargs: 3, convention: 'cdecl' },
   { name: 'fputc', nargs: 2, convention: 'cdecl' },
+  { name: 'DirectSoundCreate8', nargs: 3 },
+  { name: 'IDirectSound8_VerifyCertification', nargs: 2 },
 ];
 for (const api of extra) {
   const ownsHandler = Object.prototype.hasOwnProperty.call(api, 'handler');

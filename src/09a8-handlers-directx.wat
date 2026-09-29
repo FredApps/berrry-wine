@@ -204,6 +204,7 @@
   (global $DX_VTBL_DDSURF     (mut i32) (i32.const 0))
   (global $DX_VTBL_DDPAL      (mut i32) (i32.const 0))
   (global $DX_VTBL_DSOUND     (mut i32) (i32.const 0))
+  (global $DX_VTBL_DSOUND8    (mut i32) (i32.const 0))
   (global $DX_VTBL_DSBUF      (mut i32) (i32.const 0))
   (global $DX_VTBL_DS3DBUF    (mut i32) (i32.const 0))
   (global $DX_VTBL_DS3DLISTENER (mut i32) (i32.const 0))
@@ -1734,6 +1735,51 @@
     (call $gs32 (local.get $arg1) (local.get $obj_guest))
     (i32.store offset=0 (global.get $reg_base) (i32.const 0)) ;; DS_OK
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  ;; DirectSound8 inherits the eleven DirectSound methods and adds certification.
+  (func $handle_DirectSoundCreate8 (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $obj i32) (local $hr i32) (local $guid i32) (local $kind i32)
+    (block $done
+      (if (i32.eqz (local.get $arg1))
+        (then (local.set $hr (i32.const 0x80070057)) (br $done)))
+      (call $gs32 (local.get $arg1) (i32.const 0))
+      (if (local.get $arg2)
+        (then (local.set $hr (i32.const 0x80040110)) (br $done)))
+      (if (local.get $arg0)
+        (then
+          (local.set $guid (call $g2w_affine_span (local.get $arg0) (i32.const 16)))
+          (if (i32.eq (local.get $guid) (global.get $NULL_SENTINEL))
+            (then (local.set $hr (i32.const 0x80070057)) (br $done)))
+          (local.set $kind (i32.load (local.get $guid)))
+          (if (i32.eqz (i32.or
+                (call $guid_words_equal (local.get $guid) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0))
+                (i32.and
+                  (i32.or (i32.eq (local.get $kind) (i32.const 0xDEF00000))
+                          (i32.eq (local.get $kind) (i32.const 0xDEF00002)))
+                  (call $guid_words_equal (local.get $guid) (local.get $kind)
+                    (i32.const 0x47ED9C6D) (i32.const 0xDA4DF1AA) (i32.const 0x035C2B8F)))))
+            (then (local.set $hr (i32.const 0x88780078)) (br $done))))) ;; DSERR_NODRIVER
+      (local.set $obj (call $dx_create_com_obj (i32.const 4) (global.get $DX_VTBL_DSOUND8)))
+      (if (i32.eqz (local.get $obj))
+        (then (local.set $hr (i32.const 0x8007000E)) (br $done)))
+      (call $dsound_mark_initialized (local.get $obj))
+      (call $gs32 (local.get $arg1) (local.get $obj)))
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16))))
+
+  (func $handle_IDirectSound8_VerifyCertification (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $hr i32) (local $entry i32)
+    (block $done
+      (local.set $entry (call $dx_from_this (local.get $arg0)))
+      (if (i32.eqz (local.get $entry))
+        (then (local.set $hr (i32.const 0x80070057)) (br $done)))
+      (if (i32.eqz (load.field DxObject flags (local.get $entry)))
+        (then (local.set $hr (i32.const 0x887800AA)) (br $done))) ;; DSERR_UNINITIALIZED
+      (if (i32.eqz (local.get $arg1))
+        (then (local.set $hr (i32.const 0x80070057)) (br $done)))
+      (call $gs32 (local.get $arg1) (i32.const 1))) ;; DS_UNCERTIFIED: software device
+    (i32.store offset=0 (global.get $reg_base) (local.get $hr))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 12))))
 
   ;; DirectInputCreateA(hInstance, dwVersion, lplpDI, pUnkOuter) → HRESULT
   (func $handle_DirectInputCreateA (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
@@ -6892,6 +6938,17 @@
           (i32.eq (local.get $geometry) (i32.const 180))))))
 
   (func $handle_IDirectSound_QueryInterface (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (i32.and (i32.ne (local.get $arg1) (i32.const 0))
+                (i32.eq (call $gl32 (local.get $arg0)) (global.get $DX_VTBL_DSOUND8)))
+      (then
+        (if (call $guid_words_equal (call $g2w (local.get $arg1))
+              (i32.const 0xC50A7E93) (i32.const 0x4834F395)
+              (i32.const 0xA97FF69E) (i32.const 0x6609E59D))
+          (then
+            (i32.store offset=0 (global.get $reg_base) (call $dx_query_interface_result
+              (local.get $arg0) (local.get $arg2) (i32.const 1)))
+            (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 16)))
+            (return)))))
     ;; IID_IDirectSound {279AFA83-4981-11CE-A521-0020AF0BE560}.
     (i32.store offset=0 (global.get $reg_base) (call $dx_query_interface_single
       (local.get $arg0) (local.get $arg1) (local.get $arg2)

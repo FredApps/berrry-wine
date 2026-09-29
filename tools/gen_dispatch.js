@@ -458,6 +458,7 @@ comInterfaces.push({ prefix: 'IFtmMarshal', global: 'DX_VTBL_FTM_MARSHAL' });
 // those two slots on whatever interface's thunks follow ours. Tail again, same
 // registry-offset reason as every entry above.
 comInterfaces.push({ prefix: 'IDirectInputDevice7', global: 'DX_VTBL_DIDEV7', extends: 'IDirectInputDevice2' });
+comInterfaces.push({ prefix: 'IDirectSound8', global: 'DX_VTBL_DSOUND8', extends: 'IDirectSound' });
 
 // Build a map of prefix → { startId, count } from the api_table
 const byName = new Map(apiTable.map(a => [a.name, a]));

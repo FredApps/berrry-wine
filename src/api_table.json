@@ -32956,5 +32956,19 @@
     "convention": "stdcall",
     "hash": 2725758928,
     "handler": "guFogGenerateExp"
+  },
+  {
+    "id": 3886,
+    "name": "DirectSoundCreate8",
+    "nargs": 3,
+    "convention": "stdcall",
+    "hash": 2590216625
+  },
+  {
+    "id": 3887,
+    "name": "IDirectSound8_VerifyCertification",
+    "nargs": 2,
+    "convention": "stdcall",
+    "hash": 4126570558
   }
 ]

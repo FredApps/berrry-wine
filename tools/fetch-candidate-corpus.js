@@ -467,10 +467,6 @@ async function fetchCandidate(candidate) {
     console.log(`SHARED ${candidate.id}: uses fixture ${candidate.fixture}`);
     return { shared: 1 };
   }
-  if (!candidate.packages.length) {
-    console.log(`MANUAL ${candidate.id}: ${candidate.manual || 'no automated package is pinned'}`);
-    return { manual: 1 };
-  }
   const provenanceFile = path.join(destination, '.candidate-source.json');
   if (prepare) {
     if (!fs.existsSync(destination)) {
@@ -480,6 +476,10 @@ async function fetchCandidate(candidate) {
     writeBrowserManifest(candidate, destination);
     console.log(`PREP   ${candidate.id}: ${path.relative(ROOT, destination)}`);
     return { kept: 1 };
+  }
+  if (!candidate.packages.length) {
+    console.log(`MANUAL ${candidate.id}: ${candidate.manual || 'no automated package is pinned'}`);
+    return { manual: 1 };
   }
   if (fs.existsSync(provenanceFile) && !force) {
     writeBrowserManifest(candidate, destination);

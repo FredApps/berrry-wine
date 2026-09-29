@@ -23,6 +23,9 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     }},extraWat:`
     (func (export "dx_refs") (param $object i32) (result i32)
       (load.field DxObject refcount (call $dx_from_this (local.get $object))))
+    (func (export "device8_identity") (param $device i32) (param $enabled i32)
+      (call $gs32 (local.get $device)
+        (select (global.get $DX_VTBL_D3DDEV8) (global.get $DX_VTBL_D3DDEV9) (local.get $enabled))))
     ${Object.entries(api).flatMap(([type,names])=>names.map(name=>`
       (func (export "${type}_${name}") (param $a i32) (param $b i32) (param $c i32) (param $d i32) (param $f i32) (result i32)
         (i32.store offset=16 (global.get $reg_base) (i32.const 0x074ff000))
@@ -269,6 +272,19 @@ const sigs=require('../lib/host-import-sigs.generated.json').sigs;
     ok(await invoke(e.Surface9_UnlockRect,ab),'implicit unlock retries upload');bad(await invoke(e.Surface9_UnlockRect,ab));
     ok(await invoke(e.Device9_Present,ad));
     assert.strictEqual(backFrame[backWidth+1],0xffa1b2c3);assert.strictEqual(backFrame[0],0xffefcdab,'surrounding pixels preserved');
+    // CreateDevice8 keeps the primary device identity and replaces its vtable.
+    // Backbuffer operations must still address that SAME host renderer; asking
+    // for a fresh Device9 interface here used to create a second blank target.
+    const devicesBefore8=bridge.devices.size;
+    e.device8_identity(ad,1);
+    ok(await invoke(e.Surface9_LockRect,ab,lock,0,0),'D3D8 owner lock');
+    assert.strictEqual(read(read(lock+4)),0xffefcdab,'D3D8 lock reads existing primary renderer');
+    e.guest_write32(read(lock+4),0xff345678);
+    ok(await invoke(e.Surface9_UnlockRect,ab),'D3D8 owner unlock');
+    ok(await invoke(e.Device9_Present,ad),'D3D8 primary present');
+    assert.strictEqual(backFrame[0],0xff345678,'D3D8 CPU write reaches primary renderer');
+    assert.strictEqual(bridge.devices.size,devicesBefore8,'backbuffer access never creates an alias renderer');
+    e.device8_identity(ad,0);
     ok(await invoke(e.Surface9_LockRect,ab,lock,0,16),'implicit readonly lock');
     const readonlySubmitted=bridge.devices.get(ad).queue.submitted;
     ok(await invoke(e.Surface9_UnlockRect,ab));assert.strictEqual(bridge.devices.get(ad).queue.submitted,readonlySubmitted,'readonly unlock submits no upload');

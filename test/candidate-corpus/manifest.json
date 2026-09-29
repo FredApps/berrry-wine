@@ -1693,6 +1693,138 @@
         "maxBatches": 700,
         "batchSize": 100000
       }
+    },
+    {
+      "id": "reflexive-ricochet-xtreme",
+      "name": "Ricochet Xtreme",
+      "browser": {
+        "fileRoot": "game",
+        "exe": "game/Ricochet.exe"
+      },
+      "kind": "game",
+      "version": "1.4 build 75 (Reflexive, unwrapped)",
+      "executables": [
+        "game/Ricochet.exe"
+      ],
+      "sourcePage": "https://github.com/banteg/reflexive",
+      "license": "proprietary archived game; local compatibility fixture",
+      "localOnly": true,
+      "packages": [],
+      "manual": "Use banteg/reflexive at 615d946772e344e54ee3a7444d5f0010b68b79ac: reflexive download RicochetSetup.exe, then reflexive extract RicochetSetup.exe --unwrap --keep-extracted. Copy the entire unwrapped 'Ricochet Xtreme' tree to reflexive-ricochet-xtreme/game/. Installer manifest SHA-256 validation and reproduction details: docs/re-notes/reflexive.md.",
+      "cli": {
+        "maxBatches": 2000,
+        "batchSize": 20000,
+        "timeoutMs": 90000,
+        "vfsInclude": [
+          "**/*"
+        ],
+        "dlls": [
+          "game/IFC22.dll"
+        ]
+      },
+      "notes": "2026-09-29: CLI and browser Worker/WebGL Round 1-1 gameplay verified: paddle movement, ball launch, brick destruction and score. No runtime fix needed. Seed IFC22.dll; cold startup spends several minutes decoding assets. Local fixture includes 351 verified guest-generated cache files (15.3 MB) for reuse. CLI menu requires mousemove before click and gameplay uses relative mouse movement; normal browser mouse controls work without relativeMouse override. See docs/re-notes/ricochet-xtreme.md."
+    },
+    {
+      "id": "reflexive-zuma-deluxe",
+      "name": "Zuma Deluxe",
+      "kind": "game",
+      "version": "Reflexive archived Windows build (unwrapped; 2026-09-29 sample)",
+      "executables": [
+        "game/Zuma.exe"
+      ],
+      "sourcePage": "https://github.com/banteg/reflexive",
+      "license": "proprietary archived game; local compatibility fixture",
+      "localOnly": true,
+      "packages": [],
+      "manual": "Use banteg/reflexive at 615d946772e344e54ee3a7444d5f0010b68b79ac: reflexive download ZumaDeluxeSetup.exe, then reflexive extract ZumaDeluxeSetup.exe --unwrap --keep-extracted. Copy the entire unwrapped 'Zuma' tree to reflexive-zuma-deluxe/game/. Installer manifest SHA-256 validation and reproduction details: docs/re-notes/reflexive.md.",
+      "cli": {
+        "maxBatches": 2000,
+        "batchSize": 20000,
+        "timeoutMs": 90000,
+        "vfsInclude": [
+          "**/*"
+        ]
+      },
+      "notes": "2026-09-29: Bundled bass.dll reports missing QueueUserAPC (KERNEL32.dll), then guest calls through NULL. No confirmed gameplay. See docs/re-notes/reflexive.md."
+    },
+    {
+      "id": "reflexive-crimsonland",
+      "name": "Crimsonland",
+      "kind": "game",
+      "version": "Reflexive archived Windows build (unwrapped; 2026-09-29 sample)",
+      "executables": [
+        "game/crimsonland.exe"
+      ],
+      "sourcePage": "https://github.com/banteg/reflexive",
+      "license": "proprietary archived game; local compatibility fixture",
+      "localOnly": true,
+      "packages": [],
+      "manual": "Use banteg/reflexive at 615d946772e344e54ee3a7444d5f0010b68b79ac: reflexive download CrimsonlandSetup.exe, then reflexive extract CrimsonlandSetup.exe --unwrap --keep-extracted. Copy the entire unwrapped 'Crimsonland' tree to reflexive-crimsonland/game/. Installer manifest SHA-256 validation and reproduction details: docs/re-notes/reflexive.md.",
+      "cli": {
+        "maxBatches": 2000,
+        "batchSize": 20000,
+        "timeoutMs": 90000,
+        "vfsInclude": [
+          "**/*"
+        ],
+        "dlls": [
+          "game/grim.dll",
+          "game/vorbis.dll",
+          "game/vorbisfile.dll",
+          "game/ogg.dll"
+        ]
+      },
+      "notes": "2026-09-29: Stops at DirectX8.1 detection; seeding bundled DLLs and overriding DirectX Version did not resolve it. No confirmed gameplay. See docs/re-notes/reflexive.md."
+    },
+    {
+      "id": "reflexive-collapse-crunch",
+      "name": "Collapse! Crunch",
+      "kind": "game",
+      "version": "Reflexive archived Windows build (unwrapped; 2026-09-29 sample)",
+      "executables": [
+        "game/Collapse3.exe"
+      ],
+      "sourcePage": "https://github.com/banteg/reflexive",
+      "license": "proprietary archived game; local compatibility fixture",
+      "localOnly": true,
+      "packages": [],
+      "manual": "Use banteg/reflexive at 615d946772e344e54ee3a7444d5f0010b68b79ac: reflexive download CollapseCrunchSetup.exe, then reflexive extract CollapseCrunchSetup.exe --unwrap --keep-extracted. Copy the entire unwrapped 'Collapse! Crunch' tree to reflexive-collapse-crunch/game/. Installer manifest SHA-256 validation and reproduction details: docs/re-notes/reflexive.md.",
+      "cli": {
+        "maxBatches": 2000,
+        "batchSize": 20000,
+        "timeoutMs": 90000,
+        "vfsInclude": [
+          "**/*"
+        ]
+      },
+      "notes": "2026-09-29: Direct launch requires --screen=800x600 (survey defaults to 640x480). Renders loading screen at 800x600, then reports NULL call at batch 317. No confirmed gameplay. See docs/re-notes/reflexive.md."
+    },
+    {
+      "id": "reflexive-alien-shooter",
+      "name": "Alien Shooter",
+      "browser": {
+        "fileRoot": "game",
+        "exe": "game/AlienShooter.exe"
+      },
+      "kind": "game",
+      "version": "Reflexive archived Windows build (unwrapped; 2026-09-29 sample)",
+      "executables": [
+        "game/AlienShooter.exe"
+      ],
+      "sourcePage": "https://github.com/banteg/reflexive",
+      "license": "proprietary archived game; local compatibility fixture",
+      "localOnly": true,
+      "packages": [],
+      "manual": "Use banteg/reflexive at 615d946772e344e54ee3a7444d5f0010b68b79ac: reflexive download AlienShooterSetup.exe, then reflexive extract AlienShooterSetup.exe --unwrap --keep-extracted. Copy the entire unwrapped 'Alien Shooter' tree to reflexive-alien-shooter/game/. Installer manifest SHA-256 validation and reproduction details: docs/re-notes/reflexive.md.",
+      "cli": {
+        "maxBatches": 2000,
+        "batchSize": 20000,
+        "timeoutMs": 90000,
+        "vfsInclude": [
+          "**/*"
+        ]
+      },
+      "notes": "2026-09-29: DirectSoundCreate8/DSOUND.DLL#11 and backbuffer owner identity fixes allow native WebGL/software main menus. Fresh software CLI with --tick-ms-per-batch=5 reached Mission 01, character/camera movement and aiming. Combat and browser gameplay unverified. Setup accepts --input=50:dlg-click:1. See docs/re-notes/alien-shooter.md."
     }
   ]
 }

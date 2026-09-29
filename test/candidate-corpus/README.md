@@ -34,6 +34,25 @@ package is not directly recoverable, it is too large to pull as part of a
 routine candidate setup, or the archived package is not the required Windows
 build.
 
+The five `reflexive-*` entries are also manual because preparation uses the
+external Reflexive static extractor/unwrapper. Their local fixtures retain
+the complete unwrapped `game/` tree, original installer in `sources/`, and
+SHA-256 provenance in `.candidate-source.json`. See
+[Reflexive probe notes](../../docs/re-notes/reflexive.md) for preparation,
+launch settings, and observed blockers. The survey mounts companion assets
+and seeds the listed DLLs; use the documented direct commands for the
+800×600 display and setup-dialog input needed by individual games.
+
+Ricochet Xtreme and Alien Shooter also have local app entries. After manually
+extracting their fixtures, regenerate the browser asset inventories with:
+
+```sh
+node tools/fetch-candidate-corpus.js --id=reflexive-ricochet-xtreme,reflexive-alien-shooter --prepare
+```
+
+They are selectable on localhost as `ricochet_xtreme` and `alien_shooter`,
+and the same entries work with `node test/run.js --app=ID --no-close`.
+
 ## Run
 
 Run the local candidate survey in the CLI harness:

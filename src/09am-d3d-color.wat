@@ -20,7 +20,12 @@
     (if (i32.and (i32.eq (load.field DxObject type (local.get $p)) (i32.const 20))
       (i32.and (i32.ne (load.field DxObject misc1 (local.get $p)) (i32.const 0))
         (i32.eq (load.field DxObject misc0 (local.get $p)) (local.get $slot)))) (then
-      (return (call $dx_get_wrapper_for_vtbl (local.get $i) (global.get $DX_VTBL_D3DDEV9)))))
+      ;; This is an internal owner identity, not QueryInterface. D3D8 changes
+      ;; the primary device wrapper's vtable to Device8; requesting a Device9
+      ;; wrapper here creates an alias and splits host rendering into two
+      ;; devices (Present on the primary, LockRect/UnlockRect on the alias).
+      (return (call $w2g (i32.add (global.get $COM_WRAPPERS)
+        (i32.mul (local.get $i) (i32.const 8)))))))
     (local.set $i (i32.add (local.get $i) (i32.const 1)))
     (br_if $devices (i32.lt_u (local.get $i) (global.get $DX_MAX))))
   (i32.const 0))

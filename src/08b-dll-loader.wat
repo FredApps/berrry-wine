@@ -518,6 +518,7 @@
       (then
         (if (i32.eq (local.get $ordinal) (i32.const 1)) (then (return (i32.const 976))))  ;; DirectSoundCreate
         (if (i32.eq (local.get $ordinal) (i32.const 2)) (then (return (i32.const 1236)))) ;; DirectSoundEnumerateA
+        (if (i32.eq (local.get $ordinal) (i32.const 11)) (then (return (i32.const 3886)))) ;; DirectSoundCreate8
       ))
     ;; Authentic Win98 COMCTL32 ordinal 17 is InitCommonControls. InstallShield
     ;; setup helpers (including Heroes III's chkreqs.dll) import it without a
