@@ -277,6 +277,51 @@ controlled before/after comparison. The dominant remaining overall cost is
 CPU emulation; the D3D-specific optimization target is draw processing and
 batching, with the remaining readback a smaller component.
 
+### Fixed-plan caching and ordered batching (2026-09-29)
+
+Implemented the two draw-processing optimizations above. D3D9 keeps a bounded
+64-entry cache for the bridge's validated TL fixed-function plans and refreshes
+dynamic uniforms for each draw. Other pipelines retain full compilation.
+D3DIM merges adjacent identical-state draws in order, with a 64 KiB vertex
+limit and barriers for texture changes, target changes, clears, CPU access,
+fallback and presentation. New texture uploads and previously unseen state
+keys submit immediately. Accepted deferred draws cannot silently disappear
+on failure, including during shutdown.
+
+Headful Apple M1 A/B uses the same guest/WASM and the seeded scenario above.
+The harness now supports `--no-d3d-batching --no-fixed-cache`, applied only to
+served scripts, and records these flags plus the source hashes. Artifacts:
+`build/nfs3-drawopt-off/`, `build/nfs3-drawopt-on/`, and
+`build/nfs3-drawopt-off-repeat/`. Each contains two 20-second samples.
+
+The first disabled run measured 10.66–11.67 FPS, 334–360 GPU submissions/frame,
+and 17.44–19.70 ms/frame in backend submission. Enabled measured 12.34–12.52
+FPS and 200–209 GPU submissions from 392–419 guest draws/frame: 49–50% were
+merged. Backend submission time was 8.98–9.11 ms/frame, total draw processing
+16.08–16.15 ms/frame, and synchronization 4.07–4.18 ms/frame. Both routes had
+zero renderer errors/fallbacks and exactly one readback/frame. `drawCalls`
+now counts logical draws, `draws` actual GPU submissions, and `mergedDraws`
+eliminated submissions. `submitMs` measures the backend; `drawMs` also includes
+descriptor validation and deferred flushes.
+
+System load fell from about 40 to 31 across those first runs; two WASM
+regression compilations also overlapped the first disabled run. Consequently
+the FPS difference is not a controlled speedup claim. The scene is seeded but
+not a frame-synchronized replay, and guest draw totals differ. The direct
+batching reduction is the strongest result; pixel parity is tested separately.
+The disabled repeat measured 11.29–12.35 FPS, 333–360 submissions/frame,
+16.06–18.30 ms/frame in backend submission and 20.62–23.23 ms/frame total
+draw processing (load 32–38). Its FPS overlaps the enabled run, so these
+measurements establish reduced submission work, not a stable overall speedup.
+
+Validation passed: real WebGL batch-on/off framebuffer bytes match exactly
+at four fences, with independent expected colors for alpha ordering, a state
+change, clear and texture replacement. Pure-JS regressions cover bounded
+queues, owned vertices, fallback/release ordering, deferred failure/shutdown,
+timing, and fixed-plan validation/dynamic uniforms. Existing depthless/line,
+texture-wrap and page-watch regressions pass. The optimized NFS III screenshot
+shows the cockpit, road, HUD and rain; its renderer reports no errors.
+
 ### Local dropdown testing
 
 The debug dropdown includes `nfs3_glide_demo` and `nfs2se_glide_demo`. The
