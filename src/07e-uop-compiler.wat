@@ -637,6 +637,28 @@
           (then (call $uc_fin (local.get $R) (i32.const 2) (local.get $e)) (return)))
         (if (i32.eq (global.get $uc_mr_reg) (i32.const 1))
           (then (call $uc_fin (local.get $R) (i32.const 3) (local.get $e)) (return)))
+        ;; CALL r/m32 (FF /2) behind an inline cache (--uop-icall for call
+        ;; reg / call [reg...], --uop-iat for call [abs]): a kind-23 call to
+        ;; the target the slot holds now, which the program guards (ICG) and
+        ;; leaves at the call when the slot holds anything else. O2 the r/m.
+        (if (i32.and (i32.eq (global.get $uc_mr_reg) (i32.const 2))
+                     (i32.and (i32.eq (local.get $b) (i32.const 0xFF)) (i32.eq (local.get $v) (i32.const 32))))
+          (then
+            (memory.copy (i32.add (local.get $R) (i32.const 104)) (local.get $O0) (i32.const 24))
+            (local.set $n (call $uc_icall_class (local.get $O0)))
+            (if (local.get $n)
+              (then
+                (local.set $w (call $uc_icall_target (local.get $O0)))
+                (if (i32.eqz (local.get $w))
+                  (then (global.set $uc_n_icrej (i32.add (global.get $uc_n_icrej) (i32.const 1)))
+                        (call $uc_unsup (local.get $R)) (return)))
+                (i32.store offset=12 (local.get $R) (local.get $n))
+                (i32.store offset=24 (local.get $R) (local.get $w))
+                (call $uc_opi (local.get $O0) (local.get $e))
+                (call $uc_stack_slot (local.get $O1) (i32.const -4))
+                (i32.store offset=16 (local.get $R) (i32.const 32))
+                (call $uc_fin (local.get $R) (i32.const 23) (local.get $e))
+                (return)))))
         (call $uc_unsup (local.get $R)) (return)))
     ;; imul r, r/m, imm
     (if (i32.or (i32.eq (local.get $b) (i32.const 0x69)) (i32.eq (local.get $b) (i32.const 0x6B)))
@@ -779,6 +801,48 @@
     (i32.store offset=12 (local.get $o) (i32.const 0))
     (i32.store offset=16 (local.get $o) (local.get $disp))
     (i32.store offset=20 (local.get $o) (i32.const 32)))
+
+  ;; An FF /2 r/m's inline-cache class: 1 call reg / call [reg...] (with
+  ;; --uop-icall), 2 call [abs] through an import slot (with --uop-iat), 0 left
+  ;; to the threaded code (the flag is off, or ESP is involved: the push moves
+  ;; it, and a call through a stack slot is not a vtable).
+  (func $uc_icall_class (param $o i32) (result i32)
+    (if (i32.eq (i32.load (local.get $o)) (i32.const 1))
+      (then (return (select (global.get $uc_icall) (i32.const 0)
+                            (i32.ne (i32.load offset=4 (local.get $o)) (i32.const 4))))))
+    (if (i32.or (i32.eq (i32.load offset=4 (local.get $o)) (i32.const 4))
+                (i32.eq (i32.load offset=8 (local.get $o)) (i32.const 4)))
+      (then (return (i32.const 0))))
+    (if (i32.and (i32.lt_s (i32.load offset=4 (local.get $o)) (i32.const 0))
+                 (i32.lt_s (i32.load offset=8 (local.get $o)) (i32.const 0)))
+      (then (return (i32.const 0))))
+    (global.get $uc_icall))
+
+  ;; The target an FF /2 would call now: the register, or the dword its slot
+  ;; holds, from the registers the compile is running with. 0 when that is not
+  ;; guest code the tier may follow -- an unmapped slot or target, or an
+  ;; API/COM thunk (the thunk zone stays an exit, as for E8).
+  (func $uc_icall_target (param $o i32) (result i32)
+    (local $a i32) (local $t i32)
+    (if (i32.eq (i32.load (local.get $o)) (i32.const 1))
+      (then (local.set $t (i32.load (i32.add (global.get $reg_base)
+                                             (i32.shl (i32.load offset=4 (local.get $o)) (i32.const 2))))))
+      (else
+        (local.set $a (i32.load offset=16 (local.get $o)))
+        (if (i32.ge_s (i32.load offset=4 (local.get $o)) (i32.const 0))
+          (then (local.set $a (i32.add (local.get $a)
+                  (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.load offset=4 (local.get $o)) (i32.const 2))))))))
+        (if (i32.ge_s (i32.load offset=8 (local.get $o)) (i32.const 0))
+          (then (local.set $a (i32.add (local.get $a)
+                  (i32.shl (i32.load (i32.add (global.get $reg_base) (i32.shl (i32.load offset=8 (local.get $o)) (i32.const 2))))
+                           (i32.load offset=12 (local.get $o)))))))
+        (if (i32.eqz (call $guest_addr_mapped (local.get $a))) (then (return (i32.const 0))))
+        (local.set $t (call $gl32 (local.get $a)))))
+    (if (i32.and (i32.ge_u (local.get $t) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $t) (global.get $thunk_guest_end)))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (call $guest_addr_mapped (local.get $t))) (then (return (i32.const 0))))
+    (local.get $t))
 
   ;; ---- per-instruction properties ----
 
@@ -3152,6 +3216,17 @@
               ;; written
               (if (i32.eq (call $uc_kind (local.get $R)) (i32.const 23))
                 (then
+                  ;; FF /2: the slot must still hold the target followed at
+                  ;; compile time; anything else leaves at the call, with the
+                  ;; entry flags, before the push
+                  (if (i32.load offset=12 (local.get $R))
+                    (then
+                      (call $uc_emit (i32.const 71) (i32.const 5)
+                            (call $uc_rawof (call $uc_read (i32.add (local.get $R) (i32.const 104)) (local.get $R) (i32.const 1)))
+                            (call $uc_aN (local.get $tgt))
+                            (call $uc_aN (i32.sub (i32.load offset=12 (local.get $R)) (i32.const 1)))
+                            (call $uc_aN (i32.load (local.get $R)))
+                            (call $uc_xstub) (i64.const 0) (i64.const 0))))
                   (call $uc_store (i32.add (local.get $R) (i32.const 80)) (i32.const 32) (call $uc_aC (local.get $nx)))
                   (call $uc_o3 (i32.const 8) (call $uc_aR (i32.const 4)) (call $uc_aR (i32.const 4)) (call $uc_aN (i32.const -4)))
                   (local.set $md (i32.or (local.get $md) (i32.const 16)))
