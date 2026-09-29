@@ -337,9 +337,8 @@ async function main() {
   const liar = new CommandQueue({ deviceId: 1, consumer: { execute() { return { value: 0 }; } } });
   assert.throws(() => liar.submit(OP.DRAW), e => e.code === 'PROTOCOL');
   assert.strictEqual(liar.completed, 0);
-  // owned: the submitter hands the payload over, so the executor sees the
-  // caller's own objects (no copy, no freeze) under the same byte budget and
-  // the same data-only rules as a copied submit.
+  // owned: a trusted submitter hands the payload over, so the executor sees
+  // the caller's own objects -- no copy, no freeze, no walk, no bytes charged.
   let seenOwned;
   const ownedQueue = new CommandQueue({ deviceId: 4, capacityBytes: 4096,
     consumer: { execute(command) { seenOwned = command.payload; return { value: 1, complete: true }; } } });
@@ -349,12 +348,10 @@ async function main() {
   assert(!Object.isFrozen(seenOwned.state), 'an owned payload is not frozen');
   ownedQueue.submit(OP.DRAW, ownedPayload);
   assert.notStrictEqual(seenOwned, ownedPayload, 'without owned the payload is still copied');
-  assert.throws(() => ownedQueue.submit(OP.DRAW, { bytes: new Uint8Array(5000) }, { owned: true }), e => e.code === 'FULL');
-  const cyclic = {}; cyclic.self = cyclic;
-  assert.throws(() => ownedQueue.submit(OP.DRAW, cyclic, { owned: true }), e => e.code === 'INVALID');
-  assert.throws(() => ownedQueue.submit(OP.DRAW, { host: new Map() }, { owned: true }), e => e.code === 'INVALID');
-  const shared = new Uint8Array(8);
-  ownedQueue.submit(OP.DRAW, { a: shared, b: shared }, { owned: true });
+  assert.throws(() => ownedQueue.submit(OP.DRAW, { bytes: new Uint8Array(5000) }), e => e.code === 'FULL',
+    'a copied payload is still budgeted');
+  ownedQueue.submit(OP.DRAW, { bytes: new Uint8Array(5000) }, { owned: true });
+  assert.strictEqual(ownedQueue.bytes, 0, 'an owned command retired synchronously holds no budget');
   await workerTests();
   console.log('PASS neutral D3D command stream: direct effects, snapshots, ordered completion, bounds, leases, cancellation, generations and faults');
 }
