@@ -82,6 +82,7 @@ const VARIANTS = {
   TooltipState:       { allocators: [alloc('$tooltip_wndproc')] },
   ToolbarState:       { allocators: [alloc('$toolbar_ensure_state')] },
   TabNativeState:     { allocators: [alloc('$tab_native_state_get')] },
+  AnimateState:       { allocators: [alloc('$animate_wndproc')] },
   // The partial view. Not an allocation of its own: it is a window onto the
   // first two words of ButtonState / StaticState / ComboBoxState / EditState,
   // which are the only four variants that agree there.
@@ -205,6 +206,14 @@ add('ColorSpectrumState', [
 ], 'the HSL picker\'s own wndproc, plus the two colour-dialog helpers that reach it by ' +
    'control id 0x467; $colorspectrum_commit passes +0/+4/+8 positionally to ' +
    '$colordlg_hsl_to_rgb (param $h) (param $s) (param $l), which is what names the three words');
+
+add('AnimateState', [
+  '$anim_stop', '$anim_close', '$anim_read_chunk', '$anim_apply_palette',
+  '$anim_decode_to', '$anim_adopt', '$anim_open', '$anim_play', '$anim_step',
+  '$anim_paint', '$anim_service', '$animate_wndproc',
+], 'every $anim_* function takes the block $animate_wndproc allocates as its ' +
+   'ptr<AnimateState> $sw ($anim_service reads it back through wnd_get_state_ptr); ' +
+   '$anim_notify/$anim_open_source/$anim_live_*/$anim_visible do not reach it');
 
 // ── Borrowers: functions that hold someone ELSE's control state ─────────────
 // These are the entries whose class is not readable from the function name, so

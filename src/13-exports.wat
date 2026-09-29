@@ -20,6 +20,8 @@
     (local.set $saved_start (global.get $run_budget_start))
     (global.set $block_budget (local.get $max_blocks))
     (global.set $run_budget_start (local.get $max_blocks))
+    ;; Animate controls playing on comctl32's "thread" (09c3-wndprocs6).
+    (call $anim_service)
     ;; FlushInstructionCache broadcasts through shared memory because decoded
     ;; blocks are instance-local. Check once per host/Worker slice, not once per
     ;; x86 block; the API is rare and a slice boundary is the first point at

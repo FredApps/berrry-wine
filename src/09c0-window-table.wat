@@ -1515,6 +1515,10 @@
                 (i32.const 0x74))
               (i32.eqz (i32.load8_u offset=9 (local.get $wa))))))
       (then (return (i32.const 33))))
+    ;; "sysa"+"nima" -> SysAnimate32
+    (if (i32.and (i32.eq (local.get $d0) (i32.const 0x61737973))
+                 (i32.eq (local.get $d1) (i32.const 0x616d696e)))
+      (then (return (i32.const 34))))
     ;; "syst"+"reev" -> TreeView
     (if (i32.and (i32.eq (local.get $d0) (i32.const 0x74737973))
                  (i32.eq (local.get $d1) (i32.const 0x76656572)))
