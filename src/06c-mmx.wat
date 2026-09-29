@@ -524,6 +524,136 @@
     (call $gs128 (local.get $addr) (local.get $v))
     (dispatch-next))
 
+  ;; ---- Dedicated scalar handlers (478..490) ----
+  ;; The decoder picks one of these instead of $th_sse_rr/rm/mr for the hot
+  ;; scalar subops, so the dispatch that reached the handler already names the
+  ;; operation and no second br_table runs. Operand word is the generic
+  ;; form's low byte (dst<<4|src, or dst<<4 with an address word following).
+  ;; A scalar op touches lane 0 only, so it reads and writes that one f32 in
+  ;; the XMM file; the upper 96 bits stay where they are in memory.
+  (func $th_addss_rr (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32)
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp)
+      (f32.add (f32.load (local.get $dp)) (f32.load (call $xmm_addr (local.get $op)))))
+    (dispatch-next))
+
+  (func $th_addss_rm (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $read_addr))))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp) (f32.add (f32.load (local.get $dp)) (local.get $b)))
+    (dispatch-next))
+
+  (func $th_subss_rr (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32)
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp)
+      (f32.sub (f32.load (local.get $dp)) (f32.load (call $xmm_addr (local.get $op)))))
+    (dispatch-next))
+
+  (func $th_subss_rm (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $read_addr))))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp) (f32.sub (f32.load (local.get $dp)) (local.get $b)))
+    (dispatch-next))
+
+  (func $th_mulss_rr (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32)
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp)
+      (f32.mul (f32.load (local.get $dp)) (f32.load (call $xmm_addr (local.get $op)))))
+    (dispatch-next))
+
+  (func $th_mulss_rm (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $read_addr))))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp) (f32.mul (f32.load (local.get $dp)) (local.get $b)))
+    (dispatch-next))
+
+  (func $th_divss_rr (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32)
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp)
+      (f32.div (f32.load (local.get $dp)) (f32.load (call $xmm_addr (local.get $op)))))
+    (dispatch-next))
+
+  (func $th_divss_rm (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $read_addr))))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp) (f32.div (f32.load (local.get $dp)) (local.get $b)))
+    (dispatch-next))
+
+  ;; MOVSS xmm,xmm keeps the destination's upper lanes.
+  (func $th_movss_rr (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32)
+    (i32.store (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4)))
+      (i32.load (call $xmm_addr (local.get $op))))
+    (dispatch-next))
+
+  ;; MOVSS xmm,m32 zeroes bits 32..127.
+  (func $th_movss_load (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $v i32)
+    (local.set $v (call $gl32 (call $read_addr)))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (i32.store (local.get $dp) (local.get $v))
+    (i32.store offset=4 (local.get $dp) (i32.const 0))
+    (i64.store offset=8 (local.get $dp) (i64.const 0))
+    (dispatch-next))
+
+  (func $th_movss_store (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $v i32)
+    (local.set $v (i32.load (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4)))))
+    (call $gs32 (call $read_addr) (local.get $v))
+    (dispatch-next))
+
+  (func $th_comiss_rr (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32)
+    (call $sse_compare_flags
+      (f32.load (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+      (f32.load (call $xmm_addr (local.get $op))))
+    (dispatch-next))
+
+  (func $th_comiss_rm (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $read_addr))))
+    (call $sse_compare_flags
+      (f32.load (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+      (local.get $b))
+    (dispatch-next))
+
+  ;; Emit an SSE op, swapping the generic handler for a dedicated one when
+  ;; the subop has one. Only the low byte of the operand word survives,
+  ;; which is all the dedicated handlers read.
+  (func $te_sse (param $h i32) (param $op i32)
+    (local $sub i32) (local $d i32)
+    (local.set $sub (i32.shr_u (local.get $op) (i32.const 8)))
+    (if (i32.eq (local.get $h) (i32.const 432))
+      (then
+        (if (i32.eq (local.get $sub) (i32.const 2))  (then (local.set $d (i32.const 486))))
+        (if (i32.eq (local.get $sub) (i32.const 10)) (then (local.set $d (i32.const 478))))
+        (if (i32.eq (local.get $sub) (i32.const 11)) (then (local.set $d (i32.const 482))))
+        (if (i32.eq (local.get $sub) (i32.const 12)) (then (local.set $d (i32.const 489))))
+        (if (i32.eq (local.get $sub) (i32.const 13)) (then (local.set $d (i32.const 484))))
+        (if (i32.eq (local.get $sub) (i32.const 14)) (then (local.set $d (i32.const 480))))))
+    (if (i32.eq (local.get $h) (i32.const 433))
+      (then
+        (if (i32.eq (local.get $sub) (i32.const 2))  (then (local.set $d (i32.const 487))))
+        (if (i32.eq (local.get $sub) (i32.const 10)) (then (local.set $d (i32.const 479))))
+        (if (i32.eq (local.get $sub) (i32.const 11)) (then (local.set $d (i32.const 483))))
+        (if (i32.eq (local.get $sub) (i32.const 12)) (then (local.set $d (i32.const 490))))
+        (if (i32.eq (local.get $sub) (i32.const 13)) (then (local.set $d (i32.const 485))))
+        (if (i32.eq (local.get $sub) (i32.const 14)) (then (local.set $d (i32.const 481))))))
+    (if (i32.and (i32.eq (local.get $h) (i32.const 434))
+                 (i32.eq (local.get $sub) (i32.const 2)))
+      (then (local.set $d (i32.const 488))))
+    (if (local.get $d)
+      (then (call $te (local.get $d) (i32.and (local.get $op) (i32.const 0xFF))))
+      (else (call $te (local.get $h) (local.get $op)))))
+
   ;; ---- Guest 64-bit access ----
   ;; Two 32-bit accesses rather than one i64.load on g2w: $gl32/$gs32 carry the
   ;; page-boundary and DIB-backing logic, and an MMX blitter reads straight out
