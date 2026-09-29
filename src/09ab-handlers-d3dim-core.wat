@@ -275,6 +275,16 @@
       (local.get $vertex_type) (local.get $vertices) (local.get $count))
     (global.set $d3dim_state_override (i32.const 0)))
 
+  ;; Render endpoints share one instance. A native trap bypasses ordinary
+  ;; draw epilogues, so its scheduler clears optional raster hooks before the
+  ;; next endpoint can run. Only call after all asynchronous draw slices end.
+  ;; Coefficients and private GL matrix storage are persistent scratch; the
+  ;; enable flags below guard their use and each draw supplies fresh values.
+  (func (export "d3d_render_reset_transients")
+    (global.set $rast_fog_on (i32.const 0))
+    (global.set $rast_t1_on (i32.const 0))
+    (global.set $d3dim_state_override (i32.const 0)))
+
   ;; ── GPU executor seam ─────────────────────────────────────────
   ;; With a GPU executor attached (lib/d3dim-gpu.js), the same 0x20000 draw /
   ;; 0x20001 fence / 0x20003 flip records go to it instead of the render
@@ -355,6 +365,10 @@
   (global $d3dim_gpu_scratch_cap (mut i32) (i32.const 0))
   (func (export "d3dim_gpu_enable") (param $on i32)
     (global.set $d3dim_gpu_on (i32.ne (local.get $on) (i32.const 0))))
+  ;; The process render owner describes an immutable queued state snapshot.
+  ;; Reset to zero after each GPU batch draw, including exceptional exits.
+  (func (export "d3dim_gpu_state_override") (param $state i32)
+    (global.set $d3dim_state_override (local.get $state)))
 
   ;; The seam's one WAT-owned scratch: clear descriptor at +0, describe at +64.
   (func $d3dim_gpu_buffer (result i32)

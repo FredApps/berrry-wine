@@ -1843,6 +1843,7 @@ Resource-aware Win98 emulator
       "lib/d3d9-backend.js",
       "lib/d3dim-gpu.js",
       "lib/d3d-command-stream.js",
+      "lib/render-worker.js",
       "lib/d3d-geometry-batches.js",
       "lib/d3d9-software-backend.js",
       "lib/glide-software.js",
@@ -1850,6 +1851,7 @@ Resource-aware Win98 emulator
       "lib/d3d9-host.js",
       "lib/gl-command-stream.js",
       "lib/gl-compat.js",
+      "lib/gl-render-host.js",
       "lib/worker-imports.js",
       "lib/vfs-seed.js",
       "lib/debug-midi.js",
@@ -2485,21 +2487,10 @@ Resource-aware Win98 emulator
       try { return localStorage.getItem(THREADS_KEY) !== '0'; } catch (_) { return true; }
     }
     window.WINE_THREADS = false;
-    // D3DIM (DX2-7) software raster Worker: every draw path queues to it and
-    // each surface read/write, clear and present fences first. It needs a guest
-    // instance that may Atomics.wait, so it only engages in Threads mode.
-    // On by default: measured 2026-09-24 on the quiet box, fixed work, MW3
-    // gameplay 6.86 -> 5.29s wall and MCM's race 2.18 -> 1.48s at equal CPU,
-    // the race frame pixel-identical. Threads alone moved neither. The cost
-    // is ~90us per fenced frame, which only shows on a screen that draws one
-    // quad and then locks its back buffer. ?d3d-worker=0 / ?no-d3d-worker
-    // opts out for A/B.
-    window.WINE_D3D_RENDER_WORKER = (() => {
-      const q = new URLSearchParams(location.search);
-      if (q.has('no-d3d-worker')) return false;
-      const v = q.get('d3d-worker');
-      return v === null || !/^(0|false|off)$/i.test(v);
-    })();
+    // Threads mode shares one process-owned renderer across D3D, GL and
+    // Glide, for software and WebGL. The former ?no-d3d-worker / ?d3d-worker=0
+    // A/B switches no longer bypass rendering isolation.
+    window.WINE_D3D_RENDER_WORKER = true;
     // D3DIM (DX2-7) triangles on WebGL instead of the WAT software rasterizer.
     // Read once per launch by whichever thread owns the guest instance, so it
     // steers the NEXT launch like the other renderer switches. The toolbar

@@ -929,6 +929,16 @@
     (call $gl_sw_aux_surfaces (local.get $w) (local.get $h))
     (i32.const 1))
 
+  ;; Stop targeting borrowed bitmap bits without resetting GL state. The
+  ;; next window draw allocates its ordinary drawable and depth surfaces.
+  (func (export "gl_sw_unbind_bitmap")
+    (if (i32.eqz (global.get $gl_sw_bitmap)) (then (return)))
+    (call $d3dim_worker_fence)
+    (global.set $gl_sw_bitmap (i32.const 0))
+    (global.set $gl_sw_rt (i32.const 0))
+    (global.set $gl_sw_front (i32.const 0))
+    (global.set $gl_sw_flip_y (i32.const 1)))
+
   (func $gl_sw_clear_depth
     (call $gl_sw_fill_depth (global.get $gl_sw_zbuf)))
 
@@ -2673,7 +2683,6 @@
   (func $gl_sw_worker_try (param $start i32) (param $vertices i32) (result i32)
     (local $snap i32) (local $b i32) (local $d i32) (local $g i32)
     (if (global.get $gl_sw_in_worker) (then (return (i32.const 0))))
-    (if (global.get $gl_sw_bitmap) (then (return (i32.const 0))))
     (if (i32.eq (global.get $gl_sw_worker_ok) (i32.const 2)) (then (return (i32.const 0))))
     (if (i32.eqz (global.get $gl_sw_snap)) (then
       (local.set $g (call $gl_alloc_affine (i32.const 1056)))
@@ -2736,6 +2745,10 @@
         (return (i32.const 0))))
     (global.set $gl_sw_worker_ok (i32.const 1))
     (global.set $d3dim_worker_pending (i32.const 1))
+    ;; A DIB is directly visible to guest memory and GDI immediately after
+    ;; this draw returns. Keep its historical synchronous visibility while
+    ;; moving the raster loop onto the common renderer owner.
+    (if (global.get $gl_sw_bitmap) (then (call $d3dim_worker_fence)))
     (i32.const 1))
 
   ;; The render Worker's half: install a snapshot $gl_sw_worker_try took and
