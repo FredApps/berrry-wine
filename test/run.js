@@ -4818,6 +4818,10 @@ async function main() {
       exeBytes,
       seeds: [...((ASSET_ENTRY && ASSET_ENTRY.dlls) || []), ...DLL_SEED],
       detectRequiredDlls,
+      onMissing: (name, spec) => console.warn(`[dll] ${name} is loaded as a real PE ` +
+        `but is not on disk (${spec}); its imports fall to WAT stubs and an ordinal ` +
+        `import from it crashes as "<ord>". test/binaries/dlls is gitignored: copy it ` +
+        `into a fresh worktree.`),
       loadSpec: (spec) => {
         // Registry seeds arrive as repo-relative paths; the graph walk's own
         // discoveries arrive as bare DLL names.
