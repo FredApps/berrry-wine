@@ -8,7 +8,9 @@
 // into SS, so every instruction that lets the guest look at ESP's value has to
 // translate. Indeo refuses to decode a frame unless
 // `lea eax,[esp+838h] / sub eax,esp` leaves 838h, and saves its stack with
-// PUSH ESP before switching SS to call back into 16-bit code.
+// PUSH ESP before switching SS to call back into 16-bit code. Its colour
+// converter aligns with `lea esp,[esp+0]`, which must put the SS base back
+// (it left ESP a bare offset once, and the High Council video looped forever).
 
 const assert = require('assert');
 const { bootRenderHarness } = require('./render-helper');
@@ -44,10 +46,11 @@ const code = [
   0x59,                                     // 20c: pop ecx
   0x54,                                     // 20d: push esp
   0x5c,                                     // 20e: pop esp
-  0xe8, 0x02, 0x00, 0x00, 0x00,             // 20f: call 216h
-  0xeb, 0xfe,                               // 214: jmp $   ; park here
-  0x8b, 0x14, 0x24,                         // 216: mov edx,[esp]
-  0xc3,                                     // 219: ret
+  0x8d, 0x64, 0x24, 0x00,                   // 20f: lea esp,[esp+0]
+  0xe8, 0x02, 0x00, 0x00, 0x00,             // 213: call 21ah
+  0xeb, 0xfe,                               // 218: jmp $   ; park here
+  0x8b, 0x14, 0x24,                         // 21a: mov edx,[esp]
+  0xc3,                                     // 21d: ret
 ];
 
 (async () => {
@@ -64,9 +67,9 @@ const code = [
   assert.strictEqual(e.use32_reg32(ECX) >>> 0, 0x3f00,
     'push esp pushes the offset ESP had before the push');
   assert.strictEqual(e.use32_reg32(ESP) >>> 0, 0x00113f00,
-    'pop esp loads the popped offset back as the same stack position');
-  assert.strictEqual(e.use32_reg32(EDX) >>> 0, 0x214,
-    'call rel32 in USE32 code pushes a doubleword return offset');
+    'pop esp and lea esp,[esp+0] leave ESP at the same stack position');
+  assert.strictEqual(e.use32_reg32(EDX) >>> 0, 0x218,
+    'call rel32 in USE32 code pushes a doubleword return offset (onto the based stack, after lea esp)');
   console.log('PASS USE32 code on a based 32-bit stack sees ESP as an offset into SS');
 })().catch(error => {
   console.error(error && error.stack || error);

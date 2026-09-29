@@ -220,6 +220,13 @@
       (then
         (if (i32.eqz (i32.and (local.get $info) (i32.const 0x800)))
           (then (local.set $off (i32.and (local.get $off) (i32.const 0xFFFF)))))
+        ;; LEA ESP, m: the register file keeps ESP linear ($esp_arch), so the
+        ;; offset goes back on top of the SS base. Indeo's colour converter
+        ;; aligns with `lea esp,[esp+0]` on its flat SS; storing the bare
+        ;; offset sent every [esp+N] after it to unmapped memory, its row
+        ;; counter read 0, and the High Council video looped ~2^32 times.
+        (if (i32.eq (i32.and (local.get $op) (i32.const 7)) (i32.const 4))
+          (then (local.set $off (i32.add (local.get $off) (global.get $seg_base_ss)))))
         (i32.store (i32.add (global.get $reg_base)
                             (i32.shl (i32.and (local.get $op) (i32.const 7)) (i32.const 2)))
                    (local.get $off))
