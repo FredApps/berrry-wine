@@ -253,6 +253,63 @@ const CASES = [
   },
 ];
 
+// ---- --uop-muldiv (07e kinds 25/26, 07d MULW/SETMULF/DIVW) ----
+// The flags a mul leaves are $set_flags_mul's record: CF=OF from the upper
+// half, ZF/SF from EAX through whatever sign shift the previous producer left
+// (an 8-bit add here, so SF reads bit 7 exactly as threaded code does).
+// A raw SEH frame (no scope table, so 11-seh calls the handler for real)
+// catches #DE and skips the 2-byte div: every divide that faults must leave
+// the program at that div, and threaded code raises it there.
+const SEH_ON = [[0x64, 0x8B, 0x1D, 0, 0, 0, 0], [0x6A, 0xFF], [0x6A, 0x00], CALL('seh_after'),
+  // handler(rec, frame, ctx, disp): ctx->Eip += 2; ExceptionContinueExecution
+  [0x8B, 0x44, 0x24, 0x0C], [0x83, 0x80, 0xB8, 0x00, 0x00, 0x00, 0x02], [0x31, 0xC0], 0xC3,
+  L('seh_after'), 0x53, [0x64, 0x89, 0x25, 0, 0, 0, 0]];
+const SEH_OFF = [[0x8B, 0x04, 0x24], [0x64, 0xA3, 0, 0, 0, 0], [0x83, 0xC4, 0x10]];
+CASES.push(
+  {
+    // mul r/m32 with mixed upper halves (a byte times a dword), CF read by
+    // jb and setb (inc preserves CF), OF by seto; imul reg and imul eax (the operand is EAX
+    // itself); SF/ZF after an 8-bit shift sign; a mul whose flags are dead.
+    name: 'muldiv-mul', regs: { ecx: N }, muldiv: true,
+    code: [L('l'), [0x0F, 0xB6, 0x06], [0x00, 0xD3], [0xF7, 0x66, 0x04], J(cc.B, 'k'), 0x47, L('k'),
+           [0x0F, 0x92, 0xC2], [0x01, 0xD5], [0x01, 0xC3], [0x0F, 0xBE, 0x46, 0x08], [0xF7, 0x6E, 0x0C], [0x0F, 0x90, 0xC2],
+           [0x0F, 0x98, 0xC6], [0x01, 0xD5], [0x8B, 0x46, 0x10], [0xF7, 0xEB], [0x0F, 0x94, 0xC2],
+           [0x01, 0xD3], [0x31, 0xC5], [0x8B, 0x46, 0x14], [0xF7, 0xE8], [0x8B, 0x46, 0x18], [0xF7, 0xE5],
+           [0x01, 0xC3], [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // div/idiv that never fault: unsigned by a register and by memory,
+    // signed after cdq (negative quotients and remainders), and a cmp whose
+    // flags cross all four divides to the jb (div leaves the flags alone);
+    // the results accumulate through lea, which keeps them too.
+    name: 'muldiv-div', regs: { ecx: N }, muldiv: true,
+    code: [L('l'), [0x8B, 0x5E, 0x04], [0x83, 0xCB, 0x01], [0x39, 0xCD], [0x8B, 0x06], [0xBA, 0, 0, 0, 0],
+           [0xF7, 0xF3], [0x8D, 0x2C, 0x28], [0x8D, 0x2C, 0x2A], [0xBA, 0, 0, 0, 0], [0xF7, 0x76, 0x08],
+           [0x8D, 0x3C, 0x38], [0x8B, 0x46, 0x0C], 0x99, [0xF7, 0xFB], [0x8D, 0x2C, 0x2A], [0x8D, 0x3C, 0x38],
+           [0x8B, 0x46, 0x14], 0x99, [0xF7, 0x7E, 0x10], [0x8D, 0x2C, 0x2A], [0x8D, 0x3C, 0x38],
+           J(cc.B, 'k'), 0x45, L('k'), [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // Every #DE a divide can raise, inside the loop: div by zero (a byte
+    // masked to 0-7), div overflow (EDX >= divisor), idiv of the 32-bit
+    // INT_MIN by -1, 0, 1 or 2, and idiv of EDX:EAX = 0x80000000:0 (the
+    // 64-bit INT_MIN, which i64.div_s would trap on) by the same.
+    // The handler resumes at div+2, an entry threaded code splits a block at
+    // and the program does not charge (dynamicEntry, like ret-mismatch).
+    name: 'muldiv-div-exits', regs: { ecx: 600 }, muldiv: true, head: 'l', dynamicEntry: true, want: { divExits: '>0' },
+    // Threaded code reports a fault at the start of the block it is in
+    // ($eip is the block entry), so each divide that can fault is made to
+    // begin a block (a jo to the next instruction) for the handler's Eip += 2
+    // to land after it in both tiers.
+    code: [...SEH_ON, L('l'), [0x8B, 0x06], [0x31, 0xD2], [0x0F, 0xB6, 0x5E, 0x04], [0x83, 0xE3, 0x07], J(cc.O, 'd0'), L('d0'), [0xF7, 0xF3],
+           [0x01, 0xC5], [0x01, 0xD5], [0x8B, 0x06], [0x8B, 0x56, 0x08], [0x83, 0xE2, 0x0F], [0x8B, 0x5E, 0x0C],
+           [0x83, 0xE3, 0x1F], J(cc.O, 'd1'), L('d1'), [0xF7, 0xF3], [0x31, 0xC5], [0x31, 0xD5], [0xB8, 0x00, 0x00, 0x00, 0x80], 0x99,
+           [0x0F, 0xB6, 0x5E, 0x05], [0x83, 0xE3, 0x03], 0x4B, J(cc.O, 'd2'), L('d2'), [0xF7, 0xFB], [0x01, 0xC5], [0x01, 0xD5],
+           [0x31, 0xC0], [0xBA, 0x00, 0x00, 0x00, 0x80], J(cc.O, 'd3'), L('d3'), [0xF7, 0xFB], [0x01, 0xC5], [0x01, 0xD5],
+           [0x83, 0xC6, 0x04], 0x49, J(cc.NZ, 'l'), ...SEH_OFF, 0xC3],
+  },
+);
+
 // ---- --uop-trace-heads (07e $uc_form_trace) ----
 // A head with no back edge: the loop around it runs an instruction the tier
 // does not lower (bsr), so no head in it has a loop to compile, and without
@@ -484,7 +541,12 @@ function runCase(inst, c, a, codeAddr, mode) {
   // A known flag state on entry: a sub that sets CF.
   e.set_uop(mode === 'off' ? 0 : 1);
   if (c.aggr) e.set_aggressive_stack(mode === 'off' ? 0 : 1);
+  const feats = ['muldiv', 'icall', 'iat'].filter((f) => c[f]);
+  for (const f of feats) e['set_uop_' + f](mode === 'off' ? 0 : 1);
+  const unfeat = () => { for (const f of feats) e['set_uop_' + f](0); };
   const before = { installs: e.uop_stats(2), enters: e.uop_stats(4), blocks: e.uop_stats(5), traces: e.uop_cstat(26) };
+  const CTR = { divExits: 16, icPass: 17, icFail: 18, iatPass: 19, iatFail: 20 };
+  const ctr0 = Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, e.uop_stats(i)]));
   let sp = null;
   if (mode === 'pre') {
     const head = codeAddr + labelAt(c.head);
@@ -494,6 +556,7 @@ function runCase(inst, c, a, codeAddr, mode) {
     const pc = e.uop_compile(head);
     if (!pc) {
       if (c.aggr) e.set_aggressive_stack(0);
+      unfeat();
       if (c.trace) e.set_uop_trace_heads(0);
       if (c.lf) e.set_logical_frame(0, 0);
       const why = WAT_REASONS.findIndex((_, k) => k && e.uop_decline_count(k) !== declines[k]);
@@ -516,7 +579,10 @@ function runCase(inst, c, a, codeAddr, mode) {
     const eip = e.get_eip() >>> 0;
     if (process.env.UOP_STOPS) console.log(mode, k, (eip - codeAddr).toString(16), 'blocks', e.get_last_run_blocks(), 'ecx', e.get_ecx());
     if (eip === 0) { ok = true; break; }
-    stops.push(eip - codeAddr);
+    // A stop outside this case's code (a continuation thunk, e.g. the SEH
+    // handler's return) is absolute: each run's code lives in its own slot.
+    const rel = eip - codeAddr;
+    stops.push(rel >= 0 && rel < 0x10000 ? '+0x' + rel.toString(16) : '@0x' + eip.toString(16));
   }
   const st = {
     ok, eip: e.get_eip() >>> 0, stops: stops.join(','), nstops: stops.length, flags: e.uop_flags(), mem: hash(mem, g2w, a),
@@ -524,9 +590,11 @@ function runCase(inst, c, a, codeAddr, mode) {
     installs: e.uop_stats(2) - before.installs, enters: e.uop_stats(4) - before.enters,
     blocks: e.uop_stats(5) - before.blocks, sp, lf: e.get_logical_frame_count() - lf0,
     traces: e.uop_cstat(26) - before.traces,
+    ctr: Object.fromEntries(Object.entries(CTR).map(([k, i]) => [k, e.uop_stats(i) - ctr0[k]])),
   };
   e.set_uop(0);
   if (c.aggr) e.set_aggressive_stack(0);
+  unfeat();
   if (c.trace) e.set_uop_trace_heads(0);
   if (c.lf) e.set_logical_frame(0, 0);
   return st;
@@ -796,7 +864,7 @@ const WAT_REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-back
   'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
   'dead-flags-consumed', 'dead-cf', 'cf-no-recipe', 'cf-kind', 'dead-flags-rec', 'rec-no-recipe', 'rec-kind',
   'dead-flags-jcc', 'kind', 'too-many-windows', 'label', 'arg', 'too-many-temps', 'program-too-big',
-  'ranges-full', 'scratch-overflow'];
+  'ranges-full', 'scratch-overflow', 'call-indirect'];
 
 async function main() {
   bench.ensureBuilt();
@@ -860,12 +928,17 @@ async function main() {
       if (((mode === 'hot' && !c.folds && !c.dynamicEntry) || clock) && st.stops !== off.stops) {
         const x = st.stops.split(','), y = off.stops.split(',');
         let k = 0; while (k < x.length && x[k] === y[k]) k++;
-        diffs.push(`batch ${k} stops at +0x${(+x[k]).toString(16)} vs +0x${(+y[k]).toString(16)} (${st.nstops} vs ${off.nstops} batches)`);
+        diffs.push(`batch ${k} stops at ${x[k]} vs ${y[k]} (${st.nstops} vs ${off.nstops} batches)`);
       }
       REGS.forEach((r, k) => { if (st.regs[k] !== off.regs[k]) diffs.push(`${r} ${st.regs[k].toString(16)} vs ${off.regs[k].toString(16)}`); });
       if (!st.enters && !c.declines && !(c.mayStayCold && mode === 'hot')) diffs.push('never entered');
+      // counters the feature must move: '>0', or an exact count
+      for (const [k, v] of Object.entries(c.want || {})) {
+        if (v === '>0' ? !(st.ctr[k] > 0) : st.ctr[k] !== v) diffs.push(`${k}=${st.ctr[k]} want ${v}`);
+      }
       if (diffs.length) fails++;
-      results.push(`${mode}: ${diffs.length ? 'FAIL ' + diffs.join(', ') : 'ok'} (enters=${st.enters} blocks=${st.blocks})`);
+      const ctrs = Object.entries(st.ctr).filter(([, v]) => v).map(([k, v]) => ` ${k}=${v}`).join('');
+      results.push(`${mode}: ${diffs.length ? 'FAIL ' + diffs.join(', ') : 'ok'} (enters=${st.enters} blocks=${st.blocks}${ctrs})`);
     }
     console.log(`${c.name.padEnd(18)} ${results.join(' | ')}`);
   }

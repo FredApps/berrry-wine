@@ -9,7 +9,7 @@ const UOP_REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-back
   'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
   'dead-flags-consumed', 'dead-cf', 'cf-no-recipe', 'cf-kind', 'dead-flags-rec', 'rec-no-recipe', 'rec-kind',
   'dead-flags-jcc', 'kind', 'too-many-windows', 'label', 'arg', 'too-many-temps', 'program-too-big',
-  'ranges-full', 'scratch-overflow'];
+  'ranges-full', 'scratch-overflow', 'call-indirect'];
 
 function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = console.log,
   appPolicy = () => null }) {
@@ -67,6 +67,18 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // push's temp (07e $uc_sp_block). Opt-in: an elided slot is not in guest
   // memory while the pair is open. docs/uop-tier-design.md.
   const aggrWanted = () => uopWanted() && (hasFlag('aggressive-stack') || (appPolicy() || {}).aggressiveStack === true);
+  // Opt-in tier widenings, each its own A/B arm (07e):
+  //   --uop-muldiv  mul/imul/div/idiv r/m32 (F7 /4-/7); a divide that would
+  //                 fault leaves the program at the div, threaded code raises.
+  //   --uop-icall   call [reg+disp] / call [reg] / call reg (FF /2) with a
+  //                 guarded inline cache of the target the slot held at
+  //                 compile time; a mismatch leaves at the call.
+  //   --uop-iat     call [abs] into a guest DLL, the same guard; a target in
+  //                 the thunk zone stays an exit.
+  const muldivWanted = () => uopWanted() && (hasFlag('uop-muldiv') || (appPolicy() || {}).uopMuldiv === true);
+  const icallWanted = () => uopWanted() && (hasFlag('uop-icall') || (appPolicy() || {}).uopIcall === true);
+  const iatWanted = () => uopWanted() && (hasFlag('uop-iat') || (appPolicy() || {}).uopIat === true);
+  const WIDEN = [['set_uop_muldiv', muldivWanted], ['set_uop_icall', icallWanted], ['set_uop_iat', iatWanted]];
   // --uop-trace-heads[=MIN,MAX] (or `uopTraceHeads: true` on the app): a hot
   // head with no back edge is lowered as a forward trace -- straight-line
   // code, both arms of a branch, calls and rets to an in-region call -- of
@@ -312,6 +324,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (uopWanted()) inheritWasm('set_uop', 1);
     if (NO_UOP_NOBUMP) inheritWasm('set_uop_nobump', 0);
     if (aggrWanted()) inheritWasm('set_aggressive_stack', 1);
+    for (const [setter, wanted] of WIDEN) if (wanted()) inheritWasm(setter, 1);
     if (traceWanted()) {
       inheritWasm('set_uop_trace_heads', 1);
       if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) inheritWasm('set_uop_trace_limits', TRACE_LIMITS[0], TRACE_LIMITS[1]);
@@ -338,6 +351,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       if (UOP_WIN_CENSUS && instance.exports.set_uop_win_census) instance.exports.set_uop_win_census(1);
       if (UOP_REGUARD_SPAN !== null && instance.exports.set_uop_reguard_span) instance.exports.set_uop_reguard_span(Number(UOP_REGUARD_SPAN) | 0);
       if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
+      for (const [setter, wanted] of WIDEN) if (wanted() && instance.exports[setter]) instance.exports[setter](1);
       if (traceWanted() && instance.exports.set_uop_trace_heads) {
         instance.exports.set_uop_trace_heads(1);
         if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) instance.exports.set_uop_trace_limits(TRACE_LIMITS[0], TRACE_LIMITS[1]);
@@ -492,6 +506,15 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       log(`uop: installs=${st(2)} kills=${st(3)} retired-poor=${st(7)} enters=${st(4)} ` +
         `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} rg-pages=${st(14)} rg-nonadj=${st(15)} win-kept=${st(9)} win-reset=${st(10)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
         `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (traceWanted() ? ` traces=${cs(26)}` : '') + (why ? `\n  declines: ${why}` : ''));
+      if (muldivWanted() || icallWanted() || iatWanted()) {
+        // $uop_cstat 27..30 are what the compiler kept; $uop_stats 16..20 what
+        // those programs did at run time. The failing sites are the four
+        // call EIPs whose guards failed most ($uop_icg_note).
+        const sites = [0, 1, 2, 3].map((k) => [x.uop_icg_site(k) >>> 0, x.uop_icg_site(4 + k) >>> 0])
+          .filter(([, n]) => n).map(([a, n]) => `0x${a.toString(16)}=${n}`).join(' ');
+        log(`uop widen: muldiv-insns=${cs(27)} div-exits=${st(16)} | icall-sites=${cs(28)} pass=${st(17)} fail=${st(18)} | ` +
+          `iat-sites=${cs(29)} pass=${st(19)} fail=${st(20)} | rejected=${cs(30)}` + (sites ? `\n  guard-fail sites: ${sites}` : ''));
+      }
       if (x.get_uop_nobump_skips) log(`uop nobump: skips=${x.get_uop_nobump_skips() >>> 0}`);
       if (UOP_WIN_CENSUS) require('./runner-win-census').reportWinCensus(instance, log);
       if (aggrWanted()) {

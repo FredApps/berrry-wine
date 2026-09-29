@@ -52,7 +52,7 @@ const REASONS = [null, 'scan-limit', 'overlap', 'head-unsupported', 'no-backedge
   'seam-ambiguous', 'long-block', 'unreached-block', 'demand-no-fixpoint', 'branch-mid-block',
   'dead-flags-consumed', 'dead-cf', 'cf-no-recipe', 'cf-kind', 'dead-flags-rec', 'rec-no-recipe', 'rec-kind',
   'dead-flags-jcc', 'kind', 'too-many-windows', 'label', 'arg', 'too-many-temps', 'program-too-big',
-  'ranges-full', 'scratch-overflow'];
+  'ranges-full', 'scratch-overflow', 'call-indirect'];
 const why = r => r === 0 ? 'installed' : r === 0xFFFF ? 'busy' : (REASONS[r] || `reason${r}`);
 const hex = v => '0x' + (v >>> 0).toString(16);
 

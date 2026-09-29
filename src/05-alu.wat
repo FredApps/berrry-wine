@@ -1383,7 +1383,12 @@
     (local.set $divisor (i64.extend_i32_s (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $op) (i32.const 2))))))
     (local.set $dividend (i64.or (i64.extend_i32_u (i32.load offset=0 (global.get $reg_base)))
       (i64.shl (i64.extend_i32_u (i32.load offset=8 (global.get $reg_base))) (i64.const 32))))
-    (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 0xC0000094)) (return)))
+    ;; #DE, and INT64_MIN / -1 (whose quotient overflows anyway), which
+    ;; would otherwise trap i64.div_s and kill the whole instance
+    (if (i32.or (i64.eqz (local.get $divisor))
+                (i32.and (i64.eq (local.get $divisor) (i64.const -1))
+                         (i64.eq (local.get $dividend) (i64.shl (i64.const 1) (i64.const 63)))))
+      (then (call $raise_exception (i32.const 0xC0000094)) (return)))
     (local.set $quotient (i64.div_s (local.get $dividend) (local.get $divisor)))
     ;; #DE if quotient doesn't fit in signed 32-bit range
     (if (i32.or (i64.gt_s (local.get $quotient) (i64.const 0x7FFFFFFF))
@@ -1430,7 +1435,12 @@
     (local.set $dividend (i64.extend_i32_s (i32.or
       (i32.shl (i32.and (i32.load offset=8 (global.get $reg_base)) (i32.const 0xFFFF)) (i32.const 16))
       (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))))
-    (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 0xC0000094)) (return)))
+    ;; #DE, and INT64_MIN / -1 (whose quotient overflows anyway), which
+    ;; would otherwise trap i64.div_s and kill the whole instance
+    (if (i32.or (i64.eqz (local.get $divisor))
+                (i32.and (i64.eq (local.get $divisor) (i64.const -1))
+                         (i64.eq (local.get $dividend) (i64.shl (i64.const 1) (i64.const 63)))))
+      (then (call $raise_exception (i32.const 0xC0000094)) (return)))
     (local.set $quotient (i64.div_s (local.get $dividend) (local.get $divisor)))
     (if (i32.or (i64.gt_s (local.get $quotient) (i64.const 32767))
                (i64.lt_s (local.get $quotient) (i64.const -32768)))
@@ -1522,7 +1532,12 @@
     (local.set $divisor (i64.extend_i32_s (call $gl32 (local.get $addr))))
     (local.set $dividend (i64.or (i64.extend_i32_u (i32.load offset=0 (global.get $reg_base)))
       (i64.shl (i64.extend_i32_u (i32.load offset=8 (global.get $reg_base))) (i64.const 32))))
-    (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 0xC0000094)) (return)))
+    ;; #DE, and INT64_MIN / -1 (whose quotient overflows anyway), which
+    ;; would otherwise trap i64.div_s and kill the whole instance
+    (if (i32.or (i64.eqz (local.get $divisor))
+                (i32.and (i64.eq (local.get $divisor) (i64.const -1))
+                         (i64.eq (local.get $dividend) (i64.shl (i64.const 1) (i64.const 63)))))
+      (then (call $raise_exception (i32.const 0xC0000094)) (return)))
     (local.set $quotient (i64.div_s (local.get $dividend) (local.get $divisor)))
     ;; #DE if quotient doesn't fit in signed 32-bit range
     (if (i32.or (i64.gt_s (local.get $quotient) (i64.const 0x7FFFFFFF))
@@ -1570,7 +1585,12 @@
     (local.set $dividend (i64.extend_i32_s (i32.or
       (i32.shl (i32.and (i32.load offset=8 (global.get $reg_base)) (i32.const 0xFFFF)) (i32.const 16))
       (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))))
-    (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 0xC0000094)) (return)))
+    ;; #DE, and INT64_MIN / -1 (whose quotient overflows anyway), which
+    ;; would otherwise trap i64.div_s and kill the whole instance
+    (if (i32.or (i64.eqz (local.get $divisor))
+                (i32.and (i64.eq (local.get $divisor) (i64.const -1))
+                         (i64.eq (local.get $dividend) (i64.shl (i64.const 1) (i64.const 63)))))
+      (then (call $raise_exception (i32.const 0xC0000094)) (return)))
     (local.set $quotient (i64.div_s (local.get $dividend) (local.get $divisor)))
     (if (i32.or (i64.gt_s (local.get $quotient) (i64.const 32767))
                (i64.lt_s (local.get $quotient) (i64.const -32768)))
@@ -1619,7 +1639,12 @@
     (local.set $dividend (i64.extend_i32_s (i32.or
       (i32.shl (i32.and (i32.load offset=8 (global.get $reg_base)) (i32.const 0xFFFF)) (i32.const 16))
       (i32.and (i32.load offset=0 (global.get $reg_base)) (i32.const 0xFFFF)))))
-    (if (i64.eqz (local.get $divisor)) (then (call $raise_exception (i32.const 0xC0000094)) (return)))
+    ;; #DE, and INT64_MIN / -1 (whose quotient overflows anyway), which
+    ;; would otherwise trap i64.div_s and kill the whole instance
+    (if (i32.or (i64.eqz (local.get $divisor))
+                (i32.and (i64.eq (local.get $divisor) (i64.const -1))
+                         (i64.eq (local.get $dividend) (i64.shl (i64.const 1) (i64.const 63)))))
+      (then (call $raise_exception (i32.const 0xC0000094)) (return)))
     (local.set $quotient (i64.div_s (local.get $dividend) (local.get $divisor)))
     (if (i32.or (i64.gt_s (local.get $quotient) (i64.const 32767))
                (i64.lt_s (local.get $quotient) (i64.const -32768)))
