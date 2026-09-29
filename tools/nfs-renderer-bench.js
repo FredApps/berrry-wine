@@ -21,6 +21,7 @@ const cases = arg('cases', 'glide,d3d,software,glide-software').split(',');
 const seconds = Number(arg('seconds', '30'));
 const samples = Number(arg('samples', '2'));
 const seed = Number(arg('seed', '12345')) >>> 0;
+const profileEnabled = process.argv.includes('--profile');
 assert(Number.isFinite(seconds) && seconds > 0, 'seconds must be positive');
 assert(Number.isInteger(samples) && samples >= 0, 'samples must be a nonnegative integer');
 const output = path.resolve(ROOT, arg('out', 'build/nfs-renderer-bench'));
@@ -44,6 +45,20 @@ assert.equal(fixtureSha256, '0defab3eeb22ee4b6e0007a4d5b26a99d868008ba77e2b9bd3e
 const workerFile = path.join(ROOT, 'lib/guest-worker.js');
 const needle = '      const result = await WebAssembly.instantiate(msg.module, built.imports);';
 const originalWorker = fs.readFileSync(workerFile, 'utf8');
+const d3dCensus = `
+if (globalThis.D3DIMGpu) {
+  const prototype = globalThis.D3DIMGpu.D3DIMGpu.prototype, draw = prototype._draw;
+  prototype._draw = function(wa) {
+    const before = this.stats.fallbacks, result = draw.call(this, wa);
+    if (this.stats.fallbacks !== before) {
+      const key = JSON.stringify({primitive:this._u32(wa+4),vertexType:this._u32(wa+8),count:this._u32(wa+16)});
+      const census = this.stats.fallbackKinds || (this.stats.fallbackKinds = {});
+      census[key] = (census[key] || 0) + 1;
+    }
+    return result;
+  };
+}
+`;
 const rendererProbe = `
 if (typeof OffscreenCanvas === 'function') {
   const getContext = OffscreenCanvas.prototype.getContext;
@@ -200,9 +215,25 @@ async function runCase(server, name) {
     for (let i = 0; i < samples; i++) {
       await page.bringToFront();
       await page.screenshot({ path: path.join(dir, `sample-${i + 1}-before.png`) });
+      const profilers = [];
+      if (profileEnabled) {
+        const targets = [{label:'page', client:await page.target().createCDPSession()},
+          ...page.workers().map((worker, index) => ({label:'worker-' + index, client:worker.client, url:worker.url()}))];
+        for (const target of targets) {
+          if (!target.client) continue;
+          await target.client.send('Profiler.enable');
+          await target.client.send('Profiler.setSamplingInterval', {interval:1000});
+          await target.client.send('Profiler.start');
+          profilers.push(target);
+        }
+      }
       const loadBefore = os.loadavg(), cpuBefore = await cpu(), before = await observe(page);
       await sleep(seconds * 1000);
       const after = await observe(page), cpuAfter = await cpu(), loadAfter = os.loadavg();
+      for (const target of profilers) {
+        const { profile } = await target.client.send('Profiler.stop');
+        fs.writeFileSync(path.join(dir, 'sample-' + (i+1) + '-' + target.label + '.cpuprofile'), JSON.stringify(profile));
+      }
       assert(before.running && after.running && !before.hidden && !after.hidden, 'visible live game required');
       assert.deepStrictEqual(after.scene, before.scene, 'scene configuration must remain fixed');
       if (errors.length) throw new Error(errors[0]);
@@ -248,14 +279,21 @@ async function runCase(server, name) {
   const server = await startStaticServer({ root: ROOT, crossOriginIsolated: true,
     allowedRealRoots: [fixtureRoot, fs.realpathSync(path.join(ROOT, 'fonts'))],
     handleRequest(req, res) {
-      if (new URL(req.url, 'http://localhost').pathname !== '/lib/guest-worker.js') return false;
+      const pathname = new URL(req.url, 'http://localhost').pathname;
+      if (profileEnabled && pathname === '/lib/d3dim-gpu.js') {
+        res.writeHead(200, {'Content-Type':'application/javascript','Cache-Control':'no-store',
+          'Cross-Origin-Resource-Policy':'same-origin','Cross-Origin-Embedder-Policy':'require-corp'});
+        res.end(fs.readFileSync(path.join(ROOT,'lib/d3dim-gpu.js'),'utf8') + d3dCensus);
+        return true;
+      }
+      if (pathname !== '/lib/guest-worker.js') return false;
       res.writeHead(200, {'Content-Type':'application/javascript','Cache-Control':'no-store',
         'Cross-Origin-Resource-Policy':'same-origin',
         'Cross-Origin-Embedder-Policy':'require-corp'});
       res.end(seededWorker + rendererProbe); return true;
     } });
   const meta = { startedAt: new Date().toISOString(), commit: execFileSync('git',['rev-parse','HEAD'],{cwd:ROOT,encoding:'utf8'}).trim(),
-    wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, seed, seconds, samples,
+    wasmSha256: hash(path.join(ROOT,'build/wine-assembly.wasm')), headful:true, seed, seconds, samples, profileEnabled,
     machine: { platform:os.platform(), arch:os.arch(), cpus:os.cpus().length, model:os.cpus()[0].model },
     fixtureSha256,
     results: [] };
