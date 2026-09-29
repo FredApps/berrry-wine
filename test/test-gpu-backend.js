@@ -21,7 +21,7 @@ const gl = {
   bufferData: (...a) => calls.push(['bufferData', ...a]), deleteBuffer() {},
   createTexture: () => ({ id: next++ }), activeTexture() {}, bindTexture() {},
   pixelStorei() {}, texImage2D: (...a) => calls.push(['texImage2D', ...a]),
-  texSubImage2D() {}, texParameteri() {}, deleteTexture() {},
+  texSubImage2D() {}, texParameteri: (...a) => calls.push(['texParameteri', ...a]), deleteTexture() {},
   enableVertexAttribArray: (...a) => calls.push(['enableVertexAttribArray', ...a]),
   disableVertexAttribArray: (...a) => calls.push(['disableVertexAttribArray', ...a]),
   vertexAttribPointer: (...a) => calls.push(['vertexAttribPointer', ...a]),
@@ -45,6 +45,17 @@ gpu.uploadTexture2D(texture, {
   type: 0x1401, pixels: new Uint8Array([1, 2, 3, 4]),
 });
 assert(calls.some(call => call[0] === 'texImage2D'), 'backend owns texture upload');
+// D3D9 re-states sampler parameters on every draw of a reused texture: a
+// repeat is skipped per texture, a change or another texture still reaches GL.
+const texParams = () => calls.filter(call => call[0] === 'texParameteri').map(call => call.slice(2));
+gpu.setTextureParameter(texture, 0x2801, 0x2600);
+gpu.setTextureParameter(texture, 0x2801, 0x2600);
+gpu.setTextureParameter(texture, 0x2801, 0x2601);
+gpu.setTextureParameter(gpu.createTexture(), 0x2801, 0x2601);
+gpu.setTextureParameter(null, 0x2801, 0x2601);
+gpu.setTextureParameter(null, 0x2801, 0x2601);
+assert.deepStrictEqual(texParams(), [[0x2801, 0x2600], [0x2801, 0x2601], [0x2801, 0x2601],
+  [0x2801, 0x2601], [0x2801, 0x2601]], 'texture parameter cache is per texture and never caches the default object');
 const program = gpu.createProgram('vertex', 'fragment', ['a'], ['u']);
 gpu.setUniform(program, 'u', '1i', 7);
 gpu.setUniform(program, 'u', '1i', 7);
