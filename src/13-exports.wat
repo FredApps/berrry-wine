@@ -2711,6 +2711,9 @@
     (global.set $block_chain_on (i32.ne (local.get $flag) (i32.const 0)))
     (call $be_gate_refresh))
   (func (export "get_block_chain") (result i32) (global.get $block_chain_on))
+  (func (export "set_jump_table") (param $flag i32)
+    (global.set $jump_table_on (i32.ne (local.get $flag) (i32.const 0))))
+  (func (export "get_jump_table") (result i32) (global.get $jump_table_on))
   (func (export "get_chain_hits") (result i64) (global.get $chain_hits))
   ;; Arms the $branch_end_calls / $branch_end_pool counters. Off, the block
   ;; transfer path pays no counter at all, so a reader that did not arm this

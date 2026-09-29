@@ -1888,6 +1888,38 @@
         (if (global.get $steps) (then (global.set $eip (local.get $ret_addr))))
         (return)))
     (global.set $eip (local.get $target)))
+  ;; 498: jmp [disp+r*4] -- a switch statement's table jump (op = r, disp in
+  ;; the word). Emitted instead of 355/125 while $jump_table_on. Two changes
+  ;; against those, and nothing else:
+  ;;   * the table word is read with $g2w's direct-window arithmetic inline
+  ;;     (the same answer $gl32 gives there, which is where every image's
+  ;;     .text/.rdata lives), $gl32 only off it;
+  ;;   * the transfer takes $branch_end, like a jmp rel32, instead of
+  ;;     returning to $run's desk. That saves the desk trip, and it is what
+  ;;     lets a case target be hot-bumped into a uop head at all: the desk
+  ;;     never calls $bx_hot_bump. Both charge the transfer one block.
+  ;; Nothing is cached: the word is re-read on every dispatch, so a table the
+  ;; guest rewrites needs no invalidation. See docs/uop-tier-design.md §16.
+  (func $th_jmp_tbl (param $op i32)
+    (local $ga i32) (local $wa i32) (local $target i32) (local $ret_addr i32)
+    (local.set $ga
+      (i32.add (read-thread-word)
+        (i32.shl (i32.load (i32.add (global.get $reg_base) (i32.shl (local.get $op) (i32.const 2))))
+                 (i32.const 2))))
+    (local.set $wa (i32.add (i32.sub (local.get $ga) (global.get $image_base)) (global.get $GUEST_BASE)))
+    (local.set $target
+      (if (result i32) (i32.lt_u (local.get $wa) (i32.sub (region.end $DIRECT_WINDOW) (i32.const 3)))
+        (then (i32.load (local.get $wa)))
+        (else (call $gl32 (local.get $ga)))))
+    (if (i32.and (i32.ge_u (local.get $target) (global.get $thunk_guest_base))
+                 (i32.lt_u (local.get $target) (global.get $thunk_guest_end)))
+      (then
+        (local.set $ret_addr (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+        (call $win32_dispatch (i32.div_u (i32.sub (local.get $target) (global.get $thunk_guest_base)) (i32.const 8)))
+        (if (global.get $steps) (then (global.set $eip (local.get $ret_addr))))
+        (return)))
+    (global.set $eip (local.get $target))
+    (return_call $branch_end))
   ;; 142: push [base+disp]. op=base, disp in word.
   (func $th_push_m32_ro (param $op i32)
      (local $nx_fn i32) (local $nx_op i32) (local $addr i32)

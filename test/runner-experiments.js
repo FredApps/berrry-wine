@@ -215,6 +215,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   const NO_X87_ISLAND_PREDECODE = hasFlag('no-x87-island-predecode');
   const NO_RECT_RUN = hasFlag('no-rect-run');
   const NO_CASE_CHAIN = hasFlag('no-case-chain');
+  const NO_JUMP_TABLE = hasFlag('no-jump-table');
   const NO_RLE_RUN = hasFlag('no-rle-run');
   // The two stream-idiom folds (docs/loop-idiom-superops-design.md §20). Both
   // are on by default and both off switches exist for the same reason the ones
@@ -309,6 +310,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (NO_X87_ISLAND_PREDECODE) inheritWasm('set_x87_island_predecode', 0);
     if (NO_RECT_RUN) inheritWasm('set_rect_run', 0);
     if (NO_CASE_CHAIN) inheritWasm('set_case_chain', 0);
+    if (NO_JUMP_TABLE) inheritWasm('set_jump_table', 0);
     if (NO_RLE_RUN) inheritWasm('set_rle_run', 0);
     if (NO_SMK_TREE) inheritWasm('set_smk_tree', 0);
     if (NO_PCX_RUN) inheritWasm('set_pcx_run', 0);
@@ -469,6 +471,9 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     }
     if (NO_CASE_CHAIN && instance.exports.set_case_chain) {
       instance.exports.set_case_chain(0);
+    }
+    if (NO_JUMP_TABLE && instance.exports.set_jump_table) {
+      instance.exports.set_jump_table(0);
     }
     if (NO_RLE_RUN && instance.exports.set_rle_run) {
       instance.exports.set_rle_run(0);
