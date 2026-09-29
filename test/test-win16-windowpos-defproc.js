@@ -189,6 +189,7 @@ const extraWat = `
     (if (local.get $erase) (then (call $nc_flags_set (local.get $h) (i32.const 2)))))
   (func (export "test_visible") (param $h i32) (param $visible i32)
     (drop (call $wnd_set_style (local.get $h) (select (i32.const 0x10000000) (i32.const 0) (local.get $visible)))))
+  (func (export "test_clean") (param $h i32) (call $update_clear_hwnd (local.get $h)))
   (func (export "test_visible_bit") (param $h i32) (result i32)
     (i32.ne (i32.and (call $wnd_get_style (local.get $h)) (i32.const 0x10000000)) (i32.const 0)))
   (func (export "test_update") (param $h i32) (param $caller i32)
@@ -516,6 +517,17 @@ const pack = (x, y) => ((x & 0xffff) | (y << 16)) >>> 0;
   runShow(showing, 0, 0x60);
   assert.strictEqual(e.test_visible_bit(showing), 0, 'hide clears WS_VISIBLE');
   runShow(showing, 0, 0x60); // Already hidden must return FALSE too.
+  // Hiding a child exposes what it covered: Civilization II hides its city
+  // screen on Exit, and the parent must get that rectangle back as damage.
+  const coverParent = e.test_window(0x900);
+  const cover = e.test_window(0x900);
+  e.test_as_child(cover, coverParent);
+  e.test_clean(coverParent);
+  e.test_clean(cover);
+  runShow(cover, 0, 0x60);
+  assert.strictEqual(e.test_visible_bit(cover), 0, 'hide clears the child\'s WS_VISIBLE');
+  assert.notStrictEqual(e.test_dirty(coverParent), 0, 'hiding a child invalidates the parent beneath it');
+  assert.strictEqual(e.test_dirty(cover), 0, 'the hidden child keeps no update region');
   runShow(showing, 8, 0x60);
   assert.strictEqual(e.test_visible_bit(showing), 1, 'nonactivating show sets WS_VISIBLE');
   const updateSelf = [0xff, 0x76, 0x0e, 0x9a, ...word(update), 0x1f, 0];

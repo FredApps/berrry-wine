@@ -9091,8 +9091,14 @@
         (global.set $paint_pending (i32.const 1))
         (call $invalidate_hwnd (local.get $hwnd)))
       (else
+        ;; The same hide transaction as the 32-bit ShowWindow: the area the
+        ;; window covered belongs to what is beneath it again, and the hidden
+        ;; window keeps no update region. Civilization II hides its city
+        ;; screen on Exit and the map behind it was never repainted.
+        (call $wnd_uncover_parent (local.get $hwnd))
         (drop (call $wnd_set_style (local.get $hwnd)
-          (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0xEFFFFFFF))))))
+          (i32.and (call $wnd_get_style (local.get $hwnd)) (i32.const 0xEFFFFFFF))))
+        (call $paint_clear_subtree (local.get $hwnd))))
     ;; SW_MAXIMIZE changed the renderer's outer rectangle above. Win16 cannot
     ;; use the 32-bit ShowWindow continuation, but it still needs USER's client
     ;; rectangle and synchronous SIZE_MAXIMIZED delivery before ShowWindow
