@@ -147,10 +147,10 @@
   ;; (docs/uop-tier-design.md section 18). One bit per fold, all clear by
   ;; default; `--no-fold=NAME` in test/runner-experiments.js sets them, and the
   ;; mask is inherited by every guest-thread instance. Decode-time, like every
-  ;; other fold switch. Bits: 0x01 storm-bitreader (H396), 0x04 lut-span
-  ;; (H431), 0x08 colorkey8 (H443), 0x10 mw3-blit (H436/H440/H441), 0x20
-  ;; lut16-counted (H418), 0x80 xlat-stosb (H418); 0x02 was smack-huff (H395,
-  ;; retired). The MMX exact copies already
+  ;; other fold switch. Bits: 0x04 lut-span (H431), 0x08 colorkey8 (H443),
+  ;; 0x10 mw3-blit (H436/H440/H441), 0x20 lut16-counted (H418), 0x80
+  ;; xlat-stosb (H418); 0x01 was storm-bitreader (H396) and 0x02 smack-huff
+  ;; (H395), both retired. The MMX exact copies already
   ;; had globals and now have setters (set_mmx_copy64, set_mmx_mask_copy).
   (global $fold_off_mask (mut i32) (i32.const 0))
   (func $fold_off (param $bit i32) (result i32)
@@ -4440,64 +4440,6 @@
     (call $te (i32.const 267) (i32.const 0))
     (call $te_raw (local.get $a)))
 
-  ;; Match Storm.dll's 144-byte PKWARE bit-reservoir helper. The signature has
-  ;; no relocated addresses: check its complete prologue/fast path and the
-  ;; entire common slow-path tail. This is deliberately an exact compiler-code
-  ;; superinstruction, not a general CALL peephole.
-  (func $match_storm_bitreader (result i32)
-    (local $p i32)
-    (if (call $fold_off (i32.const 0x01)) (then (return (i32.const 0))))
-    (local.set $p (global.get $d_pc))
-    (if (i32.ne (call $gl32 (local.get $p)) (i32.const 0x748B5653))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 4))) (i32.const 0x8B570C24))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 8))) (i32.const 0x8B14245C))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 12))) (i32.const 0xC33B1846))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 16))) (i32.const 0xCB8A1072))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 20))) (i32.const 0x895FC32B))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 24))) (i32.const 0x6ED31846))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 28))) (i32.const 0x5EC03314))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 32))) (i32.const 0xC88AC35B))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 36))) (i32.const 0xD31C7E8D))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 40))) (i32.const 0x468B146E))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 44))) (i32.const 0x75073920))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 96))) (i32.const 0x8AD23307))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 100))) (i32.const 0x22340694))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 104))) (i32.const 0x8B400000))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 108))) (i32.const 0x08E2C1CB))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 112))) (i32.const 0x560B0789))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 116))) (i32.const 0x18468B14))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 120))) (i32.const 0x5689C82A))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 124))) (i32.const 0x5FC32B14))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 128))) (i32.const 0xC083EAD3))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 132))) (i32.const 0x14568908))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 136))) (i32.const 0x33184689))
-      (then (return (i32.const 0))))
-    (if (i32.ne (call $gl32 (i32.add (local.get $p) (i32.const 140))) (i32.const 0xC35B5EC0))
-      (then (return (i32.const 0))))
-    (i32.const 1))
-
   ;; ============================================================
   ;; DECODE BLOCK
   ;; ============================================================
@@ -4644,21 +4586,6 @@
             (then
               (call $te (i32.const 45) (global.get $d_pc))
               (br $exit)))))
-
-      ;; Storm's scalar MPQ decompressor calls this tiny helper tens of
-      ;; thousands of times per rendered frame load. It is always entered at a
-      ;; basic-block boundary, so recognize the whole exact helper before the
-      ;; ordinary per-instruction decoder consumes its first PUSH.
-      (if (i32.and
-            (i32.eqz (local.get $icount))
-            (i32.eqz (global.get $code16)))
-        (then
-          (if (call $match_storm_bitreader)
-            (then
-              (call $te (i32.const 396)
-                (i32.add (global.get $d_pc) (i32.const 0x31)))
-              (local.set $done (i32.const 1))
-              (br $decode)))))
 
       ;; A run-length sprite blit is a loop NEST, so it is only ever entered
       ;; at its head -- try it at a block start, before the ladder fold below

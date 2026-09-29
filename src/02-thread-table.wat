@@ -457,7 +457,7 @@
     $th_dec_m8_abs_jnz        ;; 393: DEC byte [abs] + JNZ rel8
     $th_shr_ebp_1_jcc_b       ;; 394: SHR EBP,1 + JB/JAE rel8 (op=0/1)
     $th_retired_fold          ;; 395: retired (was SMACK_HUFF, Smacker Huffman node walk; uop runs it)
-    $th_storm_bitreader       ;; 396: exact Storm PKWARE bit-reservoir helper
+    $th_retired_fold          ;; 396: retired (was Storm PKWARE bit-reservoir helper; uop tier is as fast)
     $th_aam                   ;; 397: AAM imm8
     $th_port_io               ;; 398: IN/OUT accumulator, imm8/DX port
     $th_enter                 ;; 399: ENTER imm16,0 (32-bit frame)
