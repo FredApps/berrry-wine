@@ -5109,6 +5109,10 @@
           (if (call $try_emit_mmx_copy64 (local.get $insn_start))
             (then
               (local.set $done (i32.const 1))
+              (br $decode)))
+          (if (call $try_emit_mmx_fill64 (local.get $insn_start))
+            (then
+              (local.set $done (i32.const 1))
               (br $decode)))))
 
       ;; ---- NOP (0x90) ----

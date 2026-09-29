@@ -2439,6 +2439,15 @@
     (global.get $loop_copy32_counted_runs))
   (func (export "get_loop_copy32_counted_bulk_bytes") (result i64)
     (global.get $loop_copy32_counted_bulk_bytes))
+  ;; UE1 SoftDrv MMX qword fill (07b $try_emit_mmx_fill64). On by default;
+  ;; decode-time, so the cache is dropped and both A/B arms decode from scratch.
+  (func (export "set_loop_mmx_fill_emit") (param $flag i32)
+    (global.set $mmx_fill64_enabled (i32.ne (local.get $flag) (i32.const 0)))
+    (call $clear_cache))
+  (func (export "get_mmx_fill64_matches") (result i32) (global.get $mmx_fill64_matches))
+  (func (export "get_mmx_fill64_runs") (result i32) (global.get $mmx_fill64_runs))
+  (func (export "get_mmx_fill64_qwords") (result i64) (global.get $mmx_fill64_qwords))
+  (func (export "get_mmx_fill64_bulk_qwords") (result i64) (global.get $mmx_fill64_bulk_qwords))
   (func (export "set_loop_aoe_fill_emit") (param $flag i32)
     (global.set $loop_aoe_fill_emit_enabled (local.get $flag))
     (call $clear_cache))
