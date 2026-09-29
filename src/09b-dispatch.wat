@@ -78,6 +78,18 @@
         (i32.eq (local.get $api_id) (global.get $API_ID_QueryPerformanceCounter))
         (i32.eq (local.get $api_id) (global.get $API_ID_QueryPerformanceFrequency)))))
 
+  ;; The per-call API log: the COM marker and name before the handler, and
+  ;; log_api_exit after it. Three host calls per Win32 API -- 88M each of log
+  ;; and log_api_exit in one Heroes III run -- that a host with no API
+  ;; consumer (run.js --quiet-api and no API tracing) answers by doing nothing.
+  ;; set_api_log(0) skips them; $api_calls keeps the count the host used to
+  ;; take from them (get_api_calls). Per instance.
+  (global $api_log_on (mut i32) (i32.const 1))
+  (global $api_calls (mut i32) (i32.const 0))
+  (func (export "set_api_log") (param $on i32)
+    (global.set $api_log_on (i32.ne (local.get $on) (i32.const 0))))
+  (func (export "get_api_calls") (result i32) (global.get $api_calls))
+
   (func $win32_dispatch (param $thunk_idx i32)
     (local $api_id i32) (local $name_rva i32) (local $name_ptr i32)
     (local $arg0 i32) (local $arg1 i32) (local $arg2 i32) (local $arg3 i32)
@@ -1401,20 +1413,24 @@
     ;; IMAGE_IMPORT_BY_NAME RVA. host_resolve_ordinal found a real api_id, so
     ;; we have a handler to run — just substitute a placeholder name for
     ;; logging (and for any handler that prints name_ptr).
+    (global.set $api_calls (i32.add (global.get $api_calls) (i32.const 1)))
     (if (i32.and (local.get $name_rva) (i32.const 0x80000000))
       (then
         (local.set $name_ptr (i32.const 0x2E0))
         ;; Emit COM-marker BEFORE the name so JS can substitute the real
         ;; method name in $lastApiName before --trace-api filtering and
         ;; --trace-stack walking happen on the entry log.
-        (call $host_log_i32 (i32.or (i32.const 0xC0DE0000) (local.get $api_id)))
-        (call $host_log (local.get $name_ptr) (i32.const 5)))
+        (if (global.get $api_log_on)
+          (then
+            (call $host_log_i32 (i32.or (i32.const 0xC0DE0000) (local.get $api_id)))
+            (call $host_log (local.get $name_ptr) (i32.const 5)))))
       (else
         ;; Through $g2w: a DLL rebased into a sparse reservation keeps its
         ;; hint/name table outside the direct window.
         (local.set $name_ptr (call $g2w (i32.add (global.get $image_base)
           (i32.add (local.get $name_rva) (i32.const 2)))))
-        (call $host_log (local.get $name_ptr) (call $strlen (local.get $name_ptr)))))
+        (if (global.get $api_log_on)
+          (then (call $host_log (local.get $name_ptr) (call $strlen (local.get $name_ptr)))))))
     ;; Load args from guest stack
     (local.set $arg0 (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))
     (local.set $arg1 (call $gl32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 8))))
@@ -1439,7 +1455,7 @@
         (call $restore_win32_nonvolatile
           (local.get $saved_ebx) (local.get $saved_esi)
           (local.get $saved_edi) (local.get $saved_ebp))
-        (call $host_log_api_exit)
+        (if (global.get $api_log_on) (then (call $host_log_api_exit)))
         (return)))
     (if (i32.eq (local.get $api_id) (global.get $API_ID_PeekMessageW))
       (then
@@ -1449,7 +1465,7 @@
         (call $restore_win32_nonvolatile
           (local.get $saved_ebx) (local.get $saved_esi)
           (local.get $saved_edi) (local.get $saved_ebp))
-        (call $host_log_api_exit)
+        (if (global.get $api_log_on) (then (call $host_log_api_exit)))
         (return)))
     ;; Keep the message-aware wait out of the generated page dispatch. Its
     ;; private-pump semantics require a completed stdcall frame before the
@@ -1484,7 +1500,7 @@
         (call $restore_win32_nonvolatile
           (local.get $saved_ebx) (local.get $saved_esi)
           (local.get $saved_edi) (local.get $saved_ebp))
-        (call $host_log_api_exit)
+        (if (global.get $api_log_on) (then (call $host_log_api_exit)))
         ;; This direct handler deliberately completes its own stdcall frame,
         ;; so resume at the return address instead of relying on thunk auto-pop.
         (global.set $eip (call $gl32 (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 24))))
@@ -1498,5 +1514,5 @@
       (local.get $saved_edi) (local.get $saved_ebp))
 
     ;; Post-handler ESP hook for --esp-delta audit
-    (call $host_log_api_exit)
+    (if (global.get $api_log_on) (then (call $host_log_api_exit)))
   )

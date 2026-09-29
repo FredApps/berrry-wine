@@ -1532,6 +1532,12 @@ async function main() {
   let batchesRun = 0;
   let netWaits = 0;   // consecutive net_wait yields, reset by any progress
   let apiCount = 0;
+  // Set with h.log below. When on, the main instance counts its own Win32
+  // calls ($api_calls) and h.log sees only non-API log lines, so the total
+  // is the sum -- the same number the per-call log used to produce.
+  let apiLogOff = false;
+  const apiTotal = () => (apiLogOff && instance && instance.exports.get_api_calls)
+    ? apiCount + (instance.exports.get_api_calls() >>> 0) : apiCount;
   const apiCounts = TRACE_API_COUNTS ? new Map() : null;
   let lastApiName = null;  // track last API name for return value correlation
   let lastApiEntry = null; // typed metadata for last API (for return formatting)
@@ -2648,7 +2654,7 @@ async function main() {
     warmup: Number(getArg('gameplay-warmup', '100')),
     iterations: Number(getArg('gameplay-iterations', '600')),
     enabled: Number(getArg('gameplay-candidate', '1')),
-    apiCount: () => apiCount,
+    apiCount: () => apiTotal(),
     walking: hasFlag('gameplay-walking'), renderer,
     profile: getArg('gameplay-profile', null),
   }) : null;
@@ -2949,17 +2955,16 @@ async function main() {
   // initial === maximum so the buffer is never detached, so one decode per
   // distinct pointer is enough.
   const apiNameCache = new Map();
-  // Experimental A/B: retain API totals but avoid decoding names no consumer
-  // needs. Explicit diagnostics always keep the original logging path.
-  const fastQuietApi = hasFlag('quiet-api-fast') && QUIET_API &&
+  // --quiet-api with no consumer of the per-call API log: every instance is
+  // told to skip the log / log_i32 / log_api_exit host calls outright
+  // (09b-dispatch $api_log_on) -- three host calls per Win32 API, 88M each in
+  // one Heroes III run. The count survives in WAT ($api_calls, apiTotal()).
+  // The list is every reader of an API name or exit below, plus --esp-audit,
+  // which wraps a worker's log. --quiet-api-fast is now an alias of this.
+  apiLogOff = QUIET_API &&
     !TRACE_API && !TRACE_API_COUNTS && !TRACE_CRITICAL &&
-    !TRACE_INPUT_DISPATCH && !ESP_DELTA && !breakApis.length;
+    !TRACE_INPUT_DISPATCH && !ESP_DELTA && !ESP_AUDIT && !breakApis.length;
   h.log = (ptr, len) => {
-    if (fastQuietApi) {
-      apiCount++;
-      pendingComApiId = -1;
-      return;
-    }
     let t = apiNameCache.get(ptr);
     if (t === undefined) {
       const b = new Uint8Array(memory.buffer, ptr, Math.min(len, 256));
@@ -4638,6 +4643,9 @@ async function main() {
   const inheritWasm = (setter, ...args) =>
     recordInheritedWasmGlobal(inheritedWasmGlobals, setter, args);
   experiments.recordInherited(inheritWasm, { copySuperops: COPY_SUPEROPS, verbose: VERBOSE });
+  // A guest thread's API log feeds only --trace-api/--trace-api-counts, which
+  // keep it on (apiLogOff), so a quiet run silences it on every instance.
+  if (apiLogOff) inheritWasm('set_api_log', 0);
   if (FLIP_VSYNC) inheritWasm('set_flip_vsync', 1);
   if (PRESENT_CAP) inheritWasm('set_present_cap', PRESENT_CAP);
   inheritWasm('set_present_pace_mode', PRESENT_PACE_MODE);
@@ -5542,6 +5550,7 @@ async function main() {
     instance.exports.set_win16_trace(1);
   }
   experiments.applyMain(instance, { copySuperops: COPY_SUPEROPS, ctx });
+  if (apiLogOff && instance.exports.set_api_log) instance.exports.set_api_log(0);
   if (FLIP_VSYNC && instance.exports.set_flip_vsync) {
     instance.exports.set_flip_vsync(1);
   }
@@ -9835,7 +9844,8 @@ if (VERBOSE) {
         } catch (_) {}
         dumpStack();
       }
-      if (injectedInputThisBatch || eip !== prevEip || apiCount !== prevApiCount
+      const apiNow = apiTotal();
+      if (injectedInputThisBatch || eip !== prevEip || apiNow !== prevApiCount
           || regFp !== prevRegFp || win16Calls !== prevWin16Calls
           || workerFp !== prevWorkerFp || workerStepsTotal !== prevWorkerSteps) {
         prevWorkerFp = workerFp;
@@ -9843,7 +9853,7 @@ if (VERBOSE) {
         prevWin16Calls = win16Calls;
         if (!QUIET_BLOCKS && eip !== prevEip) console.log(`[${batch}] ${regs()}`);
         prevEip = eip;
-        prevApiCount = apiCount;
+        prevApiCount = apiNow;
         prevRegFp = regFp;
         stuckCount = 0;
       } else if (ex.get_yield_reason() === 16 && ctx.d3d9Bridge &&
@@ -10242,7 +10252,7 @@ if (VERBOSE) {
       `${video.width}x${video.height} at ${video.fps}fps (${video.duration.toFixed(2)}s)`);
   }
 
-  console.log(`\nStats: ${apiCount} API calls, ${batchesRun} batches`
+  console.log(`\nStats: ${apiTotal()} API calls, ${batchesRun} batches`
     + ` in ${executionElapsedSeconds.toFixed(3)}s (${(batchesRun / Math.max(executionElapsedSeconds,0.001)).toFixed(0)} batches/s)`);
   if (PRESENT_CAP && instance.exports.get_present_paced_count) {
     console.log(`present pacing (main instance): cap ${PRESENT_CAP}/s ${PRESENT_PACE_MODE ? 'smooth' : 'deadline'}, `

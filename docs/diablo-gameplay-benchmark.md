@@ -246,6 +246,13 @@ API-name counts, critical-section tracing, input-dispatch tracing, ESP auditing
 and API breakpoints are all off. `tools/test-quiet-api-fast.js` executes the
 actual callback and tests each diagnostic guard plus ordinary logging.
 
+Since 2026-09-28 this is what plain `--quiet-api` does, one level further
+down: under the same guard run.js calls `set_api_log(0)` on every instance and
+`$win32_dispatch` (09b-dispatch) skips the `log`/`log_i32`/`log_api_exit` host
+calls altogether, keeping the total in `$api_calls` (`get_api_calls`), so the
+`Stats: N API calls` line is unchanged. `--quiet-api-fast` is accepted as an
+alias and does nothing more.
+
 ### Quiet-logging A/B result
 
 Both suites ran sequentially on the same quiet host, one process at a time.
