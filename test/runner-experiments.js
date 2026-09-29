@@ -88,6 +88,10 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // memory it landed on, and read the VirtualAlloc backing's contiguity at
   // exit (test/runner-win-census.js). Main instance only.
   const UOP_WIN_CENSUS = hasFlag('uop-win-census');
+  // --uop-reguard-span=BYTES: how far a uop re-guard may grow its window
+  // around the page it missed on (07d $uop_reguard_wide; default 64KB, 4096 =
+  // the old one-page window). Every instance: each thread re-guards its own.
+  const UOP_REGUARD_SPAN = getArg('uop-reguard-span', null);
   if (UOP_CENSUS) env.DBG_INV = '1';
   // --branch-clock: one guest-clock block per executed x86 branch, not per
   // threaded block cut ($branch_clock in 05-alu). Pass it to BOTH arms of any
@@ -313,6 +317,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) inheritWasm('set_uop_trace_limits', TRACE_LIMITS[0], TRACE_LIMITS[1]);
     }
     if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
+    if (UOP_REGUARD_SPAN !== null) inheritWasm('set_uop_reguard_span', Number(UOP_REGUARD_SPAN) | 0);
     if (TREE_FOLD || TRACE_TREE_FOLD) inheritWasm('set_tree_fold', 1);
     if (TRACE_TREE_FOLD) inheritWasm('set_tree_trace', 1);
     // The thresholds too: a guest thread decodes in its own instance, so a cap
@@ -331,6 +336,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       if (UOP_CENSUS && instance.exports.set_uop_census) instance.exports.set_uop_census(1);
       instance.exports.set_uop(1);
       if (UOP_WIN_CENSUS && instance.exports.set_uop_win_census) instance.exports.set_uop_win_census(1);
+      if (UOP_REGUARD_SPAN !== null && instance.exports.set_uop_reguard_span) instance.exports.set_uop_reguard_span(Number(UOP_REGUARD_SPAN) | 0);
       if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
       if (traceWanted() && instance.exports.set_uop_trace_heads) {
         instance.exports.set_uop_trace_heads(1);
@@ -484,7 +490,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       const why = UOP_REASONS.map((name, k) => [name, k && x.uop_decline_count(k) >>> 0])
         .filter(([, n]) => n).sort((a, b) => b[1] - a[1]).slice(0, 12).map(([k, n]) => `${k}=${n}`).join(' ');
       log(`uop: installs=${st(2)} kills=${st(3)} retired-poor=${st(7)} enters=${st(4)} ` +
-        `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} win-kept=${st(9)} win-reset=${st(10)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
+        `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} rg-pages=${st(14)} rg-nonadj=${st(15)} win-kept=${st(9)} win-reset=${st(10)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
         `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (traceWanted() ? ` traces=${cs(26)}` : '') + (why ? `\n  declines: ${why}` : ''));
       if (x.get_uop_nobump_skips) log(`uop nobump: skips=${x.get_uop_nobump_skips() >>> 0}`);
       if (UOP_WIN_CENSUS) require('./runner-win-census').reportWinCensus(instance, log);

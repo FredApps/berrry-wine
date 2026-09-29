@@ -668,6 +668,74 @@ function codeWriteCase(inst, a, nextCode) {
   return errs;
 }
 
+// A re-guard widens its window to the 64KB-aligned block around the missing
+// page ($uop_reguard_wide, 07d) while the backing stays affine and, for a
+// store window, no page holds code. Two properties: a store sweep that walks
+// from a data page into an adjacent code page of the same block must still
+// leave the program at that page and retire the decoded block it overwrote
+// (the widened window must stop short of the code page), and a pure data
+// sweep must prove far fewer windows than the one-page re-guard
+// (--uop-reguard-span=4096) while ending in the same state.
+// uop_stats: 1 reguards, 4 enters, 14 pages the widening added.
+function reguardWidenCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst;
+  const loop = asm([L('l'), [0x88, 0x07], 0x47, 0x49, J(cc.NZ, 'l'), 0xC3]); // mov [edi],al; inc edi; dec ecx; jnz; ret
+  const errs = [];
+  const st = (k) => e.uop_stats(k) >>> 0;
+  const install = (Lc) => {
+    const pc = e.uop_compile(Lc);
+    if (!pc) { errs.push('store loop declined'); return false; }
+    e.uop_install(Lc, pc);
+    return true;
+  };
+  const arm = (span) => {
+    // Fresh pages per arm: the previous arm left its code page rewritten.
+    let D = nextCode(), P = nextCode();
+    while ((D >>> 16) !== (P >>> 16)) { D = P; P = nextCode(); }
+    const Lc = nextCode();
+    mem.set(loop, g2w(Lc));
+    e.set_uop_reguard_span(span);
+    e.set_uop(1);
+    if (!install(Lc)) return null;
+    // 1. A pure data sweep over 16 pages of the buffer, four times.
+    mem.fill(0, g2w(a.buf), g2w(a.buf) + 0x10000);
+    const rg0 = st(1), wp0 = st(14), en1 = st(4);
+    for (let i = 0; i < 4; i++) {
+      if (!callAt(inst, a, Lc, { ecx: 0x10000, edi: a.buf, eax: 0x40 + i })) errs.push(`span ${span}: data sweep did not return`);
+    }
+    if (st(4) === en1) errs.push(`span ${span}: data sweep never entered`);
+    let h = 0x811C9DC5;
+    for (let k = 0; k < 0x10000; k++) h = Math.imul(h ^ mem[g2w(a.buf) + k], 16777619);
+    const out = { reguards: st(1) - rg0, widened: st(14) - wp0, hash: h >>> 0 };
+    // 2. From a data page into the code page after it, same 64KB block.
+    mem.set([0xB8, 0x11, 0x11, 0x11, 0x11, 0xC3], g2w(P + 0x800));           // mov eax,0x11111111 ; ret
+    callAt(inst, a, P + 0x800, {});
+    if ((e.get_eax() >>> 0) !== 0x11111111) errs.push(`span ${span}: R before: eax ${(e.get_eax() >>> 0).toString(16)}`);
+    const en0 = st(4);
+    if (!callAt(inst, a, Lc, { ecx: 0x1005, edi: D + 0x800, eax: 0xB8 })) errs.push(`span ${span}: sweep into code did not return`);
+    if (st(4) === en0) errs.push(`span ${span}: sweep into code never entered`);
+    callAt(inst, a, P + 0x800, {});
+    if ((e.get_eax() >>> 0) !== 0xB8B8B8B8) errs.push(`span ${span}: R after sweep: eax ${(e.get_eax() >>> 0).toString(16)} (stale decoded block)`);
+    e.set_uop(0);
+    return out;
+  };
+  try {
+    const narrow = arm(0x1000);
+    const wide = arm(0x10000);
+    if (narrow && wide) {
+      if (narrow.hash !== wide.hash) errs.push('data sweep: wide and narrow re-guards left different memory');
+      if (narrow.widened) errs.push(`one-page re-guard widened ${narrow.widened} pages`);
+      if (!wide.widened) errs.push('wide re-guard never widened');
+      if (!(wide.reguards * 4 <= narrow.reguards)) errs.push(`wide re-guards ${wide.reguards} not well under narrow ${narrow.reguards}`);
+      if (!errs.length) console.log(`reguard-widen      ok (data sweep re-guards: ${narrow.reguards} one-page, ${wide.reguards} widened, +${wide.widened} pages; code page still exits)`);
+    }
+  } finally {
+    e.set_uop(0);
+    e.set_uop_reguard_span(0x10000);
+  }
+  return errs;
+}
+
 // --handler-hist must measure the program with the tier running; --trace-eip
 // (and --break/--watch/--count) must still hold it off, since they observe
 // every block. 13-exports.wat $dbg_recompute: $dbg_tier_guard.
@@ -810,6 +878,10 @@ async function main() {
   if (!only || only === 'code-write-gate') {
     const errs = codeWriteCase(inst, a, () => a.code + 0x1000 * slot++);
     if (errs.length) { fails++; console.log(`code-write-gate    FAIL ${errs.join(', ')}`); }
+  }
+  if (!only || only === 'reguard-widen') {
+    const errs = reguardWidenCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`reguard-widen      FAIL ${errs.join(', ')}`); }
   }
   if (!only || only === 'hist-keeps-tier') {
     const errs = histCase(inst, a, () => a.code + 0x1000 * slot++);

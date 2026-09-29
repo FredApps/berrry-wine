@@ -1179,3 +1179,76 @@ The feature stays **opt-in** for now, for three reasons:
 
 The recommended next step is to flip the default once one browser
 spot-check agrees.
+## 14. Windows and VirtualAlloc contiguity: measured, then widened (2026-09-28)
+
+The question was whether guaranteeing each VirtualAlloc reservation's backing
+as one contiguous wasm run (or compacting the pool now and then) would speed
+the tier up. `--uop-win-census` (test/runner-win-census.js) counts every
+window proof by memory class and failure reason, classifies each re-guard
+against its slot's previous window, counts sparse `$g2w_affine_span`
+fallbacks, and reads VIRTUAL_MAP_TABLE / VIRTUAL_RESERVE_TABLE at exit. One
+run per game on the bench box, `tools/uop-game-ab.js` routes, main instance.
+
+**What it found.** The GUARD op never fires in these games; every window is a
+one-page `$uop_reguard`, so non-adjacent backing causes *zero* window
+failures or exits. Bulk-path non-adjacent fallbacks: StarCraft 105 of 2.24M,
+Warcraft III 5,006 of 5.17M, none elsewhere.
+
+| game | re-guards | per enter | direct / DIB / sparse | in previous window's affine run | only if backing were contiguous |
+|---|---|---|---|---|---|
+| StarCraft | 3.36M | 1.8 | 55% / 0.03% / 44.5% | direct 87%, sparse 54.7% | 221K (6.6% of all) |
+| Heroes III | 13.5M | 2.4 | 56% / 22.5% / 21% | DIB 100%, direct 70%, sparse 16.7% | 0.3% of sparse |
+| Moorhuhn 3 | 23.8M | 4.9 | 98.9% / - / 1% | direct 99% | - |
+| Diablo | 147M | 1.46 | 5% / - / 95% | sparse 99.98% | 0.007% |
+| Warcraft III | 32.4M | 2.0 | 35% / - / 63% | direct 94.6%, sparse 24% | 2.45M (7.6% of all) |
+
+The allocator is not fragmented: every commit is one contiguous extent
+(best-fit hole, else bump, else gap scan, then the extension window, then
+64KB-granule splits); non-adjacency inside a reservation comes only from
+separate commits interleaved with other allocations (StarCraft commits 4KB
+~13,700 times; Warcraft III has 64KB reservations committed as sixteen 4KB
+records). At exit 61-62% of committed reservations are one affine run, but
+the pool is nearly all wilderness: StarCraft 24MB used, 291.8MB largest free
+run, no holes; Warcraft III 88.7MB used, 227.2 of 227.3MB free in one run.
+
+So the lever is window width, not contiguity. `$uop_reguard` now widens a
+re-guard to the 64KB-aligned block around the missed page
+(`$uop_reguard_wide`; `--uop-reguard-span=N` sets the block, 4096 restores
+one page): the whole block in one `$g2w_affine_span` plus one 16-bit load of
+the code-page bitmap (the block's sixteen slots are one aligned group), else
+page-by-page growth that stops at a non-adjacent/unmapped page or, for a
+store window, a code page. Every page it covers is proved as
+`$uop_window_set` proves one, so the epoch rules are unchanged.
+`uop_stats` 14/15 are pages the widening proved and growth stops at a
+non-adjacent page.
+
+| game | re-guards one-page -> widened | user CPU widened vs one-page (2 x 2 interleaved, box2) |
+|---|---|---|
+| Diablo | 147.2M -> 1.46M | -2.1% (null 0.45%); rerun -3.4% (null 2-4%) |
+| Moorhuhn 3 | 23.8M -> 5.6M | -1.3% (null 0.9%) |
+| Heroes III | 13.5M -> 5.9M | -0.6% (null 1.3%) |
+| StarCraft | 3.36M -> 1.36M | +0.3% (null 1.4%) |
+| Warcraft III | 32.4M -> 21.5M | 0.0% (null 1.8%) |
+
+Frames identical on Diablo, Heroes III and Warcraft III; StarCraft and
+Moorhuhn 3 differ between two runs of the same arm by as much as between
+arms. A first version that grew page by page for every re-guard was +1.1%
+on Warcraft III and +2.2% on Moorhuhn 3 (87.7M page proofs replacing 23.8M
+re-guards); the block fast path is what made it neutral there.
+
+**Verdict on contiguity.** Only after widening does contiguity reach
+anything, and then only Warcraft III's growth stops at non-adjacent pages
+(8.97M) and StarCraft's (138K). Warcraft III's 34% re-guard cut from
+widening moved its CPU by 0.0%, so the smaller cut contiguity could add is
+below the null band. A contiguous-commit guarantee is not worth building,
+and a compacting defragmenter less so: moving backing at a safe point would
+have to cover every holder of a raw wasm address into sparse backing --
+uop windows (covered: the move rewrites PTEs, which bumps
+`$UOP_WIN_EPOCH`); native shader allocations and the software D3D raster,
+which retain wasm pointers (`$w2g_sparse` exists to map them back); GL/DX
+client arrays and locked buffers and the audio mixer reading guest PCM
+between batches; JS-side typed-array views and cached offsets; the D3DIM
+render worker and every guest thread's Worker running concurrently on the
+shared memory (no stop-the-world protocol exists, so a main-thread safe
+point does not cover them); and in-flight host calls/thread RPCs carrying a
+wasm pointer. None of those has a relocation hook today.

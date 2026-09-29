@@ -285,6 +285,9 @@ async function main() {
     if (k) return [...ARMS[k[1]], `--block-exec-walk-k=${k[2]}`];
     return ARMS[a] || ARMS[a.replace(/\d+$/, '')];
   };
+  // narrow: the uop arm with re-guards proving one page again instead of
+  // widening to the 64KB-aligned affine block -- its partner is uop.
+  ARMS.narrow = [...ARMS.uop, '--uop-reguard-span=4096'];
   // --ref-wasm=FILE adds arms refoff / refuop: the same two arms on another
   // prebuilt module, so an engine change is measured against its predecessor
   // in one sweep on one box.

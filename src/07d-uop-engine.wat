@@ -304,8 +304,124 @@
     (if (i32.gt_u (i32.add (i32.and (local.get $ga) (i32.const 0xFFF)) (local.get $size))
                   (i32.const 0x1000))
       (then (return (i32.const 0))))
+    (if (i32.ne (global.get $uop_rg_mask) (i32.const 0xFFFFF000))
+      (then (return_call $uop_reguard_wide (local.get $w) (local.get $pg))))
     (call $uop_window_set (local.get $w) (local.get $pg) (i32.const 0x1000)
       (i32.load offset=12 (local.get $w))))
+
+  ;; A re-guard proves more than the page it missed on. --uop-win-census
+  ;; measured it (docs/uop-tier-design.md section 14): with one-page
+  ;; windows a stream re-guards at every page it walks onto -- Diablo 1.46
+  ;; re-guards per entry, Moorhuhn 3 4.9 -- and 65-99.9% of them land inside
+  ;; the affine run the slot's previous window was already in. So grow the
+  ;; window from the missed page, a page at a time in both directions, while
+  ;; the next page has the same guest->wasm delta and (for a written window)
+  ;; holds no decoded code, up to the $uop_rg_mask-aligned block containing
+  ;; it (64KB by default; --uop-reguard-span=4096 restores one page). Every
+  ;; page it covers is proved exactly as $uop_window_set proves one, so the
+  ;; epoch rules are unchanged: nothing it relied on can change without a
+  ;; $uop_win_bump.
+  (global $uop_rg_mask (mut i32) (i32.const 0xFFFF0000))
+  (global $uop_rg_pages (mut i32) (i32.const 0))   ;; pages proved by wide re-guards
+  (global $uop_rg_nonadj (mut i32) (i32.const 0))  ;; growth stopped at a non-adjacent backing page
+  (func $uop_reguard_wide (param $w i32) (param $pg i32) (result i32)
+    (local $rw i32) (local $wa i32) (local $lo i32) (local $hi i32)
+    (local $blo i32) (local $bhi i32)
+    (local.set $rw (i32.load offset=12 (local.get $w)))
+    (if (i32.eqz (call $uop_window_set (local.get $w) (local.get $pg) (i32.const 0x1000)
+                   (local.get $rw)))
+      (then (return (i32.const 0))))
+    ;; the page is proved and the slot holds it; delta = wa - guest
+    (local.set $wa (i32.add (local.get $pg) (i32.load offset=8 (local.get $w))))
+    (local.set $blo (i32.and (local.get $pg) (global.get $uop_rg_mask)))
+    (local.set $bhi (i32.add (local.get $blo)
+      (i32.add (i32.xor (global.get $uop_rg_mask) (i32.const -1)) (i32.const 1))))
+    ;; The common case first: the whole block is one affine run with no code
+    ;; page in it -- one span proof and one 16-bit bitmap load per 64KB,
+    ;; instead of a proof and a bitmap test per page.
+    (if (call $uop_rg_block_ok (local.get $blo) (local.get $bhi)
+          (i32.sub (local.get $wa) (i32.sub (local.get $pg) (local.get $blo)))
+          (local.get $rw))
+      (then
+        (local.set $lo (local.get $blo))
+        (local.set $hi (local.get $bhi)))
+      (else (call $uop_rg_grow (local.get $pg) (local.get $wa) (local.get $blo)
+                (local.get $bhi) (local.get $rw))
+        (local.set $lo (global.get $uop_rg_lo))
+        (local.set $hi (global.get $uop_rg_hi))))
+    (global.set $uop_rg_pages (i32.add (global.get $uop_rg_pages)
+      (i32.shr_u (i32.sub (local.get $hi) (local.get $lo)) (i32.const 12))))
+    ;; delta unchanged; lo first, then span (a 4-byte access compares
+    ;; ga - lo against span - 4, and both only ever grow the covered range)
+    (i32.store (local.get $w) (local.get $lo))
+    (i32.store offset=4 (local.get $w) (i32.sub (local.get $hi) (local.get $lo)))
+    (i32.const 1))
+
+  ;; Is [blo, bhi) one affine run starting at wasm $wlo, and -- for a written
+  ;; window -- free of code pages? Within a 64KB-aligned block the code-page
+  ;; bitmap's slot hash (04-cache $code_page_slot: (ga>>12 ^ ga>>28) & 0xFFFF)
+  ;; only permutes the low four slot bits, so the block's sixteen pages are
+  ;; exactly one aligned 16-bit group: one load answers "any code here". A
+  ;; span narrower than 64KB tests its whole enclosing group, which can only
+  ;; refuse more, never less.
+  (func $uop_rg_block_ok (param $blo i32) (param $bhi i32) (param $wlo i32) (param $rw i32) (result i32)
+    (local $g i32)
+    (if (i32.ne (call $g2w_affine_span (local.get $blo) (i32.sub (local.get $bhi) (local.get $blo)))
+                (local.get $wlo))
+      (then (return (i32.const 0))))
+    (if (i32.eqz (local.get $rw)) (then (return (i32.const 1))))
+    (local.set $g (local.get $blo))
+    (loop $l
+      (if (i32.load16_u (i32.add (global.get $CODE_PAGE_BITMAP)
+            (i32.and (i32.shr_u (local.get $g) (i32.const 15)) (i32.const 0x1FFE))))
+        (then (return (i32.const 0))))
+      (local.set $g (i32.add (local.get $g) (i32.const 0x10000)))
+      (br_if $l (i32.lt_u (local.get $g) (local.get $bhi))))
+    (i32.const 1))
+
+  ;; The block is not wholly usable: grow from the proved page one page at a
+  ;; time in both directions, stopping at a non-adjacent or unmapped page or
+  ;; (written window) a code page. Answers in $uop_rg_lo / $uop_rg_hi.
+  (global $uop_rg_lo (mut i32) (i32.const 0))
+  (global $uop_rg_hi (mut i32) (i32.const 0))
+  (func $uop_rg_grow (param $pg i32) (param $wa i32) (param $blo i32) (param $bhi i32) (param $rw i32)
+    (local $lo i32) (local $hi i32) (local $nw i32)
+    (local.set $lo (local.get $pg))
+    (local.set $hi (i32.add (local.get $pg) (i32.const 0x1000)))
+    (block $up (loop $grow_up
+      (br_if $up (i32.ge_u (local.get $hi) (local.get $bhi)))
+      (local.set $nw (call $g2w_affine_span (local.get $hi) (i32.const 0x1000)))
+      (if (i32.ne (local.get $nw)
+            (i32.add (local.get $wa) (i32.sub (local.get $hi) (local.get $pg))))
+        (then
+          (if (i32.ne (local.get $nw) (global.get $NULL_SENTINEL))
+            (then (global.set $uop_rg_nonadj (i32.add (global.get $uop_rg_nonadj) (i32.const 1)))))
+          (br $up)))
+      (br_if $up (i32.and (i32.ne (local.get $rw) (i32.const 0))
+                          (call $code_write_is_code (local.get $hi))))
+      (local.set $hi (i32.add (local.get $hi) (i32.const 0x1000)))
+      (br $grow_up)))
+    (block $down (loop $grow_down
+      (br_if $down (i32.le_u (local.get $lo) (local.get $blo)))
+      (local.set $nw (call $g2w_affine_span (i32.sub (local.get $lo) (i32.const 0x1000)) (i32.const 0x1000)))
+      (if (i32.ne (local.get $nw)
+            (i32.sub (i32.add (local.get $wa) (i32.sub (local.get $lo) (local.get $pg))) (i32.const 0x1000)))
+        (then
+          (if (i32.ne (local.get $nw) (global.get $NULL_SENTINEL))
+            (then (global.set $uop_rg_nonadj (i32.add (global.get $uop_rg_nonadj) (i32.const 1)))))
+          (br $down)))
+      (br_if $down (i32.and (i32.ne (local.get $rw) (i32.const 0))
+                            (call $code_write_is_code (i32.sub (local.get $lo) (i32.const 0x1000)))))
+      (local.set $lo (i32.sub (local.get $lo) (i32.const 0x1000)))
+      (br $grow_down)))
+    (global.set $uop_rg_lo (local.get $lo))
+    (global.set $uop_rg_hi (local.get $hi)))
+  (func (export "set_uop_reguard_span") (param $bytes i32)
+    (global.set $uop_rg_mask
+      (i32.xor (i32.sub (select (local.get $bytes) (i32.const 0x1000)
+                          (i32.gt_u (local.get $bytes) (i32.const 0x1000)))
+                        (i32.const 1))
+               (i32.const -1))))
 
   ;; --uop-win-census: what kind of memory every window proof lands on, why
   ;; the failures fail, and -- for each re-guard -- whether a window WIDER
@@ -1553,6 +1669,9 @@
     (if (i32.eq (local.get $which) (i32.const 11)) (then (return (global.get $uop_cw_skipped))))
     (if (i32.eq (local.get $which) (i32.const 12)) (then (return (global.get $uop_cw_scans))))
     (if (i32.eq (local.get $which) (i32.const 13)) (then (return (global.get $uop_cw_rebuilds))))
+    ;; Wide re-guards: pages proved, growth stopped by a non-adjacent backing page.
+    (if (i32.eq (local.get $which) (i32.const 14)) (then (return (global.get $uop_rg_pages))))
+    (if (i32.eq (local.get $which) (i32.const 15)) (then (return (global.get $uop_rg_nonadj))))
     (i32.const 0))
   ;; Where the lowering may write: 0 code base, 1 code bytes, 2 temps base,
   ;; 3 windows base.
