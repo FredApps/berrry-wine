@@ -196,6 +196,16 @@ and zero framebuffer re-uploads. The line fallback's readback is eliminated.
 Rain remains visible and renderer error counts remain zero. This leaves the
 DIB-based presentation readback as the remaining transfer in this workload.
 
+Post-fix CPU profiles (`build/nfs3-post-lines-profile/`, `4f5e6330`) show the
+D3D guest-main worker spends about 68% of sampled elapsed time in WASM
+(mostly x86/x87 execution), 20% in draw processing and 6% synchronizing.
+D3D still submits about 346 GPU draws/frame versus Glide's 221; its draw
+timer is 21.45 ms/frame, Flip sync 4.66 ms/frame. Fixed-function shader source
+generation/metadata lowering repeats before the GPU program cache lookup
+and accounts for roughly 3.5 ms per measured frame. Static-plan caching and
+ordered draw coalescing are candidates, not implemented optimizations.
+Machine load 45–67 and profiling overhead preclude stable FPS claims.
+
 The optional `tools/nfs-renderer-bench.js --profile` census identified every
 sampled software fallback as primitive 3 (line strip), vertex type 3 (TL),
 count 2: 2,496 calls over 104 frames. Rain is the likely source. Two full-DIB
