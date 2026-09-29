@@ -385,15 +385,16 @@ const { compileSrcWasm } = require('./compile-src');
         calls.push(e.DrawPrimitiveUP(device,4,1,vptr,28),e.Present(device));
         compressedPixels.push(px((4*16+4)));
       }
-      // The three uncompressed widths B&W2's land asks for -- one byte (L8),
-      // two (R5G6B5) and three (R8G8B8) -- through the same real GPU path, so
+      // The uncompressed widths B&W2's land asks for -- one byte (L8), two
+      // (R5G6B5, A4R4G4B4) and three (R8G8B8) -- through the same real GPU path, so
       // each decode is covered end to end and not only as a unit conversion.
       // Every texture is uniform, so the sampled texel is the whole picture.
       const narrowPixels=[];
       for(const [format,words] of [[50,Array(4).fill(0x40404040)],
         [23,Array(8).fill(0x07e007e0)],
         [20,[0x00ff0000,0x0000ff00,0xff0000ff,0x00ff0000,0x0000ff00,0xff0000ff,
-             0x00ff0000,0x0000ff00,0xff0000ff,0x00ff0000,0x0000ff00,0xff0000ff]]]){
+             0x00ff0000,0x0000ff00,0xff0000ff,0x00ff0000,0x0000ff00,0xff0000ff]],
+        [26,Array(8).fill(0x8f408f40)]]){
         calls.push(e.compressed_create(device,out,format));const t=e.guest_read32(out)>>>0;
         calls.push(e.lock_texture(t,out));write(e.guest_read32(out+4)>>>0,words);
         calls.push(e.unlock_texture(t),e.SetTexture(device,0,t),e.SetTextureStageState(device,0,5,2));
@@ -475,13 +476,14 @@ const { compileSrcWasm } = require('./compile-src');
     assert.ok(result.commandFinishes.some(([op,finished,failed])=>op===5&&!finished&&!failed),'draws were issued without a finish');
     assert.ok(result.nativeIRDraws>0,'queued draws retain the WAT-owned IR projection');
     assert.strictEqual(result.eventComplete,1);
-    assert.strictEqual(result.presents,30); assert.ok(result.hasLayer);
+    assert.strictEqual(result.presents,31); assert.ok(result.hasLayer);
     // RGBA render targets preserve DXT5 alpha; the opaque default canvas used
     // to replace this with255 during readback.
     assert.deepStrictEqual(result.compressedPixels,[[0,0,255,255],[0,255,0,136],[0,255,0,128]]);
     // L8 reads its one byte on all three channels; R5G6B5's all-ones green
-    // field reaches 255, not 252; R8G8B8 is blue-first like every other xRGB.
-    assert.deepStrictEqual(result.narrowPixels,[[64,64,64,255],[0,255,0,255],[0,0,255,255]]);
+    // field reaches 255, not 252; R8G8B8 is blue-first like every other xRGB;
+    // A4R4G4B4 0x8f40 widens each nibble by 17 and keeps its alpha.
+    assert.deepStrictEqual(result.narrowPixels,[[64,64,64,255],[0,255,0,255],[0,0,255,255],[0,68,255,136]]);
     assert.deepStrictEqual(result.culledPixel,result.transformedPixel);
     assert.deepStrictEqual(result.untexturedPixel,[0,255,0,128]);
     assert.strictEqual(result.singleLevelFilter,0x2600);

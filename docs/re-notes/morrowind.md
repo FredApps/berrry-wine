@@ -730,3 +730,54 @@ slice/RPC thread's id, else 1.
 Check it live: find BINK by `[640, 480, frames]` in the first three dwords,
 then read dwords `0x53` (size), `0x56` (avail) and `0x5b` (free) of the
 struct.
+
+## Title music rebuilt its graph every frame: QUARTZ.VXD (2026-09-28, FIXED ae31f419)
+
+Symptom: from about batch 3.9M, while `mw_logo.bik` still plays, the
+software-D3D9 run creates a new DirectShow filter graph on almost every
+frame until the guest heap runs out (OOM before the menu at 1024 MB). This is
+not the track-end restart described above: the graph never runs at all.
+
+Music code in Morrowind.exe:
+
+| VA | what |
+|---|---|
+| `0x403630` | music update (entry; `find_fn.js` wrongly says `0x40367d`). Calls play at `0x403702` when `[esi+0x7c]` holds a path, clears it, then calls `0x4034a0` |
+| `0x403250` | play: `CoCreateInstance(CLSID_FilterGraph, IID_IGraphBuilder)` at `0x40337a`, `RenderFile` (vtbl+0x34), QI IBasicAudio, flag = 1 |
+| `0x4034a0` | QI IMediaControl (IID at `0x73d770`) and IMediaPosition (`0x73d750`), `put_CurrentPosition(0)`, `IMediaControl::Run` (vtbl+0x1c). Success lands on `0x403526` (flag = 2) |
+| `0x4037ac` | IMediaEvent poll (`0x73d760`), gated on flag 2 |
+
+Track: `Data Files/Music/Special/morrowind title.mp3`. Counting `0x403526`
+is the one-number check: 0 means Run never succeeded.
+
+Cause: Win98 quartz.dll (installed copy, origBase `0x35500000`) builds its
+parser ring buffers through `\\.\QUARTZ.VXD`:
+
+- `CreateFileA("\\.\QUARTZ.VXD", GENERIC_WRITE, share 2, OPEN_ALWAYS)`; the
+  handle is global `0x355c9088`.
+- `0x355c4029`: `DeviceIoControl(h, 1, &pages, 4, obj, 4)` returns a base
+  whose `[base+N, base+2N)` is a second mapping of `[base, base+N)`.
+  Refcount at `0x355da1cc`; failure gives `hr = 0x8007000e`.
+- `0x35533363` / `0x355c3f9c`: ioctl 2 with `&base` frees it; the last
+  reference closes the handle.
+- The fallback when CreateFile fails (`0x35536014`, ring ctor
+  `0x35535fb2(size, extra)`) is NT-style: `CreateFileMappingA` plus two
+  `MapViewOfFileEx` at a fixed base. The Win98 section model (one address per
+  section) refuses that, so the fallback cannot work here either.
+
+The VFS created a plain file for that name, quartz trusted a VxD that was not
+there, ioctl 1 failed, and every Pause/Run returned E_OUTOFMEMORY. Fix: the
+VFS fails the whole `\\.\` namespace, and `09a0c` emulates the device. ioctl 1
+reserves 2N, commits N and points the upper half's PTEs at the lower half's
+backing. After the fix `0x403526` counts once per `0x403250`, about every
+60K batches at `--tick-ms-per-batch=2`: that is the title track's own
+114 s, so the track really ends and restarts.
+
+### Next wall: the main menu binds an A4R4G4B4 texture (FIXED, same day)
+
+Once the music graph runs, the software run reaches the main menu with a
+black background. The host logs `invalid texture resource stage=0 kind=3
+levels=1 lod=0 format=26` on every menu draw: D3DFMT_A4R4G4B4. The WAT create
+gate had admitted 26 since B&W2 needed it, but `lib/d3d9-host.js` never
+learned to sample it, so the whole draw was dropped. It now decodes 26
+(nibble × 17); `test-d3d9-pipeline-web.js` draws one through the GPU path.
