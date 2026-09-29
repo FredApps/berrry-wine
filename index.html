@@ -2344,9 +2344,10 @@ Resource-aware Win98 emulator
     // ?aggressive-stack: the uop tier also elides push/pop pairs nothing can
     // observe (opt-in, compile-time; read at launch, host.js).
     if (new URLSearchParams(location.search).has('aggressive-stack')) window.WineSuperops.aggressiveStack = true;
-    // ?uop-trace-heads: hot heads with no back edge become forward traces
-    // (opt-in, compile-time; read at launch, host.js).
-    if (new URLSearchParams(location.search).has('uop-trace-heads')) window.WineSuperops.uopTraceHeads = true;
+    // Trace heads: hot heads with no back edge become forward traces (on by
+    // default, compile-time; read at launch, host.js). ?no-uop-trace-heads
+    // turns them off; ?uop-trace-heads is still accepted and changes nothing.
+    if (new URLSearchParams(location.search).has('no-uop-trace-heads')) window.WineSuperops.uopTraceHeads = false;
     if (new URLSearchParams(location.search).has('no-uop')) {
       window.WineSuperops.uop = false;
       window.addEventListener('load', () => {

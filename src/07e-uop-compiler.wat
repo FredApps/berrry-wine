@@ -1281,7 +1281,9 @@
   ;; logical-frame marker is unsupported in the scan, so a trace always
   ;; stops in front of it. Fewer than $uc_trace_min instructions stays a
   ;; no-backedge decline: the enter/exit would cost more than the trip saves.
-  (global $uc_trace (mut i32) (i32.const 0))
+  ;; On by default since 2026-09-28 (docs/uop-tier-design.md §13, default-on
+  ;; decision); --no-uop-trace-heads / ?no-uop-trace-heads turn it off.
+  (global $uc_trace (mut i32) (i32.const 1))
   (global $uc_trace_min (mut i32) (i32.const 8))
   (global $uc_trace_max (mut i32) (i32.const 160))
   (global $uc_ntraces (mut i32) (i32.const 0))
@@ -3859,7 +3861,8 @@
     (if (i32.eq (local.get $which) (i32.const 5)) (then (return (global.get $uc_words))))
     (if (i32.eq (local.get $which) (i32.const 26)) (then (return (global.get $uc_ntraces))))
     (i32.const 0))
-  ;; --uop-trace-heads / ?uop-trace-heads: a hot head with no back edge is
+  ;; Trace heads (on by default; --no-uop-trace-heads / ?no-uop-trace-heads):
+  ;; a hot head with no back edge is
   ;; lowered as a forward trace ($uc_form_trace) instead of declined. min/max
   ;; bound the trace in instructions (0 keeps the current value).
   (func (export "set_uop_trace_heads") (param $on i32)

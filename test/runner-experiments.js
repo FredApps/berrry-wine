@@ -67,14 +67,15 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // push's temp (07e $uc_sp_block). Opt-in: an elided slot is not in guest
   // memory while the pair is open. docs/uop-tier-design.md.
   const aggrWanted = () => uopWanted() && (hasFlag('aggressive-stack') || (appPolicy() || {}).aggressiveStack === true);
-  // --uop-trace-heads[=MIN,MAX] (or `uopTraceHeads: true` on the app): a hot
+  // Trace heads (on by default; --no-uop-trace-heads or `uopTraceHeads: false`
+  // on the app turns them off; --uop-trace-heads=MIN,MAX sets the limits): a hot
   // head with no back edge is lowered as a forward trace -- straight-line
   // code, both arms of a branch, calls and rets to an in-region call -- of
   // MIN..MAX instructions (default 8..160) instead of declined as no-backedge
   // (07e $uc_form_trace). The hotness gate is still --block-exec-walk-k.
   const UOP_TRACE_ARG = getArg('uop-trace-heads', null);
-  const traceWanted = () => uopWanted() && (hasFlag('uop-trace-heads') || UOP_TRACE_ARG !== null ||
-    (appPolicy() || {}).uopTraceHeads === true);
+  const traceWanted = () => uopWanted() && !hasFlag('no-uop-trace-heads') &&
+    (appPolicy() || {}).uopTraceHeads !== false;
   const TRACE_LIMITS = (() => {
     const [mn = '0', mx = '0'] = (UOP_TRACE_ARG && UOP_TRACE_ARG !== 'true' ? UOP_TRACE_ARG : '').split(',');
     return [parseInt(mn, 10) || 0, parseInt(mx, 10) || 0];
@@ -304,8 +305,8 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (uopWanted()) inheritWasm('set_uop', 1);
     if (NO_UOP_NOBUMP) inheritWasm('set_uop_nobump', 0);
     if (aggrWanted()) inheritWasm('set_aggressive_stack', 1);
+    inheritWasm('set_uop_trace_heads', traceWanted() ? 1 : 0);
     if (traceWanted()) {
-      inheritWasm('set_uop_trace_heads', 1);
       if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) inheritWasm('set_uop_trace_limits', TRACE_LIMITS[0], TRACE_LIMITS[1]);
     }
     if (UOP_CENSUS) inheritWasm('set_uop_census', 1);
@@ -327,8 +328,8 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       if (UOP_CENSUS && instance.exports.set_uop_census) instance.exports.set_uop_census(1);
       instance.exports.set_uop(1);
       if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
-      if (traceWanted() && instance.exports.set_uop_trace_heads) {
-        instance.exports.set_uop_trace_heads(1);
+      if (instance.exports.set_uop_trace_heads) instance.exports.set_uop_trace_heads(traceWanted() ? 1 : 0);
+      if (traceWanted() && instance.exports.set_uop_trace_limits) {
         if (TRACE_LIMITS[0] || TRACE_LIMITS[1]) instance.exports.set_uop_trace_limits(TRACE_LIMITS[0], TRACE_LIMITS[1]);
       }
       uopOn = true;

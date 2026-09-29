@@ -470,7 +470,9 @@ function runCase(inst, c, a, codeAddr, mode) {
   const bytes = c.bytes || asm(typeof c.code === 'function' ? c.code(a) : c.code);
   mem.set(bytes, g2w(codeAddr));
   const labelAt = (x) => (typeof x === 'string' ? bytes.labels.get(x) : x || 0);
-  if (c.trace) e.set_uop_trace_heads(mode === 'off' ? 0 : 1);
+  // Explicit either way: trace heads are the instance default now, and a
+  // loop case must keep testing the loop tier alone.
+  e.set_uop_trace_heads(c.trace && mode !== 'off' ? 1 : 0);
   if (c.lf) e.set_logical_frame(codeAddr + labelAt(c.lf), 0);
   const lf0 = e.get_logical_frame_count();
   if (c.setup) c.setup(mem, g2w, a);
