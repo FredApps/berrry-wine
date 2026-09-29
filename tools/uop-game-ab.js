@@ -293,7 +293,10 @@ async function main() {
   // threshold is an arm too, so a K sweep runs in one interleaved sweep:
   // uopkN / tracekN add --block-exec-walk-k=N (a name, not trailing digits,
   // so they are not read as repeats; tracek16x2 is a repeat of tracek16).
+  // Trace heads are the default since 2026-09-28, so uop and trace are now
+  // the same configuration; notrace is the arm without them.
   ARMS.trace = [...ARMS.uop, '--uop-trace-heads'];
+  ARMS.notrace = [...ARMS.uop, '--no-uop-trace-heads'];
   const armFor = (a) => {
     const k = /^(uop|trace|off)k(\d+)(?:x\d+)?$/.exec(a);
     if (k) return [...ARMS[k[1]], `--block-exec-walk-k=${k[2]}`];

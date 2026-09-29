@@ -2203,9 +2203,10 @@ class WineAssembly {
     const aggressiveStack = (uop && (this.aggressiveStack === true ||
       (window.WineSuperops && window.WineSuperops.aggressiveStack === true))) ? 1 : 0;
     if (this.instance.exports.set_aggressive_stack) this.instance.exports.set_aggressive_stack(aggressiveStack);
-    // ?uop-trace-heads: hot heads with no back edge become forward traces
-    // (07e $uc_form_trace) instead of no-backedge declines. Opt-in.
-    const uopTraceHeads = (uop && window.WineSuperops && window.WineSuperops.uopTraceHeads === true) ? 1 : 0;
+    // Trace heads: hot heads with no back edge become forward traces
+    // (07e $uc_form_trace) instead of no-backedge declines. On by default;
+    // ?no-uop-trace-heads turns them off.
+    const uopTraceHeads = (uop && !(window.WineSuperops && window.WineSuperops.uopTraceHeads === false)) ? 1 : 0;
     if (this.instance.exports.set_uop_trace_heads) this.instance.exports.set_uop_trace_heads(uopTraceHeads);
     // ?x87-fuse-debug=MASK[,LO,HI] -- the bisect knob for a fold divergence.
     // MASK picks families (1 pipeline4, 2 short, 4 tree4, 8 affine, 16 island)
