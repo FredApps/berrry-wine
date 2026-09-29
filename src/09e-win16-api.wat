@@ -1799,21 +1799,37 @@
         (call $handle_VerQueryValueA (local.get $block) (local.get $sub)
           (local.get $tmp_out) (local.get $tmp_len) (i32.const 0) (i32.const 0))
         (local.set $result (i32.load offset=0 (global.get $reg_base)))
-        (call $win16_call32_end)))
-    (if (local.get $result)
-      (then
-        (local.set $value (call $gl32 (local.get $tmp_out)))
-        ;; The shared ANSI parser keeps its compatibility translation pair in
-        ;; scratch memory. For our synthesized GDI block, expose the identical
-        ;; Win16 data from the four bytes reserved at the end of that block so
-        ;; the returned far pointer remains relative to the caller's selector.
+        (call $win16_call32_end)
+        ;; Our compact synthesized GDI version block keeps its translation
+        ;; pair in a trailer, not a VERSION child node. Handle that format here;
+        ;; ordinary PE blocks use the shared bounded resource-tree parser.
         (if (i32.and
               (i32.eq (call $gl16 (local.get $block))
                 (i32.add (global.get $DX_VERSION_INFO_SIZE) (i32.const 4)))
               (i32.eq (call $gl32 (i32.add (local.get $block) (i32.const 0x30)))
                 (i32.const 0x0004000A)))
-          (then (local.set $value
-            (i32.add (local.get $block) (global.get $DX_VERSION_INFO_SIZE)))))
+          (then
+            (if (i32.eqz (i32.or
+                  (i32.or
+                    (i32.xor (call $gl32 (local.get $sub)) (i32.const 0x7261565c))
+                    (i32.xor (call $gl32 (i32.add (local.get $sub) (i32.const 4))) (i32.const 0x656c6946)))
+                  (i32.or
+                    (i32.or
+                      (i32.xor (call $gl32 (i32.add (local.get $sub) (i32.const 8))) (i32.const 0x6f666e49))
+                      (i32.xor (call $gl32 (i32.add (local.get $sub) (i32.const 12))) (i32.const 0x6172545c)))
+                    (i32.or
+                      (i32.or
+                        (i32.xor (call $gl32 (i32.add (local.get $sub) (i32.const 16))) (i32.const 0x616c736e))
+                        (i32.xor (call $gl32 (i32.add (local.get $sub) (i32.const 20))) (i32.const 0x6e6f6974)))
+                      (call $gl8 (i32.add (local.get $sub) (i32.const 24)))))))
+              (then
+                (call $gs32 (local.get $tmp_out)
+                  (i32.add (local.get $block) (global.get $DX_VERSION_INFO_SIZE)))
+                (call $gs32 (local.get $tmp_len) (i32.const 4))
+                (local.set $result (i32.const 1))))))))
+    (if (local.get $result)
+      (then
+        (local.set $value (call $gl32 (local.get $tmp_out)))
         (local.set $delta (i32.sub (local.get $value) (local.get $block)))
         (local.set $value_off (i32.add (local.get $block_off) (local.get $delta)))
         (if (i32.or (i32.lt_s (local.get $delta) (i32.const 0))

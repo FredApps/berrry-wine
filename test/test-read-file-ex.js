@@ -4,6 +4,10 @@ const assert=require('assert'),fs=require('fs'),path=require('path');
 const {bootRenderHarness}=require('./render-helper');
 const sleepId=require('../src/api_table.json').find(a=>a.name==='SleepEx').id;
 const extraWat=`
+  (func (export "wait_many") (param $handles i32) (param $all i32) (param $timeout i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const 0x07000000))
+    (call $handle_WaitForMultipleObjectsEx (i32.const 2) (local.get $handles)
+      (local.get $all) (local.get $timeout) (i32.const 0) (i32.const 0)))
   (func (export "sleep_thunk") (result i32)
     (call $gl32 (call $init_com_vtable (i32.const ${sleepId}) (i32.const 1))))
   (func (export "start_inline") (param $code i32)
@@ -19,13 +23,18 @@ const extraWat=`
     (i32.store offset=16 (global.get $reg_base) (i32.const 0x07000000))
     (call $gs32 (i32.load offset=16 (global.get $reg_base)) (i32.const 0))
     (global.set $eip (i32.const 0))
+    (if (i32.eq (local.get $object) (i32.const 2)) (then
+      (call $handle_WaitForMultipleObjectsEx (i32.const 1) (i32.const 0) (i32.const 0) (i32.const 0) (local.get $alertable) (i32.const 0))
+      (return)))
     (if (local.get $object) (then
       (call $handle_WaitForSingleObjectEx (i32.const 1) (i32.const 0) (local.get $alertable) (i32.const 0) (i32.const 0) (i32.const 0)))
     (else (call $handle_SleepEx (i32.const 0) (local.get $alertable) (i32.const 0) (i32.const 0) (i32.const 0) (i32.const 0)))))
 `;
 const u32=n=>[n&255,n>>>8&255,n>>>16&255,n>>>24&255];
 (async()=>{
-  const {exports:e,memory,hostCtx,host}=await bootRenderHarness({fonts:'none',extraWat});
+  let waitResult=0, waitArgs;
+  const {exports:e,memory,hostCtx,host}=await bootRenderHarness({fonts:'none',extraWat,
+    extraHostOverrides:{wait_multiple:(...args)=>{waitArgs=args;return waitResult;}}});
   const pe=fs.readFileSync(path.join(__dirname,'binaries/calc.exe'));
   new Uint8Array(memory.buffer).set(pe,e.get_staging());assert.ok(e.load_pe(pe.length));
   const alloc=n=>e.guest_alloc(n)>>>0,read=p=>e.guest_read32(p)>>>0,write=(p,n)=>e.guest_write32(p,n);
@@ -79,5 +88,26 @@ const u32=n=>[n&255,n>>>8&255,n>>>16&255,n>>>24&255];
   assert.strictEqual(read(seen),4,'inline CALL dispatch reaches the callback');
   assert.strictEqual(read(after),0xc0,'inline caller resumes with WAIT_IO_COMPLETION');
   assert.strictEqual(e.get_esp()>>>0,0x07000004,'inline caller and callback stack are balanced');
+  init(ov,0);assert.strictEqual(e.read_ex(h,buf,1,ov,cb),1);
+  e.clear_yield();e.alert(1,2);
+  for(let i=0;i<20&&e.get_eip();i++)e.run(1000);
+  assert.strictEqual(read(seen),5,'alertable multi-wait delivers queued completion');
+  assert.strictEqual(e.get_eax()>>>0,0xc0);
+  assert.strictEqual(e.get_esp()>>>0,0x07000018,'WaitForMultipleObjectsEx callback cleanup');
+  e.clear_yield();e.alert(0,2);
+  assert.strictEqual(e.get_esp()>>>0,0x07000018,'immediate multi-wait pops all five arguments');
+  const handles=alloc(8);write(handles,0xe0001);write(handles+4,0xe0002);
+  waitResult=1;e.clear_yield();e.wait_many(handles,0,0);
+  assert.deepStrictEqual(waitArgs,[2,e.guest_to_wasm(handles),0,0]);
+  assert.strictEqual(e.get_eax()>>>0,1,'wait-any preserves the signaled handle index');
+  assert.strictEqual(e.get_esp()>>>0,0x07000018);
+  waitResult=0xffff;e.clear_yield();e.wait_many(handles,1,1234);
+  assert.strictEqual(e.get_yield_reason(),1);
+  assert.strictEqual(e.get_wait_handle(),2);
+  assert.strictEqual(e.get_wait_handles_ptr(),e.guest_to_wasm(handles));
+  assert.strictEqual(e.get_wait_all(),1);
+  assert.strictEqual(e.get_wait_timeout(),1234);
+  assert.strictEqual(e.get_wait_stack_bytes(),24,'scheduler must pop all five arguments on wake');
+  assert.strictEqual(e.get_esp()>>>0,0x07000000,'parked wait keeps its original call frame');
   console.log('PASS ReadFileEx positional bytes, OVERLAPPED, deferred x86 callbacks, alertable waits and ABI');
 })().catch(error=>{console.error(error);process.exitCode=1;});

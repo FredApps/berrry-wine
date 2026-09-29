@@ -1710,6 +1710,21 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
   )
 
+  ;; Alertable multi-object wait uses the same scheduler contract, with one
+  ;; additional stdcall argument. Both the immediate and parked paths must
+  ;; pop 24 bytes; the non-Ex handler's parked path records only 20.
+  (func $handle_WaitForMultipleObjectsEx (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (if (local.get $arg4) (then
+      (if (call $io_apc_start (i32.const 24)) (then (return)))))
+    (call $handle_WaitForMultipleObjects
+      (local.get $arg0) (local.get $arg1) (local.get $arg2)
+      (local.get $arg3) (i32.const 0) (local.get $name_ptr))
+    (if (i32.eq (global.get $yield_reason) (i32.const 1))
+      (then (global.set $wait_stack_bytes (i32.const 24)))
+      (else
+        (i32.store offset=16 (global.get $reg_base)
+          (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4))))))
+
   ;; 528: GlobalAddAtomW(lpString) — 1 arg stdcall, shares the A namespace.
   (func $handle_GlobalAddAtomW (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $narrow i32)

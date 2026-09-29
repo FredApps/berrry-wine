@@ -34,7 +34,13 @@ async function main() {
     data: new Uint8Array(bad), attrs: 0x20,
   });
 
-  const { instance } = await WebAssembly.instantiate(compileSrcWasm(), imports);
+  const wasm = compileSrcWasm((file, source) => file === '13-exports.wat' ? source + `
+    (func (export "query_wide") (param $block i32) (param $path i32)
+        (param $out i32) (param $length i32) (result i32)
+      (call $version_query (local.get $block) (local.get $path)
+        (local.get $out) (local.get $length) (i32.const 1)))
+  ` : source);
+  const { instance } = await WebAssembly.instantiate(wasm, imports);
   const e = instance.exports;
   ctx.exports = e;
   const u8 = new Uint8Array(memory.buffer);
@@ -77,6 +83,69 @@ async function main() {
 
   assert.strictEqual(e.test_call_GetFileVersionInfoSizeA(writeAscii('C:\\missing.dll'), 0), 0);
   assert.strictEqual(e.test_call_GetFileVersionInfoSizeA(writeAscii('C:\\Windows\\Temp\\bad.dll'), 0), 0);
+
+  // A genuine hierarchy with two languages and binary translations. String
+  // values differ from the fixed version: NFS III queries FileVersion text.
+  const align = n => (n + 3) & ~3;
+  function node(key, type, value, children = []) {
+    const keyBytes = Buffer.from(key + '\0', 'utf16le');
+    const valueAt = align(6 + keyBytes.length);
+    let size = valueAt + value.length;
+    for (const child of children) size = align(size) + child.length;
+    const out = Buffer.alloc(size);
+    out.writeUInt16LE(size, 0);
+    out.writeUInt16LE(type === 1 ? value.length / 2 : value.length, 2);
+    out.writeUInt16LE(type, 4);
+    keyBytes.copy(out, 6);
+    value.copy(out, valueAt);
+    let at = valueAt + value.length;
+    for (const child of children) { at = align(at); child.copy(out, at); at += child.length; }
+    return out;
+  }
+  const textNode = (key, value) => node(key, 1, Buffer.from(value + '\0', 'utf16le'));
+  const empty = Buffer.alloc(0);
+  const tree = node('VS_VERSION_INFO', 0, blob.subarray(40), [
+    node('StringFileInfo', 1, empty, [
+      node('040904B0', 1, empty, [textNode('FileVersion', '-1, -1.-1'),
+        textNode('ProductName', 'Demo racer')]),
+      node('040C04B0', 1, empty, [textNode('ProductName', 'Course')]),
+    ]),
+    node('VarFileInfo', 1, empty, [node('Translation', 0, Buffer.from([9, 4, 176, 4, 12, 4, 176, 4]))]),
+  ]);
+  const resource = e.guest_alloc(tree.length);
+  u8.set(tree, wa(resource));
+  const outPtr = e.guest_alloc(4), outLen = e.guest_alloc(4);
+  function query(sub) {
+    const ok = e.test_call_VerQueryValueA(resource, writeAscii(sub), outPtr, outLen);
+    const count = dv.getUint32(wa(outLen), true);
+    const ptr = dv.getUint32(wa(outPtr), true);
+    return { ok, count, ptr, text: ok ? Buffer.from(u8.subarray(wa(ptr), wa(ptr) + count)).toString('latin1') : '' };
+  }
+  let q = query('\\stringfileinfo\\040904b0\\fileversion');
+  assert.strictEqual(q.ok, 1);
+  assert.strictEqual(q.text, '-1, -1.-1\0');
+  assert.strictEqual(q.count, 10, 'ANSI string length includes terminator');
+  assert.strictEqual(query('\\StringFileInfo\\040904B0\\ProductName').text, 'Demo racer\0');
+  assert.strictEqual(query('\\StringFileInfo\\040C04B0\\ProductName').text, 'Course\0');
+  q = query('\\VarFileInfo\\Translation');
+  assert.strictEqual(q.count, 8, 'real translation array, not a canned language');
+  assert.deepStrictEqual(Buffer.from(u8.subarray(wa(q.ptr), wa(q.ptr) + q.count)), Buffer.from([9, 4, 176, 4, 12, 4, 176, 4]));
+  q = query('\\');
+  assert.strictEqual(q.ptr, resource + 40);
+  assert.strictEqual(q.count, 52);
+  q = query('\\StringFileInfo\\040904B0\\Missing');
+  assert.strictEqual(q.ok, 0);
+  assert.strictEqual(q.count, 0);
+  assert.deepStrictEqual(Buffer.from(u8.subarray(wa(resource), wa(resource) + tree.length)), tree,
+    'ANSI queries must not corrupt the UTF-16 source');
+  assert.strictEqual(e.query_wide(resource, writeWide('\\StringFileInfo\\040C04B0\\ProductName'), outPtr, outLen), 1);
+  const wideResult = dv.getUint32(wa(outPtr), true);
+  assert(wideResult >= resource && wideResult < resource + tree.length);
+  assert.strictEqual(Buffer.from(u8.subarray(wa(wideResult), wa(wideResult) + 14)).toString('utf16le'), 'Course\0');
+  assert.strictEqual(dv.getUint32(wa(outLen), true), 7, 'wide string length is characters, not bytes');
+  // A zero-sized child must fail rather than looping forever or fabricating a value.
+  dv.setUint16(wa(resource) + 92, 0, true);
+  assert.strictEqual(query('\\StringFileInfo\\040904B0\\FileVersion').ok, 0);
   console.log('PASS file-backed GetFileVersionInfo A/W resource lookup');
 }
 

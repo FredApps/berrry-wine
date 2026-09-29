@@ -3,6 +3,49 @@
   "assetRoot": "test/binaries/candidates",
   "candidates": [
     {
+      "id": "need-for-speed-2-demo",
+      "name": "Need for Speed II Demo",
+      "kind": "game",
+      "version": "1997-05-15 Windows demo",
+      "executables": ["game/nfsw.exe"],
+      "sourcePage": "https://www.classicdosgames.com/game/Need_for_Speed_II.html",
+      "license": "original EA playable demo; local compatibility fixture",
+      "localOnly": true,
+      "packages": [{
+        "url": "https://www.classicdosgames.com/files/games/electronicarts/nfs2demo.exe",
+        "sha1": "3618d9c4070794e5cee4629a85c5e874e006db84",
+        "type": "archive",
+        "into": "game"
+      }],
+      "browser": { "fileRoot": "game", "exe": "game/nfsw.exe" },
+      "cli": { "maxBatches": 2000, "batchSize": 100000 },
+      "notes": "Original DirectDraw/software demo, not the Glide-only Special Edition demo. Pacific Spirit track. Keep the complete extracted tree, including mixed-case FEData paths."
+    },
+    {
+      "id": "need-for-speed-3-demo",
+      "name": "Need for Speed III: Hot Pursuit Demo",
+      "kind": "game",
+      "version": "September 1998 final Windows demo",
+      "executables": ["game/nfs3demo.exe"],
+      "sourcePage": "https://archive.org/details/need-for-speed-demo-coll-windows",
+      "license": "original EA playable demo; local compatibility fixture",
+      "localOnly": true,
+      "packages": [{
+        "url": "https://archive.org/download/need-for-speed-demo-coll-windows/nfs03demo.zip",
+        "sha1": "c3f247d051cd347e2f0515d71d8e387f00a6f373",
+        "type": "archive",
+        "into": "game"
+      }],
+      "postExtract": [{
+        "type": "writeText",
+        "file": "game/install.win",
+        "text": "english\r\nlocal\r\n.\\GameData\\\r\n.\\GameData\\Tracks\\\r\n.\\GameData\\Tracks\\Tutor\\\r\n.\\GameData\\CarModel\\\r\n.\\GameData\\Render\\pc\\\r\n.\\GameData\\DashHud\\\r\n.\\GameData\\Audio\\pc\\\r\n.\\GameData\\Audio\\SFX\\\r\n.\\GameData\\Audio\\Speech\\English\\\r\n.\\GameData\\Audio\\Speech\\German\\\r\n.\\GameData\\Audio\\Speech\\French\\\r\n.\\GameData\\Audio\\Speech\\Spanish\\\r\n.\\GameData\\Audio\\Speech\\Italian\\\r\n.\\FeData\\art\\\r\n.\\FeData\\text\\\r\n.\\FeData\\text\\\r\n.\\FeData\\save\\\r\n.\\FeData\\stats\\\r\n.\\FeData\\config\\\r\n.\\FeData\\audio\\\r\n.\\FeData\\Art\\Slides\\\r\n.\\FeData\\Art\\Track\\\r\nC:\\FeData\\Art\\Showcase\\\r\nC:\\FeData\\movies\\\r\n.\\FeData\\stats\\prh\\\r\n\u001a"
+      }],
+      "browser": { "fileRoot": "game", "exe": "game/nfs3demo.exe" },
+      "cli": { "maxBatches": 2000, "batchSize": 100000 },
+      "notes": "The bundled EA readme identifies this as the final demo: Corvette on Rocky Pass, random Single Race/Hot Pursuit and weather. Includes original software and Direct3D renderer DLLs plus installer/readme/license files."
+    },
+    {
       "id": "dxball",
       "name": "DX-Ball",
       "kind": "game",

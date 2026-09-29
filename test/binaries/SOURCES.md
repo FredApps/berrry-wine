@@ -3,6 +3,23 @@
 Test binary provenance is recorded below; most fixtures come from publicly
 archived software on archive.org.
 
+## Need for Speed Windows demos
+
+Local candidate fixtures (original demo executables, no binary patches):
+
+| App | Archive | SHA-1 |
+| --- | --- | --- |
+| `nfs2_demo` | [nfs2demo.exe](https://www.classicdosgames.com/files/games/electronicarts/nfs2demo.exe) | `3618d9c4070794e5cee4629a85c5e874e006db84` |
+| `nfs3_demo` | [nfs03demo.zip](https://archive.org/download/need-for-speed-demo-coll-windows/nfs03demo.zip) | `c3f247d051cd347e2f0515d71d8e387f00a6f373` |
+
+Reproduce with `node tools/fetch-candidate-corpus.js --id=need-for-speed-2-demo`
+and `--id=need-for-speed-3-demo`. The manifest preserves the complete asset trees.
+NFS II is the original software/DirectDraw demo, not the Glide Special Edition.
+NFS III is the September 1998 final demo. Its `install.win` is reproduced from
+the original bundled InstallShield installer's output (English, local install);
+the recipe writes its relative data paths, CRLF lines, and DOS EOF byte.
+Both are marked `localOnly`; demo licensing is not a public redistribution grant.
+
 ## Windows 98 Demo/Shareware Games A-D
 
 **`win98-games-a-d/`** — complete A-through-D collection of Windows game
