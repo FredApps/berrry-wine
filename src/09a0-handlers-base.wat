@@ -5460,11 +5460,13 @@
 
   ;; 63: RtlUnwind
   (func $handle_RtlUnwind (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
-    ;; Unlink SEH chain: set FS:[0] = TargetFrame->next
-    (if (i32.ne (local.get $arg0) (i32.const 0))
-    (then (call $gs32 (global.get $fs_base) (call $gl32 (local.get $arg0)))))
-    (i32.store offset=0 (global.get $reg_base) (local.get $arg3)) ;; ReturnValue
-    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20))) (return)
+    ;; Calls every frame handler above TargetFrame with EXCEPTION_UNWINDING and
+    ;; unlinks it, then returns to the caller; see $rtl_unwind_begin (11-seh).
+    ;; The stdcall frame is popped here; the walk owns EIP from now ($steps = 0).
+    (local $ret i32)
+    (local.set $ret (call $gl32 (i32.load offset=16 (global.get $reg_base))))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
+    (call $rtl_unwind_begin (local.get $arg0) (local.get $arg2) (local.get $arg3) (local.get $ret))
   )
 
   ;; 64: FreeLibrary — STUB: unimplemented
