@@ -104,7 +104,7 @@ function resolveShellLaunchPath(file, vfs, isWinExec) {
 // Arm p (worker mode only): a guest main thread parked in GetMessage parks the
 // host step until its next WM_TIMER, as the cooperative loop does, instead of
 // re-polling every step (~30K blocks/s on every idle app, 2026-09-23).
-const SCHED_ARMS_DEFAULT = 'b,e,g,w,f,p';
+const SCHED_ARMS_DEFAULT = 'b,e,g,w,f,p,m';
 // Arm w: a safety bound on how long a guest thread's Worker holds its slice
 // through local Sleeps — the step epoch normally ends it first, when the main
 // slice returns (measured on Moorhuhn 2: ~64ms per main slice) — and the
@@ -3951,6 +3951,7 @@ class WineAssembly {
         const localSleep = !!(Rpc && Rpc.endStepEpoch && self.memory && !serial && !self._frozen
           && self.threadManager && self.threadManager.backend === 'worker' && self._schedArm('w'));
         const freeRun = localSleep && self._schedArm('f');
+        const mainWaitArm = freeRun && self._schedArm('m');
         if (self.threadManager) {
           self.threadManager.workerFreeRun = freeRun;
           self.threadManager.workerLocalSleep = localSleep
@@ -3983,6 +3984,20 @@ class WineAssembly {
             }
             self._workerMainSleepUntil = 0;
           }
+          // A main thread parked on an unsatisfied WaitFor* (yield 1) has
+          // nothing to run: its slice would return at once with the same
+          // yield. Poll the wait here, as sibling waits are polled
+          // (thread-manager _pollParkedWait), and post a slice only once it is
+          // satisfied. StarCraft's every file read is such a wait on Storm's
+          // read thread, and re-slicing it cost ~1700 empty round trips a
+          // second.
+          const parked = self._workerMainParkedWait;
+          if (parked && mainWaitArm) {
+            const done = self.threadManager ? self.threadManager.resolveMainWorkerWait(parked, { parked: true }) : null;
+            if (!done) return Object.assign({}, parked, { blocks: 0, ms: 0, waitPolled: true });
+            self._workerMainParkedWait = null;
+            await self.guestWorker.link.completeWait(done.result, done.waitStackBytes);
+          }
           // A vblank the page delivered while the main thread sat in yield 13
           // rides on this slice; the worker ticks and clears it before run.
           let sliceSync = mainSync;
@@ -4008,6 +4023,13 @@ class WineAssembly {
         const runMainThenEnd = async () => {
           try {
             const slice = await runMain();
+            // This slice may have set what a parked sibling waits on (a job
+            // queued for a helper thread): start that thread now, not at the
+            // next step's scan.
+            if (mainWaitArm && slice && slice.yield === 1 && !slice.waitPolled && self.threadManager &&
+                self.threadManager.offerSatisfiedWaiters) {
+              self.threadManager.offerSatisfiedWaiters();
+            }
             const until = self._workerMainSleepUntil;
             if (!stepEnded && slice && !(slice.blocks | 0) && until) {
               const left = until - self._guestTickMs(self.hostCtx && self.hostCtx.sharedAudio);
@@ -4155,10 +4177,22 @@ class WineAssembly {
           // wait drops them. Clearing instead leaked 12 bytes of guest stack per
           // wait, and Winamp died minutes later at EIP=0xffffffff — which is why
           // nothing caught it before guest threads ran in this mode.
-          const done = self.threadManager ? self.threadManager.resolveMainWorkerWait(r) : null;
-          if (done) await self.guestWorker.link.completeWait(done.result, done.waitStackBytes);
-          // Unsatisfied: leave the yield set. The next slice re-polls, and the
-          // worker's run() returns immediately while parked.
+          // runMain already polled a wait it found parked (waitPolled).
+          const done = r.waitPolled ? null
+            : self.threadManager ? self.threadManager.resolveMainWorkerWait(r) : null;
+          if (done) {
+            await self.guestWorker.link.completeWait(done.result, done.waitStackBytes);
+          } else {
+            // Unsatisfied: leave the yield set, and let runMain poll it on
+            // this thread from now on. Free-running, whatever satisfies it is
+            // most likely a sibling's slice (SetEvent), so park the step until
+            // one completes -- a short bound covers timeouts and page-side
+            // signals.
+            if (mainWaitArm) {
+              self._workerMainParkedWait = r;
+              self._workerIdleMs = Math.max(self._workerIdleMs, 2);
+            }
+          }
         } else if (r.yield === 7) {
           // The message-wait resume runs inside the worker at the top of each
           // slice, where the instance is. Nothing to do here — and specifically
@@ -4910,6 +4944,9 @@ class WineAssembly {
   //   p  Worker mode: a main thread parked in GetMessage parks the host step
   //      until its next WM_TIMER (capped, input wakes it), as the
   //      cooperative loop's _parkedSleepMs does, instead of re-polling
+  //   m  Worker mode, with f: a main thread parked in WaitFor* is polled here
+  //      instead of re-sliced every step, the threads its slice woke are
+  //      started at once, and the step parks until a sibling slice returns
   // `?sched-arm=LIST` replaces the default set for an A/B; `?sched-arm=none`
   // turns every arm off.
   _schedArm(name) {
