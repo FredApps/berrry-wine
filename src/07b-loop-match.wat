@@ -2242,6 +2242,8 @@
     (local $fall i32) (local $n i32) (local $first i32)
     (local $table_stack i32) (local $stack_disp i32)
 
+    ;; --no-fold=lut16-counted: both forms, for the uop-tier A/B (section 18).
+    (if (call $fold_off (i32.const 0x20)) (then (return (i32.const 0))))
     (local.set $n (global.get $op_index_n))
     (if (i32.eq (local.get $n) (i32.const 10))
       (then

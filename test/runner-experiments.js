@@ -244,7 +244,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   };
   const FOLD_BITS = {
     'storm-bitreader': 0x01, 'smack-huff': 0x02, 'lut-span': 0x04,
-    'colorkey8': 0x08, 'mw3-blit': 0x10, 'xlat-stosb': 0x80,
+    'colorkey8': 0x08, 'mw3-blit': 0x10, 'lut16-counted': 0x20, 'xlat-stosb': 0x80,
   };
   const NO_FOLDS = (getArg('no-fold', '') || '').split(',').filter(Boolean);
   for (const n of NO_FOLDS) {
