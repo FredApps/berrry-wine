@@ -2336,9 +2336,8 @@ const TOGGLES = {
   case_chain: 'set_case_chain',
   rle_run: 'set_rle_run',
   rect_run: 'set_rect_run',
-  ck_lut16: 'set_ck_lut16',
-  ck_blend16: 'set_ck_blend16',
-  ck_shadow16: 'set_ck_shadow16',
+  // ck_lut16/ck_blend16/ck_shadow16 were the SimGolf keyed-blit folds, retired
+  // to the uop tier (docs/uop-tier-design.md section 18); their shapes stay.
   block_exec: 'set_block_exec',
   // Save-compression prototypes: a SIB-fused `OP [sib], r8` (handler 465) and
   // the implode match-extension fold (466). Shapes: implode_a, implode_b.

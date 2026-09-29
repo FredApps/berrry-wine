@@ -524,12 +524,12 @@
     ;; installs, $region_try_install and every recorded histogram keep their
     ;; identity; new installs from the block matcher emit 458.
     $th_block_exec            ;; 454: alias of 458 (was $th_tree_fold)
-    $th_ck_lut16_run          ;; 455: a whole colour-keyed LUT16 sprite row
-    $th_ck_blend16_run        ;; 456: a whole alpha-blended RGB565 sprite row
-    $th_ck_shadow16_run       ;; 457: a keyed sprite row with a dest-indexed arm
+    $th_retired_fold          ;; 455: retired (was CK_LUT16, SimGolf keyed LUT16 row; uop runs it)
+    $th_retired_fold          ;; 456: retired (was CK_BLEND16, SimGolf RGB565 blend row; uop runs it)
+    $th_retired_fold          ;; 457: retired (was CK_SHADOW16, SimGolf dest-indexed row; uop runs it)
     $th_block_exec            ;; 458: a region descriptor, registers in locals
     $th_bx_resume             ;; 459: the fallback resume trampoline (empty)
-    $th_ck_copy8_run          ;; 460: a colour-keyed 8bpp->8bpp sprite row
+    $th_retired_fold          ;; 460: retired (was CK_COPY8, SimGolf keyed 8bpp row; uop runs it)
     $th_retired_fold          ;; 461: retired (was SMK_TREE, Smacker Huffman descent; uop runs it)
     $th_pcx_run               ;; 462: a whole Quake II PCX/WAL run expansion
     $th_block_exec_leaf       ;; 463: a ONE-block descriptor, no region machinery

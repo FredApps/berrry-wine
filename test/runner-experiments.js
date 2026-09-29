@@ -234,8 +234,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   const FOLD_SETTERS = {
     'case-chain': 'set_case_chain', 'rle-run': 'set_rle_run', 'rect-run': 'set_rect_run',
     'pcx-run': 'set_pcx_run',
-    'ck-lut16': 'set_ck_lut16', 'ck-copy8': 'set_ck_copy8',
-    'ck-blend16': 'set_ck_blend16', 'ck-shadow16': 'set_ck_shadow16',
     'aoe-fill': 'set_loop_aoe_fill_emit', 'aoe-span': 'set_loop_aoe_span_emit',
     'mmx-fill': 'set_loop_mmx_fill_emit', 'mmx-copy64': 'set_mmx_copy64',
     'mmx-mask-copy': 'set_mmx_mask_copy', 'lut16-stack': 'set_loop_lut16_stack_emit',

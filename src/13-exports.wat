@@ -2580,27 +2580,6 @@
     (global.set $rle_run_enabled (local.get $flag)))
   (func (export "get_rle_run") (result i32) (global.get $rle_run_enabled))
 
-  ;; The colour-keyed LUT16 blit fold ($th_ck_lut16_run). Same decode-time
-  ;; rules as the three above. `matches` counts blocks the grammar accepted,
-  ;; `runs` dispatches of the executor, `px` pixels it actually blitted -- so
-  ;; a run that matched but never executed is visible as matches>0, runs==0.
-  (func (export "set_ck_lut16") (param $flag i32)
-    (global.set $ck_lut16_enabled (local.get $flag)))
-  (func (export "get_ck_lut16") (result i32) (global.get $ck_lut16_enabled))
-  (func (export "get_ck_lut16_matches") (result i32) (global.get $ck_lut16_matches))
-  (func (export "get_ck_lut16_runs") (result i32) (global.get $ck_lut16_runs))
-  (func (export "get_ck_lut16_px") (result i64) (global.get $ck_lut16_px))
-
-  ;; The colour-keyed 8bpp->8bpp copy fold ($th_ck_copy8_run). Same
-  ;; decode-time off switch as the rest, so an A/B needs two code addresses
-  ;; or a cleared block cache.
-  (func (export "set_ck_copy8") (param $flag i32)
-    (global.set $ck_copy8_enabled (local.get $flag)))
-  (func (export "get_ck_copy8") (result i32) (global.get $ck_copy8_enabled))
-  (func (export "get_ck_copy8_matches") (result i32) (global.get $ck_copy8_matches))
-  (func (export "get_ck_copy8_runs") (result i32) (global.get $ck_copy8_runs))
-  (func (export "get_ck_copy8_px") (result i64) (global.get $ck_copy8_px))
-
   ;; The stream-idiom fold of docs/loop-idiom-superops-design.md §20 (SMK_TREE,
   ;; its sibling, is retired: docs/uop-tier-design.md section 18).
   ;; `matches` counts blocks the recognizer accepted, `runs` entries into the
@@ -2623,25 +2602,6 @@
   (func (export "get_implode_cmp_run_matches") (result i32) (global.get $implode_cmp_run_matches))
   (func (export "get_implode_cmp_run_runs") (result i32) (global.get $implode_cmp_run_runs))
   (func (export "get_implode_cmp_run_iters") (result i64) (global.get $implode_cmp_run_iters))
-
-  ;; The alpha-blended RGB565 blit fold ($th_ck_blend16_run). The off switch
-  ;; is decode-time like every other fold's, so an A/B has to run the two arms
-  ;; at different code addresses or clear the block cache between them.
-  (func (export "set_ck_blend16") (param $flag i32)
-    (global.set $ck_blend16_enabled (local.get $flag)))
-  (func (export "get_ck_blend16") (result i32) (global.get $ck_blend16_enabled))
-  (func (export "get_ck_blend16_matches") (result i32) (global.get $ck_blend16_matches))
-  (func (export "get_ck_blend16_runs") (result i32) (global.get $ck_blend16_runs))
-  (func (export "get_ck_blend16_px") (result i64) (global.get $ck_blend16_px))
-
-  ;; The dest-indexed keyed blit fold ($th_ck_shadow16_run). Same decode-time
-  ;; off switch, same A/B caveat.
-  (func (export "set_ck_shadow16") (param $flag i32)
-    (global.set $ck_shadow16_enabled (local.get $flag)))
-  (func (export "get_ck_shadow16") (result i32) (global.get $ck_shadow16_enabled))
-  (func (export "get_ck_shadow16_matches") (result i32) (global.get $ck_shadow16_matches))
-  (func (export "get_ck_shadow16_runs") (result i32) (global.get $ck_shadow16_runs))
-  (func (export "get_ck_shadow16_px") (result i64) (global.get $ck_shadow16_px))
 
   ;; Off switches for the exact folds that had none (07-decoder.wat
   ;; $fold_off_mask; docs/uop-tier-design.md section 18). Decode-time, per
