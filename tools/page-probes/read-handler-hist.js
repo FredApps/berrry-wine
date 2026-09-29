@@ -45,7 +45,7 @@
   // three counters separate them. Guarded per name so an older build, or a
   // build without a given fold, still reports everything else.
   var folds = {};
-  ['rle_run_matches', 'lut_span_matches'].forEach(function (k) {
+  ['rle_run_matches'].forEach(function (k) {
     try { if (e['get_' + k]) folds[k] = String(e['get_' + k]()); } catch (_) {}
   });
   return JSON.stringify({ perf: perf, armSnap: window.__histArmSnap || null,

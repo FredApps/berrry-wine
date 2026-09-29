@@ -297,9 +297,11 @@ function alignPageEnd(p, room) {
     'a fourth inc/dec with no role is declined, not folded');
 
   // Jazz's dominant lighting kernel at 0x474e04 is a straight-line span that
-  // its compiler already unrolled eight pixels wide. H431 mode 2 recognizes
-  // the whole semantic unit: two selected rows of a 64K table, eight in-place
-  // lookups, two packed dword stores, and the exact scratch-register/flag tail.
+  // its compiler already unrolled eight pixels wide: two selected rows of a 64K
+  // table, eight in-place lookups, two packed dword stores, and a scratch
+  // register/flag tail. Its H431 mode 2 fold was retired to the uop tier
+  // (docs/uop-tier-design.md section 18); this stays as an exactness check
+  // with the LUT family on and off, across a destination page boundary.
   const jazzPacked8 = Uint8Array.from([
     0x33, 0xc0,                         // xor eax,eax
     0x33, 0xd2,                         // xor edx,edx
@@ -379,82 +381,11 @@ function alignPageEnd(p, room) {
 
   put(packedDst, packedInput);
   e.set_loop_lut_emit(1);
-  const packedMatches = e.get_lut_span_matches();
-  const packedRuns = e.get_lut_span_runs();
-  const packedBytes = e.get_lut_span_bytes();
   runAt(jazzPacked8, packedSetup);
   assert.deepStrictEqual(get(packedDst, 8), packedBaselineBytes,
-    'H431 packed-eight output agrees across a destination page boundary');
+    'packed-eight output agrees across a destination page boundary');
   assert.deepStrictEqual(packedState(), packedBaselineState,
-    'H431 packed-eight preserves all observable GPR and lazy-flag state');
-  assert.strictEqual(e.get_lut_span_matches(), packedMatches + 1,
-    'packed-eight recognizer matches the authentic Jazz instruction span');
-  assert.strictEqual(e.get_lut_span_runs(), packedRuns + 1,
-    'packed-eight executes through H431 mode 2');
-  assert.strictEqual(Number(e.get_lut_span_bytes() - packedBytes), 8,
-    'packed-eight H431 charges all transformed pixels');
-
-  // Equivalent XOR encoding is a conservative near miss: mode 2 is exact and
-  // ordinary decoding must retain the same result without incrementing H431.
-  const packedNear = Uint8Array.from(jazzPacked8);
-  packedNear[0] = 0x31;
-  put(packedDst, packedInput);
-  const packedNearMatches = e.get_lut_span_matches();
-  const packedNearRuns = e.get_lut_span_runs();
-  runAt(packedNear, packedSetup);
-  assert.deepStrictEqual(get(packedDst, 8), packedBaselineBytes,
-    'packed-eight near miss falls back to equivalent ordinary x86');
-  assert.deepStrictEqual(packedState(), packedBaselineState,
-    'packed-eight near miss preserves ordinary architectural state');
-  assert.strictEqual(e.get_lut_span_matches(), packedNearMatches,
-    'packed-eight near miss is not recognized');
-  assert.strictEqual(e.get_lut_span_runs(), packedNearRuns,
-    'packed-eight near miss never executes H431');
-
-  if (process.env.LUT_PACKED_BENCH) {
-    const iterations = Number(process.env.LUT_PACKED_BENCH_ITERS || 10000);
-    const reps = Number(process.env.LUT_PACKED_BENCH_REPS || 9);
-    const benchDst0 = (rowArena + 0x1000) >>> 0;
-    const benchDst1 = (rowArena + 0x1100) >>> 0;
-    put(benchDst0, packedInput); put(benchDst1, packedInput);
-
-    function setupBench(code, dest) {
-      e.set_esp(stack); dv.setUint32(imageWa(stack), 0, true);
-      e.set_eax(0xaaaaaaaa); e.set_ebx(0xbbbbbbbb); e.set_ecx(0xdead125a);
-      e.set_edx(0xdddddddd); e.set_esi(0xeeeeeeee); e.set_edi(dest);
-      e.set_ebp(packedFrame); e.set_eip(code); e.run(100000);
-    }
-    e.set_loop_lut_emit(0);
-    const packedBaselineCode = install(jazzPacked8);
-    setupBench(packedBaselineCode, benchDst0); // decode/cache ordinary handlers
-    e.set_loop_lut_emit(1);
-    const packedFusedCode = install(jazzPacked8);
-    setupBench(packedFusedCode, benchDst1); // decode/cache H431 mode 2
-
-    function timeArm(code, dest, loops = iterations) {
-      const t0 = process.hrtime.bigint();
-      for (let i = 0; i < loops; i++) setupBench(code, dest);
-      return Number(process.hrtime.bigint() - t0) / 1e6;
-    }
-    timeArm(packedBaselineCode, benchDst0, 100);
-    timeArm(packedFusedCode, benchDst1, 100);
-    const samples = { ordinary: [], h431: [] };
-    for (let rep = 0; rep < reps; rep++) {
-      const order = rep & 1 ? ['h431', 'ordinary'] : ['ordinary', 'h431'];
-      for (const name of order) {
-        const code = name === 'h431' ? packedFusedCode : packedBaselineCode;
-        const dest = name === 'h431' ? benchDst1 : benchDst0;
-        samples[name].push(timeArm(code, dest));
-      }
-    }
-    const median = values => [...values].sort((a, b) => a - b)[values.length >> 1];
-    const ordinaryMs = median(samples.ordinary);
-    const h431Ms = median(samples.h431);
-    console.log(`BENCH Jazz packed-eight LUT: ${iterations} calls, ${reps} alternating reps`);
-    console.log(`  ordinary median ${ordinaryMs.toFixed(2)} ms`);
-    console.log(`  H431     median ${h431Ms.toFixed(2)} ms`);
-    console.log(`  speedup ${(ordinaryMs / h431Ms).toFixed(2)}x`);
-  }
+    'packed-eight preserves all observable GPR and lazy-flag state');
 
   // Heroes III's exact RGB565 form has an 8-bit source and a 16-bit table and
   // destination. H418's wide16/stack-table forms for it were retired to the

@@ -395,11 +395,6 @@ function reportExperiments({ BLOCK_EXEC, BLOCK_EXEC_STATS, BLOCK_CHAIN, TRACE_LO
           'runs', e.get_x87_affine_prepare_runs()
             + e.get_x87_affine_finish_runs());
       }
-      if (e.get_lut_span_runs) {
-        log(`loopmatch: ${label} fixed LUT spans`,
-          e.get_lut_span_matches(), 'runs', e.get_lut_span_runs(),
-          'bytes', String(e.get_lut_span_bytes()));
-      }
       if (e.get_loop_aoe_fill_runs) {
         log(`loopmatch: ${label} AoE grid fills`,
           e.get_loop_aoe_fill_matches(), 'runs', e.get_loop_aoe_fill_runs(),

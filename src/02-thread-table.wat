@@ -493,7 +493,7 @@
     $th_retired_fold          ;; 428: retired (was CASE_CHAIN, cmp al,imm8 / jz switch ladder; uop runs it)
     $th_rle_run               ;; 429: a whole run-length sprite blit row
     $th_load_far_ptr32        ;; 430: LES/LDS r32, m16:32 in a flat task
-    $th_lut_span              ;; 431: fixed unrolled LUT/blend span
+    $th_retired_fold          ;; 431: retired (was LUT_SPAN, fixed unrolled LUT/blend span; uop runs it)
     ;; -- SSE base (src/06c-mmx.wat) --
     $th_sse_rr                ;; 432: xmm,xmm (op=sub<<8|dst<<4|src)
     $th_sse_rm                ;; 433: xmm,m128 (address word follows)

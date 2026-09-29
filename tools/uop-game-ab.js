@@ -200,8 +200,9 @@ const GAMES = {
   },
   jazz2: {
     // Jazz Jackrabbit 2 shareware, left alone: title, then its animated
-    // Darn Ratz attraction (docs/re-notes/jazz2-demo.md) -- the lighting
-    // kernel (H431 mode 2) and the masked MMX row copy (H419) draw it.
+    // Darn Ratz attraction (docs/re-notes/jazz2-demo.md) -- its lighting
+    // kernel and masked MMX row copy had folds (H431 mode 2, H419), both
+    // retired to the uop tier (docs/uop-tier-design.md section 18).
     app: 'jazz2_demo', split: 400,
     args: ['--screen=800x600', '--batch-size=100000', '--max-batches=900', '--stuck-after=1000000'],
     input: [],

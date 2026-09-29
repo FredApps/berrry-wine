@@ -2447,12 +2447,6 @@
     (global.get $loop_xlat_stosb_runs))
   (func (export "get_loop_xlat_stosb_bytes") (result i64)
     (global.get $loop_xlat_stosb_bytes))
-  (func (export "get_lut_span_matches") (result i32)
-    (global.get $lut_span_matches))
-  (func (export "get_lut_span_runs") (result i32)
-    (global.get $lut_span_runs))
-  (func (export "get_lut_span_bytes") (result i64)
-    (global.get $lut_span_bytes))
   ;; Compatibility switch: control both families together. Prefer the family
   ;; switches for an A/B because COPY_RUN remains disabled by default.
   (func (export "set_loop_emit") (param $flag i32)

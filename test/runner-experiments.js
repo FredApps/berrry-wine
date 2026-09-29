@@ -239,7 +239,6 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     'copy32-counted': 'set_loop_copy32_counted_emit',
   };
   const FOLD_BITS = {
-    'lut-span': 0x04,
     'colorkey8': 0x08, 'xlat-stosb': 0x80,
   };
   const NO_FOLDS = (getArg('no-fold', '') || '').split(',').filter(Boolean);
