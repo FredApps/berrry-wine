@@ -228,6 +228,14 @@ Do not equate broker/Atomics waits with x86 compute or assume that moving all
 x87 stack slots into locals wins: `docs/x87-realistic-region-bench.md` already
 records the difference between per-op dispatch and profitable longer regions.
 
+Follow-up guest-PC/census profiling is complete in
+[nfs3-emulation-profile.md](../nfs3-emulation-profile.md): three windows each
+on Glide/D3D consistently identify the integer loop at `0x4c5f28..0x4c5f41`
+(11–14% of residual block entries), interrupted by unsupported MOVSD pairs.
+General MOVSD micro-op lowering is the first candidate. The repeated four-FST
+store loop at `0x4dec44` contributes another 2.5–2.9%; memory guard failures
+were zero. These are entry shares, not predicted time savings.
+
 The optional `tools/nfs-renderer-bench.js --profile` census identified every
 sampled software fallback as primitive 3 (line strip), vertex type 3 (TL),
 count 2: 2,496 calls over 104 frames. Rain is the likely source. Two full-DIB
