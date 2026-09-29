@@ -352,6 +352,42 @@
     (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
   )
 
+  ;; strtok(s, delim) — msvcrt keeps one continuation pointer; s == NULL
+  ;; resumes from it. Leading delimiters are skipped, the token's terminating
+  ;; delimiter is overwritten with NUL, and the next call resumes past it.
+  ;; Byte-wise through $gl8/$gs8, since the string can cross a guest page.
+  (global $crt_strtok_next (mut i32) (i32.const 0))
+  (func $handle_strtok (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
+    (local $s i32) (local $set i32) (local $c i32) (local $tok i32)
+    (local.set $s (select (local.get $arg0) (global.get $crt_strtok_next) (i32.ne (local.get $arg0) (i32.const 0))))
+    (local.set $set (call $g2w (local.get $arg1)))
+    (i32.store offset=0 (global.get $reg_base) (i32.const 0))
+    (block $done
+      (br_if $done (i32.eqz (local.get $s)))
+      (block $start (loop $skip
+        (local.set $c (call $gl8 (local.get $s)))
+        (br_if $start (i32.eqz (local.get $c)))
+        (br_if $start (i32.eqz (call $crt_char_in_set (local.get $set) (local.get $c))))
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $skip)))
+      (if (i32.eqz (local.get $c))
+        (then (global.set $crt_strtok_next (local.get $s)) (br $done)))
+      (local.set $tok (local.get $s))
+      (block $end (loop $scan
+        (local.set $c (call $gl8 (local.get $s)))
+        (br_if $end (i32.eqz (local.get $c)))
+        (br_if $end (call $crt_char_in_set (local.get $set) (local.get $c)))
+        (local.set $s (i32.add (local.get $s) (i32.const 1)))
+        (br $scan)))
+      (if (local.get $c)
+        (then
+          (call $gs8 (local.get $s) (i32.const 0))
+          (local.set $s (i32.add (local.get $s) (i32.const 1)))))
+      (global.set $crt_strtok_next (local.get $s))
+      (i32.store offset=0 (global.get $reg_base) (local.get $tok)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)))
+  )
+
   ;; strpbrk(s, accept) — pointer to the first accept character in s, or NULL.
   (func $handle_strpbrk (param $arg0 i32) (param $arg1 i32) (param $arg2 i32) (param $arg3 i32) (param $arg4 i32) (param $name_ptr i32)
     (local $wa i32) (local $set i32) (local $c i32)

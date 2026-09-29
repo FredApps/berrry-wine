@@ -31794,5 +31794,12 @@
     "nargs": 2,
     "convention": "stdcall",
     "hash": 2022757007
+  },
+  {
+    "id": 3740,
+    "name": "strtok",
+    "nargs": 2,
+    "convention": "cdecl",
+    "hash": 1020058646
   }
 ]
