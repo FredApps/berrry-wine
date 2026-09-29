@@ -540,7 +540,7 @@
     (memory.fill (load.field.memarg GdiBitmap bits (local.get $record)) (i32.const 0xFF)
       (i32.mul (load.field.memarg GdiBitmap stride (local.get $record))
         (load.field.memarg GdiBitmap height (local.get $record))))
-    (drop (call $host_gdi_surface_upload (local.get $bitmap)
+    (drop (call $gdi_write_surface_upload (local.get $bitmap)
       (i32.const 0) (i32.const 0) (i32.const 640) (i32.const 480)))
     (local.set $dc (call $gdi_dc_alloc))
     (if (i32.eqz (local.get $dc))

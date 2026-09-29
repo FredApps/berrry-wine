@@ -57,6 +57,19 @@ otherwise triggers the default same-EIP detector after only 11 batches.
 node test/run.js --app=nfs3_demo --threads --real-ticks --no-build --quiet-api --quiet-blocks --stuck-after=100000 --max-batches=100000 --max-seconds=40 --batch-size=10000 --png=/tmp/nfs3.png
 ```
 
+## Texture cache page tracking
+
+The WebGL cache now watches only texture/palette/render-target backing pages.
+Guest aliases and Worker instances share atomic generations; CPU, bulk,
+native drawing and host writes notify them. An unchanged texture checks page
+versions instead of scanning pixel bytes. `test-page-watch.js` covers missed
+notifications, independent consumers, native rendering, buffer swaps and
+fallback behavior. Real NFS III gameplay passed a pixel-shadow audit with
+zero misses through 554k triangles; normal mode made zero texture byte
+comparisons over 357 measured flips. See
+[dirty-tracking measurements](../d3dim-dirty-tracking-perf.md) for artifacts
+and the machine-load limits on the observed FPS.
+
 ## Compatibility fixes
 
 The browser worker loop must finish pending thread instantiation before

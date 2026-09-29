@@ -513,6 +513,10 @@
   (func $code_write_is_code (param $ga i32) (result i32)
     (call $code_page_test (local.get $ga)))
 
+  (func $store_page_needs_barrier (param $ga i32) (result i32)
+    (i32.or (call $code_write_is_code (local.get $ga))
+      (call $page_watch_is_watched (call $g2w (local.get $ga)))))
+
   ;; A write of $len bytes starting at $ga. The length is not decoration: with
   ;; per-offset invalidation (docs/page-compile-design.md section 5) the retire
   ;; walk needs the real extent, because it retires the blocks that cover the
@@ -521,6 +525,10 @@
   ;; two endpoints named every page in between as long as there were at most
   ;; two -- would now leave every block in the middle live over rewritten bytes.
   (func $invalidate_code_write (param $ga i32) (param $len i32)
+    ;; Bulk writers already use this boundary before their contiguous write.
+    ;; As with code invalidation, resource ownership must exclude a concurrent
+    ;; reader until that operation finishes; this notification is not a fence.
+    (call $page_watch_write_guest (local.get $ga) (local.get $len))
     ;; Invalidate decoded blocks only when writes can affect already-decoded
     ;; executable bytes. RCT mutates large image-data buffers during startup;
     ;; treating every image write as self-modifying code makes each byte/word
@@ -572,11 +580,13 @@
                                   (i32.shr_u (local.get $ga) (i32.const 28)))
                          (i32.const 7))))
           (then (call $code_write_hit (local.get $ga) (i32.const 4))))
-        (i32.store (local.get $wa) (local.get $v)) (return)))
+        (i32.store (local.get $wa) (local.get $v))
+        (call $page_watch_write_one (local.get $wa)) (return)))
     (call $invalidate_code_write (local.get $ga) (i32.const 4))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 3))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 3)))
-      (then (i32.store (local.get $wa) (local.get $v)) (return)))
+      (then (i32.store (local.get $wa) (local.get $v))
+        (call $page_watch_write (local.get $wa) (i32.const 4)) (return)))
     (i32.store8 (local.get $wa) (local.get $v))
     (i32.store8
       (call $g2w (i32.add (local.get $ga) (i32.const 1)))
@@ -584,7 +594,9 @@
     (i32.store8
       (call $g2w (i32.add (local.get $ga) (i32.const 2)))
       (i32.shr_u (local.get $v) (i32.const 16)))
-    (i32.store8 (local.get $end_wa) (i32.shr_u (local.get $v) (i32.const 24))))
+    (i32.store8 (local.get $end_wa) (i32.shr_u (local.get $v) (i32.const 24)))
+    (call $page_watch_write_one (local.get $wa))
+    (call $page_watch_write_one (local.get $end_wa)))
   ;; Common 64-bit guest store for x87/MMX. Translate once for the ordinary
   ;; same-page case; sparse guest neighbors need not be WASM neighbors.
   (func $gs64 (param $ga i32) (param $v i64)
@@ -602,11 +614,13 @@
                                   (i32.shr_u (local.get $ga) (i32.const 28)))
                          (i32.const 7))))
           (then (call $code_write_hit (local.get $ga) (i32.const 8))))
-        (i64.store (local.get $wa) (local.get $v)) (return)))
+        (i64.store (local.get $wa) (local.get $v))
+        (call $page_watch_write_one (local.get $wa)) (return)))
     (call $invalidate_code_write (local.get $ga) (i32.const 8))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 7))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 7)))
-      (then (i64.store (local.get $wa) (local.get $v)) (return)))
+      (then (i64.store (local.get $wa) (local.get $v))
+        (call $page_watch_write (local.get $wa) (i32.const 8)) (return)))
     (call $gs32 (local.get $ga) (i32.wrap_i64 (local.get $v)))
     (call $gs32 (i32.add (local.get $ga) (i32.const 4))
       (i32.wrap_i64 (i64.shr_u (local.get $v) (i64.const 32)))))
@@ -625,13 +639,17 @@
                                   (i32.shr_u (local.get $ga) (i32.const 28)))
                          (i32.const 7))))
           (then (call $code_write_hit (local.get $ga) (i32.const 2))))
-        (i32.store16 (local.get $wa) (local.get $v)) (return)))
+        (i32.store16 (local.get $wa) (local.get $v))
+        (call $page_watch_write_one (local.get $wa)) (return)))
     (call $invalidate_code_write (local.get $ga) (i32.const 2))
     (local.set $end_wa (call $g2w (i32.add (local.get $ga) (i32.const 1))))
     (if (i32.eq (local.get $end_wa) (i32.add (local.get $wa) (i32.const 1)))
-      (then (i32.store16 (local.get $wa) (local.get $v)) (return)))
+      (then (i32.store16 (local.get $wa) (local.get $v))
+        (call $page_watch_write (local.get $wa) (i32.const 2)) (return)))
     (i32.store8 (local.get $wa) (local.get $v))
-    (i32.store8 (local.get $end_wa) (i32.shr_u (local.get $v) (i32.const 8))))
+    (i32.store8 (local.get $end_wa) (i32.shr_u (local.get $v) (i32.const 8)))
+    (call $page_watch_write_one (local.get $wa))
+    (call $page_watch_write_one (local.get $end_wa)))
   (func $gs8 (param $ga i32) (param $v i32)
     (local $wa i32) (local $g2w_wa i32)
     (local.set $wa (g2w-fast (local.get $ga)))
@@ -645,7 +663,8 @@
                                   (i32.shr_u (local.get $ga) (i32.const 28)))
                          (i32.const 7))))
       (then (call $code_write_hit (local.get $ga) (i32.const 1))))
-    (i32.store8 (local.get $wa) (local.get $v)))
+    (i32.store8 (local.get $wa) (local.get $v))
+    (call $page_watch_write_one (local.get $wa)))
 
   ;; ============================================================
   ;; LAZY FLAGS

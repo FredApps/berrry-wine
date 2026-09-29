@@ -768,7 +768,7 @@
       (then
         (memory.copy (load.field.memarg GdiBitmap bits (local.get $record))
           (local.get $buffer) (local.get $copied))
-        (drop (call $host_gdi_surface_upload (load.field.memarg GdiBitmap self_handle (local.get $record))
+        (drop (call $gdi_write_surface_upload (load.field.memarg GdiBitmap self_handle (local.get $record))
           (i32.const 0) (i32.const 0) (load.field.memarg GdiBitmap width (local.get $record))
           (load.field.memarg GdiBitmap height (local.get $record)))))
       (else (memory.copy (local.get $buffer)
@@ -856,7 +856,7 @@
         (i32.sub (local.get $height) (i32.const 5)) (local.get $color))
       (local.set $i (i32.add (local.get $i) (i32.const 1)))
       (br $icons)))
-    (drop (call $host_gdi_surface_upload (local.get $handle) (i32.const 0)
+    (drop (call $gdi_write_surface_upload (local.get $handle) (i32.const 0)
       (i32.const 0) (local.get $width) (local.get $height)))
     (local.get $handle))
 

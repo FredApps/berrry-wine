@@ -6107,6 +6107,7 @@
         (local.set $cost (i32.add (local.get $cost) (i32.const 4)))
         (i32.store offset=24 (local.get $esp_wa) (local.get $x0))
         (i32.store offset=20 (local.get $esp_wa) (local.get $x1))
+        (call $page_watch_write (i32.add (local.get $esp_wa) (i32.const 20)) (i32.const 8))
         (local.set $swap (local.get $x0))
         (local.set $x0 (local.get $x1))
         (local.set $x1 (local.get $swap))))
@@ -6153,6 +6154,7 @@
     (if (i32.lt_s (local.get $x0) (local.get $min_x))
       (then
         (i32.store offset=20 (local.get $esp_wa) (local.get $min_x))
+        (call $page_watch_write (i32.add (local.get $esp_wa) (i32.const 20)) (i32.const 4))
         (if (i32.eq (local.get $op) (i32.const 2))
           (then
             (local.set $cost (i32.add (local.get $cost) (i32.const 2)))
@@ -6167,6 +6169,7 @@
         (local.set $cost (i32.add (local.get $cost) (i32.const 2)))
         (local.set $x1 (local.get $max_x))
         (i32.store offset=24 (local.get $esp_wa) (local.get $x1))
+        (call $page_watch_write (i32.add (local.get $esp_wa) (i32.const 24)) (i32.const 4))
         (i32.store offset=20 (global.get $reg_base) (local.get $x1))))
 
     (local.set $row_base (i32.load offset=0x3c (local.get $this_wa)))

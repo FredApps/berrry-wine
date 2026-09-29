@@ -3194,6 +3194,7 @@
   ;; Storm keeps its generated code and its file buffers in the same heap
   ;; region, so that is a real collision, not a theoretical one.
   (func (export "invalidate_code_range") (param $ga i32) (param $len i32)
+    (call $page_watch_write_guest (local.get $ga) (local.get $len))
     (call $invalidate_code_range (local.get $ga) (local.get $len)))
 
   ;; Write guest memory (guest addr)

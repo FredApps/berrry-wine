@@ -264,7 +264,7 @@
         (local.set $end (i32.add (local.get $lo) (i32.sub (local.get $len) (i32.const 1))))
         (local.set $p (local.get $lo))
         (block $ok (loop $pages
-          (if (call $code_write_is_code (local.get $p)) (then (return (i32.const 0))))
+          (if (call $store_page_needs_barrier (local.get $p)) (then (return (i32.const 0))))
           (br_if $ok (i32.eq (i32.and (local.get $p) (i32.const 0xFFFFF000))
                              (i32.and (local.get $end) (i32.const 0xFFFFF000))))
           (local.set $p (i32.add (i32.and (local.get $p) (i32.const 0xFFFFF000)) (i32.const 0x1000)))
@@ -370,6 +370,8 @@
                 (local.get $wlo))
       (then (return (i32.const 0))))
     (if (i32.eqz (local.get $rw)) (then (return (i32.const 1))))
+    (if (call $page_watch_any (local.get $wlo) (i32.sub (local.get $bhi) (local.get $blo)))
+      (then (return (i32.const 0))))
     (local.set $g (local.get $blo))
     (loop $l
       (if (i32.load16_u (i32.add (global.get $CODE_PAGE_BITMAP)
@@ -398,7 +400,7 @@
             (then (global.set $uop_rg_nonadj (i32.add (global.get $uop_rg_nonadj) (i32.const 1)))))
           (br $up)))
       (br_if $up (i32.and (i32.ne (local.get $rw) (i32.const 0))
-                          (call $code_write_is_code (local.get $hi))))
+                          (call $store_page_needs_barrier (local.get $hi))))
       (local.set $hi (i32.add (local.get $hi) (i32.const 0x1000)))
       (br $grow_up)))
     (block $down (loop $grow_down
@@ -411,7 +413,7 @@
             (then (global.set $uop_rg_nonadj (i32.add (global.get $uop_rg_nonadj) (i32.const 1)))))
           (br $down)))
       (br_if $down (i32.and (i32.ne (local.get $rw) (i32.const 0))
-                            (call $code_write_is_code (i32.sub (local.get $lo) (i32.const 0x1000)))))
+                            (call $store_page_needs_barrier (i32.sub (local.get $lo) (i32.const 0x1000)))))
       (local.set $lo (i32.sub (local.get $lo) (i32.const 0x1000)))
       (br $grow_down)))
     (global.set $uop_rg_lo (local.get $lo))

@@ -129,9 +129,11 @@
       (local.set $i (i32.add (local.get $i) (i32.const 1))) (br $l)))
     (local.get $i))
   (func $memcpy (param $dst i32) (param $src i32) (param $len i32)
-    (if (local.get $len) (then (memory.copy (local.get $dst) (local.get $src) (local.get $len)))))
+    (if (local.get $len) (then (memory.copy (local.get $dst) (local.get $src) (local.get $len))
+      (call $page_watch_write (local.get $dst) (local.get $len)))))
   (func $zero_memory (param $ptr i32) (param $len i32)
-    (if (local.get $len) (then (memory.fill (local.get $ptr) (i32.const 0) (local.get $len)))))
+    (if (local.get $len) (then (memory.fill (local.get $ptr) (i32.const 0) (local.get $len))
+      (call $page_watch_write (local.get $ptr) (local.get $len)))))
 
   ;; Page-aligned DIB allocation. The arena is intentionally separate from
   ;; HeapAlloc/VirtualAlloc so every guest store needs only one range check to
@@ -181,6 +183,7 @@
       (i32.load16_u
         (i32.add (global.get $DIB_PAGE_RUNS) (i32.shl (local.get $page) (i32.const 1)))))
     (if (i32.eqz (local.get $pages)) (then (return)))
+    (call $page_watch_write (local.get $wa) (i32.shl (local.get $pages) (i32.const 12)))
     (i32.store16
       (i32.add (global.get $DIB_PAGE_RUNS) (i32.shl (local.get $page) (i32.const 1)))
       (i32.const 0))
@@ -2586,6 +2589,7 @@
         (local.set $size (local.get $raw))))
     (if (call $heap_block_bad (local.get $block) (local.get $size))
       (then (return (i32.const 0))))
+    (call $page_watch_write_guest (local.get $block) (local.get $size))
     ;; Linking a block that is already on the list is what makes the list
     ;; cyclic: free(B) with head A, then free(A) again, and A->B->A. Real
     ;; programs do it -- WordPad's shutdown does -- so refuse the second link
@@ -8531,7 +8535,8 @@
 
   (func $guest_span_writeback (param $ga i32) (param $wa i32) (param $len i32)
     (local $i i32)
-    (if (i32.eqz (call $guest_span_is_copy (local.get $wa))) (then (return)))
+    (if (i32.eqz (call $guest_span_is_copy (local.get $wa))) (then
+      (call $page_watch_write (local.get $wa) (local.get $len)) (return)))
     (block $done (loop $copy
       (br_if $done (i32.ge_u (local.get $i) (local.get $len)))
       (call $gs8 (i32.add (local.get $ga) (local.get $i))

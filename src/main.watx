@@ -31,6 +31,7 @@
 (include "01b-api-hashes.generated.wat")
 (include "02-thread-table.wat")
 (include "03-registers.wat")
+(include "03a-page-watch.wat")
 (include "04-cache.wat")
 (include "05-alu.wat")
 (include "05b-string-ops.wat")

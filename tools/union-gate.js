@@ -98,6 +98,7 @@ const UNIONS = {
     // helpers), or the producer that made the handle. Functions that touch more
     // than one variant are listed in bySite below instead.
     byFunction: {
+      '$gdi_write_surface_upload': 'GdiBitmap', // gdi_bitmap_record_valid guards the record
       // --- bitmap (type 3) ---
       '$gdi_native_get_object_w':      'GdiBitmap',  // 01-header:471 `+4 == 3`
       '$gdi_native_get_object_h':      'GdiBitmap',  // 01-header:478 `+4 == 3`

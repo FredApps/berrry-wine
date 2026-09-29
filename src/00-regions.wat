@@ -430,6 +430,8 @@
     (owner "09a2-handlers-console.wat:$console_buffers_init"))
   (region.declare $CONSOLE_INPUT (size 0x00001000) (align 0x00001000)
     (owner "09a2-handlers-console.wat:$console_input_count"))
+  (region.declare $PAGE_WATCH_ROOT (size 0x00001000) (align 0x00001000)
+    (owner "03a-page-watch.wat:$page_watch_acquire"))
   (region.declare $DIB_PAGE_USED (size 0x00004000) (align 0x00001000)
     (owner "10-helpers.wat:$dib_alloc"))
   (region.declare $DIB_PAGE_RUNS (size 0x00008000) (align 0x00001000)
