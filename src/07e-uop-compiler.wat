@@ -395,6 +395,11 @@
     (local.set $O0 (i32.add (local.get $R) (i32.const 56)))
     (local.set $O1 (i32.add (local.get $R) (i32.const 80)))
     (local.set $O2 (i32.add (local.get $R) (i32.const 104)))
+    ;; A threaded block-start fold that charges the clock by its own unit,
+    ;; not per x86 branch: stop in front of it and let threaded code run it,
+    ;; so both tiers stop on the same instruction ($smk_tree_walk_at).
+    (if (call $smk_tree_walk_at (local.get $addr) (i32.const 0))
+      (then (call $uc_unsup (local.get $R)) (return)))
     (local.set $p (local.get $addr))
     (local.set $v (i32.const 32))
     (local.set $b (call $uc_rd8 (local.get $p)))
