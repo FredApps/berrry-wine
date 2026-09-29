@@ -17,10 +17,10 @@ const { bootRenderHarness } = require('./render-helper');
 
 const STACK = 0x00300000;
 const FS = 0x00310000;
-const A = 0x002ff000;       // innermost (top) registration
-const B = 0x002ff100;
-const T = 0x002ff200;       // target
-const OUTER = 0x002ff300;
+const A = 0x00300100;       // innermost (top) registration, above the raiser like a caller frame
+const B = 0x00300200;
+const T = 0x00300300;       // target
+const OUTER = 0x00300400;
 const HA = 0x00401000, HB = 0x00402000, HT = 0x00403000;
 const RET = 0x00405555;
 const REC = 0x00320000;
@@ -49,6 +49,33 @@ const extraWat = String.raw`
     (global.set $steps (i32.const 77))
     (call $handle_RtlUnwind (local.get $target) (i32.const 0x00409999)
       (local.get $rec) (local.get $retval) (i32.const 0) (i32.const 0)))
+  ;; RtlUnwind called from a handler running on the stack at $esp.
+  (func (export "t_call_at") (param $esp i32) (param $target i32) (param $rec i32) (param $retval i32)
+    (i32.store offset=16 (global.get $reg_base) (local.get $esp))
+    (call $gs32 (local.get $esp) (i32.const ${RET}))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 4)) (local.get $target))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 12)) (local.get $rec))
+    (call $gs32 (i32.add (local.get $esp) (i32.const 16)) (local.get $retval))
+    (call $handle_RtlUnwind (local.get $target) (i32.const 0)
+      (local.get $rec) (local.get $retval) (i32.const 0) (i32.const 0)))
+  ;; Guest code calling handler(rec, frame, 0, dc) where handler is a thunk.
+  (func (export "t_call_handler") (param $h i32) (param $rec i32) (param $frame i32) (param $dc i32)
+    (i32.store offset=16 (global.get $reg_base) (i32.const ${STACK - 0x800}))
+    (call $gs32 (i32.const ${STACK - 0x800}) (i32.const ${RET}))
+    (call $gs32 (i32.const ${STACK - 0x800 + 4}) (local.get $rec))
+    (call $gs32 (i32.const ${STACK - 0x800 + 8}) (local.get $frame))
+    (call $gs32 (i32.const ${STACK - 0x800 + 12}) (i32.const 0))
+    (call $gs32 (i32.const ${STACK - 0x800 + 16}) (local.get $dc))
+    (global.set $steps (i32.const 77))
+    (call $win32_dispatch
+      (i32.div_u (i32.sub (local.get $h) (global.get $thunk_guest_base)) (i32.const 8))))
+  ;; RaiseException's dispatch, entered with ESP at the raiser's stack.
+  (func (export "t_raise") (param $code i32)
+    (if (i32.eqz (global.get $delphi_seh_thunk))
+      (then (global.set $delphi_seh_thunk (call $com_cont_thunk (i32.const 0xCACA000E)))))
+    (i32.store offset=16 (global.get $reg_base) (i32.const ${STACK}))
+    (call $raise_delphi_exception (local.get $code) (i32.const 0) (i32.const 0) (i32.const 0)))
+  (func (export "t_rec") (result i32) (global.get $delphi_exception_record))
   ;; The running handler executes RET with a disposition in EAX; the return
   ;; address it pops is the continuation thunk, which the thread then enters.
   (func (export "t_handler_returns") (param $disp i32) (result i32)
@@ -158,6 +185,59 @@ const extraWat = String.raw`
   wat.t_handler_returns(1);
   assert.strictEqual(u(wat.t_r(FS)), OUTER);
   assert.strictEqual(u(wat.t_eip()), RET);
+
+  // --- the dispatcher's own registration node ----------------------------
+  // msvcr71 _UnwindNestedFrames: saved = FS:[0]; RtlUnwind(catching frame);
+  // saved->next = FS:[0]; FS:[0] = saved. With the catching frame on top and
+  // no dispatcher node, saved IS that frame and the relink points it at itself.
+  chain();
+  wat.t_raise(0xE06D7363);
+  f = frame();
+  assert.strictEqual(u(wat.t_eip()), HA, 'the search calls the top frame\'s handler');
+  assert.strictEqual(f.est, A);
+  const node = u(wat.t_r(FS));
+  assert.notStrictEqual(node, A, 'a dispatcher node heads the chain while the handler runs');
+  assert.strictEqual(u(wat.t_r(node)), A, 'the node links to the chain head');
+  assert.ok(node > f.esp && node < STACK, 'the node sits between the handler frame and the raiser');
+
+  // Handler A returns ExceptionContinueSearch: the node goes, B is offered it.
+  wat.t_handler_returns(1);
+  assert.strictEqual(u(wat.t_eip()), HB, 'continue search reaches B');
+  f = frame();
+  const node2 = u(wat.t_r(FS));
+  assert.strictEqual(u(wat.t_r(node2)), A, 'a fresh node for B over the untouched chain');
+
+  // B catches: _UnwindNestedFrames(B) as msvcr71 writes it.
+  const saved = u(wat.t_r(FS));
+  const handlerEsp = f.esp;
+  wat.t_set_reg(4, handlerEsp - 64);
+  wat.t_call_at(handlerEsp - 64, B, u(wat.t_rec()), 0);
+  assert.strictEqual(u(wat.t_eip()), HA, 'A is unwound');
+  wat.t_handler_returns(1);
+  assert.strictEqual(u(wat.t_eip()), RET, 'the node is unlinked without a call, B stays');
+  assert.strictEqual(u(wat.t_r(FS)), B);
+  wat.t_w(saved, u(wat.t_r(FS)));
+  wat.t_w(FS, saved);
+  assert.strictEqual(u(wat.t_r(B)), T, 'B keeps its own next link: no self-cycle');
+  assert.strictEqual(u(wat.t_r(saved)), B, 'the node is relinked over B, as on NT');
+
+  // A later raise (the catch block rethrowing) skips the stale node.
+  wat.t_raise(0xE06D7363);
+  f = frame();
+  assert.strictEqual(u(wat.t_eip()), HB, 'the old node is skipped, not called');
+  assert.strictEqual(f.est, B);
+
+  // The node's handler, called by guest code: nested exception / continue search.
+  const nodeThunk = u(wat.t_r(saved + 4));
+  wat.t_w(REC + 4, 0);
+  const dcAddr = REC + 0x40;
+  wat.t_call_handler(nodeThunk, REC, saved, dcAddr);
+  assert.strictEqual(u(wat.t_reg(0)), 2, 'search phase: ExceptionNestedException');
+  assert.strictEqual(u(wat.t_r(dcAddr)), B, 'names the frame whose handler was running');
+  assert.strictEqual(u(wat.t_eip()), RET, 'and returns');
+  wat.t_w(REC + 4, 2);
+  wat.t_call_handler(nodeThunk, REC, saved, dcAddr);
+  assert.strictEqual(u(wat.t_reg(0)), 1, 'unwinding: ExceptionContinueSearch');
 
   assert.deepStrictEqual(exits, []);
   console.log('PASS  RtlUnwind calls intermediate handlers with EXCEPTION_UNWINDING and keeps the target');

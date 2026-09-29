@@ -58,11 +58,21 @@
       (br_if $unhandled (i32.eq (global.get $delphi_seh_rec) (i32.const 0xFFFFFFFF)))
       (br_if $unhandled (i32.eqz (global.get $delphi_seh_rec)))
       (local.set $handler (call $gl32 (i32.add (global.get $delphi_seh_rec) (i32.const 4))))
+      ;; An earlier dispatch's node (this raise is nested in a handler, e.g.
+      ;; a catch block rethrowing): "nested exception", keep searching.
+      (if (i32.and (i32.ne (local.get $handler) (i32.const 0))
+                   (i32.eq (local.get $handler) (global.get $seh_node_thunk)))
+        (then (local.set $handler (i32.const 0))))
       (if (local.get $handler)
         (then
           (global.set $delphi_seh_head_before
             (call $gl32 (global.get $fs_base)))
-          ;; Call handler(ExceptionRecord, EstablisherFrame, ContextRecord, DispatcherContext).
+          ;; Call handler(ExceptionRecord, EstablisherFrame, ContextRecord,
+          ;; DispatcherContext) under a dispatcher node: the node takes the
+          ;; 12 bytes above the argument frame, and 0xCACA000E pops both.
+          (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 12)))
+          (call $seh_push_dispatch_node
+            (i32.load offset=16 (global.get $reg_base)) (global.get $delphi_seh_rec))
           (i32.store offset=16 (global.get $reg_base) (i32.sub (i32.load offset=16 (global.get $reg_base)) (i32.const 20)))
           (call $gs32 (i32.load offset=16 (global.get $reg_base)) (global.get $delphi_seh_thunk))
           (call $gs32 (i32.add (i32.load offset=16 (global.get $reg_base)) (i32.const 4)) (global.get $delphi_exception_record))
@@ -190,7 +200,9 @@
     (call $gs32 (i32.add (local.get $ctx) (i32.const 0xc0)) (call $build_eflags))
     (call $gs32 (i32.add (local.get $ctx) (i32.const 0xc4)) (local.get $esp))
     (call $gs32 (i32.add (local.get $ctx) (i32.const 0xc8)) (i32.const 0x23))   ;; SegSs
-    (local.set $sp (i32.sub (local.get $rec) (i32.const 20)))
+    ;; Dispatcher node in the 12 bytes above the argument frame.
+    (call $seh_push_dispatch_node (i32.sub (local.get $rec) (i32.const 12)) (local.get $seh_rec))
+    (local.set $sp (i32.sub (local.get $rec) (i32.const 32)))
     (call $gs32 (local.get $sp) (global.get $seh_raw_thunk))
     (call $gs32 (i32.add (local.get $sp) (i32.const 4)) (local.get $rec))
     (call $gs32 (i32.add (local.get $sp) (i32.const 8)) (local.get $seh_rec))
@@ -226,6 +238,7 @@
     (local.set $frame (call $gl32 (i32.add (local.get $esp) (i32.const 4))))
     (local.set $ctx (call $gl32 (i32.add (local.get $esp) (i32.const 8))))
     (local.set $disp (i32.load offset=0 (global.get $reg_base)))
+    (call $seh_pop_dispatch_node (i32.add (local.get $esp) (i32.const 16)))
     (call $seh_load_context (local.get $ctx))
     (if (i32.eqz (local.get $disp)) (then (return)))
     (if (i32.eq (local.get $disp) (i32.const 1))
@@ -235,6 +248,66 @@
         (global.set $fault_raising (i32.const 0))
         (return)))
     (call $host_exit (i32.or (i32.const 0xDE00) (call $gl32 (local.get $rec)))))
+
+  ;; ============================================================
+  ;; Dispatcher registration node
+  ;; ============================================================
+  ;; NT's RtlpExecuteHandlerForException links a registration of its own on
+  ;; top of FS:[0] for as long as a frame handler runs (next = the chain head,
+  ;; handler = RtlpExceptionHandler, +8 = the establisher frame) and pops it
+  ;; when the handler returns. Runtimes depend on it being there: msvcr71's
+  ;; _UnwindNestedFrames saves FS:[0], calls RtlUnwind(catching frame), then
+  ;; does saved->next = FS:[0]; FS:[0] = saved. With no node the saved head
+  ;; is the catching frame itself whenever it was on top, and that relink
+  ;; makes it point at itself -- the next exception's walk then never ends
+  ;; (UT2004's guard/unguard rethrow during its map load).
+  ;;
+  ;; Our walks skip a node rather than call it, since its only answers are
+  ;; "continue search" while unwinding and "nested exception" (keep
+  ;; searching past it) otherwise. The handler address is still a real
+  ;; 0xCACA003A thunk that answers the same way, for guest code that walks
+  ;; the chain and calls handlers itself.
+  (global $seh_node_thunk (mut i32) (i32.const 0))
+
+  (func $seh_push_dispatch_node (param $node i32) (param $frame i32)
+    (if (i32.eqz (global.get $seh_node_thunk))
+      (then (global.set $seh_node_thunk (call $com_cont_thunk (i32.const 0xCACA003A)))))
+    (call $gs32 (local.get $node) (call $gl32 (global.get $fs_base)))
+    (call $gs32 (i32.add (local.get $node) (i32.const 4)) (global.get $seh_node_thunk))
+    (call $gs32 (i32.add (local.get $node) (i32.const 8)) (local.get $frame))
+    (call $gs32 (global.get $fs_base) (local.get $node)))
+
+  ;; The handler returned: drop the node if it is still the head. A handler
+  ;; that unwound past it (RtlUnwind unlinks it like any other frame) has
+  ;; already taken it off.
+  (func $seh_pop_dispatch_node (param $node i32)
+    (if (i32.eq (call $gl32 (global.get $fs_base)) (local.get $node))
+      (then (call $gs32 (global.get $fs_base) (call $gl32 (local.get $node))))))
+
+  (func $seh_is_dispatch_node (param $rec i32) (result i32)
+    (i32.and (i32.ne (global.get $seh_node_thunk) (i32.const 0))
+             (i32.eq (call $gl32 (i32.add (local.get $rec) (i32.const 4)))
+                     (global.get $seh_node_thunk))))
+
+  ;; 0xCACA003A called as handler(rec, frame, ctx, dispatcher): cdecl, ESP at
+  ;; the return address. Unwinding: ExceptionContinueSearch. Otherwise
+  ;; ExceptionNestedException, naming the frame whose handler was running.
+  (func $seh_dispatch_node_handler
+    (local $esp i32) (local $rec i32) (local $frame i32) (local $dc i32)
+    (local.set $esp (i32.load offset=16 (global.get $reg_base)))
+    (local.set $rec (call $gl32 (i32.add (local.get $esp) (i32.const 4))))
+    (local.set $frame (call $gl32 (i32.add (local.get $esp) (i32.const 8))))
+    (local.set $dc (call $gl32 (i32.add (local.get $esp) (i32.const 16))))
+    (if (i32.and (call $gl32 (i32.add (local.get $rec) (i32.const 4))) (i32.const 6))
+      (then (i32.store offset=0 (global.get $reg_base) (i32.const 1)))
+      (else
+        (if (local.get $dc)
+          (then (call $gs32 (local.get $dc)
+            (call $gl32 (i32.add (local.get $frame) (i32.const 8))))))
+        (i32.store offset=0 (global.get $reg_base) (i32.const 2))))
+    (global.set $eip (call $gl32 (local.get $esp)))
+    (i32.store offset=16 (global.get $reg_base) (i32.add (local.get $esp) (i32.const 4)))
+    (global.set $steps (i32.const 0)))
 
   ;; ============================================================
   ;; RtlUnwind(TargetFrame, TargetIp, ExceptionRecord, ReturnValue)
@@ -343,7 +416,9 @@
           (call $host_log_i32 (local.get $cur))
           (br $finish)))
       (local.set $handler (call $gl32 (i32.add (local.get $cur) (i32.const 4))))
-      (if (i32.eqz (local.get $handler))
+      ;; A dispatcher node would answer "continue search": unlink it uncalled.
+      (if (i32.or (i32.eqz (local.get $handler))
+                  (i32.eq (local.get $handler) (global.get $seh_node_thunk)))
         (then
           (call $gs32 (global.get $fs_base) (call $gl32 (local.get $cur)))
           (call $gs32 (i32.add (local.get $s) (i32.const 20)) (call $gl32 (local.get $cur)))
@@ -404,6 +479,11 @@
       ;; End of chain?
       (br_if $unhandled (i32.eq (local.get $seh_rec) (i32.const 0xFFFFFFFF)))
       (br_if $unhandled (i32.eqz (local.get $seh_rec)))
+      ;; A dispatcher node (the fault is nested in a running handler): skip it.
+      (if (call $seh_is_dispatch_node (local.get $seh_rec))
+        (then
+          (local.set $seh_rec (call $gl32 (local.get $seh_rec)))
+          (br $walk)))
       ;; Handler address
       (local.set $handler (call $gl32 (i32.add (local.get $seh_rec) (i32.const 4))))
       ;; Derive frame EBP: MSVC __SEH_prolog4 installs 5-dword record at EBP-0x10
