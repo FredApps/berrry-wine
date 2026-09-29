@@ -189,6 +189,34 @@ const CASES = [
            [0x1D, ...d32(0x7FFFFFFF)], J(cc.B, 'k'), 0x43, L('k'), [0x83, 0xDB, 0xFF], J(cc.L, 'm'), 0x45, L('m'),
            [0x01, 0xC5], [0x83, 0xC6, 0x04], [0x83, 0xC7, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
   },
+  {
+    // adc, the same forms: adc r,r (13 C0), r/m,r (11 D3), r,imm8 (83 /2),
+    // r,m (13 /r), m,r (11 /r, a read-modify-write), m,imm32 (81 /2),
+    // eax,imm32 (15), and adc ebx,-1 whose b+CF wraps when CF is set -- the
+    // handlers' raw-mode record (flag_op 8, CF 1, OF 0) -- with CF and SF^OF
+    // read after. Carry in is 0 and 1 about equally (the cmp on random data).
+    name: 'adc-forms', regs: { ecx: N },
+    code: [L('l'), [0x8B, 0x06], [0x8B, 0x56, 0x04], [0x39, 0xD0], [0x13, 0xC0], [0x11, 0xD3],
+           [0x83, 0xD5, 0x05], [0x13, 0x56, 0x08], [0x11, 0x07], [0x81, 0x17, ...d32(0x92345678)],
+           [0x15, ...d32(0x7FFFFFFF)], J(cc.B, 'k'), 0x43, L('k'), [0x83, 0xD3, 0xFF], J(cc.L, 'm'), 0x45, L('m'),
+           [0x01, 0xC5], [0x83, 0xC6, 0x04], [0x83, 0xC7, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3],
+  },
+  {
+    // adc then sbb into memory with CF read straight off the first one (the
+    // state 'G' path), OF read by jo, and the exit flags from an adc.
+    name: 'adc-sbb-chain', regs: { ecx: N, eax: 0x9E3779B9 },
+    code: [L('l'), [0x13, 0x06], [0x19, 0x07], J(cc.O, 'k'), 0x43, L('k'), [0x11, 0x47, 0x04],
+           [0x83, 0xC6, 0x04], [0x83, 0xC7, 0x04], 0x49, J(cc.NZ, 'l'), [0x13, 0xC3], 0xC3],
+  },
+  {
+    // jgl.dll's scaled blitter tail (SimGolf, 0x10018108): a 16.16 source
+    // step, the carry out of the 16-bit fraction add taken by adc from an
+    // absolute address, and ebx = count<<16 | step counted down by jns.
+    name: 'adc-scale-blit', regs: { ebx: (1500 << 16) | 0xA3D7, edx: 0x1234 },
+    setup: (mem, g2w, a) => { new DataView(mem.buffer).setUint32(g2w(a.buf + 0x1F000), 1, true); },
+    code: (a) => [L('l'), [0x8A, 0x06], [0x88, 0x07], [0x66, 0x01, 0xDA], [0x13, 0x35, ...d32(a.buf + 0x1F000)],
+                  [0x83, 0xC7, 0x02], [0x81, 0xEB, ...d32(0x10000)], J(cc.NS, 'l'), 0xC3],
+  },
   // ---- the stack (07e kinds 21-24) ----
   {
     // push r / imm32 / imm8 / esp, read back through [esp+N], popped into
@@ -862,6 +890,79 @@ function reguardWidenCase(inst, a, nextCode) {
   return errs;
 }
 
+// adc into memory whose store window fails (07e kind 20). A carry chain
+// `adc eax,[esi] / adc [edi],eax` with lea steps, so CF runs from each adc
+// into the next and both flag records are live: the RMW's entry state is the
+// first adc's record. edi sweeps from a data page into the code page after it,
+// so the store's window is refused there and the instruction re-executes
+// threaded from its entry state -- which is only right if the lowering stores
+// before it writes its own record. Compared, byte for byte, with the same
+// sweep run threaded. (A store that overwrites the decoded block itself is
+// window-keep's question; here the sweep stops short of it, and the block
+// must still answer as before.)
+function adcGuardCase(inst, a, nextCode) {
+  const { e, mem, g2w } = inst;
+  const errs = [];
+  const arm = (on) => {
+    const D = nextCode(), P = nextCode(), Lc = nextCode();
+    if (P !== D + 0x1000) { errs.push('pages not adjacent'); return null; }
+    // clc ; L: adc eax,[esi] ; adc [edi],eax ; lea esi,[esi+4] ; lea edi,[edi+4] ; dec ecx ; jnz L ; ret
+    const code = asm([0xF8, L('l'), [0x13, 0x06], [0x11, 0x07], [0x8D, 0x76, 0x04], [0x8D, 0x7F, 0x04], 0x49, J(cc.NZ, 'l'), 0xC3]);
+    mem.set(code, g2w(Lc));
+    const dv = new DataView(mem.buffer);
+    let x = 0x2545F491;
+    for (let k = 0; k < 0x1000; k += 4) { x = Math.imul(x ^ (x >>> 15), 0x2C1B3C6D) >>> 0; dv.setUint32(g2w(a.buf) + k, x, true); }
+    for (let k = 0; k < 0x1000; k += 4) { dv.setUint32(g2w(D) + k, Math.imul(k, 0x9E3779B1) >>> 0, true); dv.setUint32(g2w(P) + k, 0, true); }
+    mem.set([0xB8, 0x11, 0x11, 0x11, 0x11, 0xC3], g2w(P + 0x800));           // mov eax,0x11111111 ; ret
+    callAt(inst, a, P + 0x800, {});
+    e.set_uop(on ? 1 : 0);
+    const st0 = [0, 1, 4, 10].map((k) => e.uop_stats(k));
+    // Window census, re-guard context (16) + 9: refused, the written window
+    // would hold a code page -- the deopt this case exists for.
+    e.set_uop_win_census(1);
+    if (on) {
+      const pc = e.uop_compile(Lc + 1);
+      if (!pc) { errs.push('adc carry chain declined'); e.set_uop(0); return null; }
+      e.uop_install(Lc + 1, pc);
+    }
+    // Twice over data only (the windows get proved), then into the code page.
+    for (let i = 0; i < 2; i++) {
+      if (!callAt(inst, a, Lc, { ecx: 0x3C0, esi: a.buf, edi: D, eax: 0x7FFFFFF0 + i })) errs.push('data sweep did not return');
+    }
+    if (!callAt(inst, a, Lc, { ecx: 0x100, esi: a.buf, edi: D + 0xF00, eax: 0xFFFFFFFF })) errs.push('sweep into code did not return');
+    const out = {
+      regs: [e.get_eax(), e.get_ecx(), e.get_esi() - a.buf, e.get_edi() - D].map((v) => v >>> 0),
+      flags: e.uop_flags(),
+      mem: Array.from(mem.subarray(g2w(D), g2w(D) + 0x2000)),
+      d: [0, 1, 4, 10].map((k, i) => e.uop_stats(k) - st0[i]),
+      codeRefused: e.uop_win_census(16 + 9),
+    };
+    e.set_uop_win_census(0);
+    e.set_uop(0);
+    callAt(inst, a, P + 0x800, {});
+    out.r = e.get_eax() >>> 0;
+    return out;
+  };
+  try {
+    const off = arm(false), on = arm(true);
+    if (off && on) {
+      if (!on.d[2]) errs.push('never entered');
+      if (!on.codeRefused) errs.push('the store window into the code page never failed');
+      if (JSON.stringify(on.regs) !== JSON.stringify(off.regs)) errs.push(`regs ${on.regs.map((v) => v.toString(16))} vs ${off.regs.map((v) => v.toString(16))}`);
+      if (on.flags !== off.flags) errs.push(`flags ${on.flags.toString(2)} vs ${off.flags.toString(2)}`);
+      const k = on.mem.findIndex((v, i) => v !== off.mem[i]);
+      if (k >= 0) errs.push(`memory differs at +0x${k.toString(16)}`);
+      if (on.r !== off.r) errs.push(`R after sweep: eax ${on.r.toString(16)} vs ${off.r.toString(16)}`);
+      if (off.r !== 0x11111111) errs.push(`R clobbered: eax ${off.r.toString(16)}`);
+      if (off.mem[0x1000] === 0 && off.mem[0x1300] !== 0) errs.push('the sweep never reached the code page');
+      if (!errs.length) console.log(`adc-guard-fail     ok (enters=${on.d[2]} reguards=${on.d[1]} refused-at-code-page=${on.codeRefused})`);
+    }
+  } finally {
+    e.set_uop(0);
+  }
+  return errs;
+}
+
 // --handler-hist must measure the program with the tier running; --trace-eip
 // (and --break/--watch/--count) must still hold it off, since they observe
 // every block. 13-exports.wat $dbg_recompute: $dbg_tier_guard.
@@ -1016,6 +1117,10 @@ async function main() {
   if (!only || only === 'reguard-widen') {
     const errs = reguardWidenCase(inst, a, () => a.code + 0x1000 * slot++);
     if (errs.length) { fails++; console.log(`reguard-widen      FAIL ${errs.join(', ')}`); }
+  }
+  if (!only || only === 'adc-guard-fail') {
+    const errs = adcGuardCase(inst, a, () => a.code + 0x1000 * slot++);
+    if (errs.length) { fails++; console.log(`adc-guard-fail     FAIL ${errs.join(', ')}`); }
   }
   if (!only || only === 'hist-keeps-tier') {
     const errs = histCase(inst, a, () => a.code + 0x1000 * slot++);

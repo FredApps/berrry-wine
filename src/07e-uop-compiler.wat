@@ -41,7 +41,7 @@
   ;;   +12 sc  +16 imm | disp  +20 w.  part: 0 d, 1 w, 2 l, 3 h.
   ;; Kinds: 0 unsup 1 alu 2 inc 3 dec 4 test 5 mov 6 lea 7 nop 8 xchg 9 cwde
   ;;   10 cdq 11 shift 12 not 13 neg 14 imul 15 jcc 16 jmp 17 movx
-  ;;   18 shift-by-cl 19 setcc (+20 cc) 20 sbb (32-bit only).
+  ;;   18 shift-by-cl 19 setcc (+20 cc) 20 adc/sbb (32-bit only, +12 2/3).
   ;; ALU op: 0 add 1 or 2 adc 3 sbb 4 and 5 sub 6 xor 7 cmp; shift op:
   ;;   0 shl 1 shr 2 sar 3 rol 4 ror (rol/ror only by immediate, kind 11).
   ;; flags: 1 in loop, 2 leader, 4 seam, 8 flags live in, 16 cut, 32 back.
@@ -394,15 +394,14 @@
                  (i32.lt_u (i32.and (local.get $b) (i32.const 7)) (i32.const 6)))
       (then
         (local.set $op (i32.shr_u (local.get $b) (i32.const 3)))
-        (if (i32.eq (local.get $op) (i32.const 2))
-          (then (call $uc_unsup (local.get $R)) (return)))
         (i32.store offset=12 (local.get $R) (local.get $op))
         (local.set $form (i32.and (local.get $b) (i32.const 7)))
         (if (i32.lt_u (local.get $form) (i32.const 4))
           (then
             (local.set $w (select (local.get $v) (i32.const 8) (i32.and (local.get $form) (i32.const 1))))
-            ;; sbb: 32-bit only (kind 20)
-            (if (i32.and (i32.eq (local.get $op) (i32.const 3)) (i32.ne (local.get $w) (i32.const 32)))
+            ;; adc / sbb: 32-bit only (kind 20)
+            (if (i32.and (i32.or (i32.eq (local.get $op) (i32.const 2)) (i32.eq (local.get $op) (i32.const 3)))
+                         (i32.ne (local.get $w) (i32.const 32)))
               (then (call $uc_unsup (local.get $R)) (return)))
             (if (i32.lt_u (local.get $form) (i32.const 2))
               (then (local.set $e (call $uc_modrm (local.get $p) (local.get $w) (local.get $O0)))
@@ -410,17 +409,18 @@
               (else (local.set $e (call $uc_modrm (local.get $p) (local.get $w) (local.get $O1)))
                     (call $uc_opr (local.get $O0) (global.get $uc_mr_reg) (local.get $w))))
             (i32.store offset=16 (local.get $R) (local.get $w))
-            (call $uc_fin (local.get $R) (select (i32.const 20) (i32.const 1) (i32.eq (local.get $op) (i32.const 3)))
+            (call $uc_fin (local.get $R) (select (i32.const 20) (i32.const 1) (i32.eq (i32.or (local.get $op) (i32.const 1)) (i32.const 3)))
                           (local.get $e))
             (return)))
         (local.set $w (select (i32.const 8) (local.get $v) (i32.eq (local.get $form) (i32.const 4))))
-        (if (i32.and (i32.eq (local.get $op) (i32.const 3)) (i32.ne (local.get $w) (i32.const 32)))
+        (if (i32.and (i32.or (i32.eq (local.get $op) (i32.const 2)) (i32.eq (local.get $op) (i32.const 3)))
+                     (i32.ne (local.get $w) (i32.const 32)))
           (then (call $uc_unsup (local.get $R)) (return)))
         (local.set $n (call $uc_imm (local.get $p) (local.get $w)))
         (call $uc_opr (local.get $O0) (i32.const 0) (local.get $w))
         (call $uc_opi (local.get $O1) (global.get $uc_imm_v))
         (i32.store offset=16 (local.get $R) (local.get $w))
-        (call $uc_fin (local.get $R) (select (i32.const 20) (i32.const 1) (i32.eq (local.get $op) (i32.const 3)))
+        (call $uc_fin (local.get $R) (select (i32.const 20) (i32.const 1) (i32.eq (i32.or (local.get $op) (i32.const 1)) (i32.const 3)))
                       (i32.add (local.get $p) (local.get $n)))
         (return)))
     ;; inc/dec r
@@ -438,15 +438,15 @@
         (local.set $w (select (i32.const 8) (local.get $v) (i32.eq (local.get $b) (i32.const 0x80))))
         (local.set $e (call $uc_modrm (local.get $p) (local.get $w) (local.get $O0)))
         (local.set $op (global.get $uc_mr_reg))
-        (if (i32.or (i32.eq (local.get $op) (i32.const 2))
-                    (i32.and (i32.eq (local.get $op) (i32.const 3)) (i32.ne (local.get $w) (i32.const 32))))
+        (if (i32.and (i32.or (i32.eq (local.get $op) (i32.const 2)) (i32.eq (local.get $op) (i32.const 3)))
+                     (i32.ne (local.get $w) (i32.const 32)))
           (then (call $uc_unsup (local.get $R)) (return)))
         (local.set $n (call $uc_imm (local.get $e)
           (select (local.get $v) (i32.const 8) (i32.eq (local.get $b) (i32.const 0x81)))))
         (call $uc_opi (local.get $O1) (global.get $uc_imm_v))
         (i32.store offset=12 (local.get $R) (local.get $op))
         (i32.store offset=16 (local.get $R) (local.get $w))
-        (call $uc_fin (local.get $R) (select (i32.const 20) (i32.const 1) (i32.eq (local.get $op) (i32.const 3)))
+        (call $uc_fin (local.get $R) (select (i32.const 20) (i32.const 1) (i32.eq (i32.or (local.get $op) (i32.const 1)) (i32.const 3)))
                       (i32.add (local.get $e) (local.get $n)))
         (return)))
     ;; test r/m, r
@@ -2409,12 +2409,22 @@
         (if (local.get $n) (then (return (local.get $n))))
         (call $uc_write (local.get $O0) (local.get $v))
         (return (i32.const 0))))
-    ;; sbb (32-bit): r = a - (b + CF), recorded as $set_flags_sub(a, b+CF, r)
-    ;; with the threaded handlers' fix-up when b+CF wraps (flag_a 0, flag_b 1,
-    ;; so CF reads 1). The record is written every time: the state after is
-    ;; 'G' ($uc_flag_class 3).
+    ;; adc / sbb (32-bit, +12 2 / 3): r = a +/- (b + CF), recorded as
+    ;; $do_alu32 and the register-form handlers record it:
+    ;;   sbb  $set_flags_sub(a, b+CF, r); when b+CF wraps, flag_a 0 and
+    ;;        flag_b 1 (so CF reads 1) -- done arithmetically below;
+    ;;   adc  $set_flags_add(a, b+CF, r); when b+CF wraps, raw mode: flag_op
+    ;;        8, flag_a 1 (CF), flag_b 0 (OF), flag_res still r -- a different
+    ;;        op, so two RECs behind a layout branch (BNZL/GOTO, no block).
+    ;; The state after is 'G' ($uc_flag_class 3), so the record is written
+    ;; whenever anything after can read it ($uc_live_out; memory accesses and
+    ;; exits count). A memory destination is stored BEFORE the record: a
+    ;; store that deopts re-executes this instruction in threaded code from
+    ;; the entry state, and with CF coming from the globals ('G') a record
+    ;; already written would hand it the wrong carry.
     (if (i32.eq (local.get $k) (i32.const 20))
       (then
+        (local.set $op (i32.load offset=12 (local.get $R)))
         (local.set $vx (call $uc_scratch))
         (local.set $n (call $uc_cf_into (global.get $uc_x_c) (global.get $uc_x_cd) (local.get $vx)))
         (if (local.get $n) (then (return (local.get $n))))
@@ -2425,20 +2435,39 @@
         (local.set $vl1 (call $uc_scratch))
         (call $uc_o3 (i32.const 3) (local.get $vl1) (local.get $vy) (local.get $vx))
         (local.set $t (call $uc_aT (i32.const 6) (local.get $a)))
-        (call $uc_o3 (i32.const 4) (local.get $t) (local.get $src) (local.get $vl1))
-        ;; wrapped = (b+CF) <u b; keep = wrapped - 1 (all ones unless wrapped)
-        (local.set $vl2 (call $uc_scratch))
-        (call $uc_o3 (i32.const 54) (local.get $vl2) (local.get $vl1) (local.get $vy))
-        (local.set $v (call $uc_scratch))
-        (call $uc_o3 (i32.const 8) (local.get $v) (local.get $vl2) (call $uc_aN (i32.const -1)))
-        (local.set $vx (call $uc_scratch))
-        (call $uc_o3 (i32.const 5) (local.get $vx) (local.get $src) (local.get $v))
-        (local.set $vy (call $uc_scratch))
-        (call $uc_o3 (i32.const 5) (local.get $vy) (local.get $vl1) (local.get $v))
-        (call $uc_o3 (i32.const 6) (local.get $vy) (local.get $vy) (local.get $vl2))
-        (call $uc_o5 (i32.const 28) (call $uc_aN (i32.const 2)) (local.get $vx) (local.get $vy)
-                     (local.get $t) (call $uc_aN (i32.const 31)))
-        (call $uc_write (local.get $O0) (local.get $t))
+        (call $uc_o3 (select (i32.const 3) (i32.const 4) (i32.eq (local.get $op) (i32.const 2)))
+                     (local.get $t) (local.get $src) (local.get $vl1))
+        (if (call $uc_is_mem (local.get $O0)) (then (call $uc_write (local.get $O0) (local.get $t))))
+        (if (call $uc_live_out (local.get $R))
+          (then
+            ;; wrapped = (b+CF) <u b
+            (local.set $vl2 (call $uc_scratch))
+            (call $uc_o3 (i32.const 54) (local.get $vl2) (local.get $vl1) (local.get $vy))
+            (if (i32.eq (local.get $op) (i32.const 2))
+              (then
+                (local.set $vx (call $uc_aL (i32.const 7) (global.get $uc_nlocal)))
+                (local.set $v (call $uc_aL (i32.const 7) (i32.add (global.get $uc_nlocal) (i32.const 1))))
+                (global.set $uc_nlocal (i32.add (global.get $uc_nlocal) (i32.const 2)))
+                (call $uc_o2 (i32.const 64) (local.get $vl2) (local.get $vx))
+                (call $uc_o5 (i32.const 28) (call $uc_aN (i32.const 1)) (local.get $src) (local.get $vl1)
+                             (local.get $t) (call $uc_aN (i32.const 31)))
+                (call $uc_o1 (i32.const 62) (local.get $v))
+                (call $uc_label (local.get $vx))
+                (call $uc_o5 (i32.const 28) (call $uc_aN (i32.const 8)) (call $uc_aC (i32.const 1))
+                             (call $uc_aC (i32.const 0)) (local.get $t) (call $uc_aN (i32.const 31)))
+                (call $uc_label (local.get $v)))
+              (else
+                ;; keep = wrapped - 1 (all ones unless wrapped)
+                (local.set $v (call $uc_scratch))
+                (call $uc_o3 (i32.const 8) (local.get $v) (local.get $vl2) (call $uc_aN (i32.const -1)))
+                (local.set $vx (call $uc_scratch))
+                (call $uc_o3 (i32.const 5) (local.get $vx) (local.get $src) (local.get $v))
+                (local.set $vy (call $uc_scratch))
+                (call $uc_o3 (i32.const 5) (local.get $vy) (local.get $vl1) (local.get $v))
+                (call $uc_o3 (i32.const 6) (local.get $vy) (local.get $vy) (local.get $vl2))
+                (call $uc_o5 (i32.const 28) (call $uc_aN (i32.const 2)) (local.get $vx) (local.get $vy)
+                             (local.get $t) (call $uc_aN (i32.const 31)))))))
+        (if (i32.eqz (call $uc_is_mem (local.get $O0))) (then (call $uc_write (local.get $O0) (local.get $t))))
         (return (i32.const 0))))
     (if (i32.eq (local.get $k) (i32.const 14))
       (then
