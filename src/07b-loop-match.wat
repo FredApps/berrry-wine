@@ -1582,6 +1582,7 @@
     (local $p i32) (local $m i32) (local $q i32)
     (local $st0 f64) (local $v f64) (local $w f64) (local $w2 f64)
     (local $r0 i64) (local $ri i64)
+    (local $g2w_wa i32)
     (local.set $cursor (global.get $ip))
     (local.set $fn (i32.and (i32.shr_u (local.get $packed) (i32.const 12)) (i32.const 0xFF)))
     (local.set $op (i32.and (local.get $packed) (i32.const 0xFFF)))
@@ -1630,12 +1631,12 @@
                   $k8 $k9 $k10 $k11 $k12 $k13 $k14 $k15 $generic
                   (local.get $g)))
         ;; k0: D8 mem, float32 operand
-        (local.set $v (f64.promote_f32 (f32.load (call $g2w (local.get $addr)))))
+        (local.set $v (f64.promote_f32 (f32.load (g2w-fast (local.get $addr)))))
         (br $arith))
         ;; k1: D9 mem -- FLD/FST/FSTP m32, FLDCW, FNSTCW
         (if (i32.eqz (local.get $r))
           (then
-            (x87i-push (f64.promote_f32 (f32.load (call $g2w (local.get $addr)))))
+            (x87i-push (f64.promote_f32 (f32.load (g2w-fast (local.get $addr)))))
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 3))
           (then
@@ -1649,13 +1650,13 @@
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 5))
           (then
-            (global.set $fpu_cw (i32.load16_u (call $g2w (local.get $addr))))
+            (global.set $fpu_cw (i32.load16_u (g2w-fast (local.get $addr))))
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 7))
           (then (call $gs16 (local.get $addr) (global.get $fpu_cw)) (br $next_op)))
         (br $generic))
         ;; k2: DA mem, int32 operand
-        (local.set $v (f64.convert_i32_s (i32.load (call $g2w (local.get $addr)))))
+        (local.set $v (f64.convert_i32_s (i32.load (g2w-fast (local.get $addr)))))
         (br $arith))
         ;; k3: DB mem -- FILD/FIST/FISTP m32 (m80 forms are generic)
         (if (i32.eqz (local.get $r))
@@ -1672,12 +1673,12 @@
             (br $next_op)))
         (br $generic))
         ;; k4: DC mem, float64 operand
-        (local.set $v (f64.load (call $g2w (local.get $addr))))
+        (local.set $v (f64.load (g2w-fast (local.get $addr))))
         (br $arith))
         ;; k5: DD mem -- FLD/FST/FSTP m64, FNSTSW m16
         (if (i32.eqz (local.get $r))
           (then
-            (x87i-push (f64.load (call $g2w (local.get $addr))))
+            (x87i-push (f64.load (g2w-fast (local.get $addr))))
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 3))
           (then
@@ -1695,16 +1696,16 @@
             (br $next_op)))
         (br $generic))
         ;; k6: DE mem, int16 operand
-        (local.set $v (f64.convert_i32_s (i32.load16_s (call $g2w (local.get $addr)))))
+        (local.set $v (f64.convert_i32_s (i32.load16_s (g2w-fast (local.get $addr)))))
         (br $arith))
         ;; k7: DF mem -- FILD/FIST/FISTP m16, FILD/FISTP m64 (BCD is generic)
         (if (i32.eqz (local.get $r))
           (then
-            (x87i-push (f64.convert_i32_s (i32.load16_s (call $g2w (local.get $addr)))))
+            (x87i-push (f64.convert_i32_s (i32.load16_s (g2w-fast (local.get $addr)))))
             (br $next_op)))
         (if (i32.eq (local.get $r) (i32.const 5))
           (then
-            (local.set $r0 (i64.load (call $g2w (local.get $addr))))
+            (local.set $r0 (i64.load (g2w-fast (local.get $addr))))
             (x87i-push (f64.convert_i64_s (local.get $r0)))
             ;; $fpu_raw_set 0
             (i64.store offset=64 (x87i-slot (local.get $top)) (local.get $r0))
