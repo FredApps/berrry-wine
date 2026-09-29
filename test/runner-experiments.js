@@ -72,6 +72,10 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
   // flush, and the live programs at exit. The records go through log_i32, so
   // this turns DBG_INV on; read them with tools/uop-census.js.
   const UOP_CENSUS = hasFlag('uop-census');
+  // --uop-win-census: classify every uop window proof and re-guard by the
+  // memory it landed on, and read the VirtualAlloc backing's contiguity at
+  // exit (test/runner-win-census.js). Main instance only.
+  const UOP_WIN_CENSUS = hasFlag('uop-win-census');
   if (UOP_CENSUS) env.DBG_INV = '1';
   // --branch-clock: one guest-clock block per executed x86 branch, not per
   // threaded block cut ($branch_clock in 05-alu). Pass it to BOTH arms of any
@@ -304,6 +308,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
     if (uopWanted() && instance.exports.set_uop && ctx) {
       if (UOP_CENSUS && instance.exports.set_uop_census) instance.exports.set_uop_census(1);
       instance.exports.set_uop(1);
+      if (UOP_WIN_CENSUS && instance.exports.set_uop_win_census) instance.exports.set_uop_win_census(1);
       if (aggrWanted() && instance.exports.set_aggressive_stack) instance.exports.set_aggressive_stack(1);
       uopOn = true;
     }
@@ -455,6 +460,7 @@ function createRunnerExperiments({ hasFlag, getArg, env = process.env, log = con
       log(`uop: installs=${st(2)} kills=${st(3)} retired-poor=${st(7)} enters=${st(4)} ` +
         `blocks=${st(5)} head-exits=${st(6)} reguards=${st(1)} win-kept=${st(9)} win-reset=${st(10)} gen=${st(8)} | compiled=${cs(0)} declined=${cs(1)} ` +
         `insns=${cs(2)} uops=${cs(3)} flushes=${cs(4)}` + (why ? `\n  declines: ${why}` : ''));
+      if (UOP_WIN_CENSUS) require('./runner-win-census').reportWinCensus(instance, log);
       if (aggrWanted()) {
         // $uop_cstat 6..25: the aggressive-stack counters of every program
         // kept (07e $uc_sp_block). plain = pairs the conservative "nothing

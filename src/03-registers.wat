@@ -215,16 +215,23 @@
   ;; the corresponding contiguous backing page. Checking merely the two ends
   ;; would accept a hole or a differently backed middle page; checking each
   ;; page boundary proves the affine range that bulk string/loop helpers need.
+  ;; Why the last failing call failed, for --uop-win-census (07d $uwc_*):
+  ;; 1 first page unmapped, 2 wrapped end, 3 a later page unmapped, 4 a later
+  ;; page mapped but not backed next to its predecessor. Written only on the
+  ;; failure returns, so a successful span pays nothing for it.
+  (global $gpas_why (mut i32) (i32.const 0))
   (func $guest_page_affine_span (param $ga i32) (param $len i32) (result i32)
     (local $start_wa i32) (local $cur_wa i32)
     (local $end i32) (local $cur i32)
     (local.set $start_wa (call $guest_page_translate (local.get $ga)))
     (if (i32.eq (local.get $start_wa) (global.get $NULL_SENTINEL))
-      (then (return (global.get $NULL_SENTINEL))))
+      (then (global.set $gpas_why (i32.const 1))
+            (return (global.get $NULL_SENTINEL))))
     (if (i32.eqz (local.get $len)) (then (return (local.get $start_wa))))
     (local.set $end (i32.add (local.get $ga) (local.get $len)))
     (if (i32.le_u (local.get $end) (local.get $ga))
-      (then (return (global.get $NULL_SENTINEL))))
+      (then (global.set $gpas_why (i32.const 2))
+            (return (global.get $NULL_SENTINEL))))
     (local.set $cur
       (i32.add (i32.or (local.get $ga) (i32.const 0xFFF)) (i32.const 1)))
     (block $done (loop $pages
@@ -233,7 +240,11 @@
       (if (i32.ne (local.get $cur_wa)
             (i32.add (local.get $start_wa)
               (i32.sub (local.get $cur) (local.get $ga))))
-        (then (return (global.get $NULL_SENTINEL))))
+        (then
+          (global.set $gpas_why
+            (select (i32.const 3) (i32.const 4)
+              (i32.eq (local.get $cur_wa) (global.get $NULL_SENTINEL))))
+          (return (global.get $NULL_SENTINEL))))
       (local.set $cur (i32.add (local.get $cur) (i32.const 0x1000)))
       (br $pages)))
     (local.get $start_wa))
@@ -366,7 +377,11 @@
     ;; The page-boundary walk is amortized by the bulk operation that requested
     ;; the span. NULL_SENTINEL tells that caller to preserve exact x86 ordering
     ;; through its elementwise path when pages are missing or non-contiguous.
-    (call $guest_page_affine_span (local.get $ga) (local.get $len))
+    (local.set $wa (call $guest_page_affine_span (local.get $ga) (local.get $len)))
+    ;; --uop-win-census: how the sparse spans bulk paths ask for turn out.
+    (if (global.get $uwc_on)
+      (then (call $uwc_bulk_note (local.get $len) (local.get $wa))))
+    (local.get $wa)
   )
   ;; Sparse backing is not in the direct affine guest window. In particular,
   ;; native shader allocations retain WASM pointers and must recover the real
