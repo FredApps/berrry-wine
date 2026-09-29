@@ -1704,28 +1704,6 @@
       (br $l)))
     (i32.const 0))
 
-  ;; Is the record R leaves in the globals ('G', $uc_flag_class 3) provably
-  ;; never read? Only when the one successor is an in-loop full flag writer
-  ;; (alu/test/neg: kinds 1 4 13) that cannot exit before it writes -- no
-  ;; memory operand, not a branch, no seam or cut. $uc_live_out alone is NOT
-  ;; enough for a 'G' producer: skipping sbb's record whenever it said so
-  ;; broke Heroes III (a NULL call at batch 3651, uop frames 99.97% off; the
-  ;; same build with the record always written is identical to the
-  ;; reference), so somewhere an observer of the globals is not a consumer
-  ;; in $uc_liveness. Not found yet; kinds 18 and 25 still skip on
-  ;; $uc_live_out alone.
-  (func $uc_rec_dead (param $R i32) (result i32)
-    (local $S i32) (local $k i32)
-    (if (i32.ne (call $uc_nsucc (local.get $R)) (i32.const 1)) (then (return (i32.const 0))))
-    (local.set $S (call $uc_in_loop (call $uc_succ (local.get $R) (i32.const 0))))
-    (if (i32.eqz (local.get $S)) (then (return (i32.const 0))))
-    (local.set $k (call $uc_kind (local.get $S)))
-    (if (i32.eqz (i32.or (i32.eq (local.get $k) (i32.const 1))
-                         (i32.or (i32.eq (local.get $k) (i32.const 4)) (i32.eq (local.get $k) (i32.const 13)))))
-      (then (return (i32.const 0))))
-    (i32.eqz (i32.or (i32.or (call $uc_is_branch (local.get $S)) (call $uc_touches_mem (local.get $S)))
-                     (i32.or (call $uc_flag (local.get $S) (i32.const 4)) (call $uc_flag (local.get $S) (i32.const 16))))))
-
   ;; ---- flag liveness (per instruction, backward) ----
   ;; Consumers: a Jcc; anything that can exit (a memory access that may
   ;; deopt, a budget check before a charged transfer, seam or cut).
@@ -2438,9 +2416,14 @@
     ;;   adc  $set_flags_add(a, b+CF, r); when b+CF wraps, raw mode: flag_op
     ;;        8, flag_a 1 (CF), flag_b 0 (OF), flag_res still r -- a different
     ;;        op, so two RECs behind a layout branch (BNZL/GOTO, no block).
-    ;; The state after is 'G' ($uc_flag_class 3), so the record is written
-    ;; unless the next instruction overwrites it with no way to exit first
-    ;; ($uc_rec_dead -- SimGolf's `adc esi,[m] / add edi,2`). A memory destination is stored BEFORE the record: a
+    ;; The state after is 'G' ($uc_flag_class 3), and the record is written
+    ;; EVERY time. Skipping it when $uc_live_out said the flags were dead --
+    ;; or even only when the next instruction is a register alu/test/neg
+    ;; that overwrites them -- broke Heroes III (a NULL call at batch 3651,
+    ;; uop frames 99.97% off the reference; always writing it is identical),
+    ;; so something observes the globals that $uc_liveness does not count.
+    ;; Not found; kinds 18 and 25 still skip on $uc_live_out and may share it.
+    ;; A memory destination is stored BEFORE the record: a
     ;; store that deopts re-executes this instruction in threaded code from
     ;; the entry state, and with CF coming from the globals ('G') a record
     ;; already written would hand it the wrong carry.
@@ -2460,8 +2443,8 @@
         (call $uc_o3 (select (i32.const 3) (i32.const 4) (i32.eq (local.get $op) (i32.const 2)))
                      (local.get $t) (local.get $src) (local.get $vl1))
         (if (call $uc_is_mem (local.get $O0)) (then (call $uc_write (local.get $O0) (local.get $t))))
-        (if (i32.eqz (call $uc_rec_dead (local.get $R)))
-          (then
+        (block
+          (block
             ;; wrapped = (b+CF) <u b
             (local.set $vl2 (call $uc_scratch))
             (call $uc_o3 (i32.const 54) (local.get $vl2) (local.get $vl1) (local.get $vy))
