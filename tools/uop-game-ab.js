@@ -200,12 +200,21 @@ const GAMES = {
   },
   jazz2: {
     // Jazz Jackrabbit 2 shareware, left alone: title, then its animated
-    // Darn Ratz attraction (docs/re-notes/jazz2-demo.md) -- its lighting
-    // kernel and masked MMX row copy had folds (H431 mode 2, H419), both
-    // retired to the uop tier (docs/uop-tier-design.md section 18).
+    // Darn Ratz attraction (docs/re-notes/jazz2-demo.md). It never reaches
+    // the level renderer: its lighting kernel (H431 mode 2) and masked MMX
+    // row copy (H419) run 0 times here, so a fold A/B for those uses jazz2g.
     app: 'jazz2_demo', split: 400,
     args: ['--screen=800x600', '--batch-size=100000', '--max-batches=900', '--stuck-after=1000000'],
     input: [],
+  },
+  jazz2g: {
+    // Jazz 2 into its DEMO level: Escape past the title and the Darn Ratz
+    // loading screen, then the demo plays itself. The level renderer runs
+    // here -- threaded, H431 fired 641,572 times in 3000 batches.
+    app: 'jazz2_demo', split: 1000,
+    args: ['--screen=800x600', '--batch-size=100000', '--max-batches=3000', '--stuck-after=1000000'],
+    input: ['200:keydown:27', '205:keyup:27', '600:keydown:27', '605:keyup:27',
+      '1000:keydown:27', '1005:keyup:27'],
   },
   aoe1: {
     // Age of Empires trial: test-aoe-menu.js's startup into a random-map
