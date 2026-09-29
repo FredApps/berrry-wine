@@ -1579,7 +1579,7 @@
         <label title="Fold Caesar III's run-length sprite blit into one dispatch (handler 424). Decode-time, so it steers blocks decoded after the toggle — relaunch for a clean A/B."><input id="rle-run-toggle" type="checkbox" checked onchange="setRleRun(this.checked)">RLE fold</label>
         <label title="Compile proven x87 expression regions and fold contiguous x87 islands. On by default; ?no-x87-fold starts it off. Decode-time, so relaunch for a clean A/B."><input id="x87-fold-toggle" type="checkbox" checked onchange="setX87Fusion(this.checked)">x87 fold</label>
         <label title="Micro-op tier, on by default (?no-uop starts it off): a hot loop head is compiled from x86 into a micro-op program and run in one br_table loop (src/07d, 07e). Applies to running apps immediately, every guest thread included; turning it off drops every program."><input id="uop-toggle" type="checkbox" checked onchange="setUop(this.checked)">uop tier</label>
-        <label title="Which renderer both Direct3D generations use. WebGL: D3D8/9 on the WebGL backend, DX2-7 (immediate mode) on the WAT software rasterizer. +DX7 puts immediate mode on WebGL too — post-transform, so the guest keeps its own T&amp;L and each fence reads the frame back into the guest surface. Software: D3D8/9 on the software backend on a render Worker, DX2-7 on the WAT rasterizer. Both are read at launch, so relaunch after changing this.">D3D: <select id="d3d-renderer-select" onchange="setD3DRenderer(this.value)"><option value="webgl">WebGL</option><option value="webgl-all">WebGL +DX7</option><option value="software">Software</option></select></label>
+        <label title="Which renderer Glide and both Direct3D generations use. WebGL: D3D8/9 on the WebGL backend, DX2-7 (immediate mode) on the WAT software rasterizer. +DX7 puts immediate mode on WebGL too — post-transform, so the guest keeps its own T&amp;L and each fence reads the frame back into the guest surface. Software: D3D8/9 on the software backend on a render Worker, DX2-7 on the WAT rasterizer. Both are read at launch, so relaunch after changing this.">GPU: <select id="d3d-renderer-select" onchange="setD3DRenderer(this.value)"><option value="webgl">WebGL</option><option value="webgl-all">WebGL +DX7</option><option value="software">Software</option></select></label>
         <label><input id="perf-stream-toggle" type="checkbox" onchange="setPerfStream(this.checked)">Stream</label>
         <label title="Real guest threads, on by default (?no-threads starts this page without them): the guest main thread and every CreateThread target run in Workers. Needs cross-origin isolation, which the page installs once (sw-coi.js) and reloads for. An app with `threads: false` in lib/apps.js always runs cooperatively."><input id="threads-toggle" type="checkbox" checked onchange="setThreads(this.checked)">Threads</label>
         <span id="threads-status" style="color:#606060"></span>
@@ -2431,7 +2431,7 @@ Resource-aware Win98 emulator
       window.WineD3D.renderer = mode.renderer;
       window.WINE_D3DIM_GPU = mode.d3dim;
       syncD3DSelect();
-      appendDebugLog(`[d3d] D3D8/9 on ${mode.renderer === 'software' ? 'the software backend' : 'WebGL'}, ` +
+      appendDebugLog(`[gpu] Glide and D3D8/9 on ${mode.renderer === 'software' ? 'the software backend' : 'WebGL'}, ` +
         `DX2-7 on ${mode.d3dim ? 'WebGL' : 'the WAT software rasterizer'}` +
         ' — takes effect on the next launch');
     }

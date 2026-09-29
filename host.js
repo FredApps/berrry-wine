@@ -1177,9 +1177,11 @@ class WineAssembly {
     const ctx = {
       getMemory: () => self.memory.buffer,
       d3d9Bridge: opts.d3d9Bridge,
-      // The ?debug toolbar's D3D select; unset falls through to the
+      // The ?debug toolbar's shared GPU select; unset falls through to the
       // ?d3d9-renderer query and then WebGL inside host-imports.js.
       d3d9Backend: self.d3d9Backend ||
+        (typeof window !== 'undefined' && window.WineD3D && window.WineD3D.renderer) || null,
+      glideBackend: self.d3d9Backend ||
         (typeof window !== 'undefined' && window.WineD3D && window.WineD3D.renderer) || null,
       d3d9Programmable: self.d3d9Programmable === true,
       // `wallClock` in lib/apps.js: the calendar (GetLocalTime and friends)

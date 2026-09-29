@@ -54,6 +54,7 @@ const root = path.join(__dirname, '..');
   }));
   try {
     const plain = await open('?debug');
+    assert.strictEqual(await plain.page.$eval('#d3d-renderer-select', s => s.parentElement.childNodes[0].textContent.trim()), 'GPU:');
     assert.deepStrictEqual(await selected(plain.page), { select: 'webgl', renderer: 'webgl' },
       'the toolbar defaults to the WebGL backend');
     assert.deepStrictEqual(await bothHalves(plain.page), {
@@ -82,6 +83,9 @@ const root = path.join(__dirname, '..');
       runningApps[0].wine.hostCtx.d3d9Bridge, { timeout: 120000 });
     const bridge = await plain.page.evaluate(() => {
       const b = runningApps[0].wine.hostCtx.d3d9Bridge;
+      const ctx = runningApps[0].wine.hostCtx;
+      if (ctx.glideBackend !== 'software') throw new Error('Glide ignored shared GPU choice');
+      if (ctx.glideBridge && ctx.glideBridge.options.backend !== 'software') throw new Error('Glide bridge ignored shared GPU choice');
       return { backend: b.backend, asyncSoftware: b.asyncSoftware };
     });
     assert.deepStrictEqual(bridge, { backend: 'software', asyncSoftware: true },

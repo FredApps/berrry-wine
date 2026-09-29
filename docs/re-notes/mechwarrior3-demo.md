@@ -1483,3 +1483,37 @@ extra synchronization). Its screenshot shows the progressing mission, terrain,
 HUD and another mech. Audit FPS (15.43) includes deliberate byte comparisons
 and is excluded from the timing table. Measured named candidate SHA-256:
 `e1be4076cf7f91f1629acc44f8478749d941bc1a2ca22e22f7a55b4e2b3e9c8b`.
+
+
+### Merge and default evaluation (2026-09-29)
+
+Merged into main at `a4f6b4a1`; **lazy synchronization remains disabled by
+default**. The benchmark now accepts the established NFS3/GTA2/SDK routes and
+`--lazy-sync-startup` enables the experiment before guest execution. Eligibility
+also requires page-aligned DIB backing: otherwise a scalar access starting
+before an unaligned surface could overlap it without another translation.
+The focused surface-fence test verifies this eager fallback.
+
+Box8 sequential compatibility runs (`lazy-coverage2-off/on`), same candidate
+WASM and pinned GPU source, 10-second windows after warmup:
+
+| Application | Off FPS | On FPS | Result |
+|---|---:|---:|---|
+| SDK Boids | 71.03 | 73.43 | Both pass, zero GPU/browser errors |
+| SDK Flip3DTL | 186.07 | 179.36 | Both pass, zero GPU/browser errors |
+| NFS3 demo | — | — | Both fail page protocol timeout before measurement |
+| GTA2 demo | — | — | Both refuse multiple guest-worker present recorders |
+
+Neither SDK sample arms a lazy Lock, so these are compatibility controls,
+not evidence that deferred CPU access is safe in other games. Their short
+windows do not establish a performance improvement or regression. Heroes II
+also reaches its adventure map (1,864 presents) with the candidate's default
+software/eager path; this does not exercise GPU lazy synchronization.
+
+GTA2's multiple guest instances reinforce the outstanding ownership issue:
+the pending range currently belongs to one WASM instance, while guest memory
+is shared. NFS3 needs its baseline route/debugging resolved before it can be
+counted as coverage. Retained native/GDI pointers also remain unaudited. Those
+gaps rule out enabling this globally despite the demonstrated MW3 reduction
+from three readbacks to one. Artifacts: experiment worktree
+`build/mw3-lazy-results/*-lazy-coverage2-{off,on}/`.
