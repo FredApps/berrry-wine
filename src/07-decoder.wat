@@ -7095,11 +7095,9 @@
                             (global.get $mr_val)))))
                 (else
                   (call $apply_seg_override)
-                  (local.set $a (call $emit_sib_or_abs))
-                  (call $te_sse (i32.const 433)
+                  (call $emit_sse_mem (i32.const 433)
                     (i32.or (i32.const 0xC00)
-                            (i32.shl (global.get $mr_reg) (i32.const 4))))
-                  (call $te_raw (local.get $a))))
+                            (i32.shl (global.get $mr_reg) (i32.const 4))))))
               (br $decode)))
           ;; SDL2's Win32 video bootstrap is built with baseline SSE and uses
           ;; these exact bitwise/move forms before it has created a window.
@@ -7244,7 +7242,6 @@
                                 (global.get $mr_val)))))))
                 (else
                   (call $apply_seg_override)
-                  (local.set $a (call $emit_sib_or_abs))
                   (if (i32.eq (local.get $op) (i32.const 0xC6))
                     (then (local.set $imm
                       (i32.or (local.get $imm)
@@ -7252,13 +7249,12 @@
                   (if (i32.or (i32.eq (local.get $op) (i32.const 0x11))
                               (i32.or (i32.eq (local.get $op) (i32.const 0x29))
                                       (i32.eq (local.get $op) (i32.const 0x17))))
-                    (then (call $te_sse (i32.const 434)
+                    (then (call $emit_sse_mem (i32.const 434)
                       (i32.or (i32.shl (local.get $imm) (i32.const 8))
                               (i32.shl (global.get $mr_reg) (i32.const 4)))))
-                    (else (call $te_sse (i32.const 433)
+                    (else (call $emit_sse_mem (i32.const 433)
                       (i32.or (i32.shl (local.get $imm) (i32.const 8))
-                              (i32.shl (global.get $mr_reg) (i32.const 4))))))
-                  (call $te_raw (local.get $a))))
+                              (i32.shl (global.get $mr_reg) (i32.const 4))))))))
               (br $decode)))
 
           ;; ---- MMX ----

@@ -625,6 +625,102 @@
       (local.get $b))
     (dispatch-next))
 
+  ;; ---- [reg+disp] forms (491..497) ----
+  ;; The integer _ro handlers' trick for the scalar ops: operand word is
+  ;; disp<<8 | xmm<<4 | base, so the address is one register load and an add
+  ;; inside the handler, instead of a $th_compute_ea_sib dispatch ahead of it
+  ;; and a round trip through ea_temp. Displacements past signed 24 bits and
+  ;; indexed or absolute operands keep the generic path.
+  (func $sse_ro_addr (param $op i32) (result i32)
+    (i32.add
+      (i32.load (i32.add (global.get $reg_base)
+        (i32.shl (i32.and (local.get $op) (i32.const 0xF)) (i32.const 2))))
+      (i32.shr_s (local.get $op) (i32.const 8))))
+
+  (func $th_movss_load_ro (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $v i32)
+    (local.set $v (call $gl32 (call $sse_ro_addr (local.get $op))))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (i32.store (local.get $dp) (local.get $v))
+    (i32.store offset=4 (local.get $dp) (i32.const 0))
+    (i64.store offset=8 (local.get $dp) (i64.const 0))
+    (dispatch-next))
+
+  (func $th_movss_store_ro (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32)
+    (call $gs32 (call $sse_ro_addr (local.get $op))
+      (i32.load (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4)))))
+    (dispatch-next))
+
+  (func $th_addss_ro (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $sse_ro_addr (local.get $op)))))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp) (f32.add (f32.load (local.get $dp)) (local.get $b)))
+    (dispatch-next))
+
+  (func $th_subss_ro (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $sse_ro_addr (local.get $op)))))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp) (f32.sub (f32.load (local.get $dp)) (local.get $b)))
+    (dispatch-next))
+
+  (func $th_mulss_ro (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $sse_ro_addr (local.get $op)))))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp) (f32.mul (f32.load (local.get $dp)) (local.get $b)))
+    (dispatch-next))
+
+  (func $th_divss_ro (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $dp i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $sse_ro_addr (local.get $op)))))
+    (local.set $dp (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+    (f32.store (local.get $dp) (f32.div (f32.load (local.get $dp)) (local.get $b)))
+    (dispatch-next))
+
+  (func $th_comiss_ro (param $op i32)
+    (local $nx_fn i32) (local $nx_op i32) (local $b f32)
+    (local.set $b (f32.reinterpret_i32 (call $gl32 (call $sse_ro_addr (local.get $op)))))
+    (call $sse_compare_flags
+      (f32.load (call $xmm_addr (i32.shr_u (local.get $op) (i32.const 4))))
+      (local.get $b))
+    (dispatch-next))
+
+  ;; Emit an SSE memory-operand op: the packed [reg+disp] handler when the
+  ;; subop has one and the operand fits, else the address op + generic or
+  ;; dedicated handler + address word. $decode_modrm and $apply_seg_override
+  ;; have already run.
+  (func $emit_sse_mem (param $h i32) (param $op i32)
+    (local $sub i32) (local $ro i32) (local $a i32)
+    (local.set $sub (i32.shr_u (local.get $op) (i32.const 8)))
+    (if (i32.eq (local.get $h) (i32.const 433))
+      (then
+        (if (i32.eq (local.get $sub) (i32.const 2))  (then (local.set $ro (i32.const 491))))
+        (if (i32.eq (local.get $sub) (i32.const 10)) (then (local.set $ro (i32.const 493))))
+        (if (i32.eq (local.get $sub) (i32.const 14)) (then (local.set $ro (i32.const 494))))
+        (if (i32.eq (local.get $sub) (i32.const 11)) (then (local.set $ro (i32.const 495))))
+        (if (i32.eq (local.get $sub) (i32.const 13)) (then (local.set $ro (i32.const 496))))
+        (if (i32.eq (local.get $sub) (i32.const 12)) (then (local.set $ro (i32.const 497))))))
+    (if (i32.and (i32.eq (local.get $h) (i32.const 434))
+                 (i32.eq (local.get $sub) (i32.const 2)))
+      (then (local.set $ro (i32.const 492))))
+    (if (i32.and
+          (i32.and (i32.ne (local.get $ro) (i32.const 0))
+                   (call $mr_simple_base))
+          (i32.and (i32.eqz (global.get $d_addr16))
+                   (i32.eq (i32.shr_s (i32.shl (global.get $mr_disp) (i32.const 8)) (i32.const 8))
+                           (global.get $mr_disp))))
+      (then
+        (call $te (local.get $ro)
+          (i32.or (i32.shl (global.get $mr_disp) (i32.const 8))
+            (i32.or (i32.and (local.get $op) (i32.const 0xF0)) (global.get $mr_base))))
+        (return)))
+    (local.set $a (call $emit_sib_or_abs))
+    (call $te_sse (local.get $h) (local.get $op))
+    (call $te_raw (local.get $a)))
+
   ;; Emit an SSE op, swapping the generic handler for a dedicated one when
   ;; the subop has one. Only the low byte of the operand word survives,
   ;; which is all the dedicated handlers read.

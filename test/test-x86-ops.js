@@ -983,6 +983,50 @@ async function main() {
   testBytes('MOVUPS store after a page-crossing load writes all 16 bytes',
     bytesAt(sseEdge + 0x20, 16), sseBytesA);
 
+  // Scalar ops on [reg+disp] take the packed _ro handlers (disp in the
+  // operand word); a displacement past signed 24 bits and [esp+disp8] with a
+  // SIB byte are checked alongside.
+  const sseR = sseEdge + 0x100;
+  const f32le = (...v) => [...new Uint8Array(new Float32Array(v).buffer)];
+  setBytes(sseR, f32le(2, 3, 5, 8, 2));
+  setBytes(sseR + 0x20, new Array(0x40).fill(0xcc));
+  const d32 = v => le32(v >>> 0);
+  runCode([
+    0xbe, ...le32(sseR + 0x100),                 // mov esi,sseR+0x100
+    0xf3, 0x0f, 0x10, 0x86, ...d32(-0x100),      // movss xmm0,[esi-0x100]  2
+    0xf3, 0x0f, 0x58, 0x86, ...d32(-0xfc),       // addss xmm0,[esi-0xfc]   +3 = 5
+    0xf3, 0x0f, 0x59, 0x86, ...d32(-0xf8),       // mulss xmm0,[esi-0xf8]   *5 = 25
+    0xf3, 0x0f, 0x5c, 0x86, ...d32(-0xf4),       // subss xmm0,[esi-0xf4]   -8 = 17
+    0xf3, 0x0f, 0x5e, 0x86, ...d32(-0xf0),       // divss xmm0,[esi-0xf0]   /2 = 8.5
+    0xf3, 0x0f, 0x11, 0x86, ...d32(-0xe0),       // movss [esi-0xe0],xmm0   -> sseR+0x20
+    0x31, 0xc0, 0x31, 0xc9,                      // xor eax,eax / xor ecx,ecx
+    0x0f, 0x2f, 0x86, ...d32(-0xfc),             // comiss xmm0,[esi-0xfc]  8.5 > 3
+    0x0f, 0x97, 0xc0,                            // seta al
+    0x0f, 0x2f, 0x86, ...d32(-0xe0),             // comiss xmm0,[esi-0xe0]  8.5 == 8.5
+    0x0f, 0x94, 0xc1,                            // sete cl
+    0xa2, ...le32(sseR + 0x24),                  // mov [sseR+0x24],al
+    0x88, 0x0d, ...le32(sseR + 0x25),            // mov [sseR+0x25],cl
+    0xbf, ...le32(sseR - 0x01000000),            // mov edi,sseR-0x1000000
+    0xf3, 0x0f, 0x10, 0x8f, ...le32(0x01000004), // movss xmm1,[edi+0x1000004]  3 (generic path)
+    0xf3, 0x0f, 0x11, 0x8f, ...le32(0x01000028), // movss [edi+0x1000028],xmm1
+    0xf3, 0x0f, 0x11, 0x44, 0x24, 0xf8,          // movss [esp-8],xmm0
+    0xf3, 0x0f, 0x10, 0x54, 0x24, 0xf8,          // movss xmm2,[esp-8]
+    0xf3, 0x0f, 0x11, 0x96, ...d32(-0xd4),       // movss [esi-0xd4],xmm2  -> sseR+0x2c
+    0x0f, 0x10, 0x1d, ...le32(sseA),             // movups xmm3,[sseA]
+    0xf3, 0x0f, 0x10, 0x9e, ...d32(-0xd0),       // movss xmm3,[esi-0xd0] -> 0xcc bytes
+    0x0f, 0x11, 0x1d, ...le32(sseR + 0x40),      // movups [sseR+0x40],xmm3
+  ]);
+  testBytes('[reg+disp] MOVSS/ADDSS/MULSS/SUBSS/DIVSS chain stores 8.5',
+    bytesAt(sseR + 0x20, 4), f32le(8.5));
+  testBytes('[reg+disp] COMISS sets above and equal',
+    bytesAt(sseR + 0x24, 2), [1, 1]);
+  testBytes('MOVSS with a >24-bit displacement keeps the generic path',
+    bytesAt(sseR + 0x28, 4), f32le(3));
+  testBytes('MOVSS through [esp-8] round-trips',
+    bytesAt(sseR + 0x2c, 4), f32le(8.5));
+  testBytes('[reg+disp] MOVSS load zeroes the upper 96 bits',
+    bytesAt(sseR + 0x40, 16), [0xcc, 0xcc, 0xcc, 0xcc, ...new Array(12).fill(0)]);
+
   runCode([
     0x0f, 0x10, 0x05, ...le32(sseA),       // movups xmm0,[sseA]
     0x0f, 0x10, 0x0d, ...le32(sseB),       // movups xmm1,[sseB]

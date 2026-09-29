@@ -11,7 +11,7 @@
   ;; For byte regs: 0=al,1=cl,2=dl,3=bl,4=ah,5=ch,6=dh,7=bh
 
   (type $handler_t (func (param i32)))
-  (table $handlers 491 funcref)
+  (table $handlers 498 funcref)
 
   (elem (i32.const 0)
     ;; -- Core --
@@ -560,4 +560,11 @@
     $th_movss_store            ;; 488: dedicated scalar SSE (06c)
     $th_comiss_rr              ;; 489: dedicated scalar SSE (06c)
     $th_comiss_rm              ;; 490: dedicated scalar SSE (06c)
+    $th_movss_load_ro          ;; 491: scalar SSE [reg+disp] (06c)
+    $th_movss_store_ro         ;; 492: scalar SSE [reg+disp] (06c)
+    $th_addss_ro               ;; 493: scalar SSE [reg+disp] (06c)
+    $th_subss_ro               ;; 494: scalar SSE [reg+disp] (06c)
+    $th_mulss_ro               ;; 495: scalar SSE [reg+disp] (06c)
+    $th_divss_ro               ;; 496: scalar SSE [reg+disp] (06c)
+    $th_comiss_ro              ;; 497: scalar SSE [reg+disp] (06c)
   )
