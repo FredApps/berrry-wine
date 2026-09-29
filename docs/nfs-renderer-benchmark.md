@@ -228,6 +228,13 @@ dropdown and rendered with zero renderer errors.
 
 ## NFS II
 
+**Correctness update:** these measurements predate the W-buffer unused-Z fix.
+Driving revealed missing terrain/car triangles when NFS II SE left `ooz`
+non-finite. Identical-frame replay confirms the fix restores those pixels;
+see `docs/re-notes/need-for-speed.md`. The old Glide timings therefore include
+incorrectly omitted geometry and need a fresh benchmark before performance
+conclusions about the corrected renderer.
+
 | Demo / rendering route | Output | FPS, sample 1 / 2 | Combined FPS | CPU ms/frame |
 | --- | --- | ---: | ---: | ---: |
 | Original NFS II software | 640×480 | 50.82 / 50.12 | 50.47 | 40.84 |
